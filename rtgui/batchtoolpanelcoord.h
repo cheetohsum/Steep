@@ -81,6 +81,7 @@ public:
 
     // imageareatoollistener interface
     void spotWBselected (int x, int y, Thumbnail* thm = nullptr) override;
+    void pointColorSelected (int x, int y, Thumbnail* thm = nullptr) override;
     void cropSelectionReady () override;
     void rotateSelectionReady (double rotate_deg, Thumbnail* thm = nullptr) override;
     CropGUIListener* startCropEditing (Thumbnail* thm = nullptr) override;

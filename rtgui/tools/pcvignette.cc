@@ -24,7 +24,8 @@ PCVignette::PCVignette () : FoldableToolPanel(this, TOOL_NAME, M("TP_PCVIGNETTE_
     roundness->set_tooltip_text (M("TP_PCVIGNETTE_ROUNDNESS_TOOLTIP"));
     roundness->setAdjusterListener (this);
 
-    pack_start (*strength);
+    getSummaryBox()->pack_start (*strength);
+    getSummaryBox()->show_all();
     pack_start (*feather);
     pack_start (*roundness);
 
@@ -84,6 +85,7 @@ void PCVignette::setDefaults (const ProcParams* defParams, const ParamsEdited* p
 
 void PCVignette::adjusterChanged(Adjuster* a, double newval)
 {
+    autoEnable();
     if (listener && getEnabled()) {
         if (a == strength) {
             listener->panelChanged (EvPCVignetteStrength, strength->getTextValue());

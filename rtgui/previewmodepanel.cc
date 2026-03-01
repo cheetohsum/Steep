@@ -92,17 +92,11 @@ PreviewModePanel::PreviewModePanel (ImageArea* ia) :
     backColor2->set_active (options.bgcolor == 2);
     backColor3->set_active (options.bgcolor == 3);
 
-    pack_start (*backColor0, Gtk::PACK_SHRINK, 0);
-    pack_start (*backColor1, Gtk::PACK_SHRINK, 0);
-    pack_start (*backColor3, Gtk::PACK_SHRINK, 0);
-    pack_start (*backColor2, Gtk::PACK_SHRINK, 0);
-
-    pack_start (*Gtk::manage (new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK, 2);
-
-    pack_start (*previewR, Gtk::PACK_SHRINK, 0);
-    pack_start (*previewG, Gtk::PACK_SHRINK, 0);
-    pack_start (*previewB, Gtk::PACK_SHRINK, 0);
-    pack_start (*previewL, Gtk::PACK_SHRINK, 0);
+    // Preview channel buttons (R/G/B/L) moved to Options menu
+    // pack_start (*previewR, Gtk::PACK_SHRINK, 0);
+    // pack_start (*previewG, Gtk::PACK_SHRINK, 0);
+    // pack_start (*previewB, Gtk::PACK_SHRINK, 0);
+    // pack_start (*previewL, Gtk::PACK_SHRINK, 0);
 
     connR = previewR->signal_toggled().connect( sigc::bind(sigc::mem_fun(*this, &PreviewModePanel::buttonToggled), previewR) );
     connG = previewG->signal_toggled().connect( sigc::bind(sigc::mem_fun(*this, &PreviewModePanel::buttonToggled), previewG) );
@@ -250,6 +244,21 @@ void PreviewModePanel::togglebackColor()
         togglebackColor2();
     } else {
         togglebackColor0();
+    }
+}
+
+void PreviewModePanel::setBackColor(int index)
+{
+    int current = GetbackColor();
+    if (current == index) {
+        return;
+    }
+
+    switch (index) {
+        case 0: togglebackColor0(); break;
+        case 1: togglebackColor1(); break;
+        case 2: togglebackColor2(); break;
+        case 3: togglebackColor3(); break;
     }
 }
 

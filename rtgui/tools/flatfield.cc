@@ -43,7 +43,7 @@ FlatField::FlatField () : FoldableToolPanel(this, TOOL_NAME, M("TP_FLATFIELD_LAB
     hbff = Gtk::manage(new Gtk::Box());
     flatFieldFile = Gtk::manage(new MyFileChooserButton(M("TP_FLATFIELD_LABEL"), Gtk::FILE_CHOOSER_ACTION_OPEN));
     bindCurrentFolder (*flatFieldFile, options.lastFlatfieldDir);
-    ffLabel = Gtk::manage(new Gtk::Label(M("GENERAL_FILE")));
+    ffLabel = Gtk::manage(new Gtk::Label(M("TP_FLATFIELD_FILE")));
     flatFieldFileReset = Gtk::manage(new Gtk::Button());
     flatFieldFileReset->set_image (*Gtk::manage(new RTImage ("cancel-small", Gtk::ICON_SIZE_BUTTON)));
     hbff->pack_start(*ffLabel, Gtk::PACK_SHRINK);
@@ -61,15 +61,20 @@ FlatField::FlatField () : FoldableToolPanel(this, TOOL_NAME, M("TP_FLATFIELD_LAB
 
     flatFieldBlurRadius->show();
 
-    Gtk::Box* hbffbt = Gtk::manage (new Gtk::Box ());
-    hbffbt->pack_start (*Gtk::manage (new Gtk::Label ( M("TP_FLATFIELD_BLURTYPE") + ":")), Gtk::PACK_SHRINK);
+    Gtk::Grid* hbffbt = Gtk::manage(new Gtk::Grid());
+    hbffbt->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(hbffbt, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    Gtk::Label* hbffbtLabel = Gtk::manage(new Gtk::Label(M("TP_FLATFIELD_BLURTYPE") + ":"));
+    setExpandAlignProperties(hbffbtLabel, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     flatFieldBlurType = Gtk::manage (new MyComboBoxText ());
     flatFieldBlurType->append(M("TP_FLATFIELD_BT_AREA"));
     flatFieldBlurType->append(M("TP_FLATFIELD_BT_VERTICAL"));
     flatFieldBlurType->append(M("TP_FLATFIELD_BT_HORIZONTAL"));
     flatFieldBlurType->append(M("TP_FLATFIELD_BT_VERTHORIZ"));
     flatFieldBlurType->set_active(0);
-    hbffbt->pack_end (*flatFieldBlurType, Gtk::PACK_EXPAND_WIDGET);
+    setExpandAlignProperties(flatFieldBlurType, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    hbffbt->attach(*hbffbtLabel, 0, 0, 1, 1);
+    hbffbt->attach(*flatFieldBlurType, 1, 0, 1, 1);
 
     flatFieldClipControl = Gtk::manage (new Adjuster(M("TP_FLATFIELD_CLIPCONTROL"), 0., 100., 1., 0.));
     flatFieldClipControl->setAdjusterListener(this);
@@ -80,14 +85,21 @@ FlatField::FlatField () : FoldableToolPanel(this, TOOL_NAME, M("TP_FLATFIELD_LAB
     flatFieldClipControl->show();
     flatFieldClipControl->set_tooltip_markup (M("TP_FLATFIELD_CLIPCONTROL_TOOLTIP"));
 
-    pack_start( *flatFieldFromMetaData, Gtk::PACK_SHRINK);
-    pack_start( *Gtk::manage( new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)), Gtk::PACK_SHRINK, 0 );
-    pack_start( *flatFieldAutoSelect, Gtk::PACK_SHRINK);
-    pack_start( *hbff, Gtk::PACK_SHRINK);
-    pack_start( *ffInfo, Gtk::PACK_SHRINK);
-    pack_start( *hbffbt, Gtk::PACK_SHRINK);
-    pack_start( *flatFieldBlurRadius, Gtk::PACK_SHRINK);
-    pack_start( *flatFieldClipControl, Gtk::PACK_SHRINK);
+    getSummaryBox()->pack_start( *flatFieldFromMetaData, Gtk::PACK_SHRINK);
+    getSummaryBox()->pack_start( *Gtk::manage( new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)), Gtk::PACK_SHRINK, 0 );
+    getSummaryBox()->pack_start( *flatFieldAutoSelect, Gtk::PACK_SHRINK);
+    getSummaryBox()->pack_start( *hbff, Gtk::PACK_SHRINK);
+    getSummaryBox()->pack_start( *ffInfo, Gtk::PACK_SHRINK);
+    getSummaryBox()->show_all();
+
+    // Advanced section for blur type, blur radius, clip control
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
+
+    advBox->pack_start( *hbffbt, Gtk::PACK_SHRINK);
+    advBox->pack_start( *flatFieldBlurRadius, Gtk::PACK_SHRINK);
+    advBox->pack_start( *flatFieldClipControl, Gtk::PACK_SHRINK);
 
     flatFieldFileconn = flatFieldFile->signal_file_set().connect ( sigc::mem_fun(*this, &FlatField::flatFieldFileChanged)); //, true);
     flatFieldFileReset->signal_clicked().connect( sigc::mem_fun(*this, &FlatField::flatFieldFile_Reset), true );
@@ -294,6 +306,7 @@ void FlatField::adjusterAutoToggled (Adjuster* a, bool newval)
 void FlatField::setBatchMode(bool batchMode)
 {
     ToolPanel::setBatchMode (batchMode);
+    advancedSection->setBatchMode(batchMode);
     flatFieldBlurRadius->showEditedCB ();
     flatFieldClipControl->showEditedCB ();
 }

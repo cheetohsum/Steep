@@ -131,11 +131,11 @@ ThumbBrowserEntryBase::ThumbBrowserEntryBase (const Glib::ustring& fname, Thumbn
     prevPos(0, 0),
     activeDeviceScale(1),
     pendingDeviceScale(1),
-    upperMargin(6),
-    borderWidth(1),
-    textGap(6),
-    sideMargin(8),
-    lowerMargin(8),
+    upperMargin(2),
+    borderWidth(0),
+    textGap(4),
+    sideMargin(2),
+    lowerMargin(2),
     dispname(Glib::path_get_basename(fname)),
     buttonSet(nullptr),
     width(0),
@@ -217,17 +217,20 @@ void ThumbBrowserEntryBase::updateBackBuffer ()
     Gdk::RGBA bgn = parent->getNormalBgColor();
     Gdk::RGBA bgs = parent->getSelectedBgColor();
 
-    // clear area, draw frames and background
-    style->render_background(cc, 0., 0., expected.width, expected.height);
+    // Fill entire cell with #393939 (the FileCatalog background from CSS).
+    // The surface is RGB24 (no alpha) so we must paint the correct color
+    // explicitly — uninitialized pixels default to black.
+    cc->set_source_rgb(0.2235, 0.2235, 0.2235); // #393939
+    cc->paint();
 
     cc->set_antialias(Cairo::ANTIALIAS_SUBPIXEL);
 
     drawFrame (cc, bgs, bgn);
 
-    // calculate height of button set
+    // calculate height of button set (hidden if nothing to show)
     int bsHeight = 0;
 
-    if (buttonSet) {
+    if (buttonSet && buttonSet->shouldShow()) {
         int tmp;
         buttonSet->getAllocatedDimensions(tmp, bsHeight);
     }
@@ -339,23 +342,9 @@ void ThumbBrowserEntryBase::updateBackBuffer ()
 
         if (! ((parent->getLocation() != ThumbBrowserBase::THLOC_EDITOR && options.overlayedFileNames)
                 || (parent->getLocation() == ThumbBrowserBase::THLOC_EDITOR && options.filmStripOverlayedFileNames)) ) {
-            textposx_fn = expected.width / 2 - fnlabw / 2;
-
-            if (textposx_fn < 0) {
-                textposx_fn = 0;
-            }
-
-            textposx_ex = expected.width / 2 - exlabw / 2;
-
-            if (textposx_ex < 0) {
-                textposx_ex = 0;
-            }
-
-            textposx_dt = expected.width / 2 - dtlabw / 2;
-
-            if (textposx_dt < 0) {
-                textposx_dt = 0;
-            }
+            textposx_fn = sideMargin;
+            textposx_ex = sideMargin;
+            textposx_dt = sideMargin;
 
             textposy = expected.height - lowerMargin - infoh;
             textw = expected.width - 2 * textGap;
@@ -377,6 +366,9 @@ void ThumbBrowserEntryBase::updateBackBuffer ()
         // draw file name
         Glib::RefPtr<Pango::Context> context = w->get_pango_context () ;
         Pango::FontDescription fontd = w->get_style_context()->get_font();
+        // Reduce text size for thumbnail labels
+        int baseSize = fontd.get_size();
+        fontd.set_size(baseSize * 8 / 10); // 80% of normal size
         fontd.set_weight (Pango::WEIGHT_BOLD);
 
         if (italicstyle) {
@@ -443,6 +435,9 @@ void ThumbBrowserEntryBase::getTextSizes (int& infow, int& infoh)
 
     // filename:
     Pango::FontDescription fontd = w->get_style_context()->get_font();
+    // Reduce text size for thumbnail labels (must match drawing code)
+    int baseSize = fontd.get_size();
+    fontd.set_size(baseSize * 8 / 10); // 80% of normal size
     fontd.set_weight (Pango::WEIGHT_BOLD);
     context->set_font_description (fontd);
     Glib::RefPtr<Pango::Layout> fn = w->create_pango_layout(dispname);
@@ -498,10 +493,10 @@ void ThumbBrowserEntryBase::resize (int h)
     int old_preh = previewSize.height;
     int old_prew = previewSize.width;
 
-    // dimensions of the button set
+    // dimensions of the button set (hidden if nothing to show)
     int bsw = 0, bsh = 0;
 
-    if (buttonSet) {
+    if (buttonSet && buttonSet->shouldShow()) {
         buttonSet->getMinimalDimensions (bsw, bsh);
     }
 
@@ -582,37 +577,11 @@ void ThumbBrowserEntryBase::onDeviceScaleChanged(int newDeviceScale) {
 
 void ThumbBrowserEntryBase::drawFrame (Cairo::RefPtr<Cairo::Context> cc, const Gdk::RGBA& bg, const Gdk::RGBA& fg)
 {
-
-    int radius = 4;
-
-    if (selected || framed) {
-        cc->move_to (radius, 0);
-        cc->arc (expected.width - 1 - radius, radius, radius, -rtengine::RT_PI / 2, 0);
-        cc->arc (expected.width - 1 - radius, expected.height - 1 - radius, radius, 0, rtengine::RT_PI / 2);
-        cc->arc (radius, expected.height - 1 - radius, radius, rtengine::RT_PI / 2, rtengine::RT_PI);
-        cc->arc (radius, radius, radius, rtengine::RT_PI, -rtengine::RT_PI / 2);
-        cc->close_path ();
-
-        if (selected) {
-            cc->set_source_rgb (bg.get_red(), bg.get_green(), bg.get_blue());
-            cc->fill_preserve ();
-        }
-
-        cc->set_source_rgb (bg.get_red() * 2 / 3, bg.get_green() * 2 / 3, bg.get_blue() * 2 / 3);
-        cc->set_line_width (1.0);
-        cc->stroke ();
-    }
-
-    if (framed) {
-        cc->move_to (+2 + 0.5 + radius, +2 + 0.5);
-        cc->arc (-2 + 0.5 + expected.width - 1 - radius, +2 + 0.5 + radius, radius, -rtengine::RT_PI / 2, 0);
-        cc->arc (-2 + 0.5 + expected.width - 1 - radius, -2 + 0.5 + expected.height - 1 - radius, radius, 0, rtengine::RT_PI / 2);
-        cc->arc (+2 + 0.5 + radius, -2 + expected.height - 1 - radius, radius, rtengine::RT_PI / 2, rtengine::RT_PI);
-        cc->arc (+2 + 0.5 + radius, +2 + radius, radius, rtengine::RT_PI, -rtengine::RT_PI / 2);
-        cc->close_path ();
-        cc->set_source_rgb (fg.get_red(), fg.get_green(), fg.get_blue());
-        cc->set_line_width (2.0);
-        cc->stroke ();
+    // Only draw a subtle highlight fill for selected thumbnails — no borders
+    if (selected) {
+        cc->rectangle(0, 0, expected.width, expected.height);
+        cc->set_source_rgb(bg.get_red(), bg.get_green(), bg.get_blue());
+        cc->fill();
     }
 }
 
@@ -658,8 +627,8 @@ void ThumbBrowserEntryBase::draw (Cairo::RefPtr<Cairo::Context> cc)
 
 //    drawProgressBar (window, cc, selected ? texts : textn, selected ? bgs : bgn, ofsX+startx, expected.width, ofsY+starty + upperMargin+bsHeight+borderWidth+previewSize.height+borderWidth+textGap+tpos, fnlabh);
 
-    // redraw button set above the thumbnail
-    if (buttonSet) {
+    // redraw button set above the thumbnail (hidden if no rank/label, or in filmstrip/tab mode)
+    if (buttonSet && buttonSet->shouldShow() && !(parent && parent->isInTabMode())) {
         buttonSet->setColors (selected ? parent->getSelectedBgColor() : parent->getNormalBgColor(), selected ? parent->getNormalBgColor() : parent->getSelectedBgColor());
         buttonSet->redraw (cc);
     }
@@ -733,19 +702,19 @@ std::vector<std::shared_ptr<RTSurface>> ThumbBrowserEntryBase::getSpecificityIco
 bool ThumbBrowserEntryBase::motionNotify  (int x, int y)
 {
 
-    return buttonSet ? buttonSet->motionNotify (x, y) : false;
+    return (buttonSet && !(parent && parent->isInTabMode())) ? buttonSet->motionNotify (x, y) : false;
 }
 
 bool ThumbBrowserEntryBase::pressNotify   (int button, int type, int bstate, int x, int y)
 {
 
-    return buttonSet ? buttonSet->pressNotify (x, y) : false;
+    return (buttonSet && !(parent && parent->isInTabMode())) ? buttonSet->pressNotify (x, y) : false;
 }
 
 bool ThumbBrowserEntryBase::releaseNotify (int button, int type, int bstate, int x, int y)
 {
 
-    return buttonSet ? buttonSet->releaseNotify (x, y) : false;
+    return (buttonSet && !(parent && parent->isInTabMode())) ? buttonSet->releaseNotify (x, y) : false;
 }
 
 std::tuple<Glib::ustring, bool> ThumbBrowserEntryBase::getToolTip (int x, int y) const

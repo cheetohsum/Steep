@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <!-- Up arrow (left side) -->
+  <path d="M8 4.5l-3.5 4h2.5v7h2v-7h2.5L8 4.5z" fill="#cccccc" opacity="0.8"/>
+  <!-- Down arrow (right side) -->
+  <path d="M16 19.5l3.5-4h-2.5v-7h-2v7h-2.5l3.5 4z" fill="#cccccc" opacity="0.8"/>
+</svg>

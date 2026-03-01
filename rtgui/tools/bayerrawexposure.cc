@@ -67,12 +67,19 @@ BayerRAWExposure::BayerRAWExposure () : FoldableToolPanel(this, TOOL_NAME, M("TP
     Dehablack->set_active (false);
     Dehablack->setCheckBoxListener (this);
 
-    pack_start( *PexBlack1, Gtk::PACK_SHRINK, 0);//black R
-    pack_start( *PexBlack0, Gtk::PACK_SHRINK, 0);//black G1
-    pack_start( *PexBlack3, Gtk::PACK_SHRINK, 0);//black G2
-    pack_start( *PexBlack2, Gtk::PACK_SHRINK, 0);//black B
-    pack_start( *PextwoGreen, Gtk::PACK_SHRINK, 0);//black 2 green
-    pack_start( *Dehablack, Gtk::PACK_SHRINK, 0);//black Dehaze
+    getSummaryBox()->pack_start( *Dehablack, Gtk::PACK_SHRINK, 0);//black Dehaze
+    getSummaryBox()->pack_start( *PextwoGreen, Gtk::PACK_SHRINK, 0);//black 2 green
+    getSummaryBox()->show_all();
+
+    // Advanced section for per-channel black levels
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
+
+    advBox->pack_start( *PexBlack1, Gtk::PACK_SHRINK, 0);//black R
+    advBox->pack_start( *PexBlack0, Gtk::PACK_SHRINK, 0);//black G1
+    advBox->pack_start( *PexBlack3, Gtk::PACK_SHRINK, 0);//black G2
+    advBox->pack_start( *PexBlack2, Gtk::PACK_SHRINK, 0);//black B
 
     PexBlack0->setLogScale(100, 0);
     PexBlack1->setLogScale(100, 0);
@@ -232,6 +239,7 @@ void BayerRAWExposure::checkBoxToggled (CheckBox* c, CheckValue newval)
 void BayerRAWExposure::setBatchMode(bool batchMode)
 {
     ToolPanel::setBatchMode (batchMode);
+    advancedSection->setBatchMode(batchMode);
     PexBlack0->showEditedCB ();//black
     PexBlack1->showEditedCB ();//black
     PexBlack2->showEditedCB ();//black

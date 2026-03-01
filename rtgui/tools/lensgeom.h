@@ -64,7 +64,9 @@ public:
     }
 
     void adjusterChanged (Adjuster* a, double newval) override;
+    void hideMethodCombo ();
 
 private:
+    Gtk::Box* methodBox;
     IdleRegister idle_register;
 };

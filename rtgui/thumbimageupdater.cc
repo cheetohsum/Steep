@@ -20,6 +20,7 @@
 #include <atomic>
 #include <memory>
 #include <set>
+#include <thread>
 
 #include <gtkmm.h>
 
@@ -79,10 +80,14 @@ public:
         active_(0),
         inactive_waiting_(false)
     {
-        int threadCount = 1;
 #ifdef _OPENMP
-        threadCount = omp_get_num_procs();
+        int threadCount = omp_get_num_procs();
+#else
+        int threadCount = std::max(2u, std::thread::hardware_concurrency());
 #endif
+        // Use half the cores for thumbnail upgrades, leaving headroom
+        // for preview loading, editor processing, and UI responsiveness.
+        threadCount = std::max(2, threadCount / 2);
 
         threadPool_.reset(new Glib::ThreadPool(threadCount, 0));
     }
@@ -101,10 +106,15 @@ public:
 
     std::condition_variable inactive_;
 
+    // Listeners that have been removed — skip callbacks for these.
+    std::set<ThumbImageUpdateListener*> cancelled_;
+
     void
     processNextJob()
     {
         Job j;
+        Thumbnail* thm = nullptr;
+        std::pair<hidpi::LogicalSize, int> size_and_scale;
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
@@ -148,16 +158,24 @@ public:
             jobs_.erase(i);
             DEBUG("%d job(s) remaining", int(jobs_.size()) );
 
+            // If listener already cancelled, skip entirely
+            if (cancelled_.find(j.listener_) != cancelled_.end()) {
+                return;
+            }
+
+            // Copy data from entry while it's guaranteed alive (under lock).
+            // Hold a reference to the thumbnail so it survives entry deletion.
+            thm = j.tbe_->thumbnail;
+            thm->increaseRef();
+            size_and_scale = j.tbe_->getDesiredPreviewSize();
+
             ++active_;
         }
 
-        // unlock and do processing; will relock on block exit, then call listener
+        // Process using copied data — no more access to j.tbe_
         double scale = 1.0;
         rtengine::IImage8* img = nullptr;
-        Thumbnail* thm = j.tbe_->thumbnail;
-
-        auto size_and_scale = j.tbe_->getDesiredPreviewSize();
-        hidpi::LogicalSize& logical = size_and_scale.first;
+        hidpi::LogicalSize logical = size_and_scale.first;
         int device_scale = size_and_scale.second;
         int preview_height = logical.scaleToDevice(device_scale).height;
 
@@ -170,13 +188,24 @@ public:
         }
 
         if (img) {
-            DEBUG("pushing image %s", thm->getFileName().c_str());
-            ThumbImageUpdateListener::ImageUpdate update(img, logical, device_scale, scale, thm->getProcParams().crop);
-            j.listener_->updateImage(update);
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (cancelled_.find(j.listener_) != cancelled_.end()) {
+                // Listener was removed — discard result, don't callback
+                delete img;
+            } else {
+                DEBUG("pushing image %s", thm->getFileName().c_str());
+                ThumbImageUpdateListener::ImageUpdate update(img, logical, device_scale, scale, thm->getProcParams().crop);
+                j.listener_->updateImage(update);
+            }
         }
+
+        // Release our reference to the thumbnail
+        thm->decreaseRef();
 
         if ( --active_ == 0 ) {
             std::lock_guard<std::mutex> lock(mutex_);
+            // All jobs finished — safe to clear cancelled set
+            cancelled_.clear();
             if (inactive_waiting_) {
                 inactive_waiting_ = false;
                 inactive_.notify_all();
@@ -240,47 +269,30 @@ void ThumbImageUpdater::removeJobs(ThumbImageUpdateListener* listener)
 {
     DEBUG("removeJobs(%p)", listener);
 
-    {
-        std::lock_guard<std::mutex> lock(impl_->mutex_);
+    std::lock_guard<std::mutex> lock(impl_->mutex_);
 
-        for( Impl::JobList::iterator i(impl_->jobs_.begin()); i != impl_->jobs_.end(); ) {
-            if (i->listener_ == listener) {
-                DEBUG("erasing specific job");
-                Impl::JobList::iterator e(i++);
-                impl_->jobs_.erase(e);
-            } else {
-                ++i;
-            }
+    for( Impl::JobList::iterator i(impl_->jobs_.begin()); i != impl_->jobs_.end(); ) {
+        if (i->listener_ == listener) {
+            DEBUG("erasing specific job");
+            Impl::JobList::iterator e(i++);
+            impl_->jobs_.erase(e);
+        } else {
+            ++i;
         }
     }
 
-    while ( impl_->active_ != 0 ) {
-        DEBUG("waiting for running jobs1");
-        {
-            std::unique_lock<std::mutex> lock(impl_->mutex_);
-            impl_->inactive_waiting_ = true;
-            impl_->inactive_.wait(lock);
-        }
-    }
+    // Mark listener as cancelled so any in-flight jobs skip the callback
+    // instead of delivering to a deleted object.
+    impl_->cancelled_.insert(listener);
 }
 
 void ThumbImageUpdater::removeAllJobs()
 {
     DEBUG("stop");
 
-    {
-        std::lock_guard<std::mutex> lock(impl_->mutex_);
-
-        impl_->jobs_.clear();
-    }
-
-    while ( impl_->active_ != 0 ) {
-        DEBUG("waiting for running jobs2");
-        {
-            std::unique_lock<std::mutex> lock(impl_->mutex_);
-            impl_->inactive_waiting_ = true;
-            impl_->inactive_.wait(lock);
-        }
-    }
+    std::lock_guard<std::mutex> lock(impl_->mutex_);
+    impl_->jobs_.clear();
+    // Don't wait for active jobs — they will finish naturally and their
+    // results will be harmlessly delivered to entries pending deletion.
 }
 

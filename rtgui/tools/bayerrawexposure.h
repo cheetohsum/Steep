@@ -20,6 +20,7 @@
 
 #include <gtkmm.h>
 
+#include "guiutils.h"
 #include "toolpanel.h"
 #include "eventmapper.h"
 #include "widgets/basic/adjuster.h"
@@ -59,4 +60,5 @@ protected:
     IdleRegister idle_register;
     rtengine::ProcEvent EvDehablack;
     rtengine::ProcEvent EvDehablackVoid;
+    AdvancedSection* advancedSection;
 };

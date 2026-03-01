@@ -61,6 +61,7 @@ protected:
 
     rtengine::ProcEvent EvSharpenContrast;
     rtengine::ProcEvent EvSharpenBlur;
+    AdvancedSection* advancedSection;
 public:
     static const Glib::ustring TOOL_NAME;
 

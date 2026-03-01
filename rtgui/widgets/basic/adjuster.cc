@@ -29,7 +29,10 @@
 
 namespace {
 
-constexpr int MIN_RESET_BUTTON_HEIGHT = 17;
+constexpr int MIN_RESET_BUTTON_HEIGHT = 12;
+
+constexpr int LABEL_FIXED_WIDTH = 38;
+constexpr int SPIN_FIXED_WIDTH = 22;
 
 double one2one(double val)
 {
@@ -67,6 +70,7 @@ Adjuster::Adjuster(
     logBase(0),
     logPivot(0),
     logAnchorMiddle(false),
+    isBipolar_(false),
     value2slider(value2slider ? value2slider : &one2one),
     slider2value(slider2value ? slider2value : &one2one)
 
@@ -86,10 +90,22 @@ Adjuster::Adjuster(
     set_column_homogeneous(false);
     set_row_spacing(0);
     set_row_homogeneous(false);
+    set_name("Adjuster");
+    set_margin_start(0);
 
     if (!adjustmentName.empty()) {
         label = Gtk::manage(new Gtk::Label(adjustmentName));
-        setExpandAlignProperties(label, true, false, Gtk::ALIGN_START, Gtk::ALIGN_BASELINE);
+        setExpandAlignProperties(label, false, false, Gtk::ALIGN_START, Gtk::ALIGN_BASELINE);
+        // Consistent label width for slider alignment across tools
+        label->set_width_chars(12);
+        label->set_xalign(1.0); // Right-align text within the fixed-width label
+        label->set_ellipsize(Pango::ELLIPSIZE_NONE);
+        // Compact font via inline CSS (theme CSS font-size doesn't cascade reliably in GTK3)
+        auto labelCss = Gtk::CssProvider::create();
+        labelCss->load_from_data("label { font-size: 10px; }");
+        label->get_style_context()->add_provider(
+            labelCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 100
+        );
     }
 
     reset = Gtk::manage(new Gtk::Button());
@@ -105,14 +121,67 @@ Adjuster::Adjuster(
 
     setExpandAlignProperties(spin, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_CENTER);
     spin->set_input_purpose(Gtk::INPUT_PURPOSE_DIGITS);
+    spin->set_size_request(SPIN_FIXED_WIDTH, -1);
+
+    // Hide the +/- buttons of the spinbutton via high-priority inline CSS
+    // (theme CSS specificity battles cannot reliably hide internal spinbutton buttons)
+    {
+        auto css = Gtk::CssProvider::create();
+        css->load_from_data(
+            "spinbutton button { min-width: 0; min-height: 0; padding: 0; margin: 0;"
+            " border: none; background: none; background-image: none; color: transparent; opacity: 0; }"
+            " spinbutton button image { -gtk-icon-transform: scale(0); min-width: 0; min-height: 0; }"
+            " spinbutton entry { background: transparent; border: none; box-shadow: none;"
+            " padding: 0; min-height: 0; font-size: 8px; }"
+            " spinbutton { background: transparent; border: none; box-shadow: none; }"
+        );
+        spin->get_style_context()->add_provider(
+            css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 100
+        );
+    }
+
+    // Smaller font on spin entry (SpinButton IS an Entry)
+    {
+        auto entryCss = Gtk::CssProvider::create();
+        entryCss->load_from_data(
+            "spinbutton { font-size: 8px; padding: 0; margin: 0; min-height: 0; }"
+            " spinbutton entry { font-size: 8px; padding: 0; margin: 0; min-height: 0; }"
+        );
+        spin->get_style_context()->add_provider(
+            entryCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200
+        );
+    }
 
     reset->set_size_request(-1, RTScalable::scalePixelSize(spin->get_height() > MIN_RESET_BUTTON_HEIGHT ? spin->get_height() : MIN_RESET_BUTTON_HEIGHT));
     slider = Gtk::manage(new MyHScale());
     setExpandAlignProperties(slider, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
     slider->set_draw_value(false);
+
+    // Compact slider via inline CSS — avoid negative margins which break GTK hit-testing
+    {
+        auto sliderCss = Gtk::CssProvider::create();
+        sliderCss->load_from_data(
+            "scale { padding: 0; margin: 0; min-height: 0; }"
+            " scale trough { min-height: 3px; margin: 0; padding: 0; }"
+            " scale slider { min-height: 0; min-width: 0; padding: 7px; margin: -7px;"
+            "   background: transparent; border-color: transparent;"
+            "   border: none; box-shadow: none; -gtk-icon-shadow: none; }"
+            " scale trough highlight { margin: 0; padding: 0; min-height: 0; }"
+        );
+        slider->get_style_context()->add_provider(
+            sliderCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200
+        );
+    }
     //slider->set_has_origin(false);  // ------------------ This will remove the colored part on the left of the slider's knob
 
     setLimits(vmin, vmax, vstep, vdefault);
+
+    // Detect bipolar range (e.g. -5 to +5) for center-fill slider rendering
+    isBipolar_ = (vmin < 0 && vmax > 0);
+    if (isBipolar_) {
+        slider->get_style_context()->add_class("bipolar");
+        slider->set_has_origin(false);  // Disable default left-fill; we draw custom center-fill
+    }
 
     if (adjustmentName.empty()) {
         // No label, everything goes in a single row
@@ -131,25 +200,34 @@ Adjuster::Adjuster(
 
         attach_next_to(*reset, *spin, Gtk::POS_RIGHT, 1, 1);
     } else {
-        // A label is provided, spreading the widgets in 2 rows
-        attach_next_to(*label, Gtk::POS_LEFT, 1, 1);
-        attach_next_to(*spin, Gtk::POS_RIGHT, 1, 1);
-        // A second Grid is necessary
-        grid = Gtk::manage(new Gtk::Grid());
-        grid->attach_next_to(*slider, Gtk::POS_LEFT, 1, 1);
+        // LR-style compact single-row: [label] [slider] [spin]
+        setExpandAlignProperties(label, false, false, Gtk::ALIGN_START, Gtk::ALIGN_BASELINE);
+        attach(*label, 0, 0, 1, 1);
 
+        attach(*slider, 1, 0, 1, 1);   // slider already has hexpand=true
+
+        attach(*spin, 2, 0, 1, 1);
+
+        // Icons: attach hidden (showIcons() can reveal them later)
+        int col = 3;
         if (imageIcon1) {
-            grid->attach_next_to(*imageIcon1, *slider, Gtk::POS_LEFT, 1, 1);
+            imageIcon1->set_visible(false);
+            imageIcon1->set_no_show_all(true);
+            attach(*imageIcon1, col++, 0, 1, 1);
         }
-
         if (imageIcon2) {
-            grid->attach_next_to(*imageIcon2, Gtk::POS_RIGHT, 1, 1);
-            grid->attach_next_to(*reset, *imageIcon2, Gtk::POS_RIGHT, 1, 1);
-        } else {
-            grid->attach_next_to(*reset, *slider, Gtk::POS_RIGHT, 1, 1);
+            imageIcon2->set_visible(false);
+            imageIcon2->set_no_show_all(true);
+            attach(*imageIcon2, col++, 0, 1, 1);
         }
 
-        attach_next_to(*grid, *label, Gtk::POS_BOTTOM, 2, 1);
+        // Reset: hidden (double-click on label/slider still works for reset)
+        reset->set_visible(false);
+        reset->set_no_show_all(true);
+        attach(*reset, col++, 0, 1, 1);
+
+        // No sub-grid needed
+        grid = nullptr;
     }
 
     defaultVal = ctorDefaultVal = shapeValue(vdefault);
@@ -177,6 +255,29 @@ Adjuster::Adjuster(
         }
     );
     reset->signal_button_release_event().connect_notify( sigc::mem_fun(*this, &Adjuster::resetPressed) );
+
+    // Double-click on slider resets to default (after=true so GTK drag handler runs first)
+    slider->signal_button_press_event().connect(
+        [this](GdkEventButton* event) -> bool {
+            if (event->type == GDK_2BUTTON_PRESS && event->button == 1) {
+                resetValue(false);
+                return true;
+            }
+            return false;
+        }, true);
+
+    // Double-click on label also resets to default
+    if (label) {
+        label->add_events(Gdk::BUTTON_PRESS_MASK);
+        label->signal_button_press_event().connect(
+            [this](GdkEventButton* event) -> bool {
+                if (event->type == GDK_2BUTTON_PRESS && event->button == 1) {
+                    resetValue(false);
+                    return true;
+                }
+                return false;
+            }, false);
+    }
 
     show_all();
 }
@@ -213,7 +314,11 @@ void Adjuster::addAutoButton (const Glib::ustring &tooltip)
 void Adjuster::delAutoButton ()
 {
     if (automatic) {
-        removeIfThere(grid, automatic);
+        if (grid) {
+            removeIfThere(grid, automatic);
+        } else {
+            removeIfThere(this, automatic);
+        }
         delete automatic;
         automatic = nullptr;
     }
@@ -366,9 +471,29 @@ void Adjuster::setAddMode(bool addM)
             }
 
             setLimits(-range, range, vStep, 0);
+
+            // Add mode is always bipolar (centered at 0)
+            if (!isBipolar_) {
+                isBipolar_ = true;
+                slider->get_style_context()->add_class("bipolar");
+                slider->set_has_origin(false);
+            }
         } else {
             // Switching to the absolute mode
             setLimits(vMin, vMax, vStep, defaultVal);
+
+            // Re-evaluate bipolar status
+            bool shouldBeBipolar = (vMin < 0 && vMax > 0);
+            if (isBipolar_ != shouldBeBipolar) {
+                isBipolar_ = shouldBeBipolar;
+                if (isBipolar_) {
+                    slider->get_style_context()->add_class("bipolar");
+                    slider->set_has_origin(false);
+                } else {
+                    slider->get_style_context()->remove_class("bipolar");
+                    slider->set_has_origin(true);
+                }
+            }
         }
     }
 }
@@ -423,6 +548,8 @@ void Adjuster::sliderChanged ()
 
 void Adjuster::setValue (double a)
 {
+    spinChange.cancel();
+    sliderChange.cancel();
     spinChange.block();
     sliderChange.block(true);
     spin->set_value(shapeValue(a));
@@ -509,17 +636,15 @@ void Adjuster::showEditedCB ()
     if (!editedCheckBox) {
         editedCheckBox = Gtk::manage(new Gtk::CheckButton(adjustmentName));
         editedCheckBox->set_vexpand(false);
+        editedCheckBox->set_hexpand(false);
+        editedCheckBox->set_halign(Gtk::ALIGN_START);
+        editedCheckBox->set_valign(Gtk::ALIGN_CENTER);
 
-        if (grid) {
-            editedCheckBox->set_hexpand(true);
-            editedCheckBox->set_halign(Gtk::ALIGN_START);
-            editedCheckBox->set_valign(Gtk::ALIGN_CENTER);
-            attach_next_to(*editedCheckBox, *spin, Gtk::POS_LEFT, 1, 1);
+        if (!adjustmentName.empty()) {
+            // Labeled layout: editedCheckBox replaces label at column 0
+            attach(*editedCheckBox, 0, 0, 1, 1);
         } else {
-            editedCheckBox->set_hexpand(false);
-            editedCheckBox->set_halign(Gtk::ALIGN_START);
-            editedCheckBox->set_valign(Gtk::ALIGN_CENTER);
-
+            // No-label layout: insert before first widget
             if (imageIcon1) {
                 attach_next_to(*editedCheckBox, *imageIcon1, Gtk::POS_LEFT, 1, 1);
             } else {
@@ -706,4 +831,14 @@ void Adjuster::showIcons(bool yes)
         imageIcon2->set_visible(yes);
         imageIcon2->set_no_show_all(!yes);
     }
+}
+
+void Adjuster::setSliderGradient(const std::vector<GradientMilestone>& milestones)
+{
+    slider->setTrackGradient(milestones);
+}
+
+void Adjuster::clearSliderGradient()
+{
+    slider->clearTrackGradient();
 }

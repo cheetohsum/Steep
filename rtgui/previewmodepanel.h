@@ -58,6 +58,7 @@ public:
     void togglebackColor2();
     void togglebackColor3();
     void togglebackColor();
+    void setBackColor(int index);
 
     sigc::connection connR, connB, connG, connL, connbackColor0, connbackColor1, connbackColor2, connbackColor3;
 

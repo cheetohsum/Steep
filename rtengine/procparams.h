@@ -630,6 +630,21 @@ struct DirPyrDenoiseParams {
     void getCurves(NoiseCurve& lCurve, NoiseCurve& cCurve) const;
 };
 
+/**
+ * Parameters of AI denoising (RawRefinery)
+ */
+struct AIDenoiseParams {
+    bool    enabled;
+    double  isoConditioning;  // 0-100
+    double  blend;            // 0-100
+    bool    useGpu;
+
+    AIDenoiseParams();
+
+    bool operator ==(const AIDenoiseParams& other) const;
+    bool operator !=(const AIDenoiseParams& other) const;
+};
+
 // EPD related parameters.
 struct EPDParams {
     bool   enabled;
@@ -1585,10 +1600,71 @@ struct HSVEqualizerParams {
     std::vector<double> scurve;
     std::vector<double> vcurve;
 
+    Glib::ustring mode;                  // "Curves" or "Sliders"
+    std::array<double, 8> hueShifts;     // -100..100, one per color channel
+    std::array<double, 8> satShifts;
+    std::array<double, 8> lumShifts;
+
     HSVEqualizerParams();
 
     bool operator ==(const HSVEqualizerParams& other) const;
     bool operator !=(const HSVEqualizerParams& other) const;
+};
+
+/**
+ * Color Grading params (3-way color wheels)
+ */
+struct ColorGradingParams {
+    bool enabled;
+    double shadowsHue;      // 0..360 degrees
+    double shadowsSat;      // 0..1
+    double shadowsLum;      // -100..100
+    double midtonesHue;
+    double midtonesSat;
+    double midtonesLum;
+    double highlightsHue;
+    double highlightsSat;
+    double highlightsLum;
+    double globalHue;
+    double globalSat;
+    double globalLum;
+    double blending;        // 0..100
+    double balance;         // -100..100
+
+    ColorGradingParams();
+
+    bool operator ==(const ColorGradingParams& other) const;
+    bool operator !=(const ColorGradingParams& other) const;
+};
+
+/**
+ * A single Point Color target — hue-selective HSL adjustment
+ */
+struct PointColorTarget {
+    double centerHue;   // 0..1
+    double hueShift;    // -100..100
+    double saturation;  // -100..100
+    double luminance;   // -100..100
+    double range;       // 1..100 (default 50)
+
+    PointColorTarget();
+
+    bool operator ==(const PointColorTarget& other) const;
+    bool operator !=(const PointColorTarget& other) const;
+};
+
+/**
+ * Point Color params — multiple targeted hue adjustments
+ */
+struct PointColorParams {
+    bool enabled;
+    std::vector<PointColorTarget> targets;
+    int activeTarget;  // GUI selection index, -1 if none
+
+    PointColorParams();
+
+    bool operator ==(const PointColorParams& other) const;
+    bool operator !=(const PointColorParams& other) const;
 };
 
 /**
@@ -1880,6 +1956,7 @@ public:
     DefringeParams          defringe;        ///< Defringing parameters
     ImpulseDenoiseParams    impulseDenoise;  ///< Impulse denoising parameters
     DirPyrDenoiseParams     dirpyrDenoise;   ///< Directional Pyramid denoising parameters
+    AIDenoiseParams         aiDenoise;       ///< AI denoising parameters (RawRefinery)
     EPDParams               epd;             ///< Edge Preserving Decomposition parameters
     FattalToneMappingParams fattal;          ///< Fattal02 tone mapping
     SHParams                sh;              ///< Shadow/highlight enhancement parameters
@@ -1907,6 +1984,8 @@ public:
     WaveletParams           wavelet;         ///< Wavelet parameters
     DirPyrEqualizerParams   dirpyrequalizer; ///< directional pyramid wavelet parameters
     HSVEqualizerParams      hsvequalizer;    ///< hsv wavelet parameters
+    ColorGradingParams      colorGrading;    ///< 3-way color grading parameters
+    PointColorParams        pointcolor;      ///< Point color adjustment parameters
     FilmSimulationParams    filmSimulation;  ///< film simulation parameters
     SoftLightParams         softlight;       ///< softlight parameters
     DehazeParams            dehaze;          ///< dehaze parameters

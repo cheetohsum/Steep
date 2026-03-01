@@ -21,6 +21,7 @@
 #include "guiutils.h"
 
 #include "options.h"
+#include "rtengine/rtapp.h"
 #include "rtengine/utils.h"
 #include "rtengine/procparams.h"
 #include "rtimage.h"
@@ -553,6 +554,18 @@ ExpanderBox::ExpanderBox( Gtk::Container *p): pC(p)
     set_border_width(2);
 #endif
 //GTK318
+    // Compact UI: shrink buttons/comboboxes/entries inside tool content
+    {
+        auto css = Gtk::CssProvider::create();
+        css->load_from_data(
+            "combobox { min-height: 0; margin: 1px 0; }"
+            " combobox button { min-height: 0; min-width: 0; padding: 0 2px; margin: 0; }"
+            " button { min-height: 0; min-width: 0; padding: 1px 4px; margin: 1px 0; }"
+            " entry { min-height: 0; padding: 0; margin: 1px 0; }"
+        );
+        get_style_context()->add_provider(
+            css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+    }
 }
 
 void ExpanderBox::setLevel(int level)
@@ -590,7 +603,8 @@ MyExpander::MyExpander(bool useEnabled, Gtk::Widget* titleWidget) :
     closedImage("expander-closed-small"),
     enabled(false), inconsistent(false), flushEvent(false), expBox(nullptr),
     child(nullptr), headerWidget(nullptr), statusImage(nullptr),
-    label(nullptr), useEnabled(useEnabled)
+    label(nullptr), useEnabled(useEnabled),
+    summaryBox(nullptr), expandArrow(nullptr), expandable_(true), flatMode_(false)
 {
     set_orientation(Gtk::ORIENTATION_VERTICAL);
     set_spacing(0);
@@ -627,6 +641,12 @@ MyExpander::MyExpander(bool useEnabled, Gtk::Widget* titleWidget) :
         headerWidget = titleWidget;
     }
 
+    if (useEnabled) {
+        expandArrow = Gtk::manage(new RTImage(closedImage));
+        expandArrow->set_can_focus(false);
+        headerHBox->pack_end(*expandArrow, Gtk::PACK_SHRINK, 0);
+    }
+
     titleEvBox = Gtk::manage(new Gtk::EventBox());
     titleEvBox->set_name("MyExpanderTitle");
     titleEvBox->set_border_width(0);
@@ -635,6 +655,25 @@ MyExpander::MyExpander(bool useEnabled, Gtk::Widget* titleWidget) :
     titleEvBox->set_can_focus(false);
 
     pack_start(*titleEvBox, Gtk::PACK_EXPAND_WIDGET, 0);
+
+    summaryBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
+    summaryBox->set_spacing(0);
+    summaryBox->set_border_width(0);
+    summaryBox->get_style_context()->add_class("MyExpanderSummary");
+    {
+        auto sCSS = Gtk::CssProvider::create();
+        sCSS->load_from_data(
+            "combobox { min-height: 0; margin: 0; }"
+            " combobox button { min-height: 0; min-width: 0; padding: 0 2px; margin: 0; }"
+            " button { min-height: 0; min-width: 0; padding: 1px 4px; margin: 0; }"
+            " entry { min-height: 0; padding: 0; margin: 0; }"
+            " label { font-size: 9px; margin: 0; padding: 0; }"
+        );
+        summaryBox->get_style_context()->add_provider(
+            sCSS, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+    }
+    summaryBox->show();
+    pack_start(*summaryBox, Gtk::PACK_SHRINK, 0);
 
     updateStyle();
 
@@ -651,7 +690,8 @@ MyExpander::MyExpander(bool useEnabled, Glib::ustring titleLabel) :
     closedImage("expander-closed-small"),
     enabled(false), inconsistent(false), flushEvent(false), expBox(nullptr),
     child(nullptr), headerWidget(nullptr),
-    label(nullptr), useEnabled(useEnabled)
+    label(nullptr), useEnabled(useEnabled),
+    summaryBox(nullptr), expandArrow(nullptr), expandable_(true), flatMode_(false)
 {
     set_orientation(Gtk::ORIENTATION_VERTICAL);
     set_spacing(0);
@@ -687,6 +727,12 @@ MyExpander::MyExpander(bool useEnabled, Glib::ustring titleLabel) :
     label->set_markup(escapeHtmlChars(titleLabel));
     headerHBox->pack_start(*label, Gtk::PACK_EXPAND_WIDGET, 0);
 
+    if (useEnabled) {
+        expandArrow = Gtk::manage(new RTImage(closedImage));
+        expandArrow->set_can_focus(false);
+        headerHBox->pack_end(*expandArrow, Gtk::PACK_SHRINK, 0);
+    }
+
     titleEvBox = Gtk::manage(new Gtk::EventBox());
     titleEvBox->set_name("MyExpanderTitle");
     titleEvBox->set_border_width(0);
@@ -695,6 +741,25 @@ MyExpander::MyExpander(bool useEnabled, Glib::ustring titleLabel) :
     titleEvBox->set_can_focus(false);
 
     pack_start(*titleEvBox, Gtk::PACK_EXPAND_WIDGET, 0);
+
+    summaryBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
+    summaryBox->set_spacing(0);
+    summaryBox->set_border_width(0);
+    summaryBox->get_style_context()->add_class("MyExpanderSummary");
+    {
+        auto sCSS = Gtk::CssProvider::create();
+        sCSS->load_from_data(
+            "combobox { min-height: 0; margin: 0; }"
+            " combobox button { min-height: 0; min-width: 0; padding: 0 2px; margin: 0; }"
+            " button { min-height: 0; min-width: 0; padding: 1px 4px; margin: 0; }"
+            " entry { min-height: 0; padding: 0; margin: 0; }"
+            " label { font-size: 9px; margin: 0; padding: 0; }"
+        );
+        summaryBox->get_style_context()->add_provider(
+            sCSS, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+    }
+    summaryBox->show();
+    pack_start(*summaryBox, Gtk::PACK_SHRINK, 0);
 
     updateStyle();
 
@@ -854,6 +919,49 @@ void MyExpander::setEnabledTooltipText(Glib::ustring tooltipText)
     }
 }
 
+void MyExpander::setExpandable(bool canExpand)
+{
+    expandable_ = canExpand;
+    if (!canExpand) {
+        if (expandArrow) {
+            expandArrow->hide();
+        }
+        if (!useEnabled) {
+            statusImage->hide();
+        }
+        if (expBox) {
+            expBox->hideBox();
+        }
+    } else {
+        if (expandArrow) {
+            expandArrow->show();
+        }
+        if (!useEnabled) {
+            statusImage->show();
+        }
+    }
+}
+
+void MyExpander::setFlatMode(bool flat)
+{
+    flatMode_ = flat;
+    if (!flat) return;
+
+    get_style_context()->add_class("flat-mode");
+
+    // Hide the entire header row (tool name label + all icons)
+    titleEvBox->set_no_show_all(true);
+    titleEvBox->hide();
+
+    // Force expanded (content always visible)
+    set_expanded(true);
+
+    // Force enabled
+    if (useEnabled) {
+        setEnabled(true);
+    }
+}
+
 void MyExpander::set_expanded( bool expanded )
 {
     if (!expBox) {
@@ -865,6 +973,14 @@ void MyExpander::set_expanded( bool expanded )
             statusImage->set_from_icon_name(openedImage);
         } else {
             statusImage->set_from_icon_name(closedImage);
+        }
+    }
+
+    if (expandArrow) {
+        if (expanded) {
+            expandArrow->set_from_icon_name(openedImage);
+        } else {
+            expandArrow->set_from_icon_name(closedImage);
         }
     }
 
@@ -890,12 +1006,19 @@ void MyExpander::add  (Gtk::Container& widget, bool setChild)
     pack_start(*expBox, Gtk::PACK_SHRINK, 0);
     widget.show();
     expBox->hideBox();
+    expBox->set_no_show_all(true);  // Prevent parent show_all() from expanding
 }
 
 bool MyExpander::on_toggle(GdkEventButton* event)
 {
+    if (flatMode_) return false;
+
     if (flushEvent) {
         flushEvent = false;
+        return false;
+    }
+
+    if (!expandable_) {
         return false;
     }
 
@@ -910,6 +1033,14 @@ bool MyExpander::on_toggle(GdkEventButton* event)
             statusImage->set_from_icon_name(closedImage);
         } else {
             statusImage->set_from_icon_name(openedImage);
+        }
+    }
+
+    if (expandArrow) {
+        if (isVisible) {
+            expandArrow->set_from_icon_name(closedImage);
+        } else {
+            expandArrow->set_from_icon_name(openedImage);
         }
     }
 
@@ -931,6 +1062,8 @@ MyExpander::type_signal_enabled_toggled MyExpander::signal_enabled_toggled()
 // internal use ; when the user clicks on the toggle button, it calls this method that will emit an enabled_change event
 bool MyExpander::on_enabled_change(GdkEventButton* event)
 {
+    if (flatMode_) return false;
+
     if (event->button == 1) {
         if (enabled) {
             enabled = false;
@@ -1007,12 +1140,20 @@ void MyScrolledWindow::get_preferred_width_vfunc (int &minimum_width, int &natur
 
 void MyScrolledWindow::get_preferred_height_vfunc (int &minimum_height, int &natural_height) const
 {
-    natural_height = minimum_height = RTScalable::scalePixelSize(50);
+    if (get_propagate_natural_height()) {
+        Gtk::ScrolledWindow::get_preferred_height_vfunc(minimum_height, natural_height);
+    } else {
+        natural_height = minimum_height = RTScalable::scalePixelSize(50);
+    }
 }
 
 void MyScrolledWindow::get_preferred_height_for_width_vfunc (int width, int &minimum_height, int &natural_height) const
 {
-    natural_height = minimum_height = RTScalable::scalePixelSize(50);
+    if (get_propagate_natural_height()) {
+        Gtk::ScrolledWindow::get_preferred_height_for_width_vfunc(width, minimum_height, natural_height);
+    } else {
+        natural_height = minimum_height = RTScalable::scalePixelSize(50);
+    }
 }
 
 /*
@@ -1282,6 +1423,137 @@ bool MyHScale::on_key_press_event (GdkEventKey* event)
     } else {
         return Gtk::Widget::on_key_press_event(event);
     }
+}
+
+void MyHScale::setTrackGradient(const std::vector<GradientMilestone>& milestones)
+{
+    trackGradient_ = milestones;
+    queue_draw();
+}
+
+void MyHScale::clearTrackGradient()
+{
+    trackGradient_.clear();
+    queue_draw();
+}
+
+bool MyHScale::on_draw (const Cairo::RefPtr<Cairo::Context>& cr)
+{
+    // Draw the default scale first (provides baseline layout)
+    bool ret = Gtk::Scale::on_draw(cr);
+
+    const Gtk::Allocation alloc = get_allocation();
+    const int w = alloc.get_width();
+    const int h = alloc.get_height();
+    const int troughY = h / 2;
+    // Use slider travel range for knob positioning, full width for visuals
+    int sliderStart = 0, sliderEnd = 0;
+    get_slider_range(sliderStart, sliderEnd);
+    const int padding = 2;  // visual trough extends nearly full width
+    const int troughWidth = w - 2 * padding;
+    const bool isBipolar = get_style_context()->has_class("bipolar");
+
+    const double rangeMin = get_adjustment()->get_lower();
+    const double rangeMax = get_adjustment()->get_upper();
+    const double value = get_value();
+    const double range = rangeMax - rangeMin;
+
+    // --- A. Draw gradient track ---
+    const int troughHeight = std::max(6, static_cast<int>(h * 0.28));
+    const int fillY = troughY - troughHeight / 2;
+    const double radius = troughHeight / 2.0;
+
+    if (!trackGradient_.empty()) {
+        auto gradient = Cairo::LinearGradient::create(padding, 0, padding + troughWidth, 0);
+        for (const auto& ms : trackGradient_) {
+            gradient->add_color_stop_rgba(ms.position, ms.r, ms.g, ms.b, ms.a > 0 ? ms.a : 1.0);
+        }
+        cr->begin_new_sub_path();
+        cr->arc(padding + radius, fillY + radius, radius, rtengine::RT_PI * 0.5, rtengine::RT_PI * 1.5);
+        cr->arc(padding + troughWidth - radius, fillY + radius, radius, rtengine::RT_PI * 1.5, rtengine::RT_PI * 0.5);
+        cr->close_path();
+        cr->set_source(gradient);
+        cr->fill();
+    }
+
+    // --- B. Bipolar center-fill ---
+    if (isBipolar && range > 0) {
+        const int bipolarHeight = std::max(2, static_cast<int>(h * 0.08));
+        const int bipolarY = troughY - bipolarHeight / 2;
+        const double centerFrac = (0.0 - rangeMin) / range;
+        const double valueFrac = (value - rangeMin) / range;
+        const int centerX = padding + static_cast<int>(centerFrac * troughWidth);
+        const int valueX = padding + static_cast<int>(valueFrac * troughWidth);
+        const int fillLeft = std::min(centerX, valueX);
+        const int fillRight = std::max(centerX, valueX);
+
+        if (fillRight > fillLeft) {
+            cr->set_source_rgba(0.176, 0.498, 0.827, 0.85);
+            const double r2 = bipolarHeight / 2.0;
+            cr->begin_new_sub_path();
+            cr->arc(fillLeft + r2, bipolarY + r2, r2, rtengine::RT_PI * 0.5, rtengine::RT_PI * 1.5);
+            cr->arc(fillRight - r2, bipolarY + r2, r2, rtengine::RT_PI * 1.5, rtengine::RT_PI * 0.5);
+            cr->close_path();
+            cr->fill();
+        }
+    }
+
+    // --- C. Draw 11 tick marks above trough ---
+    if (showTickMarks_) {
+        const int tickHeight = 3;
+        const int tickTop = fillY - tickHeight - 1;
+
+        for (int i = 0; i <= 10; ++i) {
+            const double frac = i / 10.0;
+            const int x = padding + static_cast<int>(frac * troughWidth);
+            const bool isCenter = (i == 5);
+
+            cr->set_source_rgba(1.0, 1.0, 1.0, isCenter && isBipolar ? 0.25 : 0.12);
+            cr->set_line_width(1.0);
+            cr->move_to(x + 0.5, tickTop);
+            cr->line_to(x + 0.5, tickTop + tickHeight + (isCenter && isBipolar ? 1 : 0));
+            cr->stroke();
+        }
+    }
+
+    // --- D. Diamond thumb ---
+    if (range > 0) {
+        const double valueFrac = (value - rangeMin) / range;
+        // Use GTK slider range for precise knob position (matches drag behavior)
+        const int knobX = sliderStart + static_cast<int>(valueFrac * (sliderEnd - sliderStart));
+
+        // Diamond dimensions
+        const double dw = 4.0;  // half-width
+        const double dh = 5.0;  // half-height
+
+        // Check hover state
+        bool isHover = get_state_flags() & Gtk::STATE_FLAG_PRELIGHT;
+
+        // Shadow (offset 1px down)
+        cr->move_to(knobX, troughY - dh + 1);
+        cr->line_to(knobX + dw, troughY + 1);
+        cr->line_to(knobX, troughY + dh + 1);
+        cr->line_to(knobX - dw, troughY + 1);
+        cr->close_path();
+        cr->set_source_rgba(0, 0, 0, 0.2);
+        cr->fill();
+
+        // Diamond body
+        cr->move_to(knobX, troughY - dh);
+        cr->line_to(knobX + dw, troughY);
+        cr->line_to(knobX, troughY + dh);
+        cr->line_to(knobX - dw, troughY);
+        cr->close_path();
+        cr->set_source_rgb(isHover ? 0.91 : 0.816, isHover ? 0.91 : 0.816, isHover ? 0.91 : 0.816);
+        cr->fill_preserve();
+
+        // Diamond border
+        cr->set_source_rgba(0.4, 0.4, 0.4, 1.0);
+        cr->set_line_width(1.0);
+        cr->stroke();
+    }
+
+    return ret;
 }
 
 class MyFileChooserWidget::Impl
@@ -2118,4 +2390,176 @@ void OptionalRadioButtonGroup::register_button(Gtk::ToggleButton &button)
         sigc::mem_fun(this, &OptionalRadioButtonGroup::onButtonToggled),
         &button));
     onButtonToggled(&button);
+}
+
+
+// AdvancedSection
+
+AdvancedSection::AdvancedSection() :
+    Gtk::Box(Gtk::ORIENTATION_VERTICAL),
+    expanded(false)
+{
+    set_name("AdvancedSection");
+    get_style_context()->add_class("AdvancedSection");
+
+    // Separator line above header
+    auto* sep = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
+    pack_start(*sep, Gtk::PACK_SHRINK, 0);
+
+    // Clickable header with arrow + label
+    auto* headerBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL));
+    headerBox->set_spacing(4);
+
+    arrowImage = Gtk::manage(new RTImage("expander-closed-small"));
+    arrowImage->set_can_focus(false);
+    headerBox->pack_start(*arrowImage, Gtk::PACK_SHRINK, 0);
+
+    auto* label = Gtk::manage(new Gtk::Label(M("TP_GENERAL_ADVANCED")));
+    setExpandAlignProperties(label, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    headerBox->pack_start(*label, Gtk::PACK_SHRINK, 0);
+
+    auto* headerEvBox = Gtk::manage(new Gtk::EventBox());
+    headerEvBox->set_name("AdvancedSectionHeader");
+    setExpandAlignProperties(headerEvBox, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_FILL);
+    headerEvBox->add(*headerBox);
+    headerEvBox->set_can_focus(false);
+    headerEvBox->signal_button_release_event().connect(
+        sigc::mem_fun(*this, &AdvancedSection::onHeaderClick));
+
+    pack_start(*headerEvBox, Gtk::PACK_SHRINK, 0);
+
+    // Content box
+    contentBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
+    pack_start(*contentBox, Gtk::PACK_SHRINK, 0);
+
+    // Default state based on UI complexity
+    bool defaultExpanded = (App::get().options().uiComplexity >= Options::UI_EXPERT);
+    setExpanded(defaultExpanded);
+
+    show_all_children();
+    if (!expanded) {
+        contentBox->hide();
+    }
+}
+
+bool AdvancedSection::onHeaderClick(GdkEventButton* event)
+{
+    if (event->button != 1) {
+        return false;
+    }
+    setExpanded(!expanded);
+    return false;
+}
+
+void AdvancedSection::setExpanded(bool expand)
+{
+    expanded = expand;
+    updateArrow();
+    if (expanded) {
+        contentBox->show();
+    } else {
+        contentBox->hide();
+    }
+}
+
+bool AdvancedSection::getExpanded() const
+{
+    return expanded;
+}
+
+void AdvancedSection::setBatchMode(bool batchMode)
+{
+    if (batchMode) {
+        setExpanded(true);
+    }
+}
+
+void AdvancedSection::updateArrow()
+{
+    if (expanded) {
+        arrowImage->set_from_icon_name("expander-open-small");
+    } else {
+        arrowImage->set_from_icon_name("expander-closed-small");
+    }
+}
+
+// ToolGroup
+
+ToolGroup::ToolGroup(const Glib::ustring& label) :
+    Gtk::Box(Gtk::ORIENTATION_VERTICAL),
+    expanded(false)
+{
+    set_name("ToolGroup");
+    get_style_context()->add_class("ToolGroup");
+
+    // Clickable header: single label with arrow + text via markup
+    groupLabel_ = Glib::Markup::escape_text(label);
+    arrowLabel = Gtk::manage(new Gtk::Label());
+    arrowLabel->set_use_markup(true);
+    arrowLabel->set_markup("<small>\xe2\x96\xb8</small>  " + groupLabel_);
+    arrowLabel->set_can_focus(false);
+    setExpandAlignProperties(arrowLabel, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+
+    auto* headerEvBox = Gtk::manage(new Gtk::EventBox());
+    headerEvBox->set_name("ToolGroupHeader");
+    setExpandAlignProperties(headerEvBox, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_FILL);
+    headerEvBox->add(*arrowLabel);
+    headerEvBox->set_can_focus(false);
+
+    // Inline CSS for compact tool group headers
+    auto tgCss = Gtk::CssProvider::create();
+    tgCss->load_from_data(
+        "#ToolGroupHeader { padding: 1px 4px; min-height: 0; }"
+        "#ToolGroupHeader label { font-size: 9px; font-weight: bold; min-height: 0; padding: 0; margin: 0; }"
+    );
+    headerEvBox->get_style_context()->add_provider(tgCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+    arrowLabel->get_style_context()->add_provider(tgCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+    headerEvBox->signal_button_release_event().connect(
+        sigc::mem_fun(*this, &ToolGroup::onHeaderClick));
+
+    pack_start(*headerEvBox, Gtk::PACK_SHRINK, 0);
+
+    // Content box for child tool panels
+    contentBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
+    pack_start(*contentBox, Gtk::PACK_SHRINK, 0);
+
+    // Default: collapsed
+    setExpanded(false);
+    show_all_children();
+}
+
+bool ToolGroup::onHeaderClick(GdkEventButton* event)
+{
+    if (event->button != 1) {
+        return false;
+    }
+    setExpanded(!expanded);
+    return false;
+}
+
+void ToolGroup::setExpanded(bool expand)
+{
+    expanded = expand;
+    updateArrow();
+    if (expanded) {
+        contentBox->set_no_show_all(false);
+        contentBox->show_all();
+    } else {
+        contentBox->hide();
+        contentBox->set_no_show_all(true);
+    }
+}
+
+bool ToolGroup::getExpanded() const
+{
+    return expanded;
+}
+
+void ToolGroup::updateArrow()
+{
+    if (expanded) {
+        arrowLabel->set_markup("<small>\xe2\x96\xbe</small>  " + groupLabel_); // ▾
+    } else {
+        arrowLabel->set_markup("<small>\xe2\x96\xb8</small>  " + groupLabel_); // ▸
+    }
 }

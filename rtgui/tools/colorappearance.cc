@@ -171,22 +171,30 @@ ColorAppearance::ColorAppearance () : FoldableToolPanel (this, TOOL_NAME, M ("TP
     complexmethod->append(M("TP_WAVELET_COMPEXPERT"));
     complexmethodconn = complexmethod->signal_changed().connect(sigc::mem_fun(*this, &ColorAppearance::complexmethodChanged));
     complexmethod->set_tooltip_text(M("TP_WAVELET_COMPLEX_TOOLTIP"));
-    Gtk::Box* const complexHBox = Gtk::manage(new Gtk::Box());
+    Gtk::Grid* const complexGrid = Gtk::manage(new Gtk::Grid());
+    complexGrid->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(complexGrid, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
     Gtk::Label* const complexLabel = Gtk::manage(new Gtk::Label(M("TP_WAVELET_COMPLEXLAB") + ":"));
-    complexHBox->pack_start(*complexLabel, Gtk::PACK_SHRINK, 4);
-    complexHBox->pack_start(*complexmethod);
-    genVBox->pack_start (*complexHBox, Gtk::PACK_SHRINK);
+    setExpandAlignProperties(complexLabel, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    setExpandAlignProperties(complexmethod, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    complexGrid->attach(*complexLabel, 0, 0, 1, 1);
+    complexGrid->attach(*complexmethod, 1, 0, 1, 1);
+    genVBox->pack_start(*complexGrid, Gtk::PACK_SHRINK);
 
     modelmethod = Gtk::manage (new MyComboBoxText ());
     modelmethod->append(M("TP_COLORAPP_MOD02"));//Old CIECAM02
     modelmethod->append(M("TP_COLORAPP_MOD16"));//new CIECAM16
     modelmethodconn = modelmethod->signal_changed().connect(sigc::mem_fun(*this, &ColorAppearance::modelmethodChanged));
     modelmethod->set_tooltip_text(M("TP_COLORAPP_MODELCAT_TOOLTIP"));
-    Gtk::Box* const modelHBox = Gtk::manage(new Gtk::Box());
+    Gtk::Grid* const modelGrid = Gtk::manage(new Gtk::Grid());
+    modelGrid->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(modelGrid, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
     Gtk::Label* const modelLabel = Gtk::manage(new Gtk::Label(M("TP_COLORAPP_MODELCAT") + ":"));
-    modelHBox->pack_start(*modelLabel, Gtk::PACK_SHRINK, 4);
-    modelHBox->pack_start(*modelmethod);
-    genVBox->pack_start (*modelHBox, Gtk::PACK_SHRINK);
+    setExpandAlignProperties(modelLabel, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    setExpandAlignProperties(modelmethod, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    modelGrid->attach(*modelLabel, 0, 0, 1, 1);
+    modelGrid->attach(*modelmethod, 1, 0, 1, 1);
+    genVBox->pack_start (*modelGrid, Gtk::PACK_SHRINK);
 
     catmethod = Gtk::manage (new MyComboBoxText ());//The choice of basic method is either 
     catmethod->append(M("TP_COLORAPP_CATCLASSIC"));//Classical (recommended),
@@ -195,11 +203,15 @@ ColorAppearance::ColorAppearance () : FoldableToolPanel (this, TOOL_NAME, M ("TP
 
     catmethodconn = catmethod->signal_changed().connect(sigc::mem_fun(*this, &ColorAppearance::catmethodChanged));
     catmethod->set_tooltip_text(M("TP_COLORAPP_CATMET_TOOLTIP"));
-    Gtk::Box* const catHBox = Gtk::manage(new Gtk::Box());
+    Gtk::Grid* const catGrid = Gtk::manage(new Gtk::Grid());
+    catGrid->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(catGrid, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
     Gtk::Label* const catLabel = Gtk::manage(new Gtk::Label(M("TP_COLORAPP_CATMOD") + ":"));
-    catHBox->pack_start(*catLabel, Gtk::PACK_SHRINK, 4);
-    catHBox->pack_start(*catmethod);
-    genVBox->pack_start (*catHBox, Gtk::PACK_SHRINK);
+    setExpandAlignProperties(catLabel, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    setExpandAlignProperties(catmethod, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    catGrid->attach(*catLabel, 0, 0, 1, 1);
+    catGrid->attach(*catmethod, 1, 0, 1, 1);
+    genVBox->pack_start (*catGrid, Gtk::PACK_SHRINK);
 
 
     genFrame->add (*genVBox);
@@ -226,41 +238,47 @@ ColorAppearance::ColorAppearance () : FoldableToolPanel (this, TOOL_NAME, M ("TP
     degree->addAutoButton (M ("TP_COLORAPP_CAT02ADAPTATION_TOOLTIP"));
     p1VBox->pack_start (*degree);
 
-    Gtk::Box* surrHBox1 = Gtk::manage (new Gtk::Box ());
-    surrHBox1->set_spacing (2);
-    surrHBox1->set_tooltip_markup (M ("TP_COLORAPP_SURSOURCE_TOOLTIP"));
-    Gtk::Label* surrLabel1 = Gtk::manage (new Gtk::Label (M ("TP_COLORAPP_SURROUNDSRC") + ":"));//surround scene
-    surrHBox1->pack_start (*surrLabel1, Gtk::PACK_SHRINK);
+    Gtk::Grid* surrGrid1 = Gtk::manage (new Gtk::Grid ());
+    surrGrid1->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(surrGrid1, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    surrGrid1->set_tooltip_markup (M ("TP_COLORAPP_SURSOURCE_TOOLTIP"));
+    Gtk::Label* surrLabel1 = Gtk::manage (new Gtk::Label (M ("TP_COLORAPP_SURROUNDSRC") + ":"));
+    setExpandAlignProperties(surrLabel1, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     surrsrc = Gtk::manage (new MyComboBoxText ());
-    surrsrc->append (M ("TP_COLORAPP_SURROUND_AVER"));//standard creates a slight lighting effect
+    setExpandAlignProperties(surrsrc, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    surrsrc->append (M ("TP_COLORAPP_SURROUND_AVER"));
     surrsrc->append (M ("TP_COLORAPP_SURROUND_DIM"));
     surrsrc->append (M ("TP_COLORAPP_SURROUND_DARK"));
     surrsrc->append (M ("TP_COLORAPP_SURROUND_EXDARK"));
     surrsrc->set_active (0);
-    surrHBox1->pack_start (*surrsrc);
-    p1VBox->pack_start (*surrHBox1);
+    surrGrid1->attach (*surrLabel1, 0, 0, 1, 1);
+    surrGrid1->attach (*surrsrc, 1, 0, 1, 1);
+    p1VBox->pack_start (*surrGrid1);
 
-    wbmHBox = Gtk::manage (new Gtk::Box ());
-
-    wbmHBox->set_spacing (2);
+    wbmHBox = Gtk::manage (new Gtk::Grid ());
+    wbmHBox->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(wbmHBox, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
     wbmHBox->set_tooltip_markup (M ("TP_COLORAPP_MODEL_TOOLTIP"));
-    Gtk::Label* wbmLab = Gtk::manage (new Gtk::Label (M ("TP_COLORAPP_MODEL") + ":"));//white point model - The default balance point is D50, but D65 can be selected. In this case, the viewing temperature will be set to 6504K.
-    wbmHBox->pack_start (*wbmLab, Gtk::PACK_SHRINK);
+    Gtk::Label* wbmLab = Gtk::manage (new Gtk::Label (M ("TP_COLORAPP_MODEL") + ":"));
+    setExpandAlignProperties(wbmLab, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     wbmodel = Gtk::manage (new MyComboBoxText ());
+    setExpandAlignProperties(wbmodel, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
     wbmodel->append (M ("TP_COLORAPP_WBRT"));
     wbmodel->append (M ("TP_COLORAPP_WBCAM"));
     wbmodel->append (M ("TP_COLORAPP_FREE"));
 
     wbmodel->set_active (0);
-    wbmHBox->pack_start (*wbmodel);
+    wbmHBox->attach (*wbmLab, 0, 0, 1, 1);
+    wbmHBox->attach (*wbmodel, 1, 0, 1, 1);
     p1VBox->pack_start (*wbmHBox);
 
 
-    illumHBox = Gtk::manage (new Gtk::Box ());
-    illumHBox->set_spacing (2);
+    illumHBox = Gtk::manage (new Gtk::Grid ());
+    illumHBox->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(illumHBox, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
     illumHBox->set_tooltip_markup (M ("TP_COLORAPP_ILLUM_TOOLTIP"));
     Gtk::Label* illumLab = Gtk::manage (new Gtk::Label (M ("TP_COLORAPP_ILLUM") + ":"));//Choice of illuminant in non-standard cases
-    illumHBox->pack_start (*illumLab, Gtk::PACK_SHRINK);
+    setExpandAlignProperties(illumLab, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     illum = Gtk::manage (new MyComboBoxText ());
     illum->append (M ("TP_COLORAPP_ILA"));
     illum->append (M ("TP_COLORAPP_IL41"));
@@ -272,7 +290,9 @@ ColorAppearance::ColorAppearance () : FoldableToolPanel (this, TOOL_NAME, M ("TP
     illum->append (M ("TP_COLORAPP_ILFREE"));
 
     illum->set_active (0);
-    illumHBox->pack_start (*illum);
+    setExpandAlignProperties(illum, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    illumHBox->attach (*illumLab, 0, 0, 1, 1);
+    illumHBox->attach (*illum, 1, 0, 1, 1);
     p1VBox->pack_start (*illumHBox);
 
     Gtk::Image* itempL =  Gtk::manage (new RTImage ("circle-blue-small"));
@@ -323,18 +343,21 @@ ColorAppearance::ColorAppearance () : FoldableToolPanel (this, TOOL_NAME, M ("TP
     p2VBox = Gtk::manage ( new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     p2VBox->set_spacing (2);
 
-    alHBox = Gtk::manage (new Gtk::Box ());
-    alHBox->set_spacing (2);
+    alHBox = Gtk::manage (new Gtk::Grid ());
+    alHBox->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(alHBox, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
     alHBox->set_tooltip_markup (M ("TP_COLORAPP_ALGO_TOOLTIP"));
     Gtk::Label* alLabel = Gtk::manage (new Gtk::Label (M ("TP_COLORAPP_ALGO") + ":"));
-    alHBox->pack_start (*alLabel, Gtk::PACK_SHRINK);
+    setExpandAlignProperties(alLabel, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     algo = Gtk::manage (new MyComboBoxText ());//I chose 4 possible combinations of the 6 variables... we can imagine others, but that will complicate the code
     algo->append (M ("TP_COLORAPP_ALGO_JC"));
     algo->append (M ("TP_COLORAPP_ALGO_JS"));
     algo->append (M ("TP_COLORAPP_ALGO_QM"));
     algo->append (M ("TP_COLORAPP_ALGO_ALL"));
     algo->set_active (0);
-    alHBox->pack_start (*algo);
+    setExpandAlignProperties(algo, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    alHBox->attach (*alLabel, 0, 0, 1, 1);
+    alHBox->attach (*algo, 1, 0, 1, 1);
     p2VBox->pack_start (*alHBox);
 
     p2VBox->pack_start (*Gtk::manage (new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)), Gtk::PACK_EXPAND_WIDGET, 4);
@@ -603,19 +626,22 @@ ColorAppearance::ColorAppearance () : FoldableToolPanel (this, TOOL_NAME, M ("TP
     p3VBox->pack_start(*tempgreenFrame);
     p3VBox->pack_start (*ybout);
 
-    Gtk::Box* surrHBox = Gtk::manage (new Gtk::Box ());//Surround viewing
-    surrHBox->set_spacing (2);
-    surrHBox->set_tooltip_markup (M ("TP_COLORAPP_SURROUND_TOOLTIP"));
+    Gtk::Grid* surrGrid = Gtk::manage (new Gtk::Grid ());
+    surrGrid->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(surrGrid, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    surrGrid->set_tooltip_markup (M ("TP_COLORAPP_SURROUND_TOOLTIP"));
     Gtk::Label* surrLabel = Gtk::manage (new Gtk::Label (M ("TP_COLORAPP_SURROUND") + ":"));
-    surrHBox->pack_start (*surrLabel, Gtk::PACK_SHRINK);
+    setExpandAlignProperties(surrLabel, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     surround = Gtk::manage (new MyComboBoxText ());
-    surround->append (M ("TP_COLORAPP_SURROUND_AVER"));//standard
+    setExpandAlignProperties(surround, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    surround->append (M ("TP_COLORAPP_SURROUND_AVER"));
     surround->append (M ("TP_COLORAPP_SURROUND_DIM"));
     surround->append (M ("TP_COLORAPP_SURROUND_DARK"));
     surround->append (M ("TP_COLORAPP_SURROUND_EXDARK"));
     surround->set_active (1);
-    surrHBox->pack_start (*surround);
-    p3VBox->pack_start (*surrHBox);
+    surrGrid->attach (*surrLabel, 0, 0, 1, 1);
+    surrGrid->attach (*surround, 1, 0, 1, 1);
+    p3VBox->pack_start (*surrGrid);
 
     p3Frame->add (*p3VBox);
     pack_start (*p3Frame, Gtk::PACK_EXPAND_WIDGET, 4);

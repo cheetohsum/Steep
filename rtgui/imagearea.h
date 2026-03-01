@@ -49,6 +49,7 @@ protected:
     Glib::RefPtr<Pango::Layout> deglayout;
     BackBuffer iBackBuffer;
     int backBufferDeviceScale;
+    int infoMouseX_, infoMouseY_; // last mouse pos for info overlay
     bool showClippedH, showClippedS;
 
     ImageAreaPanel* parent;
@@ -138,6 +139,7 @@ public:
     void setToolHand        ();
     void straightenReady    (double rotDeg);
     void spotWBSelected     (int x, int y);
+    void pointColorSelected (int x, int y);
     void sharpMaskSelected  (bool sharpMask);
     int  getSpotWBRectSize  ();
     void redraw             ();

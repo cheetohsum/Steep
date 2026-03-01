@@ -41,32 +41,49 @@ Vibrance::Vibrance () : FoldableToolPanel(this, TOOL_NAME, M("TP_VIBRANCE_LABEL"
     Color::hsv2rgb01(0.14056f, 0.45f, 0.6f, R, G, B);
     milestones.push_back( GradientMilestone(1.0, double(R), double(G), double(B)) );
 
-    saturated = Gtk::manage(new Adjuster (M("TP_VIBRANCE_SATURATED"), -100., 100., 1., 0.));
-    saturated->setAdjusterListener (this);
-    saturated->set_sensitive(false);
-    pack_start( *saturated, Gtk::PACK_SHRINK, 0);
-
+    // Vibrance (pastels) first, Saturation (saturated) second — LR order
     pastels = Gtk::manage(new Adjuster (M("TP_VIBRANCE_PASTELS"), -100., 100., 1., 0.));
     pastels->setAdjusterListener (this);
-    pack_start( *pastels, Gtk::PACK_SHRINK, 0);
+    // Saturation gradient: gray → vibrant orange
+    pastels->setSliderGradient({
+        GradientMilestone(0.0, 0.3, 0.3, 0.3),
+        GradientMilestone(1.0, 0.9, 0.55, 0.15)
+    });
+    getSummaryBox()->pack_start( *pastels, Gtk::PACK_SHRINK, 0);
+
+    saturated = Gtk::manage(new Adjuster (M("TP_VIBRANCE_SATURATED"), -100., 100., 1., 0.));
+    saturated->setAdjusterListener (this);
+    // Saturation gradient: gray → vibrant orange
+    saturated->setSliderGradient({
+        GradientMilestone(0.0, 0.3, 0.3, 0.3),
+        GradientMilestone(1.0, 0.9, 0.55, 0.15)
+    });
+    getSummaryBox()->pack_start( *saturated, Gtk::PACK_SHRINK, 0);
+    getSummaryBox()->show_all();
+
+    // Advanced section
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
+
+    // Link toggle in advanced (default off = sliders independent)
+    pastSatTog = Gtk::manage (new Gtk::CheckButton (M("TP_VIBRANCE_PASTSATTOG")));
+    pastSatTog->set_active (false);
+    advBox->pack_start(*pastSatTog, Gtk::PACK_SHRINK, 0);
 
     psThreshold = Gtk::manage (new ThresholdAdjuster (M("TP_VIBRANCE_PSTHRESHOLD"), -100., 100., 0., M("TP_VIBRANCE_PSTHRESHOLD_WEIGTHING"), 0, 0., 100., 75., M("TP_VIBRANCE_PSTHRESHOLD_SATTHRESH"), 0, this, false));
     psThreshold->setAdjusterListener (this);
     psThreshold->set_tooltip_markup(M("TP_VIBRANCE_PSTHRESHOLD_TOOLTIP"));
     psThreshold->set_sensitive(false);
-    pack_start( *psThreshold, Gtk::PACK_SHRINK, 0);
+    advBox->pack_start( *psThreshold, Gtk::PACK_SHRINK, 0);
 
     protectSkins = Gtk::manage (new Gtk::CheckButton (M("TP_VIBRANCE_PROTECTSKINS")));
     protectSkins->set_active (true);
-    pack_start(*protectSkins, Gtk::PACK_SHRINK, 0);
+    advBox->pack_start(*protectSkins, Gtk::PACK_SHRINK, 0);
 
     avoidColorShift = Gtk::manage (new Gtk::CheckButton (M("TP_VIBRANCE_AVOIDCOLORSHIFT")));
     avoidColorShift->set_active (true);
-    pack_start(*avoidColorShift, Gtk::PACK_SHRINK, 0);
-
-    pastSatTog = Gtk::manage (new Gtk::CheckButton (M("TP_VIBRANCE_PASTSATTOG")));
-    pastSatTog->set_active (true);
-    pack_start(*pastSatTog, Gtk::PACK_SHRINK, 0);
+    advBox->pack_start(*avoidColorShift, Gtk::PACK_SHRINK, 0);
 
     auto& options = App::get().mut_options();
     curveEditorGG = new CurveEditorGroup (options.lastVibranceCurvesDir, M("TP_VIBRANCE_CURVEEDITOR_SKINTONES_LABEL"));
@@ -83,7 +100,7 @@ Vibrance::Vibrance () : FoldableToolPanel(this, TOOL_NAME, M("TP_VIBRANCE_LABEL"
     skinTonesCurve->setRangeDefaultMilestones(0.1, 0.4, 0.85);
     curveEditorGG->curveListComplete();
 
-    pack_start (*curveEditorGG, Gtk::PACK_SHRINK, 4);
+    advBox->pack_start (*curveEditorGG, Gtk::PACK_SHRINK, 4);
 
     pskinsconn = protectSkins->signal_toggled().connect( sigc::mem_fun(*this, &Vibrance::protectskins_toggled) );
     ashiftconn = avoidColorShift->signal_toggled().connect( sigc::mem_fun(*this, &Vibrance::avoidcolorshift_toggled) );
@@ -283,6 +300,7 @@ void Vibrance::pastsattog_toggled ()
 
 void Vibrance::adjusterChanged(Adjuster* a, double newval)
 {
+    autoEnable();
     if (a == pastels && pastSatTog->get_active()) {
         saturated->setValue (newval);
     }
@@ -308,6 +326,7 @@ void Vibrance::adjusterChanged(ThresholdAdjuster* a, double newBottomLeft, doubl
 
 void Vibrance::adjusterChanged(ThresholdAdjuster* a, int newBottom, int newTop)
 {
+    autoEnable();
     if (listener && getEnabled()) {
         listener->panelChanged (EvVibrancePastSatThreshold, psThreshold->getHistoryString());
     }
@@ -331,6 +350,7 @@ void Vibrance::setBatchMode(bool batchMode)
     psThreshold->showEditedCB ();
 
     curveEditorGG->setBatchMode (batchMode);
+    advancedSection->setBatchMode(batchMode);
 }
 
 void Vibrance::setDefaults(const ProcParams* defParams, const ParamsEdited* pedited)

@@ -47,6 +47,7 @@ protected:
     Gtk::CheckButton* avoidColorShift;
     Gtk::CheckButton* pastSatTog;
     DiagonalCurveEditor* skinTonesCurve;
+    AdvancedSection* advancedSection;
 
     bool lastProtectSkins;
     bool lastAvoidColorShift;

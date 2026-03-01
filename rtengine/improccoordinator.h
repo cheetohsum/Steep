@@ -18,6 +18,7 @@
  */
 #pragma once
 
+#include <atomic>
 #include <memory>
 
 #include "array2D.h"
@@ -252,7 +253,7 @@ protected:
     int  changeSinceLast;
     bool updaterRunning;
     const std::unique_ptr<ProcParams> nextParams;
-    bool destroying;
+    std::atomic<bool> destroying;
     bool utili;
     bool autili;
     bool butili;
@@ -380,6 +381,7 @@ protected:
     
     bool lastspotdup;
     bool previewDeltaE;
+    bool showMaskOverlay;
     int locallColorMask;
     int locallColorMaskinv;
     int locallExpMask;
@@ -411,6 +413,7 @@ public:
     void        endUpdateParams (ProcEvent change) override;  // must be called after beginUpdateParams, triggers update
     void        endUpdateParams (int changeFlags) override;
     void        stopProcessing () override;
+    void        signalStop () override;
 
     std::string *retistrsav;
 
@@ -450,6 +453,7 @@ public:
     bool getAutoWB   (double& temp, double& green, double equal, StandardObserver observer, double tempBias) override;
     void getCamWB    (double& temp, double& green, StandardObserver observer) override;
     void getSpotWB   (int x, int y, int rectSize, double& temp, double& green) override;
+    void getSpotHSV  (int x, int y, int rectSize, float& h, float& s, float& v) override;
     bool getFilmNegativeSpot(int x, int y, int spotSize, FilmNegativeParams::RGB &refInput, FilmNegativeParams::RGB &refOutput) override;
     void getAutoCrop (double ratio, int &x, int &y, int &w, int &h) override;
     bool getHighQualComputed() override;
@@ -468,9 +472,10 @@ public:
         updaterThreadStart.unlock();
     }
 
-    void setLocallabMaskVisibility(bool previewDeltaE, int locallColorMask, int locallColorMaskinv, int locallExpMask, int locallExpMaskinv, int locallSHMask, int locallSHMaskinv, int locallvibMask, int locallsoftMask, int locallblMask, int localltmMask, int locallretiMask, int locallsharMask, int localllcMask, int locallcbMask, int localllogMask, int locall_Mask, int locallcieMask) override
+    void setLocallabMaskVisibility(bool previewDeltaE, bool showMaskOverlay, int locallColorMask, int locallColorMaskinv, int locallExpMask, int locallExpMaskinv, int locallSHMask, int locallSHMaskinv, int locallvibMask, int locallsoftMask, int locallblMask, int localltmMask, int locallretiMask, int locallsharMask, int localllcMask, int locallcbMask, int localllogMask, int locall_Mask, int locallcieMask) override
     {
         this->previewDeltaE = previewDeltaE;
+        this->showMaskOverlay = showMaskOverlay;
         this->locallColorMask = locallColorMask;
         this->locallColorMaskinv = locallColorMaskinv;
         this->locallExpMask = locallExpMask;
@@ -614,6 +619,7 @@ public:
     }
 
     void saveInputICCReference (const Glib::ustring& fname, bool apply_wb) override;
+    bool exportDemosaicedTIFF (const Glib::ustring& outputPath) override;
 
     InitialImage*  getInitialImage () override
     {

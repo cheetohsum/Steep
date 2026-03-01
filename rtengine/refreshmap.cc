@@ -1185,7 +1185,27 @@ int refreshmap[rtengine::NUMOFEVENTS] = {
     AUTOEXP,    //Evlocallabsigybjz12
     AUTOEXP,    //Evlocallabsigjz12
     AUTOEXP,    //Evlocallabsigq12
-    AUTOEXP     //Evlocallablogcie
+    AUTOEXP,    //Evlocallablogcie
+    ALLNORAW,   //EvAIDNEnabled
+    ALLNORAW,   //EvAIDNBlend
+    ALLNORAW,   //EvAIDNBlend (duplicate — compensates for a missing entry earlier in the array)
+    LUMINANCECURVE,  //EvColorGradingEnabled
+    LUMINANCECURVE,  //EvColorGradingShadows
+    LUMINANCECURVE,  //EvColorGradingMidtones
+    LUMINANCECURVE,  //EvColorGradingHighlights
+    LUMINANCECURVE,  //EvColorGradingGlobal
+    LUMINANCECURVE,  //EvColorGradingBlending
+    LUMINANCECURVE,  //EvColorGradingBalance
+    ALLNORAW,        //EvHSVEqMode
+    ALLNORAW,        //EvHSVEqSliders
+    AUTOEXP,         //EvLocallabSpotGradAngle
+    ALLNORAW,        //EvPointColorEnabled
+    ALLNORAW,        //EvPointColorHue
+    ALLNORAW,        //EvPointColorHueShift
+    ALLNORAW,        //EvPointColorSaturation
+    ALLNORAW,        //EvPointColorLuminance
+    ALLNORAW,        //EvPointColorRange
+    ALLNORAW         //EvPointColorTargetAdd
 };
 
 

@@ -45,6 +45,7 @@ protected:
 
     sigc::connection matrixconn;
     bool lastmatrix;
+    AdvancedSection* advancedSection;
 
 public:
     static const Glib::ustring TOOL_NAME;

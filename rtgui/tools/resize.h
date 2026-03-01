@@ -81,6 +81,7 @@ private:
     MySpinButton*      le;
     MySpinButton*      se;
     Gtk::CheckButton *allowUpscaling;
+    AdvancedSection*   advancedSection;
     int                maxw, maxh;
     int                cropw, croph;
     sigc::connection   sconn, aconn, wconn, hconn, leconn, seconn;

@@ -49,6 +49,11 @@
 #include <omp.h>
 #endif
 
+#ifdef RT_AI_MASKING
+#include "aisegmentation.h"
+#include "aimaskcache.h"
+#endif
+
 namespace
 {
 
@@ -231,6 +236,7 @@ ImProcCoordinator::ImProcCoordinator() :
     czjzlocalcurve(65536, LUT_CLIP_OFF),
     lastspotdup(false),
     previewDeltaE(false),
+    showMaskOverlay(false),
     locallColorMask(0),
     locallColorMaskinv(0),
     locallExpMask(0),
@@ -388,6 +394,11 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             frameCountListener->FrameCountChanged(imgsrc->getFrameCount(), params->raw.bayersensor.imageNum);
         }
 
+        // Abort early if this processor is being shut down (e.g. user switched photos)
+        if (destroying) {
+            return;
+        }
+
         // raw auto CA is bypassed if no high detail is needed, so we have to compute it when high detail is needed
         float reddeha = 0.f;//initialize black red, blue, green for dehaze
         float greendeha = 0.f;
@@ -479,6 +490,10 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             // if a demosaic happened we should also call getimage later, so we need to set the M_INIT flag
             todo |= (M_INIT | M_CSHARP);
 
+        }
+
+        if (destroying) {
+            return;
         }
 
         if ((todo & (M_RAW | M_CSHARP)) && params->pdsharpening.enabled) {
@@ -860,6 +875,10 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
   
         oprevi = orig_prev;
 
+        if (destroying) {
+            return;
+        }
+
         if ((todo & M_SPOT) && !spotsDone) {
             if (params->spot.enabled && !params->spot.entries.empty()) {
                 allocCache(spotprev);
@@ -1176,6 +1195,10 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
         }
 
 
+        if (destroying) {
+            return;
+        }
+
         if ((todo & (M_AUTOEXP | M_RGBCURVE | M_CROP)) && params->locallab.enabled && !params->locallab.spots.empty()) {
 
             ipf.rgb2lab(*oprevi, *oprevl, params->icm.workingProfile);
@@ -1254,6 +1277,28 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             
             bool *autocontrast = nullptr;
             autocontrast = new bool[sizespot];
+
+#ifdef RT_AI_MASKING
+            // Compute AI segmentation masks once for all spots (if any spot uses AI masking)
+            fprintf(stderr, "AI Masking: Engine initialized = %d\n", getAISegmentationEngine().isInitialized() ? 1 : 0);
+            if (getAISegmentationEngine().isInitialized()) {
+                bool needAIMask = false;
+                for (int s = 0; s < sizespot && !needAIMask; ++s) {
+                    needAIMask = params->locallab.spots.at(s).useAIMask;
+                    fprintf(stderr, "AI Masking: Spot %d useAIMask = %d\n", s, params->locallab.spots.at(s).useAIMask ? 1 : 0);
+                }
+                if (needAIMask) {
+                    const std::string imageId = imgsrc->getFileName().raw();
+                    fprintf(stderr, "AI Masking: Computing masks for %s (%dx%d)\n", imageId.c_str(), pW, pH);
+                    AIMaskCache::getInstance().computeMasks(
+                        imageId, oprevi->r.ptrs, oprevi->g.ptrs, oprevi->b.ptrs,
+                        pW, pH, fw, fh, true);
+                    fprintf(stderr, "AI Masking: Masks computed, hasCachedMasks = %d\n", AIMaskCache::getInstance().hasCachedMasks() ? 1 : 0);
+                } else {
+                    fprintf(stderr, "AI Masking: No spots need AI mask\n");
+                }
+            }
+#endif
 
             for (int sp = 0; sp < (int)params->locallab.spots.size(); sp++) {
 
@@ -1545,7 +1590,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                               locedgwavCurve, locedgwavutili,
                               loclmasCurve_wav, lmasutili_wav,
                               LHutili, HHutili, CHutili, HHutilijz, CHutilijz, LHutilijz, cclocalcurve, localcutili, rgblocalcurve, localrgbutili, localexutili, exlocalcurve, hltonecurveloc, shtonecurveloc, tonecurveloc, lightCurveloc,
-                              huerblu, chromarblu, lumarblu, huer, chromar, lumar, sobeler, lastsav, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                              huerblu, chromarblu, lumarblu, huer, chromar, lumar, sobeler, lastsav, false, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                               minCD, maxCD, mini, maxi, Tmean, Tsigma, Tmin, Tmax,
                               meantm, stdtm, meanreti, stdreti, fab, maxicam, rdx, rdy, grx, gry, blx, bly, meanx, meany, meanxe, meanye, maxdat, prim, ill, contsig, lightsig, slopeg, linkrgb,
                               resi, sharc, denocont, ghsbpwp, ghsbpwpvalue, savmadl, ghsbwslider, ghssym, ghsautsp, ghscolor, ghsmid, ghsmaxrgb, ghs3sig, michbwslider);
@@ -1808,6 +1853,11 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             //*************************************************************
 
         }
+
+        if (destroying) {
+            return;
+        }
+
         if ((todo & M_RGBCURVE) || (todo & M_CROP)) {
             //complexCurve also calculated pre-curves histogram depending on crop
             CurveFactory::complexCurve(params->toneCurve.expcomp, params->toneCurve.black / 65535.0,
@@ -1976,6 +2026,8 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             if (params->colorToning.enabled && params->colorToning.method == "LabGrid") {
                 ipf.colorToningLabGrid(nprevl, 0, nprevl->W, 0, nprevl->H, false);
             }
+
+            ipf.colorGrading(nprevl, 0, nprevl->W, 0, nprevl->H, false);
 
             ipf.shadowsHighlights(nprevl, params->sh.enabled, params->sh.lab, params->sh.highlights, params->sh.shadows, params->sh.radius, scale, params->sh.htonalwidth, params->sh.stonalwidth);
 
@@ -3258,6 +3310,50 @@ void ImProcCoordinator::getSpotWB(int x, int y, int rect, double& temp, double& 
 
 
 
+void ImProcCoordinator::getSpotHSV(int x, int y, int rectSize, float& hOut, float& sOut, float& vOut)
+{
+    MyMutex::MyLock lock(mProcessing);
+
+    // Scale image coords to preview coords
+    int px = x / scale;
+    int py = y / scale;
+
+    if (!orig_prev || px < 0 || py < 0 || px >= pW || py >= pH) {
+        hOut = sOut = vOut = 0.f;
+        return;
+    }
+
+    // Average a small rect
+    int x1 = std::max(0, px - rectSize);
+    int y1 = std::max(0, py - rectSize);
+    int x2 = std::min(pW - 1, px + rectSize);
+    int y2 = std::min(pH - 1, py + rectSize);
+
+    float rSum = 0.f, gSum = 0.f, bSum = 0.f;
+    int count = 0;
+    for (int i = y1; i <= y2; ++i) {
+        for (int j = x1; j <= x2; ++j) {
+            rSum += orig_prev->r(i, j);
+            gSum += orig_prev->g(i, j);
+            bSum += orig_prev->b(i, j);
+            ++count;
+        }
+    }
+
+    if (count > 0) {
+        // orig_prev values are 0..65535 range; normalize to 0..1 for hsv conversion
+        float r = rSum / (count * 65535.f);
+        float g = gSum / (count * 65535.f);
+        float b = bSum / (count * 65535.f);
+        r = std::max(0.f, std::min(1.f, r));
+        g = std::max(0.f, std::min(1.f, g));
+        b = std::max(0.f, std::min(1.f, b));
+        Color::rgb2hsv01(r, g, b, hOut, sOut, vOut);
+    } else {
+        hOut = sOut = vOut = 0.f;
+    }
+}
+
 void ImProcCoordinator::getAutoCrop(double ratio, int &x, int &y, int &w, int &h)
 {
 
@@ -3447,17 +3543,55 @@ void ImProcCoordinator::saveInputICCReference(const Glib::ustring& fname, bool a
     //im->saveJPEG (fname, 85);
 }
 
+bool ImProcCoordinator::exportDemosaicedTIFF(const Glib::ustring& outputPath)
+{
+    MyMutex::MyLock lock(mProcessing);
+
+    int fW, fH;
+    int tr = getCoarseBitMask(params->coarse);
+    imgsrc->getFullSize(fW, fH, tr);
+
+    // Temporarily disable OOG clamping so highlight values > 65535
+    // survive into the TIFF for the AI denoiser's highlight scale.
+    bool savedClampOOG = params->toneCurve.clampOOG;
+    params->toneCurve.clampOOG = false;
+
+    Imagefloat* im = new Imagefloat(fW, fH);
+    PreviewProps pp(0, 0, fW, fH, 1);
+    imgsrc->getImage(currWB, tr, im, pp, params->toneCurve, params->raw);
+
+    params->toneCurve.clampOOG = savedClampOOG;
+
+    int err = im->saveTIFF(outputPath, 32, true/*isFloat*/, true/*uncompressed*/);
+    delete im;
+
+    if (err != 0) {
+        fprintf(stderr, "AI Denoise: Failed to export demosaiced TIFF (err=%d)\n", err);
+        return false;
+    }
+
+    fprintf(stderr, "AI Denoise: Exported demosaiced TIFF %dx%d to %s\n", fW, fH, outputPath.c_str());
+    return true;
+}
+
 void ImProcCoordinator::stopProcessing()
 {
 
     updaterThreadStart.lock();
 
     if (updaterRunning && thread) {
+        destroying = true;
         changeSinceLast = 0;
         thread->join();
     }
 
     updaterThreadStart.unlock();
+}
+
+void ImProcCoordinator::signalStop()
+{
+    destroying = true;
+    changeSinceLast = 0;
 }
 
 void ImProcCoordinator::startProcessing()
@@ -3473,6 +3607,8 @@ void ImProcCoordinator::startProcessing()
 
             thread = Glib::Thread::create(sigc::mem_fun(*this, &ImProcCoordinator::process), 0, true, true, Glib::THREAD_PRIORITY_NORMAL);
 
+        } else {
+            // already running, skip
         }
     }
 }
@@ -3525,6 +3661,7 @@ void ImProcCoordinator::process()
             || params->blackwhite != nextParams->blackwhite
             || params->icm != nextParams->icm
             || params->hsvequalizer != nextParams->hsvequalizer
+            || params->pointcolor != nextParams->pointcolor
             || params->filmSimulation != nextParams->filmSimulation
             || params->softlight != nextParams->softlight
             || params->raw != nextParams->raw

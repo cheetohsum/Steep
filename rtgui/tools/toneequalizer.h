@@ -52,6 +52,7 @@ private:
     Adjuster *regularization;
     Adjuster *pivot;
     CheckBox *show_colormap;
+    AdvancedSection *advancedSection;
 
     rtengine::ProcEvent EvEnabled;
     rtengine::ProcEvent EvBands;

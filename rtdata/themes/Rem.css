@@ -1,0 +1,2032 @@
+/*
+  Rem — Dark Fantasy Theme for RawTherapee
+
+  A deep navy/indigo palette inspired by a cat-imp wizard character
+  with glowing cyan eyes, teal-green candle flame, and copper accents.
+
+  Color palette:
+    Body:        #1a1e2e (dark navy-charcoal)
+    Robes:       #2d3468, #3a4590 (deep indigo)
+    Accents:     #5f70c0, #7080d8 (cornflower blue)
+    Eyes (glow): #90ddf0, #b0ecff (cyan)
+    Candle:      #65e8a8 (teal-green)
+    Candlestick: #b87848 (copper/bronze)
+    Star emblem: #c0b8d8 (lavender-white)
+
+  Copyright (c) 2026 RawTherapee
+  Licensed under the GNU General Public License v3 or later.
+*/
+
+/***************************/
+/**/ @import url("./common/size.css"); /**/ /* TODO: Remove this weird dependency */
+/***************************/
+
+/** Set style defaults **/
+* {
+    color: #c0bdd0;
+    text-shadow: none; /* Keep at none, or suffer serious performance issues */
+}
+
+*:disabled {
+    color: rgba(192,189,208,0.25);
+    opacity: 0.8;
+}
+
+.view:selected:not(check):not(radio) {
+    color: #111528;
+    background-color: #5f70c0;
+}
+
+/* The Places and Dir browser panels */
+textview.view, treeview.view {
+    padding: 0;
+    margin: 0;
+}
+.view, .textview, textview, textview.view, treeview > entry {
+    background-color: #111528;
+}
+/* The headers of these panels */
+.view .button {
+    background-color: #161a35;
+}
+
+window > box {
+    padding: 0.416666666666666666em;
+}
+window.background {
+    background-color: #1e2240;
+}
+
+/*** Window decoration *********************************************************/
+.csd:not(.popup):not(tooltip) > decoration {
+    background-color: #1e2240;
+    background-image: none;
+    box-shadow: 0 0.25em 0.75em 0.083333333333333333em rgba(0, 0, 0, 0.5), 0 0 0 0.083333333333333333em #0e1228;
+}
+headerbar {
+    background-color: shade(rgb(20,24,48),1.12);
+    box-shadow: inset 0 0.083333333333333333em rgba(95,112,192,.13);
+    background-image: linear-gradient(shade(rgb(20,24,48),1.14), shade(rgb(20,24,48),.86));
+    border-bottom-color: #0e1228;
+    padding: 0 0.333333em;
+    min-height: 2em;
+}
+#RTHeaderBar {
+    padding: 0 0.25em;
+}
+#RTHeaderBar .title {
+    font-weight: bold;
+    font-size: 0.9em;
+    color: #c0bdd0;
+}
+#RTHeaderBar .subtitle {
+    font-size: 0.75em;
+    color: #6070a0;
+}
+
+/* Header bar navigation buttons */
+#NavButton {
+    padding: 0.25em 0.5em;
+    margin: 0.083333em;
+    border-radius: 0.25em;
+    background-color: transparent;
+    border: none;
+}
+#NavButton:hover {
+    background-color: rgba(255,255,255,0.08);
+}
+#NavButton:checked {
+    background-color: rgba(255,255,255,0.15);
+    box-shadow: inset 0 -0.166666em 0 0 #90ddf0;
+}
+
+/* Options menu button */
+#OptionsMenuButton {
+    padding: 0.25em 0.333333em;
+    margin: 0.083333em;
+    border-radius: 0.25em;
+}
+#OptionsMenuButton:hover {
+    background-color: rgba(255,255,255,0.08);
+}
+#OptionsPopover {
+    background-color: #1a1e40;
+}
+#OptionsPopover button {
+    padding: 0.333333em 0.5em;
+    border-radius: 0.166666em;
+    min-width: 10em;
+}
+#OptionsPopover button:hover {
+    background-color: rgba(255,255,255,0.1);
+}
+
+/* Window control buttons */
+#WindowControlButton {
+    padding: 0.25em 0.416666em;
+    margin: 0.083333em;
+    border-radius: 0.25em;
+}
+#WindowControlButton:hover {
+    background-color: rgba(255,255,255,0.1);
+}
+#WindowCloseButton {
+    padding: 0.25em 0.416666em;
+    margin: 0.083333em;
+    border-radius: 0.25em;
+}
+#WindowCloseButton:hover {
+    background-color: rgba(232,17,35,0.9);
+}
+dialog > box {
+    padding: 0.666666666666666666em;
+}
+dialog.csd #PrefNotebook > header,
+dialog.csd #AboutNotebook > header,
+window.csd:not(.fullscreen) #MainNotebook > header.top {
+    border-top-color: #1e2240;
+}
+
+/* Window state */
+.maximized > headerbar {
+    border-radius: 0;
+}
+
+/*** End Window decoration *****************************************************/
+
+arrow {
+    min-width: 1.333333333333333333em;
+    min-height: 1.333333333333333333em;
+}
+cellview {
+    margin: -1px 0;
+}
+
+overshoot,
+undershoot {
+    background-image: none; /* removes the dashed scrollbar line */
+}
+
+dialog.background,
+messagedialog.background,
+window.dialog.background {
+    background-color: #1e2240;
+    color: #c0bdd0;
+}
+popover, popover.background {
+    background-color: #1a1e40;
+    color: #c0bdd0;
+}
+
+box, grid {
+    border-width: 0;
+    border-style: none;
+    border-radius: 0;
+    margin: 0.083333333333333333em;
+    padding: 0;
+    min-height: 0.4166666666666666em;
+    min-width: 0.4166666666666666em;
+}
+label {
+    padding: 0.083333333333333333em 0;
+    margin: 0.19em;
+    min-height: 1.333333333333333333em;
+}
+
+/* Affects all frames except in the toolbox */
+frame {
+    padding: 0;
+    margin-bottom: 0.75em;
+}
+
+/* Create space between frame contents and frame border */
+frame border {
+    border: 1px solid #111528;
+    border-radius: 0.3333333333333333em;
+    padding: 0.083333333333333333em;
+}
+
+frame > label {
+    color: #c0b8d8;
+    padding: 0.416666666666666666em 0.25em;
+}
+
+/* affects selection list*/
+entry > window > frame {
+    margin: 0;
+}
+
+tooltip {
+    border-radius: 0.416666666666666666em;
+    background-color: rgba(0,0,0,0.95);
+    border-style: none;
+    box-shadow: none;
+    padding: 0;
+    margin: 0;
+}
+
+treeview header button {
+    background-image: linear-gradient(#1c2040, #181c38, #141830);
+}
+
+/*** Separator *********************************************************************************/
+separator,
+.separator {
+    border: none;
+    min-width: 0.083333333333333333em;
+    min-height: 0.083333333333333333em;
+}
+grid separator, box separator {
+    background-color: rgba(0, 0, 0, 0.17);
+}
+grid separator.horizontal, box separator.horizontal {
+    margin: 0.5em 0.25em;
+}
+grid separator.vertical, box separator.vertical {
+    margin: 0.25em 0.5em;
+}
+
+popover separator:not(:only-child) {
+    margin: 0 0.5em;
+}
+
+paned.horizontal > separator {
+    margin:  0 0.16666666666666666em;
+}
+
+paned.vertical > separator {
+    margin: 0.25em 0;
+}
+
+dialog paned.horizontal > separator {
+    min-width: 0.333333333333333333em;
+}
+
+menu separator {
+    margin: 0.25em 0.5em;
+}
+
+#Navigator separator {
+    margin: 0;
+}
+
+.scrollableToolbar separator.vertical {
+    margin: 0.19em;
+}
+
+#MyExpander separator.horizontal {
+    margin: 0.25em 0.19em;
+}
+#MyFileChooserButton separator {
+}
+
+#PlacesPaned .view.separator {
+    min-height: 0.16666666666666666em;
+    color: #161a35;
+}
+
+#MetaPanelNotebook separator {
+    margin: 0.19em 0;
+}
+/*** end****************************************************************************************/
+
+#FileBrowser {
+    padding: 0.1666666666666666em;
+    margin: 0;
+}
+
+#FileCatalog {
+    background-color: #1a1e38;
+    border: none;
+}
+#FileCatalog:selected {
+    background-color: #3a4590;
+}
+
+#BeforeAfterContainer frame {
+    background-color: #111528;
+    padding: 0;
+    margin: 0.0833333333333333em;
+}
+
+#BeforeAfterContainer frame border {
+    border-radius: 0;
+    margin: 0;
+    padding: 0;
+}
+
+
+/* Frames in the toolbox. Not MyExpander frames. */
+eventbox.frame {
+    border-color: #3a4590;
+}
+
+/*** Load - Save dialog ************************************************************************/
+filechooser {
+margin-bottom: 0.25em;
+}
+
+filechooser box > box box > button {
+margin-top: 0.5em;
+margin-right: 0;
+}
+
+filechooser #pathbarbox {
+    padding: 0.5em;
+}
+
+/* Right side */
+filechooser > box > paned > box:nth-child(3) {
+    border-width: 0.083333333333333333em;
+    padding: 0;
+    margin: 0;
+}
+filechooser > box > paned > box:nth-child(3) > box > * > * > * > frame {
+    padding: 0;
+    margin: -0.6666666666666666em -0.083333333333333333em;
+}
+/**/
+filechooser placessidebar viewport.frame {
+    padding: 0;
+    margin: -0.3333333333333333em 0 -0.083333333333333333em;
+    border-width: 0.083333333333333333em;
+}
+filechooser placessidebar list row image {
+    min-width: 1.333333333333333333em;
+    min-height: 1.333333333333333333em;
+}
+filechooser placessidebar list row {
+    margin: 0;
+    padding: 0 0.5em 0 0.83333333333333333em;
+    min-height: calc(1.416666666666666666em + 8px);
+}
+filechooser placessidebar list row label{
+    margin: 0 0 0 0.583333333333333333em;
+}
+
+/*** end ***************************************************************************************/
+
+/*** Scrollbar ***************************************/
+scrollbar {
+    border: none;
+    margin: 0;
+    padding: 0;
+    background-color: #161a30;
+}
+scrollbar slider {
+    padding: 0;
+    margin: 0;
+    background-color: #4a5088;
+}
+scrollbar slider:hover {
+    background-color: #6070a0;
+}
+
+scrollbar:not(.overlay-indicator).horizontal {
+    border-width: 0 0.083333333333333333em 0.083333333333333333em 0.083333333333333333em;
+}
+scrollbar:not(.overlay-indicator).vertical {
+    border-width: 0.083333333333333333em 0.083333333333333333em 0.083333333333333333em 0;
+}
+scrollbar:not(.overlay-indicator).horizontal slider,
+scrollbar.horizontal.hovering slider {
+    min-height: 0.5em;
+    min-width: 2em;
+    border-width: 0.25em;
+}
+scrollbar:not(.overlay-indicator).horizontal.fine-tune slider,
+scrollbar.horizontal.hovering.fine-tune slider {
+    min-height: calc(0.5em - 2px);
+    border-width: calc(0.25em + 1px);
+    margin: 0 -1px;
+    /*
+    min-height: 0.3333333333333333em;
+    border-width: 0.3333333333333333em;
+    margin: 0 -0.0833333333333333em;
+    */
+}
+scrollbar.horizontal.overlay-indicator:not(.hovering) slider {
+    min-width: 2em;
+    min-height: 0.25em;
+    border-width: 0;
+    border-radius: 0.25em;
+    margin: 0.166666666666666666em 0.25em;
+    /*margin: 0 0.1666666666666666em;*/
+}
+
+scrollbar:not(.overlay-indicator).vertical slider,
+scrollbar.vertical.hovering slider {
+    min-height: 2em;
+    min-width: 0.5em;
+    border-width: 0.25em;
+}
+scrollbar:not(.overlay-indicator).vertical.fine-tune slider,
+scrollbar.vertical.hovering.fine-tune slider {
+    min-width: calc(0.5em - 2px);
+    border-width: calc(0.25em + 1px);
+    margin: -0.0833333333333333em 0;
+    /*
+    min-width: 0.3333333333333333em;
+    border-width: 0.3333333333333333em;
+    margin: -0.0833333333333333em 0;
+    */
+}
+scrollbar.vertical.overlay-indicator:not(.hovering) slider {
+    min-width: 0.25em;
+    min-height: 2em;
+    border-width: 0;
+    border-radius: 0.25em;
+    margin: 0.1666666666666666em 0;
+    /*margin: 0.25em 0.166666666666666666em;*/
+}
+
+/* Scrollbar stuck workaround */
+scrollbar:not(.overlay-indicator):hover {
+    min-width: 1px;
+}
+
+/* Toolbar stuck workaround */
+.scrollableToolbar > scrollbar:not(.dummy),
+.scrollableToolbar > scrollbar:not(.dummy) > contents:not(.dummy),
+.scrollableToolbar > scrollbar:not(.dummy) > contents:not(.dummy) > trough:not(.dummy),
+.scrollableToolbar > scrollbar:not(.dummy) > contents:not(.dummy) > trough:not(.dummy) > slider:not(.dummy) {
+    padding: 0;
+    margin: 0;
+    min-height: 0;
+    min-width: 0;
+    border: none;
+}
+
+/**************************************************/
+
+button  {
+    padding: 0;
+    box-shadow: none;
+    min-height: 0.4166666666666666em;
+    min-width: 0.4166666666666666em;
+    background-image: linear-gradient(to bottom, rgba(45,52,104,.3), rgba(20,24,48,.3));
+}
+
+button:disabled {
+    opacity: 1;
+}
+
+button.flat  {
+    background-image: none;
+}
+
+button.flat:checked {
+    background-image:  linear-gradient(#2d3468, #283060, #242c58);
+}
+
+checkbutton > check {
+    background-image: linear-gradient(#2d3468, #283060, #242c58);
+}
+
+radiobutton > radio {
+    background-image: linear-gradient(#2d3468, #283060, #242c58);
+}
+
+button.flat:hover, checkbutton:hover > check, radiobutton:hover > radio {
+    background-image: linear-gradient(shade(#2d3468,1.3), shade(#283060,1.3), shade(#242c58,1.3));
+}
+
+button.popupbutton-arrow {
+    min-width: 1.5em;
+}
+
+button:hover  {
+    background-image: linear-gradient(to bottom, rgba(74,80,136,.3), rgba(40,48,96,.3));
+}
+
+button:active  {
+    background-image: linear-gradient(to bottom, rgba(20,24,48,.3), rgba(0,0,0,.3));
+}
+
+button:checked  {
+    background-image: linear-gradient(to bottom, rgba(20,24,48,.8), rgba(0,0,0,.8));
+}
+
+button:checked:hover  {
+    background-image: linear-gradient(to bottom, rgba(36,44,88,1), rgba(20,24,48,1));
+}
+
+/* Save, Cancel, OK ... buttons */
+.dialog-action-area button {
+    min-height: 1.6em;
+    margin-top: 0.3em;
+    padding: 0.1em 0.8em;
+}
+/**/
+
+/*** Scale**************************************************************************************/
+scale {
+    padding: 0;
+    min-height: 0.4166666666666666em;
+    margin: 0 0.25em 0 0;
+}
+
+scale slider {
+    /* Slider size is min-width x min-height ; margin have to be half of those values, but negative */
+    min-width: 0;
+    min-height: 0;
+    margin: -0.4em;
+    padding: 0.4em;
+    border-radius: 0.8em;
+    border-width: 0.083333333333333333em;
+    background-image: linear-gradient(#242850, #202848, #1a1e38);
+}
+scale slider:hover {
+    background-image: linear-gradient(#2d3468, #283060, #242c58);
+}
+scale:disabled slider {
+    background-image: none;
+    background-color: #242850;
+    border-color: #121630;
+}
+scale trough {
+    margin: 0.5em 0.5em;  /* have to be half of "scale slider / min-width min-height" */
+    min-height: 0.2em;
+    min-width: 0.2em;
+    padding: 0 0.583333333333333333em;
+    border-width: 0.083333333333333333em;
+    border-radius: 0.333333333333333333em;
+    background-color: rgba(0,0,0,0.15);
+}
+scale:disabled trough {
+    background-color: #242850;
+    border-color: #121630;
+}
+scale.color trough {
+    border-width: 0.083333333333333333em;
+    min-height: 0.333333333333333333em;
+    min-width: 0.333333333333333333em;
+    border-radius: 0;
+    padding: 0;
+}
+
+scale trough highlight {
+    border: none;
+    margin: 0 -0.583333333333333333em;
+    border-radius: 0.2em;
+    min-height: 0;
+    min-width: 0;
+    padding: 0.1em 0.1em 0 0; /*height of trough */
+}
+
+scale.fine-tune trough highlight {
+    padding: 0.5em 0.5em 0 0;
+    border-radius: 0.5em;
+}
+/*** end ***************************************************************************************/
+
+
+/*.EditorTopPanel .button, .ToolBarPanelFileBrowser .button, .EditorZoomPanel .button {*/
+.button {
+    padding: 0.0833333333333333em;
+    margin: 0.0833333333333333em;
+    padding: 0;
+    min-height: 0.4166666666666666em;
+    min-width: 0.4166666666666666em;
+    border-radius: 0.25em;
+}
+
+/* Adjusters */
+.text-button {
+    padding: 0;
+}
+
+/* Any text-button which is a real button, unlike Slider label */
+.text-button.button {
+    padding: 0.3333333333333333em;
+}
+
+/* Better on/off state separation for text toggle buttons, e.g. auto-levels or histogram matching. */
+button.text-button.toggle {
+    background-image: linear-gradient(to bottom, rgba(45,52,104,.3), rgba(20,24,48,.3));
+}
+
+button.text-button.toggle:hover {
+    background-image: linear-gradient(to bottom, rgba(60,68,120,.3), rgba(36,44,88,.3));
+}
+
+button.text-button.toggle:checked {
+    background-image: linear-gradient(to bottom, rgba(20,24,48,.3), rgba(0,0,0,.4));
+}
+
+button.text-button.toggle:hover:checked {
+    background-image: linear-gradient(to bottom, rgba(30,36,72,.3), rgba(0,0,0,.3));
+}
+
+#ShowMaskButton:checked {
+    background-color: rgba(184,120,72,0.7);
+    color: white;
+}
+
+#ShowMaskButton:hover:checked {
+    background-color: rgba(200,140,90,0.8);
+    color: white;
+}
+
+/* */
+
+.drawingarea {
+    border-radius: 0;
+    background-color: #0e1220;
+    border: 0.0833333333333333em solid #6070a0;
+}
+.drawingarea:disabled {
+    background-color: #242850;
+    border-color: #121630;
+}
+
+.drawingarea:selected {
+    background-color: #3a4590;
+    border-radius: 1.8333333333333333em;
+}
+
+image {
+    padding: 0.0833333333333333em;
+}
+
+/* Vertical group of buttons in 1 column */
+button.Top {
+    border-radius: 0.25em 0.25em 0 0;
+    border-style: solid solid none solid;
+    margin-bottom: 0;
+}
+button.MiddleV {
+    border-radius: 0;
+    border-style: none solid none solid;
+    margin-top: 0;
+    margin-bottom: 0;
+}
+button.Bottom {
+    border-radius: 0 0 0.25em 0.25em;
+    border-style: none solid solid solid;
+    margin-top: 0;
+}
+/* end */
+
+/* Horizontal group of buttons in 1 row */
+#MetaPanelNotebook scrolledwindow + grid > button.Left,
+#MetaPanelNotebook scrolledwindow + grid + grid > button.Left,
+#ProfilePanel button.Left,
+button.Left {
+    border-radius: 0.25em 0 0 0.25em;
+    border-style: solid none solid solid;
+    margin-right: 0;
+}
+#MetaPanelNotebook scrolledwindow + grid > button.MiddleH,
+#MetaPanelNotebook scrolledwindow + grid + grid > button.MiddleH,
+#ProfilePanel button.MiddleH,
+button.MiddleH {
+    border-radius: 0;
+    border-style: solid none solid none;
+    margin-left: 0;
+    margin-right: 0;
+}
+#MetaPanelNotebook scrolledwindow + grid > button.Right,
+#MetaPanelNotebook scrolledwindow + grid + grid > button.Right,
+#ProfilePanel button.Right,
+button.Right {
+    border-radius: 0 0.25em 0.25em 0;
+    border-style: solid solid solid none;
+    margin-left: 0;
+}
+/* end */
+
+/* Preset list panel */
+#PresetListPanel .preset-card {
+    padding: 4px;
+    border-radius: 4px;
+    min-width: 80px;
+}
+
+#PresetListPanel .preset-card:hover {
+    background-color: rgba(255,255,255,0.08);
+}
+
+#PresetListPanel .preset-card.selected {
+    background-color: rgba(95,112,192,0.25);
+    border: 1px solid rgba(95,112,192,0.5);
+}
+
+#PresetListPanel .preset-card-label {
+    font-size: 0.85em;
+}
+
+#PresetListPanel .preset-special {
+    padding: 2px 6px;
+    font-style: italic;
+    font-size: 0.9em;
+}
+
+#PresetListPanel .preset-special.selected {
+    background-color: rgba(95,112,192,0.25);
+    border: 1px solid rgba(95,112,192,0.5);
+}
+
+#PresetListPanel .preset-category > label {
+    font-weight: bold;
+    font-size: 0.9em;
+}
+
+#PresetListPanel box,
+#PresetListPanel flowbox,
+#PresetListPanel flowboxchild {
+    margin: 0;
+    min-height: 0;
+}
+#PresetListPanel button {
+    margin: 0;
+}
+#PresetListPanel label {
+    margin: 0;
+    padding: 0;
+    min-height: 0;
+}
+
+/* Navigator and History floating dialogs */
+#NavigatorDialog,
+#HistoryDialog {
+    background-color: #1e2240;
+}
+#NavigatorDialog headerbar,
+#HistoryDialog headerbar {
+    background-color: shade(rgb(20,24,48),1.12);
+    background-image: linear-gradient(shade(rgb(20,24,48),1.14), shade(rgb(20,24,48),.86));
+    border-bottom-color: #0e1228;
+    min-height: 1.6em;
+    padding: 0 0.25em;
+}
+#NavigatorDialog headerbar .title,
+#HistoryDialog headerbar .title {
+    font-weight: bold;
+    font-size: 0.9em;
+}
+
+/* Ensure all windows and decorations follow theme */
+decoration {
+    background-color: #1e2240;
+}
+
+/* Point Color */
+#PointColorToolbar button {
+    min-width: 22px;
+    min-height: 22px;
+    padding: 1px 4px;
+}
+#PointColorTargetList {
+    border-radius: 3px;
+}
+#PointColorSwatch {
+    border-radius: 2px;
+    min-height: 12px;
+}
+
+/* [1.23[-][+]] */
+entry, spinbutton {
+    min-height: 0.8333333333333333em;
+    background-color: rgba(0,0,0,0.075);
+    border-radius: 0.2em;
+}
+
+spinbutton entry {
+    padding-right: 0.25em;
+}
+spinbutton button {
+    margin: 0;
+    padding: 0;
+    border-radius: 0;
+}
+spinbutton button.up {
+    border-radius: 0 0.16666666666666666666em 0.16666666666666666666em 0;
+}
+
+entry:disabled, spinbutton:disabled {
+    background-color: #161a35;
+}
+
+entry:hover, spinbutton:hover {
+    background-color: #3a4590;
+}
+
+entry:selected {
+    color: #111528;
+    background-color: #5f70c0;
+}
+
+/* Hide spinbutton +/- buttons inside Adjusters — must beat #MyExpander button:not(.ColorDot) specificity */
+#MyExpander #Adjuster spinbutton button {
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    margin: 0;
+    border: none;
+    background: none;
+    background-image: none;
+    box-shadow: none;
+    color: transparent;
+    opacity: 0;
+    -gtk-icon-source: none;
+}
+#MyExpander #Adjuster spinbutton button image {
+    -gtk-icon-transform: scale(0);
+    -gtk-icon-source: none;
+    min-width: 0;
+    min-height: 0;
+}
+
+/* Borderless, transparent spinbutton entry in Adjusters */
+#MyExpander #Adjuster spinbutton {
+    background: transparent;
+    border: none;
+    box-shadow: none;
+    min-height: 0;
+}
+#MyExpander #Adjuster spinbutton entry {
+    background: transparent;
+    background-color: transparent;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    min-height: 0;
+    padding: 0;
+    font-size: 0.75em;
+}
+/* Shrink reset button */
+#Adjuster button.flat {
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    margin: 0;
+}
+#Adjuster button.flat image {
+    -gtk-icon-transform: scale(0.55);
+}
+
+/* Context menus */
+menu {
+    background-color: #111528;
+    color: #8890c0;
+}
+
+/* Context menu item */
+menuitem {
+    padding: 0.1666666666666666em;
+    margin: 0;
+    min-height: 0.8333333333333333em;
+}
+
+/* FlowBoxChild */
+flowboxchild:selected {
+    background-color: inherit;
+}
+
+/*** EXIF Info Strip ****************************************************************************/
+#ExifInfoLabel {
+    color: #7080a8;
+    padding: 0.25em 0;
+    font-size: 0.85em;
+    letter-spacing: 0.05em;
+}
+
+/*** Histogram *********************************************************************************/
+#HistogramPanel {
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    border: none;
+}
+
+#HistogramPanel > :nth-child(1) {
+    border: none;
+}
+
+#HistogramPanel > :nth-child(2) {
+    border: none;
+    padding: 0.083333333333333333em 0;
+}
+
+#HistogramArea,
+#HistogramRGBArea {
+    border-width: 0.083333333333333333em;
+}
+
+/* All histogram buttons: no background, no border */
+#histButton,
+button.radio#histButton,
+button.toggle#histButton {
+    padding: 0.083em;
+    margin: 0;
+    min-height: 1em;
+    min-width: 1em;
+    border: none;
+    background: none;
+    background-image: none;
+    box-shadow: none;
+    border-radius: 0;
+    outline: none;
+}
+
+/* Active scope type: subtle underline only */
+button.radio#histButton:checked {
+    background: none;
+    background-image: none;
+    box-shadow: inset 0 -2px 0 rgba(144,221,240,0.6);
+}
+
+button.radio#histButton:hover,
+button.toggle#histButton:hover,
+#histButton:hover {
+    background: none;
+    background-image: none;
+    opacity: 0.8;
+}
+
+/* Scope toggle overlay button in top-right corner */
+#histScopeToggle {
+    background: none;
+    border: none;
+    padding: 2px;
+    margin: 2px;
+    min-height: 0;
+    min-width: 0;
+    opacity: 0.4;
+}
+#histScopeToggle:hover {
+    opacity: 0.8;
+}
+
+/* Bottom bar with scope buttons */
+#histBottomBar {
+    background: rgba(14,18,32,0.85);
+    padding: 1px 2px;
+    border: none;
+}
+
+/* Horizontal brightness slider in button strip. */
+#histScale {
+    min-height: 0;
+    min-width: 3em;
+    margin: 0 0.25em;
+}
+#histScale trough {
+    padding: 0;
+}
+#histScale trough highlight {
+    margin: 0;
+    padding: 0;
+}
+
+/*** end ***************************************************************************************/
+
+/*** Modules ***********************************************************************************/
+#EditorModules {
+    background-color: #1e2240;
+}
+
+#EditorModules > box {
+    margin: 0;
+    padding: 0;
+}
+
+#MyExpander {
+    margin: 0;
+    padding: 0;
+}
+
+#MyExpander.withScrollbar { /* This margin is always added */
+    margin-right: 0.3em;
+}
+
+#MyExpander.withScrollbar #MyExpander { /* No margin for nested expanders */
+    margin-right: 0;
+}
+
+/* Borders around tools and subtools */
+#MyExpander {
+    border-top: 0.0833333333333333em solid rgba(0,0,0,0.3);
+}
+#MyExpander:first-child {
+    border-top: none;
+}
+#MyExpander:nth-last-child(1),
+#MyExpander #MyExpander:nth-last-child(1) {
+    border-bottom: 0.0833333333333333em solid rgba(0,0,0,0.3);
+}
+#MyExpander #MyExpander:nth-last-child(2) {
+    border-bottom: none;
+}
+
+/* ExpanderContents is just a logical container. Don't add additional spacing. */
+#ExpanderBox > .ExpanderContents > * {
+    margin: 0;
+    min-height: 0;
+    padding: 0 0 0 4px;
+}
+
+/* For sub-tools containers that go below another widget, add some margin
+ * between them if the container has children. */
+#MyExpander .SubToolsContainer:not(:first-child) > :first-child {
+    margin-top: 0.15em;
+}
+
+#MyExpander .SubToolsContainer {
+    min-height: 0;
+}
+
+.SubToolsContainer > #MyExpander,
+.ToolParamBlock > #MyExpander,
+.ExpanderContents,
+#MyExpander .ToolParamBlock {
+    margin: 0;
+}
+
+/* Tool background */
+#ExpanderBox > box,
+#ExpanderBox > grid {
+    background-color: rgba(255,255,255,0.075);
+    padding: 0.02em 0.08em 0.05em 10px;
+    border-top: 0.0833333333333333em solid rgba(255,255,255,0.1);
+    border-bottom: none;
+}
+
+/* Not all combinations below are used, but this makes sure
+   also some of the more exotic box and frame layouts are
+   treated properly. */
+#ExpanderBox frame > box,
+#ExpanderBox frame frame > box,
+#ExpanderBox2 frame > box,
+#ExpanderBox2 frame frame > box,
+#ExpanderBox3 frame > box,
+#ExpanderBox3 frame frame > box,
+#ExpanderBox frame > grid,
+#ExpanderBox frame frame > grid,
+#ExpanderBox2 frame > grid,
+#ExpanderBox2 frame frame > grid,
+#ExpanderBox3 frame > grid,
+#ExpanderBox3 frame frame > grid {
+    padding: 0 0.25em 0.35em 0.25em;
+}
+
+/* Necessary hack for extra margin in Wavelets and some other locations */
+#ExpanderBox box > box,
+#ExpanderBox2 box > box {
+    margin: 0.03em 0;
+}
+
+/* Sub-tool (MyExpander) background */
+#LocallabToolPanel > box,
+#LocallabToolPanel > grid,
+#ExpanderBox2 > box,
+#ExpanderBox2 > grid {
+    background-color: rgba(255,255,255,0.075);
+    margin: 0;
+    padding: 0.2em 0.25em 0.35em 10px;
+    border-top: 0.0833333333333333em solid rgba(255,255,255,0.1);
+    border-bottom: none;
+}
+
+#MyExpanderTitle label {
+    color: #8890c0;
+    padding: 0;
+    margin: 0;
+    font-size: 1.1em; /* TODO: Does not work? */
+    font-weight: bold;
+}
+
+#MyExpander.Fold > #MyExpanderTitle label,
+#MyExpander.OnOff.enabledTool > #MyExpanderTitle label {
+    color: #b0b8e0;
+}
+
+#MyExpanderTitle:hover {
+    background-color: #0c1020;
+}
+#MyExpanderTitle eventbox:hover image {
+    background-color: #0c1020;
+    margin: 0;
+    padding: 0;
+}
+#MyExpanderTitle:hover label {
+    color: #c0b8d8;
+}
+
+/* Alignment of tool headers is controlled by the image */
+#MyExpander.Fold > #MyExpanderTitle box > image,
+#MyExpander.OnOff > #MyExpanderTitle #MyExpanderStatus image {
+    padding: 0.2em;
+    margin: 0.15em 0.15em 0.15em 0;
+}
+
+/* Summary box - always-visible controls between header and expandable content */
+.MyExpanderSummary { padding: 0 0.1em 0.05em 0.3em; }
+.MyExpanderSummary scale {
+    margin-right: 0.25em;
+}
+.MyExpanderSummary scale trough {
+    padding: 0 0.25em;
+}
+
+/* Prevent short labels from wrapping in summary grids */
+.MyExpanderSummary .grid-spacing > label {
+    min-width: 2.5em;
+}
+
+/* Prevent adjuster rows from overflowing the panel */
+#MyExpander #Adjuster {
+    min-width: 0;
+    margin-top: 0;
+    margin-bottom: 0;
+}
+#MyExpander #Adjuster > label {
+    margin-right: 0.05em;
+}
+
+/* === Compact tool panel layout === */
+
+/* Smaller font in tool content areas */
+#ExpanderBox label,
+#ExpanderBox spinbutton entry,
+.MyExpanderSummary label {
+    font-size: 9px;
+}
+
+/* Scale — keep compact but clickable */
+#MyExpander scale {
+    margin: 0 2px 0 0;
+    min-height: 14px;
+    padding: 0;
+}
+
+#MyExpander scale trough {
+    margin: 4px 0;
+    padding: 0;
+    min-height: 4px;
+}
+
+#MyExpander scale slider {
+    padding: 7px;
+    margin: -7px;
+    border-radius: 7px;
+    min-height: 0;
+    min-width: 0;
+}
+
+#MyExpander scale trough highlight {
+    margin: 0 -1px;
+}
+
+/* Reduce label height/margin for tighter rows + slider alignment */
+#MyExpander label {
+    min-height: 0;
+    margin: 0;
+    padding: 0 0 0 6px;
+}
+
+/* Reduce box/grid min-height in tool panels */
+#MyExpander box,
+#MyExpander grid {
+    min-height: 0;
+    margin: 0;
+}
+
+/* Compact checkbuttons/radiobuttons */
+#MyExpander checkbutton,
+#MyExpander radiobutton {
+    min-height: 0;
+    margin: 0 0.05em;
+    padding: 0;
+}
+
+/* Reduce label margin next to check/radio */
+#MyExpander checkbutton label,
+#MyExpander radiobutton label {
+    margin: 0 0.2em 0 0.15em;
+}
+
+/* Compact buttons (reset, autolevels, etc.) — exclude ColorDot radio buttons */
+#MyExpander button:not(.ColorDot) {
+    min-height: 0;
+    min-width: 0;
+    padding: 0 0.1em;
+    margin: 0.02em 0;
+}
+
+/* Text buttons inside tool panels need extra shrink */
+#MyExpander button:not(.ColorDot) label {
+    margin: 0 0.15em;
+    padding: 0;
+}
+
+/* Compact auto-exposure button */
+.auto-button {
+    padding: 0 0.5em;
+    margin: 0;
+    font-size: 0.85em;
+}
+
+/* Color Mixer dot selector */
+.ColorDot,
+radiobutton.ColorDot,
+radiobutton.ColorDot > * {
+    min-width: 14px;
+    min-height: 14px;
+    border-radius: 50%;
+    padding: 2px;
+    margin: 1px;
+    border: 2px solid transparent;
+    background-image: none;
+}
+.ColorDot:checked,
+radiobutton.ColorDot:checked,
+radiobutton.ColorDot:checked > * {
+    border-color: white;
+    box-shadow: 0 0 3px rgba(255,255,255,0.5);
+}
+
+#LocallabToolPanel separator, #ExpanderBox2 separator, #ExpanderBox3 separator {
+    color: #141830;
+}
+
+/* AdvancedSection collapsible header */
+#AdvancedSection {
+    margin: 0;
+    padding: 0;
+}
+#AdvancedSectionHeader {
+    padding: 0.1em 0;
+}
+#AdvancedSectionHeader:hover {
+    background-color: #0c1020;
+}
+#AdvancedSectionHeader label {
+    color: #7080a8;
+    font-size: 0.9em;
+    font-style: italic;
+    padding: 0;
+    margin: 0;
+}
+#AdvancedSectionHeader:hover label {
+    color: #a0a8d0;
+}
+#AdvancedSectionHeader image {
+    padding: 0.2em;
+    margin: 0;
+}
+
+/* ColorWheel widget — no dark square background */
+#ColorWheel {
+    margin: 0;
+    padding: 0;
+}
+#ColorWheel .drawingarea {
+    background-color: transparent;
+    border: none;
+}
+#ColorWheel label {
+    margin: 0;
+    padding: 0;
+}
+
+/* Mode Button Bar (LR-style mode switching) */
+#ModeButtonBar {
+    margin: 0;
+    padding: 0;
+    border-bottom: 1px solid #141838;
+    background-color: #1e2240;
+}
+#ModeButtonBar .ModeButton {
+    border-radius: 0;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 0.2em 0.4em;
+    margin: 0;
+    background-color: #1e2240;
+    font-size: 0.95em;
+}
+#ModeButtonBar .ModeButton:checked {
+    border-bottom-color: #90ddf0;
+    background-color: rgba(144,221,240,0.15);
+}
+#ModeButtonBar .ModeButton:hover:not(:checked) {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+#ModeButtonBar .ModeButton image {
+    padding: 0 0.15em;
+}
+
+/* ToolGroup collapsible section headers in Edit mode */
+#ToolGroup {
+    margin: 0;
+    padding: 0;
+}
+#ToolGroup .ToolGroupSeparator {
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+    color: transparent;
+    border: none;
+}
+#ToolGroupHeader {
+    padding: 0px 4px;
+    min-height: 0;
+}
+#ToolGroupHeader:hover {
+    background-color: #0e1225;
+}
+#ToolGroupHeader label {
+    color: #c0bdd0;
+    font-weight: bold;
+    font-size: 7px;
+    padding: 0;
+    margin: 0;
+    min-height: 0;
+}
+#ToolGroupHeader label:first-child {
+    font-size: 6px;
+    margin-right: -1px;
+}
+#ToolGroupHeader:hover label {
+    color: #c8d0f0;
+}
+/* arrow is now a label, no image rule needed */
+#ToolGroupHeader box {
+    margin: 0;
+    padding: 0;
+    min-height: 0;
+}
+
+/* Flat mode: header hidden, thin separator between tools */
+#MyExpander.flat-mode {
+    border-top: none;
+    border-bottom: none;
+    margin-top: 0.3em;
+    padding-top: 0.2em;
+    border-top: 1px solid rgba(255,255,255,0.06);
+}
+
+/* First tool in group: no top separator */
+#MyExpander.flat-mode:first-child {
+    border-top: none;
+    margin-top: 0;
+    padding-top: 0;
+}
+
+/* Remove ExpanderBox background/border for flat tools */
+#MyExpander.flat-mode #ExpanderBox > box,
+#MyExpander.flat-mode #ExpanderBox > grid {
+    background-color: transparent;
+    border-top: none;
+    padding: 0 0 0.1em 10px;
+}
+
+/* Tool section labels (within flat-mode tool groups) */
+.tool-section-label {
+    font-size: 9px;
+    font-weight: bold;
+    color: #8890c0;
+    padding: 0 0 1px 0;
+    margin: 0;
+}
+
+/* Compact comboboxes in all tool panels */
+#MyExpander combobox,
+#MyExpander combobox button {
+    min-height: 0;
+    min-width: 0;
+    padding: 0;
+    margin: 0;
+}
+
+/* Override global button.combo padding inside tool panels */
+#MyExpander button.combo {
+    padding: 0 0 0 0.1em;
+}
+
+/* Shrink dropdown arrow inside tool panels */
+#MyExpander arrow {
+    min-width: 0.7em;
+    min-height: 0.7em;
+}
+
+/* Compact check/radio indicators inside tool panels */
+#MyExpander checkbutton > check,
+#MyExpander radiobutton > radio {
+    min-height: 0.7em;
+    min-width: 0.7em;
+    padding: 0;
+    margin: 0.05em;
+}
+
+/* Compact cellview inside tool panels */
+#MyExpander cellview {
+    margin: -2px 0;
+    padding: 0;
+}
+
+/* Tighten combobox text area */
+#MyExpander combobox cellview {
+    font-size: 0.95em;
+    padding: 0;
+    margin: -2px 0;
+}
+
+/* Reduce grid-spacing margins inside tool panels */
+#MyExpander .grid-spacing > * {
+    margin: 0.04em 0.04em;
+}
+
+/* Compact spinbuttons inside tool panels */
+#MyExpander spinbutton {
+    min-height: 0.8em;
+}
+
+/* Reduce vertical spacing in flat-mode grids */
+#MyExpander.flat-mode .grid-spacing > * {
+    margin-top: 0.08em;
+    margin-bottom: 0.08em;
+}
+
+/* Remove nested box margin in flat-mode */
+#MyExpander.flat-mode #ExpanderBox box > box {
+    margin: 0;
+}
+
+/* Reduce flat-mode summary box bottom padding */
+#MyExpander.flat-mode .MyExpanderSummary {
+    padding-bottom: 0;
+}
+
+/* Editor tab button */
+#MainNotebook grid label, #MainNotebook grid image  {
+    padding: 0.0833333333333333em;
+}
+/*** end ***************************************************************************************/
+
+/* File Browser right side tabs - Toolbox, Inspector, Fast Export, Filter */
+notebook {
+    padding: 0;
+    margin: 0;
+    border-style: none;
+}
+
+notebook header {
+    box-shadow: none;
+    background-color: #1a1e38;
+    border-width: 0.0833333333333333em;
+    border-style: none;
+    border-color: #111528;
+    border-radius: 0;
+    padding: 0;
+    margin: 0;
+}
+
+notebook tabs {
+    padding: 0.0833333333333333em;
+    margin: 0;
+}
+
+notebook tab {
+    padding: 0.0833333333333333em;
+    margin: 0.1666666666666666em;
+    min-height: 1.25em;
+    min-width: 1.25em;
+}
+
+notebook tab:hover {
+    background-color: #2d3468;
+}
+
+notebook tab button {
+    padding: 0 0;
+    margin: 0 0.25em;
+}
+
+/* Get rid of shitty notebook header shadow */
+notebook header.top {
+    border-bottom-style: solid;
+    padding-bottom: 0.25em;
+}
+notebook header.right {
+    border-left-style: solid;
+    padding-left: 0.25em;
+}
+notebook header.bottom {
+    border-top-style: solid;
+    padding-top: 0.25em;
+}
+notebook header.left {
+    border-right-style: solid;
+    padding-right: 0.25em;
+}
+
+notebook.frame {
+    border-radius: 0;
+    border-style: none;
+}
+
+/* Pad notebooks, makes the other borders look nicer */
+notebook stack {
+    background-color: #1e2240;
+    padding: 0;
+    margin: 0;
+}
+
+paned box, paned grid {
+    padding: 0;
+    margin: 0;
+    border-style: none;
+}
+
+paned > separator {
+    background: rgba(0,0,0,0.075);
+    border: none;
+    min-width: 0.25em;
+    min-height: 0.25em;
+    padding: 0;
+    margin: 0;
+}
+
+fontchooser scrolledwindow,
+#PlacesPaned scrolledwindow,
+#HistoryPanel scrolledwindow,
+#Snapshots scrolledwindow {
+    border-width: 0.083333333333333333em;
+}
+
+#PlacesPaned {
+    margin: 0;
+    padding: 0 0.4166666666666666em 0 0;
+    background-color: #1e2240;
+}
+#PlacesPaned > box:nth-child(1) scrolledwindow + grid {
+    margin: 0;
+    border-top-width: 0.083333333333333333em;
+}
+#PlacesPaned  > box:nth-child(3) treeview {
+    padding: 0;
+}
+
+#MainNotebook > header.left tab image {
+    margin: 0.5em 0 0 0;
+}
+#MainNotebook > header.top tab image {
+    margin: 0 0.5em 0 0;
+}
+#MainNotebook > header.left tab {
+    margin: 0.5em 0 0.5em 0;
+}
+#MainNotebook > header.top tab {
+    margin: 0 0.5em 0 0.5em;
+}
+
+#MainNotebook header {
+    background-color: #0e1220;
+    border: 0;
+    padding: 0;
+}
+#MainNotebook tabs {
+    background-color: #0e1220;
+}
+#MainNotebook tab:hover {
+    background-color: #2d3468;
+}
+#MainNotebook tab:active {
+    border-color: #7888c0;
+}
+#MainNotebook tab:checked {
+    background-color: #2d3468;
+}
+
+#RightNotebook > stack > :nth-child(1) checkbutton + scrolledwindow {
+    min-height: calc(6em + 43px);
+}
+#RightNotebook > stack > scrolledwindow frame,
+#BatchQueueButtonsMainContainer frame,
+dialog frame {
+    margin: 0;
+    padding: 0;
+}
+#RightNotebook > stack > scrolledwindow frame > border,
+#BatchQueueButtonsMainContainer > frame > border,
+dialog frame > border {
+    padding: 0;
+    border-width: 0.083333333333333333em;
+    margin: 0;
+}
+#RightNotebook > stack > scrolledwindow frame > label:not(.dummy),
+#BatchQueueButtonsMainContainer frame > label:not(.dummy),
+#ToolPanelNotebook frame > label:not(.dummy),
+dialog frame > label:not(.dummy) {
+    padding: 0.25em 0.5em;
+}
+#BatchQueueButtonsMainContainer frame > border {
+    margin-bottom: 0.833333333333333333em;
+}
+#BatchQueueButtonsMainContainer frame:nth-child(3) > border {
+    padding-left: 0.916666666666666666em;
+}
+
+#RightNotebook header {
+    background-color: #0e1220;
+}
+#RightNotebook tabs {
+    background-color: #0e1220;
+    padding-bottom: 0.083333333333333333em;
+}
+#RightNotebook tab:hover {
+    background-color: #2d3468;
+    color: #b0b8e0;
+}
+#RightNotebook tab:active {
+    border-color: #7888c0;
+}
+
+#LabelRightNotebook {
+    padding: 0.4166666666666666em;
+    margin: 0.1666666666666666em;
+    font-size: 1.25em;
+}
+
+#ToolPanelNotebook {
+    min-width: 25em;
+}
+
+#ToolPanelNotebook viewport {
+    padding: 0;
+}
+
+#ToolPanelNotebook .PanelEnding {
+    margin-top: 4px;
+}
+
+#ToolPanelNotebook header tabs {
+    padding: 0.0833333333333333em;
+    background-color: #0e1220;
+}
+
+#ToolPanelNotebook header tab {
+    margin: 0;
+    padding: 0.3333333333333333em;
+}
+
+/* All tool panels have a frame except for Meta which unlike the rest is a notebook itself.
+ * So we use CSS to make it look like a frame. */
+#MetaPanelNotebook > stack > box {
+    border: 0.0833333333333333em solid #111528;
+    background-color: #161a35;
+    border-radius: 0 0 0.3333333333333333em 0.3333333333333333em;
+    border-top-style: none;
+    padding: 0 0.25em 0.25em 0.25em;
+    margin: 0 0.4166666666666666em 0.4166666666666666em 0.4166666666666666em;
+}
+
+#MetaPanelNotebook header {
+    border: 0.0833333333333333em solid #111528;
+    background-color: #161a35;
+    border-radius: 0.3333333333333333em 0.3333333333333333em 0 0;
+    border-bottom-style: none;
+    padding: 0.4166666666666666em;
+    margin: 0.4166666666666666em 0.4166666666666666em 0 0.4166666666666666em;
+}
+
+#MetaPanelNotebook > header > tabs {
+    background-color: #161a35;
+}
+
+#MetaPanelNotebook > header tab {
+    margin: 0 0.4166666666666666em;
+    padding: 0.4166666666666666em;
+}
+
+#MetaPanelNotebook textview {
+    border-radius: 0.25em;
+}
+
+#MetaPanelNotebook entry, #MetaPanelNotebook scrolledwindow, #MetaPanelNotebook combobox {
+    margin: 0.1666666666666666em 0 0.1666666666666666em 0;
+}
+
+#MetaPanelNotebook entry {
+    padding: 0 0.0833333333333333em;
+}
+
+#MetaPanelNotebook label {
+    padding: 0 0.4166666666666666em;
+}
+
+#MetaPanelNotebook text {
+    border-color: #0c1020;
+    background-color: #111528;
+    border-style: solid;
+    border-width: 0.0833333333333333em;
+    border-radius: 0.25em;
+}
+
+#MetaPanelNotebook stack > box > scrolledwindow > viewport {
+    margin-left: 1.25em;
+}
+
+#PreviewWindow {
+    border-style: solid;
+}
+
+/* Decently sized tabs */
+#PrefNotebook tab, #AboutNotebook tab {
+    padding: 0.8em;
+}
+
+#PrefNotebook, #AboutNotebook {
+    padding: 0;
+    margin: 0 0 3pt 0;
+}
+
+#PrefNotebook header, #AboutNotebook header {
+    padding: 0;
+    margin: 0;
+}
+
+#PrefNotebook header tabs, #AboutNotebook header tabs {
+    padding: 0;
+    margin: 0;
+}
+
+#PrefNotebook stack, #AboutNotebook stack {
+    padding: 3pt;
+    margin: 0;
+}
+#PrefNotebook box > frame > border {
+    padding-top: 0;
+    padding-bottom: 0.25em;
+}
+#PrefNotebook scrolledwindow scrolledwindow {
+    border-width: 0.083333333333333333em;
+}
+
+/* Compact preferences layout */
+#PrefNotebook label {
+    font-size: 0.85em;
+    padding: 0;
+    margin: 0.02em 0.1em;
+    min-height: 0;
+}
+#PrefNotebook checkbutton label,
+#PrefNotebook radiobutton label {
+    margin: 0 0.1em;
+}
+#PrefNotebook checkbutton,
+#PrefNotebook radiobutton {
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+}
+#PrefNotebook checkbutton > check,
+#PrefNotebook radiobutton > radio {
+    min-height: 0.7em;
+    min-width: 0.7em;
+    margin: 0.05em;
+}
+#PrefNotebook combobox {
+    min-height: 0;
+}
+#PrefNotebook combobox button.combo {
+    min-height: 0;
+    padding: 0.05em 0.25em;
+}
+#PrefNotebook button {
+    min-height: 0;
+    padding: 0.1em 0.5em;
+    font-size: 0.85em;
+}
+#PrefNotebook spinbutton {
+    min-height: 0;
+    font-size: 0.85em;
+}
+/* Section headings (frame titles) — larger and bold */
+#PrefNotebook frame > label {
+    font-size: 1.05em;
+    font-weight: bold;
+    padding: 0.3em 0.25em 0.15em;
+    color: #b0b8e0;
+}
+#PrefNotebook frame {
+    margin-bottom: 0.3em;
+}
+#PrefNotebook frame border {
+    padding: 0.05em 0.15em;
+}
+#PrefNotebook grid {
+    min-height: 0;
+    margin: 0;
+}
+#PrefNotebook box {
+    min-height: 0;
+    margin: 0;
+}
+/* Reduce row spacing in preference grids */
+#PrefNotebook grid > label {
+    margin-top: 0.02em;
+    margin-bottom: 0.02em;
+}
+
+/* Add space between bottom panel and window edge */
+#IopsPanel {
+    padding: 0 0.1666666666666666em 0.1666666666666666em;
+}
+
+#EditorLeftPaned:last-child {
+    padding: 0.8333333333333333em 0 0 0.8333333333333333em;
+}
+
+#EditorRightPaned:last-child {
+    padding: 0;
+}
+
+#MainNotebook > header #CloseButton {
+    padding: 0;
+    margin: 0 0 0 0.3em;
+}
+#MainNotebook > header #CloseButton image {
+    padding: 0;
+    margin: 0;
+}
+
+#RightNotebook #ToolPanelNotebook stack {
+    margin: 0;
+}
+
+#RightNotebook scrolledwindow {
+    padding: 0;
+}
+
+#Navigator border,
+#HistoryPanel border,
+#Snapshots border {
+    border: none;
+}
+
+#Navigator > label,
+#HistoryPanel > label,
+#Snapshots > label {
+    margin: 0;
+    padding: 0 0 0.25em 0;
+}
+
+#Snapshots scrolledwindow + box {
+    margin: -8px  0 -4px;
+    border-top-width: 0.083333333333333333em;
+}
+
+#Navigator box label {
+    margin: 0;
+    padding: 0;
+}
+
+/*** PartialPaste ******************************************************************************/
+#PartialPaste {
+    border-width: 0.083333333333333333em;
+    padding-top: 0.5em;
+    padding-bottom: 0.5em;
+}
+
+#PartialPaste separator.vertical {
+    margin: 0 0.333333333333333333em;
+    padding: 0;
+}
+
+#PartialPaste separator { /* Struggles with #PartialPasteHeaderSep */
+    margin: 0.166666666666666666em 0.5em 0.166666666666666666em 1.166666666666666666em;
+}
+#PartialPasteHeaderSep.horizontal {
+    margin: 0.166666666666666666em 0.5em;
+}
+
+/*
+#PartialPasteHeader label {
+}
+*/
+
+/* make the "partial profile" dialog a little bit more readable */
+#PartialPasteHeader {
+    margin: 1.5em 0 0 0;
+    padding: 0;
+    font-weight: bold;
+}
+
+#PartialPasteHeaderSep {
+    background-color: #7080d8;
+}
+
+/*** end ***************************************************************************************/
+
+
+/* All MyFileChooserButtons */
+button#MyFileChooserButton {
+    padding: 0.1666666666666666em;
+    margin: 0.1666666666666666em;
+}
+
+#ToolPanelNotebook button {
+    margin: 0;
+}
+
+button.flat {
+    background: none;
+    border: none;
+    outline: none;
+}
+
+button.flat:checked {
+    background: #111528;
+}
+
+.text-button, .image-button, .independent {
+    box-shadow: none;
+    min-height: 2em;
+    min-width: 2em;
+    padding: 0;
+}
+#MyExpander .text-button,
+#MyExpander .image-button,
+#MyExpander .independent,
+.MyExpanderSummary .text-button,
+.MyExpanderSummary .image-button,
+.MyExpanderSummary .independent {
+    min-height: 0;
+    min-width: 0;
+    padding: 0 4px;
+}
+
+/* Makes image-comboboxes (e.g. tone curve types) have same size as image buttons */
+combobox, .popupbutton-arrow {
+    min-height: 2em;
+}
+#MyExpander combobox,
+.MyExpanderSummary combobox {
+    min-height: 0;
+}
+#MyExpander combobox button.combo,
+.MyExpanderSummary combobox button.combo {
+    min-height: 0;
+    padding: 0 2px;
+}
+
+/* Visual divider between the icon and arrow in the pop-up button. */
+.image-combo button.Left {
+    border-right: solid 0.083333333333333333em #0c1020;
+}
+
+/* Makes image-combobox small icons centered */
+button.toggle > grid > image {
+    padding: 0.3333333333333333em;
+}
+
+#histButton {
+    background: none;
+    min-height: 1em;
+    min-width: 1em;
+}
+
+/* -gtk-icon-shadow looks buggy on the small histogram icons */
+#histButton:hover {
+    -gtk-icon-shadow: none;
+}
+
+.narrowbutton {
+    min-width: 0.8333333333333333em;
+}
+
+
+.smallbuttonbox button {
+    min-width: 1.3333333333333333em;
+    min-height: 1.3333333333333333em;
+}
+
+
+/* Adds gap between combobox contents and combobox edges */
+button.combo, .image-combo .toggle, #MyFileChooserButton {
+    padding-left: 0.3333333333333333em;
+    padding-right: 0.3333333333333333em;
+}
+
+/*** Progressbar *******************************************************************************/
+progressbar trough {
+    background-color: #1a1e38;
+    border: none;
+}
+
+progressbar progress {
+    border-color: #161a35;
+    /*border-radius: 0.25em;*/
+    background-color: #65e8a8;
+}
+/*** end ***************************************************************************************/
+
+/* Add padding to grid cells */
+
+.grid-spacing > * {
+    margin: 0.1666666666666666em;
+}

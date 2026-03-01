@@ -123,6 +123,28 @@ struct SaveFormat {
     bool saveParams;
 };
 
+struct WatermarkOptions {
+    bool enabled = false;
+    Glib::ustring text;
+    Glib::ustring fontFamily = "Sans";
+    int fontSize = 48;
+    bool fontBold = false;
+    bool fontItalic = false;
+    int sizeMode = 1;        // 0=fixed pt, 1=% of short edge
+    double sizePercent = 3.0;
+    double textR = 1, textG = 1, textB = 1, textA = 1;
+    double opacity = 1.0;
+    bool strokeEnabled = true;
+    double strokeR = 0, strokeG = 0, strokeB = 0, strokeA = 1;
+    double strokeWidth = 2.0;
+    bool shadowEnabled = false;
+    double shadowR = 0, shadowG = 0, shadowB = 0, shadowA = 0.5;
+    double shadowOffsetX = 3, shadowOffsetY = 3, shadowBlur = 3;
+    int position = 8;        // 0-8 (TL/TC/TR/CL/C/CR/BL/BC/BR), default BR
+    int marginX = 20, marginY = 20;
+    double rotation = 0;
+};
+
 enum ThFileType {FT_Invalid = -1, FT_None = 0, FT_Raw = 1, FT_Jpeg = 2, FT_Tiff = 3, FT_Png = 4, FT_Custom = 5, FT_Tiff16 = 6, FT_Png16 = 7, FT_Custom16 = 8};
 enum PPLoadLocation {PLL_Cache = 0, PLL_Input = 1};
 enum CPBKeyType {CPBKT_TID = 0, CPBKT_NAME = 1, CPBKT_TID_NAME = 2};
@@ -204,6 +226,7 @@ public:
 
     bool savesParamsAtExit;
     SaveFormat saveFormat, saveFormatBatch;
+    WatermarkOptions watermark;
     Glib::ustring savePathTemplate;
     Glib::ustring savePathFolder;
     bool saveUsePathTemplate;
@@ -339,6 +362,14 @@ public:
     bool overwriteOutputFile;
     int complexity;
     int spotmet;
+    bool toolPanelSoloMode;
+
+    enum UIComplexity {
+        UI_BEGINNER = 0,
+        UI_STANDARD = 1,
+        UI_EXPERT = 2
+    };
+    int uiComplexity;
 
     bool inspectorWindow; // open inspector in separate window
     bool zoomOnScroll;    // translate scroll events to zoom
@@ -434,6 +465,10 @@ public:
     Glib::ustring ICCPC_description;
     Glib::ustring ICCPC_copyright;
     bool ICCPC_appendParamsToDesc;
+
+    // AI Denoise (RawRefinery) paths
+    Glib::ustring rawrefineryPath;  // Path to rawrefinery_cli.py or rawrefinery_cli executable
+    Glib::ustring pythonPath;       // Path to python interpreter for rawrefinery
 
     // fast export options
     bool fastexport_bypass_sharpening;

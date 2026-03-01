@@ -36,6 +36,7 @@
 #include "refreshmap.h"
 #include "rt_math.h"
 #include "utils.h"
+#include "aidenoise.h"
 #include "iccstore.h"
 
 #include "rtgui/editcallbacks.h"
@@ -147,7 +148,6 @@ bool Crop::hasListener()
 void Crop::update(int todo)
 {
     MyMutex::MyLock cropLock(cropMutex);
-
     ProcParams& params = *parent->params;
 //       CropGUIListener* cropgl;
 
@@ -618,6 +618,15 @@ void Crop::update(int todo)
         if ((settings->leveldnautsimpl == 1 && params.dirpyrDenoise.Cmethod == "AUT")  || (settings->leveldnautsimpl == 0 && params.dirpyrDenoise.C2method == "AUTO")) { //reinit origCrop after Auto
             PreviewProps pp(trafx, trafy, trafw * skip, trafh * skip, skip);
             parent->imgsrc->getImage(parent->currWB, tr, origCrop, pp, params.toneCurve, params.raw);
+        }
+
+        // AI Denoise blending (uses cached result from subprocess)
+        if (params.aiDenoise.enabled && params.aiDenoise.blend > 0) {
+            auto& aidm = AIDenoiseManager::getInstance();
+            if (aidm.isCacheValid(parent->imgsrc->getFileName(), params.aiDenoise.isoConditioning)) {
+                ImProcFunctions::blendAIDenoise(origCrop, aidm.getCachedResult(),
+                    params.aiDenoise.blend / 100.0, trafx, trafy, skip);
+            }
         }
 
         if ((todo & M_SPOT) && params.spot.enabled && !params.spot.entries.empty()) {
@@ -1184,12 +1193,12 @@ void Crop::update(int todo)
                         loclmasCurve_wav,lmasutili_wav,
                         LHutili, HHutili, CHutili, HHutilijz, CHutilijz, LHutilijz, cclocalcurve2, localcutili, rgblocalcurve2, localrgbutili, localexutili, exlocalcurve2, hltonecurveloc2, shtonecurveloc2, tonecurveloc2, lightCurveloc2,
                         huerefblu, chromarefblu, lumarefblu, huere, chromare, lumare, sobelre, lastsav, 
-                        parent->previewDeltaE, parent->locallColorMask, parent->locallColorMaskinv, parent->locallExpMask, parent->locallExpMaskinv, parent->locallSHMask, parent->locallSHMaskinv, parent->locallvibMask,  parent->localllcMask, parent->locallsharMask, parent->locallcbMask, parent->locallretiMask, parent->locallsoftMask, parent->localltmMask, parent->locallblMask,
+                        parent->previewDeltaE, parent->showMaskOverlay, parent->locallColorMask, parent->locallColorMaskinv, parent->locallExpMask, parent->locallExpMaskinv, parent->locallSHMask, parent->locallSHMaskinv, parent->locallvibMask,  parent->localllcMask, parent->locallsharMask, parent->locallcbMask, parent->locallretiMask, parent->locallsoftMask, parent->localltmMask, parent->locallblMask,
                         parent->localllogMask, parent->locall_Mask, parent->locallcieMask, minCD, maxCD, mini, maxi, Tmean, Tsigma, Tmin, Tmax,
                         meantme, stdtme, meanretie, stdretie, fab, maxicam,rdx, rdy, grx, gry, blx, bly, meanx, meany, meanxe, meanye, maxdat, prim, ill, contsig, lightsig, slopeg, linkrgb,
                         resi, sharc, denocont, ghsbpwp, ghsbpwpvalue, savmadl, ghsbwslider, ghssym, ghsautsp, ghscolor, ghsmid, ghsmaxrgb, ghs3sig, michbwslider);
 
-                        if (parent->previewDeltaE || parent->locallColorMask == 5 || parent->locallvibMask == 4 || parent->locallExpMask == 5 || parent->locallSHMask == 4 || parent->localllcMask == 4 || parent->localltmMask == 4 || parent->localllogMask == 4 || parent->locallsoftMask == 6 || parent->localllcMask == 4 || parent->locallcieMask == 4) {
+                        if (parent->previewDeltaE || parent->showMaskOverlay || parent->locallColorMask == 5 || parent->locallvibMask == 4 || parent->locallExpMask == 5 || parent->locallSHMask == 4 || parent->localllcMask == 4 || parent->localltmMask == 4 || parent->localllogMask == 4 || parent->locallsoftMask == 6 || parent->localllcMask == 4 || parent->locallcieMask == 4) {
                             params.blackwhite.enabled = false;
                             params.colorToning.enabled = false;
                             params.rgbCurves.enabled = false;
@@ -1272,7 +1281,7 @@ void Crop::update(int todo)
                         locedgwavCurve, locedgwavutili,
                         loclmasCurve_wav,lmasutili_wav,
                         LHutili, HHutili, CHutili, HHutilijz, CHutilijz, LHutilijz, cclocalcurve2, localcutili, rgblocalcurve2, localrgbutili, localexutili, exlocalcurve2, hltonecurveloc2, shtonecurveloc2, tonecurveloc2, lightCurveloc2,
-                        huerefblu, chromarefblu, lumarefblu, huere, chromare, lumare, sobelre, lastsav, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        huerefblu, chromarefblu, lumarefblu, huere, chromare, lumare, sobelre, lastsav, false, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                         minCD, maxCD, mini, maxi, Tmean, Tsigma, Tmin, Tmax,
                         meantme, stdtme, meanretie, stdretie, fab, maxicam, rdx, rdy, grx, gry, blx, bly, meanx, meany, meanxe, meanye, maxdat, prim, ill, contsig, lightsig, slopeg, linkrgb,
                         resi, sharc, denocont, ghsbpwp, ghsbpwpvalue, savmadl, ghsbwslider, ghssym, ghsautsp, ghscolor, ghsmid, ghsmaxrgb, ghs3sig, michbwslider);
@@ -1391,6 +1400,8 @@ void Crop::update(int todo)
         if (params.colorToning.enabled && params.colorToning.method == "LabGrid") {
             parent->ipf.colorToningLabGrid(labnCrop, 0,labnCrop->W , 0, labnCrop->H, false);
         }
+
+        parent->ipf.colorGrading(labnCrop, 0, labnCrop->W, 0, labnCrop->H, false);
 
         parent->ipf.shadowsHighlights(labnCrop, params.sh.enabled, params.sh.lab,params.sh.highlights ,params.sh.shadows, params.sh.radius, skip, params.sh.htonalwidth, params.sh.stonalwidth);
         

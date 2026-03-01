@@ -168,6 +168,15 @@ Locallab::Locallab():
     Gtk::Separator* const separator = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
     panel->pack_start(*separator, false, false);
 
+    // Add "Show Mask" toggle button
+    showMaskOverlay_ = Gtk::manage(new Gtk::ToggleButton(M("TP_LOCALLAB_SHOW_MASK_OVERLAY")));
+    showMaskOverlay_->set_name("ShowMaskButton");
+    showMaskOverlay_->get_style_context()->add_class("toggle");
+    showMaskOverlayConn_ = showMaskOverlay_->signal_toggled().connect(
+        sigc::mem_fun(*this, &Locallab::showMaskOverlayChanged));
+    showMaskOverlay_->set_active(true);
+    panel->pack_start(*showMaskOverlay_, false, false);
+
     // Add tool list widget
     toollist->setLocallabToolListListener(this);
     panel->pack_start(*toollist, false, false);
@@ -187,12 +196,17 @@ Locallab::Locallab():
              expcbdl.getPreviewDeltaEButton(),
              explog.getPreviewDeltaEButton(),
              expmask.getPreviewDeltaEButton(),
+#ifdef RT_AI_MASKING
+             expaimask.getPreviewDeltaEButton(),
+#endif
              expcie.getPreviewDeltaEButton(),
          }) {
         if (button) {
             delta_e_preview_button_group.register_button(*button);
         }
     }
+    // Also register the Show Mask button for mutual exclusion
+    delta_e_preview_button_group.register_button(*showMaskOverlay_);
 
     // Add Locallab tools to panel widget
     ToolVBox* const toolpanel = Gtk::manage(new ToolVBox());
@@ -204,6 +218,9 @@ Locallab::Locallab():
     addTool(toolpanel, &expcie);
     addTool(toolpanel, &expexpose);
     addTool(toolpanel, &expmask);
+#ifdef RT_AI_MASKING
+    addTool(toolpanel, &expaimask);
+#endif
     addTool(toolpanel, &expsoft);
     addTool(toolpanel, &expblur);
     addTool(toolpanel, &exptonemap);
@@ -272,6 +289,8 @@ void Locallab::read(const rtengine::procparams::ProcParams* pp, const ParamsEdit
             r.shape = 0;
         } else if (pp->locallab.spots.at(i).shape == "RECT")  {
             r.shape = 1;
+        } else if (pp->locallab.spots.at(i).shape == "GRAD")  {
+            r.shape = 2;
         }
 
         if (pp->locallab.spots.at(i).prevMethod == "hide") {
@@ -332,6 +351,7 @@ void Locallab::read(const rtengine::procparams::ProcParams* pp, const ParamsEdit
         r.transit = pp->locallab.spots.at(i).transit;
         r.transitweak = pp->locallab.spots.at(i).transitweak;
         r.transitgrad = pp->locallab.spots.at(i).transitgrad;
+        r.gradangle = pp->locallab.spots.at(i).gradangle;
         r.feather = pp->locallab.spots.at(i).feather;
         r.struc = pp->locallab.spots.at(i).struc;
         r.thresh = pp->locallab.spots.at(i).thresh;
@@ -448,6 +468,8 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                 r.shape = 0;
             } else if (newSpot->shape == "RECT"){
                 r.shape = 1;
+            } else if (newSpot->shape == "GRAD"){
+                r.shape = 2;
             }
 
             if (newSpot->prevMethod == "hide") {
@@ -528,6 +550,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
             r.transit = newSpot->transit;
             r.transitweak = newSpot->transitweak;
             r.transitgrad = newSpot->transitgrad;
+            r.gradangle = newSpot->gradangle;
             r.feather = newSpot->feather;
             r.struc = newSpot->struc;
             r.thresh = newSpot->thresh;
@@ -779,6 +802,8 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                 r.shape = 0;
             } else if (newSpot->shape == "RECT"){
                 r.shape = 1;
+            } else if (newSpot->shape == "GRAD"){
+                r.shape = 2;
             }
 
             if (newSpot->prevMethod == "hide") {
@@ -869,6 +894,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
             r.transit = newSpot->transit;
             r.transitweak = newSpot->transitweak;
             r.transitgrad = newSpot->transitgrad;
+            r.gradangle = newSpot->gradangle;
             r.feather = newSpot->feather;
             r.struc = newSpot->struc;
             r.thresh = newSpot->thresh;
@@ -979,8 +1005,10 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
 
                     if (r->shape == 0) {
                         pp->locallab.spots.at(pp->locallab.selspot).shape = "ELI";
-                    } else {
+                    } else if (r->shape == 1) {
                         pp->locallab.spots.at(pp->locallab.selspot).shape = "RECT";
+                    } else {
+                        pp->locallab.spots.at(pp->locallab.selspot).shape = "GRAD";
                     }
 
                     if (r->prevMethod == 0) {
@@ -1042,6 +1070,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                     pp->locallab.spots.at(pp->locallab.selspot).transit = r->transit;
                     pp->locallab.spots.at(pp->locallab.selspot).transitweak = r->transitweak;
                     pp->locallab.spots.at(pp->locallab.selspot).transitgrad = r->transitgrad;
+                    pp->locallab.spots.at(pp->locallab.selspot).gradangle = r->gradangle;
                     pp->locallab.spots.at(pp->locallab.selspot).feather = r->feather;
                     pp->locallab.spots.at(pp->locallab.selspot).struc = r->struc;
                     pp->locallab.spots.at(pp->locallab.selspot).thresh = r->thresh;
@@ -1534,10 +1563,28 @@ void Locallab::refChanged(const std::vector<locallabRef> &ref, int selspot)
     }
 }
 */
+void Locallab::showMaskOverlayChanged()
+{
+    if (showMaskOverlay_->get_active()) {
+        // Deactivate per-tool mask views and deltaE previews
+        resetToolMaskView();
+        expsettings->resetDeltaEPreview();
+    }
+
+    if (listener) {
+        listener->panelChanged(EvlocallabshowmaskMethod, "");
+    }
+}
+
 void Locallab::resetMaskVisibility()
 {
     // Indicate to spot control panel that no more mask preview is active
     expsettings->setMaskPrevActive(false);
+
+    // Reset Show Mask Overlay toggle
+    showMaskOverlayConn_.block();
+    showMaskOverlay_->set_active(false);
+    showMaskOverlayConn_.unblock();
 
     // Reset deltaE preview
     expsettings->resetDeltaEPreview();
@@ -1591,7 +1638,7 @@ Locallab::llMaskVisibility Locallab::getMaskVisibility() const
                               (lcMask == 0) || (cbMask == 0) || (logMask == 0) || (maskMask == 0) || (cieMask == 0);
     expsettings->setMaskPrevActive(isMaskActive);
 
-    return {prevDeltaE, colorMask, colorMaskinv, expMask, expMaskinv, shMask, shMaskinv, vibMask, softMask, blMask, tmMask, retiMask, sharMask, lcMask, cbMask, logMask, maskMask, cieMask};
+    return {prevDeltaE, showMaskOverlay_->get_active(), colorMask, colorMaskinv, expMask, expMaskinv, shMask, shMaskinv, vibMask, softMask, blMask, tmMask, retiMask, sharMask, lcMask, cbMask, logMask, maskMask, cieMask};
 }
 
 //void Locallab::resetshowPressed()

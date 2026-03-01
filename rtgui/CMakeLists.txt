@@ -18,6 +18,7 @@ set(RT_GUI_TOOL_PANEL_SOURCES
     tools/cacorrection.cc
     tools/chmixer.cc
     tools/colorappearance.cc
+    tools/colorgrading.cc
     tools/colortoning.cc
     tools/compressgamut.cc
     tools/crop.cc
@@ -36,6 +37,8 @@ set(RT_GUI_TOOL_PANEL_SOURCES
     tools/gradient.cc
     tools/hsvequalizer.cc
     tools/icmpanel.cc
+    tools/pointcolor.cc
+    tools/aidenoise.cc
     tools/impulsedenoise.cc
     tools/labcurve.cc
     tools/lensgeom.cc
@@ -44,6 +47,7 @@ set(RT_GUI_TOOL_PANEL_SOURCES
     tools/locallab.cc
     tools/locallabtools.cc
     tools/locallabtools2.cc
+    tools/locallabaimask.cc
     tools/pcvignette.cc
     tools/pdsharpening.cc
     tools/perspective.cc
@@ -80,6 +84,7 @@ set(RT_GUI_WIDGET_SOURCES
     widgets/basic/checkbox.cc
     widgets/basic/coloredbar.cc
     widgets/basic/colorpreview.cc
+    widgets/basic/colorwheel.cc
     widgets/basic/coordinateadjuster.cc
     widgets/basic/lwbutton.cc
     widgets/basic/lwbuttonset.cc
@@ -101,7 +106,9 @@ set(RT_GUI_WIDGET_SOURCES
 
 set(RT_GUI_WINDOWS_SOURCES
     windows/editwindow.cc
+    windows/historydialog.cc
     windows/iccprofilecreator.cc
+    windows/navigatordialog.cc
     windows/partialpastedlg.cc
     windows/preferences.cc
     windows/renamedlg.cc
@@ -112,6 +119,7 @@ set(RT_GUI_WINDOWS_SOURCES
 )
 
 set(NONCLISOURCEFILES
+    albumbrowser.cc
     alignedmalloc.cc
     aspectratios.cc
     batchqueue.cc
@@ -161,6 +169,7 @@ set(NONCLISOURCEFILES
     lockablecolorpicker.cc
     main.cc
     metadatapanel.cc
+    modebuttonbar.cc
     multilangmgr.cc
     navigator.cc
     options.cc
@@ -171,6 +180,7 @@ set(NONCLISOURCEFILES
     previewloader.cc
     previewmodepanel.cc
     previewwindow.cc
+    presetlistpanel.cc
     profilepanel.cc
     profilestorecombobox.cc
     recentbrowser.cc
@@ -178,6 +188,8 @@ set(NONCLISOURCEFILES
     rtscalable.cc
     rtsurface.cc
     saveformatpanel.cc
+    watermarkpanel.cc
+    watermarkrenderer.cc
     soundman.cc
     threadutils.cc
     thumbbrowserbase.cc

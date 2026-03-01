@@ -19,17 +19,25 @@
  */
 #pragma once
 
+#include "albumbrowser.h"
+#include "browserfilter.h"
 #include "extprog.h"
 #include "histogrampanel.h"
 #include "history.h"
 #include "imageareapanel.h"
-#include "profilepanel.h"
+#include "presetlistpanel.h"
 #include "progressconnector.h"
 #include "thumbnaillistener.h"
 #include "windows/saveasdlg.h"
+#include "windows/navigatordialog.h"
+#include "windows/historydialog.h"
 
 #include "rtengine/noncopyable.h"
 #include "rtengine/rtengine.h"
+
+#include <atomic>
+#include <map>
+#include <memory>
 
 #include <gtkmm.h>
 
@@ -42,11 +50,16 @@ class array2D;
 using ExternalEditorChangedSignal = sigc::signal<void>;
 
 class BatchQueueEntry;
+class DirBrowser;
 class EditorPanel;
 class FilePanel;
+class IndicateClippedPanel;
 class MyProgressBar;
 class Navigator;
+class PlacesBrowser;
 class PopUpButton;
+class PreviewModePanel;
+class RecentBrowser;
 class RTAppChooserDialog;
 class Thumbnail;
 class ToolPanelCoordinator;
@@ -88,6 +101,13 @@ public:
     void setParentWindow (Gtk::Window* p)
     {
         parentWindow = p;
+
+        if (p && navigator && !navigatorDialog_) {
+            navigatorDialog_ = new NavigatorDialog(*p, navigator);
+        }
+        if (p && history && !historyDialog_) {
+            historyDialog_ = new HistoryDialog(*p, history);
+        }
     }
 
     void writeOptions();
@@ -194,6 +214,27 @@ public:
     {
         return isProcessing;
     }
+    void signalStopProcessing()
+    {
+        if (ipc) {
+            ipc->signalStop();
+        }
+    }
+    PreviewModePanel* getPreviewModePanel();
+    IndicateClippedPanel* getIndicateClippedPanel();
+    Gtk::ToggleButton* getToggleHistogramProfile() { return toggleHistogramProfile; }
+
+    // Color management accessors (delegated to ColorManagementToolbar)
+    int getRenderingIntent () const;
+    void setRenderingIntent (int i);
+    bool getSoftProofing () const;
+    void setSoftProofing (bool a);
+    bool getGamutCheck () const;
+    void setGamutCheck (bool a);
+    int getMonitorProfileIndex () const;
+    void setMonitorProfileIndex (int i);
+    int getMonitorProfileCount () const;
+    Glib::ustring getMonitorProfileName (int i) const;
     void updateExternalEditorWidget(int selectedIndex, const std::vector<ExternalEditor> &editors);
     void updateProfiles (const Glib::ustring &printerProfile, rtengine::RenderingIntent printerIntent, bool printerBPC);
     void updateTPVScrollbar (bool hide);
@@ -205,9 +246,36 @@ public:
 
     bool saveImmediately (const Glib::ustring &filename, const SaveFormat &sf);
 
+    void showNavigatorDialog();
+    void showHistoryDialog();
+
     Gtk::Paned* catalogPane;
 
 private:
+    Gtk::Box* filmstripActionBar;
+    Gtk::Button* filmstripRankBtns[5];
+    int filmstripCurrentRating;
+    void updateFilmstripStars(int highlightUpTo);
+
+    // Filter bar
+    Gtk::ToggleButton* tbFilterBar;
+    Gtk::Revealer* filterBarRevealer;
+    Gtk::ToggleButton* fbUnRanked;
+    Gtk::ToggleButton* fbRank[5];
+    Gtk::ToggleButton* fbUnCLabeled;
+    Gtk::ToggleButton* fbCLabel[5];
+    Gtk::ToggleButton* fbEdited[2];
+    Gtk::ToggleButton* fbRecentlySaved[2];
+    Gtk::Button* fbClearAll;
+    Gtk::Entry* fbSearchEntry;
+    bool filterBarBlockSignals;
+
+    void filterBarToggled();
+    void filterBarChanged();
+    void filterBarClearAll();
+    void applyEditorFilter();
+    BrowserFilter buildEditorFilter();
+
     void close ();
 
     BatchQueueEntry*    createBatchQueueEntry ();
@@ -225,7 +293,6 @@ private:
     bool realized;
 
     MyProgressBar  *progressLabel;
-    Gtk::ToggleButton* info;
     Gtk::ToggleButton* hidehp;
     Gtk::ToggleButton* tbShowHideSidePanels;
     Gtk::ToggleButton* tbTopPanel_1;
@@ -233,8 +300,7 @@ private:
     Gtk::ToggleButton* tbBeforeLock;
     //bool bAllSidePanelsVisible;
     Gtk::ToggleButton* beforeAfter;
-    Gtk::Paned* hpanedl;
-    Gtk::Paned* hpanedr;
+    Gtk::Overlay* hpanedr;
     Gtk::Image *iHistoryShow, *iHistoryHide;
     Gtk::Image *iTopPanel_1_Show, *iTopPanel_1_Hide;
     Gtk::Image *iRightPanel_1_Show, *iRightPanel_1_Hide;
@@ -242,9 +308,44 @@ private:
     Gtk::Image *iShowHideSidePanels_exit;
     Gtk::Image *iBeforeLockON, *iBeforeLockOFF;
     Gtk::Paned *leftbox;
-    Gtk::Paned *leftsubpaned;
-    Gtk::Paned *vboxright;
+    Gtk::Overlay* editOverlay_;
+    NavigatorDialog* navigatorDialog_;
+    HistoryDialog* historyDialog_;
+    PlacesBrowser* editorPlacesBrowser_;
+    RecentBrowser* editorRecentBrowser_;
+    DirBrowser* editorDirBrowser_;
+    AlbumBrowser* albumBrowser_;
+    Gtk::Box* editorPlacesPaned_;
+
+    std::set<std::string> currentAlbumWhitelist_;
+    void onAlbumSelected (const std::set<std::string>& whitelist);
+    void onAlbumViewRequested (const Glib::ustring& albumName, const std::vector<Glib::ustring>& files);
+    void addCurrentImageToTargetAlbum ();
+
+    // Album grid view
+    Gtk::Stack* albumViewStack_;
+    Gtk::Box* albumViewBox_;
+    Gtk::Box* albumViewHeader_;
+    Gtk::Label* albumNameLabel_;
+    Gtk::Label* albumCountLabel_;
+    Gtk::ScrolledWindow* albumViewScrolled_;
+    Gtk::FlowBox* albumViewGrid_;
+    Glib::ustring currentAlbumViewName_;
+    std::vector<Glib::ustring> currentAlbumFiles_;
+    int albumViewSession_;
+    bool albumViewBuilt_; // true if grid is populated and ready to show
+    Gtk::ToggleButton* tbAlbumView_;
+    sigc::connection albumViewToggleConn_;
+    std::map<std::string, Glib::RefPtr<Gdk::Pixbuf>> albumThumbCache_;
+    void showAlbumView (const Glib::ustring& albumName, const std::vector<Glib::ustring>& files);
+    void hideAlbumView ();
+    void toggleAlbumView ();
+    void loadAlbumThumbnails (int session, const std::vector<Glib::ustring>& files);
+
+    Gtk::Box *vboxright;
     Gtk::Box *vsubboxright;
+    Gtk::Box *histogramRow_;
+    Gtk::Label *exifInfo;
 
     Gtk::Button* queueimg;
     Gtk::Button* saveimgas;
@@ -279,8 +380,7 @@ private:
     Gtk::Box* afterHeaderBox;
     Gtk::ToggleButton* toggleHistogramProfile;
 
-    Gtk::Frame* ppframe;
-    ProfilePanel* profilep;
+    PresetListPanel* presetListPanel;
     History* history;
     HistogramPanel* histogramPanel;
     ToolPanelCoordinator* tpc;
@@ -311,6 +411,10 @@ private:
     bool isProcessing;
 
     IdleRegister idle_register;
+
+    // Cancellation token for async placeholder thumbnail generation.
+    // Set to true in close()/destructor to prevent stale callbacks.
+    std::shared_ptr<std::atomic<bool>> placeholderCancel_;
 
     rtengine::HistogramObservable* histogram_observable;
     Options::ScopeType histogram_scope_type;

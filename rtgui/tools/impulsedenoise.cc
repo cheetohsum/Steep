@@ -35,10 +35,12 @@ ImpulseDenoise::ImpulseDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_IMP
 
     thresh = Gtk::manage (new Adjuster (M("TP_IMPULSEDENOISE_THRESH"), 0, 100, 1, 50));
 
-    pack_start (*thresh);
+    getSummaryBox()->pack_start (*thresh);
 
     thresh->setAdjusterListener (this);
 
+    setExpandable(false);
+    getSummaryBox()->show_all();
     show_all_children ();
 }
 
@@ -85,6 +87,7 @@ void ImpulseDenoise::setDefaults (const ProcParams* defParams, const ParamsEdite
 
 void ImpulseDenoise::adjusterChanged(Adjuster* a, double newval)
 {
+    autoEnable();
     if (listener && getEnabled()) {
         listener->panelChanged (EvIDNThresh, Glib::ustring::format (std::setw(2), std::fixed, std::setprecision(1), a->getValue()));
     }

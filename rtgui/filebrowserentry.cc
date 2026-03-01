@@ -137,25 +137,8 @@ void FileBrowserEntry::calcThumbnailSize ()
 
 std::vector<std::shared_ptr<RTSurface>> FileBrowserEntry::getIconsOnImageArea ()
 {
-    if (!thumbnail) {
-        return {};
-    }
-
-    std::vector<std::shared_ptr<RTSurface>> ret;
-
-    if (thumbnail->hasProcParams() && editedIcon) {
-        ret.push_back(editedIcon);
-    }
-
-    if (thumbnail->isRecentlySaved() && recentlySavedIcon) {
-        ret.push_back(recentlySavedIcon);
-    }
-
-    if (thumbnail->isEnqueued () && enqueuedIcon) {
-        ret.push_back(enqueuedIcon);
-    }
-
-    return ret;
+    // Icons (checkmarks etc.) removed from thumbnail overlay for cleaner look
+    return {};
 }
 
 std::vector<std::shared_ptr<RTSurface>> FileBrowserEntry::getSpecificityIconsOnImageArea ()

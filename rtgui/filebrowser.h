@@ -64,11 +64,16 @@ class FileBrowser final : public ThumbBrowserBase,
 {
 private:
     typedef sigc::signal<void> type_trash_changed;
+    typedef sigc::signal<void> type_save_image_requested;
 
     using ThumbBrowserBase::redrawNeeded;
 
     IdleRegister idle_register;
     unsigned int session_id_;
+
+    std::vector<ThumbBrowserEntryBase*> pendingDeletion_;
+    sigc::connection deletionConnection_;
+    bool onDeletionIdle_();
 
 protected:
     Gtk::MenuItem* rank[6];
@@ -77,6 +82,7 @@ protected:
     Gtk::MenuItem* untrash;
     Gtk::MenuItem* develop;
     Gtk::MenuItem* developfast;
+    Gtk::MenuItem* saveImage;
     Gtk::MenuItem* rename;
     Gtk::MenuItem* remove;
     Gtk::MenuItem* removeInclProc;
@@ -138,14 +144,13 @@ protected:
     void sortOrderRequested (int order);
     void rankingRequested   (std::vector<FileBrowserEntry*> tbe, int rank);
     void colorlabelRequested   (std::vector<FileBrowserEntry*> tbe, int colorlabel);
-    void requestRanking (int rank);
-    void requestColorLabel(int colorlabel);
     void notifySelectionListener ();
     void openRequested( std::vector<FileBrowserEntry*> mselected);
     void inspectRequested( std::vector<FileBrowserEntry*> mselected);
     ExportPanel* exportPanel;
 
     type_trash_changed m_trash_changed;
+    type_save_image_requested m_save_image_requested;
 
 public:
     FileBrowser ();
@@ -194,6 +199,10 @@ public:
         return tbl ? tbl->isInTabMode() : false;
     }
 
+    void requestRanking (int rank);
+    void requestColorLabel(int colorlabel);
+    void requestDevelop();
+
     void openNextImage();
     void openPrevImage();
     void selectImage(const Glib::ustring& fname, bool doScroll = true);
@@ -220,4 +229,5 @@ public:
     void restoreValue() override;
 
     type_trash_changed trash_changed();
+    type_save_image_requested save_image_requested();
 };

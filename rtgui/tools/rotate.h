@@ -32,7 +32,6 @@ class Rotate final :
 
 protected:
     Adjuster*           degree;
-    Gtk::Button*        selectStraight;
     LensGeomListener*   rlistener;
 
 public:
@@ -50,7 +49,6 @@ public:
     void adjusterChanged        (Adjuster* a, double newval) override;
     void setAdjusterBehavior    (bool rotadd);
     void trimValues             (rtengine::procparams::ProcParams* pp) override;
-    void selectStraightPressed  ();
     void setLensGeomListener    (LensGeomListener* l)
     {
         rlistener = l;

@@ -534,6 +534,10 @@ void CropWindow::buttonPress (int button, int type, int bstate, int x, int y)
                         int spotx, spoty;
                         screenCoordToImage (x, y, spotx, spoty);
                         iarea->spotWBSelected (spotx, spoty);
+                    } else if (iarea->getToolMode () == TMPointColorPick) {
+                        int spotx, spoty;
+                        screenCoordToImage (x, y, spotx, spoty);
+                        iarea->pointColorSelected (spotx, spoty);
                     } else if (iarea->getToolMode () == TMCropSelect && cropgl) {
                         state = SCropSelecting;
                         screenCoordToImage (x, y, press_x, press_y);
@@ -928,6 +932,10 @@ void CropWindow::pointerMoved (int bstate, int x, int y)
         action_y = y;
         iarea->redraw ();
     } else if (state == SNormal && iarea->getToolMode () == TMSpotWB) {
+        action_x = x;
+        action_y = y;
+        iarea->redraw ();
+    } else if (state == SNormal && iarea->getToolMode () == TMPointColorPick) {
         action_x = x;
         action_y = y;
         iarea->redraw ();
@@ -1403,6 +1411,8 @@ void CropWindow::updateCursor (int x, int y)
                 }
             } else if (tm == TMSpotWB) {
                 newType = CSSpotWB;
+            } else if (tm == TMPointColorPick) {
+                newType = CSPointColorPick;
             } else if (tm == TMCropSelect) {
                 newType = CSCropSelect;
             } else if (tm == TMStraighten) {
@@ -2122,6 +2132,8 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
             drawUnscaledSpotRectangle (cr, iarea->getPipetteRectSize ());
         } else if (iarea->getToolMode () == TMSpotWB) {
             drawScaledSpotRectangle (cr, iarea->getSpotWBRectSize ());
+        } else if (iarea->getToolMode () == TMPointColorPick) {
+            drawScaledSpotRectangle (cr, 3);
         }
     }
 

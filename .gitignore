@@ -21,6 +21,9 @@ install_manifest.txt
 
 build*
 cmake-build*
+install/
+NUL
+__pycache__/
 Build*
 Debug
 RelWithDebInfo

@@ -381,10 +381,10 @@ void Options::setDefaults()
     dirBrowserSortType = Gtk::SORT_ASCENDING;
     preferencesWidth = 800;
     preferencesHeight = 600;
-    toolPanelWidth = 400;
+    toolPanelWidth = 330;
     browserToolPanelWidth = 465;
     browserToolPanelHeight = 600;
-    browserToolPanelOpened = true;;
+    browserToolPanelOpened = false;
     browserDirPanelOpened = true;
     editorFilmStripOpened = true;
     historyPanelWidth = 330;
@@ -424,7 +424,7 @@ void Options::setDefaults()
     sameThumbSize = false;               // preferring speed of switch between file browser and single editor tab
     showHistory = true;
     showFilePanelState = 0;             // Not used anymore ; was the thumb strip state
-    showInfo = true;
+    showInfo = false;
     cropPPI = 600;
     showClippedHighlights = false;
     showClippedShadows = false;
@@ -485,12 +485,12 @@ void Options::setDefaults()
     overlayedFileNames = false;
     filmStripOverlayedFileNames = false;
     internalThumbIfUntouched = true;    // if TRUE, only fast, internal preview images are taken if the image is not edited yet
-    showFileNames = true;
+    showFileNames = false;
     filmStripShowFileNames = false;
     tabbedUI = false;
     mainNBVertical = true;
     multiDisplayMode = 0;
-    histogramPosition = 1;
+    histogramPosition = 2;
     histogramRed = true;
     histogramGreen = true;
     histogramBlue = true;
@@ -505,6 +505,8 @@ void Options::setDefaults()
     curvebboxpos = 1;
     complexity = 2;
     spotmet = 0;
+    toolPanelSoloMode = false;
+    uiComplexity = Options::UI_EXPERT;
 
     inspectorWindow = false;
     zoomOnScroll = true;
@@ -552,6 +554,9 @@ void Options::setDefaults()
     ICCPC_description = "";
     ICCPC_copyright = Options::getICCProfileCopyright();
     ICCPC_appendParamsToDesc = false;
+
+    rawrefineryPath = "";
+    pythonPath = "";
 
     clutsDir = "./cluts";
 
@@ -1192,6 +1197,102 @@ void Options::readFromFile(Glib::ustring fname)
                 }
             }
 
+            if (keyFile.has_group("Watermark")) {
+                if (keyFile.has_key("Watermark", "Enabled")) {
+                    watermark.enabled = keyFile.get_boolean("Watermark", "Enabled");
+                }
+                if (keyFile.has_key("Watermark", "Text")) {
+                    watermark.text = keyFile.get_string("Watermark", "Text");
+                }
+                if (keyFile.has_key("Watermark", "FontFamily")) {
+                    watermark.fontFamily = keyFile.get_string("Watermark", "FontFamily");
+                }
+                if (keyFile.has_key("Watermark", "FontSize")) {
+                    watermark.fontSize = keyFile.get_integer("Watermark", "FontSize");
+                }
+                if (keyFile.has_key("Watermark", "FontBold")) {
+                    watermark.fontBold = keyFile.get_boolean("Watermark", "FontBold");
+                }
+                if (keyFile.has_key("Watermark", "FontItalic")) {
+                    watermark.fontItalic = keyFile.get_boolean("Watermark", "FontItalic");
+                }
+                if (keyFile.has_key("Watermark", "SizeMode")) {
+                    watermark.sizeMode = keyFile.get_integer("Watermark", "SizeMode");
+                }
+                if (keyFile.has_key("Watermark", "SizePercent")) {
+                    watermark.sizePercent = keyFile.get_double("Watermark", "SizePercent");
+                }
+                if (keyFile.has_key("Watermark", "TextR")) {
+                    watermark.textR = keyFile.get_double("Watermark", "TextR");
+                }
+                if (keyFile.has_key("Watermark", "TextG")) {
+                    watermark.textG = keyFile.get_double("Watermark", "TextG");
+                }
+                if (keyFile.has_key("Watermark", "TextB")) {
+                    watermark.textB = keyFile.get_double("Watermark", "TextB");
+                }
+                if (keyFile.has_key("Watermark", "TextA")) {
+                    watermark.textA = keyFile.get_double("Watermark", "TextA");
+                }
+                if (keyFile.has_key("Watermark", "Opacity")) {
+                    watermark.opacity = keyFile.get_double("Watermark", "Opacity");
+                }
+                if (keyFile.has_key("Watermark", "StrokeEnabled")) {
+                    watermark.strokeEnabled = keyFile.get_boolean("Watermark", "StrokeEnabled");
+                }
+                if (keyFile.has_key("Watermark", "StrokeR")) {
+                    watermark.strokeR = keyFile.get_double("Watermark", "StrokeR");
+                }
+                if (keyFile.has_key("Watermark", "StrokeG")) {
+                    watermark.strokeG = keyFile.get_double("Watermark", "StrokeG");
+                }
+                if (keyFile.has_key("Watermark", "StrokeB")) {
+                    watermark.strokeB = keyFile.get_double("Watermark", "StrokeB");
+                }
+                if (keyFile.has_key("Watermark", "StrokeA")) {
+                    watermark.strokeA = keyFile.get_double("Watermark", "StrokeA");
+                }
+                if (keyFile.has_key("Watermark", "StrokeWidth")) {
+                    watermark.strokeWidth = keyFile.get_double("Watermark", "StrokeWidth");
+                }
+                if (keyFile.has_key("Watermark", "ShadowEnabled")) {
+                    watermark.shadowEnabled = keyFile.get_boolean("Watermark", "ShadowEnabled");
+                }
+                if (keyFile.has_key("Watermark", "ShadowR")) {
+                    watermark.shadowR = keyFile.get_double("Watermark", "ShadowR");
+                }
+                if (keyFile.has_key("Watermark", "ShadowG")) {
+                    watermark.shadowG = keyFile.get_double("Watermark", "ShadowG");
+                }
+                if (keyFile.has_key("Watermark", "ShadowB")) {
+                    watermark.shadowB = keyFile.get_double("Watermark", "ShadowB");
+                }
+                if (keyFile.has_key("Watermark", "ShadowA")) {
+                    watermark.shadowA = keyFile.get_double("Watermark", "ShadowA");
+                }
+                if (keyFile.has_key("Watermark", "ShadowOffsetX")) {
+                    watermark.shadowOffsetX = keyFile.get_double("Watermark", "ShadowOffsetX");
+                }
+                if (keyFile.has_key("Watermark", "ShadowOffsetY")) {
+                    watermark.shadowOffsetY = keyFile.get_double("Watermark", "ShadowOffsetY");
+                }
+                if (keyFile.has_key("Watermark", "ShadowBlur")) {
+                    watermark.shadowBlur = keyFile.get_double("Watermark", "ShadowBlur");
+                }
+                if (keyFile.has_key("Watermark", "Position")) {
+                    watermark.position = keyFile.get_integer("Watermark", "Position");
+                }
+                if (keyFile.has_key("Watermark", "MarginX")) {
+                    watermark.marginX = keyFile.get_integer("Watermark", "MarginX");
+                }
+                if (keyFile.has_key("Watermark", "MarginY")) {
+                    watermark.marginY = keyFile.get_integer("Watermark", "MarginY");
+                }
+                if (keyFile.has_key("Watermark", "Rotation")) {
+                    watermark.rotation = keyFile.get_double("Watermark", "Rotation");
+                }
+            }
+
             if (keyFile.has_group("Profiles")) {
                 if (keyFile.has_key("Profiles", "Directory")) {
                     profilePath = keyFile.get_string("Profiles", "Directory");
@@ -1797,6 +1898,14 @@ void Options::readFromFile(Glib::ustring fname)
                     spotmet = keyFile.get_integer("GUI", "Spotmet");
                 }
 
+                if (keyFile.has_key("GUI", "ToolPanelSoloMode")) {
+                    toolPanelSoloMode = keyFile.get_boolean("GUI", "ToolPanelSoloMode");
+                }
+
+                if (keyFile.has_key("GUI", "UIComplexity")) {
+                    uiComplexity = keyFile.get_integer("GUI", "UIComplexity");
+                }
+
                 if (keyFile.has_key("GUI", "InspectorWindow")) {
                     inspectorWindow = keyFile.get_boolean("GUI", "InspectorWindow");
                 }
@@ -2126,6 +2235,16 @@ void Options::readFromFile(Glib::ustring fname)
 
                 if (keyFile.has_key("ICC Profile Creator", "AppendParamsToDesc")) {
                     ICCPC_appendParamsToDesc = keyFile.get_boolean("ICC Profile Creator", "AppendParamsToDesc");
+                }
+            }
+
+            if (keyFile.has_group("AI Denoise")) {
+                if (keyFile.has_key("AI Denoise", "RawRefineryPath")) {
+                    rawrefineryPath = keyFile.get_string("AI Denoise", "RawRefineryPath");
+                }
+
+                if (keyFile.has_key("AI Denoise", "PythonPath")) {
+                    pythonPath = keyFile.get_string("AI Denoise", "PythonPath");
                 }
             }
 
@@ -2587,6 +2706,39 @@ void Options::saveToFile(Glib::ustring fname)
         keyFile.set_boolean("Output", "TiffUncompressedBatch", saveFormatBatch.tiffUncompressed);
         keyFile.set_boolean("Output", "SaveProcParamsBatch", saveFormatBatch.saveParams);
 
+        // Watermark
+        keyFile.set_boolean("Watermark", "Enabled", watermark.enabled);
+        keyFile.set_string("Watermark", "Text", watermark.text);
+        keyFile.set_string("Watermark", "FontFamily", watermark.fontFamily);
+        keyFile.set_integer("Watermark", "FontSize", watermark.fontSize);
+        keyFile.set_boolean("Watermark", "FontBold", watermark.fontBold);
+        keyFile.set_boolean("Watermark", "FontItalic", watermark.fontItalic);
+        keyFile.set_integer("Watermark", "SizeMode", watermark.sizeMode);
+        keyFile.set_double("Watermark", "SizePercent", watermark.sizePercent);
+        keyFile.set_double("Watermark", "TextR", watermark.textR);
+        keyFile.set_double("Watermark", "TextG", watermark.textG);
+        keyFile.set_double("Watermark", "TextB", watermark.textB);
+        keyFile.set_double("Watermark", "TextA", watermark.textA);
+        keyFile.set_double("Watermark", "Opacity", watermark.opacity);
+        keyFile.set_boolean("Watermark", "StrokeEnabled", watermark.strokeEnabled);
+        keyFile.set_double("Watermark", "StrokeR", watermark.strokeR);
+        keyFile.set_double("Watermark", "StrokeG", watermark.strokeG);
+        keyFile.set_double("Watermark", "StrokeB", watermark.strokeB);
+        keyFile.set_double("Watermark", "StrokeA", watermark.strokeA);
+        keyFile.set_double("Watermark", "StrokeWidth", watermark.strokeWidth);
+        keyFile.set_boolean("Watermark", "ShadowEnabled", watermark.shadowEnabled);
+        keyFile.set_double("Watermark", "ShadowR", watermark.shadowR);
+        keyFile.set_double("Watermark", "ShadowG", watermark.shadowG);
+        keyFile.set_double("Watermark", "ShadowB", watermark.shadowB);
+        keyFile.set_double("Watermark", "ShadowA", watermark.shadowA);
+        keyFile.set_double("Watermark", "ShadowOffsetX", watermark.shadowOffsetX);
+        keyFile.set_double("Watermark", "ShadowOffsetY", watermark.shadowOffsetY);
+        keyFile.set_double("Watermark", "ShadowBlur", watermark.shadowBlur);
+        keyFile.set_integer("Watermark", "Position", watermark.position);
+        keyFile.set_integer("Watermark", "MarginX", watermark.marginX);
+        keyFile.set_integer("Watermark", "MarginY", watermark.marginY);
+        keyFile.set_double("Watermark", "Rotation", watermark.rotation);
+
         keyFile.set_string("Output", "PathTemplate", savePathTemplate);
         keyFile.set_string("Output", "PathFolder", savePathFolder);
         keyFile.set_boolean("Output", "AutoSuffix", autoSuffix);
@@ -2684,6 +2836,8 @@ void Options::saveToFile(Glib::ustring fname)
         keyFile.set_boolean("GUI", "Showtooltip", showtooltip);
         keyFile.set_integer("GUI", "Complexity", complexity);
         keyFile.set_integer("GUI", "Spotmet", spotmet);
+        keyFile.set_boolean("GUI", "ToolPanelSoloMode", toolPanelSoloMode);
+        keyFile.set_integer("GUI", "UIComplexity", uiComplexity);
         keyFile.set_boolean("GUI", "InspectorWindow", inspectorWindow);
         keyFile.set_boolean("GUI", "ZoomOnScroll", zoomOnScroll);
         keyFile.set_integer("GUI", "MaxZoom", static_cast<int>(maxZoomLimit));
@@ -2769,6 +2923,8 @@ void Options::saveToFile(Glib::ustring fname)
         keyFile.set_string("ICC Profile Creator", "Copyright", ICCPC_copyright);
         keyFile.set_boolean("ICC Profile Creator", "AppendParamsToDesc", ICCPC_appendParamsToDesc);
 
+        keyFile.set_string("AI Denoise", "RawRefineryPath", rawrefineryPath);
+        keyFile.set_string("AI Denoise", "PythonPath", pythonPath);
 
         Glib::ArrayHandle<int> bab = baBehav;
         keyFile.set_integer_list("Batch Processing", "AdjusterBehavior", bab);

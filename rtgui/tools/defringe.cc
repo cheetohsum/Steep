@@ -63,11 +63,16 @@ Defringe::Defringe () : FoldableToolPanel(this, TOOL_NAME, M("TP_DEFRINGE_LABEL"
 // radius->show();
 // threshold->show();
 
-    pack_start (*radius);
-    pack_start (*threshold);
+    getSummaryBox()->pack_start (*radius);
+    getSummaryBox()->pack_start (*threshold);
+    getSummaryBox()->show_all();
     curveEditorPF->curveListComplete();
 
-    pack_start (*curveEditorPF, Gtk::PACK_SHRINK, 4);
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
+
+    advBox->pack_start (*curveEditorPF, Gtk::PACK_SHRINK, 4);
 
 }
 
@@ -162,6 +167,7 @@ void Defringe::curveChanged ()
 
 void Defringe::adjusterChanged(Adjuster* a, double newval)
 {
+    autoEnable();
     if (listener && getEnabled()) {
 
         if (a == radius) {
@@ -192,4 +198,5 @@ void Defringe::setBatchMode (bool batchMode)
     ToolPanel::setBatchMode (batchMode);
     radius->showEditedCB ();
     threshold->showEditedCB ();
+    advancedSection->setBatchMode(batchMode);
 }

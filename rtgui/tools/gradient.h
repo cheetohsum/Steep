@@ -28,6 +28,7 @@ protected:
     Adjuster* strength;
     Adjuster* centerX;
     Adjuster* centerY;
+    AdvancedSection* advancedSection;
     double draggedPointOldAngle;
     double draggedPointAdjusterAngle;
     double draggedFeatherOffset;

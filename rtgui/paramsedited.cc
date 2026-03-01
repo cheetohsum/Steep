@@ -430,6 +430,10 @@ void ParamsEdited::set(bool v)
     defringe.huecurve          = v;
     impulseDenoise.enabled     = v;
     impulseDenoise.thresh      = v;
+    aiDenoise.enabled          = v;
+    aiDenoise.isoConditioning  = v;
+    aiDenoise.blend            = v;
+    aiDenoise.useGpu           = v;
     dirpyrDenoise.enabled      = v;
     dirpyrDenoise.enhance      = v;
 //  dirpyrDenoise.perform      = v;
@@ -899,6 +903,27 @@ void ParamsEdited::set(bool v)
     hsvequalizer.hcurve = v;
     hsvequalizer.scurve = v;
     hsvequalizer.vcurve = v;
+    hsvequalizer.mode = v;
+    hsvequalizer.hueShifts = v;
+    hsvequalizer.satShifts = v;
+    hsvequalizer.lumShifts = v;
+    colorGrading.enabled = v;
+    colorGrading.shadowsHue = v;
+    colorGrading.shadowsSat = v;
+    colorGrading.shadowsLum = v;
+    colorGrading.midtonesHue = v;
+    colorGrading.midtonesSat = v;
+    colorGrading.midtonesLum = v;
+    colorGrading.highlightsHue = v;
+    colorGrading.highlightsSat = v;
+    colorGrading.highlightsLum = v;
+    colorGrading.globalHue = v;
+    colorGrading.globalSat = v;
+    colorGrading.globalLum = v;
+    colorGrading.blending = v;
+    colorGrading.balance = v;
+    pointcolor.enabled = v;
+    pointcolor.targets = v;
     filmSimulation.enabled = v;
     filmSimulation.clutFilename = v;
     filmSimulation.strength = v;
@@ -1211,6 +1236,11 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         impulseDenoise.enabled = impulseDenoise.enabled && p.impulseDenoise.enabled == other.impulseDenoise.enabled;
         impulseDenoise.thresh = impulseDenoise.thresh && p.impulseDenoise.thresh == other.impulseDenoise.thresh;
 
+        aiDenoise.enabled = aiDenoise.enabled && p.aiDenoise.enabled == other.aiDenoise.enabled;
+        aiDenoise.isoConditioning = aiDenoise.isoConditioning && p.aiDenoise.isoConditioning == other.aiDenoise.isoConditioning;
+        aiDenoise.blend = aiDenoise.blend && p.aiDenoise.blend == other.aiDenoise.blend;
+        aiDenoise.useGpu = aiDenoise.useGpu && p.aiDenoise.useGpu == other.aiDenoise.useGpu;
+
         dirpyrDenoise.enabled = dirpyrDenoise.enabled && p.dirpyrDenoise.enabled == other.dirpyrDenoise.enabled;
         dirpyrDenoise.enhance = dirpyrDenoise.enhance && p.dirpyrDenoise.enhance == other.dirpyrDenoise.enhance;
         dirpyrDenoise.median = dirpyrDenoise.median && p.dirpyrDenoise.median == other.dirpyrDenoise.median;
@@ -1366,6 +1396,7 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
                 locallab.spots.at(j).avoidrad = locallab.spots.at(j).avoidrad && pSpot.avoidrad == otherSpot.avoidrad;
                 locallab.spots.at(j).transitweak = locallab.spots.at(j).transitweak && pSpot.transitweak == otherSpot.transitweak;
                 locallab.spots.at(j).transitgrad = locallab.spots.at(j).transitgrad && pSpot.transitgrad == otherSpot.transitgrad;
+                locallab.spots.at(j).gradangle = locallab.spots.at(j).gradangle && pSpot.gradangle == otherSpot.gradangle;
                 locallab.spots.at(j).hishow = locallab.spots.at(j).hishow && pSpot.hishow == otherSpot.hishow;
                 locallab.spots.at(j).activ = locallab.spots.at(j).activ && pSpot.activ == otherSpot.activ;
                 locallab.spots.at(j).avoidneg = locallab.spots.at(j).avoidneg && pSpot.avoidneg == otherSpot.avoidneg;
@@ -2002,6 +2033,19 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
                 locallab.spots.at(j).LLmask_curvewav = locallab.spots.at(j).LLmask_curvewav && pSpot.LLmask_curvewav == otherSpot.LLmask_curvewav;
                 locallab.spots.at(j).csthresholdmask = locallab.spots.at(j).csthresholdmask && pSpot.csthresholdmask == otherSpot.csthresholdmask;
 
+                // AI Mask
+                locallab.spots.at(j).visiaimask = locallab.spots.at(j).visiaimask && pSpot.visiaimask == otherSpot.visiaimask;
+                locallab.spots.at(j).expaimask = locallab.spots.at(j).expaimask && pSpot.expaimask == otherSpot.expaimask;
+                locallab.spots.at(j).useAIMask = locallab.spots.at(j).useAIMask && pSpot.useAIMask == otherSpot.useAIMask;
+                locallab.spots.at(j).aiMaskClass = locallab.spots.at(j).aiMaskClass && pSpot.aiMaskClass == otherSpot.aiMaskClass;
+                locallab.spots.at(j).aiMaskThreshold = locallab.spots.at(j).aiMaskThreshold && pSpot.aiMaskThreshold == otherSpot.aiMaskThreshold;
+                locallab.spots.at(j).aiMaskFeather = locallab.spots.at(j).aiMaskFeather && pSpot.aiMaskFeather == otherSpot.aiMaskFeather;
+                locallab.spots.at(j).aiMaskBlur = locallab.spots.at(j).aiMaskBlur && pSpot.aiMaskBlur == otherSpot.aiMaskBlur;
+                locallab.spots.at(j).aiMaskInvert = locallab.spots.at(j).aiMaskInvert && pSpot.aiMaskInvert == otherSpot.aiMaskInvert;
+                locallab.spots.at(j).aiMaskOpacity = locallab.spots.at(j).aiMaskOpacity && pSpot.aiMaskOpacity == otherSpot.aiMaskOpacity;
+                locallab.spots.at(j).aiMaskRefineRadius = locallab.spots.at(j).aiMaskRefineRadius && pSpot.aiMaskRefineRadius == otherSpot.aiMaskRefineRadius;
+                locallab.spots.at(j).aiMaskRefineEps = locallab.spots.at(j).aiMaskRefineEps && pSpot.aiMaskRefineEps == otherSpot.aiMaskRefineEps;
+
                 //ciecam
                 locallab.spots.at(j).visicie = locallab.spots.at(j).visicie && pSpot.visicie == otherSpot.visicie;
                 locallab.spots.at(j).expcie = locallab.spots.at(j).expcie && pSpot.expcie == otherSpot.expcie;
@@ -2547,6 +2591,27 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         hsvequalizer.hcurve = hsvequalizer.hcurve && p.hsvequalizer.hcurve == other.hsvequalizer.hcurve;
         hsvequalizer.scurve = hsvequalizer.scurve && p.hsvequalizer.scurve == other.hsvequalizer.scurve;
         hsvequalizer.vcurve = hsvequalizer.vcurve && p.hsvequalizer.vcurve == other.hsvequalizer.vcurve;
+        hsvequalizer.mode = hsvequalizer.mode && p.hsvequalizer.mode == other.hsvequalizer.mode;
+        hsvequalizer.hueShifts = hsvequalizer.hueShifts && p.hsvequalizer.hueShifts == other.hsvequalizer.hueShifts;
+        hsvequalizer.satShifts = hsvequalizer.satShifts && p.hsvequalizer.satShifts == other.hsvequalizer.satShifts;
+        hsvequalizer.lumShifts = hsvequalizer.lumShifts && p.hsvequalizer.lumShifts == other.hsvequalizer.lumShifts;
+        colorGrading.enabled = colorGrading.enabled && p.colorGrading.enabled == other.colorGrading.enabled;
+        colorGrading.shadowsHue = colorGrading.shadowsHue && p.colorGrading.shadowsHue == other.colorGrading.shadowsHue;
+        colorGrading.shadowsSat = colorGrading.shadowsSat && p.colorGrading.shadowsSat == other.colorGrading.shadowsSat;
+        colorGrading.shadowsLum = colorGrading.shadowsLum && p.colorGrading.shadowsLum == other.colorGrading.shadowsLum;
+        colorGrading.midtonesHue = colorGrading.midtonesHue && p.colorGrading.midtonesHue == other.colorGrading.midtonesHue;
+        colorGrading.midtonesSat = colorGrading.midtonesSat && p.colorGrading.midtonesSat == other.colorGrading.midtonesSat;
+        colorGrading.midtonesLum = colorGrading.midtonesLum && p.colorGrading.midtonesLum == other.colorGrading.midtonesLum;
+        colorGrading.highlightsHue = colorGrading.highlightsHue && p.colorGrading.highlightsHue == other.colorGrading.highlightsHue;
+        colorGrading.highlightsSat = colorGrading.highlightsSat && p.colorGrading.highlightsSat == other.colorGrading.highlightsSat;
+        colorGrading.highlightsLum = colorGrading.highlightsLum && p.colorGrading.highlightsLum == other.colorGrading.highlightsLum;
+        colorGrading.globalHue = colorGrading.globalHue && p.colorGrading.globalHue == other.colorGrading.globalHue;
+        colorGrading.globalSat = colorGrading.globalSat && p.colorGrading.globalSat == other.colorGrading.globalSat;
+        colorGrading.globalLum = colorGrading.globalLum && p.colorGrading.globalLum == other.colorGrading.globalLum;
+        colorGrading.blending = colorGrading.blending && p.colorGrading.blending == other.colorGrading.blending;
+        colorGrading.balance = colorGrading.balance && p.colorGrading.balance == other.colorGrading.balance;
+        pointcolor.enabled = pointcolor.enabled && p.pointcolor.enabled == other.pointcolor.enabled;
+        pointcolor.targets = pointcolor.targets && p.pointcolor.targets == other.pointcolor.targets;
         filmSimulation.enabled = filmSimulation.enabled && p.filmSimulation.enabled == other.filmSimulation.enabled;
         filmSimulation.clutFilename = filmSimulation.clutFilename && p.filmSimulation.clutFilename == other.filmSimulation.clutFilename;
         filmSimulation.strength = filmSimulation.strength && p.filmSimulation.strength == other.filmSimulation.strength;
@@ -3586,6 +3651,22 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
         toEdit.impulseDenoise.thresh = mods.impulseDenoise.thresh;
     }
 
+    if (aiDenoise.enabled) {
+        toEdit.aiDenoise.enabled = mods.aiDenoise.enabled;
+    }
+
+    if (aiDenoise.isoConditioning) {
+        toEdit.aiDenoise.isoConditioning = mods.aiDenoise.isoConditioning;
+    }
+
+    if (aiDenoise.blend) {
+        toEdit.aiDenoise.blend = mods.aiDenoise.blend;
+    }
+
+    if (aiDenoise.useGpu) {
+        toEdit.aiDenoise.useGpu = mods.aiDenoise.useGpu;
+    }
+
     if (dirpyrDenoise.enabled) {
         toEdit.dirpyrDenoise.enabled = mods.dirpyrDenoise.enabled;
     }
@@ -4153,6 +4234,10 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
 
         if (locallab.spots.at(i).transitgrad) {
             toEdit.locallab.spots.at(i).transitgrad = mods.locallab.spots.at(i).transitgrad;
+        }
+
+        if (locallab.spots.at(i).gradangle) {
+            toEdit.locallab.spots.at(i).gradangle = mods.locallab.spots.at(i).gradangle;
         }
 
         if (locallab.spots.at(i).hishow) {
@@ -6608,6 +6693,51 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
             toEdit.locallab.spots.at(i).csthresholdmask = mods.locallab.spots.at(i).csthresholdmask;
         }
 
+        // AI Mask
+        if (locallab.spots.at(i).visiaimask) {
+            toEdit.locallab.spots.at(i).visiaimask = mods.locallab.spots.at(i).visiaimask;
+        }
+
+        if (locallab.spots.at(i).expaimask) {
+            toEdit.locallab.spots.at(i).expaimask = mods.locallab.spots.at(i).expaimask;
+        }
+
+        if (locallab.spots.at(i).useAIMask) {
+            toEdit.locallab.spots.at(i).useAIMask = mods.locallab.spots.at(i).useAIMask;
+        }
+
+        if (locallab.spots.at(i).aiMaskClass) {
+            toEdit.locallab.spots.at(i).aiMaskClass = mods.locallab.spots.at(i).aiMaskClass;
+        }
+
+        if (locallab.spots.at(i).aiMaskThreshold) {
+            toEdit.locallab.spots.at(i).aiMaskThreshold = mods.locallab.spots.at(i).aiMaskThreshold;
+        }
+
+        if (locallab.spots.at(i).aiMaskFeather) {
+            toEdit.locallab.spots.at(i).aiMaskFeather = mods.locallab.spots.at(i).aiMaskFeather;
+        }
+
+        if (locallab.spots.at(i).aiMaskBlur) {
+            toEdit.locallab.spots.at(i).aiMaskBlur = mods.locallab.spots.at(i).aiMaskBlur;
+        }
+
+        if (locallab.spots.at(i).aiMaskInvert) {
+            toEdit.locallab.spots.at(i).aiMaskInvert = mods.locallab.spots.at(i).aiMaskInvert;
+        }
+
+        if (locallab.spots.at(i).aiMaskOpacity) {
+            toEdit.locallab.spots.at(i).aiMaskOpacity = mods.locallab.spots.at(i).aiMaskOpacity;
+        }
+
+        if (locallab.spots.at(i).aiMaskRefineRadius) {
+            toEdit.locallab.spots.at(i).aiMaskRefineRadius = mods.locallab.spots.at(i).aiMaskRefineRadius;
+        }
+
+        if (locallab.spots.at(i).aiMaskRefineEps) {
+            toEdit.locallab.spots.at(i).aiMaskRefineEps = mods.locallab.spots.at(i).aiMaskRefineEps;
+        }
+
         //ciecam
         if (locallab.spots.at(i).visicie) {
             toEdit.locallab.spots.at(i).visicie = mods.locallab.spots.at(i).visicie;
@@ -8638,6 +8768,91 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
         toEdit.hsvequalizer.vcurve = mods.hsvequalizer.vcurve;
     }
 
+    if (hsvequalizer.mode) {
+        toEdit.hsvequalizer.mode = mods.hsvequalizer.mode;
+    }
+
+    if (hsvequalizer.hueShifts) {
+        toEdit.hsvequalizer.hueShifts = mods.hsvequalizer.hueShifts;
+    }
+
+    if (hsvequalizer.satShifts) {
+        toEdit.hsvequalizer.satShifts = mods.hsvequalizer.satShifts;
+    }
+
+    if (hsvequalizer.lumShifts) {
+        toEdit.hsvequalizer.lumShifts = mods.hsvequalizer.lumShifts;
+    }
+
+    if (colorGrading.enabled) {
+        toEdit.colorGrading.enabled = mods.colorGrading.enabled;
+    }
+
+    if (colorGrading.shadowsHue) {
+        toEdit.colorGrading.shadowsHue = mods.colorGrading.shadowsHue;
+    }
+
+    if (colorGrading.shadowsSat) {
+        toEdit.colorGrading.shadowsSat = mods.colorGrading.shadowsSat;
+    }
+
+    if (colorGrading.shadowsLum) {
+        toEdit.colorGrading.shadowsLum = mods.colorGrading.shadowsLum;
+    }
+
+    if (colorGrading.midtonesHue) {
+        toEdit.colorGrading.midtonesHue = mods.colorGrading.midtonesHue;
+    }
+
+    if (colorGrading.midtonesSat) {
+        toEdit.colorGrading.midtonesSat = mods.colorGrading.midtonesSat;
+    }
+
+    if (colorGrading.midtonesLum) {
+        toEdit.colorGrading.midtonesLum = mods.colorGrading.midtonesLum;
+    }
+
+    if (colorGrading.highlightsHue) {
+        toEdit.colorGrading.highlightsHue = mods.colorGrading.highlightsHue;
+    }
+
+    if (colorGrading.highlightsSat) {
+        toEdit.colorGrading.highlightsSat = mods.colorGrading.highlightsSat;
+    }
+
+    if (colorGrading.highlightsLum) {
+        toEdit.colorGrading.highlightsLum = mods.colorGrading.highlightsLum;
+    }
+
+    if (colorGrading.globalHue) {
+        toEdit.colorGrading.globalHue = mods.colorGrading.globalHue;
+    }
+
+    if (colorGrading.globalSat) {
+        toEdit.colorGrading.globalSat = mods.colorGrading.globalSat;
+    }
+
+    if (colorGrading.globalLum) {
+        toEdit.colorGrading.globalLum = mods.colorGrading.globalLum;
+    }
+
+    if (colorGrading.blending) {
+        toEdit.colorGrading.blending = mods.colorGrading.blending;
+    }
+
+    if (colorGrading.balance) {
+        toEdit.colorGrading.balance = mods.colorGrading.balance;
+    }
+
+    if (pointcolor.enabled) {
+        toEdit.pointcolor.enabled = mods.pointcolor.enabled;
+    }
+
+    if (pointcolor.targets) {
+        toEdit.pointcolor.targets = mods.pointcolor.targets;
+        toEdit.pointcolor.activeTarget = mods.pointcolor.activeTarget;
+    }
+
     if (filmSimulation.enabled) {
         toEdit.filmSimulation.enabled = mods.filmSimulation.enabled;
     }
@@ -8800,6 +9015,7 @@ LocallabParamsEdited::LocallabSpotEdited::LocallabSpotEdited(bool v) :
     avoidrad(v),
     transitweak(v),
     transitgrad(v),
+    gradangle(v),
     hishow(v),
     activ(v),
     avoidneg(v),
@@ -9422,6 +9638,18 @@ LocallabParamsEdited::LocallabSpotEdited::LocallabSpotEdited(bool v) :
     Lmask_curve(v),
     LLmask_curvewav(v),
     csthresholdmask(v),
+    // AI Mask
+    visiaimask(v),
+    expaimask(v),
+    useAIMask(v),
+    aiMaskClass(v),
+    aiMaskThreshold(v),
+    aiMaskFeather(v),
+    aiMaskBlur(v),
+    aiMaskInvert(v),
+    aiMaskOpacity(v),
+    aiMaskRefineRadius(v),
+    aiMaskRefineEps(v),
     //ciecam
     visicie(v),
     complexcie(v),
@@ -9642,6 +9870,7 @@ void LocallabParamsEdited::LocallabSpotEdited::set(bool v)
     avoidrad = v;
     transitweak = v;
     transitgrad = v;
+    gradangle = v;
     hishow = v;
     activ = v;
     avoidneg = v;
@@ -10274,6 +10503,18 @@ void LocallabParamsEdited::LocallabSpotEdited::set(bool v)
     Lmask_curve = v;
     LLmask_curvewav = v;
     csthresholdmask = v;
+    // AI Mask
+    visiaimask = v;
+    expaimask = v;
+    useAIMask = v;
+    aiMaskClass = v;
+    aiMaskThreshold = v;
+    aiMaskFeather = v;
+    aiMaskBlur = v;
+    aiMaskInvert = v;
+    aiMaskOpacity = v;
+    aiMaskRefineRadius = v;
+    aiMaskRefineEps = v;
     //ciecam
     visicie= v;
     complexcie= v;

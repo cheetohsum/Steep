@@ -51,7 +51,7 @@ Distortion::Distortion (): FoldableToolPanel(this, TOOL_NAME, M("TP_DISTORTION_L
     autoDistor->set_tooltip_text (M("TP_DISTORTION_AUTO_TOOLTIP"));
     idConn = autoDistor->signal_pressed().connect( sigc::mem_fun(*this, &Distortion::idPressed) );
     autoDistor->show();
-    pack_start (*autoDistor);
+    getSummaryBox()->pack_start (*autoDistor);
 
     Gtk::Image* idistL =   Gtk::manage (new RTImage ("distortion-pincushion-small"));
     Gtk::Image* idistR =   Gtk::manage (new RTImage ("distortion-barrel-small"));
@@ -60,7 +60,8 @@ Distortion::Distortion (): FoldableToolPanel(this, TOOL_NAME, M("TP_DISTORTION_L
     distor->setAdjusterListener (this);
     distor->setLogScale(2, 0);
     distor->show();
-    pack_start (*distor);
+    getSummaryBox()->pack_start (*distor);
+    getSummaryBox()->show_all();
 
     Gtk::Frame* defish_frame = Gtk::manage (new Gtk::Frame());
     defish_frame->set_label_align(0.025, 0.5);

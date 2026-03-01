@@ -22,8 +22,6 @@
 
 #include "exiffiltersettings.h"
 
-class RTSurface;
-
 class FilterPanelListener
 {
 public:
@@ -62,8 +60,6 @@ protected:
 
     ExifFilterSettings curefs;
     FilterPanelListener* listener;
-
-    std::unique_ptr<RTSurface> ornamentSurface;
 
 public:
     FilterPanel ();

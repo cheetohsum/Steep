@@ -39,9 +39,16 @@ SoftLight::SoftLight(): FoldableToolPanel(this, TOOL_NAME, M("TP_SOFTLIGHT_LABEL
     
     strength = Gtk::manage(new Adjuster(M("TP_SOFTLIGHT_STRENGTH"), 0., 100., 1., 30.));
     strength->setAdjusterListener(this);
+    // Brightness gradient: dark → light
+    strength->setSliderGradient({
+        GradientMilestone(0.0, 0.1, 0.1, 0.1),
+        GradientMilestone(1.0, 0.95, 0.95, 0.95)
+    });
     strength->show();
 
-    pack_start(*strength);
+    getSummaryBox()->pack_start(*strength);
+    setExpandable(false);
+    getSummaryBox()->show_all();
 }
 
 
@@ -86,6 +93,7 @@ void SoftLight::setDefaults(const ProcParams *defParams, const ParamsEdited *ped
 
 void SoftLight::adjusterChanged(Adjuster* a, double newval)
 {
+    autoEnable();
     if (listener && getEnabled()) {
         listener->panelChanged(EvSoftLightStrength, a->getTextValue());
     }

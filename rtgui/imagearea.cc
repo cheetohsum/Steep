@@ -43,6 +43,8 @@ ImageArea::ImageArea (ImageAreaPanel* p) : parent(p), fullImageWidth(0), fullIma
     showClippedH = false;
     showClippedS = false;
     listener = nullptr;
+    infoMouseX_ = 0;
+    infoMouseY_ = 0;
 
     zoomPanel = Gtk::manage (new ZoomPanel (this));
     indClippedPanel = Gtk::manage (new IndicateClippedPanel (this));
@@ -273,6 +275,19 @@ bool ImageArea::on_draw(const ::Cairo::RefPtr< Cairo::Context> &cr)
         if (deviceScale != backBufferDeviceScale) {
             updateInfoTextBackBuffer();
         }
+        // Position info overlay at bottom-left of mouse cursor
+        int bw = iBackBuffer.getWidth() / std::max(1, backBufferDeviceScale);
+        int bh = iBackBuffer.getHeight() / std::max(1, backBufferDeviceScale);
+        int ix = infoMouseX_;
+        int iy = infoMouseY_ + 16; // 16px below cursor
+        // Keep within widget bounds
+        int aw = get_width();
+        int ah = get_height();
+        if (ix + bw > aw) ix = aw - bw;
+        if (iy + bh > ah) iy = infoMouseY_ - bh - 4; // flip above if no room
+        if (ix < 0) ix = 0;
+        if (iy < 0) iy = 0;
+        iBackBuffer.setDestPosition(ix, iy);
         iBackBuffer.copySurface(cr);
     }
 
@@ -283,6 +298,12 @@ bool ImageArea::on_draw(const ::Cairo::RefPtr< Cairo::Context> &cr)
 
 bool ImageArea::on_motion_notify_event (GdkEventMotion* event)
 {
+    infoMouseX_ = static_cast<int>(event->x);
+    infoMouseY_ = static_cast<int>(event->y);
+
+    if (App::get().options().showInfo && !infotext.empty()) {
+        queue_draw();
+    }
 
     if (focusGrabber) {
         focusGrabber->pointerMoved (event->state, event->x, event->y);
@@ -621,6 +642,13 @@ void ImageArea::spotWBSelected (int x, int y)
 
     if (listener) {
         listener->spotWBselected (x, y);
+    }
+}
+
+void ImageArea::pointColorSelected (int x, int y)
+{
+    if (listener) {
+        listener->pointColorSelected (x, y);
     }
 }
 

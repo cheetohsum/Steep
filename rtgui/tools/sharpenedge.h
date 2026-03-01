@@ -42,6 +42,7 @@ protected:
 
     sigc::connection chanthreeconn;
     bool lastchanthree;
+    AdvancedSection* advancedSection;
 
 public:
     static const Glib::ustring TOOL_NAME;

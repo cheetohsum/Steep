@@ -47,4 +47,6 @@ public:
     void rotateRight    ();
     void flipHorizontal ();
     void flipVertical   ();
+    void toggleHFlip    () { hflip->set_active(!hflip->get_active()); }
+    void toggleVFlip    () { vflip->set_active(!vflip->get_active()); }
 };

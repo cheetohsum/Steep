@@ -604,7 +604,14 @@ void ThumbBrowserBase::configScrollBars ()
         va->set_page_increment(height == 0 ? ih : (ih / height) * height);
         va->set_page_size(ih);
 
-        if (ih >= inH) {
+        if (arrangement == TB_Horizontal) {
+            // Filmstrip: single row, never show vertical scrollbar.
+            // Instead, resize the widget to fit the content height.
+            vscroll.hide();
+            if (inH > 0) {
+                internal.set_size_request(-1, inH);
+            }
+        } else if (ih >= inH) {
             vscroll.hide();
         } else {
             vscroll.show();
@@ -1034,7 +1041,7 @@ bool ThumbBrowserBase::Internal::on_draw(const ::Cairo::RefPtr< Cairo::Context> 
             }
         }
     }
-    style->render_frame(cr, 0., 0., logical.width, logical.height);
+    // Frame border removed for cleaner look
 
     return true;
 }
@@ -1177,6 +1184,22 @@ void ThumbBrowserBase::zoomChanged (bool zoomIn)
     redraw ();
 }
 
+void ThumbBrowserBase::setThumbnailHeight (int newHeight)
+{
+    previewHeight = newHeight;
+    saveThumbnailHeight(newHeight);
+
+    {
+        MYWRITERLOCK(l, entryRW);
+
+        for (size_t i = 0; i < fd.size(); i++) {
+            fd[i]->resize (previewHeight);
+        }
+    }
+
+    redraw ();
+}
+
 void ThumbBrowserBase::refreshThumbImages ()
 {
 
@@ -1261,31 +1284,66 @@ void ThumbBrowserBase::enableTabMode(bool enable)
 
 void ThumbBrowserBase::insertEntry (ThumbBrowserEntryBase* entry)
 {
-    // find place in sort order
+    // Queue entry for batch insertion instead of inserting one-by-one into sorted vector
     {
+        MyMutex::MyLock lock(pendingMutex_);
+        entry->onDeviceScaleChanged(lastDeviceScale);
+        entry->setOffset((int)(hscroll.get_value()), (int)(vscroll.get_value()));
+        pendingInserts_.push_back(entry);
+    }
+
+    // Schedule a single merge+redraw for all entries queued this idle cycle
+    if (!redrawPending_) {
+        redrawPending_ = true;
+        Glib::signal_idle().connect(
+            sigc::mem_fun(*this, &ThumbBrowserBase::onRedrawIdle_),
+            G_PRIORITY_DEFAULT_IDLE
+        );
+    }
+}
+
+bool ThumbBrowserBase::onRedrawIdle_ ()
+{
+    redrawPending_ = false;
+
+    // Collect all pending entries
+    std::vector<ThumbBrowserEntryBase*> batch;
+    {
+        MyMutex::MyLock lock(pendingMutex_);
+        batch.swap(pendingInserts_);
+    }
+
+    if (!batch.empty()) {
         MYWRITERLOCK(l, entryRW);
 
         const auto& options = App::get().options();
-        entry->onDeviceScaleChanged(lastDeviceScale);
+        auto cmp = [&](const ThumbBrowserEntryBase* a, const ThumbBrowserEntryBase* b) {
+            bool lt = a->compare(*b, options.sortMethod);
+            return options.sortDescending ? !lt : lt;
+        };
 
-        fd.insert(
-            std::lower_bound(
-                fd.begin(),
-                fd.end(),
-                entry,
-                [&](const ThumbBrowserEntryBase* a, const ThumbBrowserEntryBase* b)
-                {
-                    bool lt = a->compare(*b, options.sortMethod);
-                    return options.sortDescending ? !lt : lt;
-                }
-            ),
-            entry
-        );
+        // Sort the batch
+        std::sort(batch.begin(), batch.end(), cmp);
 
-        entry->setOffset ((int)(hscroll.get_value()), (int)(vscroll.get_value()));
+        // Merge batch into the already-sorted fd vector in one O(N+M) pass
+        std::vector<ThumbBrowserEntryBase*> merged;
+        merged.reserve(fd.size() + batch.size());
+        auto itA = fd.begin();
+        auto itB = batch.begin();
+        while (itA != fd.end() && itB != batch.end()) {
+            if (cmp(*itA, *itB)) {
+                merged.push_back(*itA++);
+            } else {
+                merged.push_back(*itB++);
+            }
+        }
+        while (itA != fd.end()) merged.push_back(*itA++);
+        while (itB != batch.end()) merged.push_back(*itB++);
+        fd.swap(merged);
     }
 
-    redraw ();
+    redraw();
+    return false;
 }
 
 void ThumbBrowserBase::getScrollPosition (double& h, double& v)

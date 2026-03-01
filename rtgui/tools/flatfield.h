@@ -69,6 +69,7 @@ protected:
     rtengine::ProcEvent EvFlatFieldFromMetaData;
 
     IdleRegister idle_register;
+    AdvancedSection* advancedSection;
 
 public:
     static const Glib::ustring TOOL_NAME;

@@ -18,6 +18,7 @@
  */
 #pragma once
 
+#include <atomic>
 #include <set>
 
 #include <giomm.h>
@@ -35,6 +36,7 @@
 
 class FilePanel;
 class CoarsePanel;
+class MyHScale;
 class ToolBar;
 
 /*
@@ -75,7 +77,7 @@ private:
     Gtk::Box* hBox;
     Glib::ustring selectedDirectory;
     DirectoryResetInfo resetData;
-    int selectedDirectoryId;
+    std::atomic<int> selectedDirectoryId;
     bool enabled;
     bool inTabMode;  // Tab mode has e.g. different progress bar handling
     Glib::ustring imageToSelect_fname;
@@ -98,6 +100,9 @@ private:
     Gtk::Box* fltrEditedBox;
     Gtk::Box* fltrRecentlySavedBox;
     Gtk::Box* fltrVbox2;
+
+    Gtk::Revealer* filterRevealer_;
+    Gtk::ToggleButton* bFilterToggle_;
 
     Gtk::Separator* vSepiLeftPanel;
 
@@ -140,8 +145,7 @@ private:
 
     Gtk::Box* trashButtonBox;
 
-    Gtk::Button* zoomInButton;
-    Gtk::Button* zoomOutButton;
+    MyHScale* zoomSlider_;
 
     RTImage* progressImage;
     Gtk::Label* progressLabel;
@@ -165,6 +169,10 @@ private:
     std::vector<FileMonitorInfo> dirMonitors;
 
     IdleRegister idle_register;
+
+    std::set<std::string> albumWhitelist_;
+    bool inAlbumMode_;
+    Glib::ustring savedDirectory_;
 
     void addAndOpenFile (const Glib::ustring& fname);
     void addFile (const Glib::ustring& fName);
@@ -261,10 +269,15 @@ public:
     void setFilterPanel (FilterPanel* fpanel);
     void setExportPanel (ExportPanel* expanel);
     void exifInfoButtonToggled();
+    void filterToggled();
     void categoryButtonToggled (Gtk::ToggleButton* b, bool isMouseClick);
     void showRecursiveToggled();
     bool capture_event(GdkEventButton* event);
     void filterChanged ();
+    void setAlbumWhitelist (const std::set<std::string>& whitelist);
+    void showAlbumFiles (const Glib::ustring& albumName, const std::vector<Glib::ustring>& files);
+    void exitAlbumMode ();
+    bool isInAlbumMode () const { return inAlbumMode_; }
 
     void saveResetState ();
     bool restoreResetState ();
@@ -275,6 +288,7 @@ public:
 
     void zoomIn ();
     void zoomOut ();
+    void zoomSliderChanged ();
 
     void buttonBrowsePathPressed ();
     bool BrowsePath_key_pressed (GdkEventKey *event);

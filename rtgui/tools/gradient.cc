@@ -59,11 +59,19 @@ Gradient::Gradient () : FoldableToolPanel(this, TOOL_NAME, M("TP_GRADIENT_LABEL"
     centerY->set_tooltip_text (M("TP_GRADIENT_CENTER_Y_TOOLTIP"));
     centerY->setAdjusterListener (this);
 
-    pack_start (*strength, Gtk::PACK_SHRINK, 0);
-    pack_start (*degree, Gtk::PACK_SHRINK, 0);
-    pack_start (*feather, Gtk::PACK_SHRINK, 0);
-    pack_start (*centerX, Gtk::PACK_SHRINK, 0);
-    pack_start (*centerY, Gtk::PACK_SHRINK, 0);
+    // Visible items (in summary box)
+    getSummaryBox()->pack_start (*strength, Gtk::PACK_SHRINK, 0);
+    getSummaryBox()->pack_start (*degree, Gtk::PACK_SHRINK, 0);
+    getSummaryBox()->show_all();
+
+    // Advanced items
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
+
+    advBox->pack_start (*feather, Gtk::PACK_SHRINK, 0);
+    advBox->pack_start (*centerX, Gtk::PACK_SHRINK, 0);
+    advBox->pack_start (*centerY, Gtk::PACK_SHRINK, 0);
 
     // Instantiating the Editing geometry; positions will be initialized later
     Line *hLine, *vLine, *featherLine[2];
@@ -270,6 +278,7 @@ void Gradient::setDefaults (const ProcParams* defParams, const ParamsEdited* ped
 
 void Gradient::adjusterChanged(Adjuster* a, double newval)
 {
+    autoEnable();
     updateGeometry(int(centerX->getValue()), int(centerY->getValue()), feather->getValue(), degree->getValue());
 
     if (listener && getEnabled()) {
@@ -323,6 +332,7 @@ void Gradient::setBatchMode (bool batchMode)
     editConn.disconnect();
     removeIfThere(this, editHBox, false);
     ToolPanel::setBatchMode (batchMode);
+    advancedSection->setBatchMode(batchMode);
     degree->showEditedCB ();
     feather->showEditedCB ();
     strength->showEditedCB ();

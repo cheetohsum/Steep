@@ -91,7 +91,7 @@ private:
     FlatCurveEditor* colorShape;
     DiagonalCurveEditor* clshape;
     DiagonalCurveEditor* cl2shape;
-    Gtk::Box* ctbox;
+    Gtk::Grid* ctbox;
     Gtk::Frame *p1Frame;
 
     Gtk::Box* chanMixerBox;
@@ -171,5 +171,6 @@ private:
     int labRegionSelected;
     sigc::connection labRegionSelectionConn;
 
+    AdvancedSection* advancedSection;
     IdleRegister idle_register;
 };

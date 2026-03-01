@@ -165,14 +165,24 @@ void PreviewHandler::imageReady(const rtengine::procparams::CropParams& cp)
     );
 }
 
+void PreviewHandler::setPlaceholder(Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scale)
+{
+    MyMutex::MyLock lock(previewImgMutex);
+    previewImg = pixbuf;
+    previewScale = scale;
+    previewImageChanged();
+}
+
 Glib::RefPtr<Gdk::Pixbuf> PreviewHandler::getRoughImage (
     ImageCoord pos, hidpi::ScaledDeviceSize desiredSize, double zoom)
 {
     MyMutex::MyLock lock(previewImgMutex);
 
     Glib::RefPtr<Gdk::Pixbuf> resPixbuf;
-    if (!image || !image->getData()) return resPixbuf;
     if (!previewImg) return resPixbuf;
+
+    int imgW = image ? image->getWidth() : previewImg->get_width();
+    int imgH = image ? image->getHeight() : previewImg->get_height();
 
     double totalZoom = zoom * previewScale;
 
@@ -180,11 +190,11 @@ Glib::RefPtr<Gdk::Pixbuf> PreviewHandler::getRoughImage (
     int h = desiredSize.height;
 
     if (w > previewImg->get_width()*totalZoom) {
-        w = image->getWidth() * totalZoom;
+        w = imgW * totalZoom;
     }
 
     if (h > previewImg->get_height()*totalZoom) {
-        h = image->getHeight() * totalZoom;
+        h = imgH * totalZoom;
     }
 
     pos.x *= zoom;
@@ -205,8 +215,10 @@ hidpi::DevicePixbuf PreviewHandler::getRoughImage (hidpi::LogicalSize desiredSiz
     MyMutex::MyLock lock(previewImgMutex);
 
     hidpi::DevicePixbuf result;
-    if (!image || !image->getData()) return result;
     if (!previewImg) return result;
+
+    int imgW = image ? image->getWidth() : previewImg->get_width();
+    int imgH = image ? image->getHeight() : previewImg->get_height();
 
     double zoom1 = (double)max(desiredSize.width, 20) / previewImg->get_width(); // too small values lead to extremely increased processing time in scale function, Issue 2783
     double zoom2 = (double)max(desiredSize.height, 20) / previewImg->get_height();
@@ -215,7 +227,7 @@ hidpi::DevicePixbuf PreviewHandler::getRoughImage (hidpi::LogicalSize desiredSiz
     outLogicalZoom = zoom / previewScale;
     zoom = zoom * deviceScale;
 
-    auto pixbuf = Gdk::Pixbuf::create (Gdk::COLORSPACE_RGB, false, 8, image->getWidth() * zoom, image->getHeight() * zoom);
+    auto pixbuf = Gdk::Pixbuf::create (Gdk::COLORSPACE_RGB, false, 8, imgW * zoom, imgH * zoom);
     previewImg->scale (pixbuf, 0, 0, previewImg->get_width()*zoom, previewImg->get_height()*zoom, 0, 0, zoom, zoom, Gdk::INTERP_BILINEAR);
 
     result = hidpi::DevicePixbuf(pixbuf, deviceScale);

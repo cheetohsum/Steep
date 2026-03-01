@@ -34,6 +34,7 @@ protected:
     Adjuster *edgeStopping;
     Adjuster *scale;
     Adjuster *reweightingIterates;
+    AdvancedSection *advancedSection;
 
 public:
     static const Glib::ustring TOOL_NAME;

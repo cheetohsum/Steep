@@ -38,7 +38,7 @@ protected:
 
     MyComboBoxText* method;
     Gtk::Box* borderbox;
-    Gtk::Box *imageNumberBox;
+    Gtk::Grid *imageNumberBox;
     Adjuster* border;
     MyComboBoxText* imageNumber;
     Adjuster* ccSteps;
@@ -75,6 +75,7 @@ protected:
     rtengine::ProcEvent EvDemosaicContrast;
     rtengine::ProcEvent EvDemosaicPixelshiftDemosaicMethod;
     rtengine::ProcEvent EvPixelshiftAverage;
+    AdvancedSection* advancedSection;
 public:
     static const Glib::ustring TOOL_NAME;
 

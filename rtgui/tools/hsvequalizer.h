@@ -18,12 +18,14 @@
  */
 #pragma once
 
+#include <array>
 #include <gtkmm.h>
 
 #include "colorprovider.h"
 #include "curvelistener.h"
 #include "guiutils.h"
 #include "toolpanel.h"
+#include "widgets/basic/adjuster.h"
 
 class CurveEditor;
 class CurveEditorGroup;
@@ -33,7 +35,8 @@ class HSVEqualizer final :
     public ToolParamBlock,
     public FoldableToolPanel,
     public CurveListener,
-    public ColorProvider
+    public ColorProvider,
+    public AdjusterListener
 {
 
 protected:
@@ -42,6 +45,27 @@ protected:
     FlatCurveEditor*   hshape;
     FlatCurveEditor*   sshape;
     FlatCurveEditor*   vshape;
+
+    // Color dot channel selector
+    Gtk::Box* channelBar;
+    std::array<Gtk::DrawingArea*, 8> channelDots;
+    int activeChannel;
+
+    // Per-channel H/S/L sliders
+    Adjuster* hueAdj;
+    Adjuster* satAdj;
+    Adjuster* lumAdj;
+
+    // Internal storage for all 8 channels
+    std::array<double, 8> hueValues;
+    std::array<double, 8> satValues;
+    std::array<double, 8> lumValues;
+
+    AdvancedSection* advancedSection;
+
+    void onChannelSelected(int channel);
+    void updateActiveSliderGradients();
+    std::vector<double> slidersToFlatCurve(const std::array<double, 8>& shifts) const;
 
 public:
     static const Glib::ustring TOOL_NAME;
@@ -52,11 +76,11 @@ public:
     void read            (const rtengine::procparams::ProcParams* pp, const ParamsEdited* pedited = nullptr) override;
     void write           (rtengine::procparams::ProcParams* pp, ParamsEdited* pedited = nullptr) override;
     void curveChanged    (CurveEditor* ce) override;
-    //void setDefaults     (const rtengine::procparams::ProcParams* defParams, const ParamsEdited* pedited=NULL);
     void setBatchMode    (bool batchMode) override;
     void setEditProvider (EditDataProvider *provider) override;
     void autoOpenCurve   () override;
     void colorForValue (double valX, double valY, enum ColorCaller::ElemType elemType, int callerId, ColorCaller* caller) override;
 
+    void adjusterChanged(Adjuster* a, double newval) override;
     void enabledChanged() override;
 };

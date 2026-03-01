@@ -149,6 +149,9 @@ void CursorManager::setCursor (Glib::RefPtr<Gdk::Window> window, CursorShape sha
         case CursorShape::CSResizeWidth:
             window->set_cursor(cMoveX);
             break;
+        case CursorShape::CSPointColorPick:
+            window->set_cursor(cWB);
+            break;
         case CursorShape::CSSpotWB:
             window->set_cursor(cWB);
             break;

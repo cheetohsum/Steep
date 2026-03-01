@@ -279,6 +279,10 @@ protected:
     RTImage* statusImage;       /// Image to display the opened/closed status (if useEnabled is false) of the enabled/disabled status (if useEnabled is true)
     Gtk::Label* label;          /// Text to display in the header, next to the arrow image ; can be NULL if the "widget" version of the ctor has been used
     bool useEnabled;            /// Set whether to handle an enabled/disabled feature and display the appropriate images
+    Gtk::Box* summaryBox;       /// Always-visible area between header and expandable content
+    RTImage* expandArrow;       /// Expand arrow on right side of header (for useEnabled tools)
+    bool expandable_;           /// Whether tool has expandable content
+    bool flatMode_;             /// Whether this expander is in flat (non-interactive) mode
 
 public:
 
@@ -341,6 +345,18 @@ public:
     void add  (Gtk::Container& widget, bool setChild = true);
 
     void updateVScrollbars(bool hide);
+
+    /// Get the always-visible summary box between header and expandable content
+    Gtk::Box* getSummaryBox() { return summaryBox; }
+    /// Set whether this expander has expandable content (hides arrow when false)
+    void setExpandable(bool canExpand);
+    /// Get whether this expander has expandable content
+    bool getExpandable() const { return expandable_; }
+
+    /// Set flat mode: hides power/arrow icons, forces expanded+enabled, thin label header
+    void setFlatMode(bool flat);
+    /// Get whether this expander is in flat mode
+    bool getFlatMode() const { return flatMode_; }
 };
 
 
@@ -425,15 +441,45 @@ public:
 };
 
 /**
+ * @brief Define a gradient milestone
+ */
+class GradientMilestone final
+{
+public:
+    double position;
+    double r;
+    double g;
+    double b;
+    double a;
+
+    GradientMilestone(double _p = 0., double _r = 0., double _g = 0., double _b = 0., double _a = 0.)
+    {
+        position = _p;
+        r = _r;
+        g = _g;
+        b = _b;
+        a = _a;
+    }
+};
+
+/**
  * @brief subclass of Gtk::Scale in order to handle the scrollwheel
  */
 class MyHScale final : public Gtk::Scale
 {
 
+public:
+    void setTrackGradient(const std::vector<GradientMilestone>& milestones);
+    void clearTrackGradient();
+
 protected:
     bool on_scroll_event (GdkEventScroll* event) override;
     bool on_key_press_event (GdkEventKey* event) override;
+    bool on_draw (const Cairo::RefPtr<Cairo::Context>& cr) override;
 
+private:
+    std::vector<GradientMilestone> trackGradient_;
+    bool showTickMarks_ = true;
 };
 
 class MyFileChooserWidget
@@ -628,29 +674,6 @@ public:
     void setPreferredWidth(int width);
 };
 
-
-/**
- * @brief Define a gradient milestone
- */
-class GradientMilestone final
-{
-public:
-    double position;
-    double r;
-    double g;
-    double b;
-    double a;
-
-    GradientMilestone(double _p = 0., double _r = 0., double _g = 0., double _b = 0., double _a = 0.)
-    {
-        position = _p;
-        r = _r;
-        g = _g;
-        b = _b;
-        a = _a;
-    }
-};
-
 class RefCount
 {
 private:
@@ -836,6 +859,73 @@ inline void setActiveTextOrIndex(Gtk::ComboBoxText &comboBox, const Glib::ustrin
         comboBox.set_active (index);
     }
 }
+
+/**
+ * @brief A collapsible "Advanced" section within tool panels.
+ *
+ * Distinct from MyExpander (which is for tool-level panels with enable/disable
+ * toggles). AdvancedSection is a simple clickable header with an arrow that
+ * toggles child visibility, defaulting to collapsed.
+ *
+ * Default state: collapsed for UI_BEGINNER/UI_STANDARD, expanded for UI_EXPERT.
+ * In batch mode: always expanded.
+ */
+class AdvancedSection final : public Gtk::Box
+{
+public:
+    AdvancedSection();
+
+    /// Get the content box to pack widgets into.
+    Gtk::Box* getContentBox() { return contentBox; }
+
+    /// Set expanded/collapsed state.
+    void setExpanded(bool expanded);
+
+    /// Get expanded/collapsed state.
+    bool getExpanded() const;
+
+    /// Force expanded (e.g. for batch mode).
+    void setBatchMode(bool batchMode);
+
+private:
+    Gtk::Box* contentBox;
+    RTImage* arrowImage;
+    bool expanded;
+
+    bool onHeaderClick(GdkEventButton* event);
+    void updateArrow();
+};
+
+/**
+ * @brief A collapsible group section for organizing tools in the Edit panel.
+ *
+ * Similar to AdvancedSection but styled as a bold section header for grouping
+ * multiple tool panels (e.g., "Light", "Color", "Detail"). Default: expanded.
+ * Contains a ToolVBox for child tool panels.
+ */
+class ToolGroup final : public Gtk::Box
+{
+public:
+    explicit ToolGroup(const Glib::ustring& label);
+
+    /// Get the content box to pack tool panels into.
+    Gtk::Box* getContentBox() { return contentBox; }
+
+    /// Set expanded/collapsed state.
+    void setExpanded(bool expanded);
+
+    /// Get expanded/collapsed state.
+    bool getExpanded() const;
+
+private:
+    Gtk::Box* contentBox;
+    Gtk::Label* arrowLabel;
+    Glib::ustring groupLabel_;
+    bool expanded;
+
+    bool onHeaderClick(GdkEventButton* event);
+    void updateArrow();
+};
 
 inline Gtk::Window& getToplevelWindow (Gtk::Widget* widget)
 {

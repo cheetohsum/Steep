@@ -22,6 +22,7 @@
 #include <cstring>
 
 #include "guiutils.h"
+#include "rtimage.h"
 #include "rtsurface.h"
 #include "multilangmgr.h"
 #include "options.h"
@@ -104,17 +105,59 @@ DirBrowser::DirBrowser () : dirTreeModel(),
     crt.property_ellipsize() = Pango::ELLIPSIZE_END;
 
 //   dirtree->set_flags(Gtk::CAN_FOCUS);
-    dirtree->set_headers_visible();
-    dirtree->set_headers_clickable();
+    dirtree->set_headers_visible(false);
     dirtree->set_rules_hint(false);
     dirtree->set_reorderable(false);
     dirtree->set_enable_search(false);
+    dirtree->set_show_expanders(false);
+    dirtree->set_level_indentation(10);
     scrolledwindow4->set_can_focus(true);
     scrolledwindow4->set_shadow_type(Gtk::SHADOW_NONE);
     scrolledwindow4->set_policy(Gtk::POLICY_AUTOMATIC, Gtk::POLICY_AUTOMATIC);
+    scrolledwindow4->set_min_content_height(200);
     scrolledwindow4->property_window_placement().set_value(Gtk::CORNER_TOP_LEFT);
     scrolledwindow4->add(*dirtree);
 
+    // Compact CSS for smaller text and tighter header
+    dirtree->set_name("DirBrowserTree");
+    auto css = Gtk::CssProvider::create();
+    css->load_from_data(
+        "#DirBrowserTree { font-size: 0.85em; -GtkTreeView-horizontal-separator: 0; }"
+        "#DirBrowserTree header button { min-height: 0; min-width: 0; padding: 0; margin: 0; }"
+        "#DirBrowserTree header button label { font-size: 0.85em; padding: 0 4px; margin: 0; }"
+        "#DirBrowserTree header { min-height: 0; padding: 0; margin: 0; }"
+        "#DirBrowseBtn { min-height: 0; min-width: 0; padding: 0 2px; margin: 0; }"
+    );
+    dirtree->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+
+    // Browse button packed at end of header row (added in fillDirTree via custom header widget)
+    Gtk::Button* browseBtn = Gtk::manage(new Gtk::Button());
+    browseBtn->set_name("DirBrowseBtn");
+    browseBtn->set_image(*Gtk::manage(new RTImage("folder-open-browse", Gtk::ICON_SIZE_MENU)));
+    browseBtn->set_relief(Gtk::RELIEF_NONE);
+    browseBtn->set_tooltip_text(M("DIRBROWSER_BROWSE"));
+    browseBtn->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+    browseBtn->signal_clicked().connect(sigc::mem_fun(*this, &DirBrowser::browseForFolder));
+
+    Gtk::Box* headerBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+    headerBar->set_name("FoldersHeader");
+
+    Gtk::Label* headerLabel = Gtk::manage(new Gtk::Label(M("DIRBROWSER_FOLDERS")));
+    headerLabel->set_xalign(0.0);
+    auto headerCss = Gtk::CssProvider::create();
+    headerCss->load_from_data(
+        "#FoldersHeader { min-height: 0; padding: 0 4px; }"
+        "#FoldersHeader label { font-size: 10px; font-weight: bold; padding: 2px 0; margin: 0; }"
+        "#DirBrowseBtn { min-height: 0; min-width: 0; padding: 0 2px; margin: 0; }"
+    );
+    headerBar->get_style_context()->add_provider(headerCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+    headerLabel->get_style_context()->add_provider(headerCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+    browseBtn->get_style_context()->add_provider(headerCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+
+    headerBar->pack_start(*headerLabel, Gtk::PACK_EXPAND_WIDGET);
+    headerBar->pack_end(*browseBtn, Gtk::PACK_SHRINK);
+
+    pack_start (*headerBar, Gtk::PACK_SHRINK, 0);
     pack_start (*scrolledwindow4);
     dirtree->show ();
     scrolledwindow4->show ();
@@ -270,6 +313,23 @@ void DirBrowser::on_sort_column_changed() const
     options.dirBrowserSortType = tvc.get_sort_order();
 }
 
+void DirBrowser::browseForFolder ()
+{
+    Gtk::Window* toplevel = dynamic_cast<Gtk::Window*>(get_toplevel());
+    if (!toplevel) return;
+
+    Gtk::FileChooserDialog fc(*toplevel, M("DIRBROWSER_BROWSE"), Gtk::FILE_CHOOSER_ACTION_SELECT_FOLDER);
+    fc.add_button(M("GENERAL_CANCEL"), Gtk::RESPONSE_CANCEL);
+    fc.add_button(M("GENERAL_OK"), Gtk::RESPONSE_OK);
+
+    if (fc.run() == Gtk::RESPONSE_OK) {
+        Glib::ustring dir = fc.get_filename();
+        if (!dir.empty()) {
+            open(dir);
+        }
+    }
+}
+
 void DirBrowser::row_expanded (const Gtk::TreeModel::iterator& iter, const Gtk::TreeModel::Path& path)
 {
 
@@ -389,7 +449,11 @@ void DirBrowser::row_activated (const Gtk::TreeModel::Path& path, Gtk::TreeViewC
 
     if (Glib::file_test (dname, Glib::FILE_TEST_IS_DIR)) {
         dirSelectionSignal (dname, Glib::ustring());
-        dirtree->expand_row(path, false);
+        if (dirtree->row_expanded(path)) {
+            dirtree->collapse_row(path);
+        } else {
+            dirtree->expand_row(path, false);
+        }
     }
 }
 

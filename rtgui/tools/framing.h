@@ -169,6 +169,7 @@ private:
     rtengine::ProcEvent EvFramingBorderGreen;
     rtengine::ProcEvent EvFramingBorderBlue;
 
+    AdvancedSection* advancedSection;
     IdleRegister idleRegister;
     std::unique_ptr<AspectRatios> aspectRatioData;
 

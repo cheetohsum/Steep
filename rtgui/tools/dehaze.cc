@@ -42,6 +42,11 @@ Dehaze::Dehaze(): FoldableToolPanel(this, TOOL_NAME, M("TP_DEHAZE_LABEL"), false
     
     strength = Gtk::manage(new Adjuster(M("TP_DEHAZE_STRENGTH"), 0., 100., 1., 50.));
     strength->setAdjusterListener(this);
+    // Dehaze gradient: hazy gray → clear
+    strength->setSliderGradient({
+        GradientMilestone(0.0, 0.55, 0.55, 0.55),
+        GradientMilestone(1.0, 0.85, 0.92, 0.98)
+    });
     strength->show();
 
     depth = Gtk::manage(new Adjuster(M("TP_DEHAZE_DEPTH"), 0., 100., 1., 25.));
@@ -56,10 +61,16 @@ Dehaze::Dehaze(): FoldableToolPanel(this, TOOL_NAME, M("TP_DEHAZE_LABEL"), false
     showDepthMap->signal_toggled().connect(sigc::mem_fun(*this, &Dehaze::showDepthMapChanged));
     showDepthMap->show();
     
-    pack_start(*strength);
-    pack_start(*depth);
-    pack_start(*saturation);
-    pack_start(*showDepthMap);
+    getSummaryBox()->pack_start(*strength);
+    getSummaryBox()->show_all();
+
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
+
+    advBox->pack_start(*showDepthMap);
+    advBox->pack_start(*depth);
+    advBox->pack_start(*saturation);
 }
 
 void Dehaze::read(const ProcParams *pp, const ParamsEdited *pedited)
@@ -119,6 +130,7 @@ void Dehaze::setDefaults(const ProcParams *defParams, const ParamsEdited *pedite
 
 void Dehaze::adjusterChanged(Adjuster* a, double newval)
 {
+    autoEnable();
     if (listener && getEnabled()) {
         if (a == strength) {
             listener->panelChanged(EvDehazeStrength, a->getTextValue());
@@ -156,6 +168,7 @@ void Dehaze::setBatchMode(bool batchMode)
 
     strength->showEditedCB();
     depth->showEditedCB();
+    advancedSection->setBatchMode(batchMode);
 }
 
 void Dehaze::setAdjusterBehavior(bool strengthAdd)

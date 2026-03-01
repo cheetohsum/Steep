@@ -53,6 +53,11 @@ public:
     explicit FileThumbnailButtonSet (FileBrowserEntry* myEntry);
     void    setRank (int stars);
     void    setColorLabel (int colorlabel);
-    void    setInTrash (bool inTrash);
 
+    // Returns true if buttons have meaningful content to show
+    bool    shouldShow () const override { return currentRank_ > 0 || currentColorLabel_ > 0; }
+
+private:
+    int currentRank_ = 0;
+    int currentColorLabel_ = 0;
 };

@@ -51,15 +51,16 @@ BatchQueuePanel::BatchQueuePanel (FileCatalog* aFileCatalog) : parent(nullptr)
     Gtk::Box* batchQueueButtonBox = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     batchQueueButtonBox->set_name("BatchQueueButtons");
 
-    qStartStop = Gtk::manage (new Gtk::Switch());
+    qStartStop = Gtk::manage (new Gtk::Button("Export Queue"));
     qStartStop->set_tooltip_markup (M("QUEUE_STARTSTOP_TOOLTIP"));
-    qStartStopConn = qStartStop->property_active().signal_changed().connect (sigc::mem_fun(*this, &BatchQueuePanel::startOrStopBatchProc));
+    qStartStop->signal_clicked().connect (sigc::mem_fun(*this, &BatchQueuePanel::startOrStopBatchProc));
 
     qAutoStart = Gtk::manage (new Gtk::CheckButton (M("QUEUE_AUTOSTART")));
     qAutoStart->set_tooltip_text (M("QUEUE_AUTOSTART_TOOLTIP"));
     qAutoStart->set_active (options.procQueueEnabled);
 
     queueShouldRun = false;
+    isQueueRunning_ = false;
 
     batchQueueButtonBox->pack_start (*qStartStop, Gtk::PACK_SHRINK, 4);
     batchQueueButtonBox->pack_start (*qAutoStart, Gtk::PACK_SHRINK, 4);
@@ -71,19 +72,10 @@ BatchQueuePanel::BatchQueuePanel (FileCatalog* aFileCatalog) : parent(nullptr)
     fdir = Gtk::manage (new Gtk::Frame (M("QUEUE_LOCATION_TITLE")));
     fdir->set_label_align(0.025, 0.5);
     Gtk::Box* odvb = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
-    Gtk::Box* hb2 = Gtk::manage (new Gtk::Box ());
-    useTemplate = Gtk::manage (new Gtk::RadioButton (M("QUEUE_LOCATION_TEMPLATE") + ":"));
-    hb2->pack_start (*useTemplate, Gtk::PACK_SHRINK, 4);
-    outdirTemplate = Gtk::manage (new Gtk::Entry ());
-    hb2->pack_start (*outdirTemplate);
-    templateHelpButton = Gtk::manage (new Gtk::ToggleButton("?"));
-    templateHelpButton->set_tooltip_markup (M ("QUEUE_LOCATION_TEMPLATE_HELP_BUTTON_TOOLTIP"));
-    hb2->pack_start (*templateHelpButton, Gtk::PACK_SHRINK, 0);
-    odvb->pack_start (*hb2, Gtk::PACK_SHRINK, 0);
-    outdirTemplate->set_tooltip_markup (M("QUEUE_LOCATION_TEMPLATE_TOOLTIP"));
-    useTemplate->set_tooltip_markup (M("QUEUE_LOCATION_TEMPLATE_TOOLTIP"));
+
+    // Folder row (top option)
     Gtk::Box* hb3 = Gtk::manage (new Gtk::Box ());
-    useFolder = Gtk::manage (new Gtk::RadioButton (M("QUEUE_LOCATION_FOLDER") + ":"));
+    useFolder = Gtk::manage (new Gtk::RadioButton (M("QUEUE_LOCATION_FOLDER")));
     hb3->pack_start (*useFolder, Gtk::PACK_SHRINK, 4);
 
 #if 0 //defined(__APPLE__) || defined(__linux__)
@@ -114,6 +106,20 @@ BatchQueuePanel::BatchQueuePanel (FileCatalog* aFileCatalog) : parent(nullptr)
 #endif
 
     odvb->pack_start (*hb3, Gtk::PACK_SHRINK, 4);
+
+    // Template row (below folder)
+    Gtk::Box* hb2 = Gtk::manage (new Gtk::Box ());
+    useTemplate = Gtk::manage (new Gtk::RadioButton (M("QUEUE_LOCATION_TEMPLATE")));
+    hb2->pack_start (*useTemplate, Gtk::PACK_SHRINK, 4);
+    outdirTemplate = Gtk::manage (new Gtk::Entry ());
+    hb2->pack_start (*outdirTemplate);
+    templateHelpButton = Gtk::manage (new Gtk::ToggleButton("?"));
+    templateHelpButton->set_tooltip_markup (M ("QUEUE_LOCATION_TEMPLATE_HELP_BUTTON_TOOLTIP"));
+    hb2->pack_start (*templateHelpButton, Gtk::PACK_SHRINK, 0);
+    outdirTemplate->set_tooltip_markup (M("QUEUE_LOCATION_TEMPLATE_TOOLTIP"));
+    useTemplate->set_tooltip_markup (M("QUEUE_LOCATION_TEMPLATE_TOOLTIP"));
+    odvb->pack_start (*hb2, Gtk::PACK_SHRINK, 0);
+
     destinationPreviewLabel = Gtk::manage (new Gtk::Label ());
     destinationPreviewLabel->set_tooltip_markup (M("QUEUE_DESTPREVIEW_TOOLTIP"));
     destinationPreviewLabel->set_selectable (true);  // so users can copy the path to the clipboard
@@ -122,8 +128,8 @@ BatchQueuePanel::BatchQueuePanel (FileCatalog* aFileCatalog) : parent(nullptr)
     destinationPreviewScrolledWindow->set_policy (Gtk::POLICY_AUTOMATIC, Gtk::POLICY_AUTOMATIC);
     destinationPreviewScrolledWindow->add (*destinationPreviewLabel);
     odvb->pack_start (*destinationPreviewScrolledWindow, Gtk::PACK_SHRINK);
-    Gtk::RadioButton::Group g = useTemplate->get_group();
-    useFolder->set_group (g);
+    Gtk::RadioButton::Group g = useFolder->get_group();
+    useTemplate->set_group (g);
     fdir->add (*odvb);
 
     // Output file format selection
@@ -133,10 +139,20 @@ BatchQueuePanel::BatchQueuePanel (FileCatalog* aFileCatalog) : parent(nullptr)
     setExpandAlignProperties(saveFormatPanel, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
     fformat->add (*saveFormatPanel);
 
+    // Watermark settings
+    fwatermark = Gtk::manage (new Gtk::Frame (M("WATERMARK_TITLE")));
+    fwatermark->set_label_align(0.025, 0.5);
+    watermarkPanel = Gtk::manage (new WatermarkPanel ());
+    auto* wmScroll = Gtk::manage (new Gtk::ScrolledWindow ());
+    wmScroll->set_policy (Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+    wmScroll->add (*watermarkPanel);
+    wmScroll->set_size_request (-1, 200);
+    fwatermark->add (*wmScroll);
+
     outdirTemplate->set_text (options.savePathTemplate);
     useTemplate->set_active (options.saveUsePathTemplate);
     useFolder->set_active (!options.saveUsePathTemplate);
-    destinationPreviewLabel->set_text (M("QUEUE_DESTPREVIEW_TITLE"));
+    destinationPreviewLabel->set_text ("");
 
     // setup signal handlers
     outdirTemplate->signal_changed().connect (sigc::mem_fun(*this, &BatchQueuePanel::saveOptions));
@@ -147,12 +163,14 @@ BatchQueuePanel::BatchQueuePanel (FileCatalog* aFileCatalog) : parent(nullptr)
 
     // setup button bar
     topBox = Gtk::manage (new Gtk::Box ());
+    topBox->set_halign(Gtk::ALIGN_START);
     pack_start (*topBox, Gtk::PACK_SHRINK);
     topBox->set_name("BatchQueueButtonsMainContainer");
 
     topBox->pack_start (*bbox, Gtk::PACK_SHRINK, 4);
-    topBox->pack_start (*fdir, Gtk::PACK_EXPAND_WIDGET, 4);
-    topBox->pack_start (*fformat, Gtk::PACK_EXPAND_WIDGET, 4);
+    topBox->pack_start (*fdir, Gtk::PACK_SHRINK, 4);
+    topBox->pack_start (*fformat, Gtk::PACK_SHRINK, 4);
+    topBox->pack_start (*fwatermark, Gtk::PACK_SHRINK, 4);
 
     middleSplitPane = Gtk::manage (new Gtk::Paned(Gtk::ORIENTATION_HORIZONTAL));
     templateHelpTextView = Gtk::manage (new Gtk::TextView());
@@ -219,6 +237,7 @@ void BatchQueuePanel::init (RTWindow *parent)
     this->parent = parent;
 
     saveFormatPanel->init (App::get().options().saveFormatBatch);
+    watermarkPanel->init (App::get().options().watermark);
 }
 
 // it is expected to have a non null forceOrientation value on Preferences update only. In this case, qsize is ignored and computed automatically
@@ -237,7 +256,7 @@ void BatchQueuePanel::updateTab (int qsize, int forceOrientation)
         if(!qsize ) {
             grid->attach_next_to(*Gtk::manage (new RTImage ("gears", Gtk::ICON_SIZE_LARGE_TOOLBAR)), Gtk::POS_TOP, 1, 1);
             l = Gtk::manage (new Gtk::Label (Glib::ustring(" ") + M("MAIN_FRAME_QUEUE")) );
-        } else if (qStartStop->get_active()) {
+        } else if (isQueueRunning_) {
             grid->attach_next_to(*Gtk::manage (new RTImage ("gears-play", Gtk::ICON_SIZE_LARGE_TOOLBAR)), Gtk::POS_TOP, 1, 1);
             l = Gtk::manage (new Gtk::Label (Glib::ustring(" ") + M("MAIN_FRAME_QUEUE") + " [" + Glib::ustring::format( qsize ) + "]"));
         } else {
@@ -257,7 +276,7 @@ void BatchQueuePanel::updateTab (int qsize, int forceOrientation)
         if (!qsize ) {
             grid->attach_next_to(*Gtk::manage (new RTImage ("gears", Gtk::ICON_SIZE_LARGE_TOOLBAR)), Gtk::POS_RIGHT, 1, 1);
             grid->attach_next_to(*Gtk::manage (new Gtk::Label (M("MAIN_FRAME_QUEUE") )), Gtk::POS_RIGHT, 1, 1);
-        } else if (qStartStop->get_active()) {
+        } else if (isQueueRunning_) {
             grid->attach_next_to(*Gtk::manage (new RTImage ("gears-play", Gtk::ICON_SIZE_LARGE_TOOLBAR)), Gtk::POS_RIGHT, 1, 1);
             grid->attach_next_to(*Gtk::manage (new Gtk::Label (M("MAIN_FRAME_QUEUE") + " [" + Glib::ustring::format( qsize ) + "]" )), Gtk::POS_RIGHT, 1, 1);
         } else {
@@ -293,10 +312,10 @@ void BatchQueuePanel::queueSizeChanged(int qsize, bool queueRunning, bool queueE
 
 void BatchQueuePanel::startOrStopBatchProc()
 {
-    if (qStartStop->get_state()) {
-        startBatchProc();
-    } else {
+    if (isQueueRunning_) {
         stopBatchProc();
+    } else {
+        startBatchProc();
     }
 }
 
@@ -323,6 +342,8 @@ void BatchQueuePanel::stopBatchProc ()
 
 void BatchQueuePanel::setGuiFromBatchState(bool queueRunning, int qsize)
 {
+    isQueueRunning_ = queueRunning;
+
     // Change the GUI state in response to the reported queue state
     if (qsize == 0 || (qsize == 1 && queueRunning)) {
         qStartStop->set_sensitive(false);
@@ -330,12 +351,9 @@ void BatchQueuePanel::setGuiFromBatchState(bool queueRunning, int qsize)
         qStartStop->set_sensitive(true);
     }
 
-    qStartStopConn.block(true);
-    qStartStop->set_active(queueRunning);
-    qStartStopConn.block(false);
-
     fdir->set_sensitive (!queueRunning);
     fformat->set_sensitive (!queueRunning);
+    fwatermark->set_sensitive (!queueRunning);
 
     updateTab(qsize);
 }
@@ -466,7 +484,7 @@ void BatchQueuePanel::addBatchQueueJobs(const std::vector<BatchQueueEntry*>& ent
 {
     batchQueue->addEntries(entries, head);
 
-    if (!qStartStop->get_active() && qAutoStart->get_active()) {
+    if (!isQueueRunning_ && qAutoStart->get_active()) {
         // Auto-start as if the user had pressed the qStartStop switch
         startBatchProc ();
     }
@@ -479,6 +497,7 @@ void BatchQueuePanel::saveOptions ()
     options.savePathTemplate    = outdirTemplate->get_text();
     options.saveUsePathTemplate = useTemplate->get_active();
     options.procQueueEnabled    = qAutoStart->get_active();
+    options.watermark           = watermarkPanel->getOptions();
     batchQueue->updateDestinationPathPreview();
 }
 
@@ -489,7 +508,7 @@ bool BatchQueuePanel::handleShortcutKey (GdkEventKey* event)
     if (ctrl) {
         switch(event->keyval) {
         case GDK_KEY_s:
-            if (qStartStop->get_active()) {
+            if (isQueueRunning_) {
                 stopBatchProc();
             } else {
                 startBatchProc();

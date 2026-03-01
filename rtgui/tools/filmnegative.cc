@@ -235,16 +235,17 @@ FilmNegative::FilmNegative() :
     csGrid->attach(*csLabel, 0, 0, 1, 1);
     csGrid->attach(*colorSpace, 1, 0, 1, 1);
 
-    pack_start(*csGrid);
+    getSummaryBox()->pack_start(*csGrid);
 
     colorSpace->set_active((int)ColorSpace::WORKING);
     colorSpace->signal_changed().connect(sigc::mem_fun(*this, &FilmNegative::colorSpaceChanged));
     colorSpace->show();
 
-    pack_start(*greenExp, Gtk::PACK_SHRINK, 0);
-    pack_start(*redRatio, Gtk::PACK_SHRINK, 0);
-    pack_start(*blueRatio, Gtk::PACK_SHRINK, 0);
-    pack_start(picker, Gtk::PACK_SHRINK, 0);
+    getSummaryBox()->pack_start(*greenExp, Gtk::PACK_SHRINK, 0);
+    getSummaryBox()->pack_start(*redRatio, Gtk::PACK_SHRINK, 0);
+    getSummaryBox()->pack_start(*blueRatio, Gtk::PACK_SHRINK, 0);
+    getSummaryBox()->pack_start(picker, Gtk::PACK_SHRINK, 0);
+    getSummaryBox()->show_all();
 
     Gtk::Separator* const sep = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
     sep->get_style_context()->add_class("grid-row-separator");
@@ -447,6 +448,7 @@ void FilmNegative::setBatchMode(bool batchMode)
 
 void FilmNegative::adjusterChanged(Adjuster* a, double newval)
 {
+    autoEnable();
     if (listener && getEnabled()) {
         if (a == redRatio || a == greenExp || a == blueRatio) {
             listener->panelChanged(

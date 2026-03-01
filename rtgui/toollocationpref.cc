@@ -73,6 +73,8 @@ Glib::ustring getToolTitleKey(Tool tool)
             return "TP_TONE_EQUALIZER_LABEL";
         case Tool::IMPULSE_DENOISE:
             return "TP_IMPULSEDENOISE_LABEL";
+        case Tool::AI_DENOISE:
+            return "TP_AIDENOISE_LABEL";
         case Tool::DEFRINGE_TOOL:
             return "TP_DEFRINGE_LABEL";
         case Tool::COMPRESSGAMUT_TOOL:
@@ -97,6 +99,8 @@ Glib::ustring getToolTitleKey(Tool tool)
             return "TP_RGBCURVES_LABEL";
         case Tool::COLOR_TONING:
             return "TP_COLORTONING_LABEL";
+        case Tool::COLOR_GRADING:
+            return "TP_COLORGRADING_LABEL";
         case Tool::LENS_GEOM:
             return "TP_LENSGEOM_LABEL";
         case Tool::LENS_PROF:
@@ -145,6 +149,8 @@ Glib::ustring getToolTitleKey(Tool tool)
             return "TP_DIRPYREQUALIZER_LABEL";
         case Tool::HSV_EQUALIZER:
             return "TP_HSVEQUALIZER_LABEL";
+        case Tool::POINT_COLOR:
+            return "TP_POINTCOLOR_LABEL";
         case Tool::FILM_SIMULATION:
             return "TP_FILMSIMULATION_LABEL";
         case Tool::SOFT_LIGHT:

@@ -137,14 +137,17 @@ PerspCorrection::PerspCorrection () : FoldableToolPanel(this, TOOL_NAME, M("TP_P
     RTImage* const ipers_rotate_left = Gtk::manage(new RTImage("rotate-right-small"));
     RTImage* const ipers_rotate_right = Gtk::manage(new RTImage("rotate-left-small"));
 
-    Gtk::Box* method_hbox = Gtk::manage (new Gtk::Box());
-    Gtk::Label* method_label = Gtk::manage (new Gtk::Label (M("TP_PERSPECTIVE_METHOD") + ": "));
+    Gtk::Grid* method_hbox = Gtk::manage(new Gtk::Grid());
+    method_hbox->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(method_hbox, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    Gtk::Label* method_label = Gtk::manage(new Gtk::Label(M("TP_PERSPECTIVE_METHOD") + ": "));
+    setExpandAlignProperties(method_label, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     method = Gtk::manage (new MyComboBoxText ());
     method->append (M("TP_PERSPECTIVE_METHOD_SIMPLE"));
     method->append (M("TP_PERSPECTIVE_METHOD_CAMERA_BASED"));
-    method_hbox->pack_start(*method_label, Gtk::PACK_SHRINK);
-    method_hbox->pack_start(*method);
-    pack_start(*method_hbox);
+    setExpandAlignProperties(method, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    method_hbox->attach(*method_label, 0, 0, 1, 1);
+    method_hbox->attach(*method, 1, 0, 1, 1);
 
     simple = Gtk::manage( new Gtk::Box(Gtk::ORIENTATION_VERTICAL) );
 
@@ -261,8 +264,8 @@ PerspCorrection::PerspCorrection () : FoldableToolPanel(this, TOOL_NAME, M("TP_P
     projection_yaw = Gtk::manage (new Adjuster (M("TP_PERSPECTIVE_PROJECTION_YAW"), -60, 60, 0.1, 0, ipers_proj_yaw_left, ipers_proj_yaw_right));
     projection_yaw->setAdjusterListener (this);
 
-    simple->pack_start (*horiz);
-    simple->pack_start (*vert);
+    getSummaryBox()->pack_start (*horiz);
+    getSummaryBox()->pack_start (*vert);
 
     auto_hbox->pack_start (*auto_pitch);
     auto_hbox->pack_start (*auto_yaw);
@@ -293,15 +296,21 @@ PerspCorrection::PerspCorrection () : FoldableToolPanel(this, TOOL_NAME, M("TP_P
     recovery_frame->add(*recovery_vbox);
     camera_based->pack_start(*recovery_frame);
 
-    pack_start(*simple);
-    pack_start(*camera_based);
+    getSummaryBox()->show_all();
+
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
+
+    advBox->pack_start(*method_hbox);
+    advBox->pack_start(*camera_based);
 
     horiz->setLogScale(2, 0);
     vert->setLogScale(2, 0);
     camera_focal_length->setLogScale(4000, 0.5);
     camera_crop_factor->setLogScale(300, 0.1);
 
-    method->signal_changed().connect(sigc::mem_fun(*this, &PerspCorrection::methodChanged));
+    method->connect(method->signal_changed().connect(sigc::mem_fun(*this, &PerspCorrection::methodChanged)));
 
     show_all();
 }
@@ -485,6 +494,12 @@ void PerspCorrection::adjusterChanged(Adjuster* a, double newval)
 {
     if (listener) {
         if (a == horiz || a == vert) {
+            // H/V sliders only work in simple mode — switch silently
+            if (method->get_active_row_number() != 0) {
+                method->block(true);
+                method->set_active(0);
+                method->block(false);
+            }
             listener->panelChanged (EvPerspCorr,
                     Glib::ustring::compose("%1=%2\n%3=%4",
                         M("TP_PERSPECTIVE_HORIZONTAL"),
@@ -598,13 +613,12 @@ void PerspCorrection::methodChanged (void)
 {
 
     if (!batchMode) {
-        removeIfThere (this, simple, false);
-        removeIfThere (this, camera_based, false);
-
         if (method->get_active_row_number() == 0) {
-            pack_start (*simple);
+            simple->show();
+            camera_based->hide();
         } else if (method->get_active_row_number() == 1) {
-            pack_start (*camera_based);
+            simple->hide();
+            camera_based->show();
         }
 
         // If no longer in camera-based mode and control lines are being edited.
@@ -649,9 +663,15 @@ void PerspCorrection::setAdjusterBehavior (
 void PerspCorrection::setControlLineEditMode(bool active)
 {
     // Only camera-based mode supports control lines, so the mode must be
-    // switched if not in camera-based mode.
+    // switched if not in camera-based mode. Block signal to avoid
+    // methodChanged() hiding/showing containers.
     if (method->get_active_row_number() != 1) {
+        method->block(true);
         method->set_active(1);
+        method->block(false);
+        if (listener) {
+            listener->panelChanged(EvPerspMethod, method->get_active_text());
+        }
     }
 
     lines_button_edit->set_active(active);
@@ -711,6 +731,7 @@ void PerspCorrection::setBatchMode (bool batchMode)
     auto_pitch_yaw->set_sensitive(false);
 
     method->append (M("GENERAL_UNCHANGED"));
+    advancedSection->setBatchMode(batchMode);
 }
 
 void PerspCorrection::setFocalLengthValue (const ProcParams* pparams, const FramesMetaData* metadata)
@@ -777,6 +798,51 @@ void PerspCorrection::setFocalLengthValue (const ProcParams* pparams, const Fram
 void PerspCorrection::switchOffEditMode(void)
 {
     lines_button_edit->set_active(false);
+}
+
+void PerspCorrection::hideAdvancedSection()
+{
+    if (advancedSection) {
+        advancedSection->set_no_show_all(true);
+        advancedSection->hide();
+    }
+}
+
+void PerspCorrection::exposeAutoButtons()
+{
+    // Move projection rotate and auto-correction buttons into the summary
+    // box so they're accessible when the advanced section is hidden.
+
+    // Re-parent auto buttons from camera_based box
+    Gtk::Box* autoRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+    Gtk::Label* autoLabel = Gtk::manage(new Gtk::Label(M("GENERAL_AUTO") + " "));
+    autoRow->pack_start(*autoLabel, Gtk::PACK_SHRINK);
+
+    if (auto_pitch->get_parent()) {
+        auto_pitch->get_parent()->remove(*auto_pitch);
+    }
+    if (auto_yaw->get_parent()) {
+        auto_yaw->get_parent()->remove(*auto_yaw);
+    }
+    if (auto_pitch_yaw->get_parent()) {
+        auto_pitch_yaw->get_parent()->remove(*auto_pitch_yaw);
+    }
+    autoRow->pack_start(*auto_pitch, Gtk::PACK_SHRINK);
+    autoRow->pack_start(*auto_yaw, Gtk::PACK_SHRINK);
+    autoRow->pack_start(*auto_pitch_yaw, Gtk::PACK_SHRINK);
+    autoRow->show_all();
+
+    getSummaryBox()->pack_start(*autoRow, Gtk::PACK_SHRINK, 2);
+}
+
+void PerspCorrection::runAutoCorrection()
+{
+    if (method->get_active_row_number() != 1) {
+        method->block(true);
+        method->set_active(1);
+        method->block(false);
+    }
+    autoCorrectionPressed(auto_pitch_yaw);
 }
 
 void PerspCorrection::setEditProvider(EditDataProvider* provider)

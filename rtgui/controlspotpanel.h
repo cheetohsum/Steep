@@ -50,11 +50,13 @@ public:
     /**
      * A SpotRow structure allows exchanges from and to ControlSpotClass
      */
+    static constexpr int GEOM_PER_SPOT = 10;
+
     struct SpotRow {
         Glib::ustring name;
         bool isvisible;
         int prevMethod; // 0 = Normal, 1 = Excluding
-        int shape; // 0 = Ellipse, 1 = Rectangle
+        int shape; // 0 = Ellipse, 1 = Rectangle, 2 = Gradient
         int spotMethod; // 0 = Normal, 1 = Excluding  2 = fullimage 3 = main
         int sensiexclu;
         int structexclu;
@@ -71,6 +73,7 @@ public:
         double transit;
         double transitweak;
         double transitgrad;
+        double gradangle;
         double feather;
         double struc;
         double thresh;
@@ -314,6 +317,7 @@ private:
         Gtk::TreeModelColumn<double> transit;
         Gtk::TreeModelColumn<double> transitweak;
         Gtk::TreeModelColumn<double> transitgrad;
+        Gtk::TreeModelColumn<double> gradangle;
         Gtk::TreeModelColumn<double> feather;
         Gtk::TreeModelColumn<double> struc;
         Gtk::TreeModelColumn<double> thresh;
@@ -407,6 +411,7 @@ private:
     Adjuster* const transit_;
     Adjuster* const transitweak_;
     Adjuster* const transitgrad_;
+    Adjuster* const gradangle_;
     Adjuster* const feather_;
     Adjuster* const struc_;
     Adjuster* const thresh_;
@@ -443,6 +448,7 @@ private:
     MyExpander* const expShapeDetect_;
     MyExpander* const expSpecCases_;
     MyExpander* const expMaskMerge_;
+    MyExpander* const expAdvanced_;
 
     Gtk::ToggleButton* const preview_;
     sigc::connection previewConn_;

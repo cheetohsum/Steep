@@ -1,0 +1,4 @@
+build/
+install/
+.git/
+tools/__pycache__/

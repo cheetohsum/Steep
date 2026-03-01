@@ -18,6 +18,8 @@
  */
 #include "placesbrowser.h"
 
+#include <thread>
+
 #include "guiutils.h"
 #include "rtimage.h"
 #include "options.h"
@@ -33,46 +35,72 @@ PlacesBrowser::PlacesBrowser ()
 {
     set_orientation(Gtk::ORIENTATION_VERTICAL);
 
+    // Header bar: "Places" label + "+" add-place button
+    Gtk::Box* headerBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+    headerBar->set_name("PlacesHeader");
+    Gtk::Label* headerLabel = Gtk::manage(new Gtk::Label(M("MAIN_FRAME_PLACES")));
+    headerLabel->set_xalign(0.0);
+    addPlaceBtn_ = Gtk::manage(new Gtk::Button());
+    addPlaceBtn_->set_name("PlacesAddBtn");
+    addPlaceBtn_->set_image(*Gtk::manage(new RTImage("add-place", Gtk::ICON_SIZE_MENU)));
+    addPlaceBtn_->set_relief(Gtk::RELIEF_NONE);
+    addPlaceBtn_->set_tooltip_text(M("MAIN_FRAME_PLACES_ADD"));
+    addPlaceBtn_->signal_clicked().connect(sigc::mem_fun(*this, &PlacesBrowser::addPressed));
+
+    auto headerCss = Gtk::CssProvider::create();
+    headerCss->load_from_data(
+        "#PlacesHeader { min-height: 0; padding: 0 4px; }"
+        "#PlacesHeader label { font-size: 10px; font-weight: bold; padding: 2px 0; margin: 0; }"
+        "#PlacesAddBtn { min-height: 0; min-width: 0; padding: 0; margin: 0; }"
+    );
+    headerBar->get_style_context()->add_provider(headerCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+    headerLabel->get_style_context()->add_provider(headerCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+    addPlaceBtn_->get_style_context()->add_provider(headerCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+
+    headerBar->pack_start(*headerLabel, Gtk::PACK_EXPAND_WIDGET);
+    headerBar->pack_end(*addPlaceBtn_, Gtk::PACK_SHRINK);
+    pack_start(*headerBar, Gtk::PACK_SHRINK, 0);
+
     scrollw = Gtk::manage (new Gtk::ScrolledWindow ());
     scrollw->set_policy (Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
-    pack_start (*scrollw);
-
-    // Since Gtk3, we can't have image+text buttons natively. We'll comply to the Gtk guidelines and choose one of them (icons here)
-    add = Gtk::manage (new Gtk::Button ());
-    add->set_tooltip_text(M("MAIN_FRAME_PLACES_ADD"));
-    setExpandAlignProperties(add, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_START);
-    //add->get_style_context()->set_junction_sides(Gtk::JUNCTION_RIGHT);
-    add->get_style_context()->add_class("Left");
-    add->set_image (*Gtk::manage (new RTImage ("add-small", Gtk::ICON_SIZE_BUTTON)));
-    del = Gtk::manage (new Gtk::Button ());
-    del->set_tooltip_text(M("MAIN_FRAME_PLACES_DEL"));
-    setExpandAlignProperties(del, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_START);
-    //del->get_style_context()->set_junction_sides(Gtk::JUNCTION_LEFT);
-    del->get_style_context()->add_class("Right");
-    del->set_image (*Gtk::manage (new RTImage ("remove-small", Gtk::ICON_SIZE_BUTTON)));
-    Gtk::Grid* buttonBox = Gtk::manage (new Gtk::Grid ());
-    buttonBox->set_orientation(Gtk::ORIENTATION_HORIZONTAL);
-    buttonBox->attach_next_to(*add, Gtk::POS_LEFT, 1, 1);
-    buttonBox->attach_next_to(*del, *add, Gtk::POS_RIGHT, 1, 1);
-
-    pack_start (*buttonBox, Gtk::PACK_SHRINK, 2);
+    scrollw->set_propagate_natural_height(true);
+    scrollw->set_max_content_height(48);
+    pack_start (*scrollw, Gtk::PACK_SHRINK);
 
     treeView = Gtk::manage (new Gtk::TreeView ());
     treeView->set_can_focus(false);
+    treeView->set_name("PlacesBrowserTree");
     scrollw->add (*treeView);
+
+    // Right-click context menu for places
+    rightClickMenu = Gtk::manage(new Gtk::Menu());
+    addMenuItem = Gtk::manage(new Gtk::MenuItem(M("MAIN_FRAME_PLACES_ADD")));
+    addMenuItem->signal_activate().connect(sigc::mem_fun(*this, &PlacesBrowser::addPressed));
+    rightClickMenu->append(*addMenuItem);
+    removeMenuItem = Gtk::manage(new Gtk::MenuItem(M("MAIN_FRAME_PLACES_DEL")));
+    removeMenuItem->signal_activate().connect(sigc::mem_fun(*this, &PlacesBrowser::delPressed));
+    rightClickMenu->append(*removeMenuItem);
+    rightClickMenu->show_all();
+    treeView->signal_button_press_event().connect(sigc::mem_fun(*this, &PlacesBrowser::onButtonPress), false);
 
     placesModel = Gtk::ListStore::create (placesColumns);
     treeView->set_model (placesModel);
-    treeView->set_headers_visible (true);
+    treeView->set_headers_visible (false);
 
     Gtk::TreeView::Column *iviewcol = Gtk::manage (new Gtk::TreeView::Column (M("MAIN_FRAME_PLACES")));
     Gtk::CellRendererPixbuf *iconCR  = Gtk::manage (new Gtk::CellRendererPixbuf());
     Gtk::CellRendererText *labelCR  = Gtk::manage (new Gtk::CellRendererText());
     labelCR->property_ellipsize() = Pango::ELLIPSIZE_MIDDLE;
+    Gtk::CellRendererText *countCR = Gtk::manage (new Gtk::CellRendererText());
+    countCR->property_foreground() = "#888888";
+    countCR->property_xalign() = 1.0;
+
     iviewcol->pack_start (*iconCR, false);
     iviewcol->pack_start (*labelCR, true);
+    iviewcol->pack_end (*countCR, false);
     iviewcol->add_attribute (*iconCR, "gicon", 0);
     iviewcol->add_attribute (*labelCR, "text", placesColumns.label);
+    iviewcol->add_attribute (*countCR, "text", placesColumns.photoCount);
     treeView->append_column (*iviewcol);
 
     treeView->set_row_separator_func (sigc::mem_fun(*this, &PlacesBrowser::rowSeparatorFunc));
@@ -90,8 +118,6 @@ PlacesBrowser::PlacesBrowser ()
     vm->signal_drive_changed().connect (sigc::mem_fun(*this, &PlacesBrowser::driveChanged));
 
     treeView->get_selection()->signal_changed().connect(sigc::mem_fun(*this, &PlacesBrowser::selectionChanged));
-    add->signal_clicked().connect(sigc::mem_fun(*this, &PlacesBrowser::addPressed));
-    del->signal_clicked().connect(sigc::mem_fun(*this, &PlacesBrowser::delPressed));
 
     show_all ();
 }
@@ -247,6 +273,8 @@ void PlacesBrowser::refreshPlacesList ()
             newrow[placesColumns.rowSeparator] = false;
         }
     }
+
+    startPhotoCount();
 }
 
 bool PlacesBrowser::rowSeparatorFunc (const Glib::RefPtr<Gtk::TreeModel>& model, const Gtk::TreeModel::iterator& iter)
@@ -304,8 +332,13 @@ void PlacesBrowser::selectionChanged ()
 
 void PlacesBrowser::dirSelected (const Glib::ustring& dirname, const Glib::ustring& openfile)
 {
-
     lastSelectedDir = dirname;
+
+    // Invalidate cache for this directory (contents may have changed)
+    {
+        std::lock_guard<std::mutex> lock(photoCountMutex_);
+        photoCountCache_.erase(dirname);
+    }
 }
 
 void PlacesBrowser::addPressed ()
@@ -352,6 +385,32 @@ void PlacesBrowser::delPressed ()
     }
 
     refreshPlacesList ();
+}
+
+bool PlacesBrowser::onButtonPress (GdkEventButton* event)
+{
+    if (event->type == GDK_BUTTON_PRESS && event->button == 3) {
+        Gtk::TreeModel::Path path;
+        bool onRow = treeView->get_path_at_pos(static_cast<int>(event->x), static_cast<int>(event->y), path);
+        bool isFavorite = false;
+
+        if (onRow) {
+            treeView->get_selection()->select(path);
+            auto iter = placesModel->get_iter(path);
+            isFavorite = iter && iter->get_value(placesColumns.type) == 5;
+        }
+
+        // Show "Add" if we have a directory selected in the dir browser
+        addMenuItem->set_visible(!lastSelectedDir.empty());
+        // Show "Remove" only for favorites
+        removeMenuItem->set_visible(isFavorite);
+
+        if (!lastSelectedDir.empty() || isFavorite) {
+            rightClickMenu->popup(event->button, event->time);
+            return true;
+        }
+    }
+    return false;
 }
 
 Glib::ustring PlacesBrowser::userHomeDir ()
@@ -402,4 +461,95 @@ Glib::ustring PlacesBrowser::userPicturesDir ()
     return Glib::get_user_special_dir (G_USER_DIRECTORY_PICTURES);
 
 #endif
+}
+
+int PlacesBrowser::countPhotosInDir (const Glib::ustring& dirPath)
+{
+    int count = 0;
+
+    try {
+        Glib::Dir dir(dirPath);
+
+        const auto& exts = App::get().options().parsedExtensionsSet;
+
+        for (auto it = dir.begin(); it != dir.end(); ++it) {
+            const Glib::ustring& fname = *it;
+            auto dotpos = fname.find_last_of('.');
+
+            if (dotpos != Glib::ustring::npos) {
+                Glib::ustring ext = fname.substr(dotpos + 1).lowercase();
+
+                if (exts.count(ext.raw())) {
+                    ++count;
+                }
+            }
+        }
+    } catch (...) {
+        // Directory may not be accessible
+    }
+
+    return count;
+}
+
+void PlacesBrowser::startPhotoCount ()
+{
+    if (countingActive_.exchange(true)) {
+        return; // already counting
+    }
+
+    // Collect paths from model
+    struct DirEntry {
+        Glib::ustring path;
+        Gtk::TreeModel::Path treePath;
+    };
+    std::vector<DirEntry> dirs;
+
+    for (auto it = placesModel->children().begin(); it != placesModel->children().end(); ++it) {
+        Glib::ustring root = (*it)[placesColumns.root];
+
+        if (!root.empty() && !(*it)[placesColumns.rowSeparator]) {
+            dirs.push_back({root, placesModel->get_path(it)});
+        }
+    }
+
+    auto model = placesModel;
+    auto cols = &placesColumns;
+    auto activeFlag = &countingActive_;
+    auto cache = &photoCountCache_;
+    auto mtx = &photoCountMutex_;
+
+    std::thread([dirs, model, cols, activeFlag, cache, mtx]() {
+        for (const auto& entry : dirs) {
+            int count = -1;
+
+            {
+                std::lock_guard<std::mutex> lock(*mtx);
+                auto it = cache->find(entry.path);
+
+                if (it != cache->end()) {
+                    count = it->second;
+                }
+            }
+
+            if (count < 0) {
+                count = countPhotosInDir(entry.path);
+
+                std::lock_guard<std::mutex> lock(*mtx);
+                (*cache)[entry.path] = count;
+            }
+
+            Glib::ustring countStr = count > 0 ? "(" + std::to_string(count) + ")" : "";
+            Gtk::TreeModel::Path tp = entry.treePath;
+
+            Glib::signal_idle().connect_once([model, cols, tp, countStr]() {
+                auto it = model->get_iter(tp);
+
+                if (it) {
+                    (*it)[cols->photoCount] = countStr;
+                }
+            });
+        }
+
+        activeFlag->store(false);
+    }).detach();
 }

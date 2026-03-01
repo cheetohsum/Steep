@@ -32,18 +32,6 @@ const Glib::ustring RGBCurves::TOOL_NAME = "rgbcurves";
 RGBCurves::RGBCurves () : FoldableToolPanel(this, TOOL_NAME, M("TP_RGBCURVES_LABEL"), false, true), lastLumamode(false)
 {
 
-    lumamode = Gtk::manage (new Gtk::CheckButton (M("TP_RGBCURVES_LUMAMODE")));
-    lumamode->set_tooltip_markup (M("TP_RGBCURVES_LUMAMODE_TOOLTIP"));
-    lumamode->set_active (false);
-    lumamode->show ();
-    pack_start (*lumamode);
-
-    Gtk::Separator *hsep1 = Gtk::manage (new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
-    hsep1->show ();
-    pack_start (*hsep1);
-
-    lumamodeConn = lumamode->signal_toggled().connect( sigc::mem_fun(*this, &RGBCurves::lumamodeChanged) );
-
     std::vector<GradientMilestone> milestones;
 
     auto& options = App::get().mut_options();
@@ -75,6 +63,20 @@ RGBCurves::RGBCurves () : FoldableToolPanel(this, TOOL_NAME, M("TP_RGBCURVES_LAB
     curveEditorG->curveListComplete();
 
     pack_start (*curveEditorG, Gtk::PACK_SHRINK, 4);
+
+    // Advanced section
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
+
+    lumamode = Gtk::manage (new Gtk::CheckButton (M("TP_RGBCURVES_LUMAMODE")));
+    lumamode->set_tooltip_markup (M("TP_RGBCURVES_LUMAMODE_TOOLTIP"));
+    lumamode->set_active (false);
+    lumamode->show ();
+    getSummaryBox()->pack_start (*lumamode);
+    getSummaryBox()->show_all();
+
+    lumamodeConn = lumamode->signal_toggled().connect( sigc::mem_fun(*this, &RGBCurves::lumamodeChanged) );
 
 }
 
@@ -204,6 +206,7 @@ void RGBCurves::setBatchMode (bool batchMode)
 
     ToolPanel::setBatchMode (batchMode);
     curveEditorG->setBatchMode (batchMode);
+    advancedSection->setBatchMode(batchMode);
 }
 
 

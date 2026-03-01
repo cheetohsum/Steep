@@ -49,4 +49,7 @@ public:
 
     void    setButtonListener   (LWButtonListener* bl);
     void    redraw              (Cairo::RefPtr<Cairo::Context> context);
+
+    // Override to conditionally hide the button set (e.g. no rank/label)
+    virtual bool shouldShow () const { return true; }
 };

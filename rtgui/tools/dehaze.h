@@ -38,7 +38,8 @@ private:
     rtengine::ProcEvent EvDehazeDepth;
     rtengine::ProcEvent EvDehazeShowDepthMap;
     rtengine::ProcEvent EvDehazeSaturation;
-    
+    AdvancedSection* advancedSection;
+
 public:
     static const Glib::ustring TOOL_NAME;
 

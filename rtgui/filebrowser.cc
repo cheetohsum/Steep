@@ -162,6 +162,8 @@ FileBrowser::FileBrowser () :
     p++;
     pmenu->attach (*Gtk::manage(developfast = new Gtk::MenuItem (M("FILEBROWSER_POPUPPROCESSFAST"))), 0, 1, p, p + 1);
     p++;
+    pmenu->attach (*Gtk::manage(saveImage = new Gtk::MenuItem (M("FILEBROWSER_POPUPSAVEIMAGE"))), 0, 1, p, p + 1);
+    p++;
 
     pmenu->attach (*Gtk::manage(new Gtk::SeparatorMenuItem ()), 0, 1, p, p + 1);
     p++;
@@ -493,6 +495,7 @@ FileBrowser::FileBrowser () :
     untrash->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), untrash));
     develop->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), develop));
     developfast->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), developfast));
+    saveImage->signal_activate().connect ([this]() { m_save_image_requested.emit(); });
     rename->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), rename));
     remove->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), remove));
     removeInclProc->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), removeInclProc));
@@ -531,6 +534,13 @@ FileBrowser::FileBrowser () :
 FileBrowser::~FileBrowser ()
 {
     idle_register.destroy();
+
+    // Cancel deferred deletion callback and flush remaining entries
+    deletionConnection_.disconnect();
+    for (auto* entry : pendingDeletion_) {
+        delete entry;
+    }
+    pendingDeletion_.clear();
 
     ProfileStore::getInstance()->removeListener(this);
     delete pmenu;
@@ -607,6 +617,13 @@ void FileBrowser::rightClicked ()
     cachesubmenu->show_all ();
     cachemenu->set_submenu (*cachesubmenu);
 
+    // "Save Image" only makes sense in editor's filmstrip (tab mode)
+    if (isInTabMode()) {
+        saveImage->show();
+    } else {
+        saveImage->hide();
+    }
+
     pmenu->popup (3, this->eventTime);
 }
 
@@ -650,7 +667,6 @@ void FileBrowser::addEntry_ (FileBrowserEntry* entry)
     entry->addButtonSet(new FileThumbnailButtonSet(entry));
     entry->getThumbButtonSet()->setRank(entry->thumbnail->getRank());
     entry->getThumbButtonSet()->setColorLabel(entry->thumbnail->getColorLabel());
-    entry->getThumbButtonSet()->setInTrash(entry->thumbnail->getTrashed());
     entry->getThumbButtonSet()->setButtonListener(this);
     entry->resize(getThumbnailHeight());
     entry->filtered = !checkFilter(entry);
@@ -695,6 +711,16 @@ void FileBrowser::close ()
 {
     ++session_id_;
 
+    // Clear any pending batch inserts — move to deferred deletion
+    {
+        MyMutex::MyLock lock(pendingMutex_);
+        pendingDeletion_.insert(pendingDeletion_.end(),
+                                pendingInserts_.begin(),
+                                pendingInserts_.end());
+        pendingInserts_.clear();
+        redrawPending_ = false;
+    }
+
     {
         MYWRITERLOCK(l, entryRW);
 
@@ -707,15 +733,37 @@ void FileBrowser::close ()
 
         MYWRITERLOCK_ACQUIRE(l);
 
-        // The listener merges parameters with old values, so delete afterwards
-        for (size_t i = 0; i < fd.size(); i++) {
-            delete fd.at(i);
-        }
-
+        // Move entries to deferred deletion instead of blocking the main thread
+        pendingDeletion_.insert(pendingDeletion_.end(), fd.begin(), fd.end());
         fd.clear ();
     }
 
     lastClicked = nullptr;
+
+    // Schedule batched deletion via idle callback
+    if (!pendingDeletion_.empty() && !deletionConnection_.connected()) {
+        deletionConnection_ = Glib::signal_idle().connect(
+            sigc::mem_fun(*this, &FileBrowser::onDeletionIdle_),
+            G_PRIORITY_LOW
+        );
+    }
+}
+
+bool FileBrowser::onDeletionIdle_()
+{
+    const int BATCH_SIZE = 64;
+    int count = 0;
+
+    while (!pendingDeletion_.empty() && count < BATCH_SIZE) {
+        delete pendingDeletion_.back();
+        pendingDeletion_.pop_back();
+        ++count;
+    }
+
+    if (pendingDeletion_.empty()) {
+        return false; // all done, unregister
+    }
+    return true; // more to delete, call again
 }
 
 void FileBrowser::menuColorlabelActivated (Gtk::MenuItem* m)
@@ -1550,6 +1598,14 @@ bool FileBrowser::checkFilter (ThumbBrowserEntryBase* entryb) const   // true ->
 
     FileBrowserEntry* entry = static_cast<FileBrowserEntry*>(entryb);
 
+    // Album whitelist filter: if active, only show files in the album
+    if (!filter.albumWhitelist.empty()) {
+        std::string fullPath = entry->thumbnail->getFileName();
+        if (filter.albumWhitelist.find(fullPath) == filter.albumWhitelist.end()) {
+            return false;
+        }
+    }
+
     if (filter.showOriginal && entry->getOriginal()) {
         return false;
     }
@@ -1640,7 +1696,6 @@ void FileBrowser::toTrashRequested (std::vector<FileBrowserEntry*> tbe)
         if (tbe[i]->getThumbButtonSet()) {
             tbe[i]->getThumbButtonSet()->setRank (tbe[i]->thumbnail->getRank());
             tbe[i]->getThumbButtonSet()->setColorLabel (tbe[i]->thumbnail->getColorLabel());
-            tbe[i]->getThumbButtonSet()->setInTrash (true);
             tbe[i]->thumbnail->updateCache (); // needed to save the colorlabel to disk in the procparam file(s) and the cache image data file
         }
     }
@@ -1664,7 +1719,6 @@ void FileBrowser::fromTrashRequested (std::vector<FileBrowserEntry*> tbe)
         if (tbe[i]->getThumbButtonSet()) {
             tbe[i]->getThumbButtonSet()->setRank (tbe[i]->thumbnail->getRank());
             tbe[i]->getThumbButtonSet()->setColorLabel (tbe[i]->thumbnail->getColorLabel());
-            tbe[i]->getThumbButtonSet()->setInTrash (false);
             tbe[i]->thumbnail->updateCache (); // needed to save the colorlabel to disk in the procparam file(s) and the cache image data file
         }
     }
@@ -1774,6 +1828,22 @@ void FileBrowser::requestColorLabel(int colorlabel)
     }
 
     colorlabelRequested (mselected, colorlabel);
+}
+
+void FileBrowser::requestDevelop()
+{
+    std::vector<FileBrowserEntry*> mselected;
+    {
+        MYREADERLOCK(l, entryRW);
+
+        for (size_t i = 0; i < selected.size(); i++) {
+            mselected.push_back (static_cast<FileBrowserEntry*>(selected[i]));
+        }
+    }
+
+    if (tbl) {
+        tbl->developRequested (mselected, false);
+    }
 }
 
 void FileBrowser::buttonPressed (LWButton* button, int actionCode, void* actionData)
@@ -2034,6 +2104,11 @@ void FileBrowser::redrawNeeded (LWButton* button)
 FileBrowser::type_trash_changed FileBrowser::trash_changed ()
 {
     return m_trash_changed;
+}
+
+FileBrowser::type_save_image_requested FileBrowser::save_image_requested ()
+{
+    return m_save_image_requested;
 }
 
 

@@ -752,6 +752,8 @@ public:
     virtual void        startProcessing (int changeCode) = 0;
     /** Stops image processing. When it returns, the image processing is already stopped. */
     virtual void        stopProcessing () = 0;
+    /** Signals the processing thread to abort without waiting for it to finish. */
+    virtual void        signalStop () = 0;
     /** Sets the scale of the preview image. The larger the number is, the faster the image updates are (typical values are 4-5).
       * @param scale is the scale of the preview image */
     virtual void        setPreviewScale (int scale) = 0;
@@ -778,7 +780,7 @@ public:
 
     virtual void        updateUnLock() = 0;
 
-    virtual void        setLocallabMaskVisibility(bool previewDeltaE, int locallColorMask, int locallColorMaskinv, int locallExpMask, int locallExpMaskinv, int locallSHMask, int locallSHMaskinv, int locallvibMask, int locallsoftMask, int locallblMask, int localltmMask, int locallretiMask, int locallsharMask, int localllcMask, int locallcbMask, int localllogMask, int locall_Mask, int locallcieMask) = 0;
+    virtual void        setLocallabMaskVisibility(bool previewDeltaE, bool showMaskOverlay, int locallColorMask, int locallColorMaskinv, int locallExpMask, int locallExpMaskinv, int locallSHMask, int locallSHMaskinv, int locallvibMask, int locallsoftMask, int locallblMask, int localltmMask, int locallretiMask, int locallsharMask, int localllcMask, int locallcbMask, int localllogMask, int locall_Mask, int locallcieMask) = 0;
 
     /** Creates and returns a Crop instance that acts as a window on the image
       * @param editDataProvider pointer to the EditDataProvider that communicates with the EditSubscriber
@@ -788,6 +790,7 @@ public:
     virtual bool        getAutoWB   (double& temp, double& green, double equal, StandardObserver observer, double tempBias) = 0;
     virtual void        getCamWB    (double& temp, double& green, StandardObserver observer) = 0;
     virtual void        getSpotWB  (int x, int y, int rectSize, double& temp, double& green) = 0;
+    virtual void        getSpotHSV (int x, int y, int rectSize, float& h, float& s, float& v) = 0;
     virtual bool        getFilmNegativeSpot(int x, int y, int spotSize, procparams::FilmNegativeParams::RGB &refInput, procparams::FilmNegativeParams::RGB &refOutput) = 0;
 
     virtual void        getAutoCrop (double ratio, int &x, int &y, int &w, int &h) = 0;
@@ -827,6 +830,11 @@ public:
     virtual void        setSoftProofing         (bool softProof, bool gamutCheck) = 0;
     virtual void        getSoftProofing         (bool &softProof, bool &gamutCheck) = 0;
     virtual ProcEvent   setSharpMask            (bool sharpMask) = 0;
+
+    /** Export RT's demosaiced image as a float32 TIFF for AI denoiser input.
+      * @param outputPath path for the output TIFF file
+      * @return true on success */
+    virtual bool        exportDemosaicedTIFF    (const Glib::ustring& outputPath) = 0;
 
     virtual ~StagedImageProcessor () {}
 

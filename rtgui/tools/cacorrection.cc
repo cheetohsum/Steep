@@ -43,12 +43,14 @@ CACorrection::CACorrection () : FoldableToolPanel(this, TOOL_NAME, M("TP_CACORRE
     blue = Gtk::manage (new Adjuster (M("TP_CACORRECTION_BLUE"), -0.005, 0.005, 0.0001, 0, icablueL, icablueR));
     blue->setAdjusterListener (this);
 
-    pack_start (*red);
-    pack_start (*blue);
+    getSummaryBox()->pack_start (*red);
+    getSummaryBox()->pack_start (*blue);
 
     red->setLogScale(10, 0);
     blue->setLogScale(10, 0);
 
+    setExpandable(false);
+    getSummaryBox()->show_all();
     show_all();
 }
 

@@ -39,14 +39,14 @@ LensGeometry::LensGeometry () : FoldableToolPanel(this, TOOL_NAME, M("TP_LENSGEO
     EvTransScaleVertically  = m->newEvent(TRANSFORM, "HISTORY_MSG_TRANS_SCALE_VERTICALLY");
     EvTransMethod = m->newEvent(TRANSFORM, "HISTORY_MSG_TRANS_METHOD");
 
-    Gtk::Box* hb1 = Gtk::manage (new Gtk::Box ());
-    hb1->pack_start (*Gtk::manage (new Gtk::Label ( M("TP_RAW_DMETHOD") + ": ")), Gtk::PACK_SHRINK, 4);
+    methodBox = Gtk::manage (new Gtk::Box ());
+    methodBox->pack_start (*Gtk::manage (new Gtk::Label ( M("TP_RAW_DMETHOD") + ": ")), Gtk::PACK_SHRINK, 4);
     method = Gtk::manage (new MyComboBoxText ());
     method->append(M("TP_LENSGEOM_LOG"));
     method->append(M("TP_LENSGEOM_LIN"));
     method->set_active(0);
-    hb1->pack_end (*method, Gtk::PACK_EXPAND_WIDGET, 4);
-    pack_start( *hb1, Gtk::PACK_SHRINK, 4);
+    methodBox->pack_end (*method, Gtk::PACK_EXPAND_WIDGET, 4);
+    pack_start( *methodBox, Gtk::PACK_SHRINK, 4);
 
     scale = Gtk::manage (new Adjuster (M("TP_LENSGEOM_SCALE"), 0.1, 10, 0.01, 1));
     scale->setAdjusterListener (this);
@@ -209,6 +209,14 @@ void LensGeometry::methodChanged ()
 
     if (listener && method->get_active_row_number() >= 0) {
         listener->panelChanged(EvTransMethod, method->get_active_text());
+    }
+}
+
+void LensGeometry::hideMethodCombo ()
+{
+    if (methodBox) {
+        methodBox->set_no_show_all(true);
+        methodBox->hide();
     }
 }
 

@@ -35,11 +35,9 @@ Sharpening::Sharpening () : FoldableToolPanel(this, TOOL_NAME, M("TP_SHARPENING_
     hb->show ();
     contrast = Gtk::manage(new Adjuster (M("TP_SHARPENING_CONTRAST"), 0, 200, 1, 20));
     contrast->setAdjusterListener (this);
-    pack_start(*contrast);
     contrast->show();
     blur = Gtk::manage(new Adjuster (M("TP_SHARPENING_BLUR"), 0.2, 2.0, 0.05, 0.2));
     blur->setAdjusterListener (this);
-    pack_start(*blur);
     blur->show();
 
     Gtk::Label* ml = Gtk::manage (new Gtk::Label (M("TP_SHARPENING_METHOD") + ":"));
@@ -50,7 +48,6 @@ Sharpening::Sharpening () : FoldableToolPanel(this, TOOL_NAME, M("TP_SHARPENING_
     method->show ();
     hb->pack_start(*ml, Gtk::PACK_SHRINK, 4);
     hb->pack_start(*method);
-    pack_start (*hb);
 
     rld = new Gtk::Box(Gtk::ORIENTATION_VERTICAL);
     dradius = Gtk::manage (new Adjuster (M("TP_SHARPENING_EDRADIUS"), 0.4, 2.5, 0.01, 0.75));
@@ -70,23 +67,34 @@ Sharpening::Sharpening () : FoldableToolPanel(this, TOOL_NAME, M("TP_SHARPENING_
     usm = new Gtk::Box(Gtk::ORIENTATION_VERTICAL);
     usm->show ();
 
-
-    Gtk::Separator* hsep6a = Gtk::manage (new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
     amount = Gtk::manage (new Adjuster (M("TP_SHARPENING_AMOUNT"), 1, 1000, 1, 200));
     radius = Gtk::manage (new Adjuster (M("TP_SHARPENING_RADIUS"), 0.3, 3, 0.01, 0.5));
     threshold = Gtk::manage (new ThresholdAdjuster (M("TP_SHARPENING_THRESHOLD"), 0., 2000., 20., 80., 2000., 1200., 0, false));
     threshold->setAdjusterListener (this);
-    pack_start(*hsep6a, Gtk::PACK_SHRINK, 2);
 
-    pack_start (*usm);
-
-    usm->pack_start(*radius);
-    usm->pack_start(*threshold);
-    usm->pack_start(*amount);
-    hsep6a->show ();
-    radius->show ();
-    threshold->show ();
+    // Visible: amount and radius (in summary box)
+    getSummaryBox()->pack_start(*amount);
+    getSummaryBox()->pack_start(*radius);
+    getSummaryBox()->show_all();
     amount->show ();
+    radius->show ();
+
+    // Advanced section
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
+
+    advBox->pack_start(*contrast);
+    advBox->pack_start(*blur);
+    Gtk::Separator* hsep6a = Gtk::manage (new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
+    advBox->pack_start(*hsep6a, Gtk::PACK_SHRINK, 2);
+    advBox->pack_start (*hb);
+    hsep6a->show ();
+
+    advBox->pack_start (*usm);
+
+    usm->pack_start(*threshold);
+    threshold->show ();
 
     Gtk::Separator* hsep6 = Gtk::manage (new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
     edgesonly = Gtk::manage (new Gtk::CheckButton (M("TP_SHARPENING_ONLYEDGES")));
@@ -320,6 +328,7 @@ void Sharpening::setDefaults (const ProcParams* defParams, const ParamsEdited* p
 
 void Sharpening::adjusterChanged(Adjuster* a, double newval)
 {
+    autoEnable();
     if (listener && (multiImage || getEnabled()) ) {
 
         Glib::ustring costr;
@@ -372,6 +381,7 @@ void Sharpening::adjusterChanged(ThresholdAdjuster* a, int newBottom, int newTop
 
 void Sharpening::adjusterChanged(ThresholdAdjuster* a, int newBottomLeft, int newTopLeft, int newBottomRight, int newTopRight)
 {
+    autoEnable();
     if (listener && (multiImage || getEnabled())) {
         if (a == threshold) {
             listener->panelChanged(EvShrThresh, threshold->getHistoryString());
@@ -471,13 +481,14 @@ void Sharpening::method_changed ()
 {
 
     if (!batchMode) {
-        removeIfThere (this, usm, false);
-        removeIfThere (this, rld, false);
+        Gtk::Box* const advBox = advancedSection->getContentBox();
+        removeIfThere (advBox, usm, false);
+        removeIfThere (advBox, rld, false);
 
         if (method->get_active_row_number() == 0) {
-            pack_start (*usm);
+            advBox->pack_start (*usm);
         } else if (method->get_active_row_number() == 1) {
-            pack_start (*rld);
+            advBox->pack_start (*rld);
         }
     }
 
@@ -496,7 +507,8 @@ void Sharpening::setBatchMode (bool batchMode)
     hcbin->pack_start (*hcbox);
     removeIfThere (edgebin, edgebox, false);
     edgebin->pack_start (*edgebox);
-    pack_start (*rld);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
+    advBox->pack_start (*rld);
 
     contrast->showEditedCB ();
     blur->showEditedCB ();
@@ -511,6 +523,7 @@ void Sharpening::setBatchMode (bool batchMode)
     ddamping->showEditedCB ();
     diter->showEditedCB ();
     method->append (M("GENERAL_UNCHANGED"));
+    advancedSection->setBatchMode(batchMode);
 }
 
 void Sharpening::setAdjusterBehavior (bool contrastadd, bool radiusadd, bool amountadd, bool dampingadd, bool iteradd, bool edgetoladd, bool haloctrladd)

@@ -90,6 +90,7 @@ public:
 
     void fillDirTree ();
     void on_sort_column_changed() const;
+    void browseForFolder ();
     void row_expanded   (const Gtk::TreeModel::iterator& iter, const Gtk::TreeModel::Path& path);
     void row_collapsed  (const Gtk::TreeModel::iterator& iter, const Gtk::TreeModel::Path& path);
     void row_activated  (const Gtk::TreeModel::Path& path, Gtk::TreeViewColumn* column);

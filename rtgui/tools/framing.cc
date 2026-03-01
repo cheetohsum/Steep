@@ -315,10 +315,16 @@ Framing::Framing() :
 {
     setupEvents();
     setupFramingMethodGui();
+    getSummaryBox()->show_all();
     pack_start(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)));
+
+    advancedSection = Gtk::manage(new AdvancedSection());
+
     setupBorderSizeGui();
     pack_start(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)));
     setupBorderColorsGui();
+
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
 }
 
 Framing::~Framing() {
@@ -387,7 +393,7 @@ void Framing::setupFramingMethodGui()
 
     combos->attach(*orientationLabel, 0, 2);
     combos->attach(*orientation, 1, 2);
-    pack_start(*combos);
+    getSummaryBox()->pack_start(*combos);
 
     width = DimensionGui(this, "TP_FRAMING_FRAMED_WIDTH");
     width.setRange(Resize::MIN_SIZE, Resize::MAX_SCALE * imgWidth);
@@ -415,6 +421,13 @@ void Framing::setupFramingMethodGui()
 
 void Framing::setupBorderSizeGui()
 {
+    // Visible: relative border size adjuster in summary
+    relativeBorderSize = Gtk::manage(new Adjuster(M("TP_FRAMING_BORDER_SIZE"), 0, 1, 0.01, 0.1));
+    getSummaryBox()->pack_start(*relativeBorderSize);
+
+    // Advanced: sizing method, basis, min size, absolute size
+    Gtk::Box* const advBox = advancedSection->getContentBox();
+
     Gtk::Grid* combos = Gtk::manage(new Gtk::Grid());
     combos->set_row_spacing(ROW_SPACING);
 
@@ -441,10 +454,7 @@ void Framing::setupBorderSizeGui()
     combos->attach(*basisLabel, 0, 1);
     combos->attach(*basis, 1, 1);
 
-    pack_start(*combos);
-
-    relativeBorderSize = Gtk::manage(new Adjuster(M("TP_FRAMING_BORDER_SIZE"), 0, 1, 0.01, 0.1));
-    pack_start(*relativeBorderSize);
+    advBox->pack_start(*combos);
 
     minSizeFrame = Gtk::manage(new Gtk::Frame());
     minSizeFrame->set_label_align(FRAME_LABEL_ALIGN_X, FRAME_LABEL_ALIGN_Y);
@@ -461,12 +471,12 @@ void Framing::setupBorderSizeGui()
     minHeight.setValue(0);
 
     minSizeFrame->add(*minSizeFrameContent);
-    pack_start(*minSizeFrame);
+    advBox->pack_start(*minSizeFrame);
 
-    absWidth = DimensionGui(this, "TP_FRAMING_ABSOLUTE_WIDTH");
+    absWidth = DimensionGui(advBox, "TP_FRAMING_ABSOLUTE_WIDTH");
     absWidth.setRange(0, imgWidth);
     absWidth.setValue(0);
-    absHeight = DimensionGui(this, "TP_FRAMING_ABSOLUTE_HEIGHT");
+    absHeight = DimensionGui(advBox, "TP_FRAMING_ABSOLUTE_HEIGHT");
     absHeight.setRange(0, imgHeight);
     absHeight.setValue(0);
 
@@ -731,6 +741,7 @@ void Framing::setBatchMode(bool batchMode)
     redAdj->showEditedCB();
     greenAdj->showEditedCB();
     blueAdj->showEditedCB();
+    advancedSection->setBatchMode(batchMode);
 }
 
 void Framing::enabledChanged()
@@ -898,6 +909,7 @@ void Framing::updateBorderColorGui()
 
 void Framing::adjusterChanged(Adjuster* adj, double newVal)
 {
+    autoEnable();
     if (adj == redAdj || adj == greenAdj || adj == blueAdj) {
         updateBorderColorGui();
     }

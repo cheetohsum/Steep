@@ -1651,6 +1651,28 @@ void DirPyrDenoiseParams::getCurves(NoiseCurve &lCurve, NoiseCurve &cCurve) cons
     cCurve.Set(this->cccurve);
 }
 
+AIDenoiseParams::AIDenoiseParams() :
+    enabled(false),
+    isoConditioning(50),
+    blend(100),
+    useGpu(true)
+{
+}
+
+bool AIDenoiseParams::operator ==(const AIDenoiseParams& other) const
+{
+    return
+        enabled == other.enabled
+        && isoConditioning == other.isoConditioning
+        && blend == other.blend
+        && useGpu == other.useGpu;
+}
+
+bool AIDenoiseParams::operator !=(const AIDenoiseParams& other) const
+{
+    return !(*this == other);
+}
+
 EPDParams::EPDParams() :
     enabled(false),
     strength(0.5),
@@ -3086,7 +3108,11 @@ HSVEqualizerParams::HSVEqualizerParams() :
     },
     vcurve{
         FCT_Linear
-    }
+    },
+    mode("Curves"),
+    hueShifts{},
+    satShifts{},
+    lumShifts{}
 {
 }
 
@@ -3096,7 +3122,11 @@ bool HSVEqualizerParams::operator ==(const HSVEqualizerParams& other) const
         enabled == other.enabled
         && hcurve == other.hcurve
         && scurve == other.scurve
-        && vcurve == other.vcurve;
+        && vcurve == other.vcurve
+        && mode == other.mode
+        && hueShifts == other.hueShifts
+        && satShifts == other.satShifts
+        && lumShifts == other.lumShifts;
 }
 
 bool HSVEqualizerParams::operator !=(const HSVEqualizerParams& other) const
@@ -3104,9 +3134,87 @@ bool HSVEqualizerParams::operator !=(const HSVEqualizerParams& other) const
     return !(*this == other);
 }
 
+ColorGradingParams::ColorGradingParams() :
+    enabled(false),
+    shadowsHue(0), shadowsSat(0), shadowsLum(0),
+    midtonesHue(0), midtonesSat(0), midtonesLum(0),
+    highlightsHue(0), highlightsSat(0), highlightsLum(0),
+    globalHue(0), globalSat(0), globalLum(0),
+    blending(50), balance(0)
+{
+}
+
+bool ColorGradingParams::operator ==(const ColorGradingParams& other) const
+{
+    return
+        enabled == other.enabled
+        && shadowsHue == other.shadowsHue
+        && shadowsSat == other.shadowsSat
+        && shadowsLum == other.shadowsLum
+        && midtonesHue == other.midtonesHue
+        && midtonesSat == other.midtonesSat
+        && midtonesLum == other.midtonesLum
+        && highlightsHue == other.highlightsHue
+        && highlightsSat == other.highlightsSat
+        && highlightsLum == other.highlightsLum
+        && globalHue == other.globalHue
+        && globalSat == other.globalSat
+        && globalLum == other.globalLum
+        && blending == other.blending
+        && balance == other.balance;
+}
+
+bool ColorGradingParams::operator !=(const ColorGradingParams& other) const
+{
+    return !(*this == other);
+}
+
+PointColorTarget::PointColorTarget() :
+    centerHue(0),
+    hueShift(0),
+    saturation(0),
+    luminance(0),
+    range(50)
+{
+}
+
+bool PointColorTarget::operator ==(const PointColorTarget& other) const
+{
+    return
+        centerHue == other.centerHue
+        && hueShift == other.hueShift
+        && saturation == other.saturation
+        && luminance == other.luminance
+        && range == other.range;
+}
+
+bool PointColorTarget::operator !=(const PointColorTarget& other) const
+{
+    return !(*this == other);
+}
+
+PointColorParams::PointColorParams() :
+    enabled(false),
+    activeTarget(-1)
+{
+}
+
+bool PointColorParams::operator ==(const PointColorParams& other) const
+{
+    return
+        enabled == other.enabled
+        && targets == other.targets
+        && activeTarget == other.activeTarget;
+}
+
+bool PointColorParams::operator !=(const PointColorParams& other) const
+{
+    return !(*this == other);
+}
+
 FilmSimulationParams::FilmSimulationParams() :
     enabled(false),
-    strength(100)
+    strength(0)
 {
 }
 
@@ -3126,7 +3234,7 @@ bool FilmSimulationParams::operator !=(const FilmSimulationParams& other) const
 
 SoftLightParams::SoftLightParams() :
     enabled(false),
-    strength(30)
+    strength(0)
 {
 }
 
@@ -3145,7 +3253,7 @@ bool SoftLightParams::operator !=(const SoftLightParams& other) const
 
 DehazeParams::DehazeParams() :
     enabled(false),
-    strength(50),
+    strength(0),
     saturation(50),
     showDepthMap(false),
     depth(25)
@@ -4035,6 +4143,12 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->impulseDenoise.enabled, "Impulse Denoising", "Enabled", impulseDenoise.enabled, keyFile);
         saveToKeyfile(!pedited || pedited->impulseDenoise.thresh, "Impulse Denoising", "Threshold", impulseDenoise.thresh, keyFile);
 
+// AI Denoise
+        saveToKeyfile(!pedited || pedited->aiDenoise.enabled, "AI Denoising", "Enabled", aiDenoise.enabled, keyFile);
+        saveToKeyfile(!pedited || pedited->aiDenoise.isoConditioning, "AI Denoising", "ISOConditioning", aiDenoise.isoConditioning, keyFile);
+        saveToKeyfile(!pedited || pedited->aiDenoise.blend, "AI Denoising", "Blend", aiDenoise.blend, keyFile);
+        saveToKeyfile(!pedited || pedited->aiDenoise.useGpu, "AI Denoising", "UseGPU", aiDenoise.useGpu, keyFile);
+
 // Defringe
         saveToKeyfile(!pedited || pedited->defringe.enabled, "Defringing", "Enabled", defringe.enabled, keyFile);
         saveToKeyfile(!pedited || pedited->defringe.radius, "Defringing", "Radius", defringe.radius, keyFile);
@@ -4648,6 +4762,44 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->hsvequalizer.hcurve, "HSV Equalizer", "HCurve", hsvequalizer.hcurve, keyFile);
         saveToKeyfile(!pedited || pedited->hsvequalizer.scurve, "HSV Equalizer", "SCurve", hsvequalizer.scurve, keyFile);
         saveToKeyfile(!pedited || pedited->hsvequalizer.vcurve, "HSV Equalizer", "VCurve", hsvequalizer.vcurve, keyFile);
+        saveToKeyfile(!pedited || pedited->hsvequalizer.mode, "HSV Equalizer", "Mode", hsvequalizer.mode, keyFile);
+        for (int i = 0; i < 8; ++i) {
+            saveToKeyfile(!pedited || pedited->hsvequalizer.hueShifts, "HSV Equalizer", "HueShift" + std::to_string(i), hsvequalizer.hueShifts[i], keyFile);
+            saveToKeyfile(!pedited || pedited->hsvequalizer.satShifts, "HSV Equalizer", "SatShift" + std::to_string(i), hsvequalizer.satShifts[i], keyFile);
+            saveToKeyfile(!pedited || pedited->hsvequalizer.lumShifts, "HSV Equalizer", "LumShift" + std::to_string(i), hsvequalizer.lumShifts[i], keyFile);
+        }
+
+// Color Grading
+        saveToKeyfile(!pedited || pedited->colorGrading.enabled, "Color Grading", "Enabled", colorGrading.enabled, keyFile);
+        saveToKeyfile(!pedited || pedited->colorGrading.shadowsHue, "Color Grading", "ShadowsHue", colorGrading.shadowsHue, keyFile);
+        saveToKeyfile(!pedited || pedited->colorGrading.shadowsSat, "Color Grading", "ShadowsSat", colorGrading.shadowsSat, keyFile);
+        saveToKeyfile(!pedited || pedited->colorGrading.shadowsLum, "Color Grading", "ShadowsLum", colorGrading.shadowsLum, keyFile);
+        saveToKeyfile(!pedited || pedited->colorGrading.midtonesHue, "Color Grading", "MidtonesHue", colorGrading.midtonesHue, keyFile);
+        saveToKeyfile(!pedited || pedited->colorGrading.midtonesSat, "Color Grading", "MidtonesSat", colorGrading.midtonesSat, keyFile);
+        saveToKeyfile(!pedited || pedited->colorGrading.midtonesLum, "Color Grading", "MidtonesLum", colorGrading.midtonesLum, keyFile);
+        saveToKeyfile(!pedited || pedited->colorGrading.highlightsHue, "Color Grading", "HighlightsHue", colorGrading.highlightsHue, keyFile);
+        saveToKeyfile(!pedited || pedited->colorGrading.highlightsSat, "Color Grading", "HighlightsSat", colorGrading.highlightsSat, keyFile);
+        saveToKeyfile(!pedited || pedited->colorGrading.highlightsLum, "Color Grading", "HighlightsLum", colorGrading.highlightsLum, keyFile);
+        saveToKeyfile(!pedited || pedited->colorGrading.globalHue, "Color Grading", "GlobalHue", colorGrading.globalHue, keyFile);
+        saveToKeyfile(!pedited || pedited->colorGrading.globalSat, "Color Grading", "GlobalSat", colorGrading.globalSat, keyFile);
+        saveToKeyfile(!pedited || pedited->colorGrading.globalLum, "Color Grading", "GlobalLum", colorGrading.globalLum, keyFile);
+        saveToKeyfile(!pedited || pedited->colorGrading.blending, "Color Grading", "Blending", colorGrading.blending, keyFile);
+        saveToKeyfile(!pedited || pedited->colorGrading.balance, "Color Grading", "Balance", colorGrading.balance, keyFile);
+
+// Point Color
+        saveToKeyfile(!pedited || pedited->pointcolor.enabled, "Point Color", "Enabled", pointcolor.enabled, keyFile);
+        if (!pedited || pedited->pointcolor.targets) {
+            saveToKeyfile(true, "Point Color", "NumTargets", (int)pointcolor.targets.size(), keyFile);
+            for (size_t i = 0; i < pointcolor.targets.size(); ++i) {
+                Glib::ustring prefix = Glib::ustring::compose("Target%1_", i + 1);
+                saveToKeyfile(true, "Point Color", prefix + "CenterHue", pointcolor.targets[i].centerHue, keyFile);
+                saveToKeyfile(true, "Point Color", prefix + "HueShift", pointcolor.targets[i].hueShift, keyFile);
+                saveToKeyfile(true, "Point Color", prefix + "Saturation", pointcolor.targets[i].saturation, keyFile);
+                saveToKeyfile(true, "Point Color", prefix + "Luminance", pointcolor.targets[i].luminance, keyFile);
+                saveToKeyfile(true, "Point Color", prefix + "Range", pointcolor.targets[i].range, keyFile);
+            }
+            saveToKeyfile(true, "Point Color", "ActiveTarget", pointcolor.activeTarget, keyFile);
+        }
 
 // Soft Light
         saveToKeyfile(!pedited || pedited->softlight.enabled, "SoftLight", "Enabled", softlight.enabled, keyFile);
@@ -5466,6 +5618,13 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited)
         if (keyFile.has_group("Impulse Denoising")) {
             assignFromKeyfile(keyFile, "Impulse Denoising", "Enabled", impulseDenoise.enabled, pedited->impulseDenoise.enabled);
             assignFromKeyfile(keyFile, "Impulse Denoising", "Threshold", impulseDenoise.thresh, pedited->impulseDenoise.thresh);
+        }
+
+        if (keyFile.has_group("AI Denoising")) {
+            assignFromKeyfile(keyFile, "AI Denoising", "Enabled", aiDenoise.enabled, pedited->aiDenoise.enabled);
+            assignFromKeyfile(keyFile, "AI Denoising", "ISOConditioning", aiDenoise.isoConditioning, pedited->aiDenoise.isoConditioning);
+            assignFromKeyfile(keyFile, "AI Denoising", "Blend", aiDenoise.blend, pedited->aiDenoise.blend);
+            assignFromKeyfile(keyFile, "AI Denoising", "UseGPU", aiDenoise.useGpu, pedited->aiDenoise.useGpu);
         }
 
         if (keyFile.has_group("Directional Pyramid Denoising")) { //TODO: No longer an accurate description for FT denoise
@@ -6602,6 +6761,72 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited)
                 assignFromKeyfile(keyFile, "HSV Equalizer", "SCurve", hsvequalizer.scurve, pedited->hsvequalizer.scurve);
                 assignFromKeyfile(keyFile, "HSV Equalizer", "VCurve", hsvequalizer.vcurve, pedited->hsvequalizer.vcurve);
             }
+
+            assignFromKeyfile(keyFile, "HSV Equalizer", "Mode", hsvequalizer.mode, pedited->hsvequalizer.mode);
+            for (int i = 0; i < 8; ++i) {
+                assignFromKeyfile(keyFile, "HSV Equalizer", "HueShift" + std::to_string(i), hsvequalizer.hueShifts[i], pedited->hsvequalizer.hueShifts);
+                assignFromKeyfile(keyFile, "HSV Equalizer", "SatShift" + std::to_string(i), hsvequalizer.satShifts[i], pedited->hsvequalizer.satShifts);
+                assignFromKeyfile(keyFile, "HSV Equalizer", "LumShift" + std::to_string(i), hsvequalizer.lumShifts[i], pedited->hsvequalizer.lumShifts);
+            }
+        }
+
+        if (keyFile.has_group("Color Grading")) {
+            assignFromKeyfile(keyFile, "Color Grading", "Enabled", colorGrading.enabled, pedited->colorGrading.enabled);
+            assignFromKeyfile(keyFile, "Color Grading", "ShadowsHue", colorGrading.shadowsHue, pedited->colorGrading.shadowsHue);
+            assignFromKeyfile(keyFile, "Color Grading", "ShadowsSat", colorGrading.shadowsSat, pedited->colorGrading.shadowsSat);
+            assignFromKeyfile(keyFile, "Color Grading", "ShadowsLum", colorGrading.shadowsLum, pedited->colorGrading.shadowsLum);
+            assignFromKeyfile(keyFile, "Color Grading", "MidtonesHue", colorGrading.midtonesHue, pedited->colorGrading.midtonesHue);
+            assignFromKeyfile(keyFile, "Color Grading", "MidtonesSat", colorGrading.midtonesSat, pedited->colorGrading.midtonesSat);
+            assignFromKeyfile(keyFile, "Color Grading", "MidtonesLum", colorGrading.midtonesLum, pedited->colorGrading.midtonesLum);
+            assignFromKeyfile(keyFile, "Color Grading", "HighlightsHue", colorGrading.highlightsHue, pedited->colorGrading.highlightsHue);
+            assignFromKeyfile(keyFile, "Color Grading", "HighlightsSat", colorGrading.highlightsSat, pedited->colorGrading.highlightsSat);
+            assignFromKeyfile(keyFile, "Color Grading", "HighlightsLum", colorGrading.highlightsLum, pedited->colorGrading.highlightsLum);
+            assignFromKeyfile(keyFile, "Color Grading", "GlobalHue", colorGrading.globalHue, pedited->colorGrading.globalHue);
+            assignFromKeyfile(keyFile, "Color Grading", "GlobalSat", colorGrading.globalSat, pedited->colorGrading.globalSat);
+            assignFromKeyfile(keyFile, "Color Grading", "GlobalLum", colorGrading.globalLum, pedited->colorGrading.globalLum);
+            assignFromKeyfile(keyFile, "Color Grading", "Blending", colorGrading.blending, pedited->colorGrading.blending);
+            assignFromKeyfile(keyFile, "Color Grading", "Balance", colorGrading.balance, pedited->colorGrading.balance);
+        }
+
+        if (keyFile.has_group("Point Color")) {
+            assignFromKeyfile(keyFile, "Point Color", "Enabled", pointcolor.enabled, pedited->pointcolor.enabled);
+
+            int numTargets = 0;
+            if (keyFile.has_key("Point Color", "NumTargets")) {
+                // New multi-target format
+                assignFromKeyfile(keyFile, "Point Color", "NumTargets", numTargets, pedited->pointcolor.targets);
+                pointcolor.targets.resize(numTargets);
+                for (int i = 0; i < numTargets; ++i) {
+                    Glib::ustring prefix = Glib::ustring::compose("Target%1_", i + 1);
+                    bool dummy = false;
+                    assignFromKeyfile(keyFile, "Point Color", prefix + "CenterHue", pointcolor.targets[i].centerHue, dummy);
+                    assignFromKeyfile(keyFile, "Point Color", prefix + "HueShift", pointcolor.targets[i].hueShift, dummy);
+                    assignFromKeyfile(keyFile, "Point Color", prefix + "Saturation", pointcolor.targets[i].saturation, dummy);
+                    assignFromKeyfile(keyFile, "Point Color", prefix + "Luminance", pointcolor.targets[i].luminance, dummy);
+                    assignFromKeyfile(keyFile, "Point Color", prefix + "Range", pointcolor.targets[i].range, dummy);
+                }
+                if (pedited) {
+                    pedited->pointcolor.targets = true;
+                }
+                assignFromKeyfile(keyFile, "Point Color", "ActiveTarget", pointcolor.activeTarget, pedited->pointcolor.targets);
+            } else if (keyFile.has_key("Point Color", "CenterHue")) {
+                // Legacy single-target format — migrate
+                PointColorTarget legacy;
+                bool dummy = false;
+                assignFromKeyfile(keyFile, "Point Color", "CenterHue", legacy.centerHue, dummy);
+                assignFromKeyfile(keyFile, "Point Color", "HueShift", legacy.hueShift, dummy);
+                assignFromKeyfile(keyFile, "Point Color", "Saturation", legacy.saturation, dummy);
+                assignFromKeyfile(keyFile, "Point Color", "Luminance", legacy.luminance, dummy);
+                assignFromKeyfile(keyFile, "Point Color", "Range", legacy.range, dummy);
+                // Only add if non-default
+                if (legacy.hueShift != 0 || legacy.saturation != 0 || legacy.luminance != 0) {
+                    pointcolor.targets.push_back(legacy);
+                    pointcolor.activeTarget = 0;
+                }
+                if (pedited) {
+                    pedited->pointcolor.targets = true;
+                }
+            }
         }
 
         if (keyFile.has_group("RGB Curves")) {
@@ -7088,6 +7313,7 @@ bool ProcParams::operator ==(const ProcParams& other) const
         && colorappearance == other.colorappearance
         && impulseDenoise == other.impulseDenoise
         && dirpyrDenoise == other.dirpyrDenoise
+        && aiDenoise == other.aiDenoise
         && epd == other.epd
         && fattal == other.fattal
         && defringe == other.defringe

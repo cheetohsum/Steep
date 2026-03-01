@@ -69,6 +69,7 @@ protected:
     double logBase;
     double logPivot;
     bool logAnchorMiddle;
+    bool isBipolar_;
 
     double shapeValue (double a) const;
     double2double_fun value2slider, slider2value;
@@ -136,4 +137,6 @@ public:
     void setLogScale(double base, double pivot, bool anchorMiddle = false);
     void setDelay(unsigned int min_delay_ms, unsigned int max_delay_ms = 0);
     void showIcons(bool yes);
+    void setSliderGradient(const std::vector<GradientMilestone>& milestones);
+    void clearSliderGradient();
 };

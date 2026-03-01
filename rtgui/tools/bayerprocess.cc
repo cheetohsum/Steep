@@ -43,8 +43,11 @@ BayerProcess::BayerProcess () :
     EvDemosaicPixelshiftDemosaicMethod = m->newEvent(DEMOSAIC, "HISTORY_MSG_PIXELSHIFT_DEMOSAIC");
     EvPixelshiftAverage = m->newEvent(DEMOSAIC, "HISTORY_MSG_PIXELSHIFT_AVERAGE");
 
-    Gtk::Box* hb1 = Gtk::manage (new Gtk::Box ());
-    hb1->pack_start (*Gtk::manage (new Gtk::Label ( M("TP_RAW_DMETHOD") + ": ")), Gtk::PACK_SHRINK, 4);
+    Gtk::Grid* hb1 = Gtk::manage(new Gtk::Grid());
+    hb1->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(hb1, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    Gtk::Label* hb1Label = Gtk::manage(new Gtk::Label(M("TP_RAW_DMETHOD") + ": "));
+    setExpandAlignProperties(hb1Label, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     method = Gtk::manage (new MyComboBoxText ());
 
     for(const auto method_string : procparams::RAWParams::BayerSensor::getMethodStrings()) {
@@ -54,8 +57,16 @@ BayerProcess::BayerProcess () :
     method->set_active(0);
     hb1->set_tooltip_markup (M("TP_RAW_DMETHOD_TOOLTIP"));
 
-    hb1->pack_end (*method, Gtk::PACK_EXPAND_WIDGET, 4);
-    pack_start( *hb1, Gtk::PACK_SHRINK, 4);
+    setExpandAlignProperties(method, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    hb1->attach(*hb1Label, 0, 0, 1, 1);
+    hb1->attach(*method, 1, 0, 1, 1);
+    getSummaryBox()->pack_start( *hb1, Gtk::PACK_SHRINK, 4);
+    getSummaryBox()->show_all();
+
+    // Advanced section for method-specific options, border, image number, false color suppression
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
 
     dualDemosaicOptions = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
 
@@ -67,7 +78,7 @@ BayerProcess::BayerProcess () :
 
     dualDemosaicContrast->show();
     dualDemosaicOptions->pack_start(*dualDemosaicContrast);
-    pack_start( *dualDemosaicOptions, Gtk::PACK_SHRINK, 4);
+    advBox->pack_start( *dualDemosaicOptions, Gtk::PACK_SHRINK, 4);
 
     borderbox = Gtk::manage(new Gtk::Box());
     border = Gtk::manage(new Adjuster(M("TP_RAW_BORDER"), 0, 16, 1, 4));
@@ -77,10 +88,13 @@ BayerProcess::BayerProcess () :
 
     border->show();
     borderbox->pack_start(*border);
-    pack_start(*borderbox, Gtk::PACK_SHRINK, 4);
+    advBox->pack_start(*borderbox, Gtk::PACK_SHRINK, 4);
 
-    imageNumberBox = Gtk::manage (new Gtk::Box ());
-    imageNumberBox->pack_start (*Gtk::manage (new Gtk::Label ( M("TP_RAW_IMAGENUM") + ": ")), Gtk::PACK_SHRINK, 4);
+    imageNumberBox = Gtk::manage(new Gtk::Grid());
+    imageNumberBox->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(imageNumberBox, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    Gtk::Label* imageNumLabel = Gtk::manage(new Gtk::Label(M("TP_RAW_IMAGENUM") + ": "));
+    setExpandAlignProperties(imageNumLabel, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     imageNumber = Gtk::manage (new MyComboBoxText ());
     imageNumber->append("1");
     imageNumber->append("2");
@@ -88,17 +102,19 @@ BayerProcess::BayerProcess () :
     imageNumber->append("4");
     imageNumber->set_active(0);
     imageNumberBox->set_tooltip_text(M("TP_RAW_IMAGENUM_TOOLTIP"));
-    imageNumberBox->pack_end (*imageNumber, Gtk::PACK_EXPAND_WIDGET, 4);
-    pack_start( *imageNumberBox, Gtk::PACK_SHRINK, 4);
+    setExpandAlignProperties(imageNumber, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    imageNumberBox->attach(*imageNumLabel, 0, 0, 1, 1);
+    imageNumberBox->attach(*imageNumber, 1, 0, 1, 1);
+    advBox->pack_start( *imageNumberBox, Gtk::PACK_SHRINK, 4);
 
-    pack_start( *Gtk::manage( new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)), Gtk::PACK_SHRINK, 0 );
+    advBox->pack_start( *Gtk::manage( new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)), Gtk::PACK_SHRINK, 0 );
     ccSteps = Gtk::manage (new Adjuster (M("TP_RAW_FALSECOLOR"), 0, 5, 1, 0 ));
     ccSteps->setAdjusterListener (this);
 
     ccSteps->setDelay(std::max(options.adjusterMinDelay, options.adjusterMaxDelay));
 
     ccSteps->show();
-    pack_start( *ccSteps, Gtk::PACK_SHRINK, 4);
+    advBox->pack_start( *ccSteps, Gtk::PACK_SHRINK, 4);
 
     dcbOptions = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
 
@@ -112,7 +128,7 @@ BayerProcess::BayerProcess () :
     dcbEnhance->setCheckBoxListener (this);
     dcbOptions->pack_start(*dcbIterations);
     dcbOptions->pack_start(*dcbEnhance);
-    pack_start( *dcbOptions, Gtk::PACK_SHRINK, 4);
+    advBox->pack_start( *dcbOptions, Gtk::PACK_SHRINK, 4);
 
     lmmseOptions = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
 
@@ -124,7 +140,7 @@ BayerProcess::BayerProcess () :
 
     lmmseIterations->show();
     lmmseOptions->pack_start(*lmmseIterations);
-    pack_start( *lmmseOptions, Gtk::PACK_SHRINK, 4);
+    advBox->pack_start( *lmmseOptions, Gtk::PACK_SHRINK, 4);
 
     // --------------------  PixelShift  ----------------------
 
@@ -144,15 +160,20 @@ BayerProcess::BayerProcess () :
     pixelShiftEqualBrightChannel->set_tooltip_text (M("TP_RAW_PIXELSHIFTEQUALBRIGHTCHANNEL_TOOLTIP"));
     pixelShiftMainVBox->pack_start(*pixelShiftEqualBrightChannel);
 
-    Gtk::Box* hb3 = Gtk::manage (new Gtk::Box ());
-    hb3->pack_start (*Gtk::manage (new Gtk::Label ( M("TP_RAW_PIXELSHIFTMOTIONMETHOD") + ": ")), Gtk::PACK_SHRINK, 4);
+    Gtk::Grid* hb3 = Gtk::manage(new Gtk::Grid());
+    hb3->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(hb3, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    Gtk::Label* hb3Label = Gtk::manage(new Gtk::Label(M("TP_RAW_PIXELSHIFTMOTIONMETHOD") + ": "));
+    setExpandAlignProperties(hb3Label, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     pixelShiftMotionMethod = Gtk::manage (new MyComboBoxText ());
     pixelShiftMotionMethod->append(M("TP_RAW_PIXELSHIFTMM_OFF"));
     pixelShiftMotionMethod->append(M("TP_RAW_PIXELSHIFTMM_AUTO"));
     pixelShiftMotionMethod->append(M("TP_RAW_PIXELSHIFTMM_CUSTOM"));
     pixelShiftMotionMethod->set_active(toUnderlying(RAWParams::BayerSensor::PSMotionCorrectionMethod::AUTO));
     pixelShiftMotionMethod->show();
-    hb3->pack_start(*pixelShiftMotionMethod);
+    setExpandAlignProperties(pixelShiftMotionMethod, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    hb3->attach(*hb3Label, 0, 0, 1, 1);
+    hb3->attach(*pixelShiftMotionMethod, 1, 0, 1, 1);
     pixelShiftMainVBox->pack_start(*hb3);
 
     pixelShiftOptions = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
@@ -169,14 +190,19 @@ BayerProcess::BayerProcess () :
     pixelShiftMainVBox->pack_start(*pixelShiftShowMotionMaskOnly);
 
 
-    Gtk::Box* hb4 = Gtk::manage (new Gtk::Box ());
-    hb4->pack_start (*Gtk::manage (new Gtk::Label ( M("TP_RAW_PIXELSHIFTDMETHOD") + ": ")), Gtk::PACK_SHRINK, 4);
+    Gtk::Grid* hb4 = Gtk::manage(new Gtk::Grid());
+    hb4->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(hb4, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    Gtk::Label* hb4Label = Gtk::manage(new Gtk::Label(M("TP_RAW_PIXELSHIFTDMETHOD") + ": "));
+    setExpandAlignProperties(hb4Label, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     pixelShiftDemosaicMethod = Gtk::manage (new MyComboBoxText ());
     for(const auto method_string : procparams::RAWParams::BayerSensor::getPSDemosaicMethodStrings()) {
         pixelShiftDemosaicMethod->append(M("TP_RAW_" + Glib::ustring(method_string).uppercase()));
     }
     pixelShiftDemosaicMethod->set_active(0);
-    hb4->pack_start(*pixelShiftDemosaicMethod);
+    setExpandAlignProperties(pixelShiftDemosaicMethod, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    hb4->attach(*hb4Label, 0, 0, 1, 1);
+    hb4->attach(*pixelShiftDemosaicMethod, 1, 0, 1, 1);
     pixelShiftOptions->pack_start(*hb4);
 
     pixelShiftGreen = Gtk::manage (new CheckBox(M("TP_RAW_PIXELSHIFTGREEN"), multiImage));
@@ -241,7 +267,7 @@ BayerProcess::BayerProcess () :
     pixelShiftFrame->add(*pixelShiftMainVBox);
     pixelShiftOptions->hide();
 
-    pack_start( *pixelShiftFrame, Gtk::PACK_SHRINK, 4);
+    advBox->pack_start( *pixelShiftFrame, Gtk::PACK_SHRINK, 4);
 
     method->connect(method->signal_changed().connect( sigc::mem_fun(*this, &BayerProcess::methodChanged) ));
     imageNumber->connect(imageNumber->signal_changed().connect( sigc::mem_fun(*this, &BayerProcess::imageNumberChanged) ));
@@ -495,6 +521,7 @@ void BayerProcess::setBatchMode(bool batchMode)
     imageNumber->append (M("GENERAL_UNCHANGED"));
     imageNumber->set_active_text (M("GENERAL_UNCHANGED"));
     ToolPanel::setBatchMode (batchMode);
+    advancedSection->setBatchMode(batchMode);
     border->showEditedCB ();
     ccSteps->showEditedCB ();
     dcbIterations->showEditedCB ();

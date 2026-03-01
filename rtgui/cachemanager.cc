@@ -20,6 +20,7 @@
 #include <memory>
 #include <iostream>
 
+#include <sys/stat.h>
 #include <dirent.h>
 #include <giomm.h>
 #include <glib/gstdio.h>
@@ -316,19 +317,10 @@ std::string CacheManager::getMD5 (const Glib::ustring& fname)
 
 #else
 
-    const auto file = Gio::File::create_for_path(fname);
-    if (file) {
-
-        try
-        {
-            const auto info = file->query_info("standard::*");
-            if (info) {
-                // We only use name and size to identify a file.
-                const auto identifier = Glib::ustring::compose("%1%2", fname, info->get_size());
-                return Glib::Checksum::compute_checksum(Glib::Checksum::CHECKSUM_MD5, identifier);
-            }
-
-        } catch(Gio::Error&) {}
+    struct stat st;
+    if (::stat(fname.c_str(), &st) == 0) {
+        const auto identifier = Glib::ustring::compose("%1%2", fname, static_cast<gint64>(st.st_size));
+        return Glib::Checksum::compute_checksum(Glib::Checksum::CHECKSUM_MD5, identifier);
     }
 
 #endif

@@ -25,6 +25,7 @@
 #include "batchqueue.h"
 #include "guiutils.h"
 #include "saveformatpanel.h"
+#include "watermarkpanel.h"
 
 class RTWindow;
 class FileCatalog;
@@ -37,8 +38,8 @@ class BatchQueuePanel : public Gtk::Box,
 
     Gtk::Button* zoomInButton;
     Gtk::Button* zoomOutButton;
-    Gtk::Switch* qStartStop;
-    sigc::connection qStartStopConn;
+    Gtk::Button* qStartStop;
+    bool isQueueRunning_;
     Gtk::CheckButton* qAutoStart;
 
     Gtk::Entry* outdirTemplate;
@@ -48,7 +49,8 @@ class BatchQueuePanel : public Gtk::Box,
     Gtk::RadioButton* useTemplate;
     Gtk::RadioButton* useFolder;
     SaveFormatPanel* saveFormatPanel;
-    Gtk::Frame *fdir, *fformat;
+    WatermarkPanel* watermarkPanel;
+    Gtk::Frame *fdir, *fformat, *fwatermark;
 
     RTWindow* parent;
     BatchQueue* batchQueue;

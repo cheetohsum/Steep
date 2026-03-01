@@ -45,7 +45,11 @@ ToolBar::ToolBar () : showColPickers(true), listener (nullptr), pickerListener(n
     wbTool->set_relief(Gtk::RELIEF_NONE);
     wbTool->show ();
 
-    pack_start (*wbTool);
+    // wbTool and colPickerTool are NOT packed here — they get packed
+    // into the Color tool group by ToolPanelCoordinator.
+    // Reference them so Gtk::manage doesn't destroy them prematurely.
+    wbTool->reference();
+    colPickerTool->reference();
 
     showcolpickersimg.reset(new RTImage("color-picker-bars", Gtk::ICON_SIZE_LARGE_TOOLBAR));
     hidecolpickersimg.reset(new RTImage("color-picker-hide", Gtk::ICON_SIZE_LARGE_TOOLBAR));
@@ -55,8 +59,6 @@ ToolBar::ToolBar () : showColPickers(true), listener (nullptr), pickerListener(n
     showcolpickersimg->show ();
     colPickerTool->set_relief(Gtk::RELIEF_NONE);
     colPickerTool->show ();
-
-    pack_start (*colPickerTool);
 
     cropTool = Gtk::manage (new Gtk::ToggleButton ());
     Gtk::Image* cropimg = Gtk::manage (new RTImage ("crop", Gtk::ICON_SIZE_LARGE_TOOLBAR));
@@ -542,16 +544,42 @@ bool ToolBar::handleShortcutKey (GdkEventKey* event)
     return false;
 }
 
+void ToolBar::hideCropTools()
+{
+    cropTool->set_no_show_all(true);
+    cropTool->hide();
+    straTool->set_no_show_all(true);
+    straTool->hide();
+    if (perspTool) {
+        perspTool->set_no_show_all(true);
+        perspTool->hide();
+    }
+}
+
+void ToolBar::hideHandTool()
+{
+    handTool->set_no_show_all(true);
+    handTool->hide();
+}
+
 void ToolBar::setBatchMode()
 {
     if (wbTool) {
         wbConn.disconnect();
-        removeIfThere(this, wbTool, false);
+        auto* wbParent = wbTool->get_parent();
+        if (wbParent) {
+            auto* wbContainer = dynamic_cast<Gtk::Container*>(wbParent);
+            if (wbContainer) wbContainer->remove(*wbTool);
+        }
         wbTool = nullptr;
     }
     if (colPickerTool) {
         cpConn.disconnect();
-        removeIfThere(this, colPickerTool, false);
+        auto* cpParent = colPickerTool->get_parent();
+        if (cpParent) {
+            auto* cpContainer = dynamic_cast<Gtk::Container*>(cpParent);
+            if (cpContainer) cpContainer->remove(*colPickerTool);
+        }
         colPickerTool = nullptr;
     }
     if (perspTool) {

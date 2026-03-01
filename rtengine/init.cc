@@ -36,6 +36,10 @@
 #include "rtlensfun.h"
 #include "metadata.h"
 #include "procparams.h"
+#include "aidenoise.h"
+#ifdef RT_AI_MASKING
+#include "aisegmentation.h"
+#endif
 
 namespace rtengine
 {
@@ -117,6 +121,25 @@ int init (const Settings* s, const Glib::ustring& baseDir, const Glib::ustring& 
 
     Color::init ();
     Exiv2Metadata::init();
+
+    AIDenoiseManager::getInstance().detect();
+
+#ifdef RT_AI_MASKING
+    {
+        const Glib::ustring modelPath = Glib::build_filename(baseDir, "models", "segformer_b0_ade20k.onnx");
+        fprintf(stderr, "AI Masking: Looking for model at: %s\n", modelPath.c_str());
+        if (Glib::file_test(modelPath, Glib::FILE_TEST_EXISTS)) {
+            fprintf(stderr, "AI Masking: Model file found, initializing...\n");
+            if (!getAISegmentationEngine().init(modelPath)) {
+                fprintf(stderr, "AI Masking: Failed to initialize segmentation engine\n");
+            } else {
+                fprintf(stderr, "AI Masking: Engine initialized successfully\n");
+            }
+        } else {
+            fprintf(stderr, "AI Masking: Model file NOT found at %s\n", modelPath.c_str());
+        }
+    }
+#endif
 
     delete lcmsMutex;
     lcmsMutex = new MyMutex;

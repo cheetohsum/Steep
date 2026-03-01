@@ -28,6 +28,9 @@ class ZoomPanel :
 
 protected:
 
+    Gtk::MenuButton* zoomBtn;
+    Gtk::Popover*    zoomPopover;
+    Gtk::Scale*     zoomSlider;
     Gtk::Button*    zoomOut;
     Gtk::Button*    zoomIn;
     Gtk::Button*    zoomFit;
@@ -36,6 +39,7 @@ protected:
     Gtk::Button*    newCrop;
     Gtk::Label*     zoomLabel;
     ImageArea*      iarea;
+    bool            sliderUpdateInProgress;
 
 public:
 

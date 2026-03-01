@@ -54,11 +54,16 @@ ColorToning::ColorToning () : FoldableToolPanel(this, TOOL_NAME, M("TP_COLORTONI
     method->set_active (0);
     method->set_tooltip_text (M("TP_COLORTONING_METHOD_TOOLTIP"));
 
-    ctbox = Gtk::manage (new Gtk::Box ());
+    ctbox = Gtk::manage (new Gtk::Grid ());
+    ctbox->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(ctbox, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
     Gtk::Label* lab = Gtk::manage (new Gtk::Label (M("TP_COLORTONING_METHOD")));
-    ctbox->pack_start (*lab, Gtk::PACK_SHRINK, 4);
-    ctbox->pack_start (*method);
-    pack_start (*ctbox);
+    setExpandAlignProperties(lab, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    setExpandAlignProperties(method, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    ctbox->attach (*lab, 0, 0, 1, 1);
+    ctbox->attach (*method, 1, 0, 1, 1);
+    getSummaryBox()->pack_start (*ctbox);
+    getSummaryBox()->show_all();
 
     methodconn = method->signal_changed().connect ( sigc::mem_fun(*this, &ColorToning::methodChanged) );
 
@@ -190,20 +195,15 @@ ColorToning::ColorToning () : FoldableToolPanel(this, TOOL_NAME, M("TP_COLORTONI
     hlColSat->setBgColorProvider(this, 2);
     hlColSat->setUpdatePolicy(RTUP_DYNAMIC);
 
-    pack_start( *hlColSat, Gtk::PACK_SHRINK, 0);
-
     shadowsColSat = Gtk::manage (new ThresholdAdjuster (M("TP_COLORTONING_SHADOWS"), 0., 100., 80., M("TP_COLORTONING_STRENGTH"), 1., 0., 360., 208., M("TP_COLORTONING_HUE"), 1., nullptr, false));
     shadowsColSat->setAdjusterListener (this);
     shadowsColSat->setBgColorProvider(this, 3);
     shadowsColSat->setUpdatePolicy(RTUP_DYNAMIC);
 
-    pack_start( *shadowsColSat, Gtk::PACK_SHRINK, 0);
-
-
     balance = Gtk::manage( new Adjuster(M("TP_COLORTONING_BALANCE"), -100., 100., 1., 0.) );
     balance->setAdjusterListener(this);
 
-    pack_start (*balance, Gtk::PACK_SHRINK, 2);
+    // These will be packed below, after the advanced section is created
 
     //----------- Saturation and strength ------------------------------
 
@@ -240,7 +240,6 @@ ColorToning::ColorToning () : FoldableToolPanel(this, TOOL_NAME, M("TP_COLORTONI
 
     p1VBox->pack_start( *saturatedOpacity, Gtk::PACK_SHRINK, 2); //I have moved after Chanmixer
     p1Frame->add(*p1VBox);
-    pack_start (*p1Frame, Gtk::PACK_EXPAND_WIDGET, 4);
 
     strength = Gtk::manage( new Adjuster(M("TP_COLORTONING_STR"), 0., 100., 1., 50.) );;
     strength->setAdjusterListener(this);
@@ -314,7 +313,6 @@ ColorToning::ColorToning () : FoldableToolPanel(this, TOOL_NAME, M("TP_COLORTONI
     chanMixerBox->pack_start(*chanMixerShadowsFrame, Gtk::PACK_SHRINK);
 
     pack_start(*chanMixerBox, Gtk::PACK_SHRINK);
-    pack_start( *strength, Gtk::PACK_SHRINK, 2); //I have moved after Chanmixer
 
     //--------------------- Reset sliders  ---------------------------
     neutrHBox = Gtk::manage (new Gtk::Box());
@@ -327,6 +325,17 @@ ColorToning::ColorToning () : FoldableToolPanel(this, TOOL_NAME, M("TP_COLORTONI
 
     pack_start (*neutrHBox);
 
+    // Advanced section
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
+
+    advBox->pack_start( *hlColSat, Gtk::PACK_SHRINK, 0);
+    advBox->pack_start( *shadowsColSat, Gtk::PACK_SHRINK, 0);
+    advBox->pack_start (*balance, Gtk::PACK_SHRINK, 2);
+    advBox->pack_start (*p1Frame, Gtk::PACK_EXPAND_WIDGET, 4);
+    advBox->pack_start( *strength, Gtk::PACK_SHRINK, 2);
+
     //--------------------- Keep luminance checkbox -------------------
     lumamode = Gtk::manage (new Gtk::CheckButton (M("TP_COLORTONING_LUMAMODE")));
     lumamode->set_tooltip_markup (M("TP_COLORTONING_LUMAMODE_TOOLTIP"));
@@ -334,7 +343,7 @@ ColorToning::ColorToning () : FoldableToolPanel(this, TOOL_NAME, M("TP_COLORTONI
     lumamode->show ();
     lumamodeConn = lumamode->signal_toggled().connect( sigc::mem_fun(*this, &ColorToning::lumamodeChanged) );
 
-    pack_start (*lumamode);
+    advBox->pack_start (*lumamode);
 
 
     redlow->setAdjusterListener (this);
@@ -439,7 +448,9 @@ ColorToning::ColorToning () : FoldableToolPanel(this, TOOL_NAME, M("TP_COLORTONI
     labRegionPower->setLogScale(4, 0.1);
     labRegionBox->pack_start(*labRegionPower);
 
-    hb = Gtk::manage(new Gtk::Box());
+    Gtk::Grid* channelGrid = Gtk::manage(new Gtk::Grid());
+    channelGrid->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(channelGrid, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
     labRegionChannel = Gtk::manage(new MyComboBoxText());
     labRegionChannel->append(M("TP_COLORTONING_LABREGION_CHANNEL_ALL"));
     labRegionChannel->append(M("TP_COLORTONING_LABREGION_CHANNEL_R"));
@@ -448,9 +459,12 @@ ColorToning::ColorToning () : FoldableToolPanel(this, TOOL_NAME, M("TP_COLORTONI
     labRegionChannel->set_active(0);
     labRegionChannel->signal_changed().connect(sigc::mem_fun(*this, &ColorToning::labRegionChannelChanged));
 
-    hb->pack_start(*Gtk::manage(new Gtk::Label(M("TP_COLORTONING_LABREGION_CHANNEL") + ": ")), Gtk::PACK_SHRINK);
-    hb->pack_start(*labRegionChannel);
-    labRegionBox->pack_start(*hb);
+    Gtk::Label* labRegionChannelLabel = Gtk::manage(new Gtk::Label(M("TP_COLORTONING_LABREGION_CHANNEL") + ": "));
+    setExpandAlignProperties(labRegionChannelLabel, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    setExpandAlignProperties(labRegionChannel, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    channelGrid->attach(*labRegionChannelLabel, 0, 0, 1, 1);
+    channelGrid->attach(*labRegionChannel, 1, 0, 1, 1);
+    labRegionBox->pack_start(*channelGrid);
 
     labRegionBox->pack_start(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)));
 
@@ -921,6 +935,7 @@ void ColorToning::autoColorTonChanged(int bwct, int satthres, int satprot)
 
 void ColorToning::adjusterChanged (ThresholdAdjuster* a, double newBottom, double newTop)
 {
+    autoEnable();
     if (listener && getEnabled()) {
         listener->panelChanged(
             a == hlColSat
@@ -1345,6 +1360,7 @@ void ColorToning::trimValues (rtengine::procparams::ProcParams* pp)
 
 void ColorToning::adjusterChanged(Adjuster* a, double newval)
 {
+    autoEnable();
     if (!listener || !getEnabled()) {
         return;
     }
@@ -1410,6 +1426,7 @@ void ColorToning::setBatchMode (bool batchMode)
     opacityCurveEditorG->setBatchMode (batchMode);
     clCurveEditorG->setBatchMode (batchMode);
     cl2CurveEditorG->setBatchMode (batchMode);
+    advancedSection->setBatchMode(batchMode);
 
 }
 

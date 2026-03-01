@@ -20,9 +20,11 @@
 #include "filecatalog.h"
 
 #include <algorithm>
+#include <functional>
 #include <iterator>
 #include <iostream>
 #include <iomanip>
+#include <thread>
 
 #include <glib/gstdio.h>
 
@@ -123,6 +125,85 @@ void getFilesRecursively(
 }
 
 
+// Streaming variant: calls onFile for each matching file.
+// Returns false if cancelled (onFile returned false).
+bool getFilesRecursivelyStreaming(
+    const Glib::ustring &dir_path,
+    int max_depth,
+    int &dir_quota,
+    std::function<bool(const Glib::ustring&)> onFile,
+    std::vector<Glib::RefPtr<Gio::File>> *directories_explored)
+{
+    const auto& options = App::get().options();
+    try {
+        const auto dir = Gio::File::create_for_path(dir_path);
+
+        static const auto enumerate_attrs =
+            std::string(G_FILE_ATTRIBUTE_STANDARD_NAME) + "," +
+            G_FILE_ATTRIBUTE_STANDARD_TYPE + "," +
+            G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN + "," +
+            G_FILE_ATTRIBUTE_STANDARD_SYMLINK_TARGET;
+        auto enumerator = dir->enumerate_children(
+            enumerate_attrs,
+            options.browseRecursiveFollowLinks
+                ? Gio::FileQueryInfoFlags::FILE_QUERY_INFO_NONE
+                : Gio::FileQueryInfoFlags::FILE_QUERY_INFO_NOFOLLOW_SYMLINKS);
+
+        if (directories_explored) {
+            directories_explored->push_back(dir);
+        }
+
+        while (true) {
+            try {
+                const auto file = enumerator->next_file();
+                if (!file) {
+                    break;
+                }
+
+                if (!options.fbShowHidden && file->is_hidden()) {
+                    continue;
+                }
+
+                if (file->get_file_type() == Gio::FILE_TYPE_DIRECTORY) {
+                    if (max_depth > 0 && dir_quota > 0) {
+                        const Glib::ustring child_dir_path = Glib::build_filename(dir_path, file->get_name());
+                        if (!getFilesRecursivelyStreaming(child_dir_path, max_depth - 1, --dir_quota, onFile, directories_explored)) {
+                            return false;
+                        }
+                    }
+                    continue;
+                }
+
+                const Glib::ustring fname = file->get_name();
+                const auto lastdot = fname.find_last_of('.');
+
+                if (lastdot >= fname.length() - 1) {
+                    continue;
+                }
+
+                const auto& extensions = options.parsedExtensionsSet;
+                if (extensions.find(fname.substr(lastdot + 1).lowercase()) == extensions.end()) {
+                    continue;
+                }
+
+                if (!onFile(Glib::build_filename(dir_path, fname))) {
+                    return false; // cancelled
+                }
+            } catch (const Glib::Exception& exception) {
+                if (rtengine::settings->verbose) {
+                    std::cerr << exception.what() << std::endl;
+                }
+            }
+        }
+
+    } catch (const Glib::Exception& exception) {
+        if (rtengine::settings->verbose) {
+            std::cerr << "Failed to list directory \"" << dir_path << "\": " << exception.what() << std::endl;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
@@ -148,6 +229,7 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     set_orientation(Gtk::ORIENTATION_VERTICAL);
 
     inTabMode = false;
+    inAlbumMode_ = false;
 
     set_name ("FileBrowser");
 
@@ -193,19 +275,19 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
 
     //setup Query
     iQueryClear = new RTImage("cancel-small", Gtk::ICON_SIZE_BUTTON);
-    Gtk::Label* labelQuery = Gtk::manage(new Gtk::Label(M("FILEBROWSER_QUERYLABEL")));
     Query = Gtk::manage(new Gtk::Entry ()); // cannot use Gtk::manage here as FileCatalog::getFilter will fail on Query->get_text()
     Query->set_text("");
-    Query->set_width_chars (20); // TODO !!! add this value to options?
+    Query->set_placeholder_text("Search");
+    Query->set_width_chars (20);
     Query->set_max_width_chars (20);
     Query->set_tooltip_markup (M("FILEBROWSER_QUERYHINT"));
     Gtk::Box* hbQuery = Gtk::manage(new Gtk::Box ());
+    hbQuery->set_valign(Gtk::ALIGN_CENTER);
     buttonQueryClear = Gtk::manage(new Gtk::Button ());
     buttonQueryClear->set_image (*iQueryClear);
     buttonQueryClear->set_tooltip_markup (M("FILEBROWSER_QUERYBUTTONHINT"));
     buttonQueryClear->set_relief (Gtk::RELIEF_NONE);
     buttonQueryClear->signal_clicked().connect( sigc::mem_fun(*this, &FileCatalog::buttonQueryClearPressed) );
-    hbQuery->pack_start (*labelQuery, Gtk::PACK_SHRINK, 0);
     hbQuery->pack_start (*Query, Gtk::PACK_SHRINK, 0);
     hbQuery->pack_start (*buttonQueryClear, Gtk::PACK_SHRINK, 0);
     hbToolBar1->pack_start (*hbQuery, Gtk::PACK_SHRINK, 0);
@@ -240,11 +322,19 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     tbLeftPanel_1->set_tooltip_markup (M("MAIN_TOOLTIP_SHOWHIDELP1"));
     tbLeftPanel_1->set_image (*iLeftPanel_1_Hide);
     tbLeftPanel_1->signal_toggled().connect( sigc::mem_fun(*this, &FileCatalog::tbLeftPanel_1_toggled) );
-    buttonBar->pack_start (*tbLeftPanel_1, Gtk::PACK_SHRINK);
 
     vSepiLeftPanel = new Gtk::Separator(Gtk::ORIENTATION_VERTICAL);
-    buttonBar->pack_start (*vSepiLeftPanel, Gtk::PACK_SHRINK);
 
+    // Filter toggle button (shows/hides the filter bar revealer)
+    bFilterToggle_ = Gtk::manage(new Gtk::ToggleButton());
+    bFilterToggle_->set_image(*Gtk::manage(new RTImage("filter", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
+    bFilterToggle_->set_relief(Gtk::RELIEF_NONE);
+    bFilterToggle_->set_tooltip_markup(M("FILEBROWSER_SHOWDIRHINT"));
+    bFilterToggle_->signal_toggled().connect(sigc::mem_fun(*this, &FileCatalog::filterToggled));
+    buttonBar->pack_start(*bFilterToggle_, Gtk::PACK_SHRINK);
+    buttonBar->pack_start(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK);
+
+    // bFilterClear still exists for categoryButtons logic but is not on main bar
     iFilterClear = new RTImage ("filter-clear", Gtk::ICON_SIZE_LARGE_TOOLBAR);
     igFilterClear = new RTImage ("filter", Gtk::ICON_SIZE_LARGE_TOOLBAR);
     bFilterClear = Gtk::manage(new Gtk::ToggleButton ());
@@ -254,8 +344,12 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     bFilterClear->set_tooltip_markup (M("FILEBROWSER_SHOWDIRHINT"));
     bFilterClear->signal_button_press_event().connect (sigc::mem_fun(*this, &FileCatalog::capture_event), false);
     bCateg[0] = bFilterClear->signal_toggled().connect (sigc::bind(sigc::mem_fun(*this, &FileCatalog::categoryButtonToggled), bFilterClear, true));
-    buttonBar->pack_start (*bFilterClear, Gtk::PACK_SHRINK);
-    buttonBar->pack_start (*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK);
+
+    // Create the filter bar (will go inside a Revealer)
+    Gtk::Box* filterBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL));
+    filterBar->set_name("BrowserFilterBar");
+    filterBar->pack_start(*bFilterClear, Gtk::PACK_SHRINK);
+    filterBar->pack_start(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK);
 
     fltrVbox1 = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     fltrRankbox = Gtk::manage (new Gtk::Box());
@@ -322,7 +416,7 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
 
     fltrVbox1->pack_start (*fltrRankbox, Gtk::PACK_SHRINK, 0);
     fltrVbox1->pack_start (*fltrLabelbox, Gtk::PACK_SHRINK, 0);
-    buttonBar->pack_start (*fltrVbox1, Gtk::PACK_SHRINK);
+    filterBar->pack_start (*fltrVbox1, Gtk::PACK_SHRINK);
 
     bRank[0]->set_tooltip_markup (M("FILEBROWSER_SHOWRANK1HINT"));
     bRank[1]->set_tooltip_markup (M("FILEBROWSER_SHOWRANK2HINT"));
@@ -336,7 +430,7 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     bCLabel[3]->set_tooltip_markup (M("FILEBROWSER_SHOWCOLORLABEL4HINT"));
     bCLabel[4]->set_tooltip_markup (M("FILEBROWSER_SHOWCOLORLABEL5HINT"));
 
-    buttonBar->pack_start (*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK);
+    filterBar->pack_start (*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK);
 
     fltrVbox2 = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     fltrEditedBox = Gtk::manage (new Gtk::Box());
@@ -396,9 +490,9 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
 
     fltrVbox2->pack_start (*fltrEditedBox, Gtk::PACK_SHRINK, 0);
     fltrVbox2->pack_start (*fltrRecentlySavedBox, Gtk::PACK_SHRINK, 0);
-    buttonBar->pack_start (*fltrVbox2, Gtk::PACK_SHRINK);
+    filterBar->pack_start (*fltrVbox2, Gtk::PACK_SHRINK);
 
-    buttonBar->pack_start (*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK);
+    filterBar->pack_start (*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK);
 
     // Trash
     iTrashShowEmpty = new RTImage("trash-empty-show", Gtk::ICON_SIZE_LARGE_TOOLBAR) ;
@@ -435,9 +529,18 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     bRecursive->set_active(options.browseRecursive);
     bRecursive->signal_toggled().connect(sigc::mem_fun(*this, &FileCatalog::showRecursiveToggled));
 
+    // bTrash and bRecursive stay on main bar; bOriginal goes in filter bar
+    filterBar->pack_start (*bOriginal, Gtk::PACK_SHRINK);
+    // bNotTrash is not packed (removed from UI, always inactive)
+
+    // Wrap filterBar in a Revealer
+    filterRevealer_ = Gtk::manage(new Gtk::Revealer());
+    filterRevealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
+    filterRevealer_->set_transition_duration(200);
+    filterRevealer_->add(*filterBar);
+    filterRevealer_->set_reveal_child(false);
+
     buttonBar->pack_start (*bTrash, Gtk::PACK_SHRINK);
-    buttonBar->pack_start (*bNotTrash, Gtk::PACK_SHRINK);
-    buttonBar->pack_start (*bOriginal, Gtk::PACK_SHRINK);
     buttonBar->pack_start(*bRecursive, Gtk::PACK_SHRINK);
     buttonBar->pack_start (*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK);
     fileBrowser->trash_changed().connect( sigc::mem_fun(*this, &FileCatalog::trashChanged) );
@@ -496,22 +599,46 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     exifInfo->signal_toggled().connect(sigc::mem_fun(*this, &FileCatalog::exifInfoButtonToggled));
     buttonBar->pack_start (*exifInfo, Gtk::PACK_SHRINK);
 
-    // thumbnail zoom
-    Gtk::Box* zoomBox = Gtk::manage( new Gtk::Box () );
-    zoomInButton  = Gtk::manage(  new Gtk::Button () );
-    zoomInButton->set_image (*Gtk::manage(new RTImage ("magnifier-plus", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
-    zoomInButton->signal_pressed().connect (sigc::mem_fun(*this, &FileCatalog::zoomIn));
-    zoomInButton->set_relief (Gtk::RELIEF_NONE);
-    zoomInButton->set_tooltip_markup (M("FILEBROWSER_ZOOMINHINT"));
-    zoomBox->pack_end (*zoomInButton, Gtk::PACK_SHRINK);
-    zoomOutButton  = Gtk::manage( new Gtk::Button () );
-    zoomOutButton->set_image (*Gtk::manage(new RTImage ("magnifier-minus", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
-    zoomOutButton->signal_pressed().connect (sigc::mem_fun(*this, &FileCatalog::zoomOut));
-    zoomOutButton->set_relief (Gtk::RELIEF_NONE);
-    zoomOutButton->set_tooltip_markup (M("FILEBROWSER_ZOOMOUTHINT"));
-    zoomBox->pack_end (*zoomOutButton, Gtk::PACK_SHRINK);
-
-    buttonBar->pack_start (*zoomBox, Gtk::PACK_SHRINK);
+    // thumbnail zoom slider — uses MyHScale for custom tick mark drawing
+    zoomSlider_ = Gtk::manage(new MyHScale());
+    zoomSlider_->set_range(0, options.thumbnailZoomRatios.size() - 1);
+    zoomSlider_->set_increments(1, 1);
+    zoomSlider_->set_draw_value(false);
+    zoomSlider_->set_size_request(200, -1);
+    zoomSlider_->set_valign(Gtk::ALIGN_CENTER);
+    // Same compact slider CSS as Adjuster (MyHScale draws its own thumb)
+    {
+        auto sliderCss = Gtk::CssProvider::create();
+        sliderCss->load_from_data(
+            "scale { padding: 0; margin: 0; min-height: 0; }"
+            " scale trough { min-height: 3px; margin: 0; padding: 0 4px; }"
+            " scale slider { min-height: 0; min-width: 0; padding: 7px; margin: -7px;"
+            "   background: transparent; border-color: transparent;"
+            "   border: none; box-shadow: none; -gtk-icon-shadow: none; }"
+            " scale trough highlight { margin: 0; padding: 0; min-height: 0; }"
+        );
+        zoomSlider_->get_style_context()->add_provider(
+            sliderCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200
+        );
+    }
+    // Set initial slider position based on current thumbnail height
+    {
+        int curHeight = fileBrowser->getThumbnailHeight();
+        int maxHeight = options.maxThumbnailHeight;
+        int bestIdx = 0;
+        int bestDiff = std::abs(curHeight - (int)(options.thumbnailZoomRatios[0] * maxHeight));
+        for (size_t i = 1; i < options.thumbnailZoomRatios.size(); i++) {
+            int h = (int)(options.thumbnailZoomRatios[i] * maxHeight);
+            int diff = std::abs(curHeight - h);
+            if (diff < bestDiff) {
+                bestDiff = diff;
+                bestIdx = i;
+            }
+        }
+        zoomSlider_->set_value(bestIdx);
+    }
+    zoomSlider_->signal_value_changed().connect(sigc::mem_fun(*this, &FileCatalog::zoomSliderChanged));
+    buttonBar->pack_start(*zoomSlider_, Gtk::PACK_SHRINK);
     buttonBar->pack_start (*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK);
 
     // if it IS a single row toolbar
@@ -528,12 +655,21 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     tbRightPanel_1->set_tooltip_markup (M("MAIN_TOOLTIP_SHOWHIDERP1"));
     tbRightPanel_1->set_image (*iRightPanel_1_Hide);
     tbRightPanel_1->signal_toggled().connect( sigc::mem_fun(*this, &FileCatalog::tbRightPanel_1_toggled) );
-    buttonBar->pack_end (*tbRightPanel_1, Gtk::PACK_SHRINK);
 
     buttonBar->pack_end (*coarsePanel, Gtk::PACK_SHRINK);
     buttonBar->pack_end (*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK, 4);
     buttonBar->pack_end (*toolBar, Gtk::PACK_SHRINK);
     buttonBar->pack_end (*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK, 4);
+
+    // Hide hand tool in browser context — not needed for browsing
+    toolBar->hideHandTool();
+
+    // Hide coarse panel initially — shown when an image is selected
+    coarsePanel->set_no_show_all(true);
+    coarsePanel->hide();
+
+    // Pack filter revealer below the toolbar
+    pack_start (*filterRevealer_, Gtk::PACK_SHRINK);
 
     // add default panel
     hBox = Gtk::manage( new Gtk::Box () );
@@ -543,6 +679,16 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     fileBrowser->applyFilter (getFilter()); // warning: can call this only after all objects used in getFilter (e.g. Query) are instantiated
     //printf("FileCatalog::FileCatalog  fileBrowser->applyFilter (getFilter())\n");
     pack_start (*hBox);
+
+    // Bottom toolbar with sidebar toggle buttons
+    Gtk::Box* bottomBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL));
+    bottomBar->set_name("BrowserToolbarBottom");
+    bottomBar->pack_start(*tbLeftPanel_1, Gtk::PACK_SHRINK);
+    bottomBar->pack_end(*tbRightPanel_1, Gtk::PACK_SHRINK);
+    MyScrolledToolbar* stbBottom = Gtk::manage(new MyScrolledToolbar());
+    stbBottom->set_name("FileBrowserBottomToolbar");
+    stbBottom->add(*bottomBar);
+    pack_start(*stbBottom, Gtk::PACK_SHRINK);
 
     enabled = true;
 
@@ -596,6 +742,34 @@ bool FileCatalog::capture_event(GdkEventButton* event)
     // need to record modifiers on the button press, because signal_toggled does not pass the event.
     modifierKey = event->state;
     return false;
+}
+
+void FileCatalog::filterToggled()
+{
+    if (!filterRevealer_) return;
+
+    bool show = bFilterToggle_->get_active();
+    filterRevealer_->set_reveal_child(show);
+
+    if (!show) {
+        // When hiding filter bar, reset to "show all" (activate bFilterClear)
+        const int numCateg = sizeof(bCateg) / sizeof(bCateg[0]);
+        for (int i = 0; i < numCateg; i++) {
+            bCateg[i].block(true);
+        }
+
+        bFilterClear->set_active(true);
+        for (int i = 1; i < 20; i++) {
+            categoryButtons[i]->set_active(false);
+        }
+
+        for (int i = 0; i < numCateg; i++) {
+            bCateg[i].block(false);
+        }
+
+        fileBrowser->applyFilter(getFilter());
+        fileBrowser->redraw();
+    }
 }
 
 void FileCatalog::exifInfoButtonToggled()
@@ -668,11 +842,18 @@ std::vector<Glib::ustring> FileCatalog::getFileList(std::vector<Glib::RefPtr<Gio
 
 void FileCatalog::dirSelected (const Glib::ustring& dirname, const Glib::ustring& openfile)
 {
+    // Exit album mode when navigating to a directory
+    inAlbumMode_ = false;
 
     try {
         const Glib::RefPtr<Gio::File> dir = Gio::File::create_for_path(dirname);
 
         if (!dir) {
+            return;
+        }
+
+        // Skip reload if same directory is already loaded and no specific file to open
+        if (openfile.empty() && selectedDirectory == dir->get_parse_name()) {
             return;
         }
 
@@ -687,26 +868,68 @@ void FileCatalog::dirSelected (const Glib::ustring& dirname, const Glib::ustring
 
         selectedDirectory = dir->get_parse_name();
 
-        std::vector<Glib::RefPtr<Gio::File>> allDirs;
         BrowsePath->set_text(selectedDirectory);
         buttonBrowsePath->set_image(*iRefreshWhite);
-        fileNameList = getFileList(&allDirs);
+        filepanel->loadingThumbs(M("PROGRESSBAR_LOADINGTHUMBS"), 0);
 
-        for (unsigned int i = 0; i < fileNameList.size(); i++) {
-            if (openfile.empty() || fileNameList[i] != openfile) { // if we opened a file at the beginning don't add it again
-                addFile(fileNameList[i]);
-            }
-        }
+        // Enumerate files in background thread, streaming batches to
+        // the main thread as they're discovered so preview loading starts
+        // immediately rather than waiting for full enumeration to complete.
+        const int dirId = selectedDirectoryId.load();
+        const Glib::ustring selDir = selectedDirectory;
+        const Glib::ustring openF = openfile;
+        std::thread([this, dirId, selDir, openF]() {
+            std::vector<Glib::RefPtr<Gio::File>> allDirs;
+            const auto& opts = App::get().options();
+            int dirs_left = opts.browseRecursive ? opts.browseRecursiveMaxDirs : 0;
 
-        _refreshProgressBar ();
+            const size_t BATCH = 50;
+            std::vector<Glib::ustring> batch;
+            batch.reserve(BATCH);
 
-        if (previewsToLoad == 0) {
-            filepanel->loadingThumbs(M("PROGRESSBAR_NOIMAGES"), 0);
-        } else {
-            filepanel->loadingThumbs(M("PROGRESSBAR_LOADINGTHUMBS"), 0);
-        }
+            auto flushBatch = [&]() {
+                if (batch.empty()) return;
+                auto b = std::move(batch);
+                batch.reserve(BATCH);
+                Glib::signal_idle().connect_once([this, dirId, b, openF]() {
+                    if (dirId != selectedDirectoryId.load()) return;
+                    for (const auto& f : b) {
+                        if (openF.empty() || f != openF) {
+                            addFile(f);
+                        }
+                    }
+                });
+            };
 
-        refreshDirectoryMonitors(allDirs);
+            getFilesRecursivelyStreaming(
+                selDir, opts.browseRecursiveDepth, dirs_left,
+                [&](const Glib::ustring& fname) -> bool {
+                    // Abort early if user switched to another folder
+                    if (dirId != selectedDirectoryId.load(std::memory_order_relaxed)) {
+                        return false;
+                    }
+                    batch.push_back(fname);
+                    if (batch.size() >= BATCH) {
+                        flushBatch();
+                    }
+                    return true;
+                },
+                &allDirs);
+
+            // Flush any remaining files
+            flushBatch();
+
+            // Final callback: update UI and monitors
+            Glib::signal_idle().connect_once([this, dirId, allDirs]() {
+                if (dirId != selectedDirectoryId.load()) return;
+                fileNameList.clear(); // not needed anymore
+                _refreshProgressBar();
+                if (previewsToLoad == 0) {
+                    filepanel->loadingThumbs(M("PROGRESSBAR_NOIMAGES"), 0);
+                }
+                refreshDirectoryMonitors(allDirs);
+            });
+        }).detach();
     } catch (Glib::Exception& ex) {
         std::cout << ex.what();
     }
@@ -757,6 +980,7 @@ void FileCatalog::enableTabMode(bool enable)
             hideToolBar();
         }
 
+        fltrVbox1->hide();
         exifInfo->set_active( options.filmStripShowFileNames );
 
     } else {
@@ -765,10 +989,16 @@ void FileCatalog::enableTabMode(bool enable)
         if (hbToolBar1STB) {
             hbToolBar1STB->show();
         }
+        fltrVbox1->show();
         exifInfo->set_active( options.showFileNames );
     }
 
     fileBrowser->enableTabMode(inTabMode);
+
+    if (!enable) {
+        // Reapply the browser's own filter to clear any editor-applied filter
+        filterChanged();
+    }
 
     redrawAll();
 }
@@ -880,7 +1110,10 @@ void FileCatalog::previewReady (int dir_id, FileBrowserEntry* fdn)
 
             previewsLoaded++;
 
-            _refreshProgressBar();
+            // Throttle progress bar updates — only every 10 entries or at completion
+            if (previewsLoaded >= previewsToLoad || previewsLoaded % 10 == 0) {
+                _refreshProgressBar();
+            }
             return false;
         },
         G_PRIORITY_DEFAULT_IDLE
@@ -1386,6 +1619,15 @@ void FileCatalog::selectionChanged(const std::vector<Thumbnail*>& tbe)
     if (fslistener) {
         fslistener->selectionChanged (tbe);
     }
+
+    // Show coarse panel (rotate/flip) only when images are selected
+    if (coarsePanel) {
+        if (tbe.empty()) {
+            coarsePanel->hide();
+        } else {
+            coarsePanel->show();
+        }
+    }
 }
 
 void FileCatalog::clearFromCacheRequested(const std::vector<FileBrowserEntry*>& tbe, bool leavenotrace)
@@ -1456,7 +1698,7 @@ void FileCatalog::categoryButtonToggled (Gtk::ToggleButton* b, bool isMouseClick
 
         // if no modifier key is pressed,
         if (!(control_down || shift_down)) {
-            // if we're deselecting non-trashed or original
+            // if we're deselecting original (or bNotTrash, which is hidden)
             if (toggled_button >= 18 && toggled_button <= 19 && (buttons & (1 << toggled_button))) {
                 categoryButtons[0]->set_active (true);
 
@@ -1690,7 +1932,7 @@ BrowserFilter FileCatalog::getFilter ()
     bool anyCLabelFilterActive = bUnCLabeled->get_active () || bCLabel[0]->get_active () || bCLabel[1]->get_active () || bCLabel[2]->get_active () || bCLabel[3]->get_active () || bCLabel[4]->get_active ();
     bool anyEditedFilterActive = bEdited[0]->get_active() || bEdited[1]->get_active();
     bool anyRecentlySavedFilterActive = bRecentlySaved[0]->get_active() || bRecentlySaved[1]->get_active();
-    const bool anySupplementaryActive = bNotTrash->get_active() || bOriginal->get_active();
+    const bool anySupplementaryActive = bOriginal->get_active();
     /*
      * filter is setup in 2 steps
      * Step 1: handle individual filters
@@ -1747,8 +1989,8 @@ BrowserFilter FileCatalog::getFilter ()
     }
 
 
-    filter.showTrash = bTrash->get_active () || !bNotTrash->get_active ();
-    filter.showNotTrash = !bTrash->get_active ();
+    filter.showTrash = bTrash->get_active();
+    filter.showNotTrash = !bTrash->get_active();
     filter.showOriginal = bOriginal->get_active();
 
     if (!filterPanel) {
@@ -1790,7 +2032,58 @@ BrowserFilter FileCatalog::getFilter ()
             filter.vFilterStrings.push_back(entry);
         }
     }
+    filter.albumWhitelist = albumWhitelist_;
+
     return filter;
+}
+
+void FileCatalog::setAlbumWhitelist (const std::set<std::string>& whitelist)
+{
+    albumWhitelist_ = whitelist;
+    filterChanged();
+}
+
+void FileCatalog::showAlbumFiles (const Glib::ustring& albumName, const std::vector<Glib::ustring>& files)
+{
+    // Save current directory so we can restore when exiting album mode
+    if (!inAlbumMode_) {
+        savedDirectory_ = selectedDirectory;
+    }
+
+    // Close current dir and load album files
+    closeDir();
+    inAlbumMode_ = true;
+
+    // Clear the album whitelist filter — in album view mode we show
+    // exactly the files we load, no extra filtering needed
+    albumWhitelist_.clear();
+
+    // Update the browse path to show album name
+    BrowsePath->set_text(Glib::ustring::compose("Album: %1", albumName));
+
+    // Add each file from the album
+    for (const auto& f : files) {
+        if (Glib::file_test(f, Glib::FILE_TEST_EXISTS)) {
+            addFile(f);
+        }
+    }
+
+    // Apply filter and redraw
+    fileBrowser->applyFilter(getFilter());
+    _refreshProgressBar();
+}
+
+void FileCatalog::exitAlbumMode ()
+{
+    if (!inAlbumMode_) return;
+
+    inAlbumMode_ = false;
+    albumWhitelist_.clear();
+
+    // Restore saved directory if available
+    if (!savedDirectory_.empty()) {
+        dirSelected(savedDirectory_, "");
+    }
 }
 
 void FileCatalog::filterChanged ()
@@ -2010,6 +2303,18 @@ void FileCatalog::zoomOut ()
     refreshHeight();
 
 }
+void FileCatalog::zoomSliderChanged ()
+{
+    const auto& options = App::get().options();
+    int idx = (int)zoomSlider_->get_value();
+    if (idx < 0) idx = 0;
+    if (idx >= (int)options.thumbnailZoomRatios.size()) idx = options.thumbnailZoomRatios.size() - 1;
+
+    int newHeight = (int)(options.thumbnailZoomRatios[idx] * options.maxThumbnailHeight);
+    fileBrowser->setThumbnailHeight(newHeight);
+    refreshHeight();
+}
+
 void FileCatalog::refreshEditedState (const std::set<Glib::ustring>& efiles)
 {
 

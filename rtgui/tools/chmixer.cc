@@ -85,6 +85,20 @@ ChMixer::ChMixer (): FoldableToolPanel(this, TOOL_NAME, M("TP_CHMIXER_LABEL"), f
     blue[1] = Gtk::manage (new Adjuster ("", -RANGE, RANGE, 0.1, 0, imgIcon[7]));
     blue[2] = Gtk::manage (new Adjuster ("",  -RANGE, RANGE, 0.1, 100, imgIcon[8]));
 
+    // Channel gradients
+    std::vector<GradientMilestone> redGrad = {
+        GradientMilestone(0.0, 0.25, 0.05, 0.05),
+        GradientMilestone(1.0, 0.9, 0.15, 0.15)
+    };
+    std::vector<GradientMilestone> greenGrad = {
+        GradientMilestone(0.0, 0.05, 0.2, 0.05),
+        GradientMilestone(1.0, 0.15, 0.85, 0.15)
+    };
+    std::vector<GradientMilestone> blueGrad = {
+        GradientMilestone(0.0, 0.05, 0.05, 0.25),
+        GradientMilestone(1.0, 0.15, 0.15, 0.9)
+    };
+
     for (int i = 0; i < 3; i++) {
         red[i]->setAdjusterListener (this);
         green[i]->setAdjusterListener (this);
@@ -93,6 +107,10 @@ ChMixer::ChMixer (): FoldableToolPanel(this, TOOL_NAME, M("TP_CHMIXER_LABEL"), f
         red[i]->setLogScale(10, red[i]->getValue());
         green[i]->setLogScale(10, green[i]->getValue());
         blue[i]->setLogScale(10, blue[i]->getValue());
+
+        red[i]->setSliderGradient(redGrad);
+        green[i]->setSliderGradient(greenGrad);
+        blue[i]->setSliderGradient(blueGrad);
     }
 
     pack_start (*blabel);
@@ -174,6 +192,7 @@ void ChMixer::setDefaults (const ProcParams* defParams, const ParamsEdited* pedi
 
 void ChMixer::adjusterChanged(Adjuster* a, double newval)
 {
+    autoEnable();
 
     if (listener && getEnabled()) {
         Glib::ustring descr = Glib::ustring::compose ("R=%1,%2,%3\nG=%4,%5,%6\nB=%7,%8,%9",

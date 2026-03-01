@@ -18,11 +18,14 @@
  */
 #include "filepanel.h"
 
+#include "albumbrowser.h"
 #include "batchtoolpanelcoord.h"
 #include "dirbrowser.h"
 #include "editorpanel.h"
 #include "inspector.h"
 #include "placesbrowser.h"
+#include "previewloader.h"
+#include "thumbimageupdater.h"
 #include "thumbnail.h"
 #include "windows/rtwindow.h"
 
@@ -44,8 +47,10 @@ FilePanel::FilePanel () : parent(nullptr), error(0)
     placesBrowser = Gtk::manage ( new PlacesBrowser () );
     // Recent Folders
     recentBrowser = Gtk::manage ( new RecentBrowser () );
+    // Albums
+    albumBrowser_ = Gtk::manage ( new AlbumBrowser () );
 
-    // The whole left panel. Contains Places, Recent Folders and Folders.
+    // The whole left panel. Contains Places, Recent Folders, Folders and Albums.
     placespaned = Gtk::manage ( new Gtk::Paned (Gtk::ORIENTATION_VERTICAL) );
     placespaned->set_name ("PlacesPaned");
     placespaned->set_size_request(250, 100);
@@ -54,10 +59,15 @@ FilePanel::FilePanel () : parent(nullptr), error(0)
     Gtk::Box* obox = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     obox->get_style_context()->add_class ("plainback");
     obox->pack_start (*recentBrowser, Gtk::PACK_SHRINK, 4);
-    obox->pack_start (*dirBrowser);
+    obox->pack_start (*dirBrowser, Gtk::PACK_SHRINK, 0);
+    obox->pack_start (*albumBrowser_, Gtk::PACK_SHRINK, 0);
 
     placespaned->pack1 (*placesBrowser, false, true);
     placespaned->pack2 (*obox, true, true);
+
+    // Wire album selection to filter and album view
+    albumBrowser_->albumSelected().connect(sigc::mem_fun(*this, &FilePanel::onAlbumSelected));
+    albumBrowser_->albumViewRequested().connect(sigc::mem_fun(*this, &FilePanel::onAlbumViewRequested));
 
     dirpaned->pack1 (*placespaned, false, false);
 
@@ -75,6 +85,9 @@ FilePanel::FilePanel () : parent(nullptr), error(0)
     dirSelected.connect (sigc::mem_fun (recentBrowser, &RecentBrowser::dirSelected));
     dirSelected.connect (sigc::mem_fun (placesBrowser, &PlacesBrowser::dirSelected));
     dirSelected.connect (sigc::mem_fun (tpc, &BatchToolPanelCoordinator::dirSelected));
+    dirSelected.connect ([this](const Glib::ustring& dir, const Glib::ustring&) {
+        albumBrowser_->setCurrentDirectory(dir);
+    });
     fileCatalog->setDirSelector (sigc::mem_fun (dirBrowser, &DirBrowser::selectDir));
     placesBrowser->setDirSelector (sigc::mem_fun (dirBrowser, &DirBrowser::selectDir));
     recentBrowser->setDirSelector (sigc::mem_fun (dirBrowser, &DirBrowser::selectDir));
@@ -132,7 +145,10 @@ FilePanel::FilePanel () : parent(nullptr), error(0)
     exportLab->set_angle (90);
 
     tpcPaned = Gtk::manage ( new Gtk::Paned (Gtk::ORIENTATION_VERTICAL) );
-    tpcPaned->pack1 (*tpc->toolPanelNotebook, false, true);
+    auto* tpcBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
+    tpcBox->pack_start(*tpc->modeButtonBar, Gtk::PACK_SHRINK, 0);
+    tpcBox->pack_start(*tpc->modeStack);
+    tpcPaned->pack1 (*tpcBox, false, true);
     tpcPaned->pack2 (*history, true, false);
 
     rightNotebook->append_page (*sFilterPanel, *filtLab);
@@ -266,8 +282,38 @@ bool FilePanel::fileSelected (Thumbnail* thm)
     pl->complete = false;
     pl->pc = nullptr;
     pl->thm = thm;
+    pl->epanel = nullptr;
     pendingLoads.push_back(pl);
     pendingLoadMutex.unlock();
+
+    // Pause preview loading to free IO for the full image load.
+    // Resumes in imageLoaded() after the editor opens.
+    // Thumbnail upgrades continue in the background at normal priority.
+    previewLoader->pause();
+
+    // Signal the current editor's processing to abort immediately so it stops
+    // competing for CPU with the new image's RAW decode and processing.
+    const auto& opts = App::get().options();
+    if (!opts.tabbedUI && parent->epanel) {
+        parent->epanel->signalStopProcessing();
+    }
+
+    // Switch to editor view immediately so the user sees the transition
+    // while the image loads in the background.
+    if (opts.tabbedUI) {
+#ifdef _WIN32
+        int winGdiHandles = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS);
+        if (winGdiHandles == 0 || winGdiHandles > 6500)
+#endif
+        {
+            EditorPanel* ep = Gtk::manage(new EditorPanel());
+            parent->addEditorPanel(ep, thm->getFileName());
+            ep->setAspect();
+            pl->epanel = ep;
+        }
+    } else {
+        parent->SetEditorCurrent();
+    }
 
     ProgressConnector<rtengine::InitialImage*> *ld = new ProgressConnector<rtengine::InitialImage*>();
     ld->startFunc (sigc::bind(sigc::ptr_fun(&rtengine::InitialImage::load), thm->getFileName (), thm->getType() == FT_Raw, &error, parent->getProgressListener()),
@@ -286,7 +332,6 @@ bool FilePanel::addBatchQueueJobs(const std::vector<BatchQueueEntry*>& entries)
 
 bool FilePanel::imageLoaded( Thumbnail* thm, ProgressConnector<rtengine::InitialImage*> *pc )
 {
-
     pendingLoadMutex.lock();
 
     // find our place in the array and mark the entry as complete
@@ -307,38 +352,23 @@ bool FilePanel::imageLoaded( Thumbnail* thm, ProgressConnector<rtengine::Initial
 
         if (pl->pc->returnValue()) {
             if (options.tabbedUI) {
-                EditorPanel* epanel;
-                {
-#ifdef _WIN32
-                    int winGdiHandles = GetGuiResources( GetCurrentProcess(), GR_GDIOBJECTS);
-                    if(winGdiHandles > 0 && winGdiHandles <= 6500) //(old settings 8500) 0 means we don't have the rights to access the function, 8500 because the limit is 10000 and we need about 1500 free handles
-                    //J.Desmis october 2021 I change 8500 to 6500..Why ? because without while increasing size GUI system crash in multieditor
-#endif
-                    {
-                    GThreadLock lock; // Acquiring the GUI... not sure that it's necessary, but it shouldn't harm
-                    epanel = Gtk::manage (new EditorPanel ());
-                    parent->addEditorPanel (epanel, pl->thm->getFileName());
-                    }
-#ifdef _WIN32
-                    else {
-                        Glib::ustring msg_ = Glib::ustring("<b>") + M("MAIN_MSG_CANNOTLOAD") + " \"" + escapeHtmlChars(thm->getFileName()) + "\" .\n" + M("MAIN_MSG_TOOMANYOPENEDITORS") + "</b>";
-                        Gtk::MessageDialog msgd (*parent, msg_, true, Gtk::MESSAGE_ERROR, Gtk::BUTTONS_OK, true);
-                        msgd.run ();
-                        decThumbRef = true;
-                        goto MAXGDIHANDLESREACHED;
-                    }
-#endif
-                }
-                epanel->open(pl->thm, pl->pc->returnValue() );
+                // Editor panel was pre-created in fileSelected() for
+                // immediate view switch; just open the image in it now.
+                if (pl->epanel) {
+                    pl->epanel->open(pl->thm, pl->pc->returnValue());
 
-                if (!(options.multiDisplayMode > 0)) {
-                    parent->set_title_decorated(pl->thm->getFileName());
+                    if (!(options.multiDisplayMode > 0)) {
+                        parent->set_title_decorated(pl->thm->getFileName());
+                    }
+                } else {
+                    // GDI handle limit was hit — panel wasn't created
+                    Glib::ustring msg_ = Glib::ustring("<b>") + M("MAIN_MSG_CANNOTLOAD") + " \"" + escapeHtmlChars(thm->getFileName()) + "\" .\n" + M("MAIN_MSG_TOOMANYOPENEDITORS") + "</b>";
+                    Gtk::MessageDialog msgd (*parent, msg_, true, Gtk::MESSAGE_ERROR, Gtk::BUTTONS_OK, true);
+                    msgd.run ();
+                    decThumbRef = true;
                 }
             } else {
-                {
-                    GThreadLock lock; // Acquiring the GUI... not sure that it's necessary, but it shouldn't harm
-                    parent->SetEditorCurrent();
-                }
+                // View was already switched in fileSelected(); just open.
                 parent->epanel->open(pl->thm, pl->pc->returnValue() );
                 parent->set_title_decorated(pl->thm->getFileName());
             }
@@ -348,9 +378,6 @@ bool FilePanel::imageLoaded( Thumbnail* thm, ProgressConnector<rtengine::Initial
             msgd.run ();
             decThumbRef = true;
         }
-#ifdef _WIN32
-MAXGDIHANDLESREACHED:
-#endif
         delete pl->pc;
 
         {
@@ -364,6 +391,9 @@ MAXGDIHANDLESREACHED:
     }
 
     pendingLoadMutex.unlock();
+
+    // Resume preview loading now that the editor image is loaded
+    previewLoader->resume();
 
     thm->imageLoad( false );
     if (decThumbRef) {
@@ -433,6 +463,24 @@ bool FilePanel::handleShortcutKeyRelease(GdkEventKey *event)
     }
 
     return false;
+}
+
+void FilePanel::onAlbumSelected (const std::set<std::string>& whitelist)
+{
+    if (fileCatalog) {
+        fileCatalog->setAlbumWhitelist(whitelist);
+    }
+}
+
+void FilePanel::onAlbumViewRequested (const Glib::ustring& albumName, const std::vector<Glib::ustring>& files)
+{
+    if (fileCatalog) {
+        if (albumName.empty()) {
+            fileCatalog->exitAlbumMode();
+        } else {
+            fileCatalog->showAlbumFiles(albumName, files);
+        }
+    }
 }
 
 void FilePanel::loadingThumbs(Glib::ustring str, double rate)

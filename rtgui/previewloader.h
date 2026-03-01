@@ -84,6 +84,11 @@ public:
      */
     void removeAllJobs(void);
 
+    /** Pause processing — queued jobs stay but no new work starts. */
+    void pause();
+    /** Resume processing — re-schedules all pending jobs. */
+    void resume();
+
 private:
 
     PreviewLoader();

@@ -25,19 +25,31 @@ using namespace rtengine;
 RecentBrowser::RecentBrowser ()
 {
     set_orientation(Gtk::ORIENTATION_VERTICAL);
-    
-    recentDirs = Gtk::manage (new MyComboBoxText ());
 
-    Gtk::Frame* frame = Gtk::manage (new Gtk::Frame (M("MAIN_FRAME_RECENT")));
-    frame->set_label_align(0.025, 0.5);
-    frame->add (*recentDirs);
+    recentDirs = Gtk::manage (new MyComboBoxText ());
+    recentDirs->set_name("RecentFoldersCombo");
+
+    // Compact inline CSS
+    auto css = Gtk::CssProvider::create();
+    css->load_from_data(
+        "#RecentFoldersCombo { min-height: 0; padding: 1px 4px; font-size: 0.85em; }"
+    );
+    recentDirs->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
 
     const auto& options = App::get().options();
     for(size_t i = 0; i < options.recentFolders.size(); i++) {
         recentDirs->append (options.recentFolders[i]);
     }
 
-    pack_start (*frame, Gtk::PACK_SHRINK, 4);
+    // Set placeholder-like label as first entry if nothing selected
+    if (options.recentFolders.empty()) {
+        recentDirs->append("placeholder_id", M("MAIN_FRAME_RECENT"));
+        recentDirs->set_active_id("placeholder_id");
+    } else {
+        recentDirs->set_active(0);
+    }
+
+    pack_start (*recentDirs, Gtk::PACK_SHRINK, 2);
 
     conn = recentDirs->signal_changed().connect(sigc::mem_fun(*this, &RecentBrowser::selectionChanged));
 

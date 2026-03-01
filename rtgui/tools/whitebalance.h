@@ -81,6 +81,7 @@ protected:
     Adjuster* equal;
     Adjuster* tempBias;
     CheckBox* observer10;
+    AdvancedSection* advancedSection;
     Gtk::Frame* itcwbFrame;
     Gtk::CheckButton* itcwb_alg;
     MyComboBoxText* itcwb_prim;

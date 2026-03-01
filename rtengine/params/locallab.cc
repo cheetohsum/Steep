@@ -76,6 +76,7 @@ struct LoadUtil {
     void contrastByDetailLevels();
     void logEncoding();
     void mask();
+    void aiMask();
     void ciecam();
 };
 
@@ -111,6 +112,7 @@ struct SaveUtil {
     void contrastByDetailLevels();
     void logEncoding();
     void mask();
+    void aiMask();
     void ciecam();
 };
 
@@ -146,6 +148,7 @@ LocallabParams::LocallabSpot::LocallabSpot() :
     avoidrad(0.),
     transitweak(1.0),
     transitgrad(0.0),
+    gradangle(0.),
     hishow(App::get().options().complexity != 2),
     activ(true),
     avoidneg(true),
@@ -1644,6 +1647,18 @@ LocallabParams::LocallabSpot::LocallabSpot() :
         0.35,
     },
     csthresholdmask(0, 0, 6, 5, false),
+    // AI Mask
+    visiaimask(false),
+    expaimask(false),
+    useAIMask(false),
+    aiMaskClass(0),
+    aiMaskThreshold(0.3),
+    aiMaskFeather(4.0),
+    aiMaskBlur(0.0),
+    aiMaskInvert(false),
+    aiMaskOpacity(1.0),
+    aiMaskRefineRadius(8),
+    aiMaskRefineEps(0.01),
     // ciecam
     visicie(false),
     expcie(false),
@@ -2128,6 +2143,7 @@ bool LocallabParams::LocallabSpot::operator ==(const LocallabSpot& other) const
         && avoidrad == other.avoidrad
         && transitweak == other.transitweak
         && transitgrad == other.transitgrad
+        && gradangle == other.gradangle
         && hishow == other.hishow
         && activ == other.activ
         && avoidneg == other.avoidneg
@@ -3021,6 +3037,7 @@ void loadLocalLabParams(const Glib::KeyFile& keyFile, LocallabParams& locallab,
         deserialize.contrastByDetailLevels();
         deserialize.logEncoding();
         deserialize.mask();
+        deserialize.aiMask();
         deserialize.ciecam();
 
         locallab.spots.push_back(spot);
@@ -3036,6 +3053,7 @@ void LoadUtil::controlSpotSettings()
     assignFromKeyfile(keyFile, "Locallab", "Isvisible_" + index_str, spot.isvisible, spotEdited.isvisible);
     assignFromKeyfile(keyFile, "Locallab", "PrevMethod_" + index_str, spot.prevMethod, spotEdited.prevMethod);
     assignFromKeyfile(keyFile, "Locallab", "Shape_" + index_str, spot.shape, spotEdited.shape);
+    assignFromKeyfile(keyFile, "Locallab", "GradAngle_" + index_str, spot.gradangle, spotEdited.gradangle);
     assignFromKeyfile(keyFile, "Locallab", "SpotMethod_" + index_str, spot.spotMethod, spotEdited.spotMethod);
     assignFromKeyfile(keyFile, "Locallab", "wavMethod_" + index_str, spot.wavMethod, spotEdited.wavMethod);
     assignFromKeyfile(keyFile, "Locallab", "SensiExclu_" + index_str, spot.sensiexclu, spotEdited.sensiexclu);
@@ -3940,6 +3958,24 @@ void LoadUtil::mask()
     }
 }
 
+void LoadUtil::aiMask()
+{
+    spot.visiaimask = assignFromKeyfile(keyFile, "Locallab", "Expaimask_" + index_str, spot.expaimask, spotEdited.expaimask);
+    assignFromKeyfile(keyFile, "Locallab", "UseAIMask_" + index_str, spot.useAIMask, spotEdited.useAIMask);
+    assignFromKeyfile(keyFile, "Locallab", "AIMaskClass_" + index_str, spot.aiMaskClass, spotEdited.aiMaskClass);
+    assignFromKeyfile(keyFile, "Locallab", "AIMaskThreshold_" + index_str, spot.aiMaskThreshold, spotEdited.aiMaskThreshold);
+    assignFromKeyfile(keyFile, "Locallab", "AIMaskFeather_" + index_str, spot.aiMaskFeather, spotEdited.aiMaskFeather);
+    assignFromKeyfile(keyFile, "Locallab", "AIMaskBlur_" + index_str, spot.aiMaskBlur, spotEdited.aiMaskBlur);
+    assignFromKeyfile(keyFile, "Locallab", "AIMaskInvert_" + index_str, spot.aiMaskInvert, spotEdited.aiMaskInvert);
+    assignFromKeyfile(keyFile, "Locallab", "AIMaskOpacity_" + index_str, spot.aiMaskOpacity, spotEdited.aiMaskOpacity);
+    assignFromKeyfile(keyFile, "Locallab", "AIMaskRefineRadius_" + index_str, spot.aiMaskRefineRadius, spotEdited.aiMaskRefineRadius);
+    assignFromKeyfile(keyFile, "Locallab", "AIMaskRefineEps_" + index_str, spot.aiMaskRefineEps, spotEdited.aiMaskRefineEps);
+
+    if (spot.visiaimask) {
+        spotEdited.visiaimask = true;
+    }
+}
+
 void LoadUtil::ciecam()
 {
     spot.visicie = assignFromKeyfile(keyFile, "Locallab", "Expcie_" + index_str, spot.expcie, spotEdited.expcie);
@@ -4267,6 +4303,7 @@ void saveLocalLabParams(Glib::KeyFile& keyFile, const LocallabParams& locallab,
         serialize.contrastByDetailLevels();
         serialize.logEncoding();
         serialize.mask();
+        serialize.aiMask();
         serialize.ciecam();
     }
 }
@@ -4277,6 +4314,7 @@ void SaveUtil::controlSpotSettings()
     saveToKeyfile(!pedited || spot_edited->isvisible, "Locallab", "Isvisible_" + index_str, spot.isvisible, keyFile);
     saveToKeyfile(!pedited || spot_edited->prevMethod, "Locallab", "PrevMethod_" + index_str, spot.prevMethod, keyFile);
     saveToKeyfile(!pedited || spot_edited->shape, "Locallab", "Shape_" + index_str, spot.shape, keyFile);
+    saveToKeyfile(!pedited || spot_edited->gradangle, "Locallab", "GradAngle_" + index_str, spot.gradangle, keyFile);
     saveToKeyfile(!pedited || spot_edited->spotMethod, "Locallab", "SpotMethod_" + index_str, spot.spotMethod, keyFile);
     saveToKeyfile(!pedited || spot_edited->wavMethod, "Locallab", "WavMethod_" + index_str, spot.wavMethod, keyFile);
     saveToKeyfile(!pedited || spot_edited->sensiexclu, "Locallab", "SensiExclu_" + index_str, spot.sensiexclu, keyFile);
@@ -4983,6 +5021,22 @@ void SaveUtil::mask()
         saveToKeyfile(!pedited || spot_edited->Lmask_curve, "Locallab", "Lmask_Curve_" + index_str, spot.Lmask_curve, keyFile);
         saveToKeyfile(!pedited || spot_edited->LLmask_curvewav, "Locallab", "LLmask_Curvewav_" + index_str, spot.LLmask_curvewav, keyFile);
         saveToKeyfile(!pedited || spot_edited->csthresholdmask, "Locallab", "CSThresholdmask_" + index_str, spot.csthresholdmask.toVector(), keyFile);
+    }
+}
+
+void SaveUtil::aiMask()
+{
+    if ((!pedited || spot_edited->visiaimask) && spot.visiaimask) {
+        saveToKeyfile(!pedited || spot_edited->expaimask, "Locallab", "Expaimask_" + index_str, spot.expaimask, keyFile);
+        saveToKeyfile(!pedited || spot_edited->useAIMask, "Locallab", "UseAIMask_" + index_str, spot.useAIMask, keyFile);
+        saveToKeyfile(!pedited || spot_edited->aiMaskClass, "Locallab", "AIMaskClass_" + index_str, spot.aiMaskClass, keyFile);
+        saveToKeyfile(!pedited || spot_edited->aiMaskThreshold, "Locallab", "AIMaskThreshold_" + index_str, spot.aiMaskThreshold, keyFile);
+        saveToKeyfile(!pedited || spot_edited->aiMaskFeather, "Locallab", "AIMaskFeather_" + index_str, spot.aiMaskFeather, keyFile);
+        saveToKeyfile(!pedited || spot_edited->aiMaskBlur, "Locallab", "AIMaskBlur_" + index_str, spot.aiMaskBlur, keyFile);
+        saveToKeyfile(!pedited || spot_edited->aiMaskInvert, "Locallab", "AIMaskInvert_" + index_str, spot.aiMaskInvert, keyFile);
+        saveToKeyfile(!pedited || spot_edited->aiMaskOpacity, "Locallab", "AIMaskOpacity_" + index_str, spot.aiMaskOpacity, keyFile);
+        saveToKeyfile(!pedited || spot_edited->aiMaskRefineRadius, "Locallab", "AIMaskRefineRadius_" + index_str, spot.aiMaskRefineRadius, keyFile);
+        saveToKeyfile(!pedited || spot_edited->aiMaskRefineEps, "Locallab", "AIMaskRefineEps_" + index_str, spot.aiMaskRefineEps, keyFile);
     }
 }
 

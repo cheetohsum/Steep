@@ -17,8 +17,10 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <atomic>
 #include <memory>
 #include <set>
+#include <thread>
 #include "cachemanager.h"
 #include "filebrowserentry.h"
 #include "previewloader.h"
@@ -74,13 +76,18 @@ public:
 
     typedef std::set<Job, JobCompare> JobSet;
 
+    std::atomic<bool> paused_{false};
+
     Impl(): nConcurrentThreads(0)
     {
 #ifdef _OPENMP
         int threadCount = omp_get_num_procs();
 #else
-        int threadCount = 2;
+        int threadCount = std::max(2u, std::thread::hardware_concurrency());
 #endif
+        // Cap preview loader threads — this work is largely I/O-bound,
+        // and too many threads just saturates the disk subsystem.
+        threadCount = std::max(2, std::min(threadCount, 4));
 
         threadPool_.reset(new Glib::ThreadPool(threadCount, 0));
     }
@@ -101,6 +108,12 @@ public:
             // nothing to do; could be jobs have been removed
             if ( jobs_.empty() ) {
                 DEBUG("processing: nothing to do");
+                return;
+            }
+
+            // If paused (e.g. editor is loading a full image), skip work.
+            // Jobs stay in the queue and will be picked up when resumed.
+            if (paused_.load(std::memory_order_relaxed)) {
                 return;
             }
 
@@ -127,9 +140,7 @@ public:
         try {
             Thumbnail* tmb = nullptr;
             {
-                if (Glib::file_test(j.dir_entry_, Glib::FILE_TEST_EXISTS)) {
-                    tmb = cacheMgr->getEntry(j.dir_entry_);
-                }
+                tmb = cacheMgr->getEntry(j.dir_entry_);
             }
 
             if ( tmb ) {
@@ -204,6 +215,22 @@ void PreviewLoader::removeAllJobs()
     DEBUG("stop %d", impl_->nConcurrentThreads);
     MyMutex::MyLock lock(impl_->mutex_);
     impl_->jobs_.clear();
+}
+
+void PreviewLoader::pause()
+{
+    impl_->paused_.store(true, std::memory_order_relaxed);
+}
+
+void PreviewLoader::resume()
+{
+    impl_->paused_.store(false, std::memory_order_relaxed);
+
+    // Re-schedule all pending jobs so the thread pool picks them up
+    MyMutex::MyLock lock(impl_->mutex_);
+    for (size_t i = 0; i < impl_->jobs_.size(); ++i) {
+        impl_->threadPool_->push(sigc::mem_fun(*impl_, &PreviewLoader::Impl::processNextJob));
+    }
 }
 
 

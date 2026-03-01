@@ -171,6 +171,7 @@ protected:
     MyExpander* exp;
     ToolParamBlock *subToolsContainer;
     bool lastEnabled;
+    bool flatMode_ = false;
     sigc::connection enaConn;
     void foldThemAll (GdkEventButton* event);
     void enabled_toggled();
@@ -191,6 +192,7 @@ public:
 
     void setExpanded (bool expanded) final
     {
+        if (flatMode_) return;  // Always stay expanded in flat mode
         if (exp) {
             exp->set_expanded( expanded );
         }
@@ -225,6 +227,12 @@ public:
     }
 
     virtual void enabledChanged  () {}
+
+    void setFlatMode(bool flat);
+
+    Gtk::Box* getSummaryBox();
+    void setExpandable(bool expandable);
+    void autoEnable();
 
     bool getUseEnabled ()
     {

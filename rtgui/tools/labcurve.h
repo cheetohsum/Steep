@@ -40,6 +40,7 @@ class LCurve final :
 
 protected:
     CurveEditorGroup* curveEditorG;
+    CurveEditorGroup* curveEditorGAdv;
 //    CurveEditorGroup* curveEditorGD;
     Adjuster* brightness;
     Adjuster* contrast;
@@ -66,6 +67,7 @@ protected:
     rtengine::ProcEvent Evgamutmunsell;
 
     Adjuster* rstprotection;
+    AdvancedSection* advancedSection;
     sigc::connection  bwtconn, lcconn;
     bool lastACVal, lastLCVal;
 

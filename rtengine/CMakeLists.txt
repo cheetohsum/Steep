@@ -7,6 +7,7 @@ set(PROCPARAM_SRCS
 set(RTENGINESOURCEFILES
     alpha.cc
     ahd_demosaic_RT.cc
+    aidenoise.cc
     amaze_demosaic_RT.cc
     badpixels.cc
     bayer_bilinear_demosaic.cc
@@ -158,6 +159,10 @@ if(NOT WITH_SYSTEM_KLT)
     set(KLT_LIBRARIES)
 endif()
 
+if(WITH_AI_MASKING)
+    list(APPEND RTENGINESOURCEFILES aisegmentation.cc aimaskcache.cc)
+endif()
+
 add_library(rtengine STATIC "${RTENGINESOURCEFILES}")
 
 add_dependencies(rtengine UpdateInfo)
@@ -237,6 +242,11 @@ endif()
 
 if(OpenMP_CXX_FOUND)
     target_link_libraries(rtengine PUBLIC OpenMP::OpenMP_CXX)
+endif()
+
+if(WITH_AI_MASKING)
+    target_link_libraries(rtengine PUBLIC onnxruntime::onnxruntime)
+    target_compile_definitions(rtengine PUBLIC "RT_AI_MASKING")
 endif()
 
 # It may be nice to store library version too

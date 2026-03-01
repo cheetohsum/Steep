@@ -49,7 +49,7 @@ SaveFormatPanel::SaveFormatPanel () : listener (nullptr)
     hb1->set_column_spacing(5);
     hb1->set_row_spacing(5);
     setExpandAlignProperties(hb1, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
-    Gtk::Label* flab = Gtk::manage (new Gtk::Label (M("SAVEDLG_FILEFORMAT") + ":"));
+    Gtk::Label* flab = Gtk::manage (new Gtk::Label (M("SAVEDLG_FILEFORMAT")));
     setExpandAlignProperties(flab, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     format = Gtk::manage (new MyComboBoxText ());
     setExpandAlignProperties(format, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
@@ -75,7 +75,7 @@ SaveFormatPanel::SaveFormatPanel () : listener (nullptr)
     setExpandAlignProperties(jpegQual, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
     jpegQual->setAdjusterListener (this);
 
-    jpegSubSampLabel = Gtk::manage (new Gtk::Label (M("SAVEDLG_SUBSAMP") + Glib::ustring(":")) );
+    jpegSubSampLabel = Gtk::manage (new Gtk::Label (M("SAVEDLG_SUBSAMP")) );
     setExpandAlignProperties(jpegSubSampLabel, true, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
 
     jpegSubSamp = Gtk::manage (new MyComboBoxText ());
@@ -87,8 +87,8 @@ SaveFormatPanel::SaveFormatPanel () : listener (nullptr)
     jpegSubSamp->set_active (2);
     jpegSubSamp->signal_changed().connect( sigc::mem_fun(*this, &SaveFormatPanel::formatChanged) );
 
-    jpegOpts->attach(*jpegQual, 0, 0, 1, 2);
-    jpegOpts->attach(*jpegSubSampLabel, 1, 0, 1, 1);
+    jpegOpts->attach(*jpegQual, 0, 0, 2, 1);
+    jpegOpts->attach(*jpegSubSampLabel, 0, 1, 1, 1);
     jpegOpts->attach(*jpegSubSamp, 1, 1, 1, 1);
     jpegOpts->show_all ();
 

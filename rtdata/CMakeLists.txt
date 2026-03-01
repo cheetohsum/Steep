@@ -48,6 +48,10 @@ install(DIRECTORY "${THEMEDIR}" DESTINATION "${DATADIR}")
 install(DIRECTORY "${ICONTHEMEDIR}/rawtherapee" DESTINATION "${DATADIR}/${ICONTHEMEDIR}")
 install(DIRECTORY "${IMAGESDIR}" DESTINATION "${DATADIR}")
 
+if(WITH_AI_MASKING)
+    install(DIRECTORY "models" DESTINATION "${DATADIR}")
+endif()
+
 if(APPLE)
     # CMake escapes first item quote character. Do not remove 'DUMMY_VARIABLE='
     set(MACOSX_BUNDLE_COMMAND DUMMY_VARIABLE=

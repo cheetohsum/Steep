@@ -275,6 +275,13 @@ struct ImpulseDenoiseParamsEdited {
     bool thresh;
 };
 
+struct AIDenoiseParamsEdited {
+    bool enabled;
+    bool isoConditioning;
+    bool blend;
+    bool useGpu;
+};
+
 struct ColorAppearanceParamsEdited {
     bool curve;
     bool curvered;
@@ -474,6 +481,7 @@ public:
         bool avoidrad;
         bool transitweak;
         bool transitgrad;
+        bool gradangle;
         bool hishow;
         bool activ;
         bool avoidneg;
@@ -1097,6 +1105,18 @@ public:
         bool Lmask_curve;
         bool LLmask_curvewav;
         bool csthresholdmask;
+        // AI Mask
+        bool visiaimask;
+        bool expaimask;
+        bool useAIMask;
+        bool aiMaskClass;
+        bool aiMaskThreshold;
+        bool aiMaskFeather;
+        bool aiMaskBlur;
+        bool aiMaskInvert;
+        bool aiMaskOpacity;
+        bool aiMaskRefineRadius;
+        bool aiMaskRefineEps;
         //locallabcie
         bool visicie;
         bool complexcie;
@@ -1661,6 +1681,33 @@ struct HSVEqualizerParamsEdited {
     bool hcurve;
     bool scurve;
     bool vcurve;
+    bool mode;
+    bool hueShifts;
+    bool satShifts;
+    bool lumShifts;
+};
+
+struct PointColorParamsEdited {
+    bool enabled;
+    bool targets;  // entire vector edited
+};
+
+struct ColorGradingParamsEdited {
+    bool enabled;
+    bool shadowsHue;
+    bool shadowsSat;
+    bool shadowsLum;
+    bool midtonesHue;
+    bool midtonesSat;
+    bool midtonesLum;
+    bool highlightsHue;
+    bool highlightsSat;
+    bool highlightsLum;
+    bool globalHue;
+    bool globalSat;
+    bool globalLum;
+    bool blending;
+    bool balance;
 };
 
 struct FilmSimulationParamsEdited {
@@ -1809,6 +1856,7 @@ struct ParamsEdited {
     EPDParamsEdited epd;
     FattalToneMappingParamsEdited fattal;
     ImpulseDenoiseParamsEdited impulseDenoise;
+    AIDenoiseParamsEdited aiDenoise;
     SHParamsEdited sh;
     CGParamsEdited cg;
     
@@ -1835,6 +1883,8 @@ struct ParamsEdited {
     DirPyrEqualizerParamsEdited dirpyrequalizer;
     WaveletParamsEdited wavelet;
     HSVEqualizerParamsEdited hsvequalizer;
+    ColorGradingParamsEdited colorGrading;
+    PointColorParamsEdited pointcolor;
     FilmSimulationParamsEdited filmSimulation;
     SoftLightParamsEdited softlight;
     DehazeParamsEdited dehaze;

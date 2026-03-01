@@ -49,13 +49,20 @@ SharpenMicro::SharpenMicro () : FoldableToolPanel(this, TOOL_NAME, M("TP_SHARPEN
     uniformity->setAdjusterListener (this);
     uniformity->show();
 
+    getSummaryBox()->pack_start( *amount, Gtk::PACK_SHRINK, 0);
+    getSummaryBox()->show_all();
+
     pack_start( *contrast, Gtk::PACK_SHRINK, 0);
-    pack_start( *amount, Gtk::PACK_SHRINK, 0);
-    pack_start( *uniformity, Gtk::PACK_SHRINK, 0);
+
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
+
+    advBox->pack_start( *uniformity, Gtk::PACK_SHRINK, 0);
 
     matrix = Gtk::manage (new Gtk::CheckButton (M("TP_SHARPENMICRO_MATRIX")));
     matrix->set_active (true);
-    pack_start(*matrix, Gtk::PACK_SHRINK, 0);
+    advBox->pack_start(*matrix, Gtk::PACK_SHRINK, 0);
     matrix->show ();
 
     matrixconn = matrix->signal_toggled().connect( sigc::mem_fun(*this, &SharpenMicro::matrix_toggled) );
@@ -144,6 +151,7 @@ void SharpenMicro::matrix_toggled ()
 
 void SharpenMicro::adjusterChanged(Adjuster* a, double newval)
 {
+    autoEnable();
     if (listener && getEnabled()) {
         const Glib::ustring value = a->getTextValue();
 
@@ -162,6 +170,7 @@ void SharpenMicro::setBatchMode(bool batchMode)
     amount->showEditedCB     ();
     contrast->showEditedCB   ();
     uniformity->showEditedCB ();
+    advancedSection->setBatchMode(batchMode);
 }
 
 void SharpenMicro::setDefaults(const ProcParams* defParams, const ParamsEdited* pedited)

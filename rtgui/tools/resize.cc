@@ -41,33 +41,9 @@ Resize::Resize () : FoldableToolPanel(this, TOOL_NAME, M("TP_RESIZE_LABEL"), fal
     cropw = 0;
     croph = 0;
 
-    Gtk::Grid* combos = Gtk::manage (new Gtk::Grid());
-    combos->set_row_spacing(4);
-
-    appliesTo = Gtk::manage (new MyComboBoxText ());
-    appliesTo->append (M("TP_RESIZE_CROPPEDAREA"));
-    appliesTo->append (M("TP_RESIZE_FULLIMAGE"));
-    appliesTo->set_active (0);
-    appliesTo->set_hexpand();
-    appliesTo->set_halign(Gtk::ALIGN_FILL);
-
-    Gtk::Label *label = Gtk::manage (new Gtk::Label (M("TP_RESIZE_APPLIESTO"), Gtk::ALIGN_START));
-    
-    combos->attach(*label, 0, 0, 1, 1);
-    combos->attach(*appliesTo, 1, 0, 1, 1);
-
-    // See Resize::methodChanged() when adding a new method.
-    method = Gtk::manage (new MyComboBoxText ());
-    method->append (M("TP_RESIZE_LANCZOS"));
-    method->append (M("TP_RESIZE_NEAREST"));
-    method->set_active (0);
-    method->set_hexpand();
-    method->set_halign(Gtk::ALIGN_FILL);
-
-    label = Gtk::manage (new Gtk::Label (M("TP_RESIZE_METHOD"), Gtk::ALIGN_START));
-    
-    combos->attach(*label, 0, 1, 1, 1);
-    combos->attach(*method, 1, 1, 1, 1);
+    // Visible: Specification mode combo
+    Gtk::Grid* specGrid = Gtk::manage (new Gtk::Grid());
+    specGrid->set_row_spacing(4);
 
     spec = Gtk::manage (new MyComboBoxText ());
     spec->append (M("TP_RESIZE_SCALE"));
@@ -80,17 +56,45 @@ Resize::Resize () : FoldableToolPanel(this, TOOL_NAME, M("TP_RESIZE_LABEL"), fal
     spec->set_hexpand();
     spec->set_halign(Gtk::ALIGN_FILL);
 
-    label = Gtk::manage (new Gtk::Label (M("TP_RESIZE_SPECIFY"), Gtk::ALIGN_START));
+    Gtk::Label *label = Gtk::manage (new Gtk::Label (M("TP_RESIZE_SPECIFY"), Gtk::ALIGN_START));
 
-    combos->attach(*label, 0, 2, 1, 1);
-    combos->attach(*spec, 1, 2, 1, 1);
+    specGrid->attach(*label, 0, 0, 1, 1);
+    specGrid->attach(*spec, 1, 0, 1, 1);
 
-    pack_start (*combos, Gtk::PACK_SHRINK, 4);
+    getSummaryBox()->pack_start (*specGrid, Gtk::PACK_SHRINK, 4);
 
     scale = new Adjuster (M("TP_RESIZE_SCALE"), 0.01, MAX_SCALE, 0.01, 1.);
     scale->setAdjusterListener (this);
 
-    pack_start (*scale, Gtk::PACK_SHRINK, 4);
+    getSummaryBox()->pack_start (*scale, Gtk::PACK_SHRINK, 4);
+    getSummaryBox()->show_all();
+
+    // Advanced: Applies To, Method, Allow Upscaling
+    appliesTo = Gtk::manage (new MyComboBoxText ());
+    appliesTo->append (M("TP_RESIZE_CROPPEDAREA"));
+    appliesTo->append (M("TP_RESIZE_FULLIMAGE"));
+    appliesTo->set_active (0);
+    appliesTo->set_hexpand();
+    appliesTo->set_halign(Gtk::ALIGN_FILL);
+
+    // See Resize::methodChanged() when adding a new method.
+    method = Gtk::manage (new MyComboBoxText ());
+    method->append (M("TP_RESIZE_LANCZOS"));
+    method->append (M("TP_RESIZE_NEAREST"));
+    method->set_active (0);
+    method->set_hexpand();
+    method->set_halign(Gtk::ALIGN_FILL);
+
+    Gtk::Grid* advCombos = Gtk::manage (new Gtk::Grid());
+    advCombos->set_row_spacing(4);
+
+    label = Gtk::manage (new Gtk::Label (M("TP_RESIZE_APPLIESTO"), Gtk::ALIGN_START));
+    advCombos->attach(*label, 0, 0, 1, 1);
+    advCombos->attach(*appliesTo, 1, 0, 1, 1);
+
+    label = Gtk::manage (new Gtk::Label (M("TP_RESIZE_METHOD"), Gtk::ALIGN_START));
+    advCombos->attach(*label, 0, 1, 1, 1);
+    advCombos->attach(*method, 1, 1, 1, 1);
 
     sizeBox = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
 
@@ -140,8 +144,14 @@ Resize::Resize () : FoldableToolPanel(this, TOOL_NAME, M("TP_RESIZE_LABEL"), fal
     sizeBox->show_all ();
     sizeBox->reference ();
 
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
+
+    advBox->pack_start(*advCombos, Gtk::PACK_SHRINK, 4);
+
     allowUpscaling = Gtk::manage(new Gtk::CheckButton(M("TP_RESIZE_ALLOW_UPSCALING")));
-    pack_start(*allowUpscaling);
+    advBox->pack_start(*allowUpscaling);
     allowUpscaling->signal_toggled().connect(sigc::mem_fun(*this, &Resize::allowUpscalingChanged));
 
     w->set_digits (0);
@@ -332,6 +342,7 @@ void Resize::setDefaults (const ProcParams* defParams, const ParamsEdited* pedit
 
 void Resize::adjusterChanged(Adjuster* a, double newval)
 {
+    autoEnable();
     if (!batchMode) {
         wconn.block (true);
         hconn.block (true);
@@ -769,13 +780,13 @@ void Resize::updateGUI ()
     case (0):
         // Scale mode
         pack_start (*scale, Gtk::PACK_SHRINK, 4);
-        reorder_child(*allowUpscaling, 4);
+        reorder_child(*scale, 1);
         break;
 
     case (1):
         // Width mode
         pack_start (*sizeBox, Gtk::PACK_SHRINK, 4);
-        reorder_child(*allowUpscaling, 4);
+        reorder_child(*sizeBox, 1);
         w->set_sensitive (true);
         h->set_sensitive (false);
         w->get_parent()->get_parent()->show();
@@ -785,7 +796,7 @@ void Resize::updateGUI ()
     case (2):
         // Height mode
         pack_start (*sizeBox, Gtk::PACK_SHRINK, 4);
-        reorder_child(*allowUpscaling, 4);
+        reorder_child(*sizeBox, 1);
         w->set_sensitive (false);
         h->set_sensitive (true);
         w->get_parent()->get_parent()->show();
@@ -795,7 +806,7 @@ void Resize::updateGUI ()
     case (3):
         // Bounding box mode
         pack_start (*sizeBox, Gtk::PACK_SHRINK, 4);
-        reorder_child(*allowUpscaling, 4);
+        reorder_child(*sizeBox, 1);
         w->set_sensitive (true);
         h->set_sensitive (true);
         w->get_parent()->get_parent()->show();
@@ -805,7 +816,7 @@ void Resize::updateGUI ()
     case (4):
         // Long edge mode
         pack_start (*sizeBox, Gtk::PACK_SHRINK, 4);
-        reorder_child(*allowUpscaling, 4);
+        reorder_child(*sizeBox, 1);
         le->set_sensitive (true);
         se->set_sensitive (false);
         w->get_parent()->get_parent()->hide();
@@ -815,7 +826,7 @@ void Resize::updateGUI ()
     case (5):
         // Short edge mode
         pack_start (*sizeBox, Gtk::PACK_SHRINK, 4);
-        reorder_child(*allowUpscaling, 4);
+        reorder_child(*sizeBox, 1);
         le->set_sensitive (false);
         se->set_sensitive (true);
         w->get_parent()->get_parent()->hide();
@@ -841,6 +852,7 @@ void Resize::setBatchMode (bool batchMode)
     spec->append (M("GENERAL_UNCHANGED"));
     ToolPanel::setBatchMode (batchMode);
     scale->showEditedCB ();
+    advancedSection->setBatchMode(batchMode);
 }
 
 void Resize::enabledChanged ()

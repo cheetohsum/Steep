@@ -70,16 +70,17 @@ FilmSimulation::FilmSimulation()
     int foundClutsCount = m_clutComboBox->foundClutsCount();
 
     if ( foundClutsCount == 0 ) {
-        pack_start( *Gtk::manage( new Gtk::Label( M("TP_FILMSIMULATION_ZEROCLUTSFOUND") ) ) );
+        m_clutComboBox->set_tooltip_text(M("TP_FILMSIMULATION_ZEROCLUTSFOUND"));
     }
 
     m_clutComboBoxConn = m_clutComboBox->signal_changed().connect( sigc::mem_fun( *this, &FilmSimulation::onClutSelected ) );
-    pack_start( *m_clutComboBox );
+    getSummaryBox()->pack_start( *m_clutComboBox );
 
     m_strength = Gtk::manage( new Adjuster( M("TP_FILMSIMULATION_STRENGTH"), 0., 100, 1., 100 ) );
     m_strength->setAdjusterListener( this );
 
-    pack_start( *m_strength, Gtk::PACK_SHRINK, 0 );
+    getSummaryBox()->pack_start( *m_strength, Gtk::PACK_SHRINK, 0 );
+    getSummaryBox()->show_all();
 
 }
 
@@ -112,6 +113,7 @@ void FilmSimulation::enabledChanged ()
 
 void FilmSimulation::adjusterChanged(Adjuster* a, double newval)
 {
+    autoEnable();
     if (listener && (multiImage || getEnabled())) {
         const Glib::ustring value = a->getTextValue();
         listener->panelChanged(EvFilmSimulationStrength, value);

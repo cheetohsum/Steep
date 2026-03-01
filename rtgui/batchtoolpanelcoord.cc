@@ -787,3 +787,8 @@ void BatchToolPanelCoordinator::spotWBselected (int x, int y, Thumbnail* thm)
     }
 }
 
+void BatchToolPanelCoordinator::pointColorSelected(int x, int y, Thumbnail* thm)
+{
+    // No-op in batch mode
+}
+

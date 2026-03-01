@@ -37,7 +37,8 @@ private:
     rtengine::ProcEvent EvLocalContrastAmount;
     rtengine::ProcEvent EvLocalContrastDarkness;
     rtengine::ProcEvent EvLocalContrastLightness;
-    
+    AdvancedSection* advancedSection;
+
 public:
     static const Glib::ustring TOOL_NAME;
 

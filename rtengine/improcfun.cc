@@ -2132,6 +2132,24 @@ void ImProcFunctions::rgbProc(Imagefloat* working, LabImage* lab, PipetteBuffer 
     bool hCurveEnabled = params->hsvequalizer.enabled && hCurveType > FCT_Linear;
     bool sCurveEnabled = params->hsvequalizer.enabled && sCurveType > FCT_Linear;
     bool vCurveEnabled = params->hsvequalizer.enabled && vCurveType > FCT_Linear;
+    struct PointColorWork {
+        float centerH, invTwoSigmaSq, hueShiftScale, satScale, lumScale;
+    };
+    std::vector<PointColorWork> pcTargets;
+    if (params->pointcolor.enabled) {
+        for (const auto& t : params->pointcolor.targets) {
+            if (t.range <= 0) continue;
+            PointColorWork w;
+            w.centerH = static_cast<float>(t.centerHue);
+            float sigma = static_cast<float>(t.range) / 100.f * 0.15f;
+            w.invTwoSigmaSq = 1.f / (2.f * sigma * sigma);
+            w.hueShiftScale = static_cast<float>(t.hueShift) / 200.f;
+            w.satScale = static_cast<float>(t.saturation) / 100.f;
+            w.lumScale = static_cast<float>(t.luminance) / 200.f;
+            pcTargets.push_back(w);
+        }
+    }
+    bool pointColorEnabled = !pcTargets.empty();
     bool bwlCurveEnabled = bwlCurveType > FCT_Linear;
 
     // TODO: We should create a 'skip' value like for CurveFactory::complexsgnCurve (rtengine/curves.cc)
@@ -2707,7 +2725,7 @@ void ImProcFunctions::rgbProc(Imagefloat* working, LabImage* lab, PipetteBuffer 
                     }
                 }
 
-                if (sat != 0 || hCurveEnabled || sCurveEnabled || vCurveEnabled) {
+                if (sat != 0 || hCurveEnabled || sCurveEnabled || vCurveEnabled || pointColorEnabled) {
                     const float satby100 = sat / 100.f;
 
                     for (int i = istart, ti = 0; i < tH; i++, ti++) {
@@ -2770,6 +2788,38 @@ void ImProcFunctions::rgbProc(Imagefloat* working, LabImage* lab, PipetteBuffer 
                                     }
                                 }
 
+                            }
+
+                            // Point Color: gaussian-weighted HSV adjustment for each target
+                            if (pointColorEnabled) {
+                                for (const auto& w : pcTargets) {
+                                    float dh = h - w.centerH;
+                                    if (dh > 0.5f) dh -= 1.f;
+                                    if (dh < -0.5f) dh += 1.f;
+                                    float weight = expf(-(dh * dh) * w.invTwoSigmaSq);
+
+                                    if (weight > 0.001f) {
+                                        float hShift = w.hueShiftScale * weight;
+                                        h += hShift;
+                                        if (h > 1.f) h -= 1.f;
+                                        if (h < 0.f) h += 1.f;
+
+                                        float satParam = w.satScale * weight;
+                                        if (satParam > 0) {
+                                            s = (1.f - satParam) * s + satParam * (1.f - SQR(1.f - min(s, 1.0f)));
+                                        } else {
+                                            s *= 1.f + satParam;
+                                        }
+
+                                        float valParam = w.lumScale * weight;
+                                        valParam *= (1.f - SQR(SQR(1.f - min(s, 1.0f))));
+                                        if (valParam > 0) {
+                                            v = (1.f - valParam) * v + valParam * (1.f - SQR(1.f - min(v, 1.0f)));
+                                        } else {
+                                            v *= 1.f + valParam;
+                                        }
+                                    }
+                                }
                             }
 
                             Color::hsv2rgbdcp(h * 6.f, s, v, rtemp[ti * TS + tj], gtemp[ti * TS + tj], btemp[ti * TS + tj]);
@@ -6028,6 +6078,105 @@ void ImProcFunctions::colorToningLabGrid(LabImage *lab, int xstart, int xend, in
         for (int x = xstart; x < xend; ++x) {
             lab->a[y][x] += lab->L[y][x] * a_scale + a_base;
             lab->b[y][x] += lab->L[y][x] * b_scale + b_base;
+        }
+    }
+}
+
+void ImProcFunctions::colorGrading(LabImage *lab, int xstart, int xend, int ystart, int yend, bool MultiThread)
+{
+    if (!params->colorGrading.enabled) {
+        return;
+    }
+
+    const double blending = params->colorGrading.blending / 100.0;  // 0..1
+    const double balance = params->colorGrading.balance / 100.0;    // -1..1
+
+    // Convert hue/sat to Lab a/b shifts for each zone
+    // RT uses Lab scaled by 327.68 (L: 0-32768, a/b: similar scale)
+    // A standard Lab shift of 40 units = 40 * 327.68 = 13107 in RT scale
+    constexpr double labScale = 327.68;
+    auto hueSatToAB = [labScale](double hueDeg, double sat, double& a_shift, double& b_shift) {
+        double hueRad = hueDeg * RT_PI / 180.0;
+        // Max shift ~40 standard Lab units at full saturation
+        a_shift = sat * 40.0 * labScale * std::cos(hueRad);
+        b_shift = sat * 40.0 * labScale * std::sin(hueRad);
+    };
+
+    double sh_a, sh_b, mid_a, mid_b, hi_a, hi_b, gl_a, gl_b;
+    hueSatToAB(params->colorGrading.shadowsHue, params->colorGrading.shadowsSat, sh_a, sh_b);
+    hueSatToAB(params->colorGrading.midtonesHue, params->colorGrading.midtonesSat, mid_a, mid_b);
+    hueSatToAB(params->colorGrading.highlightsHue, params->colorGrading.highlightsSat, hi_a, hi_b);
+    hueSatToAB(params->colorGrading.globalHue, params->colorGrading.globalSat, gl_a, gl_b);
+
+
+    const double shLum = params->colorGrading.shadowsLum;
+    const double midLum = params->colorGrading.midtonesLum;
+    const double hiLum = params->colorGrading.highlightsLum;
+    const double glLum = params->colorGrading.globalLum;
+
+    // Shadow/highlight split points controlled by balance
+    // L range is 0..32768
+    const double shadowEnd = 32768.0 * (0.25 + 0.15 * balance);
+    const double highlightStart = 32768.0 * (0.75 - 0.15 * balance);
+
+    auto smoothstep = [](double edge0, double edge1, double x) -> double {
+        if (edge1 <= edge0) return 0.5;
+        double t = LIM((x - edge0) / (edge1 - edge0), 0.0, 1.0);
+        return t * t * (3.0 - 2.0 * t);
+    };
+
+#ifdef _OPENMP
+    #pragma omp parallel for if (MultiThread)
+#endif
+    for (int y = ystart; y < yend; ++y) {
+        for (int x = xstart; x < xend; ++x) {
+            const double L = static_cast<double>(lab->L[y][x]);
+
+            // Compute zone weights using smoothstep transitions
+            double wShadow = 1.0 - smoothstep(0.0, shadowEnd, L);
+            double wHighlight = smoothstep(highlightStart, 32768.0, L);
+            double wMidtone = 1.0 - wShadow - wHighlight;
+            if (wMidtone < 0) wMidtone = 0;
+
+            // Apply color shifts scaled by blending intensity
+            double da = (wShadow * sh_a + wMidtone * mid_a + wHighlight * hi_a + gl_a) * blending;
+            double db = (wShadow * sh_b + wMidtone * mid_b + wHighlight * hi_b + gl_b) * blending;
+            double dL = (wShadow * shLum + wMidtone * midLum + wHighlight * hiLum + glLum) * blending;
+
+            lab->a[y][x] += static_cast<float>(da);
+            lab->b[y][x] += static_cast<float>(db);
+            lab->L[y][x] += static_cast<float>(dL * 327.68); // scale -100..100 to Lab L units
+        }
+    }
+}
+
+void ImProcFunctions::blendAIDenoise(Imagefloat* orig, const Imagefloat* dn, double blend,
+                                      int srcX, int srcY, int skip)
+{
+    if (!orig || !dn || blend <= 0.0) {
+        return;
+    }
+
+    const int cropW = orig->getWidth();
+    const int cropH = orig->getHeight();
+    const int dnW = dn->getWidth();
+    const int dnH = dn->getHeight();
+    const float b = static_cast<float>(blend);
+    const float inv = 1.0f - b;
+
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(dynamic, 16)
+#endif
+    for (int y = 0; y < cropH; ++y) {
+        const int sy = srcY + y * skip;
+        if (sy < 0 || sy >= dnH) continue;
+        for (int x = 0; x < cropW; ++x) {
+            const int sx = srcX + x * skip;
+            if (sx < 0 || sx >= dnW) continue;
+
+            orig->r(y, x) = inv * orig->r(y, x) + b * dn->r(sy, sx);
+            orig->g(y, x) = inv * orig->g(y, x) + b * dn->g(sy, sx);
+            orig->b(y, x) = inv * orig->b(y, x) + b * dn->b(sy, sx);
         }
     }
 }

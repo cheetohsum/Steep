@@ -46,9 +46,15 @@ SharpenEdge::SharpenEdge () : FoldableToolPanel(this, TOOL_NAME, M("TP_SHARPENED
 
     threechannels = Gtk::manage(new Gtk::CheckButton((M("TP_SHARPENEDGE_THREE"))));// L + a + b
     threechannels->set_active (false);
-    pack_start( *passes, Gtk::PACK_SHRINK, 0);//passes
-    pack_start( *amount, Gtk::PACK_SHRINK, 0);//amount
-    pack_start( *threechannels, Gtk::PACK_SHRINK, 0);//one or 3 channels Lab
+    getSummaryBox()->pack_start( *passes, Gtk::PACK_SHRINK, 0);//passes
+    getSummaryBox()->pack_start( *amount, Gtk::PACK_SHRINK, 0);//amount
+    getSummaryBox()->show_all();
+
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
+
+    advBox->pack_start( *threechannels, Gtk::PACK_SHRINK, 0);//one or 3 channels Lab
 
     chanthreeconn = threechannels->signal_toggled().connect( sigc::mem_fun(*this, &SharpenEdge::chanthree_toggled) );
 }
@@ -133,6 +139,7 @@ void SharpenEdge::chanthree_toggled ()
 
 void SharpenEdge::adjusterChanged(Adjuster* a, double newval)
 {
+    autoEnable();
     if (listener && getEnabled()) {
         Glib::ustring value = a->getTextValue();
 
@@ -148,6 +155,7 @@ void SharpenEdge::setBatchMode(bool batchMode)
 {
     passes->showEditedCB   ();
     amount->showEditedCB ();
+    advancedSection->setBatchMode(batchMode);
 }
 
 void SharpenEdge::setDefaults(const ProcParams* defParams, const ParamsEdited* pedited)

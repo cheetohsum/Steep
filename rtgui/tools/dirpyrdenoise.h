@@ -122,21 +122,21 @@ private:
     sigc::connection  smethodconn;
     MyComboBoxText*   medmethod;
     sigc::connection  medmethodconn;
-    Gtk::Box* ctbox;
+    Gtk::Grid* ctbox;
     MyComboBoxText*   methodmed;
     sigc::connection  methodmedconn;
-    Gtk::Box* ctboxm;
+    Gtk::Grid* ctboxm;
     MyComboBoxText*   rgbmethod;
     sigc::connection  rgbmethodconn;
-    Gtk::Box* ctboxrgb;
+    Gtk::Grid* ctboxrgb;
     double nextchroma;
     double nextred;
     double nextblue;
     double nextnresid;
     double nexthighresid;
-    Gtk::Box* ctboxL;
-    Gtk::Box* ctboxC;
-    Gtk::Box* ctboxC2;
+    Gtk::Grid* ctboxL;
+    Gtk::Grid* ctboxC;
+    Gtk::Grid* ctboxC2;
     int nexttileX;
     int nexttileY;
     int nextprevX;
@@ -144,5 +144,6 @@ private:
     int nextsizeT;
     int nextsizeP;
 
+    AdvancedSection* advancedSection;
     IdleRegister idle_register;
 };

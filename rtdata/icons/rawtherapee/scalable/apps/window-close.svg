@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <!-- X close icon -->
+  <path d="M7 7 L17 17" stroke="#cccccc" stroke-opacity="0.9" stroke-width="2" stroke-linecap="round"/>
+  <path d="M17 7 L7 17" stroke="#cccccc" stroke-opacity="0.9" stroke-width="2" stroke-linecap="round"/>
+</svg>

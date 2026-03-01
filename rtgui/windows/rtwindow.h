@@ -59,8 +59,32 @@ private:
     sigc::connection onConfEventConn;
     bool on_delete_has_run;
     Gtk::Button * btn_fullscreen;
+    Gtk::Button * btn_minimize;
+    Gtk::Button * btn_close;
 
     Gtk::Image *iFullscreen, *iFullscreen_exit;
+
+    // Header bar and navigation
+    Gtk::HeaderBar* headerBar;
+    Gtk::MenuButton* optionsBtn;
+    Gtk::ComboBoxText* bgColorCombo;
+    Gtk::CheckButton* chkFocusMask;
+    Gtk::CheckButton* chkSharpMask;
+    Gtk::CheckButton* chkClippedShadows;
+    Gtk::CheckButton* chkClippedHighlights;
+    Gtk::CheckButton* chkHistogramProfile;
+    Gtk::CheckButton* chkPreviewR;
+    Gtk::CheckButton* chkPreviewG;
+    Gtk::CheckButton* chkPreviewB;
+    Gtk::CheckButton* chkPreviewL;
+    Gtk::ComboBoxText* intentCombo;
+    Gtk::ComboBoxText* profileCombo;
+    Gtk::CheckButton* chkSoftProof;
+    Gtk::CheckButton* chkGamutCheck;
+    Gtk::ToggleButton* navFileBrowser;
+    Gtk::ToggleButton* navQueue;
+    Gtk::ToggleButton* navEditor;
+    bool navSwitching; // guard against recursive toggle
 
     bool isSingleTabMode() const;
 
@@ -102,6 +126,10 @@ public:
     void showPreferences ();
     void on_realize () override;
     void toggle_fullscreen ();
+    void minimize_window ();
+    void close_window ();
+    void on_nav_switched (Gtk::ToggleButton* active);
+    void syncNavButtons (guint page_num);
     void get_position(int& x, int& y) const;
 
     void setProgress(double p) override;
@@ -142,4 +170,6 @@ public:
     void createSetmEditor();
 
     void writeToolExpandedStatus (std::vector<int> &tpOpen);
+
+    EditorPanel* getActiveEditorPanel();
 };

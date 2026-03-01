@@ -92,6 +92,7 @@ protected:
     LensGeomListener* lens_geom_listener;
     PerspCorrectionPanelListener* panel_listener;
     const rtengine::FramesMetaData* metadata;
+    AdvancedSection* advancedSection;
 
     void applyControlLines (void);
     void tweakParams(rtengine::procparams::ProcParams &pparams) override;
@@ -141,6 +142,9 @@ public:
     }
     void setMetadata (const rtengine::FramesMetaData* metadata);
     void switchOffEditMode (void);
+    void hideAdvancedSection ();
+    void exposeAutoButtons ();
+    void runAutoCorrection ();
     void trimValues          (rtengine::procparams::ProcParams* pp) override;
 };
 

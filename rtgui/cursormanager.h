@@ -43,6 +43,7 @@ enum CursorShape {
     CSResizeTopLeft,
     CSResizeTopRight,
     CSResizeWidth,
+    CSPointColorPick,
     CSSpotWB,
     CSStraighten,
     CSUndefined,

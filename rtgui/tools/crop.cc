@@ -142,15 +142,15 @@ Crop::Crop():
     setExpandAlignProperties(h, true, false, Gtk::ALIGN_END, Gtk::ALIGN_CENTER);
     h->set_width_chars(6);
 
-    selectCrop = Gtk::manage (new Gtk::Button (M("TP_CROP_SELECTCROP")));
-    setExpandAlignProperties(selectCrop, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
-    selectCrop->get_style_context()->add_class("independent");
+    selectCrop = Gtk::manage (new Gtk::Button ());
     selectCrop->set_image (*Gtk::manage (new RTImage ("crop-small", Gtk::ICON_SIZE_BUTTON)));
+    selectCrop->set_relief (Gtk::RELIEF_NONE);
+    selectCrop->set_tooltip_text (M("TP_CROP_SELECTCROP"));
 
-    resetCrop = Gtk::manage (new Gtk::Button (M("TP_CROP_RESETCROP")));
-    setExpandAlignProperties(resetCrop, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
-    resetCrop->get_style_context()->add_class("independent");
+    resetCrop = Gtk::manage (new Gtk::Button ());
     resetCrop->set_image (*Gtk::manage (new RTImage ("undo-small", Gtk::ICON_SIZE_BUTTON)));
+    resetCrop->set_relief (Gtk::RELIEF_NONE);
+    resetCrop->set_tooltip_text (M("TP_CROP_RESETCROP"));
 
     methodgrid->attach (*xlab, 0, 0, 1, 1);
     methodgrid->attach (*x, 1, 0, 1, 1);
@@ -208,43 +208,6 @@ Crop::Crop():
     pack_start (*settingsgrid, Gtk::PACK_SHRINK, 0 );
 
 
-    // ppigrid START
-    ppigrid = Gtk::manage(new Gtk::Grid());
-    ppigrid->get_style_context()->add_class("grid-spacing");
-    ppigrid->set_column_homogeneous (true);
-    setExpandAlignProperties(ppigrid, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
-
-    Gtk::Separator* ppiseparator = Gtk::manage (new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
-    ppiseparator->get_style_context()->add_class("grid-row-separator");
-
-    Gtk::Grid* ppisubgrid = Gtk::manage(new Gtk::Grid());
-    ppisubgrid->get_style_context()->add_class("grid-spacing");
-    setExpandAlignProperties(ppisubgrid, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
-
-    Gtk::Label* ppilab = Gtk::manage (new Gtk::Label (M("TP_CROP_PPI") + ":"));
-    setExpandAlignProperties(ppilab, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
-
-    ppi = Gtk::manage (new MySpinButton ());
-    setExpandAlignProperties(ppi, true, false, Gtk::ALIGN_END, Gtk::ALIGN_CENTER);
-    ppi->set_width_chars(6);
-
-    ppisubgrid->attach (*ppilab, 0, 0, 1, 1);
-    ppisubgrid->attach (*ppi, 1, 0, 1, 1);
-
-    sizecm = Gtk::manage (new Gtk::Label (M("GENERAL_NA") + " cm x " + M("GENERAL_NA") + " cm"));
-    setExpandAlignProperties(sizecm, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_CENTER);
-
-    sizein = Gtk::manage (new Gtk::Label (M("GENERAL_NA") + " in x " + M("GENERAL_NA") + " in"));
-    setExpandAlignProperties(sizein, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_CENTER);
-
-    ppigrid->attach (*ppiseparator, 0, 0, 2, 1);
-    ppigrid->attach (*sizecm, 1, 1, 1, 1);
-    ppigrid->attach (*sizein, 1, 2, 1, 1);
-    ppigrid->attach (*ppisubgrid, 0, 1, 1, 2);
-    pack_start (*ppigrid, Gtk::PACK_SHRINK, 0 );
-
-    ppi->set_value (300);
-    // ppigrid END
 
     // Populate the combobox
     for (const auto& label : crop_ratios->getLabels()) {
@@ -291,11 +254,6 @@ Crop::Crop():
     h->set_increments (1, 100);
     h->set_value (200);
 
-    ppi->set_digits (0);
-    ppi->set_increments (1, 100);
-    ppi->set_range (50, 12000);
-    ppi->set_value (300);
-
     xconn = x->signal_value_changed().connect ( sigc::mem_fun(*this, &Crop::positionChanged), true);
     yconn = y->signal_value_changed().connect ( sigc::mem_fun(*this, &Crop::positionChanged), true);
     wconn = w->signal_value_changed().connect ( sigc::mem_fun(*this, &Crop::widthChanged), true);
@@ -306,7 +264,6 @@ Crop::Crop():
     gconn = guide->signal_changed().connect( sigc::mem_fun(*this, &Crop::notifyListener) );
     selectCrop->signal_pressed().connect( sigc::mem_fun(*this, &Crop::selectPressed) );
     resetCrop->signal_pressed().connect( sigc::mem_fun(*this, &Crop::doresetCrop) );
-    ppi->signal_value_changed().connect( sigc::mem_fun(*this, &Crop::refreshSize) );
 
     nx = ny = nw = nh = 0;
     lastRotationDeg = 0;
@@ -317,10 +274,6 @@ Crop::Crop():
     methodgrid->set_column_spacing(4);
     settingsgrid->set_row_spacing(4);
     settingsgrid->set_column_spacing(4);
-    ppigrid->set_row_spacing(4);
-    ppigrid->set_column_spacing(4);
-    ppisubgrid->set_row_spacing(4);
-    ppisubgrid->set_column_spacing(4);
 #endif
 //GTK318
 
@@ -334,18 +287,10 @@ Crop::~Crop()
 
 void Crop::writeOptions ()
 {
-
-    App::get().mut_options().cropPPI = (int)ppi->get_value ();
 }
 
 void Crop::readOptions ()
 {
-
-    disableListener ();
-
-    ppi->set_value (App::get().options().cropPPI);
-
-    enableListener ();
 }
 
 void Crop::read (const ProcParams* pp, const ParamsEdited* pedited)
@@ -846,23 +791,6 @@ void Crop::adjustCropToRatio()
 
 void Crop::refreshSize ()
 {
-
-    if (!batchMode) {
-
-        std::ostringstream ostrin;
-        ostrin.precision (3);
-        //    ostrin << h->get_value()/ppi->get_value() << " in x " << w->get_value()/ppi->get_value() << " in";;
-        ostrin << nh / ppi->get_value() << " in x " << nw / ppi->get_value() << " in";;
-
-        sizein->set_text (ostrin.str ());
-
-        std::ostringstream ostrcm;
-        ostrcm.precision (3);
-        //    ostrcm << h->get_value()/ppi->get_value()*2.54 << " cm x " << w->get_value()/ppi->get_value()*2.54 << " cm";;
-        ostrcm << nh / ppi->get_value() * 2.54 << " cm x " << nw / ppi->get_value() * 2.54 << " cm";;
-
-        sizecm->set_text (ostrcm.str ());
-    }
 }
 
 /*
@@ -1535,7 +1463,6 @@ void Crop::setBatchMode (bool batchMode)
     ratio->append (M("GENERAL_UNCHANGED"));
     orientation->append (M("GENERAL_UNCHANGED"));
     guide->append (M("GENERAL_UNCHANGED"));
-    removeIfThere (this, ppigrid);
     removeIfThere (methodgrid, selectCrop);
     removeIfThere (methodgrid, resetCrop);
 }

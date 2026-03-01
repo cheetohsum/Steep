@@ -141,14 +141,14 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
     methodgrid->get_style_context()->add_class("grid-spacing");
     setExpandAlignProperties(methodgrid, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
 
-    Gtk::Label* lab = Gtk::manage (new Gtk::Label (M("TP_WBALANCE_METHOD") + ":"));
+    Gtk::Label* lab = Gtk::manage (new Gtk::Label (M("TP_WBALANCE_METHOD")));
     setExpandAlignProperties(lab, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
 
     // Create the Tree model
     refTreeModel = Gtk::TreeStore::create(methodColumns);
     // Create the Combobox
     method = Gtk::manage (new MyComboBox ());
-    setExpandAlignProperties(method, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    setExpandAlignProperties(method, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     // Assign the model to the Combobox
     method->set_model(refTreeModel);
     method->clear(); // Clear default cell layout to add custom one
@@ -257,7 +257,7 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
     methodgrid->attach (*lab, 0, 0, 1, 1);
     methodgrid->attach (*method, 1, 0, 1, 1);
     methodgrid->attach (*resetButton, 2, 0, 1, 1);
-    pack_start (*methodgrid, Gtk::PACK_SHRINK, 0 );
+    getSummaryBox()->pack_start (*methodgrid, Gtk::PACK_SHRINK, 0 );
     opt = 0;
 
     Gtk::Grid* spotgrid = Gtk::manage(new Gtk::Grid());
@@ -265,7 +265,7 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
     setExpandAlignProperties(spotgrid, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
 
     spotbutton = Gtk::manage (new Gtk::Button (M("TP_WBALANCE_PICKER")));
-    setExpandAlignProperties(spotbutton, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    setExpandAlignProperties(spotbutton, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     spotbutton->get_style_context()->add_class("independent");
     spotbutton->set_tooltip_text(M("TP_WBALANCE_SPOTWB"));
     spotbutton->set_image (*Gtk::manage (new RTImage ("color-picker-small", Gtk::ICON_SIZE_BUTTON)));
@@ -347,6 +347,19 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
     tempBias = Gtk::manage (new Adjuster(M("TP_WBALANCE_TEMPBIAS"), -1.1, 1.1, 0.005, 0.0, itempbiasL, itempbiasR));
     observer10 = Gtk::manage(new CheckBox(M("TP_WBALANCE_OBSERVER10"), multiImage));
 
+    // Temperature gradient: blue → neutral → orange
+    temp->setSliderGradient({
+        GradientMilestone(0.0, 0.3, 0.45, 0.8),
+        GradientMilestone(0.5, 0.75, 0.75, 0.75),
+        GradientMilestone(1.0, 0.9, 0.6, 0.2)
+    });
+    // Tint gradient: green → neutral → magenta
+    green->setSliderGradient({
+        GradientMilestone(0.0, 0.3, 0.7, 0.3),
+        GradientMilestone(0.5, 0.75, 0.75, 0.75),
+        GradientMilestone(1.0, 0.8, 0.3, 0.7)
+    });
+
     cache_customTemp (0);
     cache_customGreen (0);
     cache_customEqual (0);
@@ -398,19 +411,25 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
     pack_start(*PatchLabel);
     pack_start(*PatchlevelLabel);
     green->setLogScale(MAXGREEN / MINGREEN, MINGREEN);
-    pack_start (*temp);
+    getSummaryBox()->pack_start (*temp);
     //pack_start (*boxgreen);
-    pack_start (*green);
-    pack_start (*equal);
-    pack_start (*tempBias);
-    pack_start(*observer10);
+    getSummaryBox()->pack_start (*green);
+    getSummaryBox()->show_all();
 
+    // Advanced section: equal, observer, tempBias, itcwb
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
+
+    advBox->pack_start (*equal);
+    advBox->pack_start(*observer10);
+    advBox->pack_start (*tempBias);
 
     itcwbBox->pack_start (*itcwb_green);
     itcwbBox->pack_start (*itcwb_alg);
     itcwbBox->pack_start (*itcwb_prim);
     itcwbFrame->add(*itcwbBox);
-    pack_start(*itcwbFrame);
+    advBox->pack_start(*itcwbFrame);
 
     if(options.rtSettings.itcwb_enable) {
         itcwb_green->show();
@@ -1050,6 +1069,7 @@ void WhiteBalance::setBatchMode (bool batchMode)
     equal->showEditedCB ();
     tempBias->showEditedCB ();
     compatVersionAdjuster->showEditedCB();
+    advancedSection->setBatchMode(batchMode);
     Gtk::TreeModel::Row row = *(refTreeModel->append());
     row[methodColumns.colId] = WBParams::getWbEntries().size();
     row[methodColumns.colLabel] = M("GENERAL_UNCHANGED");

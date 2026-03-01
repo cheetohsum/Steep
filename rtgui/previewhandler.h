@@ -81,6 +81,9 @@ public:
     // this function is called when a new preview image arrives from rtengine
     void previewImageChanged ();
 
+    // Set a placeholder preview (e.g. cached thumbnail) before the engine delivers the real image
+    void setPlaceholder(Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scale);
+
     // with this function it is possible to ask for a rough approximation of a (possibly zoomed) crop of the image
     Glib::RefPtr<Gdk::Pixbuf> getRoughImage(ImageCoord pos, hidpi::ScaledDeviceSize desiredSize, double zoom);
     hidpi::DevicePixbuf getRoughImage(hidpi::LogicalSize desiredSize, int deviceScale, double& outLogicalZoom);

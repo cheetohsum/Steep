@@ -99,6 +99,10 @@ macro(rt_setup_dependencies)
         add_compile_definitions(RT_SIMDE)
         add_compile_definitions(SIMDE_ENABLE_NATIVE_ALIASES)
     endif()
+
+    if(WITH_AI_MASKING)
+        find_package(ONNXRuntime REQUIRED)
+    endif()
 endmacro()
 
 macro(rt_fetch_content)

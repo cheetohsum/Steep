@@ -49,11 +49,16 @@ EdgePreservingDecompositionUI::EdgePreservingDecompositionUI () : FoldableToolPa
     scale->show();
     reweightingIterates->show();
 
-    pack_start(*strength);
-    pack_start(*gamma);
-    pack_start(*edgeStopping);
-    pack_start(*scale);
-    pack_start(*reweightingIterates);
+    // Advanced items (all controls behind Advanced section)
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
+
+    advBox->pack_start(*strength);
+    advBox->pack_start(*gamma);
+    advBox->pack_start(*edgeStopping);
+    advBox->pack_start(*scale);
+    advBox->pack_start(*reweightingIterates);
 }
 
 void EdgePreservingDecompositionUI::read(const ProcParams *pp, const ParamsEdited *pedited)
@@ -148,6 +153,7 @@ void EdgePreservingDecompositionUI::setDefaults(const ProcParams *defParams, con
 
 void EdgePreservingDecompositionUI::adjusterChanged(Adjuster* a, double newval)
 {
+    autoEnable();
     if (listener && getEnabled()) {
         if(a == strength) {
             listener->panelChanged(EvEPDStrength, Glib::ustring::format(std::setw(2), std::fixed, std::setprecision(2), a->getValue()));
@@ -179,6 +185,7 @@ void EdgePreservingDecompositionUI::enabledChanged ()
 void EdgePreservingDecompositionUI::setBatchMode(bool batchMode)
 {
     ToolPanel::setBatchMode(batchMode);
+    advancedSection->setBatchMode(batchMode);
 
     strength->showEditedCB();
     gamma->showEditedCB();

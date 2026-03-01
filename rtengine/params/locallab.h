@@ -40,7 +40,7 @@ struct LocallabParams {
         Glib::ustring name;
         bool isvisible;
         Glib::ustring prevMethod; // show, hide
-        Glib::ustring shape; // ELI, RECT
+        Glib::ustring shape; // ELI, RECT, GRAD
         Glib::ustring spotMethod; // norm, exc
         Glib::ustring wavMethod; // D2, D4, D6, D10, D14
         int sensiexclu;
@@ -66,6 +66,7 @@ struct LocallabParams {
         double avoidrad;
         double transitweak;
         double transitgrad;
+        double gradangle; // Gradient angle in degrees (-180 to 180)
         bool hishow;
         bool activ;
         bool avoidneg;
@@ -690,6 +691,18 @@ struct LocallabParams {
         std::vector<double> Lmask_curve;
         std::vector<double> LLmask_curvewav;
         Threshold<int> csthresholdmask;
+        // AI Mask
+        bool visiaimask;
+        bool expaimask;
+        bool useAIMask;
+        int aiMaskClass;
+        double aiMaskThreshold;
+        double aiMaskFeather;
+        double aiMaskBlur;
+        bool aiMaskInvert;
+        double aiMaskOpacity;
+        int aiMaskRefineRadius;
+        double aiMaskRefineEps;
         //ciecam
         bool visicie;
         bool expcie;

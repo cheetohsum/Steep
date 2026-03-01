@@ -32,32 +32,48 @@ ShadowsHighlights::ShadowsHighlights () : FoldableToolPanel(this, TOOL_NAME, M("
     auto m = ProcEventMapper::getInstance();
     EvSHColorspace = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_SH_COLORSPACE");
 
-    Gtk::Box* hb = Gtk::manage (new Gtk::Box ());
-    hb->pack_start(*Gtk::manage(new Gtk::Label(M("TP_DIRPYRDENOISE_MAIN_COLORSPACE") + ": ")), Gtk::PACK_SHRINK);
+    highlights   = Gtk::manage (new Adjuster (M("TP_SHADOWSHLIGHTS_HIGHLIGHTS"), 0, 100, 1, 0));
+    // Highlights gradient: mid → light
+    highlights->setSliderGradient({
+        GradientMilestone(0.0, 0.5, 0.5, 0.5),
+        GradientMilestone(1.0, 0.95, 0.95, 0.95)
+    });
+    h_tonalwidth = Gtk::manage (new Adjuster (M("TP_SHADOWSHLIGHTS_HLTONALW"), 10, 100, 1, 70));
+    shadows      = Gtk::manage (new Adjuster (M("TP_SHADOWSHLIGHTS_SHADOWS"), 0, 100, 1, 0));
+    // Shadows gradient: dark → mid
+    shadows->setSliderGradient({
+        GradientMilestone(0.0, 0.1, 0.1, 0.1),
+        GradientMilestone(1.0, 0.5, 0.5, 0.5)
+    });
+    s_tonalwidth = Gtk::manage (new Adjuster (M("TP_SHADOWSHLIGHTS_SHTONALW"), 10, 100, 1, 30));
+    radius = Gtk::manage (new Adjuster (M("TP_SHADOWSHLIGHTS_RADIUS"), 1, 100, 1, 40));
+
+    Gtk::Grid* hb = Gtk::manage (new Gtk::Grid ());
+    hb->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(hb, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    Gtk::Label* csLabel = Gtk::manage(new Gtk::Label(M("TP_DIRPYRDENOISE_MAIN_COLORSPACE") + ": "));
+    setExpandAlignProperties(csLabel, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     colorspace = Gtk::manage(new MyComboBoxText());
     colorspace->append(M("TP_DIRPYRDENOISE_MAIN_COLORSPACE_RGB"));
     colorspace->append(M("TP_DIRPYRDENOISE_MAIN_COLORSPACE_LAB"));
-    hb->pack_start(*colorspace);
-    pack_start(*hb);
+    setExpandAlignProperties(colorspace, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    hb->attach(*csLabel, 0, 0, 1, 1);
+    hb->attach(*colorspace, 1, 0, 1, 1);
 
-    pack_start (*Gtk::manage (new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)));
+    // Visible items (in summary box)
+    getSummaryBox()->pack_start (*shadows);
+    getSummaryBox()->show_all();
 
-    highlights   = Gtk::manage (new Adjuster (M("TP_SHADOWSHLIGHTS_HIGHLIGHTS"), 0, 100, 1, 0));
-    h_tonalwidth = Gtk::manage (new Adjuster (M("TP_SHADOWSHLIGHTS_HLTONALW"), 10, 100, 1, 70));
-    pack_start (*highlights);
-    pack_start (*h_tonalwidth);
+    // Advanced items
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
 
-    pack_start (*Gtk::manage (new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)));
-
-    shadows      = Gtk::manage (new Adjuster (M("TP_SHADOWSHLIGHTS_SHADOWS"), 0, 100, 1, 0));
-    s_tonalwidth = Gtk::manage (new Adjuster (M("TP_SHADOWSHLIGHTS_SHTONALW"), 10, 100, 1, 30));
-    pack_start (*shadows);
-    pack_start (*s_tonalwidth);
-
-    pack_start (*Gtk::manage (new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)));
-
-    radius = Gtk::manage (new Adjuster (M("TP_SHADOWSHLIGHTS_RADIUS"), 1, 100, 1, 40));
-    pack_start (*radius);
+    advBox->pack_start(*highlights);
+    advBox->pack_start(*hb);
+    advBox->pack_start(*h_tonalwidth);
+    advBox->pack_start(*s_tonalwidth);
+    advBox->pack_start(*radius);
 
     radius->setAdjusterListener (this);
     highlights->setAdjusterListener (this);
@@ -157,6 +173,7 @@ void ShadowsHighlights::setDefaults (const ProcParams* defParams, const ParamsEd
 
 void ShadowsHighlights::adjusterChanged (Adjuster* a, double newval)
 {
+    autoEnable();
     if (listener && getEnabled()) {
         const Glib::ustring costr = Glib::ustring::format ((int)a->getValue());
 
@@ -199,12 +216,13 @@ void ShadowsHighlights::setBatchMode (bool batchMode)
 {
 
     ToolPanel::setBatchMode (batchMode);
+    advancedSection->setBatchMode(batchMode);
     radius->showEditedCB ();
     highlights->showEditedCB ();
     h_tonalwidth->showEditedCB ();
     shadows->showEditedCB ();
     s_tonalwidth->showEditedCB ();
-    colorspace->append(M("GENERAL_UNCHANGED"));    
+    colorspace->append(M("GENERAL_UNCHANGED"));
 }
 
 void ShadowsHighlights::setAdjusterBehavior (bool hadd, bool sadd)

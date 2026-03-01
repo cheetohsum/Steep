@@ -113,10 +113,6 @@ private:
     MySpinButton* y;
     MySpinButton* w;
     MySpinButton* h;
-    MySpinButton* ppi;
-    Gtk::Label* sizecm;
-    Gtk::Label* sizein;
-    Gtk::Grid* ppigrid;
     Gtk::Grid* methodgrid;
     Gtk::Label *customRatioLabel;
 

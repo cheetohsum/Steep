@@ -37,6 +37,7 @@
 #include "processingjob.h"
 #include "procparams.h"
 #include "rawimagesource.h"
+#include "aidenoise.h"
 #include "rtengine.h"
 #include "utils.h"
 
@@ -832,6 +833,14 @@ private:
         baseImg = new Imagefloat(fw, fh);
         imgsrc->getImage(currWB, tr, baseImg, pp, params.toneCurve, params.raw);
 
+        // AI Denoise blending (uses cached result from subprocess)
+        if (params.aiDenoise.enabled && params.aiDenoise.blend > 0) {
+            auto& aidm = AIDenoiseManager::getInstance();
+            if (aidm.isCacheValid(imgsrc->getFileName(), params.aiDenoise.isoConditioning)) {
+                ImProcFunctions::blendAIDenoise(baseImg, aidm.getCachedResult(), params.aiDenoise.blend / 100.0);
+            }
+        }
+
         if (pl) {
             pl->setProgress(0.50);
         }
@@ -1372,7 +1381,7 @@ private:
                               locedgwavCurve, locedgwavutili,
                               loclmasCurve_wav, lmasutili_wav,
                               LHutili, HHutili, CHutili, HHutilijz, CHutilijz, LHutilijz, cclocalcurve, localcutili, rgblocalcurve, localrgbutili, localexutili, exlocalcurve, hltonecurveloc, shtonecurveloc, tonecurveloc, lightCurveloc,
-                              huerefblu, chromarefblu, lumarefblu, huere, chromare, lumare, sobelre, lastsav, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                              huerefblu, chromarefblu, lumarefblu, huere, chromare, lumare, sobelre, lastsav, false, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                               minCD, maxCD, mini, maxi, Tmean, Tsigma, Tmin, Tmax,
                               meantme, stdtme, meanretie, stdretie, fab, maxicam, rdx, rdy, grx, gry, blx, bly, meanx, meany, meanxe, meanye, maxdat, prim, ill, contsig, lightsig, slopeg, linkrgb,
                               resi, sharc, denocont, ghsbpwp, ghsbpwpvalue, savmadl, ghsbwslider, ghssym, ghsautsp, ghscolor, ghsmid, ghsmaxrgb, ghs3sig, michbwslider);
@@ -1545,6 +1554,8 @@ private:
         if (params.colorToning.enabled && params.colorToning.method == "LabGrid") {
             ipf.colorToningLabGrid(labView, 0, labView->W, 0, labView->H, false);
         }
+
+        ipf.colorGrading(labView, 0, labView->W, 0, labView->H, false);
 
         ipf.shadowsHighlights(labView, params.sh.enabled, params.sh.lab, params.sh.highlights, params.sh.shadows, params.sh.radius, 1, params.sh.htonalwidth, params.sh.stonalwidth);
 

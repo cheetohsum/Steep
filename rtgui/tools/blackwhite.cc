@@ -36,7 +36,7 @@ using namespace rtengine::procparams;
 
 const Glib::ustring BlackWhite::TOOL_NAME = "blackwhite";
 
-BlackWhite::BlackWhite (): FoldableToolPanel(this, TOOL_NAME, M("TP_BWMIX_LABEL"), false, true)
+BlackWhite::BlackWhite (): FoldableToolPanel(this, TOOL_NAME, M("TP_BWMIX_LABEL"), false, false)
 {
     CurveListener::setMulti(true);
 
@@ -46,19 +46,32 @@ BlackWhite::BlackWhite (): FoldableToolPanel(this, TOOL_NAME, M("TP_BWMIX_LABEL"
 
     //----------- Method combobox ------------------------------
 
-    Gtk::Box* metHBox = Gtk::manage (new Gtk::Box ());
-    metHBox->set_spacing (2);
-    Gtk::Label* metLabel = Gtk::manage (new Gtk::Label (M("TP_BWMIX_MET") + ":"));
-    metHBox->pack_start (*metLabel, Gtk::PACK_SHRINK);
-   
+    Gtk::Box* metBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+    setExpandAlignProperties(metBox, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    metBox->set_vexpand(false);
+    Gtk::Label* metLabel = Gtk::manage(new Gtk::Label(M("TP_BWMIX_MET")));
+    metLabel->set_line_wrap(false);
+    metLabel->set_valign(Gtk::ALIGN_CENTER);
+
 	method = Gtk::manage (new MyComboBoxText ());
+    method->append (M("GENERAL_DISABLED"));
     method->append (M("TP_BWMIX_MET_DESAT"));
     method->append (M("TP_BWMIX_MET_LUMEQUAL"));
     method->append (M("TP_BWMIX_MET_CHANMIX"));
 
     method->set_active (0);
-    metHBox->pack_start (*method);
-    pack_start (*metHBox);
+    setExpandAlignProperties(method, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    method->set_size_request(90, 18);
+    // Center text vertically in combobox
+    auto cells = method->get_cells();
+    for (auto* cell : cells) {
+        cell->set_alignment(0.0, 0.5);
+        cell->set_padding(2, 0);
+    }
+    metBox->pack_start(*metLabel, false, false, 0);
+    metBox->pack_start(*method, false, false, 0);
+    getSummaryBox()->pack_start(*metBox, false, false, 0);
+    getSummaryBox()->show_all();
     methodconn = method->signal_changed().connect ( sigc::mem_fun(*this, &BlackWhite::methodChanged) );
 
 
@@ -89,11 +102,16 @@ BlackWhite::BlackWhite (): FoldableToolPanel(this, TOOL_NAME, M("TP_BWMIX_LABEL"
     luminanceCEG->curveListComplete();
     pack_start (*luminanceCEG, Gtk::PACK_SHRINK, 4);
 
+    // Advanced section
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
+
     //----------- Auto and Reset buttons ------------------------------
 
     mixerFrame = Gtk::manage (new Gtk::Frame (M("TP_BWMIX_MET_CHANMIX")));
     mixerFrame->set_label_align(0.025, 0.5);
-    pack_start (*mixerFrame, Gtk::PACK_SHRINK, 0);
+    advBox->pack_start (*mixerFrame, Gtk::PACK_SHRINK, 0);
 
     mixerVBox = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     mixerVBox->set_spacing(4);
@@ -285,7 +303,7 @@ BlackWhite::BlackWhite (): FoldableToolPanel(this, TOOL_NAME, M("TP_BWMIX_LABEL"
 
     gammaFrame = Gtk::manage (new Gtk::Frame (M("TP_BWMIX_GAMMA")));
     gammaFrame->set_label_align(0.025, 0.5);
-    pack_start (*gammaFrame, Gtk::PACK_SHRINK, 0);
+    advBox->pack_start (*gammaFrame, Gtk::PACK_SHRINK, 0);
 
     Gtk::Box* gammaVBox = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     gammaVBox->set_spacing(4);
@@ -339,7 +357,7 @@ BlackWhite::BlackWhite (): FoldableToolPanel(this, TOOL_NAME, M("TP_BWMIX_LABEL"
     // This will add the reset button at the end of the curveType buttons
     beforeCurveCEG->curveListComplete();
 
-    pack_start( *beforeCurveCEG, Gtk::PACK_SHRINK, 2);
+    advBox->pack_start( *beforeCurveCEG, Gtk::PACK_SHRINK, 2);
 
     tcmodeconn = beforeCurveMode->signal_changed().connect( sigc::mem_fun(*this, &BlackWhite::curveMode1Changed), true );
 
@@ -362,7 +380,7 @@ BlackWhite::BlackWhite (): FoldableToolPanel(this, TOOL_NAME, M("TP_BWMIX_LABEL"
 
     afterCurveCEG->curveListComplete();
 
-    pack_start( *afterCurveCEG, Gtk::PACK_SHRINK, 2);
+    advBox->pack_start( *afterCurveCEG, Gtk::PACK_SHRINK, 2);
 
 //  tcmodeconn2 = afterCurveMode->signal_changed().connect( sigc::mem_fun(*this, &BlackWhite::curveMode1Changed2), true );
 
@@ -470,13 +488,15 @@ void BlackWhite::read (const ProcParams* pp, const ParamsEdited* pedited)
 
 
     if (pedited && !pedited->blackwhite.method) {
-        method->set_active (3);    // "Unchanged"
+        method->set_active (4);    // "Unchanged"
+    } else if (!pp->blackwhite.enabled) {
+        method->set_active (0);    // "Off"
     } else if (pp->blackwhite.method == "Desaturation") {
-        method->set_active (0);
-    } else if (pp->blackwhite.method == "LumEqualizer") {
         method->set_active (1);
-    } else if (pp->blackwhite.method == "ChannelMixer") {
+    } else if (pp->blackwhite.method == "LumEqualizer") {
         method->set_active (2);
+    } else if (pp->blackwhite.method == "ChannelMixer") {
+        method->set_active (3);
     }
 
     methodChanged();
@@ -508,7 +528,8 @@ void BlackWhite::read (const ProcParams* pp, const ParamsEdited* pedited)
 
     enabledcc->set_active (pp->blackwhite.enabledcc);
     lastEnabledcc = pp->blackwhite.enabledcc;
-    setEnabled (pp->blackwhite.enabled);
+    // Enable state is controlled by method dropdown (Off = disabled)
+    setEnabled(pp->blackwhite.enabled);
 
     mixerRed->setValue (pp->blackwhite.mixerRed);
     mixerGreen->setValue (pp->blackwhite.mixerGreen);
@@ -585,7 +606,7 @@ void BlackWhite::read (const ProcParams* pp, const ParamsEdited* pedited)
 
 void BlackWhite::write (ProcParams* pp, ParamsEdited* pedited)
 {
-    pp->blackwhite.enabled = getEnabled();
+    pp->blackwhite.enabled = (method->get_active_row_number() > 0);
     pp->blackwhite.luminanceCurve = luminanceCurve->getCurve ();
     pp->blackwhite.autoc = autoch->get_active();
     pp->blackwhite.enabledcc = enabledcc->get_active ();
@@ -620,7 +641,7 @@ void BlackWhite::write (ProcParams* pp, ParamsEdited* pedited)
     //  else if (tcMode == 1) pp->blackwhite.afterCurveMode = BlackWhiteParams::TCMode::WEIGHTEDSTD;
 
     if (pedited) {
-        pedited->blackwhite.enabled = !get_inconsistent();
+        pedited->blackwhite.enabled = true;
         pedited->blackwhite.luminanceCurve = !luminanceCurve->isUnChanged ();
         pedited->blackwhite.autoc = !autoch->get_inconsistent();
         pedited->blackwhite.enabledcc = !enabledcc->get_inconsistent();
@@ -646,11 +667,11 @@ void BlackWhite::write (ProcParams* pp, ParamsEdited* pedited)
 //      pedited->blackwhite.afterCurveMode = afterCurveMode->get_active_row_number() != 1;
     }
 
-    if (method->get_active_row_number() == 0) {
+    if (method->get_active_row_number() == 1) {
         pp->blackwhite.method = "Desaturation";
-    } else if (method->get_active_row_number() == 1) {
-        pp->blackwhite.method = "LumEqualizer";
     } else if (method->get_active_row_number() == 2) {
+        pp->blackwhite.method = "LumEqualizer";
+    } else if (method->get_active_row_number() == 3) {
         pp->blackwhite.method = "ChannelMixer";
     }
 
@@ -819,8 +840,19 @@ void BlackWhite::filterChanged ()
 
 void BlackWhite::methodChanged ()
 {
-    if(method->get_active_row_number() == 2) {
+    int row = method->get_active_row_number();
+
+    if (row == 0) {
+        // Off
+        hideLuminance();
+        hideMixer();
+        beforeCurveCEG->hide();
+        afterCurveCEG->hide();
+        advancedSection->hide();
+        setEnabled(false);
+    } else if(row == 3) {
         // Channel Mixer
+        setEnabled(true);
         hideLuminance();
 
         if(setting->get_active_row_number() == 10 || setting->get_active_row_number() == 11) {
@@ -836,6 +868,7 @@ void BlackWhite::methodChanged ()
 
         beforeCurveCEG->show();
         afterCurveCEG->show();
+        advancedSection->show();
 
         bool wasEnabled = disableListener();
         settingChanged();
@@ -843,18 +876,22 @@ void BlackWhite::methodChanged ()
         if (wasEnabled) {
             enableListener();
         }
-    } else if(method->get_active_row_number() == 1) {
+    } else if(row == 2) {
         // Luminance Equalizer
+        setEnabled(true);
         showLuminance();
         hideMixer();
         beforeCurveCEG->show();
         afterCurveCEG->show();
-    } else if(method->get_active_row_number() == 0) {
+        advancedSection->show();
+    } else if(row == 1) {
         // Desaturation
+        setEnabled(true);
         hideLuminance();
         hideMixer();
         beforeCurveCEG->show();
         afterCurveCEG->show();
+        advancedSection->show();
     }
 
     if (listener && (multiImage || getEnabled())) {
@@ -1108,6 +1145,7 @@ void BlackWhite::autoch_toggled ()
 
 void BlackWhite::adjusterChanged(Adjuster* a, double newval)
 {
+    autoEnable();
     // Checking "listener" to avoid "autoch" getting toggled off because it has to change the sliders when toggling on
     if (listener && (a == mixerRed || a == mixerGreen || a == mixerBlue || a == mixerOrange || a == mixerYellow || a == mixerMagenta || a == mixerPurple || a == mixerCyan) ) {
         if (multiImage && autoch->get_inconsistent()) {
@@ -1244,6 +1282,7 @@ void BlackWhite::setBatchMode (bool batchMode)
     showEnabledCC();
     showGamma();
     showMixer(7);
+    advancedSection->setBatchMode(batchMode);
 }
 
 void BlackWhite::autoOpenCurve ()

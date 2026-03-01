@@ -23,6 +23,7 @@
 
 #include <gtkmm.h>
 
+#include "modebuttonbar.h"
 #include "tools/bayerpreprocess.h"
 #include "tools/bayerprocess.h"
 #include "tools/bayerrawexposure.h"
@@ -31,6 +32,7 @@
 #include "tools/chmixer.h"
 #include "coarsepanel.h"
 #include "tools/colorappearance.h"
+#include "tools/colorgrading.h"
 #include "tools/colortoning.h"
 #include "tools/compressgamut.h"
 #include "tools/crop.h"
@@ -51,6 +53,7 @@
 #include "tools/hsvequalizer.h"
 #include "tools/icmpanel.h"
 #include "imageareatoollistener.h"
+#include "tools/aidenoise.h"
 #include "tools/impulsedenoise.h"
 #include "tools/labcurve.h"
 #include "tools/lensgeom.h"
@@ -59,6 +62,7 @@
 #include "tools/localcontrast.h"
 #include "tools/locallab.h"
 #include "tools/pcvignette.h"
+#include "tools/pointcolor.h"
 #include "tools/pdsharpening.h"
 #include "tools/perspective.h"
 #include "pparamschangelistener.h"
@@ -112,6 +116,7 @@ class ToolPanelCoordinator :
     public ImageAreaToolListener,
     public rtengine::ImageTypeListener,
     public FilmNegProvider,
+    public PointColorPickListener,
     public rtengine::NonCopyable
 {
 protected:
@@ -144,6 +149,7 @@ protected:
     Defringe* defringe;
     Compressgamut* compressgamut;
     ImpulseDenoise* impulsedenoise;
+    AIDenoise* aidenoise;
     DirPyrDenoise* dirpyrdenoise;
     EdgePreservingDecompositionUI *epd;
     Sharpening* sharpening;
@@ -152,9 +158,11 @@ protected:
     LCurve* lcurve;
     RGBCurves* rgbcurves;
     ColorToning* colortoning;
+    ColorGrading* colorgrading;
     Wavelet * wavelet;
     DirPyrEqualizer* dirpyrequalizer;
     HSVEqualizer* hsvequalizer;
+    PointColor* pointcolor;
     SoftLight *softlight;
     Dehaze *dehaze;
     FilmSimulation *filmSimulation;
@@ -191,29 +199,34 @@ protected:
     ToolVBox* rawPanel;
     ToolVBox* advancedPanel;
     ToolVBox* locallabPanel;
+
+    // Edit mode grouped panels
+    ToolVBox* editPanel;
+    ToolGroup* lightGroup;
+    ToolGroup* colorGroup;
+    ToolGroup* detailGroup;
+    ToolGroup* effectsGroup;
+    ToolGroup* advancedGroup;
+    ToolGroup* calibrationGroup;
+
     ToolBar* toolBar;
+    Gtk::Box* colorPickerRow_;
 
-    std::unique_ptr<TextOrIcon> toiF;
-    TextOrIcon* toiE;
-    TextOrIcon* toiD;
-    TextOrIcon* toiC;
-    TextOrIcon* toiT;
-    TextOrIcon* toiR;
-    TextOrIcon* toiM;
-    TextOrIcon* toiW;
-    TextOrIcon* toiL;
+    Gtk::Image* imgPanelEnd[6];
+    Gtk::Box* vbPanelEnd[6];
 
-    Gtk::Image* imgPanelEnd[8];
-    Gtk::Box* vbPanelEnd[8];
+    // Mode-based UI (replaces notebook)
+    Gtk::ScrolledWindow* editPanelSW;
+    Gtk::ScrolledWindow* transformPanelSW;
+    Gtk::ScrolledWindow* locallabPanelSW;
 
+    // Legacy scrolled windows kept for internal compatibility
     std::unique_ptr<Gtk::ScrolledWindow> favoritePanelSW;
     Gtk::ScrolledWindow* exposurePanelSW;
     Gtk::ScrolledWindow* detailsPanelSW;
     Gtk::ScrolledWindow* colorPanelSW;
-    Gtk::ScrolledWindow* transformPanelSW;
     Gtk::ScrolledWindow* rawPanelSW;
     Gtk::ScrolledWindow* advancedPanelSW;
-    Gtk::ScrolledWindow* locallabPanelSW;
 
     std::vector<MyExpander*> expList;
 
@@ -229,13 +242,15 @@ protected:
         Gtk::Widget *page,
         const std::vector<Glib::ustring> &favorites,
         bool cloneFavoriteTools);
+    void modeChanged(EditorMode mode);
+    void populateEditPanel();
 
 private:
     EditDataProvider *editDataProvider;
-    sigc::connection notebookconn;
+    sigc::connection modeconn;
     bool photoLoadedOnce; // Used to indicated that a photo has been loaded yet
     std::shared_ptr<RTSurface> ornamentSurface;
-    Gtk::Widget* prevPage;
+    EditorMode prevMode;
 
 public:
     enum class Panel {
@@ -254,6 +269,7 @@ public:
         SHADOWS_HIGHLIGHTS,
         TONE_EQUALIZER,
         IMPULSE_DENOISE,
+        AI_DENOISE,
         DEFRINGE_TOOL,
         COMPRESSGAMUT_TOOL,
         SPOT,
@@ -266,6 +282,7 @@ public:
         L_CURVE,
         RGB_CURVES,
         COLOR_TONING,
+        COLOR_GRADING,
         LENS_GEOM,
         LENS_PROF,
         DISTORTION,
@@ -290,6 +307,7 @@ public:
         WAVELET,
         DIR_PYR_EQUALIZER,
         HSV_EQUALIZER,
+        POINT_COLOR,
         FILM_SIMULATION,
         SOFT_LIGHT,
         DEHAZE,
@@ -320,6 +338,8 @@ public:
 
     CoarsePanel* coarse;
     Gtk::Notebook* toolPanelNotebook;
+    ModeButtonBar* modeButtonBar;
+    Gtk::Stack* modeStack;
 
     ToolPanelCoordinator(bool batch = false);
     ~ToolPanelCoordinator () override;
@@ -359,6 +379,7 @@ public:
         const LUTu& histLRETI
     );
     void foldAllButOne(Gtk::Box* parent, FoldableToolPanel* openedSection);
+    void applyUIComplexity(int complexityLevel);
     void updateToolLocations(
         const std::vector<Glib::ustring> &favorites, bool cloneFavoriteTools);
 
@@ -440,6 +461,9 @@ public:
     // spotwblistener interface
     void spotWBRequested (int size) override;
 
+    // pointcolorpicklistener interface
+    void pointColorPickRequested() override;
+
     // croppanellistener interface
     void cropSelectRequested () override;
 
@@ -451,6 +475,7 @@ public:
 
     // imageareatoollistener interface
     void spotWBselected(int x, int y, Thumbnail* thm = nullptr) override;
+    void pointColorSelected(int x, int y, Thumbnail* thm = nullptr) override;
     void sharpMaskSelected(bool sharpMask) override final;
     int getSpotWBRectSize() const override;
     void cropSelectionReady() override;

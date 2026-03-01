@@ -32,6 +32,10 @@
 #include "batchqueueentry.h"
 #include "editorpanel.h"
 #include "filepanel.h"
+#include "indclippedpanel.h"
+#include "previewmodepanel.h"
+#include "presetlistpanel.h"
+#include "profilepanel.h"
 #include "tools/filmsimulation.h"
 
 Glib::RefPtr<Gtk::CssProvider> cssForced;
@@ -96,13 +100,22 @@ RTWindow::RTWindow ()
     , bpanel (nullptr)
     , splash (nullptr)
     , btn_fullscreen (nullptr)
+    , btn_minimize (nullptr)
+    , btn_close (nullptr)
     , iFullscreen (nullptr)
     , iFullscreen_exit (nullptr)
+    , headerBar (nullptr)
+    , optionsBtn (nullptr)
+    , navFileBrowser (nullptr)
+    , navQueue (nullptr)
+    , navEditor (nullptr)
+    , navSwitching (false)
     , epanel (nullptr)
     , fpanel (nullptr)
 {
     cacheMgr->init ();
     ProfilePanel::init (this);
+    PresetListPanel::init (this);
 
     // ------- loading theme files
 
@@ -142,7 +155,10 @@ RTWindow::RTWindow ()
 
         if (options.fontFamily != "default") { // Set font and size according to user choice
             // Set font and size in css from options
-            css = Glib::ustring::compose ("* { font-family: %1; font-size: %2pt}",
+            css = Glib::ustring::compose (
+                "* { font-family: %1; font-size: %2pt }"
+                " #MyExpander * { font-size: 10px; }"
+                " .MyExpanderSummary * { font-size: 10px; }",
                 options.fontFamily,
                 options.fontSize); // Font size is in "pt" in options
         } else { // Set font and size according to default values
@@ -162,7 +178,10 @@ RTWindow::RTWindow ()
                 defaultFontFamily = "-apple-system";
             }
 #endif
-            css = Glib::ustring::compose ("* { font-family: %1; font-size: %2pt}",
+            css = Glib::ustring::compose (
+                "* { font-family: %1; font-size: %2pt }"
+                " #MyExpander * { font-size: 10px; }"
+                " .MyExpanderSummary * { font-size: 10px; }",
                 defaultFontFamily,
                 defaultFontSize);
         }
@@ -182,6 +201,49 @@ RTWindow::RTWindow ()
                 printf ("Error: \"%s\"\n", err.what().c_str());
             } catch (...) {
                 printf ("Error: Can't load the desired font correctly\n");
+            }
+        }
+
+        // Compact UI overrides at high priority to ensure they win over theme CSS
+        {
+            auto cssCompact = Gtk::CssProvider::create();
+            Glib::ustring compactCSS =
+                "#MyExpander * { font-size: 10px; min-height: 0; min-width: 0; }\n"
+                "#MyExpander button,"
+                " .MyExpanderSummary button {"
+                "   min-height: 0; min-width: 0; padding: 0 4px; margin: 0; }\n"
+                "#MyExpander .text-button,"
+                " #MyExpander .image-button,"
+                " #MyExpander .independent,"
+                " .MyExpanderSummary .text-button,"
+                " .MyExpanderSummary .image-button,"
+                " .MyExpanderSummary .independent {"
+                "   min-height: 0; min-width: 0; padding: 0 4px; margin: 0; }\n"
+                "#MyExpander button label,"
+                " .MyExpanderSummary button label {"
+                "   min-height: 0; margin: 0; padding: 0; }\n"
+                "#MyExpander button.combo,"
+                " .MyExpanderSummary button.combo {"
+                "   min-height: 0; min-width: 0;"
+                "   padding: 0 2px; margin: 0; }\n"
+                "#MyExpander combobox,"
+                " .MyExpanderSummary combobox {"
+                "   min-height: 0; margin: 0; padding: 0; }\n"
+                "#MyExpander combobox cellview,"
+                " .MyExpanderSummary combobox cellview {"
+                "   min-height: 0; padding: 0; margin: 0; }\n"
+                "#MyExpander entry,"
+                " .MyExpanderSummary entry {"
+                "   min-height: 0; padding: 0; margin: 0; }\n"
+                ".MyExpanderSummary * { font-size: 10px; min-height: 0; min-width: 0; }\n";
+            try {
+                cssCompact->load_from_data(compactCSS);
+                Gtk::StyleContext::add_provider_for_screen(
+                    screen, cssCompact, GTK_STYLE_PROVIDER_PRIORITY_USER + 200);
+            } catch (Glib::Error &err) {
+                printf("Compact CSS error: %s\n", err.what().c_str());
+            } catch (...) {
+                printf("Compact CSS unknown error\n");
             }
         }
     }
@@ -253,46 +315,17 @@ RTWindow::RTWindow ()
         mainNB = Gtk::manage (new Gtk::Notebook ());
         mainNB->set_name ("MainNotebook");
         mainNB->set_scrollable (true);
+        mainNB->set_show_tabs (false); // Tabs controlled by header bar buttons
         mainNB->signal_switch_page().connect_notify ( sigc::mem_fun (*this, &RTWindow::on_mainNB_switch_page) );
 
-        // Editor panel
-        fpanel =  new FilePanel () ;
+        // File Browser panel (tab 0)
+        fpanel = new FilePanel ();
         fpanel->setParent (this);
+        mainNB->append_page (*fpanel);
 
-        // decorate tab
-        Gtk::Grid* fpanelLabelGrid = Gtk::manage (new Gtk::Grid ());
-        setExpandAlignProperties (fpanelLabelGrid, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_CENTER);
-        Gtk::Label* fpl = Gtk::manage (new Gtk::Label ( Glib::ustring (" ") + M ("MAIN_FRAME_EDITOR") ));
-
-        if (options.mainNBVertical) {
-            mainNB->set_tab_pos (Gtk::POS_LEFT);
-            fpl->set_angle (90);
-            RTImage* folderIcon = Gtk::manage (new RTImage ("folder-closed", Gtk::ICON_SIZE_LARGE_TOOLBAR));
-            fpanelLabelGrid->attach_next_to (*folderIcon, Gtk::POS_TOP, 1, 1);
-            fpanelLabelGrid->attach_next_to (*fpl, Gtk::POS_TOP, 1, 1);
-        } else {
-            RTImage* folderIcon = Gtk::manage (new RTImage ("folder-closed", Gtk::ICON_SIZE_LARGE_TOOLBAR));
-            fpanelLabelGrid->attach_next_to (*folderIcon, Gtk::POS_RIGHT, 1, 1);
-            fpanelLabelGrid->attach_next_to (*fpl, Gtk::POS_RIGHT, 1, 1);
-        }
-
-        fpanelLabelGrid->set_tooltip_markup (M ("MAIN_FRAME_FILEBROWSER_TOOLTIP"));
-        fpanelLabelGrid->show_all ();
-        mainNB->append_page (*fpanel, *fpanelLabelGrid);
-
-
-        // Batch Queue panel
+        // Batch Queue panel (tab 1)
         bpanel = Gtk::manage ( new BatchQueuePanel (fpanel->fileCatalog) );
-
-        // decorate tab, the label is unimportant since its updated in batchqueuepanel anyway
-        Gtk::Label* lbq = Gtk::manage ( new Gtk::Label (M ("MAIN_FRAME_QUEUE")) );
-
-        if (options.mainNBVertical) {
-            lbq->set_angle (90);
-        }
-
-        mainNB->append_page (*bpanel, *lbq);
-
+        mainNB->append_page (*bpanel);
 
         if (isSingleTabMode()) {
             createSetmEditor();
@@ -300,71 +333,429 @@ RTWindow::RTWindow ()
 
         mainNB->set_current_page (mainNB->page_num (*fpanel));
 
-        //Gtk::Box* mainBox = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
-        //mainBox->pack_start (*mainNB);
+        // ===== Header Bar (replaces left sidebar + action grid) =====
+        headerBar = Gtk::manage (new Gtk::HeaderBar ());
+        headerBar->set_name ("RTHeaderBar");
+        headerBar->set_show_close_button (false);
+        headerBar->set_has_subtitle (true);
 
-        // filling bottom box
+        // -- Options dropdown menu (left side, before nav buttons) --
+        optionsBtn = Gtk::manage (new Gtk::MenuButton ());
+        optionsBtn->set_name ("OptionsMenuButton");
+        optionsBtn->set_relief (Gtk::RELIEF_NONE);
+        optionsBtn->set_image (*Gtk::manage (new RTImage ("options-menu", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
+        optionsBtn->set_tooltip_markup (M ("MAIN_BUTTON_PREFERENCES"));
+
+        Gtk::Popover* optionsPopover = Gtk::manage (new Gtk::Popover ());
+        optionsPopover->set_name ("OptionsPopover");
+        Gtk::Box* optionsBox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_VERTICAL, 2));
+        optionsBox->set_margin_top (6);
+        optionsBox->set_margin_bottom (6);
+        optionsBox->set_margin_start (2);
+        optionsBox->set_margin_end (2);
+
+        Gtk::Button* menuHelpBtn = Gtk::manage (new Gtk::Button ());
+        {
+            Gtk::Box* hbox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 8));
+            hbox->pack_start (*Gtk::manage (new RTImage ("questionmark", Gtk::ICON_SIZE_LARGE_TOOLBAR)), false, false);
+            hbox->pack_start (*Gtk::manage (new Gtk::Label (M ("GENERAL_HELP"))), false, false);
+            menuHelpBtn->add (*hbox);
+        }
+        menuHelpBtn->set_relief (Gtk::RELIEF_NONE);
+        menuHelpBtn->signal_clicked().connect ([this, optionsPopover]() {
+            optionsPopover->popdown();
+            showRawPedia();
+        });
+
+        Gtk::Button* menuIccBtn = Gtk::manage (new Gtk::Button ());
+        {
+            Gtk::Box* hbox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 8));
+            hbox->pack_start (*Gtk::manage (new RTImage ("gamut-plus", Gtk::ICON_SIZE_LARGE_TOOLBAR)), false, false);
+            hbox->pack_start (*Gtk::manage (new Gtk::Label (M ("MAIN_BUTTON_ICCPROFCREATOR"))), false, false);
+            menuIccBtn->add (*hbox);
+        }
+        menuIccBtn->set_relief (Gtk::RELIEF_NONE);
+        menuIccBtn->signal_clicked().connect ([this, optionsPopover]() {
+            optionsPopover->popdown();
+            showICCProfileCreator();
+        });
+
+        Gtk::Button* menuPrefsBtn = Gtk::manage (new Gtk::Button ());
+        {
+            Gtk::Box* hbox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 8));
+            hbox->pack_start (*Gtk::manage (new RTImage ("preferences", Gtk::ICON_SIZE_LARGE_TOOLBAR)), false, false);
+            hbox->pack_start (*Gtk::manage (new Gtk::Label (M ("MAIN_BUTTON_PREFERENCES"))), false, false);
+            menuPrefsBtn->add (*hbox);
+        }
+        menuPrefsBtn->set_relief (Gtk::RELIEF_NONE);
+        menuPrefsBtn->signal_clicked().connect ([this, optionsPopover]() {
+            optionsPopover->popdown();
+            showPreferences();
+        });
+
+        Gtk::Separator* menuSep1 = Gtk::manage (new Gtk::Separator (Gtk::ORIENTATION_HORIZONTAL));
+
+        Gtk::Button* menuNavBtn = Gtk::manage (new Gtk::Button ());
+        {
+            Gtk::Box* hbox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 8));
+            hbox->pack_start (*Gtk::manage (new RTImage ("color-picker", Gtk::ICON_SIZE_LARGE_TOOLBAR)), false, false);
+            hbox->pack_start (*Gtk::manage (new Gtk::Label (M ("MAIN_MENU_NAVIGATOR"))), false, false);
+            menuNavBtn->add (*hbox);
+        }
+        menuNavBtn->set_relief (Gtk::RELIEF_NONE);
+        menuNavBtn->signal_clicked().connect ([this, optionsPopover]() {
+            optionsPopover->popdown();
+            EditorPanel* ep = getActiveEditorPanel();
+            if (ep) {
+                ep->showNavigatorDialog();
+            }
+        });
+
+        Gtk::Button* menuHistBtn = Gtk::manage (new Gtk::Button ());
+        {
+            Gtk::Box* hbox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 8));
+            hbox->pack_start (*Gtk::manage (new RTImage ("undo", Gtk::ICON_SIZE_LARGE_TOOLBAR)), false, false);
+            hbox->pack_start (*Gtk::manage (new Gtk::Label (M ("MAIN_MENU_HISTORY"))), false, false);
+            menuHistBtn->add (*hbox);
+        }
+        menuHistBtn->set_relief (Gtk::RELIEF_NONE);
+        menuHistBtn->signal_clicked().connect ([this, optionsPopover]() {
+            optionsPopover->popdown();
+            EditorPanel* ep = getActiveEditorPanel();
+            if (ep) {
+                ep->showHistoryDialog();
+            }
+        });
+
+        Gtk::Separator* menuSep2 = Gtk::manage (new Gtk::Separator (Gtk::ORIENTATION_HORIZONTAL));
+
+        Gtk::Box* bgColorRow = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 8));
+        bgColorRow->set_margin_start (4);
+        bgColorRow->set_margin_end (4);
+        Gtk::Label* bgColorLabel = Gtk::manage (new Gtk::Label (M ("MAIN_MENU_PREVIEW_BG")));
+        bgColorCombo = Gtk::manage (new Gtk::ComboBoxText ());
+        bgColorCombo->append (M ("MAIN_MENU_PREVIEW_BG_THEME"));
+        bgColorCombo->append (M ("MAIN_MENU_PREVIEW_BG_BLACK"));
+        bgColorCombo->append (M ("MAIN_MENU_PREVIEW_BG_GREY"));
+        bgColorCombo->append (M ("MAIN_MENU_PREVIEW_BG_WHITE"));
+        bgColorCombo->set_active (0);
+        bgColorRow->pack_start (*bgColorLabel, false, false);
+        bgColorRow->pack_end (*bgColorCombo, false, false);
+
+        bgColorCombo->signal_changed().connect ([this]() {
+            EditorPanel* ep = getActiveEditorPanel();
+            if (!ep) return;
+            PreviewModePanel* pmp = ep->getPreviewModePanel();
+            if (!pmp) return;
+            // Combo order: Theme(0), Black(1), Grey(2), White(3)
+            // Internal order: Theme=0, Black=1, White=2, Grey=3
+            const int comboToInternal[] = {0, 1, 3, 2};
+            int idx = bgColorCombo->get_active_row_number();
+            if (idx >= 0 && idx < 4) {
+                pmp->setBackColor(comboToInternal[idx]);
+            }
+        });
+
+        Gtk::Separator* menuSep3 = Gtk::manage (new Gtk::Separator (Gtk::ORIENTATION_HORIZONTAL));
+
+        chkFocusMask = Gtk::manage (new Gtk::CheckButton (M ("MAIN_MENU_FOCUSMASK")));
+        chkFocusMask->signal_toggled().connect ([this]() {
+            EditorPanel* ep = getActiveEditorPanel();
+            if (!ep) return;
+            IndicateClippedPanel* icp = ep->getIndicateClippedPanel();
+            if (icp) icp->setFocusMask(chkFocusMask->get_active());
+        });
+
+        chkSharpMask = Gtk::manage (new Gtk::CheckButton (M ("MAIN_MENU_SHARPMASK")));
+        chkSharpMask->signal_toggled().connect ([this]() {
+            EditorPanel* ep = getActiveEditorPanel();
+            if (!ep) return;
+            IndicateClippedPanel* icp = ep->getIndicateClippedPanel();
+            if (icp) icp->setSharpMask(chkSharpMask->get_active());
+        });
+
+        chkClippedShadows = Gtk::manage (new Gtk::CheckButton (M ("MAIN_MENU_CLIPPED_SHADOWS")));
+        chkClippedShadows->signal_toggled().connect ([this]() {
+            EditorPanel* ep = getActiveEditorPanel();
+            if (!ep) return;
+            IndicateClippedPanel* icp = ep->getIndicateClippedPanel();
+            if (icp) icp->setClippedShadows(chkClippedShadows->get_active());
+        });
+
+        chkClippedHighlights = Gtk::manage (new Gtk::CheckButton (M ("MAIN_MENU_CLIPPED_HIGHLIGHTS")));
+        chkClippedHighlights->signal_toggled().connect ([this]() {
+            EditorPanel* ep = getActiveEditorPanel();
+            if (!ep) return;
+            IndicateClippedPanel* icp = ep->getIndicateClippedPanel();
+            if (icp) icp->setClippedHighlights(chkClippedHighlights->get_active());
+        });
+
+        chkHistogramProfile = Gtk::manage (new Gtk::CheckButton (M ("MAIN_MENU_HISTOGRAM_PROFILE")));
+        chkHistogramProfile->signal_toggled().connect ([this]() {
+            EditorPanel* ep = getActiveEditorPanel();
+            if (!ep) return;
+            Gtk::ToggleButton* tb = ep->getToggleHistogramProfile();
+            if (tb && tb->get_active() != chkHistogramProfile->get_active()) {
+                tb->set_active(chkHistogramProfile->get_active());
+            }
+        });
+
+        optionsPopover->signal_show().connect ([this]() {
+            EditorPanel* ep = getActiveEditorPanel();
+            if (!ep) {
+                return;
+            }
+            PreviewModePanel* pmp = ep->getPreviewModePanel();
+            if (pmp) {
+                // Internal order: Theme=0, Black=1, White=2, Grey=3
+                // Combo order: Theme(0), Black(1), Grey(2), White(3)
+                const int internalToCombo[] = {0, 1, 3, 2};
+                int bc = pmp->GetbackColor();
+                if (bc >= 0 && bc < 4) {
+                    bgColorCombo->set_active(internalToCombo[bc]);
+                }
+            }
+            IndicateClippedPanel* icp = ep->getIndicateClippedPanel();
+            if (icp) {
+                chkFocusMask->set_active(icp->showFocusMask());
+                chkSharpMask->set_active(icp->showSharpMask());
+                chkClippedShadows->set_active(icp->showClippedShadows());
+                chkClippedHighlights->set_active(icp->showClippedHighlights());
+            }
+            Gtk::ToggleButton* tb = ep->getToggleHistogramProfile();
+            if (tb) {
+                chkHistogramProfile->set_active(tb->get_active());
+            }
+
+            // Sync preview channel checkboxes
+            if (pmp) {
+                chkPreviewR->set_active(pmp->showR());
+                chkPreviewG->set_active(pmp->showG());
+                chkPreviewB->set_active(pmp->showB());
+                chkPreviewL->set_active(pmp->showL());
+            }
+
+            // Sync color management controls
+            intentCombo->set_active(ep->getRenderingIntent());
+
+#if !defined(__APPLE__)
+            // Repopulate profile combo
+            profileCombo->remove_all();
+            int profileCount = ep->getMonitorProfileCount();
+            for (int i = 0; i < profileCount; i++) {
+                profileCombo->append(ep->getMonitorProfileName(i));
+            }
+            profileCombo->set_active(ep->getMonitorProfileIndex());
+#endif
+
+            chkSoftProof->set_active(ep->getSoftProofing());
+            chkGamutCheck->set_active(ep->getGamutCheck());
+        });
+
+        // -- Preview Channel section --
+        Gtk::Separator* menuSep4 = Gtk::manage (new Gtk::Separator (Gtk::ORIENTATION_HORIZONTAL));
+
+        Gtk::Label* previewChannelLabel = Gtk::manage (new Gtk::Label ());
+        previewChannelLabel->set_markup ("<b>" + M ("MAIN_MENU_PREVIEW_CHANNEL") + "</b>");
+        previewChannelLabel->set_halign (Gtk::ALIGN_START);
+        previewChannelLabel->set_margin_start (4);
+
+        chkPreviewR = Gtk::manage (new Gtk::CheckButton (M ("MAIN_MENU_PREVIEW_RED")));
+        chkPreviewG = Gtk::manage (new Gtk::CheckButton (M ("MAIN_MENU_PREVIEW_GREEN")));
+        chkPreviewB = Gtk::manage (new Gtk::CheckButton (M ("MAIN_MENU_PREVIEW_BLUE")));
+        chkPreviewL = Gtk::manage (new Gtk::CheckButton (M ("MAIN_MENU_PREVIEW_LUMINOSITY")));
+
+        chkPreviewR->signal_toggled().connect ([this]() {
+            EditorPanel* ep = getActiveEditorPanel();
+            if (!ep) return;
+            PreviewModePanel* pmp = ep->getPreviewModePanel();
+            if (!pmp) return;
+            if (pmp->showR() != chkPreviewR->get_active()) pmp->toggleR();
+        });
+        chkPreviewG->signal_toggled().connect ([this]() {
+            EditorPanel* ep = getActiveEditorPanel();
+            if (!ep) return;
+            PreviewModePanel* pmp = ep->getPreviewModePanel();
+            if (!pmp) return;
+            if (pmp->showG() != chkPreviewG->get_active()) pmp->toggleG();
+        });
+        chkPreviewB->signal_toggled().connect ([this]() {
+            EditorPanel* ep = getActiveEditorPanel();
+            if (!ep) return;
+            PreviewModePanel* pmp = ep->getPreviewModePanel();
+            if (!pmp) return;
+            if (pmp->showB() != chkPreviewB->get_active()) pmp->toggleB();
+        });
+        chkPreviewL->signal_toggled().connect ([this]() {
+            EditorPanel* ep = getActiveEditorPanel();
+            if (!ep) return;
+            PreviewModePanel* pmp = ep->getPreviewModePanel();
+            if (!pmp) return;
+            if (pmp->showL() != chkPreviewL->get_active()) pmp->toggleL();
+        });
+
+        // -- Color Management section --
+        Gtk::Separator* menuSep5 = Gtk::manage (new Gtk::Separator (Gtk::ORIENTATION_HORIZONTAL));
+
+        Gtk::Box* intentRow = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 8));
+        intentRow->set_margin_start (4);
+        intentRow->set_margin_end (4);
+        Gtk::Label* intentLabel = Gtk::manage (new Gtk::Label (M ("MAIN_MENU_RENDERING_INTENT")));
+        intentCombo = Gtk::manage (new Gtk::ComboBoxText ());
+        intentCombo->append (M ("PREFERENCES_INTENT_PERCEPTUAL"));
+        intentCombo->append (M ("PREFERENCES_INTENT_RELATIVE"));
+        intentCombo->append (M ("PREFERENCES_INTENT_ABSOLUTE"));
+        intentCombo->set_active (1);
+        intentRow->pack_start (*intentLabel, false, false);
+        intentRow->pack_end (*intentCombo, false, false);
+
+        intentCombo->signal_changed().connect ([this]() {
+            EditorPanel* ep = getActiveEditorPanel();
+            if (!ep) return;
+            int idx = intentCombo->get_active_row_number();
+            if (idx >= 0) ep->setRenderingIntent(idx);
+        });
+
+        Gtk::Box* profileRow = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 8));
+        profileRow->set_margin_start (4);
+        profileRow->set_margin_end (4);
+        Gtk::Label* profileLabel = Gtk::manage (new Gtk::Label (M ("MAIN_MENU_MONITOR_PROFILE")));
+        profileCombo = Gtk::manage (new Gtk::ComboBoxText ());
+        profileRow->pack_start (*profileLabel, false, false);
+        profileRow->pack_end (*profileCombo, false, false);
+
+        profileCombo->signal_changed().connect ([this]() {
+            EditorPanel* ep = getActiveEditorPanel();
+            if (!ep) return;
+            int idx = profileCombo->get_active_row_number();
+            if (idx >= 0) ep->setMonitorProfileIndex(idx);
+        });
+
+        chkSoftProof = Gtk::manage (new Gtk::CheckButton (M ("MAIN_MENU_SOFT_PROOFING")));
+        chkSoftProof->signal_toggled().connect ([this]() {
+            EditorPanel* ep = getActiveEditorPanel();
+            if (!ep) return;
+            if (ep->getSoftProofing() != chkSoftProof->get_active())
+                ep->setSoftProofing(chkSoftProof->get_active());
+        });
+
+        chkGamutCheck = Gtk::manage (new Gtk::CheckButton (M ("MAIN_MENU_GAMUT_WARNING")));
+        chkGamutCheck->signal_toggled().connect ([this]() {
+            EditorPanel* ep = getActiveEditorPanel();
+            if (!ep) return;
+            if (ep->getGamutCheck() != chkGamutCheck->get_active())
+                ep->setGamutCheck(chkGamutCheck->get_active());
+        });
+
+        optionsBox->pack_start (*menuHelpBtn, false, false);
+        optionsBox->pack_start (*menuIccBtn, false, false);
+        optionsBox->pack_start (*menuPrefsBtn, false, false);
+        optionsBox->pack_start (*menuSep1, false, false, 4);
+        optionsBox->pack_start (*menuNavBtn, false, false);
+        optionsBox->pack_start (*menuHistBtn, false, false);
+        optionsBox->pack_start (*menuSep2, false, false, 4);
+        optionsBox->pack_start (*bgColorRow, false, false);
+        optionsBox->pack_start (*chkFocusMask, false, false);
+        optionsBox->pack_start (*chkSharpMask, false, false);
+        optionsBox->pack_start (*chkClippedShadows, false, false);
+        optionsBox->pack_start (*chkClippedHighlights, false, false);
+        optionsBox->pack_start (*menuSep3, false, false, 4);
+        optionsBox->pack_start (*chkHistogramProfile, false, false);
+        optionsBox->pack_start (*menuSep4, false, false, 4);
+        optionsBox->pack_start (*previewChannelLabel, false, false);
+        optionsBox->pack_start (*chkPreviewR, false, false);
+        optionsBox->pack_start (*chkPreviewG, false, false);
+        optionsBox->pack_start (*chkPreviewB, false, false);
+        optionsBox->pack_start (*chkPreviewL, false, false);
+        optionsBox->pack_start (*menuSep5, false, false, 4);
+        optionsBox->pack_start (*intentRow, false, false);
+#if !defined(__APPLE__)
+        optionsBox->pack_start (*profileRow, false, false);
+#endif
+        optionsBox->pack_start (*chkSoftProof, false, false);
+        optionsBox->pack_start (*chkGamutCheck, false, false);
+        optionsBox->show_all ();
+        optionsPopover->add (*optionsBox);
+        optionsBtn->set_popover (*optionsPopover);
+
+        // -- Navigation buttons (icon-only, no labels) --
+        navFileBrowser = Gtk::manage (new Gtk::ToggleButton ());
+        navFileBrowser->set_name ("NavButton");
+        navFileBrowser->set_image (*Gtk::manage (new RTImage ("nav-filebrowser", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
+        navFileBrowser->set_tooltip_markup (M ("MAIN_FRAME_FILEBROWSER_TOOLTIP"));
+        navFileBrowser->set_relief (Gtk::RELIEF_NONE);
+        navFileBrowser->set_active (true);
+        navFileBrowser->signal_toggled().connect (
+            sigc::bind (sigc::mem_fun (*this, &RTWindow::on_nav_switched), navFileBrowser));
+
+        navQueue = Gtk::manage (new Gtk::ToggleButton ());
+        navQueue->set_name ("NavButton");
+        navQueue->set_image (*Gtk::manage (new RTImage ("nav-queue", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
+        navQueue->set_tooltip_markup (M ("MAIN_FRAME_QUEUE_TOOLTIP"));
+        navQueue->set_relief (Gtk::RELIEF_NONE);
+        navQueue->signal_toggled().connect (
+            sigc::bind (sigc::mem_fun (*this, &RTWindow::on_nav_switched), navQueue));
+
+        navEditor = Gtk::manage (new Gtk::ToggleButton ());
+        navEditor->set_name ("NavButton");
+        navEditor->set_image (*Gtk::manage (new RTImage ("nav-editor", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
+        navEditor->set_tooltip_markup (M ("MAIN_FRAME_EDITOR_TOOLTIP"));
+        navEditor->set_relief (Gtk::RELIEF_NONE);
+        navEditor->signal_toggled().connect (
+            sigc::bind (sigc::mem_fun (*this, &RTWindow::on_nav_switched), navEditor));
+
+        // -- Progress bar (hidden until processing starts) --
+        setExpandAlignProperties (&prProgBar, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_CENTER);
+        prProgBar.set_show_text (true);
+        prProgBar.set_orientation (Gtk::ORIENTATION_HORIZONTAL);
+        prProgBar.set_no_show_all(true);
+        prProgBar.hide();
+
+        // -- Window control buttons (right side) --
         iFullscreen = new RTImage ("fullscreen-enter", Gtk::ICON_SIZE_LARGE_TOOLBAR);
         iFullscreen_exit = new RTImage ("fullscreen-leave", Gtk::ICON_SIZE_LARGE_TOOLBAR);
 
-        Gtk::Button* iccProfileCreator = Gtk::manage (new Gtk::Button ());
-        setExpandAlignProperties (iccProfileCreator, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_CENTER);
-        iccProfileCreator->set_relief(Gtk::RELIEF_NONE);
-        iccProfileCreator->set_image (*Gtk::manage (new RTImage ("gamut-plus", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
-        iccProfileCreator->set_tooltip_markup (M ("MAIN_BUTTON_ICCPROFCREATOR"));
-        iccProfileCreator->signal_clicked().connect ( sigc::mem_fun (*this, &RTWindow::showICCProfileCreator) );
+        btn_minimize = Gtk::manage (new Gtk::Button ());
+        btn_minimize->set_name ("WindowControlButton");
+        btn_minimize->set_relief (Gtk::RELIEF_NONE);
+        btn_minimize->set_image (*Gtk::manage (new RTImage ("window-minimize", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
+        btn_minimize->set_tooltip_markup (M ("MAIN_BUTTON_MINIMIZE"));
+        btn_minimize->signal_clicked().connect (sigc::mem_fun (*this, &RTWindow::minimize_window));
 
-        Gtk::Button* helpBtn = Gtk::manage (new Gtk::Button ());
-        setExpandAlignProperties (helpBtn, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_CENTER);
-        helpBtn->set_relief(Gtk::RELIEF_NONE);
-        helpBtn->set_image (*Gtk::manage (new RTImage("questionmark", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
-        helpBtn->set_tooltip_markup (M ("GENERAL_HELP"));
-        helpBtn->signal_clicked().connect (sigc::mem_fun (*this, &RTWindow::showRawPedia));
-
-        Gtk::Button* preferences = Gtk::manage (new Gtk::Button ());
-        setExpandAlignProperties (preferences, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_CENTER);
-        preferences->set_relief(Gtk::RELIEF_NONE);
-        preferences->set_image (*Gtk::manage (new RTImage ("preferences", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
-        preferences->set_tooltip_markup (M ("MAIN_BUTTON_PREFERENCES"));
-        preferences->signal_clicked().connect ( sigc::mem_fun (*this, &RTWindow::showPreferences) );
-
-        btn_fullscreen = Gtk::manage ( new Gtk::Button());
-        setExpandAlignProperties (btn_fullscreen, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_CENTER);
-        btn_fullscreen->set_relief(Gtk::RELIEF_NONE);
+        btn_fullscreen = Gtk::manage (new Gtk::Button ());
+        btn_fullscreen->set_name ("WindowControlButton");
+        btn_fullscreen->set_relief (Gtk::RELIEF_NONE);
         btn_fullscreen->set_tooltip_markup (M ("MAIN_BUTTON_FULLSCREEN"));
         btn_fullscreen->set_image (*iFullscreen);
-        btn_fullscreen->signal_clicked().connect ( sigc::mem_fun (*this, &RTWindow::toggle_fullscreen) );
-        setExpandAlignProperties (&prProgBar, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_CENTER);
-        prProgBar.set_show_text (true);
+        btn_fullscreen->signal_clicked().connect (sigc::mem_fun (*this, &RTWindow::toggle_fullscreen));
 
-        Gtk::Grid* actionGrid = Gtk::manage (new Gtk::Grid ());
-        actionGrid->set_row_spacing (2);
-        actionGrid->set_column_spacing (2);
+        btn_close = Gtk::manage (new Gtk::Button ());
+        btn_close->set_name ("WindowCloseButton");
+        btn_close->set_relief (Gtk::RELIEF_NONE);
+        btn_close->set_image (*Gtk::manage (new RTImage ("window-close", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
+        btn_close->set_tooltip_markup (M ("MAIN_BUTTON_CLOSE"));
+        btn_close->signal_clicked().connect (sigc::mem_fun (*this, &RTWindow::close_window));
 
-        setExpandAlignProperties (actionGrid, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_CENTER);
+        // -- Assemble header bar --
+        headerBar->pack_start (*optionsBtn);
+        Gtk::Separator* sep1 = Gtk::manage (new Gtk::Separator (Gtk::ORIENTATION_VERTICAL));
+        sep1->set_margin_start (4);
+        sep1->set_margin_end (4);
+        headerBar->pack_start (*sep1);
+        headerBar->pack_start (*navFileBrowser);
+        headerBar->pack_start (*navQueue);
+        headerBar->pack_start (*navEditor);
+        Gtk::Separator* sep2 = Gtk::manage (new Gtk::Separator (Gtk::ORIENTATION_VERTICAL));
+        sep2->set_margin_start (4);
+        sep2->set_margin_end (4);
+        headerBar->pack_start (*sep2);
+        headerBar->pack_start (prProgBar);
 
-        if (options.mainNBVertical) {
-            prProgBar.set_orientation (Gtk::ORIENTATION_VERTICAL);
-            prProgBar.set_inverted (true);
-            actionGrid->set_orientation (Gtk::ORIENTATION_VERTICAL);
-            actionGrid->attach_next_to (prProgBar, Gtk::POS_BOTTOM, 1, 1);
-            actionGrid->attach_next_to (*iccProfileCreator, Gtk::POS_BOTTOM, 1, 1);
-            actionGrid->attach_next_to (*helpBtn, Gtk::POS_BOTTOM, 1, 1);
-            actionGrid->attach_next_to (*preferences, Gtk::POS_BOTTOM, 1, 1);
-            actionGrid->attach_next_to (*btn_fullscreen, Gtk::POS_BOTTOM, 1, 1);
-            mainNB->set_action_widget (actionGrid, Gtk::PACK_END);
-        } else {
-            prProgBar.set_orientation (Gtk::ORIENTATION_HORIZONTAL);
-            actionGrid->set_orientation (Gtk::ORIENTATION_HORIZONTAL);
-            actionGrid->attach_next_to (prProgBar, Gtk::POS_RIGHT, 1, 1);
-            actionGrid->attach_next_to (*iccProfileCreator, Gtk::POS_RIGHT, 1, 1);
-            actionGrid->attach_next_to (*helpBtn, Gtk::POS_RIGHT, 1, 1);
-            actionGrid->attach_next_to (*preferences, Gtk::POS_RIGHT, 1, 1);
-            actionGrid->attach_next_to (*btn_fullscreen, Gtk::POS_RIGHT, 1, 1);
-            mainNB->set_action_widget (actionGrid, Gtk::PACK_END);
-        }
+        headerBar->pack_end (*btn_close);
+        headerBar->pack_end (*btn_fullscreen);
+        headerBar->pack_end (*btn_minimize);
 
-        actionGrid->show_all();
+        set_titlebar (*headerBar);
 
         pldBridge = new PLDBridge (static_cast<rtengine::ProgressListener*> (this));
 
@@ -518,6 +909,9 @@ void RTWindow::on_mainNB_switch_page (Gtk::Widget* widget, guint page_num)
                 }
             }
         }
+
+        // Keep header bar nav buttons in sync with notebook page
+        syncNavButtons (page_num);
     }
 }
 
@@ -535,33 +929,9 @@ void RTWindow::addEditorPanel (EditorPanel* ep, const std::string &name)
         ep->setParentWindow (this);
         ep->setExternalEditorChangedSignal(&externalEditorChangedSignal);
 
-        // construct closeable tab for the image
-        Gtk::Grid* titleGrid = Gtk::manage (new Gtk::Grid ());
-        titleGrid->set_tooltip_markup (name);
-        RTImage *closebimg = Gtk::manage (new RTImage ("cancel-small", Gtk::ICON_SIZE_LARGE_TOOLBAR));
-        Gtk::Button* closeb = Gtk::manage (new Gtk::Button ());
-        closeb->set_name ("CloseButton");
-        closeb->add (*closebimg);
-        closeb->set_relief (Gtk::RELIEF_NONE);
-        closeb->set_focus_on_click (false);
-        closeb->signal_clicked().connect ( sigc::bind (sigc::mem_fun (*this, &RTWindow::remEditorPanel), ep));
-
-        if (!EditWindow::isMultiDisplayEnabled()) {
-            titleGrid->attach_next_to (*Gtk::manage (new RTImage ("aperture", Gtk::ICON_SIZE_LARGE_TOOLBAR)), Gtk::POS_RIGHT, 1, 1);
-        }
-        titleGrid->attach_next_to (*Gtk::manage (new Gtk::Label (Glib::path_get_basename (name))), Gtk::POS_RIGHT, 1, 1);
-        titleGrid->attach_next_to (*closeb, Gtk::POS_RIGHT, 1, 1);
-        titleGrid->show_all ();
-//GTK318
-#if GTK_MAJOR_VERSION == 3 && GTK_MINOR_VERSION < 20
-        titleGrid->set_column_spacing (2);
-#endif
-//GTK318
-
-        mainNB->append_page (*ep, *titleGrid);
-        //ep->setAspect ();
+        // Tabs are hidden; just append the page
+        mainNB->append_page (*ep);
         mainNB->set_current_page (mainNB->page_num (*ep));
-        mainNB->set_tab_reorderable (*ep, true);
 
         set_title_decorated (name);
         epanels[ name ] = ep;
@@ -804,6 +1174,7 @@ bool RTWindow::on_delete_event (GdkEventAny* event)
 
     cacheMgr->closeCache ();  // also makes cleanup if too large
     ProfilePanel::cleanup();
+    PresetListPanel::cleanup();
     ClutComboBox::cleanup();
     BatchQueueEntry::savedAsIcon.reset();
     FileBrowserEntry::editedIcon.reset();
@@ -872,6 +1243,30 @@ void RTWindow::writeToolExpandedStatus (std::vector<int> &tpOpen)
 }
 
 
+EditorPanel* RTWindow::getActiveEditorPanel()
+{
+    if (isSingleTabMode() || App::get().isGimpPlugin()) {
+        return epanel;
+    }
+
+    // Multi-tab mode: find the active editor panel
+    int page = mainNB->get_current_page();
+    Gtk::Widget *w = mainNB->get_nth_page(page);
+
+    for (auto& kv : epanels) {
+        if (kv.second == w) {
+            return kv.second;
+        }
+    }
+
+    // Fallback: return first editor panel if any
+    if (!epanels.empty()) {
+        return epanels.begin()->second;
+    }
+
+    return nullptr;
+}
+
 void RTWindow::showRawPedia()
 {
     GError* gerror = nullptr;
@@ -917,6 +1312,12 @@ void RTWindow::showPreferences ()
 void RTWindow::setProgress(double p)
 {
     prProgBar.set_fraction(p);
+
+    if (p > 0.0 && p < 1.0) {
+        prProgBar.show();
+    } else {
+        prProgBar.hide();
+    }
 }
 
 void RTWindow::setProgressStr(const Glib::ustring& str)
@@ -961,6 +1362,74 @@ void RTWindow::toggle_fullscreen ()
     }
 
     onConfEventConn.block(false);
+}
+
+void RTWindow::minimize_window ()
+{
+    iconify();
+}
+
+void RTWindow::close_window ()
+{
+    // Trigger the same close path as the window manager close button
+    GdkEventAny ev;
+    ev.type = GDK_DELETE;
+    ev.window = nullptr;
+    ev.send_event = TRUE;
+    on_delete_event (&ev);
+}
+
+void RTWindow::on_nav_switched (Gtk::ToggleButton* active)
+{
+    if (navSwitching) {
+        return;
+    }
+
+    navSwitching = true;
+
+    // Enforce mutual exclusion: only one nav button active at a time
+    if (active->get_active()) {
+        if (active != navFileBrowser) { navFileBrowser->set_active (false); }
+        if (active != navQueue)       { navQueue->set_active (false); }
+        if (active != navEditor)      { navEditor->set_active (false); }
+
+        // Switch to the corresponding notebook page
+        if (active == navFileBrowser) {
+            mainNB->set_current_page (mainNB->page_num (*fpanel));
+        } else if (active == navQueue) {
+            mainNB->set_current_page (mainNB->page_num (*bpanel));
+        } else if (active == navEditor) {
+            // In single-tab mode, switch to epanel; in multi-tab, switch to last editor
+            if (isSingleTabMode() && epanel) {
+                mainNB->set_current_page (mainNB->page_num (*epanel));
+            } else if (!epanels.empty()) {
+                // Switch to the last opened editor
+                mainNB->set_current_page (mainNB->page_num (*epanels.rbegin()->second));
+            }
+        }
+    } else {
+        // Don't allow deactivating the current button by clicking it again
+        active->set_active (true);
+    }
+
+    navSwitching = false;
+}
+
+void RTWindow::syncNavButtons (guint page_num)
+{
+    if (navSwitching || !navFileBrowser) {
+        return;
+    }
+
+    navSwitching = true;
+
+    Gtk::Widget* page = mainNB->get_nth_page (page_num);
+
+    navFileBrowser->set_active (page == fpanel);
+    navQueue->set_active (page == bpanel);
+    navEditor->set_active (page != fpanel && page != bpanel);
+
+    navSwitching = false;
 }
 
 void RTWindow::SetEditorCurrent()
@@ -1179,6 +1648,11 @@ void RTWindow::set_title_decorated (Glib::ustring fname)
     }
 
     set_title (versionStr + subtitle);
+
+    if (headerBar) {
+        headerBar->set_title (versionStr);
+        headerBar->set_subtitle (fname);
+    }
 }
 
 void RTWindow::closeOpenEditors()
@@ -1225,27 +1699,8 @@ void RTWindow::createSetmEditor()
     epanel = Gtk::manage ( new EditorPanel (fpanel) );
     epanel->setParent (this);
     epanel->setParentWindow (this);
-
-    // decorate tab
-    Gtk::Grid* const editorLabelGrid = Gtk::manage (new Gtk::Grid ());
-    setExpandAlignProperties (editorLabelGrid, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_CENTER);
-    Gtk::Label* const el = Gtk::manage (new Gtk::Label ( Glib::ustring (" ") + M ("MAIN_FRAME_EDITOR") ));
-
-    const auto& options = App::get().options();
-    const auto pos = options.mainNBVertical ? Gtk::POS_TOP : Gtk::POS_RIGHT;
-
-    if (options.mainNBVertical) {
-        el->set_angle (90);
-    }
-
-    editorLabelGrid->attach_next_to (*Gtk::manage (new RTImage ("aperture", Gtk::ICON_SIZE_LARGE_TOOLBAR)), pos, 1, 1);
-    editorLabelGrid->attach_next_to (*el, pos, 1, 1);
-
-    editorLabelGrid->set_tooltip_markup (M ("MAIN_FRAME_EDITOR_TOOLTIP"));
-    editorLabelGrid->show_all ();
-    epanel->tbTopPanel_1_visible (true); //show the toggle Top Panel button
-    mainNB->append_page (*epanel, *editorLabelGrid);
-
+    epanel->tbTopPanel_1_visible (true);
+    mainNB->append_page (*epanel);
 }
 
 bool RTWindow::isSingleTabMode() const

@@ -18,6 +18,7 @@
  */
 #pragma once
 
+#include <set>
 #include <vector>
 
 #include "exiffiltersettings.h"
@@ -37,6 +38,7 @@ public:
     bool matchEqual;
     ExifFilterSettings exifFilter;
     std::vector<std::string> vFilterStrings;
+    std::set<std::string> albumWhitelist;
 
     BrowserFilter ();
 };

@@ -47,6 +47,9 @@
 
 #include "cplx_wavelet_dec.h"
 #include "ciecam02.h"
+#ifdef RT_AI_MASKING
+#include "aimaskcache.h"
+#endif
 
 //#define BENCHMARK
 #include "StopWatch.h"
@@ -644,6 +647,7 @@ struct local_params {
     int qualcurvemet;
     int gridmet;
     bool prevdE;
+    bool showMaskOverlay;
     int showmaskcolmet;
     int showmaskcolmetinv;
     int showmaskexpmet;
@@ -808,6 +812,7 @@ struct local_params {
     int war;
     float adjch;
     int shapmet;
+    float gradangle;
     int edgwmet;
     int neiwmet;
     bool enaColorMask;
@@ -902,13 +907,24 @@ struct local_params {
     bool contrsho;
     bool denoAutocontr;
     bool enacontr;
-    
+
+#ifdef RT_AI_MASKING
+    bool useaimask;
+    int aimaskclass;
+    float aimaskthr;
+    float aimaskfeath;
+    float aimaskblur;
+    bool aimaskinv;
+    float aimaskopa;
+    int aimaskrefrad;
+    float aimaskrefeps;
+#endif
 
 };
 
 
 
-static void calcLocalParams(int sp, int oW, int oH,  const LocallabParams& locallab, struct local_params& lp, bool prevDeltaE, int llColorMask, int llColorMaskinv, int llExpMask, int llExpMaskinv, int llSHMask, int llSHMaskinv, int llvibMask, int lllcMask, int llsharMask, int llcbMask, int llretiMask, int llsoftMask, int lltmMask, int llblMask, int lllogMask, int ll_Mask, int llcieMask, const LocwavCurve & locwavCurveden, bool locwavdenutili)
+static void calcLocalParams(int sp, int oW, int oH,  const LocallabParams& locallab, struct local_params& lp, bool prevDeltaE, bool showMaskOverlay, int llColorMask, int llColorMaskinv, int llExpMask, int llExpMaskinv, int llSHMask, int llSHMaskinv, int llvibMask, int lllcMask, int llsharMask, int llcbMask, int llretiMask, int llsoftMask, int lltmMask, int llblMask, int lllogMask, int ll_Mask, int llcieMask, const LocwavCurve & locwavCurveden, bool locwavdenutili)
 {
     int w = oW;
     int h = oH;
@@ -1028,6 +1044,7 @@ static void calcLocalParams(int sp, int oW, int oH,  const LocallabParams& local
 
     lp.fftColorMask = locallab.spots.at(sp).fftColorMask;
     lp.prevdE = prevDeltaE;
+    lp.showMaskOverlay = showMaskOverlay;
     lp.showmaskcolmet = llColorMask;
     lp.showmaskcolmetinv = llColorMaskinv;
     lp.showmaskexpmet = llExpMask;
@@ -1279,8 +1296,10 @@ static void calcLocalParams(int sp, int oW, int oH,  const LocallabParams& local
 
     if (locallab.spots.at(sp).shape == "ELI") {
         lp.shapmet = 0;
-    } else { /*if (locallab.spots.at(sp).shape == "RECT")*/
+    } else if (locallab.spots.at(sp).shape == "RECT") {
         lp.shapmet = 1;
+    } else { // "GRAD"
+        lp.shapmet = 2;
     }
 
     lp.denoiena = locallab.spots.at(sp).expblur;
@@ -1774,6 +1793,7 @@ static void calcLocalParams(int sp, int oW, int oH,  const LocallabParams& local
     lp.feath = local_feather;
     lp.transweak = local_transitweak;
     lp.transgrad = local_transitgrad;
+    lp.gradangle = locallab.spots.at(sp).gradangle;
     lp.rad = radius;
     lp.stren = strength;
     lp.sensbn = local_sensibn;
@@ -1982,6 +2002,18 @@ static void calcLocalParams(int sp, int oW, int oH,  const LocallabParams& local
     lp.mCjz = locallab.spots.at(sp).claricresjz / 100.0;
     lp.softrjz = locallab.spots.at(sp).clarisoftjz;
 
+#ifdef RT_AI_MASKING
+    lp.useaimask = locallab.spots.at(sp).useAIMask;
+    lp.aimaskclass = locallab.spots.at(sp).aiMaskClass;
+    lp.aimaskthr = static_cast<float>(locallab.spots.at(sp).aiMaskThreshold);
+    lp.aimaskfeath = static_cast<float>(locallab.spots.at(sp).aiMaskFeather);
+    lp.aimaskblur = static_cast<float>(locallab.spots.at(sp).aiMaskBlur);
+    lp.aimaskinv = locallab.spots.at(sp).aiMaskInvert;
+    lp.aimaskopa = static_cast<float>(locallab.spots.at(sp).aiMaskOpacity);
+    lp.aimaskrefrad = locallab.spots.at(sp).aiMaskRefineRadius;
+    lp.aimaskrefeps = static_cast<float>(locallab.spots.at(sp).aiMaskRefineEps);
+#endif
+
 }
 
 static void calcTransitionrect(const float lox, const float loy, const float ach, const local_params& lp, int &zone, float &localFactor)
@@ -2080,6 +2112,51 @@ static void calcTransition(const float lox, const float loy, const float ach, co
         }
     }
 }
+
+static void calcTransitiongrad(const float lox, const float loy, const float ach, const local_params& lp, int &zone, float &localFactor)
+{
+    zone = 0;
+
+    // Check bounding rectangle first
+    if (lox >= lp.xc + lp.lx || lox <= lp.xc - lp.lxL) {
+        return;
+    }
+
+    if (loy >= lp.yc + lp.ly || loy <= lp.yc - lp.lyT) {
+        return;
+    }
+
+    // Project position onto gradient direction
+    const float theta = lp.gradangle * rtengine::RT_PI_F / 180.f;
+    const float sinT = std::sin(theta);
+    const float cosT = std::cos(theta);
+    const float dx = lox - lp.xc;
+    const float dy = loy - lp.yc;
+    const float proj = dx * sinT - dy * cosT;
+
+    // Max projection distance based on bounding box
+    const float maxX = std::max(lp.lx, lp.lxL);
+    const float maxY = std::max(lp.ly, lp.lyT);
+    const float maxProj = maxX * std::abs(sinT) + maxY * std::abs(cosT);
+
+    if (maxProj < 0.001f) {
+        zone = 2;
+        localFactor = 1.f;
+        return;
+    }
+
+    // Normalized position: -1.0 (no effect side) to +1.0 (full effect side)
+    const float t = proj / maxProj;
+
+    if (t >= ach) {
+        zone = 2; // Full effect
+    } else if (t > -ach) {
+        zone = 1; // Transition
+        localFactor = pow_F((t + ach) / (2.f * ach), lp.transweak);
+    }
+    // else zone = 0 (outside, no effect)
+}
+
 //sigmoid
 /* C -*
  * 
@@ -5488,8 +5565,10 @@ void ImProcFunctions::DeNoise_Local(int call, const struct local_params& lp, Lab
 
                 if (lp.shapmet == 0) {
                     calcTransition(lox, loy, ach, lp, zone, localFactor);
-                } else { /*if (lp.shapmet == 1)*/
+                } else if (lp.shapmet == 1) {
                     calcTransitionrect(lox, loy, ach, lp, zone, localFactor);
+                } else {
+                    calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
                 }
                 if(lp.fullim == 3 ) {//disabled scope
                     localFactor = 1.f;
@@ -5542,7 +5621,7 @@ void ImProcFunctions::DeNoise_Local(int call, const struct local_params& lp, Lab
                     transformed->L[y][x] = CLIP(12000.f + amplabL * difL);// * 10.f empirical to can visualize modifications
                     transformed->a[y][x] = clipC(amplabL * difa);// * 10.f empirical to can visualize modifications
                     transformed->b[y][x] = clipC(amplabL * difb);// * 10.f empirical to can visualize modifications
-                } else if (previewbl || lp.prevdE) {
+                } else if (previewbl || lp.prevdE || lp.showMaskOverlay) {
                     const float difbdisp = (reducdEL + reducdEa + reducdEb) * 10000.f * colorde;
 
                     if (transformed->L[y][x] < darklim) { //enhance dark luminance as user can see!
@@ -5652,8 +5731,10 @@ void ImProcFunctions::DeNoise_Local2(const struct local_params& lp, LabImage* or
 
                 if (lp.shapmet == 0) {
                     calcTransition(lox, loy, ach, lp, zone, localFactor);
-                } else { /*if (lp.shapmet == 1)*/
+                } else if (lp.shapmet == 1) {
                     calcTransitionrect(lox, loy, ach, lp, zone, localFactor);
+                } else {
+                    calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
                 }
                 if(lp.fullim == 3 ) {//disabled scope
                     localFactor = 1.f;
@@ -5701,7 +5782,7 @@ void ImProcFunctions::DeNoise_Local2(const struct local_params& lp, LabImage* or
                     transformed->L[y][x] = CLIP(12000.f + amplabL * difL);// * 10.f empirical to can visualize modifications
                     transformed->a[y][x] = clipC(amplabL * difa);// * 10.f empirical to can visualize modifications
                     transformed->b[y][x] = clipC(amplabL * difb);// * 10.f empirical to can visualize modifications
-                } else if (previewbl || lp.prevdE) {
+                } else if (previewbl || lp.prevdE || lp.showMaskOverlay) {
                     const float difbdisp = (reducdEL + reducdEa + reducdEb) * 10000.f * colorde;
 
                     if (transformed->L[y][x] < darklim) { //enhance dark luminance as user can see!
@@ -5772,8 +5853,10 @@ void ImProcFunctions::InverseReti_Local(const struct local_params & lp, const fl
 
                 if (lp.shapmet == 0) {
                     calcTransition(lox, loy, ach, lp, zone, localFactor);
-                } else { /*if (lp.shapmet == 1)*/
+                } else if (lp.shapmet == 1) {
                     calcTransitionrect(lox, loy, ach, lp, zone, localFactor);
+                } else {
+                    calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
                 }
 
                 float rL = origblur->L[y][x] / 327.68f;
@@ -5918,8 +6001,10 @@ void ImProcFunctions::InverseBlurNoise_Local(LabImage * originalmask, const stru
 
                 if (lp.shapmet == 0) {
                     calcTransition(lox, loy, ach, lp, zone, localFactor);
-                } else {
+                } else if (lp.shapmet == 1) {
                     calcTransitionrect(lox, loy, ach, lp, zone, localFactor);
+                } else {
+                    calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
                 }
 
                 float reducdE;
@@ -5950,7 +6035,7 @@ void ImProcFunctions::InverseBlurNoise_Local(LabImage * originalmask, const stru
                             transformed->L[y][x] = CLIP(12000.f + diflc);
                             transformed->a[y][x] = clipC(difa);
                             transformed->b[y][x] = clipC(difb);
-                        } else if (previewbl || lp.prevdE) {
+                        } else if (previewbl || lp.prevdE || lp.showMaskOverlay) {
                             transformed->a[y][x] = 0.f;
                             transformed->b[y] [x] = (difb);
                         }
@@ -6359,8 +6444,10 @@ static void blendmask(const local_params& lp, int xstart, int ystart, int cx, in
 
             if (lp.shapmet == 0) {
                 calcTransition(lox, loy, achm, lp, zone, localFactor);
-            } else { /*if (lp.shapmet == 1)*/
+            } else if (lp.shapmet == 1) {
                 calcTransitionrect(lox, loy, achm, lp, zone, localFactor);
+            } else {
+                calcTransitiongrad(lox, loy, achm, lp, zone, localFactor);
             }
             if(lp.fullim == 3 ) {//disable scope
                 localFactor = 1.f;
@@ -6515,8 +6602,10 @@ static void showmask(int lumask, const local_params& lp, int xstart, int ystart,
 
             if (lp.shapmet == 0) {
                 calcTransition(lox, loy, achm, lp, zone, localFactor);
-            } else { /*if (lp.shapmet == 1)*/
+            } else if (lp.shapmet == 1) {
                 calcTransitionrect(lox, loy, achm, lp, zone, localFactor);
+            } else {
+                calcTransitiongrad(lox, loy, achm, lp, zone, localFactor);
             }
 
             if (inv == 0) {
@@ -7782,8 +7871,10 @@ void ImProcFunctions::InverseSharp_Local(float **loctemp, const float hueref, co
 
                 if (lp.shapmet == 0) {
                     calcTransition(lox, loy, ach, lp, zone, localFactor);
-                } else { /*if (lp.shapmet == 1)*/
+                } else if (lp.shapmet == 1) {
                     calcTransitionrect(lox, loy, ach, lp, zone, localFactor);
+                } else {
+                    calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
                 }
 
                 const float abdelta2 = SQR(refa - origblur->a[y][x]) + SQR(refb - origblur->b[y][x]);
@@ -7832,7 +7923,7 @@ void ImProcFunctions::InverseSharp_Local(float **loctemp, const float hueref, co
                         if (sharshow && lp.fullim != 3) {
                             transformed->a[y][x] = 0.f;
                             transformed->b[y][x] = ampli * 5.f * difL * reducdE;
-                        } else if (previewshar || lp.prevdE) {
+                        } else if (previewshar || lp.prevdE || lp.showMaskOverlay) {
                             const float difbdisp = reducdE * 10000.f * lp.colorde;
 
                             if (transformed->L[y][x] < bbdark) { //enhance dark luminance as user can see!
@@ -7937,8 +8028,10 @@ void ImProcFunctions::Sharp_Local(int call, float **loctemp, int senstype, const
 
                 if (lp.shapmet == 0) {
                     calcTransition(lox, loy, ach, lp, zone, localFactor);
-                } else { /*if (lp.shapmet == 1)*/
+                } else if (lp.shapmet == 1) {
                     calcTransitionrect(lox, loy, ach, lp, zone, localFactor);
+                } else {
+                    calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
                 }
 
                 if (zone == 0) { // outside selection and outside transition zone => no effect, keep original values
@@ -7971,7 +8064,7 @@ void ImProcFunctions::Sharp_Local(int call, float **loctemp, int senstype, const
                 if (sharshow && lp.fullim != 3) {
                     transformed->a[y][x] = 0.f;
                     transformed->b[y][x] = ampli * 5.f * difL * reducdE;
-                } else if (previewshar || lp.prevdE) {
+                } else if (previewshar || lp.prevdE || lp.showMaskOverlay) {
                     float difbdisp = reducview * 10000.f * lp.colorde;
 
                     if (transformed->L[y][x] < darklim) { //enhance dark luminance as user can see!
@@ -8069,8 +8162,10 @@ void ImProcFunctions::Exclude_Local(float **deltaso, float hueref, float chromar
 
                     if (lp.shapmet == 0) {
                         calcTransition(lox, loy, ach, lp, zone, localFactor);
-                    } else { /*if (lp.shapmet == 1)*/
+                    } else if (lp.shapmet == 1) {
                         calcTransitionrect(lox, loy, ach, lp, zone, localFactor);
+                    } else {
+                        calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
                     }
 
 
@@ -8244,8 +8339,10 @@ void ImProcFunctions::transit_shapedetect_retinex(int call, int senstype, LabIma
 
                     if (lp.shapmet == 0) {
                         calcTransition(lox, loy, ach, lp, zone, localFactor);
-                    } else { /*if (lp.shapmet == 1)*/
+                    } else if (lp.shapmet == 1) {
                         calcTransitionrect(lox, loy, ach, lp, zone, localFactor);
+                    } else {
+                        calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
                     }
 
 
@@ -8369,7 +8466,7 @@ void ImProcFunctions::transit_shapedetect_retinex(int call, int senstype, LabIma
                             transformed->b[y][x] = clipC(difb);
                         }
 
-                        if (previewreti || lp.prevdE) {
+                        if (previewreti || lp.prevdE || lp.showMaskOverlay) {
                             difb = (bufexpfin->b[y][x] - original->b[y][x]) * localFactor;
                             transformed->a[y][x] = 0.f;
                             transformed->b[y][x] = previewint * difb;
@@ -8553,8 +8650,10 @@ void ImProcFunctions::transit_shapedetect(int senstype, const LabImage * bufexpo
 
                 if (lp.shapmet == 0) {
                     calcTransition(lox, loy, ach, lp, zone, localFactor);
-                } else { /*if (lp.shapmet == 1)*/
+                } else if (lp.shapmet == 1) {
                     calcTransitionrect(lox, loy, ach, lp, zone, localFactor);
+                } else {
+                    calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
                 }
 
 
@@ -8644,7 +8743,7 @@ void ImProcFunctions::transit_shapedetect(int senstype, const LabImage * bufexpo
                                 transformed->L[y][x] = CLIP(12000.f + difL);
                                 transformed->a[y][x] = clipC(difa);
                                 transformed->b[y][x] = clipC(difb);
-                            } else if (/* previewcb  ||*/ previewtm || lp.prevdE) {
+                            } else if (/* previewcb  ||*/ previewtm || lp.prevdE || lp.showMaskOverlay) {
                                 if (std::fabs(difb) < 500.f) {
                                     difb += difL;
                                 }
@@ -8884,8 +8983,10 @@ void ImProcFunctions::InverseColorLight_Local(bool tonequ, bool tonecurv, int sp
 
                     if (lp.shapmet == 0) {
                         calcTransition(lox, loy, ach, lp, zone, localFactor);
-                    } else { /*if (lp.shapmet == 1)*/
+                    } else if (lp.shapmet == 1) {
                         calcTransitionrect(lox, loy, ach, lp, zone, localFactor);//rect not good
+                    } else {
+                        calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
                     }
 
                     //deltaE
@@ -9008,7 +9109,7 @@ void ImProcFunctions::calc_ref(int sp, LabImage * original, LabImage * transform
         // always calculate hueref, chromaref, lumaref before others operations
         // use in normal mode for all modules except denoise
         struct local_params lp;
-        calcLocalParams(sp, oW, oH, params->locallab, lp, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, locwavCurveden, locwavdenutili);
+        calcLocalParams(sp, oW, oH, params->locallab, lp, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, locwavCurveden, locwavdenutili);
         int begy = lp.yc - lp.lyT;
         int begx = lp.xc - lp.lxL;
         int yEn = lp.yc + lp.ly;
@@ -9439,8 +9540,10 @@ void ImProcFunctions::BlurNoise_Local(LabImage *tmp1, LabImage * originalmask, c
 
                 if (lp.shapmet == 0) {
                     calcTransition(lox, loy, ach, lp, zone, localFactor);
-                } else { /*if (lp.shapmet == 1)*/
+                } else if (lp.shapmet == 1) {
                     calcTransitionrect(lox, loy, ach, lp, zone, localFactor);
+                } else {
+                    calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
                 }
 
                 if (zone == 0) { // outside selection and outside transition zone => no effect, keep original values
@@ -9479,7 +9582,7 @@ void ImProcFunctions::BlurNoise_Local(LabImage *tmp1, LabImage * originalmask, c
                     transformed->L[y][x] = CLIP(12000.f + 0.5f * ampli * difL);
                     transformed->a[y][x] = clipC(ampli * difa);
                     transformed->b[y][x] = clipC(ampli * difb);
-                } else if (previewbl || lp.prevdE) {//show deltaE
+                } else if (previewbl || lp.prevdE || lp.showMaskOverlay) {//show deltaE
                     const float difbdisp = reducdE * 10000.f * lp.colorde;
 
                     if (transformed->L[y][x] < darklim) { //enhance dark luminance as user can see!
@@ -9783,11 +9886,42 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
         lp.balance = LIM(lp.balance, 0.05f, 2.5f); // down balance ab-L     
         kL = lp.balance / SQR(327.68f);
     }
-    
+
     const float mindE = 2.f + MINSCOPE * varsens * lp.thr;
     const float maxdE = 5.f + MAXSCOPE * varsens * (1 + 0.1f * lp.thr);
     const float mindElim = 2.f + MINSCOPE * limscope * lp.thr;
     const float maxdElim = 5.f + MAXSCOPE * limscope * (1 + 0.1f * lp.thr);
+
+#ifdef RT_AI_MASKING
+    // Get AI mask pointer once before the parallel loop (avoids per-pixel mutex)
+    const array2D<float>* aiMaskPtr = nullptr;
+    int aiMaskW = 0, aiMaskH = 0;
+    int aiFullW = 0, aiFullH = 0;
+    if (lp.useaimask) {
+        AIMaskCache& aiCache = AIMaskCache::getInstance();
+        if (aiCache.hasCachedMasks()) {
+            const AISegClass aiCls = static_cast<AISegClass>(lp.aimaskclass);
+            aiMaskPtr = aiCache.getMask(aiCls);
+            aiMaskW = aiCache.getCachedWidth();
+            aiMaskH = aiCache.getCachedHeight();
+            aiFullW = aiCache.getFullWidth();
+            aiFullH = aiCache.getFullHeight();
+            fprintf(stderr, "AI transit: mask=%dx%d, fullImg=%dx%d, original=%dx%d, cx=%d cy=%d sk=%d, xstart=%d ystart=%d, bfw=%d bfh=%d\n",
+                    aiMaskW, aiMaskH, aiFullW, aiFullH, original->W, original->H, cx, cy, sk, xstart, ystart, bfw, bfh);
+            // Debug: show mapping for corner and center pixels
+            for (int dy = 0; dy < 3; ++dy) {
+                for (int dx = 0; dx < 3; ++dx) {
+                    int testX = dx * (bfw - 1) / 2;
+                    int testY = dy * (bfh - 1) / 2;
+                    int maskX = static_cast<int>(static_cast<float>(testX + xstart + cx) * sk * aiMaskW / aiFullW);
+                    int maskY = static_cast<int>(static_cast<float>(testY + ystart + cy) * sk * aiMaskH / aiFullH);
+                    float val = (maskY >= 0 && maskY < aiMaskH && maskX >= 0 && maskX < aiMaskW) ? (*aiMaskPtr)[maskY][maskX] : -1.f;
+                    fprintf(stderr, "  pixel(%d,%d) -> mask(%d,%d) val=%.3f\n", testX, testY, maskX, maskY, val);
+                }
+            }
+        }
+    }
+#endif
 
 #ifdef _OPENMP
     #pragma omp parallel if (multiThread)
@@ -9832,8 +9966,10 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
                 //calculate transition
                 if (lp.shapmet == 0) {
                     calcTransition(lox, loy, achm, lp, zone, localFactor);
-                } else { /*if (lp.shapmet == 1)*/
+                } else if (lp.shapmet == 1) {
                     calcTransitionrect(lox, loy, achm, lp, zone, localFactor);
+                } else {
+                    calcTransitiongrad(lox, loy, achm, lp, zone, localFactor);
                 }
                 if(lp.fullim == 3 ) {//disable scope
                     localFactor = 1.f;
@@ -9921,6 +10057,49 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
                 const float realstrbdE = reducdE * clb;
 
                 float factorx = localFactor;
+#ifdef RT_AI_MASKING
+                if (aiMaskPtr && aiFullW > 0 && aiFullH > 0) {
+                    // Map processing coordinates to mask coordinates via full-resolution space.
+                    const float my_f = static_cast<float>(y + ystart + cy) * sk * aiMaskH / static_cast<float>(aiFullH);
+                    const float mx_f = static_cast<float>(x + xstart + cx) * sk * aiMaskW / static_cast<float>(aiFullW);
+                    const int my = static_cast<int>(my_f);
+                    const int mx = static_cast<int>(mx_f);
+
+                    float aiVal;
+
+                    // Blur: average over a neighborhood in mask space
+                    const int blurRad = static_cast<int>(lp.aimaskblur * aiMaskW / static_cast<float>(aiFullW));
+                    if (blurRad > 0) {
+                        float sum = 0.f;
+                        int count = 0;
+                        const int y0 = rtengine::max(my - blurRad, 0);
+                        const int y1 = rtengine::min(my + blurRad, aiMaskH - 1);
+                        const int x0 = rtengine::max(mx - blurRad, 0);
+                        const int x1 = rtengine::min(mx + blurRad, aiMaskW - 1);
+                        for (int ay = y0; ay <= y1; ++ay) {
+                            for (int ax = x0; ax <= x1; ++ax) {
+                                sum += (*aiMaskPtr)[ay][ax];
+                                ++count;
+                            }
+                        }
+                        aiVal = count > 0 ? sum / count : 0.f;
+                    } else {
+                        aiVal = (my >= 0 && my < aiMaskH && mx >= 0 && mx < aiMaskW)
+                                ? (*aiMaskPtr)[my][mx] : 0.f;
+                    }
+
+                    // Feathering controls the transition width around the threshold.
+                    // feather=0: hard binary, feather=20: very soft (half-width = 0.5)
+                    const float halfWidth = rtengine::max(0.001f, lp.aimaskfeath * 0.025f);
+                    aiVal = LIM((aiVal - lp.aimaskthr + halfWidth) / (2.f * halfWidth), 0.f, 1.f);
+
+                    if (lp.aimaskinv) {
+                        aiVal = 1.f - aiVal;
+                    }
+                    // Blend AI mask with geometric factor
+                    factorx = intp(lp.aimaskopa, aiVal * localFactor, localFactor);
+                }
+#endif
                 if (zone > 0) {
                     //simplified transformed with deltaE and transition
                     transformed->L[y + ystart][x + xstart] = clipLoc(original->L[y + ystart][x + xstart]  + factorx * realstrdE );//clipLoc now do nothing...just keep in ace off
@@ -9945,7 +10124,17 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
                         transformed->L[y + ystart][x + xstart] = CLIP(12000.f + 0.5f * ampli * diflc);
                         transformed->a[y + ystart][x + xstart] = clipC(ampli * difa);
                         transformed->b[y + ystart][x + xstart] = clipC(ampli * difb);
-                    } else if (previewexp || previewvib || previewcol || previewSH || previewtm || previewlc || previewlog || previewcie || previewshar || previeworig || previewmas || lp.prevdE) {//show deltaE
+                    } else if (lp.showMaskOverlay) {
+                        // Red overlay: factorx * reducdE = combined effective mask strength
+                        float maskVal = factorx * reducdE;
+                        float origL = original->L[y + ystart][x + xstart];
+                        float origA = original->a[y + ystart][x + xstart];
+                        float origB = original->b[y + ystart][x + xstart];
+                        // Dim original slightly, add red (positive a*) tint
+                        transformed->L[y + ystart][x + xstart] = origL * (1.f - 0.3f * maskVal);
+                        transformed->a[y + ystart][x + xstart] = origA + maskVal * 12000.f;
+                        transformed->b[y + ystart][x + xstart] = origB * (1.f - 0.5f * maskVal);
+                    } else if (previewexp || previewvib || previewcol || previewSH || previewtm || previewlc || previewlog || previewcie || previewshar || previeworig || previewmas || lp.prevdE || lp.showMaskOverlay) {//show deltaE
                         float difbdisp = reducdE * 10000.f * lp.colorde;
 
                         if (transformed->L[y + ystart][x + xstart] < darklim) { //enhance dark luminance as user can see!
@@ -14233,8 +14422,10 @@ void ImProcFunctions::avoidcolshi(const struct local_params& lp, int sp, LabImag
 
                     if (lp.shapmet == 0) {
                         calcTransition(lox, loy, ach, lp, zone, localFactor);
-                    } else { /*if (lp.shapmet == 1)*/
+                    } else if (lp.shapmet == 1) {
                         calcTransitionrect(lox, loy, ach, lp, zone, localFactor);
+                    } else {
+                        calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
                     }
 
                     if (zone == 0) { // outside selection and outside transition zone => no effect, keep original values
@@ -15439,7 +15630,7 @@ void ImProcFunctions::Lab_Local(
 
     bool LHutili, bool HHutili, bool CHutili, bool HHutilijz, bool CHutilijz, bool LHutilijz, const LUTf& cclocalcurve, bool localcutili, const LUTf& rgblocalcurve, bool localrgbutili, bool localexutili, const LUTf& exlocalcurve, const LUTf& hltonecurveloc, const LUTf& shtonecurveloc, const LUTf& tonecurveloc, const LUTf& lightCurveloc,
     double& huerefblur, double& chromarefblur, double& lumarefblur, double& hueref, double& chromaref, double& lumaref, double& sobelref, int &lastsav,
-    bool prevDeltaE, int llColorMask, int llColorMaskinv, int llExpMask, int llExpMaskinv, int llSHMask, int llSHMaskinv, int llvibMask, int lllcMask, int llsharMask, int llcbMask, int llretiMask, int llsoftMask, int lltmMask, int llblMask, int lllogMask, int ll_Mask, int llcieMask,
+    bool prevDeltaE, bool showMaskOverlay, int llColorMask, int llColorMaskinv, int llExpMask, int llExpMaskinv, int llSHMask, int llSHMaskinv, int llvibMask, int lllcMask, int llsharMask, int llcbMask, int llretiMask, int llsoftMask, int lltmMask, int llblMask, int lllogMask, int ll_Mask, int llcieMask,
     float& minCD, float& maxCD, float& mini, float& maxi, float& Tmean, float& Tsigma, float& Tmin, float& Tmax,
     float& meantm, float& stdtm, float& meanreti, float& stdreti, float &fab,float &maxicam, float &rdx, float &rdy, float &grx, float &gry, float &blx, float &bly, float &meanx, float &meany, float &meanxe, float &meanye, float &maxdat,  int &prim, int &ill, float &contsig, float &lightsig, float &slopeg, bool &linkrgb,
     float *resi, float &sharc, float &denocont, int *ghsbpwp, float *ghsbpwpvalue, float *savmadl, float *ghsbwslider, float &ghssym, bool &ghsautsp,  float *ghscolor, float &ghsmid, float &ghsmaxrgb, float &ghs3sig, float *michbwslider)
@@ -15454,7 +15645,7 @@ void ImProcFunctions::Lab_Local(
     
     constexpr int del = 3; // to avoid crash with [loy - begy] and [lox - begx] and bfh bfw  // with gtk2 [loy - begy-1] [lox - begx -1 ] and del = 1
     struct local_params lp;
-    calcLocalParams(sp, oW, oH, params->locallab, lp, prevDeltaE, llColorMask, llColorMaskinv, llExpMask, llExpMaskinv, llSHMask, llSHMaskinv, llvibMask, lllcMask, llsharMask, llcbMask, llretiMask, llsoftMask, lltmMask, llblMask, lllogMask, ll_Mask, llcieMask, locwavCurveden, locwavdenutili);
+    calcLocalParams(sp, oW, oH, params->locallab, lp, prevDeltaE, showMaskOverlay, llColorMask, llColorMaskinv, llExpMask, llExpMaskinv, llSHMask, llSHMaskinv, llvibMask, lllcMask, llsharMask, llcbMask, llretiMask, llsoftMask, lltmMask, llblMask, lllogMask, ll_Mask, llcieMask, locwavCurveden, locwavdenutili);
     
     //parameters to change behavior GF
     float ksk = 1.f;//acts on cy
@@ -15587,7 +15778,7 @@ void ImProcFunctions::Lab_Local(
     }
 
 //encoding lab at the beginning
-    if (lp.logena && (call <= 3 || lp.prevdE || lp.showmasklogmet == 2 || lp.enaLMask || lp.showmasklogmet == 3 || lp.showmasklogmet == 4)) {
+    if (lp.logena && (call <= 3 || lp.prevdE || lp.showMaskOverlay || lp.showmasklogmet == 2 || lp.enaLMask || lp.showmasklogmet == 3 || lp.showmasklogmet == 4)) {
 
         const int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
         const int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
@@ -16488,7 +16679,7 @@ void ImProcFunctions::Lab_Local(
 
 //Tone mapping
 
-    if ((lp.strengt != 0.f || lp.showmasktmmet == 2 || lp.enatmMask || lp.showmasktmmet == 3 || lp.showmasktmmet == 4 || lp.prevdE) && lp.tonemapena && !params->epd.enabled) {
+    if ((lp.strengt != 0.f || lp.showmasktmmet == 2 || lp.enatmMask || lp.showmasktmmet == 3 || lp.showmasktmmet == 4 || lp.prevdE || lp.showMaskOverlay) && lp.tonemapena && !params->epd.enabled) {
         if (call <= 3) { //simpleprocess dcrop improcc
             const int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
             const int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
@@ -16782,7 +16973,7 @@ void ImProcFunctions::Lab_Local(
 //end TM
 
 
-    if ((lp.dehaze != 0 || lp.prevdE) && lp.retiena) {
+    if ((lp.dehaze != 0 || lp.prevdE || lp.showMaskOverlay) && lp.retiena) {
         int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
         int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
         int xstart = rtengine::max(static_cast<int>(lp.xc - lp.lxL) - cx, 0);
@@ -17545,7 +17736,7 @@ void ImProcFunctions::Lab_Local(
 
 
 //begin cbdl
-    if ((lp.mulloc[0] != 1.f || lp.mulloc[1] != 1.f || lp.mulloc[2] != 1.f || lp.mulloc[3] != 1.f || lp.mulloc[4] != 1.f || lp.mulloc[5] != 1.f || lp.clarityml != 0.f || lp.contresid != 0.f  || lp.enacbMask || lp.showmaskcbmet == 2 || lp.showmaskcbmet == 3 || lp.showmaskcbmet == 4 || lp.prevdE) && lp.cbdlena) {
+    if ((lp.mulloc[0] != 1.f || lp.mulloc[1] != 1.f || lp.mulloc[2] != 1.f || lp.mulloc[3] != 1.f || lp.mulloc[4] != 1.f || lp.mulloc[5] != 1.f || lp.clarityml != 0.f || lp.contresid != 0.f  || lp.enacbMask || lp.showmaskcbmet == 2 || lp.showmaskcbmet == 3 || lp.showmaskcbmet == 4 || lp.prevdE || lp.showMaskOverlay) && lp.cbdlena) {
         if (call <= 3) { //call from simpleprocess dcrop improcc
             const int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
             const int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
@@ -17778,7 +17969,7 @@ void ImProcFunctions::Lab_Local(
 //vibrance
     float vibg = params->locallab.spots.at(sp).vibgam;
 
-    if (lp.expvib && (lp.past != 0.f  || lp.satur != 0.f || lp.strvib != 0.f || vibg != 1.f  || lp.war != 0 || lp.strvibab != 0.f  || lp.strvibh != 0.f || lp.showmaskvibmet == 2 || lp.enavibMask || lp.showmaskvibmet == 3 || lp.showmaskvibmet == 4 || lp.prevdE) && lp.vibena) { //interior ellipse reinforced lightness and chroma  //locallutili
+    if (lp.expvib && (lp.past != 0.f  || lp.satur != 0.f || lp.strvib != 0.f || vibg != 1.f  || lp.war != 0 || lp.strvibab != 0.f  || lp.strvibh != 0.f || lp.showmaskvibmet == 2 || lp.enavibMask || lp.showmaskvibmet == 3 || lp.showmaskvibmet == 4 || lp.prevdE || lp.showMaskOverlay) && lp.vibena) { //interior ellipse reinforced lightness and chroma  //locallutili
         if (call <= 3) { //simpleprocess, dcrop, improccoordinator
             const int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
             const int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
@@ -18114,7 +18305,7 @@ void ImProcFunctions::Lab_Local(
     if(D != 0.f /* || BLP != 0.f || HLP != 1.f*  || smoth*/) {
         ghsactiv = true;
     }
-    if (! lp.invsh && (lp.highlihs > 0.f || lp.shadowhs > 0.f || tonequ || tonecurv || ghsactiv || lp.strSH != 0.f || lp.showmaskSHmet == 2 || lp.enaSHMask || lp.showmaskSHmet == 3 || lp.showmaskSHmet == 4 || lp.prevdE) && call <= 3 && lp.hsena) {
+    if (! lp.invsh && (lp.highlihs > 0.f || lp.shadowhs > 0.f || tonequ || tonecurv || ghsactiv || lp.strSH != 0.f || lp.showmaskSHmet == 2 || lp.enaSHMask || lp.showmaskSHmet == 3 || lp.showmaskSHmet == 4 || lp.prevdE || lp.showMaskOverlay) && call <= 3 && lp.hsena) {
         const int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
         const int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
         const int xstart = rtengine::max(static_cast<int>(lp.xc - lp.lxL) - cx, 0);
@@ -19462,7 +19653,7 @@ void ImProcFunctions::Lab_Local(
     }
 
 // soft light and retinex_pde
-    if ((lp.strng > 1.f || lp.prevdE) && call <= 3 && lp.sfena) {
+    if ((lp.strng > 1.f || lp.prevdE || lp.showMaskOverlay) && call <= 3 && lp.sfena) {
         int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
         int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
         int xstart = rtengine::max(static_cast<int>(lp.xc - lp.lxL) - cx, 0);
@@ -19596,7 +19787,7 @@ void ImProcFunctions::Lab_Local(
         }
     }
 
-    if ((lp.lcamount > 0.f || wavcurve || lp.showmasklcmet == 2 || lp.enalcMask || lp.showmasklcmet == 3 || lp.showmasklcmet == 4 || lp.prevdE || lp.strwav != 0.f || wavcurvelev || wavcurvecon || wavcurvecomp || wavcurvecompre || lp.edgwena || params->locallab.spots.at(sp).residblur > 0.0 || params->locallab.spots.at(sp).levelblur > 0.0 || params->locallab.spots.at(sp).residcont != 0.0 || params->locallab.spots.at(sp).clarilres != 0.0 || params->locallab.spots.at(sp).claricres != 0.0) && call <= 3 && lp.lcena) {
+    if ((lp.lcamount > 0.f || wavcurve || lp.showmasklcmet == 2 || lp.enalcMask || lp.showmasklcmet == 3 || lp.showmasklcmet == 4 || lp.prevdE || lp.showMaskOverlay || lp.strwav != 0.f || wavcurvelev || wavcurvecon || wavcurvecomp || wavcurvecompre || lp.edgwena || params->locallab.spots.at(sp).residblur > 0.0 || params->locallab.spots.at(sp).levelblur > 0.0 || params->locallab.spots.at(sp).residcont != 0.0 || params->locallab.spots.at(sp).clarilres != 0.0 || params->locallab.spots.at(sp).claricres != 0.0) && call <= 3 && lp.lcena) {
 
         int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
         int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
@@ -20502,7 +20693,7 @@ void ImProcFunctions::Lab_Local(
         enablefat = true;;
     }
 
-    bool execex = (lp.exposena && (lp.expcomp != 0.f || lp.blac != 0 || lp.shadex > 0 || lp.hlcomp > 0.f || lp.laplacexp > 0.1f || lp.strexp != 0.f || enablefat || lp.showmaskexpmet == 2 || lp.enaExpMask || lp.showmaskexpmet == 3 || lp.showmaskexpmet == 4  || lp.showmaskexpmet == 5 || lp.prevdE || (exlocalcurve && localexutili)));
+    bool execex = (lp.exposena && (lp.expcomp != 0.f || lp.blac != 0 || lp.shadex > 0 || lp.hlcomp > 0.f || lp.laplacexp > 0.1f || lp.strexp != 0.f || enablefat || lp.showmaskexpmet == 2 || lp.enaExpMask || lp.showmaskexpmet == 3 || lp.showmaskexpmet == 4  || lp.showmaskexpmet == 5 || lp.prevdE || lp.showMaskOverlay || (exlocalcurve && localexutili)));
 
     if (!lp.invex && execex) {
         int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
@@ -20596,8 +20787,10 @@ void ImProcFunctions::Lab_Local(
 
                                 if (lp.shapmet == 0) {
                                     calcTransition(lox, loy, achm, lp, zone, localFactor);
-                                } else { /*if (lp.shapmet == 1)*/
+                                } else if (lp.shapmet == 1) {
                                     calcTransitionrect(lox, loy, achm, lp, zone, localFactor);
+                                } else {
+                                    calcTransitiongrad(lox, loy, achm, lp, zone, localFactor);
                                 }
 
                                 if (zone > 0) {
@@ -21066,7 +21259,7 @@ void ImProcFunctions::Lab_Local(
     const float a_scalemerg = (lp.highAmerg - lp.lowAmerg) / factor / scaling;
     const float b_scalemerg = (lp.highBmerg - lp.lowBmerg) / factor / scaling;
 
-    if (!lp.inv && (lp.chro != 0 || lp.ligh != 0.f || lp.cont != 0 || ctoning || lp.mergemet > 0 ||  lp.strcol != 0.f ||  lp.strcolab != 0.f || lp.qualcurvemet != 0 || lp.showmaskcolmet == 2 || lp.enaColorMask || lp.showmaskcolmet == 3  || lp.showmaskcolmet == 4 || lp.showmaskcolmet == 5 || lp.prevdE) && lp.colorena) { // || lllocalcurve)) { //interior ellipse reinforced lightness and chroma  //locallutili
+    if (!lp.inv && (lp.chro != 0 || lp.ligh != 0.f || lp.cont != 0 || ctoning || lp.mergemet > 0 ||  lp.strcol != 0.f ||  lp.strcolab != 0.f || lp.qualcurvemet != 0 || lp.showmaskcolmet == 2 || lp.enaColorMask || lp.showmaskcolmet == 3  || lp.showmaskcolmet == 4 || lp.showmaskcolmet == 5 || lp.prevdE || lp.showMaskOverlay) && lp.colorena) { // || lllocalcurve)) { //interior ellipse reinforced lightness and chroma  //locallutili
         int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
         int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
         int xstart = rtengine::max(static_cast<int>(lp.xc - lp.lxL) - cx, 0);
@@ -21185,8 +21378,10 @@ void ImProcFunctions::Lab_Local(
 
                                 if (lp.shapmet == 0) {
                                     calcTransition(lox, loy, achm, lp, zone, localFactor);
-                                } else { /*if (lp.shapmet == 1)*/
+                                } else if (lp.shapmet == 1) {
                                     calcTransitionrect(lox, loy, achm, lp, zone, localFactor);
+                                } else {
+                                    calcTransitiongrad(lox, loy, achm, lp, zone, localFactor);
                                 }
 
                                 if (zone > 0) {
@@ -21361,8 +21556,10 @@ void ImProcFunctions::Lab_Local(
 
                                 if (lp.shapmet == 0) {
                                     calcTransition(lox, loy, achm, lp, zone, localFactor);
-                                } else { /*if (lp.shapmet == 1)*/
+                                } else if (lp.shapmet == 1) {
                                     calcTransitionrect(lox, loy, achm, lp, zone, localFactor);
+                                } else {
+                                    calcTransitiongrad(lox, loy, achm, lp, zone, localFactor);
                                 }
 
                                 if (zone > 0) {
@@ -23500,6 +23697,107 @@ void ImProcFunctions::Lab_Local(
         rgb2lab(*prov1, *transformed, params->icm.workingProfile);
     }
 
+
+// Show Mask Overlay: standalone red overlay pass using geometric shape + AI mask
+    if (lp.showMaskOverlay) {
+        const int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
+        const int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
+        const int xstart = rtengine::max(static_cast<int>(lp.xc - lp.lxL) - cx, 0);
+        const int xend = rtengine::min(static_cast<int>(lp.xc + lp.lx) - cx, original->W);
+
+#ifdef RT_AI_MASKING
+        const array2D<float>* aiMaskPtrOv = nullptr;
+        int aiMaskWOv = 0, aiMaskHOv = 0;
+        int aiFullWOv = 0, aiFullHOv = 0;
+        if (lp.useaimask) {
+            AIMaskCache& aiCache = AIMaskCache::getInstance();
+            if (aiCache.hasCachedMasks()) {
+                const AISegClass aiCls = static_cast<AISegClass>(lp.aimaskclass);
+                aiMaskPtrOv = aiCache.getMask(aiCls);
+                aiMaskWOv = aiCache.getCachedWidth();
+                aiMaskHOv = aiCache.getCachedHeight();
+                aiFullWOv = aiCache.getFullWidth();
+                aiFullHOv = aiCache.getFullHeight();
+            }
+        }
+#endif
+
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(dynamic, 16)
+#endif
+        for (int y = ystart; y < yend; y++) {
+            for (int x = xstart; x < xend; x++) {
+                const int lox = x + cx;
+                const int loy = y + cy;
+                int zone;
+                float localFactor = 1.f;
+                float achm = lp.trans / 100.f;
+                if (lp.fullim == 3) {
+                    achm = 1.f;
+                }
+
+                if (lp.shapmet == 0) {
+                    calcTransition(lox, loy, achm, lp, zone, localFactor);
+                } else if (lp.shapmet == 1) {
+                    calcTransitionrect(lox, loy, achm, lp, zone, localFactor);
+                } else {
+                    calcTransitiongrad(lox, loy, achm, lp, zone, localFactor);
+                }
+
+                if (zone == 0) {
+                    continue;
+                }
+
+                if (lp.fullim == 3) {
+                    localFactor = 1.f;
+                }
+
+                float factorx = localFactor;
+#ifdef RT_AI_MASKING
+                if (aiMaskPtrOv && aiFullWOv > 0 && aiFullHOv > 0) {
+                    const float my_f = static_cast<float>(y + cy) * sk * aiMaskHOv / static_cast<float>(aiFullHOv);
+                    const float mx_f = static_cast<float>(x + cx) * sk * aiMaskWOv / static_cast<float>(aiFullWOv);
+                    const int my = static_cast<int>(my_f);
+                    const int mx = static_cast<int>(mx_f);
+
+                    float aiVal;
+                    const int blurRad = static_cast<int>(lp.aimaskblur * aiMaskWOv / static_cast<float>(aiFullWOv));
+                    if (blurRad > 0) {
+                        float sum = 0.f;
+                        int count = 0;
+                        const int y0 = rtengine::max(my - blurRad, 0);
+                        const int y1 = rtengine::min(my + blurRad, aiMaskHOv - 1);
+                        const int x0 = rtengine::max(mx - blurRad, 0);
+                        const int x1 = rtengine::min(mx + blurRad, aiMaskWOv - 1);
+                        for (int ay = y0; ay <= y1; ++ay) {
+                            for (int ax = x0; ax <= x1; ++ax) {
+                                sum += (*aiMaskPtrOv)[ay][ax];
+                                ++count;
+                            }
+                        }
+                        aiVal = count > 0 ? sum / count : 0.f;
+                    } else {
+                        aiVal = (my >= 0 && my < aiMaskHOv && mx >= 0 && mx < aiMaskWOv)
+                                ? (*aiMaskPtrOv)[my][mx] : 0.f;
+                    }
+
+                    const float halfWidth = rtengine::max(0.001f, lp.aimaskfeath * 0.025f);
+                    aiVal = LIM((aiVal - lp.aimaskthr + halfWidth) / (2.f * halfWidth), 0.f, 1.f);
+
+                    if (lp.aimaskinv) {
+                        aiVal = 1.f - aiVal;
+                    }
+                    factorx = intp(lp.aimaskopa, aiVal * localFactor, localFactor);
+                }
+#endif
+                // Red overlay proportional to combined mask strength
+                const float maskVal = factorx;
+                transformed->L[y][x] = original->L[y][x] * (1.f - 0.3f * maskVal);
+                transformed->a[y][x] = original->a[y][x] + maskVal * 12000.f;
+                transformed->b[y][x] = original->b[y][x] * (1.f - 0.5f * maskVal);
+            }
+        }
+    }
 
 // Gamut and Munsell control - very important do not deactivated to avoid crash
     avoidcolshi(lp, sp, transformed, reserved, cy, cx, sk);

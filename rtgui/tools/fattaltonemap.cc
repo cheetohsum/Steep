@@ -53,9 +53,17 @@ FattalToneMapping::FattalToneMapping(): FoldableToolPanel(this, TOOL_NAME, M("TP
     threshold->show();
     anchor->show();
 
-    pack_start(*amount);
-    pack_start(*threshold);
-    pack_start(*anchor);
+    // Visible items (in summary box)
+    getSummaryBox()->pack_start(*amount);
+    getSummaryBox()->show_all();
+
+    // Advanced items
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
+
+    advBox->pack_start(*threshold);
+    advBox->pack_start(*anchor);
 }
 
 void FattalToneMapping::read(const ProcParams *pp, const ParamsEdited *pedited)
@@ -111,6 +119,7 @@ void FattalToneMapping::setDefaults(const ProcParams *defParams, const ParamsEdi
 
 void FattalToneMapping::adjusterChanged(Adjuster* a, double newval)
 {
+    autoEnable();
     if(listener && getEnabled()) {
         if(a == threshold) {
             listener->panelChanged(EvTMFattalThreshold, a->getTextValue());
@@ -138,6 +147,7 @@ void FattalToneMapping::enabledChanged ()
 void FattalToneMapping::setBatchMode(bool batchMode)
 {
     ToolPanel::setBatchMode(batchMode);
+    advancedSection->setBatchMode(batchMode);
 
     threshold->showEditedCB();
     amount->showEditedCB();

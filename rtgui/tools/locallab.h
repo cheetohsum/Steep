@@ -27,6 +27,9 @@
 #include "controlspotpanel.h"
 #include "guiutils.h"
 #include "tools/locallabtools.h"
+#ifdef RT_AI_MASKING
+#include "tools/locallabaimask.h"
+#endif
 
 /* ==== LocallabToolListListener ==== */
 class LocallabToolList;
@@ -117,9 +120,15 @@ private:
     LocallabCBDL expcbdl;
     LocallabLog explog;
     LocallabMask expmask;
+#ifdef RT_AI_MASKING
+    LocallabAIMask expaimask;
+#endif
     Locallabcie expcie;
 
     OptionalRadioButtonGroup delta_e_preview_button_group;
+
+    Gtk::ToggleButton* showMaskOverlay_;
+    sigc::connection showMaskOverlayConn_;
 
     std::vector<LocallabTool*> locallabTools;
 
@@ -211,6 +220,7 @@ public:
     // Mask visibility management functions
     struct llMaskVisibility {
         bool previewDeltaE;
+        bool showMaskOverlay;
         int colorMask;
         int colorMaskinv;
         int expMask;
@@ -260,6 +270,9 @@ private:
 
     // Locallab GUI management function
     void setParamEditable(bool cond);
+
+    // Show Mask Overlay toggle handler
+    void showMaskOverlayChanged();
 
     // ControlSpotListener function
     void resetToolMaskView() override;

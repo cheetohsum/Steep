@@ -35,6 +35,7 @@ protected:
     Adjuster* strength;
     Adjuster* centerX;
     Adjuster* centerY;
+    AdvancedSection* advancedSection;
 
 public:
     static const Glib::ustring TOOL_NAME;

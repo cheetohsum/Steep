@@ -1,0 +1,41 @@
+FROM ubuntu:22.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# RawTherapee build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential cmake git pkg-config \
+    libgtkmm-3.0-dev liblensfun-dev librsvg2-dev \
+    liblcms2-dev libfftw3-dev libiptcdata0-dev \
+    libtiff5-dev libcanberra-gtk3-dev libexiv2-dev \
+    wget unzip libtool autoconf automake \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install ONNX Runtime
+RUN wget -q https://github.com/microsoft/onnxruntime/releases/download/v1.17.1/onnxruntime-linux-x64-1.17.1.tgz \
+    && tar xzf onnxruntime-linux-x64-1.17.1.tgz \
+    && cp onnxruntime-linux-x64-1.17.1/lib/* /usr/local/lib/ \
+    && cp -r onnxruntime-linux-x64-1.17.1/include/* /usr/local/include/ \
+    && ldconfig \
+    && rm -rf onnxruntime-linux-x64-1.17.1*
+
+WORKDIR /src
+COPY . /src/
+
+# Fix Windows CRLF line endings that break shell scripts in Linux
+RUN find /src -name "*.sh" -exec sed -i 's/\r$//' {} + && \
+    find /src -name "*.cmake" -exec sed -i 's/\r$//' {} + && \
+    find /src -name "CMakeLists.txt" -exec sed -i 's/\r$//' {} + && \
+    find /src -name "*.py" -exec sed -i 's/\r$//' {} +
+
+RUN mkdir build && cd build && \
+    cmake .. \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DWITH_AI_MASKING=ON \
+        -DONNXRuntime_ROOT=/usr/local \
+        -DCMAKE_INSTALL_PREFIX=/opt/rawtherapee \
+    2>&1 | tail -30
+
+RUN cd build && make -j$(nproc) 2>&1 | tail -30
+
+RUN cd build && make install 2>&1 | tail -10

@@ -1505,6 +1505,8 @@ IImage8* Thumbnail::processImage (const procparams::ProcParams& params, eSensorT
         ipf.colorToningLabGrid(labView, 0,labView->W , 0, labView->H, false);
     }
 
+    ipf.colorGrading(labView, 0, labView->W, 0, labView->H, false);
+
     ipf.shadowsHighlights(labView, params.sh.enabled, params.sh.lab,params.sh.highlights ,params.sh.shadows, params.sh.radius, 16, params.sh.htonalwidth, params.sh.stonalwidth);
 
     if (params.localContrast.enabled) {

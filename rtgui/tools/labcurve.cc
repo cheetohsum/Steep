@@ -45,14 +45,16 @@ LCurve::LCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_LABCURVE_LABEL"), fa
     chromaticity   = Gtk::manage(new Adjuster(M("TP_LABCURVE_CHROMATICITY"), -100., 100., 1., 0.));
     chromaticity->set_tooltip_markup(M("TP_LABCURVE_CHROMA_TOOLTIP"));
 
-    pack_start(*brightness);
+    // Visible items (in summary box)
+    getSummaryBox()->pack_start(*brightness);
     brightness->show();
 
-    pack_start(*contrast);
+    getSummaryBox()->pack_start(*contrast);
     contrast->show();
 
-    pack_start(*chromaticity);
+    getSummaryBox()->pack_start(*chromaticity);
     chromaticity->show();
+    getSummaryBox()->show_all();
 
     brightness->setAdjusterListener(this);
     contrast->setAdjusterListener(this);
@@ -62,18 +64,49 @@ LCurve::LCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_LABCURVE_LABEL"), fa
     contrast->setLogScale(2, 0, true);
     chromaticity->setLogScale(2, 0, true);
 
+    // Brightness gradient: dark → light
+    brightness->setSliderGradient({
+        GradientMilestone(0.0, 0.1, 0.1, 0.1),
+        GradientMilestone(1.0, 0.95, 0.95, 0.95)
+    });
+    // Chromaticity gradient: gray → saturated
+    chromaticity->setSliderGradient({
+        GradientMilestone(0.0, 0.3, 0.3, 0.3),
+        GradientMilestone(1.0, 0.9, 0.55, 0.15)
+    });
+
+    // Visible L* curve group
+    curveEditorG = new CurveEditorGroup(App::get().mut_options().lastLabCurvesDir);
+    curveEditorG->setCurveListener(this);
+
+    lshape = static_cast<DiagonalCurveEditor*>(curveEditorG->addCurve(CT_Diagonal, "L*"));
+    lshape->setTooltip(M("TP_LABCURVE_CURVEEDITOR_LL_TOOLTIP"));
+    lshape->setEditID(EUID_Lab_LCurve, BT_SINGLEPLANE_FLOAT);
+
+    // Setting the gradient milestones for L* curve
+    // from black to white
+    std::vector<GradientMilestone> milestones = {
+        GradientMilestone(0., 0., 0., 0.),
+        GradientMilestone(1., 1., 1., 1.)
+    };
+    lshape->setBottomBarBgGradient(milestones);
+    lshape->setLeftBarBgGradient(milestones);
+
+    curveEditorG->curveListComplete();
+
+    pack_start(*curveEditorG, Gtk::PACK_SHRINK, 4);
+
+    // Advanced items
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
+
     //%%%%%%%%%%%%%%%%%%
-    Gtk::Separator* hsep2 = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
-    hsep2->show();
-    pack_start(*hsep2, Gtk::PACK_EXPAND_WIDGET, 4);
-
-
-
-
-    Gtk::Box* metHBox = Gtk::manage(new Gtk::Box());
-    metHBox->set_spacing(2);
+    Gtk::Grid* metGrid = Gtk::manage(new Gtk::Grid());
+    metGrid->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(metGrid, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
     Gtk::Label* metLabel = Gtk::manage(new Gtk::Label(M("TP_LOCALLAB_AVOID") + ":"));
-    metHBox->pack_start(*metLabel, Gtk::PACK_SHRINK);
+    setExpandAlignProperties(metLabel, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
 
     gamutmunselmethod =  Gtk::manage(new MyComboBoxText());
     gamutmunselmethod->append(M("TP_LOCALLAB_GAMUTNON"));
@@ -83,17 +116,19 @@ LCurve::LCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_LABCURVE_LABEL"), fa
     gamutmunselmethod->append(M("TP_LOCALLAB_GAMUTMUNSELL"));
     gamutmunselmethod->set_active(4);
     gamutmunselmethod->set_tooltip_text(M("TP_LOCALLAB_AVOIDCOLORSHIFT_TOOLTIP"));
-    metHBox->pack_start(*gamutmunselmethod);
-    pack_start(*metHBox);
+    setExpandAlignProperties(gamutmunselmethod, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    metGrid->attach(*metLabel, 0, 0, 1, 1);
+    metGrid->attach(*gamutmunselmethod, 1, 0, 1, 1);
+    advBox->pack_start(*metGrid);
     gamutmunselmethodconn = gamutmunselmethod->signal_changed().connect(sigc::mem_fun(*this, &LCurve::gamutmunselChanged));
 
 
     lcredsk = Gtk::manage(new Gtk::CheckButton(M("TP_LABCURVE_LCREDSK")));
     lcredsk->set_tooltip_markup(M("TP_LABCURVE_LCREDSK_TOOLTIP"));
-    pack_start(*lcredsk);
+    advBox->pack_start(*lcredsk);
 
     rstprotection = Gtk::manage(new Adjuster(M("TP_LABCURVE_RSTPROTECTION"), 0., 100., 0.1, 0.));
-    pack_start(*rstprotection);
+    advBox->pack_start(*rstprotection);
     rstprotection->show();
 
     rstprotection->setAdjusterListener(this);
@@ -105,16 +140,13 @@ LCurve::LCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_LABCURVE_LABEL"), fa
 
     Gtk::Separator* hsep3 = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
     hsep3->show();
-    pack_start(*hsep3, Gtk::PACK_EXPAND_WIDGET, 4);
+    advBox->pack_start(*hsep3, Gtk::PACK_EXPAND_WIDGET, 4);
 
-    curveEditorG = new CurveEditorGroup(App::get().mut_options().lastLabCurvesDir);
-    curveEditorG->setCurveListener(this);
+    // Advanced curves group (a*, b*, and all flat/other curves)
+    curveEditorGAdv = new CurveEditorGroup(App::get().mut_options().lastLabCurvesDir);
+    curveEditorGAdv->setCurveListener(this);
 
-    lshape = static_cast<DiagonalCurveEditor*>(curveEditorG->addCurve(CT_Diagonal, "L*"));
-    lshape->setTooltip(M("TP_LABCURVE_CURVEEDITOR_LL_TOOLTIP"));
-    lshape->setEditID(EUID_Lab_LCurve, BT_SINGLEPLANE_FLOAT);
-
-    ashape = static_cast<DiagonalCurveEditor*>(curveEditorG->addCurve(CT_Diagonal, "a*"));
+    ashape = static_cast<DiagonalCurveEditor*>(curveEditorGAdv->addCurve(CT_Diagonal, "a*"));
     ashape->setEditID(EUID_Lab_aCurve, BT_SINGLEPLANE_FLOAT);
 
     ashape->setRangeLabels(
@@ -122,14 +154,14 @@ LCurve::LCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_LABCURVE_LABEL"), fa
         M("TP_LABCURVE_CURVEEDITOR_A_RANGE3"), M("TP_LABCURVE_CURVEEDITOR_A_RANGE4")
     );
     //from green to magenta
-    std::vector<GradientMilestone> milestones = {
+    milestones = {
         GradientMilestone(0., 0., 1., 0.),
         GradientMilestone(1., 1., 0., 1.)
     };
     ashape->setBottomBarBgGradient(milestones);
     ashape->setLeftBarBgGradient(milestones);
 
-    bshape = static_cast<DiagonalCurveEditor*>(curveEditorG->addCurve(CT_Diagonal, "b*"));
+    bshape = static_cast<DiagonalCurveEditor*>(curveEditorGAdv->addCurve(CT_Diagonal, "b*"));
     bshape->setRangeLabels(
         M("TP_LABCURVE_CURVEEDITOR_B_RANGE1"), M("TP_LABCURVE_CURVEEDITOR_B_RANGE2"),
         M("TP_LABCURVE_CURVEEDITOR_B_RANGE3"), M("TP_LABCURVE_CURVEEDITOR_B_RANGE4")
@@ -144,28 +176,28 @@ LCurve::LCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_LABCURVE_LABEL"), fa
     bshape->setBottomBarBgGradient(milestones);
     bshape->setLeftBarBgGradient(milestones);
 
-    curveEditorG->newLine();  //  ------------------------------------------------ second line
+    curveEditorGAdv->newLine();  //  ------------------------------------------------ second line
 
-    lhshape = static_cast<FlatCurveEditor*>(curveEditorG->addCurve(CT_Flat, M("TP_LABCURVE_CURVEEDITOR_LH")));
+    lhshape = static_cast<FlatCurveEditor*>(curveEditorGAdv->addCurve(CT_Flat, M("TP_LABCURVE_CURVEEDITOR_LH")));
     lhshape->setTooltip(M("TP_LABCURVE_CURVEEDITOR_LH_TOOLTIP"));
     lhshape->setCurveColorProvider(this, 4);
     lhshape->setEditID(EUID_Lab_LHCurve, BT_SINGLEPLANE_FLOAT);
 
 
-    chshape = static_cast<FlatCurveEditor*>(curveEditorG->addCurve(CT_Flat, M("TP_LABCURVE_CURVEEDITOR_CH")));
+    chshape = static_cast<FlatCurveEditor*>(curveEditorGAdv->addCurve(CT_Flat, M("TP_LABCURVE_CURVEEDITOR_CH")));
     chshape->setTooltip(M("TP_LABCURVE_CURVEEDITOR_CH_TOOLTIP"));
     chshape->setCurveColorProvider(this, 1);
     chshape->setEditID(EUID_Lab_CHCurve, BT_SINGLEPLANE_FLOAT);
 
 
-    hhshape = static_cast<FlatCurveEditor*>(curveEditorG->addCurve(CT_Flat, M("TP_LABCURVE_CURVEEDITOR_HH")));
+    hhshape = static_cast<FlatCurveEditor*>(curveEditorGAdv->addCurve(CT_Flat, M("TP_LABCURVE_CURVEEDITOR_HH")));
     hhshape->setTooltip(M("TP_LABCURVE_CURVEEDITOR_HH_TOOLTIP"));
     hhshape->setCurveColorProvider(this, 5);
     hhshape->setEditID(EUID_Lab_HHCurve, BT_SINGLEPLANE_FLOAT);
 
-    curveEditorG->newLine();  //  ------------------------------------------------ 3rd line
+    curveEditorGAdv->newLine();  //  ------------------------------------------------ 3rd line
 
-    ccshape = static_cast<DiagonalCurveEditor*>(curveEditorG->addCurve(CT_Diagonal, M("TP_LABCURVE_CURVEEDITOR_CC")));
+    ccshape = static_cast<DiagonalCurveEditor*>(curveEditorGAdv->addCurve(CT_Diagonal, M("TP_LABCURVE_CURVEEDITOR_CC")));
     ccshape->setTooltip(M("TP_LABCURVE_CURVEEDITOR_CC_TOOLTIP"));
     ccshape->setEditID(EUID_Lab_CCurve, BT_SINGLEPLANE_FLOAT);
     ccshape->setRangeLabels(
@@ -177,7 +209,7 @@ LCurve::LCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_LABCURVE_LABEL"), fa
     ccshape->setLeftBarColorProvider(this, 7);
     ccshape->setRangeDefaultMilestones(0.05, 0.2, 0.58);
 
-    lcshape = static_cast<DiagonalCurveEditor*>(curveEditorG->addCurve(CT_Diagonal, M("TP_LABCURVE_CURVEEDITOR_LC")));
+    lcshape = static_cast<DiagonalCurveEditor*>(curveEditorGAdv->addCurve(CT_Diagonal, M("TP_LABCURVE_CURVEEDITOR_LC")));
     lcshape->setTooltip(M("TP_LABCURVE_CURVEEDITOR_LC_TOOLTIP"));
     lcshape->setEditID(EUID_Lab_LCCurve, BT_SINGLEPLANE_FLOAT);
 
@@ -189,7 +221,7 @@ LCurve::LCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_LABCURVE_LABEL"), fa
     );
     lcshape->setRangeDefaultMilestones(0.05, 0.2, 0.58);
 
-    clshape = static_cast<DiagonalCurveEditor*>(curveEditorG->addCurve(CT_Diagonal, M("TP_LABCURVE_CURVEEDITOR_CL")));
+    clshape = static_cast<DiagonalCurveEditor*>(curveEditorGAdv->addCurve(CT_Diagonal, M("TP_LABCURVE_CURVEEDITOR_CL")));
     clshape->setTooltip(M("TP_LABCURVE_CURVEEDITOR_CL_TOOLTIP"));
     clshape->setEditID(EUID_Lab_CLCurve, BT_SINGLEPLANE_FLOAT);
 
@@ -202,14 +234,6 @@ LCurve::LCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_LABCURVE_LABEL"), fa
     };
     clshape->setBottomBarBgGradient(milestones);
 
-
-    // Setting the gradient milestones
-
-    // from black to white
-    milestones.emplace_back(0., 0., 0., 0.);
-    milestones.emplace_back(1., 1., 1., 1.);
-    lshape->setBottomBarBgGradient(milestones);
-    lshape->setLeftBarBgGradient(milestones);
     milestones.emplace_back(0., 0., 0., 0.);
     milestones.emplace_back(1., 1., 1., 1.);
     lcshape->setRangeDefaultMilestones(0.05, 0.2, 0.58);
@@ -236,12 +260,9 @@ LCurve::LCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_LABCURVE_LABEL"), fa
 
 
     // This will add the reset button at the end of the curveType buttons
-    curveEditorG->curveListComplete();
+    curveEditorGAdv->curveListComplete();
 
-    pack_start(*curveEditorG, Gtk::PACK_SHRINK, 4);
-    Gtk::Separator* hsepdh = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
-    hsepdh->show();
-    pack_start(*hsepdh, Gtk::PACK_EXPAND_WIDGET, 4);
+    advBox->pack_start(*curveEditorGAdv, Gtk::PACK_SHRINK, 4);
     show_all_children();
 
 }
@@ -249,7 +270,7 @@ LCurve::LCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_LABCURVE_LABEL"), fa
 LCurve::~LCurve()
 {
     delete curveEditorG;
-
+    delete curveEditorGAdv;
 }
 
 void LCurve::read(const ProcParams* pp, const ParamsEdited* pedited)
@@ -576,6 +597,7 @@ void LCurve::curveChanged(CurveEditor* ce)
 
 void LCurve::adjusterChanged(Adjuster* a, double newval)
 {
+    autoEnable();
     Glib::ustring costr;
 
     if (a == brightness) {
@@ -689,11 +711,13 @@ void LCurve::setBatchMode(bool batchMode)
 {
 
     ToolPanel::setBatchMode(batchMode);
+    advancedSection->setBatchMode(batchMode);
     brightness->showEditedCB();
     contrast->showEditedCB();
     chromaticity->showEditedCB();
     rstprotection->showEditedCB();
     curveEditorG->setBatchMode(batchMode);
+    curveEditorGAdv->setBatchMode(batchMode);
     lcshape->setBottomBarColorProvider(nullptr, -1);
     lcshape->setLeftBarColorProvider(nullptr, -1);
     gamutmunselmethod->append(M("GENERAL_UNCHANGED"));

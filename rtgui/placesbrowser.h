@@ -18,6 +18,10 @@
  */
 #pragma once
 
+#include <atomic>
+#include <map>
+#include <mutex>
+
 #include <gtkmm.h>
 
 #include <giomm.h>
@@ -38,6 +42,7 @@ private:
         Gtk::TreeModelColumn<Glib::ustring>              root;
         Gtk::TreeModelColumn<int>                        type;
         Gtk::TreeModelColumn<bool>                       rowSeparator;
+        Gtk::TreeModelColumn<Glib::ustring>              photoCount;
         PlacesColumns()
         {
             add(icon);
@@ -45,6 +50,7 @@ private:
             add(root);
             add(type);
             add(rowSeparator);
+            add(photoCount);
         }
     };
     PlacesColumns            placesColumns;
@@ -54,8 +60,13 @@ private:
     Glib::RefPtr<Gio::VolumeMonitor> vm;
     DirSelectionSlot             selectDir;
     Glib::ustring                lastSelectedDir;
-    Gtk::Button*                 add;
-    Gtk::Button*                 del;
+    Gtk::Button*                 addPlaceBtn_;
+    Gtk::Menu*                   rightClickMenu;
+    Gtk::MenuItem*               addMenuItem;
+    Gtk::MenuItem*               removeMenuItem;
+    std::map<Glib::ustring, int> photoCountCache_;
+    std::mutex photoCountMutex_;
+    std::atomic<bool> countingActive_{false};
 
 public:
 
@@ -72,6 +83,9 @@ public:
     void selectionChanged ();
     void addPressed ();
     void delPressed ();
+    bool onButtonPress (GdkEventButton* event);
+    void startPhotoCount ();
+    static int countPhotosInDir (const Glib::ustring& dirPath);
 
 public:
 

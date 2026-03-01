@@ -20,6 +20,7 @@
 #include "toolpanelcoord.h"
 #include "guiutils.h"
 #include "rtimage.h"
+#include "options.h"
 
 #include "rtengine/procparams.h"
 
@@ -93,11 +94,13 @@ FoldableToolPanel::FoldableToolPanel(Gtk::Box* content, Glib::ustring toolName, 
 
 void FoldableToolPanel::foldThemAll (GdkEventButton* event)
 {
-    if (event->button == 3) {
-        if (listener) {
-            (static_cast<ToolPanelCoordinator*>(listener))->foldAllButOne( parentContainer, this);
-        } else {
-            (static_cast<ToolPanelCoordinator*>(tmp))->foldAllButOne( parentContainer, this);
+    // Right-click always triggers accordion, left-click only when solo mode is enabled
+    if (event->button == 3 || (event->button == 1 && App::get().options().toolPanelSoloMode)) {
+        ToolPanelCoordinator* coord = listener
+            ? static_cast<ToolPanelCoordinator*>(listener)
+            : static_cast<ToolPanelCoordinator*>(tmp);
+        if (coord) {
+            coord->foldAllButOne(parentContainer, this);
         }
     }
 }
@@ -142,6 +145,14 @@ bool FoldableToolPanel::getEnabled()
     return exp->getEnabled();
 }
 
+void FoldableToolPanel::setFlatMode(bool flat)
+{
+    flatMode_ = flat;
+    if (exp) {
+        exp->setFlatMode(flat);
+    }
+}
+
 // do not emit the enabled_toggled event
 void FoldableToolPanel::setEnabled(bool isEnabled)
 {
@@ -162,6 +173,28 @@ void FoldableToolPanel::setEnabledTooltipText(Glib::ustring tooltipText)
 {
     if (exp) {
         exp->set_tooltip_text(tooltipText);
+    }
+}
+
+Gtk::Box* FoldableToolPanel::getSummaryBox()
+{
+    return exp ? exp->getSummaryBox() : nullptr;
+}
+
+void FoldableToolPanel::setExpandable(bool expandable)
+{
+    if (exp) {
+        exp->setExpandable(expandable);
+    }
+}
+
+void FoldableToolPanel::autoEnable()
+{
+    // Only auto-enable for user-initiated changes, not during parameter
+    // loading (when the listener is disabled via disableListener()).
+    if (listener && exp && exp->getUseEnabled() && !exp->getEnabled()) {
+        exp->setEnabled(true);
+        enabledChanged();
     }
 }
 

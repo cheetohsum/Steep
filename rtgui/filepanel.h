@@ -18,8 +18,12 @@
  */
 #pragma once
 
+#include <set>
+#include <string>
+
 #include <gtkmm.h>
 
+#include "albumbrowser.h"
 #include "exportpanel.h"
 #include "filecatalog.h"
 #include "fileselectionlistener.h"
@@ -33,6 +37,7 @@
 #include "rtengine/noncopyable.h"
 
 class BatchToolPanelCoordinator;
+class EditorPanel;
 class RTWindow;
 class DirBrowser;
 
@@ -91,6 +96,10 @@ private:
 
     PlacesBrowser* placesBrowser;
     RecentBrowser* recentBrowser;
+    AlbumBrowser* albumBrowser_;
+
+    void onAlbumSelected (const std::set<std::string>& whitelist);
+    void onAlbumViewRequested (const Glib::ustring& albumName, const std::vector<Glib::ustring>& files);
 
     Inspector* inspectorPanel;
     Gtk::Paned* tpcPaned;
@@ -104,6 +113,7 @@ private:
         bool complete;
         ProgressConnector<rtengine::InitialImage*> *pc;
         Thumbnail *thm;
+        EditorPanel *epanel; // pre-created panel (tabbed mode only)
     };
     MyMutex pendingLoadMutex;
     std::vector<struct pendingLoad*> pendingLoads;

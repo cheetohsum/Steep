@@ -39,6 +39,7 @@
 #include "guiutils.h"
 #include "pathutils.h"
 #include "rtimage.h"
+#include "watermarkrenderer.h"
 #include <sys/time.h>
 
 using namespace std;
@@ -781,6 +782,12 @@ rtengine::ProcessingJob* BatchQueue::imageReady(rtengine::IImagefloat* img)
     //printf ("fname=%s, %s\n", fname.c_str(), removeExtension(fname).c_str());
 
     if (img && !fname.empty()) {
+        // Apply watermark if enabled
+        const auto& wmOpts = options.watermark;
+        if (wmOpts.enabled && !wmOpts.text.empty()) {
+            applyWatermark(img, wmOpts);
+        }
+
         int err = 0;
 
         if (saveFormat.format == "tif") {

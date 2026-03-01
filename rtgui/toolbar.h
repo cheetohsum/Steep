@@ -110,4 +110,10 @@ public:
     {
         blockEdit = cond;
     }
+
+    void hideCropTools();
+    void hideHandTool();
+
+    Gtk::ToggleButton* getWbTool() { return wbTool; }
+    Gtk::ToggleButton* getColPickerTool() { return colPickerTool; }
 };

@@ -44,6 +44,7 @@ protected:
     Adjuster* radius;
     Adjuster* threshold;
     bool edges;
+    AdvancedSection* advancedSection;
 
 public:
     static const Glib::ustring TOOL_NAME;

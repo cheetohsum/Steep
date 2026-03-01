@@ -19,6 +19,7 @@
 
 #include "dirpyrequalizer.h"
 
+#include "rtimage.h"
 #include "rtengine/color.h"
 
 using namespace rtengine;
@@ -78,15 +79,21 @@ DirPyrEqualizer::DirPyrEqualizer () : FoldableToolPanel(this, TOOL_NAME, M("TP_D
     buttonBox1->set_homogeneous(true);
     pack_start(*buttonBox1);
 
-    Gtk::Button * lumacontrastMinusButton = Gtk::manage (new Gtk::Button(M("TP_DIRPYREQUALIZER_LUMACONTRAST_MINUS")));
+    Gtk::Button * lumacontrastMinusButton = Gtk::manage (new Gtk::Button());
+    lumacontrastMinusButton->set_image(*Gtk::manage(new RTImage("remove-small")));
+    lumacontrastMinusButton->set_tooltip_text(M("TP_DIRPYREQUALIZER_LUMACONTRAST_MINUS"));
     buttonBox1->pack_start(*lumacontrastMinusButton);
     lumacontrastMinusPressedConn = lumacontrastMinusButton->signal_pressed().connect( sigc::mem_fun(*this, &DirPyrEqualizer::lumacontrastMinusPressed));
 
-    Gtk::Button * lumaneutralButton = Gtk::manage (new Gtk::Button(M("TP_DIRPYREQUALIZER_LUMANEUTRAL")));
+    Gtk::Button * lumaneutralButton = Gtk::manage (new Gtk::Button());
+    lumaneutralButton->set_image(*Gtk::manage(new RTImage("undo-small")));
+    lumaneutralButton->set_tooltip_text(M("TP_DIRPYREQUALIZER_LUMANEUTRAL"));
     buttonBox1->pack_start(*lumaneutralButton);
     lumaneutralPressedConn = lumaneutralButton->signal_pressed().connect( sigc::mem_fun(*this, &DirPyrEqualizer::lumaneutralPressed));
 
-    Gtk::Button * lumacontrastPlusButton = Gtk::manage (new Gtk::Button(M("TP_DIRPYREQUALIZER_LUMACONTRAST_PLUS")));
+    Gtk::Button * lumacontrastPlusButton = Gtk::manage (new Gtk::Button());
+    lumacontrastPlusButton->set_image(*Gtk::manage(new RTImage("add-small")));
+    lumacontrastPlusButton->set_tooltip_text(M("TP_DIRPYREQUALIZER_LUMACONTRAST_PLUS"));
     buttonBox1->pack_start(*lumacontrastPlusButton);
     lumacontrastPlusPressedConn = lumacontrastPlusButton->signal_pressed().connect( sigc::mem_fun(*this, &DirPyrEqualizer::lumacontrastPlusPressed));
 
@@ -353,6 +360,7 @@ void DirPyrEqualizer::cbdlMethodChanged()
 
 void DirPyrEqualizer::adjusterChanged(Adjuster* a, double newval)
 {
+    autoEnable();
     if (listener && getEnabled()) {
         if (a == threshold) {
             listener->panelChanged (EvDirPyrEqualizerThreshold,

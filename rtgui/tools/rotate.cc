@@ -42,17 +42,13 @@ Rotate::Rotate () : FoldableToolPanel(this, TOOL_NAME, M("TP_ROTATE_LABEL"))
 
     degree = Gtk::manage (new Adjuster (M("TP_ROTATE_DEGREE"), -45, 45, 0.01, 0, irotateL, irotateR));
     degree->setAdjusterListener (this);
-    pack_start (*degree);
-
-    selectStraight = Gtk::manage (new Gtk::Button (M("TP_ROTATE_SELECTLINE")));
-    selectStraight->set_image (*Gtk::manage (new RTImage ("rotate-straighten-small")));
-    selectStraight->get_style_context()->add_class("independent");
-    pack_start (*selectStraight, Gtk::PACK_SHRINK, 2);
-
-    selectStraight->signal_pressed().connect( sigc::mem_fun(*this, &Rotate::selectStraightPressed) );
+    getSummaryBox()->pack_start (*degree);
 
     degree->setLogScale(2, 0);
 
+    setExpandable(false);
+    setFlatMode(true);
+    getSummaryBox()->show_all();
     show_all ();
 }
 
@@ -107,14 +103,6 @@ void Rotate::straighten (double deg)
 
     if (listener) {
         listener->panelChanged (EvROTDegree, Glib::ustring::format (std::setw(3), std::fixed, std::setprecision(2), degree->getValue()));
-    }
-}
-
-void Rotate::selectStraightPressed ()
-{
-
-    if (rlistener) {
-        rlistener->straightenRequested ();
     }
 }
 

@@ -70,17 +70,10 @@ IndicateClippedPanel::IndicateClippedPanel (ImageArea* ia) :
     indClippedH->set_active (options.showClippedHighlights);
     indClippedS->set_active (options.showClippedShadows);
 
-    pack_start (*previewFocusMask, Gtk::PACK_SHRINK, 0);
-    pack_start (*previewSharpMask, Gtk::PACK_SHRINK, 0);
-    pack_start (*indClippedS, Gtk::PACK_SHRINK, 0);
-    pack_start (*indClippedH, Gtk::PACK_SHRINK, 0);
-
     connSharpMask = previewSharpMask->signal_toggled().connect( sigc::bind(sigc::mem_fun(*this, &IndicateClippedPanel::buttonToggled), previewSharpMask) );
     connFocusMask = previewFocusMask->signal_toggled().connect( sigc::bind(sigc::mem_fun(*this, &IndicateClippedPanel::buttonToggled), previewFocusMask) );
     connClippedS = indClippedS->signal_toggled().connect( sigc::bind(sigc::mem_fun(*this, &IndicateClippedPanel::buttonToggled), indClippedS) );
     connClippedH = indClippedH->signal_toggled().connect( sigc::bind(sigc::mem_fun(*this, &IndicateClippedPanel::buttonToggled), indClippedH) );
-
-    show_all ();
 }
 
 // inverts a toggle programmatically
@@ -155,6 +148,34 @@ void IndicateClippedPanel::buttonToggled (Gtk::ToggleButton* tb)
     // which is set when before/after view is enabled
     if (imageArea->iLinkedImageArea != nullptr) {
         imageArea->iLinkedImageArea->queue_draw ();
+    }
+}
+
+void IndicateClippedPanel::setFocusMask(bool active)
+{
+    if (previewFocusMask->get_active() != active) {
+        previewFocusMask->set_active(active);
+    }
+}
+
+void IndicateClippedPanel::setSharpMask(bool active)
+{
+    if (previewSharpMask->get_active() != active) {
+        previewSharpMask->set_active(active);
+    }
+}
+
+void IndicateClippedPanel::setClippedHighlights(bool active)
+{
+    if (indClippedH->get_active() != active) {
+        indClippedH->set_active(active);
+    }
+}
+
+void IndicateClippedPanel::setClippedShadows(bool active)
+{
+    if (indClippedS->get_active() != active) {
+        indClippedS->set_active(active);
     }
 }
 

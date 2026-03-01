@@ -203,6 +203,7 @@ public:
     {
         zoomChanged (false);
     }
+    void setThumbnailHeight (int newHeight);
     int getEffectiveHeight ();
 
     const std::vector<ThumbBrowserEntryBase*>& getEntries ()
@@ -217,6 +218,14 @@ public:
     void refreshEditedState (const std::set<Glib::ustring>& efiles);
 
     void insertEntry (ThumbBrowserEntryBase* entry);
+
+protected:
+    bool redrawPending_ = false;
+    std::vector<ThumbBrowserEntryBase*> pendingInserts_;
+    MyMutex pendingMutex_;
+private:
+    bool onRedrawIdle_ ();
+public:
 
     void getScrollPosition (double& h, double& v);
     void setScrollPosition (double h, double v);

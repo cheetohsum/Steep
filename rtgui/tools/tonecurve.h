@@ -51,9 +51,9 @@ protected:
     Adjuster* hlth;
 
     Gtk::Box* abox;
-    Gtk::Box* hlrbox;
+    Gtk::Grid* hlrbox;
 
-    Gtk::ToggleButton* autolevels;
+    Gtk::Button* autolevels;
     Gtk::Label* lclip;
     MySpinButton* sclip;
     Gtk::Button* neutral;
@@ -84,6 +84,8 @@ protected:
     rtengine::ProcEvent EvClampOOG;
     rtengine::ProcEvent EvHLbl;
     rtengine::ProcEvent EvHLth;
+
+    AdvancedSection* advancedSection;
 
     // used temporarily in eventing
     double nextExpcomp;
@@ -117,7 +119,7 @@ public:
 
     void adjusterChanged (Adjuster* a, double newval) override;
     void neutral_pressed ();
-    void autolevels_toggled ();
+    void autolevels_clicked ();
     void clip_changed ();
     bool clip_changed_ ();
     void waitForAutoExp ();

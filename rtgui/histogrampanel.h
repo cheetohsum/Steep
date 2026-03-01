@@ -268,9 +268,12 @@ private:
 protected:
 
     Gtk::Grid* gfxGrid;
-    Gtk::Grid* buttonGrid;
+    Gtk::Overlay* gfxOverlay;
+    Gtk::Button* scopeToggleBtn;
+    Gtk::Box* bottomBar;
     Gtk::Box* persistentButtons;
     Gtk::Box* optionButtons;
+    bool scopeBarVisible;
     HistogramArea* histogramArea;
     HistogramRGBArea* histogramRGBArea;
     std::unique_ptr<HistogramRGBAreaHori> histogramRGBAreaHori;
@@ -358,6 +361,7 @@ public:
     void brightnessWidgetValueChanged();
     void brightnessUpdated(float brightness);
     void scopeOptionsToggled();
+    void scopeBarToggled();
     void type_selected(Gtk::RadioButton* button);
     void type_changed ();
     void rgbv_toggled ();

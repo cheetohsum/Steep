@@ -68,14 +68,21 @@ RAWCACorr::RAWCACorr () : FoldableToolPanel(this, TOOL_NAME, M("TP_RAWCACORR_LAB
     caRed->setLogScale(10, 0);
     caBlue->setLogScale(10, 0);
 
-    pack_start( *caAutocorrect, Gtk::PACK_SHRINK, 4);
-    pack_start( *caAutoiterations, Gtk::PACK_SHRINK, 4);
-    pack_start( *caRed, Gtk::PACK_SHRINK, 4);
-    pack_start( *caBlue, Gtk::PACK_SHRINK, 4);
+    getSummaryBox()->pack_start( *caAutocorrect, Gtk::PACK_SHRINK, 4);
+    getSummaryBox()->show_all();
 
     caAvoidcolourshift = Gtk::manage (new CheckBox(M("TP_RAWCACORR_AVOIDCOLORSHIFT"), multiImage));
     caAvoidcolourshift->setCheckBoxListener (this);
     pack_start( *caAvoidcolourshift, Gtk::PACK_SHRINK, 4);
+
+    // Advanced section for manual CA sliders and iterations
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
+
+    advBox->pack_start( *caAutoiterations, Gtk::PACK_SHRINK, 4);
+    advBox->pack_start( *caRed, Gtk::PACK_SHRINK, 4);
+    advBox->pack_start( *caBlue, Gtk::PACK_SHRINK, 4);
 
 
 }
@@ -164,6 +171,7 @@ void RAWCACorr::checkBoxToggled (CheckBox* c, CheckValue newval)
 void RAWCACorr::setBatchMode(bool batchMode)
 {
     ToolPanel::setBatchMode (batchMode);
+    advancedSection->setBatchMode(batchMode);
     caAutoiterations->showEditedCB ();
     caRed->showEditedCB ();
     caBlue->showEditedCB ();

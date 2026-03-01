@@ -134,6 +134,7 @@ private:
 
     Gtk::Image *imgIcon[11];
 
+    AdvancedSection* advancedSection;
     Gtk::Separator* enabledccSep;
     Gtk::CheckButton* enabledcc;
     bool lastEnabledcc, lastAuto;

@@ -68,6 +68,7 @@ ControlSpotPanel::ControlSpotPanel():
     transit_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_TRANSITVALUE"), 2., 100., 0.1, 60.))),
     transitweak_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_TRANSITWEAK"), 0.5, 25.0, 0.1, 1.0))),
     transitgrad_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_TRANSITGRAD"), -1.0, 1.0, 0.01, 0.0))),
+    gradangle_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_GRADANGLE"), -180., 180., 0.5, 0.))),
     feather_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_FEATVALUE_MASK"), 10., 100., 0.1, 25.))),
     struc_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_THRES"), 1.0, 12.0, 0.1, 4.0))),
     thresh_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_THRESDELTAE"), 0.0, 15.0, 0.1, 2.0))),
@@ -96,6 +97,7 @@ ControlSpotPanel::ControlSpotPanel():
     expShapeDetect_(Gtk::manage(new MyExpander(false, M("TP_LOCALLAB_ARTIF")))),
     expSpecCases_(Gtk::manage(new MyExpander(false, M("TP_LOCALLAB_SPECCASE")))),
     expMaskMerge_(Gtk::manage(new MyExpander(false, M("TP_LOCALLAB_MASFRAME")))),
+    expAdvanced_(Gtk::manage(new MyExpander(false, M("TP_LOCALLAB_SPOT_ADVANCED")))),
 
     preview_(Gtk::manage(new Gtk::ToggleButton(M("TP_LOCALLAB_PREVIEW")))),
     ctboxshape(Gtk::manage(new Gtk::Box())),
@@ -135,7 +137,7 @@ ControlSpotPanel::ControlSpotPanel():
 
 
     Gtk::Box* const hbox1_ = Gtk::manage(new Gtk::Box());
-    hbox1_->set_spacing(4);
+    hbox1_->set_spacing(2);
     hbox1_->set_homogeneous(true);
     buttonaddconn_ = button_add_->signal_clicked().connect(
                          sigc::mem_fun(*this, &ControlSpotPanel::on_button_add));
@@ -143,28 +145,21 @@ ControlSpotPanel::ControlSpotPanel():
                             sigc::mem_fun(*this, &ControlSpotPanel::on_button_delete));
     buttonduplicateconn_ = button_duplicate_->signal_clicked().connect(
                                sigc::mem_fun(*this, &ControlSpotPanel::on_button_duplicate));
-
-    hbox1_->pack_start(*button_add_);
-    hbox1_->pack_start(*button_delete_);
-    hbox1_->pack_start(*button_duplicate_);
-    pack_start(*hbox1_);
-
-    Gtk::Box* const hbox2_ = Gtk::manage(new Gtk::Box());
-    hbox2_->set_spacing(4);
-    hbox2_->set_homogeneous(true);
     buttonrenameconn_ = button_rename_->signal_clicked().connect(
                             sigc::mem_fun(*this, &ControlSpotPanel::on_button_rename));
     buttonvisibilityconn_ = button_visibility_->signal_button_release_event().connect(
                                 sigc::mem_fun(*this, &ControlSpotPanel::on_button_visibility));
 
-
     if (showtooltip) {
         button_visibility_->set_tooltip_markup(M("TP_LOCALLAB_VIS_TOOLTIP"));
     }
 
-    hbox2_->pack_start(*button_rename_);
-    hbox2_->pack_start(*button_visibility_);
-    pack_start(*hbox2_);
+    hbox1_->pack_start(*button_add_);
+    hbox1_->pack_start(*button_delete_);
+    hbox1_->pack_start(*button_duplicate_);
+    hbox1_->pack_start(*button_rename_);
+    hbox1_->pack_start(*button_visibility_);
+    pack_start(*hbox1_);
 
     treemodel_ = Gtk::ListStore::create(spots_);
     treeview_->set_model(treemodel_);
@@ -215,9 +210,12 @@ ControlSpotPanel::ControlSpotPanel():
     pack_start(*ctboxactivmethod);
 
     Gtk::Label* const labelshape = Gtk::manage(new Gtk::Label(M("TP_LOCALLAB_SHAPETYPE") + ":"));
-    ctboxshape->pack_start(*labelshape, Gtk::PACK_SHRINK, 4);
+    labelshape->set_ellipsize(Pango::ELLIPSIZE_END);
+    labelshape->set_max_width_chars(12);
+    ctboxshape->pack_start(*labelshape, Gtk::PACK_SHRINK, 2);
     shape_->append(M("TP_LOCALLAB_ELI"));
     shape_->append(M("TP_LOCALLAB_RECT"));
+    shape_->append(M("TP_LOCALLAB_GRAD"));
     shape_->set_active(0);
     shapeconn_ = shape_->signal_changed().connect(
                      sigc::mem_fun(
@@ -228,8 +226,16 @@ ControlSpotPanel::ControlSpotPanel():
         shape_->set_tooltip_text(M("TP_LOCALLAB_SHAPE_TOOLTIP"));
     }
 
+    gradangle_->setAdjusterListener(this);
+    if (showtooltip) {
+        gradangle_->set_tooltip_text(M("TP_LOCALLAB_GRADANGLE_TOOLTIP"));
+    }
+    pack_start(*gradangle_);
+
     Gtk::Label* const labelspotmethod = Gtk::manage(new Gtk::Label(M("TP_LOCALLAB_EXCLUTYPE") + ":"));
-    ctboxspotmethod->pack_start(*labelspotmethod, Gtk::PACK_SHRINK, 4);
+    labelspotmethod->set_ellipsize(Pango::ELLIPSIZE_END);
+    labelspotmethod->set_max_width_chars(12);
+    ctboxspotmethod->pack_start(*labelspotmethod, Gtk::PACK_SHRINK, 2);
 
     if (showtooltip) {
         ctboxspotmethod->set_tooltip_markup(M("TP_LOCALLAB_EXCLUTYPE_TOOLTIP"));
@@ -312,6 +318,16 @@ ControlSpotPanel::ControlSpotPanel():
         circrad_->set_tooltip_text(M("TP_LOCALLAB_CIRCRAD_TOOLTIP"));
     }
 
+    // transit_ (Mask feathering) packed directly after circrad_
+    transit_->setAdjusterListener(this);
+
+    if (showtooltip) {
+        transit_->set_tooltip_text(M("TP_LOCALLAB_TRANSIT_TOOLTIP"));
+    }
+
+    pack_start(*transit_);
+
+    // Quality method (not packed at top level, used internally)
     Gtk::Box* const ctboxqualitymethod = Gtk::manage(new Gtk::Box());
     Gtk::Label* const labelqualitymethod = Gtk::manage(new Gtk::Label(M("TP_LOCALLAB_QUAL_METHOD") + ":"));
     ctboxqualitymethod->pack_start(*labelqualitymethod, Gtk::PACK_SHRINK, 4);
@@ -328,14 +344,12 @@ ControlSpotPanel::ControlSpotPanel():
                                  *this, &ControlSpotPanel::qualityMethodChanged));
     ctboxqualitymethod->pack_start(*qualityMethod_);
 
+    // --- Advanced section (collapsed by default) ---
+    ToolParamBlock* const advancedBox = Gtk::manage(new ToolParamBlock());
+
+    // Transition Gradient sliders (Decay and Symmetry)
     if (showtooltip) {
         expTransGrad_->set_tooltip_text(M("TP_LOCALLAB_TRANSIT_TOOLTIP"));
-    }
-
-    ToolParamBlock* const transitBox = Gtk::manage(new ToolParamBlock());
-
-    if (showtooltip) {
-        transit_->set_tooltip_text(M("TP_LOCALLAB_TRANSIT_TOOLTIP"));
         transitweak_->set_tooltip_text(M("TP_LOCALLAB_TRANSITWEAK_TOOLTIP"));
         feather_->set_tooltip_text(M("TP_LOCALLAB_FEATH_TOOLTIP"));
         transitgrad_->set_tooltip_text(M("TP_LOCALLAB_TRANSITGRAD_TOOLTIP"));
@@ -343,19 +357,16 @@ ControlSpotPanel::ControlSpotPanel():
         denoichmask_->set_tooltip_text(M("TP_LOCALLAB_DENOIMASK_TOOLTIP"));
     }
 
-    transit_->setAdjusterListener(this);
     transitweak_->setAdjusterListener(this);
     transitgrad_->setAdjusterListener(this);
     feather_->setAdjusterListener(this);
     scopemask_->setAdjusterListener(this);
     denoichmask_->setAdjusterListener(this);
-    transitBox->pack_start(*transit_);
-    transitBox->pack_start(*transitweak_);
-    transitBox->pack_start(*transitgrad_);
-    //transitBox->pack_start(*feather_);
-    expTransGrad_->add(*transitBox, false);
-    pack_start(*expTransGrad_, false, false);
 
+    advancedBox->pack_start(*transitweak_);
+    advancedBox->pack_start(*transitgrad_);
+
+    // ΔE Shape detection expander
     if (showtooltip) {
         expShapeDetect_->set_tooltip_text(M("TP_LOCALLAB_ARTIF_TOOLTIP"));
     }
@@ -390,13 +401,15 @@ ControlSpotPanel::ControlSpotPanel():
     artifBox->pack_start(*balanh_);
     artifBox->pack_start(*colorde_);
     expShapeDetect_->add(*artifBox, false);
-    pack_start(*expShapeDetect_, false, false);
-//    ToolParamBlock* const artifBox2 = Gtk::manage(new ToolParamBlock());
+    advancedBox->pack_start(*expShapeDetect_, false, false);
 
+    // Preview ΔE button + colorscope
     artifBox2->pack_start(*preview_);
     artifBox2->pack_start(*colorscope_);//unused with contrlspotpanel since 17 / 01 : 2024 but data used in color, vibrance, sh
     colorscope_->hide();
-    pack_start(*artifBox2);
+    advancedBox->pack_start(*artifBox2);
+
+    // Specific cases expander
     ToolParamBlock* const specCaseBox = Gtk::manage(new ToolParamBlock());
 
     hishowconn_  = hishow_->signal_toggled().connect(
@@ -421,7 +434,7 @@ ControlSpotPanel::ControlSpotPanel():
         ctboxgamut->set_tooltip_text(M("TP_LOCALLAB_AVOIDCOLORSHIFT_TOOLTIP"));
     }
 
- Gtk::Frame* const avFrame = Gtk::manage(new Gtk::Frame());
+    Gtk::Frame* const avFrame = Gtk::manage(new Gtk::Frame());
     ToolParamBlock* const avbox = Gtk::manage(new ToolParamBlock());
     avFrame->set_label_align(0.025, 0.5);
     avbox->pack_start(*ctboxgamut);
@@ -473,10 +486,10 @@ ControlSpotPanel::ControlSpotPanel():
     ctboxwavmethod->pack_start(*wavMethod_);
     specCaseBox->pack_start(*ctboxwavmethod);
 
-
     expSpecCases_->add(*specCaseBox, false);
-    pack_start(*expSpecCases_, false, false);
+    advancedBox->pack_start(*expSpecCases_, false, false);
 
+    // Mask and Merge expander
     if (showtooltip) {
         expMaskMerge_->set_tooltip_text(M("TP_LOCALLAB_MASFRAME_TOOLTIP"));
     }
@@ -494,11 +507,8 @@ ControlSpotPanel::ControlSpotPanel():
     }
 
     lumask_->setAdjusterListener(this);
-    //savrestConn_  = savrest_->signal_toggled().connect(
-    //                    sigc::mem_fun(*this, &ControlSpotPanel::savrestChanged));
 
     if (showtooltip) {
-        //savrest_->set_tooltip_text(M("TP_LOCALLAB_SAVREST_TOOLTIP"));
         lumask_->set_tooltip_text(M("TP_LOCALLAB_LUMASK_TOOLTIP"));
         laplac_->set_tooltip_text(M("TP_LOCALLAB_LAP_MASK_TOOLTIP"));
     }
@@ -512,7 +522,12 @@ ControlSpotPanel::ControlSpotPanel():
     maskBox->pack_start(*lumask_);
     // maskBox->pack_start(*savrest_);
     expMaskMerge_->add(*maskBox, false);
-    pack_start(*expMaskMerge_, false, false);
+    advancedBox->pack_start(*expMaskMerge_, false, false);
+
+    // Pack the Advanced expander (collapsed by default)
+    expAdvanced_->add(*advancedBox, false);
+    expAdvanced_->setLevel(2);
+    pack_start(*expAdvanced_, false, false);
 
     Gtk::Separator *separatormet = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
     pack_start(*separatormet, Gtk::PACK_SHRINK, 2);
@@ -862,6 +877,7 @@ void ControlSpotPanel::load_ControlSpot_param()
     transit_->setValue((double)row[spots_.transit]);
     transitweak_->setValue((double)row[spots_.transitweak]);
     transitgrad_->setValue((double)row[spots_.transitgrad]);
+    gradangle_->setValue((double)row[spots_.gradangle]);
     feather_->setValue((double)row[spots_.feather]);
     struc_->setValue((double)row[spots_.struc]);
     thresh_->setValue((double)row[spots_.thresh]);
@@ -891,6 +907,12 @@ void ControlSpotPanel::load_ControlSpot_param()
     wavMethod_->set_active(row[spots_.wavMethod]);
 	avoidgamutMethod_->set_active(row[spots_.avoidgamutMethod]);
 
+    // Show/hide gradient angle slider based on shape
+    if (shape_->get_active_row_number() == 2) { // Gradient
+        gradangle_->show();
+    } else {
+        gradangle_->hide();
+    }
 }
 
 void ControlSpotPanel::controlspotChanged()
@@ -936,6 +958,13 @@ void ControlSpotPanel::shapeChanged()
 
     row[spots_.shape] = shape_->get_active_row_number();
     updateControlSpotCurve(row);
+
+    // Show/hide gradient angle slider based on shape
+    if (shape_->get_active_row_number() == 2) { // Gradient
+        gradangle_->show();
+    } else {
+        gradangle_->hide();
+    }
 
     // Raise event
     if (listener) {
@@ -1589,6 +1618,16 @@ void ControlSpotPanel::adjusterChanged(Adjuster* a, double newval)
         }
     }
 
+    if (a == gradangle_) {
+        row[spots_.gradangle] = gradangle_->getValue();
+
+        updateControlSpotCurve(row);
+
+        if (listener) {
+            listener->panelChanged(EvLocallabSpotGradAngle, gradangle_->getTextValue());
+        }
+    }
+
     if (a == feather_) {
         row[spots_.feather] = feather_->getValue();
 
@@ -1983,6 +2022,7 @@ void ControlSpotPanel::disableParamlistener(bool cond)
     transit_->block(cond);
     transitweak_->block(cond);
     transitgrad_->block(cond);
+    gradangle_->block(cond);
     feather_->block(cond);
     struc_->block(cond);
     thresh_->block(cond);
@@ -2031,6 +2071,7 @@ void ControlSpotPanel::setParamEditable(bool cond)
     transit_->set_sensitive(cond);
     transitweak_->set_sensitive(cond);
     transitgrad_->set_sensitive(cond);
+    gradangle_->set_sensitive(cond);
     feather_->set_sensitive(cond);
     struc_->set_sensitive(cond);
     thresh_->set_sensitive(cond);
@@ -2078,6 +2119,7 @@ void ControlSpotPanel::setParamEditable(bool cond)
 
 void ControlSpotPanel::setDefaultExpanderVisibility()
 {
+    expAdvanced_->set_expanded(false);
     expTransGrad_->set_expanded(false);
     expShapeDetect_->set_expanded(false);
     expSpecCases_->set_expanded(false);
@@ -2124,13 +2166,29 @@ void ControlSpotPanel::addControlSpotCurve(Gtk::TreeModel::Row& row)
     EditRectangle* shape_rectangle;
     shape_rectangle = new EditRectangle();
     shape_rectangle->datum = Geometry::IMAGE;
-    EditSubscriber::visibleGeometry.push_back(centerCircle); // (curveid - 1) * 7
-    EditSubscriber::visibleGeometry.push_back(shape_ellipse); // (curveid - 1) * 7 + 1
-    EditSubscriber::visibleGeometry.push_back(shape_rectangle); // (curveid - 1) * 7 + 2
-    EditSubscriber::visibleGeometry.push_back(cirX); // (curveid - 1) * 7 + 3
-    EditSubscriber::visibleGeometry.push_back(cirXL); // (curveid - 1) * 7 + 4
-    EditSubscriber::visibleGeometry.push_back(cirY); // (curveid - 1) * 7 + 5
-    EditSubscriber::visibleGeometry.push_back(cirYT); // (curveid - 1) * 7 + 6
+    EditSubscriber::visibleGeometry.push_back(centerCircle); // (curveid - 1) * GEOM_PER_SPOT
+    EditSubscriber::visibleGeometry.push_back(shape_ellipse); // (curveid - 1) * GEOM_PER_SPOT + 1
+    EditSubscriber::visibleGeometry.push_back(shape_rectangle); // (curveid - 1) * GEOM_PER_SPOT + 2
+    EditSubscriber::visibleGeometry.push_back(cirX); // (curveid - 1) * GEOM_PER_SPOT + 3
+    EditSubscriber::visibleGeometry.push_back(cirXL); // (curveid - 1) * GEOM_PER_SPOT + 4
+    EditSubscriber::visibleGeometry.push_back(cirY); // (curveid - 1) * GEOM_PER_SPOT + 5
+    EditSubscriber::visibleGeometry.push_back(cirYT); // (curveid - 1) * GEOM_PER_SPOT + 6
+
+    // Gradient geometry (visible)
+    Line* gradLine1 = new Line();
+    gradLine1->datum = Geometry::IMAGE;
+    gradLine1->innerLineWidth = 2;
+    Line* gradLine2 = new Line();
+    gradLine2->datum = Geometry::IMAGE;
+    gradLine2->innerLineWidth = 2;
+    Circle* gradAngleCircle = new Circle();
+    gradAngleCircle->datum = Geometry::IMAGE;
+    gradAngleCircle->radiusInImageSpace = false;
+    gradAngleCircle->radius = 6;
+    gradAngleCircle->filled = true;
+    EditSubscriber::visibleGeometry.push_back(gradLine1);       // (curveid - 1) * GEOM_PER_SPOT + 7
+    EditSubscriber::visibleGeometry.push_back(gradLine2);       // (curveid - 1) * GEOM_PER_SPOT + 8
+    EditSubscriber::visibleGeometry.push_back(gradAngleCircle); // (curveid - 1) * GEOM_PER_SPOT + 9
 
     // Creation of mouseOverGeometry
     cirX = new Circle();
@@ -2158,15 +2216,31 @@ void ControlSpotPanel::addControlSpotCurve(Gtk::TreeModel::Row& row)
     shape_ellipse->radiusInImageSpace = true;
     shape_rectangle = new EditRectangle();
     shape_rectangle->datum = Geometry::IMAGE;
-    EditSubscriber::mouseOverGeometry.push_back(centerCircle);  // (curveid - 1) * 7
-    EditSubscriber::mouseOverGeometry.push_back(shape_ellipse);  // (curveid - 1) * 7 + 1
-    EditSubscriber::mouseOverGeometry.push_back(shape_rectangle);  // (curveid - 1) * 7 + 2
-    EditSubscriber::mouseOverGeometry.push_back(cirX);  // (curveid - 1) * 7 + 3
-    EditSubscriber::mouseOverGeometry.push_back(cirXL);  // (curveid - 1) * 7 + 4
-    EditSubscriber::mouseOverGeometry.push_back(cirY);  // (curveid - 1) * 7 + 5
-    EditSubscriber::mouseOverGeometry.push_back(cirYT);  // (curveid - 1) * 7 + 6
+    EditSubscriber::mouseOverGeometry.push_back(centerCircle);  // (curveid - 1) * GEOM_PER_SPOT
+    EditSubscriber::mouseOverGeometry.push_back(shape_ellipse);  // (curveid - 1) * GEOM_PER_SPOT + 1
+    EditSubscriber::mouseOverGeometry.push_back(shape_rectangle);  // (curveid - 1) * GEOM_PER_SPOT + 2
+    EditSubscriber::mouseOverGeometry.push_back(cirX);  // (curveid - 1) * GEOM_PER_SPOT + 3
+    EditSubscriber::mouseOverGeometry.push_back(cirXL);  // (curveid - 1) * GEOM_PER_SPOT + 4
+    EditSubscriber::mouseOverGeometry.push_back(cirY);  // (curveid - 1) * GEOM_PER_SPOT + 5
+    EditSubscriber::mouseOverGeometry.push_back(cirYT);  // (curveid - 1) * GEOM_PER_SPOT + 6
 
-    row[spots_.curveid] = EditSubscriber::visibleGeometry.size() / 7;
+    // Gradient geometry (mouseOver)
+    gradLine1 = new Line();
+    gradLine1->datum = Geometry::IMAGE;
+    gradLine1->innerLineWidth = 2;
+    gradLine2 = new Line();
+    gradLine2->datum = Geometry::IMAGE;
+    gradLine2->innerLineWidth = 2;
+    gradAngleCircle = new Circle();
+    gradAngleCircle->datum = Geometry::IMAGE;
+    gradAngleCircle->radiusInImageSpace = false;
+    gradAngleCircle->radius = 12; // Larger for easier grabbing
+    gradAngleCircle->filled = true;
+    EditSubscriber::mouseOverGeometry.push_back(gradLine1);       // (curveid - 1) * GEOM_PER_SPOT + 7
+    EditSubscriber::mouseOverGeometry.push_back(gradLine2);       // (curveid - 1) * GEOM_PER_SPOT + 8
+    EditSubscriber::mouseOverGeometry.push_back(gradAngleCircle); // (curveid - 1) * GEOM_PER_SPOT + 9
+
+    row[spots_.curveid] = EditSubscriber::visibleGeometry.size() / GEOM_PER_SPOT;
 }
 
 void ControlSpotPanel::updateControlSpotCurve(const Gtk::TreeModel::Row& row)
@@ -2233,70 +2307,138 @@ void ControlSpotPanel::updateControlSpotCurve(const Gtk::TreeModel::Row& row)
         rectangle->topLeft.y = origin.y - decayYT;
     };
 
-    updateCenterCircle(visibleGeometry.at((curveid_ - 1) * 7));
-    updateCenterCircle(mouseOverGeometry.at((curveid_ - 1) * 7));
+    const double gradangle_ = row[spots_.gradangle];
+    const auto updateGradientLine = [&](Geometry* geom1, Geometry* geom2, Geometry* handle) {
+        const float theta = gradangle_ * rtengine::RT_PI_F / 180.f;
+        const float sinT = std::sin(theta);
+        const float cosT = std::cos(theta);
+        // Perpendicular direction to gradient
+        const float perpX = cosT;
+        const float perpY = sinT;
+        // Max span for drawing the lines
+        const float maxExtent = std::max(std::max((float)decayX, (float)decayXL), std::max((float)decayY, (float)decayYT));
+        const float span = maxExtent * 1.5f;
+        // Transition band position along gradient direction
+        const float maxX = std::max((float)decayX, (float)decayXL);
+        const float maxY = std::max((float)decayY, (float)decayYT);
+        const float maxProj = maxX * std::abs(sinT) + maxY * std::abs(cosT);
+        // Use ach=0.5 for visual representation of the transition band
+        const float bandHalf = maxProj * 0.5f;
 
-    updateEllipse(visibleGeometry.at((curveid_ - 1) * 7 + 1));
-    updateEllipse(mouseOverGeometry.at((curveid_ - 1) * 7 + 1));
+        auto* l1 = static_cast<Line*>(geom1);
+        l1->begin.set(origin.x + sinT * bandHalf - perpX * span,
+                      origin.y - cosT * bandHalf - perpY * span);
+        l1->end.set(origin.x + sinT * bandHalf + perpX * span,
+                    origin.y - cosT * bandHalf + perpY * span);
 
-    updateRectangle(visibleGeometry.at((curveid_ - 1) * 7 + 2));
-    updateRectangle(mouseOverGeometry.at((curveid_ - 1) * 7 + 2));
+        auto* l2 = static_cast<Line*>(geom2);
+        l2->begin.set(origin.x - sinT * bandHalf - perpX * span,
+                      origin.y + cosT * bandHalf - perpY * span);
+        l2->end.set(origin.x - sinT * bandHalf + perpX * span,
+                    origin.y + cosT * bandHalf + perpY * span);
 
-    updateSelectionCircle(visibleGeometry.at((curveid_ - 1) * 7 + 3), decayX, 0.);
-    updateSelectionCircle(mouseOverGeometry.at((curveid_ - 1) * 7 + 3), decayX, 0.);
+        auto* h = static_cast<Circle*>(handle);
+        h->center.set(origin.x + sinT * bandHalf, origin.y - cosT * bandHalf);
+    };
 
-    updateSelectionCircle(visibleGeometry.at((curveid_ - 1) * 7 + 4), -decayXL, 0.);
-    updateSelectionCircle(mouseOverGeometry.at((curveid_ - 1) * 7 + 4), -decayXL, 0.);
+    const int base = (curveid_ - 1) * GEOM_PER_SPOT;
 
-    updateSelectionCircle(visibleGeometry.at((curveid_ - 1) * 7 + 5), 0., decayY);
-    updateSelectionCircle(mouseOverGeometry.at((curveid_ - 1) * 7 + 5), 0., decayY);
+    updateCenterCircle(visibleGeometry.at(base));
+    updateCenterCircle(mouseOverGeometry.at(base));
 
-    updateSelectionCircle(visibleGeometry.at((curveid_ - 1) * 7 + 6), 0., -decayYT);
-    updateSelectionCircle(mouseOverGeometry.at((curveid_ - 1) * 7 + 6), 0., -decayYT);
+    updateEllipse(visibleGeometry.at(base + 1));
+    updateEllipse(mouseOverGeometry.at(base + 1));
 
-    // Update Arcellipse/Rectangle visibility according to shape and visibility
+    updateRectangle(visibleGeometry.at(base + 2));
+    updateRectangle(mouseOverGeometry.at(base + 2));
+
+    updateSelectionCircle(visibleGeometry.at(base + 3), decayX, 0.);
+    updateSelectionCircle(mouseOverGeometry.at(base + 3), decayX, 0.);
+
+    updateSelectionCircle(visibleGeometry.at(base + 4), -decayXL, 0.);
+    updateSelectionCircle(mouseOverGeometry.at(base + 4), -decayXL, 0.);
+
+    updateSelectionCircle(visibleGeometry.at(base + 5), 0., decayY);
+    updateSelectionCircle(mouseOverGeometry.at(base + 5), 0., decayY);
+
+    updateSelectionCircle(visibleGeometry.at(base + 6), 0., -decayYT);
+    updateSelectionCircle(mouseOverGeometry.at(base + 6), 0., -decayYT);
+
+    // Update gradient lines
+    updateGradientLine(visibleGeometry.at(base + 7), visibleGeometry.at(base + 8), visibleGeometry.at(base + 9));
+    updateGradientLine(mouseOverGeometry.at(base + 7), mouseOverGeometry.at(base + 8), mouseOverGeometry.at(base + 9));
+
+    // Update shape visibility according to shape type and spot visibility
     if (isvisible_) {
-        EditSubscriber::visibleGeometry.at((curveid_ - 1) * 7)->setActive(true); // centerCircle
-        EditSubscriber::visibleGeometry.at((curveid_ - 1) * 7 + 3)->setActive(true); // cirX
-        EditSubscriber::visibleGeometry.at((curveid_ - 1) * 7 + 4)->setActive(true); // cirXL
-        EditSubscriber::visibleGeometry.at((curveid_ - 1) * 7 + 5)->setActive(true); // cirY
-        EditSubscriber::visibleGeometry.at((curveid_ - 1) * 7 + 6)->setActive(true); // cirYT
-
-        EditSubscriber::mouseOverGeometry.at((curveid_ - 1) * 7)->setActive(true); // centerCircle
-        EditSubscriber::mouseOverGeometry.at((curveid_ - 1) * 7 + 3)->setActive(true); // cirX
-        EditSubscriber::mouseOverGeometry.at((curveid_ - 1) * 7 + 4)->setActive(true); // cirXL
-        EditSubscriber::mouseOverGeometry.at((curveid_ - 1) * 7 + 5)->setActive(true); // cirY
-        EditSubscriber::mouseOverGeometry.at((curveid_ - 1) * 7 + 6)->setActive(true); // cirYT
+        EditSubscriber::visibleGeometry.at(base)->setActive(true); // centerCircle
+        EditSubscriber::mouseOverGeometry.at(base)->setActive(true); // centerCircle
 
         if (shape_ == 0) { // 0 = Ellipse
-            EditSubscriber::visibleGeometry.at((curveid_ - 1) * 7 + 1)->setActive(true); // shape_ellipse
-            EditSubscriber::visibleGeometry.at((curveid_ - 1) * 7 + 2)->setActive(false); // shape_rectangle
+            EditSubscriber::visibleGeometry.at(base + 1)->setActive(true);  // shape_ellipse
+            EditSubscriber::visibleGeometry.at(base + 2)->setActive(false); // shape_rectangle
+            EditSubscriber::visibleGeometry.at(base + 3)->setActive(true);  // cirX
+            EditSubscriber::visibleGeometry.at(base + 4)->setActive(true);  // cirXL
+            EditSubscriber::visibleGeometry.at(base + 5)->setActive(true);  // cirY
+            EditSubscriber::visibleGeometry.at(base + 6)->setActive(true);  // cirYT
+            EditSubscriber::visibleGeometry.at(base + 7)->setActive(false); // gradLine1
+            EditSubscriber::visibleGeometry.at(base + 8)->setActive(false); // gradLine2
+            EditSubscriber::visibleGeometry.at(base + 9)->setActive(false); // gradAngleHandle
 
-            EditSubscriber::mouseOverGeometry.at((curveid_ - 1) * 7 + 1)->setActive(true); // shape_ellipse
-            EditSubscriber::mouseOverGeometry.at((curveid_ - 1) * 7 + 2)->setActive(false); // shape_rectangle
-        } else { // 1 = Rectangle
-            EditSubscriber::visibleGeometry.at((curveid_ - 1) * 7 + 1)->setActive(false); // shape_ellipse
-            EditSubscriber::visibleGeometry.at((curveid_ - 1) * 7 + 2)->setActive(true); // shape_rectangle
+            EditSubscriber::mouseOverGeometry.at(base + 1)->setActive(true);
+            EditSubscriber::mouseOverGeometry.at(base + 2)->setActive(false);
+            EditSubscriber::mouseOverGeometry.at(base + 3)->setActive(true);
+            EditSubscriber::mouseOverGeometry.at(base + 4)->setActive(true);
+            EditSubscriber::mouseOverGeometry.at(base + 5)->setActive(true);
+            EditSubscriber::mouseOverGeometry.at(base + 6)->setActive(true);
+            EditSubscriber::mouseOverGeometry.at(base + 7)->setActive(false);
+            EditSubscriber::mouseOverGeometry.at(base + 8)->setActive(false);
+            EditSubscriber::mouseOverGeometry.at(base + 9)->setActive(false);
+        } else if (shape_ == 1) { // 1 = Rectangle
+            EditSubscriber::visibleGeometry.at(base + 1)->setActive(false); // shape_ellipse
+            EditSubscriber::visibleGeometry.at(base + 2)->setActive(true);  // shape_rectangle
+            EditSubscriber::visibleGeometry.at(base + 3)->setActive(true);  // cirX
+            EditSubscriber::visibleGeometry.at(base + 4)->setActive(true);  // cirXL
+            EditSubscriber::visibleGeometry.at(base + 5)->setActive(true);  // cirY
+            EditSubscriber::visibleGeometry.at(base + 6)->setActive(true);  // cirYT
+            EditSubscriber::visibleGeometry.at(base + 7)->setActive(false); // gradLine1
+            EditSubscriber::visibleGeometry.at(base + 8)->setActive(false); // gradLine2
+            EditSubscriber::visibleGeometry.at(base + 9)->setActive(false); // gradAngleHandle
 
-            EditSubscriber::mouseOverGeometry.at((curveid_ - 1) * 7 + 1)->setActive(false); // shape_ellipse
-            EditSubscriber::mouseOverGeometry.at((curveid_ - 1) * 7 + 2)->setActive(true); // shape_rectangle
+            EditSubscriber::mouseOverGeometry.at(base + 1)->setActive(false);
+            EditSubscriber::mouseOverGeometry.at(base + 2)->setActive(true);
+            EditSubscriber::mouseOverGeometry.at(base + 3)->setActive(true);
+            EditSubscriber::mouseOverGeometry.at(base + 4)->setActive(true);
+            EditSubscriber::mouseOverGeometry.at(base + 5)->setActive(true);
+            EditSubscriber::mouseOverGeometry.at(base + 6)->setActive(true);
+            EditSubscriber::mouseOverGeometry.at(base + 7)->setActive(false);
+            EditSubscriber::mouseOverGeometry.at(base + 8)->setActive(false);
+            EditSubscriber::mouseOverGeometry.at(base + 9)->setActive(false);
+        } else { // 2 = Gradient
+            EditSubscriber::visibleGeometry.at(base + 1)->setActive(false); // shape_ellipse
+            EditSubscriber::visibleGeometry.at(base + 2)->setActive(false); // shape_rectangle
+            EditSubscriber::visibleGeometry.at(base + 3)->setActive(false); // cirX
+            EditSubscriber::visibleGeometry.at(base + 4)->setActive(false); // cirXL
+            EditSubscriber::visibleGeometry.at(base + 5)->setActive(false); // cirY
+            EditSubscriber::visibleGeometry.at(base + 6)->setActive(false); // cirYT
+            EditSubscriber::visibleGeometry.at(base + 7)->setActive(true);  // gradLine1
+            EditSubscriber::visibleGeometry.at(base + 8)->setActive(true);  // gradLine2
+            EditSubscriber::visibleGeometry.at(base + 9)->setActive(true);  // gradAngleHandle
+
+            EditSubscriber::mouseOverGeometry.at(base + 1)->setActive(false);
+            EditSubscriber::mouseOverGeometry.at(base + 2)->setActive(false);
+            EditSubscriber::mouseOverGeometry.at(base + 3)->setActive(false);
+            EditSubscriber::mouseOverGeometry.at(base + 4)->setActive(false);
+            EditSubscriber::mouseOverGeometry.at(base + 5)->setActive(false);
+            EditSubscriber::mouseOverGeometry.at(base + 6)->setActive(false);
+            EditSubscriber::mouseOverGeometry.at(base + 7)->setActive(true);
+            EditSubscriber::mouseOverGeometry.at(base + 8)->setActive(true);
+            EditSubscriber::mouseOverGeometry.at(base + 9)->setActive(true);
         }
     } else {
-        EditSubscriber::visibleGeometry.at((curveid_ - 1) * 7)->setActive(false); // centerCircle
-        EditSubscriber::visibleGeometry.at((curveid_ - 1) * 7 + 1)->setActive(false); // shape_ellipse
-        EditSubscriber::visibleGeometry.at((curveid_ - 1) * 7 + 2)->setActive(false); // shape_rectangle
-        EditSubscriber::visibleGeometry.at((curveid_ - 1) * 7 + 3)->setActive(false); // cirX
-        EditSubscriber::visibleGeometry.at((curveid_ - 1) * 7 + 4)->setActive(false); // cirXL
-        EditSubscriber::visibleGeometry.at((curveid_ - 1) * 7 + 5)->setActive(false); // cirY
-        EditSubscriber::visibleGeometry.at((curveid_ - 1) * 7 + 6)->setActive(false); // cirYT
-
-        EditSubscriber::mouseOverGeometry.at((curveid_ - 1) * 7)->setActive(false); // centerCircle
-        EditSubscriber::mouseOverGeometry.at((curveid_ - 1) * 7 + 1)->setActive(false); // shape_ellipse
-        EditSubscriber::mouseOverGeometry.at((curveid_ - 1) * 7 + 2)->setActive(false); // shape_rectangle
-        EditSubscriber::mouseOverGeometry.at((curveid_ - 1) * 7 + 3)->setActive(false); // cirX
-        EditSubscriber::mouseOverGeometry.at((curveid_ - 1) * 7 + 4)->setActive(false); // cirXL
-        EditSubscriber::mouseOverGeometry.at((curveid_ - 1) * 7 + 5)->setActive(false); // cirY
-        EditSubscriber::mouseOverGeometry.at((curveid_ - 1) * 7 + 6)->setActive(false); // cirYT
+        for (int i = 0; i < GEOM_PER_SPOT; i++) {
+            EditSubscriber::visibleGeometry.at(base + i)->setActive(false);
+            EditSubscriber::mouseOverGeometry.at(base + i)->setActive(false);
+        }
     }
 }
 
@@ -2311,15 +2453,15 @@ void ControlSpotPanel::deleteControlSpotCurve(Gtk::TreeModel::Row& row)
     }
 
     // visibleGeometry
-    for (int i = 6; i >= 0; i--) {
-        delete *(EditSubscriber::visibleGeometry.begin() + (curveid_ - 1) * 7 + i);
-        EditSubscriber::visibleGeometry.erase(EditSubscriber::visibleGeometry.begin() + (curveid_ - 1) * 7 + i);
+    for (int i = GEOM_PER_SPOT - 1; i >= 0; i--) {
+        delete *(EditSubscriber::visibleGeometry.begin() + (curveid_ - 1) * GEOM_PER_SPOT + i);
+        EditSubscriber::visibleGeometry.erase(EditSubscriber::visibleGeometry.begin() + (curveid_ - 1) * GEOM_PER_SPOT + i);
     }
 
     // mouseOverGeometry
-    for (int i = 6; i >= 0; i--) {
-        delete *(EditSubscriber::mouseOverGeometry.begin() + (curveid_ - 1) * 7 + i);
-        EditSubscriber::mouseOverGeometry.erase(EditSubscriber::mouseOverGeometry.begin() + (curveid_ - 1) * 7 + i);
+    for (int i = GEOM_PER_SPOT - 1; i >= 0; i--) {
+        delete *(EditSubscriber::mouseOverGeometry.begin() + (curveid_ - 1) * GEOM_PER_SPOT + i);
+        EditSubscriber::mouseOverGeometry.erase(EditSubscriber::mouseOverGeometry.begin() + (curveid_ - 1) * GEOM_PER_SPOT + i);
     }
 
     row[spots_.curveid] = 0; // Reset associated curve id
@@ -2347,7 +2489,7 @@ void ControlSpotPanel::updateCurveOpacity(const Gtk::TreeModel::Row& selectedRow
     }
 
     for (int it_ = 0; it_ < (int) EditSubscriber::visibleGeometry.size(); it_++) {
-        if ((it_ < ((curveid_ - 1) * 7)) || (it_ > ((curveid_ - 1) * 7) + 6)) { // it_ does not belong to selected curve
+        if ((it_ < ((curveid_ - 1) * GEOM_PER_SPOT)) || (it_ > ((curveid_ - 1) * GEOM_PER_SPOT) + GEOM_PER_SPOT - 1)) { // it_ does not belong to selected curve
             EditSubscriber::visibleGeometry.at(it_)->opacity = 25.;
         } else {
             EditSubscriber::visibleGeometry.at(it_)->opacity = 75.;
@@ -2366,29 +2508,34 @@ CursorShape ControlSpotPanel::getCursor(int objectID, int xPos, int yPos) const
         return CSHandOpen;
     }
 
-    const int rem_ = objectID % 7;
+    const int rem_ = objectID % GEOM_PER_SPOT;
 
     switch (rem_) {
-        case (0): // centerCircle: (curveid_ - 1) * 7
+        case (0): // centerCircle: (curveid_ - 1) * GEOM_PER_SPOT
             return CSMove2D;
 
-        case (1): // shape_ellipse: (curveid_ - 1) * 7 + 1
+        case (1): // shape_ellipse: (curveid_ - 1) * GEOM_PER_SPOT + 1
             return CSMove2D;
 
-        case (2): // shape_rectangle: (curveid_ - 1) * 7 + 2
+        case (2): // shape_rectangle: (curveid_ - 1) * GEOM_PER_SPOT + 2
             return CSMove2D;
 
-        case (3): // cirX: (curveid_ - 1) * 7 + 3
+        case (3): // cirX: (curveid_ - 1) * GEOM_PER_SPOT + 3
             return CSMove1DH;
 
-        case (4): // cirXL: (curveid_ - 1) * 7 + 4
+        case (4): // cirXL: (curveid_ - 1) * GEOM_PER_SPOT + 4
             return CSMove1DH;
 
-        case (5): // cirY: (curveid_ - 1) * 7 + 5
+        case (5): // cirY: (curveid_ - 1) * GEOM_PER_SPOT + 5
             return CSMove1DV;
 
-        case (6): // cirYT: (curveid_ - 1) * 7 + 6
+        case (6): // cirYT: (curveid_ - 1) * GEOM_PER_SPOT + 6
             return CSMove1DV;
+
+        case (7): // gradLine1: (curveid_ - 1) * GEOM_PER_SPOT + 7
+        case (8): // gradLine2: (curveid_ - 1) * GEOM_PER_SPOT + 8
+        case (9): // gradAngleHandle: (curveid_ - 1) * GEOM_PER_SPOT + 9
+            return CSMove2D;
 
         default:
             return CSHandOpen;
@@ -2430,8 +2577,8 @@ bool ControlSpotPanel::mouseOver(int modifierKey)
             return false;
         }
 
-        const int curveId_ = object_ / 7 + 1;
-        const int rem = object_ % 7;
+        const int curveId_ = object_ / GEOM_PER_SPOT + 1;
+        const int rem = object_ % GEOM_PER_SPOT;
 
         // Manage mouseOver preview for TreeView
         const Gtk::TreeModel::Children children = treemodel_->children();
@@ -2447,7 +2594,7 @@ bool ControlSpotPanel::mouseOver(int modifierKey)
         }
 
         for (int it_ = 0; it_ < (int) EditSubscriber::visibleGeometry.size(); it_++) {
-            if ((it_ < ((curveId_ - 1) * 7)) || (it_ > ((curveId_ - 1) * 7) + 6)) { // it_ does not belong to cursor pointed curve
+            if ((it_ < ((curveId_ - 1) * GEOM_PER_SPOT)) || (it_ > ((curveId_ - 1) * GEOM_PER_SPOT) + GEOM_PER_SPOT - 1)) { // it_ does not belong to cursor pointed curve
                 EditSubscriber::visibleGeometry.at(it_)->state = Geometry::NORMAL;
             }
         }
@@ -2456,57 +2603,64 @@ bool ControlSpotPanel::mouseOver(int modifierKey)
 
         // Circle, Arcellipses and Rectangle
         if (rem >= 0 && rem < 3) {
-            EditSubscriber::visibleGeometry.at((curveId_ - 1) * 7)->state = Geometry::PRELIGHT;
-            EditSubscriber::visibleGeometry.at((curveId_ - 1) * 7 + 1)->state = Geometry::PRELIGHT;
-            EditSubscriber::visibleGeometry.at((curveId_ - 1) * 7 + 2)->state = Geometry::PRELIGHT;
-            EditSubscriber::visibleGeometry.at((curveId_ - 1) * 7 + 3)->state = Geometry::PRELIGHT;
-            EditSubscriber::visibleGeometry.at((curveId_ - 1) * 7 + 4)->state = Geometry::PRELIGHT;
-            EditSubscriber::visibleGeometry.at((curveId_ - 1) * 7 + 5)->state = Geometry::PRELIGHT;
-            EditSubscriber::visibleGeometry.at((curveId_ - 1) * 7 + 6)->state = Geometry::PRELIGHT;
+            EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT)->state = Geometry::PRELIGHT;
+            EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 1)->state = Geometry::PRELIGHT;
+            EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 2)->state = Geometry::PRELIGHT;
+            EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 3)->state = Geometry::PRELIGHT;
+            EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 4)->state = Geometry::PRELIGHT;
+            EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 5)->state = Geometry::PRELIGHT;
+            EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 6)->state = Geometry::PRELIGHT;
         } else {
-            EditSubscriber::visibleGeometry.at((curveId_ - 1) * 7)->state = Geometry::NORMAL;
-            EditSubscriber::visibleGeometry.at((curveId_ - 1) * 7 + 2)->state = Geometry::NORMAL;
-            EditSubscriber::visibleGeometry.at((curveId_ - 1) * 7 + 3)->state = Geometry::NORMAL;
-            EditSubscriber::visibleGeometry.at((curveId_ - 1) * 7 + 4)->state = Geometry::NORMAL;
-            EditSubscriber::visibleGeometry.at((curveId_ - 1) * 7 + 4)->state = Geometry::NORMAL;
-            EditSubscriber::visibleGeometry.at((curveId_ - 1) * 7 + 5)->state = Geometry::NORMAL;
-            EditSubscriber::visibleGeometry.at((curveId_ - 1) * 7 + 6)->state = Geometry::NORMAL;
+            EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT)->state = Geometry::NORMAL;
+            EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 2)->state = Geometry::NORMAL;
+            EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 3)->state = Geometry::NORMAL;
+            EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 4)->state = Geometry::NORMAL;
+            EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 4)->state = Geometry::NORMAL;
+            EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 5)->state = Geometry::NORMAL;
+            EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 6)->state = Geometry::NORMAL;
         }
 
         // cirX
         if (rem == 3) {
-            EditSubscriber::visibleGeometry.at((curveId_ - 1) * 7 + 3)->state = Geometry::PRELIGHT;
+            EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 3)->state = Geometry::PRELIGHT;
 
             if (method == 1 || method == 3) { // Symmetrical cases
-                EditSubscriber::visibleGeometry.at((curveId_ - 1) * 7 + 4)->state = Geometry::PRELIGHT;
+                EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 4)->state = Geometry::PRELIGHT;
             }
         }
 
         // cirXL
         if (rem == 4) {
-            EditSubscriber::visibleGeometry.at((curveId_ - 1) * 7 + 4)->state = Geometry::PRELIGHT;
+            EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 4)->state = Geometry::PRELIGHT;
 
             if (method == 1 || method == 3) { // Symmetrical cases
-                EditSubscriber::visibleGeometry.at((curveId_ - 1) * 7 + 3)->state = Geometry::PRELIGHT;
+                EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 3)->state = Geometry::PRELIGHT;
             }
         }
 
         // cirY
         if (rem == 5) {
-            EditSubscriber::visibleGeometry.at((curveId_ - 1) * 7 + 5)->state = Geometry::PRELIGHT;
+            EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 5)->state = Geometry::PRELIGHT;
 
             if (method == 1 || method == 3) { // Symmetrical cases
-                EditSubscriber::visibleGeometry.at((curveId_ - 1) * 7 + 6)->state = Geometry::PRELIGHT;
+                EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 6)->state = Geometry::PRELIGHT;
             }
         }
 
         // cirYT
         if (rem == 6) {
-            EditSubscriber::visibleGeometry.at((curveId_ - 1) * 7 + 6)->state = Geometry::PRELIGHT;
+            EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 6)->state = Geometry::PRELIGHT;
 
             if (method == 1 || method == 3) { // Symmetrical cases
-                EditSubscriber::visibleGeometry.at((curveId_ - 1) * 7 + 5)->state = Geometry::PRELIGHT;
+                EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 5)->state = Geometry::PRELIGHT;
             }
+        }
+
+        // Gradient geometry (lines and angle handle)
+        if (rem >= 7 && rem <= 9) {
+            EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 7)->state = Geometry::PRELIGHT;
+            EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 8)->state = Geometry::PRELIGHT;
+            EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 9)->state = Geometry::PRELIGHT;
         }
 
         lastObject_ = object_;
@@ -2528,7 +2682,7 @@ bool ControlSpotPanel::button1Pressed(int modifierKey)
     }
 
     // Select associated control spot
-    const int curveId_ = lastObject_ / 7 + 1;
+    const int curveId_ = lastObject_ / GEOM_PER_SPOT + 1;
     Gtk::TreeModel::Children children = treemodel_->children();
 
     for (auto iter = children.begin(); iter != children.end(); iter++) {
@@ -2568,7 +2722,7 @@ bool ControlSpotPanel::drag1(int modifierKey)
 
     int imW, imH;
     provider->getImageSize(imW, imH);
-    const int rem = lastObject_ % 7;
+    const int rem = lastObject_ % GEOM_PER_SPOT;
     const int method = shapeMethod_->get_active_row_number();
     Coord newCoord = Coord(provider->posImage.x + provider->deltaImage.x, provider->posImage.y + provider->deltaImage.y);
 
@@ -2668,6 +2822,31 @@ bool ControlSpotPanel::drag1(int modifierKey)
         }
     }
 
+    // Gradient angle handle drag
+    if (rem >= 7 && rem <= 9) {
+        // Compute center position in image coords
+        const double cx = (double)imW / 2. + centerX_->getValue() * (double)imW / 2000.;
+        const double cy = (double)imH / 2. + centerY_->getValue() * (double)imH / 2000.;
+        // Compute angle from center to current mouse position
+        const double dx = (double)newCoord.x - cx;
+        const double dy = cy - (double)newCoord.y; // Y is inverted in image coords
+        double angle = std::atan2(dx, dy) * 180.0 / rtengine::RT_PI;
+        // Clamp to -180..180
+        if (angle > 180.0) {
+            angle -= 360.0;
+        } else if (angle < -180.0) {
+            angle += 360.0;
+        }
+        gradangle_->setValue(angle);
+        row[spots_.gradangle] = gradangle_->getValue();
+
+        updateControlSpotCurve(row);
+
+        if (listener) {
+            listener->panelChanged(EvLocallabSpotGradAngle, gradangle_->getTextValue());
+        }
+    }
+
     lastCoord_.set(newCoord.x, newCoord.y);
     return true;
 }
@@ -2726,6 +2905,7 @@ std::unique_ptr<ControlSpotPanel::SpotRow> ControlSpotPanel::getSpot(const int i
             r->avoidrad = row[spots_.avoidrad];
             r->transitweak = row[spots_.transitweak];
             r->transitgrad = row[spots_.transitgrad];
+            r->gradangle = row[spots_.gradangle];
             r->scopemask = row[spots_.scopemask];
             r->denoichmask = row[spots_.denoichmask];
             r->lumask = row[spots_.lumask];
@@ -2853,6 +3033,7 @@ void ControlSpotPanel::addControlSpot(const SpotRow &newSpot)
     row[spots_.transit] = newSpot.transit;
     row[spots_.transitweak] = newSpot.transitweak;
     row[spots_.transitgrad] = newSpot.transitgrad;
+    row[spots_.gradangle] = newSpot.gradangle;
     row[spots_.feather] = newSpot.feather;
     row[spots_.struc] = newSpot.struc;
     row[spots_.thresh] = newSpot.thresh;
@@ -2979,6 +3160,7 @@ void ControlSpotPanel::setDefaults(const rtengine::procparams::ProcParams * defP
         transit_->setDefault(defSpot.transit);
         transitweak_->setDefault(defSpot.transitweak);
         transitgrad_->setDefault(defSpot.transitgrad);
+        gradangle_->setDefault(defSpot.gradangle);
         feather_->setDefault(defSpot.feather);
         struc_->setDefault(defSpot.struc);
         thresh_->setDefault(defSpot.thresh);
@@ -3023,6 +3205,7 @@ ControlSpotPanel::ControlSpots::ControlSpots()
     add(transit);
     add(transitweak);
     add(transitgrad);
+    add(gradangle);
     add(feather);
     add(struc);
     add(thresh);

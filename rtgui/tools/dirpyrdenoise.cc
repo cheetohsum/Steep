@@ -58,9 +58,12 @@ DirPyrDenoise::DirPyrDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_DIRPY
     Gtk::Box*  lumaVBox = Gtk::manage ( new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     lumaVBox->set_spacing(2);
 
-    ctboxL = Gtk::manage (new Gtk::Box ());
-    Gtk::Label* labmL = Gtk::manage (new Gtk::Label (M("TP_DIRPYRDENOISE_LUMINANCE_CONTROL") + ":"));
-    ctboxL->pack_start (*labmL, Gtk::PACK_SHRINK, 1);
+    ctboxL = Gtk::manage(new Gtk::Grid());
+    ctboxL->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(ctboxL, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    Gtk::Label* labmL = Gtk::manage(new Gtk::Label(M("TP_DIRPYRDENOISE_LUMINANCE_CONTROL") + ":"));
+    setExpandAlignProperties(labmL, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    ctboxL->attach(*labmL, 0, 0, 1, 1);
 
     Lmethod = Gtk::manage (new MyComboBoxText ());
     Lmethod->append (M("CURVEEDITOR_CURVE"));
@@ -94,9 +97,12 @@ DirPyrDenoise::DirPyrDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_DIRPY
     Gtk::Box* chromaVBox = Gtk::manage ( new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     chromaVBox->set_spacing(2);
 
-    ctboxC = Gtk::manage (new Gtk::Box ());
-    Gtk::Label* labmC = Gtk::manage (new Gtk::Label (M("TP_DIRPYRDENOISE_CHROMINANCE_METHOD") + ":"));
-    ctboxC->pack_start (*labmC, Gtk::PACK_SHRINK, 1);
+    ctboxC = Gtk::manage(new Gtk::Grid());
+    ctboxC->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(ctboxC, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    Gtk::Label* labmC = Gtk::manage(new Gtk::Label(M("TP_DIRPYRDENOISE_CHROMINANCE_METHOD") + ":"));
+    setExpandAlignProperties(labmC, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    ctboxC->attach(*labmC, 0, 0, 1, 1);
 
     Cmethod = Gtk::manage (new MyComboBoxText ());
     Cmethod->append (M("TP_DIRPYRDENOISE_CHROMINANCE_MANUAL"));
@@ -107,9 +113,12 @@ DirPyrDenoise::DirPyrDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_DIRPY
     Cmethodconn = Cmethod->signal_changed().connect ( sigc::mem_fun(*this, &DirPyrDenoise::CmethodChanged) );
     Cmethod->set_tooltip_markup (M("TP_DIRPYRDENOISE_CHROMINANCE_METHOD_TOOLTIP"));
 
-    ctboxC2 = Gtk::manage (new Gtk::Box ());
-    Gtk::Label* labmC2 = Gtk::manage (new Gtk::Label (M("TP_DIRPYRDENOISE_CHROMINANCE_METHOD") + ":"));
-    ctboxC2->pack_start (*labmC2, Gtk::PACK_SHRINK, 1);
+    ctboxC2 = Gtk::manage(new Gtk::Grid());
+    ctboxC2->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(ctboxC2, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    Gtk::Label* labmC2 = Gtk::manage(new Gtk::Label(M("TP_DIRPYRDENOISE_CHROMINANCE_METHOD") + ":"));
+    setExpandAlignProperties(labmC2, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    ctboxC2->attach(*labmC2, 0, 0, 1, 1);
     ctboxC2->set_tooltip_markup (M("TP_DIRPYRDENOISE_CHROMINANCE_METHODADVANCED_TOOLTIP"));
 
     C2method = Gtk::manage (new MyComboBoxText ());
@@ -129,16 +138,20 @@ DirPyrDenoise::DirPyrDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_DIRPY
     redchro    = Gtk::manage (new Adjuster (M("TP_DIRPYRDENOISE_CHROMINANCE_REDGREEN"), -100, 100, 0.1, 0));
     bluechro    = Gtk::manage (new Adjuster (M("TP_DIRPYRDENOISE_CHROMINANCE_BLUEYELLOW"), -100, 100, 0.1, 0));
 
-    Gtk::Box* hb1 = Gtk::manage (new Gtk::Box ());
-    hb1->pack_start (*Gtk::manage (new Gtk::Label ( M("TP_DIRPYRDENOISE_MAIN_COLORSPACE") + ": ")), Gtk::PACK_SHRINK, 1);
+    Gtk::Grid* hb1 = Gtk::manage(new Gtk::Grid());
+    hb1->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(hb1, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    Gtk::Label* hb1Label = Gtk::manage(new Gtk::Label(M("TP_DIRPYRDENOISE_MAIN_COLORSPACE") + ": "));
+    setExpandAlignProperties(hb1Label, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     hb1->set_tooltip_markup (M("TP_DIRPYRDENOISE_MAIN_COLORSPACE_TOOLTIP"));
 
     dmethod = Gtk::manage (new MyComboBoxText ());
     dmethod->append (M("TP_DIRPYRDENOISE_MAIN_COLORSPACE_LAB"));
     dmethod->append (M("TP_DIRPYRDENOISE_MAIN_COLORSPACE_RGB"));
     dmethod->set_active(0);
-    hb1->pack_end (*dmethod, Gtk::PACK_EXPAND_WIDGET, 1);
-    pack_start(*hb1, Gtk::PACK_SHRINK, 1);
+    setExpandAlignProperties(dmethod, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    hb1->attach(*hb1Label, 0, 0, 1, 1);
+    hb1->attach(*dmethod, 1, 0, 1, 1);
 
     dmethodconn = dmethod->signal_changed().connect ( sigc::mem_fun(*this, &DirPyrDenoise::dmethodChanged) );
 
@@ -211,55 +224,81 @@ DirPyrDenoise::DirPyrDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_DIRPY
     medmethod->set_tooltip_text (M("TP_DIRPYRDENOISE_MEDIAN_TYPE_TOOLTIP"));
     medmethodconn = medmethod->signal_changed().connect ( sigc::mem_fun(*this, &DirPyrDenoise::medmethodChanged) );
 
-    ctboxm = Gtk::manage (new Gtk::Box ());
-    Gtk::Label* labmm = Gtk::manage (new Gtk::Label (M("TP_DIRPYRDENOISE_MEDIAN_METHOD") + ":"));
-    ctboxm->pack_start (*labmm, Gtk::PACK_SHRINK, 1);
+    ctboxm = Gtk::manage(new Gtk::Grid());
+    ctboxm->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(ctboxm, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    Gtk::Label* labmm = Gtk::manage(new Gtk::Label(M("TP_DIRPYRDENOISE_MEDIAN_METHOD") + ":"));
+    setExpandAlignProperties(labmm, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    ctboxm->attach(*labmm, 0, 0, 1, 1);
 
-    ctbox = Gtk::manage (new Gtk::Box ());
-    Gtk::Label* labm = Gtk::manage (new Gtk::Label (M("TP_DIRPYRDENOISE_MEDIAN_TYPE") + ":"));
-    ctbox->pack_start (*labm, Gtk::PACK_SHRINK, 1);
+    ctbox = Gtk::manage(new Gtk::Grid());
+    ctbox->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(ctbox, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    Gtk::Label* labm = Gtk::manage(new Gtk::Label(M("TP_DIRPYRDENOISE_MEDIAN_TYPE") + ":"));
+    setExpandAlignProperties(labm, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    ctbox->attach(*labm, 0, 0, 1, 1);
 
-    ctboxrgb = Gtk::manage (new Gtk::Box ());
-    Gtk::Label* labrgb = Gtk::manage (new Gtk::Label (M("TP_DIRPYRDENOISE_MEDIAN_TYPE") + ":"));
-    ctboxrgb->pack_start (*labrgb, Gtk::PACK_SHRINK, 1);
+    ctboxrgb = Gtk::manage(new Gtk::Grid());
+    ctboxrgb->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(ctboxrgb, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    Gtk::Label* labrgb = Gtk::manage(new Gtk::Label(M("TP_DIRPYRDENOISE_MEDIAN_TYPE") + ":"));
+    setExpandAlignProperties(labrgb, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    ctboxrgb->attach(*labrgb, 0, 0, 1, 1);
 
-    Gtk::Box* hb11 = Gtk::manage (new Gtk::Box ());
-    hb11->pack_start (*Gtk::manage (new Gtk::Label ( M("TP_DIRPYRDENOISE_MAIN_MODE") + ": ")), Gtk::PACK_SHRINK, 1);
+    Gtk::Grid* hb11 = Gtk::manage(new Gtk::Grid());
+    hb11->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(hb11, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    Gtk::Label* hb11Label = Gtk::manage(new Gtk::Label(M("TP_DIRPYRDENOISE_MAIN_MODE") + ": "));
+    setExpandAlignProperties(hb11Label, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     hb11->set_tooltip_markup (M("TP_DIRPYRDENOISE_MAIN_MODE_TOOLTIP"));
 
     smethod = Gtk::manage (new MyComboBoxText ());
     smethod->append (M("TP_DIRPYRDENOISE_MAIN_MODE_CONSERVATIVE"));
     smethod->append (M("TP_DIRPYRDENOISE_MAIN_MODE_AGGRESSIVE"));
     smethod->set_active(1);
-    hb11->pack_start (*smethod, Gtk::PACK_EXPAND_WIDGET, 1);
-    pack_start( *hb11, Gtk::PACK_SHRINK, 1);
+    setExpandAlignProperties(smethod, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    hb11->attach(*hb11Label, 0, 0, 1, 1);
+    hb11->attach(*smethod, 1, 0, 1, 1);
     smethodconn = smethod->signal_changed().connect ( sigc::mem_fun(*this, &DirPyrDenoise::smethodChanged) );
 
     autoGain = Gtk::manage(new CheckBox(M("TP_DIRPYRDENOISE_MAIN_AUTO_GAIN"), multiImage));
     autoGain->set_tooltip_text(M("TP_DIRPYRDENOISE_MAIN_AUTO_GAIN_TOOLTIP"));
     autoGain->setCheckBoxListener(this);
-    pack_start(*autoGain, Gtk::PACK_SHRINK, 0);
 
     gamma = Gtk::manage (new Adjuster (M("TP_DIRPYRDENOISE_MAIN_GAMMA"), 1.0, 3.0, 0.01, 1.7));
     gamma->set_tooltip_text (M("TP_DIRPYRDENOISE_MAIN_GAMMA_TOOLTIP"));
     gamma->setAdjusterListener (this);
     gamma->show();
-    pack_start (*gamma, Gtk::PACK_EXPAND_WIDGET, 1);
 
     passes  = Gtk::manage (new Adjuster (M("TP_DIRPYRDENOISE_MEDIAN_PASSES"), 1.0, 3.0, 1., 1.));
     passes->set_tooltip_text (M("TP_DIRPYRDENOISE_MEDIAN_PASSES_TOOLTIP"));
     passes->setAdjusterListener (this);
     passes->show();
-    ctboxL->pack_start (*Lmethod);
+
+    // Advanced section (all controls behind Advanced)
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
+
+    advBox->pack_start(*luma, Gtk::PACK_SHRINK, 1);
+    advBox->pack_start(*chroma, Gtk::PACK_SHRINK, 1);
+    advBox->pack_start(*hb1, Gtk::PACK_SHRINK, 1);
+    advBox->pack_start( *hb11, Gtk::PACK_SHRINK, 1);
+    advBox->pack_start(*autoGain, Gtk::PACK_SHRINK, 0);
+    advBox->pack_start (*gamma, Gtk::PACK_EXPAND_WIDGET, 1);
+
+    setExpandAlignProperties(Lmethod, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    ctboxL->attach(*Lmethod, 1, 0, 1, 1);
     lumaVBox->pack_start (*ctboxL);
-    lumaVBox->pack_start (*luma);
     lumaVBox->pack_start (*NoiscurveEditorG, Gtk::PACK_SHRINK, 4);
     lumaVBox->pack_start (*Ldetail);
     lumaFrame->add(*lumaVBox);
-    pack_start (*lumaFrame);
+    advBox->pack_start (*lumaFrame);
 
-    ctboxC->pack_start (*Cmethod);
-    ctboxC2->pack_start (*C2method);
+    setExpandAlignProperties(Cmethod, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    ctboxC->attach(*Cmethod, 1, 0, 1, 1);
+    setExpandAlignProperties(C2method, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    ctboxC2->attach(*C2method, 1, 0, 1, 1);
 
     if(options.rtSettings.leveldnautsimpl == 1) {
         chromaVBox->pack_start (*ctboxC);
@@ -271,16 +310,18 @@ DirPyrDenoise::DirPyrDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_DIRPY
     chromaVBox->pack_start (*TileLabels);
     chromaVBox->pack_start (*PrevLabels);
 
-    chromaVBox->pack_start (*chroma);
     chromaVBox->pack_start (*redchro);
     chromaVBox->pack_start (*bluechro);
     chromaVBox->pack_start (*CCcurveEditorG, Gtk::PACK_SHRINK, 4);
     chromaFrame->add(*chromaVBox);
-    pack_start (*chromaFrame);
+    advBox->pack_start (*chromaFrame);
 
-    ctboxm->pack_start (*methodmed);
-    ctbox->pack_start (*medmethod);
-    ctboxrgb->pack_start (*rgbmethod);
+    setExpandAlignProperties(methodmed, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    ctboxm->attach(*methodmed, 1, 0, 1, 1);
+    setExpandAlignProperties(medmethod, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    ctbox->attach(*medmethod, 1, 0, 1, 1);
+    setExpandAlignProperties(rgbmethod, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    ctboxrgb->attach(*rgbmethod, 1, 0, 1, 1);
 
     medianVBox->pack_start (*ctboxm);
     medianVBox->pack_start (*ctbox);
@@ -288,7 +329,7 @@ DirPyrDenoise::DirPyrDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_DIRPY
     medianVBox->pack_start (*passes);
     medianFrame->add(*medianVBox);
 
-    pack_start (*medianFrame);
+    advBox->pack_start (*medianFrame);
 
     medianConn = median->signal_toggled().connect( sigc::mem_fun(*this, &DirPyrDenoise::medianChanged) );
     ctboxrgb->hide();
@@ -987,6 +1028,7 @@ void DirPyrDenoise::setDefaults (const ProcParams* defParams, const ParamsEdited
 
 void DirPyrDenoise::adjusterChanged(Adjuster* a, double newval)
 {
+    autoEnable();
     const Glib::ustring costr = Glib::ustring::format (std::setw(3), std::fixed, std::setprecision(2), a->getValue());
 
     if (listener && getEnabled()) {
@@ -1103,6 +1145,7 @@ void DirPyrDenoise::setBatchMode (bool batchMode)
     medmethod->append (M("GENERAL_UNCHANGED"));
     methodmed->append (M("GENERAL_UNCHANGED"));
     rgbmethod->append (M("GENERAL_UNCHANGED"));
+    advancedSection->setBatchMode(batchMode);
 
 }
 

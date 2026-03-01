@@ -30,6 +30,7 @@ protected:
     Adjuster *threshold;
     Adjuster *amount;
     Adjuster *anchor;
+    AdvancedSection *advancedSection;
 
     rtengine::ProcEvent EvTMFattalAnchor;
     

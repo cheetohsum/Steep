@@ -182,9 +182,9 @@ private:
     LabGrid *labgridcie;
     IdleRegister idle_register;
 
-    Gtk::Box* willuBox;
+    Gtk::Grid* willuBox;
     Gtk::Label* willulab;
-    Gtk::Box* wprimBox;
+    Gtk::Grid* wprimBox;
     Gtk::Label* wprimlab;
     Gtk::Label* cielab;
     Gtk::Grid* primCoordGrid;
@@ -201,7 +201,7 @@ private:
     Gtk::CheckButton* fbw;
     Gtk::CheckButton* gamut;
 
-    Gtk::Box* wcatBox;
+    Gtk::Grid* wcatBox;
     Gtk::Label* wcatlab;
 
 
@@ -269,6 +269,7 @@ private:
     float nextmx;
     float nextmy;
     Gtk::Label* wavlocLabels;
+    AdvancedSection* advancedSection;
 
 public:
     static const Glib::ustring TOOL_NAME;

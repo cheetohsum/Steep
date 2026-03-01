@@ -87,7 +87,12 @@ class ProgressConnector
     void workingThread ()
     {
         retval = opStart.emit ();
-        gdk_threads_add_idle(ProgressConnector<T>::emitEndSignalUI, new sigc::signal0<bool>(opEnd));
+        // Use HIGH priority so the image-loaded callback runs before
+        // queued directory-enumeration and thumbnail-loading idle callbacks,
+        // which default to G_PRIORITY_DEFAULT_IDLE (200).
+        gdk_threads_add_idle_full(G_PRIORITY_HIGH,
+                                  ProgressConnector<T>::emitEndSignalUI,
+                                  new sigc::signal0<bool>(opEnd), nullptr);
         workThread = nullptr;
     }
 

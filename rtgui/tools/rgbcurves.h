@@ -41,6 +41,7 @@ protected:
     DiagonalCurveEditor* Bshape;
 
     Gtk::CheckButton* lumamode;
+    AdvancedSection* advancedSection;
     bool lastLumamode;
     sigc::connection lumamodeConn;
 

@@ -74,11 +74,11 @@ HistogramPanel::HistogramPanel () :
     ),
     panel_listener(nullptr)
 {
-    setExpandAlignProperties(this, true, true, Gtk::ALIGN_FILL, Gtk::ALIGN_FILL);
+    setExpandAlignProperties(this, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_START);
     set_name("HistogramPanel");
 
     histogramArea = Gtk::manage (new HistogramArea (this));
-    setExpandAlignProperties(histogramArea, true, true, Gtk::ALIGN_FILL, Gtk::ALIGN_FILL);
+    setExpandAlignProperties(histogramArea, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_FILL);
 
     histogramRGBAreaHori.reset(new HistogramRGBAreaHori());
     setExpandAlignProperties(histogramRGBAreaHori.get(), true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_END);
@@ -227,12 +227,9 @@ HistogramPanel::HistogramPanel () :
     scopeVectHcBtn->set_tooltip_text(M("HISTOGRAM_TOOLTIP_TYPE_VECTORSCOPE_HC"));
     scopeVectHsBtn->set_tooltip_text(M("HISTOGRAM_TOOLTIP_TYPE_VECTORSCOPE_HS"));
 
-    buttonGrid = Gtk::manage (new Gtk::Grid ());
-    buttonGrid->set_orientation(Gtk::ORIENTATION_HORIZONTAL);
-    persistentButtons = Gtk::manage(new Gtk::Box());
-    persistentButtons->set_orientation(Gtk::ORIENTATION_VERTICAL);
-    optionButtons = Gtk::manage(new Gtk::Box());
-    optionButtons->set_orientation(Gtk::ORIENTATION_VERTICAL);
+    bottomBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+    persistentButtons = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+    optionButtons = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
 
     showRed->set_active   (options.histogramRed);
     showGreen->set_active (options.histogramGreen);
@@ -300,8 +297,8 @@ HistogramPanel::HistogramPanel () :
     setExpandAlignProperties(scopeWaveBtn, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_FILL);
     setExpandAlignProperties(scopeVectHcBtn, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_FILL);
     setExpandAlignProperties(scopeVectHsBtn, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_FILL);
-    setExpandAlignProperties(persistentButtons, false, true, Gtk::ALIGN_START, Gtk::ALIGN_FILL);
-    setExpandAlignProperties(optionButtons, false, true, Gtk::ALIGN_START, Gtk::ALIGN_FILL);
+    setExpandAlignProperties(persistentButtons, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    setExpandAlignProperties(optionButtons, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
 
     showRed->signal_toggled().connect( sigc::mem_fun(*this, &HistogramPanel::red_toggled), showRed );
     showGreen->signal_toggled().connect( sigc::mem_fun(*this, &HistogramPanel::green_toggled), showGreen );
@@ -318,51 +315,68 @@ HistogramPanel::HistogramPanel () :
     scopeVectHcBtn->signal_toggled().connect(sigc::bind(sigc::mem_fun(*this, &HistogramPanel::type_selected), scopeVectHcBtn));
     scopeVectHsBtn->signal_toggled().connect(sigc::bind(sigc::mem_fun(*this, &HistogramPanel::type_selected), scopeVectHsBtn));
 
-    brightnessWidget = Gtk::manage(new Gtk::Scale(Gtk::ORIENTATION_VERTICAL));
-    brightnessWidget->set_inverted();
+    brightnessWidget = Gtk::manage(new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
+    brightnessWidget->set_inverted(false);
     brightnessWidget->set_range(log(HistogramArea::MIN_BRIGHT), log(HistogramArea::MAX_BRIGHT));
     brightnessWidget->set_draw_value(false);
     brightnessWidget->signal_value_changed().connect(sigc::mem_fun(*this, &HistogramPanel::brightnessWidgetValueChanged));
     brightnessWidget->set_name("histScale");
     brightnessWidget->set_tooltip_text(M("HISTOGRAM_TOOLTIP_TRACE_BRIGHTNESS"));
-    setExpandAlignProperties(brightnessWidget, true, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_START);
+    setExpandAlignProperties(brightnessWidget, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_CENTER);
+    brightnessWidget->set_size_request(60, -1);
 
-    optionButtons->add(*showRed);
-    optionButtons->add(*showGreen);
-    optionButtons->add(*showBlue);
-    optionButtons->add(*showValue);
-    optionButtons->add(*showChro);
-    optionButtons->add(*showMode);
-    optionButtons->add(*showBAR);
-    optionButtons->add(*brightnessWidget);
+    optionButtons->pack_start(*showRed, Gtk::PACK_SHRINK);
+    optionButtons->pack_start(*showGreen, Gtk::PACK_SHRINK);
+    optionButtons->pack_start(*showBlue, Gtk::PACK_SHRINK);
+    optionButtons->pack_start(*showValue, Gtk::PACK_SHRINK);
+    optionButtons->pack_start(*showChro, Gtk::PACK_SHRINK);
+    optionButtons->pack_start(*showMode, Gtk::PACK_SHRINK);
+    optionButtons->pack_start(*showBAR, Gtk::PACK_SHRINK);
+    optionButtons->pack_start(*brightnessWidget, Gtk::PACK_SHRINK);
 
     Gtk::Separator* separator = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
-    setExpandAlignProperties(separator, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
-    persistentButtons->add(*scopeHistBtn);
-    persistentButtons->add(*scopeHistRawBtn);
-    persistentButtons->add(*scopeParadeBtn);
-    persistentButtons->add(*scopeWaveBtn);
-    persistentButtons->add(*scopeVectHsBtn);
-    persistentButtons->add(*scopeVectHcBtn);
-    persistentButtons->add(*separator);
-    persistentButtons->add(*scopeOptions);
+    setExpandAlignProperties(separator, false, true, Gtk::ALIGN_CENTER, Gtk::ALIGN_FILL);
+    persistentButtons->pack_start(*scopeHistBtn, Gtk::PACK_SHRINK);
+    persistentButtons->pack_start(*scopeHistRawBtn, Gtk::PACK_SHRINK);
+    persistentButtons->pack_start(*scopeParadeBtn, Gtk::PACK_SHRINK);
+    persistentButtons->pack_start(*scopeWaveBtn, Gtk::PACK_SHRINK);
+    persistentButtons->pack_start(*scopeVectHsBtn, Gtk::PACK_SHRINK);
+    persistentButtons->pack_start(*scopeVectHcBtn, Gtk::PACK_SHRINK);
+    persistentButtons->pack_start(*separator, Gtk::PACK_SHRINK);
+    persistentButtons->pack_start(*scopeOptions, Gtk::PACK_SHRINK);
 
-    // Put the button vbox next to the window's border to be less disturbing
-    if (options.histogramPosition == 1) {
-        buttonGrid->add(*persistentButtons);
-        buttonGrid->add(*optionButtons);
+    // Small toggle button overlaid in the top-right corner of the histogram
+    scopeToggleBtn = Gtk::manage(new Gtk::Button());
+    scopeToggleBtn->set_image(*Gtk::manage(new RTImage("histogram-type-histogram-small", Gtk::ICON_SIZE_BUTTON)));
+    scopeToggleBtn->set_name("histScopeToggle");
+    scopeToggleBtn->set_relief(Gtk::RELIEF_NONE);
+    scopeToggleBtn->set_can_focus(false);
+    scopeToggleBtn->set_tooltip_text(M("HISTOGRAM_TOOLTIP_TYPE_HISTOGRAM"));
+    scopeToggleBtn->set_halign(Gtk::ALIGN_END);
+    scopeToggleBtn->set_valign(Gtk::ALIGN_START);
+    scopeToggleBtn->set_margin_top(2);
+    scopeToggleBtn->set_margin_end(2);
+    scopeToggleBtn->signal_clicked().connect(sigc::mem_fun(*this, &HistogramPanel::scopeBarToggled));
 
-        add (*buttonGrid);
-        add (*gfxGrid);
-    } else {
-        buttonGrid->add(*optionButtons);
-        buttonGrid->add(*persistentButtons);
+    // Overlay: histogram drawing area with toggle button on top
+    gfxOverlay = Gtk::manage(new Gtk::Overlay());
+    gfxOverlay->add(*gfxGrid);
+    gfxOverlay->add_overlay(*scopeToggleBtn);
+    gfxOverlay->set_overlay_pass_through(*scopeToggleBtn, false);
 
-        add (*gfxGrid);
-        add (*buttonGrid);
-    }
+    // Vertical layout: overlaid gfxGrid on top, bottom bar hidden by default
+    set_orientation(Gtk::ORIENTATION_VERTICAL);
+    bottomBar->pack_start(*persistentButtons, Gtk::PACK_SHRINK);
+    bottomBar->pack_start(*optionButtons, Gtk::PACK_SHRINK);
+    bottomBar->set_name("histBottomBar");
+    add(*gfxOverlay);
+    add(*bottomBar);
+
+    scopeBarVisible = false;
 
     show_all ();
+    bottomBar->set_no_show_all();
+    bottomBar->set_visible(false);
     optionButtons->set_no_show_all();
     optionButtons->set_visible(options.histogramShowOptionButtons);
 
@@ -525,6 +539,12 @@ void HistogramPanel::scopeOptionsToggled()
     optionButtons->set_visible(scopeOptions->get_active());
 }
 
+void HistogramPanel::scopeBarToggled()
+{
+    scopeBarVisible = !scopeBarVisible;
+    bottomBar->set_visible(scopeBarVisible);
+}
+
 void HistogramPanel::type_selected(Gtk::RadioButton* button)
 {
     // Get radio button value
@@ -685,32 +705,12 @@ void HistogramPanel::pointerMoved (bool validPos, const rtengine::procparams::Co
  */
 void HistogramPanel::reorder (Gtk::PositionType align)
 {
+    // Reposition the vertical RGB area within gfxGrid based on panel side
+    gfxGrid->remove(*histogramRGBAreaVert);
     if (align == Gtk::POS_LEFT) {
-        gfxGrid->reference();
-        removeIfThere(this, gfxGrid, false);
-        add (*gfxGrid);
-        gfxGrid->unreference();
-
-        gfxGrid->remove(*histogramRGBAreaVert);
-        gfxGrid->add(*histogramRGBAreaVert);
-
-        optionButtons->reference();
-        removeIfThere(buttonGrid, optionButtons, false);
-        buttonGrid->add(*optionButtons);
-        optionButtons->unreference();
+        gfxGrid->attach_next_to(*histogramRGBAreaVert, *histogramArea, Gtk::POS_RIGHT, 1, 1);
     } else {
-        buttonGrid->reference();
-        removeIfThere(this, buttonGrid, false);
-        add (*buttonGrid);
-        buttonGrid->unreference();
-
-        gfxGrid->remove(*histogramRGBAreaVert);
         gfxGrid->attach_next_to(*histogramRGBAreaVert, *histogramArea, Gtk::POS_LEFT, 1, 1);
-
-        persistentButtons->reference();
-        removeIfThere(buttonGrid, persistentButtons, false);
-        buttonGrid->add(*persistentButtons);
-        persistentButtons->unreference();
     }
 }
 
@@ -1087,8 +1087,8 @@ Gtk::SizeRequestMode HistogramArea::get_request_mode_vfunc () const
 
 void HistogramArea::get_preferred_height_vfunc (int &minimum_height, int &natural_height) const
 {
-    minimum_height = RTScalable::scalePixelSize(100);
-    natural_height = RTScalable::scalePixelSize(200);
+    minimum_height = RTScalable::scalePixelSize(60);
+    natural_height = RTScalable::scalePixelSize(120);
 }
 
 void HistogramArea::get_preferred_width_vfunc (int &minimum_width, int &natural_width) const
@@ -1369,24 +1369,54 @@ void HistogramArea::updateDrawingArea (const ::Cairo::RefPtr< Cairo::Context> &c
             drawMarks(cr, chist, realhistheight, winw, ui, oi);
         }
 
+        // Phase 1: Draw RGB channels as filled glass areas with additive
+        // blending for natural color mixing at overlaps:
+        // R+G=Yellow, R+B=Magenta, G+B=Cyan, R+G+B=White
+        cr->set_operator(Cairo::OPERATOR_ADD);
+
         if (needRed) {
             drawCurve(cr, rhchanged, realhistheight, winw, winh);
-            cr->set_source_rgb (1.0, 0.0, 0.0);
-            cr->stroke ();
+            cr->set_source_rgba(1.0, 0.0, 0.0, 0.45);
+            cr->fill();
+        }
+
+        if (needGreen) {
+            drawCurve(cr, ghchanged, realhistheight, winw, winh);
+            cr->set_source_rgba(0.0, 1.0, 0.0, 0.45);
+            cr->fill();
+        }
+
+        if (needBlue) {
+            drawCurve(cr, bhchanged, realhistheight, winw, winh);
+            cr->set_source_rgba(0.0, 0.4, 1.0, 0.45);
+            cr->fill();
+        }
+
+        // Phase 2: Draw subtle edge lines and clipping marks with normal compositing
+        cr->set_operator(Cairo::OPERATOR_OVER);
+        cr->set_line_width(1.0);
+
+        if (needRed) {
+            drawCurve(cr, rhchanged, realhistheight, winw, winh);
+            cr->set_source_rgba(1.0, 0.3, 0.3, 0.35);
+            cr->stroke();
+            cr->set_source_rgba(1.0, 0.0, 0.0, 0.9);
             drawMarks(cr, rhchanged, realhistheight, winw, ui, oi);
         }
 
         if (needGreen) {
             drawCurve(cr, ghchanged, realhistheight, winw, winh);
-            cr->set_source_rgb (0.0, 1.0, 0.0);
-            cr->stroke ();
+            cr->set_source_rgba(0.3, 1.0, 0.3, 0.35);
+            cr->stroke();
+            cr->set_source_rgba(0.0, 1.0, 0.0, 0.9);
             drawMarks(cr, ghchanged, realhistheight, winw, ui, oi);
         }
 
         if (needBlue) {
             drawCurve(cr, bhchanged, realhistheight, winw, winh);
-            cr->set_source_rgb (0.0, 0.4, 1.0);
-            cr->stroke ();
+            cr->set_source_rgba(0.3, 0.5, 1.0, 0.35);
+            cr->stroke();
+            cr->set_source_rgba(0.0, 0.4, 1.0, 0.9);
             drawMarks(cr, bhchanged, realhistheight, winw, ui, oi);
         }
 

@@ -253,6 +253,9 @@ enum class BlurType {
 //    void colorCurve       (LabImage* lold, LabImage* lnew);
     void sharpening(LabImage* lab, const procparams::SharpeningParams &sharpenParam, bool showMask = false);
 
+    static void blendAIDenoise(Imagefloat* original, const Imagefloat* denoised, double blend,
+                               int srcX = 0, int srcY = 0, int skip = 1);
+
     void doCapture_Sharpening_SE(Imagefloat *rgb, int bfw, int bfh, struct localpass &locp, int sk, float &sharpc, bool autoshar, float capradiu,  float deconvCo, float deconvLat, bool itcheck, bool showMask, float deconvgam);
     void CaptureDeconvSharpening_SE (float** luminance, const float* const * oldLuminance, const float * const * blend, int bfw, int bfh, struct localpass &locp, float sigma, float sigmaCornerOffset, int iterations, bool checkIterStop, double startVal, double endVal);
 
@@ -434,7 +437,7 @@ enum class BlurType {
                 const LocwavCurve& loclmasCurve_wav, bool lmasutili_wav,
                 bool LHutili, bool HHutili, bool CHutili, bool HHutilijz, bool CHutilijz, bool LHutilijz, const LUTf& cclocalcurve, bool localcutili, const LUTf& rgblocalcurve, bool localrgbutili, bool localexutili, const LUTf& exlocalcurve, const LUTf& hltonecurveloc, const LUTf& shtonecurveloc, const LUTf& tonecurveloc, const LUTf& lightCurveloc,
                 double& huerefblur, double &chromarefblur, double& lumarefblur, double &hueref, double &chromaref, double &lumaref, double &sobelref, int &lastsav,
-                bool prevDeltaE, int llColorMask, int llColorMaskinv, int llExpMask, int llExpMaskinv, int llSHMask, int llSHMaskinv, int llvibMask, int lllcMask, int llsharMask, int llcbMask, int llretiMask, int llsoftMask, int lltmMask, int llblMask, int lllogMask, int ll_Mask, int llcieMask,
+                bool prevDeltaE, bool showMaskOverlay, int llColorMask, int llColorMaskinv, int llExpMask, int llExpMaskinv, int llSHMask, int llSHMaskinv, int llvibMask, int lllcMask, int llsharMask, int llcbMask, int llretiMask, int llsoftMask, int lltmMask, int llblMask, int lllogMask, int ll_Mask, int llcieMask,
                 float &minCD, float &maxCD, float &mini, float &maxi, float &Tmean, float &Tsigma, float &Tmin, float &Tmax,
                 float& meantm, float& stdtm, float& meanreti, float& stdreti, float &fab, float &maxicam, float &rdx, float &rdy, float &grx, float &gry, float &blx, float &bly, float &meanx, float &meany, float &meanxe, float &meanye, float &maxdat, int &prim, int &ill, float &contsig, float &lightsig, float &slopeg, bool &linkrgb,
                 float *resi, float &sharc, float &denocont, int *ghsbpwp, float *ghsbpwpvalue, float *savmadl, float *ghsbwslider, float &ghssym, bool &ghsautsp, float *ghscolor, float &ghsmid, float &ghsmaxrgb, float &ghs3sig, float *michbwslider);
@@ -595,6 +598,7 @@ enum class BlurType {
     void ToneMapFattal02(Imagefloat *rgb, const procparams::FattalToneMappingParams &fatParams, int detail_level, int Lalone, float **Lum, int WW, int HH, int algo, bool sat);
     void localContrast(LabImage *lab, float **destination, const procparams::LocalContrastParams &localContrastParams, bool fftwlc, double scale);
     void colorToningLabGrid(LabImage *lab, int xstart, int xend, int ystart, int yend, bool MultiThread);
+    void colorGrading(LabImage *lab, int xstart, int xend, int ystart, int yend, bool MultiThread);
     //void shadowsHighlights(LabImage *lab);
     void shadowsHighlights(LabImage *lab, bool ena, int labmode, int hightli, int shado, int rad, int scal, int hltonal, int shtonal);
     void toneEqualizer(Imagefloat *rgb);

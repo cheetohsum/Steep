@@ -20,6 +20,7 @@
 
 #include <gtkmm.h>
 
+#include "guiutils.h"
 #include "toolpanel.h"
 #include "widgets/basic/adjuster.h"
 #include "widgets/basic/checkbox.h"
@@ -41,6 +42,7 @@ protected:
     rtengine::ProcEvent EvPreProcessCAAutoiterations;
     rtengine::ProcEvent EvPreProcessCAColourshift;
     rtengine::ProcEvent EvPreProcessCAColourshiftHistory;
+    AdvancedSection* advancedSection;
 
 public:
     static const Glib::ustring TOOL_NAME;

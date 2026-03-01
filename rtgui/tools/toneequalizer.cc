@@ -46,22 +46,29 @@ ToneEqualizer::ToneEqualizer(): FoldableToolPanel(this, TOOL_NAME, M("TP_TONE_EQ
     for (size_t i = 0; i < bands.size(); ++i) {
         bands[i] = Gtk::manage(new Adjuster(M("TP_TONE_EQUALIZER_BAND_" + std::to_string(i)), -100, 100, 1, 0, Gtk::manage(new RTImage(Glib::ustring("circle-") + images[i] + "-small"))));
         bands[i]->setAdjusterListener(this);
-        pack_start(*bands[i]);
+        getSummaryBox()->pack_start(*bands[i]);
         bands[i]->showIcons(false);
     }
+
+    getSummaryBox()->show_all();
+
+    // Advanced items
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
 
     pivot = Gtk::manage(new Adjuster(M("TP_TONE_EQUALIZER_PIVOT"), -12, 12, 0.05, 0));
     pivot->setLogScale(64, 0, true);
     pivot->setAdjusterListener(this);
-    pack_start(*pivot);
+    advBox->pack_start(*pivot);
 
-    pack_start(*Gtk::manage(new Gtk::HSeparator()));
+    advBox->pack_start(*Gtk::manage(new Gtk::HSeparator()));
     regularization = Gtk::manage(new Adjuster(M("TP_TONE_EQUALIZER_DETAIL"), -5, 5, 1, 0));
     regularization->setAdjusterListener(this);
-    pack_start(*regularization);
+    advBox->pack_start(*regularization);
 
     show_colormap = Gtk::manage(new CheckBox(M("TP_TONE_EQUALIZER_SHOW_COLOR_MAP"), multiImage));
-    pack_start(*show_colormap);
+    advBox->pack_start(*show_colormap);
     show_colormap->setCheckBoxListener(this);
 
     show_all_children ();
@@ -149,6 +156,7 @@ void ToneEqualizer::setDefaults(const ProcParams *defParams, const ParamsEdited*
 
 void ToneEqualizer::adjusterChanged(Adjuster *a, double newval)
 {
+    autoEnable();
     if (listener && getEnabled()) {
         if (a == regularization) {
             listener->panelChanged(EvRegularization, Glib::ustring::format(a->getValue()));
@@ -187,6 +195,7 @@ void ToneEqualizer::enabledChanged()
 void ToneEqualizer::setBatchMode(bool batchMode)
 {
     ToolPanel::setBatchMode(batchMode);
+    advancedSection->setBatchMode(batchMode);
     if (batchMode) {
         for (auto band : bands) {
             band->showEditedCB();

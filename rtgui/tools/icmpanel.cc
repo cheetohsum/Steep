@@ -380,13 +380,16 @@ ICMPanel::ICMPanel() : FoldableToolPanel(this, TOOL_NAME, M("TP_ICM_LABEL")), iu
     primExp->signal_button_release_event().connect_notify(sigc::bind(sigc::mem_fun(this, &ICMPanel::foldAllButMe), primExp, trcExp));
 
     //Illuminants and Primaries
-    willuBox = Gtk::manage(new Gtk::Box());
+    willuBox = Gtk::manage(new Gtk::Grid());
+    willuBox->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(willuBox, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
     willulab = Gtk::manage(new Gtk::Label(M("TP_ICM_WORKING_ILLU") + ":"));
-
-    willuBox->pack_start(*willulab, Gtk::PACK_SHRINK);
+    setExpandAlignProperties(willulab, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     will = Gtk::manage(new MyComboBoxText());
-    willuBox->pack_start(*will, Gtk::PACK_EXPAND_WIDGET);
-    trcPrimVBox->pack_start(*willuBox, Gtk::PACK_EXPAND_WIDGET);
+    setExpandAlignProperties(will, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    willuBox->attach(*willulab, 0, 0, 1, 1);
+    willuBox->attach(*will, 1, 0, 1, 1);
+    trcPrimVBox->pack_start(*willuBox, Gtk::PACK_SHRINK);
     will->append(M("TP_ICM_WORKING_ILLU_NONE"));
     will->append(M("TP_ICM_WORKING_ILLU_D41"));
     will->append(M("TP_ICM_WORKING_ILLU_D50"));
@@ -403,12 +406,15 @@ ICMPanel::ICMPanel() : FoldableToolPanel(this, TOOL_NAME, M("TP_ICM_LABEL")), iu
     will->set_tooltip_text(M("TP_ICM_ILLUMPRIM_TOOLTIP"));
 
 
-    wprimBox = Gtk::manage(new Gtk::Box());
+    wprimBox = Gtk::manage(new Gtk::Grid());
+    wprimBox->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(wprimBox, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
     wprimlab = Gtk::manage(new Gtk::Label(M("TP_ICM_WORKING_PRIM") + ":"));
-
-    wprimBox->pack_start(*wprimlab, Gtk::PACK_SHRINK);
+    setExpandAlignProperties(wprimlab, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     wprim = Gtk::manage(new MyComboBoxText());
-    wprimBox->pack_start(*wprim, Gtk::PACK_EXPAND_WIDGET);
+    setExpandAlignProperties(wprim, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    wprimBox->attach(*wprimlab, 0, 0, 1, 1);
+    wprimBox->attach(*wprim, 1, 0, 1, 1);
 //    fbw = Gtk::manage(new Gtk::CheckButton((M("TP_ICM_FBW"))));
 //    fbw->set_active(true);
     gamut = Gtk::manage(new Gtk::CheckButton((M("TP_ICM_GAMUT"))));
@@ -539,11 +545,15 @@ ICMPanel::ICMPanel() : FoldableToolPanel(this, TOOL_NAME, M("TP_ICM_LABEL")), iu
     shifty = Gtk::manage(new Adjuster(M("TC_LOCALLAB_PRIM_SHIFTY"), -0.2, 0.2, 0.0001, 0.));
 
     //Chromatic adaptation
-    wcatBox = Gtk::manage(new Gtk::Box());
+    wcatBox = Gtk::manage(new Gtk::Grid());
+    wcatBox->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(wcatBox, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
     wcatlab = Gtk::manage(new Gtk::Label(M("TP_ICM_WORKING_CAT") + ":"));
-    wcatBox->pack_start(*wcatlab, Gtk::PACK_SHRINK);
+    setExpandAlignProperties(wcatlab, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     wcat = Gtk::manage(new MyComboBoxText());
-    wcatBox->pack_start(*wcat, Gtk::PACK_EXPAND_WIDGET);
+    setExpandAlignProperties(wcat, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    wcatBox->attach(*wcatlab, 0, 0, 1, 1);
+    wcatBox->attach(*wcat, 1, 0, 1, 1);
 
     wcat->append(M("TP_ICM_WORKING_CAT_BRAD"));
     wcat->append(M("TP_ICM_WORKING_CAT_CAT16"));
@@ -649,9 +659,6 @@ ICMPanel::ICMPanel() : FoldableToolPanel(this, TOOL_NAME, M("TP_ICM_LABEL")), iu
     trcExp->set_expanded(false);
     trcExp->set_no_show_all();
     trcExp->setLevel (2);
-    pack_start(*trcExp, Gtk::PACK_EXPAND_WIDGET);
-
-    pack_start(*wFrame, Gtk::PACK_EXPAND_WIDGET);
     pack_start(*iFrame, Gtk::PACK_EXPAND_WIDGET);
 
     // ---------------------------- Output profile
@@ -699,6 +706,14 @@ ICMPanel::ICMPanel() : FoldableToolPanel(this, TOOL_NAME, M("TP_ICM_LABEL")), iu
     oFrame->add(*oProfVBox);
 
     pack_start(*oFrame, Gtk::PACK_EXPAND_WIDGET);
+
+    // Advanced section: working profile and abstract profile
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
+
+    advBox->pack_start(*wFrame, Gtk::PACK_EXPAND_WIDGET);
+    advBox->pack_start(*trcExp, Gtk::PACK_EXPAND_WIDGET);
 
     // ---------------------------- Output gamma list entries
 
@@ -3202,5 +3217,6 @@ void ICMPanel::setBatchMode(bool batchMode)
     shiftx->showEditedCB();
     shifty->showEditedCB();
     preser->showEditedCB();
+    advancedSection->setBatchMode(batchMode);
 }
 

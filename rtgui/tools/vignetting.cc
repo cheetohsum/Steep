@@ -43,11 +43,17 @@ Vignetting::Vignetting () : FoldableToolPanel(this, TOOL_NAME, M("TP_VIGNETTING_
     centerY = Gtk::manage (new Adjuster (M("TP_VIGNETTING_CENTER_Y"), -100, 100, 1, 0));
     centerY->setAdjusterListener (this);
 
-    pack_start (*amount);
-    pack_start (*radius);
-    pack_start (*strength);
-    pack_start (*centerX);
-    pack_start (*centerY);
+    getSummaryBox()->pack_start (*amount);
+    getSummaryBox()->show_all();
+
+    advancedSection = Gtk::manage(new AdvancedSection());
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+    Gtk::Box* const advBox = advancedSection->getContentBox();
+
+    advBox->pack_start (*radius);
+    advBox->pack_start (*strength);
+    advBox->pack_start (*centerX);
+    advBox->pack_start (*centerY);
 
     show_all();
 }
@@ -160,4 +166,5 @@ void Vignetting::setBatchMode (bool batchMode)
     strength->showEditedCB ();
     centerX->showEditedCB ();
     centerY->showEditedCB ();
+    advancedSection->setBatchMode(batchMode);
 }
