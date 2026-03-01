@@ -1,47 +1,244 @@
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/RawTherapee/RawTherapee/dev/rtdata/images/rt-logo-text-white.svg">
-  <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/RawTherapee/RawTherapee/dev/rtdata/images/rt-logo-text-black.svg">
-  <img alt="RawTherapee logo" src="[https://user-images.githubusercontent.com/25423296/163456779-a8556205-d0a5-45e2-ac17-42d089e3c3f8.png](https://raw.githubusercontent.com/RawTherapee/RawTherapee/dev/rtdata/images/rt-logo-text-black.svg)">
-</picture>
+# Steep
 
-![RawTherapee screenshot](http://rawtherapee.com/images/carousel/100_rt59_provence_local_maskxxx.jpg)
+**A modern, AI-enhanced fork of [RawTherapee](https://rawtherapee.com) for professional RAW photo editing.**
 
-RawTherapee is a powerful, cross-platform raw photo processing program, released as [libre software](https://en.wikipedia.org/wiki/Free_software) under the [GNU General Public License Version 3](https://opensource.org/licenses/gpl-3.0.html). It is written mostly in C++ using a [GTK+](https://www.gtk.org) front-end. It uses a patched version of [dcraw](https://www.dechifro.org/dcraw/) for reading raw files, with an in-house solution which adds the highest quality support for certain camera models unsupported by dcraw and enhances the accuracy of certain raw files already supported by dcraw. It is notable for the advanced control it gives the user over the demosaicing and development process.
+Steep takes the powerful open-source RAW processing engine of RawTherapee and adds a modernized interface, AI-powered tools, and professional-grade features inspired by industry-standard editors like Lightroom and DaVinci Resolve.
 
-## Target Audience
+> **Status:** Active development. Core editing, export, and all original RawTherapee features work fully. New features (AI masking, AI denoise, watermarking, albums) are in various stages of completion. See [Feature Status](#feature-status) below.
 
-RawTherapee is designed for developing raw files from a broad range of digital cameras, as well as [HDR DNG](https://helpx.adobe.com/photoshop/digital-negative.html) files and non-raw image formats ([JPEG](https://en.wikipedia.org/wiki/JPEG), [TIFF](https://en.wikipedia.org/wiki/Tagged_Image_File_Format) and [PNG](https://en.wikipedia.org/wiki/Portable_Network_Graphics)). The target audience ranges from enthusiast newcomers who wish to broaden their understanding of how digital imaging works to semi-professional photographers. Knowledge in color science is not compulsory, but it is recommended that you are eager to learn and ready to read our documentation ([RawPedia](https://rawpedia.rawtherapee.com/)) as well as look up basic concepts which lie outside the scope of RawPedia, such as [color balance](https://en.wikipedia.org/wiki/Color_balance), elsewhere.
+---
 
-Professionals may use RawTherapee as well while enjoying complete freedom, but will probably lack some peripheral features such as [Digital Asset Management](https://en.wikipedia.org/wiki/Digital_asset_management), printing, uploading, etc. RawTherapee is not aimed at being an inclusive all-in-one program, and the [open-source community](https://en.wikipedia.org/wiki/Open-source_movement) is sufficiently developed by now to offer all those peripheral features in other specialized software.
+## What's New in Steep
 
-## Links
+### Mode-Based Editor UI
 
-Website:
-https://www.rawtherapee.com/
+The traditional multi-tab notebook interface has been replaced with a clean, mode-based layout using a **ModeButtonBar**:
 
-Forum:
-https://discuss.pixls.us/c/software/rawtherapee
+| Mode | Purpose |
+|------|---------|
+| **Presets** | Visual preset browser with thumbnail previews |
+| **Edit** | All editing tools organized into collapsible groups (Light, Color, Detail, Effects, Advanced, Calibration) |
+| **Crop** | Transform tools (Crop, Resize, Lens Geometry, Rotation, Perspective, Distortion) |
+| **Mask** | LocalLab selective editing with optional AI masks |
 
-Features:
-https://rawpedia.rawtherapee.com/Features
+### Visual Preset Browser
 
-Documentation:
-https://rawpedia.rawtherapee.com/
+Replaces the old tree-based profile selector with a card-based grid:
 
-Download RawTherapee:
-https://www.rawtherapee.com/downloads
+- Thumbnail previews of each preset's effect
+- Quick-access cards for "Custom" and "Last Saved" states
+- Category-based organization with collapsible sections
+- Background thumbnail generation
+- Full save/load/copy/paste workflow
 
-Download source code tarballs:
-https://www.rawtherapee.com/shared/source/
+### 3-Way Color Grading
 
-## Compilation, Branches and Git
-Refer to RawPedia for a detailed explanation of how to get the necessary dependencies and how to compile RawTherapee.
+Professional color grading tool with three interactive **color wheels** for shadows, midtones, and highlights:
 
-Linux:
-https://rawpedia.rawtherapee.com/Linux
+- Per-range hue, saturation, and luminance control
+- Global color wheel with luminance in an advanced section
+- Blending and balance sliders for fine-tuning tonal splits
+- Custom Cairo-rendered color wheel widget with double-click reset
 
-Windows:
-https://rawpedia.rawtherapee.com/Windows
+### Point Color (Hue-Selective HSL)
 
-macOS:
-https://rawpedia.rawtherapee.com/macOS
+Targeted color adjustments by hue range:
+
+- Multiple independent color targets
+- Per-target hue shift, saturation, luminance, and range controls
+- Color picker to sample targets directly from the image
+- Auto-generated color name labels
+
+### AI Denoise
+
+Integration with RawRefinery for AI-powered denoising:
+
+- ISO conditioning control
+- Blend slider to mix denoised result with original
+- GPU acceleration toggle
+- Background processing with cancel support
+- Result caching per ISO level
+
+### AI Semantic Masking (Optional)
+
+Compile-time feature (`-DWITH_AI_MASKING=ON`) using ONNX Runtime for automatic subject detection:
+
+- 9 semantic classes: background, person, sky, vegetation, building, vehicle, animal, foreground object
+- Mask threshold, feather, blur, and opacity controls
+- Edge refinement with configurable radius and epsilon
+- DeepLabV3-MobileNetV3 model included
+- Integrates with LocalLab for targeted adjustments on detected regions
+
+### Watermarking
+
+Full-featured watermark system applied at export:
+
+- Custom text with font selection, size, bold/italic
+- Text color with alpha transparency
+- Stroke (outline) with configurable color and width
+- Drop shadow with color, offset, and blur
+- 9-point positioning grid with margin and rotation controls
+
+### Album / Collection Management
+
+Organize images beyond the filesystem:
+
+- **Regular Albums** - manual image collections
+- **Smart Albums** - rule-based auto-filtering by rating, color label, file type, camera, lens, ISO, focal length, aperture, or edited status
+- **Folders** - organizational hierarchy for albums
+- Persistent storage, global sync across all browser instances
+
+### Floating History & Navigator
+
+History and Navigator panels can be undocked into independent floating windows.
+
+### New Themes
+
+- **RawTherapee - Modern.css** - contemporary dark theme with updated styling
+- **Rem.css** - fantasy-inspired dark theme (deep navy/indigo, cyan accents, copper details)
+
+### Custom Icon Set
+
+12+ new SVG icons for mode buttons, navigation, window controls, and album management.
+
+---
+
+## Feature Status
+
+| Feature | Status |
+|---------|--------|
+| Mode-based editor UI | Working |
+| Visual preset browser | Working |
+| 3-way color grading | Working |
+| Point color / HSL | Working |
+| Watermarking | Working |
+| Album browser | Working |
+| Floating history/navigator | Working |
+| New themes | Working |
+| AI denoise (RawRefinery) | Working (requires external Python backend) |
+| AI semantic masking | Experimental (requires ONNX Runtime, optional build flag) |
+| All original RawTherapee features | Fully preserved |
+
+---
+
+## Building from Source
+
+### Dependencies
+
+Steep has the same base dependencies as RawTherapee, plus optional extras.
+
+**Required (same as RawTherapee):**
+
+- CMake >= 3.15
+- GCC >= 4.9 (or Clang)
+- GTK+ 3 / gtkmm 3.24
+- libraw
+- lensfun
+- lcms2
+- libiptcdata
+- librsvg
+- libtiff, libjpeg, libpng
+- zlib
+- expat
+- fftw3
+
+**Optional - AI Masking:**
+
+- ONNX Runtime >= 1.17
+
+**Optional - AI Denoise:**
+
+- Python 3 with RawRefinery installed
+
+### Linux
+
+```bash
+# Install dependencies (Debian/Ubuntu)
+sudo apt install build-essential cmake git \
+  libgtk-3-dev libgtkmm-3.0-dev \
+  libraw-dev liblensfun-dev liblcms2-dev \
+  libiptcdata0-dev librsvg2-dev \
+  libtiff-dev libjpeg-dev libpng-dev \
+  zlib1g-dev libexpat1-dev libfftw3-dev
+
+# Clone
+git clone https://github.com/cheetohsum/Steep.git
+cd Steep
+
+# Configure
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+
+# Optional: enable AI masking
+# cmake .. -DCMAKE_BUILD_TYPE=Release -DWITH_AI_MASKING=ON
+
+# Build
+make -j$(nproc)
+
+# Install
+sudo make install
+```
+
+### Docker (with AI Masking)
+
+A Dockerfile is provided for building with AI masking support:
+
+```bash
+docker build -f Dockerfile.aimasking -t steep-aimasking .
+```
+
+### Windows
+
+Use MSYS2/MinGW or WSL. The project builds and runs under WSL2 with WSLg for display:
+
+```bash
+# Inside WSL2
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
+sudo make install
+rawtherapee
+```
+
+### macOS
+
+```bash
+# Install dependencies via Homebrew
+brew install cmake gtk+3 gtkmm3 libraw lensfun little-cms2 \
+  libiptcdata librsvg libtiff jpeg libpng fftw
+
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(sysctl -n hw.ncpu)
+sudo make install
+```
+
+---
+
+## Project Structure
+
+```
+Steep/
+  rtengine/          Processing engine (demosaic, color, denoise, etc.)
+  rtgui/             GTK3 GUI application
+    tools/           Editing tool panels (tonecurve, denoise, color grading, etc.)
+    widgets/         Custom widgets (adjuster, color wheel, etc.)
+    windows/         Dialog windows (preferences, history, navigator)
+  rtdata/            Runtime resources
+    themes/          CSS themes
+    languages/       Localization files
+    icons/           SVG icon sets
+    models/          AI model files (ONNX)
+  cmake/             CMake modules
+  tools/             Build and utility scripts
+```
+
+---
+
+## Acknowledgments
+
+Steep is built on top of [RawTherapee](https://rawtherapee.com), an outstanding open-source RAW photo processor. All credit for the core processing engine, demosaicing algorithms, color management, and decades of refinement goes to the RawTherapee team and its contributors.
+
+## License
+
+GNU General Public License v3.0 - same as RawTherapee. See [LICENSE](LICENSE) for details.
