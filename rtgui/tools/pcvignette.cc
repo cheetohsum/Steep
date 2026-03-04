@@ -10,7 +10,8 @@ using namespace rtengine::procparams;
 
 const Glib::ustring PCVignette::TOOL_NAME = "pcvignette";
 
-PCVignette::PCVignette () : FoldableToolPanel(this, TOOL_NAME, M("TP_PCVIGNETTE_LABEL"), false, true)
+PCVignette::PCVignette () : FoldableToolPanel(this, TOOL_NAME, M("TP_PCVIGNETTE_LABEL"), false, true),
+    detailExpanded_(false)
 {
     strength = Gtk::manage (new Adjuster (M("TP_PCVIGNETTE_STRENGTH"), -6, 6, 0.01, 0));
     strength->set_tooltip_text (M("TP_PCVIGNETTE_STRENGTH_TOOLTIP"));
@@ -24,12 +25,41 @@ PCVignette::PCVignette () : FoldableToolPanel(this, TOOL_NAME, M("TP_PCVIGNETTE_
     roundness->set_tooltip_text (M("TP_PCVIGNETTE_ROUNDNESS_TOOLTIP"));
     roundness->setAdjusterListener (this);
 
-    getSummaryBox()->pack_start (*strength);
-    getSummaryBox()->show_all();
-    pack_start (*feather);
-    pack_start (*roundness);
+    // Gradient: light center → dark vignette edges
+    strength->setSliderGradient({
+        GradientMilestone(0.0, 0.15, 0.15, 0.18),
+        GradientMilestone(0.5, 0.45, 0.45, 0.45),
+        GradientMilestone(1.0, 0.75, 0.75, 0.70)
+    });
 
-    show_all();
+    // Label-as-toggle: click the slider label to expand/collapse detail
+    strength->setLabel(Glib::ustring("\u25B8 ") + M("TP_PCVIGNETTE_STRENGTH"));
+    strength->setLabelClickCallback([this]() { toggleDetail(); });
+
+    auto *summaryBox = getSummaryBox();
+    summaryBox->pack_start (*strength);
+
+    detailContent_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
+    detailContent_->set_no_show_all(true);
+    detailContent_->pack_start(*feather);
+    detailContent_->pack_start(*roundness);
+    summaryBox->pack_start(*detailContent_, Gtk::PACK_SHRINK);
+
+    summaryBox->show_all();
+}
+
+void PCVignette::toggleDetail()
+{
+    detailExpanded_ = !detailExpanded_;
+    if (detailExpanded_) {
+        strength->setLabel(Glib::ustring("\u25BE ") + M("TP_PCVIGNETTE_STRENGTH"));
+        detailContent_->set_no_show_all(false);
+        detailContent_->show_all();
+        detailContent_->set_no_show_all(true);
+    } else {
+        strength->setLabel(Glib::ustring("\u25B8 ") + M("TP_PCVIGNETTE_STRENGTH"));
+        detailContent_->hide();
+    }
 }
 
 void PCVignette::read (const ProcParams* pp, const ParamsEdited* pedited)

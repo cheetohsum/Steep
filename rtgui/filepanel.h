@@ -50,7 +50,7 @@ public:
     FilePanel ();
     ~FilePanel () override;
 
-    Gtk::Paned* placespaned;
+    Gtk::Box* placespaned;
     Gtk::Paned* dirpaned;
 
     Gtk::Box* rightBox;
@@ -90,6 +90,11 @@ public:
     void updateTPVScrollbar (bool hide);
     void updateToolPanelToolLocations(
         const std::vector<Glib::ustring> &favorites, bool cloneFavoriteTools);
+
+    // Returns sidebar insets for queue overlay positioning
+    void getQueueOverlayInsets (int& left, int& top, int& right) const;
+    void closeAlbumView ();  // close album view + deselect sidebar
+    void openSelectedInEditor ();  // open the selected browser thumbnail in editor
 
 private:
     void on_NB_switch_page(Gtk::Widget* page, guint page_num);

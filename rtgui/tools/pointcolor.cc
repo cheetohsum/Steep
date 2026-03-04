@@ -31,8 +31,25 @@ PointColor::PointColor() :
     FoldableToolPanel(this, TOOL_NAME, M("TP_POINTCOLOR_LABEL"), false, true),
     activeTarget(-1),
     pickListener(nullptr),
-    internalUpdate(false)
+    internalUpdate(false),
+    contentExpanded_(false)
 {
+    // Clickable section label (collapsed by default)
+    sectionLabel_ = Gtk::manage(new Gtk::Label());
+    sectionLabel_->set_markup("<b>\xe2\x96\xb8 Point Color</b>");
+    sectionLabel_->set_xalign(0.0);
+    sectionLabel_->get_style_context()->add_class("tool-section-label");
+    auto* labelEvt = Gtk::manage(new Gtk::EventBox());
+    labelEvt->add(*sectionLabel_);
+    labelEvt->signal_button_press_event().connect([this](GdkEventButton*) -> bool {
+        toggleContent();
+        return true;
+    });
+    getSummaryBox()->pack_start(*labelEvt, Gtk::PACK_SHRINK, 2);
+
+    // Collapsible content box
+    toolContent_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
+
     // Toolbar: [Eyedropper] [+] [-]
     toolbarBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
     toolbarBox->set_name("PointColorToolbar");
@@ -57,14 +74,8 @@ PointColor::PointColor() :
     removeButton->signal_clicked().connect(sigc::mem_fun(*this, &PointColor::onRemoveTarget));
     toolbarBox->pack_start(*removeButton, Gtk::PACK_SHRINK);
 
-    // Section label
-    auto* sectionLabel = Gtk::manage(new Gtk::Label(M("TP_POINTCOLOR_LABEL")));
-    sectionLabel->set_xalign(0.0);
-    sectionLabel->get_style_context()->add_class("tool-section-label");
-    getSummaryBox()->pack_start(*sectionLabel, Gtk::PACK_SHRINK, 0);
-
     toolbarBox->set_margin_bottom(3);
-    getSummaryBox()->pack_start(*toolbarBox, Gtk::PACK_SHRINK, 0);
+    toolContent_->pack_start(*toolbarBox, Gtk::PACK_SHRINK, 0);
 
     // Target list
     targetStore = Gtk::ListStore::create(targetColumns);
@@ -105,8 +116,8 @@ PointColor::PointColor() :
     targetScroll->set_min_content_height(50);
     targetScroll->set_max_content_height(120);
     targetScroll->add(*targetList);
-    targetScroll->set_no_show_all(true); // Prevent show_all from overriding visibility
-    getSummaryBox()->pack_start(*targetScroll, Gtk::PACK_SHRINK, 0);
+    targetScroll->set_no_show_all(true);
+    toolContent_->pack_start(*targetScroll, Gtk::PACK_SHRINK, 0);
 
     // Center Hue selector (0..360 degrees displayed, stored as 0..1)
     centerHueAdj = Gtk::manage(new Adjuster(M("TP_POINTCOLOR_CENTER_HUE"), 0., 360., 1., 0.));
@@ -121,29 +132,52 @@ PointColor::PointColor() :
         }
         centerHueAdj->setSliderGradient(ms);
     }
-    getSummaryBox()->pack_start(*centerHueAdj, Gtk::PACK_SHRINK, 0);
+    toolContent_->pack_start(*centerHueAdj, Gtk::PACK_SHRINK, 0);
 
     hueShiftAdj = Gtk::manage(new Adjuster(M("TP_POINTCOLOR_HUESHIFT"), -100., 100., 1., 0.));
     hueShiftAdj->setAdjusterListener(this);
-    getSummaryBox()->pack_start(*hueShiftAdj, Gtk::PACK_SHRINK, 0);
+    toolContent_->pack_start(*hueShiftAdj, Gtk::PACK_SHRINK, 0);
 
     saturationAdj = Gtk::manage(new Adjuster(M("TP_POINTCOLOR_SATURATION"), -100., 100., 1., 0.));
     saturationAdj->setAdjusterListener(this);
-    getSummaryBox()->pack_start(*saturationAdj, Gtk::PACK_SHRINK, 0);
+    toolContent_->pack_start(*saturationAdj, Gtk::PACK_SHRINK, 0);
 
     luminanceAdj = Gtk::manage(new Adjuster(M("TP_POINTCOLOR_LUMINANCE"), -100., 100., 1., 0.));
     luminanceAdj->setAdjusterListener(this);
-    getSummaryBox()->pack_start(*luminanceAdj, Gtk::PACK_SHRINK, 0);
+    toolContent_->pack_start(*luminanceAdj, Gtk::PACK_SHRINK, 0);
 
     rangeAdj = Gtk::manage(new Adjuster(M("TP_POINTCOLOR_RANGE"), 1., 100., 1., 50.));
     rangeAdj->setAdjusterListener(this);
-    getSummaryBox()->pack_start(*rangeAdj, Gtk::PACK_SHRINK, 0);
+    toolContent_->pack_start(*rangeAdj, Gtk::PACK_SHRINK, 0);
+
+    // Start hidden
+    toolContent_->set_no_show_all(true);
+    toolContent_->hide();
+    getSummaryBox()->pack_start(*toolContent_, Gtk::PACK_SHRINK, 0);
 
     // Start with controls disabled and target list hidden
     setControlsSensitive(false);
     targetScroll->hide();
 
     getSummaryBox()->show_all();
+}
+
+void PointColor::toggleContent()
+{
+    contentExpanded_ = !contentExpanded_;
+    if (contentExpanded_) {
+        sectionLabel_->set_markup("<b>\xe2\x96\xbe Point Color</b>");
+        toolContent_->set_no_show_all(false);
+        toolContent_->show_all();
+        toolContent_->set_no_show_all(true);
+        // Restore targetScroll visibility based on targets
+        if (targets.empty()) {
+            targetScroll->hide();
+        }
+    } else {
+        sectionLabel_->set_markup("<b>\xe2\x96\xb8 Point Color</b>");
+        toolContent_->hide();
+    }
 }
 
 void PointColor::setControlsSensitive(bool sensitive)

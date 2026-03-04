@@ -25,6 +25,43 @@
 #include "options.h"
 #include "toolpanel.h"
 
+class PlacesTreeView : public Gtk::TreeView {
+public:
+    PlacesTreeView() : Glib::ObjectBase("PlacesTreeView") {
+        add_events(Gdk::POINTER_MOTION_MASK | Gdk::LEAVE_NOTIFY_MASK);
+    }
+
+    std::function<void(const Gtk::TreeModel::Path&)> onHoverChanged;
+protected:
+    bool on_motion_notify_event(GdkEventMotion* event) override {
+        Gtk::TreeModel::Path path;
+        Gtk::TreeViewColumn* col;
+        int cx, cy;
+        if (get_path_at_pos(static_cast<int>(event->x), static_cast<int>(event->y), path, col, cx, cy)) {
+            if (path != hoveredPath_) {
+                hoveredPath_ = path;
+                if (onHoverChanged) onHoverChanged(path);
+                queue_draw();
+            }
+        } else if (!hoveredPath_.empty()) {
+            hoveredPath_ = Gtk::TreeModel::Path();
+            if (onHoverChanged) onHoverChanged(hoveredPath_);
+            queue_draw();
+        }
+        return Gtk::TreeView::on_motion_notify_event(event);
+    }
+    bool on_leave_notify_event(GdkEventCrossing* event) override {
+        if (!hoveredPath_.empty()) {
+            hoveredPath_ = Gtk::TreeModel::Path();
+            if (onHoverChanged) onHoverChanged(hoveredPath_);
+            queue_draw();
+        }
+        return Gtk::TreeView::on_leave_notify_event(event);
+    }
+private:
+    Gtk::TreeModel::Path hoveredPath_;
+};
+
 #ifdef _WIN32
 #include "rtengine/leanwindows.h"
 #include <shlwapi.h>
@@ -52,6 +89,7 @@ PlacesBrowser::PlacesBrowser ()
         "#PlacesHeader { min-height: 0; padding: 0 4px; }"
         "#PlacesHeader label { font-size: 10px; font-weight: bold; padding: 2px 0; margin: 0; }"
         "#PlacesAddBtn { min-height: 0; min-width: 0; padding: 0; margin: 0; }"
+        "#PlacesBrowserTree { font-size: 0.92em; }"
     );
     headerBar->get_style_context()->add_provider(headerCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
     headerLabel->get_style_context()->add_provider(headerCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
@@ -64,12 +102,20 @@ PlacesBrowser::PlacesBrowser ()
     scrollw = Gtk::manage (new Gtk::ScrolledWindow ());
     scrollw->set_policy (Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
     scrollw->set_propagate_natural_height(true);
-    scrollw->set_max_content_height(48);
+    scrollw->set_overlay_scrolling(false);
     pack_start (*scrollw, Gtk::PACK_SHRINK);
 
-    treeView = Gtk::manage (new Gtk::TreeView ());
-    treeView->set_can_focus(false);
+    treeView = Gtk::manage (new PlacesTreeView ());
     treeView->set_name("PlacesBrowserTree");
+    treeView->get_style_context()->add_provider(headerCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+
+    // Hover highlighting: set_hover_selection(true) is required for motion
+    // events to reach the bin_window (and thus the virtual override).
+    treeView->set_hover_selection(true);
+    treeView->onHoverChanged = [this](const Gtk::TreeModel::Path& path) {
+        hoveredPath_ = path;
+    };
+
     scrollw->add (*treeView);
 
     // Right-click context menu for places
@@ -98,9 +144,33 @@ PlacesBrowser::PlacesBrowser ()
     iviewcol->pack_start (*iconCR, false);
     iviewcol->pack_start (*labelCR, true);
     iviewcol->pack_end (*countCR, false);
-    iviewcol->add_attribute (*iconCR, "gicon", 0);
-    iviewcol->add_attribute (*labelCR, "text", placesColumns.label);
-    iviewcol->add_attribute (*countCR, "text", placesColumns.photoCount);
+
+    // cell_data_funcs for data binding + hover highlighting
+    iviewcol->set_cell_data_func(*iconCR, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
+        auto* pbCR = static_cast<Gtk::CellRendererPixbuf*>(cr);
+        pbCR->property_gicon() = (*iter)[placesColumns.icon];
+        auto rowPath = placesModel->get_path(iter);
+        bool hovered = !hoveredPath_.empty() && rowPath == hoveredPath_;
+        pbCR->property_cell_background_set() = hovered;
+        if (hovered) pbCR->property_cell_background() = Glib::ustring("#3a3f4b");
+    });
+    iviewcol->set_cell_data_func(*labelCR, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
+        auto* textCR = static_cast<Gtk::CellRendererText*>(cr);
+        textCR->property_text() = (*iter)[placesColumns.label];
+        auto rowPath = placesModel->get_path(iter);
+        bool hovered = !hoveredPath_.empty() && rowPath == hoveredPath_;
+        textCR->property_cell_background_set() = hovered;
+        if (hovered) textCR->property_cell_background() = Glib::ustring("#3a3f4b");
+    });
+    iviewcol->set_cell_data_func(*countCR, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
+        auto* textCR = static_cast<Gtk::CellRendererText*>(cr);
+        textCR->property_text() = (*iter)[placesColumns.photoCount];
+        auto rowPath = placesModel->get_path(iter);
+        bool hovered = !hoveredPath_.empty() && rowPath == hoveredPath_;
+        textCR->property_cell_background_set() = hovered;
+        if (hovered) textCR->property_cell_background() = Glib::ustring("#3a3f4b");
+    });
+
     treeView->append_column (*iviewcol);
 
     treeView->set_row_separator_func (sigc::mem_fun(*this, &PlacesBrowser::rowSeparatorFunc));
@@ -117,7 +187,9 @@ PlacesBrowser::PlacesBrowser ()
     vm->signal_drive_disconnected().connect (sigc::mem_fun(*this, &PlacesBrowser::driveChanged));
     vm->signal_drive_changed().connect (sigc::mem_fun(*this, &PlacesBrowser::driveChanged));
 
-    treeView->get_selection()->signal_changed().connect(sigc::mem_fun(*this, &PlacesBrowser::selectionChanged));
+    // NOTE: Do NOT connect selection signal_changed — hover_selection triggers
+    // it on every mouse move. Instead, selectionChanged is called explicitly
+    // from onButtonPress for real clicks only.
 
     show_all ();
 }
@@ -389,6 +461,17 @@ void PlacesBrowser::delPressed ()
 
 bool PlacesBrowser::onButtonPress (GdkEventButton* event)
 {
+    // Left-click: manually select the row and trigger selectionChanged
+    // (we can't use signal_changed because hover_selection fires it on every motion)
+    if (event->type == GDK_BUTTON_PRESS && event->button == 1) {
+        Gtk::TreeModel::Path path;
+        if (treeView->get_path_at_pos(static_cast<int>(event->x), static_cast<int>(event->y), path)) {
+            treeView->get_selection()->select(path);
+            selectionChanged();
+            return true;
+        }
+    }
+
     if (event->type == GDK_BUTTON_PRESS && event->button == 3) {
         Gtk::TreeModel::Path path;
         bool onRow = treeView->get_path_at_pos(static_cast<int>(event->x), static_cast<int>(event->y), path);

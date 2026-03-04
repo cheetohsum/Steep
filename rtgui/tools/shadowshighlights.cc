@@ -32,14 +32,14 @@ ShadowsHighlights::ShadowsHighlights () : FoldableToolPanel(this, TOOL_NAME, M("
     auto m = ProcEventMapper::getInstance();
     EvSHColorspace = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_SH_COLORSPACE");
 
-    highlights   = Gtk::manage (new Adjuster (M("TP_SHADOWSHLIGHTS_HIGHLIGHTS"), 0, 100, 1, 0));
+    highlights   = Gtk::manage (new Adjuster (M("TP_SHADOWSHLIGHTS_HIGHLIGHTS"), -100, 100, 1, 0));
     // Highlights gradient: mid → light
     highlights->setSliderGradient({
         GradientMilestone(0.0, 0.5, 0.5, 0.5),
         GradientMilestone(1.0, 0.95, 0.95, 0.95)
     });
     h_tonalwidth = Gtk::manage (new Adjuster (M("TP_SHADOWSHLIGHTS_HLTONALW"), 10, 100, 1, 70));
-    shadows      = Gtk::manage (new Adjuster (M("TP_SHADOWSHLIGHTS_SHADOWS"), 0, 100, 1, 0));
+    shadows      = Gtk::manage (new Adjuster (M("TP_SHADOWSHLIGHTS_SHADOWS"), -100, 100, 1, 0));
     // Shadows gradient: dark → mid
     shadows->setSliderGradient({
         GradientMilestone(0.0, 0.1, 0.1, 0.1),
@@ -61,6 +61,7 @@ ShadowsHighlights::ShadowsHighlights () : FoldableToolPanel(this, TOOL_NAME, M("
     hb->attach(*colorspace, 1, 0, 1, 1);
 
     // Visible items (in summary box)
+    getSummaryBox()->pack_start (*highlights);
     getSummaryBox()->pack_start (*shadows);
     getSummaryBox()->show_all();
 
@@ -69,7 +70,6 @@ ShadowsHighlights::ShadowsHighlights () : FoldableToolPanel(this, TOOL_NAME, M("
     pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
     Gtk::Box* const advBox = advancedSection->getContentBox();
 
-    advBox->pack_start(*highlights);
     advBox->pack_start(*hb);
     advBox->pack_start(*h_tonalwidth);
     advBox->pack_start(*s_tonalwidth);

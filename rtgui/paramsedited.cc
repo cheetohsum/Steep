@@ -243,8 +243,26 @@ void ParamsEdited::set(bool v)
     localContrast.amount = v;
     localContrast.darkness = v;
     localContrast.lightness = v;
+    texture.enabled = v;
+    texture.radius = v;
+    texture.amount = v;
+    clarity.enabled = v;
+    clarity.radius = v;
+    clarity.amount = v;
+    grain.enabled = v;
+    grain.iso = v;
+    grain.strength = v;
+    grain.scale = v;
+    lensBlur.enabled = v;
+    lensBlur.amount = v;
+    lensBlur.shape = v;
+    lensBlur.cateye = v;
+    lensBlur.bokeh = v;
+    lensBlur.depth = v;
+    lensBlur.range = v;
     rgbCurves.enabled = v;
     rgbCurves.lumamode       = v;
+    rgbCurves.mastercurve    = v;
     rgbCurves.rcurve         = v;
     rgbCurves.gcurve         = v;
     rgbCurves.bcurve         = v;
@@ -428,6 +446,12 @@ void ParamsEdited::set(bool v)
     defringe.radius            = v;
     defringe.threshold         = v;
     defringe.huecurve          = v;
+    defringe.purpleAmount      = v;
+    defringe.purpleHueLow      = v;
+    defringe.purpleHueHigh     = v;
+    defringe.greenAmount       = v;
+    defringe.greenHueLow       = v;
+    defringe.greenHueHigh      = v;
     impulseDenoise.enabled     = v;
     impulseDenoise.thresh      = v;
     aiDenoise.enabled          = v;
@@ -1049,8 +1073,30 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         localContrast.darkness = localContrast.darkness && p.localContrast.darkness == other.localContrast.darkness;
         localContrast.lightness = localContrast.lightness && p.localContrast.lightness == other.localContrast.lightness;
 
+        texture.enabled = texture.enabled && p.texture.enabled == other.texture.enabled;
+        texture.radius = texture.radius && p.texture.radius == other.texture.radius;
+        texture.amount = texture.amount && p.texture.amount == other.texture.amount;
+
+        clarity.enabled = clarity.enabled && p.clarity.enabled == other.clarity.enabled;
+        clarity.radius = clarity.radius && p.clarity.radius == other.clarity.radius;
+        clarity.amount = clarity.amount && p.clarity.amount == other.clarity.amount;
+
+        grain.enabled = grain.enabled && p.grain.enabled == other.grain.enabled;
+        grain.iso = grain.iso && p.grain.iso == other.grain.iso;
+        grain.strength = grain.strength && p.grain.strength == other.grain.strength;
+        grain.scale = grain.scale && p.grain.scale == other.grain.scale;
+
+        lensBlur.enabled = lensBlur.enabled && p.lensBlur.enabled == other.lensBlur.enabled;
+        lensBlur.amount = lensBlur.amount && p.lensBlur.amount == other.lensBlur.amount;
+        lensBlur.shape = lensBlur.shape && p.lensBlur.shape == other.lensBlur.shape;
+        lensBlur.cateye = lensBlur.cateye && p.lensBlur.cateye == other.lensBlur.cateye;
+        lensBlur.bokeh = lensBlur.bokeh && p.lensBlur.bokeh == other.lensBlur.bokeh;
+        lensBlur.depth = lensBlur.depth && p.lensBlur.depth == other.lensBlur.depth;
+        lensBlur.range = lensBlur.range && p.lensBlur.range == other.lensBlur.range;
+
         rgbCurves.enabled = rgbCurves.enabled && p.rgbCurves.enabled == other.rgbCurves.enabled;
         rgbCurves.lumamode = rgbCurves.lumamode && p.rgbCurves.lumamode == other.rgbCurves.lumamode;
+        rgbCurves.mastercurve = rgbCurves.mastercurve && p.rgbCurves.mastercurve == other.rgbCurves.mastercurve;
         rgbCurves.rcurve = rgbCurves.rcurve && p.rgbCurves.rcurve == other.rgbCurves.rcurve;
         rgbCurves.gcurve = rgbCurves.gcurve && p.rgbCurves.gcurve == other.rgbCurves.gcurve;
         rgbCurves.bcurve = rgbCurves.bcurve && p.rgbCurves.bcurve == other.rgbCurves.bcurve;
@@ -1232,6 +1278,12 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         defringe.radius = defringe.radius && p.defringe.radius == other.defringe.radius;
         defringe.threshold = defringe.threshold && p.defringe.threshold == other.defringe.threshold;
         defringe.huecurve = defringe.huecurve && p.defringe.huecurve == other.defringe.huecurve;
+        defringe.purpleAmount = defringe.purpleAmount && p.defringe.purpleAmount == other.defringe.purpleAmount;
+        defringe.purpleHueLow = defringe.purpleHueLow && p.defringe.purpleHueLow == other.defringe.purpleHueLow;
+        defringe.purpleHueHigh = defringe.purpleHueHigh && p.defringe.purpleHueHigh == other.defringe.purpleHueHigh;
+        defringe.greenAmount = defringe.greenAmount && p.defringe.greenAmount == other.defringe.greenAmount;
+        defringe.greenHueLow = defringe.greenHueLow && p.defringe.greenHueLow == other.defringe.greenHueLow;
+        defringe.greenHueHigh = defringe.greenHueHigh && p.defringe.greenHueHigh == other.defringe.greenHueHigh;
 
         impulseDenoise.enabled = impulseDenoise.enabled && p.impulseDenoise.enabled == other.impulseDenoise.enabled;
         impulseDenoise.thresh = impulseDenoise.thresh && p.impulseDenoise.thresh == other.impulseDenoise.thresh;
@@ -2944,12 +2996,71 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
     ADDSETVAL_(localContrast.lightness, ADDSET_LOCALCONTRAST_LIGHTNESS);
 #undef ADDSETVAL_
 
+    if (texture.enabled) {
+        toEdit.texture.enabled = mods.texture.enabled;
+    }
+    if (texture.radius) {
+        toEdit.texture.radius = mods.texture.radius;
+    }
+    if (texture.amount) {
+        toEdit.texture.amount = mods.texture.amount;
+    }
+
+    if (clarity.enabled) {
+        toEdit.clarity.enabled = mods.clarity.enabled;
+    }
+    if (clarity.radius) {
+        toEdit.clarity.radius = mods.clarity.radius;
+    }
+    if (clarity.amount) {
+        toEdit.clarity.amount = mods.clarity.amount;
+    }
+
+    if (grain.enabled) {
+        toEdit.grain.enabled = mods.grain.enabled;
+    }
+    if (grain.iso) {
+        toEdit.grain.iso = mods.grain.iso;
+    }
+    if (grain.strength) {
+        toEdit.grain.strength = mods.grain.strength;
+    }
+    if (grain.scale) {
+        toEdit.grain.scale = mods.grain.scale;
+    }
+
+    if (lensBlur.enabled) {
+        toEdit.lensBlur.enabled = mods.lensBlur.enabled;
+    }
+    if (lensBlur.amount) {
+        toEdit.lensBlur.amount = mods.lensBlur.amount;
+    }
+    if (lensBlur.shape) {
+        toEdit.lensBlur.shape = mods.lensBlur.shape;
+    }
+    if (lensBlur.cateye) {
+        toEdit.lensBlur.cateye = mods.lensBlur.cateye;
+    }
+    if (lensBlur.bokeh) {
+        toEdit.lensBlur.bokeh = mods.lensBlur.bokeh;
+    }
+    if (lensBlur.depth) {
+        toEdit.lensBlur.depth = mods.lensBlur.depth;
+    }
+    if (lensBlur.range) {
+        toEdit.lensBlur.range = mods.lensBlur.range;
+    }
+
     if (rgbCurves.enabled) {
         toEdit.rgbCurves.enabled = mods.rgbCurves.enabled;
     }
 
     if (rgbCurves.lumamode) {
         toEdit.rgbCurves.lumamode = mods.rgbCurves.lumamode;
+    }
+
+    if (rgbCurves.mastercurve) {
+        toEdit.rgbCurves.mastercurve = mods.rgbCurves.mastercurve;
     }
 
     if (rgbCurves.rcurve) {
@@ -3426,6 +3537,25 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
 
     if (defringe.huecurve) {
         toEdit.defringe.huecurve = mods.defringe.huecurve;
+    }
+
+    if (defringe.purpleAmount) {
+        toEdit.defringe.purpleAmount = mods.defringe.purpleAmount;
+    }
+    if (defringe.purpleHueLow) {
+        toEdit.defringe.purpleHueLow = mods.defringe.purpleHueLow;
+    }
+    if (defringe.purpleHueHigh) {
+        toEdit.defringe.purpleHueHigh = mods.defringe.purpleHueHigh;
+    }
+    if (defringe.greenAmount) {
+        toEdit.defringe.greenAmount = mods.defringe.greenAmount;
+    }
+    if (defringe.greenHueLow) {
+        toEdit.defringe.greenHueLow = mods.defringe.greenHueLow;
+    }
+    if (defringe.greenHueHigh) {
+        toEdit.defringe.greenHueHigh = mods.defringe.greenHueHigh;
     }
 
     if (colorappearance.curve) {

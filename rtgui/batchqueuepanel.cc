@@ -188,26 +188,48 @@ BatchQueuePanel::BatchQueuePanel (FileCatalog* aFileCatalog) : parent(nullptr)
 
     // lower box with thumbnail zoom
     bottomBox = Gtk::manage (new Gtk::Box ());
+    bottomBox->set_name ("BatchQueueBottomBox");
     pack_start (*bottomBox, Gtk::PACK_SHRINK);
 
-    // thumbnail zoom
+    // thumbnail zoom slider
     Gtk::Box* zoomBox = Gtk::manage (new Gtk::Box ());
     zoomBox->pack_start (*Gtk::manage (new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK, 4);
-    Gtk::Label* zoomLabel = Gtk::manage (new Gtk::Label (Glib::ustring("<b>") + M("FILEBROWSER_THUMBSIZE") + ":</b>"));
-    zoomLabel->set_use_markup (true);
-    zoomBox->pack_start (*zoomLabel, Gtk::PACK_SHRINK, 4);
-    zoomInButton  = Gtk::manage (new Gtk::Button ());
-    zoomInButton->set_image (*Gtk::manage (new RTImage ("magnifier-plus", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
-    zoomInButton->signal_pressed().connect (sigc::mem_fun(*batchQueue, &BatchQueue::zoomIn));
-    zoomInButton->set_relief (Gtk::RELIEF_NONE);
-    zoomInButton->set_tooltip_markup (M("FILEBROWSER_ZOOMINHINT"));
-    zoomBox->pack_end (*zoomInButton, Gtk::PACK_SHRINK);
-    zoomOutButton  = Gtk::manage (new Gtk::Button ());
-    zoomOutButton->set_image (*Gtk::manage (new RTImage ("magnifier-minus", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
-    zoomOutButton->signal_pressed().connect (sigc::mem_fun(*batchQueue, &BatchQueue::zoomOut));
-    zoomOutButton->set_relief (Gtk::RELIEF_NONE);
-    zoomOutButton->set_tooltip_markup (M("FILEBROWSER_ZOOMOUTHINT"));
-    zoomBox->pack_end (*zoomOutButton, Gtk::PACK_SHRINK);
+
+    zoomSlider = Gtk::manage (new Gtk::Scale (Gtk::ORIENTATION_HORIZONTAL));
+    zoomSlider->set_range (0, options.thumbnailZoomRatios.size () - 1);
+    zoomSlider->set_increments (1, 1);
+    zoomSlider->set_draw_value (false);
+    zoomSlider->set_size_request (150, -1);
+    zoomSlider->set_tooltip_markup (M ("FILEBROWSER_THUMBSIZE"));
+
+    // Initialize slider position to match current thumbnail height
+    {
+        int curHeight = std::max (std::min (options.thumbSizeQueue, 200), 10);
+        int maxHeight = BatchQueue::calcMaxThumbnailHeight ();
+        int bestIdx = 0;
+        int bestDiff = std::abs (curHeight - (int)(options.thumbnailZoomRatios[0] * maxHeight));
+        for (size_t i = 1; i < options.thumbnailZoomRatios.size (); i++) {
+            int h = (int)(options.thumbnailZoomRatios[i] * maxHeight);
+            int diff = std::abs (curHeight - h);
+            if (diff < bestDiff) {
+                bestDiff = diff;
+                bestIdx = i;
+            }
+        }
+        zoomSlider->set_value (bestIdx);
+    }
+
+    zoomSlider->signal_value_changed ().connect ([this]() {
+        const auto& opts = App::get().options ();
+        int idx = (int)zoomSlider->get_value ();
+        if (idx < 0) idx = 0;
+        if (idx >= (int)opts.thumbnailZoomRatios.size ()) idx = opts.thumbnailZoomRatios.size () - 1;
+        int maxHeight = BatchQueue::calcMaxThumbnailHeight ();
+        int newHeight = (int)(opts.thumbnailZoomRatios[idx] * maxHeight);
+        batchQueue->setThumbnailHeight (newHeight);
+    });
+
+    zoomBox->pack_end (*zoomSlider, Gtk::PACK_SHRINK);
     bottomBox->pack_end (*zoomBox, Gtk::PACK_SHRINK);
 
 
@@ -243,7 +265,7 @@ void BatchQueuePanel::init (RTWindow *parent)
 // it is expected to have a non null forceOrientation value on Preferences update only. In this case, qsize is ignored and computed automatically
 void BatchQueuePanel::updateTab (int qsize, int forceOrientation)
 {
-    Gtk::Notebook *nb = (Gtk::Notebook *)(this->get_parent());
+    Gtk::Notebook *nb = dynamic_cast<Gtk::Notebook *>(this->get_parent());
 
     if (forceOrientation > 0) {
         qsize = batchQueue->getEntries().size();
@@ -566,4 +588,11 @@ void BatchQueuePanel::formatChanged(const Glib::ustring& format)
     auto& options = App::get().mut_options();
     options.saveFormatBatch = saveFormatPanel->getFormat();
     batchQueue->updateDestinationPathPreview();
+}
+
+void BatchQueuePanel::setOverlayMode (bool overlay)
+{
+    if (overlay) {
+        batchQueue->setHScrollVisible (false);
+    }
 }

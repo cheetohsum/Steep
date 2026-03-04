@@ -87,6 +87,7 @@ public:
 
     DiagonalCurveEditor* addCurve(Glib::ustring curveLabel = "");
     void updateBackgroundHistogram (CurveEditor* ce) override;
+    void setCurveGraphSize(int size) override;
     void switchGUI() override;
     void refresh(CurveEditor *curveToRefresh) override;
     void editModeSwitchedOff () override;

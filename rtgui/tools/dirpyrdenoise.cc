@@ -275,17 +275,12 @@ DirPyrDenoise::DirPyrDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_DIRPY
     passes->setAdjusterListener (this);
     passes->show();
 
-    // Advanced section (all controls behind Advanced)
-    advancedSection = Gtk::manage(new AdvancedSection());
-    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
-    Gtk::Box* const advBox = advancedSection->getContentBox();
-
-    advBox->pack_start(*luma, Gtk::PACK_SHRINK, 1);
-    advBox->pack_start(*chroma, Gtk::PACK_SHRINK, 1);
-    advBox->pack_start(*hb1, Gtk::PACK_SHRINK, 1);
-    advBox->pack_start( *hb11, Gtk::PACK_SHRINK, 1);
-    advBox->pack_start(*autoGain, Gtk::PACK_SHRINK, 0);
-    advBox->pack_start (*gamma, Gtk::PACK_EXPAND_WIDGET, 1);
+    pack_start(*luma, Gtk::PACK_SHRINK, 1);
+    pack_start(*chroma, Gtk::PACK_SHRINK, 1);
+    pack_start(*hb1, Gtk::PACK_SHRINK, 1);
+    pack_start( *hb11, Gtk::PACK_SHRINK, 1);
+    pack_start(*autoGain, Gtk::PACK_SHRINK, 0);
+    pack_start (*gamma, Gtk::PACK_EXPAND_WIDGET, 1);
 
     setExpandAlignProperties(Lmethod, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
     ctboxL->attach(*Lmethod, 1, 0, 1, 1);
@@ -293,7 +288,7 @@ DirPyrDenoise::DirPyrDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_DIRPY
     lumaVBox->pack_start (*NoiscurveEditorG, Gtk::PACK_SHRINK, 4);
     lumaVBox->pack_start (*Ldetail);
     lumaFrame->add(*lumaVBox);
-    advBox->pack_start (*lumaFrame);
+    pack_start (*lumaFrame);
 
     setExpandAlignProperties(Cmethod, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
     ctboxC->attach(*Cmethod, 1, 0, 1, 1);
@@ -314,7 +309,7 @@ DirPyrDenoise::DirPyrDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_DIRPY
     chromaVBox->pack_start (*bluechro);
     chromaVBox->pack_start (*CCcurveEditorG, Gtk::PACK_SHRINK, 4);
     chromaFrame->add(*chromaVBox);
-    advBox->pack_start (*chromaFrame);
+    pack_start (*chromaFrame);
 
     setExpandAlignProperties(methodmed, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
     ctboxm->attach(*methodmed, 1, 0, 1, 1);
@@ -329,10 +324,20 @@ DirPyrDenoise::DirPyrDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_DIRPY
     medianVBox->pack_start (*passes);
     medianFrame->add(*medianVBox);
 
-    advBox->pack_start (*medianFrame);
+    pack_start (*medianFrame);
 
     medianConn = median->signal_toggled().connect( sigc::mem_fun(*this, &DirPyrDenoise::medianChanged) );
     ctboxrgb->hide();
+
+    // Hide complex elements — show only chroma (master noise strength) slider
+    luma->set_no_show_all(true);           luma->hide();
+    lumaFrame->set_no_show_all(true);      lumaFrame->hide();
+    chromaFrame->set_no_show_all(true);    chromaFrame->hide();
+    hb1->set_no_show_all(true);            hb1->hide();
+    hb11->set_no_show_all(true);           hb11->hide();
+    autoGain->set_no_show_all(true);       autoGain->hide();
+    gamma->set_no_show_all(true);          gamma->hide();
+    medianFrame->set_no_show_all(true);    medianFrame->hide();
 }
 
 DirPyrDenoise::~DirPyrDenoise ()
@@ -1145,7 +1150,6 @@ void DirPyrDenoise::setBatchMode (bool batchMode)
     medmethod->append (M("GENERAL_UNCHANGED"));
     methodmed->append (M("GENERAL_UNCHANGED"));
     rgbmethod->append (M("GENERAL_UNCHANGED"));
-    advancedSection->setBatchMode(batchMode);
 
 }
 

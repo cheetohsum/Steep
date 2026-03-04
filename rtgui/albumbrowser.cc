@@ -24,19 +24,76 @@
 #include "pathutils.h"
 #include "rtimage.h"
 #include "thumbnail.h"
+#include "../rtengine/procparams.h"
 
 #include <fstream>
 #include <algorithm>
-#include <iostream>
+#include <cmath>
 #include <sstream>
 #include <thread>
+
+// Subclass TreeView: set_hover_selection(true) makes GTK process motion
+// events internally (prelight_or_select). The virtual override intercepts
+// these to track the hovered row for programmatic cell-background highlighting.
+class AlbumTreeView : public Gtk::TreeView {
+public:
+    AlbumTreeView() : Glib::ObjectBase("AlbumTreeView") {
+        add_events(Gdk::POINTER_MOTION_MASK | Gdk::LEAVE_NOTIFY_MASK);
+    }
+
+    std::function<void(const Gtk::TreeModel::Path&)> onHoverChanged;
+    // Custom DnD: AlbumBrowser sets these to detect drag threshold
+    std::function<void(double, double)> onDragMotion;  // called with x,y on motion while button pressed
+    bool buttonDown = false;
+protected:
+    bool on_button_press_event(GdkEventButton* event) override {
+        if (event->button == 1) buttonDown = true;
+        return Gtk::TreeView::on_button_press_event(event);
+    }
+    bool on_button_release_event(GdkEventButton* event) override {
+        if (event->button == 1) buttonDown = false;
+        return Gtk::TreeView::on_button_release_event(event);
+    }
+    bool on_motion_notify_event(GdkEventMotion* event) override {
+        Gtk::TreeModel::Path path;
+        Gtk::TreeViewColumn* col;
+        int cx, cy;
+        if (get_path_at_pos(static_cast<int>(event->x), static_cast<int>(event->y), path, col, cx, cy)) {
+            if (path != hoveredPath_) {
+                hoveredPath_ = path;
+                if (onHoverChanged) onHoverChanged(path);
+                queue_draw();
+            }
+        } else if (!hoveredPath_.empty()) {
+            hoveredPath_ = Gtk::TreeModel::Path();
+            if (onHoverChanged) onHoverChanged(hoveredPath_);
+            queue_draw();
+        }
+        if (buttonDown && onDragMotion) {
+            onDragMotion(event->x, event->y);
+        }
+        return Gtk::TreeView::on_motion_notify_event(event);
+    }
+    bool on_leave_notify_event(GdkEventCrossing* event) override {
+        if (!hoveredPath_.empty()) {
+            hoveredPath_ = Gtk::TreeModel::Path();
+            if (onHoverChanged) onHoverChanged(hoveredPath_);
+            queue_draw();
+        }
+        return Gtk::TreeView::on_leave_notify_event(event);
+    }
+private:
+    Gtk::TreeModel::Path hoveredPath_;
+};
 
 // Static signal: all AlbumBrowser instances connect to this.
 // When one instance saves, it emits this signal so others reload.
 sigc::signal<void, AlbumBrowser*> AlbumBrowser::albumsChangedOnDisk_;
 
 AlbumBrowser::AlbumBrowser ()
-    : nextNodeId_(0), selectedNodeId_(-1)
+    : selectionChanging_(false), nextNodeId_(0),
+      selectedNodeId_(-1), contextMenuNodeId_(-1), coverLoadSession_(0),
+      firstTreeLoad_(true)
 {
     set_orientation(Gtk::ORIENTATION_VERTICAL);
 
@@ -76,13 +133,25 @@ AlbumBrowser::AlbumBrowser ()
     addMenu_->show_all();
     addBtn->set_popup(*addMenu_);
 
+    // Close album button (hidden until an album is active)
+    closeAlbumBtn_ = Gtk::manage(new Gtk::Button());
+    closeAlbumBtn_->set_name("AlbumCloseBtn");
+    closeAlbumBtn_->set_label("\xC3\x97"); // × character
+    closeAlbumBtn_->set_relief(Gtk::RELIEF_NONE);
+    closeAlbumBtn_->set_tooltip_text("Close album view");
+    closeAlbumBtn_->set_no_show_all(true);
+    closeAlbumBtn_->signal_clicked().connect(sigc::mem_fun(*this, &AlbumBrowser::deselectAlbum));
+
     headerBar->pack_end(*addBtn, Gtk::PACK_SHRINK);
+    headerBar->pack_end(*closeAlbumBtn_, Gtk::PACK_SHRINK);
 
     auto css = Gtk::CssProvider::create();
     css->load_from_data(
         "#AlbumHeader { min-height: 0; padding: 0 4px; }"
         "#AlbumHeader label { font-size: 10px; font-weight: bold; padding: 2px 0; margin: 0; }"
         "#AlbumAddBtn { min-height: 0; min-width: 0; padding: 0; margin: 0; }"
+        "#AlbumCloseBtn { min-height: 0; min-width: 0; padding: 0 4px; margin: 0; font-size: 12px; color: #e88; }"
+        "#AlbumCloseBtn:hover { color: #f66; }"
         "#AlbumBrowserTree { font-size: 0.92em; }"
         "#AlbumBrowserTree header { min-height: 0; padding: 0; }"
         "#AlbumNewBtn { min-height: 0; min-width: 0; padding: 1px 4px; margin: 0; font-size: 0.85em; }"
@@ -90,6 +159,7 @@ AlbumBrowser::AlbumBrowser ()
     headerBar->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
     headerLabel->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
     addBtn->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+    closeAlbumBtn_->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
 
     pack_start(*headerBar, Gtk::PACK_SHRINK, 0);
 
@@ -101,16 +171,95 @@ AlbumBrowser::AlbumBrowser ()
     scrollw_ = Gtk::manage(new Gtk::ScrolledWindow());
     scrollw_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
     scrollw_->set_propagate_natural_height(true);
-    scrollw_->set_max_content_height(120);
+    scrollw_->set_max_content_height(160);
+    scrollw_->set_overlay_scrolling(false);
 
-    treeView_ = Gtk::manage(new Gtk::TreeView());
+    treeView_ = Gtk::manage(new AlbumTreeView());
     treeView_->set_name("AlbumBrowserTree");
     treeView_->set_headers_visible(false);
-    treeView_->set_can_focus(false);
     treeView_->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+
+    // Hover highlighting: set_hover_selection(true) is required for motion
+    // events to reach the bin_window (and thus the virtual override).
+    treeView_->set_hover_selection(true);
+    treeView_->onHoverChanged = [this](const Gtk::TreeModel::Path& path) {
+        hoveredPath_ = path;
+    };
+
+    // Custom DnD: detect drag by checking motion distance while button held
+    dragSourceNodeId_ = -1;
+    dragActive_ = false;
+    dragStartX_ = dragStartY_ = 0;
+    treeView_->onDragMotion = [this](double x, double y) {
+        if (dragSourceNodeId_ < 0) return;
+        if (!dragActive_) {
+            double dx = x - dragStartX_;
+            double dy = y - dragStartY_;
+            if (dx * dx + dy * dy > 25) {  // 5px threshold
+                dragActive_ = true;
+            }
+        }
+        if (dragActive_) {
+            Gtk::TreeModel::Path path;
+            int destNodeId = -1;
+            DropAction action = computeDropAction(static_cast<int>(x), static_cast<int>(y), path, destNodeId);
+            dropTargetPath_ = path;
+            switch (action) {
+                case DropAction::INTO_FOLDER:
+                    treeView_->set_drag_dest_row(path, Gtk::TREE_VIEW_DROP_INTO_OR_AFTER);
+                    break;
+                case DropAction::BEFORE:
+                    treeView_->set_drag_dest_row(path, Gtk::TREE_VIEW_DROP_BEFORE);
+                    break;
+                case DropAction::AFTER:
+                    treeView_->set_drag_dest_row(path, Gtk::TREE_VIEW_DROP_AFTER);
+                    break;
+                case DropAction::TO_ROOT: {
+                    Gtk::TreeModel::Path empty;
+                    treeView_->set_drag_dest_row(empty, Gtk::TREE_VIEW_DROP_AFTER);
+                    break;
+                }
+            }
+        }
+    };
 
     model_ = Gtk::TreeStore::create(columns_);
     treeView_->set_model(model_);
+
+    // Pre-load folder icons as pixbufs for reliable CellRendererPixbuf use
+    {
+        auto theme = Gtk::IconTheme::get_default();
+        int iconSz = 16;
+        try { folderClosedPixbuf_ = theme->load_icon("folder-closed-small", iconSz); } catch (...) {}
+        try { folderOpenPixbuf_ = theme->load_icon("folder-open-small", iconSz); } catch (...) {}
+    }
+
+    // Cover thumbnail / folder icon column (before name)
+    Gtk::CellRendererPixbuf* coverCR = Gtk::manage(new Gtk::CellRendererPixbuf());
+    coverCR->property_ypad() = 0;
+    coverCR->property_xpad() = 2;
+    Gtk::TreeView::Column* coverCol = Gtk::manage(new Gtk::TreeView::Column(""));
+    coverCol->pack_start(*coverCR, false);
+    coverCol->set_expand(false);
+    // Use cell_data_func to show folder icon for folders, cover pixbuf for albums
+    coverCol->set_cell_data_func(*coverCR, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
+        auto* pbCR = static_cast<Gtk::CellRendererPixbuf*>(cr);
+        int nodeType = (*iter)[columns_.nodeType];
+        if (nodeType == static_cast<int>(AlbumNodeType::FOLDER)) {
+            auto path = model_->get_path(iter);
+            bool expanded = treeView_->row_expanded(path);
+            pbCR->property_pixbuf() = expanded ? folderOpenPixbuf_ : folderClosedPixbuf_;
+        } else {
+            pbCR->property_pixbuf() = (*iter)[columns_.coverPixbuf];
+        }
+        auto rowPath = model_->get_path(iter);
+        bool hovered = !hoveredPath_.empty() && rowPath == hoveredPath_;
+        bool dropTarget = dragActive_ && !dropTargetPath_.empty() && rowPath == dropTargetPath_;
+        pbCR->property_cell_background_set() = hovered || dropTarget;
+        if (dropTarget) pbCR->property_cell_background() = Glib::ustring("#2a4a6b");
+        else if (hovered) pbCR->property_cell_background() = Glib::ustring("#3a3f4b");
+    });
+    treeView_->append_column(*coverCol);
 
     // Name column — set to expand so album names aren't truncated
     Gtk::CellRendererText* nameCR = Gtk::manage(new Gtk::CellRendererText());
@@ -126,8 +275,49 @@ AlbumBrowser::AlbumBrowser ()
         textCR->property_weight() = isTarget ? Pango::WEIGHT_BOLD : Pango::WEIGHT_NORMAL;
         textCR->property_style() = (nodeType == static_cast<int>(AlbumNodeType::SMART_ALBUM))
             ? Pango::STYLE_ITALIC : Pango::STYLE_NORMAL;
+        auto rowPath = model_->get_path(iter);
+        bool hovered = !hoveredPath_.empty() && rowPath == hoveredPath_;
+        bool dropTarget = dragActive_ && !dropTargetPath_.empty() && rowPath == dropTargetPath_;
+        textCR->property_cell_background_set() = hovered || dropTarget;
+        if (dropTarget) textCR->property_cell_background() = Glib::ustring("#2a4a6b");
+        else if (hovered) textCR->property_cell_background() = Glib::ustring("#3a3f4b");
     });
     treeView_->append_column(*nameCol);
+
+    // Create search icon pixbuf (small magnifier drawn with Cairo)
+    {
+        auto surface = Cairo::ImageSurface::create(Cairo::FORMAT_ARGB32, 14, 14);
+        auto cr = Cairo::Context::create(surface);
+        cr->set_source_rgba(0.58, 0.62, 0.68, 0.85);
+        cr->set_line_width(1.3);
+        cr->arc(5.5, 5.5, 3.5, 0, 2 * M_PI);
+        cr->stroke();
+        cr->set_line_width(1.6);
+        cr->set_line_cap(Cairo::LINE_CAP_ROUND);
+        cr->move_to(8.2, 8.2);
+        cr->line_to(11.8, 11.8);
+        cr->stroke();
+        searchPixbuf_ = Gdk::Pixbuf::create(surface, 0, 0, 14, 14);
+    }
+
+    // Search icon column (clickable, only for smart albums)
+    Gtk::CellRendererPixbuf* searchCR = Gtk::manage(new Gtk::CellRendererPixbuf());
+    searchCol_ = Gtk::manage(new Gtk::TreeView::Column(""));
+    searchCol_->pack_start(*searchCR, false);
+    searchCol_->set_expand(false);
+    searchCol_->add_attribute(*searchCR, "pixbuf", columns_.searchIcon);
+    searchCol_->set_cell_data_func(*searchCR, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
+        auto* pbCR = static_cast<Gtk::CellRendererPixbuf*>(cr);
+        // Manually set the pixbuf since set_cell_data_func overrides add_attribute
+        pbCR->property_pixbuf() = (*iter)[columns_.searchIcon];
+        auto rowPath = model_->get_path(iter);
+        bool hovered = !hoveredPath_.empty() && rowPath == hoveredPath_;
+        bool dropTarget = dragActive_ && !dropTargetPath_.empty() && rowPath == dropTargetPath_;
+        pbCR->property_cell_background_set() = hovered || dropTarget;
+        if (dropTarget) pbCR->property_cell_background() = Glib::ustring("#2a4a6b");
+        else if (hovered) pbCR->property_cell_background() = Glib::ustring("#3a3f4b");
+    });
+    treeView_->append_column(*searchCol_);
 
     // Count column — fixed width, right-aligned
     Gtk::CellRendererText* countCR = Gtk::manage(new Gtk::CellRendererText());
@@ -140,11 +330,19 @@ AlbumBrowser::AlbumBrowser ()
         auto* textCR = static_cast<Gtk::CellRendererText*>(cr);
         int nodeType = (*iter)[columns_.nodeType];
         int count = (*iter)[columns_.count];
-        if (nodeType != static_cast<int>(AlbumNodeType::FOLDER)) {
-            textCR->property_text() = Glib::ustring::compose("%1", count);
-        } else {
+        if (nodeType == static_cast<int>(AlbumNodeType::FOLDER)) {
             textCR->property_text() = "";
+        } else if (count == -1) {
+            textCR->property_text() = Glib::ustring::compose("%1", "\xe2\x80\xa6"); // "…" ellipsis
+        } else {
+            textCR->property_text() = Glib::ustring::compose("%1", count);
         }
+        auto rowPath = model_->get_path(iter);
+        bool hovered = !hoveredPath_.empty() && rowPath == hoveredPath_;
+        bool dropTarget = dragActive_ && !dropTargetPath_.empty() && rowPath == dropTargetPath_;
+        textCR->property_cell_background_set() = hovered || dropTarget;
+        if (dropTarget) textCR->property_cell_background() = Glib::ustring("#2a4a6b");
+        else if (hovered) textCR->property_cell_background() = Glib::ustring("#3a3f4b");
     });
     treeView_->append_column(*countCol);
 
@@ -153,7 +351,72 @@ AlbumBrowser::AlbumBrowser ()
     set_margin_bottom(8);
 
     treeView_->signal_button_press_event().connect(sigc::mem_fun(*this, &AlbumBrowser::onButtonPress), false);
-    treeView_->get_selection()->signal_changed().connect(sigc::mem_fun(*this, &AlbumBrowser::onSelectionChanged));
+    // Handle left-click selection on button RELEASE so DnD can initiate on press.
+    // Don't connect selection signal_changed — hover_selection triggers it on
+    // every mouse move. Instead, onSelectionChanged is called from release.
+    // Custom DnD: GTK's enable_model_drag_source is incompatible with
+    // set_hover_selection(true). Instead we track press→motion→release.
+    treeView_->signal_button_release_event().connect([this](GdkEventButton* ev) -> bool {
+        if (ev->button == 1) {
+            if (dragActive_) {
+                // Complete the drop
+                Gtk::TreeModel::Path path;
+                int destNodeId = -1;
+                DropAction action = computeDropAction(static_cast<int>(ev->x),
+                                                       static_cast<int>(ev->y), path, destNodeId);
+                dragActive_ = false;
+                dropTargetPath_ = Gtk::TreeModel::Path();
+                Gtk::TreeModel::Path empty;
+                treeView_->set_drag_dest_row(empty, Gtk::TREE_VIEW_DROP_AFTER);
+                treeView_->queue_draw();
+
+                if (destNodeId != dragSourceNodeId_) {
+                    switch (action) {
+                        case DropAction::INTO_FOLDER:
+                            moveNode(dragSourceNodeId_, destNodeId, -1, true);
+                            break;
+                        case DropAction::BEFORE: {
+                            const AlbumNode* dn = findNodeConst(destNodeId);
+                            if (dn) moveNode(dragSourceNodeId_, dn->parentId, destNodeId, false);
+                            break;
+                        }
+                        case DropAction::AFTER: {
+                            const AlbumNode* dn = findNodeConst(destNodeId);
+                            if (dn) moveNode(dragSourceNodeId_, dn->parentId, destNodeId, true);
+                            break;
+                        }
+                        case DropAction::TO_ROOT:
+                            moveNode(dragSourceNodeId_, -1, -1, true);
+                            break;
+                    }
+                }
+            } else {
+                // Simple click — handle selection
+                Gtk::TreeModel::Path path;
+                Gtk::TreeViewColumn* col;
+                int cx, cy;
+                if (treeView_->get_path_at_pos(static_cast<int>(ev->x),
+                                                static_cast<int>(ev->y),
+                                                path, col, cx, cy)) {
+                    if (col == searchCol_) {
+                        auto iter = model_->get_iter(path);
+                        if (iter) {
+                            int nodeType = (*iter)[columns_.nodeType];
+                            if (nodeType == static_cast<int>(AlbumNodeType::SMART_ALBUM)) {
+                                int nodeId = (*iter)[columns_.nodeId];
+                                runSmartAlbumSearch(nodeId, false);
+                                return true;
+                            }
+                        }
+                    }
+                    treeView_->get_selection()->select(path);
+                    onSelectionChanged();
+                }
+            }
+            dragSourceNodeId_ = -1;
+        }
+        return false;
+    }, false);
 
     loadAlbums();
     refreshTree();
@@ -235,6 +498,10 @@ void AlbumBrowser::loadAlbums ()
                     }
                 }
 
+                if (kf.has_key(group, "Cover")) {
+                    node.coverPath = kf.get_string(group, "Cover");
+                }
+
                 if (!node.name.empty()) {
                     nodes_.push_back(std::move(node));
                 }
@@ -294,6 +561,10 @@ void AlbumBrowser::saveAlbums ()
             kf.set_string_list(section, "Files", arr);
         }
 
+        if (!node.coverPath.empty()) {
+            kf.set_string(section, "Cover", node.coverPath);
+        }
+
         if (node.type == AlbumNodeType::SMART_ALBUM) {
             kf.set_string(section, "Rules", serializeRules(node.rules));
             kf.set_boolean(section, "MatchAll", node.matchAll);
@@ -313,9 +584,52 @@ void AlbumBrowser::saveAlbums ()
 
 void AlbumBrowser::refreshTree ()
 {
+    saveExpansionState();
     model_->clear();
     addChildrenToTree(-1, nullptr);
-    treeView_->expand_all();
+    restoreExpansionState();
+
+    // Load cover thumbnails in background
+    int session = ++coverLoadSession_;
+    std::thread(&AlbumBrowser::loadCoverThumbnails, this, session).detach();
+}
+
+void AlbumBrowser::saveExpansionState ()
+{
+    if (firstTreeLoad_) return;  // Nothing to save yet
+
+    expandedFolders_.clear();
+    model_->foreach_iter([this](const Gtk::TreeModel::iterator& iter) -> bool {
+        int nodeType = (*iter)[columns_.nodeType];
+        if (nodeType == static_cast<int>(AlbumNodeType::FOLDER)) {
+            int nodeId = (*iter)[columns_.nodeId];
+            if (treeView_->row_expanded(model_->get_path(iter))) {
+                expandedFolders_.insert(nodeId);
+            }
+        }
+        return false;
+    });
+}
+
+void AlbumBrowser::restoreExpansionState ()
+{
+    if (firstTreeLoad_) {
+        // First load: expand all folders by default
+        treeView_->expand_all();
+        firstTreeLoad_ = false;
+    } else {
+        // Restore previously expanded folders
+        model_->foreach_iter([this](const Gtk::TreeModel::iterator& iter) -> bool {
+            int nodeType = (*iter)[columns_.nodeType];
+            if (nodeType == static_cast<int>(AlbumNodeType::FOLDER)) {
+                int nodeId = (*iter)[columns_.nodeId];
+                if (expandedFolders_.count(nodeId)) {
+                    treeView_->expand_row(model_->get_path(iter), false);
+                }
+            }
+            return false;
+        });
+    }
 }
 
 void AlbumBrowser::addChildrenToTree (int parentId, const Gtk::TreeModel::Row* parentRow)
@@ -335,6 +649,17 @@ void AlbumBrowser::addChildrenToTree (int parentId, const Gtk::TreeModel::Row* p
         row[columns_.nodeType] = static_cast<int>(node.type);
         row[columns_.isTarget] = (node.name == targetAlbumName_ && node.type == AlbumNodeType::ALBUM);
         row[columns_.nodeId] = node.id;
+        if (node.type == AlbumNodeType::SMART_ALBUM) {
+            row[columns_.searchIcon] = searchPixbuf_;
+        }
+
+        // Set cover pixbuf for albums (folder icons handled by cell_data_func)
+        if (node.type == AlbumNodeType::ALBUM) {
+            auto cit = coverCache_.find(node.id);
+            if (cit != coverCache_.end()) {
+                row[columns_.coverPixbuf] = cit->second;
+            }
+        }
 
         // Recurse for folders
         if (node.type == AlbumNodeType::FOLDER) {
@@ -365,6 +690,198 @@ AlbumNode* AlbumBrowser::findNodeByName (const Glib::ustring& name)
         if (n.name == name) return &n;
     }
     return nullptr;
+}
+
+const AlbumNode* AlbumBrowser::findNodeConst (int id) const
+{
+    for (const auto& n : nodes_) {
+        if (n.id == id) return &n;
+    }
+    return nullptr;
+}
+
+bool AlbumBrowser::isDescendantOf (int nodeId, int potentialAncestorId) const
+{
+    int current = nodeId;
+    while (current >= 0) {
+        if (current == potentialAncestorId) return true;
+        const AlbumNode* node = findNodeConst(current);
+        if (!node) break;
+        current = node->parentId;
+    }
+    return false;
+}
+
+void AlbumBrowser::onDragDataGet (const Glib::RefPtr<Gdk::DragContext>&,
+                                   Gtk::SelectionData& data, guint, guint)
+{
+    if (dragSourceNodeId_ >= 0) {
+        data.set("ALBUM_NODE", 8,
+                 reinterpret_cast<const guint8*>(&dragSourceNodeId_), sizeof(int));
+    }
+}
+
+void AlbumBrowser::onDragDataReceived (const Glib::RefPtr<Gdk::DragContext>& context,
+                                        int x, int y,
+                                        const Gtk::SelectionData& data,
+                                        guint, guint time)
+{
+    if (data.get_length() < static_cast<int>(sizeof(int))) {
+        context->drag_finish(false, false, time);
+        return;
+    }
+
+    int sourceNodeId = *reinterpret_cast<const int*>(data.get_data());
+
+    Gtk::TreeModel::Path destPath;
+    Gtk::TreeViewDropPosition dropPos;
+
+    if (!treeView_->get_dest_row_at_pos(x, y, destPath, dropPos)) {
+        moveNode(sourceNodeId, -1, -1, true);
+    } else {
+        auto destIter = model_->get_iter(destPath);
+        if (!destIter) {
+            context->drag_finish(false, false, time);
+            return;
+        }
+        int destNodeId = (*destIter)[columns_.nodeId];
+        int destNodeType = (*destIter)[columns_.nodeType];
+
+        if ((dropPos == Gtk::TREE_VIEW_DROP_INTO_OR_BEFORE ||
+             dropPos == Gtk::TREE_VIEW_DROP_INTO_OR_AFTER) &&
+            destNodeType == static_cast<int>(AlbumNodeType::FOLDER)) {
+            moveNode(sourceNodeId, destNodeId, -1, true);
+        } else {
+            const AlbumNode* destNode = findNodeConst(destNodeId);
+            if (destNode) {
+                bool after = (dropPos == Gtk::TREE_VIEW_DROP_AFTER ||
+                              dropPos == Gtk::TREE_VIEW_DROP_INTO_OR_AFTER);
+                moveNode(sourceNodeId, destNode->parentId, destNodeId, after);
+            }
+        }
+    }
+
+    context->drag_finish(true, false, time);
+}
+
+void AlbumBrowser::moveNode (int sourceId, int newParentId, int siblingId, bool after)
+{
+    // Don't allow dropping a node into itself or its own descendants
+    if (newParentId >= 0 && isDescendantOf(newParentId, sourceId)) return;
+
+    // Find and remove source node from vector
+    auto srcIt = std::find_if(nodes_.begin(), nodes_.end(),
+        [sourceId](const AlbumNode& n) { return n.id == sourceId; });
+    if (srcIt == nodes_.end()) return;
+
+    AlbumNode srcNode = *srcIt;
+    srcNode.parentId = newParentId;
+    nodes_.erase(srcIt);
+
+    if (siblingId >= 0) {
+        // Insert before/after the sibling
+        auto sibIt = std::find_if(nodes_.begin(), nodes_.end(),
+            [siblingId](const AlbumNode& n) { return n.id == siblingId; });
+        if (sibIt != nodes_.end()) {
+            if (after) ++sibIt;
+            nodes_.insert(sibIt, srcNode);
+        } else {
+            nodes_.push_back(srcNode);
+        }
+    } else {
+        // No sibling target — append at end
+        nodes_.push_back(srcNode);
+    }
+
+    saveAlbums();
+    refreshTree();
+}
+
+AlbumBrowser::DropAction AlbumBrowser::computeDropAction(int x, int y,
+    Gtk::TreeModel::Path& outPath, int& outNodeId) const
+{
+    outNodeId = -1;
+    outPath = Gtk::TreeModel::Path();
+
+    Gtk::TreeModel::Path path;
+    if (!treeView_->get_path_at_pos(x, y, path)) {
+        return DropAction::TO_ROOT;
+    }
+
+    auto iter = model_->get_iter(path);
+    if (!iter) return DropAction::TO_ROOT;
+
+    outPath = path;
+    outNodeId = (*iter)[columns_.nodeId];
+    int nodeType = (*iter)[columns_.nodeType];
+
+    // Get the cell area to determine where within the row the cursor is
+    Gdk::Rectangle cellArea;
+    treeView_->get_cell_area(path, *treeView_->get_column(0), cellArea);
+    int rowHeight = cellArea.get_height();
+    int relY = y - cellArea.get_y();
+    double fraction = (rowHeight > 0) ? static_cast<double>(relY) / rowHeight : 0.5;
+
+    if (nodeType == static_cast<int>(AlbumNodeType::FOLDER)) {
+        // Top 25% = before, bottom 25% = after, middle 50% = into
+        if (fraction < 0.25) return DropAction::BEFORE;
+        if (fraction > 0.75) return DropAction::AFTER;
+        return DropAction::INTO_FOLDER;
+    } else {
+        // Non-folder: top half = before, bottom half = after
+        if (fraction < 0.5) return DropAction::BEFORE;
+        return DropAction::AFTER;
+    }
+}
+
+void AlbumBrowser::sortNodes(bool byName)
+{
+    // Sort children within each parent group, recursively
+    // Collect unique parent IDs
+    std::set<int> parentIds;
+    for (const auto& n : nodes_) parentIds.insert(n.parentId);
+
+    // For each parent, sort its direct children
+    for (int pid : parentIds) {
+        // Find the range of children for this parent — they may not be contiguous
+        // so we gather them, sort, and put back
+        std::vector<std::pair<size_t, AlbumNode>> children;
+        for (size_t i = 0; i < nodes_.size(); ++i) {
+            if (nodes_[i].parentId == pid) {
+                children.push_back({i, nodes_[i]});
+            }
+        }
+        if (children.size() <= 1) continue;
+
+        if (byName) {
+            std::sort(children.begin(), children.end(),
+                [](const std::pair<size_t, AlbumNode>& a, const std::pair<size_t, AlbumNode>& b) {
+                    // Folders first, then alphabetical
+                    if (a.second.type == AlbumNodeType::FOLDER && b.second.type != AlbumNodeType::FOLDER) return true;
+                    if (a.second.type != AlbumNodeType::FOLDER && b.second.type == AlbumNodeType::FOLDER) return false;
+                    return a.second.name.lowercase() < b.second.name.lowercase();
+                });
+        } else {
+            // Sort by creation order (ID)
+            std::sort(children.begin(), children.end(),
+                [](const std::pair<size_t, AlbumNode>& a, const std::pair<size_t, AlbumNode>& b) {
+                    if (a.second.type == AlbumNodeType::FOLDER && b.second.type != AlbumNodeType::FOLDER) return true;
+                    if (a.second.type != AlbumNodeType::FOLDER && b.second.type == AlbumNodeType::FOLDER) return false;
+                    return a.second.id < b.second.id;
+                });
+        }
+
+        // Write sorted children back into their original positions
+        std::vector<size_t> positions;
+        for (const auto& c : children) positions.push_back(c.first);
+        std::sort(positions.begin(), positions.end());
+        for (size_t i = 0; i < positions.size(); ++i) {
+            nodes_[positions[i]] = children[i].second;
+        }
+    }
+
+    saveAlbums();
+    refreshTree();
 }
 
 void AlbumBrowser::createAlbum (int parentId)
@@ -456,9 +973,9 @@ void AlbumBrowser::createFolder (int parentId)
 
 void AlbumBrowser::renameNode ()
 {
-    if (selectedNodeId_ < 0) return;
+    if (contextMenuNodeId_ < 0) return;
 
-    AlbumNode* node = findNode(selectedNodeId_);
+    AlbumNode* node = findNode(contextMenuNodeId_);
     if (!node) return;
 
     Gtk::Window* toplevel = dynamic_cast<Gtk::Window*>(get_toplevel());
@@ -493,7 +1010,7 @@ void AlbumBrowser::renameNode ()
 
 void AlbumBrowser::deleteNode ()
 {
-    if (selectedNodeId_ < 0) return;
+    if (contextMenuNodeId_ < 0) return;
 
     // Collect all descendant IDs (for folders)
     std::vector<int> toDelete;
@@ -505,7 +1022,7 @@ void AlbumBrowser::deleteNode ()
             }
         }
     };
-    collectChildren(selectedNodeId_);
+    collectChildren(contextMenuNodeId_);
 
     // Check if target album is being deleted
     for (int id : toDelete) {
@@ -536,17 +1053,17 @@ void AlbumBrowser::deleteNode ()
 
 void AlbumBrowser::setTargetAlbum ()
 {
-    if (selectedAlbumName_.empty()) return;
-    targetAlbumName_ = selectedAlbumName_;
+    if (contextMenuAlbumName_.empty()) return;
+    targetAlbumName_ = contextMenuAlbumName_;
     saveAlbums();
     refreshTree();
 }
 
 void AlbumBrowser::addCurrentImage ()
 {
-    if (selectedNodeId_ < 0 || !getCurrentFilePath_) return;
+    if (contextMenuNodeId_ < 0 || !getCurrentFilePath_) return;
 
-    AlbumNode* node = findNode(selectedNodeId_);
+    AlbumNode* node = findNode(contextMenuNodeId_);
     if (!node || node->type != AlbumNodeType::ALBUM) return;
 
     Glib::ustring filePath = getCurrentFilePath_();
@@ -557,9 +1074,9 @@ void AlbumBrowser::addCurrentImage ()
 
 void AlbumBrowser::editSmartAlbumRules ()
 {
-    if (selectedNodeId_ < 0) return;
+    if (contextMenuNodeId_ < 0) return;
 
-    AlbumNode* node = findNode(selectedNodeId_);
+    AlbumNode* node = findNode(contextMenuNodeId_);
     if (!node || node->type != AlbumNodeType::SMART_ALBUM) return;
 
     Glib::ustring name = node->name;
@@ -577,8 +1094,16 @@ void AlbumBrowser::editSmartAlbumRules ()
 
 void AlbumBrowser::addFileToTargetAlbum (const Glib::ustring& filePath)
 {
-    if (targetAlbumName_.empty() || filePath.empty()) return;
-    addFileToAlbum(targetAlbumName_, filePath);
+    if (filePath.empty()) return;
+
+    // Use target album if set, otherwise fall back to currently selected album
+    Glib::ustring albumName = targetAlbumName_;
+    if (albumName.empty()) {
+        albumName = selectedAlbumName_;
+    }
+    if (albumName.empty()) return;
+
+    addFileToAlbum(albumName, filePath);
 }
 
 void AlbumBrowser::addFileToAlbum (const Glib::ustring& albumName, const Glib::ustring& filePath)
@@ -611,6 +1136,9 @@ void AlbumBrowser::removeFileFromAlbum (const Glib::ustring& albumName, const Gl
 
 void AlbumBrowser::onSelectionChanged ()
 {
+    if (selectionChanging_) return;
+    selectionChanging_ = true;
+
     auto iter = treeView_->get_selection()->get_selected();
     if (iter) {
         int nodeId = (*iter)[columns_.nodeId];
@@ -620,9 +1148,11 @@ void AlbumBrowser::onSelectionChanged ()
             treeView_->get_selection()->unselect_all();
             selectedAlbumName_.clear();
             selectedNodeId_ = -1;
+            closeAlbumBtn_->hide();
             std::set<std::string> empty;
             albumSelectedSignal_.emit(empty);
             albumViewSignal_.emit("", std::vector<Glib::ustring>());
+            selectionChanging_ = false;
             return;
         }
 
@@ -630,7 +1160,10 @@ void AlbumBrowser::onSelectionChanged ()
         selectedAlbumName_ = name;
 
         AlbumNode* node = findNode(nodeId);
-        if (!node) return;
+        if (!node) {
+            selectionChanging_ = false;
+            return;
+        }
 
         if (node->type == AlbumNodeType::ALBUM) {
             // Build whitelist from album's files
@@ -638,22 +1171,12 @@ void AlbumBrowser::onSelectionChanged ()
             for (const auto& f : node->filePaths) {
                 whitelist.insert(std::string(f.c_str()));
             }
+            closeAlbumBtn_->show();
             albumSelectedSignal_.emit(whitelist);
             albumViewSignal_.emit(node->name, node->filePaths);
         } else if (node->type == AlbumNodeType::SMART_ALBUM) {
-            // Run evaluation in background thread to avoid UI freeze
-            AlbumNode nodeCopy = *node;
-            std::thread([this, nodeCopy]() {
-                auto matchingFiles = evaluateSmartAlbum(nodeCopy);
-                Glib::signal_idle().connect_once([this, matchingFiles]() {
-                    std::set<std::string> whitelist;
-                    for (const auto& f : matchingFiles) {
-                        whitelist.insert(std::string(f.c_str()));
-                    }
-                    albumSelectedSignal_.emit(whitelist);
-                    albumViewSignal_.emit(selectedAlbumName_, matchingFiles);
-                });
-            }).detach();
+            closeAlbumBtn_->show();
+            runSmartAlbumSearch(nodeId);
         } else {
             // Folders - toggle expand/collapse
             auto path = model_->get_path(iter);
@@ -664,33 +1187,99 @@ void AlbumBrowser::onSelectionChanged ()
             }
             selectedAlbumName_.clear();
             selectedNodeId_ = -1;
+            closeAlbumBtn_->hide();
             treeView_->get_selection()->unselect_all();
         }
     } else {
         selectedAlbumName_.clear();
         selectedNodeId_ = -1;
+        closeAlbumBtn_->hide();
         std::set<std::string> empty;
         albumSelectedSignal_.emit(empty);
         albumViewSignal_.emit("", std::vector<Glib::ustring>());
     }
+    selectionChanging_ = false;
+}
+
+void AlbumBrowser::runSmartAlbumSearch (int nodeId, bool openAlbum)
+{
+    AlbumNode* node = findNode(nodeId);
+    if (!node || node->type != AlbumNodeType::SMART_ALBUM) return;
+
+    AlbumNode nodeCopy = *node;
+    Glib::ustring albumName = node->name;
+
+    // Show searching indicator: replace the search icon with "..." text in count
+    model_->foreach_iter([this, nodeId](const Gtk::TreeModel::iterator& iter) -> bool {
+        if ((*iter)[columns_.nodeId] == nodeId) {
+            (*iter)[columns_.count] = -1; // sentinel for "searching"
+            return true;
+        }
+        return false;
+    });
+
+    std::thread([this, nodeCopy, albumName, nodeId, openAlbum]() {
+        auto matchingFiles = evaluateSmartAlbum(nodeCopy);
+        Glib::signal_idle().connect_once([this, matchingFiles, albumName, nodeId, openAlbum]() {
+            // Update the count in the tree model
+            model_->foreach_iter([this, nodeId, &matchingFiles](const Gtk::TreeModel::iterator& iter) -> bool {
+                if ((*iter)[columns_.nodeId] == nodeId) {
+                    (*iter)[columns_.count] = static_cast<int>(matchingFiles.size());
+                    return true; // stop
+                }
+                return false; // continue
+            });
+
+            if (openAlbum) {
+                // Emit signals so the file browser shows the results
+                std::set<std::string> whitelist;
+                for (const auto& f : matchingFiles) {
+                    whitelist.insert(std::string(f.c_str()));
+                }
+                selectedNodeId_ = nodeId;
+                selectedAlbumName_ = albumName;
+                albumSelectedSignal_.emit(whitelist);
+                albumViewSignal_.emit(albumName, matchingFiles);
+            }
+        });
+    }).detach();
 }
 
 bool AlbumBrowser::onButtonPress (GdkEventButton* event)
 {
+    // Left-click: capture source row and start coords for custom DnD.
+    // Selection is handled on button RELEASE (see signal_button_release above).
+    if (event->type == GDK_BUTTON_PRESS && event->button == 1) {
+        dragActive_ = false;
+        dragSourceNodeId_ = -1;
+        dragStartX_ = event->x;
+        dragStartY_ = event->y;
+        Gtk::TreeModel::Path path;
+        if (treeView_->get_path_at_pos(static_cast<int>(event->x),
+                                        static_cast<int>(event->y), path)) {
+            auto iter = model_->get_iter(path);
+            if (iter) {
+                dragSourceNodeId_ = (*iter)[columns_.nodeId];
+            }
+        }
+        return false;
+    }
+
     if (event->type == GDK_BUTTON_PRESS && event->button == 3) {
         Gtk::TreeModel::Path path;
         if (treeView_->get_path_at_pos(static_cast<int>(event->x), static_cast<int>(event->y), path)) {
-            treeView_->get_selection()->select(path);
             auto iter = model_->get_iter(path);
             if (iter) {
                 int nodeId = (*iter)[columns_.nodeId];
-                selectedNodeId_ = nodeId;
-                selectedAlbumName_ = (*iter)[columns_.name];
+                // Store for context menu callbacks without triggering onSelectionChanged
+                contextMenuNodeId_ = nodeId;
+                contextMenuAlbumName_ = Glib::ustring((*iter)[columns_.name]);
                 showContextMenu(event, nodeId);
-                return true;
+                return true;  // prevent default selection
             }
         } else {
-            // Right-click on empty area
+            contextMenuNodeId_ = -1;
+            contextMenuAlbumName_.clear();
             showContextMenu(event, -1);
             return true;
         }
@@ -746,6 +1335,74 @@ void AlbumBrowser::showContextMenu (GdkEventButton* event, int nodeId)
             miTarget->signal_activate().connect(sigc::mem_fun(*this, &AlbumBrowser::setTargetAlbum));
             menu->append(*miTarget);
 
+            // "Choose cover..." — pick from album images
+            if (!node->filePaths.empty()) {
+                auto* miCover = Gtk::manage(new Gtk::MenuItem(M("ALBUM_SET_COVER")));
+                miCover->signal_activate().connect([this, nodeId]() {
+                    AlbumNode* n = findNode(nodeId);
+                    if (!n || n->filePaths.empty()) return;
+
+                    Gtk::Window* toplevel = dynamic_cast<Gtk::Window*>(get_toplevel());
+                    if (!toplevel) return;
+
+                    Gtk::Dialog dlg(M("ALBUM_SET_COVER"), *toplevel, true);
+                    dlg.add_button(M("GENERAL_CANCEL"), Gtk::RESPONSE_CANCEL);
+                    dlg.set_default_size(360, 280);
+
+                    Gtk::ScrolledWindow* sw = Gtk::manage(new Gtk::ScrolledWindow());
+                    sw->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+                    Gtk::FlowBox* flowBox = Gtk::manage(new Gtk::FlowBox());
+                    flowBox->set_selection_mode(Gtk::SELECTION_SINGLE);
+                    flowBox->set_max_children_per_line(5);
+                    flowBox->set_min_children_per_line(3);
+
+                    Glib::ustring chosenPath;
+                    for (const auto& fp : n->filePaths) {
+                        Gtk::Image* img = Gtk::manage(new Gtk::Image());
+                        img->set_size_request(64, 64);
+                        img->set_tooltip_text(Glib::path_get_basename(fp));
+                        flowBox->add(*img);
+
+                        // Load thumbnail asynchronously
+                        Glib::ustring path = fp;
+                        Glib::signal_idle().connect_once([img, path]() {
+                            try {
+                                Thumbnail* thm = CacheManager::getInstance()->getEntry(path);
+                                if (thm) {
+                                    double scale = 1.0;
+                                    rtengine::IImage8* im = thm->processThumbImage(thm->getProcParams(), 64, scale);
+                                    if (im) {
+                                        auto pb = Gdk::Pixbuf::create_from_data(
+                                            im->getData(), Gdk::COLORSPACE_RGB, false, 8,
+                                            im->getWidth(), im->getHeight(), im->getWidth() * 3);
+                                        img->set(pb->copy());
+                                        delete im;
+                                    }
+                                    thm->decreaseRef();
+                                }
+                            } catch (...) {}
+                        });
+                    }
+
+                    sw->add(*flowBox);
+                    dlg.get_content_area()->pack_start(*sw, Gtk::PACK_EXPAND_WIDGET);
+                    dlg.show_all_children();
+
+                    flowBox->signal_child_activated().connect([&](Gtk::FlowBoxChild* child) {
+                        int idx = child->get_index();
+                        if (idx >= 0 && idx < static_cast<int>(n->filePaths.size())) {
+                            chosenPath = n->filePaths[idx];
+                            dlg.response(Gtk::RESPONSE_OK);
+                        }
+                    });
+
+                    if (dlg.run() == Gtk::RESPONSE_OK && !chosenPath.empty()) {
+                        setCoverForAlbum(nodeId, chosenPath);
+                    }
+                });
+                menu->append(*miCover);
+            }
+
             menu->append(*Gtk::manage(new Gtk::SeparatorMenuItem()));
 
             auto* miRename = Gtk::manage(new Gtk::MenuItem(M("ALBUM_RENAME")));
@@ -756,6 +1413,12 @@ void AlbumBrowser::showContextMenu (GdkEventButton* event, int nodeId)
             miDelete->signal_activate().connect(sigc::mem_fun(*this, &AlbumBrowser::deleteNode));
             menu->append(*miDelete);
         } else if (node->type == AlbumNodeType::SMART_ALBUM) {
+            auto* miSearch = Gtk::manage(new Gtk::MenuItem(M("ALBUM_SEARCH")));
+            miSearch->signal_activate().connect([this]() {
+                runSmartAlbumSearch(contextMenuNodeId_, false);
+            });
+            menu->append(*miSearch);
+
             auto* miEdit = Gtk::manage(new Gtk::MenuItem(M("ALBUM_EDIT_RULES")));
             miEdit->signal_activate().connect(sigc::mem_fun(*this, &AlbumBrowser::editSmartAlbumRules));
             menu->append(*miEdit);
@@ -771,6 +1434,15 @@ void AlbumBrowser::showContextMenu (GdkEventButton* event, int nodeId)
             menu->append(*miDelete);
         }
     }
+
+    // Sort options — always available
+    menu->append(*Gtk::manage(new Gtk::SeparatorMenuItem()));
+    auto* miSortName = Gtk::manage(new Gtk::MenuItem(M("ALBUM_SORT_NAME")));
+    miSortName->signal_activate().connect([this]() { sortNodes(true); });
+    menu->append(*miSortName);
+    auto* miSortDate = Gtk::manage(new Gtk::MenuItem(M("ALBUM_SORT_DATE")));
+    miSortDate->signal_activate().connect([this]() { sortNodes(false); });
+    menu->append(*miSortDate);
 
     menu->show_all();
     menu->popup(event->button, event->time);
@@ -1065,6 +1737,35 @@ bool loadExifForFile (const Glib::ustring& fpath, CacheImageData& cid)
     }
 }
 
+// Load rank/colorlabel from PP3 sidecar file and overlay onto CacheImageData.
+// Uses the HIGHER of EXIF rating and PP3 rank so both sources are respected.
+// Returns true if a PP3 was found.
+bool loadRankFromPP3 (const Glib::ustring& fpath, CacheImageData& cid)
+{
+    // PP3 sidecar is imagefile.ext.pp3
+    Glib::ustring pp3path = fpath + ".pp3";
+    try {
+        Glib::KeyFile kf;
+        if (!kf.load_from_file(pp3path)) return false;
+        if (kf.has_key("General", "Rank")) {
+            int rank = kf.get_integer("General", "Rank");
+            if (rank >= 0) {
+                // Use the higher of EXIF rating and PP3 rank
+                cid.rating = std::max(cid.rating, rank);
+            }
+        }
+        if (kf.has_key("General", "ColorLabel")) {
+            int cl = kf.get_integer("General", "ColorLabel");
+            if (cl > 0) {
+                cid.colorLabel = cl;
+            }
+        }
+        return true;
+    } catch (...) {
+        return false;
+    }
+}
+
 } // anonymous namespace
 
 std::vector<Glib::ustring> AlbumBrowser::evaluateSmartAlbum (const AlbumNode& node)
@@ -1092,6 +1793,9 @@ std::vector<Glib::ustring> AlbumBrowser::evaluateSmartAlbum (const AlbumNode& no
                 if (!loadExifForFile(fpath, cid)) continue;
             }
 
+            // Override rating/colorLabel with PP3 sidecar values (user-set rank)
+            loadRankFromPP3(fpath, cid);
+
             bool match = node.matchAll;
 
             for (const auto& rule : node.rules) {
@@ -1111,6 +1815,94 @@ std::vector<Glib::ustring> AlbumBrowser::evaluateSmartAlbum (const AlbumNode& no
         }
     }
     return matches;
+}
+
+// ---- Cover thumbnails ----
+
+void AlbumBrowser::loadCoverThumbnails(int session)
+{
+    for (const auto& node : nodes_) {
+        if (session != coverLoadSession_) return;
+        if (node.type != AlbumNodeType::ALBUM) continue;
+
+        // Skip if already cached
+        if (coverCache_.find(node.id) != coverCache_.end()) continue;
+
+        // Determine cover path
+        Glib::ustring coverFile = node.coverPath;
+        if (coverFile.empty() && !node.filePaths.empty()) {
+            coverFile = node.filePaths.front();
+        }
+        if (coverFile.empty()) continue;
+
+        Glib::RefPtr<Gdk::Pixbuf> pixbuf;
+        try {
+            Thumbnail* thm = CacheManager::getInstance()->getEntry(coverFile);
+            if (thm) {
+                double scale = 1.0;
+                rtengine::IImage8* img = thm->processThumbImage(thm->getProcParams(), 32, scale);
+                if (img) {
+                    auto pb = Gdk::Pixbuf::create_from_data(
+                        img->getData(), Gdk::COLORSPACE_RGB, false, 8,
+                        img->getWidth(), img->getHeight(), img->getWidth() * 3);
+                    // Scale to 32px height, preserve aspect ratio
+                    int w = img->getWidth(), h = img->getHeight();
+                    if (w > 0 && h > 0) {
+                        double ratio = 32.0 / h;
+                        int nw = std::max(1, static_cast<int>(w * ratio));
+                        int nh = 32;
+                        pixbuf = pb->scale_simple(nw, nh, Gdk::INTERP_BILINEAR);
+                    } else {
+                        pixbuf = pb->copy();
+                    }
+                    delete img;
+                }
+                thm->decreaseRef();
+            }
+        } catch (...) {}
+
+        if (!pixbuf) continue;
+
+        int nodeId = node.id;
+        Glib::signal_idle().connect_once([this, session, nodeId, pixbuf]() {
+            if (session != coverLoadSession_) return;
+            coverCache_[nodeId] = pixbuf;
+
+            // Update the tree model row
+            model_->foreach_iter([this, nodeId, pixbuf](const Gtk::TreeModel::iterator& iter) -> bool {
+                if ((*iter)[columns_.nodeId] == nodeId) {
+                    (*iter)[columns_.coverPixbuf] = pixbuf;
+                    return true;
+                }
+                return false;
+            });
+        });
+    }
+}
+
+void AlbumBrowser::deselectAlbum()
+{
+    selectionChanging_ = true;
+    treeView_->get_selection()->unselect_all();
+    selectedAlbumName_.clear();
+    selectedNodeId_ = -1;
+    closeAlbumBtn_->hide();
+    selectionChanging_ = false;
+
+    std::set<std::string> empty;
+    albumSelectedSignal_.emit(empty);
+    albumViewSignal_.emit("", std::vector<Glib::ustring>());
+}
+
+void AlbumBrowser::setCoverForAlbum(int nodeId, const Glib::ustring& filePath)
+{
+    AlbumNode* node = findNode(nodeId);
+    if (!node) return;
+
+    node->coverPath = filePath;
+    coverCache_.erase(nodeId);
+    saveAlbums();
+    refreshTree();
 }
 
 // ---- Backward compatibility ----

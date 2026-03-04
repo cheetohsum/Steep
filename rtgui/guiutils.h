@@ -357,6 +357,10 @@ public:
     void setFlatMode(bool flat);
     /// Get whether this expander is in flat mode
     bool getFlatMode() const { return flatMode_; }
+    /// Hide the detail/expandable area (keeps summary visible). Use after setFlatMode(true).
+    void collapseDetail();
+    /// Hide the header and force body always visible (call AFTER show_all)
+    void hideHeader();
 };
 
 
@@ -874,6 +878,7 @@ class AdvancedSection final : public Gtk::Box
 {
 public:
     AdvancedSection();
+    explicit AdvancedSection(const Glib::ustring& customLabel);
 
     /// Get the content box to pack widgets into.
     Gtk::Box* getContentBox() { return contentBox; }
@@ -923,7 +928,7 @@ private:
     Glib::ustring groupLabel_;
     bool expanded;
 
-    bool onHeaderClick(GdkEventButton* event);
+    void onHeaderClicked();
     void updateArrow();
 };
 

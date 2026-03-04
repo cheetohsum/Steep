@@ -2058,6 +2058,10 @@ void ImProcFunctions::rgbProc(Imagefloat* working, LabImage* lab, PipetteBuffer 
 
     const bool split_tiled_parts_1_2 = params->toneEqualizer.enabled;
 
+    // Build master curve LUT for the Curve tool
+    LUTf masterCurve;
+    CurveFactory::RGBCurve(params->rgbCurves.mastercurve, masterCurve, 1);
+
     std::unique_ptr<Imagefloat> tmpImage;
 
     Imagefloat* editImgFloat = nullptr;
@@ -2615,6 +2619,16 @@ void ImProcFunctions::rgbProc(Imagefloat* working, LabImage* lab, PipetteBuffer 
                     for (int i = istart, ti = 0; i < tH; i++, ti++) {
                         for (int j = jstart, tj = 0; j < tW; j++, tj++) {
                             editWhateverTmp[ti * TS + tj] = Color::gamma2curve[btemp[ti * TS + tj]] / 65536.f;
+                        }
+                    }
+                }
+
+                if (params->rgbCurves.enabled && masterCurve) { // master curve applies to all channels
+                    for (int i = istart, ti = 0; i < tH; i++, ti++) {
+                        for (int j = jstart, tj = 0; j < tW; j++, tj++) {
+                            setUnlessOOG(rtemp[ti * TS + tj], masterCurve[ rtemp[ti * TS + tj] ]);
+                            setUnlessOOG(gtemp[ti * TS + tj], masterCurve[ gtemp[ti * TS + tj] ]);
+                            setUnlessOOG(btemp[ti * TS + tj], masterCurve[ btemp[ti * TS + tj] ]);
                         }
                     }
                 }

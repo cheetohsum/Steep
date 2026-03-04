@@ -33,6 +33,7 @@ using namespace rtengine;
 
 constexpr float HistogramArea::MAX_BRIGHT;
 constexpr float HistogramArea::MIN_BRIGHT;
+constexpr int HistogramArea::ANIM_DURATION_MS;
 
 using ScopeType = Options::ScopeType;
 
@@ -227,7 +228,7 @@ HistogramPanel::HistogramPanel () :
     scopeVectHcBtn->set_tooltip_text(M("HISTOGRAM_TOOLTIP_TYPE_VECTORSCOPE_HC"));
     scopeVectHsBtn->set_tooltip_text(M("HISTOGRAM_TOOLTIP_TYPE_VECTORSCOPE_HS"));
 
-    bottomBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+    bottomBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
     persistentButtons = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
     optionButtons = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
 
@@ -364,21 +365,34 @@ HistogramPanel::HistogramPanel () :
     gfxOverlay->add_overlay(*scopeToggleBtn);
     gfxOverlay->set_overlay_pass_through(*scopeToggleBtn, false);
 
+    // Wrap optionButtons in a Revealer for animated expand
+    optionRevealer = Gtk::manage(new Gtk::Revealer());
+    optionRevealer->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
+    optionRevealer->set_transition_duration(250);
+    optionRevealer->add(*optionButtons);
+
     // Vertical layout: overlaid gfxGrid on top, bottom bar hidden by default
     set_orientation(Gtk::ORIENTATION_VERTICAL);
     bottomBar->pack_start(*persistentButtons, Gtk::PACK_SHRINK);
-    bottomBar->pack_start(*optionButtons, Gtk::PACK_SHRINK);
+    bottomBar->pack_start(*optionRevealer, Gtk::PACK_SHRINK);
     bottomBar->set_name("histBottomBar");
+
+    // Wrap bottomBar in a Revealer for animated slide-down
+    bottomBarRevealer = Gtk::manage(new Gtk::Revealer());
+    bottomBarRevealer->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
+    bottomBarRevealer->set_transition_duration(300);
+    bottomBarRevealer->add(*bottomBar);
+
     add(*gfxOverlay);
-    add(*bottomBar);
+    add(*bottomBarRevealer);
 
     scopeBarVisible = false;
 
+    // Set Revealer states before show_all (no animation on initial setup)
+    bottomBarRevealer->set_reveal_child(false);
+    optionRevealer->set_reveal_child(options.histogramShowOptionButtons);
+
     show_all ();
-    bottomBar->set_no_show_all();
-    bottomBar->set_visible(false);
-    optionButtons->set_no_show_all();
-    optionButtons->set_visible(options.histogramShowOptionButtons);
 
     type_changed();
 
@@ -535,14 +549,14 @@ void HistogramPanel::scopeOptionsToggled()
 {
     // Update options value
     App::get().mut_options().histogramShowOptionButtons = scopeOptions->get_active();
-    // Show/hide secondary buttons column
-    optionButtons->set_visible(scopeOptions->get_active());
+    // Animate show/hide of secondary buttons
+    optionRevealer->set_reveal_child(scopeOptions->get_active());
 }
 
 void HistogramPanel::scopeBarToggled()
 {
     scopeBarVisible = !scopeBarVisible;
-    bottomBar->set_visible(scopeBarVisible);
+    bottomBarRevealer->set_reveal_child(scopeBarVisible);
 }
 
 void HistogramPanel::type_selected(Gtk::RadioButton* button)
@@ -1062,6 +1076,8 @@ HistogramArea::HistogramArea (DrawModeListener *fml) :
     needPointer(App::get().options().histogramBar),
     scopeType(App::get().options().histogramScopeType),
     drawMode(App::get().options().histogramDrawMode), myDrawModeListener(fml),
+    // Animation state
+    animating(false),
     // Motion event management
     isPressed(false), movingPosition(0.0)
 {
@@ -1071,12 +1087,22 @@ HistogramArea::HistogramArea (DrawModeListener *fml) :
     lhist(256);
     chist(256);
 
+    prev_rhist(256);
+    prev_ghist(256);
+    prev_bhist(256);
+    prev_lhist(256);
+    prev_chist(256);
+    prev_rhistRaw(256);
+    prev_ghistRaw(256);
+    prev_bhistRaw(256);
+
     get_style_context()->add_class("drawingarea");
     set_name("HistogramArea");
 }
 
 HistogramArea::~HistogramArea ()
 {
+    anim_connection.disconnect();
     idle_register.destroy();
 }
 
@@ -1124,6 +1150,29 @@ void HistogramArea::updateFromOptions ()
     needPointer = options.histogramBar;
 }
 
+double HistogramArea::easeOutBack(double t)
+{
+    const double c1 = 2.5;  // stronger overshoot for playful bounce
+    const double c3 = c1 + 1.0;
+    const double tm1 = t - 1.0;
+    return 1.0 + c3 * tm1 * tm1 * tm1 + c1 * tm1 * tm1;
+}
+
+bool HistogramArea::onAnimationTick()
+{
+    auto now = std::chrono::steady_clock::now();
+    auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - anim_start).count();
+
+    if (elapsed_ms >= ANIM_DURATION_MS) {
+        animating = false;
+        queue_draw();
+        return false;
+    }
+
+    queue_draw();
+    return true;
+}
+
 void HistogramArea::update(
     const LUTu& histRed,
     const LUTu& histGreen,
@@ -1152,6 +1201,18 @@ void HistogramArea::update(
         GThreadLock lock; // All GUI access from idle_add callbacks or separate thread HAVE to be protected
 
         if (histRed) {
+            // Save previous histogram data for animation
+            if (LUT_valid) {
+                prev_rhist = rhist;
+                prev_ghist = ghist;
+                prev_bhist = bhist;
+                prev_lhist = lhist;
+                prev_chist = chist;
+                prev_rhistRaw = rhistRaw;
+                prev_ghistRaw = ghistRaw;
+                prev_bhistRaw = bhistRaw;
+            }
+
             switch (scopeType) {
                 case ScopeType::HISTOGRAM:
                     rhist = histRed;
@@ -1191,6 +1252,14 @@ void HistogramArea::update(
             rhistRaw = histRedRaw;
             ghistRaw = histGreenRaw;
             bhistRaw = histBlueRaw;
+
+            // Start animation
+            anim_start = std::chrono::steady_clock::now();
+            animating = true;
+            if (!anim_connection.connected()) {
+                anim_connection = Glib::signal_timeout().connect(
+                    sigc::mem_fun(*this, &HistogramArea::onAnimationTick), 16);
+            }
 
             LUT_valid = true;
         } else {
@@ -1288,31 +1357,50 @@ void HistogramArea::updateDrawingArea (const ::Cairo::RefPtr< Cairo::Context> &c
         LUTu& rh = rawMode ? rhistRaw : rhist;
         LUTu& gh = rawMode ? ghistRaw : ghist;
         LUTu& bh = rawMode ? bhistRaw : bhist;
+        LUTu& prev_rh = rawMode ? prev_rhistRaw : prev_rhist;
+        LUTu& prev_gh = rawMode ? prev_ghistRaw : prev_ghist;
+        LUTu& prev_bh = rawMode ? prev_bhistRaw : prev_bhist;
+
+        // Compute animation interpolation factor
+        double anim_t = 1.0;
+        if (animating) {
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - anim_start).count();
+            double raw_t = std::min(1.0, static_cast<double>(elapsed_ms) / ANIM_DURATION_MS);
+            anim_t = easeOutBack(raw_t);
+        }
+
+        auto lerp_val = [anim_t](unsigned int prev, unsigned int curr) -> unsigned int {
+            if (anim_t >= 1.0) return curr;
+            double result = prev + (static_cast<double>(curr) - prev) * anim_t;
+            return static_cast<unsigned int>(result > 0.0 ? result : 0.0);
+        };
 
         // make double copies of LUT, one for faster access, another one to scale down the raw histos
         LUTu rhchanged(256), ghchanged(256), bhchanged(256);
+        LUTu anim_lhist_lut(256), anim_chist_lut(256);
         unsigned int lhisttemp[256] ALIGNED16 {0}, chisttemp[256] ALIGNED16 {0}, rhtemp[256] ALIGNED16 {0}, ghtemp[256] ALIGNED16 {0}, bhtemp[256] ALIGNED16 {0};
         const int scale = (rawMode ? 8 : 1);
 
         for (int i = 0; i < 256; i++) {
             if (needLuma && !rawMode) {
-                lhisttemp[i] = lhist[i];
+                anim_lhist_lut[i] = lhisttemp[i] = lerp_val(prev_lhist[i], lhist[i]);
             }
 
             if (needChroma && !rawMode) {
-                chisttemp[i] = chist[i];
+                anim_chist_lut[i] = chisttemp[i] = lerp_val(prev_chist[i], chist[i]);
             }
 
             if (needRed) {
-                rhchanged[i] = rhtemp[i] = rh[i] / scale;
+                rhchanged[i] = rhtemp[i] = lerp_val(prev_rh[i] / scale, rh[i] / scale);
             }
 
             if (needGreen) {
-                ghchanged[i] = ghtemp[i] = gh[i] / scale;
+                ghchanged[i] = ghtemp[i] = lerp_val(prev_gh[i] / scale, gh[i] / scale);
             }
 
             if (needBlue) {
-                bhchanged[i] = bhtemp[i] = bh[i] / scale;
+                bhchanged[i] = bhtemp[i] = lerp_val(prev_bh[i] / scale, bh[i] / scale);
             }
         }
 
@@ -1356,17 +1444,17 @@ void HistogramArea::updateDrawingArea (const ::Cairo::RefPtr< Cairo::Context> &c
         int ui = 0, oi = 0;
 
         if (needLuma && !rawMode) {
-            drawCurve(cr, lhist, realhistheight, winw, winh);
+            drawCurve(cr, anim_lhist_lut, realhistheight, winw, winh);
             cr->set_source_rgba (0.65, 0.65, 0.65, 0.65);
             cr->fill ();
-            drawMarks(cr, lhist, realhistheight, winw, ui, oi);
+            drawMarks(cr, anim_lhist_lut, realhistheight, winw, ui, oi);
         }
 
         if (needChroma && !rawMode) {
-            drawCurve(cr, chist, realhistheight, winw, winh);
+            drawCurve(cr, anim_chist_lut, realhistheight, winw, winh);
             cr->set_source_rgb (0.9, 0.9, 0.);
             cr->stroke ();
-            drawMarks(cr, chist, realhistheight, winw, ui, oi);
+            drawMarks(cr, anim_chist_lut, realhistheight, winw, ui, oi);
         }
 
         // Phase 1: Draw RGB channels as filled glass areas with additive

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="24px"
+   height="24px"
+   viewBox="0 0 24 24"
+   version="1.1"
+   xmlns="http://www.w3.org/2000/svg">
+  <g id="layer1">
+    <!-- Source circle (back) -->
+    <circle
+       style="opacity:0.5;fill:none;stroke:#cccccc;stroke-width:1.5;stroke-opacity:1.0"
+       cx="9"
+       cy="10"
+       r="6" />
+    <!-- Target circle (front) -->
+    <circle
+       style="opacity:0.9;fill:none;stroke:#cccccc;stroke-width:1.5;stroke-opacity:1.0"
+       cx="15"
+       cy="14"
+       r="6" />
+  </g>
+</svg>

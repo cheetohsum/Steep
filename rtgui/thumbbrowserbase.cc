@@ -34,6 +34,7 @@ ThumbBrowserBase::ThumbBrowserBase ()
     : location(THLOC_FILEBROWSER), inspector(nullptr), isInspectorActive(false), eventTime(0), lastClicked(nullptr), anchor(nullptr), previewHeight(App::get().options().thumbSize), numOfCols(1), lastRowHeight(0), arrangement(TB_Horizontal)
 {
     lastDeviceScale = 0;
+    hscrollForceHidden = false;
     inW = -1;
     inH = -1;
 
@@ -588,7 +589,7 @@ void ThumbBrowserBase::configScrollBars ()
             ha->set_step_increment(!fd.empty() ? fd[0]->getEffectiveWidth() : 0);
             ha->set_page_increment(iw);
             ha->set_page_size(iw);
-            if (iw >= inW) {
+            if (iw >= inW || hscrollForceHidden) {
                 hscroll.hide();
             } else {
                 hscroll.show();
@@ -996,6 +997,11 @@ void ThumbBrowserBase::buttonPressed (int x, int y, int button, GdkEventType typ
             lastClicked = fileDescr;
             MYWRITERLOCK_RELEASE(l);
             selectionChanged ();
+
+            // In filmstrip mode, single-click also opens the image
+            if (location == THLOC_EDITOR && fileDescr && selected.size() == 1) {
+                doubleClicked (fileDescr);
+            }
         } else if (fileDescr && button == 3 && type == GDK_BUTTON_PRESS) {
             if (!fileDescr->selected) {
                 selectSingle (fileDescr);
@@ -1251,12 +1257,24 @@ void ThumbBrowserBase::enableTabMode(bool enable)
     location = enable ? THLOC_EDITOR : THLOC_FILEBROWSER;
     arrangement = enable ? ThumbBrowserBase::TB_Horizontal : ThumbBrowserBase::TB_Vertical;
 
-    const auto& options = App::get().options();
-    if ((!options.sameThumbSize && (options.thumbSizeTab != options.thumbSize)) || (options.showFileNames || options.filmStripShowFileNames)) {
+    if (enable) {
+        // In filmstrip mode, never show the vertical scrollbar.
+        vscroll.set_no_show_all(true);
+        vscroll.hide();
+    } else {
+        vscroll.set_no_show_all(false);
+    }
 
+    {
         MYWRITERLOCK(l, entryRW);
 
         for (size_t i = 0; i < fd.size(); i++) {
+            if (enable) {
+                // Minimize vertical padding in filmstrip mode
+                fd[i]->setMargins(0, 0);
+            } else {
+                fd[i]->setMargins(2, 2);
+            }
             fd[i]->resize (getThumbnailHeight());
         }
     }

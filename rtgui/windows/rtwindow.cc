@@ -17,6 +17,8 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <cmath>
+
 #include <gtkmm.h>
 #include "rtwindow.h"
 #include "cachemanager.h"
@@ -29,6 +31,7 @@
 #include "tools/whitebalance.h"
 #include "rtengine/settings.h"
 #include "batchqueuepanel.h"
+#include "batchqueue.h"
 #include "batchqueueentry.h"
 #include "editorpanel.h"
 #include "filepanel.h"
@@ -37,6 +40,8 @@
 #include "presetlistpanel.h"
 #include "profilepanel.h"
 #include "tools/filmsimulation.h"
+#include "mcp/mcpserver.h"
+#include "mcp/mcpdialog.h"
 
 Glib::RefPtr<Gtk::CssProvider> cssForced;
 Glib::RefPtr<Gtk::CssProvider> cssRT;
@@ -110,8 +115,14 @@ RTWindow::RTWindow ()
     , navQueue (nullptr)
     , navEditor (nullptr)
     , navSwitching (false)
+    , mainOverlay (nullptr)
+    , queueOverlayBox (nullptr)
+    , queueBackdrop (nullptr)
+    , queueOverlayVisible (false)
+    , queueAnimFraction (0.0)
     , epanel (nullptr)
     , fpanel (nullptr)
+    , mcpServer_ (new mcp::McpServer())
 {
     cacheMgr->init ();
     ProfilePanel::init (this);
@@ -323,15 +334,108 @@ RTWindow::RTWindow ()
         fpanel->setParent (this);
         mainNB->append_page (*fpanel);
 
-        // Batch Queue panel (tab 1)
+        // Batch Queue panel (overlay drawer, not a notebook tab)
         bpanel = Gtk::manage ( new BatchQueuePanel (fpanel->fileCatalog) );
-        mainNB->append_page (*bpanel);
 
         if (isSingleTabMode()) {
             createSetmEditor();
         }
 
         mainNB->set_current_page (mainNB->page_num (*fpanel));
+
+        // ===== Queue Overlay Drawer =====
+        // Two overlay children: backdrop (full-size dark) + drawer (top 70%, opaque).
+        // Both sized exactly via signal_get_child_position — no natural-height issues.
+        mainOverlay = Gtk::manage (new Gtk::Overlay ());
+        mainOverlay->add (*mainNB); // notebook is the base child
+
+        // 1) Backdrop: full-size EventBox, click to dismiss.
+        // No visible window — we paint the dark overlay via signal_draw to avoid
+        // GdkWindow z-order issues that would darken the drawer too.
+        queueBackdrop = Gtk::manage (new Gtk::EventBox ());
+        queueBackdrop->set_name ("QueueOverlayBackdrop");
+        queueBackdrop->set_visible_window (false);
+        queueBackdrop->signal_button_press_event().connect ([this](GdkEventButton*) -> bool {
+            hideQueueOverlay();
+            return true;
+        });
+        queueBackdrop->signal_draw ().connect (
+            [this](const Cairo::RefPtr<Cairo::Context>& cr) -> bool {
+                int w = queueBackdrop->get_allocated_width ();
+                int h = queueBackdrop->get_allocated_height ();
+                // Instant darken — full opacity whenever backdrop is visible
+                cr->set_source_rgba (0, 0, 0, 0.55);
+                cr->rectangle (0, 0, w, h);
+                cr->fill ();
+                return false;
+            }, false);
+
+        // 2) Drawer: Box with slide-down animation via Cairo translate.
+        // Content always keeps its full layout. During animation, the entire
+        // content is translated upward and clipped, creating a smooth slide-in.
+        queueOverlayBox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_VERTICAL));
+        queueOverlayBox->set_name ("QueueDrawerBox");
+        queueOverlayBox->signal_draw ().connect (
+            [this](const Cairo::RefPtr<Cairo::Context>& cr) -> bool {
+                int w = queueOverlayBox->get_allocated_width ();
+                int h = queueOverlayBox->get_allocated_height ();
+                // Ease-out quart — fast start, smooth deceleration
+                double t = queueAnimFraction;
+                double eased = 1.0 - std::pow (1.0 - t, 4);
+                int visibleH = std::max (1, static_cast<int>(h * eased));
+                // Clip to the visible portion (top visibleH pixels)
+                cr->rectangle (0, 0, w, visibleH);
+                cr->clip ();
+                // Translate content upward so it slides into view from above
+                cr->translate (0, -(h - visibleH));
+                // Paint opaque background using the drawer's CSS background-color
+                queueOverlayBox->get_style_context ()->render_background (
+                    cr, 0, 0, w, h);
+                return false; // default handler draws children (also translated)
+            }, false);
+        // Hide the bottom zoom slider bar and horizontal scrollbar — not needed in overlay mode
+        for (auto* child : bpanel->get_children ()) {
+            if (child->get_name () == "BatchQueueBottomBox") {
+                child->set_no_show_all (true);
+                child->hide ();
+                break;
+            }
+        }
+        bpanel->setOverlayMode (true);
+        queueOverlayBox->pack_start (*bpanel, true, true);
+
+        // Add both as overlay children (backdrop first, drawer on top)
+        mainOverlay->add_overlay (*queueBackdrop);
+        mainOverlay->add_overlay (*queueOverlayBox);
+
+        // Size both overlay children via signal_get_child_position
+        mainOverlay->signal_get_child_position().connect (
+            [this](Gtk::Widget* child, Gdk::Rectangle& alloc) -> bool {
+                int pw = mainOverlay->get_allocated_width();
+                int ph = mainOverlay->get_allocated_height();
+                if (child == queueBackdrop) {
+                    // Backdrop fills the entire area
+                    alloc.set_x (0);
+                    alloc.set_y (0);
+                    alloc.set_width (pw);
+                    alloc.set_height (ph);
+                    return true;
+                }
+                if (child == queueOverlayBox) {
+                    // Drawer: top 50% — always full height; animation is via clip in signal_draw
+                    int targetH = static_cast<int>(ph * 0.50);
+                    alloc.set_x (0);
+                    alloc.set_y (0);
+                    alloc.set_width (pw);
+                    alloc.set_height (targetH);
+                    return true;
+                }
+                return false;
+            }, false);
+
+        // Prevent window's show_all() from showing these; we manage visibility manually
+        queueBackdrop->set_no_show_all (true);
+        queueOverlayBox->set_no_show_all (true);
 
         // ===== Header Bar (replaces left sidebar + action grid) =====
         headerBar = Gtk::manage (new Gtk::HeaderBar ());
@@ -343,16 +447,16 @@ RTWindow::RTWindow ()
         optionsBtn = Gtk::manage (new Gtk::MenuButton ());
         optionsBtn->set_name ("OptionsMenuButton");
         optionsBtn->set_relief (Gtk::RELIEF_NONE);
-        optionsBtn->set_image (*Gtk::manage (new RTImage ("options-menu", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
+        optionsBtn->set_image (*Gtk::manage (new RTImage ("steep-logo", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
         optionsBtn->set_tooltip_markup (M ("MAIN_BUTTON_PREFERENCES"));
 
         Gtk::Popover* optionsPopover = Gtk::manage (new Gtk::Popover ());
         optionsPopover->set_name ("OptionsPopover");
         Gtk::Box* optionsBox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_VERTICAL, 2));
-        optionsBox->set_margin_top (6);
-        optionsBox->set_margin_bottom (6);
-        optionsBox->set_margin_start (2);
-        optionsBox->set_margin_end (2);
+        optionsBox->set_margin_top (8);
+        optionsBox->set_margin_bottom (8);
+        optionsBox->set_margin_start (10);
+        optionsBox->set_margin_end (10);
 
         Gtk::Button* menuHelpBtn = Gtk::manage (new Gtk::Button ());
         {
@@ -674,6 +778,19 @@ RTWindow::RTWindow ()
 #endif
         optionsBox->pack_start (*chkSoftProof, false, false);
         optionsBox->pack_start (*chkGamutCheck, false, false);
+
+        // MCP Server button
+        auto* menuMcpSep = Gtk::manage(new Gtk::Separator());
+        auto* menuMcpBtn = Gtk::manage(new Gtk::Button(M("MCP_MENU_BUTTON")));
+        menuMcpBtn->set_relief(Gtk::RELIEF_NONE);
+        menuMcpBtn->set_halign(Gtk::ALIGN_START);
+        menuMcpBtn->signal_clicked().connect([this]() {
+            optionsBtn->get_popover()->hide();
+            showMcpDialog();
+        });
+        optionsBox->pack_start(*menuMcpSep, false, false, 4);
+        optionsBox->pack_start(*menuMcpBtn, false, false);
+
         optionsBox->show_all ();
         optionsPopover->add (*optionsBox);
         optionsBtn->set_popover (*optionsPopover);
@@ -759,7 +876,7 @@ RTWindow::RTWindow ()
 
         pldBridge = new PLDBridge (static_cast<rtengine::ProgressListener*> (this));
 
-        add (*mainNB);
+        add (*mainOverlay);
         show_all ();
 
         bpanel->init (this);
@@ -776,6 +893,11 @@ RTWindow::RTWindow ()
 
 RTWindow::~RTWindow()
 {
+    // Stop MCP server before other members are destroyed
+    if (mcpServer_) {
+        mcpServer_->stop();
+    }
+
     if (!App::get().isSimpleEditor()) {
         delete pldBridge;
     }
@@ -827,6 +949,11 @@ void RTWindow::on_realize ()
 
     if (!waitForSplash) {
         showErrors();
+    }
+
+    // Auto-start MCP server if configured
+    if (options.mcpAutoStart && mcpServer_ && !mcpServer_->isRunning()) {
+        mcpServer_->start();
     }
 }
 
@@ -897,6 +1024,11 @@ void RTWindow::on_mainNB_switch_page (Gtk::Widget* widget, guint page_num)
                     set_title_decorated (ep->getFileName());
                 }
             }
+
+            // Auto-open the browser's selected photo in the editor
+            if (isSingleTabMode() && fpanel) {
+                fpanel->openSelectedInEditor();
+            }
         } else {
             // in single tab mode with command line filename epanel does not exist yet
             if (isSingleTabMode() && epanel) {
@@ -908,6 +1040,15 @@ void RTWindow::on_mainNB_switch_page (Gtk::Widget* widget, guint page_num)
                     MoveFileBrowserToMain();
                 }
             }
+        }
+
+        // Close album view in whichever panel we're leaving
+        // so the album doesn't stay open when switching between browser/editor.
+        if (fpanel) {
+            fpanel->closeAlbumView();
+        }
+        if (isSingleTabMode() && epanel) {
+            epanel->closeAlbumView();
         }
 
         // Keep header bar nav buttons in sync with notebook page
@@ -951,7 +1092,6 @@ void RTWindow::remEditorPanel (EditorPanel* ep)
         EditWindow * wndEdit = EditWindow::getInstance (this);
         wndEdit->remEditorPanel (ep);
     } else {
-        bool queueHadFocus = (mainNB->get_current_page() == mainNB->page_num (*bpanel));
         ep->setExternalEditorChangedSignal(nullptr);
         epanels.erase (ep->getFileName());
         filesEdited.erase (ep->getFileName ());
@@ -960,9 +1100,7 @@ void RTWindow::remEditorPanel (EditorPanel* ep)
         mainNB->remove_page (*ep);
 
         if (!isEditorPanel (mainNB->get_current_page())) {
-            if (!queueHadFocus) {
-                mainNB->set_current_page (mainNB->page_num (*fpanel));
-            }
+            mainNB->set_current_page (mainNB->page_num (*fpanel));
 
             set_title_decorated ("");
         } else {
@@ -1038,14 +1176,20 @@ bool RTWindow::keyPressed (GdkEventKey* event)
         return epanel->handleShortcutKey (event);
     };
 
+    // Escape dismisses queue overlay
+    if (event->keyval == GDK_KEY_Escape && queueOverlayVisible) {
+        hideQueueOverlay();
+        return true;
+    }
+
     if (ctrl) {
         switch (event->keyval) {
             case GDK_KEY_F2: // file browser panel
                 mainNB->set_current_page (mainNB->page_num (*fpanel));
                 return true;
 
-            case GDK_KEY_F3: // batch queue panel
-                mainNB->set_current_page (mainNB->page_num (*bpanel));
+            case GDK_KEY_F3: // toggle queue overlay
+                toggleQueueOverlay();
                 return true;
 
             case GDK_KEY_F4: //single tab mode, editor panel
@@ -1057,8 +1201,7 @@ bool RTWindow::keyPressed (GdkEventKey* event)
 
             case GDK_KEY_w: //multi-tab mode, close editor panel
                 if (!isSingleTabMode() &&
-                        mainNB->get_current_page() != mainNB->page_num (*fpanel) &&
-                        mainNB->get_current_page() != mainNB->page_num (*bpanel)) {
+                        mainNB->get_current_page() != mainNB->page_num (*fpanel)) {
 
                     EditorPanel* ep = static_cast<EditorPanel*> (mainNB->get_nth_page (mainNB->get_current_page()));
                     remEditorPanel (ep);
@@ -1067,10 +1210,13 @@ bool RTWindow::keyPressed (GdkEventKey* event)
         }
     }
 
+    // Route shortcuts to bpanel when queue overlay is visible
+    if (queueOverlayVisible) {
+        return bpanel->handleShortcutKey (event);
+    }
+
     if (mainNB->get_current_page() == mainNB->page_num (*fpanel)) {
         return fpanel->handleShortcutKey (event);
-    } else if (mainNB->get_current_page() == mainNB->page_num (*bpanel)) {
-        return bpanel->handleShortcutKey (event);
     } else {
         EditorPanel* ep = static_cast<EditorPanel*> (mainNB->get_nth_page (mainNB->get_current_page()));
         return ep->handleShortcutKey (event);
@@ -1387,17 +1533,30 @@ void RTWindow::on_nav_switched (Gtk::ToggleButton* active)
 
     navSwitching = true;
 
-    // Enforce mutual exclusion: only one nav button active at a time
+    if (active == navQueue) {
+        // Queue is an independent overlay toggle, not mutually exclusive
+        if (active->get_active()) {
+            showQueueOverlay();
+        } else {
+            hideQueueOverlay();
+        }
+        navSwitching = false;
+        return;
+    }
+
+    // Enforce mutual exclusion between file browser and editor
     if (active->get_active()) {
         if (active != navFileBrowser) { navFileBrowser->set_active (false); }
-        if (active != navQueue)       { navQueue->set_active (false); }
         if (active != navEditor)      { navEditor->set_active (false); }
+
+        // Close queue overlay when switching to browser or editor
+        if (queueOverlayVisible) {
+            hideQueueOverlay();
+        }
 
         // Switch to the corresponding notebook page
         if (active == navFileBrowser) {
             mainNB->set_current_page (mainNB->page_num (*fpanel));
-        } else if (active == navQueue) {
-            mainNB->set_current_page (mainNB->page_num (*bpanel));
         } else if (active == navEditor) {
             // In single-tab mode, switch to epanel; in multi-tab, switch to last editor
             if (isSingleTabMode() && epanel) {
@@ -1410,6 +1569,11 @@ void RTWindow::on_nav_switched (Gtk::ToggleButton* active)
     } else {
         // Don't allow deactivating the current button by clicking it again
         active->set_active (true);
+
+        // But still close queue overlay if it's open
+        if (queueOverlayVisible) {
+            hideQueueOverlay();
+        }
     }
 
     navSwitching = false;
@@ -1426,8 +1590,8 @@ void RTWindow::syncNavButtons (guint page_num)
     Gtk::Widget* page = mainNB->get_nth_page (page_num);
 
     navFileBrowser->set_active (page == fpanel);
-    navQueue->set_active (page == bpanel);
-    navEditor->set_active (page != fpanel && page != bpanel);
+    navEditor->set_active (page != fpanel);
+    // navQueue state is managed by overlay toggle, not notebook page
 
     navSwitching = false;
 }
@@ -1641,17 +1805,11 @@ void RTWindow::get_position(int& x, int& y) const
 
 void RTWindow::set_title_decorated (Glib::ustring fname)
 {
-    Glib::ustring subtitle;
-
-    if (!fname.empty()) {
-        subtitle = " - " + fname;
-    }
-
-    set_title (versionStr + subtitle);
+    set_title ("");
 
     if (headerBar) {
-        headerBar->set_title (versionStr);
-        headerBar->set_subtitle (fname);
+        headerBar->set_title ("");
+        headerBar->set_subtitle ("");
     }
 }
 
@@ -1668,7 +1826,7 @@ void RTWindow::closeOpenEditors()
 
 bool RTWindow::isEditorPanel (Widget* panel)
 {
-    return (panel != bpanel) && (panel != fpanel);
+    return (panel != fpanel);
 }
 
 bool RTWindow::isEditorPanel (guint pageNum)
@@ -1707,4 +1865,96 @@ bool RTWindow::isSingleTabMode() const
 {
     const auto& options = App::get().options();
     return !options.tabbedUI && ! (options.multiDisplayMode > 0);
+}
+
+void RTWindow::toggleQueueOverlay()
+{
+    if (queueOverlayVisible) {
+        hideQueueOverlay();
+    } else {
+        showQueueOverlay();
+    }
+}
+
+void RTWindow::showQueueOverlay()
+{
+    if (queueOverlayVisible) {
+        return;
+    }
+
+    queueOverlayVisible = true;
+
+    // Show widgets
+    queueBackdrop->set_no_show_all (false);
+    queueBackdrop->show_all ();
+    queueBackdrop->set_no_show_all (true);
+    queueOverlayBox->set_no_show_all (false);
+    queueOverlayBox->show_all ();
+    queueOverlayBox->set_no_show_all (true);
+
+    // Backdrop darkens instantly
+    queueAnimFraction = std::max (queueAnimFraction, 0.01);
+
+    // Force batch queue to recalculate layout and scrollbars for new size
+    bpanel->queue_resize ();
+
+    // Animate drawer slide-down — 100ms with ease-out quart
+    queueAnimConn.disconnect ();
+    queueAnimConn = Glib::signal_timeout ().connect ([this]() -> bool {
+        queueAnimFraction += 16.0 / 100.0;
+        if (queueAnimFraction >= 1.0) {
+            queueAnimFraction = 1.0;
+            queueBackdrop->queue_draw ();
+            queueOverlayBox->queue_draw ();
+            return false;
+        }
+        queueBackdrop->queue_draw ();
+        queueOverlayBox->queue_draw ();
+        return true;
+    }, 16);
+
+    // Sync nav button state (save/restore navSwitching for re-entrant safety)
+    bool wasSwitching = navSwitching;
+    navSwitching = true;
+    navQueue->set_active (true);
+    navSwitching = wasSwitching;
+}
+
+void RTWindow::hideQueueOverlay()
+{
+    if (!queueOverlayVisible) {
+        return;
+    }
+
+    queueOverlayVisible = false;
+
+    // Fade out drawer + backdrop — 70ms snap shut.
+    // Uses set_opacity() which works at compositor level, properly hiding
+    // child widgets that have their own GdkWindows (thumbnails, scrollbars).
+    queueAnimConn.disconnect ();
+    queueAnimConn = Glib::signal_timeout ().connect ([this]() -> bool {
+        queueAnimFraction -= 16.0 / 70.0;
+        if (queueAnimFraction <= 0.0) {
+            queueAnimFraction = 0.0;
+            queueOverlayBox->set_opacity (1.0); // restore for next show
+            queueBackdrop->hide ();
+            queueOverlayBox->hide ();
+            return false;
+        }
+        queueOverlayBox->set_opacity (queueAnimFraction * queueAnimFraction);
+        queueBackdrop->queue_draw ();
+        return true;
+    }, 16);
+
+    // Sync nav button state (save/restore navSwitching for re-entrant safety)
+    bool wasSwitching = navSwitching;
+    navSwitching = true;
+    navQueue->set_active (false);
+    navSwitching = wasSwitching;
+}
+
+void RTWindow::showMcpDialog()
+{
+    mcp::McpDialog dlg(*this, mcpServer_.get());
+    dlg.run();
 }

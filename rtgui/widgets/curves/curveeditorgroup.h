@@ -89,6 +89,10 @@ public:
     //void on_realize ();
     CurveEditor* addCurve(CurveType cType, Glib::ustring curveLabel, Gtk::Widget *relatedWidget = nullptr, bool expandRelatedWidget = true, bool periodic = true);
     void attachCurve (Gtk::Grid* curve);
+    void hideHeaderWidgets();  // Hide the group label and reset button
+    void setCompactDisplay(bool compact);  // Hide button boxes and coord adjusters
+    void toggleCompactDisplay();  // Toggle and refresh display
+    void setCurveGraphSize(int size);  // Set preferred curve graph size in pixels
 
 protected:
     //void curveTypeToggled ();
@@ -118,6 +122,7 @@ protected:
     int valLinear;
     int valUnchanged;
     CurveEditorGroup *parent;
+    bool compactDisplay_ = false;
 
     ColoredBar* leftBar;
     ColoredBar* bottomBar;
@@ -136,6 +141,8 @@ public:
         return valLinear;
     }
     void updateEditButton(CurveEditor* curve, Gtk::ToggleButton *button, sigc::connection &connection);
+    void setCompactDisplay(bool compact) { compactDisplay_ = compact; }
+    virtual void setCurveGraphSize(int size) {}
     virtual void updateBackgroundHistogram (CurveEditor* ce) {}
     virtual void updateLocallabBackground(CurveEditor* ce) {};
     virtual void switchGUI() = 0;

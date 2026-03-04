@@ -21,6 +21,8 @@
 #include "imagearea.h"
 #include "rtimage.h"
 
+#include <cmath>
+
 namespace {
 
 // Extract just the label portion from a localized string that may contain
@@ -33,38 +35,53 @@ Glib::ustring labelOnly (const Glib::ustring& s)
 
 } // namespace
 
-ZoomPanel::ZoomPanel (ImageArea* iarea) : iarea(iarea), sliderUpdateInProgress(false)
+ZoomPanel::ZoomPanel (ImageArea* iarea) : iarea(iarea), sliderUpdateInProgress(false), currentZoomText("100")
 {
     set_name ("EditorZoomPanel");
 
-    // Main toolbar: single magnifier button + zoom label
+    // Main button: Cairo-drawn magnifying glass with zoom % inside lens
     zoomBtn = Gtk::manage (new Gtk::MenuButton ());
-    zoomBtn->set_image (*Gtk::manage (new RTImage ("magnifier-1to1", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
     zoomBtn->set_relief (Gtk::RELIEF_NONE);
     zoomBtn->set_tooltip_markup (M ("ZOOMPANEL_ZOOM100"));
     setExpandAlignProperties (zoomBtn, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_FILL);
 
-    zoomLabel = Gtk::manage (new Gtk::Label ());
-    setExpandAlignProperties (zoomLabel, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_FILL);
+    zoomDraw = Gtk::manage (new Gtk::DrawingArea ());
+    zoomDraw->set_size_request (34, 26);
+    zoomDraw->signal_draw().connect (sigc::mem_fun (*this, &ZoomPanel::onDrawZoom));
+    zoomBtn->add (*zoomDraw);
 
     attach_next_to (*zoomBtn, Gtk::POS_RIGHT, 1, 1);
-    attach_next_to (*zoomLabel, Gtk::POS_RIGHT, 1, 1);
 
     // Build popover content
     zoomPopover = Gtk::manage (new Gtk::Popover ());
     zoomPopover->set_name ("ZoomPopover");
+    zoomPopover->set_constrain_to (Gtk::POPOVER_CONSTRAINT_WINDOW);
+
+    // Popover CSS for modern styling
+    auto popCss = Gtk::CssProvider::create ();
+    popCss->load_from_data (
+        "#ZoomPopover contents {"
+        "  border-radius: 8px;"
+        "  padding: 8px;"
+        "}"
+        "#ZoomPopover button {"
+        "  border-radius: 4px;"
+        "  padding: 4px 8px;"
+        "  min-height: 0;"
+        "}"
+    );
+    zoomPopover->get_style_context()->add_provider (popCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
 
     Gtk::Box* popBox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_VERTICAL, 2));
-    popBox->set_margin_top (6);
-    popBox->set_margin_bottom (6);
-    popBox->set_margin_start (2);
-    popBox->set_margin_end (2);
+    popBox->set_margin_top (10);
+    popBox->set_margin_bottom (10);
+    popBox->set_margin_start (10);
+    popBox->set_margin_end (10);
 
     // Zoom slider (logarithmic feel: 1% to 1600%)
-    // Use a linear scale on the log of zoom: log2(0.01)=-6.64, log2(16)=4
     zoomSlider = Gtk::manage (new Gtk::Scale (Gtk::ORIENTATION_HORIZONTAL));
-    zoomSlider->set_range (-6.64, 4.0);  // log2 of zoom range
-    zoomSlider->set_value (0.0);          // log2(1.0) = 0 => 100%
+    zoomSlider->set_range (-6.64, 4.0);
+    zoomSlider->set_value (0.0);
     zoomSlider->set_draw_value (false);
     zoomSlider->set_size_request (200, -1);
     zoomSlider->signal_value_changed().connect ([this]() {
@@ -77,7 +94,7 @@ ZoomPanel::ZoomPanel (ImageArea* iarea) : iarea(iarea), sliderUpdateInProgress(f
         }
     });
 
-    // Zoom In button — label only, shortcut in tooltip
+    // Zoom In button
     zoomIn = Gtk::manage (new Gtk::Button ());
     {
         Gtk::Box* hbox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 8));
@@ -186,8 +203,52 @@ ZoomPanel::ZoomPanel (ImageArea* iarea) : iarea(iarea), sliderUpdateInProgress(f
     zoomBtn->set_popover (*zoomPopover);
 
     show_all_children ();
+}
 
-    zoomLabel->set_text (M("ZOOMPANEL_100"));
+bool ZoomPanel::onDrawZoom (const Cairo::RefPtr<Cairo::Context>& cr)
+{
+    int w = zoomDraw->get_allocated_width ();
+    int h = zoomDraw->get_allocated_height ();
+
+    // Lens center — shifted up-left to leave room for handle
+    double cx = w * 0.40;
+    double cy = h * 0.40;
+    double r = std::min (w, h) * 0.34;
+
+    // Lens ring
+    cr->set_source_rgba (0.72, 0.76, 0.82, 0.75);
+    cr->set_line_width (1.6);
+    cr->arc (cx, cy, r, 0, 2 * M_PI);
+    cr->stroke ();
+
+    // Subtle glass fill
+    cr->set_source_rgba (0.6, 0.7, 0.85, 0.08);
+    cr->arc (cx, cy, r - 0.8, 0, 2 * M_PI);
+    cr->fill ();
+
+    // Handle
+    double angle = M_PI / 4.0;
+    double hx1 = cx + (r + 1) * std::cos (angle);
+    double hy1 = cy + (r + 1) * std::sin (angle);
+    cr->set_source_rgba (0.72, 0.76, 0.82, 0.75);
+    cr->set_line_width (2.5);
+    cr->set_line_cap (Cairo::LINE_CAP_ROUND);
+    cr->move_to (hx1, hy1);
+    cr->line_to (w * 0.88, h * 0.88);
+    cr->stroke ();
+
+    // Zoom text centered in lens
+    cr->set_source_rgba (0.88, 0.90, 0.93, 0.95);
+    auto layout = zoomDraw->create_pango_layout (currentZoomText);
+    auto font = Pango::FontDescription ("Sans Bold");
+    font.set_absolute_size (7.5 * Pango::SCALE);
+    layout->set_font_description (font);
+    int tw, th;
+    layout->get_pixel_size (tw, th);
+    cr->move_to (cx - tw / 2.0, cy - th / 2.0);
+    layout->show_in_cairo_context (cr);
+
+    return true;
 }
 
 void ZoomPanel::zoomInClicked ()
@@ -235,12 +296,9 @@ void ZoomPanel::refreshZoomLabel ()
 
     if (iarea->mainCropWindow) {
         int z = (int)(iarea->mainCropWindow->getZoom () * 100);
-
-        if (z < 100) {
-            zoomLabel->set_text (Glib::ustring::compose(" %1%%", z));
-        } else {
-            zoomLabel->set_text (Glib::ustring::compose("%1%%", z));
-        }
+        currentZoomText = Glib::ustring::compose ("%1%%", z);
+        zoomDraw->queue_draw ();
+        zoomBtn->queue_draw ();
 
         // Sync slider position
         double zoom = iarea->mainCropWindow->getZoom ();

@@ -134,9 +134,39 @@ struct LocalContrastParamsEdited {
     bool lightness;
 };
 
+struct TextureParamsEdited {
+    bool enabled;
+    bool radius;
+    bool amount;
+};
+
+struct ClarityParamsEdited {
+    bool enabled;
+    bool radius;
+    bool amount;
+};
+
+struct GrainParamsEdited {
+    bool enabled;
+    bool iso;
+    bool strength;
+    bool scale;
+};
+
+struct LensBlurParamsEdited {
+    bool enabled;
+    bool amount;
+    bool shape;
+    bool cateye;
+    bool bokeh;
+    bool depth;
+    bool range;
+};
+
 struct RGBCurvesParamsEdited {
     bool enabled;
     bool lumamode;
+    bool mastercurve;
     bool rcurve;
     bool gcurve;
     bool bcurve;
@@ -268,6 +298,12 @@ struct DefringeParamsEdited {
     bool radius;
     bool threshold;
     bool huecurve;
+    bool purpleAmount;
+    bool purpleHueLow;
+    bool purpleHueHigh;
+    bool greenAmount;
+    bool greenHueLow;
+    bool greenHueHigh;
 };
 
 struct ImpulseDenoiseParamsEdited {
@@ -1840,6 +1876,10 @@ struct ParamsEdited {
     ToneCurveParamsEdited toneCurve;
     LCurveParamsEdited labCurve;
     LocalContrastParamsEdited localContrast;
+    TextureParamsEdited texture;
+    ClarityParamsEdited clarity;
+    GrainParamsEdited grain;
+    LensBlurParamsEdited lensBlur;
     RGBCurvesParamsEdited rgbCurves;
     ColorToningEdited colorToning;
     RetinexParamsEdited retinex;

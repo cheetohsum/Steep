@@ -41,6 +41,7 @@ public:
     void onUseDistChanged();
     void onUseVignChanged();
     void onUseCAChanged();
+    void enabledChanged() override;
 
     void setBatchMode(bool yes) override;
 
@@ -98,6 +99,7 @@ private:
     bool checkLensfunCanCorrect(bool automatch);
     void setManualParamsVisibility(bool setVisible);
     void updateLensfunWarning();
+    void toggleCorrect();
 
     bool lcModeChanged;
     bool lcpFileChanged;
@@ -117,6 +119,11 @@ private:
     const rtengine::FramesMetaData* metadata;
     std::unique_ptr<rtengine::MetadataLensCorrection> metadataCorrection;
 
+    Gtk::Box* contentWrapper;
+    Gtk::Box* manualSubBox;
+    Gtk::Box* correctContent;
+    Gtk::Label* correctLabel;
+    bool correctExpanded;
     Gtk::Grid* const modesGrid;
     Gtk::Grid* const distGrid;
     Gtk::RadioButton* const corrUnchangedRB;

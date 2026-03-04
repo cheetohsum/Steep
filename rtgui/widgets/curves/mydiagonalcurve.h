@@ -41,10 +41,18 @@ public:
     std::vector<double> x, y;   // in case of parametric curves the curve parameters are stored in vector x. In other cases these vectors store the coordinates of the bullets.
 };
 
+struct CurveOverlay {
+    std::vector<double> points;  // control points: {type, x1, y1, x2, y2, ...}
+    double r, g, b, alpha;
+};
+
 class MyDiagonalCurve final : public MyCurve
 {
 private:
     IdleRegister idle_register;
+    bool hasCustomColor_ = false;
+    double customR_ = 1.0, customG_ = 1.0, customB_ = 1.0;
+    std::vector<CurveOverlay> overlays_;
 
 protected:
     DiagonalCurveDescr curve;
@@ -96,4 +104,9 @@ public:
 
     void setPos(double pos, int chanIdx) override;
     void stopNumericalAdjustment() override;
+
+    void setCurveLineColor(double r, double g, double b);
+    void clearCurveLineColor();
+    void setOverlayCurves(const std::vector<CurveOverlay>& overlays);
+    void clearOverlayCurves();
 };

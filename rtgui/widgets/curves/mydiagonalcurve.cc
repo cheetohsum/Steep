@@ -489,8 +489,30 @@ void MyDiagonalCurve::updateDrawingArea (const int handle, const ::Cairo::RefPtr
         cr->set_line_width (1.0);
     }
 
+    // draw overlay curves (e.g., R/G/B behind master)
+    for (const auto& ov : overlays_) {
+        if (ov.points.size() >= 5) {
+            std::unique_ptr<rtengine::DiagonalCurve> ovCurve(
+                new rtengine::DiagonalCurve(ov.points, CURVES_MIN_POLY_POINTS));
+            cr->set_source_rgba(ov.r, ov.g, ov.b, ov.alpha);
+            cr->set_line_width(1.0);
+            double y0 = ovCurve->getVal(0.0);
+            cr->move_to(graphX, y0 * -graphH + graphY);
+            for (int i = 1; i < graphW; ++i) {
+                double x = double(i) / double(graphW - 1);
+                double y = ovCurve->getVal(x);
+                cr->line_to(double(i) + graphX, y * -graphH + graphY);
+            }
+            cr->stroke();
+        }
+    }
+
     // draw curve
-    cr->set_source_rgb (c.get_red(), c.get_green(), c.get_blue());
+    if (hasCustomColor_) {
+        cr->set_source_rgb(customR_, customG_, customB_);
+    } else {
+        cr->set_source_rgb (c.get_red(), c.get_green(), c.get_blue());
+    }
     cr->move_to (graphX, static_cast<double>(getVal(point, 0)) * -graphH + graphY);
 
     for (int i = 1; i < graphW; ++i) {
@@ -1581,4 +1603,27 @@ void MyDiagonalCurve::reset(const std::vector<double> &resetCurve, double identi
     }
 
     queue_draw();
+}
+
+void MyDiagonalCurve::setCurveLineColor(double r, double g, double b)
+{
+    hasCustomColor_ = true;
+    customR_ = r;
+    customG_ = g;
+    customB_ = b;
+}
+
+void MyDiagonalCurve::clearCurveLineColor()
+{
+    hasCustomColor_ = false;
+}
+
+void MyDiagonalCurve::setOverlayCurves(const std::vector<CurveOverlay>& overlays)
+{
+    overlays_ = overlays;
+}
+
+void MyDiagonalCurve::clearOverlayCurves()
+{
+    overlays_.clear();
 }

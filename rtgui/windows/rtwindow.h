@@ -31,12 +31,16 @@
 
 #include "rtengine/noncopyable.h"
 
+#include <memory>
+
 class BatchQueueEntry;
 class BatchQueuePanel;
 class EditorPanel;
 struct ExternalEditor;
 class FilePanel;
 class PLDBridge;
+
+namespace mcp { class McpServer; }
 class RTWindow final :
     public Gtk::Window,
     public rtengine::ProgressListener,
@@ -86,6 +90,14 @@ private:
     Gtk::ToggleButton* navEditor;
     bool navSwitching; // guard against recursive toggle
 
+    // Queue overlay drawer
+    Gtk::Overlay* mainOverlay;
+    Gtk::Box* queueOverlayBox;
+    Gtk::EventBox* queueBackdrop;
+    bool queueOverlayVisible;
+    double queueAnimFraction;        // 0.0 = hidden, 1.0 = fully shown
+    sigc::connection queueAnimConn;  // animation timer
+
     bool isSingleTabMode() const;
 
     bool on_expose_event_epanel (GdkEventExpose* event);
@@ -130,6 +142,9 @@ public:
     void close_window ();
     void on_nav_switched (Gtk::ToggleButton* active);
     void syncNavButtons (guint page_num);
+    void toggleQueueOverlay();
+    void showQueueOverlay();
+    void hideQueueOverlay();
     void get_position(int& x, int& y) const;
 
     void setProgress(double p) override;
@@ -144,6 +159,7 @@ public:
 
     EditorPanel*  epanel;
     FilePanel* fpanel;
+    std::unique_ptr<mcp::McpServer> mcpServer_;
 
     void SetEditorCurrent();
     void SetMainCurrent();
@@ -172,4 +188,7 @@ public:
     void writeToolExpandedStatus (std::vector<int> &tpOpen);
 
     EditorPanel* getActiveEditorPanel();
+
+    void showMcpDialog();
+    mcp::McpServer* getMcpServer() { return mcpServer_.get(); }
 };

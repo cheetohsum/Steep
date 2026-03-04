@@ -27,6 +27,10 @@
 #include <set>
 #include <unordered_set>
 
+#ifdef RT_AI_MASKING
+#include "aiinpainting.h"
+#endif
+
 namespace rtengine
 {
 
@@ -71,6 +75,8 @@ public:
         TARGET,
         FINAL
     };
+
+    procparams::SpotMethod method;
 
     struct Rectangle {
         int x1;
@@ -168,6 +174,7 @@ public:
     float featherRadius;
 
     SpotBox (int tl_x, int tl_y, int br_x, int br_y, int radius, int feather_radius, Imagefloat* image, Type type) :
+       method(procparams::SpotMethod::CLONE),
        type(type),
        image(image),
        spotArea(tl_x, tl_y, br_x, br_y),
@@ -178,6 +185,7 @@ public:
     {}
 
     SpotBox (int tl_x, int tl_y, int radius, int feather_radius, Imagefloat* image, Type type) :
+       method(procparams::SpotMethod::CLONE),
        type(type),
        image(image),
        spotArea(tl_x, tl_y, image ? tl_x + image->getWidth() - 1 : 0, image ? tl_y + image->getHeight() - 1 : 0),
@@ -188,6 +196,7 @@ public:
     {}
 
     SpotBox (SpotEntry &spot, Type type) :
+        method(spot.method),
         type(type),
         image(nullptr),
         intersectionArea(),
@@ -327,6 +336,17 @@ public:
     }
 
     bool processIntersectionWith(SpotBox &destBox) {
+        using procparams::SpotMethod;
+        switch (method) {
+            case SpotMethod::HEAL:   return processHeal(destBox);
+            case SpotMethod::ERASE:  return processErase(destBox);
+            case SpotMethod::REDEYE: return processRedEye(destBox);
+            default:                 return processClone(destBox);
+        }
+    }
+
+    // Clone: copy source pixels to destination with feather blending (original behavior)
+    bool processClone(SpotBox &destBox) {
         Imagefloat *dstImg = destBox.image;
 
         if (image == nullptr || dstImg == nullptr) {
@@ -364,6 +384,200 @@ public:
                 ++dstImgX;
             }
             ++srcImgY;
+            ++dstImgY;
+        }
+
+        return true;
+    }
+
+    // Heal: copy source texture but match destination luminance
+    bool processHeal(SpotBox &destBox) {
+        Imagefloat *dstImg = destBox.image;
+
+        if (image == nullptr || dstImg == nullptr) {
+            std::cerr << "One of the source or destination SpotBox image is missing !" << std::endl;
+            return false;
+        }
+
+        // Pass 1: compute average luminance of source and destination within the inner radius
+        double srcLumSum = 0.0, dstLumSum = 0.0;
+        int lumCount = 0;
+
+        int srcImgY = intersectionArea.y1 - imgArea.y1;
+        int dstImgY = destBox.intersectionArea.y1 - destBox.imgArea.y1;
+        for (int y = intersectionArea.y1; y <= intersectionArea.y2; ++y) {
+            float dy = float(y - spotArea.y1) - featherRadius;
+            int srcImgX = intersectionArea.x1 - imgArea.x1;
+            int dstImgX = destBox.intersectionArea.x1 - destBox.imgArea.x1;
+            for (int x = intersectionArea.x1; x <= intersectionArea.x2; ++x) {
+                float dx = float(x - spotArea.x1) - featherRadius;
+                float r = sqrt(dx * dx + dy * dy);
+                if (r <= radius) {
+                    srcLumSum += 0.2126 * image->r(srcImgY, srcImgX) + 0.7152 * image->g(srcImgY, srcImgX) + 0.0722 * image->b(srcImgY, srcImgX);
+                    dstLumSum += 0.2126 * dstImg->r(dstImgY, dstImgX) + 0.7152 * dstImg->g(dstImgY, dstImgX) + 0.0722 * dstImg->b(dstImgY, dstImgX);
+                    lumCount++;
+                }
+                ++srcImgX;
+                ++dstImgX;
+            }
+            ++srcImgY;
+            ++dstImgY;
+        }
+
+        float lumRatio = 1.f;
+        if (lumCount > 0 && srcLumSum > 0.0) {
+            lumRatio = LIM(float(dstLumSum / srcLumSum), 0.25f, 4.0f);
+        }
+
+        // Pass 2: apply source pixels scaled by luminance ratio
+        srcImgY = intersectionArea.y1 - imgArea.y1;
+        dstImgY = destBox.intersectionArea.y1 - destBox.imgArea.y1;
+        for (int y = intersectionArea.y1; y <= intersectionArea.y2; ++y) {
+            float dy = float(y - spotArea.y1) - featherRadius;
+            int srcImgX = intersectionArea.x1 - imgArea.x1;
+            int dstImgX = destBox.intersectionArea.x1 - destBox.imgArea.x1;
+            for (int x = intersectionArea.x1; x <= intersectionArea.x2; ++x) {
+                float dx = float(x - spotArea.x1) - featherRadius;
+                float r = sqrt(dx * dx + dy * dy);
+
+                if (r >= featherRadius) {
+                    ++srcImgX;
+                    ++dstImgX;
+                    continue;
+                }
+
+                float srcR = image->r(srcImgY, srcImgX) * lumRatio;
+                float srcG = image->g(srcImgY, srcImgX) * lumRatio;
+                float srcB = image->b(srcImgY, srcImgX) * lumRatio;
+
+                if (r <= radius) {
+                    dstImg->r(dstImgY, dstImgX) = srcR;
+                    dstImg->g(dstImgY, dstImgX) = srcG;
+                    dstImg->b(dstImgY, dstImgX) = srcB;
+                } else {
+                    float opacity = (featherRadius - r) / (featherRadius - radius);
+                    dstImg->r(dstImgY, dstImgX) = (srcR - dstImg->r(dstImgY, dstImgX)) * opacity + dstImg->r(dstImgY, dstImgX);
+                    dstImg->g(dstImgY, dstImgX) = (srcG - dstImg->g(dstImgY, dstImgX)) * opacity + dstImg->g(dstImgY, dstImgX);
+                    dstImg->b(dstImgY, dstImgX) = (srcB - dstImg->b(dstImgY, dstImgX)) * opacity + dstImg->b(dstImgY, dstImgX);
+                }
+                ++srcImgX;
+                ++dstImgX;
+            }
+            ++srcImgY;
+            ++dstImgY;
+        }
+
+        return true;
+    }
+
+    // Erase: fill target area with average color from the feather ring
+    bool processErase(SpotBox &destBox) {
+        Imagefloat *dstImg = destBox.image;
+
+        if (dstImg == nullptr) {
+            std::cerr << "Destination SpotBox image is missing !" << std::endl;
+            return false;
+        }
+
+        // Compute average RGB from pixels in the feather ring (between radius and featherRadius)
+        double avgR = 0.0, avgG = 0.0, avgB = 0.0;
+        int count = 0;
+
+        int dstImgY = destBox.intersectionArea.y1 - destBox.imgArea.y1;
+        for (int y = destBox.intersectionArea.y1; y <= destBox.intersectionArea.y2; ++y) {
+            float dy = float(y - destBox.spotArea.y1) - destBox.featherRadius;
+            int dstImgX = destBox.intersectionArea.x1 - destBox.imgArea.x1;
+            for (int x = destBox.intersectionArea.x1; x <= destBox.intersectionArea.x2; ++x) {
+                float dx = float(x - destBox.spotArea.x1) - destBox.featherRadius;
+                float r = sqrt(dx * dx + dy * dy);
+                if (r > destBox.radius && r < destBox.featherRadius) {
+                    avgR += dstImg->r(dstImgY, dstImgX);
+                    avgG += dstImg->g(dstImgY, dstImgX);
+                    avgB += dstImg->b(dstImgY, dstImgX);
+                    count++;
+                }
+                ++dstImgX;
+            }
+            ++dstImgY;
+        }
+
+        if (count > 0) {
+            avgR /= count;
+            avgG /= count;
+            avgB /= count;
+        }
+
+        // Fill inner area with average, feather-blend at edges
+        dstImgY = destBox.intersectionArea.y1 - destBox.imgArea.y1;
+        for (int y = destBox.intersectionArea.y1; y <= destBox.intersectionArea.y2; ++y) {
+            float dy = float(y - destBox.spotArea.y1) - destBox.featherRadius;
+            int dstImgX = destBox.intersectionArea.x1 - destBox.imgArea.x1;
+            for (int x = destBox.intersectionArea.x1; x <= destBox.intersectionArea.x2; ++x) {
+                float dx = float(x - destBox.spotArea.x1) - destBox.featherRadius;
+                float r = sqrt(dx * dx + dy * dy);
+
+                if (r >= destBox.featherRadius) {
+                    ++dstImgX;
+                    continue;
+                }
+                if (r <= destBox.radius) {
+                    dstImg->r(dstImgY, dstImgX) = float(avgR);
+                    dstImg->g(dstImgY, dstImgX) = float(avgG);
+                    dstImg->b(dstImgY, dstImgX) = float(avgB);
+                } else {
+                    float opacity = (destBox.featherRadius - r) / (destBox.featherRadius - destBox.radius);
+                    dstImg->r(dstImgY, dstImgX) = (float(avgR) - dstImg->r(dstImgY, dstImgX)) * opacity + dstImg->r(dstImgY, dstImgX);
+                    dstImg->g(dstImgY, dstImgX) = (float(avgG) - dstImg->g(dstImgY, dstImgX)) * opacity + dstImg->g(dstImgY, dstImgX);
+                    dstImg->b(dstImgY, dstImgX) = (float(avgB) - dstImg->b(dstImgY, dstImgX)) * opacity + dstImg->b(dstImgY, dstImgX);
+                }
+                ++dstImgX;
+            }
+            ++dstImgY;
+        }
+
+        return true;
+    }
+
+    // Red Eye: desaturate red pixels in the target area
+    bool processRedEye(SpotBox &destBox) {
+        Imagefloat *dstImg = destBox.image;
+
+        if (dstImg == nullptr) {
+            std::cerr << "Destination SpotBox image is missing !" << std::endl;
+            return false;
+        }
+
+        int dstImgY = destBox.intersectionArea.y1 - destBox.imgArea.y1;
+        for (int y = destBox.intersectionArea.y1; y <= destBox.intersectionArea.y2; ++y) {
+            float dy = float(y - destBox.spotArea.y1) - destBox.featherRadius;
+            int dstImgX = destBox.intersectionArea.x1 - destBox.imgArea.x1;
+            for (int x = destBox.intersectionArea.x1; x <= destBox.intersectionArea.x2; ++x) {
+                float dx = float(x - destBox.spotArea.x1) - destBox.featherRadius;
+                float r = sqrt(dx * dx + dy * dy);
+
+                if (r >= destBox.featherRadius) {
+                    ++dstImgX;
+                    continue;
+                }
+
+                float pR = dstImg->r(dstImgY, dstImgX);
+                float pG = dstImg->g(dstImgY, dstImgX);
+                float pB = dstImg->b(dstImgY, dstImgX);
+                float avgGB = (pG + pB) * 0.5f;
+
+                // Check if pixel is "red" (R channel significantly higher than G,B average)
+                if (avgGB > 1.f && pR / avgGB > 1.5f) {
+                    float newR = avgGB; // Desaturate red to match green/blue average
+
+                    if (r <= destBox.radius) {
+                        dstImg->r(dstImgY, dstImgX) = newR;
+                    } else {
+                        float opacity = (destBox.featherRadius - r) / (destBox.featherRadius - destBox.radius);
+                        dstImg->r(dstImgY, dstImgX) = (newR - pR) * opacity + pR;
+                    }
+                }
+                ++dstImgX;
+            }
             ++dstImgY;
         }
 
@@ -409,8 +623,238 @@ public:
     }
 };
 
+namespace {
+
+// Process a stroke-based erase directly on the preview image
+void processStrokeErase(Imagefloat* img, const SpotEntry& entry, const PreviewProps &pp)
+{
+    if (entry.strokePoints.empty()) return;
+
+    int skip = pp.getSkip();
+    int cropX = pp.getX();
+    int cropY = pp.getY();
+    int imgW = img->getWidth();
+    int imgH = img->getHeight();
+    float radius = float(entry.radius) / float(skip);
+    float featherRadius = entry.getFeatherRadius() / float(skip);
+
+    // Compute bounding box of all stroke points in crop-local scaled coordinates
+    int bbMinX = INT_MAX, bbMinY = INT_MAX, bbMaxX = INT_MIN, bbMaxY = INT_MIN;
+    for (const auto& pt : entry.strokePoints) {
+        int sx = (pt.x - cropX) / skip;
+        int sy = (pt.y - cropY) / skip;
+        bbMinX = std::min(bbMinX, sx - int(featherRadius) - 1);
+        bbMinY = std::min(bbMinY, sy - int(featherRadius) - 1);
+        bbMaxX = std::max(bbMaxX, sx + int(featherRadius) + 1);
+        bbMaxY = std::max(bbMaxY, sy + int(featherRadius) + 1);
+    }
+
+    // Clip to image bounds
+    bbMinX = std::max(0, bbMinX);
+    bbMinY = std::max(0, bbMinY);
+    bbMaxX = std::min(imgW - 1, bbMaxX);
+    bbMaxY = std::min(imgH - 1, bbMaxY);
+
+    if (bbMinX > bbMaxX || bbMinY > bbMaxY) return;
+
+    int bbW = bbMaxX - bbMinX + 1;
+    int bbH = bbMaxY - bbMinY + 1;
+
+    // Build a 2D mask within the bounding box
+    std::vector<float> mask(bbW * bbH, 0.f);
+
+    for (const auto& pt : entry.strokePoints) {
+        float cx = float(pt.x - cropX) / float(skip) - bbMinX;
+        float cy = float(pt.y - cropY) / float(skip) - bbMinY;
+
+        int pyMin = std::max(0, int(cy - featherRadius));
+        int pyMax = std::min(bbH - 1, int(cy + featherRadius));
+        int pxMin = std::max(0, int(cx - featherRadius));
+        int pxMax = std::min(bbW - 1, int(cx + featherRadius));
+
+        for (int py = pyMin; py <= pyMax; ++py) {
+            for (int px = pxMin; px <= pxMax; ++px) {
+                float dx = float(px) - cx;
+                float dy = float(py) - cy;
+                float dist = sqrtf(dx * dx + dy * dy);
+                float val = 0.f;
+                if (dist <= radius) {
+                    val = 1.f;
+                } else if (dist < featherRadius) {
+                    val = (featherRadius - dist) / (featherRadius - radius);
+                }
+                // Max-blend (union of stroke circles)
+                mask[py * bbW + px] = std::max(mask[py * bbW + px], val);
+            }
+        }
+    }
+
+    // Sample average RGB from boundary pixels (where mask transitions from 0 to >0)
+    double avgR = 0.0, avgG = 0.0, avgB = 0.0;
+    int count = 0;
+
+    for (int py = 0; py < bbH; ++py) {
+        for (int px = 0; px < bbW; ++px) {
+            float m = mask[py * bbW + px];
+            if (m > 0.f && m < 0.5f) {
+                int ix = bbMinX + px;
+                int iy = bbMinY + py;
+                if (ix >= 0 && ix < imgW && iy >= 0 && iy < imgH) {
+                    avgR += img->r(iy, ix);
+                    avgG += img->g(iy, ix);
+                    avgB += img->b(iy, ix);
+                    count++;
+                }
+            }
+        }
+    }
+
+    if (count > 0) {
+        avgR /= count;
+        avgG /= count;
+        avgB /= count;
+    }
+
+    // Apply: blend original toward average using mask as opacity
+    for (int py = 0; py < bbH; ++py) {
+        for (int px = 0; px < bbW; ++px) {
+            float m = mask[py * bbW + px];
+            if (m <= 0.f) continue;
+
+            int ix = bbMinX + px;
+            int iy = bbMinY + py;
+            if (ix < 0 || ix >= imgW || iy < 0 || iy >= imgH) continue;
+
+            img->r(iy, ix) = float((avgR - img->r(iy, ix)) * m + img->r(iy, ix));
+            img->g(iy, ix) = float((avgG - img->g(iy, ix)) * m + img->g(iy, ix));
+            img->b(iy, ix) = float((avgB - img->b(iy, ix)) * m + img->b(iy, ix));
+        }
+    }
+}
+
+#ifdef RT_AI_MASKING
+// Process a stroke-based AI inpainting directly on the preview image
+void processStrokeAI(Imagefloat* img, const SpotEntry& entry, const PreviewProps &pp)
+{
+    if (entry.strokePoints.empty()) return;
+
+    auto& engine = rtengine::getAIInpaintingEngine();
+    if (!engine.isInitialized()) {
+        // Fall back to regular erase if AI engine not available
+        processStrokeErase(img, entry, pp);
+        return;
+    }
+
+    int skip = pp.getSkip();
+    int cropX = pp.getX();
+    int cropY = pp.getY();
+    int imgW = img->getWidth();
+    int imgH = img->getHeight();
+    float radius = float(entry.radius) / float(skip);
+    float featherRadius = entry.getFeatherRadius() / float(skip);
+
+    // Compute bounding box with padding
+    int bbMinX = INT_MAX, bbMinY = INT_MAX, bbMaxX = INT_MIN, bbMaxY = INT_MIN;
+    for (const auto& pt : entry.strokePoints) {
+        int sx = (pt.x - cropX) / skip;
+        int sy = (pt.y - cropY) / skip;
+        bbMinX = std::min(bbMinX, sx - int(featherRadius) - 1);
+        bbMinY = std::min(bbMinY, sy - int(featherRadius) - 1);
+        bbMaxX = std::max(bbMaxX, sx + int(featherRadius) + 1);
+        bbMaxY = std::max(bbMaxY, sy + int(featherRadius) + 1);
+    }
+
+    // Add padding for AI context
+    int pad = int(featherRadius * 2);
+    bbMinX = std::max(0, bbMinX - pad);
+    bbMinY = std::max(0, bbMinY - pad);
+    bbMaxX = std::min(imgW - 1, bbMaxX + pad);
+    bbMaxY = std::min(imgH - 1, bbMaxY + pad);
+
+    if (bbMinX > bbMaxX || bbMinY > bbMaxY) return;
+
+    int bbW = bbMaxX - bbMinX + 1;
+    int bbH = bbMaxY - bbMinY + 1;
+    int bbSize = bbW * bbH;
+
+    // Extract crop region
+    std::vector<float> cropR(bbSize), cropG(bbSize), cropB(bbSize);
+    std::vector<float> mask(bbSize, 0.f);
+
+    for (int y = 0; y < bbH; ++y) {
+        for (int x = 0; x < bbW; ++x) {
+            int ix = bbMinX + x;
+            int iy = bbMinY + y;
+            int idx = y * bbW + x;
+            cropR[idx] = img->r(iy, ix);
+            cropG[idx] = img->g(iy, ix);
+            cropB[idx] = img->b(iy, ix);
+        }
+    }
+
+    // Build mask from stroke points
+    for (const auto& pt : entry.strokePoints) {
+        float cx = float(pt.x - cropX) / float(skip) - bbMinX;
+        float cy = float(pt.y - cropY) / float(skip) - bbMinY;
+
+        int pyMin = std::max(0, int(cy - radius));
+        int pyMax = std::min(bbH - 1, int(cy + radius));
+        int pxMin = std::max(0, int(cx - radius));
+        int pxMax = std::min(bbW - 1, int(cx + radius));
+
+        for (int py = pyMin; py <= pyMax; ++py) {
+            for (int px = pxMin; px <= pxMax; ++px) {
+                float dx = float(px) - cx;
+                float dy = float(py) - cy;
+                float dist = sqrtf(dx * dx + dy * dy);
+                if (dist <= radius) {
+                    mask[py * bbW + px] = 1.f;
+                }
+            }
+        }
+    }
+
+    // Run AI inpainting
+    std::vector<float> outR(bbSize), outG(bbSize), outB(bbSize);
+    if (engine.inpaint(cropR.data(), cropG.data(), cropB.data(),
+                       mask.data(), bbW, bbH,
+                       outR.data(), outG.data(), outB.data())) {
+        // Write results back to image
+        for (int y = 0; y < bbH; ++y) {
+            for (int x = 0; x < bbW; ++x) {
+                int ix = bbMinX + x;
+                int iy = bbMinY + y;
+                int idx = y * bbW + x;
+                if (mask[idx] > 0.5f) {
+                    img->r(iy, ix) = outR[idx];
+                    img->g(iy, ix) = outG[idx];
+                    img->b(iy, ix) = outB[idx];
+                }
+            }
+        }
+    }
+}
+#endif // RT_AI_MASKING
+
+} // anonymous namespace
+
 void ImProcFunctions::removeSpots (Imagefloat* img, ImageSource* imgsrc, const std::vector<SpotEntry> &entries, const PreviewProps &pp, const ColorTemp &currWB, const ColorManagementParams *cmp, int tr)
 {
+    // Process stroke-based entries directly on the image first
+    for (const auto& entry : params->spot.entries) {
+        if (entry.isStroke()) {
+            int methodInt = static_cast<int>(entry.method);
+#ifdef RT_AI_MASKING
+            if (methodInt >= static_cast<int>(SpotMethod::AI_REMOVE)) {
+                processStrokeAI(img, entry, pp);
+            } else
+#endif
+            {
+                processStrokeErase(img, entry, pp);
+            }
+        }
+    }
+
     //Get the clipped image areas (src & dst) from the source image
 
     std::vector< std::shared_ptr<SpotBox> > srcSpotBoxs;
@@ -427,6 +871,11 @@ void ImProcFunctions::removeSpots (Imagefloat* img, ImageSource* imgsrc, const s
     int i = 0;
 
     for (auto entry : params->spot.entries) {
+        // Skip stroke-based entries (already processed above)
+        if (entry.isStroke()) {
+            ++i;
+            continue;
+        }
         std::shared_ptr<SpotBox> srcSpotBox(new SpotBox(entry,  SpotBox::Type::SOURCE));
         std::shared_ptr<SpotBox> dstSpotBox(new SpotBox(entry,  SpotBox::Type::TARGET));
         if (   !srcSpotBox->setIntersectionWith(fullImageBox)

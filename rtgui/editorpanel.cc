@@ -42,11 +42,13 @@
 #include "cachemanager.h"
 #include "thumbnail.h"
 #include "toolpanelcoord.h"
+#include "clipboard.h"
 
 #include <thread>
 #include "widgets/basic/popupbutton.h"
 #include "windows/rtappchooserdialog.h"
 #include "windows/rtwindow.h"
+#include "mcp/mcpserver.h"
 
 #ifdef _WIN32
 #include "rtengine/leanwindows.h"
@@ -59,6 +61,21 @@ using ScopeType = Options::ScopeType;
 
 namespace
 {
+
+// Box that caps its natural width so overlay children don't expand endlessly
+class FixedWidthBox : public Gtk::Box {
+public:
+    explicit FixedWidthBox(int width) : fixedWidth_(width) {
+        set_orientation(Gtk::ORIENTATION_VERTICAL);
+    }
+    void get_preferred_width_vfunc(int& minimum_width, int& natural_width) const override {
+        Gtk::Box::get_preferred_width_vfunc(minimum_width, natural_width);
+        minimum_width = std::min(minimum_width, fixedWidth_);
+        natural_width = fixedWidth_;
+    }
+private:
+    int fixedWidth_;
+};
 
 void setprogressStrUI(double val, const Glib::ustring str, MyProgressBar* pProgress)
 {
@@ -744,7 +761,9 @@ public:
 };
 
 EditorPanel::EditorPanel (FilePanel* filePanel)
-    : catalogPane (nullptr), realized (false), tbBeforeLock (nullptr), iHistoryShow (nullptr), iHistoryHide (nullptr),
+    : catalogPane (nullptr), realized (false), tbBeforeLock (nullptr),
+      editorToolbarTop_ (nullptr), editorToolbarBottom_ (nullptr),
+      iHistoryShow (nullptr), iHistoryHide (nullptr),
       iTopPanel_1_Show (nullptr), iTopPanel_1_Hide (nullptr), iRightPanel_1_Show (nullptr), iRightPanel_1_Hide (nullptr),
       iBeforeLockON (nullptr), iBeforeLockOFF (nullptr),
       navigatorDialog_ (nullptr), historyDialog_ (nullptr),
@@ -800,7 +819,9 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 
     placesObox->pack_start(*editorRecentBrowser_, Gtk::PACK_SHRINK, 4);
     placesObox->pack_start(*editorDirBrowser_, Gtk::PACK_EXPAND_WIDGET, 0);
+    editorDirBrowser_->set_size_request(-1, 300);
     placesObox->pack_start(*albumBrowser_, Gtk::PACK_SHRINK, 0);
+    albumBrowser_->set_size_request(-1, 200);
 
     editorPlacesPaned_->pack_start(*editorPlacesBrowser_, Gtk::PACK_SHRINK);
     editorPlacesPaned_->pack_start(*placesObox, Gtk::PACK_EXPAND_WIDGET);
@@ -824,8 +845,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     Gtk::Box* editbox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_VERTICAL));
 
     beforeAfter = Gtk::manage (new Gtk::ToggleButton ());
-    Gtk::Image* beforeAfterIcon = Gtk::manage (new RTImage ("beforeafter", Gtk::ICON_SIZE_LARGE_TOOLBAR));
-    beforeAfter->add (*beforeAfterIcon);
+    beforeAfter->set_image (*Gtk::manage (new RTImage ("compare", Gtk::ICON_SIZE_MENU)));
     beforeAfter->set_relief (Gtk::RELIEF_NONE);
     beforeAfter->set_tooltip_markup (M ("MAIN_TOOLTIP_TOGGLE"));
 
@@ -879,7 +899,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     if (tbTopPanel_1) {
         toolBarPanel->pack_start (*tbTopPanel_1, Gtk::PACK_SHRINK, 1);
     }
-    toolBarPanel->pack_start (*beforeAfter, Gtk::PACK_SHRINK, 1);
     toolBarPanel->pack_start (*tpc->getToolBar(), Gtk::PACK_SHRINK, 1);
 
     // Filter bar toggle button
@@ -888,11 +907,10 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     filterBarBlockSignals = false;
     if (!App::get().isSimpleEditor() && filePanel) {
         tbFilterBar = Gtk::manage(new Gtk::ToggleButton());
-        tbFilterBar->set_image(*Gtk::manage(new RTImage("filter", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
+        tbFilterBar->set_image(*Gtk::manage(new RTImage("filter-bar", Gtk::ICON_SIZE_MENU)));
         tbFilterBar->set_relief(Gtk::RELIEF_NONE);
         tbFilterBar->set_tooltip_markup(M("EDITOR_FILTER_TOOLTIP"));
         tbFilterBar->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::filterBarToggled));
-        toolBarPanel->pack_start(*tbFilterBar, Gtk::PACK_SHRINK, 1);
     }
 
     // Album view toggle button
@@ -925,6 +943,20 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         auto applyCSS = [&css](Gtk::Widget* w) {
             w->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
         };
+
+        // Before/After compare button
+        applyCSS(beforeAfter);
+        filmstripActionBar->pack_start(*beforeAfter, Gtk::PACK_SHRINK);
+
+        // Filter bar toggle button
+        if (tbFilterBar) {
+            applyCSS(tbFilterBar);
+            filmstripActionBar->pack_start(*tbFilterBar, Gtk::PACK_SHRINK);
+        }
+
+        auto* sep0 = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
+        applyCSS(sep0);
+        filmstripActionBar->pack_start(*sep0, Gtk::PACK_SHRINK);
 
         // Star rating buttons: unrank + 5 stars
         Gtk::Button* unrankBtn = Gtk::manage(new Gtk::Button());
@@ -969,19 +1001,62 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         applyCSS(sep1);
         filmstripActionBar->pack_start(*sep1, Gtk::PACK_SHRINK);
 
-        // Color label buttons
-        std::array<std::string, 6> clabelIcons = {"circle-gray-small", "circle-red-small", "circle-yellow-small", "circle-green-small", "circle-blue-small", "circle-purple-small"};
-        for (int i = 0; i < 6; i++) {
-            Gtk::Button* clabelBtn = Gtk::manage(new Gtk::Button());
-            clabelBtn->set_image(*Gtk::manage(new RTImage(clabelIcons[i], Gtk::ICON_SIZE_MENU)));
-            clabelBtn->set_relief(Gtk::RELIEF_NONE);
-            clabelBtn->set_tooltip_markup(M("FILEBROWSER_COLORLABEL_TOOLTIP"));
-            clabelBtn->signal_clicked().connect([this, i]() {
-                if (fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser)
-                    fPanel->fileCatalog->fileBrowser->requestColorLabel(i);
+        // Color label pill — multicolor trigger circle expands on hover
+        {
+            auto* pillEventBox = Gtk::manage(new Gtk::EventBox());
+            auto* pillBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+            pillBox->set_name("ColorLabelPill");
+
+            // Inline CSS for pill shape
+            auto pillCss = Gtk::CssProvider::create();
+            pillCss->load_from_data(
+                "#ColorLabelPill { border-radius: 12px; }"
+            );
+            pillBox->get_style_context()->add_provider(pillCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+
+            // Trigger circle (always visible)
+            auto* triggerBtn = Gtk::manage(new Gtk::Button());
+            triggerBtn->set_image(*Gtk::manage(new RTImage("circle-multicolor-small", Gtk::ICON_SIZE_MENU)));
+            triggerBtn->set_relief(Gtk::RELIEF_NONE);
+            triggerBtn->set_tooltip_markup(M("FILEBROWSER_COLORLABEL_TOOLTIP"));
+            applyCSS(triggerBtn);
+            pillBox->pack_start(*triggerBtn, Gtk::PACK_SHRINK);
+
+            // Revealer with the 6 color label buttons
+            colorLabelRevealer_ = Gtk::manage(new Gtk::Revealer());
+            colorLabelRevealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_RIGHT);
+            colorLabelRevealer_->set_transition_duration(150);
+            colorLabelRevealer_->set_reveal_child(false);
+
+            auto* labelBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+            std::array<std::string, 6> clabelIcons = {"circle-gray-small", "circle-red-small", "circle-yellow-small", "circle-green-small", "circle-blue-small", "circle-purple-small"};
+            for (int i = 0; i < 6; i++) {
+                Gtk::Button* clabelBtn = Gtk::manage(new Gtk::Button());
+                clabelBtn->set_image(*Gtk::manage(new RTImage(clabelIcons[i], Gtk::ICON_SIZE_MENU)));
+                clabelBtn->set_relief(Gtk::RELIEF_NONE);
+                clabelBtn->set_tooltip_markup(M("FILEBROWSER_COLORLABEL_TOOLTIP"));
+                clabelBtn->signal_clicked().connect([this, i]() {
+                    if (fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser)
+                        fPanel->fileCatalog->fileBrowser->requestColorLabel(i);
+                });
+                applyCSS(clabelBtn);
+                labelBox->pack_start(*clabelBtn, Gtk::PACK_SHRINK);
+            }
+            colorLabelRevealer_->add(*labelBox);
+            pillBox->pack_start(*colorLabelRevealer_, Gtk::PACK_SHRINK);
+
+            pillEventBox->add(*pillBox);
+            pillEventBox->set_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
+            pillEventBox->signal_enter_notify_event().connect([this](GdkEventCrossing*) -> bool {
+                colorLabelRevealer_->set_reveal_child(true);
+                return false;
             });
-            applyCSS(clabelBtn);
-            filmstripActionBar->pack_start(*clabelBtn, Gtk::PACK_SHRINK);
+            pillEventBox->signal_leave_notify_event().connect([this](GdkEventCrossing*) -> bool {
+                colorLabelRevealer_->set_reveal_child(false);
+                return false;
+            });
+
+            filmstripActionBar->pack_start(*pillEventBox, Gtk::PACK_SHRINK);
         }
 
         auto* sep2 = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
@@ -1012,6 +1087,38 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         addToAlbumBtn->signal_clicked().connect(sigc::mem_fun(*this, &EditorPanel::addCurrentImageToTargetAlbum));
         applyCSS(addToAlbumBtn);
         filmstripActionBar->pack_start(*addToAlbumBtn, Gtk::PACK_SHRINK);
+
+        // Copy Edit Settings button
+        auto* sep4 = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
+        applyCSS(sep4);
+        filmstripActionBar->pack_start(*sep4, Gtk::PACK_SHRINK);
+
+        Gtk::Button* copySettingsBtn = Gtk::manage(new Gtk::Button());
+        copySettingsBtn->set_image(*Gtk::manage(new RTImage("copy", Gtk::ICON_SIZE_MENU)));
+        copySettingsBtn->set_relief(Gtk::RELIEF_NONE);
+        copySettingsBtn->set_tooltip_markup(M("EDITOR_COPY_SETTINGS_TOOLTIP"));
+        copySettingsBtn->signal_clicked().connect([this]() {
+            if (openThm) {
+                clipboard.setProcParams(openThm->getProcParams());
+            }
+        });
+        applyCSS(copySettingsBtn);
+        filmstripActionBar->pack_start(*copySettingsBtn, Gtk::PACK_SHRINK);
+
+        // Edit in External Editor button
+        if (!App::get().isGimpPlugin()) {
+            auto* sep5 = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
+            applyCSS(sep5);
+            filmstripActionBar->pack_start(*sep5, Gtk::PACK_SHRINK);
+
+            Gtk::Button* extEditorBtn = Gtk::manage(new Gtk::Button());
+            extEditorBtn->set_image(*Gtk::manage(new RTImage("external-editor", Gtk::ICON_SIZE_MENU)));
+            extEditorBtn->set_relief(Gtk::RELIEF_NONE);
+            extEditorBtn->set_tooltip_markup(M("MAIN_BUTTON_SENDTOEDITOR_TOOLTIP"));
+            extEditorBtn->signal_clicked().connect(sigc::mem_fun(*this, &EditorPanel::sendToExternalPressed));
+            applyCSS(extEditorBtn);
+            filmstripActionBar->pack_start(*extEditorBtn, Gtk::PACK_SHRINK);
+        }
     }
     toolBarPanel->set_center_widget(*filmstripActionBar);
 
@@ -1029,17 +1136,19 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     MyScrolledToolbar *stb1 = Gtk::manage(new MyScrolledToolbar());
     stb1->set_name("EditorToolbarTop");
     stb1->add(*toolBarPanel);
-    editbox->pack_start (*stb1, Gtk::PACK_SHRINK, 2);
+    editbox->pack_start (*stb1, Gtk::PACK_SHRINK, 0);
+    editorToolbarTop_ = stb1;
 
     // Build filter bar (shown/hidden via revealer)
     if (tbFilterBar) {
-        Gtk::Box* filterBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+        Gtk::Box* filterBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 1));
         filterBar->set_name("EditorFilterBar");
+        filterBar->set_halign(Gtk::ALIGN_CENTER);
 
         auto filterCss = Gtk::CssProvider::create();
         filterCss->load_from_data(
             "#EditorFilterBar { padding: 2px 6px; }"
-            "#EditorFilterBar button { min-height: 0; min-width: 0; padding: 1px 2px; margin: 0; }"
+            "#EditorFilterBar button { min-height: 0; min-width: 0; padding: 1px 1px; margin: 0; }"
             "#EditorFilterBar button image { margin: 0; padding: 0; }"
             "#EditorFilterBar label { margin: 0 2px; }"
             "#EditorFilterBar entry { min-height: 0; padding: 1px 4px; }"
@@ -1053,11 +1162,19 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
             tb->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::filterBarChanged));
         };
 
-        // Rating group
-        Gtk::Label* ratingLabel = Gtk::manage(new Gtk::Label(M("EDITOR_FILTER_RATING")));
-        applyFilterCss(ratingLabel);
-        filterBar->pack_start(*ratingLabel, Gtk::PACK_SHRINK);
+        // Clear all button (before ratings)
+        fbClearAll = Gtk::manage(new Gtk::Button());
+        fbClearAll->set_image(*Gtk::manage(new RTImage("filter-clear", Gtk::ICON_SIZE_MENU)));
+        fbClearAll->set_relief(Gtk::RELIEF_NONE);
+        fbClearAll->set_tooltip_markup(M("EDITOR_FILTER_CLEAR_TOOLTIP"));
+        applyFilterCss(fbClearAll);
+        fbClearAll->signal_clicked().connect(sigc::mem_fun(*this, &EditorPanel::filterBarClearAll));
+        filterBar->pack_start(*fbClearAll, Gtk::PACK_SHRINK);
 
+        auto* fsep0 = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
+        filterBar->pack_start(*fsep0, Gtk::PACK_SHRINK);
+
+        // Rating group
         fbUnRanked = Gtk::manage(new Gtk::ToggleButton());
         fbUnRanked->set_image(*Gtk::manage(new RTImage("star-hollow-small", Gtk::ICON_SIZE_MENU)));
         fbUnRanked->set_relief(Gtk::RELIEF_NONE);
@@ -1081,10 +1198,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         filterBar->pack_start(*fsep1, Gtk::PACK_SHRINK);
 
         // Color label group
-        Gtk::Label* colorLabel = Gtk::manage(new Gtk::Label(M("EDITOR_FILTER_COLOR")));
-        applyFilterCss(colorLabel);
-        filterBar->pack_start(*colorLabel, Gtk::PACK_SHRINK);
-
         std::array<std::string, 6> clabelIcons = {"circle-empty-gray-small", "circle-red-small", "circle-yellow-small", "circle-green-small", "circle-blue-small", "circle-purple-small"};
         std::array<Glib::ustring, 6> clabelHints = {
             "FILEBROWSER_SHOWUNCOLORHINT",
@@ -1160,15 +1273,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         fbSearchEntry->signal_changed().connect(sigc::mem_fun(*this, &EditorPanel::filterBarChanged));
         filterBar->pack_start(*fbSearchEntry, Gtk::PACK_SHRINK);
 
-        // Clear all button
-        fbClearAll = Gtk::manage(new Gtk::Button());
-        fbClearAll->set_image(*Gtk::manage(new RTImage("filter-clear", Gtk::ICON_SIZE_MENU)));
-        fbClearAll->set_relief(Gtk::RELIEF_NONE);
-        fbClearAll->set_tooltip_markup(M("EDITOR_FILTER_CLEAR_TOOLTIP"));
-        applyFilterCss(fbClearAll);
-        fbClearAll->signal_clicked().connect(sigc::mem_fun(*this, &EditorPanel::filterBarClearAll));
-        filterBar->pack_end(*fbClearAll, Gtk::PACK_SHRINK);
-
         filterBarRevealer = Gtk::manage(new Gtk::Revealer());
         filterBarRevealer->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
         filterBarRevealer->set_transition_duration(200);
@@ -1178,17 +1282,13 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         editbox->pack_start(*filterBarRevealer, Gtk::PACK_SHRINK, 0);
     }
 
-    // Wrap the image area in an overlay so the left sidebar floats over it
-    // (below the filmstrip toolbar, above the bottom bar)
-    editOverlay_ = Gtk::manage(new Gtk::Overlay());
-    editOverlay_->add(*beforeAfterBox);
-    setExpandAlignProperties(leftbox, false, false, Gtk::ALIGN_START, Gtk::ALIGN_START);
+    // Image area goes directly in editbox; sidebars will overlay at hpanedr level
+    editbox->pack_start(*beforeAfterBox);
+    setExpandAlignProperties(leftbox, false, true, Gtk::ALIGN_START, Gtk::ALIGN_FILL);
     leftbox->set_size_request(options.dirBrowserWidth, -1);
-    editOverlay_->add_overlay(*leftbox);
-    editbox->pack_start(*editOverlay_);
 
     // build right side panel
-    vboxright = new Gtk::Box (Gtk::ORIENTATION_VERTICAL);
+    vboxright = new FixedWidthBox(options.toolPanelWidth);
 
     vsubboxright = new Gtk::Box (Gtk::ORIENTATION_VERTICAL, 0);
 //    int rightsize = options.fontSize * 44;
@@ -1313,12 +1413,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         navNext->set_tooltip_markup (M ("MAIN_BUTTON_NAVNEXT_TOOLTIP"));
         setExpandAlignProperties (navNext, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_CENTER);
 
-        Gtk::Image *navSyncImage = Gtk::manage (new RTImage ("nav-sync", Gtk::ICON_SIZE_SMALL_TOOLBAR));
-        navSync = Gtk::manage (new Gtk::Button ());
-        navSync->add (*navSyncImage);
-        navSync->set_relief (Gtk::RELIEF_NONE);
-        navSync->set_tooltip_markup (M ("MAIN_BUTTON_NAVSYNC_TOOLTIP"));
-        setExpandAlignProperties (navSync, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_CENTER);
     }
 
     // ==================  PACKING THE BOTTOM WIDGETS =================
@@ -1331,9 +1425,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 
     // --- Left section ---
     iops->attach(*hidehp, col++, 0, 1, 1);
-    if (!App::get().isGimpPlugin()) {
-        iops->attach(*send_to_external->buttonGroup, col++, 0, 1, 1);
-    }
+    // send_to_external moved to filmstrip action bar
     iops->attach(*progressLabel, col++, 0, 1, 1);
 
     // --- Left spacer (expands to push nav buttons to center) ---
@@ -1341,10 +1433,12 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     setExpandAlignProperties(spacerLeft, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_FILL);
     iops->attach(*spacerLeft, col++, 0, 1, 1);
 
-    // --- Centered navigation buttons ---
+    // --- Centered navigation buttons with zoom panel in center ---
     if (!App::get().isSimpleEditor() && !options.tabbedUI) {
         iops->attach(*navPrev, col++, 0, 1, 1);
-        iops->attach(*navSync, col++, 0, 1, 1);
+    }
+    iops->attach(*iareapanel->imageArea->zoomPanel, col++, 0, 1, 1);
+    if (!App::get().isSimpleEditor() && !options.tabbedUI) {
         iops->attach(*navNext, col++, 0, 1, 1);
     }
 
@@ -1354,7 +1448,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     iops->attach(*spacerRight, col++, 0, 1, 1);
 
     // --- Right section ---
-    iops->attach(*iareapanel->imageArea->zoomPanel, col++, 0, 1, 1);
     iops->attach(*tbRightPanel_1, col++, 0, 1, 1);
 
     MyScrolledToolbar *stb2 = Gtk::manage(new MyScrolledToolbar());
@@ -1362,6 +1455,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     stb2->add(*iops);
 
     editbox->pack_start (*stb2, Gtk::PACK_SHRINK, 0);
+    editorToolbarBottom_ = stb2;
     editbox->show_all ();
 
     // build screen
@@ -1372,14 +1466,32 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     vboxright->set_name ("EditorModules");
 
     Gtk::Paned *viewpaned = Gtk::manage (new Gtk::Paned (Gtk::ORIENTATION_VERTICAL));
+    viewpaned->set_name("EditorViewPaned");
+    // Hide the paned separator between filmstrip and editor via screen-level CSS
+    {
+        static auto sepCss = Gtk::CssProvider::create();
+        sepCss->load_from_data(
+            "paned#EditorViewPaned > separator {"
+            "  min-height: 0; min-width: 0; margin: 0; padding: 0;"
+            "  border: none; background: none; background-color: transparent;"
+            "  background-image: none; box-shadow: none; opacity: 0;"
+            "}"
+        );
+        Gtk::StyleContext::add_provider_for_screen(
+            Gdk::Screen::get_default(), sepCss,
+            GTK_STYLE_PROVIDER_PRIORITY_USER + 200);
+    }
     fPanel = filePanel;
 
     if (filePanel) {
         catalogPane = new Gtk::Paned();
         // Size to fit one row of filmstrip thumbnails without vertical scrollbar.
         // thumbSizeTab is the thumbnail height; add padding for borders + hscrollbar.
-        int filmstripHeight = std::min(options.thumbSizeTab, 120) + 28;
+        int filmstripHeight = std::min(options.thumbSizeTab, 115) + 8;
         catalogPane->set_size_request(-1, filmstripHeight);
+        // Inset filmstrip so sidebars don't overlap its content
+        catalogPane->set_margin_start(options.showHistory ? options.dirBrowserWidth : 0);
+        catalogPane->set_margin_end(std::min(options.toolPanelWidth, 400));
         viewpaned->pack1 (*catalogPane, false, true);
     }
 
@@ -1454,9 +1566,37 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         leftbox->set_no_show_all(true);
     }
 
-    // Right sidebar floats at top-right of image area (below filmstrip toolbar)
-    setExpandAlignProperties(vboxright, false, false, Gtk::ALIGN_END, Gtk::ALIGN_START);
-    editOverlay_->add_overlay(*vboxright);
+    // Sidebars float at full height over the entire editor (filmstrip + image)
+    hpanedr->add_overlay(*leftbox);
+    hpanedr->add_overlay(*vboxright);
+
+    // Force overlay children to span the full height of the overlay
+    hpanedr->signal_get_child_position().connect(
+        [this](Gtk::Widget* child, Gdk::Rectangle& alloc) -> bool {
+            int overlayW = hpanedr->get_allocated_width();
+            int overlayH = hpanedr->get_allocated_height();
+            int minW = 0, natW = 0;
+            child->get_preferred_width(minW, natW);
+
+            // Offset sidebars from bottom toolbar so toggle buttons stay accessible
+            int botOff = editorToolbarBottom_ ? editorToolbarBottom_->get_allocated_height() : 0;
+            int sideH = std::max(1, overlayH - botOff);
+
+            if (child == leftbox) {
+                alloc.set_x(0);
+                alloc.set_y(0);
+                alloc.set_width(natW);
+                alloc.set_height(sideH);
+                return true;
+            } else if (child == vboxright) {
+                alloc.set_x(overlayW - natW);
+                alloc.set_y(0);
+                alloc.set_width(natW);
+                alloc.set_height(sideH);
+                return true;
+            }
+            return false;
+        }, false);
 
     pack_start (*hpanedr);
 
@@ -1482,6 +1622,11 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     iareapanel->imageArea->setCropGUIListener (tpc->getCropGUIListener());
     iareapanel->imageArea->setPointerMotionListener (navigator);
     iareapanel->imageArea->setImageAreaToolListener (tpc);
+    tpc->setLevelingGridCallback([this](bool show) {
+        if (iareapanel && iareapanel->imageArea && iareapanel->imageArea->mainCropWindow) {
+            iareapanel->imageArea->mainCropWindow->setShowLevelingGrid(show);
+        }
+    });
 
     // Wire editor's folder browser to FilePanel's FileCatalog
     if (filePanel && filePanel->fileCatalog) {
@@ -1538,9 +1683,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         navNext->signal_pressed().connect ( sigc::mem_fun (*this, &EditorPanel::openNextEditorImage) );
     }
 
-    if (navSync) {
-        navSync->signal_pressed().connect ( sigc::mem_fun (*this, &EditorPanel::syncFileBrowser) );
-    }
+    // navSync removed — replaced by zoom panel in center position
 
     ShowHideSidePanelsconn = tbShowHideSidePanels->signal_toggled().connect ( sigc::mem_fun (*this, &EditorPanel::toggleSidePanels), true);
 
@@ -1934,6 +2077,12 @@ void EditorPanel::showAlbumView (const Glib::ustring& albumName, const std::vect
     }
 
     albumViewGrid_->show_all();
+
+    // Add left/right margins to account for sidebar overlays
+    const auto& opts = App::get().options();
+    albumViewBox_->set_margin_start(hidehp && hidehp->get_active() ? opts.dirBrowserWidth : 0);
+    albumViewBox_->set_margin_end(tbRightPanel_1 && tbRightPanel_1->get_active() ? std::min(opts.toolPanelWidth, 400) : 0);
+
     albumViewStack_->set_visible_child("album");
     albumViewBuilt_ = true;
 
@@ -2034,6 +2183,14 @@ void EditorPanel::hideAlbumView ()
     }
 }
 
+void EditorPanel::closeAlbumView ()
+{
+    hideAlbumView();
+    if (albumBrowser_) {
+        albumBrowser_->deselectAlbum();
+    }
+}
+
 void EditorPanel::toggleAlbumView ()
 {
     if (!tbAlbumView_ || !albumViewStack_) return;
@@ -2101,6 +2258,11 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
     ipc->setPreviewScale (10);  // Important
 
     tpc->initImage (ipc, tmb->getType() == FT_Raw);
+
+    // Notify MCP server about the active editor panel
+    if (parent && parent->getMcpServer()) {
+        parent->getMcpServer()->setEditorPanel(this);
+    }
 
     ipc->setHistogramListener (this);
     iareapanel->imageArea->indClippedPanel->silentlyDisableSharpMask();
@@ -2231,6 +2393,14 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
 
 void EditorPanel::close ()
 {
+    // Clear MCP server reference before closing
+    if (parent && parent->getMcpServer()) {
+        auto* mcpSrv = parent->getMcpServer();
+        if (mcpSrv->getEditorPanel() == this) {
+            mcpSrv->setEditorPanel(nullptr);
+        }
+    }
+
     // Cancel any pending async placeholder to prevent stale callbacks
     if (placeholderCancel_) {
         placeholderCancel_->store(true);
@@ -2621,6 +2791,14 @@ void EditorPanel::hideHistoryActivated ()
         hidehp->set_image (*iHistoryShow);
     }
 
+    // Update filmstrip margins so sidebars don't overlap content
+    if (catalogPane) {
+        catalogPane->set_margin_start(hidehp->get_active() ? options.dirBrowserWidth : 0);
+    }
+    if (albumViewBox_) {
+        albumViewBox_->set_margin_start(hidehp->get_active() ? options.dirBrowserWidth : 0);
+    }
+
     tbShowHideSidePanels_managestate();
 }
 
@@ -2647,6 +2825,15 @@ void EditorPanel::tbRightPanel_1_toggled ()
             tbRightPanel_1->set_image (*iRightPanel_1_Show);
         }
 
+        // Update filmstrip margins so sidebars don't overlap content
+        const auto& opts = App::get().options();
+        if (catalogPane) {
+            catalogPane->set_margin_end(tbRightPanel_1->get_active() ? std::min(opts.toolPanelWidth, 400) : 0);
+        }
+        if (albumViewBox_) {
+            albumViewBox_->set_margin_end(tbRightPanel_1->get_active() ? std::min(opts.toolPanelWidth, 400) : 0);
+        }
+
         tbShowHideSidePanels_managestate();
     }
 }
@@ -2662,6 +2849,18 @@ void EditorPanel::tbTopPanel_1_visible (bool visible)
     } else {
         tbTopPanel_1->hide();
     }
+}
+
+void EditorPanel::getQueueOverlayInsets (int& left, int& top, int& right) const
+{
+    // Left sidebar inset
+    left = (leftbox && leftbox->get_visible()) ? leftbox->get_allocated_width () : 0;
+
+    // Right sidebar inset
+    right = (vboxright && vboxright->get_visible()) ? vboxright->get_allocated_width () : 0;
+
+    // Top filmstrip inset
+    top = (catalogPane && catalogPane->get_visible()) ? catalogPane->get_allocated_height () : 0;
 }
 
 void EditorPanel::tbTopPanel_1_toggled ()

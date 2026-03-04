@@ -29,129 +29,12 @@ using namespace procparams;
 
 const Glib::ustring Locallab::TOOL_NAME = "locallab";
 
-/* ==== LocallabToolList ==== */
-LocallabToolList::LocallabToolList():
-    // Tool list GUI elements
-    list(Gtk::manage(new MyComboBox())),
-    listTreeModel(Gtk::ListStore::create(toolRow)),
-
-    // Tool list listener
-    listListener(nullptr)
-{
-    set_orientation(Gtk::ORIENTATION_VERTICAL);
-    list->set_model(listTreeModel);
-    list->pack_start(toolRow.name);
-    listConn = list->signal_changed().connect(sigc::mem_fun(*this, &LocallabToolList::toolRowSelected));
-    list->set_tooltip_text(M("TP_LOCALLAB_LIST_TOOLTIP"));
-    // Append title row to list
-    // Important: Title row shall always be the first one
-    const auto titleRow = *(listTreeModel->append());
-    titleRow[toolRow.id] = 0;
-    titleRow[toolRow.name] = M("TP_LOCALLAB_LIST_NAME");
-    listConn.block(true);
-    list->set_active(titleRow);
-    listConn.block(false);
-
-    // Add ComboBox to LocallabToolList widget
-    add(*list);
-}
-
-void LocallabToolList::addToolRow(const Glib::ustring &toolname, const int id)
-{
-    // Disable event management
-    listConn.block(true);
-
-    // Add tool name according to id
-    Gtk::TreeIter insertAfter;
-
-    for (auto &r : listTreeModel->children()) {
-        if (r[toolRow.id] < id) {
-            insertAfter = *r; // Tool name shall be added at least after this row
-        } else {
-            break; // Tool name shall be added before this row
-        }
-    }
-
-    // Note: There is always at list one row (i.e. title one)
-
-    const auto newRow = *(listTreeModel->insert_after(insertAfter));
-    newRow[toolRow.id] = id;
-    newRow[toolRow.name] = toolname;
-
-    // Select title row (i.e. always first row)
-    list->set_active(0);
-
-    // Enable event management
-    listConn.block(false);
-}
-
-void LocallabToolList::removeToolRow(const Glib::ustring &toolname)
-{
-    // Disable event management
-    listConn.block(true);
-
-    // Remove tool name row
-    for (auto &r : listTreeModel->children()) {
-        if (r[toolRow.name] == toolname) {
-            listTreeModel->erase(*r);
-            break;
-        }
-    }
-
-    // Select title row (i.e. always first row)
-    list->set_active(0);
-
-    // Enable event management
-    listConn.block(false);
-}
-
-void LocallabToolList::removeAllTool()
-{
-    // Disable event management
-    listConn.block(true);
-
-    // Remove all tools
-    listTreeModel->clear();
-
-    // Add title row again
-    const auto titleRow = *(listTreeModel->append());
-    titleRow[toolRow.id] = 0;
-    titleRow[toolRow.name] = M("TP_LOCALLAB_LIST_NAME");
-
-    // Select title row (i.e. always first row)
-    list->set_active(0);
-
-    // Enable event management
-    listConn.block(false);
-}
-
-void LocallabToolList::toolRowSelected()
-{
-    // Get selected tool name
-    const auto selRow = *(list->get_active());
-    const Glib::ustring toolname = selRow[toolRow.name];
-
-    // Remove selected tool name for ComboBox
-    removeToolRow(toolname);
-
-    // Warm tool list listener
-    if (listListener) {
-        listListener->locallabToolToAdd(toolname);
-    }
-}
-
 /* ==== Locallab ==== */
 Locallab::Locallab():
     FoldableToolPanel(this, TOOL_NAME, M("TP_LOCALLAB_LABEL"), false, true),
 
     // Spot control panel widget
-    expsettings(Gtk::manage(new ControlSpotPanel())),
-
-    // Tool list widget
-    toollist(Gtk::manage(new LocallabToolList()))
-
-    // Other widgets
-    //resetshowButton(Gtk::manage(new Gtk::Button(M("TP_LOCALLAB_RESETSHOW"))))
+    expsettings(Gtk::manage(new ControlSpotPanel()))
 {
     set_orientation(Gtk::ORIENTATION_VERTICAL);
     
@@ -163,23 +46,6 @@ Locallab::Locallab():
     expsettings->setControlPanelListener(this);
     expsettings->setLevel(2);
     panel->pack_start(*expsettings->getExpander(), false, false);
-
-    // Add separator
-    Gtk::Separator* const separator = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
-    panel->pack_start(*separator, false, false);
-
-    // Add "Show Mask" toggle button
-    showMaskOverlay_ = Gtk::manage(new Gtk::ToggleButton(M("TP_LOCALLAB_SHOW_MASK_OVERLAY")));
-    showMaskOverlay_->set_name("ShowMaskButton");
-    showMaskOverlay_->get_style_context()->add_class("toggle");
-    showMaskOverlayConn_ = showMaskOverlay_->signal_toggled().connect(
-        sigc::mem_fun(*this, &Locallab::showMaskOverlayChanged));
-    showMaskOverlay_->set_active(true);
-    panel->pack_start(*showMaskOverlay_, false, false);
-
-    // Add tool list widget
-    toollist->setLocallabToolListListener(this);
-    panel->pack_start(*toollist, false, false);
 
     // Add all the tools' preview delta E buttons to one group.
     for (auto button : {
@@ -205,30 +71,41 @@ Locallab::Locallab():
             delta_e_preview_button_group.register_button(*button);
         }
     }
-    // Also register the Show Mask button for mutual exclusion
-    delta_e_preview_button_group.register_button(*showMaskOverlay_);
+    // Locallab tools organized into ToolGroups (per-mask editing tools)
+    llLightGroup_ = Gtk::manage(new ToolGroup(M("TOOLGROUP_LIGHT")));
+    llColorGroup_ = Gtk::manage(new ToolGroup(M("TOOLGROUP_COLOR")));
+    llDetailGroup_ = Gtk::manage(new ToolGroup(M("TOOLGROUP_DETAIL")));
+    llAdvancedGroup_ = Gtk::manage(new ToolGroup(M("TOOLGROUP_ADVANCED")));
 
-    // Add Locallab tools to panel widget
-    ToolVBox* const toolpanel = Gtk::manage(new ToolVBox());
-    toolpanel->set_name("LocallabToolPanel");
-    addTool(toolpanel, &expcolor);
-    addTool(toolpanel, &expshadhigh);
-    addTool(toolpanel, &expvibrance);
-    addTool(toolpanel, &explog);
-    addTool(toolpanel, &expcie);
-    addTool(toolpanel, &expexpose);
-    addTool(toolpanel, &expmask);
+    // Exposure & Tone
+    addTool(llLightGroup_->getContentBox(), &expexpose);
+    addTool(llLightGroup_->getContentBox(), &expshadhigh);
+    addTool(llLightGroup_->getContentBox(), &exptonemap);
+
+    // Color
+    addTool(llColorGroup_->getContentBox(), &expcolor);
+    addTool(llColorGroup_->getContentBox(), &expvibrance);
+
+    // Detail
+    addTool(llDetailGroup_->getContentBox(), &expsharp);
+    addTool(llDetailGroup_->getContentBox(), &expcontrast);
+    addTool(llDetailGroup_->getContentBox(), &expcbdl);
+    addTool(llDetailGroup_->getContentBox(), &expblur);
+
+    // Advanced
+    addTool(llAdvancedGroup_->getContentBox(), &expsoft);
+    addTool(llAdvancedGroup_->getContentBox(), &explog);
+    addTool(llAdvancedGroup_->getContentBox(), &expreti);
+    addTool(llAdvancedGroup_->getContentBox(), &expcie);
+    addTool(llAdvancedGroup_->getContentBox(), &expmask);
 #ifdef RT_AI_MASKING
-    addTool(toolpanel, &expaimask);
+    addTool(llAdvancedGroup_->getContentBox(), &expaimask);
 #endif
-    addTool(toolpanel, &expsoft);
-    addTool(toolpanel, &expblur);
-    addTool(toolpanel, &exptonemap);
-    addTool(toolpanel, &expreti);
-    addTool(toolpanel, &expsharp);
-    addTool(toolpanel, &expcontrast);
-    addTool(toolpanel, &expcbdl);
-    panel->pack_start(*toolpanel, false, false);
+
+    panel->pack_start(*llLightGroup_, Gtk::PACK_SHRINK);
+    panel->pack_start(*llColorGroup_, Gtk::PACK_SHRINK);
+    panel->pack_start(*llDetailGroup_, Gtk::PACK_SHRINK);
+    panel->pack_start(*llAdvancedGroup_, Gtk::PACK_SHRINK);
 
     // Add separator
  //   Gtk::Separator* const separator2 = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
@@ -252,6 +129,23 @@ Locallab::Locallab():
     // By default, if no photo is loaded, all Locallab tools are removed and it's not possible to add them
     // (to be necessary called after "show_all" function)
     setParamEditable(false);
+}
+
+void Locallab::hideSettingsHeader()
+{
+    expsettings->setFlatMode(true);
+}
+
+void Locallab::hideToolGroups()
+{
+    llLightGroup_->set_no_show_all(true);
+    llLightGroup_->hide();
+    llColorGroup_->set_no_show_all(true);
+    llColorGroup_->hide();
+    llDetailGroup_->set_no_show_all(true);
+    llDetailGroup_->hide();
+    llAdvancedGroup_->set_no_show_all(true);
+    llAdvancedGroup_->hide();
 }
 
 void Locallab::read(const rtengine::procparams::ProcParams* pp, const ParamsEdited* pedited)
@@ -396,6 +290,9 @@ void Locallab::read(const rtengine::procparams::ProcParams* pp, const ParamsEdit
             r.wavMethod = 5;
         }
 
+        r.maskType = pp->locallab.spots.at(i).useAIMask ? 1 : 0;
+        r.aiMaskClass = pp->locallab.spots.at(i).aiMaskClass;
+
         expsettings->addControlSpot(r);
     }
 
@@ -408,18 +305,6 @@ void Locallab::read(const rtengine::procparams::ProcParams* pp, const ParamsEdit
     // Update each Locallab tools GUI
     for (auto tool : locallabTools) {
         tool->read(pp, pedited);
-    }
-
-    // Update tool list widget
-    int toolNb = 0;
-    toollist->removeAllTool(); // Reset Locallab list firstly
-
-    for (auto tool : locallabTools) {
-        toolNb++;
-
-        if (!tool->isLocallabToolAdded()) {
-            toollist->addToolRow(tool->getToolName(), toolNb);
-        }
     }
 
     // Specific case: if there is no spot, GUI isn't anymore editable (i.e. Locallab tool cannot be managed)
@@ -454,14 +339,12 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
     int prX, prY; // Coord of preview area center
     EditDataProvider* const provider = expsettings->getEditProvider();
 
-    int toolNb;
-
     switch (spotPanelEvent) {
         case (ControlSpotPanel::SpotCreation): { // Spot creation event
             // Spot creation (default initialization)
             newSpot = new LocallabParams::LocallabSpot();
             ControlSpotPanel::SpotRow r;
-            r.name = newSpot->name = M("TP_LOCALLAB_SPOTNAME");
+            r.name = newSpot->name = Glib::ustring("Mask ") + std::to_string(pp->locallab.spots.size() + 1);
             r.isvisible = newSpot->isvisible;
 
             if (newSpot->shape == "ELI") {
@@ -595,6 +478,9 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                 r.wavMethod = 5;
             }
 
+            r.maskType = 0; // Normal mask
+            r.aiMaskClass = 0;
+
             expsettings->addControlSpot(r);
 
             // ProcParams update
@@ -615,18 +501,6 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
 
             enableListener();
 
-            // Update tool list widget
-            toolNb = 0;
-            toollist->removeAllTool(); // Reset Locallab list firstly
-
-            for (auto tool : locallabTools) {
-                toolNb++;
-
-                if (!tool->isLocallabToolAdded()) {
-                    toollist->addToolRow(tool->getToolName(), toolNb);
-                }
-            }
-
             if (pp->locallab.spots.size() == 1) {
                 setParamEditable(true);
             }
@@ -636,6 +510,179 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
 
             // Note: No need to manage pedited as batch mode is deactivated for Locallab
 
+            break;
+        }
+
+        case (ControlSpotPanel::SpotCreationAI): { // AI Mask spot creation
+            newSpot = new LocallabParams::LocallabSpot();
+            const int aiClass = expsettings->getPendingAIClass();
+
+            // Name after the AI class
+            const char* aiClassNames[] = {
+                "Background", "Person", "Sky", "Vegetation",
+                "Building", "Vehicle", "Animal", "Foreground"
+            };
+            newSpot->name = Glib::ustring(aiClassNames[aiClass]) + " Mask";
+
+            // Full-image coverage with rectangle shape
+            newSpot->spotMethod = "full";
+            newSpot->shape = "RECT";
+
+            // Enable AI mask with selected class
+            newSpot->useAIMask = true;
+            newSpot->visiaimask = true;
+            newSpot->expaimask = true;
+            newSpot->aiMaskClass = aiClass;
+            newSpot->aiMaskThreshold = 0.3;
+            newSpot->aiMaskFeather = 100.0;
+            newSpot->aiMaskOpacity = 1.0;
+
+            // Build SpotRow
+            ControlSpotPanel::SpotRow r;
+            r.name = newSpot->name;
+            r.isvisible = newSpot->isvisible;
+
+            if (newSpot->shape == "ELI") {
+                r.shape = 0;
+            } else if (newSpot->shape == "RECT") {
+                r.shape = 1;
+            } else if (newSpot->shape == "GRAD") {
+                r.shape = 2;
+            }
+
+            if (newSpot->prevMethod == "hide") {
+                r.prevMethod = 0;
+            } else {
+                r.prevMethod = 1;
+            }
+
+            r.spotMethod = 2; // "full"
+            r.sensiexclu = newSpot->sensiexclu;
+            r.structexclu = newSpot->structexclu;
+
+            if (newSpot->shapeMethod == "IND") {
+                r.shapeMethod = 0;
+            } else if (newSpot->shapeMethod == "SYM") {
+                r.shapeMethod = 1;
+            } else if (newSpot->shapeMethod == "INDSL") {
+                r.shapeMethod = 2;
+            } else {
+                r.shapeMethod = 3;
+            }
+
+            if (newSpot->avoidgamutMethod == "NONE") {
+                r.avoidgamutMethod = 0;
+            } else if (newSpot->avoidgamutMethod == "LAB") {
+                r.avoidgamutMethod = 1;
+            } else if (newSpot->avoidgamutMethod == "XYZ") {
+                r.avoidgamutMethod = 2;
+            } else if (newSpot->avoidgamutMethod == "XYZREL") {
+                r.avoidgamutMethod = 3;
+            } else if (newSpot->avoidgamutMethod == "MUNS") {
+                r.avoidgamutMethod = 4;
+            }
+
+            // Full-image coverage: center at origin, max extents
+            if (provider && !batchMode) {
+                provider->getImageSize(imW, imH);
+                if (imW && imH) {
+                    newSpot->centerX = 0;
+                    newSpot->centerY = 0;
+                    newSpot->loc = {1000, 1000, 1000, 1000};
+                }
+            }
+
+            r.locX = newSpot->loc.at(0);
+            r.locXL = newSpot->loc.at(1);
+            r.locY = newSpot->loc.at(2);
+            r.locYT = newSpot->loc.at(3);
+            r.centerX = newSpot->centerX;
+            r.centerY = newSpot->centerY;
+            r.circrad = newSpot->circrad;
+
+            if (newSpot->qualityMethod == "enh") {
+                r.qualityMethod = 0;
+            } else {
+                r.qualityMethod = 1;
+            }
+
+            r.transit = newSpot->transit;
+            r.transitweak = newSpot->transitweak;
+            r.transitgrad = newSpot->transitgrad;
+            r.gradangle = newSpot->gradangle;
+            r.feather = newSpot->feather;
+            r.struc = newSpot->struc;
+            r.thresh = newSpot->thresh;
+            r.iter = newSpot->iter;
+            r.balan = newSpot->balan;
+            r.balanh = newSpot->balanh;
+            r.colorde = newSpot->colorde;
+            r.colorscope = newSpot->colorscope;
+            r.avoidrad = newSpot->avoidrad;
+            r.hishow = newSpot->hishow;
+            r.activ = newSpot->activ;
+            r.avoidneg = newSpot->avoidneg;
+            r.blwh = newSpot->blwh;
+            r.recurs = newSpot->recurs;
+            r.laplac = newSpot->laplac;
+            r.deltae = newSpot->deltae;
+            r.scopemask = newSpot->scopemask;
+            r.denoichmask = newSpot->denoichmask;
+            r.shortc = newSpot->shortc;
+            r.lumask = newSpot->lumask;
+
+            if (newSpot->complexMethod == "sim") {
+                r.complexMethod = 0;
+            } else if (newSpot->complexMethod == "mod") {
+                r.complexMethod = 1;
+            } else if (newSpot->complexMethod == "all") {
+                r.complexMethod = 2;
+            }
+
+            if (newSpot->wavMethod == "D2") {
+                r.wavMethod = 0;
+            } else if (newSpot->wavMethod == "D4") {
+                r.wavMethod = 1;
+            } else if (newSpot->wavMethod == "D6") {
+                r.wavMethod = 2;
+            } else if (newSpot->wavMethod == "D10") {
+                r.wavMethod = 3;
+            } else if (newSpot->wavMethod == "D14") {
+                r.wavMethod = 4;
+            } else if (newSpot->wavMethod == "D20") {
+                r.wavMethod = 5;
+            }
+
+            r.maskType = 1; // AI Mask
+            r.aiMaskClass = aiClass;
+
+            expsettings->addControlSpot(r);
+
+            // ProcParams update
+            pp->locallab.spots.push_back(*newSpot);
+            pp->locallab.selspot = pp->locallab.spots.size() - 1;
+
+            // Select new spot
+            expsettings->setSelectedSpot(pp->locallab.selspot);
+
+            // Update Locallab tools GUI
+            disableListener();
+
+            spotName = pp->locallab.spots.at(pp->locallab.selspot).name;
+
+            for (auto tool : locallabTools) {
+                tool->read(pp, pedited);
+            }
+
+            enableListener();
+
+            if (pp->locallab.spots.size() == 1) {
+                setParamEditable(true);
+            }
+
+            setDefaults(pp, pedited);
+
+            delete newSpot;
             break;
         }
 
@@ -676,18 +723,6 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
 
                     enableListener();
 
-                    // Update tool list widget
-                    toolNb = 0;
-                    toollist->removeAllTool(); // Reset Locallab list firstly
-
-                    for (auto tool : locallabTools) {
-                        toolNb++;
-
-                        if (!tool->isLocallabToolAdded()) {
-                            toollist->addToolRow(tool->getToolName(), toolNb);
-                        }
-                    }
-
                     if (pp->locallab.spots.size() == 0) {
                         setParamEditable(false);
                     }
@@ -719,18 +754,6 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
             }
 
             enableListener();
-
-            // Update tool list widget
-            toolNb = 0;
-            toollist->removeAllTool(); // Reset Locallab list firstly
-
-            for (auto tool : locallabTools) {
-                toolNb++;
-
-                if (!tool->isLocallabToolAdded()) {
-                    toollist->addToolRow(tool->getToolName(), toolNb);
-                }
-            }
 /*
             // Update locallab tools mask background
             if (pp->locallab.selspot < (int)maskBackRef.size()) {
@@ -939,6 +962,9 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                 r.wavMethod = 5;
             }
 
+            r.maskType = newSpot->useAIMask ? 1 : 0;
+            r.aiMaskClass = newSpot->aiMaskClass;
+
             expsettings->addControlSpot(r);
 
             // ProcParams update
@@ -959,18 +985,6 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
             }
 
             enableListener();
-
-            // Update tool list widget
-            toolNb = 0;
-            toollist->removeAllTool(); // Reset Locallab list firstly
-
-            for (auto tool : locallabTools) {
-                toolNb++;
-
-                if (!tool->isLocallabToolAdded()) {
-                    toollist->addToolRow(tool->getToolName(), toolNb);
-                }
-            }
 
             // Update default values according to selected spot
             setDefaults(pp, pedited);
@@ -1114,10 +1128,29 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                     } else if (r->wavMethod == 5) {
                         pp->locallab.spots.at(pp->locallab.selspot).wavMethod = "D20";
                     }
+
                 }
 
                 for (auto tool : locallabTools) {
                     tool->write(pp, pedited);
+                }
+
+                // Mask type and AI class — written AFTER tool->write() so control
+                // panel maskType takes precedence over LocallabAIMask::write()
+                if (pp->locallab.selspot < (int)pp->locallab.spots.size()) {
+                    bool isAI = (r->maskType == 1);
+                    pp->locallab.spots.at(pp->locallab.selspot).useAIMask = isAI;
+                    pp->locallab.spots.at(pp->locallab.selspot).expaimask = isAI;
+                    pp->locallab.spots.at(pp->locallab.selspot).visiaimask = isAI;
+                    if (isAI) {
+                        pp->locallab.spots.at(pp->locallab.selspot).aiMaskClass = r->aiMaskClass;
+                        pp->locallab.spots.at(pp->locallab.selspot).spotMethod = "full";
+                    }
+                    fprintf(stderr, "DEBUG Locallab::write: spot %d maskType=%d isAI=%d useAIMask=%d aiMaskClass=%d spotMethod=%s\n",
+                            pp->locallab.selspot, r->maskType, isAI ? 1 : 0,
+                            pp->locallab.spots.at(pp->locallab.selspot).useAIMask ? 1 : 0,
+                            pp->locallab.spots.at(pp->locallab.selspot).aiMaskClass,
+                            pp->locallab.spots.at(pp->locallab.selspot).spotMethod.c_str());
                 }
 
                 // Note: No need to manage pedited as batch mode is deactivated for Locallab
@@ -1563,28 +1596,16 @@ void Locallab::refChanged(const std::vector<locallabRef> &ref, int selspot)
     }
 }
 */
-void Locallab::showMaskOverlayChanged()
-{
-    if (showMaskOverlay_->get_active()) {
-        // Deactivate per-tool mask views and deltaE previews
-        resetToolMaskView();
-        expsettings->resetDeltaEPreview();
-    }
-
-    if (listener) {
-        listener->panelChanged(EvlocallabshowmaskMethod, "");
-    }
-}
-
 void Locallab::resetMaskVisibility()
 {
+    // Reset hover mask state
+    hoverMaskOverlay_ = false;
+
+    // Reset sidebar hover/eye pin state
+    expsettings->resetHoverState();
+
     // Indicate to spot control panel that no more mask preview is active
     expsettings->setMaskPrevActive(false);
-
-    // Reset Show Mask Overlay toggle
-    showMaskOverlayConn_.block();
-    showMaskOverlay_->set_active(false);
-    showMaskOverlayConn_.unblock();
 
     // Reset deltaE preview
     expsettings->resetDeltaEPreview();
@@ -1624,8 +1645,8 @@ Locallab::llMaskVisibility Locallab::getMaskVisibility() const
     // Get deltaE preview state
     const bool prevDeltaE = expsettings->isDeltaEPrevActive();
 
-    // Get mask preview from Locallab tools
-    int colorMask, colorMaskinv, expMask, expMaskinv, shMask, shMaskinv, vibMask, softMask, blMask, tmMask, retiMask, sharMask, lcMask, cbMask, logMask, maskMask, cieMask;
+    // Get mask preview from Locallab tools (each tool sets only its own variable)
+    int colorMask = 0, colorMaskinv = 0, expMask = 0, expMaskinv = 0, shMask = 0, shMaskinv = 0, vibMask = 0, softMask = 0, blMask = 0, tmMask = 0, retiMask = 0, sharMask = 0, lcMask = 0, cbMask = 0, logMask = 0, maskMask = 0, cieMask = 0;
 
     for (auto tool : locallabTools) {
         tool->getMaskView(colorMask, colorMaskinv, expMask, expMaskinv, shMask, shMaskinv, vibMask, softMask, blMask, tmMask, retiMask, sharMask, lcMask, cbMask, logMask, maskMask, cieMask);
@@ -1638,7 +1659,7 @@ Locallab::llMaskVisibility Locallab::getMaskVisibility() const
                               (lcMask == 0) || (cbMask == 0) || (logMask == 0) || (maskMask == 0) || (cieMask == 0);
     expsettings->setMaskPrevActive(isMaskActive);
 
-    return {prevDeltaE, showMaskOverlay_->get_active(), colorMask, colorMaskinv, expMask, expMaskinv, shMask, shMaskinv, vibMask, softMask, blMask, tmMask, retiMask, sharMask, lcMask, cbMask, logMask, maskMask, cieMask};
+    return {prevDeltaE, hoverMaskOverlay_, colorMask, colorMaskinv, expMask, expMaskinv, shMask, shMaskinv, vibMask, softMask, blMask, tmMask, retiMask, sharMask, lcMask, cbMask, logMask, maskMask, cieMask};
 }
 
 //void Locallab::resetshowPressed()
@@ -1648,6 +1669,24 @@ Locallab::llMaskVisibility Locallab::getMaskVisibility() const
 //        listener->panelChanged(Evlocallabshowreset, "");
 //    }
 //}
+
+void Locallab::setHoverMaskOverlay(bool hover)
+{
+    if (hover == hoverMaskOverlay_) return;
+    hoverMaskOverlay_ = hover;
+}
+
+void Locallab::spotHovered(bool hovered, bool forceRedraw)
+{
+    if (listener) {
+        listener->hoverMaskChanged(hovered, forceRedraw);
+    }
+}
+
+bool Locallab::isPointerOverMaskList() const
+{
+    return expsettings->isPointerOverTreeview();
+}
 
 void Locallab::setEditProvider(EditDataProvider * provider)
 {
@@ -1723,6 +1762,7 @@ void Locallab::spotNameChanged(const Glib::ustring &newName)
 void Locallab::addTool(Gtk::Box* where, LocallabTool* tool)
 {
     tool->getExpander()->setLevel(3);
+    tool->getExpander()->setFlatMode(true);
     where->pack_start(*tool->getExpander(), false, false);
     locallabTools.push_back(tool);
     tool->setLocallabToolListener(this);
@@ -1732,17 +1772,8 @@ void Locallab::addTool(Gtk::Box* where, LocallabTool* tool)
 void Locallab::setParamEditable(bool cond)
 {
     // Update params editable state for controlspotpanel
-    expsettings->setParamEditable(cond); // TODO Move this code to controlspotpanel.cc when there is zero spot
+    expsettings->setParamEditable(cond);
 
-    // Enable/disable possibility to add Locallab tool
-    toollist->set_sensitive(cond);
-
-    // Remove all Locallab tool (without raising event) only if cond is false
-    if (!cond) {
-        for (auto tool : locallabTools) {
-            tool->removeLocallabTool(false);
-        }
-    }
 }
 
 void Locallab::resetToolMaskView()
@@ -1774,28 +1805,6 @@ void Locallab::resetOtherMaskView(LocallabTool* current)
 
 void Locallab::toolRemoved(LocallabTool* current)
 {
-    // Update tool list widget according to removed tool
-    int toolNb = 0;
-
-    for (auto tool : locallabTools) {
-        toolNb++;
-
-        if (tool == current) {
-            toollist->addToolRow(tool->getToolName(), toolNb);
-        }
-    }
-}
-
-void Locallab::locallabToolToAdd(const Glib::ustring &toolname)
-{
-    for (auto tool : locallabTools) {
-        if (tool->getToolName() == toolname) {
-            // Set expanders visibility default state when adding tool
-            tool->setExpanded(true);
-            tool->setDefaultExpanderVisibility();
-
-            // Add tool
-            tool->addLocallabTool(true);
-        }
-    }
+    // No-op: all tools are always visible in their ToolGroups
+    (void)current;
 }

@@ -2036,6 +2036,22 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 ipf.localContrast(nprevl, nprevl->L, params->localContrast, false, scale);
             }
 
+            if (params->texture.enabled) {
+                ipf.textureContrast(nprevl, params->texture, scale);
+            }
+
+            if (params->clarity.enabled) {
+                ipf.clarityContrast(nprevl, params->clarity, scale);
+            }
+
+            if (params->grain.enabled) {
+                ipf.grainEffect(nprevl, params->grain, fw, fh);
+            }
+
+            if (params->lensBlur.enabled) {
+                ipf.lensBlur(nprevl, params->lensBlur, scale);
+            }
+
             ipf.chromiLuminanceCurve(nullptr, pW, nprevl, nprevl, chroma_acurve, chroma_bcurve, satcurve, lhskcurve, clcurve, lumacurve, utili, autili, butili, ccutili, cclutili, clcutili, histCCurve, histLCurve);
             ipf.vibrance(nprevl, params->vibrance, params->toneCurve.hrenabled, params->icm.workingProfile);
             ipf.labColorCorrectionRegions(nprevl);
@@ -2776,6 +2792,8 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             crops[i]->update(todo);     // may call ourselves
         }
 
+    fprintf(stderr, "DEBUG IPC display: panningRelatedChange=%d M_MONITOR=%d todo=0x%x\n",
+            panningRelatedChange ? 1 : 0, (todo & M_MONITOR) ? 1 : 0, todo);
     if (panningRelatedChange || (todo & M_MONITOR)) {
         if ((todo != CROP && todo != MINUPDATE) || (todo & M_MONITOR)) {
             MyMutex::MyLock prevImgLock(previmg->getMutex());
@@ -3551,16 +3569,17 @@ bool ImProcCoordinator::exportDemosaicedTIFF(const Glib::ustring& outputPath)
     int tr = getCoarseBitMask(params->coarse);
     imgsrc->getFullSize(fW, fH, tr);
 
-    // Temporarily disable OOG clamping so highlight values > 65535
-    // survive into the TIFF for the AI denoiser's highlight scale.
-    bool savedClampOOG = params->toneCurve.clampOOG;
-    params->toneCurve.clampOOG = false;
-
     Imagefloat* im = new Imagefloat(fW, fH);
     PreviewProps pp(0, 0, fW, fH, 1);
     imgsrc->getImage(currWB, tr, im, pp, params->toneCurve, params->raw);
 
-    params->toneCurve.clampOOG = savedClampOOG;
+    // Debug: check pixel values from getImage
+    {
+        int cy = fH / 2, cx = fW / 2;
+        fprintf(stderr, "AI Denoise: exportDemosaicedTIFF getImage center[%d,%d]=(%.1f,%.1f,%.1f) size=%dx%d\n",
+                cy, cx, im->r(cy, cx), im->g(cy, cx), im->b(cy, cx), fW, fH);
+        fflush(stderr);
+    }
 
     int err = im->saveTIFF(outputPath, 32, true/*isFloat*/, true/*uncompressed*/);
     delete im;
@@ -3675,6 +3694,11 @@ void ImProcCoordinator::process()
             || sharpMaskChanged;
 
         sharpMaskChanged = false;
+
+        bool locallabChanged = (params->locallab != nextParams->locallab);
+        fprintf(stderr, "DEBUG IPC: panningRelatedChange=%d locallabChanged=%d changeSinceLast=0x%x\n",
+                panningRelatedChange ? 1 : 0, locallabChanged ? 1 : 0, changeSinceLast);
+
         *params = *nextParams;
         int change = changeSinceLast;
         changeSinceLast = 0;

@@ -224,6 +224,10 @@ void MultiLangMgr::load(const Glib::ustring &language, const std::vector<Glib::u
             std::istringstream line(entry);
 
             if(std::getline(line, key, ';') && translations.find(key) == translations.end() && std::getline(line, value)) {
+                // Strip trailing \r from CRLF line endings
+                if (!value.empty() && value.back() == '\r') {
+                    value.pop_back();
+                }
                 size_t pos = 0;
                 while((pos = value.find("\\n", pos)) != std::string::npos) {
                      value.replace(pos, 2, "\n");

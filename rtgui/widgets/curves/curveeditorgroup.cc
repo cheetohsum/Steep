@@ -181,6 +181,54 @@ void CurveEditorGroup::attachCurve (Gtk::Grid* curve)
     attach(*curve, 0, line, 1, 1);
 }
 
+void CurveEditorGroup::hideHeaderWidgets()
+{
+    if (curveGroupLabel) {
+        curveGroupLabel->set_no_show_all(true);
+        curveGroupLabel->hide();
+    }
+    if (curve_reset) {
+        curve_reset->set_no_show_all(true);
+        curve_reset->hide();
+    }
+}
+
+void CurveEditorGroup::setCompactDisplay(bool compact)
+{
+    if (diagonalSubGroup) {
+        diagonalSubGroup->setCompactDisplay(compact);
+    }
+    if (flatSubGroup) {
+        flatSubGroup->setCompactDisplay(compact);
+    }
+}
+
+void CurveEditorGroup::toggleCompactDisplay()
+{
+    if (diagonalSubGroup) {
+        diagonalSubGroup->compactDisplay_ = !diagonalSubGroup->compactDisplay_;
+        if (displayedCurve) {
+            diagonalSubGroup->switchGUI();
+        }
+    }
+    if (flatSubGroup) {
+        flatSubGroup->compactDisplay_ = !flatSubGroup->compactDisplay_;
+        if (displayedCurve) {
+            flatSubGroup->switchGUI();
+        }
+    }
+}
+
+void CurveEditorGroup::setCurveGraphSize(int size)
+{
+    if (diagonalSubGroup) {
+        diagonalSubGroup->setCurveGraphSize(size);
+    }
+    if (flatSubGroup) {
+        flatSubGroup->setCurveGraphSize(size);
+    }
+}
+
 /*
  * Create all the widgets now that the curve list is complete
  * This method should handle all curve number correctly, i.e. eventually display the curve type buttons

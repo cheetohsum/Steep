@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <!-- AI sparkle / denoise icon -->
+  <g fill="#cccccc" fill-opacity="0.9">
+    <!-- Main 4-point sparkle -->
+    <path d="M12 2 L13.5 8.5 L20 10 L13.5 11.5 L12 18 L10.5 11.5 L4 10 L10.5 8.5 Z"/>
+    <!-- Small sparkle bottom-right -->
+    <path d="M18 15 L18.8 17.2 L21 18 L18.8 18.8 L18 21 L17.2 18.8 L15 18 L17.2 17.2 Z"/>
+    <!-- Tiny sparkle top-left -->
+    <path d="M6 2 L6.5 3.5 L8 4 L6.5 4.5 L6 6 L5.5 4.5 L4 4 L5.5 3.5 Z"/>
+  </g>
+</svg>

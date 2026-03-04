@@ -18,6 +18,10 @@ protected:
     Adjuster* strength;
     Adjuster* feather;
     Adjuster* roundness;
+    Gtk::Box* detailContent_;
+    bool detailExpanded_;
+
+    void toggleDetail();
 
 public:
     static const Glib::ustring TOOL_NAME;

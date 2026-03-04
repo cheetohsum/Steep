@@ -19,6 +19,8 @@
 #include "filepanel.h"
 
 #include "albumbrowser.h"
+#include "filebrowser.h"
+#include "filecatalog.h"
 #include "batchtoolpanelcoord.h"
 #include "dirbrowser.h"
 #include "editorpanel.h"
@@ -51,19 +53,19 @@ FilePanel::FilePanel () : parent(nullptr), error(0)
     albumBrowser_ = Gtk::manage ( new AlbumBrowser () );
 
     // The whole left panel. Contains Places, Recent Folders, Folders and Albums.
-    placespaned = Gtk::manage ( new Gtk::Paned (Gtk::ORIENTATION_VERTICAL) );
+    // Use a Box (not Paned) to match the editor view layout.
+    placespaned = Gtk::manage ( new Gtk::Box (Gtk::ORIENTATION_VERTICAL) );
     placespaned->set_name ("PlacesPaned");
-    placespaned->set_size_request(250, 100);
-    placespaned->set_position (options.dirBrowserHeight);
+    placespaned->set_size_request(250, -1);
 
     Gtk::Box* obox = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     obox->get_style_context()->add_class ("plainback");
     obox->pack_start (*recentBrowser, Gtk::PACK_SHRINK, 4);
-    obox->pack_start (*dirBrowser, Gtk::PACK_SHRINK, 0);
+    obox->pack_start (*dirBrowser, Gtk::PACK_EXPAND_WIDGET, 0);
     obox->pack_start (*albumBrowser_, Gtk::PACK_SHRINK, 0);
 
-    placespaned->pack1 (*placesBrowser, false, true);
-    placespaned->pack2 (*obox, true, true);
+    placespaned->pack_start (*placesBrowser, Gtk::PACK_SHRINK);
+    placespaned->pack_start (*obox, Gtk::PACK_EXPAND_WIDGET);
 
     // Wire album selection to filter and album view
     albumBrowser_->albumSelected().connect(sigc::mem_fun(*this, &FilePanel::onAlbumSelected));
@@ -121,6 +123,14 @@ FilePanel::FilePanel () : parent(nullptr), error(0)
     fileCatalog->setExportPanel (exportPanel);
     fileCatalog->setImageAreaToolListener (tpc);
     fileCatalog->fileBrowser->setBatchPParamsChangeListener (tpc);
+
+    // Wire "Set as album cover" from file browser to album browser
+    fileCatalog->fileBrowser->setAlbumCoverSetter([this](const Glib::ustring& filePath) {
+        int nodeId = albumBrowser_->getSelectedNodeId();
+        if (nodeId >= 0) {
+            albumBrowser_->setCoverForAlbum(nodeId, filePath);
+        }
+    });
 
     //------------------
 
@@ -204,7 +214,7 @@ void FilePanel::setAspect ()
     int winW, winH;
     parent->get_size(winW, winH);
     const auto& options = App::get().options();
-    placespaned->set_position(options.dirBrowserHeight);
+    // placespaned is now a Box (not Paned) — no position to set
     dirpaned->set_position(options.dirBrowserWidth);
     tpcPaned->set_position(options.browserToolPanelHeight);
     set_position(winW - options.browserToolPanelWidth);
@@ -410,7 +420,7 @@ void FilePanel::saveOptions ()
     int winW, winH;
     parent->get_size(winW, winH);
     options.dirBrowserWidth = dirpaned->get_position ();
-    options.dirBrowserHeight = placespaned->get_position ();
+    // placespaned is now a Box — dirBrowserHeight no longer used
     options.browserToolPanelWidth = winW - get_position();
     options.browserToolPanelHeight = tpcPaned->get_position ();
 
@@ -483,6 +493,32 @@ void FilePanel::onAlbumViewRequested (const Glib::ustring& albumName, const std:
     }
 }
 
+void FilePanel::closeAlbumView ()
+{
+    if (albumBrowser_) {
+        albumBrowser_->deselectAlbum();
+    }
+    if (fileCatalog) {
+        fileCatalog->exitAlbumMode();
+    }
+}
+
+void FilePanel::openSelectedInEditor ()
+{
+    if (!parent || !fileCatalog || !fileCatalog->fileBrowser) return;
+
+    Thumbnail* thm = fileCatalog->fileBrowser->getSelectedThumbnail();
+    if (!thm) return;
+
+    // Don't re-open the same image that's already loaded in the editor
+    if (parent->epanel && parent->epanel->getFileName() == thm->getFileName()) {
+        return;
+    }
+
+    thm->increaseRef();
+    fileCatalog->openRequested({thm});
+}
+
 void FilePanel::loadingThumbs(Glib::ustring str, double rate)
 {
     GThreadLock lock; // All GUI access from idle_add callbacks or separate thread HAVE to be protected
@@ -505,4 +541,14 @@ void FilePanel::updateToolPanelToolLocations(
     if (tpc) {
         tpc->updateToolLocations(favorites, cloneFavoriteTools);
     }
+}
+
+void FilePanel::getQueueOverlayInsets (int& left, int& top, int& right) const
+{
+    // Left: directory browser pane width (the paned split position)
+    left = dirpaned ? dirpaned->get_position () : 0;
+    // Right: right notebook panel width
+    right = (rightBox && rightBox->get_visible()) ? rightBox->get_allocated_width () : 0;
+    // No filmstrip in file browser
+    top = 0;
 }

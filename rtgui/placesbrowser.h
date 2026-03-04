@@ -26,6 +26,8 @@
 
 #include <giomm.h>
 
+class PlacesTreeView; // Forward declaration
+
 class PlacesBrowser :
     public Gtk::Box
 {
@@ -55,7 +57,10 @@ private:
     };
     PlacesColumns            placesColumns;
     Gtk::ScrolledWindow*    scrollw;
-    Gtk::TreeView*          treeView;
+    PlacesTreeView*         treeView;
+
+    // Hover highlighting via PlacesTreeView subclass + cell_data_func
+    Gtk::TreeModel::Path hoveredPath_;
     Glib::RefPtr<Gtk::ListStore> placesModel;
     Glib::RefPtr<Gio::VolumeMonitor> vm;
     DirSelectionSlot             selectDir;

@@ -18,6 +18,7 @@
  */
 #pragma once
 
+#include <chrono>
 #include <vector>
 
 #include <gtkmm.h>
@@ -186,6 +187,17 @@ protected:
     int drawMode;
     DrawModeListener *myDrawModeListener;
 
+    // Animation state for smooth transitions
+    LUTu prev_rhist, prev_ghist, prev_bhist, prev_lhist, prev_chist;
+    LUTu prev_rhistRaw, prev_ghistRaw, prev_bhistRaw;
+    bool animating;
+    std::chrono::steady_clock::time_point anim_start;
+    sigc::connection anim_connection;
+    static constexpr int ANIM_DURATION_MS = 500;
+
+    bool onAnimationTick();
+    static double easeOutBack(double t);
+
     // Motion event management
     bool isPressed;
     double movingPosition;
@@ -273,6 +285,8 @@ protected:
     Gtk::Box* bottomBar;
     Gtk::Box* persistentButtons;
     Gtk::Box* optionButtons;
+    Gtk::Revealer* bottomBarRevealer;
+    Gtk::Revealer* optionRevealer;
     bool scopeBarVisible;
     HistogramArea* histogramArea;
     HistogramRGBArea* histogramRGBArea;

@@ -9897,6 +9897,8 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
     const array2D<float>* aiMaskPtr = nullptr;
     int aiMaskW = 0, aiMaskH = 0;
     int aiFullW = 0, aiFullH = 0;
+    fprintf(stderr, "DEBUG transit_shapedetect2: sp=%d lp.useaimask=%d lp.aimaskclass=%d lp.aimaskopa=%.2f lp.fullim=%d\n",
+            sp, lp.useaimask ? 1 : 0, lp.aimaskclass, lp.aimaskopa, lp.fullim);
     if (lp.useaimask) {
         AIMaskCache& aiCache = AIMaskCache::getInstance();
         if (aiCache.hasCachedMasks()) {
@@ -9919,8 +9921,14 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
                     fprintf(stderr, "  pixel(%d,%d) -> mask(%d,%d) val=%.3f\n", testX, testY, maskX, maskY, val);
                 }
             }
+        } else {
+            fprintf(stderr, "DEBUG transit_shapedetect2: lp.useaimask=true but NO cached masks!\n");
         }
+    } else {
+        fprintf(stderr, "DEBUG transit_shapedetect2: lp.useaimask=false, AI mask NOT applied\n");
     }
+    fprintf(stderr, "DEBUG transit_shapedetect2: aiMaskPtr=%p aiMaskW=%d aiMaskH=%d aiFullW=%d aiFullH=%d\n",
+            (const void*)aiMaskPtr, aiMaskW, aiMaskH, aiFullW, aiFullH);
 #endif
 
 #ifdef _OPENMP
@@ -10089,8 +10097,8 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
                     }
 
                     // Feathering controls the transition width around the threshold.
-                    // feather=0: hard binary, feather=20: very soft (half-width = 0.5)
-                    const float halfWidth = rtengine::max(0.001f, lp.aimaskfeath * 0.025f);
+                    // feather=0: hard binary, feather=100: soft (half-width = 0.3)
+                    const float halfWidth = rtengine::max(0.001f, lp.aimaskfeath * 0.003f);
                     aiVal = LIM((aiVal - lp.aimaskthr + halfWidth) / (2.f * halfWidth), 0.f, 1.f);
 
                     if (lp.aimaskinv) {
@@ -23781,7 +23789,7 @@ void ImProcFunctions::Lab_Local(
                                 ? (*aiMaskPtrOv)[my][mx] : 0.f;
                     }
 
-                    const float halfWidth = rtengine::max(0.001f, lp.aimaskfeath * 0.025f);
+                    const float halfWidth = rtengine::max(0.001f, lp.aimaskfeath * 0.003f);
                     aiVal = LIM((aiVal - lp.aimaskthr + halfWidth) / (2.f * halfWidth), 0.f, 1.f);
 
                     if (lp.aimaskinv) {

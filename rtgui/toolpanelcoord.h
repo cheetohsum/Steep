@@ -18,6 +18,7 @@
  */
 #pragma once
 
+#include <functional>
 #include <unordered_set>
 #include <vector>
 
@@ -61,6 +62,10 @@
 #include "tools/lensprofile.h"
 #include "tools/localcontrast.h"
 #include "tools/locallab.h"
+#include "tools/texture.h"
+#include "tools/clarity.h"
+#include "tools/grain.h"
+#include "tools/lensblur.h"
 #include "tools/pcvignette.h"
 #include "tools/pointcolor.h"
 #include "tools/pdsharpening.h"
@@ -145,6 +150,10 @@ protected:
     ShadowsHighlights* shadowshighlights;
     ToneEqualizer* toneEqualizer;
     LocalContrast *localContrast;
+    Texture *texture;
+    Clarity *clarity;
+    Grain *grain;
+    LensBlur *lensblur;
     Spot* spot;
     Defringe* defringe;
     Compressgamut* compressgamut;
@@ -209,8 +218,11 @@ protected:
     ToolGroup* advancedGroup;
     ToolGroup* calibrationGroup;
 
+
     ToolBar* toolBar;
     Gtk::Box* colorPickerRow_;
+    Gtk::ToggleButton* bwToggle_;
+    sigc::connection bwConn_;
 
     Gtk::Image* imgPanelEnd[6];
     Gtk::Box* vbPanelEnd[6];
@@ -219,6 +231,7 @@ protected:
     Gtk::ScrolledWindow* editPanelSW;
     Gtk::ScrolledWindow* transformPanelSW;
     Gtk::ScrolledWindow* locallabPanelSW;
+    Gtk::Box* locallabPanelContainer_;  // outer container for mask panel (for reparenting ToolGroups)
 
     // Legacy scrolled windows kept for internal compatibility
     std::unique_ptr<Gtk::ScrolledWindow> favoritePanelSW;
@@ -251,6 +264,32 @@ private:
     bool photoLoadedOnce; // Used to indicated that a photo has been loaded yet
     std::shared_ptr<RTSurface> ornamentSurface;
     EditorMode prevMode;
+
+    bool maskModeActive_ = false;
+    rtengine::procparams::ToneCurveParams savedToneCurve_;
+    rtengine::procparams::VibranceParams savedVibrance_;
+    rtengine::procparams::SharpeningParams savedSharpening_;
+    rtengine::procparams::SHParams savedSH_;
+
+    void bridgeGlobalToSpot(rtengine::procparams::ProcParams* params);
+    void loadSpotIntoGlobalTools();
+
+    // Collapsible transform sections (content box + label for programmatic expand)
+    Gtk::Box* cropSectionContent_ = nullptr;
+    Gtk::Label* cropSectionLabel_ = nullptr;
+    Gtk::Box* perspSectionContent_ = nullptr;
+    Gtk::Label* perspSectionLabel_ = nullptr;
+    Gtk::Box* advSectionContent_ = nullptr;
+    Gtk::Label* advSectionLabel_ = nullptr;
+    void expandTransformSection(Gtk::Box* content, Gtk::Label* label, const Glib::ustring& name);
+
+    // Debounced mask overlay toggling
+    sigc::connection hoverMaskDebounce_;
+    sigc::connection hoverMaskWatchdog_;
+    bool pendingHoverState_ = false;
+    bool hoverMaskApplied_ = false;  // tracks what state was last sent to engine
+    void applyHoverMask();
+    void turnOffMaskOverlay(bool forceRedraw = false);
 
 public:
     enum class Panel {
@@ -308,6 +347,10 @@ public:
         DIR_PYR_EQUALIZER,
         HSV_EQUALIZER,
         POINT_COLOR,
+        TEXTURE,
+        CLARITY,
+        GRAIN,
+        LENS_BLUR,
         FILM_SIMULATION,
         SOFT_LIGHT,
         DEHAZE,
@@ -394,6 +437,7 @@ public:
     void panelChanged(const rtengine::ProcEvent& event, const Glib::ustring& descr) override;
     void setTweakOperator (rtengine::TweakOperator *tOperator) override;
     void unsetTweakOperator (rtengine::TweakOperator *tOperator) override;
+    void hoverMaskChanged(bool hover, bool forceRedraw = false) override;
 
     // FilmNegProvider interface
     void imageTypeChanged (bool isRaw, bool isBayer, bool isXtrans, bool isMono = false, bool isGainMapSupported = false) override;
@@ -492,6 +536,7 @@ public:
     void editModeSwitchedOff () final;
 
     void setEditProvider(EditDataProvider *provider);
+    void setLevelingGridCallback(std::function<void(bool)> cb);
 
     void setProgressListener(rtengine::ProgressListener *pl);
 

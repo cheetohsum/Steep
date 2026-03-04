@@ -731,6 +731,34 @@ void DiagonalCurveEditorSubGroup::switchGUI()
             customCurve->setPoints(tp == DCT_Spline ? dCurve->customCurveEd : dCurve->catmullRomCurveEd);
             customCurve->setColorProvider(dCurve->getCurveColorProvider(), dCurve->getCurveCallerId());
             customCurve->setColoredBar(leftBar, bottomBar);
+            // Apply per-channel curve color if set
+            if (dCurve->hasDrawColor()) {
+                double r, g, b;
+                dCurve->getDrawColor(r, g, b);
+                customCurve->setCurveLineColor(r, g, b);
+            } else {
+                customCurve->clearCurveLineColor();
+            }
+            // Apply overlay curves (e.g., R/G/B on master view)
+            {
+                const auto& ovEditors = dCurve->getOverlayCurveEditors();
+                if (!ovEditors.empty()) {
+                    std::vector<CurveOverlay> overlays;
+                    for (auto* ed : ovEditors) {
+                        auto* dce = dynamic_cast<DiagonalCurveEditor*>(ed);
+                        if (dce && ed->hasDrawColor()) {
+                            CurveOverlay ov;
+                            ov.points = dce->customCurveEd;
+                            ed->getDrawColor(ov.r, ov.g, ov.b);
+                            ov.alpha = 0.6;
+                            overlays.push_back(ov);
+                        }
+                    }
+                    customCurve->setOverlayCurves(overlays);
+                } else {
+                    customCurve->clearOverlayCurves();
+                }
+            }
             customCurve->queue_resize_no_redraw();
             updateEditButton(dCurve, editCustom, editCustomConn);
             parent->attachCurve (customCurveGrid);
@@ -784,6 +812,45 @@ void DiagonalCurveEditorSubGroup::switchGUI()
         default:    // (DCT_Linear, DCT_Unchanged)
             // ... do nothing
             break;
+        }
+
+        // In compact display mode, hide button boxes and coordinate adjusters
+        if (compactDisplay_) {
+            auto* bbox = editPointCustom->get_parent();
+            if (bbox) { bbox->set_no_show_all(true); bbox->hide(); }
+            customCoordAdjuster->set_no_show_all(true);
+            customCoordAdjuster->hide();
+
+            auto* nbbox = editPointNURBS->get_parent();
+            if (nbbox && nbbox != bbox) { nbbox->set_no_show_all(true); nbbox->hide(); }
+            NURBSCoordAdjuster->set_no_show_all(true);
+            NURBSCoordAdjuster->hide();
+
+            // Restore full width for curve when button box is hidden
+            customCurve->set_hexpand(true);
+        } else {
+            // Re-show button boxes and coordinate adjusters when compact mode is off
+            auto* bbox = editPointCustom->get_parent();
+            if (bbox) {
+                bbox->set_no_show_all(false);
+                bbox->show_all();
+                // Make button box NOT expand so it doesn't steal space from curve
+                bbox->set_hexpand(false);
+                bbox->set_vexpand(false);
+            }
+            customCoordAdjuster->set_no_show_all(false);
+
+            auto* nbbox = editPointNURBS->get_parent();
+            if (nbbox && nbbox != bbox) {
+                nbbox->set_no_show_all(false);
+                nbbox->show_all();
+                nbbox->set_hexpand(false);
+                nbbox->set_vexpand(false);
+            }
+            NURBSCoordAdjuster->set_no_show_all(false);
+
+            // Keep curve expanded so it doesn't shrink
+            customCurve->set_hexpand(true);
         }
 
         //dCurve->typeconn.block(false);
@@ -1283,6 +1350,13 @@ bool DiagonalCurveEditorSubGroup::adjusterLeft (GdkEventCrossing* ev, int ac)
     }
 
     return true;
+}
+
+void DiagonalCurveEditorSubGroup::setCurveGraphSize(int size)
+{
+    customCurve->set_size_request(size, size);
+    NURBSCurve->set_size_request(size, size);
+    paramCurve->set_size_request(size, size);
 }
 
 void DiagonalCurveEditorSubGroup::updateBackgroundHistogram (CurveEditor* ce)

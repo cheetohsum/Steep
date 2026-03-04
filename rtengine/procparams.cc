@@ -566,8 +566,13 @@ bool LCurveParams::operator !=(const LCurveParams& other) const
 }
 
 RGBCurvesParams::RGBCurvesParams() :
-    enabled(false),
+    enabled(true),
     lumamode(false),
+    mastercurve{
+        DCT_Spline,
+        0.0, 0.0,
+        1.0, 1.0
+    },
     rcurve{
         DCT_Linear
     },
@@ -585,6 +590,7 @@ bool RGBCurvesParams::operator ==(const RGBCurvesParams& other) const
     return
         enabled == other.enabled
         && lumamode == other.lumamode
+        && mastercurve == other.mastercurve
         && rcurve == other.rcurve
         && gcurve == other.gcurve
         && bcurve == other.bcurve;
@@ -615,6 +621,96 @@ bool LocalContrastParams::operator==(const LocalContrastParams &other) const
 }
 
 bool LocalContrastParams::operator!=(const LocalContrastParams &other) const
+{
+    return !(*this == other);
+}
+
+TextureParams::TextureParams():
+    enabled(false),
+    radius(20),
+    amount(0.0)
+{
+}
+
+bool TextureParams::operator==(const TextureParams &other) const
+{
+    return
+        enabled == other.enabled
+        && radius == other.radius
+        && amount == other.amount;
+}
+
+bool TextureParams::operator!=(const TextureParams &other) const
+{
+    return !(*this == other);
+}
+
+ClarityParams::ClarityParams():
+    enabled(false),
+    radius(100),
+    amount(0.0)
+{
+}
+
+bool ClarityParams::operator==(const ClarityParams &other) const
+{
+    return
+        enabled == other.enabled
+        && radius == other.radius
+        && amount == other.amount;
+}
+
+bool ClarityParams::operator!=(const ClarityParams &other) const
+{
+    return !(*this == other);
+}
+
+GrainParams::GrainParams():
+    enabled(false),
+    iso(400),
+    strength(0),
+    scale(100)
+{
+}
+
+bool GrainParams::operator==(const GrainParams &other) const
+{
+    return
+        enabled == other.enabled
+        && iso == other.iso
+        && strength == other.strength
+        && scale == other.scale;
+}
+
+bool GrainParams::operator!=(const GrainParams &other) const
+{
+    return !(*this == other);
+}
+
+LensBlurParams::LensBlurParams():
+    enabled(false),
+    amount(0.0),
+    shape("circle"),
+    cateye(0.0),
+    bokeh(50.0),
+    depth(50),
+    range(30)
+{
+}
+
+bool LensBlurParams::operator==(const LensBlurParams &other) const
+{
+    return
+        enabled == other.enabled
+        && amount == other.amount
+        && shape == other.shape
+        && cateye == other.cateye
+        && bokeh == other.bokeh
+        && depth == other.depth
+        && range == other.range;
+}
+
+bool LensBlurParams::operator!=(const LensBlurParams &other) const
 {
     return !(*this == other);
 }
@@ -1531,7 +1627,13 @@ DefringeParams::DefringeParams() :
         0.,
         0.35,
         0.35
-    }
+    },
+    purpleAmount(0.0),
+    purpleHueLow(30.0),
+    purpleHueHigh(70.0),
+    greenAmount(0.0),
+    greenHueLow(30.0),
+    greenHueHigh(70.0)
 {
 }
 
@@ -1541,7 +1643,13 @@ bool DefringeParams::operator ==(const DefringeParams& other) const
         enabled == other.enabled
         && radius == other.radius
         && threshold == other.threshold
-        && huecurve == other.huecurve;
+        && huecurve == other.huecurve
+        && purpleAmount == other.purpleAmount
+        && purpleHueLow == other.purpleHueLow
+        && purpleHueHigh == other.purpleHueHigh
+        && greenAmount == other.greenAmount
+        && greenHueLow == other.greenHueLow
+        && greenHueHigh == other.greenHueHigh;
 }
 
 bool DefringeParams::operator !=(const DefringeParams& other) const
@@ -1702,7 +1810,8 @@ bool EPDParams::operator !=(const EPDParams& other) const
 SpotEntry::SpotEntry() :
     radius(25),
     feather(1.f),
-    opacity(1.f)
+    opacity(1.f),
+    method(SpotMethod::CLONE)
 {
 }
 
@@ -1714,13 +1823,15 @@ float SpotEntry::getFeatherRadius() const
 bool SpotEntry::operator ==(const SpotEntry& other) const
 {
     return other.sourcePos == sourcePos && other.targetPos == targetPos &&
-           other.radius == radius && other.feather == feather && other.opacity == opacity;
+           other.radius == radius && other.feather == feather && other.opacity == opacity &&
+           other.method == method && other.strokePoints == strokePoints;
 }
 
 bool SpotEntry::operator !=(const SpotEntry& other) const
 {
     return other.sourcePos != sourcePos || other.targetPos != targetPos ||
-           other.radius != radius || other.feather != feather || other.opacity != opacity;
+           other.radius != radius || other.feather != feather || other.opacity != opacity ||
+           other.method != method || other.strokePoints != strokePoints;
 }
 
 SpotParams::SpotParams() :
@@ -3924,6 +4035,30 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->localContrast.darkness, "Local Contrast", "Darkness", localContrast.darkness, keyFile);
         saveToKeyfile(!pedited || pedited->localContrast.lightness, "Local Contrast", "Lightness", localContrast.lightness, keyFile);
 
+// Texture
+        saveToKeyfile(!pedited || pedited->texture.enabled, "Texture", "Enabled", texture.enabled, keyFile);
+        saveToKeyfile(!pedited || pedited->texture.radius, "Texture", "Radius", texture.radius, keyFile);
+        saveToKeyfile(!pedited || pedited->texture.amount, "Texture", "Amount", texture.amount, keyFile);
+
+// Clarity
+        saveToKeyfile(!pedited || pedited->clarity.enabled, "Clarity", "Enabled", clarity.enabled, keyFile);
+        saveToKeyfile(!pedited || pedited->clarity.radius, "Clarity", "Radius", clarity.radius, keyFile);
+        saveToKeyfile(!pedited || pedited->clarity.amount, "Clarity", "Amount", clarity.amount, keyFile);
+
+// Grain
+        saveToKeyfile(!pedited || pedited->grain.enabled, "Grain", "Enabled", grain.enabled, keyFile);
+        saveToKeyfile(!pedited || pedited->grain.iso, "Grain", "ISO", grain.iso, keyFile);
+        saveToKeyfile(!pedited || pedited->grain.strength, "Grain", "Strength", grain.strength, keyFile);
+        saveToKeyfile(!pedited || pedited->grain.scale, "Grain", "Scale", grain.scale, keyFile);
+
+// Lens Blur
+        saveToKeyfile(!pedited || pedited->lensBlur.enabled, "Lens Blur", "Enabled", lensBlur.enabled, keyFile);
+        saveToKeyfile(!pedited || pedited->lensBlur.amount, "Lens Blur", "Amount", lensBlur.amount, keyFile);
+        saveToKeyfile(!pedited || pedited->lensBlur.shape, "Lens Blur", "Shape", lensBlur.shape, keyFile);
+        saveToKeyfile(!pedited || pedited->lensBlur.cateye, "Lens Blur", "CatEye", lensBlur.cateye, keyFile);
+        saveToKeyfile(!pedited || pedited->lensBlur.bokeh, "Lens Blur", "Bokeh", lensBlur.bokeh, keyFile);
+        saveToKeyfile(!pedited || pedited->lensBlur.depth, "Lens Blur", "Depth", lensBlur.depth, keyFile);
+        saveToKeyfile(!pedited || pedited->lensBlur.range, "Lens Blur", "Range", lensBlur.range, keyFile);
 
 // Channel mixer
         saveToKeyfile(!pedited || pedited->chmixer.enabled, "Channel Mixer", "Enabled", chmixer.enabled, keyFile);
@@ -4154,6 +4289,12 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->defringe.radius, "Defringing", "Radius", defringe.radius, keyFile);
         saveToKeyfile(!pedited || pedited->defringe.threshold, "Defringing", "Threshold", defringe.threshold, keyFile);
         saveToKeyfile(!pedited || pedited->defringe.huecurve, "Defringing", "HueCurve", defringe.huecurve, keyFile);
+        saveToKeyfile(!pedited || pedited->defringe.purpleAmount, "Defringing", "PurpleAmount", defringe.purpleAmount, keyFile);
+        saveToKeyfile(!pedited || pedited->defringe.purpleHueLow, "Defringing", "PurpleHueLow", defringe.purpleHueLow, keyFile);
+        saveToKeyfile(!pedited || pedited->defringe.purpleHueHigh, "Defringing", "PurpleHueHigh", defringe.purpleHueHigh, keyFile);
+        saveToKeyfile(!pedited || pedited->defringe.greenAmount, "Defringing", "GreenAmount", defringe.greenAmount, keyFile);
+        saveToKeyfile(!pedited || pedited->defringe.greenHueLow, "Defringing", "GreenHueLow", defringe.greenHueLow, keyFile);
+        saveToKeyfile(!pedited || pedited->defringe.greenHueHigh, "Defringing", "GreenHueHigh", defringe.greenHueHigh, keyFile);
 
 // Dehaze
         saveToKeyfile(!pedited || pedited->dehaze.enabled, "Dehaze", "Enabled", dehaze.enabled, keyFile);
@@ -4725,7 +4866,7 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
 //Spot removal
         saveToKeyfile(!pedited || pedited->spot.enabled, "Spot removal", "Enabled", spot.enabled, keyFile);
         for (size_t i = 0; i < spot.entries.size (); ++i) {
-            std::vector<double> entry(7);
+            std::vector<double> entry(8);
 
             entry[0] = double (spot.entries.at (i).sourcePos.x);
             entry[1] = double (spot.entries.at (i).sourcePos.y);
@@ -4734,11 +4875,25 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
             entry[4] = double (spot.entries.at (i).radius);
             entry[5] = double (spot.entries.at (i).feather);
             entry[6] = double (spot.entries.at (i).opacity);
+            entry[7] = double (static_cast<int>(spot.entries.at (i).method));
 
             std::stringstream ss;
             ss << "Spot" << (i + 1);
 
             saveToKeyfile(!pedited || pedited->spot.entries, "Spot removal", ss.str(), entry, keyFile);
+
+            // Save stroke points if present
+            if (!spot.entries.at(i).strokePoints.empty()) {
+                std::vector<double> strokeData;
+                strokeData.reserve(spot.entries.at(i).strokePoints.size() * 2);
+                for (const auto& pt : spot.entries.at(i).strokePoints) {
+                    strokeData.push_back(double(pt.x));
+                    strokeData.push_back(double(pt.y));
+                }
+                std::stringstream strokeKey;
+                strokeKey << "SpotStroke" << (i + 1);
+                saveToKeyfile(!pedited || pedited->spot.entries, "Spot removal", strokeKey.str(), strokeData, keyFile);
+            }
         }
 
 // Directional pyramid equalizer
@@ -4812,6 +4967,7 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
 
         saveToKeyfile(!pedited || pedited->rgbCurves.enabled, "RGB Curves", "Enabled", rgbCurves.enabled, keyFile);
         saveToKeyfile(!pedited || pedited->rgbCurves.lumamode, "RGB Curves", "LumaMode", rgbCurves.lumamode, keyFile);
+        saveToKeyfile(!pedited || pedited->rgbCurves.mastercurve, "RGB Curves", "MasterCurve", rgbCurves.mastercurve, keyFile);
         saveToKeyfile(!pedited || pedited->rgbCurves.rcurve, "RGB Curves", "rCurve", rgbCurves.rcurve, keyFile);
         saveToKeyfile(!pedited || pedited->rgbCurves.gcurve, "RGB Curves", "gCurve", rgbCurves.gcurve, keyFile);
         saveToKeyfile(!pedited || pedited->rgbCurves.bcurve, "RGB Curves", "bCurve", rgbCurves.bcurve, keyFile);
@@ -5261,6 +5417,35 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited)
             assignFromKeyfile(keyFile, "Local Contrast", "Lightness", localContrast.lightness, pedited->localContrast.lightness);
         }
 
+        if (keyFile.has_group("Texture")) {
+            assignFromKeyfile(keyFile, "Texture", "Enabled", texture.enabled, pedited->texture.enabled);
+            assignFromKeyfile(keyFile, "Texture", "Radius", texture.radius, pedited->texture.radius);
+            assignFromKeyfile(keyFile, "Texture", "Amount", texture.amount, pedited->texture.amount);
+        }
+
+        if (keyFile.has_group("Clarity")) {
+            assignFromKeyfile(keyFile, "Clarity", "Enabled", clarity.enabled, pedited->clarity.enabled);
+            assignFromKeyfile(keyFile, "Clarity", "Radius", clarity.radius, pedited->clarity.radius);
+            assignFromKeyfile(keyFile, "Clarity", "Amount", clarity.amount, pedited->clarity.amount);
+        }
+
+        if (keyFile.has_group("Grain")) {
+            assignFromKeyfile(keyFile, "Grain", "Enabled", grain.enabled, pedited->grain.enabled);
+            assignFromKeyfile(keyFile, "Grain", "ISO", grain.iso, pedited->grain.iso);
+            assignFromKeyfile(keyFile, "Grain", "Strength", grain.strength, pedited->grain.strength);
+            assignFromKeyfile(keyFile, "Grain", "Scale", grain.scale, pedited->grain.scale);
+        }
+
+        if (keyFile.has_group("Lens Blur")) {
+            assignFromKeyfile(keyFile, "Lens Blur", "Enabled", lensBlur.enabled, pedited->lensBlur.enabled);
+            assignFromKeyfile(keyFile, "Lens Blur", "Amount", lensBlur.amount, pedited->lensBlur.amount);
+            assignFromKeyfile(keyFile, "Lens Blur", "Shape", lensBlur.shape, pedited->lensBlur.shape);
+            assignFromKeyfile(keyFile, "Lens Blur", "CatEye", lensBlur.cateye, pedited->lensBlur.cateye);
+            assignFromKeyfile(keyFile, "Lens Blur", "Bokeh", lensBlur.bokeh, pedited->lensBlur.bokeh);
+            assignFromKeyfile(keyFile, "Lens Blur", "Depth", lensBlur.depth, pedited->lensBlur.depth);
+            assignFromKeyfile(keyFile, "Lens Blur", "Range", lensBlur.range, pedited->lensBlur.range);
+        }
+
         if (keyFile.has_group("Luminance Curve")) {
             if (ppVersion >= 329) {
                 assignFromKeyfile(keyFile, "Luminance Curve", "Enabled", labCurve.enabled, pedited->labCurve.enabled);
@@ -5518,6 +5703,12 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited)
             }
 
             assignFromKeyfile(keyFile, "Defringing", "HueCurve", defringe.huecurve, pedited->defringe.huecurve);
+            assignFromKeyfile(keyFile, "Defringing", "PurpleAmount", defringe.purpleAmount, pedited->defringe.purpleAmount);
+            assignFromKeyfile(keyFile, "Defringing", "PurpleHueLow", defringe.purpleHueLow, pedited->defringe.purpleHueLow);
+            assignFromKeyfile(keyFile, "Defringing", "PurpleHueHigh", defringe.purpleHueHigh, pedited->defringe.purpleHueHigh);
+            assignFromKeyfile(keyFile, "Defringing", "GreenAmount", defringe.greenAmount, pedited->defringe.greenAmount);
+            assignFromKeyfile(keyFile, "Defringing", "GreenHueLow", defringe.greenHueLow, pedited->defringe.greenHueLow);
+            assignFromKeyfile(keyFile, "Defringing", "GreenHueHigh", defringe.greenHueHigh, pedited->defringe.greenHueHigh);
         }
 
         if (keyFile.has_group("Color appearance")) {
@@ -5978,6 +6169,23 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited)
                     se.radius  = LIM<int>(int  (entry.data()[4] + epsilon), SpotParams::minRadius, SpotParams::maxRadius);
                     se.feather = float(entry.data()[5]);
                     se.opacity = float(entry.data()[6]);
+                    if (entry.size() >= 8) {
+                        int m = int(entry.data()[7] + epsilon);
+                        se.method = static_cast<SpotMethod>(LIM(m, 0, 7));
+                    } else {
+                        se.method = SpotMethod::CLONE;
+                    }
+
+                    // Load stroke points if present
+                    std::stringstream strokeKey;
+                    strokeKey << "SpotStroke" << i;
+                    if (keyFile.has_key("Spot removal", strokeKey.str())) {
+                        Glib::ArrayHandle<double> strokeData = keyFile.get_double_list("Spot removal", strokeKey.str());
+                        for (size_t si = 0; si + 1 < strokeData.size(); si += 2) {
+                            se.strokePoints.push_back(Coord(int(strokeData.data()[si] + epsilon), int(strokeData.data()[si + 1] + epsilon)));
+                        }
+                    }
+
                     spot.entries.push_back(se);
 
                     if (pedited) {
@@ -6841,6 +7049,7 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited)
             }
 
             assignFromKeyfile(keyFile, "RGB Curves", "LumaMode", rgbCurves.lumamode, pedited->rgbCurves.lumamode);
+            assignFromKeyfile(keyFile, "RGB Curves", "MasterCurve", rgbCurves.mastercurve, pedited->rgbCurves.mastercurve);
             assignFromKeyfile(keyFile, "RGB Curves", "rCurve", rgbCurves.rcurve, pedited->rgbCurves.rcurve);
             assignFromKeyfile(keyFile, "RGB Curves", "gCurve", rgbCurves.gcurve, pedited->rgbCurves.gcurve);
             assignFromKeyfile(keyFile, "RGB Curves", "bCurve", rgbCurves.bcurve, pedited->rgbCurves.bcurve);
@@ -7303,6 +7512,10 @@ bool ProcParams::operator ==(const ProcParams& other) const
         toneCurve == other.toneCurve
         && retinex == other.retinex
         && localContrast == other.localContrast
+        && texture == other.texture
+        && clarity == other.clarity
+        && grain == other.grain
+        && lensBlur == other.lensBlur
         && labCurve == other.labCurve
         && sharpenEdge == other.sharpenEdge
         && sharpenMicro == other.sharpenMicro

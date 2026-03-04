@@ -18,8 +18,10 @@
  */
 #pragma once
 
+#include <atomic>
 #include <functional>
 #include <memory>
+#include <set>
 #include <string>
 
 #include <glibmm/ustring.h>
@@ -37,8 +39,10 @@ public:
     static AIDenoiseManager& getInstance();
 
     bool isAvailable() const { return available_; }
+    bool isDetecting() const { return detecting_; }
     void detect();
     void detect(const Glib::ustring& pythonPath, const Glib::ustring& scriptPath);
+    void setDetectDoneCallback(std::function<void(bool)> cb) { detectDoneCb_ = cb; }
 
     void startDenoising(
         const Glib::ustring& rawPath,
@@ -46,7 +50,8 @@ public:
         const Glib::ustring& outputPath,
         std::function<void(double)> progressCb,
         std::function<void(bool, const Glib::ustring&)> doneCb,
-        const Glib::ustring& inputTiffPath = ""
+        const Glib::ustring& inputTiffPath = "",
+        int iso = 0
     );
     void cancel();
 
@@ -67,11 +72,14 @@ private:
     bool findScript();
     bool testRawRefinery();
 
-    bool available_;
+    std::atomic<bool> available_;
+    std::atomic<bool> detecting_;
     Glib::ustring pythonPath_;
     Glib::ustring scriptPath_;
-    bool running_;
-    bool cancelled_;
+    std::set<Glib::ustring> triedPythonPaths_;
+    std::atomic<bool> running_;
+    std::atomic<bool> cancelled_;
+    std::function<void(bool)> detectDoneCb_;
 
 #ifdef _WIN32
     void* childProcess_;  // HANDLE on Windows

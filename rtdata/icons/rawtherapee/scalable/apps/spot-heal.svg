@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="24px"
+   height="24px"
+   viewBox="0 0 24 24"
+   version="1.1"
+   xmlns="http://www.w3.org/2000/svg">
+  <g id="layer1">
+    <!-- Band-aid cross shape -->
+    <rect
+       style="opacity:0.9;fill:#cccccc;fill-opacity:1.0;stroke:none"
+       width="8"
+       height="20"
+       x="8"
+       y="2"
+       rx="3"
+       ry="3"
+       transform="rotate(45,12,12)" />
+    <rect
+       style="opacity:0.9;fill:#cccccc;fill-opacity:1.0;stroke:none"
+       width="20"
+       height="8"
+       x="2"
+       y="8"
+       rx="3"
+       ry="3"
+       transform="rotate(45,12,12)" />
+    <!-- Center dot -->
+    <circle
+       style="opacity:0.7;fill:#555555;fill-opacity:1.0;stroke:none"
+       cx="12"
+       cy="12"
+       r="1.5" />
+  </g>
+</svg>

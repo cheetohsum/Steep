@@ -31,80 +31,17 @@
 #include "tools/locallabaimask.h"
 #endif
 
-/* ==== LocallabToolListListener ==== */
-class LocallabToolList;
-class LocallabToolListListener
-{
-public:
-    LocallabToolListListener() {};
-    virtual ~LocallabToolListListener() {};
-
-    virtual void locallabToolToAdd(const Glib::ustring &toolname) = 0;
-};
-
-/* ==== LocallabToolList ==== */
-class LocallabToolList:
-    public Gtk::Box
-{
-private:
-    // Tree model to manage ComboBox rows
-    class ToolRow:
-        public Gtk::TreeModel::ColumnRecord
-    {
-    public:
-        Gtk::TreeModelColumn<int> id;
-        Gtk::TreeModelColumn<Glib::ustring> name;
-
-        ToolRow()
-        {
-            add(id);
-            add(name);
-        }
-    };
-
-    // Tool list GUI widgets
-    MyComboBox* const list;
-    sigc::connection listConn;
-    ToolRow toolRow;
-    Glib::RefPtr<Gtk::ListStore> listTreeModel;
-
-    // Tool list listener
-    LocallabToolListListener* listListener;
-
-public:
-    LocallabToolList();
-
-    // Setter for tool list listener
-    void setLocallabToolListListener(LocallabToolListListener* ltll)
-    {
-        listListener = ltll;
-    }
-
-    // Tool list management function
-    void addToolRow(const Glib::ustring &toolname, const int id);
-    void removeToolRow(const Glib::ustring &toolname);
-    void removeAllTool();
-
-private:
-    // Tool list event management function
-    void toolRowSelected();
-};
-
 /* ==== Locallab ==== */
 class Locallab :
     public ToolParamBlock,
     public FoldableToolPanel,
     public rtengine::LocallabListener,
     public ControlPanelListener,
-    public LocallabToolListener,
-    public LocallabToolListListener
+    public LocallabToolListener
 {
 private:
     // Spot control panel widget
     ControlSpotPanel* const expsettings;
-
-    // Tool list widget
-    LocallabToolList* const toollist;
 
     // Locallab tool widgets
     LocallabColor expcolor;
@@ -125,10 +62,15 @@ private:
 #endif
     Locallabcie expcie;
 
+    // Internal ToolGroups for per-mask editing (hideable)
+    ToolGroup* llLightGroup_;
+    ToolGroup* llColorGroup_;
+    ToolGroup* llDetailGroup_;
+    ToolGroup* llAdvancedGroup_;
+
     OptionalRadioButtonGroup delta_e_preview_button_group;
 
-    Gtk::ToggleButton* showMaskOverlay_;
-    sigc::connection showMaskOverlayConn_;
+    bool hoverMaskOverlay_ = false;
 
     std::vector<LocallabTool*> locallabTools;
 
@@ -169,6 +111,12 @@ public:
     static const Glib::ustring TOOL_NAME;
 
     Locallab();
+
+    // Hide the "Settings" sub-expander header (call AFTER show_all)
+    void hideSettingsHeader();
+
+    // Hide locallab's internal ToolGroups (so global ToolGroups can replace them)
+    void hideToolGroups();
 
     // FoldableToolPanel management functions
     void read(const rtengine::procparams::ProcParams* pp, const ParamsEdited* pedited = nullptr) override;
@@ -242,6 +190,8 @@ public:
 
     void resetMaskVisibility();
     llMaskVisibility getMaskVisibility() const;
+    void setHoverMaskOverlay(bool hover);
+    bool isPointerOverMaskList() const;
 
     // Other widgets event functions
     //void resetshowPressed();
@@ -271,19 +221,14 @@ private:
     // Locallab GUI management function
     void setParamEditable(bool cond);
 
-    // Show Mask Overlay toggle handler
-    void showMaskOverlayChanged();
-
     // ControlSpotListener function
     void resetToolMaskView() override;
     void spotNameChanged(const Glib::ustring &newName) override;
+    void spotHovered(bool hovered, bool forceRedraw = false) override;
 
     // LocallabToolListener function
     void resetOtherMaskView(LocallabTool* current) override;
     void toolRemoved(LocallabTool* current) override;
-
-    // LocallabToolListListener function
-    void locallabToolToAdd(const Glib::ustring &toolname) override;
 };
 
 #endif

@@ -1513,6 +1513,23 @@ IImage8* Thumbnail::processImage (const procparams::ProcParams& params, eSensorT
         // Alberto's local contrast
         ipf.localContrast(labView, labView->L, params.localContrast, false, 16);
     }
+
+    if (params.texture.enabled) {
+        ipf.textureContrast(labView, params.texture, 16);
+    }
+
+    if (params.clarity.enabled) {
+        ipf.clarityContrast(labView, params.clarity, 16);
+    }
+
+    if (params.grain.enabled) {
+        ipf.grainEffect(labView, params.grain, labView->W, labView->H);
+    }
+
+    if (params.lensBlur.enabled) {
+        ipf.lensBlur(labView, params.lensBlur, 16);
+    }
+
     ipf.chromiLuminanceCurve (nullptr, 1, labView, labView, curve1, curve2, satcurve, lhskcurve, clcurve, lumacurve, utili, autili, butili, ccutili, cclutili, clcutili, dummy, dummy);
 
     ipf.vibrance (labView, params.vibrance, params.toneCurve.hrenabled, params.icm.workingProfile);

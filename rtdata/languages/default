@@ -14,7 +14,11 @@ ALBUM_EDIT_RULES;Edit rules...
 ALBUM_HEADER;Albums
 ALBUM_NEW_ALBUM;+ New Album
 ALBUM_RENAME;Rename...
+ALBUM_SEARCH;Search
+ALBUM_SET_COVER;Choose cover image...
 ALBUM_SET_TARGET;Set as target album
+ALBUM_SORT_DATE;Sort by date created
+ALBUM_SORT_NAME;Sort by name
 ALBUM_SMART_ADD_RULE;+ Add Rule
 ALBUM_SMART_DIALOG_TITLE;Smart Album
 ALBUM_SMART_FIELD_APERTURE;Aperture
@@ -83,10 +87,11 @@ DYNPROFILEEDITOR_PROFILE;Processing Profile
 EDITWINDOW_TITLE;Image Edit
 EDIT_OBJECT_TOOLTIP;Displays a widget on the preview window which lets you adjust this tool.
 EDITOR_ADD_TO_ALBUM_TOOLTIP;Add current image to target album
+EDITOR_COPY_SETTINGS_TOOLTIP;Copy edit settings
 EDITOR_FILTER_CLEAR_TOOLTIP;Clear all filters
 EDITOR_FILTER_COLOR;Color:
 EDITOR_FILTER_RATING;Rating:
-EDITOR_FILTER_SEARCH_PLACEHOLDER;Search filename...
+EDITOR_FILTER_SEARCH_PLACEHOLDER;Search
 EDITOR_FILTER_TOOLTIP;Show/hide filmstrip filter bar
 EDIT_PIPETTE_TOOLTIP;To add an adjustment point to the curve, hold the Ctrl key while left-clicking the desired spot in the image preview.\nTo adjust the point, hold the Ctrl key while left-clicking the corresponding area in the preview, then let go of Ctrl (unless you desire fine control) and while still holding the left mouse button move the mouse up or down to move that point up or down in the curve.
 ERROR_MSG_METADATA_VALUE;Metadata: error setting %1 to %2
@@ -195,6 +200,10 @@ FILEBROWSER_POPUPOPENINEDITOR;Open in Editor
 FILEBROWSER_POPUPPROCESS;Put to queue
 FILEBROWSER_POPUPPROCESSFAST;Put to queue (Fast export)
 FILEBROWSER_POPUPSAVEIMAGE;Save image
+FILEBROWSER_POPUPAIDENOISE;AI Denoise
+FILEBROWSER_POPUPAUTOEDIT;Auto Edit
+FILEBROWSER_POPUPDUPLICATE;Duplicate
+FILEBROWSER_POPUPSETALBUMCOVER;Set as album cover
 FILEBROWSER_POPUPPROFILEOPERATIONS;Processing profile operations
 FILEBROWSER_POPUPRANK;Rank
 FILEBROWSER_POPUPRANK0;Unrank
@@ -1555,6 +1564,29 @@ HISTORY_MSG_LOCALCONTRAST_DARKNESS;Local Contrast - Darkness
 HISTORY_MSG_LOCALCONTRAST_ENABLED;Local Contrast
 HISTORY_MSG_LOCALCONTRAST_LIGHTNESS;Local Contrast - Lightness
 HISTORY_MSG_LOCALCONTRAST_RADIUS;Local Contrast - Radius
+HISTORY_MSG_TEXTURE_ENABLED;Texture
+HISTORY_MSG_TEXTURE_AMOUNT;Texture - Amount
+HISTORY_MSG_TEXTURE_RADIUS;Texture - Detail Size
+HISTORY_MSG_CLARITY_ENABLED;Clarity
+HISTORY_MSG_CLARITY_AMOUNT;Clarity - Amount
+HISTORY_MSG_CLARITY_RADIUS;Clarity - Detail Size
+HISTORY_MSG_GRAIN_ENABLED;Grain
+HISTORY_MSG_GRAIN_STRENGTH;Grain - Strength
+HISTORY_MSG_GRAIN_ISO;Grain - ISO
+HISTORY_MSG_GRAIN_SCALE;Grain - Scale
+HISTORY_MSG_LENSBLUR_ENABLED;Lens Blur
+HISTORY_MSG_LENSBLUR_AMOUNT;Lens Blur - Amount
+HISTORY_MSG_LENSBLUR_SHAPE;Lens Blur - Shape
+HISTORY_MSG_LENSBLUR_CATEYE;Lens Blur - Cat Eye
+HISTORY_MSG_LENSBLUR_BOKEH;Lens Blur - Boost
+HISTORY_MSG_LENSBLUR_DEPTH;Lens Blur - Focus Depth
+HISTORY_MSG_LENSBLUR_RANGE;Lens Blur - Range
+HISTORY_MSG_DEFRINGE_PURPLE_AMOUNT;Defringe - Purple Amount
+HISTORY_MSG_DEFRINGE_PURPLE_HUE_LOW;Defringe - Purple Hue Low
+HISTORY_MSG_DEFRINGE_PURPLE_HUE_HIGH;Defringe - Purple Hue High
+HISTORY_MSG_DEFRINGE_GREEN_AMOUNT;Defringe - Green Amount
+HISTORY_MSG_DEFRINGE_GREEN_HUE_LOW;Defringe - Green Hue Low
+HISTORY_MSG_DEFRINGE_GREEN_HUE_HIGH;Defringe - Green Hue High
 HISTORY_MSG_LOCALLAB_TE_PIVOT;Local - Equalizer pivot
 HISTORY_MSG_LOCAL_AUTOSP;Local - GHS - Auto SP
 HISTORY_MSG_LOCAL_AVOIDNEGATIVE;Local - SC - Pre-filter zero and negative values
@@ -1750,6 +1782,7 @@ HISTORY_MSG_SOFTLIGHT_ENABLED;Soft light
 HISTORY_MSG_SOFTLIGHT_STRENGTH;Soft light - Strength
 HISTORY_MSG_SPOT;Spot removal
 HISTORY_MSG_SPOT_ENTRY;Spot removal - Point modif.
+HISTORY_MSG_SPOT_METHOD;Spot method
 HISTORY_MSG_TEMPOUT;CAM02 automatic temperature
 HISTORY_MSG_THRESWAV;Balance threshold
 HISTORY_MSG_TM_FATTAL_ANCHOR;DRC - Anchor
@@ -2000,6 +2033,8 @@ TOOLGROUP_COLOR;Color
 TOOLGROUP_DETAIL;Detail
 TOOLGROUP_EFFECTS;Effects
 TOOLGROUP_LIGHT;Exposure & Tone
+TOOLGROUP_MASKING;Masking
+TOOLGROUP_SPOT_REMOVAL;Spot Removal
 MAIN_TOOLTIP_BACKCOLOR0;Background color of the preview: <b>theme-based</b>\nShortcut: <b>9</b>
 MAIN_TOOLTIP_BACKCOLOR1;Background color of the preview: <b>black</b>\nShortcut: <b>9</b>
 MAIN_TOOLTIP_BACKCOLOR2;Background color of the preview: <b>white</b>\nShortcut: <b>9</b>
@@ -2020,6 +2055,30 @@ MAIN_TOOLTIP_SHOWHIDERP1;Show/Hide the right panel.\nShortcut: <b>Alt-l</b>
 MAIN_TOOLTIP_SHOWHIDETP1;Show/Hide the top panel.\nShortcut: <b>Shift-l</b>
 MAIN_TOOLTIP_THRESHOLD;Threshold
 MAIN_TOOLTIP_TOGGLE;Toggle the <b>Before</b>/<b>After</b> view.\nShortcut: <b>Shift-b</b>
+MCP_MENU_BUTTON;MCP Server...
+MCP_DIALOG_TITLE;MCP Server
+MCP_DIALOG_HEADER;Model Context Protocol Server
+MCP_DIALOG_DESC;Control Steep from AI assistants and automation tools via the Model Context Protocol. Start the server, then configure your MCP client.
+MCP_STATUS;Status
+MCP_STATUS_RUNNING;Running
+MCP_STATUS_STOPPED;Stopped
+MCP_PORT;Port
+MCP_URL;URL
+MCP_START_SERVER;Start Server
+MCP_STOP_SERVER;Stop Server
+MCP_COPY_CONFIG;Copy Config JSON
+MCP_COPY_URL;Copy URL
+MCP_CONNECT_CLAUDE;Auto-Configure
+MCP_CONNECT_SUCCESS;Connected!
+MCP_CONNECT_SUCCESS_DESC;Your MCP client has been configured to connect to this Steep instance. Restart your MCP client session to use it.
+MCP_CONFIG_WRITTEN;Configuration Written
+MCP_CONFIG_WRITTEN_DESC;MCP configuration has been written to:
+MCP_CONNECT_FAILED;Could not auto-connect
+MCP_CONNECT_FAILED_DESC;Please manually add this URL to your MCP client configuration:
+MCP_AUTO_START;Start server automatically when Steep launches
+MCP_TOOLS_LABEL;Available Tools
+MCP_TOOLS_NAME;Tool
+MCP_TOOLS_DESC;Description
 MONITOR_PROFILE_SYSTEM;System default
 NAVIGATOR_B;B:
 NAVIGATOR_G;G:
@@ -2817,6 +2876,14 @@ TP_DARKFRAME_LABEL;Dark-Frame
 TP_DEFRINGE_LABEL;Defringe
 TP_DEFRINGE_RADIUS;Defringe Radius
 TP_DEFRINGE_THRESHOLD;Defringe
+TP_DEFRINGE_PURPLE;Purple
+TP_DEFRINGE_GREEN;Green
+TP_DEFRINGE_AMOUNT;Amount
+TP_DEFRINGE_HUE_LOW;Hue Low
+TP_DEFRINGE_HUE_HIGH;Hue High
+TP_DEFRINGE_HUE_SECTION;Hue
+TP_DEFRINGE_PURPLE_HUE;Purple Hue
+TP_DEFRINGE_GREEN_HUE;Green Hue
 TP_DEHAZE_DEPTH;Depth
 TP_DEHAZE_LABEL;Haze Removal
 TP_DEHAZE_SATURATION;Saturation
@@ -2906,8 +2973,9 @@ TP_EPD_STRENGTH;Strength
 TP_EXPOSURE_AUTO;Auto
 TP_EXPOSURE_AUTOLEVELS;Auto Levels
 TP_EXPOSURE_AUTOLEVELS_TOOLTIP;Toggles execution of Auto Levels to automatically set Exposure slider values based on an image analysis.\nEnables Highlight Reconstruction if necessary.
-TP_EXPOSURE_BLACKLEVEL;Black
+TP_EXPOSURE_BLACKLEVEL;Blacks
 TP_EXPOSURE_BRIGHTNESS;Lightness
+TP_EXPOSURE_WHITES;Whites
 TP_EXPOSURE_CLAMPOOG;Clip out-of-gamut colors
 TP_EXPOSURE_CLIP;Clip %
 TP_EXPOSURE_CLIP_TOOLTIP;The fraction of pixels to be clipped in Auto Levels operation.
@@ -3009,7 +3077,7 @@ TP_GRADIENT_DEGREE_TOOLTIP;Rotation angle in degrees.
 TP_GRADIENT_FEATHER;Feather
 TP_GRADIENT_FEATHER_TOOLTIP;Gradient width in percent of the image diagonal.
 TP_GRADIENT_LABEL;Graduated Filter
-TP_GRADIENT_STRENGTH;Grad Filter
+TP_GRADIENT_STRENGTH;Gradient
 TP_GRADIENT_STRENGTH_TOOLTIP;Filter strength in stops.
 TP_HLREC_BLEND;Blend
 TP_HLREC_CIELAB;CIELab Blending
@@ -3225,7 +3293,7 @@ TP_LENSPROFILE_CORRECTION_AUTOMATCH;Automatically selected
 TP_LENSPROFILE_CORRECTION_LCPFILE;LCP file
 TP_LENSPROFILE_CORRECTION_MANUAL;Manually selected
 TP_LENSPROFILE_CORRECTION_METADATA;From file metadata
-TP_LENSPROFILE_LABEL;Profiled Lens Correction
+TP_LENSPROFILE_LABEL;Lens Profile
 TP_LENSPROFILE_LENS_WARNING;Warning: the crop factor used for lens profiling is larger than the crop factor of the camera, the results might be wrong.
 TP_LENSPROFILE_MODE_HEADER;Lens Profile
 TP_LENSPROFILE_USE_CA;Chromatic aberration
@@ -3237,6 +3305,31 @@ TP_LOCALCONTRAST_DARKNESS;Darkness level
 TP_LOCALCONTRAST_LABEL;Local Contrast
 TP_LOCALCONTRAST_LIGHTNESS;Lightness level
 TP_LOCALCONTRAST_RADIUS;LC Radius
+TP_TEXTURE_LABEL;Texture
+TP_TEXTURE_AMOUNT;Texture
+TP_TEXTURE_RADIUS;Detail Size
+TP_CLARITY_LABEL;Clarity
+TP_CLARITY_AMOUNT;Clarity
+TP_CLARITY_RADIUS;Detail Size
+TP_GRAIN_LABEL;Grain
+TP_GRAIN_STRENGTH;Grain
+TP_GRAIN_ISO;ISO
+TP_GRAIN_SCALE;Scale
+TP_LENSBLUR_LABEL;Lens Blur
+TP_LENSBLUR_AMOUNT;Blur Amount
+TP_LENSBLUR_BOKEH_SECTION;Bokeh
+TP_LENSBLUR_SHAPE_CIRCLE;Circle
+TP_LENSBLUR_SHAPE_5BLADE;5-Blade
+TP_LENSBLUR_SHAPE_6BLADE;6-Blade
+TP_LENSBLUR_SHAPE_7BLADE;7-Blade
+TP_LENSBLUR_SHAPE_8BLADE;8-Blade
+TP_LENSBLUR_CATEYE;Cat Eye
+TP_LENSBLUR_BOKEH;Boost
+TP_LENSBLUR_FOCUSRANGE_SECTION;Focus Range
+TP_LENSBLUR_DEPTH;Focus Depth
+TP_LENSBLUR_NEAR;Near
+TP_LENSBLUR_FAR;Far
+TP_LENSBLUR_RANGE;Range
 TP_LOCALLAB_ACTIV;Luminance only
 TP_LOCALLAB_ACTIVSPOT;Enable Spot
 TP_LOCALLAB_ADJ;Equalizer Color
@@ -3287,6 +3380,8 @@ TP_LOCALLAB_BLUR_TOOLNAME;Blur/Grain & Denoise
 TP_LOCALLAB_BLWH;All changes forced in Black-and-White
 TP_LOCALLAB_BLWH_TOOLTIP;Force color components 'a' and 'b' to zero.\nUseful for black and white processing, or film simulation.
 TP_LOCALLAB_BUTTON_ADD;Add
+TP_LOCALLAB_BUTTON_ADD_AI_MASK;Add AI Mask
+TP_LOCALLAB_BUTTON_ADD_MASK;Add Mask
 TP_LOCALLAB_BUTTON_DEL;Delete
 TP_LOCALLAB_BUTTON_DUPL;Duplicate
 TP_LOCALLAB_BUTTON_REN;Rename
@@ -3791,6 +3886,9 @@ TP_LOCALLAB_AIMASK_OPACITY_TOOLTIP;Blend between geometric mask (0) and AI mask 
 TP_LOCALLAB_AIMASK_REFINE;Edge Refinement
 TP_LOCALLAB_AIMASK_REFINE_RADIUS;Guided Filter Radius
 TP_LOCALLAB_AIMASK_REFINE_EPS;Guided Filter Epsilon
+TP_LOCALLAB_MASKTYPE;Mask Type
+TP_LOCALLAB_MASKTYPE_NORMAL;Normal
+TP_LOCALLAB_MASKTYPE_AI;AI Mask
 TP_LOCALLAB_MASKCURVE_TOOLTIP;The 3 curves are set to 1 (maximum) by default:\nC=f(C) the chroma varies according to the chrominance. You can decrease the chroma to improve the selection. By setting this curve close to zero (with a low value of C to activate the curve) you can desaturate the background in Inverse mode.\nL=f(L) the luminance varies according to the luminance, so you can decrease the brightness to improve the selection.\nL and C = f(H) luminance and chroma vary with hue, so you can decrease luminance and chroma to improve selection.
 TP_LOCALLAB_MASKDDECAY;Decay strength
 TP_LOCALLAB_MASKDECAY_TOOLTIP;Manages the rate of decay for the gray levels in the mask.\n Decay = 1 linear, Decay > 1 sharper parabolic transitions, Decay < 1 more gradual transitions.
@@ -4063,6 +4161,7 @@ TP_LOCALLAB_SHOWLAPLACE;∆ Laplacian (first)
 TP_LOCALLAB_SHOWLC;Mask And Modifications
 TP_LOCALLAB_SHOWMASK;Show mask
 TP_LOCALLAB_SHOW_MASK_OVERLAY;Show Mask
+TP_LOCALLAB_MASK_SECTION;Mask
 TP_LOCALLAB_SHOWMASKCOL_TOOLTIP;Displays Masks and Modifications.\nBeware, you can only view one tool mask at a time.\nShow modified image: shows the modified image including the effect of any adjustments and masks.\nShow modified areas without mask: shows the modifications before any masks are applied.\nShow modified areas with mask: shows the modifications after a mask has been applied.\nShow mask: shows the aspect of the mask including the effect of any curves and filters.\nShow spot structure: allows you to see the structure-detection mask when the 'Spot structure' cursor is activated (when available).\nNote: The mask is applied before the shape detection algorithm.
 TP_LOCALLAB_SHOWMASKSOFT_TOOLTIP;Allows you to visualize the different stages of the Fourier process.\n Laplace - calculates the second derivative of the Laplace transform as a function of the threshold.\nFourier - shows the Laplacian transform with DCT.\nPoisson - shows the solution of the Poisson DCE.\nNo luminance normalization - shows result without any luminance normalization.
 TP_LOCALLAB_SHOWMASKTYP1;Blur & Noise
@@ -4154,7 +4253,7 @@ TP_LOCALLAB_SPECCASE;Specific cases
 TP_LOCALLAB_SPECIAL;Special use of RGB curves
 TP_LOCALLAB_SPECIAL_TOOLTIP;The checkbox allows you to remove all other actions i.e. 'Scope', masks, sliders etc., (except for transitions) and use just the effect of the RGB tone-curve.
 TP_LOCALLAB_SPOT_ADVANCED;Advanced
-TP_LOCALLAB_SPOTNAME;New Spot
+TP_LOCALLAB_SPOTNAME;New Mask
 TP_LOCALLAB_SPRADIUS_TOOLTIP;Try setting an automatic Symmetry Point (SP) estimation, only in RGB mode. May require manual adjustment.
 TP_LOCALLAB_STD;Standard
 TP_LOCALLAB_STR;Strength
@@ -4201,7 +4300,7 @@ TP_LOCALLAB_TOOLMASK_TOOLTIP;Structure mask (slider) with the checkbox 'Structur
 TP_LOCALLAB_TRANSIT;Transition Gradient
 TP_LOCALLAB_TRANSITGRAD;Symmetry X & Y
 TP_LOCALLAB_TRANSITGRAD_TOOLTIP;Allows you to vary the y-axis transition.
-TP_LOCALLAB_TRANSITVALUE;Mask feathering
+TP_LOCALLAB_TRANSITVALUE;Feathering
 TP_LOCALLAB_TRANSITWEAK;Decay (linear-log)
 TP_LOCALLAB_TRANSITWEAK_TOOLTIP;Adjust transition decay function: 1 linear , 2 parabolic, 3 cubic up to ^25.\nCan be used in conjunction with very low transition values to reduce defects (CBDL, Wavelets, Color &amp; Light).
 TP_LOCALLAB_TRANSIT_TOOLTIP;Adjust smoothness of transition between affected and unaffected areas as a percentage of the 'radius'.
@@ -4546,10 +4645,12 @@ TP_RETINEX_VIEW_NONE;Standard
 TP_RETINEX_VIEW_TRAN;Transmission - Auto
 TP_RETINEX_VIEW_TRAN2;Transmission - Fixed
 TP_RETINEX_VIEW_UNSHARP;Unsharp mask
+TP_RGBCURVES_ALL;All
 TP_RGBCURVES_BLUE;B
 TP_RGBCURVES_CHANNEL;
+TP_RGBCURVES_CHANNEL_OPTIONS;Channel selection
 TP_RGBCURVES_GREEN;G
-TP_RGBCURVES_LABEL;RGB Curves
+TP_RGBCURVES_LABEL;Curve
 TP_RGBCURVES_LUMAMODE;Luminosity mode
 TP_RGBCURVES_LUMAMODE_TOOLTIP;<b>Luminosity mode</b> allows to vary the contribution of R, G and B channels to the luminosity of the image, without altering image color.
 TP_RGBCURVES_RED;R
@@ -4605,6 +4706,18 @@ TP_SPOT_DEFAULT_SIZE;Default spot size
 TP_SPOT_ENTRYCHANGED;Point changed
 TP_SPOT_HINT;Click on this button to be able to operate on the preview area.\n\nTo edit a spot, hover the white mark locating an edited area, making the editing geometry appear.\n\nTo add a spot, press Ctrl and left mouse button, drag the circle (Ctrl key can be released) to a source location, then release the mouse button.\n\nTo move the source or destination spot, hover its center then drag it.\n\nThe inner circle (maximum effect area) and the 'feather' circle can be resized by hovering them (the circle becomes orange) and dragging it (the circle becomes red).\n\nWhen the changes are done, right click outside any spot to end the Spot editing mode, or click on this button again.
 TP_SPOT_LABEL;Spot Removal
+TP_SPOT_METHOD;Mode
+TP_SPOT_METHOD_CLONE;Clone
+TP_SPOT_METHOD_HEAL;Heal
+TP_SPOT_METHOD_ERASE;Erase
+TP_SPOT_METHOD_REDEYE;Red Eye
+TP_SPOT_METHOD_TOOLTIP;Clone: copies source. Heal: matches luminance. Erase: fills with surrounding average. Red Eye: auto-corrects red eyes.
+TP_SPOT_AI_SECTION;Smart Tools
+TP_SPOT_AI_OBJECT;Remove Object
+TP_SPOT_AI_REFLECTION;Remove Reflections
+TP_SPOT_AI_DUST;Remove Dust
+TP_SPOT_AI_GENERATIVE;Generative Fill
+TP_SPOT_AI_COMING_SOON;Coming soon
 TP_TM_FATTAL_AMOUNT;Dynamic Range
 TP_TM_FATTAL_ANCHOR;Anchor
 TP_TM_FATTAL_LABEL;Dynamic Range Compression
@@ -4637,6 +4750,7 @@ TP_VIBRANCE_PSTHRESHOLD_TOOLTIP;The vertical axis represents pastel tones at the
 TP_VIBRANCE_PSTHRESHOLD_WEIGTHING;Pastel/saturated transition's weighting
 TP_VIBRANCE_SATURATED;Saturation
 TP_VIGNETTING_AMOUNT;Amount
+TP_TRANSFORM_ADVANCED;Advanced
 TP_VIGNETTING_CENTER;Center
 TP_VIGNETTING_CENTER_X;Center X
 TP_VIGNETTING_CENTER_Y;Center Y

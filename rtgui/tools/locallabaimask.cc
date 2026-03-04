@@ -30,7 +30,7 @@ LocallabAIMask::LocallabAIMask():
 
     aiMaskClassCombo(Gtk::manage(new MyComboBoxText())),
     aiMaskThreshold(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_THRESHOLD"), 0.0, 1.0, 0.01, 0.3))),
-    aiMaskFeather(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_FEATHER"), 0.0, 20.0, 0.1, 4.0))),
+    aiMaskFeather(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_FEATHER"), 0.0, 100.0, 1.0, 100.0))),
     aiMaskBlur(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_BLUR"), 0.0, 50.0, 0.1, 0.0))),
     aiMaskInvert(Gtk::manage(new Gtk::CheckButton(M("TP_LOCALLAB_AIMASK_INVERT")))),
     aiMaskOpacity(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_OPACITY"), 0.0, 1.0, 0.01, 1.0))),
@@ -115,6 +115,8 @@ void LocallabAIMask::getMaskView(int &colorMask, int &colorMaskinv, int &expMask
                                   int &lcMask, int &cbMask, int &logMask, int &maskMask,
                                   int &cieMask)
 {
+    // AI masks use hoverMaskOverlay_ (via showMaskOverlay) for overlay display
+    // rather than the combo-based mask preview system. Nothing to set here.
 }
 
 Gtk::ToggleButton* LocallabAIMask::getPreviewDeltaEButton() const
@@ -163,7 +165,7 @@ void LocallabAIMask::read(const rtengine::procparams::ProcParams* pp, const Para
     if (index < (int)pp->locallab.spots.size()) {
         const LocallabParams::LocallabSpot& spot = pp->locallab.spots.at(index);
 
-        exp->set_visible(spot.visiaimask);
+        exp->set_visible(true);
         exp->setEnabled(spot.expaimask);
 
         aiMaskClassCombo->set_active(spot.aiMaskClass);
@@ -186,7 +188,7 @@ void LocallabAIMask::write(rtengine::procparams::ProcParams* pp, ParamsEdited* p
     if (index < (int)pp->locallab.spots.size()) {
         LocallabParams::LocallabSpot& spot = pp->locallab.spots.at(index);
 
-        spot.visiaimask = exp->get_visible();
+        spot.visiaimask = true;
         spot.expaimask = exp->getEnabled();
         spot.useAIMask = exp->getEnabled();
 

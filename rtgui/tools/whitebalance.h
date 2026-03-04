@@ -91,6 +91,15 @@ protected:
     bool lastitcwb_alg;
 
     Gtk::Button* spotbutton;
+    Gtk::Box* detailContent_ = nullptr;
+    bool detailExpanded_ = false;
+    void toggleDetail();
+
+    Gtk::Label* sectionLabel_;
+    Gtk::Box* wbContent_ = nullptr;
+    bool contentExpanded_ = false;
+    void toggleContent();
+    Gtk::Box* pickerRow_ = nullptr;
     int opt;
     double nextTemp;
     double nextGreen;
@@ -140,6 +149,8 @@ public:
     {
         wblistener = l;
     }
+    Gtk::Box* getPickerRow() { return pickerRow_; }
+    Gtk::Box* getContentBox() { return wbContent_; }
     void setWB (int temp, double green);
     void resetWB ();
     void WBChanged           (int met, double temp, double green, double rw, double gw, double bw, float temp0, float delta, int bia, int dread, float studgood, float minchrom, int kmin, float histmin, float histmax, AWBMode aWBMode) override;

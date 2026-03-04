@@ -63,6 +63,11 @@ protected:
 
     AdvancedSection* advancedSection;
 
+    Gtk::Label* sectionLabel_;
+    Gtk::Box* toolContent_;
+    bool contentExpanded_;
+    void toggleContent();
+
     void onChannelSelected(int channel);
     void updateActiveSliderGradients();
     std::vector<double> slidersToFlatCurve(const std::array<double, 8>& shifts) const;

@@ -16,6 +16,9 @@
  *  You should have received a copy of the GNU General Public License
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include <algorithm>
+
+#include "editwidgets.h"
 #include "eventmapper.h"
 #include "perspective.h"
 
@@ -211,6 +214,9 @@ PerspCorrection::PerspCorrection () : FoldableToolPanel(this, TOOL_NAME, M("TP_P
 
     lines = std::unique_ptr<ControlLineManager>(new ControlLineManager());
     lines->callbacks = std::make_shared<LinesCallbacks>(this);
+
+    dragSubscriber_ = std::unique_ptr<PerspectiveDragSubscriber>(new PerspectiveDragSubscriber());
+    dragSubscriber_->setCallback(this);
 
     Gtk::Box* control_lines_box = Gtk::manage (new Gtk::Box());
     Gtk::Label* control_lines_label = Gtk::manage (new Gtk::Label (M("TP_PERSPECTIVE_CONTROL_LINES") + ": "));
@@ -677,6 +683,24 @@ void PerspCorrection::setControlLineEditMode(bool active)
     lines_button_edit->set_active(active);
 }
 
+void PerspCorrection::setDragEditMode(bool active)
+{
+    // Drag mode uses simple H/V perspective — ensure simple mode is selected
+    if (active && method->get_active_row_number() != 0) {
+        method->block(true);
+        method->set_active(0);
+        method->block(false);
+    }
+
+    dragSubscriber_->setActive(active);
+
+    if (active && panel_listener) {
+        panel_listener->controlLineEditModeChanged(true);
+    } else if (!active && panel_listener) {
+        panel_listener->controlLineEditModeChanged(false);
+    }
+}
+
 void PerspCorrection::setMetadata (const rtengine::FramesMetaData* metadata)
 {
     this->metadata = metadata;
@@ -798,6 +822,7 @@ void PerspCorrection::setFocalLengthValue (const ProcParams* pparams, const Fram
 void PerspCorrection::switchOffEditMode(void)
 {
     lines_button_edit->set_active(false);
+    dragSubscriber_->setActive(false);
 }
 
 void PerspCorrection::hideAdvancedSection()
@@ -848,6 +873,7 @@ void PerspCorrection::runAutoCorrection()
 void PerspCorrection::setEditProvider(EditDataProvider* provider)
 {
     lines->setEditProvider(provider);
+    dragSubscriber_->setEditProvider(provider);
 }
 
 void PerspCorrection::lineChanged(void)
@@ -968,5 +994,187 @@ void LinesCallbacks::switchOffEditMode(void)
 {
     if (tool) {
         tool->switchOffEditMode();
+    }
+}
+
+// --- PerspectiveDragSubscriber implementation ---
+
+PerspectiveDragSubscriber::PerspectiveDragSubscriber()
+    : EditSubscriber(ET_OBJECTS),
+      canvas_area_(new EditRectangle())
+{
+    // Invisible hit-test rectangle covering the whole image
+    canvas_area_->filled = true;
+    canvas_area_->topLeft = rtengine::Coord(0, 0);
+    canvas_area_->bottomRight = rtengine::Coord(1, 1); // updated in setActive
+    mouseOverGeometry.push_back(canvas_area_.get());
+
+    // Create reference grid lines (4 per axis at 20/40/60/80%)
+    for (int i = 0; i < GRID_LINES; ++i) {
+        auto hLine = std::unique_ptr<Line>(new Line());
+        hLine->innerLineWidth = 1.0f;
+        hLine->setInnerLineColor(0.7, 0.85, 1.0);  // light blue
+        hLine->setOuterLineColor(0.0, 0.0, 0.0);
+        hLine->opacity = 0.4f;
+        hLine->datum = Geometry::IMAGE;
+        visibleGeometry.push_back(hLine.get());
+        gridLines_.push_back(std::move(hLine));
+
+        auto vLine = std::unique_ptr<Line>(new Line());
+        vLine->innerLineWidth = 1.0f;
+        vLine->setInnerLineColor(0.7, 0.85, 1.0);
+        vLine->setOuterLineColor(0.0, 0.0, 0.0);
+        vLine->opacity = 0.4f;
+        vLine->datum = Geometry::IMAGE;
+        visibleGeometry.push_back(vLine.get());
+        gridLines_.push_back(std::move(vLine));
+    }
+
+    // Center crosshair lines (more prominent, dashed)
+    centerH_ = std::unique_ptr<Line>(new Line());
+    centerH_->innerLineWidth = 1.2f;
+    centerH_->setInnerLineColor(1.0, 0.9, 0.3);  // yellow
+    centerH_->setOuterLineColor(0.0, 0.0, 0.0);
+    centerH_->opacity = 0.6f;
+    centerH_->setDashed(true);
+    centerH_->datum = Geometry::IMAGE;
+    visibleGeometry.push_back(centerH_.get());
+
+    centerV_ = std::unique_ptr<Line>(new Line());
+    centerV_->innerLineWidth = 1.2f;
+    centerV_->setInnerLineColor(1.0, 0.9, 0.3);
+    centerV_->setOuterLineColor(0.0, 0.0, 0.0);
+    centerV_->opacity = 0.6f;
+    centerV_->setDashed(true);
+    centerV_->datum = Geometry::IMAGE;
+    visibleGeometry.push_back(centerV_.get());
+}
+
+void PerspectiveDragSubscriber::updateGridGeometry(int iw, int ih, double hPersp, double vPersp)
+{
+    // Map perspective values (-100..+100) to corner-shift factors.
+    // Positive H: right side compresses vertically (lines converge right).
+    // Positive V: top side compresses horizontally (lines converge up).
+    const double kh = hPersp / 100.0 * 0.20;
+    const double kv = vPersp / 100.0 * 0.20;
+
+    // Four corners of the warped rectangle (bilinear trapezoid)
+    const double tl_x = 0.0  + kv * iw,  tl_y = 0.0  + kh * ih;
+    const double tr_x = (double)iw - kv * iw,  tr_y = 0.0  - kh * ih;
+    const double bl_x = 0.0  - kv * iw,  bl_y = (double)ih - kh * ih;
+    const double br_x = (double)iw + kv * iw,  br_y = (double)ih + kh * ih;
+
+    // Helper: bilinear interpolation of corners at (u, v) in [0,1]²
+    auto mapPoint = [&](double u, double v) -> rtengine::Coord {
+        double x = (1 - v) * ((1 - u) * tl_x + u * tr_x)
+                 +      v  * ((1 - u) * bl_x + u * br_x);
+        double y = (1 - v) * ((1 - u) * tl_y + u * tr_y)
+                 +      v  * ((1 - u) * bl_y + u * br_y);
+        return rtengine::Coord(static_cast<int>(x), static_cast<int>(y));
+    };
+
+    for (int i = 0; i < GRID_LINES; ++i) {
+        double frac = (i + 1.0) / (GRID_LINES + 1.0);
+
+        // Horizontal line at v=frac, u goes 0→1
+        gridLines_[i * 2]->begin = mapPoint(0.0, frac);
+        gridLines_[i * 2]->end   = mapPoint(1.0, frac);
+
+        // Vertical line at u=frac, v goes 0→1
+        gridLines_[i * 2 + 1]->begin = mapPoint(frac, 0.0);
+        gridLines_[i * 2 + 1]->end   = mapPoint(frac, 1.0);
+    }
+
+    // Center crosshair
+    centerH_->begin = mapPoint(0.0, 0.5);
+    centerH_->end   = mapPoint(1.0, 0.5);
+    centerV_->begin = mapPoint(0.5, 0.0);
+    centerV_->end   = mapPoint(0.5, 1.0);
+}
+
+void PerspectiveDragSubscriber::setActive(bool active)
+{
+    EditDataProvider* provider = getEditProvider();
+    if (!provider) return;
+
+    bool isActive = (this == provider->getCurrSubscriber());
+    if (isActive == active) return;
+
+    if (active) {
+        int iw, ih;
+        provider->getImageSize(iw, ih);
+        canvas_area_->bottomRight = rtengine::Coord(iw, ih);
+        double h = perspective_ ? perspective_->horiz->getValue() : 0.0;
+        double v = perspective_ ? perspective_->vert->getValue() : 0.0;
+        updateGridGeometry(iw, ih, h, v);
+        subscribe();
+    } else {
+        unsubscribe();
+    }
+}
+
+bool PerspectiveDragSubscriber::button1Pressed(int modifierKey)
+{
+    EditDataProvider* dp = getEditProvider();
+    if (!dp || !perspective_) return false;
+
+    // Store initial slider values so drag is cumulative from start
+    startHoriz_ = perspective_->horiz->getValue();
+    startVert_ = perspective_->vert->getValue();
+    action = Action::DRAGGING;
+    return false; // no redraw needed yet
+}
+
+bool PerspectiveDragSubscriber::drag1(int modifierKey)
+{
+    EditDataProvider* dp = getEditProvider();
+    if (!dp || !perspective_) return false;
+
+    int iw, ih;
+    dp->getImageSize(iw, ih);
+    if (iw <= 0 || ih <= 0) return false;
+
+    // Map drag distance to perspective values.
+    // A drag across half the image = 25 units of perspective change.
+    double horizDelta = (dp->deltaImage.x / (double)iw) * 50.0;
+    double vertDelta = (dp->deltaImage.y / (double)ih) * 50.0;
+
+    double newH = std::max(-100.0, std::min(100.0, startHoriz_ + horizDelta));
+    double newV = std::max(-100.0, std::min(100.0, startVert_ + vertDelta));
+
+    // Update slider visuals
+    perspective_->horiz->setValue(newH);
+    perspective_->vert->setValue(newV);
+
+    // Update grid overlay to reflect new perspective
+    updateGridGeometry(iw, ih, newH, newV);
+
+    // Trigger reprocessing
+    perspective_->adjusterChanged(perspective_->horiz, newH);
+
+    return true; // redraw canvas to show updated grid
+}
+
+bool PerspectiveDragSubscriber::button1Released()
+{
+    action = Action::NONE;
+    return false;
+}
+
+bool PerspectiveDragSubscriber::mouseOver(int modifierKey)
+{
+    return false;
+}
+
+CursorShape PerspectiveDragSubscriber::getCursor(int objectID, int xPos, int yPos) const
+{
+    return CSHandOpen;
+}
+
+void PerspectiveDragSubscriber::switchOffEditMode()
+{
+    action = Action::NONE;
+    if (getEditProvider()) {
+        unsubscribe();
     }
 }

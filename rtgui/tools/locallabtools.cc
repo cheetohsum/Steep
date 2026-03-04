@@ -1301,7 +1301,7 @@ void LocallabColor::read(const rtengine::procparams::ProcParams* pp, const Param
     if (index < (int)pp->locallab.spots.size()) {
         const LocallabParams::LocallabSpot& spot = pp->locallab.spots.at(index);
 
-        exp->set_visible(spot.visicolor);
+        exp->set_visible(true);
         exp->setEnabled(spot.expcolor);
         complexity->set_active(spot.complexcolor);
 
@@ -1479,7 +1479,7 @@ void LocallabColor::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pe
         LocallabParams::LocallabSpot& spot = pp->locallab.spots.at(index);
 
         spot.expcolor = exp->getEnabled();
-        spot.visicolor = exp->get_visible();
+        spot.visicolor = true;
         spot.complexcolor = complexity->get_active_row_number();
 
         spot.lightness = lightness->getIntValue();
@@ -3269,7 +3269,7 @@ void LocallabExposure::read(const rtengine::procparams::ProcParams* pp, const Pa
     if (index < (int)pp->locallab.spots.size()) {
         const LocallabParams::LocallabSpot& spot = pp->locallab.spots.at(index);
 
-        exp->set_visible(spot.visiexpose);
+        exp->set_visible(true);
         exp->setEnabled(spot.expexpose);
         complexity->set_active(spot.complexexpose);
 /*
@@ -3382,7 +3382,7 @@ void LocallabExposure::write(rtengine::procparams::ProcParams* pp, ParamsEdited*
         LocallabParams::LocallabSpot& spot = pp->locallab.spots.at(index);
 
         spot.expexpose = exp->getEnabled();
-        spot.visiexpose = exp->get_visible();
+        spot.visiexpose = true;
         spot.complexexpose = complexity->get_active_row_number();
 /*
         if (expMethod->get_active_row_number() == 0) {
@@ -5130,7 +5130,7 @@ void LocallabShadow::read(const rtengine::procparams::ProcParams* pp, const Para
     if (index < (int)pp->locallab.spots.size()) {
         const LocallabParams::LocallabSpot& spot = pp->locallab.spots.at(index);
 
-        exp->set_visible(spot.visishadhigh);
+        exp->set_visible(true);
         exp->setEnabled(spot.expshadhigh);
         complexity->set_active(spot.complexshadhigh);
 
@@ -5311,7 +5311,7 @@ void LocallabShadow::write(rtengine::procparams::ProcParams* pp, ParamsEdited* p
         LocallabParams::LocallabSpot& spot = pp->locallab.spots.at(index);
 
         spot.expshadhigh = exp->getEnabled();
-        spot.visishadhigh = exp->get_visible();
+        spot.visishadhigh = true;
         spot.complexshadhigh = complexity->get_active_row_number();
 
         if (shMethod->get_active_row_number() == 0) {
@@ -7285,7 +7285,7 @@ void LocallabVibrance::read(const rtengine::procparams::ProcParams* pp, const Pa
     if (index < (int)pp->locallab.spots.size()) {
         const LocallabParams::LocallabSpot& spot = pp->locallab.spots.at(index);
 
-        exp->set_visible(spot.visivibrance);
+        exp->set_visible(true);
         exp->setEnabled(spot.expvibrance);
         complexity->set_active(spot.complexvibrance);
 
@@ -7341,7 +7341,7 @@ void LocallabVibrance::write(rtengine::procparams::ProcParams* pp, ParamsEdited*
         LocallabParams::LocallabSpot& spot = pp->locallab.spots.at(index);
 
         spot.expvibrance = exp->getEnabled();
-        spot.visivibrance = exp->get_visible();
+        spot.visivibrance = true;
         spot.complexvibrance = complexity->get_active_row_number();
 
         spot.saturated = saturated->getIntValue();
@@ -8074,7 +8074,7 @@ void LocallabSoft::read(const rtengine::procparams::ProcParams* pp, const Params
     if (index < (int)pp->locallab.spots.size()) {
         const LocallabParams::LocallabSpot& spot = pp->locallab.spots.at(index);
 
-        exp->set_visible(spot.visisoft);
+        exp->set_visible(true);
         exp->setEnabled(spot.expsoft);
         complexity->set_active(spot.complexsoft);
 
@@ -8109,7 +8109,7 @@ void LocallabSoft::write(rtengine::procparams::ProcParams* pp, ParamsEdited* ped
         LocallabParams::LocallabSpot& spot = pp->locallab.spots.at(index);
 
         spot.expsoft = exp->getEnabled();
-        spot.visisoft = exp->get_visible();
+        spot.visisoft = true;
         spot.complexsoft = complexity->get_active_row_number();
 
         if (softMethod->get_active_row_number() == 0) {
@@ -9424,7 +9424,7 @@ void LocallabBlur::read(const rtengine::procparams::ProcParams* pp, const Params
     if (index < (int)pp->locallab.spots.size()) {
         const LocallabParams::LocallabSpot& spot = pp->locallab.spots.at(index);
 
-        exp->set_visible(spot.visiblur);
+        exp->set_visible(true);
         exp->setEnabled(spot.expblur);
         complexity->set_active(spot.complexblur);
 
@@ -9587,7 +9587,7 @@ void LocallabBlur::write(rtengine::procparams::ProcParams* pp, ParamsEdited* ped
         LocallabParams::LocallabSpot& spot = pp->locallab.spots.at(index);
 
         spot.expblur = exp->getEnabled();
-        spot.visiblur = exp->get_visible();
+        spot.visiblur = true;
         spot.complexblur = complexity->get_active_row_number();
 
         if (blMethod->get_active_row_number() == 0) {

@@ -713,7 +713,7 @@ button.Right {
 }
 
 #PresetListPanel .preset-card-label {
-    font-size: 0.85em;
+    font-size: 0.72em;
 }
 
 #PresetListPanel .preset-special {
@@ -2030,3 +2030,29 @@ progressbar progress {
 .grid-spacing > * {
     margin: 0.1666666666666666em;
 }
+
+/*** Queue Overlay Drawer **********************************************************************/
+
+#QueueOverlayBackdrop {
+    background-color: rgba(0, 0, 0, 0.55);
+}
+
+#QueueDrawerBox {
+    padding: 2px 4px 0 4px;
+    background-color: #1e2240;
+}
+
+/* Queue overlay: compact frame styling */
+#QueueDrawerBox frame {
+    margin: 0;
+    padding: 0;
+}
+#QueueDrawerBox frame > border {
+    margin-bottom: 0;
+}
+#QueueDrawerBox frame > label {
+    padding: 0.15em 0.4em;
+    font-size: 0.85em;
+}
+
+/*** end Queue Overlay Drawer ******************************************************************/

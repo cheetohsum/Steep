@@ -19,6 +19,7 @@
 #pragma once
 
 #include "controllines.h"
+#include "editcallbacks.h"
 #include "lensgeomlistener.h"
 #include "toolpanel.h"
 #include "widgets/basic/adjuster.h"
@@ -26,6 +27,43 @@
 #include "rtengine/tweakoperator.h"
 
 #include <gtkmm.h>
+
+class EditRectangle;
+class Line;
+class PerspCorrection;
+
+// Interactive drag-based perspective editing.
+// Drag vertically to adjust vertical perspective, horizontally for horizontal.
+// Displays a reference grid overlay on the image preview.
+class PerspectiveDragSubscriber : public EditSubscriber
+{
+public:
+    PerspectiveDragSubscriber();
+
+    void setCallback(PerspCorrection* persp) { perspective_ = persp; }
+    void setActive(bool active);
+
+    // EditSubscriber overrides
+    bool button1Pressed(int modifierKey) override;
+    bool button1Released() override;
+    bool drag1(int modifierKey) override;
+    bool mouseOver(int modifierKey) override;
+    CursorShape getCursor(int objectID, int xPos, int yPos) const override;
+    void switchOffEditMode() override;
+
+private:
+    static constexpr int GRID_LINES = 4;  // lines per axis (at 20/40/60/80%)
+
+    void updateGridGeometry(int iw, int ih, double hPersp, double vPersp);
+
+    PerspCorrection* perspective_ = nullptr;
+    std::unique_ptr<EditRectangle> canvas_area_;
+    std::vector<std::unique_ptr<Line>> gridLines_;  // perspective grid
+    std::unique_ptr<Line> centerH_;  // center crosshair horizontal
+    std::unique_ptr<Line> centerV_;  // center crosshair vertical
+    double startHoriz_ = 0;
+    double startVert_ = 0;
+};
 
 class PerspCorrectionPanelListener
 {
@@ -41,6 +79,7 @@ class PerspCorrection final :
     public AdjusterListener,
     public FoldableToolPanel
 {
+    friend class PerspectiveDragSubscriber;
 
 protected:
     bool render = true;
@@ -60,6 +99,7 @@ protected:
     Adjuster* camera_shift_vert;
     Adjuster* camera_yaw;
     std::unique_ptr<ControlLineManager> lines;
+    std::unique_ptr<PerspectiveDragSubscriber> dragSubscriber_;
     Gtk::Button* lines_button_apply;
     Gtk::ToggleButton* lines_button_edit;
     Gtk::Button* lines_button_erase;
@@ -131,6 +171,7 @@ public:
         bool projection_shift_add,
         bool projection_rotate_add);
     void setControlLineEditMode(bool active);
+    void setDragEditMode(bool active);
     void setEditProvider (EditDataProvider* provider) override;
     void setLensGeomListener (LensGeomListener* listener)
     {

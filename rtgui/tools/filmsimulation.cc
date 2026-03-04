@@ -75,12 +75,11 @@ FilmSimulation::FilmSimulation()
 
     m_clutComboBoxConn = m_clutComboBox->signal_changed().connect( sigc::mem_fun( *this, &FilmSimulation::onClutSelected ) );
     getSummaryBox()->pack_start( *m_clutComboBox );
+    getSummaryBox()->show_all();
 
     m_strength = Gtk::manage( new Adjuster( M("TP_FILMSIMULATION_STRENGTH"), 0., 100, 1., 100 ) );
     m_strength->setAdjusterListener( this );
-
-    getSummaryBox()->pack_start( *m_strength, Gtk::PACK_SHRINK, 0 );
-    getSummaryBox()->show_all();
+    pack_start( *m_strength, Gtk::PACK_SHRINK, 0 );
 
 }
 

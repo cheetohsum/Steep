@@ -40,7 +40,7 @@ using namespace rtengine::procparams;
 const Glib::ustring LensProfilePanel::TOOL_NAME = "lensprof";
 
 LensProfilePanel::LensProfilePanel() :
-    FoldableToolPanel(this, TOOL_NAME, M("TP_LENSPROFILE_LABEL")),
+    FoldableToolPanel(this, TOOL_NAME, M("TP_LENSPROFILE_LABEL"), false, true),
     lcModeChanged(false),
     lcpFileChanged(false),
     useDistChanged(false),
@@ -77,14 +77,10 @@ LensProfilePanel::LensProfilePanel() :
 
     // Main containers:
 
-    Gtk::Frame *nodesFrame = Gtk::manage(new Gtk::Frame(M("TP_LENSPROFILE_MODE_HEADER")));
-    nodesFrame->set_label_align (0.025, 0.5);
+    correctExpanded = false;
 
     modesGrid->get_style_context()->add_class("grid-spacing");
     setExpandAlignProperties(modesGrid, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
-
-    Gtk::Frame *distFrame = Gtk::manage(new Gtk::Frame(M("TP_LENSPROFILE_USE_HEADER")));
-    distFrame->set_label_align (0.025, 0.5);
 
     distGrid->get_style_context()->add_class("grid-spacing");
     setExpandAlignProperties(distGrid, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
@@ -142,36 +138,65 @@ LensProfilePanel::LensProfilePanel() :
 
     bindCurrentFolder(*corrLcpFileChooser, options.lastLensProfileDir);
 
-    // Choice of properties to correct, applicable to all modes:
+    // Top-level mode radios:
 
-    // Populate modes grid:
+    modesGrid->attach(*corrLensfunAutoRB, 0, 0, 3, 1);
+    modesGrid->attach(*corrLensfunManualRB, 0, 1, 3, 1);
 
-    modesGrid->attach(*corrOffRB, 0, 0, 3, 1);
-    modesGrid->attach(*corrMetadata, 0, 1, 3, 1);
-    modesGrid->attach(*corrLensfunAutoRB, 0, 2, 3, 1);
-    modesGrid->attach(*corrLensfunManualRB, 0, 3, 3, 1);
+    // Manual sub-options (shown when Manually selected or any sub-option is active):
 
-    modesGrid->attach(*lensfunCamerasLbl, 0, 4, 1, 1);
-    modesGrid->attach(*lensfunCameras, 1, 4, 1, 1);
-    modesGrid->attach(*lensfunLensesLbl, 0, 5, 1, 1);
-    modesGrid->attach(*lensfunLenses, 1, 5, 1, 1);
-    modesGrid->attach(*warning, 2, 4, 1, 2);
+    Gtk::Grid *manualGrid = Gtk::manage(new Gtk::Grid());
+    manualGrid->get_style_context()->add_class("grid-spacing");
+    setExpandAlignProperties(manualGrid, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
 
-    modesGrid->attach(*corrLcpFileRB, 0, 6, 1, 1);
-    modesGrid->attach(*corrLcpFileChooser, 1, 6, 1, 1);
+    manualGrid->attach(*corrMetadata, 0, 0, 3, 1);
+    manualGrid->attach(*lensfunCamerasLbl, 0, 1, 1, 1);
+    manualGrid->attach(*lensfunCameras, 1, 1, 1, 1);
+    manualGrid->attach(*lensfunLensesLbl, 0, 2, 1, 1);
+    manualGrid->attach(*lensfunLenses, 1, 2, 1, 1);
+    manualGrid->attach(*warning, 2, 1, 1, 2);
+    manualGrid->attach(*corrLcpFileRB, 0, 3, 1, 1);
+    manualGrid->attach(*corrLcpFileChooser, 1, 3, 1, 1);
 
-    // Populate distortions grid:
+    manualSubBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
+    manualSubBox->set_margin_start(16);
+    manualSubBox->pack_start(*manualGrid, Gtk::PACK_SHRINK);
+    manualSubBox->set_no_show_all(true);
+
+    // Clickable "Correct" header
+    correctLabel = Gtk::manage(new Gtk::Label());
+    correctLabel->set_markup(Glib::ustring("<b>\u25B8 ") + M("TP_LENSPROFILE_USE_HEADER") + "</b>");
+    correctLabel->set_halign(Gtk::ALIGN_START);
+    correctLabel->set_margin_top(8);
+    correctLabel->set_margin_bottom(2);
+
+    Gtk::Button *correctHeader = Gtk::manage(new Gtk::Button());
+    correctHeader->set_name("CollapsibleHeader");
+    correctHeader->set_relief(Gtk::RELIEF_NONE);
+    correctHeader->set_can_focus(false);
+    correctHeader->set_halign(Gtk::ALIGN_START);
+    correctHeader->add(*correctLabel);
+    correctHeader->signal_clicked().connect(
+        sigc::mem_fun(*this, &LensProfilePanel::toggleCorrect));
+
+    // Correct content (hidden by default)
+    correctContent = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
+    correctContent->set_no_show_all(true);
 
     distGrid->attach(*ckbUseDist, 0, 0, 1, 1);
     distGrid->attach(*ckbUseVign, 0, 1, 1, 1);
     distGrid->attach(*ckbUseCA, 0, 2, 1, 1);
 
-    // Attach grids:
-    nodesFrame->add(*modesGrid);
-    distFrame->add(*distGrid);
+    correctContent->pack_start(*distGrid, Gtk::PACK_SHRINK);
 
-    pack_start(*nodesFrame, Gtk::PACK_EXPAND_WIDGET);
-    pack_start(*distFrame, Gtk::PACK_EXPAND_WIDGET);
+    // Wrap all content in a single hideable box
+    contentWrapper = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
+    contentWrapper->pack_start(*modesGrid, Gtk::PACK_SHRINK);
+    contentWrapper->pack_start(*manualSubBox, Gtk::PACK_SHRINK);
+    contentWrapper->pack_start(*correctHeader, Gtk::PACK_SHRINK);
+    contentWrapper->pack_start(*correctContent, Gtk::PACK_SHRINK);
+    contentWrapper->set_no_show_all(true);
+    pack_start(*contentWrapper, Gtk::PACK_EXPAND_WIDGET);
 
     // Signals:
 
@@ -182,7 +207,6 @@ LensProfilePanel::LensProfilePanel() :
 
     lensfunCameras->signal_changed().connect(sigc::mem_fun(*this, &LensProfilePanel::onLensfunCameraChanged));
     lensfunLenses->signal_changed().connect(sigc::mem_fun(*this, &LensProfilePanel::onLensfunLensChanged));
-    corrOffRB->signal_toggled().connect(sigc::bind(sigc::mem_fun(*this, &LensProfilePanel::onCorrModeChanged), corrOffRB));
     corrMetadata->signal_toggled().connect(sigc::bind(sigc::mem_fun(*this, &LensProfilePanel::onCorrModeChanged), corrMetadata));
     corrLensfunAutoRB->signal_toggled().connect(sigc::bind(sigc::mem_fun(*this, &LensProfilePanel::onCorrModeChanged), corrLensfunAutoRB));
     corrLensfunManualRB->signal_toggled().connect(sigc::bind(sigc::mem_fun(*this, &LensProfilePanel::onCorrModeChanged), corrLensfunManualRB));
@@ -196,23 +220,47 @@ void LensProfilePanel::read(const rtengine::procparams::ProcParams* pp, const Pa
 
     // corrLensfunAutoRB->set_sensitive(true);
 
+    // Helper to show content + manual sub-box
+    auto showContent = [this](bool showManualSub) {
+        contentWrapper->set_no_show_all(false);
+        contentWrapper->show_all();
+        contentWrapper->set_no_show_all(true);
+        if (showManualSub) {
+            manualSubBox->set_no_show_all(false);
+            manualSubBox->show_all();
+            manualSubBox->set_no_show_all(true);
+        } else {
+            manualSubBox->hide();
+        }
+        // Keep correctContent in its current state
+        if (!correctExpanded) {
+            correctContent->hide();
+        }
+    };
+
     switch (pp->lensProf.lcMode) {
         case procparams::LensProfParams::LcMode::LCP: {
+            setEnabled(true);
             corrLcpFileRB->set_active(true);
             setManualParamsVisibility(false);
+            showContent(true);
             break;
         }
 
         case procparams::LensProfParams::LcMode::LENSFUNAUTOMATCH: {
+            setEnabled(true);
             corrLensfunAutoRB->set_active(true);
             if (batchMode) {
                 setManualParamsVisibility(false);
             }
+            showContent(false);
             break;
         }
 
         case procparams::LensProfParams::LcMode::LENSFUNMANUAL: {
+            setEnabled(true);
             corrLensfunManualRB->set_active(true);
+            showContent(true);
             break;
         }
 
@@ -220,25 +268,29 @@ void LensProfilePanel::read(const rtengine::procparams::ProcParams* pp, const Pa
             if (metadata) {
                 auto metadataCorrection= rtengine::MetadataLensCorrectionFinder::findCorrection(metadata);
                 if (metadataCorrection) {
+                    setEnabled(true);
                     corrMetadata->set_active(true);
                     corrMetadata->set_sensitive(true);
+                    showContent(true);
+                    setManualParamsVisibility(false);
                 } else {
                     corrMetadata->set_sensitive(false);
-                    corrOffRB->set_active(true);
+                    setEnabled(false);
+                    contentWrapper->hide();
                 }
             } else {
                 corrMetadata->set_sensitive(false);
+                setEnabled(false);
+                contentWrapper->hide();
             }
             break;
         }
 
         case procparams::LensProfParams::LcMode::NONE: {
+            setEnabled(false);
             corrOffRB->set_active(true);
             setManualParamsVisibility(false);
-
-            ckbUseDist->set_sensitive(false);
-            ckbUseVign->set_sensitive(false);
-            ckbUseCA->set_sensitive(false);
+            contentWrapper->hide();
             break;
         }
     }
@@ -332,7 +384,10 @@ void LensProfilePanel::read(const rtengine::procparams::ProcParams* pp, const Pa
 
 void LensProfilePanel::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited)
 {
-    if (corrLcpFileRB->get_active()) {
+    if (!getEnabled()) {
+        pp->lensProf.lcMode = procparams::LensProfParams::LcMode::NONE;
+    }
+    else if (corrLcpFileRB->get_active()) {
         pp->lensProf.lcMode = procparams::LensProfParams::LcMode::LCP;
     }
     else if (corrMetadata->get_active()) {
@@ -344,7 +399,7 @@ void LensProfilePanel::write(rtengine::procparams::ProcParams* pp, ParamsEdited*
     else if (corrLensfunAutoRB->get_active()) {
         pp->lensProf.lcMode = procparams::LensProfParams::LcMode::LENSFUNAUTOMATCH;
     }
-    else if (corrOffRB->get_active()) {
+    else {
         pp->lensProf.lcMode = procparams::LensProfParams::LcMode::NONE;
     }
 
@@ -520,25 +575,59 @@ void LensProfilePanel::onLensfunLensChanged()
     updateLensfunWarning();
 }
 
+void LensProfilePanel::toggleCorrect()
+{
+    correctExpanded = !correctExpanded;
+    if (correctExpanded) {
+        correctLabel->set_markup(Glib::ustring("<b>\u25BE ") + M("TP_LENSPROFILE_USE_HEADER") + "</b>");
+        correctContent->set_no_show_all(false);
+        correctContent->show_all();
+        correctContent->set_no_show_all(true);
+    } else {
+        correctLabel->set_markup(Glib::ustring("<b>\u25B8 ") + M("TP_LENSPROFILE_USE_HEADER") + "</b>");
+        correctContent->hide();
+    }
+}
+
+void LensProfilePanel::enabledChanged()
+{
+    if (getEnabled()) {
+        contentWrapper->set_no_show_all(false);
+        contentWrapper->show_all();
+        contentWrapper->set_no_show_all(true);
+
+        // If no radio is active (first enable), default to auto-match
+        if (!corrMetadata->get_active() && !corrLensfunAutoRB->get_active() &&
+            !corrLensfunManualRB->get_active() && !corrLcpFileRB->get_active()) {
+            corrLensfunAutoRB->set_active(true);
+        }
+
+        // Hide manualSubBox if auto is selected
+        if (corrLensfunAutoRB->get_active()) {
+            manualSubBox->hide();
+        }
+
+        // Keep correctContent collapsed
+        if (!correctExpanded) {
+            correctContent->hide();
+        }
+    } else {
+        contentWrapper->hide();
+    }
+
+    if (listener) {
+        listener->panelChanged(EvLensCorrMode,
+            getEnabled() ? M("GENERAL_ENABLED") : M("GENERAL_DISABLED"));
+    }
+}
+
 void LensProfilePanel::onCorrModeChanged(const Gtk::RadioButton* rbChanged)
 {
     if (rbChanged->get_active()) {
         // because the method gets called for the enabled AND the disabled RadioButton, we do the processing only for the enabled one
         Glib::ustring mode;
 
-        if (rbChanged == corrOffRB) {
-            lcModeChanged = true;
-            useLensfunChanged = true;
-            lensfunAutoChanged = true;
-            lcpFileChanged = false;
-
-            ckbUseDist->set_sensitive(false);
-            ckbUseVign->set_sensitive(false);
-            ckbUseCA->set_sensitive(false);
-
-            mode = M("GENERAL_NONE");
-
-        } else if (rbChanged == corrLensfunAutoRB) {
+        if (rbChanged == corrLensfunAutoRB) {
             lcModeChanged = true;
             useLensfunChanged = true;
             lensfunAutoChanged = true;
@@ -549,7 +638,6 @@ void LensProfilePanel::onCorrModeChanged(const Gtk::RadioButton* rbChanged)
             ckbUseDist->set_sensitive(true);
             ckbUseVign->set_sensitive(true);
             ckbUseCA->set_sensitive(true);
-
 
             const bool disabled = disableListener();
             if (batchMode) {
@@ -619,10 +707,21 @@ void LensProfilePanel::onCorrModeChanged(const Gtk::RadioButton* rbChanged)
 
         updateLensfunWarning();
 
-        if (rbChanged == corrLensfunManualRB || (!batchMode && rbChanged == corrLensfunAutoRB)) {
-            setManualParamsVisibility(true);
-        } else {
+        // Show/hide manual sub-options: visible for everything except Auto
+        if (rbChanged == corrLensfunAutoRB) {
+            manualSubBox->hide();
             setManualParamsVisibility(false);
+        } else {
+            manualSubBox->set_no_show_all(false);
+            manualSubBox->show_all();
+            manualSubBox->set_no_show_all(true);
+
+            // Camera/Lens only visible for lensfun manual mode
+            if (rbChanged == corrLensfunManualRB) {
+                setManualParamsVisibility(true);
+            } else {
+                setManualParamsVisibility(false);
+            }
         }
 
         if (listener) {

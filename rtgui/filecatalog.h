@@ -97,6 +97,15 @@ private:
     Gtk::Box* fltrLabelbox;
     Gtk::Box* fltrVbox1;
 
+    // Color label hover-expand animation
+    Gtk::Box* colorLabelContainer_;
+    Gtk::DrawingArea* colorLabelSummary_;
+    Gtk::Revealer* colorLabelRevealer_;
+    bool colorLabelExpanded_;
+    double colorSummaryOpacity_;
+    sigc::connection colorFadeConn_;
+    sigc::connection colorCollapseDelay_;
+
     Gtk::Box* fltrEditedBox;
     Gtk::Box* fltrRecentlySavedBox;
     Gtk::Box* fltrVbox2;
@@ -173,6 +182,11 @@ private:
     std::set<std::string> albumWhitelist_;
     bool inAlbumMode_;
     Glib::ustring savedDirectory_;
+
+    // Color label hover-expand handlers
+    bool onColorLabelChildEnter(GdkEventCrossing* event);
+    bool onColorLabelChildLeave(GdkEventCrossing* event);
+    bool onColorLabelFadeTick();
 
     void addAndOpenFile (const Glib::ustring& fname);
     void addFile (const Glib::ustring& fName);

@@ -1205,7 +1205,8 @@ int refreshmap[rtengine::NUMOFEVENTS] = {
     ALLNORAW,        //EvPointColorSaturation
     ALLNORAW,        //EvPointColorLuminance
     ALLNORAW,        //EvPointColorRange
-    ALLNORAW         //EvPointColorTargetAdd
+    ALLNORAW,        //EvPointColorTargetAdd
+    AUTOEXP          //EvRGBMasterCurve
 };
 
 

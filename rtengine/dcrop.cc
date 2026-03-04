@@ -149,6 +149,7 @@ void Crop::update(int todo)
 {
     MyMutex::MyLock cropLock(cropMutex);
     ProcParams& params = *parent->params;
+    fprintf(stderr, "AI Denoise: Crop::update called todo=0x%x aidn_enabled=%d\n", todo, (int)params.aiDenoise.enabled);
 //       CropGUIListener* cropgl;
 
     // No need to update todo here, since it has already been changed in ImprocCoordinator::updatePreviewImage,
@@ -621,11 +622,29 @@ void Crop::update(int todo)
         }
 
         // AI Denoise blending (uses cached result from subprocess)
+        fprintf(stderr, "AI Denoise dcrop blend check: enabled=%d blend=%.1f todo=0x%x\n",
+                (int)params.aiDenoise.enabled, params.aiDenoise.blend, todo);
         if (params.aiDenoise.enabled && params.aiDenoise.blend > 0) {
             auto& aidm = AIDenoiseManager::getInstance();
             if (aidm.isCacheValid(parent->imgsrc->getFileName(), params.aiDenoise.isoConditioning)) {
-                ImProcFunctions::blendAIDenoise(origCrop, aidm.getCachedResult(),
+                const Imagefloat* dn = aidm.getCachedResult();
+                // Debug: sample origCrop and denoised values before blend
+                int midY = origCrop->getHeight() / 2;
+                int midX = origCrop->getWidth() / 2;
+                int dnSY = trafy + midY * skip;
+                int dnSX = trafx + midX * skip;
+                fprintf(stderr, "AI Denoise: PRE-BLEND origCrop[%d,%d]=(%.1f,%.1f,%.1f) dn[%d,%d]=(%.1f,%.1f,%.1f) skip=%d crop=%dx%d dn=%dx%d\n",
+                        midY, midX, origCrop->r(midY, midX), origCrop->g(midY, midX), origCrop->b(midY, midX),
+                        dnSY, dnSX,
+                        (dnSY < dn->getHeight() && dnSX < dn->getWidth()) ? dn->r(dnSY, dnSX) : -1.f,
+                        (dnSY < dn->getHeight() && dnSX < dn->getWidth()) ? dn->g(dnSY, dnSX) : -1.f,
+                        (dnSY < dn->getHeight() && dnSX < dn->getWidth()) ? dn->b(dnSY, dnSX) : -1.f,
+                        skip, origCrop->getWidth(), origCrop->getHeight(), dn->getWidth(), dn->getHeight());
+                fprintf(stderr, "AI Denoise: Blending with strength %.1f%%\n", params.aiDenoise.blend);
+                ImProcFunctions::blendAIDenoise(origCrop, dn,
                     params.aiDenoise.blend / 100.0, trafx, trafy, skip);
+                fprintf(stderr, "AI Denoise: POST-BLEND origCrop[%d,%d]=(%.1f,%.1f,%.1f)\n",
+                        midY, midX, origCrop->r(midY, midX), origCrop->g(midY, midX), origCrop->b(midY, midX));
             }
         }
 
@@ -1137,7 +1156,6 @@ void Crop::update(int todo)
             int fw = parent->fw;
 
             if (sp == params.locallab.selspot) {
-                
                 parent->ipf.Lab_Local(1, sp, (float**)shbuffer, labnCrop, labnCrop, reservCrop.get(), savenormtmCrop.get(), savenormretiCrop.get(), lastorigCrop.get(), fw, fh, cropx / skip, cropy / skip, skips(parent->fw, skip), skips(parent->fh, skip), trafx, trafy, trafw, trafh , skip, locRETgainCurve, locRETtransCurve,
                         lllocalcurve2,locallutili, 
                         cllocalcurve2, localclutili,
@@ -1409,6 +1427,23 @@ void Crop::update(int todo)
         // Alberto's local contrast
             parent->ipf.localContrast(labnCrop, labnCrop->L, params.localContrast, false, skip);
         }
+
+        if (params.texture.enabled) {
+            parent->ipf.textureContrast(labnCrop, params.texture, skip);
+        }
+
+        if (params.clarity.enabled) {
+            parent->ipf.clarityContrast(labnCrop, params.clarity, skip);
+        }
+
+        if (params.grain.enabled) {
+            parent->ipf.grainEffect(labnCrop, params.grain, parent->fw, parent->fh);
+        }
+
+        if (params.lensBlur.enabled) {
+            parent->ipf.lensBlur(labnCrop, params.lensBlur, skip);
+        }
+
         parent->ipf.chromiLuminanceCurve(this, 1, labnCrop, labnCrop, parent->chroma_acurve, parent->chroma_bcurve, parent->satcurve, parent->lhskcurve,  parent->clcurve, parent->lumacurve, utili, autili, butili, ccutili, cclutili, clcutili, dummy, dummy);
         parent->ipf.vibrance(labnCrop, params.vibrance, params.toneCurve.hrenabled, params.icm.workingProfile);
         parent->ipf.labColorCorrectionRegions(labnCrop);

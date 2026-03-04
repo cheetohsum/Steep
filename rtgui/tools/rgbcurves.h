@@ -36,14 +36,12 @@ class RGBCurves final :
 
 protected:
     CurveEditorGroup* curveEditorG;
+    DiagonalCurveEditor* Mshape;
     DiagonalCurveEditor* Rshape;
     DiagonalCurveEditor* Gshape;
     DiagonalCurveEditor* Bshape;
 
-    Gtk::CheckButton* lumamode;
-    AdvancedSection* advancedSection;
     bool lastLumamode;
-    sigc::connection lumamodeConn;
 
 public:
     static const Glib::ustring TOOL_NAME;

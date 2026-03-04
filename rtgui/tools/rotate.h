@@ -18,6 +18,8 @@
  */
 #pragma once
 
+#include <functional>
+
 #include <gtkmm.h>
 
 #include "toolpanel.h"
@@ -53,4 +55,5 @@ public:
     {
         rlistener = l;
     }
+    void setLevelingGridCallback (std::function<void(bool)> cb);
 };

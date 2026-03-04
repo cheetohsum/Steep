@@ -64,13 +64,9 @@ Dehaze::Dehaze(): FoldableToolPanel(this, TOOL_NAME, M("TP_DEHAZE_LABEL"), false
     getSummaryBox()->pack_start(*strength);
     getSummaryBox()->show_all();
 
-    advancedSection = Gtk::manage(new AdvancedSection());
-    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
-    Gtk::Box* const advBox = advancedSection->getContentBox();
-
-    advBox->pack_start(*showDepthMap);
-    advBox->pack_start(*depth);
-    advBox->pack_start(*saturation);
+    pack_start(*showDepthMap);
+    pack_start(*depth);
+    pack_start(*saturation);
 }
 
 void Dehaze::read(const ProcParams *pp, const ParamsEdited *pedited)
@@ -168,7 +164,6 @@ void Dehaze::setBatchMode(bool batchMode)
 
     strength->showEditedCB();
     depth->showEditedCB();
-    advancedSection->setBatchMode(batchMode);
 }
 
 void Dehaze::setAdjusterBehavior(bool strengthAdd)

@@ -206,6 +206,7 @@ public:
     void toggleSidePanelsZoomFit();
 
     void saveProfile ();
+    void closeAlbumView ();  // public: close album view + deselect sidebar
     Glib::ustring getShortName ();
     Glib::ustring getFileName () const;
     bool handleShortcutKey (GdkEventKey* event);
@@ -242,6 +243,9 @@ public:
     void updateToolPanelToolLocations(
         const std::vector<Glib::ustring> &favorites, bool cloneFavoriteTools);
 
+    // Returns sidebar/filmstrip insets for queue overlay positioning
+    void getQueueOverlayInsets (int& left, int& top, int& right) const;
+
     void defaultMonitorProfileChanged (const Glib::ustring &profile_name, bool auto_monitor_profile);
 
     bool saveImmediately (const Glib::ustring &filename, const SaveFormat &sf);
@@ -251,11 +255,16 @@ public:
 
     Gtk::Paned* catalogPane;
 
+    // MCP server access
+    rtengine::StagedImageProcessor* getIpc() const { return ipc; }
+    ToolPanelCoordinator* getTpc() const { return tpc; }
+
 private:
     Gtk::Box* filmstripActionBar;
     Gtk::Button* filmstripRankBtns[5];
     int filmstripCurrentRating;
     void updateFilmstripStars(int highlightUpTo);
+    Gtk::Revealer* colorLabelRevealer_;
 
     // Filter bar
     Gtk::ToggleButton* tbFilterBar;
@@ -301,6 +310,8 @@ private:
     //bool bAllSidePanelsVisible;
     Gtk::ToggleButton* beforeAfter;
     Gtk::Overlay* hpanedr;
+    Gtk::Widget* editorToolbarTop_;
+    Gtk::Widget* editorToolbarBottom_;
     Gtk::Image *iHistoryShow, *iHistoryHide;
     Gtk::Image *iTopPanel_1_Show, *iTopPanel_1_Hide;
     Gtk::Image *iRightPanel_1_Show, *iRightPanel_1_Hide;

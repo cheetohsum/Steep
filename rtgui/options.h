@@ -470,6 +470,9 @@ public:
     Glib::ustring rawrefineryPath;  // Path to rawrefinery_cli.py or rawrefinery_cli executable
     Glib::ustring pythonPath;       // Path to python interpreter for rawrefinery
 
+    // MCP Server
+    bool mcpAutoStart;  // Auto-start MCP server when RawTherapee launches
+
     // fast export options
     bool fastexport_bypass_sharpening;
     bool fastexport_bypass_sharpenEdge;

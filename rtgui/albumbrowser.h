@@ -17,6 +17,7 @@
 #pragma once
 
 #include <functional>
+#include <map>
 #include <set>
 #include <vector>
 
@@ -40,6 +41,7 @@ struct AlbumNode {
     std::vector<Glib::ustring> filePaths;   // ALBUM only
     std::vector<SmartAlbumRule> rules;       // SMART_ALBUM only
     bool matchAll;  // true = AND, false = OR for smart album rules
+    Glib::ustring coverPath;  // empty = use first filePath
 };
 
 // For backward compatibility
@@ -50,6 +52,8 @@ struct AlbumEntry {
 
 class CacheImageData;
 class Thumbnail;
+
+class AlbumTreeView; // Forward declaration
 
 class AlbumBrowser : public Gtk::Box
 {
@@ -87,20 +91,34 @@ private:
         Gtk::TreeModelColumn<int> nodeType;  // 0=folder, 1=album, 2=smart
         Gtk::TreeModelColumn<bool> isTarget;
         Gtk::TreeModelColumn<int> nodeId;
-        AlbumColumns () { add(name); add(count); add(nodeType); add(isTarget); add(nodeId); }
+        Gtk::TreeModelColumn<Glib::RefPtr<Gdk::Pixbuf>> searchIcon;
+        Gtk::TreeModelColumn<Glib::RefPtr<Gdk::Pixbuf>> coverPixbuf;
+        AlbumColumns () { add(name); add(count); add(nodeType); add(isTarget); add(nodeId); add(searchIcon); add(coverPixbuf); }
     };
 
     AlbumColumns columns_;
     Gtk::ScrolledWindow* scrollw_;
-    Gtk::TreeView* treeView_;
+    AlbumTreeView* treeView_;
     Glib::RefPtr<Gtk::TreeStore> model_;
     Gtk::Menu* addMenu_;  // dropdown for "+" button
+    Gtk::Button* closeAlbumBtn_;
+    bool selectionChanging_;
+
+    // Hover highlighting via AlbumTreeView subclass + cell_data_func
+    Gtk::TreeModel::Path hoveredPath_;
+    // Custom DnD state (GTK DnD is incompatible with set_hover_selection)
+    int dragSourceNodeId_;
+    double dragStartX_, dragStartY_;
+    bool dragActive_;
+    Gtk::TreeModel::Path dropTargetPath_;  // highlighted during drag
 
     std::vector<AlbumNode> nodes_;
     int nextNodeId_;
     Glib::ustring targetAlbumName_;
     Glib::ustring selectedAlbumName_;
     int selectedNodeId_;
+    int contextMenuNodeId_;
+    Glib::ustring contextMenuAlbumName_;
 
     AlbumSelectedSignal albumSelectedSignal_;
     AlbumViewSignal albumViewSignal_;
@@ -142,8 +160,48 @@ private:
 
     // Smart album evaluation
     std::vector<Glib::ustring> evaluateSmartAlbum (const AlbumNode& node);
+    void runSmartAlbumSearch (int nodeId, bool openAlbum = true);
+
+    Glib::RefPtr<Gdk::Pixbuf> searchPixbuf_;
+    Glib::RefPtr<Gdk::Pixbuf> folderClosedPixbuf_;
+    Glib::RefPtr<Gdk::Pixbuf> folderOpenPixbuf_;
+    Gtk::TreeViewColumn* searchCol_;
+
+    // Cover thumbnails
+    int coverLoadSession_;
+    std::map<int, Glib::RefPtr<Gdk::Pixbuf>> coverCache_;
+    void loadCoverThumbnails(int session);
+
+    // Expansion state tracking
+    std::set<int> expandedFolders_;
+    bool firstTreeLoad_;
+    void saveExpansionState();
+    void restoreExpansionState();
+
+    // Drag and drop
+    void onDragDataGet(const Glib::RefPtr<Gdk::DragContext>& context,
+                       Gtk::SelectionData& data, guint info, guint time);
+    void onDragDataReceived(const Glib::RefPtr<Gdk::DragContext>& context,
+                            int x, int y, const Gtk::SelectionData& data,
+                            guint info, guint time);
+    void moveNode(int sourceId, int newParentId, int siblingId, bool after);
+    bool isDescendantOf(int nodeId, int potentialAncestorId) const;
+    const AlbumNode* findNodeConst(int id) const;
+
+    // Drop position: determines whether a drop goes INTO a folder,
+    // BEFORE/AFTER a sibling (same parent), or to root level
+    enum class DropAction { INTO_FOLDER, BEFORE, AFTER, TO_ROOT };
+    DropAction computeDropAction(int x, int y, Gtk::TreeModel::Path& path, int& destNodeId) const;
+
+    // Sorting
+    void sortNodes(bool byName);  // true=by name, false=by date (creation order / id)
 
     // Serialization helpers
     static Glib::ustring serializeRules (const std::vector<SmartAlbumRule>& rules);
     static std::vector<SmartAlbumRule> deserializeRules (const Glib::ustring& str);
+
+public:
+    void setCoverForAlbum(int nodeId, const Glib::ustring& filePath);
+    int getSelectedNodeId() const { return selectedNodeId_; }
+    void deselectAlbum();
 };

@@ -39,6 +39,7 @@
 #include "aidenoise.h"
 #ifdef RT_AI_MASKING
 #include "aisegmentation.h"
+#include "aiinpainting.h"
 #endif
 
 namespace rtengine
@@ -137,6 +138,22 @@ int init (const Settings* s, const Glib::ustring& baseDir, const Glib::ustring& 
             }
         } else {
             fprintf(stderr, "AI Masking: Model file NOT found at %s\n", modelPath.c_str());
+        }
+    }
+
+    // LaMa inpainting model
+    {
+        const Glib::ustring lamaPath = Glib::build_filename(baseDir, "models", "lama_inpainting.onnx");
+        fprintf(stderr, "AI Inpainting: Looking for model at: %s\n", lamaPath.c_str());
+        if (Glib::file_test(lamaPath, Glib::FILE_TEST_EXISTS)) {
+            fprintf(stderr, "AI Inpainting: Model file found, initializing...\n");
+            if (!getAIInpaintingEngine().init(lamaPath)) {
+                fprintf(stderr, "AI Inpainting: Failed to initialize inpainting engine\n");
+            } else {
+                fprintf(stderr, "AI Inpainting: Engine initialized successfully\n");
+            }
+        } else {
+            fprintf(stderr, "AI Inpainting: Model file NOT found at %s\n", lamaPath.c_str());
         }
     }
 #endif

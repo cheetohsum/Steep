@@ -75,6 +75,8 @@ public:
     void show ();
     void set_tooltip_text (const Glib::ustring &text);
     void setItemSensitivity (int i, bool isSensitive);
+    void triggerShowMenu();    // Show the popup menu programmatically
+    void hideArrowButton();    // Hide the dropdown arrow button
 
 private:
     type_signal_changed messageChanged;

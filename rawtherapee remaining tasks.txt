@@ -1,0 +1,126 @@
+I want you to explore the menus and options presented to the user under each of exposure / detail / color / advanced / selective editing / transform / raw / metadata. for each, I want you to locate 
+options which are overly technical and devise how to redesign the existing menu structures for each to hide those over-complciated options in advanced drop-down menus inside of each of a given tabs submenus For example 
+with exposure, Clip out of gamut colors, Highlt reconstruction, the clip% should be hidden under an advanced drop-down and auto levels should still be there as it is important for users. Another example is in 
+framing sizing/basis/ limit minimum size could be hidden under an advacned drop down, and the min width / min height could be hidden if it wasnt checked too, those kinds of patterns. 
+^TRIED ONCE
+
+When users right click images in the thumbnail preview at the top of the editor or in file explorer add to that context menu the ability to apply ai denoise, to apply auto image edits like exposure too
+
+Users should be able to visually see selective edits in the view for each of the spots they've added, what that area is actually affecting so when we use AI masking it can show a preview of what area is being detected as the masked area correctly.
+
+Add in auto-level to images, which should also be accessible from the right-click context menu.
+
+Add in AI sifting through images to tell which are out of focus or completely white/black
+
+
+In Exposure - move the auto button to be above the slider and centered as a button that just says 'auto' and remove
+  the Clip % / +/- and the reset button. Remove the duplicative highlights, and strength up/down from the tools under
+  exposure and tone. Under Detail move LC Radius, Local Contrast, Luminance, Chrominance - Master, ISO Conditioning,
+  Blend to Advanced. Under Effects. Move the 'set haldcut directory in prefrences' to be over the drop-down button if
+  it is returning no results so it takes up less space in the UI. Move inversional color space, reference exponent,
+  red ratio, blue ratio, pick neutral spots, L*a*B settings all into advanced. Move the Black & white button from
+  Advanced to the top of Exposure, and make it so users click it to enable B&W for the photo and from that same button
+  can drop down to select desat / luminance equalizer / channel mixer to change the method. Make sure the Camera
+  drop-down is above ADvanced, and make sure the frommetadata/auto-selection and File have more descriptive tool names
+  as its hard to tell what they do currently.
+  
+  
+  from the bottom toolbar move the relative colometric and the button to the left of it with the DCI-P3 content and all that jazz to be stored in the options dropdown in the top toolbar. each should be their own nested drop-down in that menu with their existing options.
+ also  move the highlight pixesl without out of gamut colors and soft-proofing buttons also to be in the otpions menu drop down from the top toolbar, and   from the top bar merge the preview red/blue/green/luminosity channels to be in the options menu drop-down from the top tool-bar - it should be its own nested drop-down in that menu with the existing options.
+  
+  
+  move the rating options / color / add to queue button from the top filmstrip in the editor view to be along the top toolbar below the filmstrip centered along its width. 
+remove the dedicated Trash / Checkmark  buttons from the filmstrip each photo itself and make sure theyre accessible by right clicking a photo in the filmstriup.
+
+  
+add a filter button to the top of the UI which when pressed drops down a bar below the top toolbar to allow users to filter based on tagged color, stars, and other potentially relevant EXIF or editing METADATA...
+
+  to the places / recent folders and folders side panel i want you to mvoe the + button to be to the left of recent folders, make it smalelr and not have a box around it (create a custom svg for it) remove the - button and instead just have users right click a place to remove it from the list. reorganize the recent folder dropdown 
+  to have the label inside the drop-down itself and make it vertically more compact and remove the label which is currently to the left of the drop-down. i want you to scale down the text size of folders, and make the header / 
+  sort button be more vertically compact too. to the left of the little drop-down arrow on the folders view i want you to add a button which opens the users file brwoser to choose a specific folder that way
+
+
+on the top toolbar on the brwoser page change the +/- zoom buttons to instead be a zoom slider which increases/decreases thumbnail size. remove the hand button from showing ni the top right, and only display the turn/flip buttons if the user has clicked on an iamge. change the find: text to instead say search inside of the actual saerch box and make sure its veritcally aligned in the box 
+
+ 
+ For the right panel on the File Browser View I need you to remove the : after thingsl ike Aperture, and make sure the Boxes themselves are more vertically compact, and appear to the right of a given option not extending down below it.
+Create a new theme called 'Rem' Theme which is themed after this character [image]
+
+Make sure the Snapshots functionality is in our Options drop-down and spawns a modal window for it
+  
+  can u add an 'add to album' button to the right of queue along the top bar (create a new svg for this), and make
+  sure there is a friendlier heading than ALBUM_HEADER for the list of albums? Allow users to click a below albums
+  to create a new album - plan out how to make this good and robust, when users click on an album it should show a
+  full view of that album over the editor pane, let people put albums in folders they creaet too, and make smart
+  folders with rules like specific >star criteria or other EXIF data. image attached for inspiration
+  
+  
+   in the editor view center the left / right and synchronize buttons which are on the bottom toolbar and make them slightly smaller, create new better svgs for these. make sure the collapse right sidebar button is on the right too.
+
+  To the editors tools in the tool gruops fix text getting truncated with ... we should nver truncate tool name. Fix
+  the WB ":" wrapping to the new line b y removing it, and make the WB selecter button not so wide like the B&W
+  button, and remove the 'click eyedropper or + to add a color target text from the UI, and remvoe the empty grey bar
+  which displays whatever the selected color target is from the UI as its duplicative and taking up space.
+ in the editor view under color for the HSV the color mixer buttons are just thin slits without colored circles to dinciate which colors theyre for, please add in colored circles for each of the Color adjusters. and remove the dark square in css around shadows/mids/highs wheels and reduce the padding bt their lables and the actual wheels
+  
+    To the queue page, make the slider to enable queue be a button that says 'Export Queue' instead. and remove the : for use teamplate/save/fileformat /subsampling, make the default option save to folder and be the top-option as well.
+ remove the 'select a thumbnail to preview its destination path header here' but keep the functionality. Make the buttons for each of those output locations/fileformat much shorter horizontally 
+
+
+After we have selected one album or folder of photos it is very slow to switch to the next album or folder the user has selected, especially if they have 100s or tyhousands of photos in the album. Clicking that
+new folder will take forever for the filmstrip to load, and kind of freeze the folder pane too. 
+  
+  Vertically reduce the size of Places and folders so albums has like 300px more height in the UI on the left sidebar., you can take more away from Folders and Places. Vertically Center/align the Folders/Places/Albums headers andmake
+them all the same font size and font - make sure these edits are consistent across brwoser and editro views.
+
+ in the editor view  under exposure and tone we should have a curve editor where users can adjust an overall point Curve, and an RGB point curve [add iamge from LR]
+ 
+   To the tool groups in the editor on the right sidebar I want you to reduce their vertical size, reduce the text size, and vertically align the tool group label with the > to its left, and remove the ---- dividing line separating tool groups.
+
+  
+ on the before and after view in the editor window make sure befoer and after are centered above the respective before/after images and not off to the side, reduce the text size, debold it, and make the lock icon smaller and also design a new better custom svg for it.
+ 
+  in the editor view to detail I want you to add back in our AI Denoise button running on RawRefinery
+  
+  to the filmstrip view in the editor make it 30px less tall and remove the vertical scrollbar on the right side from ever appearing, also remove the duplicative css bar below the actual toolbar which is making the UI slightly taller 
+than it needs to be.
+
+In the editor view remove the unncessary --- dividing tool subgroups and only keep them bt major changes in tools like bt mixer/grading/wb in color or all the exposure and light settings and the sharpness curve 
+
+in the editor view add to the camera toolgroup tools to adjust chromatic aberration, lens profiles, and defringing and a lens blur tool with a  drop down which allows you to configure an addiitional blur / bokeh / cat eye/ focus range leveraging depth.
+
+
+  ^^^^^^^DONE^^^^^^^
+
+when the UI is fullscreen make sure we stil ldisplay the top toolbar so users can minimize/view options, switch windows.
+
+reduce the height of filmstrip images display by like 30px
+
+in the editor view make sure the % in the magnifying glass updates when users change the zoom, currently it will stay the same % when dragged in the UI, or if over 100% zoomed in
+
+in the editor view make the behavior so one click zooms in, click and hold pans around the image.
+
+in the editor view improve the options for spot removal with specific Heal, Erase Clone options, a size adjuster for the eraser, red eye removal (with auto correct), otpions to use GenAI, detect obejcts, remove reflections/people/dust.
+
+in the editor view change the way sidebars are hidden to make it so users can double click along the edge of the left/right/filmstrip sidebars to hide/open them and remove the actual close/hide sidebar buttons from displaying and so they are full width below filmstrip and not hover windows like they are rn
+
+get AI Masking working again
+
+Add AI Upscale
+
+To copy edit settings add a cog next to it to allow users to choose via radio toggles which all edit settings are copied
+
+Make presets actually load again theyre not loading currently in the UI or displaying on the editor view in the Presets page.
+
+add pagination for the major tools in exposure/color 
+
+
+
+IDK IF WE DO THESE 
+
+In the editor view add a sort option for the filmstrip images, add a sort option for albums too.
+
+
+in the filters list add a filetype dynamic filter which loads the filetypes of the images available in the view or folder or album and loads the different filetypes as quickbuttons for sorting.
+
+

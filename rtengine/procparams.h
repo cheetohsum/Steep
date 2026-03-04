@@ -209,11 +209,73 @@ struct LocalContrastParams {
 
 
 /**
+ * Parameters for texture enhancement (fine detail local contrast)
+ */
+struct TextureParams {
+    bool enabled;
+    int radius;       // Default: 20 (small = fine detail)
+    double amount;    // Default: 0.0
+
+    TextureParams();
+
+    bool operator==(const TextureParams &other) const;
+    bool operator!=(const TextureParams &other) const;
+};
+
+/**
+ * Parameters for clarity (mid-tone local contrast)
+ */
+struct ClarityParams {
+    bool enabled;
+    int radius;       // Default: 100 (large = midtone contrast)
+    double amount;    // Default: 0.0
+
+    ClarityParams();
+
+    bool operator==(const ClarityParams &other) const;
+    bool operator!=(const ClarityParams &other) const;
+};
+
+/**
+ * Parameters for film grain effect
+ */
+struct GrainParams {
+    bool enabled;
+    int iso;          // Default: 400 (20-6400)
+    int strength;     // Default: 0 (0-100)
+    int scale;        // Default: 100 (0-100)
+
+    GrainParams();
+
+    bool operator==(const GrainParams &other) const;
+    bool operator!=(const GrainParams &other) const;
+};
+
+/**
+ * Parameters for lens blur effect
+ */
+struct LensBlurParams {
+    bool enabled;
+    double amount;         // 0-100, default 0 (overall blur strength)
+    Glib::ustring shape;   // "circle", "5blade", "6blade", "7blade", "8blade"
+    double cateye;         // 0-100, default 0 (cat eye distortion)
+    double bokeh;          // 0-100, default 50 (bokeh boost/highlight bloom)
+    int depth;             // 0-100, default 50 (focus depth)
+    int range;             // 0-100, default 30 (focus transition range)
+
+    LensBlurParams();
+
+    bool operator==(const LensBlurParams &other) const;
+    bool operator!=(const LensBlurParams &other) const;
+};
+
+/**
   * Parameters of the RGB curves
   */
 struct RGBCurvesParams {
     bool enabled;
     bool lumamode;
+    std::vector<double>   mastercurve;
     std::vector<double>   rcurve;
     std::vector<double>   gcurve;
     std::vector<double>   bcurve;
@@ -573,6 +635,12 @@ struct DefringeParams {
     double  radius;
     int     threshold;
     std::vector<double> huecurve;
+    double  purpleAmount;   // 0-20, default 0
+    double  purpleHueLow;   // 0-100, default 30
+    double  purpleHueHigh;  // 0-100, default 70
+    double  greenAmount;    // 0-20, default 0
+    double  greenHueLow;    // 0-100, default 30
+    double  greenHueHigh;   // 0-100, default 70
 
     DefringeParams();
 
@@ -1102,6 +1170,17 @@ struct FramingParams {
     bool operator !=(const FramingParams& other) const;
 };
 
+enum class SpotMethod : int {
+    CLONE  = 0,  // Copy source pixels to target (current behavior)
+    HEAL   = 1,  // Copy source texture, match target luminance
+    ERASE  = 2,  // Fill with surrounding area average
+    REDEYE = 3,  // Auto red-eye correction
+    AI_REMOVE  = 4,  // AI object removal (LaMa inpainting)
+    AI_DUST    = 5,  // AI dust/scratch removal
+    AI_REFLECT = 6,  // AI reflection removal
+    AI_FILL    = 7   // AI generative fill
+};
+
 /**
   * Parameters entry
   */
@@ -1111,9 +1190,12 @@ struct SpotEntry {
     int radius;
     float feather;
     float opacity;
+    SpotMethod method;
+    std::vector<Coord> strokePoints;  // non-empty = stroke-based spot
 
     SpotEntry();
     float getFeatherRadius() const;
+    bool isStroke() const { return !strokePoints.empty(); }
 
     bool operator ==(const SpotEntry& other) const;
     bool operator !=(const SpotEntry& other) const;
@@ -1943,6 +2025,10 @@ public:
     LCurveParams            labCurve;        ///< CIELAB luminance curve parameters
     RetinexParams           retinex;         ///< Retinex parameters
     LocalContrastParams     localContrast;   ////< Local contrast parameters
+    TextureParams           texture;         ///< Texture enhancement parameters
+    ClarityParams           clarity;         ///< Clarity parameters
+    GrainParams             grain;           ///< Film grain parameters
+    LensBlurParams          lensBlur;        ///< Lens blur parameters
     RGBCurvesParams         rgbCurves;       ///< RGB curves parameters
     ColorToningParams       colorToning;     ///< Color Toning parameters
     SharpeningParams        sharpening;      ///< Sharpening parameters

@@ -1196,6 +1196,7 @@ enum ProcEventCode {
     EvPointColorLuminance = 1166,
     EvPointColorRange = 1167,
     EvPointColorTargetAdd = 1168,
+    EvRGBMasterCurve = 1169,
     NUMOFEVENTS
 };
 

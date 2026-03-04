@@ -46,6 +46,37 @@ protected:
     bool edges;
     AdvancedSection* advancedSection;
 
+    // Purple/Green mode
+    Gtk::ToggleButton *purpleBtn;
+    Gtk::ToggleButton *greenBtn;
+    Gtk::Box *purpleBox;
+    Gtk::Box *greenBox;
+    Gtk::Box *defringeContent;
+    Gtk::Label *defringeLabel;
+    bool defringeExpanded;
+    Gtk::Box *hueContent;
+    Gtk::Label *hueLabel;
+    bool hueExpanded;
+    Adjuster *purpleAmount;
+    Adjuster *purpleHueLow;
+    Adjuster *purpleHueHigh;
+    Adjuster *greenAmount;
+    Adjuster *greenHueLow;
+    Adjuster *greenHueHigh;
+
+    rtengine::ProcEvent EvDefringePurpleAmount;
+    rtengine::ProcEvent EvDefringePurpleHueLow;
+    rtengine::ProcEvent EvDefringePurpleHueHigh;
+    rtengine::ProcEvent EvDefringeGreenAmount;
+    rtengine::ProcEvent EvDefringeGreenHueLow;
+    rtengine::ProcEvent EvDefringeGreenHueHigh;
+
+    void purpleBtnToggled();
+    void greenBtnToggled();
+    void updateModeDisplay();
+    void toggleDefringe();
+    void toggleHue();
+
 public:
     static const Glib::ustring TOOL_NAME;
 

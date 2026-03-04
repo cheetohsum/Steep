@@ -23,6 +23,8 @@
 
 #include "guiutils.h"
 
+class DirTreeView; // Forward declaration for subclass with hover interception
+
 class DirBrowser : public Gtk::Box
 {
 public:
@@ -38,6 +40,7 @@ private:
         Gtk::TreeModelColumn<Glib::ustring> icon_name;
         Gtk::TreeModelColumn<Glib::ustring> dirname;
         Gtk::TreeModelColumn<Glib::RefPtr<Gio::FileMonitor> > monitor;
+        Gtk::TreeModelColumn<Glib::ustring> photoCount;
 
         DirTreeColumns()
         {
@@ -45,6 +48,7 @@ private:
             add(filename);
             add(dirname);
             add(monitor);
+            add(photoCount);
         }
     };
 
@@ -53,7 +57,7 @@ private:
     Gtk::CellRendererText crt;
 
 
-    Gtk::TreeView *dirtree;
+    DirTreeView *dirtree;
     Gtk::ScrolledWindow *scrolledwindow4;
     DirSelectionSignal dirSelectionSignal;
 
@@ -81,8 +85,24 @@ private:
     void addDir (const Gtk::TreeModel::iterator& iter, const Glib::ustring& dirname);
     Gtk::TreePath expandToDir (const Glib::ustring& dirName);
     void updateDir (const Gtk::TreeModel::iterator& iter);
+    void countPhotosInChildren (const Gtk::TreeModel::iterator& parent);
 
     IdleRegister idle_register;
+
+    // Hover thumbnail popup
+    Gtk::Window* hoverPopup_;
+    Gtk::Box* hoverBox_;
+    Gtk::Image* hoverImages_[5];
+    Gtk::TreeModel::Path hoveredPath_;
+    sigc::connection hoverTimer_;
+    bool popupVisible_;
+    int hoverSession_;
+
+    bool onMotionNotify(GdkEventMotion* event);
+    bool onLeaveNotify(GdkEventCrossing* event);
+    void showHoverPopup(const Gtk::TreeModel::Path& path);
+    void hideHoverPopup();
+    void loadHoverThumbnails(const Glib::ustring& dirname, int session);
 
 public:
     DirBrowser ();

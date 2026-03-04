@@ -58,18 +58,26 @@ ToneCurve::ToneCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_EXPOSURE_LABEL
 
     autolevels = Gtk::manage(new Gtk::Button(M("TP_EXPOSURE_AUTO")));
     autolevels->get_style_context()->add_class("auto-button");
+    autolevels->get_style_context()->add_class(GTK_STYLE_CLASS_FLAT);
+    autolevels->set_relief(Gtk::RELIEF_NONE);
     autolevels->set_tooltip_markup(M("TP_EXPOSURE_AUTOLEVELS_TOOLTIP"));
-    setExpandAlignProperties(autolevels, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_CENTER);
-    autolevels->set_size_request(-1, 18);
+    setExpandAlignProperties(autolevels, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    autolevels->set_can_focus(false);
     {
         auto css = Gtk::CssProvider::create();
-        css->load_from_data("button { min-height: 0; min-width: 0; padding: 0 6px; margin: 0; font-size: 10px; }");
+        // Offset margin-left by ~half the label column width so button text
+        // centers visually above the slider rather than the full panel width.
+        css->load_from_data(
+            "button { min-height: 0; min-width: 0; padding: 1px 4px; margin: 0 18px 0 50px;"
+            "  font-size: 8px; background: transparent; background-image: none;"
+            "  border: none; box-shadow: none; color: #999; }"
+            " button:hover { color: #ddd; background: rgba(255,255,255,0.06); }"
+        );
         autolevels->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-        // Also style the label inside
         auto* label = dynamic_cast<Gtk::Label*>(autolevels->get_child());
         if (label) {
             auto lcss = Gtk::CssProvider::create();
-            lcss->load_from_data("label { font-size: 10px; margin: 0; padding: 0; }");
+            lcss->load_from_data("label { font-size: 8px; margin: 0; padding: 0; }");
             label->get_style_context()->add_provider(lcss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
         }
     }
@@ -94,8 +102,7 @@ ToneCurve::ToneCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_EXPOSURE_LABEL
     getSummaryBox()->pack_start(*autolevels, false, false, 0);
 
     //----------- Exposure Compensation ---------------------
-    expcomp = Gtk::manage(new Adjuster(M("TP_EXPOSURE_EXPCOMP"), -5, 12, 0.05, 0));
-    expcomp->setLogScale(2, 0, true);
+    expcomp = Gtk::manage(new Adjuster(M("TP_EXPOSURE_EXPCOMP"), -5, 5, 0.05, 0));
     getSummaryBox()->pack_start(*expcomp);
 
 //---------Brightness / Contrast -------------------------
@@ -105,6 +112,14 @@ ToneCurve::ToneCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_EXPOSURE_LABEL
     getSummaryBox()->pack_start(*contrast);
     saturation = Gtk::manage(new Adjuster(M("TP_EXPOSURE_SATURATION"), -100, 100, 1, 0));
     pack_start(*saturation);
+
+//----------- Whites (Highlight Compression, in summary) --------
+    hlcompr = Gtk::manage(new Adjuster(M("TP_EXPOSURE_WHITES"), -100, 100, 1, 0));
+    getSummaryBox()->pack_start(*hlcompr);
+
+//----------- Blacks (Black Level, in summary) --------
+    black = Gtk::manage(new Adjuster(M("TP_EXPOSURE_BLACKLEVEL"), -100, 100, 1, 0));
+    getSummaryBox()->pack_start(*black);
 
     brightness->setLogScale(2, 0, true);
     contrast->setLogScale(2, 0, true);
@@ -126,8 +141,8 @@ ToneCurve::ToneCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_EXPOSURE_LABEL
         GradientMilestone(1.0, 0.9, 0.55, 0.15)
     });
 
+
 //----------- Curve 1 ------------------------------
-    pack_start (*Gtk::manage (new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)));
 
     histmatching = Gtk::manage(new Gtk::ToggleButton(M("TP_EXPOSURE_HISTMATCHING")));
     histmatching->set_tooltip_markup(M("TP_EXPOSURE_HISTMATCHING_TOOLTIP"));
@@ -168,7 +183,6 @@ ToneCurve::ToneCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_EXPOSURE_LABEL
 //----------- OOG clamping (Advanced) ----------------------------------
     clampOOG = Gtk::manage(new Gtk::CheckButton(M("TP_EXPOSURE_CLAMPOOG")));
     advBox->pack_start(*clampOOG);
-    advBox->pack_start(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)));
     clampOOG->signal_toggled().connect(sigc::mem_fun(*this, &ToneCurve::clampOOGChanged));
 
 //-------------- Highlight Reconstruction (Advanced) -----------------
@@ -211,16 +225,11 @@ ToneCurve::ToneCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_EXPOSURE_LABEL
     enaconn  = hrenabled->signal_toggled().connect( sigc::mem_fun(*this, &ToneCurve::hrenabledChanged) );
     methconn = method->signal_changed().connect ( sigc::mem_fun(*this, &ToneCurve::methodChanged) );
 
-    //----------- Highlight recovery & threshold (Advanced) -------------
-    hlcompr = Gtk::manage(new Adjuster(M("TP_EXPOSURE_COMPRHIGHLIGHTS"), 0, 500, 1, 0));
-    advBox->pack_start(*hlcompr);
+    //----------- Highlight threshold (Advanced) -------------
     hlcomprthresh = Gtk::manage(new Adjuster(M("TP_EXPOSURE_COMPRHIGHLIGHTSTHRESHOLD"), 0, 100, 1, 0));
     advBox->pack_start(*hlcomprthresh);
 
-//----------- Black Level & Compression (Advanced) -------------------
-    black = Gtk::manage(new Adjuster(M("TP_EXPOSURE_BLACKLEVEL"), -16384, 32768, 50, 0));
-    black->setLogScale(10, 0, true);
-    advBox->pack_start(*black);
+//----------- Shadow Compression (Advanced) -------------------
     shcompr = Gtk::manage(new Adjuster(M("TP_EXPOSURE_COMPRSHADOWS"), 0, 100, 1, 50));
     advBox->pack_start(*shcompr);
 

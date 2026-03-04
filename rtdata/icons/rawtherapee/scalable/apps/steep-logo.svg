@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <!-- Steep logo - mountain peak through a lens -->
+  <!-- Outer lens ring -->
+  <circle cx="12" cy="12" r="10" fill="none" stroke="#cccccc" stroke-opacity="0.9" stroke-width="1.8"/>
+  <!-- Mountain peak -->
+  <path d="M5 18 L10 7 L12.5 11 L15 6 L20 18 Z" fill="#cccccc" fill-opacity="0.9"/>
+  <!-- Snow cap accent on taller peak -->
+  <path d="M15 6 L13.2 10 L15 9 L16.8 10 Z" fill="#ffffff" fill-opacity="0.6"/>
+</svg>

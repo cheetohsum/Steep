@@ -22,10 +22,11 @@
 HistoryDialog::HistoryDialog(Gtk::Window& parent, History* hist)
 {
     set_transient_for(parent);
-    set_type_hint(Gdk::WINDOW_TYPE_HINT_UTILITY);
+    set_type_hint(Gdk::WINDOW_TYPE_HINT_DIALOG);
     set_name("HistoryDialog");
     set_default_size(350, 500);
-    set_skip_taskbar_hint(true);
+    set_resizable(true);
+    set_deletable(true);
 
     auto headerBar = Gtk::manage(new Gtk::HeaderBar());
     headerBar->set_title(M("HISTORY_LABEL"));
@@ -49,4 +50,13 @@ bool HistoryDialog::on_delete_event(GdkEventAny* /*event*/)
 {
     hide();
     return true;
+}
+
+bool HistoryDialog::on_key_press_event(GdkEventKey* event)
+{
+    if (event->keyval == GDK_KEY_Escape) {
+        hide();
+        return true;
+    }
+    return Gtk::Window::on_key_press_event(event);
 }

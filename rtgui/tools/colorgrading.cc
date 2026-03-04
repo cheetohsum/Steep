@@ -29,13 +29,24 @@ using namespace rtengine::procparams;
 
 const Glib::ustring ColorGrading::TOOL_NAME = "colorgrading";
 
-ColorGrading::ColorGrading() : FoldableToolPanel(this, TOOL_NAME, M("TP_COLORGRADING_LABEL"), false, true)
+ColorGrading::ColorGrading() : FoldableToolPanel(this, TOOL_NAME, M("TP_COLORGRADING_LABEL"), false, true),
+    contentExpanded_(false)
 {
-    // Section label
-    auto* sectionLabel = Gtk::manage(new Gtk::Label("Grading"));
-    sectionLabel->set_xalign(0.0);
-    sectionLabel->get_style_context()->add_class("tool-section-label");
-    getSummaryBox()->pack_start(*sectionLabel, Gtk::PACK_SHRINK, 2);
+    // Clickable section label (collapsed by default)
+    sectionLabel_ = Gtk::manage(new Gtk::Label());
+    sectionLabel_->set_markup("<b>\xe2\x96\xb8 Grading</b>");
+    sectionLabel_->set_xalign(0.0);
+    sectionLabel_->get_style_context()->add_class("tool-section-label");
+    auto* labelEvt = Gtk::manage(new Gtk::EventBox());
+    labelEvt->add(*sectionLabel_);
+    labelEvt->signal_button_press_event().connect([this](GdkEventButton*) -> bool {
+        toggleContent();
+        return true;
+    });
+    getSummaryBox()->pack_start(*labelEvt, Gtk::PACK_SHRINK, 2);
+
+    // Collapsible content box
+    toolContent_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
 
     // Three color wheels in a horizontal box
     auto* wheelsBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
@@ -53,33 +64,40 @@ ColorGrading::ColorGrading() : FoldableToolPanel(this, TOOL_NAME, M("TP_COLORGRA
     highlightsWheel->setListener(this);
     wheelsBox->pack_start(*highlightsWheel, Gtk::PACK_EXPAND_WIDGET, 0);
 
-    getSummaryBox()->pack_start(*wheelsBox, Gtk::PACK_SHRINK, 0);
+    toolContent_->pack_start(*wheelsBox, Gtk::PACK_SHRINK, 0);
 
     // Luminance adjusters stacked vertically under the wheels
     shadowsLum = Gtk::manage(new Adjuster(M("TP_COLORGRADING_SHADOW_LUM"), -100., 100., 1., 0.));
     shadowsLum->setAdjusterListener(this);
-    getSummaryBox()->pack_start(*shadowsLum, Gtk::PACK_SHRINK, 0);
+    toolContent_->pack_start(*shadowsLum, Gtk::PACK_SHRINK, 0);
 
     midtonesLum = Gtk::manage(new Adjuster(M("TP_COLORGRADING_MID_LUM"), -100., 100., 1., 0.));
     midtonesLum->setAdjusterListener(this);
-    getSummaryBox()->pack_start(*midtonesLum, Gtk::PACK_SHRINK, 0);
+    toolContent_->pack_start(*midtonesLum, Gtk::PACK_SHRINK, 0);
 
     highlightsLum = Gtk::manage(new Adjuster(M("TP_COLORGRADING_HIGH_LUM"), -100., 100., 1., 0.));
     highlightsLum->setAdjusterListener(this);
-    getSummaryBox()->pack_start(*highlightsLum, Gtk::PACK_SHRINK, 0);
+    toolContent_->pack_start(*highlightsLum, Gtk::PACK_SHRINK, 0);
 
     // Blending and Balance
     blending = Gtk::manage(new Adjuster(M("TP_COLORGRADING_BLENDING"), 0., 100., 1., 50.));
     blending->setAdjusterListener(this);
-    getSummaryBox()->pack_start(*blending, Gtk::PACK_SHRINK, 0);
+    toolContent_->pack_start(*blending, Gtk::PACK_SHRINK, 0);
 
     balance = Gtk::manage(new Adjuster(M("TP_COLORGRADING_BALANCE"), -100., 100., 1., 0.));
     balance->setAdjusterListener(this);
-    getSummaryBox()->pack_start(*balance, Gtk::PACK_SHRINK, 0);
+    toolContent_->pack_start(*balance, Gtk::PACK_SHRINK, 0);
+
+    // Start hidden
+    toolContent_->set_no_show_all(true);
+    toolContent_->hide();
+    getSummaryBox()->pack_start(*toolContent_, Gtk::PACK_SHRINK, 0);
     getSummaryBox()->show_all();
 
-    // Advanced section with global wheel
+    // Advanced section with global wheel (visible only when content expanded)
     advancedSection = Gtk::manage(new AdvancedSection());
+    advancedSection->set_no_show_all(true);
+    advancedSection->hide();
     pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
     Gtk::Box* const advBox = advancedSection->getContentBox();
 
@@ -95,6 +113,24 @@ ColorGrading::ColorGrading() : FoldableToolPanel(this, TOOL_NAME, M("TP_COLORGRA
     advBox->pack_start(*globalLum, Gtk::PACK_SHRINK, 0);
 
     show_all_children();
+}
+
+void ColorGrading::toggleContent()
+{
+    contentExpanded_ = !contentExpanded_;
+    if (contentExpanded_) {
+        sectionLabel_->set_markup("<b>\xe2\x96\xbe Grading</b>");
+        toolContent_->set_no_show_all(false);
+        toolContent_->show_all();
+        toolContent_->set_no_show_all(true);
+        advancedSection->set_no_show_all(false);
+        advancedSection->show_all();
+        advancedSection->set_no_show_all(true);
+    } else {
+        sectionLabel_->set_markup("<b>\xe2\x96\xb8 Grading</b>");
+        toolContent_->hide();
+        advancedSection->hide();
+    }
 }
 
 void ColorGrading::read(const ProcParams* pp, const ParamsEdited* pedited)

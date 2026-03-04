@@ -21,11 +21,36 @@
 #include <iostream>
 #include <cstring>
 
+#include "cachemanager.h"
 #include "guiutils.h"
 #include "rtimage.h"
 #include "rtsurface.h"
 #include "multilangmgr.h"
 #include "options.h"
+#include "thumbnail.h"
+
+#include <thread>
+
+// Subclass TreeView to intercept motion/leave events BEFORE the base class
+// handler (which returns TRUE when hover_selection is enabled, consuming events).
+// The Glib::ObjectBase("DirTreeView") call registers a new GType so gtkmm
+// installs class closures that dispatch to our virtual function overrides.
+class DirTreeView : public Gtk::TreeView {
+public:
+    DirTreeView() : Glib::ObjectBase("DirTreeView") {}
+
+    std::function<bool(GdkEventMotion*)> onMotion;
+    std::function<bool(GdkEventCrossing*)> onLeave;
+protected:
+    bool on_motion_notify_event(GdkEventMotion* event) override {
+        if (onMotion) onMotion(event);
+        return Gtk::TreeView::on_motion_notify_event(event);
+    }
+    bool on_leave_notify_event(GdkEventCrossing* event) override {
+        if (onLeave) onLeave(event);
+        return Gtk::TreeView::on_leave_notify_event(event);
+    }
+};
 
 #ifdef _WIN32
 #include "rtengine/leanwindows.h"
@@ -100,9 +125,10 @@ DirBrowser::DirBrowser () : dirTreeModel(),
 #endif
 {
     set_orientation(Gtk::ORIENTATION_VERTICAL);
-    dirtree = Gtk::manage ( new Gtk::TreeView() );
+    dirtree = Gtk::manage ( new DirTreeView() );
     scrolledwindow4 = Gtk::manage ( new Gtk::ScrolledWindow() );
     crt.property_ellipsize() = Pango::ELLIPSIZE_END;
+    crt.property_max_width_chars() = 22;
 
 //   dirtree->set_flags(Gtk::CAN_FOCUS);
     dirtree->set_headers_visible(false);
@@ -111,10 +137,12 @@ DirBrowser::DirBrowser () : dirTreeModel(),
     dirtree->set_enable_search(false);
     dirtree->set_show_expanders(false);
     dirtree->set_level_indentation(10);
+    dirtree->set_hover_selection(true);
+    dirtree->set_activate_on_single_click(true);
     scrolledwindow4->set_can_focus(true);
     scrolledwindow4->set_shadow_type(Gtk::SHADOW_NONE);
     scrolledwindow4->set_policy(Gtk::POLICY_AUTOMATIC, Gtk::POLICY_AUTOMATIC);
-    scrolledwindow4->set_min_content_height(200);
+    scrolledwindow4->set_min_content_height(150);
     scrolledwindow4->property_window_placement().set_value(Gtk::CORNER_TOP_LEFT);
     scrolledwindow4->add(*dirtree);
 
@@ -122,9 +150,9 @@ DirBrowser::DirBrowser () : dirTreeModel(),
     dirtree->set_name("DirBrowserTree");
     auto css = Gtk::CssProvider::create();
     css->load_from_data(
-        "#DirBrowserTree { font-size: 0.85em; -GtkTreeView-horizontal-separator: 0; }"
+        "#DirBrowserTree { font-size: 0.92em; -GtkTreeView-horizontal-separator: 0; }"
         "#DirBrowserTree header button { min-height: 0; min-width: 0; padding: 0; margin: 0; }"
-        "#DirBrowserTree header button label { font-size: 0.85em; padding: 0 4px; margin: 0; }"
+        "#DirBrowserTree header button label { font-size: 0.92em; padding: 0 4px; margin: 0; }"
         "#DirBrowserTree header { min-height: 0; padding: 0; margin: 0; }"
         "#DirBrowseBtn { min-height: 0; min-width: 0; padding: 0 2px; margin: 0; }"
     );
@@ -161,10 +189,50 @@ DirBrowser::DirBrowser () : dirTreeModel(),
     pack_start (*scrolledwindow4);
     dirtree->show ();
     scrolledwindow4->show ();
+
+    // Hover thumbnail popup
+    popupVisible_ = false;
+    hoverSession_ = 0;
+    hoverPopup_ = new Gtk::Window(Gtk::WINDOW_POPUP);
+    hoverPopup_->set_type_hint(Gdk::WINDOW_TYPE_HINT_TOOLTIP);
+    hoverPopup_->set_name("DirHoverPopup");
+
+    auto popupCss = Gtk::CssProvider::create();
+    popupCss->load_from_data(
+        "#DirHoverPopup {"
+        "  background: rgba(32,32,36,0.95);"
+        "  border-radius: 6px;"
+        "  border: 1px solid rgba(255,255,255,0.1);"
+        "  padding: 4px;"
+        "}"
+    );
+    hoverPopup_->get_style_context()->add_provider(popupCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+
+    hoverBox_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 3));
+    for (int i = 0; i < 5; i++) {
+        hoverImages_[i] = Gtk::manage(new Gtk::Image());
+        hoverImages_[i]->set_size_request(48, 48);
+        hoverImages_[i]->set_no_show_all(true);
+        hoverBox_->pack_start(*hoverImages_[i], Gtk::PACK_SHRINK);
+    }
+    hoverPopup_->add(*hoverBox_);
+    hoverBox_->show();
+
+    // Hook into DirTreeView's virtual method overrides for motion/leave
+    dirtree->add_events(Gdk::POINTER_MOTION_MASK | Gdk::LEAVE_NOTIFY_MASK);
+    dirtree->onMotion = [this](GdkEventMotion* event) { return onMotionNotify(event); };
+    dirtree->onLeave = [this](GdkEventCrossing* event) { return onLeaveNotify(event); };
+
+    // Hide popup on scroll
+    scrolledwindow4->get_vadjustment()->signal_value_changed().connect([this]() {
+        hideHoverPopup();
+    });
 }
 
 DirBrowser::~DirBrowser()
 {
+    hideHoverPopup();
+    delete hoverPopup_;
     idle_register.destroy();
 }
 
@@ -182,6 +250,15 @@ void DirBrowser::fillDirTree ()
     tvc.add_attribute(*render_pb, "icon-name", dtColumns.icon_name);
     tvc.pack_start (crt);
     tvc.add_attribute(crt, "text", dtColumns.filename);
+
+    Gtk::CellRendererText* countCR = Gtk::manage(new Gtk::CellRendererText());
+    countCR->property_foreground() = "#888888";
+    countCR->property_xalign() = 1.0;
+    countCR->property_ypad() = 0;
+    countCR->property_scale() = 0.8;
+    countCR->property_xpad() = 8;
+    tvc.pack_end(*countCR, false);
+    tvc.add_attribute(*countCR, "text", dtColumns.photoCount);
 
     dirtree->append_column(tvc);
 
@@ -319,10 +396,73 @@ void DirBrowser::browseForFolder ()
     if (!toplevel) return;
 
     Gtk::FileChooserDialog fc(*toplevel, M("DIRBROWSER_BROWSE"), Gtk::FILE_CHOOSER_ACTION_SELECT_FOLDER);
+    fc.set_name("RTFileChooser");
+    fc.set_default_size(780, 520);
+
+    // Modern styling for the file chooser dialog
+    auto fcCss = Gtk::CssProvider::create();
+    fcCss->load_from_data(
+        "#RTFileChooser {"
+        "  border-radius: 8px;"
+        "}"
+        "#RTFileChooser headerbar {"
+        "  border-radius: 8px 8px 0 0;"
+        "  padding: 4px 10px;"
+        "}"
+        "#RTFileChooser placessidebar {"
+        "  background: alpha(@theme_base_color, 0.6);"
+        "  border-right: 1px solid alpha(@borders, 0.3);"
+        "  padding: 4px 0;"
+        "}"
+        "#RTFileChooser placessidebar row {"
+        "  padding: 4px 8px;"
+        "  margin: 1px 4px;"
+        "  border-radius: 6px;"
+        "}"
+        "#RTFileChooser placessidebar row:selected {"
+        "  border-radius: 6px;"
+        "}"
+        "#RTFileChooser treeview {"
+        "  padding: 2px;"
+        "}"
+        "#RTFileChooser treeview header button {"
+        "  padding: 4px 8px;"
+        "  font-weight: 600;"
+        "}"
+        "#RTFileChooser .dialog-action-box {"
+        "  padding: 8px 12px;"
+        "  border-top: 1px solid alpha(@borders, 0.3);"
+        "}"
+        "#RTFileChooser .dialog-action-box button {"
+        "  border-radius: 6px;"
+        "  padding: 6px 20px;"
+        "  min-height: 0;"
+        "}"
+        "#RTFileChooser .dialog-action-box button:last-child {"
+        "  background: alpha(@theme_selected_bg_color, 0.7);"
+        "  color: @theme_selected_fg_color;"
+        "}"
+        "#RTFileChooser .dialog-action-box button:last-child:hover {"
+        "  background: @theme_selected_bg_color;"
+        "}"
+        "#RTFileChooser .path-bar button {"
+        "  border-radius: 4px;"
+        "  padding: 2px 6px;"
+        "  margin: 1px;"
+        "}"
+    );
+    auto screen = fc.get_screen();
+    Gtk::StyleContext::add_provider_for_screen(
+        screen, fcCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+
     fc.add_button(M("GENERAL_CANCEL"), Gtk::RESPONSE_CANCEL);
     fc.add_button(M("GENERAL_OK"), Gtk::RESPONSE_OK);
+    fc.set_default_response(Gtk::RESPONSE_OK);
 
-    if (fc.run() == Gtk::RESPONSE_OK) {
+    int result = fc.run();
+    Gtk::StyleContext::remove_provider_for_screen(screen, fcCss);
+
+    if (result == Gtk::RESPONSE_OK) {
         Glib::ustring dir = fc.get_filename();
         if (!dir.empty()) {
             open(dir);
@@ -383,6 +523,8 @@ void DirBrowser::row_expanded (const Gtk::TreeModel::iterator& iter, const Gtk::
     Glib::RefPtr<Gio::FileMonitor> monitor = dir->monitor_directory(Gio::FileMonitorFlags::FILE_MONITOR_WATCH_MOVES);
     iter->set_value (dtColumns.monitor, monitor);
     monitor->signal_changed().connect (sigc::bind(sigc::mem_fun(*this, &DirBrowser::file_changed), iter, dir->get_parse_name()));
+
+    countPhotosInChildren(iter);
 }
 
 void DirBrowser::row_collapsed (const Gtk::TreeModel::iterator& iter, const Gtk::TreeModel::Path& path)
@@ -584,5 +726,209 @@ void DirBrowser::selectDir (Glib::ustring dir)
 {
 
     open (dir, "");
+}
+
+bool DirBrowser::onMotionNotify(GdkEventMotion* event)
+{
+    Gtk::TreeModel::Path path;
+    Gtk::TreeViewColumn* column = nullptr;
+    int cell_x, cell_y;
+
+    if (dirtree->get_path_at_pos(static_cast<int>(event->x), static_cast<int>(event->y),
+                                  path, column, cell_x, cell_y)) {
+        if (path != hoveredPath_) {
+            hoveredPath_ = path;
+
+            if (popupVisible_) {
+                // Popup already showing — update immediately for new row
+                showHoverPopup(path);
+            } else {
+                // Start/restart delay timer — fires for whichever row is
+                // current when it expires (not the row at connect time)
+                hoverTimer_.disconnect();
+                hoverTimer_ = Glib::signal_timeout().connect([this]() -> bool {
+                    if (!hoveredPath_.empty()) {
+                        showHoverPopup(hoveredPath_);
+                    }
+                    return false;
+                }, 300);
+            }
+        }
+    } else {
+        hideHoverPopup();
+    }
+    return false;  // don't consume — let hover_selection work
+}
+
+bool DirBrowser::onLeaveNotify(GdkEventCrossing*)
+{
+    hideHoverPopup();
+    return false;
+}
+
+void DirBrowser::showHoverPopup(const Gtk::TreeModel::Path& path)
+{
+    if (path.empty() || !dirTreeModel) return;
+
+    auto iter = dirTreeModel->get_iter(path);
+    if (!iter) return;
+
+    Glib::ustring dirname = (*iter)[dtColumns.dirname];
+    if (dirname.empty()) return;
+
+    // Position popup to the right of the sidebar, aligned with the row
+    Gdk::Rectangle cellArea;
+    dirtree->get_cell_area(path, *dirtree->get_column(0), cellArea);
+
+    int root_x = 0, root_y = 0;
+    auto binWin = dirtree->get_bin_window();
+    if (binWin) {
+        int bwx, bwy;
+        binWin->get_origin(bwx, bwy);
+        root_x = bwx;
+        root_y = bwy + cellArea.get_y();
+    }
+
+    // Place to the right of the entire DirBrowser widget
+    int sidebarW = get_allocated_width();
+    int popupX = root_x + sidebarW + 4;
+    int popupY = root_y;
+
+    // Clear all images
+    for (int i = 0; i < 5; i++) {
+        hoverImages_[i]->clear();
+        hoverImages_[i]->hide();
+    }
+
+    hoverPopup_->move(popupX, popupY);
+    hoverPopup_->show();
+    popupVisible_ = true;
+
+    int session = ++hoverSession_;
+    std::thread(&DirBrowser::loadHoverThumbnails, this, dirname, session).detach();
+}
+
+void DirBrowser::hideHoverPopup()
+{
+    hoverTimer_.disconnect();
+    hoveredPath_ = Gtk::TreeModel::Path();
+    if (popupVisible_) {
+        hoverPopup_->hide();
+        popupVisible_ = false;
+    }
+    ++hoverSession_;
+}
+
+void DirBrowser::loadHoverThumbnails(const Glib::ustring& dirname, int session)
+{
+    std::vector<Glib::ustring> imageFiles;
+    try {
+        Glib::Dir dir(dirname);
+        const auto& exts = App::get().options().parsedExtensionsSet;
+        for (auto it = dir.begin(); it != dir.end() && imageFiles.size() < 5; ++it) {
+            const Glib::ustring& fname = *it;
+            auto dotpos = fname.find_last_of('.');
+            if (dotpos != Glib::ustring::npos) {
+                Glib::ustring ext = fname.substr(dotpos + 1).lowercase();
+                if (exts.count(ext.raw())) {
+                    imageFiles.push_back(Glib::build_filename(dirname, fname));
+                }
+            }
+        }
+    } catch (...) {
+        return;
+    }
+
+    if (imageFiles.empty()) {
+        Glib::signal_idle().connect_once([this, session]() {
+            if (session != hoverSession_) return;
+            hideHoverPopup();
+        });
+        return;
+    }
+
+    for (size_t i = 0; i < imageFiles.size(); i++) {
+        if (session != hoverSession_) return;
+
+        const Glib::ustring& fpath = imageFiles[i];
+        Glib::RefPtr<Gdk::Pixbuf> pixbuf;
+
+        try {
+            Thumbnail* thm = CacheManager::getInstance()->getEntry(fpath);
+            if (thm) {
+                double scale = 1.0;
+                rtengine::IImage8* img = thm->processThumbImage(thm->getProcParams(), 48, scale);
+                if (img) {
+                    auto pb = Gdk::Pixbuf::create_from_data(
+                        img->getData(), Gdk::COLORSPACE_RGB, false, 8,
+                        img->getWidth(), img->getHeight(), img->getWidth() * 3);
+                    pixbuf = pb->copy();
+                    delete img;
+                }
+                thm->decreaseRef();
+            }
+        } catch (...) {}
+
+        if (!pixbuf) continue;
+
+        int idx = static_cast<int>(i);
+        Glib::signal_idle().connect_once([this, session, idx, pixbuf]() {
+            if (session != hoverSession_ || !popupVisible_) return;
+            hoverImages_[idx]->set(pixbuf);
+            hoverImages_[idx]->show();
+        });
+    }
+}
+
+void DirBrowser::countPhotosInChildren (const Gtk::TreeModel::iterator& parent)
+{
+    struct Entry {
+        Glib::ustring dirname;
+        Glib::ustring pathStr;
+    };
+    std::vector<Entry> entries;
+
+    for (auto child = parent->children().begin(); child != parent->children().end(); ++child) {
+        Glib::ustring dirname = (*child)[dtColumns.dirname];
+        if (!dirname.empty()) {
+            entries.push_back({dirname, dirTreeModel->get_path(child).to_string()});
+        }
+    }
+
+    auto model = dirTreeModel;
+    auto photoCountCol = dtColumns.photoCount;
+
+    std::thread([entries, model, photoCountCol]() {
+        for (const auto& entry : entries) {
+            int count = 0;
+            try {
+                Glib::Dir dir(entry.dirname);
+                const auto& exts = App::get().options().parsedExtensionsSet;
+                for (auto it = dir.begin(); it != dir.end(); ++it) {
+                    const Glib::ustring& fname = *it;
+                    auto dotpos = fname.find_last_of('.');
+                    if (dotpos != Glib::ustring::npos) {
+                        Glib::ustring ext = fname.substr(dotpos + 1).lowercase();
+                        if (exts.count(ext.raw())) {
+                            ++count;
+                        }
+                    }
+                }
+            } catch (...) {}
+
+            Glib::ustring countStr = count > 0 ? std::to_string(count) : "";
+            Glib::ustring pathStr = entry.pathStr;
+
+            Glib::signal_idle().connect_once([model, photoCountCol, pathStr, countStr]() {
+                try {
+                    Gtk::TreeModel::Path path(pathStr);
+                    auto iter = model->get_iter(path);
+                    if (iter) {
+                        (*iter)[photoCountCol] = countStr;
+                    }
+                } catch (...) {}
+            });
+        }
+    }).detach();
 }
 

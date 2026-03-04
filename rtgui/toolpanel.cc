@@ -153,6 +153,13 @@ void FoldableToolPanel::setFlatMode(bool flat)
     }
 }
 
+void FoldableToolPanel::collapseDetail()
+{
+    if (exp) {
+        exp->collapseDetail();
+    }
+}
+
 // do not emit the enabled_toggled event
 void FoldableToolPanel::setEnabled(bool isEnabled)
 {

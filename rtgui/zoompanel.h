@@ -12,7 +12,7 @@
  *  but WITHOUT ANY WARRANTY; without even the implied warranty of
  *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  *  GNU General Public License for more details.
- *l
+ *
  *  You should have received a copy of the GNU General Public License
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
@@ -29,6 +29,7 @@ class ZoomPanel :
 protected:
 
     Gtk::MenuButton* zoomBtn;
+    Gtk::DrawingArea* zoomDraw;
     Gtk::Popover*    zoomPopover;
     Gtk::Scale*     zoomSlider;
     Gtk::Button*    zoomOut;
@@ -37,9 +38,11 @@ protected:
     Gtk::Button*    zoomFitCrop;
     Gtk::Button*    zoom11;
     Gtk::Button*    newCrop;
-    Gtk::Label*     zoomLabel;
     ImageArea*      iarea;
     bool            sliderUpdateInProgress;
+    Glib::ustring   currentZoomText;
+
+    bool onDrawZoom (const Cairo::RefPtr<Cairo::Context>& cr);
 
 public:
 

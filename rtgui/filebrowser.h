@@ -122,6 +122,9 @@ protected:
     Gtk::MenuItem* resetdefaultprof;
     Gtk::MenuItem* clearprof;
     Gtk::MenuItem* cachemenu;
+    Gtk::MenuItem* aiDenoise;
+    Gtk::MenuItem* autoEdit;
+    Gtk::MenuItem* duplicate;
     Gtk::MenuItem* clearFromCache;
     Gtk::MenuItem* clearFromCacheFull;
     Gtk::Menu* pmenu;
@@ -151,6 +154,9 @@ protected:
 
     type_trash_changed m_trash_changed;
     type_save_image_requested m_save_image_requested;
+
+    Gtk::MenuItem* setAlbumCover;
+    std::function<void(const Glib::ustring&)> albumCoverSetter_;
 
 public:
     FileBrowser ();
@@ -206,6 +212,7 @@ public:
     void openNextImage();
     void openPrevImage();
     void selectImage(const Glib::ustring& fname, bool doScroll = true);
+    Thumbnail* getSelectedThumbnail();  // returns lastClicked or first selected
 
     void copyProfile ();
     void pasteProfile ();
@@ -230,4 +237,8 @@ public:
 
     type_trash_changed trash_changed();
     type_save_image_requested save_image_requested();
+
+    void setAlbumCoverSetter(std::function<void(const Glib::ustring&)> setter) {
+        albumCoverSetter_ = std::move(setter);
+    }
 };

@@ -84,7 +84,7 @@ CropWindow::CropWindow (ImageArea* parent, bool isLowUpdatePriority_, bool isDet
       upperBorderWidth(1), sepWidth(2), windowPos(30, 30), windowSize(0, 0), imgAreaPos(0, 0), imgAreaSize(0, 0),
       imgPos(-1, -1), imgSize(1, 1), iarea(parent), cropZoom(0), zoomVersion(0), exposeVersion(0), cropgl(nullptr),
       pmlistener(nullptr), pmhlistener(nullptr), scrollAccum(0.0), observedCropWin(nullptr),
-      crop_custom_ratio(0.f)
+      crop_custom_ratio(0.f), showLevelingGrid_(false)
 {
     initZoomSteps();
 
@@ -310,13 +310,22 @@ void CropWindow::leaveNotify (GdkEventCrossing* event)
 {
     EditSubscriber* subscriber = iarea->getCurrSubscriber();
 
-    if (state == SNormal && subscriber && subscriber->getEditingType() == ET_PIPETTE) {
-        iarea->setPipetteVal1(-1.f);
-        iarea->setPipetteVal2(-1.f);
-        iarea->setPipetteVal3(-1.f);
+    if (state == SNormal && subscriber) {
+        if (subscriber->getEditingType() == ET_PIPETTE) {
+            iarea->setPipetteVal1(-1.f);
+            iarea->setPipetteVal2(-1.f);
+            iarea->setPipetteVal3(-1.f);
 
-        if (subscriber->mouseOver(0)) {
-            iarea->redraw();
+            if (subscriber->mouseOver(0)) {
+                iarea->redraw();
+            }
+        } else if (subscriber->getEditingType() == ET_OBJECTS) {
+            // Mouse left the canvas — signal no object under cursor
+            // so hover-triggered overlays (e.g. locallab mask) turn off
+            iarea->setObject(-1);
+            if (subscriber->mouseOver(0)) {
+                iarea->redraw();
+            }
         }
     }
 }
@@ -726,7 +735,26 @@ void CropWindow::buttonRelease (int button, int num, int bstate, int x, int y)
             needRedraw = true;
         }
     } else if (state == SCropImgMove) {
-        cropHandler.update ();
+        // If no drag occurred (click without movement), toggle zoom
+        if (action_x == 0 && action_y == 0 && iarea->getToolMode () == TMHand) {
+            if (fitZoomEnabled) {
+                if (fitZoom) {
+                    state = SNormal;
+                    zoomVersion = exposeVersion;
+                    screenCoordToImage (x, y, action_x, action_y);
+                    changeZoom (zoom11index, true, action_x, action_y);
+                    fitZoom = false;
+                } else if (App::get().options().cropAutoFit) {
+                    zoomFitCrop();
+                } else {
+                    zoomFit();
+                }
+            } else {
+                zoom11 ();
+            }
+        } else {
+            cropHandler.update ();
+        }
 
         state = SNormal;
 
@@ -2125,6 +2153,10 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
         drawStraightenGuide (cr);
     }
 
+    if (showLevelingGrid_) {
+        drawLevelingGrid(cr);
+    }
+
     if (state == SNormal && isFlawnOver) {
         EditSubscriber *editSubscriber = iarea->getCurrSubscriber();
 
@@ -2733,6 +2765,65 @@ void CropWindow::drawStraightenGuide (Cairo::RefPtr<Cairo::Context> cr)
         deglayout->add_to_cairo_context (cr);
         cr->fill ();
     }
+}
+
+void CropWindow::setShowLevelingGrid (bool show)
+{
+    if (showLevelingGrid_ != show) {
+        showLevelingGrid_ = show;
+        iarea->queue_draw();
+    }
+}
+
+void CropWindow::drawLevelingGrid (Cairo::RefPtr<Cairo::Context> cr)
+{
+    // Draw horizontal and vertical guide lines across the image area
+    // to help the user level the image while adjusting rotation.
+    int x0 = windowPos.x + imgPos.x + imgAreaPos.x;
+    int y0 = windowPos.y + imgPos.y + imgAreaPos.y;
+    int w = imgAreaSize.width;
+    int h = imgAreaSize.height;
+
+    if (w <= 0 || h <= 0) return;
+
+    cr->save();
+    cr->rectangle(x0, y0, w, h);
+    cr->clip();
+
+    // Draw grid lines — 6 horizontal, 6 vertical (divides into 7ths)
+    constexpr int N = 6;
+    cr->set_line_width(0.5);
+
+    for (int i = 1; i <= N; ++i) {
+        double frac = static_cast<double>(i) / (N + 1);
+
+        // Solid white line
+        cr->set_source_rgba(1.0, 1.0, 1.0, 0.35);
+        // Horizontal
+        double yy = y0 + h * frac;
+        cr->move_to(x0, yy + 0.5);
+        cr->line_to(x0 + w, yy + 0.5);
+        cr->stroke();
+        // Vertical
+        double xx = x0 + w * frac;
+        cr->move_to(xx + 0.5, y0);
+        cr->line_to(xx + 0.5, y0 + h);
+        cr->stroke();
+    }
+
+    // Center crosshair — slightly brighter
+    cr->set_line_width(0.8);
+    cr->set_source_rgba(1.0, 1.0, 1.0, 0.5);
+    double cx = x0 + w * 0.5;
+    double cy = y0 + h * 0.5;
+    cr->move_to(x0, cy + 0.5);
+    cr->line_to(x0 + w, cy + 0.5);
+    cr->stroke();
+    cr->move_to(cx + 0.5, y0);
+    cr->line_to(cx + 0.5, y0 + h);
+    cr->stroke();
+
+    cr->restore();
 }
 
 void CropWindow::drawScaledSpotRectangle (Cairo::RefPtr<Cairo::Context> cr, int rectSize)

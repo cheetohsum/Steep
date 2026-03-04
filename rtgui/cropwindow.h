@@ -124,6 +124,8 @@ class CropWindow final : public LWButtonListener, public CropDisplayHandler, pub
     void updateCursor              (int x, int y);
     void drawDecoration            (Cairo::RefPtr<Cairo::Context> cr);
     void drawStraightenGuide       (Cairo::RefPtr<Cairo::Context> cr);
+    void drawLevelingGrid          (Cairo::RefPtr<Cairo::Context> cr);
+    bool showLevelingGrid_;
     void drawScaledSpotRectangle   (Cairo::RefPtr<Cairo::Context> cr, int rectSize);
     void drawUnscaledSpotRectangle (Cairo::RefPtr<Cairo::Context> cr, int rectSize);
     void drawObservedFrame         (const Cairo::RefPtr<Cairo::Context>& cr);
@@ -216,6 +218,7 @@ public:
     void expose        (Cairo::RefPtr<Cairo::Context> cr);
 
     void setEditSubscriber (EditSubscriber* newSubscriber);
+    void setShowLevelingGrid (bool show);
 
     // interface lwbuttonlistener
     void buttonPressed (LWButton* button, int actionCode, void* actionData) override;

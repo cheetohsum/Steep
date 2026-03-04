@@ -160,8 +160,6 @@ Crop::Crop():
     methodgrid->attach (*w, 1, 1, 1, 1);
     methodgrid->attach (*hlab, 2, 1, 1, 1);
     methodgrid->attach (*h, 3, 1, 1, 1);
-    methodgrid->attach (*selectCrop, 0, 2, 2, 1);
-    methodgrid->attach (*resetCrop, 2, 2, 2, 1);
     pack_start (*methodgrid, Gtk::PACK_EXPAND_WIDGET, 0 );
 
     Gtk::Separator* methodseparator = Gtk::manage (new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));

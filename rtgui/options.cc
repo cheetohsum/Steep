@@ -381,7 +381,7 @@ void Options::setDefaults()
     dirBrowserSortType = Gtk::SORT_ASCENDING;
     preferencesWidth = 800;
     preferencesHeight = 600;
-    toolPanelWidth = 330;
+    toolPanelWidth = 260;
     browserToolPanelWidth = 465;
     browserToolPanelHeight = 600;
     browserToolPanelOpened = false;
@@ -419,7 +419,7 @@ void Options::setDefaults()
     lastCopyMovePath = "";
     version = "0.0.0.0";                // temporary value; will be correctly set in RTWindow::on_realize
     thumbSize = 160;
-    thumbSizeTab = 160;
+    thumbSizeTab = 80;
     thumbSizeQueue = 160;
     sameThumbSize = false;               // preferring speed of switch between file browser and single editor tab
     showHistory = true;
@@ -557,6 +557,8 @@ void Options::setDefaults()
 
     rawrefineryPath = "";
     pythonPath = "";
+
+    mcpAutoStart = false;
 
     clutsDir = "./cluts";
 
@@ -2248,6 +2250,12 @@ void Options::readFromFile(Glib::ustring fname)
                 }
             }
 
+            if (keyFile.has_group("MCP Server")) {
+                if (keyFile.has_key("MCP Server", "AutoStart")) {
+                    mcpAutoStart = keyFile.get_boolean("MCP Server", "AutoStart");
+                }
+            }
+
             if (keyFile.has_group("Batch Processing")) {
                 if (keyFile.has_key("Batch Processing", "AdjusterBehavior")) {
                     baBehav = keyFile.get_integer_list("Batch Processing", "AdjusterBehavior");
@@ -2925,6 +2933,8 @@ void Options::saveToFile(Glib::ustring fname)
 
         keyFile.set_string("AI Denoise", "RawRefineryPath", rawrefineryPath);
         keyFile.set_string("AI Denoise", "PythonPath", pythonPath);
+
+        keyFile.set_boolean("MCP Server", "AutoStart", mcpAutoStart);
 
         Glib::ArrayHandle<int> bab = baBehav;
         keyFile.set_integer_list("Batch Processing", "AdjusterBehavior", bab);

@@ -1653,7 +1653,7 @@ LocallabParams::LocallabSpot::LocallabSpot() :
     useAIMask(false),
     aiMaskClass(0),
     aiMaskThreshold(0.3),
-    aiMaskFeather(4.0),
+    aiMaskFeather(100.0),
     aiMaskBlur(0.0),
     aiMaskInvert(false),
     aiMaskOpacity(1.0),
@@ -2977,7 +2977,19 @@ bool LocallabParams::LocallabSpot::operator ==(const LocallabSpot& other) const
         && shadmaskcie == other.shadmaskcie
         && fftcieMask == other.fftcieMask
         && LLmaskciecurvewav == other.LLmaskciecurvewav
-        && csthresholdcie == other.csthresholdcie;
+        && csthresholdcie == other.csthresholdcie
+        // AI Mask
+        && visiaimask == other.visiaimask
+        && expaimask == other.expaimask
+        && useAIMask == other.useAIMask
+        && aiMaskClass == other.aiMaskClass
+        && aiMaskThreshold == other.aiMaskThreshold
+        && aiMaskFeather == other.aiMaskFeather
+        && aiMaskBlur == other.aiMaskBlur
+        && aiMaskInvert == other.aiMaskInvert
+        && aiMaskOpacity == other.aiMaskOpacity
+        && aiMaskRefineRadius == other.aiMaskRefineRadius
+        && aiMaskRefineEps == other.aiMaskRefineEps;
     // clang-format on
 }
 

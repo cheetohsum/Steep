@@ -118,6 +118,7 @@ protected:
     Internal internal;
     Gtk::Scrollbar hscroll;
     Gtk::Scrollbar vscroll;
+    bool hscrollForceHidden;
     int lastDeviceScale;
 
     int inW, inH;
@@ -267,6 +268,13 @@ public:
     }
     Gdk::RGBA getSelectedBgColor() {
         return internal.getSelectedBgColor();
+    }
+
+    void setHScrollVisible (bool visible) {
+        hscrollForceHidden = !visible;
+        if (!visible) {
+            hscroll.hide ();
+        }
     }
 
 };

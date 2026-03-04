@@ -942,6 +942,35 @@ void MyExpander::setExpandable(bool canExpand)
     }
 }
 
+void MyExpander::hideHeader()
+{
+    printf("hideHeader called: useEnabled=%d, enabled=%d, expBox=%p, label=%s\n",
+           useEnabled, enabled, (void*)expBox, label ? label->get_text().c_str() : "(widget)");
+    fflush(stdout);
+
+    // Hide the title row but keep the body visible.
+    titleEvBox->set_no_show_all(true);
+    titleEvBox->hide();
+
+    // Force the enabled state directly (without emitting signal_enabled_toggled)
+    if (useEnabled && !enabled) {
+        enabled = true;
+        statusImage->set_from_icon_name(enabledImage);
+        get_style_context()->add_class("enabledTool");
+    }
+
+    // Show the body. ExpanderBox overrides show() to a no-op and
+    // show_all() to only show children. We need:
+    // 1. Clear set_no_show_all so future show_all from parents will work
+    // 2. showBox() to actually show the EventBox via Gtk::EventBox::show()
+    // 3. show_all() to recursively show all children inside
+    if (expBox) {
+        expBox->set_no_show_all(false);
+        expBox->showBox();   // shows the EventBox container itself
+        expBox->show_all();  // shows children (content widgets)
+    }
+}
+
 void MyExpander::setFlatMode(bool flat)
 {
     flatMode_ = flat;
@@ -956,15 +985,33 @@ void MyExpander::setFlatMode(bool flat)
     // Force expanded (content always visible)
     set_expanded(true);
 
+    // Allow parent show_all() to propagate into the body
+    if (expBox) {
+        expBox->set_no_show_all(false);
+    }
+
     // Force enabled
     if (useEnabled) {
         setEnabled(true);
     }
 }
 
+void MyExpander::collapseDetail()
+{
+    if (expBox) {
+        expBox->hideBox();
+        expBox->set_no_show_all(true);
+    }
+}
+
 void MyExpander::set_expanded( bool expanded )
 {
     if (!expBox) {
+        return;
+    }
+
+    // Flat mode panels are always expanded — ignore collapse requests
+    if (flatMode_ && !expanded) {
         return;
     }
 
@@ -2396,6 +2443,11 @@ void OptionalRadioButtonGroup::register_button(Gtk::ToggleButton &button)
 // AdvancedSection
 
 AdvancedSection::AdvancedSection() :
+    AdvancedSection(M("TP_GENERAL_ADVANCED"))
+{
+}
+
+AdvancedSection::AdvancedSection(const Glib::ustring& customLabel) :
     Gtk::Box(Gtk::ORIENTATION_VERTICAL),
     expanded(false)
 {
@@ -2414,7 +2466,7 @@ AdvancedSection::AdvancedSection() :
     arrowImage->set_can_focus(false);
     headerBox->pack_start(*arrowImage, Gtk::PACK_SHRINK, 0);
 
-    auto* label = Gtk::manage(new Gtk::Label(M("TP_GENERAL_ADVANCED")));
+    auto* label = Gtk::manage(new Gtk::Label(customLabel));
     setExpandAlignProperties(label, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     headerBox->pack_start(*label, Gtk::PACK_SHRINK, 0);
 
@@ -2456,9 +2508,11 @@ void AdvancedSection::setExpanded(bool expand)
     expanded = expand;
     updateArrow();
     if (expanded) {
-        contentBox->show();
+        contentBox->set_no_show_all(false);
+        contentBox->show_all();
     } else {
         contentBox->hide();
+        contentBox->set_no_show_all(true);
     }
 }
 
@@ -2500,24 +2554,26 @@ ToolGroup::ToolGroup(const Glib::ustring& label) :
     arrowLabel->set_can_focus(false);
     setExpandAlignProperties(arrowLabel, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
 
-    auto* headerEvBox = Gtk::manage(new Gtk::EventBox());
-    headerEvBox->set_name("ToolGroupHeader");
-    setExpandAlignProperties(headerEvBox, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_FILL);
-    headerEvBox->add(*arrowLabel);
-    headerEvBox->set_can_focus(false);
+    auto* headerBtn = Gtk::manage(new Gtk::Button());
+    headerBtn->set_name("ToolGroupHeader");
+    headerBtn->set_relief(Gtk::RELIEF_NONE);
+    headerBtn->set_can_focus(false);
+    headerBtn->set_halign(Gtk::ALIGN_START);
+    headerBtn->add(*arrowLabel);
 
     // Inline CSS for compact tool group headers
     auto tgCss = Gtk::CssProvider::create();
     tgCss->load_from_data(
-        "#ToolGroupHeader { padding: 1px 4px; min-height: 0; }"
+        "#ToolGroupHeader { padding: 1px 4px; min-height: 0; border: none; background: none; background-image: none; box-shadow: none; }"
+        "#ToolGroupHeader:hover { background-color: rgba(130,170,230,0.22); border-radius: 4px; }"
         "#ToolGroupHeader label { font-size: 9px; font-weight: bold; min-height: 0; padding: 0; margin: 0; }"
     );
-    headerEvBox->get_style_context()->add_provider(tgCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+    headerBtn->get_style_context()->add_provider(tgCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
     arrowLabel->get_style_context()->add_provider(tgCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-    headerEvBox->signal_button_release_event().connect(
-        sigc::mem_fun(*this, &ToolGroup::onHeaderClick));
+    headerBtn->signal_clicked().connect(
+        sigc::mem_fun(*this, &ToolGroup::onHeaderClicked));
 
-    pack_start(*headerEvBox, Gtk::PACK_SHRINK, 0);
+    pack_start(*headerBtn, Gtk::PACK_SHRINK, 0);
 
     // Content box for child tool panels
     contentBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
@@ -2528,13 +2584,9 @@ ToolGroup::ToolGroup(const Glib::ustring& label) :
     show_all_children();
 }
 
-bool ToolGroup::onHeaderClick(GdkEventButton* event)
+void ToolGroup::onHeaderClicked()
 {
-    if (event->button != 1) {
-        return false;
-    }
     setExpanded(!expanded);
-    return false;
 }
 
 void ToolGroup::setExpanded(bool expand)

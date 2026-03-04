@@ -36,12 +36,10 @@ Rotate::Rotate () : FoldableToolPanel(this, TOOL_NAME, M("TP_ROTATE_LABEL"))
 
     rlistener = nullptr;
 
-    //TODO the action of the rotation slider is counter-intuitive
-    Gtk::Image* irotateL =   Gtk::manage (new RTImage ("rotate-right-small"));
-    Gtk::Image* irotateR =   Gtk::manage (new RTImage ("rotate-left-small"));
-
-    degree = Gtk::manage (new Adjuster (M("TP_ROTATE_DEGREE"), -45, 45, 0.01, 0, irotateL, irotateR));
+    degree = Gtk::manage (new Adjuster ("", -45, 45, 0.01, 0));
     degree->setAdjusterListener (this);
+    degree->hideResetButton();
+    degree->setSliderMinWidth(150);
     getSummaryBox()->pack_start (*degree);
 
     degree->setLogScale(2, 0);
@@ -123,4 +121,9 @@ void Rotate::trimValues (rtengine::procparams::ProcParams* pp)
 {
 
     degree->trimValue(pp->rotate.degree);
+}
+
+void Rotate::setLevelingGridCallback (std::function<void(bool)> cb)
+{
+    degree->setInteractionCallback(std::move(cb));
 }

@@ -21,6 +21,7 @@
 #define _SPOT_H_
 
 #include "editwidgets.h"
+#include "guiutils.h"
 #include "toolpanel.h"
 #include "widgets/basic/adjuster.h"
 
@@ -31,32 +32,9 @@
 
 /**
  * @brief Let the user create/edit/delete points for Spot Removal tool
- *
- * User Interface:
- *
- * For the rest of this documentation, T represent a "target" point (where the image is edited) and
- * S represent the "source" location (where the edition takes its source data).
- *
- * When the edit button is active, all T points are shown by a small "dot". When the user
- * move the cursor over one of them, a circle is displayed to show the radius of the brush, as well
- * as a second circle representing the source data (S point). The user can then use the left mouse button
- * over the icon to drag the T point. The left mouse button can be used over the S circle or the right
- * mouse button can be used over the T point to move the S point.
- *
- * Using the left mouse button over the circle of the T point will let the user adjust its radius.
- *
- * Using the left mouse button over the feather circle will let the user adjust its radius by setting
- * a coefficient (0.0 = same radius than the inner circle ; 1.0 = 2 times the inner radius).
- *
- * To create a new point, just move over a free area, and press the left mouse button while holding
- * the CTRL key. This will create a new S and T pair of points. The CTRL key can be released, but keep
- * the left mouse button pressed and move away to position the S point.
- *
- * To delete a point, move your mouse over any of its geometry press the middle or right mouse button
- * (the point will be deleted on button release).
  */
 
-class Spot : public ToolParamBlock, public FoldableToolPanel, public rtengine::TweakOperator, public EditSubscriber
+class Spot : public ToolParamBlock, public FoldableToolPanel, public AdjusterListener, public rtengine::TweakOperator, public EditSubscriber
 {
 
 private:
@@ -79,6 +57,14 @@ private:
     Circle targetFeatherCircle;    // to show the Feather radius at the Target position
     Line link;                     // to show the link between the Source and Target position
 
+    // Phase 2: cursor preview circle
+    Circle cursorPreviewCircle;
+
+    // Phase 4: stroke preview
+    Polyline strokePreviewLine;
+    bool isStrokeDragging = false;
+    std::vector<rtengine::Coord> currentStrokePoints;
+
     OPIcon *getActiveSpotIcon ();
     void updateGeometry ();
     void createGeometry ();
@@ -86,6 +72,24 @@ private:
     void deleteSelectedEntry ();
     void resetPressed ();
     void releaseEdit();
+    void methodChanged ();
+
+    // Phase 1: method toggle buttons
+    int getActiveMethod() const;
+    void setActiveMethod(int index);
+    void blockMethodButtons(bool block);
+    void onMethodButtonToggled(Gtk::ToggleButton* button, int methodIndex);
+
+    // Phase 3: dynamic size preview widget
+    class SpotSizePreview : public Gtk::DrawingArea {
+    public:
+        SpotSizePreview();
+        void setValue(int radius);
+    protected:
+        bool on_draw(const Cairo::RefPtr<Cairo::Context>& cr) override;
+    private:
+        int currentRadius = 25;
+    };
 
 protected:
     Gtk::Box* labelBox;
@@ -94,6 +98,20 @@ protected:
     Gtk::ToggleButton* edit;
     Gtk::Button* reset;
     Adjuster* spotSize;
+
+    // Phase 1: icon toggle buttons replacing MyComboBoxText
+    Gtk::ToggleButton* btnClone;
+    Gtk::ToggleButton* btnHeal;
+    Gtk::ToggleButton* btnErase;
+    Gtk::ToggleButton* btnRedEye;
+    Gtk::Box* methodBox;
+    bool blockMethodSignal = false;
+    sigc::connection cloneConn, healConn, eraseConn, redeyeConn;
+
+    // Phase 3: size preview
+    SpotSizePreview* sizePreview;
+
+    AdvancedSection* aiSection;
     sigc::connection editConn, editedConn;
 
     void editToggled ();
@@ -114,6 +132,9 @@ public:
     void setEditProvider (EditDataProvider* provider) override;
 
     void setBatchMode (bool batchMode) override;
+
+    // AdjusterListener interface
+    void adjusterChanged (Adjuster* a, double newval) override;
 
     // EditSubscriber interface
     CursorShape getCursor (int objectID, int xPos, int yPos) const override;
@@ -136,6 +157,7 @@ public:
     rtengine::ProcEvent EvSpotEnabledOPA; // used to toggle-on the Spot 'On Preview Adjustment' mode
     rtengine::ProcEvent EvSpotEntry;
     rtengine::ProcEvent EvSpotEntryOPA;
+    rtengine::ProcEvent EvSpotMethod;
 };
 
 #endif

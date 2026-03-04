@@ -86,6 +86,10 @@ protected:
     sigc::signal<void> sig_curvepoint_click;
     sigc::signal<void> sig_curvepoint_release;
 
+    bool hasDrawColor_ = false;
+    double drawR_ = 1.0, drawG_ = 1.0, drawB_ = 1.0;
+    std::vector<CurveEditor*> overlayEditors_;
+
 public:
 
     CurveEditor (Glib::ustring text, CurveEditorGroup* ceGroup, CurveEditorSubGroup* ceSubGroup);
@@ -110,6 +114,14 @@ public:
     std::vector<GradientMilestone> getBottomBarBgGradient () const;
     std::vector<GradientMilestone> getLeftBarBgGradient () const;
 
+    Gtk::Widget* getButtonGroup();
+    void addButtonCSSClass(const Glib::ustring& cssClass);
+    void enableCompactMode(const Glib::ustring& color = "#888", const Glib::ustring& checkedColor = "#ddd");
+    void setCurveDrawColor(double r, double g, double b) { drawR_ = r; drawG_ = g; drawB_ = b; hasDrawColor_ = true; }
+    bool hasDrawColor() const { return hasDrawColor_; }
+    void getDrawColor(double& r, double& g, double& b) const { r = drawR_; g = drawG_; b = drawB_; }
+    void setOverlayCurveEditors(const std::vector<CurveEditor*>& editors) { overlayEditors_ = editors; }
+    const std::vector<CurveEditor*>& getOverlayCurveEditors() const { return overlayEditors_; }
     void refresh (); // refresh the display of the CurveEditor (e.g. when a ColoredBar has been changed from the outside)
     bool openIfNonlinear();  // Open up the curve if it has modifications and it's not already opened
 

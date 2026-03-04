@@ -59,4 +59,9 @@ private:
     Adjuster* balance;
 
     AdvancedSection* advancedSection;
+
+    Gtk::Label* sectionLabel_;
+    Gtk::Box* toolContent_;
+    bool contentExpanded_;
+    void toggleContent();
 };

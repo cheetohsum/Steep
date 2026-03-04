@@ -37,7 +37,8 @@ Gradient::Gradient () : FoldableToolPanel(this, TOOL_NAME, M("TP_GRADIENT_LABEL"
     edit->set_tooltip_text(M("EDIT_OBJECT_TOOLTIP"));
     editConn = edit->signal_toggled().connect( sigc::mem_fun(*this, &Gradient::editToggled) );
     editHBox->pack_start(*edit, Gtk::PACK_SHRINK, 0);
-    pack_start (*editHBox, Gtk::PACK_SHRINK, 0);
+
+    detailExpanded_ = false;
 
     strength = Gtk::manage (new Adjuster (M("TP_GRADIENT_STRENGTH"), -5, 5, 0.01, 0));
     strength->set_tooltip_text (M("TP_GRADIENT_STRENGTH_TOOLTIP"));
@@ -59,19 +60,30 @@ Gradient::Gradient () : FoldableToolPanel(this, TOOL_NAME, M("TP_GRADIENT_LABEL"
     centerY->set_tooltip_text (M("TP_GRADIENT_CENTER_Y_TOOLTIP"));
     centerY->setAdjusterListener (this);
 
-    // Visible items (in summary box)
-    getSummaryBox()->pack_start (*strength, Gtk::PACK_SHRINK, 0);
-    getSummaryBox()->pack_start (*degree, Gtk::PACK_SHRINK, 0);
-    getSummaryBox()->show_all();
+    // Gradient: light → dark filter feel
+    strength->setSliderGradient({
+        GradientMilestone(0.0, 0.70, 0.70, 0.65),
+        GradientMilestone(0.5, 0.45, 0.45, 0.45),
+        GradientMilestone(1.0, 0.20, 0.20, 0.25)
+    });
 
-    // Advanced items
-    advancedSection = Gtk::manage(new AdvancedSection());
-    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
-    Gtk::Box* const advBox = advancedSection->getContentBox();
+    // Label-as-toggle: click the slider label to expand/collapse detail
+    strength->setLabel(Glib::ustring("\u25B8 ") + M("TP_GRADIENT_STRENGTH"));
+    strength->setLabelClickCallback([this]() { toggleDetail(); });
 
-    advBox->pack_start (*feather, Gtk::PACK_SHRINK, 0);
-    advBox->pack_start (*centerX, Gtk::PACK_SHRINK, 0);
-    advBox->pack_start (*centerY, Gtk::PACK_SHRINK, 0);
+    auto *summaryBox = getSummaryBox();
+    summaryBox->pack_start (*strength, Gtk::PACK_SHRINK, 0);
+
+    detailContent_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
+    detailContent_->set_no_show_all(true);
+    detailContent_->pack_start(*editHBox, Gtk::PACK_SHRINK, 0);
+    detailContent_->pack_start(*degree, Gtk::PACK_SHRINK, 0);
+    detailContent_->pack_start(*feather, Gtk::PACK_SHRINK, 0);
+    detailContent_->pack_start(*centerX, Gtk::PACK_SHRINK, 0);
+    detailContent_->pack_start(*centerY, Gtk::PACK_SHRINK, 0);
+    summaryBox->pack_start(*detailContent_, Gtk::PACK_SHRINK);
+
+    summaryBox->show_all();
 
     // Instantiating the Editing geometry; positions will be initialized later
     Line *hLine, *vLine, *featherLine[2];
@@ -332,7 +344,6 @@ void Gradient::setBatchMode (bool batchMode)
     editConn.disconnect();
     removeIfThere(this, editHBox, false);
     ToolPanel::setBatchMode (batchMode);
-    advancedSection->setBatchMode(batchMode);
     degree->showEditedCB ();
     feather->showEditedCB ();
     strength->showEditedCB ();
@@ -343,6 +354,20 @@ void Gradient::setBatchMode (bool batchMode)
 void Gradient::setEditProvider (EditDataProvider* provider)
 {
     EditSubscriber::setEditProvider(provider);
+}
+
+void Gradient::toggleDetail()
+{
+    detailExpanded_ = !detailExpanded_;
+    if (detailExpanded_) {
+        strength->setLabel(Glib::ustring("\u25BE ") + M("TP_GRADIENT_STRENGTH"));
+        detailContent_->set_no_show_all(false);
+        detailContent_->show_all();
+        detailContent_->set_no_show_all(true);
+    } else {
+        strength->setLabel(Glib::ustring("\u25B8 ") + M("TP_GRADIENT_STRENGTH"));
+        detailContent_->hide();
+    }
 }
 
 void Gradient::editToggled ()

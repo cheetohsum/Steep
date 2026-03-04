@@ -90,8 +90,8 @@ public:
     void writeOptions();
 
 private:
-    static constexpr int THUMB_HEIGHT = 60;
-    static constexpr int CARD_MIN_WIDTH = 100;
+    static constexpr int THUMB_HEIGHT = 48;
+    static constexpr int CARD_MIN_WIDTH = 80;
 
     // Toolbar callbacks
     void profileFillModeToggled();

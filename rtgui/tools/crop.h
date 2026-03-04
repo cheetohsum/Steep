@@ -87,6 +87,9 @@ public:
         clistener = cl;
     }
 
+    Gtk::Button* getSelectCropButton() { return selectCrop; }
+    Gtk::Button* getResetCropButton() { return resetCrop; }
+
     void resizeScaleChanged (double rsc);
     void hFlipCrop          ();
     void vFlipCrop          ();

@@ -28,7 +28,8 @@ protected:
     Adjuster* strength;
     Adjuster* centerX;
     Adjuster* centerY;
-    AdvancedSection* advancedSection;
+    Gtk::Box* detailContent_;
+    bool detailExpanded_;
     double draggedPointOldAngle;
     double draggedPointAdjusterAngle;
     double draggedFeatherOffset;
@@ -37,6 +38,7 @@ protected:
 
     void editToggled ();
     void releaseEdit();
+    void toggleDetail();
 
 public:
     static const Glib::ustring TOOL_NAME;

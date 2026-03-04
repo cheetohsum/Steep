@@ -1564,6 +1564,22 @@ private:
             ipf.localContrast(labView, labView->L, params.localContrast, false, 1);//scale);
         }
 
+        if (params.texture.enabled) {
+            ipf.textureContrast(labView, params.texture, 1);
+        }
+
+        if (params.clarity.enabled) {
+            ipf.clarityContrast(labView, params.clarity, 1);
+        }
+
+        if (params.grain.enabled) {
+            ipf.grainEffect(labView, params.grain, labView->W, labView->H);
+        }
+
+        if (params.lensBlur.enabled) {
+            ipf.lensBlur(labView, params.lensBlur, 1);
+        }
+
         ipf.chromiLuminanceCurve(nullptr, 1, labView, labView, curve1, curve2, satcurve, lhskcurve, clcurve, lumacurve, utili, autili, butili, ccutili, cclutili, clcutili, dummy, dummy);
 
         const bool cam02 = params.colorappearance.modelmethod == "02" && params.colorappearance.enabled;

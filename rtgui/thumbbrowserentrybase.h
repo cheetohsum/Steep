@@ -141,6 +141,11 @@ public:
     virtual void draw (Cairo::RefPtr<Cairo::Context> cc);
 
     void addButtonSet (LWButtonSet* bs);
+    void setMargins (int upper, int lower)
+    {
+        upperMargin = upper;
+        lowerMargin = lower;
+    }
     int getMinimalHeight () const
     {
         return height;

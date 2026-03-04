@@ -36,8 +36,7 @@ class BatchQueuePanel : public Gtk::Box,
     public FormatChangeListener
 {
 
-    Gtk::Button* zoomInButton;
-    Gtk::Button* zoomOutButton;
+    Gtk::Scale* zoomSlider;
     Gtk::Button* qStartStop;
     bool isQueueRunning_;
     Gtk::CheckButton* qAutoStart;
@@ -75,6 +74,9 @@ public:
     void saveOptions ();
 
     bool handleShortcutKey (GdkEventKey* event);
+
+    BatchQueue* getBatchQueue () { return batchQueue; }
+    void setOverlayMode (bool overlay);
 
     // batchqueuelistener interface
     void queueSizeChanged(int qsize, bool queueRunning, bool queueError, const Glib::ustring& queueErrorMessage) override;

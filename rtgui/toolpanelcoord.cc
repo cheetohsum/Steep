@@ -59,6 +59,18 @@ const std::vector<ToolTree> EXPOSURE_PANEL_TOOLS = {
         .children = {},
     },
     {
+        .id = Tool::TEXTURE,
+        .children = {},
+    },
+    {
+        .id = Tool::CLARITY,
+        .children = {},
+    },
+    {
+        .id = Tool::GRAIN,
+        .children = {},
+    },
+    {
         .id = Tool::PC_VIGNETTE,
         .children = {},
     },
@@ -250,6 +262,10 @@ const std::vector<ToolTree> TRANSFORM_PANEL_TOOLS = {
 
 const std::vector<ToolTree> RAW_PANEL_TOOLS = {
     {
+        .id = Tool::LENS_BLUR,
+        .children = {},
+    },
+    {
         .id = Tool::PD_SHARPENING,
         .children = {},
     },
@@ -409,6 +425,10 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
     dirpyrequalizer     = Gtk::manage(new DirPyrEqualizer());
     hsvequalizer        = Gtk::manage(new HSVEqualizer());
     pointcolor          = Gtk::manage(new PointColor());
+    texture             = Gtk::manage(new Texture());
+    clarity             = Gtk::manage(new Clarity());
+    grain               = Gtk::manage(new Grain());
+    lensblur            = Gtk::manage(new LensBlur());
     filmSimulation      = Gtk::manage(new FilmSimulation());
     softlight           = Gtk::manage(new SoftLight());
     dehaze              = Gtk::manage(new Dehaze());
@@ -522,7 +542,6 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
     editPanel->pack_start(*colorGroup, Gtk::PACK_SHRINK);
     editPanel->pack_start(*detailGroup, Gtk::PACK_SHRINK);
     editPanel->pack_start(*effectsGroup, Gtk::PACK_SHRINK);
-    editPanel->pack_start(*advancedGroup, Gtk::PACK_SHRINK);
     editPanel->pack_start(*calibrationGroup, Gtk::PACK_SHRINK);
 
     // Metadata is now inside the Advanced group
@@ -542,11 +561,11 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
     transformPanelContainer->pack_start(*vbPanelEnd[1], Gtk::PACK_SHRINK);
 
     // Locallab/Mask panel scrolled window
-    Gtk::Box *locallabPanelContainer =
+    locallabPanelContainer_ =
         Gtk::manage(new Gtk::Box(Gtk::Orientation::ORIENTATION_VERTICAL));
-    locallabPanelSW->add(*locallabPanelContainer);
-    locallabPanelContainer->pack_start(*locallabPanel, Gtk::PACK_SHRINK);
-    locallabPanelContainer->pack_start(*vbPanelEnd[2], Gtk::PACK_SHRINK);
+    locallabPanelSW->add(*locallabPanelContainer_);
+    locallabPanelContainer_->pack_start(*locallabPanel, Gtk::PACK_SHRINK);
+    locallabPanelContainer_->pack_start(*vbPanelEnd[2], Gtk::PACK_SHRINK);
 
     // Create ModeButtonBar
     modeButtonBar = Gtk::manage(new ModeButtonBar());
@@ -566,7 +585,47 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
     // Populate Edit panel with tools
     populateEditPanel();
 
-    // Button bar at top of Crop page
+    // Helper: make a flat icon button
+    auto mkBtn = [](const char* icon, const char* tip) -> Gtk::Button* {
+        Gtk::Button* b = Gtk::manage(new Gtk::Button());
+        b->set_image(*Gtk::manage(new RTImage(icon, Gtk::ICON_SIZE_BUTTON)));
+        b->set_relief(Gtk::RELIEF_NONE);
+        b->set_tooltip_text(M(tip));
+        return b;
+    };
+
+    // Helper: make a collapsible section (Clarity-style toggle)
+    // Returns {headerRow, contentBox, label}
+    struct CollapsibleSection { Gtk::Box* header; Gtk::Box* content; Gtk::Label* label; };
+    auto mkCollapsible = [](const Glib::ustring& name) -> CollapsibleSection {
+        Gtk::Box* headerRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+        headerRow->set_margin_start(6);
+        headerRow->set_margin_end(4);
+        headerRow->set_margin_top(4);
+        headerRow->set_margin_bottom(0);
+
+        Gtk::Button* toggle = Gtk::manage(new Gtk::Button());
+        toggle->set_relief(Gtk::RELIEF_NONE);
+        Gtk::Label* label = Gtk::manage(new Gtk::Label());
+        label->set_markup("\u25B8 <b>" + Glib::Markup::escape_text(name) + "</b>");
+        toggle->add(*label);
+        headerRow->pack_start(*toggle, Gtk::PACK_SHRINK);
+
+        Gtk::Box* content = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
+        content->set_no_show_all(true);
+
+        toggle->signal_clicked().connect([content, label, name]() {
+            bool expanded = content->get_visible();
+            content->set_no_show_all(false);
+            expanded ? content->hide() : content->show_all();
+            content->set_no_show_all(true);
+            label->set_markup(Glib::ustring(expanded ? "\u25B8 <b>" : "\u25BE <b>") + Glib::Markup::escape_text(name) + "</b>");
+        });
+
+        return {headerRow, content, label};
+    };
+
+    // Button row at top: RotL / RotR / FlipH / FlipV
     {
         Gtk::Box* btnRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
         btnRow->set_margin_start(4);
@@ -574,66 +633,133 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
         btnRow->set_margin_top(2);
         btnRow->set_margin_bottom(2);
 
-        auto mkBtn = [](const char* icon, const char* tip) -> Gtk::Button* {
-            Gtk::Button* b = Gtk::manage(new Gtk::Button());
-            b->set_image(*Gtk::manage(new RTImage(icon, Gtk::ICON_SIZE_BUTTON)));
-            b->set_relief(Gtk::RELIEF_NONE);
-            b->set_tooltip_text(M(tip));
-            return b;
-        };
-
         Gtk::Button* rotL = mkBtn("rotate-left-90", "TP_COARSETRAF_TOOLTIP_ROTLEFT");
         Gtk::Button* rotR = mkBtn("rotate-right-90", "TP_COARSETRAF_TOOLTIP_ROTRIGHT");
         Gtk::Button* flipH = mkBtn("flip-horizontal", "TP_COARSETRAF_TOOLTIP_HFLIP");
         Gtk::Button* flipV = mkBtn("flip-vertical", "TP_COARSETRAF_TOOLTIP_VFLIP");
-        Gtk::Button* straighten = mkBtn("rotate-straighten-small", "TP_ROTATE_SELECTLINE");
-        Gtk::Button* cropSel = mkBtn("crop-small", "TP_CROP_SELECTCROP");
-        Gtk::Button* perspSel = mkBtn("perspective-vertical-bottom", "TOOLBAR_TOOLTIP_PERSPECTIVE");
 
         rotL->signal_pressed().connect([this]() { coarse->rotateLeft(); });
         rotR->signal_pressed().connect([this]() { coarse->rotateRight(); });
         flipH->signal_pressed().connect([this]() { coarse->toggleHFlip(); });
         flipV->signal_pressed().connect([this]() { coarse->toggleVFlip(); });
-        straighten->signal_pressed().connect([this]() { straightenRequested(); });
-        cropSel->signal_pressed().connect([this]() { cropSelectRequested(); });
-        perspSel->signal_pressed().connect([this]() { toolBar->setTool(TMPerspective); toolSelected(TMPerspective); });
 
         btnRow->pack_start(*rotL, Gtk::PACK_SHRINK);
         btnRow->pack_start(*rotR, Gtk::PACK_SHRINK);
         btnRow->pack_start(*flipH, Gtk::PACK_SHRINK);
         btnRow->pack_start(*flipV, Gtk::PACK_SHRINK);
-        btnRow->pack_start(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK, 4);
-        btnRow->pack_start(*straighten, Gtk::PACK_SHRINK);
-        btnRow->pack_start(*cropSel, Gtk::PACK_SHRINK);
-        btnRow->pack_start(*perspSel, Gtk::PACK_SHRINK);
 
         transformPanel->pack_start(*btnRow, Gtk::PACK_SHRINK, 0);
     }
 
-    // Populate Transform panel — all tools flat (no headers/power buttons)
-    addPanel(transformPanel, crop, 1);
-    crop->setFlatMode(true);
-    addPanel(transformPanel, rotate, 1);
-    // rotate already has setFlatMode(true) in its constructor
-    addPanel(transformPanel, perspective, 1);
-    perspective->setFlatMode(true);
-    perspective->exposeAutoButtons();
-    perspective->hideAdvancedSection();
-    addPanel(transformPanel, lensgeom, 1);
-    lensgeom->setFlatMode(true);
-    lensgeom->hideMethodCombo();
-    addPanel(lensgeom->getSubToolsContainer(), lensProf, 2);
-    lensProf->setFlatMode(true);
-    addPanel(lensgeom->getSubToolsContainer(), distortion, 2);
-    distortion->setFlatMode(true);
-    addPanel(lensgeom->getSubToolsContainer(), cacorrection, 2);
-    cacorrection->setFlatMode(true);
-    addPanel(lensgeom->getSubToolsContainer(), vignetting, 2);
-    vignetting->setFlatMode(true);
+    transformPanel->pack_start(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)), Gtk::PACK_SHRINK, 2);
+
+    // --- Crop section (collapsible) ---
+    {
+        auto sec = mkCollapsible(M("TP_CROP_LABEL"));
+        cropSectionContent_ = sec.content;
+        cropSectionLabel_ = sec.label;
+
+        // Add crop-select and reset buttons to header row
+        sec.header->pack_end(*crop->getResetCropButton(), Gtk::PACK_SHRINK);
+        sec.header->pack_end(*crop->getSelectCropButton(), Gtk::PACK_SHRINK);
+
+        // Pack crop's expander into the collapsible content
+        crop->setParent(sec.content);
+        crop->setLevel(1);
+        crop->setFlatMode(true);
+        sec.content->pack_start(*crop->getExpander(), false, false);
+
+        transformPanel->pack_start(*sec.header, Gtk::PACK_SHRINK);
+        transformPanel->pack_start(*sec.content, Gtk::PACK_SHRINK);
+    }
+
+    // --- Rotate section (inline with straighten button) ---
+    {
+        Gtk::Box* rotateRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+
+        rotate->setParent(rotateRow);
+        rotate->setLevel(1);
+        // rotate already has setFlatMode(true) in its constructor
+        rotateRow->pack_start(*rotate->getExpander(), true, true);
+
+        Gtk::Button* straighten = mkBtn("rotate-straighten-small", "TP_ROTATE_SELECTLINE");
+        straighten->signal_pressed().connect([this]() { straightenRequested(); });
+        straighten->set_margin_end(4);
+        rotateRow->pack_end(*straighten, Gtk::PACK_SHRINK);
+
+        transformPanel->pack_start(*rotateRow, Gtk::PACK_SHRINK);
+    }
+
+    // --- Perspective section (collapsible) ---
+    {
+        auto sec = mkCollapsible(M("TP_PERSPECTIVE_LABEL"));
+        perspSectionContent_ = sec.content;
+        perspSectionLabel_ = sec.label;
+
+        Gtk::Button* perspSel = mkBtn("perspective-vertical-bottom", "TOOLBAR_TOOLTIP_PERSPECTIVE");
+        perspSel->signal_pressed().connect([this]() { toolBar->setTool(TMPerspective); toolSelected(TMPerspective); });
+        sec.header->pack_end(*perspSel, Gtk::PACK_SHRINK);
+
+        perspective->setParent(sec.content);
+        perspective->setLevel(1);
+        perspective->setFlatMode(true);
+        perspective->exposeAutoButtons();
+        perspective->hideAdvancedSection();
+        sec.content->pack_start(*perspective->getExpander(), false, false);
+
+        transformPanel->pack_start(*sec.header, Gtk::PACK_SHRINK);
+        transformPanel->pack_start(*sec.content, Gtk::PACK_SHRINK);
+    }
+
+    // --- Advanced section (collapsible) ---
+    {
+        auto sec = mkCollapsible(M("TP_TRANSFORM_ADVANCED"));
+        advSectionContent_ = sec.content;
+        advSectionLabel_ = sec.label;
+
+        lensgeom->setFlatMode(true);
+        lensgeom->hideMethodCombo();
+        lensgeom->setParent(sec.content);
+        lensgeom->setLevel(1);
+        sec.content->pack_start(*lensgeom->getExpander(), false, false);
+
+        distortion->setFlatMode(true);
+        distortion->setParent(lensgeom->getSubToolsContainer());
+        distortion->setLevel(2);
+        lensgeom->getSubToolsContainer()->pack_start(*distortion->getExpander(), false, false);
+
+        vignetting->setFlatMode(true);
+        vignetting->setParent(lensgeom->getSubToolsContainer());
+        vignetting->setLevel(2);
+        lensgeom->getSubToolsContainer()->pack_start(*vignetting->getExpander(), false, false);
+
+        transformPanel->pack_start(*sec.header, Gtk::PACK_SHRINK);
+        transformPanel->pack_start(*sec.content, Gtk::PACK_SHRINK);
+    }
 
     // Populate Selective panel (spot removal + locallab)
+    // Simple bold section labels (not collapsible)
+    Gtk::Label* spotLabel = Gtk::manage(new Gtk::Label());
+    spotLabel->set_markup("<b>" + Glib::Markup::escape_text(M("TOOLGROUP_SPOT_REMOVAL")) + "</b>");
+    spotLabel->set_halign(Gtk::ALIGN_START);
+    spotLabel->set_margin_start(6);
+    spotLabel->set_margin_top(4);
+    spotLabel->set_margin_bottom(2);
+    locallabPanel->pack_start(*spotLabel, Gtk::PACK_SHRINK);
     addPanel(locallabPanel, spot, 1);
+    spot->setFlatMode(true);
+
+    Gtk::Label* maskLabel = Gtk::manage(new Gtk::Label());
+    maskLabel->set_markup("<b>" + Glib::Markup::escape_text(M("TOOLGROUP_MASKING")) + "</b>");
+    maskLabel->set_halign(Gtk::ALIGN_START);
+    maskLabel->set_margin_start(6);
+    maskLabel->set_margin_top(4);
+    maskLabel->set_margin_bottom(2);
+    locallabPanel->pack_start(*maskLabel, Gtk::PACK_SHRINK);
     addPanel(locallabPanel, locallab, 1);
+    locallab->setFlatMode(true);
+    locallab->hideSettingsHeader();
+    locallab->hideToolGroups();
 
     // Show all after populating panels
     modeStack->show_all();
@@ -683,12 +809,12 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
     toolBar->setToolBarListener(this);
     toolBar->hideCropTools();
 
-    // Pack spot WB and color picker into the Color group's picker row
-    if (colorPickerRow_ && toolBar->getWbTool()) {
-        colorPickerRow_->pack_start(*toolBar->getWbTool(), Gtk::PACK_SHRINK);
+    // Pack spot WB and color picker into WB's picker row
+    if (whitebalance->getPickerRow() && toolBar->getWbTool()) {
+        whitebalance->getPickerRow()->pack_start(*toolBar->getWbTool(), Gtk::PACK_SHRINK);
     }
-    if (colorPickerRow_ && toolBar->getColPickerTool()) {
-        colorPickerRow_->pack_start(*toolBar->getColPickerTool(), Gtk::PACK_SHRINK);
+    if (whitebalance->getPickerRow() && toolBar->getColPickerTool()) {
+        whitebalance->getPickerRow()->pack_start(*toolBar->getColPickerTool(), Gtk::PACK_SHRINK);
     }
 }
 
@@ -816,6 +942,14 @@ std::string ToolPanelCoordinator::getToolName(Tool tool)
             return HSVEqualizer::TOOL_NAME;
         case Tool::POINT_COLOR:
             return PointColor::TOOL_NAME;
+        case Tool::TEXTURE:
+            return Texture::TOOL_NAME;
+        case Tool::CLARITY:
+            return Clarity::TOOL_NAME;
+        case Tool::GRAIN:
+            return Grain::TOOL_NAME;
+        case Tool::LENS_BLUR:
+            return LensBlur::TOOL_NAME;
         case Tool::FILM_SIMULATION:
             return FilmSimulation::TOOL_NAME;
         case Tool::SOFT_LIGHT:
@@ -874,6 +1008,145 @@ void ToolPanelCoordinator::notebookPageChanged(Gtk::Widget* page, guint page_num
     // Legacy function - no longer used (mode switching handled by modeChanged)
 }
 
+void ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params)
+{
+    if (!maskModeActive_ || params->locallab.spots.empty()) return;
+
+    const int idx = params->locallab.selspot;
+    if (idx < 0 || idx >= (int)params->locallab.spots.size()) return;
+
+    auto& spot = params->locallab.spots.at(idx);
+
+    // Always bridge global tool values to the spot.
+    // The widgets show spot values (loaded by loadSpotIntoGlobalTools),
+    // so write() puts those values into global params. We copy them to the spot
+    // and restore the original global params.
+
+    // ToneCurve exposure → Exposure spot
+    spot.expcomp = params->toneCurve.expcomp;
+    spot.black = params->toneCurve.black;
+    spot.hlcompr = params->toneCurve.hlcompr;
+    spot.hlcomprthresh = params->toneCurve.hlcomprthresh;
+    spot.shcompr = params->toneCurve.shcompr;
+    // Enable expose sub-tool if any exposure value is non-default
+    if (spot.expcomp != 0.0 || spot.black != 0 ||
+        spot.hlcompr != 0 || spot.hlcomprthresh != 0 || spot.shcompr != 50) {
+        spot.expexpose = true;
+        spot.visiexpose = true;
+    }
+
+    // ToneCurve brightness/contrast/saturation → Color spot
+    spot.lightness = params->toneCurve.brightness;
+    spot.contrast = params->toneCurve.contrast;
+    spot.chroma = params->toneCurve.saturation;
+    if (spot.lightness != 0 || spot.contrast != 0 || spot.chroma != 0) {
+        spot.expcolor = true;
+        spot.visicolor = true;
+    }
+
+    // Vibrance → Vibrance spot
+    spot.saturated = params->vibrance.saturated;
+    spot.pastels = params->vibrance.pastels;
+    spot.psthreshold = params->vibrance.psthreshold;
+    spot.protectskins = params->vibrance.protectskins;
+    spot.avoidcolorshift = params->vibrance.avoidcolorshift;
+    spot.pastsattog = params->vibrance.pastsattog;
+    if (spot.pastels != 0 || spot.saturated != 0) {
+        spot.expvibrance = true;
+        spot.visivibrance = true;
+    }
+
+    // Sharpening → Sharp spot
+    spot.sharamount = params->sharpening.amount;
+    spot.sharradius = params->sharpening.radius;
+    spot.sharcontrast = static_cast<int>(params->sharpening.contrast);
+    if (spot.sharamount != 0) {
+        spot.expsharp = true;
+        spot.visisharp = true;
+    }
+
+    // ShadowsHighlights → Shadow spot
+    spot.highlights = params->sh.highlights;
+    spot.shadows = params->sh.shadows;
+    spot.h_tonalwidth = params->sh.htonalwidth;
+    spot.s_tonalwidth = params->sh.stonalwidth;
+    if (spot.highlights != 0 || spot.shadows != 0) {
+        spot.expshadhigh = true;
+        spot.visishadhigh = true;
+    }
+
+    // Restore global params to saved state (no global effect)
+    params->toneCurve = savedToneCurve_;
+    params->vibrance = savedVibrance_;
+    params->sharpening = savedSharpening_;
+    params->sh = savedSH_;
+}
+
+void ToolPanelCoordinator::loadSpotIntoGlobalTools()
+{
+    if (!ipc) return;
+
+    ProcParams* params = ipc->beginUpdateParams();
+    if (params->locallab.spots.empty()) {
+        ipc->endUpdateParams(0);
+        return;
+    }
+
+    const int idx = params->locallab.selspot;
+    if (idx < 0 || idx >= (int)params->locallab.spots.size()) {
+        ipc->endUpdateParams(0);
+        return;
+    }
+
+    const auto& spot = params->locallab.spots.at(idx);
+
+    // Map spot values to global fields in a temp copy
+    ProcParams tempParams = *params;
+    tempParams.toneCurve.expcomp = spot.expcomp;
+    tempParams.toneCurve.black = spot.black;
+    tempParams.toneCurve.hlcompr = spot.hlcompr;
+    tempParams.toneCurve.hlcomprthresh = spot.hlcomprthresh;
+    tempParams.toneCurve.shcompr = spot.shcompr;
+    tempParams.toneCurve.brightness = spot.lightness;
+    tempParams.toneCurve.contrast = spot.contrast;
+    tempParams.toneCurve.saturation = spot.chroma;
+
+    tempParams.vibrance.pastels = spot.pastels;
+    tempParams.vibrance.saturated = spot.saturated;
+    tempParams.vibrance.psthreshold = spot.psthreshold;
+    tempParams.vibrance.protectskins = spot.protectskins;
+    tempParams.vibrance.avoidcolorshift = spot.avoidcolorshift;
+    tempParams.vibrance.pastsattog = spot.pastsattog;
+
+    tempParams.sharpening.amount = spot.sharamount;
+    tempParams.sharpening.radius = spot.sharradius;
+    tempParams.sharpening.contrast = spot.sharcontrast;
+
+    tempParams.sh.highlights = spot.highlights;
+    tempParams.sh.shadows = spot.shadows;
+    tempParams.sh.htonalwidth = spot.h_tonalwidth;
+    tempParams.sh.stonalwidth = spot.s_tonalwidth;
+
+    ipc->endUpdateParams(0);  // release lock, no reprocess
+
+    // Update widget display (listener disabled to prevent recursive panelChanged)
+    toneCurve->disableListener();
+    toneCurve->read(&tempParams);
+    toneCurve->enableListener();
+
+    vibrance->disableListener();
+    vibrance->read(&tempParams);
+    vibrance->enableListener();
+
+    sharpening->disableListener();
+    sharpening->read(&tempParams);
+    sharpening->enableListener();
+
+    shadowshighlights->disableListener();
+    shadowshighlights->read(&tempParams);
+    shadowshighlights->enableListener();
+}
+
 void ToolPanelCoordinator::modeChanged(EditorMode mode)
 {
     // Switch the visible stack child
@@ -892,17 +1165,108 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
             break;
     }
 
+    // Reparent global ToolGroups between editPanel and locallabPanel
+    if (mode == EditorMode::MASK && prevMode != EditorMode::MASK) {
+        editPanel->remove(*lightGroup);
+        editPanel->remove(*colorGroup);
+        editPanel->remove(*detailGroup);
+        editPanel->remove(*effectsGroup);
+        editPanel->remove(*calibrationGroup);
+        locallabPanel->pack_start(*lightGroup, Gtk::PACK_SHRINK);
+        locallabPanel->pack_start(*colorGroup, Gtk::PACK_SHRINK);
+        locallabPanel->pack_start(*detailGroup, Gtk::PACK_SHRINK);
+        locallabPanel->pack_start(*effectsGroup, Gtk::PACK_SHRINK);
+        locallabPanel->pack_start(*calibrationGroup, Gtk::PACK_SHRINK);
+    }
+    if (prevMode == EditorMode::MASK && mode != EditorMode::MASK) {
+        locallabPanel->remove(*lightGroup);
+        locallabPanel->remove(*colorGroup);
+        locallabPanel->remove(*detailGroup);
+        locallabPanel->remove(*effectsGroup);
+        locallabPanel->remove(*calibrationGroup);
+        editPanel->pack_start(*lightGroup, Gtk::PACK_SHRINK);
+        editPanel->pack_start(*colorGroup, Gtk::PACK_SHRINK);
+        editPanel->pack_start(*detailGroup, Gtk::PACK_SHRINK);
+        editPanel->pack_start(*effectsGroup, Gtk::PACK_SHRINK);
+        editPanel->pack_start(*calibrationGroup, Gtk::PACK_SHRINK);
+    }
+
     // Handle Locallab subscription/unsubscription
     if (photoLoadedOnce) {
         if (mode == EditorMode::MASK) {
             toolBar->blockEditDeactivation();
             locallab->subscribe();
-            locallab->setExpanded(true);
+
+            // Auto-enable locallab when entering mask mode (required for overlay rendering)
+            if (!locallab->getEnabled()) {
+                locallab->setEnabled(true);
+                locallab->enabledChanged();
+            }
+
+            // Fire mask visibility so the engine shows the overlay
+            if (ipc) {
+                const Locallab::llMaskVisibility mv = locallab->getMaskVisibility();
+                ipc->setLocallabMaskVisibility(mv.previewDeltaE, mv.showMaskOverlay,
+                    mv.colorMask, mv.colorMaskinv, mv.expMask, mv.expMaskinv,
+                    mv.SHMask, mv.SHMaskinv, mv.vibMask, mv.softMask,
+                    mv.blMask, mv.tmMask, mv.retiMask, mv.sharMask,
+                    mv.lcMask, mv.cbMask, mv.logMask, mv.maskMask, mv.cieMask);
+                // Trigger reprocess so the mask overlay renders immediately
+                panelChanged(rtengine::EvlocallabshowmaskMethod, "");
+            }
+
+            // Save global params and load spot values into global tools
+            maskModeActive_ = true;
+            if (ipc) {
+                ProcParams* p = ipc->beginUpdateParams();
+                savedToneCurve_ = p->toneCurve;
+                savedVibrance_ = p->vibrance;
+                savedSharpening_ = p->sharpening;
+                savedSH_ = p->sh;
+                ipc->endUpdateParams(0);
+            }
+            loadSpotIntoGlobalTools();
         }
 
-        if (prevMode == EditorMode::MASK) {
+        if (prevMode == EditorMode::MASK && mode != EditorMode::MASK) {
+            // Restore original global params and re-read tools
+            maskModeActive_ = false;
+            if (ipc) {
+                ProcParams* p = ipc->beginUpdateParams();
+                p->toneCurve = savedToneCurve_;
+                p->vibrance = savedVibrance_;
+                p->sharpening = savedSharpening_;
+                p->sh = savedSH_;
+                ipc->endUpdateParams(rtengine::RefreshMapper::getInstance()->getAction(
+                    rtengine::EvlocallabshowmaskMethod));
+
+                ProcParams restored;
+                ProcParams* current = ipc->beginUpdateParams();
+                restored = *current;
+                ipc->endUpdateParams(0);
+
+                toneCurve->disableListener();
+                toneCurve->read(&restored);
+                toneCurve->enableListener();
+                vibrance->disableListener();
+                vibrance->read(&restored);
+                vibrance->enableListener();
+                sharpening->disableListener();
+                sharpening->read(&restored);
+                sharpening->enableListener();
+                shadowshighlights->disableListener();
+                shadowshighlights->read(&restored);
+                shadowshighlights->enableListener();
+            }
+
             toolBar->blockEditDeactivation(false);
             locallab->unsubscribe();
+            // Clear mask overlay when leaving mask mode (non-zero = inactive)
+            if (ipc) {
+                ipc->setLocallabMaskVisibility(false, false,
+                    1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1);
+                panelChanged(rtengine::EvlocallabshowmaskMethod, "");
+            }
         }
     }
 
@@ -911,70 +1275,101 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
 
 void ToolPanelCoordinator::populateEditPanel()
 {
-    // Light group: Tone Curve, Shadows/Highlights, Tone Equalizer, EPD
-    addPanel(lightGroup->getContentBox(), blackwhite, 1);
-    blackwhite->setFlatMode(true);
+    // Exposure & Tone group: B&W toggle + summary sliders + RGB Curves
+    {
+        // B&W toggle button
+        bwToggle_ = Gtk::manage(new Gtk::ToggleButton("B&&W"));
+        bwToggle_->set_relief(Gtk::RELIEF_NONE);
+        bwToggle_->set_can_focus(false);
+        bwToggle_->set_halign(Gtk::ALIGN_START);
+        bwToggle_->set_margin_start(4);
+        bwToggle_->set_margin_top(2);
+        bwToggle_->set_margin_bottom(2);
+        auto bwCss = Gtk::CssProvider::create();
+        bwCss->load_from_data(
+            "button { font-size: 9px; font-weight: bold; padding: 2px 8px;"
+            "  min-height: 0; border-radius: 3px;"
+            "  background: transparent; background-image: none;"
+            "  border: 1px solid alpha(@theme_fg_color, 0.3); }"
+            "button:checked { background-color: alpha(@theme_fg_color, 0.15);"
+            "  border-color: alpha(@theme_fg_color, 0.5); }"
+            "button:hover { background-color: rgba(130,170,230,0.22); }");
+        bwToggle_->get_style_context()->add_provider(
+            bwCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+        lightGroup->getContentBox()->pack_start(*bwToggle_, Gtk::PACK_SHRINK);
+        bwConn_ = bwToggle_->signal_toggled().connect([this]() {
+            blackwhite->setEnabled(bwToggle_->get_active());
+            blackwhite->enabledChanged();
+        });
+    }
     addPanel(lightGroup->getContentBox(), toneCurve, 1);
     toneCurve->setFlatMode(true);
+    toneCurve->collapseDetail();
     addPanel(lightGroup->getContentBox(), shadowshighlights, 1);
     shadowshighlights->setFlatMode(true);
-    addPanel(lightGroup->getContentBox(), toneEqualizer, 1);
-    toneEqualizer->setFlatMode(true);
-    addPanel(lightGroup->getContentBox(), epd, 1);
-    epd->setFlatMode(true);
+    shadowshighlights->collapseDetail();
+    addPanel(lightGroup->getContentBox(), rgbcurves, 1);
+    rgbcurves->setFlatMode(true);
 
-    // Color group (LR-aligned): White Balance, Vibrance, Color Mixer (HSV Eq),
-    //                           Point Color, Color Grading
-    // Spot WB and Color Picker buttons will be added after toolBar is created
-    colorPickerRow_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 2));
-    colorPickerRow_->set_margin_start(4);
-    colorPickerRow_->set_margin_bottom(2);
-    colorGroup->getContentBox()->pack_start(*colorPickerRow_, Gtk::PACK_SHRINK);
+    // Color group: WB, Vibrance (below tint), HSV Eq, Color Grading, Point Color
     addPanel(colorGroup->getContentBox(), whitebalance, 1);
     whitebalance->setFlatMode(true);
+    whitebalance->collapseDetail();
     addPanel(colorGroup->getContentBox(), vibrance, 1);
     vibrance->setFlatMode(true);
+    vibrance->collapseDetail();
     addPanel(colorGroup->getContentBox(), hsvequalizer, 1);
     hsvequalizer->setFlatMode(true);
-    addPanel(colorGroup->getContentBox(), pointcolor, 1);
-    pointcolor->setFlatMode(true);
+    hsvequalizer->collapseDetail();
     addPanel(colorGroup->getContentBox(), colorgrading, 1);
     colorgrading->setFlatMode(true);
+    colorgrading->collapseDetail();
+    addPanel(colorGroup->getContentBox(), pointcolor, 1);
+    pointcolor->setFlatMode(true);
 
-    // Detail group: Sharpening, Local Contrast, Denoise, AI Denoise, Defringe, Dehaze
+    // Detail group: Sharpening, Local Contrast, Noise Reduction, AI Denoise, Dehaze
     addPanel(detailGroup->getContentBox(), sharpening, 1);
     sharpening->setFlatMode(true);
-    addPanel(detailGroup->getContentBox(), localContrast, 1);
-    localContrast->setFlatMode(true);
+    sharpening->collapseDetail();
     addPanel(detailGroup->getContentBox(), dirpyrdenoise, 1);
     dirpyrdenoise->setFlatMode(true);
     addPanel(detailGroup->getContentBox(), aidenoise, 1);
     aidenoise->setFlatMode(true);
-    addPanel(detailGroup->getContentBox(), defringe, 1);
-    defringe->setFlatMode(true);
-    addPanel(detailGroup->getContentBox(), dirpyrequalizer, 1);
-    dirpyrequalizer->setFlatMode(true);
     addPanel(detailGroup->getContentBox(), dehaze, 1);
     dehaze->setFlatMode(true);
+    dehaze->collapseDetail();
 
-    // Effects group: PC Vignette, Gradient, Film Simulation, Film Negative, L Curve
+    // Effects group: Texture, Clarity, Grain, PC Vignette, Gradient, Film Simulation
+    addPanel(effectsGroup->getContentBox(), texture, 1);
+    texture->setFlatMode(true);
+    texture->collapseDetail();
+    addPanel(effectsGroup->getContentBox(), clarity, 1);
+    clarity->setFlatMode(true);
+    clarity->collapseDetail();
+    addPanel(effectsGroup->getContentBox(), grain, 1);
+    grain->setFlatMode(true);
+    grain->collapseDetail();
     addPanel(effectsGroup->getContentBox(), pcvignette, 1);
     pcvignette->setFlatMode(true);
+    pcvignette->collapseDetail();
     addPanel(effectsGroup->getContentBox(), gradient, 1);
     gradient->setFlatMode(true);
+    gradient->collapseDetail();
     addPanel(effectsGroup->getContentBox(), filmSimulation, 1);
     filmSimulation->setFlatMode(true);
-    addPanel(effectsGroup->getContentBox(), filmNegative, 1);
-    filmNegative->setFlatMode(true);
-    addPanel(effectsGroup->getContentBox(), lcurve, 1);
-    lcurve->setFlatMode(true);
+    filmSimulation->collapseDetail();
 
-    // Advanced group: Moved color tools + existing advanced tools
+    // Advanced group: Niche/legacy tools (hidden from main panel)
+    addPanel(advancedGroup->getContentBox(), blackwhite, 1);
+    blackwhite->setFlatMode(true);
+    addPanel(advancedGroup->getContentBox(), toneEqualizer, 1);
+    toneEqualizer->setFlatMode(true);
+    addPanel(advancedGroup->getContentBox(), epd, 1);
+    epd->setFlatMode(true);
+    addPanel(advancedGroup->getContentBox(), dirpyrequalizer, 1);
+    dirpyrequalizer->setFlatMode(true);
     addPanel(advancedGroup->getContentBox(), chmixer, 1);
     chmixer->setFlatMode(true);
-    // B&W moved to lightGroup
-    addPanel(advancedGroup->getContentBox(), rgbcurves, 1);
-    rgbcurves->setFlatMode(true);
     addPanel(advancedGroup->getContentBox(), colortoning, 1);
     colortoning->setFlatMode(true);
     addPanel(advancedGroup->getContentBox(), softlight, 1);
@@ -997,31 +1392,13 @@ void ToolPanelCoordinator::populateEditPanel()
     wavelet->setFlatMode(true);
     advancedGroup->getContentBox()->pack_start(*metadata, Gtk::PACK_SHRINK);
 
-    // Calibration group: ICM, Raw Exposure, Bayer/XTrans process, Preprocess, Dark Frame, Flat Field, Raw CA, PD Sharpening
-    addPanel(calibrationGroup->getContentBox(), icm, 1);
-    icm->setFlatMode(true);
-    addPanel(calibrationGroup->getContentBox(), rawexposure, 1);
-    rawexposure->setFlatMode(true);
-    addPanel(calibrationGroup->getContentBox(), sensorbayer, 1);
-    sensorbayer->setFlatMode(true);
-    addPanel(sensorbayer->getSubToolsContainer(), bayerprocess, 2);
-    addPanel(sensorbayer->getSubToolsContainer(), bayerrawexposure, 2);
-    addPanel(sensorbayer->getSubToolsContainer(), bayerpreprocess, 2);
-    addPanel(sensorbayer->getSubToolsContainer(), rawcacorrection, 2);
-    addPanel(calibrationGroup->getContentBox(), sensorxtrans, 1);
-    sensorxtrans->setFlatMode(true);
-    addPanel(sensorxtrans->getSubToolsContainer(), xtransprocess, 2);
-    addPanel(sensorxtrans->getSubToolsContainer(), xtransrawexposure, 2);
-    addPanel(calibrationGroup->getContentBox(), preprocessWB, 1);
-    preprocessWB->setFlatMode(true);
-    addPanel(calibrationGroup->getContentBox(), preprocess, 1);
-    preprocess->setFlatMode(true);
-    addPanel(calibrationGroup->getContentBox(), darkframe, 1);
-    darkframe->setFlatMode(true);
-    addPanel(calibrationGroup->getContentBox(), flatfield, 1);
-    flatfield->setFlatMode(true);
-    addPanel(calibrationGroup->getContentBox(), pdSharpening, 1);
-    pdSharpening->setFlatMode(true);
+    // Camera group: Lens tools only
+    addPanel(calibrationGroup->getContentBox(), defringe, 1);
+    defringe->setFlatMode(true);
+    addPanel(calibrationGroup->getContentBox(), lensProf, 1);
+    lensProf->setFlatMode(true);
+    addPanel(calibrationGroup->getContentBox(), lensblur, 1);
+    lensblur->setFlatMode(true);
 
 }
 
@@ -1371,6 +1748,78 @@ void ToolPanelCoordinator::refreshPreview (const rtengine::ProcEvent& event)
     ipc->endUpdateParams (event);   // starts the IPC processing
 }
 
+void ToolPanelCoordinator::turnOffMaskOverlay(bool /*forceRedraw*/)
+{
+    if (!ipc) return;
+
+    hoverMaskApplied_ = false;
+    pendingHoverState_ = false;
+    hoverMaskDebounce_.disconnect();
+    hoverMaskWatchdog_.disconnect();
+
+    locallab->setHoverMaskOverlay(false);
+    ipc->setLocallabMaskVisibility(false, false,
+        1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1);
+
+    // Trigger reprocess to clear overlay from dcrop
+    ipc->beginUpdateParams();
+    ipc->endUpdateParams(AUTOEXP);
+}
+
+void ToolPanelCoordinator::hoverMaskChanged(bool hover, bool forceRedraw)
+{
+    if (!ipc) return;
+
+    // Cancel any pending debounce
+    hoverMaskDebounce_.disconnect();
+    pendingHoverState_ = hover;
+
+    if (!hover) {
+        // Turn off immediately — never debounce "off"
+        turnOffMaskOverlay(forceRedraw);
+        return;
+    }
+
+    // Skip if already on
+    if (hoverMaskApplied_) return;
+
+    // Debounce "on" to avoid expensive reprocessing on rapid mouse movement
+    hoverMaskDebounce_ = Glib::signal_timeout().connect([this]() {
+        if (!ipc || !pendingHoverState_) return false;
+
+        hoverMaskApplied_ = true;
+        locallab->setHoverMaskOverlay(true);
+        const Locallab::llMaskVisibility mv = locallab->getMaskVisibility();
+        ipc->setLocallabMaskVisibility(mv.previewDeltaE, mv.showMaskOverlay,
+            mv.colorMask, mv.colorMaskinv, mv.expMask, mv.expMaskinv,
+            mv.SHMask, mv.SHMaskinv, mv.vibMask, mv.softMask,
+            mv.blMask, mv.tmMask, mv.retiMask, mv.sharMask,
+            mv.lcMask, mv.cbMask, mv.logMask, mv.maskMask, mv.cieMask);
+        ipc->beginUpdateParams();
+        ipc->endUpdateParams(AUTOEXP);
+
+        // Start watchdog: periodically check actual pointer position
+        // This catches cases where leave events are missed (common on WSLg/X11)
+        hoverMaskWatchdog_ = Glib::signal_timeout().connect([this]() {
+            if (!hoverMaskApplied_) {
+                return false;  // already off
+            }
+            if (!locallab->isPointerOverMaskList()) {
+                turnOffMaskOverlay();
+                return false;  // stop watchdog
+            }
+            return true;  // keep checking
+        }, 300);
+
+        return false;  // one-shot debounce
+    }, 100);
+}
+
+void ToolPanelCoordinator::applyHoverMask()
+{
+    // Unused — logic inlined into hoverMaskChanged
+}
+
 void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const Glib::ustring& descr)
 {
     if (!ipc) {
@@ -1384,6 +1833,9 @@ void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const 
     for (auto toolPanel : toolPanels) {
         toolPanel->write(params);
     }
+
+    // Bridge global tool values to selected locallab spot in mask mode
+    bridgeGlobalToSpot(params);
 
     // Compensate rotation on flip
     if (event == rtengine::EvCTHFlip || event == rtengine::EvCTVFlip) {
@@ -1450,11 +1902,15 @@ void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const 
                 maskStruc.SHMask, maskStruc.SHMaskinv, maskStruc.vibMask, maskStruc.softMask,
                 maskStruc.blMask, maskStruc.tmMask, maskStruc.retiMask, maskStruc.sharMask,
                 maskStruc.lcMask, maskStruc.cbMask, maskStruc.logMask, maskStruc.maskMask, maskStruc.cieMask);
-    } else if (event == rtengine::EvLocallabSpotCreated || event == rtengine::EvLocallabSpotSelectedWithMask ||
+    } else if (event == rtengine::EvLocallabSpotCreated || event == rtengine::EvLocallabSpotSelected ||
+            event == rtengine::EvLocallabSpotSelectedWithMask ||
             event == rtengine::EvLocallabSpotDeleted /*|| event == rtengine::Evlocallabshowreset*/ ||
             event == rtengine::EvlocallabToolRemovedWithRefresh) {
         locallab->resetMaskVisibility();
-        ipc->setLocallabMaskVisibility(false, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        hoverMaskApplied_ = false;
+        hoverMaskDebounce_.disconnect();
+        hoverMaskWatchdog_.disconnect();
+        ipc->setLocallabMaskVisibility(false, false, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1);
     }
 
     ipc->endUpdateParams(changeFlags);    // starts the IPC processing
@@ -1463,6 +1919,13 @@ void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const 
 
     for (auto paramcListener : paramcListeners) {
         paramcListener->procParamsChanged(params, event, descr);
+    }
+
+    // When spot changes in mask mode, reload spot values into global tools
+    if (maskModeActive_ &&
+        (event == rtengine::EvLocallabSpotSelectedWithMask ||
+         event == rtengine::EvLocallabSpotCreated)) {
+        loadSpotIntoGlobalTools();
     }
 
     // Locallab spot curves are set visible if at least one photo has been loaded (to avoid
@@ -1557,14 +2020,23 @@ void ToolPanelCoordinator::profileChange(
         }
     }
 
+    // Sync B&W toggle with blackwhite tool state
+    if (bwToggle_) {
+        bwConn_.block();
+        bwToggle_->set_active(blackwhite->getEnabled());
+        bwConn_.unblock();
+    }
+
     if (event == rtengine::EvPhotoLoaded || event == rtengine::EvProfileChanged || event == rtengine::EvHistoryBrowsed || event == rtengine::EvCTRotate) {
         // updating the "on preview" geometry
         gradient->updateGeometry(params->gradient.centerX, params->gradient.centerY, params->gradient.feather, params->gradient.degree, fw, fh);
     }
 
-    // Reset Locallab mask visibility
+    // Reset Locallab mask visibility — overlay off by default (hover-driven)
     locallab->resetMaskVisibility();
-    ipc->setLocallabMaskVisibility(false, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    hoverMaskApplied_ = false;
+    hoverMaskDebounce_.disconnect();
+    ipc->setLocallabMaskVisibility(false, false, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1);
 
     // start the IPC processing
     if (filterRawRefresh) {
@@ -2130,7 +2602,8 @@ void ToolPanelCoordinator::applyUIComplexity(int complexityLevel)
         Tool::CH_MIXER, Tool::BLACK_WHITE, Tool::RESIZE_TOOL,
         Tool::PR_SHARPENING, Tool::FRAMING, Tool::CROP_TOOL,
         Tool::ICM, Tool::WAVELET, Tool::DIR_PYR_EQUALIZER,
-        Tool::HSV_EQUALIZER, Tool::POINT_COLOR, Tool::FILM_SIMULATION, Tool::SOFT_LIGHT,
+        Tool::HSV_EQUALIZER, Tool::POINT_COLOR, Tool::TEXTURE, Tool::CLARITY,
+        Tool::GRAIN, Tool::FILM_SIMULATION, Tool::SOFT_LIGHT,
         Tool::DEHAZE, Tool::SENSOR_BAYER, Tool::SENSOR_XTRANS,
         Tool::BAYER_PROCESS, Tool::XTRANS_PROCESS, Tool::BAYER_PREPROCESS,
         Tool::PREPROCESS, Tool::DARKFRAME_TOOL, Tool::FLATFIELD_TOOL,
@@ -2140,6 +2613,9 @@ void ToolPanelCoordinator::applyUIComplexity(int complexityLevel)
     };
 
     for (const auto& tool : allTools) {
+        // Spot and Locallab are always visible on the Mask page
+        if (tool == Tool::SPOT || tool == Tool::LOCALLAB) continue;
+
         FoldableToolPanel* panel = getFoldableToolPanel(tool);
         if (!panel) continue;
 
@@ -2234,6 +2710,19 @@ void ToolPanelCoordinator::toolDeselected(ToolMode tool)
 {
     if (tool == TMPerspective) {
         perspective->requestApplyControlLines();
+        perspective->setDragEditMode(false);
+    }
+}
+
+void ToolPanelCoordinator::expandTransformSection(Gtk::Box* content, Gtk::Label* label, const Glib::ustring& name)
+{
+    if (content && !content->get_visible()) {
+        content->set_no_show_all(false);
+        content->show_all();
+        content->set_no_show_all(true);
+        if (label) {
+            label->set_markup("\u25BE <b>" + Glib::Markup::escape_text(name) + "</b>");
+        }
     }
 }
 
@@ -2248,6 +2737,7 @@ void ToolPanelCoordinator::toolSelected(ToolMode tool)
         case TMCropSelect: {
             toolBar->blockEditDeactivation(false);
             crop->setExpanded(true);
+            expandTransformSection(cropSectionContent_, cropSectionLabel_, M("TP_CROP_LABEL"));
             modeButtonBar->setActiveMode(EditorMode::CROPPING);
             modeChanged(EditorMode::CROPPING);
             break;
@@ -2264,7 +2754,6 @@ void ToolPanelCoordinator::toolSelected(ToolMode tool)
         case TMStraighten: {
             toolBar->blockEditDeactivation(false);
             rotate->setExpanded(true);
-            lensgeom->setExpanded(true);
             modeButtonBar->setActiveMode(EditorMode::CROPPING);
             modeChanged(EditorMode::CROPPING);
             break;
@@ -2272,9 +2761,9 @@ void ToolPanelCoordinator::toolSelected(ToolMode tool)
 
         case TMPerspective: {
             toolBar->blockEditDeactivation(false);
-            perspective->setControlLineEditMode(true);
+            perspective->setDragEditMode(true);
             perspective->setExpanded(true);
-            lensgeom->setExpanded(true);
+            expandTransformSection(perspSectionContent_, perspSectionLabel_, M("TP_PERSPECTIVE_LABEL"));
             modeButtonBar->setActiveMode(EditorMode::CROPPING);
             modeChanged(EditorMode::CROPPING);
             break;
@@ -2307,6 +2796,11 @@ void ToolPanelCoordinator::setEditProvider(EditDataProvider *provider)
     for (size_t i = 0; i < toolPanels.size(); i++) {
         toolPanels.at(i)->setEditProvider(provider);
     }
+}
+
+void ToolPanelCoordinator::setLevelingGridCallback(std::function<void(bool)> cb)
+{
+    rotate->setLevelingGridCallback(std::move(cb));
 }
 
 bool ToolPanelCoordinator::getFilmNegativeSpot(rtengine::Coord spot, int spotSize, RGB &refInput, RGB &refOutput)
@@ -2409,6 +2903,14 @@ FoldableToolPanel *ToolPanelCoordinator::getFoldableToolPanel(Tool tool) const
             return hsvequalizer;
         case Tool::POINT_COLOR:
             return pointcolor;
+        case Tool::TEXTURE:
+            return texture;
+        case Tool::CLARITY:
+            return clarity;
+        case Tool::GRAIN:
+            return grain;
+        case Tool::LENS_BLUR:
+            return lensblur;
         case Tool::FILM_SIMULATION:
             return filmSimulation;
         case Tool::SOFT_LIGHT:

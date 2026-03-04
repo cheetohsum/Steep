@@ -597,6 +597,10 @@ enum class BlurType {
     void dehazeloc(Imagefloat *rgb, const procparams::DehazeParams &dehazeParams, int sk, int sp);
     void ToneMapFattal02(Imagefloat *rgb, const procparams::FattalToneMappingParams &fatParams, int detail_level, int Lalone, float **Lum, int WW, int HH, int algo, bool sat);
     void localContrast(LabImage *lab, float **destination, const procparams::LocalContrastParams &localContrastParams, bool fftwlc, double scale);
+    void textureContrast(LabImage *lab, const procparams::TextureParams &params, double scale);
+    void clarityContrast(LabImage *lab, const procparams::ClarityParams &params, double scale);
+    void grainEffect(LabImage *lab, const procparams::GrainParams &params, int fw, int fh);
+    void lensBlur(LabImage *lab, const procparams::LensBlurParams &params, double scale);
     void colorToningLabGrid(LabImage *lab, int xstart, int xend, int ystart, int yend, bool MultiThread);
     void colorGrading(LabImage *lab, int xstart, int xend, int ystart, int yend, bool MultiThread);
     //void shadowsHighlights(LabImage *lab);

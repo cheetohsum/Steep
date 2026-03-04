@@ -43,6 +43,7 @@
 #include "pathutils.h"
 #include "placesbrowser.h"
 #include "rtimage.h"
+#include "rtscalable.h"
 #include "thumbimageupdater.h"
 #include "thumbnail.h"
 #include "toolbar.h"
@@ -414,8 +415,59 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
         bCLabel[i]->signal_button_press_event().connect (sigc::mem_fun(*this, &FileCatalog::capture_event), false);
     }
 
+    // Create compact multi-color summary indicator (5 tiny colored dots)
+    colorLabelSummary_ = Gtk::manage(new Gtk::DrawingArea());
+    colorLabelSummary_->set_size_request(RTScalable::scalePixelSize(36), RTScalable::scalePixelSize(16));
+    colorLabelSummary_->signal_draw().connect([this](const Cairo::RefPtr<Cairo::Context>& cr) -> bool {
+        const double colors[][3] = {{1,0,0}, {1,1,0}, {0,0.75,0}, {0,0.4,1}, {0.6,0,0.8}};
+        const int w = colorLabelSummary_->get_allocated_width();
+        const int h = colorLabelSummary_->get_allocated_height();
+        const double r = std::min(w / 12.0, h / 2.0 - 1.0);
+        const double spacing = (w - 2.0) / 5.0;
+        const double alpha = colorSummaryOpacity_;
+        for (int i = 0; i < 5; i++) {
+            cr->set_source_rgba(colors[i][0], colors[i][1], colors[i][2], alpha);
+            cr->arc(1.0 + spacing * (i + 0.5), h / 2.0, r, 0, 2 * M_PI);
+            cr->fill();
+        }
+        return true;
+    });
+    colorSummaryOpacity_ = 1.0;
+    colorLabelExpanded_ = false;
+
+    // Connect enter/leave on the summary DrawingArea (has its own GdkWindow)
+    colorLabelSummary_->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
+    colorLabelSummary_->signal_enter_notify_event().connect(
+        sigc::mem_fun(*this, &FileCatalog::onColorLabelChildEnter));
+    colorLabelSummary_->signal_leave_notify_event().connect(
+        sigc::mem_fun(*this, &FileCatalog::onColorLabelChildLeave));
+
+    // Connect enter/leave on each color label button (each has its own GdkWindow)
+    bUnCLabeled->signal_enter_notify_event().connect(
+        sigc::mem_fun(*this, &FileCatalog::onColorLabelChildEnter));
+    bUnCLabeled->signal_leave_notify_event().connect(
+        sigc::mem_fun(*this, &FileCatalog::onColorLabelChildLeave));
+    for (int i = 0; i < 5; i++) {
+        bCLabel[i]->signal_enter_notify_event().connect(
+            sigc::mem_fun(*this, &FileCatalog::onColorLabelChildEnter));
+        bCLabel[i]->signal_leave_notify_event().connect(
+            sigc::mem_fun(*this, &FileCatalog::onColorLabelChildLeave));
+    }
+
+    // Put individual color label buttons inside a Revealer for animated expand
+    colorLabelRevealer_ = Gtk::manage(new Gtk::Revealer());
+    colorLabelRevealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_RIGHT);
+    colorLabelRevealer_->set_transition_duration(250);
+    colorLabelRevealer_->add(*fltrLabelbox);
+    colorLabelRevealer_->set_reveal_child(false);
+
+    // Container with summary + revealer (no EventBox needed)
+    colorLabelContainer_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+    colorLabelContainer_->pack_start(*colorLabelSummary_, Gtk::PACK_SHRINK);
+    colorLabelContainer_->pack_start(*colorLabelRevealer_, Gtk::PACK_SHRINK);
+
     fltrVbox1->pack_start (*fltrRankbox, Gtk::PACK_SHRINK, 0);
-    fltrVbox1->pack_start (*fltrLabelbox, Gtk::PACK_SHRINK, 0);
+    fltrVbox1->pack_start (*colorLabelContainer_, Gtk::PACK_SHRINK, 0);
     filterBar->pack_start (*fltrVbox1, Gtk::PACK_SHRINK);
 
     bRank[0]->set_tooltip_markup (M("FILEBROWSER_SHOWRANK1HINT"));
@@ -700,8 +752,66 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     }
 }
 
+bool FileCatalog::onColorLabelChildEnter(GdkEventCrossing* /*event*/)
+{
+    // Pointer entered one of our widgets — cancel any pending collapse
+    colorCollapseDelay_.disconnect();
+
+    if (!colorLabelExpanded_) {
+        colorLabelExpanded_ = true;
+        colorLabelRevealer_->set_reveal_child(true);
+
+        // Start fade animation
+        if (!colorFadeConn_.connected()) {
+            colorFadeConn_ = Glib::signal_timeout().connect(
+                sigc::mem_fun(*this, &FileCatalog::onColorLabelFadeTick), 16);
+        }
+    }
+    return false;
+}
+
+bool FileCatalog::onColorLabelChildLeave(GdkEventCrossing* event)
+{
+    // Ignore if pointer moved to a child widget (e.g. button label inside button)
+    if (event->detail == GDK_NOTIFY_INFERIOR) return false;
+
+    // Schedule collapse after a short delay — gives the pointer time to
+    // reach the next sibling widget, which will cancel this on enter.
+    if (!colorCollapseDelay_.connected()) {
+        colorCollapseDelay_ = Glib::signal_timeout().connect([this]() -> bool {
+            colorLabelExpanded_ = false;
+            colorLabelRevealer_->set_reveal_child(false);
+
+            // Start fade-in animation for summary
+            if (!colorFadeConn_.connected()) {
+                colorFadeConn_ = Glib::signal_timeout().connect(
+                    sigc::mem_fun(*this, &FileCatalog::onColorLabelFadeTick), 16);
+            }
+            return false; // one-shot
+        }, 300);
+    }
+    return false;
+}
+
+bool FileCatalog::onColorLabelFadeTick()
+{
+    const double step = 0.07;
+    if (colorLabelExpanded_) {
+        colorSummaryOpacity_ = std::max(0.0, colorSummaryOpacity_ - step);
+    } else {
+        colorSummaryOpacity_ = std::min(1.0, colorSummaryOpacity_ + step);
+    }
+    colorLabelSummary_->queue_draw();
+
+    bool done = (colorLabelExpanded_ && colorSummaryOpacity_ <= 0.0) ||
+                (!colorLabelExpanded_ && colorSummaryOpacity_ >= 1.0);
+    return !done;
+}
+
 FileCatalog::~FileCatalog()
 {
+    colorFadeConn_.disconnect();
+    colorCollapseDelay_.disconnect();
     idle_register.destroy();
 
     for (int i = 0; i < 5; i++) {

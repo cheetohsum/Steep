@@ -22,6 +22,8 @@
 #include "delayed.h"
 #include "guiutils.h"
 
+#include <functional>
+
 class Adjuster;
 
 class AdjusterListener
@@ -70,6 +72,9 @@ protected:
     double logPivot;
     bool logAnchorMiddle;
     bool isBipolar_;
+    std::function<void()> labelClickCallback_;
+    std::function<void(bool)> interactionCallback_;
+    Gtk::Button* labelButton_ = nullptr;
 
     double shapeValue (double a) const;
     double2double_fun value2slider, slider2value;
@@ -139,4 +144,8 @@ public:
     void showIcons(bool yes);
     void setSliderGradient(const std::vector<GradientMilestone>& milestones);
     void clearSliderGradient();
+    void setLabelClickCallback(std::function<void()> callback);
+    void setInteractionCallback(std::function<void(bool)> callback);
+    void hideResetButton();
+    void setSliderMinWidth(int px);
 };

@@ -137,12 +137,7 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
     wbIcons[toUnderlying(WBEntry::Type::LED)]         = "wb-led-small";
     wbIcons[toUnderlying(WBEntry::Type::CUSTOM)]      = "wb-custom-small";
 
-    Gtk::Grid* methodgrid = Gtk::manage(new Gtk::Grid());
-    methodgrid->get_style_context()->add_class("grid-spacing");
-    setExpandAlignProperties(methodgrid, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
-
-    Gtk::Label* lab = Gtk::manage (new Gtk::Label (M("TP_WBALANCE_METHOD")));
-    setExpandAlignProperties(lab, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    // Method combo setup (packed directly into summary, no grid wrapper)
 
     // Create the Tree model
     refTreeModel = Gtk::TreeStore::create(methodColumns);
@@ -254,31 +249,34 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
     resetButton->set_image (*Gtk::manage (new RTImage ("undo-small", Gtk::ICON_SIZE_BUTTON)));
 
     method->set_active (0); // Camera
-    methodgrid->attach (*lab, 0, 0, 1, 1);
-    methodgrid->attach (*method, 1, 0, 1, 1);
-    methodgrid->attach (*resetButton, 2, 0, 1, 1);
-    getSummaryBox()->pack_start (*methodgrid, Gtk::PACK_SHRINK, 0 );
-    opt = 0;
 
-    Gtk::Grid* spotgrid = Gtk::manage(new Gtk::Grid());
-    spotgrid->get_style_context()->add_class("grid-spacing");
-    setExpandAlignProperties(spotgrid, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
-
-    spotbutton = Gtk::manage (new Gtk::Button (M("TP_WBALANCE_PICKER")));
+    spotbutton = Gtk::manage (new Gtk::Button ());
     setExpandAlignProperties(spotbutton, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     spotbutton->get_style_context()->add_class("independent");
     spotbutton->set_tooltip_text(M("TP_WBALANCE_SPOTWB"));
-    spotbutton->set_image (*Gtk::manage (new RTImage ("color-picker-small", Gtk::ICON_SIZE_BUTTON)));
+    spotbutton->set_image (*Gtk::manage (new RTImage ("wb-pick")));
+    spotbutton->set_always_show_image(true);
+    spotbutton->set_relief(Gtk::RELIEF_NONE);
 
-    Gtk::Label* slab = Gtk::manage (new Gtk::Label (M("TP_WBALANCE_SIZE")));
-    setExpandAlignProperties(slab, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    // Size label removed — spot size dropdown is self-explanatory
 
     Gtk::Grid* wbsizehelper = Gtk::manage(new Gtk::Grid());
     wbsizehelper->set_name("WB-Size-Helper");
     setExpandAlignProperties(wbsizehelper, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
 
     spotsize = Gtk::manage (new MyComboBoxText ());
-    setExpandAlignProperties(spotsize, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    setExpandAlignProperties(spotsize, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    spotsize->set_size_request(36, -1);
+    {
+        auto cssProv = Gtk::CssProvider::create();
+        try {
+            cssProv->load_from_data(
+                "#WB-Size-Helper combobox button { padding: 0 2px; min-height: 16px; min-width: 0; }"
+                " #WB-Size-Helper combobox arrow { min-width: 8px; min-height: 8px; }"
+            );
+            wbsizehelper->get_style_context()->add_provider(cssProv, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+        } catch (...) {}
+    }
     spotsize->append ("2");
 
     const auto& options = App::get().options();
@@ -312,14 +310,7 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
 
     wbsizehelper->attach (*spotsize, 0, 0, 1, 1);
 
-    spotgrid->attach (*spotbutton, 0, 0, 1, 1);
-    spotgrid->attach (*slab, 1, 0, 1, 1);
-    spotgrid->attach (*wbsizehelper, 2, 0, 1, 1);
-    pack_start (*spotgrid, Gtk::PACK_SHRINK, 0 );
-
-    Gtk::Separator *separator = Gtk::manage (new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
-    separator->get_style_context()->add_class("grid-row-separator");
-    pack_start (*separator, Gtk::PACK_SHRINK, 0);
+    opt = 0;
 
     Gtk::Image* itempL =  Gtk::manage (new RTImage ("circle-blue-small", Gtk::ICON_SIZE_BUTTON));
     Gtk::Image* itempR =  Gtk::manage (new RTImage ("circle-yellow-small", Gtk::ICON_SIZE_BUTTON));
@@ -411,13 +402,64 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
     pack_start(*PatchLabel);
     pack_start(*PatchlevelLabel);
     green->setLogScale(MAXGREEN / MINGREEN, MINGREEN);
-    getSummaryBox()->pack_start (*temp);
-    //pack_start (*boxgreen);
-    getSummaryBox()->pack_start (*green);
+
+    // --- Summary box layout ---
+    // Temp & Tint always visible at top
+    getSummaryBox()->pack_start(*temp);
+    getSummaryBox()->pack_start(*green);
+
+    // "WB ▸" label + Camera dropdown on one row
+    auto* wbHeaderRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+    sectionLabel_ = Gtk::manage(new Gtk::Label());
+    sectionLabel_->set_markup("\u25B8 WB");
+    sectionLabel_->set_xalign(0.0);
+    auto* wbToggleBtn = Gtk::manage(new Gtk::Button());
+    wbToggleBtn->add(*sectionLabel_);
+    wbToggleBtn->set_relief(Gtk::RELIEF_NONE);
+    wbToggleBtn->set_can_focus(false);
+    wbToggleBtn->set_tooltip_text(M("TP_WBALANCE_LABEL"));
+    {
+        auto css = Gtk::CssProvider::create();
+        try {
+            css->load_from_data(
+                "button { background: transparent; border: none; box-shadow: none;"
+                " padding: 0 4px; margin: 0; min-height: 0; min-width: 0; }"
+                " button:hover { background-color: rgba(102,153,204,0.15); border-radius: 3px; }"
+            );
+            wbToggleBtn->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+        } catch (...) {}
+    }
+    setExpandAlignProperties(wbToggleBtn, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    wbToggleBtn->signal_clicked().connect([this]() { toggleDetail(); });
+
+    wbHeaderRow->pack_start(*wbToggleBtn, Gtk::PACK_SHRINK);
+    wbHeaderRow->pack_start(*method, Gtk::PACK_SHRINK);
+    getSummaryBox()->pack_start(*wbHeaderRow, Gtk::PACK_SHRINK, 0);
+
+    // Detail content: spot picker, size, reset (hidden by default, toggled by WB label)
+    detailContent_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
+    detailContent_->set_no_show_all(true);
+
+    auto* spotRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 3));
+    spotRow->set_margin_start(4);
+    spotRow->pack_start(*spotbutton, Gtk::PACK_SHRINK);
+    spotRow->pack_start(*wbsizehelper, Gtk::PACK_SHRINK);
+    spotRow->pack_start(*resetButton, Gtk::PACK_SHRINK);
+    detailContent_->pack_start(*spotRow, Gtk::PACK_SHRINK);
+
+    // Row for color picker buttons (populated by toolpanelcoord)
+    pickerRow_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 2));
+    pickerRow_->set_margin_start(4);
+    pickerRow_->set_margin_top(2);
+    detailContent_->pack_start(*pickerRow_, Gtk::PACK_SHRINK);
+
+    getSummaryBox()->pack_start(*detailContent_, Gtk::PACK_SHRINK);
     getSummaryBox()->show_all();
 
     // Advanced section: equal, observer, tempBias, itcwb
     advancedSection = Gtk::manage(new AdvancedSection());
+    advancedSection->set_no_show_all(true);
+    advancedSection->hide();
     pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
     Gtk::Box* const advBox = advancedSection->getContentBox();
 
@@ -459,6 +501,11 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
 WhiteBalance::~WhiteBalance()
 {
     idle_register.destroy();
+}
+
+void WhiteBalance::toggleContent()
+{
+    // Unused — toggleDetail() handles WB detail toggling now
 }
 
 void WhiteBalance::enabledChanged()
@@ -1106,6 +1153,20 @@ void WhiteBalance::setWB (int vtemp, double vgreen)
 void WhiteBalance::resetWB ()
 {
     setActiveMethod(M("TP_WBALANCE_CAMERA"));
+}
+
+void WhiteBalance::toggleDetail()
+{
+    detailExpanded_ = !detailExpanded_;
+    if (detailExpanded_) {
+        sectionLabel_->set_markup("\u25BE WB");
+        detailContent_->set_no_show_all(false);
+        detailContent_->show_all();
+        detailContent_->set_no_show_all(true);
+    } else {
+        sectionLabel_->set_markup("\u25B8 WB");
+        detailContent_->hide();
+    }
 }
 
 void WhiteBalance::setAdjusterBehavior (bool tempadd, bool greenadd, bool equaladd, bool tempbiasadd)

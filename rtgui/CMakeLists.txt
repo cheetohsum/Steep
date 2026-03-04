@@ -44,6 +44,10 @@ set(RT_GUI_TOOL_PANEL_SOURCES
     tools/lensgeom.cc
     tools/lensprofile.cc
     tools/localcontrast.cc
+    tools/texture.cc
+    tools/clarity.cc
+    tools/grain.cc
+    tools/lensblur.cc
     tools/locallab.cc
     tools/locallabtools.cc
     tools/locallabtools2.cc
@@ -116,6 +120,15 @@ set(RT_GUI_WINDOWS_SOURCES
     windows/rtwindow.cc
     windows/saveasdlg.cc
     windows/splash.cc
+)
+
+set(RT_GUI_MCP_SOURCES
+    mcp/mcpprotocol.cc
+    mcp/mcpserver.cc
+    mcp/mcptools.cc
+    mcp/mcpresources.cc
+    mcp/mcpdialog.cc
+    mcp/mcpvolumewatcher.cc
 )
 
 set(NONCLISOURCEFILES
@@ -204,6 +217,7 @@ set(NONCLISOURCEFILES
     ${RT_GUI_TOOL_PANEL_SOURCES}
     ${RT_GUI_WIDGET_SOURCES}
     ${RT_GUI_WINDOWS_SOURCES}
+    ${RT_GUI_MCP_SOURCES}
 )
 
 if(APPLE)

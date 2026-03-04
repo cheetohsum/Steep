@@ -41,6 +41,11 @@ protected:
     Gtk::Button* cancelBtn;
     Gtk::Label* statusLabel;
 
+    Gtk::Label* sectionLabel_;
+    Gtk::Box* toolContent_;
+    bool contentExpanded_;
+    void toggleContent();
+
     Glib::ustring imagePath_;
     rtengine::StagedImageProcessor* ipc_;
 

@@ -37,6 +37,7 @@ public:
 
     virtual void resetToolMaskView() = 0;
     virtual void spotNameChanged(const Glib::ustring &newName) = 0;
+    virtual void spotHovered(bool hovered, bool forceRedraw = false) = 0;
 };
 
 
@@ -97,6 +98,8 @@ public:
         //bool savrest;
         int complexMethod; // 0 = Simple, 1 = Moderate, 2 = all
         int wavMethod; // 0 = D2, 1 = D4, 2 = D6, 3 = D10, 4 = D14
+        int maskType; // 0 = Normal, 1 = AI Mask
+        int aiMaskClass; // 0-7 class index
     };
 
     /**
@@ -108,7 +111,8 @@ public:
         SpotDeletion = 2,
         SpotSelection = 3,
         SpotDuplication = 4,
-        SpotAllVisibilityChanged = 5
+        SpotAllVisibilityChanged = 5,
+        SpotCreationAI = 6
     };
     IdleRegister idle_register;
 
@@ -187,6 +191,17 @@ public:
      * Reset deltaE preview active state
      */
     void resetDeltaEPreview();
+    /**
+     * Reset hover/eye pin state (called on image switch, spot change, etc.)
+     */
+    void resetHoverState()
+    {
+        eyePinned_ = false;
+        sidebarHoverActive_ = false;
+        hoveredSpotIndex_ = -1;
+    }
+
+    int getPendingAIClass() const { return pendingAIClass_; }
 
     // Control spot creation functions
     /**
@@ -234,6 +249,7 @@ public:
 
 private:
     // Cell renderer
+    void render_preview(Gtk::CellRenderer* cell, const Gtk::TreeModel::iterator& iter);
     void render_name(Gtk::CellRenderer* cell, const Gtk::TreeModel::iterator& iter);
     void render_isvisible(Gtk::CellRenderer* cell, const Gtk::TreeModel::iterator& iter);
 
@@ -242,6 +258,7 @@ private:
     void on_button_duplicate();
     void on_button_rename();
     bool on_button_visibility(GdkEventButton* event);
+    void on_ai_mask_selected(int classIndex);
 
     bool blockTreeviewSearch(GdkEventKey* event);
     bool onSpotSelectionEvent(GdkEventButton* event);
@@ -258,6 +275,8 @@ private:
     void avoidgamutMethodChanged();
    //void complexMethodChanged();
     void wavMethodChanged();
+    void maskTypeChanged();
+    void aiMaskClassChanged();
 
     void updateParamVisibility();
 
@@ -341,6 +360,8 @@ private:
         //Gtk::TreeModelColumn<bool> savrest;
         Gtk::TreeModelColumn<int> complexMethod; // 0 = Simple, 1 = mod, 2 = all
         Gtk::TreeModelColumn<int> wavMethod; // 0 = D2, 1 = D4, 2 = D6, 3 = D10, 4 = D14
+        Gtk::TreeModelColumn<int> maskType; // 0 = Normal, 1 = AI Mask
+        Gtk::TreeModelColumn<int> aiMaskClass; // 0-7 class index
     };
 
     class RenameDialog:
@@ -368,6 +389,7 @@ private:
     Gtk::TreeView* const treeview_;
     sigc::connection treeviewconn_;
     Glib::RefPtr<Gtk::ListStore> treemodel_;
+    Gtk::Menu* contextMenu_;
 
     Gtk::Button* const button_add_;
     sigc::connection buttonaddconn_;
@@ -398,6 +420,10 @@ private:
     sigc::connection wavMethodconn_;
     MyComboBoxText* const avoidgamutMethod_;
 	sigc::connection avoidgamutconn_;
+    MyComboBoxText* const maskType_;
+    sigc::connection maskTypeConn_;
+    MyComboBoxText* const aiMaskClass_;
+    sigc::connection aiMaskClassConn_;
 
     Adjuster* const sensiexclu_;
     Adjuster* const structexclu_;
@@ -459,6 +485,8 @@ private:
     
     Gtk::Box* const ctboxshapemethod;
     Gtk::Box* const ctboxgamut;
+    Gtk::Box* const ctboxmasktype;
+    Gtk::Box* const ctboxaiclass;
     ToolParamBlock* const artifBox2;
 
     // Internal variables
@@ -473,8 +501,29 @@ private:
     Gtk::Frame* const excluFrame;
     bool maskPrevActive;
 
+    // Mask dropdown section
+    Gtk::Box* maskDetailBox_;
+    bool maskDetailExpanded_;
+    Gtk::Label* maskArrowLabel_;
+    void toggleMaskDetail();
+
+    // Sidebar hover mask overlay
+    bool sidebarHoverActive_ = false;
+    int hoveredSpotIndex_ = -1;
+    bool eyePinned_ = false;  // true = eye clicked to pin overlay on, stays on even without hover
+    bool onTreeviewMotion(GdkEventMotion* event);
+    bool onTreeviewLeave(GdkEventCrossing* event);
+public:
+    bool isPointerOverTreeview() const;
+private:
+
     // Row background color
     Gdk::RGBA colorMouseover, colorNominal, colorMouseovertext;
+
+    // AI Mask button and dropdown
+    Gtk::Button* button_add_ai_;
+    Gtk::Menu* aiClassMenu_;
+    int pendingAIClass_ = -1;
 
     // Treeview mutex
     MyMutex mTreeview;

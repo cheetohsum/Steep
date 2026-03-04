@@ -32,7 +32,7 @@ namespace {
 constexpr int MIN_RESET_BUTTON_HEIGHT = 12;
 
 constexpr int LABEL_FIXED_WIDTH = 38;
-constexpr int SPIN_FIXED_WIDTH = 22;
+constexpr int SPIN_FIXED_WIDTH = 18;
 
 double one2one(double val)
 {
@@ -98,8 +98,9 @@ Adjuster::Adjuster(
         setExpandAlignProperties(label, false, false, Gtk::ALIGN_START, Gtk::ALIGN_BASELINE);
         // Consistent label width for slider alignment across tools
         label->set_width_chars(12);
+        label->set_max_width_chars(12);
         label->set_xalign(1.0); // Right-align text within the fixed-width label
-        label->set_ellipsize(Pango::ELLIPSIZE_NONE);
+        label->set_ellipsize(Pango::ELLIPSIZE_END);
         // Compact font via inline CSS (theme CSS font-size doesn't cascade reliably in GTK3)
         auto labelCss = Gtk::CssProvider::create();
         labelCss->load_from_data("label { font-size: 10px; }");
@@ -156,23 +157,35 @@ Adjuster::Adjuster(
     slider = Gtk::manage(new MyHScale());
     setExpandAlignProperties(slider, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
     slider->set_draw_value(false);
+    slider->set_has_origin(false); // Disable GTK's built-in trough highlight
 
-    // Compact slider via inline CSS — avoid negative margins which break GTK hit-testing
+    // Grab focus on first click so default handler processes the click immediately
+    slider->signal_button_press_event().connect(
+        [this](GdkEventButton*) -> bool {
+            slider->grab_focus();
+            return false; // propagate to default handler
+        }, false); // before default handler
+
+    // Compact slider via inline CSS
+    // - Use padding for thumb hitbox (counts toward GTK gadget allocation for hit-testing)
+    // - Never use negative margins — they shrink the allocation and break hit-testing
+    // - Use near-invisible (not transparent) background so GTK includes thumb in hit-test
     {
         auto sliderCss = Gtk::CssProvider::create();
         sliderCss->load_from_data(
-            "scale { padding: 0; margin: 0; min-height: 0; }"
-            " scale trough { min-height: 3px; margin: 0; padding: 0; }"
-            " scale slider { min-height: 0; min-width: 0; padding: 7px; margin: -7px;"
-            "   background: transparent; border-color: transparent;"
-            "   border: none; box-shadow: none; -gtk-icon-shadow: none; }"
-            " scale trough highlight { margin: 0; padding: 0; min-height: 0; }"
+            "scale { padding: 0 7px; margin: 0; min-height: 0; }"
+            " scale trough { min-height: 3px; margin: 0; padding: 0;"
+            "   background-color: transparent; background-image: none; border: none; }"
+            " scale trough:hover { background-color: rgba(102,153,204,0.06); }"
+            " scale slider { min-height: 0; min-width: 0; padding: 7px; margin: 0;"
+            "   background-color: rgba(0,0,0,0.01); background-image: none; border: none;"
+            "   box-shadow: none; -gtk-icon-shadow: none; border-radius: 50%; }"
+            " scale slider:hover { background-color: rgba(102,153,204,0.18); background-image: none; box-shadow: 0 0 6px rgba(102,153,204,0.2); }"
         );
         slider->get_style_context()->add_provider(
             sliderCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200
         );
     }
-    //slider->set_has_origin(false);  // ------------------ This will remove the colored part on the left of the slider's knob
 
     setLimits(vmin, vmax, vstep, vdefault);
 
@@ -629,7 +642,10 @@ EditedState Adjuster::getEditedState ()
 void Adjuster::showEditedCB ()
 {
 
-    if (label) {
+    if (labelButton_) {
+        removeIfThere(this, labelButton_, false);
+        labelButton_ = nullptr;
+    } else if (label) {
         removeIfThere(this, label, false);
     }
 
@@ -841,4 +857,75 @@ void Adjuster::setSliderGradient(const std::vector<GradientMilestone>& milestone
 void Adjuster::clearSliderGradient()
 {
     slider->clearTrackGradient();
+}
+
+void Adjuster::setLabelClickCallback(std::function<void()> callback)
+{
+    labelClickCallback_ = std::move(callback);
+    if (!label || labelButton_) return;
+
+    // Wrap the label in a Gtk::Button for reliable click + hover.
+    // (Gtk::Label is a no-window widget; CSS :hover on EventBox doesn't work in WSLg.)
+    label->reference();
+    remove(*label);
+
+    // Widen label to accommodate arrow prefix while keeping alignment
+    label->set_width_chars(11);
+    label->set_max_width_chars(11);
+
+    labelButton_ = Gtk::manage(new Gtk::Button());
+    labelButton_->set_relief(Gtk::RELIEF_NONE);
+    labelButton_->set_can_focus(false);
+    labelButton_->add(*label);
+    label->unreference();
+
+    setExpandAlignProperties(labelButton_, false, false, Gtk::ALIGN_START, Gtk::ALIGN_BASELINE);
+    // Fixed pixel width ensures all clickable labels align regardless of text length
+    labelButton_->set_size_request(75, -1);
+
+    auto css = Gtk::CssProvider::create();
+    css->load_from_data(
+        "button { background: transparent; border: none; box-shadow: none;"
+        " padding: 0; margin: 0; min-height: 0; min-width: 0; }"
+        " button:hover { background-color: rgba(102,153,204,0.15); border-radius: 3px; }"
+    );
+    labelButton_->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+
+    attach(*labelButton_, 0, 0, 1, 1);
+    labelButton_->show_all();
+
+    labelButton_->signal_clicked().connect([this]() {
+        if (labelClickCallback_) labelClickCallback_();
+    });
+}
+
+void Adjuster::setInteractionCallback(std::function<void(bool)> callback)
+{
+    interactionCallback_ = std::move(callback);
+    // Connect slider press → callback(true), release → callback(false)
+    slider->signal_button_press_event().connect(
+        [this](GdkEventButton* event) -> bool {
+            if (event->button == 1 && event->type == GDK_BUTTON_PRESS && interactionCallback_) {
+                interactionCallback_(true);
+            }
+            return false;
+        }, false);
+    slider->signal_button_release_event().connect(
+        [this](GdkEventButton* event) -> bool {
+            if (event->button == 1 && interactionCallback_) {
+                interactionCallback_(false);
+            }
+            return false;
+        }, false);
+}
+
+void Adjuster::hideResetButton()
+{
+    reset->set_visible(false);
+    reset->set_no_show_all(true);
+}
+
+void Adjuster::setSliderMinWidth(int px)
+{
+    slider->set_size_request(px, -1);
 }

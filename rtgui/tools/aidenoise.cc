@@ -33,6 +33,7 @@ using namespace rtengine::procparams;
 const Glib::ustring AIDenoise::TOOL_NAME = "aidenoise";
 
 AIDenoise::AIDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_AIDENOISE_LABEL"), true, true),
+    contentExpanded_(false),
     ipc_(nullptr)
 {
 
@@ -46,22 +47,42 @@ AIDenoise::AIDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_AIDENOISE_LAB
     cancelBtn->set_sensitive(false);
 
     statusLabel = Gtk::manage (new Gtk::Label (M("TP_AIDENOISE_STATUS_READY")));
-    statusLabel->set_halign(Gtk::ALIGN_START);
+    statusLabel->set_halign(Gtk::ALIGN_END);
 
-    Gtk::Box* btnBox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 4));
-    btnBox->pack_start (*denoiseBtn, Gtk::PACK_EXPAND_WIDGET);
-    btnBox->pack_start (*cancelBtn, Gtk::PACK_EXPAND_WIDGET);
+    // Header row: clickable label + denoise button inline
+    auto* headerRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+    sectionLabel_ = Gtk::manage(new Gtk::Label());
+    sectionLabel_->set_markup("<b>\xe2\x96\xb8 AI Denoise</b>");
+    sectionLabel_->set_xalign(0.0);
+    sectionLabel_->get_style_context()->add_class("tool-section-label");
+    auto* labelEvt = Gtk::manage(new Gtk::EventBox());
+    labelEvt->add(*sectionLabel_);
+    labelEvt->signal_button_press_event().connect([this](GdkEventButton*) -> bool {
+        toggleContent();
+        return true;
+    });
+    headerRow->pack_start(*labelEvt, Gtk::PACK_EXPAND_WIDGET);
+    headerRow->pack_end(*denoiseBtn, Gtk::PACK_SHRINK);
+    getSummaryBox()->pack_start(*headerRow, Gtk::PACK_SHRINK);
 
-    // Advanced section for ISO Conditioning and Blend
-    advancedSection = Gtk::manage(new AdvancedSection());
-    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
-    Gtk::Box* const advBox = advancedSection->getContentBox();
-    advBox->pack_start(*isoConditioning);
-    advBox->pack_start(*blend);
+    // Collapsible content box
+    toolContent_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
 
-    pack_start (*useGpu);
-    pack_start (*btnBox);
-    pack_start (*statusLabel);
+    // GPU checkbox + status on one line
+    Gtk::Box* gpuRow = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 4));
+    gpuRow->pack_start (*useGpu, Gtk::PACK_SHRINK);
+    gpuRow->pack_end (*statusLabel, Gtk::PACK_SHRINK);
+
+    toolContent_->pack_start(*isoConditioning, Gtk::PACK_SHRINK);
+    toolContent_->pack_start(*blend, Gtk::PACK_SHRINK);
+    toolContent_->pack_start(*gpuRow, Gtk::PACK_SHRINK);
+    toolContent_->pack_start(*cancelBtn, Gtk::PACK_SHRINK);
+
+    // Start hidden
+    toolContent_->set_no_show_all(true);
+    toolContent_->hide();
+    getSummaryBox()->pack_start(*toolContent_, Gtk::PACK_SHRINK);
+    getSummaryBox()->show_all();
 
     isoConditioning->setAdjusterListener (this);
     blend->setAdjusterListener (this);
@@ -69,7 +90,40 @@ AIDenoise::AIDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_AIDENOISE_LAB
     denoiseBtn->signal_clicked().connect(sigc::mem_fun(*this, &AIDenoise::onDenoiseClicked));
     cancelBtn->signal_clicked().connect(sigc::mem_fun(*this, &AIDenoise::onCancelClicked));
 
-    show_all_children ();
+    // Register callback so the status label updates when detection finishes
+    auto& aidm = rtengine::AIDenoiseManager::getInstance();
+    aidm.setDetectDoneCallback([this](bool success) {
+        Glib::signal_idle().connect_once([this, success]() {
+            if (success) {
+                updateStatus(M("TP_AIDENOISE_STATUS_READY"));
+            } else {
+                updateStatus(M("TP_AIDENOISE_STATUS_NOT_AVAILABLE"));
+            }
+        });
+    });
+
+    // Show initial status based on current detection state
+    if (aidm.isAvailable()) {
+        statusLabel->set_text(M("TP_AIDENOISE_STATUS_READY"));
+    } else if (aidm.isDetecting()) {
+        statusLabel->set_text("Detecting RawRefinery...");
+    }
+
+    show_all();
+}
+
+void AIDenoise::toggleContent()
+{
+    contentExpanded_ = !contentExpanded_;
+    if (contentExpanded_) {
+        sectionLabel_->set_markup("<b>\xe2\x96\xbe AI Denoise</b>");
+        toolContent_->set_no_show_all(false);
+        toolContent_->show_all();
+        toolContent_->set_no_show_all(true);
+    } else {
+        sectionLabel_->set_markup("<b>\xe2\x96\xb8 AI Denoise</b>");
+        toolContent_->hide();
+    }
 }
 
 void AIDenoise::read (const ProcParams* pp, const ParamsEdited* pedited)
@@ -153,7 +207,6 @@ void AIDenoise::setBatchMode (bool batchMode)
 {
 
     ToolPanel::setBatchMode (batchMode);
-    advancedSection->setBatchMode(batchMode);
     isoConditioning->showEditedCB ();
     blend->showEditedCB ();
 }
@@ -177,7 +230,18 @@ void AIDenoise::setImProcCoordinator (rtengine::StagedImageProcessor* ipc)
 
 void AIDenoise::onDenoiseClicked ()
 {
+    // Auto-enable the tool when user clicks Denoise
+    if (!getEnabled()) {
+        setEnabled(true);
+        enabledChanged();
+    }
+
     auto& aidm = rtengine::AIDenoiseManager::getInstance();
+
+    if (aidm.isDetecting()) {
+        updateStatus("Detecting RawRefinery... please wait");
+        return;
+    }
 
     if (!aidm.isAvailable()) {
         updateStatus(M("TP_AIDENOISE_STATUS_NOT_AVAILABLE"));
@@ -215,6 +279,16 @@ void AIDenoise::onDenoiseClicked ()
     params.blend = blend->getValue();
     params.useGpu = useGpu->get_active();
 
+    // Get actual ISO from image metadata
+    int actualIso = 0;
+    if (ipc_) {
+        const auto* md = ipc_->getInitialImage()->getMetaData();
+        if (md) {
+            actualIso = md->getISOSpeed();
+        }
+    }
+    fprintf(stderr, "AI Denoise: actual ISO from EXIF = %d\n", actualIso);
+
     aidm.startDenoising(
         imagePath_,
         params,
@@ -228,23 +302,34 @@ void AIDenoise::onDenoiseClicked ()
                 updateStatus(msg);
             });
         },
-        // Done callback — dispatch to GTK main thread
+        // Done callback — dispatch to GTK main thread via idle_add (thread-safe)
         [this](bool success, const Glib::ustring& message) {
-            Glib::signal_idle().connect_once([this, success, message]() {
-                denoiseBtn->set_sensitive(true);
-                cancelBtn->set_sensitive(false);
+            fprintf(stderr, "AI Denoise: doneCb called success=%d, dispatching to main thread\n", (int)success);
+            struct IdleData {
+                AIDenoise* self;
+                bool success;
+                Glib::ustring message;
+            };
+            auto* data = new IdleData{this, success, message};
+            g_idle_add([](gpointer user_data) -> gboolean {
+                fprintf(stderr, "AI Denoise: g_idle_add callback FIRED\n");
+                auto* d = static_cast<IdleData*>(user_data);
+                auto* self = d->self;
+                bool success = d->success;
+                Glib::ustring message = d->message;
+                delete d;
+
+                self->denoiseBtn->set_sensitive(true);
+                self->cancelBtn->set_sensitive(false);
                 if (success) {
-                    updateStatus("Denoised successfully");
-                    // Trigger a pipeline re-render by calling adjusterChanged
-                    // directly. We can't use blend->setValue() because Adjuster
-                    // blocks signals during programmatic changes (no event fires).
-                    // Calling adjusterChanged() directly goes through
-                    // listener->panelChanged(EvAIDNBlend) → endUpdateParams →
-                    // startProcessing → Crop::update where the blend code runs.
-                    if (listener && getEnabled()) {
-                        listener->panelChanged(EvAIDNBlend,
+                    self->updateStatus("Denoised successfully");
+                    fprintf(stderr, "AI Denoise: Done callback - listener=%p enabled=%d\n",
+                            (void*)self->listener, (int)self->getEnabled());
+                    if (self->listener && self->getEnabled()) {
+                        fprintf(stderr, "AI Denoise: Firing panelChanged(EvAIDNBlend)\n");
+                        self->listener->panelChanged(EvAIDNBlend,
                             Glib::ustring::format(std::setw(2), std::fixed,
-                                std::setprecision(1), blend->getValue()));
+                                std::setprecision(1), self->blend->getValue()));
                     }
                 } else {
                     // Extract a clean error message from stderr output
@@ -269,11 +354,13 @@ void AIDenoise::onDenoiseClicked ()
                             }
                         }
                     }
-                    updateStatus(cleanMsg);
+                    self->updateStatus(cleanMsg);
                 }
-            });
+                return G_SOURCE_REMOVE;
+            }, data);
         },
-        inputTiffPath
+        inputTiffPath,
+        actualIso
     );
 }
 

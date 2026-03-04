@@ -55,6 +55,8 @@ ControlSpotPanel::ControlSpotPanel():
     //complexMethod_(Gtk::manage(new MyComboBoxText())),
     wavMethod_(Gtk::manage(new MyComboBoxText())),
     avoidgamutMethod_(Gtk::manage(new MyComboBoxText())),
+    maskType_(Gtk::manage(new MyComboBoxText())),
+    aiMaskClass_(Gtk::manage(new MyComboBoxText())),
 
     sensiexclu_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_SENSIEXCLU"), 0, 100, 1, 12))),
     structexclu_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_STRUCCOL"), 0, 100, 1, 0))),
@@ -105,6 +107,8 @@ ControlSpotPanel::ControlSpotPanel():
     ctboxspotmethod(Gtk::manage(new Gtk::Box())),    
     ctboxshapemethod(Gtk::manage(new Gtk::Box())),
     ctboxgamut(Gtk::manage(new Gtk::Box())),
+    ctboxmasktype(Gtk::manage(new Gtk::Box())),
+    ctboxaiclass(Gtk::manage(new Gtk::Box())),
     artifBox2(Gtk::manage(new ToolParamBlock())),
 
     controlPanelListener(nullptr),
@@ -136,9 +140,7 @@ ControlSpotPanel::ControlSpotPanel():
     pack_start(*ctboxprevmethod);
 
 
-    Gtk::Box* const hbox1_ = Gtk::manage(new Gtk::Box());
-    hbox1_->set_spacing(2);
-    hbox1_->set_homogeneous(true);
+    // Connect all button signals
     buttonaddconn_ = button_add_->signal_clicked().connect(
                          sigc::mem_fun(*this, &ControlSpotPanel::on_button_add));
     buttondeleteconn_ = button_delete_->signal_clicked().connect(
@@ -150,16 +152,71 @@ ControlSpotPanel::ControlSpotPanel():
     buttonvisibilityconn_ = button_visibility_->signal_button_release_event().connect(
                                 sigc::mem_fun(*this, &ControlSpotPanel::on_button_visibility));
 
-    if (showtooltip) {
-        button_visibility_->set_tooltip_markup(M("TP_LOCALLAB_VIS_TOOLTIP"));
-    }
+    // Keep unused buttons parented in a hidden box (Gtk::manage requires a parent)
+    Gtk::Box* const hiddenBox = Gtk::manage(new Gtk::Box());
+    hiddenBox->set_no_show_all(true);
+    hiddenBox->hide();
+    hiddenBox->pack_start(*button_delete_);
+    hiddenBox->pack_start(*button_duplicate_);
+    hiddenBox->pack_start(*button_rename_);
+    hiddenBox->pack_start(*button_visibility_);
+    pack_start(*hiddenBox);
 
-    hbox1_->pack_start(*button_add_);
-    hbox1_->pack_start(*button_delete_);
-    hbox1_->pack_start(*button_duplicate_);
-    hbox1_->pack_start(*button_rename_);
-    hbox1_->pack_start(*button_visibility_);
-    pack_start(*hbox1_);
+    // Single "Add Mask" button visible at top
+    button_add_->set_label(M("TP_LOCALLAB_BUTTON_ADD_MASK"));
+    Gtk::Box* const addRow = Gtk::manage(new Gtk::Box());
+    addRow->pack_start(*button_add_, true, true);
+
+    // "Add AI Mask" button with dropdown class menu
+    button_add_ai_ = Gtk::manage(new Gtk::Button(M("TP_LOCALLAB_BUTTON_ADD_AI_MASK")));
+    aiClassMenu_ = new Gtk::Menu();
+
+    const char* aiClassKeys[] = {
+        "TP_LOCALLAB_AIMASK_CLASS_BACKGROUND",
+        "TP_LOCALLAB_AIMASK_CLASS_PERSON",
+        "TP_LOCALLAB_AIMASK_CLASS_SKY",
+        "TP_LOCALLAB_AIMASK_CLASS_VEGETATION",
+        "TP_LOCALLAB_AIMASK_CLASS_BUILDING",
+        "TP_LOCALLAB_AIMASK_CLASS_VEHICLE",
+        "TP_LOCALLAB_AIMASK_CLASS_ANIMAL",
+        "TP_LOCALLAB_AIMASK_CLASS_FOREGROUND"
+    };
+
+    for (int i = 0; i < 8; i++) {
+        auto* mi = Gtk::manage(new Gtk::MenuItem(M(aiClassKeys[i])));
+        mi->signal_activate().connect(
+            sigc::bind(sigc::mem_fun(*this, &ControlSpotPanel::on_ai_mask_selected), i));
+        aiClassMenu_->append(*mi);
+    }
+    aiClassMenu_->show_all();
+
+    button_add_ai_->signal_clicked().connect([this]() {
+        aiClassMenu_->popup_at_widget(button_add_ai_,
+            Gdk::GRAVITY_SOUTH_WEST, Gdk::GRAVITY_NORTH_WEST, nullptr);
+    });
+
+    addRow->pack_start(*button_add_ai_, true, true, 4);
+
+    pack_start(*addRow);
+
+    // Right-click context menu for mask rows
+    contextMenu_ = new Gtk::Menu();
+    {
+        auto* mi = Gtk::manage(new Gtk::MenuItem(M("TP_LOCALLAB_BUTTON_REN")));
+        mi->signal_activate().connect(sigc::mem_fun(*this, &ControlSpotPanel::on_button_rename));
+        contextMenu_->append(*mi);
+    }
+    {
+        auto* mi = Gtk::manage(new Gtk::MenuItem(M("TP_LOCALLAB_BUTTON_DUPL")));
+        mi->signal_activate().connect(sigc::mem_fun(*this, &ControlSpotPanel::on_button_duplicate));
+        contextMenu_->append(*mi);
+    }
+    {
+        auto* mi = Gtk::manage(new Gtk::MenuItem(M("TP_LOCALLAB_BUTTON_DEL")));
+        mi->signal_activate().connect(sigc::mem_fun(*this, &ControlSpotPanel::on_button_delete));
+        contextMenu_->append(*mi);
+    }
+    contextMenu_->show_all();
 
     treemodel_ = Gtk::ListStore::create(spots_);
     treeview_->set_model(treemodel_);
@@ -167,6 +224,7 @@ ControlSpotPanel::ControlSpotPanel():
                         sigc::mem_fun(
                             *this, &ControlSpotPanel::controlspotChanged));
     treeview_->set_grid_lines(Gtk::TREE_VIEW_GRID_LINES_VERTICAL);
+    treeview_->set_headers_visible(false);
 
     // Disable search to prevent hijacking keyboard shortcuts #5265
     treeview_->set_enable_search(false);
@@ -174,40 +232,66 @@ ControlSpotPanel::ControlSpotPanel():
         sigc::mem_fun(
             *this, &ControlSpotPanel::blockTreeviewSearch), false);
 
-    // Avoid situation where no spot is selected (Ctrl+click on treeview)
+    // Handle right-click (context menu), left-click on visibility column, and Ctrl+click
     treeview_->signal_button_press_event().connect(
         sigc::mem_fun(
             *this, &ControlSpotPanel::onSpotSelectionEvent), false);
 
-    auto cell = Gtk::manage(new Gtk::CellRendererText());
-    int cols_count = treeview_->append_column(M("TP_LOCALLAB_COL_NAME"), *cell);
+    // Sidebar hover: show mask overlay when mouse is over a selected row
+    treeview_->add_events(Gdk::POINTER_MOTION_MASK | Gdk::LEAVE_NOTIFY_MASK);
+    treeview_->signal_motion_notify_event().connect(
+        sigc::mem_fun(*this, &ControlSpotPanel::onTreeviewMotion), false);
+    treeview_->signal_leave_notify_event().connect(
+        sigc::mem_fun(*this, &ControlSpotPanel::onTreeviewLeave), false);
+
+    // Preview column — small colored square for AI masks
+    auto* previewCell = Gtk::manage(new Gtk::CellRendererPixbuf());
+    int cols_count = treeview_->append_column("", *previewCell);
     auto col = treeview_->get_column(cols_count - 1);
 
     if (col) {
+        col->set_expand(false);
+        col->set_cell_data_func(
+            *previewCell, sigc::mem_fun(
+                *this, &ControlSpotPanel::render_preview));
+    }
+
+    // Name column
+    auto cell = Gtk::manage(new Gtk::CellRendererText());
+    cols_count = treeview_->append_column("", *cell);
+    col = treeview_->get_column(cols_count - 1);
+
+    if (col) {
+        col->set_expand(true);
         col->set_cell_data_func(
             *cell, sigc::mem_fun(
                 *this, &ControlSpotPanel::render_name));
     }
 
-    cell = Gtk::manage(new Gtk::CellRendererText());
-    cols_count = treeview_->append_column(M("TP_LOCALLAB_COL_VIS"), *cell);
+    // Visibility column — eye icon, toggled via left-click
+    auto* pixCell = Gtk::manage(new Gtk::CellRendererPixbuf());
+    pixCell->property_stock_size() = Gtk::ICON_SIZE_MENU;
+    cols_count = treeview_->append_column("", *pixCell);
     col = treeview_->get_column(cols_count - 1);
 
     if (col) {
+        col->set_expand(false);
         col->set_cell_data_func(
-            *cell, sigc::mem_fun(
+            *pixCell, sigc::mem_fun(
                 *this, &ControlSpotPanel::render_isvisible));
     }
 
     scrolledwindow_->add(*treeview_);
     scrolledwindow_->set_policy(Gtk::POLICY_AUTOMATIC, Gtk::POLICY_AUTOMATIC);
-    scrolledwindow_->set_min_content_height(150);
-    pack_start(*scrolledwindow_);
-    pack_start(*hishow_);
+    // Start compact — grows as masks are added, caps at 200px then scrolls
+    scrolledwindow_->set_min_content_height(30);
+    scrolledwindow_->set_max_content_height(200);
+    scrolledwindow_->set_propagate_natural_height(true);
+    pack_start(*scrolledwindow_, Gtk::PACK_SHRINK);
 
+    // hishow_ and activ_ are configured here but packed into advancedBox below
    // Gtk::Box* const ctboxactivmethod = Gtk::manage(new Gtk::Box());
     ctboxactivmethod->pack_start(*activ_);
-    pack_start(*ctboxactivmethod);
 
     Gtk::Label* const labelshape = Gtk::manage(new Gtk::Label(M("TP_LOCALLAB_SHAPETYPE") + ":"));
     labelshape->set_ellipsize(Pango::ELLIPSIZE_END);
@@ -221,7 +305,7 @@ ControlSpotPanel::ControlSpotPanel():
                      sigc::mem_fun(
                          *this, &ControlSpotPanel::shapeChanged));
     ctboxshape->pack_start(*shape_);
-    pack_start(*ctboxshape);
+    // ctboxshape packed into maskDetailBox_ below
     if (showtooltip) {
         shape_->set_tooltip_text(M("TP_LOCALLAB_SHAPE_TOOLTIP"));
     }
@@ -230,7 +314,7 @@ ControlSpotPanel::ControlSpotPanel():
     if (showtooltip) {
         gradangle_->set_tooltip_text(M("TP_LOCALLAB_GRADANGLE_TOOLTIP"));
     }
-    pack_start(*gradangle_);
+    // gradangle_ packed into advancedBox below
 
     Gtk::Label* const labelspotmethod = Gtk::manage(new Gtk::Label(M("TP_LOCALLAB_EXCLUTYPE") + ":"));
     labelspotmethod->set_ellipsize(Pango::ELLIPSIZE_END);
@@ -250,7 +334,7 @@ ControlSpotPanel::ControlSpotPanel():
                           sigc::mem_fun(
                               *this, &ControlSpotPanel::spotMethodChanged));
     ctboxspotmethod->pack_start(*spotMethod_);
-    pack_start(*ctboxspotmethod);
+    // ctboxspotmethod packed into advancedBox below
 
 
     excluFrame->set_label_align(0.025, 0.5);
@@ -272,7 +356,7 @@ ControlSpotPanel::ControlSpotPanel():
     excluBox->pack_start(*sensiexclu_);
     excluBox->pack_start(*structexclu_);
     excluFrame->add(*excluBox);
-    pack_start(*excluFrame);
+    // excluFrame packed into advancedBox below
 
 
     Gtk::Label* const labelshapemethod = Gtk::manage(new Gtk::Label(M("TP_LOCALLAB_STYPE") + ":"));
@@ -293,39 +377,58 @@ ControlSpotPanel::ControlSpotPanel():
     ctboxshapemethod->pack_start(*shapeMethod_);
 //    pack_start(*ctboxshapemethod);
 
-    pack_start(*locX_);
+    // locX_, locXL_, locY_, locYT_, centerX_, centerY_ packed into advancedBox below
     locX_->setAdjusterListener(this);
-
-    pack_start(*locXL_);
     locXL_->setAdjusterListener(this);
-
-    pack_start(*locY_);
     locY_->setAdjusterListener(this);
-
-    pack_start(*locYT_);
     locYT_->setAdjusterListener(this);
-
-    pack_start(*centerX_);
     centerX_->setAdjusterListener(this);
-
-    pack_start(*centerY_);
     centerY_->setAdjusterListener(this);
 
-    pack_start(*circrad_);
+    // circrad_ packed into maskDetailBox_ below
     circrad_->setAdjusterListener(this);
 
     if (showtooltip) {
         circrad_->set_tooltip_text(M("TP_LOCALLAB_CIRCRAD_TOOLTIP"));
     }
 
-    // transit_ (Mask feathering) packed directly after circrad_
+    // transit_ (Mask feathering) packed into maskDetailBox_ below
     transit_->setAdjusterListener(this);
 
     if (showtooltip) {
         transit_->set_tooltip_text(M("TP_LOCALLAB_TRANSIT_TOOLTIP"));
     }
 
-    pack_start(*transit_);
+    // Mask Type combo (Normal / AI Mask)
+    Gtk::Label* const labelMaskType = Gtk::manage(new Gtk::Label(M("TP_LOCALLAB_MASKTYPE") + ":"));
+    ctboxmasktype->pack_start(*labelMaskType, Gtk::PACK_SHRINK, 2);
+    maskType_->append(M("TP_LOCALLAB_MASKTYPE_NORMAL"));
+    maskType_->append(M("TP_LOCALLAB_MASKTYPE_AI"));
+    maskType_->set_active(0);
+    maskTypeConn_ = maskType_->signal_changed().connect(
+                        sigc::mem_fun(
+                            *this, &ControlSpotPanel::maskTypeChanged));
+    ctboxmasktype->pack_start(*maskType_);
+
+    // AI Class combo
+    Gtk::Label* const labelAIClass = Gtk::manage(new Gtk::Label(M("TP_LOCALLAB_AIMASK_CLASS") + ":"));
+    ctboxaiclass->pack_start(*labelAIClass, Gtk::PACK_SHRINK, 2);
+    aiMaskClass_->append(M("TP_LOCALLAB_AIMASK_CLASS_BACKGROUND"));
+    aiMaskClass_->append(M("TP_LOCALLAB_AIMASK_CLASS_PERSON"));
+    aiMaskClass_->append(M("TP_LOCALLAB_AIMASK_CLASS_SKY"));
+    aiMaskClass_->append(M("TP_LOCALLAB_AIMASK_CLASS_VEGETATION"));
+    aiMaskClass_->append(M("TP_LOCALLAB_AIMASK_CLASS_BUILDING"));
+    aiMaskClass_->append(M("TP_LOCALLAB_AIMASK_CLASS_VEHICLE"));
+    aiMaskClass_->append(M("TP_LOCALLAB_AIMASK_CLASS_ANIMAL"));
+    aiMaskClass_->append(M("TP_LOCALLAB_AIMASK_CLASS_FOREGROUND"));
+    aiMaskClass_->set_active(2); // Default: Sky
+    aiMaskClassConn_ = aiMaskClass_->signal_changed().connect(
+                           sigc::mem_fun(
+                               *this, &ControlSpotPanel::aiMaskClassChanged));
+    ctboxaiclass->pack_start(*aiMaskClass_);
+    if (showtooltip) {
+        aiMaskClass_->set_tooltip_text(M("TP_LOCALLAB_AIMASK_CLASS_TOOLTIP"));
+    }
 
     // Quality method (not packed at top level, used internally)
     Gtk::Box* const ctboxqualitymethod = Gtk::manage(new Gtk::Box());
@@ -346,6 +449,19 @@ ControlSpotPanel::ControlSpotPanel():
 
     // --- Advanced section (collapsed by default) ---
     ToolParamBlock* const advancedBox = Gtk::manage(new ToolParamBlock());
+
+    // Moved from top level: mask settings that are less commonly changed
+    advancedBox->pack_start(*hishow_);
+    advancedBox->pack_start(*ctboxactivmethod);
+    advancedBox->pack_start(*gradangle_);
+    advancedBox->pack_start(*ctboxspotmethod);
+    advancedBox->pack_start(*excluFrame);
+    advancedBox->pack_start(*locX_);
+    advancedBox->pack_start(*locXL_);
+    advancedBox->pack_start(*locY_);
+    advancedBox->pack_start(*locYT_);
+    advancedBox->pack_start(*centerX_);
+    advancedBox->pack_start(*centerY_);
 
     // Transition Gradient sliders (Decay and Symmetry)
     if (showtooltip) {
@@ -527,7 +643,45 @@ ControlSpotPanel::ControlSpotPanel():
     // Pack the Advanced expander (collapsed by default)
     expAdvanced_->add(*advancedBox, false);
     expAdvanced_->setLevel(2);
-    pack_start(*expAdvanced_, false, false);
+
+    // --- Mask dropdown: clickable "Mask" label that expands/collapses ---
+    maskDetailExpanded_ = false;
+
+    maskArrowLabel_ = Gtk::manage(new Gtk::Label());
+    maskArrowLabel_->set_use_markup(true);
+    maskArrowLabel_->set_markup(Glib::ustring("<small>\xe2\x96\xb8</small>  ") +
+        Glib::Markup::escape_text(M("TP_LOCALLAB_MASK_SECTION")));
+    maskArrowLabel_->set_can_focus(false);
+    setExpandAlignProperties(maskArrowLabel_, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+
+    Gtk::Button* maskHeaderBtn = Gtk::manage(new Gtk::Button());
+    maskHeaderBtn->set_name("MaskSectionHeader");
+    maskHeaderBtn->set_relief(Gtk::RELIEF_NONE);
+    maskHeaderBtn->set_can_focus(false);
+    maskHeaderBtn->set_halign(Gtk::ALIGN_START);
+    maskHeaderBtn->add(*maskArrowLabel_);
+
+    auto maskCss = Gtk::CssProvider::create();
+    maskCss->load_from_data(
+        "#MaskSectionHeader { padding: 1px 4px; min-height: 0; border: none; background: none; background-image: none; box-shadow: none; }"
+        "#MaskSectionHeader:hover { background-color: rgba(130,170,230,0.22); border-radius: 4px; }"
+        "#MaskSectionHeader label { font-size: 9px; font-weight: bold; min-height: 0; padding: 0; margin: 0; }"
+    );
+    maskHeaderBtn->get_style_context()->add_provider(maskCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+    maskArrowLabel_->get_style_context()->add_provider(maskCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+    maskHeaderBtn->signal_clicked().connect(
+        sigc::mem_fun(*this, &ControlSpotPanel::toggleMaskDetail));
+
+    pack_start(*maskHeaderBtn, Gtk::PACK_SHRINK);
+
+    maskDetailBox_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
+    maskDetailBox_->set_no_show_all(true);
+    maskDetailBox_->pack_start(*ctboxshape, Gtk::PACK_SHRINK);
+    maskDetailBox_->pack_start(*circrad_, Gtk::PACK_SHRINK);
+    maskDetailBox_->pack_start(*transit_, Gtk::PACK_SHRINK);
+    maskDetailBox_->pack_start(*ctboxmasktype, Gtk::PACK_SHRINK);
+    maskDetailBox_->pack_start(*ctboxaiclass, Gtk::PACK_SHRINK);
+    pack_start(*maskDetailBox_, Gtk::PACK_SHRINK);
 
     Gtk::Separator *separatormet = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
     pack_start(*separatormet, Gtk::PACK_SHRINK, 2);
@@ -608,9 +762,130 @@ ControlSpotPanel::~ControlSpotPanel()
     }
 }
 
+void ControlSpotPanel::toggleMaskDetail()
+{
+    maskDetailExpanded_ = !maskDetailExpanded_;
+    if (maskDetailExpanded_) {
+        maskArrowLabel_->set_markup(Glib::ustring("<small>\xe2\x96\xbe</small>  ") +
+            Glib::Markup::escape_text(M("TP_LOCALLAB_MASK_SECTION")));
+        maskDetailBox_->set_no_show_all(false);
+        maskDetailBox_->show_all();
+        maskDetailBox_->set_no_show_all(true);
+        // Hide AI class if mask type is Normal
+        if (maskType_->get_active_row_number() != 1) {
+            ctboxaiclass->hide();
+        }
+    } else {
+        maskArrowLabel_->set_markup(Glib::ustring("<small>\xe2\x96\xb8</small>  ") +
+            Glib::Markup::escape_text(M("TP_LOCALLAB_MASK_SECTION")));
+        maskDetailBox_->hide();
+    }
+}
+
+bool ControlSpotPanel::onTreeviewMotion(GdkEventMotion* /*event*/)
+{
+    // Show the selected spot's mask overlay when mouse is anywhere over the treeview.
+    // We do NOT change the selection on hover — that triggers expensive spot-change
+    // events and resets mask visibility, causing stuck/compounding overlays.
+    if (!eyePinned_ && !sidebarHoverActive_) {
+        if (treeview_->get_selection()->count_selected_rows()) {
+            sidebarHoverActive_ = true;
+            if (controlPanelListener) {
+                controlPanelListener->spotHovered(true);
+            }
+        }
+    }
+    return false;
+}
+
+bool ControlSpotPanel::onTreeviewLeave(GdkEventCrossing* /*event*/)
+{
+    hoveredSpotIndex_ = -1;
+    // Only hide overlay on leave if not eye-pinned
+    if (!eyePinned_ && sidebarHoverActive_) {
+        sidebarHoverActive_ = false;
+        if (controlPanelListener) {
+            controlPanelListener->spotHovered(false);
+        }
+    }
+    return false;
+}
+
+bool ControlSpotPanel::isPointerOverTreeview() const
+{
+    auto gdkWin = treeview_->get_bin_window();
+    if (!gdkWin) return false;
+
+    auto display = treeview_->get_display();
+    auto seat = display->get_default_seat();
+    auto device = seat->get_pointer();
+    int x, y;
+    Gdk::ModifierType mask;
+    gdkWin->get_device_position(device, x, y, mask);
+
+    return x >= 0 && y >= 0 &&
+           x < treeview_->get_allocated_width() &&
+           y < treeview_->get_allocated_height();
+}
+
 void ControlSpotPanel::setEditProvider(EditDataProvider* provider)
 {
     EditSubscriber::setEditProvider(provider);
+}
+
+void ControlSpotPanel::render_preview(
+    Gtk::CellRenderer* cell, const Gtk::TreeModel::iterator& iter)
+{
+    auto row = *iter;
+    Gtk::CellRendererPixbuf *cp = static_cast<Gtk::CellRendererPixbuf *>(cell);
+
+    const int maskT = row[spots_.maskType];
+
+    if (maskT == 1) {
+        // AI Mask — show a small colored square indicating the class
+        const int cls = row[spots_.aiMaskClass];
+
+        // Colors per AI class (R, G, B)
+        static const guint8 classColors[][3] = {
+            {128, 128, 128}, // 0: Background — gray
+            {220,  80,  80}, // 1: Person — red
+            { 80, 140, 220}, // 2: Sky — blue
+            { 80, 180,  80}, // 3: Vegetation — green
+            {200, 150,  60}, // 4: Building — amber
+            {160,  80, 200}, // 5: Vehicle — purple
+            {220, 180,  50}, // 6: Animal — yellow
+            { 80, 200, 200}, // 7: Foreground — cyan
+        };
+
+        const int sz = 14;
+        auto pixbuf = Gdk::Pixbuf::create(Gdk::COLORSPACE_RGB, true, 8, sz, sz);
+        pixbuf->fill(0x00000000); // transparent
+
+        const int ci = std::min(std::max(cls, 0), 7);
+        guint8* pixels = pixbuf->get_pixels();
+        const int rowstride = pixbuf->get_rowstride();
+
+        // Draw filled rounded-ish square (1px border radius by skipping corners)
+        for (int y = 0; y < sz; y++) {
+            for (int x = 0; x < sz; x++) {
+                // Skip the 4 exact corners for a slightly rounded look
+                bool corner = (x == 0 && y == 0) || (x == sz-1 && y == 0) ||
+                              (x == 0 && y == sz-1) || (x == sz-1 && y == sz-1);
+                if (corner) continue;
+
+                guint8* p = pixels + y * rowstride + x * 4;
+                p[0] = classColors[ci][0];
+                p[1] = classColors[ci][1];
+                p[2] = classColors[ci][2];
+                p[3] = 220; // slightly translucent
+            }
+        }
+
+        cp->property_pixbuf() = pixbuf;
+    } else {
+        // Normal mask — no preview icon
+        cp->property_pixbuf().reset_value();
+    }
 }
 
 void ControlSpotPanel::render_name(
@@ -634,20 +909,13 @@ void ControlSpotPanel::render_isvisible(
     Gtk::CellRenderer* cell, const Gtk::TreeModel::iterator& iter)
 {
     auto row = *iter;
-    Gtk::CellRendererText *ct = static_cast<Gtk::CellRendererText *>(cell);
+    Gtk::CellRendererPixbuf *cp = static_cast<Gtk::CellRendererPixbuf *>(cell);
 
-    // Render cell text
+    // Render eye icon based on visibility
     if (row[spots_.isvisible]) {
-        ct->property_text() = M("TP_LOCALLAB_ROW_VIS");
+        cp->property_icon_name() = "eye-open";
     } else {
-        ct->property_text() = M("TP_LOCALLAB_ROW_NVIS");
-    }
-
-    // Render cell background color
-    if (row[spots_.mouseover]) {
-        ct->property_background_rgba() = colorMouseovertext;
-    } else {
-        ct->property_background_rgba() = colorNominal;
+        cp->property_icon_name() = "eye-closed";
     }
 }
 
@@ -663,6 +931,19 @@ void ControlSpotPanel::on_button_add()
     nbSpotChanged_ = true;
     selSpotChanged_ = true;
     eventType = SpotCreation;
+    listener->panelChanged(EvLocallabSpotCreated, "-");
+}
+
+void ControlSpotPanel::on_ai_mask_selected(int classIndex)
+{
+    if (!listener) {
+        return;
+    }
+
+    pendingAIClass_ = classIndex;
+    nbSpotChanged_ = true;
+    selSpotChanged_ = true;
+    eventType = SpotCreationAI;
     listener->panelChanged(EvLocallabSpotCreated, "-");
 }
 
@@ -841,6 +1122,50 @@ bool ControlSpotPanel::onSpotSelectionEvent(GdkEventButton* event)
         return true;
     }
 
+    // Right-click: show context menu
+    if (event->button == 3) {
+        Gtk::TreeModel::Path path;
+        if (treeview_->get_path_at_pos(static_cast<int>(event->x), static_cast<int>(event->y), path)) {
+            treeview_->get_selection()->select(path);
+            contextMenu_->popup(event->button, event->time);
+            return true;
+        }
+        return false;
+    }
+
+    // Left-click on visibility column: toggle pinned mask overlay
+    if (event->button == 1) {
+        Gtk::TreeModel::Path path;
+        Gtk::TreeViewColumn* column = nullptr;
+        int cell_x, cell_y;
+
+        if (treeview_->get_path_at_pos(static_cast<int>(event->x), static_cast<int>(event->y), path, column, cell_x, cell_y)) {
+            if (column == treeview_->get_column(1)) {
+                auto iter = treemodel_->get_iter(path);
+                if (iter) {
+                    // Select the clicked row's spot
+                    treeview_->get_selection()->select(path);
+
+                    // Toggle pinned mask overlay
+                    eyePinned_ = !eyePinned_;
+                    sidebarHoverActive_ = eyePinned_;
+
+                    // Update eye icon and geometry visibility
+                    Gtk::TreeModel::Row row = *iter;
+                    row[spots_.isvisible] = eyePinned_;
+                    updateControlSpotCurve(row);
+
+                    if (controlPanelListener) {
+                        // forceRedraw=true ensures canvas repaints to show/hide geometry
+                        controlPanelListener->spotHovered(eyePinned_, true);
+                    }
+
+                    return true;
+                }
+            }
+        }
+    }
+
     // Otherwise selection action is transferred to treeview widget
     return false;
 }
@@ -906,6 +1231,9 @@ void ControlSpotPanel::load_ControlSpot_param()
     //complexMethod_->set_active(row[spots_.complexMethod]);
     wavMethod_->set_active(row[spots_.wavMethod]);
 	avoidgamutMethod_->set_active(row[spots_.avoidgamutMethod]);
+    maskType_->set_active(row[spots_.maskType]);
+    aiMaskClass_->set_active(row[spots_.aiMaskClass]);
+    ctboxaiclass->set_visible(row[spots_.maskType] == 1);
 
     // Show/hide gradient angle slider based on shape
     if (shape_->get_active_row_number() == 2) { // Gradient
@@ -922,6 +1250,9 @@ void ControlSpotPanel::controlspotChanged()
     if (!listener) {
         return;
     }
+
+    // Reset hover so overlay re-triggers for newly selected spot
+    sidebarHoverActive_ = false;
 
     // Raise event
     const int selIndex = getSelectedSpot();
@@ -1318,6 +1649,54 @@ void ControlSpotPanel::wavMethodChanged()
     // Raise event
     if (listener) {
         listener->panelChanged(EvLocallabSpotwavMethod, wavMethod_->get_active_text());
+    }
+}
+
+void ControlSpotPanel::maskTypeChanged()
+{
+    const auto s = treeview_->get_selection();
+
+    if (!s->count_selected_rows()) {
+        return;
+    }
+
+    const auto iter = s->get_selected();
+    Gtk::TreeModel::Row row = *iter;
+
+    row[spots_.maskType] = maskType_->get_active_row_number();
+
+    // Show/hide AI class based on mask type
+    if (maskType_->get_active_row_number() == 1) {
+        ctboxaiclass->show();
+        // AI masks use full-image coverage with rectangle shape
+        row[spots_.spotMethod] = 2; // "full"
+        row[spots_.shape] = 1; // "RECT"
+        shape_->set_active(1);
+        spotMethod_->set_active(2);
+    } else {
+        ctboxaiclass->hide();
+    }
+
+    if (listener) {
+        listener->panelChanged(EvLocallabSpotSelectedWithMask, maskType_->get_active_text());
+    }
+}
+
+void ControlSpotPanel::aiMaskClassChanged()
+{
+    const auto s = treeview_->get_selection();
+
+    if (!s->count_selected_rows()) {
+        return;
+    }
+
+    const auto iter = s->get_selected();
+    Gtk::TreeModel::Row row = *iter;
+
+    row[spots_.aiMaskClass] = aiMaskClass_->get_active_row_number();
+
+    if (listener) {
+        listener->panelChanged(EvLocallabSpotSelectedWithMask, aiMaskClass_->get_active_text());
     }
 }
 
@@ -2047,6 +2426,8 @@ void ControlSpotPanel::disableParamlistener(bool cond)
     //complexMethodconn_.block(cond);
     wavMethodconn_.block(cond);
 	avoidgamutconn_.block(cond);
+    maskTypeConn_.block(cond);
+    aiMaskClassConn_.block(cond);
 
 }
 
@@ -2572,6 +2953,11 @@ bool ControlSpotPanel::mouseOver(int modifierKey)
                 row[spots_.mouseover] = false;
             }
 
+            // Notify listener that mouse left spot area
+            if (controlPanelListener) {
+                controlPanelListener->spotHovered(false);
+            }
+
             // Actualize lastObject_
             lastObject_ = object_;
             return false;
@@ -2579,6 +2965,12 @@ bool ControlSpotPanel::mouseOver(int modifierKey)
 
         const int curveId_ = object_ / GEOM_PER_SPOT + 1;
         const int rem = object_ % GEOM_PER_SPOT;
+
+        // Notify listener that mouse entered a spot (selected spot only)
+        if (controlPanelListener) {
+            const bool isSelectedSpot = (selRow[spots_.curveid] == curveId_);
+            controlPanelListener->spotHovered(isSelectedSpot);
+        }
 
         // Manage mouseOver preview for TreeView
         const Gtk::TreeModel::Children children = treemodel_->children();
@@ -2920,6 +3312,8 @@ std::unique_ptr<ControlSpotPanel::SpotRow> ControlSpotPanel::getSpot(const int i
             //r->savrest = row[spots_.savrest];
             r->wavMethod = row[spots_.wavMethod];
             r->avoidgamutMethod = row[spots_.avoidgamutMethod];
+            r->maskType = row[spots_.maskType];
+            r->aiMaskClass = row[spots_.aiMaskClass];
 
             return r;
         }
@@ -3058,6 +3452,8 @@ void ControlSpotPanel::addControlSpot(const SpotRow &newSpot)
     row[spots_.complexMethod] = newSpot.complexMethod;
     row[spots_.wavMethod] = newSpot.wavMethod;
     row[spots_.avoidgamutMethod] = newSpot.avoidgamutMethod;
+    row[spots_.maskType] = newSpot.maskType;
+    row[spots_.aiMaskClass] = newSpot.aiMaskClass;
     updateParamVisibility();
     disableParamlistener(false);
 
@@ -3230,6 +3626,8 @@ ControlSpotPanel::ControlSpots::ControlSpots()
     add(complexMethod);
     add(wavMethod);
 	add(avoidgamutMethod);
+    add(maskType);
+    add(aiMaskClass);
 }
 
 //-----------------------------------------------------------------------------

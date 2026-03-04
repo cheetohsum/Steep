@@ -47,10 +47,46 @@ enum GeometryIndex {
     VISIBLE_SOURCE_CIRCLE,
     VISIBLE_TARGET_FEATHER_CIRCLE,
     VISIBLE_TARGET_CIRCLE,
+    VISIBLE_CURSOR_PREVIEW,
+    VISIBLE_STROKE_PREVIEW,
     VISIBLE_OBJECT_COUNT
 };
 
 }
+
+// ---- Phase 3: SpotSizePreview implementation ----
+
+Spot::SpotSizePreview::SpotSizePreview()
+{
+    set_size_request(24, 24);
+}
+
+void Spot::SpotSizePreview::setValue(int radius)
+{
+    currentRadius = radius;
+    queue_draw();
+}
+
+bool Spot::SpotSizePreview::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
+{
+    int w = get_allocated_width();
+    int h = get_allocated_height();
+
+    // Map radius [1,400] -> diameter [4px, min(w,h)-2]
+    int maxDia = std::min(w, h) - 2;
+    int minDia = 4;
+    double t = double(currentRadius - 1) / double(400 - 1);
+    int dia = int(minDia + t * (maxDia - minDia) + 0.5);
+    dia = std::max(minDia, std::min(maxDia, dia));
+
+    cr->set_source_rgba(0.7, 0.7, 0.7, 0.8);
+    cr->arc(w / 2.0, h / 2.0, dia / 2.0, 0, 2.0 * M_PI);
+    cr->fill();
+
+    return true;
+}
+
+// ---- Main Spot implementation ----
 
 const Glib::ustring Spot::TOOL_NAME = "spot";
 
@@ -63,10 +99,11 @@ Spot::Spot() :
     sourceIcon("spot-normal", "spot-active", "spot-prelight", "", "", Geometry::DP_CENTERCENTER),
     editedCheckBox(nullptr)
 {
-    countLabel = Gtk::manage (new Gtk::Label (Glib::ustring::compose (M ("TP_SPOT_COUNTLABEL"), 0)));
+    countLabel = Gtk::manage (new Gtk::Label (""));
+    countLabel->set_no_show_all(true);
 
     edit = Gtk::manage (new Gtk::ToggleButton());
-    edit->add (*Gtk::manage (new RTImage ("edit-point")));
+    edit->add (*Gtk::manage (new RTImage ("spot-eraser")));
     editConn = edit->signal_toggled().connect ( sigc::mem_fun (*this, &Spot::editToggled) );
     edit->set_tooltip_text(M("TP_SPOT_HINT"));
 
@@ -76,15 +113,81 @@ Spot::Spot() :
     reset->set_border_width (0);
     reset->signal_clicked().connect ( sigc::mem_fun (*this, &Spot::resetPressed) );
 
-    spotSize = Gtk::manage(new Adjuster(M("TP_SPOT_DEFAULT_SIZE"), SpotParams::minRadius, SpotParams::maxRadius, 1, 25));
+    spotSize = Gtk::manage(new Adjuster("", SpotParams::minRadius, SpotParams::maxRadius, 1, 25,
+                                        Gtk::manage(new RTImage("circle-empty-gray-small"))));
+    spotSize->setAdjusterListener(this);
 
+    // Phase 1: Method toggle buttons (icon-only toolbar)
+    methodBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+    methodBox->get_style_context()->add_class("linked");
+
+    auto makeMethodButton = [&](const Glib::ustring& iconName, const Glib::ustring& tooltip) -> Gtk::ToggleButton* {
+        Gtk::ToggleButton* btn = Gtk::manage(new Gtk::ToggleButton());
+        btn->add(*Gtk::manage(new RTImage(iconName)));
+        btn->set_tooltip_text(tooltip);
+        btn->set_relief(Gtk::RELIEF_NONE);
+        return btn;
+    };
+
+    btnClone = makeMethodButton("spot-clone", M("TP_SPOT_METHOD_CLONE"));
+    btnHeal = makeMethodButton("spot-heal", M("TP_SPOT_METHOD_HEAL"));
+    btnErase = makeMethodButton("spot-erase", M("TP_SPOT_METHOD_ERASE"));
+    btnRedEye = makeMethodButton("spot-redeye", M("TP_SPOT_METHOD_REDEYE"));
+
+    btnClone->set_active(true);
+
+    cloneConn = btnClone->signal_toggled().connect(sigc::bind(sigc::mem_fun(*this, &Spot::onMethodButtonToggled), btnClone, 0));
+    healConn = btnHeal->signal_toggled().connect(sigc::bind(sigc::mem_fun(*this, &Spot::onMethodButtonToggled), btnHeal, 1));
+    eraseConn = btnErase->signal_toggled().connect(sigc::bind(sigc::mem_fun(*this, &Spot::onMethodButtonToggled), btnErase, 2));
+    redeyeConn = btnRedEye->signal_toggled().connect(sigc::bind(sigc::mem_fun(*this, &Spot::onMethodButtonToggled), btnRedEye, 3));
+
+    methodBox->pack_start(*btnClone, false, false, 0);
+    methodBox->pack_start(*btnHeal, false, false, 0);
+    methodBox->pack_start(*btnErase, false, false, 0);
+    methodBox->pack_start(*btnRedEye, false, false, 0);
+
+    // Phase 3: Size preview widget
+    sizePreview = Gtk::manage(new SpotSizePreview());
+
+    // AI placeholder section (collapsible)
+    aiSection = Gtk::manage(new AdvancedSection(M("TP_SPOT_AI_SECTION")));
+    Gtk::Box* aiContent = aiSection->getContentBox();
+
+    Gtk::Box* aiRow1 = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+    Gtk::Box* aiRow2 = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+
+    auto makeAiButton = [](const Glib::ustring& label, const Glib::ustring& tooltip) -> Gtk::Button* {
+        Gtk::Button* btn = Gtk::manage(new Gtk::Button(label));
+        btn->set_sensitive(false);
+        btn->set_tooltip_text(tooltip);
+        return btn;
+    };
+
+    aiRow1->pack_start(*makeAiButton(M("TP_SPOT_AI_OBJECT"), M("TP_SPOT_AI_COMING_SOON")), true, true, 0);
+    aiRow1->pack_start(*makeAiButton(M("TP_SPOT_AI_REFLECTION"), M("TP_SPOT_AI_COMING_SOON")), true, true, 0);
+    aiRow2->pack_start(*makeAiButton(M("TP_SPOT_AI_DUST"), M("TP_SPOT_AI_COMING_SOON")), true, true, 0);
+    aiRow2->pack_start(*makeAiButton(M("TP_SPOT_AI_GENERATIVE"), M("TP_SPOT_AI_COMING_SOON")), true, true, 0);
+
+    aiContent->pack_start(*aiRow1, false, false, 0);
+    aiContent->pack_start(*aiRow2, false, false, 0);
+    aiSection->setExpanded(false);
+
+    // Layout: [edit] [method buttons] ... [count] [reset] on one row
     labelBox = Gtk::manage (new Gtk::Box());
     labelBox->set_spacing (2);
+    labelBox->pack_start (*edit, false, false, 0);
+    labelBox->pack_start (*methodBox, false, false, 0);
     labelBox->pack_start (*countLabel, false, false, 0);
-    labelBox->pack_end (*edit, false, false, 0);
     labelBox->pack_end (*reset, false, false, 0);
-    labelBox->pack_end (*spotSize, false, false, 0);
     pack_start (*labelBox);
+
+    // Size row: [size preview] [slider]
+    Gtk::Box* sizeBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+    sizeBox->pack_start(*sizePreview, false, false, 0);
+    sizeBox->pack_start(*spotSize, true, true, 0);
+    pack_start(*sizeBox);
+
+    pack_start (*aiSection, Gtk::PACK_SHRINK);
 
     sourceIcon.datum = Geometry::IMAGE;
     sourceIcon.setActive (false);
@@ -118,11 +221,24 @@ Spot::Spot() :
     link.datum = Geometry::IMAGE;
     link.setActive (false);
 
+    // Phase 2: cursor preview circle
+    cursorPreviewCircle.datum = Geometry::IMAGE;
+    cursorPreviewCircle.radiusInImageSpace = true;
+    cursorPreviewCircle.setDashed(true);
+    cursorPreviewCircle.innerLineWidth = 0.7;
+    cursorPreviewCircle.setActive(false);
+
+    // Phase 4: stroke preview line
+    strokePreviewLine.datum = Geometry::IMAGE;
+    strokePreviewLine.setActive(false);
+    strokePreviewLine.innerLineWidth = 1.5;
+
     auto m = ProcEventMapper::getInstance();
     EvSpotEnabled = m->newEvent(ALLNORAW, "HISTORY_MSG_SPOT");
     EvSpotEnabledOPA = m->newEvent(SPOTADJUST, "HISTORY_MSG_SPOT");
     EvSpotEntry = m->newEvent(SPOTADJUST, "HISTORY_MSG_SPOT_ENTRY");
     EvSpotEntryOPA = m->newEvent(SPOTADJUST, "HISTORY_MSG_SPOT_ENTRY");
+    EvSpotMethod = m->newEvent(SPOTADJUST, "HISTORY_MSG_SPOT_METHOD");
 
     show_all();
 }
@@ -138,6 +254,79 @@ Spot::~Spot()
 
     // We do not delete the mouseOverGeometry, because the referenced objects are either
     // shared with visibleGeometry or instantiated by the class's ctor
+}
+
+// Phase 1: Method button helpers
+
+int Spot::getActiveMethod() const
+{
+    if (btnClone->get_active()) return 0;
+    if (btnHeal->get_active()) return 1;
+    if (btnErase->get_active()) return 2;
+    if (btnRedEye->get_active()) return 3;
+    return 0;
+}
+
+void Spot::setActiveMethod(int index)
+{
+    blockMethodButtons(true);
+    btnClone->set_active(index == 0);
+    btnHeal->set_active(index == 1);
+    btnErase->set_active(index == 2);
+    btnRedEye->set_active(index == 3);
+    blockMethodButtons(false);
+}
+
+void Spot::blockMethodButtons(bool block)
+{
+    if (block) {
+        cloneConn.block();
+        healConn.block();
+        eraseConn.block();
+        redeyeConn.block();
+    } else {
+        cloneConn.unblock();
+        healConn.unblock();
+        eraseConn.unblock();
+        redeyeConn.unblock();
+    }
+    blockMethodSignal = block;
+}
+
+void Spot::onMethodButtonToggled(Gtk::ToggleButton* button, int methodIndex)
+{
+    if (blockMethodSignal) return;
+
+    // Prevent self-deactivation (radio behavior)
+    if (!button->get_active()) {
+        blockMethodButtons(true);
+        button->set_active(true);
+        blockMethodButtons(false);
+        return;
+    }
+
+    // Deactivate all others
+    blockMethodButtons(true);
+    if (button != btnClone) btnClone->set_active(false);
+    if (button != btnHeal) btnHeal->set_active(false);
+    if (button != btnErase) btnErase->set_active(false);
+    if (button != btnRedEye) btnRedEye->set_active(false);
+    blockMethodButtons(false);
+
+    methodChanged();
+}
+
+// Phase 3: AdjusterListener
+void Spot::adjusterChanged(Adjuster* a, double newval)
+{
+    if (a == spotSize) {
+        sizePreview->setValue(int(newval));
+
+        // Update cursor preview circle radius if active
+        if (cursorPreviewCircle.isVisible()) {
+            cursorPreviewCircle.radius = int(newval);
+        }
+    }
 }
 
 void Spot::read (const ProcParams* pp, const ParamsEdited* pedited)
@@ -227,6 +416,13 @@ void Spot::releaseEdit()
     loGeom->state = Geometry::NORMAL;
     sourceIcon.state = Geometry::NORMAL;
     draggedSide = DraggedSide::NONE;
+
+    // Reset stroke dragging state
+    isStrokeDragging = false;
+    strokePreviewLine.setActive(false);
+    strokePreviewLine.points.clear();
+    currentStrokePoints.clear();
+
     updateGeometry();
 }
 
@@ -290,6 +486,27 @@ void Spot::editToggled ()
     }
 }
 
+void Spot::methodChanged()
+{
+    if (activeSpot > -1) {
+        SpotMethod newMethod = static_cast<SpotMethod>(getActiveMethod());
+        if (spots.at(activeSpot).method != newMethod) {
+            spots.at(activeSpot).method = newMethod;
+
+            // For Erase/RedEye, set source = target (no source needed)
+            if (newMethod == SpotMethod::ERASE || newMethod == SpotMethod::REDEYE) {
+                spots.at(activeSpot).sourcePos = spots.at(activeSpot).targetPos;
+            }
+
+            updateGeometry();
+
+            if (listener) {
+                listener->panelChanged(EvSpotEntryOPA, M("TP_SPOT_ENTRYCHANGED"));
+            }
+        }
+    }
+}
+
 Geometry* Spot::getVisibleGeometryFromMO (int MOID)
 {
     if (MOID == -1) {
@@ -316,10 +533,15 @@ void Spot::createGeometry ()
     int nbrEntry = spots.size();
 
     if (!batchMode) {
-        countLabel->set_text (Glib::ustring::compose (M ("TP_SPOT_COUNTLABEL"), nbrEntry));
+        if (nbrEntry > 0) {
+            countLabel->set_text (Glib::ustring::compose (M ("TP_SPOT_COUNTLABEL"), nbrEntry));
+            countLabel->show();
+        } else {
+            countLabel->set_text ("");
+            countLabel->hide();
+        }
     }
 
-    //printf("CreateGeometry(%d)\n", nbrEntry);
     // delete all dynamically allocated geometry
     if (EditSubscriber::visibleGeometry.size() > VISIBLE_OBJECT_COUNT)
         for (size_t i = 0; i < EditSubscriber::visibleGeometry.size() - VISIBLE_OBJECT_COUNT; ++i) { // static visible geometry at the end of the list
@@ -355,7 +577,6 @@ void Spot::createGeometry ()
         EditSubscriber::visibleGeometry.at (j)->setActive (true);
         EditSubscriber::visibleGeometry.at (j)->datum = Geometry::IMAGE;
         EditSubscriber::visibleGeometry.at (j)->state = Geometry::NORMAL;
-        //printf("mouseOverGeometry.at(%d) = %p\n", (unsigned int)i, (void*)EditSubscriber::mouseOverGeometry.at(i));
     }
 
     int visibleOffset = j;
@@ -371,6 +592,10 @@ void Spot::createGeometry ()
     EditSubscriber::visibleGeometry.at (j++) = &targetFeatherCircle; // VISIBLE_OBJECT_COUNT + 4
     assert(j - visibleOffset == VISIBLE_TARGET_CIRCLE);
     EditSubscriber::visibleGeometry.at (j++) = &targetCircle;        // VISIBLE_OBJECT_COUNT + 5
+    assert(j - visibleOffset == VISIBLE_CURSOR_PREVIEW);
+    EditSubscriber::visibleGeometry.at (j++) = &cursorPreviewCircle; // VISIBLE_OBJECT_COUNT + 6
+    assert(j - visibleOffset == VISIBLE_STROKE_PREVIEW);
+    EditSubscriber::visibleGeometry.at (j++) = &strokePreviewLine;   // VISIBLE_OBJECT_COUNT + 7
     static_cast<void>(visibleOffset);
 }
 
@@ -383,6 +608,8 @@ void Spot::updateGeometry()
         dataProvider->getImageSize (imW, imH);
 
         if (activeSpot > -1) {
+            bool hideSource = (spots.at(activeSpot).method == SpotMethod::ERASE || spots.at(activeSpot).method == SpotMethod::REDEYE);
+
             // Target point circle
             targetCircle.center = spots.at (activeSpot).targetPos;
             targetCircle.radius = spots.at (activeSpot).radius;
@@ -395,17 +622,17 @@ void Spot::updateGeometry()
 
             // Source point Icon
             sourceIcon.position = spots.at (activeSpot).sourcePos;
-            sourceIcon.setActive (true);
+            sourceIcon.setActive (!hideSource);
 
             // Source point circle
             sourceCircle.center = spots.at (activeSpot).sourcePos;
             sourceCircle.radius = spots.at (activeSpot).radius;
-            sourceCircle.setActive (true);
+            sourceCircle.setActive (!hideSource);
 
             // Source point Mouse Over disc
             sourceMODisc.center = sourceCircle.center;
             sourceMODisc.radius = sourceCircle.radius;
-            sourceMODisc.setActive (true);
+            sourceMODisc.setActive (!hideSource);
 
             // Target point feather circle
             targetFeatherCircle.center = spots.at (activeSpot).targetPos;
@@ -416,27 +643,45 @@ void Spot::updateGeometry()
             // Source point feather circle
             sourceFeatherCircle.center = spots.at (activeSpot).sourcePos;
             sourceFeatherCircle.radius = targetFeatherCircle.radius;
-            sourceFeatherCircle.setActive (true);
+            sourceFeatherCircle.setActive (!hideSource);
 
             // Link line
-            PolarCoord p;
-            p = targetCircle.center - sourceCircle.center;
+            if (!hideSource) {
+                PolarCoord p;
+                p = targetCircle.center - sourceCircle.center;
 
-            if (p.radius > sourceCircle.radius + targetCircle.radius) {
-                PolarCoord p2 (sourceCircle.radius, p.angle);
-                Coord p3;
-                p3 = p2;
-                link.begin = sourceCircle.center + p3;
-                p2.set (targetCircle.radius, p.angle + 180);
-                p3 = p2;
-                link.end = targetCircle.center + p3;
-                link.setActive (draggedSide == DraggedSide::NONE);
+                if (p.radius > sourceCircle.radius + targetCircle.radius) {
+                    PolarCoord p2 (sourceCircle.radius, p.angle);
+                    Coord p3;
+                    p3 = p2;
+                    link.begin = sourceCircle.center + p3;
+                    p2.set (targetCircle.radius, p.angle + 180);
+                    p3 = p2;
+                    link.end = targetCircle.center + p3;
+                    link.setActive (draggedSide == DraggedSide::NONE);
+                } else {
+                    link.setActive (false);
+                }
             } else {
                 link.setActive (false);
             }
 
-            sourceCircle.setVisible(draggedSide != DraggedSide::SOURCE);
+            sourceCircle.setVisible(!hideSource && draggedSide != DraggedSide::SOURCE);
             targetCircle.setVisible(draggedSide != DraggedSide::TARGET);
+
+            // Phase 4: show stroke preview for active stroke spot
+            if (spots.at(activeSpot).isStroke()) {
+                strokePreviewLine.points.clear();
+                for (const auto& pt : spots.at(activeSpot).strokePoints) {
+                    strokePreviewLine.points.push_back(pt);
+                }
+                strokePreviewLine.setActive(true);
+            } else if (!isStrokeDragging) {
+                strokePreviewLine.setActive(false);
+            }
+
+            // Hide cursor preview when a spot is active
+            cursorPreviewCircle.setActive(false);
         } else {
             targetCircle.state = Geometry::NORMAL;
             sourceCircle.state = Geometry::NORMAL;
@@ -451,6 +696,10 @@ void Spot::updateGeometry()
             targetFeatherCircle.setActive (false);
             sourceFeatherCircle.setActive (false);
             link.setActive (false);
+
+            if (!isStrokeDragging) {
+                strokePreviewLine.setActive(false);
+            }
         }
 
         for (size_t i = 0; i < spots.size(); ++i) {
@@ -483,17 +732,15 @@ void Spot::addNewEntry()
     se.radius = spotSize->getIntValue();
     se.targetPos = editProvider->posImage;
     se.sourcePos = se.targetPos;
+    se.method = static_cast<SpotMethod>(getActiveMethod());
     spots.push_back (se); // this make a copy of se ...
     activeSpot = spots.size() - 1;
     lastObject = MO_SOURCE_DISC;
-
-    //printf("ActiveSpot = %d\n", activeSpot);
 
     createGeometry();
     updateGeometry();
     EditSubscriber::visibleGeometry.at (activeSpot)->state = Geometry::ACTIVE;
     sourceIcon.state = Geometry::DRAGGED;
-    // TODO: find a way to disable the active spot's Mouse Over geometry but still displaying its location...
 
     if (listener) {
         listener->panelChanged (EvSpotEntryOPA, M ("TP_SPOT_ENTRYCHANGED"));
@@ -587,7 +834,9 @@ bool Spot::mouseOver (int modifierKey)
 
                     EditSubscriber::visibleGeometry.at (activeSpot)->state = Geometry::PRELIGHT;
                     EditSubscriber::mouseOverGeometry.at (activeSpot + MO_OBJECT_COUNT)->state = Geometry::PRELIGHT;
-                    //printf("ActiveSpot = %d (was %d before)\n", activeSpot, oldActiveSpot);
+
+                    // Sync method buttons to reflect this spot's method
+                    setActiveMethod(static_cast<int>(spots.at(activeSpot).method));
                 }
             }
         }
@@ -598,8 +847,29 @@ bool Spot::mouseOver (int modifierKey)
             lastObject = MO_TARGET_DISK;
         }
 
+        // Phase 2: Show/hide cursor preview circle
+        if (lastObject == -1 && activeSpot == -1 && !isStrokeDragging) {
+            cursorPreviewCircle.center = editProvider->posImage;
+            cursorPreviewCircle.radius = spotSize->getIntValue();
+            cursorPreviewCircle.setActive(true);
+        } else {
+            cursorPreviewCircle.setActive(false);
+        }
+
         updateGeometry();
         return true;
+    }
+
+    // Phase 2: Update cursor preview position even when object hasn't changed,
+    // but only if the position actually moved (avoid redraw loop)
+    if (editProvider && lastObject == -1 && activeSpot == -1 && !isStrokeDragging) {
+        rtengine::Coord newPos = editProvider->posImage;
+        if (newPos != cursorPreviewCircle.center) {
+            cursorPreviewCircle.center = newPos;
+            cursorPreviewCircle.radius = spotSize->getIntValue();
+            cursorPreviewCircle.setActive(true);
+            return true;  // Request redraw, but don't call updateGeometry (no state change)
+        }
     }
 
     return false;
@@ -611,20 +881,59 @@ bool Spot::button1Pressed (int modifierKey)
     EditDataProvider* editProvider = getEditProvider();
 
     if (editProvider) {
-        if (lastObject == -1 && (modifierKey & GDK_CONTROL_MASK)) {
-            int imW, imH;
-            const auto startPos = editProvider->posImage;
-            editProvider->getImageSize(imW, imH);
-            if (startPos.x < 0 || startPos.y < 0 || startPos.x > imW || startPos.y > imH) {
-                return false; // Outside of image area.
-            }
-            draggedSide = DraggedSide::SOURCE;
-            addNewEntry();
-            EditSubscriber::action = EditSubscriber::Action::DRAGGING;
-            return true;
-        } else if (lastObject > -1) {
+        // Hide cursor preview during interaction
+        cursorPreviewCircle.setActive(false);
+
+        // Interact with existing spot (drag target or source)
+        if (lastObject > -1) {
             draggedSide = lastObject == MO_TARGET_DISK ? DraggedSide::TARGET : lastObject == MO_SOURCE_DISC ? DraggedSide::SOURCE : DraggedSide::NONE;
             getVisibleGeometryFromMO (lastObject)->state = Geometry::DRAGGED;
+            EditSubscriber::action = EditSubscriber::Action::DRAGGING;
+            return true;
+        }
+
+        // Clicking empty area — check bounds
+        int imW, imH;
+        const auto startPos = editProvider->posImage;
+        editProvider->getImageSize(imW, imH);
+        if (startPos.x < 0 || startPos.y < 0 || startPos.x > imW || startPos.y > imH) {
+            return false; // Outside of image area.
+        }
+
+        SpotMethod currentMethod = static_cast<SpotMethod>(getActiveMethod());
+
+        if (currentMethod == SpotMethod::ERASE || currentMethod == SpotMethod::REDEYE) {
+            // Phase 4: Start stroke dragging for erase mode
+            if (currentMethod == SpotMethod::ERASE) {
+                isStrokeDragging = true;
+                currentStrokePoints.clear();
+                currentStrokePoints.push_back(startPos);
+                strokePreviewLine.points.clear();
+                strokePreviewLine.points.push_back(startPos);
+                strokePreviewLine.setActive(true);
+                EditSubscriber::action = EditSubscriber::Action::DRAGGING;
+                return true;
+            }
+
+            // RedEye: no Ctrl needed, no source drag, spot is complete immediately
+            draggedSide = DraggedSide::NONE;
+            addNewEntry();
+
+            // Deselect spot so geometry circles auto-hide
+            activeSpot = -1;
+            lastObject = -1;
+            updateGeometry();
+
+            // Use PICKING to consume the click (prevents cropwindow from panning)
+            EditSubscriber::action = EditSubscriber::Action::PICKING;
+            return true;
+        }
+
+        if ((modifierKey & GDK_CONTROL_MASK) &&
+            (currentMethod == SpotMethod::CLONE || currentMethod == SpotMethod::HEAL)) {
+            // Clone/Heal: Ctrl+click required, start source drag
+            draggedSide = DraggedSide::SOURCE;
+            addNewEntry();
             EditSubscriber::action = EditSubscriber::Action::DRAGGING;
             return true;
         }
@@ -636,6 +945,67 @@ bool Spot::button1Pressed (int modifierKey)
 // End the drag of a Target point
 bool Spot::button1Released()
 {
+    // Phase 4: Handle stroke release
+    if (isStrokeDragging) {
+        isStrokeDragging = false;
+        strokePreviewLine.setActive(false);
+
+        if (currentStrokePoints.size() >= 2) {
+            // Create stroke-based spot entry
+            SpotEntry se;
+            se.radius = spotSize->getIntValue();
+            se.method = SpotMethod::ERASE;
+
+            // Compute bounding box center as targetPos
+            int minX = INT_MAX, minY = INT_MAX, maxX = INT_MIN, maxY = INT_MIN;
+            for (const auto& pt : currentStrokePoints) {
+                minX = std::min(minX, pt.x);
+                minY = std::min(minY, pt.y);
+                maxX = std::max(maxX, pt.x);
+                maxY = std::max(maxY, pt.y);
+            }
+            se.targetPos.set((minX + maxX) / 2, (minY + maxY) / 2);
+            se.sourcePos = se.targetPos;
+            se.strokePoints = currentStrokePoints;
+
+            spots.push_back(se);
+            activeSpot = -1;
+            lastObject = -1;
+
+            createGeometry();
+            updateGeometry();
+
+            if (listener) {
+                listener->panelChanged(edit->get_active() ? EvSpotEntryOPA : EvSpotEntry, M("TP_SPOT_ENTRYCHANGED"));
+            }
+        } else if (currentStrokePoints.size() == 1) {
+            // Single click without drag — create normal circle spot
+            EditDataProvider* editProvider = getEditProvider();
+            if (editProvider) {
+                SpotEntry se;
+                se.radius = spotSize->getIntValue();
+                se.targetPos = currentStrokePoints[0];
+                se.sourcePos = se.targetPos;
+                se.method = SpotMethod::ERASE;
+                spots.push_back(se);
+                activeSpot = -1;
+                lastObject = -1;
+
+                createGeometry();
+                updateGeometry();
+
+                if (listener) {
+                    listener->panelChanged(edit->get_active() ? EvSpotEntryOPA : EvSpotEntry, M("TP_SPOT_ENTRYCHANGED"));
+                }
+            }
+        }
+
+        currentStrokePoints.clear();
+        strokePreviewLine.points.clear();
+        EditSubscriber::action = EditSubscriber::Action::NONE;
+        return true;
+    }
+
     Geometry *loGeom = getVisibleGeometryFromMO (lastObject);
 
     if (!loGeom) {
@@ -708,6 +1078,30 @@ bool Spot::button3Released()
 
 bool Spot::drag1 (int modifierKey)
 {
+    // Phase 4: Handle stroke dragging
+    if (isStrokeDragging) {
+        EditDataProvider* editProvider = getEditProvider();
+        if (!editProvider) return false;
+
+        rtengine::Coord pos = editProvider->posImage;
+
+        // Throttle: only add point if far enough from last
+        if (!currentStrokePoints.empty()) {
+            const auto& last = currentStrokePoints.back();
+            int dx = pos.x - last.x;
+            int dy = pos.y - last.y;
+            int minSpacing = std::max(spotSize->getIntValue() / 4, 2);
+            if (dx * dx + dy * dy < minSpacing * minSpacing) {
+                return true; // Too close, skip
+            }
+        }
+
+        currentStrokePoints.push_back(pos);
+        strokePreviewLine.points.push_back(pos);
+        updateGeometry();
+        return true;
+    }
+
     if (EditSubscriber::action != EditSubscriber::Action::DRAGGING) {
         return false;
     }
@@ -717,12 +1111,9 @@ bool Spot::drag1 (int modifierKey)
     editProvider->getImageSize (imW, imH);
     bool modified = false;
 
-    //printf("Drag1 / LastObject=%d\n", lastObject);
-
     Geometry *loGeom = EditSubscriber::mouseOverGeometry.at (lastObject);
 
     if (loGeom == &sourceMODisc) {
-        //printf("sourceMODisc / deltaPrevImage = %d / %d\n", editProvider->deltaPrevImage.x, editProvider->deltaPrevImage.y);
         rtengine::Coord currPos = spots.at (activeSpot).sourcePos;
         spots.at (activeSpot).sourcePos += editProvider->deltaPrevImage;
         spots.at (activeSpot).sourcePos.clip (imW, imH);
@@ -733,7 +1124,6 @@ bool Spot::drag1 (int modifierKey)
 
         EditSubscriber::mouseOverGeometry.at (activeSpot + MO_OBJECT_COUNT)->state = Geometry::DRAGGED;
     } else if (loGeom == &targetMODisc || lastObject >= MO_OBJECT_COUNT) {
-        //printf("targetMODisc / deltaPrevImage = %d / %d\n", editProvider->deltaPrevImage.x, editProvider->deltaPrevImage.y);
         rtengine::Coord currPos = spots.at (activeSpot).targetPos;
         spots.at (activeSpot).targetPos += editProvider->deltaPrevImage;
         spots.at (activeSpot).targetPos.clip (imW, imH);
@@ -742,7 +1132,6 @@ bool Spot::drag1 (int modifierKey)
             modified = true;
         }
     } else if (loGeom == &sourceCircle) {
-        //printf("sourceCircle / deltaPrevImage = %d / %d\n", editProvider->deltaImage.x, editProvider->deltaImage.y);
         int lastRadius = spots.at (activeSpot).radius;
         rtengine::Coord currPos = editProvider->posImage + editProvider->deltaImage;
         rtengine::PolarCoord currPolar (currPos - spots.at (activeSpot).sourcePos);
@@ -752,7 +1141,6 @@ bool Spot::drag1 (int modifierKey)
             modified = true;
         }
     } else if (loGeom == &targetCircle) {
-        //printf("targetCircle / deltaPrevImage = %d / %d\n", editProvider->deltaImage.x, editProvider->deltaImage.y);
         int lastRadius = spots.at (activeSpot).radius;
         rtengine::Coord currPos = editProvider->posImage + editProvider->deltaImage;
         rtengine::PolarCoord currPolar (currPos - spots.at (activeSpot).targetPos);
@@ -762,7 +1150,6 @@ bool Spot::drag1 (int modifierKey)
             modified = true;
         }
     } else if (loGeom == &sourceFeatherCircle) {
-        //printf("sourceFeatherCircle / deltaPrevImage = %d / %d\n", editProvider->deltaImage.x, editProvider->deltaImage.y);
         float currFeather = spots.at (activeSpot).feather;
         rtengine::Coord currPos = editProvider->posImage + editProvider->deltaImage;
         rtengine::PolarCoord currPolar (currPos - spots.at (activeSpot).sourcePos);
@@ -772,7 +1159,6 @@ bool Spot::drag1 (int modifierKey)
             modified = true;
         }
     } else if (loGeom == &targetFeatherCircle) {
-        //printf("targetFeatherCircle / deltaPrevImage = %d / %d\n", editProvider->deltaImage.x, editProvider->deltaImage.y);
         float currFeather = spots.at (activeSpot).feather;
         rtengine::Coord currPos = editProvider->posImage + editProvider->deltaImage;
         rtengine::PolarCoord currPolar (currPos - spots.at (activeSpot).targetPos);
@@ -865,11 +1251,6 @@ void Spot::switchOffEditMode ()
 
 void Spot::tweakParams(procparams::ProcParams& pparams)
 {
-    //params->raw.bayersensor.method = RAWParams::BayerSensor::getMethodString(RAWParams::BayerSensor::Method::FAST);
-    //params->raw.xtranssensor.method = RAWParams::XTransSensor::getMethodString(RAWParams::XTransSensor::Method::FAST);
-
-    // -> disabling all transform
-    //pparams.coarse = CoarseTransformParams();
     pparams.lensProf = LensProfParams();
     pparams.cacorrection = CACorrParams();
     pparams.distortion = DistortionParams();
@@ -894,6 +1275,5 @@ void Spot::tweakParams(procparams::ProcParams& pparams)
     pparams.pcvignette.enabled = false;
     pparams.colorappearance.enabled = false;
     pparams.locallab.enabled = false;
-   // pparams.toneCurve.hrenabled = false;  // not sure for this one, it could be useful for ExpComp w/o performance penalty
     pparams.toneCurve.histmatching = false;
 }

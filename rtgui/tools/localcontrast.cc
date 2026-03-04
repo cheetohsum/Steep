@@ -64,13 +64,9 @@ LocalContrast::LocalContrast(): FoldableToolPanel(this, TOOL_NAME, M("TP_LOCALCO
     getSummaryBox()->pack_start(*amount);
     getSummaryBox()->show_all();
 
-    advancedSection = Gtk::manage(new AdvancedSection());
-    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
-    Gtk::Box* const advBox = advancedSection->getContentBox();
-
-    advBox->pack_start(*radius);
-    advBox->pack_start(*darkness);
-    advBox->pack_start(*lightness);
+    pack_start(*radius);
+    pack_start(*darkness);
+    pack_start(*lightness);
 }
 
 
@@ -171,7 +167,6 @@ void LocalContrast::setBatchMode(bool batchMode)
     amount->showEditedCB();
     darkness->showEditedCB();
     lightness->showEditedCB();
-    advancedSection->setBatchMode(batchMode);
 }
 
 

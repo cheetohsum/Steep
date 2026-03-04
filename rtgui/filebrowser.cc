@@ -167,6 +167,21 @@ FileBrowser::FileBrowser () :
 
     pmenu->attach (*Gtk::manage(new Gtk::SeparatorMenuItem ()), 0, 1, p, p + 1);
     p++;
+
+    /***********************
+     * AI & Quick Actions
+     ***********************/
+    pmenu->attach (*Gtk::manage(aiDenoise = new MyImageMenuItem (M("FILEBROWSER_POPUPAIDENOISE"), "ai-denoise")), 0, 1, p, p + 1);
+    p++;
+    pmenu->attach (*Gtk::manage(autoEdit = new MyImageMenuItem (M("FILEBROWSER_POPUPAUTOEDIT"), "palette-brush")), 0, 1, p, p + 1);
+    p++;
+    pmenu->attach (*Gtk::manage(duplicate = new Gtk::MenuItem (M("FILEBROWSER_POPUPDUPLICATE"))), 0, 1, p, p + 1);
+    p++;
+    pmenu->attach (*Gtk::manage(setAlbumCover = new Gtk::MenuItem (M("FILEBROWSER_POPUPSETALBUMCOVER"))), 0, 1, p, p + 1);
+    p++;
+
+    pmenu->attach (*Gtk::manage(new Gtk::SeparatorMenuItem ()), 0, 1, p, p + 1);
+    p++;
     pmenu->attach (*Gtk::manage(selall = new Gtk::MenuItem (M("FILEBROWSER_POPUPSELECTALL"))), 0, 1, p, p + 1);
     p++;
 
@@ -510,6 +525,18 @@ FileBrowser::FileBrowser () :
     resetdefaultprof->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), resetdefaultprof));
     clearprof->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), clearprof));
     cachemenu->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), cachemenu));
+    aiDenoise->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), aiDenoise));
+    autoEdit->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), autoEdit));
+    duplicate->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), duplicate));
+
+    setAlbumCover->signal_activate().connect([this]() {
+        if (!albumCoverSetter_) return;
+        MYREADERLOCK(l, entryRW);
+        if (selected.size() == 1) {
+            Glib::ustring fname = (static_cast<FileBrowserEntry*>(selected[0]))->filename;
+            albumCoverSetter_(fname);
+        }
+    });
 
     // A separate pop-up menu for Color Labels
     int c = 0;
@@ -622,6 +649,16 @@ void FileBrowser::rightClicked ()
         saveImage->show();
     } else {
         saveImage->hide();
+    }
+
+    // "Set as album cover" — only when a setter is wired and exactly one image is selected
+    {
+        MYREADERLOCK(l2, entryRW);
+        if (albumCoverSetter_ && selected.size() == 1) {
+            setAlbumCover->show();
+        } else {
+            setAlbumCover->hide();
+        }
     }
 
     pmenu->popup (3, this->eventTime);
@@ -1097,6 +1134,88 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
         tbl->clearFromCacheRequested (mselected, true);
 
         //queue_draw ();
+    } else if (m == aiDenoise) {
+        // Enable AI Denoise on all selected photos
+        if (!mselected.empty() && bppcl) {
+            bppcl->beginBatchPParamsChange(mselected.size());
+        }
+
+        for (size_t i = 0; i < mselected.size(); i++) {
+            rtengine::procparams::ProcParams pp = mselected[i]->thumbnail->getProcParams();
+            pp.aiDenoise.enabled = true;
+            mselected[i]->thumbnail->setProcParams(pp, nullptr, FILEBROWSER, false);
+        }
+
+        if (!mselected.empty() && bppcl) {
+            bppcl->endBatchPParamsChange();
+        }
+    } else if (m == autoEdit) {
+        // Auto-edit: apply sensible defaults for quick improvement
+        if (!mselected.empty() && bppcl) {
+            bppcl->beginBatchPParamsChange(mselected.size());
+        }
+
+        for (size_t i = 0; i < mselected.size(); i++) {
+            rtengine::procparams::ProcParams pp = mselected[i]->thumbnail->getProcParams();
+            // Auto tone curve
+            pp.toneCurve.autoexp = true;
+            // Moderate vibrance
+            pp.vibrance.enabled = true;
+            pp.vibrance.pastels = 30;
+            pp.vibrance.saturated = 20;
+            // Mild sharpening
+            pp.sharpening.enabled = true;
+            pp.sharpening.contrast = 15;
+            mselected[i]->thumbnail->setProcParams(pp, nullptr, FILEBROWSER, false);
+        }
+
+        if (!mselected.empty() && bppcl) {
+            bppcl->endBatchPParamsChange();
+        }
+    } else if (m == duplicate) {
+        // Duplicate: copy each selected file with a _copy suffix
+        for (size_t i = 0; i < mselected.size(); i++) {
+            Glib::ustring srcPath = mselected[i]->filename;
+            auto srcFile = Gio::File::create_for_path(srcPath);
+            if (!srcFile || !srcFile->query_exists()) continue;
+
+            // Build destination name: insert _copy before extension
+            Glib::ustring dir = Glib::path_get_dirname(srcPath);
+            Glib::ustring base = Glib::path_get_basename(srcPath);
+            auto dotPos = base.rfind('.');
+            Glib::ustring destName;
+            if (dotPos != Glib::ustring::npos) {
+                destName = base.substr(0, dotPos) + "_copy" + base.substr(dotPos);
+            } else {
+                destName = base + "_copy";
+            }
+            Glib::ustring destPath = Glib::build_filename(dir, destName);
+
+            // Avoid overwriting: append _2, _3, etc.
+            int suffix = 2;
+            while (Gio::File::create_for_path(destPath)->query_exists()) {
+                if (dotPos != Glib::ustring::npos) {
+                    destName = base.substr(0, dotPos) + "_copy" + std::to_string(suffix) + base.substr(dotPos);
+                } else {
+                    destName = base + "_copy" + std::to_string(suffix);
+                }
+                destPath = Glib::build_filename(dir, destName);
+                suffix++;
+            }
+
+            try {
+                srcFile->copy(Gio::File::create_for_path(destPath));
+                // Also copy the PP3 sidecar if it exists
+                Glib::ustring pp3Src = srcPath + ".pp3";
+                auto pp3File = Gio::File::create_for_path(pp3Src);
+                if (pp3File->query_exists()) {
+                    pp3File->copy(Gio::File::create_for_path(destPath + ".pp3"));
+                }
+            } catch (const Glib::Error&) {
+                // Silently skip failed copies
+            }
+        }
+        queue_draw ();
 #ifdef _WIN32
     } else if (miOpenDefaultViewer && m == miOpenDefaultViewer) {
         openDefaultViewer(1);
@@ -1456,7 +1575,7 @@ int FileBrowser::getThumbnailHeight ()
     const auto& options = App::get().options();
     // The user could have manually forced the option to a too big value
     if (!options.sameThumbSize && getLocation() == THLOC_EDITOR) {
-        return std::max(std::min(options.thumbSizeTab, 800), 10);
+        return std::max(std::min(options.thumbSizeTab, 115), 10);
     } else {
         return std::max(std::min(options.thumbSize, 800), 10);
     }
@@ -2047,6 +2166,18 @@ void FileBrowser::selectImage(const Glib::ustring& fname, bool doScroll)
             }
         }
     }
+}
+
+Thumbnail* FileBrowser::getSelectedThumbnail()
+{
+    MYREADERLOCK(l, entryRW);
+    if (lastClicked) {
+        return lastClicked->thumbnail;
+    }
+    if (!selected.empty()) {
+        return selected.front()->thumbnail;
+    }
+    return nullptr;
 }
 
 void FileBrowser::openNextPreviousEditorImage (const Glib::ustring& fname, eRTNav nextPrevious)

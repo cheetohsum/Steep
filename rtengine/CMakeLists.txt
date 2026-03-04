@@ -70,6 +70,9 @@ set(RTENGINESOURCEFILES
     iplocallab.cc
     iplabregions.cc
     iplocalcontrast.cc
+    iptextureclarity.cc
+    ipgraineffect.cc
+    iplensblur.cc
     ipresize.cc
     ipretinex.cc
     ipshadowshighlights.cc
@@ -160,7 +163,7 @@ if(NOT WITH_SYSTEM_KLT)
 endif()
 
 if(WITH_AI_MASKING)
-    list(APPEND RTENGINESOURCEFILES aisegmentation.cc aimaskcache.cc)
+    list(APPEND RTENGINESOURCEFILES aisegmentation.cc aimaskcache.cc aiinpainting.cc)
 endif()
 
 add_library(rtengine STATIC "${RTENGINESOURCEFILES}")

@@ -56,7 +56,8 @@ const char* CHANNEL_KEYS[8] = {
 } // namespace
 
 HSVEqualizer::HSVEqualizer () : FoldableToolPanel(this, TOOL_NAME, M("TP_HSVEQUALIZER_LABEL"), false, true),
-    activeChannel(0)
+    activeChannel(0),
+    contentExpanded_(false)
 {
     hueValues.fill(0.0);
     satValues.fill(0.0);
@@ -70,6 +71,22 @@ HSVEqualizer::HSVEqualizer () : FoldableToolPanel(this, TOOL_NAME, M("TP_HSVEQUA
         Color::hsv2rgb01(x, 0.5f, 0.5f, R, G, B);
         bottomMilestones.push_back( GradientMilestone(double(x), double(R), double(G), double(B)) );
     }
+
+    // Clickable section label (collapsed by default)
+    sectionLabel_ = Gtk::manage(new Gtk::Label());
+    sectionLabel_->set_markup("<b>\xe2\x96\xb8 Color Mixer</b>");
+    sectionLabel_->set_xalign(0.0);
+    sectionLabel_->get_style_context()->add_class("tool-section-label");
+    auto* labelEvt = Gtk::manage(new Gtk::EventBox());
+    labelEvt->add(*sectionLabel_);
+    labelEvt->signal_button_press_event().connect([this](GdkEventButton*) -> bool {
+        toggleContent();
+        return true;
+    });
+    getSummaryBox()->pack_start(*labelEvt, Gtk::PACK_SHRINK, 2);
+
+    // Collapsible content box
+    toolContent_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
 
     // Channel bar — 8 colored dot buttons using DrawingArea circles
     channelBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 3));
@@ -117,7 +134,7 @@ HSVEqualizer::HSVEqualizer () : FoldableToolPanel(this, TOOL_NAME, M("TP_HSVEQUA
 
         channelBar->pack_start(*evBox, Gtk::PACK_EXPAND_WIDGET, 0);
     }
-    getSummaryBox()->pack_start(*channelBar, Gtk::PACK_SHRINK, 0);
+    toolContent_->pack_start(*channelBar, Gtk::PACK_SHRINK, 0);
 
     // Three H/S/L sliders for the active channel
     hueAdj = Gtk::manage(new Adjuster(M("TP_HSVEQUALIZER_HUE"), -100., 100., 1., 0.));
@@ -126,9 +143,14 @@ HSVEqualizer::HSVEqualizer () : FoldableToolPanel(this, TOOL_NAME, M("TP_HSVEQUA
     hueAdj->setAdjusterListener(this);
     satAdj->setAdjusterListener(this);
     lumAdj->setAdjusterListener(this);
-    getSummaryBox()->pack_start(*hueAdj, Gtk::PACK_SHRINK, 0);
-    getSummaryBox()->pack_start(*satAdj, Gtk::PACK_SHRINK, 0);
-    getSummaryBox()->pack_start(*lumAdj, Gtk::PACK_SHRINK, 0);
+    toolContent_->pack_start(*hueAdj, Gtk::PACK_SHRINK, 0);
+    toolContent_->pack_start(*satAdj, Gtk::PACK_SHRINK, 0);
+    toolContent_->pack_start(*lumAdj, Gtk::PACK_SHRINK, 0);
+
+    // Start hidden
+    toolContent_->set_no_show_all(true);
+    toolContent_->hide();
+    getSummaryBox()->pack_start(*toolContent_, Gtk::PACK_SHRINK, 0);
     getSummaryBox()->show_all();
 
     // Set initial gradients for channel 0
@@ -136,6 +158,8 @@ HSVEqualizer::HSVEqualizer () : FoldableToolPanel(this, TOOL_NAME, M("TP_HSVEQUA
 
     // Curves in AdvancedSection
     advancedSection = Gtk::manage(new AdvancedSection());
+    advancedSection->set_no_show_all(true);
+    advancedSection->hide();
 
     curveEditorG = new CurveEditorGroup (App::get().mut_options().lastHsvCurvesDir, M("TP_HSVEQUALIZER_CHANNEL"));
     curveEditorG->setCurveListener (this);
@@ -158,6 +182,24 @@ HSVEqualizer::HSVEqualizer () : FoldableToolPanel(this, TOOL_NAME, M("TP_HSVEQUA
     curveEditorG->curveListComplete();
     advancedSection->getContentBox()->pack_start(*curveEditorG, Gtk::PACK_SHRINK, 4);
     pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
+}
+
+void HSVEqualizer::toggleContent()
+{
+    contentExpanded_ = !contentExpanded_;
+    if (contentExpanded_) {
+        sectionLabel_->set_markup("<b>\xe2\x96\xbe Color Mixer</b>");
+        toolContent_->set_no_show_all(false);
+        toolContent_->show_all();
+        toolContent_->set_no_show_all(true);
+        advancedSection->set_no_show_all(false);
+        advancedSection->show_all();
+        advancedSection->set_no_show_all(true);
+    } else {
+        sectionLabel_->set_markup("<b>\xe2\x96\xb8 Color Mixer</b>");
+        toolContent_->hide();
+        advancedSection->hide();
+    }
 }
 
 void HSVEqualizer::updateActiveSliderGradients()

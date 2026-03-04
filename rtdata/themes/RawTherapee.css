@@ -24,18 +24,18 @@
 
 /** Set style defaults **/
 * {
-    color: #BBBBBB;
+    color: #cdd2da;
     text-shadow: none; /* Keep at none, or suffer serious performance issues */
 }
 
 *:disabled {
-    color: rgba(255,255,255,0.25);
+    color: rgba(200,210,225,0.25);
     opacity: 0.8;
 }
 
 .view:selected:not(check):not(radio) {
-    color: #262626;
-    background-color: #AAAAAA;
+    color: #1a1e24;
+    background-color: #8a92a1;
 }
 
 /* The Places and Dir browser panels */
@@ -44,31 +44,31 @@ textview.view, treeview.view {
     margin: 0;
 }
 .view, .textview, textview, textview.view, treeview > entry {
-    background-color: #262626;
+    background-color: #1a1e24;
 }
 /* The headers of these panels */
 .view .button {
-    background-color: #363636;
+    background-color: #2e3340;
 }
 
 window > box {
     padding: 0.416666666666666666em;
 }
 window.background {
-    background-color: #484848;
+    background-color: #2c3038;
 }
 
 /*** Window decoration *********************************************************/
 .csd:not(.popup):not(tooltip) > decoration {
-    background-color: #484848;
+    background-color: #2c3038;
     background-image: none;
     box-shadow: 0 0.25em 0.75em 0.083333333333333333em rgba(0, 0, 0, 0.5), 0 0 0 0.083333333333333333em #242424;
 }
 headerbar {
-    background-color: shade(rgb(50,50,50),1.12);
-    box-shadow: inset 0 0.083333333333333333em rgba(200,200,200,.13);
-    background-image: linear-gradient(shade(rgb(50,50,50),1.14), shade(rgb(50,50,50),.86));
-    border-bottom-color: #242424;
+    background-color: #252a32;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 8px rgba(0,0,0,0.3);
+    background-image: linear-gradient(rgba(255,255,255,0.05), rgba(0,0,0,0.08));
+    border-bottom-color: #1a1e24;
     padding: 0 0.333333em;
     min-height: 2em;
 }
@@ -78,11 +78,11 @@ headerbar {
 #RTHeaderBar .title {
     font-weight: bold;
     font-size: 0.9em;
-    color: #BBBBBB;
+    color: #e2e6ed;
 }
 #RTHeaderBar .subtitle {
     font-size: 0.75em;
-    color: #888888;
+    color: #6b7280;
 }
 
 /* Header bar navigation buttons */
@@ -94,11 +94,11 @@ headerbar {
     border: none;
 }
 #NavButton:hover {
-    background-color: rgba(255,255,255,0.08);
+    background-color: rgba(130,170,230,0.08);
 }
 #NavButton:checked {
-    background-color: rgba(255,255,255,0.15);
-    box-shadow: inset 0 -0.166666em 0 0 #8ab4f8;
+    background-color: rgba(102,153,204,0.12);
+    box-shadow: inset 0 -0.166666em 0 0 #6699CC;
 }
 
 /* Options menu button */
@@ -108,18 +108,43 @@ headerbar {
     border-radius: 0.25em;
 }
 #OptionsMenuButton:hover {
-    background-color: rgba(255,255,255,0.08);
+    background-color: rgba(130,170,230,0.08);
 }
-#OptionsPopover {
-    background-color: #3a3a3a;
+#OptionsPopover contents {
+    background-color: rgba(30,35,48,0.92);
+    border: 1px solid rgba(120,140,180,0.15);
+    border-radius: 10px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.06);
+    padding: 4px;
+}
+#OptionsPopover separator {
+    background-color: rgba(120,140,180,0.12);
+    min-height: 1px;
+    margin: 2px 6px;
 }
 #OptionsPopover button {
-    padding: 0.333333em 0.5em;
-    border-radius: 0.166666em;
+    padding: 0.333333em 0.666666em;
+    border-radius: 6px;
     min-width: 10em;
 }
 #OptionsPopover button:hover {
-    background-color: rgba(255,255,255,0.1);
+    background-color: rgba(130,170,230,0.12);
+}
+#OptionsPopover checkbutton {
+    padding: 2px 6px;
+    border-radius: 6px;
+}
+#OptionsPopover checkbutton:hover {
+    background-color: rgba(130,170,230,0.08);
+}
+#OptionsPopover combobox button {
+    min-width: 0;
+    padding: 2px 8px;
+    border-radius: 6px;
+    border: 1px solid rgba(120,140,180,0.2);
+}
+#OptionsPopover label {
+    padding: 0 2px;
 }
 
 /* Window control buttons */
@@ -129,7 +154,7 @@ headerbar {
     border-radius: 0.25em;
 }
 #WindowControlButton:hover {
-    background-color: rgba(255,255,255,0.1);
+    background-color: rgba(130,170,230,0.10);
 }
 #WindowCloseButton {
     padding: 0.25em 0.416666em;
@@ -145,7 +170,7 @@ dialog > box {
 dialog.csd #PrefNotebook > header,
 dialog.csd #AboutNotebook > header,
 window.csd:not(.fullscreen) #MainNotebook > header.top {
-    border-top-color: #484848;
+    border-top-color: #2c3038;
 }
 
 /* Window state */
@@ -171,12 +196,16 @@ undershoot {
 dialog.background,
 messagedialog.background,
 window.dialog.background {
-    background-color: #484848;
-    color: #BBBBBB;
+    background-color: #2c3038;
+    color: #cdd2da;
 }
 popover, popover.background {
-    background-color: #3a3a3a;
-    color: #BBBBBB;
+    background-color: rgba(28,32,40,0.95);
+    background-image: linear-gradient(rgba(255,255,255,0.04), transparent 40%);
+    color: #cdd2da;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04);
 }
 
 box, grid {
@@ -202,13 +231,13 @@ frame {
 
 /* Create space between frame contents and frame border */
 frame border {
-    border: 1px solid #262626;
+    border: 1px solid #1a1e24;
     border-radius: 0.3333333333333333em;
     padding: 0.083333333333333333em;
 }
 
 frame > label {
-    color: #D8D8D8;
+    color: #e2e6ed;
     padding: 0.416666666666666666em 0.25em;
 }
 
@@ -218,16 +247,16 @@ entry > window > frame {
 }
 
 tooltip {
-    border-radius: 0.416666666666666666em;
-    background-color: rgba(0,0,0,0.95);
+    border-radius: 8px;
+    background-color: rgba(20,24,32,0.95);
     border-style: none;
-    box-shadow: none;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
     padding: 0;
     margin: 0;
 }
 
 treeview header button {
-    background-image: linear-gradient(#343434, #2E2E2E, #292929);
+    background-image: linear-gradient(#2e3340, #282e38, #252a32);
 }
 
 /*** Separator *********************************************************************************/
@@ -276,14 +305,17 @@ menu separator {
 }
 
 #MyExpander separator.horizontal {
-    margin: 0.25em 0.19em;
+    min-height: 0;
+    margin: 0;
+    background: transparent;
+    border: none;
 }
 #MyFileChooserButton separator {
 }
 
 #PlacesPaned .view.separator {
     min-height: 0.16666666666666666em;
-    color: #363636;
+    color: #252a32;
 }
 
 #MetaPanelNotebook separator {
@@ -297,15 +329,25 @@ menu separator {
 }
 
 #FileCatalog {
-    background-color: #393939;
+    background-color: #252a32;
     border: none;
+    padding: 0;
+    margin: 0;
+}
+/* Thin scrollbar in filmstrip */
+#FileCatalog scrollbar.horizontal slider {
+    min-height: 4px;
+    border-width: 1px;
+}
+#FileCatalog scrollbar.horizontal {
+    min-height: 6px;
 }
 #FileCatalog:selected {
-    background-color: #565656;
+    background-color: rgba(102,153,204,0.2);
 }
 
 #BeforeAfterContainer frame {
-    background-color: #262626;
+    background-color: #1a1e24;
     padding: 0;
     margin: 0.0833333333333333em;
 }
@@ -319,7 +361,7 @@ menu separator {
 
 /* Frames in the toolbox. Not MyExpander frames. */
 eventbox.frame {
-    border-color: #565656;
+    border-color: rgba(255,255,255,0.06);
 }
 
 /*** Load - Save dialog ************************************************************************/
@@ -372,15 +414,18 @@ scrollbar {
     border: none;
     margin: 0;
     padding: 0;
-    background-color: #303030;
+    background-color: rgba(20,24,30,0.5);
 }
 scrollbar slider {
     padding: 0;
     margin: 0;
-    background-color: #808080;
+    background-color: rgba(160,175,200,0.35);
+    border-radius: 4px;
+    box-shadow: 0 0 2px rgba(0,0,0,0.3);
 }
 scrollbar slider:hover {
-    background-color: #999999;
+    background-color: rgba(160,175,200,0.55);
+    box-shadow: 0 0 4px rgba(102,153,204,0.2);
 }
 
 scrollbar:not(.overlay-indicator).horizontal {
@@ -462,10 +507,11 @@ scrollbar:not(.overlay-indicator):hover {
 
 button  {
     padding: 0;
-    box-shadow: none;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.04);
     min-height: 0.4166666666666666em;
     min-width: 0.4166666666666666em;
-    background-image: linear-gradient(to bottom, rgba(100,100,100,.3), rgba(30,30,30,.3));
+    background-image: linear-gradient(to bottom, rgba(130,150,180,.18), rgba(50,60,80,.18));
+    border: 1px solid rgba(255,255,255,0.08);
 }
 
 button:disabled {
@@ -477,19 +523,21 @@ button.flat  {
 }
 
 button.flat:checked {
-    background-image:  linear-gradient(#545454, #4E4E34, #494949);
+    background-image: linear-gradient(rgba(30,40,60,.6), rgba(10,15,25,.6));
 }
 
 checkbutton > check {
-    background-image: linear-gradient(#545454, #4E4E4E, #494949);
+    background-image: linear-gradient(rgba(60,70,90,.6), rgba(40,50,70,.6));
+    border-color: rgba(255,255,255,0.08);
 }
 
 radiobutton > radio {
-    background-image: linear-gradient(#545454, #4E4E4E, #494949);
+    background-image: linear-gradient(rgba(60,70,90,.6), rgba(40,50,70,.6));
+    border-color: rgba(255,255,255,0.08);
 }
 
 button.flat:hover, checkbutton:hover > check, radiobutton:hover > radio {
-    background-image: linear-gradient(shade(#545454,1.3), shade(#4E4E4E,1.3), shade(#494949,1.3));
+    background-image: linear-gradient(rgba(80,95,120,.6), rgba(60,75,100,.6));
 }
 
 button.popupbutton-arrow {
@@ -497,19 +545,20 @@ button.popupbutton-arrow {
 }
 
 button:hover  {
-    background-image: linear-gradient(to bottom, rgba(150,150,150,.3), rgba(80,80,80,.3));
+    background-image: linear-gradient(to bottom, rgba(150,170,200,.2), rgba(80,100,130,.2));
+    box-shadow: 0 0 4px rgba(102,153,204,0.1);
 }
 
 button:active  {
-    background-image: linear-gradient(to bottom, rgba(30,30,30,.3), rgba(0,0,0,.3));
+    background-image: linear-gradient(to bottom, rgba(20,30,50,.4), rgba(0,0,0,.3));
 }
 
 button:checked  {
-    background-image: linear-gradient(to bottom, rgba(30,30,30,.8), rgba(0,0,0,.8));
+    background-image: linear-gradient(to bottom, rgba(30,40,60,.6), rgba(10,15,25,.6));
 }
 
 button:checked:hover  {
-    background-image: linear-gradient(to bottom, rgba(60,60,60,1), rgba(30,30,30,1));
+    background-image: linear-gradient(to bottom, rgba(50,65,90,.6), rgba(30,40,60,.6));
 }
 
 /* Save, Cancel, OK ... buttons */
@@ -535,10 +584,11 @@ scale slider {
     padding: 0.4em;
     border-radius: 0.8em;
     border-width: 0.083333333333333333em;
-    background-image: linear-gradient(#444444, #3E3E3E, #393939);
+    background-image: linear-gradient(#3a4050, #343a48, #2e3340);
 }
 scale slider:hover {
-    background-image: linear-gradient(#545454, #4E4E4E, #494949);
+    background-image: linear-gradient(#4a5060, #444a58, #3e4350);
+    box-shadow: 0 0 4px rgba(102,153,204,0.2);
 }
 scale:disabled slider {
     background-image: none;
@@ -552,7 +602,7 @@ scale trough {
     padding: 0 0.583333333333333333em;
     border-width: 0.083333333333333333em;
     border-radius: 0.333333333333333333em;
-    background-color: rgba(0,0,0,0.15);
+    background-color: rgba(0,0,0,0.2);
 }
 scale:disabled trough {
     background-color: #444;
@@ -604,19 +654,19 @@ scale.fine-tune trough highlight {
 
 /* Better on/off state separation for text toggle buttons, e.g. auto-levels or histogram matching. */
 button.text-button.toggle {
-    background-image: linear-gradient(to bottom, rgba(100,100,100,.3), rgba(30,30,30,.3));
+    background-image: linear-gradient(to bottom, rgba(130,150,180,.15), rgba(50,60,80,.15));
 }
 
 button.text-button.toggle:hover {
-    background-image: linear-gradient(to bottom, rgba(128,128,128,.3), rgba(64,64,64,.3));
+    background-image: linear-gradient(to bottom, rgba(150,170,200,.2), rgba(80,100,130,.2));
 }
 
 button.text-button.toggle:checked {
-    background-image: linear-gradient(to bottom, rgba(30,30,30,.3), rgba(0,0,0,.4));
+    background-image: linear-gradient(to bottom, rgba(30,40,60,.4), rgba(10,15,25,.4));
 }
 
 button.text-button.toggle:hover:checked {
-    background-image: linear-gradient(to bottom, rgba(48,48,48,.3), rgba(0,0,0,.3));
+    background-image: linear-gradient(to bottom, rgba(50,65,90,.4), rgba(30,40,60,.4));
 }
 
 #ShowMaskButton:checked {
@@ -633,7 +683,7 @@ button.text-button.toggle:hover:checked {
 
 .drawingarea {
     border-radius: 0;
-    background-color: #2A2A2A;
+    background-color: #1a1e24;
     border: 0.0833333333333333em solid #888888;
 }
 .drawingarea:disabled {
@@ -642,7 +692,7 @@ button.text-button.toggle:hover:checked {
 }
 
 .drawingarea:selected {
-    background-color: #565656;
+    background-color: rgba(102,153,204,0.2);
     border-radius: 1.8333333333333333em;
 }
 
@@ -705,7 +755,7 @@ button.Right {
 }
 
 #PresetListPanel .preset-card:hover {
-    background-color: rgba(255,255,255,0.08);
+    background-color: rgba(130,170,230,0.08);
 }
 
 #PresetListPanel .preset-card.selected {
@@ -751,13 +801,13 @@ button.Right {
 /* Navigator and History floating dialogs */
 #NavigatorDialog,
 #HistoryDialog {
-    background-color: #484848;
+    background-color: #2c3038;
 }
 #NavigatorDialog headerbar,
 #HistoryDialog headerbar {
-    background-color: shade(rgb(50,50,50),1.12);
-    background-image: linear-gradient(shade(rgb(50,50,50),1.14), shade(rgb(50,50,50),.86));
-    border-bottom-color: #242424;
+    background-color: #252a32;
+    background-image: linear-gradient(rgba(255,255,255,0.03), rgba(0,0,0,0.05));
+    border-bottom-color: #1a1e24;
     min-height: 1.6em;
     padding: 0 0.25em;
 }
@@ -769,7 +819,7 @@ button.Right {
 
 /* Ensure all windows and decorations follow theme */
 decoration {
-    background-color: #484848;
+    background-color: #2c3038;
 }
 
 /* Point Color */
@@ -789,8 +839,9 @@ decoration {
 /* [1.23[-][+]] */
 entry, spinbutton {
     min-height: 0.8333333333333333em;
-    background-color: rgba(0,0,0,0.075);
+    background-color: rgba(0,0,0,0.12);
     border-radius: 0.2em;
+    border: 1px solid rgba(255,255,255,0.06);
 }
 
 spinbutton entry {
@@ -806,16 +857,16 @@ spinbutton button.up {
 }
 
 entry:disabled, spinbutton:disabled {
-    background-color: #363636;
+    background-color: #252a32;
 }
 
 entry:hover, spinbutton:hover {
-    background-color: #565656;
+    background-color: rgba(130,170,230,0.08);
 }
 
 entry:selected {
-    color: #262626;
-    background-color: #AAAAAA;
+    color: #1a1e24;
+    background-color: #8a92a1;
 }
 
 /* Hide spinbutton +/- buttons inside Adjusters — must beat #MyExpander button:not(.ColorDot) specificity */
@@ -867,17 +918,52 @@ entry:selected {
     -gtk-icon-transform: scale(0.55);
 }
 
-/* Context menus */
+/* Context menus - frosted glass style */
 menu {
-    background-color: #262626;
-    color: #909090;
+    background-color: rgba(28, 32, 40, 0.93);
+    color: #e2e6ed;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 10px;
+    padding: 4px 0;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
 }
 
 /* Context menu item */
 menuitem {
-    padding: 0.1666666666666666em;
-    margin: 0;
-    min-height: 0.8333333333333333em;
+    padding: 4px 12px;
+    margin: 1px 4px;
+    min-height: 1.1em;
+    border-radius: 6px;
+    transition: background-color 150ms ease;
+}
+menuitem:hover {
+    background-color: rgba(102, 153, 204, 0.2);
+    color: #ffffff;
+}
+menuitem label {
+    font-size: 0.92em;
+}
+
+/* Submenu arrows */
+menuitem arrow {
+    color: rgba(255, 255, 255, 0.3);
+    min-width: 1em;
+    min-height: 1em;
+}
+menuitem:hover arrow {
+    color: rgba(255, 255, 255, 0.7);
+}
+
+/* Menu separators */
+menu > separator {
+    margin: 3px 10px;
+    min-height: 1px;
+    background-color: rgba(255, 255, 255, 0.08);
+}
+
+/* Disabled menu items */
+menuitem:disabled label {
+    color: rgba(255, 255, 255, 0.25);
 }
 
 /* FlowBoxChild */
@@ -915,14 +1001,14 @@ flowboxchild:selected {
     border-width: 0.083333333333333333em;
 }
 
-/* All histogram buttons: no background, no border */
+/* All histogram buttons: no background, no border, compact spacing */
 #histButton,
 button.radio#histButton,
 button.toggle#histButton {
-    padding: 0.083em;
+    padding: 0;
     margin: 0;
-    min-height: 1em;
-    min-width: 1em;
+    min-height: 0;
+    min-width: 0;
     border: none;
     background: none;
     background-image: none;
@@ -962,7 +1048,7 @@ button.toggle#histButton:hover,
 
 /* Bottom bar with scope buttons */
 #histBottomBar {
-    background: rgba(30,30,30,0.85);
+    background: rgba(20,24,30,0.85);
     padding: 1px 2px;
     border: none;
 }
@@ -985,7 +1071,7 @@ button.toggle#histButton:hover,
 
 /*** Modules ***********************************************************************************/
 #EditorModules {
-    background-color: #484848;
+    background-color: #2c3038;
 }
 
 #EditorModules > box {
@@ -999,23 +1085,23 @@ button.toggle#histButton:hover,
 }
 
 #MyExpander.withScrollbar { /* This margin is always added */
-    margin-right: 0.3em;
+    margin-right: 0.1em;
 }
 
 #MyExpander.withScrollbar #MyExpander { /* No margin for nested expanders */
     margin-right: 0;
 }
 
-/* Borders around tools and subtools */
+/* Borders between tools removed for cleaner look */
 #MyExpander {
-    border-top: 0.0833333333333333em solid rgba(0,0,0,0.3);
+    border-top: none;
 }
 #MyExpander:first-child {
     border-top: none;
 }
 #MyExpander:nth-last-child(1),
 #MyExpander #MyExpander:nth-last-child(1) {
-    border-bottom: 0.0833333333333333em solid rgba(0,0,0,0.3);
+    border-bottom: none;
 }
 #MyExpander #MyExpander:nth-last-child(2) {
     border-bottom: none;
@@ -1025,7 +1111,7 @@ button.toggle#histButton:hover,
 #ExpanderBox > .ExpanderContents > * {
     margin: 0;
     min-height: 0;
-    padding: 0 0 0 4px;
+    padding: 0;
 }
 
 /* For sub-tools containers that go below another widget, add some margin
@@ -1045,13 +1131,16 @@ button.toggle#histButton:hover,
     margin: 0;
 }
 
-/* Tool background */
+/* Tool background — glass treatment */
 #ExpanderBox > box,
 #ExpanderBox > grid {
-    background-color: rgba(255,255,255,0.075);
-    padding: 0.02em 0.08em 0.05em 10px;
-    border-top: 0.0833333333333333em solid rgba(255,255,255,0.1);
+    background-color: rgba(180,200,230,0.07);
+    background-image: linear-gradient(rgba(255,255,255,0.03), transparent 70%);
+    padding: 0.05em 0 0.05em 6px;
+    border-top: 1px solid rgba(255,255,255,0.06);
     border-bottom: none;
+    border-radius: 0 0 4px 4px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
 }
 
 /* Not all combinations below are used, but this makes sure
@@ -1083,15 +1172,16 @@ button.toggle#histButton:hover,
 #LocallabToolPanel > grid,
 #ExpanderBox2 > box,
 #ExpanderBox2 > grid {
-    background-color: rgba(255,255,255,0.075);
+    background-color: rgba(180,200,230,0.06);
+    background-image: linear-gradient(rgba(255,255,255,0.02), transparent 60%);
     margin: 0;
     padding: 0.2em 0.25em 0.35em 10px;
-    border-top: 0.0833333333333333em solid rgba(255,255,255,0.1);
+    border-top: 1px solid rgba(255,255,255,0.06);
     border-bottom: none;
 }
 
 #MyExpanderTitle label {
-    color: #AAAAAA;
+    color: #8a92a1;
     padding: 0;
     margin: 0;
     font-size: 1.1em; /* TODO: Does not work? */
@@ -1100,19 +1190,21 @@ button.toggle#histButton:hover,
 
 #MyExpander.Fold > #MyExpanderTitle label,
 #MyExpander.OnOff.enabledTool > #MyExpanderTitle label {
-    color: #DDDDDD;
+    color: #e2e6ed;
 }
 
 #MyExpanderTitle:hover {
-    background-color: #202020;
+    background-color: rgba(130,170,230,0.12);
+    border-radius: 4px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.15);
 }
 #MyExpanderTitle eventbox:hover image {
-    background-color: #202020;
+    background-color: transparent;
     margin: 0;
     padding: 0;
 }
 #MyExpanderTitle:hover label {
-    color: #D8D8D8;
+    color: #e2e6ed;
 }
 
 /* Alignment of tool headers is controlled by the image */
@@ -1123,7 +1215,7 @@ button.toggle#histButton:hover,
 }
 
 /* Summary box - always-visible controls between header and expandable content */
-.MyExpanderSummary { padding: 0 0.1em 0.05em 0.3em; }
+.MyExpanderSummary { padding: 0.05em 0 0.05em 0.15em; }
 .MyExpanderSummary scale {
     margin-right: 0.25em;
 }
@@ -1157,27 +1249,32 @@ button.toggle#histButton:hover,
 
 /* Scale — keep compact but clickable */
 #MyExpander scale {
-    margin: 0 2px 0 0;
-    min-height: 14px;
+    margin: 0;
+    min-height: 0;
     padding: 0;
 }
 
 #MyExpander scale trough {
-    margin: 4px 0;
+    margin: 0;
     padding: 0;
-    min-height: 4px;
+    min-height: 3px;
+}
+
+#MyExpander scale trough:hover {
+    background-color: rgba(102,153,204,0.06);
 }
 
 #MyExpander scale slider {
-    padding: 7px;
-    margin: -7px;
-    border-radius: 7px;
     min-height: 0;
     min-width: 0;
+    padding: 7px;
+    margin: 0;
+    border-radius: 50%;
 }
 
-#MyExpander scale trough highlight {
-    margin: 0 -1px;
+#MyExpander scale slider:hover {
+    background-color: rgba(102,153,204,0.18);
+    box-shadow: 0 0 6px rgba(102,153,204,0.2);
 }
 
 /* Reduce label height/margin for tighter rows + slider alignment */
@@ -1249,7 +1346,7 @@ radiobutton.ColorDot:checked > * {
 }
 
 #LocallabToolPanel separator, #ExpanderBox2 separator, #ExpanderBox3 separator {
-    color: #292929;
+    color: #1a1e24;
 }
 
 /* AdvancedSection collapsible header */
@@ -1261,21 +1358,40 @@ radiobutton.ColorDot:checked > * {
     padding: 0.1em 0;
 }
 #AdvancedSectionHeader:hover {
-    background-color: #202020;
+    background-color: rgba(130,170,230,0.12);
+    border-radius: 4px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
 }
 #AdvancedSectionHeader label {
-    color: #999999;
+    color: #6b7280;
     font-size: 0.9em;
     font-style: italic;
     padding: 0;
     margin: 0;
 }
 #AdvancedSectionHeader:hover label {
-    color: #CCCCCC;
+    color: #cdd2da;
 }
 #AdvancedSectionHeader image {
     padding: 0.2em;
     margin: 0;
+}
+
+/* Collapsible section headers (▸ Defringe, ▸ Hue, ▸ Bokeh, ▸ Focus Range, ▸ Correct) */
+#CollapsibleHeader {
+    padding: 2px 4px;
+    border-radius: 4px;
+    border: none;
+    background: none;
+    background-image: none;
+    box-shadow: none;
+}
+#CollapsibleHeader:hover {
+    background-color: rgba(130,170,230,0.22);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+}
+#CollapsibleHeader:hover label {
+    color: #e2e6ed;
 }
 
 /* ColorWheel widget — no dark square background */
@@ -1295,25 +1411,31 @@ radiobutton.ColorDot:checked > * {
 /* Mode Button Bar (LR-style mode switching) */
 #ModeButtonBar {
     margin: 0;
-    padding: 0;
-    border-bottom: 1px solid #333333;
-    background-color: #484848;
+    padding: 2px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+    border-top: 1px solid rgba(255,255,255,0.04);
+    background-color: rgba(30,35,45,0.9);
+    background-image: linear-gradient(rgba(255,255,255,0.04), rgba(0,0,0,0.08));
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
 #ModeButtonBar .ModeButton {
-    border-radius: 0;
+    border-radius: 4px;
     border: none;
     border-bottom: 2px solid transparent;
-    padding: 0.2em 0.4em;
-    margin: 0;
-    background-color: #484848;
+    padding: 0.3em 0.5em;
+    margin: 1px 2px;
+    background-color: transparent;
     font-size: 0.95em;
 }
 #ModeButtonBar .ModeButton:checked {
     border-bottom-color: #6699CC;
-    background-color: rgba(102, 153, 204, 0.15);
+    background-color: rgba(102, 153, 204, 0.18);
+    background-image: linear-gradient(rgba(102,153,204,0.08), transparent);
+    box-shadow: 0 1px 6px rgba(102,153,204,0.25), inset 0 1px 0 rgba(255,255,255,0.06);
 }
 #ModeButtonBar .ModeButton:hover:not(:checked) {
-    background-color: rgba(255, 255, 255, 0.05);
+    background-color: rgba(130,170,230,0.12);
+    box-shadow: 0 0 4px rgba(102,153,204,0.1);
 }
 #ModeButtonBar .ModeButton image {
     padding: 0 0.15em;
@@ -1321,7 +1443,7 @@ radiobutton.ColorDot:checked > * {
 
 /* ToolGroup collapsible section headers in Edit mode */
 #ToolGroup {
-    margin: 0;
+    margin: 2px 0;
     padding: 0;
 }
 #ToolGroup .ToolGroupSeparator {
@@ -1332,22 +1454,33 @@ radiobutton.ColorDot:checked > * {
     border: none;
 }
 #ToolGroupHeader {
-    padding: 1px 4px;
+    padding: 6px 10px;
     min-height: 0;
+    background-color: rgba(180,200,230,0.08);
+    background-image: linear-gradient(rgba(255,255,255,0.04), transparent);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px;
+    margin: 3px 4px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.06);
 }
-#ToolGroupHeader:hover {
-    background-color: #252525;
+#ToolGroupHeader:hover,
+#ToolGroupHeader.hovered {
+    background-color: rgba(130,170,230,0.22);
+    border-color: rgba(255,255,255,0.12);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3), inset 0 1px 0 rgba(255,255,255,0.08);
 }
 #ToolGroupHeader label {
-    color: #BBBBBB;
-    font-weight: bold;
+    color: #8a92a1;
+    font-weight: 600;
     font-size: 10px;
+    letter-spacing: 0.05em;
     padding: 0;
     margin: 0;
     min-height: 0;
 }
-#ToolGroupHeader:hover label {
-    color: #EEEEEE;
+#ToolGroupHeader:hover label,
+#ToolGroupHeader.hovered label {
+    color: #e2e6ed;
 }
 /* arrow is now a label, no image rule needed */
 #ToolGroupHeader box {
@@ -1356,35 +1489,54 @@ radiobutton.ColorDot:checked > * {
     min-height: 0;
 }
 
-/* Flat mode: header hidden, thin separator between tools */
+/* Zero-gap contentBox inside ToolGroups */
+#ToolGroup > box {
+    margin: 0;
+    padding: 0;
+    min-height: 0;
+    border: none;
+}
+
+/* Flat mode: header hidden, seamless inline tools */
 #MyExpander.flat-mode {
+    border: none;
+    margin: 0;
+    padding: 0;
+}
+#MyExpander.flat-mode .MyExpanderSummary {
+    padding: 0 0 0 0.15em;
+}
+
+/* Flat-mode: ExpanderBox is removed from widget tree.
+   Only summary controls are visible. */
+
+/* Kill borders/shadows in flat-mode children */
+#MyExpander.flat-mode * {
     border-top: none;
     border-bottom: none;
-    margin-top: 0.3em;
-    padding-top: 0.2em;
-    border-top: 1px solid rgba(255,255,255,0.06);
+    box-shadow: none;
 }
-
-/* First tool in group: no top separator */
-#MyExpander.flat-mode:first-child {
-    border-top: none;
-    margin-top: 0;
-    padding-top: 0;
-}
-
-/* Remove ExpanderBox background/border for flat tools */
+/* Override #ExpanderBox > box/grid border-top (higher specificity needed) */
 #MyExpander.flat-mode #ExpanderBox > box,
 #MyExpander.flat-mode #ExpanderBox > grid {
-    background-color: transparent;
     border-top: none;
-    padding: 0 0 0.1em 10px;
+    background-color: transparent;
+    background-image: none;
+    box-shadow: none;
+    padding: 0 0 0 6px;
+    border-radius: 0;
+}
+#MyExpander.flat-mode separator {
+    min-height: 0;
+    background: transparent;
+    border: none;
 }
 
 /* Tool section labels (within flat-mode tool groups) */
 .tool-section-label {
     font-size: 9px;
     font-weight: bold;
-    color: #AAAAAA;
+    color: #8a92a1;
     padding: 0 0 1px 0;
     margin: 0;
 }
@@ -1401,6 +1553,12 @@ radiobutton.ColorDot:checked > * {
 /* Override global button.combo padding inside tool panels */
 #MyExpander button.combo {
     padding: 0 0 0 0.1em;
+}
+
+/* Hover glow on combobox dropdowns in tool panels */
+#MyExpander combobox button:hover,
+#MyExpander button.combo:hover {
+    background-image: linear-gradient(rgba(130,170,230,0.08), rgba(130,170,230,0.04));
 }
 
 /* Shrink dropdown arrow inside tool panels */
@@ -1448,7 +1606,7 @@ radiobutton.ColorDot:checked > * {
 }
 
 /* Remove nested box margin in flat-mode */
-#MyExpander.flat-mode #ExpanderBox box > box {
+#MyExpander.flat-mode box > box {
     margin: 0;
 }
 
@@ -1471,11 +1629,12 @@ notebook {
 }
 
 notebook header {
-    box-shadow: none;
-    background-color: #383838;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+    background-color: #252a32;
+    background-image: linear-gradient(rgba(255,255,255,0.03), rgba(0,0,0,0.04));
     border-width: 0.0833333333333333em;
     border-style: none;
-    border-color: #262626;
+    border-color: #1a1e24;
     border-radius: 0;
     padding: 0;
     margin: 0;
@@ -1491,10 +1650,11 @@ notebook tab {
     margin: 0.1666666666666666em;
     min-height: 1.25em;
     min-width: 1.25em;
+    border-radius: 4px;
 }
 
 notebook tab:hover {
-    background-color: #505050;
+    background-color: rgba(130,170,230,0.08);
 }
 
 notebook tab button {
@@ -1527,7 +1687,7 @@ notebook.frame {
 
 /* Pad notebooks, makes the other borders look nicer */
 notebook stack {
-    background-color: #484848;
+    background-color: #2c3038;
     padding: 0;
     margin: 0;
 }
@@ -1539,12 +1699,26 @@ paned box, paned grid {
 }
 
 paned > separator {
-    background: rgba(0,0,0,0.075);
+    background: rgba(0,0,0,0.12);
     border: none;
     min-width: 0.25em;
     min-height: 0.25em;
     padding: 0;
     margin: 0;
+}
+
+/* Hide the separator between filmstrip and editor */
+#EditorViewPaned > separator {
+    min-height: 0;
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: none;
+    background: none;
+    background-color: transparent;
+    background-image: none;
+    box-shadow: none;
+    opacity: 0;
 }
 
 fontchooser scrolledwindow,
@@ -1557,7 +1731,7 @@ fontchooser scrolledwindow,
 #PlacesPaned {
     margin: 0;
     padding: 0 0.4166666666666666em 0 0;
-    background-color: #484848;
+    background-color: #2c3038;
 }
 #PlacesPaned > box:nth-child(1) scrolledwindow + grid {
     margin: 0;
@@ -1581,21 +1755,21 @@ fontchooser scrolledwindow,
 }
 
 #MainNotebook header {
-    background-color: #2A2A2A;
+    background-color: #1a1e24;
     border: 0;
     padding: 0;
 }
 #MainNotebook tabs {
-    background-color: #2A2A2A;
+    background-color: #1a1e24;
 }
 #MainNotebook tab:hover {
-    background-color: #505050;
+    background-color: rgba(130,170,230,0.08);
 }
 #MainNotebook tab:active {
     border-color: #989898;
 }
 #MainNotebook tab:checked {
-    background-color: #505050;
+    background-color: rgba(102,153,204,0.12);
 }
 
 #RightNotebook > stack > :nth-child(1) checkbutton + scrolledwindow {
@@ -1628,15 +1802,15 @@ dialog frame > label:not(.dummy) {
 }
 
 #RightNotebook header {
-    background-color: #2A2A2A;
+    background-color: #1a1e24;
 }
 #RightNotebook tabs {
-    background-color: #2A2A2A;
+    background-color: #1a1e24;
     padding-bottom: 0.083333333333333333em;
 }
 #RightNotebook tab:hover {
-    background-color: #505050;
-    color: #D6D6D6;
+    background-color: rgba(130,170,230,0.08);
+    color: #e2e6ed;
 }
 #RightNotebook tab:active {
     border-color: #A5A5A5;
@@ -1662,7 +1836,7 @@ dialog frame > label:not(.dummy) {
 
 #ToolPanelNotebook header tabs {
     padding: 0.0833333333333333em;
-    background-color: #2A2A2A;
+    background-color: #1a1e24;
 }
 
 #ToolPanelNotebook header tab {
@@ -1673,8 +1847,8 @@ dialog frame > label:not(.dummy) {
 /* All tool panels have a frame except for Meta which unlike the rest is a notebook itself.
  * So we use CSS to make it look like a frame. */
 #MetaPanelNotebook > stack > box {
-    border: 0.0833333333333333em solid #262626;
-    background-color: #363636;
+    border: 0.0833333333333333em solid #1a1e24;
+    background-color: #252a32;
     border-radius: 0 0 0.3333333333333333em 0.3333333333333333em;
     border-top-style: none;
     padding: 0 0.25em 0.25em 0.25em;
@@ -1682,8 +1856,8 @@ dialog frame > label:not(.dummy) {
 }
 
 #MetaPanelNotebook header {
-    border: 0.0833333333333333em solid #262626;
-    background-color: #363636;
+    border: 0.0833333333333333em solid #1a1e24;
+    background-color: #252a32;
     border-radius: 0.3333333333333333em 0.3333333333333333em 0 0;
     border-bottom-style: none;
     padding: 0.4166666666666666em;
@@ -1691,7 +1865,7 @@ dialog frame > label:not(.dummy) {
 }
 
 #MetaPanelNotebook > header > tabs {
-    background-color: #363636;
+    background-color: #252a32;
 }
 
 #MetaPanelNotebook > header tab {
@@ -1716,8 +1890,8 @@ dialog frame > label:not(.dummy) {
 }
 
 #MetaPanelNotebook text {
-    border-color: #202020;
-    background-color: #262626;
+    border-color: #1a1e24;
+    background-color: #1a1e24;
     border-style: solid;
     border-width: 0.0833333333333333em;
     border-radius: 0.25em;
@@ -1807,7 +1981,7 @@ dialog frame > label:not(.dummy) {
     font-size: 1.05em;
     font-weight: bold;
     padding: 0.3em 0.25em 0.15em;
-    color: #DDDDDD;
+    color: #e2e6ed;
 }
 #PrefNotebook frame {
     margin-bottom: 0.3em;
@@ -1914,7 +2088,7 @@ dialog frame > label:not(.dummy) {
 }
 
 #PartialPasteHeaderSep {
-    background-color: #D8D8D8;
+    background-color: #8a92a1;
 }
 
 /*** end ***************************************************************************************/
@@ -1937,7 +2111,7 @@ button.flat {
 }
 
 button.flat:checked {
-    background: #262626;
+    background: #1a1e24;
 }
 
 .text-button, .image-button, .independent {
@@ -1973,7 +2147,7 @@ combobox, .popupbutton-arrow {
 
 /* Visual divider between the icon and arrow in the pop-up button. */
 .image-combo button.Left {
-    border-right: solid 0.083333333333333333em #202020;
+    border-right: solid 0.083333333333333333em #1a1e24;
 }
 
 /* Makes image-combobox small icons centered */
@@ -1983,8 +2157,8 @@ button.toggle > grid > image {
 
 #histButton {
     background: none;
-    min-height: 1em;
-    min-width: 1em;
+    min-height: 0;
+    min-width: 0;
 }
 
 /* -gtk-icon-shadow looks buggy on the small histogram icons */
@@ -2011,12 +2185,12 @@ button.combo, .image-combo .toggle, #MyFileChooserButton {
 
 /*** Progressbar *******************************************************************************/
 progressbar trough {
-    background-color: #383838;
+    background-color: #252a32;
     border: none;
 }
 
 progressbar progress {
-    border-color: #363636;
+    border-color: #252a32;
     /*border-radius: 0.25em;*/
     background-color: #215d9c;
 }
@@ -2027,3 +2201,115 @@ progressbar progress {
 .grid-spacing > * {
     margin: 0.1666666666666666em;
 }
+
+/*** Curve tool — Lightroom-style colored circle channel buttons ********************************/
+
+/* Base style: small colored circles with hidden content */
+.curve-channel-all,
+.curve-channel-r,
+.curve-channel-g,
+.curve-channel-b {
+    min-width: 16px;
+    min-height: 16px;
+    border-radius: 50%;
+    padding: 0;
+    margin: 1px 4px;
+    background-image: none;
+    box-shadow: none;
+}
+
+/* Hide the label text and curve type icon inside the colored dot buttons */
+.curve-channel-all label,
+.curve-channel-all image,
+.curve-channel-r label,
+.curve-channel-r image,
+.curve-channel-g label,
+.curve-channel-g image,
+.curve-channel-b label,
+.curve-channel-b image {
+    color: transparent;
+    -gtk-icon-size: 0;
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    margin: 0;
+}
+
+/* Also collapse the internal grid container */
+.curve-channel-all grid,
+.curve-channel-r grid,
+.curve-channel-g grid,
+.curve-channel-b grid {
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    margin: 0;
+}
+
+/* All channel — gray / white */
+.curve-channel-all {
+    background-color: #777777;
+    border: 1.5px solid #555555;
+}
+.curve-channel-all:checked {
+    background-color: #dddddd;
+    border-color: #bbbbbb;
+}
+
+/* Red channel */
+.curve-channel-r {
+    background-color: #bb3333;
+    border: 1.5px solid #882222;
+}
+.curve-channel-r:checked {
+    background-color: #ee4444;
+    border-color: #cc3333;
+}
+
+/* Green channel */
+.curve-channel-g {
+    background-color: #33aa33;
+    border: 1.5px solid #228822;
+}
+.curve-channel-g:checked {
+    background-color: #44cc44;
+    border-color: #33aa33;
+}
+
+/* Blue channel */
+.curve-channel-b {
+    background-color: #3355bb;
+    border: 1.5px solid #223388;
+}
+.curve-channel-b:checked {
+    background-color: #4477ee;
+    border-color: #3366cc;
+}
+
+/*** end Curve tool ****************************************************************************/
+
+/*** Queue Overlay Drawer **********************************************************************/
+
+#QueueOverlayBackdrop {
+    background-color: rgba(0, 0, 0, 0.55);
+}
+
+#QueueDrawerBox {
+    padding: 2px 4px 0 4px;
+    background-color: #2c3038;
+}
+
+/* Queue overlay: compact frame styling */
+#QueueDrawerBox frame {
+    margin: 0;
+    padding: 0;
+}
+#QueueDrawerBox frame > border {
+    margin-bottom: 0;
+}
+#QueueDrawerBox frame > label {
+    padding: 0.15em 0.4em;
+    font-size: 0.85em;
+}
+
+/*** end Queue Overlay Drawer ******************************************************************/

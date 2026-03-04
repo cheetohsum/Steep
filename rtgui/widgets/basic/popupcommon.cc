@@ -269,6 +269,21 @@ bool PopUpCommon::setSelected (int entryNum)
     }
 }
 
+void PopUpCommon::triggerShowMenu()
+{
+    if (hasMenu) {
+        menu->show_all();
+        menu->popup_at_widget(button, Gdk::GRAVITY_SOUTH_WEST, Gdk::GRAVITY_NORTH_WEST, nullptr);
+    }
+}
+
+void PopUpCommon::hideArrowButton()
+{
+    arrowButton->set_no_show_all(true);
+    arrowButton->hide();
+    button->get_style_context()->remove_class("Left");
+}
+
 void PopUpCommon::show()
 {
     menu->reposition();

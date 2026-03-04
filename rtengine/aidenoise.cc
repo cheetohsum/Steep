@@ -27,6 +27,7 @@
 #include <glibmm/spawn.h>
 
 #include "imageformat.h"
+#include "rtapp.h"
 #include "settings.h"
 
 namespace rtengine
@@ -34,6 +35,7 @@ namespace rtengine
 
 AIDenoiseManager::AIDenoiseManager()
     : available_(false)
+    , detecting_(false)
     , running_(false)
     , cancelled_(false)
 #ifdef _WIN32
@@ -75,11 +77,16 @@ bool AIDenoiseManager::findPython()
         pythonPaths.push_back(std::string(home) + "/rawrefinery_env/bin/python3");
     }
     pythonPaths.push_back("/tmp/rawrefinery_env/bin/python3");
+    // Try versioned interpreters first (RawRefinery needs 3.11+)
+    pythonPaths.push_back("python3.13");
+    pythonPaths.push_back("python3.12");
+    pythonPaths.push_back("python3.11");
     pythonPaths.push_back("python3");
     pythonPaths.push_back("python");
 #endif
 
     for (const auto& path : pythonPaths) {
+        if (triedPythonPaths_.count(path)) continue;
         Glib::ustring cmd = Glib::ustring(path) + " --version";
         try {
             std::string stdout_str;
@@ -99,13 +106,15 @@ bool AIDenoiseManager::findPython()
 
 bool AIDenoiseManager::findScript()
 {
-    // Look for rawrefinery_cli.py shipped alongside RT
-    // Check relative to the executable, then common install paths
     std::vector<std::string> scriptPaths;
 
-    // Check next to the datadir (install prefix share/rawtherapee/scripts/)
-    scriptPaths.push_back("/tmp/RawTherapee/install/share/rawtherapee/scripts/rawrefinery_cli.py");
-    scriptPaths.push_back("/tmp/RawTherapee/tools/rawrefinery_cli.py");
+    // Check relative to the RT data directory first (most reliable)
+    const Glib::ustring& dataDir = App::get().argv0();
+    if (!dataDir.empty()) {
+        scriptPaths.push_back(Glib::build_filename(dataDir, "scripts", "rawrefinery_cli.py"));
+    }
+
+    // Common install paths
     scriptPaths.push_back("/usr/local/share/rawtherapee/scripts/rawrefinery_cli.py");
     scriptPaths.push_back("/usr/share/rawtherapee/scripts/rawrefinery_cli.py");
 
@@ -146,28 +155,47 @@ bool AIDenoiseManager::testRawRefinery()
 void AIDenoiseManager::detect()
 {
     available_ = false;
+    detecting_ = true;
 
-    // Need both: a Python with RawRefinery, and our CLI script
-    if (!findPython()) {
-        fprintf(stderr, "AI Denoise: No Python interpreter found\n");
-        return;
-    }
+    // Run detection in a background thread to avoid blocking startup.
+    // spawn_command_line_sync has no timeout and can hang if Python is
+    // slow or loads heavy deps (CUDA, TensorFlow, etc.)
+    std::thread([this]() {
+        // Try each Python candidate until one has RawRefinery importable.
+        // findPython picks the first working interpreter, but RawRefinery
+        // requires 3.11+ so we may need to keep trying.
+        bool found = false;
+        while (findPython()) {
+            if (testRawRefinery()) {
+                found = true;
+                break;
+            }
+            fprintf(stderr, "AI Denoise: RawRefinery not importable with %s, trying next...\n",
+                    pythonPath_.c_str());
+            // Remove this path so findPython skips it next iteration
+            triedPythonPaths_.insert(pythonPath_);
+            pythonPath_.clear();
+        }
 
-    if (!testRawRefinery()) {
-        fprintf(stderr, "AI Denoise: RawRefinery module not found for %s. "
-                "Install with: pip install rawrefinery\n", pythonPath_.c_str());
-        return;
-    }
+        if (!found) {
+            fprintf(stderr, "AI Denoise: No Python with RawRefinery found. "
+                    "Install with: python3.11 -m pip install rawrefinery\n");
+            detecting_ = false;
+            if (detectDoneCb_) detectDoneCb_(false);
+            return;
+        }
 
-    if (!findScript()) {
-        // No CLI script found, but we have python + module — use inline invocation
-        fprintf(stderr, "AI Denoise: CLI script not found, will use inline python\n");
-    }
+        if (!findScript()) {
+            fprintf(stderr, "AI Denoise: CLI script not found, will use inline python\n");
+        }
 
-    available_ = true;
-    fprintf(stderr, "AI Denoise: Ready (python=%s, script=%s)\n",
-            pythonPath_.c_str(),
-            scriptPath_.empty() ? "<inline>" : scriptPath_.c_str());
+        available_ = true;
+        detecting_ = false;
+        fprintf(stderr, "AI Denoise: Ready (python=%s, script=%s)\n",
+                pythonPath_.c_str(),
+                scriptPath_.empty() ? "<inline>" : scriptPath_.c_str());
+        if (detectDoneCb_) detectDoneCb_(true);
+    }).detach();
 }
 
 void AIDenoiseManager::detect(const Glib::ustring& pythonPath,
@@ -205,7 +233,8 @@ void AIDenoiseManager::startDenoising(
     const Glib::ustring& outputPath,
     std::function<void(double)> progressCb,
     std::function<void(bool, const Glib::ustring&)> doneCb,
-    const Glib::ustring& inputTiffPath)
+    const Glib::ustring& inputTiffPath,
+    int iso)
 {
     if (!available_ || running_) {
         if (doneCb) {
@@ -217,7 +246,7 @@ void AIDenoiseManager::startDenoising(
     running_ = true;
     cancelled_ = false;
 
-    std::thread([this, rawPath, params, outputPath, progressCb, doneCb, inputTiffPath]() {
+    std::thread([this, rawPath, params, outputPath, progressCb, doneCb, inputTiffPath, iso]() {
         // Build command line: python <script> --input <raw> --output <tif> --iso-strength <N> [--gpu]
         std::vector<std::string> argv;
 
@@ -252,6 +281,11 @@ void AIDenoiseManager::startDenoising(
         argv.push_back(outputPath);
         argv.push_back("--iso-strength");
         argv.push_back(std::to_string(params.isoConditioning));
+
+        if (iso > 0) {
+            argv.push_back("--iso");
+            argv.push_back(std::to_string(iso));
+        }
 
         if (params.useGpu) {
             argv.push_back("--gpu");
@@ -289,11 +323,27 @@ void AIDenoiseManager::startDenoising(
                 result->setSampleFormat(IIOSF_FLOAT32);
                 int loadErr = result->loadTIFF(outputPath);
                 if (loadErr == 0) {
-                    fprintf(stderr, "AI Denoise: Loaded result %dx%d\n",
+                    fprintf(stderr, "AI Denoise: Loaded result %dx%d, about to cache\n",
                             result->getWidth(), result->getHeight());
+                    fflush(stderr);
+                    fprintf(stderr, "AI Denoise: doneCb is %s BEFORE cache\n",
+                            doneCb ? "set" : "NULL");
+                    fflush(stderr);
                     setCachedResult(std::move(result), rawPath, params.isoConditioning);
+                    fprintf(stderr, "AI Denoise: cache set OK\n");
+                    fflush(stderr);
                     if (doneCb) {
-                        doneCb(true, "");
+                        try {
+                            doneCb(true, "");
+                            fprintf(stderr, "AI Denoise: doneCb returned OK\n");
+                            fflush(stderr);
+                        } catch (const std::exception& ex) {
+                            fprintf(stderr, "AI Denoise: doneCb threw: %s\n", ex.what());
+                            fflush(stderr);
+                        } catch (...) {
+                            fprintf(stderr, "AI Denoise: doneCb threw unknown exception\n");
+                            fflush(stderr);
+                        }
                     }
                 } else {
                     fprintf(stderr, "AI Denoise: Failed to load output TIFF (err=%d)\n", loadErr);
@@ -325,9 +375,17 @@ void AIDenoiseManager::cancel()
 bool AIDenoiseManager::isCacheValid(const Glib::ustring& rawPath, double iso) const
 {
     MyMutex::MyLock lock(cacheMutex_);
-    return cachedResult_ != nullptr
+    bool valid = cachedResult_ != nullptr
         && cachedRawPath_ == rawPath
         && cachedIso_ == iso;
+    fprintf(stderr, "AI Denoise: isCacheValid: result=%p path_match=%d iso_match=%d (cached='%s' vs '%s', iso=%.1f vs %.1f) => %d\n",
+            cachedResult_.get(),
+            (int)(cachedRawPath_ == rawPath),
+            (int)(cachedIso_ == iso),
+            cachedRawPath_.c_str(), rawPath.c_str(),
+            cachedIso_, iso,
+            (int)valid);
+    return valid;
 }
 
 Imagefloat* AIDenoiseManager::getCachedResult() const

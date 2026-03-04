@@ -132,7 +132,9 @@ PresetListPanel::PresetListPanel() :
         img->set_halign(Gtk::ALIGN_START);
         vbox->pack_start(*img, Gtk::PACK_SHRINK);
         auto* label = Gtk::manage(new Gtk::Label());
-        label->set_line_wrap(false);
+        label->set_line_wrap(true);
+        label->set_line_wrap_mode(Pango::WRAP_WORD_CHAR);
+        label->set_max_width_chars(14);
         label->set_xalign(0.0);
         label->get_style_context()->add_class("preset-card-label");
         vbox->pack_start(*label, Gtk::PACK_SHRINK);
@@ -156,7 +158,9 @@ PresetListPanel::PresetListPanel() :
         img->set_halign(Gtk::ALIGN_START);
         vbox->pack_start(*img, Gtk::PACK_SHRINK);
         auto* label = Gtk::manage(new Gtk::Label());
-        label->set_line_wrap(false);
+        label->set_line_wrap(true);
+        label->set_line_wrap_mode(Pango::WRAP_WORD_CHAR);
+        label->set_max_width_chars(14);
         label->set_xalign(0.0);
         label->get_style_context()->add_class("preset-card-label");
         vbox->pack_start(*label, Gtk::PACK_SHRINK);
@@ -347,7 +351,9 @@ Gtk::Button* PresetListPanel::createCard(const ProfileStoreEntry* entry)
     vbox->pack_start(*img, Gtk::PACK_SHRINK);
 
     auto* label = Gtk::manage(new Gtk::Label(entry->label));
-    label->set_line_wrap(false);
+    label->set_line_wrap(true);
+    label->set_line_wrap_mode(Pango::WRAP_WORD_CHAR);
+    label->set_max_width_chars(14);
     label->set_xalign(0.0);
     label->get_style_context()->add_class("preset-card-label");
     vbox->pack_start(*label, Gtk::PACK_SHRINK);

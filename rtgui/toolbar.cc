@@ -36,7 +36,8 @@ ToolBar::ToolBar () : showColPickers(true), listener (nullptr), pickerListener(n
     handTool->set_relief(Gtk::RELIEF_NONE);
     handTool->show ();
 
-    pack_start (*handTool);
+    // Hand tool not packed — it's always active by default, button hidden to save space
+    // pack_start (*handTool);
 
     wbTool = Gtk::manage (new Gtk::ToggleButton ());
     Gtk::Image* wbimg = Gtk::manage (new RTImage ("color-picker", Gtk::ICON_SIZE_LARGE_TOOLBAR));
@@ -47,9 +48,6 @@ ToolBar::ToolBar () : showColPickers(true), listener (nullptr), pickerListener(n
 
     // wbTool and colPickerTool are NOT packed here — they get packed
     // into the Color tool group by ToolPanelCoordinator.
-    // Reference them so Gtk::manage doesn't destroy them prematurely.
-    wbTool->reference();
-    colPickerTool->reference();
 
     showcolpickersimg.reset(new RTImage("color-picker-bars", Gtk::ICON_SIZE_LARGE_TOOLBAR));
     hidecolpickersimg.reset(new RTImage("color-picker-hide", Gtk::ICON_SIZE_LARGE_TOOLBAR));
@@ -59,6 +57,10 @@ ToolBar::ToolBar () : showColPickers(true), listener (nullptr), pickerListener(n
     showcolpickersimg->show ();
     colPickerTool->set_relief(Gtk::RELIEF_NONE);
     colPickerTool->show ();
+
+    // Reference so Gtk::manage doesn't destroy them before they're packed
+    wbTool->reference();
+    colPickerTool->reference();
 
     cropTool = Gtk::manage (new Gtk::ToggleButton ());
     Gtk::Image* cropimg = Gtk::manage (new RTImage ("crop", Gtk::ICON_SIZE_LARGE_TOOLBAR));
@@ -531,10 +533,7 @@ bool ToolBar::handleShortcutKey (GdkEventKey* event)
             stra_pressed ();
             return true;
 
-        case GDK_KEY_h:
-        case GDK_KEY_H:
-            hand_pressed ();
-            return true;
+        // H shortcut removed — hand tool button is hidden
         }
     } else {
         switch (event->keyval) {

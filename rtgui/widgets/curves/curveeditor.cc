@@ -311,6 +311,87 @@ void CurveEditor::setUnChanged (bool uc)
 /*
  * Update the backgrounds histograms
  */
+Gtk::Widget* CurveEditor::getButtonGroup()
+{
+    return curveType->buttonGroup;
+}
+
+void CurveEditor::addButtonCSSClass(const Glib::ustring& cssClass)
+{
+    curveType->get_style_context()->add_class(cssClass);
+}
+
+void CurveEditor::enableCompactMode(const Glib::ustring& color, const Glib::ustring& checkedColor)
+{
+    const int PRIO = GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200;
+
+    // Add a CSS class so we can target this specific button
+    curveType->get_style_context()->add_class("curve-dot");
+
+    // 1) Style the toggle button as a tiny colored circle
+    //    GTK3 CSS node for GtkToggleButton is "button"
+    curveType->set_size_request(10, 10);
+    {
+        auto css = Gtk::CssProvider::create();
+        try {
+            css->load_from_data(
+                ".curve-dot { min-width: 10px; min-height: 10px; "
+                "padding: 0; margin: 0 3px; "
+                "border-radius: 50%; "
+                "background-color: " + color + "; background-image: none; "
+                "border: 1px solid " + color + "; "
+                "box-shadow: none; -gtk-icon-shadow: none; "
+                "outline: none; }"
+                " .curve-dot:checked { background-color: " + checkedColor + "; background-image: none; "
+                "border-color: " + checkedColor + "; }");
+            curveType->get_style_context()->add_provider(css, PRIO);
+        } catch (...) {}
+    }
+
+    // 2) Hide internal label + icon completely
+    auto* child = curveType->get_child();
+    if (child) {
+        child->set_no_show_all(true);
+        child->hide();
+    }
+
+    // 3) Remove image-combo class and collapse buttonGroup; hide arrow button
+    curveType->buttonGroup->get_style_context()->remove_class("image-combo");
+    curveType->buttonGroup->set_column_spacing(0);
+    curveType->buttonGroup->set_row_spacing(0);
+    {
+        // Only target the grid container, not its children
+        curveType->buttonGroup->get_style_context()->add_class("curve-dot-group");
+        auto bgCss = Gtk::CssProvider::create();
+        try {
+            bgCss->load_from_data(".curve-dot-group { padding: 0; margin: 0; }");
+            curveType->buttonGroup->get_style_context()->add_provider(bgCss, PRIO);
+        } catch (...) {}
+
+        auto children = curveType->buttonGroup->get_children();
+        for (auto* w : children) {
+            if (w != static_cast<Gtk::Widget*>(curveType)) {
+                w->set_no_show_all(true);
+                w->hide();
+            }
+        }
+    }
+
+    // 4) Right-click shows curve type menu; left-click on active dot does nothing (radio behavior)
+    curveType->signal_button_press_event().connect(
+        [this](GdkEventButton* event) -> bool {
+            if (event->button == 3) {
+                curveType->triggerShowMenu();
+                return true;
+            }
+            // Prevent toggling off the active dot — one channel is always visible
+            if (event->button == 1 && curveType->get_active()) {
+                return true;
+            }
+            return false;
+        }, false);
+}
+
 void CurveEditor::updateBackgroundHistogram(const LUTu& hist)
 {
     // Copy the histogram in the curve editor cache

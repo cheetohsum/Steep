@@ -54,6 +54,9 @@ public:
     virtual void setTweakOperator (rtengine::TweakOperator *tOperator) = 0;
     /// @brief Unset the TweakOperator to the StagedImageProcessor
     virtual void unsetTweakOperator (rtengine::TweakOperator *tOperator) = 0;
+    /// @brief Lightweight mask overlay toggle for hover (bypasses heavy AUTOEXP refresh)
+    /// @param forceRedraw If true, always trigger a canvas repaint (e.g. for geometry visibility changes)
+    virtual void hoverMaskChanged(bool hover, bool forceRedraw = false) {}
 };
 
 /// @brief This class control the space around the group of tools inside a tab, as well as the space separating each tool. */
@@ -229,6 +232,7 @@ public:
     virtual void enabledChanged  () {}
 
     void setFlatMode(bool flat);
+    void collapseDetail();
 
     Gtk::Box* getSummaryBox();
     void setExpandable(bool expandable);
