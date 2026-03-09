@@ -1525,7 +1525,6 @@ HISTORY_MSG_ICM_AINTENT;Abstract profile intent
 HISTORY_MSG_ICM_APSAT;Abstract profile saturation
 HISTORY_MSG_ICM_BLUX;Primaries Blue X
 HISTORY_MSG_ICM_BLUY;Primaries Blue Y
-HISTORY_MSG_ICM_BLUX;Primaries Blue X
 HISTORY_MSG_ICM_BLUROT;Primaries Blue rotation
 HISTORY_MSG_ICM_BLUSAT;Primaries Blue saturation
 HISTORY_MSG_ICM_CAT;Matrix adaptation

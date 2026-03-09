@@ -155,6 +155,14 @@ Glib::ustring getToolTitleKey(Tool tool)
             return "TP_FILMPRESETS_LABEL";
         case Tool::FILM_SIMULATION:
             return "TP_FILMSIMULATION_LABEL";
+        case Tool::TEXTURE:
+            return "TP_TEXTURE_LABEL";
+        case Tool::CLARITY:
+            return "TP_CLARITY_LABEL";
+        case Tool::GRAIN:
+            return "TP_GRAIN_LABEL";
+        case Tool::TILT_SHIFT:
+            return "TP_TILTSHIFT_LABEL";
         case Tool::SOFT_LIGHT:
             return "TP_SOFTLIGHT_LABEL";
         case Tool::DEHAZE:
