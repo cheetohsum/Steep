@@ -19,6 +19,8 @@
 #include "watermarkpanel.h"
 #include "multilangmgr.h"
 
+#include "rtengine/rt_math.h"
+
 #include <cairo.h>
 #include <pango/pangocairo.h>
 

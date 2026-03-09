@@ -23,6 +23,8 @@
 
 #include <cmath>
 
+#include "rtengine/rt_math.h"
+
 namespace {
 
 // Extract just the label portion from a localized string that may contain

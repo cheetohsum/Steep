@@ -20,6 +20,9 @@
 
 #include <algorithm>
 #include <cmath>
+
+#include "rtengine/rt_math.h"
+
 #include <cairo.h>
 #include <pango/pangocairo.h>
 

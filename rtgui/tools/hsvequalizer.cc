@@ -18,6 +18,8 @@
  */
 #include "hsvequalizer.h"
 
+#include "rtengine/rt_math.h"
+
 #include "options.h"
 #include "widgets/curves/curveeditor.h"
 #include "widgets/curves/curveeditorgroup.h"

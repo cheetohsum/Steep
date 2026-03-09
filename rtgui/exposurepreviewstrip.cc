@@ -21,6 +21,8 @@
 #include <thread>
 #include <algorithm>
 
+#include "rtengine/rt_math.h"
+
 #include "thumbnail.h"
 #include "../rtengine/iimage.h"
 

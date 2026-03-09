@@ -22,6 +22,8 @@
 #include <cstring>
 #include <iostream>
 
+#include "rtengine/rt_math.h"
+
 #include "cachemanager.h"
 #include "guiutils.h"
 #include "rtimage.h"

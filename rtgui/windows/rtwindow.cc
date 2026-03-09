@@ -19,6 +19,8 @@
 
 #include <cmath>
 
+#include "rtengine/rt_math.h"
+
 #include <gtkmm.h>
 #include "rtwindow.h"
 #include "cachemanager.h"

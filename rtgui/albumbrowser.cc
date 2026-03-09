@@ -19,6 +19,8 @@
 #include <cmath>
 #include <cairomm/cairomm.h>
 
+#include "rtengine/rt_math.h"
+
 #include "cacheimagedata.h"
 #include "cachemanager.h"
 #include "guiutils.h"

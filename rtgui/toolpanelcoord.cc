@@ -18,6 +18,8 @@
  */
 #include <iostream>
 
+#include "rtengine/rt_math.h"
+
 #include "imagearea.h"
 #include "multilangmgr.h"
 #include "toolpanelcoord.h"
@@ -3814,18 +3816,12 @@ void ToolPanelCoordinator::updateResetButtons()
     bool spotDirty = !(current.spot == stock.spot);
     spotGroup->setResetVisible(spotDirty);
 
-    // Masking group — dirty when any spots exist. Read from IPC params since
-    // locallab->write() on a fresh ProcParams doesn't populate spots (it only
-    // does so during SpotCreation events).
-    {
-        bool maskingDirty = false;
-        if (ipc) {
-            ProcParams* p = ipc->beginUpdateParams();
-            maskingDirty = !p->locallab.spots.empty();
-            ipc->endUpdateParams(0);
-        }
-        maskingGroup->setResetVisible(maskingDirty);
-    }
+    // Masking group — dirty when any spots exist in the control panel.
+    // Can't use locallab->write() (doesn't populate spots on a fresh ProcParams)
+    // and can't use ipc->beginUpdateParams() (interferes with processing pipeline).
+    // Query the control panel's treemodel directly via Locallab's expsettings.
+    bool maskingDirty = locallab->getSpotCount() > 0;
+    maskingGroup->setResetVisible(maskingDirty);
 
     // Crop section: crop + rotate
     if (cropResetBtn_) {
