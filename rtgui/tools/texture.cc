@@ -55,9 +55,16 @@ Texture::Texture(): FoldableToolPanel(this, TOOL_NAME, M("TP_TEXTURE_LABEL"), fa
     summaryBox->pack_start(*amount);
 
     detailContent_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
-    detailContent_->set_no_show_all(true);
     detailContent_->pack_start(*radius);
-    summaryBox->pack_start(*detailContent_, Gtk::PACK_SHRINK);
+    detailContent_->show_all();
+
+    detailRevealer_ = Gtk::manage(new Gtk::Revealer());
+    detailRevealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
+    detailRevealer_->set_transition_duration(200);
+    detailRevealer_->set_reveal_child(false);
+    detailRevealer_->add(*detailContent_);
+    detailRevealer_->show();
+    summaryBox->pack_start(*detailRevealer_, Gtk::PACK_SHRINK);
 
     summaryBox->show_all();
 }
@@ -65,15 +72,8 @@ Texture::Texture(): FoldableToolPanel(this, TOOL_NAME, M("TP_TEXTURE_LABEL"), fa
 void Texture::toggleDetail()
 {
     detailExpanded_ = !detailExpanded_;
-    if (detailExpanded_) {
-        amount->setLabel(Glib::ustring("\u25BE ") + M("TP_TEXTURE_AMOUNT"));
-        detailContent_->set_no_show_all(false);
-        detailContent_->show_all();
-        detailContent_->set_no_show_all(true);
-    } else {
-        amount->setLabel(Glib::ustring("\u25B8 ") + M("TP_TEXTURE_AMOUNT"));
-        detailContent_->hide();
-    }
+    amount->setLabel(Glib::ustring(detailExpanded_ ? "\u25BE " : "\u25B8 ") + M("TP_TEXTURE_AMOUNT"));
+    detailRevealer_->set_reveal_child(detailExpanded_);
 }
 
 void Texture::read(const ProcParams *pp, const ParamsEdited *pedited)

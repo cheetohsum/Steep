@@ -63,4 +63,11 @@ public:
 
     void        formatChanged   ();
     void        adjusterChanged (Adjuster* a, double newval) override;
+
+    /// Move subsampling, tiff options, and savesPP into a collapsed "Options" expander.
+    void        setCompactMode  ();
+
+private:
+    bool compactMode_ = false;
+    Gtk::Box* subsampRow_ = nullptr;
 };

@@ -58,7 +58,8 @@ void drawCrop (const Cairo::RefPtr<Cairo::Context>& cr,
                double clipWidth, double clipHeight,
                double startx, double starty, double scale,
                const rtengine::procparams::CropParams& cparams,
-               bool drawGuide = true, bool useBgColor = true, bool fullImageVisible = true);
+               bool drawGuide = true, bool useBgColor = true, bool fullImageVisible = true,
+               bool solidOverlay = false);
 gboolean acquireGUI(void* data);
 void setExpandAlignProperties(Gtk::Widget *widget, bool hExpand, bool vExpand, enum Gtk::Align hAlign, enum Gtk::Align vAlign);
 Gtk::Border getPadding(const Glib::RefPtr<Gtk::StyleContext> style);
@@ -476,14 +477,23 @@ public:
     void setTrackGradient(const std::vector<GradientMilestone>& milestones);
     void clearTrackGradient();
 
+    void setLabelText(const Glib::ustring& text);
+    void setLabelClickCallback(std::function<void()> callback);
+    bool hasLabel() const;
+    double getLabelAreaWidth() const;
+
 protected:
     bool on_scroll_event (GdkEventScroll* event) override;
     bool on_key_press_event (GdkEventKey* event) override;
     bool on_draw (const Cairo::RefPtr<Cairo::Context>& cr) override;
+    bool on_button_press_event(GdkEventButton* event) override;
 
 private:
     std::vector<GradientMilestone> trackGradient_;
     bool showTickMarks_ = true;
+    Glib::ustring labelText_;
+    std::function<void()> labelClickCallback_;
+    double labelAreaWidth_ = 0.0;
 };
 
 class MyFileChooserWidget
@@ -913,8 +923,11 @@ class ToolGroup final : public Gtk::Box
 public:
     explicit ToolGroup(const Glib::ustring& label);
 
-    /// Get the content box to pack tool panels into.
+    /// Get the content box to pack tool panels into (hides when collapsed).
     Gtk::Box* getContentBox() { return contentBox; }
+
+    /// Get the persistent box that stays visible even when collapsed.
+    Gtk::Box* getPersistentBox() { return persistentBox; }
 
     /// Set expanded/collapsed state.
     void setExpanded(bool expanded);
@@ -922,11 +935,21 @@ public:
     /// Get expanded/collapsed state.
     bool getExpanded() const;
 
+    /// Show/hide the reset button (X icon next to header).
+    void setResetVisible(bool visible);
+
+    /// Set callback for when reset button is clicked.
+    void setResetCallback(std::function<void()> cb);
+
 private:
+    Gtk::Box* persistentBox;
     Gtk::Box* contentBox;
+    Gtk::Revealer* revealer;
     Gtk::Label* arrowLabel;
+    Gtk::Button* resetBtn;
     Glib::ustring groupLabel_;
     bool expanded;
+    std::function<void()> resetCallback_;
 
     void onHeaderClicked();
     void updateArrow();

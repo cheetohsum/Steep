@@ -19,6 +19,9 @@
 #include "filepanel.h"
 
 #include "albumbrowser.h"
+#include "guiutils.h"
+#include "options.h"
+#include "rtimage.h"
 #include "filebrowser.h"
 #include "filecatalog.h"
 #include "batchtoolpanelcoord.h"
@@ -60,8 +63,9 @@ FilePanel::FilePanel () : parent(nullptr), error(0)
 
     Gtk::Box* obox = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     obox->get_style_context()->add_class ("plainback");
-    obox->pack_start (*recentBrowser, Gtk::PACK_SHRINK, 4);
     obox->pack_start (*dirBrowser, Gtk::PACK_EXPAND_WIDGET, 0);
+    dirBrowser->set_size_request(-1, 300);
+    obox->pack_start (*recentBrowser, Gtk::PACK_SHRINK, 4);
     obox->pack_start (*albumBrowser_, Gtk::PACK_SHRINK, 0);
 
     placespaned->pack_start (*placesBrowser, Gtk::PACK_SHRINK);
@@ -76,6 +80,7 @@ FilePanel::FilePanel () : parent(nullptr), error(0)
     tpc = new BatchToolPanelCoordinator (this);
     // Location bar
     fileCatalog = Gtk::manage ( new FileCatalog (tpc->coarse, tpc->getToolBar(), this) );
+    fileCatalog->tbLeftPanel_1_visible(false); // left toggle now in FilePanel footer
     // Holds the location bar and thumbnails
     ribbonPane = Gtk::manage ( new Gtk::Paned() );
     ribbonPane->add(*fileCatalog);
@@ -131,6 +136,9 @@ FilePanel::FilePanel () : parent(nullptr), error(0)
             albumBrowser_->setCoverForAlbum(nodeId, filePath);
         }
     });
+    fileCatalog->fileBrowser->setAlbumModeChecker([this]() {
+        return fileCatalog->isInAlbumMode();
+    });
 
     //------------------
 
@@ -171,7 +179,44 @@ FilePanel::FilePanel () : parent(nullptr), error(0)
 
     rightBox->pack_start (*rightNotebook);
 
-    pack1(*dirpaned, true, true);
+    // Wrap dirpaned + footer in a vertical box so the footer spans full width
+    auto* dirpanedBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
+    dirpanedBox->pack_start(*dirpaned, Gtk::PACK_EXPAND_WIDGET);
+
+    // Bottom footer bar matching the editor's EditorToolbarBottom layout
+    auto* footerBar = Gtk::manage(new Gtk::Grid());
+    footerBar->set_name("BrowserFooterBar");
+
+    // Left sidebar toggle (matches editor's hidehp position)
+    browserHideLp_ = Gtk::manage(new Gtk::ToggleButton());
+    browserHideLp_->set_relief(Gtk::RELIEF_NONE);
+    browserHideLp_->set_active(options.showHistory);
+    iBrowserLpShow_ = Gtk::manage(new RTImage("panel-to-right", Gtk::ICON_SIZE_LARGE_TOOLBAR));
+    iBrowserLpHide_ = Gtk::manage(new RTImage("panel-to-left", Gtk::ICON_SIZE_LARGE_TOOLBAR));
+    browserHideLp_->set_image(options.showHistory ? *iBrowserLpHide_ : *iBrowserLpShow_);
+    browserHideLp_->set_tooltip_markup(M("MAIN_TOOLTIP_SHOWHIDELP1"));
+    browserHideLp_->signal_toggled().connect([this]() {
+        if (browserHideLp_->get_active()) {
+            placespaned->show();
+            browserHideLp_->set_image(*iBrowserLpHide_);
+        } else {
+            placespaned->hide();
+            browserHideLp_->set_image(*iBrowserLpShow_);
+        }
+    });
+    footerBar->attach(*browserHideLp_, 0, 0, 1, 1);
+
+    // Spacer
+    auto* footerSpacer = Gtk::manage(new Gtk::Label(""));
+    footerSpacer->set_hexpand(true);
+    footerBar->attach(*footerSpacer, 1, 0, 1, 1);
+
+    auto* stbFooter = Gtk::manage(new MyScrolledToolbar());
+    stbFooter->set_name("EditorToolbarBottom");
+    stbFooter->add(*footerBar);
+    dirpanedBox->pack_start(*stbFooter, Gtk::PACK_SHRINK);
+
+    pack1(*dirpanedBox, true, true);
     pack2(*rightBox, false, false);
 
     fileCatalog->setFileSelectionChangeListener (tpc);
@@ -208,6 +253,13 @@ void FilePanel::on_realize ()
     tpc->closeAllTools();
 }
 
+
+void FilePanel::setContentOpacity (double opacity)
+{
+    // Fade only the content area (thumbnails + right panel), keep left sidebar static
+    if (ribbonPane) ribbonPane->set_opacity(opacity);
+    if (rightBox) rightBox->set_opacity(opacity);
+}
 
 void FilePanel::setAspect ()
 {
@@ -270,18 +322,22 @@ void FilePanel::on_NB_switch_page(Gtk::Widget* page, guint page_num)
 
 bool FilePanel::fileSelected (Thumbnail* thm)
 {
+    fprintf(stderr, "DBG fileSelected: thm=%p parent=%p\n", (void*)thm, (void*)parent);
     if (!parent) {
+        fprintf(stderr, "DBG fileSelected: no parent, returning false\n");
         return false;
     }
 
     // Check if it's already open BEFORE loading the file
     if (App::get().options().tabbedUI && parent->selectEditorPanel(thm->getFileName())) {
+        fprintf(stderr, "DBG fileSelected: already open in tab, returning true\n");
         thm->decreaseRef();
         return true;
     }
 
     // Check if the image is already being opened and set the image loading status if it is not
     bool loading = thm->imageLoad( true );
+    fprintf(stderr, "DBG fileSelected: imageLoad returned %d\n", (int)loading);
 
     if( !loading ) {
         return false;
@@ -342,6 +398,7 @@ bool FilePanel::addBatchQueueJobs(const std::vector<BatchQueueEntry*>& entries)
 
 bool FilePanel::imageLoaded( Thumbnail* thm, ProgressConnector<rtengine::InitialImage*> *pc )
 {
+    fprintf(stderr, "DBG imageLoaded: thm=%p pc=%p returnValue=%p\n", (void*)thm, (void*)pc, (void*)pc->returnValue());
     pendingLoadMutex.lock();
 
     // find our place in the array and mark the entry as complete

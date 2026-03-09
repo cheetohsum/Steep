@@ -253,26 +253,21 @@ window.csd:not(.fullscreen) #MainNotebook > header.top {
 }
 
 #BeforeAfterContainer {
-    border-width: 0.083333333333333333em;
+    border-width: 0;
     border-radius: 0;
     padding: 0;
-    margin: calc(0.416666666666666666em - 2px) 0 0.416666666666666666em;
-}
-#BeforeAfterContainer > box:nth-child(2) > box:nth-child(2),
-#BeforeAfterContainer > box:nth-child(1) > box:nth-child(2){
-    border-top: 0.083333333333333333em solid @bg-dark-grey;
+    margin: 0;
 }
 #BeforeAfterContainer > box:nth-child(2){
-    border-left: 0.083333333333333333em solid @bg-dark-grey;
+    border-left: 1px solid rgba(255,255,255,0.08);
 }
 
-/* !!! Must be same height as "Small Lock Button" */
 #BeforeAfterContainer label {
-    padding: 0 0.5em;
-    min-height: 2em;
-    min-width: 2em;
-    margin: 0.25em 0;
-    border-width: 0.083333333333333333em;
+    padding: 0;
+    min-height: 0;
+    min-width: 0;
+    margin: 0;
+    border-width: 0;
 }
 
 #EditorToolbarTop {
@@ -693,19 +688,16 @@ messagedialog .dialog-action-area button:not(:only-child):nth-child(2) {
 }
 
 /* Small Lock Button */
-#BeforeAfterContainer button {
-    min-height: 2em;
-    min-width: 2em;
-    margin: 0.25em 0.25em 0.25em 0;
+#BeforeAfterContainer button.ba-lock {
+    min-height: 14px;
+    min-width: 14px;
+    margin: 0 2px;
     padding: 0;
-    border-radius: 0.2em;
-    border-width: 0.083333333333333333em;
+    border-radius: 2px;
+    border-width: 0;
 }
-#BeforeAfterContainer button image{
-    margin: 0 0 0 0.083333333333333333em;
-}
-#BeforeAfterContainer button:checked image{
-    margin: 0.083333333333333333em -0.166666666666666666em 0.083333333333333333em 0.25em;
+#BeforeAfterContainer button.ba-lock image {
+    margin: 0;
 }
 
 /* Snapshot & Places buttons */

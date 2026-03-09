@@ -308,6 +308,7 @@ class Polyline : public Geometry
 public:
     std::vector<rtengine::Coord> points;
     bool filled;
+    bool lineWidthInImageSpace = false;  // when true, innerLineWidth is scaled from image to canvas space
 
     Polyline ();
 

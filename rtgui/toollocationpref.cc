@@ -151,6 +151,8 @@ Glib::ustring getToolTitleKey(Tool tool)
             return "TP_HSVEQUALIZER_LABEL";
         case Tool::POINT_COLOR:
             return "TP_POINTCOLOR_LABEL";
+        case Tool::FILM_PRESETS:
+            return "TP_FILMPRESETS_LABEL";
         case Tool::FILM_SIMULATION:
             return "TP_FILMSIMULATION_LABEL";
         case Tool::SOFT_LIGHT:

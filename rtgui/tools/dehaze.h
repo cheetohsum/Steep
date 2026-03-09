@@ -55,5 +55,7 @@ public:
     void showDepthMapChanged();
 //    void luminanceChanged();
     void setAdjusterBehavior(bool strengthAdd);
+
+    Adjuster* getStrengthSlider() { return strength; }
 };
 

@@ -30,6 +30,7 @@
 
 #include <sigc++/slot.h>
 
+#include <algorithm>
 #include <iomanip>
 
 using namespace rtengine;
@@ -163,10 +164,29 @@ ToneCurve::ToneCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_EXPOSURE_LABEL
     curveEditorG = new CurveEditorGroup(options.lastToneCurvesDir, M("TP_EXPOSURE_CURVEEDITOR1"));
     curveEditorG->setCurveListener(this);
 
-    shape = static_cast<DiagonalCurveEditor*>(curveEditorG->addCurve(CT_Diagonal, "", toneCurveMode));
+    shape = static_cast<DiagonalCurveEditor*>(curveEditorG->addCurve(CT_Diagonal, M("TP_RGBCURVES_ALL"), toneCurveMode));
     shape->setEditID(EUID_ToneCurve1, BT_IMAGEFLOAT);
     shape->setBottomBarBgGradient(bottomMilestones);
     shape->setLeftBarBgGradient(bottomMilestones);
+    shape->setCurveDrawColor(0.85, 0.85, 0.85);
+
+    shapeR = static_cast<DiagonalCurveEditor*>(curveEditorG->addCurve(CT_Diagonal, M("TP_RGBCURVES_RED")));
+    shapeR->setBottomBarBgGradient(bottomMilestones);
+    shapeR->setLeftBarBgGradient(bottomMilestones);
+    shapeR->setCurveDrawColor(0.9, 0.2, 0.2);
+
+    shapeG = static_cast<DiagonalCurveEditor*>(curveEditorG->addCurve(CT_Diagonal, M("TP_RGBCURVES_GREEN")));
+    shapeG->setBottomBarBgGradient(bottomMilestones);
+    shapeG->setLeftBarBgGradient(bottomMilestones);
+    shapeG->setCurveDrawColor(0.2, 0.8, 0.2);
+
+    shapeB = static_cast<DiagonalCurveEditor*>(curveEditorG->addCurve(CT_Diagonal, M("TP_RGBCURVES_BLUE")));
+    shapeB->setBottomBarBgGradient(bottomMilestones);
+    shapeB->setLeftBarBgGradient(bottomMilestones);
+    shapeB->setCurveDrawColor(0.3, 0.4, 0.9);
+
+    // Master curve shows R/G/B curves as overlays
+    shape->setOverlayCurveEditors({shapeR, shapeG, shapeB});
 
     // This will add the reset button at the end of the curveType buttons
     curveEditorG->curveListComplete();
@@ -295,8 +315,8 @@ void ToneCurve::read(const ProcParams* pp, const ParamsEdited* pedited)
     lastAuto = pp->toneCurve.autoexp;
 
     expcomp->setValue(pp->toneCurve.expcomp);
-    black->setValue(pp->toneCurve.black);
-    hlcompr->setValue(pp->toneCurve.hlcompr);
+    black->setValue(pp->toneCurve.black * 100.0 / 16384.0);   // engine 0..16384 → GUI -100..100
+    hlcompr->setValue(-pp->toneCurve.hlcompr / 5.0);           // engine 0..500 → GUI 0..-100
     hlbl->setValue(pp->toneCurve.hlbl);
     hlth->setValue(pp->toneCurve.hlth);
     hlcomprthresh->setValue(pp->toneCurve.hlcomprthresh);
@@ -314,6 +334,9 @@ void ToneCurve::read(const ProcParams* pp, const ParamsEdited* pedited)
     contrast->setValue(pp->toneCurve.contrast);
     saturation->setValue(pp->toneCurve.saturation);
     shape->setCurve(pp->toneCurve.curve);
+    shapeR->setCurve(pp->toneCurve.curveR);
+    shapeG->setCurve(pp->toneCurve.curveG);
+    shapeB->setCurve(pp->toneCurve.curveB);
     shape2->setCurve(pp->toneCurve.curve2);
 
     toneCurveMode->set_active(rtengine::toUnderlying(pp->toneCurve.curveMode));
@@ -336,6 +359,9 @@ void ToneCurve::read(const ProcParams* pp, const ParamsEdited* pedited)
         saturation->setEditedState(pedited->toneCurve.saturation ? Edited : UnEdited);
         clipDirty = pedited->toneCurve.clip;
         shape->setUnChanged(!pedited->toneCurve.curve);
+        shapeR->setUnChanged(!pedited->toneCurve.curveR);
+        shapeG->setUnChanged(!pedited->toneCurve.curveG);
+        shapeB->setUnChanged(!pedited->toneCurve.curveB);
         shape2->setUnChanged(!pedited->toneCurve.curve2);
         hrenabled->set_inconsistent(!pedited->toneCurve.hrenabled);
 
@@ -382,23 +408,30 @@ void ToneCurve::read(const ProcParams* pp, const ParamsEdited* pedited)
 void ToneCurve::autoOpenCurve()
 {
     shape->openIfNonlinear();
+    shapeR->openIfNonlinear();
+    shapeG->openIfNonlinear();
+    shapeB->openIfNonlinear();
     shape2->openIfNonlinear();
 }
 
 void ToneCurve::setEditProvider(EditDataProvider *provider)
 {
     shape->setEditProvider(provider);
+    shapeR->setEditProvider(provider);
+    shapeG->setEditProvider(provider);
+    shapeB->setEditProvider(provider);
     shape2->setEditProvider(provider);
 }
 
 void ToneCurve::write(ProcParams* pp, ParamsEdited* pedited)
 {
 
-    pp->toneCurve.autoexp = false;
+    pp->toneCurve.autoexp = pendingAutoExp_;
+    pendingAutoExp_ = false;
     pp->toneCurve.clip = sclip->get_value();
     pp->toneCurve.expcomp = expcomp->getValue();
-    pp->toneCurve.black = black->getValue();
-    pp->toneCurve.hlcompr = hlcompr->getValue();
+    pp->toneCurve.black = static_cast<int>(black->getValue() * 16384.0 / 100.0);   // GUI -100..100 → engine 0..16384
+    pp->toneCurve.hlcompr = std::max(0, static_cast<int>(-hlcompr->getValue() * 5.0));  // GUI -100..0 → engine 0..500
     pp->toneCurve.hlbl = hlbl->getValue();
     pp->toneCurve.hlth = hlth->getValue();
     pp->toneCurve.hlcomprthresh = hlcomprthresh->getValue();
@@ -407,6 +440,9 @@ void ToneCurve::write(ProcParams* pp, ParamsEdited* pedited)
     pp->toneCurve.contrast = contrast->getValue();
     pp->toneCurve.saturation = saturation->getValue();
     pp->toneCurve.curve = shape->getCurve();
+    pp->toneCurve.curveR = shapeR->getCurve();
+    pp->toneCurve.curveG = shapeG->getCurve();
+    pp->toneCurve.curveB = shapeB->getCurve();
     pp->toneCurve.curve2 = shape2->getCurve();
 
     int tcMode = toneCurveMode->get_active_row_number();
@@ -459,6 +495,9 @@ void ToneCurve::write(ProcParams* pp, ParamsEdited* pedited)
         pedited->toneCurve.autoexp = true;
         pedited->toneCurve.clip = clipDirty;
         pedited->toneCurve.curve = !shape->isUnChanged();
+        pedited->toneCurve.curveR = !shapeR->isUnChanged();
+        pedited->toneCurve.curveG = !shapeG->isUnChanged();
+        pedited->toneCurve.curveB = !shapeB->isUnChanged();
         pedited->toneCurve.curve2 = !shape2->isUnChanged();
         pedited->toneCurve.curveMode = toneCurveMode->get_active_row_number() != 6;
         pedited->toneCurve.curveMode2 = toneCurveMode2->get_active_row_number() != 6;
@@ -577,8 +616,8 @@ void ToneCurve::setDefaults(const ProcParams* defParams, const ParamsEdited* ped
 
     expcomp->setDefault(defParams->toneCurve.expcomp);
     brightness->setDefault(defParams->toneCurve.brightness);
-    black->setDefault(defParams->toneCurve.black);
-    hlcompr->setDefault(defParams->toneCurve.hlcompr);
+    black->setDefault(defParams->toneCurve.black * 100.0 / 16384.0);
+    hlcompr->setDefault(-defParams->toneCurve.hlcompr / 5.0);
     hlbl->setDefault(defParams->toneCurve.hlbl);
     hlth->setDefault(defParams->toneCurve.hlth);
     hlcomprthresh->setDefault(defParams->toneCurve.hlcomprthresh);
@@ -617,7 +656,7 @@ void ToneCurve::curveChanged(CurveEditor* ce)
 
     if (listener) {
         setHistmatching(false);
-        if (ce == shape) {
+        if (ce == shape || ce == shapeR || ce == shapeG || ce == shapeB) {
             listener->panelChanged(EvToneCurve1, M("HISTORY_CUSTOMCURVE"));
         } else if (ce == shape2) {
             listener->panelChanged(EvToneCurve2, M("HISTORY_CUSTOMCURVE"));
@@ -666,6 +705,12 @@ float ToneCurve::blendPipetteValues(CurveEditor *ce, float chan1, float chan2, f
         if (toneCurveMode->get_active_row_number() == 4) {
             return chan1 * 0.2126729f + chan2 * 0.7151521f + chan3 * 0.0721750f;
         }
+    } else if (ce == shapeR) {
+        return chan1; // Red channel only
+    } else if (ce == shapeG) {
+        return chan2; // Green channel only
+    } else if (ce == shapeB) {
+        return chan3; // Blue channel only
     } else if (ce == shape2) {
         if (toneCurveMode2->get_active_row_number() == 4) {
             return chan1 * 0.2126729f + chan2 * 0.7151521f + chan3 * 0.0721750f;
@@ -769,6 +814,7 @@ void ToneCurve::neutral_pressed()
 void ToneCurve::autolevels_clicked()
 {
     setHistmatching(false);
+    pendingAutoExp_ = true;
 
     if (listener) {
         listener->panelChanged(EvAutoExp, M("GENERAL_ENABLED"));
@@ -918,6 +964,11 @@ void ToneCurve::updateCurveBackgroundHistogram(
     const LUTu& histLRETI
 )
 {
+    // Update individual channels FIRST so their data is available
+    // when the master curve's subgroup checks overlay editors
+    shapeR->updateBackgroundHistogram(histRed);
+    shapeG->updateBackgroundHistogram(histGreen);
+    shapeB->updateBackgroundHistogram(histBlue);
     shape->updateBackgroundHistogram(histToneCurve);
 }
 
@@ -951,11 +1002,11 @@ void ToneCurve::histmatchingToggled()
 
 void ToneCurve::autoExpChanged(double expcomp, int bright, int contr, int black, int hlcompr, int hlcomprthresh, bool hlrecons)
 {
-    nextBlack = black;
+    nextBlack = static_cast<int>(black * 100.0 / 16384.0);
     nextExpcomp = expcomp;
     nextBrightness = bright;
     nextContrast = contr;
-    nextHlcompr = hlcompr;
+    nextHlcompr = static_cast<int>(-hlcompr / 5.0);
     nextHlcomprthresh = hlcomprthresh;
     nextHLRecons = hlrecons;
 

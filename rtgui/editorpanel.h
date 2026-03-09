@@ -36,6 +36,7 @@
 #include "rtengine/rtengine.h"
 
 #include <atomic>
+#include <functional>
 #include <map>
 #include <memory>
 
@@ -206,6 +207,7 @@ public:
     void toggleSidePanelsZoomFit();
 
     void saveProfile ();
+    void collapseFilterBar();  // Collapse filter bar to prevent filmstrip overlap
     void closeAlbumView ();  // public: close album view + deselect sidebar
     Glib::ustring getShortName ();
     Glib::ustring getFileName () const;
@@ -246,6 +248,14 @@ public:
     // Returns sidebar/filmstrip insets for queue overlay positioning
     void getQueueOverlayInsets (int& left, int& top, int& right) const;
 
+    // Animated view transition (browser ↔ editor)
+    void animateEditorIn(bool skipFilmstrip = false);
+    void animateEditorOut(std::function<void()> onComplete);
+
+    // Left panel (history) visibility for sync with browser sidebar
+    bool isLeftPanelVisible() const { return hidehp && hidehp->get_active(); }
+    void setLeftPanelVisible(bool visible) { if (hidehp && hidehp->get_active() != visible) hidehp->set_active(visible); }
+
     void defaultMonitorProfileChanged (const Glib::ustring &profile_name, bool auto_monitor_profile);
 
     bool saveImmediately (const Glib::ustring &filename, const SaveFormat &sf);
@@ -263,8 +273,24 @@ private:
     Gtk::Box* filmstripActionBar;
     Gtk::Button* filmstripRankBtns[5];
     int filmstripCurrentRating;
+    std::map<std::string, Gtk::CheckMenuItem*> editorCopyFilters_;
+    Gtk::Menu* editorCopyFilterMenu_;
     void updateFilmstripStars(int highlightUpTo);
     Gtk::Revealer* colorLabelRevealer_;
+
+    // Filmstrip sort
+    Gtk::MenuButton* filmstripSortBtn_;
+    Gtk::Menu* filmstripSortMenu_;
+    Gtk::RadioMenuItem* filmstripSortMethod_[Options::SORT_METHOD_COUNT];
+    Gtk::RadioMenuItem* filmstripSortOrder_[2];
+    void filmstripSortChanged ();
+
+    // Album view sort
+    Gtk::MenuButton* albumSortBtn_;
+    Gtk::Menu* albumSortMenu_;
+    Gtk::RadioMenuItem* albumSortMethod_[Options::SORT_METHOD_COUNT];
+    Gtk::RadioMenuItem* albumSortOrder_[2];
+    void albumSortChanged ();
 
     // Filter bar
     Gtk::ToggleButton* tbFilterBar;
@@ -334,6 +360,8 @@ private:
     void addCurrentImageToTargetAlbum ();
 
     // Album grid view
+    enum class AlbumViewMode { GRID, FIT, COLLAGE };
+
     Gtk::Stack* albumViewStack_;
     Gtk::Box* albumViewBox_;
     Gtk::Box* albumViewHeader_;
@@ -344,14 +372,48 @@ private:
     Glib::ustring currentAlbumViewName_;
     std::vector<Glib::ustring> currentAlbumFiles_;
     int albumViewSession_;
-    bool albumViewBuilt_; // true if grid is populated and ready to show
+    bool albumViewBuilt_;
     Gtk::ToggleButton* tbAlbumView_;
     sigc::connection albumViewToggleConn_;
     std::map<std::string, Glib::RefPtr<Gdk::Pixbuf>> albumThumbCache_;
+
+    // Album view mode, zoom, info
+    AlbumViewMode albumViewMode_;
+    int albumThumbHeight_;
+    bool albumShowInfo_;
+    Gtk::Scale* albumZoomSlider_;
+    sigc::connection albumZoomConn_;
+    Gtk::ToggleButton* albumInfoToggle_;
+    Gtk::RadioButton* albumModeGrid_;
+    Gtk::RadioButton* albumModeFit_;
+    Gtk::RadioButton* albumModeCollage_;
+    Gtk::RadioButton::Group albumModeGroup_;
+    Gtk::Stack* albumGridStack_;
+    Gtk::DrawingArea* albumCollageArea_;
+    struct CollageItem { int x, y, w, h; std::string filepath; };
+    std::vector<CollageItem> collageLayout_;
+    int collageContentHeight_;
+    bool collageRelayoutPending_ = false;
+    int fitLastW_ = 0;
+    int fitLastH_ = 0;
+    std::map<std::string, double> albumAspectCache_;
+    std::map<std::string, Glib::RefPtr<Gdk::Pixbuf>> collageScaledCache_;
+    sigc::connection albumFitResizeConn_;
+
     void showAlbumView (const Glib::ustring& albumName, const std::vector<Glib::ustring>& files);
     void hideAlbumView ();
     void toggleAlbumView ();
     void loadAlbumThumbnails (int session, const std::vector<Glib::ustring>& files);
+    void rebuildAlbumGrid ();
+    void albumZoomChanged ();
+    void albumInfoToggled ();
+    void albumViewModeChanged ();
+    void applyAlbumViewMode ();
+    void recalculateFitSize ();
+    void recalculateCollageLayout ();
+    bool onCollageAreaDraw (const Cairo::RefPtr<Cairo::Context>& cr);
+    bool onCollageAreaClick (GdkEventButton* ev);
+    double getAspectRatio (const std::string& filepath);
 
     Gtk::Box *vboxright;
     Gtk::Box *vsubboxright;
@@ -429,4 +491,10 @@ private:
 
     rtengine::HistogramObservable* histogram_observable;
     Options::ScopeType histogram_scope_type;
+    Glib::ustring lastSyncedEditorDir_;  // prevent redundant dir browser scroll resets
+
+    // View transition animation state
+    double editorAnimFraction_ = 1.0;  // 0=hidden, 1=fully shown
+    bool editorAnimIn_ = true;         // true=animating in, false=animating out
+    sigc::connection editorAnimConn_;
 };

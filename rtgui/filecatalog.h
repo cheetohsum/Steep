@@ -91,7 +91,6 @@ private:
 
     Gtk::Box* buttonBar;
     Gtk::Box* hbToolBar1;
-    MyScrolledToolbar* hbToolBar1STB;
 
     Gtk::Box* fltrRankbox;
     Gtk::Box* fltrLabelbox;
@@ -155,6 +154,7 @@ private:
     Gtk::Box* trashButtonBox;
 
     MyHScale* zoomSlider_;
+    Gtk::Button* bRotateCW_;
 
     RTImage* progressImage;
     Gtk::Label* progressLabel;

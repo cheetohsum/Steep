@@ -48,15 +48,15 @@ ControlSpotPanel::ControlSpotPanel():
     button_visibility_(Gtk::manage(new Gtk::Button(M("TP_LOCALLAB_BUTTON_VIS")))),
 
     prevMethod_(Gtk::manage(new MyComboBoxText())),
-    shape_(Gtk::manage(new MyComboBoxText())),
+    shape_(Gtk::manage(new PopUpButton())),
     spotMethod_(Gtk::manage(new MyComboBoxText())),
     shapeMethod_(Gtk::manage(new MyComboBoxText())),
     qualityMethod_(Gtk::manage(new MyComboBoxText())),
     //complexMethod_(Gtk::manage(new MyComboBoxText())),
     wavMethod_(Gtk::manage(new MyComboBoxText())),
     avoidgamutMethod_(Gtk::manage(new MyComboBoxText())),
-    maskType_(Gtk::manage(new MyComboBoxText())),
-    aiMaskClass_(Gtk::manage(new MyComboBoxText())),
+    maskType_(Gtk::manage(new PopUpButton())),
+    aiMaskClass_(Gtk::manage(new PopUpButton())),
 
     sensiexclu_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_SENSIEXCLU"), 0, 100, 1, 12))),
     structexclu_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_STRUCCOL"), 0, 100, 1, 0))),
@@ -67,7 +67,7 @@ ControlSpotPanel::ControlSpotPanel():
     centerX_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_CENTER_X"), -1000, 1000, 1, 0))),
     centerY_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_CENTER_Y"), -1000, 1000, 1, 0))),
     circrad_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_CIRCRADIUS"), 1.5, 150., 0.5, 18.))),
-    transit_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_TRANSITVALUE"), 2., 100., 0.1, 60.))),
+    transit_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_TRANSITVALUE"), 0.5, 100., 0.1, 60.))),
     transitweak_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_TRANSITWEAK"), 0.5, 25.0, 0.1, 1.0))),
     transitgrad_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_TRANSITGRAD"), -1.0, 1.0, 0.01, 0.0))),
     gradangle_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_GRADANGLE"), -180., 180., 0.5, 0.))),
@@ -165,7 +165,10 @@ ControlSpotPanel::ControlSpotPanel():
     // Single "Add Mask" button visible at top
     button_add_->set_label(M("TP_LOCALLAB_BUTTON_ADD_MASK"));
     Gtk::Box* const addRow = Gtk::manage(new Gtk::Box());
-    addRow->pack_start(*button_add_, true, true);
+    addRow->set_halign(Gtk::ALIGN_START);
+    addRow->set_margin_top(4);
+    addRow->set_margin_bottom(4);
+    addRow->pack_start(*button_add_, Gtk::PACK_SHRINK);
 
     // "Add AI Mask" button with dropdown class menu
     button_add_ai_ = Gtk::manage(new Gtk::Button(M("TP_LOCALLAB_BUTTON_ADD_AI_MASK")));
@@ -182,8 +185,21 @@ ControlSpotPanel::ControlSpotPanel():
         "TP_LOCALLAB_AIMASK_CLASS_FOREGROUND"
     };
 
+    const char* aiClassIcons[] = {
+        "mask-class-background", "mask-class-person", "mask-class-sky",
+        "mask-class-vegetation", "mask-class-building", "mask-class-vehicle",
+        "mask-class-animal", "mask-class-foreground"
+    };
+
     for (int i = 0; i < 8; i++) {
-        auto* mi = Gtk::manage(new Gtk::MenuItem(M(aiClassKeys[i])));
+        auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+        auto* img = Gtk::manage(new RTImage(aiClassIcons[i]));
+        auto* lbl = Gtk::manage(new Gtk::Label(M(aiClassKeys[i])));
+        lbl->set_halign(Gtk::ALIGN_START);
+        box->pack_start(*img, Gtk::PACK_SHRINK);
+        box->pack_start(*lbl, Gtk::PACK_EXPAND_WIDGET);
+        auto* mi = Gtk::manage(new Gtk::MenuItem());
+        mi->add(*box);
         mi->signal_activate().connect(
             sigc::bind(sigc::mem_fun(*this, &ControlSpotPanel::on_ai_mask_selected), i));
         aiClassMenu_->append(*mi);
@@ -195,7 +211,7 @@ ControlSpotPanel::ControlSpotPanel():
             Gdk::GRAVITY_SOUTH_WEST, Gdk::GRAVITY_NORTH_WEST, nullptr);
     });
 
-    addRow->pack_start(*button_add_ai_, true, true, 4);
+    addRow->pack_start(*button_add_ai_, Gtk::PACK_SHRINK, 4);
 
     pack_start(*addRow);
 
@@ -220,10 +236,11 @@ ControlSpotPanel::ControlSpotPanel():
 
     treemodel_ = Gtk::ListStore::create(spots_);
     treeview_->set_model(treemodel_);
+    treeview_->set_name("MaskTreeView");
     treeviewconn_ = treeview_->get_selection()->signal_changed().connect(
                         sigc::mem_fun(
                             *this, &ControlSpotPanel::controlspotChanged));
-    treeview_->set_grid_lines(Gtk::TREE_VIEW_GRID_LINES_VERTICAL);
+    treeview_->set_grid_lines(Gtk::TREE_VIEW_GRID_LINES_NONE);
     treeview_->set_headers_visible(false);
 
     // Disable search to prevent hijacking keyboard shortcuts #5265
@@ -246,6 +263,7 @@ ControlSpotPanel::ControlSpotPanel():
 
     // Preview column — small colored square for AI masks
     auto* previewCell = Gtk::manage(new Gtk::CellRendererPixbuf());
+    previewCell->property_ypad() = 6;
     int cols_count = treeview_->append_column("", *previewCell);
     auto col = treeview_->get_column(cols_count - 1);
 
@@ -258,6 +276,8 @@ ControlSpotPanel::ControlSpotPanel():
 
     // Name column
     auto cell = Gtk::manage(new Gtk::CellRendererText());
+    cell->property_ellipsize() = Pango::ELLIPSIZE_END;
+    cell->property_ypad() = 6;
     cols_count = treeview_->append_column("", *cell);
     col = treeview_->get_column(cols_count - 1);
 
@@ -271,6 +291,8 @@ ControlSpotPanel::ControlSpotPanel():
     // Visibility column — eye icon, toggled via left-click
     auto* pixCell = Gtk::manage(new Gtk::CellRendererPixbuf());
     pixCell->property_stock_size() = Gtk::ICON_SIZE_MENU;
+    pixCell->property_xpad() = 4;
+    pixCell->property_ypad() = 6;
     cols_count = treeview_->append_column("", *pixCell);
     col = treeview_->get_column(cols_count - 1);
 
@@ -282,29 +304,33 @@ ControlSpotPanel::ControlSpotPanel():
     }
 
     scrolledwindow_->add(*treeview_);
-    scrolledwindow_->set_policy(Gtk::POLICY_AUTOMATIC, Gtk::POLICY_AUTOMATIC);
-    // Start compact — grows as masks are added, caps at 200px then scrolls
-    scrolledwindow_->set_min_content_height(30);
-    scrolledwindow_->set_max_content_height(200);
+    scrolledwindow_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+    scrolledwindow_->set_shadow_type(Gtk::SHADOW_NONE);
+    // Start compact — grows as masks are added, caps at 300px then scrolls
+    scrolledwindow_->set_min_content_height(40);
+    scrolledwindow_->set_max_content_height(300);
     scrolledwindow_->set_propagate_natural_height(true);
+    scrolledwindow_->set_margin_end(4);
     pack_start(*scrolledwindow_, Gtk::PACK_SHRINK);
 
     // hishow_ and activ_ are configured here but packed into advancedBox below
    // Gtk::Box* const ctboxactivmethod = Gtk::manage(new Gtk::Box());
     ctboxactivmethod->pack_start(*activ_);
 
-    Gtk::Label* const labelshape = Gtk::manage(new Gtk::Label(M("TP_LOCALLAB_SHAPETYPE") + ":"));
-    labelshape->set_ellipsize(Pango::ELLIPSIZE_END);
-    labelshape->set_max_width_chars(12);
-    ctboxshape->pack_start(*labelshape, Gtk::PACK_SHRINK, 2);
-    shape_->append(M("TP_LOCALLAB_ELI"));
-    shape_->append(M("TP_LOCALLAB_RECT"));
-    shape_->append(M("TP_LOCALLAB_GRAD"));
-    shape_->set_active(0);
+    shape_->addEntry("shape-ellipse", M("TP_LOCALLAB_ELI"));
+    shape_->addEntry("shape-rectangle", M("TP_LOCALLAB_RECT"));
+    shape_->addEntry("shape-gradient", M("TP_LOCALLAB_GRAD"));
+    shape_->setSelected(0);
+    shape_->show();
     shapeconn_ = shape_->signal_changed().connect(
                      sigc::mem_fun(
                          *this, &ControlSpotPanel::shapeChanged));
-    ctboxshape->pack_start(*shape_);
+    shape_->hideArrowButton();
+    shape_->signal_clicked().connect([this]() { shape_->triggerShowMenu(); });
+    shape_->buttonGroup->set_hexpand(false);
+    shape_->buttonGroup->set_halign(Gtk::ALIGN_START);
+    ctboxshape->pack_start(*shape_->buttonGroup, Gtk::PACK_SHRINK);
+    shape_->setShowSelectionLabel(true);
     // ctboxshape packed into maskDetailBox_ below
     if (showtooltip) {
         shape_->set_tooltip_text(M("TP_LOCALLAB_SHAPE_TOOLTIP"));
@@ -400,32 +426,40 @@ ControlSpotPanel::ControlSpotPanel():
     }
 
     // Mask Type combo (Normal / AI Mask)
-    Gtk::Label* const labelMaskType = Gtk::manage(new Gtk::Label(M("TP_LOCALLAB_MASKTYPE") + ":"));
-    ctboxmasktype->pack_start(*labelMaskType, Gtk::PACK_SHRINK, 2);
-    maskType_->append(M("TP_LOCALLAB_MASKTYPE_NORMAL"));
-    maskType_->append(M("TP_LOCALLAB_MASKTYPE_AI"));
-    maskType_->set_active(0);
+    maskType_->addEntry("mask-normal", M("TP_LOCALLAB_MASKTYPE_NORMAL"));
+    maskType_->addEntry("mask-ai", M("TP_LOCALLAB_MASKTYPE_AI"));
+    maskType_->setSelected(0);
+    maskType_->show();
     maskTypeConn_ = maskType_->signal_changed().connect(
                         sigc::mem_fun(
                             *this, &ControlSpotPanel::maskTypeChanged));
-    ctboxmasktype->pack_start(*maskType_);
+    maskType_->hideArrowButton();
+    maskType_->signal_clicked().connect([this]() { maskType_->triggerShowMenu(); });
+    maskType_->buttonGroup->set_hexpand(false);
+    maskType_->buttonGroup->set_halign(Gtk::ALIGN_START);
+    ctboxmasktype->pack_start(*maskType_->buttonGroup, Gtk::PACK_SHRINK);
+    maskType_->setShowSelectionLabel(true);
 
     // AI Class combo
-    Gtk::Label* const labelAIClass = Gtk::manage(new Gtk::Label(M("TP_LOCALLAB_AIMASK_CLASS") + ":"));
-    ctboxaiclass->pack_start(*labelAIClass, Gtk::PACK_SHRINK, 2);
-    aiMaskClass_->append(M("TP_LOCALLAB_AIMASK_CLASS_BACKGROUND"));
-    aiMaskClass_->append(M("TP_LOCALLAB_AIMASK_CLASS_PERSON"));
-    aiMaskClass_->append(M("TP_LOCALLAB_AIMASK_CLASS_SKY"));
-    aiMaskClass_->append(M("TP_LOCALLAB_AIMASK_CLASS_VEGETATION"));
-    aiMaskClass_->append(M("TP_LOCALLAB_AIMASK_CLASS_BUILDING"));
-    aiMaskClass_->append(M("TP_LOCALLAB_AIMASK_CLASS_VEHICLE"));
-    aiMaskClass_->append(M("TP_LOCALLAB_AIMASK_CLASS_ANIMAL"));
-    aiMaskClass_->append(M("TP_LOCALLAB_AIMASK_CLASS_FOREGROUND"));
-    aiMaskClass_->set_active(2); // Default: Sky
+    aiMaskClass_->addEntry("mask-class-background", M("TP_LOCALLAB_AIMASK_CLASS_BACKGROUND"));
+    aiMaskClass_->addEntry("mask-class-person", M("TP_LOCALLAB_AIMASK_CLASS_PERSON"));
+    aiMaskClass_->addEntry("mask-class-sky", M("TP_LOCALLAB_AIMASK_CLASS_SKY"));
+    aiMaskClass_->addEntry("mask-class-vegetation", M("TP_LOCALLAB_AIMASK_CLASS_VEGETATION"));
+    aiMaskClass_->addEntry("mask-class-building", M("TP_LOCALLAB_AIMASK_CLASS_BUILDING"));
+    aiMaskClass_->addEntry("mask-class-vehicle", M("TP_LOCALLAB_AIMASK_CLASS_VEHICLE"));
+    aiMaskClass_->addEntry("mask-class-animal", M("TP_LOCALLAB_AIMASK_CLASS_ANIMAL"));
+    aiMaskClass_->addEntry("mask-class-foreground", M("TP_LOCALLAB_AIMASK_CLASS_FOREGROUND"));
+    aiMaskClass_->setSelected(2); // Default: Sky
+    aiMaskClass_->show();
     aiMaskClassConn_ = aiMaskClass_->signal_changed().connect(
                            sigc::mem_fun(
                                *this, &ControlSpotPanel::aiMaskClassChanged));
-    ctboxaiclass->pack_start(*aiMaskClass_);
+    aiMaskClass_->hideArrowButton();
+    aiMaskClass_->signal_clicked().connect([this]() { aiMaskClass_->triggerShowMenu(); });
+    aiMaskClass_->buttonGroup->set_hexpand(false);
+    aiMaskClass_->buttonGroup->set_halign(Gtk::ALIGN_START);
+    ctboxaiclass->pack_start(*aiMaskClass_->buttonGroup, Gtk::PACK_SHRINK);
+    aiMaskClass_->setShowSelectionLabel(true);
     if (showtooltip) {
         aiMaskClass_->set_tooltip_text(M("TP_LOCALLAB_AIMASK_CLASS_TOOLTIP"));
     }
@@ -655,33 +689,32 @@ ControlSpotPanel::ControlSpotPanel():
     setExpandAlignProperties(maskArrowLabel_, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
 
     Gtk::Button* maskHeaderBtn = Gtk::manage(new Gtk::Button());
-    maskHeaderBtn->set_name("MaskSectionHeader");
     maskHeaderBtn->set_relief(Gtk::RELIEF_NONE);
     maskHeaderBtn->set_can_focus(false);
     maskHeaderBtn->set_halign(Gtk::ALIGN_START);
     maskHeaderBtn->add(*maskArrowLabel_);
-
-    auto maskCss = Gtk::CssProvider::create();
-    maskCss->load_from_data(
-        "#MaskSectionHeader { padding: 1px 4px; min-height: 0; border: none; background: none; background-image: none; box-shadow: none; }"
-        "#MaskSectionHeader:hover { background-color: rgba(130,170,230,0.22); border-radius: 4px; }"
-        "#MaskSectionHeader label { font-size: 9px; font-weight: bold; min-height: 0; padding: 0; margin: 0; }"
-    );
-    maskHeaderBtn->get_style_context()->add_provider(maskCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-    maskArrowLabel_->get_style_context()->add_provider(maskCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
     maskHeaderBtn->signal_clicked().connect(
         sigc::mem_fun(*this, &ControlSpotPanel::toggleMaskDetail));
 
     pack_start(*maskHeaderBtn, Gtk::PACK_SHRINK);
 
     maskDetailBox_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
-    maskDetailBox_->set_no_show_all(true);
-    maskDetailBox_->pack_start(*ctboxshape, Gtk::PACK_SHRINK);
-    maskDetailBox_->pack_start(*circrad_, Gtk::PACK_SHRINK);
-    maskDetailBox_->pack_start(*transit_, Gtk::PACK_SHRINK);
-    maskDetailBox_->pack_start(*ctboxmasktype, Gtk::PACK_SHRINK);
+    Gtk::Box* shapeTypeRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+    shapeTypeRow->pack_start(*ctboxshape, Gtk::PACK_SHRINK);
+    shapeTypeRow->pack_start(*ctboxmasktype, Gtk::PACK_SHRINK);
+    maskDetailBox_->pack_start(*shapeTypeRow, Gtk::PACK_SHRINK);
     maskDetailBox_->pack_start(*ctboxaiclass, Gtk::PACK_SHRINK);
-    pack_start(*maskDetailBox_, Gtk::PACK_SHRINK);
+    circrad_->set_margin_end(40);
+    maskDetailBox_->pack_start(*circrad_, Gtk::PACK_SHRINK);
+    transit_->set_margin_end(40);
+    maskDetailBox_->pack_start(*transit_, Gtk::PACK_SHRINK);
+
+    maskRevealer_ = Gtk::manage(new Gtk::Revealer());
+    maskRevealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
+    maskRevealer_->set_transition_duration(200);
+    maskRevealer_->set_reveal_child(false);
+    maskRevealer_->add(*maskDetailBox_);
+    pack_start(*maskRevealer_, Gtk::PACK_SHRINK);
 
     Gtk::Separator *separatormet = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
     pack_start(*separatormet, Gtk::PACK_SHRINK, 2);
@@ -729,6 +762,8 @@ ControlSpotPanel::ControlSpotPanel():
     ctboxwavmethod->pack_start(*wavMethod_);
     pack_start(*ctboxwavmethod);
 */
+    set_name("MaskingPanel");
+    set_margin_end(6);  // Prevent content clipping at right edge
     show_all();
     // Define row background color
     // Mouseovered spot (opaque orange)
@@ -768,17 +803,16 @@ void ControlSpotPanel::toggleMaskDetail()
     if (maskDetailExpanded_) {
         maskArrowLabel_->set_markup(Glib::ustring("<small>\xe2\x96\xbe</small>  ") +
             Glib::Markup::escape_text(M("TP_LOCALLAB_MASK_SECTION")));
-        maskDetailBox_->set_no_show_all(false);
         maskDetailBox_->show_all();
-        maskDetailBox_->set_no_show_all(true);
         // Hide AI class if mask type is Normal
-        if (maskType_->get_active_row_number() != 1) {
+        if (maskType_->getSelected() != 1) {
             ctboxaiclass->hide();
         }
+        maskRevealer_->set_reveal_child(true);
     } else {
         maskArrowLabel_->set_markup(Glib::ustring("<small>\xe2\x96\xb8</small>  ") +
             Glib::Markup::escape_text(M("TP_LOCALLAB_MASK_SECTION")));
-        maskDetailBox_->hide();
+        maskRevealer_->set_reveal_child(false);
     }
 }
 
@@ -839,53 +873,116 @@ void ControlSpotPanel::render_preview(
     auto row = *iter;
     Gtk::CellRendererPixbuf *cp = static_cast<Gtk::CellRendererPixbuf *>(cell);
 
-    const int maskT = row[spots_.maskType];
+    const int shp    = row[spots_.shape];      // 0=ellipse, 1=rect, 2=gradient
+    const int maskT  = row[spots_.maskType];
+    const int cls    = row[spots_.aiMaskClass];
+    const double rX  = (double)row[spots_.locX]  / 3000.0;
+    const double rXL = (double)row[spots_.locXL] / 3000.0;
+    const double rY  = (double)row[spots_.locY]  / 3000.0;
+    const double rYT = (double)row[spots_.locYT] / 3000.0;
+    const double cxOff = (double)row[spots_.centerX] / 2000.0;
+    const double cyOff = (double)row[spots_.centerY] / 2000.0;
+    const double feather = std::max((double)row[spots_.transit] / 100.0, 0.05);
+    const double angle = (double)row[spots_.gradangle] * RT_PI_180;
 
-    if (maskT == 1) {
-        // AI Mask — show a small colored square indicating the class
-        const int cls = row[spots_.aiMaskClass];
+    // AI class colors
+    static const guint8 classColors[][3] = {
+        {128, 128, 128}, {220,  80,  80}, { 80, 140, 220}, { 80, 180,  80},
+        {200, 150,  60}, {160,  80, 200}, {220, 180,  50}, { 80, 200, 200},
+    };
 
-        // Colors per AI class (R, G, B)
-        static const guint8 classColors[][3] = {
-            {128, 128, 128}, // 0: Background — gray
-            {220,  80,  80}, // 1: Person — red
-            { 80, 140, 220}, // 2: Sky — blue
-            { 80, 180,  80}, // 3: Vegetation — green
-            {200, 150,  60}, // 4: Building — amber
-            {160,  80, 200}, // 5: Vehicle — purple
-            {220, 180,  50}, // 6: Animal — yellow
-            { 80, 200, 200}, // 7: Foreground — cyan
-        };
+    // Heat colors for normal masks (warm orange/yellow)
+    static const guint8 heatHi[3]  = {255, 170,  40};
+    static const guint8 heatLo[3]  = { 60,  90, 160};
 
-        const int sz = 14;
-        auto pixbuf = Gdk::Pixbuf::create(Gdk::COLORSPACE_RGB, true, 8, sz, sz);
-        pixbuf->fill(0x00000000); // transparent
+    const int W = 28, H = 18;
+    auto pixbuf = Gdk::Pixbuf::create(Gdk::COLORSPACE_RGB, true, 8, W, H);
+    pixbuf->fill(0x00000000);
+    guint8* pixels = pixbuf->get_pixels();
+    const int rowstride = pixbuf->get_rowstride();
 
-        const int ci = std::min(std::max(cls, 0), 7);
-        guint8* pixels = pixbuf->get_pixels();
-        const int rowstride = pixbuf->get_rowstride();
+    const double cx = 0.5 + cxOff;
+    const double cy = 0.5 + cyOff;
 
-        // Draw filled rounded-ish square (1px border radius by skipping corners)
-        for (int y = 0; y < sz; y++) {
-            for (int x = 0; x < sz; x++) {
-                // Skip the 4 exact corners for a slightly rounded look
-                bool corner = (x == 0 && y == 0) || (x == sz-1 && y == 0) ||
-                              (x == 0 && y == sz-1) || (x == sz-1 && y == sz-1);
-                if (corner) continue;
+    for (int py = 0; py < H; py++) {
+        for (int px = 0; px < W; px++) {
+            double x = (double)px / (W - 1); // 0..1
+            double y = (double)py / (H - 1);
 
-                guint8* p = pixels + y * rowstride + x * 4;
+            double dist = 0.0;
+
+            if (shp == 2) {
+                // Gradient: linear along angle direction from center
+                double dx = x - cx;
+                double dy = y - cy;
+                dist = std::abs(dx * std::sin(angle) - dy * std::cos(angle));
+                dist /= std::max(feather, 0.05);
+            } else {
+                // Ellipse or Rectangle
+                double extR = std::max(rX,  0.01);
+                double extL = std::max(rXL, 0.01);
+                double extB = std::max(rY,  0.01);
+                double extT = std::max(rYT, 0.01);
+
+                double dx = x - cx;
+                double dy = y - cy;
+                double nx = dx / (dx >= 0 ? extR : extL);
+                double ny = dy / (dy >= 0 ? extB : extT);
+
+                if (shp == 0) {
+                    dist = std::sqrt(nx * nx + ny * ny);
+                } else {
+                    dist = std::max(std::abs(nx), std::abs(ny));
+                }
+            }
+
+            // Compute strength with feathering
+            double strength;
+            if (dist <= 1.0) {
+                strength = 1.0;
+            } else if (dist <= 1.0 + feather) {
+                strength = 1.0 - (dist - 1.0) / feather;
+            } else {
+                strength = 0.0;
+            }
+
+            if (strength <= 0.001) continue;
+
+            guint8* p = pixels + py * rowstride + px * 4;
+
+            if (maskT == 1) {
+                // AI mask: use class color
+                const int ci = std::min(std::max(cls, 0), 7);
                 p[0] = classColors[ci][0];
                 p[1] = classColors[ci][1];
                 p[2] = classColors[ci][2];
-                p[3] = 220; // slightly translucent
+                p[3] = (guint8)(strength * 200);
+            } else {
+                // Normal mask: heat gradient (lo→hi by strength)
+                double s = strength;
+                p[0] = (guint8)(heatLo[0] + s * (heatHi[0] - heatLo[0]));
+                p[1] = (guint8)(heatLo[1] + s * (heatHi[1] - heatLo[1]));
+                p[2] = (guint8)(heatLo[2] + s * (heatHi[2] - heatLo[2]));
+                p[3] = (guint8)(strength * 200);
             }
         }
-
-        cp->property_pixbuf() = pixbuf;
-    } else {
-        // Normal mask — no preview icon
-        cp->property_pixbuf().reset_value();
     }
+
+    // Subtle 1px border for definition
+    for (int px = 0; px < W; px++) {
+        for (int py : {0, H - 1}) {
+            guint8* p = pixels + py * rowstride + px * 4;
+            p[0] = 80; p[1] = 85; p[2] = 95; p[3] = 100;
+        }
+    }
+    for (int py = 0; py < H; py++) {
+        for (int px : {0, W - 1}) {
+            guint8* p = pixels + py * rowstride + px * 4;
+            p[0] = 80; p[1] = 85; p[2] = 95; p[3] = 100;
+        }
+    }
+
+    cp->property_pixbuf() = pixbuf;
 }
 
 void ControlSpotPanel::render_name(
@@ -1186,7 +1283,7 @@ void ControlSpotPanel::load_ControlSpot_param()
 
     // Load param in selected control spot
     prevMethod_->set_active(row[spots_.prevMethod]);
-    shape_->set_active(row[spots_.shape]);
+    shape_->setSelected(row[spots_.shape]);
     spotMethod_->set_active(row[spots_.spotMethod]);
     sensiexclu_->setValue((double)row[spots_.sensiexclu]);
     structexclu_->setValue((double)row[spots_.structexclu]);
@@ -1231,15 +1328,23 @@ void ControlSpotPanel::load_ControlSpot_param()
     //complexMethod_->set_active(row[spots_.complexMethod]);
     wavMethod_->set_active(row[spots_.wavMethod]);
 	avoidgamutMethod_->set_active(row[spots_.avoidgamutMethod]);
-    maskType_->set_active(row[spots_.maskType]);
-    aiMaskClass_->set_active(row[spots_.aiMaskClass]);
+    maskType_->setSelected(row[spots_.maskType]);
+    aiMaskClass_->setSelected(row[spots_.aiMaskClass]);
     ctboxaiclass->set_visible(row[spots_.maskType] == 1);
 
-    // Show/hide gradient angle slider based on shape
-    if (shape_->get_active_row_number() == 2) { // Gradient
+    // Show/hide controls based on shape
+    if (shape_->getSelected() == 2) { // Gradient
         gradangle_->show();
+        locX_->hide();
+        locXL_->hide();
+        locY_->hide();
+        locYT_->hide();
     } else {
         gradangle_->hide();
+        locX_->show();
+        locXL_->show();
+        locY_->show();
+        locYT_->show();
     }
 }
 
@@ -1273,10 +1378,8 @@ void ControlSpotPanel::controlspotChanged()
     }
 }
 
-void ControlSpotPanel::shapeChanged()
+void ControlSpotPanel::shapeChanged(int /*index*/)
 {
-    // printf("shapeChanged\n");
-
     // Get selected control spot
     const auto s = treeview_->get_selection();
 
@@ -1287,19 +1390,70 @@ void ControlSpotPanel::shapeChanged()
     const auto iter = s->get_selected();
     Gtk::TreeModel::Row row = *iter;
 
-    row[spots_.shape] = shape_->get_active_row_number();
+    const int prevShape = row[spots_.shape];
+    row[spots_.shape] = shape_->getSelected();
+
+    // When switching to Gradient, save current dimensions and expand bounding box
+    if (shape_->getSelected() == 2 && prevShape != 2) {
+        savedLocX_  = (double)row[spots_.locX];
+        savedLocXL_ = (double)row[spots_.locXL];
+        savedLocY_  = (double)row[spots_.locY];
+        savedLocYT_ = (double)row[spots_.locYT];
+        savedTransit_ = row[spots_.transit];
+        hasSavedDims_ = true;
+
+        disableParamlistener(true);
+        locX_->setValue(3000.);
+        row[spots_.locX] = locX_->getIntValue();
+        locXL_->setValue(3000.);
+        row[spots_.locXL] = locXL_->getIntValue();
+        locY_->setValue(3000.);
+        row[spots_.locY] = locY_->getIntValue();
+        locYT_->setValue(3000.);
+        row[spots_.locYT] = locYT_->getIntValue();
+        transit_->setValue(100.);
+        row[spots_.transit] = transit_->getValue();
+        disableParamlistener(false);
+    }
+    // When switching back from Gradient, restore saved dimensions
+    else if (prevShape == 2 && shape_->getSelected() != 2 && hasSavedDims_) {
+        disableParamlistener(true);
+        locX_->setValue(savedLocX_);
+        row[spots_.locX] = locX_->getIntValue();
+        locXL_->setValue(savedLocXL_);
+        row[spots_.locXL] = locXL_->getIntValue();
+        locY_->setValue(savedLocY_);
+        row[spots_.locY] = locY_->getIntValue();
+        locYT_->setValue(savedLocYT_);
+        row[spots_.locYT] = locYT_->getIntValue();
+        transit_->setValue(savedTransit_);
+        row[spots_.transit] = transit_->getValue();
+        disableParamlistener(false);
+        hasSavedDims_ = false;
+    }
+
     updateControlSpotCurve(row);
 
-    // Show/hide gradient angle slider based on shape
-    if (shape_->get_active_row_number() == 2) { // Gradient
+    // Show/hide controls based on shape
+    if (shape_->getSelected() == 2) { // Gradient
         gradangle_->show();
+        locX_->hide();
+        locXL_->hide();
+        locY_->hide();
+        locYT_->hide();
     } else {
         gradangle_->hide();
+        locX_->show();
+        locXL_->show();
+        locY_->show();
+        locYT_->show();
     }
 
     // Raise event
     if (listener) {
-        listener->panelChanged(EvLocallabSpotShape, shape_->get_active_text());
+        const char* shapeKeys[] = {"TP_LOCALLAB_ELI", "TP_LOCALLAB_RECT", "TP_LOCALLAB_GRAD"};
+        const int sel = shape_->getSelected();
+        listener->panelChanged(EvLocallabSpotShape, sel >= 0 && sel < 3 ? M(shapeKeys[sel]) : "");
     }
 }
 
@@ -1391,8 +1545,8 @@ void ControlSpotPanel::spotMethodChanged()
             row[spots_.locY] = locY_->getIntValue();
             locYT_->setValue(150.);
             row[spots_.locYT] = locYT_->getIntValue();
-            shape_->set_active(0);
-            row[spots_.shape] = shape_->get_active_row_number();
+            shape_->setSelected(0);
+            row[spots_.shape] = shape_->getSelected();
             transit_->setValue(60.);
             row[spots_.transit] = transit_->getValue();
             disableParamlistener(false);
@@ -1412,8 +1566,8 @@ void ControlSpotPanel::spotMethodChanged()
             row[spots_.locY] = locY_->getIntValue();
             locYT_->setValue(150.);
             row[spots_.locYT] = locYT_->getIntValue();
-            shape_->set_active(0);
-            row[spots_.shape] = shape_->get_active_row_number();
+            shape_->setSelected(0);
+            row[spots_.shape] = shape_->getSelected();
             transit_->setValue(60.);
             row[spots_.transit] = transit_->getValue();
             disableParamlistener(false);
@@ -1421,7 +1575,7 @@ void ControlSpotPanel::spotMethodChanged()
         }
     } else if (spotMethod_->get_active_row_number() == 2  || spotMethod_->get_active_row_number() == 3) { // Full image or Global case
         excluFrame->hide();
-        shape_->set_active(0);
+        shape_->setSelected(0);
 
         locX_->setValue(3000.);
         row[spots_.locX] = locX_->getIntValue();
@@ -1431,8 +1585,8 @@ void ControlSpotPanel::spotMethodChanged()
         row[spots_.locY] = locY_->getIntValue();
         locYT_->setValue(3000.);
         row[spots_.locYT] = locYT_->getIntValue();
-        shape_->set_active(1);
-        row[spots_.shape] = shape_->get_active_row_number();
+        shape_->setSelected(1);
+        row[spots_.shape] = shape_->getSelected();
         transit_->setValue(100.);
         row[spots_.transit] = transit_->getValue();
         
@@ -1652,7 +1806,7 @@ void ControlSpotPanel::wavMethodChanged()
     }
 }
 
-void ControlSpotPanel::maskTypeChanged()
+void ControlSpotPanel::maskTypeChanged(int /*index*/)
 {
     const auto s = treeview_->get_selection();
 
@@ -1663,26 +1817,33 @@ void ControlSpotPanel::maskTypeChanged()
     const auto iter = s->get_selected();
     Gtk::TreeModel::Row row = *iter;
 
-    row[spots_.maskType] = maskType_->get_active_row_number();
+    row[spots_.maskType] = maskType_->getSelected();
 
     // Show/hide AI class based on mask type
-    if (maskType_->get_active_row_number() == 1) {
+    if (maskType_->getSelected() == 1) {
         ctboxaiclass->show();
-        // AI masks use full-image coverage with rectangle shape
+        // Set spotMethod to "full" for engine compatibility, but do NOT
+        // trigger spotMethodChanged() which would expand loc to 3000 and
+        // lose the user's geometric boundary. The AI mask + geometric
+        // boundary work together: effect only applies where BOTH the AI
+        // detects the class AND the pixel is within the spot boundary.
         row[spots_.spotMethod] = 2; // "full"
         row[spots_.shape] = 1; // "RECT"
-        shape_->set_active(1);
+        shape_->setSelected(1);
+        spotMethodconn_.block(true);
         spotMethod_->set_active(2);
+        spotMethodconn_.block(false);
     } else {
         ctboxaiclass->hide();
     }
 
     if (listener) {
-        listener->panelChanged(EvLocallabSpotSelectedWithMask, maskType_->get_active_text());
+        listener->panelChanged(EvLocallabSpotSelectedWithMask,
+            maskType_->getSelected() == 1 ? M("TP_LOCALLAB_MASKTYPE_AI") : M("TP_LOCALLAB_MASKTYPE_NORMAL"));
     }
 }
 
-void ControlSpotPanel::aiMaskClassChanged()
+void ControlSpotPanel::aiMaskClassChanged(int /*index*/)
 {
     const auto s = treeview_->get_selection();
 
@@ -1693,10 +1854,18 @@ void ControlSpotPanel::aiMaskClassChanged()
     const auto iter = s->get_selected();
     Gtk::TreeModel::Row row = *iter;
 
-    row[spots_.aiMaskClass] = aiMaskClass_->get_active_row_number();
+    row[spots_.aiMaskClass] = aiMaskClass_->getSelected();
 
     if (listener) {
-        listener->panelChanged(EvLocallabSpotSelectedWithMask, aiMaskClass_->get_active_text());
+        const char* aiClassKeys[] = {
+            "TP_LOCALLAB_AIMASK_CLASS_BACKGROUND", "TP_LOCALLAB_AIMASK_CLASS_PERSON",
+            "TP_LOCALLAB_AIMASK_CLASS_SKY", "TP_LOCALLAB_AIMASK_CLASS_VEGETATION",
+            "TP_LOCALLAB_AIMASK_CLASS_BUILDING", "TP_LOCALLAB_AIMASK_CLASS_VEHICLE",
+            "TP_LOCALLAB_AIMASK_CLASS_ANIMAL", "TP_LOCALLAB_AIMASK_CLASS_FOREGROUND"
+        };
+        const int sel = aiMaskClass_->getSelected();
+        listener->panelChanged(EvLocallabSpotSelectedWithMask,
+            sel >= 0 && sel < 8 ? M(aiClassKeys[sel]) : "");
     }
 }
 
@@ -2605,13 +2774,13 @@ void ControlSpotPanel::addControlSpotCurve(Gtk::TreeModel::Row& row)
     EditSubscriber::mouseOverGeometry.push_back(cirY);  // (curveid - 1) * GEOM_PER_SPOT + 5
     EditSubscriber::mouseOverGeometry.push_back(cirYT);  // (curveid - 1) * GEOM_PER_SPOT + 6
 
-    // Gradient geometry (mouseOver)
+    // Gradient geometry (mouseOver) — wide hit area for easy grabbing
     gradLine1 = new Line();
     gradLine1->datum = Geometry::IMAGE;
-    gradLine1->innerLineWidth = 2;
+    gradLine1->innerLineWidth = 30;
     gradLine2 = new Line();
     gradLine2->datum = Geometry::IMAGE;
-    gradLine2->innerLineWidth = 2;
+    gradLine2->innerLineWidth = 30;
     gradAngleCircle = new Circle();
     gradAngleCircle->datum = Geometry::IMAGE;
     gradAngleCircle->radiusInImageSpace = false;
@@ -2689,6 +2858,7 @@ void ControlSpotPanel::updateControlSpotCurve(const Gtk::TreeModel::Row& row)
     };
 
     const double gradangle_ = row[spots_.gradangle];
+    const double transit_val = row[spots_.transit];
     const auto updateGradientLine = [&](Geometry* geom1, Geometry* geom2, Geometry* handle) {
         const float theta = gradangle_ * rtengine::RT_PI_F / 180.f;
         const float sinT = std::sin(theta);
@@ -2696,15 +2866,19 @@ void ControlSpotPanel::updateControlSpotCurve(const Gtk::TreeModel::Row& row)
         // Perpendicular direction to gradient
         const float perpX = cosT;
         const float perpY = sinT;
-        // Max span for drawing the lines
-        const float maxExtent = std::max(std::max((float)decayX, (float)decayXL), std::max((float)decayY, (float)decayYT));
-        const float span = maxExtent * 1.5f;
+        // Max span for drawing the lines — cap to image size
+        const float maxExtent = std::max((float)imW, (float)imH);
+        const float span = maxExtent;
         // Transition band position along gradient direction
-        const float maxX = std::max((float)decayX, (float)decayXL);
-        const float maxY = std::max((float)decayY, (float)decayYT);
+        // Cap to image extent from center (matching engine calcTransitiongrad)
+        const float imgMaxX = std::max((float)origin.x, (float)(imW - origin.x));
+        const float imgMaxY = std::max((float)origin.y, (float)(imH - origin.y));
+        const float maxX = std::min(std::max((float)decayX, (float)decayXL), imgMaxX);
+        const float maxY = std::min(std::max((float)decayY, (float)decayYT), imgMaxY);
         const float maxProj = maxX * std::abs(sinT) + maxY * std::abs(cosT);
-        // Use ach=0.5 for visual representation of the transition band
-        const float bandHalf = maxProj * 0.5f;
+        // Position lines at actual transition boundaries using transit value
+        const float ach = static_cast<float>(transit_val) / 100.f;
+        const float bandHalf = maxProj * ach;
 
         auto* l1 = static_cast<Line*>(geom1);
         l1->begin.set(origin.x + sinT * bandHalf - perpX * span,
@@ -2913,9 +3087,11 @@ CursorShape ControlSpotPanel::getCursor(int objectID, int xPos, int yPos) const
         case (6): // cirYT: (curveid_ - 1) * GEOM_PER_SPOT + 6
             return CSMove1DV;
 
-        case (7): // gradLine1: (curveid_ - 1) * GEOM_PER_SPOT + 7
-        case (8): // gradLine2: (curveid_ - 1) * GEOM_PER_SPOT + 8
-        case (9): // gradAngleHandle: (curveid_ - 1) * GEOM_PER_SPOT + 9
+        case (7): // gradLine1: drag to adjust gradient width
+        case (8): // gradLine2: drag to adjust gradient width
+            return CSResizeHeight;
+
+        case (9): // gradAngleHandle: drag to rotate gradient
             return CSMove2D;
 
         default:
@@ -3214,8 +3390,38 @@ bool ControlSpotPanel::drag1(int modifierKey)
         }
     }
 
+    // Gradient line drag — adjust transit (width of gradient transition)
+    if (rem == 7 || rem == 8) {
+        const double cx = (double)imW / 2. + centerX_->getValue() * (double)imW / 2000.;
+        const double cy = (double)imH / 2. + centerY_->getValue() * (double)imH / 2000.;
+        const double theta = gradangle_->getValue() * rtengine::RT_PI / 180.0;
+        const double sinT = std::sin(theta);
+        const double cosT = std::cos(theta);
+        // Project mouse position onto gradient direction from center
+        const double dx = (double)newCoord.x - cx;
+        const double dy = (double)newCoord.y - cy;
+        const double proj = std::abs(dx * sinT - dy * cosT);
+        // Compute maxProj (matching engine and visualization)
+        const double imgMaxX = std::max(cx, (double)imW - cx);
+        const double imgMaxY = std::max(cy, (double)imH - cy);
+        const double maxProj = imgMaxX * std::abs(sinT) + imgMaxY * std::abs(cosT);
+        // Convert distance to transit value: proj = maxProj * (transit/100)
+        if (maxProj > 0.001) {
+            double newTransit = (proj / maxProj) * 100.0;
+            newTransit = rtengine::LIM(newTransit, 0.5, 100.0);
+            transit_->setValue(newTransit);
+            row[spots_.transit] = transit_->getValue();
+        }
+
+        updateControlSpotCurve(row);
+
+        if (listener) {
+            listener->panelChanged(EvLocallabSpotTransit, transit_->getTextValue());
+        }
+    }
+
     // Gradient angle handle drag
-    if (rem >= 7 && rem <= 9) {
+    if (rem == 9) {
         // Compute center position in image coords
         const double cx = (double)imW / 2. + centerX_->getValue() * (double)imW / 2000.;
         const double cy = (double)imH / 2. + centerY_->getValue() * (double)imH / 2000.;

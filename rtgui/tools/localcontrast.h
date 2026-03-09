@@ -52,5 +52,6 @@ public:
     void adjusterChanged(Adjuster *a, double newval) override;
     void enabledChanged() override;
     void setAdjusterBehavior(bool radiusAdd, bool amountAdd, bool darknessAdd, bool lightnessAdd);
+    Adjuster* getAmountSlider() { return amount; }
 };
 

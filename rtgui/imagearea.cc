@@ -245,6 +245,19 @@ void ImageArea::redraw ()
     }
 }
 
+void ImageArea::setCropPreviewMode (bool editingCrop)
+{
+    if (mainCropWindow) {
+        mainCropWindow->setSolidCropOverlay(!editingCrop);
+        if (!editingCrop && mainCropWindow->cropHandler.cropParams->enabled) {
+            mainCropWindow->zoomFitCrop();
+        } else if (editingCrop) {
+            mainCropWindow->zoomFit();
+        }
+        redraw();
+    }
+}
+
 void ImageArea::switchPickerVisibility (bool isVisible)
 {
     redraw();
@@ -707,7 +720,9 @@ void ImageArea::cropZoomChanged (CropWindow* cw)
 {
 
     if (cw == mainCropWindow) {
-        parent->zoomChanged ();
+        if (!suppressZoomSync_) {
+            parent->zoomChanged ();
+        }
         syncBeforeAfterViews ();
         zoomPanel->refreshZoomLabel ();
     }
@@ -728,7 +743,9 @@ void ImageArea::setZoom (double zoom)
 {
 
     if (mainCropWindow) {
+        suppressZoomSync_ = true;
         mainCropWindow->setZoom (zoom);
+        suppressZoomSync_ = false;
     }
 
     zoomPanel->refreshZoomLabel ();

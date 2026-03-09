@@ -165,11 +165,35 @@ void FileBrowserEntry::customBackBufferUpdate (Cairo::RefPtr<Cairo::Context> c)
     // somewhere in pipeline customBackBufferUpdate is called when scale == 1.0, which is nonsense for a thumb
     if (scale == 1.0 || !cropParams->enabled) return;
 
+    bool inFilmstrip = parent && parent->getLocation() == ThumbBrowserBase::THLOC_EDITOR;
+
     auto drawScaled = [&](const rtengine::procparams::CropParams& crop) {
         double zoom = scale / activeDeviceScale;
-        drawCrop(c, prevPos.x, prevPos.y, previewSize.width, previewSize.height,
-                 previewSize.width, previewSize.height,
-                 0, 0, zoom, crop, true, false);
+        if (inFilmstrip) {
+            // In filmstrip: hide non-crop areas with filmstrip background color
+            c->save();
+            c->set_line_width(0.0);
+            c->rectangle(prevPos.x, prevPos.y, previewSize.width, previewSize.height);
+            c->clip();
+
+            double c1x = crop.x * zoom;
+            double c1y = crop.y * zoom;
+            double c2x = (crop.x + crop.w) * zoom;
+            double c2y = (crop.y + crop.h) * zoom;
+
+            Gdk::RGBA bg = parent->getNormalBgColor();
+            c->set_source_rgb(bg.get_red(), bg.get_green(), bg.get_blue());
+            c->rectangle(prevPos.x, prevPos.y, previewSize.width, round(c1y) + 0.5);
+            c->rectangle(prevPos.x, prevPos.y + round(c2y) + 0.5, previewSize.width, previewSize.height - round(c2y));
+            c->rectangle(prevPos.x, prevPos.y + round(c1y) + 0.5, round(c1x) + 0.5, round(c2y - c1y + 1) + 0.5);
+            c->rectangle(prevPos.x + round(c2x) + 0.5, prevPos.y + round(c1y) + 0.5, previewSize.width - round(c2x), round(c2y - c1y + 1) + 0.5);
+            c->fill();
+            c->restore();
+        } else {
+            drawCrop(c, prevPos.x, prevPos.y, previewSize.width, previewSize.height,
+                     previewSize.width, previewSize.height,
+                     0, 0, zoom, crop, true, false);
+        }
     };
 
     if (state == SCropSelecting || state == SResizeH1 || state == SResizeH2 || state == SResizeW1 || state == SResizeW2 || state == SResizeTL || state == SResizeTR || state == SResizeBL || state == SResizeBR || state == SCropMove) {

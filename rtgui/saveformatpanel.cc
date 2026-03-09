@@ -197,14 +197,20 @@ void SaveFormatPanel::formatChanged ()
 
     if (fr == "jpg") {
         jpegOpts->show_all();
+        if (compactMode_) {
+            // Subsampling was moved to the Options expander
+            if (subsampRow_) subsampRow_->show_all();
+        }
         tiffUncompressed->hide();
         bigTiff->hide();
     } else if (fr == "png") {
         jpegOpts->hide();
+        if (compactMode_ && subsampRow_) subsampRow_->hide();
         tiffUncompressed->hide();
         bigTiff->hide();
     } else if (fr == "tif") {
         jpegOpts->hide();
+        if (compactMode_ && subsampRow_) subsampRow_->hide();
         tiffUncompressed->show_all();
         bigTiff->show_all();
     }
@@ -212,6 +218,41 @@ void SaveFormatPanel::formatChanged ()
     if (listener) {
         listener->formatChanged (fr);
     }
+}
+
+void SaveFormatPanel::setCompactMode()
+{
+    compactMode_ = true;
+
+    // Remove advanced widgets from their current parents
+    jpegOpts->remove(*jpegSubSampLabel);
+    jpegOpts->remove(*jpegSubSamp);
+    remove(*tiffUncompressed);
+    remove(*bigTiff);
+    remove(*savesPP);
+
+    // Create collapsed "Options" expander
+    auto* expander = Gtk::manage(new Gtk::Expander("Options"));
+    expander->set_expanded(false);
+
+    auto* optBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 2));
+
+    subsampRow_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+    subsampRow_->pack_start(*jpegSubSampLabel, Gtk::PACK_SHRINK);
+    subsampRow_->pack_start(*jpegSubSamp, Gtk::PACK_EXPAND_WIDGET);
+
+    optBox->pack_start(*subsampRow_, Gtk::PACK_SHRINK);
+    optBox->pack_start(*tiffUncompressed, Gtk::PACK_SHRINK);
+    optBox->pack_start(*bigTiff, Gtk::PACK_SHRINK);
+    optBox->pack_start(*savesPP, Gtk::PACK_SHRINK);
+
+    expander->add(*optBox);
+    attach(*expander, 0, 5, 1, 1);
+    expander->show_all();
+    expander->set_expanded(false);
+
+    // Trigger format-specific visibility
+    formatChanged();
 }
 
 void SaveFormatPanel::adjusterChanged(Adjuster* a, double newval)

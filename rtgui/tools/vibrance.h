@@ -84,4 +84,7 @@ public:
     void avoidcolorshift_toggled ();
     void pastsattog_toggled      ();
     std::vector<double> getCurvePoints(ThresholdSelector* tAdjuster) const override;
+
+    Adjuster* getVibranceSlider() { return pastels; }
+    Adjuster* getSaturationSlider() { return saturated; }
 };

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <g style="opacity:0.7;fill:none;stroke:#cccccc;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round">
+    <rect x="1.5" y="8.5" width="21" height="7" rx="3.5" transform="rotate(-45 12 12)"/>
+    <rect x="1.5" y="8.5" width="21" height="7" rx="3.5" transform="rotate(45 12 12)"/>
+  </g>
+  <g style="opacity:0.8;fill:#cccccc;stroke:none">
+    <circle cx="12" cy="10" r="0.9"/>
+    <circle cx="14" cy="12" r="0.9"/>
+    <circle cx="10" cy="12" r="0.9"/>
+    <circle cx="12" cy="14" r="0.9"/>
+  </g>
+</svg>

@@ -303,6 +303,15 @@ ToneCurveParams::ToneCurveParams() :
     curve2{
         DCT_Linear
     },
+    curveR{
+        DCT_Linear
+    },
+    curveG{
+        DCT_Linear
+    },
+    curveB{
+        DCT_Linear
+    },
     curveMode(ToneCurveMode::STD),
     curveMode2(ToneCurveMode::STD),
     brightness(0),
@@ -330,6 +339,9 @@ bool ToneCurveParams::isPanningRelatedChange(const ToneCurveParams& other) const
         && expcomp == other.expcomp
         && curve == other.curve
         && curve2 == other.curve2
+        && curveR == other.curveR
+        && curveG == other.curveG
+        && curveB == other.curveB
         && curveMode == other.curveMode
         && curveMode2 == other.curveMode2
         && brightness == other.brightness
@@ -355,6 +367,9 @@ bool ToneCurveParams::operator ==(const ToneCurveParams& other) const
         && expcomp == other.expcomp
         && curve == other.curve
         && curve2 == other.curve2
+        && curveR == other.curveR
+        && curveG == other.curveG
+        && curveB == other.curveB
         && curveMode == other.curveMode
         && curveMode2 == other.curveMode2
         && brightness == other.brightness
@@ -683,6 +698,32 @@ bool GrainParams::operator==(const GrainParams &other) const
 }
 
 bool GrainParams::operator!=(const GrainParams &other) const
+{
+    return !(*this == other);
+}
+
+TiltShiftParams::TiltShiftParams():
+    enabled(false),
+    amount(0),
+    focusPos(50),
+    focusWidth(20),
+    feather(50),
+    angle(0)
+{
+}
+
+bool TiltShiftParams::operator==(const TiltShiftParams &other) const
+{
+    return
+        enabled == other.enabled
+        && amount == other.amount
+        && focusPos == other.focusPos
+        && focusWidth == other.focusWidth
+        && feather == other.feather
+        && angle == other.angle;
+}
+
+bool TiltShiftParams::operator!=(const TiltShiftParams &other) const
 {
     return !(*this == other);
 }
@@ -1192,7 +1233,7 @@ SharpeningParams::SharpeningParams() :
     blurradius(0.2),
     gamma(1.0),
     radius(0.5),
-    amount(200),
+    amount(0),
     threshold(20, 80, 2000, 1200, false),
     edgesonly(false),
     edges_radius(1.9),
@@ -1704,7 +1745,7 @@ DirPyrDenoiseParams::DirPyrDenoiseParams() :
     perform(false),
     luma(0),
     Ldetail(0),
-    chroma(15),
+    chroma(0),
     redchro(0),
     bluechro(0),
     autoGain(true),
@@ -1712,7 +1753,7 @@ DirPyrDenoiseParams::DirPyrDenoiseParams() :
     dmethod("Lab"),
     Lmethod("SLI"),
     Cmethod("MAN"),
-    C2method("AUTO"),
+    C2method("MANU"),
     smethod("shal"),
     medmethod("soft"),
     methodmed("none"),
@@ -2184,7 +2225,8 @@ PerspectiveParams::PerspectiveParams() :
     projection_rotate(0.0),
     projection_shift_horiz(0.0),
     projection_shift_vert(0.0),
-    projection_yaw(0.0)
+    projection_yaw(0.0),
+    mesh_grid_size(0)
 {
 }
 
@@ -2211,7 +2253,10 @@ bool PerspectiveParams::operator ==(const PerspectiveParams& other) const
         // rare and a small issue. Besides, a proper comparison requires lots
         // more code which introduces clutter.
         && control_line_values == other.control_line_values
-        && control_line_types == other.control_line_types;
+        && control_line_types == other.control_line_types
+        && mesh_grid_size == other.mesh_grid_size
+        && mesh_offsets_x == other.mesh_offsets_x
+        && mesh_offsets_y == other.mesh_offsets_y;
 }
 
 bool PerspectiveParams::operator !=(const PerspectiveParams& other) const
@@ -2223,7 +2268,7 @@ GradientParams::GradientParams() :
     enabled(false),
     degree(0.0),
     feather(25),
-    strength(0.60),
+    strength(0.0),
     centerX(0),
     centerY(0)
 {
@@ -2247,7 +2292,7 @@ bool GradientParams::operator !=(const GradientParams& other) const
 
 PCVignetteParams::PCVignetteParams() :
     enabled(false),
-    strength(0.60),
+    strength(0.0),
     feather(50),
     roundness(50)
 {
@@ -2364,7 +2409,10 @@ BlackWhiteParams::BlackWhiteParams() :
     mixerPurple(33),
     gammaRed(0),
     gammaGreen(0),
-    gammaBlue(0)
+    gammaBlue(0),
+    neutrals(0),
+    tone(0),
+    strength(100)
 {
 }
 
@@ -2393,7 +2441,10 @@ bool BlackWhiteParams::operator ==(const BlackWhiteParams& other) const
         && mixerPurple == other.mixerPurple
         && gammaRed == other.gammaRed
         && gammaGreen == other.gammaGreen
-        && gammaBlue == other.gammaBlue;
+        && gammaBlue == other.gammaBlue
+        && neutrals == other.neutrals
+        && tone == other.tone
+        && strength == other.strength;
 }
 
 bool BlackWhiteParams::operator !=(const BlackWhiteParams& other) const
@@ -3343,6 +3394,54 @@ bool FilmSimulationParams::operator !=(const FilmSimulationParams& other) const
 }
 
 
+FilmPresetsParams::FilmPresetsParams() :
+    enabled(false),
+    preset("heritage_gold"),
+    strength(0),
+    contrast(0),
+    saturation(0),
+    warmth(0),
+    tint(0),
+    fade(0),
+    rolloff(0),
+    shadowHue(220),
+    shadowTint(0),
+    highlightHue(40),
+    highlightTint(0),
+    halation(0),
+    redShift(0),
+    greenShift(0),
+    blueShift(0)
+{
+}
+
+bool FilmPresetsParams::operator==(const FilmPresetsParams &other) const
+{
+    return
+        enabled == other.enabled
+        && preset == other.preset
+        && strength == other.strength
+        && contrast == other.contrast
+        && saturation == other.saturation
+        && warmth == other.warmth
+        && tint == other.tint
+        && fade == other.fade
+        && rolloff == other.rolloff
+        && shadowHue == other.shadowHue
+        && shadowTint == other.shadowTint
+        && highlightHue == other.highlightHue
+        && highlightTint == other.highlightTint
+        && halation == other.halation
+        && redShift == other.redShift
+        && greenShift == other.greenShift
+        && blueShift == other.blueShift;
+}
+
+bool FilmPresetsParams::operator!=(const FilmPresetsParams &other) const
+{
+    return !(*this == other);
+}
+
 SoftLightParams::SoftLightParams() :
     enabled(false),
     strength(0)
@@ -3914,6 +4013,8 @@ void ProcParams::setDefaults()
 
     filmSimulation = {};
 
+    filmPresets = {};
+
     softlight = {};
 
     dehaze = {};
@@ -3992,6 +4093,9 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
 
         saveToKeyfile(!pedited || pedited->toneCurve.curve, "Exposure", "Curve", toneCurve.curve, keyFile);
         saveToKeyfile(!pedited || pedited->toneCurve.curve2, "Exposure", "Curve2", toneCurve.curve2, keyFile);
+        saveToKeyfile(!pedited || pedited->toneCurve.curveR, "Exposure", "CurveR", toneCurve.curveR, keyFile);
+        saveToKeyfile(!pedited || pedited->toneCurve.curveG, "Exposure", "CurveG", toneCurve.curveG, keyFile);
+        saveToKeyfile(!pedited || pedited->toneCurve.curveB, "Exposure", "CurveB", toneCurve.curveB, keyFile);
 
 // Retinex
         saveToKeyfile(!pedited || pedited->retinex.enabled, "Retinex", "Enabled", retinex.enabled, keyFile);
@@ -4051,6 +4155,14 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->grain.strength, "Grain", "Strength", grain.strength, keyFile);
         saveToKeyfile(!pedited || pedited->grain.scale, "Grain", "Scale", grain.scale, keyFile);
 
+// Tilt-Shift
+        saveToKeyfile(!pedited || pedited->tiltShift.enabled, "TiltShift", "Enabled", tiltShift.enabled, keyFile);
+        saveToKeyfile(!pedited || pedited->tiltShift.amount, "TiltShift", "Amount", tiltShift.amount, keyFile);
+        saveToKeyfile(!pedited || pedited->tiltShift.focusPos, "TiltShift", "FocusPos", tiltShift.focusPos, keyFile);
+        saveToKeyfile(!pedited || pedited->tiltShift.focusWidth, "TiltShift", "FocusWidth", tiltShift.focusWidth, keyFile);
+        saveToKeyfile(!pedited || pedited->tiltShift.feather, "TiltShift", "Feather", tiltShift.feather, keyFile);
+        saveToKeyfile(!pedited || pedited->tiltShift.angle, "TiltShift", "Angle", tiltShift.angle, keyFile);
+
 // Lens Blur
         saveToKeyfile(!pedited || pedited->lensBlur.enabled, "Lens Blur", "Enabled", lensBlur.enabled, keyFile);
         saveToKeyfile(!pedited || pedited->lensBlur.amount, "Lens Blur", "Amount", lensBlur.amount, keyFile);
@@ -4096,6 +4208,9 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->blackwhite.gammaRed, "Black & White", "GammaRed", blackwhite.gammaRed, keyFile);
         saveToKeyfile(!pedited || pedited->blackwhite.gammaGreen, "Black & White", "GammaGreen", blackwhite.gammaGreen, keyFile);
         saveToKeyfile(!pedited || pedited->blackwhite.gammaBlue, "Black & White", "GammaBlue", blackwhite.gammaBlue, keyFile);
+        saveToKeyfile(!pedited || pedited->blackwhite.neutrals, "Black & White", "Neutrals", blackwhite.neutrals, keyFile);
+        saveToKeyfile(!pedited || pedited->blackwhite.tone, "Black & White", "Tone", blackwhite.tone, keyFile);
+        saveToKeyfile(!pedited || pedited->blackwhite.strength, "Black & White", "Strength", blackwhite.strength, keyFile);
         saveToKeyfile(!pedited || pedited->blackwhite.algo, "Black & White", "Algorithm", blackwhite.algo, keyFile);
         saveToKeyfile(!pedited || pedited->blackwhite.luminanceCurve, "Black & White", "LuminanceCurve", blackwhite.luminanceCurve, keyFile);
         saveToKeyfile(
@@ -4460,6 +4575,11 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->perspective.projection_yaw, "Perspective", "ProjectionYaw", perspective.projection_yaw, keyFile);
         saveToKeyfile(!pedited || pedited->perspective.control_lines, "Perspective", "ControlLineValues", perspective.control_line_values, keyFile);
         saveToKeyfile(!pedited || pedited->perspective.control_lines, "Perspective", "ControlLineTypes", perspective.control_line_types, keyFile);
+        saveToKeyfile(!pedited || pedited->perspective.mesh_warp, "Perspective", "MeshGridSize", perspective.mesh_grid_size, keyFile);
+        if ((!pedited || pedited->perspective.mesh_warp) && !perspective.mesh_offsets_x.empty()) {
+            saveToKeyfile(true, "Perspective", "MeshOffsetsX", perspective.mesh_offsets_x, keyFile);
+            saveToKeyfile(true, "Perspective", "MeshOffsetsY", perspective.mesh_offsets_y, keyFile);
+        }
 
 // Gradient
         saveToKeyfile(!pedited || pedited->gradient.enabled, "Gradient", "Enabled", gradient.enabled, keyFile);
@@ -4965,6 +5085,25 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->filmSimulation.clutFilename, "Film Simulation", "ClutFilename", filmSimulation.clutFilename, keyFile);
         saveToKeyfile(!pedited || pedited->filmSimulation.strength, "Film Simulation", "Strength", filmSimulation.strength, keyFile);
 
+// Film presets
+        saveToKeyfile(!pedited || pedited->filmPresets.enabled, "Film Presets", "Enabled", filmPresets.enabled, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.preset, "Film Presets", "Preset", filmPresets.preset, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.strength, "Film Presets", "Strength", filmPresets.strength, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.contrast, "Film Presets", "Contrast", filmPresets.contrast, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.saturation, "Film Presets", "Saturation", filmPresets.saturation, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.warmth, "Film Presets", "Warmth", filmPresets.warmth, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.tint, "Film Presets", "Tint", filmPresets.tint, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.fade, "Film Presets", "Fade", filmPresets.fade, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.rolloff, "Film Presets", "Rolloff", filmPresets.rolloff, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.shadowHue, "Film Presets", "ShadowHue", filmPresets.shadowHue, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.shadowTint, "Film Presets", "ShadowTint", filmPresets.shadowTint, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.highlightHue, "Film Presets", "HighlightHue", filmPresets.highlightHue, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.highlightTint, "Film Presets", "HighlightTint", filmPresets.highlightTint, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.halation, "Film Presets", "Halation", filmPresets.halation, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.redShift, "Film Presets", "RedShift", filmPresets.redShift, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.greenShift, "Film Presets", "GreenShift", filmPresets.greenShift, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.blueShift, "Film Presets", "BlueShift", filmPresets.blueShift, keyFile);
+
         saveToKeyfile(!pedited || pedited->rgbCurves.enabled, "RGB Curves", "Enabled", rgbCurves.enabled, keyFile);
         saveToKeyfile(!pedited || pedited->rgbCurves.lumamode, "RGB Curves", "LumaMode", rgbCurves.lumamode, keyFile);
         saveToKeyfile(!pedited || pedited->rgbCurves.mastercurve, "RGB Curves", "MasterCurve", rgbCurves.mastercurve, keyFile);
@@ -5250,6 +5389,10 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited)
                 assignFromKeyfile(keyFile, "Exposure", "Curve2", toneCurve.curve2, pedited->toneCurve.curve2);
             }
 
+            assignFromKeyfile(keyFile, "Exposure", "CurveR", toneCurve.curveR, pedited->toneCurve.curveR);
+            assignFromKeyfile(keyFile, "Exposure", "CurveG", toneCurve.curveG, pedited->toneCurve.curveG);
+            assignFromKeyfile(keyFile, "Exposure", "CurveB", toneCurve.curveB, pedited->toneCurve.curveB);
+
             assignFromKeyfile(keyFile, "Exposure", "HistogramMatching", toneCurve.histmatching, pedited->toneCurve.histmatching);
             if (ppVersion < 340) {
                 toneCurve.fromHistMatching = false;
@@ -5322,6 +5465,9 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited)
             assignFromKeyfile(keyFile, "Black & White", "GammaRed", blackwhite.gammaRed, pedited->blackwhite.gammaRed);
             assignFromKeyfile(keyFile, "Black & White", "GammaGreen", blackwhite.gammaGreen, pedited->blackwhite.gammaGreen);
             assignFromKeyfile(keyFile, "Black & White", "GammaBlue", blackwhite.gammaBlue, pedited->blackwhite.gammaBlue);
+            assignFromKeyfile(keyFile, "Black & White", "Neutrals", blackwhite.neutrals, pedited->blackwhite.neutrals);
+            assignFromKeyfile(keyFile, "Black & White", "Tone", blackwhite.tone, pedited->blackwhite.tone);
+            assignFromKeyfile(keyFile, "Black & White", "Strength", blackwhite.strength, pedited->blackwhite.strength);
             assignFromKeyfile(keyFile, "Black & White", "Filter", blackwhite.filter, pedited->blackwhite.filter);
             assignFromKeyfile(keyFile, "Black & White", "Setting", blackwhite.setting, pedited->blackwhite.setting);
             assignFromKeyfile(keyFile, "Black & White", "LuminanceCurve", blackwhite.luminanceCurve, pedited->blackwhite.luminanceCurve);
@@ -5434,6 +5580,15 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited)
             assignFromKeyfile(keyFile, "Grain", "ISO", grain.iso, pedited->grain.iso);
             assignFromKeyfile(keyFile, "Grain", "Strength", grain.strength, pedited->grain.strength);
             assignFromKeyfile(keyFile, "Grain", "Scale", grain.scale, pedited->grain.scale);
+        }
+
+        if (keyFile.has_group("TiltShift")) {
+            assignFromKeyfile(keyFile, "TiltShift", "Enabled", tiltShift.enabled, pedited->tiltShift.enabled);
+            assignFromKeyfile(keyFile, "TiltShift", "Amount", tiltShift.amount, pedited->tiltShift.amount);
+            assignFromKeyfile(keyFile, "TiltShift", "FocusPos", tiltShift.focusPos, pedited->tiltShift.focusPos);
+            assignFromKeyfile(keyFile, "TiltShift", "FocusWidth", tiltShift.focusWidth, pedited->tiltShift.focusWidth);
+            assignFromKeyfile(keyFile, "TiltShift", "Feather", tiltShift.feather, pedited->tiltShift.feather);
+            assignFromKeyfile(keyFile, "TiltShift", "Angle", tiltShift.angle, pedited->tiltShift.angle);
         }
 
         if (keyFile.has_group("Lens Blur")) {
@@ -6095,6 +6250,14 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited)
                 perspective.control_line_types = keyFile.get_integer_list("Perspective", "ControlLineTypes");
                 if (pedited) {
                     pedited->perspective.control_lines = true;
+                }
+            }
+            assignFromKeyfile(keyFile, "Perspective", "MeshGridSize", perspective.mesh_grid_size, pedited->perspective.mesh_warp);
+            if (keyFile.has_key("Perspective", "MeshOffsetsX")) {
+                perspective.mesh_offsets_x = keyFile.get_double_list("Perspective", "MeshOffsetsX");
+                perspective.mesh_offsets_y = keyFile.get_double_list("Perspective", "MeshOffsetsY");
+                if (pedited) {
+                    pedited->perspective.mesh_warp = true;
                 }
             }
         }
@@ -6920,6 +7083,26 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited)
             }
         }
 
+        if (keyFile.has_group("Film Presets")) {
+            assignFromKeyfile(keyFile, "Film Presets", "Enabled", filmPresets.enabled, pedited->filmPresets.enabled);
+            assignFromKeyfile(keyFile, "Film Presets", "Preset", filmPresets.preset, pedited->filmPresets.preset);
+            assignFromKeyfile(keyFile, "Film Presets", "Strength", filmPresets.strength, pedited->filmPresets.strength);
+            assignFromKeyfile(keyFile, "Film Presets", "Contrast", filmPresets.contrast, pedited->filmPresets.contrast);
+            assignFromKeyfile(keyFile, "Film Presets", "Saturation", filmPresets.saturation, pedited->filmPresets.saturation);
+            assignFromKeyfile(keyFile, "Film Presets", "Warmth", filmPresets.warmth, pedited->filmPresets.warmth);
+            assignFromKeyfile(keyFile, "Film Presets", "Tint", filmPresets.tint, pedited->filmPresets.tint);
+            assignFromKeyfile(keyFile, "Film Presets", "Fade", filmPresets.fade, pedited->filmPresets.fade);
+            assignFromKeyfile(keyFile, "Film Presets", "Rolloff", filmPresets.rolloff, pedited->filmPresets.rolloff);
+            assignFromKeyfile(keyFile, "Film Presets", "ShadowHue", filmPresets.shadowHue, pedited->filmPresets.shadowHue);
+            assignFromKeyfile(keyFile, "Film Presets", "ShadowTint", filmPresets.shadowTint, pedited->filmPresets.shadowTint);
+            assignFromKeyfile(keyFile, "Film Presets", "HighlightHue", filmPresets.highlightHue, pedited->filmPresets.highlightHue);
+            assignFromKeyfile(keyFile, "Film Presets", "HighlightTint", filmPresets.highlightTint, pedited->filmPresets.highlightTint);
+            assignFromKeyfile(keyFile, "Film Presets", "Halation", filmPresets.halation, pedited->filmPresets.halation);
+            assignFromKeyfile(keyFile, "Film Presets", "RedShift", filmPresets.redShift, pedited->filmPresets.redShift);
+            assignFromKeyfile(keyFile, "Film Presets", "GreenShift", filmPresets.greenShift, pedited->filmPresets.greenShift);
+            assignFromKeyfile(keyFile, "Film Presets", "BlueShift", filmPresets.blueShift, pedited->filmPresets.blueShift);
+        }
+
         if (keyFile.has_group("Film Simulation")) {
             assignFromKeyfile(keyFile, "Film Simulation", "Enabled", filmSimulation.enabled, pedited->filmSimulation.enabled);
 			assignFromKeyfile(keyFile, "Film Simulation", "ClutFilename", filmSimulation.clutFilename, pedited->filmSimulation.clutFilename);
@@ -7515,6 +7698,7 @@ bool ProcParams::operator ==(const ProcParams& other) const
         && texture == other.texture
         && clarity == other.clarity
         && grain == other.grain
+        && tiltShift == other.tiltShift
         && lensBlur == other.lensBlur
         && labCurve == other.labCurve
         && sharpenEdge == other.sharpenEdge
@@ -7555,6 +7739,7 @@ bool ProcParams::operator ==(const ProcParams& other) const
         && dirpyrequalizer == other.dirpyrequalizer
         && hsvequalizer == other.hsvequalizer
         && filmSimulation == other.filmSimulation
+        && filmPresets == other.filmPresets
         && softlight == other.softlight
         && rgbCurves == other.rgbCurves
         && colorToning == other.colorToning

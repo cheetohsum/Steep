@@ -427,6 +427,26 @@ homogeneous::Matrix<double> perspectiveMatrix(double camera_focal_length, double
     return matrix;
 }
 
+inline void meshLookup(double u, double v,
+                       const double* dx, const double* dy,
+                       int gridSize, double& outDx, double& outDy)
+{
+    u = rtengine::LIM(u, 0.0, 1.0);
+    v = rtengine::LIM(v, 0.0, 1.0);
+    const double gx = u * (gridSize - 1);
+    const double gy = v * (gridSize - 1);
+    const int ix = std::min(static_cast<int>(gx), gridSize - 2);
+    const int iy = std::min(static_cast<int>(gy), gridSize - 2);
+    const double fx = gx - ix;
+    const double fy = gy - iy;
+    const int i00 = iy * gridSize + ix;
+    const int i10 = i00 + 1;
+    const int i01 = i00 + gridSize;
+    const int i11 = i01 + 1;
+    outDx = (1 - fy) * ((1 - fx) * dx[i00] + fx * dx[i10]) + fy * ((1 - fx) * dx[i01] + fx * dx[i11]);
+    outDy = (1 - fy) * ((1 - fx) * dy[i00] + fx * dy[i10]) + fy * ((1 - fx) * dy[i01] + fx * dy[i11]);
+}
+
 bool ImProcFunctions::transCoord (int W, int H, const std::vector<Coord2D> &src, std::vector<Coord2D> &red,  std::vector<Coord2D> &green, std::vector<Coord2D> &blue, double ascaleDef,
                                   const LensCorrection *pLCPMap) const
 {
@@ -502,8 +522,25 @@ bool ImProcFunctions::transCoord (int W, int H, const std::vector<Coord2D> &src,
             p_projection_rotate, p_projection_shift_horiz,
             p_projection_shift_vert, p_projection_scale);
 
+    // mesh warp precompute for transCoord
+    const int tc_meshGridSize = params->perspective.mesh_grid_size;
+    const bool tc_enableMeshWarp = tc_meshGridSize > 0
+        && static_cast<int>(params->perspective.mesh_offsets_x.size()) == tc_meshGridSize * tc_meshGridSize
+        && static_cast<int>(params->perspective.mesh_offsets_y.size()) == tc_meshGridSize * tc_meshGridSize;
+    const double* tc_meshDx = tc_enableMeshWarp ? params->perspective.mesh_offsets_x.data() : nullptr;
+    const double* tc_meshDy = tc_enableMeshWarp ? params->perspective.mesh_offsets_y.data() : nullptr;
+    const double tc_meshOW = std::max(oW - 1.0, 1.0);
+    const double tc_meshOH = std::max(oH - 1.0, 1.0);
+
     for (size_t i = 0; i < src.size(); i++) {
         double x_d = src[i].x, y_d = src[i].y;
+
+        if (tc_enableMeshWarp) {
+            double mdx, mdy;
+            meshLookup(x_d / tc_meshOW, y_d / tc_meshOH, tc_meshDx, tc_meshDy, tc_meshGridSize, mdx, mdy);
+            x_d -= mdx * oW;
+            y_d -= mdy * oH;
+        }
 
         x_d = hscale * (x_d - w2);     // centering x coord & scale
         y_d = vscale * (y_d - h2);     // centering y coord & scale
@@ -1191,6 +1228,16 @@ void ImProcFunctions::transformGeneral(bool highQuality, Imagefloat *original, I
         original->b.ptrs
     };
 
+    // mesh warp precompute
+    const int meshGridSize = params->perspective.mesh_grid_size;
+    const bool enableMeshWarp = meshGridSize > 0
+        && static_cast<int>(params->perspective.mesh_offsets_x.size()) == meshGridSize * meshGridSize
+        && static_cast<int>(params->perspective.mesh_offsets_y.size()) == meshGridSize * meshGridSize;
+    const double* meshDx = enableMeshWarp ? params->perspective.mesh_offsets_x.data() : nullptr;
+    const double* meshDy = enableMeshWarp ? params->perspective.mesh_offsets_y.data() : nullptr;
+    const double meshOW = std::max(transformed->getWidth() - 1.0, 1.0);
+    const double meshOH = std::max(transformed->getHeight() - 1.0, 1.0);
+
     // main cycle
 #ifdef _OPENMP
     #pragma omp parallel for schedule(dynamic, 16) if(multiThread)
@@ -1200,6 +1247,13 @@ void ImProcFunctions::transformGeneral(bool highQuality, Imagefloat *original, I
         for (int x = 0; x < transformed->getWidth(); ++x) {
             double x_d = x;
             double y_d = y;
+
+            if (enableMeshWarp) {
+                double mdx, mdy;
+                meshLookup(x / meshOW, y / meshOH, meshDx, meshDy, meshGridSize, mdx, mdy);
+                x_d -= mdx * oW;
+                y_d -= mdy * oH;
+            }
 
             x_d = hscale * (x_d + centerFactorx);     // centering x coord & scale
             y_d = vscale * (y_d + centerFactory);     // centering y coord & scale
@@ -1417,7 +1471,9 @@ bool ImProcFunctions::needsPerspective () const
                     params->perspective.projection_rotate ||
                     params->perspective.projection_shift_horiz ||
                     params->perspective.projection_shift_vert ||
-                    params->perspective.projection_yaw));
+                    params->perspective.projection_yaw))
+        || (params->perspective.mesh_grid_size > 0
+            && !params->perspective.mesh_offsets_x.empty());
 }
 
 bool ImProcFunctions::needsScale () const

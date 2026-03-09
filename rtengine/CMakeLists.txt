@@ -72,12 +72,14 @@ set(RTENGINESOURCEFILES
     iplocalcontrast.cc
     iptextureclarity.cc
     ipgraineffect.cc
+    iptiltshift.cc
     iplensblur.cc
     ipresize.cc
     ipretinex.cc
     ipshadowshighlights.cc
     ipsharpen.cc
     ipsharpenedges.cc
+    ipfilmpresets.cc
     ipsoftlight.cc
     iptoneequalizer.cc
     iptransform.cc

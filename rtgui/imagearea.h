@@ -80,6 +80,7 @@ public:
     IndicateClippedPanel* indClippedPanel;
     PreviewModePanel* previewModePanel;
     ImageArea* iLinkedImageArea; // used to set a reference to the Before image area, which is set when before/after view is enabled
+    bool suppressZoomSync_ = false; // prevents zoom sync recursion between before/after views
 
     explicit ImageArea (ImageAreaPanel* p);
     ~ImageArea () override;
@@ -143,6 +144,7 @@ public:
     void sharpMaskSelected  (bool sharpMask);
     int  getSpotWBRectSize  ();
     void redraw             ();
+    void setCropPreviewMode (bool editingCrop);
 
     void zoomFit     ();
     double getZoom   ();

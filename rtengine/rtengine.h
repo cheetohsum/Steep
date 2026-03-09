@@ -782,6 +782,12 @@ public:
 
     virtual void        setLocallabMaskVisibility(bool previewDeltaE, bool showMaskOverlay, int locallColorMask, int locallColorMaskinv, int locallExpMask, int locallExpMaskinv, int locallSHMask, int locallSHMaskinv, int locallvibMask, int locallsoftMask, int locallblMask, int localltmMask, int locallretiMask, int locallsharMask, int localllcMask, int locallcbMask, int localllogMask, int locall_Mask, int locallcieMask) = 0;
 
+#ifdef RT_AI_MASKING
+    /** @brief Enable/disable AI mask blend (constraining global adjustments to masked areas).
+      * Should be set to true when in mask editing mode, false otherwise. */
+    virtual void        setAIMaskBlendActive(bool active) = 0;
+#endif
+
     /** Creates and returns a Crop instance that acts as a window on the image
       * @param editDataProvider pointer to the EditDataProvider that communicates with the EditSubscriber
       * @return a pointer to the Crop object that handles the image data trough its own pipeline */

@@ -115,6 +115,9 @@ public:
     // Hide the "Settings" sub-expander header (call AFTER show_all)
     void hideSettingsHeader();
 
+    // Access exposure tool for preview strip routing
+    LocallabExposure& getExposureTool() { return expexpose; }
+
     // Hide locallab's internal ToolGroups (so global ToolGroups can replace them)
     void hideToolGroups();
 

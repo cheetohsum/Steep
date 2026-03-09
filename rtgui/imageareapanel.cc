@@ -66,12 +66,16 @@ void ImageAreaPanel::setBeforeAfterViews (ImageAreaPanel* bef, ImageAreaPanel* a
 
 void ImageAreaPanel::zoomChanged ()
 {
+    if (zoomSyncing) return;
+    zoomSyncing = true;
 
     if (after && this == before) {
         after->imageArea->setZoom (imageArea->getZoom ());
     } else if (before && this == after) {
         before->imageArea->setZoom (imageArea->getZoom ());
     }
+
+    zoomSyncing = false;
 }
 
 void ImageAreaPanel::synchronize ()

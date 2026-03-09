@@ -72,11 +72,15 @@ protected:
     Gtk::CheckButton *clampOOG;
 
     bool clipDirty, lastAuto;
+    bool pendingAutoExp_ = false;
     sigc::connection autoconn, neutralconn, tcmodeconn, tcmode2conn;
     sigc::connection histmatchconn;
     CurveEditorGroup* curveEditorG;
     CurveEditorGroup* curveEditorG2;
     DiagonalCurveEditor* shape;
+    DiagonalCurveEditor* shapeR;
+    DiagonalCurveEditor* shapeG;
+    DiagonalCurveEditor* shapeB;
     DiagonalCurveEditor* shape2;
 
     rtengine::ProcEvent EvHistMatching;
@@ -154,4 +158,11 @@ public:
     void hrenabledChanged ();
     void methodChanged ();
     void clampOOGChanged();
+
+    Adjuster* getExpcompSlider() { return expcomp; }
+    Adjuster* getBrightnessSlider() { return brightness; }
+    Adjuster* getContrastSlider() { return contrast; }
+    Adjuster* getBlackSlider() { return black; }
+    Adjuster* getHlcomprSlider() { return hlcompr; }
+    Adjuster* getSaturationSlider() { return saturation; }
 };

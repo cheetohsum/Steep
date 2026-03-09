@@ -75,13 +75,20 @@ Gradient::Gradient () : FoldableToolPanel(this, TOOL_NAME, M("TP_GRADIENT_LABEL"
     summaryBox->pack_start (*strength, Gtk::PACK_SHRINK, 0);
 
     detailContent_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
-    detailContent_->set_no_show_all(true);
     detailContent_->pack_start(*editHBox, Gtk::PACK_SHRINK, 0);
     detailContent_->pack_start(*degree, Gtk::PACK_SHRINK, 0);
     detailContent_->pack_start(*feather, Gtk::PACK_SHRINK, 0);
     detailContent_->pack_start(*centerX, Gtk::PACK_SHRINK, 0);
     detailContent_->pack_start(*centerY, Gtk::PACK_SHRINK, 0);
-    summaryBox->pack_start(*detailContent_, Gtk::PACK_SHRINK);
+    detailContent_->show_all();
+
+    detailRevealer_ = Gtk::manage(new Gtk::Revealer());
+    detailRevealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
+    detailRevealer_->set_transition_duration(200);
+    detailRevealer_->set_reveal_child(false);
+    detailRevealer_->add(*detailContent_);
+    detailRevealer_->show();
+    summaryBox->pack_start(*detailRevealer_, Gtk::PACK_SHRINK);
 
     summaryBox->show_all();
 
@@ -359,15 +366,8 @@ void Gradient::setEditProvider (EditDataProvider* provider)
 void Gradient::toggleDetail()
 {
     detailExpanded_ = !detailExpanded_;
-    if (detailExpanded_) {
-        strength->setLabel(Glib::ustring("\u25BE ") + M("TP_GRADIENT_STRENGTH"));
-        detailContent_->set_no_show_all(false);
-        detailContent_->show_all();
-        detailContent_->set_no_show_all(true);
-    } else {
-        strength->setLabel(Glib::ustring("\u25B8 ") + M("TP_GRADIENT_STRENGTH"));
-        detailContent_->hide();
-    }
+    strength->setLabel(Glib::ustring(detailExpanded_ ? "\u25BE " : "\u25B8 ") + M("TP_GRADIENT_STRENGTH"));
+    detailRevealer_->set_reveal_child(detailExpanded_);
 }
 
 void Gradient::editToggled ()

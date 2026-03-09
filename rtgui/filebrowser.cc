@@ -152,17 +152,17 @@ FileBrowser::FileBrowser () :
 
     int p = 0;
     pmenu = new Gtk::Menu ();
-    pmenu->attach (*Gtk::manage(open = new Gtk::MenuItem (M("FILEBROWSER_POPUPOPEN"))), 0, 1, p, p + 1);
+    pmenu->attach (*Gtk::manage(open = new MyImageMenuItem (M("FILEBROWSER_POPUPOPEN"), "menu-open")), 0, 1, p, p + 1);
     p++;
     if (options.inspectorWindow) {
-        pmenu->attach (*Gtk::manage(inspect = new Gtk::MenuItem (M("FILEBROWSER_POPUPINSPECT"))), 0, 1, p, p + 1);
+        pmenu->attach (*Gtk::manage(inspect = new MyImageMenuItem (M("FILEBROWSER_POPUPINSPECT"), "menu-inspect")), 0, 1, p, p + 1);
         p++;
     }
     pmenu->attach (*Gtk::manage(develop = new MyImageMenuItem (M("FILEBROWSER_POPUPPROCESS"), "gears")), 0, 1, p, p + 1);
     p++;
-    pmenu->attach (*Gtk::manage(developfast = new Gtk::MenuItem (M("FILEBROWSER_POPUPPROCESSFAST"))), 0, 1, p, p + 1);
+    pmenu->attach (*Gtk::manage(developfast = new MyImageMenuItem (M("FILEBROWSER_POPUPPROCESSFAST"), "menu-develop-fast")), 0, 1, p, p + 1);
     p++;
-    pmenu->attach (*Gtk::manage(saveImage = new Gtk::MenuItem (M("FILEBROWSER_POPUPSAVEIMAGE"))), 0, 1, p, p + 1);
+    pmenu->attach (*Gtk::manage(saveImage = new MyImageMenuItem (M("FILEBROWSER_POPUPSAVEIMAGE"), "menu-save")), 0, 1, p, p + 1);
     p++;
 
     pmenu->attach (*Gtk::manage(new Gtk::SeparatorMenuItem ()), 0, 1, p, p + 1);
@@ -175,14 +175,14 @@ FileBrowser::FileBrowser () :
     p++;
     pmenu->attach (*Gtk::manage(autoEdit = new MyImageMenuItem (M("FILEBROWSER_POPUPAUTOEDIT"), "palette-brush")), 0, 1, p, p + 1);
     p++;
-    pmenu->attach (*Gtk::manage(duplicate = new Gtk::MenuItem (M("FILEBROWSER_POPUPDUPLICATE"))), 0, 1, p, p + 1);
+    pmenu->attach (*Gtk::manage(duplicate = new MyImageMenuItem (M("FILEBROWSER_POPUPDUPLICATE"), "menu-duplicate")), 0, 1, p, p + 1);
     p++;
-    pmenu->attach (*Gtk::manage(setAlbumCover = new Gtk::MenuItem (M("FILEBROWSER_POPUPSETALBUMCOVER"))), 0, 1, p, p + 1);
+    pmenu->attach (*Gtk::manage(setAlbumCover = new MyImageMenuItem (M("FILEBROWSER_POPUPSETALBUMCOVER"), "menu-album-cover")), 0, 1, p, p + 1);
     p++;
 
     pmenu->attach (*Gtk::manage(new Gtk::SeparatorMenuItem ()), 0, 1, p, p + 1);
     p++;
-    pmenu->attach (*Gtk::manage(selall = new Gtk::MenuItem (M("FILEBROWSER_POPUPSELECTALL"))), 0, 1, p, p + 1);
+    pmenu->attach (*Gtk::manage(selall = new MyImageMenuItem (M("FILEBROWSER_POPUPSELECTALL"), "menu-select-all")), 0, 1, p, p + 1);
     p++;
 
     /***********************
@@ -199,9 +199,10 @@ FileBrowser::FileBrowser () :
         M("SORT_BY_EXIF"),
         M("SORT_BY_RANK"),
         M("SORT_BY_LABEL"),
+        M("SORT_BY_FILETYPE"),
     };
 
-    pmenu->attach (*Gtk::manage(menuSort = new Gtk::MenuItem (M("FILEBROWSER_POPUPSORTBY"))), 0, 1, p, p + 1);
+    pmenu->attach (*Gtk::manage(menuSort = new MyImageMenuItem (M("FILEBROWSER_POPUPSORTBY"), "menu-sort")), 0, 1, p, p + 1);
     p++;
     Gtk::Menu* submenuSort = Gtk::manage (new Gtk::Menu ());
     Gtk::RadioButtonGroup sortOrderGroup, sortMethodGroup;
@@ -223,26 +224,28 @@ FileBrowser::FileBrowser () :
     /***********************
      * rank
      ***********************/
+    std::array<std::string, 6> rankIcons = {"menu-star-empty", "menu-star-1", "menu-star-2", "menu-star-3", "menu-star-4", "menu-star-5"};
+
     if (options.menuGroupRank) {
-        pmenu->attach (*Gtk::manage(menuRank = new Gtk::MenuItem (M("FILEBROWSER_POPUPRANK"))), 0, 1, p, p + 1);
+        pmenu->attach (*Gtk::manage(menuRank = new MyImageMenuItem (M("FILEBROWSER_POPUPRANK"), "menu-sort-rank")), 0, 1, p, p + 1);
         p++;
         Gtk::Menu* submenuRank = Gtk::manage (new Gtk::Menu ());
-        submenuRank->attach (*Gtk::manage(rank[0] = new Gtk::MenuItem (M("FILEBROWSER_POPUPUNRANK"))), 0, 1, p, p + 1);
+        submenuRank->attach (*Gtk::manage(rank[0] = new MyImageMenuItem (M("FILEBROWSER_POPUPUNRANK"), rankIcons[0])), 0, 1, p, p + 1);
         p++;
 
         for (int i = 1; i <= 5; i++) {
-            submenuRank->attach (*Gtk::manage(rank[i] = new Gtk::MenuItem (M(Glib::ustring::compose("%1%2", "FILEBROWSER_POPUPRANK", i)))), 0, 1, p, p + 1);
+            submenuRank->attach (*Gtk::manage(rank[i] = new MyImageMenuItem (M(Glib::ustring::compose("%1%2", "FILEBROWSER_POPUPRANK", i)), rankIcons[i])), 0, 1, p, p + 1);
             p++;
         }
 
         submenuRank->show_all ();
         menuRank->set_submenu (*submenuRank);
     } else {
-        pmenu->attach (*Gtk::manage(rank[0] = new Gtk::MenuItem (M("FILEBROWSER_POPUPUNRANK"))), 0, 1, p, p + 1);
+        pmenu->attach (*Gtk::manage(rank[0] = new MyImageMenuItem (M("FILEBROWSER_POPUPUNRANK"), rankIcons[0])), 0, 1, p, p + 1);
         p++;
 
         for (int i = 1; i <= 5; i++) {
-            pmenu->attach (*Gtk::manage(rank[i] = new Gtk::MenuItem (M(Glib::ustring::compose("%1%2", "FILEBROWSER_POPUPRANK", i)))), 0, 1, p, p + 1);
+            pmenu->attach (*Gtk::manage(rank[i] = new MyImageMenuItem (M(Glib::ustring::compose("%1%2", "FILEBROWSER_POPUPRANK", i)), rankIcons[i])), 0, 1, p, p + 1);
             p++;
         }
 
@@ -266,7 +269,7 @@ FileBrowser::FileBrowser () :
     std::array<std::string, 6> clabelInactiveIcons = {"circle-empty-darkgray-small", "circle-empty-red-small", "circle-empty-yellow-small", "circle-empty-green-small", "circle-empty-blue-small", "circle-empty-purple-small"};
 
     if (options.menuGroupLabel) {
-        pmenu->attach (*Gtk::manage(menuLabel = new Gtk::MenuItem (M("FILEBROWSER_POPUPCOLORLABEL"))), 0, 1, p, p + 1);
+        pmenu->attach (*Gtk::manage(menuLabel = new MyImageMenuItem (M("FILEBROWSER_POPUPCOLORLABEL"), "menu-sort-label")), 0, 1, p, p + 1);
         p++;
         Gtk::Menu* submenuLabel = Gtk::manage (new Gtk::Menu ());
 
@@ -291,7 +294,7 @@ FileBrowser::FileBrowser () :
      * external programs
      * *********************/
 #if defined(_WIN32)
-    Gtk::manage(miOpenDefaultViewer = new Gtk::MenuItem (M("FILEBROWSER_OPENDEFAULTVIEWER")));
+    Gtk::manage(miOpenDefaultViewer = new MyImageMenuItem (M("FILEBROWSER_OPENDEFAULTVIEWER"), "external-editor"));
 #endif
 
     // Build a list of menu items
@@ -348,49 +351,49 @@ FileBrowser::FileBrowser () :
      * File Operations
      * *********************/
     if (options.menuGroupFileOperations) {
-        pmenu->attach (*Gtk::manage(menuFileOperations = new Gtk::MenuItem (M("FILEBROWSER_POPUPFILEOPERATIONS"))), 0, 1, p, p + 1);
+        pmenu->attach (*Gtk::manage(menuFileOperations = new MyImageMenuItem (M("FILEBROWSER_POPUPFILEOPERATIONS"), "menu-trash")), 0, 1, p, p + 1);
         p++;
         Gtk::Menu* submenuFileOperations = Gtk::manage (new Gtk::Menu ());
 
-        submenuFileOperations->attach (*Gtk::manage(trash = new Gtk::MenuItem (M("FILEBROWSER_POPUPTRASH"))), 0, 1, p, p + 1);
+        submenuFileOperations->attach (*Gtk::manage(trash = new MyImageMenuItem (M("FILEBROWSER_POPUPTRASH"), "menu-trash")), 0, 1, p, p + 1);
         p++;
-        submenuFileOperations->attach (*Gtk::manage(untrash = new Gtk::MenuItem (M("FILEBROWSER_POPUPUNTRASH"))), 0, 1, p, p + 1);
-        p++;
-        submenuFileOperations->attach (*Gtk::manage(new Gtk::SeparatorMenuItem ()), 0, 1, p, p + 1);
-        p++;
-        submenuFileOperations->attach (*Gtk::manage(rename = new Gtk::MenuItem (M("FILEBROWSER_POPUPRENAME"))), 0, 1, p, p + 1);
-        p++;
-        submenuFileOperations->attach (*Gtk::manage(remove = new Gtk::MenuItem (M("FILEBROWSER_POPUPREMOVE"))), 0, 1, p, p + 1);
-        p++;
-        submenuFileOperations->attach (*Gtk::manage(removeInclProc = new Gtk::MenuItem (M("FILEBROWSER_POPUPREMOVEINCLPROC"))), 0, 1, p, p + 1);
+        submenuFileOperations->attach (*Gtk::manage(untrash = new MyImageMenuItem (M("FILEBROWSER_POPUPUNTRASH"), "menu-trash-restore")), 0, 1, p, p + 1);
         p++;
         submenuFileOperations->attach (*Gtk::manage(new Gtk::SeparatorMenuItem ()), 0, 1, p, p + 1);
         p++;
-        submenuFileOperations->attach (*Gtk::manage(copyTo = new Gtk::MenuItem (M("FILEBROWSER_POPUPCOPYTO"))), 0, 1, p, p + 1);
+        submenuFileOperations->attach (*Gtk::manage(rename = new MyImageMenuItem (M("FILEBROWSER_POPUPRENAME"), "menu-rename")), 0, 1, p, p + 1);
         p++;
-        submenuFileOperations->attach (*Gtk::manage(moveTo = new Gtk::MenuItem (M("FILEBROWSER_POPUPMOVETO"))), 0, 1, p, p + 1);
+        submenuFileOperations->attach (*Gtk::manage(remove = new MyImageMenuItem (M("FILEBROWSER_POPUPREMOVE"), "menu-delete")), 0, 1, p, p + 1);
+        p++;
+        submenuFileOperations->attach (*Gtk::manage(removeInclProc = new MyImageMenuItem (M("FILEBROWSER_POPUPREMOVEINCLPROC"), "menu-delete-all")), 0, 1, p, p + 1);
+        p++;
+        submenuFileOperations->attach (*Gtk::manage(new Gtk::SeparatorMenuItem ()), 0, 1, p, p + 1);
+        p++;
+        submenuFileOperations->attach (*Gtk::manage(copyTo = new MyImageMenuItem (M("FILEBROWSER_POPUPCOPYTO"), "menu-copy-to")), 0, 1, p, p + 1);
+        p++;
+        submenuFileOperations->attach (*Gtk::manage(moveTo = new MyImageMenuItem (M("FILEBROWSER_POPUPMOVETO"), "menu-move-to")), 0, 1, p, p + 1);
         p++;
 
         submenuFileOperations->show_all ();
         menuFileOperations->set_submenu (*submenuFileOperations);
     } else {
-        pmenu->attach (*Gtk::manage(trash = new Gtk::MenuItem (M("FILEBROWSER_POPUPTRASH"))), 0, 1, p, p + 1);
+        pmenu->attach (*Gtk::manage(trash = new MyImageMenuItem (M("FILEBROWSER_POPUPTRASH"), "menu-trash")), 0, 1, p, p + 1);
         p++;
-        pmenu->attach (*Gtk::manage(untrash = new Gtk::MenuItem (M("FILEBROWSER_POPUPUNTRASH"))), 0, 1, p, p + 1);
-        p++;
-        pmenu->attach (*Gtk::manage(new Gtk::SeparatorMenuItem ()), 0, 1, p, p + 1);
-        p++;
-        pmenu->attach (*Gtk::manage(rename = new Gtk::MenuItem (M("FILEBROWSER_POPUPRENAME"))), 0, 1, p, p + 1);
-        p++;
-        pmenu->attach (*Gtk::manage(remove = new Gtk::MenuItem (M("FILEBROWSER_POPUPREMOVE"))), 0, 1, p, p + 1);
-        p++;
-        pmenu->attach (*Gtk::manage(removeInclProc = new Gtk::MenuItem (M("FILEBROWSER_POPUPREMOVEINCLPROC"))), 0, 1, p, p + 1);
+        pmenu->attach (*Gtk::manage(untrash = new MyImageMenuItem (M("FILEBROWSER_POPUPUNTRASH"), "menu-trash-restore")), 0, 1, p, p + 1);
         p++;
         pmenu->attach (*Gtk::manage(new Gtk::SeparatorMenuItem ()), 0, 1, p, p + 1);
         p++;
-        pmenu->attach (*Gtk::manage(copyTo = new Gtk::MenuItem (M("FILEBROWSER_POPUPCOPYTO"))), 0, 1, p, p + 1);
+        pmenu->attach (*Gtk::manage(rename = new MyImageMenuItem (M("FILEBROWSER_POPUPRENAME"), "menu-rename")), 0, 1, p, p + 1);
         p++;
-        pmenu->attach (*Gtk::manage(moveTo = new Gtk::MenuItem (M("FILEBROWSER_POPUPMOVETO"))), 0, 1, p, p + 1);
+        pmenu->attach (*Gtk::manage(remove = new MyImageMenuItem (M("FILEBROWSER_POPUPREMOVE"), "menu-delete")), 0, 1, p, p + 1);
+        p++;
+        pmenu->attach (*Gtk::manage(removeInclProc = new MyImageMenuItem (M("FILEBROWSER_POPUPREMOVEINCLPROC"), "menu-delete-all")), 0, 1, p, p + 1);
+        p++;
+        pmenu->attach (*Gtk::manage(new Gtk::SeparatorMenuItem ()), 0, 1, p, p + 1);
+        p++;
+        pmenu->attach (*Gtk::manage(copyTo = new MyImageMenuItem (M("FILEBROWSER_POPUPCOPYTO"), "menu-copy-to")), 0, 1, p, p + 1);
+        p++;
+        pmenu->attach (*Gtk::manage(moveTo = new MyImageMenuItem (M("FILEBROWSER_POPUPMOVETO"), "menu-move-to")), 0, 1, p, p + 1);
         p++;
     }
 
@@ -400,57 +403,223 @@ FileBrowser::FileBrowser () :
     /***********************
      * Profile Operations
      * *********************/
+
+    // Build "Copy Settings..." submenu with group drill-downs
+    auto buildCopyFilterSubmenu = [this]() {
+        Gtk::Menu* topMenu = Gtk::manage(new Gtk::Menu());
+        copyFilters_.clear();
+        int p = 0;
+
+        // Prevent menu close on CheckMenuItem click
+        auto preventClose = [](Gtk::CheckMenuItem* item) {
+            item->signal_button_release_event().connect(
+                [item](GdkEventButton*) {
+                    item->set_active(!item->get_active());
+                    return true;
+                }, false);
+        };
+
+        // Prevent menu close on plain MenuItem click
+        auto preventCloseAction = [](Gtk::MenuItem* item, std::function<void()> action) {
+            item->signal_button_release_event().connect(
+                [action](GdkEventButton*) {
+                    action();
+                    return true;
+                }, false);
+        };
+
+        // Global "Copy All" / "Copy None"
+        auto* copyAll = Gtk::manage(new MyImageMenuItem(M("GENERAL_ALL"), "menu-select-all"));
+        preventCloseAction(copyAll, [this]() {
+            for (auto& kv : copyFilters_) kv.second->set_active(true);
+        });
+        topMenu->attach(*copyAll, 0, 1, p, p + 1); p++;
+
+        auto* copyNone = Gtk::manage(new MyImageMenuItem(M("GENERAL_NONE"), "menu-select-none"));
+        preventCloseAction(copyNone, [this]() {
+            for (auto& kv : copyFilters_) kv.second->set_active(false);
+        });
+        topMenu->attach(*copyNone, 0, 1, p, p + 1); p++;
+
+        topMenu->attach(*Gtk::manage(new Gtk::SeparatorMenuItem()), 0, 1, p, p + 1); p++;
+
+        // Add a group MenuItem with submenu of individual CheckMenuItems
+        // Each submenu gets All/None toggles at the top
+        auto addGroup = [&](const Glib::ustring& groupLabel,
+                            const std::vector<std::pair<std::string, Glib::ustring>>& items) {
+            Gtk::MenuItem* groupItem = Gtk::manage(new Gtk::MenuItem(groupLabel));
+            topMenu->attach(*groupItem, 0, 1, p, p + 1);
+            p++;
+
+            Gtk::Menu* sub = Gtk::manage(new Gtk::Menu());
+            int s = 0;
+
+            // Collect children for group-level All/None
+            std::vector<Gtk::CheckMenuItem*> children;
+            for (const auto& kv : items) {
+                auto* item = Gtk::manage(new Gtk::CheckMenuItem(kv.second));
+                item->set_active(true);
+                copyFilters_[kv.first] = item;
+                preventClose(item);
+                children.push_back(item);
+            }
+
+            // Group All / None
+            auto* grpAll = Gtk::manage(new MyImageMenuItem(M("GENERAL_ALL"), "menu-select-all"));
+            preventCloseAction(grpAll, [children]() {
+                for (auto* c : children) c->set_active(true);
+            });
+            sub->attach(*grpAll, 0, 1, s, s + 1); s++;
+
+            auto* grpNone = Gtk::manage(new MyImageMenuItem(M("GENERAL_NONE"), "menu-select-none"));
+            preventCloseAction(grpNone, [children]() {
+                for (auto* c : children) c->set_active(false);
+            });
+            sub->attach(*grpNone, 0, 1, s, s + 1); s++;
+
+            sub->attach(*Gtk::manage(new Gtk::SeparatorMenuItem()), 0, 1, s, s + 1); s++;
+
+            // Individual items
+            for (auto* item : children) {
+                sub->attach(*item, 0, 1, s, s + 1);
+                s++;
+            }
+
+            sub->show_all();
+            groupItem->set_submenu(*sub);
+        };
+
+        // Basic (no Local Contrast, no Tone Mapping/EPD/Fattal)
+        addGroup(M("PARTIALPASTE_BASICGROUP"), {
+            {"wb",            M("PARTIALPASTE_WHITEBALANCE")},
+            {"toneCurve",     M("PARTIALPASTE_EXPOSURE")},
+            {"sh",            M("PARTIALPASTE_SHADOWSHIGHLIGHTS")},
+            {"toneEqualizer", M("PARTIALPASTE_TONE_EQUALIZER")},
+        });
+
+        // Detail
+        addGroup(M("PARTIALPASTE_DETAILGROUP"), {
+            {"sharpening",      M("PARTIALPASTE_SHARPENING")},
+            {"sharpenEdge",     M("PARTIALPASTE_SHARPENEDGE")},
+            {"sharpenMicro",    M("PARTIALPASTE_SHARPENMICRO")},
+            {"impulseDenoise",  M("PARTIALPASTE_IMPULSEDENOISE")},
+            {"dirpyrDenoise",   M("PARTIALPASTE_DIRPYRDENOISE")},
+            {"defringe",        M("PARTIALPASTE_DEFRINGE")},
+            {"dehaze",          M("PARTIALPASTE_DEHAZE")},
+            {"dirpyrequalizer", M("PARTIALPASTE_DIRPYREQUALIZER")},
+        });
+
+        // Color (no Color Appearance, no ICM)
+        addGroup(M("PARTIALPASTE_COLORGROUP"), {
+            {"labCurve",       M("PARTIALPASTE_LABCURVE")},
+            {"rgbCurves",      M("PARTIALPASTE_RGBCURVES")},
+            {"colorToning",    M("PARTIALPASTE_COLORTONING")},
+            {"chmixer",        M("PARTIALPASTE_CHANNELMIXER")},
+            {"blackwhite",     M("PARTIALPASTE_CHANNELMIXERBW")},
+            {"hsvequalizer",   M("PARTIALPASTE_HSVEQUALIZER")},
+            {"filmSimulation", M("PARTIALPASTE_FILMSIMULATION")},
+            {"softlight",      M("PARTIALPASTE_SOFTLIGHT")},
+            {"vibrance",       M("PARTIALPASTE_VIBRANCE")},
+        });
+
+        // Lens
+        addGroup(M("PARTIALPASTE_LENSGROUP"), {
+            {"distortion",   M("PARTIALPASTE_DISTORTION")},
+            {"cacorrection", M("PARTIALPASTE_CACORRECTION")},
+            {"vignetting",   M("PARTIALPASTE_VIGNETTING")},
+            {"lensProf",     M("PARTIALPASTE_LENSPROFILE")},
+        });
+
+        // Composition (no Post-Crop Vignetting)
+        addGroup(M("PARTIALPASTE_COMPOSITIONGROUP"), {
+            {"coarse",       M("PARTIALPASTE_COARSETRANS")},
+            {"rotate",       M("PARTIALPASTE_ROTATION")},
+            {"crop",         M("PARTIALPASTE_CROP")},
+            {"resize",       M("PARTIALPASTE_RESIZE")},
+            {"prsharpening", M("PARTIALPASTE_PRSHARPENING")},
+            {"perspective",  M("PARTIALPASTE_PERSPECTIVE")},
+            {"commonTrans",  M("PARTIALPASTE_COMMONTRANSFORMPARAMS")},
+            {"gradient",     M("PARTIALPASTE_GRADIENT")},
+            {"framing",      M("PARTIALPASTE_FRAMING")},
+        });
+
+        // Advanced
+        addGroup(M("PARTIALPASTE_ADVANCEDGROUP"), {
+            {"retinex", M("PARTIALPASTE_RETINEX")},
+            {"wavelet", M("PARTIALPASTE_EQUALIZER")},
+            {"spot",    M("PARTIALPASTE_SPOT")},
+            {"cg",      M("PARTIALPASTE_COMPRESSGAMUT")},
+        });
+
+        // Selective Editing — single item directly in top menu
+        auto* locallabItem = Gtk::manage(new Gtk::CheckMenuItem(M("PARTIALPASTE_LOCALLABGROUP")));
+        locallabItem->set_active(true);
+        copyFilters_["locallab"] = locallabItem;
+        preventClose(locallabItem);
+        topMenu->attach(*locallabItem, 0, 1, p, p + 1);
+        p++;
+
+        topMenu->show_all();
+        return topMenu;
+    };
+
     if (options.menuGroupProfileOperations) {
-        pmenu->attach (*Gtk::manage(menuProfileOperations = new Gtk::MenuItem (M("FILEBROWSER_POPUPPROFILEOPERATIONS"))), 0, 1, p, p + 1);
+        pmenu->attach (*Gtk::manage(menuProfileOperations = new MyImageMenuItem (M("FILEBROWSER_POPUPPROFILEOPERATIONS"), "menu-profile-apply")), 0, 1, p, p + 1);
         p++;
 
         Gtk::Menu* submenuProfileOperations = Gtk::manage (new Gtk::Menu ());
 
-        submenuProfileOperations->attach (*Gtk::manage(copyprof = new Gtk::MenuItem (M("FILEBROWSER_COPYPROFILE"))), 0, 1, p, p + 1);
+        submenuProfileOperations->attach (*Gtk::manage(copyprof = new MyImageMenuItem (M("FILEBROWSER_COPYPROFILE"), "menu-profile-copy")), 0, 1, p, p + 1);
         p++;
-        submenuProfileOperations->attach (*Gtk::manage(pasteprof = new Gtk::MenuItem (M("FILEBROWSER_PASTEPROFILE"))), 0, 1, p, p + 1);
+        submenuProfileOperations->attach (*Gtk::manage(copyprofSettings = new MyImageMenuItem (M("FILEBROWSER_COPYPROFILE_SETTINGS"), "gears")), 0, 1, p, p + 1);
+        copyprofSettings->set_submenu (*buildCopyFilterSubmenu());
         p++;
-        submenuProfileOperations->attach (*Gtk::manage(partpasteprof = new Gtk::MenuItem (M("FILEBROWSER_PARTIALPASTEPROFILE"))), 0, 1, p, p + 1);
+        submenuProfileOperations->attach (*Gtk::manage(pasteprof = new MyImageMenuItem (M("FILEBROWSER_PASTEPROFILE"), "menu-profile-paste")), 0, 1, p, p + 1);
         p++;
-        submenuProfileOperations->attach (*Gtk::manage(applyprof = new Gtk::MenuItem (M("FILEBROWSER_APPLYPROFILE"))), 0, 1, p, p + 1);
+        submenuProfileOperations->attach (*Gtk::manage(partpasteprof = new MyImageMenuItem (M("FILEBROWSER_PARTIALPASTEPROFILE"), "menu-profile-partial")), 0, 1, p, p + 1);
         p++;
-        submenuProfileOperations->attach (*Gtk::manage(applypartprof = new Gtk::MenuItem (M("FILEBROWSER_APPLYPROFILE_PARTIAL"))), 0, 1, p, p + 1);
+        submenuProfileOperations->attach (*Gtk::manage(applyprof = new MyImageMenuItem (M("FILEBROWSER_APPLYPROFILE"), "menu-profile-apply")), 0, 1, p, p + 1);
         p++;
-        submenuProfileOperations->attach (*Gtk::manage(resetdefaultprof = new Gtk::MenuItem (M("FILEBROWSER_RESETDEFAULTPROFILE"))), 0, 1, p, p + 1);
+        submenuProfileOperations->attach (*Gtk::manage(applypartprof = new MyImageMenuItem (M("FILEBROWSER_APPLYPROFILE_PARTIAL"), "menu-profile-apply-partial")), 0, 1, p, p + 1);
         p++;
-        submenuProfileOperations->attach (*Gtk::manage(clearprof = new Gtk::MenuItem (M("FILEBROWSER_CLEARPROFILE"))), 0, 1, p, p + 1);
+        submenuProfileOperations->attach (*Gtk::manage(resetdefaultprof = new MyImageMenuItem (M("FILEBROWSER_RESETDEFAULTPROFILE"), "menu-profile-reset")), 0, 1, p, p + 1);
+        p++;
+        submenuProfileOperations->attach (*Gtk::manage(clearprof = new MyImageMenuItem (M("FILEBROWSER_CLEARPROFILE"), "menu-profile-clear")), 0, 1, p, p + 1);
         p++;
 
         submenuProfileOperations->show_all ();
         menuProfileOperations->set_submenu (*submenuProfileOperations);
     } else {
-        pmenu->attach (*Gtk::manage(copyprof = new Gtk::MenuItem (M("FILEBROWSER_COPYPROFILE"))), 0, 1, p, p + 1);
+        pmenu->attach (*Gtk::manage(copyprof = new MyImageMenuItem (M("FILEBROWSER_COPYPROFILE"), "menu-profile-copy")), 0, 1, p, p + 1);
         p++;
-        pmenu->attach (*Gtk::manage(pasteprof = new Gtk::MenuItem (M("FILEBROWSER_PASTEPROFILE"))), 0, 1, p, p + 1);
+        pmenu->attach (*Gtk::manage(copyprofSettings = new MyImageMenuItem (M("FILEBROWSER_COPYPROFILE_SETTINGS"), "gears")), 0, 1, p, p + 1);
+        copyprofSettings->set_submenu (*buildCopyFilterSubmenu());
         p++;
-        pmenu->attach (*Gtk::manage(partpasteprof = new Gtk::MenuItem (M("FILEBROWSER_PARTIALPASTEPROFILE"))), 0, 1, p, p + 1);
+        pmenu->attach (*Gtk::manage(pasteprof = new MyImageMenuItem (M("FILEBROWSER_PASTEPROFILE"), "menu-profile-paste")), 0, 1, p, p + 1);
         p++;
-        pmenu->attach (*Gtk::manage(applyprof = new Gtk::MenuItem (M("FILEBROWSER_APPLYPROFILE"))), 0, 1, p, p + 1);
+        pmenu->attach (*Gtk::manage(partpasteprof = new MyImageMenuItem (M("FILEBROWSER_PARTIALPASTEPROFILE"), "menu-profile-partial")), 0, 1, p, p + 1);
         p++;
-        pmenu->attach (*Gtk::manage(applypartprof = new Gtk::MenuItem (M("FILEBROWSER_APPLYPROFILE_PARTIAL"))), 0, 1, p, p + 1);
+        pmenu->attach (*Gtk::manage(applyprof = new MyImageMenuItem (M("FILEBROWSER_APPLYPROFILE"), "menu-profile-apply")), 0, 1, p, p + 1);
         p++;
-        pmenu->attach (*Gtk::manage(resetdefaultprof = new Gtk::MenuItem (M("FILEBROWSER_RESETDEFAULTPROFILE"))), 0, 1, p, p + 1);
+        pmenu->attach (*Gtk::manage(applypartprof = new MyImageMenuItem (M("FILEBROWSER_APPLYPROFILE_PARTIAL"), "menu-profile-apply-partial")), 0, 1, p, p + 1);
         p++;
-        pmenu->attach (*Gtk::manage(clearprof = new Gtk::MenuItem (M("FILEBROWSER_CLEARPROFILE"))), 0, 1, p, p + 1);
+        pmenu->attach (*Gtk::manage(resetdefaultprof = new MyImageMenuItem (M("FILEBROWSER_RESETDEFAULTPROFILE"), "menu-profile-reset")), 0, 1, p, p + 1);
+        p++;
+        pmenu->attach (*Gtk::manage(clearprof = new MyImageMenuItem (M("FILEBROWSER_CLEARPROFILE"), "menu-profile-clear")), 0, 1, p, p + 1);
         p++;
     }
 
 
     pmenu->attach (*Gtk::manage(new Gtk::SeparatorMenuItem ()), 0, 1, p, p + 1);
     p++;
-    pmenu->attach (*Gtk::manage(menuDF = new Gtk::MenuItem (M("FILEBROWSER_DARKFRAME"))), 0, 1, p, p + 1);
+    pmenu->attach (*Gtk::manage(menuDF = new MyImageMenuItem (M("FILEBROWSER_DARKFRAME"), "menu-darkframe")), 0, 1, p, p + 1);
     p++;
-    pmenu->attach (*Gtk::manage(menuFF = new Gtk::MenuItem (M("FILEBROWSER_FLATFIELD"))), 0, 1, p, p + 1);
+    pmenu->attach (*Gtk::manage(menuFF = new MyImageMenuItem (M("FILEBROWSER_FLATFIELD"), "menu-flatfield")), 0, 1, p, p + 1);
     p++;
 
     pmenu->attach (*Gtk::manage(new Gtk::SeparatorMenuItem ()), 0, 1, p, p + 1);
     p++;
-    pmenu->attach (*Gtk::manage(cachemenu = new Gtk::MenuItem (M("FILEBROWSER_CACHE"))), 0, 1, p, p + 1);
+    pmenu->attach (*Gtk::manage(cachemenu = new MyImageMenuItem (M("FILEBROWSER_CACHE"), "menu-cache-clear")), 0, 1, p, p + 1);
 
     pmenu->show_all ();
 
@@ -607,11 +776,11 @@ void FileBrowser::rightClicked ()
     // submenuDF
     int p = 0;
     Gtk::Menu* submenuDF = Gtk::manage (new Gtk::Menu ());
-    submenuDF->attach (*Gtk::manage(selectDF = new Gtk::MenuItem (M("FILEBROWSER_SELECTDARKFRAME"))), 0, 1, p, p + 1);
+    submenuDF->attach (*Gtk::manage(selectDF = new MyImageMenuItem (M("FILEBROWSER_SELECTDARKFRAME"), "menu-darkframe")), 0, 1, p, p + 1);
     p++;
-    submenuDF->attach (*Gtk::manage(autoDF = new Gtk::MenuItem (M("FILEBROWSER_AUTODARKFRAME"))), 0, 1, p, p + 1);
+    submenuDF->attach (*Gtk::manage(autoDF = new MyImageMenuItem (M("FILEBROWSER_AUTODARKFRAME"), "menu-darkframe-auto")), 0, 1, p, p + 1);
     p++;
-    submenuDF->attach (*Gtk::manage(thisIsDF = new Gtk::MenuItem (M("FILEBROWSER_MOVETODARKFDIR"))), 0, 1, p, p + 1);
+    submenuDF->attach (*Gtk::manage(thisIsDF = new MyImageMenuItem (M("FILEBROWSER_MOVETODARKFDIR"), "menu-darkframe-move")), 0, 1, p, p + 1);
     selectDF->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), selectDF));
     autoDF->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), autoDF));
     thisIsDF->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), thisIsDF ));
@@ -621,11 +790,11 @@ void FileBrowser::rightClicked ()
     // submenuFF
     p = 0;
     Gtk::Menu* submenuFF = Gtk::manage (new Gtk::Menu ());
-    submenuFF->attach (*Gtk::manage(selectFF = new Gtk::MenuItem (M("FILEBROWSER_SELECTFLATFIELD"))), 0, 1, p, p + 1);
+    submenuFF->attach (*Gtk::manage(selectFF = new MyImageMenuItem (M("FILEBROWSER_SELECTFLATFIELD"), "menu-flatfield")), 0, 1, p, p + 1);
     p++;
-    submenuFF->attach (*Gtk::manage(autoFF = new Gtk::MenuItem (M("FILEBROWSER_AUTOFLATFIELD"))), 0, 1, p, p + 1);
+    submenuFF->attach (*Gtk::manage(autoFF = new MyImageMenuItem (M("FILEBROWSER_AUTOFLATFIELD"), "menu-flatfield-auto")), 0, 1, p, p + 1);
     p++;
-    submenuFF->attach (*Gtk::manage(thisIsFF = new Gtk::MenuItem (M("FILEBROWSER_MOVETOFLATFIELDDIR"))), 0, 1, p, p + 1);
+    submenuFF->attach (*Gtk::manage(thisIsFF = new MyImageMenuItem (M("FILEBROWSER_MOVETOFLATFIELDDIR"), "menu-flatfield-move")), 0, 1, p, p + 1);
     selectFF->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), selectFF));
     autoFF->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), autoFF));
     thisIsFF->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), thisIsFF ));
@@ -635,9 +804,9 @@ void FileBrowser::rightClicked ()
     // build cache sub menu
     p = 0;
     Gtk::Menu* cachesubmenu = Gtk::manage (new Gtk::Menu ());
-    cachesubmenu->attach (*Gtk::manage(clearFromCache = new Gtk::MenuItem (M("FILEBROWSER_CACHECLEARFROMPARTIAL"))), 0, 1, p, p + 1);
+    cachesubmenu->attach (*Gtk::manage(clearFromCache = new MyImageMenuItem (M("FILEBROWSER_CACHECLEARFROMPARTIAL"), "menu-cache-partial")), 0, 1, p, p + 1);
     p++;
-    cachesubmenu->attach (*Gtk::manage(clearFromCacheFull = new Gtk::MenuItem (M("FILEBROWSER_CACHECLEARFROMFULL"))), 0, 1, p, p + 1);
+    cachesubmenu->attach (*Gtk::manage(clearFromCacheFull = new MyImageMenuItem (M("FILEBROWSER_CACHECLEARFROMFULL"), "menu-cache-clear")), 0, 1, p, p + 1);
     p++;
     clearFromCache->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), clearFromCache));
     clearFromCacheFull->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), clearFromCacheFull));
@@ -651,10 +820,10 @@ void FileBrowser::rightClicked ()
         saveImage->hide();
     }
 
-    // "Set as album cover" — only when a setter is wired and exactly one image is selected
+    // "Set as album cover" — only when viewing an album and exactly one image is selected
     {
         MYREADERLOCK(l2, entryRW);
-        if (albumCoverSetter_ && selected.size() == 1) {
+        if (isInAlbumMode_ && isInAlbumMode_() && selected.size() == 1) {
             setAlbumCover->show();
         } else {
             setAlbumCover->hide();
@@ -1228,7 +1397,95 @@ void FileBrowser::copyProfile ()
     MYREADERLOCK(l, entryRW);
 
     if (selected.size() == 1) {
-        clipboard.setProcParams ((static_cast<FileBrowserEntry*>(selected[0]))->thumbnail->getProcParams());
+        const auto& srcPP = (static_cast<FileBrowserEntry*>(selected[0]))->thumbnail->getProcParams();
+
+        // Check if all visible filters are active (fast path: full copy)
+        bool allActive = true;
+        for (const auto& kv : copyFilters_) {
+            if (!kv.second->get_active()) {
+                allActive = false;
+                break;
+            }
+        }
+
+        if (allActive) {
+            clipboard.setProcParams(srcPP);
+        } else {
+            // Build a ParamsEdited filter: start all-true, disable unchecked items
+            ParamsEdited filterPE(true);
+            filterPE.locallab.spots.resize(srcPP.locallab.spots.size(), LocallabParamsEdited::LocallabSpotEdited(true));
+            ParamsEdited falsePE;
+            falsePE.locallab.spots.resize(srcPP.locallab.spots.size(), LocallabParamsEdited::LocallabSpotEdited(false));
+
+            // Always exclude general (rank/color labels)
+            filterPE.general = falsePE.general;
+
+            // Helper: check if a filter key is unchecked
+            auto isOff = [this](const std::string& key) -> bool {
+                auto it = copyFilters_.find(key);
+                return it != copyFilters_.end() && !it->second->get_active();
+            };
+
+            // Basic
+            if (isOff("wb"))            filterPE.wb = falsePE.wb;
+            if (isOff("toneCurve"))     filterPE.toneCurve = falsePE.toneCurve;
+            if (isOff("sh"))            filterPE.sh = falsePE.sh;
+            if (isOff("toneEqualizer")) filterPE.toneEqualizer = falsePE.toneEqualizer;
+
+            // Detail
+            if (isOff("sharpening"))      filterPE.sharpening = falsePE.sharpening;
+            if (isOff("sharpenEdge"))     filterPE.sharpenEdge = falsePE.sharpenEdge;
+            if (isOff("sharpenMicro"))    filterPE.sharpenMicro = falsePE.sharpenMicro;
+            if (isOff("impulseDenoise"))  filterPE.impulseDenoise = falsePE.impulseDenoise;
+            if (isOff("dirpyrDenoise"))   filterPE.dirpyrDenoise = falsePE.dirpyrDenoise;
+            if (isOff("defringe"))        filterPE.defringe = falsePE.defringe;
+            if (isOff("dehaze"))          filterPE.dehaze = falsePE.dehaze;
+            if (isOff("dirpyrequalizer")) filterPE.dirpyrequalizer = falsePE.dirpyrequalizer;
+
+            // Color
+            if (isOff("labCurve"))       filterPE.labCurve = falsePE.labCurve;
+            if (isOff("rgbCurves"))      filterPE.rgbCurves = falsePE.rgbCurves;
+            if (isOff("colorToning"))    filterPE.colorToning = falsePE.colorToning;
+            if (isOff("chmixer"))        filterPE.chmixer = falsePE.chmixer;
+            if (isOff("blackwhite"))     filterPE.blackwhite = falsePE.blackwhite;
+            if (isOff("hsvequalizer"))   filterPE.hsvequalizer = falsePE.hsvequalizer;
+            if (isOff("filmSimulation")) filterPE.filmSimulation = falsePE.filmSimulation;
+            if (isOff("softlight"))      filterPE.softlight = falsePE.softlight;
+            if (isOff("vibrance"))       filterPE.vibrance = falsePE.vibrance;
+
+            // Lens
+            if (isOff("distortion"))   filterPE.distortion = falsePE.distortion;
+            if (isOff("cacorrection")) filterPE.cacorrection = falsePE.cacorrection;
+            if (isOff("vignetting"))   filterPE.vignetting = falsePE.vignetting;
+            if (isOff("lensProf"))     filterPE.lensProf = falsePE.lensProf;
+
+            // Composition
+            if (isOff("coarse"))       filterPE.coarse = falsePE.coarse;
+            if (isOff("rotate"))       filterPE.rotate = falsePE.rotate;
+            if (isOff("crop"))         filterPE.crop = falsePE.crop;
+            if (isOff("resize"))       filterPE.resize = falsePE.resize;
+            if (isOff("prsharpening")) filterPE.prsharpening = falsePE.prsharpening;
+            if (isOff("perspective"))  filterPE.perspective = falsePE.perspective;
+            if (isOff("commonTrans"))  filterPE.commonTrans = falsePE.commonTrans;
+            if (isOff("gradient"))     filterPE.gradient = falsePE.gradient;
+            if (isOff("framing"))      filterPE.framing = falsePE.framing;
+
+            // Advanced
+            if (isOff("retinex")) filterPE.retinex = falsePE.retinex;
+            if (isOff("wavelet")) filterPE.wavelet = falsePE.wavelet;
+            if (isOff("spot"))    filterPE.spot = falsePE.spot;
+            if (isOff("cg"))      filterPE.cg = falsePE.cg;
+
+            // Selective Editing
+            if (isOff("locallab")) filterPE.locallab = falsePE.locallab;
+
+            // Apply filter: combine only selected settings from source
+            rtengine::procparams::ProcParams filteredPP;
+            filterPE.combine(filteredPP, srcPP, true);
+
+            rtengine::procparams::PartialProfile pp(&filteredPP, &filterPE);
+            clipboard.setPartialProfile(pp);
+        }
     }
 }
 
@@ -1882,6 +2139,9 @@ void FileBrowser::rankingRequested (std::vector<FileBrowserEntry*> tbe, int rank
         if (tbe[i]->getThumbButtonSet()) {
             tbe[i]->getThumbButtonSet()->setRank (tbe[i]->thumbnail->getRank());
         }
+
+        // Trigger overlay animation (all entries animate in parallel)
+        tbe[i]->startRatingAnimation();
     }
 
     applyFilter (filter);
@@ -1912,6 +2172,9 @@ void FileBrowser::colorlabelRequested (std::vector<FileBrowserEntry*> tbe, int c
         if (tbe[i]->getThumbButtonSet()) {
             tbe[i]->getThumbButtonSet()->setColorLabel (tbe[i]->thumbnail->getColorLabel());
         }
+
+        // Trigger overlay animation (all entries animate in parallel)
+        tbe[i]->startColorLabelAnimation();
     }
 
     applyFilter (filter);

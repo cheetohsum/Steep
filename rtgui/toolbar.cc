@@ -86,6 +86,14 @@ ToolBar::ToolBar () : showColPickers(true), listener (nullptr), pickerListener(n
     perspTool->set_relief(Gtk::RELIEF_NONE);
     pack_start(*perspTool);
 
+    perspGridTool = Gtk::manage(new Gtk::ToggleButton());
+    Gtk::Image* perspGridImg = Gtk::manage(new RTImage("perspective-grid", Gtk::ICON_SIZE_LARGE_TOOLBAR));
+    perspGridTool->add(*perspGridImg);
+    perspGridImg->show();
+    perspGridTool->set_relief(Gtk::RELIEF_NONE);
+    perspGridTool->show();
+    pack_start(*perspGridTool);
+
 
     handTool->set_active (true);
     current = TMHand;
@@ -97,6 +105,7 @@ ToolBar::ToolBar () : showColPickers(true), listener (nullptr), pickerListener(n
     cropConn = cropTool->signal_toggled().connect( sigc::mem_fun(*this, &ToolBar::crop_pressed));
     straConn = straTool->signal_toggled().connect( sigc::mem_fun(*this, &ToolBar::stra_pressed));
     perspConn = perspTool->signal_toggled().connect( sigc::mem_fun(*this, &ToolBar::persp_pressed));
+    perspGridConn = perspGridTool->signal_toggled().connect( sigc::mem_fun(*this, &ToolBar::persp_grid_pressed));
 
     handTool->set_tooltip_markup (M("TOOLBAR_TOOLTIP_HAND"));
     wbTool->set_tooltip_markup (M("TOOLBAR_TOOLTIP_WB"));
@@ -104,6 +113,7 @@ ToolBar::ToolBar () : showColPickers(true), listener (nullptr), pickerListener(n
     cropTool->set_tooltip_markup (M("TOOLBAR_TOOLTIP_CROP"));
     straTool->set_tooltip_markup (M("TOOLBAR_TOOLTIP_STRAIGHTEN"));
     perspTool->set_tooltip_markup(M("TOOLBAR_TOOLTIP_PERSPECTIVE"));
+    perspGridTool->set_tooltip_markup(M("TP_PERSPECTIVE_GRID_TOOLTIP"));
 }
 
 //
@@ -119,9 +129,10 @@ void ToolBar::setTool (ToolMode tool)
     ConnectionBlocker straBlocker(straConn);
     ConnectionBlocker cropBlocker(cropConn);
     ConnectionBlocker perspBlocker(perspConn);
+    ConnectionBlocker perspGridBlocker(perspGridConn);
     ConnectionBlocker wbWasBlocked(wbTool, wbConn), cpWasBlocked(colPickerTool, cpConn);
 
-    stopEdit = tool == TMHand && (handTool->get_active() || (perspTool && perspTool->get_active())) && editingMode && !blockEdit;
+    stopEdit = tool == TMHand && (handTool->get_active() || (perspTool && perspTool->get_active()) || (perspGridTool && perspGridTool->get_active())) && editingMode && !blockEdit;
 
     handTool->set_active (false);
 
@@ -136,6 +147,9 @@ void ToolBar::setTool (ToolMode tool)
     }
     if (perspTool) {
         perspTool->set_active(false);
+    }
+    if (perspGridTool) {
+        perspGridTool->set_active(false);
     }
 
     if (tool == TMHand) {
@@ -156,7 +170,11 @@ void ToolBar::setTool (ToolMode tool)
     } else if (tool == TMPerspective) {
         if (perspTool) {
             perspTool->set_active(true);
-            // Perspective is a hand tool, but has its own button.
+            handTool->set_image(*handimg);
+        }
+    } else if (tool == TMPerspectiveGrid) {
+        if (perspGridTool) {
+            perspGridTool->set_active(true);
             handTool->set_image(*handimg);
         }
     }
@@ -182,6 +200,7 @@ void ToolBar::startEditMode()
         ConnectionBlocker straBlocker(straConn);
         ConnectionBlocker cropBlocker(cropConn);
         ConnectionBlocker perspBlocker(perspConn);
+        ConnectionBlocker perspGridBlocker(perspGridConn);
         ConnectionBlocker wbWasBlocked(wbTool, wbConn), cpWasBlocked(colPickerTool, cpConn);
 
         if (current != TMHand) {
@@ -196,6 +215,9 @@ void ToolBar::startEditMode()
             straTool->set_active (false);
             if (perspTool) {
                 perspTool->set_active(false);
+            }
+            if (perspGridTool) {
+                perspGridTool->set_active(false);
             }
             current = TMHand;
         }
@@ -230,6 +252,7 @@ void ToolBar::hand_pressed ()
     ConnectionBlocker straBlocker(straConn);
     ConnectionBlocker cropBlocker(cropConn);
     ConnectionBlocker perspBlocker(perspConn);
+    ConnectionBlocker perspGridBlocker(perspGridConn);
     ConnectionBlocker wbWasBlocked(wbTool, wbConn), cpWasBlocked(colPickerTool, cpConn);
 
     if (editingMode && !blockEdit) {
@@ -250,6 +273,9 @@ void ToolBar::hand_pressed ()
     straTool->set_active (false);
     if (perspTool) {
         perspTool->set_active(false);
+    }
+    if (perspGridTool) {
+        perspGridTool->set_active(false);
     }
     handTool->set_active (true);
 
@@ -274,6 +300,7 @@ void ToolBar::wb_pressed ()
     ConnectionBlocker straBlocker(straConn);
     ConnectionBlocker cropBlocker(cropConn);
     ConnectionBlocker perspBlocker(perspConn);
+    ConnectionBlocker perspGridBlocker(perspGridConn);
     ConnectionBlocker wbWasBlocked(wbTool, wbConn), cpWasBlocked(colPickerTool, cpConn);
 
     if (current != TMSpotWB) {
@@ -288,6 +315,9 @@ void ToolBar::wb_pressed ()
         straTool->set_active (false);
         if (perspTool) {
             perspTool->set_active(false);
+        }
+        if (perspGridTool) {
+            perspGridTool->set_active(false);
         }
         if (colPickerTool) {
             colPickerTool->set_active(false);
@@ -314,6 +344,7 @@ void ToolBar::colPicker_pressed (GdkEventButton* event)
         ConnectionBlocker handBlocker(handConn);
         ConnectionBlocker straBlocker(straConn);
         ConnectionBlocker cropBlocker(cropConn);
+        ConnectionBlocker perspGridBlocker(perspGridConn);
         ConnectionBlocker wbWasBlocked(wbTool, wbConn);
 
         cropTool->set_active (false);
@@ -323,6 +354,9 @@ void ToolBar::colPicker_pressed (GdkEventButton* event)
         straTool->set_active (false);
         if (perspTool) {
             perspTool->set_active(false);
+        }
+        if (perspGridTool) {
+            perspGridTool->set_active(false);
         }
 
         if (current != TMColorPicker) {
@@ -396,6 +430,7 @@ void ToolBar::crop_pressed ()
     ConnectionBlocker straBlocker(straConn);
     ConnectionBlocker cropBlocker(cropConn);
     ConnectionBlocker perspBlocker(perspConn);
+    ConnectionBlocker perspGridBlocker(perspGridConn);
     ConnectionBlocker wbWasBlocked(wbTool, wbConn), cpWasBlocked(colPickerTool, cpConn);
 
     if (editingMode) {
@@ -415,6 +450,9 @@ void ToolBar::crop_pressed ()
     straTool->set_active (false);
     if (perspTool) {
         perspTool->set_active(false);
+    }
+    if (perspGridTool) {
+        perspGridTool->set_active(false);
     }
     cropTool->set_active (true);
 
@@ -440,6 +478,7 @@ void ToolBar::stra_pressed ()
     ConnectionBlocker straBlocker(straConn);
     ConnectionBlocker cropBlocker(cropConn);
     ConnectionBlocker perspBlocker(perspConn);
+    ConnectionBlocker perspGridBlocker(perspGridConn);
     ConnectionBlocker wbWasBlocked(wbTool, wbConn), cpWasBlocked(colPickerTool, cpConn);
 
     if (editingMode) {
@@ -459,6 +498,9 @@ void ToolBar::stra_pressed ()
     cropTool->set_active (false);
     if (perspTool) {
         perspTool->set_active(false);
+    }
+    if (perspGridTool) {
+        perspGridTool->set_active(false);
     }
     straTool->set_active (true);
 
@@ -489,7 +531,12 @@ void ToolBar::persp_pressed ()
     ConnectionBlocker straBlocker(straConn);
     ConnectionBlocker cropBlocker(cropConn);
     ConnectionBlocker perspBlocker(perspConn);
+    ConnectionBlocker perspGridBlocker(perspGridConn);
     ConnectionBlocker wbWasBlocked(wbTool, wbConn), cpWasBlocked(colPickerTool, cpConn);
+
+    if (perspGridTool) {
+        perspGridTool->set_active(false);
+    }
 
     if (editingMode) {
         stopEditMode();
@@ -502,6 +549,39 @@ void ToolBar::persp_pressed ()
 
     if (listener) {
         listener->toolSelected(TMPerspective);
+    }
+}
+
+void ToolBar::persp_grid_pressed ()
+{
+    if (listener && !perspGridTool->get_active()) {
+        listener->toolDeselected(TMPerspectiveGrid);
+        return;
+    }
+
+    {
+    ConnectionBlocker handBlocker(handConn);
+    ConnectionBlocker straBlocker(straConn);
+    ConnectionBlocker cropBlocker(cropConn);
+    ConnectionBlocker perspBlocker(perspConn);
+    ConnectionBlocker perspGridBlocker(perspGridConn);
+    ConnectionBlocker wbWasBlocked(wbTool, wbConn), cpWasBlocked(colPickerTool, cpConn);
+
+    if (perspTool) {
+        perspTool->set_active(false);
+    }
+
+    if (editingMode) {
+        stopEditMode();
+        if (listener) {
+            listener->editModeSwitchedOff();
+        }
+    }
+
+    }
+
+    if (listener) {
+        listener->toolSelected(TMPerspectiveGrid);
     }
 }
 
@@ -553,6 +633,10 @@ void ToolBar::hideCropTools()
         perspTool->set_no_show_all(true);
         perspTool->hide();
     }
+    if (perspGridTool) {
+        perspGridTool->set_no_show_all(true);
+        perspGridTool->hide();
+    }
 }
 
 void ToolBar::hideHandTool()
@@ -585,6 +669,11 @@ void ToolBar::setBatchMode()
         perspConn.disconnect();
         removeIfThere(this, perspTool, false);
         perspTool = nullptr;
+    }
+    if (perspGridTool) {
+        perspGridConn.disconnect();
+        removeIfThere(this, perspGridTool, false);
+        perspGridTool = nullptr;
     }
 
     allowNoTool = true;

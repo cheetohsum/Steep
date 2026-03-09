@@ -91,7 +91,7 @@ protected:
     bool lastitcwb_alg;
 
     Gtk::Button* spotbutton;
-    Gtk::Box* detailContent_ = nullptr;
+    Gtk::Revealer* detailRevealer_ = nullptr;
     bool detailExpanded_ = false;
     void toggleDetail();
 
@@ -159,4 +159,7 @@ public:
     void setAdjusterBehavior (bool tempadd, bool greenadd, bool equaladd, bool tempbiasadd);
     void trimValues          (rtengine::procparams::ProcParams* pp) override;
     void enabledChanged() override;
+
+    Adjuster* getTempSlider() { return temp; }
+    Adjuster* getGreenSlider() { return green; }
 };

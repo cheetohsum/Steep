@@ -156,6 +156,12 @@ BatchQueue::BatchQueue (FileCatalog* aFileCatalog) : processing(nullptr), fileCa
     selall->signal_activate().connect (sigc::mem_fun(*this, &BatchQueue::selectAll));
 
     setArrangement (ThumbBrowserBase::TB_Vertical);
+
+    // Hide horizontal scrollbar permanently; vertical auto-shows when needed
+    hscroll.set_no_show_all(true);
+    hscroll.hide();
+    vscroll.set_no_show_all(true);
+    vscroll.hide();
 }
 
 BatchQueue::~BatchQueue ()

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <g style="opacity:0.7;fill:none;stroke:#cccccc;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round">
+    <path d="M4 7 L6.5 2 L9 6.5"/>
+    <path d="M20 7 L17.5 2 L15 6.5"/>
+    <ellipse cx="12" cy="13" rx="8" ry="7"/>
+  </g>
+  <g style="opacity:0.7;fill:#cccccc;stroke:none">
+    <circle cx="9" cy="11" r="1.2"/>
+    <circle cx="15" cy="11" r="1.2"/>
+  </g>
+  <path d="M11 14.5 L12 13.5 L13 14.5" style="opacity:0.7;fill:none;stroke:#cccccc;stroke-width:1.2;stroke-linecap:round;stroke-linejoin:round"/>
+</svg>

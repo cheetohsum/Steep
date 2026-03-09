@@ -496,6 +496,7 @@ struct local_params {
     float ycent, xcent;
     float lx, ly;
     float lxL, lyT;
+    float imW, imH;  // image dimensions for gradient normalization
     float transweak;
     float transgrad;
     float iterat;
@@ -1657,6 +1658,8 @@ static void calcLocalParams(int sp, int oW, int oH,  const LocallabParams& local
     lp.ly = h * local_y;
     lp.lxL = w * local_xL;
     lp.lyT = h * local_yT;
+    lp.imW = static_cast<float>(w);
+    lp.imH = static_cast<float>(h);
     lp.chro = local_chroma;
     lp.struco = structcolor;
     lp.strengrid = strengthgrid;
@@ -1944,7 +1947,7 @@ static void calcLocalParams(int sp, int oW, int oH,  const LocallabParams& local
     lp.retiena = locallab.spots.at(sp).expreti && lp.activspot && llColorMaskinv == 0 && llExpMaskinv == 0 && llSHMaskinv == 0 && llExpMask == 0 && llsoftMask == 0 && llSHMask == 0 && llcbMask == 0 && lllcMask == 0 && llsharMask == 0 && llColorMask == 0 && lltmMask == 0 && llvibMask == 0 && llSHMask == 0 && lllogMask == 0 && ll_Mask == 0 && llcieMask == 0;
     lp.lcena = locallab.spots.at(sp).expcontrast && lp.activspot && llColorMaskinv == 0 && llExpMaskinv == 0 && llSHMaskinv == 0 && llExpMask == 0 && llsoftMask == 0 && llSHMask == 0 && llcbMask == 0 && llsharMask == 0 && llColorMask == 0 && lltmMask == 0 && llvibMask == 0 && llSHMask == 0 && lllogMask == 0 && ll_Mask == 0 && llcieMask == 0;
     lp.cbdlena = locallab.spots.at(sp).expcbdl && lp.activspot && llColorMaskinv == 0 && llExpMaskinv == 0 && llSHMaskinv == 0 && llExpMask == 0 && llsoftMask == 0 && llSHMask == 0 && llretiMask == 0 && lllcMask == 0 && llsharMask == 0 && lllcMask == 0 && llColorMask == 0 && lltmMask == 0 && llvibMask == 0 && lllogMask == 0 && ll_Mask == 0 && llcieMask == 0;
-    lp.exposena = locallab.spots.at(sp).expexpose  && lp.activspot  && llColorMaskinv == 0 && llSHMaskinv == 0 && llColorMask == 0 && llsoftMask == 0 && llSHMask == 0 && lllcMask == 0 && llsharMask == 0 && llcbMask == 0 && llretiMask == 0 && lltmMask == 0 && llvibMask == 0 && lllogMask == 0 && ll_Mask == 0 && llcieMask == 0; // Exposure tool is deactivated if Color & Light mask SHmask is visible
+    lp.exposena = (locallab.spots.at(sp).expexpose || locallab.spots.at(sp).useAIMask) && lp.activspot  && (locallab.spots.at(sp).useAIMask || (llColorMaskinv == 0 && llSHMaskinv == 0 && llColorMask == 0 && llsoftMask == 0 && llSHMask == 0 && lllcMask == 0 && llsharMask == 0 && llcbMask == 0 && llretiMask == 0 && lltmMask == 0 && llvibMask == 0 && lllogMask == 0 && ll_Mask == 0 && llcieMask == 0)); // AI mask spots bypass mask display flag checks
     lp.hsena = locallab.spots.at(sp).expshadhigh && lp.activspot && llColorMaskinv == 0 && llExpMaskinv == 0 && llColorMask == 0 && llsoftMask == 0 && llExpMask == 0 && llcbMask == 0 && lllcMask == 0 && llsharMask == 0 && llretiMask == 0 && lltmMask == 0 && llvibMask == 0 && lllogMask == 0 && ll_Mask == 0 && llcieMask == 0;// Shadow Highlight tool is deactivated if Color & Light mask or SHmask is visible
     lp.vibena = locallab.spots.at(sp).expvibrance && lp.activspot && llColorMaskinv == 0 && llExpMaskinv == 0 && llSHMaskinv == 0 && llColorMask == 0 && llsoftMask == 0 && llExpMask == 0 && llcbMask == 0 && lllcMask == 0 && llsharMask == 0 && llretiMask == 0 && llcbMask == 0 && lltmMask == 0 && llSHMask == 0 && lllogMask == 0 && ll_Mask == 0 && llcieMask == 0;// vibrance tool is deactivated if Color & Light mask or SHmask is visible
     lp.sharpena = locallab.spots.at(sp).expsharp && lp.activspot && llColorMaskinv == 0 && llExpMaskinv == 0 && llSHMaskinv == 0 && llColorMask == 0 && llsoftMask == 0 && llExpMask == 0 && llcbMask == 0 && lllcMask == 0 && llretiMask == 0 && llcbMask == 0 && lltmMask == 0 && llSHMask == 0 && llvibMask == 0 && lllogMask == 0 && ll_Mask == 0 && llcieMask == 0;
@@ -2134,9 +2137,12 @@ static void calcTransitiongrad(const float lox, const float loy, const float ach
     const float dy = loy - lp.yc;
     const float proj = dx * sinT - dy * cosT;
 
-    // Max projection distance based on bounding box
-    const float maxX = std::max(lp.lx, lp.lxL);
-    const float maxY = std::max(lp.ly, lp.lyT);
+    // Max projection distance — capped to image extent from center
+    // so an oversized bounding box doesn't inflate the gradient
+    const float imgMaxX = std::max(lp.xc, lp.imW - lp.xc);
+    const float imgMaxY = std::max(lp.yc, lp.imH - lp.yc);
+    const float maxX = std::min(std::max(lp.lx, lp.lxL), imgMaxX);
+    const float maxY = std::min(std::max(lp.ly, lp.lyT), imgMaxY);
     const float maxProj = maxX * std::abs(sinT) + maxY * std::abs(cosT);
 
     if (maxProj < 0.001f) {
@@ -6609,10 +6615,16 @@ static void showmask(int lumask, const local_params& lp, int xstart, int ystart,
             }
 
             if (inv == 0) {
-                if (zone > 0) {//normal
-                    transformed->L[y + ystart][x + xstart] = (lum) + clipLoc(bufmaskorigSH->L[y][x]);
-                    transformed->a[y + ystart][x + xstart] = bufexporig->a[y][x] * bufmaskorigSH->a[y][x];
-                    transformed->b[y + ystart][x + xstart] = (colo) + bufexporig->b[y][x] * bufmaskorigSH->b[y][x];
+                if (zone > 0) {//normal — blend with localFactor for gradient visualization
+                    const float origL = transformed->L[y + ystart][x + xstart];
+                    const float origa = transformed->a[y + ystart][x + xstart];
+                    const float origb = transformed->b[y + ystart][x + xstart];
+                    const float maskL = (lum) + clipLoc(bufmaskorigSH->L[y][x]);
+                    const float maska = bufexporig->a[y][x] * bufmaskorigSH->a[y][x];
+                    const float maskb = (colo) + bufexporig->b[y][x] * bufmaskorigSH->b[y][x];
+                    transformed->L[y + ystart][x + xstart] = origL + localFactor * (maskL - origL);
+                    transformed->a[y + ystart][x + xstart] = origa + localFactor * (maska - origa);
+                    transformed->b[y + ystart][x + xstart] = origb + localFactor * (maskb - origb);
                 }
             } else if (inv == 1) { //inverse
                 if (zone == 0) {
@@ -9605,8 +9617,6 @@ void ImProcFunctions::BlurNoise_Local(LabImage *tmp1, LabImage * originalmask, c
 
 void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, int call, int senstype, const LabImage * bufexporig, const LabImage * bufexpfin, LabImage * originalmask, const float hueref, const float chromaref, const float lumaref, float sobelref, float meansobel, float ** blend2, struct local_params & lp, LabImage * original, LabImage * transformed, const LabImage *tmp1, LocalLabGradientMode grad, int cx, int cy, int sk)
 {
-    
-    
     //initialize coordinates
     int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
     int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
@@ -9897,8 +9907,6 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
     const array2D<float>* aiMaskPtr = nullptr;
     int aiMaskW = 0, aiMaskH = 0;
     int aiFullW = 0, aiFullH = 0;
-    fprintf(stderr, "DEBUG transit_shapedetect2: sp=%d lp.useaimask=%d lp.aimaskclass=%d lp.aimaskopa=%.2f lp.fullim=%d\n",
-            sp, lp.useaimask ? 1 : 0, lp.aimaskclass, lp.aimaskopa, lp.fullim);
     if (lp.useaimask) {
         AIMaskCache& aiCache = AIMaskCache::getInstance();
         if (aiCache.hasCachedMasks()) {
@@ -9908,27 +9916,9 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
             aiMaskH = aiCache.getCachedHeight();
             aiFullW = aiCache.getFullWidth();
             aiFullH = aiCache.getFullHeight();
-            fprintf(stderr, "AI transit: mask=%dx%d, fullImg=%dx%d, original=%dx%d, cx=%d cy=%d sk=%d, xstart=%d ystart=%d, bfw=%d bfh=%d\n",
-                    aiMaskW, aiMaskH, aiFullW, aiFullH, original->W, original->H, cx, cy, sk, xstart, ystart, bfw, bfh);
-            // Debug: show mapping for corner and center pixels
-            for (int dy = 0; dy < 3; ++dy) {
-                for (int dx = 0; dx < 3; ++dx) {
-                    int testX = dx * (bfw - 1) / 2;
-                    int testY = dy * (bfh - 1) / 2;
-                    int maskX = static_cast<int>(static_cast<float>(testX + xstart + cx) * sk * aiMaskW / aiFullW);
-                    int maskY = static_cast<int>(static_cast<float>(testY + ystart + cy) * sk * aiMaskH / aiFullH);
-                    float val = (maskY >= 0 && maskY < aiMaskH && maskX >= 0 && maskX < aiMaskW) ? (*aiMaskPtr)[maskY][maskX] : -1.f;
-                    fprintf(stderr, "  pixel(%d,%d) -> mask(%d,%d) val=%.3f\n", testX, testY, maskX, maskY, val);
-                }
-            }
         } else {
-            fprintf(stderr, "DEBUG transit_shapedetect2: lp.useaimask=true but NO cached masks!\n");
         }
-    } else {
-        fprintf(stderr, "DEBUG transit_shapedetect2: lp.useaimask=false, AI mask NOT applied\n");
     }
-    fprintf(stderr, "DEBUG transit_shapedetect2: aiMaskPtr=%p aiMaskW=%d aiMaskH=%d aiFullW=%d aiFullH=%d\n",
-            (const void*)aiMaskPtr, aiMaskW, aiMaskH, aiFullW, aiFullH);
 #endif
 
 #ifdef _OPENMP
@@ -10020,7 +10010,7 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
                 const float dE = rsob + std::sqrt(kab * (kch * chrodelta2 + kH * huedelta2) + kL * SQR(refL - maskptr->L[y][x]));
                 //reduction action with deltaE
                 float reducdE = calcreducdE(dE, maxdE, mindE, maxdElim, mindElim, lp.iterat, limscope, varsens);
-                if(lp.fullim == 3 ) {//disable scope
+                if(lp.fullim == 3 || lp.shapmet == 2) {//disable scope for Global mode and gradient shape
                     reducdE = 1.f;
                 }
                 if ((senstype == 11 || ( senstype == 31 && lp.islogcie)) && (varsens >= limvarsens)) {
@@ -10066,7 +10056,9 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
 
                 float factorx = localFactor;
 #ifdef RT_AI_MASKING
+                bool aiMaskActive = false;
                 if (aiMaskPtr && aiFullW > 0 && aiFullH > 0) {
+                    aiMaskActive = true;
                     // Map processing coordinates to mask coordinates via full-resolution space.
                     const float my_f = static_cast<float>(y + ystart + cy) * sk * aiMaskH / static_cast<float>(aiFullH);
                     const float mx_f = static_cast<float>(x + xstart + cx) * sk * aiMaskW / static_cast<float>(aiFullW);
@@ -10104,9 +10096,27 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
                     if (lp.aimaskinv) {
                         aiVal = 1.f - aiVal;
                     }
-                    // Blend AI mask with geometric factor
-                    factorx = intp(lp.aimaskopa, aiVal * localFactor, localFactor);
+                    // When AI mask is active, combine with geometric shape.
+                    // For gradient shape, multiply AI mask with gradient localFactor
+                    // so both spatial controls work together.
+                    // For ellipse/rect, AI mask is the primary control (localFactor
+                    // may be 0 outside the geometric boundary).
+                    if (lp.shapmet == 2 && zone > 0) {
+                        factorx = localFactor * lp.aimaskopa * aiVal;
+                    } else {
+                        factorx = lp.aimaskopa * aiVal;
+                    }
                 }
+#endif
+                // When AI mask is active, apply based on factorx regardless of zone,
+                // since the AI mask provides its own spatial constraint.
+                // Otherwise, use the normal zone > 0 check.
+#ifdef RT_AI_MASKING
+                if (aiMaskActive) {
+                    transformed->L[y + ystart][x + xstart] = clipLoc(original->L[y + ystart][x + xstart] + factorx * realstrdE);
+                    transformed->a[y + ystart][x + xstart] = clipC(original->a[y + ystart][x + xstart] + factorx * realstradE);
+                    transformed->b[y + ystart][x + xstart] = clipC(original->b[y + ystart][x + xstart] + factorx * realstrbdE);
+                } else
 #endif
                 if (zone > 0) {
                     //simplified transformed with deltaE and transition
@@ -15654,7 +15664,7 @@ void ImProcFunctions::Lab_Local(
     constexpr int del = 3; // to avoid crash with [loy - begy] and [lox - begx] and bfh bfw  // with gtk2 [loy - begy-1] [lox - begx -1 ] and del = 1
     struct local_params lp;
     calcLocalParams(sp, oW, oH, params->locallab, lp, prevDeltaE, showMaskOverlay, llColorMask, llColorMaskinv, llExpMask, llExpMaskinv, llSHMask, llSHMaskinv, llvibMask, lllcMask, llsharMask, llcbMask, llretiMask, llsoftMask, lltmMask, llblMask, lllogMask, ll_Mask, llcieMask, locwavCurveden, locwavdenutili);
-    
+
     //parameters to change behavior GF
     float ksk = 1.f;//acts on cy
     float kskx = 1.f;//acts on cx

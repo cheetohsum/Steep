@@ -349,6 +349,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
 
     const auto prevdemo = App::get().options().prevdemo;
     bool highDetailNeeded = prevdemo == PD_Sidecar ? true : (todo & M_HIGHQUAL);
+
     //    printf("metwb=%s \n", params->wb.method.c_str());
 
     // Check if any detail crops need high detail. If not, take a fast path short cut
@@ -1280,22 +1281,16 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
 
 #ifdef RT_AI_MASKING
             // Compute AI segmentation masks once for all spots (if any spot uses AI masking)
-            fprintf(stderr, "AI Masking: Engine initialized = %d\n", getAISegmentationEngine().isInitialized() ? 1 : 0);
             if (getAISegmentationEngine().isInitialized()) {
                 bool needAIMask = false;
                 for (int s = 0; s < sizespot && !needAIMask; ++s) {
                     needAIMask = params->locallab.spots.at(s).useAIMask;
-                    fprintf(stderr, "AI Masking: Spot %d useAIMask = %d\n", s, params->locallab.spots.at(s).useAIMask ? 1 : 0);
                 }
                 if (needAIMask) {
                     const std::string imageId = imgsrc->getFileName().raw();
-                    fprintf(stderr, "AI Masking: Computing masks for %s (%dx%d)\n", imageId.c_str(), pW, pH);
                     AIMaskCache::getInstance().computeMasks(
                         imageId, oprevi->r.ptrs, oprevi->g.ptrs, oprevi->b.ptrs,
                         pW, pH, fw, fh, true);
-                    fprintf(stderr, "AI Masking: Masks computed, hasCachedMasks = %d\n", AIMaskCache::getInstance().hasCachedMasks() ? 1 : 0);
-                } else {
-                    fprintf(stderr, "AI Masking: No spots need AI mask\n");
                 }
             }
 #endif
@@ -1590,7 +1585,12 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                               locedgwavCurve, locedgwavutili,
                               loclmasCurve_wav, lmasutili_wav,
                               LHutili, HHutili, CHutili, HHutilijz, CHutilijz, LHutilijz, cclocalcurve, localcutili, rgblocalcurve, localrgbutili, localexutili, exlocalcurve, hltonecurveloc, shtonecurveloc, tonecurveloc, lightCurveloc,
-                              huerblu, chromarblu, lumarblu, huer, chromar, lumar, sobeler, lastsav, false, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                              huerblu, chromarblu, lumarblu, huer, chromar, lumar, sobeler, lastsav,
+                              // Main preview: always pass false/0 for mask visibility flags.
+                              // Mask overlays are only shown in the detail crop (dcrop.cc).
+                              // Passing real values here would replace actual edits with mask visualizations.
+                              false, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                              0, 0, 0,
                               minCD, maxCD, mini, maxi, Tmean, Tsigma, Tmin, Tmax,
                               meantm, stdtm, meanreti, stdreti, fab, maxicam, rdx, rdy, grx, gry, blx, bly, meanx, meany, meanxe, meanye, maxdat, prim, ill, contsig, lightsig, slopeg, linkrgb,
                               resi, sharc, denocont, ghsbpwp, ghsbpwpvalue, savmadl, ghsbwslider, ghssym, ghsautsp, ghscolor, ghsmid, ghsmaxrgb, ghs3sig, michbwslider);
@@ -1941,6 +1941,8 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 }
             }
 
+            // NOTE: AI mask baseline save moved to end of processing pipeline (after all global steps)
+
             // if it's just crop we just need the histogram, no image updates
             if (todo & M_RGBCURVE) {
                 //initialize rrm bbm ggm different from zero to avoid black screen in some cases
@@ -2046,6 +2048,10 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
 
             if (params->grain.enabled) {
                 ipf.grainEffect(nprevl, params->grain, fw, fh);
+            }
+
+            if (params->tiltShift.enabled) {
+                ipf.tiltShiftEffect(nprevl, params->tiltShift, fw, fh);
             }
 
             if (params->lensBlur.enabled) {
@@ -2281,6 +2287,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
 
             }
 
+            ipf.filmPresets(nprevl, params->filmPresets);
             ipf.softLight(nprevl, params->softlight);
 
 
@@ -2775,7 +2782,72 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             }
 
         }
-        //  if (todo & (M_AUTOEXP | M_RGBCURVE)) {
+
+#ifdef RT_AI_MASKING
+        // AI mask baseline: save/update when NOT in mask mode, blend when IN mask mode.
+        {
+            const bool ipcProcessingOccurred = (todo & (M_AUTOEXP | M_RGBCURVE | M_LUMACURVE | M_LUMINANCE | M_COLOR));
+            bool hasActiveAIMask = false;
+            if (params->locallab.enabled) {
+                for (const auto& spot : params->locallab.spots) {
+                    if (spot.useAIMask && spot.activ) { hasActiveAIMask = true; break; }
+                }
+            }
+
+            if (!hasActiveAIMask || !AIMaskCache::getInstance().hasCachedMasks()) {
+                aiMaskBaseline_.reset();
+            } else if (!aiMaskBlendActive_ && ipcProcessingOccurred) {
+                // NOT in mask mode: save/update baseline from current fully-processed state
+                if (!aiMaskBaseline_ || aiMaskBaseline_->W != pW || aiMaskBaseline_->H != pH) {
+                    aiMaskBaseline_.reset(new LabImage(pW, pH));
+                }
+                aiMaskBaseline_->CopyFrom(nprevl);
+            }
+        }
+
+        // Blend: constrain spot's changes to AI mask areas using edit-tab baseline
+        if ((todo & (M_AUTOEXP | M_RGBCURVE | M_LUMACURVE | M_LUMINANCE | M_COLOR))
+            && aiMaskBlendActive_ && aiMaskBaseline_ && aiMaskBaseline_->W == pW && aiMaskBaseline_->H == pH) {
+            AIMaskCache& aiCache = AIMaskCache::getInstance();
+            const int maskW = aiCache.getCachedWidth();
+            const int maskH = aiCache.getCachedHeight();
+
+            if (maskW > 0 && maskH > 0) {
+                #pragma omp parallel for schedule(dynamic, 16)
+                for (int y = 0; y < pH; y++) {
+                    for (int x = 0; x < pW; x++) {
+                        int mx = x * maskW / pW;
+                        int my = y * maskH / pH;
+                        mx = rtengine::LIM(mx, 0, maskW - 1);
+                        my = rtengine::LIM(my, 0, maskH - 1);
+
+                        float combinedMask = 0.f;
+                        for (const auto& spot : params->locallab.spots) {
+                            if (!spot.useAIMask || !spot.activ) continue;
+                            const auto* maskArr = aiCache.getMask(static_cast<AISegClass>(spot.aiMaskClass));
+                            if (!maskArr) continue;
+
+                            float val = (*maskArr)[my][mx];
+                            float opacity = static_cast<float>(spot.aiMaskOpacity);
+                            float threshold = static_cast<float>(spot.aiMaskThreshold);
+                            if (val > threshold) {
+                                float masked = (val - threshold) / (1.f - threshold + 1e-6f);
+                                masked = rtengine::LIM(masked * opacity, 0.f, 1.f);
+                                combinedMask = std::max(combinedMask, masked);
+                            }
+                        }
+
+                        if (combinedMask < 1.f) {
+                            float inv = 1.f - combinedMask;
+                            nprevl->L[y][x] = combinedMask * nprevl->L[y][x] + inv * aiMaskBaseline_->L[y][x];
+                            nprevl->a[y][x] = combinedMask * nprevl->a[y][x] + inv * aiMaskBaseline_->a[y][x];
+                            nprevl->b[y][x] = combinedMask * nprevl->b[y][x] + inv * aiMaskBaseline_->b[y][x];
+                        }
+                    }
+                }
+            }
+        }
+#endif
 
         // Update the monitor color transform if necessary
         if ((todo & M_MONITOR) || (lastOutputProfile != params->icm.outputProfile) || lastOutputIntent != params->icm.outputIntent || lastOutputBPC != params->icm.outputBPC) {
@@ -2792,8 +2864,6 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             crops[i]->update(todo);     // may call ourselves
         }
 
-    fprintf(stderr, "DEBUG IPC display: panningRelatedChange=%d M_MONITOR=%d todo=0x%x\n",
-            panningRelatedChange ? 1 : 0, (todo & M_MONITOR) ? 1 : 0, todo);
     if (panningRelatedChange || (todo & M_MONITOR)) {
         if ((todo != CROP && todo != MINUPDATE) || (todo & M_MONITOR)) {
             MyMutex::MyLock prevImgLock(previmg->getMutex());
@@ -2890,6 +2960,10 @@ void ImProcCoordinator::freeAll()
         oprevl    = nullptr;
         delete nprevl;
         nprevl    = nullptr;
+
+#ifdef RT_AI_MASKING
+        aiMaskBaseline_.reset();
+#endif
 
         if (ncie) {
             delete ncie;
@@ -3573,23 +3647,13 @@ bool ImProcCoordinator::exportDemosaicedTIFF(const Glib::ustring& outputPath)
     PreviewProps pp(0, 0, fW, fH, 1);
     imgsrc->getImage(currWB, tr, im, pp, params->toneCurve, params->raw);
 
-    // Debug: check pixel values from getImage
-    {
-        int cy = fH / 2, cx = fW / 2;
-        fprintf(stderr, "AI Denoise: exportDemosaicedTIFF getImage center[%d,%d]=(%.1f,%.1f,%.1f) size=%dx%d\n",
-                cy, cx, im->r(cy, cx), im->g(cy, cx), im->b(cy, cx), fW, fH);
-        fflush(stderr);
-    }
-
     int err = im->saveTIFF(outputPath, 32, true/*isFloat*/, true/*uncompressed*/);
     delete im;
 
     if (err != 0) {
-        fprintf(stderr, "AI Denoise: Failed to export demosaiced TIFF (err=%d)\n", err);
         return false;
     }
 
-    fprintf(stderr, "AI Denoise: Exported demosaiced TIFF %dx%d to %s\n", fW, fH, outputPath.c_str());
     return true;
 }
 
@@ -3682,6 +3746,7 @@ void ImProcCoordinator::process()
             || params->hsvequalizer != nextParams->hsvequalizer
             || params->pointcolor != nextParams->pointcolor
             || params->filmSimulation != nextParams->filmSimulation
+            || params->filmPresets != nextParams->filmPresets
             || params->softlight != nextParams->softlight
             || params->raw != nextParams->raw
             || params->retinex != nextParams->retinex
@@ -3694,10 +3759,6 @@ void ImProcCoordinator::process()
             || sharpMaskChanged;
 
         sharpMaskChanged = false;
-
-        bool locallabChanged = (params->locallab != nextParams->locallab);
-        fprintf(stderr, "DEBUG IPC: panningRelatedChange=%d locallabChanged=%d changeSinceLast=0x%x\n",
-                panningRelatedChange ? 1 : 0, locallabChanged ? 1 : 0, changeSinceLast);
 
         *params = *nextParams;
         int change = changeSinceLast;

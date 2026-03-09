@@ -518,7 +518,7 @@ void Options::setDefaults()
 #else
     clutCacheSize = 1;
 #endif
-    filledProfile = false;
+    filledProfile = true;
     maxInspectorBuffers = 2; //  a rather conservative value for low specced systems...
     inspectorDelay = 0;
     serializeTiffRead = true;

@@ -26,8 +26,10 @@
 
 #include "rtengine/tweakoperator.h"
 
+#include <array>
 #include <gtkmm.h>
 
+class Circle;
 class EditRectangle;
 class Line;
 class PerspCorrection;
@@ -65,6 +67,54 @@ private:
     double startVert_ = 0;
 };
 
+// Interactive vertex grid perspective editing.
+// Displays a 7x7 grid of selectable/draggable vertices on the image.
+// Users select vertices (especially near corners) and drag to adjust perspective.
+class VertexGridSubscriber : public EditSubscriber
+{
+public:
+    VertexGridSubscriber();
+
+    void setCallback(PerspCorrection* persp) { perspective_ = persp; }
+    void setActive(bool active);
+
+    // EditSubscriber overrides
+    bool button1Pressed(int modifierKey) override;
+    bool button1Released() override;
+    bool drag1(int modifierKey) override;
+    bool mouseOver(int modifierKey) override;
+    CursorShape getCursor(int objectID, int xPos, int yPos) const override;
+    void switchOffEditMode() override;
+
+private:
+    static constexpr int GRID_SIZE = 10;
+    static constexpr int VERTEX_COUNT = GRID_SIZE * GRID_SIZE;
+    static constexpr int HANDLE_RADIUS = 5;
+
+    struct GridVertex {
+        double u, v;           // base position [0,1]²
+        double dx = 0, dy = 0; // displacement (normalized)
+        bool selected = false;
+    };
+
+    void updateGeometry(int iw, int ih);
+    void selectVertex(int index, bool addToSelection, bool rangeSelect);
+    void clearSelection();
+    int vertexAtObject(int objectID) const;
+
+    PerspCorrection* perspective_ = nullptr;
+    std::unique_ptr<EditRectangle> canvas_area_;
+    std::array<GridVertex, VERTEX_COUNT> vertices_;
+    std::vector<std::unique_ptr<Circle>> vertexCircles_;
+    std::vector<std::unique_ptr<Line>> gridLines_;
+    std::array<double, VERTEX_COUNT> startDx_{}, startDy_{};
+    int lastSelectedIdx_ = -1;  // for range selection
+    int pendingSingleSelect_ = -1; // deferred single-select on release (if no drag)
+    bool didDrag_ = false;         // true once drag1 fires after button1Pressed
+
+    friend class PerspCorrection;
+};
+
 class PerspCorrectionPanelListener
 {
 public:
@@ -80,6 +130,7 @@ class PerspCorrection final :
     public FoldableToolPanel
 {
     friend class PerspectiveDragSubscriber;
+    friend class VertexGridSubscriber;
 
 protected:
     bool render = true;
@@ -100,6 +151,7 @@ protected:
     Adjuster* camera_yaw;
     std::unique_ptr<ControlLineManager> lines;
     std::unique_ptr<PerspectiveDragSubscriber> dragSubscriber_;
+    std::unique_ptr<VertexGridSubscriber> gridSubscriber_;
     Gtk::Button* lines_button_apply;
     Gtk::ToggleButton* lines_button_edit;
     Gtk::Button* lines_button_erase;
@@ -123,6 +175,7 @@ protected:
     rtengine::ProcEvent EvPerspProjShiftVoid;
     rtengine::ProcEvent EvPerspProjRotateVoid;
     rtengine::ProcEvent EvPerspProjAngleVoid;
+    rtengine::ProcEvent EvPerspMeshWarp;
     rtengine::ProcEvent* event_persp_cam_focal_length;
     rtengine::ProcEvent* event_persp_cam_shift;
     rtengine::ProcEvent* event_persp_cam_angle;
@@ -170,8 +223,10 @@ public:
         bool projection_angle_add,
         bool projection_shift_add,
         bool projection_rotate_add);
+    void meshChanged();
     void setControlLineEditMode(bool active);
     void setDragEditMode(bool active);
+    void setGridEditMode(bool active);
     void setEditProvider (EditDataProvider* provider) override;
     void setLensGeomListener (LensGeomListener* listener)
     {

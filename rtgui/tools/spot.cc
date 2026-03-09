@@ -113,8 +113,7 @@ Spot::Spot() :
     reset->set_border_width (0);
     reset->signal_clicked().connect ( sigc::mem_fun (*this, &Spot::resetPressed) );
 
-    spotSize = Gtk::manage(new Adjuster("", SpotParams::minRadius, SpotParams::maxRadius, 1, 25,
-                                        Gtk::manage(new RTImage("circle-empty-gray-small"))));
+    spotSize = Gtk::manage(new Adjuster("", SpotParams::minRadius, SpotParams::maxRadius, 1, 25));
     spotSize->setAdjusterListener(this);
 
     // Phase 1: Method toggle buttons (icon-only toolbar)
@@ -134,8 +133,7 @@ Spot::Spot() :
     btnErase = makeMethodButton("spot-erase", M("TP_SPOT_METHOD_ERASE"));
     btnRedEye = makeMethodButton("spot-redeye", M("TP_SPOT_METHOD_REDEYE"));
 
-    btnClone->set_active(true);
-
+    // No button active initially — clicking any button activates that mode + enters edit
     cloneConn = btnClone->signal_toggled().connect(sigc::bind(sigc::mem_fun(*this, &Spot::onMethodButtonToggled), btnClone, 0));
     healConn = btnHeal->signal_toggled().connect(sigc::bind(sigc::mem_fun(*this, &Spot::onMethodButtonToggled), btnHeal, 1));
     eraseConn = btnErase->signal_toggled().connect(sigc::bind(sigc::mem_fun(*this, &Spot::onMethodButtonToggled), btnErase, 2));
@@ -172,12 +170,10 @@ Spot::Spot() :
     aiContent->pack_start(*aiRow2, false, false, 0);
     aiSection->setExpanded(false);
 
-    // Layout: [edit] [method buttons] ... [count] [reset] on one row
+    // Layout: [method buttons] ... [reset] on one row
     labelBox = Gtk::manage (new Gtk::Box());
     labelBox->set_spacing (2);
-    labelBox->pack_start (*edit, false, false, 0);
     labelBox->pack_start (*methodBox, false, false, 0);
-    labelBox->pack_start (*countLabel, false, false, 0);
     labelBox->pack_end (*reset, false, false, 0);
     pack_start (*labelBox);
 
@@ -228,10 +224,11 @@ Spot::Spot() :
     cursorPreviewCircle.innerLineWidth = 0.7;
     cursorPreviewCircle.setActive(false);
 
-    // Phase 4: stroke preview line
+    // Phase 4: stroke preview line — width matches brush diameter in image space
     strokePreviewLine.datum = Geometry::IMAGE;
     strokePreviewLine.setActive(false);
-    strokePreviewLine.innerLineWidth = 1.5;
+    strokePreviewLine.lineWidthInImageSpace = true;
+    strokePreviewLine.innerLineWidth = float(SpotParams::minRadius * 2);
 
     auto m = ProcEventMapper::getInstance();
     EvSpotEnabled = m->newEvent(ALLNORAW, "HISTORY_MSG_SPOT");
@@ -297,11 +294,17 @@ void Spot::onMethodButtonToggled(Gtk::ToggleButton* button, int methodIndex)
 {
     if (blockMethodSignal) return;
 
-    // Prevent self-deactivation (radio behavior)
     if (!button->get_active()) {
-        blockMethodButtons(true);
-        button->set_active(true);
-        blockMethodButtons(false);
+        // User clicked the already-active button → toggle edit mode OFF
+        if (listener && edit->get_active()) {
+            editConn.block(true);
+            edit->set_active(false);
+            editConn.block(false);
+            releaseEdit();
+            unsubscribe();
+            listener->unsetTweakOperator(this);
+            listener->refreshPreview(EvSpotEnabled);
+        }
         return;
     }
 
@@ -312,6 +315,23 @@ void Spot::onMethodButtonToggled(Gtk::ToggleButton* button, int methodIndex)
     if (button != btnErase) btnErase->set_active(false);
     if (button != btnRedEye) btnRedEye->set_active(false);
     blockMethodButtons(false);
+
+    // Auto-activate edit mode
+    if (listener && !edit->get_active()) {
+        editConn.block(true);
+        edit->set_active(true);
+        editConn.block(false);
+
+        // Auto-enable the tool if it's currently disabled
+        if (!getEnabled()) {
+            setEnabled(true);
+            enabledChanged();
+        }
+
+        listener->setTweakOperator(this);
+        listener->refreshPreview(EvSpotEnabledOPA);
+        subscribe();
+    }
 
     methodChanged();
 }
@@ -533,13 +553,7 @@ void Spot::createGeometry ()
     int nbrEntry = spots.size();
 
     if (!batchMode) {
-        if (nbrEntry > 0) {
-            countLabel->set_text (Glib::ustring::compose (M ("TP_SPOT_COUNTLABEL"), nbrEntry));
-            countLabel->show();
-        } else {
-            countLabel->set_text ("");
-            countLabel->hide();
-        }
+        // countLabel removed from UI
     }
 
     // delete all dynamically allocated geometry
@@ -902,36 +916,32 @@ bool Spot::button1Pressed (int modifierKey)
 
         SpotMethod currentMethod = static_cast<SpotMethod>(getActiveMethod());
 
-        if (currentMethod == SpotMethod::ERASE || currentMethod == SpotMethod::REDEYE) {
-            // Phase 4: Start stroke dragging for erase mode
-            if (currentMethod == SpotMethod::ERASE) {
-                isStrokeDragging = true;
-                currentStrokePoints.clear();
-                currentStrokePoints.push_back(startPos);
-                strokePreviewLine.points.clear();
-                strokePreviewLine.points.push_back(startPos);
-                strokePreviewLine.setActive(true);
-                EditSubscriber::action = EditSubscriber::Action::DRAGGING;
-                return true;
-            }
+        if (currentMethod == SpotMethod::ERASE) {
+            // Erase: start stroke dragging — drag for freeform, single click for circle
+            isStrokeDragging = true;
+            currentStrokePoints.clear();
+            currentStrokePoints.push_back(startPos);
+            strokePreviewLine.points.clear();
+            strokePreviewLine.points.push_back(startPos);
+            strokePreviewLine.innerLineWidth = float(spotSize->getIntValue() * 2);
+            strokePreviewLine.setActive(true);
+            EditSubscriber::action = EditSubscriber::Action::DRAGGING;
+            return true;
+        }
 
-            // RedEye: no Ctrl needed, no source drag, spot is complete immediately
+        if (currentMethod == SpotMethod::REDEYE) {
+            // RedEye: click to place, no source needed
             draggedSide = DraggedSide::NONE;
             addNewEntry();
-
-            // Deselect spot so geometry circles auto-hide
             activeSpot = -1;
             lastObject = -1;
             updateGeometry();
-
-            // Use PICKING to consume the click (prevents cropwindow from panning)
             EditSubscriber::action = EditSubscriber::Action::PICKING;
             return true;
         }
 
-        if ((modifierKey & GDK_CONTROL_MASK) &&
-            (currentMethod == SpotMethod::CLONE || currentMethod == SpotMethod::HEAL)) {
-            // Clone/Heal: Ctrl+click required, start source drag
+        if (currentMethod == SpotMethod::CLONE || currentMethod == SpotMethod::HEAL) {
+            // Clone/Heal: click to place target, drag to set source
             draggedSide = DraggedSide::SOURCE;
             addNewEntry();
             EditSubscriber::action = EditSubscriber::Action::DRAGGING;
@@ -1083,7 +1093,8 @@ bool Spot::drag1 (int modifierKey)
         EditDataProvider* editProvider = getEditProvider();
         if (!editProvider) return false;
 
-        rtengine::Coord pos = editProvider->posImage;
+        // posImage is the initial click position; deltaImage gives the total offset during drag
+        rtengine::Coord pos = editProvider->posImage + editProvider->deltaImage;
 
         // Throttle: only add point if far enough from last
         if (!currentStrokePoints.empty()) {
@@ -1234,7 +1245,7 @@ bool Spot::pick3 (bool picked)
 void Spot::switchOffEditMode ()
 {
     if (edit->get_active()) {
-        // switching off the toggle button
+        // switching off the hidden edit toggle
         bool wasBlocked = editConn.block (true);
         edit->set_active (false);
 
@@ -1242,6 +1253,14 @@ void Spot::switchOffEditMode ()
             editConn.block (false);
         }
     }
+
+    // Visually deactivate all method buttons
+    blockMethodButtons(true);
+    btnClone->set_active(false);
+    btnHeal->set_active(false);
+    btnErase->set_active(false);
+    btnRedEye->set_active(false);
+    blockMethodButtons(false);
 
     EditSubscriber::switchOffEditMode();  // disconnect
     listener->unsetTweakOperator(this);

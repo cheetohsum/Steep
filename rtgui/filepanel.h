@@ -91,10 +91,17 @@ public:
     void updateToolPanelToolLocations(
         const std::vector<Glib::ustring> &favorites, bool cloneFavoriteTools);
 
+    // Fade browser content without affecting the left sidebar
+    void setContentOpacity (double opacity);
+
     // Returns sidebar insets for queue overlay positioning
     void getQueueOverlayInsets (int& left, int& top, int& right) const;
     void closeAlbumView ();  // close album view + deselect sidebar
     void openSelectedInEditor ();  // open the selected browser thumbnail in editor
+
+    // Left panel visibility for sync with editor sidebar
+    bool isLeftPanelVisible() const { return browserHideLp_ && browserHideLp_->get_active(); }
+    void setLeftPanelVisible(bool visible) { if (browserHideLp_ && browserHideLp_->get_active() != visible) browserHideLp_->set_active(visible); }
 
 private:
     void on_NB_switch_page(Gtk::Widget* page, guint page_num);
@@ -126,4 +133,9 @@ private:
     int error;
 
     IdleRegister idle_register;
+
+    // Browser footer bar (matches editor's bottom toolbar layout)
+    Gtk::ToggleButton* browserHideLp_;
+    Gtk::Image* iBrowserLpShow_;
+    Gtk::Image* iBrowserLpHide_;
 };

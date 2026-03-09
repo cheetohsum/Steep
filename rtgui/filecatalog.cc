@@ -214,7 +214,6 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     listener(nullptr),
     fslistener(nullptr),
     iatlistener(nullptr),
-    hbToolBar1STB(nullptr),
     progressImage(nullptr),
     progressLabel(nullptr),
     hasValidCurrentEFS(false),
@@ -251,15 +250,17 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     emptyT->show ();
     trashButtonBox->show ();
 
-    //initialize hbToolBar1
+    //initialize hbToolBar1 — widgets created here, packed into buttonBar below
     hbToolBar1 = Gtk::manage(new Gtk::Box ());
 
     //setup BrowsePath
-    iRefreshWhite = new RTImage("refresh-small", Gtk::ICON_SIZE_BUTTON);
-    iRefreshRed = new RTImage("refresh-red-small", Gtk::ICON_SIZE_BUTTON);
+    iRefreshWhite = new RTImage("refresh-modern", Gtk::ICON_SIZE_BUTTON);
+    iRefreshRed = new RTImage("refresh-modern", Gtk::ICON_SIZE_BUTTON);
 
     BrowsePath = Gtk::manage(new Gtk::Entry ());
-    BrowsePath->set_width_chars (50);
+    BrowsePath->set_width_chars (25);
+    BrowsePath->set_max_width_chars (30);
+    BrowsePath->set_hexpand (false);
     BrowsePath->set_tooltip_markup (M("FILEBROWSER_BROWSEPATHHINT"));
     Gtk::Box* hbBrowsePath = Gtk::manage(new Gtk::Box ());
     buttonBrowsePath = Gtk::manage(new Gtk::Button ());
@@ -267,9 +268,9 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     buttonBrowsePath->set_tooltip_markup (M("FILEBROWSER_BROWSEPATHBUTTONHINT"));
     buttonBrowsePath->set_relief (Gtk::RELIEF_NONE);
     buttonBrowsePath->signal_clicked().connect( sigc::mem_fun(*this, &FileCatalog::buttonBrowsePathPressed) );
-    hbBrowsePath->pack_start (*BrowsePath, Gtk::PACK_EXPAND_WIDGET, 0);
+    hbBrowsePath->pack_start (*BrowsePath, Gtk::PACK_SHRINK, 0);
     hbBrowsePath->pack_start (*buttonBrowsePath, Gtk::PACK_SHRINK, 0);
-    hbToolBar1->pack_start (*hbBrowsePath, Gtk::PACK_EXPAND_WIDGET, 0);
+    hbToolBar1->pack_start (*hbBrowsePath, Gtk::PACK_SHRINK, 0);
 
     BrowsePath->signal_activate().connect (sigc::mem_fun(*this, &FileCatalog::buttonBrowsePathPressed)); //respond to the Enter key
     BrowsePath->signal_key_press_event().connect(sigc::mem_fun(*this, &FileCatalog::BrowsePath_key_pressed));
@@ -279,9 +280,23 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     Query = Gtk::manage(new Gtk::Entry ()); // cannot use Gtk::manage here as FileCatalog::getFilter will fail on Query->get_text()
     Query->set_text("");
     Query->set_placeholder_text("Search");
-    Query->set_width_chars (20);
+    Query->set_width_chars (15);
     Query->set_max_width_chars (20);
     Query->set_tooltip_markup (M("FILEBROWSER_QUERYHINT"));
+
+    // Force both entries to share identical font, color, and height
+    {
+        auto entryCss = Gtk::CssProvider::create();
+        entryCss->load_from_data(
+            "entry { font-size: 8pt; color: #cdd2da; min-height: 22px; padding: 1px 5px; }"
+            "entry:focus { color: #cdd2da; }"
+            "entry image { color: #cdd2da; }"  // placeholder icon if any
+        );
+        BrowsePath->get_style_context()->add_provider(
+            entryCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+        Query->get_style_context()->add_provider(
+            entryCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+    }
     Gtk::Box* hbQuery = Gtk::manage(new Gtk::Box ());
     hbQuery->set_valign(Gtk::ALIGN_CENTER);
     buttonQueryClear = Gtk::manage(new Gtk::Button ());
@@ -293,18 +308,21 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     hbQuery->pack_start (*buttonQueryClear, Gtk::PACK_SHRINK, 0);
     hbToolBar1->pack_start (*hbQuery, Gtk::PACK_SHRINK, 0);
 
+    // Hide query clear button by default; show when search text is non-empty
+    buttonQueryClear->set_no_show_all(true);
+    buttonQueryClear->hide();
+    Query->signal_changed().connect([this]() {
+        if (Query->get_text().empty()) {
+            buttonQueryClear->hide();
+        } else {
+            buttonQueryClear->show();
+        }
+    });
+
     Query->signal_activate().connect (sigc::mem_fun(*this, &FileCatalog::executeQuery)); //respond to the Enter key
     Query->signal_key_press_event().connect(sigc::mem_fun(*this, &FileCatalog::Query_key_pressed));
 
     const auto& options = App::get().options();
-
-    // if NOT a single row toolbar
-    if (!options.FileBrowserToolbarSingleRow) {
-        hbToolBar1STB = Gtk::manage(new MyScrolledToolbar());
-        hbToolBar1STB->set_name("FileBrowserQueryToolbar");
-        hbToolBar1STB->add(*hbToolBar1);
-        pack_start (*hbToolBar1STB, Gtk::PACK_SHRINK, 0);
-    }
 
     // setup button bar
     buttonBar = Gtk::manage( new Gtk::Box () );
@@ -328,12 +346,11 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
 
     // Filter toggle button (shows/hides the filter bar revealer)
     bFilterToggle_ = Gtk::manage(new Gtk::ToggleButton());
-    bFilterToggle_->set_image(*Gtk::manage(new RTImage("filter", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
+    bFilterToggle_->set_image(*Gtk::manage(new RTImage("filter-modern", Gtk::ICON_SIZE_BUTTON)));
     bFilterToggle_->set_relief(Gtk::RELIEF_NONE);
     bFilterToggle_->set_tooltip_markup(M("FILEBROWSER_SHOWDIRHINT"));
     bFilterToggle_->signal_toggled().connect(sigc::mem_fun(*this, &FileCatalog::filterToggled));
     buttonBar->pack_start(*bFilterToggle_, Gtk::PACK_SHRINK);
-    buttonBar->pack_start(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK);
 
     // bFilterClear still exists for categoryButtons logic but is not on main bar
     iFilterClear = new RTImage ("filter-clear", Gtk::ICON_SIZE_LARGE_TOOLBAR);
@@ -547,8 +564,8 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     filterBar->pack_start (*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK);
 
     // Trash
-    iTrashShowEmpty = new RTImage("trash-empty-show", Gtk::ICON_SIZE_LARGE_TOOLBAR) ;
-    iTrashShowFull  = new RTImage("trash-full-show", Gtk::ICON_SIZE_LARGE_TOOLBAR) ;
+    iTrashShowEmpty = new RTImage("trash-modern", Gtk::ICON_SIZE_BUTTON) ;
+    iTrashShowFull  = new RTImage("trash-modern", Gtk::ICON_SIZE_BUTTON) ;
 
     bTrash = Gtk::manage( new Gtk::ToggleButton () );
     bTrash->set_image (*iTrashShowEmpty);
@@ -592,64 +609,33 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     filterRevealer_->add(*filterBar);
     filterRevealer_->set_reveal_child(false);
 
-    buttonBar->pack_start (*bTrash, Gtk::PACK_SHRINK);
-    buttonBar->pack_start(*bRecursive, Gtk::PACK_SHRINK);
-    buttonBar->pack_start (*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK);
     fileBrowser->trash_changed().connect( sigc::mem_fun(*this, &FileCatalog::trashChanged) );
-
-    // 0  - bFilterClear
-    // 1  - bUnRanked
-    // 2  - bRank[0]
-    // 3  - bRank[1]
-    // 4  - bRank[2]
-    // 5  - bRank[3]
-    // 6  - bRank[4]
-    // 7  - bUnCLabeled
-    // 8  - bCLabel[0]
-    // 9  - bCLabel[1]
-    // 10 - bCLabel[2]
-    // 11 - bCLabel[3]
-    // 12 - bCLabel[4]
-    // 13 - bEdited[0]
-    // 14 - bEdited[1]
-    // 15 - bRecentlySaved[0]
-    // 16 - bRecentlySaved[1]
-    // 17 - bTrash
-    // 18 - bNotTrash
-    // 19 - bOriginal
 
     categoryButtons[0] = bFilterClear;
     categoryButtons[1] = bUnRanked;
-
     for (int i = 0; i < 5; i++) {
         categoryButtons[i + 2] = bRank[i];
     }
-
     categoryButtons[7] = bUnCLabeled;
-
     for (int i = 0; i < 5; i++) {
         categoryButtons[i + 8] = bCLabel[i];
     }
-
     for (int i = 0; i < 2; i++) {
         categoryButtons[i + 13] = bEdited[i];
     }
-
     for (int i = 0; i < 2; i++) {
         categoryButtons[i + 15] = bRecentlySaved[i];
     }
-
     categoryButtons[17] = bTrash;
     categoryButtons[18] = bNotTrash;
     categoryButtons[19] = bOriginal;
 
     exifInfo = Gtk::manage(new Gtk::ToggleButton ());
-    exifInfo->set_image (*Gtk::manage(new RTImage ("info", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
+    exifInfo->set_image (*Gtk::manage(new RTImage ("info-modern", Gtk::ICON_SIZE_BUTTON)));
     exifInfo->set_relief (Gtk::RELIEF_NONE);
     exifInfo->set_tooltip_markup (M("FILEBROWSER_SHOWEXIFINFO"));
     exifInfo->set_active( options.showFileNames );
     exifInfo->signal_toggled().connect(sigc::mem_fun(*this, &FileCatalog::exifInfoButtonToggled));
-    buttonBar->pack_start (*exifInfo, Gtk::PACK_SHRINK);
 
     // thumbnail zoom slider — uses MyHScale for custom tick mark drawing
     zoomSlider_ = Gtk::manage(new MyHScale());
@@ -690,13 +676,19 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
         zoomSlider_->set_value(bestIdx);
     }
     zoomSlider_->signal_value_changed().connect(sigc::mem_fun(*this, &FileCatalog::zoomSliderChanged));
-    buttonBar->pack_start(*zoomSlider_, Gtk::PACK_SHRINK);
-    buttonBar->pack_start (*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK);
 
-    // if it IS a single row toolbar
-    if (options.FileBrowserToolbarSingleRow) {
-        buttonBar->pack_start (*hbToolBar1, Gtk::PACK_EXPAND_WIDGET, 0);
-    }
+    // Standalone rotate CW button (replaces coarsePanel in browser bar)
+    bRotateCW_ = Gtk::manage(new Gtk::Button());
+    bRotateCW_->set_image(*Gtk::manage(new RTImage("rotate-cw", Gtk::ICON_SIZE_BUTTON)));
+    bRotateCW_->set_relief(Gtk::RELIEF_NONE);
+    bRotateCW_->set_tooltip_markup(M("TP_COARSETRAF_TOOLTIP_ROTRIGHT"));
+    bRotateCW_->set_no_show_all(true);
+    bRotateCW_->hide();
+    bRotateCW_->signal_clicked().connect([this]() {
+        if (coarsePanel) {
+            coarsePanel->rotateRight();
+        }
+    });
 
     tbRightPanel_1 = new Gtk::ToggleButton ();
     iRightPanel_1_Show = new RTImage("panel-to-left", Gtk::ICON_SIZE_LARGE_TOOLBAR);
@@ -708,15 +700,20 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     tbRightPanel_1->set_image (*iRightPanel_1_Hide);
     tbRightPanel_1->signal_toggled().connect( sigc::mem_fun(*this, &FileCatalog::tbRightPanel_1_toggled) );
 
-    buttonBar->pack_end (*coarsePanel, Gtk::PACK_SHRINK);
-    buttonBar->pack_end (*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK, 4);
-    buttonBar->pack_end (*toolBar, Gtk::PACK_SHRINK);
-    buttonBar->pack_end (*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK, 4);
+    // --- Single row layout ---
+    // [filter] [trash] [info] [BrowsePath + Query] [zoom] [rotate]  ...  [rightPanel]
+    buttonBar->pack_start (*bTrash, Gtk::PACK_SHRINK);
+    buttonBar->pack_start (*exifInfo, Gtk::PACK_SHRINK);
+    buttonBar->pack_start (*hbToolBar1, Gtk::PACK_SHRINK, 0);
+    zoomSlider_->set_margin_start(8);
+    buttonBar->pack_start(*zoomSlider_, Gtk::PACK_SHRINK);
+    buttonBar->pack_start (*bRotateCW_, Gtk::PACK_SHRINK);
+    buttonBar->pack_end (*tbRightPanel_1, Gtk::PACK_SHRINK);
 
     // Hide hand tool in browser context — not needed for browsing
     toolBar->hideHandTool();
 
-    // Hide coarse panel initially — shown when an image is selected
+    // CoarsePanel still exists for editor use but not shown in browser bar
     coarsePanel->set_no_show_all(true);
     coarsePanel->hide();
 
@@ -731,16 +728,6 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     fileBrowser->applyFilter (getFilter()); // warning: can call this only after all objects used in getFilter (e.g. Query) are instantiated
     //printf("FileCatalog::FileCatalog  fileBrowser->applyFilter (getFilter())\n");
     pack_start (*hBox);
-
-    // Bottom toolbar with sidebar toggle buttons
-    Gtk::Box* bottomBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL));
-    bottomBar->set_name("BrowserToolbarBottom");
-    bottomBar->pack_start(*tbLeftPanel_1, Gtk::PACK_SHRINK);
-    bottomBar->pack_end(*tbRightPanel_1, Gtk::PACK_SHRINK);
-    MyScrolledToolbar* stbBottom = Gtk::manage(new MyScrolledToolbar());
-    stbBottom->set_name("FileBrowserBottomToolbar");
-    stbBottom->add(*bottomBar);
-    pack_start(*stbBottom, Gtk::PACK_SHRINK);
 
     enabled = true;
 
@@ -1084,6 +1071,12 @@ void FileCatalog::enableTabMode(bool enable)
 
     const auto& options = App::get().options();
     if (enable) {
+        // Collapse the filter bar when entering filmstrip mode to prevent
+        // it from overlapping the filmstrip thumbnails.
+        if (bFilterToggle_ && bFilterToggle_->get_active()) {
+            bFilterToggle_->set_active(false);  // triggers filterToggled → hides & clears
+        }
+
         if (options.showFilmStripToolBar) {
             showToolBar();
         } else {
@@ -1096,9 +1089,6 @@ void FileCatalog::enableTabMode(bool enable)
     } else {
         buttonBar->show();
         hbToolBar1->show();
-        if (hbToolBar1STB) {
-            hbToolBar1STB->show();
-        }
         fltrVbox1->show();
         exifInfo->set_active( options.showFileNames );
     }
@@ -1314,10 +1304,6 @@ void FileCatalog::refreshHeight ()
         newHeight = h;
     }
 
-    if (hbToolBar1STB && hbToolBar1STB->is_visible()) {
-        newHeight += hbToolBar1STB->get_height();
-    }
-
     if (buttonBar->is_visible()) {
         newHeight += buttonBar->get_height();
     }
@@ -1327,6 +1313,7 @@ void FileCatalog::refreshHeight ()
 
 void FileCatalog::_openImage(const std::vector<Thumbnail*>& tmb)
 {
+    fprintf(stderr, "DBG _openImage: tmb.size=%zu enabled=%d listener=%p\n", tmb.size(), (int)enabled, (void*)listener);
     if (enabled && listener) {
         for (size_t i = 0; i < tmb.size(); i++) {
             // fileSelected does not complete with a fully loaded image, but it does do some preliminary checks
@@ -1736,6 +1723,15 @@ void FileCatalog::selectionChanged(const std::vector<Thumbnail*>& tbe)
             coarsePanel->hide();
         } else {
             coarsePanel->show();
+        }
+    }
+
+    // Show rotate button only when images are selected
+    if (bRotateCW_) {
+        if (tbe.empty()) {
+            bRotateCW_->hide();
+        } else {
+            bRotateCW_->show();
         }
     }
 }
@@ -2514,30 +2510,9 @@ bool FileCatalog::Query_key_pressed (GdkEventKey *event)
     return false;
 }
 
-void FileCatalog::updateFBQueryTB (bool singleRow)
+void FileCatalog::updateFBQueryTB (bool /*singleRow*/)
 {
-    hbToolBar1->reference();
-
-    if (singleRow) {
-        if (hbToolBar1STB) {
-            hbToolBar1STB->remove_with_viewport();
-            removeIfThere(this, hbToolBar1STB, false);
-            buttonBar->pack_start(*hbToolBar1, Gtk::PACK_EXPAND_WIDGET, 0);
-            hbToolBar1STB = nullptr;
-        }
-    } else {
-        if (!hbToolBar1STB) {
-            removeIfThere(buttonBar, hbToolBar1, false);
-            hbToolBar1STB = Gtk::manage(new MyScrolledToolbar());
-            hbToolBar1STB->set_name("FileBrowserQueryToolbar");
-            hbToolBar1STB->add(*hbToolBar1);
-            hbToolBar1STB->show();
-            pack_start (*hbToolBar1STB, Gtk::PACK_SHRINK, 0);
-            reorder_child(*hbToolBar1STB, 0);
-        }
-    }
-
-    hbToolBar1->unreference();
+    // Always single-row layout — nothing to toggle
 }
 
 void FileCatalog::updateFBToolBarVisibility (bool showFilmStripToolBar)
@@ -3082,18 +3057,10 @@ bool FileCatalog::handleShortcutKeyRelease(GdkEventKey* event)
 
 void FileCatalog::showToolBar()
 {
-    if (hbToolBar1STB) {
-        hbToolBar1STB->show();
-    }
-
     buttonBar->show();
 }
 
 void FileCatalog::hideToolBar()
 {
-    if (hbToolBar1STB) {
-        hbToolBar1STB->hide();
-    }
-
     buttonBar->hide();
 }

@@ -54,6 +54,7 @@ private:
     void crop_pressed ();
     void stra_pressed ();
     void persp_pressed ();
+    void persp_grid_pressed ();
     bool showColorPickers(bool showCP);
     void switchColorPickersVisibility();
 
@@ -64,6 +65,7 @@ protected:
     Gtk::ToggleButton* cropTool;
     Gtk::ToggleButton* straTool;
     Gtk::ToggleButton* perspTool;
+    Gtk::ToggleButton* perspGridTool;
     ToolBarListener* listener;
     LockablePickerToolListener* pickerListener;
     ToolMode current;
@@ -76,6 +78,7 @@ protected:
     sigc::connection  cropConn;
     sigc::connection  straConn;
     sigc::connection  perspConn;
+    sigc::connection  perspGridConn;
 
 public:
     ToolBar ();

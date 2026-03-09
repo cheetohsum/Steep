@@ -78,6 +78,15 @@ public:
     Glib::ustring getFilterString  ();
     Glib::ustring getalgoString  ();
 
+    /// Set B&W mode: methodRow (0=Off,1=Desat,2=LumEq,3=ChanMix), filterRow (0=None,1=Red,...).
+    void setBWPreset (int methodRow, int filterRow);
+    /// Get combo index for external B&W dropdown (0=Off,1=B&W,2=Red,...).
+    int getBWPresetIndex () const;
+
+    Adjuster* getNeutralsSlider() const { return bwNeutrals; }
+    Adjuster* getToneSlider() const { return bwTone; }
+    Adjuster* getStrengthSlider() const { return bwStrength; }
+
 private:
     void showLuminance();
     void hideLuminance();
@@ -114,6 +123,9 @@ private:
     Adjuster *gammaRed;
     Adjuster *gammaGreen;
     Adjuster *gammaBlue;
+    Adjuster *bwNeutrals;
+    Adjuster *bwTone;
+    Adjuster *bwStrength;
     Adjuster *mixerOrange;
     Adjuster *mixerYellow;
     Adjuster *mixerCyan;
@@ -134,7 +146,6 @@ private:
 
     Gtk::Image *imgIcon[11];
 
-    AdvancedSection* advancedSection;
     Gtk::Separator* enabledccSep;
     Gtk::CheckButton* enabledcc;
     bool lastEnabledcc, lastAuto;

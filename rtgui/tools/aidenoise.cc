@@ -42,52 +42,75 @@ AIDenoise::AIDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_AIDENOISE_LAB
 
     useGpu = Gtk::manage (new Gtk::CheckButton (M("TP_AIDENOISE_USE_GPU")));
 
-    denoiseBtn = Gtk::manage (new Gtk::Button (M("TP_AIDENOISE_DENOISE")));
     cancelBtn = Gtk::manage (new Gtk::Button (M("TP_AIDENOISE_CANCEL")));
     cancelBtn->set_sensitive(false);
 
     statusLabel = Gtk::manage (new Gtk::Label (M("TP_AIDENOISE_STATUS_READY")));
     statusLabel->set_halign(Gtk::ALIGN_END);
 
-    // Header row: clickable label + denoise button inline
-    auto* headerRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
-    sectionLabel_ = Gtk::manage(new Gtk::Label());
-    sectionLabel_->set_markup("<b>\xe2\x96\xb8 AI Denoise</b>");
-    sectionLabel_->set_xalign(0.0);
+    // Checkbox (no label) triggers AI Denoise when ticked, sets blend=0 when unticked
+    activateCheck_ = Gtk::manage(new Gtk::CheckButton());
+    activateCheck_->signal_toggled().connect([this]() {
+        if (blockActivate_) return;
+        if (activateCheck_->get_active()) {
+            // Restore blend and run denoise
+            blend->setValue(savedBlend_);
+            onDenoiseClicked();
+        } else {
+            // Save current blend and zero it out
+            savedBlend_ = blend->getValue();
+            blend->setValue(0);
+            if (listener && getEnabled()) {
+                listener->panelChanged(EvAIDNBlend,
+                    Glib::ustring::format(std::setw(2), std::fixed,
+                        std::setprecision(1), 0.0));
+            }
+        }
+    });
+    activateCheck_->set_tooltip_text("Check to run AI Denoise, uncheck to disable effect");
+
+    // Clickable label that toggles the settings panel
+    sectionLabel_ = Gtk::manage(new Gtk::Label("AI Denoise"));
     sectionLabel_->get_style_context()->add_class("tool-section-label");
-    auto* labelEvt = Gtk::manage(new Gtk::EventBox());
-    labelEvt->add(*sectionLabel_);
-    labelEvt->signal_button_press_event().connect([this](GdkEventButton*) -> bool {
+    sectionLabel_->set_halign(Gtk::ALIGN_START);
+    auto* labelEvent = Gtk::manage(new Gtk::EventBox());
+    labelEvent->add(*sectionLabel_);
+    labelEvent->set_events(Gdk::BUTTON_PRESS_MASK);
+    labelEvent->signal_button_press_event().connect([this](GdkEventButton*) -> bool {
         toggleContent();
         return true;
     });
-    headerRow->pack_start(*labelEvt, Gtk::PACK_EXPAND_WIDGET);
-    headerRow->pack_end(*denoiseBtn, Gtk::PACK_SHRINK);
+    labelEvent->set_tooltip_text("Click to show/hide settings");
+
+    // Header row: checkbox + label + status
+    auto* headerRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+    headerRow->pack_start(*activateCheck_, Gtk::PACK_SHRINK);
+    headerRow->pack_start(*labelEvent, Gtk::PACK_SHRINK);
+    headerRow->pack_end(*statusLabel, Gtk::PACK_SHRINK);
     getSummaryBox()->pack_start(*headerRow, Gtk::PACK_SHRINK);
 
     // Collapsible content box
     toolContent_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
 
-    // GPU checkbox + status on one line
-    Gtk::Box* gpuRow = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 4));
-    gpuRow->pack_start (*useGpu, Gtk::PACK_SHRINK);
-    gpuRow->pack_end (*statusLabel, Gtk::PACK_SHRINK);
-
     toolContent_->pack_start(*isoConditioning, Gtk::PACK_SHRINK);
     toolContent_->pack_start(*blend, Gtk::PACK_SHRINK);
-    toolContent_->pack_start(*gpuRow, Gtk::PACK_SHRINK);
+    toolContent_->pack_start(*useGpu, Gtk::PACK_SHRINK);
     toolContent_->pack_start(*cancelBtn, Gtk::PACK_SHRINK);
+    toolContent_->show_all();
 
-    // Start hidden
-    toolContent_->set_no_show_all(true);
-    toolContent_->hide();
-    getSummaryBox()->pack_start(*toolContent_, Gtk::PACK_SHRINK);
+    // Animated revealer for smooth expand/collapse
+    revealer_ = Gtk::manage(new Gtk::Revealer());
+    revealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
+    revealer_->set_transition_duration(200);
+    revealer_->set_reveal_child(false);
+    revealer_->add(*toolContent_);
+    revealer_->show();
+    getSummaryBox()->pack_start(*revealer_, Gtk::PACK_SHRINK);
     getSummaryBox()->show_all();
 
     isoConditioning->setAdjusterListener (this);
     blend->setAdjusterListener (this);
 
-    denoiseBtn->signal_clicked().connect(sigc::mem_fun(*this, &AIDenoise::onDenoiseClicked));
     cancelBtn->signal_clicked().connect(sigc::mem_fun(*this, &AIDenoise::onCancelClicked));
 
     // Register callback so the status label updates when detection finishes
@@ -115,15 +138,7 @@ AIDenoise::AIDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_AIDENOISE_LAB
 void AIDenoise::toggleContent()
 {
     contentExpanded_ = !contentExpanded_;
-    if (contentExpanded_) {
-        sectionLabel_->set_markup("<b>\xe2\x96\xbe AI Denoise</b>");
-        toolContent_->set_no_show_all(false);
-        toolContent_->show_all();
-        toolContent_->set_no_show_all(true);
-    } else {
-        sectionLabel_->set_markup("<b>\xe2\x96\xb8 AI Denoise</b>");
-        toolContent_->hide();
-    }
+    revealer_->set_reveal_child(contentExpanded_);
 }
 
 void AIDenoise::read (const ProcParams* pp, const ParamsEdited* pedited)
@@ -143,6 +158,14 @@ void AIDenoise::read (const ProcParams* pp, const ParamsEdited* pedited)
     isoConditioning->setValue (pp->aiDenoise.isoConditioning);
     blend->setValue (pp->aiDenoise.blend);
     useGpu->set_active (pp->aiDenoise.useGpu);
+
+    // Sync checkbox: active when blend > 0
+    blockActivate_ = true;
+    activateCheck_->set_active(pp->aiDenoise.blend > 0);
+    if (pp->aiDenoise.blend > 0) {
+        savedBlend_ = pp->aiDenoise.blend;
+    }
+    blockActivate_ = false;
 
     enableListener ();
 }
@@ -254,7 +277,6 @@ void AIDenoise::onDenoiseClicked ()
     }
 
     updateStatus(M("TP_AIDENOISE_STATUS_PROCESSING"));
-    denoiseBtn->set_sensitive(false);
     cancelBtn->set_sensitive(true);
 
     // Export RT's own demosaiced image for the denoiser (correct color space)
@@ -263,7 +285,6 @@ void AIDenoise::onDenoiseClicked ()
         inputTiffPath = Glib::build_filename(Glib::get_tmp_dir(), "rt_aidenoise_input.tif");
         if (!ipc_->exportDemosaicedTIFF(inputTiffPath)) {
             updateStatus("Failed to export demosaiced image");
-            denoiseBtn->set_sensitive(true);
             cancelBtn->set_sensitive(false);
             return;
         }
@@ -319,7 +340,6 @@ void AIDenoise::onDenoiseClicked ()
                 Glib::ustring message = d->message;
                 delete d;
 
-                self->denoiseBtn->set_sensitive(true);
                 self->cancelBtn->set_sensitive(false);
                 if (success) {
                     self->updateStatus("Denoised successfully");
@@ -368,7 +388,6 @@ void AIDenoise::onCancelClicked ()
 {
     rtengine::AIDenoiseManager::getInstance().cancel();
     updateStatus(M("TP_AIDENOISE_STATUS_CANCELLED"));
-    denoiseBtn->set_sensitive(true);
     cancelBtn->set_sensitive(false);
 }
 

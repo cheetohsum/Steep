@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="16" height="16">
+  <!-- Trapezoid outline (perspective-distorted rectangle) -->
+  <path d="M3 2 L13 2 L15 14 L1 14 Z" fill="none" stroke="#cdd2da" stroke-width="1.2" stroke-linejoin="round" stroke-linecap="round"/>
+  <!-- Grid dots at 3x3 interior intersections -->
+  <circle cx="5.5" cy="5" r="1.1" fill="#cdd2da"/>
+  <circle cx="8" cy="5" r="1.1" fill="#cdd2da"/>
+  <circle cx="10.5" cy="5" r="1.1" fill="#cdd2da"/>
+  <circle cx="4.5" cy="8" r="1.1" fill="#cdd2da"/>
+  <circle cx="8" cy="8" r="1.1" fill="#cdd2da"/>
+  <circle cx="11.5" cy="8" r="1.1" fill="#cdd2da"/>
+  <circle cx="3.5" cy="11" r="1.1" fill="#cdd2da"/>
+  <circle cx="8" cy="11" r="1.1" fill="#cdd2da"/>
+  <circle cx="12.5" cy="11" r="1.1" fill="#cdd2da"/>
+</svg>

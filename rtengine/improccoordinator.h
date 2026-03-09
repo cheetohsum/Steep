@@ -67,6 +67,9 @@ protected:
     Imagefloat *spotprev;
     LabImage *oprevl;
     LabImage *nprevl;
+#ifdef RT_AI_MASKING
+    std::unique_ptr<LabImage> aiMaskBaseline_; // Clean pre-global-adjustment LAB for AI mask blending
+#endif
     Imagefloat *fattal_11_dcrop_cache; // global cache for ToneMapFattal02 used in 1:1 detail windows (except when denoise is active)
     Image8 *previmg;  // displayed image in monitor color space, showing the output profile as well (soft-proofing enabled, which then correspond to workimg) or not
     Image8 *workimg;  // internal image in output color space for analysis
@@ -382,6 +385,9 @@ protected:
     bool lastspotdup;
     bool previewDeltaE;
     bool showMaskOverlay;
+#ifdef RT_AI_MASKING
+    bool aiMaskBlendActive_ = false;
+#endif
     int locallColorMask;
     int locallColorMaskinv;
     int locallExpMask;
@@ -494,6 +500,13 @@ public:
         this->locall_Mask = locall_Mask;
         this->locallcieMask = locallcieMask;
     }
+
+#ifdef RT_AI_MASKING
+    void setAIMaskBlendActive(bool active) override
+    {
+        aiMaskBlendActive_ = active;
+    }
+#endif
 
     void setProgressListener (ProgressListener* pl) override
     {

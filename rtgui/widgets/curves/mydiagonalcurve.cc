@@ -39,6 +39,9 @@ MyDiagonalCurve::MyDiagonalCurve () :
     ugpY(0.0),
     activeParam(-1),
     bghistvalid(false),
+    bghistTintR(1.0), bghistTintG(1.0), bghistTintB(1.0),
+    bghistTinted(false),
+    bghistRGBvalid(false),
     locallabRef(0.0)
 
 {
@@ -47,6 +50,9 @@ MyDiagonalCurve::MyDiagonalCurve () :
     lit_point = -1;
 
     bghist = new unsigned int[256];
+    bghistR = new unsigned int[256];
+    bghistG = new unsigned int[256];
+    bghistB = new unsigned int[256];
 
     editedPos.resize(2);
     editedPos.at(0) = editedPos.at(1) = 0.0;
@@ -66,6 +72,9 @@ MyDiagonalCurve::~MyDiagonalCurve ()
     idle_register.destroy();
 
     delete [] bghist;
+    delete [] bghistR;
+    delete [] bghistG;
+    delete [] bghistB;
 }
 
 std::vector<double> MyDiagonalCurve::get_vector (int veclen)
@@ -322,7 +331,51 @@ void MyDiagonalCurve::updateDrawingArea (const int handle, const ::Cairo::RefPtr
     }
 
     // histogram in the background
-    if (bghistvalid) {
+    if (bghistRGBvalid) {
+        // find shared max across all 3 channels
+        unsigned int valMax = 0;
+        for (int i = 0; i < 256; i++) {
+            if (bghistR[i] > valMax) valMax = bghistR[i];
+            if (bghistG[i] > valMax) valMax = bghistG[i];
+            if (bghistB[i] > valMax) valMax = bghistB[i];
+        }
+
+        if (valMax > 0) {
+            double stepSize = graphW / 255.0;
+            cr->set_line_width(1.0);
+
+            // Draw order: B, G, R (red on top)
+            const unsigned int* channels[] = {bghistB, bghistG, bghistR};
+            const double colors[][4] = {
+                {0.25, 0.35, 0.85, 0.35},  // B
+                {0.2,  0.75, 0.2,  0.30},  // G
+                {0.85, 0.2,  0.2,  0.30},  // R
+            };
+
+            for (int ch = 0; ch < 3; ch++) {
+                // Filled area
+                cr->set_source_rgba(colors[ch][0], colors[ch][1], colors[ch][2], colors[ch][3] * 0.5);
+                cr->move_to(graphX, graphY);
+                for (int i = 0; i < 256; i++) {
+                    double val = double(channels[ch][i]) * double(graphH - 2) / double(valMax);
+                    cr->line_to(graphX + double(i) * stepSize, graphY - val);
+                }
+                cr->line_to(graphX + 255.0 * stepSize, graphY);
+                cr->close_path();
+                cr->fill();
+
+                // Stroke outline for definition
+                cr->set_source_rgba(colors[ch][0], colors[ch][1], colors[ch][2], colors[ch][3]);
+                cr->set_line_width(1.0);
+                cr->move_to(graphX, graphY);
+                for (int i = 0; i < 256; i++) {
+                    double val = double(channels[ch][i]) * double(graphH - 2) / double(valMax);
+                    cr->line_to(graphX + double(i) * stepSize, graphY - val);
+                }
+                cr->stroke();
+            }
+        }
+    } else if (bghistvalid) {
         // find highest bin
         unsigned int valMax = 0;
 
@@ -331,26 +384,37 @@ void MyDiagonalCurve::updateDrawingArea (const int handle, const ::Cairo::RefPtr
                 valMax = bghist[i];
             }
 
-        // draw histogram
+        // draw histogram - use tint color if set, otherwise default gray
         cr->set_line_width (1.0);
         double stepSize = graphW / 255.0;
         cr->move_to (graphX, graphY);
-        c = style->get_color(state);
-        cr->set_source_rgba (c.get_red(), c.get_green(), c.get_blue(), 0.2);
+        if (bghistTinted) {
+            cr->set_source_rgba(bghistTintR, bghistTintG, bghistTintB, 0.25);
+        } else {
+            c = style->get_color(state);
+            cr->set_source_rgba (c.get_red(), c.get_green(), c.get_blue(), 0.2);
+        }
 
         for (int i = 0; i < 256; i++) {
             double val = double(bghist[i]) * double(graphH - 2) / double(valMax);
-            /*
-            if (val>graphH-2)
-                val = graphH-2;
-            */
-            //if (i>0)
             cr->line_to (graphX + double(i)*stepSize, graphY - val);
         }
 
         cr->line_to (graphX + 255.*stepSize, graphY);
         cr->close_path();
         cr->fill ();
+
+        // Stroke outline for definition when tinted
+        if (bghistTinted) {
+            cr->set_source_rgba(bghistTintR, bghistTintG, bghistTintB, 0.4);
+            cr->set_line_width(1.0);
+            cr->move_to(graphX, graphY);
+            for (int i = 0; i < 256; i++) {
+                double val = double(bghist[i]) * double(graphH - 2) / double(valMax);
+                cr->line_to(graphX + double(i) * stepSize, graphY - val);
+            }
+            cr->stroke();
+        }
     }
 
     // draw the grid lines:
@@ -489,25 +553,7 @@ void MyDiagonalCurve::updateDrawingArea (const int handle, const ::Cairo::RefPtr
         cr->set_line_width (1.0);
     }
 
-    // draw overlay curves (e.g., R/G/B behind master)
-    for (const auto& ov : overlays_) {
-        if (ov.points.size() >= 5) {
-            std::unique_ptr<rtengine::DiagonalCurve> ovCurve(
-                new rtengine::DiagonalCurve(ov.points, CURVES_MIN_POLY_POINTS));
-            cr->set_source_rgba(ov.r, ov.g, ov.b, ov.alpha);
-            cr->set_line_width(1.0);
-            double y0 = ovCurve->getVal(0.0);
-            cr->move_to(graphX, y0 * -graphH + graphY);
-            for (int i = 1; i < graphW; ++i) {
-                double x = double(i) / double(graphW - 1);
-                double y = ovCurve->getVal(x);
-                cr->line_to(double(i) + graphX, y * -graphH + graphY);
-            }
-            cr->stroke();
-        }
-    }
-
-    // draw curve
+    // draw master curve
     if (hasCustomColor_) {
         cr->set_source_rgb(customR_, customG_, customB_);
     } else {
@@ -520,6 +566,38 @@ void MyDiagonalCurve::updateDrawingArea (const int handle, const ::Cairo::RefPtr
     }
 
     cr->stroke ();
+
+    // draw R/G/B channel overlay curves - only when a channel has a non-identity curve
+    {
+        for (size_t idx = 0; idx < overlays_.size(); idx++) {
+            const auto& ov = overlays_[idx];
+
+            // Only draw if the channel has its own non-identity curve
+            std::unique_ptr<rtengine::DiagonalCurve> chanCurve;
+            if (ov.points.size() >= 5) {
+                chanCurve.reset(new rtengine::DiagonalCurve(ov.points, CURVES_MIN_POLY_POINTS));
+                if (chanCurve->isIdentity()) {
+                    continue; // skip identity channels
+                }
+            } else {
+                continue; // no curve data, skip
+            }
+
+            cr->set_source_rgba(ov.r, ov.g, ov.b, 0.75);
+            cr->set_line_width(1.5);
+
+            float val0 = getVal(point, 0);
+            double y0 = chanCurve->getVal(static_cast<double>(val0));
+            cr->move_to(graphX, y0 * -graphH + graphY);
+
+            for (int i = 1; i < graphW; ++i) {
+                float baseVal = getVal(point, i);
+                double y = chanCurve->getVal(static_cast<double>(baseVal));
+                cr->line_to(double(i) + graphX, y * -graphH + graphY);
+            }
+            cr->stroke();
+        }
+    }
 
     // draw bullets
     if (curve.type != DCT_Parametric) {
@@ -644,82 +722,19 @@ bool MyDiagonalCurve::handleEvents (GdkEvent* event)
                     ugpX = curve.x.at(closest_point);
                     ugpY = curve.y.at(closest_point);
                 } else if (event->button.button == 3) {
-                    if (lit_point > -1 && grab_point == -1) {
-                        if (!coordinateAdjuster->is_visible()) {
-                            coordinateAdjuster->showMe(this);
-                        }
-
-                        edited_point = lit_point;
-                        std::vector<CoordinateAdjuster::Boundaries> newBoundaries(2);
-                        int size = curve.x.size();
-
-                        if      (edited_point == 0)      {
-                            newBoundaries.at(0).minVal = 0.;
-                            newBoundaries.at(0).maxVal = curve.x.at(1);
-                        } else if (edited_point == size - 1) {
-                            newBoundaries.at(0).minVal = curve.x.at(edited_point - 1);
-                            newBoundaries.at(0).maxVal = 1.;
-                        } else if (curve.x.size() > 2)     {
-                            newBoundaries.at(0).minVal = curve.x.at(edited_point - 1);
-                            newBoundaries.at(0).maxVal = curve.x.at(edited_point + 1);
-                        }
-
-                        newBoundaries.at(1).minVal = 0.;
-                        newBoundaries.at(1).maxVal = 1.;
-                        editedPos.at(0) = curve.x.at(edited_point);
-                        editedPos.at(1) = curve.y.at(edited_point);
-                        coordinateAdjuster->setPos(editedPos);
-                        coordinateAdjuster->startNumericalAdjustment(newBoundaries);
-                        queue_draw();
-                        new_type = CSArrow;
-                    }
+                    // Right-click resets the curve to identity
+                    reset(std::vector<double>(), 0.5);
+                    curveIsDirty = true;
+                    queue_draw();
+                    notifyListener();
                 }
             } else { // if (edited_point > -1)
                 if (event->button.button == 3) {
-                    // do we edit another point?
-                    if (edited_point > -1 && grab_point == -1) {
-                        /*  get the pointer position  */
-                        getCursorPosition(Gdk::EventType(event->type), event->motion.is_hint != 0, int(event->button.x), int(event->button.y), Gdk::ModifierType(event->button.state));
-                        findClosestPoint();
-
-                        if (cursorX >= 0 && cursorX <= graphW && cursorY >= 0 && cursorY <= graphH) {
-                            if (distanceX <= minDistanceX) {
-                                // the cursor is close to an existing point
-                                lit_point = closest_point;
-
-                                if (lit_point != edited_point) {
-                                    edited_point = lit_point;
-                                    curveIsDirty = true;
-                                    queue_draw();
-                                    std::vector<CoordinateAdjuster::Boundaries> newBoundaries;
-                                    newBoundaries.resize(2);
-                                    int size = curve.x.size();
-
-                                    if      (edited_point == 0)      {
-                                        newBoundaries.at(0).minVal = 0.;
-                                        newBoundaries.at(0).maxVal = curve.x.at(1);
-                                    } else if (edited_point == size - 1) {
-                                        newBoundaries.at(0).minVal = curve.x.at(edited_point - 1);
-                                        newBoundaries.at(0).maxVal = 1.;
-                                    } else if (curve.x.size() > 2)     {
-                                        newBoundaries.at(0).minVal = curve.x.at(edited_point - 1);
-                                        newBoundaries.at(0).maxVal = curve.x.at(edited_point + 1);
-                                    }
-
-                                    newBoundaries.at(1).minVal = 0.;
-                                    newBoundaries.at(1).maxVal = 1.;
-                                    editedPos.at(0) = curve.x.at(edited_point);
-                                    editedPos.at(1) = curve.y.at(edited_point);
-                                    coordinateAdjuster->switchAdjustedPoint(editedPos, newBoundaries);
-                                }
-                            } else {
-                                // the cursor is inside the graph but away from existing points
-                                new_type = CSPlus;
-                                curveIsDirty = true;
-                                stopNumericalAdjustment();
-                            }
-                        }
-                    }
+                    // Right-click resets the curve to identity
+                    reset(std::vector<double>(), 0.5);
+                    curveIsDirty = true;
+                    queue_draw();
+                    notifyListener();
                 }
             }
             retval = true;
@@ -1522,16 +1537,54 @@ void MyDiagonalCurve::setActiveParam (int ac)
 
 void MyDiagonalCurve::updateBackgroundHistogram (const LUTu & hist)
 {
+    // Single-channel histogram replaces any previous RGB histogram
+    bghistRGBvalid = false;
+
     if (hist) {
-        //memcpy (bghist, hist, 256*sizeof(unsigned int));
         for (int i = 0; i < 256; i++) {
             bghist[i] = hist[i];
         }
 
-        //hist = bghist;
         bghistvalid = true;
     } else {
         bghistvalid = false;
+    }
+
+    mcih->pending++;
+
+    idle_register.add(
+        [this]() -> bool
+        {
+            if (mcih->destroyed) {
+                if (mcih->pending == 1) {
+                    delete mcih;
+                } else {
+                    --mcih->pending;
+                }
+
+                return false;
+            }
+
+            mcih->clearPixmap();
+
+            --mcih->pending;
+
+            return false;
+        }
+    );
+}
+
+void MyDiagonalCurve::updateBackgroundHistogramRGB (const LUTu & histR, const LUTu & histG, const LUTu & histB)
+{
+    if (histR && histG && histB) {
+        for (int i = 0; i < 256; i++) {
+            bghistR[i] = histR[i];
+            bghistG[i] = histG[i];
+            bghistB[i] = histB[i];
+        }
+        bghistRGBvalid = true;
+    } else {
+        bghistRGBvalid = false;
     }
 
     mcih->pending++;
@@ -1626,4 +1679,17 @@ void MyDiagonalCurve::setOverlayCurves(const std::vector<CurveOverlay>& overlays
 void MyDiagonalCurve::clearOverlayCurves()
 {
     overlays_.clear();
+}
+
+void MyDiagonalCurve::setBackgroundHistogramTint(double r, double g, double b)
+{
+    bghistTintR = r;
+    bghistTintG = g;
+    bghistTintB = b;
+    bghistTinted = true;
+}
+
+void MyDiagonalCurve::clearBackgroundHistogramTint()
+{
+    bghistTinted = false;
 }

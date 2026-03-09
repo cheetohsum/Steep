@@ -1,0 +1,26 @@
+[Exposure]
+Auto=false
+Compensation=0.3
+Contrast=10
+Black=100
+HighlightCompr=60
+ShadowCompr=60
+CurveMode=FilmLike
+Curve=3;0;0.05;0.25;0.22;0.50;0.55;0.75;0.85;1;0.98;
+
+[White Balance]
+Enabled=true
+Setting=Custom
+Temperature=5800
+Green=0.98
+
+[PCVignette]
+Enabled=true
+Strength=0.8
+Feather=60
+Roundness=50
+
+[Luminance Curve]
+Enabled=true
+Brightness=5
+Contrast=10

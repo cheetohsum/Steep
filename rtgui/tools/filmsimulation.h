@@ -73,9 +73,13 @@ private:
 
     void updateDisable( bool value );
 
+    Gtk::CheckButton *m_enableCheck;
+    sigc::connection m_enableConn;
     ClutComboBox *m_clutComboBox;
     sigc::connection m_clutComboBoxConn;
     Glib::ustring m_oldClutFilename;
 
     Adjuster *m_strength;
+
+    void onEnableToggled();
 };

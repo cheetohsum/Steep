@@ -19,6 +19,7 @@ protected:
     Adjuster* feather;
     Adjuster* roundness;
     Gtk::Box* detailContent_;
+    Gtk::Revealer* detailRevealer_;
     bool detailExpanded_;
 
     void toggleDetail();
@@ -37,4 +38,6 @@ public:
     void enabledChanged  () override;
     void setAdjusterBehavior (bool strengthadd, bool featheradd, bool roundnessadd);
     void trimValues          (rtengine::procparams::ProcParams* pp) override;
+
+    Adjuster* getStrengthSlider() { return strength; }
 };

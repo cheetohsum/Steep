@@ -169,6 +169,9 @@ void ParamsEdited::set(bool v)
     general.intrash      = v;
     toneCurve.curve      = v;
     toneCurve.curve2     = v;
+    toneCurve.curveR     = v;
+    toneCurve.curveG     = v;
+    toneCurve.curveB     = v;
     toneCurve.curveMode  = v;
     toneCurve.curveMode2 = v;
     toneCurve.brightness = v;
@@ -253,6 +256,12 @@ void ParamsEdited::set(bool v)
     grain.iso = v;
     grain.strength = v;
     grain.scale = v;
+    tiltShift.enabled = v;
+    tiltShift.amount = v;
+    tiltShift.focusPos = v;
+    tiltShift.focusWidth = v;
+    tiltShift.feather = v;
+    tiltShift.angle = v;
     lensBlur.enabled = v;
     lensBlur.amount = v;
     lensBlur.shape = v;
@@ -563,6 +572,7 @@ void ParamsEdited::set(bool v)
     perspective.projection_shift_vert = v;
     perspective.projection_yaw = v;
     perspective.control_lines = v;
+    perspective.mesh_warp = v;
     gradient.enabled = v;
     gradient.degree = v;
     gradient.feather = v;
@@ -611,6 +621,9 @@ void ParamsEdited::set(bool v)
     blackwhite.gammaRed   = v;
     blackwhite.gammaGreen   = v;
     blackwhite.gammaBlue   = v;
+    blackwhite.neutrals   = v;
+    blackwhite.tone   = v;
+    blackwhite.strength   = v;
     blackwhite.filter   = v;
     blackwhite.setting   = v;
     blackwhite.method   = v;
@@ -951,6 +964,23 @@ void ParamsEdited::set(bool v)
     filmSimulation.enabled = v;
     filmSimulation.clutFilename = v;
     filmSimulation.strength = v;
+    filmPresets.enabled = v;
+    filmPresets.preset = v;
+    filmPresets.strength = v;
+    filmPresets.contrast = v;
+    filmPresets.saturation = v;
+    filmPresets.warmth = v;
+    filmPresets.tint = v;
+    filmPresets.fade = v;
+    filmPresets.rolloff = v;
+    filmPresets.shadowHue = v;
+    filmPresets.shadowTint = v;
+    filmPresets.highlightHue = v;
+    filmPresets.highlightTint = v;
+    filmPresets.halation = v;
+    filmPresets.redShift = v;
+    filmPresets.greenShift = v;
+    filmPresets.blueShift = v;
     softlight.enabled = v;
     softlight.strength = v;
     dehaze.enabled = v;
@@ -998,6 +1028,9 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         const ProcParams& other = src[i];
         toneCurve.curve = toneCurve.curve && p.toneCurve.curve == other.toneCurve.curve;
         toneCurve.curve2 = toneCurve.curve2 && p.toneCurve.curve2 == other.toneCurve.curve2;
+        toneCurve.curveR = toneCurve.curveR && p.toneCurve.curveR == other.toneCurve.curveR;
+        toneCurve.curveG = toneCurve.curveG && p.toneCurve.curveG == other.toneCurve.curveG;
+        toneCurve.curveB = toneCurve.curveB && p.toneCurve.curveB == other.toneCurve.curveB;
         toneCurve.curveMode = toneCurve.curveMode && p.toneCurve.curveMode == other.toneCurve.curveMode;
         toneCurve.curveMode2 = toneCurve.curveMode2 && p.toneCurve.curveMode2 == other.toneCurve.curveMode2;
         toneCurve.brightness = toneCurve.brightness && p.toneCurve.brightness == other.toneCurve.brightness;
@@ -1085,6 +1118,13 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         grain.iso = grain.iso && p.grain.iso == other.grain.iso;
         grain.strength = grain.strength && p.grain.strength == other.grain.strength;
         grain.scale = grain.scale && p.grain.scale == other.grain.scale;
+
+        tiltShift.enabled = tiltShift.enabled && p.tiltShift.enabled == other.tiltShift.enabled;
+        tiltShift.amount = tiltShift.amount && p.tiltShift.amount == other.tiltShift.amount;
+        tiltShift.focusPos = tiltShift.focusPos && p.tiltShift.focusPos == other.tiltShift.focusPos;
+        tiltShift.focusWidth = tiltShift.focusWidth && p.tiltShift.focusWidth == other.tiltShift.focusWidth;
+        tiltShift.feather = tiltShift.feather && p.tiltShift.feather == other.tiltShift.feather;
+        tiltShift.angle = tiltShift.angle && p.tiltShift.angle == other.tiltShift.angle;
 
         lensBlur.enabled = lensBlur.enabled && p.lensBlur.enabled == other.lensBlur.enabled;
         lensBlur.amount = lensBlur.amount && p.lensBlur.amount == other.lensBlur.amount;
@@ -1404,6 +1444,7 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         perspective.projection_shift_vert = perspective.projection_shift_vert && p.perspective.projection_shift_vert == other.perspective.projection_shift_vert;
         perspective.projection_yaw = perspective.projection_yaw && p.perspective.projection_yaw == other.perspective.projection_yaw;
         perspective.control_lines = perspective.control_lines && p.perspective.control_line_values == other.perspective.control_line_values && p.perspective.control_line_types == other.perspective.control_line_types;
+        perspective.mesh_warp = perspective.mesh_warp && p.perspective.mesh_grid_size == other.perspective.mesh_grid_size && p.perspective.mesh_offsets_x == other.perspective.mesh_offsets_x && p.perspective.mesh_offsets_y == other.perspective.mesh_offsets_y;
         gradient.enabled = gradient.enabled && p.gradient.enabled == other.gradient.enabled;
         gradient.degree = gradient.degree && p.gradient.degree == other.gradient.degree;
         gradient.feather = gradient.feather && p.gradient.feather == other.gradient.feather;
@@ -2337,6 +2378,9 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         blackwhite.gammaRed = blackwhite.gammaRed && p.blackwhite.gammaRed == other.blackwhite.gammaRed;
         blackwhite.gammaGreen = blackwhite.gammaGreen && p.blackwhite.gammaGreen == other.blackwhite.gammaGreen;
         blackwhite.gammaBlue = blackwhite.gammaBlue && p.blackwhite.gammaBlue == other.blackwhite.gammaBlue;
+        blackwhite.neutrals = blackwhite.neutrals && p.blackwhite.neutrals == other.blackwhite.neutrals;
+        blackwhite.tone = blackwhite.tone && p.blackwhite.tone == other.blackwhite.tone;
+        blackwhite.strength = blackwhite.strength && p.blackwhite.strength == other.blackwhite.strength;
         blackwhite.filter = blackwhite.filter && p.blackwhite.filter == other.blackwhite.filter;
         blackwhite.setting = blackwhite.setting && p.blackwhite.setting == other.blackwhite.setting;
         blackwhite.luminanceCurve = blackwhite.luminanceCurve && p.blackwhite.luminanceCurve == other.blackwhite.luminanceCurve;
@@ -2667,6 +2711,23 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         filmSimulation.enabled = filmSimulation.enabled && p.filmSimulation.enabled == other.filmSimulation.enabled;
         filmSimulation.clutFilename = filmSimulation.clutFilename && p.filmSimulation.clutFilename == other.filmSimulation.clutFilename;
         filmSimulation.strength = filmSimulation.strength && p.filmSimulation.strength == other.filmSimulation.strength;
+        filmPresets.enabled = filmPresets.enabled && p.filmPresets.enabled == other.filmPresets.enabled;
+        filmPresets.preset = filmPresets.preset && p.filmPresets.preset == other.filmPresets.preset;
+        filmPresets.strength = filmPresets.strength && p.filmPresets.strength == other.filmPresets.strength;
+        filmPresets.contrast = filmPresets.contrast && p.filmPresets.contrast == other.filmPresets.contrast;
+        filmPresets.saturation = filmPresets.saturation && p.filmPresets.saturation == other.filmPresets.saturation;
+        filmPresets.warmth = filmPresets.warmth && p.filmPresets.warmth == other.filmPresets.warmth;
+        filmPresets.tint = filmPresets.tint && p.filmPresets.tint == other.filmPresets.tint;
+        filmPresets.fade = filmPresets.fade && p.filmPresets.fade == other.filmPresets.fade;
+        filmPresets.rolloff = filmPresets.rolloff && p.filmPresets.rolloff == other.filmPresets.rolloff;
+        filmPresets.shadowHue = filmPresets.shadowHue && p.filmPresets.shadowHue == other.filmPresets.shadowHue;
+        filmPresets.shadowTint = filmPresets.shadowTint && p.filmPresets.shadowTint == other.filmPresets.shadowTint;
+        filmPresets.highlightHue = filmPresets.highlightHue && p.filmPresets.highlightHue == other.filmPresets.highlightHue;
+        filmPresets.highlightTint = filmPresets.highlightTint && p.filmPresets.highlightTint == other.filmPresets.highlightTint;
+        filmPresets.halation = filmPresets.halation && p.filmPresets.halation == other.filmPresets.halation;
+        filmPresets.redShift = filmPresets.redShift && p.filmPresets.redShift == other.filmPresets.redShift;
+        filmPresets.greenShift = filmPresets.greenShift && p.filmPresets.greenShift == other.filmPresets.greenShift;
+        filmPresets.blueShift = filmPresets.blueShift && p.filmPresets.blueShift == other.filmPresets.blueShift;
         softlight.enabled = softlight.enabled && p.softlight.enabled == other.softlight.enabled;
         softlight.strength = softlight.strength && p.softlight.strength == other.softlight.strength;
         dehaze.enabled = dehaze.enabled && p.dehaze.enabled == other.dehaze.enabled;
@@ -2703,6 +2764,18 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
 
     if (toneCurve.curve2) {
         toEdit.toneCurve.curve2 = mods.toneCurve.curve2;
+    }
+
+    if (toneCurve.curveR) {
+        toEdit.toneCurve.curveR = mods.toneCurve.curveR;
+    }
+
+    if (toneCurve.curveG) {
+        toEdit.toneCurve.curveG = mods.toneCurve.curveG;
+    }
+
+    if (toneCurve.curveB) {
+        toEdit.toneCurve.curveB = mods.toneCurve.curveB;
     }
 
     if (toneCurve.curveMode) {
@@ -3027,6 +3100,25 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
     }
     if (grain.scale) {
         toEdit.grain.scale = mods.grain.scale;
+    }
+
+    if (tiltShift.enabled) {
+        toEdit.tiltShift.enabled = mods.tiltShift.enabled;
+    }
+    if (tiltShift.amount) {
+        toEdit.tiltShift.amount = mods.tiltShift.amount;
+    }
+    if (tiltShift.focusPos) {
+        toEdit.tiltShift.focusPos = mods.tiltShift.focusPos;
+    }
+    if (tiltShift.focusWidth) {
+        toEdit.tiltShift.focusWidth = mods.tiltShift.focusWidth;
+    }
+    if (tiltShift.feather) {
+        toEdit.tiltShift.feather = mods.tiltShift.feather;
+    }
+    if (tiltShift.angle) {
+        toEdit.tiltShift.angle = mods.tiltShift.angle;
     }
 
     if (lensBlur.enabled) {
@@ -4212,6 +4304,12 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
     if (perspective.control_lines) {
         toEdit.perspective.control_line_values = mods.perspective.control_line_values;
         toEdit.perspective.control_line_types = mods.perspective.control_line_types;
+    }
+
+    if (perspective.mesh_warp) {
+        toEdit.perspective.mesh_grid_size = mods.perspective.mesh_grid_size;
+        toEdit.perspective.mesh_offsets_x = mods.perspective.mesh_offsets_x;
+        toEdit.perspective.mesh_offsets_y = mods.perspective.mesh_offsets_y;
     }
 
     if (gradient.enabled) {
@@ -7750,6 +7848,18 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
         toEdit.blackwhite.gammaBlue = dontforceSet && options.baBehav[ADDSET_BLACKWHITE_GAMMA] ? toEdit.blackwhite.gammaBlue + mods.blackwhite.gammaBlue : mods.blackwhite.gammaBlue;
     }
 
+    if (blackwhite.neutrals) {
+        toEdit.blackwhite.neutrals = dontforceSet && options.baBehav[ADDSET_BLACKWHITE_GAMMA] ? toEdit.blackwhite.neutrals + mods.blackwhite.neutrals : mods.blackwhite.neutrals;
+    }
+
+    if (blackwhite.tone) {
+        toEdit.blackwhite.tone = dontforceSet && options.baBehav[ADDSET_BLACKWHITE_GAMMA] ? toEdit.blackwhite.tone + mods.blackwhite.tone : mods.blackwhite.tone;
+    }
+
+    if (blackwhite.strength) {
+        toEdit.blackwhite.strength = dontforceSet && options.baBehav[ADDSET_BLACKWHITE_GAMMA] ? toEdit.blackwhite.strength + mods.blackwhite.strength : mods.blackwhite.strength;
+    }
+
     if (blackwhite.beforeCurve) {
         toEdit.blackwhite.beforeCurve = mods.blackwhite.beforeCurve;
     }
@@ -8993,6 +9103,58 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
 
     if (filmSimulation.strength) {
         toEdit.filmSimulation.strength = dontforceSet && options.baBehav[ADDSET_FILMSIMULATION_STRENGTH] ? toEdit.filmSimulation.strength + mods.filmSimulation.strength : mods.filmSimulation.strength;
+    }
+
+    if (filmPresets.enabled) {
+        toEdit.filmPresets.enabled = mods.filmPresets.enabled;
+    }
+    if (filmPresets.preset) {
+        toEdit.filmPresets.preset = mods.filmPresets.preset;
+    }
+    if (filmPresets.strength) {
+        toEdit.filmPresets.strength = mods.filmPresets.strength;
+    }
+    if (filmPresets.contrast) {
+        toEdit.filmPresets.contrast = mods.filmPresets.contrast;
+    }
+    if (filmPresets.saturation) {
+        toEdit.filmPresets.saturation = mods.filmPresets.saturation;
+    }
+    if (filmPresets.warmth) {
+        toEdit.filmPresets.warmth = mods.filmPresets.warmth;
+    }
+    if (filmPresets.tint) {
+        toEdit.filmPresets.tint = mods.filmPresets.tint;
+    }
+    if (filmPresets.fade) {
+        toEdit.filmPresets.fade = mods.filmPresets.fade;
+    }
+    if (filmPresets.rolloff) {
+        toEdit.filmPresets.rolloff = mods.filmPresets.rolloff;
+    }
+    if (filmPresets.shadowHue) {
+        toEdit.filmPresets.shadowHue = mods.filmPresets.shadowHue;
+    }
+    if (filmPresets.shadowTint) {
+        toEdit.filmPresets.shadowTint = mods.filmPresets.shadowTint;
+    }
+    if (filmPresets.highlightHue) {
+        toEdit.filmPresets.highlightHue = mods.filmPresets.highlightHue;
+    }
+    if (filmPresets.highlightTint) {
+        toEdit.filmPresets.highlightTint = mods.filmPresets.highlightTint;
+    }
+    if (filmPresets.halation) {
+        toEdit.filmPresets.halation = mods.filmPresets.halation;
+    }
+    if (filmPresets.redShift) {
+        toEdit.filmPresets.redShift = mods.filmPresets.redShift;
+    }
+    if (filmPresets.greenShift) {
+        toEdit.filmPresets.greenShift = mods.filmPresets.greenShift;
+    }
+    if (filmPresets.blueShift) {
+        toEdit.filmPresets.blueShift = mods.filmPresets.blueShift;
     }
 
     if (softlight.enabled) {

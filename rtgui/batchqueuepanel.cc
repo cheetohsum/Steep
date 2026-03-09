@@ -135,8 +135,9 @@ BatchQueuePanel::BatchQueuePanel (FileCatalog* aFileCatalog) : parent(nullptr)
     // Output file format selection
     fformat = Gtk::manage (new Gtk::Frame (M("QUEUE_FORMAT_TITLE")));
     fformat->set_label_align(0.025, 0.5);
+    fformat->set_size_request(280, -1);
     saveFormatPanel = Gtk::manage (new SaveFormatPanel ());
-    setExpandAlignProperties(saveFormatPanel, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    setExpandAlignProperties(saveFormatPanel, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_START);
     fformat->add (*saveFormatPanel);
 
     // Watermark settings
@@ -150,8 +151,7 @@ BatchQueuePanel::BatchQueuePanel (FileCatalog* aFileCatalog) : parent(nullptr)
     fwatermark->add (*wmScroll);
 
     outdirTemplate->set_text (options.savePathTemplate);
-    useTemplate->set_active (options.saveUsePathTemplate);
-    useFolder->set_active (!options.saveUsePathTemplate);
+    useFolder->set_active (true);
     destinationPreviewLabel->set_text ("");
 
     // setup signal handlers
@@ -259,6 +259,7 @@ void BatchQueuePanel::init (RTWindow *parent)
     this->parent = parent;
 
     saveFormatPanel->init (App::get().options().saveFormatBatch);
+    saveFormatPanel->setCompactMode();
     watermarkPanel->init (App::get().options().watermark);
 }
 

@@ -28,6 +28,7 @@ private:
     Adjuster *amount;
     Adjuster *radius;
     Gtk::Box* detailContent_;
+    Gtk::Revealer* detailRevealer_;
     bool detailExpanded_;
 
     rtengine::ProcEvent EvClarityEnabled;
@@ -48,4 +49,6 @@ public:
 
     void adjusterChanged(Adjuster *a, double newval) override;
     void enabledChanged() override;
+
+    Adjuster* getAmountSlider() { return amount; }
 };

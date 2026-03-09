@@ -18,6 +18,9 @@
  */
 #include "colorwheel.h"
 
+#include <cmath>
+#include <cstdio>
+
 #include "options.h"
 
 #include "rtengine/color.h"
@@ -95,6 +98,11 @@ void ColorWheelArea::updateFromMouse(double mx, double my)
     hue_ = newHue;
     sat_ = newSat;
     edited_ = true;
+
+    // Update the parent ColorWheel's indicator
+    if (owner_) {
+        static_cast<ColorWheel*>(owner_)->updateIndicatorFromArea();
+    }
 }
 
 bool ColorWheelArea::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
@@ -295,12 +303,14 @@ void ColorWheelArea::get_preferred_height_for_width_vfunc(int width, int& minimu
 }
 
 // ============================================================
-// ColorWheel (wrapper with label + reset)
+// ColorWheel (wrapper with label + indicator + editable entry)
 // ============================================================
 
 ColorWheel::ColorWheel(const Glib::ustring& label)
     : Gtk::Box(Gtk::ORIENTATION_VERTICAL, 2)
     , label_(label)
+    , indicatorBox_(Gtk::ORIENTATION_HORIZONTAL, 3)
+    , updatingIndicator_(false)
 {
     set_name("ColorWheel");
     area_.setOwner(this);
@@ -312,24 +322,135 @@ ColorWheel::ColorWheel(const Glib::ustring& label)
 
     pack_start(area_, Gtk::PACK_EXPAND_WIDGET, 0);
 
-    // Reset button (double-click on wheel also resets)
-    // No external reset button needed - double-click on wheel resets
+    // Indicator row: colored dot + text entry
+    indicatorBox_.set_halign(Gtk::ALIGN_CENTER);
+
+    dotLabel_.set_use_markup(true);
+    dotLabel_.set_can_focus(false);
+    indicatorBox_.pack_start(dotLabel_, Gtk::PACK_SHRINK, 0);
+
+    entry_.set_width_chars(3);
+    entry_.set_max_width_chars(3);
+    entry_.set_max_length(3);
+    entry_.set_alignment(0.5); // center text
+    entry_.set_name("ColorWheelEntry");
+    entry_.set_text("0");
+    entry_.signal_activate().connect(
+        sigc::mem_fun(*this, &ColorWheel::onEntryActivate));
+    entry_.signal_focus_out_event().connect(
+        sigc::mem_fun(*this, &ColorWheel::onEntryFocusOut));
+    indicatorBox_.pack_start(entry_, Gtk::PACK_SHRINK, 0);
+
+    pack_start(indicatorBox_, Gtk::PACK_SHRINK, 2);
+
+    // Compact CSS for the entry
+    auto css = Gtk::CssProvider::create();
+    css->load_from_data(
+        "#ColorWheelEntry {"
+        "  padding: 0 2px;"
+        "  min-height: 16px;"
+        "  min-width: 28px;"
+        "  font-size: 10px;"
+        "  border: none;"
+        "  background: transparent;"
+        "  color: #999999;"
+        "}");
+    entry_.get_style_context()->add_provider(
+        css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 100);
 
     show_all_children();
+    updateIndicator();
 }
 
 void ColorWheel::setHueSat(double hue, double saturation, bool notify)
 {
     area_.setHueSat(hue, saturation, notify);
+    updateIndicator();
 }
 
 void ColorWheel::reset()
 {
     area_.reset();
+    updateIndicator();
+}
+
+void ColorWheel::updateIndicator()
+{
+    updatingIndicator_ = true;
+
+    double sat = area_.getSaturation();
+    double hue = area_.getHue();
+
+    // Update entry text: sat 0..1 -> display 0..100
+    int value = static_cast<int>(std::round(sat * 100.0));
+    entry_.set_text(Glib::ustring::format(value));
+
+    // Update colored dot
+    if (sat < 0.01) {
+        dotLabel_.set_markup(
+            "<span foreground='#555555' size='small'>\xe2\x97\x8f</span>");
+    } else {
+        float r, g, b;
+        float hueNorm = static_cast<float>(hue / 360.0);
+        rtengine::Color::hsv2rgb01(hueNorm, static_cast<float>(sat), 0.65f, r, g, b);
+
+        char hex[8];
+        std::snprintf(hex, sizeof(hex), "#%02x%02x%02x",
+            static_cast<int>(r * 255), static_cast<int>(g * 255), static_cast<int>(b * 255));
+
+        dotLabel_.set_markup(Glib::ustring::compose(
+            "<span foreground='%1' size='small'>\xe2\x97\x8f</span>",
+            Glib::ustring(hex)));
+    }
+
+    updatingIndicator_ = false;
+}
+
+void ColorWheel::onEntryActivate()
+{
+    applyEntryValue();
+}
+
+bool ColorWheel::onEntryFocusOut(GdkEventFocus*)
+{
+    applyEntryValue();
+    return false;
+}
+
+void ColorWheel::applyEntryValue()
+{
+    if (updatingIndicator_) {
+        return;
+    }
+
+    // Parse entry text as integer 0-100
+    int val = 0;
+    try {
+        val = std::stoi(entry_.get_text().raw());
+    } catch (...) {
+        // Invalid input — reset to current value
+        updateIndicator();
+        return;
+    }
+
+    val = std::max(0, std::min(100, val));
+
+    double newSat = val / 100.0;
+    double curHue = area_.getHue();
+
+    // If saturation was 0 and user types a value, default hue to 0
+    if (area_.getSaturation() < 0.01 && newSat > 0.01) {
+        curHue = 0;
+    }
+
+    area_.setHueSat(curHue, newSat, true);
+    area_.setEdited(true);
+    updateIndicator();
 }
 
 bool ColorWheel::resetPressed(GdkEventButton* event)
 {
     area_.reset();
+    updateIndicator();
     return true;
 }

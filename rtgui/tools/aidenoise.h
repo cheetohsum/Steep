@@ -37,14 +37,18 @@ protected:
     Adjuster* blend;
     AdvancedSection* advancedSection;
     Gtk::CheckButton* useGpu;
-    Gtk::Button* denoiseBtn;
     Gtk::Button* cancelBtn;
     Gtk::Label* statusLabel;
 
     Gtk::Label* sectionLabel_;
     Gtk::Box* toolContent_;
+    Gtk::Revealer* revealer_;
     bool contentExpanded_;
     void toggleContent();
+
+    Gtk::CheckButton* activateCheck_;
+    bool blockActivate_ = false;
+    double savedBlend_ = 100.0;
 
     Glib::ustring imagePath_;
     rtengine::StagedImageProcessor* ipc_;

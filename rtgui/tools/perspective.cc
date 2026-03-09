@@ -26,6 +26,7 @@
 #include "rtsurface.h"
 
 #include "rtengine/procparams.h"
+#include "rtengine/rt_math.h"
 
 using namespace rtengine;
 using namespace rtengine::procparams;
@@ -101,6 +102,7 @@ PerspCorrection::PerspCorrection () : FoldableToolPanel(this, TOOL_NAME, M("TP_P
     EvPerspProjAngle = mapper->newEvent(TRANSFORM, "HISTORY_MSG_PERSP_PROJ_ANGLE");
     EvPerspProjRotate = mapper->newEvent(TRANSFORM, "HISTORY_MSG_PERSP_PROJ_ROTATE");
     EvPerspProjShift = mapper->newEvent(TRANSFORM, "HISTORY_MSG_PERSP_PROJ_SHIFT");
+    EvPerspMeshWarp = mapper->newEvent(TRANSFORM, "HISTORY_MSG_PERSP_MESH");
     EvPerspRender = mapper->newEvent(TRANSFORM, "GENERAL_NA");
     // Void events.
     EvPerspCamAngleVoid = mapper->newEvent(M_VOID, "HISTORY_MSG_PERSP_CAM_ANGLE");
@@ -218,6 +220,9 @@ PerspCorrection::PerspCorrection () : FoldableToolPanel(this, TOOL_NAME, M("TP_P
     dragSubscriber_ = std::unique_ptr<PerspectiveDragSubscriber>(new PerspectiveDragSubscriber());
     dragSubscriber_->setCallback(this);
 
+    gridSubscriber_ = std::unique_ptr<VertexGridSubscriber>(new VertexGridSubscriber());
+    gridSubscriber_->setCallback(this);
+
     Gtk::Box* control_lines_box = Gtk::manage (new Gtk::Box());
     Gtk::Label* control_lines_label = Gtk::manage (new Gtk::Label (M("TP_PERSPECTIVE_CONTROL_LINES") + ": "));
     control_lines_label->set_tooltip_markup( M("TP_PERSPECTIVE_CONTROL_LINES_TOOLTIP") );
@@ -238,10 +243,6 @@ PerspCorrection::PerspCorrection () : FoldableToolPanel(this, TOOL_NAME, M("TP_P
     auto_pitch_yaw = Gtk::manage (new Gtk::Button ());
     auto_pitch_yaw->set_image(*ipers_auto_pitch_yaw);
     auto_pitch_yaw->signal_pressed().connect( sigc::bind(sigc::mem_fun(*this, &PerspCorrection::autoCorrectionPressed), auto_pitch_yaw) );
-
-    Gtk::Box* auto_hbox = Gtk::manage (new Gtk::Box());
-    Gtk::Label* auto_label = Gtk::manage (new Gtk::Label (M("GENERAL_AUTO") + ": "));
-    auto_hbox->pack_start(*auto_label, Gtk::PACK_SHRINK);
 
     Gtk::Frame* pca_frame = Gtk::manage (new Gtk::Frame
             (M("TP_PERSPECTIVE_POST_CORRECTION_ADJUSTMENT_FRAME")));
@@ -273,10 +274,6 @@ PerspCorrection::PerspCorrection () : FoldableToolPanel(this, TOOL_NAME, M("TP_P
     getSummaryBox()->pack_start (*horiz);
     getSummaryBox()->pack_start (*vert);
 
-    auto_hbox->pack_start (*auto_pitch);
-    auto_hbox->pack_start (*auto_yaw);
-    auto_hbox->pack_start (*auto_pitch_yaw);
-
     camera_vbox->pack_start (*camera_focal_length);
     camera_vbox->pack_start (*camera_crop_factor);
     camera_vbox->pack_start (*camera_shift_horiz);
@@ -286,8 +283,6 @@ PerspCorrection::PerspCorrection () : FoldableToolPanel(this, TOOL_NAME, M("TP_P
     camera_vbox->pack_start (*camera_yaw);
     camera_vbox->pack_start (*Gtk::manage (new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)));
     camera_vbox->pack_start (*control_lines_box);
-    camera_vbox->pack_start (*Gtk::manage (new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)));
-    camera_vbox->pack_start (*auto_hbox);
     camera_frame->add(*camera_vbox);
     camera_based->pack_start(*camera_frame);
 
@@ -368,6 +363,31 @@ void PerspCorrection::read (const ProcParams* pp, const ParamsEdited* pedited)
         method->set_active (1);
     }
 
+    if (gridSubscriber_) {
+        if (pp->perspective.mesh_grid_size == VertexGridSubscriber::GRID_SIZE
+            && static_cast<int>(pp->perspective.mesh_offsets_x.size()) == VertexGridSubscriber::VERTEX_COUNT) {
+            for (int i = 0; i < VertexGridSubscriber::VERTEX_COUNT; ++i) {
+                gridSubscriber_->vertices_[i].dx = pp->perspective.mesh_offsets_x[i];
+                gridSubscriber_->vertices_[i].dy = pp->perspective.mesh_offsets_y[i];
+            }
+        } else {
+            // No mesh data — reset all vertices to zero displacement
+            for (int i = 0; i < VertexGridSubscriber::VERTEX_COUNT; ++i) {
+                gridSubscriber_->vertices_[i].dx = 0;
+                gridSubscriber_->vertices_[i].dy = 0;
+            }
+        }
+        // Refresh on-canvas geometry positions
+        EditDataProvider* provider = gridSubscriber_->getEditProvider();
+        if (provider) {
+            int iw, ih;
+            provider->getImageSize(iw, ih);
+            if (iw > 0 && ih > 0) {
+                gridSubscriber_->updateGeometry(iw, ih);
+            }
+        }
+    }
+
     updateApplyDeleteButtons();
 
     enableListener ();
@@ -415,6 +435,19 @@ void PerspCorrection::write (ProcParams* pp, ParamsEdited* pedited)
     controlLinesToValues(control_lines, pp->perspective.control_line_values,
             pp->perspective.control_line_types);
 
+    if (gridSubscriber_) {
+        const auto& verts = gridSubscriber_->vertices_;
+        bool anyNonZero = false;
+        pp->perspective.mesh_offsets_x.resize(VertexGridSubscriber::VERTEX_COUNT);
+        pp->perspective.mesh_offsets_y.resize(VertexGridSubscriber::VERTEX_COUNT);
+        for (int i = 0; i < VertexGridSubscriber::VERTEX_COUNT; ++i) {
+            pp->perspective.mesh_offsets_x[i] = verts[i].dx;
+            pp->perspective.mesh_offsets_y[i] = verts[i].dy;
+            if (verts[i].dx != 0 || verts[i].dy != 0) anyNonZero = true;
+        }
+        pp->perspective.mesh_grid_size = anyNonZero ? VertexGridSubscriber::GRID_SIZE : 0;
+    }
+
     if (method->get_active_row_number() == 0) {
         pp->perspective.method = "simple";
     } else if (method->get_active_row_number() == 1) {
@@ -438,6 +471,7 @@ void PerspCorrection::write (ProcParams* pp, ParamsEdited* pedited)
         pedited->perspective.projection_shift_vert = projection_shift_vert->getEditedState();
         pedited->perspective.projection_yaw = projection_yaw->getEditedState();
         pedited->perspective.control_lines = lines->getEdited();
+        pedited->perspective.mesh_warp = true;
     }
 }
 
@@ -701,6 +735,22 @@ void PerspCorrection::setDragEditMode(bool active)
     }
 }
 
+void PerspCorrection::setGridEditMode(bool active)
+{
+    // Grid mode uses simple H/V perspective — ensure simple mode is selected
+    if (active && method->get_active_row_number() != 0) {
+        method->block(true);
+        method->set_active(0);
+        method->block(false);
+    }
+
+    gridSubscriber_->setActive(active);
+
+    if (panel_listener) {
+        panel_listener->controlLineEditModeChanged(active);
+    }
+}
+
 void PerspCorrection::setMetadata (const rtengine::FramesMetaData* metadata)
 {
     this->metadata = metadata;
@@ -819,6 +869,13 @@ void PerspCorrection::setFocalLengthValue (const ProcParams* pparams, const Fram
     }
 }
 
+void PerspCorrection::meshChanged()
+{
+    if (listener) {
+        listener->panelChanged(EvPerspMeshWarp, M("HISTORY_MSG_PERSP_MESH"));
+    }
+}
+
 void PerspCorrection::switchOffEditMode(void)
 {
     lines_button_edit->set_active(false);
@@ -835,29 +892,7 @@ void PerspCorrection::hideAdvancedSection()
 
 void PerspCorrection::exposeAutoButtons()
 {
-    // Move projection rotate and auto-correction buttons into the summary
-    // box so they're accessible when the advanced section is hidden.
-
-    // Re-parent auto buttons from camera_based box
-    Gtk::Box* autoRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
-    Gtk::Label* autoLabel = Gtk::manage(new Gtk::Label(M("GENERAL_AUTO") + " "));
-    autoRow->pack_start(*autoLabel, Gtk::PACK_SHRINK);
-
-    if (auto_pitch->get_parent()) {
-        auto_pitch->get_parent()->remove(*auto_pitch);
-    }
-    if (auto_yaw->get_parent()) {
-        auto_yaw->get_parent()->remove(*auto_yaw);
-    }
-    if (auto_pitch_yaw->get_parent()) {
-        auto_pitch_yaw->get_parent()->remove(*auto_pitch_yaw);
-    }
-    autoRow->pack_start(*auto_pitch, Gtk::PACK_SHRINK);
-    autoRow->pack_start(*auto_yaw, Gtk::PACK_SHRINK);
-    autoRow->pack_start(*auto_pitch_yaw, Gtk::PACK_SHRINK);
-    autoRow->show_all();
-
-    getSummaryBox()->pack_start(*autoRow, Gtk::PACK_SHRINK, 2);
+    // Auto buttons removed from UI
 }
 
 void PerspCorrection::runAutoCorrection()
@@ -874,6 +909,7 @@ void PerspCorrection::setEditProvider(EditDataProvider* provider)
 {
     lines->setEditProvider(provider);
     dragSubscriber_->setEditProvider(provider);
+    gridSubscriber_->setEditProvider(provider);
 }
 
 void PerspCorrection::lineChanged(void)
@@ -1174,6 +1210,274 @@ CursorShape PerspectiveDragSubscriber::getCursor(int objectID, int xPos, int yPo
 void PerspectiveDragSubscriber::switchOffEditMode()
 {
     action = Action::NONE;
+    if (getEditProvider()) {
+        unsubscribe();
+    }
+}
+
+// VertexGridSubscriber implementation
+
+VertexGridSubscriber::VertexGridSubscriber()
+    : EditSubscriber(ET_OBJECTS),
+      canvas_area_(new EditRectangle())
+{
+    // Initialize grid vertex positions (10x10 grid at even intervals)
+    for (int row = 0; row < GRID_SIZE; ++row) {
+        for (int col = 0; col < GRID_SIZE; ++col) {
+            int idx = row * GRID_SIZE + col;
+            vertices_[idx].u = col / (double)(GRID_SIZE - 1);
+            vertices_[idx].v = row / (double)(GRID_SIZE - 1);
+            vertices_[idx].dx = 0;
+            vertices_[idx].dy = 0;
+            vertices_[idx].selected = false;
+        }
+    }
+
+    // Create vertex circles (visible + mouse-over)
+    for (int i = 0; i < VERTEX_COUNT; ++i) {
+        auto circle = std::unique_ptr<Circle>(new Circle());
+        circle->radius = HANDLE_RADIUS;
+        circle->filled = true;
+        circle->radiusInImageSpace = false;
+        circle->datum = Geometry::IMAGE;
+        circle->setActive(true);
+        circle->setAutoColor(true);
+        circle->state = Geometry::NORMAL;
+        circle->innerLineWidth = 1.5f;
+        visibleGeometry.push_back(circle.get());
+        mouseOverGeometry.push_back(circle.get());
+        vertexCircles_.push_back(std::move(circle));
+    }
+
+    // Create grid lines: horizontal + vertical segments
+    for (int row = 0; row < GRID_SIZE; ++row) {
+        for (int col = 0; col < GRID_SIZE - 1; ++col) {
+            auto line = std::unique_ptr<Line>(new Line());
+            line->innerLineWidth = 1.0f;
+            line->setInnerLineColor(0.5, 0.7, 1.0);
+            line->setOuterLineColor(0.0, 0.0, 0.0);
+            line->opacity = 0.5f;
+            line->datum = Geometry::IMAGE;
+            visibleGeometry.push_back(line.get());
+            gridLines_.push_back(std::move(line));
+        }
+    }
+    for (int col = 0; col < GRID_SIZE; ++col) {
+        for (int row = 0; row < GRID_SIZE - 1; ++row) {
+            auto line = std::unique_ptr<Line>(new Line());
+            line->innerLineWidth = 1.0f;
+            line->setInnerLineColor(0.5, 0.7, 1.0);
+            line->setOuterLineColor(0.0, 0.0, 0.0);
+            line->opacity = 0.5f;
+            line->datum = Geometry::IMAGE;
+            visibleGeometry.push_back(line.get());
+            gridLines_.push_back(std::move(line));
+        }
+    }
+
+    // Invisible canvas for click-on-empty deselect (lowest priority)
+    canvas_area_->filled = true;
+    canvas_area_->topLeft = rtengine::Coord(0, 0);
+    canvas_area_->bottomRight = rtengine::Coord(1, 1);
+    mouseOverGeometry.insert(mouseOverGeometry.begin(), canvas_area_.get());
+}
+
+void VertexGridSubscriber::updateGeometry(int iw, int ih)
+{
+    for (int i = 0; i < VERTEX_COUNT; ++i) {
+        double px = (vertices_[i].u + vertices_[i].dx) * iw;
+        double py = (vertices_[i].v + vertices_[i].dy) * ih;
+        vertexCircles_[i]->center = rtengine::Coord(static_cast<int>(px), static_cast<int>(py));
+        vertexCircles_[i]->state = vertices_[i].selected ? Geometry::ACTIVE : Geometry::NORMAL;
+    }
+
+    // Update grid lines between adjacent vertices
+    int li = 0;
+    for (int r = 0; r < GRID_SIZE; ++r) {
+        for (int c = 0; c < GRID_SIZE - 1; ++c) {
+            int a = r * GRID_SIZE + c, b = a + 1;
+            gridLines_[li]->begin = vertexCircles_[a]->center;
+            gridLines_[li]->end   = vertexCircles_[b]->center;
+            li++;
+        }
+    }
+    for (int c = 0; c < GRID_SIZE; ++c) {
+        for (int r = 0; r < GRID_SIZE - 1; ++r) {
+            int a = r * GRID_SIZE + c, b = a + GRID_SIZE;
+            gridLines_[li]->begin = vertexCircles_[a]->center;
+            gridLines_[li]->end   = vertexCircles_[b]->center;
+            li++;
+        }
+    }
+}
+
+void VertexGridSubscriber::setActive(bool active)
+{
+    EditDataProvider* provider = getEditProvider();
+    if (!provider) return;
+
+    bool isActive = (this == provider->getCurrSubscriber());
+    if (isActive == active) return;
+
+    if (active) {
+        int iw, ih;
+        provider->getImageSize(iw, ih);
+        canvas_area_->bottomRight = rtengine::Coord(iw, ih);
+        clearSelection();
+        updateGeometry(iw, ih);
+        subscribe();
+    } else {
+        unsubscribe();
+    }
+}
+
+void VertexGridSubscriber::selectVertex(int index, bool addToSelection, bool rangeSelect)
+{
+    if (index < 0 || index >= VERTEX_COUNT) return;
+
+    if (rangeSelect && lastSelectedIdx_ >= 0 && lastSelectedIdx_ < VERTEX_COUNT) {
+        int row1 = lastSelectedIdx_ / GRID_SIZE;
+        int col1 = lastSelectedIdx_ % GRID_SIZE;
+        int row2 = index / GRID_SIZE;
+        int col2 = index % GRID_SIZE;
+        int rMin = std::min(row1, row2), rMax = std::max(row1, row2);
+        int cMin = std::min(col1, col2), cMax = std::max(col1, col2);
+        for (int r = rMin; r <= rMax; ++r) {
+            for (int c = cMin; c <= cMax; ++c) {
+                vertices_[r * GRID_SIZE + c].selected = true;
+            }
+        }
+    } else if (addToSelection) {
+        vertices_[index].selected = !vertices_[index].selected;
+    } else {
+        for (auto& vtx : vertices_) {
+            vtx.selected = false;
+        }
+        vertices_[index].selected = true;
+    }
+
+    lastSelectedIdx_ = index;
+
+    for (int i = 0; i < VERTEX_COUNT; ++i) {
+        vertexCircles_[i]->state = vertices_[i].selected ? Geometry::ACTIVE : Geometry::NORMAL;
+    }
+}
+
+void VertexGridSubscriber::clearSelection()
+{
+    for (auto& vtx : vertices_) {
+        vtx.selected = false;
+    }
+    for (int i = 0; i < VERTEX_COUNT; ++i) {
+        vertexCircles_[i]->state = Geometry::NORMAL;
+    }
+    lastSelectedIdx_ = -1;
+}
+
+int VertexGridSubscriber::vertexAtObject(int objectID) const
+{
+    if (objectID >= 1 && objectID <= VERTEX_COUNT) {
+        return objectID - 1;
+    }
+    return -1;
+}
+
+bool VertexGridSubscriber::button1Pressed(int modifierKey)
+{
+    EditDataProvider* dp = getEditProvider();
+    if (!dp || !perspective_) return false;
+
+    int objectID = dp->getObject();
+    int vertexIdx = vertexAtObject(objectID);
+    didDrag_ = false;
+    pendingSingleSelect_ = -1;
+
+    if (vertexIdx >= 0) {
+        bool shift = (modifierKey & GDK_SHIFT_MASK) != 0;
+        bool ctrl = (modifierKey & GDK_CONTROL_MASK) != 0;
+
+        if (!shift && !ctrl && vertices_[vertexIdx].selected) {
+            // Clicked an already-selected vertex without modifiers:
+            // defer single-select to release so drag keeps multi-selection
+            pendingSingleSelect_ = vertexIdx;
+        } else {
+            selectVertex(vertexIdx, ctrl, shift);
+        }
+
+        // Save start displacements for all vertices
+        for (int i = 0; i < VERTEX_COUNT; ++i) {
+            startDx_[i] = vertices_[i].dx;
+            startDy_[i] = vertices_[i].dy;
+        }
+        action = Action::DRAGGING;
+    } else {
+        clearSelection();
+        lastSelectedIdx_ = -1;
+        action = Action::NONE;
+    }
+
+    return true;
+}
+
+bool VertexGridSubscriber::drag1(int modifierKey)
+{
+    if (action != Action::DRAGGING) return false;
+
+    EditDataProvider* dp = getEditProvider();
+    if (!dp || !perspective_) return false;
+
+    didDrag_ = true;
+    pendingSingleSelect_ = -1; // cancel deferred single-select since user is dragging
+
+    int iw, ih;
+    dp->getImageSize(iw, ih);
+    if (iw <= 0 || ih <= 0) return false;
+
+    double ndx = dp->deltaImage.x / static_cast<double>(iw);
+    double ndy = dp->deltaImage.y / static_cast<double>(ih);
+
+    for (int i = 0; i < VERTEX_COUNT; ++i) {
+        if (vertices_[i].selected) {
+            vertices_[i].dx = rtengine::LIM(startDx_[i] + ndx, -0.5, 0.5);
+            vertices_[i].dy = rtengine::LIM(startDy_[i] + ndy, -0.5, 0.5);
+        }
+    }
+    updateGeometry(iw, ih);
+    perspective_->meshChanged();
+    return true;
+}
+
+bool VertexGridSubscriber::button1Released()
+{
+    // If user clicked an already-selected vertex without dragging,
+    // deselect all others and select only that vertex
+    if (pendingSingleSelect_ >= 0 && !didDrag_) {
+        selectVertex(pendingSingleSelect_, false, false);
+    }
+    pendingSingleSelect_ = -1;
+    didDrag_ = false;
+    action = Action::NONE;
+    return false;
+}
+
+bool VertexGridSubscriber::mouseOver(int modifierKey)
+{
+    return false;
+}
+
+CursorShape VertexGridSubscriber::getCursor(int objectID, int xPos, int yPos) const
+{
+    int vertexIdx = vertexAtObject(objectID);
+    if (vertexIdx >= 0) {
+        return CSHandOpen;
+    }
+    return CSArrow;
+}
+
+void VertexGridSubscriber::switchOffEditMode()
+{
+    action = Action::NONE;
+    clearSelection();
     if (getEditProvider()) {
         unsubscribe();
     }

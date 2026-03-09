@@ -42,8 +42,9 @@ public:
 };
 
 struct CurveOverlay {
-    std::vector<double> points;  // control points: {type, x1, y1, x2, y2, ...}
+    std::vector<double> points;  // per-channel control points: {type, x1, y1, ...} (empty = identity)
     double r, g, b, alpha;
+    bool useBaseCurve;  // if true, compose with the master/base curve
 };
 
 class MyDiagonalCurve final : public MyCurve
@@ -70,6 +71,12 @@ protected:
     int activeParam;
     unsigned int* bghist;   // histogram values
     bool bghistvalid;
+    double bghistTintR, bghistTintG, bghistTintB; // tint color for single-channel histogram
+    bool bghistTinted;
+    unsigned int* bghistR;  // per-channel histogram values
+    unsigned int* bghistG;
+    unsigned int* bghistB;
+    bool bghistRGBvalid;
     double locallabRef; // Locallab reference value to display in the background
 
     void updateDrawingArea (const int handle, const ::Cairo::RefPtr< Cairo::Context> &cr);
@@ -95,6 +102,9 @@ public:
     void setActiveParam (int ac);
     void reset (const std::vector<double> &resetCurve, double identityValue = 0.5) override;
     void updateBackgroundHistogram (const LUTu & hist);
+    void updateBackgroundHistogramRGB (const LUTu & histR, const LUTu & histG, const LUTu & histB);
+    void setBackgroundHistogramTint(double r, double g, double b);
+    void clearBackgroundHistogramTint();
 
     void pipetteMouseOver (CurveEditor *ce, EditDataProvider *provider, int modifierKey) override;
     bool pipetteButton1Pressed(EditDataProvider *provider, int modifierKey) override;

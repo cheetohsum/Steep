@@ -3818,6 +3818,16 @@ void LocallabExposure::curveChanged(CurveEditor* ce)
     }
 }
 
+void LocallabExposure::setExpCompValue(double val)
+{
+    expcomp->setValue(val);
+}
+
+void LocallabExposure::setEnabledOn()
+{
+    exp->setEnabled(true);
+}
+
 void LocallabExposure::enabledChanged()
 {
     if (isLocActivated) {

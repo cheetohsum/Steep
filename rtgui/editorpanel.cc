@@ -19,6 +19,7 @@
  */
 #include "editorpanel.h"
 
+#include <cmath>
 #include <iostream>
 
 #include "rtengine/array2D.h"
@@ -43,6 +44,7 @@
 #include "thumbnail.h"
 #include "toolpanelcoord.h"
 #include "clipboard.h"
+#include "paramsedited.h"
 
 #include <thread>
 #include "widgets/basic/popupbutton.h"
@@ -817,11 +819,10 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     Gtk::Box* placesObox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     placesObox->get_style_context()->add_class("plainback");
 
-    placesObox->pack_start(*editorRecentBrowser_, Gtk::PACK_SHRINK, 4);
     placesObox->pack_start(*editorDirBrowser_, Gtk::PACK_EXPAND_WIDGET, 0);
     editorDirBrowser_->set_size_request(-1, 300);
+    placesObox->pack_start(*editorRecentBrowser_, Gtk::PACK_SHRINK, 4);
     placesObox->pack_start(*albumBrowser_, Gtk::PACK_SHRINK, 0);
-    albumBrowser_->set_size_request(-1, 200);
 
     editorPlacesPaned_->pack_start(*editorPlacesBrowser_, Gtk::PACK_SHRINK);
     editorPlacesPaned_->pack_start(*placesObox, Gtk::PACK_EXPAND_WIDGET);
@@ -849,8 +850,8 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     beforeAfter->set_relief (Gtk::RELIEF_NONE);
     beforeAfter->set_tooltip_markup (M ("MAIN_TOOLTIP_TOGGLE"));
 
-    iBeforeLockON = new RTImage ("padlock-locked-small", Gtk::ICON_SIZE_LARGE_TOOLBAR);
-    iBeforeLockOFF = new RTImage ("padlock-unlocked-small", Gtk::ICON_SIZE_LARGE_TOOLBAR);
+    iBeforeLockON = new RTImage ("ba-lock-on", Gtk::ICON_SIZE_SMALL_TOOLBAR);
+    iBeforeLockOFF = new RTImage ("ba-lock-off", Gtk::ICON_SIZE_SMALL_TOOLBAR);
 
 
     hidehp = Gtk::manage (new Gtk::ToggleButton ());
@@ -907,7 +908,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     filterBarBlockSignals = false;
     if (!App::get().isSimpleEditor() && filePanel) {
         tbFilterBar = Gtk::manage(new Gtk::ToggleButton());
-        tbFilterBar->set_image(*Gtk::manage(new RTImage("filter-bar", Gtk::ICON_SIZE_MENU)));
+        tbFilterBar->set_image(*Gtk::manage(new RTImage("filter-modern", Gtk::ICON_SIZE_MENU)));
         tbFilterBar->set_relief(Gtk::RELIEF_NONE);
         tbFilterBar->set_tooltip_markup(M("EDITOR_FILTER_TOOLTIP"));
         tbFilterBar->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::filterBarToggled));
@@ -916,6 +917,21 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     // Album view toggle button
     tbAlbumView_ = nullptr;
     albumViewSession_ = 0;
+    albumViewMode_ = AlbumViewMode::GRID;
+    albumThumbHeight_ = 120;
+    albumShowInfo_ = false;
+    albumZoomSlider_ = nullptr;
+    albumInfoToggle_ = nullptr;
+    albumModeGrid_ = nullptr;
+    albumModeFit_ = nullptr;
+    albumModeCollage_ = nullptr;
+    albumGridStack_ = nullptr;
+    albumCollageArea_ = nullptr;
+    collageContentHeight_ = 0;
+    filmstripSortBtn_ = nullptr;
+    filmstripSortMenu_ = nullptr;
+    albumSortBtn_ = nullptr;
+    albumSortMenu_ = nullptr;
     if (!App::get().isSimpleEditor() && filePanel) {
         tbAlbumView_ = Gtk::manage(new Gtk::ToggleButton());
         tbAlbumView_->set_image(*Gtk::manage(new RTImage("fullscreen-leave", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
@@ -1088,22 +1104,353 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         applyCSS(addToAlbumBtn);
         filmstripActionBar->pack_start(*addToAlbumBtn, Gtk::PACK_SHRINK);
 
-        // Copy Edit Settings button
+        // Copy Edit Settings button + filter cog
         auto* sep4 = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
         applyCSS(sep4);
         filmstripActionBar->pack_start(*sep4, Gtk::PACK_SHRINK);
+
+        // Build copy filter menu (same structure as file browser)
+        {
+            editorCopyFilterMenu_ = Gtk::manage(new Gtk::Menu());
+            editorCopyFilters_.clear();
+            int p = 0;
+
+            auto preventClose = [](Gtk::CheckMenuItem* item) {
+                item->signal_button_release_event().connect(
+                    [item](GdkEventButton*) {
+                        item->set_active(!item->get_active());
+                        return true;
+                    }, false);
+            };
+
+            auto preventCloseAction = [](Gtk::MenuItem* item, std::function<void()> action) {
+                item->signal_button_release_event().connect(
+                    [action](GdkEventButton*) {
+                        action();
+                        return true;
+                    }, false);
+            };
+
+            // Copy / Paste actions at top
+            auto* doCopy = Gtk::manage(new MyImageMenuItem(M("PRESET_COPY_SETTINGS"), "preset-copy"));
+            doCopy->signal_activate().connect([this]() {
+                if (!openThm) return;
+                const auto& srcPP = openThm->getProcParams();
+                bool allActive = true;
+                for (const auto& kv : editorCopyFilters_) {
+                    if (!kv.second->get_active()) { allActive = false; break; }
+                }
+                if (allActive) {
+                    clipboard.setProcParams(srcPP);
+                } else {
+                    ParamsEdited filterPE(true);
+                    filterPE.locallab.spots.resize(srcPP.locallab.spots.size(), LocallabParamsEdited::LocallabSpotEdited(true));
+                    ParamsEdited falsePE;
+                    falsePE.locallab.spots.resize(srcPP.locallab.spots.size(), LocallabParamsEdited::LocallabSpotEdited(false));
+                    filterPE.general = falsePE.general;
+                    auto isOff = [this](const std::string& key) -> bool {
+                        auto it = editorCopyFilters_.find(key);
+                        return it != editorCopyFilters_.end() && !it->second->get_active();
+                    };
+                    if (isOff("wb"))            filterPE.wb = falsePE.wb;
+                    if (isOff("toneCurve"))     filterPE.toneCurve = falsePE.toneCurve;
+                    if (isOff("sh"))            filterPE.sh = falsePE.sh;
+                    if (isOff("toneEqualizer")) filterPE.toneEqualizer = falsePE.toneEqualizer;
+                    if (isOff("sharpening"))      filterPE.sharpening = falsePE.sharpening;
+                    if (isOff("sharpenEdge"))     filterPE.sharpenEdge = falsePE.sharpenEdge;
+                    if (isOff("sharpenMicro"))    filterPE.sharpenMicro = falsePE.sharpenMicro;
+                    if (isOff("impulseDenoise"))  filterPE.impulseDenoise = falsePE.impulseDenoise;
+                    if (isOff("dirpyrDenoise"))   filterPE.dirpyrDenoise = falsePE.dirpyrDenoise;
+                    if (isOff("defringe"))        filterPE.defringe = falsePE.defringe;
+                    if (isOff("dehaze"))          filterPE.dehaze = falsePE.dehaze;
+                    if (isOff("dirpyrequalizer")) filterPE.dirpyrequalizer = falsePE.dirpyrequalizer;
+                    if (isOff("labCurve"))       filterPE.labCurve = falsePE.labCurve;
+                    if (isOff("rgbCurves"))      filterPE.rgbCurves = falsePE.rgbCurves;
+                    if (isOff("colorToning"))    filterPE.colorToning = falsePE.colorToning;
+                    if (isOff("chmixer"))        filterPE.chmixer = falsePE.chmixer;
+                    if (isOff("blackwhite"))     filterPE.blackwhite = falsePE.blackwhite;
+                    if (isOff("hsvequalizer"))   filterPE.hsvequalizer = falsePE.hsvequalizer;
+                    if (isOff("filmSimulation")) filterPE.filmSimulation = falsePE.filmSimulation;
+                    if (isOff("softlight"))      filterPE.softlight = falsePE.softlight;
+                    if (isOff("vibrance"))       filterPE.vibrance = falsePE.vibrance;
+                    if (isOff("distortion"))   filterPE.distortion = falsePE.distortion;
+                    if (isOff("cacorrection")) filterPE.cacorrection = falsePE.cacorrection;
+                    if (isOff("vignetting"))   filterPE.vignetting = falsePE.vignetting;
+                    if (isOff("lensProf"))     filterPE.lensProf = falsePE.lensProf;
+                    if (isOff("coarse"))       filterPE.coarse = falsePE.coarse;
+                    if (isOff("rotate"))       filterPE.rotate = falsePE.rotate;
+                    if (isOff("crop"))         filterPE.crop = falsePE.crop;
+                    if (isOff("resize"))       filterPE.resize = falsePE.resize;
+                    if (isOff("prsharpening")) filterPE.prsharpening = falsePE.prsharpening;
+                    if (isOff("perspective"))  filterPE.perspective = falsePE.perspective;
+                    if (isOff("commonTrans"))  filterPE.commonTrans = falsePE.commonTrans;
+                    if (isOff("gradient"))     filterPE.gradient = falsePE.gradient;
+                    if (isOff("framing"))      filterPE.framing = falsePE.framing;
+                    if (isOff("retinex")) filterPE.retinex = falsePE.retinex;
+                    if (isOff("wavelet")) filterPE.wavelet = falsePE.wavelet;
+                    if (isOff("spot"))    filterPE.spot = falsePE.spot;
+                    if (isOff("cg"))      filterPE.cg = falsePE.cg;
+                    if (isOff("locallab")) filterPE.locallab = falsePE.locallab;
+                    rtengine::procparams::ProcParams filteredPP;
+                    filterPE.combine(filteredPP, srcPP, true);
+                    rtengine::procparams::PartialProfile pp(&filteredPP, &filterPE);
+                    clipboard.setPartialProfile(pp);
+                }
+            });
+            editorCopyFilterMenu_->attach(*doCopy, 0, 1, p, p + 1); p++;
+
+            auto* doPaste = Gtk::manage(new MyImageMenuItem(M("PRESET_PASTE_CLIPBOARD"), "preset-paste"));
+            doPaste->signal_activate().connect([this]() {
+                if (!clipboard.hasProcParams() || !ipc) return;
+                ProcParams pp = clipboard.getProcParams();
+                ProcParams* params = ipc->beginUpdateParams();
+                *params = pp;
+                ipc->endUpdateParams(rtengine::EvProfileChanged);
+            });
+            editorCopyFilterMenu_->attach(*doPaste, 0, 1, p, p + 1); p++;
+
+            editorCopyFilterMenu_->attach(*Gtk::manage(new Gtk::SeparatorMenuItem()), 0, 1, p, p + 1); p++;
+
+            // Global All / None
+            auto* copyAll = Gtk::manage(new MyImageMenuItem(M("GENERAL_ALL"), "menu-select-all"));
+            preventCloseAction(copyAll, [this]() {
+                for (auto& kv : editorCopyFilters_) kv.second->set_active(true);
+            });
+            editorCopyFilterMenu_->attach(*copyAll, 0, 1, p, p + 1); p++;
+
+            auto* copyNone = Gtk::manage(new MyImageMenuItem(M("GENERAL_NONE"), "menu-select-none"));
+            preventCloseAction(copyNone, [this]() {
+                for (auto& kv : editorCopyFilters_) kv.second->set_active(false);
+            });
+            editorCopyFilterMenu_->attach(*copyNone, 0, 1, p, p + 1); p++;
+
+            editorCopyFilterMenu_->attach(*Gtk::manage(new Gtk::SeparatorMenuItem()), 0, 1, p, p + 1); p++;
+
+            auto addGroup = [&](const Glib::ustring& groupLabel,
+                                const std::vector<std::pair<std::string, Glib::ustring>>& items) {
+                Gtk::MenuItem* groupItem = Gtk::manage(new Gtk::MenuItem(groupLabel));
+                editorCopyFilterMenu_->attach(*groupItem, 0, 1, p, p + 1);
+                p++;
+
+                Gtk::Menu* sub = Gtk::manage(new Gtk::Menu());
+                int s = 0;
+
+                std::vector<Gtk::CheckMenuItem*> children;
+                for (const auto& kv : items) {
+                    auto* item = Gtk::manage(new Gtk::CheckMenuItem(kv.second));
+                    item->set_active(true);
+                    editorCopyFilters_[kv.first] = item;
+                    preventClose(item);
+                    children.push_back(item);
+                }
+
+                auto* grpAll = Gtk::manage(new MyImageMenuItem(M("GENERAL_ALL"), "menu-select-all"));
+                preventCloseAction(grpAll, [children]() {
+                    for (auto* c : children) c->set_active(true);
+                });
+                sub->attach(*grpAll, 0, 1, s, s + 1); s++;
+
+                auto* grpNone = Gtk::manage(new MyImageMenuItem(M("GENERAL_NONE"), "menu-select-none"));
+                preventCloseAction(grpNone, [children]() {
+                    for (auto* c : children) c->set_active(false);
+                });
+                sub->attach(*grpNone, 0, 1, s, s + 1); s++;
+
+                sub->attach(*Gtk::manage(new Gtk::SeparatorMenuItem()), 0, 1, s, s + 1); s++;
+
+                for (auto* item : children) {
+                    sub->attach(*item, 0, 1, s, s + 1);
+                    s++;
+                }
+
+                sub->show_all();
+                groupItem->set_submenu(*sub);
+            };
+
+            addGroup(M("PARTIALPASTE_BASICGROUP"), {
+                {"wb",            M("PARTIALPASTE_WHITEBALANCE")},
+                {"toneCurve",     M("PARTIALPASTE_EXPOSURE")},
+                {"sh",            M("PARTIALPASTE_SHADOWSHIGHLIGHTS")},
+                {"toneEqualizer", M("PARTIALPASTE_TONE_EQUALIZER")},
+            });
+            addGroup(M("PARTIALPASTE_DETAILGROUP"), {
+                {"sharpening",      M("PARTIALPASTE_SHARPENING")},
+                {"sharpenEdge",     M("PARTIALPASTE_SHARPENEDGE")},
+                {"sharpenMicro",    M("PARTIALPASTE_SHARPENMICRO")},
+                {"impulseDenoise",  M("PARTIALPASTE_IMPULSEDENOISE")},
+                {"dirpyrDenoise",   M("PARTIALPASTE_DIRPYRDENOISE")},
+                {"defringe",        M("PARTIALPASTE_DEFRINGE")},
+                {"dehaze",          M("PARTIALPASTE_DEHAZE")},
+                {"dirpyrequalizer", M("PARTIALPASTE_DIRPYREQUALIZER")},
+            });
+            addGroup(M("PARTIALPASTE_COLORGROUP"), {
+                {"labCurve",       M("PARTIALPASTE_LABCURVE")},
+                {"rgbCurves",      M("PARTIALPASTE_RGBCURVES")},
+                {"colorToning",    M("PARTIALPASTE_COLORTONING")},
+                {"chmixer",        M("PARTIALPASTE_CHANNELMIXER")},
+                {"blackwhite",     M("PARTIALPASTE_CHANNELMIXERBW")},
+                {"hsvequalizer",   M("PARTIALPASTE_HSVEQUALIZER")},
+                {"filmSimulation", M("PARTIALPASTE_FILMSIMULATION")},
+                {"softlight",      M("PARTIALPASTE_SOFTLIGHT")},
+                {"vibrance",       M("PARTIALPASTE_VIBRANCE")},
+            });
+            addGroup(M("PARTIALPASTE_LENSGROUP"), {
+                {"distortion",   M("PARTIALPASTE_DISTORTION")},
+                {"cacorrection", M("PARTIALPASTE_CACORRECTION")},
+                {"vignetting",   M("PARTIALPASTE_VIGNETTING")},
+                {"lensProf",     M("PARTIALPASTE_LENSPROFILE")},
+            });
+            addGroup(M("PARTIALPASTE_COMPOSITIONGROUP"), {
+                {"coarse",       M("PARTIALPASTE_COARSETRANS")},
+                {"rotate",       M("PARTIALPASTE_ROTATION")},
+                {"crop",         M("PARTIALPASTE_CROP")},
+                {"resize",       M("PARTIALPASTE_RESIZE")},
+                {"prsharpening", M("PARTIALPASTE_PRSHARPENING")},
+                {"perspective",  M("PARTIALPASTE_PERSPECTIVE")},
+                {"commonTrans",  M("PARTIALPASTE_COMMONTRANSFORMPARAMS")},
+                {"gradient",     M("PARTIALPASTE_GRADIENT")},
+                {"framing",      M("PARTIALPASTE_FRAMING")},
+            });
+            addGroup(M("PARTIALPASTE_ADVANCEDGROUP"), {
+                {"retinex", M("PARTIALPASTE_RETINEX")},
+                {"wavelet", M("PARTIALPASTE_EQUALIZER")},
+                {"spot",    M("PARTIALPASTE_SPOT")},
+                {"cg",      M("PARTIALPASTE_COMPRESSGAMUT")},
+            });
+
+            auto* locallabItem = Gtk::manage(new Gtk::CheckMenuItem(M("PARTIALPASTE_LOCALLABGROUP")));
+            locallabItem->set_active(true);
+            editorCopyFilters_["locallab"] = locallabItem;
+            preventClose(locallabItem);
+            editorCopyFilterMenu_->attach(*locallabItem, 0, 1, p, p + 1);
+            p++;
+
+            editorCopyFilterMenu_->show_all();
+        }
 
         Gtk::Button* copySettingsBtn = Gtk::manage(new Gtk::Button());
         copySettingsBtn->set_image(*Gtk::manage(new RTImage("copy", Gtk::ICON_SIZE_MENU)));
         copySettingsBtn->set_relief(Gtk::RELIEF_NONE);
         copySettingsBtn->set_tooltip_markup(M("EDITOR_COPY_SETTINGS_TOOLTIP"));
         copySettingsBtn->signal_clicked().connect([this]() {
-            if (openThm) {
-                clipboard.setProcParams(openThm->getProcParams());
+            if (!openThm) return;
+            const auto& srcPP = openThm->getProcParams();
+
+            // Check if all visible filters are active
+            bool allActive = true;
+            for (const auto& kv : editorCopyFilters_) {
+                if (!kv.second->get_active()) {
+                    allActive = false;
+                    break;
+                }
+            }
+
+            if (allActive) {
+                clipboard.setProcParams(srcPP);
+            } else {
+                ParamsEdited filterPE(true);
+                filterPE.locallab.spots.resize(srcPP.locallab.spots.size(), LocallabParamsEdited::LocallabSpotEdited(true));
+                ParamsEdited falsePE;
+                falsePE.locallab.spots.resize(srcPP.locallab.spots.size(), LocallabParamsEdited::LocallabSpotEdited(false));
+                filterPE.general = falsePE.general;
+
+                auto isOff = [this](const std::string& key) -> bool {
+                    auto it = editorCopyFilters_.find(key);
+                    return it != editorCopyFilters_.end() && !it->second->get_active();
+                };
+
+                if (isOff("wb"))            filterPE.wb = falsePE.wb;
+                if (isOff("toneCurve"))     filterPE.toneCurve = falsePE.toneCurve;
+                if (isOff("sh"))            filterPE.sh = falsePE.sh;
+                if (isOff("toneEqualizer")) filterPE.toneEqualizer = falsePE.toneEqualizer;
+                if (isOff("sharpening"))      filterPE.sharpening = falsePE.sharpening;
+                if (isOff("sharpenEdge"))     filterPE.sharpenEdge = falsePE.sharpenEdge;
+                if (isOff("sharpenMicro"))    filterPE.sharpenMicro = falsePE.sharpenMicro;
+                if (isOff("impulseDenoise"))  filterPE.impulseDenoise = falsePE.impulseDenoise;
+                if (isOff("dirpyrDenoise"))   filterPE.dirpyrDenoise = falsePE.dirpyrDenoise;
+                if (isOff("defringe"))        filterPE.defringe = falsePE.defringe;
+                if (isOff("dehaze"))          filterPE.dehaze = falsePE.dehaze;
+                if (isOff("dirpyrequalizer")) filterPE.dirpyrequalizer = falsePE.dirpyrequalizer;
+                if (isOff("labCurve"))       filterPE.labCurve = falsePE.labCurve;
+                if (isOff("rgbCurves"))      filterPE.rgbCurves = falsePE.rgbCurves;
+                if (isOff("colorToning"))    filterPE.colorToning = falsePE.colorToning;
+                if (isOff("chmixer"))        filterPE.chmixer = falsePE.chmixer;
+                if (isOff("blackwhite"))     filterPE.blackwhite = falsePE.blackwhite;
+                if (isOff("hsvequalizer"))   filterPE.hsvequalizer = falsePE.hsvequalizer;
+                if (isOff("filmSimulation")) filterPE.filmSimulation = falsePE.filmSimulation;
+                if (isOff("softlight"))      filterPE.softlight = falsePE.softlight;
+                if (isOff("vibrance"))       filterPE.vibrance = falsePE.vibrance;
+                if (isOff("distortion"))   filterPE.distortion = falsePE.distortion;
+                if (isOff("cacorrection")) filterPE.cacorrection = falsePE.cacorrection;
+                if (isOff("vignetting"))   filterPE.vignetting = falsePE.vignetting;
+                if (isOff("lensProf"))     filterPE.lensProf = falsePE.lensProf;
+                if (isOff("coarse"))       filterPE.coarse = falsePE.coarse;
+                if (isOff("rotate"))       filterPE.rotate = falsePE.rotate;
+                if (isOff("crop"))         filterPE.crop = falsePE.crop;
+                if (isOff("resize"))       filterPE.resize = falsePE.resize;
+                if (isOff("prsharpening")) filterPE.prsharpening = falsePE.prsharpening;
+                if (isOff("perspective"))  filterPE.perspective = falsePE.perspective;
+                if (isOff("commonTrans"))  filterPE.commonTrans = falsePE.commonTrans;
+                if (isOff("gradient"))     filterPE.gradient = falsePE.gradient;
+                if (isOff("framing"))      filterPE.framing = falsePE.framing;
+                if (isOff("retinex")) filterPE.retinex = falsePE.retinex;
+                if (isOff("wavelet")) filterPE.wavelet = falsePE.wavelet;
+                if (isOff("spot"))    filterPE.spot = falsePE.spot;
+                if (isOff("cg"))      filterPE.cg = falsePE.cg;
+                if (isOff("locallab")) filterPE.locallab = falsePE.locallab;
+
+                rtengine::procparams::ProcParams filteredPP;
+                filterPE.combine(filteredPP, srcPP, true);
+                rtengine::procparams::PartialProfile pp(&filteredPP, &filterPE);
+                clipboard.setPartialProfile(pp);
             }
         });
-        applyCSS(copySettingsBtn);
-        filmstripActionBar->pack_start(*copySettingsBtn, Gtk::PACK_SHRINK);
+        // Copy filter dropdown — inset to the right of the copy button
+        Gtk::MenuButton* copyFilterBtn = Gtk::manage(new Gtk::MenuButton());
+        copyFilterBtn->set_image(*Gtk::manage(new RTImage("copy-filter", Gtk::ICON_SIZE_MENU)));
+        copyFilterBtn->set_relief(Gtk::RELIEF_NONE);
+        copyFilterBtn->set_tooltip_markup(M("FILEBROWSER_COPYPROFILE_SETTINGS"));
+        copyFilterBtn->set_popup(*editorCopyFilterMenu_);
+
+        // Group copy + filter as a visually joined button pair
+        Gtk::Box* copyGroup = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+        copyGroup->set_name("CopySettingsGroup");
+        copyGroup->pack_start(*copySettingsBtn, Gtk::PACK_SHRINK);
+        copyGroup->pack_start(*copyFilterBtn, Gtk::PACK_SHRINK);
+        applyCSS(copyGroup);
+
+        // Screen-level CSS for the joined pair
+        {
+            static bool cssAdded = false;
+            if (!cssAdded) {
+                auto css = Gtk::CssProvider::create();
+                css->load_from_data(
+                    "#CopySettingsGroup {"
+                    "  margin: 0; padding: 0;"
+                    "}"
+                    "#CopySettingsGroup > button:first-child {"
+                    "  border-top-right-radius: 0; border-bottom-right-radius: 0;"
+                    "  margin-right: -2px; padding-right: 1px;"
+                    "}"
+                    "#CopySettingsGroup > menubutton > button {"
+                    "  border-top-left-radius: 0; border-bottom-left-radius: 0;"
+                    "  margin-left: -2px; padding-left: 1px;"
+                    "  min-width: 12px; padding-right: 2px;"
+                    "}"
+                    "#CopySettingsGroup > menubutton {"
+                    "  margin: 0; padding: 0;"
+                    "}"
+                    "#CopySettingsGroup > menubutton image {"
+                    "  min-width: 12px; min-height: 12px;"
+                    "}"
+                );
+                Gtk::StyleContext::add_provider_for_screen(
+                    Gdk::Screen::get_default(), css,
+                    GTK_STYLE_PROVIDER_PRIORITY_USER + 100);
+                cssAdded = true;
+            }
+        }
+        filmstripActionBar->pack_start(*copyGroup, Gtk::PACK_SHRINK);
 
         // Edit in External Editor button
         if (!App::get().isGimpPlugin()) {
@@ -1118,6 +1465,57 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
             extEditorBtn->signal_clicked().connect(sigc::mem_fun(*this, &EditorPanel::sendToExternalPressed));
             applyCSS(extEditorBtn);
             filmstripActionBar->pack_start(*extEditorBtn, Gtk::PACK_SHRINK);
+        }
+
+        // Sort button with popup menu
+        {
+            auto* sep6 = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
+            applyCSS(sep6);
+            filmstripActionBar->pack_start(*sep6, Gtk::PACK_SHRINK);
+
+            filmstripSortBtn_ = Gtk::manage(new Gtk::MenuButton());
+            filmstripSortBtn_->set_image(*Gtk::manage(new RTImage("menu-sort", Gtk::ICON_SIZE_MENU)));
+            filmstripSortBtn_->set_relief(Gtk::RELIEF_NONE);
+            filmstripSortBtn_->set_tooltip_markup(M("FILEBROWSER_POPUPSORTBY"));
+            applyCSS(filmstripSortBtn_);
+
+            filmstripSortMenu_ = Gtk::manage(new Gtk::Menu());
+
+            // Sort order
+            Gtk::RadioButtonGroup sortOrderGrp;
+            filmstripSortOrder_[0] = Gtk::manage(new Gtk::RadioMenuItem(sortOrderGrp, M("SORT_ASCENDING")));
+            filmstripSortOrder_[1] = Gtk::manage(new Gtk::RadioMenuItem(sortOrderGrp, M("SORT_DESCENDING")));
+            filmstripSortMenu_->append(*filmstripSortOrder_[0]);
+            filmstripSortMenu_->append(*filmstripSortOrder_[1]);
+
+            filmstripSortMenu_->append(*Gtk::manage(new Gtk::SeparatorMenuItem()));
+
+            // Sort methods
+            Gtk::RadioButtonGroup sortMethodGrp;
+            const Glib::ustring sortLabels[Options::SORT_METHOD_COUNT] = {
+                M("SORT_BY_NAME"), M("SORT_BY_DATE"), M("SORT_BY_EXIF"),
+                M("SORT_BY_RANK"), M("SORT_BY_LABEL"), M("SORT_BY_FILETYPE")
+            };
+            for (int i = 0; i < Options::SORT_METHOD_COUNT; i++) {
+                filmstripSortMethod_[i] = Gtk::manage(new Gtk::RadioMenuItem(sortMethodGrp, sortLabels[i]));
+                filmstripSortMenu_->append(*filmstripSortMethod_[i]);
+            }
+
+            // Set initial state from options
+            const auto& opts = App::get().options();
+            filmstripSortOrder_[opts.sortDescending ? 1 : 0]->set_active(true);
+            if (opts.sortMethod >= 0 && opts.sortMethod < Options::SORT_METHOD_COUNT)
+                filmstripSortMethod_[opts.sortMethod]->set_active(true);
+
+            // Connect signals
+            for (int i = 0; i < 2; i++)
+                filmstripSortOrder_[i]->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::filmstripSortChanged));
+            for (int i = 0; i < Options::SORT_METHOD_COUNT; i++)
+                filmstripSortMethod_[i]->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::filmstripSortChanged));
+
+            filmstripSortMenu_->show_all();
+            filmstripSortBtn_->set_popup(*filmstripSortMenu_);
+            filmstripActionBar->pack_start(*filmstripSortBtn_, Gtk::PACK_SHRINK);
         }
     }
     toolBarPanel->set_center_widget(*filmstripActionBar);
@@ -1136,6 +1534,9 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     MyScrolledToolbar *stb1 = Gtk::manage(new MyScrolledToolbar());
     stb1->set_name("EditorToolbarTop");
     stb1->add(*toolBarPanel);
+    // Offset toolbar from sidebars so buttons aren't hidden by the overlay
+    stb1->set_margin_start(options.showHistory ? options.dirBrowserWidth : 0);
+    stb1->set_margin_end(std::min(options.toolPanelWidth, 400));
     editbox->pack_start (*stb1, Gtk::PACK_SHRINK, 0);
     editorToolbarTop_ = stb1;
 
@@ -1512,19 +1913,117 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     backBtn->signal_clicked().connect(sigc::mem_fun(*this, &EditorPanel::hideAlbumView));
     albumViewHeader_->pack_start(*backBtn, Gtk::PACK_SHRINK);
 
-    albumNameLabel_ = Gtk::manage(new Gtk::Label());
-    albumNameLabel_->set_halign(Gtk::ALIGN_START);
     auto albumHeaderCss = Gtk::CssProvider::create();
     albumHeaderCss->load_from_data(
         "#AlbumViewHeader { padding: 4px 8px; }"
         "#AlbumViewHeader label { padding: 0; margin: 0; }"
         "#AlbumViewGrid { padding: 8px; }"
         "#AlbumViewItem { padding: 4px; }"
+        "#AlbumViewHeader .linked radiobutton { padding: 2px 6px; min-height: 0; min-width: 0; }"
+        "#AlbumViewHeader scale { min-width: 100px; }"
     );
     albumViewHeader_->get_style_context()->add_provider(albumHeaderCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+
+    // View mode segmented control (Grid | Fit | Collage) — left side after back button
+    {
+        albumModeGrid_ = Gtk::manage(new Gtk::RadioButton(albumModeGroup_));
+        albumModeGrid_->set_mode(false);
+        albumModeGrid_->set_image(*Gtk::manage(new RTImage("album-view-grid", Gtk::ICON_SIZE_MENU)));
+        albumModeGrid_->set_tooltip_text(M("ALBUM_VIEW_MODE_GRID"));
+        albumModeGrid_->set_active(true);
+
+        albumModeFit_ = Gtk::manage(new Gtk::RadioButton(albumModeGroup_));
+        albumModeFit_->set_mode(false);
+        albumModeFit_->set_image(*Gtk::manage(new RTImage("album-view-fit", Gtk::ICON_SIZE_MENU)));
+        albumModeFit_->set_tooltip_text(M("ALBUM_VIEW_MODE_FIT"));
+
+        albumModeCollage_ = Gtk::manage(new Gtk::RadioButton(albumModeGroup_));
+        albumModeCollage_->set_mode(false);
+        albumModeCollage_->set_image(*Gtk::manage(new RTImage("album-view-collage", Gtk::ICON_SIZE_MENU)));
+        albumModeCollage_->set_tooltip_text(M("ALBUM_VIEW_MODE_COLLAGE"));
+
+        Gtk::Box* modeBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+        modeBox->get_style_context()->add_class("linked");
+        modeBox->pack_start(*albumModeGrid_, Gtk::PACK_SHRINK);
+        modeBox->pack_start(*albumModeFit_, Gtk::PACK_SHRINK);
+        modeBox->pack_start(*albumModeCollage_, Gtk::PACK_SHRINK);
+        modeBox->get_style_context()->add_provider(albumHeaderCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+
+        albumModeGrid_->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::albumViewModeChanged));
+        albumModeFit_->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::albumViewModeChanged));
+        albumModeCollage_->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::albumViewModeChanged));
+
+        albumViewHeader_->pack_start(*modeBox, Gtk::PACK_SHRINK);
+    }
+
+    // Info toggle button
+    albumInfoToggle_ = Gtk::manage(new Gtk::ToggleButton());
+    albumInfoToggle_->set_image(*Gtk::manage(new RTImage("info", Gtk::ICON_SIZE_MENU)));
+    albumInfoToggle_->set_relief(Gtk::RELIEF_NONE);
+    albumInfoToggle_->set_tooltip_text(M("ALBUM_VIEW_INFO_TOGGLE"));
+    albumInfoToggle_->set_active(albumShowInfo_);
+    albumInfoToggle_->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::albumInfoToggled));
+    albumViewHeader_->pack_start(*albumInfoToggle_, Gtk::PACK_SHRINK);
+
+    // Zoom slider
+    albumZoomSlider_ = Gtk::manage(new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
+    albumZoomSlider_->set_range(60, 400);
+    albumZoomSlider_->set_value(albumThumbHeight_);
+    albumZoomSlider_->set_draw_value(false);
+    albumZoomSlider_->set_size_request(120, -1);
+    albumZoomSlider_->get_style_context()->add_provider(albumHeaderCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+    albumZoomConn_ = albumZoomSlider_->signal_value_changed().connect(sigc::mem_fun(*this, &EditorPanel::albumZoomChanged));
+    albumViewHeader_->pack_start(*albumZoomSlider_, Gtk::PACK_SHRINK);
+
+    // Album sort button
+    {
+        albumSortBtn_ = Gtk::manage(new Gtk::MenuButton());
+        albumSortBtn_->set_image(*Gtk::manage(new RTImage("menu-sort", Gtk::ICON_SIZE_MENU)));
+        albumSortBtn_->set_relief(Gtk::RELIEF_NONE);
+        albumSortBtn_->set_tooltip_markup(M("FILEBROWSER_POPUPSORTBY"));
+
+        albumSortMenu_ = Gtk::manage(new Gtk::Menu());
+
+        Gtk::RadioButtonGroup aOrderGrp;
+        albumSortOrder_[0] = Gtk::manage(new Gtk::RadioMenuItem(aOrderGrp, M("SORT_ASCENDING")));
+        albumSortOrder_[1] = Gtk::manage(new Gtk::RadioMenuItem(aOrderGrp, M("SORT_DESCENDING")));
+        albumSortMenu_->append(*albumSortOrder_[0]);
+        albumSortMenu_->append(*albumSortOrder_[1]);
+
+        albumSortMenu_->append(*Gtk::manage(new Gtk::SeparatorMenuItem()));
+
+        Gtk::RadioButtonGroup aMethodGrp;
+        const Glib::ustring aLabels[Options::SORT_METHOD_COUNT] = {
+            M("SORT_BY_NAME"), M("SORT_BY_DATE"), M("SORT_BY_EXIF"),
+            M("SORT_BY_RANK"), M("SORT_BY_LABEL"), M("SORT_BY_FILETYPE")
+        };
+        for (int i = 0; i < Options::SORT_METHOD_COUNT; i++) {
+            albumSortMethod_[i] = Gtk::manage(new Gtk::RadioMenuItem(aMethodGrp, aLabels[i]));
+            albumSortMenu_->append(*albumSortMethod_[i]);
+        }
+
+        const auto& opts = App::get().options();
+        albumSortOrder_[opts.sortDescending ? 1 : 0]->set_active(true);
+        if (opts.sortMethod >= 0 && opts.sortMethod < Options::SORT_METHOD_COUNT)
+            albumSortMethod_[opts.sortMethod]->set_active(true);
+
+        for (int i = 0; i < 2; i++)
+            albumSortOrder_[i]->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::albumSortChanged));
+        for (int i = 0; i < Options::SORT_METHOD_COUNT; i++)
+            albumSortMethod_[i]->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::albumSortChanged));
+
+        albumSortMenu_->show_all();
+        albumSortBtn_->set_popup(*albumSortMenu_);
+        albumViewHeader_->pack_start(*albumSortBtn_, Gtk::PACK_SHRINK);
+    }
+
+    // Album name — right side, expands to fill
+    albumNameLabel_ = Gtk::manage(new Gtk::Label());
+    albumNameLabel_->set_halign(Gtk::ALIGN_END);
     albumNameLabel_->get_style_context()->add_provider(albumHeaderCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
     albumViewHeader_->pack_start(*albumNameLabel_, Gtk::PACK_EXPAND_WIDGET);
 
+    // Photo count — far right
     albumCountLabel_ = Gtk::manage(new Gtk::Label());
     albumCountLabel_->set_halign(Gtk::ALIGN_END);
     albumCountLabel_->get_style_context()->add_provider(albumHeaderCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
@@ -1542,19 +2041,55 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     albumViewGrid_->set_homogeneous(true);
     albumViewGrid_->set_column_spacing(4);
     albumViewGrid_->set_row_spacing(4);
-    albumViewGrid_->set_min_children_per_line(3);
-    albumViewGrid_->set_max_children_per_line(20);
+    albumViewGrid_->set_min_children_per_line(1);
+    albumViewGrid_->set_max_children_per_line(50);
     albumViewGrid_->set_selection_mode(Gtk::SELECTION_SINGLE);
-    albumViewGrid_->set_activate_on_single_click(false); // require double-click
-    albumViewGrid_->set_valign(Gtk::ALIGN_START); // pin to top, don't stretch
+    albumViewGrid_->set_activate_on_single_click(false);
+    albumViewGrid_->set_valign(Gtk::ALIGN_START);
     albumViewGrid_->get_style_context()->add_provider(albumHeaderCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
 
-    albumViewScrolled_->add(*albumViewGrid_);
+    // Double-click to open image from grid (defer cacheMgr work off main thread)
+    albumViewGrid_->signal_child_activated().connect([this](Gtk::FlowBoxChild* child) {
+        int idx = child->get_index();
+        if (idx < 0 || idx >= static_cast<int>(currentAlbumFiles_.size())) return;
+        Glib::ustring filePath = currentAlbumFiles_[idx];
+        hideAlbumView();
+        std::thread([this, filePath]() {
+            Thumbnail* thm = cacheMgr->getEntry(filePath);
+            if (thm) {
+                Glib::signal_idle().connect_once([this, thm]() {
+                    if (fPanel && fPanel->fileCatalog) {
+                        fPanel->fileCatalog->openRequested({thm});
+                    } else {
+                        thm->decreaseRef();
+                    }
+                });
+            }
+        }).detach();
+    });
+
+    // Collage DrawingArea
+    albumCollageArea_ = Gtk::manage(new Gtk::DrawingArea());
+    albumCollageArea_->set_name("AlbumCollageArea");
+    albumCollageArea_->signal_draw().connect(sigc::mem_fun(*this, &EditorPanel::onCollageAreaDraw));
+    albumCollageArea_->add_events(Gdk::BUTTON_PRESS_MASK);
+    albumCollageArea_->signal_button_press_event().connect(sigc::mem_fun(*this, &EditorPanel::onCollageAreaClick));
+
+    // Stack to switch between FlowBox grid and Collage DrawingArea
+    albumGridStack_ = Gtk::manage(new Gtk::Stack());
+    albumGridStack_->set_transition_type(Gtk::STACK_TRANSITION_TYPE_CROSSFADE);
+    albumGridStack_->set_transition_duration(200);
+    albumGridStack_->add(*albumViewGrid_, "grid");
+    albumGridStack_->add(*albumCollageArea_, "collage");
+    albumGridStack_->set_visible_child("grid");
+
+    albumViewScrolled_->add(*albumGridStack_);
     albumViewBox_->pack_start(*albumViewScrolled_);
 
     // Wrap editor view and album view in a Gtk::Stack
     albumViewStack_ = Gtk::manage(new Gtk::Stack());
-    albumViewStack_->set_transition_type(Gtk::STACK_TRANSITION_TYPE_NONE);
+    albumViewStack_->set_transition_type(Gtk::STACK_TRANSITION_TYPE_CROSSFADE);
+    albumViewStack_->set_transition_duration(250);
     albumViewStack_->add(*viewpaned, "editor");
     albumViewStack_->add(*albumViewBox_, "album");
     albumViewStack_->set_visible_child("editor");
@@ -1589,7 +2124,15 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                 alloc.set_height(sideH);
                 return true;
             } else if (child == vboxright) {
-                alloc.set_x(overlayW - natW);
+                // Slide offset for view transition animation
+                double eased;
+                if (editorAnimIn_) {
+                    eased = 1.0 - std::pow(1.0 - editorAnimFraction_, 3); // ease-out-cubic
+                } else {
+                    eased = editorAnimFraction_ * editorAnimFraction_ * editorAnimFraction_; // ease-in-cubic
+                }
+                int slideOffset = static_cast<int>(natW * (1.0 - eased));
+                alloc.set_x(overlayW - natW + slideOffset);
                 alloc.set_y(0);
                 alloc.set_width(natW);
                 alloc.set_height(sideH);
@@ -1820,13 +2363,14 @@ void EditorPanel::setAspect ()
     const auto& options = App::get().options();
     leftbox->set_size_request(options.dirBrowserWidth, -1);
 
-    // Sync editor's folder browser with the browser panel's current directory (deferred to idle
-    // so the widget tree is fully realized before we try to expand directories)
+    // Sync editor's folder browser with the browser panel's current directory.
+    // Only re-open if the directory actually changed to avoid scroll jumps.
     if (fPanel && fPanel->fileCatalog && editorDirBrowser_) {
         Glib::signal_idle().connect_once([this]() {
             if (realized && fPanel && fPanel->fileCatalog && editorDirBrowser_) {
                 Glib::ustring browserDir = fPanel->fileCatalog->lastSelectedDir();
-                if (!browserDir.empty()) {
+                if (!browserDir.empty() && browserDir != lastSyncedEditorDir_) {
+                    lastSyncedEditorDir_ = browserDir;
                     editorDirBrowser_->open(browserDir);
                     if (albumBrowser_) albumBrowser_->setCurrentDirectory(browserDir);
                 }
@@ -1884,6 +2428,99 @@ void EditorPanel::updateFilmstripStars(int highlightUpTo)
     }
 }
 
+void EditorPanel::filmstripSortChanged ()
+{
+    if (!fPanel || !fPanel->fileCatalog || !fPanel->fileCatalog->fileBrowser) return;
+
+    // Determine which method is active
+    int method = 0;
+    for (int i = 0; i < Options::SORT_METHOD_COUNT; i++) {
+        if (filmstripSortMethod_[i]->get_active()) {
+            method = i;
+            break;
+        }
+    }
+    bool descending = filmstripSortOrder_[1]->get_active();
+
+    auto& opts = App::get().mut_options();
+    opts.sortMethod = Options::SortMethod(method);
+    opts.sortDescending = descending;
+
+    fPanel->fileCatalog->fileBrowser->resort();
+}
+
+void EditorPanel::albumSortChanged ()
+{
+    // Determine which method is active
+    int method = 0;
+    for (int i = 0; i < Options::SORT_METHOD_COUNT; i++) {
+        if (albumSortMethod_[i]->get_active()) {
+            method = i;
+            break;
+        }
+    }
+    bool descending = albumSortOrder_[1]->get_active();
+
+    // Sort the album files list
+    if (currentAlbumFiles_.empty()) return;
+
+    // We need Thumbnail objects to compare — use cacheMgr
+    // Build sortable pairs of (filepath, Thumbnail*)
+    struct SortEntry {
+        Glib::ustring path;
+        Thumbnail* thm;
+    };
+    std::vector<SortEntry> entries;
+    for (const auto& f : currentAlbumFiles_) {
+        Thumbnail* thm = cacheMgr->getEntry(f);
+        entries.push_back({f, thm});
+    }
+
+    Options::SortMethod sm = Options::SortMethod(method);
+
+    std::sort(entries.begin(), entries.end(), [sm, descending](const SortEntry& a, const SortEntry& b) {
+        if (!a.thm || !b.thm) return false;
+        int cmp = 0;
+        switch (sm) {
+        case Options::SORT_BY_NAME:
+            return descending
+                ? a.path.casefold() > b.path.casefold()
+                : a.path.casefold() < b.path.casefold();
+        case Options::SORT_BY_DATE:
+            cmp = a.thm->getDateTime().compare(b.thm->getDateTime());
+            break;
+        case Options::SORT_BY_EXIF:
+            cmp = a.thm->getExifString().compare(b.thm->getExifString());
+            break;
+        case Options::SORT_BY_RANK:
+            cmp = a.thm->getRank() - b.thm->getRank();
+            break;
+        case Options::SORT_BY_LABEL:
+            cmp = a.thm->getColorLabel() - b.thm->getColorLabel();
+            break;
+        default: break;
+        }
+        if (!cmp) {
+            cmp = a.path.casefold().compare(b.path.casefold());
+        }
+        return descending ? cmp > 0 : cmp < 0;
+    });
+
+    // Rebuild the file list and release refs
+    currentAlbumFiles_.clear();
+    for (auto& e : entries) {
+        currentAlbumFiles_.push_back(e.path);
+        if (e.thm) e.thm->decreaseRef();
+    }
+
+    // Rebuild the view
+    if (albumViewMode_ == AlbumViewMode::COLLAGE) {
+        recalculateCollageLayout();
+    } else {
+        rebuildAlbumGrid();
+    }
+}
+
 void EditorPanel::filterBarToggled()
 {
     if (!filterBarRevealer) return;
@@ -1893,6 +2530,13 @@ void EditorPanel::filterBarToggled()
 
     if (!show) {
         filterBarClearAll();
+    }
+}
+
+void EditorPanel::collapseFilterBar()
+{
+    if (tbFilterBar && tbFilterBar->get_active()) {
+        tbFilterBar->set_active(false);  // triggers filterBarToggled → clears & hides
     }
 }
 
@@ -2030,53 +2674,8 @@ void EditorPanel::showAlbumView (const Glib::ustring& albumName, const std::vect
     albumNameLabel_->set_markup("<b>" + Glib::Markup::escape_text(albumName) + "</b>");
     albumCountLabel_->set_text(Glib::ustring::compose(M("ALBUM_VIEW_PHOTOS"), files.size()));
 
-    // Clear existing grid
-    for (auto* child : albumViewGrid_->get_children()) {
-        albumViewGrid_->remove(*child);
-    }
-
-    // Track which files still need thumbnail loading (not in cache)
-    std::vector<Glib::ustring> filesToLoad;
-
-    // Create items — use cached pixbufs where available
-    for (const auto& fpath : files) {
-        if (!Glib::file_test(fpath, Glib::FILE_TEST_EXISTS)) continue;
-
-        Gtk::Box* itemBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 2));
-        itemBox->set_size_request(140, -1);
-        itemBox->set_name("AlbumViewItem");
-        itemBox->set_valign(Gtk::ALIGN_START);
-
-        Gtk::Image* thumbImg = Gtk::manage(new Gtk::Image());
-        thumbImg->set_size_request(120, 90);
-        thumbImg->set_name("AlbumThumb_" + fpath);
-
-        // Use cached pixbuf if available
-        auto cacheIt = albumThumbCache_.find(fpath);
-        if (cacheIt != albumThumbCache_.end()) {
-            thumbImg->set(cacheIt->second);
-        } else {
-            filesToLoad.push_back(fpath);
-        }
-
-        itemBox->pack_start(*thumbImg, Gtk::PACK_SHRINK);
-
-        // Filename label
-        Glib::ustring basename = Glib::path_get_basename(fpath);
-        Gtk::Label* label = Gtk::manage(new Gtk::Label(basename));
-        label->set_ellipsize(Pango::ELLIPSIZE_MIDDLE);
-        label->set_max_width_chars(18);
-        label->set_tooltip_text(fpath);
-
-        auto labelCss = Gtk::CssProvider::create();
-        labelCss->load_from_data("label { font-size: 0.8em; }");
-        label->get_style_context()->add_provider(labelCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-
-        itemBox->pack_start(*label, Gtk::PACK_SHRINK);
-        albumViewGrid_->add(*itemBox);
-    }
-
-    albumViewGrid_->show_all();
+    // Rebuild the grid/collage with current settings
+    rebuildAlbumGrid();
 
     // Add left/right margins to account for sidebar overlays
     const auto& opts = App::get().options();
@@ -2093,10 +2692,384 @@ void EditorPanel::showAlbumView (const Glib::ustring& albumName, const std::vect
         albumViewToggleConn_.unblock();
     }
 
-    // Only load thumbnails that aren't already cached
+    // Load thumbnails that aren't already cached
+    std::vector<Glib::ustring> filesToLoad;
+    for (const auto& fpath : files) {
+        if (albumThumbCache_.find(fpath) == albumThumbCache_.end() &&
+            Glib::file_test(fpath, Glib::FILE_TEST_EXISTS)) {
+            filesToLoad.push_back(fpath);
+        }
+    }
     if (!filesToLoad.empty()) {
         loadAlbumThumbnails(albumViewSession_, filesToLoad);
     }
+
+    // Apply current view mode settings
+    applyAlbumViewMode();
+}
+
+void EditorPanel::rebuildAlbumGrid ()
+{
+    if (!albumViewGrid_) return;
+
+    // Clear existing grid
+    for (auto* child : albumViewGrid_->get_children()) {
+        albumViewGrid_->remove(*child);
+    }
+
+    int thumbH = albumThumbHeight_;
+    int thumbW = static_cast<int>(thumbH * 4.0 / 3.0);
+    int itemW = thumbW + 20;
+
+    auto labelCss = Gtk::CssProvider::create();
+    labelCss->load_from_data("label { font-size: 0.8em; }");
+
+    for (const auto& fpath : currentAlbumFiles_) {
+        if (!Glib::file_test(fpath, Glib::FILE_TEST_EXISTS)) continue;
+
+        Gtk::Box* itemBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 2));
+        itemBox->set_size_request(itemW, -1);
+        itemBox->set_name("AlbumViewItem");
+        itemBox->set_valign(Gtk::ALIGN_START);
+
+        Gtk::Image* thumbImg = Gtk::manage(new Gtk::Image());
+        thumbImg->set_size_request(thumbW, thumbH);
+        thumbImg->set_name("AlbumThumb_" + fpath);
+
+        // Use cached pixbuf, scaled to display size
+        auto cacheIt = albumThumbCache_.find(fpath);
+        if (cacheIt != albumThumbCache_.end()) {
+            auto& src = cacheIt->second;
+            int srcW = src->get_width();
+            int srcH = src->get_height();
+            // Scale to fit within thumbW x thumbH preserving aspect ratio
+            double scale = std::min(static_cast<double>(thumbW) / srcW,
+                                    static_cast<double>(thumbH) / srcH);
+            int dispW = std::max(1, static_cast<int>(srcW * scale));
+            int dispH = std::max(1, static_cast<int>(srcH * scale));
+            thumbImg->set(src->scale_simple(dispW, dispH, Gdk::INTERP_BILINEAR));
+        }
+
+        itemBox->pack_start(*thumbImg, Gtk::PACK_SHRINK);
+
+        // Filename label (only if info is shown)
+        if (albumShowInfo_) {
+            Glib::ustring basename = Glib::path_get_basename(fpath);
+            Gtk::Label* label = Gtk::manage(new Gtk::Label(basename));
+            label->set_ellipsize(Pango::ELLIPSIZE_MIDDLE);
+            label->set_max_width_chars(18);
+            label->set_tooltip_text(fpath);
+            label->get_style_context()->add_provider(labelCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+            itemBox->pack_start(*label, Gtk::PACK_SHRINK);
+        }
+
+        albumViewGrid_->add(*itemBox);
+    }
+
+    albumViewGrid_->show_all();
+}
+
+void EditorPanel::albumZoomChanged ()
+{
+    if (!albumZoomSlider_) return;
+    int newH = static_cast<int>(albumZoomSlider_->get_value());
+    if (newH == albumThumbHeight_) return;
+    albumThumbHeight_ = newH;
+
+    if (albumViewMode_ == AlbumViewMode::COLLAGE) {
+        recalculateCollageLayout();
+        if (albumCollageArea_) albumCollageArea_->queue_draw();
+    } else {
+        rebuildAlbumGrid();
+    }
+}
+
+void EditorPanel::albumInfoToggled ()
+{
+    if (!albumInfoToggle_) return;
+    albumShowInfo_ = albumInfoToggle_->get_active();
+
+    if (albumViewMode_ == AlbumViewMode::COLLAGE) {
+        if (albumCollageArea_) albumCollageArea_->queue_draw();
+    } else {
+        rebuildAlbumGrid();
+    }
+}
+
+void EditorPanel::albumViewModeChanged ()
+{
+    AlbumViewMode newMode;
+    if (albumModeGrid_ && albumModeGrid_->get_active()) {
+        newMode = AlbumViewMode::GRID;
+    } else if (albumModeFit_ && albumModeFit_->get_active()) {
+        newMode = AlbumViewMode::FIT;
+    } else {
+        newMode = AlbumViewMode::COLLAGE;
+    }
+
+    if (newMode == albumViewMode_) return;
+    albumViewMode_ = newMode;
+    applyAlbumViewMode();
+}
+
+void EditorPanel::applyAlbumViewMode ()
+{
+    if (!albumGridStack_ || !albumViewScrolled_ || !albumZoomSlider_) return;
+
+    // Disconnect any fit-mode resize handler
+    albumFitResizeConn_.disconnect();
+
+    switch (albumViewMode_) {
+    case AlbumViewMode::GRID:
+        albumGridStack_->set_visible_child("grid");
+        albumViewScrolled_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+        albumZoomSlider_->set_sensitive(true);
+        albumZoomConn_.block();
+        albumZoomSlider_->set_value(albumThumbHeight_);
+        albumZoomConn_.unblock();
+        rebuildAlbumGrid();
+        break;
+
+    case AlbumViewMode::FIT:
+        albumGridStack_->set_visible_child("grid");
+        albumViewScrolled_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_NEVER);
+        albumZoomSlider_->set_sensitive(false);
+        fitLastW_ = 0;
+        fitLastH_ = 0;
+        recalculateFitSize();
+        // Recalculate on viewport resize (with size-changed guard)
+        albumFitResizeConn_ = albumViewScrolled_->signal_size_allocate().connect(
+            [this](Gtk::Allocation& alloc) {
+                if (alloc.get_width() == fitLastW_ && alloc.get_height() == fitLastH_) return;
+                fitLastW_ = alloc.get_width();
+                fitLastH_ = alloc.get_height();
+                Glib::signal_idle().connect_once([this]() {
+                    if (albumViewMode_ == AlbumViewMode::FIT) {
+                        recalculateFitSize();
+                    }
+                });
+            });
+        break;
+
+    case AlbumViewMode::COLLAGE:
+        albumGridStack_->set_visible_child("collage");
+        albumViewScrolled_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+        albumZoomSlider_->set_sensitive(true);
+        albumZoomConn_.block();
+        albumZoomSlider_->set_value(albumThumbHeight_);
+        albumZoomConn_.unblock();
+        recalculateCollageLayout();
+        break;
+    }
+}
+
+void EditorPanel::recalculateFitSize ()
+{
+    if (currentAlbumFiles_.empty() || !albumViewScrolled_) return;
+
+    int viewportW = albumViewScrolled_->get_allocated_width() - 16; // padding
+    int viewportH = albumViewScrolled_->get_allocated_height() - 16;
+    if (viewportW <= 0 || viewportH <= 0) return;
+
+    int n = static_cast<int>(currentAlbumFiles_.size());
+    int gap = 4;
+    int labelH = albumShowInfo_ ? 20 : 0;
+
+    // Binary search for largest thumbH where all items fit
+    int lo = 30, hi = 600, best = 60;
+    while (lo <= hi) {
+        int mid = (lo + hi) / 2;
+        int thumbW = static_cast<int>(mid * 4.0 / 3.0);
+        int itemW = thumbW + 20;
+        int itemH = mid + labelH + 8;
+
+        int cols = std::max(1, (viewportW + gap) / (itemW + gap));
+        int rows = (n + cols - 1) / cols;
+        int totalH = rows * (itemH + gap) - gap;
+
+        if (totalH <= viewportH) {
+            best = mid;
+            lo = mid + 1;
+        } else {
+            hi = mid - 1;
+        }
+    }
+
+    albumThumbHeight_ = best;
+    // Update slider display (without triggering signal)
+    if (albumZoomSlider_) {
+        albumZoomConn_.block();
+        albumZoomSlider_->set_value(best);
+        albumZoomConn_.unblock();
+    }
+    rebuildAlbumGrid();
+}
+
+double EditorPanel::getAspectRatio (const std::string& filepath)
+{
+    auto it = albumAspectCache_.find(filepath);
+    if (it != albumAspectCache_.end()) return it->second;
+
+    // Try to get from cached pixbuf
+    auto thumbIt = albumThumbCache_.find(filepath);
+    if (thumbIt != albumThumbCache_.end() && thumbIt->second) {
+        double ar = static_cast<double>(thumbIt->second->get_width()) / thumbIt->second->get_height();
+        albumAspectCache_[filepath] = ar;
+        return ar;
+    }
+
+    return 1.5; // default 3:2
+}
+
+void EditorPanel::recalculateCollageLayout ()
+{
+    collageLayout_.clear();
+    collageScaledCache_.clear();
+    collageContentHeight_ = 0;
+    if (currentAlbumFiles_.empty() || !albumViewScrolled_) return;
+
+    int viewportW = albumViewScrolled_->get_allocated_width() - 16;
+    if (viewportW <= 0) viewportW = 800;
+
+    int targetH = albumThumbHeight_;
+    int gap = 4;
+    int yOff = 8; // top padding
+
+    // Justified row algorithm
+    std::vector<std::pair<std::string, double>> items; // filepath, aspect ratio
+    for (const auto& f : currentAlbumFiles_) {
+        if (!Glib::file_test(f, Glib::FILE_TEST_EXISTS)) continue;
+        items.push_back({f, getAspectRatio(f)});
+    }
+
+    size_t i = 0;
+    while (i < items.size()) {
+        // Accumulate items for this row
+        double rowWidthSum = 0;
+        size_t rowStart = i;
+        while (i < items.size()) {
+            double itemW = targetH * items[i].second;
+            if (rowWidthSum + itemW + (i - rowStart) * gap > viewportW && i > rowStart) {
+                break;
+            }
+            rowWidthSum += itemW;
+            ++i;
+        }
+
+        size_t rowCount = i - rowStart;
+        bool isLastRow = (i >= items.size());
+
+        // Calculate actual row height to fill width exactly
+        double totalGaps = (rowCount - 1) * gap;
+        double rowH;
+        if (!isLastRow && rowCount > 0) {
+            // Scale row to fill viewport width
+            double arSum = 0;
+            for (size_t j = rowStart; j < i; ++j) arSum += items[j].second;
+            rowH = (viewportW - totalGaps) / arSum;
+        } else {
+            rowH = targetH; // last row: don't stretch
+        }
+
+        int xOff = 8; // left padding
+        for (size_t j = rowStart; j < i; ++j) {
+            int w = static_cast<int>(rowH * items[j].second);
+            int h = static_cast<int>(rowH);
+            collageLayout_.push_back({xOff, yOff, w, h, items[j].first});
+            xOff += w + gap;
+        }
+
+        yOff += static_cast<int>(rowH) + gap;
+    }
+
+    collageContentHeight_ = yOff + 8;
+    if (albumCollageArea_) {
+        albumCollageArea_->set_size_request(-1, collageContentHeight_);
+        albumCollageArea_->queue_draw();
+    }
+}
+
+bool EditorPanel::onCollageAreaDraw (const Cairo::RefPtr<Cairo::Context>& cr)
+{
+    if (collageLayout_.empty()) return true;
+
+    // Get visible region for scroll culling
+    double clipX1, clipY1, clipX2, clipY2;
+    cr->get_clip_extents(clipX1, clipY1, clipX2, clipY2);
+
+    for (const auto& item : collageLayout_) {
+        // Skip items outside visible region
+        if (item.y + item.h < clipY1 || item.y > clipY2) continue;
+
+        auto cacheIt = albumThumbCache_.find(item.filepath);
+        if (cacheIt != albumThumbCache_.end() && cacheIt->second) {
+            // Use scaled pixbuf cache to avoid rescaling every draw
+            int tw = std::max(1, item.w);
+            int th = std::max(1, item.h);
+            std::string cacheKey = item.filepath + "|" + std::to_string(tw) + "x" + std::to_string(th);
+            auto& scaled = collageScaledCache_[cacheKey];
+            if (!scaled) {
+                scaled = cacheIt->second->scale_simple(tw, th, Gdk::INTERP_BILINEAR);
+            }
+            Gdk::Cairo::set_source_pixbuf(cr, scaled, item.x, item.y);
+            cr->rectangle(item.x, item.y, item.w, item.h);
+            cr->fill();
+        } else {
+            // Placeholder rectangle
+            cr->set_source_rgba(0.3, 0.3, 0.3, 0.5);
+            cr->rectangle(item.x, item.y, item.w, item.h);
+            cr->fill();
+        }
+
+        // Draw filename if info is shown
+        if (albumShowInfo_ && albumCollageArea_) {
+            Glib::ustring basename = Glib::path_get_basename(item.filepath);
+            cr->set_source_rgba(0, 0, 0, 0.6);
+            cr->rectangle(item.x, item.y + item.h - 18, item.w, 18);
+            cr->fill();
+
+            cr->set_source_rgb(1, 1, 1);
+            cr->move_to(item.x + 4, item.y + item.h - 4);
+            auto layout = albumCollageArea_->create_pango_layout(basename);
+            auto fontDesc = Pango::FontDescription("sans 8");
+            layout->set_font_description(fontDesc);
+            layout->set_width((item.w - 8) * Pango::SCALE);
+            layout->set_ellipsize(Pango::ELLIPSIZE_MIDDLE);
+            layout->show_in_cairo_context(cr);
+        }
+    }
+
+    return true;
+}
+
+bool EditorPanel::onCollageAreaClick (GdkEventButton* ev)
+{
+    if (!ev || ev->type != GDK_2BUTTON_PRESS || ev->button != 1) return false;
+
+    int mx = static_cast<int>(ev->x);
+    int my = static_cast<int>(ev->y);
+
+    for (const auto& item : collageLayout_) {
+        if (mx >= item.x && mx < item.x + item.w &&
+            my >= item.y && my < item.y + item.h) {
+            Glib::ustring filePath(item.filepath);
+            hideAlbumView();
+            std::thread([this, filePath]() {
+                Thumbnail* thm = cacheMgr->getEntry(filePath);
+                if (thm) {
+                    Glib::signal_idle().connect_once([this, thm]() {
+                        if (fPanel && fPanel->fileCatalog) {
+                            fPanel->fileCatalog->openRequested({thm});
+                        } else {
+                            thm->decreaseRef();
+                        }
+                    });
+                }
+            }).detach();
+            return true;
+        }
+    }
+    return false;
 }
 
 void EditorPanel::loadAlbumThumbnails (int session, const std::vector<Glib::ustring>& files)
@@ -2107,7 +3080,6 @@ void EditorPanel::loadAlbumThumbnails (int session, const std::vector<Glib::ustr
         nThreads = files.size();
     }
 
-    // Each thread gets a slice of the file list
     size_t chunkSize = (files.size() + nThreads - 1) / nThreads;
 
     for (unsigned int t = 0; t < nThreads; ++t) {
@@ -2119,14 +3091,14 @@ void EditorPanel::loadAlbumThumbnails (int session, const std::vector<Glib::ustr
 
         std::thread([this, session, chunk]() {
             for (const auto& fpath : chunk) {
-                if (session != albumViewSession_) return; // cancelled
+                if (session != albumViewSession_) return;
                 if (!Glib::file_test(fpath, Glib::FILE_TEST_EXISTS)) continue;
 
                 Thumbnail* thm = cacheMgr->getEntry(fpath);
                 if (!thm) continue;
 
                 double scale;
-                rtengine::IImage8* img = thm->processThumbImage(thm->getProcParams(), 90, scale);
+                rtengine::IImage8* img = thm->processThumbImage(thm->getProcParams(), 300, scale);
                 if (!img) {
                     thm->decreaseRef();
                     continue;
@@ -2144,21 +3116,48 @@ void EditorPanel::loadAlbumThumbnails (int session, const std::vector<Glib::ustr
                 Glib::signal_idle().connect_once([this, session, capturedPath, pixbufCopy]() {
                     if (session != albumViewSession_) return;
 
-                    // Store in cache for future instant re-display
                     albumThumbCache_[capturedPath] = pixbufCopy;
+                    // Cache aspect ratio
+                    if (pixbufCopy->get_height() > 0) {
+                        albumAspectCache_[capturedPath] =
+                            static_cast<double>(pixbufCopy->get_width()) / pixbufCopy->get_height();
+                    }
 
-                    // Find the matching image widget and set the pixbuf
-                    for (auto* child : albumViewGrid_->get_children()) {
-                        auto* flowChild = dynamic_cast<Gtk::FlowBoxChild*>(child);
-                        if (!flowChild) continue;
-                        auto* itemBox = dynamic_cast<Gtk::Box*>(flowChild->get_child());
-                        if (!itemBox) continue;
+                    if (albumViewMode_ == AlbumViewMode::COLLAGE) {
+                        // Immediately show newly loaded thumbnail (using current layout)
+                        if (albumCollageArea_) albumCollageArea_->queue_draw();
+                        // Debounce collage relayout: schedule one idle relayout
+                        // instead of relaying out for every single thumbnail
+                        if (!collageRelayoutPending_) {
+                            collageRelayoutPending_ = true;
+                            Glib::signal_timeout().connect_once([this]() {
+                                collageRelayoutPending_ = false;
+                                if (albumViewMode_ == AlbumViewMode::COLLAGE) {
+                                    recalculateCollageLayout();
+                                }
+                            }, 100); // batch updates over 100ms
+                        }
+                    } else {
+                        // Update matching image widget in grid
+                        for (auto* child : albumViewGrid_->get_children()) {
+                            auto* flowChild = dynamic_cast<Gtk::FlowBoxChild*>(child);
+                            if (!flowChild) continue;
+                            auto* itemBox = dynamic_cast<Gtk::Box*>(flowChild->get_child());
+                            if (!itemBox) continue;
 
-                        for (auto* w : itemBox->get_children()) {
-                            auto* thumbImg = dynamic_cast<Gtk::Image*>(w);
-                            if (thumbImg && thumbImg->get_name() == "AlbumThumb_" + capturedPath) {
-                                thumbImg->set(pixbufCopy);
-                                return;
+                            for (auto* w : itemBox->get_children()) {
+                                auto* thumbImg = dynamic_cast<Gtk::Image*>(w);
+                                if (thumbImg && thumbImg->get_name() == "AlbumThumb_" + capturedPath) {
+                                    int srcW = pixbufCopy->get_width();
+                                    int srcH = pixbufCopy->get_height();
+                                    int thumbW = static_cast<int>(albumThumbHeight_ * 4.0 / 3.0);
+                                    double sc = std::min(static_cast<double>(thumbW) / srcW,
+                                                         static_cast<double>(albumThumbHeight_) / srcH);
+                                    int dispW = std::max(1, static_cast<int>(srcW * sc));
+                                    int dispH = std::max(1, static_cast<int>(srcH * sc));
+                                    thumbImg->set(pixbufCopy->scale_simple(dispW, dispH, Gdk::INTERP_BILINEAR));
+                                    return;
+                                }
                             }
                         }
                     }
@@ -2171,15 +3170,21 @@ void EditorPanel::loadAlbumThumbnails (int session, const std::vector<Glib::ustr
 void EditorPanel::hideAlbumView ()
 {
     if (!albumViewStack_) return;
-    // Don't cancel background thumbnail loading — let it finish populating
-    // the cache so re-showing the same content is instant.
+    albumFitResizeConn_.disconnect();
     albumViewStack_->set_visible_child("editor");
 
-    // Update toggle button state without triggering the signal
     if (tbAlbumView_ && tbAlbumView_->get_active()) {
         albumViewToggleConn_.block();
         tbAlbumView_->set_active(false);
         albumViewToggleConn_.unblock();
+    }
+
+    // Ensure filmstrip is visible and redrawn after returning from album view
+    if (catalogPane) {
+        catalogPane->set_opacity(1.0);
+    }
+    if (fPanel && fPanel->fileCatalog) {
+        fPanel->fileCatalog->redrawAll();
     }
 }
 
@@ -2196,7 +3201,6 @@ void EditorPanel::toggleAlbumView ()
     if (!tbAlbumView_ || !albumViewStack_) return;
 
     if (tbAlbumView_->get_active()) {
-        // Determine the current folder name and files
         Glib::ustring dirName;
         std::vector<Glib::ustring> files;
 
@@ -2211,25 +3215,24 @@ void EditorPanel::toggleAlbumView ()
         }
 
         if (dirName.empty()) {
-            // No folder context — show placeholder
             albumViewStack_->set_visible_child("album");
             albumNameLabel_->set_markup("<b>" + Glib::ustring(M("ALBUM_HEADER")) + "</b>");
             albumCountLabel_->set_text(M("ALBUM_VIEW_SELECT"));
         } else if (albumViewBuilt_ && currentAlbumViewName_ == dirName && currentAlbumFiles_ == files) {
-            // Same content as what's already built — instant stack flip
             albumViewStack_->set_visible_child("album");
+            applyAlbumViewMode();
         } else {
-            // Different content — rebuild the grid
             showAlbumView(dirName, files);
         }
     } else {
-        // Switch back to editor — keep the grid intact for fast re-show
+        albumFitResizeConn_.disconnect();
         albumViewStack_->set_visible_child("editor");
     }
 }
 
 void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
 {
+    fprintf(stderr, "DBG EditorPanel::open tmb=%p isrc=%p\n", (void*)tmb, (void*)isrc);
     close();
 
     isProcessing = true; // prevents closing-on-init
@@ -2252,12 +3255,16 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
     this->isrc = isrc;
     ipc = rtengine::StagedImageProcessor::create (isrc);
 
+    fprintf(stderr, "DBG open: ipc created=%p\n", (void*)ipc);
     ipc->setProgressListener (this);
     colorMgmtToolBar->updateProcessor();
     ipc->setPreviewImageListener (previewHandler);
     ipc->setPreviewScale (10);  // Important
 
+    fprintf(stderr, "DBG open: before initImage\n");
     tpc->initImage (ipc, tmb->getType() == FT_Raw);
+    fprintf(stderr, "DBG open: after initImage\n");
+    tpc->setThumbnail(openThm);
 
     // Notify MCP server about the active editor panel
     if (parent && parent->getMcpServer()) {
@@ -2276,6 +3283,7 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
     rtengine::ImageSource* is = isrc->getImageSource();
     is->setProgressListener ( this );
 
+    fprintf(stderr, "DBG open: before initProfile\n");
     // try to load the last saved parameters from the cache or from the paramfile file
     ProcParams* ldprof = openThm->createProcParamsForUpdate (true, false); // will be freed by initProfile
 
@@ -2285,6 +3293,7 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
     presetListPanel->setImageProcessor(ipc);
     presetListPanel->setThumbnail(openThm);
     presetListPanel->initProfile (defProf, ldprof);
+    fprintf(stderr, "DBG open: after initProfile\n");
 
     presetListPanel->setInitialFileName (fname);
 
@@ -2314,11 +3323,13 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
         beforeAfterToggled();
     }
 
+    fprintf(stderr, "DBG open: before cropHandler, mainCropWindow=%p\n", (void*)iareapanel->imageArea->mainCropWindow);
     // If in single tab mode, the main crop window is not constructed the very first time
     // since there was no resize event
     if (iareapanel->imageArea->mainCropWindow) {
         iareapanel->imageArea->mainCropWindow->cropHandler.newImage (ipc, false);
     } else {
+        fprintf(stderr, "DBG open: mainCropWindow is null, calling on_resized\n");
         Gtk::Allocation alloc;
         iareapanel->imageArea->on_resized (alloc);
 
@@ -2791,12 +3802,16 @@ void EditorPanel::hideHistoryActivated ()
         hidehp->set_image (*iHistoryShow);
     }
 
-    // Update filmstrip margins so sidebars don't overlap content
+    // Update filmstrip + toolbar margins so sidebars don't overlap content
+    int leftMargin = hidehp->get_active() ? options.dirBrowserWidth : 0;
     if (catalogPane) {
-        catalogPane->set_margin_start(hidehp->get_active() ? options.dirBrowserWidth : 0);
+        catalogPane->set_margin_start(leftMargin);
     }
     if (albumViewBox_) {
-        albumViewBox_->set_margin_start(hidehp->get_active() ? options.dirBrowserWidth : 0);
+        albumViewBox_->set_margin_start(leftMargin);
+    }
+    if (editorToolbarTop_) {
+        editorToolbarTop_->set_margin_start(leftMargin);
     }
 
     tbShowHideSidePanels_managestate();
@@ -2825,13 +3840,17 @@ void EditorPanel::tbRightPanel_1_toggled ()
             tbRightPanel_1->set_image (*iRightPanel_1_Show);
         }
 
-        // Update filmstrip margins so sidebars don't overlap content
+        // Update filmstrip + toolbar margins so sidebars don't overlap content
         const auto& opts = App::get().options();
+        int rightMargin = tbRightPanel_1->get_active() ? std::min(opts.toolPanelWidth, 400) : 0;
         if (catalogPane) {
-            catalogPane->set_margin_end(tbRightPanel_1->get_active() ? std::min(opts.toolPanelWidth, 400) : 0);
+            catalogPane->set_margin_end(rightMargin);
         }
         if (albumViewBox_) {
-            albumViewBox_->set_margin_end(tbRightPanel_1->get_active() ? std::min(opts.toolPanelWidth, 400) : 0);
+            albumViewBox_->set_margin_end(rightMargin);
+        }
+        if (editorToolbarTop_) {
+            editorToolbarTop_->set_margin_end(rightMargin);
         }
 
         tbShowHideSidePanels_managestate();
@@ -2861,6 +3880,108 @@ void EditorPanel::getQueueOverlayInsets (int& left, int& top, int& right) const
 
     // Top filmstrip inset
     top = (catalogPane && catalogPane->get_visible()) ? catalogPane->get_allocated_height () : 0;
+}
+
+void EditorPanel::animateEditorIn(bool skipFilmstrip)
+{
+    // Cancel any running animation
+    editorAnimConn_.disconnect();
+    editorAnimIn_ = true;
+    editorAnimFraction_ = 0.0;
+
+    // Show filmstrip if enabled (start transparent, animation fades it in)
+    if (!skipFilmstrip && catalogPane && App::get().options().editorFilmStripOpened) {
+        catalogPane->set_opacity(0.0);
+        catalogPane->show();
+    } else if (skipFilmstrip && catalogPane && App::get().options().editorFilmStripOpened) {
+        // Hero transition manages filmstrip visibility; just make sure it's shown
+        catalogPane->show();
+    }
+
+    // Start footer bar transparent
+    if (editorToolbarBottom_) {
+        editorToolbarBottom_->set_opacity(0.0);
+    }
+
+    // Start sidebar off-screen (fraction 0 = fully hidden)
+    hpanedr->queue_resize();
+
+    editorAnimConn_ = Glib::signal_timeout().connect([this, skipFilmstrip]() -> bool {
+        editorAnimFraction_ += 16.0 / 250.0;  // 250ms total — smooth entrance
+        if (editorAnimFraction_ >= 1.0) {
+            editorAnimFraction_ = 1.0;
+            if (!skipFilmstrip && catalogPane && catalogPane->get_visible()) {
+                catalogPane->set_opacity(1.0);
+            }
+            if (editorToolbarBottom_) {
+                editorToolbarBottom_->set_opacity(1.0);
+            }
+            hpanedr->queue_resize();
+            return false;
+        }
+
+        double eased = 1.0 - std::pow(1.0 - editorAnimFraction_, 3); // ease-out-cubic
+
+        // Filmstrip: smooth opacity fade only (skip during hero transition)
+        if (!skipFilmstrip && catalogPane && catalogPane->get_visible()) {
+            catalogPane->set_opacity(eased);
+        }
+
+        // Footer bar: fade in
+        if (editorToolbarBottom_) {
+            editorToolbarBottom_->set_opacity(eased);
+        }
+
+        // Sidebar slides in from right via signal_get_child_position
+        hpanedr->queue_resize();
+        return true;
+    }, 16);
+}
+
+void EditorPanel::animateEditorOut(std::function<void()> onComplete)
+{
+    // Cancel any running animation
+    editorAnimConn_.disconnect();
+    editorAnimIn_ = false;
+    editorAnimFraction_ = 1.0;
+
+    editorAnimConn_ = Glib::signal_timeout().connect([this, onComplete]() -> bool {
+        editorAnimFraction_ -= 16.0 / 180.0;  // 180ms total
+        if (editorAnimFraction_ <= 0.0) {
+            editorAnimFraction_ = 0.0;
+            // Reset filmstrip state
+            if (catalogPane) {
+                catalogPane->set_opacity(1.0);
+            }
+            if (editorToolbarBottom_) {
+                editorToolbarBottom_->set_opacity(1.0);
+            }
+            hpanedr->queue_resize();
+            // Execute completion callback (switches notebook page)
+            if (onComplete) {
+                onComplete();
+            }
+            return false;
+        }
+
+        // Ease-in-cubic for exit: accelerates out smoothly
+        double t = editorAnimFraction_;
+        double eased = t * t * t;
+
+        // Filmstrip: smooth opacity fade only
+        if (catalogPane && catalogPane->get_visible()) {
+            catalogPane->set_opacity(eased);
+        }
+
+        // Footer bar: fade out
+        if (editorToolbarBottom_) {
+            editorToolbarBottom_->set_opacity(eased);
+        }
+
+        // Sidebar slides out to right via signal_get_child_position
+        hpanedr->queue_resize();
+        return true;
+    }, 16);
 }
 
 void EditorPanel::tbTopPanel_1_toggled ()
@@ -3685,6 +4806,7 @@ void EditorPanel::beforeAfterToggled ()
 
     removeIfThere (beforeAfterBox,  beforeBox, false);
     removeIfThere (afterBox,  afterHeaderBox, false);
+    beforeAfterBox->set_homogeneous (false);
 
     if (beforeIarea) {
         if (beforeIpc) {
@@ -3725,39 +4847,42 @@ void EditorPanel::beforeAfterToggled ()
 
         beforeIarea = new ImageAreaPanel ();
 
-        int HeaderBoxHeight = 17;
+        int HeaderBoxHeight = 15;
 
-        beforeLabel = Gtk::manage (new Gtk::Label ());
-        beforeLabel->set_markup (Glib::ustring ("<b>") + M ("GENERAL_BEFORE") + "</b>");
+        beforeLabel = Gtk::manage (new Gtk::Label (M ("GENERAL_BEFORE")));
+        beforeLabel->get_style_context()->add_class("ba-label");
         tbBeforeLock = Gtk::manage (new Gtk::ToggleButton ());
+        tbBeforeLock->get_style_context()->add_class("ba-lock");
         tbBeforeLock->set_relief(Gtk::RELIEF_NONE);
         tbBeforeLock->set_tooltip_markup (M ("MAIN_TOOLTIP_BEFOREAFTERLOCK"));
         tbBeforeLock->signal_toggled().connect ( sigc::mem_fun (*this, &EditorPanel::tbBeforeLock_toggled) );
         beforeHeaderBox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL));
         beforeHeaderBox->get_style_context()->add_class("smallbuttonbox");
-        beforeHeaderBox->pack_end (*tbBeforeLock, Gtk::PACK_SHRINK, 2);
-        beforeHeaderBox->pack_end (*beforeLabel, Gtk::PACK_SHRINK, 2);
+        beforeHeaderBox->pack_start (*beforeLabel, Gtk::PACK_EXPAND_WIDGET, 0);
+        beforeHeaderBox->pack_end (*tbBeforeLock, Gtk::PACK_SHRINK, 0);
         beforeHeaderBox->set_size_request (0, HeaderBoxHeight);
 
         history->blistenerLock ? tbBeforeLock->set_image (*iBeforeLockON) : tbBeforeLock->set_image (*iBeforeLockOFF);
         tbBeforeLock->set_active (history->blistenerLock);
 
         beforeBox = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
-        beforeBox->pack_start (*beforeHeaderBox, Gtk::PACK_SHRINK, 2);
+        beforeBox->pack_start (*beforeHeaderBox, Gtk::PACK_SHRINK, 0);
         beforeBox->pack_start (*beforeIarea);
 
-        afterLabel = Gtk::manage (new Gtk::Label ());
-        afterLabel->set_markup (Glib::ustring ("<b>") + M ("GENERAL_AFTER") + "</b>");
+        afterLabel = Gtk::manage (new Gtk::Label (M ("GENERAL_AFTER")));
+        afterLabel->get_style_context()->add_class("ba-label");
         afterHeaderBox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL));
         afterHeaderBox->set_size_request (0, HeaderBoxHeight);
-        afterHeaderBox->pack_end (*afterLabel, Gtk::PACK_SHRINK, 2);
-        afterBox->pack_start (*afterHeaderBox, Gtk::PACK_SHRINK, 2);
+        afterHeaderBox->pack_start (*afterLabel, Gtk::PACK_EXPAND_WIDGET, 0);
+        afterBox->pack_start (*afterHeaderBox, Gtk::PACK_SHRINK, 0);
         afterBox->reorder_child (*afterHeaderBox, 0);
 
         beforeAfterBox->pack_start (*beforeBox);
         beforeAfterBox->reorder_child (*beforeBox, 0);
-        beforeAfterBox->show_all ();
+        beforeAfterBox->set_homogeneous (true);
 
+        // Set up IPC BEFORE show_all so that when size_allocate fires,
+        // ipc is already set and mainCropWindow can be created
         beforePreviewHandler = new PreviewHandler ();
 
         beforeIpc = rtengine::StagedImageProcessor::create (beforeImg);
@@ -3777,6 +4902,9 @@ void EditorPanel::beforeAfterToggled ()
 
         iareapanel->setBeforeAfterViews (beforeIarea, iareapanel);
         beforeIarea->setBeforeAfterViews (beforeIarea, iareapanel);
+
+        // Show all AFTER IPC is fully configured
+        beforeAfterBox->show_all ();
 
         rtengine::procparams::ProcParams params;
 

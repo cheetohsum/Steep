@@ -89,6 +89,7 @@ public:
 
     Gtk::Button* getSelectCropButton() { return selectCrop; }
     Gtk::Button* getResetCropButton() { return resetCrop; }
+    Gtk::Widget* getRatioRow() { return ratioRow_; }
 
     void resizeScaleChanged (double rsc);
     void hFlipCrop          ();
@@ -103,7 +104,8 @@ private:
 
     const std::unique_ptr<CropRatios> crop_ratios;
 
-    Gtk::CheckButton* fixr;
+    Gtk::ToggleButton* fixr;
+    RTImage* lockIcon;
     MyComboBoxText* ratio;
     MyComboBoxText* orientation;
     MyComboBoxText* guide;
@@ -117,6 +119,7 @@ private:
     MySpinButton* w;
     MySpinButton* h;
     Gtk::Grid* methodgrid;
+    Gtk::Widget* ratioRow_;
     Gtk::Label *customRatioLabel;
 
     int maxw, maxh;

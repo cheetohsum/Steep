@@ -91,23 +91,9 @@ Adjuster::Adjuster(
     set_row_spacing(0);
     set_row_homogeneous(false);
     set_name("Adjuster");
-    set_margin_start(0);
 
-    if (!adjustmentName.empty()) {
-        label = Gtk::manage(new Gtk::Label(adjustmentName));
-        setExpandAlignProperties(label, false, false, Gtk::ALIGN_START, Gtk::ALIGN_BASELINE);
-        // Consistent label width for slider alignment across tools
-        label->set_width_chars(12);
-        label->set_max_width_chars(12);
-        label->set_xalign(1.0); // Right-align text within the fixed-width label
-        label->set_ellipsize(Pango::ELLIPSIZE_END);
-        // Compact font via inline CSS (theme CSS font-size doesn't cascade reliably in GTK3)
-        auto labelCss = Gtk::CssProvider::create();
-        labelCss->load_from_data("label { font-size: 10px; }");
-        label->get_style_context()->add_provider(
-            labelCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 100
-        );
-    }
+    // Label text is rendered inside the slider trough (DxO/LR style)
+    // No separate Gtk::Label widget needed — label stays nullptr
 
     reset = Gtk::manage(new Gtk::Button());
 
@@ -120,42 +106,46 @@ Adjuster::Adjuster(
 
     spin = Gtk::manage(new MySpinButton());
 
-    setExpandAlignProperties(spin, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_CENTER);
+    setExpandAlignProperties(spin, false, true, Gtk::ALIGN_END, Gtk::ALIGN_FILL);
     spin->set_input_purpose(Gtk::INPUT_PURPOSE_DIGITS);
     spin->set_size_request(SPIN_FIXED_WIDTH, -1);
+    spin->set_width_chars(4);      // Compact width — just enough for values like "-5.00"
+    spin->set_max_width_chars(5);  // Cap natural width
 
-    // Hide the +/- buttons of the spinbutton via high-priority inline CSS
-    // (theme CSS specificity battles cannot reliably hide internal spinbutton buttons)
+    // Clean display: show "0" instead of "0.00" when value is exactly zero
+    spin->signal_output().connect([this]() -> bool {
+        const double val = spin->get_adjustment()->get_value();
+        if (val == 0.0) {
+            spin->set_text("0");
+            return true; // we handled the output
+        }
+        return false; // use default formatting
+    });
+
+    // Unified spinbutton CSS: hide +/- buttons, compact font, blend into pill row
     {
         auto css = Gtk::CssProvider::create();
-        css->load_from_data(
-            "spinbutton button { min-width: 0; min-height: 0; padding: 0; margin: 0;"
-            " border: none; background: none; background-image: none; color: transparent; opacity: 0; }"
-            " spinbutton button image { -gtk-icon-transform: scale(0); min-width: 0; min-height: 0; }"
-            " spinbutton entry { background: transparent; border: none; box-shadow: none;"
-            " padding: 0; min-height: 0; font-size: 8px; }"
-            " spinbutton { background: transparent; border: none; box-shadow: none; }"
-        );
-        spin->get_style_context()->add_provider(
-            css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 100
-        );
-    }
-
-    // Smaller font on spin entry (SpinButton IS an Entry)
-    {
-        auto entryCss = Gtk::CssProvider::create();
-        entryCss->load_from_data(
-            "spinbutton { font-size: 8px; padding: 0; margin: 0; min-height: 0; }"
-            " spinbutton entry { font-size: 8px; padding: 0; margin: 0; min-height: 0; }"
-        );
-        spin->get_style_context()->add_provider(
-            entryCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200
-        );
+        try {
+            css->load_from_data(
+                "spinbutton { background: transparent; border: none; box-shadow: none;"
+                " font-size: 9px; padding: 0 4px 0 0; margin: 0; min-height: 0; max-width: 36px;"
+                " color: rgba(255,255,255,0.65); }"
+                " spinbutton entry { background: transparent; border: none; box-shadow: none;"
+                " font-size: 9px; padding: 0; margin: 0; min-height: 0;"
+                " color: rgba(255,255,255,0.65); caret-color: rgba(255,255,255,0.65); }"
+                " spinbutton button { min-width: 0; min-height: 0; max-width: 0;"
+                " padding: 0; margin: 0; border: none; background: none; opacity: 0; }"
+                " spinbutton button image { min-width: 0; min-height: 0; }"
+            );
+            spin->get_style_context()->add_provider(
+                css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200
+            );
+        } catch (...) {}
     }
 
     reset->set_size_request(-1, RTScalable::scalePixelSize(spin->get_height() > MIN_RESET_BUTTON_HEIGHT ? spin->get_height() : MIN_RESET_BUTTON_HEIGHT));
     slider = Gtk::manage(new MyHScale());
-    setExpandAlignProperties(slider, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    setExpandAlignProperties(slider, true, true, Gtk::ALIGN_FILL, Gtk::ALIGN_FILL);
     slider->set_draw_value(false);
     slider->set_has_origin(false); // Disable GTK's built-in trough highlight
 
@@ -166,25 +156,42 @@ Adjuster::Adjuster(
             return false; // propagate to default handler
         }, false); // before default handler
 
-    // Compact slider via inline CSS
-    // - Use padding for thumb hitbox (counts toward GTK gadget allocation for hit-testing)
-    // - Never use negative margins — they shrink the allocation and break hit-testing
-    // - Use near-invisible (not transparent) background so GTK includes thumb in hit-test
+    // Inline CSS for slider — taller trough when label is embedded inside
     {
         auto sliderCss = Gtk::CssProvider::create();
-        sliderCss->load_from_data(
-            "scale { padding: 0 7px; margin: 0; min-height: 0; }"
-            " scale trough { min-height: 3px; margin: 0; padding: 0;"
-            "   background-color: transparent; background-image: none; border: none; }"
-            " scale trough:hover { background-color: rgba(102,153,204,0.06); }"
-            " scale slider { min-height: 0; min-width: 0; padding: 7px; margin: 0;"
-            "   background-color: rgba(0,0,0,0.01); background-image: none; border: none;"
-            "   box-shadow: none; -gtk-icon-shadow: none; border-radius: 50%; }"
-            " scale slider:hover { background-color: rgba(102,153,204,0.18); background-image: none; box-shadow: 0 0 6px rgba(102,153,204,0.2); }"
-        );
-        slider->get_style_context()->add_provider(
-            sliderCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200
-        );
+        try {
+            if (!adjustmentName.empty()) {
+                // Label-inside-pill: dark pill drawn by Cairo, GTK trough invisible
+                sliderCss->load_from_data(
+                    "scale { padding: 0 0; margin: 0; min-height: 34px; }"
+                    " scale trough { min-height: 34px; margin: 0; padding: 0;"
+                    "   background-color: transparent; background-image: none; border: none; }"
+                    " scale slider { min-height: 0; min-width: 0; padding: 17px; margin: 0;"
+                    "   background-color: transparent; background-image: none; border: none;"
+                    "   box-shadow: none; border-radius: 50%; }"
+                );
+                slider->setLabelText(adjustmentName);
+            } else {
+                // No label: compact trough
+                sliderCss->load_from_data(
+                    "scale { padding: 0 4px; margin: 0; min-height: 0; }"
+                    " scale trough { min-height: 3px; margin: 0; padding: 0;"
+                    "   background-color: transparent; background-image: none; border: none; }"
+                    " scale trough:hover { background-color: rgba(102,153,204,0.06); }"
+                    " scale slider { min-height: 0; min-width: 0; padding: 7px; margin: 0;"
+                    "   background-color: rgba(0,0,0,0.01); background-image: none; border: none;"
+                    "   box-shadow: none; border-radius: 50%; }"
+                    " scale slider:hover { background-color: rgba(102,153,204,0.18); background-image: none; box-shadow: 0 0 6px rgba(102,153,204,0.2); }"
+                );
+            }
+            slider->get_style_context()->add_provider(
+                sliderCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200
+            );
+        } catch (...) {
+            if (!adjustmentName.empty()) {
+                slider->setLabelText(adjustmentName);
+            }
+        }
     }
 
     setLimits(vmin, vmax, vstep, vdefault);
@@ -213,16 +220,16 @@ Adjuster::Adjuster(
 
         attach_next_to(*reset, *spin, Gtk::POS_RIGHT, 1, 1);
     } else {
-        // LR-style compact single-row: [label] [slider] [spin]
-        setExpandAlignProperties(label, false, false, Gtk::ALIGN_START, Gtk::ALIGN_BASELINE);
-        attach(*label, 0, 0, 1, 1);
-
-        attach(*slider, 1, 0, 1, 1);   // slider already has hexpand=true
-
-        attach(*spin, 2, 0, 1, 1);
+        // Label-inside-slider: spin overlaid on slider in same cell
+        // Slider fills the full width — pill covers the entire row, perfectly centered
+        set_size_request(200, -1);
+        set_margin_top(1);
+        set_margin_bottom(1);
+        attach(*slider, 0, 0, 1, 1);   // slider fills full width (hexpand=true)
+        attach(*spin, 0, 0, 1, 1);     // spin overlays slider, right-aligned
 
         // Icons: attach hidden (showIcons() can reveal them later)
-        int col = 3;
+        int col = 1;
         if (imageIcon1) {
             imageIcon1->set_visible(false);
             imageIcon1->set_no_show_all(true);
@@ -270,16 +277,22 @@ Adjuster::Adjuster(
     reset->signal_button_release_event().connect_notify( sigc::mem_fun(*this, &Adjuster::resetPressed) );
 
     // Double-click on slider resets to default (after=true so GTK drag handler runs first)
+    // Skip reset when click is in the label area and a labelClickCallback is set
     slider->signal_button_press_event().connect(
         [this](GdkEventButton* event) -> bool {
             if (event->type == GDK_2BUTTON_PRESS && event->button == 1) {
+                // Don't reset if clicking in the label area (label click handles that)
+                if (labelClickCallback_ && slider->getLabelAreaWidth() > 0
+                    && event->x < slider->getLabelAreaWidth()) {
+                    return false;
+                }
                 resetValue(false);
                 return true;
             }
             return false;
         }, true);
 
-    // Double-click on label also resets to default
+    // Double-click on label also resets to default (only if separate label widget exists)
     if (label) {
         label->add_events(Gdk::BUTTON_PRESS_MASK);
         label->signal_button_press_event().connect(
@@ -641,11 +654,7 @@ EditedState Adjuster::getEditedState ()
 
 void Adjuster::showEditedCB ()
 {
-
-    if (labelButton_) {
-        removeIfThere(this, labelButton_, false);
-        labelButton_ = nullptr;
-    } else if (label) {
+    if (label) {
         removeIfThere(this, label, false);
     }
 
@@ -657,8 +666,9 @@ void Adjuster::showEditedCB ()
         editedCheckBox->set_valign(Gtk::ALIGN_CENTER);
 
         if (!adjustmentName.empty()) {
-            // Labeled layout: editedCheckBox replaces label at column 0
-            attach(*editedCheckBox, 0, 0, 1, 1);
+            // Clear embedded label text — checkbox takes over
+            slider->setLabelText("");
+            attach_next_to(*editedCheckBox, *slider, Gtk::POS_LEFT, 1, 1);
         } else {
             // No-label layout: insert before first widget
             if (imageIcon1) {
@@ -816,7 +826,11 @@ Glib::ustring Adjuster::getTextValue() const
 
 void Adjuster::setLabel(const Glib::ustring &lbl)
 {
-    label->set_label(lbl);
+    if (label) {
+        label->set_label(lbl);
+    } else {
+        slider->setLabelText(lbl);
+    }
 }
 
 bool Adjuster::block(bool isBlocked)
@@ -862,41 +876,7 @@ void Adjuster::clearSliderGradient()
 void Adjuster::setLabelClickCallback(std::function<void()> callback)
 {
     labelClickCallback_ = std::move(callback);
-    if (!label || labelButton_) return;
-
-    // Wrap the label in a Gtk::Button for reliable click + hover.
-    // (Gtk::Label is a no-window widget; CSS :hover on EventBox doesn't work in WSLg.)
-    label->reference();
-    remove(*label);
-
-    // Widen label to accommodate arrow prefix while keeping alignment
-    label->set_width_chars(11);
-    label->set_max_width_chars(11);
-
-    labelButton_ = Gtk::manage(new Gtk::Button());
-    labelButton_->set_relief(Gtk::RELIEF_NONE);
-    labelButton_->set_can_focus(false);
-    labelButton_->add(*label);
-    label->unreference();
-
-    setExpandAlignProperties(labelButton_, false, false, Gtk::ALIGN_START, Gtk::ALIGN_BASELINE);
-    // Fixed pixel width ensures all clickable labels align regardless of text length
-    labelButton_->set_size_request(75, -1);
-
-    auto css = Gtk::CssProvider::create();
-    css->load_from_data(
-        "button { background: transparent; border: none; box-shadow: none;"
-        " padding: 0; margin: 0; min-height: 0; min-width: 0; }"
-        " button:hover { background-color: rgba(102,153,204,0.15); border-radius: 3px; }"
-    );
-    labelButton_->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-
-    attach(*labelButton_, 0, 0, 1, 1);
-    labelButton_->show_all();
-
-    labelButton_->signal_clicked().connect([this]() {
-        if (labelClickCallback_) labelClickCallback_();
-    });
+    slider->setLabelClickCallback(callback);
 }
 
 void Adjuster::setInteractionCallback(std::function<void(bool)> callback)
@@ -928,4 +908,108 @@ void Adjuster::hideResetButton()
 void Adjuster::setSliderMinWidth(int px)
 {
     slider->set_size_request(px, -1);
+}
+
+bool Adjuster::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
+{
+    if (!adjustmentName.empty() && slider->get_visible()) {
+        // Pill covers only the slider area — right edge stops where spin begins
+        const Gtk::Allocation sAlloc = slider->get_allocation();
+        const int pillX = sAlloc.get_x();
+        const int pillW = sAlloc.get_width();
+        const int pillY = 0;
+        const int pillH = get_allocated_height();
+        const double pillR = 4.0;
+
+        if (pillW < 10) {
+            return Gtk::Grid::on_draw(cr);
+        }
+
+        // Slider position for fill calculations
+        const int sliderX = sAlloc.get_x();
+        const int sliderW = sAlloc.get_width();
+
+        // --- Pill background ---
+        auto pillPath = [&]() {
+            cr->begin_new_sub_path();
+            cr->arc(pillX + pillR, pillY + pillR, pillR, rtengine::RT_PI, rtengine::RT_PI * 1.5);
+            cr->arc(pillX + pillW - pillR, pillY + pillR, pillR, rtengine::RT_PI * 1.5, 0);
+            cr->arc(pillX + pillW - pillR, pillY + pillH - pillR, pillR, 0, rtengine::RT_PI * 0.5);
+            cr->arc(pillX + pillR, pillY + pillH - pillR, pillR, rtengine::RT_PI * 0.5, rtengine::RT_PI);
+            cr->close_path();
+        };
+
+        pillPath();
+        cr->set_source_rgba(0.0, 0.0, 0.0, 0.3);
+        cr->fill();
+
+        // --- Value fill (within slider range only, clipped to pill) ---
+        auto adj = slider->get_adjustment();
+        const double rangeMin = adj->get_lower();
+        const double rangeMax = adj->get_upper();
+        const double range = rangeMax - rangeMin;
+        const double val = adj->get_value();
+
+        if (range > 0) {
+            const double valueFrac = (val - rangeMin) / range;
+
+            int fillLeft, fillRight;
+            if (isBipolar_) {
+                const double centerFrac = (0.0 - rangeMin) / range;
+                const int centerX = sliderX + static_cast<int>(centerFrac * sliderW);
+                const int valueX = sliderX + static_cast<int>(valueFrac * sliderW);
+                fillLeft = std::min(centerX, valueX);
+                fillRight = std::max(centerX, valueX);
+            } else {
+                fillLeft = sliderX;
+                fillRight = sliderX + static_cast<int>(valueFrac * sliderW);
+            }
+
+            if (fillRight > fillLeft + 1) {
+                cr->save();
+                pillPath();
+                cr->clip();
+                // Vertical gradient fill: brighter at top, darker at bottom
+                auto fillGrad = Cairo::LinearGradient::create(0, pillY, 0, pillY + pillH);
+                fillGrad->add_color_stop_rgba(0.0, 1.0, 1.0, 1.0, 0.14);
+                fillGrad->add_color_stop_rgba(1.0, 1.0, 1.0, 1.0, 0.03);
+                cr->set_source(fillGrad);
+                cr->rectangle(fillLeft, pillY, fillRight - fillLeft, pillH);
+                cr->fill();
+                cr->restore();
+            }
+        }
+    }
+
+    // Draw children, then label text on top
+    cr->save();
+    Gtk::Grid::on_draw(cr);
+    cr->restore();
+
+    // --- Label text: drawn AFTER children so it's on top of gradient tracks ---
+    if (!adjustmentName.empty() && slider->get_visible()) {
+        const int pillY = 0;
+        const int pillH = get_allocated_height();
+        const Gtk::Allocation sAlloc = slider->get_allocation();
+
+        auto layout = create_pango_layout(adjustmentName);
+        auto fontDesc = Pango::FontDescription("sans 9");
+        layout->set_font_description(fontDesc);
+
+        const int maxLabelWidth = sAlloc.get_width() / 2;
+        layout->set_width(maxLabelWidth * Pango::SCALE);
+        layout->set_ellipsize(Pango::ELLIPSIZE_END);
+
+        Pango::Rectangle inkRect, logRect;
+        layout->get_pixel_extents(inkRect, logRect);
+
+        const int textX = sAlloc.get_x() + 10;
+        const int textY = pillY + (pillH - logRect.get_height()) / 2;
+
+        cr->set_source_rgba(1.0, 1.0, 1.0, 0.85);
+        cr->move_to(textX, textY);
+        layout->show_in_cairo_context(cr);
+    }
+
+    return true;
 }

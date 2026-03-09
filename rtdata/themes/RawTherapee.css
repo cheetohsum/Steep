@@ -51,28 +51,89 @@ textview.view, treeview.view {
     background-color: #2e3340;
 }
 
-window > box {
+/* Mask list treeview — transparent background to blend with panel */
+#MaskTreeView,
+#MaskTreeView.view {
+    background-color: transparent;
+}
+#MaskTreeView row {
+    min-height: 32px;
+    padding: 4px 0;
+}
+#MaskTreeView row:selected {
+    background-color: rgba(100,160,255,0.25);
+}
+#MaskTreeView row:hover:not(:selected) {
+    background-color: rgba(130,170,230,0.10);
+}
+
+/* Masking panel — strip all backgrounds to match surrounding dark panel area.
+   The panel is nested inside multiple flat-mode expanders; ensure every layer
+   is fully transparent and content doesn't overflow to the right.
+   Use high specificity (#MyExpander.flat-mode #MaskingPanel) to beat the
+   flat-mode .ToolParamBlock { margin: 0 } rule. */
+#MyExpander.flat-mode #MaskingPanel,
+#MaskingPanel {
+    background-color: transparent;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+    padding-right: 6px;
+    min-width: 0;
+}
+/* Scrolledwindow inside masking panel — no background, constrain width */
+#MaskingPanel scrolledwindow,
+#MaskingPanel scrolledwindow viewport {
+    background-color: transparent;
+    background-image: none;
+    min-width: 0;
+}
+/* Nested boxes/grids inside masking panel — transparent */
+#MaskingPanel > box,
+#MaskingPanel > grid,
+#MaskingPanel box > box {
+    background-color: transparent;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+}
+/* All ancestors of MaskingPanel within the flat-mode expander tree */
+#MyExpander.flat-mode .ToolParamBlock .ToolParamBlock {
+    background-color: transparent;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+}
+
+window > box:not(#MainVBox) {
     padding: 0.416666666666666666em;
 }
 window.background {
-    background-color: #2c3038;
+    background-color: #252a32;
 }
 
 /*** Window decoration *********************************************************/
 .csd:not(.popup):not(tooltip) > decoration {
-    background-color: #2c3038;
+    background-color: #252a32;
     background-image: none;
-    box-shadow: 0 0.25em 0.75em 0.083333333333333333em rgba(0, 0, 0, 0.5), 0 0 0 0.083333333333333333em #242424;
+    border: none;
+    box-shadow: none;
+    margin: 0;
 }
 headerbar {
     background-color: #252a32;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08), 0 2px 8px rgba(0,0,0,0.3);
     background-image: linear-gradient(rgba(255,255,255,0.05), rgba(0,0,0,0.08));
-    border-bottom-color: #1a1e24;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+    border: none;
     padding: 0 0.333333em;
     min-height: 2em;
 }
+#MainVBox {
+    margin: 0;
+    padding: 0;
+}
 #RTHeaderBar {
+    margin: 0;
     padding: 0 0.25em;
 }
 #RTHeaderBar .title {
@@ -349,13 +410,33 @@ menu separator {
 #BeforeAfterContainer frame {
     background-color: #1a1e24;
     padding: 0;
-    margin: 0.0833333333333333em;
+    margin: 0;
 }
 
 #BeforeAfterContainer frame border {
     border-radius: 0;
+    border: none;
     margin: 0;
     padding: 0;
+}
+
+#BeforeAfterContainer .ba-label {
+    font-size: 0.8em;
+    font-weight: normal;
+    color: rgba(205,210,218,0.6);
+    padding: 1px 0;
+    min-height: 0;
+}
+
+#BeforeAfterContainer .ba-lock {
+    min-height: 14px;
+    min-width: 14px;
+    padding: 0;
+    margin: 0 2px;
+}
+
+#BeforeAfterContainer .ba-lock image {
+    margin: 0;
 }
 
 
@@ -749,9 +830,9 @@ button.Right {
 
 /* Preset list panel */
 #PresetListPanel .preset-card {
-    padding: 4px;
+    padding: 1px 0;
     border-radius: 4px;
-    min-width: 80px;
+    min-width: 48px;
 }
 
 #PresetListPanel .preset-card:hover {
@@ -764,7 +845,9 @@ button.Right {
 }
 
 #PresetListPanel .preset-card-label {
-    font-size: 0.85em;
+    font-size: 5px;
+    margin-top: 0;
+    padding-top: 0;
 }
 
 #PresetListPanel .preset-special {
@@ -778,9 +861,14 @@ button.Right {
     border: 1px solid rgba(100,160,255,0.5);
 }
 
-#PresetListPanel .preset-category > label {
+#PresetListPanel .preset-category-label {
     font-weight: bold;
-    font-size: 0.9em;
+    font-size: 0.8em;
+}
+
+#PresetListPanel .preset-drop-target {
+    background-color: rgba(100,160,255,0.15);
+    border-radius: 4px;
 }
 
 #PresetListPanel box,
@@ -1215,7 +1303,7 @@ button.toggle#histButton:hover,
 }
 
 /* Summary box - always-visible controls between header and expandable content */
-.MyExpanderSummary { padding: 0.05em 0 0.05em 0.15em; }
+.MyExpanderSummary { padding: 0.05em 0 0.05em 0; }
 .MyExpanderSummary scale {
     margin-right: 0.25em;
 }
@@ -1343,6 +1431,53 @@ radiobutton.ColorDot:checked,
 radiobutton.ColorDot:checked > * {
     border-color: white;
     box-shadow: 0 0 3px rgba(255,255,255,0.5);
+}
+
+/* Pagination bar and dots for tool switching */
+#ColorToolStack #MyExpander,
+#ColorToolStack #ExpanderBox,
+#ColorToolStack #ExpanderBox > box,
+#ColorToolStack #ExpanderBox > grid,
+#ColorToolStack .MyExpanderSummary {
+    border: none;
+    border-top: none;
+    border-bottom: none;
+    background-color: transparent;
+    background-image: none;
+    box-shadow: none;
+    padding-top: 0;
+    margin-top: 0;
+}
+#PaginationBar {
+    border: none;
+    background: transparent;
+    box-shadow: none;
+    margin-top: -1px;
+    padding-top: 2px;
+}
+.PaginationDot {
+    min-width: 16px;
+    min-height: 16px;
+    padding: 1px;
+    margin: 0 3px;
+    border-radius: 4px;
+    border: 1px solid rgba(255,255,255,0.15);
+    background-color: transparent;
+    background-image: none;
+    box-shadow: none;
+    transition: all 200ms ease;
+    opacity: 0.45;
+}
+.PaginationDot:checked {
+    border-color: rgba(102,153,204,0.6);
+    background-color: rgba(102,153,204,0.12);
+    box-shadow: 0 0 5px rgba(102,153,204,0.35);
+    opacity: 1.0;
+}
+.PaginationDot:hover:not(:checked) {
+    border-color: rgba(255,255,255,0.35);
+    background-color: rgba(255,255,255,0.05);
+    opacity: 0.75;
 }
 
 #LocallabToolPanel separator, #ExpanderBox2 separator, #ExpanderBox3 separator {
@@ -1516,20 +1651,77 @@ radiobutton.ColorDot:checked > * {
     border-bottom: none;
     box-shadow: none;
 }
-/* Override #ExpanderBox > box/grid border-top (higher specificity needed) */
+/* Override #ExpanderBox > box/grid border-top (higher specificity needed).
+   Include ExpanderBox2/3 so nested flat-mode expanders (e.g. masking panel
+   at level 2) also get transparent backgrounds. */
+#MyExpander.flat-mode #ExpanderBox,
+#MyExpander.flat-mode #ExpanderBox2,
+#MyExpander.flat-mode #ExpanderBox3 {
+    padding: 0;
+    margin: 0;
+    background-color: transparent;
+    background-image: none;
+}
 #MyExpander.flat-mode #ExpanderBox > box,
-#MyExpander.flat-mode #ExpanderBox > grid {
+#MyExpander.flat-mode #ExpanderBox > grid,
+#MyExpander.flat-mode #ExpanderBox2 > box,
+#MyExpander.flat-mode #ExpanderBox2 > grid,
+#MyExpander.flat-mode #ExpanderBox3 > box,
+#MyExpander.flat-mode #ExpanderBox3 > grid {
     border-top: none;
     background-color: transparent;
     background-image: none;
     box-shadow: none;
-    padding: 0 0 0 6px;
+    padding: 0;
+    margin: 0;
     border-radius: 0;
+}
+#MyExpander.flat-mode .ToolParamBlock {
+    padding: 0;
+    margin: 0;
 }
 #MyExpander.flat-mode separator {
     min-height: 0;
     background: transparent;
     border: none;
+}
+
+/* Eliminate gaps between consecutive flat-mode tool panels in ToolGroups */
+.ToolGroup #MyExpander.flat-mode {
+    margin: 0;
+    padding: 0;
+    border: none;
+}
+.ToolGroup #MyExpander.flat-mode #ExpanderBox,
+.ToolGroup #MyExpander.flat-mode #ExpanderBox2,
+.ToolGroup #MyExpander.flat-mode #ExpanderBox3 {
+    margin: 0;
+    padding: 0;
+    border: none;
+}
+.ToolGroup #MyExpander.flat-mode #ExpanderBox,
+.ToolGroup #MyExpander.flat-mode #ExpanderBox > box,
+.ToolGroup #MyExpander.flat-mode #ExpanderBox > grid,
+.ToolGroup #MyExpander.flat-mode #ExpanderBox2,
+.ToolGroup #MyExpander.flat-mode #ExpanderBox2 > box,
+.ToolGroup #MyExpander.flat-mode #ExpanderBox2 > grid,
+.ToolGroup #MyExpander.flat-mode #ExpanderBox3,
+.ToolGroup #MyExpander.flat-mode #ExpanderBox3 > box,
+.ToolGroup #MyExpander.flat-mode #ExpanderBox3 > grid {
+    margin: 0;
+    padding: 0;
+    border: none;
+    border-top: none;
+    background-color: transparent;
+    background-image: none;
+    box-shadow: none;
+}
+.ToolGroup #MyExpander.flat-mode .ToolParamBlock {
+    padding: 0;
+}
+.ToolGroup #MyExpander.flat-mode .MyExpanderSummary {
+    padding: 0;
+    margin: 0;
 }
 
 /* Tool section labels (within flat-mode tool groups) */
@@ -2313,3 +2505,4 @@ progressbar progress {
 }
 
 /*** end Queue Overlay Drawer ******************************************************************/
+

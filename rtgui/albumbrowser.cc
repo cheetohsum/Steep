@@ -16,6 +16,9 @@
  */
 #include "albumbrowser.h"
 
+#include <cmath>
+#include <cairomm/cairomm.h>
+
 #include "cacheimagedata.h"
 #include "cachemanager.h"
 #include "guiutils.h"
@@ -45,6 +48,11 @@ public:
     // Custom DnD: AlbumBrowser sets these to detect drag threshold
     std::function<void(double, double)> onDragMotion;  // called with x,y on motion while button pressed
     bool buttonDown = false;
+
+    // Clip-reveal state: set by AlbumBrowser when expanding
+    std::string revealParentPath;
+    double revealFraction = 1.0;
+
 protected:
     bool on_button_press_event(GdkEventButton* event) override {
         if (event->button == 1) buttonDown = true;
@@ -82,9 +90,69 @@ protected:
         }
         return Gtk::TreeView::on_leave_notify_event(event);
     }
+    bool on_draw(const Cairo::RefPtr<Cairo::Context>& cr) override {
+        if (!revealParentPath.empty() && revealFraction < 1.0) {
+            Gtk::TreePath parentPath(revealParentPath);
+            Gdk::Rectangle parentRect;
+            get_background_area(parentPath, *get_column(0), parentRect);
+            int revealTop = parentRect.get_y() + parentRect.get_height();
+
+            auto parentIter = get_model()->get_iter(parentPath);
+            int totalChildH = 0;
+            if (parentIter && !parentIter->children().empty()) {
+                auto lastChild = parentIter->children().end();
+                --lastChild;
+                Gdk::Rectangle lastRect;
+                get_background_area(get_model()->get_path(lastChild), *get_column(0), lastRect);
+                totalChildH = (lastRect.get_y() + lastRect.get_height()) - revealTop;
+            }
+
+            int revealH = static_cast<int>(totalChildH * revealFraction);
+            int w = get_allocated_width();
+            int h = get_allocated_height();
+
+            cr->save();
+            cr->rectangle(0, 0, w, revealTop + revealH);
+            if (revealTop + totalChildH < h) {
+                cr->rectangle(0, revealTop + totalChildH, w, h - (revealTop + totalChildH));
+            }
+            cr->clip();
+            bool result = Gtk::TreeView::on_draw(cr);
+            cr->restore();
+            return result;
+        }
+        return Gtk::TreeView::on_draw(cr);
+    }
 private:
     Gtk::TreeModel::Path hoveredPath_;
 };
+
+// Generate rotated chevron pixbufs: frame 0 = right (0°), frame count = down (90°)
+static std::vector<Glib::RefPtr<Gdk::Pixbuf>> generateChevronFrames(int count)
+{
+    const int sz = 16;
+    const double cx = sz / 2.0, cy = sz / 2.0;
+    std::vector<Glib::RefPtr<Gdk::Pixbuf>> frames;
+    frames.reserve(count + 1);
+    for (int i = 0; i <= count; ++i) {
+        auto surface = Cairo::ImageSurface::create(Cairo::FORMAT_ARGB32, sz, sz);
+        auto cr = Cairo::Context::create(surface);
+        double angle = (M_PI / 2.0) * i / count;
+        cr->translate(cx, cy);
+        cr->rotate(angle);
+        cr->translate(-cx, -cy);
+        cr->set_source_rgba(0.6, 0.6, 0.6, 1.0);
+        cr->set_line_width(1.5);
+        cr->set_line_cap(Cairo::LINE_CAP_ROUND);
+        cr->set_line_join(Cairo::LINE_JOIN_ROUND);
+        cr->move_to(6, 3.5);
+        cr->line_to(10.5, 8);
+        cr->line_to(6, 12.5);
+        cr->stroke();
+        frames.push_back(Gdk::Pixbuf::create(surface, 0, 0, sz, sz));
+    }
+    return frames;
+}
 
 // Static signal: all AlbumBrowser instances connect to this.
 // When one instance saves, it emits this signal so others reload.
@@ -163,10 +231,6 @@ AlbumBrowser::AlbumBrowser ()
 
     pack_start(*headerBar, Gtk::PACK_SHRINK, 0);
 
-    // Separator
-    Gtk::Separator* sep = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
-    pack_start(*sep, Gtk::PACK_SHRINK, 0);
-
     // Scrolled tree view
     scrollw_ = Gtk::manage(new Gtk::ScrolledWindow());
     scrollw_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
@@ -225,14 +289,54 @@ AlbumBrowser::AlbumBrowser ()
 
     model_ = Gtk::TreeStore::create(columns_);
     treeView_->set_model(model_);
+    treeView_->set_show_expanders(false);
+    treeView_->set_level_indentation(12);
 
-    // Pre-load folder icons as pixbufs for reliable CellRendererPixbuf use
+    // Pre-load folder icons; generate chevron rotation frames
     {
         auto theme = Gtk::IconTheme::get_default();
         int iconSz = 16;
         try { folderClosedPixbuf_ = theme->load_icon("folder-closed-small", iconSz); } catch (...) {}
         try { folderOpenPixbuf_ = theme->load_icon("folder-open-small", iconSz); } catch (...) {}
     }
+    chevronFrames_ = generateChevronFrames(6);
+    chevronRightPixbuf_ = chevronFrames_.front();
+    chevronDownPixbuf_ = chevronFrames_.back();
+
+    // Chevron expand/collapse indicator column (only shown for FOLDER nodes)
+    Gtk::CellRendererPixbuf* chevronCR = Gtk::manage(new Gtk::CellRendererPixbuf());
+    chevronCR->property_ypad() = 0;
+    chevronCR->property_xpad() = 0;
+    Gtk::TreeView::Column* chevronCol = Gtk::manage(new Gtk::TreeView::Column(""));
+    chevronCol->pack_start(*chevronCR, false);
+    chevronCol->set_expand(false);
+    chevronCol->set_cell_data_func(*chevronCR, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
+        auto* pbCR = static_cast<Gtk::CellRendererPixbuf*>(cr);
+        int nodeType = (*iter)[columns_.nodeType];
+        if (nodeType == static_cast<int>(AlbumNodeType::FOLDER)) {
+            auto path = model_->get_path(iter);
+            auto pathStr = path.to_string();
+            auto animIt = chevronAnimFrame_.find(pathStr);
+            if (animIt != chevronAnimFrame_.end()) {
+                int frame = std::max(0, std::min(animIt->second, static_cast<int>(chevronFrames_.size()) - 1));
+                pbCR->property_pixbuf() = chevronFrames_[frame];
+            } else {
+                bool expanded = treeView_->row_expanded(path);
+                pbCR->property_pixbuf() = expanded ? chevronDownPixbuf_ : chevronRightPixbuf_;
+            }
+            pbCR->property_visible() = true;
+        } else {
+            pbCR->property_pixbuf().reset_value();
+            pbCR->property_visible() = false;
+        }
+        auto rowPath = model_->get_path(iter);
+        bool hovered = !hoveredPath_.empty() && rowPath == hoveredPath_;
+        bool dropTarget = dragActive_ && !dropTargetPath_.empty() && rowPath == dropTargetPath_;
+        pbCR->property_cell_background_set() = hovered || dropTarget;
+        if (dropTarget) pbCR->property_cell_background() = Glib::ustring("#2a4a6b");
+        else if (hovered) pbCR->property_cell_background() = Glib::ustring("#3a3f4b");
+    });
+    treeView_->append_column(*chevronCol);
 
     // Cover thumbnail / folder icon column (before name)
     Gtk::CellRendererPixbuf* coverCR = Gtk::manage(new Gtk::CellRendererPixbuf());
@@ -426,7 +530,56 @@ AlbumBrowser::AlbumBrowser ()
 
 AlbumBrowser::~AlbumBrowser ()
 {
+    chevronAnimConn_.disconnect();
     globalChangeConn_.disconnect();
+}
+
+void AlbumBrowser::startChevronAnim()
+{
+    if (chevronAnimConn_.connected()) return;
+    chevronAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
+        // Advance chevron frames
+        for (auto it = chevronAnimFrame_.begin(); it != chevronAnimFrame_.end(); ) {
+            bool expanding = chevronAnimExpanding_[it->first];
+            if (expanding) {
+                it->second++;
+                if (it->second >= static_cast<int>(chevronFrames_.size()) - 1) {
+                    it->second = static_cast<int>(chevronFrames_.size()) - 1;
+                    chevronAnimExpanding_.erase(it->first);
+                    it = chevronAnimFrame_.erase(it);
+                    continue;
+                }
+            } else {
+                it->second--;
+                if (it->second <= 0) {
+                    it->second = 0;
+                    chevronAnimExpanding_.erase(it->first);
+                    it = chevronAnimFrame_.erase(it);
+                    continue;
+                }
+            }
+            ++it;
+        }
+
+        // Advance reveal fraction (clip-based reveal)
+        if (revealAlpha_ < 1.0) {
+            revealAlpha_ += 16.0 / 150.0;
+            if (revealAlpha_ >= 1.0) {
+                revealAlpha_ = 1.0;
+                revealParentPath_.clear();
+                treeView_->revealParentPath.clear();
+                treeView_->revealFraction = 1.0;
+            } else {
+                double t = 1.0 - std::pow(1.0 - revealAlpha_, 3);
+                treeView_->revealFraction = t;
+            }
+        }
+
+        treeView_->queue_draw();
+
+        bool done = chevronAnimFrame_.empty() && revealAlpha_ >= 1.0;
+        return !done;
+    }, 16);
 }
 
 void AlbumBrowser::onGlobalAlbumsChanged (AlbumBrowser* sender)
@@ -614,8 +767,7 @@ void AlbumBrowser::saveExpansionState ()
 void AlbumBrowser::restoreExpansionState ()
 {
     if (firstTreeLoad_) {
-        // First load: expand all folders by default
-        treeView_->expand_all();
+        // First load: folders start collapsed
         firstTreeLoad_ = false;
     } else {
         // Restore previously expanded folders
@@ -1178,13 +1330,85 @@ void AlbumBrowser::onSelectionChanged ()
             closeAlbumBtn_->show();
             runSmartAlbumSearch(nodeId);
         } else {
-            // Folders - toggle expand/collapse
+            // Folders - toggle expand/collapse with animation
             auto path = model_->get_path(iter);
-            if (treeView_->row_expanded(path)) {
+            expandAnimConn_.disconnect();
+            bool wasExpanded = treeView_->row_expanded(path);
+
+            // Hide scrollbar during animation to prevent flash
+            scrollw_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_NEVER);
+
+            if (wasExpanded) {
+                // Start chevron collapse animation
+                auto pathStr = path.to_string();
+                auto cit = chevronAnimFrame_.find(pathStr);
+                chevronAnimFrame_[pathStr] = cit != chevronAnimFrame_.end()
+                    ? cit->second : static_cast<int>(chevronFrames_.size()) - 1;
+                chevronAnimExpanding_[pathStr] = false;
+                revealParentPath_.clear();
+                treeView_->revealParentPath.clear();
+                treeView_->revealFraction = 1.0;
+                startChevronAnim();
+
+                // Collapse animation: capture height, collapse, animate
+                expandAnimStartH_ = scrollw_->get_allocated_height();
                 treeView_->collapse_row(path);
+                // Measure new natural height after collapse
+                int minH = 0, natH = 0;
+                treeView_->get_preferred_height(minH, natH);
+                expandAnimTargetH_ = std::max(std::min(natH + 4, 160), 20);
+                expandAnimExpanding_ = false;
+                expandAnimFraction_ = 0.0;
+                scrollw_->set_max_content_height(expandAnimStartH_);
+                expandAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
+                    expandAnimFraction_ += 16.0 / 150.0; // 150ms collapse
+                    if (expandAnimFraction_ >= 1.0) {
+                        scrollw_->set_max_content_height(160);
+                        scrollw_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+                        return false;
+                    }
+                    double t = expandAnimFraction_ * expandAnimFraction_; // ease-in-quad
+                    int h = expandAnimStartH_ + static_cast<int>((expandAnimTargetH_ - expandAnimStartH_) * t);
+                    scrollw_->set_max_content_height(h);
+                    return true;
+                }, 16);
             } else {
+                // Start chevron expand animation + child reveal
+                auto pathStr = path.to_string();
+                auto cit = chevronAnimFrame_.find(pathStr);
+                chevronAnimFrame_[pathStr] = cit != chevronAnimFrame_.end()
+                    ? cit->second : 0;
+                chevronAnimExpanding_[pathStr] = true;
+                revealParentPath_ = pathStr;
+                revealAlpha_ = 0.0;
+                treeView_->revealParentPath = pathStr;
+                treeView_->revealFraction = 0.0;
+                startChevronAnim();
+
+                // Expand animation: capture height, expand, animate
+                expandAnimStartH_ = scrollw_->get_allocated_height();
                 treeView_->expand_row(path, false);
+                // Measure new natural height after expand
+                int minH = 0, natH = 0;
+                treeView_->get_preferred_height(minH, natH);
+                expandAnimTargetH_ = std::max(std::min(natH + 4, 160), 20);
+                expandAnimExpanding_ = true;
+                expandAnimFraction_ = 0.0;
+                scrollw_->set_max_content_height(expandAnimStartH_);
+                expandAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
+                    expandAnimFraction_ += 16.0 / 250.0; // 250ms expand
+                    if (expandAnimFraction_ >= 1.0) {
+                        scrollw_->set_max_content_height(160);
+                        scrollw_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+                        return false;
+                    }
+                    double t = 1.0 - std::pow(1.0 - expandAnimFraction_, 4); // ease-out-quart
+                    int h = expandAnimStartH_ + static_cast<int>((expandAnimTargetH_ - expandAnimStartH_) * t);
+                    scrollw_->set_max_content_height(h);
+                    return true;
+                }, 16);
             }
+
             selectedAlbumName_.clear();
             selectedNodeId_ = -1;
             closeAlbumBtn_->hide();

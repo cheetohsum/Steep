@@ -332,6 +332,9 @@ void Polyline::drawOuterGeometry(Cairo::RefPtr<Cairo::Context> &cr, ObjectMOBuff
             color = outerLineColor;
         }
 
+        if (lineWidthInImageSpace) {
+            lineWidth = coordSystem.scaleValueToCanvas(lineWidth);
+        }
         cr->set_source_rgba (color.getR(), color.getG(), color.getB(), OUTERGEOM_OPACITY * rtengine::min(innerLineWidth / 2.f, 1.f));
         cr->set_line_width (lineWidth);
         cr->set_line_cap(Cairo::LINE_CAP_ROUND);
@@ -381,7 +384,8 @@ void Polyline::drawInnerGeometry(Cairo::RefPtr<Cairo::Context> &cr, ObjectMOBuff
             cr->set_source_rgba (color.getR(), color.getG(), color.getB(), INNERGEOM_OPACITY);
         }
 
-        cr->set_line_width(innerLineWidth);
+        double scaledLineWidth = lineWidthInImageSpace ? coordSystem.scaleValueToCanvas(double(innerLineWidth)) : double(innerLineWidth);
+        cr->set_line_width(scaledLineWidth);
         cr->set_line_cap(flags & F_DASHED ? Cairo::LINE_CAP_BUTT : Cairo::LINE_CAP_ROUND);
         cr->set_line_join(Cairo::LINE_JOIN_ROUND);
 
@@ -453,7 +457,8 @@ void Polyline::drawToMOChannel (Cairo::RefPtr<Cairo::Context> &cr, unsigned shor
         // Setting MO Channel color according to the objet's ID
         setMOChannelColor(cr, objectBuffer, id);
 
-        cr->set_line_width( getMouseOverLineWidth() );
+        double moLineWidth = lineWidthInImageSpace ? coordSystem.scaleValueToCanvas(getMouseOverLineWidth()) : getMouseOverLineWidth();
+        cr->set_line_width(moLineWidth);
         cr->set_line_cap(Cairo::LINE_CAP_ROUND);
         cr->set_line_join(Cairo::LINE_JOIN_ROUND);
 

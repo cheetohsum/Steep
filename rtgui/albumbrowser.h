@@ -165,7 +165,27 @@ private:
     Glib::RefPtr<Gdk::Pixbuf> searchPixbuf_;
     Glib::RefPtr<Gdk::Pixbuf> folderClosedPixbuf_;
     Glib::RefPtr<Gdk::Pixbuf> folderOpenPixbuf_;
+    Glib::RefPtr<Gdk::Pixbuf> chevronRightPixbuf_;
+    Glib::RefPtr<Gdk::Pixbuf> chevronDownPixbuf_;
     Gtk::TreeViewColumn* searchCol_;
+
+    // Chevron rotation animation
+    std::vector<Glib::RefPtr<Gdk::Pixbuf>> chevronFrames_;
+    std::map<std::string, int> chevronAnimFrame_;
+    std::map<std::string, bool> chevronAnimExpanding_;
+    sigc::connection chevronAnimConn_;
+    void startChevronAnim();
+
+    // Child row reveal (fade-in on expand)
+    std::string revealParentPath_;
+    double revealAlpha_ = 1.0;
+
+    // Expand/collapse animation
+    sigc::connection expandAnimConn_;
+    double expandAnimFraction_ = 0.0;
+    int expandAnimTargetH_ = 0;
+    int expandAnimStartH_ = 0;
+    bool expandAnimExpanding_ = true;
 
     // Cover thumbnails
     int coverLoadSession_;

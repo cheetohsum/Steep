@@ -38,6 +38,7 @@ namespace Gtk
 {
 
 class Grid;
+class Label;
 class Menu;
 class Button;
 class ImageMenuItem;
@@ -77,6 +78,7 @@ public:
     void setItemSensitivity (int i, bool isSensitive);
     void triggerShowMenu();    // Show the popup menu programmatically
     void hideArrowButton();    // Hide the dropdown arrow button
+    void setShowSelectionLabel(bool show);  // Show selected entry's text inside the button
 
 private:
     type_signal_changed messageChanged;
@@ -96,8 +98,11 @@ private:
     bool hasMenu;
     MyMutex entrySelectionMutex;
 
+    Gtk::Label* selectionLabel_ = nullptr;
+
     void changeImage(int position);
     void changeImage(const Glib::ustring& iconName, const Glib::RefPtr<const Gio::Icon>& gIcon);
+    void updateSelectionLabel();
     void entrySelected(Gtk::Widget* menuItem);
     bool insertEntryImpl(int position, const Glib::ustring& iconName, const Glib::RefPtr<const Gio::Icon>& gIcon, RTImage* image, const Glib::ustring& label, Gtk::RadioButtonGroup* radioGroup);
     void showMenu(GdkEventButton* event);

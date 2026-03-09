@@ -134,7 +134,7 @@ DirPyrDenoise::DirPyrDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_DIRPY
     TileLabels = Gtk::manage(new Gtk::Label("---", Gtk::ALIGN_CENTER));
     PrevLabels = Gtk::manage(new Gtk::Label("---", Gtk::ALIGN_CENTER));
 
-    chroma    = Gtk::manage (new Adjuster (M("TP_DIRPYRDENOISE_CHROMINANCE_MASTER"), 0, 100, 0.01, 15));
+    chroma    = Gtk::manage (new Adjuster (M("TP_DIRPYRDENOISE_CHROMINANCE_MASTER"), 0, 100, 0.01, 0));
     redchro    = Gtk::manage (new Adjuster (M("TP_DIRPYRDENOISE_CHROMINANCE_REDGREEN"), -100, 100, 0.1, 0));
     bluechro    = Gtk::manage (new Adjuster (M("TP_DIRPYRDENOISE_CHROMINANCE_BLUEYELLOW"), -100, 100, 0.1, 0));
 
@@ -275,8 +275,9 @@ DirPyrDenoise::DirPyrDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_DIRPY
     passes->setAdjusterListener (this);
     passes->show();
 
-    pack_start(*luma, Gtk::PACK_SHRINK, 1);
-    pack_start(*chroma, Gtk::PACK_SHRINK, 1);
+    getSummaryBox()->pack_start(*luma, Gtk::PACK_SHRINK, 1);
+    getSummaryBox()->pack_start(*chroma, Gtk::PACK_SHRINK, 1);
+    getSummaryBox()->show_all();
     pack_start(*hb1, Gtk::PACK_SHRINK, 1);
     pack_start( *hb11, Gtk::PACK_SHRINK, 1);
     pack_start(*autoGain, Gtk::PACK_SHRINK, 0);
@@ -508,12 +509,15 @@ void DirPyrDenoise::read (const ProcParams* pp, const ParamsEdited* pedited)
     } else {
         C2method->set_active (0);
 
-        if (pp->dirpyrDenoise.C2method == "MANU") {
-            C2method->set_active (0);
-        } else if (pp->dirpyrDenoise.C2method == "AUTO") {
-            C2method->set_active (1);
-        } else if (pp->dirpyrDenoise.C2method == "PREV") {
-            C2method->set_active (2);
+        // Force manual mode when tool is disabled so chrominance stays editable
+        if (pp->dirpyrDenoise.enabled) {
+            if (pp->dirpyrDenoise.C2method == "MANU") {
+                C2method->set_active (0);
+            } else if (pp->dirpyrDenoise.C2method == "AUTO") {
+                C2method->set_active (1);
+            } else if (pp->dirpyrDenoise.C2method == "PREV") {
+                C2method->set_active (2);
+            }
         }
 
         C2methodChanged();
@@ -648,7 +652,12 @@ void DirPyrDenoise::read (const ProcParams* pp, const ParamsEdited* pedited)
 //  lastperform = pp->dirpyrDenoise.perform;
     luma->setValue    (pp->dirpyrDenoise.luma);
     Ldetail->setValue (pp->dirpyrDenoise.Ldetail);
-    chroma->setValue  (pp->dirpyrDenoise.chroma);
+    // Override chroma default: if tool disabled and chroma is old default (15), reset to 0
+    double chromaVal = pp->dirpyrDenoise.chroma;
+    if (!pp->dirpyrDenoise.enabled && chromaVal == 15) {
+        chromaVal = 0;
+    }
+    chroma->setValue  (chromaVal);
     redchro->setValue  (pp->dirpyrDenoise.redchro);
     bluechro->setValue  (pp->dirpyrDenoise.bluechro);
 
@@ -1221,3 +1230,6 @@ void DirPyrDenoise::trimValues (rtengine::procparams::ProcParams* pp)
     gamma->trimValue(pp->dirpyrDenoise.gamma);
     passes->trimValue(pp->dirpyrDenoise.passes);
 }
+
+Adjuster* DirPyrDenoise::getLumaSlider() { return luma; }
+Adjuster* DirPyrDenoise::getChromaSlider() { return chroma; }

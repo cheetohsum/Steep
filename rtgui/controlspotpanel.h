@@ -28,6 +28,7 @@
 #include "threadutils.h"
 #include "toolpanel.h"
 #include "widgets/basic/adjuster.h"
+#include "widgets/basic/popupbutton.h"
 
 class ControlPanelListener
 {
@@ -268,15 +269,15 @@ private:
     void controlspotChanged();
 
     void prevMethodChanged();
-    void shapeChanged();
+    void shapeChanged(int index);
     void spotMethodChanged();
     void shapeMethodChanged();
     void qualityMethodChanged();
     void avoidgamutMethodChanged();
    //void complexMethodChanged();
     void wavMethodChanged();
-    void maskTypeChanged();
-    void aiMaskClassChanged();
+    void maskTypeChanged(int index);
+    void aiMaskClassChanged(int index);
 
     void updateParamVisibility();
 
@@ -406,7 +407,7 @@ private:
 
     MyComboBoxText* const prevMethod_;
     sigc::connection prevMethodconn_;
-    MyComboBoxText* const shape_;
+    PopUpButton* const shape_;
     sigc::connection shapeconn_;
     MyComboBoxText* const spotMethod_;
     sigc::connection spotMethodconn_;
@@ -420,9 +421,9 @@ private:
     sigc::connection wavMethodconn_;
     MyComboBoxText* const avoidgamutMethod_;
 	sigc::connection avoidgamutconn_;
-    MyComboBoxText* const maskType_;
+    PopUpButton* const maskType_;
     sigc::connection maskTypeConn_;
-    MyComboBoxText* const aiMaskClass_;
+    PopUpButton* const aiMaskClass_;
     sigc::connection aiMaskClassConn_;
 
     Adjuster* const sensiexclu_;
@@ -501,8 +502,15 @@ private:
     Gtk::Frame* const excluFrame;
     bool maskPrevActive;
 
+    // Backup of ellipse/rect dimensions before switching to gradient
+    double savedLocX_ = 150., savedLocXL_ = 150.;
+    double savedLocY_ = 150., savedLocYT_ = 150.;
+    double savedTransit_ = 60.;
+    bool hasSavedDims_ = false;
+
     // Mask dropdown section
     Gtk::Box* maskDetailBox_;
+    Gtk::Revealer* maskRevealer_;
     bool maskDetailExpanded_;
     Gtk::Label* maskArrowLabel_;
     void toggleMaskDetail();

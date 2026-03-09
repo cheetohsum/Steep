@@ -34,6 +34,10 @@ ALBUM_SMART_MATCH_ALL;Match all rules
 ALBUM_SMART_MATCH_ANY;Match any rule
 ALBUM_SMART_NAME;Name:
 ALBUM_VIEW_BACK;Back to Editor
+ALBUM_VIEW_INFO_TOGGLE;Show/hide photo info
+ALBUM_VIEW_MODE_COLLAGE;Collage view
+ALBUM_VIEW_MODE_FIT;Fit to screen
+ALBUM_VIEW_MODE_GRID;Grid view
 ALBUM_VIEW_PHOTOS;%1 photos
 ALBUM_VIEW_SELECT;Select an album from the sidebar
 EDITOR_ALBUM_VIEW_TOOLTIP;Toggle album grid view
@@ -165,6 +169,7 @@ FILEBROWSER_CACHECLEARFROMPARTIAL;Clear all except cached profiles
 FILEBROWSER_CLEARPROFILE;Clear
 FILEBROWSER_COLORLABEL_TOOLTIP;Color label.\n\nUse dropdown menu or shortcuts:\n<b>Shift-Ctrl-0</b> No Color\n<b>Shift-Ctrl-1</b> Red\n<b>Shift-Ctrl-2</b> Yellow\n<b>Shift-Ctrl-3</b> Green\n<b>Shift-Ctrl-4</b> Blue\n<b>Shift-Ctrl-5</b> Purple
 FILEBROWSER_COPYPROFILE;Copy
+FILEBROWSER_COPYPROFILE_SETTINGS;Copy Settings...
 FILEBROWSER_CURRENT_NAME;Current name:
 FILEBROWSER_DARKFRAME;Dark-frame
 FILEBROWSER_DELETEDIALOG_ALL;Are you sure you want to <b>permanently</b> delete all <b>%1</b> files in trash?
@@ -268,6 +273,7 @@ FILECHOOSER_FILTER_SAME;Same format as current photo
 FILECHOOSER_FILTER_TIFF;TIFF files
 GENERAL_ABOUT;About
 GENERAL_AFTER;After
+GENERAL_ALL;All
 GENERAL_APPLY;Apply
 GENERAL_ASIMAGE;As Image
 GENERAL_AUTO;Automatic
@@ -1574,6 +1580,29 @@ HISTORY_MSG_GRAIN_ENABLED;Grain
 HISTORY_MSG_GRAIN_STRENGTH;Grain - Strength
 HISTORY_MSG_GRAIN_ISO;Grain - ISO
 HISTORY_MSG_GRAIN_SCALE;Grain - Scale
+HISTORY_MSG_TILTSHIFT_ENABLED;Tilt-Shift
+HISTORY_MSG_TILTSHIFT_AMOUNT;Tilt-Shift - Amount
+HISTORY_MSG_TILTSHIFT_FOCUSPOS;Tilt-Shift - Focus Position
+HISTORY_MSG_TILTSHIFT_FOCUSWIDTH;Tilt-Shift - Focus Width
+HISTORY_MSG_TILTSHIFT_FEATHER;Tilt-Shift - Feather
+HISTORY_MSG_TILTSHIFT_ANGLE;Tilt-Shift - Angle
+HISTORY_MSG_FILMPRESETS_ENABLED;Film Presets
+HISTORY_MSG_FILMPRESETS_PRESET;Film Presets - Preset
+HISTORY_MSG_FILMPRESETS_STRENGTH;Film Presets - Strength
+HISTORY_MSG_FILMPRESETS_CONTRAST;Film Presets - Contrast
+HISTORY_MSG_FILMPRESETS_SATURATION;Film Presets - Saturation
+HISTORY_MSG_FILMPRESETS_WARMTH;Film Presets - Warmth
+HISTORY_MSG_FILMPRESETS_TINT;Film Presets - Tint
+HISTORY_MSG_FILMPRESETS_FADE;Film Presets - Fade
+HISTORY_MSG_FILMPRESETS_ROLLOFF;Film Presets - Rolloff
+HISTORY_MSG_FILMPRESETS_SHADOWHUE;Film Presets - Shadow Hue
+HISTORY_MSG_FILMPRESETS_SHADOWTINT;Film Presets - Shadow Tint
+HISTORY_MSG_FILMPRESETS_HIGHLIGHTHUE;Film Presets - Highlight Hue
+HISTORY_MSG_FILMPRESETS_HIGHLIGHTTINT;Film Presets - Highlight Tint
+HISTORY_MSG_FILMPRESETS_HALATION;Film Presets - Halation
+HISTORY_MSG_FILMPRESETS_REDSHIFT;Film Presets - Red Shift
+HISTORY_MSG_FILMPRESETS_GREENSHIFT;Film Presets - Green Shift
+HISTORY_MSG_FILMPRESETS_BLUESHIFT;Film Presets - Blue Shift
 HISTORY_MSG_LENSBLUR_ENABLED;Lens Blur
 HISTORY_MSG_LENSBLUR_AMOUNT;Lens Blur - Amount
 HISTORY_MSG_LENSBLUR_SHAPE;Lens Blur - Shape
@@ -1752,6 +1781,7 @@ HISTORY_MSG_PERSP_CAM_ANGLE;Perspective - Camera
 HISTORY_MSG_PERSP_CAM_FL;Perspective - Camera
 HISTORY_MSG_PERSP_CAM_SHIFT;Perspective - Camera
 HISTORY_MSG_PERSP_CTRL_LINE;Perspective - Control lines
+HISTORY_MSG_PERSP_MESH;Perspective - Mesh Warp
 HISTORY_MSG_PERSP_METHOD;Perspective - Method
 HISTORY_MSG_PERSP_PROJ_ANGLE;Perspective - Recovery
 HISTORY_MSG_PERSP_PROJ_ROTATE;Perspective - PCA rotation
@@ -2028,6 +2058,7 @@ MODE_EDIT;Edit
 MODE_MASK;Mask
 MODE_PRESETS;Presets
 TOOLGROUP_ADVANCED;Advanced
+TOOLGROUP_BW;Black & White
 TOOLGROUP_CALIBRATION;Camera
 TOOLGROUP_COLOR;Color
 TOOLGROUP_DETAIL;Detail
@@ -2445,6 +2476,14 @@ PROFILEPANEL_TOOLTIPSAVE;Save current profile.\n<b>Ctrl-click</b> to select the 
 PRESETPANEL_BUNDLED;Bundled Presets
 PRESETPANEL_HOVER_TOOLTIP;Hover over a preset to preview its effect on the current image
 PRESETPANEL_MYPRESETS;My Presets
+PRESET_APPLY;Apply
+PRESET_RENAME;Rename
+PRESET_SAVE_CURRENT;Save Current Settings
+PRESET_DELETE;Delete
+PRESET_RENAME_GROUP;Rename Group
+PRESET_CONFIRM_DELETE;Delete preset "%1"?
+PRESET_COPY_SETTINGS;Copy Edit Settings
+PRESET_PASTE_CLIPBOARD;Paste Clipboard Settings
 PROGRESSBAR_DECODING;Decoding...
 PROGRESSBAR_GREENEQUIL;Green equilibration...
 PROGRESSBAR_HLREC;Highlight reconstruction...
@@ -2535,6 +2574,7 @@ SOFTPROOF_TOOLTIP;Soft-proofing simulates the appearance of the image:\n- when p
 SORT_ASCENDING;Ascending
 SORT_BY_DATE;By Date
 SORT_BY_EXIF;By EXIF
+SORT_BY_FILETYPE;By File Type
 SORT_BY_LABEL;By Color Label
 SORT_BY_NAME;By Name
 SORT_BY_RANK;By Rank
@@ -2602,6 +2642,9 @@ TP_BWMIX_MET_CHANMIX;Channel Mixer
 TP_BWMIX_MET_DESAT;Desaturation
 TP_BWMIX_MET_LUMEQUAL;Luminance Equalizer
 TP_BWMIX_MIXC;Channel Mixer
+TP_BWMIX_NEUTRALS;Neutrals
+TP_BWMIX_TONE;Tone
+TP_BWMIX_STRENGTH;Strength
 TP_BWMIX_NEUTRAL;Reset
 TP_BWMIX_RGBLABEL;R: %1%%   G: %2%%   B: %3%%   Total: %4%%
 TP_BWMIX_RGBLABEL_HINT;Final RGB factors that take care of all the mixer options.\n'Total' displays the sum of the RGB values:\n- always 100% in relative mode\n- higher (lighter) or lower (darker) than 100% in absolute mode.
@@ -2864,6 +2907,7 @@ TP_CROP_GTTRIANGLE1;Golden Triangles 1
 TP_CROP_GTTRIANGLE2;Golden Triangles 2
 TP_CROP_GUIDETYPE;Guide type:
 TP_CROP_H;Height
+TP_CROP_ORIENTATION;Orientation
 TP_CROP_LABEL;Crop
 TP_CROP_PPI;PPI
 TP_CROP_RESETCROP;Reset
@@ -2891,12 +2935,12 @@ TP_DEHAZE_SHOW_DEPTH_MAP;Show depth map
 TP_DEHAZE_STRENGTH;Haze Removal
 TP_DIRPYRDENOISE_CHROMINANCE_AMZ;Auto multi-zones
 TP_DIRPYRDENOISE_CHROMINANCE_AUTOGLOBAL;Automatic global
-TP_DIRPYRDENOISE_CHROMINANCE_BLUEYELLOW;Chrominance - Blue-Yellow
+TP_DIRPYRDENOISE_CHROMINANCE_BLUEYELLOW;Chroma Blue-Yellow
 TP_DIRPYRDENOISE_CHROMINANCE_CURVE;Chrominance curve
 TP_DIRPYRDENOISE_CHROMINANCE_CURVE_TOOLTIP;Increase (multiply) the value of all chrominance sliders.\nThis curve lets you adjust the strength of chromatic noise reduction as a function of chromaticity, for instance to increase the action in areas of low saturation and to decrease it in those of high saturation.
 TP_DIRPYRDENOISE_CHROMINANCE_FRAME;Chrominance
 TP_DIRPYRDENOISE_CHROMINANCE_MANUAL;Manual
-TP_DIRPYRDENOISE_CHROMINANCE_MASTER;Chrominance - Master
+TP_DIRPYRDENOISE_CHROMINANCE_MASTER;Chrominance
 TP_DIRPYRDENOISE_CHROMINANCE_METHOD;Method
 TP_DIRPYRDENOISE_CHROMINANCE_METHODADVANCED_TOOLTIP;Manual\nActs on the full image.\nYou control the noise reduction settings manually.\n\nAutomatic global\nActs on the full image.\n9 zones are used to calculate a global chrominance noise reduction setting.\n\nPreview\nActs on the whole image.\nThe part of the image visible in the preview is used to calculate global chrominance noise reduction settings.
 TP_DIRPYRDENOISE_CHROMINANCE_METHOD_TOOLTIP;Manual\nActs on the full image.\nYou control the noise reduction settings manually.\n\nAutomatic global\nActs on the full image.\n9 zones are used to calculate a global chrominance noise reduction setting.\n\nAutomatic multi-zones\nNo preview - works only during saving, but using the 'Preview' method by matching the tile size and center to the preview size and center you can get an idea of the expected results.\nThe image is divided into tiles (about 10 to 70 depending on image size) and each tile receives its own chrominance noise reduction settings.\n\nPreview\nActs on the whole image.\nThe part of the image visible in the preview is used to calculate global chrominance noise reduction settings.
@@ -2907,7 +2951,7 @@ TP_DIRPYRDENOISE_CHROMINANCE_PREVIEW_INFO;Preview size=%1, Center: Px=%2  Py=%3
 TP_DIRPYRDENOISE_CHROMINANCE_PREVIEW_NOISEINFO;Preview noise: Mean=%1  High=%2
 TP_DIRPYRDENOISE_CHROMINANCE_PREVIEW_NOISEINFO_EMPTY;Preview noise: Mean= -   High= -
 TP_DIRPYRDENOISE_CHROMINANCE_PREVIEW_TILEINFO;Tile size=%1, Center: Tx=%2  Ty=%3
-TP_DIRPYRDENOISE_CHROMINANCE_REDGREEN;Chrominance - Red-Green
+TP_DIRPYRDENOISE_CHROMINANCE_REDGREEN;Chroma Red-Green
 TP_DIRPYRDENOISE_LABEL;Noise Reduction
 TP_DIRPYRDENOISE_LUMINANCE_CONTROL;Luminance control
 TP_DIRPYRDENOISE_LUMINANCE_CURVE;Luminance curve
@@ -3023,6 +3067,43 @@ TP_FILMSIMULATION_LABEL;Film Simulation
 TP_FILMSIMULATION_SLOWPARSEDIR;RawTherapee is configured to look for Hald CLUT images, which are used for the Film Simulation tool, in a folder which is taking too long to load.\nGo to Preferences > Image Processing > Film Simulation\nto see which folder is being used. You should either point RawTherapee to a folder which contains only Hald CLUT images and nothing more, or to an empty folder if you don't want to use the Film Simulation tool.\n\nRead the Film Simulation article in RawPedia for more information.\n\nDo you want to cancel the scan now?
 TP_FILMSIMULATION_STRENGTH;Strength
 TP_FILMSIMULATION_ZEROCLUTSFOUND;Set HaldCLUT directory in Preferences
+TP_FILMPRESETS_LABEL;Film Presets
+TP_FILMPRESETS_CUSTOM;Custom
+TP_FILMPRESETS_HERITAGE_GOLD;Heritage Gold
+TP_FILMPRESETS_PORCELAIN_400;Porcelain 400
+TP_FILMPRESETS_VIVID_CHROME;Vivid Chrome
+TP_FILMPRESETS_ARCTIC;Arctic
+TP_FILMPRESETS_SOVEREIGN;Sovereign
+TP_FILMPRESETS_GOLDEN_HOUR;Golden Hour
+TP_FILMPRESETS_TWILIGHT_160;Twilight 160
+TP_FILMPRESETS_NOSTALGIA_200;Nostalgia 200
+TP_FILMPRESETS_DESERT_CHROME;Desert Chrome
+TP_FILMPRESETS_STREET_800;Street 800
+TP_FILMPRESETS_CINEMATIC_500T;Cinematic 500T
+TP_FILMPRESETS_FADE_BLOOM;Fade & Bloom
+TP_FILMPRESETS_EMBER;Ember
+TP_FILMPRESETS_SILVER_GELATIN;Silver Gelatin
+TP_FILMPRESETS_ANALOG_DREAM;Analog Dream
+TP_FILMPRESETS_STRENGTH;Strength
+TP_FILMPRESETS_CONTRAST;Contrast
+TP_FILMPRESETS_SATURATION;Saturation
+TP_FILMPRESETS_WARMTH;Warmth
+TP_FILMPRESETS_TINT;Tint
+TP_FILMPRESETS_FADE;Fade
+TP_FILMPRESETS_ROLLOFF;Rolloff
+TP_FILMPRESETS_SHADOWHUE;Shadow Hue
+TP_FILMPRESETS_SHADOWTINT;Shadow Tint
+TP_FILMPRESETS_HIGHLIGHTHUE;Highlight Hue
+TP_FILMPRESETS_HIGHLIGHTTINT;Highlight Tint
+TP_FILMPRESETS_HALATION;Halation
+TP_FILMPRESETS_REDSHIFT;Red
+TP_FILMPRESETS_GREENSHIFT;Green
+TP_FILMPRESETS_BLUESHIFT;Blue
+TP_FILMPRESETS_SECTION_TONE;Tone
+TP_FILMPRESETS_SECTION_COLOR;Color
+TP_FILMPRESETS_SECTION_TINTING;Tinting
+TP_FILMPRESETS_SECTION_CHANNEL;Channel Response
+TP_FILMPRESETS_SECTION_SPECIAL;Special
 TP_FLATFIELD_AUTOSELECT;Auto-Select Flat-Field File
 TP_FLATFIELD_BLURRADIUS;Blur radius
 TP_FLATFIELD_BLURTYPE;Blur type
@@ -3315,6 +3396,12 @@ TP_GRAIN_LABEL;Grain
 TP_GRAIN_STRENGTH;Grain
 TP_GRAIN_ISO;ISO
 TP_GRAIN_SCALE;Scale
+TP_TILTSHIFT_LABEL;Tilt-Shift
+TP_TILTSHIFT_AMOUNT;Amount
+TP_TILTSHIFT_FOCUSPOS;Focus Position
+TP_TILTSHIFT_FOCUSWIDTH;Focus Width
+TP_TILTSHIFT_FEATHER;Feather
+TP_TILTSHIFT_ANGLE;Angle
 TP_LENSBLUR_LABEL;Lens Blur
 TP_LENSBLUR_AMOUNT;Blur Amount
 TP_LENSBLUR_BOKEH_SECTION;Bokeh
@@ -3380,8 +3467,8 @@ TP_LOCALLAB_BLUR_TOOLNAME;Blur/Grain & Denoise
 TP_LOCALLAB_BLWH;All changes forced in Black-and-White
 TP_LOCALLAB_BLWH_TOOLTIP;Force color components 'a' and 'b' to zero.\nUseful for black and white processing, or film simulation.
 TP_LOCALLAB_BUTTON_ADD;Add
-TP_LOCALLAB_BUTTON_ADD_AI_MASK;Add AI Mask
-TP_LOCALLAB_BUTTON_ADD_MASK;Add Mask
+TP_LOCALLAB_BUTTON_ADD_AI_MASK;+ AI
+TP_LOCALLAB_BUTTON_ADD_MASK;+
 TP_LOCALLAB_BUTTON_DEL;Delete
 TP_LOCALLAB_BUTTON_DUPL;Duplicate
 TP_LOCALLAB_BUTTON_REN;Rename
@@ -3864,7 +3951,7 @@ TP_LOCALLAB_MASKCOM_TOOLNAME;Common Color Mask
 TP_LOCALLAB_MASKCOM_TOOLTIP;A tool in its own right.\nCan be used to adjust the image appearance (chrominance, luminance, contrast) and texture as a function of Scope.
 TP_LOCALLAB_AIMASK;AI Auto Mask
 TP_LOCALLAB_AIMASK_TOOLNAME;AI Auto Mask
-TP_LOCALLAB_AIMASK_CLASS;Mask Class
+TP_LOCALLAB_AIMASK_CLASS;Class
 TP_LOCALLAB_AIMASK_CLASS_BACKGROUND;Background
 TP_LOCALLAB_AIMASK_CLASS_PERSON;Person
 TP_LOCALLAB_AIMASK_CLASS_SKY;Sky
@@ -3886,7 +3973,7 @@ TP_LOCALLAB_AIMASK_OPACITY_TOOLTIP;Blend between geometric mask (0) and AI mask 
 TP_LOCALLAB_AIMASK_REFINE;Edge Refinement
 TP_LOCALLAB_AIMASK_REFINE_RADIUS;Guided Filter Radius
 TP_LOCALLAB_AIMASK_REFINE_EPS;Guided Filter Epsilon
-TP_LOCALLAB_MASKTYPE;Mask Type
+TP_LOCALLAB_MASKTYPE;Type
 TP_LOCALLAB_MASKTYPE_NORMAL;Normal
 TP_LOCALLAB_MASKTYPE_AI;AI Mask
 TP_LOCALLAB_MASKCURVE_TOOLTIP;The 3 curves are set to 1 (maximum) by default:\nC=f(C) the chroma varies according to the chrominance. You can decrease the chroma to improve the selection. By setting this curve close to zero (with a low value of C to activate the curve) you can desaturate the background in Inverse mode.\nL=f(L) the luminance varies according to the luminance, so you can decrease the brightness to improve the selection.\nL and C = f(H) luminance and chroma vary with hue, so you can decrease luminance and chroma to improve selection.
@@ -4136,7 +4223,7 @@ TP_LOCALLAB_SHADHMASK_TOOLTIP;Lowers the highlights of the mask in the same way 
 TP_LOCALLAB_SHADMASK_TOOLTIP;Lifts the shadows of the mask in the same way as the shadows/highlights algorithm.
 TP_LOCALLAB_SHADOWHIGHLIGHT_TOOLTIP;Adjust shadows and highlights either with 'Shadows Highlights' sliders, 'Tone Equalizer', 'Generalized Hyperbolic Stretch' (GHS), or 'Michaelis-Menten Tone mapping' (MM).\nCan be used instead of, or in conjunction with the Exposure module, or for GHS / MM as a tone mapper.
 TP_LOCALLAB_SHAMASKCOL;Shadows
-TP_LOCALLAB_SHAPETYPE;Mask shape
+TP_LOCALLAB_SHAPETYPE;Shape
 TP_LOCALLAB_SHAPE_TOOLTIP;'Ellipse' is the normal mode.\n 'Rectangle' can be used in certain cases, for example to work in full-image mode by placing the delimiters outside the preview area. In this case, set transition = 100.\n 'Gradient' creates a linear graduated mask with configurable angle.\n\nFuture developments will include polygon shapes and Bezier curves.
 TP_LOCALLAB_SHARAMOUNT;Amount
 TP_LOCALLAB_SHARBLUR;Blur radius
@@ -4417,9 +4504,10 @@ TP_PERSPECTIVE_CAMERA_SHIFT_HORIZONTAL;Horizontal shift
 TP_PERSPECTIVE_CAMERA_SHIFT_VERTICAL;Vertical shift
 TP_PERSPECTIVE_CAMERA_YAW;Horizontal
 TP_PERSPECTIVE_CONTROL_LINES;Control lines
+TP_PERSPECTIVE_GRID_TOOLTIP;<b>Vertex Grid Perspective</b>\n\nClick vertices to select, drag to adjust perspective. Shift+click to select multiple.
 TP_PERSPECTIVE_CONTROL_LINES_TOOLTIP;<b>Ctrl</b>+<b>drag</b>: Draw new line\n<b>Right-click</b>: Delete line
 TP_PERSPECTIVE_CONTROL_LINE_APPLY_INVALID_TOOLTIP;At least two horizontal or two vertical control lines required.
-TP_PERSPECTIVE_HORIZONTAL;Horizontal Perspective
+TP_PERSPECTIVE_HORIZONTAL;Horizontal
 TP_PERSPECTIVE_LABEL;Perspective
 TP_PERSPECTIVE_METHOD;Method
 TP_PERSPECTIVE_METHOD_CAMERA_BASED;Camera-based
@@ -4431,7 +4519,7 @@ TP_PERSPECTIVE_PROJECTION_SHIFT_HORIZONTAL;Horizontal shift
 TP_PERSPECTIVE_PROJECTION_SHIFT_VERTICAL;Vertical shift
 TP_PERSPECTIVE_PROJECTION_YAW;Horizontal
 TP_PERSPECTIVE_RECOVERY_FRAME;Recovery
-TP_PERSPECTIVE_VERTICAL;Vertical Perspective
+TP_PERSPECTIVE_VERTICAL;Vertical
 TP_PFCURVE_CURVEEDITOR_CH;Hue
 TP_PFCURVE_CURVEEDITOR_CH_TOOLTIP;Controls defringe strength by color.\nHigher = more,\nLower = less.
 TP_PREPROCESS_DEADPIXFILT;Dead pixel filter

@@ -404,11 +404,7 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
     green->setLogScale(MAXGREEN / MINGREEN, MINGREEN);
 
     // --- Summary box layout ---
-    // Temp & Tint always visible at top
-    getSummaryBox()->pack_start(*temp);
-    getSummaryBox()->pack_start(*green);
-
-    // "WB ▸" label + Camera dropdown on one row
+    // "WB ▸" label + Camera dropdown first, then Temp & Tint
     auto* wbHeaderRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
     sectionLabel_ = Gtk::manage(new Gtk::Label());
     sectionLabel_->set_markup("\u25B8 WB");
@@ -436,24 +432,26 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
     wbHeaderRow->pack_start(*method, Gtk::PACK_SHRINK);
     getSummaryBox()->pack_start(*wbHeaderRow, Gtk::PACK_SHRINK, 0);
 
-    // Detail content: spot picker, size, reset (hidden by default, toggled by WB label)
-    detailContent_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
-    detailContent_->set_no_show_all(true);
+    // Detail content: pickers + spot size + reset — single row below WB header
+    // pickerRow_ is populated later by toolpanelcoord with WbTool + ColPickerTool
+    pickerRow_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 3));
+    pickerRow_->set_halign(Gtk::ALIGN_START);
+    // Spot size dropdown and reset are packed at the end (after toolpanelcoord adds pickers)
+    pickerRow_->pack_end(*resetButton, Gtk::PACK_SHRINK);
+    pickerRow_->pack_end(*wbsizehelper, Gtk::PACK_SHRINK);
+    pickerRow_->show_all();
 
-    auto* spotRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 3));
-    spotRow->set_margin_start(4);
-    spotRow->pack_start(*spotbutton, Gtk::PACK_SHRINK);
-    spotRow->pack_start(*wbsizehelper, Gtk::PACK_SHRINK);
-    spotRow->pack_start(*resetButton, Gtk::PACK_SHRINK);
-    detailContent_->pack_start(*spotRow, Gtk::PACK_SHRINK);
+    // Animated revealer for detail content — right after WB header, before sliders
+    detailRevealer_ = Gtk::manage(new Gtk::Revealer());
+    detailRevealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
+    detailRevealer_->set_transition_duration(200);
+    detailRevealer_->set_reveal_child(false);
+    detailRevealer_->add(*pickerRow_);
+    detailRevealer_->show();
+    getSummaryBox()->pack_start(*detailRevealer_, Gtk::PACK_SHRINK);
 
-    // Row for color picker buttons (populated by toolpanelcoord)
-    pickerRow_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 2));
-    pickerRow_->set_margin_start(4);
-    pickerRow_->set_margin_top(2);
-    detailContent_->pack_start(*pickerRow_, Gtk::PACK_SHRINK);
-
-    getSummaryBox()->pack_start(*detailContent_, Gtk::PACK_SHRINK);
+    getSummaryBox()->pack_start(*temp);
+    getSummaryBox()->pack_start(*green);
     getSummaryBox()->show_all();
 
     // Advanced section: equal, observer, tempBias, itcwb
@@ -1160,13 +1158,10 @@ void WhiteBalance::toggleDetail()
     detailExpanded_ = !detailExpanded_;
     if (detailExpanded_) {
         sectionLabel_->set_markup("\u25BE WB");
-        detailContent_->set_no_show_all(false);
-        detailContent_->show_all();
-        detailContent_->set_no_show_all(true);
     } else {
         sectionLabel_->set_markup("\u25B8 WB");
-        detailContent_->hide();
     }
+    detailRevealer_->set_reveal_child(detailExpanded_);
 }
 
 void WhiteBalance::setAdjusterBehavior (bool tempadd, bool greenadd, bool equaladd, bool tempbiasadd)

@@ -29,6 +29,7 @@ class ImageAreaPanel final :
 protected:
 
     ImageAreaPanel *before, *after;
+    bool zoomSyncing = false;
 
     void synchronize ();
 

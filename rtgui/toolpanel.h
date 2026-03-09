@@ -57,6 +57,7 @@ public:
     /// @brief Lightweight mask overlay toggle for hover (bypasses heavy AUTOEXP refresh)
     /// @param forceRedraw If true, always trigger a canvas repaint (e.g. for geometry visibility changes)
     virtual void hoverMaskChanged(bool hover, bool forceRedraw = false) {}
+    virtual void cropPreviewModeChanged(bool editingCrop) {}
 };
 
 /// @brief This class control the space around the group of tools inside a tab, as well as the space separating each tool. */

@@ -843,9 +843,8 @@ void ImProcFunctions::removeSpots (Imagefloat* img, ImageSource* imgsrc, const s
     // Process stroke-based entries directly on the image first
     for (const auto& entry : params->spot.entries) {
         if (entry.isStroke()) {
-            int methodInt = static_cast<int>(entry.method);
 #ifdef RT_AI_MASKING
-            if (methodInt >= static_cast<int>(SpotMethod::AI_REMOVE)) {
+            if (static_cast<int>(entry.method) >= static_cast<int>(SpotMethod::AI_REMOVE)) {
                 processStrokeAI(img, entry, pp);
             } else
 #endif
@@ -873,8 +872,7 @@ void ImProcFunctions::removeSpots (Imagefloat* img, ImageSource* imgsrc, const s
     for (auto entry : params->spot.entries) {
         // Skip stroke-based entries (already processed above)
         if (entry.isStroke()) {
-            ++i;
-            continue;
+            continue;  // Don't increment i — it indexes into srcSpotBoxs/dstSpotBoxs
         }
         std::shared_ptr<SpotBox> srcSpotBox(new SpotBox(entry,  SpotBox::Type::SOURCE));
         std::shared_ptr<SpotBox> dstSpotBox(new SpotBox(entry,  SpotBox::Type::TARGET));

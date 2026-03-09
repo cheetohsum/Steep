@@ -119,6 +119,7 @@ class CropWindow final : public LWButtonListener, public CropDisplayHandler, pub
     CropWindow* observedCropWin;  // Pointer to the currently active detail CropWindow
 
     float crop_custom_ratio;
+    bool solidCropOverlay_;
 
     bool onArea                    (CursorArea a, int x, int y);
     void updateCursor              (int x, int y);
@@ -166,6 +167,10 @@ public:
     void setFitZoomEnabled  (bool fze)
     {
         fitZoomEnabled = fze;
+    }
+    void setSolidCropOverlay (bool solid)
+    {
+        solidCropOverlay_ = solid;
     }
     void setObservedCropWin (CropWindow* cw)
     {

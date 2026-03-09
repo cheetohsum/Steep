@@ -20,6 +20,7 @@
 
 #include <atomic>
 #include <tuple>
+#include <chrono>
 #include <gtkmm.h>
 
 #include "cursormanager.h"
@@ -106,6 +107,7 @@ protected:
 private:
     const std::string collate_name;
     const std::string collate_exif;
+    const std::string collate_ext;
 
 public:
 
@@ -207,6 +209,9 @@ public:
         case Options::SORT_BY_LABEL:
             cmp = thumbnail->getColorLabel() - other.thumbnail->getColorLabel();
             break;
+        case Options::SORT_BY_FILETYPE:
+            cmp = collate_ext.compare(other.collate_ext);
+            break;
         case Options::SORT_METHOD_COUNT: abort();
         }
 
@@ -244,4 +249,23 @@ public:
         this->original = original;
     }
 
+    // Animation for rating/label changes (filmstrip overlay)
+    void startRatingAnimation ();
+    void startColorLabelAnimation ();
+
+    // Get a copy of the cached back-buffer surface for animation snapshots
+    Cairo::RefPtr<Cairo::ImageSurface> snapshotSurface () const;
+
+protected:
+    // Animation state
+    double animRatingAlpha_;       // 0.0 = no anim, >0 = fading out
+    double animColorAlpha_;
+    sigc::connection animTimerConn_;
+    std::chrono::steady_clock::time_point animStartTime_;
+    bool animRatingActive_;
+    bool animColorActive_;
+    static constexpr double ANIM_DURATION_MS = 600.0;
+
+    void drawFilmstripOverlays (Cairo::RefPtr<Cairo::Context> cc, int x, int y);
+    bool animTick ();
 };

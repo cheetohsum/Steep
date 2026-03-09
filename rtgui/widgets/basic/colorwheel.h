@@ -79,9 +79,21 @@ public:
     void setListener(ColorWheelListener* l) { area_.setListener(l); }
     void setEdited(bool yes) { area_.setEdited(yes); }
     bool getEdited() const { return area_.getEdited(); }
+    void updateIndicatorFromArea() { updateIndicator(); }
 
 private:
+    void updateIndicator();
+    void onEntryActivate();
+    bool onEntryFocusOut(GdkEventFocus* event);
+    void applyEntryValue();
     bool resetPressed(GdkEventButton* event);
+
     ColorWheelArea area_;
     Gtk::Label label_;
+
+    // Indicator row: colored dot + editable entry
+    Gtk::Box indicatorBox_;
+    Gtk::Label dotLabel_;
+    Gtk::Entry entry_;
+    bool updatingIndicator_;
 };

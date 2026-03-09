@@ -18,6 +18,8 @@
  */
 #pragma once
 
+#include <memory>
+
 #include "rtengine.h"
 #include "pipettebuffer.h"
 #include "rtgui/threadutils.h"
@@ -41,6 +43,9 @@ protected:
     Imagefloat*  spotCrop;   // "one chunk" allocation
     LabImage*    laboCrop;   // "one chunk" allocation
     LabImage*    labnCrop;   // "one chunk" allocation
+#ifdef RT_AI_MASKING
+    std::unique_ptr<LabImage> aiMaskBaseline_; // Clean pre-global-adjustment LAB for AI mask blending
+#endif
     Image8*      cropImg;    // "one chunk" allocation ; displayed image in monitor color space, showing the output profile as well (soft-proofing enabled, which then correspond to workimg) or not
     float *      shbuf_real;  // "one chunk" allocation
 

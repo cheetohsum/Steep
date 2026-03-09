@@ -30,6 +30,8 @@
 #include "rtengine/procevents.h"
 #include "rtengine/rtengine.h"
 
+#include <glib/gstdio.h>
+
 using namespace rtengine;
 using namespace rtengine::procparams;
 
@@ -47,8 +49,8 @@ void PresetListPanel::cleanup()
 }
 
 PresetListPanel::PresetListPanel() :
-    modeOn_("profile-filled"),
-    modeOff_("profile-partial"),
+    modeOn_("preset-fill-on"),
+    modeOff_("preset-fill-off"),
     profileFillImage_(Gtk::manage(new RTImage(App::get().options().filledProfile ? modeOn_ : modeOff_, Gtk::ICON_SIZE_LARGE_TOOLBAR))),
     selectedEntry_(nullptr),
     selectedWidget_(nullptr),
@@ -78,22 +80,22 @@ PresetListPanel::PresetListPanel() :
     setExpandAlignProperties(fillMode_, false, true, Gtk::ALIGN_CENTER, Gtk::ALIGN_FILL);
 
     load_ = Gtk::manage(new Gtk::Button());
-    load_->add(*Gtk::manage(new RTImage("folder-open", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
+    load_->add(*Gtk::manage(new RTImage("preset-load", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
     load_->get_style_context()->add_class("Left");
     setExpandAlignProperties(load_, false, true, Gtk::ALIGN_CENTER, Gtk::ALIGN_FILL);
 
     save_ = Gtk::manage(new Gtk::Button());
-    save_->add(*Gtk::manage(new RTImage("save", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
+    save_->add(*Gtk::manage(new RTImage("preset-save", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
     save_->get_style_context()->add_class("MiddleH");
     setExpandAlignProperties(save_, false, true, Gtk::ALIGN_CENTER, Gtk::ALIGN_FILL);
 
     copy_ = Gtk::manage(new Gtk::Button());
-    copy_->add(*Gtk::manage(new RTImage("copy", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
+    copy_->add(*Gtk::manage(new RTImage("preset-copy", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
     copy_->get_style_context()->add_class("MiddleH");
     setExpandAlignProperties(copy_, false, true, Gtk::ALIGN_CENTER, Gtk::ALIGN_FILL);
 
     paste_ = Gtk::manage(new Gtk::Button());
-    paste_->add(*Gtk::manage(new RTImage("paste", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
+    paste_->add(*Gtk::manage(new RTImage("preset-paste", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
     paste_->get_style_context()->add_class("Right");
     setExpandAlignProperties(paste_, false, true, Gtk::ALIGN_CENTER, Gtk::ALIGN_FILL);
 
@@ -107,17 +109,17 @@ PresetListPanel::PresetListPanel() :
     contentBox_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
     contentBox_->set_valign(Gtk::ALIGN_START);
     contentBox_->set_margin_start(2);
-    contentBox_->set_margin_end(2);
+    contentBox_->set_margin_end(3);
     contentBox_->pack_start(*toolbar, Gtk::PACK_SHRINK, 0);
 
     // Special entries FlowBox (Custom / Last Saved) — card-style
     specialFlowBox_ = Gtk::manage(new Gtk::FlowBox());
     specialFlowBox_->set_selection_mode(Gtk::SELECTION_NONE);
-    specialFlowBox_->set_homogeneous(false);
-    specialFlowBox_->set_min_children_per_line(1);
+    specialFlowBox_->set_homogeneous(true);
+    specialFlowBox_->set_min_children_per_line(3);
     specialFlowBox_->set_max_children_per_line(20);
-    specialFlowBox_->set_column_spacing(4);
-    specialFlowBox_->set_row_spacing(4);
+    specialFlowBox_->set_column_spacing(1);
+    specialFlowBox_->set_row_spacing(1);
     specialFlowBox_->set_no_show_all(true);
 
     customButton_ = Gtk::manage(new Gtk::Button());
@@ -127,15 +129,17 @@ PresetListPanel::PresetListPanel() :
     customButton_->set_size_request(CARD_MIN_WIDTH, -1);
     {
         auto* vbox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 1));
+        vbox->set_halign(Gtk::ALIGN_CENTER);
         auto* img = Gtk::manage(new Gtk::Image());
         img->set_size_request(-1, THUMB_HEIGHT);
-        img->set_halign(Gtk::ALIGN_START);
+        img->set_halign(Gtk::ALIGN_CENTER);
         vbox->pack_start(*img, Gtk::PACK_SHRINK);
         auto* label = Gtk::manage(new Gtk::Label());
         label->set_line_wrap(true);
         label->set_line_wrap_mode(Pango::WRAP_WORD_CHAR);
         label->set_max_width_chars(14);
-        label->set_xalign(0.0);
+        label->set_xalign(0.5);
+        label->set_justify(Gtk::JUSTIFY_CENTER);
         label->get_style_context()->add_class("preset-card-label");
         vbox->pack_start(*label, Gtk::PACK_SHRINK);
         customButton_->add(*vbox);
@@ -153,15 +157,17 @@ PresetListPanel::PresetListPanel() :
     lastSavedButton_->set_size_request(CARD_MIN_WIDTH, -1);
     {
         auto* vbox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 1));
+        vbox->set_halign(Gtk::ALIGN_CENTER);
         auto* img = Gtk::manage(new Gtk::Image());
         img->set_size_request(-1, THUMB_HEIGHT);
-        img->set_halign(Gtk::ALIGN_START);
+        img->set_halign(Gtk::ALIGN_CENTER);
         vbox->pack_start(*img, Gtk::PACK_SHRINK);
         auto* label = Gtk::manage(new Gtk::Label());
         label->set_line_wrap(true);
         label->set_line_wrap_mode(Pango::WRAP_WORD_CHAR);
         label->set_max_width_chars(14);
-        label->set_xalign(0.0);
+        label->set_xalign(0.5);
+        label->set_justify(Gtk::JUSTIFY_CENTER);
         label->get_style_context()->add_class("preset-card-label");
         vbox->pack_start(*label, Gtk::PACK_SHRINK);
         lastSavedButton_->add(*vbox);
@@ -175,7 +181,7 @@ PresetListPanel::PresetListPanel() :
     contentBox_->pack_start(*specialFlowBox_, Gtk::PACK_SHRINK);
 
     // Grid area for preset cards
-    gridBox_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 2));
+    gridBox_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
     contentBox_->pack_start(*gridBox_, Gtk::PACK_SHRINK);
 
     scrolledWin_ = Gtk::manage(new Gtk::ScrolledWindow());
@@ -220,6 +226,7 @@ void PresetListPanel::buildContent()
 {
     cardMap_.clear();
     thumbImageMap_.clear();
+    categoryHeaders_.clear();
 
     // Clear grid content
     for (auto* child : gridBox_->get_children()) {
@@ -243,30 +250,75 @@ void PresetListPanel::buildContent()
     if (!rootFiles.empty()) {
         auto* flowBox = Gtk::manage(new Gtk::FlowBox());
         flowBox->set_selection_mode(Gtk::SELECTION_NONE);
-        flowBox->set_homogeneous(false);
-        flowBox->set_min_children_per_line(1);
+        flowBox->set_homogeneous(true);
+        flowBox->set_min_children_per_line(3);
         flowBox->set_max_children_per_line(20);
-        flowBox->set_column_spacing(4);
-        flowBox->set_row_spacing(4);
+        flowBox->set_column_spacing(1);
+        flowBox->set_row_spacing(1);
         for (auto* entry : rootFiles) {
             flowBox->add(*createCard(entry));
         }
         gridBox_->pack_start(*flowBox, Gtk::PACK_SHRINK);
     }
 
-    // Root-level folders as expanders, sub-levels via buildCategoryContent
+    // Root-level folders as animated categories
     for (auto* entry : *entryList) {
         if (entry->parentFolderId == rootFolderId && entry->type == PSET_FOLDER) {
             Glib::ustring folderPath(ProfileStore::getInstance()->getPathFromId(entry->folderId));
             if (App::get().options().useBundledProfiles ||
                 ((folderPath != "${G}") && (folderPath != "${U}"))) {
-                auto* expander = Gtk::manage(new Gtk::Expander(entry->label));
-                expander->set_expanded(true);
-                expander->get_style_context()->add_class("preset-category");
-                auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 2));
-                expander->add(*box);
+                // Animated category with Revealer
+                auto* catBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
+                catBox->get_style_context()->add_class("preset-category");
+
+                auto* headerEvBox = Gtk::manage(new Gtk::EventBox());
+                auto* headerRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+                auto* arrowLabel = Gtk::manage(new Gtk::Label());
+                auto* nameLabel = Gtk::manage(new Gtk::Label(entry->label));
+                nameLabel->get_style_context()->add_class("preset-category-label");
+                nameLabel->set_xalign(0.0);
+                headerRow->pack_start(*arrowLabel, Gtk::PACK_SHRINK);
+                headerRow->pack_start(*nameLabel, Gtk::PACK_EXPAND_WIDGET);
+                headerEvBox->add(*headerRow);
+
+                auto* revealer = Gtk::manage(new Gtk::Revealer());
+                revealer->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
+                revealer->set_transition_duration(200);
+
+                bool expanded = true;
+                auto expIt = categoryExpanded_.find(entry->folderId);
+                if (expIt != categoryExpanded_.end()) {
+                    expanded = expIt->second;
+                }
+                revealer->set_reveal_child(expanded);
+                arrowLabel->set_text(expanded ? "\xe2\x96\xbe" : "\xe2\x96\xb8");
+                categoryExpanded_[entry->folderId] = expanded;
+
+                int folderId = entry->folderId;
+                headerEvBox->signal_button_press_event().connect(
+                    [this, revealer, arrowLabel, folderId](GdkEventButton* event) -> bool {
+                        if (event->button == 1) {
+                            bool nowExpanded = !revealer->get_reveal_child();
+                            revealer->set_reveal_child(nowExpanded);
+                            arrowLabel->set_text(nowExpanded ? "\xe2\x96\xbe" : "\xe2\x96\xb8");
+                            categoryExpanded_[folderId] = nowExpanded;
+                            return true;
+                        }
+                        if (event->button == 3) {
+                            showGroupContextMenu(event, folderId);
+                            return true;
+                        }
+                        return false;
+                    }, false);
+
+                auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
+                revealer->add(*box);
+                catBox->pack_start(*headerEvBox, Gtk::PACK_SHRINK);
+                catBox->pack_start(*revealer, Gtk::PACK_SHRINK);
+
                 buildCategoryContent(box, entry->folderId, entryList);
-                gridBox_->pack_start(*expander, Gtk::PACK_SHRINK);
+                gridBox_->pack_start(*catBox, Gtk::PACK_SHRINK);
+                categoryHeaders_[folderId] = headerEvBox;
             } else {
                 // Skip ${G}/${U} wrapper, promote children to parent level
                 buildCategoryContent(gridBox_, entry->folderId, entryList);
@@ -301,11 +353,11 @@ void PresetListPanel::buildCategoryContent(
     if (!files.empty()) {
         auto* flowBox = Gtk::manage(new Gtk::FlowBox());
         flowBox->set_selection_mode(Gtk::SELECTION_NONE);
-        flowBox->set_homogeneous(false);
-        flowBox->set_min_children_per_line(1);
+        flowBox->set_homogeneous(true);
+        flowBox->set_min_children_per_line(3);
         flowBox->set_max_children_per_line(20);
-        flowBox->set_column_spacing(4);
-        flowBox->set_row_spacing(4);
+        flowBox->set_column_spacing(1);
+        flowBox->set_row_spacing(1);
 
         for (auto* entry : files) {
             auto* card = createCard(entry);
@@ -315,20 +367,63 @@ void PresetListPanel::buildCategoryContent(
         parent->pack_start(*flowBox, Gtk::PACK_SHRINK);
     }
 
-    // Add sub-folders as expanders
+    // Add sub-folders as animated categories
     for (auto* folder : folders) {
         Glib::ustring folderPath(ProfileStore::getInstance()->getPathFromId(folder->folderId));
 
         if (App::get().options().useBundledProfiles ||
             ((folderPath != "${G}") && (folderPath != "${U}"))) {
-            auto* expander = Gtk::manage(new Gtk::Expander(folder->label));
-            expander->set_expanded(true);
-            expander->get_style_context()->add_class("preset-category");
+            auto* catBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
+            catBox->get_style_context()->add_class("preset-category");
+
+            auto* headerEvBox = Gtk::manage(new Gtk::EventBox());
+            auto* headerRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+            auto* arrowLabel = Gtk::manage(new Gtk::Label());
+            auto* nameLabel = Gtk::manage(new Gtk::Label(folder->label));
+            nameLabel->get_style_context()->add_class("preset-category-label");
+            nameLabel->set_xalign(0.0);
+            headerRow->pack_start(*arrowLabel, Gtk::PACK_SHRINK);
+            headerRow->pack_start(*nameLabel, Gtk::PACK_EXPAND_WIDGET);
+            headerEvBox->add(*headerRow);
+
+            auto* revealer = Gtk::manage(new Gtk::Revealer());
+            revealer->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
+            revealer->set_transition_duration(200);
+
+            bool expanded = true;
+            auto expIt = categoryExpanded_.find(folder->folderId);
+            if (expIt != categoryExpanded_.end()) {
+                expanded = expIt->second;
+            }
+            revealer->set_reveal_child(expanded);
+            arrowLabel->set_text(expanded ? "\xe2\x96\xbe" : "\xe2\x96\xb8");
+            categoryExpanded_[folder->folderId] = expanded;
+
+            int folderId = folder->folderId;
+            headerEvBox->signal_button_press_event().connect(
+                [this, revealer, arrowLabel, folderId](GdkEventButton* event) -> bool {
+                    if (event->button == 1) {
+                        bool nowExpanded = !revealer->get_reveal_child();
+                        revealer->set_reveal_child(nowExpanded);
+                        arrowLabel->set_text(nowExpanded ? "\xe2\x96\xbe" : "\xe2\x96\xb8");
+                        categoryExpanded_[folderId] = nowExpanded;
+                        return true;
+                    }
+                    if (event->button == 3) {
+                        showGroupContextMenu(event, folderId);
+                        return true;
+                    }
+                    return false;
+                }, false);
+
             auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 2));
-            expander->add(*box);
+            revealer->add(*box);
+            catBox->pack_start(*headerEvBox, Gtk::PACK_SHRINK);
+            catBox->pack_start(*revealer, Gtk::PACK_SHRINK);
 
             buildCategoryContent(box, folder->folderId, entryList);
-            parent->pack_start(*expander, Gtk::PACK_SHRINK);
+            parent->pack_start(*catBox, Gtk::PACK_SHRINK);
+            categoryHeaders_[folderId] = headerEvBox;
         } else {
             // Skip ${G}/${U} wrapper, promote children to parent level
             buildCategoryContent(parent, folder->folderId, entryList);
@@ -343,36 +438,105 @@ Gtk::Button* PresetListPanel::createCard(const ProfileStoreEntry* entry)
     card->get_style_context()->add_class("preset-card");
     card->set_size_request(CARD_MIN_WIDTH, -1);
 
-    auto* vbox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 1));
+    auto* vbox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
+    vbox->set_halign(Gtk::ALIGN_CENTER);
 
     auto* img = Gtk::manage(new Gtk::Image());
     img->set_size_request(-1, THUMB_HEIGHT);
-    img->set_halign(Gtk::ALIGN_START);
+    img->set_halign(Gtk::ALIGN_CENTER);
     vbox->pack_start(*img, Gtk::PACK_SHRINK);
 
     auto* label = Gtk::manage(new Gtk::Label(entry->label));
     label->set_line_wrap(true);
     label->set_line_wrap_mode(Pango::WRAP_WORD_CHAR);
     label->set_max_width_chars(14);
-    label->set_xalign(0.0);
+    label->set_xalign(0.5);
+    label->set_justify(Gtk::JUSTIFY_CENTER);
     label->get_style_context()->add_class("preset-card-label");
+    {
+        auto css = Gtk::CssProvider::create();
+        css->load_from_data("label { font-size: 8px; }");
+        label->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+    }
     vbox->pack_start(*label, Gtk::PACK_SHRINK);
 
     card->add(*vbox);
 
-    // Click to select
+    // Button press: right-click context menu + DnD start tracking
+    card->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK |
+                     Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK |
+                     Gdk::POINTER_MOTION_MASK);
+
+    card->signal_button_press_event().connect(
+        [this, entry](GdkEventButton* event) -> bool {
+            if (event->button == 3) {
+                showCardContextMenu(event, entry);
+                return true;
+            }
+            if (event->button == 1) {
+                dragEntry_ = entry;
+                dragStartX_ = event->x_root;
+                dragStartY_ = event->y_root;
+                dragActive_ = false;
+            }
+            return false;
+        }, false);
+
+    card->signal_motion_notify_event().connect(
+        [this](GdkEventMotion* event) -> bool {
+            if (dragEntry_ && !dragActive_) {
+                double dx = event->x_root - dragStartX_;
+                double dy = event->y_root - dragStartY_;
+                if (dx * dx + dy * dy > 25) {
+                    dragActive_ = true;
+                    if (auto win = scrolledWin_->get_window()) {
+                        auto display = Gdk::Display::get_default();
+                        auto cursor = Gdk::Cursor::create(display, Gdk::HAND1);
+                        win->set_cursor(cursor);
+                    }
+                }
+            }
+            if (dragActive_) {
+                highlightDropTarget(event->x_root, event->y_root);
+            }
+            return false;
+        }, false);
+
+    card->signal_button_release_event().connect(
+        [this, entry](GdkEventButton* event) -> bool {
+            if (dragActive_ && event->button == 1) {
+                completeDrop(event->x_root, event->y_root);
+                dragEntry_ = nullptr;
+                dragActive_ = false;
+                if (auto win = scrolledWin_->get_window()) {
+                    win->set_cursor();
+                }
+                clearDropHighlight();
+                return true;  // prevent "clicked" from firing
+            }
+            dragEntry_ = nullptr;
+            dragActive_ = false;
+            return false;
+        }, false);
+
+    // Click to select (only fires when release is inside button and not dragging)
     card->signal_clicked().connect([this, entry]() {
-        selectEntry(entry);
+        if (!dragActive_) {
+            selectEntry(entry);
+        }
     });
 
     // Hover events for preview
-    card->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
     card->signal_enter_notify_event().connect([this, entry](GdkEventCrossing*) -> bool {
-        startHoverTimer(entry);
+        if (!dragActive_) {
+            startHoverTimer(entry);
+        }
         return false;
     }, false);
     card->signal_leave_notify_event().connect([this](GdkEventCrossing*) -> bool {
-        cancelHover();
+        if (!dragActive_) {
+            cancelHover();
+        }
         return false;
     }, false);
 
@@ -598,6 +762,7 @@ void PresetListPanel::clearParamChanges()
 
 void PresetListPanel::initProfile(const Glib::ustring& profileFullPath, ProcParams* lastSaved)
 {
+    fprintf(stderr, "DBG initProfile: enter\n");
     const ProfileStoreEntry* pse = nullptr;
     const PartialProfile* defprofile = nullptr;
 
@@ -626,6 +791,7 @@ void PresetListPanel::initProfile(const Glib::ustring& profileFullPath, ProcPara
         lastsaved_ = new PartialProfile(lastSaved, pe);
     }
 
+    fprintf(stderr, "DBG initProfile: before updateProfileList\n");
     updateProfileList();
 
     if (lastsaved_) {
@@ -638,24 +804,31 @@ void PresetListPanel::initProfile(const Glib::ustring& profileFullPath, ProcPara
 
     defprofile = ProfileStore::getInstance()->getProfile(pse);
 
+    fprintf(stderr, "DBG initProfile: before profileChange lastsaved_=%p tpc_=%p\n", (void*)lastsaved_, (void*)tpc_);
     if (lastsaved_) {
         selectEntry(lastSavedPSE_, false);
 
         if (tpc_) {
             tpc_->setDefaults(lastsaved_->pparams);
+            fprintf(stderr, "DBG initProfile: calling profileChange (lastsaved)\n");
             tpc_->profileChange(lastsaved_, EvPhotoLoaded,
                 getCurrentLabel(), nullptr, true);
+            fprintf(stderr, "DBG initProfile: profileChange returned\n");
         }
     } else {
         selectEntry(pse, false);
 
         if (tpc_) {
             tpc_->setDefaults(defprofile->pparams);
+            fprintf(stderr, "DBG initProfile: calling profileChange (default)\n");
             tpc_->profileChange(defprofile, EvPhotoLoaded, getCurrentLabel());
+            fprintf(stderr, "DBG initProfile: profileChange returned\n");
         }
     }
 
+    fprintf(stderr, "DBG initProfile: before startThumbnailGeneration\n");
     startThumbnailGeneration();
+    fprintf(stderr, "DBG initProfile: done\n");
 }
 
 void PresetListPanel::setInitialFileName(const Glib::ustring& filename)
@@ -1191,4 +1364,294 @@ void PresetListPanel::collectPresetEntries(std::vector<const ProfileStoreEntry*>
     for (const auto& pair : cardMap_) {
         entries.push_back(pair.first);
     }
+}
+
+// ============================================================
+// Path resolution helpers
+// ============================================================
+
+Glib::ustring PresetListPanel::resolveVirtualPath(const Glib::ustring& virtualPath) const
+{
+    auto& options = App::get().options();
+    Glib::ustring result = virtualPath;
+    if (result.length() >= 4 && result.substr(0, 4) == "${U}") {
+        result = options.getUserProfilePath() + result.substr(4);
+    } else if (result.length() >= 4 && result.substr(0, 4) == "${G}") {
+        result = options.getGlobalProfilePath() + result.substr(4);
+    }
+    return result;
+}
+
+bool PresetListPanel::isUserPreset(const ProfileStoreEntry* entry) const
+{
+    if (!entry) return false;
+    Glib::ustring path = ProfileStore::getInstance()->getPathFromId(entry->parentFolderId);
+    return path.length() >= 4 && path.substr(0, 4) == "${U}";
+}
+
+// ============================================================
+// Context menus (Phase 4)
+// ============================================================
+
+void PresetListPanel::showCardContextMenu(GdkEventButton* event, const ProfileStoreEntry* entry)
+{
+    auto* menu = Gtk::manage(new Gtk::Menu());
+
+    // "Copy Edit Settings" — always available when an image is open
+    if (ipc_) {
+        auto* copyItem = Gtk::manage(new Gtk::MenuItem(M("PRESET_COPY_SETTINGS")));
+        copyItem->signal_activate().connect([this]() {
+            if (!ipc_) return;
+            ProcParams currentParams;
+            ipc_->getParams(&currentParams, false);
+            clipboard.setProcParams(currentParams);
+        });
+        menu->append(*copyItem);
+    }
+
+    // "Paste Clipboard Settings" — visible when clipboard has data
+    if (clipboard.hasProcParams()) {
+        auto* pasteItem = Gtk::manage(new Gtk::MenuItem(M("PRESET_PASTE_CLIPBOARD")));
+        pasteItem->signal_activate().connect([this]() {
+            if (!clipboard.hasProcParams()) return;
+
+            if (!custom_) {
+                custom_ = new PartialProfile(true);
+            }
+
+            ProcParams pp = clipboard.getProcParams();
+            *custom_->pparams = pp;
+            custom_->pedited->set(true);
+            custom_->pedited->locallab.spots.clear();
+            custom_->pedited->locallab.spots.resize(pp.locallab.spots.size(),
+                LocallabParamsEdited::LocallabSpotEdited(true));
+
+            addCustomEntry();
+            selectEntry(customPSE_, false);
+            changeTo(custom_, M("HISTORY_FROMCLIPBOARD"));
+        });
+        menu->append(*pasteItem);
+        menu->append(*Gtk::manage(new Gtk::SeparatorMenuItem()));
+    }
+
+    // "Apply" — always available
+    auto* applyItem = Gtk::manage(new Gtk::MenuItem(M("PRESET_APPLY")));
+    applyItem->signal_activate().connect([this, entry]() {
+        selectEntry(entry);
+    });
+    menu->append(*applyItem);
+
+    if (isUserPreset(entry)) {
+        // "Rename"
+        auto* renameItem = Gtk::manage(new Gtk::MenuItem(M("PRESET_RENAME")));
+        renameItem->signal_activate().connect([this, entry]() {
+            renamePreset(entry);
+        });
+        menu->append(*renameItem);
+
+        // "Save Current Settings"
+        auto* overwriteItem = Gtk::manage(new Gtk::MenuItem(M("PRESET_SAVE_CURRENT")));
+        overwriteItem->signal_activate().connect([this, entry]() {
+            overwritePreset(entry);
+        });
+        menu->append(*overwriteItem);
+
+        menu->append(*Gtk::manage(new Gtk::SeparatorMenuItem()));
+
+        // "Delete"
+        auto* deleteItem = Gtk::manage(new Gtk::MenuItem(M("PRESET_DELETE")));
+        deleteItem->signal_activate().connect([this, entry]() {
+            deletePreset(entry);
+        });
+        menu->append(*deleteItem);
+    }
+
+    menu->show_all();
+    menu->popup(event->button, event->time);
+}
+
+void PresetListPanel::renamePreset(const ProfileStoreEntry* entry)
+{
+    if (!entry || !isUserPreset(entry)) return;
+
+    Glib::ustring virtualDir = ProfileStore::getInstance()->getPathFromId(entry->parentFolderId);
+    Glib::ustring realDir = resolveVirtualPath(virtualDir);
+    Glib::ustring oldPath = Glib::build_filename(realDir, entry->label + ".pp3");
+
+    Gtk::Dialog dialog(M("PRESET_RENAME"), getToplevelWindow(scrolledWin_), true);
+    dialog.add_button(M("GENERAL_CANCEL"), Gtk::RESPONSE_CANCEL);
+    dialog.add_button(M("GENERAL_OK"), Gtk::RESPONSE_OK);
+
+    auto* nameEntry = Gtk::manage(new Gtk::Entry());
+    nameEntry->set_text(entry->label);
+    nameEntry->set_activates_default(true);
+    dialog.get_content_area()->pack_start(*nameEntry, Gtk::PACK_SHRINK, 8);
+    dialog.set_default_response(Gtk::RESPONSE_OK);
+    dialog.show_all();
+
+    if (dialog.run() == Gtk::RESPONSE_OK) {
+        Glib::ustring newName = nameEntry->get_text();
+        if (!newName.empty() && newName != entry->label) {
+            Glib::ustring newPath = Glib::build_filename(realDir, newName + ".pp3");
+            if (g_rename(oldPath.c_str(), newPath.c_str()) == 0) {
+                ProfileStore::getInstance()->parseProfiles();
+            }
+        }
+    }
+}
+
+void PresetListPanel::overwritePreset(const ProfileStoreEntry* entry)
+{
+    if (!entry || !isUserPreset(entry) || !ipc_) return;
+
+    Glib::ustring virtualDir = ProfileStore::getInstance()->getPathFromId(entry->parentFolderId);
+    Glib::ustring realDir = resolveVirtualPath(virtualDir);
+    Glib::ustring filePath = Glib::build_filename(realDir, entry->label + ".pp3");
+
+    ProcParams currentParams;
+    ipc_->getParams(&currentParams, false);
+
+    if (currentParams.save(filePath) == 0) {
+        ProfileStore::getInstance()->parseProfiles();
+    }
+}
+
+void PresetListPanel::deletePreset(const ProfileStoreEntry* entry)
+{
+    if (!entry || !isUserPreset(entry)) return;
+
+    // Confirmation dialog
+    Glib::ustring msg = M("PRESET_CONFIRM_DELETE");
+    auto pos = msg.find("%1");
+    if (pos != Glib::ustring::npos) {
+        msg.replace(pos, 2, entry->label);
+    }
+
+    Gtk::MessageDialog dialog(getToplevelWindow(scrolledWin_), msg,
+                              false, Gtk::MESSAGE_QUESTION, Gtk::BUTTONS_YES_NO, true);
+    if (dialog.run() != Gtk::RESPONSE_YES) return;
+
+    Glib::ustring virtualDir = ProfileStore::getInstance()->getPathFromId(entry->parentFolderId);
+    Glib::ustring realDir = resolveVirtualPath(virtualDir);
+    Glib::ustring filePath = Glib::build_filename(realDir, entry->label + ".pp3");
+
+    if (g_unlink(filePath.c_str()) == 0) {
+        if (selectedEntry_ == entry) {
+            selectedEntry_ = nullptr;
+            selectedWidget_ = nullptr;
+        }
+        ProfileStore::getInstance()->parseProfiles();
+    }
+}
+
+void PresetListPanel::showGroupContextMenu(GdkEventButton* event, int folderId)
+{
+    Glib::ustring folderPath = ProfileStore::getInstance()->getPathFromId(folderId);
+    if (folderPath.length() < 4 || folderPath.substr(0, 4) != "${U}") return;
+
+    auto* menu = Gtk::manage(new Gtk::Menu());
+
+    auto* renameItem = Gtk::manage(new Gtk::MenuItem(M("PRESET_RENAME_GROUP")));
+    renameItem->signal_activate().connect([this, folderId]() {
+        renameGroup(folderId);
+    });
+    menu->append(*renameItem);
+
+    menu->show_all();
+    menu->popup(event->button, event->time);
+}
+
+void PresetListPanel::renameGroup(int folderId)
+{
+    Glib::ustring virtualPath = ProfileStore::getInstance()->getPathFromId(folderId);
+    if (virtualPath.length() < 4 || virtualPath.substr(0, 4) != "${U}") return;
+
+    Glib::ustring realPath = resolveVirtualPath(virtualPath);
+    Glib::ustring oldName = Glib::path_get_basename(realPath);
+
+    Gtk::Dialog dialog(M("PRESET_RENAME_GROUP"), getToplevelWindow(scrolledWin_), true);
+    dialog.add_button(M("GENERAL_CANCEL"), Gtk::RESPONSE_CANCEL);
+    dialog.add_button(M("GENERAL_OK"), Gtk::RESPONSE_OK);
+
+    auto* nameEntry = Gtk::manage(new Gtk::Entry());
+    nameEntry->set_text(oldName);
+    nameEntry->set_activates_default(true);
+    dialog.get_content_area()->pack_start(*nameEntry, Gtk::PACK_SHRINK, 8);
+    dialog.set_default_response(Gtk::RESPONSE_OK);
+    dialog.show_all();
+
+    if (dialog.run() == Gtk::RESPONSE_OK) {
+        Glib::ustring newName = nameEntry->get_text();
+        if (!newName.empty() && newName != oldName) {
+            Glib::ustring parentDir = Glib::path_get_dirname(realPath);
+            Glib::ustring newPath = Glib::build_filename(parentDir, newName);
+            if (g_rename(realPath.c_str(), newPath.c_str()) == 0) {
+                ProfileStore::getInstance()->parseProfiles();
+            }
+        }
+    }
+}
+
+// ============================================================
+// Drag-and-Drop (Phase 5)
+// ============================================================
+
+void PresetListPanel::highlightDropTarget(double x_root, double y_root)
+{
+    clearDropHighlight();
+
+    for (auto& pair : categoryHeaders_) {
+        Gtk::Widget* header = pair.second;
+        if (!header->get_realized() || !header->get_window()) continue;
+
+        int screen_x, screen_y;
+        header->get_window()->get_root_coords(0, 0, screen_x, screen_y);
+        int hw = header->get_allocated_width();
+        int hh = header->get_allocated_height();
+
+        if (x_root >= screen_x && x_root <= screen_x + hw &&
+            y_root >= screen_y && y_root <= screen_y + hh) {
+            header->get_style_context()->add_class("preset-drop-target");
+            dropTargetWidget_ = header;
+            dropTargetFolderId_ = pair.first;
+            return;
+        }
+    }
+
+    dropTargetFolderId_ = -1;
+}
+
+void PresetListPanel::completeDrop(double x_root, double y_root)
+{
+    highlightDropTarget(x_root, y_root);
+
+    if (dropTargetFolderId_ < 0 || !dragEntry_) return;
+    if (!isUserPreset(dragEntry_)) return;
+
+    // Check target is also a user folder
+    Glib::ustring targetVirtualPath = ProfileStore::getInstance()->getPathFromId(dropTargetFolderId_);
+    if (targetVirtualPath.length() < 4 || targetVirtualPath.substr(0, 4) != "${U}") return;
+
+    // Don't drop onto same folder
+    if (dropTargetFolderId_ == dragEntry_->parentFolderId) return;
+
+    Glib::ustring srcVirtualDir = ProfileStore::getInstance()->getPathFromId(dragEntry_->parentFolderId);
+    Glib::ustring srcRealDir = resolveVirtualPath(srcVirtualDir);
+    Glib::ustring srcPath = Glib::build_filename(srcRealDir, dragEntry_->label + ".pp3");
+
+    Glib::ustring dstRealDir = resolveVirtualPath(targetVirtualPath);
+    Glib::ustring dstPath = Glib::build_filename(dstRealDir, dragEntry_->label + ".pp3");
+
+    if (g_rename(srcPath.c_str(), dstPath.c_str()) == 0) {
+        ProfileStore::getInstance()->parseProfiles();
+    }
+}
+
+void PresetListPanel::clearDropHighlight()
+{
+    if (dropTargetWidget_) {
+        dropTargetWidget_->get_style_context()->remove_class("preset-drop-target");
+        dropTargetWidget_ = nullptr;
+    }
+    dropTargetFolderId_ = -1;
 }

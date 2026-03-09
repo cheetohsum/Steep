@@ -46,6 +46,7 @@
 #include "tools/epd.h"
 #include "tools/fattaltonemap.h"
 #include "tools/filmnegative.h"
+#include "tools/filmpresets.h"
 #include "tools/filmsimulation.h"
 #include "tools/flatfield.h"
 #include "tools/framing.h"
@@ -65,6 +66,7 @@
 #include "tools/texture.h"
 #include "tools/clarity.h"
 #include "tools/grain.h"
+#include "tools/tiltshift.h"
 #include "tools/lensblur.h"
 #include "tools/pcvignette.h"
 #include "tools/pointcolor.h"
@@ -99,6 +101,8 @@
 #include "tools/whitebalance.h"
 #include "tools/xtransprocess.h"
 #include "tools/xtransrawexposure.h"
+
+#include "exposurepreviewstrip.h"
 
 #include "rtengine/noncopyable.h"
 #include "rtengine/rtengine.h"
@@ -153,6 +157,7 @@ protected:
     Texture *texture;
     Clarity *clarity;
     Grain *grain;
+    TiltShift *tiltshift;
     LensBlur *lensblur;
     Spot* spot;
     Defringe* defringe;
@@ -175,6 +180,7 @@ protected:
     SoftLight *softlight;
     Dehaze *dehaze;
     FilmSimulation *filmSimulation;
+    FilmPresets *filmPresets;
     SensorBayer * sensorbayer;
     SensorXTrans * sensorxtrans;
     BayerProcess* bayerprocess;
@@ -215,14 +221,22 @@ protected:
     ToolGroup* colorGroup;
     ToolGroup* detailGroup;
     ToolGroup* effectsGroup;
+    ToolGroup* bwGroup;
     ToolGroup* advancedGroup;
     ToolGroup* calibrationGroup;
 
+    // Mask mode grouped panels
+    ToolGroup* spotGroup;
+    ToolGroup* maskingGroup;
+
+    PreviewStrip* exposureStrip_ = nullptr;
+    PreviewStrip* colorStrip_ = nullptr;
+    PreviewStrip* detailStrip_ = nullptr;
+    PreviewStrip* effectsStrip_ = nullptr;
+    PreviewStrip* bwStrip_ = nullptr;
 
     ToolBar* toolBar;
     Gtk::Box* colorPickerRow_;
-    Gtk::ToggleButton* bwToggle_;
-    sigc::connection bwConn_;
 
     Gtk::Image* imgPanelEnd[6];
     Gtk::Box* vbPanelEnd[6];
@@ -260,10 +274,17 @@ protected:
 
 private:
     EditDataProvider *editDataProvider;
+    class ImageArea *imageArea_;
     sigc::connection modeconn;
     bool photoLoadedOnce; // Used to indicated that a photo has been loaded yet
     std::shared_ptr<RTSurface> ornamentSurface;
     EditorMode prevMode;
+
+    // Color tool pagination (orb dots + stack)
+    Gtk::Stack* colorToolStack_ = nullptr;
+    Gtk::ToggleButton* colorDots_[3] = {};
+    bool colorDotBlock_ = false;
+    int colorDotActive_ = 0;
 
     bool maskModeActive_ = false;
     rtengine::procparams::ToneCurveParams savedToneCurve_;
@@ -271,14 +292,20 @@ private:
     rtengine::procparams::SharpeningParams savedSharpening_;
     rtengine::procparams::SHParams savedSH_;
 
-    void bridgeGlobalToSpot(rtengine::procparams::ProcParams* params);
+    bool bridgeGlobalToSpot(rtengine::procparams::ProcParams* params, const rtengine::ProcEvent& event);
     void loadSpotIntoGlobalTools();
+    void updateResetButtons();
+    void captureBaseline();
+    rtengine::procparams::ProcParams baselineParams_;
+    bool suppressResetUpdate_ = false;
 
     // Collapsible transform sections (content box + label for programmatic expand)
     Gtk::Box* cropSectionContent_ = nullptr;
     Gtk::Label* cropSectionLabel_ = nullptr;
+    Gtk::Button* cropResetBtn_ = nullptr;
     Gtk::Box* perspSectionContent_ = nullptr;
     Gtk::Label* perspSectionLabel_ = nullptr;
+    Gtk::Button* perspResetBtn_ = nullptr;
     Gtk::Box* advSectionContent_ = nullptr;
     Gtk::Label* advSectionLabel_ = nullptr;
     void expandTransformSection(Gtk::Box* content, Gtk::Label* label, const Glib::ustring& name);
@@ -350,7 +377,9 @@ public:
         TEXTURE,
         CLARITY,
         GRAIN,
+        TILT_SHIFT,
         LENS_BLUR,
+        FILM_PRESETS,
         FILM_SIMULATION,
         SOFT_LIGHT,
         DEHAZE,
@@ -537,6 +566,8 @@ public:
 
     void setEditProvider(EditDataProvider *provider);
     void setLevelingGridCallback(std::function<void(bool)> cb);
+
+    void setThumbnail(Thumbnail* thm);
 
     void setProgressListener(rtengine::ProgressListener *pl);
 

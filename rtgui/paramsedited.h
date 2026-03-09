@@ -44,6 +44,9 @@ struct GeneralParamsEdited {
 struct ToneCurveParamsEdited {
     bool curve;
     bool curve2;
+    bool curveR;
+    bool curveG;
+    bool curveB;
     bool curveMode;
     bool curveMode2;
     bool brightness;
@@ -151,6 +154,15 @@ struct GrainParamsEdited {
     bool iso;
     bool strength;
     bool scale;
+};
+
+struct TiltShiftParamsEdited {
+    bool enabled;
+    bool amount;
+    bool focusPos;
+    bool focusWidth;
+    bool feather;
+    bool angle;
 };
 
 struct LensBlurParamsEdited {
@@ -1389,6 +1401,7 @@ struct PerspectiveParamsEdited {
     bool projection_shift_vert;
     bool projection_yaw;
     bool control_lines;
+    bool mesh_warp;
 };
 
 struct GradientParamsEdited {
@@ -1440,6 +1453,9 @@ struct BlackWhiteParamsEdited {
     bool gammaRed;
     bool gammaGreen;
     bool gammaBlue;
+    bool neutrals;
+    bool tone;
+    bool strength;
     bool luminanceCurve;
     bool beforeCurve;
     bool beforeCurveMode;
@@ -1752,6 +1768,26 @@ struct FilmSimulationParamsEdited {
     bool strength;
 };
 
+struct FilmPresetsParamsEdited {
+    bool enabled;
+    bool preset;
+    bool strength;
+    bool contrast;
+    bool saturation;
+    bool warmth;
+    bool tint;
+    bool fade;
+    bool rolloff;
+    bool shadowHue;
+    bool shadowTint;
+    bool highlightHue;
+    bool highlightTint;
+    bool halation;
+    bool redShift;
+    bool greenShift;
+    bool blueShift;
+};
+
 struct SoftLightParamsEdited {
     bool enabled;
     bool strength;
@@ -1879,6 +1915,7 @@ struct ParamsEdited {
     TextureParamsEdited texture;
     ClarityParamsEdited clarity;
     GrainParamsEdited grain;
+    TiltShiftParamsEdited tiltShift;
     LensBlurParamsEdited lensBlur;
     RGBCurvesParamsEdited rgbCurves;
     ColorToningEdited colorToning;
@@ -1926,6 +1963,7 @@ struct ParamsEdited {
     ColorGradingParamsEdited colorGrading;
     PointColorParamsEdited pointcolor;
     FilmSimulationParamsEdited filmSimulation;
+    FilmPresetsParamsEdited filmPresets;
     SoftLightParamsEdited softlight;
     DehazeParamsEdited dehaze;
     MetaDataParamsEdited metadata;

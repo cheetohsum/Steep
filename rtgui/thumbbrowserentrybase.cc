@@ -20,6 +20,7 @@
 
 #include "options.h"
 #include "thumbbrowserbase.h"
+#include "filethumbnailbuttonset.h"
 #include "rtengine/rt_math.h"
 #include "rtsurface.h"
 
@@ -154,6 +155,13 @@ ThumbBrowserEntryBase::ThumbBrowserEntryBase (const Glib::ustring& fname, Thumbn
     cursor_type(CSUndefined),
     collate_name(getPaddedName(dispname).casefold_collate_key()),
     collate_exif(getPaddedName(thm->getExifString()).casefold_collate_key()),
+    collate_ext(([&fname]() -> std::string {
+        auto dot = fname.rfind('.');
+        if (dot != Glib::ustring::npos) {
+            return fname.substr(dot + 1).casefold_collate_key();
+        }
+        return std::string();
+    })()),
     thumbnail(thm),
     filename(fname),
     selected(false),
@@ -165,12 +173,17 @@ ThumbBrowserEntryBase::ThumbBrowserEntryBase (const Glib::ustring& fname, Thumbn
     edited(false),
     recentlysaved(false),
     updatepriority(false),
-    withFilename(WFNAME_NONE)
+    withFilename(WFNAME_NONE),
+    animRatingAlpha_(0),
+    animColorAlpha_(0),
+    animRatingActive_(false),
+    animColorActive_(false)
 {
 }
 
 ThumbBrowserEntryBase::~ThumbBrowserEntryBase ()
 {
+    animTimerConn_.disconnect();
     delete buttonSet;
 }
 
@@ -217,10 +230,10 @@ void ThumbBrowserEntryBase::updateBackBuffer ()
     Gdk::RGBA bgn = parent->getNormalBgColor();
     Gdk::RGBA bgs = parent->getSelectedBgColor();
 
-    // Fill entire cell with #393939 (the FileCatalog background from CSS).
+    // Fill entire cell with theme background color.
     // The surface is RGB24 (no alpha) so we must paint the correct color
     // explicitly — uninitialized pixels default to black.
-    cc->set_source_rgb(0.2235, 0.2235, 0.2235); // #393939
+    cc->set_source_rgb(bgn.get_red(), bgn.get_green(), bgn.get_blue());
     cc->paint();
 
     cc->set_antialias(Cairo::ANTIALIAS_SUBPIXEL);
@@ -228,9 +241,11 @@ void ThumbBrowserEntryBase::updateBackBuffer ()
     drawFrame (cc, bgs, bgn);
 
     // calculate height of button set (hidden if nothing to show)
+    // In filmstrip mode, don't reserve space — overlays are drawn on the image
     int bsHeight = 0;
+    bool inFilmstrip = parent && parent->getLocation() == ThumbBrowserBase::THLOC_EDITOR;
 
-    if (buttonSet && buttonSet->shouldShow()) {
+    if (buttonSet && buttonSet->shouldShow() && !inFilmstrip) {
         int tmp;
         buttonSet->getAllocatedDimensions(tmp, bsHeight);
     }
@@ -494,9 +509,11 @@ void ThumbBrowserEntryBase::resize (int h)
     int old_prew = previewSize.width;
 
     // dimensions of the button set (hidden if nothing to show)
+    // In filmstrip mode, don't reserve space — overlays are drawn on the image
     int bsw = 0, bsh = 0;
+    bool inFilmstrip = parent && parent->getLocation() == ThumbBrowserBase::THLOC_EDITOR;
 
-    if (buttonSet && buttonSet->shouldShow()) {
+    if (buttonSet && buttonSet->shouldShow() && !inFilmstrip) {
         buttonSet->getMinimalDimensions (bsw, bsh);
     }
 
@@ -623,9 +640,11 @@ void ThumbBrowserEntryBase::draw (Cairo::RefPtr<Cairo::Context> cc)
     cc->set_source(backBuffer->getSurface(), x_offset, y_offset);
     cc->paint();
 
-    // check icon set changes!!!
-
-//    drawProgressBar (window, cc, selected ? texts : textn, selected ? bgs : bgn, ofsX+startx, expected.width, ofsY+starty + upperMargin+bsHeight+borderWidth+previewSize.height+borderWidth+textGap+tpos, fnlabh);
+    // In filmstrip mode: draw rating/label overlays directly on the image
+    bool inFilmstrip = parent && parent->getLocation() == ThumbBrowserBase::THLOC_EDITOR;
+    if (inFilmstrip && thumbnail) {
+        drawFilmstripOverlays(cc, x_offset, y_offset);
+    }
 
     // redraw button set above the thumbnail (hidden if no rank/label, or in filmstrip/tab mode)
     if (buttonSet && buttonSet->shouldShow() && !(parent && parent->isInTabMode())) {
@@ -746,4 +765,194 @@ std::tuple<Glib::ustring, bool> ThumbBrowserEntryBase::getToolTip (int x, int y)
     return std::make_tuple(std::move(tooltip), useMarkup);
 }
 
+void ThumbBrowserEntryBase::drawFilmstripOverlays (Cairo::RefPtr<Cairo::Context> cc, int x, int y)
+{
+    if (!thumbnail || !parent) return;
 
+    int rank = thumbnail->getRank();
+    int clabel = thumbnail->getColorLabel();
+    if (rank <= 0 && clabel <= 0 && !animRatingActive_ && !animColorActive_) return;
+
+    // Icon area: bottom-left for stars, bottom-right for color label
+    int imgX = x + prevPos.x;
+    int imgY = y + prevPos.y;
+    int imgW = previewSize.width;
+    int imgH = previewSize.height;
+
+    // Draw rating animation glow
+    if (animRatingActive_ && animRatingAlpha_ > 0) {
+        cc->save();
+        cc->rectangle(imgX, imgY, imgW, imgH);
+        cc->clip();
+        // Golden glow from bottom
+        auto grad = Cairo::LinearGradient::create(imgX, imgY + imgH, imgX, imgY + imgH * 0.5);
+        grad->add_color_stop_rgba(0, 1.0, 0.84, 0.0, 0.4 * animRatingAlpha_);
+        grad->add_color_stop_rgba(1, 1.0, 0.84, 0.0, 0.0);
+        cc->set_source(grad);
+        cc->paint();
+        cc->restore();
+    }
+
+    // Draw color label animation glow
+    if (animColorActive_ && animColorAlpha_ > 0 && clabel > 0) {
+        static const double colorR[] = {0, 1.0, 1.0, 0.2, 0.2, 0.6};
+        static const double colorG[] = {0, 0.2, 0.85, 0.8, 0.4, 0.2};
+        static const double colorB[] = {0, 0.2, 0.0, 0.2, 1.0, 0.8};
+        int ci = std::min(clabel, 5);
+        cc->save();
+        // Colored border glow
+        double glowW = 3.0 * animColorAlpha_;
+        cc->set_source_rgba(colorR[ci], colorG[ci], colorB[ci], 0.7 * animColorAlpha_);
+        cc->set_line_width(glowW);
+        cc->rectangle(imgX + glowW/2, imgY + glowW/2, imgW - glowW, imgH - glowW);
+        cc->stroke();
+        cc->restore();
+    }
+
+    // Draw star icons at bottom-left
+    if (rank > 0 && FileThumbnailButtonSet::rankIcon) {
+        auto starSurf = FileThumbnailButtonSet::rankIcon->get();
+        if (starSurf) {
+            int iconW = FileThumbnailButtonSet::rankIcon->getWidth();
+            int iconH = FileThumbnailButtonSet::rankIcon->getHeight();
+
+            int gap = 1;
+            int totalW = rank * (iconW + gap) - gap;
+            int sx = imgX + 3;
+            int sy = imgY + imgH - iconH - 3;
+
+            // Semi-transparent backdrop pill
+            cc->set_source_rgba(0, 0, 0, 0.5);
+            double radius = 3.0;
+            cc->begin_new_path();
+            cc->arc(sx - 2 + radius, sy - 2 + radius, radius, M_PI, 1.5 * M_PI);
+            cc->arc(sx + totalW + 2 - radius, sy - 2 + radius, radius, 1.5 * M_PI, 2.0 * M_PI);
+            cc->arc(sx + totalW + 2 - radius, sy + iconH + 2 - radius, radius, 0, 0.5 * M_PI);
+            cc->arc(sx - 2 + radius, sy + iconH + 2 - radius, radius, 0.5 * M_PI, M_PI);
+            cc->close_path();
+            cc->fill();
+
+            // Draw stars with scale-up animation on recent change
+            double starScale = 1.0;
+            if (animRatingActive_ && animRatingAlpha_ > 0.3) {
+                starScale = 1.0 + 0.3 * (animRatingAlpha_ - 0.3) / 0.7;
+            }
+            for (int i = 0; i < rank; i++) {
+                if (starScale > 1.01) {
+                    cc->save();
+                    double scx = sx + iconW / 2.0;
+                    double scy = sy + iconH / 2.0;
+                    cc->translate(scx, scy);
+                    cc->scale(starScale, starScale);
+                    cc->translate(-scx, -scy);
+                }
+                cc->set_source(starSurf, sx, sy);
+                cc->rectangle(sx, sy, iconW, iconH);
+                cc->fill();
+                if (starScale > 1.01) {
+                    cc->restore();
+                }
+                sx += iconW + gap;
+            }
+        }
+    }
+
+    // Draw color label circle at bottom-right
+    if (clabel > 0 && clabel <= 5 && FileThumbnailButtonSet::colorLabelIcon[clabel]) {
+        auto circSurf = FileThumbnailButtonSet::colorLabelIcon[clabel]->get();
+        if (circSurf) {
+            int iconW = FileThumbnailButtonSet::colorLabelIcon[clabel]->getWidth();
+            int iconH = FileThumbnailButtonSet::colorLabelIcon[clabel]->getHeight();
+            int cx = imgX + imgW - iconW - 3;
+            int cy = imgY + imgH - iconH - 3;
+
+            // Semi-transparent backdrop
+            cc->set_source_rgba(0, 0, 0, 0.5);
+            cc->arc(cx + iconW / 2.0, cy + iconH / 2.0, iconW / 2.0 + 2, 0, 2 * M_PI);
+            cc->fill();
+
+            cc->set_source(circSurf, cx, cy);
+            cc->rectangle(cx, cy, iconW, iconH);
+            cc->fill();
+        }
+    }
+}
+
+void ThumbBrowserEntryBase::startRatingAnimation ()
+{
+    animRatingActive_ = true;
+    animRatingAlpha_ = 1.0;
+    animColorActive_ = animColorActive_; // preserve existing color anim
+    animStartTime_ = std::chrono::steady_clock::now();
+
+    if (!animTimerConn_.connected()) {
+        animTimerConn_ = Glib::signal_timeout().connect(
+            sigc::mem_fun(*this, &ThumbBrowserEntryBase::animTick), 30);
+    }
+
+    if (parent) {
+        parent->getDrawingArea()->queue_draw();
+    }
+}
+
+void ThumbBrowserEntryBase::startColorLabelAnimation ()
+{
+    animColorActive_ = true;
+    animColorAlpha_ = 1.0;
+    animRatingActive_ = animRatingActive_; // preserve existing rating anim
+    animStartTime_ = std::chrono::steady_clock::now();
+
+    if (!animTimerConn_.connected()) {
+        animTimerConn_ = Glib::signal_timeout().connect(
+            sigc::mem_fun(*this, &ThumbBrowserEntryBase::animTick), 30);
+    }
+
+    if (parent) {
+        parent->getDrawingArea()->queue_draw();
+    }
+}
+
+bool ThumbBrowserEntryBase::animTick ()
+{
+    auto now = std::chrono::steady_clock::now();
+    double elapsed = std::chrono::duration<double, std::milli>(now - animStartTime_).count();
+    double t = std::min(1.0, elapsed / ANIM_DURATION_MS);
+
+    // Ease-out cubic
+    double ease = 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t);
+
+    if (animRatingActive_) {
+        animRatingAlpha_ = std::max(0.0, 1.0 - ease);
+    }
+    if (animColorActive_) {
+        animColorAlpha_ = std::max(0.0, 1.0 - ease);
+    }
+
+    if (parent) {
+        parent->getDrawingArea()->queue_draw();
+    }
+
+    if (t >= 1.0) {
+        animRatingActive_ = false;
+        animColorActive_ = false;
+        animRatingAlpha_ = 0;
+        animColorAlpha_ = 0;
+        return false; // disconnect timer
+    }
+    return true; // continue
+}
+
+Cairo::RefPtr<Cairo::ImageSurface> ThumbBrowserEntryBase::snapshotSurface () const
+{
+    if (!backBuffer || !backBuffer->surfaceCreated()) {
+        return {};
+    }
+    auto src = backBuffer->getSurface();
+    int w = src->get_width();
+    int h = src->get_height();
+    auto copy = Cairo::ImageSurface::create(Cairo::FORMAT_ARGB32, w, h);
+    auto cr = Cairo::Context::create(copy);
+    cr->set_source(src, 0, 0);
+    cr->paint();
+    return copy;
+}

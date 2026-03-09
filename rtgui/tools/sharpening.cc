@@ -67,7 +67,7 @@ Sharpening::Sharpening () : FoldableToolPanel(this, TOOL_NAME, M("TP_SHARPENING_
     usm = new Gtk::Box(Gtk::ORIENTATION_VERTICAL);
     usm->show ();
 
-    amount = Gtk::manage (new Adjuster (M("TP_SHARPENING_AMOUNT"), 1, 1000, 1, 200));
+    amount = Gtk::manage (new Adjuster (M("TP_SHARPENING_AMOUNT"), 1, 1000, 1, 0));
     radius = Gtk::manage (new Adjuster (M("TP_SHARPENING_RADIUS"), 0.3, 3, 0.01, 0.5));
     threshold = Gtk::manage (new ThresholdAdjuster (M("TP_SHARPENING_THRESHOLD"), 0., 2000., 20., 80., 2000., 1200., 0, false));
     threshold->setAdjusterListener (this);
@@ -186,7 +186,12 @@ void Sharpening::read (const ProcParams* pp, const ParamsEdited* pedited)
 
     contrast->setValue      (pp->sharpening.contrast);
     blur->setValue          (pp->sharpening.blurradius);
-    amount->setValue        (pp->sharpening.amount);
+    // Override amount default: if tool disabled and amount is the old default (200), reset to 0
+    int amountVal = pp->sharpening.amount;
+    if (!pp->sharpening.enabled && amountVal == 200) {
+        amountVal = 0;
+    }
+    amount->setValue        (amountVal);
     radius->setValue        (pp->sharpening.radius);
     threshold->setValue<int>(pp->sharpening.threshold);
     eradius->setValue       (pp->sharpening.edges_radius);

@@ -18,6 +18,10 @@
  */
 #pragma once
 
+#include <map>
+#include <string>
+#include <vector>
+
 #include <gtkmm.h>
 #include <giomm.h>
 
@@ -88,6 +92,28 @@ private:
     void countPhotosInChildren (const Gtk::TreeModel::iterator& parent);
 
     IdleRegister idle_register;
+
+    // Chevron expand/collapse indicators
+    Glib::RefPtr<Gdk::Pixbuf> chevronRightPixbuf_;
+    Glib::RefPtr<Gdk::Pixbuf> chevronDownPixbuf_;
+
+    // Chevron rotation animation
+    std::vector<Glib::RefPtr<Gdk::Pixbuf>> chevronFrames_;
+    std::map<std::string, int> chevronAnimFrame_;
+    std::map<std::string, bool> chevronAnimExpanding_;
+    sigc::connection chevronAnimConn_;
+    void startChevronAnim();
+
+    // Child row reveal (fade-in on expand)
+    std::string revealParentPath_;
+    double revealAlpha_ = 1.0;
+
+    // Expand/collapse animation
+    sigc::connection expandAnimConn_;
+    double expandAnimFraction_ = 0.0;
+    int expandAnimStartH_ = 0;
+    int expandAnimTargetH_ = 0;
+    bool expandAnimExpanding_ = true;
 
     // Hover thumbnail popup
     Gtk::Window* hoverPopup_;

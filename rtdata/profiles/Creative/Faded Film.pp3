@@ -1,0 +1,21 @@
+[Exposure]
+Auto=false
+Compensation=0.2
+Contrast=-5
+Black=0
+HighlightCompr=80
+ShadowCompr=70
+CurveMode=Standard
+Curve=3;0;0.08;0.20;0.18;0.50;0.52;0.80;0.82;1;0.95;
+
+[Vibrance]
+Enabled=true
+Pastels=-20
+Saturated=-25
+ProtectSkins=false
+
+[Luminance Curve]
+Enabled=true
+Brightness=5
+Contrast=-10
+LCurve=3;0;0.06;0.25;0.22;0.50;0.50;0.85;0.88;1;0.95;

@@ -152,6 +152,34 @@ Crop::Crop():
     resetCrop->set_relief (Gtk::RELIEF_NONE);
     resetCrop->set_tooltip_text (M("TP_CROP_RESETCROP"));
 
+    // Lock ratio toggle with lock icon
+    fixr = Gtk::manage (new Gtk::ToggleButton ());
+    lockIcon = Gtk::manage (new RTImage ("ba-lock-on", Gtk::ICON_SIZE_BUTTON));
+    fixr->set_image (*lockIcon);
+    fixr->set_always_show_image (true);
+    fixr->set_relief (Gtk::RELIEF_NONE);
+    fixr->set_tooltip_text (M("TP_CROP_FIXRATIO"));
+    fixr->set_active (true);
+    setExpandAlignProperties(fixr, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+
+    ratio = Gtk::manage (new MyComboBoxText ());
+    setExpandAlignProperties(ratio, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+
+    orientation = Gtk::manage (new MyComboBoxText ());
+    setExpandAlignProperties(orientation, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+
+    customRatioLabel = Gtk::manage(new Gtk::Label(""));
+    customRatioLabel->hide();
+    setExpandAlignProperties(customRatioLabel, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_CENTER);
+
+    // Ratio row: [lock icon] [ratio combo]
+    Gtk::Box* ratioRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+    setExpandAlignProperties(ratioRow, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    ratioRow->pack_start (*fixr, Gtk::PACK_SHRINK);
+    ratioRow->pack_start (*ratio, Gtk::PACK_EXPAND_WIDGET);
+    ratioRow_ = ratioRow;
+
+    // Position and size spinners
     methodgrid->attach (*xlab, 0, 0, 1, 1);
     methodgrid->attach (*x, 1, 0, 1, 1);
     methodgrid->attach (*ylab, 2, 0, 1, 1);
@@ -166,32 +194,13 @@ Crop::Crop():
     methodseparator->get_style_context()->add_class("grid-row-separator");
     pack_start (*methodseparator, Gtk::PACK_SHRINK, 0);
 
+    // Orientation, custom ratio label, and guide type
     Gtk::Grid* settingsgrid = Gtk::manage(new Gtk::Grid());
     settingsgrid->get_style_context()->add_class("grid-spacing");
     setExpandAlignProperties(settingsgrid, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
 
-    fixr = Gtk::manage (new Gtk::CheckButton (M("TP_CROP_FIXRATIO")));
-    setExpandAlignProperties(fixr, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
-    fixr->set_active (1);
-
-    Gtk::Grid* ratiogrid = Gtk::manage(new Gtk::Grid());
-    ratiogrid->get_style_context()->add_class("grid-spacing");
-    setExpandAlignProperties(ratiogrid, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
-
-    ratio = Gtk::manage (new MyComboBoxText ());
-    setExpandAlignProperties(ratio, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
-
-    orientation = Gtk::manage (new MyComboBoxText ());
-    setExpandAlignProperties(orientation, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
-
-    customRatioLabel = Gtk::manage(new Gtk::Label(""));
-    customRatioLabel->hide();
-    setExpandAlignProperties(customRatioLabel, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_CENTER);
-
-    ratiogrid->set_column_homogeneous (true);
-    ratiogrid->attach (*ratio, 0, 0, 1, 1);
-    ratiogrid->attach (*customRatioLabel, 1, 0, 1, 1);
-    ratiogrid->attach (*orientation, 1, 0, 1, 1);
+    Gtk::Label* orientlab = Gtk::manage (new Gtk::Label (M("TP_CROP_ORIENTATION") + ":"));
+    setExpandAlignProperties(orientlab, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
 
     Gtk::Label* guidelab = Gtk::manage (new Gtk::Label (M("TP_CROP_GUIDETYPE")));
     setExpandAlignProperties(guidelab, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
@@ -199,8 +208,9 @@ Crop::Crop():
     guide = Gtk::manage (new MyComboBoxText ());
     setExpandAlignProperties(guide, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
 
-    settingsgrid->attach (*fixr, 0, 0, 1, 1);
-    settingsgrid->attach (*ratiogrid, 1, 0, 1, 1);
+    settingsgrid->attach (*orientlab, 0, 0, 1, 1);
+    settingsgrid->attach (*orientation, 1, 0, 1, 1);
+    settingsgrid->attach (*customRatioLabel, 1, 0, 1, 1);
     settingsgrid->attach (*guidelab, 0, 1, 1, 1);
     settingsgrid->attach (*guide, 1, 1, 1, 1);
     pack_start (*settingsgrid, Gtk::PACK_SHRINK, 0 );
@@ -367,6 +377,7 @@ void Crop::read (const ProcParams* pp, const ParamsEdited* pedited)
         ratio->set_active_text (pp->crop.ratio);
     }
     fixr->set_active (pp->crop.fixratio);
+    lockIcon->set_from_icon_name (pp->crop.fixratio ? "ba-lock-on" : "ba-lock-off");
 
     lastRotationDeg = pp->coarse.rotate;
 
@@ -690,6 +701,9 @@ void Crop::heightChanged ()
 // Fixed ratio toggle button
 void Crop::ratioFixedChanged ()
 {
+    // Update lock icon
+    lockIcon->set_from_icon_name (fixr->get_active() ? "ba-lock-on" : "ba-lock-off");
+
     // Batch mode handling when enabling/disabling fixed crop
     if (batchMode && lastFixRatio != fixr->get_active ()) {
         if (fixr->get_inconsistent()) {
@@ -716,6 +730,12 @@ void Crop::ratioChanged ()
     } else {
         orientation->show();
         customRatioLabel->hide();
+    }
+
+    // Auto-enable crop when a ratio is selected
+    if (!getEnabled()) {
+        setEnabled(true);
+        enabledChanged();
     }
 
     if (!fixr->get_active ()) {

@@ -74,7 +74,6 @@ protected:
     bool isBipolar_;
     std::function<void()> labelClickCallback_;
     std::function<void(bool)> interactionCallback_;
-    Gtk::Button* labelButton_ = nullptr;
 
     double shapeValue (double a) const;
     double2double_fun value2slider, slider2value;
@@ -148,4 +147,7 @@ public:
     void setInteractionCallback(std::function<void(bool)> callback);
     void hideResetButton();
     void setSliderMinWidth(int px);
+
+protected:
+    bool on_draw(const Cairo::RefPtr<Cairo::Context>& cr) override;
 };

@@ -725,40 +725,47 @@ void DiagonalCurveEditorSubGroup::switchGUI()
             }
         }
 
+        // Curve line is always white/default; tint the background histogram to match channel
+        customCurve->clearCurveLineColor();
+        NURBSCurve->clearCurveLineColor();
+        if (dCurve->hasDrawColor() && dCurve->getOverlayCurveEditors().empty()) {
+            // Individual channel (R/G/B) - tint the histogram
+            double r, g, b;
+            dCurve->getDrawColor(r, g, b);
+            customCurve->setBackgroundHistogramTint(r, g, b);
+            NURBSCurve->setBackgroundHistogramTint(r, g, b);
+        } else {
+            // Master curve or no color - no tint (RGB histograms handle it)
+            customCurve->clearBackgroundHistogramTint();
+            NURBSCurve->clearBackgroundHistogramTint();
+        }
+        {
+            const auto& ovEditors = dCurve->getOverlayCurveEditors();
+            if (!ovEditors.empty()) {
+                std::vector<CurveOverlay> overlays;
+                for (auto* ed : ovEditors) {
+                    auto* dce = dynamic_cast<DiagonalCurveEditor*>(ed);
+                    if (dce && ed->hasDrawColor()) {
+                        CurveOverlay ov;
+                        ov.points = dce->customCurveEd;
+                        ed->getDrawColor(ov.r, ov.g, ov.b);
+                        ov.alpha = 0.65;
+                        ov.useBaseCurve = true;
+                        overlays.push_back(ov);
+                    }
+                }
+                customCurve->setOverlayCurves(overlays);
+            } else {
+                customCurve->clearOverlayCurves();
+            }
+        }
+
         switch(auto tp = (DiagonalCurveType)(dCurve->curveType->getSelected())) {
         case (DCT_Spline):
         case (DCT_CatumullRom):
             customCurve->setPoints(tp == DCT_Spline ? dCurve->customCurveEd : dCurve->catmullRomCurveEd);
             customCurve->setColorProvider(dCurve->getCurveColorProvider(), dCurve->getCurveCallerId());
             customCurve->setColoredBar(leftBar, bottomBar);
-            // Apply per-channel curve color if set
-            if (dCurve->hasDrawColor()) {
-                double r, g, b;
-                dCurve->getDrawColor(r, g, b);
-                customCurve->setCurveLineColor(r, g, b);
-            } else {
-                customCurve->clearCurveLineColor();
-            }
-            // Apply overlay curves (e.g., R/G/B on master view)
-            {
-                const auto& ovEditors = dCurve->getOverlayCurveEditors();
-                if (!ovEditors.empty()) {
-                    std::vector<CurveOverlay> overlays;
-                    for (auto* ed : ovEditors) {
-                        auto* dce = dynamic_cast<DiagonalCurveEditor*>(ed);
-                        if (dce && ed->hasDrawColor()) {
-                            CurveOverlay ov;
-                            ov.points = dce->customCurveEd;
-                            ed->getDrawColor(ov.r, ov.g, ov.b);
-                            ov.alpha = 0.6;
-                            overlays.push_back(ov);
-                        }
-                    }
-                    customCurve->setOverlayCurves(overlays);
-                } else {
-                    customCurve->clearOverlayCurves();
-                }
-            }
             customCurve->queue_resize_no_redraw();
             updateEditButton(dCurve, editCustom, editCustomConn);
             parent->attachCurve (customCurveGrid);
@@ -1175,9 +1182,30 @@ void DiagonalCurveEditorSubGroup::storeDisplayedCurve()
 void DiagonalCurveEditorSubGroup::restoreDisplayedHistogram()
 {
     if (parent->displayedCurve /*&& initslope==1*/) {
-        paramCurve->updateBackgroundHistogram (parent->displayedCurve->histogram);
-        customCurve->updateBackgroundHistogram (parent->displayedCurve->histogram);
-        NURBSCurve->updateBackgroundHistogram (parent->displayedCurve->histogram);
+        // Check if the displayed curve has overlay editors with valid histograms
+        auto* dce = dynamic_cast<DiagonalCurveEditor*>(parent->displayedCurve);
+        if (dce) {
+            const auto& ovEditors = dce->getOverlayCurveEditors();
+            if (ovEditors.size() >= 3
+                && ovEditors[0]->bgHistValid
+                && ovEditors[1]->bgHistValid
+                && ovEditors[2]->bgHistValid) {
+                paramCurve->updateBackgroundHistogramRGB(ovEditors[0]->histogram, ovEditors[1]->histogram, ovEditors[2]->histogram);
+                customCurve->updateBackgroundHistogramRGB(ovEditors[0]->histogram, ovEditors[1]->histogram, ovEditors[2]->histogram);
+                NURBSCurve->updateBackgroundHistogramRGB(ovEditors[0]->histogram, ovEditors[1]->histogram, ovEditors[2]->histogram);
+                return;
+            }
+        }
+
+        if (parent->displayedCurve->bgHistRGBValid) {
+            paramCurve->updateBackgroundHistogramRGB (parent->displayedCurve->histogramR, parent->displayedCurve->histogramG, parent->displayedCurve->histogramB);
+            customCurve->updateBackgroundHistogramRGB (parent->displayedCurve->histogramR, parent->displayedCurve->histogramG, parent->displayedCurve->histogramB);
+            NURBSCurve->updateBackgroundHistogramRGB (parent->displayedCurve->histogramR, parent->displayedCurve->histogramG, parent->displayedCurve->histogramB);
+        } else {
+            paramCurve->updateBackgroundHistogram (parent->displayedCurve->histogram);
+            customCurve->updateBackgroundHistogram (parent->displayedCurve->histogram);
+            NURBSCurve->updateBackgroundHistogram (parent->displayedCurve->histogram);
+        }
     }
 
 }
@@ -1361,10 +1389,58 @@ void DiagonalCurveEditorSubGroup::setCurveGraphSize(int size)
 
 void DiagonalCurveEditorSubGroup::updateBackgroundHistogram (CurveEditor* ce)
 {
-    if (ce == parent->displayedCurve /*&&  initslope==1*/) {
-        paramCurve->updateBackgroundHistogram (ce->histogram);
-        customCurve->updateBackgroundHistogram (ce->histogram);
-        NURBSCurve->updateBackgroundHistogram (ce->histogram);
+    CurveEditor* displayed = parent->displayedCurve;
+
+    // If a non-displayed curve is updated, check if it's an overlay of the displayed curve
+    // and trigger an RGB histogram update on the displayed curve
+    if (ce != displayed && displayed) {
+        auto* dce = dynamic_cast<DiagonalCurveEditor*>(displayed);
+        if (dce) {
+            const auto& ovEditors = dce->getOverlayCurveEditors();
+            for (auto* ov : ovEditors) {
+                if (ov == ce) {
+                    // This non-displayed editor is an overlay of the displayed curve;
+                    // re-check if all overlays now have valid data
+                    if (ovEditors.size() >= 3
+                        && ovEditors[0]->bgHistValid
+                        && ovEditors[1]->bgHistValid
+                        && ovEditors[2]->bgHistValid) {
+                        paramCurve->updateBackgroundHistogramRGB(ovEditors[0]->histogram, ovEditors[1]->histogram, ovEditors[2]->histogram);
+                        customCurve->updateBackgroundHistogramRGB(ovEditors[0]->histogram, ovEditors[1]->histogram, ovEditors[2]->histogram);
+                        NURBSCurve->updateBackgroundHistogramRGB(ovEditors[0]->histogram, ovEditors[1]->histogram, ovEditors[2]->histogram);
+                    }
+                    return;
+                }
+            }
+        }
+    }
+
+    if (ce == displayed /*&&  initslope==1*/) {
+        // If the displayed curve has overlay editors (e.g. R/G/B on master),
+        // synthesize RGB histogram from their individual single-channel histograms
+        auto* dce = dynamic_cast<DiagonalCurveEditor*>(ce);
+        if (dce) {
+            const auto& ovEditors = dce->getOverlayCurveEditors();
+            if (ovEditors.size() >= 3
+                && ovEditors[0]->bgHistValid
+                && ovEditors[1]->bgHistValid
+                && ovEditors[2]->bgHistValid) {
+                paramCurve->updateBackgroundHistogramRGB(ovEditors[0]->histogram, ovEditors[1]->histogram, ovEditors[2]->histogram);
+                customCurve->updateBackgroundHistogramRGB(ovEditors[0]->histogram, ovEditors[1]->histogram, ovEditors[2]->histogram);
+                NURBSCurve->updateBackgroundHistogramRGB(ovEditors[0]->histogram, ovEditors[1]->histogram, ovEditors[2]->histogram);
+                return;
+            }
+        }
+
+        if (ce->bgHistRGBValid) {
+            paramCurve->updateBackgroundHistogramRGB (ce->histogramR, ce->histogramG, ce->histogramB);
+            customCurve->updateBackgroundHistogramRGB (ce->histogramR, ce->histogramG, ce->histogramB);
+            NURBSCurve->updateBackgroundHistogramRGB (ce->histogramR, ce->histogramG, ce->histogramB);
+        } else {
+            paramCurve->updateBackgroundHistogram (ce->histogram);
+            customCurve->updateBackgroundHistogram (ce->histogram);
+            NURBSCurve->updateBackgroundHistogram (ce->histogram);
+        }
     }
 }
 

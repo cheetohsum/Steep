@@ -31,6 +31,7 @@ set(RT_GUI_TOOL_PANEL_SOURCES
     tools/epd.cc
     tools/fattaltonemap.cc
     tools/filmnegative.cc
+    tools/filmpresets.cc
     tools/filmsimulation.cc
     tools/flatfield.cc
     tools/framing.cc
@@ -47,6 +48,7 @@ set(RT_GUI_TOOL_PANEL_SOURCES
     tools/texture.cc
     tools/clarity.cc
     tools/grain.cc
+    tools/tiltshift.cc
     tools/lensblur.cc
     tools/locallab.cc
     tools/locallabtools.cc
@@ -157,6 +159,7 @@ set(NONCLISOURCEFILES
     editcallbacks.cc
     editorpanel.cc
     editwidgets.cc
+    exposurepreviewstrip.cc
     eventmapper.cc
     exiffiltersettings.cc
     exifpanel.cc

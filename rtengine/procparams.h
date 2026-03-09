@@ -93,6 +93,9 @@ struct ToneCurveParams {
     double expcomp;
     std::vector<double> curve;
     std::vector<double> curve2;
+    std::vector<double> curveR;
+    std::vector<double> curveG;
+    std::vector<double> curveB;
     ToneCurveMode curveMode;
     ToneCurveMode curveMode2;
     int brightness;
@@ -249,6 +252,23 @@ struct GrainParams {
 
     bool operator==(const GrainParams &other) const;
     bool operator!=(const GrainParams &other) const;
+};
+
+/**
+ * Parameters for tilt-shift (miniature/diorama) effect
+ */
+struct TiltShiftParams {
+    bool enabled;
+    int amount;      // 0-100, default 0 (overall blur strength)
+    int focusPos;    // 0-100, default 50 (% from top)
+    int focusWidth;  // 0-100, default 20 (% of height)
+    int feather;     // 0-100, default 50
+    int angle;       // -45 to 45, default 0
+
+    TiltShiftParams();
+
+    bool operator==(const TiltShiftParams &other) const;
+    bool operator!=(const TiltShiftParams &other) const;
 };
 
 /**
@@ -965,6 +985,9 @@ struct PerspectiveParams {
     std::vector<int> control_line_values;
     /** 0 is vertical, 1 is horizontal, undefined otherwise. */
     std::vector<int> control_line_types;
+    int mesh_grid_size;                  // 0 = no mesh; e.g. 10 = 10x10 grid
+    std::vector<double> mesh_offsets_x;  // VERTEX_COUNT normalized dx values
+    std::vector<double> mesh_offsets_y;  // VERTEX_COUNT normalized dy values
 
     PerspectiveParams();
 
@@ -1067,6 +1090,9 @@ struct BlackWhiteParams {
     int gammaRed;
     int gammaGreen;
     int gammaBlue;
+    int neutrals;   // -100 to 100, uniform gamma shift
+    int tone;        // -100 to 100, warm/cool differential gamma
+    int strength;    // 0 to 100, B&W blend strength
 
     BlackWhiteParams();
 
@@ -1763,6 +1789,34 @@ struct FilmSimulationParams {
     bool operator !=(const FilmSimulationParams& other) const;
 };
 
+/**
+ *  Film presets params (parametric film emulation)
+ */
+struct FilmPresetsParams {
+    bool enabled;
+    Glib::ustring preset;  // preset ID: "custom", "heritage_gold", etc.
+    int strength;           // 0-100
+    int contrast;           // -100..100
+    int saturation;         // -100..100
+    int warmth;             // -100..100
+    int tint;               // -100..100
+    int fade;               // 0..100
+    int rolloff;            // 0..100
+    int shadowHue;          // 0..360
+    int shadowTint;         // 0..100
+    int highlightHue;       // 0..360
+    int highlightTint;      // 0..100
+    int halation;           // 0..100
+    int redShift;           // -100..100
+    int greenShift;         // -100..100
+    int blueShift;          // -100..100
+
+    FilmPresetsParams();
+
+    bool operator==(const FilmPresetsParams &other) const;
+    bool operator!=(const FilmPresetsParams &other) const;
+};
+
 struct SoftLightParams {
     bool enabled;
     int strength;
@@ -2028,6 +2082,7 @@ public:
     TextureParams           texture;         ///< Texture enhancement parameters
     ClarityParams           clarity;         ///< Clarity parameters
     GrainParams             grain;           ///< Film grain parameters
+    TiltShiftParams         tiltShift;       ///< Tilt-shift effect parameters
     LensBlurParams          lensBlur;        ///< Lens blur parameters
     RGBCurvesParams         rgbCurves;       ///< RGB curves parameters
     ColorToningParams       colorToning;     ///< Color Toning parameters
@@ -2073,6 +2128,7 @@ public:
     ColorGradingParams      colorGrading;    ///< 3-way color grading parameters
     PointColorParams        pointcolor;      ///< Point color adjustment parameters
     FilmSimulationParams    filmSimulation;  ///< film simulation parameters
+    FilmPresetsParams       filmPresets;     ///< parametric film presets parameters
     SoftLightParams         softlight;       ///< softlight parameters
     DehazeParams            dehaze;          ///< dehaze parameters
     FilmNegativeParams      filmNegative;    ///< Film negative parameters

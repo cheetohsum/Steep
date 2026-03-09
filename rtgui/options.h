@@ -554,6 +554,7 @@ public:
         SORT_BY_EXIF,
         SORT_BY_RANK,
         SORT_BY_LABEL,
+        SORT_BY_FILETYPE,
         SORT_METHOD_COUNT,
     };
     SortMethod sortMethod; // remembers current state of file browser

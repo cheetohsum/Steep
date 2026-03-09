@@ -87,4 +87,6 @@ public:
 
     void setAdjusterBehavior (bool contrastadd, bool radiusadd, bool amountadd, bool dampingadd, bool iteradd, bool edgetoladd, bool haloctrladd);
     void trimValues          (rtengine::procparams::ProcParams* pp) override;
+
+    Adjuster* getAmountSlider() { return amount; }
 };

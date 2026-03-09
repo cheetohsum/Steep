@@ -80,7 +80,6 @@ private:
     TargetColumns targetColumns;
     Glib::RefPtr<Gtk::ListStore> targetStore;
     Gtk::TreeView* targetList;
-    Gtk::ScrolledWindow* targetScroll;
 
     // Toolbar buttons
     Gtk::Button* pickButton;
@@ -100,6 +99,7 @@ private:
     int activeTarget;
     PointColorPickListener* pickListener;
     bool internalUpdate;  // suppress adjuster events during load
+    sigc::connection selectionConn_;
 
     Gtk::Label* sectionLabel_;
     Gtk::Box* toolContent_;

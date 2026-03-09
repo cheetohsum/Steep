@@ -29,6 +29,7 @@ private:
     Adjuster *iso;
     Adjuster *scale;
     Gtk::Box* detailContent_;
+    Gtk::Revealer* detailRevealer_;
     bool detailExpanded_;
 
     rtengine::ProcEvent EvGrainEnabled;
@@ -50,4 +51,6 @@ public:
 
     void adjusterChanged(Adjuster *a, double newval) override;
     void enabledChanged() override;
+
+    Adjuster* getStrengthSlider() { return strength; }
 };

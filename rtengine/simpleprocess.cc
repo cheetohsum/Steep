@@ -1576,6 +1576,10 @@ private:
             ipf.grainEffect(labView, params.grain, labView->W, labView->H);
         }
 
+        if (params.tiltShift.enabled) {
+            ipf.tiltShiftEffect(labView, params.tiltShift, labView->W, labView->H);
+        }
+
         if (params.lensBlur.enabled) {
             ipf.lensBlur(labView, params.lensBlur, 1);
         }
@@ -1782,6 +1786,7 @@ private:
             wavCLVCurve.Reset();
         }
 
+        ipf.filmPresets(labView, params.filmPresets);
         ipf.softLight(labView, params.softlight);
 
 

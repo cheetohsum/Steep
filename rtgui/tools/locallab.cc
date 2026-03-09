@@ -134,6 +134,33 @@ Locallab::Locallab():
 void Locallab::hideSettingsHeader()
 {
     expsettings->setFlatMode(true);
+
+    // Force transparent backgrounds on ALL containers between the masking panel
+    // and the locallabPanel.  Widget-level add_provider() only affects the
+    // single widget it is attached to (GTK3 doc), so we must walk the tree
+    // and attach a provider to each intermediate container.  Defer until
+    // realize() so the full widget tree is available.
+    signal_realize().connect([this]() {
+        auto css = Gtk::CssProvider::create();
+        css->load_from_data(
+            "* { background-color: transparent;"
+            "    background-image: none;"
+            "    border: none;"
+            "    box-shadow: none; }");
+
+        // Walk from ControlSpotPanel up through Locallab, and two more
+        // levels above (ExpanderContents + ExpanderBox wrapping Locallab).
+        Gtk::Widget* w = expsettings;
+        Gtk::Widget* stop = this->get_parent();  // ExpanderContents above 'this'
+        if (stop) stop = stop->get_parent();      // ExpanderBox above that
+        while (w) {
+            w->get_style_context()->add_provider(
+                css, GTK_STYLE_PROVIDER_PRIORITY_USER + 200);
+            if (w == stop)
+                break;
+            w = w->get_parent();
+        }
+    });
 }
 
 void Locallab::hideToolGroups()
@@ -150,11 +177,17 @@ void Locallab::hideToolGroups()
 
 void Locallab::read(const rtengine::procparams::ProcParams* pp, const ParamsEdited* pedited)
 {
+    fprintf(stderr, "DBG Locallab::read: enter, spots=%zu\n", pp->locallab.spots.size());
     // Disable all listeners
     disableListener();
 
     // Update Locallab activation state
-    setEnabled(pp->locallab.enabled);
+    // In flat mode (modernized UI), locallab is always enabled — the user has
+    // no power button to toggle it, so respect the flat-mode "always enabled"
+    // contract rather than the saved ProcParams state.
+    if (!exp->getFlatMode()) {
+        setEnabled(pp->locallab.enabled);
+    }
  //   const int showsettings = options.complexity;
 
     // Transmit Locallab activation state to Locallab tools
@@ -293,19 +326,24 @@ void Locallab::read(const rtengine::procparams::ProcParams* pp, const ParamsEdit
         r.maskType = pp->locallab.spots.at(i).useAIMask ? 1 : 0;
         r.aiMaskClass = pp->locallab.spots.at(i).aiMaskClass;
 
+        fprintf(stderr, "DBG Locallab::read: addControlSpot %d\n", i);
         expsettings->addControlSpot(r);
     }
+    fprintf(stderr, "DBG Locallab::read: spots added, selecting\n");
 
     // Select active spot
     if (pp->locallab.spots.size() > 0) {
         expsettings->setSelectedSpot(pp->locallab.selspot);
         spotName = pp->locallab.spots.at(pp->locallab.selspot).name;
     }
+    fprintf(stderr, "DBG Locallab::read: before locallabTools read (%zu tools)\n", locallabTools.size());
 
     // Update each Locallab tools GUI
-    for (auto tool : locallabTools) {
-        tool->read(pp, pedited);
+    for (size_t ti = 0; ti < locallabTools.size(); ti++) {
+        fprintf(stderr, "DBG Locallab::read: tool %zu\n", ti);
+        locallabTools[ti]->read(pp, pedited);
     }
+    fprintf(stderr, "DBG Locallab::read: tools done\n");
 
     // Specific case: if there is no spot, GUI isn't anymore editable (i.e. Locallab tool cannot be managed)
     if (pp->locallab.spots.size() > 0) {
@@ -316,6 +354,7 @@ void Locallab::read(const rtengine::procparams::ProcParams* pp, const ParamsEdit
 
     // Enable all listeners
     enableListener();
+    fprintf(stderr, "DBG Locallab::read: done\n");
 
     // Note: No need to manage pedited as batch mode is deactivated for Locallab
 }
@@ -483,6 +522,12 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
 
             expsettings->addControlSpot(r);
 
+            // Auto-enable LocalLab when creating a spot
+            if (!pp->locallab.enabled) {
+                pp->locallab.enabled = true;
+                setEnabled(true);
+            }
+
             // ProcParams update
             pp->locallab.spots.push_back(*newSpot);
             pp->locallab.selspot = pp->locallab.spots.size() - 1;
@@ -536,6 +581,16 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
             newSpot->aiMaskThreshold = 0.3;
             newSpot->aiMaskFeather = 100.0;
             newSpot->aiMaskOpacity = 1.0;
+
+            // Auto-enable exposure tool so per-spot adjustments work through LocalLab
+            newSpot->expexpose = true;
+            newSpot->visiexpose = true;
+
+            // Auto-enable LocalLab if not already enabled
+            if (!pp->locallab.enabled) {
+                pp->locallab.enabled = true;
+                setEnabled(true);
+            }
 
             // Build SpotRow
             ControlSpotPanel::SpotRow r;
@@ -1146,11 +1201,6 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                         pp->locallab.spots.at(pp->locallab.selspot).aiMaskClass = r->aiMaskClass;
                         pp->locallab.spots.at(pp->locallab.selspot).spotMethod = "full";
                     }
-                    fprintf(stderr, "DEBUG Locallab::write: spot %d maskType=%d isAI=%d useAIMask=%d aiMaskClass=%d spotMethod=%s\n",
-                            pp->locallab.selspot, r->maskType, isAI ? 1 : 0,
-                            pp->locallab.spots.at(pp->locallab.selspot).useAIMask ? 1 : 0,
-                            pp->locallab.spots.at(pp->locallab.selspot).aiMaskClass,
-                            pp->locallab.spots.at(pp->locallab.selspot).spotMethod.c_str());
                 }
 
                 // Note: No need to manage pedited as batch mode is deactivated for Locallab

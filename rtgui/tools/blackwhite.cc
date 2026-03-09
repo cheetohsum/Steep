@@ -36,7 +36,7 @@ using namespace rtengine::procparams;
 
 const Glib::ustring BlackWhite::TOOL_NAME = "blackwhite";
 
-BlackWhite::BlackWhite (): FoldableToolPanel(this, TOOL_NAME, M("TP_BWMIX_LABEL"), false, false)
+BlackWhite::BlackWhite (): FoldableToolPanel(this, TOOL_NAME, M("TP_BWMIX_LABEL"), false, true)
 {
     CurveListener::setMulti(true);
 
@@ -71,75 +71,45 @@ BlackWhite::BlackWhite (): FoldableToolPanel(this, TOOL_NAME, M("TP_BWMIX_LABEL"
     metBox->pack_start(*metLabel, false, false, 0);
     metBox->pack_start(*method, false, false, 0);
     getSummaryBox()->pack_start(*metBox, false, false, 0);
+
     getSummaryBox()->show_all();
     methodconn = method->signal_changed().connect ( sigc::mem_fun(*this, &BlackWhite::methodChanged) );
 
+    //----------- Neutrals / Tone / Strength sliders --------------
 
-    //----------- Luminance equalizer ------------------------------
+    bwNeutrals = Gtk::manage(new Adjuster(M("TP_BWMIX_NEUTRALS"), -100, 100, 1, 0));
+    bwNeutrals->setAdjusterListener(this);
+    getSummaryBox()->pack_start(*bwNeutrals, Gtk::PACK_SHRINK, 0);
 
-    luminanceSep = Gtk::manage (new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
-    pack_start (*luminanceSep);
+    bwTone = Gtk::manage(new Adjuster(M("TP_BWMIX_TONE"), -100, 100, 1, 0));
+    bwTone->setAdjusterListener(this);
+    getSummaryBox()->pack_start(*bwTone, Gtk::PACK_SHRINK, 0);
 
-    std::vector<GradientMilestone> bottomMilestones;
-    float R, G, B;
+    bwStrength = Gtk::manage(new Adjuster(M("TP_BWMIX_STRENGTH"), 0, 100, 1, 100));
+    bwStrength->setAdjusterListener(this);
+    getSummaryBox()->pack_start(*bwStrength, Gtk::PACK_SHRINK, 0);
 
-    // -0.1 rad < Hue < 1.6 rad
-    for (int i = 0; i < 7; i++) {
-        float x = float(i) * (1.0f / 6.f);
-        Color::hsv2rgb01(x, 0.5f, 0.5f, R, G, B);
-        bottomMilestones.push_back( GradientMilestone(double(x), double(R), double(G), double(B)) );
-    }
+    //----------- Hidden widgets needed for read/write compatibility ------
+    // These are created but never packed into any visible container.
+    // They exist so that read()/write()/setDefaults() etc. don't crash.
+
+    luminanceSep = nullptr;
 
     auto& options = App::get().mut_options();
     luminanceCEG = new CurveEditorGroup (options.lastBWCurvesDir, M("TP_BWMIX_CHANNEL"));
     luminanceCEG->setCurveListener (this);
     luminanceCurve = static_cast<FlatCurveEditor*>(luminanceCEG->addCurve(CT_Flat, M("TP_BWMIX_VAL")));
-    luminanceCurve->setEditID(EUID_BlackWhiteLuminance, BT_SINGLEPLANE_FLOAT);
-    luminanceCurve->setBottomBarBgGradient(bottomMilestones);
-    luminanceCurve->setCurveColorProvider(this, 3);
-    luminanceCurve->setTooltip(M("TP_BWMIX_CURVEEDITOR_LH_TOOLTIP"));
-
     luminanceCEG->curveListComplete();
-    pack_start (*luminanceCEG, Gtk::PACK_SHRINK, 4);
 
-    // Advanced section
-    advancedSection = Gtk::manage(new AdvancedSection());
-    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
-    Gtk::Box* const advBox = advancedSection->getContentBox();
-
-    //----------- Auto and Reset buttons ------------------------------
-
-    mixerFrame = Gtk::manage (new Gtk::Frame (M("TP_BWMIX_MET_CHANMIX")));
-    mixerFrame->set_label_align(0.025, 0.5);
-    advBox->pack_start (*mixerFrame, Gtk::PACK_SHRINK, 0);
-
+    mixerFrame = nullptr;
     mixerVBox = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
-    mixerVBox->set_spacing(4);
-
     autoHBox = Gtk::manage (new Gtk::Box ());
-
     autoch = Gtk::manage (new Gtk::ToggleButton (M("TP_BWMIX_AUTOCH")));
     autoconn = autoch->signal_toggled().connect( sigc::mem_fun(*this, &BlackWhite::autoch_toggled) );
-
     neutral = Gtk::manage (new Gtk::Button (M("TP_BWMIX_NEUTRAL")));
     neutralconn = neutral->signal_pressed().connect( sigc::mem_fun(*this, &BlackWhite::neutral_pressed) );
-    neutral->show();
-
-    autoHBox->pack_start (*autoch);
-    autoHBox->pack_end (*neutral);
-    autoHBox->pack_end (*Gtk::manage (new Gtk::Label (" "))); //spacer
-    mixerVBox->pack_start (*autoHBox);
-
-    //----------- Presets combobox ------------------------------
-
-    mixerVBox->pack_start (*Gtk::manage (new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)));
 
     settingHBox = Gtk::manage (new Gtk::Box ());
-    settingHBox->set_spacing (2);
-    settingHBox->set_tooltip_markup (M("TP_BWMIX_SETTING_TOOLTIP"));
-    Gtk::Label *settingLabel = Gtk::manage (new Gtk::Label (M("TP_BWMIX_SETTING") + ":"));
-
-    settingHBox->pack_start (*settingLabel, Gtk::PACK_SHRINK);
     setting = Gtk::manage (new MyComboBoxText ());
     setting->append (M("TP_BWMIX_SET_NORMCONTAST"));
     setting->append (M("TP_BWMIX_SET_HIGHCONTAST"));
@@ -156,40 +126,19 @@ BlackWhite::BlackWhite (): FoldableToolPanel(this, TOOL_NAME, M("TP_BWMIX_LABEL"
     setting->append (M("TP_BWMIX_SET_ROYGCBPMABS"));
     setting->append (M("TP_BWMIX_SET_ROYGCBPMREL"));
     setting->append (M("TP_BWMIX_SET_INFRARED"));
-
     setting->set_active (11);
-    settingHBox->pack_start (*setting);
-    mixerVBox->pack_start (*settingHBox);
     settingconn = setting->signal_changed().connect ( sigc::mem_fun(*this, &BlackWhite::settingChanged) );
 
     RGBLabels = Gtk::manage(new Gtk::Label("---", Gtk::ALIGN_CENTER));
-    RGBLabels->set_tooltip_text(M("TP_BWMIX_RGBLABEL_HINT"));
-    mixerVBox->pack_start (*RGBLabels);
 
-    //----------- Complementary Color checkbox ------------------------------
-
-    enabledccSep = Gtk::manage (new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
-    mixerVBox->pack_start (*enabledccSep);
-
+    enabledccSep = nullptr;
     enabledcc = Gtk::manage (new Gtk::CheckButton (M("TP_BWMIX_CC_ENABLED")));
-
     enabledcc->set_active (true);
-    enabledcc->set_tooltip_markup (M("TP_BWMIX_CC_TOOLTIP"));
-
-    mixerVBox->pack_start(*enabledcc, Gtk::PACK_SHRINK, 0);
-    enabledcc->show ();
     enaccconn = enabledcc->signal_toggled().connect( sigc::mem_fun(*this, &BlackWhite::enabledcc_toggled) );
 
-    //----------- Color Filters ------------------------------
-
-    filterSep = Gtk::manage (new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
-    mixerVBox->pack_start (*filterSep);
-
+    filterSep = nullptr;
+    filterSep2 = nullptr;
     filterHBox = Gtk::manage (new Gtk::Box ());
-    filterHBox->set_spacing (2);
-    filterHBox->set_tooltip_markup (M("TP_BWMIX_FILTER_TOOLTIP"));
-    Gtk::Label *filterLabel = Gtk::manage (new Gtk::Label (M("TP_BWMIX_FILTER") + ":"));
-    filterHBox->pack_start (*filterLabel, Gtk::PACK_SHRINK);
     filter = Gtk::manage (new MyComboBoxText ());
     filter->append (M("TP_BWMIX_FILTER_NONE"));
     filter->append (M("TP_BWMIX_FILTER_RED"));
@@ -200,13 +149,8 @@ BlackWhite::BlackWhite (): FoldableToolPanel(this, TOOL_NAME, M("TP_BWMIX_LABEL"
     filter->append (M("TP_BWMIX_FILTER_BLUEGREEN"));
     filter->append (M("TP_BWMIX_FILTER_BLUE"));
     filter->append (M("TP_BWMIX_FILTER_PURPLE"));
-
     filter->set_active (0);
-    filterHBox->pack_start (*filter);
-    mixerVBox->pack_start (*filterHBox);
     filterconn = filter->signal_changed().connect ( sigc::mem_fun(*this, &BlackWhite::filterChanged) );
-
-    //----------- RGB / ROYGCBPM Mixer ------------------------------
 
     imgIcon[0] = Gtk::manage (new RTImage ("circle-red-small"));
     imgIcon[1] = Gtk::manage (new RTImage ("circle-orange-small"));
@@ -216,127 +160,42 @@ BlackWhite::BlackWhite (): FoldableToolPanel(this, TOOL_NAME, M("TP_BWMIX_LABEL"
     imgIcon[5] = Gtk::manage (new RTImage ("circle-blue-small"));
     imgIcon[6] = Gtk::manage (new RTImage ("circle-purple-small"));
     imgIcon[7] = Gtk::manage (new RTImage ("circle-magenta-small"));
-
     imgIcon[8]  = Gtk::manage (new RTImage ("circle-empty-red-small"));
     imgIcon[9]  = Gtk::manage (new RTImage ("circle-empty-green-small"));
     imgIcon[10] = Gtk::manage (new RTImage ("circle-empty-blue-small"));
 
-    mixerVBox->pack_start (*Gtk::manage (new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)));
-
-    mixerRed = Gtk::manage(new Adjuster (/*M("TP_BWMIX_RED")*/"", -100, 200, 1, 33, imgIcon[0]));
-
+    mixerRed = Gtk::manage(new Adjuster ("", -100, 200, 1, 33, imgIcon[0]));
     mixerRed->setAdjusterListener (this);
-    mixerRed->set_tooltip_markup (M("TP_BWMIX_RGB_TOOLTIP"));
-    mixerRed->show();
-    mixerVBox->pack_start( *mixerRed, Gtk::PACK_SHRINK, 0);
-
-    mixerGreen = Gtk::manage(new Adjuster (/*M("TP_BWMIX_GREEN")*/"", -100, 200, 1, 33, imgIcon[3]));
-
+    mixerGreen = Gtk::manage(new Adjuster ("", -100, 200, 1, 33, imgIcon[3]));
     mixerGreen->setAdjusterListener (this);
-    mixerGreen->set_tooltip_markup (M("TP_BWMIX_RGB_TOOLTIP"));
-    mixerGreen->show();
-    mixerVBox->pack_start( *mixerGreen, Gtk::PACK_SHRINK, 0);
-
-    mixerBlue = Gtk::manage(new Adjuster (/*M("TP_BWMIX_BLUE")*/"", -100, 200, 1, 33, imgIcon[5]));
-
+    mixerBlue = Gtk::manage(new Adjuster ("", -100, 200, 1, 33, imgIcon[5]));
     mixerBlue->setAdjusterListener (this);
-    mixerBlue->set_tooltip_markup (M("TP_BWMIX_RGB_TOOLTIP"));
-    mixerBlue->show();
-    mixerVBox->pack_start( *mixerBlue, Gtk::PACK_SHRINK, 0);
-
-    filterSep2 = Gtk::manage (new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
-    mixerVBox->pack_start (*filterSep2);
+    mixerOrange = Gtk::manage(new Adjuster ("", -100, 200, 1, 33, imgIcon[1]));
+    mixerOrange->setAdjusterListener (this);
+    mixerYellow = Gtk::manage(new Adjuster ("", -100, 200, 1, 33, imgIcon[2]));
+    mixerYellow->setAdjusterListener (this);
+    mixerCyan = Gtk::manage(new Adjuster ("", -100, 200, 1, 33, imgIcon[4]));
+    mixerCyan->setAdjusterListener (this);
+    mixerPurple = Gtk::manage(new Adjuster ("", -100, 200, 1, 33, imgIcon[6]));
+    mixerPurple->setAdjusterListener (this);
+    mixerMagenta = Gtk::manage(new Adjuster ("", -100, 200, 1, 33, imgIcon[7]));
+    mixerMagenta->setAdjusterListener (this);
 
     algoHBox = Gtk::manage (new Gtk::Box ());
-    algoHBox->set_spacing (2);
-    algoHBox->set_tooltip_markup (M("TP_BWMIX_ALGO_TOOLTIP"));
-
-    alLabel = Gtk::manage (new Gtk::Label (M("TP_BWMIX_ALGO") + ":"));
-    algoHBox->pack_start (*alLabel, Gtk::PACK_SHRINK);
-
+    alLabel = nullptr;
     algo = Gtk::manage (new MyComboBoxText ());
     algo->append (M("TP_BWMIX_ALGO_LI"));
     algo->append (M("TP_BWMIX_ALGO_SP"));
     algo->set_active (1);
-    algoHBox->pack_start (*algo);
-    mixerVBox->pack_start(*algoHBox);
     algoconn = algo->signal_changed().connect ( sigc::mem_fun(*this, &BlackWhite::algoChanged) );
 
-    mixerOrange = Gtk::manage(new Adjuster (/*M("TP_BWMIX_ORANGE")*/"", -100, 200, 1, 33, imgIcon[1]));
-
-    mixerOrange->setAdjusterListener (this);
-    mixerOrange->set_tooltip_markup (M("TP_BWMIX_RGB_TOOLTIP"));
-    mixerOrange->show();
-    mixerVBox->pack_start( *mixerOrange, Gtk::PACK_SHRINK, 0);
-
-    mixerYellow = Gtk::manage(new Adjuster (/*M("TP_BWMIX_YELLOW")*/"", -100, 200, 1, 33, imgIcon[2]));
-
-    mixerYellow->setAdjusterListener (this);
-    mixerYellow->set_tooltip_markup (M("TP_BWMIX_RGB_TOOLTIP"));
-    mixerYellow->show();
-    mixerVBox->pack_start( *mixerYellow, Gtk::PACK_SHRINK, 0);
-
-    mixerCyan = Gtk::manage(new Adjuster (/*M("TP_BWMIX_CYAN")*/"", -100, 200, 1, 33, imgIcon[4]));
-
-    mixerCyan->setAdjusterListener (this);
-    mixerCyan->set_tooltip_markup (M("TP_BWMIX_RGB_TOOLTIP"));
-    mixerCyan->show();
-    mixerVBox->pack_start( *mixerCyan, Gtk::PACK_SHRINK, 0);
-
-    mixerPurple = Gtk::manage(new Adjuster (/*M("TP_BWMIX_PURPLE")*/"", -100, 200, 1, 33, imgIcon[6]));
-
-    mixerPurple->setAdjusterListener (this);
-    mixerPurple->set_tooltip_markup (M("TP_BWMIX_RGB_TOOLTIP"));
-    mixerPurple->show();
-    mixerVBox->pack_start( *mixerPurple, Gtk::PACK_SHRINK, 0);
-
-    mixerMagenta = Gtk::manage(new Adjuster (/*M("TP_BWMIX_MAGENTA")*/"", -100, 200, 1, 33, imgIcon[7]));
-
-    mixerMagenta->setAdjusterListener (this);
-    mixerMagenta->set_tooltip_markup (M("TP_BWMIX_RGB_TOOLTIP"));
-    mixerMagenta->show();
-    mixerVBox->pack_start( *mixerMagenta, Gtk::PACK_SHRINK, 0);
-
-    mixerFrame->add(*mixerVBox);
-
-    //----------- Gamma sliders ------------------------------
-
-    gammaFrame = Gtk::manage (new Gtk::Frame (M("TP_BWMIX_GAMMA")));
-    gammaFrame->set_label_align(0.025, 0.5);
-    advBox->pack_start (*gammaFrame, Gtk::PACK_SHRINK, 0);
-
-    Gtk::Box* gammaVBox = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
-    gammaVBox->set_spacing(4);
-
-
-    gammaRed = Gtk::manage(new Adjuster (/*M("TP_BWMIX_GAM_RED")*/"", -100, 100, 1, 0, imgIcon[8]));
-
+    gammaFrame = nullptr;
+    gammaRed = Gtk::manage(new Adjuster ("", -100, 100, 1, 0, imgIcon[8]));
     gammaRed->setAdjusterListener (this);
-    gammaRed->set_tooltip_markup (M("TP_BWMIX_GAM_TOOLTIP"));
-    gammaRed->show();
-    gammaVBox->pack_start( *gammaRed, Gtk::PACK_SHRINK, 0);
-
-    gammaGreen = Gtk::manage(new Adjuster (/*M("TP_BWMIX_GAM_GREEN")*/"", -100, 100, 1, 0, imgIcon[9]));
-
+    gammaGreen = Gtk::manage(new Adjuster ("", -100, 100, 1, 0, imgIcon[9]));
     gammaGreen->setAdjusterListener (this);
-    gammaGreen->set_tooltip_markup (M("TP_BWMIX_GAM_TOOLTIP"));
-    gammaGreen->show();
-    gammaVBox->pack_start( *gammaGreen, Gtk::PACK_SHRINK, 0);
-
-    gammaBlue = Gtk::manage(new Adjuster (/*M("TP_BWMIX_GAM_BLUE")*/"", -100, 100, 1, 0, imgIcon[10]));
-
+    gammaBlue = Gtk::manage(new Adjuster ("", -100, 100, 1, 0, imgIcon[10]));
     gammaBlue->setAdjusterListener (this);
-    gammaBlue->set_tooltip_markup (M("TP_BWMIX_GAM_TOOLTIP"));
-    gammaBlue->show();
-    gammaVBox->pack_start( *gammaBlue, Gtk::PACK_SHRINK, 0);
-
-    gammaFrame->add(*gammaVBox);
-
-    //----------- Curve 1 ------------------------------
-
-    std::vector<GradientMilestone> bottomMilestonesbw;
-    bottomMilestonesbw.push_back( GradientMilestone(0., 0., 0., 0.) );
-    bottomMilestonesbw.push_back( GradientMilestone(1., 1., 1., 1.) );
 
     beforeCurveMode = Gtk::manage (new MyComboBoxText ());
     beforeCurveMode->append (M("TP_BWMIX_TCMODE_STANDARD"));
@@ -347,42 +206,14 @@ BlackWhite::BlackWhite (): FoldableToolPanel(this, TOOL_NAME, M("TP_BWMIX_LABEL"
 
     beforeCurveCEG = new CurveEditorGroup (options.lastBWCurvesDir, M("TP_BWMIX_CURVEEDITOR1"));
     beforeCurveCEG->setCurveListener (this);
-
     beforeCurve = static_cast<DiagonalCurveEditor*>(beforeCurveCEG->addCurve(CT_Diagonal, "", beforeCurveMode));
-    beforeCurve->setEditID(EUID_BlackWhiteBeforeCurve, BT_IMAGEFLOAT);
-    beforeCurve->setBottomBarBgGradient(bottomMilestonesbw);
-    beforeCurve->setLeftBarBgGradient(bottomMilestonesbw);
-    beforeCurve->setTooltip(M("TP_BWMIX_CURVEEDITOR_BEFORE_TOOLTIP"));
-
-    // This will add the reset button at the end of the curveType buttons
     beforeCurveCEG->curveListComplete();
-
-    advBox->pack_start( *beforeCurveCEG, Gtk::PACK_SHRINK, 2);
-
     tcmodeconn = beforeCurveMode->signal_changed().connect( sigc::mem_fun(*this, &BlackWhite::curveMode1Changed), true );
 
-    //----------- Curve 2 ------------------------------
-    /*
-        afterCurveMode = Gtk::manage (new MyComboBoxText ());
-        afterCurveMode->append (M("TP_BWMIX_TCMODE_STANDARD"));
-        //  afterCurveMode->append (M("TP_BWMIX_TCMODE_WEIGHTEDSTD"));
-        afterCurveMode->set_active (0);
-    */
     afterCurveCEG = new CurveEditorGroup (options.lastBWCurvesDir, M("TP_BWMIX_CURVEEDITOR2"));
     afterCurveCEG->setCurveListener (this);
-
-//  afterCurve = static_cast<DiagonalCurveEditor*>(afterCurveCEG->addCurve(CT_Diagonal, "", afterCurveMode));
     afterCurve = static_cast<DiagonalCurveEditor*>(afterCurveCEG->addCurve(CT_Diagonal, ""));
-    afterCurve->setEditID(EUID_BlackWhiteAfterCurve, BT_SINGLEPLANE_FLOAT);
-    afterCurve->setBottomBarBgGradient(bottomMilestonesbw);
-    afterCurve->setLeftBarBgGradient(bottomMilestonesbw);
-    afterCurve->setTooltip(M("TP_BWMIX_CURVEEDITOR_AFTER_TOOLTIP"));
-
     afterCurveCEG->curveListComplete();
-
-    advBox->pack_start( *afterCurveCEG, Gtk::PACK_SHRINK, 2);
-
-//  tcmodeconn2 = afterCurveMode->signal_changed().connect( sigc::mem_fun(*this, &BlackWhite::curveMode1Changed2), true );
 
     show_all();
 
@@ -489,16 +320,15 @@ void BlackWhite::read (const ProcParams* pp, const ParamsEdited* pedited)
 
     if (pedited && !pedited->blackwhite.method) {
         method->set_active (4);    // "Unchanged"
-    } else if (!pp->blackwhite.enabled) {
-        method->set_active (0);    // "Off"
     } else if (pp->blackwhite.method == "Desaturation") {
         method->set_active (1);
     } else if (pp->blackwhite.method == "LumEqualizer") {
         method->set_active (2);
     } else if (pp->blackwhite.method == "ChannelMixer") {
         method->set_active (3);
+    } else {
+        method->set_active (1);    // Default to Desaturation
     }
-
     methodChanged();
 
 
@@ -537,6 +367,9 @@ void BlackWhite::read (const ProcParams* pp, const ParamsEdited* pedited)
     gammaRed->setValue (pp->blackwhite.gammaRed);
     gammaGreen->setValue (pp->blackwhite.gammaGreen);
     gammaBlue->setValue (pp->blackwhite.gammaBlue);
+    bwNeutrals->setValue (pp->blackwhite.neutrals);
+    bwTone->setValue (pp->blackwhite.tone);
+    bwStrength->setValue (pp->blackwhite.strength);
     mixerOrange->setValue (pp->blackwhite.mixerOrange);
     mixerYellow->setValue (pp->blackwhite.mixerYellow);
     mixerCyan->setValue (pp->blackwhite.mixerCyan);
@@ -578,6 +411,9 @@ void BlackWhite::read (const ProcParams* pp, const ParamsEdited* pedited)
         gammaRed->setEditedState (pedited->blackwhite.gammaRed ? Edited : UnEdited);
         gammaGreen->setEditedState (pedited->blackwhite.gammaGreen ? Edited : UnEdited);
         gammaBlue->setEditedState (pedited->blackwhite.gammaBlue ? Edited : UnEdited);
+        bwNeutrals->setEditedState (pedited->blackwhite.neutrals ? Edited : UnEdited);
+        bwTone->setEditedState (pedited->blackwhite.tone ? Edited : UnEdited);
+        bwStrength->setEditedState (pedited->blackwhite.strength ? Edited : UnEdited);
         mixerOrange->setEditedState (pedited->blackwhite.mixerOrange ? Edited : UnEdited);
         mixerYellow->setEditedState (pedited->blackwhite.mixerYellow ? Edited : UnEdited);
         mixerCyan->setEditedState (pedited->blackwhite.mixerCyan ? Edited : UnEdited);
@@ -606,7 +442,7 @@ void BlackWhite::read (const ProcParams* pp, const ParamsEdited* pedited)
 
 void BlackWhite::write (ProcParams* pp, ParamsEdited* pedited)
 {
-    pp->blackwhite.enabled = (method->get_active_row_number() > 0);
+    pp->blackwhite.enabled = getEnabled();
     pp->blackwhite.luminanceCurve = luminanceCurve->getCurve ();
     pp->blackwhite.autoc = autoch->get_active();
     pp->blackwhite.enabledcc = enabledcc->get_active ();
@@ -616,6 +452,9 @@ void BlackWhite::write (ProcParams* pp, ParamsEdited* pedited)
     pp->blackwhite.gammaRed = gammaRed->getValue ();
     pp->blackwhite.gammaGreen = gammaGreen->getValue ();
     pp->blackwhite.gammaBlue = gammaBlue->getValue ();
+    pp->blackwhite.neutrals = bwNeutrals->getValue ();
+    pp->blackwhite.tone = bwTone->getValue ();
+    pp->blackwhite.strength = bwStrength->getValue ();
     pp->blackwhite.mixerOrange = mixerOrange->getValue ();
     pp->blackwhite.mixerYellow = mixerYellow->getValue ();
     pp->blackwhite.mixerCyan = mixerCyan->getValue ();
@@ -651,6 +490,9 @@ void BlackWhite::write (ProcParams* pp, ParamsEdited* pedited)
         pedited->blackwhite.gammaRed = gammaRed->getEditedState ();
         pedited->blackwhite.gammaGreen = gammaGreen->getEditedState ();
         pedited->blackwhite.gammaBlue = gammaBlue->getEditedState ();
+        pedited->blackwhite.neutrals = bwNeutrals->getEditedState ();
+        pedited->blackwhite.tone = bwTone->getEditedState ();
+        pedited->blackwhite.strength = bwStrength->getEditedState ();
         pedited->blackwhite.filter = filter->get_active_text() != M("GENERAL_UNCHANGED");
         pedited->blackwhite.setting = setting->get_active_text() != M("GENERAL_UNCHANGED");
         pedited->blackwhite.method = method->get_active_text() != M("GENERAL_UNCHANGED");
@@ -673,6 +515,9 @@ void BlackWhite::write (ProcParams* pp, ParamsEdited* pedited)
         pp->blackwhite.method = "LumEqualizer";
     } else if (method->get_active_row_number() == 3) {
         pp->blackwhite.method = "ChannelMixer";
+    } else {
+        // Default to Desaturation when method is "Disabled" but tool is enabled
+        pp->blackwhite.method = "Desaturation";
     }
 
     if (algo->get_active_row_number() == 0) {
@@ -843,64 +688,56 @@ void BlackWhite::methodChanged ()
     int row = method->get_active_row_number();
 
     if (row == 0) {
-        // Off
-        hideLuminance();
-        hideMixer();
-        beforeCurveCEG->hide();
-        afterCurveCEG->hide();
-        advancedSection->hide();
         setEnabled(false);
-    } else if(row == 3) {
-        // Channel Mixer
+    } else {
         setEnabled(true);
-        hideLuminance();
-
-        if(setting->get_active_row_number() == 10 || setting->get_active_row_number() == 11) {
-            hideEnabledCC();
-            showMixer(3);
-        } else if(setting->get_active_row_number() == 12 || setting->get_active_row_number() == 13) {
-            showEnabledCC();
-            showMixer(7);
-        } else {
-            hideEnabledCC();
-            showMixer(3, false);
-        }
-
-        beforeCurveCEG->show();
-        afterCurveCEG->show();
-        advancedSection->show();
-
-        bool wasEnabled = disableListener();
-        settingChanged();
-
-        if (wasEnabled) {
-            enableListener();
-        }
-    } else if(row == 2) {
-        // Luminance Equalizer
-        setEnabled(true);
-        showLuminance();
-        hideMixer();
-        beforeCurveCEG->show();
-        afterCurveCEG->show();
-        advancedSection->show();
-    } else if(row == 1) {
-        // Desaturation
-        setEnabled(true);
-        hideLuminance();
-        hideMixer();
-        beforeCurveCEG->show();
-        afterCurveCEG->show();
-        advancedSection->show();
     }
 
-    if (listener && (multiImage || getEnabled())) {
+    if (listener) {
         listener->panelChanged (EvBWmethod, method->get_active_text ());
+    }
+}
+
+void BlackWhite::setBWPreset (int methodRow, int filterRow)
+{
+    methodconn.block(true);
+    filterconn.block(true);
+    method->set_active(methodRow);
+    filter->set_active(filterRow);
+    methodconn.block(false);
+    filterconn.block(false);
+    methodChanged();
+    if (methodRow > 0) {
+        filterChanged();
+    }
+}
+
+int BlackWhite::getBWPresetIndex () const
+{
+    if (method->get_active_row_number() == 0) return 0; // Off
+    int m = method->get_active_row_number();
+    int f = filter->get_active_row_number();
+    // Filters only apply in ChannelMixer (row 3)
+    if (m != 3 || f == 0) return 1; // plain B/W
+    switch (f) {
+        case 1: return 2; // Red
+        case 2: return 3; // Orange
+        case 3: return 4; // Yellow
+        case 5: return 5; // Green
+        case 7: return 6; // Blue
+        default: return 1;
     }
 }
 
 void BlackWhite::enabledChanged ()
 {
+    // When enabled via checkbox and method is "Disabled", auto-select Desaturation
+    if (getEnabled() && method->get_active_row_number() == 0) {
+        methodconn.block(true);
+        method->set_active(1); // Desaturation
+        methodconn.block(false);
+    }
+
     if (listener) {
         if (get_inconsistent()) {
             listener->panelChanged (EvBWChmixEnabled, M("GENERAL_UNCHANGED"));
@@ -1002,6 +839,9 @@ void BlackWhite::setDefaults (const ProcParams* defParams, const ParamsEdited* p
     gammaRed->setDefault (defParams->blackwhite.gammaRed);
     gammaGreen->setDefault (defParams->blackwhite.gammaGreen);
     gammaBlue->setDefault (defParams->blackwhite.gammaBlue);
+    bwNeutrals->setDefault (defParams->blackwhite.neutrals);
+    bwTone->setDefault (defParams->blackwhite.tone);
+    bwStrength->setDefault (defParams->blackwhite.strength);
     mixerOrange->setDefault (defParams->blackwhite.mixerOrange);
     mixerYellow->setDefault (defParams->blackwhite.mixerYellow);
     mixerCyan->setDefault (defParams->blackwhite.mixerCyan);
@@ -1015,6 +855,9 @@ void BlackWhite::setDefaults (const ProcParams* defParams, const ParamsEdited* p
         gammaRed->setDefaultEditedState (pedited->blackwhite.gammaRed ? Edited : UnEdited);
         gammaGreen->setDefaultEditedState (pedited->blackwhite.gammaGreen ? Edited : UnEdited);
         gammaBlue->setDefaultEditedState (pedited->blackwhite.gammaBlue ? Edited : UnEdited);
+        bwNeutrals->setDefaultEditedState (pedited->blackwhite.neutrals ? Edited : UnEdited);
+        bwTone->setDefaultEditedState (pedited->blackwhite.tone ? Edited : UnEdited);
+        bwStrength->setDefaultEditedState (pedited->blackwhite.strength ? Edited : UnEdited);
         mixerOrange->setDefaultEditedState (pedited->blackwhite.mixerOrange ? Edited : UnEdited);
         mixerYellow->setDefaultEditedState (pedited->blackwhite.mixerYellow ? Edited : UnEdited);
         mixerCyan->setDefaultEditedState (pedited->blackwhite.mixerCyan ? Edited : UnEdited);
@@ -1027,6 +870,9 @@ void BlackWhite::setDefaults (const ProcParams* defParams, const ParamsEdited* p
         gammaRed->setDefaultEditedState (Irrelevant);
         gammaGreen->setDefaultEditedState (Irrelevant);
         gammaBlue->setDefaultEditedState (Irrelevant);
+        bwNeutrals->setDefaultEditedState (Irrelevant);
+        bwTone->setDefaultEditedState (Irrelevant);
+        bwStrength->setDefaultEditedState (Irrelevant);
         mixerOrange->setDefaultEditedState (Irrelevant);
         mixerYellow->setDefaultEditedState (Irrelevant);
         mixerCyan->setDefaultEditedState (Irrelevant);
@@ -1192,6 +1038,12 @@ void BlackWhite::adjusterChanged(Adjuster* a, double newval)
             listener->panelChanged (EvBWmag, value );
         } else if (a == mixerPurple) {
             listener->panelChanged (EvBWpur, value );
+        } else if (a == bwNeutrals) {
+            listener->panelChanged (EvBWNeutrals, value);
+        } else if (a == bwTone) {
+            listener->panelChanged (EvBWTone, value);
+        } else if (a == bwStrength) {
+            listener->panelChanged (EvBWStrength, value);
         }
     }
 }
@@ -1244,45 +1096,15 @@ void BlackWhite::updateRGBLabel ()
 
 void BlackWhite::setBatchMode (bool batchMode)
 {
-    removeIfThere (autoHBox, autoch, false);
-    autoch = Gtk::manage (new Gtk::CheckButton (M("TP_BWMIX_AUTOCH")));
-    autoconn = autoch->signal_toggled().connect( sigc::mem_fun(*this, &BlackWhite::autoch_toggled) );
-    autoHBox->pack_start (*autoch);
-
-    removeIfThere (mixerVBox, RGBLabels, false);
-    delete RGBLabels;
-    RGBLabels = nullptr;
-
     ToolPanel::setBatchMode (batchMode);
-    mixerRed->showEditedCB ();
-    mixerOrange->showEditedCB ();
-    mixerYellow->showEditedCB ();
-    mixerGreen->showEditedCB ();
-    mixerCyan->showEditedCB ();
-    mixerBlue->showEditedCB ();
-    mixerMagenta->showEditedCB ();
-    mixerPurple->showEditedCB ();
-    gammaRed->showEditedCB ();
-    gammaGreen->showEditedCB ();
-    gammaBlue->showEditedCB ();
+    bwNeutrals->showEditedCB ();
+    bwTone->showEditedCB ();
+    bwStrength->showEditedCB ();
     method->append (M("GENERAL_UNCHANGED"));
     filter->append (M("GENERAL_UNCHANGED"));
     setting->append (M("GENERAL_UNCHANGED"));
-    luminanceCEG->setBatchMode (batchMode);
-    beforeCurveCEG->setBatchMode (batchMode);
-    beforeCurveCEG->show();
     beforeCurveMode->append (M("GENERAL_UNCHANGED"));
-    afterCurveCEG->setBatchMode (batchMode);
-    afterCurveCEG->show();
-//  afterCurveMode->append (M("GENERAL_UNCHANGED"));
     algo->append (M("GENERAL_UNCHANGED"));
-
-    showLuminance();
-    showFilter();
-    showEnabledCC();
-    showGamma();
-    showMixer(7);
-    advancedSection->setBatchMode(batchMode);
 }
 
 void BlackWhite::autoOpenCurve ()
@@ -1324,6 +1146,9 @@ void BlackWhite::trimValues (rtengine::procparams::ProcParams* pp)
     gammaRed->trimValue (pp->blackwhite.gammaRed);
     gammaGreen->trimValue (pp->blackwhite.gammaGreen);
     gammaBlue->trimValue (pp->blackwhite.gammaBlue);
+    bwNeutrals->trimValue (pp->blackwhite.neutrals);
+    bwTone->trimValue (pp->blackwhite.tone);
+    bwStrength->trimValue (pp->blackwhite.strength);
     mixerOrange->trimValue (pp->blackwhite.mixerOrange);
     mixerYellow->trimValue (pp->blackwhite.mixerYellow);
     mixerCyan->trimValue (pp->blackwhite.mixerCyan);
@@ -1331,107 +1156,16 @@ void BlackWhite::trimValues (rtengine::procparams::ProcParams* pp)
     mixerPurple->trimValue (pp->blackwhite.mixerPurple);
 }
 
-void BlackWhite::showLuminance()
-{
-    luminanceCEG->show();
-    luminanceSep->show();
-}
-
-void BlackWhite::hideLuminance()
-{
-    if (!batchMode) {
-        luminanceCEG->hide();
-        luminanceSep->hide();
-    }
-}
-
-void BlackWhite::showFilter()
-{
-    filterHBox->show();
-    filterSep->show();
-}
-
-void BlackWhite::hideFilter()
-{
-    if (!batchMode) {
-        filterHBox->hide();
-        filterSep->hide();
-    }
-}
-
-void BlackWhite::showEnabledCC()
-{
-    enabledcc->show();
-    enabledccSep->show();
-}
-
-void BlackWhite::hideEnabledCC()
-{
-    if (!batchMode) {
-        enabledcc->hide();
-        enabledccSep->hide();
-    }
-}
-
-void BlackWhite::showMixer(int nChannels, bool RGBIsSensitive)
-{
-    if (!batchMode) {
-        RGBLabels->show();
-    }
-
-    if (!batchMode && nChannels == 3) {
-        mixerRed->show();
-        mixerRed->set_sensitive (RGBIsSensitive);
-        mixerGreen->show();
-        mixerGreen->set_sensitive (RGBIsSensitive);
-        mixerBlue->show();
-        mixerBlue->set_sensitive (RGBIsSensitive);
-        filterSep2->hide();
-        algo->hide();
-        alLabel->hide();
-        mixerOrange->hide();
-        mixerYellow->hide();
-        mixerCyan->hide();
-        mixerMagenta->hide();
-        mixerPurple->hide();
-    } else {
-        mixerRed->show();
-        mixerRed->set_sensitive (true);
-        mixerGreen->show();
-        mixerGreen->set_sensitive (true);
-        mixerBlue->show();
-        mixerBlue->set_sensitive (true);
-        filterSep2->show();
-        mixerOrange->show();
-        algo->show();
-        alLabel->show();
-        mixerYellow->show();
-        mixerCyan->show();
-        mixerMagenta->show();
-        mixerPurple->show();
-    }
-
-    mixerFrame->show();
-}
-
-void BlackWhite::hideMixer()
-{
-    if (!batchMode) {
-        mixerFrame->hide();
-    }
-}
-
-void BlackWhite::showGamma()
-{
-    gammaFrame->show();
-}
-
-void BlackWhite::hideGamma()
-{
-    if (!batchMode) {
-        gammaFrame->hide();
-    }
-}
+void BlackWhite::showLuminance() {}
+void BlackWhite::hideLuminance() {}
+void BlackWhite::showFilter() {}
+void BlackWhite::hideFilter() {}
+void BlackWhite::showEnabledCC() {}
+void BlackWhite::hideEnabledCC() {}
+void BlackWhite::showMixer(int, bool) {}
+void BlackWhite::hideMixer() {}
+void BlackWhite::showGamma() {}
+void BlackWhite::hideGamma() {}
 
 Glib::ustring BlackWhite::getalgoString()
 {

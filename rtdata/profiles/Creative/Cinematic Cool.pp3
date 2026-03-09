@@ -1,0 +1,25 @@
+[Exposure]
+Auto=false
+Compensation=-0.1
+Contrast=15
+Black=150
+HighlightCompr=70
+ShadowCompr=40
+CurveMode=Standard
+Curve=3;0;0;0.15;0.05;0.50;0.48;0.85;0.90;1;1;
+
+[White Balance]
+Enabled=true
+Setting=Custom
+Temperature=4500
+Green=1.02
+
+[Vibrance]
+Enabled=true
+Pastels=-15
+Saturated=-20
+ProtectSkins=true
+
+[Luminance Curve]
+Enabled=true
+Contrast=15

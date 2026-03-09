@@ -547,6 +547,8 @@ public:
     void curveChanged(CurveEditor* ce) override;
     void updateguiexpos(int spottype);
     void previewexeChanged();
+    void setExpCompValue(double val);
+    void setEnabledOn();
 
 private:
     void enabledChanged() override;

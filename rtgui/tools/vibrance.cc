@@ -140,24 +140,17 @@ void Vibrance::read(const ProcParams* pp, const ParamsEdited* pedited)
     lastAvoidColorShift = pp->vibrance.avoidcolorshift;
 
     pastsattogconn.block (true);
-    pastSatTog->set_active (pp->vibrance.pastsattog);
+    pastSatTog->set_active (false);
     pastsattogconn.block (false);
-    lastPastSatTog = pp->vibrance.pastsattog;
+    lastPastSatTog = false;
 
     pastels->setValue (pp->vibrance.pastels);
     psThreshold->setValue<int> (pp->vibrance.psthreshold);
 
-    if (lastPastSatTog) {
-        // Link both slider, so we set saturated and psThresholds unsensitive
-        psThreshold->set_sensitive(false);
-        saturated->set_sensitive(false);
-        saturated->setValue (pp->vibrance.pastels);    // Pastels and Saturated are linked
-    } else {
-        // Separate sliders, so we set saturated and psThresholds sensitive again
-        psThreshold->set_sensitive(true);
-        saturated->set_sensitive(true);
-        saturated->setValue (pp->vibrance.saturated);  // Pastels and Saturated are separate
-    }
+    // Always keep sliders independent
+    psThreshold->set_sensitive(true);
+    saturated->set_sensitive(true);
+    saturated->setValue (pp->vibrance.saturated);
 
     skinTonesCurve->setCurve (pp->vibrance.skintonescurve);
 

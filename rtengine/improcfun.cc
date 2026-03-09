@@ -2062,6 +2062,12 @@ void ImProcFunctions::rgbProc(Imagefloat* working, LabImage* lab, PipetteBuffer 
     LUTf masterCurve;
     CurveFactory::RGBCurve(params->rgbCurves.mastercurve, masterCurve, 1);
 
+    // Build per-channel tone curve LUTs (R/G/B channels in the Exposure tone curve)
+    LUTf tcRCurve, tcGCurve, tcBCurve;
+    CurveFactory::RGBCurve(params->toneCurve.curveR, tcRCurve, 1);
+    CurveFactory::RGBCurve(params->toneCurve.curveG, tcGCurve, 1);
+    CurveFactory::RGBCurve(params->toneCurve.curveB, tcBCurve, 1);
+
     std::unique_ptr<Imagefloat> tmpImage;
 
     Imagefloat* editImgFloat = nullptr;
@@ -2304,6 +2310,19 @@ void ImProcFunctions::rgbProc(Imagefloat* working, LabImage* lab, PipetteBuffer 
     float bwrgam = params->blackwhite.gammaRed;
     float bwggam = params->blackwhite.gammaGreen;
     float bwbgam = params->blackwhite.gammaBlue;
+
+    // Apply Neutrals (uniform gamma shift) and Tone (differential R/B gamma)
+    {
+        float neutrals = static_cast<float>(params->blackwhite.neutrals);
+        float tone = static_cast<float>(params->blackwhite.tone);
+        bwrgam += neutrals + tone * 0.5f;
+        bwggam += neutrals;
+        bwbgam += neutrals - tone * 0.5f;
+        bwrgam = rtengine::LIM(bwrgam, -100.f, 100.f);
+        bwggam = rtengine::LIM(bwggam, -100.f, 100.f);
+        bwbgam = rtengine::LIM(bwbgam, -100.f, 100.f);
+    }
+
     float mixerOrange = params->blackwhite.mixerOrange;
     float mixerYellow = params->blackwhite.mixerYellow;
     float mixerCyan = params->blackwhite.mixerCyan;
@@ -2601,6 +2620,23 @@ void ImProcFunctions::rgbProc(Imagefloat* working, LabImage* lab, PipetteBuffer 
 
                 if (hasToneCurve2) {
                     customToneCurve(customToneCurve2, curveMode2, rtemp, gtemp, btemp, istart, tH, jstart, tW, TS, ptc2ApplyState);
+                }
+
+                // Apply per-channel tone curves (R/G/B from Exposure tone curve)
+                if (tcRCurve || tcGCurve || tcBCurve) {
+                    for (int i = istart, ti = 0; i < tH; i++, ti++) {
+                        for (int j = jstart, tj = 0; j < tW; j++, tj++) {
+                            if (tcRCurve) {
+                                setUnlessOOG(rtemp[ti * TS + tj], tcRCurve[ rtemp[ti * TS + tj] ]);
+                            }
+                            if (tcGCurve) {
+                                setUnlessOOG(gtemp[ti * TS + tj], tcGCurve[ gtemp[ti * TS + tj] ]);
+                            }
+                            if (tcBCurve) {
+                                setUnlessOOG(btemp[ti * TS + tj], tcBCurve[ btemp[ti * TS + tj] ]);
+                            }
+                        }
+                    }
                 }
 
                 if (editID == EUID_RGB_R) {
@@ -3444,6 +3480,24 @@ void ImProcFunctions::rgbProc(Imagefloat* working, LabImage* lab, PipetteBuffer 
                 }
 
 #endif
+            }
+        }
+
+        // Strength blending: blend B&W result with original color
+        {
+            float bwStrength = params->blackwhite.strength / 100.f;
+            if (bwStrength < 1.f) {
+                float origWeight = 1.f - bwStrength;
+#ifdef _OPENMP
+                #pragma omp parallel for schedule(dynamic, 16)
+#endif
+                for (int i = 0; i < tH; i++) {
+                    for (int j = 0; j < tW; j++) {
+                        tmpImage->r(i, j) = bwStrength * tmpImage->r(i, j) + origWeight * working->r(i, j);
+                        tmpImage->g(i, j) = bwStrength * tmpImage->g(i, j) + origWeight * working->g(i, j);
+                        tmpImage->b(i, j) = bwStrength * tmpImage->b(i, j) + origWeight * working->b(i, j);
+                    }
+                }
             }
         }
 

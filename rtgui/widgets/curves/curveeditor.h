@@ -59,6 +59,8 @@ protected:
     PopUpToggleButton* curveType;
     LUTu histogram; // histogram values
     bool bgHistValid;
+    LUTu histogramR, histogramG, histogramB; // per-channel histogram values
+    bool bgHistRGBValid;
     double locallabRef; // Locallab reference value
     bool remoteDrag;
 
@@ -99,6 +101,7 @@ public:
     bool isUnChanged ();
     void setUnChanged (bool uc);
     void updateBackgroundHistogram(const LUTu& hist);
+    void updateBackgroundHistogramRGB(const LUTu& histR, const LUTu& histG, const LUTu& histB);
     void updateLocallabBackground(double ref);
     void setLeftBarColorProvider(ColorProvider* cp, int callerId);
     void setBottomBarColorProvider(ColorProvider* cp, int callerId);

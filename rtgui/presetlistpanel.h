@@ -90,8 +90,8 @@ public:
     void writeOptions();
 
 private:
-    static constexpr int THUMB_HEIGHT = 48;
-    static constexpr int CARD_MIN_WIDTH = 80;
+    static constexpr int THUMB_HEIGHT = 56;
+    static constexpr int CARD_MIN_WIDTH = 48;
 
     // Toolbar callbacks
     void profileFillModeToggled();
@@ -179,6 +179,30 @@ private:
     std::map<const ProfileStoreEntry*, Glib::RefPtr<Gdk::Pixbuf>> thumbCache_;
     std::thread thumbThread_;
     std::atomic<bool> thumbCancelled_;
+
+    // Phase 3: Animated categories
+    std::map<int, bool> categoryExpanded_;
+
+    // Phase 4: Context menu
+    void showCardContextMenu(GdkEventButton* event, const ProfileStoreEntry* entry);
+    void renamePreset(const ProfileStoreEntry* entry);
+    void overwritePreset(const ProfileStoreEntry* entry);
+    void deletePreset(const ProfileStoreEntry* entry);
+    void showGroupContextMenu(GdkEventButton* event, int folderId);
+    void renameGroup(int folderId);
+    bool isUserPreset(const ProfileStoreEntry* entry) const;
+    Glib::ustring resolveVirtualPath(const Glib::ustring& virtualPath) const;
+
+    // Phase 5: DnD
+    const ProfileStoreEntry* dragEntry_ = nullptr;
+    double dragStartX_ = 0, dragStartY_ = 0;
+    bool dragActive_ = false;
+    Gtk::Widget* dropTargetWidget_ = nullptr;
+    int dropTargetFolderId_ = -1;
+    std::map<int, Gtk::Widget*> categoryHeaders_;
+    void highlightDropTarget(double x, double y);
+    void completeDrop(double x, double y);
+    void clearDropHighlight();
 
     static PartialPasteDlg* partialProfileDlg_;
     static Gtk::Window* parent_;

@@ -53,6 +53,7 @@ PointColor::PointColor() :
     // Toolbar: [Eyedropper] [+] [-]
     toolbarBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
     toolbarBox->set_name("PointColorToolbar");
+    toolbarBox->set_halign(Gtk::ALIGN_CENTER);
 
     pickButton = Gtk::manage(new Gtk::Button());
     auto* pickImg = Gtk::manage(new RTImage("color-picker"));
@@ -83,7 +84,7 @@ PointColor::PointColor() :
     targetList->set_name("PointColorTargetList");
     targetList->set_headers_visible(false);
     targetList->append_column("", targetColumns.label);
-    targetList->get_selection()->signal_changed().connect(
+    selectionConn_ = targetList->get_selection()->signal_changed().connect(
         sigc::mem_fun(*this, &PointColor::onTargetSelected));
 
     // Custom cell renderer for color dot
@@ -111,13 +112,9 @@ PointColor::PointColor() :
             });
     }
 
-    targetScroll = Gtk::manage(new Gtk::ScrolledWindow());
-    targetScroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
-    targetScroll->set_min_content_height(50);
-    targetScroll->set_max_content_height(120);
-    targetScroll->add(*targetList);
-    targetScroll->set_no_show_all(true);
-    toolContent_->pack_start(*targetScroll, Gtk::PACK_SHRINK, 0);
+    targetList->set_no_show_all(true);
+    targetList->hide();
+    toolContent_->pack_start(*targetList, Gtk::PACK_SHRINK, 0);
 
     // Center Hue selector (0..360 degrees displayed, stored as 0..1)
     centerHueAdj = Gtk::manage(new Adjuster(M("TP_POINTCOLOR_CENTER_HUE"), 0., 360., 1., 0.));
@@ -155,9 +152,8 @@ PointColor::PointColor() :
     toolContent_->hide();
     getSummaryBox()->pack_start(*toolContent_, Gtk::PACK_SHRINK, 0);
 
-    // Start with controls disabled and target list hidden
+    // Start with controls disabled
     setControlsSensitive(false);
-    targetScroll->hide();
 
     getSummaryBox()->show_all();
 }
@@ -170,10 +166,6 @@ void PointColor::toggleContent()
         toolContent_->set_no_show_all(false);
         toolContent_->show_all();
         toolContent_->set_no_show_all(true);
-        // Restore targetScroll visibility based on targets
-        if (targets.empty()) {
-            targetScroll->hide();
-        }
     } else {
         sectionLabel_->set_markup("<b>\xe2\x96\xb8 Point Color</b>");
         toolContent_->hide();
@@ -211,29 +203,53 @@ void PointColor::updateColorSwatch()
 
 void PointColor::updateTargetList()
 {
+    // Block selection signal to prevent re-entrant saves during rebuild
+    selectionConn_.block();
+
     targetStore->clear();
 
     for (size_t i = 0; i < targets.size(); ++i) {
         auto row = *(targetStore->append());
         row[targetColumns.index] = (int)i;
         int deg = (int)(targets[i].centerHue * 360.0 + 0.5) % 360;
-        row[targetColumns.label] = Glib::ustring::compose(
+
+        Glib::ustring label = Glib::ustring::compose(
             "%1 (%2\xc2\xb0)", hueToColorName(targets[i].centerHue), deg);
+
+        // Append edit summary if any adjustments are non-zero
+        Glib::ustring edits;
+        if (std::abs(targets[i].hueShift) >= 0.5) {
+            edits += Glib::ustring::compose("H%1", (int)targets[i].hueShift);
+        }
+        if (std::abs(targets[i].saturation) >= 0.5) {
+            if (!edits.empty()) edits += " ";
+            edits += Glib::ustring::compose("S%1", (int)targets[i].saturation);
+        }
+        if (std::abs(targets[i].luminance) >= 0.5) {
+            if (!edits.empty()) edits += " ";
+            edits += Glib::ustring::compose("L%1", (int)targets[i].luminance);
+        }
+        if (!edits.empty()) {
+            label += "  " + edits;
+        }
+
+        row[targetColumns.label] = label;
         row[targetColumns.hue] = targets[i].centerHue;
     }
 
     if (targets.empty()) {
-        targetScroll->hide();
+        targetList->hide();
         setControlsSensitive(false);
     } else {
-        targetScroll->show();
-
+        targetList->show();
         // Select active target
         if (activeTarget >= 0 && activeTarget < (int)targets.size()) {
             auto path = Gtk::TreePath(Glib::ustring::format(activeTarget));
             targetList->get_selection()->select(path);
         }
     }
+
+    selectionConn_.unblock();
 }
 
 void PointColor::loadTargetToControls(int idx)
@@ -452,7 +468,7 @@ void PointColor::setBatchMode(bool batchMode)
 
     // Hide interactive elements in batch mode
     toolbarBox->hide();
-    targetScroll->hide();
+    targetList->hide();
 
     centerHueAdj->showEditedCB();
     hueShiftAdj->showEditedCB();

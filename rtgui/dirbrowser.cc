@@ -18,8 +18,9 @@
  */
 #include "dirbrowser.h"
 
-#include <iostream>
+#include <cmath>
 #include <cstring>
+#include <iostream>
 
 #include "cachemanager.h"
 #include "guiutils.h"
@@ -41,6 +42,11 @@ public:
 
     std::function<bool(GdkEventMotion*)> onMotion;
     std::function<bool(GdkEventCrossing*)> onLeave;
+
+    // Clip-reveal state: set by DirBrowser when expanding
+    std::string revealParentPath;
+    double revealFraction = 1.0;
+
 protected:
     bool on_motion_notify_event(GdkEventMotion* event) override {
         if (onMotion) onMotion(event);
@@ -49,6 +55,43 @@ protected:
     bool on_leave_notify_event(GdkEventCrossing* event) override {
         if (onLeave) onLeave(event);
         return Gtk::TreeView::on_leave_notify_event(event);
+    }
+    bool on_draw(const Cairo::RefPtr<Cairo::Context>& cr) override {
+        if (!revealParentPath.empty() && revealFraction < 1.0) {
+            Gtk::TreePath parentPath(revealParentPath);
+            // Get the parent row's background area to find its bottom edge
+            Gdk::Rectangle parentRect;
+            get_background_area(parentPath, *get_column(0), parentRect);
+            int revealTop = parentRect.get_y() + parentRect.get_height();
+
+            // Find total children height by checking the last child
+            auto parentIter = get_model()->get_iter(parentPath);
+            int totalChildH = 0;
+            if (parentIter && !parentIter->children().empty()) {
+                auto lastChild = parentIter->children().end();
+                --lastChild;
+                Gdk::Rectangle lastRect;
+                get_background_area(get_model()->get_path(lastChild), *get_column(0), lastRect);
+                totalChildH = (lastRect.get_y() + lastRect.get_height()) - revealTop;
+            }
+
+            int revealH = static_cast<int>(totalChildH * revealFraction);
+            int w = get_allocated_width();
+            int h = get_allocated_height();
+
+            cr->save();
+            // Clip: everything above children area + revealed portion of children
+            cr->rectangle(0, 0, w, revealTop + revealH);
+            // Plus everything below the children area (other rows)
+            if (revealTop + totalChildH < h) {
+                cr->rectangle(0, revealTop + totalChildH, w, h - (revealTop + totalChildH));
+            }
+            cr->clip();
+            bool result = Gtk::TreeView::on_draw(cr);
+            cr->restore();
+            return result;
+        }
+        return Gtk::TreeView::on_draw(cr);
     }
 };
 
@@ -231,9 +274,37 @@ DirBrowser::DirBrowser () : dirTreeModel(),
 
 DirBrowser::~DirBrowser()
 {
+    chevronAnimConn_.disconnect();
     hideHoverPopup();
     delete hoverPopup_;
     idle_register.destroy();
+}
+
+// Generate rotated chevron pixbufs: frame 0 = right (0°), frame count = down (90°)
+static std::vector<Glib::RefPtr<Gdk::Pixbuf>> generateChevronFrames(int count)
+{
+    const int sz = 16;
+    const double cx = sz / 2.0, cy = sz / 2.0;
+    std::vector<Glib::RefPtr<Gdk::Pixbuf>> frames;
+    frames.reserve(count + 1);
+    for (int i = 0; i <= count; ++i) {
+        auto surface = Cairo::ImageSurface::create(Cairo::FORMAT_ARGB32, sz, sz);
+        auto cr = Cairo::Context::create(surface);
+        double angle = (M_PI / 2.0) * i / count; // 0 to 90°
+        cr->translate(cx, cy);
+        cr->rotate(angle);
+        cr->translate(-cx, -cy);
+        cr->set_source_rgba(0.6, 0.6, 0.6, 1.0);
+        cr->set_line_width(1.5);
+        cr->set_line_cap(Cairo::LINE_CAP_ROUND);
+        cr->set_line_join(Cairo::LINE_JOIN_ROUND);
+        cr->move_to(6, 3.5);
+        cr->line_to(10.5, 8);
+        cr->line_to(6, 12.5);
+        cr->stroke();
+        frames.push_back(Gdk::Pixbuf::create(surface, 0, 0, sz, sz));
+    }
+    return frames;
 }
 
 void DirBrowser::fillDirTree ()
@@ -243,6 +314,30 @@ void DirBrowser::fillDirTree ()
     dirtree->set_model (dirTreeModel);
 
     fillRoot ();
+
+    // Generate chevron rotation frames (Cairo-drawn)
+    chevronFrames_ = generateChevronFrames(6);
+    chevronRightPixbuf_ = chevronFrames_.front();
+    chevronDownPixbuf_ = chevronFrames_.back();
+
+    // Chevron expand/collapse indicator
+    Gtk::CellRendererPixbuf* chevronCR = Gtk::manage(new Gtk::CellRendererPixbuf());
+    chevronCR->property_ypad() = 0;
+    chevronCR->property_xpad() = 0;
+    tvc.pack_start(*chevronCR, false);
+    tvc.set_cell_data_func(*chevronCR, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
+        auto* pbCR = static_cast<Gtk::CellRendererPixbuf*>(cr);
+        auto path = dirTreeModel->get_path(iter);
+        auto pathStr = path.to_string();
+        auto it = chevronAnimFrame_.find(pathStr);
+        if (it != chevronAnimFrame_.end()) {
+            int frame = std::max(0, std::min(it->second, static_cast<int>(chevronFrames_.size()) - 1));
+            pbCR->property_pixbuf() = chevronFrames_[frame];
+        } else {
+            bool expanded = dirtree->row_expanded(path);
+            pbCR->property_pixbuf() = expanded ? chevronDownPixbuf_ : chevronRightPixbuf_;
+        }
+    });
 
     Gtk::CellRendererPixbuf* render_pb = Gtk::manage ( new Gtk::CellRendererPixbuf () );
     render_pb->property_stock_size() = Gtk::ICON_SIZE_SMALL_TOOLBAR;
@@ -591,12 +686,138 @@ void DirBrowser::row_activated (const Gtk::TreeModel::Path& path, Gtk::TreeViewC
 
     if (Glib::file_test (dname, Glib::FILE_TEST_IS_DIR)) {
         dirSelectionSignal (dname, Glib::ustring());
-        if (dirtree->row_expanded(path)) {
+
+        expandAnimConn_.disconnect();
+        bool wasExpanded = dirtree->row_expanded(path);
+
+        if (wasExpanded) {
+            // Start chevron collapse animation
+            auto pathStr = path.to_string();
+            auto it = chevronAnimFrame_.find(pathStr);
+            chevronAnimFrame_[pathStr] = it != chevronAnimFrame_.end()
+                ? it->second : static_cast<int>(chevronFrames_.size()) - 1;
+            chevronAnimExpanding_[pathStr] = false;
+            revealParentPath_.clear();
+            dirtree->revealParentPath.clear();
+            dirtree->revealFraction = 1.0;
+            startChevronAnim();
+
+            // Collapse with animation (fast: 120ms)
+            expandAnimStartH_ = scrolledwindow4->get_allocated_height();
             dirtree->collapse_row(path);
+            int minH = 0, natH = 0;
+            dirtree->get_preferred_height(minH, natH);
+            expandAnimTargetH_ = std::max(natH + 4, scrolledwindow4->get_min_content_height());
+            // Clamp to current if natural is larger (scrolled content)
+            if (expandAnimTargetH_ >= expandAnimStartH_) {
+                // Content is still larger than viewport, no height animation needed
+                return;
+            }
+            expandAnimExpanding_ = false;
+            expandAnimFraction_ = 0.0;
+            scrolledwindow4->set_min_content_height(expandAnimTargetH_);
+            scrolledwindow4->set_max_content_height(expandAnimStartH_);
+            scrolledwindow4->set_propagate_natural_height(true);
+            expandAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
+                expandAnimFraction_ += 16.0 / 120.0; // 120ms collapse
+                if (expandAnimFraction_ >= 1.0) {
+                    scrolledwindow4->set_max_content_height(-1);
+                    return false;
+                }
+                double t = expandAnimFraction_ * expandAnimFraction_; // ease-in-quad
+                int h = expandAnimStartH_ + static_cast<int>((expandAnimTargetH_ - expandAnimStartH_) * t);
+                scrolledwindow4->set_max_content_height(h);
+                return true;
+            }, 16);
         } else {
+            // Start chevron expand animation + child reveal
+            auto pathStr = path.to_string();
+            auto it = chevronAnimFrame_.find(pathStr);
+            chevronAnimFrame_[pathStr] = it != chevronAnimFrame_.end()
+                ? it->second : 0;
+            chevronAnimExpanding_[pathStr] = true;
+            revealParentPath_ = pathStr;
+            revealAlpha_ = 0.0;
+            dirtree->revealParentPath = pathStr;
+            dirtree->revealFraction = 0.0;
+            startChevronAnim();
+
+            // Expand with animation (smooth: 200ms)
+            expandAnimStartH_ = scrolledwindow4->get_allocated_height();
             dirtree->expand_row(path, false);
+            int minH = 0, natH = 0;
+            dirtree->get_preferred_height(minH, natH);
+            expandAnimTargetH_ = natH + 4;
+            if (expandAnimTargetH_ <= expandAnimStartH_) {
+                // Content fits, no animation needed
+                return;
+            }
+            expandAnimExpanding_ = true;
+            expandAnimFraction_ = 0.0;
+            scrolledwindow4->set_max_content_height(expandAnimStartH_);
+            scrolledwindow4->set_propagate_natural_height(true);
+            expandAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
+                expandAnimFraction_ += 16.0 / 200.0; // 200ms expand
+                if (expandAnimFraction_ >= 1.0) {
+                    scrolledwindow4->set_max_content_height(-1);
+                    return false;
+                }
+                double t = 1.0 - std::pow(1.0 - expandAnimFraction_, 3); // ease-out-cubic
+                int h = expandAnimStartH_ + static_cast<int>((expandAnimTargetH_ - expandAnimStartH_) * t);
+                scrolledwindow4->set_max_content_height(h);
+                return true;
+            }, 16);
         }
     }
+}
+
+void DirBrowser::startChevronAnim()
+{
+    if (chevronAnimConn_.connected()) return;
+    chevronAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
+        // Advance chevron frames
+        for (auto it = chevronAnimFrame_.begin(); it != chevronAnimFrame_.end(); ) {
+            bool expanding = chevronAnimExpanding_[it->first];
+            if (expanding) {
+                it->second++;
+                if (it->second >= static_cast<int>(chevronFrames_.size()) - 1) {
+                    it->second = static_cast<int>(chevronFrames_.size()) - 1;
+                    chevronAnimExpanding_.erase(it->first);
+                    it = chevronAnimFrame_.erase(it);
+                    continue;
+                }
+            } else {
+                it->second--;
+                if (it->second <= 0) {
+                    it->second = 0;
+                    chevronAnimExpanding_.erase(it->first);
+                    it = chevronAnimFrame_.erase(it);
+                    continue;
+                }
+            }
+            ++it;
+        }
+
+        // Advance reveal fraction (clip-based reveal)
+        if (revealAlpha_ < 1.0) {
+            revealAlpha_ += 16.0 / 150.0;
+            if (revealAlpha_ >= 1.0) {
+                revealAlpha_ = 1.0;
+                revealParentPath_.clear();
+                dirtree->revealParentPath.clear();
+                dirtree->revealFraction = 1.0;
+            } else {
+                // Ease-out-cubic for smooth deceleration
+                double t = 1.0 - std::pow(1.0 - revealAlpha_, 3);
+                dirtree->revealFraction = t;
+            }
+        }
+
+        dirtree->queue_draw();
+
+        bool done = chevronAnimFrame_.empty() && revealAlpha_ >= 1.0;
+        return !done;
+    }, 16);
 }
 
 Gtk::TreePath DirBrowser::expandToDir (const Glib::ustring& absDirPath)

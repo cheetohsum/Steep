@@ -463,7 +463,8 @@ void drawCrop (const Cairo::RefPtr<Cairo::Context>& cr,
                double clipWidth, double clipHeight,
                double startx, double starty, double scale,
                const rtengine::procparams::CropParams& cparams,
-               bool drawGuide, bool useBgColor, bool fullImageVisible)
+               bool drawGuide, bool useBgColor, bool fullImageVisible,
+               bool solidOverlay)
 {
     cr->save();
 
@@ -478,7 +479,18 @@ void drawCrop (const Cairo::RefPtr<Cairo::Context>& cr,
 
     const auto& options = App::get().options();
     // crop overlay color, linked with crop windows background
-    if (options.bgcolor == 0 || !useBgColor) {
+    if (solidOverlay) {
+        // Fully opaque overlay when not in crop editing mode
+        if (options.bgcolor == 0) {
+            cr->set_source_rgba (0, 0, 0, 1.0);
+        } else if (options.bgcolor == 1) {
+            cr->set_source_rgb (0, 0, 0);
+        } else if (options.bgcolor == 2) {
+            cr->set_source_rgb (1, 1, 1);
+        } else if (options.bgcolor == 3) {
+            cr->set_source_rgb (0.467, 0.467, 0.467);
+        }
+    } else if (options.bgcolor == 0 || !useBgColor) {
         cr->set_source_rgba (options.cutOverlayBrush[0], options.cutOverlayBrush[1], options.cutOverlayBrush[2], options.cutOverlayBrush[3]);
     } else if (options.bgcolor == 1) {
         cr->set_source_rgb (0, 0, 0);
@@ -549,6 +561,8 @@ bool ExpanderBox::on_draw(const ::Cairo::RefPtr< Cairo::Context> &cr) {
 ExpanderBox::ExpanderBox( Gtk::Container *p): pC(p)
 {
     set_name ("ExpanderBox");
+    // No own GDK window — background comes from child CSS, not EventBox.
+    set_visible_window(false);
 //GTK318
 #if GTK_MAJOR_VERSION == 3 && GTK_MINOR_VERSION < 20
     set_border_width(2);
@@ -944,10 +958,6 @@ void MyExpander::setExpandable(bool canExpand)
 
 void MyExpander::hideHeader()
 {
-    printf("hideHeader called: useEnabled=%d, enabled=%d, expBox=%p, label=%s\n",
-           useEnabled, enabled, (void*)expBox, label ? label->get_text().c_str() : "(widget)");
-    fflush(stdout);
-
     // Hide the title row but keep the body visible.
     titleEvBox->set_no_show_all(true);
     titleEvBox->hide();
@@ -985,9 +995,27 @@ void MyExpander::setFlatMode(bool flat)
     // Force expanded (content always visible)
     set_expanded(true);
 
-    // Allow parent show_all() to propagate into the body
+    // Allow parent show_all() to propagate into the body.
+    // Force the ExpanderBox EventBox and its child to be fully
+    // transparent via a high-priority inline CSS provider.
     if (expBox) {
         expBox->set_no_show_all(false);
+        expBox->set_visible_window(false);
+        auto flatCss = Gtk::CssProvider::create();
+        flatCss->load_from_data(
+            "#ExpanderBox, #ExpanderBox2, #ExpanderBox3 {"
+            "  background-color: transparent; background-image: none;"
+            "  border: none; box-shadow: none; padding: 0; margin: 0;"
+            "}"
+            " #ExpanderBox > box, #ExpanderBox > grid,"
+            " #ExpanderBox2 > box, #ExpanderBox2 > grid,"
+            " #ExpanderBox3 > box, #ExpanderBox3 > grid {"
+            "  background-color: transparent; background-image: none;"
+            "  border: none; box-shadow: none; padding: 0; margin: 0;"
+            "}"
+        );
+        expBox->get_style_context()->add_provider(
+            flatCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 300);
     }
 
     // Force enabled
@@ -1484,19 +1512,58 @@ void MyHScale::clearTrackGradient()
     queue_draw();
 }
 
+void MyHScale::setLabelText(const Glib::ustring& text)
+{
+    labelText_ = text;
+    queue_draw();
+}
+
+void MyHScale::setLabelClickCallback(std::function<void()> callback)
+{
+    labelClickCallback_ = std::move(callback);
+}
+
+bool MyHScale::hasLabel() const
+{
+    return !labelText_.empty();
+}
+
+double MyHScale::getLabelAreaWidth() const
+{
+    return labelAreaWidth_;
+}
+
+bool MyHScale::on_button_press_event(GdkEventButton* event)
+{
+    if (event->button == 1 && labelClickCallback_ && labelAreaWidth_ > 0) {
+        if (event->x < labelAreaWidth_) {
+            labelClickCallback_();
+            return true; // consume click, don't move thumb
+        }
+    }
+    return Gtk::Scale::on_button_press_event(event);
+}
+
 bool MyHScale::on_draw (const Cairo::RefPtr<Cairo::Context>& cr)
 {
-    // Draw the default scale first (provides baseline layout)
-    bool ret = Gtk::Scale::on_draw(cr);
-
     const Gtk::Allocation alloc = get_allocation();
     const int w = alloc.get_width();
     const int h = alloc.get_height();
     const int troughY = h / 2;
-    // Use slider travel range for knob positioning, full width for visuals
+    const bool hasLbl = hasLabel();
+
+    // For labeled sliders: skip GTK default draw entirely (we paint everything).
+    // Pill background is drawn by Adjuster::on_draw — don't erase it here.
+    // For unlabeled: let GTK draw first, then overlay our custom elements.
+    bool ret = true;
+    if (!hasLbl) {
+        ret = Gtk::Scale::on_draw(cr);
+    }
+    // (labeled: no erase — Adjuster's pill shows through)
+
     int sliderStart = 0, sliderEnd = 0;
     get_slider_range(sliderStart, sliderEnd);
-    const int padding = 2;  // visual trough extends nearly full width
+    const int padding = 2;
     const int troughWidth = w - 2 * padding;
     const bool isBipolar = get_style_context()->has_class("bipolar");
 
@@ -1505,99 +1572,127 @@ bool MyHScale::on_draw (const Cairo::RefPtr<Cairo::Context>& cr)
     const double value = get_value();
     const double range = rangeMax - rangeMin;
 
-    // --- A. Draw gradient track ---
-    const int troughHeight = std::max(6, static_cast<int>(h * 0.28));
-    const int fillY = troughY - troughHeight / 2;
-    const double radius = troughHeight / 2.0;
+    if (hasLbl) {
+        // Pill background, value fill, and label text are all drawn by Adjuster::on_draw
+        // at the grid level. Here we only draw the gradient track if present.
 
-    if (!trackGradient_.empty()) {
-        auto gradient = Cairo::LinearGradient::create(padding, 0, padding + troughWidth, 0);
-        for (const auto& ms : trackGradient_) {
-            gradient->add_color_stop_rgba(ms.position, ms.r, ms.g, ms.b, ms.a > 0 ? ms.a : 1.0);
-        }
-        cr->begin_new_sub_path();
-        cr->arc(padding + radius, fillY + radius, radius, rtengine::RT_PI * 0.5, rtengine::RT_PI * 1.5);
-        cr->arc(padding + troughWidth - radius, fillY + radius, radius, rtengine::RT_PI * 1.5, rtengine::RT_PI * 0.5);
-        cr->close_path();
-        cr->set_source(gradient);
-        cr->fill();
-    }
+        const double pillR = 4.0;
 
-    // --- B. Bipolar center-fill ---
-    if (isBipolar && range > 0) {
-        const int bipolarHeight = std::max(2, static_cast<int>(h * 0.08));
-        const int bipolarY = troughY - bipolarHeight / 2;
-        const double centerFrac = (0.0 - rangeMin) / range;
-        const double valueFrac = (value - rangeMin) / range;
-        const int centerX = padding + static_cast<int>(centerFrac * troughWidth);
-        const int valueX = padding + static_cast<int>(valueFrac * troughWidth);
-        const int fillLeft = std::min(centerX, valueX);
-        const int fillRight = std::max(centerX, valueX);
+        // --- Gradient track inside pill (if present, e.g. Temperature/Tint) ---
+        if (!trackGradient_.empty()) {
+            const int gradH = h - 6;
+            const int gradY2 = troughY - gradH / 2;
+            const int gradStartX = padding + 2;
+            const int gradEndX = w - padding - 2;
 
-        if (fillRight > fillLeft) {
-            cr->set_source_rgba(0.176, 0.498, 0.827, 0.85);
-            const double r2 = bipolarHeight / 2.0;
+            auto gradient = Cairo::LinearGradient::create(gradStartX, 0, gradEndX, 0);
+            for (const auto& ms : trackGradient_) {
+                gradient->add_color_stop_rgba(ms.position, ms.r, ms.g, ms.b, (ms.a > 0 ? ms.a : 1.0) * 0.4);
+            }
             cr->begin_new_sub_path();
-            cr->arc(fillLeft + r2, bipolarY + r2, r2, rtengine::RT_PI * 0.5, rtengine::RT_PI * 1.5);
-            cr->arc(fillRight - r2, bipolarY + r2, r2, rtengine::RT_PI * 1.5, rtengine::RT_PI * 0.5);
+            cr->arc(gradStartX + pillR, gradY2 + pillR, pillR, rtengine::RT_PI, rtengine::RT_PI * 1.5);
+            cr->arc(gradEndX - pillR, gradY2 + pillR, pillR, rtengine::RT_PI * 1.5, 0);
+            cr->arc(gradEndX - pillR, gradY2 + gradH - pillR, pillR, 0, rtengine::RT_PI * 0.5);
+            cr->arc(gradStartX + pillR, gradY2 + gradH - pillR, pillR, rtengine::RT_PI * 0.5, rtengine::RT_PI);
             cr->close_path();
+            cr->set_source(gradient);
             cr->fill();
         }
-    }
 
-    // --- C. Draw 11 tick marks above trough ---
-    if (showTickMarks_) {
-        const int tickHeight = 3;
-        const int tickTop = fillY - tickHeight - 1;
+        // Compute label area width for click detection (used by on_button_press_event)
+        auto layout = create_pango_layout(labelText_);
+        auto fontDesc = Pango::FontDescription("sans 9");
+        layout->set_font_description(fontDesc);
+        Pango::Rectangle logRect;
+        layout->get_pixel_extents(logRect, logRect);
+        labelAreaWidth_ = padding + 12 + logRect.get_width() + 6;
+    } else {
+        // --- Unlabeled slider: keep existing custom overlay ---
+        labelAreaWidth_ = 0.0;
 
-        for (int i = 0; i <= 10; ++i) {
-            const double frac = i / 10.0;
-            const int x = padding + static_cast<int>(frac * troughWidth);
-            const bool isCenter = (i == 5);
+        if (!trackGradient_.empty()) {
+            const int troughHeight = std::max(6, static_cast<int>(h * 0.28));
+            const int fillY = troughY - troughHeight / 2;
+            const double radius = troughHeight / 2.0;
 
-            cr->set_source_rgba(1.0, 1.0, 1.0, isCenter && isBipolar ? 0.25 : 0.12);
+            auto gradient = Cairo::LinearGradient::create(padding, 0, padding + troughWidth, 0);
+            for (const auto& ms : trackGradient_) {
+                gradient->add_color_stop_rgba(ms.position, ms.r, ms.g, ms.b, ms.a > 0 ? ms.a : 1.0);
+            }
+            cr->begin_new_sub_path();
+            cr->arc(padding + radius, fillY + radius, radius, rtengine::RT_PI * 0.5, rtengine::RT_PI * 1.5);
+            cr->arc(padding + troughWidth - radius, fillY + radius, radius, rtengine::RT_PI * 1.5, rtengine::RT_PI * 0.5);
+            cr->close_path();
+            cr->set_source(gradient);
+            cr->fill();
+        }
+
+        // Bipolar center-fill
+        if (isBipolar && range > 0) {
+            const int bipolarHeight = 2;
+            const int bipolarY = troughY - bipolarHeight / 2;
+            const double centerFrac = (0.0 - rangeMin) / range;
+            const double valueFrac = (value - rangeMin) / range;
+            const int centerX = padding + static_cast<int>(centerFrac * troughWidth);
+            const int valueX = padding + static_cast<int>(valueFrac * troughWidth);
+            const int fillLeft = std::min(centerX, valueX);
+            const int fillRight = std::max(centerX, valueX);
+
+            if (fillRight > fillLeft) {
+                cr->set_source_rgba(0.176, 0.498, 0.827, 0.85);
+                cr->rectangle(fillLeft, bipolarY, fillRight - fillLeft, bipolarHeight);
+                cr->fill();
+            }
+        }
+
+        // Tick marks
+        if (showTickMarks_) {
+            const int troughHeight = std::max(6, static_cast<int>(h * 0.28));
+            const int fillY = troughY - troughHeight / 2;
+            const int tickHeight = 3;
+            const int tickTop = fillY - tickHeight - 1;
+
+            for (int i = 0; i <= 10; ++i) {
+                const double frac = i / 10.0;
+                const int x = padding + static_cast<int>(frac * troughWidth);
+                const bool isCenter = (i == 5);
+
+                cr->set_source_rgba(1.0, 1.0, 1.0, isCenter && isBipolar ? 0.25 : 0.12);
+                cr->set_line_width(1.0);
+                cr->move_to(x + 0.5, tickTop);
+                cr->line_to(x + 0.5, tickTop + tickHeight + (isCenter && isBipolar ? 1 : 0));
+                cr->stroke();
+            }
+        }
+
+        // Diamond thumb for unlabeled
+        if (range > 0) {
+            const double valueFrac = (value - rangeMin) / range;
+            const int knobX = sliderStart + static_cast<int>(valueFrac * (sliderEnd - sliderStart));
+            const double dw = 4.0;
+            const double dh = 5.0;
+            bool isHover = get_state_flags() & Gtk::STATE_FLAG_PRELIGHT;
+
+            cr->move_to(knobX, troughY - dh + 1);
+            cr->line_to(knobX + dw, troughY + 1);
+            cr->line_to(knobX, troughY + dh + 1);
+            cr->line_to(knobX - dw, troughY + 1);
+            cr->close_path();
+            cr->set_source_rgba(0, 0, 0, 0.2);
+            cr->fill();
+
+            cr->move_to(knobX, troughY - dh);
+            cr->line_to(knobX + dw, troughY);
+            cr->line_to(knobX, troughY + dh);
+            cr->line_to(knobX - dw, troughY);
+            cr->close_path();
+            cr->set_source_rgb(isHover ? 0.91 : 0.816, isHover ? 0.91 : 0.816, isHover ? 0.91 : 0.816);
+            cr->fill_preserve();
+
+            cr->set_source_rgba(0.4, 0.4, 0.4, 1.0);
             cr->set_line_width(1.0);
-            cr->move_to(x + 0.5, tickTop);
-            cr->line_to(x + 0.5, tickTop + tickHeight + (isCenter && isBipolar ? 1 : 0));
             cr->stroke();
         }
-    }
-
-    // --- D. Diamond thumb ---
-    if (range > 0) {
-        const double valueFrac = (value - rangeMin) / range;
-        // Use GTK slider range for precise knob position (matches drag behavior)
-        const int knobX = sliderStart + static_cast<int>(valueFrac * (sliderEnd - sliderStart));
-
-        // Diamond dimensions
-        const double dw = 4.0;  // half-width
-        const double dh = 5.0;  // half-height
-
-        // Check hover state
-        bool isHover = get_state_flags() & Gtk::STATE_FLAG_PRELIGHT;
-
-        // Shadow (offset 1px down)
-        cr->move_to(knobX, troughY - dh + 1);
-        cr->line_to(knobX + dw, troughY + 1);
-        cr->line_to(knobX, troughY + dh + 1);
-        cr->line_to(knobX - dw, troughY + 1);
-        cr->close_path();
-        cr->set_source_rgba(0, 0, 0, 0.2);
-        cr->fill();
-
-        // Diamond body
-        cr->move_to(knobX, troughY - dh);
-        cr->line_to(knobX + dw, troughY);
-        cr->line_to(knobX, troughY + dh);
-        cr->line_to(knobX - dw, troughY);
-        cr->close_path();
-        cr->set_source_rgb(isHover ? 0.91 : 0.816, isHover ? 0.91 : 0.816, isHover ? 0.91 : 0.816);
-        cr->fill_preserve();
-
-        // Diamond border
-        cr->set_source_rgba(0.4, 0.4, 0.4, 1.0);
-        cr->set_line_width(1.0);
-        cr->stroke();
     }
 
     return ret;
@@ -2561,23 +2656,55 @@ ToolGroup::ToolGroup(const Glib::ustring& label) :
     headerBtn->set_halign(Gtk::ALIGN_START);
     headerBtn->add(*arrowLabel);
 
-    // Inline CSS for compact tool group headers
+    // Reset button (X) — hidden by default, shown when group has non-default values
+    resetBtn = Gtk::manage(new Gtk::Button());
+    resetBtn->set_name("ToolGroupReset");
+    resetBtn->set_relief(Gtk::RELIEF_NONE);
+    resetBtn->set_can_focus(false);
+    resetBtn->set_tooltip_text("Reset to defaults");
+    auto* resetLabel = Gtk::manage(new Gtk::Label());
+    resetLabel->set_use_markup(true);
+    resetLabel->set_markup("<small>\xc3\x97</small>"); // × (multiplication sign, used as X)
+    resetBtn->add(*resetLabel);
+    resetBtn->set_no_show_all(true);
+    resetBtn->signal_clicked().connect([this]() {
+        if (resetCallback_) resetCallback_();
+    });
+
+    // Inline CSS for compact tool group headers + reset button
     auto tgCss = Gtk::CssProvider::create();
     tgCss->load_from_data(
         "#ToolGroupHeader { padding: 1px 4px; min-height: 0; border: none; background: none; background-image: none; box-shadow: none; }"
         "#ToolGroupHeader:hover { background-color: rgba(130,170,230,0.22); border-radius: 4px; }"
         "#ToolGroupHeader label { font-size: 9px; font-weight: bold; min-height: 0; padding: 0; margin: 0; }"
+        "#ToolGroupReset { padding: 1px 3px; margin: 0 2px; min-height: 12px; min-width: 12px; border: none; background: none; background-image: none; box-shadow: none; }"
+        "#ToolGroupReset:hover { background-color: rgba(200,80,80,0.3); border-radius: 3px; }"
+        "#ToolGroupReset label { font-size: 9px; color: #aaaaaa; min-height: 0; padding: 0; margin: 0; }"
+        "#ToolGroupReset:hover label { color: #ffffff; }"
     );
     headerBtn->get_style_context()->add_provider(tgCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
     arrowLabel->get_style_context()->add_provider(tgCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+    resetBtn->get_style_context()->add_provider(tgCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
     headerBtn->signal_clicked().connect(
         sigc::mem_fun(*this, &ToolGroup::onHeaderClicked));
 
-    pack_start(*headerBtn, Gtk::PACK_SHRINK, 0);
+    // Header row: header button + reset button
+    auto* headerRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL));
+    headerRow->pack_start(*headerBtn, Gtk::PACK_SHRINK, 0);
+    headerRow->pack_start(*resetBtn, Gtk::PACK_SHRINK, 0);
+    pack_start(*headerRow, Gtk::PACK_SHRINK, 0);
 
-    // Content box for child tool panels
+    // Persistent box: always visible even when collapsed (for preview strips)
+    persistentBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
+    pack_start(*persistentBox, Gtk::PACK_SHRINK, 0);
+
+    // Content box inside a Revealer for smooth expand/collapse animation
     contentBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
-    pack_start(*contentBox, Gtk::PACK_SHRINK, 0);
+    revealer = Gtk::manage(new Gtk::Revealer());
+    revealer->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
+    revealer->set_transition_duration(200);
+    revealer->add(*contentBox);
+    pack_start(*revealer, Gtk::PACK_SHRINK, 0);
 
     // Default: collapsed
     setExpanded(false);
@@ -2593,13 +2720,7 @@ void ToolGroup::setExpanded(bool expand)
 {
     expanded = expand;
     updateArrow();
-    if (expanded) {
-        contentBox->set_no_show_all(false);
-        contentBox->show_all();
-    } else {
-        contentBox->hide();
-        contentBox->set_no_show_all(true);
-    }
+    revealer->set_reveal_child(expanded);
 }
 
 bool ToolGroup::getExpanded() const
@@ -2614,4 +2735,21 @@ void ToolGroup::updateArrow()
     } else {
         arrowLabel->set_markup("<small>\xe2\x96\xb8</small>  " + groupLabel_); // ▸
     }
+}
+
+void ToolGroup::setResetVisible(bool visible)
+{
+    if (visible) {
+        resetBtn->set_no_show_all(false);
+        resetBtn->set_visible(true);
+        resetBtn->show_all();
+    } else {
+        resetBtn->set_visible(false);
+        resetBtn->set_no_show_all(true);
+    }
+}
+
+void ToolGroup::setResetCallback(std::function<void()> cb)
+{
+    resetCallback_ = cb;
 }

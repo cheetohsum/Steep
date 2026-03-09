@@ -258,6 +258,7 @@ bool PopUpCommon::setSelected (int entryNum)
         changeImage(entryNum);
         selected = entryNum;
         setButtonHint();
+        updateSelectionLabel();
 
         auto radioMenuItem = dynamic_cast<Gtk::RadioMenuItem*>(menu->get_children()[entryNum]);
         if (radioMenuItem && !radioMenuItem->get_active()) {
@@ -327,4 +328,33 @@ void PopUpCommon::set_tooltip_text (const Glib::ustring &text)
 {
     buttonHint = text;
     setButtonHint();
+}
+
+void PopUpCommon::setShowSelectionLabel(bool show)
+{
+    if (show && !selectionLabel_) {
+        selectionLabel_ = Gtk::manage(new Gtk::Label());
+        selectionLabel_->set_halign(Gtk::ALIGN_START);
+        selectionLabel_->set_margin_start(4);
+        imageContainer->attach_next_to(*selectionLabel_, *buttonImage, Gtk::POS_RIGHT, 1, 1);
+        selectionLabel_->show();
+        updateSelectionLabel();
+    } else if (!show && selectionLabel_) {
+        imageContainer->remove(*selectionLabel_);
+        selectionLabel_ = nullptr;
+    }
+}
+
+void PopUpCommon::updateSelectionLabel()
+{
+    if (!selectionLabel_ || selected < 0) {
+        return;
+    }
+    auto items = menu->get_children();
+    if (selected < (int)items.size()) {
+        auto item = dynamic_cast<MyImageMenuItemInterface*>(items[selected]);
+        if (item) {
+            selectionLabel_->set_text(item->getLabel()->get_text());
+        }
+    }
 }

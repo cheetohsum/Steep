@@ -250,6 +250,7 @@ CurveEditor::CurveEditor (Glib::ustring text, CurveEditorGroup* ceGroup, CurveEd
 {
 
     bgHistValid = false;
+    bgHistRGBValid = false;
     locallabRef = 0.0;
     remoteDrag = false;
     selected = DCT_Linear;
@@ -403,6 +404,21 @@ void CurveEditor::updateBackgroundHistogram(const LUTu& hist)
     }
 
     // Then call the curve editor group to eventually update the histogram
+    subGroup->updateBackgroundHistogram(this);
+}
+
+void CurveEditor::updateBackgroundHistogramRGB(const LUTu& histR, const LUTu& histG, const LUTu& histB)
+{
+    if (histR && histG && histB) {
+        histogramR = histR;
+        histogramG = histG;
+        histogramB = histB;
+        bgHistRGBValid = true;
+    } else {
+        bgHistRGBValid = false;
+    }
+
+    // Trigger update through the subgroup
     subGroup->updateBackgroundHistogram(this);
 }
 

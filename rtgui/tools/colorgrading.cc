@@ -253,6 +253,7 @@ void ColorGrading::adjusterChanged(Adjuster* a, double newval)
 
 void ColorGrading::colorWheelChanged(ColorWheel* source, double hue, double saturation)
 {
+    autoEnable();
     if (listener && getEnabled()) {
         if (source == shadowsWheel) {
             listener->panelChanged(EvColorGradingShadows, M("GENERAL_CHANGED"));

@@ -84,7 +84,7 @@ CropWindow::CropWindow (ImageArea* parent, bool isLowUpdatePriority_, bool isDet
       upperBorderWidth(1), sepWidth(2), windowPos(30, 30), windowSize(0, 0), imgAreaPos(0, 0), imgAreaSize(0, 0),
       imgPos(-1, -1), imgSize(1, 1), iarea(parent), cropZoom(0), zoomVersion(0), exposeVersion(0), cropgl(nullptr),
       pmlistener(nullptr), pmhlistener(nullptr), scrollAccum(0.0), observedCropWin(nullptr),
-      crop_custom_ratio(0.f), showLevelingGrid_(false)
+      crop_custom_ratio(0.f), solidCropOverlay_(false), showLevelingGrid_(false)
 {
     initZoomSteps();
 
@@ -458,7 +458,8 @@ void CropWindow::buttonPress (int button, int type, int bstate, int x, int y)
                             needRedraw = true;
                         }
                     } else if ((iarea->getToolMode () == TMHand
-                                || iarea->getToolMode() == TMPerspective)
+                                || iarea->getToolMode() == TMPerspective
+                                || iarea->getToolMode() == TMPerspectiveGrid)
                                && editSubscriber
                                && cropgl
                                && cropgl->inImageArea(iarea->posImage.x, iarea->posImage.y)
@@ -473,7 +474,8 @@ void CropWindow::buttonPress (int button, int type, int bstate, int x, int y)
                                 state = SEditPick1;
                                 pickedObject = iarea->getObject();
                                 pickModifierKey = bstate;
-                            } else if (iarea->getToolMode() == TMPerspective) {
+                            } else if (iarea->getToolMode() == TMPerspective
+                                || iarea->getToolMode() == TMPerspectiveGrid) {
                                 state = SCropImgMove;
                             }
                             press_x = x;
@@ -587,7 +589,8 @@ void CropWindow::buttonPress (int button, int type, int bstate, int x, int y)
                         action_y = 0;
                     }
 
-                } else if (iarea->getToolMode () == TMHand || iarea->getToolMode() == TMPerspective) {  // events outside of the image domain
+                } else if (iarea->getToolMode () == TMHand || iarea->getToolMode() == TMPerspective
+                                || iarea->getToolMode() == TMPerspectiveGrid) {  // events outside of the image domain
                     EditSubscriber *editSubscriber = iarea->getCurrSubscriber();
 
                     if (editSubscriber && editSubscriber->getEditingType() == ET_OBJECTS) {
@@ -642,7 +645,8 @@ void CropWindow::buttonPress (int button, int type, int bstate, int x, int y)
             }
         }
     } else if (button == 3) {
-        if (iarea->getToolMode () == TMHand || iarea->getToolMode() == TMPerspective) {
+        if (iarea->getToolMode () == TMHand || iarea->getToolMode() == TMPerspective
+                                || iarea->getToolMode() == TMPerspectiveGrid) {
             EditSubscriber *editSubscriber = iarea->getCurrSubscriber();
             if (editSubscriber && editSubscriber->getEditingType() == ET_OBJECTS) {
                 needRedraw = editSubscriber->button3Pressed(bstate);
@@ -1994,6 +1998,20 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
                 auto pattern = hidpi::getSourceForSurface(cr);
                 int deviceScale = RTScalable::getScaleForWidget(iarea);
                 hidpi::setDeviceScale(pattern->get_surface(), deviceScale);
+
+                // When in crop preview mode, clip image to crop rectangle
+                if (solidCropOverlay_ && cropHandler.cropParams->enabled) {
+                    cr->save();
+                    ImageCoord cropPos = cropHandler.getPosition();
+                    double scale = zoomSteps[cropZoom].zoom / deviceScale;
+                    double cx = offset.x + (cropParams.x - cropPos.x) * scale;
+                    double cy = offset.y + (cropParams.y - cropPos.y) * scale;
+                    double cw = cropParams.w * scale;
+                    double ch = cropParams.h * scale;
+                    cr->rectangle(cx, cy, cw, ch);
+                    cr->clip();
+                }
+
                 // Contain blitting area within crop window
                 cr->rectangle(offset.x, offset.y,
                               std::min(tmp->get_width() / deviceScale,
@@ -2001,12 +2019,30 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
                               std::min(tmp->get_height() / deviceScale,
                                        imgAreaSize.height - imgPos.y));
                 cr->fill();
+
+                if (solidCropOverlay_ && cropHandler.cropParams->enabled) {
+                    cr->restore();
+                }
             } else {
                 hidpi::LogicalCoord offset = windowPos + imgAreaPos + imgPos;
                 Gdk::Cairo::set_source_pixbuf(cr, cropHandler.cropPixbuf, offset.x, offset.y);
                 auto pattern = hidpi::getSourceForSurface(cr);
                 int deviceScale = RTScalable::getScaleForWidget(iarea);
                 hidpi::setDeviceScale(pattern->get_surface(), deviceScale);
+
+                // When in crop preview mode, clip image to crop rectangle
+                if (solidCropOverlay_ && cropHandler.cropParams->enabled) {
+                    cr->save();
+                    ImageCoord cropPos = cropHandler.getPosition();
+                    double scale = zoomSteps[cropZoom].zoom / deviceScale;
+                    double cx = offset.x + (cropParams.x - cropPos.x) * scale;
+                    double cy = offset.y + (cropParams.y - cropPos.y) * scale;
+                    double cw = cropParams.w * scale;
+                    double ch = cropParams.h * scale;
+                    cr->rectangle(cx, cy, cw, ch);
+                    cr->clip();
+                }
+
                 // Contain blitting area within crop window
                 cr->rectangle(offset.x, offset.y,
                               std::min(cropHandler.cropPixbuf->get_width() / deviceScale,
@@ -2014,9 +2050,13 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
                               std::min(cropHandler.cropPixbuf->get_height() / deviceScale,
                                        imgAreaSize.height - imgPos.y));
                 cr->fill();
+
+                if (solidCropOverlay_ && cropHandler.cropParams->enabled) {
+                    cr->restore();
+                }
             }
 
-            if (cropHandler.cropParams->enabled) {
+            if (cropHandler.cropParams->enabled && !solidCropOverlay_) {
                 hidpi::LogicalCoord offset = windowPos + imgAreaPos + imgPos;
                 ImageCoord cropPos = cropHandler.getPosition();
                 double deviceScale = RTScalable::getScaleForWidget(iarea);
@@ -2034,7 +2074,7 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
                          cropPos.x, cropPos.y,
                          zoomSteps[cropZoom].zoom / deviceScale, cropParams,
                          (this == iarea->mainCropWindow), useBgColor,
-                         cropHandler.isFullDisplay());
+                         cropHandler.isFullDisplay(), false);
             }
 
             if (observedCropWin) {
@@ -2115,6 +2155,19 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
                 Gdk::Cairo::set_source_pixbuf(cr, rough, offset.x, offset.y);
                 auto pattern = hidpi::getSourceForSurface(cr);
                 hidpi::setDeviceScale(pattern->get_surface(), deviceScale);
+
+                // When in crop preview mode, clip image to crop rectangle
+                if (solidCropOverlay_ && cropHandler.cropParams->enabled) {
+                    cr->save();
+                    double scale = zoomSteps[cropZoom].zoom / deviceScale;
+                    double cx = offset.x + (cropParams.x - cropPos.x) * scale;
+                    double cy = offset.y + (cropParams.y - cropPos.y) * scale;
+                    double cw = cropParams.w * scale;
+                    double ch = cropParams.h * scale;
+                    cr->rectangle(cx, cy, cw, ch);
+                    cr->clip();
+                }
+
                 // Contain blitting area within crop window
                 cr->rectangle(offset.x, offset.y,
                               std::min(rough->get_width() / desiredSize.device_scale,
@@ -2123,7 +2176,11 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
                                        imgAreaSize.height - imgPos.y));
                 cr->fill();
 
-                if (cropHandler.cropParams->enabled) {
+                if (solidCropOverlay_ && cropHandler.cropParams->enabled) {
+                    cr->restore();
+                }
+
+                if (cropHandler.cropParams->enabled && !solidCropOverlay_) {
                     double roughW = rough->get_width();
                     double roughH = rough->get_height();
                     double clipWidth =
@@ -2139,7 +2196,7 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
                               cropPos.x, cropPos.y,
                               zoomSteps[cropZoom].zoom / deviceScale, cropParams,
                               (this == iarea->mainCropWindow), useBgColor,
-                              cropHandler.isFullDisplay());
+                              cropHandler.isFullDisplay(), false);
                 }
 
                 if (observedCropWin) {
@@ -2246,9 +2303,16 @@ void CropWindow::zoomIn (bool toCursor, int cursorX, int cursorY)
         }
     }
 
+    // Skip 3 major steps for stronger zoom
     int z = cropZoom + 1;
-    while (z < int(zoomSteps.size()) && !zoomSteps[z].is_major) {
-        ++z;
+    int majorsSkipped = 0;
+    while (z < int(zoomSteps.size()) && majorsSkipped < 3) {
+        if (zoomSteps[z].is_major) {
+            ++majorsSkipped;
+        }
+        if (majorsSkipped < 3) {
+            ++z;
+        }
     }
     changeZoom (z, true, x, y);
     fitZoom = false;
@@ -2271,9 +2335,16 @@ void CropWindow::zoomOut (bool toCursor, int cursorX, int cursorY)
     }
 
     zoomVersion = exposeVersion;
+    // Skip 3 major steps for stronger zoom
     int z = cropZoom - 1;
-    while (z >= 0 && !zoomSteps[z].is_major) {
-        --z;
+    int majorsSkipped = 0;
+    while (z >= 0 && majorsSkipped < 3) {
+        if (zoomSteps[z].is_major) {
+            ++majorsSkipped;
+        }
+        if (majorsSkipped < 3) {
+            --z;
+        }
     }
     changeZoom (z, true, x, y);
     fitZoom = false;
@@ -2336,7 +2407,7 @@ void CropWindow::setZoom (double zoom)
                 break;
             }
 
-    changeZoom (cz, false);
+    changeZoom (cz, true);
 }
 
 double CropWindow::getZoomFitVal ()

@@ -57,4 +57,7 @@ public:
     void trimValues          (rtengine::procparams::ProcParams* pp) override;
 
     void colorspaceChanged();
+
+    Adjuster* getHighlightsSlider() { return highlights; }
+    Adjuster* getShadowsSlider() { return shadows; }
 };

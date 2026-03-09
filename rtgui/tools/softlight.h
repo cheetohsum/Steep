@@ -45,5 +45,6 @@ public:
     void adjusterChanged(Adjuster *a, double newval) override;
     void enabledChanged() override;
     void setAdjusterBehavior(bool strengthAdd);
+    Adjuster* getStrengthSlider() { return strength; }
 };
 

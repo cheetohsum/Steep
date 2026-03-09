@@ -85,6 +85,9 @@ public:
     void trimValues          (rtengine::procparams::ProcParams* pp) override;
     Glib::ustring getSettingString ();
 
+    Adjuster* getLumaSlider();
+    Adjuster* getChromaSlider();
+
 private:
     rtengine::ProcEvent EvDPDNGain;
     CurveEditorGroup* NoiscurveEditorG;

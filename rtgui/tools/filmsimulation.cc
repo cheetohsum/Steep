@@ -65,6 +65,14 @@ bool notifySlowParseDir (const std::chrono::system_clock::time_point& startedAt)
 FilmSimulation::FilmSimulation()
     :   FoldableToolPanel( this, TOOL_NAME, M("TP_FILMSIMULATION_LABEL"), false, true )
 {
+    // Label + Checkbox + CLUT dropdown on same row
+    auto *label = Gtk::manage(new Gtk::Label(M("TP_FILMSIMULATION_LABEL")));
+    label->set_halign(Gtk::ALIGN_START);
+
+    m_enableCheck = Gtk::manage(new Gtk::CheckButton());
+    m_enableCheck->set_active(false);
+    m_enableConn = m_enableCheck->signal_toggled().connect(sigc::mem_fun(*this, &FilmSimulation::onEnableToggled));
+
     m_clutComboBox = Gtk::manage( new ClutComboBox(App::get().options().clutsDir) );
 
     int foundClutsCount = m_clutComboBox->foundClutsCount();
@@ -74,12 +82,18 @@ FilmSimulation::FilmSimulation()
     }
 
     m_clutComboBoxConn = m_clutComboBox->signal_changed().connect( sigc::mem_fun( *this, &FilmSimulation::onClutSelected ) );
-    getSummaryBox()->pack_start( *m_clutComboBox );
-    getSummaryBox()->show_all();
+
+    auto *headerRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+    headerRow->pack_start(*label, Gtk::PACK_SHRINK, 0);
+    headerRow->pack_start(*m_enableCheck, Gtk::PACK_SHRINK, 0);
+    headerRow->pack_start(*m_clutComboBox, Gtk::PACK_EXPAND_WIDGET, 0);
 
     m_strength = Gtk::manage( new Adjuster( M("TP_FILMSIMULATION_STRENGTH"), 0., 100, 1., 100 ) );
     m_strength->setAdjusterListener( this );
-    pack_start( *m_strength, Gtk::PACK_SHRINK, 0 );
+
+    getSummaryBox()->pack_start(*headerRow, Gtk::PACK_SHRINK, 0);
+    getSummaryBox()->pack_start(*m_strength, Gtk::PACK_SHRINK, 0);
+    getSummaryBox()->show_all();
 
 }
 
@@ -98,6 +112,10 @@ void FilmSimulation::onClutSelected()
 
 void FilmSimulation::enabledChanged ()
 {
+    // Sync visible checkbox with internal enabled state
+    m_enableConn.block(true);
+    m_enableCheck->set_active(getEnabled());
+    m_enableConn.block(false);
 
     if (listener) {
         if (get_inconsistent()) {
@@ -108,6 +126,12 @@ void FilmSimulation::enabledChanged ()
             listener->panelChanged (EvFilmSimulationEnabled, M("GENERAL_DISABLED"));
         }
     }
+}
+
+void FilmSimulation::onEnableToggled()
+{
+    setEnabled(m_enableCheck->get_active());
+    enabledChanged();
 }
 
 void FilmSimulation::adjusterChanged(Adjuster* a, double newval)
@@ -132,6 +156,10 @@ void FilmSimulation::read( const rtengine::procparams::ProcParams* pp, const Par
     updateDisable(true);
 
     setEnabled(pp->filmSimulation.enabled);
+    // Sync visible checkbox with tool enabled state
+    m_enableConn.block(true);
+    m_enableCheck->set_active(pp->filmSimulation.enabled);
+    m_enableConn.block(false);
 
     const auto& options = App::get().options();
     if (!pp->filmSimulation.clutFilename.empty()) {

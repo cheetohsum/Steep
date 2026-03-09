@@ -35,6 +35,9 @@
 #include "batchqueueentry.h"
 #include "editorpanel.h"
 #include "filepanel.h"
+#include "filecatalog.h"
+#include "filebrowser.h"
+#include "thumbbrowserentrybase.h"
 #include "indclippedpanel.h"
 #include "previewmodepanel.h"
 #include "presetlistpanel.h"
@@ -120,6 +123,13 @@ RTWindow::RTWindow ()
     , queueBackdrop (nullptr)
     , queueOverlayVisible (false)
     , queueAnimFraction (0.0)
+    , heroOverlay_ (nullptr)
+    , heroAnimFraction_ (0.0)
+    , heroPageSwitched_ (false)
+    , heroAnimIn_ (true)
+    , startupOverlay_ (nullptr)
+    , startupAnimTime_ (0.0)
+    , startupAnimActive_ (false)
     , epanel (nullptr)
     , fpanel (nullptr)
     , mcpServer_ (new mcp::McpServer())
@@ -430,12 +440,277 @@ RTWindow::RTWindow ()
                     alloc.set_height (targetH);
                     return true;
                 }
+                if (child == heroOverlay_) {
+                    alloc.set_x (0);
+                    alloc.set_y (0);
+                    alloc.set_width (pw);
+                    alloc.set_height (ph);
+                    return true;
+                }
+                if (child == startupOverlay_) {
+                    alloc.set_x (0);
+                    alloc.set_y (0);
+                    alloc.set_width (pw);
+                    alloc.set_height (ph);
+                    return true;
+                }
                 return false;
             }, false);
+
+        // ===== Hero Transition Overlay (thumbnail animation browser→filmstrip) =====
+        heroOverlay_ = Gtk::manage (new Gtk::EventBox ());
+        heroOverlay_->set_name ("HeroTransitionOverlay");
+        heroOverlay_->set_visible_window (false);
+        heroOverlay_->signal_draw ().connect (
+            [this](const Cairo::RefPtr<Cairo::Context>& cr) -> bool {
+                if (capturedThumbs_.empty()) return false;
+
+                double t = heroAnimFraction_;
+
+                // Motion starts after page switch; remap remaining time to 0→1
+                double switchPt = heroAnimIn_ ? 0.35 : 0.25;
+                double motionT = heroPageSwitched_
+                    ? std::min(1.0, (t - switchPt) / (0.90 - switchPt))
+                    : 0.0;
+                // Ease-out-cubic for smooth movement
+                double motionEased = 1.0 - std::pow(1.0 - motionT, 3);
+
+                for (auto& ct : capturedThumbs_) {
+                    if (!ct.surface) continue;
+
+                    double curX, curY, curW, curH, alpha;
+
+                    if (ct.isHero && heroPageSwitched_) {
+                        // Interpolate from src to dst position
+                        curX = ct.srcX + (ct.dstX - ct.srcX) * motionEased;
+                        curY = ct.srcY + (ct.dstY - ct.srcY) * motionEased;
+                        curW = ct.srcW + (ct.dstW - ct.srcW) * motionEased;
+                        curH = ct.srcH + (ct.dstH - ct.srcH) * motionEased;
+                        // Fade out near end (crossfade with real content underneath)
+                        alpha = motionT < 0.65 ? 1.0 : std::max(0.0, 1.0 - (motionT - 0.65) / 0.35);
+                    } else {
+                        // Non-hero: stay in place, fade out quickly
+                        curX = ct.srcX;
+                        curY = ct.srcY;
+                        curW = ct.srcW;
+                        curH = ct.srcH;
+                        double fadeT = std::min(1.0, t / 0.35);
+                        alpha = 1.0 - fadeT * fadeT;
+                    }
+
+                    if (alpha <= 0.001) continue;
+
+                    cr->save();
+                    cr->translate(curX, curY);
+                    double scaleX = curW / ct.surface->get_width();
+                    double scaleY = curH / ct.surface->get_height();
+                    cr->scale(scaleX, scaleY);
+                    cr->set_source(ct.surface, 0, 0);
+                    cr->paint_with_alpha(alpha);
+                    cr->restore();
+                }
+                return true;
+            }, false);
+        mainOverlay->add_overlay (*heroOverlay_);
+
+        // ===== Startup Animation Overlay =====
+        startupOverlay_ = Gtk::manage (new Gtk::EventBox ());
+        startupOverlay_->set_name ("StartupOverlay");
+        startupOverlay_->set_visible_window (false);
+
+        // Pre-render the steep logo at large size using the icon theme
+        {
+            auto iconTheme = Gtk::IconTheme::get_default();
+            try {
+                auto pixbuf = iconTheme->load_icon("steep-logo", 96, Gtk::ICON_LOOKUP_FORCE_SVG);
+                if (pixbuf) {
+                    logoSurface_ = Cairo::ImageSurface::create(
+                        Cairo::FORMAT_ARGB32, pixbuf->get_width(), pixbuf->get_height());
+                    auto cr = Cairo::Context::create(logoSurface_);
+                    Gdk::Cairo::set_source_pixbuf(cr, pixbuf, 0, 0);
+                    cr->paint();
+                }
+            } catch (...) {
+                // Logo not found — animation will still work without it
+            }
+        }
+
+        startupAnimActive_ = true; // active immediately so first draw shows the overlay
+
+        startupOverlay_->signal_draw ().connect (
+            [this](const Cairo::RefPtr<Cairo::Context>& cr) -> bool {
+                if (!startupAnimActive_) return false;
+
+                int w = startupOverlay_->get_allocated_width ();
+                int h = startupOverlay_->get_allocated_height ();
+                double t = startupAnimTime_;
+
+                // Phase timings (seconds)
+                const double fadeInEnd = 0.3;     // logo fade-in
+                const double holdEnd = 1.8;       // hold with animated topo
+                const double fadeOutEnd = 3.0;    // everything fades out
+
+                // Overall opacity: fade in quickly, hold, then fade out
+                double opacity = 1.0;
+                if (t < fadeInEnd) {
+                    // Ease-out for smooth fade-in
+                    double p = t / fadeInEnd;
+                    opacity = 1.0 - (1.0 - p) * (1.0 - p);
+                } else if (t > holdEnd) {
+                    double p = std::min(1.0, (t - holdEnd) / (fadeOutEnd - holdEnd));
+                    // Ease-in for fade-out
+                    opacity = 1.0 - p * p;
+                }
+                opacity = std::max(0.0, std::min(1.0, opacity));
+
+                if (opacity <= 0.001) return false;
+
+                // Draw fully opaque dark background
+                cr->set_source_rgba (0.08, 0.09, 0.14, opacity);
+                cr->rectangle (0, 0, w, h);
+                cr->fill ();
+
+                double cx = w * 0.5;
+                double cy = h * 0.5;
+                double animPhase = t * 0.6;  // slow drift
+
+                // === Digital Topography Contour Lines ===
+                // Flowing contour lines across the entire surface
+                const int numLines = 22;
+                double lineSpacing = h / (double)(numLines + 1);
+
+                for (int i = 0; i < numLines; i++) {
+                    double baseY = lineSpacing * (i + 1);
+
+                    // Color varies per line — blues/teals/cyans
+                    double seed = i * 0.47 + 1.2;
+                    double r = 0.18 + 0.08 * std::sin(seed);
+                    double g = 0.32 + 0.12 * std::cos(seed + 0.8);
+                    double b = 0.52 + 0.10 * std::sin(seed + 2.0);
+
+                    // Lines brightest near center, dimmer at edges
+                    double distFromCenter = std::abs(baseY - cy) / cy;
+                    double lineAlpha = opacity * (0.25 + 0.35 * (1.0 - distFromCenter));
+
+                    cr->set_source_rgba (r, g, b, lineAlpha);
+                    cr->set_line_width (1.2 + 0.4 * std::sin(i * 1.3));
+
+                    cr->move_to (0, baseY);
+                    for (int x = 0; x <= w; x += 3) {
+                        double fx = x / (double)w;
+                        // Multi-frequency sine waves for organic topographic contours
+                        double dy = 0.0;
+                        dy += 18.0 * std::sin(fx * 3.5 * M_PI + animPhase * 1.0 + i * 0.6);
+                        dy += 10.0 * std::sin(fx * 6.0 * M_PI + animPhase * 1.4 + i * 0.35);
+                        dy +=  6.0 * std::sin(fx * 11.0 * M_PI + animPhase * 0.8 + i * 0.9);
+                        dy +=  3.0 * std::cos(fx * 17.0 * M_PI + animPhase * 1.7 + i * 1.2);
+                        // Pinch amplitude toward horizontal center for a "peak" effect
+                        double pinch = 1.0 + 0.5 * std::exp(-8.0 * (fx - 0.5) * (fx - 0.5));
+                        cr->line_to (x, baseY + dy * pinch);
+                    }
+                    cr->stroke ();
+                }
+
+                // === Elevation contour rings — irregular topographic rings ===
+                for (int ring = 0; ring < 8; ring++) {
+                    double baseR = 50.0 + ring * 35.0 + 8.0 * std::sin(animPhase * 0.9 + ring * 0.7);
+                    double ringAlpha = opacity * (0.12 + 0.08 * (1.0 - ring / 8.0));
+                    double rb = 0.30 + 0.05 * ring;
+                    double gb = 0.50 + 0.03 * ring;
+                    double bb = 0.65 + 0.02 * ring;
+                    cr->set_source_rgba (rb, gb, bb, ringAlpha);
+                    cr->set_line_width (0.9 + 0.2 * (ring % 3 == 0 ? 1.0 : 0.0));
+
+                    bool first = true;
+                    for (int deg = 0; deg <= 360; deg += 2) {
+                        double rad = deg * M_PI / 180.0;
+                        double wobble = 1.0
+                            + 0.08 * std::sin(rad * 3 + animPhase + ring * 0.9)
+                            + 0.05 * std::cos(rad * 5 + animPhase * 1.3 + ring * 0.6)
+                            + 0.03 * std::sin(rad * 8 + animPhase * 0.7 + ring * 1.4);
+                        double px = cx + baseR * wobble * std::cos(rad);
+                        double py = cy + baseR * wobble * std::sin(rad);
+                        if (first) { cr->move_to(px, py); first = false; }
+                        else cr->line_to(px, py);
+                    }
+                    cr->close_path ();
+                    cr->stroke ();
+                }
+
+                // === Subtle grid-dot pattern (elevation markers) ===
+                {
+                    double dotAlpha = opacity * 0.06;
+                    cr->set_source_rgba(0.4, 0.6, 0.8, dotAlpha);
+                    double spacing = 30.0;
+                    for (double gx = spacing; gx < w; gx += spacing) {
+                        for (double gy = spacing; gy < h; gy += spacing) {
+                            cr->arc(gx, gy, 0.6, 0, 2 * M_PI);
+                            cr->fill();
+                        }
+                    }
+                }
+
+                // === Central glow behind logo ===
+                {
+                    double glowR = std::min(w, h) * 0.22;
+                    auto gradient = Cairo::RadialGradient::create(
+                        cx, cy - 10, 0, cx, cy - 10, glowR);
+                    gradient->add_color_stop_rgba(0.0, 0.25, 0.45, 0.65, 0.25 * opacity);
+                    gradient->add_color_stop_rgba(0.5, 0.15, 0.30, 0.50, 0.10 * opacity);
+                    gradient->add_color_stop_rgba(1.0, 0.08, 0.09, 0.14, 0.0);
+                    cr->set_source(gradient);
+                    cr->rectangle(0, 0, w, h);
+                    cr->fill();
+                }
+
+                // === Steep Logo (centered, large) ===
+                if (logoSurface_) {
+                    double logoW = logoSurface_->get_width();
+                    double logoH = logoSurface_->get_height();
+                    double targetSize = std::min(w, h) * 0.16;
+                    targetSize = std::max(120.0, std::min(220.0, targetSize));
+                    double scale = targetSize / std::max(logoW, logoH);
+                    double logoX = (w - logoW * scale) * 0.5;
+                    double logoY = (h - logoH * scale) * 0.5 - 24;
+
+                    cr->save();
+                    cr->translate(logoX, logoY);
+                    cr->scale(scale, scale);
+                    cr->set_source(logoSurface_, 0, 0);
+                    cr->paint_with_alpha(opacity);
+                    cr->restore();
+                }
+
+                // === "STEEP" text below logo ===
+                {
+                    auto layout = Pango::Layout::create(cr);
+                    auto fontDesc = Pango::FontDescription();
+                    fontDesc.set_family("sans-serif");
+                    fontDesc.set_weight(Pango::WEIGHT_LIGHT);
+                    fontDesc.set_size(20 * PANGO_SCALE);
+                    layout->set_font_description(fontDesc);
+                    layout->set_text("S T E E P");
+                    layout->set_alignment(Pango::ALIGN_CENTER);
+
+                    int textW, textH;
+                    layout->get_pixel_size(textW, textH);
+                    double textX = (w - textW) * 0.5;
+                    double textY = cy + 60;
+
+                    cr->move_to(textX, textY);
+                    cr->set_source_rgba(0.80, 0.83, 0.88, opacity * 0.9);
+                    layout->show_in_cairo_context(cr);
+                }
+
+                return true;
+            }, false);
+
+        mainOverlay->add_overlay (*startupOverlay_);
 
         // Prevent window's show_all() from showing these; we manage visibility manually
         queueBackdrop->set_no_show_all (true);
         queueOverlayBox->set_no_show_all (true);
+        heroOverlay_->set_no_show_all (true);
 
         // ===== Header Bar (replaces left sidebar + action grid) =====
         headerBar = Gtk::manage (new Gtk::HeaderBar ());
@@ -872,11 +1147,43 @@ RTWindow::RTWindow ()
         headerBar->pack_end (*btn_fullscreen);
         headerBar->pack_end (*btn_minimize);
 
-        set_titlebar (*headerBar);
+        // Use an invisible widget as the CSD titlebar so the compositor doesn't add
+        // server-side decorations. The real headerBar is packed as a regular widget
+        // so it stays visible in fullscreen.
+        Gtk::EventBox* fakeTitlebar = Gtk::manage(new Gtk::EventBox());
+        fakeTitlebar->set_size_request(-1, 0);
+        fakeTitlebar->set_no_show_all(true);
+        set_titlebar(*fakeTitlebar);
+
+        // Wrap headerBar in an EventBox so we can catch clicks on empty areas for dragging
+        Gtk::EventBox* headerDragBox = Gtk::manage(new Gtk::EventBox());
+        headerDragBox->set_above_child(false); // let child widgets get events first
+        headerDragBox->add(*headerBar);
+        headerDragBox->signal_button_press_event().connect([this](GdkEventButton* event) -> bool {
+            if (event->type == GDK_2BUTTON_PRESS && event->button == 1) {
+                if (is_maximized()) {
+                    unmaximize();
+                } else {
+                    maximize();
+                }
+                return true;
+            }
+            if (event->type == GDK_BUTTON_PRESS && event->button == 1) {
+                get_window()->begin_move_drag(event->button,
+                    event->x_root, event->y_root, event->time);
+                return true;
+            }
+            return false;
+        }, false);
+
+        Gtk::Box* mainVBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
+        mainVBox->set_name("MainVBox");
+        mainVBox->pack_start(*headerDragBox, false, false);
+        mainVBox->pack_start(*mainOverlay, true, true);
 
         pldBridge = new PLDBridge (static_cast<rtengine::ProgressListener*> (this));
 
-        add (*mainOverlay);
+        add (*mainVBox);
         show_all ();
 
         bpanel->init (this);
@@ -925,6 +1232,28 @@ void RTWindow::on_realize ()
     }
 
     mainWindowCursorManager.init (get_window());
+
+    // Start startup animation timer
+    if (startupOverlay_ && startupAnimActive_) {
+        auto startTime = std::make_shared<Glib::Timer>();
+        startTime->start();
+
+        startupAnimConn_ = Glib::signal_timeout().connect (
+            [this, startTime]() -> bool {
+                startupAnimTime_ = startTime->elapsed();
+
+                if (startupAnimTime_ > 3.1) {
+                    // Animation complete
+                    startupAnimActive_ = false;
+                    startupOverlay_->hide ();
+                    startupOverlay_->set_no_show_all (true);
+                    return false; // disconnect timer
+                }
+
+                startupOverlay_->queue_draw ();
+                return true; // continue
+            }, 16); // ~60fps
+    }
 
     // Display release notes only if new major version.
     bool waitForSplash = false;
@@ -1029,11 +1358,30 @@ void RTWindow::on_mainNB_switch_page (Gtk::Widget* widget, guint page_num)
             if (isSingleTabMode() && fpanel) {
                 fpanel->openSelectedInEditor();
             }
+
+            // Sync left panel state: browser → editor
+            if (isSingleTabMode() && epanel && fpanel) {
+                epanel->setLeftPanelVisible(fpanel->isLeftPanelVisible());
+            }
+
+            // Collapse filter bar to prevent overlap with filmstrip
+            ep->collapseFilterBar();
+
+            // Animate editor panels in (sidebar slides from right, filmstrip from top)
+            // Skip if hero transition is active — it manages its own animation
+            if (isSingleTabMode() && epanel && !heroAnimConn_.connected()) {
+                epanel->animateEditorIn();
+            }
         } else {
             // in single tab mode with command line filename epanel does not exist yet
             if (isSingleTabMode() && epanel) {
                 // Save profile on leaving the editor panel
                 epanel->saveProfile();
+
+                // Sync left panel state: editor → browser
+                if (fpanel) {
+                    fpanel->setLeftPanelVisible(epanel->isLeftPanelVisible());
+                }
 
                 // Moving the FileBrowser only if the user has switched to the FileBrowser tab
                 if (mainNB->get_nth_page (page_num) == fpanel) {
@@ -1556,10 +1904,42 @@ void RTWindow::on_nav_switched (Gtk::ToggleButton* active)
 
         // Switch to the corresponding notebook page
         if (active == navFileBrowser) {
+            // Cancel any running forward hero transition
+            if (heroAnimConn_.connected()) {
+                heroAnimConn_.disconnect();
+                heroOverlay_->hide();
+                capturedThumbs_.clear();
+                fpanel->setContentOpacity(1.0);
+                if (epanel && epanel->catalogPane) {
+                    epanel->catalogPane->set_opacity(1.0);
+                }
+            }
+            // Reverse hero: filmstrip thumbnails grow to browser grid positions
+            if (isSingleTabMode() && epanel && isEditorPanel(mainNB->get_current_page())) {
+                navSwitching = false;
+                // Capture filmstrip thumbnails before animating editor out
+                captureFilmstripThumbnails();
+                // Start sidebar slide-out
+                epanel->animateEditorOut(nullptr);
+                // Start reverse hero transition (manages page switch + browser reveal)
+                startReverseHeroTransition([this]() {
+                    mainNB->set_current_page(mainNB->page_num(*fpanel));
+                });
+                return;
+            }
             mainNB->set_current_page (mainNB->page_num (*fpanel));
         } else if (active == navEditor) {
             // In single-tab mode, switch to epanel; in multi-tab, switch to last editor
             if (isSingleTabMode() && epanel) {
+                // Hero transition: thumbnails fly from browser grid to filmstrip
+                if (mainNB->get_current_page() == mainNB->page_num(*fpanel)) {
+                    navSwitching = false;
+                    heroAnimConn_.disconnect();
+                    viewAnimConn_.disconnect();
+                    captureVisibleThumbnails();
+                    startHeroTransition();
+                    return;
+                }
                 mainNB->set_current_page (mainNB->page_num (*epanel));
             } else if (!epanels.empty()) {
                 // Switch to the last opened editor
@@ -1613,7 +1993,7 @@ void RTWindow::MoveFileBrowserToMain()
         epanel->catalogPane->remove (*fCatalog);
         fpanel->ribbonPane->add (*fCatalog);
         fCatalog->enableTabMode (false);
-        fCatalog->tbLeftPanel_1_visible (true);
+        fCatalog->tbLeftPanel_1_visible (false);  // Left toggle now in FilePanel footer
         fCatalog->tbRightPanel_1_visible (true);
     }
 }
@@ -1951,6 +2331,252 @@ void RTWindow::hideQueueOverlay()
     navSwitching = true;
     navQueue->set_active (false);
     navSwitching = wasSwitching;
+}
+
+void RTWindow::captureVisibleThumbnails()
+{
+    capturedThumbs_.clear();
+    if (!fpanel || !fpanel->fileCatalog || !fpanel->fileCatalog->fileBrowser) return;
+
+    auto* fb = fpanel->fileCatalog->fileBrowser;
+    const auto& entries = fb->getEntries();
+    int vpW = fb->get_allocated_width();
+    int vpH = fb->get_allocated_height();
+
+    for (auto* entry : entries) {
+        if (!entry->insideWindow(0, 0, vpW, vpH)) continue;
+
+        auto surface = entry->snapshotSurface();
+        if (!surface) continue;
+
+        // Translate entry position to mainOverlay coordinates
+        int absX = 0, absY = 0;
+        fb->translate_coordinates(*mainOverlay, entry->getX(), entry->getY(), absX, absY);
+
+        CapturedThumb ct;
+        ct.surface = surface;
+        ct.srcX = absX;
+        ct.srcY = absY;
+        ct.srcW = entry->getEffectiveWidth();
+        ct.srcH = entry->getEffectiveHeight();
+        ct.dstX = ct.srcX;  // default: same position (will be updated for heroes)
+        ct.dstY = ct.srcY;
+        ct.dstW = ct.srcW;
+        ct.dstH = ct.srcH;
+        ct.isHero = false;
+        ct.entry = entry;
+        capturedThumbs_.push_back(std::move(ct));
+    }
+}
+
+void RTWindow::computeFilmstripTargets()
+{
+    if (!epanel || !epanel->catalogPane || !fpanel || !fpanel->fileCatalog) return;
+
+    auto* fb = fpanel->fileCatalog->fileBrowser;
+    int filmVpW = fb->get_allocated_width();
+    int filmVpH = fb->get_allocated_height();
+
+    // Get filmstrip position in overlay coordinates
+    int filmAbsX = 0, filmAbsY = 0;
+    fb->translate_coordinates(*mainOverlay, 0, 0, filmAbsX, filmAbsY);
+
+    for (auto& ct : capturedThumbs_) {
+        // Check if this entry is visible in the filmstrip viewport
+        if (!ct.entry->insideWindow(0, 0, filmVpW, filmVpH)) continue;
+
+        // Get the entry's new position in the filmstrip
+        int entryAbsX = 0, entryAbsY = 0;
+        fb->translate_coordinates(*mainOverlay,
+            ct.entry->getX(), ct.entry->getY(),
+            entryAbsX, entryAbsY);
+
+        ct.isHero = true;
+        ct.dstX = entryAbsX;
+        ct.dstY = entryAbsY;
+        ct.dstW = ct.entry->getEffectiveWidth();
+        ct.dstH = ct.entry->getEffectiveHeight();
+    }
+}
+
+void RTWindow::startHeroTransition()
+{
+    heroAnimConn_.disconnect();
+    heroAnimFraction_ = 0.0;
+    heroPageSwitched_ = false;
+    heroAnimIn_ = true;
+
+    // Show the hero overlay (thumbnails drawn on transparent layer above browser)
+    heroOverlay_->set_no_show_all(false);
+    heroOverlay_->show_all();
+    heroOverlay_->set_no_show_all(true);
+
+    // Don't switch pages yet — browser stays visible underneath,
+    // fading out smoothly (including toolbar/header)
+    heroAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
+        heroAnimFraction_ += 16.0 / 400.0;  // 400ms total hero animation
+
+        if (heroAnimFraction_ >= 1.0) {
+            heroAnimFraction_ = 1.0;
+            // Final state: overlay done, real filmstrip visible
+            fpanel->setContentOpacity(1.0);
+            if (epanel->catalogPane) {
+                epanel->catalogPane->set_opacity(1.0);
+            }
+            heroOverlay_->hide();
+            capturedThumbs_.clear();
+            return false;
+        }
+
+        // Phase 1 (0–35%): Browser fades out smoothly (including header/toolbar)
+        // Hero thumbnails start floating, non-heroes fade
+        if (heroAnimFraction_ < 0.35) {
+            double fade = heroAnimFraction_ / 0.35; // 0→1
+            double easedFade = fade * fade; // ease-in-quad
+            fpanel->setContentOpacity(1.0 - easedFade);
+        }
+
+        // Phase 2 (35%): Switch pages — browser fully faded, switch under overlay
+        if (!heroPageSwitched_ && heroAnimFraction_ >= 0.35) {
+            heroPageSwitched_ = true;
+            fpanel->setContentOpacity(1.0); // restore for next time
+            mainNB->set_current_page(mainNB->page_num(*epanel));
+            // MoveFileBrowserToEditor + setAspect happen in on_mainNB_switch_page
+
+            // Hide filmstrip during hero — we'll crossfade it in
+            if (epanel->catalogPane) {
+                epanel->catalogPane->set_opacity(0.0);
+            }
+            // Start sidebar slide (skip filmstrip animation)
+            epanel->animateEditorIn(true);
+
+            // Compute filmstrip targets after a brief layout settle
+            Glib::signal_timeout().connect_once([this]() {
+                computeFilmstripTargets();
+            }, 32); // 2 frames for layout
+        }
+
+        // Phase 3 (70–100%): Crossfade real filmstrip in
+        if (heroPageSwitched_ && heroAnimFraction_ > 0.70 && epanel->catalogPane) {
+            double reveal = (heroAnimFraction_ - 0.70) / 0.30; // 0→1
+            double easedReveal = 1.0 - std::pow(1.0 - reveal, 3); // ease-out-cubic
+            epanel->catalogPane->set_opacity(easedReveal);
+        }
+
+        heroOverlay_->queue_draw();
+        return true;
+    }, 16);
+}
+
+void RTWindow::captureFilmstripThumbnails()
+{
+    capturedThumbs_.clear();
+    if (!epanel || !epanel->catalogPane || !fpanel || !fpanel->fileCatalog) return;
+
+    auto* fb = fpanel->fileCatalog->fileBrowser;
+    const auto& entries = fb->getEntries();
+    int vpW = fb->get_allocated_width();
+    int vpH = fb->get_allocated_height();
+
+    for (auto* entry : entries) {
+        if (!entry->insideWindow(0, 0, vpW, vpH)) continue;
+
+        auto surface = entry->snapshotSurface();
+        if (!surface) continue;
+
+        int absX = 0, absY = 0;
+        fb->translate_coordinates(*mainOverlay, entry->getX(), entry->getY(), absX, absY);
+
+        CapturedThumb ct;
+        ct.surface = surface;
+        ct.srcX = absX;
+        ct.srcY = absY;
+        ct.srcW = entry->getEffectiveWidth();
+        ct.srcH = entry->getEffectiveHeight();
+        ct.dstX = ct.srcX;
+        ct.dstY = ct.srcY;
+        ct.dstW = ct.srcW;
+        ct.dstH = ct.srcH;
+        ct.isHero = false;
+        ct.entry = entry;
+        capturedThumbs_.push_back(std::move(ct));
+    }
+}
+
+void RTWindow::computeBrowserTargets()
+{
+    if (!fpanel || !fpanel->fileCatalog || !fpanel->fileCatalog->fileBrowser) return;
+
+    auto* fb = fpanel->fileCatalog->fileBrowser;
+    int vpW = fb->get_allocated_width();
+    int vpH = fb->get_allocated_height();
+
+    for (auto& ct : capturedThumbs_) {
+        if (!ct.entry->insideWindow(0, 0, vpW, vpH)) continue;
+
+        int absX = 0, absY = 0;
+        fb->translate_coordinates(*mainOverlay,
+            ct.entry->getX(), ct.entry->getY(),
+            absX, absY);
+
+        ct.isHero = true;
+        ct.dstX = absX;
+        ct.dstY = absY;
+        ct.dstW = ct.entry->getEffectiveWidth();
+        ct.dstH = ct.entry->getEffectiveHeight();
+    }
+}
+
+void RTWindow::startReverseHeroTransition(std::function<void()> afterPageSwitch)
+{
+    heroAnimConn_.disconnect();
+    viewAnimConn_.disconnect();
+    heroAnimFraction_ = 0.0;
+    heroPageSwitched_ = false;
+    heroAnimIn_ = false;
+
+    // Show overlay with captured filmstrip thumbnails
+    heroOverlay_->set_no_show_all(false);
+    heroOverlay_->show_all();
+    heroOverlay_->set_no_show_all(true);
+
+    heroAnimConn_ = Glib::signal_timeout().connect([this, afterPageSwitch]() -> bool {
+        heroAnimFraction_ += 16.0 / 400.0;  // 400ms total
+
+        if (heroAnimFraction_ >= 1.0) {
+            heroAnimFraction_ = 1.0;
+            fpanel->setContentOpacity(1.0);
+            heroOverlay_->hide();
+            capturedThumbs_.clear();
+            return false;
+        }
+
+        // Phase 1 (0–25%): Filmstrip thumbnails visible at their filmstrip positions,
+        // editor content fading underneath
+        // Phase 2 (25%): Switch to browser page
+        if (!heroPageSwitched_ && heroAnimFraction_ >= 0.25) {
+            heroPageSwitched_ = true;
+            if (afterPageSwitch) afterPageSwitch();
+            // Browser appears but hidden behind overlay
+            fpanel->setContentOpacity(0.0);
+
+            // Compute browser grid target positions after layout settles
+            Glib::signal_timeout().connect_once([this]() {
+                computeBrowserTargets();
+            }, 32);
+        }
+
+        // Phase 3 (25–90%): Hero thumbnails grow from filmstrip to browser grid positions
+        // Phase 4 (70–100%): Real browser crossfades in
+        if (heroPageSwitched_ && heroAnimFraction_ > 0.70) {
+            double reveal = (heroAnimFraction_ - 0.70) / 0.30;
+            double easedReveal = 1.0 - std::pow(1.0 - reveal, 3);
+            fpanel->setContentOpacity(easedReveal);
+        }
+
+        heroOverlay_->queue_draw();
+        return true;
+    }, 16);
 }
 
 void RTWindow::showMcpDialog()

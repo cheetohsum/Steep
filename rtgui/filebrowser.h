@@ -76,57 +76,59 @@ private:
     bool onDeletionIdle_();
 
 protected:
-    Gtk::MenuItem* rank[6];
+    MyImageMenuItem* rank[6];
     MyImageMenuItem* colorlabel[6];
-    Gtk::MenuItem* trash;
-    Gtk::MenuItem* untrash;
-    Gtk::MenuItem* develop;
-    Gtk::MenuItem* developfast;
-    Gtk::MenuItem* saveImage;
-    Gtk::MenuItem* rename;
-    Gtk::MenuItem* remove;
-    Gtk::MenuItem* removeInclProc;
-    Gtk::MenuItem* open;
-    Gtk::MenuItem* inspect;
-    Gtk::MenuItem* selall;
+    MyImageMenuItem* trash;
+    MyImageMenuItem* untrash;
+    MyImageMenuItem* develop;
+    MyImageMenuItem* developfast;
+    MyImageMenuItem* saveImage;
+    MyImageMenuItem* rename;
+    MyImageMenuItem* remove;
+    MyImageMenuItem* removeInclProc;
+    MyImageMenuItem* open;
+    MyImageMenuItem* inspect;
+    MyImageMenuItem* selall;
     Gtk::RadioMenuItem* sortMethod[Options::SORT_METHOD_COUNT];
     Gtk::RadioMenuItem* sortOrder[2];
-    Gtk::MenuItem* copyTo;
-    Gtk::MenuItem* moveTo;
+    MyImageMenuItem* copyTo;
+    MyImageMenuItem* moveTo;
 
-    Gtk::MenuItem* menuSort;
-    Gtk::MenuItem* menuRank;
-    Gtk::MenuItem* menuLabel;
-    Gtk::MenuItem* menuFileOperations;
-    Gtk::MenuItem* menuProfileOperations;
+    MyImageMenuItem* menuSort;
+    MyImageMenuItem* menuRank;
+    MyImageMenuItem* menuLabel;
+    MyImageMenuItem* menuFileOperations;
+    MyImageMenuItem* menuProfileOperations;
     Gtk::MenuItem* menuExtProg;
     Gtk::MenuItem** amiExtProg;
-    Gtk::MenuItem* miOpenDefaultViewer;
+    MyImageMenuItem* miOpenDefaultViewer;
     std::map<Glib::ustring, const ExtProgAction*> mMenuExtProgs;  // key is menuitem label
 
-    Gtk::MenuItem* menuDF;
-    Gtk::MenuItem* selectDF;
-    Gtk::MenuItem* thisIsDF;
-    Gtk::MenuItem* autoDF;
+    MyImageMenuItem* menuDF;
+    MyImageMenuItem* selectDF;
+    MyImageMenuItem* thisIsDF;
+    MyImageMenuItem* autoDF;
 
-    Gtk::MenuItem* menuFF;
-    Gtk::MenuItem* selectFF;
-    Gtk::MenuItem* thisIsFF;
-    Gtk::MenuItem* autoFF;
+    MyImageMenuItem* menuFF;
+    MyImageMenuItem* selectFF;
+    MyImageMenuItem* thisIsFF;
+    MyImageMenuItem* autoFF;
 
-    Gtk::MenuItem* copyprof;
-    Gtk::MenuItem* pasteprof;
-    Gtk::MenuItem* partpasteprof;
-    Gtk::MenuItem* applyprof;
-    Gtk::MenuItem* applypartprof;
-    Gtk::MenuItem* resetdefaultprof;
-    Gtk::MenuItem* clearprof;
-    Gtk::MenuItem* cachemenu;
-    Gtk::MenuItem* aiDenoise;
-    Gtk::MenuItem* autoEdit;
-    Gtk::MenuItem* duplicate;
-    Gtk::MenuItem* clearFromCache;
-    Gtk::MenuItem* clearFromCacheFull;
+    MyImageMenuItem* copyprof;
+    MyImageMenuItem* copyprofSettings;
+    std::map<std::string, Gtk::CheckMenuItem*> copyFilters_;
+    MyImageMenuItem* pasteprof;
+    MyImageMenuItem* partpasteprof;
+    MyImageMenuItem* applyprof;
+    MyImageMenuItem* applypartprof;
+    MyImageMenuItem* resetdefaultprof;
+    MyImageMenuItem* clearprof;
+    MyImageMenuItem* cachemenu;
+    MyImageMenuItem* aiDenoise;
+    MyImageMenuItem* autoEdit;
+    MyImageMenuItem* duplicate;
+    MyImageMenuItem* clearFromCache;
+    MyImageMenuItem* clearFromCacheFull;
     Gtk::Menu* pmenu;
 
     MyImageMenuItem* colorlabel_pop[6];
@@ -155,8 +157,9 @@ protected:
     type_trash_changed m_trash_changed;
     type_save_image_requested m_save_image_requested;
 
-    Gtk::MenuItem* setAlbumCover;
+    MyImageMenuItem* setAlbumCover;
     std::function<void(const Glib::ustring&)> albumCoverSetter_;
+    std::function<bool()> isInAlbumMode_;
 
 public:
     FileBrowser ();
@@ -240,5 +243,8 @@ public:
 
     void setAlbumCoverSetter(std::function<void(const Glib::ustring&)> setter) {
         albumCoverSetter_ = std::move(setter);
+    }
+    void setAlbumModeChecker(std::function<bool()> checker) {
+        isInAlbumMode_ = std::move(checker);
     }
 };
