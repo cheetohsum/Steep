@@ -2,15 +2,68 @@
 
 **A modern, AI-enhanced fork of [RawTherapee](https://rawtherapee.com) for professional RAW photo editing.**
 
-Steep takes the powerful open-source RAW processing engine of RawTherapee and adds a modernized interface, AI-powered tools, and professional-grade features inspired by industry-standard editors like Lightroom and DaVinci Resolve.
+Steep takes the powerful open-source RAW processing engine of RawTherapee and adds a modernized interface, AI-powered tools, creative effects, and an MCP server for AI agent integration — all while preserving every original RawTherapee feature.
 
-> **Status:** Active development. Core editing, export, and all original RawTherapee features work fully. New features (AI masking, AI denoise, watermarking, albums) are in various stages of completion. See [Feature Status](#feature-status) below.
+> **Status:** Active development. Core editing, export, and all original RawTherapee features work fully. New features (AI masking, AI denoise, MCP server, watermarking, albums) are in various stages of completion. See [Feature Status](#feature-status) below.
 
 ![Steep — Editor](screenshots/rt-editor.png)
 
 ---
 
+## Downloads
+
+Pre-built binaries are published automatically from the `dev` branch. Grab the latest for your platform:
+
+| Platform | Architecture | Download |
+|----------|-------------|----------|
+| **Linux** | x86_64 | [AppImage](https://github.com/RawTherapee/RawTherapee/releases/download/nightly-github-actions/RawTherapee_dev_x86_64_release.AppImage) |
+| **Linux** | ARM64 | [AppImage](https://github.com/RawTherapee/RawTherapee/releases/download/nightly-github-actions/RawTherapee_dev_arm64_release.AppImage) |
+| **Windows** | x86_64 | [Installer (.exe)](https://github.com/RawTherapee/RawTherapee/releases/download/nightly-github-actions/RawTherapee_dev_win64_x86_64_release.exe) · [ZIP](https://github.com/RawTherapee/RawTherapee/releases/download/nightly-github-actions/RawTherapee_dev_win64_x86_64_release.zip) |
+| **Windows** | ARM64 | [Installer (.exe)](https://github.com/RawTherapee/RawTherapee/releases/download/nightly-github-actions/RawTherapee_dev_win64_arm64_release.exe) · [ZIP](https://github.com/RawTherapee/RawTherapee/releases/download/nightly-github-actions/RawTherapee_dev_win64_arm64_release.zip) |
+| **macOS** | Apple Silicon | [DMG (.zip)](https://github.com/RawTherapee/RawTherapee/releases/download/nightly-github-actions/RawTherapee_dev_macOS_arm64_Release.zip) |
+| **macOS** | Intel x86_64 | [DMG (.zip)](https://github.com/RawTherapee/RawTherapee/releases/download/nightly-github-actions/RawTherapee_dev_macOS_x86_64_Release.zip) |
+
+Browse all builds (including debug and versioned releases) on the [Nightly Releases](https://github.com/RawTherapee/RawTherapee/releases/tag/nightly-github-actions) page.
+
+---
+
 ## What's New in Steep
+
+### MCP Server (Model Context Protocol)
+
+Steep includes a built-in **MCP server** that exposes the editor to AI agents, automation scripts, and external tools over HTTP. The server implements the Model Context Protocol with JSON-RPC 2.0 and runs on `localhost:39793`.
+
+**Exposed tools:**
+
+| Tool | Description |
+|------|-------------|
+| `get_image_info` | Image metadata and EXIF data |
+| `get_params` / `set_params` | Read/write processing parameters (20+ sections) |
+| `set_tool_enabled` | Toggle individual tool activation |
+| `list_tools` | List all tools and their current state |
+| `adjust_exposure` | Quick exposure adjustment |
+| `adjust_white_balance` | Quick white balance adjustment |
+| `load_profile` / `save_profile` | PP3 profile file I/O |
+| `list_volumes` | Connected drives and mount points |
+| `get_mount_events` | Volume mount/unmount event stream |
+| `scan_photos` | Directory EXIF metadata scanning |
+| `import_photos` | Smart import with date-based organization |
+
+**Usage with Claude Code / AI agents:**
+
+Add to your `.mcp.json`:
+```json
+{
+  "mcpServers": {
+    "rawtherapee": {
+      "type": "http",
+      "url": "http://localhost:39793/mcp"
+    }
+  }
+}
+```
+
+The MCP server starts automatically with the application and includes a UI dialog for monitoring connections and requests.
 
 ### Mode-Based Editor UI
 
@@ -32,6 +85,8 @@ Replaces the old tree-based profile selector with a card-based grid:
 - Category-based organization with collapsible sections
 - Background thumbnail generation
 - Full save/load/copy/paste workflow
+- Context menus for rename/overwrite/delete
+- Drag-and-drop preset reordering
 
 ### File Browser
 
@@ -39,7 +94,7 @@ Replaces the old tree-based profile selector with a card-based grid:
 
 ### 3-Way Color Grading
 
-Professional color grading tool with three interactive **color wheels** for shadows, midtones, and highlights:
+Professional color grading tool with four interactive **color wheels** for shadows, midtones, highlights, and global:
 
 - Per-range hue, saturation, and luminance control
 - Global color wheel with luminance in an advanced section
@@ -54,6 +109,23 @@ Targeted color adjustments by hue range:
 - Per-target hue shift, saturation, luminance, and range controls
 - Color picker to sample targets directly from the image
 - Auto-generated color name labels
+
+### Film Presets
+
+Parametric film emulation with a popover-based preset selector:
+
+- Adjustable strength, contrast, saturation, warmth, tint, and fade
+- Shadow/highlight specific hue and tint controls
+- Halation, RGB shift, and rolloff controls
+- Hover preview with timeout
+
+### Tilt-Shift
+
+Miniature/diorama effect with interactive geometry:
+
+- Blur amount, focus position, and width controls
+- Feather and rotation adjustment
+- Draggable on-image geometry for visual placement
 
 ### AI Denoise
 
@@ -75,6 +147,10 @@ Compile-time feature (`-DWITH_AI_MASKING=ON`) using ONNX Runtime for automatic s
 - DeepLabV3-MobileNetV3 model included
 - Integrates with LocalLab for targeted adjustments on detected regions
 
+### AI Inpainting
+
+Content-aware fill for masked regions using a LaMa ONNX model.
+
 ### Watermarking
 
 Full-featured watermark system applied at export:
@@ -84,15 +160,17 @@ Full-featured watermark system applied at export:
 - Stroke (outline) with configurable color and width
 - Drop shadow with color, offset, and blur
 - 9-point positioning grid with margin and rotation controls
+- Live preview window
 
 ### Album / Collection Management
 
 Organize images beyond the filesystem:
 
-- **Regular Albums** - manual image collections
-- **Smart Albums** - rule-based auto-filtering by rating, color label, file type, camera, lens, ISO, focal length, aperture, or edited status
-- **Folders** - organizational hierarchy for albums
+- **Regular Albums** — manual image collections
+- **Smart Albums** — rule-based auto-filtering by rating, color label, file type, camera, lens, ISO, focal length, aperture, or edited status (with AND/OR logic)
+- **Folders** — organizational hierarchy for albums
 - Persistent storage, global sync across all browser instances
+- Cover thumbnail previews and drag-and-drop organization
 
 ### Floating History & Navigator
 
@@ -100,8 +178,8 @@ History and Navigator panels can be undocked into independent floating windows.
 
 ### New Themes
 
-- **RawTherapee - Modern.css** - contemporary dark theme with updated styling
-- **Rem.css** - fantasy-inspired dark theme (deep navy/indigo, cyan accents, copper details)
+- **RawTherapee - Modern.css** — contemporary dark theme with updated styling
+- **Rem.css** — fantasy-inspired dark theme (deep navy/indigo, cyan accents, copper details)
 
 ### Custom Icon Set
 
@@ -113,16 +191,20 @@ History and Navigator panels can be undocked into independent floating windows.
 
 | Feature | Status |
 |---------|--------|
+| MCP server | Working |
 | Mode-based editor UI | Working |
 | Visual preset browser | Working |
 | 3-way color grading | Working |
 | Point color / HSL | Working |
+| Film presets | Working |
+| Tilt-shift | Working |
 | Watermarking | Working |
 | Album browser | Working |
 | Floating history/navigator | Working |
 | New themes | Working |
 | AI denoise (RawRefinery) | Working (requires external Python backend) |
 | AI semantic masking | Experimental (requires ONNX Runtime, optional build flag) |
+| AI inpainting | Experimental (requires ONNX model) |
 | All original RawTherapee features | Fully preserved |
 
 ---
@@ -147,12 +229,14 @@ Steep has the same base dependencies as RawTherapee, plus optional extras.
 - zlib
 - expat
 - fftw3
+- exiv2
+- libjxl (JPEG-XL)
 
-**Optional - AI Masking:**
+**Optional — AI Masking:**
 
 - ONNX Runtime >= 1.17
 
-**Optional - AI Denoise:**
+**Optional — AI Denoise:**
 
 - Python 3 with RawRefinery installed
 
@@ -165,11 +249,12 @@ sudo apt install build-essential cmake git \
   libraw-dev liblensfun-dev liblcms2-dev \
   libiptcdata0-dev librsvg2-dev \
   libtiff-dev libjpeg-dev libpng-dev \
-  zlib1g-dev libexpat1-dev libfftw3-dev
+  zlib1g-dev libexpat1-dev libfftw3-dev \
+  libexiv2-dev libjxl-dev
 
 # Clone
-git clone https://github.com/cheetohsum/Steep.git
-cd Steep
+git clone https://github.com/RawTherapee/RawTherapee.git
+cd RawTherapee
 
 # Configure
 mkdir build && cd build
@@ -184,6 +269,8 @@ make -j$(nproc)
 # Install
 sudo make install
 ```
+
+Or grab a pre-built **AppImage** (x86_64 or ARM64) from the [Nightly Releases](https://github.com/RawTherapee/RawTherapee/releases/tag/nightly-github-actions).
 
 ### Docker (with AI Masking)
 
@@ -206,18 +293,22 @@ sudo make install
 rawtherapee
 ```
 
+Pre-built Windows installers (.exe) and ZIP archives are available from the [Nightly Releases](https://github.com/RawTherapee/RawTherapee/releases/tag/nightly-github-actions).
+
 ### macOS
 
 ```bash
 # Install dependencies via Homebrew
 brew install cmake gtk+3 gtkmm3 libraw lensfun little-cms2 \
-  libiptcdata librsvg libtiff jpeg libpng fftw
+  libiptcdata librsvg libtiff jpeg libpng fftw exiv2 jpeg-xl
 
 mkdir build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j$(sysctl -n hw.ncpu)
 sudo make install
 ```
+
+Pre-built DMGs (Intel and Apple Silicon) are available from the [Nightly Releases](https://github.com/RawTherapee/RawTherapee/releases/tag/nightly-github-actions).
 
 ---
 
@@ -227,7 +318,8 @@ sudo make install
 Steep/
   rtengine/          Processing engine (demosaic, color, denoise, etc.)
   rtgui/             GTK3 GUI application
-    tools/           Editing tool panels (tonecurve, denoise, color grading, etc.)
+    mcp/             MCP server (JSON-RPC 2.0 over HTTP)
+    tools/           Editing tool panels (tonecurve, color grading, film presets, etc.)
     widgets/         Custom widgets (adjuster, color wheel, etc.)
     windows/         Dialog windows (preferences, history, navigator)
   rtdata/            Runtime resources
@@ -247,4 +339,4 @@ Steep is built on top of [RawTherapee](https://rawtherapee.com), an outstanding 
 
 ## License
 
-GNU General Public License v3.0 - same as RawTherapee. See [LICENSE](LICENSE) for details.
+GNU General Public License v3.0 — same as RawTherapee. See [LICENSE](LICENSE) for details.
