@@ -26,6 +26,10 @@ jobs:
         with: 
           fetch-tags: '0'
           fetch-depth: '0'
+      - name: Remove Mono framework
+        run: |
+          # Mono's old png.h conflicts with Homebrew's libpng
+          sudo rm -rf /Library/Frameworks/Mono.framework
       - name: Install dependencies
         run: |
            date -u
@@ -92,7 +96,7 @@ jobs:
             -DWITH_AI_MASKING=ON \
             ..
             zsh -c 'echo "Configured in $(printf "%0.2f" $(($[$(date +%s)-$(cat configstamp)]/$((60.))))) minutes"' >> $GITHUB_STEP_SUMMARY
-      - name: Compile RawTherapee
+      - name: Compile Steep
         run: |
           date -u && date +%s > build/compilestamp
           cd build
@@ -105,7 +109,10 @@ jobs:
           date +%s > build/bundlestamp && date -u && cd build
           echo "Automated Build! WARNING:\nNot intended for end-user testing." > message
           export REF=${GITHUB_REF##*/} && sudo make macosx_bundle
-          export ARTIFACT=(RawTherapee*${CMAKE_BUILD_TYPE}.zip)
+          # Rename artifact from RawTherapee to Steep
+          export ORIG_ARTIFACT=(RawTherapee*${CMAKE_BUILD_TYPE}.zip)
+          export ARTIFACT="${ORIG_ARTIFACT/RawTherapee/Steep}"
+          mv "$ORIG_ARTIFACT" "$ARTIFACT"
           echo "=== artifact: ${ARTIFACT}"
           # defining environment variables for next step as per
           # https://github.com/actions/starter-workflows/issues/68
@@ -167,6 +174,10 @@ jobs:
         with:
           fetch-tags: '0'
           fetch-depth: '0'
+      - name: Remove Mono framework
+        run: |
+          # Mono's old png.h conflicts with Homebrew's libpng
+          sudo rm -rf /Library/Frameworks/Mono.framework
       - name: Install dependencies
         run: |
            date -u
@@ -233,7 +244,7 @@ jobs:
             -DWITH_AI_MASKING=ON \
             ..
             zsh -c 'echo "Configured in $(printf "%0.2f" $(($[$(date +%s)-$(cat configstamp)]/$((60.))))) minutes"' >> $GITHUB_STEP_SUMMARY
-      - name: Compile RawTherapee
+      - name: Compile Steep
         run: |
           date -u && date +%s > build/compilestamp
           cd build
@@ -246,7 +257,10 @@ jobs:
           date +%s > build/bundlestamp && date -u && cd build
           echo "Automated Build! WARNING:\nNot intended for end-user testing." > message
           export REF=${GITHUB_REF##*/} && sudo make macosx_bundle
-          export ARTIFACT=(RawTherapee*${CMAKE_BUILD_TYPE}.zip)
+          # Rename artifact from RawTherapee to Steep
+          export ORIG_ARTIFACT=(RawTherapee*${CMAKE_BUILD_TYPE}.zip)
+          export ARTIFACT="${ORIG_ARTIFACT/RawTherapee/Steep}"
+          mv "$ORIG_ARTIFACT" "$ARTIFACT"
           echo "=== artifact: ${ARTIFACT}"
           # defining environment variables for next step as per
           # https://github.com/actions/starter-workflows/issues/68
