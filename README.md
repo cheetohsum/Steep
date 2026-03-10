@@ -35,7 +35,7 @@ Replaces the old tree-based profile selector with a card-based grid:
 
 ### File Browser
 
-![Steep — File Browser](screenshots/rt-browser.png)
+![Steep — File Browser](screenshots/rt-browser.jpg)
 
 ### 3-Way Color Grading
 

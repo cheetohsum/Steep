@@ -22,7 +22,7 @@
 #include "opthelper.h"
 #include "rt_math.h"
 
-#include <onnxruntime_c_api.h>
+#include "onnxruntime_compat.h"
 
 #include <algorithm>
 #include <cmath>
