@@ -77,7 +77,7 @@ jobs:
             -DPROC_LABEL="generic processor" \
             -DCMAKE_OSX_ARCHITECTURES=$(uname -m) \
             -DWITH_LTO="ON" \
-            -DLENSFUNDBDIR="/Applications/RawTherapee.app/Contents/Resources/share/lensfun" \
+            -DLENSFUNDBDIR="/Applications/Steep.app/Contents/Resources/share/lensfun" \
             -DCMAKE_C_COMPILER=clang \
             -DCMAKE_CXX_COMPILER=clang++ \
             -DCMAKE_C_FLAGS="-arch x86_64 -Wno-pass-failed -Wno-deprecated-register -Wno-unused-command-line-argument" \
@@ -109,10 +109,7 @@ jobs:
           date +%s > build/bundlestamp && date -u && cd build
           echo "Automated Build! WARNING:\nNot intended for end-user testing." > message
           export REF=${GITHUB_REF##*/} && sudo make macosx_bundle
-          # Rename artifact from RawTherapee to Steep
-          export ORIG_ARTIFACT=(RawTherapee*${CMAKE_BUILD_TYPE}.zip)
-          export ARTIFACT="${ORIG_ARTIFACT/RawTherapee/Steep}"
-          mv "$ORIG_ARTIFACT" "$ARTIFACT"
+          export ARTIFACT=(Steep*${CMAKE_BUILD_TYPE}.zip)
           echo "=== artifact: ${ARTIFACT}"
           # defining environment variables for next step as per
           # https://github.com/actions/starter-workflows/issues/68
@@ -139,13 +136,13 @@ jobs:
         continue-on-error: true
         run: |
           cd build
-          sudo cp -R RawTherapee.app /Applications
-          open -a /Applications/RawTherapee.app
+          sudo cp -R Steep.app /Applications
+          open -a /Applications/Steep.app
           sleep 10
           echo "Applications running: $(osascript -e 'tell application "Finder" to get the name of every process whose visible is true' 2>/dev/null || echo 'could not query')" >> $GITHUB_STEP_SUMMARY
-          if pgrep -f RawTherapee > /dev/null 2>&1; then
+          if pgrep -f rawtherapee > /dev/null 2>&1; then
             echo "App launched successfully" >> $GITHUB_STEP_SUMMARY
-            osascript -e 'tell application "RawTherapee" to if it is running then quit' 2>/dev/null || true
+            osascript -e 'tell application "Steep" to if it is running then quit' 2>/dev/null || true
           else
             echo "App did not start (may require display)" >> $GITHUB_STEP_SUMMARY
           fi
@@ -153,7 +150,7 @@ jobs:
       - name: Test the -cli
         run: |
           cd build
-          echo "$(RawTherapee*folder/rawtherapee-cli --version)" >> $GITHUB_STEP_SUMMARY
+          echo "$(Steep*folder/rawtherapee-cli --version)" >> $GITHUB_STEP_SUMMARY
 
       - name: Publish artifacts
         uses: softprops/action-gh-release@v2
@@ -223,7 +220,7 @@ jobs:
             -DCACHE_NAME_SUFFIX="${RAW_THERAPEE_VERSION}-${REF}" \
             -DCMAKE_OSX_ARCHITECTURES=arm64 \
             -DWITH_LTO="ON" \
-            -DLENSFUNDBDIR="/Applications/RawTherapee.app/Contents/Resources/share/lensfun" \
+            -DLENSFUNDBDIR="/Applications/Steep.app/Contents/Resources/share/lensfun" \
             -DWITH_SIMDE="ON" \
             -DCMAKE_C_COMPILER=clang \
             -DCMAKE_CXX_COMPILER=clang++ \
@@ -257,10 +254,7 @@ jobs:
           date +%s > build/bundlestamp && date -u && cd build
           echo "Automated Build! WARNING:\nNot intended for end-user testing." > message
           export REF=${GITHUB_REF##*/} && sudo make macosx_bundle
-          # Rename artifact from RawTherapee to Steep
-          export ORIG_ARTIFACT=(RawTherapee*${CMAKE_BUILD_TYPE}.zip)
-          export ARTIFACT="${ORIG_ARTIFACT/RawTherapee/Steep}"
-          mv "$ORIG_ARTIFACT" "$ARTIFACT"
+          export ARTIFACT=(Steep*${CMAKE_BUILD_TYPE}.zip)
           echo "=== artifact: ${ARTIFACT}"
           # defining environment variables for next step as per
           # https://github.com/actions/starter-workflows/issues/68
@@ -288,13 +282,13 @@ jobs:
         continue-on-error: true
         run: |
           cd build
-          sudo cp -R RawTherapee.app /Applications
-          open -a /Applications/RawTherapee.app
+          sudo cp -R Steep.app /Applications
+          open -a /Applications/Steep.app
           sleep 10
           echo "Applications running: $(osascript -e 'tell application "Finder" to get the name of every process whose visible is true' 2>/dev/null || echo 'could not query')" >> $GITHUB_STEP_SUMMARY
-          if pgrep -f RawTherapee > /dev/null 2>&1; then
+          if pgrep -f rawtherapee > /dev/null 2>&1; then
             echo "App launched successfully" >> $GITHUB_STEP_SUMMARY
-            osascript -e 'tell application "RawTherapee" to if it is running then quit' 2>/dev/null || true
+            osascript -e 'tell application "Steep" to if it is running then quit' 2>/dev/null || true
           else
             echo "App did not start (may require display)" >> $GITHUB_STEP_SUMMARY
           fi
@@ -302,7 +296,7 @@ jobs:
       - name: Test the -cli
         run: |
           cd build
-          echo "$(RawTherapee*folder/rawtherapee-cli --version)" >> $GITHUB_STEP_SUMMARY
+          echo "$(Steep*folder/rawtherapee-cli --version)" >> $GITHUB_STEP_SUMMARY
 
       - name: Publish artifacts
         uses: softprops/action-gh-release@v2

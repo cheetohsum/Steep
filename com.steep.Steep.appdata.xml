@@ -1,25 +1,22 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-    <id>com.rawtherapee.RawTherapee</id>
-    <name>RawTherapee</name>
-    <summary>An advanced raw photo development program</summary>
+    <id>com.steep.Steep</id>
+    <name>Steep</name>
+    <summary>A modern, AI-enhanced RAW photo editor</summary>
     <summary xml:lang="cs">Program pro konverzi a zpracování digitálních raw fotografií</summary>
     <summary xml:lang="fr">Logiciel de conversion et de traitement de photos numériques de format raw (but de capteur)</summary>
     <summary xml:lang="pl">Zaawansowany program do wywoływania zdjęć typu raw</summary>
     <translation type="gettext">rawtherapee</translation>
     <description>
-        <p>RawTherapee is a powerful, cross-platform raw photo processing program. It is written mostly in C++ using a GTK+ front-end. It uses a patched version of dcraw for reading raw files, with an in-house solution which adds the highest quality support for certain camera models unsupported by dcraw and enhances the accuracy of certain raw files already supported by dcraw. It is notable for the advanced control it gives the user over the demosaicing and development process.</p>
-        <p>RawTherapee is designed for developing raw files from a broad range of digital cameras, as well as HDR DNG files and non-raw image formats (JPEG, TIFF and PNG). The target audience ranges from enthusiast newcomers who wish to broaden their understanding of how digital imaging works to semi-professional photographers. Knowledge in color science is not compulsory, but it is recommended that you are eager to learn and ready to read our documentation (RawPedia) as well as look up basic concepts which lie outside the scope of RawPedia, such as color balance, elsewhere.</p>
-        <p>Of course, professionals may use RawTherapee too while enjoying complete freedom, but will probably lack some peripheral features such as Digital Asset Management, printing, uploading, etc. RawTherapee is not aimed at being an inclusive all-in-one program, and the open-source community is sufficiently developed by now to offer all those peripheral features in other specialized software.</p>
+        <p>Steep is a modern, AI-enhanced fork of RawTherapee for professional RAW photo editing. It adds a modernized interface with mode-based editing, AI-powered tools (semantic masking, denoising, inpainting), professional color grading, and an MCP server for AI agent integration — all while preserving every original RawTherapee feature.</p>
+        <p>Steep is designed for developing raw files from a broad range of digital cameras, as well as HDR DNG files and non-raw image formats (JPEG, TIFF and PNG). The target audience ranges from enthusiast newcomers to professional photographers looking for AI-assisted workflows and a modern editing experience.</p>
     </description>
     <content_rating type="oars-1.0" />
     <metadata_license>CC-BY-SA-4.0</metadata_license>
     <project_license>GPL-3.0+</project_license>
-    <url type="bugtracker">https://github.com/RawTherapee/RawTherapee/issues</url>
-    <url type="donation">https://www.paypal.me/rawtherapee</url>
+    <url type="bugtracker">https://github.com/cheetohsum/Steep/issues</url>
     <url type="help">https://rawpedia.rawtherapee.com</url>
-    <url type="homepage">https://www.rawtherapee.com</url>
-    <url type="translate">https://rawpedia.rawtherapee.com/Main_Page#Localization</url>
+    <url type="homepage">https://github.com/cheetohsum/Steep</url>
     <launchable type="desktop-id">rawtherapee.desktop</launchable>
     <releases>
         <release version="5.12" date="2025-05-28" type="stable"></release>

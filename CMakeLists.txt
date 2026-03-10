@@ -19,7 +19,7 @@ if(${CMAKE_EXTRA_GENERATOR} MATCHES "Eclipse CDT4")
     # set(CMAKE_ECLIPSE_VERSION "4.6.0" CACHE STRING "Eclipse version" FORCE)
 endif()
 
-project(RawTherapee)
+project(Steep)
 
 set(CMAKE_CXX_STANDARD 11)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -475,6 +475,6 @@ if(WIN32)
 endif()
 
 if(UNIX)
-    install(FILES com.rawtherapee.RawTherapee.appdata.xml
+    install(FILES com.steep.Steep.appdata.xml
             DESTINATION "${APPDATADIR}")
 endif()
