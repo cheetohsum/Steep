@@ -49,12 +49,37 @@ if(ONNXRuntime_FOUND)
     set(ONNXRuntime_LIBRARIES ${ONNXRuntime_LIBRARY})
 
     if(NOT TARGET onnxruntime::onnxruntime)
-        add_library(onnxruntime::onnxruntime UNKNOWN IMPORTED)
-        set_target_properties(onnxruntime::onnxruntime PROPERTIES
-            IMPORTED_LOCATION "${ONNXRuntime_LIBRARY}"
-            INTERFACE_INCLUDE_DIRECTORIES "${ONNXRuntime_INCLUDE_DIR}"
-        )
+        if(WIN32)
+            # On Windows, ONNX Runtime ships onnxruntime.lib (import lib) +
+            # onnxruntime.dll.  Use SHARED IMPORTED so IMPORTED_IMPLIB works.
+            add_library(onnxruntime::onnxruntime SHARED IMPORTED)
+            set_target_properties(onnxruntime::onnxruntime PROPERTIES
+                IMPORTED_IMPLIB "${ONNXRuntime_LIBRARY}"
+                INTERFACE_INCLUDE_DIRECTORIES "${ONNXRuntime_INCLUDE_DIR}"
+            )
+            # Locate the DLL for runtime bundling.
+            find_file(ONNXRuntime_DLL
+                NAMES onnxruntime.dll
+                PATHS
+                    ${ONNXRuntime_ROOT}
+                    ${ONNXRUNTIME_ROOT_DIR}
+                PATH_SUFFIXES
+                    lib
+                    bin
+            )
+            if(ONNXRuntime_DLL)
+                set_target_properties(onnxruntime::onnxruntime PROPERTIES
+                    IMPORTED_LOCATION "${ONNXRuntime_DLL}"
+                )
+            endif()
+        else()
+            add_library(onnxruntime::onnxruntime UNKNOWN IMPORTED)
+            set_target_properties(onnxruntime::onnxruntime PROPERTIES
+                IMPORTED_LOCATION "${ONNXRuntime_LIBRARY}"
+                INTERFACE_INCLUDE_DIRECTORIES "${ONNXRuntime_INCLUDE_DIR}"
+            )
+        endif()
     endif()
 endif()
 
-mark_as_advanced(ONNXRuntime_INCLUDE_DIR ONNXRuntime_LIBRARY)
+mark_as_advanced(ONNXRuntime_INCLUDE_DIR ONNXRuntime_LIBRARY ONNXRuntime_DLL)

@@ -111,6 +111,7 @@ Source: "{#MyBuildBasePath}\share\*"; DestDir: "{app}\share\"; Flags: ignorevers
 Source: "{#MyBuildBasePath}\profiles\*"; DestDir: "{app}\profiles\"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#MyBuildBasePath}\sounds\*"; DestDir: "{app}\sounds\"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#MyBuildBasePath}\themes\*"; DestDir: "{app}\themes\"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#MyBuildBasePath}\models\*"; DestDir: "{app}\models\"; Flags: skipifsourcedoesntexist ignoreversion recursesubdirs createallsubdirs
 Source: "{#MyBuildBasePath}\AboutThisBuild.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#MyBuildBasePath}\AUTHORS.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#MyBuildBasePath}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion

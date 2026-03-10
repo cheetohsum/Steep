@@ -39,6 +39,19 @@ jobs:
           echo "Installing dependencies with apt."
           sudo apt-get install -y cmake libgtk-3-dev libgtkmm-3.0-dev liblensfun-dev librsvg2-dev liblcms2-dev libfftw3-dev libiptcdata0-dev libtiff5-dev libcanberra-gtk3-dev liblensfun-bin libexpat1-dev libbrotli-dev zlib1g-dev libinih-dev adwaita-icon-theme-full gettext libarchive-tools zstd libgif-dev libwebp-dev libwebpdemux2
 
+      - name: Install ONNX Runtime
+        run: |
+          ONNX_VERSION="1.17.1"
+          echo "Downloading ONNX Runtime ${ONNX_VERSION} for x64."
+          curl -L -o onnxruntime.tgz \
+            "https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/onnxruntime-linux-x64-${ONNX_VERSION}.tgz"
+          echo "Extracting ONNX Runtime."
+          tar xzf onnxruntime.tgz
+          echo "Installing headers and library."
+          sudo cp -r onnxruntime-linux-x64-${ONNX_VERSION}/include/* /usr/local/include/
+          sudo cp onnxruntime-linux-x64-${ONNX_VERSION}/lib/* /usr/local/lib/
+          sudo ldconfig
+
       - name: Install makedeb
         run: |
           echo "Installing makedeb..."
@@ -98,6 +111,7 @@ jobs:
             -DWITH_PROF="OFF" \
             -DWITH_SAN="OFF" \
             -DWITH_SYSTEM_KLT="OFF" \
+            -DWITH_AI_MASKING=ON \
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DLENSFUNDBDIR="../share/lensfun/version_1" \
             ..
@@ -286,6 +300,19 @@ jobs:
           echo "Installing dependencies with apt."
           DEBIAN_FRONTEND=noninteractive sudo apt install -y build-essential cmake libgtk-3-dev libgtkmm-3.0-dev liblensfun-dev librsvg2-dev liblcms2-dev libfftw3-dev libiptcdata0-dev libtiff5-dev libcanberra-gtk3-dev liblensfun-bin libexpat1-dev libbrotli-dev zlib1g-dev libinih-dev adwaita-icon-theme-full gettext libarchive-tools zstd libgif-dev libwebp-dev libwebpdemux2 libsimde-dev
 
+      - name: Install ONNX Runtime
+        run: |
+          ONNX_VERSION="1.17.1"
+          echo "Downloading ONNX Runtime ${ONNX_VERSION} for aarch64."
+          curl -L -o onnxruntime.tgz \
+            "https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/onnxruntime-linux-aarch64-${ONNX_VERSION}.tgz"
+          echo "Extracting ONNX Runtime."
+          tar xzf onnxruntime.tgz
+          echo "Installing headers and library."
+          sudo cp -r onnxruntime-linux-aarch64-${ONNX_VERSION}/include/* /usr/local/include/
+          sudo cp onnxruntime-linux-aarch64-${ONNX_VERSION}/lib/* /usr/local/lib/
+          sudo ldconfig
+
       - name: Install Exiv2
         run: |
           EXIV2_VERSION='v0.28.5'
@@ -299,7 +326,7 @@ jobs:
 
           echo "Building and installing."
           sudo make -j$(nproc) install
-          
+
       - name: Install libjxl
         working-directory: .
         run: |
@@ -364,6 +391,7 @@ jobs:
             -DWITH_SAN="OFF" \
             -DWITH_SYSTEM_KLT="OFF" \
             -DWITH_SIMDE="ON" \
+            -DWITH_AI_MASKING=ON \
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DLENSFUNDBDIR="../share/lensfun/version_1" \
             ..

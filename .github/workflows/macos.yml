@@ -37,6 +37,18 @@ jobs:
            echo "----====Pourage====----"
            cat depslog | grep Pouring
            zsh -c 'echo "Completed installation of dependencies in $(printf "%0.2f" $(($[$(date +%s)-$(cat build/stamp)]/$((60.))))) minutes"' >> $GITHUB_STEP_SUMMARY
+      - name: Install ONNX Runtime
+        run: |
+          ONNX_VERSION="1.17.1"
+          echo "Downloading ONNX Runtime ${ONNX_VERSION} for x86_64."
+          curl -L -o onnxruntime.tgz \
+            "https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/onnxruntime-osx-x86_64-${ONNX_VERSION}.tgz"
+          echo "Extracting ONNX Runtime."
+          tar xzf onnxruntime.tgz
+          echo "Installing headers and library to /usr/local."
+          sudo cp -r onnxruntime-osx-x86_64-${ONNX_VERSION}/include/* /usr/local/include/
+          sudo cp onnxruntime-osx-x86_64-${ONNX_VERSION}/lib/*.dylib /usr/local/lib/
+
       - name: Configure build system
         env:
           IDENT: '-'
@@ -77,6 +89,7 @@ jobs:
             -DCONTINUOUS=ON \
             -DCODESIGNID:STRING="$IDENT" \
             -DFANCY_DMG="ON" \
+            -DWITH_AI_MASKING=ON \
             ..
             zsh -c 'echo "Configured in $(printf "%0.2f" $(($[$(date +%s)-$(cat configstamp)]/$((60.))))) minutes"' >> $GITHUB_STEP_SUMMARY
       - name: Compile RawTherapee
@@ -165,6 +178,18 @@ jobs:
            echo "----====Pourage====----"
            cat depslog | grep Pouring
            zsh -c 'echo "Completed installation of dependencies in $(printf "%0.2f" $(($[$(date +%s)-$(cat build/stamp)]/$((60.))))) minutes"' >> $GITHUB_STEP_SUMMARY
+      - name: Install ONNX Runtime
+        run: |
+          ONNX_VERSION="1.17.1"
+          echo "Downloading ONNX Runtime ${ONNX_VERSION} for arm64."
+          curl -L -o onnxruntime.tgz \
+            "https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/onnxruntime-osx-arm64-${ONNX_VERSION}.tgz"
+          echo "Extracting ONNX Runtime."
+          tar xzf onnxruntime.tgz
+          echo "Installing headers and library to /opt/homebrew."
+          sudo cp -r onnxruntime-osx-arm64-${ONNX_VERSION}/include/* /opt/homebrew/include/
+          sudo cp onnxruntime-osx-arm64-${ONNX_VERSION}/lib/*.dylib /opt/homebrew/lib/
+
       - name: Configure build system
         env:
           IDENT: '-'
@@ -205,6 +230,7 @@ jobs:
             -DCODESIGNID:STRING="$IDENT" \
             -DLOCAL_PREFIX=/opt/homebrew \
             -DFANCY_DMG="ON" \
+            -DWITH_AI_MASKING=ON \
             ..
             zsh -c 'echo "Configured in $(printf "%0.2f" $(($[$(date +%s)-$(cat configstamp)]/$((60.))))) minutes"' >> $GITHUB_STEP_SUMMARY
       - name: Compile RawTherapee

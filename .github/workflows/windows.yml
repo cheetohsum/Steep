@@ -81,6 +81,35 @@ jobs:
           echo "Installing SIMDe."
           meson install
 
+      - name: Install ONNX Runtime
+        run: |
+          ONNX_VERSION="1.17.1"
+          if [ "${{matrix.arch}}" == "arm64" ]; then
+            ONNX_ARCHIVE="onnxruntime-win-arm64-${ONNX_VERSION}.zip"
+          else
+            ONNX_ARCHIVE="onnxruntime-win-x64-${ONNX_VERSION}.zip"
+          fi
+          echo "Downloading ONNX Runtime ${ONNX_VERSION} for ${{matrix.arch}}."
+          curl -L -o onnxruntime.zip \
+            "https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/${ONNX_ARCHIVE}"
+          echo "Extracting ONNX Runtime."
+          unzip -q onnxruntime.zip
+          ONNX_DIR="$(pwd)/$(ls -d onnxruntime-win-*)"
+          echo "ONNX Runtime extracted to ${ONNX_DIR}"
+
+          echo "Generating MinGW-compatible import library."
+          cd "${ONNX_DIR}/lib"
+          gendef onnxruntime.dll 2>/dev/null || true
+          if [ -f onnxruntime.def ]; then
+            dlltool -d onnxruntime.def -l libonnxruntime.dll.a -D onnxruntime.dll
+            echo "MinGW import library created."
+          else
+            echo "gendef not available or failed; will link against .lib directly."
+          fi
+          cd -
+
+          echo "ONNX_DIR=${ONNX_DIR}" >> "$(cygpath -u $GITHUB_ENV)"
+
       - name: Configure build
         run: |
           export REF_NAME_FILTERED="$(echo '${{github.ref_name}}' | sed 's/[^A-z0-9_.-]//g')"
@@ -101,6 +130,8 @@ jobs:
             -DPROC_TARGET_NUMBER="1" \
             -DLENSFUNDBDIR="share/lensfun" \
             -DWITH_SIMDE="${{matrix.arch == 'x86_64' && 'OFF' || 'ON'}}" \
+            -DWITH_AI_MASKING=ON \
+            -DONNXRuntime_ROOT="${ONNX_DIR}" \
             -S . -B build
 
           echo "Recording filtered ref name."
@@ -166,6 +197,11 @@ jobs:
           echo "Copying GLib schemas."
           mkdir -p "$BUILD_DIR/share/glib-2.0/schemas"
           cp 'share/glib-2.0/schemas/gschemas.compiled' "$BUILD_DIR/share/glib-2.0/schemas"
+
+          echo "Copying ONNX Runtime DLL."
+          if [ -f "${ONNX_DIR}/lib/onnxruntime.dll" ]; then
+            cp "${ONNX_DIR}/lib/onnxruntime.dll" "$BUILD_DIR"
+          fi
 
           echo "Creating GTK settings.ini."
           mkdir -p "$BUILD_DIR/share/gtk-3.0/"
