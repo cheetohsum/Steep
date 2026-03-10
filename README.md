@@ -20,7 +20,8 @@ Pre-built binaries are published automatically from the `dev` branch. Grab the l
 | **Windows** | ARM64 | [Installer (.exe)](https://github.com/cheetohsum/Steep/releases/download/nightly-github-actions/Steep_dev_win64_arm64_release.exe) · [ZIP](https://github.com/cheetohsum/Steep/releases/download/nightly-github-actions/Steep_dev_win64_arm64_release.zip) |
 | **macOS** | Apple Silicon | [DMG (.zip)](https://github.com/cheetohsum/Steep/releases/download/nightly-github-actions/Steep_dev_macOS_arm64_Release.zip) |
 | **macOS** | Intel x86_64 | [DMG (.zip)](https://github.com/cheetohsum/Steep/releases/download/nightly-github-actions/Steep_dev_macOS_x86_64_Release.zip) |
-| **Linux** | x86_64, ARM64 | Coming soon (AppImage) — [build from source](#linux) for now |
+| **Linux** | x86_64 | [AppImage](https://github.com/cheetohsum/Steep/releases/download/nightly-github-actions/Steep_dev_x86_64_release.AppImage) |
+| **Linux** | ARM64 | [AppImage](https://github.com/cheetohsum/Steep/releases/download/nightly-github-actions/Steep_dev_arm64_release.AppImage) |
 
 Browse all builds (including debug and versioned releases) on the [Nightly Releases](https://github.com/cheetohsum/Steep/releases/tag/nightly-github-actions) page.
 
@@ -269,7 +270,7 @@ make -j$(nproc)
 sudo make install
 ```
 
-Linux AppImage builds are coming soon — check the [Nightly Releases](https://github.com/cheetohsum/Steep/releases/tag/nightly-github-actions) page for availability.
+Pre-built Linux AppImages (x86_64 and ARM64) are available from the [Nightly Releases](https://github.com/cheetohsum/Steep/releases/tag/nightly-github-actions).
 
 ### Docker (with AI Masking)
 
