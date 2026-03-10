@@ -6,6 +6,8 @@ Steep takes the powerful open-source RAW processing engine of RawTherapee and ad
 
 > **Status:** Active development. Core editing, export, and all original RawTherapee features work fully. New features (AI masking, AI denoise, watermarking, albums) are in various stages of completion. See [Feature Status](#feature-status) below.
 
+![Steep — Main Editor](screenshots/rt-window.png)
+
 ---
 
 ## What's New in Steep
@@ -21,6 +23,8 @@ The traditional multi-tab notebook interface has been replaced with a clean, mod
 | **Crop** | Transform tools (Crop, Resize, Lens Geometry, Rotation, Perspective, Distortion) |
 | **Mask** | LocalLab selective editing with optional AI masks |
 
+![Mode toolbar](screenshots/toolbar-check.png)
+
 ### Visual Preset Browser
 
 Replaces the old tree-based profile selector with a card-based grid:
@@ -30,6 +34,8 @@ Replaces the old tree-based profile selector with a card-based grid:
 - Category-based organization with collapsible sections
 - Background thumbnail generation
 - Full save/load/copy/paste workflow
+
+![Black & white editing](screenshots/bw-check.png)
 
 ### 3-Way Color Grading
 
@@ -68,6 +74,9 @@ Compile-time feature (`-DWITH_AI_MASKING=ON`) using ONNX Runtime for automatic s
 - Edge refinement with configurable radius and epsilon
 - DeepLabV3-MobileNetV3 model included
 - Integrates with LocalLab for targeted adjustments on detected regions
+
+![AI Masking mode](screenshots/rt-masking.png)
+![Masking panel](screenshots/masking-panel-check.png)
 
 ### Watermarking
 
