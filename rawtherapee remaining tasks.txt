@@ -77,50 +77,124 @@ them all the same font size and font - make sure these edits are consistent acro
  
    To the tool groups in the editor on the right sidebar I want you to reduce their vertical size, reduce the text size, and vertically align the tool group label with the > to its left, and remove the ---- dividing line separating tool groups.
 
-  
- on the before and after view in the editor window make sure befoer and after are centered above the respective before/after images and not off to the side, reduce the text size, debold it, and make the lock icon smaller and also design a new better custom svg for it.
- 
+
   in the editor view to detail I want you to add back in our AI Denoise button running on RawRefinery
   
   to the filmstrip view in the editor make it 30px less tall and remove the vertical scrollbar on the right side from ever appearing, also remove the duplicative css bar below the actual toolbar which is making the UI slightly taller 
 than it needs to be.
+
+
+when the UI is fullscreen make sure we stil ldisplay the top toolbar so users can minimize/view options, switch windows.
+
+
 
 In the editor view remove the unncessary --- dividing tool subgroups and only keep them bt major changes in tools like bt mixer/grading/wb in color or all the exposure and light settings and the sharpness curve 
 
 in the editor view add to the camera toolgroup tools to adjust chromatic aberration, lens profiles, and defringing and a lens blur tool with a  drop down which allows you to configure an addiitional blur / bokeh / cat eye/ focus range leveraging depth.
 
 
-  ^^^^^^^DONE^^^^^^^
+In the editor view add a sort button with custom SVG (use the sort svg in right click context menu) for the filmstrip images, and in the browser in albnum views add in a sort for images as well. include options like filetype,date,rank,colorlabel like the right click options.
 
-when the UI is fullscreen make sure we stil ldisplay the top toolbar so users can minimize/view options, switch windows.
+In crop, straight line select, reset, and perspective buttons are still being pushed off to the right side of the right panel, move the select straight line to be to the left of the crop button, and move perspective in to the left. and move the reset button in to the elft too.
 
-reduce the height of filmstrip images display by like 30px
 
-in the editor view make sure the % in the magnifying glass updates when users change the zoom, currently it will stay the same % when dragged in the UI, or if over 100% zoomed in
+in the editor pane To crop move up the ratio selection dropdown out of the collasped part of Crop and make sure  when selected it correctly crops the photo view.
 
-in the editor view make the behavior so one click zooms in, click and hold pans around the image.
+In the right click menu on a photo add custom svg icons for all options.
 
-in the editor view improve the options for spot removal with specific Heal, Erase Clone options, a size adjuster for the eraser, red eye removal (with auto correct), otpions to use GenAI, detect obejcts, remove reflections/people/dust.
+Make the exposure and tone sliders wider overall
 
-in the editor view change the way sidebars are hidden to make it so users can double click along the edge of the left/right/filmstrip sidebars to hide/open them and remove the actual close/hide sidebar buttons from displaying and so they are full width below filmstrip and not hover windows like they are rn
+In perspective remove the 'perspective' word from the lable its redundant at thatp oint, and remove the automatic label and buttons.
 
-get AI Masking working again
+In the Masking pane for each Mask Type / Class / Shape create a new SVG Icon for them and display it to the left of the label in the dropdown. Also Create an SVG Icon for Spot Removal and Masking
+
+
+In color for Saturation and Virbance make sure they are not tied to eachother, sautraion is grayed out right now. Move Vibrance and Saturation to be under tint instead of under the WB button.
+
+
+Ok. for exposure and tone I want you to ad above the auto button a slider which shows several thumbnail previews of
+  the image horizontally. this auto button should allow users to drag a vertical | slider left/right and automatically
+  adjust the image. the preview should depict that image at those various levels of adjustment. the way the slider
+  should adjust the image values is the following: when moving left of the center brilliance (new effect) will go to
+  .8 at the maximum value to the left, exposure -.2, highlights -.8, shadows .56, birghtness -.75, contrast .47,
+  blacks .06, when to the right brilliance shoudl be .8, exposure -.15, highgliths -.5, shadows .58, brightness .4,
+  contrast .61, black point 0, these values should scale according to the image data tiself. You should implement this
+  in a scalable and expert way with a beautiful UI implementation with pill corners for the horizontal thumbnail
+  previews (which should be smoothly overlapping in a line in one row)
+  
+  In Color for WB fix the WB buttons appearing in the center when dropped down they should appear below the WB button, fix the temperatrue text truncation. Vertically align the Temperature, Tint, Vibracne and Saturation sliders - currently the tint is a bit off from the rest of them. 
+
+  Under WB remove the color picker to the left side of the pick size button, move the pic ksize button to be to the right of the locakble color picekr along wit the revert button so theyre all on one row, make the pick size button wayyy less wide.
+
+
+add pagination for the major tools (color mixer, grading, point color) in color instead of drop downs. have a little orb icon for each choice which users can click, add an animation for changing bt them and for the paginations orb icons changing, make them decently tightly padded together.
+
+In color for black and white can you add sliders to adjust Neutrals / Tone / Strength of the B&W effect which appear when the drop-down is expanded? The preview slider should adjust these as well.
+
+Under Detail fix the truncation of Sharpening/Luminance/Chromin..., Make the Sharpening Radius / Chromin Dropdowns like Grain is under effects so only Sharpening and Luminance are visible at first
+
+
+For the AI Denoise button under Detail make sure it has an expansio nanimation
+
+  Add a list of different film sims (including one specifically desined to emulate Kodachrome without referencing it by name), plan out how to add to the effects drop-down tab in the edit pane as many different and varied and nuanced film simulations as possible, be innovative and unique with your implementation to emulate a real film
+  look which would imrpess experts - do NOT use identical names to fuji film sims but invent unqiue new ones. also add in a cool 'custom film sim' which allows users to configure all of the parameters for a film sim and create their own custom ones.
+
+add a short initial startup animation whcih shows the steep logo in the center of a blank pane, then has the background fade out to expose the browser view as the images and sidepanel moves in. the nackground fade animation should be a digital topopgrahy animation 
+
+
+In the Curves component under exposure and tone make it so u can see all the R G B channels on the curves preview and overall separately on the base view, and also click into each still with the colored label at the top to edit them specifically.
+
+In the Masks pane change the Add Mask / Add AI Mask to be a + and + AI button, remove the Mask Shape / Mask Feathering and just make them say Shape / Feathering. Have the dropdown show the words for what is currently selected to the right of 
+the shape/type/class for a dropdown.
+
+move the copy edit settings cog to t he right of copy settings to be a different unique custom svg and have it be like inset to the right of that button
+
+
+add in an additional adjustment mode with a new svg icon to perspective in the crop menu which should allow users to click or shift-click dot grid vertices on the image in the editing pane either one or shift/ctr-click to select many at a time which allows the user to selectively drag and drop to adjust the persepctive of those sets of vertices 
+selected on the image.
+
+The color grading wheels themselves do not seem to have an effect on the image. the sliders do.
+  
+  add an open/close animations to the folders in the folder pane and to the albums in the album pane below it
+  
+  If filters are expanded when users switch to edit view, make sure filters are collapsed otherwise they will be overlapping on the filmstrip view. also make the filter button on the edit pane match
+the filter button on the browser view, and have the clear filter icon be the filter button on the browser pane with a red X in its bottom-right corner for both pages.
+
+
+in effects add in a tilt-shift effect which has a ui which allows users to adjust the width/depth of the tilt-shift effect in the image easily and configure the blur / featheirn details via slders hidden in a drop-down under the
+tilt-shift effect name like other buttons.
+
+remove 'gradient' from an effect under the effects list in edit pane as we have gradients in masking now.
+
+Add a label above the Film Simulations tool and make the default have the box be unchecked and checking the box enables film sims to be running on the image.
+
+make sure if user sets anything in masking/spot removal that we add the dirty detector X to allow users to easily clear out any settings applied to the right of those toolgrup headers like on edit pane.
+
+vertex grid tool in the crop pane in edit is not currently adjusting the perspective of the image around those vertices when those grid vertices are moved. also make sure clicking on the tool again disables the view of the tool, and there should be an x populated by the perspective / crop toolgruops when there are values
+to clear out.
+  
+  /\/\/\ DONE /\/\/\
+
+
+
+
+
+
+
+
+  
+  
+  
+  \/\/\/ IDK IF WE DO THESE \/\/\/
+
+
 
 Add AI Upscale
 
-To copy edit settings add a cog next to it to allow users to choose via radio toggles which all edit settings are copied
-
-Make presets actually load again theyre not loading currently in the UI or displaying on the editor view in the Presets page.
-
-add pagination for the major tools in exposure/color 
 
 
 
-IDK IF WE DO THESE 
+  
 
-In the editor view add a sort option for the filmstrip images, add a sort option for albums too.
-
-
-in the filters list add a filetype dynamic filter which loads the filetypes of the images available in the view or folder or album and loads the different filetypes as quickbuttons for sorting.
-
+Create an SVG Icon for feathering and add it to the left of wherever there is feathering 
 

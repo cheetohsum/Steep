@@ -10045,8 +10045,12 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
                 }
 
                 if (lp.blwh) {
-                    cla = 0.f;
-                    clb = 0.f;
+                    // Desaturate: set delta so final color channels become zero.
+                    // Blending formula: transformed->a = original->a + factorx * reducdE * cla
+                    // For B&W: need transformed->a = 0 when fully inside mask (factorx=reducdE=1)
+                    // So cla = -original->a, giving partial desaturation in transition zones.
+                    cla = -original->a[y + ystart][x + xstart];
+                    clb = -original->b[y + ystart][x + xstart];
                 }
 
 
@@ -21277,7 +21281,7 @@ void ImProcFunctions::Lab_Local(
     const float a_scalemerg = (lp.highAmerg - lp.lowAmerg) / factor / scaling;
     const float b_scalemerg = (lp.highBmerg - lp.lowBmerg) / factor / scaling;
 
-    if (!lp.inv && (lp.chro != 0 || lp.ligh != 0.f || lp.cont != 0 || ctoning || lp.mergemet > 0 ||  lp.strcol != 0.f ||  lp.strcolab != 0.f || lp.qualcurvemet != 0 || lp.showmaskcolmet == 2 || lp.enaColorMask || lp.showmaskcolmet == 3  || lp.showmaskcolmet == 4 || lp.showmaskcolmet == 5 || lp.prevdE || lp.showMaskOverlay) && lp.colorena) { // || lllocalcurve)) { //interior ellipse reinforced lightness and chroma  //locallutili
+    if (!lp.inv && (lp.chro != 0 || lp.ligh != 0.f || lp.cont != 0 || ctoning || lp.mergemet > 0 ||  lp.strcol != 0.f ||  lp.strcolab != 0.f || lp.qualcurvemet != 0 || lp.showmaskcolmet == 2 || lp.enaColorMask || lp.showmaskcolmet == 3  || lp.showmaskcolmet == 4 || lp.showmaskcolmet == 5 || lp.prevdE || lp.showMaskOverlay || lp.blwh) && lp.colorena) { // || lllocalcurve)) { //interior ellipse reinforced lightness and chroma  //locallutili
         int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
         int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
         int xstart = rtengine::max(static_cast<int>(lp.xc - lp.lxL) - cx, 0);

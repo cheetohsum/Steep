@@ -291,6 +291,7 @@ private:
     rtengine::procparams::VibranceParams savedVibrance_;
     rtengine::procparams::SharpeningParams savedSharpening_;
     rtengine::procparams::SHParams savedSH_;
+    rtengine::procparams::BlackWhiteParams savedBlackWhite_;
 
     bool bridgeGlobalToSpot(rtengine::procparams::ProcParams* params, const rtengine::ProcEvent& event);
     void loadSpotIntoGlobalTools();

@@ -1286,11 +1286,24 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
         bridged = true;
     }
 
+    if (id == EvBWChmixEnabled || id == EvBWmethod) {
+        // B&W is active when enabled OR when the method is changed to anything
+        // other than its default. Use enabled flag from the write() call.
+        spot.blwh = params->blackwhite.enabled;
+        // B&W desaturation runs inside the color processing block,
+        // so the color tool must be enabled for the engine to reach it.
+        if (spot.blwh) {
+            spot.expcolor = true;
+        }
+        bridged = true;
+    }
+
     if (maskModeActive_) {
         params->toneCurve = savedToneCurve_;
         params->vibrance = savedVibrance_;
         params->sharpening = savedSharpening_;
         params->sh = savedSH_;
+        params->blackwhite = savedBlackWhite_;
     }
 
     return bridged;
@@ -1341,6 +1354,8 @@ void ToolPanelCoordinator::loadSpotIntoGlobalTools()
     tempParams.sh.htonalwidth = spot.h_tonalwidth;
     tempParams.sh.stonalwidth = spot.s_tonalwidth;
 
+    tempParams.blackwhite.enabled = spot.blwh;
+
     ipc->endUpdateParams(0);  // release lock, no reprocess
 
     // Update widget display (listener disabled to prevent recursive panelChanged)
@@ -1359,6 +1374,10 @@ void ToolPanelCoordinator::loadSpotIntoGlobalTools()
     shadowshighlights->disableListener();
     shadowshighlights->read(&tempParams);
     shadowshighlights->enableListener();
+
+    blackwhite->disableListener();
+    blackwhite->read(&tempParams);
+    blackwhite->enableListener();
 }
 
 void ToolPanelCoordinator::modeChanged(EditorMode mode)
@@ -1382,6 +1401,9 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
             break;
         case EditorMode::MASK:
             modeStack->set_visible_child("mask");
+            // Auto-expand spot removal and masking groups
+            spotGroup->setExpanded(true);
+            maskingGroup->setExpanded(true);
             break;
     }
 
@@ -1457,6 +1479,7 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
                 savedVibrance_ = p->vibrance;
                 savedSharpening_ = p->sharpening;
                 savedSH_ = p->sh;
+                savedBlackWhite_ = p->blackwhite;
                 ipc->endUpdateParams(0);
             }
             loadSpotIntoGlobalTools();
@@ -2535,9 +2558,20 @@ void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const 
 
     ProcParams* params = ipc->beginUpdateParams();
 
+    // In mask mode, locallab tool widgets are hidden and have stale/default values.
+    // Skip their write() to prevent overwriting bridged spot settings (expcomp,
+    // lightness, etc.) that were set by bridgeGlobalToSpot in a previous cycle.
+    // The control spot geometry (center, size, shape) is still written from the treemodel.
+    if (maskModeActive_) {
+        locallab->setSkipToolWrites(true);
+    }
 
     for (auto toolPanel : toolPanels) {
         toolPanel->write(params);
+    }
+
+    if (maskModeActive_) {
+        locallab->setSkipToolWrites(false);
     }
 
     // Update preview strips BEFORE bridge zeroes globals, so strips see real values.
@@ -2569,6 +2603,7 @@ void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const 
         params->vibrance = savedVibrance_;
         params->sharpening = savedSharpening_;
         params->sh = savedSH_;
+        params->blackwhite = savedBlackWhite_;
     }
 
     // Compensate rotation on flip
@@ -3776,24 +3811,6 @@ void ToolPanelCoordinator::updateResetButtons()
     bool cgDirty = !(current.colorGrading == b.colorGrading);
     bool pcDirty = !(current.pointcolor == b.pointcolor);
     bool colorDirty = wbDirty || vibDirty || hsvDirty || cgDirty || pcDirty;
-    if (colorDirty) {
-        FILE* f = fopen("/tmp/rt_urb.log", "a");
-        if (f) {
-            fprintf(f, "COLOR DIRTY: wb=%d vib=%d hsv=%d cg=%d pc=%d\n",
-                    wbDirty, vibDirty, hsvDirty, cgDirty, pcDirty);
-            if (wbDirty) {
-                fprintf(f, "  WB: enabled %d/%d method '%s'/'%s' temp %d/%d green %.4f/%.4f equal %.4f/%.4f itcwb_sampling %d/%d compat %d/%d\n",
-                        current.wb.enabled, b.wb.enabled,
-                        current.wb.method.c_str(), b.wb.method.c_str(),
-                        current.wb.temperature, b.wb.temperature,
-                        current.wb.green, b.wb.green,
-                        current.wb.equal, b.wb.equal,
-                        current.wb.itcwb_sampling, b.wb.itcwb_sampling,
-                        current.wb.compat_version, b.wb.compat_version);
-            }
-            fclose(f);
-        }
-    }
     colorGroup->setResetVisible(colorDirty);
 
     // Detail group: sharpening + dirpyrdenoise + dehaze

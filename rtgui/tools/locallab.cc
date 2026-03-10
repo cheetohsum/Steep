@@ -1186,8 +1186,12 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
 
                 }
 
-                for (auto tool : locallabTools) {
-                    tool->write(pp, pedited);
+                // In mask mode, tool widgets are hidden and have stale values.
+                // Skip writing them to avoid overwriting bridged spot settings.
+                if (!skipToolWrites_) {
+                    for (auto tool : locallabTools) {
+                        tool->write(pp, pedited);
+                    }
                 }
 
                 // Mask type and AI class — written AFTER tool->write() so control
@@ -1736,6 +1740,11 @@ void Locallab::spotHovered(bool hovered, bool forceRedraw)
 bool Locallab::isPointerOverMaskList() const
 {
     return expsettings->isPointerOverTreeview();
+}
+
+int Locallab::getSpotCount()
+{
+    return expsettings->getSpotNumber();
 }
 
 void Locallab::setEditProvider(EditDataProvider * provider)

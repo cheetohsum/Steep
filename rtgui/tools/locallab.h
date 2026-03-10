@@ -71,6 +71,7 @@ private:
     OptionalRadioButtonGroup delta_e_preview_button_group;
 
     bool hoverMaskOverlay_ = false;
+    bool skipToolWrites_ = false;
 
     std::vector<LocallabTool*> locallabTools;
 
@@ -117,6 +118,9 @@ public:
 
     // Access exposure tool for preview strip routing
     LocallabExposure& getExposureTool() { return expexpose; }
+
+    // When true, write() only updates control spot geometry, not tool settings
+    void setSkipToolWrites(bool skip) { skipToolWrites_ = skip; }
 
     // Hide locallab's internal ToolGroups (so global ToolGroups can replace them)
     void hideToolGroups();
@@ -195,6 +199,7 @@ public:
     llMaskVisibility getMaskVisibility() const;
     void setHoverMaskOverlay(bool hover);
     bool isPointerOverMaskList() const;
+    int getSpotCount();
 
     // Other widgets event functions
     //void resetshowPressed();

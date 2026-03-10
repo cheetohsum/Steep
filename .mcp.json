@@ -3,6 +3,10 @@
     "rawtherapee": {
       "type": "http",
       "url": "http://localhost:39793/mcp"
+    },
+    "playwright": {
+      "command": "npx",
+      "args": ["@playwright/mcp@latest"]
     }
   }
 }
