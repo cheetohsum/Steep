@@ -22,7 +22,7 @@
    xmlns:cc="http://creativecommons.org/ns#"
    xmlns:dc="http://purl.org/dc/elements/1.1/">
   <title
-     id="title188">RawTherapee splash screen</title>
+     id="title188">Steep splash screen</title>
   <defs
      id="defs777">
     <rect
@@ -155,7 +155,7 @@
        height="2.6693359"
        y="-0.83466793"
        x="-0.52089257"
-       inkscape:label="RawTherapee white"
+       inkscape:label="Steep white"
        id="filter4749"
        style="color-interpolation-filters:sRGB"
        inkscape:auto-region="true">
@@ -240,7 +240,7 @@
        height="3.1717951"
        y="-1.0858974"
        x="-0.15505423"
-       inkscape:label="RawTherapee white"
+       inkscape:label="Steep white"
        id="filter4749-3"
        style="color-interpolation-filters:sRGB"
        inkscape:auto-region="true">
@@ -879,7 +879,7 @@
        height="3.8250666"
        y="-1.4125333"
        x="-0.12470456"
-       inkscape:label="RawTherapee white"
+       inkscape:label="Steep white"
        id="filter4749-3-4"
        style="color-interpolation-filters:sRGB"
        inkscape:auto-region="true">
@@ -910,7 +910,7 @@
        height="4.2627358"
        y="-1.6313679"
        x="-0.10626753"
-       inkscape:label="RawTherapee white"
+       inkscape:label="Steep white"
        id="filter4749-3-2"
        style="color-interpolation-filters:sRGB"
        inkscape:auto-region="true">
@@ -941,7 +941,7 @@
        height="3.1717934"
        y="-1.0858967"
        x="-0.15505489"
-       inkscape:label="RawTherapee white"
+       inkscape:label="Steep white"
        id="filter4749-3-3"
        style="color-interpolation-filters:sRGB"
        inkscape:auto-region="true">
@@ -972,7 +972,7 @@
        height="4.2627359"
        y="-1.6313679"
        x="-0.10626753"
-       inkscape:label="RawTherapee white"
+       inkscape:label="Steep white"
        id="filter4749-3-2-3"
        style="color-interpolation-filters:sRGB"
        inkscape:auto-region="true">
@@ -1003,7 +1003,7 @@
        height="4.2627359"
        y="-1.6313679"
        x="-0.10626753"
-       inkscape:label="RawTherapee white"
+       inkscape:label="Steep white"
        id="filter4749-3-2-3-3"
        style="color-interpolation-filters:sRGB"
        inkscape:auto-region="true">
@@ -1034,7 +1034,7 @@
        height="3.8093036"
        y="-1.4046518"
        x="-0.10504629"
-       inkscape:label="RawTherapee white"
+       inkscape:label="Steep white"
        id="filter4749-3-8"
        style="color-interpolation-filters:sRGB"
        inkscape:auto-region="true">
@@ -1129,7 +1129,7 @@
     <rdf:RDF>
       <cc:Work
          rdf:about="">
-        <dc:title>RawTherapee splash screen</dc:title>
+        <dc:title>Steep splash screen</dc:title>
         <cc:license
            rdf:resource="http://creativecommons.org/licenses/by-sa/4.0/" />
       </cc:Work>
