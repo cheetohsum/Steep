@@ -1031,6 +1031,11 @@ bool ThumbBrowserBase::Internal::on_draw(const ::Cairo::RefPtr< Cairo::Context> 
 
     cr->set_antialias(Cairo::ANTIALIAS_NONE);
     cr->set_line_join(Cairo::LINE_JOIN_MITER);
+
+    // Explicit background fill — macOS Quartz doesn't always honor CSS background-color on DrawingArea
+    cr->set_source_rgb(0.145, 0.165, 0.196); // #252a32
+    cr->paint();
+
     style->render_background(cr, 0., 0., logical.width, logical.height);
     Glib::RefPtr<Pango::Context> context = get_pango_context ();
     context->set_font_description (style->get_font());

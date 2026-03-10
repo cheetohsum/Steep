@@ -129,19 +129,24 @@ Adjuster::Adjuster(
             css->load_from_data(
                 "spinbutton { background: transparent; border: none; box-shadow: none;"
                 " font-size: 9px; padding: 0 4px 0 0; margin: 0; min-height: 0; max-width: 36px;"
-                " color: rgba(255,255,255,0.65); }"
+                " overflow: hidden; color: rgba(255,255,255,0.65); }"
                 " spinbutton entry { background: transparent; border: none; box-shadow: none;"
                 " font-size: 9px; padding: 0; margin: 0; min-height: 0;"
                 " color: rgba(255,255,255,0.65); caret-color: rgba(255,255,255,0.65); }"
-                " spinbutton button { min-width: 0; min-height: 0; max-width: 0;"
-                " padding: 0; margin: 0; border: none; background: none; opacity: 0; }"
-                " spinbutton button image { min-width: 0; min-height: 0; }"
+                " spinbutton button { min-width: 0; min-height: 0; max-width: 0; max-height: 0;"
+                " padding: 0; margin: 0; border: none; background: none; opacity: 0;"
+                " -gtk-icon-size: 0; }"
+                " spinbutton button image { min-width: 0; min-height: 0; max-width: 0; max-height: 0; }"
             );
             spin->get_style_context()->add_provider(
                 css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200
             );
         } catch (...) {}
     }
+
+    // Programmatically disable +/- buttons (macOS may ignore CSS hiding)
+    spin->set_numeric(true);
+    spin->set_update_policy(Gtk::UPDATE_IF_VALID);
 
     reset->set_size_request(-1, RTScalable::scalePixelSize(spin->get_height() > MIN_RESET_BUTTON_HEIGHT ? spin->get_height() : MIN_RESET_BUTTON_HEIGHT));
     slider = Gtk::manage(new MyHScale());

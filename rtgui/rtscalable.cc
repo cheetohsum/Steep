@@ -80,18 +80,23 @@ Cairo::RefPtr<Cairo::ImageSurface> RTScalable::loadSurfaceFromIcon(const Glib::u
     // Looking for corresponding icon (if existing)
     const auto iconInfo = theme->lookup_icon(iconName, size);
 
-    if (!iconInfo) {
-        std::cerr << "Failed to load icon \"" << iconName << "\" for size " << size << "px" << std::endl;
+    Glib::ustring iconPath;
 
-        return surf;
+    if (iconInfo) {
+        iconPath = iconInfo.get_filename();
     }
 
-    const auto iconPath = iconInfo.get_filename();
-
+    // Fallback: direct file lookup when icon theme lookup fails (e.g. macOS missing icon cache)
     if (iconPath.empty()) {
-        std::cerr << "Failed to load icon \"" << iconName << "\" for size " << size << "px" << std::endl;
-
-        return surf;
+        const auto fallback = Glib::build_filename(
+            App::get().argv0(), "icons", "rawtherapee", "scalable", "apps",
+            iconName + ".svg");
+        if (Glib::file_test(fallback, Glib::FILE_TEST_EXISTS)) {
+            iconPath = fallback;
+        } else {
+            std::cerr << "Failed to load icon \"" << iconName << "\" for size " << size << "px" << std::endl;
+            return surf;
+        }
     }
 
     // Create surface from corresponding icon

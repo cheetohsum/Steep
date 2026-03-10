@@ -257,6 +257,13 @@ cp -RL ${LOCAL_PREFIX}/share/icons/Adwaita/* "${RESOURCES}"/share/icons/Adwaita/
 "${LOCAL_PREFIX}/bin/gtk-update-icon-cache" "${RESOURCES}/share/icons/Adwaita" || "${LOCAL_PREFIX}/bin/gtk-update-icon-cache-3.0" "${RESOURCES}/share/icons/Adwaita"
 cp -RL "${LOCAL_PREFIX}/share/icons/hicolor" "${RESOURCES}/share/icons/hicolor"
 
+# Update RawTherapee icon theme cache (ensures custom icons like page-* are found)
+if [[ -d "${RESOURCES}/share/rawtherapee/icons/rawtherapee" ]]; then
+    msg "Update RawTherapee icon theme cache"
+    "${LOCAL_PREFIX}/bin/gtk-update-icon-cache" "${RESOURCES}/share/rawtherapee/icons/rawtherapee" 2>/dev/null || \
+    "${LOCAL_PREFIX}/bin/gtk-update-icon-cache-3.0" "${RESOURCES}/share/rawtherapee/icons/rawtherapee" 2>/dev/null || true
+fi
+
 # fix libfreetype install name
 for lib in "${LIB}"/*; do
     install_name_tool -change libfreetype.6.dylib "${LIB}"/libfreetype.6.dylib "${lib}" 2>/dev/null

@@ -252,6 +252,8 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
 
     //initialize hbToolBar1 — widgets created here, packed into buttonBar below
     hbToolBar1 = Gtk::manage(new Gtk::Box ());
+    hbToolBar1->set_spacing(4);
+    hbToolBar1->set_margin_start(2);
 
     //setup BrowsePath
     iRefreshWhite = new RTImage("refresh-modern", Gtk::ICON_SIZE_BUTTON);
@@ -263,6 +265,7 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     BrowsePath->set_hexpand (false);
     BrowsePath->set_tooltip_markup (M("FILEBROWSER_BROWSEPATHHINT"));
     Gtk::Box* hbBrowsePath = Gtk::manage(new Gtk::Box ());
+    hbBrowsePath->set_valign(Gtk::ALIGN_CENTER);
     buttonBrowsePath = Gtk::manage(new Gtk::Button ());
     buttonBrowsePath->set_image (*iRefreshWhite);
     buttonBrowsePath->set_tooltip_markup (M("FILEBROWSER_BROWSEPATHBUTTONHINT"));
@@ -288,8 +291,9 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     {
         auto entryCss = Gtk::CssProvider::create();
         entryCss->load_from_data(
-            "entry { font-size: 8pt; color: #cdd2da; min-height: 22px; padding: 1px 5px; }"
+            "entry { font-size: 8pt; color: #cdd2da; min-height: 22px; max-height: 22px; padding: 1px 5px; }"
             "entry:focus { color: #cdd2da; }"
+            "entry:disabled { color: #cdd2da; }"
             "entry image { color: #cdd2da; }"  // placeholder icon if any
         );
         BrowsePath->get_style_context()->add_provider(
