@@ -29,6 +29,18 @@
 #include "rtengine/rtapp.h"
 #include "rtengine/cJSON.h"
 
+// localtime_r is POSIX; Windows provides localtime_s with swapped args.
+namespace {
+inline struct tm* portable_localtime(const time_t* t, struct tm* result) {
+#ifdef _WIN32
+    localtime_s(result, t);
+#else
+    localtime_r(t, result);
+#endif
+    return result;
+}
+} // namespace
+
 #include <glib/gstdio.h>
 #include <giomm.h>
 
@@ -404,7 +416,7 @@ std::string getExifDateFolder(const std::string& filePath, const std::string& tm
         if (meta && meta->hasExif()) {
             time_t ts = meta->getDateTimeAsTS();
             if (ts > 0) {
-                localtime_r(&ts, &date);
+                portable_localtime(&ts, &date);
                 hasDate = true;
             }
         }
@@ -414,7 +426,7 @@ std::string getExifDateFolder(const std::string& filePath, const std::string& tm
     if (!hasDate) {
         GStatBuf st;
         if (g_stat(filePath.c_str(), &st) == 0) {
-            localtime_r(&st.st_mtime, &date);
+            portable_localtime(&st.st_mtime, &date);
             hasDate = true;
         }
     }
@@ -877,7 +889,7 @@ std::string handleToolCall(const std::string& toolName, cJSON* args, McpServer* 
                     time_t ts = meta->getDateTimeAsTS();
                     if (ts > 0) {
                         struct tm tm;
-                        localtime_r(&ts, &tm);
+                        portable_localtime(&ts, &tm);
                         char buf[32];
                         strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm);
                         cJSON_AddStringToObject(fileObj, "dateTime", buf);

@@ -23,11 +23,21 @@ namespace mcp {
 
 namespace {
 
+// localtime_r is POSIX; Windows provides localtime_s with swapped args.
+inline struct tm* portable_localtime(const time_t* t, struct tm* result) {
+#ifdef _WIN32
+    localtime_s(result, t);
+#else
+    localtime_r(t, result);
+#endif
+    return result;
+}
+
 std::string nowISO8601() {
     auto now = std::chrono::system_clock::now();
     auto t = std::chrono::system_clock::to_time_t(now);
     struct tm tm;
-    localtime_r(&t, &tm);
+    portable_localtime(&t, &tm);
     char buf[32];
     strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S", &tm);
     return buf;
