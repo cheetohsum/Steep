@@ -2809,8 +2809,10 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
         if ((todo & (M_AUTOEXP | M_RGBCURVE | M_LUMACURVE | M_LUMINANCE | M_COLOR))
             && aiMaskBlendActive_ && aiMaskBaseline_ && aiMaskBaseline_->W == pW && aiMaskBaseline_->H == pH) {
             AIMaskCache& aiCache = AIMaskCache::getInstance();
-            const int maskW = aiCache.getCachedWidth();
-            const int maskH = aiCache.getCachedHeight();
+            // Hold the cache lock for the entire blend to prevent dangling pointers
+            MyMutex::MyLock cacheLock(aiCache.mutex());
+            const int maskW = aiCache.getCachedWidthUnsafe();
+            const int maskH = aiCache.getCachedHeightUnsafe();
 
             if (maskW > 0 && maskH > 0) {
                 #pragma omp parallel for schedule(dynamic, 16)
@@ -2824,7 +2826,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                         float combinedMask = 0.f;
                         for (const auto& spot : params->locallab.spots) {
                             if (!spot.useAIMask || !spot.activ) continue;
-                            const auto* maskArr = aiCache.getMask(static_cast<AISegClass>(spot.aiMaskClass));
+                            const auto* maskArr = aiCache.getMaskUnsafe(static_cast<AISegClass>(spot.aiMaskClass));
                             if (!maskArr) continue;
 
                             float val = (*maskArr)[my][mx];

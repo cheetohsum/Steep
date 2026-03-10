@@ -41,8 +41,17 @@ public:
     // Get cached probability for a specific class at a specific pixel (no imageId check)
     float getMaskValue(AISegClass cls, int y, int x) const;
 
-    // Get entire cached mask for a class (no imageId check)
+    // Get entire cached mask for a class (no imageId check).
+    // IMPORTANT: caller must hold a ScopedLock from acquireLock() while
+    // using the returned pointer to prevent cache invalidation.
     const array2D<float>* getMask(AISegClass cls) const;
+
+    // Get entire cached mask (unsynchronized — caller must already hold the mutex)
+    const array2D<float>* getMaskUnsafe(AISegClass cls) const;
+
+    // Expose mutex for callers that need to hold the lock across multiple calls.
+    // Use with MyMutex::MyLock to prevent cache invalidation while using pointers.
+    MyMutex& mutex() const { return mutex_; }
 
     // Check if masks are cached for this image
     bool hasCachedMasks(const std::string& imageId) const;
@@ -56,13 +65,21 @@ public:
     // Invalidate all cached masks
     void invalidateAll();
 
-    // Get cached image dimensions
+    // Get cached image dimensions (self-locking)
     int getCachedWidth() const;
     int getCachedHeight() const;
+
+    // Get cached image dimensions (unsynchronized — caller must already hold a ScopedLock)
+    int getCachedWidthUnsafe() const { return cachedWidth_; }
+    int getCachedHeightUnsafe() const { return cachedHeight_; }
 
     // Get full-resolution image dimensions (needed for coordinate mapping)
     int getFullWidth() const;
     int getFullHeight() const;
+
+    // Unsynchronized versions — caller must already hold the mutex
+    int getFullWidthUnsafe() const { return fullW_; }
+    int getFullHeightUnsafe() const { return fullH_; }
 
 private:
     AIMaskCache();

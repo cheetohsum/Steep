@@ -1981,10 +1981,12 @@ void Crop::update(int todo)
 
     if (processingOccurred && parent->aiMaskBlendActive_ && aiMaskBaseline_ && aiMaskBaseline_->W == labnCrop->W && aiMaskBaseline_->H == labnCrop->H) {
         AIMaskCache& aiCache = AIMaskCache::getInstance();
-        const int maskW = aiCache.getCachedWidth();
-        const int maskH = aiCache.getCachedHeight();
-        const int fullW = aiCache.getFullWidth();
-        const int fullH = aiCache.getFullHeight();
+        // Hold the cache lock for the entire blend to prevent dangling pointers
+        MyMutex::MyLock cacheLock(aiCache.mutex());
+        const int maskW = aiCache.getCachedWidthUnsafe();
+        const int maskH = aiCache.getCachedHeightUnsafe();
+        const int fullW = aiCache.getFullWidthUnsafe();
+        const int fullH = aiCache.getFullHeightUnsafe();
         const int blendW = labnCrop->W;
         const int blendH = labnCrop->H;
 
@@ -2004,7 +2006,7 @@ void Crop::update(int todo)
                     float combinedMask = 0.f;
                     for (const auto& spot : params.locallab.spots) {
                         if (!spot.useAIMask || !spot.activ) continue;
-                        const auto* maskArr = aiCache.getMask(static_cast<AISegClass>(spot.aiMaskClass));
+                        const auto* maskArr = aiCache.getMaskUnsafe(static_cast<AISegClass>(spot.aiMaskClass));
                         if (!maskArr) continue;
 
                         float val = (*maskArr)[my][mx];

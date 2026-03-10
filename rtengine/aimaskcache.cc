@@ -78,7 +78,11 @@ float AIMaskCache::getMaskValue(AISegClass cls, int y, int x) const
 const array2D<float>* AIMaskCache::getMask(AISegClass cls) const
 {
     MyMutex::MyLock lock(mutex_);
+    return getMaskUnsafe(cls);
+}
 
+const array2D<float>* AIMaskCache::getMaskUnsafe(AISegClass cls) const
+{
     if (cachedMasks_.empty()) {
         return nullptr;
     }

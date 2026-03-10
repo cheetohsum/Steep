@@ -144,9 +144,21 @@ Adjuster::Adjuster(
         } catch (...) {}
     }
 
-    // Programmatically disable +/- buttons (macOS may ignore CSS hiding)
+    // Programmatically disable +/- buttons (some platforms ignore CSS hiding)
     spin->set_numeric(true);
     spin->set_update_policy(Gtk::UPDATE_IF_VALID);
+
+    // Hide spinbutton's internal +/- buttons via GTK widget tree.
+    // CSS alone doesn't reliably hide them on all platforms (Windows, macOS).
+    gtk_container_forall(
+        GTK_CONTAINER(spin->gobj()),
+        [](GtkWidget* child, gpointer) {
+            if (GTK_IS_BUTTON(child)) {
+                gtk_widget_set_no_show_all(child, TRUE);
+                gtk_widget_hide(child);
+            }
+        },
+        nullptr);
 
     reset->set_size_request(-1, RTScalable::scalePixelSize(spin->get_height() > MIN_RESET_BUTTON_HEIGHT ? spin->get_height() : MIN_RESET_BUTTON_HEIGHT));
     slider = Gtk::manage(new MyHScale());

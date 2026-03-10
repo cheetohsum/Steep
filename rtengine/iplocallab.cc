@@ -9916,7 +9916,6 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
             aiMaskH = aiCache.getCachedHeight();
             aiFullW = aiCache.getFullWidth();
             aiFullH = aiCache.getFullHeight();
-        } else {
         }
     }
 #endif

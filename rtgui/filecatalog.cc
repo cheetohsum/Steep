@@ -290,16 +290,18 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     // Force both entries to share identical font, color, and height
     {
         auto entryCss = Gtk::CssProvider::create();
-        entryCss->load_from_data(
-            "entry { font-size: 8pt; color: #cdd2da; min-height: 22px; max-height: 22px; padding: 1px 5px; }"
-            "entry:focus { color: #cdd2da; }"
-            "entry:disabled { color: #cdd2da; }"
-            "entry image { color: #cdd2da; }"  // placeholder icon if any
-        );
-        BrowsePath->get_style_context()->add_provider(
-            entryCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-        Query->get_style_context()->add_provider(
-            entryCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+        try {
+            entryCss->load_from_data(
+                "entry { font-size: 8pt; color: #cdd2da; min-height: 22px; padding: 1px 5px; }"
+                "entry:focus { color: #cdd2da; }"
+                "entry:disabled { color: #cdd2da; }"
+                "entry image { color: #cdd2da; }"
+            );
+            BrowsePath->get_style_context()->add_provider(
+                entryCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+            Query->get_style_context()->add_provider(
+                entryCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+        } catch (...) {}
     }
     Gtk::Box* hbQuery = Gtk::manage(new Gtk::Box ());
     hbQuery->set_valign(Gtk::ALIGN_CENTER);
@@ -651,17 +653,19 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     // Same compact slider CSS as Adjuster (MyHScale draws its own thumb)
     {
         auto sliderCss = Gtk::CssProvider::create();
-        sliderCss->load_from_data(
-            "scale { padding: 0; margin: 0; min-height: 0; }"
-            " scale trough { min-height: 3px; margin: 0; padding: 0 4px; }"
-            " scale slider { min-height: 0; min-width: 0; padding: 7px; margin: -7px;"
-            "   background: transparent; border-color: transparent;"
-            "   border: none; box-shadow: none; -gtk-icon-shadow: none; }"
-            " scale trough highlight { margin: 0; padding: 0; min-height: 0; }"
-        );
-        zoomSlider_->get_style_context()->add_provider(
-            sliderCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200
-        );
+        try {
+            sliderCss->load_from_data(
+                "scale { padding: 0; margin: 0; min-height: 0; }"
+                " scale trough { min-height: 3px; margin: 0; padding: 0 4px; }"
+                " scale slider { min-height: 0; min-width: 0; padding: 7px; margin: -7px;"
+                "   background: transparent; border-color: transparent;"
+                "   border: none; box-shadow: none; }"
+                " scale trough highlight { margin: 0; padding: 0; min-height: 0; }"
+            );
+            zoomSlider_->get_style_context()->add_provider(
+                sliderCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200
+            );
+        } catch (...) {}
     }
     // Set initial slider position based on current thumbnail height
     {

@@ -345,8 +345,26 @@ std::vector<array2D<float>> AISegmentationEngine::segment(
     float* outputData = nullptr;
     pImpl->api->GetTensorMutableData(outputOrt, reinterpret_cast<void**>(&outputData));
 
+    if (!outputData) {
+        fprintf(stderr, "AI Masking: GetTensorMutableData returned null\n");
+        pImpl->api->ReleaseValue(outputOrt);
+        for (int c = 0; c < numClasses; ++c) {
+            result[c](width, height);
+        }
+        return result;
+    }
+
     OrtTensorTypeAndShapeInfo* typeInfo = nullptr;
     pImpl->api->GetTensorTypeAndShape(outputOrt, &typeInfo);
+
+    if (!typeInfo) {
+        fprintf(stderr, "AI Masking: GetTensorTypeAndShape returned null\n");
+        pImpl->api->ReleaseValue(outputOrt);
+        for (int c = 0; c < numClasses; ++c) {
+            result[c](width, height);
+        }
+        return result;
+    }
 
     size_t dimCount = 0;
     pImpl->api->GetDimensionsCount(typeInfo, &dimCount);
@@ -456,60 +474,6 @@ std::vector<array2D<float>> AISegmentationEngine::segment(
         // while still cleaning up noise. Too small epsilon (0.01) aggressively snaps
         // to luminance edges and cuts off thin features.
         guidedFilter(guide, result[c], result[c], 6, 0.1f, multiThread);
-    }
-
-    // Debug: dump argmax class map as PPM to /tmp/aimask_debug.ppm
-    {
-        FILE* fp = fopen("/tmp/aimask_debug.ppm", "wb");
-        if (fp) {
-            fprintf(fp, "P6\n%d %d\n255\n", width, height);
-            // Color map: BG=gray, Person=red, Sky=blue, Vegetation=green,
-            // Building=brown, Vehicle=yellow, Animal=magenta, FG=cyan
-            const unsigned char colors[][3] = {
-                {128, 128, 128}, // BACKGROUND
-                {255, 0, 0},     // PERSON
-                {0, 100, 255},   // SKY
-                {0, 200, 0},     // VEGETATION
-                {160, 82, 45},   // BUILDING
-                {255, 255, 0},   // VEHICLE
-                {255, 0, 255},   // ANIMAL
-                {0, 255, 255}    // FOREGROUND_OBJECT
-            };
-            for (int y = 0; y < height; ++y) {
-                for (int x = 0; x < width; ++x) {
-                    int bestClass = 0;
-                    float bestProb = result[0][y][x];
-                    for (int c = 1; c < numClasses; ++c) {
-                        if (result[c][y][x] > bestProb) {
-                            bestProb = result[c][y][x];
-                            bestClass = c;
-                        }
-                    }
-                    fwrite(colors[bestClass], 1, 3, fp);
-                }
-            }
-            fclose(fp);
-            fprintf(stderr, "AI Masking: Debug mask saved to /tmp/aimask_debug.ppm (%dx%d)\n", width, height);
-        }
-
-        // Also dump individual class probability maps
-        const char* classNames[] = {"bg", "person", "sky", "veg", "building", "vehicle", "animal", "fg"};
-        for (int c = 0; c < numClasses; ++c) {
-            char fname[256];
-            snprintf(fname, sizeof(fname), "/tmp/aimask_%s.pgm", classNames[c]);
-            FILE* f = fopen(fname, "wb");
-            if (f) {
-                fprintf(f, "P5\n%d %d\n255\n", width, height);
-                for (int y = 0; y < height; ++y) {
-                    for (int x = 0; x < width; ++x) {
-                        unsigned char val = static_cast<unsigned char>(std::min(255.f, result[c][y][x] * 255.f));
-                        fwrite(&val, 1, 1, f);
-                    }
-                }
-                fclose(f);
-            }
-        }
-        fprintf(stderr, "AI Masking: Individual class masks saved to /tmp/aimask_*.pgm\n");
     }
 
     return result;
