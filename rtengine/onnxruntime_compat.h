@@ -1,28 +1,23 @@
 /*
  *  ONNX Runtime compatibility wrapper for MinGW/GCC on Windows.
  *
- *  The ONNX Runtime C API header uses ORT_API_CALL (__stdcall) in function
- *  pointer declarations within structs. GCC/MinGW cannot parse this syntax
- *  (e.g., "int(ORT_API_CALL* Fn)(...)"). On x86_64 and ARM64 Windows there
- *  is only one calling convention, so __stdcall is meaningless.
+ *  The ONNX Runtime C API header defines ORT_API_CALL as _stdcall (single
+ *  underscore, MSVC keyword). MinGW/GCC only recognizes __stdcall (double
+ *  underscore). Since _stdcall is not a keyword in GCC, it causes parse
+ *  errors in function pointer declarations.
  *
- *  Fix: neutralize __stdcall/_stdcall keywords during header inclusion so
- *  the preprocessor expands ORT_API_CALL to nothing.
+ *  Fix: define _stdcall as empty before including the header. This does NOT
+ *  affect __stdcall (used by WINAPI/CALLBACK in system headers).
+ *  On x86_64 and ARM64 the calling convention is irrelevant anyway.
  */
 #pragma once
 
 #if defined(_WIN32) && defined(__MINGW32__)
-/* Shadow the __stdcall keyword with empty macros before the ONNX header
-   can use them in its own #define ORT_API_CALL __stdcall. The preprocessor
-   will then expand ORT_API_CALL -> __stdcall -> (empty). */
+/* ONNX Runtime does: #define ORT_API_CALL _stdcall
+   _stdcall is MSVC-only; GCC doesn't recognize it. Define it as empty. */
+#ifndef _stdcall
 #define _stdcall
-#define __stdcall
+#endif
 #endif
 
 #include <onnxruntime_c_api.h>
-
-#if defined(_WIN32) && defined(__MINGW32__)
-/* Remove our shadow macros so __stdcall works normally elsewhere. */
-#undef _stdcall
-#undef __stdcall
-#endif

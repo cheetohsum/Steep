@@ -99,9 +99,12 @@ jobs:
           echo "ONNX Runtime extracted to ${ONNX_DIR}"
 
           echo "Patching ONNX Runtime header for MinGW compatibility."
-          # MinGW/GCC cannot parse __stdcall in function pointer declarations.
-          # On x86_64/ARM64, __stdcall is meaningless anyway. Remove it.
-          sed -i 's/#define ORT_API_CALL.*stdcall/#define ORT_API_CALL/' \
+          # ONNX uses _stdcall (MSVC keyword); GCC only recognizes __stdcall.
+          # Replace _stdcall with nothing (safe on x64/ARM64).
+          sed -i 's/#define ORT_API_CALL _stdcall/#define ORT_API_CALL/' \
+            "${ONNX_DIR}/include/onnxruntime_c_api.h"
+          # Also handle __stdcall variant just in case.
+          sed -i 's/#define ORT_API_CALL __stdcall/#define ORT_API_CALL/' \
             "${ONNX_DIR}/include/onnxruntime_c_api.h"
 
           echo "Generating MinGW-compatible import library."
