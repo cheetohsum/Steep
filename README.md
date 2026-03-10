@@ -16,14 +16,13 @@ Pre-built binaries are published automatically from the `dev` branch. Grab the l
 
 | Platform | Architecture | Download |
 |----------|-------------|----------|
-| **Linux** | x86_64 | [AppImage](https://github.com/RawTherapee/RawTherapee/releases/download/nightly-github-actions/RawTherapee_dev_x86_64_release.AppImage) |
-| **Linux** | ARM64 | [AppImage](https://github.com/RawTherapee/RawTherapee/releases/download/nightly-github-actions/RawTherapee_dev_arm64_release.AppImage) |
-| **Windows** | x86_64 | [Installer (.exe)](https://github.com/RawTherapee/RawTherapee/releases/download/nightly-github-actions/RawTherapee_dev_win64_x86_64_release.exe) · [ZIP](https://github.com/RawTherapee/RawTherapee/releases/download/nightly-github-actions/RawTherapee_dev_win64_x86_64_release.zip) |
-| **Windows** | ARM64 | [Installer (.exe)](https://github.com/RawTherapee/RawTherapee/releases/download/nightly-github-actions/RawTherapee_dev_win64_arm64_release.exe) · [ZIP](https://github.com/RawTherapee/RawTherapee/releases/download/nightly-github-actions/RawTherapee_dev_win64_arm64_release.zip) |
-| **macOS** | Apple Silicon | [DMG (.zip)](https://github.com/RawTherapee/RawTherapee/releases/download/nightly-github-actions/RawTherapee_dev_macOS_arm64_Release.zip) |
-| **macOS** | Intel x86_64 | [DMG (.zip)](https://github.com/RawTherapee/RawTherapee/releases/download/nightly-github-actions/RawTherapee_dev_macOS_x86_64_Release.zip) |
+| **Windows** | x86_64 | [Installer (.exe)](https://github.com/cheetohsum/Steep/releases/download/nightly-github-actions/Steep_dev_win64_x86_64_release.exe) · [ZIP](https://github.com/cheetohsum/Steep/releases/download/nightly-github-actions/Steep_dev_win64_x86_64_release.zip) |
+| **Windows** | ARM64 | [Installer (.exe)](https://github.com/cheetohsum/Steep/releases/download/nightly-github-actions/Steep_dev_win64_arm64_release.exe) · [ZIP](https://github.com/cheetohsum/Steep/releases/download/nightly-github-actions/Steep_dev_win64_arm64_release.zip) |
+| **macOS** | Apple Silicon | [DMG (.zip)](https://github.com/cheetohsum/Steep/releases/download/nightly-github-actions/Steep_dev_macOS_arm64_Release.zip) |
+| **macOS** | Intel x86_64 | [DMG (.zip)](https://github.com/cheetohsum/Steep/releases/download/nightly-github-actions/Steep_dev_macOS_x86_64_Release.zip) |
+| **Linux** | x86_64, ARM64 | Coming soon (AppImage) — [build from source](#linux) for now |
 
-Browse all builds (including debug and versioned releases) on the [Nightly Releases](https://github.com/RawTherapee/RawTherapee/releases/tag/nightly-github-actions) page.
+Browse all builds (including debug and versioned releases) on the [Nightly Releases](https://github.com/cheetohsum/Steep/releases/tag/nightly-github-actions) page.
 
 ---
 
@@ -253,7 +252,7 @@ sudo apt install build-essential cmake git \
   libexiv2-dev libjxl-dev
 
 # Clone
-git clone https://github.com/RawTherapee/RawTherapee.git
+git clone https://github.com/cheetohsum/Steep.git
 cd RawTherapee
 
 # Configure
@@ -270,7 +269,7 @@ make -j$(nproc)
 sudo make install
 ```
 
-Or grab a pre-built **AppImage** (x86_64 or ARM64) from the [Nightly Releases](https://github.com/RawTherapee/RawTherapee/releases/tag/nightly-github-actions).
+Linux AppImage builds are coming soon — check the [Nightly Releases](https://github.com/cheetohsum/Steep/releases/tag/nightly-github-actions) page for availability.
 
 ### Docker (with AI Masking)
 
@@ -293,7 +292,7 @@ sudo make install
 rawtherapee
 ```
 
-Pre-built Windows installers (.exe) and ZIP archives are available from the [Nightly Releases](https://github.com/RawTherapee/RawTherapee/releases/tag/nightly-github-actions).
+Pre-built Windows installers (.exe) and ZIP archives are available from the [Nightly Releases](https://github.com/cheetohsum/Steep/releases/tag/nightly-github-actions).
 
 ### macOS
 
@@ -308,7 +307,7 @@ make -j$(sysctl -n hw.ncpu)
 sudo make install
 ```
 
-Pre-built DMGs (Intel and Apple Silicon) are available from the [Nightly Releases](https://github.com/RawTherapee/RawTherapee/releases/tag/nightly-github-actions).
+Pre-built DMGs (Intel and Apple Silicon) are available from the [Nightly Releases](https://github.com/cheetohsum/Steep/releases/tag/nightly-github-actions).
 
 ---
 
