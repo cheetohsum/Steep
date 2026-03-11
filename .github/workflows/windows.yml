@@ -161,18 +161,11 @@ jobs:
           echo "Copying Lensfun database to the build directory."
           cp -R "/C/msys2/msys64/${{env.MSYS2_ENV_PREFIX}}/var/lib/lensfun-updates/version_1" 'build/${{matrix.build_type}}/share/lensfun'
 
-      - name: Setup Python for pidng wheel build
+      - name: Setup Python 3.11 (for dev headers)
         if: ${{matrix.arch == 'x86_64'}}
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
-      - name: Build pidng wheel
-        if: ${{matrix.arch == 'x86_64'}}
-        shell: pwsh
-        run: |
-          echo "Building pidng wheel with system Python (has dev headers + MSVC)."
-          python -m pip wheel pidng -w build/${{matrix.build_type}}/pidng_wheels --no-cache-dir
 
       - name: Bundle dependencies
         run: |
@@ -238,15 +231,20 @@ jobs:
           # Install pip
           curl -L -o "$PYTHON_DIR/get-pip.py" https://bootstrap.pypa.io/get-pip.py
           "$PYTHON_DIR/python.exe" "$PYTHON_DIR/get-pip.py" --no-warn-script-location
-          # Install RawRefinery into the embedded Python.
-          # pidng has a C extension needing Python.h; embedded Python has no
-          # headers so we pre-build the pidng wheel using setup-python (step above).
-          if ls "$BUILD_DIR/pidng_wheels"/pidng*.whl 1>/dev/null 2>&1; then
-            "$PYTHON_DIR/python.exe" -m pip install "$BUILD_DIR/pidng_wheels"/pidng*.whl --no-warn-script-location
-            rm -rf "$BUILD_DIR/pidng_wheels"
+          # Copy Python dev headers + import lib from setup-python into the
+          # embedded Python so pip can compile pidng's C extension (needs Python.h).
+          # setup-python exports pythonLocation env var with the full install path.
+          SETUP_PY="$(cygpath -u "${pythonLocation:-}")"
+          if [ -d "$SETUP_PY/include" ]; then
+            echo "Copying Python dev headers from $SETUP_PY"
+            cp -r "$SETUP_PY/include" "$PYTHON_DIR/include"
+            mkdir -p "$PYTHON_DIR/libs"
+            cp "$SETUP_PY/libs/"python3*.lib "$PYTHON_DIR/libs/" 2>/dev/null || true
           fi
+          # Install RawRefinery (pidng C extension will now compile successfully)
           "$PYTHON_DIR/python.exe" -m pip install rawrefinery --no-warn-script-location
-          rm -f "$PYTHON_DIR/get-pip.py"
+          # Clean up dev files not needed at runtime
+          rm -rf "$PYTHON_DIR/include" "$PYTHON_DIR/libs" "$PYTHON_DIR/get-pip.py"
           echo "RawRefinery bundled successfully."
 
           echo "Creating GTK settings.ini."
