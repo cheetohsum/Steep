@@ -148,7 +148,7 @@
             </dict>
         </array>
         <key>CFBundleExecutable</key>
-        <string>rawtherapee</string>
+        <string>steep</string>
         <key>CFBundleGetInfoString</key>
         <string>@version@, Copyright © 2004-2010 Gábor Horváth, 2010-2024 RawTherapee Development Team, 2024-2026 Steep Contributors</string>
         <key>CFBundleIconFile</key>

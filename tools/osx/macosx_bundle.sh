@@ -35,7 +35,7 @@ function CheckLink {
 }
 
 function ModifyInstallNames {
-    find -E "${CONTENTS}" -type f -regex '.*/(rawtherapee-cli|rawtherapee|.*\.(dylib|so))' | while read -r x; do
+    find -E "${CONTENTS}" -type f -regex '.*/(steep-cli|steep|.*\.(dylib|so))' | while read -r x; do
         msg "Modifying install names: ${x}"
         {
             # id
@@ -94,7 +94,7 @@ CMAKE_OSX_DEPLOYMENT_TARGET="$(cmake .. -L -N | grep CMAKE_OSX_DEPLOYMENT_TARGET
 #Out: x86_64
 CMAKE_OSX_ARCHITECTURES="$(cmake .. -L -N | grep CMAKE_OSX_ARCHITECTURES)"; CMAKE_OSX_ARCHITECTURES="${CMAKE_OSX_ARCHITECTURES#*=}"
 
-MINIMUM_SYSTEM_VERSION="$(otool -l "${CMAKE_BUILD_TYPE}"/MacOS/rawtherapee | grep -A2 'LC_VERSION_MIN_MACOSX' | awk '$1 ~ /version/ { printf $2 }')"
+MINIMUM_SYSTEM_VERSION="$(otool -l "${CMAKE_BUILD_TYPE}"/MacOS/steep | grep -A2 'LC_VERSION_MIN_MACOSX' | awk '$1 ~ /version/ { printf $2 }')"
 if [[ -z $MINIMUM_SYSTEM_VERSION ]]; then
     MINIMUM_SYSTEM_VERSION=${CMAKE_OSX_DEPLOYMENT_TARGET}
 fi
@@ -167,7 +167,7 @@ RESOURCES="${CONTENTS}/Resources"
 MACOS="${CONTENTS}/MacOS"
 LIB="${CONTENTS}/Frameworks"
 ETC="${RESOURCES}/etc"
-EXECUTABLE="${MACOS}/rawtherapee"
+EXECUTABLE="${MACOS}/steep"
 GDK_PREFIX="${LOCAL_PREFIX}/"
 
 msg "Removing old files:"
@@ -358,9 +358,9 @@ if [[ -n $UNIVERSAL_URL ]]; then
     hdiutil unmount ./univmount
     rm -r univapp
     # Create the fat main binary and move it into the new bundle
-    lipo -create -output rawtherapee ${APP}-arm64/Contents/MacOS/rawtherapee ${APP}-x86_64/Contents/MacOS/rawtherapee
-    lipo -create -output rawtherapee-cli ${APP}-arm64/Contents/MacOS/rawtherapee-cli ${APP}-x86_64/Contents/MacOS/rawtherapee-cli
-    mv rawtherapee ${APP}/Contents/MacOS
+    lipo -create -output steep ${APP}-arm64/Contents/MacOS/steep ${APP}-x86_64/Contents/MacOS/steep
+    lipo -create -output steep-cli ${APP}-arm64/Contents/MacOS/steep-cli ${APP}-x86_64/Contents/MacOS/steep-cli
+    mv steep ${APP}/Contents/MacOS
     # Create all the fat dependencies and move them into the bundle
     for lib in ${APP}-arm64/Contents/Frameworks/* ; do
         lipo -create -output $(basename $lib) ${APP}-arm64/Contents/Frameworks/$(basename $lib) ${APP}-x86_64/Contents/Frameworks/$(basename $lib)
@@ -396,8 +396,8 @@ if [[ -n $CODESIGNID ]]; then
             done
         fi
     done
-    codesign --preserve-metadata=identifier --digest-algorithm=sha1,sha256 --force --timestamp --strict -v -s "${CODESIGNID}" -i com.steep.Steep -o runtime --entitlements "${CMAKE_BUILD_TYPE}"/rt.entitlements "${APP}"/Contents/MacOS/rawtherapee-cli
-    codesign --preserve-metadata=identifier --digest-algorithm=sha1,sha256 --force --timestamp --strict -v -s "${CODESIGNID}" -i com.steep.Steep -o runtime --entitlements "${CMAKE_BUILD_TYPE}"/rt.entitlements "${APP}"/Contents/MacOS/rawtherapee
+    codesign --preserve-metadata=identifier --digest-algorithm=sha1,sha256 --force --timestamp --strict -v -s "${CODESIGNID}" -i com.steep.Steep -o runtime --entitlements "${CMAKE_BUILD_TYPE}"/rt.entitlements "${APP}"/Contents/MacOS/steep-cli
+    codesign --preserve-metadata=identifier --digest-algorithm=sha1,sha256 --force --timestamp --strict -v -s "${CODESIGNID}" -i com.steep.Steep -o runtime --entitlements "${CMAKE_BUILD_TYPE}"/rt.entitlements "${APP}"/Contents/MacOS/steep
     codesign --preserve-metadata=identifier --digest-algorithm=sha1,sha256 --force --timestamp --strict -v -s "${CODESIGNID}" -i com.steep.Steep -o runtime --entitlements "${CMAKE_BUILD_TYPE}"/rt.entitlements "${APP}"
     spctl -a -vvvv "${APP}"
 fi
@@ -489,9 +489,9 @@ function CreateDmg {
     # Zip disk image for redistribution
     msg "Zipping disk image for redistribution:"
     mkdir "${PROJECT_NAME}_macOS_${MINIMUM_SYSTEM_VERSION}_${arch}_${PROJECT_FULL_VERSION}_folder"
-    cp {"${PROJECT_NAME}_macOS_${MINIMUM_SYSTEM_VERSION}_${arch}_${PROJECT_FULL_VERSION}.dmg","${PROJECT_NAME}.app/Contents/MacOS/rawtherapee-cli","${PROJECT_SOURCE_DATA_DIR}/INSTALL.readme.rtf"} "${PROJECT_NAME}_macOS_${MINIMUM_SYSTEM_VERSION}_${arch}_${PROJECT_FULL_VERSION}_folder"
-    mv "${PROJECT_NAME}_macOS_${MINIMUM_SYSTEM_VERSION}_${arch}_${PROJECT_FULL_VERSION}_folder/INSTALL.readme.rtf" "${PROJECT_NAME}_macOS_${MINIMUM_SYSTEM_VERSION}_${arch}_${PROJECT_FULL_VERSION}_folder/install-readme.txt"
-    codesign -s "${CODESIGNID}" -i com.steep.rawtherapee-cli -f "${PROJECT_NAME}_macOS_${MINIMUM_SYSTEM_VERSION}_${arch}_${PROJECT_FULL_VERSION}_folder/rawtherapee-cli"
+    cp "${dmg_name}.dmg" "${PROJECT_NAME}_macOS_${MINIMUM_SYSTEM_VERSION}_${arch}_${PROJECT_FULL_VERSION}_folder/"
+    cp "${PROJECT_NAME}.app/Contents/MacOS/steep-cli" "${PROJECT_NAME}_macOS_${MINIMUM_SYSTEM_VERSION}_${arch}_${PROJECT_FULL_VERSION}_folder/"
+    codesign -s "${CODESIGNID}" -i com.steep.steep-cli -f "${PROJECT_NAME}_macOS_${MINIMUM_SYSTEM_VERSION}_${arch}_${PROJECT_FULL_VERSION}_folder/steep-cli"
     zip -r "${PROJECT_NAME}_macOS_${MINIMUM_SYSTEM_VERSION}_${arch}_${PROJECT_FULL_VERSION}.zip" "${PROJECT_NAME}_macOS_${MINIMUM_SYSTEM_VERSION}_${arch}_${PROJECT_FULL_VERSION}_folder/"
     if [[ -n $NIGHTLY ]]; then
         cp "${PROJECT_NAME}_macOS_${MINIMUM_SYSTEM_VERSION}_${arch}_${PROJECT_FULL_VERSION}.zip" "${PROJECT_NAME}_macOS_${arch}_latest.zip"

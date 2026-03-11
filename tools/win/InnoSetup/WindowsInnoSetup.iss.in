@@ -9,9 +9,9 @@
 ; Note that all *.dll files will be added, so be careful which DLLs are present
 ; in the folder before running this script.
 ;
-; This script searches for and bundles all "rawtherapee*.exe" files, allowing
+; This script searches for and bundles all "steep*.exe" files, allowing
 ; you to bundle a "release" as well as a "debug" version at the same time.
-; At least one "rawtherapee.exe" file is required.
+; At least one "steep.exe" file is required.
 ;
 ; This script is configured to check that the operating system's bit depth is
 ; the same as that of the executable file.
@@ -23,8 +23,8 @@
 #define MyAppVersionNumeric "${GIT_NUMERIC_VERSION_BS}"
 #define MyAppPublisher "github.com/cheetohsum/Steep"
 #define MyAppURL "https://github.com/cheetohsum/Steep"
-#define MyAppExeName "rawtherapee.exe"
-#define MyAppCliExeName "rawtherapee-cli.exe"
+#define MyAppExeName "steep.exe"
+#define MyAppCliExeName "steep-cli.exe"
 #define MyBuildBasePath "${CMAKE_INSTALL_PREFIX}"
 #define MySourceBasePath "${PROJECT_SOURCE_DIR}"
 #define MyBitDepth "${BUILD_BIT_DEPTH}"
@@ -97,7 +97,7 @@ Name: regBrowseFolder; Description: "Add ""Browse with Steep"" option to context
 Name: regOpenFile; Description: "Add ""Open with Steep"" option to context menu when right-clicking on a file."; GroupDescription: File extensions:
 
 [Files]
-Source: "{#MyBuildBasePath}\rawtherapee*.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MyBuildBasePath}\steep*.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#MyBuildBasePath}\camconst.json"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#MyBuildBasePath}\dcpprofiles\*"; DestDir: "{app}\dcpprofiles\"; Flags: ignoreversion recursesubdirs createallsubdirs
 ;Source: "{#MyBuildBasePath}\etc\*"; DestDir: "{app}\etc\"; Flags: ignoreversion recursesubdirs createallsubdirs

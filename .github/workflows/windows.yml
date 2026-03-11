@@ -164,9 +164,9 @@ jobs:
       - name: Bundle dependencies
         run: |
           echo "Listing shared library dependencies."
-          ldd "./build/${{matrix.build_type}}/rawtherapee.exe"
+          ldd "./build/${{matrix.build_type}}/steep.exe"
           echo "Finding DLLs to include."
-          DLLS=($(ldd "./build/${{matrix.build_type}}/rawtherapee.exe" | grep "/${{env.MSYS2_ENV_PREFIX}}/bin/" | awk '{print($1)'}))
+          DLLS=($(ldd "./build/${{matrix.build_type}}/steep.exe" | grep "/${{env.MSYS2_ENV_PREFIX}}/bin/" | awk '{print($1)'}))
           echo "Required DLLs are: ${DLLS[*]}"
 
           echo "Getting workspace path."
@@ -473,17 +473,17 @@ for name in ['setup.py', 'setup.cfg']:
         working-directory: build/${{env.ARTIFACT_NAME}}
         run: |
           echo "Launching CLI."
-          ./rawtherapee-cli.exe
+          ./steep-cli.exe
 
       - name: Launch GUI
         working-directory: build/${{env.ARTIFACT_NAME}}
         run: |
-          STATUS_FILE="rawtherapee-status.txt"
+          STATUS_FILE="steep-status.txt"
           SUCCESS_MESSAGE="success"
           FAILURE_MESSAGE="failure"
 
           echo "Launching GUI."
-          ./rawtherapee.exe && echo $SUCCESS_MESSAGE > $STATUS_FILE || echo $FAILURE_MESSAGE > $STATUS_FILE &
+          ./steep.exe && echo $SUCCESS_MESSAGE > $STATUS_FILE || echo $FAILURE_MESSAGE > $STATUS_FILE &
 
           echo "Waiting 10 seconds for app to start."
           sleep 10

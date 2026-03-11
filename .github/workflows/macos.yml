@@ -140,7 +140,7 @@ jobs:
           open -a /Applications/Steep.app
           sleep 10
           echo "Applications running: $(osascript -e 'tell application "Finder" to get the name of every process whose visible is true' 2>/dev/null || echo 'could not query')" >> $GITHUB_STEP_SUMMARY
-          if pgrep -f rawtherapee > /dev/null 2>&1; then
+          if pgrep -f steep > /dev/null 2>&1; then
             echo "App launched successfully" >> $GITHUB_STEP_SUMMARY
             osascript -e 'tell application "Steep" to if it is running then quit' 2>/dev/null || true
           else
@@ -150,7 +150,7 @@ jobs:
       - name: Test the -cli
         run: |
           cd build
-          echo "$(Steep*folder/rawtherapee-cli --version)" >> $GITHUB_STEP_SUMMARY
+          echo "$(Steep*folder/steep-cli --version)" >> $GITHUB_STEP_SUMMARY
 
       - name: Publish artifacts
         uses: softprops/action-gh-release@v2
@@ -286,7 +286,7 @@ jobs:
           open -a /Applications/Steep.app
           sleep 10
           echo "Applications running: $(osascript -e 'tell application "Finder" to get the name of every process whose visible is true' 2>/dev/null || echo 'could not query')" >> $GITHUB_STEP_SUMMARY
-          if pgrep -f rawtherapee > /dev/null 2>&1; then
+          if pgrep -f steep > /dev/null 2>&1; then
             echo "App launched successfully" >> $GITHUB_STEP_SUMMARY
             osascript -e 'tell application "Steep" to if it is running then quit' 2>/dev/null || true
           else
@@ -296,7 +296,7 @@ jobs:
       - name: Test the -cli
         run: |
           cd build
-          echo "$(Steep*folder/rawtherapee-cli --version)" >> $GITHUB_STEP_SUMMARY
+          echo "$(Steep*folder/steep-cli --version)" >> $GITHUB_STEP_SUMMARY
 
       - name: Publish artifacts
         uses: softprops/action-gh-release@v2
