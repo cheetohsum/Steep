@@ -219,33 +219,38 @@ jobs:
             cp "${ONNX_DIR}/lib/onnxruntime.dll" "$BUILD_DIR"
           fi
 
-          echo "Bundling embedded Python with RawRefinery."
-          PYTHON_VERSION="3.11.9"
-          PYTHON_DIR="$BUILD_DIR/python"
-          mkdir -p "$PYTHON_DIR"
-          curl -L -o python-embed.zip \
-            "https://www.python.org/ftp/python/${PYTHON_VERSION}/python-${PYTHON_VERSION}-embed-amd64.zip"
-          unzip -q python-embed.zip -d "$PYTHON_DIR"
-          # Enable pip in embedded Python by uncommenting import site
-          sed -i 's/#import site/import site/' "$PYTHON_DIR/python311._pth"
-          # Install pip
-          curl -L -o "$PYTHON_DIR/get-pip.py" https://bootstrap.pypa.io/get-pip.py
-          "$PYTHON_DIR/python.exe" "$PYTHON_DIR/get-pip.py" --no-warn-script-location
-          # Copy Python dev headers + import lib from setup-python into the
-          # embedded Python so pip can compile pidng's C extension (needs Python.h).
-          # setup-python exports pythonLocation env var with the full install path.
-          SETUP_PY="$(cygpath -u "${pythonLocation:-}")"
-          if [ -d "$SETUP_PY/include" ]; then
-            echo "Copying Python dev headers from $SETUP_PY"
-            cp -r "$SETUP_PY/include" "$PYTHON_DIR/include"
-            mkdir -p "$PYTHON_DIR/libs"
-            cp "$SETUP_PY/libs/"python3*.lib "$PYTHON_DIR/libs/" 2>/dev/null || true
+          # Bundle embedded Python + RawRefinery (x86_64 only; no arm64 embed available)
+          if [ "${{matrix.arch}}" == "x86_64" ]; then
+            echo "Bundling embedded Python with RawRefinery."
+            PYTHON_VERSION="3.11.9"
+            PYTHON_DIR="$BUILD_DIR/python"
+            mkdir -p "$PYTHON_DIR"
+            curl -L -o python-embed.zip \
+              "https://www.python.org/ftp/python/${PYTHON_VERSION}/python-${PYTHON_VERSION}-embed-amd64.zip"
+            unzip -q python-embed.zip -d "$PYTHON_DIR"
+            # Enable pip in embedded Python by uncommenting import site
+            sed -i 's/#import site/import site/' "$PYTHON_DIR/python311._pth"
+            # Install pip
+            curl -L -o "$PYTHON_DIR/get-pip.py" https://bootstrap.pypa.io/get-pip.py
+            "$PYTHON_DIR/python.exe" "$PYTHON_DIR/get-pip.py" --no-warn-script-location
+            # Copy Python dev headers + import lib from setup-python into the
+            # embedded Python so pip can compile pidng's C extension (needs Python.h).
+            # setup-python exports pythonLocation env var with the full install path.
+            if [ -n "${pythonLocation:-}" ]; then
+              SETUP_PY="$(cygpath -u "$pythonLocation")"
+              if [ -d "$SETUP_PY/include" ]; then
+                echo "Copying Python dev headers from $SETUP_PY"
+                cp -r "$SETUP_PY/include" "$PYTHON_DIR/include"
+                mkdir -p "$PYTHON_DIR/libs"
+                cp "$SETUP_PY/libs/"python3*.lib "$PYTHON_DIR/libs/" 2>/dev/null || true
+              fi
+            fi
+            # Install RawRefinery (pidng C extension will now compile successfully)
+            "$PYTHON_DIR/python.exe" -m pip install rawrefinery --no-warn-script-location
+            # Clean up dev files not needed at runtime
+            rm -rf "$PYTHON_DIR/include" "$PYTHON_DIR/libs" "$PYTHON_DIR/get-pip.py"
+            echo "RawRefinery bundled successfully."
           fi
-          # Install RawRefinery (pidng C extension will now compile successfully)
-          "$PYTHON_DIR/python.exe" -m pip install rawrefinery --no-warn-script-location
-          # Clean up dev files not needed at runtime
-          rm -rf "$PYTHON_DIR/include" "$PYTHON_DIR/libs" "$PYTHON_DIR/get-pip.py"
-          echo "RawRefinery bundled successfully."
 
           echo "Creating GTK settings.ini."
           mkdir -p "$BUILD_DIR/share/gtk-3.0/"
