@@ -190,6 +190,8 @@ class Preferences final :
     Gtk::CheckButton* overlayedFileNames;
     Gtk::CheckButton* filmStripOverlayedFileNames;
     Gtk::CheckButton* sameThumbSize;
+    Gtk::SpinButton* filmstripThumbSizeSB;
+    Gtk::SpinButton* browserThumbSizeSB;
     Gtk::SpinButton* browseRecursiveDepth;
     Gtk::SpinButton* browseRecursiveMaxDirs;
     Gtk::CheckButton* browseRecursiveFollowLinks{nullptr};

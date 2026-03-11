@@ -419,7 +419,7 @@ void Options::setDefaults()
     lastCopyMovePath = "";
     version = "0.0.0.0";                // temporary value; will be correctly set in RTWindow::on_realize
     thumbSize = 160;
-    thumbSizeTab = 80;
+    thumbSizeTab = 90;
     thumbSizeQueue = 160;
     sameThumbSize = false;               // preferring speed of switch between file browser and single editor tab
     showHistory = true;

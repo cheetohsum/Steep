@@ -67,7 +67,7 @@ Sharpening::Sharpening () : FoldableToolPanel(this, TOOL_NAME, M("TP_SHARPENING_
     usm = new Gtk::Box(Gtk::ORIENTATION_VERTICAL);
     usm->show ();
 
-    amount = Gtk::manage (new Adjuster (M("TP_SHARPENING_AMOUNT"), 1, 1000, 1, 0));
+    amount = Gtk::manage (new Adjuster (M("TP_SHARPENING_AMOUNT"), 0, 1000, 1, 0));
     radius = Gtk::manage (new Adjuster (M("TP_SHARPENING_RADIUS"), 0.3, 3, 0.01, 0.5));
     threshold = Gtk::manage (new ThresholdAdjuster (M("TP_SHARPENING_THRESHOLD"), 0., 2000., 20., 80., 2000., 1200., 0, false));
     threshold->setAdjusterListener (this);

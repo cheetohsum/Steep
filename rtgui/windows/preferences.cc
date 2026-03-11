@@ -1515,6 +1515,23 @@ Gtk::Widget* Preferences::getFileBrowserPanel()
     vbro->pack_start(*sameThumbSize, Gtk::PACK_SHRINK, 0);
     vbro->pack_start(*ckbInternalThumbIfUntouched, Gtk::PACK_SHRINK, 0);
 
+    Gtk::Box* hbThumbSizes = Gtk::manage(new Gtk::Box());
+    Gtk::Label* labFilmstripThumb = Gtk::manage(new Gtk::Label(M("PREFERENCES_FILMSTRIP_THUMB_SIZE"), Gtk::ALIGN_START));
+    filmstripThumbSizeSB = Gtk::manage(new Gtk::SpinButton());
+    filmstripThumbSizeSB->set_digits(0);
+    filmstripThumbSizeSB->set_increments(5, 10);
+    filmstripThumbSizeSB->set_range(40, 200);
+    hbThumbSizes->pack_start(*labFilmstripThumb, Gtk::PACK_SHRINK, 4);
+    hbThumbSizes->pack_start(*filmstripThumbSizeSB, Gtk::PACK_SHRINK, 4);
+    Gtk::Label* labBrowserThumb = Gtk::manage(new Gtk::Label(M("PREFERENCES_BROWSER_THUMB_SIZE"), Gtk::ALIGN_START));
+    browserThumbSizeSB = Gtk::manage(new Gtk::SpinButton());
+    browserThumbSizeSB->set_digits(0);
+    browserThumbSizeSB->set_increments(10, 50);
+    browserThumbSizeSB->set_range(40, 800);
+    hbThumbSizes->pack_start(*labBrowserThumb, Gtk::PACK_SHRINK, 4);
+    hbThumbSizes->pack_start(*browserThumbSizeSB, Gtk::PACK_SHRINK, 4);
+    vbro->pack_start(*hbThumbSizes, Gtk::PACK_SHRINK, 4);
+
     thumbnailRankColorMode = Gtk::manage(new Gtk::CheckButton(M("PREFERENCES_THUMBNAIL_RANK_COLOR_MODE")));
     vbro->pack_start(*thumbnailRankColorMode, Gtk::PACK_SHRINK, 0);
 
@@ -2010,6 +2027,8 @@ void Preferences::storePreferences()
     moptions.overlayedFileNames = overlayedFileNames->get_active();
     moptions.filmStripOverlayedFileNames = filmStripOverlayedFileNames->get_active();
     moptions.sameThumbSize = sameThumbSize->get_active();
+    moptions.thumbSizeTab = (int)filmstripThumbSizeSB->get_value();
+    moptions.thumbSize = (int)browserThumbSizeSB->get_value();
     moptions.internalThumbIfUntouched = ckbInternalThumbIfUntouched->get_active();
     moptions.browseRecursiveDepth = static_cast<int>(browseRecursiveDepth->get_value());
     moptions.browseRecursiveMaxDirs = static_cast<int>(browseRecursiveMaxDirs->get_value());
@@ -2253,6 +2272,8 @@ void Preferences::fillPreferences()
     overlayedFileNames->set_active(moptions.overlayedFileNames);
     filmStripOverlayedFileNames->set_active(moptions.filmStripOverlayedFileNames);
     sameThumbSize->set_active(moptions.sameThumbSize);
+    filmstripThumbSizeSB->set_value(moptions.thumbSizeTab);
+    browserThumbSizeSB->set_value(moptions.thumbSize);
     ckbInternalThumbIfUntouched->set_active(moptions.internalThumbIfUntouched);
     browseRecursiveDepth->set_value(moptions.browseRecursiveDepth);
     browseRecursiveMaxDirs->set_value(moptions.browseRecursiveMaxDirs);

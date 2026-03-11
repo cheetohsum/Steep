@@ -1891,7 +1891,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         catalogPane = new Gtk::Paned();
         // Size to fit one row of filmstrip thumbnails without vertical scrollbar.
         // thumbSizeTab is the thumbnail height; add padding for borders + hscrollbar.
-        int filmstripHeight = std::min(options.thumbSizeTab, 115);
+        int filmstripHeight = std::min(options.thumbSizeTab, 125) + 10;
         catalogPane->set_size_request(-1, filmstripHeight);
         // Inset filmstrip so sidebars don't overlap its content
         catalogPane->set_margin_start(options.showHistory ? options.dirBrowserWidth : 0);
