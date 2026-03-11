@@ -161,12 +161,6 @@ jobs:
           echo "Copying Lensfun database to the build directory."
           cp -R "/C/msys2/msys64/${{env.MSYS2_ENV_PREFIX}}/var/lib/lensfun-updates/version_1" 'build/${{matrix.build_type}}/share/lensfun'
 
-      - name: Setup Python 3.11 (for dev headers)
-        if: ${{matrix.arch == 'x86_64'}}
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
       - name: Bundle dependencies
         run: |
           echo "Listing shared library dependencies."
@@ -233,22 +227,37 @@ jobs:
             # Install pip
             curl -L -o "$PYTHON_DIR/get-pip.py" https://bootstrap.pypa.io/get-pip.py
             "$PYTHON_DIR/python.exe" "$PYTHON_DIR/get-pip.py" --no-warn-script-location
-            # Copy Python dev headers + import lib from setup-python into the
-            # embedded Python so pip can compile pidng's C extension (needs Python.h).
-            # setup-python exports pythonLocation env var with the full install path.
-            if [ -n "${pythonLocation:-}" ]; then
-              SETUP_PY="$(cygpath -u "$pythonLocation")"
-              if [ -d "$SETUP_PY/include" ]; then
-                echo "Copying Python dev headers from $SETUP_PY"
-                cp -r "$SETUP_PY/include" "$PYTHON_DIR/include"
-                mkdir -p "$PYTHON_DIR/libs"
-                cp "$SETUP_PY/libs/"python3*.lib "$PYTHON_DIR/libs/" 2>/dev/null || true
+            # pidng's C extension (ljpegCompress) uses __builtin_clz which is
+            # GCC-only and can't link with MSVC. Install pidng as pure-Python
+            # by downloading source, patching out ext_modules, then installing.
+            TMP_PIDNG="$BUILD_DIR/tmp_pidng"
+            "$PYTHON_DIR/python.exe" -m pip download pidng --no-binary :all: \
+              -d "$TMP_PIDNG" --no-deps --no-warn-script-location
+            PIDNG_ARCHIVE="$(ls "$TMP_PIDNG"/pidng-*.tar.gz 2>/dev/null | head -1)"
+            if [ -n "$PIDNG_ARCHIVE" ]; then
+              cd "$TMP_PIDNG"
+              tar xzf "$(basename "$PIDNG_ARCHIVE")"
+              PIDNG_DIR="$(ls -d pidng-*/ 2>/dev/null | head -1)"
+              if [ -n "$PIDNG_DIR" ]; then
+                cd "$PIDNG_DIR"
+                # Remove ext_modules so it installs as pure Python (no C extension)
+                "$PYTHON_DIR/python.exe" -c "
+import pathlib, re
+for name in ['setup.py', 'setup.cfg']:
+    p = pathlib.Path(name)
+    if p.exists():
+        txt = p.read_text()
+        txt = re.sub(r'ext_modules\s*=\s*\[[^\]]*\],?\s*', '', txt, flags=re.DOTALL)
+        p.write_text(txt)
+"
+                "$PYTHON_DIR/python.exe" -m pip install . --no-warn-script-location
               fi
+              cd "$BUILD_DIR"
             fi
-            # Install RawRefinery (pidng C extension will now compile successfully)
+            rm -rf "$TMP_PIDNG"
+            # Install RawRefinery (pidng already satisfied, won't rebuild)
             "$PYTHON_DIR/python.exe" -m pip install rawrefinery --no-warn-script-location
-            # Clean up dev files not needed at runtime
-            rm -rf "$PYTHON_DIR/include" "$PYTHON_DIR/libs" "$PYTHON_DIR/get-pip.py"
+            rm -f "$PYTHON_DIR/get-pip.py"
             echo "RawRefinery bundled successfully."
           fi
 
