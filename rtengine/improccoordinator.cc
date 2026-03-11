@@ -2783,74 +2783,6 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
 
         }
 
-#ifdef RT_AI_MASKING
-        // AI mask baseline: save/update when NOT in mask mode, blend when IN mask mode.
-        {
-            const bool ipcProcessingOccurred = (todo & (M_AUTOEXP | M_RGBCURVE | M_LUMACURVE | M_LUMINANCE | M_COLOR));
-            bool hasActiveAIMask = false;
-            if (params->locallab.enabled) {
-                for (const auto& spot : params->locallab.spots) {
-                    if (spot.useAIMask && spot.activ) { hasActiveAIMask = true; break; }
-                }
-            }
-
-            if (!hasActiveAIMask || !AIMaskCache::getInstance().hasCachedMasks()) {
-                aiMaskBaseline_.reset();
-            } else if (!aiMaskBlendActive_ && ipcProcessingOccurred) {
-                // NOT in mask mode: save/update baseline from current fully-processed state
-                if (!aiMaskBaseline_ || aiMaskBaseline_->W != pW || aiMaskBaseline_->H != pH) {
-                    aiMaskBaseline_.reset(new LabImage(pW, pH));
-                }
-                aiMaskBaseline_->CopyFrom(nprevl);
-            }
-        }
-
-        // Blend: constrain spot's changes to AI mask areas using edit-tab baseline
-        if ((todo & (M_AUTOEXP | M_RGBCURVE | M_LUMACURVE | M_LUMINANCE | M_COLOR))
-            && aiMaskBlendActive_ && aiMaskBaseline_ && aiMaskBaseline_->W == pW && aiMaskBaseline_->H == pH) {
-            AIMaskCache& aiCache = AIMaskCache::getInstance();
-            // Hold the cache lock for the entire blend to prevent dangling pointers
-            MyMutex::MyLock cacheLock(aiCache.mutex());
-            const int maskW = aiCache.getCachedWidthUnsafe();
-            const int maskH = aiCache.getCachedHeightUnsafe();
-
-            if (maskW > 0 && maskH > 0) {
-                #pragma omp parallel for schedule(dynamic, 16)
-                for (int y = 0; y < pH; y++) {
-                    for (int x = 0; x < pW; x++) {
-                        int mx = x * maskW / pW;
-                        int my = y * maskH / pH;
-                        mx = rtengine::LIM(mx, 0, maskW - 1);
-                        my = rtengine::LIM(my, 0, maskH - 1);
-
-                        float combinedMask = 0.f;
-                        for (const auto& spot : params->locallab.spots) {
-                            if (!spot.useAIMask || !spot.activ) continue;
-                            const auto* maskArr = aiCache.getMaskUnsafe(static_cast<AISegClass>(spot.aiMaskClass));
-                            if (!maskArr) continue;
-
-                            float val = (*maskArr)[my][mx];
-                            float opacity = static_cast<float>(spot.aiMaskOpacity);
-                            float threshold = static_cast<float>(spot.aiMaskThreshold);
-                            if (val > threshold) {
-                                float masked = (val - threshold) / (1.f - threshold + 1e-6f);
-                                masked = rtengine::LIM(masked * opacity, 0.f, 1.f);
-                                combinedMask = std::max(combinedMask, masked);
-                            }
-                        }
-
-                        if (combinedMask < 1.f) {
-                            float inv = 1.f - combinedMask;
-                            nprevl->L[y][x] = combinedMask * nprevl->L[y][x] + inv * aiMaskBaseline_->L[y][x];
-                            nprevl->a[y][x] = combinedMask * nprevl->a[y][x] + inv * aiMaskBaseline_->a[y][x];
-                            nprevl->b[y][x] = combinedMask * nprevl->b[y][x] + inv * aiMaskBaseline_->b[y][x];
-                        }
-                    }
-                }
-            }
-        }
-#endif
-
         // Update the monitor color transform if necessary
         if ((todo & M_MONITOR) || (lastOutputProfile != params->icm.outputProfile) || lastOutputIntent != params->icm.outputIntent || lastOutputBPC != params->icm.outputBPC) {
             lastOutputProfile = params->icm.outputProfile;
@@ -2962,10 +2894,6 @@ void ImProcCoordinator::freeAll()
         oprevl    = nullptr;
         delete nprevl;
         nprevl    = nullptr;
-
-#ifdef RT_AI_MASKING
-        aiMaskBaseline_.reset();
-#endif
 
         if (ncie) {
             delete ncie;

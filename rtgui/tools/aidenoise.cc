@@ -159,9 +159,9 @@ void AIDenoise::read (const ProcParams* pp, const ParamsEdited* pedited)
     blend->setValue (pp->aiDenoise.blend);
     useGpu->set_active (pp->aiDenoise.useGpu);
 
-    // Sync checkbox: active when blend > 0
+    // Sync checkbox: active only when enabled AND blend > 0
     blockActivate_ = true;
-    activateCheck_->set_active(pp->aiDenoise.blend > 0);
+    activateCheck_->set_active(pp->aiDenoise.enabled && pp->aiDenoise.blend > 0);
     if (pp->aiDenoise.blend > 0) {
         savedBlend_ = pp->aiDenoise.blend;
     }

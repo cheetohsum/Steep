@@ -1142,16 +1142,6 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
 
     auto& spot = params->locallab.spots.at(idx);
 
-#ifdef RT_AI_MASKING
-    // When spot uses an AI mask, skip bridging entirely. Let global params change
-    // freely — the AI mask blend in the engine will constrain the effect to the
-    // masked area. Bridging would intercept the change and route it through LocalLab's
-    // spot processing which doesn't produce visible results for these parameters.
-    if (spot.useAIMask && spot.activ) {
-        return false;
-    }
-#endif
-
     if (hasGradient) {
         // Gradient mode: copy ALL bridgeable global values to the gradient spot
         // and zero globals. Must ALWAYS return true because globals are zeroed —
@@ -1407,6 +1397,16 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
             break;
     }
 
+    // Deselect active perspective/crop tools when switching away from CROPPING tab
+    if (mode != EditorMode::CROPPING && toolBar) {
+        ToolMode cur = toolBar->getTool();
+        if (cur == TMPerspective || cur == TMPerspectiveGrid ||
+            cur == TMCropSelect || cur == TMStraighten) {
+            toolDeselected(cur);
+            toolBar->setTool(TMHand);
+        }
+    }
+
     // Crop preview mode: show full image when on crop tab, cropped view otherwise
     if (imageArea_) {
         imageArea_->setCropPreviewMode(mode == EditorMode::CROPPING);
@@ -1468,11 +1468,6 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
 
             // Save global params and load spot values into global tools
             maskModeActive_ = true;
-#ifdef RT_AI_MASKING
-            if (ipc) {
-                ipc->setAIMaskBlendActive(true);
-            }
-#endif
             if (ipc) {
                 ProcParams* p = ipc->beginUpdateParams();
                 savedToneCurve_ = p->toneCurve;
@@ -1488,11 +1483,6 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
         if (prevMode == EditorMode::MASK && mode != EditorMode::MASK) {
             // Restore original global params and re-read tools
             maskModeActive_ = false;
-#ifdef RT_AI_MASKING
-            if (ipc) {
-                ipc->setAIMaskBlendActive(false);
-            }
-#endif
             if (ipc) {
                 ProcParams* p = ipc->beginUpdateParams();
                 p->toneCurve = savedToneCurve_;

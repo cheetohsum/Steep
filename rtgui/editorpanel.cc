@@ -844,6 +844,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 
     // build the middle of the screen
     Gtk::Box* editbox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_VERTICAL));
+    editbox->set_name("EditorEditBox");
 
     beforeAfter = Gtk::manage (new Gtk::ToggleButton ());
     beforeAfter->set_image (*Gtk::manage (new RTImage ("compare", Gtk::ICON_SIZE_MENU)));
@@ -1529,6 +1530,8 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 
     beforeAfterBox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL));
     beforeAfterBox->set_name ("BeforeAfterContainer");
+    beforeAfterBox->set_margin_start(options.showHistory ? options.dirBrowserWidth : 0);
+    beforeAfterBox->set_margin_end(std::min(options.toolPanelWidth, 400));
     beforeAfterBox->pack_start (*afterBox);
 
     MyScrolledToolbar *stb1 = Gtk::manage(new MyScrolledToolbar());
@@ -1888,7 +1891,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         catalogPane = new Gtk::Paned();
         // Size to fit one row of filmstrip thumbnails without vertical scrollbar.
         // thumbSizeTab is the thumbnail height; add padding for borders + hscrollbar.
-        int filmstripHeight = std::min(options.thumbSizeTab, 115) + 8;
+        int filmstripHeight = std::min(options.thumbSizeTab, 115);
         catalogPane->set_size_request(-1, filmstripHeight);
         // Inset filmstrip so sidebars don't overlap its content
         catalogPane->set_margin_start(options.showHistory ? options.dirBrowserWidth : 0);
@@ -3813,6 +3816,9 @@ void EditorPanel::hideHistoryActivated ()
     if (editorToolbarTop_) {
         editorToolbarTop_->set_margin_start(leftMargin);
     }
+    if (beforeAfterBox) {
+        beforeAfterBox->set_margin_start(leftMargin);
+    }
 
     tbShowHideSidePanels_managestate();
 }
@@ -3851,6 +3857,9 @@ void EditorPanel::tbRightPanel_1_toggled ()
         }
         if (editorToolbarTop_) {
             editorToolbarTop_->set_margin_end(rightMargin);
+        }
+        if (beforeAfterBox) {
+            beforeAfterBox->set_margin_end(rightMargin);
         }
 
         tbShowHideSidePanels_managestate();
@@ -4890,8 +4899,10 @@ void EditorPanel::beforeAfterToggled ()
         beforeIpc->setPreviewImageListener (beforePreviewHandler);
         Glib::ustring monitorProfile;
         rtengine::RenderingIntent intent;
-        ipc->getMonitorProfile(monitorProfile, intent);
-        beforeIpc->setMonitorProfile(monitorProfile, intent);
+        if (ipc) {
+            ipc->getMonitorProfile(monitorProfile, intent);
+            beforeIpc->setMonitorProfile(monitorProfile, intent);
+        }
 
         beforeIarea->imageArea->setPreviewHandler (beforePreviewHandler);
         beforeIarea->imageArea->setImProcCoordinator (beforeIpc);

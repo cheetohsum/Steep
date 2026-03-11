@@ -134,8 +134,7 @@ Adjuster::Adjuster(
                 " font-size: 9px; padding: 0; margin: 0; min-height: 0;"
                 " color: rgba(255,255,255,0.65); caret-color: rgba(255,255,255,0.65); }"
                 " spinbutton button { min-width: 0; min-height: 0; max-width: 0; max-height: 0;"
-                " padding: 0; margin: 0; border: none; background: none; opacity: 0;"
-                " -gtk-icon-size: 0; }"
+                " padding: 0; margin: 0; border: none; background: none; opacity: 0; }"
                 " spinbutton button image { min-width: 0; min-height: 0; max-width: 0; max-height: 0; }"
             );
             spin->get_style_context()->add_provider(
@@ -148,17 +147,10 @@ Adjuster::Adjuster(
     spin->set_numeric(true);
     spin->set_update_policy(Gtk::UPDATE_IF_VALID);
 
-    // Hide spinbutton's internal +/- buttons via GTK widget tree.
-    // CSS alone doesn't reliably hide them on all platforms (Windows, macOS).
-    gtk_container_forall(
-        GTK_CONTAINER(spin->gobj()),
-        [](GtkWidget* child, gpointer) {
-            if (GTK_IS_BUTTON(child)) {
-                gtk_widget_set_no_show_all(child, TRUE);
-                gtk_widget_hide(child);
-            }
-        },
-        nullptr);
+    // Note: GtkSpinButton is NOT a GtkContainer on Windows, so
+    // gtk_container_forall cannot be used to hide +/- buttons.
+    // For named adjusters, spin is hidden entirely and value drawn via Cairo.
+    // For unnamed adjusters, CSS handles button hiding.
 
     reset->set_size_request(-1, RTScalable::scalePixelSize(spin->get_height() > MIN_RESET_BUTTON_HEIGHT ? spin->get_height() : MIN_RESET_BUTTON_HEIGHT));
     slider = Gtk::manage(new MyHScale());
@@ -237,13 +229,14 @@ Adjuster::Adjuster(
 
         attach_next_to(*reset, *spin, Gtk::POS_RIGHT, 1, 1);
     } else {
-        // Label-inside-slider: spin overlaid on slider in same cell
+        // Label-inside-slider: value drawn by Cairo in on_draw, spin hidden
         // Slider fills the full width — pill covers the entire row, perfectly centered
         set_size_request(200, -1);
         set_margin_top(1);
         set_margin_bottom(1);
         attach(*slider, 0, 0, 1, 1);   // slider fills full width (hexpand=true)
-        attach(*spin, 0, 0, 1, 1);     // spin overlays slider, right-aligned
+        spin->set_no_show_all(true);
+        spin->set_visible(false);       // hidden — value rendered by on_draw
 
         // Icons: attach hidden (showIcons() can reveal them later)
         int col = 1;
@@ -289,6 +282,7 @@ Adjuster::Adjuster(
             const double v = shapeValue(getSliderValue());
             spin->set_value(addMode ? v : this->slider2value(v));
             spinChange.unblock();
+            queue_draw(); // redraw Cairo value text
         }
     );
     reset->signal_button_release_event().connect_notify( sigc::mem_fun(*this, &Adjuster::resetPressed) );
@@ -1026,6 +1020,18 @@ bool Adjuster::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
         cr->set_source_rgba(1.0, 1.0, 1.0, 0.85);
         cr->move_to(textX, textY);
         layout->show_in_cairo_context(cr);
+
+        // Draw value text on the right side of the pill
+        Glib::ustring valStr = spin->get_text();
+        auto valLayout = create_pango_layout(valStr);
+        valLayout->set_font_description(Pango::FontDescription("sans 9"));
+        Pango::Rectangle vInk, vLog;
+        valLayout->get_pixel_extents(vInk, vLog);
+        const int valX = sAlloc.get_x() + sAlloc.get_width() - vLog.get_width() - 10;
+        const int valY = pillY + (pillH - vLog.get_height()) / 2;
+        cr->set_source_rgba(1.0, 1.0, 1.0, 0.65);
+        cr->move_to(valX, valY);
+        valLayout->show_in_cairo_context(cr);
     }
 
     return true;

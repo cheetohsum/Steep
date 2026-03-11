@@ -278,10 +278,8 @@ void History::procParamsChanged(
             selection->select(newrow);
         }
 
-        if (blistener && row && !blistenerLock) {
-            blistener->historyBeforeLineChanged(row[historyColumns.params]);
-        } else if (blistener && size == 0 && !blistenerLock) {
-            blistener->historyBeforeLineChanged(newrow[historyColumns.params]);
+        if (blistener && !blistenerLock) {
+            blistener->historyBeforeLineChanged(historyModel->children()[0][historyColumns.params]);
         }
     } else { // else just update it
         row[historyColumns.value] = g_markup_escape_text(descr.c_str(), -1);
@@ -414,7 +412,7 @@ bool History::getBeforeLineParams (rtengine::procparams::ProcParams& params)
     }
 
     Gtk::TreeModel::Row row;
-    row = historyModel->children()[size == 1 ? 0 : size - 2];
+    row = historyModel->children()[0];
     params = row[historyColumns.params];
     return true;
 }

@@ -1952,86 +1952,6 @@ void Crop::update(int todo)
     // all pipette buffer processing should be finished now
     PipetteBuffer::setReady();
 
-#ifdef RT_AI_MASKING
-    // Blend: constrain ALL global adjustments to AI mask areas using persistent baseline
-    // AI mask baseline: save/update when NOT in mask mode (captures edit-tab state),
-    // then blend when IN mask mode (constrains only the spot's changes to masked area).
-    const bool processingOccurred = (todo & (M_AUTOEXP | M_RGBCURVE | M_LUMACURVE | M_LUMINANCE | M_COLOR));
-    {
-        bool hasActiveAIMask = false;
-        if (params.locallab.enabled) {
-            for (const auto& spot : params.locallab.spots) {
-                if (spot.useAIMask && spot.activ) { hasActiveAIMask = true; break; }
-            }
-        }
-
-        if (!hasActiveAIMask || !AIMaskCache::getInstance().hasCachedMasks()) {
-            // No AI masks active — clean up
-            aiMaskBaseline_.reset();
-        } else if (!parent->aiMaskBlendActive_ && processingOccurred) {
-            // NOT in mask mode: save/update baseline from current fully-processed state.
-            // This captures the edit-tab result including all global adjustments.
-            if (!aiMaskBaseline_ || aiMaskBaseline_->W != labnCrop->W || aiMaskBaseline_->H != labnCrop->H) {
-                aiMaskBaseline_.reset(new LabImage(labnCrop->W, labnCrop->H));
-            }
-            aiMaskBaseline_->CopyFrom(labnCrop);
-        }
-        // In mask mode: keep existing baseline (frozen edit-tab state), blend below
-    }
-
-    if (processingOccurred && parent->aiMaskBlendActive_ && aiMaskBaseline_ && aiMaskBaseline_->W == labnCrop->W && aiMaskBaseline_->H == labnCrop->H) {
-        AIMaskCache& aiCache = AIMaskCache::getInstance();
-        // Hold the cache lock for the entire blend to prevent dangling pointers
-        MyMutex::MyLock cacheLock(aiCache.mutex());
-        const int maskW = aiCache.getCachedWidthUnsafe();
-        const int maskH = aiCache.getCachedHeightUnsafe();
-        const int fullW = aiCache.getFullWidthUnsafe();
-        const int fullH = aiCache.getFullHeightUnsafe();
-        const int blendW = labnCrop->W;
-        const int blendH = labnCrop->H;
-
-        if (maskW > 0 && maskH > 0 && fullW > 0 && fullH > 0) {
-            #pragma omp parallel for schedule(dynamic, 16)
-            for (int y = 0; y < blendH; y++) {
-                for (int x = 0; x < blendW; x++) {
-                    // Map crop pixel → full image → mask coordinates
-                    int imgX = cropx + x * skip;
-                    int imgY = cropy + y * skip;
-                    int mx = imgX * maskW / fullW;
-                    int my = imgY * maskH / fullH;
-                    mx = rtengine::LIM(mx, 0, maskW - 1);
-                    my = rtengine::LIM(my, 0, maskH - 1);
-
-                    // Compute combined AI mask value from all active spots
-                    float combinedMask = 0.f;
-                    for (const auto& spot : params.locallab.spots) {
-                        if (!spot.useAIMask || !spot.activ) continue;
-                        const auto* maskArr = aiCache.getMaskUnsafe(static_cast<AISegClass>(spot.aiMaskClass));
-                        if (!maskArr) continue;
-
-                        float val = (*maskArr)[my][mx];
-                        float opacity = static_cast<float>(spot.aiMaskOpacity);
-                        float threshold = static_cast<float>(spot.aiMaskThreshold);
-                        if (val > threshold) {
-                            float masked = (val - threshold) / (1.f - threshold + 1e-6f);
-                            masked = rtengine::LIM(masked * opacity, 0.f, 1.f);
-                            combinedMask = std::max(combinedMask, masked);
-                        }
-                    }
-
-                    // Blend: mask=1 → keep adjusted, mask=0 → keep unadjusted
-                    if (combinedMask < 1.f) {
-                        float inv = 1.f - combinedMask;
-                        labnCrop->L[y][x] = combinedMask * labnCrop->L[y][x] + inv * aiMaskBaseline_->L[y][x];
-                        labnCrop->a[y][x] = combinedMask * labnCrop->a[y][x] + inv * aiMaskBaseline_->a[y][x];
-                        labnCrop->b[y][x] = combinedMask * labnCrop->b[y][x] + inv * aiMaskBaseline_->b[y][x];
-                    }
-                }
-            }
-        }
-    }
-#endif
-
     // Computing the preview image, i.e. converting from lab->Monitor color space (soft-proofing disabled) or lab->Output profile->Monitor color space (soft-proofing enabled)
     parent->ipf.lab2monitorRgb(labnCrop, cropImg);
 
@@ -2092,10 +2012,6 @@ void Crop::freeAll()
             delete    labnCrop;
             labnCrop = nullptr;
         }
-
-#ifdef RT_AI_MASKING
-        aiMaskBaseline_.reset();
-#endif
 
         if (cropImg) {
             delete    cropImg;

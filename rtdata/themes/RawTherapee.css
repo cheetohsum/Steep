@@ -80,6 +80,14 @@ textview.view, treeview.view {
     box-shadow: none;
     padding-right: 6px;
     min-width: 0;
+    color: white;
+}
+#MaskingPanel label {
+    color: white;
+}
+#MaskTreeView,
+#MaskTreeView * {
+    color: white;
 }
 /* Scrolledwindow inside masking panel — no background, constrain width */
 #MaskingPanel scrolledwindow,
@@ -387,6 +395,7 @@ menu separator {
 #FileBrowser {
     padding: 0.1666666666666666em;
     margin: 0;
+    background-color: #252a32;
 }
 
 #FileCatalog {
@@ -1899,6 +1908,13 @@ paned > separator {
     margin: 0;
 }
 
+/* Ensure margin gaps behind filmstrip/toolbar/beforeAfter match the theme */
+#EditorViewPaned,
+#EditorEditBox,
+#BeforeAfterContainer {
+    background-color: #252a32;
+}
+
 /* Hide the separator between filmstrip and editor */
 #EditorViewPaned > separator {
     min-height: 0;
@@ -2195,15 +2211,23 @@ dialog frame > label:not(.dummy) {
     margin-bottom: 0.02em;
 }
 
-/* Add space between bottom panel and window edge */
+/* Editor toolbars — ensure margins show correct theme background */
+#EditorToolbarTop,
+#EditorToolbarBottom {
+    background-color: #252a32;
+}
 #IopsPanel {
     padding: 0 0.1666666666666666em 0.1666666666666666em;
+    background-color: #252a32;
 }
 
 #EditorLeftPaned:last-child {
     padding: 0.8333333333333333em 0 0 0.8333333333333333em;
 }
 
+#EditorRightPaned {
+    background-color: #252a32;
+}
 #EditorRightPaned:last-child {
     padding: 0;
 }
@@ -2420,7 +2444,7 @@ progressbar progress {
 .curve-channel-b label,
 .curve-channel-b image {
     color: transparent;
-    -gtk-icon-size: 0;
+    /* -gtk-icon-size not supported on all platforms */
     min-width: 0;
     min-height: 0;
     padding: 0;

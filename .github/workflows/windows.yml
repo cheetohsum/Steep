@@ -213,6 +213,23 @@ jobs:
             cp "${ONNX_DIR}/lib/onnxruntime.dll" "$BUILD_DIR"
           fi
 
+          echo "Bundling embedded Python with RawRefinery."
+          PYTHON_VERSION="3.11.9"
+          PYTHON_DIR="$BUILD_DIR/python"
+          mkdir -p "$PYTHON_DIR"
+          curl -L -o python-embed.zip \
+            "https://www.python.org/ftp/python/${PYTHON_VERSION}/python-${PYTHON_VERSION}-embed-amd64.zip"
+          unzip -q python-embed.zip -d "$PYTHON_DIR"
+          # Enable pip in embedded Python by uncommenting import site
+          sed -i 's/#import site/import site/' "$PYTHON_DIR/python311._pth"
+          # Install pip
+          curl -L -o "$PYTHON_DIR/get-pip.py" https://bootstrap.pypa.io/get-pip.py
+          "$PYTHON_DIR/python.exe" "$PYTHON_DIR/get-pip.py" --no-warn-script-location
+          # Install RawRefinery
+          "$PYTHON_DIR/python.exe" -m pip install rawrefinery --no-warn-script-location
+          rm -f "$PYTHON_DIR/get-pip.py"
+          echo "RawRefinery bundled successfully."
+
           echo "Creating GTK settings.ini."
           mkdir -p "$BUILD_DIR/share/gtk-3.0/"
           echo -e '[Settings]\ngtk-button-images=1' > "$BUILD_DIR/share/gtk-3.0/settings.ini"

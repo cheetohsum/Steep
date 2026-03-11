@@ -21,6 +21,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <thread>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 
 #include <glibmm/fileutils.h>
 #include <glibmm/miscutils.h>
@@ -63,6 +66,17 @@ bool AIDenoiseManager::findPython()
     std::vector<std::string> pythonPaths;
 
 #ifdef _WIN32
+    // Check bundled Python first (shipped alongside rawtherapee.exe)
+    {
+        char exePath[MAX_PATH] = {};
+        GetModuleFileNameA(nullptr, exePath, MAX_PATH);
+        std::string exeDir(exePath);
+        auto pos = exeDir.find_last_of("\\/");
+        if (pos != std::string::npos) {
+            exeDir = exeDir.substr(0, pos);
+            pythonPaths.push_back(exeDir + "\\python\\python.exe");
+        }
+    }
     // Check common Windows venv locations
     const char* home = getenv("USERPROFILE");
     if (home) {
