@@ -443,7 +443,7 @@ function CreateDmg {
         echo "Building Fancy .dmg"
         touch message
         MESSAGE="$(cat message)"
-        magick ${PROJECT_SOURCE_DATA_DIR}/rtdmg-bkgd.png -pointsize 80 -fill Black -draw "text 14,1307 '${PROJECT_FULL_VERSION}'" -fill Salmon -draw "text 10,1300 '${PROJECT_FULL_VERSION}'" ./rtdmg-bkgd.png
+        magick ${PROJECT_SOURCE_DATA_DIR}/rtdmg-bkgd.png -pointsize 80 -font Menlo-Bold -fill Black -draw "text 14,1307 '${PROJECT_FULL_VERSION}'" -fill Salmon -draw "text 10,1300 '${PROJECT_FULL_VERSION}'" ./rtdmg-bkgd.png
         magick ./rtdmg-bkgd.png -pointsize 90 -fill Black -gravity center -font Menlo-Bold -draw "text 5,120 \"$MESSAGE\"" -fill Red -gravity center -font Menlo-Bold -draw "text 1,124 \"$MESSAGE\"" ./rtdmg-bkgd.png
         create-dmg \
         --background ./rtdmg-bkgd.png \
@@ -489,7 +489,7 @@ function CreateDmg {
     # Zip disk image for redistribution
     msg "Zipping disk image for redistribution:"
     mkdir "${PROJECT_NAME}_macOS_${MINIMUM_SYSTEM_VERSION}_${arch}_${PROJECT_FULL_VERSION}_folder"
-    cp "${dmg_name}.dmg" "${PROJECT_NAME}_macOS_${MINIMUM_SYSTEM_VERSION}_${arch}_${PROJECT_FULL_VERSION}_folder/"
+    cp "${dmg_name}.dmg" "${PROJECT_NAME}_macOS_${MINIMUM_SYSTEM_VERSION}_${arch}_${PROJECT_FULL_VERSION}_folder/" || { echo "ERROR: DMG '${dmg_name}.dmg' not found — create-dmg likely failed."; exit 1; }
     cp "${PROJECT_NAME}.app/Contents/MacOS/steep-cli" "${PROJECT_NAME}_macOS_${MINIMUM_SYSTEM_VERSION}_${arch}_${PROJECT_FULL_VERSION}_folder/"
     codesign -s "${CODESIGNID}" -i com.steep.steep-cli -f "${PROJECT_NAME}_macOS_${MINIMUM_SYSTEM_VERSION}_${arch}_${PROJECT_FULL_VERSION}_folder/steep-cli"
     zip -r "${PROJECT_NAME}_macOS_${MINIMUM_SYSTEM_VERSION}_${arch}_${PROJECT_FULL_VERSION}.zip" "${PROJECT_NAME}_macOS_${MINIMUM_SYSTEM_VERSION}_${arch}_${PROJECT_FULL_VERSION}_folder/"
