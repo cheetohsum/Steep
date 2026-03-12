@@ -444,8 +444,9 @@ function CreateDmg {
         touch message
         MESSAGE="$(cat message)"
         local dmg_bkgd="${PWD}/rtdmg-bkgd.png"
-        magick ${PROJECT_SOURCE_DATA_DIR}/rtdmg-bkgd.png -pointsize 80 -font Menlo-Bold -fill Black -draw "text 14,1307 '${PROJECT_FULL_VERSION}'" -fill Salmon -draw "text 10,1300 '${PROJECT_FULL_VERSION}'" "${dmg_bkgd}"
-        magick "${dmg_bkgd}" -pointsize 90 -fill Black -gravity center -font Menlo-Bold -draw "text 5,120 \"$MESSAGE\"" -fill Red -gravity center -font Menlo-Bold -draw "text 1,124 \"$MESSAGE\"" "${dmg_bkgd}"
+        local dmg_font="/System/Library/Fonts/Menlo.ttc"
+        magick ${PROJECT_SOURCE_DATA_DIR}/rtdmg-bkgd.png -pointsize 80 -font "${dmg_font}" -fill Black -draw "text 14,1307 '${PROJECT_FULL_VERSION}'" -fill Salmon -draw "text 10,1300 '${PROJECT_FULL_VERSION}'" "${dmg_bkgd}"
+        magick "${dmg_bkgd}" -pointsize 90 -fill Black -gravity center -font "${dmg_font}" -draw "text 5,120 \"$MESSAGE\"" -fill Red -gravity center -font "${dmg_font}" -draw "text 1,124 \"$MESSAGE\"" "${dmg_bkgd}"
         create-dmg \
         --background "${dmg_bkgd}" \
         --volname ${PROJECT_NAME}_${PROJECT_FULL_VERSION} \
