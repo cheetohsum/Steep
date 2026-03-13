@@ -172,18 +172,20 @@ Adjuster::Adjuster(
             if (!adjustmentName.empty()) {
                 // Label-inside-pill: dark pill drawn by Cairo, GTK trough invisible
                 sliderCss->load_from_data(
-                    "scale { padding: 0 0; margin: 0; min-height: 34px; }"
+                    "scale { padding: 0 0; margin: 0; min-height: 34px; -GtkRange-stepper-size: 0; }"
                     " scale trough { min-height: 34px; margin: 0; padding: 0;"
                     "   background-color: transparent; background-image: none; border: none; }"
                     " scale slider { min-height: 0; min-width: 0; padding: 17px; margin: 0;"
                     "   background-color: transparent; background-image: none; border: none;"
                     "   box-shadow: none; border-radius: 50%; }"
+                    " scale button { min-width: 0; min-height: 0; max-width: 0; max-height: 0;"
+                    "   padding: 0; margin: 0; border: none; background: none; opacity: 0; }"
                 );
                 slider->setLabelText(adjustmentName);
             } else {
                 // No label: compact trough
                 sliderCss->load_from_data(
-                    "scale { padding: 0 4px; margin: 0; min-height: 0; }"
+                    "scale { padding: 0 4px; margin: 0; min-height: 0; -GtkRange-stepper-size: 0; }"
                     " scale trough { min-height: 3px; margin: 0; padding: 0;"
                     "   background-color: transparent; background-image: none; border: none; }"
                     " scale trough:hover { background-color: rgba(102,153,204,0.06); }"
@@ -191,6 +193,8 @@ Adjuster::Adjuster(
                     "   background-color: rgba(0,0,0,0.01); background-image: none; border: none;"
                     "   box-shadow: none; border-radius: 50%; }"
                     " scale slider:hover { background-color: rgba(102,153,204,0.18); background-image: none; box-shadow: 0 0 6px rgba(102,153,204,0.2); }"
+                    " scale button { min-width: 0; min-height: 0; max-width: 0; max-height: 0;"
+                    "   padding: 0; margin: 0; border: none; background: none; opacity: 0; }"
                 );
             }
             slider->get_style_context()->add_provider(
