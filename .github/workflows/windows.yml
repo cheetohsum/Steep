@@ -225,10 +225,13 @@ jobs:
             sed -i 's/#import site/import site/' "$PYTHON_DIR/python311._pth"
             curl -L -o "$PYTHON_DIR/get-pip.py" https://bootstrap.pypa.io/get-pip.py
             "$PYTHON_DIR/python.exe" "$PYTHON_DIR/get-pip.py" --no-warn-script-location
-            # Install only what the self-contained CLI script needs
+            # Install only what the self-contained CLI script needs.
+            # Use --extra-index-url for torch CPU wheels so pip still
+            # checks PyPI for all other packages.
             "$PYTHON_DIR/python.exe" -m pip install \
-              torch --index-url https://download.pytorch.org/whl/cpu \
-              blended-tiling tifffile platformdirs requests numpy \
+              torch --extra-index-url https://download.pytorch.org/whl/cpu \
+              tifffile platformdirs requests numpy \
+              git+https://github.com/ProGamerGov/blended-tiling.git \
               --no-warn-script-location
             rm -f "$PYTHON_DIR/get-pip.py"
             echo "AI Denoise dependencies bundled successfully."
