@@ -132,6 +132,10 @@ LocallabParams::LocallabSpot::LocallabSpot() :
     shapeMethod("IND"),
     avoidgamutMethod("MUNS"),
     loc{150, 150, 150, 150},
+    polyMaskPoints{},
+    polyMaskFeather(5.0),
+    polyMaskSnapTolerance(10.0),
+    polyMaskLegLength(3.0),
     centerX(0),
     centerY(0),
     circrad(18.),
@@ -2127,6 +2131,10 @@ bool LocallabParams::LocallabSpot::operator ==(const LocallabSpot& other) const
         && shapeMethod == other.shapeMethod
         && avoidgamutMethod == other.avoidgamutMethod
         && loc == other.loc
+        && polyMaskPoints == other.polyMaskPoints
+        && polyMaskFeather == other.polyMaskFeather
+        && polyMaskSnapTolerance == other.polyMaskSnapTolerance
+        && polyMaskLegLength == other.polyMaskLegLength
         && centerX == other.centerX
         && centerY == other.centerY
         && circrad == other.circrad
@@ -3090,6 +3098,10 @@ void LoadUtil::controlSpotSettings()
         }
     }
     assignFromKeyfile(keyFile, "Locallab", "Loc_" + index_str, spot.loc, spotEdited.loc);
+    assignFromKeyfile(keyFile, "Locallab", "PolyMaskPoints_" + index_str, spot.polyMaskPoints, spotEdited.polyMaskPoints);
+    assignFromKeyfile(keyFile, "Locallab", "PolyMaskFeather_" + index_str, spot.polyMaskFeather, spotEdited.polyMaskFeather);
+    assignFromKeyfile(keyFile, "Locallab", "PolyMaskSnapTol_" + index_str, spot.polyMaskSnapTolerance, spotEdited.polyMaskSnapTolerance);
+    assignFromKeyfile(keyFile, "Locallab", "PolyMaskLegLen_" + index_str, spot.polyMaskLegLength, spotEdited.polyMaskLegLength);
     assignFromKeyfile(keyFile, "Locallab", "CenterX_" + index_str, spot.centerX, spotEdited.centerX);
     assignFromKeyfile(keyFile, "Locallab", "CenterY_" + index_str, spot.centerY, spotEdited.centerY);
     assignFromKeyfile(keyFile, "Locallab", "Circrad_" + index_str, spot.circrad, spotEdited.circrad);
@@ -4335,6 +4347,10 @@ void SaveUtil::controlSpotSettings()
     saveToKeyfile(!pedited || spot_edited->shapeMethod, "Locallab", "ShapeMethod_" + index_str, spot.shapeMethod, keyFile);
     saveToKeyfile(!pedited || spot_edited->avoidgamutMethod, "Locallab", "AvoidgamutMethod_" + index_str, spot.avoidgamutMethod, keyFile);
     saveToKeyfile(!pedited || spot_edited->loc, "Locallab", "Loc_" + index_str, spot.loc, keyFile);
+    saveToKeyfile(!pedited || spot_edited->polyMaskPoints, "Locallab", "PolyMaskPoints_" + index_str, spot.polyMaskPoints, keyFile);
+    saveToKeyfile(!pedited || spot_edited->polyMaskFeather, "Locallab", "PolyMaskFeather_" + index_str, spot.polyMaskFeather, keyFile);
+    saveToKeyfile(!pedited || spot_edited->polyMaskSnapTolerance, "Locallab", "PolyMaskSnapTol_" + index_str, spot.polyMaskSnapTolerance, keyFile);
+    saveToKeyfile(!pedited || spot_edited->polyMaskLegLength, "Locallab", "PolyMaskLegLen_" + index_str, spot.polyMaskLegLength, keyFile);
     saveToKeyfile(!pedited || spot_edited->centerX, "Locallab", "CenterX_" + index_str, spot.centerX, keyFile);
     saveToKeyfile(!pedited || spot_edited->centerY, "Locallab", "CenterY_" + index_str, spot.centerY, keyFile);
     saveToKeyfile(!pedited || spot_edited->circrad, "Locallab", "Circrad_" + index_str, spot.circrad, keyFile);

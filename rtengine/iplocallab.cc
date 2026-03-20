@@ -47,6 +47,7 @@
 
 #include "cplx_wavelet_dec.h"
 #include "ciecam02.h"
+#include "polymask.h"
 #ifdef RT_AI_MASKING
 #include "aimaskcache.h"
 #endif
@@ -814,6 +815,8 @@ struct local_params {
     float adjch;
     int shapmet;
     float gradangle;
+    const float* const* polyMask; // pre-rasterized polygon mask [y][x], nullptr if not polygon
+    int polyMaskW, polyMaskH; // dimensions of polygon mask
     int edgwmet;
     int neiwmet;
     bool enaColorMask;
@@ -1299,9 +1302,16 @@ static void calcLocalParams(int sp, int oW, int oH,  const LocallabParams& local
         lp.shapmet = 0;
     } else if (locallab.spots.at(sp).shape == "RECT") {
         lp.shapmet = 1;
+    } else if (locallab.spots.at(sp).shape == "POLY") {
+        lp.shapmet = 3;
     } else { // "GRAD"
         lp.shapmet = 2;
     }
+
+    // Initialize polygon mask pointer (will be set externally if shapmet == 3)
+    lp.polyMask = nullptr;
+    lp.polyMaskW = 0;
+    lp.polyMaskH = 0;
 
     lp.denoiena = locallab.spots.at(sp).expblur;
 
@@ -1660,6 +1670,8 @@ static void calcLocalParams(int sp, int oW, int oH,  const LocallabParams& local
     lp.lyT = h * local_yT;
     lp.imW = static_cast<float>(w);
     lp.imH = static_cast<float>(h);
+
+    // Note: polygon bounding box is computed in Lab_Local after vertex scaling
     lp.chro = local_chroma;
     lp.struco = structcolor;
     lp.strengrid = strengthgrid;
@@ -2161,6 +2173,45 @@ static void calcTransitiongrad(const float lox, const float loy, const float ach
         localFactor = pow_F((t + ach) / (2.f * ach), lp.transweak);
     }
     // else zone = 0 (outside, no effect)
+}
+
+static inline void calcTransitionpoly(const float lox, const float loy, const local_params& lp, int &zone, float &localFactor)
+{
+    zone = 0;
+    localFactor = 0.f;
+
+    if (!lp.polyMask || lp.polyMaskW <= 0 || lp.polyMaskH <= 0) {
+        return;
+    }
+
+    const int ix = static_cast<int>(lox);
+    const int iy = static_cast<int>(loy);
+
+    if (ix < 0 || ix >= lp.polyMaskW || iy < 0 || iy >= lp.polyMaskH) {
+        return;
+    }
+
+    localFactor = lp.polyMask[iy][ix];
+    zone = localFactor >= 1.f ? 2 : (localFactor > 0.f ? 1 : 0);
+}
+
+// Unified shape dispatch — replaces repeated if/else chains at every dispatch site
+static inline void calcTransitionShape(const float lox, const float loy, const float ach, const local_params& lp, int &zone, float &localFactor)
+{
+    switch (lp.shapmet) {
+    case 0:
+        calcTransition(lox, loy, ach, lp, zone, localFactor);
+        break;
+    case 1:
+        calcTransitionrect(lox, loy, ach, lp, zone, localFactor);
+        break;
+    case 3:
+        calcTransitionpoly(lox, loy, lp, zone, localFactor);
+        break;
+    default: // 2 = gradient
+        calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
+        break;
+    }
 }
 
 //sigmoid
@@ -5569,13 +5620,7 @@ void ImProcFunctions::DeNoise_Local(int call, const struct local_params& lp, Lab
                 int zone;
                 float localFactor = 1.f;
 
-                if (lp.shapmet == 0) {
-                    calcTransition(lox, loy, ach, lp, zone, localFactor);
-                } else if (lp.shapmet == 1) {
-                    calcTransitionrect(lox, loy, ach, lp, zone, localFactor);
-                } else {
-                    calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
-                }
+                calcTransitionShape(lox, loy, ach, lp, zone, localFactor);
                 if(lp.fullim == 3 ) {//disabled scope
                     localFactor = 1.f;
                 }
@@ -5735,13 +5780,7 @@ void ImProcFunctions::DeNoise_Local2(const struct local_params& lp, LabImage* or
                 int zone;
                 float localFactor = 1.f;
 
-                if (lp.shapmet == 0) {
-                    calcTransition(lox, loy, ach, lp, zone, localFactor);
-                } else if (lp.shapmet == 1) {
-                    calcTransitionrect(lox, loy, ach, lp, zone, localFactor);
-                } else {
-                    calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
-                }
+                calcTransitionShape(lox, loy, ach, lp, zone, localFactor);
                 if(lp.fullim == 3 ) {//disabled scope
                     localFactor = 1.f;
                 }
@@ -5857,13 +5896,7 @@ void ImProcFunctions::InverseReti_Local(const struct local_params & lp, const fl
                 int zone;
                 float localFactor;
 
-                if (lp.shapmet == 0) {
-                    calcTransition(lox, loy, ach, lp, zone, localFactor);
-                } else if (lp.shapmet == 1) {
-                    calcTransitionrect(lox, loy, ach, lp, zone, localFactor);
-                } else {
-                    calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
-                }
+                calcTransitionShape(lox, loy, ach, lp, zone, localFactor);
 
                 float rL = origblur->L[y][x] / 327.68f;
                 float dE = std::sqrt(kab * SQR(refa - origblur->a[y][x] / 327.68f) + kab * SQR(refb - origblur->b[y][x] / 327.68f) + kL * SQR(lumaref - rL));
@@ -6005,13 +6038,7 @@ void ImProcFunctions::InverseBlurNoise_Local(LabImage * originalmask, const stru
                 int zone;
                 float localFactor;
 
-                if (lp.shapmet == 0) {
-                    calcTransition(lox, loy, ach, lp, zone, localFactor);
-                } else if (lp.shapmet == 1) {
-                    calcTransitionrect(lox, loy, ach, lp, zone, localFactor);
-                } else {
-                    calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
-                }
+                calcTransitionShape(lox, loy, ach, lp, zone, localFactor);
 
                 float reducdE;
 
@@ -6448,13 +6475,7 @@ static void blendmask(const local_params& lp, int xstart, int ystart, int cx, in
                 achm = 1.f;
             }
 
-            if (lp.shapmet == 0) {
-                calcTransition(lox, loy, achm, lp, zone, localFactor);
-            } else if (lp.shapmet == 1) {
-                calcTransitionrect(lox, loy, achm, lp, zone, localFactor);
-            } else {
-                calcTransitiongrad(lox, loy, achm, lp, zone, localFactor);
-            }
+            calcTransitionShape(lox, loy, achm, lp, zone, localFactor);
             if(lp.fullim == 3 ) {//disable scope
                 localFactor = 1.f;
             }
@@ -6606,13 +6627,7 @@ static void showmask(int lumask, const local_params& lp, int xstart, int ystart,
             float localFactor = 1.f;
             const float achm = lp.trans / 100.f;
 
-            if (lp.shapmet == 0) {
-                calcTransition(lox, loy, achm, lp, zone, localFactor);
-            } else if (lp.shapmet == 1) {
-                calcTransitionrect(lox, loy, achm, lp, zone, localFactor);
-            } else {
-                calcTransitiongrad(lox, loy, achm, lp, zone, localFactor);
-            }
+            calcTransitionShape(lox, loy, achm, lp, zone, localFactor);
 
             if (inv == 0) {
                 if (zone > 0) {//normal — blend with localFactor for gradient visualization
@@ -7881,13 +7896,7 @@ void ImProcFunctions::InverseSharp_Local(float **loctemp, const float hueref, co
                 int zone;
                 float localFactor = 1.f;
 
-                if (lp.shapmet == 0) {
-                    calcTransition(lox, loy, ach, lp, zone, localFactor);
-                } else if (lp.shapmet == 1) {
-                    calcTransitionrect(lox, loy, ach, lp, zone, localFactor);
-                } else {
-                    calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
-                }
+                calcTransitionShape(lox, loy, ach, lp, zone, localFactor);
 
                 const float abdelta2 = SQR(refa - origblur->a[y][x]) + SQR(refb - origblur->b[y][x]);
                 const float chrodelta2 = SQR(std::sqrt(SQR(origblur->a[y][x]) + SQR(origblur->b[y][x])) - (chromaref * 327.68f));
@@ -8038,13 +8047,7 @@ void ImProcFunctions::Sharp_Local(int call, float **loctemp, int senstype, const
                 int zone;
                 float localFactor = 1.f;
 
-                if (lp.shapmet == 0) {
-                    calcTransition(lox, loy, ach, lp, zone, localFactor);
-                } else if (lp.shapmet == 1) {
-                    calcTransitionrect(lox, loy, ach, lp, zone, localFactor);
-                } else {
-                    calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
-                }
+                calcTransitionShape(lox, loy, ach, lp, zone, localFactor);
 
                 if (zone == 0) { // outside selection and outside transition zone => no effect, keep original values
                     continue;
@@ -8172,13 +8175,7 @@ void ImProcFunctions::Exclude_Local(float **deltaso, float hueref, float chromar
                     int zone;
                     float localFactor = 1.f;
 
-                    if (lp.shapmet == 0) {
-                        calcTransition(lox, loy, ach, lp, zone, localFactor);
-                    } else if (lp.shapmet == 1) {
-                        calcTransitionrect(lox, loy, ach, lp, zone, localFactor);
-                    } else {
-                        calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
-                    }
+                    calcTransitionShape(lox, loy, ach, lp, zone, localFactor);
 
 
                     if (zone == 0) { // outside selection and outside transition zone => no effect, keep original values
@@ -8349,13 +8346,7 @@ void ImProcFunctions::transit_shapedetect_retinex(int call, int senstype, LabIma
                     int zone;
                     float localFactor = 1.f;
 
-                    if (lp.shapmet == 0) {
-                        calcTransition(lox, loy, ach, lp, zone, localFactor);
-                    } else if (lp.shapmet == 1) {
-                        calcTransitionrect(lox, loy, ach, lp, zone, localFactor);
-                    } else {
-                        calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
-                    }
+                    calcTransitionShape(lox, loy, ach, lp, zone, localFactor);
 
 
                     if (zone == 0) { // outside selection and outside transition zone => no effect, keep original values
@@ -8660,13 +8651,7 @@ void ImProcFunctions::transit_shapedetect(int senstype, const LabImage * bufexpo
                 int zone;
                 float localFactor = 1.f;
 
-                if (lp.shapmet == 0) {
-                    calcTransition(lox, loy, ach, lp, zone, localFactor);
-                } else if (lp.shapmet == 1) {
-                    calcTransitionrect(lox, loy, ach, lp, zone, localFactor);
-                } else {
-                    calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
-                }
+                calcTransitionShape(lox, loy, ach, lp, zone, localFactor);
 
 
                 if (zone == 0) { // outside selection and outside transition zone => no effect, keep original values
@@ -8993,13 +8978,7 @@ void ImProcFunctions::InverseColorLight_Local(bool tonequ, bool tonecurv, int sp
                     int zone;
                     float localFactor = 1.f;
 
-                    if (lp.shapmet == 0) {
-                        calcTransition(lox, loy, ach, lp, zone, localFactor);
-                    } else if (lp.shapmet == 1) {
-                        calcTransitionrect(lox, loy, ach, lp, zone, localFactor);//rect not good
-                    } else {
-                        calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
-                    }
+                    calcTransitionShape(lox, loy, ach, lp, zone, localFactor);
 
                     //deltaE
                     float reducdE;
@@ -9550,13 +9529,7 @@ void ImProcFunctions::BlurNoise_Local(LabImage *tmp1, LabImage * originalmask, c
                 int zone;
                 float localFactor = 1.f;
 
-                if (lp.shapmet == 0) {
-                    calcTransition(lox, loy, ach, lp, zone, localFactor);
-                } else if (lp.shapmet == 1) {
-                    calcTransitionrect(lox, loy, ach, lp, zone, localFactor);
-                } else {
-                    calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
-                }
+                calcTransitionShape(lox, loy, ach, lp, zone, localFactor);
 
                 if (zone == 0) { // outside selection and outside transition zone => no effect, keep original values
                     continue;
@@ -9961,13 +9934,7 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
                 }
 
                 //calculate transition
-                if (lp.shapmet == 0) {
-                    calcTransition(lox, loy, achm, lp, zone, localFactor);
-                } else if (lp.shapmet == 1) {
-                    calcTransitionrect(lox, loy, achm, lp, zone, localFactor);
-                } else {
-                    calcTransitiongrad(lox, loy, achm, lp, zone, localFactor);
-                }
+                calcTransitionShape(lox, loy, achm, lp, zone, localFactor);
                 if(lp.fullim == 3 ) {//disable scope
                     localFactor = 1.f;
                 }
@@ -14441,13 +14408,7 @@ void ImProcFunctions::avoidcolshi(const struct local_params& lp, int sp, LabImag
                     int zone;
                     float localFactor = 1.f;
 
-                    if (lp.shapmet == 0) {
-                        calcTransition(lox, loy, ach, lp, zone, localFactor);
-                    } else if (lp.shapmet == 1) {
-                        calcTransitionrect(lox, loy, ach, lp, zone, localFactor);
-                    } else {
-                        calcTransitiongrad(lox, loy, ach, lp, zone, localFactor);
-                    }
+                    calcTransitionShape(lox, loy, ach, lp, zone, localFactor);
 
                     if (zone == 0) { // outside selection and outside transition zone => no effect, keep original values
                         continue;
@@ -15667,6 +15628,73 @@ void ImProcFunctions::Lab_Local(
     constexpr int del = 3; // to avoid crash with [loy - begy] and [lox - begx] and bfh bfw  // with gtk2 [loy - begy-1] [lox - begx -1 ] and del = 1
     struct local_params lp;
     calcLocalParams(sp, oW, oH, params->locallab, lp, prevDeltaE, showMaskOverlay, llColorMask, llColorMaskinv, llExpMask, llExpMaskinv, llSHMask, llSHMaskinv, llvibMask, lllcMask, llsharMask, llcbMask, llretiMask, llsoftMask, lltmMask, llblMask, lllogMask, ll_Mask, llcieMask, locwavCurveden, locwavdenutili);
+
+    // Pre-rasterize polygon mask if shape is POLY
+    // Polygon vertices are stored in full image coordinates, but processing
+    // may happen at reduced resolution (preview). Scale vertices to match.
+    array2D<float> polyMaskBuf;
+    if (lp.shapmet == 3) {
+        const auto& pts = params->locallab.spots.at(sp).polyMaskPoints;
+        if (pts.size() >= 6) { // need at least 3 vertices (6 ints)
+            const float scaleX = (fw > 0) ? static_cast<float>(oW) / static_cast<float>(fw) : 1.f;
+            const float scaleY = (fh > 0) ? static_cast<float>(oH) / static_cast<float>(fh) : 1.f;
+            const float feather = static_cast<float>(params->locallab.spots.at(sp).polyMaskFeather)
+                                * std::min(scaleX, scaleY);
+
+            // Check cache first to avoid expensive re-rasterization
+            auto& polyCache = PolyMaskCache::getInstance();
+            if (!polyCache.getCached(sp, pts, feather, oW, oH, polyMaskBuf)) {
+                std::vector<std::pair<float, float>> vertices;
+                vertices.reserve(pts.size() / 2);
+                for (size_t i = 0; i + 1 < pts.size(); i += 2) {
+                    vertices.emplace_back(static_cast<float>(pts[i]) * scaleX,
+                                          static_cast<float>(pts[i + 1]) * scaleY);
+                }
+                rasterizePolygonMask(vertices, oW, oH, feather, polyMaskBuf);
+                polyCache.store(sp, pts, feather, oW, oH, polyMaskBuf);
+            }
+            lp.polyMask = polyMaskBuf;
+            lp.polyMaskW = oW;
+            lp.polyMaskH = oH;
+
+            // Override bounding box with polygon bounds + feather.
+            // For polygon masks the center point may be outside the polygon,
+            // so we must ensure the bbox fully covers the polygon regardless
+            // of center position.
+            float minPx = static_cast<float>(oW), minPy = static_cast<float>(oH);
+            float maxPx = 0.f, maxPy = 0.f;
+            for (size_t i = 0; i + 1 < pts.size(); i += 2) {
+                const float vx = static_cast<float>(pts[i]) * scaleX;
+                const float vy = static_cast<float>(pts[i + 1]) * scaleY;
+                minPx = std::min(minPx, vx);
+                minPy = std::min(minPy, vy);
+                maxPx = std::max(maxPx, vx);
+                maxPy = std::max(maxPy, vy);
+            }
+            // Compute absolute bounds with feather margin, clamped to image
+            const float bx0 = std::max(minPx - feather, 0.f);
+            const float by0 = std::max(minPy - feather, 0.f);
+            const float bx1 = std::min(maxPx + feather, static_cast<float>(oW));
+            const float by1 = std::min(maxPy + feather, static_cast<float>(oH));
+            // Express as distances from center (what lp.lx/ly/lxL/lyT represent)
+            lp.lxL = std::max(lp.xc - bx0, 1.f);
+            lp.lx  = std::max(bx1 - lp.xc, 1.f);
+            lp.lyT = std::max(lp.yc - by0, 1.f);
+            lp.ly  = std::max(by1 - lp.yc, 1.f);
+        }
+    }
+
+#ifdef RT_AI_MASKING
+    // When AI mask is active, expand bounding box to cover full image so the
+    // AI segmentation mask can apply everywhere the detected class exists,
+    // not just in the small geometric shape area.
+    if (lp.useaimask) {
+        lp.lxL = std::max(lp.xc, 1.f);
+        lp.lx  = std::max(static_cast<float>(oW) - lp.xc, 1.f);
+        lp.lyT = std::max(lp.yc, 1.f);
+        lp.ly  = std::max(static_cast<float>(oH) - lp.yc, 1.f);
+    }
+#endif
 
     //parameters to change behavior GF
     float ksk = 1.f;//acts on cy
@@ -20806,13 +20834,7 @@ void ImProcFunctions::Lab_Local(
                                 float localFactor = 1.f;
                                 const float achm = lp.trans / 100.f;
 
-                                if (lp.shapmet == 0) {
-                                    calcTransition(lox, loy, achm, lp, zone, localFactor);
-                                } else if (lp.shapmet == 1) {
-                                    calcTransitionrect(lox, loy, achm, lp, zone, localFactor);
-                                } else {
-                                    calcTransitiongrad(lox, loy, achm, lp, zone, localFactor);
-                                }
+                                calcTransitionShape(lox, loy, achm, lp, zone, localFactor);
 
                                 if (zone > 0) {
                                     transformed->L[y][x] = CLIP(blend2[y - ystart][x - xstart]);
@@ -21397,13 +21419,7 @@ void ImProcFunctions::Lab_Local(
                                 float localFactor = 1.f;
                                 const float achm = lp.trans / 100.f;
 
-                                if (lp.shapmet == 0) {
-                                    calcTransition(lox, loy, achm, lp, zone, localFactor);
-                                } else if (lp.shapmet == 1) {
-                                    calcTransitionrect(lox, loy, achm, lp, zone, localFactor);
-                                } else {
-                                    calcTransitiongrad(lox, loy, achm, lp, zone, localFactor);
-                                }
+                                calcTransitionShape(lox, loy, achm, lp, zone, localFactor);
 
                                 if (zone > 0) {
                                     transformed->L[y][x] = CLIP(blend2[y - ystart][x - xstart]);
@@ -21575,13 +21591,7 @@ void ImProcFunctions::Lab_Local(
                                 int zone;
                                 float localFactor = 1.f;
 
-                                if (lp.shapmet == 0) {
-                                    calcTransition(lox, loy, achm, lp, zone, localFactor);
-                                } else if (lp.shapmet == 1) {
-                                    calcTransitionrect(lox, loy, achm, lp, zone, localFactor);
-                                } else {
-                                    calcTransitiongrad(lox, loy, achm, lp, zone, localFactor);
-                                }
+                                calcTransitionShape(lox, loy, achm, lp, zone, localFactor);
 
                                 if (zone > 0) {
                                     transformed->L[y + ystart][x + xstart] = buftemp->L[y][x] * localFactor + (1.f - localFactor) * original->L[y + ystart][x + xstart];
@@ -23757,17 +23767,19 @@ void ImProcFunctions::Lab_Local(
                     achm = 1.f;
                 }
 
-                if (lp.shapmet == 0) {
-                    calcTransition(lox, loy, achm, lp, zone, localFactor);
-                } else if (lp.shapmet == 1) {
-                    calcTransitionrect(lox, loy, achm, lp, zone, localFactor);
-                } else {
-                    calcTransitiongrad(lox, loy, achm, lp, zone, localFactor);
-                }
+                calcTransitionShape(lox, loy, achm, lp, zone, localFactor);
 
+#ifdef RT_AI_MASKING
+                // When AI mask is active, don't skip zone=0 pixels —
+                // the AI mask is the primary mask, not the geometric shape.
+                if (!lp.useaimask && zone == 0) {
+                    continue;
+                }
+#else
                 if (zone == 0) {
                     continue;
                 }
+#endif
 
                 if (lp.fullim == 3) {
                     localFactor = 1.f;

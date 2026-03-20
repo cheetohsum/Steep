@@ -1,0 +1,34 @@
+[Film Presets]
+Enabled=true
+Preset=fade_bloom
+Strength=70
+Fade=20
+Grain=30
+Saturation=-15
+
+[Exposure]
+Auto=false
+Compensation=0.15
+Contrast=-10
+HighlightCompr=80
+ShadowCompr=70
+CurveMode=Standard
+Curve=3;0;0.08;0.20;0.18;0.50;0.52;0.80;0.82;1;0.94;
+
+[White Balance]
+Enabled=true
+Setting=Custom
+Temperature=5700
+Green=0.98
+
+[PCVignette]
+Enabled=true
+Strength=1.0
+Feather=50
+Roundness=50
+
+[Vibrance]
+Enabled=true
+Pastels=-15
+Saturated=-20
+ProtectSkins=false

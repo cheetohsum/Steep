@@ -42,6 +42,8 @@ public:
     static std::shared_ptr<RTSurface> processIcon;
 
     static std::array<std::shared_ptr<RTSurface>, 6> colorLabelIcon;
+    static std::shared_ptr<RTSurface> pickIcon;
+    static std::shared_ptr<RTSurface> rejectIcon;
 
     static Glib::ustring processToolTip;
     static Glib::ustring unrankToolTip;

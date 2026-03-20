@@ -316,6 +316,7 @@ private:
     sigc::connection hoverMaskWatchdog_;
     bool pendingHoverState_ = false;
     bool hoverMaskApplied_ = false;  // tracks what state was last sent to engine
+    int hoverMissCount_ = 0;  // consecutive watchdog misses before turning off
     void applyHoverMask();
     void turnOffMaskOverlay(bool forceRedraw = false);
 

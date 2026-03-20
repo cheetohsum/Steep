@@ -56,20 +56,27 @@ FilePanel::FilePanel () : parent(nullptr), error(0)
     albumBrowser_ = Gtk::manage ( new AlbumBrowser () );
 
     // The whole left panel. Contains Places, Recent Folders, Folders and Albums.
-    // Use a Box (not Paned) to match the editor view layout.
-    placespaned = Gtk::manage ( new Gtk::Box (Gtk::ORIENTATION_VERTICAL) );
+    placespaned = Gtk::manage ( new Gtk::Paned (Gtk::ORIENTATION_VERTICAL) );
     placespaned->set_name ("PlacesPaned");
     placespaned->set_size_request(250, -1);
 
     Gtk::Box* obox = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     obox->get_style_context()->add_class ("plainback");
     obox->pack_start (*dirBrowser, Gtk::PACK_EXPAND_WIDGET, 0);
-    dirBrowser->set_size_request(-1, 300);
+    dirBrowser->set_size_request(-1, 200);
     obox->pack_start (*recentBrowser, Gtk::PACK_SHRINK, 4);
     obox->pack_start (*albumBrowser_, Gtk::PACK_SHRINK, 0);
 
-    placespaned->pack_start (*placesBrowser, Gtk::PACK_SHRINK);
-    placespaned->pack_start (*obox, Gtk::PACK_EXPAND_WIDGET);
+    placespaned->pack1 (*placesBrowser, false, false); // no resize, no shrink
+    placespaned->pack2 (*obox, true, false);            // resize, no shrink
+    int placesPos = std::max(options.dirBrowserHeight, 300);
+    placespaned->set_position(placesPos);
+    // Guard: prevent GTK from collapsing the places panel
+    placespaned->property_position().signal_changed().connect([this]() {
+        if (placespaned->get_position() < 200) {
+            placespaned->set_position(std::max(App::get().options().dirBrowserHeight, 300));
+        }
+    });
 
     // Wire album selection to filter and album view
     albumBrowser_->albumSelected().connect(sigc::mem_fun(*this, &FilePanel::onAlbumSelected));
@@ -213,6 +220,7 @@ FilePanel::FilePanel () : parent(nullptr), error(0)
 
     auto* stbFooter = Gtk::manage(new MyScrolledToolbar());
     stbFooter->set_name("EditorToolbarBottom");
+    stbFooter->set_vexpand(false);
     stbFooter->add(*footerBar);
     dirpanedBox->pack_start(*stbFooter, Gtk::PACK_SHRINK);
 
@@ -266,7 +274,7 @@ void FilePanel::setAspect ()
     int winW, winH;
     parent->get_size(winW, winH);
     const auto& options = App::get().options();
-    // placespaned is now a Box (not Paned) — no position to set
+    placespaned->set_position(std::max(options.dirBrowserHeight, 300));
     dirpaned->set_position(options.dirBrowserWidth);
     tpcPaned->set_position(options.browserToolPanelHeight);
     set_position(winW - options.browserToolPanelWidth);
@@ -322,23 +330,18 @@ void FilePanel::on_NB_switch_page(Gtk::Widget* page, guint page_num)
 
 bool FilePanel::fileSelected (Thumbnail* thm)
 {
-    fprintf(stderr, "DBG fileSelected: thm=%p parent=%p\n", (void*)thm, (void*)parent);
     if (!parent) {
-        fprintf(stderr, "DBG fileSelected: no parent, returning false\n");
         return false;
     }
 
     // Check if it's already open BEFORE loading the file
     if (App::get().options().tabbedUI && parent->selectEditorPanel(thm->getFileName())) {
-        fprintf(stderr, "DBG fileSelected: already open in tab, returning true\n");
         thm->decreaseRef();
         return true;
     }
 
     // Check if the image is already being opened and set the image loading status if it is not
     bool loading = thm->imageLoad( true );
-    fprintf(stderr, "DBG fileSelected: imageLoad returned %d\n", (int)loading);
-
     if( !loading ) {
         return false;
     }
@@ -398,7 +401,6 @@ bool FilePanel::addBatchQueueJobs(const std::vector<BatchQueueEntry*>& entries)
 
 bool FilePanel::imageLoaded( Thumbnail* thm, ProgressConnector<rtengine::InitialImage*> *pc )
 {
-    fprintf(stderr, "DBG imageLoaded: thm=%p pc=%p returnValue=%p\n", (void*)thm, (void*)pc, (void*)pc->returnValue());
     pendingLoadMutex.lock();
 
     // find our place in the array and mark the entry as complete
@@ -477,7 +479,7 @@ void FilePanel::saveOptions ()
     int winW, winH;
     parent->get_size(winW, winH);
     options.dirBrowserWidth = dirpaned->get_position ();
-    // placespaned is now a Box — dirBrowserHeight no longer used
+    options.dirBrowserHeight = placespaned->get_position ();
     options.browserToolPanelWidth = winW - get_position();
     options.browserToolPanelHeight = tpcPaned->get_position ();
 

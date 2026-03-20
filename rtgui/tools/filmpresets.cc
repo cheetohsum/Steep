@@ -46,11 +46,18 @@ const FilmPresets::PresetInfo FilmPresets::presetList[] = {
 
 const int FilmPresets::numPresets = sizeof(presetList) / sizeof(presetList[0]);
 
+FilmPresets::~FilmPresets()
+{
+    delete customDialog_;
+}
+
 FilmPresets::FilmPresets() :
     FoldableToolPanel(this, TOOL_NAME, M("TP_FILMPRESETS_LABEL"), false, true),
     activePresetIdx_(0),
     hoverPresetIdx_(-1),
-    detailExpanded_(false)
+    detailExpanded_(false),
+    customDialog_(nullptr),
+    dialogScrolled_(nullptr)
 {
     auto m = ProcEventMapper::getInstance();
     EvFilmPresetsEnabled      = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_ENABLED");
@@ -70,6 +77,8 @@ FilmPresets::FilmPresets() :
     EvFilmPresetsRedShift     = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_REDSHIFT");
     EvFilmPresetsGreenShift   = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_GREENSHIFT");
     EvFilmPresetsBlueShift    = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_BLUESHIFT");
+    EvFilmPresetsGrain        = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_GRAIN");
+    EvFilmPresetsVibrance     = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_VIBRANCE");
 
     // --- Label + enable checkbox + preset dropdown on same row ---
     auto* headerLabel = Gtk::manage(new Gtk::Label(M("TP_FILMPRESETS_LABEL")));
@@ -246,6 +255,21 @@ FilmPresets::FilmPresets() :
     detailContent_->pack_start(*greenShift);
     detailContent_->pack_start(*blueShift);
 
+    // -- Film Character --
+    auto* filmCharLabel = Gtk::manage(new Gtk::Label());
+    filmCharLabel->set_markup("<small>" + M("TP_FILMPRESETS_SECTION_FILM") + "</small>");
+    filmCharLabel->set_halign(Gtk::ALIGN_START);
+    filmCharLabel->get_style_context()->add_class("section-label");
+    detailContent_->pack_start(*filmCharLabel, Gtk::PACK_SHRINK, 4);
+
+    grainAdj = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_GRAIN"), 0., 100., 1., 0.));
+    grainAdj->setAdjusterListener(this);
+    detailContent_->pack_start(*grainAdj);
+
+    vibranceAdj = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_VIBRANCE"), -100., 100., 1., 0.));
+    vibranceAdj->setAdjusterListener(this);
+    detailContent_->pack_start(*vibranceAdj);
+
     // -- Special --
     auto* specialLabel = Gtk::manage(new Gtk::Label());
     specialLabel->set_markup("<small>" + M("TP_FILMPRESETS_SECTION_SPECIAL") + "</small>");
@@ -330,6 +354,53 @@ void FilmPresets::onPresetLeave()
     }
 }
 
+void FilmPresets::openCustomDialog()
+{
+    if (!customDialog_) {
+        Gtk::Window* toplevel = dynamic_cast<Gtk::Window*>(get_toplevel());
+
+        customDialog_ = new Gtk::Dialog(
+            M("TP_FILMPRESETS_CUSTOM"),
+            false
+        );
+        if (toplevel) {
+            customDialog_->set_transient_for(*toplevel);
+        }
+        customDialog_->set_default_size(550, 700);
+        customDialog_->set_type_hint(Gdk::WINDOW_TYPE_HINT_DIALOG);
+
+        dialogScrolled_ = Gtk::manage(new Gtk::ScrolledWindow());
+        dialogScrolled_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+
+        auto* contentArea = customDialog_->get_content_area();
+        contentArea->pack_start(*dialogScrolled_, Gtk::PACK_EXPAND_WIDGET);
+
+        customDialog_->signal_delete_event().connect([this](GdkEventAny*) -> bool {
+            if (detailContent_->get_parent() == dialogScrolled_) {
+                dialogScrolled_->remove();
+                detailRevealer_->add(*detailContent_);
+                detailContent_->show_all();
+            }
+            customDialog_->hide();
+            return true;
+        });
+    }
+
+    if (customDialog_->is_visible()) {
+        customDialog_->present();
+        return;
+    }
+
+    // Reparent detailContent_ into the dialog's scrolled window
+    if (detailContent_->get_parent()) {
+        detailContent_->get_parent()->remove(*detailContent_);
+    }
+    dialogScrolled_->add(*detailContent_);
+    detailContent_->show_all();
+    customDialog_->show_all();
+    customDialog_->present();
+}
+
 void FilmPresets::onPresetClick(int idx)
 {
     hoverTimeout_.disconnect();
@@ -338,9 +409,19 @@ void FilmPresets::onPresetClick(int idx)
     updateButtonLabel();
     presetPopover_->popdown();
 
-    // Auto-expand detail section when "Custom" is selected
-    if (idx == 0 && !detailExpanded_) {
-        toggleDetail();
+    if (idx == 0) {
+        // Custom: open dialog instead of inline toggle
+        openCustomDialog();
+    } else {
+        // Close custom dialog if visible
+        if (customDialog_ && customDialog_->is_visible()) {
+            if (detailContent_->get_parent() == dialogScrolled_) {
+                dialogScrolled_->remove();
+                detailRevealer_->add(*detailContent_);
+                detailContent_->show_all();
+            }
+            customDialog_->hide();
+        }
     }
 
     autoEnable();
@@ -379,6 +460,8 @@ void FilmPresets::read(const ProcParams* pp, const ParamsEdited* pedited)
         redShift->setEditedState(pedited->filmPresets.redShift ? Edited : UnEdited);
         greenShift->setEditedState(pedited->filmPresets.greenShift ? Edited : UnEdited);
         blueShift->setEditedState(pedited->filmPresets.blueShift ? Edited : UnEdited);
+        grainAdj->setEditedState(pedited->filmPresets.grain ? Edited : UnEdited);
+        vibranceAdj->setEditedState(pedited->filmPresets.vibrance ? Edited : UnEdited);
         set_inconsistent(multiImage && !pedited->filmPresets.enabled);
     }
 
@@ -405,6 +488,8 @@ void FilmPresets::read(const ProcParams* pp, const ParamsEdited* pedited)
     redShift->setValue(pp->filmPresets.redShift);
     greenShift->setValue(pp->filmPresets.greenShift);
     blueShift->setValue(pp->filmPresets.blueShift);
+    grainAdj->setValue(pp->filmPresets.grain);
+    vibranceAdj->setValue(pp->filmPresets.vibrance);
 
     enableListener();
 }
@@ -432,6 +517,8 @@ void FilmPresets::write(ProcParams* pp, ParamsEdited* pedited)
     pp->filmPresets.redShift = redShift->getValue();
     pp->filmPresets.greenShift = greenShift->getValue();
     pp->filmPresets.blueShift = blueShift->getValue();
+    pp->filmPresets.grain = grainAdj->getValue();
+    pp->filmPresets.vibrance = vibranceAdj->getValue();
 
     if (pedited) {
         pedited->filmPresets.enabled = !get_inconsistent();
@@ -451,6 +538,8 @@ void FilmPresets::write(ProcParams* pp, ParamsEdited* pedited)
         pedited->filmPresets.redShift = redShift->getEditedState();
         pedited->filmPresets.greenShift = greenShift->getEditedState();
         pedited->filmPresets.blueShift = blueShift->getEditedState();
+        pedited->filmPresets.grain = grainAdj->getEditedState();
+        pedited->filmPresets.vibrance = vibranceAdj->getEditedState();
     }
 }
 
@@ -471,6 +560,8 @@ void FilmPresets::setDefaults(const ProcParams* defParams, const ParamsEdited* p
     redShift->setDefault(defParams->filmPresets.redShift);
     greenShift->setDefault(defParams->filmPresets.greenShift);
     blueShift->setDefault(defParams->filmPresets.blueShift);
+    grainAdj->setDefault(defParams->filmPresets.grain);
+    vibranceAdj->setDefault(defParams->filmPresets.vibrance);
 
     if (pedited) {
         strength->setDefaultEditedState(pedited->filmPresets.strength ? Edited : UnEdited);
@@ -488,6 +579,8 @@ void FilmPresets::setDefaults(const ProcParams* defParams, const ParamsEdited* p
         redShift->setDefaultEditedState(pedited->filmPresets.redShift ? Edited : UnEdited);
         greenShift->setDefaultEditedState(pedited->filmPresets.greenShift ? Edited : UnEdited);
         blueShift->setDefaultEditedState(pedited->filmPresets.blueShift ? Edited : UnEdited);
+        grainAdj->setDefaultEditedState(pedited->filmPresets.grain ? Edited : UnEdited);
+        vibranceAdj->setDefaultEditedState(pedited->filmPresets.vibrance ? Edited : UnEdited);
     } else {
         strength->setDefaultEditedState(Irrelevant);
         contrast->setDefaultEditedState(Irrelevant);
@@ -504,6 +597,8 @@ void FilmPresets::setDefaults(const ProcParams* defParams, const ParamsEdited* p
         redShift->setDefaultEditedState(Irrelevant);
         greenShift->setDefaultEditedState(Irrelevant);
         blueShift->setDefaultEditedState(Irrelevant);
+        grainAdj->setDefaultEditedState(Irrelevant);
+        vibranceAdj->setDefaultEditedState(Irrelevant);
     }
 }
 
@@ -556,6 +651,10 @@ void FilmPresets::adjusterChanged(Adjuster* a, double newval)
             listener->panelChanged(EvFilmPresetsGreenShift, a->getTextValue());
         } else if (a == blueShift) {
             listener->panelChanged(EvFilmPresetsBlueShift, a->getTextValue());
+        } else if (a == grainAdj) {
+            listener->panelChanged(EvFilmPresetsGrain, a->getTextValue());
+        } else if (a == vibranceAdj) {
+            listener->panelChanged(EvFilmPresetsVibrance, a->getTextValue());
         }
     }
 }
@@ -603,4 +702,6 @@ void FilmPresets::setBatchMode(bool batchMode)
     redShift->showEditedCB();
     greenShift->showEditedCB();
     blueShift->showEditedCB();
+    grainAdj->showEditedCB();
+    vibranceAdj->showEditedCB();
 }

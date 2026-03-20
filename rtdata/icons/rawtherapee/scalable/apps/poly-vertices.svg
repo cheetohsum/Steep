@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+  <!-- Polygon outline with vertex dots -->
+  <polygon points="3,12 2,5 8,1 14,5 13,12"
+    style="opacity:0.7;fill:none;stroke:#cccccc;stroke-width:1.2;stroke-linejoin:round"/>
+  <circle cx="3" cy="12" r="1.5" style="opacity:0.8;fill:#cccccc"/>
+  <circle cx="2" cy="5" r="1.5" style="opacity:0.8;fill:#cccccc"/>
+  <circle cx="8" cy="1" r="1.5" style="opacity:0.8;fill:#cccccc"/>
+  <circle cx="14" cy="5" r="1.5" style="opacity:0.8;fill:#cccccc"/>
+  <circle cx="13" cy="12" r="1.5" style="opacity:0.8;fill:#cccccc"/>
+</svg>

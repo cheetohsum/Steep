@@ -1,0 +1,22 @@
+[Film Presets]
+Enabled=true
+Preset=cinematic_500t
+Strength=80
+Contrast=-5
+Halation=40
+Warmth=-10
+
+[Exposure]
+Auto=false
+Compensation=0.15
+Contrast=-5
+HighlightCompr=60
+ShadowCompr=70
+CurveMode=Standard
+Curve=3;0;0.06;0.20;0.18;0.50;0.52;0.80;0.85;1;0.97;
+
+[White Balance]
+Enabled=true
+Setting=Custom
+Temperature=3800
+Green=1.0

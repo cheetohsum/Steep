@@ -1810,6 +1810,8 @@ struct FilmPresetsParams {
     int redShift;           // -100..100
     int greenShift;         // -100..100
     int blueShift;          // -100..100
+    int grain;              // 0..100
+    int vibrance;           // -100..100
 
     FilmPresetsParams();
 
@@ -2135,6 +2137,7 @@ public:
     int                     rank;            ///< Custom image quality ranking
     int                     colorlabel;      ///< Custom color label
     bool                    inTrash;         ///< Marks deleted image
+    int                     pickLabel;       ///< Pick/reject flag: 0=unflagged, 1=picked, -1=rejected
     Glib::ustring           appVersion;      ///< Version of the application that generated the parameters
     int                     ppVersion;       ///< Version of the PP file from which the parameters have been read
 

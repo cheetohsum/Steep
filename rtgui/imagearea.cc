@@ -134,8 +134,10 @@ void ImageArea::setImProcCoordinator(rtengine::StagedImageProcessor* ipc_)
 
         cropWins.clear();
 
-        mainCropWindow->deleteColorPickers ();
-        mainCropWindow->setObservedCropWin (nullptr);
+        if (mainCropWindow) {
+            mainCropWindow->deleteColorPickers ();
+            mainCropWindow->setObservedCropWin (nullptr);
+        }
     }
 
     ipc = ipc_;
@@ -754,6 +756,30 @@ void ImageArea::setZoom (double zoom)
 void ImageArea::initialImageArrived ()
 {
     if (mainCropWindow) {
+        // If this is the "before" panel, match the "after" panel's zoom and
+        // position so the before image shows the same area immediately.
+        if (parent->isBeforePanel()) {
+            ImageArea* linked = parent->getLinkedImageArea();
+            if (linked) {
+                double linkedZoom = linked->getZoom();
+                if (linkedZoom > 0) {
+                    suppressZoomSync_ = true;
+                    mainCropWindow->setZoom(linkedZoom);
+                    suppressZoomSync_ = false;
+                }
+                int x, y;
+                linked->getScrollPosition(x, y);
+                mainCropWindow->setCropAnchorPosition(x, y);
+            }
+            parent->initialImageReady_ = true;
+            parent->syncBeforeAfterViews();
+
+            ImageSize size = mainCropWindow->cropHandler.getFullImageSize();
+            fullImageWidth = size.width;
+            fullImageHeight = size.height;
+            return;
+        }
+
         const auto& options = App::get().options();
         ImageSize size = mainCropWindow->cropHandler.getFullImageSize();
         if(options.prevdemo != PD_Sidecar || !options.rememberZoomAndPan ||

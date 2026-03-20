@@ -300,7 +300,7 @@ RTWindow::RTWindow ()
         gtkosx_application_ready (osxApp);
     }
 #endif
-    versionStr = "RawTherapee " + App::VERSION;
+    versionStr = "Steep " + App::VERSION;
 
     set_title_decorated ("");
     set_resizable (true);
@@ -1188,6 +1188,13 @@ RTWindow::RTWindow ()
         add (*mainVBox);
         show_all ();
 
+        // CSD edge resize: detect cursor near window edges and start resize drag
+        add_events(Gdk::POINTER_MOTION_MASK | Gdk::BUTTON_PRESS_MASK);
+        signal_motion_notify_event().connect(
+            sigc::mem_fun(*this, &RTWindow::onWindowMotion), false);
+        signal_button_press_event().connect(
+            sigc::mem_fun(*this, &RTWindow::onWindowButtonPress), false);
+
         bpanel->init (this);
 
         if (!App::get().argv1().empty() && !App::get().isRemote()) {
@@ -1919,14 +1926,20 @@ void RTWindow::on_nav_switched (Gtk::ToggleButton* active)
             // Reverse hero: filmstrip thumbnails grow to browser grid positions
             if (isSingleTabMode() && epanel && isEditorPanel(mainNB->get_current_page())) {
                 navSwitching = false;
-                // Capture filmstrip thumbnails before animating editor out
-                captureFilmstripThumbnails();
-                // Start sidebar slide-out
-                epanel->animateEditorOut(nullptr);
-                // Start reverse hero transition (manages page switch + browser reveal)
-                startReverseHeroTransition([this]() {
-                    mainNB->set_current_page(mainNB->page_num(*fpanel));
-                });
+                if (App::get().options().editorFilmStripOpened) {
+                    // Full hero animation — filmstrip is visible
+                    captureFilmstripThumbnails();
+                    epanel->animateEditorOut(nullptr);
+                    startReverseHeroTransition([this]() {
+                        mainNB->set_current_page(mainNB->page_num(*fpanel));
+                    });
+                } else {
+                    // Filmstrip collapsed — skip hero, but still animate sidebar out
+                    // Page switch happens after sidebar animation completes
+                    epanel->animateEditorOut([this]() {
+                        mainNB->set_current_page(mainNB->page_num(*fpanel));
+                    });
+                }
                 return;
             }
             mainNB->set_current_page (mainNB->page_num (*fpanel));
@@ -1935,12 +1948,17 @@ void RTWindow::on_nav_switched (Gtk::ToggleButton* active)
             if (isSingleTabMode() && epanel) {
                 // Hero transition: thumbnails fly from browser grid to filmstrip
                 if (mainNB->get_current_page() == mainNB->page_num(*fpanel)) {
-                    navSwitching = false;
-                    heroAnimConn_.disconnect();
-                    viewAnimConn_.disconnect();
-                    captureVisibleThumbnails();
-                    startHeroTransition();
-                    return;
+                    if (App::get().options().editorFilmStripOpened) {
+                        // Full hero animation — filmstrip is visible
+                        navSwitching = false;
+                        heroAnimConn_.disconnect();
+                        viewAnimConn_.disconnect();
+                        captureVisibleThumbnails();
+                        startHeroTransition();
+                        return;
+                    }
+                    // Filmstrip collapsed — skip hero, page switch triggers
+                    // animateEditorIn via on_mainNB_switch_page
                 }
                 mainNB->set_current_page (mainNB->page_num (*epanel));
             } else if (!epanels.empty()) {
@@ -2585,4 +2603,73 @@ void RTWindow::showMcpDialog()
 {
     mcp::McpDialog dlg(*this, mcpServer_.get());
     dlg.run();
+}
+
+int RTWindow::detectEdge(double x, double y, int w, int h) const
+{
+    const int g = RESIZE_GRIP;
+    bool left   = x < g;
+    bool right  = x >= w - g;
+    bool top    = y < g;
+    bool bottom = y >= h - g;
+
+    if (top && left)     return Gdk::WINDOW_EDGE_NORTH_WEST;
+    if (top && right)    return Gdk::WINDOW_EDGE_NORTH_EAST;
+    if (bottom && left)  return Gdk::WINDOW_EDGE_SOUTH_WEST;
+    if (bottom && right) return Gdk::WINDOW_EDGE_SOUTH_EAST;
+    if (top)             return Gdk::WINDOW_EDGE_NORTH;
+    if (bottom)          return Gdk::WINDOW_EDGE_SOUTH;
+    if (left)            return Gdk::WINDOW_EDGE_WEST;
+    if (right)           return Gdk::WINDOW_EDGE_EAST;
+    return -1;
+}
+
+bool RTWindow::onWindowMotion(GdkEventMotion* event)
+{
+    if (is_fullscreen || is_maximized()) return false;
+
+    int w = get_allocated_width();
+    int h = get_allocated_height();
+    int edge = detectEdge(event->x, event->y, w, h);
+
+    Glib::RefPtr<Gdk::Window> win = get_window();
+    if (!win) return false;
+
+    if (edge < 0) {
+        win->set_cursor();
+        return false;
+    }
+
+    Glib::RefPtr<Gdk::Cursor> cursor;
+    Glib::RefPtr<Gdk::Display> disp = get_display();
+    switch (static_cast<Gdk::WindowEdge>(edge)) {
+        case Gdk::WINDOW_EDGE_NORTH:       cursor = Gdk::Cursor::create(disp, "n-resize"); break;
+        case Gdk::WINDOW_EDGE_SOUTH:       cursor = Gdk::Cursor::create(disp, "s-resize"); break;
+        case Gdk::WINDOW_EDGE_WEST:        cursor = Gdk::Cursor::create(disp, "w-resize"); break;
+        case Gdk::WINDOW_EDGE_EAST:        cursor = Gdk::Cursor::create(disp, "e-resize"); break;
+        case Gdk::WINDOW_EDGE_NORTH_WEST:  cursor = Gdk::Cursor::create(disp, "nw-resize"); break;
+        case Gdk::WINDOW_EDGE_NORTH_EAST:  cursor = Gdk::Cursor::create(disp, "ne-resize"); break;
+        case Gdk::WINDOW_EDGE_SOUTH_WEST:  cursor = Gdk::Cursor::create(disp, "sw-resize"); break;
+        case Gdk::WINDOW_EDGE_SOUTH_EAST:  cursor = Gdk::Cursor::create(disp, "se-resize"); break;
+    }
+    win->set_cursor(cursor);
+    return false;
+}
+
+bool RTWindow::onWindowButtonPress(GdkEventButton* event)
+{
+    if (is_fullscreen || is_maximized()) return false;
+    if (event->button != 1 || event->type != GDK_BUTTON_PRESS) return false;
+
+    int w = get_allocated_width();
+    int h = get_allocated_height();
+    int edge = detectEdge(event->x, event->y, w, h);
+
+    if (edge < 0) return false;
+
+    get_window()->begin_resize_drag(static_cast<Gdk::WindowEdge>(edge),
+        event->button,
+        static_cast<int>(event->x_root), static_cast<int>(event->y_root),
+        event->time);
+    return true;
 }

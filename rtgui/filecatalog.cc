@@ -24,6 +24,7 @@
 #include <iterator>
 #include <iostream>
 #include <iomanip>
+#include <numeric>
 #include <thread>
 
 #include <glib/gstdio.h>
@@ -333,10 +334,10 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     // setup button bar
     buttonBar = Gtk::manage( new Gtk::Box () );
     buttonBar->set_name ("ToolBarPanelFileBrowser");
-    MyScrolledToolbar *stb = Gtk::manage(new MyScrolledToolbar());
-    stb->set_name("FileBrowserIconToolbar");
-    stb->add(*buttonBar);
-    pack_start (*stb, Gtk::PACK_SHRINK);
+    stb_ = Gtk::manage(new MyScrolledToolbar());
+    stb_->set_name("FileBrowserIconToolbar");
+    stb_->add(*buttonBar);
+    pack_start (*stb_, Gtk::PACK_SHRINK);
 
     tbLeftPanel_1 = new Gtk::ToggleButton ();
     iLeftPanel_1_Show = new RTImage("panel-to-right", Gtk::ICON_SIZE_LARGE_TOOLBAR);
@@ -507,6 +508,52 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
 
     filterBar->pack_start (*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK);
 
+    // Pick/Reject/Unflag filter buttons
+    {
+        Gtk::Box* fltrPickbox = Gtk::manage(new Gtk::Box());
+        fltrPickbox->get_style_context()->add_class("smallbuttonbox");
+
+        iPicked = new RTImage("flag-pick", Gtk::ICON_SIZE_BUTTON);
+        igPicked = new RTImage("flag-pick", Gtk::ICON_SIZE_BUTTON);
+        bPicked = Gtk::manage(new Gtk::ToggleButton());
+        bPicked->get_style_context()->add_class("smallbutton");
+        bPicked->set_active(false);
+        bPicked->set_image(*igPicked);
+        bPicked->set_relief(Gtk::RELIEF_NONE);
+        bPicked->set_tooltip_markup(M("FILEBROWSER_SHOWPICKEDHINT"));
+        bCateg[20] = bPicked->signal_toggled().connect(sigc::bind(sigc::mem_fun(*this, &FileCatalog::categoryButtonToggled), bPicked, true));
+        fltrPickbox->pack_start(*bPicked, Gtk::PACK_SHRINK);
+        bPicked->signal_button_press_event().connect(sigc::mem_fun(*this, &FileCatalog::capture_event), false);
+
+        iUnflagged = new RTImage("flag-unflagged", Gtk::ICON_SIZE_BUTTON);
+        igUnflagged = new RTImage("flag-unflagged", Gtk::ICON_SIZE_BUTTON);
+        bUnflagged = Gtk::manage(new Gtk::ToggleButton());
+        bUnflagged->get_style_context()->add_class("smallbutton");
+        bUnflagged->set_active(false);
+        bUnflagged->set_image(*igUnflagged);
+        bUnflagged->set_relief(Gtk::RELIEF_NONE);
+        bUnflagged->set_tooltip_markup(M("FILEBROWSER_SHOWUNFLAGGEDHINT"));
+        bCateg[21] = bUnflagged->signal_toggled().connect(sigc::bind(sigc::mem_fun(*this, &FileCatalog::categoryButtonToggled), bUnflagged, true));
+        fltrPickbox->pack_start(*bUnflagged, Gtk::PACK_SHRINK);
+        bUnflagged->signal_button_press_event().connect(sigc::mem_fun(*this, &FileCatalog::capture_event), false);
+
+        iRejected = new RTImage("flag-reject", Gtk::ICON_SIZE_BUTTON);
+        igRejected = new RTImage("flag-reject", Gtk::ICON_SIZE_BUTTON);
+        bRejected = Gtk::manage(new Gtk::ToggleButton());
+        bRejected->get_style_context()->add_class("smallbutton");
+        bRejected->set_active(false);
+        bRejected->set_image(*igRejected);
+        bRejected->set_relief(Gtk::RELIEF_NONE);
+        bRejected->set_tooltip_markup(M("FILEBROWSER_SHOWREJECTEDHINT"));
+        bCateg[22] = bRejected->signal_toggled().connect(sigc::bind(sigc::mem_fun(*this, &FileCatalog::categoryButtonToggled), bRejected, true));
+        fltrPickbox->pack_start(*bRejected, Gtk::PACK_SHRINK);
+        bRejected->signal_button_press_event().connect(sigc::mem_fun(*this, &FileCatalog::capture_event), false);
+
+        filterBar->pack_start(*fltrPickbox, Gtk::PACK_SHRINK);
+    }
+
+    filterBar->pack_start (*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK);
+
     fltrVbox2 = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     fltrEditedBox = Gtk::manage (new Gtk::Box());
     fltrEditedBox->get_style_context()->add_class("smallbuttonbox");
@@ -608,6 +655,35 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     filterBar->pack_start (*bOriginal, Gtk::PACK_SHRINK);
     // bNotTrash is not packed (removed from UI, always inactive)
 
+    // Filetype filter dropdown
+    filterBar->pack_start(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK);
+    {
+        filetypeButton_ = Gtk::manage(new Gtk::MenuButton());
+        filetypeButton_->set_label(M("FILEBROWSER_FILETYPE_ALL"));
+        filetypeButton_->set_relief(Gtk::RELIEF_NONE);
+        filetypeButton_->set_tooltip_markup(M("FILEBROWSER_FILETYPE_TOOLTIP"));
+        filetypeButton_->get_style_context()->add_class("smallbutton");
+
+        filetypePopover_ = Gtk::manage(new Gtk::Popover(*filetypeButton_));
+        filetypeBox_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
+        filetypeBox_->set_margin_start(10);
+        filetypeBox_->set_margin_end(10);
+        filetypeBox_->set_margin_top(8);
+        filetypeBox_->set_margin_bottom(8);
+        filetypeBox_->set_size_request(140, -1);
+
+        filetypeAllCheck_ = Gtk::manage(new Gtk::CheckButton(M("FILEBROWSER_FILETYPE_SELECTALL")));
+        filetypeAllCheck_->set_active(true);
+        filetypeAllCheck_->signal_toggled().connect(sigc::mem_fun(*this, &FileCatalog::onFiletypeAllToggled));
+        filetypeBox_->pack_start(*filetypeAllCheck_, Gtk::PACK_SHRINK);
+        filetypeBox_->pack_start(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)), Gtk::PACK_SHRINK);
+
+        filetypePopover_->add(*filetypeBox_);
+        filetypePopover_->set_position(Gtk::POS_BOTTOM);
+        filetypeButton_->set_popover(*filetypePopover_);
+        filterBar->pack_start(*filetypeButton_, Gtk::PACK_SHRINK);
+    }
+
     // Wrap filterBar in a Revealer
     filterRevealer_ = Gtk::manage(new Gtk::Revealer());
     filterRevealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
@@ -635,6 +711,9 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     categoryButtons[17] = bTrash;
     categoryButtons[18] = bNotTrash;
     categoryButtons[19] = bOriginal;
+    categoryButtons[20] = bPicked;
+    categoryButtons[21] = bUnflagged;
+    categoryButtons[22] = bRejected;
 
     exifInfo = Gtk::manage(new Gtk::ToggleButton ());
     exifInfo->set_image (*Gtk::manage(new RTImage ("info-modern", Gtk::ICON_SIZE_BUTTON)));
@@ -914,9 +993,20 @@ void FileCatalog::closeDir ()
 
     // ignore old requests
     ++selectedDirectoryId;
+    earlySelectDone_ = false;
 
     // terminate thumbnail preview loading
     previewLoader->removeAllJobs ();
+
+    // discard any pending preview batch entries
+    {
+        std::lock_guard<std::mutex> lock(previewBatchMutex_);
+        for (auto& p : pendingPreviews_) {
+            delete p.second;
+        }
+        pendingPreviews_.clear();
+        previewBatchPending_ = false;
+    }
 
     // terminate thumbnail updater
     thumbImageUpdater->removeAllJobs ();
@@ -931,6 +1021,19 @@ void FileCatalog::closeDir ()
         dirEFS.clear ();
     }
     hasValidCurrentEFS = false;
+
+    // Clear filetype UI for the new directory, but preserve selectedFiletypes_
+    // so the filter persists across folder switches
+    filetypeBlockSignals_ = true;
+    knownFiletypes_.clear();
+    for (auto& pair : filetypeChecks_) {
+        filetypeBox_->remove(*pair.second);
+    }
+    filetypeChecks_.clear();
+    filetypeAllCheck_->set_active(selectedFiletypes_.empty());
+    filetypeBlockSignals_ = false;
+    updateFiletypeButtonLabel();
+
     redrawAll ();
 }
 
@@ -971,58 +1074,89 @@ void FileCatalog::dirSelected (const Glib::ustring& dirname, const Glib::ustring
             addAndOpenFile (openfile);
         }
 
+        // Tell the preview loader to prioritize jobs near the target image
+        // so the filmstrip shows relevant thumbnails first.
+        if (!openfile.empty()) {
+            previewLoader->setPriorityHint(openfile);
+        } else if (!imageToSelect_fname.empty()) {
+            previewLoader->setPriorityHint(imageToSelect_fname);
+        }
+
         selectedDirectory = dir->get_parse_name();
 
         BrowsePath->set_text(selectedDirectory);
         buttonBrowsePath->set_image(*iRefreshWhite);
         filepanel->loadingThumbs(M("PROGRESSBAR_LOADINGTHUMBS"), 0);
 
-        // Enumerate files in background thread, streaming batches to
-        // the main thread as they're discovered so preview loading starts
-        // immediately rather than waiting for full enumeration to complete.
+        // Enumerate files in background thread, then sort by proximity to the
+        // target image so that filmstrip-visible thumbnails load first.
         const int dirId = selectedDirectoryId.load();
         const Glib::ustring selDir = selectedDirectory;
         const Glib::ustring openF = openfile;
-        std::thread([this, dirId, selDir, openF]() {
+        const Glib::ustring imgTarget = imageToSelect_fname;
+        std::thread([this, dirId, selDir, openF, imgTarget]() {
             std::vector<Glib::RefPtr<Gio::File>> allDirs;
             const auto& opts = App::get().options();
             int dirs_left = opts.browseRecursive ? opts.browseRecursiveMaxDirs : 0;
 
-            const size_t BATCH = 50;
-            std::vector<Glib::ustring> batch;
-            batch.reserve(BATCH);
+            // Phase 1: Collect all filenames (fast — just readdir)
+            std::vector<Glib::ustring> allFiles;
+            getFilesRecursivelyStreaming(
+                selDir, opts.browseRecursiveDepth, dirs_left,
+                [&](const Glib::ustring& fname) -> bool {
+                    if (dirId != selectedDirectoryId.load(std::memory_order_relaxed)) {
+                        return false;
+                    }
+                    allFiles.push_back(fname);
+                    return true;
+                },
+                &allDirs);
 
-            auto flushBatch = [&]() {
-                if (batch.empty()) return;
-                auto b = std::move(batch);
-                batch.reserve(BATCH);
-                Glib::signal_idle().connect_once([this, dirId, b, openF]() {
+            if (dirId != selectedDirectoryId.load(std::memory_order_relaxed)) return;
+
+            // Phase 2: Sort by proximity to the target image so filmstrip-
+            // visible thumbnails (near the selected image) load first.
+            const Glib::ustring target = !openF.empty() ? openF : imgTarget;
+            if (!target.empty() && allFiles.size() > 1) {
+                std::sort(allFiles.begin(), allFiles.end());
+                auto it = std::lower_bound(allFiles.begin(), allFiles.end(), target);
+                const size_t targetIdx = static_cast<size_t>(std::distance(allFiles.begin(), it));
+
+                // Build index array sorted by distance from target
+                std::vector<size_t> order(allFiles.size());
+                std::iota(order.begin(), order.end(), 0);
+                std::sort(order.begin(), order.end(), [targetIdx](size_t a, size_t b) {
+                    size_t distA = (a >= targetIdx) ? (a - targetIdx) : (targetIdx - a);
+                    size_t distB = (b >= targetIdx) ? (b - targetIdx) : (targetIdx - b);
+                    return distA < distB;
+                });
+
+                std::vector<Glib::ustring> sorted;
+                sorted.reserve(allFiles.size());
+                for (size_t idx : order) {
+                    sorted.push_back(std::move(allFiles[idx]));
+                }
+                allFiles = std::move(sorted);
+            }
+
+            // Phase 3: Dispatch in batches to main thread
+            const size_t BATCH = 50;
+            for (size_t i = 0; i < allFiles.size(); i += BATCH) {
+                if (dirId != selectedDirectoryId.load(std::memory_order_relaxed)) return;
+                size_t end = std::min(i + BATCH, allFiles.size());
+                std::vector<Glib::ustring> batch(
+                    std::make_move_iterator(allFiles.begin() + i),
+                    std::make_move_iterator(allFiles.begin() + end));
+
+                Glib::signal_idle().connect_once([this, dirId, batch, openF]() {
                     if (dirId != selectedDirectoryId.load()) return;
-                    for (const auto& f : b) {
+                    for (const auto& f : batch) {
                         if (openF.empty() || f != openF) {
                             addFile(f);
                         }
                     }
                 });
-            };
-
-            getFilesRecursivelyStreaming(
-                selDir, opts.browseRecursiveDepth, dirs_left,
-                [&](const Glib::ustring& fname) -> bool {
-                    // Abort early if user switched to another folder
-                    if (dirId != selectedDirectoryId.load(std::memory_order_relaxed)) {
-                        return false;
-                    }
-                    batch.push_back(fname);
-                    if (batch.size() >= BATCH) {
-                        flushBatch();
-                    }
-                    return true;
-                },
-                &allDirs);
-
-            // Flush any remaining files
-            flushBatch();
+            }
 
             // Final callback: update UI and monitors
             Glib::signal_idle().connect_once([this, dirId, allDirs]() {
@@ -1079,11 +1213,17 @@ void FileCatalog::enableTabMode(bool enable)
 
     const auto& options = App::get().options();
     if (enable) {
+        // Add CSS class for filmstrip-specific styling (zero padding)
+        get_style_context()->add_class("filmstrip");
+        fileBrowser->get_style_context()->add_class("filmstrip");
+
         // Collapse the filter bar when entering filmstrip mode to prevent
         // it from overlapping the filmstrip thumbnails.
         if (bFilterToggle_ && bFilterToggle_->get_active()) {
             bFilterToggle_->set_active(false);  // triggers filterToggled → hides & clears
         }
+        // Hide the revealer widget entirely so it contributes zero pixels
+        filterRevealer_->hide();
 
         if (options.showFilmStripToolBar) {
             showToolBar();
@@ -1095,13 +1235,23 @@ void FileCatalog::enableTabMode(bool enable)
         exifInfo->set_active( options.filmStripShowFileNames );
 
     } else {
+        get_style_context()->remove_class("filmstrip");
+        fileBrowser->get_style_context()->remove_class("filmstrip");
+
+        stb_->show();
         buttonBar->show();
         hbToolBar1->show();
+        filterRevealer_->show();
         fltrVbox1->show();
         exifInfo->set_active( options.showFileNames );
     }
 
     fileBrowser->enableTabMode(inTabMode);
+
+    // Reset size request now that inTabMode flag is set.
+    // In tab mode this clears the large height from browser mode;
+    // in browser mode this recalculates the proper height.
+    refreshHeight();
 
     if (!enable) {
         // Reapply the browser's own filter to clear any editor-applied filter
@@ -1156,76 +1306,117 @@ void FileCatalog::_refreshProgressBar ()
 
 void FileCatalog::previewReady (int dir_id, FileBrowserEntry* fdn)
 {
-    idle_register.add(
-        [this, dir_id, fdn]() -> bool
+    // Collect entries from background PreviewLoader threads into a batch.
+    // A single idle callback processes the whole batch, avoiding thousands
+    // of individual idle dispatches that would saturate the GTK main loop
+    // when loading folders with many images.
+    bool needSchedule = false;
+    {
+        std::lock_guard<std::mutex> lock(previewBatchMutex_);
+        pendingPreviews_.emplace_back(dir_id, fdn);
+        if (!previewBatchPending_) {
+            previewBatchPending_ = true;
+            needSchedule = true;
+        }
+    }
+
+    if (needSchedule) {
+        idle_register.add(
+            [this]() -> bool {
+                return processPendingPreviews_();
+            },
+            G_PRIORITY_DEFAULT_IDLE
+        );
+    }
+}
+
+bool FileCatalog::processPendingPreviews_()
+{
+    std::vector<std::pair<int, FileBrowserEntry*>> batch;
+    {
+        std::lock_guard<std::mutex> lock(previewBatchMutex_);
+        batch.swap(pendingPreviews_);
+    }
+
+    for (auto& p : batch) {
+        const int dir_id = p.first;
+        FileBrowserEntry* fdn = p.second;
+
+        if (dir_id != selectedDirectoryId) {
+            delete fdn;
+            continue;
+        }
+
+        // put it into the "full directory" browser
+        fdn->setImageAreaToolListener(iatlistener);
+        fileBrowser->addEntry_(fdn);
+
+        // update exif filter settings
+        const CacheImageData* cfs = fdn->thumbnail->getCacheImageData();
         {
-            if ( dir_id != selectedDirectoryId ) {
-                delete fdn;
-                return false;
-            }
+            MyMutex::MyLock lock(dirEFSMutex);
 
-            // put it into the "full directory" browser
-            fdn->setImageAreaToolListener (iatlistener);
-            fileBrowser->addEntry_ (fdn);
-
-            // update exif filter settings (minimal & maximal values of exif tags, cameras, lenses, etc...)
-            const CacheImageData* cfs = fdn->thumbnail->getCacheImageData();
-
-            {
-                MyMutex::MyLock lock(dirEFSMutex);
-
-                if (cfs->exifValid) {
-                    if (cfs->fnumber < dirEFS.fnumberFrom) {
-                        dirEFS.fnumberFrom = cfs->fnumber;
-                    }
-
-                    if (cfs->fnumber > dirEFS.fnumberTo) {
-                        dirEFS.fnumberTo = cfs->fnumber;
-                    }
-
-                    if (cfs->shutter < dirEFS.shutterFrom) {
-                        dirEFS.shutterFrom = cfs->shutter;
-                    }
-
-                    if (cfs->shutter > dirEFS.shutterTo) {
-                        dirEFS.shutterTo = cfs->shutter;
-                    }
-
-                    if (cfs->iso > 0 && cfs->iso < dirEFS.isoFrom) {
-                        dirEFS.isoFrom = cfs->iso;
-                    }
-
-                    if (cfs->iso > 0 && cfs->iso > dirEFS.isoTo) {
-                        dirEFS.isoTo = cfs->iso;
-                    }
-
-                    if (cfs->focalLen < dirEFS.focalFrom) {
-                        dirEFS.focalFrom = cfs->focalLen;
-                    }
-
-                    if (cfs->focalLen > dirEFS.focalTo) {
-                        dirEFS.focalTo = cfs->focalLen;
-                    }
-
-                    //TODO: ass filters for HDR and PixelShift files
+            if (cfs->exifValid) {
+                if (cfs->fnumber < dirEFS.fnumberFrom) {
+                    dirEFS.fnumberFrom = cfs->fnumber;
                 }
-
-                dirEFS.filetypes.insert (cfs->filetype);
-                dirEFS.cameras.insert (cfs->getCamera());
-                dirEFS.lenses.insert (cfs->lens);
-                dirEFS.expcomp.insert (cfs->expcomp);
+                if (cfs->fnumber > dirEFS.fnumberTo) {
+                    dirEFS.fnumberTo = cfs->fnumber;
+                }
+                if (cfs->shutter < dirEFS.shutterFrom) {
+                    dirEFS.shutterFrom = cfs->shutter;
+                }
+                if (cfs->shutter > dirEFS.shutterTo) {
+                    dirEFS.shutterTo = cfs->shutter;
+                }
+                if (cfs->iso > 0 && cfs->iso < dirEFS.isoFrom) {
+                    dirEFS.isoFrom = cfs->iso;
+                }
+                if (cfs->iso > 0 && cfs->iso > dirEFS.isoTo) {
+                    dirEFS.isoTo = cfs->iso;
+                }
+                if (cfs->focalLen < dirEFS.focalFrom) {
+                    dirEFS.focalFrom = cfs->focalLen;
+                }
+                if (cfs->focalLen > dirEFS.focalTo) {
+                    dirEFS.focalTo = cfs->focalLen;
+                }
             }
 
-            previewsLoaded++;
+            dirEFS.filetypes.insert(cfs->filetype);
+            dirEFS.cameras.insert(cfs->getCamera());
+            dirEFS.lenses.insert(cfs->lens);
+            dirEFS.expcomp.insert(cfs->expcomp);
+        }
 
-            // Throttle progress bar updates — only every 10 entries or at completion
-            if (previewsLoaded >= previewsToLoad || previewsLoaded % 10 == 0) {
-                _refreshProgressBar();
-            }
-            return false;
-        },
-        G_PRIORITY_DEFAULT_IDLE
-    );
+        previewsLoaded++;
+    }
+
+    if (!batch.empty()) {
+        _refreshProgressBar();
+        updateFiletypeFilter();
+    }
+
+    // Early scroll-to-selection: as soon as the target image appears in a
+    // batch, select+scroll to it so the user sees it immediately instead of
+    // waiting for ALL previews to finish loading.
+    if (!earlySelectDone_ && !imageToSelect_fname.empty()) {
+        fileBrowser->selectImage(imageToSelect_fname);
+        if (fileBrowser->getSelectedThumbnail()) {
+            earlySelectDone_ = true;
+        }
+    }
+
+    // Check if more entries arrived while we were processing
+    {
+        std::lock_guard<std::mutex> lock(previewBatchMutex_);
+        if (pendingPreviews_.empty()) {
+            previewBatchPending_ = false;
+            return false;  // done — remove idle source
+        }
+    }
+    // More entries pending — keep the idle source active
+    return true;
 }
 
 // Called within GTK UI thread
@@ -1256,6 +1447,31 @@ void FileCatalog::previewsFinishedUI(int dir_id)
     fileBrowser->refreshQuickThumbImages();
     fileBrowser->applyFilter(getFilter());  // refresh total image count
     _refreshProgressBar();
+
+    // Now that all types are known, prune any persisted filetype selections
+    // that don't exist in this folder
+    if (!selectedFiletypes_.empty()) {
+        std::set<std::string> pruned;
+        for (const auto& ft : selectedFiletypes_) {
+            if (knownFiletypes_.count(ft) > 0) {
+                pruned.insert(ft);
+            }
+        }
+        if (pruned.empty() || pruned == knownFiletypes_) {
+            // None of the filtered types exist here, or all types match — clear filter
+            selectedFiletypes_.clear();
+            filetypeBlockSignals_ = true;
+            for (auto& pair : filetypeChecks_) {
+                pair.second->set_active(true);
+            }
+            filetypeAllCheck_->set_active(true);
+            filetypeBlockSignals_ = false;
+        } else {
+            selectedFiletypes_ = pruned;
+        }
+        updateFiletypeButtonLabel();
+        fileBrowser->applyFilter(getFilter());
+    }
 
     filepanel->loadingThumbs(M("PROGRESSBAR_READY"), 0);
 
@@ -1304,6 +1520,15 @@ void FileCatalog::refreshThumbImages ()
 
 void FileCatalog::refreshHeight ()
 {
+    if (inTabMode) {
+        // In filmstrip mode, do NOT set a size request on FileCatalog.
+        // The parent (catalogPane) constrains the height; FileCatalog
+        // just fills whatever space it gets. Setting a large size request
+        // here would force the parent to grow beyond its cap.
+        set_size_request(0, 0);
+        return;
+    }
+
     int newHeight = fileBrowser->getEffectiveHeight();
 
     if (newHeight < 5) {  // This may occur if there's no thumbnail.
@@ -1316,12 +1541,11 @@ void FileCatalog::refreshHeight ()
         newHeight += buttonBar->get_height();
     }
 
-    set_size_request(0, newHeight + 2); // HOMBRE: yeah, +2, there's always 2 pixels missing... sorry for this dirty hack O:)
+    set_size_request(0, newHeight);
 }
 
 void FileCatalog::_openImage(const std::vector<Thumbnail*>& tmb)
 {
-    fprintf(stderr, "DBG _openImage: tmb.size=%zu enabled=%d listener=%p\n", tmb.size(), (int)enabled, (void*)listener);
     if (enabled && listener) {
         for (size_t i = 0; i < tmb.size(); i++) {
             // fileSelected does not complete with a fully loaded image, but it does do some preliminary checks
@@ -2044,6 +2268,7 @@ BrowserFilter FileCatalog::getFilter ()
 
     bool anyRankFilterActive = bUnRanked->get_active () || bRank[0]->get_active () || bRank[1]->get_active () || bRank[2]->get_active () || bRank[3]->get_active () || bRank[4]->get_active ();
     bool anyCLabelFilterActive = bUnCLabeled->get_active () || bCLabel[0]->get_active () || bCLabel[1]->get_active () || bCLabel[2]->get_active () || bCLabel[3]->get_active () || bCLabel[4]->get_active ();
+    bool anyPickFilterActive = bPicked->get_active() || bRejected->get_active() || bUnflagged->get_active();
     bool anyEditedFilterActive = bEdited[0]->get_active() || bEdited[1]->get_active();
     bool anyRecentlySavedFilterActive = bRecentlySaved[0]->get_active() || bRecentlySaved[1]->get_active();
     const bool anySupplementaryActive = bOriginal->get_active();
@@ -2107,6 +2332,17 @@ BrowserFilter FileCatalog::getFilter ()
     filter.showNotTrash = !bTrash->get_active();
     filter.showOriginal = bOriginal->get_active();
 
+    // Pick filter: if no pick filter buttons are active or filter is cleared, show all
+    if (anyPickFilterActive && !bFilterClear->get_active()) {
+        filter.showPicked = bPicked->get_active();
+        filter.showRejected = bRejected->get_active();
+        filter.showUnflagged = bUnflagged->get_active();
+    } else {
+        filter.showPicked = true;
+        filter.showRejected = true;
+        filter.showUnflagged = true;
+    }
+
     if (!filterPanel) {
         filter.exifFilterEnabled = false;
     } else {
@@ -2147,6 +2383,7 @@ BrowserFilter FileCatalog::getFilter ()
         }
     }
     filter.albumWhitelist = albumWhitelist_;
+    filter.filetypeFilter = selectedFiletypes_;
 
     return filter;
 }
@@ -2207,6 +2444,157 @@ void FileCatalog::filterChanged ()
     // this needs further analysis and cleanup
     fileBrowser->applyFilter (getFilter());
     _refreshProgressBar();
+}
+
+void FileCatalog::updateFiletypeFilter ()
+{
+    // Collect filetypes from dirEFS (uppercased for display consistency)
+    std::set<std::string> types;
+    {
+        MyMutex::MyLock lock(dirEFSMutex);
+        for (const auto& ft : dirEFS.filetypes) {
+            std::string upper = ft;
+            std::transform(upper.begin(), upper.end(), upper.begin(), ::toupper);
+            types.insert(upper);
+        }
+    }
+
+    // Nothing new to add?
+    if (types == knownFiletypes_) return;
+
+    filetypeBlockSignals_ = true;
+
+    // Add checkboxes for newly discovered types
+    bool hasFilter = !selectedFiletypes_.empty();
+    for (const auto& ft : types) {
+        if (knownFiletypes_.find(ft) != knownFiletypes_.end()) continue;
+
+        auto* cb = Gtk::manage(new Gtk::CheckButton(ft));
+        // If a filter is active from a previous folder, only check types that
+        // are in the persisted selection; otherwise start all checked
+        cb->set_active(!hasFilter || selectedFiletypes_.count(ft) > 0);
+        cb->signal_toggled().connect(
+            sigc::bind(sigc::mem_fun(*this, &FileCatalog::onFiletypeCheckToggled), ft));
+        filetypeBox_->pack_start(*cb, Gtk::PACK_SHRINK);
+        filetypeChecks_[ft] = cb;
+    }
+
+    knownFiletypes_ = types;
+
+    // Keep persisted selection intact during progressive loading —
+    // we can't prune yet because not all types have been discovered.
+    // The "All" checkbox reflects whether a filter is active.
+    if (hasFilter) {
+        filetypeAllCheck_->set_active(false);
+    }
+
+    filetypeBox_->show_all();
+    filetypeBlockSignals_ = false;
+
+    updateFiletypeButtonLabel();
+    // Re-apply filter so newly discovered types respect the selection
+    if (!selectedFiletypes_.empty()) {
+        filterChanged();
+    }
+}
+
+void FileCatalog::onFiletypeCheckToggled (const std::string& filetype)
+{
+    if (filetypeBlockSignals_) return;
+
+    // Rebuild selectedFiletypes_ from checkbox states
+    selectedFiletypes_.clear();
+    bool allChecked = true;
+    for (const auto& pair : filetypeChecks_) {
+        if (pair.second->get_active()) {
+            selectedFiletypes_.insert(pair.first);
+        } else {
+            allChecked = false;
+        }
+    }
+
+    // If all are checked, clear the set (means "show all")
+    if (allChecked) {
+        selectedFiletypes_.clear();
+    }
+
+    // Sync the "All" checkbox
+    filetypeBlockSignals_ = true;
+    filetypeAllCheck_->set_active(allChecked);
+    filetypeBlockSignals_ = false;
+
+    updateFiletypeButtonLabel();
+    filterChanged();
+}
+
+void FileCatalog::onFiletypeAllToggled ()
+{
+    if (filetypeBlockSignals_) return;
+
+    bool all = filetypeAllCheck_->get_active();
+    filetypeBlockSignals_ = true;
+    for (auto& pair : filetypeChecks_) {
+        pair.second->set_active(all);
+    }
+    filetypeBlockSignals_ = false;
+
+    if (all) {
+        selectedFiletypes_.clear();
+        filetypeButton_->set_label(M("FILEBROWSER_FILETYPE_ALL"));
+    } else {
+        // "All" unchecked = hide everything (unusual but consistent)
+        selectedFiletypes_.clear();
+        // Actually, unchecking "All" should deselect all types
+        // The filter will show nothing — user must pick specific types
+    }
+
+    filterChanged();
+}
+
+void FileCatalog::setSelectedFiletypes (const std::set<std::string>& sel)
+{
+    selectedFiletypes_ = sel;
+
+    // Sync checkbox state
+    filetypeBlockSignals_ = true;
+    bool allChecked = sel.empty();
+    for (auto& pair : filetypeChecks_) {
+        pair.second->set_active(allChecked || sel.count(pair.first) > 0);
+    }
+    filetypeAllCheck_->set_active(allChecked);
+    filetypeBlockSignals_ = false;
+
+    updateFiletypeButtonLabel();
+    filterChanged();
+}
+
+void FileCatalog::updateFiletypeButtonLabel ()
+{
+    if (selectedFiletypes_.empty()) {
+        filetypeButton_->set_label(M("FILEBROWSER_FILETYPE_ALL"));
+    } else if (selectedFiletypes_.size() == 1) {
+        filetypeButton_->set_label(*selectedFiletypes_.begin() + " Only");
+    } else if (selectedFiletypes_.size() == 2) {
+        auto it = selectedFiletypes_.begin();
+        Glib::ustring first = *it++;
+        filetypeButton_->set_label(first + ", " + *it);
+    } else {
+        filetypeButton_->set_label(
+            Glib::ustring::compose("%1 +%2 more", *selectedFiletypes_.begin(),
+                                   selectedFiletypes_.size() - 1));
+    }
+}
+
+void FileCatalog::resetFiletypeFilter ()
+{
+    filetypeBlockSignals_ = true;
+    selectedFiletypes_.clear();
+    for (auto& pair : filetypeChecks_) {
+        pair.second->set_active(true);
+    }
+    filetypeAllCheck_->set_active(true);
+    filetypeBlockSignals_ = false;
+    filetypeButton_->set_label(M("FILEBROWSER_FILETYPE_ALL"));
 }
 
 void FileCatalog::saveResetState ()
@@ -3065,10 +3453,12 @@ bool FileCatalog::handleShortcutKeyRelease(GdkEventKey* event)
 
 void FileCatalog::showToolBar()
 {
+    if (inTabMode) stb_->show();
     buttonBar->show();
 }
 
 void FileCatalog::hideToolBar()
 {
     buttonBar->hide();
+    if (inTabMode) stb_->hide();
 }

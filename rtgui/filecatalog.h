@@ -19,7 +19,10 @@
 #pragma once
 
 #include <atomic>
+#include <map>
+#include <mutex>
 #include <set>
+#include <utility>
 
 #include <giomm.h>
 
@@ -90,6 +93,7 @@ private:
     DirSelectionSlot selectDir;
 
     Gtk::Box* buttonBar;
+    MyScrolledToolbar* stb_;
     Gtk::Box* hbToolBar1;
 
     Gtk::Box* fltrRankbox;
@@ -123,18 +127,22 @@ private:
     Gtk::ToggleButton* bCLabel[5];//color label
     Gtk::ToggleButton* bEdited[2];
     Gtk::ToggleButton* bRecentlySaved[2];
+    Gtk::ToggleButton* bPicked;
+    Gtk::ToggleButton* bRejected;
+    Gtk::ToggleButton* bUnflagged;
     Gtk::ToggleButton* bTrash;
     Gtk::ToggleButton* bNotTrash;
     Gtk::ToggleButton* bOriginal;
     Gtk::ToggleButton* bRecursive;
-    Gtk::ToggleButton* categoryButtons[20];
+    Gtk::ToggleButton* categoryButtons[23];
     Gtk::ToggleButton* exifInfo;
-    sigc::connection bCateg[20];
+    sigc::connection bCateg[23];
     Gtk::Image* iFilterClear, *igFilterClear;
     Gtk::Image* iranked[5], *igranked[5], *iUnRanked, *igUnRanked;
     Gtk::Image* iCLabeled[5], *igCLabeled[5], *iUnCLabeled, *igUnCLabeled;
     Gtk::Image* iEdited[2], *igEdited[2];
     Gtk::Image* iRecentlySaved[2], *igRecentlySaved[2];
+    Gtk::Image *iPicked, *igPicked, *iRejected, *igRejected, *iUnflagged, *igUnflagged;
     Gtk::Image *iTrashShowEmpty, *iTrashShowFull;
     Gtk::Image *iNotTrash, *iOriginal;
     Gtk::Image *iRefreshWhite, *iRefreshRed;
@@ -179,9 +187,33 @@ private:
 
     IdleRegister idle_register;
 
+    // Preview batching: collect thumbnails from background PreviewLoader
+    // threads and process them in batches to avoid thousands of individual
+    // idle callbacks that saturate the GTK main loop.
+    std::mutex previewBatchMutex_;
+    std::vector<std::pair<int, FileBrowserEntry*>> pendingPreviews_;
+    bool previewBatchPending_ = false;
+    bool processPendingPreviews_();
+
+    bool earlySelectDone_ = false;
+
     std::set<std::string> albumWhitelist_;
     bool inAlbumMode_;
     Glib::ustring savedDirectory_;
+
+    // Filetype filter dropdown
+    Gtk::MenuButton* filetypeButton_;
+    Gtk::Popover* filetypePopover_;
+    Gtk::Box* filetypeBox_;
+    Gtk::CheckButton* filetypeAllCheck_;
+    std::map<std::string, Gtk::CheckButton*> filetypeChecks_;
+    std::set<std::string> knownFiletypes_;       // all types seen (uppercase)
+    std::set<std::string> selectedFiletypes_;    // active types (uppercase); empty = all
+    bool filetypeBlockSignals_ = false;
+    void updateFiletypeFilter();
+    void onFiletypeCheckToggled(const std::string& filetype);
+    void onFiletypeAllToggled();
+    void resetFiletypeFilter();
 
     // Color label hover-expand handlers
     bool onColorLabelChildEnter(GdkEventCrossing* event);
@@ -338,6 +370,12 @@ public:
 
     void showToolBar();
     void hideToolBar();
+
+    // Filetype filter state — shared between browser and editor filter bars
+    const std::set<std::string>& getKnownFiletypes() const { return knownFiletypes_; }
+    const std::set<std::string>& getSelectedFiletypes() const { return selectedFiletypes_; }
+    void setSelectedFiletypes(const std::set<std::string>& sel);
+    void updateFiletypeButtonLabel();
 
     void on_dir_changed (const Glib::RefPtr<Gio::File>& file, const Glib::RefPtr<Gio::File>& other_file, Gio::FileMonitorEvent event_type, bool internal);
 

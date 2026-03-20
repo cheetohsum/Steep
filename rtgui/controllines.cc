@@ -427,7 +427,7 @@ void ControlLineManager::addLine(Coord begin, Coord end,
                                  rtengine::ControlLine::Type type)
 {
     constexpr int line_width = 2;
-    constexpr int handle_radius = 6;
+    constexpr int handle_radius = 4;
     std::unique_ptr<Line> line;
     std::shared_ptr<OPIcon> icon_h, icon_v;
     std::unique_ptr<Circle> begin_c, end_c;
@@ -458,12 +458,20 @@ void ControlLineManager::addLine(Coord begin, Coord end,
     begin_c->filled = true;
     begin_c->radius = handle_radius;
     begin_c->center = begin;
+    begin_c->setAutoColor(false);
+    begin_c->setInnerLineColor(0.7, 0.7, 0.7);
+    begin_c->setOuterLineColor(0.2, 0.2, 0.2);
+    begin_c->opacity = 60.f;
 
     end_c = std::unique_ptr<Circle>(new Circle());
     end_c->datum = Geometry::IMAGE;
     end_c->filled = true;
     end_c->radius = handle_radius;
     end_c->center = end;
+    end_c->setAutoColor(false);
+    end_c->setInnerLineColor(0.7, 0.7, 0.7);
+    end_c->setOuterLineColor(0.2, 0.2, 0.2);
+    end_c->opacity = 60.f;
 
     std::unique_ptr<::ControlLine> control_line(new ::ControlLine());
     control_line->begin = std::move(begin_c);

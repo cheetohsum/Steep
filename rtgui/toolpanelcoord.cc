@@ -740,14 +740,10 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
 
     // --- Rotate section (inline) ---
     {
-        Gtk::Box* rotateRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
-
-        rotate->setParent(rotateRow);
+        rotate->setParent(transformPanel);
         rotate->setLevel(1);
         // rotate already has setFlatMode(true) in its constructor
-        rotateRow->pack_start(*rotate->getExpander(), true, true);
-
-        transformPanel->pack_start(*rotateRow, Gtk::PACK_SHRINK);
+        transformPanel->pack_start(*rotate->getExpander(), false, false);
     }
 
     // --- Perspective section (collapsible) ---
@@ -1117,6 +1113,11 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
 {
     if (params->locallab.spots.empty()) return false;
 
+    // Never bridge for internal mask visibility events — these aren't user edits.
+    using namespace rtengine;
+    const int id = event;
+    if (id == EvlocallabshowmaskMethod) return false;
+
     // Bridge when in mask mode OR when any locallab spot has gradient shape
     bool hasGradient = false;
     int gradIdx = -1;
@@ -1210,8 +1211,6 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
     }
 
     // Mask mode: event-specific bridging
-    using namespace rtengine;
-    const int id = event;
     bool bridged = false;
 
     if (id == EvExpComp || id == EvBlack || id == EvHLCompr || id == EvHLComprThreshold || id == EvSHCompr) {
@@ -1391,8 +1390,7 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
             break;
         case EditorMode::MASK:
             modeStack->set_visible_child("mask");
-            // Auto-expand spot removal and masking groups
-            spotGroup->setExpanded(true);
+            // Auto-expand masking group (the primary tool on this pane)
             maskingGroup->setExpanded(true);
             break;
     }
@@ -1426,6 +1424,13 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
         locallabPanel->pack_start(*detailGroup, Gtk::PACK_SHRINK);
         locallabPanel->pack_start(*effectsGroup, Gtk::PACK_SHRINK);
         locallabPanel->pack_start(*calibrationGroup, Gtk::PACK_SHRINK);
+        // Start all reparented groups collapsed on the Mask pane
+        lightGroup->setExpanded(false);
+        bwGroup->setExpanded(false);
+        colorGroup->setExpanded(false);
+        detailGroup->setExpanded(false);
+        effectsGroup->setExpanded(false);
+        calibrationGroup->setExpanded(false);
     }
     if (prevMode == EditorMode::MASK && mode != EditorMode::MASK) {
         locallabPanel->remove(*lightGroup);
@@ -1440,6 +1445,11 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
         editPanel->pack_start(*detailGroup, Gtk::PACK_SHRINK);
         editPanel->pack_start(*effectsGroup, Gtk::PACK_SHRINK);
         editPanel->pack_start(*calibrationGroup, Gtk::PACK_SHRINK);
+        // Restore edit-pane defaults: main groups expanded, effects/calibration collapsed
+        lightGroup->setExpanded(true);
+        bwGroup->setExpanded(true);
+        colorGroup->setExpanded(true);
+        detailGroup->setExpanded(true);
     }
 
     // Handle Locallab subscription/unsubscription
@@ -1454,6 +1464,19 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
                 locallab->enabledChanged();
             }
 
+            // Save global params BEFORE any panelChanged call, which could
+            // zero them via bridgeGlobalToSpot when a gradient spot exists.
+            if (ipc) {
+                ProcParams* p = ipc->beginUpdateParams();
+                savedToneCurve_ = p->toneCurve;
+                savedVibrance_ = p->vibrance;
+                savedSharpening_ = p->sharpening;
+                savedSH_ = p->sh;
+                savedBlackWhite_ = p->blackwhite;
+                ipc->endUpdateParams(0);
+            }
+            maskModeActive_ = true;
+
             // Fire mask visibility so the engine shows the overlay
             if (ipc) {
                 const Locallab::llMaskVisibility mv = locallab->getMaskVisibility();
@@ -1466,17 +1489,6 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
                 panelChanged(rtengine::EvlocallabshowmaskMethod, "");
             }
 
-            // Save global params and load spot values into global tools
-            maskModeActive_ = true;
-            if (ipc) {
-                ProcParams* p = ipc->beginUpdateParams();
-                savedToneCurve_ = p->toneCurve;
-                savedVibrance_ = p->vibrance;
-                savedSharpening_ = p->sharpening;
-                savedSH_ = p->sh;
-                savedBlackWhite_ = p->blackwhite;
-                ipc->endUpdateParams(0);
-            }
             loadSpotIntoGlobalTools();
         }
 
@@ -1489,6 +1501,7 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
                 p->vibrance = savedVibrance_;
                 p->sharpening = savedSharpening_;
                 p->sh = savedSH_;
+                p->blackwhite = savedBlackWhite_;
                 ipc->endUpdateParams(rtengine::RefreshMapper::getInstance()->getAction(
                     rtengine::EvlocallabshowmaskMethod));
 
@@ -1509,15 +1522,22 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
                 shadowshighlights->disableListener();
                 shadowshighlights->read(&restored);
                 shadowshighlights->enableListener();
+                blackwhite->disableListener();
+                blackwhite->read(&restored);
+                blackwhite->enableListener();
             }
 
             toolBar->blockEditDeactivation(false);
             locallab->unsubscribe();
-            // Clear mask overlay when leaving mask mode (all zeros = no mask shown)
+            // Clear mask overlay when leaving mask mode (all zeros = no mask shown).
+            // Skip locallab tool writes so the stale locallab tool widgets don't
+            // overwrite bridged spot values (expcomp, lightness, etc.).
             if (ipc) {
                 ipc->setLocallabMaskVisibility(false, false,
                     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+                locallab->setSkipToolWrites(true);
                 panelChanged(rtengine::EvlocallabshowmaskMethod, "");
+                locallab->setSkipToolWrites(false);
             }
         }
     }
@@ -2478,8 +2498,25 @@ void ToolPanelCoordinator::turnOffMaskOverlay(bool /*forceRedraw*/)
     ipc->setLocallabMaskVisibility(false, false,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 
-    // Trigger reprocess to clear overlay from dcrop
-    ipc->beginUpdateParams();
+    // Write current GUI state to params before triggering reprocess,
+    // otherwise uncommitted slider/adjuster values can be lost.
+    ProcParams* params = ipc->beginUpdateParams();
+    if (maskModeActive_) {
+        locallab->setSkipToolWrites(true);
+    }
+    for (auto toolPanel : toolPanels) {
+        toolPanel->write(params);
+    }
+    if (maskModeActive_) {
+        locallab->setSkipToolWrites(false);
+        // In mask mode, global tool widgets show spot values.
+        // Restore the real globals so the engine processes correctly.
+        params->toneCurve = savedToneCurve_;
+        params->vibrance = savedVibrance_;
+        params->sharpening = savedSharpening_;
+        params->sh = savedSH_;
+        params->blackwhite = savedBlackWhite_;
+    }
     ipc->endUpdateParams(AUTOEXP);
 }
 
@@ -2512,21 +2549,48 @@ void ToolPanelCoordinator::hoverMaskChanged(bool hover, bool forceRedraw)
             mv.SHMask, mv.SHMaskinv, mv.vibMask, mv.softMask,
             mv.blMask, mv.tmMask, mv.retiMask, mv.sharMask,
             mv.lcMask, mv.cbMask, mv.logMask, mv.maskMask, mv.cieMask);
-        ipc->beginUpdateParams();
+        // Write current GUI state to params before triggering reprocess,
+        // otherwise uncommitted slider/adjuster values can be lost.
+        ProcParams* params = ipc->beginUpdateParams();
+        if (maskModeActive_) {
+            locallab->setSkipToolWrites(true);
+        }
+        for (auto toolPanel : toolPanels) {
+            toolPanel->write(params);
+        }
+        if (maskModeActive_) {
+            locallab->setSkipToolWrites(false);
+            // Restore saved globals — write() put spot values into them
+            params->toneCurve = savedToneCurve_;
+            params->vibrance = savedVibrance_;
+            params->sharpening = savedSharpening_;
+            params->sh = savedSH_;
+            params->blackwhite = savedBlackWhite_;
+        }
         ipc->endUpdateParams(AUTOEXP);
 
         // Start watchdog: periodically check actual pointer position
         // This catches cases where leave events are missed (common on WSLg/X11)
+        hoverMissCount_ = 0;
         hoverMaskWatchdog_ = Glib::signal_timeout().connect([this]() {
             if (!hoverMaskApplied_) {
                 return false;  // already off
             }
             if (!locallab->isPointerOverMaskList()) {
-                turnOffMaskOverlay();
-                return false;  // stop watchdog
+                hoverMissCount_++;
+                // Require 3 consecutive misses to avoid false positives
+                // (Windows GDK can return stale coords during redraws)
+                if (hoverMissCount_ >= 3) {
+                    turnOffMaskOverlay();
+                    // Reset ControlSpotPanel's hover state so it can re-trigger
+                    locallab->resetSidebarHover();
+                    return false;  // stop watchdog
+                }
+            } else {
+                hoverMissCount_ = 0;
             }
             return true;  // keep checking
-        }, 300);
+        }, 500);
 
         return false;  // one-shot debounce
     }, 100);
@@ -2670,6 +2734,15 @@ void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const 
         hoverMaskDebounce_.disconnect();
         hoverMaskWatchdog_.disconnect();
         ipc->setLocallabMaskVisibility(false, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    } else if (hoverMaskApplied_) {
+        // Hover overlay is active — re-apply mask visibility so the reprocess
+        // triggered by this parameter change renders the overlay with updated values.
+        const Locallab::llMaskVisibility mv = locallab->getMaskVisibility();
+        ipc->setLocallabMaskVisibility(mv.previewDeltaE, mv.showMaskOverlay,
+            mv.colorMask, mv.colorMaskinv, mv.expMask, mv.expMaskinv,
+            mv.SHMask, mv.SHMaskinv, mv.vibMask, mv.softMask,
+            mv.blMask, mv.tmMask, mv.retiMask, mv.sharMask,
+            mv.lcMask, mv.cbMask, mv.logMask, mv.maskMask, mv.cieMask);
     }
 
     ipc->endUpdateParams(changeFlags);    // starts the IPC processing

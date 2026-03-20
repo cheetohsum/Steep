@@ -3411,7 +3411,9 @@ FilmPresetsParams::FilmPresetsParams() :
     halation(0),
     redShift(0),
     greenShift(0),
-    blueShift(0)
+    blueShift(0),
+    grain(0),
+    vibrance(0)
 {
 }
 
@@ -3434,7 +3436,9 @@ bool FilmPresetsParams::operator==(const FilmPresetsParams &other) const
         && halation == other.halation
         && redShift == other.redShift
         && greenShift == other.greenShift
-        && blueShift == other.blueShift;
+        && blueShift == other.blueShift
+        && grain == other.grain
+        && vibrance == other.vibrance;
 }
 
 bool FilmPresetsParams::operator!=(const FilmPresetsParams &other) const
@@ -4031,6 +4035,7 @@ void ProcParams::setDefaults()
     rank = -1;
     colorlabel = 0;
     inTrash = false;
+    pickLabel = 0;
 
     ppVersion = PPVERSION;
 }
@@ -4057,6 +4062,7 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         }
         saveToKeyfile(!pedited || pedited->general.colorlabel, "General", "ColorLabel", colorlabel, keyFile);
         saveToKeyfile(!pedited || pedited->general.intrash, "General", "InTrash", inTrash, keyFile);
+        saveToKeyfile(!pedited || pedited->general.picklabel, "General", "PickLabel", pickLabel, keyFile);
 
 // Tone curve
         saveToKeyfile(!pedited || pedited->toneCurve.autoexp, "Exposure", "Auto", toneCurve.autoexp, keyFile);
@@ -5103,6 +5109,8 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->filmPresets.redShift, "Film Presets", "RedShift", filmPresets.redShift, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.greenShift, "Film Presets", "GreenShift", filmPresets.greenShift, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.blueShift, "Film Presets", "BlueShift", filmPresets.blueShift, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.grain, "Film Presets", "Grain", filmPresets.grain, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.vibrance, "Film Presets", "Vibrance", filmPresets.vibrance, keyFile);
 
         saveToKeyfile(!pedited || pedited->rgbCurves.enabled, "RGB Curves", "Enabled", rgbCurves.enabled, keyFile);
         saveToKeyfile(!pedited || pedited->rgbCurves.lumamode, "RGB Curves", "LumaMode", rgbCurves.lumamode, keyFile);
@@ -5349,6 +5357,7 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited)
             assignFromKeyfile(keyFile, "General", "Rank", rank, pedited->general.rank);
             assignFromKeyfile(keyFile, "General", "ColorLabel", colorlabel, pedited->general.colorlabel);
             assignFromKeyfile(keyFile, "General", "InTrash", inTrash, pedited->general.intrash);
+            assignFromKeyfile(keyFile, "General", "PickLabel", pickLabel, pedited->general.picklabel);
         }
 
         if (keyFile.has_group("Exposure")) {
@@ -7101,6 +7110,8 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited)
             assignFromKeyfile(keyFile, "Film Presets", "RedShift", filmPresets.redShift, pedited->filmPresets.redShift);
             assignFromKeyfile(keyFile, "Film Presets", "GreenShift", filmPresets.greenShift, pedited->filmPresets.greenShift);
             assignFromKeyfile(keyFile, "Film Presets", "BlueShift", filmPresets.blueShift, pedited->filmPresets.blueShift);
+            assignFromKeyfile(keyFile, "Film Presets", "Grain", filmPresets.grain, pedited->filmPresets.grain);
+            assignFromKeyfile(keyFile, "Film Presets", "Vibrance", filmPresets.vibrance, pedited->filmPresets.vibrance);
         }
 
         if (keyFile.has_group("Film Simulation")) {
@@ -7839,6 +7850,7 @@ void PartialProfile::clearGeneral()
     if (pedited) {
         pedited->general.colorlabel = false;
         pedited->general.intrash = false;
+        pedited->general.picklabel = false;
         pedited->general.rank = false;
     }
 }

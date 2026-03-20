@@ -1,0 +1,21 @@
+[Film Presets]
+Enabled=true
+Preset=vivid_chrome
+Strength=85
+Contrast=15
+Saturation=10
+
+[Exposure]
+Auto=false
+Compensation=0.1
+Contrast=15
+HighlightCompr=50
+ShadowCompr=40
+
+[Sharpening]
+Enabled=true
+Contrast=15
+Method=usm
+Radius=0.9
+Amount=100
+Threshold=20;80;2000;1200;

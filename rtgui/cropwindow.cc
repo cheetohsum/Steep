@@ -522,7 +522,8 @@ void CropWindow::buttonPress (int button, int type, int bstate, int x, int y)
                         state = SResizeW2;
                         press_x = x;
                         action_x = cropHandler.cropParams->w;
-                    } else if ((bstate & GDK_SHIFT_MASK) && onArea (CropInside, x, y)) {
+                    } else if (((bstate & GDK_SHIFT_MASK) || iarea->getToolMode() == TMCropSelect)
+                               && onArea (CropInside, x, y)) {
                         state = SCropMove;
                         press_x = x;
                         press_y = y;
@@ -874,7 +875,9 @@ void CropWindow::buttonRelease (int button, int num, int bstate, int x, int y)
 
     if (cropgl && (state == SCropSelecting || state == SResizeH1 || state == SResizeH2 || state == SResizeW1 || state == SResizeW2 || state == SResizeTL || state == SResizeTR || state == SResizeBL || state == SResizeBR || state == SCropMove)) {
         cropgl->cropManipReady ();
-        iarea->setToolHand ();
+        if (iarea->getToolMode () != TMCropSelect) {
+            iarea->setToolHand ();
+        }
         needRedraw = true;
 
         if (fitZoom && options.cropAutoFit) {
@@ -1409,17 +1412,17 @@ void CropWindow::updateCursor (int x, int y)
             newType = CSResizeDiagonal;
         } else if (tm == TMColorPicker && hoveredPicker) {
             newType = CSMove;
-        } else if (tm == TMHand && (onArea (CropTopLeft, x, y))) {
+        } else if ((tm == TMHand || (tm == TMCropSelect && cropHandler.cropParams->enabled)) && (onArea (CropTopLeft, x, y))) {
             newType = CSResizeTopLeft;
-        } else if (tm == TMHand && (onArea (CropTopRight, x, y))) {
+        } else if ((tm == TMHand || (tm == TMCropSelect && cropHandler.cropParams->enabled)) && (onArea (CropTopRight, x, y))) {
             newType = CSResizeTopRight;
-        } else if (tm == TMHand && (onArea (CropBottomLeft, x, y))) {
+        } else if ((tm == TMHand || (tm == TMCropSelect && cropHandler.cropParams->enabled)) && (onArea (CropBottomLeft, x, y))) {
             newType = CSResizeBottomLeft;
-        } else if (tm == TMHand && (onArea (CropBottomRight, x, y))) {
+        } else if ((tm == TMHand || (tm == TMCropSelect && cropHandler.cropParams->enabled)) && (onArea (CropBottomRight, x, y))) {
             newType = CSResizeBottomRight;
-        } else if (tm == TMHand && (onArea (CropTop, x, y) || onArea (CropBottom, x, y))) {
+        } else if ((tm == TMHand || (tm == TMCropSelect && cropHandler.cropParams->enabled)) && (onArea (CropTop, x, y) || onArea (CropBottom, x, y))) {
             newType = CSResizeHeight;
-        } else if (tm == TMHand && (onArea (CropLeft, x, y) || onArea (CropRight, x, y))) {
+        } else if ((tm == TMHand || (tm == TMCropSelect && cropHandler.cropParams->enabled)) && (onArea (CropLeft, x, y) || onArea (CropRight, x, y))) {
             newType = CSResizeWidth;
         } else if (onArea (CropImage, x, y)) {
             int objectID = -1;
@@ -1446,7 +1449,11 @@ void CropWindow::updateCursor (int x, int y)
             } else if (tm == TMPointColorPick) {
                 newType = CSPointColorPick;
             } else if (tm == TMCropSelect) {
-                newType = CSCropSelect;
+                if (cropHandler.cropParams->enabled && onArea(CropInside, x, y)) {
+                    newType = CSMove;
+                } else {
+                    newType = CSCropSelect;
+                }
             } else if (tm == TMStraighten) {
                 newType = CSStraighten;
             } else if (tm == TMColorPicker) {
@@ -2848,12 +2855,28 @@ void CropWindow::setShowLevelingGrid (bool show)
 
 void CropWindow::drawLevelingGrid (Cairo::RefPtr<Cairo::Context> cr)
 {
-    // Draw horizontal and vertical guide lines across the image area
-    // to help the user level the image while adjusting rotation.
-    int x0 = windowPos.x + imgPos.x + imgAreaPos.x;
-    int y0 = windowPos.y + imgPos.y + imgAreaPos.y;
-    int w = imgAreaSize.width;
-    int h = imgAreaSize.height;
+    // Draw horizontal and vertical guide lines across the actual image content,
+    // not the full image area panel.
+    double deviceScale = RTScalable::getScaleForWidget(iarea);
+
+    // Image content rect in screen (logical) coordinates
+    double imgX = windowPos.x + imgAreaPos.x + imgPos.x;
+    double imgY = windowPos.y + imgAreaPos.y + imgPos.y;
+    double imgW = imgSize.width / deviceScale;
+    double imgH = imgSize.height / deviceScale;
+
+    // Image area bounds
+    double areaX = windowPos.x + imgAreaPos.x;
+    double areaY = windowPos.y + imgAreaPos.y;
+
+    // Intersect image rect with image area to get visible image region
+    double x0 = std::max(imgX, areaX);
+    double y0 = std::max(imgY, areaY);
+    double x1 = std::min(imgX + imgW, areaX + static_cast<double>(imgAreaSize.width));
+    double y1 = std::min(imgY + imgH, areaY + static_cast<double>(imgAreaSize.height));
+
+    double w = x1 - x0;
+    double h = y1 - y0;
 
     if (w <= 0 || h <= 0) return;
 
@@ -2868,7 +2891,6 @@ void CropWindow::drawLevelingGrid (Cairo::RefPtr<Cairo::Context> cr)
     for (int i = 1; i <= N; ++i) {
         double frac = static_cast<double>(i) / (N + 1);
 
-        // Solid white line
         cr->set_source_rgba(1.0, 1.0, 1.0, 0.35);
         // Horizontal
         double yy = y0 + h * frac;

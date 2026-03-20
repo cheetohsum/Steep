@@ -40,7 +40,7 @@ struct LocallabParams {
         Glib::ustring name;
         bool isvisible;
         Glib::ustring prevMethod; // show, hide
-        Glib::ustring shape; // ELI, RECT, GRAD
+        Glib::ustring shape; // ELI, RECT, GRAD, POLY
         Glib::ustring spotMethod; // norm, exc
         Glib::ustring wavMethod; // D2, D4, D6, D10, D14
         int sensiexclu;
@@ -50,6 +50,10 @@ struct LocallabParams {
         Glib::ustring avoidgamutMethod; // NONE, LAB, XYZ
 		
         std::vector<int> loc; // For ellipse/rectangle: {locX, locXL, locY, locYT}
+        std::vector<int> polyMaskPoints; // Polygon mask vertices: flattened [x1,y1,x2,y2,...] in image pixel coords
+        double polyMaskFeather; // Polygon mask feather width (0-100 pixels)
+        double polyMaskSnapTolerance; // Magnetic snap search radius in preview pixels (0-50)
+        double polyMaskLegLength; // Minimum distance between freehand lasso points in pixels (1-20)
         int centerX;
         int centerY;
         int circrad;

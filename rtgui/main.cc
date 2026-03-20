@@ -56,6 +56,7 @@
 #else
 #include "rtengine/leanwindows.h"
 #include <conio.h>
+#include <windows.h>
 
 #include <glibmm/thread.h>
 #endif
@@ -124,7 +125,7 @@ int processLineParams ( int argc, char **argv )
 #endif
 
                 case 'v':
-                    printf("RawTherapee, version %s\n", RTVERSION);
+                    printf("Steep, version %s\n", RTVERSION);
                     ret = 0;
                     break;
 
@@ -344,8 +345,64 @@ void show_gimp_plugin_info_dialog(Gtk::Window *parent)
 } // namespace
 
 
+#ifdef _WIN32
+static LONG WINAPI crashHandler(EXCEPTION_POINTERS* ep)
+{
+    fprintf(stderr, "\n=== CRASH ===\n");
+    fprintf(stderr, "Exception code: 0x%08lX\n", ep->ExceptionRecord->ExceptionCode);
+    fprintf(stderr, "Exception addr: %p\n", ep->ExceptionRecord->ExceptionAddress);
+    if (ep->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && ep->ExceptionRecord->NumberParameters >= 2) {
+        fprintf(stderr, "Access violation %s address %p\n",
+            ep->ExceptionRecord->ExceptionInformation[0] ? "writing" : "reading",
+            (void*)ep->ExceptionRecord->ExceptionInformation[1]);
+    }
+    fprintf(stderr, "RIP=%p RSP=%p\n", (void*)ep->ContextRecord->Rip, (void*)ep->ContextRecord->Rsp);
+
+    // Walk the stack with module names
+    fprintf(stderr, "Stack trace:\n");
+    void* stack[64];
+    USHORT frames = CaptureStackBackTrace(0, 64, stack, NULL);
+    for (USHORT i = 0; i < frames; i++) {
+        HMODULE hMod = NULL;
+        char modName[MAX_PATH] = "???";
+        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               (LPCSTR)stack[i], &hMod)) {
+            GetModuleFileNameA(hMod, modName, MAX_PATH);
+            // Just print the filename part
+            char* slash = strrchr(modName, '\\');
+            char* name = slash ? slash + 1 : modName;
+            fprintf(stderr, "  [%2d] %p (%s+0x%llx)\n", i, stack[i], name,
+                    (unsigned long long)((char*)stack[i] - (char*)hMod));
+        } else {
+            fprintf(stderr, "  [%2d] %p\n", i, stack[i]);
+        }
+    }
+
+    // Also resolve the crash address itself
+    {
+        HMODULE hMod = NULL;
+        char modName[MAX_PATH] = "???";
+        void* crashAddr = ep->ExceptionRecord->ExceptionAddress;
+        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               (LPCSTR)crashAddr, &hMod)) {
+            GetModuleFileNameA(hMod, modName, MAX_PATH);
+            char* slash = strrchr(modName, '\\');
+            char* name = slash ? slash + 1 : modName;
+            fprintf(stderr, "Crash in: %s+0x%llx\n", name,
+                    (unsigned long long)((char*)crashAddr - (char*)hMod));
+        }
+    }
+
+    fflush(stderr);
+    return EXCEPTION_EXECUTE_HANDLER;
+}
+#endif
+
 int main (int argc, char **argv)
 {
+#ifdef _WIN32
+    SetUnhandledExceptionFilter(crashHandler);
+#endif
     setlocale (LC_ALL, "");
     setlocale (LC_NUMERIC, "C"); // to set decimal point to "."
 
@@ -432,7 +489,7 @@ int main (int argc, char **argv)
                     SetConsoleCtrlHandler ( NULL, true );
                     // Set title of console
                     char consoletitle[128];
-                    snprintf(consoletitle, sizeof(consoletitle), "RawTherapee %s Console", RTVERSION);
+                    snprintf(consoletitle, sizeof(consoletitle), "Steep %s Console", RTVERSION);
                     SetConsoleTitle (consoletitle);
                     // increase size of screen buffer
                     COORD c;

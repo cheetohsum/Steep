@@ -37,6 +37,31 @@
 
 #include <fstream>
 #include <string>
+#include <cmath>
+#include <numeric>
+
+namespace {
+
+struct CurvePreset {
+    const char* langKey;
+    std::vector<double> points; // empty = "Custom" placeholder
+};
+
+const CurvePreset kDiagonalPresets[] = {
+    { "CURVEEDITOR_PRESET_CUSTOM",          {} },
+    { "CURVEEDITOR_PRESET_COLORNEG",        { 3, 0,1, 0.25,0.80, 0.50,0.50, 0.75,0.20, 1,0 } },
+    { "CURVEEDITOR_PRESET_CROSSPROCESS",    { 3, 0,0.05, 0.15,0.06, 0.35,0.45, 0.65,0.70, 0.85,0.95, 1,0.98 } },
+    { "CURVEEDITOR_PRESET_NEGATIVE",        { 3, 0,1, 0.5,0.5, 1,0 } },
+    { "CURVEEDITOR_PRESET_STRONGCONTRAST",  { 3, 0,0, 0.25,0.10, 0.50,0.50, 0.75,0.90, 1,1 } },
+    { "CURVEEDITOR_PRESET_LIFTSHADOWS",     { 3, 0,0.08, 0.25,0.25, 0.75,0.75, 1,1 } },
+    { "CURVEEDITOR_PRESET_SOLARIZED",       { 3, 0,0, 0.25,1, 0.50,0, 0.75,1, 1,0 } },
+    { "CURVEEDITOR_PRESET_LIGHTER",         { 3, 0,0, 0.25,0.35, 0.50,0.60, 0.75,0.82, 1,1 } },
+    { "CURVEEDITOR_PRESET_CONSTRICTMASK",   { 3, 0,0, 0.40,0, 0.60,1, 1,1 } },
+};
+
+constexpr int kNumPresets = sizeof(kDiagonalPresets) / sizeof(kDiagonalPresets[0]);
+
+} // namespace
 
 DiagonalCurveEditorSubGroup::DiagonalCurveEditorSubGroup (CurveEditorGroup* prt, Glib::ustring& curveDir) : CurveEditorSubGroup(curveDir)
 {
@@ -44,6 +69,7 @@ DiagonalCurveEditorSubGroup::DiagonalCurveEditorSubGroup (CurveEditorGroup* prt,
 
     editedAdjuster = nullptr;
     editedAdjusterValue = 0;
+    applyingPreset_ = false;
 
     Gtk::PositionType sideStart = options.curvebboxpos == 0 || options.curvebboxpos == 2 ? Gtk::POS_LEFT : Gtk::POS_TOP;
     Gtk::PositionType sideEnd = options.curvebboxpos == 0 || options.curvebboxpos == 2 ? Gtk::POS_RIGHT : Gtk::POS_BOTTOM;
@@ -352,6 +378,38 @@ DiagonalCurveEditorSubGroup::DiagonalCurveEditorSubGroup (CurveEditorGroup* prt,
     paramCurveGrid->show_all ();
     // parametric curve end
 
+
+    // Preset combo + center button (shared across Spline/CatmullRom/NURBS views)
+    Gtk::Grid* presetRow = Gtk::manage(new Gtk::Grid());
+    presetRow->set_orientation(Gtk::ORIENTATION_HORIZONTAL);
+    presetRow->set_column_spacing(4);
+    setExpandAlignProperties(presetRow, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+
+    presetCombo_ = Gtk::manage(new Gtk::ComboBoxText());
+    for (int i = 0; i < kNumPresets; ++i) {
+        presetCombo_->append(M(kDiagonalPresets[i].langKey));
+    }
+    presetCombo_->set_active(0);
+    presetCombo_->set_hexpand(true);
+
+    centerBtn_ = Gtk::manage(new Gtk::Button());
+    centerBtn_->set_image(*Gtk::manage(new RTImage("crosshair-node-curve")));
+    centerBtn_->set_tooltip_text(M("CURVEEDITOR_TOOLTIPCENTER"));
+    centerBtn_->set_relief(Gtk::RELIEF_NONE);
+
+    presetRow->add(*presetCombo_);
+    presetRow->add(*centerBtn_);
+
+    presetRow->set_name("CurvePresetRow");
+    presetRow->show_all();
+
+    // Preset row will be re-parented in switchGUI(); reference to prevent destruction
+    presetRow->reference();
+
+    presetComboConn_ = presetCombo_->signal_changed().connect(
+        sigc::mem_fun(*this, &DiagonalCurveEditorSubGroup::presetChanged));
+    centerBtn_->signal_clicked().connect(
+        sigc::mem_fun(*this, &DiagonalCurveEditorSubGroup::centerPressed));
 
     customCurveGrid->reference ();
     paramCurveGrid->reference ();
@@ -760,9 +818,23 @@ void DiagonalCurveEditorSubGroup::switchGUI()
             }
         }
 
+        // Re-parent preset row into the appropriate grid
+        {
+            Gtk::Grid* presetRow = static_cast<Gtk::Grid*>(presetCombo_->get_parent());
+            if (presetRow) {
+                auto* oldParent = presetRow->get_parent();
+                if (oldParent) {
+                    static_cast<Gtk::Container*>(oldParent)->remove(*presetRow);
+                }
+            }
+        }
+
         switch(auto tp = (DiagonalCurveType)(dCurve->curveType->getSelected())) {
         case (DCT_Spline):
-        case (DCT_CatumullRom):
+        case (DCT_CatumullRom): {
+            Gtk::Grid* presetRow = static_cast<Gtk::Grid*>(presetCombo_->get_parent());
+            customCurveGrid->attach_next_to(*presetRow, Gtk::POS_TOP, 1, 1);
+            presetRow->show_all();
             customCurve->setPoints(tp == DCT_Spline ? dCurve->customCurveEd : dCurve->catmullRomCurveEd);
             customCurve->setColorProvider(dCurve->getCurveColorProvider(), dCurve->getCurveCallerId());
             customCurve->setColoredBar(leftBar, bottomBar);
@@ -770,7 +842,9 @@ void DiagonalCurveEditorSubGroup::switchGUI()
             updateEditButton(dCurve, editCustom, editCustomConn);
             parent->attachCurve (customCurveGrid);
             customCurveGrid->check_resize();
+            markPresetCustom();
             break;
+        }
 
         case (DCT_Parametric): {
             Glib::ustring label[4];
@@ -806,7 +880,10 @@ void DiagonalCurveEditorSubGroup::switchGUI()
             break;
         }
 
-        case (DCT_NURBS):
+        case (DCT_NURBS): {
+            Gtk::Grid* presetRow = static_cast<Gtk::Grid*>(presetCombo_->get_parent());
+            NURBSCurveGrid->attach_next_to(*presetRow, Gtk::POS_TOP, 1, 1);
+            presetRow->show_all();
             NURBSCurve->setPoints (dCurve->NURBSCurveEd);
             NURBSCurve->setColorProvider(dCurve->getCurveColorProvider(), dCurve->getCurveCallerId());
             NURBSCurve->setColoredBar(leftBar, bottomBar);
@@ -814,15 +891,20 @@ void DiagonalCurveEditorSubGroup::switchGUI()
             updateEditButton(dCurve, editNURBS, editNURBSConn);
             parent->attachCurve (NURBSCurveGrid);
             NURBSCurveGrid->check_resize();
+            markPresetCustom();
             break;
+        }
 
         default:    // (DCT_Linear, DCT_Unchanged)
             // ... do nothing
             break;
         }
 
-        // In compact display mode, hide button boxes and coordinate adjusters
+        // In compact display mode, hide button boxes, preset row, and coordinate adjusters
         if (compactDisplay_) {
+            Gtk::Grid* presetRow = static_cast<Gtk::Grid*>(presetCombo_->get_parent());
+            if (presetRow) { presetRow->set_no_show_all(true); presetRow->hide(); }
+
             auto* bbox = editPointCustom->get_parent();
             if (bbox) { bbox->set_no_show_all(true); bbox->hide(); }
             customCoordAdjuster->set_no_show_all(true);
@@ -836,7 +918,10 @@ void DiagonalCurveEditorSubGroup::switchGUI()
             // Restore full width for curve when button box is hidden
             customCurve->set_hexpand(true);
         } else {
-            // Re-show button boxes and coordinate adjusters when compact mode is off
+            // Re-show preset row, button boxes and coordinate adjusters when compact mode is off
+            Gtk::Grid* presetRow = static_cast<Gtk::Grid*>(presetCombo_->get_parent());
+            if (presetRow) { presetRow->set_no_show_all(false); presetRow->show_all(); }
+
             auto* bbox = editPointCustom->get_parent();
             if (bbox) {
                 bbox->set_no_show_all(false);
@@ -1173,6 +1258,10 @@ void DiagonalCurveEditorSubGroup::storeDisplayedCurve()
         default:
             break;
         }
+
+        if (!applyingPreset_) {
+            markPresetCustom();
+        }
     }
 }
 
@@ -1378,6 +1467,167 @@ bool DiagonalCurveEditorSubGroup::adjusterLeft (GdkEventCrossing* ev, int ac)
     }
 
     return true;
+}
+
+void DiagonalCurveEditorSubGroup::presetChanged()
+{
+    int idx = presetCombo_->get_active_row_number();
+    if (idx <= 0) {
+        return; // "Custom" or nothing
+    }
+
+    const auto& preset = kDiagonalPresets[idx];
+    if (preset.points.empty()) {
+        return;
+    }
+
+    DiagonalCurveEditor* dCurve = static_cast<DiagonalCurveEditor*>(parent->displayedCurve);
+    if (!dCurve) {
+        return;
+    }
+
+    auto points = preset.points;
+
+    // Adapt the type byte to match the current curve type
+    auto tp = (DiagonalCurveType)(dCurve->curveType->getSelected());
+    switch (tp) {
+    case DCT_Spline:
+        points[0] = (double)DCT_Spline;
+        break;
+    case DCT_CatumullRom:
+        points[0] = (double)DCT_CatumullRom;
+        break;
+    case DCT_NURBS:
+        points[0] = (double)DCT_NURBS;
+        break;
+    default:
+        return;
+    }
+
+    applyingPreset_ = true;
+
+    if (tp == DCT_NURBS) {
+        NURBSCurve->setPoints(points);
+        NURBSCurve->notifyListener();
+    } else {
+        customCurve->setPoints(points);
+        customCurve->notifyListener();
+    }
+
+    applyingPreset_ = false;
+}
+
+void DiagonalCurveEditorSubGroup::centerPressed()
+{
+    DiagonalCurveEditor* dCurve = static_cast<DiagonalCurveEditor*>(parent->displayedCurve);
+    if (!dCurve) {
+        return;
+    }
+
+    std::vector<double> points;
+    auto tp = (DiagonalCurveType)(dCurve->curveType->getSelected());
+    MyDiagonalCurve* activeCurve = nullptr;
+
+    switch (tp) {
+    case DCT_Spline:
+    case DCT_CatumullRom:
+        points = customCurve->getPoints();
+        activeCurve = customCurve;
+        break;
+    case DCT_NURBS:
+        points = NURBSCurve->getPoints();
+        activeCurve = NURBSCurve;
+        break;
+    default:
+        return;
+    }
+
+    if (points.size() < 5) { // type + at least 2 control points (4 values)
+        return;
+    }
+
+    // Find the median of the image histogram — the x where
+    // half the total pixel count is to the left.
+    if (!dCurve->bgHistValid || dCurve->histogram.getSize() == 0) {
+        return; // no histogram data available
+    }
+
+    const LUTu& hist = dCurve->histogram;
+    int bins = hist.getSize();
+    unsigned long long totalPixels = 0;
+    for (int i = 0; i < bins; ++i) {
+        totalPixels += hist[i];
+    }
+    if (totalPixels == 0) {
+        return;
+    }
+
+    // Walk bins to find median
+    unsigned long long halfPixels = totalPixels / 2;
+    unsigned long long accumulated = 0;
+    double centerX = 0.5; // fallback
+    for (int i = 0; i < bins; ++i) {
+        accumulated += hist[i];
+        if (accumulated >= halfPixels) {
+            centerX = (double)i / (bins - 1); // normalize to [0, 1]
+            break;
+        }
+    }
+
+    // Evaluate the curve at the median x to get the y-value ON the curve
+    rtengine::DiagonalCurve dcurve(points);
+    double centerY = dcurve.getVal(centerX);
+
+    // Points layout: [type, x0, y0, x1, y1, ...]
+    int numPts = ((int)points.size() - 1) / 2;
+    if (numPts < 2) {
+        return;
+    }
+
+    if (numPts == 2) {
+        // Only endpoints — insert a new point at the histogram median
+        points.insert(points.begin() + 3, centerY);
+        points.insert(points.begin() + 3, centerX);
+    } else {
+        // Find the non-endpoint control point closest to x=0.5
+        int bestIdx = -1;
+        double bestDist = 1e9;
+        for (int i = 1; i < numPts - 1; ++i) {
+            double px = points[1 + i * 2];
+            double dist = std::abs(px - 0.5);
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestIdx = i;
+            }
+        }
+
+        if (bestIdx < 0) {
+            return;
+        }
+
+        // Clamp centerX between neighbors, then re-evaluate y on the curve
+        double leftX = points[1 + (bestIdx - 1) * 2];
+        double rightX = points[1 + (bestIdx + 1) * 2];
+        centerX = std::max(leftX + 0.001, std::min(rightX - 0.001, centerX));
+        centerY = dcurve.getVal(centerX);
+
+        points[1 + bestIdx * 2] = centerX;
+        points[1 + bestIdx * 2 + 1] = centerY;
+    }
+
+    applyingPreset_ = true;
+    activeCurve->setPoints(points);
+    activeCurve->notifyListener();
+    applyingPreset_ = false;
+
+    markPresetCustom();
+}
+
+void DiagonalCurveEditorSubGroup::markPresetCustom()
+{
+    presetComboConn_.block(true);
+    presetCombo_->set_active(0);
+    presetComboConn_.block(false);
 }
 
 void DiagonalCurveEditorSubGroup::setCurveGraphSize(int size)

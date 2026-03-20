@@ -199,6 +199,7 @@ public:
     llMaskVisibility getMaskVisibility() const;
     void setHoverMaskOverlay(bool hover);
     bool isPointerOverMaskList() const;
+    void resetSidebarHover();
     int getSpotCount();
 
     // Other widgets event functions

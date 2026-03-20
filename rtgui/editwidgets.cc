@@ -104,7 +104,8 @@ void Circle::drawOuterGeometry(Cairo::RefPtr<Cairo::Context> &cr, ObjectMOBuffer
             color = outerLineColor;
         }
 
-        cr->set_source_rgba (color.getR(), color.getG(), color.getB(), OUTERGEOM_OPACITY * rtengine::min(innerLineWidth / 2.f, 1.f));
+        double opacityFactor = opacity / 100.;
+        cr->set_source_rgba (color.getR(), color.getG(), color.getB(), opacityFactor * OUTERGEOM_OPACITY * rtengine::min(innerLineWidth / 2.f, 1.f));
         cr->set_line_width (lineWidth);
         cr->set_line_cap(Cairo::LINE_CAP_ROUND);
 
@@ -136,7 +137,7 @@ void Circle::drawInnerGeometry(Cairo::RefPtr<Cairo::Context> &cr, ObjectMOBuffer
                 color = innerLineColor;
             }
 
-            cr->set_source_rgba (color.getR(), color.getG(), color.getB(), INNERGEOM_OPACITY);
+            cr->set_source_rgba (color.getR(), color.getG(), color.getB(), opacity / 100.);
         }
 
         cr->set_line_width(innerLineWidth);
@@ -222,7 +223,8 @@ void Line::drawOuterGeometry(Cairo::RefPtr<Cairo::Context> &cr, ObjectMOBuffer *
             color = outerLineColor;
         }
 
-        cr->set_source_rgba (color.getR(), color.getG(), color.getB(), OUTERGEOM_OPACITY * rtengine::min(innerLineWidth / 2.f, 1.f));
+        double opacityFactor = opacity / 100.;
+        cr->set_source_rgba (color.getR(), color.getG(), color.getB(), opacityFactor * OUTERGEOM_OPACITY * rtengine::min(innerLineWidth / 2.f, 1.f));
         cr->set_line_width (lineWidth);
         cr->set_line_cap(Cairo::LINE_CAP_ROUND);
 
@@ -258,7 +260,7 @@ void Line::drawInnerGeometry(Cairo::RefPtr<Cairo::Context> &cr, ObjectMOBuffer *
                 color = innerLineColor;
             }
 
-            cr->set_source_rgba (color.getR(), color.getG(), color.getB(), INNERGEOM_OPACITY);
+            cr->set_source_rgba (color.getR(), color.getG(), color.getB(), opacity / 100.);
         }
 
         cr->set_line_width(innerLineWidth);

@@ -521,6 +521,7 @@ void ToolBar::stra_pressed ()
 void ToolBar::persp_pressed ()
 {
     if (listener && !perspTool->get_active()) {
+        current = TMHand;
         listener->toolDeselected(TMPerspective);
         return;
     }
@@ -545,6 +546,8 @@ void ToolBar::persp_pressed ()
         }
     }
 
+    current = TMPerspective;
+
     }
 
     if (listener) {
@@ -555,6 +558,7 @@ void ToolBar::persp_pressed ()
 void ToolBar::persp_grid_pressed ()
 {
     if (listener && !perspGridTool->get_active()) {
+        current = TMHand;
         listener->toolDeselected(TMPerspectiveGrid);
         return;
     }
@@ -577,6 +581,8 @@ void ToolBar::persp_grid_pressed ()
             listener->editModeSwitchedOff();
         }
     }
+
+    current = TMPerspectiveGrid;
 
     }
 

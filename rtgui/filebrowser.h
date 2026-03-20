@@ -78,6 +78,9 @@ private:
 protected:
     MyImageMenuItem* rank[6];
     MyImageMenuItem* colorlabel[6];
+    MyImageMenuItem* pickFlag;
+    MyImageMenuItem* rejectFlag;
+    MyImageMenuItem* unflagFlag;
     MyImageMenuItem* trash;
     MyImageMenuItem* untrash;
     MyImageMenuItem* develop;
@@ -149,6 +152,7 @@ protected:
     void sortOrderRequested (int order);
     void rankingRequested   (std::vector<FileBrowserEntry*> tbe, int rank);
     void colorlabelRequested   (std::vector<FileBrowserEntry*> tbe, int colorlabel);
+    void pickRequested (std::vector<FileBrowserEntry*> tbe, int pick);
     void notifySelectionListener ();
     void openRequested( std::vector<FileBrowserEntry*> mselected);
     void inspectRequested( std::vector<FileBrowserEntry*> mselected);
@@ -210,6 +214,7 @@ public:
 
     void requestRanking (int rank);
     void requestColorLabel(int colorlabel);
+    void requestPick(int pick);
     void requestDevelop();
 
     void openNextImage();

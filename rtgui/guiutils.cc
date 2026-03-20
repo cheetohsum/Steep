@@ -510,17 +510,26 @@ void drawCrop (const Cairo::RefPtr<Cairo::Context>& cr,
 
     // rectangle around the cropped area and guides
     if (cparams.guide != rtengine::procparams::CropParams::Guide::NONE && drawGuide) {
+        cr->save();
+        cr->rectangle(imx, imy, clipWidth, clipHeight);
+        cr->clip();
+
         double rectx1 = round(c1x) + imx + 0.5;
         double recty1 = round(c1y) + imy + 0.5;
         double rectx2 = round(c2x) + imx + 0.5;
         double recty2 = round(c2y) + imy + 0.5;
 
-        if(fullImageVisible) {
-            rectx2 = min(rectx2, imx + imw - 0.5);
-            recty2 = min(recty2, imy + imh - 0.5);
+        // Clamp guide rect to visible image area on all four sides
+        rectx1 = max(rectx1, imx + 0.5);
+        recty1 = max(recty1, imy + 0.5);
+        rectx2 = min(rectx2, imx + clipWidth - 0.5);
+        recty2 = min(recty2, imy + clipHeight - 0.5);
+
+        if (rectx2 > rectx1 && recty2 > recty1) {
+            drawCropGuides(cr, rectx1, recty1, rectx2, recty2, cparams);
         }
 
-        drawCropGuides(cr, rectx1, recty1, rectx2, recty2, cparams);
+        cr->restore();
     }
 }
 
@@ -2676,10 +2685,10 @@ ToolGroup::ToolGroup(const Glib::ustring& label) :
     tgCss->load_from_data(
         "#ToolGroupHeader { padding: 1px 4px; min-height: 0; border: none; background: none; background-image: none; box-shadow: none; }"
         "#ToolGroupHeader:hover { background-color: rgba(130,170,230,0.22); border-radius: 4px; }"
-        "#ToolGroupHeader label { font-size: 9px; font-weight: bold; min-height: 0; padding: 0; margin: 0; }"
+        "#ToolGroupHeader label { font-size: 10.5px; font-weight: bold; min-height: 0; padding: 0; margin: 0; }"
         "#ToolGroupReset { padding: 1px 3px; margin: 0 2px; min-height: 12px; min-width: 12px; border: none; background: none; background-image: none; box-shadow: none; }"
         "#ToolGroupReset:hover { background-color: rgba(200,80,80,0.3); border-radius: 3px; }"
-        "#ToolGroupReset label { font-size: 9px; color: #aaaaaa; min-height: 0; padding: 0; margin: 0; }"
+        "#ToolGroupReset label { font-size: 10.5px; color: #aaaaaa; min-height: 0; padding: 0; margin: 0; }"
         "#ToolGroupReset:hover label { color: #ffffff; }"
     );
     headerBtn->get_style_context()->add_provider(tgCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);

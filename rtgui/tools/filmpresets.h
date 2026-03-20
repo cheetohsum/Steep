@@ -52,10 +52,16 @@ private:
     Adjuster* redShift;
     Adjuster* greenShift;
     Adjuster* blueShift;
+    Adjuster* grainAdj;
+    Adjuster* vibranceAdj;
 
     Gtk::Box* detailContent_;
     Gtk::Revealer* detailRevealer_;
     bool detailExpanded_;
+
+    Gtk::Dialog* customDialog_;
+    Gtk::ScrolledWindow* dialogScrolled_;
+    void openCustomDialog();
 
     rtengine::ProcEvent EvFilmPresetsEnabled;
     rtengine::ProcEvent EvFilmPresetsPreset;
@@ -74,6 +80,8 @@ private:
     rtengine::ProcEvent EvFilmPresetsRedShift;
     rtengine::ProcEvent EvFilmPresetsGreenShift;
     rtengine::ProcEvent EvFilmPresetsBlueShift;
+    rtengine::ProcEvent EvFilmPresetsGrain;
+    rtengine::ProcEvent EvFilmPresetsVibrance;
 
     void toggleDetail();
     void updateButtonLabel();
@@ -97,6 +105,7 @@ public:
     static const Glib::ustring TOOL_NAME;
 
     FilmPresets();
+    ~FilmPresets() override;
 
     void read(const rtengine::procparams::ProcParams* pp, const ParamsEdited* pedited = nullptr) override;
     void write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited = nullptr) override;

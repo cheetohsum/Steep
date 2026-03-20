@@ -287,6 +287,27 @@ FileBrowser::FileBrowser () :
         }
     }
 
+    /***********************
+     * pick/reject flags
+     ***********************/
+    {
+        MyImageMenuItem* menuFlag = Gtk::manage(new MyImageMenuItem (M("FILEBROWSER_POPUPFLAG"), "menu-flag-pick"));
+        pmenu->attach (*menuFlag, 0, 1, p, p + 1);
+        p++;
+
+        Gtk::Menu* submenuFlag = Gtk::manage (new Gtk::Menu ());
+        int fp = 0;
+        submenuFlag->attach (*Gtk::manage(pickFlag = new MyImageMenuItem (M("FILEBROWSER_POPUPPICK"), "menu-flag-pick")), 0, 1, fp, fp + 1);
+        fp++;
+        submenuFlag->attach (*Gtk::manage(unflagFlag = new MyImageMenuItem (M("FILEBROWSER_POPUPUNFLAG"), "menu-flag-unflagged")), 0, 1, fp, fp + 1);
+        fp++;
+        submenuFlag->attach (*Gtk::manage(rejectFlag = new MyImageMenuItem (M("FILEBROWSER_POPUPREJECT"), "menu-flag-reject")), 0, 1, fp, fp + 1);
+        fp++;
+
+        submenuFlag->show_all ();
+        menuFlag->set_submenu (*submenuFlag);
+    }
+
     pmenu->attach (*Gtk::manage(new Gtk::SeparatorMenuItem ()), 0, 1, p, p + 1);
     p++;
 
@@ -665,6 +686,10 @@ FileBrowser::FileBrowser () :
         colorlabel[i]->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), colorlabel[i]));
     }
 
+    pickFlag->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), pickFlag));
+    rejectFlag->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), rejectFlag));
+    unflagFlag->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), unflagFlag));
+
     for (size_t i = 0; i < mMenuExtProgs.size(); i++) {
         amiExtProg[i]->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), amiExtProg[i]));
     }
@@ -917,6 +942,18 @@ void FileBrowser::close ()
 {
     ++session_id_;
 
+    // Drain any pending deletions from PREVIOUS folder switches immediately.
+    // The idle callback runs at G_PRIORITY_LOW which is starved during active
+    // loading, causing thousands of old Thumbnails (with image buffers) to
+    // accumulate across folder switches.  Free them now before loading more.
+    if (deletionConnection_.connected()) {
+        deletionConnection_.disconnect();
+    }
+    for (auto* entry : pendingDeletion_) {
+        delete entry;
+    }
+    pendingDeletion_.clear();
+
     // Clear any pending batch inserts — move to deferred deletion
     {
         MyMutex::MyLock lock(pendingMutex_);
@@ -1025,6 +1062,17 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
             colorlabelRequested (mselected, i);
             return;
         }
+
+    if (m == pickFlag) {
+        pickRequested (mselected, 1);
+        return;
+    } else if (m == rejectFlag) {
+        pickRequested (mselected, -1);
+        return;
+    } else if (m == unflagFlag) {
+        pickRequested (mselected, 0);
+        return;
+    }
 
     const auto& options = App::get().options();
 
@@ -1326,16 +1374,20 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
 
         for (size_t i = 0; i < mselected.size(); i++) {
             rtengine::procparams::ProcParams pp = mselected[i]->thumbnail->getProcParams();
-            // Auto tone curve
+            // Auto tone curve — compute auto-exposure
             pp.toneCurve.autoexp = true;
+            // Explicit mild contrast and brightness for consistency
+            // (autoexp computes expcomp/black/hlcompr but we set
+            //  contrast and brightness to fixed tasteful values)
+            pp.toneCurve.contrast = 15;
+            pp.toneCurve.brightness = 5;
             // Moderate vibrance
             pp.vibrance.enabled = true;
             pp.vibrance.pastels = 30;
             pp.vibrance.saturated = 20;
-            // Mild sharpening
+            // Enable sharpening (default amount, no mask override)
             pp.sharpening.enabled = true;
-            pp.sharpening.contrast = 15;
-            mselected[i]->thumbnail->setProcParams(pp, nullptr, FILEBROWSER, false);
+            mselected[i]->thumbnail->setProcParams(pp, nullptr, FILEBROWSER, true);
         }
 
         if (!mselected.empty() && bppcl) {
@@ -1703,7 +1755,24 @@ bool FileBrowser::keyPressed (GdkEventKey* event)
     }
 
 #ifdef __WIN32__
-    else if (!shift && !ctrl && !alt && !altgr) { // rank
+    else if (!shift && !ctrl && !alt && !altgr) { // pick/reject flags
+        switch(event->keyval) {
+        case GDK_KEY_p:
+        case GDK_KEY_P:
+            requestPick (1);
+            return true;
+        case GDK_KEY_u:
+        case GDK_KEY_U:
+            requestPick (0);
+            return true;
+        case GDK_KEY_x:
+        case GDK_KEY_X:
+            requestPick (-1);
+            return true;
+        }
+    }
+
+    if (!shift && !ctrl && !alt && !altgr) { // rank
         switch(event->hardware_keycode) {
         case 0x30:  // 0-key
             requestRanking (0);
@@ -1758,7 +1827,24 @@ bool FileBrowser::keyPressed (GdkEventKey* event)
     }
 
 #else
-    else if (!shift && !ctrl && !alt) { // rank
+    else if (!shift && !ctrl && !alt) { // pick/reject flags
+        switch(event->keyval) {
+        case GDK_KEY_p:
+        case GDK_KEY_P:
+            requestPick (1);
+            return true;
+        case GDK_KEY_u:
+        case GDK_KEY_U:
+            requestPick (0);
+            return true;
+        case GDK_KEY_x:
+        case GDK_KEY_X:
+            requestPick (-1);
+            return true;
+        }
+    }
+
+    if (!shift && !ctrl && !alt) { // rank
         switch(event->hardware_keycode) {
         case 0x13:
             requestRanking (0);
@@ -1832,7 +1918,7 @@ int FileBrowser::getThumbnailHeight ()
     const auto& options = App::get().options();
     // The user could have manually forced the option to a too big value
     if (!options.sameThumbSize && getLocation() == THLOC_EDITOR) {
-        return std::max(std::min(options.thumbSizeTab, 115), 10);
+        return std::max(std::min(options.thumbSizeTab, 132), 10);
     } else {
         return std::max(std::min(options.thumbSize, 800), 10);
     }
@@ -1986,6 +2072,16 @@ bool FileBrowser::checkFilter (ThumbBrowserEntryBase* entryb) const   // true ->
         return false;
     }
 
+    // return false if pick filter settings are not satisfied
+    {
+        int pick = entry->thumbnail->getPick();
+        if ((pick == 1 && !filter.showPicked) ||
+            (pick == -1 && !filter.showRejected) ||
+            (pick == 0 && !filter.showUnflagged)) {
+            return false;
+        }
+    }
+
     // return false if basic filter settings are not satisfied
     if ((!filter.showRanked[entry->thumbnail->getRank()] ) ||
             (!filter.showCLabeled[entry->thumbnail->getColorLabel()] ) ||
@@ -1999,6 +2095,16 @@ bool FileBrowser::checkFilter (ThumbBrowserEntryBase* entryb) const   // true ->
             (entry->thumbnail->getTrashed() && !filter.showTrash) ||
             (!entry->thumbnail->getTrashed() && !filter.showNotTrash)) {
         return false;
+    }
+
+    // Filetype filter from filter bar dropdown
+    if (!filter.filetypeFilter.empty()) {
+        const CacheImageData* cfs = entry->thumbnail->getCacheImageData();
+        std::string ft = cfs->filetype;
+        std::transform(ft.begin(), ft.end(), ft.begin(), ::toupper);
+        if (filter.filetypeFilter.find(ft) == filter.filetypeFilter.end()) {
+            return false;
+        }
     }
 
     // return false if query is not satisfied
@@ -2210,6 +2316,41 @@ void FileBrowser::requestColorLabel(int colorlabel)
     }
 
     colorlabelRequested (mselected, colorlabel);
+}
+
+void FileBrowser::pickRequested (std::vector<FileBrowserEntry*> tbe, int pick)
+{
+    if (!tbe.empty() && bppcl) {
+        bppcl->beginBatchPParamsChange(tbe.size());
+    }
+
+    for (size_t i = 0; i < tbe.size(); i++) {
+        tbe[i]->thumbnail->createProcParamsForUpdate(false, false, true);
+        tbe[i]->thumbnail->notifylisterners_procParamsChanged(FILEBROWSER);
+        tbe[i]->thumbnail->setPick (pick);
+        tbe[i]->thumbnail->updateCache();
+        tbe[i]->startPickAnimation();
+    }
+
+    applyFilter (filter);
+
+    if (!tbe.empty() && bppcl) {
+        bppcl->endBatchPParamsChange();
+    }
+}
+
+void FileBrowser::requestPick(int pick)
+{
+    std::vector<FileBrowserEntry*> mselected;
+    {
+        MYREADERLOCK(l, entryRW);
+
+        for (size_t i = 0; i < selected.size(); i++) {
+            mselected.push_back (static_cast<FileBrowserEntry*>(selected[i]));
+        }
+    }
+
+    pickRequested (mselected, pick);
 }
 
 void FileBrowser::requestDevelop()

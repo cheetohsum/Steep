@@ -44,21 +44,20 @@ struct FilmRecipe {
     float highlightHue, highlightTint;        // Highlight tinting
     float halation;                           // Halation glow strength (0-1)
     float warmth, tint;                       // Global color balance shifts
+    float grain;                              // Film grain strength (0-1)
+    float vibrance;                           // Vibrance: boost low-saturation more (-1..1)
 };
 
-// Soft-clip: filmic highlight compression instead of hard clamp.
-// Values above 1.0 are smoothly rolled off toward 1.0.
+// Soft-clip: C1-continuous shoulder curve with knee at 0.9.
+// Linear below knee, rational roll-off above, asymptotically approaches 1.0.
 inline float softClip(float x)
 {
-    if (x <= 0.f) {
-        return 0.f;
-    }
-    if (x <= 1.f) {
-        return x;
-    }
-    // Filmic roll-off: asymptotically approaches 1.0
-    float excess = x - 1.f;
-    return 1.f - 0.5f / (1.f + excess * 4.f);
+    if (x <= 0.f) return 0.f;
+    const float knee = 0.9f;
+    if (x <= knee) return x;
+    float t = x - knee;
+    float range = 1.f - knee;  // 0.1
+    return knee + range * t / (t + range);
 }
 
 // Film H&D characteristic curve with base fog, S-curve contrast, and shoulder
@@ -103,6 +102,16 @@ inline float smoothstep(float edge0, float edge1, float x)
     return t * t * (3.f - 2.f * t);
 }
 
+// Hash-based per-pixel noise for film grain
+inline float grainNoise(int x, int y, uint32_t seed)
+{
+    uint32_t h = static_cast<uint32_t>(x) * 73856093u ^ static_cast<uint32_t>(y) * 19349663u ^ seed;
+    h = (h ^ (h >> 16)) * 0x45d9f3bu;
+    h = (h ^ (h >> 16)) * 0x45d9f3bu;
+    h = h ^ (h >> 16);
+    return (static_cast<float>(h & 0xFFFFu) / 65535.f) * 2.f - 1.f;
+}
+
 // ================================================================
 // 16 preset recipes: custom + 15 film stocks
 // Values are INTENTIONALLY strong for visible, dramatic differences.
@@ -125,6 +134,8 @@ static const FilmRecipe recipes[] = {
         40.f, 0.0f,              // highlight: no tint
         0.0f,                    // halation: none
         0.0f, 0.0f,             // warmth/tint: none
+        0.0f,                    // grain: none
+        0.0f,                    // vibrance: neutral
     },
 
     // 1: Heritage Gold — Kodachrome K-14
@@ -145,6 +156,8 @@ static const FilmRecipe recipes[] = {
         38.f, 0.22f,             // Warm golden highlight tint
         0.03f,                   // Minimal halation
         0.10f, -0.02f,          // Warm bias, slight green tint
+        0.15f,                   // Fine grain (K-14 process)
+        0.30f,                   // Strong vibrance (Kodachrome signature)
     },
 
     // 2: Porcelain 400 — Portra C-41
@@ -164,6 +177,8 @@ static const FilmRecipe recipes[] = {
         45.f, 0.14f,             // Warm highlight tint
         0.03f,                   // Slight halation
         0.06f, 0.02f,           // Warm, slight magenta
+        0.20f,                   // Visible but fine grain
+        0.15f,                   // Gentle vibrance (Portra is subtle)
     },
 
     // 3: Vivid Chrome — Velvia E-6
@@ -183,6 +198,8 @@ static const FilmRecipe recipes[] = {
         35.f, 0.08f,             // Warm highlight
         0.02f,                   // Minimal halation
         0.03f, -0.01f,          // Slightly warm
+        0.10f,                   // Very fine grain (Velvia)
+        0.40f,                   // Maximum vibrance (Velvia signature)
     },
 
     // 4: Arctic — Ektachrome E100VS/E-6
@@ -202,6 +219,8 @@ static const FilmRecipe recipes[] = {
         200.f, 0.15f,            // Cool highlight tint
         0.01f,
         -0.14f, 0.03f,          // Cool, slight magenta
+        0.12f,                   // Fine grain
+        0.25f,                   // Good vibrance
     },
 
     // 5: Sovereign — Provia E-6
@@ -221,6 +240,8 @@ static const FilmRecipe recipes[] = {
         38.f, 0.10f,
         0.02f,
         0.02f, 0.00f,
+        0.10f,                   // Fine grain (Provia)
+        0.20f,                   // Balanced vibrance
     },
 
     // 6: Golden Hour — Ektar C-41
@@ -240,6 +261,8 @@ static const FilmRecipe recipes[] = {
         32.f, 0.30f,             // Warm golden highlights
         0.05f,
         0.18f, -0.03f,          // Very warm
+        0.12f,                   // Fine grain (Ektar)
+        0.30f,                   // Strong vibrance
     },
 
     // 7: Twilight 160 — Gold 200 C-41
@@ -259,6 +282,8 @@ static const FilmRecipe recipes[] = {
         48.f, 0.22f,             // Amber highlight
         0.04f,
         0.14f, 0.01f,
+        0.18f,                   // Visible grain (consumer film)
+        0.15f,                   // Moderate vibrance
     },
 
     // 8: Nostalgia 200 — Superia C-41
@@ -278,6 +303,8 @@ static const FilmRecipe recipes[] = {
         50.f, 0.10f,
         0.04f,
         0.08f, 0.04f,           // Warm with magenta tint
+        0.22f,                   // Visible grain (Superia)
+        0.10f,                   // Mild vibrance
     },
 
     // 9: Desert Chrome — Agfa Vista C-41
@@ -297,6 +324,8 @@ static const FilmRecipe recipes[] = {
         28.f, 0.25f,             // Warm highlight
         0.06f,
         0.16f, -0.02f,
+        0.20f,                   // Moderate grain (Agfa Vista)
+        0.25f,                   // Good vibrance
     },
 
     // 10: Street 800 — Pushed Tri-X
@@ -316,6 +345,8 @@ static const FilmRecipe recipes[] = {
         50.f, 0.04f,
         0.02f,
         0.0f, 0.02f,            // Slight magenta
+        0.45f,                   // Heavy grain (pushed Tri-X)
+        0.0f,                    // N/A (near-monochrome)
     },
 
     // 11: Cinematic 500T — Cinestill ECN-2
@@ -335,6 +366,8 @@ static const FilmRecipe recipes[] = {
         30.f, 0.20f,             // Warm highlight
         0.45f,                   // Strong halation (anti-halation layer removed!)
         -0.10f, 0.04f,          // Cool, slight magenta
+        0.18f,                   // Moderate grain (Cinestill 500T)
+        0.20f,                   // Decent vibrance
     },
 
     // 12: Fade & Bloom — Expired film
@@ -354,6 +387,8 @@ static const FilmRecipe recipes[] = {
         50.f, 0.14f,
         0.10f,                   // Noticeable halation
         0.05f, 0.08f,           // Slight warm, magenta
+        0.30f,                   // Heavy grain (expired film)
+        -0.10f,                  // Reduced vibrance (degraded dyes)
     },
 
     // 13: Ember — Cross-processed (E-6 film in C-41 chemistry)
@@ -373,6 +408,8 @@ static const FilmRecipe recipes[] = {
         55.f, 0.25f,             // Warm/amber highlight
         0.06f,
         0.08f, 0.06f,           // Warm, magenta
+        0.25f,                   // Visible grain (cross-process)
+        0.30f,                   // Strong vibrance (wild colors)
     },
 
     // 14: Silver Gelatin — Classic B&W silver print
@@ -392,6 +429,8 @@ static const FilmRecipe recipes[] = {
         40.f, 0.03f,             // Very subtle warm highlight
         0.01f,
         -0.02f, 0.04f,          // Cool, slight magenta (silver tone)
+        0.35f,                   // Heavy grain (classic B&W print)
+        0.0f,                    // N/A (near-monochrome)
     },
 
     // 15: Analog Dream — Lo-fi, dreamy, vintage
@@ -411,6 +450,8 @@ static const FilmRecipe recipes[] = {
         48.f, 0.22f,             // Warm highlight
         0.15f,                   // Noticeable halation (dreamy glow)
         0.12f, 0.02f,           // Warm
+        0.28f,                   // Heavy grain (lo-fi)
+        0.10f,                   // Mild vibrance
     },
 };
 
@@ -465,6 +506,12 @@ void ImProcFunctions::filmPresets(LabImage *lab, const procparams::FilmPresetsPa
     const float userGreenShift = fp.greenShift / 100.f;
     const float userBlueShift = fp.blueShift / 100.f;
 
+    // Grain: slider 0-100 maps to 0-1.0
+    const float userGrain = fp.grain / 100.f;
+
+    // Vibrance: slider -100..100 maps to -1..1
+    const float userVibrance = fp.vibrance / 100.f;
+
     // === Compute effective parameters ===
 
     // Per-channel gains
@@ -507,6 +554,12 @@ void ImProcFunctions::filmPresets(LabImage *lab, const procparams::FilmPresetsPa
     // Warmth/tint: recipe + user (large multipliers for visible effect)
     const float totalWarmth = recipe->warmth + userWarmth * 0.5f;
     const float totalTint = recipe->tint + userTint * 0.5f;
+
+    // Grain: user slider overrides recipe when > 0
+    const float grain = (fp.grain > 0) ? userGrain : recipe->grain;
+
+    // Vibrance: recipe + user adjustment
+    const float vibrance = recipe->vibrance + userVibrance * 0.5f;
 
     // === Working space matrices for LAB <-> RGB ===
     const TMatrix wprof = ICCStore::getInstance()->workingSpaceMatrix(params->icm.workingProfile);
@@ -570,9 +623,9 @@ void ImProcFunctions::filmPresets(LabImage *lab, const procparams::FilmPresetsPa
                 if (lum > 0.001f) {
                     float lumNew = filmCurve(lum, masterContrast, 0.f, 0.f);
                     float ratio = lumNew / lum;
-                    R = LIM01(R * ratio);
-                    G = LIM01(G * ratio);
-                    B = LIM01(B * ratio);
+                    R = softClip(R * ratio);
+                    G = softClip(G * ratio);
+                    B = softClip(B * ratio);
                 }
             }
 
@@ -584,46 +637,75 @@ void ImProcFunctions::filmPresets(LabImage *lab, const procparams::FilmPresetsPa
                 B = B * (1.f - baseFog) + baseFog;
             }
 
-            // === Stage 5: Hue-dependent saturation ===
-            // Different films saturate different hues differently
+            // === Stage 5: Hue-dependent saturation + Vibrance ===
+            // rgb2hsl expects [0,65535], hsl2rgb outputs [0,65535]
             {
+                float R65 = R * MAXVALF, G65 = G * MAXVALF, B65 = B * MAXVALF;
                 float h, s, l;
-                Color::rgb2hsl(R, G, B, h, s, l);
+                Color::rgb2hsl(R65, G65, B65, h, s, l);
 
                 if (s > 0.001f) {
+                    // Hue-dependent saturation
                     float hueIdx = h * 6.f;
                     int sector = static_cast<int>(hueIdx) % 6;
                     float frac = hueIdx - static_cast<int>(hueIdx);
                     float satMul = intp(frac, hueSat[(sector + 1) % 6], hueSat[sector]);
                     s = LIM01(s * satMul);
-                    Color::hsl2rgb(h, s, l, R, G, B);
+
+                    // Vibrance: boost low-saturation colors more (film-like response)
+                    if (std::fabs(vibrance) > 0.001f) {
+                        float scale = 1.f + vibrance * (1.f - s);
+                        s = LIM01(s * scale);
+                    }
+
+                    Color::hsl2rgb(h, s, l, R65, G65, B65);
+                    R = R65 / MAXVALF;
+                    G = G65 / MAXVALF;
+                    B = B65 / MAXVALF;
                 }
             }
 
             // === Stage 6: Shadow/highlight color cast ===
-            // Luminance-dependent tinting with smooth transitions
+            // Luminance-preserving tinting with smooth transitions
             if (shTint > 0.001f || hlTint > 0.001f) {
                 float lum = 0.2126f * R + 0.7152f * G + 0.0722f * B;
 
                 if (shTint > 0.001f) {
+                    float lumBefore = 0.2126f * R + 0.7152f * G + 0.0722f * B;
                     float shadowW = 1.f - smoothstep(0.f, 0.4f, lum);
                     float shStr = shTint * shadowW * 0.25f;
                     float shCos = cosf(shHue);
                     float shSin = sinf(shHue);
-                    // Tint in RGB approximating hue angle
-                    R = LIM01(R + shStr * (shCos * 0.6f + shSin * 0.2f));
-                    G = LIM01(G + shStr * (-shCos * 0.3f + shSin * 0.3f));
-                    B = LIM01(B + shStr * (-shCos * 0.3f - shSin * 0.5f));
+                    R = softClip(R + shStr * (shCos * 0.6f + shSin * 0.2f));
+                    G = softClip(G + shStr * (-shCos * 0.3f + shSin * 0.3f));
+                    B = softClip(B + shStr * (-shCos * 0.3f - shSin * 0.5f));
+                    // Restore luminance to prevent vignette
+                    float lumAfter = 0.2126f * R + 0.7152f * G + 0.0722f * B;
+                    if (lumAfter > 0.001f) {
+                        float ratio = lumBefore / lumAfter;
+                        R *= ratio;
+                        G *= ratio;
+                        B *= ratio;
+                    }
                 }
 
                 if (hlTint > 0.001f) {
+                    float lumBefore = 0.2126f * R + 0.7152f * G + 0.0722f * B;
                     float highW = smoothstep(0.6f, 1.f, lum);
                     float hlStr = hlTint * highW * 0.20f;
                     float hlCos = cosf(hlHue);
                     float hlSin = sinf(hlHue);
-                    R = LIM01(R + hlStr * (hlCos * 0.6f + hlSin * 0.2f));
-                    G = LIM01(G + hlStr * (-hlCos * 0.3f + hlSin * 0.3f));
-                    B = LIM01(B + hlStr * (-hlCos * 0.3f - hlSin * 0.5f));
+                    R = softClip(R + hlStr * (hlCos * 0.6f + hlSin * 0.2f));
+                    G = softClip(G + hlStr * (-hlCos * 0.3f + hlSin * 0.3f));
+                    B = softClip(B + hlStr * (-hlCos * 0.3f - hlSin * 0.5f));
+                    // Restore luminance
+                    float lumAfter = 0.2126f * R + 0.7152f * G + 0.0722f * B;
+                    if (lumAfter > 0.001f) {
+                        float ratio = lumBefore / lumAfter;
+                        R *= ratio;
+                        G *= ratio;
+                        B *= ratio;
+                    }
                 }
             }
 
@@ -633,17 +715,34 @@ void ImProcFunctions::filmPresets(LabImage *lab, const procparams::FilmPresetsPa
                 float lum = 0.2126f * R + 0.7152f * G + 0.0722f * B;
                 if (lum > 0.5f) {
                     float glow = (lum - 0.5f) * 2.f * halation;
-                    R = LIM01(R + glow * 0.45f);
-                    G = LIM01(G + glow * 0.18f);
-                    B = LIM01(B - glow * 0.12f);
+                    R = softClip(R + glow * 0.45f);
+                    G = softClip(G + glow * 0.18f);
+                    B = softClip(B - glow * 0.12f);
                 }
             }
 
             // === Stage 8: Warmth/tint global color balance ===
             if (std::fabs(totalWarmth) > 0.001f || std::fabs(totalTint) > 0.001f) {
-                R = LIM01(R + totalWarmth * 0.08f + totalTint * 0.03f);
-                G = LIM01(G - totalTint * 0.04f);
-                B = LIM01(B - totalWarmth * 0.08f + totalTint * 0.02f);
+                R = softClip(R + totalWarmth * 0.08f + totalTint * 0.03f);
+                G = softClip(G - totalTint * 0.04f);
+                B = softClip(B - totalWarmth * 0.08f + totalTint * 0.02f);
+            }
+
+            // === Stage 9: Film grain ===
+            // Luminance-dependent noise, stronger in midtones (like real film)
+            if (grain > 0.001f) {
+                float lum = 0.2126f * R + 0.7152f * G + 0.0722f * B;
+                float midWeight = 4.f * lum * (1.f - lum);
+                if (midWeight < 0.f) midWeight = 0.f;
+                float grainStr = grain * midWeight * 0.15f;
+                // Mostly luminance grain with subtle per-channel variation
+                float nR = grainNoise(j, i, 0x12345678u);
+                float nG = grainNoise(j, i, 0x9ABCDEF0u);
+                float nB = grainNoise(j, i, 0x56789ABCu);
+                float lumaGrain = (nR + nG + nB) * (1.f / 3.f);
+                R = softClip(R + (lumaGrain * 0.8f + nR * 0.2f) * grainStr);
+                G = softClip(G + (lumaGrain * 0.8f + nG * 0.2f) * grainStr);
+                B = softClip(B + (lumaGrain * 0.8f + nB * 0.2f) * grainStr);
             }
 
             // === Convert back to 0-65535 range ===

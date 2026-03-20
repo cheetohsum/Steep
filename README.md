@@ -185,6 +185,41 @@ History and Navigator panels can be undocked into independent floating windows.
 
 12+ new SVG icons for mode buttons, navigation, window controls, and album management.
 
+### UI & UX Improvements
+
+Steep includes dozens of UI/UX refinements that collectively make the editor feel more modern and polished.
+
+#### Modernized Slider Controls
+- **Pill-style adjusters** — sliders render their value label directly via Cairo inside a dark pill shape, replacing the traditional GTK spin button + separate slider layout
+- **Double-click reset** — double-click any slider or its label to reset to default
+- **Clean appearance** — stepper buttons (+/-) hidden, transparent GTK trough (all drawing done by custom Cairo paint)
+
+#### Edit Pane Layout
+- **Single scrollable panel** — all editing tools in one continuous scroll instead of multiple tab pages
+- **Collapsible ToolGroups** — tools organized into logical groups (Light, Color, Detail, Effects, Advanced, Calibration) with expand/collapse headers
+- **AdvancedSection widget** — less-used controls tucked into expandable "Advanced" sections within individual tools, keeping the default view clean
+
+#### Crop & Transform Refinements
+- **Reset buttons** on crop and perspective section headers for quick clearing
+- **Toggle behavior** — crop/perspective tool buttons toggle off when clicked while already active
+- **Auto-deselect** — switching modes automatically deselects active crop/perspective tools
+
+#### Masking & Spot Improvements
+- **Spot panel redesign** — streamlined ControlSpotPanel layout
+- **B&W masking bridge** — B&W enabled state bridged to LocalLab spots for mask-mode desaturation
+- **Auto-expand** — spot/masking groups auto-expand when entering mask mode
+
+#### Browser & Filmstrip
+- **Configurable thumbnail sizes** — filmstrip and browser thumbnail sizes adjustable in Preferences
+- **Toolbar polish** — consistent entry field heights, alignment, and spacing in the file browser toolbar
+
+#### Before/After View
+- Shows the original unedited image as the default "Before" state
+
+#### Cross-Platform Fixes
+- **Windows:** GTK theme CSS compatibility fixes, editor container background colors
+- **macOS:** Cairo background fills for Quartz backend, icon fallback for theme lookup failures, browser toolbar alignment
+
 ---
 
 ## Feature Status
@@ -205,6 +240,7 @@ History and Navigator panels can be undocked into independent floating windows.
 | AI denoise (RawRefinery) | Working (requires external Python backend) |
 | AI semantic masking | Experimental (requires ONNX Runtime, optional build flag) |
 | AI inpainting | Experimental (requires ONNX model) |
+| UI & UX refinements | Working |
 | All original RawTherapee features | Fully preserved |
 
 ---

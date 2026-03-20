@@ -135,6 +135,12 @@ private:
 
     bool isSingleTabMode() const;
 
+    // CSD window edge resize
+    static const int RESIZE_GRIP = 6;
+    int detectEdge(double x, double y, int w, int h) const;
+    bool onWindowMotion(GdkEventMotion* event);
+    bool onWindowButtonPress(GdkEventButton* event);
+
     bool on_expose_event_epanel (GdkEventExpose* event);
     bool on_expose_event_fpanel (GdkEventExpose* event);
     bool splashClosed (GdkEventAny* event);

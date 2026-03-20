@@ -39,30 +39,25 @@ class PreviewLoader::Impl :
 {
 public:
     struct Job {
-        Job(int dir_id, const Glib::ustring& dir_entry, PreviewLoaderListener* listener):
+        Job(int dir_id, const Glib::ustring& dir_entry, PreviewLoaderListener* listener, int generation):
             dir_id_(dir_id),
             dir_entry_(dir_entry),
-            listener_(listener)
+            listener_(listener),
+            generation_(generation)
         {}
 
         Job():
             dir_id_(0),
-            listener_(nullptr)
+            listener_(nullptr),
+            generation_(0)
         {}
 
         int dir_id_;
         Glib::ustring dir_entry_;
         PreviewLoaderListener* listener_;
+        int generation_;
     };
-    /* Issue 2406
-        struct OutputJob
-        {
-            bool complete;
-            int dir_id;
-            PreviewLoaderListener* listener;
-            FileBrowserEntry* fdn;
-        };
-    */
+
     struct JobCompare {
         bool operator()(const Job& lhs, const Job& rhs) const
         {
@@ -77,6 +72,8 @@ public:
     typedef std::set<Job, JobCompare> JobSet;
 
     std::atomic<bool> paused_{false};
+    std::atomic<int> generation_{0};
+    std::atomic<unsigned> priorityCounter_{0};
 
     Impl(): nConcurrentThreads(0)
     {
@@ -85,9 +82,12 @@ public:
 #else
         int threadCount = std::max(2u, std::thread::hardware_concurrency());
 #endif
-        // Cap preview loader threads — this work is largely I/O-bound,
-        // and too many threads just saturates the disk subsystem.
-        threadCount = std::max(2, std::min(threadCount, 4));
+        // Preview loading is I/O-bound (reading cached thumbnails from disk).
+        // Use enough threads to keep the I/O subsystem busy — modern SSDs
+        // handle 8+ concurrent small-file reads easily, and having extra
+        // threads ensures new-folder work starts immediately when switching
+        // folders (old-folder threads may still be in-flight).
+        threadCount = std::max(4, std::min(threadCount, 8));
 
         threadPool_.reset(new Glib::ThreadPool(threadCount, 0));
     }
@@ -95,84 +95,104 @@ public:
     std::unique_ptr<Glib::ThreadPool> threadPool_;
     MyMutex mutex_;
     JobSet jobs_;
+    Glib::ustring priorityHint_;
     gint nConcurrentThreads;
-// Issue 2406   std::vector<OutputJob *> output_;
+
+    // Pick the best job from the set, considering the priority hint.
+    // When a hint is set, alternates between forward and backward neighbors
+    // so filmstrip thumbnails expand symmetrically from the target.
+    // Returns jobs_.end() if empty or paused.
+    JobSet::iterator pickBestJob_()
+    {
+        if (jobs_.empty() || paused_.load(std::memory_order_relaxed)) {
+            return jobs_.end();
+        }
+
+        if (priorityHint_.empty()) {
+            return jobs_.begin();
+        }
+
+        int dir_id = jobs_.begin()->dir_id_;
+        auto hint_it = jobs_.lower_bound(Job(dir_id, priorityHint_, nullptr, 0));
+
+        // hint_it points to first job >= hint.  prev(hint_it) is last job < hint.
+        auto fwd = hint_it;
+        auto bwd = (hint_it != jobs_.begin()) ? std::prev(hint_it) : jobs_.end();
+
+        if (fwd != jobs_.end() && bwd != jobs_.end()) {
+            // Both directions available — alternate to expand symmetrically
+            unsigned count = priorityCounter_.fetch_add(1, std::memory_order_relaxed);
+            return (count % 2 == 0) ? fwd : bwd;
+        } else if (fwd != jobs_.end()) {
+            return fwd;
+        } else if (bwd != jobs_.end()) {
+            return bwd;
+        }
+        return jobs_.begin();
+    }
 
     void processNextJob()
     {
-        Job j;
-// Issue 2406       OutputJob *oj;
+        // Peek at the queue before committing to the concurrent thread count.
+        // This ensures no-op tasks (from stale thread pool pushes) don't
+        // interfere with the nConcurrentThreads counter.
         {
             MyMutex::MyLock lock(mutex_);
-
-            // nothing to do; could be jobs have been removed
-            if ( jobs_.empty() ) {
-                DEBUG("processing: nothing to do");
+            if (jobs_.empty() || paused_.load(std::memory_order_relaxed)) {
                 return;
             }
-
-            // If paused (e.g. editor is loading a full image), skip work.
-            // Jobs stay in the queue and will be picked up when resumed.
-            if (paused_.load(std::memory_order_relaxed)) {
-                return;
-            }
-
-            // copy and remove front job
-            j = *jobs_.begin();
-            jobs_.erase(jobs_.begin());
-            DEBUG("processing %s", j.dir_entry_.c_str());
-            DEBUG("%d job(s) remaining", jobs_.size());
-            /* Issue 2406
-                        oj = new OutputJob();
-                        oj->complete = false;
-                        oj->dir_id = j.dir_id_;
-                        oj->listener = j.listener_;
-                        oj->fdn = 0;
-                        output_.push_back(oj);
-            */
         }
 
-        g_atomic_int_inc (&nConcurrentThreads);  // to detect when last thread in pool has run out
+        g_atomic_int_inc (&nConcurrentThreads);
 
-        // unlock and do processing; will relock on block exit, then call listener
-        // if something got
-// Issue 2406       FileBrowserEntry* fdn = 0;
-        try {
-            Thumbnail* tmb = nullptr;
+        int lastDirId = -1;
+        PreviewLoaderListener* lastListener = nullptr;
+
+        // Loop to drain the queue — each thread processes all available jobs
+        // before returning to the thread pool, avoiding thousands of individual
+        // thread pool task dispatches for large folders.
+        while (true) {
+            Job j;
             {
-                tmb = cacheMgr->getEntry(j.dir_entry_);
-            }
+                MyMutex::MyLock lock(mutex_);
 
-            if ( tmb ) {
-                DEBUG("Preview Ready\n");
-                j.listener_->previewReady(j.dir_id_, new FileBrowserEntry(tmb, j.dir_entry_));
-// Issue 2406               fdn = new FileBrowserEntry(tmb,j.dir_entry_);
-            }
-
-        } catch (Glib::Error &e) {} catch(...) {}
-
-        /* Issue 2406
-                {
-                    // the purpose of the output_ vector is to deliver the previewReady() calls in the same
-                    // order as we got the jobs from the jobs_ queue.
-                    MyMutex::MyLock lock(mutex_);
-                    oj->fdn = fdn;
-                    oj->complete = true;
-                    while (output_.size() > 0 && output_.front()->complete) {
-                        oj = output_.front();
-                        if (oj->fdn) {
-                            oj->listener->previewReady(oj->dir_id,oj->fdn);
-                        }
-                        output_.erase(output_.begin());
-                        delete oj;
-                    }
+                auto best = pickBestJob_();
+                if (best == jobs_.end()) {
+                    break;
                 }
-        */
+
+                j = *best;
+                jobs_.erase(best);
+                DEBUG("processing %s", j.dir_entry_.c_str());
+                DEBUG("%d job(s) remaining", jobs_.size());
+            }
+
+            // Skip jobs from a previous directory — removeAllJobs() increments
+            // the generation counter, so any job queued before the switch has a
+            // stale generation and we can skip the expensive cacheMgr I/O.
+            if (j.generation_ != generation_.load(std::memory_order_acquire)) {
+                continue;
+            }
+
+            try {
+                Thumbnail* tmb = cacheMgr->getEntry(j.dir_entry_);
+
+                if ( tmb ) {
+                    DEBUG("Preview Ready\n");
+                    j.listener_->previewReady(j.dir_id_, new FileBrowserEntry(tmb, j.dir_entry_));
+                }
+
+            } catch (Glib::Error &e) {} catch(...) {}
+
+            lastDirId = j.dir_id_;
+            lastListener = j.listener_;
+        }
+
         bool last = g_atomic_int_dec_and_test (&nConcurrentThreads);
 
         // signal at end
-        if (last && jobs_.empty()) {
-            j.listener_->previewsFinished(j.dir_id_);
+        if (last && lastListener && jobs_.empty()) {
+            lastListener->previewsFinished(lastDirId);
         }
     }
 };
@@ -201,7 +221,7 @@ void PreviewLoader::add(int dir_id, const Glib::ustring& dir_entry, PreviewLoade
 
             // create a new job and append to queue
             DEBUG("saving job %s", dir_entry.c_str());
-            impl_->jobs_.insert(Impl::Job(dir_id, dir_entry, l));
+            impl_->jobs_.insert(Impl::Job(dir_id, dir_entry, l, impl_->generation_.load(std::memory_order_relaxed)));
         }
 
         // queue a run request
@@ -215,6 +235,17 @@ void PreviewLoader::removeAllJobs()
     DEBUG("stop %d", impl_->nConcurrentThreads);
     MyMutex::MyLock lock(impl_->mutex_);
     impl_->jobs_.clear();
+    impl_->priorityHint_.clear();
+    // Increment generation so in-flight threads that already dequeued a job
+    // from the old directory will skip the expensive cacheMgr I/O.
+    impl_->generation_.fetch_add(1, std::memory_order_release);
+}
+
+void PreviewLoader::setPriorityHint(const Glib::ustring& targetFile)
+{
+    MyMutex::MyLock lock(impl_->mutex_);
+    impl_->priorityHint_ = targetFile;
+    impl_->priorityCounter_.store(0, std::memory_order_relaxed);
 }
 
 void PreviewLoader::pause()
@@ -232,5 +263,3 @@ void PreviewLoader::resume()
         impl_->threadPool_->push(sigc::mem_fun(*impl_, &PreviewLoader::Impl::processNextJob));
     }
 }
-
-

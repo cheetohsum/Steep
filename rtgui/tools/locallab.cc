@@ -177,7 +177,6 @@ void Locallab::hideToolGroups()
 
 void Locallab::read(const rtengine::procparams::ProcParams* pp, const ParamsEdited* pedited)
 {
-    fprintf(stderr, "DBG Locallab::read: enter, spots=%zu\n", pp->locallab.spots.size());
     // Disable all listeners
     disableListener();
 
@@ -218,6 +217,8 @@ void Locallab::read(const rtengine::procparams::ProcParams* pp, const ParamsEdit
             r.shape = 1;
         } else if (pp->locallab.spots.at(i).shape == "GRAD")  {
             r.shape = 2;
+        } else if (pp->locallab.spots.at(i).shape == "POLY")  {
+            r.shape = 3;
         }
 
         if (pp->locallab.spots.at(i).prevMethod == "hide") {
@@ -325,25 +326,22 @@ void Locallab::read(const rtengine::procparams::ProcParams* pp, const ParamsEdit
 
         r.maskType = pp->locallab.spots.at(i).useAIMask ? 1 : 0;
         r.aiMaskClass = pp->locallab.spots.at(i).aiMaskClass;
+        r.polyMaskPoints = pp->locallab.spots.at(i).polyMaskPoints;
+        r.polyMaskFeather = pp->locallab.spots.at(i).polyMaskFeather;
+        r.polyMaskSnapTolerance = pp->locallab.spots.at(i).polyMaskSnapTolerance;
+        r.polyMaskLegLength = pp->locallab.spots.at(i).polyMaskLegLength;
 
-        fprintf(stderr, "DBG Locallab::read: addControlSpot %d\n", i);
         expsettings->addControlSpot(r);
     }
-    fprintf(stderr, "DBG Locallab::read: spots added, selecting\n");
-
     // Select active spot
     if (pp->locallab.spots.size() > 0) {
         expsettings->setSelectedSpot(pp->locallab.selspot);
         spotName = pp->locallab.spots.at(pp->locallab.selspot).name;
     }
-    fprintf(stderr, "DBG Locallab::read: before locallabTools read (%zu tools)\n", locallabTools.size());
-
     // Update each Locallab tools GUI
     for (size_t ti = 0; ti < locallabTools.size(); ti++) {
-        fprintf(stderr, "DBG Locallab::read: tool %zu\n", ti);
         locallabTools[ti]->read(pp, pedited);
     }
-    fprintf(stderr, "DBG Locallab::read: tools done\n");
 
     // Specific case: if there is no spot, GUI isn't anymore editable (i.e. Locallab tool cannot be managed)
     if (pp->locallab.spots.size() > 0) {
@@ -354,7 +352,6 @@ void Locallab::read(const rtengine::procparams::ProcParams* pp, const ParamsEdit
 
     // Enable all listeners
     enableListener();
-    fprintf(stderr, "DBG Locallab::read: done\n");
 
     // Note: No need to manage pedited as batch mode is deactivated for Locallab
 }
@@ -392,6 +389,8 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                 r.shape = 1;
             } else if (newSpot->shape == "GRAD"){
                 r.shape = 2;
+            } else if (newSpot->shape == "POLY"){
+                r.shape = 3;
             }
 
             if (newSpot->prevMethod == "hide") {
@@ -519,6 +518,10 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
 
             r.maskType = 0; // Normal mask
             r.aiMaskClass = 0;
+            r.polyMaskPoints = newSpot->polyMaskPoints;
+            r.polyMaskFeather = newSpot->polyMaskFeather;
+            r.polyMaskSnapTolerance = newSpot->polyMaskSnapTolerance;
+            r.polyMaskLegLength = newSpot->polyMaskLegLength;
 
             expsettings->addControlSpot(r);
 
@@ -603,6 +606,8 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                 r.shape = 1;
             } else if (newSpot->shape == "GRAD") {
                 r.shape = 2;
+            } else if (newSpot->shape == "POLY") {
+                r.shape = 3;
             }
 
             if (newSpot->prevMethod == "hide") {
@@ -710,6 +715,10 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
 
             r.maskType = 1; // AI Mask
             r.aiMaskClass = aiClass;
+            r.polyMaskPoints = newSpot->polyMaskPoints;
+            r.polyMaskFeather = newSpot->polyMaskFeather;
+            r.polyMaskSnapTolerance = newSpot->polyMaskSnapTolerance;
+            r.polyMaskLegLength = newSpot->polyMaskLegLength;
 
             expsettings->addControlSpot(r);
 
@@ -882,6 +891,8 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                 r.shape = 1;
             } else if (newSpot->shape == "GRAD"){
                 r.shape = 2;
+            } else if (newSpot->shape == "POLY"){
+                r.shape = 3;
             }
 
             if (newSpot->prevMethod == "hide") {
@@ -1019,6 +1030,10 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
 
             r.maskType = newSpot->useAIMask ? 1 : 0;
             r.aiMaskClass = newSpot->aiMaskClass;
+            r.polyMaskPoints = newSpot->polyMaskPoints;
+            r.polyMaskFeather = newSpot->polyMaskFeather;
+            r.polyMaskSnapTolerance = newSpot->polyMaskSnapTolerance;
+            r.polyMaskLegLength = newSpot->polyMaskLegLength;
 
             expsettings->addControlSpot(r);
 
@@ -1076,6 +1091,8 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                         pp->locallab.spots.at(pp->locallab.selspot).shape = "ELI";
                     } else if (r->shape == 1) {
                         pp->locallab.spots.at(pp->locallab.selspot).shape = "RECT";
+                    } else if (r->shape == 3) {
+                        pp->locallab.spots.at(pp->locallab.selspot).shape = "POLY";
                     } else {
                         pp->locallab.spots.at(pp->locallab.selspot).shape = "GRAD";
                     }
@@ -1205,6 +1222,11 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                         pp->locallab.spots.at(pp->locallab.selspot).aiMaskClass = r->aiMaskClass;
                         pp->locallab.spots.at(pp->locallab.selspot).spotMethod = "full";
                     }
+                    // Polygon mask data
+                    pp->locallab.spots.at(pp->locallab.selspot).polyMaskPoints = r->polyMaskPoints;
+                    pp->locallab.spots.at(pp->locallab.selspot).polyMaskFeather = r->polyMaskFeather;
+                    pp->locallab.spots.at(pp->locallab.selspot).polyMaskSnapTolerance = r->polyMaskSnapTolerance;
+                    pp->locallab.spots.at(pp->locallab.selspot).polyMaskLegLength = r->polyMaskLegLength;
                 }
 
                 // Note: No need to manage pedited as batch mode is deactivated for Locallab
@@ -1740,6 +1762,11 @@ void Locallab::spotHovered(bool hovered, bool forceRedraw)
 bool Locallab::isPointerOverMaskList() const
 {
     return expsettings->isPointerOverTreeview();
+}
+
+void Locallab::resetSidebarHover()
+{
+    expsettings->resetSidebarHover();
 }
 
 int Locallab::getSpotCount()

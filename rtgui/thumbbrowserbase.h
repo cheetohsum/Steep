@@ -220,10 +220,17 @@ public:
 
     void insertEntry (ThumbBrowserEntryBase* entry);
 
+    // Pause/resume layout during animations to prevent arrangeFiles() from
+    // competing with animation frames on the main thread.
+    void pauseLayout ();
+    void resumeLayout ();
+
 protected:
     bool redrawPending_ = false;
+    bool layoutPaused_ = false;
     std::vector<ThumbBrowserEntryBase*> pendingInserts_;
     MyMutex pendingMutex_;
+    sigc::connection redrawTimeout_;
 private:
     bool onRedrawIdle_ ();
 public:

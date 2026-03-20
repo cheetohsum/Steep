@@ -252,6 +252,7 @@ public:
     // Animation for rating/label changes (filmstrip overlay)
     void startRatingAnimation ();
     void startColorLabelAnimation ();
+    void startPickAnimation ();
 
     // Get a copy of the cached back-buffer surface for animation snapshots
     Cairo::RefPtr<Cairo::ImageSurface> snapshotSurface () const;
@@ -260,10 +261,12 @@ protected:
     // Animation state
     double animRatingAlpha_;       // 0.0 = no anim, >0 = fading out
     double animColorAlpha_;
+    double animPickAlpha_;
     sigc::connection animTimerConn_;
     std::chrono::steady_clock::time_point animStartTime_;
     bool animRatingActive_;
     bool animColorActive_;
+    bool animPickActive_;
     static constexpr double ANIM_DURATION_MS = 600.0;
 
     void drawFilmstripOverlays (Cairo::RefPtr<Cairo::Context> cc, int x, int y);

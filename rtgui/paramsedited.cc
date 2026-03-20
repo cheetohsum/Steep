@@ -167,6 +167,7 @@ void ParamsEdited::set(bool v)
     general.rank         = v;
     general.colorlabel   = v;
     general.intrash      = v;
+    general.picklabel    = v;
     toneCurve.curve      = v;
     toneCurve.curve2     = v;
     toneCurve.curveR     = v;
@@ -981,6 +982,8 @@ void ParamsEdited::set(bool v)
     filmPresets.redShift = v;
     filmPresets.greenShift = v;
     filmPresets.blueShift = v;
+    filmPresets.grain = v;
+    filmPresets.vibrance = v;
     softlight.enabled = v;
     softlight.strength = v;
     dehaze.enabled = v;
@@ -1473,6 +1476,10 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
                 locallab.spots.at(j).shapeMethod = locallab.spots.at(j).shapeMethod && pSpot.shapeMethod == otherSpot.shapeMethod;
                 locallab.spots.at(j).avoidgamutMethod = locallab.spots.at(j).avoidgamutMethod && pSpot.avoidgamutMethod == otherSpot.avoidgamutMethod;
                 locallab.spots.at(j).loc = locallab.spots.at(j).loc && pSpot.loc == otherSpot.loc;
+                locallab.spots.at(j).polyMaskPoints = locallab.spots.at(j).polyMaskPoints && pSpot.polyMaskPoints == otherSpot.polyMaskPoints;
+                locallab.spots.at(j).polyMaskFeather = locallab.spots.at(j).polyMaskFeather && pSpot.polyMaskFeather == otherSpot.polyMaskFeather;
+                locallab.spots.at(j).polyMaskSnapTolerance = locallab.spots.at(j).polyMaskSnapTolerance && pSpot.polyMaskSnapTolerance == otherSpot.polyMaskSnapTolerance;
+                locallab.spots.at(j).polyMaskLegLength = locallab.spots.at(j).polyMaskLegLength && pSpot.polyMaskLegLength == otherSpot.polyMaskLegLength;
                 locallab.spots.at(j).centerX = locallab.spots.at(j).centerX && pSpot.centerX == otherSpot.centerX;
                 locallab.spots.at(j).centerY = locallab.spots.at(j).centerY && pSpot.centerY == otherSpot.centerY;
                 locallab.spots.at(j).circrad = locallab.spots.at(j).circrad && pSpot.circrad == otherSpot.circrad;
@@ -2728,6 +2735,8 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         filmPresets.redShift = filmPresets.redShift && p.filmPresets.redShift == other.filmPresets.redShift;
         filmPresets.greenShift = filmPresets.greenShift && p.filmPresets.greenShift == other.filmPresets.greenShift;
         filmPresets.blueShift = filmPresets.blueShift && p.filmPresets.blueShift == other.filmPresets.blueShift;
+        filmPresets.grain = filmPresets.grain && p.filmPresets.grain == other.filmPresets.grain;
+        filmPresets.vibrance = filmPresets.vibrance && p.filmPresets.vibrance == other.filmPresets.vibrance;
         softlight.enabled = softlight.enabled && p.softlight.enabled == other.softlight.enabled;
         softlight.strength = softlight.strength && p.softlight.strength == other.softlight.strength;
         dehaze.enabled = dehaze.enabled && p.dehaze.enabled == other.dehaze.enabled;
@@ -9156,6 +9165,12 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
     if (filmPresets.blueShift) {
         toEdit.filmPresets.blueShift = mods.filmPresets.blueShift;
     }
+    if (filmPresets.grain) {
+        toEdit.filmPresets.grain = mods.filmPresets.grain;
+    }
+    if (filmPresets.vibrance) {
+        toEdit.filmPresets.vibrance = mods.filmPresets.vibrance;
+    }
 
     if (softlight.enabled) {
         toEdit.softlight.enabled = mods.softlight.enabled;
@@ -9291,6 +9306,10 @@ LocallabParamsEdited::LocallabSpotEdited::LocallabSpotEdited(bool v) :
     shapeMethod(v),
     avoidgamutMethod(v),
     loc(v),
+    polyMaskPoints(v),
+    polyMaskFeather(v),
+    polyMaskSnapTolerance(v),
+    polyMaskLegLength(v),
     centerX(v),
     centerY(v),
     circrad(v),
@@ -10146,6 +10165,10 @@ void LocallabParamsEdited::LocallabSpotEdited::set(bool v)
     shapeMethod = v;
     avoidgamutMethod = v;
     loc = v;
+    polyMaskPoints = v;
+    polyMaskFeather = v;
+    polyMaskSnapTolerance = v;
+    polyMaskLegLength = v;
     centerX = v;
     centerY = v;
     circrad = v;

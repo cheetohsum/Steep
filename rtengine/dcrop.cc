@@ -2278,6 +2278,16 @@ void Crop::fullUpdate()
 
     parent->updaterThreadStart.lock();
 
+    // If the IPC is shutting down, bail out immediately.  The IPC
+    // destructor acquires this same lock, so we must not do any work
+    // after it has set destroying — the Crop and parent may be freed
+    // as soon as we release the lock.
+    if (parent->destroying) {
+        updating = false;
+        parent->updaterThreadStart.unlock();
+        return;
+    }
+
     if (parent->updaterRunning && parent->thread) {
         // Do NOT reset changes here, since in a long chain of events it will lead to chroma_scale not being updated,
         // causing Color::lab2rgb to return a black image on some opens

@@ -176,8 +176,10 @@ ThumbBrowserEntryBase::ThumbBrowserEntryBase (const Glib::ustring& fname, Thumbn
     withFilename(WFNAME_NONE),
     animRatingAlpha_(0),
     animColorAlpha_(0),
+    animPickAlpha_(0),
     animRatingActive_(false),
-    animColorActive_(false)
+    animColorActive_(false),
+    animPickActive_(false)
 {
 }
 
@@ -771,9 +773,10 @@ void ThumbBrowserEntryBase::drawFilmstripOverlays (Cairo::RefPtr<Cairo::Context>
 
     int rank = thumbnail->getRank();
     int clabel = thumbnail->getColorLabel();
-    if (rank <= 0 && clabel <= 0 && !animRatingActive_ && !animColorActive_) return;
+    int pick = thumbnail->getPick();
+    if (rank <= 0 && clabel <= 0 && pick == 0 && !animRatingActive_ && !animColorActive_ && !animPickActive_) return;
 
-    // Icon area: bottom-left for stars, bottom-right for color label
+    // Icon area: bottom-left for stars, top-left for color label, top-right for pick flag
     int imgX = x + prevPos.x;
     int imgY = y + prevPos.y;
     int imgW = previewSize.width;
@@ -809,6 +812,28 @@ void ThumbBrowserEntryBase::drawFilmstripOverlays (Cairo::RefPtr<Cairo::Context>
         cc->restore();
     }
 
+    // Draw pick animation glow
+    if (animPickActive_ && animPickAlpha_ > 0) {
+        cc->save();
+        cc->rectangle(imgX, imgY, imgW, imgH);
+        cc->clip();
+        if (pick == 1) {
+            // Green glow from top for pick
+            auto grad = Cairo::LinearGradient::create(imgX, imgY, imgX, imgY + imgH * 0.5);
+            grad->add_color_stop_rgba(0, 0.2, 0.9, 0.2, 0.4 * animPickAlpha_);
+            grad->add_color_stop_rgba(1, 0.2, 0.9, 0.2, 0.0);
+            cc->set_source(grad);
+        } else if (pick == -1) {
+            // Red glow from top for reject
+            auto grad = Cairo::LinearGradient::create(imgX, imgY, imgX, imgY + imgH * 0.5);
+            grad->add_color_stop_rgba(0, 0.9, 0.2, 0.2, 0.4 * animPickAlpha_);
+            grad->add_color_stop_rgba(1, 0.9, 0.2, 0.2, 0.0);
+            cc->set_source(grad);
+        }
+        cc->paint();
+        cc->restore();
+    }
+
     // Draw star icons at bottom-left
     if (rank > 0 && FileThumbnailButtonSet::rankIcon) {
         auto starSurf = FileThumbnailButtonSet::rankIcon->get();
@@ -818,62 +843,105 @@ void ThumbBrowserEntryBase::drawFilmstripOverlays (Cairo::RefPtr<Cairo::Context>
 
             int gap = 1;
             int totalW = rank * (iconW + gap) - gap;
+            int availW = imgW - 6; // 3px margin each side
+
+            // Scale down stars if they don't fit (e.g. narrow portrait thumbnails)
+            double fitScale = 1.0;
+            if (totalW > availW && totalW > 0) {
+                fitScale = static_cast<double>(availW) / totalW;
+            }
+
             int sx = imgX + 3;
-            int sy = imgY + imgH - iconH - 3;
+            int sy = imgY + imgH - static_cast<int>(iconH * fitScale) - 3;
 
             // Semi-transparent backdrop pill
+            int scaledTotalW = static_cast<int>(totalW * fitScale);
+            int scaledIconH = static_cast<int>(iconH * fitScale);
             cc->set_source_rgba(0, 0, 0, 0.5);
             double radius = 3.0;
             cc->begin_new_path();
             cc->arc(sx - 2 + radius, sy - 2 + radius, radius, M_PI, 1.5 * M_PI);
-            cc->arc(sx + totalW + 2 - radius, sy - 2 + radius, radius, 1.5 * M_PI, 2.0 * M_PI);
-            cc->arc(sx + totalW + 2 - radius, sy + iconH + 2 - radius, radius, 0, 0.5 * M_PI);
-            cc->arc(sx - 2 + radius, sy + iconH + 2 - radius, radius, 0.5 * M_PI, M_PI);
+            cc->arc(sx + scaledTotalW + 2 - radius, sy - 2 + radius, radius, 1.5 * M_PI, 2.0 * M_PI);
+            cc->arc(sx + scaledTotalW + 2 - radius, sy + scaledIconH + 2 - radius, radius, 0, 0.5 * M_PI);
+            cc->arc(sx - 2 + radius, sy + scaledIconH + 2 - radius, radius, 0.5 * M_PI, M_PI);
             cc->close_path();
             cc->fill();
 
             // Draw stars with scale-up animation on recent change
-            double starScale = 1.0;
+            double starScale = fitScale;
             if (animRatingActive_ && animRatingAlpha_ > 0.3) {
-                starScale = 1.0 + 0.3 * (animRatingAlpha_ - 0.3) / 0.7;
+                starScale *= 1.0 + 0.3 * (animRatingAlpha_ - 0.3) / 0.7;
             }
+            double drawX = sx;
             for (int i = 0; i < rank; i++) {
-                if (starScale > 1.01) {
-                    cc->save();
-                    double scx = sx + iconW / 2.0;
-                    double scy = sy + iconH / 2.0;
-                    cc->translate(scx, scy);
-                    cc->scale(starScale, starScale);
-                    cc->translate(-scx, -scy);
-                }
-                cc->set_source(starSurf, sx, sy);
-                cc->rectangle(sx, sy, iconW, iconH);
+                cc->save();
+                double scx = drawX + iconW * fitScale / 2.0;
+                double scy = sy + scaledIconH / 2.0;
+                cc->translate(scx, scy);
+                cc->scale(starScale, starScale);
+                cc->translate(-scx, -scy);
+                cc->set_source(starSurf, drawX, sy);
+                cc->rectangle(drawX, sy, iconW, iconH);
                 cc->fill();
-                if (starScale > 1.01) {
-                    cc->restore();
-                }
-                sx += iconW + gap;
+                cc->restore();
+                drawX += (iconW + gap) * fitScale;
             }
         }
     }
 
-    // Draw color label circle at bottom-right
+    // Draw pick/reject flag at top-right
+    if (pick != 0) {
+        auto& flagIconPtr = (pick == 1) ? FileThumbnailButtonSet::pickIcon : FileThumbnailButtonSet::rejectIcon;
+        if (flagIconPtr) {
+            auto flagSurf = flagIconPtr->get();
+            if (flagSurf) {
+                int iconW = flagIconPtr->getWidth();
+                int iconH = flagIconPtr->getHeight();
+                int fx = imgX + imgW - iconW - 3;
+                int fy = imgY + 3;
+
+                // Semi-transparent backdrop pill
+                cc->set_source_rgba(0, 0, 0, 0.5);
+                double radius = 3.0;
+                cc->begin_new_path();
+                cc->arc(fx - 2 + radius, fy - 2 + radius, radius, M_PI, 1.5 * M_PI);
+                cc->arc(fx + iconW + 2 - radius, fy - 2 + radius, radius, 1.5 * M_PI, 2.0 * M_PI);
+                cc->arc(fx + iconW + 2 - radius, fy + iconH + 2 - radius, radius, 0, 0.5 * M_PI);
+                cc->arc(fx - 2 + radius, fy + iconH + 2 - radius, radius, 0.5 * M_PI, M_PI);
+                cc->close_path();
+                cc->fill();
+
+                cc->set_source(flagSurf, fx, fy);
+                cc->rectangle(fx, fy, iconW, iconH);
+                cc->fill();
+            }
+        }
+    }
+
+    // Draw color label circle at top-left (scaled down 80%)
     if (clabel > 0 && clabel <= 5 && FileThumbnailButtonSet::colorLabelIcon[clabel]) {
         auto circSurf = FileThumbnailButtonSet::colorLabelIcon[clabel]->get();
         if (circSurf) {
             int iconW = FileThumbnailButtonSet::colorLabelIcon[clabel]->getWidth();
             int iconH = FileThumbnailButtonSet::colorLabelIcon[clabel]->getHeight();
-            int cx = imgX + imgW - iconW - 3;
-            int cy = imgY + imgH - iconH - 3;
+            double clScale = 0.8;
+            int cx = imgX + 3;
+            int cy = imgY + 3;
 
-            // Semi-transparent backdrop
+            // Semi-transparent backdrop circle
             cc->set_source_rgba(0, 0, 0, 0.5);
-            cc->arc(cx + iconW / 2.0, cy + iconH / 2.0, iconW / 2.0 + 2, 0, 2 * M_PI);
+            cc->arc(cx + iconW * clScale / 2.0, cy + iconH * clScale / 2.0,
+                    iconW * clScale / 2.0 + 1.5, 0, 2 * M_PI);
             cc->fill();
 
-            cc->set_source(circSurf, cx, cy);
-            cc->rectangle(cx, cy, iconW, iconH);
+            // Draw scaled icon
+            cc->save();
+            cc->translate(cx, cy);
+            cc->scale(clScale, clScale);
+            cc->set_source(circSurf, 0, 0);
+            cc->rectangle(0, 0, iconW, iconH);
             cc->fill();
+            cc->restore();
         }
     }
 }
@@ -912,6 +980,22 @@ void ThumbBrowserEntryBase::startColorLabelAnimation ()
     }
 }
 
+void ThumbBrowserEntryBase::startPickAnimation ()
+{
+    animPickActive_ = true;
+    animPickAlpha_ = 1.0;
+    animStartTime_ = std::chrono::steady_clock::now();
+
+    if (!animTimerConn_.connected()) {
+        animTimerConn_ = Glib::signal_timeout().connect(
+            sigc::mem_fun(*this, &ThumbBrowserEntryBase::animTick), 30);
+    }
+
+    if (parent) {
+        parent->getDrawingArea()->queue_draw();
+    }
+}
+
 bool ThumbBrowserEntryBase::animTick ()
 {
     auto now = std::chrono::steady_clock::now();
@@ -927,6 +1011,9 @@ bool ThumbBrowserEntryBase::animTick ()
     if (animColorActive_) {
         animColorAlpha_ = std::max(0.0, 1.0 - ease);
     }
+    if (animPickActive_) {
+        animPickAlpha_ = std::max(0.0, 1.0 - ease);
+    }
 
     if (parent) {
         parent->getDrawingArea()->queue_draw();
@@ -935,8 +1022,10 @@ bool ThumbBrowserEntryBase::animTick ()
     if (t >= 1.0) {
         animRatingActive_ = false;
         animColorActive_ = false;
+        animPickActive_ = false;
         animRatingAlpha_ = 0;
         animColorAlpha_ = 0;
+        animPickAlpha_ = 0;
         return false; // disconnect timer
     }
     return true; // continue

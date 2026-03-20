@@ -76,19 +76,55 @@ CropHandler::~CropHandler ()
 
 void CropHandler::setEditSubscriber (EditSubscriber* newSubscriber)
 {
-    (static_cast<rtengine::Crop *>(crop))->setEditSubscriber(newSubscriber);
+    if (crop) {
+        (static_cast<rtengine::Crop *>(crop))->setEditSubscriber(newSubscriber);
+    }
+}
+
+void CropHandler::disconnectCrop ()
+{
+    // Safely detach from the current crop so the IPC can be destroyed
+    // without leaving a dangling pointer.  Must be called while the
+    // crop object is still alive (before IPC destruction).
+    if (crop) {
+        crop->setListener(nullptr);
+        crop = nullptr;
+    }
+
+    idle_register.destroy();
+    redraw_needed = false;
+    cropPixbuf.clear();
+    cropPixbuftrue.clear();
+
+    if (ipc) {
+        ipc->delSizeListener(this);
+        ipc = nullptr;
+    }
 }
 
 void CropHandler::newImage (StagedImageProcessor* ipc_, bool isDetailWindow)
 {
-    fprintf(stderr, "DBG newImage: ipc_=%p enabled=%d isDetailWindow=%d\n", (void*)ipc_, (int)enabled, (int)isDetailWindow);
+    // Disconnect the old crop's listener FIRST, before clearing callbacks.
+    // This prevents the old IPC's processing thread from calling
+    // setDetailedCrop() on this CropHandler after we've switched images.
+    // The old crop will be destroyed when the old IPC is cleaned up.
+    if (crop) {
+        crop->setListener(nullptr);
+        crop = nullptr;
+    }
+
+    // Cancel any pending idle callbacks from the previous IPC's processing
+    // to prevent stale callbacks from firing after the image has changed.
+    idle_register.destroy();
+    redraw_needed = false;
+    cropPixbuf.clear();
+    cropPixbuftrue.clear();
 
     ipc = ipc_;
     cx = 0;
     cy = 0;
 
     if (!ipc) {
-        fprintf(stderr, "DBG newImage: ipc is NULL, returning\n");
         return;
     }
 
@@ -102,7 +138,6 @@ void CropHandler::newImage (StagedImageProcessor* ipc_, bool isDetailWindow)
     crop = ipc->createCrop (editDataProvider, isDetailWindow);
     ipc->setSizeListener (this);
     crop->setListener (enabled ? this : nullptr);
-    fprintf(stderr, "DBG newImage: crop=%p listener=%s\n", (void*)crop, enabled ? "this" : "nullptr");
     initial = true;
 }
 
@@ -314,9 +349,6 @@ void CropHandler::setDetailedCrop(
     int askip
 )
 {
-    fprintf(stderr, "DBG setDetailedCrop: enabled=%d im=%p imtrue=%p ax=%d ay=%d aw=%d ah=%d askip=%d\n",
-            (int)enabled, (void*)im, (void*)imtrue, ax, ay, aw, ah, askip);
-    fprintf(stderr, "DBG   cropX=%d cropY=%d cropW=%d cropH=%d zoom=%d\n", cropX, cropY, cropW, cropH, zoom);
     if (!enabled) {
         return;
     }
@@ -342,7 +374,6 @@ void CropHandler::setDetailedCrop(
     received.scale = askip;
 
     bool accepted = acceptUpdate(received);
-    fprintf(stderr, "DBG   acceptUpdate=%d\n", (int)accepted);
     if (accepted) {
         cropimg_width = im->getWidth ();
         cropimg_height = im->getHeight ();
@@ -446,8 +477,6 @@ void CropHandler::getWindow(int& cwx, int& cwy, int& cww, int& cwh, int& cskip)
 
 void CropHandler::update ()
 {
-    fprintf(stderr, "DBG update: crop=%p enabled=%d\n", (void*)crop, (int)enabled);
-
     if (crop && enabled) {
 //        crop->setWindow (cropX, cropY, cropW, cropH, zoom>=1000 ? 1 : zoom); --> we use the "getWindow" hook instead of setting the size before
         crop->setListener (this);
@@ -466,8 +495,6 @@ void CropHandler::update ()
 
 void CropHandler::setEnabled (bool e)
 {
-    fprintf(stderr, "DBG setEnabled: e=%d (was %d) crop=%p\n", (int)e, (int)enabled, (void*)crop);
-
     enabled = e;
 
     if (!enabled) {

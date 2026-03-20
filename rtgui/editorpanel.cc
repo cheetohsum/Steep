@@ -807,7 +807,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     history = new History();
 
     // Build left sidebar: Places / Recent Folders / Directory Browser
-    editorPlacesPaned_ = new Gtk::Box(Gtk::ORIENTATION_VERTICAL);
+    editorPlacesPaned_ = new Gtk::Paned(Gtk::ORIENTATION_VERTICAL);
     editorPlacesPaned_->set_name("PlacesPaned");
     editorPlacesPaned_->set_size_request(250, -1);
 
@@ -820,12 +820,19 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     placesObox->get_style_context()->add_class("plainback");
 
     placesObox->pack_start(*editorDirBrowser_, Gtk::PACK_EXPAND_WIDGET, 0);
-    editorDirBrowser_->set_size_request(-1, 300);
+    editorDirBrowser_->set_size_request(-1, 200);
     placesObox->pack_start(*editorRecentBrowser_, Gtk::PACK_SHRINK, 4);
     placesObox->pack_start(*albumBrowser_, Gtk::PACK_SHRINK, 0);
 
-    editorPlacesPaned_->pack_start(*editorPlacesBrowser_, Gtk::PACK_SHRINK);
-    editorPlacesPaned_->pack_start(*placesObox, Gtk::PACK_EXPAND_WIDGET);
+    editorPlacesPaned_->pack1(*editorPlacesBrowser_, false, false);
+    editorPlacesPaned_->pack2(*placesObox, true, false);
+    int placesPos = std::max(App::get().options().dirBrowserHeight, 300);
+    editorPlacesPaned_->set_position(placesPos);
+    editorPlacesPaned_->property_position().signal_changed().connect([this]() {
+        if (editorPlacesPaned_->get_position() < 200) {
+            editorPlacesPaned_->set_position(std::max(App::get().options().dirBrowserHeight, 300));
+        }
+    });
 
     // Wire album selection to filmstrip filter and album view
     albumBrowser_->albumSelected().connect(sigc::mem_fun(*this, &EditorPanel::onAlbumSelected));
@@ -845,6 +852,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     // build the middle of the screen
     Gtk::Box* editbox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_VERTICAL));
     editbox->set_name("EditorEditBox");
+    editbox->set_spacing(0);
 
     beforeAfter = Gtk::manage (new Gtk::ToggleButton ());
     beforeAfter->set_image (*Gtk::manage (new RTImage ("compare", Gtk::ICON_SIZE_MENU)));
@@ -907,6 +915,10 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     tbFilterBar = nullptr;
     filterBarRevealer = nullptr;
     filterBarBlockSignals = false;
+    fbFiletypeButton_ = nullptr;
+    fbFiletypePopover_ = nullptr;
+    fbFiletypeBox_ = nullptr;
+    fbFiletypeAllCheck_ = nullptr;
     if (!App::get().isSimpleEditor() && filePanel) {
         tbFilterBar = Gtk::manage(new Gtk::ToggleButton());
         tbFilterBar->set_image(*Gtk::manage(new RTImage("filter-modern", Gtk::ICON_SIZE_MENU)));
@@ -929,6 +941,9 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     albumGridStack_ = nullptr;
     albumCollageArea_ = nullptr;
     collageContentHeight_ = 0;
+    filmstripFlagBtn_ = nullptr;
+    filmstripRejectBtn_ = nullptr;
+    filmstripCurrentPick_ = 0;
     filmstripSortBtn_ = nullptr;
     filmstripSortMenu_ = nullptr;
     albumSortBtn_ = nullptr;
@@ -974,6 +989,43 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         auto* sep0 = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
         applyCSS(sep0);
         filmstripActionBar->pack_start(*sep0, Gtk::PACK_SHRINK);
+
+        // Flag / Reject buttons
+        filmstripCurrentPick_ = 0;
+
+        filmstripFlagBtn_ = Gtk::manage(new Gtk::Button());
+        filmstripFlagBtn_->set_image(*Gtk::manage(new RTImage("flag-pick", Gtk::ICON_SIZE_MENU)));
+        filmstripFlagBtn_->set_relief(Gtk::RELIEF_NONE);
+        filmstripFlagBtn_->set_tooltip_markup(M("FILEBROWSER_POPUPFLAG"));
+        filmstripFlagBtn_->signal_clicked().connect([this]() {
+            if (fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser) {
+                int newPick = (filmstripCurrentPick_ == 1) ? 0 : 1;
+                fPanel->fileCatalog->fileBrowser->requestPick(newPick);
+                filmstripCurrentPick_ = newPick;
+                updateFilmstripFlagBtn();
+            }
+        });
+        applyCSS(filmstripFlagBtn_);
+        filmstripActionBar->pack_start(*filmstripFlagBtn_, Gtk::PACK_SHRINK);
+
+        filmstripRejectBtn_ = Gtk::manage(new Gtk::Button());
+        filmstripRejectBtn_->set_image(*Gtk::manage(new RTImage("flag-reject", Gtk::ICON_SIZE_MENU)));
+        filmstripRejectBtn_->set_relief(Gtk::RELIEF_NONE);
+        filmstripRejectBtn_->set_tooltip_markup(M("FILEBROWSER_POPUPREJECT"));
+        filmstripRejectBtn_->signal_clicked().connect([this]() {
+            if (fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser) {
+                int newPick = (filmstripCurrentPick_ == -1) ? 0 : -1;
+                fPanel->fileCatalog->fileBrowser->requestPick(newPick);
+                filmstripCurrentPick_ = newPick;
+                updateFilmstripFlagBtn();
+            }
+        });
+        applyCSS(filmstripRejectBtn_);
+        filmstripActionBar->pack_start(*filmstripRejectBtn_, Gtk::PACK_SHRINK);
+
+        auto* sepFlag = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
+        applyCSS(sepFlag);
+        filmstripActionBar->pack_start(*sepFlag, Gtk::PACK_SHRINK);
 
         // Star rating buttons: unrank + 5 stars
         Gtk::Button* unrankBtn = Gtk::manage(new Gtk::Button());
@@ -1677,6 +1729,39 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         fbSearchEntry->signal_changed().connect(sigc::mem_fun(*this, &EditorPanel::filterBarChanged));
         filterBar->pack_start(*fbSearchEntry, Gtk::PACK_SHRINK);
 
+        // Filetype filter dropdown
+        auto* fsep4 = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
+        filterBar->pack_start(*fsep4, Gtk::PACK_SHRINK);
+
+        fbFiletypeButton_ = Gtk::manage(new Gtk::MenuButton());
+        fbFiletypeButton_->set_label(M("FILEBROWSER_FILETYPE_ALL"));
+        fbFiletypeButton_->set_relief(Gtk::RELIEF_NONE);
+        fbFiletypeButton_->set_tooltip_markup(M("FILEBROWSER_FILETYPE_TOOLTIP"));
+        applyFilterCss(fbFiletypeButton_);
+
+        fbFiletypePopover_ = Gtk::manage(new Gtk::Popover(*fbFiletypeButton_));
+        fbFiletypeBox_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
+        fbFiletypeBox_->set_margin_start(10);
+        fbFiletypeBox_->set_margin_end(10);
+        fbFiletypeBox_->set_margin_top(8);
+        fbFiletypeBox_->set_margin_bottom(8);
+        fbFiletypeBox_->set_size_request(140, -1);
+
+        fbFiletypeAllCheck_ = Gtk::manage(new Gtk::CheckButton(M("FILEBROWSER_FILETYPE_SELECTALL")));
+        fbFiletypeAllCheck_->set_active(true);
+        fbFiletypeAllCheck_->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::onEditorFiletypeAllToggled));
+        fbFiletypeBox_->pack_start(*fbFiletypeAllCheck_, Gtk::PACK_SHRINK);
+        fbFiletypeBox_->pack_start(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)), Gtk::PACK_SHRINK);
+
+        fbFiletypePopover_->add(*fbFiletypeBox_);
+        fbFiletypePopover_->set_position(Gtk::POS_BOTTOM);
+        fbFiletypeButton_->set_popover(*fbFiletypePopover_);
+
+        // Rebuild popover contents each time it opens (syncs with FileCatalog state)
+        fbFiletypePopover_->signal_show().connect(sigc::mem_fun(*this, &EditorPanel::rebuildEditorFiletypePopover));
+
+        filterBar->pack_start(*fbFiletypeButton_, Gtk::PACK_SHRINK);
+
         filterBarRevealer = Gtk::manage(new Gtk::Revealer());
         filterBarRevealer->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
         filterBarRevealer->set_transition_duration(200);
@@ -1687,7 +1772,8 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     }
 
     // Image area goes directly in editbox; sidebars will overlay at hpanedr level
-    editbox->pack_start(*beforeAfterBox);
+    beforeAfterBox->set_vexpand(true);
+    editbox->pack_start(*beforeAfterBox, Gtk::PACK_EXPAND_WIDGET, 0);
     setExpandAlignProperties(leftbox, false, true, Gtk::ALIGN_START, Gtk::ALIGN_FILL);
     leftbox->set_size_request(options.dirBrowserWidth, -1);
 
@@ -1869,37 +1955,23 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     vboxright->reference ();
     vboxright->set_name ("EditorModules");
 
-    Gtk::Paned *viewpaned = Gtk::manage (new Gtk::Paned (Gtk::ORIENTATION_VERTICAL));
-    viewpaned->set_name("EditorViewPaned");
-    // Hide the paned separator between filmstrip and editor via screen-level CSS
-    {
-        static auto sepCss = Gtk::CssProvider::create();
-        sepCss->load_from_data(
-            "paned#EditorViewPaned > separator {"
-            "  min-height: 0; min-width: 0; margin: 0; padding: 0;"
-            "  border: none; background: none; background-color: transparent;"
-            "  background-image: none; box-shadow: none; opacity: 0;"
-            "}"
-        );
-        Gtk::StyleContext::add_provider_for_screen(
-            Gdk::Screen::get_default(), sepCss,
-            GTK_STYLE_PROVIDER_PRIORITY_USER + 200);
-    }
     fPanel = filePanel;
 
     if (filePanel) {
-        catalogPane = new Gtk::Paned();
+        catalogPane = new Gtk::Box(Gtk::ORIENTATION_VERTICAL);
+        catalogPane->set_name("EditorFilmstripPane");
         // Size to fit one row of filmstrip thumbnails without vertical scrollbar.
-        // thumbSizeTab is the thumbnail height; add padding for borders + hscrollbar.
-        int filmstripHeight = std::min(options.thumbSizeTab, 125) + 10;
-        catalogPane->set_size_request(-1, filmstripHeight);
+        int filmstripHeight = std::min(options.thumbSizeTab, 144);
+        filmstripFullHeight_ = filmstripHeight;
         // Inset filmstrip so sidebars don't overlap its content
         catalogPane->set_margin_start(options.showHistory ? options.dirBrowserWidth : 0);
         catalogPane->set_margin_end(std::min(options.toolPanelWidth, 400));
-        viewpaned->pack1 (*catalogPane, false, true);
+        catalogPane->set_vexpand(false);
+        catalogPane->set_valign(Gtk::ALIGN_START);
+        // Pack filmstrip directly into editbox as its first child (before the toolbar)
+        editbox->pack_start(*catalogPane, false, false, 0);
+        editbox->reorder_child(*catalogPane, 0);
     }
-
-    viewpaned->pack2(*editbox, true, true);
 
     // Album grid view
     albumViewBox_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
@@ -2093,7 +2165,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     albumViewStack_ = Gtk::manage(new Gtk::Stack());
     albumViewStack_->set_transition_type(Gtk::STACK_TRANSITION_TYPE_CROSSFADE);
     albumViewStack_->set_transition_duration(250);
-    albumViewStack_->add(*viewpaned, "editor");
+    albumViewStack_->add(*editbox, "editor");
     albumViewStack_->add(*albumViewBox_, "album");
     albumViewStack_->set_visible_child("editor");
 
@@ -2102,6 +2174,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 
     if (!options.showHistory) {
         leftbox->set_no_show_all(true);
+        leftAnimFraction_ = 0.0;
     }
 
     // Sidebars float at full height over the entire editor (filmstrip + image)
@@ -2121,20 +2194,28 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
             int sideH = std::max(1, overlayH - botOff);
 
             if (child == leftbox) {
-                alloc.set_x(0);
+                // Slide left sidebar in/out from the left edge
+                double eased = 1.0 - std::pow(1.0 - leftAnimFraction_, 3); // ease-out-cubic
+                int slideOffset = static_cast<int>(natW * (1.0 - eased));
+                alloc.set_x(-slideOffset);
                 alloc.set_y(0);
                 alloc.set_width(natW);
                 alloc.set_height(sideH);
                 return true;
             } else if (child == vboxright) {
-                // Slide offset for view transition animation
-                double eased;
+                // Combine view-transition animation with toggle animation
+                // View transition: drives entry/exit when switching to editor
+                double viewEased;
                 if (editorAnimIn_) {
-                    eased = 1.0 - std::pow(1.0 - editorAnimFraction_, 3); // ease-out-cubic
+                    viewEased = 1.0 - std::pow(1.0 - editorAnimFraction_, 3);
                 } else {
-                    eased = editorAnimFraction_ * editorAnimFraction_ * editorAnimFraction_; // ease-in-cubic
+                    viewEased = editorAnimFraction_ * editorAnimFraction_ * editorAnimFraction_;
                 }
-                int slideOffset = static_cast<int>(natW * (1.0 - eased));
+                // Toggle animation: drives show/hide via sidebar button
+                double toggleEased = 1.0 - std::pow(1.0 - rightAnimFraction_, 3);
+                // Use the minimum — either animation can hide the sidebar
+                double combined = std::min(viewEased, toggleEased);
+                int slideOffset = static_cast<int>(natW * (1.0 - combined));
                 alloc.set_x(overlayW - natW + slideOffset);
                 alloc.set_y(0);
                 alloc.set_width(natW);
@@ -2243,10 +2324,16 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         tbTopPanel_1->signal_toggled().connect ( sigc::mem_fun (*this, &EditorPanel::tbTopPanel_1_toggled) );
     }
 
+
 }
 
 EditorPanel::~EditorPanel ()
 {
+    if (beforeAfterCancel_) {
+        beforeAfterCancel_->store(true);
+        beforeAfterCancel_.reset();
+    }
+
     if (placeholderCancel_) {
         placeholderCancel_->store(true);
         placeholderCancel_.reset();
@@ -2408,7 +2495,7 @@ void EditorPanel::on_realize ()
     editorDirBrowser_->fillDirTree();
     editorPlacesBrowser_->refreshPlacesList();
 
-    // dirBrowserHeight no longer used — Places is now a Box, not a Paned
+    editorPlacesPaned_->set_position(std::max(App::get().options().dirBrowserHeight, 300));
 
     // Sync with browser's current directory on first show
     if (fPanel && fPanel->fileCatalog) {
@@ -2428,6 +2515,19 @@ void EditorPanel::updateFilmstripStars(int highlightUpTo)
         } else {
             filmstripRankBtns[i]->set_image(*Gtk::manage(new RTImage("star-small", Gtk::ICON_SIZE_MENU)));
         }
+    }
+}
+
+void EditorPanel::updateFilmstripFlagBtn()
+{
+    if (filmstripCurrentPick_ == 1) {
+        // Currently flagged — show unflag icon
+        filmstripFlagBtn_->set_image(*Gtk::manage(new RTImage("flag-unflagged", Gtk::ICON_SIZE_MENU)));
+        filmstripFlagBtn_->set_tooltip_markup(M("FILEBROWSER_POPUPUNFLAG"));
+    } else {
+        // Not flagged — show flag icon
+        filmstripFlagBtn_->set_image(*Gtk::manage(new RTImage("flag-pick", Gtk::ICON_SIZE_MENU)));
+        filmstripFlagBtn_->set_tooltip_markup(M("FILEBROWSER_POPUPFLAG"));
     }
 }
 
@@ -2531,15 +2631,28 @@ void EditorPanel::filterBarToggled()
     bool show = tbFilterBar->get_active();
     filterBarRevealer->set_reveal_child(show);
 
-    if (!show) {
-        filterBarClearAll();
+    if (show && fbFiletypeButton_ && fPanel && fPanel->fileCatalog) {
+        // Sync filetype button label with current state
+        const auto& sel = fPanel->fileCatalog->getSelectedFiletypes();
+        if (sel.empty()) {
+            fbFiletypeButton_->set_label(M("FILEBROWSER_FILETYPE_ALL"));
+        } else if (sel.size() == 1) {
+            fbFiletypeButton_->set_label(*sel.begin() + " Only");
+        } else if (sel.size() == 2) {
+            auto it = sel.begin();
+            Glib::ustring first = *it++;
+            fbFiletypeButton_->set_label(first + ", " + *it);
+        } else {
+            fbFiletypeButton_->set_label(
+                Glib::ustring::compose("%1 +%2 more", *sel.begin(), sel.size() - 1));
+        }
     }
 }
 
 void EditorPanel::collapseFilterBar()
 {
     if (tbFilterBar && tbFilterBar->get_active()) {
-        tbFilterBar->set_active(false);  // triggers filterBarToggled → clears & hides
+        tbFilterBar->set_active(false);  // triggers filterBarToggled → hides
     }
 }
 
@@ -2570,7 +2683,109 @@ void EditorPanel::filterBarClearAll()
 
     fbSearchEntry->set_text("");
 
+    // Reset filetype filter
+    if (fPanel && fPanel->fileCatalog) {
+        fPanel->fileCatalog->setSelectedFiletypes({});
+    }
+    if (fbFiletypeButton_) {
+        fbFiletypeButton_->set_label(M("FILEBROWSER_FILETYPE_ALL"));
+    }
+
     filterBarBlockSignals = false;
+    applyEditorFilter();
+}
+
+void EditorPanel::rebuildEditorFiletypePopover()
+{
+    if (!fPanel || !fPanel->fileCatalog) return;
+
+    const auto& known = fPanel->fileCatalog->getKnownFiletypes();
+    const auto& selected = fPanel->fileCatalog->getSelectedFiletypes();
+
+    fbFiletypeBlockSignals_ = true;
+
+    // Remove old type checkboxes (keep "All" + separator at positions 0,1)
+    for (auto& pair : fbFiletypeChecks_) {
+        fbFiletypeBox_->remove(*pair.second);
+    }
+    fbFiletypeChecks_.clear();
+
+    // Add checkbox for each known type
+    for (const auto& ft : known) {
+        auto* cb = Gtk::manage(new Gtk::CheckButton(ft));
+        bool checked = selected.empty() || selected.count(ft) > 0;
+        cb->set_active(checked);
+        cb->signal_toggled().connect(
+            sigc::bind(sigc::mem_fun(*this, &EditorPanel::onEditorFiletypeCheckToggled), ft));
+        fbFiletypeBox_->pack_start(*cb, Gtk::PACK_SHRINK);
+        fbFiletypeChecks_[ft] = cb;
+    }
+
+    fbFiletypeAllCheck_->set_active(selected.empty());
+    fbFiletypeBox_->show_all();
+    fbFiletypeBlockSignals_ = false;
+}
+
+void EditorPanel::onEditorFiletypeCheckToggled(const std::string& ft)
+{
+    if (fbFiletypeBlockSignals_) return;
+    if (!fPanel || !fPanel->fileCatalog) return;
+
+    // Build selected set from checkbox states
+    std::set<std::string> sel;
+    bool allChecked = true;
+    for (const auto& pair : fbFiletypeChecks_) {
+        if (pair.second->get_active()) {
+            sel.insert(pair.first);
+        } else {
+            allChecked = false;
+        }
+    }
+    if (allChecked) sel.clear();
+
+    // Sync "All" checkbox
+    fbFiletypeBlockSignals_ = true;
+    fbFiletypeAllCheck_->set_active(allChecked);
+    fbFiletypeBlockSignals_ = false;
+
+    // Update shared state and button labels
+    fPanel->fileCatalog->setSelectedFiletypes(sel);
+
+    // Update editor button label
+    if (sel.empty()) {
+        fbFiletypeButton_->set_label(M("FILEBROWSER_FILETYPE_ALL"));
+    } else if (sel.size() == 1) {
+        fbFiletypeButton_->set_label(*sel.begin() + " Only");
+    } else if (sel.size() == 2) {
+        auto it = sel.begin();
+        Glib::ustring first = *it++;
+        fbFiletypeButton_->set_label(first + ", " + *it);
+    } else {
+        fbFiletypeButton_->set_label(
+            Glib::ustring::compose("%1 +%2 more", *sel.begin(), sel.size() - 1));
+    }
+
+    applyEditorFilter();
+}
+
+void EditorPanel::onEditorFiletypeAllToggled()
+{
+    if (fbFiletypeBlockSignals_) return;
+    if (!fPanel || !fPanel->fileCatalog) return;
+
+    bool all = fbFiletypeAllCheck_->get_active();
+    fbFiletypeBlockSignals_ = true;
+    for (auto& pair : fbFiletypeChecks_) {
+        pair.second->set_active(all);
+    }
+    fbFiletypeBlockSignals_ = false;
+
+    std::set<std::string> sel;
+    if (!all) {
+        // All unchecked — empty selection means show nothing
+    }
+    fPanel->fileCatalog->setSelectedFiletypes(sel);
+    fbFiletypeButton_->set_label(M("FILEBROWSER_FILETYPE_ALL"));
     applyEditorFilter();
 }
 
@@ -2628,6 +2843,11 @@ BrowserFilter EditorPanel::buildEditorFilter()
 
     // Album whitelist
     f.albumWhitelist = currentAlbumWhitelist_;
+
+    // Filetype filter (shared with FileCatalog)
+    if (fPanel && fPanel->fileCatalog) {
+        f.filetypeFilter = fPanel->fileCatalog->getSelectedFiletypes();
+    }
 
     // Always show non-trash, hide trash
     f.showTrash = false;
@@ -3233,9 +3453,17 @@ void EditorPanel::toggleAlbumView ()
     }
 }
 
+
 void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
 {
-    fprintf(stderr, "DBG EditorPanel::open tmb=%p isrc=%p\n", (void*)tmb, (void*)isrc);
+    // Sync places paned position from file panel
+    if (fPanel && fPanel->placespaned) {
+        int pos = fPanel->placespaned->get_position();
+        if (pos >= 200) {
+            editorPlacesPaned_->set_position(pos);
+        }
+    }
+
     close();
 
     isProcessing = true; // prevents closing-on-init
@@ -3246,6 +3474,10 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
     // Update filmstrip action bar stars to reflect opened image's rating
     filmstripCurrentRating = openThm->getRank();
     updateFilmstripStars(filmstripCurrentRating);
+
+    // Update filmstrip flag button to reflect opened image's pick state
+    filmstripCurrentPick_ = openThm->getPick();
+    updateFilmstripFlagBtn();
 
     fname = openThm->getFileName();
     if (fPanel && fPanel->fileCatalog) {
@@ -3258,15 +3490,12 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
     this->isrc = isrc;
     ipc = rtengine::StagedImageProcessor::create (isrc);
 
-    fprintf(stderr, "DBG open: ipc created=%p\n", (void*)ipc);
     ipc->setProgressListener (this);
     colorMgmtToolBar->updateProcessor();
     ipc->setPreviewImageListener (previewHandler);
     ipc->setPreviewScale (10);  // Important
 
-    fprintf(stderr, "DBG open: before initImage\n");
     tpc->initImage (ipc, tmb->getType() == FT_Raw);
-    fprintf(stderr, "DBG open: after initImage\n");
     tpc->setThumbnail(openThm);
 
     // Notify MCP server about the active editor panel
@@ -3286,7 +3515,6 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
     rtengine::ImageSource* is = isrc->getImageSource();
     is->setProgressListener ( this );
 
-    fprintf(stderr, "DBG open: before initProfile\n");
     // try to load the last saved parameters from the cache or from the paramfile file
     ProcParams* ldprof = openThm->createProcParamsForUpdate (true, false); // will be freed by initProfile
 
@@ -3296,7 +3524,6 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
     presetListPanel->setImageProcessor(ipc);
     presetListPanel->setThumbnail(openThm);
     presetListPanel->initProfile (defProf, ldprof);
-    fprintf(stderr, "DBG open: after initProfile\n");
 
     presetListPanel->setInitialFileName (fname);
 
@@ -3322,17 +3549,17 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
     info_toggled ();
 
     if (beforeIarea) {
-        beforeAfterToggled();
+        // Single call handles both cleanup of old state and recreation
+        // for the new image (button is still active, so activation runs).
+        // A second call was redundant and caused an extra RAW file load.
         beforeAfterToggled();
     }
 
-    fprintf(stderr, "DBG open: before cropHandler, mainCropWindow=%p\n", (void*)iareapanel->imageArea->mainCropWindow);
     // If in single tab mode, the main crop window is not constructed the very first time
     // since there was no resize event
     if (iareapanel->imageArea->mainCropWindow) {
         iareapanel->imageArea->mainCropWindow->cropHandler.newImage (ipc, false);
     } else {
-        fprintf(stderr, "DBG open: mainCropWindow is null, calling on_resized\n");
         Gtk::Allocation alloc;
         iareapanel->imageArea->on_resized (alloc);
 
@@ -3415,7 +3642,11 @@ void EditorPanel::close ()
         }
     }
 
-    // Cancel any pending async placeholder to prevent stale callbacks
+    // Cancel any pending async loads to prevent stale callbacks
+    if (beforeAfterCancel_) {
+        beforeAfterCancel_->store(true);
+        beforeAfterCancel_.reset();
+    }
     if (placeholderCancel_) {
         placeholderCancel_->store(true);
         placeholderCancel_.reset();
@@ -3437,13 +3668,9 @@ void EditorPanel::close ()
         ProcParams savedParams;
         ipc->getParams (&savedParams);
 
-        // Disconnect TPC — non-blocking (no stopProcessing join)
         tpc->closeImage ();
         tpc->writeOptions ();
 
-        // Disconnect listeners so processing thread callbacks become no-ops.
-        // Pointer writes are atomic on x86 and the processing thread null-checks
-        // before each callback, so this is safe without a blocking join.
         rtengine::ImageSource* is = isrc->getImageSource();
         is->setProgressListener ( nullptr );
 
@@ -3455,6 +3682,21 @@ void EditorPanel::close ()
             beforeIpc->setPreviewImageListener (nullptr);
         }
 
+        // Clear before/after linked view pointers so no stale references
+        // remain while the before state is cleaned up in open().
+        if (beforeIarea) {
+            iareapanel->setBeforeAfterViews (nullptr, iareapanel);
+            iareapanel->imageArea->iLinkedImageArea = nullptr;
+        }
+
+        // Disconnect crop handlers from old crops BEFORE deferring IPC
+        // destruction.  The deferred thread deletes the IPC which deletes
+        // its Crop objects.  Without this, cropHandler.crop would be a
+        // dangling pointer when open()->newImage() tries to use it.
+        if (iareapanel && iareapanel->imageArea->mainCropWindow) {
+            iareapanel->imageArea->mainCropWindow->cropHandler.disconnectCrop();
+        }
+
         if (iareapanel) {
             iareapanel->imageArea->setPreviewHandler (nullptr);
             iareapanel->imageArea->setImProcCoordinator (nullptr);
@@ -3463,9 +3705,11 @@ void EditorPanel::close ()
 
         navigator->previewWindow->setPreviewHandler (nullptr);
 
-        // Defer heavy work (stopProcessing join, handler deletion, ipc
-        // destruction, profile save) to a background thread so close()
-        // returns instantly and the GUI can switch to the new image.
+        // Defer stopProcessing + IPC destruction to background thread.
+        // stopProcessing() blocks until processing finishes, which can
+        // take seconds for large RAWs — too long for the UI thread.
+        // All crop handlers have been disconnected above, so no dangling
+        // pointers remain on the main thread.
         {
             rtengine::StagedImageProcessor* old = ipc;
             PreviewHandler* oldHandler = previewHandler;
@@ -3474,21 +3718,18 @@ void EditorPanel::close ()
 
             if (Glib::file_test(savedFname, Glib::FILE_TEST_EXISTS)) {
                 savedThm = openThm;
-                savedThm->increaseRef(); // prevent deletion during async save
+                savedThm->increaseRef();
             }
 
             ipc = nullptr;
             previewHandler = nullptr;
 
             std::thread([old, oldHandler, savedParams, savedThm, savedFname]() {
-                // Join the processing thread (was blocking GUI before)
                 old->stopProcessing();
 
-                // Safe to delete now — processing thread is done
                 delete oldHandler;
                 rtengine::StagedImageProcessor::destroy(old);
 
-                // Save profile to disk (was blocking GUI before)
                 if (savedThm) {
                     savedThm->setProcParams(savedParams, nullptr, EDITOR);
                     savedThm->decreaseRef();
@@ -3788,25 +4029,47 @@ void EditorPanel::info_toggled ()
 
 void EditorPanel::hideHistoryActivated ()
 {
-    if (hidehp->get_active()) {
+    auto& options = App::get().mut_options();
+    const bool show = hidehp->get_active();
+    options.showHistory = show;
+    hidehp->set_image(show ? *iHistoryHide : *iHistoryShow);
+
+    leftAnimConn_.disconnect();
+
+    if (show) {
+        // Show immediately, then animate in
         leftbox->set_no_show_all(false);
         leftbox->show_all();
+        leftAnimFraction_ = 0.0;
+        leftAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
+            leftAnimFraction_ += 16.0 / 200.0; // 200ms
+            if (leftAnimFraction_ >= 1.0) {
+                leftAnimFraction_ = 1.0;
+                hpanedr->queue_allocate();
+                return false;
+            }
+            hpanedr->queue_allocate();
+            return true;
+        }, 16);
     } else {
-        leftbox->hide();
-        leftbox->set_no_show_all(true);
-    }
-
-    auto& options = App::get().mut_options();
-    options.showHistory = hidehp->get_active();
-
-    if (options.showHistory) {
-        hidehp->set_image (*iHistoryHide);
-    } else {
-        hidehp->set_image (*iHistoryShow);
+        // Animate out, then hide
+        leftAnimFraction_ = 1.0;
+        leftAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
+            leftAnimFraction_ -= 16.0 / 200.0;
+            if (leftAnimFraction_ <= 0.0) {
+                leftAnimFraction_ = 0.0;
+                leftbox->hide();
+                leftbox->set_no_show_all(true);
+                hpanedr->queue_allocate();
+                return false;
+            }
+            hpanedr->queue_allocate();
+            return true;
+        }, 16);
     }
 
     // Update filmstrip + toolbar margins so sidebars don't overlap content
-    int leftMargin = hidehp->get_active() ? options.dirBrowserWidth : 0;
+    int leftMargin = show ? options.dirBrowserWidth : 0;
     if (catalogPane) {
         catalogPane->set_margin_start(leftMargin);
     }
@@ -3838,17 +4101,42 @@ void EditorPanel::tbRightPanel_1_toggled ()
         tbShowHideSidePanels_managestate();
         */
     if (vboxright) {
-        if (tbRightPanel_1->get_active()) {
+        const bool show = tbRightPanel_1->get_active();
+        tbRightPanel_1->set_image(show ? *iRightPanel_1_Hide : *iRightPanel_1_Show);
+
+        rightAnimConn_.disconnect();
+
+        if (show) {
             vboxright->show();
-            tbRightPanel_1->set_image (*iRightPanel_1_Hide);
+            rightAnimFraction_ = 0.0;
+            rightAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
+                rightAnimFraction_ += 16.0 / 200.0;
+                if (rightAnimFraction_ >= 1.0) {
+                    rightAnimFraction_ = 1.0;
+                    hpanedr->queue_allocate();
+                    return false;
+                }
+                hpanedr->queue_allocate();
+                return true;
+            }, 16);
         } else {
-            vboxright->hide();
-            tbRightPanel_1->set_image (*iRightPanel_1_Show);
+            rightAnimFraction_ = 1.0;
+            rightAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
+                rightAnimFraction_ -= 16.0 / 200.0;
+                if (rightAnimFraction_ <= 0.0) {
+                    rightAnimFraction_ = 0.0;
+                    vboxright->hide();
+                    hpanedr->queue_allocate();
+                    return false;
+                }
+                hpanedr->queue_allocate();
+                return true;
+            }, 16);
         }
 
         // Update filmstrip + toolbar margins so sidebars don't overlap content
         const auto& opts = App::get().options();
-        int rightMargin = tbRightPanel_1->get_active() ? std::min(opts.toolPanelWidth, 400) : 0;
+        int rightMargin = show ? std::min(opts.toolPanelWidth, 400) : 0;
         if (catalogPane) {
             catalogPane->set_margin_end(rightMargin);
         }
@@ -3898,6 +4186,12 @@ void EditorPanel::animateEditorIn(bool skipFilmstrip)
     editorAnimIn_ = true;
     editorAnimFraction_ = 0.0;
 
+    // Pause filmstrip layout during animation — thumbnail inserts accumulate
+    // but arrangeFiles() won't run until the animation ends.
+    if (fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser) {
+        fPanel->fileCatalog->fileBrowser->pauseLayout();
+    }
+
     // Show filmstrip if enabled (start transparent, animation fades it in)
     if (!skipFilmstrip && catalogPane && App::get().options().editorFilmStripOpened) {
         catalogPane->set_opacity(0.0);
@@ -3913,7 +4207,7 @@ void EditorPanel::animateEditorIn(bool skipFilmstrip)
     }
 
     // Start sidebar off-screen (fraction 0 = fully hidden)
-    hpanedr->queue_resize();
+    hpanedr->queue_allocate();
 
     editorAnimConn_ = Glib::signal_timeout().connect([this, skipFilmstrip]() -> bool {
         editorAnimFraction_ += 16.0 / 250.0;  // 250ms total — smooth entrance
@@ -3925,7 +4219,12 @@ void EditorPanel::animateEditorIn(bool skipFilmstrip)
             if (editorToolbarBottom_) {
                 editorToolbarBottom_->set_opacity(1.0);
             }
-            hpanedr->queue_resize();
+            hpanedr->queue_allocate();
+
+            // Resume filmstrip layout — flush accumulated entries in one batch
+            if (fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser) {
+                fPanel->fileCatalog->fileBrowser->resumeLayout();
+            }
             return false;
         }
 
@@ -3942,7 +4241,7 @@ void EditorPanel::animateEditorIn(bool skipFilmstrip)
         }
 
         // Sidebar slides in from right via signal_get_child_position
-        hpanedr->queue_resize();
+        hpanedr->queue_allocate();
         return true;
     }, 16);
 }
@@ -3953,6 +4252,11 @@ void EditorPanel::animateEditorOut(std::function<void()> onComplete)
     editorAnimConn_.disconnect();
     editorAnimIn_ = false;
     editorAnimFraction_ = 1.0;
+
+    // Pause filmstrip layout during animation
+    if (fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser) {
+        fPanel->fileCatalog->fileBrowser->pauseLayout();
+    }
 
     editorAnimConn_ = Glib::signal_timeout().connect([this, onComplete]() -> bool {
         editorAnimFraction_ -= 16.0 / 180.0;  // 180ms total
@@ -3965,7 +4269,13 @@ void EditorPanel::animateEditorOut(std::function<void()> onComplete)
             if (editorToolbarBottom_) {
                 editorToolbarBottom_->set_opacity(1.0);
             }
-            hpanedr->queue_resize();
+            hpanedr->queue_allocate();
+
+            // Resume filmstrip layout
+            if (fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser) {
+                fPanel->fileCatalog->fileBrowser->resumeLayout();
+            }
+
             // Execute completion callback (switches notebook page)
             if (onComplete) {
                 onComplete();
@@ -3988,29 +4298,67 @@ void EditorPanel::animateEditorOut(std::function<void()> onComplete)
         }
 
         // Sidebar slides out to right via signal_get_child_position
-        hpanedr->queue_resize();
+        hpanedr->queue_allocate();
         return true;
     }, 16);
 }
 
 void EditorPanel::tbTopPanel_1_toggled ()
 {
+    if (!catalogPane) return; // catalogPane does not exist in multitab mode
 
-    if (catalogPane) { // catalogPane does not exist in multitab mode
+    auto& options = App::get().mut_options();
+    const bool show = tbTopPanel_1->get_active();
+    options.editorFilmStripOpened = show;
+    tbTopPanel_1->set_image(show ? *iTopPanel_1_Hide : *iTopPanel_1_Show);
 
-        auto& options = App::get().mut_options();
-        if (tbTopPanel_1->get_active()) {
-            catalogPane->show();
-            tbTopPanel_1->set_image (*iTopPanel_1_Hide);
-            options.editorFilmStripOpened = true;
-        } else {
-            catalogPane->hide();
-            tbTopPanel_1->set_image (*iTopPanel_1_Show);
-            options.editorFilmStripOpened = false;
+    topAnimConn_.disconnect();
+
+    if (show) {
+        // Update target from actual content height
+        if (fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser) {
+            int actualH = fPanel->fileCatalog->fileBrowser->getEffectiveHeight();
+            if (actualH > 0) {
+                filmstripFullHeight_ = actualH;
+            }
         }
-
-        tbShowHideSidePanels_managestate();
+        // Show at zero height, then animate open
+        catalogPane->set_size_request(-1, 1);
+        catalogPane->show();
+        topAnimFraction_ = 0.0;
+        topAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
+            topAnimFraction_ += 16.0 / 200.0;
+            if (topAnimFraction_ >= 1.0) {
+                topAnimFraction_ = 1.0;
+                catalogPane->set_size_request(-1, -1);
+                return false;
+            }
+            double eased = 1.0 - std::pow(1.0 - topAnimFraction_, 3);
+            int h = std::max(1, static_cast<int>(filmstripFullHeight_ * eased));
+            catalogPane->set_size_request(-1, h);
+            catalogPane->set_opacity(eased);
+            return true;
+        }, 16);
+    } else {
+        topAnimFraction_ = 1.0;
+        topAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
+            topAnimFraction_ -= 16.0 / 200.0;
+            if (topAnimFraction_ <= 0.0) {
+                topAnimFraction_ = 0.0;
+                catalogPane->hide();
+                catalogPane->set_size_request(-1, -1);
+                catalogPane->set_opacity(1.0);
+                return false;
+            }
+            double eased = topAnimFraction_ * topAnimFraction_ * topAnimFraction_;
+            int h = std::max(1, static_cast<int>(filmstripFullHeight_ * eased));
+            catalogPane->set_size_request(-1, h);
+            catalogPane->set_opacity(eased);
+            return true;
+        }, 16);
     }
+
+    tbShowHideSidePanels_managestate();
 }
 
 /*
@@ -4798,7 +5146,6 @@ void EditorPanel::updateExternalEditorSelection()
 
 void EditorPanel::historyBeforeLineChanged (const rtengine::procparams::ProcParams& params)
 {
-
     if (beforeIpc) {
         ProcParams* pparams = beforeIpc->beginUpdateParams ();
         *pparams = params;
@@ -4818,6 +5165,12 @@ void EditorPanel::beforeAfterToggled ()
     beforeAfterBox->set_homogeneous (false);
 
     if (beforeIarea) {
+        // Cancel any pending async load
+        if (beforeAfterCancel_) {
+            beforeAfterCancel_->store(true);
+            beforeAfterCancel_.reset();
+        }
+
         if (beforeIpc) {
             beforeIpc->stopProcessing ();
         }
@@ -4847,12 +5200,10 @@ void EditorPanel::beforeAfterToggled ()
 
     if (beforeAfter->get_active ()) {
 
-        int errorCode = 0;
-        rtengine::InitialImage *beforeImg = rtengine::InitialImage::load ( isrc->getImageSource ()->getFileName(),  openThm->getType() == FT_Raw, &errorCode, nullptr);
-
-        if ( !beforeImg || errorCode ) {
-            return;
-        }
+        // Cancel any previous async load
+        if (beforeAfterCancel_) beforeAfterCancel_->store(true);
+        auto cancel = std::make_shared<std::atomic<bool>>(false);
+        beforeAfterCancel_ = cancel;
 
         beforeIarea = new ImageAreaPanel ();
 
@@ -4890,38 +5241,77 @@ void EditorPanel::beforeAfterToggled ()
         beforeAfterBox->reorder_child (*beforeBox, 0);
         beforeAfterBox->set_homogeneous (true);
 
-        // Set up IPC BEFORE show_all so that when size_allocate fires,
-        // ipc is already set and mainCropWindow can be created
-        beforePreviewHandler = new PreviewHandler ();
-
-        beforeIpc = rtengine::StagedImageProcessor::create (beforeImg);
-        beforeIpc->setPreviewScale (10);
-        beforeIpc->setPreviewImageListener (beforePreviewHandler);
-        Glib::ustring monitorProfile;
-        rtengine::RenderingIntent intent;
-        if (ipc) {
-            ipc->getMonitorProfile(monitorProfile, intent);
-            beforeIpc->setMonitorProfile(monitorProfile, intent);
-        }
-
-        beforeIarea->imageArea->setPreviewHandler (beforePreviewHandler);
-        beforeIarea->imageArea->setImProcCoordinator (beforeIpc);
-
-        beforeIarea->imageArea->setPreviewModePanel (iareapanel->imageArea->previewModePanel);
-        beforeIarea->imageArea->setIndicateClippedPanel (iareapanel->imageArea->indClippedPanel);
-        iareapanel->imageArea->iLinkedImageArea = beforeIarea->imageArea;
-
-        iareapanel->setBeforeAfterViews (beforeIarea, iareapanel);
-        beforeIarea->setBeforeAfterViews (beforeIarea, iareapanel);
-
-        // Show all AFTER IPC is fully configured
+        // Show UI immediately — before panel appears as empty frame
+        // while the image loads asynchronously in the background.
         beforeAfterBox->show_all ();
 
-        rtengine::procparams::ProcParams params;
+        // Load the before image on a background thread to avoid
+        // blocking the GUI during RAW file decoding.
+        const auto loadFname = isrc->getImageSource()->getFileName();
+        const bool loadIsRaw = openThm->getType() == FT_Raw;
 
-        if (history->getBeforeLineParams (params)) {
-            historyBeforeLineChanged (params);
-        }
+        std::thread([this, loadFname, loadIsRaw, cancel]() {
+            int errorCode = 0;
+            auto* beforeImg = rtengine::InitialImage::load(
+                loadFname, loadIsRaw, &errorCode, nullptr);
+
+            if (!beforeImg || errorCode || cancel->load()) {
+                if (beforeImg) delete beforeImg;
+                return;
+            }
+
+            Glib::signal_idle().connect_once([this, beforeImg, cancel]() {
+                if (cancel->load() || !beforeIarea) {
+                    delete beforeImg;
+                    return;
+                }
+
+                beforePreviewHandler = new PreviewHandler ();
+
+                beforeIpc = rtengine::StagedImageProcessor::create (beforeImg);
+                beforeIpc->setPreviewScale (10);
+                beforeIpc->setPreviewImageListener (beforePreviewHandler);
+                Glib::ustring monitorProfile;
+                rtengine::RenderingIntent intent;
+                if (ipc) {
+                    ipc->getMonitorProfile(monitorProfile, intent);
+                    beforeIpc->setMonitorProfile(monitorProfile, intent);
+                }
+
+                // Apply the "before" params BEFORE connecting to the image area,
+                // so the IPC starts processing with the correct params from the start.
+                {
+                    rtengine::procparams::ProcParams beforeParams;
+                    if (!history->blistenerLock) {
+                        // Unlocked: neutral/unedited processing
+                        beforeParams = ProcParams();
+                    } else {
+                        // Locked: state before most recent edit
+                        history->getBeforeLineParams(beforeParams);
+                    }
+                    ProcParams* pp = beforeIpc->beginUpdateParams();
+                    *pp = beforeParams;
+                    beforeIpc->endUpdateParams(rtengine::EvProfileChanged);
+                }
+
+                beforeIarea->imageArea->setPreviewHandler (beforePreviewHandler);
+                beforeIarea->imageArea->setImProcCoordinator (beforeIpc);
+
+                beforeIarea->imageArea->setPreviewModePanel (iareapanel->imageArea->previewModePanel);
+                beforeIarea->imageArea->setIndicateClippedPanel (iareapanel->imageArea->indClippedPanel);
+                iareapanel->imageArea->iLinkedImageArea = beforeIarea->imageArea;
+
+                iareapanel->setBeforeAfterViews (beforeIarea, iareapanel);
+                beforeIarea->setBeforeAfterViews (beforeIarea, iareapanel);
+
+                // Trigger mainCropWindow creation now that IPC is set
+                if (!beforeIarea->imageArea->mainCropWindow &&
+                        beforeIarea->imageArea->get_width() > 1) {
+                    Gtk::Allocation alloc = beforeIarea->imageArea->get_allocation();
+                    beforeIarea->imageArea->on_resized(alloc);
+                }
+            });
+        }).detach();
     }
 }
 
@@ -4929,6 +5319,12 @@ void EditorPanel::tbBeforeLock_toggled ()
 {
     history->blistenerLock = tbBeforeLock->get_active();
     tbBeforeLock->get_active() ? tbBeforeLock->set_image (*iBeforeLockON) : tbBeforeLock->set_image (*iBeforeLockOFF);
+
+    // Refresh the before view to reflect the new mode
+    rtengine::procparams::ProcParams params;
+    if (history->getBeforeLineParams(params)) {
+        historyBeforeLineChanged(params);
+    }
 }
 
 void EditorPanel::histogramChanged(

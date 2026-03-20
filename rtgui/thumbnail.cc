@@ -1289,6 +1289,16 @@ void Thumbnail::setTrashed(bool trashed)
     properties.trashed = trashed;
 }
 
+int Thumbnail::getPick() const
+{
+    return properties.pick;
+}
+
+void Thumbnail::setPick(int pick)
+{
+    properties.pick = pick;
+}
+
 void Thumbnail::addThumbnailListener (ThumbnailListener* tnl)
 {
 
@@ -1422,6 +1432,7 @@ void Thumbnail::loadProperties()
 
         properties.trashed.value = pparams->inTrash;
         properties.color.value = pparams->colorlabel;
+        properties.pick.value = pparams->pickLabel;
     }
 
     if (options.thumbnailRankColorMode == Options::ThumbnailPropertyMode::XMP) {
@@ -1445,6 +1456,11 @@ void Thumbnail::updateProcParamsProperties(bool forceUpdate)
 
     if ((properties.trashed.edited || forceUpdate) && properties.trashed != pparams->inTrash) {
         pparams->inTrash = properties.trashed;
+        pparamsValid = true;
+    }
+
+    if ((properties.pick.edited || forceUpdate) && properties.pick != pparams->pickLabel) {
+        pparams->pickLabel = properties.pick;
         pparamsValid = true;
     }
 

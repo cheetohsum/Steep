@@ -84,6 +84,11 @@ public:
      */
     void removeAllJobs(void);
 
+    /**
+     * @brief Set a priority hint so jobs near the target file are loaded first.
+     */
+    void setPriorityHint(const Glib::ustring& targetFile);
+
     /** Pause processing — queued jobs stay but no new work starts. */
     void pause();
     /** Resume processing — re-schedules all pending jobs. */

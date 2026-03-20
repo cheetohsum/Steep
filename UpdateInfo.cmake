@@ -46,7 +46,9 @@ if(REL_INFO_FILE STREQUAL REL_INFO_FILE-NOTFOUND)
     # Get version description.
     # Depending on whether you checked out a branch (dev) or a tag (release),
     # "git describe" will return "5.0-gtk2-2-g12345678" or "5.0-gtk2", respectively.
-    execute_process(COMMAND ${GIT_CMD} describe --tags --always OUTPUT_VARIABLE GIT_DESCRIBE OUTPUT_STRIP_TRAILING_WHITESPACE WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
+    # Use --match to only consider version-like tags (e.g. "5.12"), ignoring
+    # CI-only tags such as "nightly-github-actions" that produce nonsense names.
+    execute_process(COMMAND ${GIT_CMD} describe --tags --always --match "[0-9]*" OUTPUT_VARIABLE GIT_DESCRIBE OUTPUT_STRIP_TRAILING_WHITESPACE WORKING_DIRECTORY "${PROJECT_SOURCE_DIR}")
 
     # Get branch name.
     # Will return empty if you checked out a commit or tag. Empty string handled later.

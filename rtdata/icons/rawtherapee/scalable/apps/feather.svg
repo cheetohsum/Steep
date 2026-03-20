@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
+  <!-- Feather quill icon -->
+  <!-- Quill shaft -->
+  <line x1="1" y1="15" x2="7" y2="7"
+    style="opacity:0.7;stroke:#cccccc;stroke-width:1.2;stroke-linecap:round"/>
+  <!-- Feather vane (left) -->
+  <path d="M7,7 C5,4 4,2 6,1 C8,2 7.5,4 7,7Z"
+    style="opacity:0.6;fill:#cccccc;stroke:none"/>
+  <!-- Feather vane (right) -->
+  <path d="M7,7 C9,5 11,3 13,2 C12,4 10,6 7,7Z"
+    style="opacity:0.6;fill:#cccccc;stroke:none"/>
+  <!-- Central spine -->
+  <path d="M7,7 C8,4 9,2 10,1"
+    style="opacity:0.7;fill:none;stroke:#cccccc;stroke-width:0.8;stroke-linecap:round"/>
+</svg>

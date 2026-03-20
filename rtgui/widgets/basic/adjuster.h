@@ -146,6 +146,7 @@ public:
     void setLabelClickCallback(std::function<void()> callback);
     void setInteractionCallback(std::function<void(bool)> callback);
     void hideResetButton();
+    void hideSpinButton();
     void setSliderMinWidth(int px);
 
 protected:

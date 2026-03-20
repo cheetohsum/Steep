@@ -25,6 +25,13 @@
 #include "rtengine/procparams.h"
 #include "rtimage.h"
 #include "eventmapper.h"
+#include "imagearea.h"
+#include "cropwindow.h"
+#ifdef RT_AI_MASKING
+#include "rtengine/aimaskcache.h"
+#endif
+
+#include <cmath>
 
 using namespace rtengine;
 using namespace procparams;
@@ -67,7 +74,7 @@ ControlSpotPanel::ControlSpotPanel():
     centerX_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_CENTER_X"), -1000, 1000, 1, 0))),
     centerY_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_CENTER_Y"), -1000, 1000, 1, 0))),
     circrad_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_CIRCRADIUS"), 1.5, 150., 0.5, 18.))),
-    transit_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_TRANSITVALUE"), 0.5, 100., 0.1, 60.))),
+    transit_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_TRANSITVALUE"), 0.5, 100., 0.1, 60., Gtk::manage(new RTImage("feather"))))),
     transitweak_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_TRANSITWEAK"), 0.5, 25.0, 0.1, 1.0))),
     transitgrad_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_TRANSITGRAD"), -1.0, 1.0, 0.01, 0.0))),
     gradangle_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_GRADANGLE"), -180., 180., 0.5, 0.))),
@@ -84,6 +91,10 @@ ControlSpotPanel::ControlSpotPanel():
     scopemask_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_SCOPEMASK"), 0, 100, 1, 60))),
     denoichmask_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_DENOIMASK"), 0., 100., 0.5, 0))),
     lumask_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_LUMASK"), -50, 30, 1, 10, Gtk::manage(new RTImage("circle-yellow-small")), Gtk::manage(new RTImage("circle-gray-small")) ))),
+
+    polyFeather_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_POLY_FEATHER"), 0, 100, 1, 5, Gtk::manage(new RTImage("feather"))))),
+    polySnapTol_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_POLY_SNAP_TOL"), 0, 50, 1, 10))),
+    polyLegLen_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_POLY_LEG_LEN"), 0.5, 20, 0.5, 3))),
 
     hishow_(Gtk::manage(new Gtk::CheckButton(M("TP_LOCALLAB_PREVSHOW")))),
     activ_(Gtk::manage(new Gtk::CheckButton(M("TP_LOCALLAB_ACTIVSPOT")))),
@@ -263,7 +274,7 @@ ControlSpotPanel::ControlSpotPanel():
 
     // Preview column — small colored square for AI masks
     auto* previewCell = Gtk::manage(new Gtk::CellRendererPixbuf());
-    previewCell->property_ypad() = 6;
+    previewCell->property_ypad() = 11;
     int cols_count = treeview_->append_column("", *previewCell);
     auto col = treeview_->get_column(cols_count - 1);
 
@@ -277,7 +288,7 @@ ControlSpotPanel::ControlSpotPanel():
     // Name column
     auto cell = Gtk::manage(new Gtk::CellRendererText());
     cell->property_ellipsize() = Pango::ELLIPSIZE_END;
-    cell->property_ypad() = 6;
+    cell->property_ypad() = 11;
     cols_count = treeview_->append_column("", *cell);
     col = treeview_->get_column(cols_count - 1);
 
@@ -292,7 +303,7 @@ ControlSpotPanel::ControlSpotPanel():
     auto* pixCell = Gtk::manage(new Gtk::CellRendererPixbuf());
     pixCell->property_stock_size() = Gtk::ICON_SIZE_MENU;
     pixCell->property_xpad() = 4;
-    pixCell->property_ypad() = 6;
+    pixCell->property_ypad() = 11;
     cols_count = treeview_->append_column("", *pixCell);
     col = treeview_->get_column(cols_count - 1);
 
@@ -320,6 +331,7 @@ ControlSpotPanel::ControlSpotPanel():
     shape_->addEntry("shape-ellipse", M("TP_LOCALLAB_ELI"));
     shape_->addEntry("shape-rectangle", M("TP_LOCALLAB_RECT"));
     shape_->addEntry("shape-gradient", M("TP_LOCALLAB_GRAD"));
+    shape_->addEntry("shape-polygon", M("TP_LOCALLAB_POLY"));
     shape_->setSelected(0);
     shape_->show();
     shapeconn_ = shape_->signal_changed().connect(
@@ -341,6 +353,32 @@ ControlSpotPanel::ControlSpotPanel():
         gradangle_->set_tooltip_text(M("TP_LOCALLAB_GRADANGLE_TOOLTIP"));
     }
     // gradangle_ packed into advancedBox below
+
+    // Polygon (Lasso) controls — draw button + vertex count inline with shape row
+    {
+        polyDrawBtn_ = Gtk::manage(new Gtk::ToggleButton());
+        polyDrawBtn_->set_image(*Gtk::manage(new RTImage("poly-draw")));
+        polyDrawBtn_->set_tooltip_text(M("TP_LOCALLAB_POLY_DRAW"));
+        polyDrawConn_ = polyDrawBtn_->signal_toggled().connect(
+            sigc::mem_fun(*this, &ControlSpotPanel::polyDrawClicked));
+
+        polyVertexLabel_ = Gtk::manage(new Gtk::Label("0"));
+        polyVertexLabel_->set_margin_start(2);
+    }
+
+    // Polygon sliders box (feather, snap tolerance, leg length)
+    polyBox_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 2));
+    {
+        polyFeather_->setAdjusterListener(this);
+        polySnapTol_->setAdjusterListener(this);
+        polyLegLen_->setAdjusterListener(this);
+
+        polyBox_->pack_start(*polyFeather_, Gtk::PACK_SHRINK);
+        polyBox_->pack_start(*polySnapTol_, Gtk::PACK_SHRINK);
+        polyBox_->pack_start(*polyLegLen_, Gtk::PACK_SHRINK);
+    }
+    polyBox_->set_no_show_all(true);
+    // polyBox_ packed into maskDetailBox_ below
 
     Gtk::Label* const labelspotmethod = Gtk::manage(new Gtk::Label(M("TP_LOCALLAB_EXCLUTYPE") + ":"));
     labelspotmethod->set_ellipsize(Pango::ELLIPSIZE_END);
@@ -680,33 +718,48 @@ ControlSpotPanel::ControlSpotPanel():
 
     // --- Mask dropdown: clickable "Mask" label that expands/collapses ---
     maskDetailExpanded_ = false;
+    maskSpotName_ = "";
 
     maskArrowLabel_ = Gtk::manage(new Gtk::Label());
     maskArrowLabel_->set_use_markup(true);
-    maskArrowLabel_->set_markup(Glib::ustring("<small>\xe2\x96\xb8</small>  ") +
-        Glib::Markup::escape_text(M("TP_LOCALLAB_MASK_SECTION")));
     maskArrowLabel_->set_can_focus(false);
     setExpandAlignProperties(maskArrowLabel_, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
 
-    Gtk::Button* maskHeaderBtn = Gtk::manage(new Gtk::Button());
-    maskHeaderBtn->set_relief(Gtk::RELIEF_NONE);
-    maskHeaderBtn->set_can_focus(false);
-    maskHeaderBtn->set_halign(Gtk::ALIGN_START);
-    maskHeaderBtn->add(*maskArrowLabel_);
-    maskHeaderBtn->signal_clicked().connect(
+    maskHeaderBtn_ = Gtk::manage(new Gtk::Button());
+    maskHeaderBtn_->set_relief(Gtk::RELIEF_NONE);
+    maskHeaderBtn_->set_can_focus(false);
+    maskHeaderBtn_->set_halign(Gtk::ALIGN_START);
+    maskHeaderBtn_->set_margin_top(0);
+    maskHeaderBtn_->set_margin_bottom(0);
+    maskHeaderBtn_->add(*maskArrowLabel_);
+    maskHeaderBtn_->signal_clicked().connect(
         sigc::mem_fun(*this, &ControlSpotPanel::toggleMaskDetail));
+    // Will be shown/hidden based on spot selection
 
-    pack_start(*maskHeaderBtn, Gtk::PACK_SHRINK);
+    pack_start(*maskHeaderBtn_, Gtk::PACK_SHRINK);
 
-    maskDetailBox_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
-    Gtk::Box* shapeTypeRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
-    shapeTypeRow->pack_start(*ctboxshape, Gtk::PACK_SHRINK);
-    shapeTypeRow->pack_start(*ctboxmasktype, Gtk::PACK_SHRINK);
-    maskDetailBox_->pack_start(*shapeTypeRow, Gtk::PACK_SHRINK);
+    maskDetailBox_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
+    shapeTypeRow_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
+    shapeTypeRow_->set_margin_top(6);
+    shapeTypeRow_->pack_start(*ctboxshape, Gtk::PACK_SHRINK);
+    shapeTypeRow_->pack_start(*ctboxmasktype, Gtk::PACK_SHRINK);
+
+    // Polygon inline controls: draw button + vertex icon + count (hidden by default)
+    polyDrawBtn_->set_no_show_all(true);
+    shapeTypeRow_->pack_start(*polyDrawBtn_, Gtk::PACK_SHRINK);
+
+    polyVertexIcon_ = Gtk::manage(new RTImage("poly-vertices"));
+    polyVertexIcon_->set_no_show_all(true);
+    polyVertexIcon_->set_margin_start(4);
+    shapeTypeRow_->pack_start(*polyVertexIcon_, Gtk::PACK_SHRINK);
+
+    polyVertexLabel_->set_no_show_all(true);
+    shapeTypeRow_->pack_start(*polyVertexLabel_, Gtk::PACK_SHRINK);
+
+    maskDetailBox_->pack_start(*shapeTypeRow_, Gtk::PACK_SHRINK);
     maskDetailBox_->pack_start(*ctboxaiclass, Gtk::PACK_SHRINK);
-    circrad_->set_margin_end(40);
+    maskDetailBox_->pack_start(*polyBox_, Gtk::PACK_SHRINK);
     maskDetailBox_->pack_start(*circrad_, Gtk::PACK_SHRINK);
-    transit_->set_margin_end(40);
     maskDetailBox_->pack_start(*transit_, Gtk::PACK_SHRINK);
 
     maskRevealer_ = Gtk::manage(new Gtk::Revealer());
@@ -714,7 +767,11 @@ ControlSpotPanel::ControlSpotPanel():
     maskRevealer_->set_transition_duration(200);
     maskRevealer_->set_reveal_child(false);
     maskRevealer_->add(*maskDetailBox_);
+    // Will be shown/hidden based on spot selection
     pack_start(*maskRevealer_, Gtk::PACK_SHRINK);
+
+    // Grey out mask controls until a mask/spot is added
+    setMaskControlsSensitive(false);
 
     Gtk::Separator *separatormet = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
     pack_start(*separatormet, Gtk::PACK_SHRINK, 2);
@@ -764,7 +821,18 @@ ControlSpotPanel::ControlSpotPanel():
 */
     set_name("MaskingPanel");
     set_margin_end(6);  // Prevent content clipping at right edge
+    maskSpotName_ = M("TP_LOCALLAB_MASK_SECTION");
+    updateMaskLabel();  // Set initial label text
     show_all();
+    // Show mask section but greyed out (no spots yet)
+    maskDetailExpanded_ = true;
+    maskRevealer_->set_reveal_child(true);
+    // Hide poly-specific and AI-specific widgets initially
+    polyDrawBtn_->hide();
+    polyVertexIcon_->hide();
+    polyVertexLabel_->hide();
+    polyBox_->hide();
+    ctboxaiclass->hide();
     // Define row background color
     // Mouseovered spot (opaque orange)
     colorMouseover.set_red(1.);
@@ -797,21 +865,60 @@ ControlSpotPanel::~ControlSpotPanel()
     }
 }
 
+void ControlSpotPanel::updateMaskLabel()
+{
+    const Glib::ustring arrow = maskDetailExpanded_
+        ? "\xe2\x96\xbe"   // ▾
+        : "\xe2\x96\xb8";  // ▸
+    const Glib::ustring name = maskSpotName_.empty()
+        ? M("TP_LOCALLAB_MASK_SECTION")
+        : maskSpotName_;
+    maskArrowLabel_->set_markup(
+        "<span size=\"large\">" + Glib::Markup::escape_text(arrow + "  " + name) + "</span>");
+}
+
+void ControlSpotPanel::setMaskControlsSensitive(bool sensitive)
+{
+    shapeTypeRow_->set_sensitive(sensitive);
+    circrad_->set_sensitive(sensitive);
+    transit_->set_sensitive(sensitive);
+    polyBox_->set_sensitive(sensitive);
+    ctboxaiclass->set_sensitive(sensitive);
+}
+
 void ControlSpotPanel::toggleMaskDetail()
 {
     maskDetailExpanded_ = !maskDetailExpanded_;
+    updateMaskLabel();
     if (maskDetailExpanded_) {
-        maskArrowLabel_->set_markup(Glib::ustring("<small>\xe2\x96\xbe</small>  ") +
-            Glib::Markup::escape_text(M("TP_LOCALLAB_MASK_SECTION")));
-        maskDetailBox_->show_all();
-        // Hide AI class if mask type is Normal
-        if (maskType_->getSelected() != 1) {
+        maskDetailBox_->show();
+        shapeTypeRow_->show();
+        // Show/hide based on mask type
+        if (maskType_->getSelected() == 1) {
+            ctboxaiclass->show();
+        } else {
             ctboxaiclass->hide();
+        }
+        // Show/hide based on shape
+        const int shp = shape_->getSelected();
+        if (shp == 3) { // Lasso
+            polyBox_->show();
+            polyBox_->show_all_children();
+            polyDrawBtn_->show();
+            polyVertexIcon_->show();
+            polyVertexLabel_->show();
+            circrad_->hide();
+            transit_->hide();
+        } else {
+            polyBox_->hide();
+            polyDrawBtn_->hide();
+            polyVertexIcon_->hide();
+            polyVertexLabel_->hide();
+            circrad_->show();
+            transit_->show();
         }
         maskRevealer_->set_reveal_child(true);
     } else {
-        maskArrowLabel_->set_markup(Glib::ustring("<small>\xe2\x96\xb8</small>  ") +
-            Glib::Markup::escape_text(M("TP_LOCALLAB_MASK_SECTION")));
         maskRevealer_->set_reveal_child(false);
     }
 }
@@ -847,19 +954,36 @@ bool ControlSpotPanel::onTreeviewLeave(GdkEventCrossing* /*event*/)
 
 bool ControlSpotPanel::isPointerOverTreeview() const
 {
-    auto gdkWin = treeview_->get_bin_window();
+    // Use the toplevel window to get pointer position, then check if it's
+    // within the treeview's screen allocation. This avoids bin_window
+    // coordinate issues on Windows where get_device_position can return
+    // stale values during redraws.
+    auto toplevel = treeview_->get_toplevel();
+    if (!toplevel) return false;
+
+    auto gdkWin = toplevel->get_window();
     if (!gdkWin) return false;
 
     auto display = treeview_->get_display();
     auto seat = display->get_default_seat();
     auto device = seat->get_pointer();
-    int x, y;
+    int px, py;
     Gdk::ModifierType mask;
-    gdkWin->get_device_position(device, x, y, mask);
+    gdkWin->get_device_position(device, px, py, mask);
 
-    return x >= 0 && y >= 0 &&
-           x < treeview_->get_allocated_width() &&
-           y < treeview_->get_allocated_height();
+    // Translate treeview allocation to toplevel coordinates
+    int wx, wy;
+    treeview_->translate_coordinates(*dynamic_cast<Gtk::Widget*>(toplevel), 0, 0, wx, wy);
+
+    const int w = treeview_->get_allocated_width();
+    const int h = treeview_->get_allocated_height();
+
+    return px >= wx && py >= wy && px < wx + w && py < wy + h;
+}
+
+void ControlSpotPanel::resetSidebarHover()
+{
+    sidebarHoverActive_ = false;
 }
 
 void ControlSpotPanel::setEditProvider(EditDataProvider* provider)
@@ -873,7 +997,7 @@ void ControlSpotPanel::render_preview(
     auto row = *iter;
     Gtk::CellRendererPixbuf *cp = static_cast<Gtk::CellRendererPixbuf *>(cell);
 
-    const int shp    = row[spots_.shape];      // 0=ellipse, 1=rect, 2=gradient
+    const int shp    = row[spots_.shape];      // 0=ellipse, 1=rect, 2=gradient, 3=polygon
     const int maskT  = row[spots_.maskType];
     const int cls    = row[spots_.aiMaskClass];
     const double rX  = (double)row[spots_.locX]  / 3000.0;
@@ -884,6 +1008,10 @@ void ControlSpotPanel::render_preview(
     const double cyOff = (double)row[spots_.centerY] / 2000.0;
     const double feather = std::max((double)row[spots_.transit] / 100.0, 0.05);
     const double angle = (double)row[spots_.gradangle] * RT_PI_180;
+
+    // Polygon vertices (for shape==3)
+    const std::vector<int> polyPts = row[spots_.polyMaskPoints];
+    const double polyFeather = (double)row[spots_.polyMaskFeather];
 
     // AI class colors
     static const guint8 classColors[][3] = {
@@ -904,69 +1032,190 @@ void ControlSpotPanel::render_preview(
     const double cx = 0.5 + cxOff;
     const double cy = 0.5 + cyOff;
 
+    // For polygon shape, build normalized vertex list and compute bounding box
+    std::vector<std::pair<double, double>> polyVerts;
+    double polyMinX = 1e9, polyMinY = 1e9, polyMaxX = -1e9, polyMaxY = -1e9;
+    if (shp == 3 && polyPts.size() >= 6) {
+        // Get image size for normalization
+        int imW = 1, imH = 1;
+        EditDataProvider* prov = getEditProvider();
+        if (prov) prov->getImageSize(imW, imH);
+        if (imW < 1) imW = 1;
+        if (imH < 1) imH = 1;
+
+        polyVerts.reserve(polyPts.size() / 2);
+        for (size_t i = 0; i + 1 < polyPts.size(); i += 2) {
+            double vx = (double)polyPts[i] / (double)imW;
+            double vy = (double)polyPts[i + 1] / (double)imH;
+            polyVerts.emplace_back(vx, vy);
+            polyMinX = std::min(polyMinX, vx);
+            polyMinY = std::min(polyMinY, vy);
+            polyMaxX = std::max(polyMaxX, vx);
+            polyMaxY = std::max(polyMaxY, vy);
+        }
+    }
+
+    // For AI masks, sample from the actual cached segmentation mask
+#ifdef RT_AI_MASKING
+    bool aiRendered = false;
+    if (maskT == 1) {
+        const int ci = std::min(std::max(cls, 0), 7);
+        AIMaskCache& aiCache = AIMaskCache::getInstance();
+        // Try to acquire lock without blocking — if the engine is computing
+        // masks, just show the placeholder instead of blocking the GUI thread.
+        if (aiCache.mutex().trylock()) {
+            const array2D<float>* aiMaskData = aiCache.getMaskUnsafe(
+                static_cast<AISegClass>(std::min(std::max(cls, 0), 7)));
+            const int aiMaskW = aiCache.getCachedWidthUnsafe();
+            const int aiMaskH = aiCache.getCachedHeightUnsafe();
+            if (aiMaskData && aiMaskW > 0 && aiMaskH > 0) {
+                for (int py = 0; py < H; py++) {
+                    for (int px = 0; px < W; px++) {
+                        const int my = std::min(static_cast<int>((double)py / (H - 1) * (aiMaskH - 1)), aiMaskH - 1);
+                        const int mx = std::min(static_cast<int>((double)px / (W - 1) * (aiMaskW - 1)), aiMaskW - 1);
+                        const float prob = (*aiMaskData)[my][mx];
+
+                        const float thr = 0.5f;
+                        const float hw = 0.15f;
+                        const float strength = std::max(0.f, std::min(1.f, (prob - thr + hw) / (2.f * hw)));
+                        if (strength <= 0.001f) continue;
+
+                        guint8* p = pixels + py * rowstride + px * 4;
+                        p[0] = classColors[ci][0];
+                        p[1] = classColors[ci][1];
+                        p[2] = classColors[ci][2];
+                        p[3] = (guint8)(strength * 200);
+                    }
+                }
+                aiRendered = true;
+            }
+            aiCache.mutex().unlock();
+        }
+        if (!aiRendered) {
+            // No cached AI mask yet or lock busy — dim class-colored placeholder
+            for (int py = 1; py < H - 1; py++) {
+                for (int px = 1; px < W - 1; px++) {
+                    guint8* p = pixels + py * rowstride + px * 4;
+                    p[0] = classColors[ci][0];
+                    p[1] = classColors[ci][1];
+                    p[2] = classColors[ci][2];
+                    p[3] = 60;
+                }
+            }
+            aiRendered = true;
+        }
+    }
+    if (!aiRendered)
+#endif
+    // Normal geometric mask rendering
+    {
     for (int py = 0; py < H; py++) {
         for (int px = 0; px < W; px++) {
             double x = (double)px / (W - 1); // 0..1
             double y = (double)py / (H - 1);
 
-            double dist = 0.0;
+            double strength = 0.0;
 
-            if (shp == 2) {
-                // Gradient: linear along angle direction from center
-                double dx = x - cx;
-                double dy = y - cy;
-                dist = std::abs(dx * std::sin(angle) - dy * std::cos(angle));
-                dist /= std::max(feather, 0.05);
-            } else {
-                // Ellipse or Rectangle
-                double extR = std::max(rX,  0.01);
-                double extL = std::max(rXL, 0.01);
-                double extB = std::max(rY,  0.01);
-                double extT = std::max(rYT, 0.01);
+            if (shp == 3) {
+                // Polygon: point-in-polygon test with feathering
+                if (polyVerts.size() >= 3) {
+                    // Ray casting PiP test
+                    bool inside = false;
+                    const int n = static_cast<int>(polyVerts.size());
+                    for (int i = 0, j = n - 1; i < n; j = i++) {
+                        const double xi = polyVerts[i].first, yi = polyVerts[i].second;
+                        const double xj = polyVerts[j].first, yj = polyVerts[j].second;
+                        if (((yi > y) != (yj > y)) &&
+                            (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+                            inside = !inside;
+                        }
+                    }
 
-                double dx = x - cx;
-                double dy = y - cy;
-                double nx = dx / (dx >= 0 ? extR : extL);
-                double ny = dy / (dy >= 0 ? extB : extT);
+                    if (inside) {
+                        strength = 1.0;
+                    }
 
-                if (shp == 0) {
-                    dist = std::sqrt(nx * nx + ny * ny);
-                } else {
-                    dist = std::max(std::abs(nx), std::abs(ny));
+                    // Apply feathering near edges
+                    if (polyFeather > 0.0) {
+                        // Compute normalized feather distance
+                        int imW = 1;
+                        EditDataProvider* prov = getEditProvider();
+                        if (prov) { int h; prov->getImageSize(imW, h); }
+                        if (imW < 1) imW = 1;
+                        double fNorm = polyFeather / (double)imW;
+
+                        // Distance to nearest polygon edge
+                        double minDist = 1e9;
+                        for (int i = 0, j = n - 1; i < n; j = i++) {
+                            double ax = polyVerts[j].first, ay = polyVerts[j].second;
+                            double bx = polyVerts[i].first, by = polyVerts[i].second;
+                            double dx = bx - ax, dy = by - ay;
+                            double lenSq = dx * dx + dy * dy;
+                            double t = (lenSq < 1e-12) ? 0.0 :
+                                std::max(0.0, std::min(1.0, ((x - ax) * dx + (y - ay) * dy) / lenSq));
+                            double ex = x - (ax + t * dx);
+                            double ey = y - (ay + t * dy);
+                            minDist = std::min(minDist, std::sqrt(ex * ex + ey * ey));
+                        }
+
+                        if (inside && minDist < fNorm) {
+                            strength = minDist / fNorm;
+                        } else if (!inside && minDist < fNorm) {
+                            strength = 1.0 - minDist / fNorm;
+                        }
+                    }
                 }
-            }
-
-            // Compute strength with feathering
-            double strength;
-            if (dist <= 1.0) {
-                strength = 1.0;
-            } else if (dist <= 1.0 + feather) {
-                strength = 1.0 - (dist - 1.0) / feather;
             } else {
-                strength = 0.0;
+                double dist = 0.0;
+
+                if (shp == 2) {
+                    // Gradient: linear along angle direction from center
+                    double dx = x - cx;
+                    double dy = y - cy;
+                    dist = std::abs(dx * std::sin(angle) - dy * std::cos(angle));
+                    dist /= std::max(feather, 0.05);
+                } else {
+                    // Ellipse or Rectangle
+                    double extR = std::max(rX,  0.01);
+                    double extL = std::max(rXL, 0.01);
+                    double extB = std::max(rY,  0.01);
+                    double extT = std::max(rYT, 0.01);
+
+                    double dx = x - cx;
+                    double dy = y - cy;
+                    double nx = dx / (dx >= 0 ? extR : extL);
+                    double ny = dy / (dy >= 0 ? extB : extT);
+
+                    if (shp == 0) {
+                        dist = std::sqrt(nx * nx + ny * ny);
+                    } else {
+                        dist = std::max(std::abs(nx), std::abs(ny));
+                    }
+                }
+
+                // Compute strength with feathering
+                if (dist <= 1.0) {
+                    strength = 1.0;
+                } else if (dist <= 1.0 + feather) {
+                    strength = 1.0 - (dist - 1.0) / feather;
+                } else {
+                    strength = 0.0;
+                }
             }
 
             if (strength <= 0.001) continue;
 
             guint8* p = pixels + py * rowstride + px * 4;
 
-            if (maskT == 1) {
-                // AI mask: use class color
-                const int ci = std::min(std::max(cls, 0), 7);
-                p[0] = classColors[ci][0];
-                p[1] = classColors[ci][1];
-                p[2] = classColors[ci][2];
-                p[3] = (guint8)(strength * 200);
-            } else {
-                // Normal mask: heat gradient (lo→hi by strength)
-                double s = strength;
-                p[0] = (guint8)(heatLo[0] + s * (heatHi[0] - heatLo[0]));
-                p[1] = (guint8)(heatLo[1] + s * (heatHi[1] - heatLo[1]));
-                p[2] = (guint8)(heatLo[2] + s * (heatHi[2] - heatLo[2]));
-                p[3] = (guint8)(strength * 200);
-            }
+            // Normal mask: heat gradient (lo→hi by strength)
+            double s = strength;
+            p[0] = (guint8)(heatLo[0] + s * (heatHi[0] - heatLo[0]));
+            p[1] = (guint8)(heatLo[1] + s * (heatHi[1] - heatLo[1]));
+            p[2] = (guint8)(heatLo[2] + s * (heatHi[2] - heatLo[2]));
+            p[3] = (guint8)(strength * 200);
         }
     }
+    } // end normal geometric mask rendering
 
     // Subtle 1px border for definition
     for (int px = 0; px < W; px++) {
@@ -991,8 +1240,9 @@ void ControlSpotPanel::render_name(
     auto row = *iter;
     Gtk::CellRendererText *ct = static_cast<Gtk::CellRendererText *>(cell);
 
-    // Render cell text
-    ct->property_text() = row[spots_.name];
+    // Render cell text with larger font to match mask dropdown label
+    ct->property_markup() = "<span size=\"large\">" +
+        Glib::Markup::escape_text(Glib::ustring(row[spots_.name])) + "</span>";
 
     // Render cell background color
     if (row[spots_.mouseover]) {
@@ -1018,7 +1268,6 @@ void ControlSpotPanel::render_isvisible(
 
 void ControlSpotPanel::on_button_add()
 {
-    // printf("on_button_add\n");
 
     if (!listener) {
         return;
@@ -1042,6 +1291,14 @@ void ControlSpotPanel::on_ai_mask_selected(int classIndex)
     selSpotChanged_ = true;
     eventType = SpotCreationAI;
     listener->panelChanged(EvLocallabSpotCreated, "-");
+
+    // Schedule a delayed treeview redraw so the preview thumbnail
+    // updates after the engine computes the AI segmentation mask.
+    aiPreviewRefresh_.disconnect();
+    aiPreviewRefresh_ = Glib::signal_timeout().connect([this]() {
+        treeview_->queue_draw();
+        return false; // one-shot
+    }, 1500);
 }
 
 void ControlSpotPanel::on_button_delete()
@@ -1125,6 +1382,9 @@ void ControlSpotPanel::on_button_rename()
             if (controlPanelListener) {
                 controlPanelListener->spotNameChanged(newname);
             }
+            // Update mask dropdown label with new name
+            maskSpotName_ = newname;
+            updateMaskLabel();
         }
     }
 }
@@ -1339,18 +1599,61 @@ void ControlSpotPanel::load_ControlSpot_param()
         locXL_->hide();
         locY_->hide();
         locYT_->hide();
-    } else {
+        circrad_->show();
+        transit_->show();
+        polyBox_->hide();
+        polyDrawBtn_->hide();
+        polyVertexIcon_->hide();
+        polyVertexLabel_->hide();
+    } else if (shape_->getSelected() == 3) { // Polygon (Lasso)
         gradangle_->hide();
+        locX_->hide();
+        locXL_->hide();
+        locY_->hide();
+        locYT_->hide();
+        circrad_->hide();
+        transit_->hide();
+        polyBox_->show();
+        polyBox_->show_all_children();
+        polyDrawBtn_->show();
+        polyVertexIcon_->show();
+        polyVertexLabel_->show();
+        const std::vector<int> pts = row[spots_.polyMaskPoints];
+        const int nVerts = static_cast<int>(pts.size()) / 2;
+        polyVertexLabel_->set_text(Glib::ustring::compose("%1", nVerts));
+        polyFeather_->setValue(row[spots_.polyMaskFeather]);
+        polySnapTol_->setValue(row[spots_.polyMaskSnapTolerance]);
+        polyLegLen_->setValue(row[spots_.polyMaskLegLength]);
+        // Auto-activate draw mode
+        if (!polyDrawing_) {
+            polyDrawConn_.block(true);
+            polyDrawBtn_->set_active(true);
+            polyDrawConn_.block(false);
+            polyDrawing_ = true;
+            polyTempPoints_.clear();
+        }
+    } else { // Ellipse or Rectangle
+        gradangle_->hide();
+        circrad_->show();
+        transit_->show();
         locX_->show();
         locXL_->show();
         locY_->show();
         locYT_->show();
+        polyBox_->hide();
+        polyDrawBtn_->hide();
+        polyVertexIcon_->hide();
+        polyVertexLabel_->hide();
     }
+
+    // Show mask dropdown with the selected spot's name
+    maskSpotName_ = row[spots_.name];
+    updateMaskLabel();
+    setMaskControlsSensitive(true);
 }
 
 void ControlSpotPanel::controlspotChanged()
 {
-    // printf("controlspotChanged\n");
 
     if (!listener) {
         return;
@@ -1363,6 +1666,10 @@ void ControlSpotPanel::controlspotChanged()
     const int selIndex = getSelectedSpot();
 
     if (selIndex == -1) { // No selected spot
+        // Grey out mask controls when no spot is selected
+        maskSpotName_ = M("TP_LOCALLAB_MASK_SECTION");
+        updateMaskLabel();
+        setMaskControlsSensitive(false);
         return;
     }
 
@@ -1370,6 +1677,10 @@ void ControlSpotPanel::controlspotChanged()
     eventType = SpotSelection;
     const std::unique_ptr<SpotRow> spotRow = getSpot(selIndex);
 
+    // Show the Mask dropdown with the selected spot's name
+    maskSpotName_ = spotRow->name;
+    updateMaskLabel();
+    setMaskControlsSensitive(true);
     // Image area shall be regenerated if mask or deltaE preview was active when switching spot
     if (maskPrevActive || preview_->get_active()) {
         listener->panelChanged(EvLocallabSpotSelectedWithMask, spotRow->name);
@@ -1393,8 +1704,8 @@ void ControlSpotPanel::shapeChanged(int /*index*/)
     const int prevShape = row[spots_.shape];
     row[spots_.shape] = shape_->getSelected();
 
-    // When switching to Gradient, save current dimensions and expand bounding box
-    if (shape_->getSelected() == 2 && prevShape != 2) {
+    // When switching to Gradient or Polygon, save current dimensions and expand bounding box
+    if ((shape_->getSelected() == 2 || shape_->getSelected() == 3) && prevShape != 2 && prevShape != 3) {
         savedLocX_  = (double)row[spots_.locX];
         savedLocXL_ = (double)row[spots_.locXL];
         savedLocY_  = (double)row[spots_.locY];
@@ -1415,8 +1726,8 @@ void ControlSpotPanel::shapeChanged(int /*index*/)
         row[spots_.transit] = transit_->getValue();
         disableParamlistener(false);
     }
-    // When switching back from Gradient, restore saved dimensions
-    else if (prevShape == 2 && shape_->getSelected() != 2 && hasSavedDims_) {
+    // When switching back from Gradient/Polygon, restore saved dimensions
+    else if ((prevShape == 2 || prevShape == 3) && shape_->getSelected() != 2 && shape_->getSelected() != 3 && hasSavedDims_) {
         disableParamlistener(true);
         locX_->setValue(savedLocX_);
         row[spots_.locX] = locX_->getIntValue();
@@ -1432,6 +1743,16 @@ void ControlSpotPanel::shapeChanged(int /*index*/)
         hasSavedDims_ = false;
     }
 
+    // Cancel polygon drawing if switching away from polygon
+    if (shape_->getSelected() != 3 && (polyDrawing_ || polyDragging_)) {
+        polyDrawing_ = false;
+        polyDragging_ = false;
+        polyTempPoints_.clear();
+        polyDrawConn_.block(true);
+        polyDrawBtn_->set_active(false);
+        polyDrawConn_.block(false);
+    }
+
     updateControlSpotCurve(row);
 
     // Show/hide controls based on shape
@@ -1441,19 +1762,95 @@ void ControlSpotPanel::shapeChanged(int /*index*/)
         locXL_->hide();
         locY_->hide();
         locYT_->hide();
-    } else {
+        circrad_->show();
+        transit_->show();
+        polyBox_->hide();
+        polyDrawBtn_->hide();
+        polyVertexIcon_->hide();
+        polyVertexLabel_->hide();
+    } else if (shape_->getSelected() == 3) { // Polygon (Lasso)
         gradangle_->hide();
+        locX_->hide();
+        locXL_->hide();
+        locY_->hide();
+        locYT_->hide();
+        circrad_->hide();
+        transit_->hide();
+        polyBox_->show();
+        polyBox_->show_all_children();
+        polyDrawBtn_->show();
+        polyVertexIcon_->show();
+        polyVertexLabel_->show();
+        // Update vertex count label
+        const std::vector<int> pts = row[spots_.polyMaskPoints];
+        const int nVerts = static_cast<int>(pts.size()) / 2;
+        polyVertexLabel_->set_text(Glib::ustring::compose("%1", nVerts));
+        polyFeather_->setValue(row[spots_.polyMaskFeather]);
+        polySnapTol_->setValue(row[spots_.polyMaskSnapTolerance]);
+        polyLegLen_->setValue(row[spots_.polyMaskLegLength]);
+        // Auto-activate draw mode when switching to Lasso
+        if (!polyDrawing_) {
+            polyDrawConn_.block(true);
+            polyDrawBtn_->set_active(true);
+            polyDrawConn_.block(false);
+            polyDrawing_ = true;
+            polyTempPoints_.clear();
+        }
+    } else { // Ellipse or Rectangle
+        gradangle_->hide();
+        circrad_->show();
+        transit_->show();
         locX_->show();
         locXL_->show();
         locY_->show();
         locYT_->show();
+        polyBox_->hide();
+        polyDrawBtn_->hide();
+        polyVertexIcon_->hide();
+        polyVertexLabel_->hide();
     }
 
     // Raise event
     if (listener) {
-        const char* shapeKeys[] = {"TP_LOCALLAB_ELI", "TP_LOCALLAB_RECT", "TP_LOCALLAB_GRAD"};
+        const char* shapeKeys[] = {"TP_LOCALLAB_ELI", "TP_LOCALLAB_RECT", "TP_LOCALLAB_GRAD", "TP_LOCALLAB_POLY"};
         const int sel = shape_->getSelected();
-        listener->panelChanged(EvLocallabSpotShape, sel >= 0 && sel < 3 ? M(shapeKeys[sel]) : "");
+        listener->panelChanged(EvLocallabSpotShape, sel >= 0 && sel < 4 ? M(shapeKeys[sel]) : "");
+    }
+}
+
+void ControlSpotPanel::polyDrawClicked()
+{
+    if (polyDrawBtn_->get_active()) {
+        // Enter polygon drawing mode
+        polyDrawing_ = true;
+        polyDragging_ = false;
+        polyTempPoints_.clear();
+    } else {
+        // Exit drawing mode
+        polyDrawing_ = false;
+        polyDragging_ = false;
+
+        const auto s = treeview_->get_selection();
+        if (s->count_selected_rows() && polyTempPoints_.size() >= 3) {
+            const auto iter = s->get_selected();
+            Gtk::TreeModel::Row row = *iter;
+
+            std::vector<int> pts;
+            pts.reserve(polyTempPoints_.size() * 2);
+            for (const auto& p : polyTempPoints_) {
+                pts.push_back(p.x);
+                pts.push_back(p.y);
+            }
+            row[spots_.polyMaskPoints] = pts;
+            polyVertexLabel_->set_text(Glib::ustring::compose("%1", polyTempPoints_.size()));
+
+            updateControlSpotCurve(row);
+
+            if (listener) {
+                listener->panelChanged(EvLocallabSpotShape, M("TP_LOCALLAB_POLY"));
+            }
+        }
+        polyTempPoints_.clear();
     }
 }
 
@@ -1838,7 +2235,10 @@ void ControlSpotPanel::maskTypeChanged(int /*index*/)
     }
 
     if (listener) {
-        listener->panelChanged(EvLocallabSpotSelectedWithMask,
+        // Use EvLocallabSpotShape (not EvLocallabSpotSelectedWithMask) so the
+        // hover mask overlay is NOT killed by panelChanged — this is a parameter
+        // change, not a spot selection change.
+        listener->panelChanged(EvLocallabSpotShape,
             maskType_->getSelected() == 1 ? M("TP_LOCALLAB_MASKTYPE_AI") : M("TP_LOCALLAB_MASKTYPE_NORMAL"));
     }
 }
@@ -1864,9 +2264,18 @@ void ControlSpotPanel::aiMaskClassChanged(int /*index*/)
             "TP_LOCALLAB_AIMASK_CLASS_ANIMAL", "TP_LOCALLAB_AIMASK_CLASS_FOREGROUND"
         };
         const int sel = aiMaskClass_->getSelected();
-        listener->panelChanged(EvLocallabSpotSelectedWithMask,
+        // Use EvLocallabSpotShape (not EvLocallabSpotSelectedWithMask) so the
+        // hover mask overlay is NOT killed — this is a parameter change.
+        listener->panelChanged(EvLocallabSpotShape,
             sel >= 0 && sel < 8 ? M(aiClassKeys[sel]) : "");
     }
+
+    // Schedule delayed treeview redraw to pick up new AI mask data
+    aiPreviewRefresh_.disconnect();
+    aiPreviewRefresh_ = Glib::signal_timeout().connect([this]() {
+        treeview_->queue_draw();
+        return false;
+    }, 1500);
 }
 
 void ControlSpotPanel::updateParamVisibility()
@@ -2270,6 +2679,24 @@ void ControlSpotPanel::adjusterChanged(Adjuster* a, double newval)
         if (listener) {
             listener->panelChanged(EvLocallabSpotlumask, lumask_->getTextValue());
         }
+    }
+
+    if (a == polyFeather_) {
+        row[spots_.polyMaskFeather] = polyFeather_->getValue();
+
+        if (listener) {
+            listener->panelChanged(EvLocallabSpotShape, polyFeather_->getTextValue());
+        }
+    }
+
+    if (a == polySnapTol_) {
+        row[spots_.polyMaskSnapTolerance] = polySnapTol_->getValue();
+        // No engine event needed — tolerance is only used during drawing
+    }
+
+    if (a == polyLegLen_) {
+        row[spots_.polyMaskLegLength] = polyLegLen_->getValue();
+        // No engine event needed — leg length is only used during drawing
     }
 }
 
@@ -2740,6 +3167,12 @@ void ControlSpotPanel::addControlSpotCurve(Gtk::TreeModel::Row& row)
     EditSubscriber::visibleGeometry.push_back(gradLine2);       // (curveid - 1) * GEOM_PER_SPOT + 8
     EditSubscriber::visibleGeometry.push_back(gradAngleCircle); // (curveid - 1) * GEOM_PER_SPOT + 9
 
+    // Polygon (Lasso) geometry (visible)
+    Polyline* polyShape = new Polyline();
+    polyShape->datum = Geometry::IMAGE;
+    polyShape->filled = false;
+    EditSubscriber::visibleGeometry.push_back(polyShape);       // (curveid - 1) * GEOM_PER_SPOT + 10
+
     // Creation of mouseOverGeometry
     cirX = new Circle();
     cirX->radius = 4.;
@@ -2789,6 +3222,12 @@ void ControlSpotPanel::addControlSpotCurve(Gtk::TreeModel::Row& row)
     EditSubscriber::mouseOverGeometry.push_back(gradLine1);       // (curveid - 1) * GEOM_PER_SPOT + 7
     EditSubscriber::mouseOverGeometry.push_back(gradLine2);       // (curveid - 1) * GEOM_PER_SPOT + 8
     EditSubscriber::mouseOverGeometry.push_back(gradAngleCircle); // (curveid - 1) * GEOM_PER_SPOT + 9
+
+    // Polygon (Lasso) geometry (mouseOver) — same as visible, wide hit area
+    polyShape = new Polyline();
+    polyShape->datum = Geometry::IMAGE;
+    polyShape->filled = true; // Filled for hit detection
+    EditSubscriber::mouseOverGeometry.push_back(polyShape);       // (curveid - 1) * GEOM_PER_SPOT + 10
 
     row[spots_.curveid] = EditSubscriber::visibleGeometry.size() / GEOM_PER_SPOT;
 }
@@ -2923,71 +3362,57 @@ void ControlSpotPanel::updateControlSpotCurve(const Gtk::TreeModel::Row& row)
     updateGradientLine(visibleGeometry.at(base + 7), visibleGeometry.at(base + 8), visibleGeometry.at(base + 9));
     updateGradientLine(mouseOverGeometry.at(base + 7), mouseOverGeometry.at(base + 8), mouseOverGeometry.at(base + 9));
 
+    // Update polygon outline from stored vertices
+    const auto updatePolygon = [&](Geometry* geom, const std::vector<int>& pts) {
+        auto* poly = static_cast<Polyline*>(geom);
+        poly->points.clear();
+        for (size_t i = 0; i + 1 < pts.size(); i += 2) {
+            poly->points.push_back(rtengine::Coord(pts[i], pts[i + 1]));
+        }
+        // Close the polygon by connecting last point to first
+        if (poly->points.size() >= 3) {
+            poly->points.push_back(poly->points.front());
+        }
+    };
+
+    const std::vector<int> polyPts = row[spots_.polyMaskPoints];
+    updatePolygon(visibleGeometry.at(base + 10), polyPts);
+    updatePolygon(mouseOverGeometry.at(base + 10), polyPts);
+
+    // Helper to set active state for a range of geometry indices
+    const auto setGeomActive = [&](int idx, bool vis, bool mo) {
+        EditSubscriber::visibleGeometry.at(base + idx)->setActive(vis);
+        EditSubscriber::mouseOverGeometry.at(base + idx)->setActive(mo);
+    };
+
     // Update shape visibility according to shape type and spot visibility
     if (isvisible_) {
-        EditSubscriber::visibleGeometry.at(base)->setActive(true); // centerCircle
-        EditSubscriber::mouseOverGeometry.at(base)->setActive(true); // centerCircle
+        setGeomActive(0, true, true); // centerCircle always visible
 
-        if (shape_ == 0) { // 0 = Ellipse
-            EditSubscriber::visibleGeometry.at(base + 1)->setActive(true);  // shape_ellipse
-            EditSubscriber::visibleGeometry.at(base + 2)->setActive(false); // shape_rectangle
-            EditSubscriber::visibleGeometry.at(base + 3)->setActive(true);  // cirX
-            EditSubscriber::visibleGeometry.at(base + 4)->setActive(true);  // cirXL
-            EditSubscriber::visibleGeometry.at(base + 5)->setActive(true);  // cirY
-            EditSubscriber::visibleGeometry.at(base + 6)->setActive(true);  // cirYT
-            EditSubscriber::visibleGeometry.at(base + 7)->setActive(false); // gradLine1
-            EditSubscriber::visibleGeometry.at(base + 8)->setActive(false); // gradLine2
-            EditSubscriber::visibleGeometry.at(base + 9)->setActive(false); // gradAngleHandle
-
-            EditSubscriber::mouseOverGeometry.at(base + 1)->setActive(true);
-            EditSubscriber::mouseOverGeometry.at(base + 2)->setActive(false);
-            EditSubscriber::mouseOverGeometry.at(base + 3)->setActive(true);
-            EditSubscriber::mouseOverGeometry.at(base + 4)->setActive(true);
-            EditSubscriber::mouseOverGeometry.at(base + 5)->setActive(true);
-            EditSubscriber::mouseOverGeometry.at(base + 6)->setActive(true);
-            EditSubscriber::mouseOverGeometry.at(base + 7)->setActive(false);
-            EditSubscriber::mouseOverGeometry.at(base + 8)->setActive(false);
-            EditSubscriber::mouseOverGeometry.at(base + 9)->setActive(false);
-        } else if (shape_ == 1) { // 1 = Rectangle
-            EditSubscriber::visibleGeometry.at(base + 1)->setActive(false); // shape_ellipse
-            EditSubscriber::visibleGeometry.at(base + 2)->setActive(true);  // shape_rectangle
-            EditSubscriber::visibleGeometry.at(base + 3)->setActive(true);  // cirX
-            EditSubscriber::visibleGeometry.at(base + 4)->setActive(true);  // cirXL
-            EditSubscriber::visibleGeometry.at(base + 5)->setActive(true);  // cirY
-            EditSubscriber::visibleGeometry.at(base + 6)->setActive(true);  // cirYT
-            EditSubscriber::visibleGeometry.at(base + 7)->setActive(false); // gradLine1
-            EditSubscriber::visibleGeometry.at(base + 8)->setActive(false); // gradLine2
-            EditSubscriber::visibleGeometry.at(base + 9)->setActive(false); // gradAngleHandle
-
-            EditSubscriber::mouseOverGeometry.at(base + 1)->setActive(false);
-            EditSubscriber::mouseOverGeometry.at(base + 2)->setActive(true);
-            EditSubscriber::mouseOverGeometry.at(base + 3)->setActive(true);
-            EditSubscriber::mouseOverGeometry.at(base + 4)->setActive(true);
-            EditSubscriber::mouseOverGeometry.at(base + 5)->setActive(true);
-            EditSubscriber::mouseOverGeometry.at(base + 6)->setActive(true);
-            EditSubscriber::mouseOverGeometry.at(base + 7)->setActive(false);
-            EditSubscriber::mouseOverGeometry.at(base + 8)->setActive(false);
-            EditSubscriber::mouseOverGeometry.at(base + 9)->setActive(false);
+        if (shape_ == 0) { // Ellipse
+            setGeomActive(1, true, true);   // ellipse
+            setGeomActive(2, false, false); // rectangle
+            for (int i = 3; i <= 6; i++) setGeomActive(i, true, true); // handles
+            for (int i = 7; i <= 9; i++) setGeomActive(i, false, false); // gradient
+            setGeomActive(10, false, false); // polygon
+        } else if (shape_ == 1) { // Rectangle
+            setGeomActive(1, false, false);
+            setGeomActive(2, true, true);
+            for (int i = 3; i <= 6; i++) setGeomActive(i, true, true);
+            for (int i = 7; i <= 9; i++) setGeomActive(i, false, false);
+            setGeomActive(10, false, false);
+        } else if (shape_ == 3) { // Polygon (Lasso)
+            setGeomActive(1, false, false);
+            setGeomActive(2, false, false);
+            for (int i = 3; i <= 6; i++) setGeomActive(i, false, false);
+            for (int i = 7; i <= 9; i++) setGeomActive(i, false, false);
+            setGeomActive(10, true, true);
         } else { // 2 = Gradient
-            EditSubscriber::visibleGeometry.at(base + 1)->setActive(false); // shape_ellipse
-            EditSubscriber::visibleGeometry.at(base + 2)->setActive(false); // shape_rectangle
-            EditSubscriber::visibleGeometry.at(base + 3)->setActive(false); // cirX
-            EditSubscriber::visibleGeometry.at(base + 4)->setActive(false); // cirXL
-            EditSubscriber::visibleGeometry.at(base + 5)->setActive(false); // cirY
-            EditSubscriber::visibleGeometry.at(base + 6)->setActive(false); // cirYT
-            EditSubscriber::visibleGeometry.at(base + 7)->setActive(true);  // gradLine1
-            EditSubscriber::visibleGeometry.at(base + 8)->setActive(true);  // gradLine2
-            EditSubscriber::visibleGeometry.at(base + 9)->setActive(true);  // gradAngleHandle
-
-            EditSubscriber::mouseOverGeometry.at(base + 1)->setActive(false);
-            EditSubscriber::mouseOverGeometry.at(base + 2)->setActive(false);
-            EditSubscriber::mouseOverGeometry.at(base + 3)->setActive(false);
-            EditSubscriber::mouseOverGeometry.at(base + 4)->setActive(false);
-            EditSubscriber::mouseOverGeometry.at(base + 5)->setActive(false);
-            EditSubscriber::mouseOverGeometry.at(base + 6)->setActive(false);
-            EditSubscriber::mouseOverGeometry.at(base + 7)->setActive(true);
-            EditSubscriber::mouseOverGeometry.at(base + 8)->setActive(true);
-            EditSubscriber::mouseOverGeometry.at(base + 9)->setActive(true);
+            setGeomActive(1, false, false);
+            setGeomActive(2, false, false);
+            for (int i = 3; i <= 6; i++) setGeomActive(i, false, false);
+            for (int i = 7; i <= 9; i++) setGeomActive(i, true, true);
+            setGeomActive(10, false, false);
         }
     } else {
         for (int i = 0; i < GEOM_PER_SPOT; i++) {
@@ -3238,14 +3663,174 @@ bool ControlSpotPanel::mouseOver(int modifierKey)
     return false;
 }
 
+//-----------------------------------------------------------------------------
+// Magnetic snap: snap a point to the nearest strong edge in the preview
+//-----------------------------------------------------------------------------
+rtengine::Coord ControlSpotPanel::magneticSnap(int imgX, int imgY)
+{
+    EditDataProvider* provider = getEditProvider();
+    if (!provider) return {imgX, imgY};
+
+    // Access preview pixbuf through ImageArea → CropWindow → CropHandler
+    auto* imageArea = static_cast<ImageArea*>(provider);
+    CropWindow* mainCrop = imageArea->getMainCropWindow();
+    if (!mainCrop) return {imgX, imgY};
+
+    auto pixbuf = mainCrop->cropHandler.cropPixbuf;
+    if (!pixbuf) return {imgX, imgY};
+
+    const int pbW = pixbuf->get_width();
+    const int pbH = pixbuf->get_height();
+    const guint8* data = pixbuf->get_pixels();
+    const int rowstride = pixbuf->get_rowstride();
+
+    // Convert image coords to crop image (pixbuf) coords
+    int cx, cy;
+    mainCrop->imageCoordToCropImage(imgX, imgY, cx, cy);
+
+    // Get scale factor: image pixels per preview pixel
+    const auto cropSz = mainCrop->cropHandler.getSize();
+    if (cropSz.width <= 0 || cropSz.height <= 0) return {imgX, imgY};
+    const float scaleX = static_cast<float>(cropSz.width) / static_cast<float>(pbW);
+    const float scaleY = static_cast<float>(cropSz.height) / static_cast<float>(pbH);
+
+    // Get tolerance from the selected spot
+    int radius = 10;
+    const auto s = treeview_->get_selection();
+    if (s->count_selected_rows()) {
+        const auto iter = s->get_selected();
+        Gtk::TreeModel::Row row = *iter;
+        radius = static_cast<int>(row[spots_.polyMaskSnapTolerance]);
+    }
+    if (radius <= 0) return {imgX, imgY}; // snapping disabled
+    float bestMag = 0.f;
+    int bestDx = 0, bestDy = 0;
+
+    // Luminance helper
+    auto lum = [&](int x, int y) -> float {
+        const guint8* p = data + rowstride * y + x * 3;
+        return 0.299f * p[0] + 0.587f * p[1] + 0.114f * p[2];
+    };
+
+    for (int dy = -radius; dy <= radius; dy++) {
+        for (int dx = -radius; dx <= radius; dx++) {
+            if (dx * dx + dy * dy > radius * radius) continue;
+
+            const int px = cx + dx;
+            const int py = cy + dy;
+
+            // Need 1px border for Sobel kernel
+            if (px < 1 || px >= pbW - 1 || py < 1 || py >= pbH - 1) continue;
+
+            // Sobel gradient magnitude
+            const float gx = -lum(px-1,py-1) + lum(px+1,py-1)
+                         - 2*lum(px-1,py)   + 2*lum(px+1,py)
+                         -   lum(px-1,py+1) + lum(px+1,py+1);
+            const float gy = -lum(px-1,py-1) - 2*lum(px,py-1) - lum(px+1,py-1)
+                         +   lum(px-1,py+1) + 2*lum(px,py+1) + lum(px+1,py+1);
+            const float mag = gx * gx + gy * gy;
+
+            if (mag > bestMag) {
+                bestMag = mag;
+                bestDx = dx;
+                bestDy = dy;
+            }
+        }
+    }
+
+    // Only snap if the edge is strong enough (threshold avoids snapping in flat areas)
+    if (bestMag < 500.f) return {imgX, imgY};
+
+    // Convert preview offset back to image coords
+    return {imgX + static_cast<int>(bestDx * scaleX),
+            imgY + static_cast<int>(bestDy * scaleY)};
+}
+
+//-----------------------------------------------------------------------------
+// Ramer-Douglas-Peucker polygon simplification
+//-----------------------------------------------------------------------------
+void ControlSpotPanel::simplifyPolygon(std::vector<rtengine::Coord>& pts, double epsilon)
+{
+    if (pts.size() < 3) return;
+
+    // Find the point farthest from the line between first and last
+    const auto perpDist = [](const Coord& pt, const Coord& a, const Coord& b) -> double {
+        const double dx = b.x - a.x;
+        const double dy = b.y - a.y;
+        const double lenSq = dx * dx + dy * dy;
+        if (lenSq < 1e-10) {
+            const double ex = pt.x - a.x;
+            const double ey = pt.y - a.y;
+            return std::sqrt(ex * ex + ey * ey);
+        }
+        return std::abs(dy * pt.x - dx * pt.y + b.x * a.y - b.y * a.x) / std::sqrt(lenSq);
+    };
+
+    double maxDist = 0;
+    size_t maxIdx = 0;
+    for (size_t i = 1; i + 1 < pts.size(); i++) {
+        const double d = perpDist(pts[i], pts.front(), pts.back());
+        if (d > maxDist) {
+            maxDist = d;
+            maxIdx = i;
+        }
+    }
+
+    if (maxDist > epsilon) {
+        // Recursively simplify both halves
+        std::vector<Coord> left(pts.begin(), pts.begin() + maxIdx + 1);
+        std::vector<Coord> right(pts.begin() + maxIdx, pts.end());
+        simplifyPolygon(left, epsilon);
+        simplifyPolygon(right, epsilon);
+
+        pts.clear();
+        pts.insert(pts.end(), left.begin(), left.end() - 1);
+        pts.insert(pts.end(), right.begin(), right.end());
+    } else {
+        // All intermediate points are within tolerance — keep only endpoints
+        Coord first = pts.front();
+        Coord last = pts.back();
+        pts.clear();
+        pts.push_back(first);
+        pts.push_back(last);
+    }
+}
+
 bool ControlSpotPanel::button1Pressed(int modifierKey)
 {
-    // printf("button1Pressed\n");
-
     EditDataProvider *provider = getEditProvider();
     const auto s = treeview_->get_selection();
 
-    if (!provider || lastObject_ == -1 || !s->count_selected_rows()) { // When there is no control spot (i.e. no selected row), objectID can unexpectedly be different from -1 and produced not desired behavior
+    // Handle polygon freehand drawing mode — start a drag gesture
+    if (polyDrawing_ && provider && s->count_selected_rows()) {
+        const int px = static_cast<int>(provider->posImage.x + provider->deltaImage.x);
+        const int py = static_cast<int>(provider->posImage.y + provider->deltaImage.y);
+
+        // Snap first point to nearest edge
+        const auto snapped = magneticSnap(px, py);
+
+        polyTempPoints_.clear();
+        polyTempPoints_.push_back(snapped);
+        polyDragging_ = true;
+
+        // Update polyline geometry
+        const auto iter_sel = s->get_selected();
+        Gtk::TreeModel::Row row = *iter_sel;
+        const int curveid_ = row[spots_.curveid];
+        if (curveid_ > 0) {
+            const int base = (curveid_ - 1) * GEOM_PER_SPOT;
+            auto* visPoly = static_cast<Polyline*>(visibleGeometry.at(base + 10));
+            visPoly->points.clear();
+            visPoly->points.push_back(snapped);
+            mouseOverGeometry.at(base + 10)->setActive(true);
+            visibleGeometry.at(base + 10)->setActive(true);
+        }
+
+        EditSubscriber::action = EditSubscriber::Action::DRAGGING;
+        return true;
+    }
+
+    if (!provider || lastObject_ == -1 || !s->count_selected_rows()) {
         return false;
     }
 
@@ -3269,19 +3854,88 @@ bool ControlSpotPanel::button1Pressed(int modifierKey)
 
 bool ControlSpotPanel::button1Released()
 {
-    // printf("button1Released\n");
+    // Handle polygon freehand draw release — close and store the polygon
+    if (polyDragging_ && polyDrawing_) {
+        polyDragging_ = false;
+        EditSubscriber::action = EditSubscriber::Action::NONE;
+
+        const auto s = treeview_->get_selection();
+        if (s->count_selected_rows() && polyTempPoints_.size() >= 3) {
+            // Simplify the polygon to reduce point count
+            simplifyPolygon(polyTempPoints_, 3.0);
+
+            const auto iter = s->get_selected();
+            Gtk::TreeModel::Row row = *iter;
+
+            std::vector<int> pts;
+            pts.reserve(polyTempPoints_.size() * 2);
+            for (const auto& p : polyTempPoints_) {
+                pts.push_back(p.x);
+                pts.push_back(p.y);
+            }
+            row[spots_.polyMaskPoints] = pts;
+            polyVertexLabel_->set_text(Glib::ustring::compose("%1", polyTempPoints_.size()));
+
+            updateControlSpotCurve(row);
+
+            if (listener) {
+                listener->panelChanged(EvLocallabSpotShape, M("TP_LOCALLAB_POLY"));
+            }
+        }
+        polyTempPoints_.clear();
+
+        // Deactivate draw mode after completing a polygon
+        polyDrawing_ = false;
+        polyDrawConn_.block(true);
+        polyDrawBtn_->set_active(false);
+        polyDrawConn_.block(false);
+
+        return true;
+    }
+
     EditSubscriber::action = EditSubscriber::Action::NONE;
     return true;
 }
 
 bool ControlSpotPanel::drag1(int modifierKey)
 {
-    // printf("drag1\n");
-
     EditDataProvider *provider = getEditProvider();
     const auto s = treeview_->get_selection();
 
-    if (!provider || lastObject_ == -1 || !s->count_selected_rows()) { // When there is no control spot (i.e. no selected row), objectID can unexpectedly be different from -1 and produced not desired behavior
+    // Handle polygon freehand drawing — add points along the drag path
+    if (polyDragging_ && polyDrawing_ && provider && s->count_selected_rows()) {
+        const int px = static_cast<int>(provider->posImage.x + provider->deltaImage.x);
+        const int py = static_cast<int>(provider->posImage.y + provider->deltaImage.y);
+
+        // Only add point if far enough from the last one (configurable leg length)
+        const double legLen = polyLegLen_->getValue();
+        if (!polyTempPoints_.empty()) {
+            const auto& last = polyTempPoints_.back();
+            const double dx = px - last.x;
+            const double dy = py - last.y;
+            if (dx * dx + dy * dy < legLen * legLen) {
+                return false; // too close, skip
+            }
+        }
+
+        // Magnetic snap to nearest edge
+        const auto snapped = magneticSnap(px, py);
+        polyTempPoints_.push_back(snapped);
+
+        // Update the visible polyline
+        const auto iter_sel = s->get_selected();
+        Gtk::TreeModel::Row row = *iter_sel;
+        const int curveid_ = row[spots_.curveid];
+        if (curveid_ > 0) {
+            const int base = (curveid_ - 1) * GEOM_PER_SPOT;
+            auto* visPoly = static_cast<Polyline*>(visibleGeometry.at(base + 10));
+            visPoly->points.push_back(snapped);
+        }
+
+        return true;
+    }
+
+    if (!provider || lastObject_ == -1 || !s->count_selected_rows()) {
         return false;
     }
 
@@ -3520,6 +4174,10 @@ std::unique_ptr<ControlSpotPanel::SpotRow> ControlSpotPanel::getSpot(const int i
             r->avoidgamutMethod = row[spots_.avoidgamutMethod];
             r->maskType = row[spots_.maskType];
             r->aiMaskClass = row[spots_.aiMaskClass];
+            r->polyMaskPoints = row[spots_.polyMaskPoints];
+            r->polyMaskFeather = row[spots_.polyMaskFeather];
+            r->polyMaskSnapTolerance = row[spots_.polyMaskSnapTolerance];
+            r->polyMaskLegLength = row[spots_.polyMaskLegLength];
 
             return r;
         }
@@ -3566,8 +4224,6 @@ int ControlSpotPanel::getSelectedSpot()
 
 bool ControlSpotPanel::setSelectedSpot(const int index)
 {
-    // printf("setSelectedSpot: %d\n", index);
-
     MyMutex::MyLock lock(mTreeview);
 
     int i = -1;
@@ -3660,8 +4316,15 @@ void ControlSpotPanel::addControlSpot(const SpotRow &newSpot)
     row[spots_.avoidgamutMethod] = newSpot.avoidgamutMethod;
     row[spots_.maskType] = newSpot.maskType;
     row[spots_.aiMaskClass] = newSpot.aiMaskClass;
+    row[spots_.polyMaskPoints] = newSpot.polyMaskPoints;
+    row[spots_.polyMaskFeather] = newSpot.polyMaskFeather;
+    row[spots_.polyMaskSnapTolerance] = newSpot.polyMaskSnapTolerance;
+    row[spots_.polyMaskLegLength] = newSpot.polyMaskLegLength;
     updateParamVisibility();
     disableParamlistener(false);
+
+    // Enable mask controls now that a spot exists
+    setMaskControlsSensitive(true);
 
     // Add associated control spot curve
     addControlSpotCurve(row);
@@ -3690,6 +4353,13 @@ void ControlSpotPanel::deleteControlSpot(const int index)
     }
 
     disableParamlistener(false);
+
+    // Grey out mask controls when no spots remain
+    if (treemodel_->children().empty()) {
+        maskSpotName_ = M("TP_LOCALLAB_MASK_SECTION");
+        updateMaskLabel();
+        setMaskControlsSensitive(false);
+    }
 }
 
 //new function linked to Global and options 
@@ -3834,6 +4504,10 @@ ControlSpotPanel::ControlSpots::ControlSpots()
 	add(avoidgamutMethod);
     add(maskType);
     add(aiMaskClass);
+    add(polyMaskPoints);
+    add(polyMaskFeather);
+    add(polyMaskSnapTolerance);
+    add(polyMaskLegLength);
 }
 
 //-----------------------------------------------------------------------------

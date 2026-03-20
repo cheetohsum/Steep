@@ -28,6 +28,9 @@ class BrowserFilter
 public:
     bool showRanked[6];
     bool showCLabeled[6];
+    bool showPicked;
+    bool showRejected;
+    bool showUnflagged;
     bool showTrash;
     bool showNotTrash;
     bool showOriginal;
@@ -39,6 +42,10 @@ public:
     ExifFilterSettings exifFilter;
     std::vector<std::string> vFilterStrings;
     std::set<std::string> albumWhitelist;
+
+    // Filetype filter: if non-empty, only show entries whose uppercase
+    // extension is in this set.  Empty = show all types.
+    std::set<std::string> filetypeFilter;
 
     BrowserFilter ();
 };

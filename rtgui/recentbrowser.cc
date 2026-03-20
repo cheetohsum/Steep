@@ -32,7 +32,7 @@ RecentBrowser::RecentBrowser ()
     // Compact inline CSS
     auto css = Gtk::CssProvider::create();
     css->load_from_data(
-        "#RecentFoldersCombo { min-height: 0; padding: 1px 4px; font-size: 0.85em; }"
+        "#RecentFoldersCombo { min-height: 0; padding: 1px 4px; font-size: 0.978em; }"
     );
     recentDirs->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
 

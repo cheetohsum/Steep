@@ -58,10 +58,9 @@ void ImageAreaPanel::syncBeforeAfterViews ()
 
 void ImageAreaPanel::setBeforeAfterViews (ImageAreaPanel* bef, ImageAreaPanel* aft)
 {
-
     before = bef;
     after = aft;
-    syncBeforeAfterViews ();
+    initialImageReady_ = false;
 }
 
 void ImageAreaPanel::zoomChanged ()
@@ -80,7 +79,6 @@ void ImageAreaPanel::zoomChanged ()
 
 void ImageAreaPanel::synchronize ()
 {
-
     if (after && this == before) {
         int imgw, imgh, x, y;
         after->imageArea->getScrollImageSize (imgw, imgh);
@@ -91,6 +89,9 @@ void ImageAreaPanel::synchronize ()
             imageArea->queue_draw ();
         }
     } else if (before && this == after) {
+        if (!before->initialImageReady_) {
+            return;
+        }
         int imgw, imgh, x, y;
         before->imageArea->getScrollImageSize (imgw, imgh);
         before->imageArea->getScrollPosition (x, y);
@@ -100,6 +101,12 @@ void ImageAreaPanel::synchronize ()
             imageArea->queue_draw ();
         }
     }
+}
 
+ImageArea* ImageAreaPanel::getLinkedImageArea() const
+{
+    if (before == this && after) return after->imageArea;
+    if (after == this && before) return before->imageArea;
+    return nullptr;
 }
 

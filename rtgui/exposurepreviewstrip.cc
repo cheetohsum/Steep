@@ -118,6 +118,7 @@ void PreviewStrip::generateThumbnailsAsync()
 
     auto params = currentParams_; // shared_ptr copy
     Thumbnail* thm = thumbnail_;
+    thm->increaseRef(); // prevent thumbnail deletion while thread runs
     ParamModifier modifier = paramModifier_;
     PreviewStrip* self = this;
 
@@ -126,7 +127,10 @@ void PreviewStrip::generateThumbnailsAsync()
         results->reserve(NUM_THUMBS);
 
         for (int i = 0; i < NUM_THUMBS; ++i) {
-            if (cancel->load()) return;
+            if (cancel->load()) {
+                thm->decreaseRef();
+                return;
+            }
 
             double t = -1.0 + (2.0 * i) / (NUM_THUMBS - 1);
 
@@ -142,6 +146,7 @@ void PreviewStrip::generateThumbnailsAsync()
 
             if (cancel->load()) {
                 delete img;
+                thm->decreaseRef();
                 return;
             }
 
@@ -155,6 +160,8 @@ void PreviewStrip::generateThumbnailsAsync()
 
             results->push_back(copied);
         }
+
+        thm->decreaseRef();
 
         if (cancel->load()) return;
 

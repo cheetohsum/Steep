@@ -1,0 +1,24 @@
+[Film Presets]
+Enabled=true
+Preset=golden_hour
+Strength=75
+Warmth=20
+
+[Exposure]
+Auto=false
+Compensation=0.3
+Contrast=5
+HighlightCompr=60
+ShadowCompr=50
+
+[White Balance]
+Enabled=true
+Setting=Custom
+Temperature=6200
+Green=0.99
+
+[PCVignette]
+Enabled=true
+Strength=0.5
+Feather=65
+Roundness=50

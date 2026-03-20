@@ -71,6 +71,8 @@ private:
 PlacesBrowser::PlacesBrowser ()
 {
     set_orientation(Gtk::ORIENTATION_VERTICAL);
+    set_name("PlacesBrowserWidget");
+    set_size_request(-1, 300);
 
     // Header bar: "Places" label + "+" add-place button
     Gtk::Box* headerBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
@@ -87,9 +89,9 @@ PlacesBrowser::PlacesBrowser ()
     auto headerCss = Gtk::CssProvider::create();
     headerCss->load_from_data(
         "#PlacesHeader { min-height: 0; padding: 0 4px; }"
-        "#PlacesHeader label { font-size: 10px; font-weight: bold; padding: 2px 0; margin: 0; }"
+        "#PlacesHeader label { font-size: 11.5px; font-weight: bold; padding: 2px 0; margin: 0; }"
         "#PlacesAddBtn { min-height: 0; min-width: 0; padding: 0; margin: 0; }"
-        "#PlacesBrowserTree { font-size: 0.92em; }"
+        "#PlacesBrowserTree { font-size: 1.058em; }"
     );
     headerBar->get_style_context()->add_provider(headerCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
     headerLabel->get_style_context()->add_provider(headerCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
@@ -101,9 +103,8 @@ PlacesBrowser::PlacesBrowser ()
 
     scrollw = Gtk::manage (new Gtk::ScrolledWindow ());
     scrollw->set_policy (Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
-    scrollw->set_propagate_natural_height(true);
     scrollw->set_overlay_scrolling(false);
-    pack_start (*scrollw, Gtk::PACK_SHRINK);
+    pack_start (*scrollw, Gtk::PACK_EXPAND_WIDGET);
 
     treeView = Gtk::manage (new PlacesTreeView ());
     treeView->set_name("PlacesBrowserTree");
@@ -212,8 +213,20 @@ void PlacesBrowser::refreshPlacesList ()
         if (fav && fav->query_exists()) {
             try {
                 if (auto info = fav->query_info ()) {
+                    // Show "Parent/Folder" so user can tell nesting context
+                    Glib::ustring displayLabel = info->get_display_name();
+                    auto parent = fav->get_parent();
+                    if (parent) {
+                        try {
+                            auto parentInfo = parent->query_info();
+                            if (parentInfo) {
+                                displayLabel = parentInfo->get_display_name()
+                                    + "/" + displayLabel;
+                            }
+                        } catch (...) {}
+                    }
                     Gtk::TreeModel::Row newrow = *(placesModel->append());
-                    newrow[placesColumns.label] = info->get_display_name ();
+                    newrow[placesColumns.label] = displayLabel;
                     newrow[placesColumns.icon]  = info->get_icon ();
                     newrow[placesColumns.root]  = fav->get_parse_name ();
                     newrow[placesColumns.type]  = 5;

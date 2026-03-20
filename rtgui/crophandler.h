@@ -62,6 +62,7 @@ public:
     void    setEditSubscriber      (EditSubscriber* newSubscriber);
 
     void    newImage      (rtengine::StagedImageProcessor* ipc_, bool isDetailWindow);
+    void    disconnectCrop ();
     void    setZoom       (int z, int centerx = -1, int centery = -1);
     float   getZoomFactor ();
     double  getFitZoom    ();

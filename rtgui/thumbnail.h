@@ -95,10 +95,11 @@ class Thumbnail
         Property<int> rank;
         Property<int> color;
         Property<bool> trashed;
+        Property<int> pick;
 
-        explicit Properties(int r=0, int c=0, bool t=false):
-            rank(r), color(c), trashed(t) {}
-        bool edited() const { return rank.edited || color.edited || trashed.edited; }
+        explicit Properties(int r=0, int c=0, bool t=false, int p=0):
+            rank(r), color(c), trashed(t), pick(p) {}
+        bool edited() const { return rank.edited || color.edited || trashed.edited || pick.edited; }
     };
     Properties properties;
 
@@ -184,6 +185,9 @@ public:
 
     bool            getTrashed () const;
     void            setTrashed (bool trashed);
+
+    int             getPick () const;
+    void            setPick (int pick);
 
     void            addThumbnailListener (ThumbnailListener* tnl);
     void            removeThumbnailListener (ThumbnailListener* tnl);

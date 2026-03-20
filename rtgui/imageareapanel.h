@@ -35,6 +35,7 @@ protected:
 
 public:
     ImageArea*   imageArea;
+    bool initialImageReady_ = false;
 
     ImageAreaPanel  ();
     ~ImageAreaPanel () override;
@@ -43,4 +44,7 @@ public:
 
     void setBeforeAfterViews (ImageAreaPanel* bef, ImageAreaPanel* aft);
     void syncBeforeAfterViews();
+
+    bool isBeforePanel() const { return before != nullptr && before == this; }
+    ImageArea* getLinkedImageArea() const;
 };

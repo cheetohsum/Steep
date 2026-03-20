@@ -32,6 +32,8 @@ std::shared_ptr<RTSurface> FileThumbnailButtonSet::trashIcon = std::shared_ptr<R
 std::shared_ptr<RTSurface> FileThumbnailButtonSet::unTrashIcon = std::shared_ptr<RTSurface>(nullptr);
 std::shared_ptr<RTSurface> FileThumbnailButtonSet::processIcon = std::shared_ptr<RTSurface>(nullptr);
 std::array<std::shared_ptr<RTSurface>, 6> FileThumbnailButtonSet::colorLabelIcon;
+std::shared_ptr<RTSurface> FileThumbnailButtonSet::pickIcon = std::shared_ptr<RTSurface>(nullptr);
+std::shared_ptr<RTSurface> FileThumbnailButtonSet::rejectIcon = std::shared_ptr<RTSurface>(nullptr);
 
 Glib::ustring FileThumbnailButtonSet::processToolTip;
 Glib::ustring FileThumbnailButtonSet::unrankToolTip;
@@ -56,6 +58,8 @@ FileThumbnailButtonSet::FileThumbnailButtonSet (FileBrowserEntry* myEntry)
         colorLabelIcon[3] = std::shared_ptr<RTSurface>(new RTSurface("circle-green-small", Gtk::ICON_SIZE_MENU));
         colorLabelIcon[4] = std::shared_ptr<RTSurface>(new RTSurface("circle-blue-small", Gtk::ICON_SIZE_MENU));
         colorLabelIcon[5] = std::shared_ptr<RTSurface>(new RTSurface("circle-purple-small", Gtk::ICON_SIZE_MENU));
+        pickIcon = std::shared_ptr<RTSurface>(new RTSurface("flag-pick", Gtk::ICON_SIZE_BUTTON));
+        rejectIcon = std::shared_ptr<RTSurface>(new RTSurface("flag-reject", Gtk::ICON_SIZE_BUTTON));
 
         processToolTip = M("FILEBROWSER_POPUPPROCESS");
         unrankToolTip = M("FILEBROWSER_UNRANK_TOOLTIP");

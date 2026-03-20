@@ -1,0 +1,34 @@
+[Film Presets]
+Enabled=true
+Preset=porcelain_400
+Strength=80
+Fade=10
+
+[Exposure]
+Auto=false
+Compensation=0.1
+Contrast=-5
+HighlightCompr=70
+ShadowCompr=60
+CurveMode=FilmLike
+Curve=3;0;0.04;0.20;0.18;0.50;0.52;0.80;0.84;1;0.98;
+
+[White Balance]
+Enabled=true
+Setting=Custom
+Temperature=5400
+Green=1.0
+
+[Sharpening]
+Enabled=true
+Contrast=10
+Method=usm
+Radius=0.7
+Amount=70
+Threshold=20;80;2000;1200;
+
+[Vibrance]
+Enabled=true
+Pastels=10
+Saturated=-5
+ProtectSkins=true

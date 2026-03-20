@@ -50,7 +50,7 @@ public:
     FilePanel ();
     ~FilePanel () override;
 
-    Gtk::Box* placespaned;
+    Gtk::Paned* placespaned;
     Gtk::Paned* dirpaned;
 
     Gtk::Box* rightBox;

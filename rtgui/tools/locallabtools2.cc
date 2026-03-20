@@ -6494,7 +6494,6 @@ sigc::connection *LocallabLog::getPreviewDeltaEButtonConnection()
 
 void LocallabLog::read(const rtengine::procparams::ProcParams* pp, const ParamsEdited* pedited)
 {
-    fprintf(stderr, "DBG LocallabLog::read: ENTER spots=%zu selspot=%d\n", pp->locallab.spots.size(), pp->locallab.selspot);
     // Disable all listeners
     disableListener();
     nbmasklog = 0;
@@ -6503,28 +6502,17 @@ void LocallabLog::read(const rtengine::procparams::ProcParams* pp, const ParamsE
 
     if (index < (int)pp->locallab.spots.size()) {
         const LocallabParams::LocallabSpot& spot = pp->locallab.spots.at(index);
-        fprintf(stderr, "DBG LocallabLog::read: A set_visible\n");
         exp->set_visible(true);
-        fprintf(stderr, "DBG LocallabLog::read: B setEnabled\n");
         exp->setEnabled(spot.explog);
-        fprintf(stderr, "DBG LocallabLog::read: C complexity\n");
         complexity->set_active(spot.complexlog);
 
-        fprintf(stderr, "DBG LocallabLog::read: D autocompute\n");
         autocompute->set_active(spot.autocompute);
-        fprintf(stderr, "DBG LocallabLog::read: E blackEv\n");
         blackEv->setValue(spot.blackEv);
-        fprintf(stderr, "DBG LocallabLog::read: F repar\n");
         repar->setValue(spot.repar);
-        fprintf(stderr, "DBG LocallabLog::read: G whiteEv\n");
         whiteEv->setValue(spot.whiteEv);
-        fprintf(stderr, "DBG LocallabLog::read: H whiteslog\n");
         whiteslog->setValue(spot.whiteslog);
-        fprintf(stderr, "DBG LocallabLog::read: I blackslog\n");
         blackslog->setValue(spot.blackslog);
-        fprintf(stderr, "DBG LocallabLog::read: J comprlog\n");
         comprlog->setValue(spot.comprlog);
-        fprintf(stderr, "DBG LocallabLog::read: K strelog\n");
         strelog->setValue(spot.strelog);
 
         /*        if(whiteEv->getValue() < 1.5){
@@ -6552,12 +6540,10 @@ void LocallabLog::read(const rtengine::procparams::ProcParams* pp, const ParamsE
             surround->set_active(3);
         }
 
-        fprintf(stderr, "DBG LocallabLog::read: L recothresl\n");
         recothresl->setValue((double)spot.recothresl);
         lowthresl->setValue((double)spot.lowthresl);
         higthresl->setValue((double)spot.higthresl);
         decayl->setValue((double)spot.decayl);
-        fprintf(stderr, "DBG LocallabLog::read: M ciecam\n");
         ciecam->set_active(spot.ciecam);
         satlog->set_active(spot.satlog);
         fullimage->set_active(spot.fullimage);
@@ -6596,20 +6582,15 @@ void LocallabLog::read(const rtengine::procparams::ProcParams* pp, const ParamsE
 
     // Update GUI according to complexity mode (BEFORE enableListener to avoid
     // signal cascades that can deadlock with ipc->beginUpdateParams)
-    fprintf(stderr, "DBG LocallabLog::read: O updateGUIToMode\n");
     updateGUIToMode(static_cast<modeType>(complexity->get_active_row_number()));
 
     // Update Log Encoding GUI according to autocompute button state
-    fprintf(stderr, "DBG LocallabLog::read: P updateLogGUI\n");
     updateLogGUI();
-    fprintf(stderr, "DBG LocallabLog::read: Q updateLogGUI2\n");
     updateLogGUI2();
 
     // Enable all listeners AFTER all GUI updates to prevent panelChanged deadlocks
-    fprintf(stderr, "DBG LocallabLog::read: N enableListener\n");
     enableListener();
 
-    fprintf(stderr, "DBG LocallabLog::read: EXIT\n");
     // Note: No need to manage pedited as batch mode is deactivated for Locallab
 }
 
@@ -6723,16 +6704,11 @@ void LocallabLog::enaLMaskChanged()
 
 void LocallabLog::updateGUIToMode(const modeType new_type)
 {
-    fprintf(stderr, "DBG LocallabLog::updateGUIToMode: ENTER new_type=%d\n", (int)new_type);
-
     switch (new_type) {
         case Simple:
-            fprintf(stderr, "DBG LocallabLog::updateGUIToMode: Simple case\n");
             // Expert and Normal mode widgets are hidden in Simple mode
             ciecam->hide();
-            fprintf(stderr, "DBG LocallabLog::updateGUIToMode: Simple ciecam hidden, setting active\n");
             ciecam->set_active(true);
-            fprintf(stderr, "DBG LocallabLog::updateGUIToMode: Simple after ciecam\n");
             sourceabs->hide();
             targabs->hide();
             saturl->hide();
@@ -6753,16 +6729,12 @@ void LocallabLog::updateGUIToMode(const modeType new_type)
             maskusablel->hide();
             maskunusablel->hide();
             decayl->hide();
-            fprintf(stderr, "DBG LocallabLog::updateGUIToMode: Simple DONE\n");
-
             break;
 
         case Normal:
-            fprintf(stderr, "DBG LocallabLog::updateGUIToMode: Normal case\n");
             // Expert mode widgets are hidden in Normal mode
             ciecam->hide();
             ciecam->set_active(true);
-            fprintf(stderr, "DBG LocallabLog::updateGUIToMode: Normal after ciecam\n");
 
             sourceabs->show();
             targabs->show();

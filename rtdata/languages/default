@@ -71,6 +71,16 @@ CURVEEDITOR_TOOLTIPLINEAR;Reset curve to linear.
 CURVEEDITOR_TOOLTIPLOAD;Load a curve from file.
 CURVEEDITOR_TOOLTIPPASTE;Paste curve from clipboard.
 CURVEEDITOR_TOOLTIPSAVE;Save current curve.
+CURVEEDITOR_TOOLTIPCENTER;Move the middle control point to the curve's tonal center of mass
+CURVEEDITOR_PRESET_CUSTOM;Custom
+CURVEEDITOR_PRESET_COLORNEG;Color Negative
+CURVEEDITOR_PRESET_CROSSPROCESS;Cross Process
+CURVEEDITOR_PRESET_NEGATIVE;Negative
+CURVEEDITOR_PRESET_STRONGCONTRAST;Strong Contrast
+CURVEEDITOR_PRESET_LIFTSHADOWS;Lift Shadows
+CURVEEDITOR_PRESET_SOLARIZED;Solarized
+CURVEEDITOR_PRESET_LIGHTER;Lighter
+CURVEEDITOR_PRESET_CONSTRICTMASK;Constrict Mask
 CURVEEDITOR_TYPE;Type:
 DIRBROWSER_BROWSE;Browse for Folder
 DIRBROWSER_FOLDERS;Folders
@@ -188,6 +198,10 @@ FILEBROWSER_PARTIALPASTEPROFILE;Paste - partial
 FILEBROWSER_PASTEPROFILE;Paste
 FILEBROWSER_POPUPCANCELJOB;Cancel job
 FILEBROWSER_POPUPCOLORLABEL;Color label
+FILEBROWSER_POPUPFLAG;Flag
+FILEBROWSER_POPUPPICK;Flag
+FILEBROWSER_POPUPREJECT;Reject
+FILEBROWSER_POPUPUNFLAG;Unflag
 FILEBROWSER_POPUPCOLORLABEL0;Label: None
 FILEBROWSER_POPUPCOLORLABEL1;Label: Red
 FILEBROWSER_POPUPCOLORLABEL2;Label: Yellow
@@ -243,9 +257,15 @@ FILEBROWSER_SHOWCOLORLABEL3HINT;Show images labeled Green.\nShortcut: <b>Alt-3</
 FILEBROWSER_SHOWCOLORLABEL4HINT;Show images labeled Blue.\nShortcut: <b>Alt-4</b>
 FILEBROWSER_SHOWCOLORLABEL5HINT;Show images labeled Purple.\nShortcut: <b>Alt-5</b>
 FILEBROWSER_SHOWDIRHINT;Clear all filters.\nShortcut: <b>d</b>
+FILEBROWSER_SHOWPICKEDHINT;Show flagged images.\nShortcut: <b>P</b>
+FILEBROWSER_SHOWREJECTEDHINT;Show rejected images.\nShortcut: <b>X</b>
+FILEBROWSER_SHOWUNFLAGGEDHINT;Show unflagged images.\nShortcut: <b>U</b>
 FILEBROWSER_SHOWEDITEDHINT;Show edited images.\nShortcut: <b>Shift-7</b>
 FILEBROWSER_SHOWEDITEDNOTHINT;Show not edited images.\nShortcut: <b>Shift-6</b>
 FILEBROWSER_SHOWEXIFINFO;Show Exif info.\n\nShortcuts:\n<b>i</b> - Multiple Editor Tabs Mode,\n<b>Alt-i</b> - Single Editor Tab Mode.
+FILEBROWSER_FILETYPE_ALL;All Files
+FILEBROWSER_FILETYPE_SELECTALL;Select All
+FILEBROWSER_FILETYPE_TOOLTIP;Show only specific file types
 FILEBROWSER_SHOWNOTTRASHHINT;Show only images not in trash.
 FILEBROWSER_SHOWORIGINALHINT;Show only original images.\n\nWhen several images exist with the same filename but different extensions, the one considered original is the one whose extension is nearest the top of the parsed extensions list in Preferences > File Browser > Parsed Extensions.
 FILEBROWSER_SHOWRANK1HINT;Show images ranked as 1-star.\nShortcut: <b>Shift-1</b>
@@ -2069,7 +2089,7 @@ MAIN_TOOLTIP_BACKCOLOR0;Background color of the preview: <b>theme-based</b>\nSho
 MAIN_TOOLTIP_BACKCOLOR1;Background color of the preview: <b>black</b>\nShortcut: <b>9</b>
 MAIN_TOOLTIP_BACKCOLOR2;Background color of the preview: <b>white</b>\nShortcut: <b>9</b>
 MAIN_TOOLTIP_BACKCOLOR3;Background color of the preview: <b>middle grey</b>\nShortcut: <b>9</b>
-MAIN_TOOLTIP_BEFOREAFTERLOCK;<b>Lock</b> / <b>Unlock</b> the <b>Before</b> view\n\n<b>Lock</b>: keep the <b>Before</b> view unchanged.\nUseful to evaluate the cumulative effect of multiple tools.\nAdditionally, comparisons can be made to any state in the History.\n\n<b>Unlock</b>: the <b>Before</b> view will follow the <b>After</b> view one step behind, showing the image before the effect of the currently used tool.
+MAIN_TOOLTIP_BEFOREAFTERLOCK;<b>Lock</b> / <b>Unlock</b> the <b>Before</b> view\n\n<b>Unlock</b> (default): the <b>Before</b> view always shows the original unedited photo.\n\n<b>Lock</b>: the <b>Before</b> view shows the image one step behind, before the effect of the most recent edit.
 MAIN_TOOLTIP_HIDEHP;Show/Hide the left panel (including the history).\nShortcut: <b>l</b>
 MAIN_TOOLTIP_INDCLIPPEDH;Clipped highlight indication.\nShortcut: <b>&gt;</b>
 MAIN_TOOLTIP_INDCLIPPEDS;Clipped shadow indication.\nShortcut: <b>&lt;</b>
@@ -3105,6 +3125,11 @@ TP_FILMPRESETS_SECTION_COLOR;Color
 TP_FILMPRESETS_SECTION_TINTING;Tinting
 TP_FILMPRESETS_SECTION_CHANNEL;Channel Response
 TP_FILMPRESETS_SECTION_SPECIAL;Special
+TP_FILMPRESETS_GRAIN;Grain
+TP_FILMPRESETS_VIBRANCE;Vibrance
+TP_FILMPRESETS_SECTION_FILM;Film Character
+HISTORY_MSG_FILMPRESETS_GRAIN;Film Presets - Grain
+HISTORY_MSG_FILMPRESETS_VIBRANCE;Film Presets - Vibrance
 TP_FLATFIELD_AUTOSELECT;Auto-Select Flat-Field File
 TP_FLATFIELD_BLURRADIUS;Blur radius
 TP_FLATFIELD_BLURTYPE;Blur type
@@ -4161,6 +4186,12 @@ TP_LOCALLAB_RADMASKCOL;Smooth radius
 TP_LOCALLAB_RECOTHRES02_TOOLTIP;If the 'Recovery threshold' value is greater than 1, the mask in Mask and Modifications takes into account any previous modifications made to the image but not those made with the current tool (e.g. Color and Light, Wavelet, CAM16, etc.)\nIf the value of the 'Recovery threshold' is less than 1, the mask in Mask and Modifications does not take into account any previous modifications to the image.\n\nIn both cases, the 'Recovery threshold' acts on the masked image as modified by the current tool (Color and Light, Wavelet, CAM16, etc.).
 TP_LOCALLAB_RECT;Rectangle
 TP_LOCALLAB_GRAD;Gradient
+TP_LOCALLAB_POLY;Lasso
+TP_LOCALLAB_POLY_DRAW;Draw
+TP_LOCALLAB_POLY_FEATHER;Feather
+TP_LOCALLAB_POLY_SNAP_TOL;Snap Tolerance
+TP_LOCALLAB_POLY_LEG_LEN;Leg Length
+TP_LOCALLAB_POLY_INSTRUCT;Click and drag to draw
 TP_LOCALLAB_RECURS;Recursive references
 TP_LOCALLAB_RECURS_TOOLTIP;Forces the algorithm to recalculate the references after each tool is applied.\nAlso useful for working with masks.
 TP_LOCALLAB_REN_DIALOG_LAB;Enter the new Control Spot name

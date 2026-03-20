@@ -187,13 +187,20 @@ void History::historySelectionChanged ()
             tpc->profileChange (&pp, EvHistoryBrowsed, row[historyColumns.text], &paramsEdited);
         }
 
-        if (blistener && !blistenerLock) {
-            Gtk::TreeModel::Path path = historyModel->get_path (iter);
-            path.prev ();
-            iter = historyModel->get_iter (path);
+        if (blistener) {
+            if (!blistenerLock) {
+                // Unlocked: always show the truly unedited photo (neutral processing)
+                blistener->historyBeforeLineChanged (ProcParams());
+            } else {
+                // Locked: show state before the selected history entry
+                Gtk::TreeModel::Path path = historyModel->get_path (iter);
+                path.prev ();
+                auto prevIter = historyModel->get_iter (path);
 
-            if (blistener && iter) {
-                blistener->historyBeforeLineChanged (iter->get_value (historyColumns.params));
+                if (prevIter) {
+                    blistener->historyBeforeLineChanged (
+                        prevIter->get_value (historyColumns.params));
+                }
             }
         }
     }
@@ -278,8 +285,18 @@ void History::procParamsChanged(
             selection->select(newrow);
         }
 
-        if (blistener && !blistenerLock) {
-            blistener->historyBeforeLineChanged(historyModel->children()[0][historyColumns.params]);
+        if (blistener) {
+            if (!blistenerLock) {
+                // Unlocked: always show the truly unedited photo (neutral processing)
+                blistener->historyBeforeLineChanged(ProcParams());
+            } else {
+                // Locked: show state before the most recent edit
+                const int newSize = historyModel->children().size();
+                if (newSize >= 2) {
+                    blistener->historyBeforeLineChanged(
+                        historyModel->children()[newSize - 2][historyColumns.params]);
+                }
+            }
         }
     } else { // else just update it
         row[historyColumns.value] = g_markup_escape_text(descr.c_str(), -1);
@@ -404,16 +421,19 @@ void History::resized (Gtk::Allocation& req)
 
 bool History::getBeforeLineParams (rtengine::procparams::ProcParams& params)
 {
-
-    int size = historyModel->children().size ();
+    const int size = historyModel->children().size ();
 
     if (size == 0 || !blistener) {
         return false;
     }
 
-    Gtk::TreeModel::Row row;
-    row = historyModel->children()[0];
-    params = row[historyColumns.params];
+    if (blistenerLock && size >= 2) {
+        // Locked: show state before the most recent edit
+        params = historyModel->children()[size - 2][historyColumns.params];
+    } else {
+        // Unlocked: show the truly unedited photo (neutral processing)
+        params = ProcParams();
+    }
     return true;
 }
 

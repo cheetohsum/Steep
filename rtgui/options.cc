@@ -419,7 +419,7 @@ void Options::setDefaults()
     lastCopyMovePath = "";
     version = "0.0.0.0";                // temporary value; will be correctly set in RTWindow::on_realize
     thumbSize = 160;
-    thumbSizeTab = 90;
+    thumbSizeTab = 104;
     thumbSizeQueue = 160;
     sameThumbSize = false;               // preferring speed of switch between file browser and single editor tab
     showHistory = true;
@@ -1352,6 +1352,10 @@ void Options::readFromFile(Glib::ustring fname)
 
                 if (keyFile.has_key("File Browser", "ThumbnailSizeTab")) {
                     thumbSizeTab = keyFile.get_integer("File Browser", "ThumbnailSizeTab");
+                    // Migrate old small filmstrip thumbs to new larger default
+                    if (thumbSizeTab <= 90) {
+                        thumbSizeTab = 104;
+                    }
                 }
 
                 if (keyFile.has_key("File Browser", "ThumbnailSizeQueue")) {

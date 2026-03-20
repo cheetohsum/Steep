@@ -89,7 +89,7 @@ public:
 private:
     static constexpr int GRID_SIZE = 10;
     static constexpr int VERTEX_COUNT = GRID_SIZE * GRID_SIZE;
-    static constexpr int HANDLE_RADIUS = 5;
+    static constexpr int HANDLE_RADIUS = 3;
 
     struct GridVertex {
         double u, v;           // base position [0,1]²

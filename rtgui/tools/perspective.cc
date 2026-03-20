@@ -1049,18 +1049,18 @@ PerspectiveDragSubscriber::PerspectiveDragSubscriber()
     for (int i = 0; i < GRID_LINES; ++i) {
         auto hLine = std::unique_ptr<Line>(new Line());
         hLine->innerLineWidth = 1.0f;
-        hLine->setInnerLineColor(0.7, 0.85, 1.0);  // light blue
-        hLine->setOuterLineColor(0.0, 0.0, 0.0);
-        hLine->opacity = 0.4f;
+        hLine->setInnerLineColor(0.6, 0.6, 0.6);
+        hLine->setOuterLineColor(0.15, 0.15, 0.15);
+        hLine->opacity = 30.f;
         hLine->datum = Geometry::IMAGE;
         visibleGeometry.push_back(hLine.get());
         gridLines_.push_back(std::move(hLine));
 
         auto vLine = std::unique_ptr<Line>(new Line());
         vLine->innerLineWidth = 1.0f;
-        vLine->setInnerLineColor(0.7, 0.85, 1.0);
-        vLine->setOuterLineColor(0.0, 0.0, 0.0);
-        vLine->opacity = 0.4f;
+        vLine->setInnerLineColor(0.6, 0.6, 0.6);
+        vLine->setOuterLineColor(0.15, 0.15, 0.15);
+        vLine->opacity = 30.f;
         vLine->datum = Geometry::IMAGE;
         visibleGeometry.push_back(vLine.get());
         gridLines_.push_back(std::move(vLine));
@@ -1069,18 +1069,18 @@ PerspectiveDragSubscriber::PerspectiveDragSubscriber()
     // Center crosshair lines (more prominent, dashed)
     centerH_ = std::unique_ptr<Line>(new Line());
     centerH_->innerLineWidth = 1.2f;
-    centerH_->setInnerLineColor(1.0, 0.9, 0.3);  // yellow
-    centerH_->setOuterLineColor(0.0, 0.0, 0.0);
-    centerH_->opacity = 0.6f;
+    centerH_->setInnerLineColor(0.8, 0.8, 0.4);  // muted yellow
+    centerH_->setOuterLineColor(0.1, 0.1, 0.1);
+    centerH_->opacity = 50.f;
     centerH_->setDashed(true);
     centerH_->datum = Geometry::IMAGE;
     visibleGeometry.push_back(centerH_.get());
 
     centerV_ = std::unique_ptr<Line>(new Line());
     centerV_->innerLineWidth = 1.2f;
-    centerV_->setInnerLineColor(1.0, 0.9, 0.3);
-    centerV_->setOuterLineColor(0.0, 0.0, 0.0);
-    centerV_->opacity = 0.6f;
+    centerV_->setInnerLineColor(0.8, 0.8, 0.4);
+    centerV_->setOuterLineColor(0.1, 0.1, 0.1);
+    centerV_->opacity = 50.f;
     centerV_->setDashed(true);
     centerV_->datum = Geometry::IMAGE;
     visibleGeometry.push_back(centerV_.get());
@@ -1241,9 +1241,12 @@ VertexGridSubscriber::VertexGridSubscriber()
         circle->radiusInImageSpace = false;
         circle->datum = Geometry::IMAGE;
         circle->setActive(true);
-        circle->setAutoColor(true);
+        circle->setAutoColor(false);
+        circle->setInnerLineColor(0.7, 0.7, 0.7);
+        circle->setOuterLineColor(0.2, 0.2, 0.2);
+        circle->opacity = 60.f;
         circle->state = Geometry::NORMAL;
-        circle->innerLineWidth = 1.5f;
+        circle->innerLineWidth = 1.0f;
         visibleGeometry.push_back(circle.get());
         mouseOverGeometry.push_back(circle.get());
         vertexCircles_.push_back(std::move(circle));
@@ -1254,9 +1257,9 @@ VertexGridSubscriber::VertexGridSubscriber()
         for (int col = 0; col < GRID_SIZE - 1; ++col) {
             auto line = std::unique_ptr<Line>(new Line());
             line->innerLineWidth = 1.0f;
-            line->setInnerLineColor(0.5, 0.7, 1.0);
-            line->setOuterLineColor(0.0, 0.0, 0.0);
-            line->opacity = 0.5f;
+            line->setInnerLineColor(0.6, 0.6, 0.6);
+            line->setOuterLineColor(0.15, 0.15, 0.15);
+            line->opacity = 35.f;
             line->datum = Geometry::IMAGE;
             visibleGeometry.push_back(line.get());
             gridLines_.push_back(std::move(line));
@@ -1266,9 +1269,9 @@ VertexGridSubscriber::VertexGridSubscriber()
         for (int row = 0; row < GRID_SIZE - 1; ++row) {
             auto line = std::unique_ptr<Line>(new Line());
             line->innerLineWidth = 1.0f;
-            line->setInnerLineColor(0.5, 0.7, 1.0);
-            line->setOuterLineColor(0.0, 0.0, 0.0);
-            line->opacity = 0.5f;
+            line->setInnerLineColor(0.6, 0.6, 0.6);
+            line->setOuterLineColor(0.15, 0.15, 0.15);
+            line->opacity = 35.f;
             line->datum = Geometry::IMAGE;
             visibleGeometry.push_back(line.get());
             gridLines_.push_back(std::move(line));

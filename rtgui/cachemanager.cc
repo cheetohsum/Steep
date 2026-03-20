@@ -220,9 +220,12 @@ void CacheManager::renameEntry (const std::string& oldfilename, const std::strin
 
 void CacheManager::closeThumbnail (Thumbnail* thumbnail)
 {
-    MyMutex::MyLock lock (mutex);
-
-    openEntries.erase (thumbnail->getFileName ());
+    {
+        MyMutex::MyLock lock (mutex);
+        openEntries.erase (thumbnail->getFileName ());
+    }
+    // Delete outside the lock — destructor may do work and we don't want
+    // to block getEntry() calls from the preview loader thread pool.
     delete thumbnail;
 }
 

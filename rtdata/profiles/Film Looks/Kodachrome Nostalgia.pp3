@@ -1,0 +1,25 @@
+[Film Presets]
+Enabled=true
+Preset=heritage_gold
+Strength=75
+Contrast=10
+Warmth=15
+
+[Exposure]
+Auto=false
+Compensation=0.2
+Contrast=10
+HighlightCompr=40
+ShadowCompr=50
+
+[White Balance]
+Enabled=true
+Setting=Custom
+Temperature=5900
+Green=1.0
+
+[PCVignette]
+Enabled=true
+Strength=0.6
+Feather=60
+Roundness=50

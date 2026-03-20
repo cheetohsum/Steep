@@ -22,6 +22,7 @@
 #define _CONTROLSPOTPANEL_H_
 
 #include <memory>
+#include <vector>
 
 #include "rtengine/coord.h"
 #include "editcallbacks.h"
@@ -52,13 +53,13 @@ public:
     /**
      * A SpotRow structure allows exchanges from and to ControlSpotClass
      */
-    static constexpr int GEOM_PER_SPOT = 10;
+    static constexpr int GEOM_PER_SPOT = 11;
 
     struct SpotRow {
         Glib::ustring name;
         bool isvisible;
         int prevMethod; // 0 = Normal, 1 = Excluding
-        int shape; // 0 = Ellipse, 1 = Rectangle, 2 = Gradient
+        int shape; // 0 = Ellipse, 1 = Rectangle, 2 = Gradient, 3 = Polygon (Lasso)
         int spotMethod; // 0 = Normal, 1 = Excluding  2 = fullimage 3 = main
         int sensiexclu;
         int structexclu;
@@ -101,6 +102,10 @@ public:
         int wavMethod; // 0 = D2, 1 = D4, 2 = D6, 3 = D10, 4 = D14
         int maskType; // 0 = Normal, 1 = AI Mask
         int aiMaskClass; // 0-7 class index
+        std::vector<int> polyMaskPoints; // Polygon vertices: flattened [x1,y1,x2,y2,...]
+        double polyMaskFeather; // Polygon feather width
+        double polyMaskSnapTolerance; // Magnetic snap search radius
+        double polyMaskLegLength; // Min distance between freehand points
     };
 
     /**
@@ -270,6 +275,8 @@ private:
 
     void prevMethodChanged();
     void shapeChanged(int index);
+    void polyDrawClicked();
+    void polyFeatherChanged(Adjuster* a, double newval);
     void spotMethodChanged();
     void shapeMethodChanged();
     void qualityMethodChanged();
@@ -363,6 +370,10 @@ private:
         Gtk::TreeModelColumn<int> wavMethod; // 0 = D2, 1 = D4, 2 = D6, 3 = D10, 4 = D14
         Gtk::TreeModelColumn<int> maskType; // 0 = Normal, 1 = AI Mask
         Gtk::TreeModelColumn<int> aiMaskClass; // 0-7 class index
+        Gtk::TreeModelColumn<std::vector<int>> polyMaskPoints;
+        Gtk::TreeModelColumn<double> polyMaskFeather;
+        Gtk::TreeModelColumn<double> polyMaskSnapTolerance;
+        Gtk::TreeModelColumn<double> polyMaskLegLength;
     };
 
     class RenameDialog:
@@ -425,6 +436,7 @@ private:
     sigc::connection maskTypeConn_;
     PopUpButton* const aiMaskClass_;
     sigc::connection aiMaskClassConn_;
+    sigc::connection aiPreviewRefresh_; // delayed treeview redraw after AI mask computation
 
     Adjuster* const sensiexclu_;
     Adjuster* const structexclu_;
@@ -508,12 +520,32 @@ private:
     double savedTransit_ = 60.;
     bool hasSavedDims_ = false;
 
+    // Polygon (Lasso) drawing state
+    bool polyDrawing_ = false;   // draw mode enabled (button toggled)
+    bool polyDragging_ = false;  // currently in a freehand drag gesture
+    std::vector<rtengine::Coord> polyTempPoints_; // vertices being drawn
+    Gtk::ToggleButton* polyDrawBtn_;
+    sigc::connection polyDrawConn_;
+    Adjuster* const polyFeather_;
+    Adjuster* const polySnapTol_;
+    Adjuster* const polyLegLen_;
+    Gtk::Label* polyVertexLabel_;
+    RTImage* polyVertexIcon_;
+    Gtk::Box* polyBox_; // container for polygon-specific controls
+    Gtk::Box* shapeTypeRow_; // row with shape/masktype buttons + poly controls
+    rtengine::Coord magneticSnap(int imgX, int imgY); // snap to nearest edge
+    static void simplifyPolygon(std::vector<rtengine::Coord>& pts, double epsilon);
+
     // Mask dropdown section
+    Gtk::Button* maskHeaderBtn_;
     Gtk::Box* maskDetailBox_;
     Gtk::Revealer* maskRevealer_;
     bool maskDetailExpanded_;
     Gtk::Label* maskArrowLabel_;
+    Glib::ustring maskSpotName_;  // name of currently selected spot
     void toggleMaskDetail();
+    void updateMaskLabel();  // refresh arrow+name markup
+    void setMaskControlsSensitive(bool sensitive);
 
     // Sidebar hover mask overlay
     bool sidebarHoverActive_ = false;
@@ -523,6 +555,7 @@ private:
     bool onTreeviewLeave(GdkEventCrossing* event);
 public:
     bool isPointerOverTreeview() const;
+    void resetSidebarHover();
 private:
 
     // Row background color

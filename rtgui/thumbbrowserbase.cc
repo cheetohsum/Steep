@@ -607,11 +607,10 @@ void ThumbBrowserBase::configScrollBars ()
 
         if (arrangement == TB_Horizontal) {
             // Filmstrip: single row, never show vertical scrollbar.
-            // Instead, resize the widget to fit the content height.
+            // Don't set a height request on Internal — the parent container
+            // (catalogPane) caps the filmstrip height. Setting a request here
+            // would force the parent to grow beyond its cap in a Box layout.
             vscroll.hide();
-            if (inH > 0) {
-                internal.set_size_request(-1, inH);
-            }
         } else if (ih >= inH) {
             vscroll.hide();
         } else {
@@ -1064,8 +1063,20 @@ Gtk::SizeRequestMode ThumbBrowserBase::Internal::get_request_mode_vfunc () const
 
 void ThumbBrowserBase::Internal::get_preferred_height_vfunc (int &minimum_height, int &natural_height) const
 {
-    minimum_height = RTScalable::scalePixelSize(20);
-    natural_height = RTScalable::scalePixelSize(80);
+    if (parent && parent->arrangement == ThumbBrowserBase::TB_Horizontal) {
+        // Filmstrip mode: report actual content height so the parent Box
+        // doesn't over-allocate vertical space (the hardcoded 80px natural
+        // height was creating visible padding above/below thumbnails).
+        int contentH = parent->getEffectiveHeight();
+        if (contentH <= 0) {
+            contentH = parent->getThumbnailHeight();
+        }
+        minimum_height = contentH;
+        natural_height = contentH;
+    } else {
+        minimum_height = RTScalable::scalePixelSize(20);
+        natural_height = RTScalable::scalePixelSize(80);
+    }
 }
 
 void ThumbBrowserBase::Internal::get_preferred_width_vfunc (int &minimum_width, int &natural_width) const
@@ -1153,6 +1164,13 @@ void ThumbBrowserBase::redraw (ThumbBrowserEntryBase* entry)
 
     GThreadLock lock;
     arrangeFiles(entry);
+    if (arrangement == TB_Horizontal) {
+        int allocated = internal.get_allocated_height();
+        int content = getEffectiveHeight();
+        if (content > 0 && content != allocated) {
+            internal.queue_resize();
+        }
+    }
     queue_draw();
 }
 
@@ -1266,8 +1284,16 @@ void ThumbBrowserBase::enableTabMode(bool enable)
         // In filmstrip mode, never show the vertical scrollbar.
         vscroll.set_no_show_all(true);
         vscroll.hide();
+        // Allow horizontal scrollbar to appear when thumbnails overflow
+        hscrollForceHidden = false;
+        hscroll.set_no_show_all(false);
+        // Compact spacing — the scrollbar row will only take space when visible
+        set_row_spacing(0);
+        set_column_spacing(0);
     } else {
         vscroll.set_no_show_all(false);
+        hscrollForceHidden = false;
+        hscroll.set_no_show_all(false);
     }
 
     {
@@ -1315,13 +1341,48 @@ void ThumbBrowserBase::insertEntry (ThumbBrowserEntryBase* entry)
         pendingInserts_.push_back(entry);
     }
 
-    // Schedule a single merge+redraw for all entries queued this idle cycle
+    // When layout is paused (during animations), just accumulate entries
+    // without scheduling redraw — resumeLayout() will flush them all at once.
+    if (layoutPaused_) {
+        return;
+    }
+
+    // Schedule a debounced merge+redraw. Using a short timer instead of an
+    // idle callback lets entries accumulate, dramatically reducing the number
+    // of expensive arrangeFiles() calls when loading folders with thousands
+    // of images. Filmstrip (horizontal) layout is trivially O(N) so we use
+    // a shorter debounce; grid layout is more expensive so we keep 150ms.
     if (!redrawPending_) {
         redrawPending_ = true;
-        Glib::signal_idle().connect(
+        const int debounceMs = (arrangement == TB_Horizontal) ? 50 : 150;
+        redrawTimeout_ = Glib::signal_timeout().connect(
             sigc::mem_fun(*this, &ThumbBrowserBase::onRedrawIdle_),
-            G_PRIORITY_DEFAULT_IDLE
+            debounceMs,
+            G_PRIORITY_LOW  // lower priority than previewReady callbacks
         );
+    }
+}
+
+void ThumbBrowserBase::pauseLayout ()
+{
+    layoutPaused_ = true;
+    // Cancel any pending redraw timer — entries will keep accumulating
+    redrawTimeout_.disconnect();
+    redrawPending_ = false;
+}
+
+void ThumbBrowserBase::resumeLayout ()
+{
+    layoutPaused_ = false;
+
+    // If entries accumulated during the pause, flush them now
+    bool hasPending;
+    {
+        MyMutex::MyLock lock(pendingMutex_);
+        hasPending = !pendingInserts_.empty();
+    }
+    if (hasPending) {
+        onRedrawIdle_();
     }
 }
 
@@ -1384,7 +1445,8 @@ void ThumbBrowserBase::setScrollPosition (double h, double v)
 // needed for auto-height in single tab
 int ThumbBrowserBase::getEffectiveHeight()
 {
-    int h = hscroll.get_height() + 2; // have 2 pixels rounding error for scroll bars to appear
+    // Only include scrollbar height if it's actually visible
+    int h = hscroll.get_visible() ? hscroll.get_height() : 0;
 
     MYREADERLOCK(l, entryRW);
 

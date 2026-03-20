@@ -77,10 +77,16 @@ bool AIDenoiseManager::findPython()
             pythonPaths.push_back(exeDir + "\\python\\python.exe");
         }
     }
-    // Check common Windows venv locations
+    // Check common Windows venv / conda locations
     const char* home = getenv("USERPROFILE");
     if (home) {
         pythonPaths.push_back(std::string(home) + "\\rawrefinery_env\\Scripts\\python.exe");
+        // Common Anaconda/Miniconda locations
+        pythonPaths.push_back(std::string(home) + "\\Anaconda3\\python.exe");
+        pythonPaths.push_back(std::string(home) + "\\miniconda3\\python.exe");
+        pythonPaths.push_back(std::string(home) + "\\AppData\\Local\\Programs\\Python\\Python313\\python.exe");
+        pythonPaths.push_back(std::string(home) + "\\AppData\\Local\\Programs\\Python\\Python312\\python.exe");
+        pythonPaths.push_back(std::string(home) + "\\AppData\\Local\\Programs\\Python\\Python311\\python.exe");
     }
     pythonPaths.push_back("python.exe");
     pythonPaths.push_back("python3.exe");
@@ -155,7 +161,9 @@ bool AIDenoiseManager::testRawRefinery()
         return false;
     }
 
-    Glib::ustring cmd = pythonPath_ + " -c \"import RawRefinery; print('ok')\"";
+    // The CLI script is self-contained (no RawRefinery package needed).
+    // Just check that the minimal deps are importable: torch, blended_tiling.
+    Glib::ustring cmd = pythonPath_ + " -c \"import torch; from blended_tiling import TilingModule; print('ok')\"";
     try {
         std::string stdout_str;
         int exit_status = 0;
@@ -184,7 +192,7 @@ void AIDenoiseManager::detect()
                 found = true;
                 break;
             }
-            fprintf(stderr, "AI Denoise: RawRefinery not importable with %s, trying next...\n",
+            fprintf(stderr, "AI Denoise: torch/blended_tiling not importable with %s, trying next...\n",
                     pythonPath_.c_str());
             // Remove this path so findPython skips it next iteration
             triedPythonPaths_.insert(pythonPath_);
@@ -192,8 +200,11 @@ void AIDenoiseManager::detect()
         }
 
         if (!found) {
-            fprintf(stderr, "AI Denoise: No Python with RawRefinery found. "
-                    "Install with: python3.11 -m pip install rawrefinery\n");
+            fprintf(stderr, "AI Denoise: No Python with torch+blended_tiling found.\n"
+#ifdef _WIN32
+                    "  Run bundle-win.sh to bundle embedded Python, or install manually:\n"
+#endif
+                    "  pip install torch blended-tiling tifffile platformdirs requests numpy\n");
             detecting_ = false;
             if (detectDoneCb_) detectDoneCb_(false);
             return;

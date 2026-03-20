@@ -18,7 +18,10 @@
  */
 #include "browserfilter.h"
 
-BrowserFilter::BrowserFilter () : 
+BrowserFilter::BrowserFilter () :
+    showPicked(true),
+    showRejected(true),
+    showUnflagged(true),
     showTrash(true),
     showNotTrash(true),
     showOriginal(false),

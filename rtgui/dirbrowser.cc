@@ -195,9 +195,9 @@ DirBrowser::DirBrowser () : dirTreeModel(),
     dirtree->set_name("DirBrowserTree");
     auto css = Gtk::CssProvider::create();
     css->load_from_data(
-        "#DirBrowserTree { font-size: 0.92em; -GtkTreeView-horizontal-separator: 0; }"
+        "#DirBrowserTree { font-size: 1.058em; -GtkTreeView-horizontal-separator: 0; }"
         "#DirBrowserTree header button { min-height: 0; min-width: 0; padding: 0; margin: 0; }"
-        "#DirBrowserTree header button label { font-size: 0.92em; padding: 0 4px; margin: 0; }"
+        "#DirBrowserTree header button label { font-size: 1.058em; padding: 0 4px; margin: 0; }"
         "#DirBrowserTree header { min-height: 0; padding: 0; margin: 0; }"
         "#DirBrowseBtn { min-height: 0; min-width: 0; padding: 0 2px; margin: 0; }"
     );
@@ -220,7 +220,7 @@ DirBrowser::DirBrowser () : dirTreeModel(),
     auto headerCss = Gtk::CssProvider::create();
     headerCss->load_from_data(
         "#FoldersHeader { min-height: 0; padding: 0 4px; }"
-        "#FoldersHeader label { font-size: 10px; font-weight: bold; padding: 2px 0; margin: 0; }"
+        "#FoldersHeader label { font-size: 11.5px; font-weight: bold; padding: 2px 0; margin: 0; }"
         "#DirBrowseBtn { min-height: 0; min-width: 0; padding: 0 2px; margin: 0; }"
     );
     headerBar->get_style_context()->add_provider(headerCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);

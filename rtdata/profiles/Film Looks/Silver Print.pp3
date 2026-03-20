@@ -1,0 +1,27 @@
+[Film Presets]
+Enabled=true
+Preset=silver_gelatin
+Strength=90
+Contrast=15
+
+[Exposure]
+Auto=false
+Compensation=0.1
+Contrast=15
+Black=100
+HighlightCompr=45
+ShadowCompr=35
+
+[White Balance]
+Enabled=true
+Setting=Custom
+Temperature=5500
+Green=1.0
+
+[Sharpening]
+Enabled=true
+Contrast=15
+Method=usm
+Radius=0.6
+Amount=90
+Threshold=20;80;2000;1200;

@@ -61,6 +61,7 @@ public:
     unsigned iso;
     int rating;
     int colorLabel;
+    int pickLabel;
     bool isHDR;
     bool isDNG;
     bool isPixelShift;

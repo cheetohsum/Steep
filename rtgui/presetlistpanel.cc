@@ -238,9 +238,7 @@ void PresetListPanel::buildContent()
 
     // Collect root-level files, including Internal default
     std::vector<const ProfileStoreEntry*> rootFiles;
-    if (rootFolderId != 0) {
-        rootFiles.push_back(ProfileStore::getInstance()->getInternalDefaultPSE());
-    }
+    // Internal default (Neutral) omitted — available via Custom card
     for (auto* entry : *entryList) {
         if (entry->parentFolderId == rootFolderId && entry->type != PSET_FOLDER) {
             rootFiles.push_back(entry);
@@ -455,7 +453,7 @@ Gtk::Button* PresetListPanel::createCard(const ProfileStoreEntry* entry)
     label->get_style_context()->add_class("preset-card-label");
     {
         auto css = Gtk::CssProvider::create();
-        css->load_from_data("label { font-size: 8px; }");
+        css->load_from_data("label { font-size: 10px; }");
         label->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
     }
     vbox->pack_start(*label, Gtk::PACK_SHRINK);
@@ -762,7 +760,6 @@ void PresetListPanel::clearParamChanges()
 
 void PresetListPanel::initProfile(const Glib::ustring& profileFullPath, ProcParams* lastSaved)
 {
-    fprintf(stderr, "DBG initProfile: enter\n");
     const ProfileStoreEntry* pse = nullptr;
     const PartialProfile* defprofile = nullptr;
 
@@ -791,7 +788,6 @@ void PresetListPanel::initProfile(const Glib::ustring& profileFullPath, ProcPara
         lastsaved_ = new PartialProfile(lastSaved, pe);
     }
 
-    fprintf(stderr, "DBG initProfile: before updateProfileList\n");
     updateProfileList();
 
     if (lastsaved_) {
@@ -804,31 +800,24 @@ void PresetListPanel::initProfile(const Glib::ustring& profileFullPath, ProcPara
 
     defprofile = ProfileStore::getInstance()->getProfile(pse);
 
-    fprintf(stderr, "DBG initProfile: before profileChange lastsaved_=%p tpc_=%p\n", (void*)lastsaved_, (void*)tpc_);
     if (lastsaved_) {
         selectEntry(lastSavedPSE_, false);
 
         if (tpc_) {
             tpc_->setDefaults(lastsaved_->pparams);
-            fprintf(stderr, "DBG initProfile: calling profileChange (lastsaved)\n");
             tpc_->profileChange(lastsaved_, EvPhotoLoaded,
                 getCurrentLabel(), nullptr, true);
-            fprintf(stderr, "DBG initProfile: profileChange returned\n");
         }
     } else {
         selectEntry(pse, false);
 
         if (tpc_) {
             tpc_->setDefaults(defprofile->pparams);
-            fprintf(stderr, "DBG initProfile: calling profileChange (default)\n");
             tpc_->profileChange(defprofile, EvPhotoLoaded, getCurrentLabel());
-            fprintf(stderr, "DBG initProfile: profileChange returned\n");
         }
     }
 
-    fprintf(stderr, "DBG initProfile: before startThumbnailGeneration\n");
     startThumbnailGeneration();
-    fprintf(stderr, "DBG initProfile: done\n");
 }
 
 void PresetListPanel::setInitialFileName(const Glib::ustring& filename)

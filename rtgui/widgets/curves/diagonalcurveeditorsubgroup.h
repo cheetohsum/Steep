@@ -79,6 +79,11 @@ protected:
     Gtk::ToggleButton* editParam;
     sigc::connection   editParamConn;
 
+    Gtk::ComboBoxText* presetCombo_;
+    sigc::connection   presetComboConn_;
+    Gtk::Button*       centerBtn_;
+    bool               applyingPreset_;
+
     int activeParamControl;
 
 public:
@@ -118,6 +123,9 @@ protected:
     void adjusterChanged (Adjuster* a, double newval) override;
     bool adjusterEntered (GdkEventCrossing* ev, int ac);
     bool adjusterLeft (GdkEventCrossing* ev, int ac);
+    void presetChanged();
+    void centerPressed();
+    void markPresetCustom();
     void setSubGroupRangeLabels(Glib::ustring r1, Glib::ustring r2, Glib::ustring r3, Glib::ustring r4);
     void setSubGroupBottomBarBgGradient();
 };

@@ -101,6 +101,7 @@ set(RTENGINESOURCEFILES
     PF_correct_RT.cc
     pipettebuffer.cc
     pixelshift.cc
+    polymask.cc
     previewimage.cc
     processingjob.cc
     profilestore.cc

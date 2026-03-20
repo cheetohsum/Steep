@@ -39,6 +39,7 @@ struct GeneralParamsEdited {
     bool rank;
     bool colorlabel;
     bool intrash;
+    bool picklabel;
 };
 
 struct ToneCurveParamsEdited {
@@ -513,6 +514,10 @@ public:
         bool shapeMethod;
         bool avoidgamutMethod;
         bool loc;
+        bool polyMaskPoints;
+        bool polyMaskFeather;
+        bool polyMaskSnapTolerance;
+        bool polyMaskLegLength;
         bool centerX;
         bool centerY;
         bool circrad;
@@ -1786,6 +1791,8 @@ struct FilmPresetsParamsEdited {
     bool redShift;
     bool greenShift;
     bool blueShift;
+    bool grain;
+    bool vibrance;
 };
 
 struct SoftLightParamsEdited {

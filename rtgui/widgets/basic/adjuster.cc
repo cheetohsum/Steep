@@ -920,6 +920,12 @@ void Adjuster::hideResetButton()
     reset->set_no_show_all(true);
 }
 
+void Adjuster::hideSpinButton()
+{
+    spin->set_visible(false);
+    spin->set_no_show_all(true);
+}
+
 void Adjuster::setSliderMinWidth(int px)
 {
     slider->set_size_request(px, -1);

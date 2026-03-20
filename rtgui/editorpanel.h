@@ -263,7 +263,7 @@ public:
     void showNavigatorDialog();
     void showHistoryDialog();
 
-    Gtk::Paned* catalogPane;
+    Gtk::Box* catalogPane;
 
     // MCP server access
     rtengine::StagedImageProcessor* getIpc() const { return ipc; }
@@ -277,6 +277,12 @@ private:
     Gtk::Menu* editorCopyFilterMenu_;
     void updateFilmstripStars(int highlightUpTo);
     Gtk::Revealer* colorLabelRevealer_;
+
+    // Filmstrip flag/reject
+    Gtk::Button* filmstripFlagBtn_;
+    Gtk::Button* filmstripRejectBtn_;
+    int filmstripCurrentPick_;
+    void updateFilmstripFlagBtn();
 
     // Filmstrip sort
     Gtk::MenuButton* filmstripSortBtn_;
@@ -304,6 +310,17 @@ private:
     Gtk::Button* fbClearAll;
     Gtk::Entry* fbSearchEntry;
     bool filterBarBlockSignals;
+
+    // Filetype filter in editor filter bar
+    Gtk::MenuButton* fbFiletypeButton_;
+    Gtk::Popover* fbFiletypePopover_;
+    Gtk::Box* fbFiletypeBox_;
+    Gtk::CheckButton* fbFiletypeAllCheck_;
+    std::map<std::string, Gtk::CheckButton*> fbFiletypeChecks_;
+    bool fbFiletypeBlockSignals_ = false;
+    void rebuildEditorFiletypePopover();
+    void onEditorFiletypeCheckToggled(const std::string& ft);
+    void onEditorFiletypeAllToggled();
 
     void filterBarToggled();
     void filterBarChanged();
@@ -352,7 +369,7 @@ private:
     RecentBrowser* editorRecentBrowser_;
     DirBrowser* editorDirBrowser_;
     AlbumBrowser* albumBrowser_;
-    Gtk::Box* editorPlacesPaned_;
+    Gtk::Paned* editorPlacesPaned_;
 
     std::set<std::string> currentAlbumWhitelist_;
     void onAlbumSelected (const std::set<std::string>& whitelist);
@@ -489,6 +506,9 @@ private:
     // Set to true in close()/destructor to prevent stale callbacks.
     std::shared_ptr<std::atomic<bool>> placeholderCancel_;
 
+    // Cancellation token for async before/after image loading.
+    std::shared_ptr<std::atomic<bool>> beforeAfterCancel_;
+
     rtengine::HistogramObservable* histogram_observable;
     Options::ScopeType histogram_scope_type;
     Glib::ustring lastSyncedEditorDir_;  // prevent redundant dir browser scroll resets
@@ -497,4 +517,13 @@ private:
     double editorAnimFraction_ = 1.0;  // 0=hidden, 1=fully shown
     bool editorAnimIn_ = true;         // true=animating in, false=animating out
     sigc::connection editorAnimConn_;
+
+    // Sidebar/filmstrip toggle animation state
+    double leftAnimFraction_ = 1.0;    // 0=hidden, 1=fully shown
+    sigc::connection leftAnimConn_;
+    double rightAnimFraction_ = 1.0;
+    sigc::connection rightAnimConn_;
+    double topAnimFraction_ = 1.0;
+    sigc::connection topAnimConn_;
+    int filmstripFullHeight_ = 0;      // cached filmstrip height for animation
 };

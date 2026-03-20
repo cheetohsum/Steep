@@ -39,14 +39,16 @@ Rotate::Rotate () : FoldableToolPanel(this, TOOL_NAME, M("TP_ROTATE_LABEL"))
     degree = Gtk::manage (new Adjuster ("", -45, 45, 0.01, 0));
     degree->setAdjusterListener (this);
     degree->hideResetButton();
-    degree->setSliderMinWidth(150);
-    getSummaryBox()->pack_start (*degree);
+    degree->hideSpinButton();
+    degree->set_halign(Gtk::ALIGN_FILL);
+    degree->set_margin_start(10);
+    degree->set_margin_end(10);
+    pack_start (*degree, false, false);
 
     degree->setLogScale(2, 0);
 
     setExpandable(false);
     setFlatMode(true);
-    getSummaryBox()->show_all();
     show_all ();
 }
 

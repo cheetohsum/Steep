@@ -218,11 +218,11 @@ AlbumBrowser::AlbumBrowser ()
     auto css = Gtk::CssProvider::create();
     css->load_from_data(
         "#AlbumHeader { min-height: 0; padding: 0 4px; }"
-        "#AlbumHeader label { font-size: 10px; font-weight: bold; padding: 2px 0; margin: 0; }"
+        "#AlbumHeader label { font-size: 11.5px; font-weight: bold; padding: 2px 0; margin: 0; }"
         "#AlbumAddBtn { min-height: 0; min-width: 0; padding: 0; margin: 0; }"
         "#AlbumCloseBtn { min-height: 0; min-width: 0; padding: 0 4px; margin: 0; font-size: 12px; color: #e88; }"
         "#AlbumCloseBtn:hover { color: #f66; }"
-        "#AlbumBrowserTree { font-size: 0.92em; }"
+        "#AlbumBrowserTree { font-size: 1.058em; }"
         "#AlbumBrowserTree header { min-height: 0; padding: 0; }"
         "#AlbumNewBtn { min-height: 0; min-width: 0; padding: 1px 4px; margin: 0; font-size: 0.85em; }"
     );
