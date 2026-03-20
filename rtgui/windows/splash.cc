@@ -47,12 +47,12 @@ bool SplashImage::on_draw(const ::Cairo::RefPtr< Cairo::Context> &cr)
         context->set_font_description (fontd);
 
         int w, h;
-        Glib::ustring versionStr(App::VERSION);
+        Glib::ustring versionStr("Steep " + App::VERSION);
 
         version = create_pango_layout (versionStr);
         version->set_text(versionStr);
         version->get_pixel_size (w, h);
-        cr->set_source_rgb (0., 0., 0.);
+        cr->set_source_rgb (0.08, 0.09, 0.14);
         cr->set_line_width(3.);
         cr->set_line_join(Cairo::LINE_JOIN_ROUND);
         cr->move_to (surface->getWidth() - w - 32, surface->getHeight() - h - 20);

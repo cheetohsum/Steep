@@ -1928,7 +1928,7 @@ namespace {
 // Returns true if cache data was found and loaded.
 bool loadCacheDataForFile (const Glib::ustring& fpath, CacheImageData& cid)
 {
-    std::string md5 = CacheManager::getMD5(fpath);
+    std::string md5 = cacheMgr->getMD5(fpath);
     if (md5.empty()) return false;
 
     Glib::ustring cacheName = cacheMgr->getCacheFileName("data", fpath, ".txt", md5);

@@ -1114,6 +1114,14 @@ void FileCatalog::dirSelected (const Glib::ustring& dirname, const Glib::ustring
 
             if (dirId != selectedDirectoryId.load(std::memory_order_relaxed)) return;
 
+            // Phase 1.5: Batch-precompute MD5 hashes for all files.
+            // On Windows this uses a single FindFirstFileW pass per
+            // directory instead of individual GetFileAttributesExW calls
+            // in each preview-loader thread, cutting syscall overhead.
+            cacheMgr->precomputeMD5(allFiles);
+
+            if (dirId != selectedDirectoryId.load(std::memory_order_relaxed)) return;
+
             // Phase 2: Sort by proximity to the target image so filmstrip-
             // visible thumbnails (near the selected image) load first.
             const Glib::ustring target = !openF.empty() ? openF : imgTarget;
@@ -1140,7 +1148,7 @@ void FileCatalog::dirSelected (const Glib::ustring& dirname, const Glib::ustring
             }
 
             // Phase 3: Dispatch in batches to main thread
-            const size_t BATCH = 50;
+            const size_t BATCH = 200;
             for (size_t i = 0; i < allFiles.size(); i += BATCH) {
                 if (dirId != selectedDirectoryId.load(std::memory_order_relaxed)) return;
                 size_t end = std::min(i + BATCH, allFiles.size());

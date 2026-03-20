@@ -82,12 +82,13 @@ public:
 #else
         int threadCount = std::max(2u, std::thread::hardware_concurrency());
 #endif
-        // Preview loading is I/O-bound (reading cached thumbnails from disk).
+        // Preview loading is I/O-bound (reading cached thumbnails from disk
+        // and, for uncached images, extracting embedded thumbnails from RAW).
         // Use enough threads to keep the I/O subsystem busy — modern SSDs
-        // handle 8+ concurrent small-file reads easily, and having extra
-        // threads ensures new-folder work starts immediately when switching
-        // folders (old-folder threads may still be in-flight).
-        threadCount = std::max(4, std::min(threadCount, 8));
+        // handle many concurrent small-file reads easily, and even for
+        // uncached RAW folders the embedded-JPEG extraction benefits from
+        // overlapping I/O with CPU work across more threads.
+        threadCount = std::max(4, std::min(threadCount * 2, 16));
 
         threadPool_.reset(new Glib::ThreadPool(threadCount, 0));
     }

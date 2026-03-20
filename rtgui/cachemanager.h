@@ -19,7 +19,10 @@
 #pragma once
 
 #include <map>
+#include <mutex>
 #include <string>
+#include <unordered_map>
+#include <vector>
 
 #include <glibmm/ustring.h>
 
@@ -38,6 +41,13 @@ private:
     Entries openEntries;
     Glib::ustring    baseDir;
     mutable MyMutex  mutex;
+
+    // MD5 cache: avoids redundant per-file GetFileAttributesExW / stat
+    // calls when the same file is accessed multiple times (e.g. preview
+    // load then thumbnail upgrade).  Populated in bulk by precomputeMD5().
+    // Mutable because caching is a transparent optimization.
+    mutable std::unordered_map<std::string, std::string> md5Cache_;
+    mutable std::mutex md5CacheMutex_;
 
     void deleteDir   (const Glib::ustring& dirName) const;
     void deleteFiles (const Glib::ustring& fname, const std::string& md5, bool purgeData, bool purgeProfile) const;
@@ -61,7 +71,18 @@ public:
     void clearImages () const;
     void clearProfiles () const;
     void clearFromCache (const Glib::ustring& fname, bool purge) const;
-    static std::string getMD5 (const Glib::ustring& fname);
+
+    // Compute MD5 cache key for a file (based on path + size + creation time).
+    // Results are cached internally; use precomputeMD5() to batch-populate.
+    std::string getMD5 (const Glib::ustring& fname) const;
+
+    // Batch-precompute MD5 hashes for a list of files.  On Windows this
+    // uses a single FindFirstFileW pass per directory instead of individual
+    // GetFileAttributesExW calls, reducing syscall overhead significantly
+    // for large folders.  Call from the directory-enumeration thread before
+    // dispatching to the preview loader.
+    void precomputeMD5 (const std::vector<Glib::ustring>& files);
+    void clearMD5Cache ();
 
     Glib::ustring    getCacheFileName (const Glib::ustring& subDir,
                                        const Glib::ustring& fname,

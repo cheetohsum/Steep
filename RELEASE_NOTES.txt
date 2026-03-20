@@ -1,52 +1,43 @@
-RAWTHERAPEE 5.12-dev RELEASE NOTES
+STEEP RELEASE NOTES
 
-This is a development version of RawTherapee. We update the code almost daily. Every few months, once enough changes have accumulated and the code is stabilized, we make a new official release. Every code change between these releases is known as a "development" version, and this is one of them.
+Steep is a modern RAW photo editor forked from RawTherapee.
+https://github.com/cheetohsum/Steep
+
+Steep is based on RawTherapee by the RawTherapee contributors.
 
 
 
 IN GENERAL
 
-Start by reading the "Getting Started" article on RawPedia:
-https://rawpedia.rawtherapee.com/
+Start by reading the documentation:
+https://github.com/cheetohsum/Steep
 
-RawTherapee supports most raw formats, including Pentax and Sony Pixel Shift, Canon Dual-Pixel, and those from Foveon and X-Trans sensors.
-If you're wondering whether it supports your camera's raw format, first download RawTherapee and try for yourself. If a raw format is not supported it will either not open, or the preview in the Editor tab will appear black, white, or have a strong color cast - usually magenta. In that case, read the "Adding Support for New Raw Formats" RawPedia article.
+Steep supports most raw formats, including Pentax and Sony Pixel Shift, Canon Dual-Pixel, and those from Foveon and X-Trans sensors.
+If you're wondering whether it supports your camera's raw format, first download Steep and try for yourself. If a raw format is not supported it will either not open, or the preview in the Editor tab will appear black, white, or have a strong color cast - usually magenta.
 
-In order to use RawTherapee efficiently you should know that:
+In order to use Steep efficiently you should know that:
 - You can scroll all panels using the mouse scroll-wheel.
 - You can right-click on a tool's name to automatically expand it while collapsing all others.
 - To change slider values or drop-down list items with the mouse scroll-wheel, hold the Shift key. This is so that you can safely scroll the panels without accidentally changing a slider or other tool setting.
 - All curves support the Shift and Ctrl keys while dragging a point. Shift+drag makes the point snap to a meaningful axis (top, bottom, diagonal, other), while Ctrl+drag makes your mouse movement super-fine for precise point positioning.
-- There are many keyboard shortcuts which make working with RawTherapee much faster and give you greater control. Make sure you familiarize yourself with them on RawPedia's "Keyboard Shortcuts" page!
+- There are many keyboard shortcuts which make working with Steep much faster and give you greater control.
 - All sliders support a fine-tuning mode which you can toggle by pressing the Shift key while dragging a slider.
-
-
-
-NEW FEATURES SINCE 5.12
-
-- TODO
-- Added or improved support for cameras, raw formats and color profiles:
-    - TODO
 
 
 
 NEWS RELEVANT TO PACKAGE MAINTAINERS
 
-New since 5.12:
-- Add LunaSVG as alternate SVG rendering backend
-- TODO
-
 In general:
-- To get the source code, either clone from git or use the tarball from https://rawtherapee.com/shared/source/. Do not use the auto-generated GitHub release tarballs.
+- To get the source code, clone from git: https://github.com/cheetohsum/Steep
 - Requires GTK+ version >= 3.24.3.
-- GTK+ versions 3.24.3 - 3.24.6 have an issue where combobox menu scroll-arrows are missing when the combobox list does not fit vertically on the screen. As a result, users would not be able to scroll in the following comboboxes: Processing Profiles, Film Simulation, and the camera and lens profiles in Profiled Lens Correction.
-- JPEG XL read support depends on libjxl. By default, RawTherapee builds with JPEG XL support if and only if libjxl is present. Use -DWITH_JXL="ON" or DWITH_JXL="OFF" to explicitly enable or disable, respectively, JPEG XL support.
-- RawTherapee builds with a custom version of LibRaw by default. To use the system LibRaw, use -DWITH_SYSTEM_LIBRAW="ON". Requires LibRaw >= 0.21.
-- RawTherapee 5 requires GCC-4.9 or higher, or Clang.
-- Do not use -ffast-math, it will not make RawTherapee faster but will introduce artifacts.
-- Use -O3, it will make RawTherapee faster with no known side-effects.
+- GTK+ versions 3.24.3 - 3.24.6 have an issue where combobox menu scroll-arrows are missing when the combobox list does not fit vertically on the screen.
+- JPEG XL read support depends on libjxl. By default, Steep builds with JPEG XL support if and only if libjxl is present. Use -DWITH_JXL="ON" or -DWITH_JXL="OFF" to explicitly enable or disable JPEG XL support.
+- Steep builds with a custom version of LibRaw by default. To use the system LibRaw, use -DWITH_SYSTEM_LIBRAW="ON". Requires LibRaw >= 0.21.
+- Steep requires GCC-4.9 or higher, or Clang.
+- Do not use -ffast-math, it will not make Steep faster but will introduce artifacts.
+- Use -O3, it will make Steep faster with no known side-effects.
 - For stable releases use -DCACHE_NAME_SUFFIX=""
-- For development builds and release-candidates use -DCACHE_NAME_SUFFIX="5-dev"
+- For development builds use -DCACHE_NAME_SUFFIX="5-dev"
 
 To avoid Rust dependencies:
 - Build using LunaSVG rendering backend
@@ -62,25 +53,18 @@ See CONTRIBUTING.md
 
 DOCUMENTATION
 
-https://rawpedia.rawtherapee.com/
+https://github.com/cheetohsum/Steep
 
 
 
 REPORTING BUGS
 
-If you found a problem, don't keep it to yourself. Read the "How to write useful bug reports" article to get the problem fixed:
-https://rawpedia.rawtherapee.com/How_to_write_useful_bug_reports
-
-
-
-FORUM
-
-RawTherapee shares a forum with users and developers of other Free/Libre/Open Source Software:
-https://discuss.pixls.us/c/software/rawtherapee
+If you found a problem, please report it:
+https://github.com/cheetohsum/Steep/issues
 
 
 
 REVISION HISTORY
 
 The complete changelog is available at:
-https://github.com/RawTherapee/RawTherapee/commits/
+https://github.com/cheetohsum/Steep/commits/

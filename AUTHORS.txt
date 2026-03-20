@@ -1,14 +1,21 @@
+Steep - A Modern RAW Photo Editor
+https://github.com/cheetohsum/Steep
+
+Steep fork developed by:
+  Alex R (cheetohsum)
+
+Based on RawTherapee, originally created by:
 
 Project initiator:
 
-  Gábor Horváth <hgabor@rawtherapee.com>
+  Gabor Horvath <hgabor@rawtherapee.com>
 
 Development contributors, in last name alphabetical order:
 
   Harald Aust
   Roel Baars
   Richard E Barber
-  Dániel Battyányi
+  Daniel Battyanyi
   Martin Burri
   Pierre Cabrera
   Javier Celaya
@@ -17,14 +24,14 @@ Development contributors, in last name alphabetical order:
   Oliver Duis
   Maciek Dworak
   Michael Ezra
-  Flössie
-  Rüdiger Franke
+  Floessie
+  Rudiger Franke
   Jean-Christophe Frisch
   Ilias Giarimis
   Scott Gilbertson
   Alberto Griggio
   Steve Herrell
-  Philippe Hupé
+  Philippe Hupe
   Wolfgang Kuehnel
   Lawrence Lee
   Guokai Ma
@@ -49,32 +56,32 @@ Other contributors (profiles, ideas, mockups, testing, forum activity, translati
   Andy Astbury
   Marcin Bajor
   Javier Bartol
-  Thorsten Bartolomäus
+  Thorsten Bartholomaus
   Patrik Brunner
   Fernando Carello
-  Rodrigo Nuno Bragança da Cunha
+  Rodrigo Nuno Braganca da Cunha
   Pat David
   Jacques Dekker
   Reine Edvardsson
   Andrea Ferrero
-  André Gauthier
-  Sébastien Guyader
-  M. Dávid Gyurkó
+  Andre Gauthier
+  Sebastien Guyader
+  M. David Gyurko
   JK Han (pinholecam)
   Arturs Jekabsons
-  Marián Kyral
+  Marian Kyral
   Oscar de Lama
   Lebarhon
   Karl Loncarek
   Patrick Lopatto
-  Francisco Lorés
+  Francisco Lores
   Jie Luo
   Paul Matthijsse
   Wim ter Meer
   Alberto Righetto
   Kostia (Kildor) Romanov
   Henning Sidow
-  Kalle Söderman
+  Kalle Soderman
   strange-sparrow
   Wayne Sutton
   Johan Thor

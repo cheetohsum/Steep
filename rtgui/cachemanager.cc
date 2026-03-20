@@ -27,6 +27,7 @@
 
 #ifdef _WIN32
 #include <fileapi.h>
+#include <handleapi.h>
 #endif
 
 #include "cachemanager.h"
@@ -304,8 +305,18 @@ void CacheManager::deleteFiles (const Glib::ustring& fname, const std::string& m
     }
 }
 
-std::string CacheManager::getMD5 (const Glib::ustring& fname)
+std::string CacheManager::getMD5 (const Glib::ustring& fname) const
 {
+    // Check precomputed cache first (populated by precomputeMD5).
+    {
+        std::lock_guard<std::mutex> lock(md5CacheMutex_);
+        const auto it = md5Cache_.find(fname.raw());
+        if (it != md5Cache_.end()) {
+            return it->second;
+        }
+    }
+
+    std::string result;
 
 #ifdef _WIN32
 
@@ -315,7 +326,7 @@ std::string CacheManager::getMD5 (const Glib::ustring& fname)
     if (GetFileAttributesExW(wfname.get(), GetFileExInfoStandard, &fileAttr)) {
         // We use name, size and creation time to identify a file.
         const auto identifier = Glib::ustring::compose("%1-%2-%3-%4", fileAttr.nFileSizeLow, fileAttr.ftCreationTime.dwHighDateTime, fileAttr.ftCreationTime.dwLowDateTime, fname);
-        return Glib::Checksum::compute_checksum(Glib::Checksum::CHECKSUM_MD5, identifier);
+        result = Glib::Checksum::compute_checksum(Glib::Checksum::CHECKSUM_MD5, identifier);
     }
 
 #else
@@ -323,12 +334,104 @@ std::string CacheManager::getMD5 (const Glib::ustring& fname)
     struct stat st;
     if (::stat(fname.c_str(), &st) == 0) {
         const auto identifier = Glib::ustring::compose("%1%2", fname, static_cast<gint64>(st.st_size));
-        return Glib::Checksum::compute_checksum(Glib::Checksum::CHECKSUM_MD5, identifier);
+        result = Glib::Checksum::compute_checksum(Glib::Checksum::CHECKSUM_MD5, identifier);
     }
 
 #endif
 
-    return {};
+    // Cache the result for future lookups.
+    if (!result.empty()) {
+        std::lock_guard<std::mutex> lock(md5CacheMutex_);
+        md5Cache_.emplace(fname.raw(), result);
+    }
+
+    return result;
+}
+
+void CacheManager::precomputeMD5 (const std::vector<Glib::ustring>& files)
+{
+    if (files.empty()) {
+        return;
+    }
+
+#ifdef _WIN32
+    // Group files by parent directory so we can do one FindFirstFileW
+    // pass per directory instead of N individual GetFileAttributesExW calls.
+    std::unordered_map<std::string, std::vector<const Glib::ustring*>> byDir;
+    for (const auto& f : files) {
+        byDir[Glib::path_get_dirname(f)].push_back(&f);
+    }
+
+    std::unordered_map<std::string, std::string> results;
+
+    for (const auto& kv : byDir) {
+        const std::string& dirPath = kv.first;
+        const std::vector<const Glib::ustring*>& dirFiles = kv.second;
+
+        // Build lookup: wide basename -> full path pointer
+        std::unordered_map<std::wstring, const Glib::ustring*> needed;
+        needed.reserve(dirFiles.size());
+        for (const auto* fp : dirFiles) {
+            const std::string base = Glib::path_get_basename(*fp);
+            std::unique_ptr<wchar_t, GFreeFunc> wbase(
+                reinterpret_cast<wchar_t*>(g_utf8_to_utf16(base.c_str(), -1, NULL, NULL, NULL)), g_free);
+            if (wbase) {
+                needed[wbase.get()] = fp;
+            }
+        }
+
+        // Single directory enumeration pass
+        const std::string pattern = dirPath + "\\*";
+        std::unique_ptr<wchar_t, GFreeFunc> wpattern(
+            reinterpret_cast<wchar_t*>(g_utf8_to_utf16(pattern.c_str(), -1, NULL, NULL, NULL)), g_free);
+        if (!wpattern) {
+            continue;
+        }
+
+        WIN32_FIND_DATAW fd;
+        HANDLE hFind = FindFirstFileW(wpattern.get(), &fd);
+        if (hFind == INVALID_HANDLE_VALUE) {
+            continue;
+        }
+
+        do {
+            auto it = needed.find(fd.cFileName);
+            if (it != needed.end()) {
+                const Glib::ustring& fullPath = *(it->second);
+                const auto identifier = Glib::ustring::compose(
+                    "%1-%2-%3-%4",
+                    fd.nFileSizeLow,
+                    fd.ftCreationTime.dwHighDateTime,
+                    fd.ftCreationTime.dwLowDateTime,
+                    fullPath);
+                results.emplace(
+                    fullPath.raw(),
+                    Glib::Checksum::compute_checksum(Glib::Checksum::CHECKSUM_MD5, identifier));
+            }
+        } while (FindNextFileW(hFind, &fd));
+
+        FindClose(hFind);
+    }
+
+    // Bulk-insert into cache under a single lock acquisition.
+    {
+        std::lock_guard<std::mutex> lock(md5CacheMutex_);
+        md5Cache_.insert(results.begin(), results.end());
+    }
+
+#else
+    // On Linux, stat() is already fast.  Just populate the cache
+    // so preview-loader threads get instant hits.
+    for (const auto& f : files) {
+        getMD5(f);
+    }
+#endif
+}
+
+void CacheManager::clearMD5Cache ()
+{
+    std::lock_guard<std::mutex> lock(md5CacheMutex_);
+    md5Cache_.clear();
 }
 
 Glib::ustring CacheManager::getCacheFileName (const Glib::ustring& subDir,
