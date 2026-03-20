@@ -356,7 +356,11 @@ static LONG WINAPI crashHandler(EXCEPTION_POINTERS* ep)
             ep->ExceptionRecord->ExceptionInformation[0] ? "writing" : "reading",
             (void*)ep->ExceptionRecord->ExceptionInformation[1]);
     }
+#if defined(_M_ARM64) || defined(__aarch64__)
+    fprintf(stderr, "PC=%p SP=%p\n", (void*)ep->ContextRecord->Pc, (void*)ep->ContextRecord->Sp);
+#elif defined(_M_X64) || defined(__x86_64__)
     fprintf(stderr, "RIP=%p RSP=%p\n", (void*)ep->ContextRecord->Rip, (void*)ep->ContextRecord->Rsp);
+#endif
 
     // Walk the stack with module names
     fprintf(stderr, "Stack trace:\n");
