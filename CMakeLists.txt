@@ -12,7 +12,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/modules/")
 # Must stay before the project() command:
 if(${CMAKE_EXTRA_GENERATOR} MATCHES "Eclipse CDT4")
     set(CMAKE_CXX_COMPILER_ARG1
-        "-std=c++11"
+        "-std=c++14"
         CACHE STRING "C++ version for eclipse" FORCE)
     # Users building with Eclipse should set CMAKE_ECLIPSE_VERSION through the
     # command line to their current version of Eclipse:
@@ -21,7 +21,7 @@ endif()
 
 project(Steep)
 
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
