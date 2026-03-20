@@ -20,6 +20,7 @@
  */
 #include <algorithm>
 #include <map>
+#include <thread>
 
 #include <glibmm/ustring.h>
 
@@ -1367,32 +1368,61 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
             bppcl->endBatchPParamsChange();
         }
     } else if (m == autoEdit) {
-        // Auto-edit: apply sensible defaults for quick improvement
+        // Auto-edit: apply gentle adjustments for quick improvement.
+        // Runs in a background thread to avoid freezing the UI when
+        // many images are selected.
+
+        // Hold references so thumbnails stay alive during background work.
+        auto thumbnails = std::make_shared<std::vector<Thumbnail*>>();
+        thumbnails->reserve(mselected.size());
+        for (auto* entry : mselected) {
+            entry->thumbnail->increaseRef();
+            thumbnails->push_back(entry->thumbnail);
+        }
+
         if (!mselected.empty() && bppcl) {
             bppcl->beginBatchPParamsChange(mselected.size());
         }
 
-        for (size_t i = 0; i < mselected.size(); i++) {
-            rtengine::procparams::ProcParams pp = mselected[i]->thumbnail->getProcParams();
-            // Auto tone curve — compute auto-exposure
-            pp.toneCurve.autoexp = true;
-            // Explicit mild contrast and brightness for consistency
-            // (autoexp computes expcomp/black/hlcompr but we set
-            //  contrast and brightness to fixed tasteful values)
-            pp.toneCurve.contrast = 15;
-            pp.toneCurve.brightness = 5;
-            // Moderate vibrance
-            pp.vibrance.enabled = true;
-            pp.vibrance.pastels = 30;
-            pp.vibrance.saturated = 20;
-            // Enable sharpening (default amount, no mask override)
-            pp.sharpening.enabled = true;
-            mselected[i]->thumbnail->setProcParams(pp, nullptr, FILEBROWSER, true);
-        }
+        std::thread([this, thumbnails]() {
+            for (auto* thm : *thumbnails) {
+                rtengine::procparams::ProcParams pp = thm->getProcParams();
 
-        if (!mselected.empty() && bppcl) {
-            bppcl->endBatchPParamsChange();
-        }
+                // Gentle exposure boost (only if not already raised)
+                if (pp.toneCurve.expcomp < 0.25) {
+                    pp.toneCurve.expcomp = 0.25;
+                }
+                // Mild contrast
+                if (pp.toneCurve.contrast < 10) {
+                    pp.toneCurve.contrast = 10;
+                }
+                // Subtle vibrance
+                pp.vibrance.enabled = true;
+                if (pp.vibrance.pastels < 15) {
+                    pp.vibrance.pastels = 15;
+                }
+                if (pp.vibrance.saturated < 10) {
+                    pp.vibrance.saturated = 10;
+                }
+                // Enable sharpening
+                pp.sharpening.enabled = true;
+
+                // updateCacheNow = false — avoids blocking disk writes;
+                // cache is written when the thumbnail is next closed.
+                thm->setProcParams(pp, nullptr, FILEBROWSER, false);
+            }
+
+            // Dispatch cleanup to main thread
+            Glib::signal_idle().connect_once([this, thumbnails]() {
+                if (bppcl) {
+                    bppcl->endBatchPParamsChange();
+                }
+                for (auto* thm : *thumbnails) {
+                    thm->decreaseRef();
+                }
+                queue_draw();
+            });
+        }).detach();
     } else if (m == duplicate) {
         // Duplicate: copy each selected file with a _copy suffix
         for (size_t i = 0; i < mselected.size(); i++) {
