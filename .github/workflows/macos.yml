@@ -78,8 +78,8 @@ jobs:
             -DCMAKE_OSX_ARCHITECTURES=$(uname -m) \
             -DWITH_LTO="ON" \
             -DLENSFUNDBDIR="/Applications/Steep.app/Contents/Resources/share/lensfun" \
-            -DCMAKE_C_COMPILER=clang \
-            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_COMPILER=/usr/bin/clang \
+            -DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
             -DCMAKE_C_FLAGS="-arch x86_64 -Wno-pass-failed -Wno-deprecated-register -Wno-unused-command-line-argument" \
             -DCMAKE_CXX_FLAGS="-arch x86_64 -Wno-pass-failed -Wno-deprecated-register -Wno-unused-command-line-argument" \
             -DOpenMP_C_FLAGS="${C_FLAGS}" \
@@ -222,8 +222,8 @@ jobs:
             -DWITH_LTO="ON" \
             -DLENSFUNDBDIR="/Applications/Steep.app/Contents/Resources/share/lensfun" \
             -DWITH_SIMDE="ON" \
-            -DCMAKE_C_COMPILER=clang \
-            -DCMAKE_CXX_COMPILER=clang++ \
+            -DCMAKE_C_COMPILER=/usr/bin/clang \
+            -DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
             -DCMAKE_C_FLAGS="-arch arm64 -Wno-pass-failed -Wno-deprecated-register -Wno-unused-command-line-argument" \
             -DCMAKE_CXX_FLAGS="-arch arm64 -Wno-pass-failed -Wno-deprecated-register -Wno-unused-command-line-argument" \
             -DOpenMP_C_FLAGS="${C_FLAGS}" \
