@@ -2329,14 +2329,11 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 
 EditorPanel::~EditorPanel ()
 {
+    deferredOpenConn_.disconnect();
+
     if (beforeAfterCancel_) {
         beforeAfterCancel_->store(true);
         beforeAfterCancel_.reset();
-    }
-
-    if (placeholderCancel_) {
-        placeholderCancel_->store(true);
-        placeholderCancel_.reset();
     }
 
     idle_register.destroy();
@@ -3456,6 +3453,10 @@ void EditorPanel::toggleAlbumView ()
 
 void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
 {
+    // Cancel any pending deferred Phase B from a previous open()
+    deferredOpenConn_.disconnect();
+    ++openSession_;
+
     // Sync places paned position from file panel
     if (fPanel && fPanel->placespaned) {
         int pos = fPanel->placespaned->get_position();
@@ -3464,20 +3465,21 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
         }
     }
 
+    // Save the old preview pixbuf before close() destroys the handler.
+    // This prevents a blank frame: the old preview is shown instantly on
+    // the new handler while the correct thumbnail is being generated.
+    Glib::RefPtr<Gdk::Pixbuf> oldPreview;
+    double oldPreviewScale = 1.0;
+    if (previewHandler) {
+        oldPreview = previewHandler->getPreviewPixbuf(oldPreviewScale);
+    }
+
     close();
 
     isProcessing = true; // prevents closing-on-init
 
     // initialize everything
     openThm = tmb;
-
-    // Update filmstrip action bar stars to reflect opened image's rating
-    filmstripCurrentRating = openThm->getRank();
-    updateFilmstripStars(filmstripCurrentRating);
-
-    // Update filmstrip flag button to reflect opened image's pick state
-    filmstripCurrentPick_ = openThm->getPick();
-    updateFilmstripFlagBtn();
 
     fname = openThm->getFileName();
     if (fPanel && fPanel->fileCatalog) {
@@ -3495,6 +3497,89 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
     ipc->setPreviewImageListener (previewHandler);
     ipc->setPreviewScale (10);  // Important
 
+    // --- Visual pipeline setup (placeholder + crop window) FIRST ---
+    // Set up the image area with the new preview handler immediately.
+    // First set the old preview as a bridge placeholder so the image area
+    // always has something to paint (no blank frame). Then generate the
+    // correct thumbnail which replaces the old preview.
+
+    if (oldPreview) {
+        previewHandler->setPlaceholder(oldPreview, oldPreviewScale);
+    }
+
+    iareapanel->imageArea->setPreviewHandler (previewHandler);
+    iareapanel->imageArea->setImProcCoordinator (ipc);
+    navigator->previewWindow->setPreviewHandler (previewHandler);
+    navigator->previewWindow->setImageArea (iareapanel->imageArea);
+
+    // Generate placeholder from cached thumbnail. Skip if we already have
+    // a bridge preview (filmstrip navigation) — the engine will deliver
+    // the full preview soon, and skipping saves ~100ms.
+    if (!oldPreview) {
+        double thumbScale;
+        rtengine::IImage8* thumbImg = openThm->processThumbImage(
+            openThm->getProcParams(), 400, thumbScale);
+        if (thumbImg) {
+            int tw = thumbImg->getWidth();
+            int th = thumbImg->getHeight();
+            if (tw > 0 && th > 0 && thumbImg->getData()) {
+                auto pixbuf = Gdk::Pixbuf::create_from_data(
+                    thumbImg->getData(), Gdk::COLORSPACE_RGB, false, 8,
+                    tw, th, tw * 3);
+                auto copied = pixbuf->copy();
+                int fullW = ipc->getFullWidth();
+                if (fullW > 0) {
+                    double scale = static_cast<double>(fullW) / tw;
+                    previewHandler->setPlaceholder(copied, scale);
+                }
+            }
+            delete thumbImg;
+        }
+    }
+
+    // If in single tab mode, the main crop window is not constructed the very first time
+    // since there was no resize event
+    if (iareapanel->imageArea->mainCropWindow) {
+        iareapanel->imageArea->mainCropWindow->cropHandler.newImage (ipc, false);
+    } else {
+        Gtk::Allocation alloc;
+        iareapanel->imageArea->on_resized (alloc);
+
+        // When passing a photo as an argument to the RawTherapee executable, the user wants
+        // this auto-loaded photo's thumbnail to be selected and visible in the Filmstrip.
+        EditorPanel::syncFileBrowser();
+    }
+
+    history->resetSnapShotNumber();
+    navigator->setInvalid(ipc->getFullWidth(),ipc->getFullHeight());
+
+    // Set fit zoom for the new image so the placeholder renders at the right scale.
+    // Normally zoomFit is called by initialImageArrived(), but that only fires when
+    // the engine delivers the first crop — too late for the placeholder.
+    if (iareapanel->imageArea->mainCropWindow) {
+        iareapanel->imageArea->mainCropWindow->zoomFit();
+    }
+
+    // --- Defer heavy tool panel + profile setup to idle callback ---
+    // Return now so GTK can paint the placeholder preview.  Phase B runs
+    // immediately after the redraw (priority 130 > GTK redraw at 120).
+    {
+        const unsigned int session = openSession_;
+        deferredOpenConn_ = Glib::signal_idle().connect(
+            [this, session, tmb]() -> bool {
+                if (session != openSession_) {
+                    return false;  // stale: a newer open() superseded us
+                }
+                openPhaseB(tmb);
+                return false;  // one-shot
+            },
+            G_PRIORITY_HIGH_IDLE + 30
+        );
+    }
+}
+
+void EditorPanel::openPhaseB (Thumbnail* tmb)
+{
     tpc->initImage (ipc, tmb->getType() == FT_Raw);
     tpc->setThumbnail(openThm);
 
@@ -3505,12 +3590,6 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
 
     ipc->setHistogramListener (this);
     iareapanel->imageArea->indClippedPanel->silentlyDisableSharpMask();
-
-//    iarea->fitZoom ();   // tell to the editorPanel that the next image has to be fitted to the screen
-    iareapanel->imageArea->setPreviewHandler (previewHandler);
-    iareapanel->imageArea->setImProcCoordinator (ipc);
-    navigator->previewWindow->setPreviewHandler (previewHandler);
-    navigator->previewWindow->setImageArea (iareapanel->imageArea);
 
     rtengine::ImageSource* is = isrc->getImageSource();
     is->setProgressListener ( this );
@@ -3528,6 +3607,14 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
     presetListPanel->setInitialFileName (fname);
 
     openThm->addThumbnailListener (this);
+
+    // Update filmstrip action bar stars to reflect opened image's rating
+    filmstripCurrentRating = openThm->getRank();
+    updateFilmstripStars(filmstripCurrentRating);
+
+    // Update filmstrip flag button to reflect opened image's pick state
+    filmstripCurrentPick_ = openThm->getPick();
+    updateFilmstripFlagBtn();
 
     // Update EXIF info strip
     {
@@ -3555,71 +3642,6 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
         beforeAfterToggled();
     }
 
-    // If in single tab mode, the main crop window is not constructed the very first time
-    // since there was no resize event
-    if (iareapanel->imageArea->mainCropWindow) {
-        iareapanel->imageArea->mainCropWindow->cropHandler.newImage (ipc, false);
-    } else {
-        Gtk::Allocation alloc;
-        iareapanel->imageArea->on_resized (alloc);
-
-        // When passing a photo as an argument to the RawTherapee executable, the user wants
-        // this auto-loaded photo's thumbnail to be selected and visible in the Filmstrip.
-        EditorPanel::syncFileBrowser();
-    }
-
-    history->resetSnapShotNumber();
-    navigator->setInvalid(ipc->getFullWidth(),ipc->getFullHeight());
-
-    // Set fit zoom for the new image so the placeholder renders at the right scale.
-    // Normally zoomFit is called by initialImageArrived(), but that only fires when
-    // the engine delivers the first crop — too late for the placeholder.
-    if (iareapanel->imageArea->mainCropWindow) {
-        iareapanel->imageArea->mainCropWindow->zoomFit();
-    }
-
-    // Generate placeholder thumbnail asynchronously so open() doesn't block the UI.
-    // Cancel any pending placeholder from a previous image first.
-    if (placeholderCancel_) {
-        placeholderCancel_->store(true);
-    }
-    {
-        auto cancel = std::make_shared<std::atomic<bool>>(false);
-        placeholderCancel_ = cancel;
-        Thumbnail* thm = openThm;
-        int fullW = ipc->getFullWidth();
-        PreviewHandler* ph = previewHandler;
-        ImageArea* ia = iareapanel->imageArea;
-
-        std::thread([thm, fullW, ph, ia, cancel]() {
-            double thumbScale;
-            rtengine::IImage8* thumbImg = thm->processThumbImage(
-                thm->getProcParams(), 400, thumbScale);
-            if (!thumbImg) return;
-
-            if (cancel->load()) {
-                delete thumbImg;
-                return;
-            }
-
-            int tw = thumbImg->getWidth();
-            int th = thumbImg->getHeight();
-            auto pixbuf = Gdk::Pixbuf::create_from_data(
-                thumbImg->getData(), Gdk::COLORSPACE_RGB, false, 8,
-                tw, th, tw * 3);
-            auto copied = pixbuf->copy();
-            double scale = static_cast<double>(fullW) / tw;
-            delete thumbImg;
-
-            Glib::signal_idle().connect_once([ph, copied, scale, ia, cancel]() {
-                if (!cancel->load()) {
-                    ph->setPlaceholder(copied, scale);
-                    ia->queue_draw();
-                }
-            });
-        }).detach();
-    }
-
     // Defer directory browser navigation to an idle callback so it doesn't
     // block the image from appearing.  dirBrowser->open() scans the filesystem
     // which is very slow on cross-filesystem mounts (e.g. WSL2 /mnt/c/).
@@ -3634,6 +3656,9 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
 
 void EditorPanel::close ()
 {
+    // Cancel any pending deferred Phase B from open()
+    deferredOpenConn_.disconnect();
+
     // Clear MCP server reference before closing
     if (parent && parent->getMcpServer()) {
         auto* mcpSrv = parent->getMcpServer();
@@ -3646,10 +3671,6 @@ void EditorPanel::close ()
     if (beforeAfterCancel_) {
         beforeAfterCancel_->store(true);
         beforeAfterCancel_.reset();
-    }
-    if (placeholderCancel_) {
-        placeholderCancel_->store(true);
-        placeholderCancel_.reset();
     }
 
     if (ipc) {
@@ -3673,10 +3694,6 @@ void EditorPanel::close ()
 
         rtengine::ImageSource* is = isrc->getImageSource();
         is->setProgressListener ( nullptr );
-
-        if (ipc) {
-            ipc->setPreviewImageListener (nullptr);
-        }
 
         if (beforeIpc) {
             beforeIpc->setPreviewImageListener (nullptr);
@@ -3705,11 +3722,11 @@ void EditorPanel::close ()
 
         navigator->previewWindow->setPreviewHandler (nullptr);
 
+        ipc->setPreviewImageListener (nullptr);
+
         // Defer stopProcessing + IPC destruction to background thread.
         // stopProcessing() blocks until processing finishes, which can
         // take seconds for large RAWs — too long for the UI thread.
-        // All crop handlers have been disconnected above, so no dangling
-        // pointers remain on the main thread.
         {
             rtengine::StagedImageProcessor* old = ipc;
             PreviewHandler* oldHandler = previewHandler;
@@ -4184,66 +4201,19 @@ void EditorPanel::animateEditorIn(bool skipFilmstrip)
     // Cancel any running animation
     editorAnimConn_.disconnect();
     editorAnimIn_ = true;
-    editorAnimFraction_ = 0.0;
+    editorAnimFraction_ = 1.0;  // Instantly at final state
 
-    // Pause filmstrip layout during animation — thumbnail inserts accumulate
-    // but arrangeFiles() won't run until the animation ends.
-    if (fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser) {
-        fPanel->fileCatalog->fileBrowser->pauseLayout();
-    }
-
-    // Show filmstrip if enabled (start transparent, animation fades it in)
-    if (!skipFilmstrip && catalogPane && App::get().options().editorFilmStripOpened) {
-        catalogPane->set_opacity(0.0);
-        catalogPane->show();
-    } else if (skipFilmstrip && catalogPane && App::get().options().editorFilmStripOpened) {
-        // Hero transition manages filmstrip visibility; just make sure it's shown
+    // Show filmstrip if enabled
+    if (catalogPane && App::get().options().editorFilmStripOpened) {
+        catalogPane->set_opacity(1.0);
         catalogPane->show();
     }
 
-    // Start footer bar transparent
     if (editorToolbarBottom_) {
-        editorToolbarBottom_->set_opacity(0.0);
+        editorToolbarBottom_->set_opacity(1.0);
     }
 
-    // Start sidebar off-screen (fraction 0 = fully hidden)
     hpanedr->queue_allocate();
-
-    editorAnimConn_ = Glib::signal_timeout().connect([this, skipFilmstrip]() -> bool {
-        editorAnimFraction_ += 16.0 / 250.0;  // 250ms total — smooth entrance
-        if (editorAnimFraction_ >= 1.0) {
-            editorAnimFraction_ = 1.0;
-            if (!skipFilmstrip && catalogPane && catalogPane->get_visible()) {
-                catalogPane->set_opacity(1.0);
-            }
-            if (editorToolbarBottom_) {
-                editorToolbarBottom_->set_opacity(1.0);
-            }
-            hpanedr->queue_allocate();
-
-            // Resume filmstrip layout — flush accumulated entries in one batch
-            if (fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser) {
-                fPanel->fileCatalog->fileBrowser->resumeLayout();
-            }
-            return false;
-        }
-
-        double eased = 1.0 - std::pow(1.0 - editorAnimFraction_, 3); // ease-out-cubic
-
-        // Filmstrip: smooth opacity fade only (skip during hero transition)
-        if (!skipFilmstrip && catalogPane && catalogPane->get_visible()) {
-            catalogPane->set_opacity(eased);
-        }
-
-        // Footer bar: fade in
-        if (editorToolbarBottom_) {
-            editorToolbarBottom_->set_opacity(eased);
-        }
-
-        // Sidebar slides in from right via signal_get_child_position
-        hpanedr->queue_allocate();
-        return true;
-    }, 16);
 }
 
 void EditorPanel::animateEditorOut(std::function<void()> onComplete)
@@ -4251,56 +4221,20 @@ void EditorPanel::animateEditorOut(std::function<void()> onComplete)
     // Cancel any running animation
     editorAnimConn_.disconnect();
     editorAnimIn_ = false;
-    editorAnimFraction_ = 1.0;
+    editorAnimFraction_ = 0.0;  // Instantly at final state
 
-    // Pause filmstrip layout during animation
-    if (fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser) {
-        fPanel->fileCatalog->fileBrowser->pauseLayout();
+    // Reset opacities
+    if (catalogPane) {
+        catalogPane->set_opacity(1.0);
     }
+    if (editorToolbarBottom_) {
+        editorToolbarBottom_->set_opacity(1.0);
+    }
+    hpanedr->queue_allocate();
 
-    editorAnimConn_ = Glib::signal_timeout().connect([this, onComplete]() -> bool {
-        editorAnimFraction_ -= 16.0 / 180.0;  // 180ms total
-        if (editorAnimFraction_ <= 0.0) {
-            editorAnimFraction_ = 0.0;
-            // Reset filmstrip state
-            if (catalogPane) {
-                catalogPane->set_opacity(1.0);
-            }
-            if (editorToolbarBottom_) {
-                editorToolbarBottom_->set_opacity(1.0);
-            }
-            hpanedr->queue_allocate();
-
-            // Resume filmstrip layout
-            if (fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser) {
-                fPanel->fileCatalog->fileBrowser->resumeLayout();
-            }
-
-            // Execute completion callback (switches notebook page)
-            if (onComplete) {
-                onComplete();
-            }
-            return false;
-        }
-
-        // Ease-in-cubic for exit: accelerates out smoothly
-        double t = editorAnimFraction_;
-        double eased = t * t * t;
-
-        // Filmstrip: smooth opacity fade only
-        if (catalogPane && catalogPane->get_visible()) {
-            catalogPane->set_opacity(eased);
-        }
-
-        // Footer bar: fade out
-        if (editorToolbarBottom_) {
-            editorToolbarBottom_->set_opacity(eased);
-        }
-
-        // Sidebar slides out to right via signal_get_child_position
-        hpanedr->queue_allocate();
-        return true;
-    }, 16);
+    if (onComplete) {
+        onComplete();
+    }
 }
 
 void EditorPanel::tbTopPanel_1_toggled ()
@@ -4953,6 +4887,9 @@ bool EditorPanel::saveImmediately (const Glib::ustring &filename, const SaveForm
 void EditorPanel::openPreviousEditorImage()
 {
     if (!App::get().isSimpleEditor() && fPanel && !fname.empty()) {
+        if (ipc) {
+            ipc->signalStop();
+        }
         fPanel->fileCatalog->openNextPreviousEditorImage (fname, NAV_PREVIOUS);
     }
 }
@@ -4960,6 +4897,9 @@ void EditorPanel::openPreviousEditorImage()
 void EditorPanel::openNextEditorImage()
 {
     if (!App::get().isSimpleEditor() && fPanel && !fname.empty()) {
+        if (ipc) {
+            ipc->signalStop();
+        }
         fPanel->fileCatalog->openNextPreviousEditorImage (fname, NAV_NEXT);
     }
 }

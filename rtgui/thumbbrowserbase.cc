@@ -586,7 +586,9 @@ void ThumbBrowserBase::configScrollBars ()
             auto ha = hscroll.get_adjustment();
             int iw = internal.get_width();
             ha->set_upper(inW);
-            ha->set_step_increment(!fd.empty() ? fd[0]->getEffectiveWidth() : 0);
+            int stepW = 0;
+            for (const auto* e : fd) { if (!e->filtered) { stepW = e->getEffectiveWidth(); break; } }
+            ha->set_step_increment(stepW);
             ha->set_page_increment(iw);
             ha->set_page_size(iw);
             if (iw >= inW || hscrollForceHidden) {
@@ -600,7 +602,8 @@ void ThumbBrowserBase::configScrollBars ()
 
         auto va = vscroll.get_adjustment();
         va->set_upper(inH);
-        const auto height = !fd.empty() ? fd[0]->getEffectiveHeight() : 0;
+        int height = 0;
+        for (const auto* e : fd) { if (!e->filtered) { height = e->getEffectiveHeight(); break; } }
         va->set_step_increment(height);
         va->set_page_increment(height == 0 ? ih : (ih / height) * height);
         va->set_page_size(ih);
@@ -663,25 +666,25 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry)
 
         int currx = 0;
 
-        for (unsigned int ct = 0; ct < fd.size(); ++ct) {
-            // arrange items in the column
-
-            for (; ct < fd.size() && fd[ct]->filtered; ++ct) {
+        for (unsigned int ct = 0; ct < fd.size(); ) {
+            // skip filtered entries — position off-screen
+            if (fd[ct]->filtered) {
+                fd[ct]->setPosition(-10000, -10000, fd[ct]->getMinimalWidth(), rowHeight);
                 fd[ct]->drawable = false;
+                ++ct;
+                continue;
             }
 
-            if (ct < fd.size()) {
-                const int maxw = fd[ct]->getMinimalWidth();
-
-                fd[ct]->setPosition(currx, 0, maxw, rowHeight);
-                fd[ct]->drawable = true;
-                currx += maxw;
-            }
+            const int maxw = fd[ct]->getMinimalWidth();
+            fd[ct]->setPosition(currx, 0, maxw, rowHeight);
+            fd[ct]->drawable = true;
+            currx += maxw;
+            ++ct;
         }
 
         MYREADERLOCK_RELEASE(l);
         // This will require a Writer access
-        resizeThumbnailArea(currx, !fd.empty() ? fd[0]->getEffectiveHeight() : rowHeight);
+        resizeThumbnailArea(currx, rowHeight);
     } else {
         const int availWidth = internal.get_width();
 
@@ -778,14 +781,18 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry)
                     currx += colWidths[c];
                 }
                 // arrange all entries in the row beginning with the currently added one
-                for (int i = col; ct < fd.size() && i < numOfCols; ++i, ++ct) {
-                    for (; ct < fd.size() && fd[ct]->filtered; ++ct) {
+                for (int i = col; ct < fd.size() && i < numOfCols; ++i) {
+                    // skip filtered entries without consuming a column
+                    while (ct < fd.size() && fd[ct]->filtered) {
+                        fd[ct]->setPosition(-10000, -10000, colWidths[i], rowHeight);
                         fd[ct]->drawable = false;
+                        ++ct;
                     }
                     if (ct < fd.size()) {
                         fd[ct]->setPosition(currx, curry, colWidths[i], rowHeight);
                         fd[ct]->drawable = true;
                         currx += colWidths[i];
+                        ++ct;
                     }
                 }
 
@@ -801,20 +808,19 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry)
             // arrange items in the row
             int currx = 0;
 
-            for (int i = 0; ct < fd.size() && i < numOfCols; ++i, ++ct) {
-                for (; ct < fd.size() && fd[ct]->filtered; ++ct) {
-                    // Thumbs that are not going be drawn should also have a minimum height and width. Cause
-                    // the properties might be used in other parts of the code. The position is just set to be
-                    // zero as a default.
-                    fd[ct]->setPosition(0, 0, colWidths[i], rowHeight);
-
+            for (int i = 0; ct < fd.size() && i < numOfCols; ++i) {
+                // skip filtered entries without consuming a column
+                while (ct < fd.size() && fd[ct]->filtered) {
+                    fd[ct]->setPosition(-10000, -10000, colWidths[i], rowHeight);
                     fd[ct]->drawable = false;
+                    ++ct;
                 }
 
                 if (ct < fd.size()) {
                     fd[ct]->setPosition(currx, curry, colWidths[i], rowHeight);
                     fd[ct]->drawable = true;
                     currx += colWidths[i];
+                    ++ct;
                 }
             }
 
@@ -1300,34 +1306,15 @@ void ThumbBrowserBase::enableTabMode(bool enable)
         MYWRITERLOCK(l, entryRW);
 
         for (size_t i = 0; i < fd.size(); i++) {
-            if (enable) {
-                // Minimize vertical padding in filmstrip mode
-                fd[i]->setMargins(0, 0);
-            } else {
-                fd[i]->setMargins(2, 2);
-            }
-            fd[i]->resize (getThumbnailHeight());
+            fd[i]->setMargins(enable ? 0 : 2, enable ? 0 : 2);
+            fd[i]->resize(getThumbnailHeight());
         }
     }
 
-    redraw ();
-
-    // Scroll to selected position if going into ribbon mode or back
-    // Tab mode is horizontal, file browser is vertical
-    {
-        MYREADERLOCK(l, entryRW);
-
-        if (!selected.empty()) {
-            if (enable) {
-                double h = selected[0]->getStartX();
-                MYREADERLOCK_RELEASE(l);
-                hscroll.set_value (min(h, hscroll.get_adjustment()->get_upper()));
-            } else {
-                double v = selected[0]->getStartY();
-                MYREADERLOCK_RELEASE(l);
-                vscroll.set_value (min(v, vscroll.get_adjustment()->get_upper()));
-            }
-        }
+    // Only redraw in filmstrip mode — browser mode gets a redraw from
+    // FileCatalog::enableTabMode → filterChanged().
+    if (enable) {
+        redraw();
     }
 }
 

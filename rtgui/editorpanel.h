@@ -89,6 +89,7 @@ public:
     ~EditorPanel () override;
 
     void open (Thumbnail* tmb, rtengine::InitialImage* isrc);
+    void openPhaseB (Thumbnail* tmb);
     void setAspect ();
     void on_realize () override;
     void leftPaneButtonReleased (GdkEventButton *event);
@@ -502,12 +503,12 @@ private:
 
     IdleRegister idle_register;
 
-    // Cancellation token for async placeholder thumbnail generation.
-    // Set to true in close()/destructor to prevent stale callbacks.
-    std::shared_ptr<std::atomic<bool>> placeholderCancel_;
-
     // Cancellation token for async before/after image loading.
     std::shared_ptr<std::atomic<bool>> beforeAfterCancel_;
+
+    // Deferred Phase B (tool panel + profile initialization after placeholder paints)
+    sigc::connection deferredOpenConn_;
+    unsigned int openSession_ = 0;
 
     rtengine::HistogramObservable* histogram_observable;
     Options::ScopeType histogram_scope_type;

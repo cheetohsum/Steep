@@ -148,6 +148,10 @@ public:
         upperMargin = upper;
         lowerMargin = lower;
     }
+    void setDirty ()
+    {
+        if (backBuffer) backBuffer->setDirty(true);
+    }
     int getMinimalHeight () const
     {
         return height;

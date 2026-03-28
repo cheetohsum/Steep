@@ -573,14 +573,26 @@ void ThumbBrowserEntryBase::resize (int h)
         width = bsw + 2 * sideMargin + 2 * borderWidth;
     }
 
-    if (previewSize.height != old_preh || previewSize.width != old_prew) { // if new thumbnail height or new orientation
-        preview.clear();
-        refreshThumbnailImage ();
+    if (previewSize.height != old_preh || previewSize.width != old_prew) {
+        // Only regenerate the thumbnail if the size change is significant
+        // (e.g., zoom change or orientation change).  Small changes from
+        // margin adjustments (filmstrip↔browser) just need a dirty flag —
+        // the existing preview scales fine for a few pixels of difference.
+        if (std::abs(previewSize.height - old_preh) > 8 || std::abs(previewSize.width - old_prew) > 8) {
+            preview.clear();
+            refreshThumbnailImage ();
+        } else if (backBuffer) {
+            backBuffer->setDirty(true);
+        }
     } else if (backBuffer) {
         backBuffer->setDirty(true);    // This will force a backBuffer update on queue_draw
     }
 
-    drawable = true;
+    // Don't mark filtered entries as drawable — they should remain hidden
+    // until arrangeFiles() explicitly sets drawable based on filter state.
+    if (!filtered) {
+        drawable = true;
+    }
 }
 
 std::pair<hidpi::LogicalSize, int> ThumbBrowserEntryBase::getDesiredPreviewSize() const {
@@ -639,8 +651,13 @@ void ThumbBrowserEntryBase::draw (Cairo::RefPtr<Cairo::Context> cc)
 
     int x_offset = startx + ofsX;
     int y_offset = starty + ofsY;
+    // Clip to entry bounds so no entry can paint outside its area
+    cc->save();
+    cc->rectangle(x_offset, y_offset, expected.width, expected.height);
+    cc->clip();
     cc->set_source(backBuffer->getSurface(), x_offset, y_offset);
     cc->paint();
+    cc->restore();
 
     // In filmstrip mode: draw rating/label overlays directly on the image
     bool inFilmstrip = parent && parent->getLocation() == ThumbBrowserBase::THLOC_EDITOR;

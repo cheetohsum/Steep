@@ -18,6 +18,7 @@
  */
 
 #include <cmath>
+#include <unordered_map>
 
 #include "rtengine/rt_math.h"
 
@@ -129,6 +130,7 @@ RTWindow::RTWindow ()
     , heroAnimFraction_ (0.0)
     , heroPageSwitched_ (false)
     , heroAnimIn_ (true)
+    , heroFilmX_ (0), heroFilmY_ (0), heroFilmW_ (0), heroFilmH_ (0)
     , startupOverlay_ (nullptr)
     , startupAnimTime_ (0.0)
     , startupAnimActive_ (false)
@@ -477,6 +479,9 @@ RTWindow::RTWindow ()
                 // Ease-out-cubic for smooth movement
                 double motionEased = 1.0 - std::pow(1.0 - motionT, 3);
 
+                // Filmstrip clip boundaries (set by computeFilmstripTargets)
+                double filmR = heroFilmX_ + heroFilmW_;
+
                 for (auto& ct : capturedThumbs_) {
                     if (!ct.surface) continue;
 
@@ -488,8 +493,16 @@ RTWindow::RTWindow ()
                         curY = ct.srcY + (ct.dstY - ct.srcY) * motionEased;
                         curW = ct.srcW + (ct.dstW - ct.srcW) * motionEased;
                         curH = ct.srcH + (ct.dstH - ct.srcH) * motionEased;
-                        // Fade out near end (crossfade with real content underneath)
+
+                        // Fade out near end (crossfade with real filmstrip underneath)
                         alpha = motionT < 0.65 ? 1.0 : std::max(0.0, 1.0 - (motionT - 0.65) / 0.35);
+
+                        // Fade out heroes whose destination is past the filmstrip right edge
+                        // (would be hidden behind the sidebar)
+                        if (ct.dstX + ct.dstW > filmR) {
+                            double fadeT = std::min(1.0, t / 0.35);
+                            alpha = std::max(0.0, 1.0 - fadeT * fadeT);
+                        }
                     } else {
                         // Non-hero: stay in place, fade out quickly
                         curX = ct.srcX;
@@ -1363,8 +1376,10 @@ void RTWindow::on_mainNB_switch_page (Gtk::Widget* widget, guint page_num)
                 }
             }
 
-            // Auto-open the browser's selected photo in the editor
-            if (isSingleTabMode() && fpanel) {
+            // Auto-open the browser's selected photo in the editor.
+            // Skip during hero transition — heavy EditorPanel::open() would block animation.
+            // The hero completion callback handles it instead.
+            if (isSingleTabMode() && fpanel && !heroAnimConn_.connected()) {
                 fpanel->openSelectedInEditor();
             }
 
@@ -1923,43 +1938,11 @@ void RTWindow::on_nav_switched (Gtk::ToggleButton* active)
                     epanel->catalogPane->set_opacity(1.0);
                 }
             }
-            // Reverse hero: filmstrip thumbnails grow to browser grid positions
-            if (isSingleTabMode() && epanel && isEditorPanel(mainNB->get_current_page())) {
-                navSwitching = false;
-                if (App::get().options().editorFilmStripOpened) {
-                    // Full hero animation — filmstrip is visible
-                    captureFilmstripThumbnails();
-                    epanel->animateEditorOut(nullptr);
-                    startReverseHeroTransition([this]() {
-                        mainNB->set_current_page(mainNB->page_num(*fpanel));
-                    });
-                } else {
-                    // Filmstrip collapsed — skip hero, but still animate sidebar out
-                    // Page switch happens after sidebar animation completes
-                    epanel->animateEditorOut([this]() {
-                        mainNB->set_current_page(mainNB->page_num(*fpanel));
-                    });
-                }
-                return;
-            }
             mainNB->set_current_page (mainNB->page_num (*fpanel));
         } else if (active == navEditor) {
             // In single-tab mode, switch to epanel; in multi-tab, switch to last editor
             if (isSingleTabMode() && epanel) {
-                // Hero transition: thumbnails fly from browser grid to filmstrip
-                if (mainNB->get_current_page() == mainNB->page_num(*fpanel)) {
-                    if (App::get().options().editorFilmStripOpened) {
-                        // Full hero animation — filmstrip is visible
-                        navSwitching = false;
-                        heroAnimConn_.disconnect();
-                        viewAnimConn_.disconnect();
-                        captureVisibleThumbnails();
-                        startHeroTransition();
-                        return;
-                    }
-                    // Filmstrip collapsed — skip hero, page switch triggers
-                    // animateEditorIn via on_mainNB_switch_page
-                }
+                // Instant switch — no hero animation
                 mainNB->set_current_page (mainNB->page_num (*epanel));
             } else if (!epanels.empty()) {
                 // Switch to the last opened editor
@@ -2394,28 +2377,53 @@ void RTWindow::computeFilmstripTargets()
     if (!epanel || !epanel->catalogPane || !fpanel || !fpanel->fileCatalog) return;
 
     auto* fb = fpanel->fileCatalog->fileBrowser;
+    const auto& entries = fb->getEntries();
+
     int filmVpW = fb->get_allocated_width();
     int filmVpH = fb->get_allocated_height();
+    if (filmVpW < 10 || filmVpH < 10) return; // Allocation not ready
 
-    // Get filmstrip position in overlay coordinates
+    // Get filmstrip's internal widget position in overlay coordinates
     int filmAbsX = 0, filmAbsY = 0;
     fb->translate_coordinates(*mainOverlay, 0, 0, filmAbsX, filmAbsY);
 
+    // Store filmstrip clip rect so the draw lambda can fade/clip heroes at edges
+    heroFilmX_ = filmAbsX;
+    heroFilmY_ = filmAbsY;
+    heroFilmW_ = filmVpW;
+    heroFilmH_ = filmVpH;
+
+    // Build entry→captured_thumb map for O(1) lookup
+    std::unordered_map<ThumbBrowserEntryBase*, CapturedThumb*> capturedMap;
     for (auto& ct : capturedThumbs_) {
-        // Check if this entry is visible in the filmstrip viewport
-        if (!ct.entry->insideWindow(0, 0, filmVpW, filmVpH)) continue;
+        capturedMap[ct.entry] = &ct;
+    }
 
-        // Get the entry's new position in the filmstrip
-        int entryAbsX = 0, entryAbsY = 0;
-        fb->translate_coordinates(*mainOverlay,
-            ct.entry->getX(), ct.entry->getY(),
-            entryAbsX, entryAbsY);
+    // Compute horizontal filmstrip positions manually.
+    // arrangeFiles() may not have run yet (layout paused + widget not allocated),
+    // so we mirror the TB_Horizontal branch: entries placed left-to-right at y=0.
+    // Scroll is at 0 for a freshly-switched filmstrip.
+    int currx = 0;
+    for (auto* entry : entries) {
+        if (entry->filtered) continue;
 
-        ct.isHero = true;
-        ct.dstX = entryAbsX;
-        ct.dstY = entryAbsY;
-        ct.dstW = ct.entry->getEffectiveWidth();
-        ct.dstH = ct.entry->getEffectiveHeight();
+        int entryW = entry->getMinimalWidth();
+        int entryH = entry->getEffectiveHeight();
+
+        // Check if this entry would be visible in the viewport (scroll=0)
+        if (currx + entryW > 0 && currx < filmVpW) {
+            auto it = capturedMap.find(entry);
+            if (it != capturedMap.end()) {
+                CapturedThumb* ct = it->second;
+                ct->isHero = true;
+                ct->dstX = filmAbsX + currx;
+                ct->dstY = filmAbsY;
+                ct->dstW = entryW;
+                ct->dstH = entryH;
+            }
+        }
+
+        currx += entryW;
     }
 }
 
@@ -2445,6 +2453,15 @@ void RTWindow::startHeroTransition()
             }
             heroOverlay_->hide();
             capturedThumbs_.clear();
+
+            // Now open the selected image — use idle dispatch so it runs
+            // after this timer callback fully unwinds.
+            Glib::signal_idle().connect_once([this]() {
+                if (fpanel) {
+                    fpanel->openSelectedInEditor();
+                }
+            });
+
             return false;
         }
 
@@ -2470,10 +2487,9 @@ void RTWindow::startHeroTransition()
             // Start sidebar slide (skip filmstrip animation)
             epanel->animateEditorIn(true);
 
-            // Compute filmstrip targets after a brief layout settle
-            Glib::signal_timeout().connect_once([this]() {
-                computeFilmstripTargets();
-            }, 32); // 2 frames for layout
+            // Compute filmstrip targets immediately — manual position computation
+            // doesn't depend on GTK allocation, only on entry order and sizes.
+            computeFilmstripTargets();
         }
 
         // Phase 3 (70–100%): Crossfade real filmstrip in
@@ -2568,6 +2584,12 @@ void RTWindow::startReverseHeroTransition(std::function<void()> afterPageSwitch)
             fpanel->setContentOpacity(1.0);
             heroOverlay_->hide();
             capturedThumbs_.clear();
+
+            // Resume layout — flush any accumulated inserts now that animation is done
+            if (fpanel && fpanel->fileCatalog && fpanel->fileCatalog->fileBrowser) {
+                fpanel->fileCatalog->fileBrowser->resumeLayout();
+            }
+
             return false;
         }
 
@@ -2580,10 +2602,15 @@ void RTWindow::startReverseHeroTransition(std::function<void()> afterPageSwitch)
             // Browser appears but hidden behind overlay
             fpanel->setContentOpacity(0.0);
 
-            // Compute browser grid target positions after layout settles
-            Glib::signal_timeout().connect_once([this]() {
-                computeBrowserTargets();
-            }, 32);
+            // Compute browser grid target positions immediately — enableTabMode(false)
+            // already ran arrangeFiles() via filterChanged(), so entries have valid positions.
+            computeBrowserTargets();
+
+            // Pause layout so animateEditorOut's resumeLayout() (at 180ms) doesn't
+            // trigger a heavy arrangeFiles() mid-animation from accumulated inserts.
+            if (fpanel && fpanel->fileCatalog && fpanel->fileCatalog->fileBrowser) {
+                fpanel->fileCatalog->fileBrowser->pauseLayout();
+            }
         }
 
         // Phase 3 (25–90%): Hero thumbnails grow from filmstrip to browser grid positions

@@ -436,6 +436,7 @@ void Options::setDefaults()
     languageAutoDetect = langMgr.isOSLanguageDetectSupported();
     lastSaveAsPath = "";
     overwriteOutputFile = false;        // if TRUE, existing output JPGs/PNGs are overwritten, instead of adding ..-1.jpg, -2.jpg etc.
+    confirmDeleteFiles = true;
     theme = "RawTherapee";
     maxThumbnailHeight = 250;
     maxThumbnailWidth = 800;
@@ -1196,6 +1197,9 @@ void Options::readFromFile(Glib::ustring fname)
 
                 if (keyFile.has_key("Output", "OverwriteOutputFile")) {
                     overwriteOutputFile = keyFile.get_boolean("Output", "OverwriteOutputFile");
+                }
+                if (keyFile.has_key("Output", "ConfirmDeleteFiles")) {
+                    confirmDeleteFiles = keyFile.get_boolean("Output", "ConfirmDeleteFiles");
                 }
             }
 
@@ -2759,6 +2763,7 @@ void Options::saveToFile(Glib::ustring fname)
         keyFile.set_boolean("Output", "UsePathTemplate", saveUsePathTemplate);
         keyFile.set_string("Output", "LastSaveAsPath", lastSaveAsPath);
         keyFile.set_boolean("Output", "OverwriteOutputFile", overwriteOutputFile);
+        keyFile.set_boolean("Output", "ConfirmDeleteFiles", confirmDeleteFiles);
 
         keyFile.set_string("Profiles", "Directory", profilePath);
         keyFile.set_boolean("Profiles", "UseBundledProfiles", useBundledProfiles);

@@ -1484,7 +1484,7 @@ void FileCatalog::previewsFinishedUI(int dir_id)
     filepanel->loadingThumbs(M("PROGRESSBAR_READY"), 0);
 
     if (!imageToSelect_fname.empty()) {
-        fileBrowser->selectImage(imageToSelect_fname);
+        fileBrowser->selectImage(imageToSelect_fname, false);
         imageToSelect_fname = "";
     }
 
@@ -1587,13 +1587,18 @@ void FileCatalog::openRequested(const std::vector<Thumbnail*>& tmb)
         thumb->increaseRef();
     }
 
-    idle_register.add(
-        [this, tmb]() -> bool
-        {
-            _openImage(tmb);
-            return false;
-        }
-    );
+    if (directOpen_) {
+        // Already on main thread from filmstrip nav — skip idle roundtrip
+        _openImage(tmb);
+    } else {
+        idle_register.add(
+            [this, tmb]() -> bool
+            {
+                _openImage(tmb);
+                return false;
+            }
+        );
+    }
 }
 
 void FileCatalog::deleteRequested(const std::vector<FileBrowserEntry*>& tbe, bool inclBatchProcessed, bool onlySelected)
@@ -1602,43 +1607,84 @@ void FileCatalog::deleteRequested(const std::vector<FileBrowserEntry*>& tbe, boo
         return;
     }
 
-    Gtk::MessageDialog msd (getToplevelWindow(this), M("FILEBROWSER_DELETEDIALOG_HEADER"), true, Gtk::MESSAGE_QUESTION, Gtk::BUTTONS_YES_NO, true);
-    if (onlySelected) {
-        msd.set_secondary_text(Glib::ustring::compose (inclBatchProcessed ? M("FILEBROWSER_DELETEDIALOG_SELECTEDINCLPROC") : M("FILEBROWSER_DELETEDIALOG_SELECTED"), tbe.size()), true);
-    } else {
-        msd.set_secondary_text(Glib::ustring::compose (M("FILEBROWSER_DELETEDIALOG_ALL"), tbe.size()), true);
-    }
+    auto& options = App::get().mut_options();
 
-    if (msd.run() == Gtk::RESPONSE_YES) {
-        for (unsigned int i = 0; i < tbe.size(); i++) {
-            const auto fname = tbe[i]->filename;
-            // remove from browser
-            delete fileBrowser->delEntry (fname);
-            // remove from cache
-            cacheMgr->deleteEntry (fname);
-            // delete from file system
-            ::g_remove (fname.c_str ());
-            // delete paramfile if found
-            ::g_remove ((fname + App::PARAM_FILE_EXTENSION).c_str ());
-            ::g_remove ((removeExtension(fname) + App::PARAM_FILE_EXTENSION).c_str ());
-            // delete .thm file
-            ::g_remove ((removeExtension(fname) + ".thm").c_str ());
-            ::g_remove ((removeExtension(fname) + ".THM").c_str ());
-
-            if (inclBatchProcessed) {
-                const auto& options = App::get().options();
-                Glib::ustring procfName = Glib::ustring::compose ("%1.%2", BatchQueue::calcAutoFileNameBase(fname), options.saveFormatBatch.format);
-                ::g_remove (procfName.c_str ());
-
-                Glib::ustring procfNameParamFile = Glib::ustring::compose ("%1.%2.out%3", BatchQueue::calcAutoFileNameBase(fname), options.saveFormatBatch.format, App::PARAM_FILE_EXTENSION);
-                ::g_remove (procfNameParamFile.c_str ());
-            }
-
-            previewsLoaded--;
+    if (options.confirmDeleteFiles) {
+        Gtk::MessageDialog msd (getToplevelWindow(this), M("FILEBROWSER_DELETEDIALOG_HEADER"), true, Gtk::MESSAGE_QUESTION, Gtk::BUTTONS_YES_NO, true);
+        if (onlySelected) {
+            msd.set_secondary_text(Glib::ustring::compose (inclBatchProcessed ? M("FILEBROWSER_DELETEDIALOG_SELECTEDINCLPROC") : M("FILEBROWSER_DELETEDIALOG_SELECTED"), tbe.size()), true);
+        } else {
+            msd.set_secondary_text(Glib::ustring::compose (M("FILEBROWSER_DELETEDIALOG_ALL"), tbe.size()), true);
         }
 
+        Gtk::CheckButton dontAsk(M("GENERAL_DONT_ASK_AGAIN"));
+        msd.get_content_area()->pack_end(dontAsk, false, false, 4);
+        dontAsk.show();
+
+        if (msd.run() != Gtk::RESPONSE_YES) {
+            return;
+        }
+
+        if (dontAsk.get_active()) {
+            options.confirmDeleteFiles = false;
+        }
+    }
+
+    {
+        // Collect filenames and build the set for bulk removal
+        std::set<Glib::ustring> fnameSet;
+        std::vector<Glib::ustring> filenames;
+        filenames.reserve(tbe.size());
+        for (const auto* entry : tbe) {
+            fnameSet.insert(entry->filename);
+            filenames.push_back(entry->filename);
+        }
+
+        // Pre-compute batch-processed paths on main thread (needs App::get())
+        std::vector<std::pair<Glib::ustring, Glib::ustring>> batchPaths;
+        if (inclBatchProcessed) {
+            const auto& options = App::get().options();
+            batchPaths.reserve(filenames.size());
+            for (const auto& fname : filenames) {
+                Glib::ustring base = BatchQueue::calcAutoFileNameBase(fname);
+                Glib::ustring procf = Glib::ustring::compose("%1.%2", base, options.saveFormatBatch.format);
+                Glib::ustring paramf = Glib::ustring::compose("%1.%2.out%3", base, options.saveFormatBatch.format, App::PARAM_FILE_EXTENSION);
+                batchPaths.emplace_back(std::move(procf), std::move(paramf));
+            }
+        }
+
+        // Bulk-remove entries from browser (single pass, single redraw)
+        auto removed = fileBrowser->delEntries(fnameSet);
+        for (auto* entry : removed) {
+            delete entry;
+        }
+
+        previewsLoaded -= static_cast<int>(filenames.size());
         _refreshProgressBar();
-        redrawAll ();
+
+        // Filesystem + cache deletion on background thread
+        const Glib::ustring paramExt = App::PARAM_FILE_EXTENSION;
+        std::thread([filenames = std::move(filenames),
+                     batchPaths = std::move(batchPaths),
+                     paramExt]() {
+            for (const auto& fname : filenames) {
+                // delete from cache
+                cacheMgr->deleteEntry(fname);
+                // delete from file system
+                ::g_remove(fname.c_str());
+                // delete paramfile if found
+                ::g_remove((fname + paramExt).c_str());
+                ::g_remove((removeExtension(fname) + paramExt).c_str());
+                // delete .thm file
+                ::g_remove((removeExtension(fname) + ".thm").c_str());
+                ::g_remove((removeExtension(fname) + ".THM").c_str());
+            }
+
+            for (const auto& bp : batchPaths) {
+                ::g_remove(bp.first.c_str());
+                ::g_remove(bp.second.c_str());
+            }
+        }).detach();
     }
 }
 
@@ -3097,7 +3143,10 @@ void FileCatalog::openNextPreviousEditorImage (Glib::ustring fname, eRTNav nextP
         refImageForOpen_fname = fname;
         actionNextPrevious = nextPrevious;
     } else {
+        // Skip idle dispatch — we're already on the main thread
+        directOpen_ = true;
         fileBrowser->openNextPreviousEditorImage(fname, nextPrevious);
+        directOpen_ = false;
         refImageForOpen_fname = "";
         actionNextPrevious = NAV_NONE;
     }

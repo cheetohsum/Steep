@@ -360,6 +360,7 @@ public:
     bool renameUseTemplates;
     bool internalThumbIfUntouched;
     bool overwriteOutputFile;
+    bool confirmDeleteFiles;
     int complexity;
     int spotmet;
     bool toolPanelSoloMode;
