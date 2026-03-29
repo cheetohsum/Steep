@@ -18,6 +18,8 @@
  */
 #include "filepanel.h"
 
+#include <thread>
+
 #include "albumbrowser.h"
 #include "guiutils.h"
 #include "options.h"
@@ -244,6 +246,7 @@ FilePanel::FilePanel () : parent(nullptr), error(0)
 
 FilePanel::~FilePanel ()
 {
+    clearPreloadCache();
     idle_register.destroy();
 
     rightNotebookSwitchConn.disconnect();
@@ -360,12 +363,10 @@ bool FilePanel::fileSelected (Thumbnail* thm)
     // Thumbnail upgrades continue in the background at normal priority.
     previewLoader->pause();
 
-    // Signal the current editor's processing to abort immediately so it stops
-    // competing for CPU with the new image's RAW decode and processing.
+    // Don't signal stop here — aborting the processing thread mid-OpenMP
+    // causes access violations. Let it finish naturally; close() in open()
+    // will handle cleanup on a background thread.
     const auto& opts = App::get().options();
-    if (!opts.tabbedUI && parent->epanel) {
-        parent->epanel->signalStopProcessing();
-    }
 
     // Switch to editor view immediately so the user sees the transition
     // while the image loads in the background.
@@ -382,6 +383,105 @@ bool FilePanel::fileSelected (Thumbnail* thm)
         }
     } else {
         parent->SetEditorCurrent();
+    }
+
+    // Show the clicked image's thumbnail INSTANTLY as a preview.
+    // Try cached Pixbuf first (free), fall back to processThumbImage (~50-200ms).
+    if (!opts.tabbedUI && parent->epanel) {
+        Glib::RefPtr<Gdk::Pixbuf> quickPb;
+        double displayScale = 1.0;
+
+        // Fast path: cached Pixbuf from a previous filmstrip render
+        double cachedScale = 1.0;
+        quickPb = thm->getCachedPixbuf(cachedScale);
+
+        if (quickPb) {
+            int fullW = 0, fullH = 0;
+            thm->getOriginalSize(fullW, fullH);
+            if (fullW > 0) {
+                displayScale = static_cast<double>(fullW) / quickPb->get_width();
+            }
+        } else {
+            // Slow path: generate thumbnail now (~50-200ms for QUICK, ~200-400ms for FULL)
+            double thumbScale = 1.0;
+            rtengine::IImage8* thumbImg = thm->processThumbImage(thm->getProcParams(), 400, thumbScale);
+            if (thumbImg) {
+                int tw = thumbImg->getWidth(), th = thumbImg->getHeight();
+                if (tw > 0 && th > 0 && thumbImg->getData()) {
+                    auto pb = Gdk::Pixbuf::create_from_data(
+                        thumbImg->getData(), Gdk::COLORSPACE_RGB, false, 8, tw, th, tw * 3);
+                    quickPb = pb->copy();
+                    int fullW = 0, fullH = 0;
+                    thm->getOriginalSize(fullW, fullH);
+                    if (fullW > 0) {
+                        displayScale = static_cast<double>(fullW) / tw;
+                    }
+                }
+                delete thumbImg;
+            }
+        }
+
+        if (quickPb) {
+            parent->epanel->setQuickPreview(quickPb, displayScale);
+        }
+    }
+
+    // Check preload cache before starting a new background load
+    rtengine::InitialImage* cachedImg = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(preloadMutex_);
+        auto it = preloadCache_.find(std::string(thm->getFileName()));
+        if (it != preloadCache_.end()) {
+            cachedImg = it->second;
+            preloadCache_.erase(it);
+            // Ownership transferred to caller — no decreaseRef
+        }
+    }
+
+    if (cachedImg) {
+        // Cache hit — open immediately without expensive I/O
+        bool opened = false;
+        const auto& opts2 = App::get().options();
+        if (opts2.tabbedUI) {
+            if (pl->epanel) {
+                pl->epanel->open(pl->thm, cachedImg);
+                if (!(opts2.multiDisplayMode > 0)) {
+                    parent->set_title_decorated(pl->thm->getFileName());
+                }
+                opened = true;
+            } else {
+                // GDI limit — release the cached image
+                cachedImg->decreaseRef();
+                thm->decreaseRef();
+            }
+        } else {
+            parent->epanel->open(pl->thm, cachedImg);
+            parent->set_title_decorated(pl->thm->getFileName());
+            opened = true;
+        }
+
+        parent->setProgress(0.);
+        parent->setProgressStr("");
+
+        // Clean up pendingLoad entry
+        pendingLoadMutex.lock();
+        for (auto it2 = pendingLoads.begin(); it2 != pendingLoads.end(); ++it2) {
+            if (*it2 == pl) {
+                pendingLoads.erase(it2);
+                break;
+            }
+        }
+        pendingLoadMutex.unlock();
+        delete pl;
+
+        previewLoader->resume();
+        thm->imageLoad(false);
+
+        if (opened) {
+            preloadAdjacent(thm->getFileName());
+        }
+
+        return true;
     }
 
     ProgressConnector<rtengine::InitialImage*> *ld = new ProgressConnector<rtengine::InitialImage*>();
@@ -469,7 +569,76 @@ bool FilePanel::imageLoaded( Thumbnail* thm, ProgressConnector<rtengine::Initial
         thm->decreaseRef();
     }
 
+    // Preload adjacent images for faster filmstrip navigation
+    preloadAdjacent(thm->getFileName());
+
     return false; // MUST return false from idle function
+}
+
+void FilePanel::clearPreloadCache()
+{
+    std::lock_guard<std::mutex> lock(preloadMutex_);
+    for (auto& kv : preloadCache_) {
+        kv.second->decreaseRef();
+    }
+    preloadCache_.clear();
+}
+
+void FilePanel::preloadAdjacent(const Glib::ustring& fname)
+{
+    if (!fileCatalog || !fileCatalog->fileBrowser) return;
+
+    // Full RAW preload for N±3 (instant editor opening)
+    auto entries = fileCatalog->fileBrowser->getAdjacentEntries(fname, 3);
+
+    // Build set of filenames that should be in the full-image cache
+    std::set<std::string> keep;
+    for (const auto& e : entries) {
+        keep.insert(std::string(e.fname));
+    }
+
+    // Evict stale entries and find what needs loading
+    std::vector<FileBrowser::AdjacentEntry> toLoad;
+    {
+        std::lock_guard<std::mutex> lock(preloadMutex_);
+
+        for (auto it = preloadCache_.begin(); it != preloadCache_.end(); ) {
+            if (keep.find(it->first) == keep.end()) {
+                it->second->decreaseRef();
+                it = preloadCache_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+
+        for (const auto& e : entries) {
+            if (preloadCache_.find(std::string(e.fname)) == preloadCache_.end()) {
+                toLoad.push_back(e);
+            }
+        }
+    }
+
+    for (const auto& entry : toLoad) {
+        Glib::ustring loadFname = entry.fname;
+        bool isRaw = entry.isRaw;
+
+        std::thread([this, loadFname, isRaw]() {
+            int err = 0;
+            rtengine::InitialImage* img = rtengine::InitialImage::load(loadFname, isRaw, &err, nullptr);
+            if (img && !err) {
+                std::lock_guard<std::mutex> lock(preloadMutex_);
+                auto it = preloadCache_.find(std::string(loadFname));
+                if (it != preloadCache_.end()) {
+                    img->decreaseRef();
+                } else {
+                    preloadCache_[std::string(loadFname)] = img;
+                }
+            }
+        }).detach();
+    }
+
+    // Thumbnail preload for N±5 (ensures filmstrip previews are processed)
+    fileCatalog->fileBrowser->refreshAdjacentThumbnails(fname, 5);
 }
 
 void FilePanel::saveOptions ()

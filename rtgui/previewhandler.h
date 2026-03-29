@@ -83,10 +83,19 @@ public:
 
     // Set a placeholder preview (e.g. cached thumbnail) before the engine delivers the real image
     void setPlaceholder(Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scale);
+    bool hasPlaceholder() const;
 
     // with this function it is possible to ask for a rough approximation of a (possibly zoomed) crop of the image
     Glib::RefPtr<Gdk::Pixbuf> getRoughImage(ImageCoord pos, hidpi::ScaledDeviceSize desiredSize, double zoom);
     hidpi::DevicePixbuf getRoughImage(hidpi::LogicalSize desiredSize, int deviceScale, double& outLogicalZoom);
 
     rtengine::procparams::CropParams    getCropParams ();
+
+    // Snapshot the current preview pixbuf and scale for reuse as a placeholder.
+    // Returns a deep copy because previewImg may wrap engine memory that gets freed.
+    Glib::RefPtr<Gdk::Pixbuf> getPreviewPixbuf(double& scale) {
+        MyMutex::MyLock lock(previewImgMutex);
+        scale = previewScale;
+        return previewImg ? previewImg->copy() : Glib::RefPtr<Gdk::Pixbuf>();
+    }
 };

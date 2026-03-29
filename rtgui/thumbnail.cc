@@ -916,11 +916,21 @@ rtengine::IImage8* Thumbnail::processThumbImage (const rtengine::procparams::Pro
         image = tpp->quickProcessImage (pparams, h, rtengine::TI_Nearest);
     } else {
         // Full thumbnail: apply profile
-        // image = tpp->processImage (pparams, h, rtengine::TI_Bilinear, cfs.getCamera(), cfs.focalLen, cfs.focalLen35mm, cfs.focusDist, cfs.shutter, cfs.fnumber, cfs.iso, cfs.expcomp, scale );
         image = tpp->processImage (pparams, static_cast<rtengine::eSensorType>(cfs.sensortype), h, rtengine::TI_Bilinear, &cfs, scale );
     }
 
     tpp->getDimensions(lastW, lastH, lastScale);
+
+    // Cache a Pixbuf copy for instant editor preview on image switch.
+    if (image) {
+        int tw = image->getWidth(), th = image->getHeight();
+        if (tw > 0 && th > 0 && image->getData()) {
+            auto pb = Gdk::Pixbuf::create_from_data(
+                image->getData(), Gdk::COLORSPACE_RGB, false, 8, tw, th, tw * 3);
+            cachedPixbuf_ = pb->copy();
+            cachedPixbufScale_ = scale;
+        }
+    }
 
     delete tpp;
     tpp = nullptr;

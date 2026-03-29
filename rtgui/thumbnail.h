@@ -23,6 +23,7 @@
 
 #include <glibmm/ustring.h>
 #include <glibmm/datetime.h>
+#include <gdkmm/pixbuf.h>
 
 #include "cacheimagedata.h"
 #include "threadutils.h"
@@ -75,6 +76,10 @@ class Thumbnail
     Glib::ustring   exifString;
     Glib::ustring   dateTimeString;
     Glib::DateTime  dateTime;
+
+    // Cached low-res pixbuf for instant editor preview on image switch
+    Glib::RefPtr<Gdk::Pixbuf> cachedPixbuf_;
+    double cachedPixbufScale_ = 1.0;
 
     bool            initial_;
 
@@ -152,6 +157,11 @@ public:
 
 //        unsigned char*  getThumbnailImage (int &w, int &h, int fixwh=1); // fixwh = 0: fix w and calculate h, =1: fix h and calculate w
     rtengine::IImage8* processThumbImage    (const rtengine::procparams::ProcParams& pparams, int h, double& scale);
+    Glib::RefPtr<Gdk::Pixbuf> getCachedPixbuf(double& scale) {
+        MyMutex::MyLock lock(mutex);
+        scale = cachedPixbufScale_;
+        return cachedPixbuf_;
+    }
     rtengine::IImage8* upgradeThumbImage    (const rtengine::procparams::ProcParams& pparams, int h, double& scale, bool forceUpgrade);
     void            getThumbnailSize        (int &w, int &h, const rtengine::procparams::ProcParams *pparams = nullptr);
     void            getFinalSize            (const rtengine::procparams::ProcParams& pparams, int& w, int& h);

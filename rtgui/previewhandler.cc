@@ -173,6 +173,11 @@ void PreviewHandler::setPlaceholder(Glib::RefPtr<Gdk::Pixbuf> pixbuf, double sca
     previewImageChanged();
 }
 
+bool PreviewHandler::hasPlaceholder() const
+{
+    return (bool)previewImg;
+}
+
 Glib::RefPtr<Gdk::Pixbuf> PreviewHandler::getRoughImage (
     ImageCoord pos, hidpi::ScaledDeviceSize desiredSize, double zoom)
 {
@@ -203,6 +208,8 @@ Glib::RefPtr<Gdk::Pixbuf> PreviewHandler::getRoughImage (
     w = rtengine::LIM<int>(w, 0, int(previewImg->get_width() * totalZoom) - pos.x);
     h = rtengine::LIM<int>(h, 0, int(previewImg->get_height() * totalZoom) - pos.y);
 
+    if (w < 1 || h < 1) return resPixbuf;
+
     resPixbuf = Gdk::Pixbuf::create (Gdk::COLORSPACE_RGB, false, 8, w, h);
     previewImg->scale (resPixbuf, 0, 0, w, h, -pos.x, -pos.y, totalZoom, totalZoom, Gdk::INTERP_NEAREST);
 
@@ -227,7 +234,11 @@ hidpi::DevicePixbuf PreviewHandler::getRoughImage (hidpi::LogicalSize desiredSiz
     outLogicalZoom = zoom / previewScale;
     zoom = zoom * deviceScale;
 
-    auto pixbuf = Gdk::Pixbuf::create (Gdk::COLORSPACE_RGB, false, 8, imgW * zoom, imgH * zoom);
+    int destW = imgW * zoom;
+    int destH = imgH * zoom;
+    if (destW < 1 || destH < 1) return result;
+
+    auto pixbuf = Gdk::Pixbuf::create (Gdk::COLORSPACE_RGB, false, 8, destW, destH);
     previewImg->scale (pixbuf, 0, 0, previewImg->get_width()*zoom, previewImg->get_height()*zoom, 0, 0, zoom, zoom, Gdk::INTERP_BILINEAR);
 
     result = hidpi::DevicePixbuf(pixbuf, deviceScale);

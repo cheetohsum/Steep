@@ -3466,8 +3466,8 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
     }
 
     // Save the old preview pixbuf before close() destroys the handler.
-    // This prevents a blank frame: the old preview is shown instantly on
-    // the new handler while the correct thumbnail is being generated.
+    // This may be a quick preview (correct new image thumbnail) set by
+    // setQuickPreview(), or the previous image's preview as a bridge.
     Glib::RefPtr<Gdk::Pixbuf> oldPreview;
     double oldPreviewScale = 1.0;
     if (previewHandler) {
@@ -3503,37 +3503,52 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
     // always has something to paint (no blank frame). Then generate the
     // correct thumbnail which replaces the old preview.
 
-    if (oldPreview) {
-        previewHandler->setPlaceholder(oldPreview, oldPreviewScale);
-    }
-
     iareapanel->imageArea->setPreviewHandler (previewHandler);
     iareapanel->imageArea->setImProcCoordinator (ipc);
     navigator->previewWindow->setPreviewHandler (previewHandler);
     navigator->previewWindow->setImageArea (iareapanel->imageArea);
 
-    // Generate placeholder from cached thumbnail. Skip if we already have
-    // a bridge preview (filmstrip navigation) — the engine will deliver
-    // the full preview soon, and skipping saves ~100ms.
-    if (!oldPreview) {
-        double thumbScale;
-        rtengine::IImage8* thumbImg = openThm->processThumbImage(
-            openThm->getProcParams(), 400, thumbScale);
-        if (thumbImg) {
-            int tw = thumbImg->getWidth();
-            int th = thumbImg->getHeight();
-            if (tw > 0 && th > 0 && thumbImg->getData()) {
-                auto pixbuf = Gdk::Pixbuf::create_from_data(
-                    thumbImg->getData(), Gdk::COLORSPACE_RGB, false, 8,
-                    tw, th, tw * 3);
-                auto copied = pixbuf->copy();
-                int fullW = ipc->getFullWidth();
-                if (fullW > 0) {
-                    double scale = static_cast<double>(fullW) / tw;
-                    previewHandler->setPlaceholder(copied, scale);
-                }
+    // Show the NEW image's thumbnail as placeholder (correct image, low-res).
+    // Try cached Pixbuf first (free), fall back to processThumbImage (fast
+    // for QUICK_THUMBNAIL, ~100ms for FULL_THUMBNAIL).
+    {
+        bool placeholderSet = false;
+
+        // Fast path: cached Pixbuf from a previous filmstrip render
+        double cachedScale = 1.0;
+        auto cachedPb = openThm->getCachedPixbuf(cachedScale);
+        if (cachedPb) {
+            int fullW = ipc->getFullWidth();
+            if (fullW > 0) {
+                double displayScale = static_cast<double>(fullW) / cachedPb->get_width();
+                previewHandler->setPlaceholder(cachedPb, displayScale);
+            } else {
+                previewHandler->setPlaceholder(cachedPb, cachedScale);
             }
-            delete thumbImg;
+            placeholderSet = true;
+        }
+
+        // Slow path: generate from thumbnail data
+        if (!placeholderSet) {
+            double thumbScale;
+            rtengine::IImage8* thumbImg = openThm->processThumbImage(
+                openThm->getProcParams(), 400, thumbScale);
+            if (thumbImg) {
+                int tw = thumbImg->getWidth();
+                int th = thumbImg->getHeight();
+                if (tw > 0 && th > 0 && thumbImg->getData()) {
+                    auto pixbuf = Gdk::Pixbuf::create_from_data(
+                        thumbImg->getData(), Gdk::COLORSPACE_RGB, false, 8,
+                        tw, th, tw * 3);
+                    auto copied = pixbuf->copy();
+                    int fullW = ipc->getFullWidth();
+                    if (fullW > 0) {
+                        double scale = static_cast<double>(fullW) / tw;
+                        previewHandler->setPlaceholder(copied, scale);
+                    }
+                }
+                delete thumbImg;
+            }
         }
     }
 
@@ -3575,6 +3590,25 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
             },
             G_PRIORITY_HIGH_IDLE + 30
         );
+    }
+}
+
+void EditorPanel::setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scale)
+{
+    if (!pixbuf || !previewHandler) return;
+
+    // Disconnect the old processor's preview listener so it can't
+    // overwrite our placeholder with stale frames. The processing
+    // thread continues running (no unsafe abort) but its output
+    // goes nowhere. open() will reconnect a new processor later.
+    if (ipc) {
+        ipc->setPreviewImageListener(nullptr);
+    }
+
+    previewHandler->setPlaceholder(pixbuf, scale);
+
+    if (iareapanel && iareapanel->imageArea) {
+        iareapanel->imageArea->queue_draw();
     }
 }
 

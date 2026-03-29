@@ -90,6 +90,7 @@ public:
 
     void open (Thumbnail* tmb, rtengine::InitialImage* isrc);
     void openPhaseB (Thumbnail* tmb);
+    void setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scale);
     void setAspect ();
     void on_realize () override;
     void leftPaneButtonReleased (GdkEventButton *event);
