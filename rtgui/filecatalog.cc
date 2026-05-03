@@ -1587,18 +1587,10 @@ void FileCatalog::openRequested(const std::vector<Thumbnail*>& tmb)
         thumb->increaseRef();
     }
 
-    if (directOpen_) {
-        // Already on main thread from filmstrip nav — skip idle roundtrip
-        _openImage(tmb);
-    } else {
-        idle_register.add(
-            [this, tmb]() -> bool
-            {
-                _openImage(tmb);
-                return false;
-            }
-        );
-    }
+    // All callers (click, keyboard nav, context menus, startup) are on the
+    // main UI thread, so the idle roundtrip only added ~100ms of perceived
+    // latency between click and the instant-preview paint.
+    _openImage(tmb);
 }
 
 void FileCatalog::deleteRequested(const std::vector<FileBrowserEntry*>& tbe, bool inclBatchProcessed, bool onlySelected)
@@ -1653,10 +1645,11 @@ void FileCatalog::deleteRequested(const std::vector<FileBrowserEntry*>& tbe, boo
             }
         }
 
-        // Bulk-remove entries from browser (single pass, single redraw)
-        auto removed = fileBrowser->delEntries(fnameSet);
-        for (auto* entry : removed) {
-            delete entry;
+        // Remove entries from browser
+        for (const auto& fname : filenames) {
+            if (auto* entry = fileBrowser->delEntry(fname)) {
+                delete entry;
+            }
         }
 
         previewsLoaded -= static_cast<int>(filenames.size());
@@ -3143,10 +3136,7 @@ void FileCatalog::openNextPreviousEditorImage (Glib::ustring fname, eRTNav nextP
         refImageForOpen_fname = fname;
         actionNextPrevious = nextPrevious;
     } else {
-        // Skip idle dispatch — we're already on the main thread
-        directOpen_ = true;
         fileBrowser->openNextPreviousEditorImage(fname, nextPrevious);
-        directOpen_ = false;
         refImageForOpen_fname = "";
         actionNextPrevious = NAV_NONE;
     }

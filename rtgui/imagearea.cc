@@ -271,6 +271,53 @@ bool ImageArea::on_draw(const ::Cairo::RefPtr< Cairo::Context> &cr)
 
     int deviceScale = RTScalable::getScaleForWidget(this);
 
+    // Clear quick-preview override once the engine has produced a real
+    // frame for the new image — the cropwindow can take over cleanly.
+    if (quickPreviewOverride_ && mainCropWindow && mainCropWindow->cropHandler.cropPixbuf) {
+        quickPreviewOverride_.reset();
+    }
+
+    if (quickPreviewOverride_) {
+        int aw = get_width();
+        int ah = get_height();
+        int pw = quickPreviewOverride_->get_width();
+        int ph = quickPreviewOverride_->get_height();
+        if (pw > 0 && ph > 0 && aw > 0 && ah > 0) {
+            cr->save();
+
+            // Paint the same background the cropwindow paints, so the handoff
+            // from override to real frame is a seamless continuation rather
+            // than a color shift.
+            int backColor = previewModePanel ? previewModePanel->GetbackColor() : 0;
+            if (backColor == 0) {
+                get_style_context()->render_background(cr, 0, 0, aw, ah);
+            } else {
+                if (backColor == 1) {
+                    cr->set_source_rgb(0, 0, 0);
+                } else if (backColor == 2) {
+                    cr->set_source_rgb(1, 1, 1);
+                } else {
+                    cr->set_source_rgb(0.467, 0.467, 0.467);
+                }
+                cr->rectangle(0, 0, aw, ah);
+                cr->fill();
+            }
+
+            double s = std::min((double)aw / pw, (double)ah / ph);
+            int dw = (int)(pw * s);
+            int dh = (int)(ph * s);
+            int ox = (aw - dw) / 2;
+            int oy = (ah - dh) / 2;
+            cr->translate(ox, oy);
+            cr->scale(s, s);
+            Gdk::Cairo::set_source_pixbuf(cr, quickPreviewOverride_, 0, 0);
+            cr->rectangle(0, 0, pw, ph);
+            cr->fill();
+            cr->restore();
+        }
+        return true;
+    }
+
     if (mainCropWindow) {
         if (deviceScale != mainCropWindow->cropHandler.getDeviceScale()) {
             for (const auto& win : cropWins) {
@@ -907,5 +954,19 @@ void ImageArea::get_preferred_height_for_width_vfunc (int width, int &minimum_he
 void ImageArea::get_preferred_width_for_height_vfunc (int height, int &minimum_width, int &natural_width) const
 {
     get_preferred_width_vfunc (minimum_width, natural_width);
+}
+
+void ImageArea::setQuickPreviewOverride (Glib::RefPtr<Gdk::Pixbuf> pixbuf)
+{
+    quickPreviewOverride_ = pixbuf;
+    queue_draw();
+}
+
+void ImageArea::clearQuickPreviewOverride ()
+{
+    if (quickPreviewOverride_) {
+        quickPreviewOverride_.reset();
+        queue_draw();
+    }
 }
 

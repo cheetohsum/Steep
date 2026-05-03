@@ -170,4 +170,13 @@ public:
     {
         return mainCropWindow;
     }
+
+    // Instant-preview override: paints a thumbnail-scale pixbuf instead of
+    // the cropwindow until a real engine frame arrives (cleared in on_draw
+    // when the new image's cropPixbuf becomes available).
+    void setQuickPreviewOverride (Glib::RefPtr<Gdk::Pixbuf> pixbuf);
+    void clearQuickPreviewOverride ();
+
+private:
+    Glib::RefPtr<Gdk::Pixbuf> quickPreviewOverride_;
 };

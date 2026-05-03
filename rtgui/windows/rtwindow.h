@@ -118,6 +118,7 @@ private:
     bool heroPageSwitched_;           // true once notebook page has been switched
     bool heroAnimIn_;                 // true=browser→editor, false=editor→browser
     sigc::connection heroAnimConn_;
+    int heroFilmX_, heroFilmY_, heroFilmW_, heroFilmH_; // filmstrip clip rect
 
     // Startup animation overlay
     Gtk::EventBox* startupOverlay_;

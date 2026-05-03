@@ -2614,6 +2614,47 @@ Thumbnail* FileBrowser::getSelectedThumbnail()
     return nullptr;
 }
 
+std::vector<FileBrowser::AdjacentEntry> FileBrowser::getAdjacentEntries(const Glib::ustring& fname, int count)
+{
+    std::vector<AdjacentEntry> result;
+    if (count <= 0) return result;
+
+    MYREADERLOCK(l, entryRW);
+
+    const int n = static_cast<int>(fd.size());
+    int idx = -1;
+    for (int i = 0; i < n; ++i) {
+        if (fd[i] && fd[i]->filename == fname) {
+            idx = i;
+            break;
+        }
+    }
+    if (idx < 0) return result;
+
+    const int lo = std::max(0, idx - count);
+    const int hi = std::min(n - 1, idx + count);
+    for (int i = lo; i <= hi; ++i) {
+        if (i == idx) continue;
+        auto* entry = fd[i];
+        if (!entry || !entry->thumbnail) continue;
+        AdjacentEntry e;
+        e.fname = entry->filename;
+        e.isRaw = (entry->thumbnail->getType() == FT_Raw);
+        result.push_back(e);
+    }
+    return result;
+}
+
+void FileBrowser::refreshAdjacentThumbnails(const Glib::ustring& fname, int count)
+{
+    // The preview loader handles thumbnail generation lazily once the
+    // thumbs are visible. A targeted pre-warm on adjacent entries would
+    // require plumbing a single-entry API through the loader; until then
+    // rely on the filmstrip's normal scroll-driven loading.
+    (void)fname;
+    (void)count;
+}
+
 void FileBrowser::openNextPreviousEditorImage (const Glib::ustring& fname, eRTNav nextPrevious)
 {
 

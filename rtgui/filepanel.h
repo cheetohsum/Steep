@@ -18,6 +18,8 @@
  */
 #pragma once
 
+#include <map>
+#include <mutex>
 #include <set>
 #include <string>
 
@@ -129,6 +131,13 @@ private:
     };
     MyMutex pendingLoadMutex;
     std::vector<struct pendingLoad*> pendingLoads;
+
+    // Adjacent-image preload cache (N±3 around the current selection).
+    // Hit on open → skip expensive RAW I/O; miss → start a background load.
+    std::mutex preloadMutex_;
+    std::map<std::string, rtengine::InitialImage*> preloadCache_;
+    void clearPreloadCache();
+    void preloadAdjacent(const Glib::ustring& fname);
 
     int error;
 

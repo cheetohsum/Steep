@@ -222,6 +222,15 @@ public:
     void selectImage(const Glib::ustring& fname, bool doScroll = true);
     Thumbnail* getSelectedThumbnail();  // returns lastClicked or first selected
 
+    // N entries before and after `fname` in the current filmstrip order.
+    // Used to precompute adjacent-image previews for fast filmstrip nav.
+    struct AdjacentEntry {
+        Glib::ustring fname;
+        bool isRaw;
+    };
+    std::vector<AdjacentEntry> getAdjacentEntries(const Glib::ustring& fname, int count);
+    void refreshAdjacentThumbnails(const Glib::ustring& fname, int count);
+
     void copyProfile ();
     void pasteProfile ();
     void partPasteProfile ();

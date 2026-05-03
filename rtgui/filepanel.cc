@@ -368,25 +368,11 @@ bool FilePanel::fileSelected (Thumbnail* thm)
     // will handle cleanup on a background thread.
     const auto& opts = App::get().options();
 
-    // Switch to editor view immediately so the user sees the transition
-    // while the image loads in the background.
-    if (opts.tabbedUI) {
-#ifdef _WIN32
-        int winGdiHandles = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS);
-        if (winGdiHandles == 0 || winGdiHandles > 6500)
-#endif
-        {
-            EditorPanel* ep = Gtk::manage(new EditorPanel());
-            parent->addEditorPanel(ep, thm->getFileName());
-            ep->setAspect();
-            pl->epanel = ep;
-        }
-    } else {
-        parent->SetEditorCurrent();
-    }
-
-    // Show the clicked image's thumbnail INSTANTLY as a preview.
-    // Try cached Pixbuf first (free), fall back to processThumbImage (~50-200ms).
+    // Install the clicked image's thumbnail as an INSTANT preview on the
+    // existing editor panel BEFORE switching the view. Done before the view
+    // switch so the editor's first paint after becoming visible already has
+    // the new thumbnail — no black/empty frame between the click and the
+    // preview appearing.
     if (!opts.tabbedUI && parent->epanel) {
         Glib::RefPtr<Gdk::Pixbuf> quickPb;
         double displayScale = 1.0;
@@ -424,6 +410,23 @@ bool FilePanel::fileSelected (Thumbnail* thm)
         if (quickPb) {
             parent->epanel->setQuickPreview(quickPb, displayScale);
         }
+    }
+
+    // Switch to editor view. The override (set above) ensures the first
+    // paint already shows the new thumbnail.
+    if (opts.tabbedUI) {
+#ifdef _WIN32
+        int winGdiHandles = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS);
+        if (winGdiHandles == 0 || winGdiHandles > 6500)
+#endif
+        {
+            EditorPanel* ep = Gtk::manage(new EditorPanel());
+            parent->addEditorPanel(ep, thm->getFileName());
+            ep->setAspect();
+            pl->epanel = ep;
+        }
+    } else {
+        parent->SetEditorCurrent();
     }
 
     // Check preload cache before starting a new background load
