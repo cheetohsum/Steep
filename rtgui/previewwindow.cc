@@ -36,6 +36,16 @@ PreviewWindow::PreviewWindow () : previewHandler(nullptr), mainCropWin(nullptr),
     rconn = signal_size_allocate().connect( sigc::mem_fun(*this, &PreviewWindow::on_resized) );
 }
 
+PreviewWindow::~PreviewWindow ()
+{
+    // Unregister from CropWindow's listener list so it doesn't dereference
+    // our freed vtable on the next cropPositionChanged/cropZoomChanged.
+    if (mainCropWin) {
+        mainCropWin->delCropWindowListener (this);
+        mainCropWin = nullptr;
+    }
+}
+
 void PreviewWindow::on_realize ()
 {
 
@@ -222,9 +232,16 @@ void PreviewWindow::previewImageChanged ()
 
 void PreviewWindow::setImageArea (ImageArea* ia)
 {
+    // If we were registered with a different CropWindow before, unregister so
+    // we don't leave a dangling listener pointer when that window is torn down
+    // and don't double-register on the same window.
+    if (mainCropWin) {
+        mainCropWin->delCropWindowListener (this);
+        mainCropWin = nullptr;
+    }
 
     imageArea = ia;
-    mainCropWin = ia->getMainCropWindow ();
+    mainCropWin = ia ? ia->getMainCropWindow () : nullptr;
 
     if (mainCropWin) {
         mainCropWin->addCropWindowListener (this);

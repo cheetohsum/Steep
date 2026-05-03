@@ -17,6 +17,7 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include <cmath>
+#include <mutex>
 
 #include <glib.h>
 #include <glibmm/ustring.h>
@@ -2048,6 +2049,16 @@ void ImProcFunctions::rgbProc(Imagefloat* working, LabImage* lab, PipetteBuffer 
                               double &rrm, double &ggm, double &bbm, float &autor, float &autog, float &autob, double expcomp, int hlcompr, int hlcomprthresh,
                               DCPProfile *dcpProf, const DCPProfileApplyState& asIn, LUTu& histToneCurve, size_t chunkSize, bool measure)
 {
+    // Serialize all rgbProc invocations process-wide. Concurrent invocations
+    // (e.g. old EditorPanel's detached stopProcessing thread + new IPC's
+    // processing thread during photo switching) each spawn `#pragma omp
+    // parallel` regions that share libgomp's worker pool. On Windows MinGW,
+    // when team A is torn down while team B is still grabbing workers from
+    // the pool, a worker can end up with `ts.team == NULL` mid-execution and
+    // crash on the next GOMP_* call (seen as access violation reading [4]
+    // inside libgomp+0x53bc, called from rgbProc's _omp_fn).
+    static std::mutex rgbProcMutex;
+    std::lock_guard<std::mutex> rgbProcLock(rgbProcMutex);
 
     std::unique_ptr<StopWatch> stop;
 

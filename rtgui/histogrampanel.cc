@@ -22,6 +22,7 @@
 #include "options.h"
 #include <cstring>
 #include <cmath>
+#include <memory>
 #include "rtimage.h"
 #include "rtscalable.h"
 #include "rtengine/array2D.h"
@@ -1192,12 +1193,55 @@ void HistogramArea::update(
     const array2D<int>& waveformLuma
 )
 {
-    // Note: This function is called outside of GUI threads
+    // Note: This function is called outside of GUI threads.
+    // Deep-copy inputs into a heap struct so the idle lambda doesn't dangle
+    // on LUTu/array2D buffers owned by the engine (which may be freed or
+    // overwritten before the idle fires).
+    struct UpdateData {
+        LUTu histRed, histGreen, histBlue, histLuma, histChroma;
+        LUTu histRedRaw, histGreenRaw, histBlueRaw;
+        int vectorscopeScale = 0;
+        array2D<int> vectorscopeHC, vectorscopeHS;
+        int waveformScale = 0;
+        array2D<int> waveformRed, waveformGreen, waveformBlue, waveformLuma;
+    };
+    auto data = std::make_shared<UpdateData>();
+    data->histRed       = histRed;
+    data->histGreen     = histGreen;
+    data->histBlue      = histBlue;
+    data->histLuma      = histLuma;
+    data->histChroma    = histChroma;
+    data->histRedRaw    = histRedRaw;
+    data->histGreenRaw  = histGreenRaw;
+    data->histBlueRaw   = histBlueRaw;
+    data->vectorscopeScale = vectorscopeScale;
+    data->vectorscopeHC = vectorscopeHC;
+    data->vectorscopeHS = vectorscopeHS;
+    data->waveformScale = waveformScale;
+    data->waveformRed   = waveformRed;
+    data->waveformGreen = waveformGreen;
+    data->waveformBlue  = waveformBlue;
+    data->waveformLuma  = waveformLuma;
+
     idle_register.add(
-        [this, &histRed, &histGreen, &histBlue, &histLuma, &histChroma, &histRedRaw,
-                &histGreenRaw, &histBlueRaw, vectorscopeScale, &vectorscopeHC,
-                &vectorscopeHS, waveformScale, &waveformRed, &waveformGreen,
-                &waveformBlue, &waveformLuma]() -> bool {
+        [this, data]() -> bool {
+        const LUTu& histRed        = data->histRed;
+        const LUTu& histGreen      = data->histGreen;
+        const LUTu& histBlue       = data->histBlue;
+        const LUTu& histLuma       = data->histLuma;
+        const LUTu& histChroma     = data->histChroma;
+        const LUTu& histRedRaw     = data->histRedRaw;
+        const LUTu& histGreenRaw   = data->histGreenRaw;
+        const LUTu& histBlueRaw    = data->histBlueRaw;
+        const int   vectorscopeScale = data->vectorscopeScale;
+        const array2D<int>& vectorscopeHC = data->vectorscopeHC;
+        const array2D<int>& vectorscopeHS = data->vectorscopeHS;
+        const int   waveformScale  = data->waveformScale;
+        const array2D<int>& waveformRed   = data->waveformRed;
+        const array2D<int>& waveformGreen = data->waveformGreen;
+        const array2D<int>& waveformBlue  = data->waveformBlue;
+        const array2D<int>& waveformLuma  = data->waveformLuma;
+
         GThreadLock lock; // All GUI access from idle_add callbacks or separate thread HAVE to be protected
 
         if (histRed) {

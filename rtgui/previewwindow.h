@@ -49,6 +49,7 @@ private:
 
 public:
     PreviewWindow ();
+    ~PreviewWindow () override;
 
     void setPreviewHandler  (PreviewHandler* ph);
     void setImageArea       (ImageArea* ia);

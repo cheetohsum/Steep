@@ -2341,6 +2341,13 @@ EditorPanel::~EditorPanel ()
     history->setHistoryBeforeLineListener (nullptr);
     // the order is important!
     iareapanel->setBeforeAfterViews (nullptr, iareapanel);
+    // The navigator's PreviewWindow registered itself as a CropWindow listener
+    // on iareapanel->imageArea->mainCropWindow. Unregister before iareapanel is
+    // destroyed so PreviewWindow doesn't hold a dangling CropWindow pointer
+    // when it is destroyed later (line ~delete navigator below).
+    if (navigator && navigator->previewWindow) {
+        navigator->previewWindow->setImageArea (nullptr);
+    }
     delete iareapanel;
     iareapanel = nullptr;
 
@@ -3595,7 +3602,7 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
 
 void EditorPanel::setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scale)
 {
-    if (!pixbuf || !previewHandler) return;
+    if (!pixbuf) return;
 
     // Disconnect the old processor's preview listener so it can't
     // overwrite our placeholder with stale frames. The processing
@@ -3605,10 +3612,16 @@ void EditorPanel::setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scal
         ipc->setPreviewImageListener(nullptr);
     }
 
-    previewHandler->setPlaceholder(pixbuf, scale);
+    if (previewHandler) {
+        previewHandler->setPlaceholder(pixbuf, scale);
+    }
 
+    // Install an override at the ImageArea level — the old cropHandler's
+    // cropPixbuf still contains the previous image and would otherwise
+    // paint through and hide our new thumbnail. The override is cleared
+    // automatically once the new image's cropPixbuf is populated.
     if (iareapanel && iareapanel->imageArea) {
-        iareapanel->imageArea->queue_draw();
+        iareapanel->imageArea->setQuickPreviewOverride(pixbuf);
     }
 }
 
@@ -3755,6 +3768,11 @@ void EditorPanel::close ()
         }
 
         navigator->previewWindow->setPreviewHandler (nullptr);
+        // Unregister the previewWindow as a CropWindow listener before the
+        // iareapanel (and its mainCropWindow) is destroyed. Otherwise the
+        // next cropPositionChanged/cropZoomChanged iterates a listener list
+        // that dereferences a dangling PreviewWindow*.
+        navigator->previewWindow->setImageArea (nullptr);
 
         ipc->setPreviewImageListener (nullptr);
 

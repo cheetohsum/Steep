@@ -463,7 +463,13 @@ public:
     {
         int idx = (int)index;  // don't use floor! The difference in negative space is no problems here
 
-        if (index < 0.f) {
+        // Note: the `!(index >= 0.f)` form (rather than `index < 0.f`) is
+        // deliberately NaN-safe. NaN comparisons are always false, so NaN
+        // lands here and gets clamped to idx=0, matching the vfloat overload
+        // which uses vclampf. Without this, `(int)NaN` produces an
+        // out-of-bounds index and data[idx] segfaults inside tight OpenMP
+        // loops (seen in rgbProc → Color::RGB2Lab and copyAndClamp).
+        if (!(index >= 0.f)) {
             if (clip & LUT_CLIP_BELOW) {
                 return data[0];
             }
@@ -490,7 +496,8 @@ public:
         index *= (float)upperBound;
         int idx = (int)index;  // don't use floor! The difference in negative space is no problems here
 
-        if (index < 0.f) {
+        // NaN-safe: see operator[](V) above.
+        if (!(index >= 0.f)) {
             if (clip & LUT_CLIP_BELOW) {
                 return data[0];
             }
