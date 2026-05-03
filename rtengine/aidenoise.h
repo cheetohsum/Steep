@@ -21,7 +21,6 @@
 #include <atomic>
 #include <functional>
 #include <memory>
-#include <set>
 #include <string>
 
 #include <glibmm/ustring.h>
@@ -33,6 +32,24 @@
 namespace rtengine
 {
 
+// AIDenoiseManager runs RawRefinery's TreeNet denoise model natively via
+// ONNX Runtime (with DirectML acceleration on Windows). It replaces the
+// previous Python subprocess pipeline — no Python interpreter, no
+// `pip install rawrefinery`, no popup window.
+//
+// The inference pipeline mirrors rawrefinery_cli.py:
+//   1. Load 32-bit float TIFF (RT-exported demosaiced image)
+//   2. Tile to 256x256 with stride 64 (75% overlap)
+//   3. Run model(rgb_tile, iso_cond) per tile via ONNX Runtime
+//   4. Cosine-weighted stitch with bias correction (eliminates tile grid)
+//   5. Highlight preservation (blend back original > 1.0)
+//   6. Save 32-bit float TIFF for RT to consume
+//
+// The session is reused across invocations and lazily reset on GPU/CPU mode
+// change. The model file (Tree Net Denoise / ShadowWeightedL1.onnx) is
+// auto-located at LOCALAPPDATA\RawRefinery\RawRefinery\ on Windows or the
+// platform-equivalent user data dir. If missing, it is downloaded from the
+// upstream RawRefinery release.
 class AIDenoiseManager
 {
 public:
@@ -41,7 +58,6 @@ public:
     bool isAvailable() const { return available_; }
     bool isDetecting() const { return detecting_; }
     void detect();
-    void detect(const Glib::ustring& pythonPath, const Glib::ustring& scriptPath);
     void setDetectDoneCallback(std::function<void(bool)> cb) { detectDoneCb_ = cb; }
 
     void startDenoising(
@@ -68,24 +84,19 @@ private:
     AIDenoiseManager(const AIDenoiseManager&) = delete;
     AIDenoiseManager& operator=(const AIDenoiseManager&) = delete;
 
-    bool findPython();
-    bool findScript();
-    bool testRawRefinery();
+    // Find the model file on disk; empty string if not found.
+    Glib::ustring findModelPath() const;
+
+    // PIMPL: ONNX Runtime types are kept out of the header so callers don't
+    // need to include onnxruntime headers.
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 
     std::atomic<bool> available_;
     std::atomic<bool> detecting_;
-    Glib::ustring pythonPath_;
-    Glib::ustring scriptPath_;
-    std::set<Glib::ustring> triedPythonPaths_;
     std::atomic<bool> running_;
     std::atomic<bool> cancelled_;
     std::function<void(bool)> detectDoneCb_;
-
-#ifdef _WIN32
-    void* childProcess_;  // HANDLE on Windows
-#else
-    int childPid_;
-#endif
 
     // Result cache
     mutable MyMutex cacheMutex_;

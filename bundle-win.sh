@@ -43,29 +43,21 @@ cp /mingw64/share/glib-2.0/schemas/gschemas.compiled "$BUILD_DIR/share/glib-2.0/
 mkdir -p "$BUILD_DIR/share/gtk-3.0"
 printf '[Settings]\ngtk-button-images=1\n' > "$BUILD_DIR/share/gtk-3.0/settings.ini"
 
-# Bundle embedded Python for AI Denoise
-PYTHON_DIR="$BUILD_DIR/python"
-if [ ! -f "$PYTHON_DIR/python.exe" ]; then
-  echo "Bundling embedded Python for AI Denoise..."
-  PYTHON_VERSION="3.11.9"
-  mkdir -p "$PYTHON_DIR"
-  EMBED_ZIP="/tmp/python-embed.zip"
-  if [ ! -f "$EMBED_ZIP" ]; then
-    curl -L -o "$EMBED_ZIP" \
-      "https://www.python.org/ftp/python/${PYTHON_VERSION}/python-${PYTHON_VERSION}-embed-amd64.zip"
-  fi
-  unzip -q "$EMBED_ZIP" -d "$PYTHON_DIR"
-  sed -i 's/#import site/import site/' "$PYTHON_DIR/python311._pth"
-  curl -L -o "$PYTHON_DIR/get-pip.py" https://bootstrap.pypa.io/get-pip.py
-  "$PYTHON_DIR/python.exe" "$PYTHON_DIR/get-pip.py" --no-warn-script-location
-  "$PYTHON_DIR/python.exe" -m pip install \
-    torch --index-url https://download.pytorch.org/whl/cpu \
-    blended-tiling tifffile platformdirs requests numpy \
-    --no-warn-script-location
-  rm -f "$PYTHON_DIR/get-pip.py"
-  echo "Embedded Python bundled."
-else
-  echo "Embedded Python already present, skipping."
+# Bundle ONNX Runtime + DirectML for native AI Denoise.
+# These ship in ext/onnxruntime/bin/ alongside the staged headers and import lib.
+ORT_BIN_SRC="$(dirname "$0")/ext/onnxruntime/bin"
+if [ -d "$ORT_BIN_SRC" ]; then
+  echo "Bundling ONNX Runtime + DirectML DLLs for AI Denoise..."
+  cp -u "$ORT_BIN_SRC/onnxruntime.dll" "$BUILD_DIR/" 2>/dev/null || true
+  cp -u "$ORT_BIN_SRC/DirectML.dll"   "$BUILD_DIR/" 2>/dev/null || true
+fi
+
+# Drop the old embedded Python interpreter — no longer used. Removing it
+# saves ~700 MB in the bundle. Skip removal if user wants to keep it for
+# other tools (gated on whether RT_AI_DENOISE_KEEP_PYTHON env var is set).
+if [ -d "$BUILD_DIR/python" ] && [ -z "${RT_AI_DENOISE_KEEP_PYTHON:-}" ]; then
+  echo "Removing legacy embedded Python ($BUILD_DIR/python) — native ONNX engine in use."
+  rm -rf "$BUILD_DIR/python"
 fi
 
 echo "DLL bundling done"

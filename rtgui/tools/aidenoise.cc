@@ -129,7 +129,7 @@ AIDenoise::AIDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_AIDENOISE_LAB
     if (aidm.isAvailable()) {
         statusLabel->set_text(M("TP_AIDENOISE_STATUS_READY"));
     } else if (aidm.isDetecting()) {
-        statusLabel->set_text("Detecting RawRefinery...");
+        statusLabel->set_text("Loading model...");
     }
 
     show_all();
@@ -262,7 +262,7 @@ void AIDenoise::onDenoiseClicked ()
     auto& aidm = rtengine::AIDenoiseManager::getInstance();
 
     if (aidm.isDetecting()) {
-        updateStatus("Detecting RawRefinery... please wait");
+        updateStatus("Loading model... please wait");
         return;
     }
 
@@ -360,8 +360,11 @@ void AIDenoise::onDenoiseClicked ()
                     } else if (message.find("CUDA") != Glib::ustring::npos
                                || message.find("out of memory") != Glib::ustring::npos) {
                         cleanMsg = "GPU out of memory. Try disabling 'Use GPU'.";
-                    } else if (message.find("No module named") != Glib::ustring::npos) {
-                        cleanMsg = "RawRefinery module not found. Reinstall with: pip install rawrefinery";
+                    } else if (message.find("model file not found") != Glib::ustring::npos
+                               || message.find("ONNX model file not found") != Glib::ustring::npos) {
+                        cleanMsg = "AI Denoise model file not found. See logs for expected path.";
+                    } else if (message.find("ONNX Runtime") != Glib::ustring::npos) {
+                        cleanMsg = message;  // ONNX Runtime errors are usually informative as-is
                     } else {
                         // Extract last meaningful line from stderr
                         auto pos = message.rfind("Error during processing:");
