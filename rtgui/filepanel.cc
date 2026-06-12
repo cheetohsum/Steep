@@ -355,7 +355,10 @@ struct RawLoadLease {
     RawLoadGate::PreloadAcquireResult preloadResult;
     std::chrono::milliseconds retryAfter;
 
-    explicit RawLoadLease(bool foreground, std::chrono::milliseconds preloadQuietFor = std::chrono::milliseconds(0)) :
+    explicit RawLoadLease(
+        bool foreground,
+        std::chrono::milliseconds preloadQuietFor = std::chrono::milliseconds(0),
+        bool includeEditorActivity = true) :
         acquired(false),
         foreground(foreground),
         preloadResult(RawLoadGate::PreloadAcquireResult::Busy),
@@ -366,7 +369,7 @@ struct RawLoadLease {
             acquired = true;
             preloadResult = RawLoadGate::PreloadAcquireResult::Acquired;
         } else {
-            preloadResult = g_rawLoadGate.tryAcquirePreload(preloadQuietFor, retryAfter);
+            preloadResult = g_rawLoadGate.tryAcquirePreload(preloadQuietFor, retryAfter, includeEditorActivity);
             acquired = preloadResult == RawLoadGate::PreloadAcquireResult::Acquired;
         }
     }
@@ -675,6 +678,7 @@ struct PreloadManager {
     static constexpr int    kDirectionalInterLoadDelayMs = 350;
     static constexpr int    kForegroundQuietMs = 900;
     static constexpr int    kDirectionalForegroundQuietMs = 600;
+    static constexpr int    kDirectionalThroughEditorRawQuietMs = 300;
     static constexpr int    kRapidDirectionalCadenceMs = 850;
     static constexpr int    kRapidDirectionalForegroundQuietMs = 600;
     static constexpr int    kRapidImmediateRawForegroundQuietMs = 150;
@@ -836,6 +840,7 @@ struct PreloadManager {
     int                     foregroundQuietMs = kForegroundQuietMs;
     int                     immediateRawQuietMs = kForegroundQuietMs;
     bool                    rawStrideMode = false;
+    bool                    rawStrideCanPreloadThroughEditor = false;
     unsigned                scheduleGeneration = 0;
 #ifdef _WIN32
     HANDLE                  workerThreadHandle = nullptr;
@@ -2935,6 +2940,8 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
         && recentDirectionalSelectionGapMs_ <= PreloadManager::kRapidDirectionalCadenceMs;
     const bool rawStridePreload = directionalPreload
         && recentDirectionalRawSelectionRunLength_ >= 2;
+    const bool rawStrideCanPreloadThroughEditor = rawStridePreload
+        && recentDirectionalSelectionGapMs_ > PreloadManager::kRapidDirectionalCadenceMs;
     const int quickPreviewWarmRadius = (!refreshThumbnails && rawStridePreload)
         ? 0
         : PreloadManager::kQuickPreviewWarmRadius;
@@ -3065,6 +3072,14 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
             scheduledForegroundQuietMs,
             PreloadManager::kRapidImmediateRawForegroundQuietMs);
     }
+    if (rawStrideCanPreloadThroughEditor) {
+        scheduledForegroundQuietMs = std::min(
+            scheduledForegroundQuietMs,
+            PreloadManager::kDirectionalThroughEditorRawQuietMs);
+        scheduledImmediateRawQuietMs = std::min(
+            scheduledImmediateRawQuietMs,
+            PreloadManager::kDirectionalThroughEditorRawQuietMs);
+    }
     const size_t scheduledWantedCount = newWantedSet.size();
     const size_t scheduledHotCount = newHotWantedSet.size();
     bool startWorker = false;
@@ -3079,14 +3094,16 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
             && preload_->interLoadDelayMs == scheduledInterLoadDelayMs
             && preload_->foregroundQuietMs == scheduledForegroundQuietMs
             && preload_->immediateRawQuietMs == scheduledImmediateRawQuietMs
-            && preload_->rawStrideMode == rawStridePreload;
+            && preload_->rawStrideMode == rawStridePreload
+            && preload_->rawStrideCanPreloadThroughEditor == rawStrideCanPreloadThroughEditor;
 
         if (rawQueueUnchanged) {
-            FILESEL_LOG("[preload] unchanged wanted=%zu hot=%zu dir=%d rawStride=%d quiet=%dms immediateRawQuiet=%dms cadence=%dms anchor=%s\n",
+            FILESEL_LOG("[preload] unchanged wanted=%zu hot=%zu dir=%d rawStride=%d throughEditor=%d quiet=%dms immediateRawQuiet=%dms cadence=%dms anchor=%s\n",
                 scheduledWantedCount,
                 scheduledHotCount,
                 static_cast<int>(preferredDirection),
                 static_cast<int>(rawStridePreload),
+                static_cast<int>(rawStrideCanPreloadThroughEditor),
                 scheduledForegroundQuietMs,
                 scheduledImmediateRawQuietMs,
                 recentDirectionalSelectionGapMs_,
@@ -3119,13 +3136,15 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
             preload_->foregroundQuietMs = scheduledForegroundQuietMs;
             preload_->immediateRawQuietMs = scheduledImmediateRawQuietMs;
             preload_->rawStrideMode = rawStridePreload;
+            preload_->rawStrideCanPreloadThroughEditor = rawStrideCanPreloadThroughEditor;
             ++preload_->scheduleGeneration;
             preload_->cv.notify_all();
-            FILESEL_LOG("[preload] scheduled wanted=%zu hot=%zu dir=%d rawStride=%d quiet=%dms immediateRawQuiet=%dms cadence=%dms anchor=%s\n",
+            FILESEL_LOG("[preload] scheduled wanted=%zu hot=%zu dir=%d rawStride=%d throughEditor=%d quiet=%dms immediateRawQuiet=%dms cadence=%dms anchor=%s\n",
                 scheduledWantedCount,
                 scheduledHotCount,
                 static_cast<int>(preferredDirection),
                 static_cast<int>(rawStridePreload),
+                static_cast<int>(rawStrideCanPreloadThroughEditor),
                 scheduledForegroundQuietMs,
                 scheduledImmediateRawQuietMs,
                 recentDirectionalSelectionGapMs_,
@@ -3360,6 +3379,7 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
                 {
                     std::unique_ptr<RawLoadLease> loadLease;
                     const auto gateCandidateStart = std::chrono::steady_clock::now();
+                    bool includeEditorActivity = entry.isRaw;
                     if (entry.isRaw) {
                         int foregroundQuietMs = PreloadManager::kForegroundQuietMs;
                         {
@@ -3369,8 +3389,12 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
                                 && state->hotWantedEntries.front().fnameRaw == loadFname) {
                                 foregroundQuietMs = state->immediateRawQuietMs;
                             }
+                            includeEditorActivity = !state->rawStrideCanPreloadThroughEditor;
                         }
-                        loadLease.reset(new RawLoadLease(false, std::chrono::milliseconds(foregroundQuietMs)));
+                        loadLease.reset(new RawLoadLease(
+                            false,
+                            std::chrono::milliseconds(foregroundQuietMs),
+                            includeEditorActivity));
                         if (!loadLease->acquired) {
                             if (loadLease->preloadResult == RawLoadGate::PreloadAcquireResult::TooSoon) {
                                 const auto retryDelay = std::max(
@@ -3425,7 +3449,6 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
                             continue;
                         }
                     }
-                    const bool includeEditorActivity = entry.isRaw;
                     const auto pressureBeforeLoading =
                         g_rawLoadGate.foregroundPressureSince(gateCandidateStart, loadFname, includeEditorActivity);
                     if (pressureBeforeLoading.any && !pressureBeforeLoading.sameFile) {
