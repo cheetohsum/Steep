@@ -16,14 +16,21 @@
  *  You should have received a copy of the GNU General Public License
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include <algorithm>
 #include <cassert>
 #include <chrono>
 #include <cmath>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <iostream>
+#include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
+#include <unordered_map>
+#include <unordered_set>
 
 #include "camconst.h"
 #include "color.h"
@@ -105,6 +112,106 @@ long long rawLoadDurationMs(
     const std::chrono::steady_clock::time_point& to)
 {
     return std::chrono::duration_cast<std::chrono::milliseconds>(to - from).count();
+}
+
+struct RawMetadataPrewarmEntry
+{
+    std::string key;
+    Glib::ustring fname;
+};
+
+struct RawMetadataPrewarmState
+{
+    std::mutex mutex;
+    std::deque<RawMetadataPrewarmEntry> queue;
+    std::unordered_set<std::string> queued;
+    std::unordered_set<std::string> loading;
+    std::unordered_map<std::string, std::unique_ptr<rtengine::FramesData>> cache;
+    std::deque<std::string> cacheOrder;
+    bool workerRunning = false;
+};
+
+RawMetadataPrewarmState& rawMetadataPrewarmState()
+{
+    static auto* state = new RawMetadataPrewarmState();
+    return *state;
+}
+
+constexpr size_t kRawMetadataPrewarmMaxQueue = 12;
+constexpr size_t kRawMetadataPrewarmMaxCache = 8;
+
+std::string rawMetadataPrewarmKey(const Glib::ustring& fname)
+{
+    return std::string(fname.c_str());
+}
+
+void evictRawMetadataPrewarmCacheLocked(RawMetadataPrewarmState& state)
+{
+    while (state.cache.size() > kRawMetadataPrewarmMaxCache && !state.cacheOrder.empty()) {
+        const std::string key = state.cacheOrder.front();
+        state.cacheOrder.pop_front();
+        state.cache.erase(key);
+    }
+}
+
+void rawMetadataPrewarmWorker()
+{
+    auto& state = rawMetadataPrewarmState();
+
+    while (true) {
+        RawMetadataPrewarmEntry entry;
+        {
+            std::lock_guard<std::mutex> lock(state.mutex);
+            if (state.queue.empty()) {
+                state.workerRunning = false;
+                return;
+            }
+
+            entry = state.queue.front();
+            state.queue.pop_front();
+            state.queued.erase(entry.key);
+
+            if (state.cache.count(entry.key)) {
+                continue;
+            }
+
+            state.loading.insert(entry.key);
+        }
+
+        auto metadata = std::make_unique<rtengine::FramesData>(entry.fname);
+
+        {
+            std::lock_guard<std::mutex> lock(state.mutex);
+            state.loading.erase(entry.key);
+            if (!state.cache.count(entry.key)) {
+                state.cache.emplace(entry.key, std::move(metadata));
+                state.cacheOrder.push_back(entry.key);
+                evictRawMetadataPrewarmCacheLocked(state);
+            }
+        }
+    }
+}
+
+std::unique_ptr<rtengine::FramesData> takePrewarmedRawMetadata(const Glib::ustring& fname)
+{
+    auto& state = rawMetadataPrewarmState();
+    const std::string key = rawMetadataPrewarmKey(fname);
+    std::lock_guard<std::mutex> lock(state.mutex);
+
+    const auto it = state.cache.find(key);
+    if (it == state.cache.end()) {
+        return nullptr;
+    }
+
+    auto metadata = std::move(it->second);
+    state.cache.erase(it);
+
+    const auto orderIt = std::find(state.cacheOrder.begin(), state.cacheOrder.end(), key);
+    if (orderIt != state.cacheOrder.end()) {
+        state.cacheOrder.erase(orderIt);
+    }
+
+    return metadata;
 }
 
 void zeroImage(rtengine::Imagefloat* image)
@@ -598,6 +705,39 @@ RawImageSource::~RawImageSource()
 
     if (embProfile) {
         cmsCloseProfile(embProfile);
+    }
+}
+
+void RawImageSource::prewarmMetadata(const Glib::ustring& fname)
+{
+    if (fname.empty()) {
+        return;
+    }
+
+    auto& state = rawMetadataPrewarmState();
+    const std::string key = rawMetadataPrewarmKey(fname);
+    bool startWorker = false;
+    {
+        std::lock_guard<std::mutex> lock(state.mutex);
+        if (state.cache.count(key) || state.queued.count(key) || state.loading.count(key)) {
+            return;
+        }
+
+        if (state.queue.size() >= kRawMetadataPrewarmMaxQueue) {
+            return;
+        }
+
+        state.queue.push_back({key, fname});
+        state.queued.insert(key);
+
+        if (!state.workerRunning) {
+            state.workerRunning = true;
+            startWorker = true;
+        }
+    }
+
+    if (startWorker) {
+        std::thread(rawMetadataPrewarmWorker).detach();
     }
 }
 
@@ -1569,7 +1709,9 @@ int RawImageSource::load(const Glib::ustring &fname, bool firstFrameOnly)
 
     // Load complete Exif information
     const auto metadataStart = std::chrono::steady_clock::now();
-    idata = new FramesData(fname); // TODO: std::unique_ptr<>
+    auto prewarmedMetadata = takePrewarmedRawMetadata(fname);
+    const bool usedPrewarmedMetadata = static_cast<bool>(prewarmedMetadata);
+    idata = usedPrewarmedMetadata ? prewarmedMetadata.release() : new FramesData(fname); // TODO: std::unique_ptr<>
     idata->setDCRawFrameCount(numFrames);
     {
         int ww, hh;
@@ -1577,8 +1719,9 @@ int RawImageSource::load(const Glib::ustring &fname, bool firstFrameOnly)
         idata->setDimensions(ww, hh);
     }
     if (timingLog) {
-        rawLoadTimingLog("[rawLoad] metadata duration=%lldms file=%s\n",
+        rawLoadTimingLog("[rawLoad] metadata duration=%lldms source=%s file=%s\n",
             rawLoadDurationMs(metadataStart, std::chrono::steady_clock::now()),
+            usedPrewarmedMetadata ? "prewarm" : "load",
             fname.c_str());
     }
 

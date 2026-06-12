@@ -124,6 +124,8 @@ public:
     RawImageSource ();
     ~RawImageSource () override;
 
+    static void prewarmMetadata(const Glib::ustring& fname);
+
     int load(const Glib::ustring &fname) override { return load(fname, false); }
     int load(const Glib::ustring &fname, bool firstFrameOnly);
     void        preprocess  (const procparams::RAWParams &raw, const procparams::LensProfParams &lensProf, const procparams::CoarseTransformParams& coarse, float &reddeha, float &greendeha, float &bluedeha, bool prepareDenoise = true) override;

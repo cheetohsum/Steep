@@ -3061,6 +3061,14 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
         addHotWanted(false, false, 0, PreloadManager::kMaxEntries);
     }
 
+    std::vector<Glib::ustring> rawMetadataPrewarmFiles;
+    rawMetadataPrewarmFiles.reserve(newHotWantedEntries.size());
+    for (const auto& e : newHotWantedEntries) {
+        if (e.isRaw) {
+            rawMetadataPrewarmFiles.push_back(e.fname);
+        }
+    }
+
     const int scheduledStartDelayMs = directionalPreload
         ? PreloadManager::kDirectionalStartDelayMs
         : PreloadManager::kStartDelayMs;
@@ -3179,6 +3187,9 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
                 }
             }
         }
+    }
+    for (const auto& prewarmFile : rawMetadataPrewarmFiles) {
+        rtengine::InitialImage::prewarmRawMetadata(prewarmFile);
     }
     releasePreloadImagesInBackground(std::move(evictedPreloadImages), "retarget", fname);
     FILESEL_LOG("[preload] scheduled wanted=%zu hot=%zu dir=%d quickWarm=%d startDelay=%dms interDelay=%dms foregroundQuiet=%dms startWorker=%d anchor=%s\n",
