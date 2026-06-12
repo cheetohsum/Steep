@@ -280,6 +280,33 @@ bool ImageArea::on_draw(const ::Cairo::RefPtr< Cairo::Context> &cr)
         }
 
         mainCropWindow->expose (cr);
+    } else if (previewHandler && get_width() > 1 && get_height() > 1) {
+        // A newly-created tab can receive a cached filmstrip preview before
+        // the real processor exists. Draw it directly until open() creates the
+        // crop window and hands the same placeholder to the processor-backed
+        // PreviewHandler.
+        get_style_context()->render_background(cr, 0, 0, get_width(), get_height());
+
+        double logicalZoom = 1.0;
+        hidpi::DevicePixbuf rough = previewHandler->getRoughImage(
+            hidpi::LogicalSize(get_width(), get_height()),
+            deviceScale,
+            logicalZoom);
+
+        if (rough) {
+            const hidpi::ScaledDeviceSize roughSize = rough.size();
+            const int roughDeviceScale = std::max(1, roughSize.device_scale);
+            const int logicalW = roughSize.width / roughDeviceScale;
+            const int logicalH = roughSize.height / roughDeviceScale;
+            const int x = (get_width() - logicalW) / 2;
+            const int y = (get_height() - logicalH) / 2;
+
+            Gdk::Cairo::set_source_pixbuf(cr, rough.pixbuf(), x, y);
+            auto pattern = hidpi::getSourceForSurface(cr);
+            hidpi::setDeviceScale(pattern->get_surface(), roughDeviceScale);
+            cr->rectangle(x, y, logicalW, logicalH);
+            cr->fill();
+        }
     }
 
     for (std::list<CropWindow*>::reverse_iterator i = cropWins.rbegin(); i != cropWins.rend(); ++i) {
@@ -908,4 +935,3 @@ void ImageArea::get_preferred_width_for_height_vfunc (int height, int &minimum_w
 {
     get_preferred_width_vfunc (minimum_width, natural_width);
 }
-

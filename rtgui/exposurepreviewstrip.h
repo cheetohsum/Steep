@@ -55,13 +55,17 @@ private:
     bool on_button_release_event(GdkEventButton* event) override;
     bool on_motion_notify_event(GdkEventMotion* event) override;
     Gtk::SizeRequestMode get_request_mode_vfunc() const override;
+    void get_preferred_width_vfunc(int& min, int& natural) const override;
     void get_preferred_height_vfunc(int& min, int& natural) const override;
 
     void generateThumbnailsAsync();
     void handleDrag(double x);
+    void cancelThumbnailGeneration();
 
     static constexpr int STRIP_HEIGHT = 36;
+    static constexpr int STRIP_WIDTH = 220;
     static constexpr int NUM_THUMBS = 6;
+    static constexpr unsigned int THUMB_START_DELAY_MS = 1200;
     static constexpr double CORNER_RADIUS = 8.0;
 
     Thumbnail* thumbnail_ = nullptr;
@@ -76,5 +80,9 @@ private:
     DragCallback releaseCallback_;
     sigc::connection debounceConn_;
     sigc::connection dragThrottleConn_;
+    sigc::connection commitConn_;
     std::shared_ptr<std::atomic<bool>> cancelToken_;
+    std::shared_ptr<std::atomic<bool>> aliveToken_ = std::make_shared<std::atomic<bool>>(true);
+    std::shared_ptr<rtengine::procparams::ProcParams> pendingCommitParams_;
+    double pendingCommitPos_ = 0.0;
 };

@@ -151,8 +151,9 @@ RGBCurves::RGBCurves () : FoldableToolPanel(this, TOOL_NAME, M("TP_RGBCURVES_LAB
         } catch (...) {}
     }
 
-    // Make the curve graph smaller so it fits nicely in the panel
-    curveEditorG->setCurveGraphSize(60);
+    // Keep the curve graph inside the right sidebar instead of letting GTK
+    // expand it under the vertical scrollbar.
+    curveEditorG->setCurveGraphSize(230);
 
     // Set all curves to Spline identity so the graph is always available
     const std::vector<double> splineIdentity{DCT_Spline, 0.0, 0.0, 1.0, 1.0};

@@ -121,6 +121,10 @@ class CropWindow final : public LWButtonListener, public CropDisplayHandler, pub
     float crop_custom_ratio;
     bool solidCropOverlay_;
 
+    // Last successfully drawn crop — painted as a bridge during image transitions
+    // to prevent white flash when cropPixbuf is null and rough image is unavailable.
+    Glib::RefPtr<Gdk::Pixbuf> bridgePixbuf_;
+
     bool onArea                    (CursorArea a, int x, int y);
     void updateCursor              (int x, int y);
     void drawDecoration            (Cairo::RefPtr<Cairo::Context> cr);

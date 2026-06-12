@@ -123,7 +123,8 @@ int init (const Settings* s, const Glib::ustring& baseDir, const Glib::ustring& 
     Color::init ();
     Exiv2Metadata::init();
 
-    AIDenoiseManager::getInstance().detect();
+    // AI Denoise dependency probing is started lazily from the UI. Running the
+    // Python probe during engine init races the Windows GTK startup path.
 
 #ifdef RT_AI_MASKING
     {

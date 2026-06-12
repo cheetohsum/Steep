@@ -198,6 +198,16 @@ RawImage::~RawImage()
     }
 }
 
+std::string RawImage::getDecoderName() const
+{
+    if (decoder == Decoder::LIBRAW && libraw) {
+        const char* name = libraw->unpack_function_name();
+        return name ? name : "libraw";
+    }
+
+    return "dcraw";
+}
+
 void RawImage::pre_interpolate()
 {
     int w = width, h = height;
@@ -583,10 +593,10 @@ skip_block:
 int RawImage::loadRaw(bool loadData, unsigned int imageNum, bool closeFile, ProgressListener *plistener, double progressRange)
 {
     ifname = filename.c_str();
-    image = nullptr;
-    image_from_float.reset();
     verbose = settings->verbose;
     oprof = nullptr;
+
+    const bool hadOpenFile = ifp;
 
     if (!ifp) {
         ifp = gfopen(ifname);   // Maps to either file map or direct fopen
@@ -598,25 +608,44 @@ int RawImage::loadRaw(bool loadData, unsigned int imageNum, bool closeFile, Prog
         return 3;
     }
 
+    // A metadata-only load leaves LibRaw identified but not unpacked. Reuse
+    // that state for the immediate full decode instead of identifying again.
+    const bool reuseIdentifiedLibRaw =
+        loadData
+        && settings->enableLibRaw
+        && libraw
+        && decoder == Decoder::LIBRAW
+        && hadOpenFile
+        && imageNum == shot_select
+        && is_raw
+        && !image
+        && !raw_image
+        && !float_raw_image;
+
+    image = nullptr;
+    image_from_float.reset();
+
     imfile_set_plistener(ifp, plistener, 0.9 * progressRange);
 
-    thumb_length = 0;
-    thumb_offset = 0;
-    thumb_load_raw = nullptr;
-    use_camera_wb = 0;
-    highlight = 1;
-    half_size = 0;
-    raw_image = nullptr;
+    if (!reuseIdentifiedLibRaw) {
+        thumb_length = 0;
+        thumb_offset = 0;
+        thumb_load_raw = nullptr;
+        use_camera_wb = 0;
+        highlight = 1;
+        half_size = 0;
+        raw_image = nullptr;
+    }
 
     //***************** Read ALL raw file info
     // set the number of the frame to extract. If the number is larger then number of existing frames - 1, dcraw will handle that correctly
 
     shot_select = imageNum;
 
-    if (settings->enableLibRaw) {
+    if (settings->enableLibRaw && !reuseIdentifiedLibRaw) {
         libraw.reset(new LibRaw());
     }
-    int libraw_error = [&]() -> int {
+    int libraw_error = reuseIdentifiedLibRaw ? LIBRAW_SUCCESS : [&]() -> int {
         if (!settings->enableLibRaw) {
             return LIBRAW_SUCCESS;
         }
@@ -885,6 +914,7 @@ int RawImage::loadRaw(bool loadData, unsigned int imageNum, bool closeFile, Prog
 
         use_camera_wb = 1;
         shrink = 0;
+        bool useLibRawRawImageForCompress = false;
 
         if (settings->verbose) {
             printf("Loading %s %s image from %s...\n", make, model, filename.c_str());
@@ -921,10 +951,7 @@ int RawImage::loadRaw(bool loadData, unsigned int imageNum, bool closeFile, Prog
             libraw->imgdata.rawparams.shot_select = shot_select;
             libraw->imgdata.rawparams.options &= ~LIBRAW_RAWOPTIONS_CONVERTFLOAT_TO_INT;
 
-            int err = libraw->open_buffer(ifp->data, ifp->size);
-            if (err) {
-                return err;
-            }
+            int err = LIBRAW_SUCCESS;
             {
 #ifdef LIBRAW_USE_OPENMP
                 MyMutex::MyLock lock(*librawMutex);
@@ -974,15 +1001,26 @@ int RawImage::loadRaw(bool loadData, unsigned int imageNum, bool closeFile, Prog
                     }
                 }
             } else {
+                // Bayer/X-Trans/mono files already have a single LibRaw raw
+                // plane. Avoid expanding it to LibRaw's 4-channel image only
+                // to compress it back to one plane immediately afterwards.
+                useLibRawRawImageForCompress =
+                    raw_image
+                    && closeFile
+                    && !merged_pixelshift.is_merged_pixelshift
+                    && (filters != 0 || isXtrans() || colors == 1);
+
+                if (!useLibRawRawImageForCompress) {
 #ifdef LIBRAW_USE_OPENMP
-                MyMutex::MyLock lock(*librawMutex);
+                    MyMutex::MyLock lock(*librawMutex);
 #endif
-                float_raw_image = nullptr;
-                err = libraw->raw2image();
-                if (err) {
-                    return err;
+                    float_raw_image = nullptr;
+                    err = libraw->raw2image();
+                    if (err) {
+                        return err;
+                    }
+                    image = libraw->imgdata.image;
                 }
-                image = libraw->imgdata.image;
             }
 
             // get our custom camera matrices, but don't mess with black/white levels yet
@@ -1141,8 +1179,11 @@ int RawImage::loadRaw(bool loadData, unsigned int imageNum, bool closeFile, Prog
                 if (has_raw_mask) {
                     calculate_black_from_mask(mask, cblack, raw_image, raw_height, raw_width, top_margin, left_margin, filters);
                 }
+
+                if (!useLibRawRawImageForCompress) {
+                    raw_image = nullptr;
+                }
             }
-            raw_image = nullptr;
             adjust_margins = !float_raw_image; //true;
         } else {
             if (decoder == Decoder::DCRAW && get_maker() == "Sigma" && cc && cc->has_rawCrop(width, height)) { // foveon images
@@ -1286,7 +1327,7 @@ DCraw::dcrawImage_t RawImage::get_image()
 
 float** RawImage::compress_image(unsigned int frameNum, bool freeImage)
 {
-    if (!image && !image_from_float) {
+    if (!image && !image_from_float && !raw_image) {
         return nullptr;
     }
 
@@ -1348,6 +1389,24 @@ float** RawImage::compress_image(unsigned int frameNum, bool freeImage)
 
         delete [] float_raw_image;
         float_raw_image = nullptr;
+    } else if (raw_image && decoder == Decoder::LIBRAW && (filters != 0 || isXtrans())) {
+#ifdef _OPENMP
+        #pragma omp parallel for
+#endif
+
+        for (int row = 0; row < height; row++)
+            for (int col = 0; col < width; col++) {
+                this->data[row][col] = raw_image[(row + top_margin) * raw_width + col + left_margin];
+            }
+    } else if (raw_image && decoder == Decoder::LIBRAW && colors == 1) {
+#ifdef _OPENMP
+        #pragma omp parallel for
+#endif
+
+        for (int row = 0; row < height; row++)
+            for (int col = 0; col < width; col++) {
+                this->data[row][col] = raw_image[(row + top_margin) * raw_width + col + left_margin];
+            }
     } else if (merged_pixelshift.is_merged_pixelshift) {
         // Frame 0 is not shifted. Frame 1 is shifted down. Frame 2 is shifted
         // down and right. Frame 3 is shifted right.
@@ -1437,6 +1496,7 @@ float** RawImage::compress_image(unsigned int frameNum, bool freeImage)
             libraw->recycle();
         }
         image = nullptr;
+        raw_image = nullptr;
         image_from_float.reset();
     }
 

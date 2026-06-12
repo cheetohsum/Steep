@@ -19,15 +19,20 @@
 #include "cachemanager.h"
 #include "multilangmgr.h"
 #include "thumbnail.h"
+#include <algorithm>
+#include <array>
+#include <chrono>
 #include <sstream>
 #include <iomanip>
 #include <cstdio>
 #include <cstdlib>
+#include <utility>
 #include "rtengine/colortemp.h"
 #include "rtengine/imagedata.h"
 #include "rtengine/procparams.h"
 #include "rtengine/rtthumbnail.h"
 #include <glib/gstdio.h>
+#include <glibmm/keyfile.h>
 #include <glibmm/timezone.h>
 
 #include "rtengine/dynamicprofile.h"
@@ -51,6 +56,56 @@
 #endif // _WIN32
 
 namespace {
+
+using ThumbnailBenchClock = std::chrono::steady_clock;
+
+bool thumbnailBenchEnabled()
+{
+    static const bool enabled = g_getenv("RT_THUMBNAIL_BENCH") != nullptr;
+    return enabled;
+}
+
+long long thumbnailBenchMs(ThumbnailBenchClock::time_point start, ThumbnailBenchClock::time_point end)
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+}
+
+bool isRawOriginalExtension(const std::string& extension)
+{
+    static constexpr const char* rawExtensions[] = {
+        "3fr", "arw", "arq", "cr2", "cr3", "crf", "crw", "dcr", "dng",
+        "fff", "iiq", "kdc", "mef", "mos", "mrw", "nef", "nrw", "orf",
+        "ori", "pef", "raf", "raw", "rw2", "rwl", "rwz", "sr2", "srf",
+        "srw", "x3f"
+    };
+
+    for (const char* rawExtension : rawExtensions) {
+        if (extension == rawExtension) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+Glib::ustring findPairedJpegPreview(const Glib::ustring& rawPath)
+{
+    static constexpr const char* jpegExtensions[] = {
+        ".jpg", ".JPG", ".jpeg", ".JPEG"
+    };
+
+    const Glib::ustring base = removeExtension(rawPath);
+
+    for (const char* jpegExtension : jpegExtensions) {
+        const Glib::ustring candidate = base + jpegExtension;
+
+        if (candidate != rawPath && Glib::file_test(candidate, Glib::FILE_TEST_IS_REGULAR)) {
+            return candidate;
+        }
+    }
+
+    return {};
+}
 
 bool CPBDump(
     const Glib::ustring& commFName,
@@ -143,6 +198,10 @@ void getRankAndColorFromMetadata(
         rank = rtengine::LIM(cfs.getRating(), 0, 5);
         color = rtengine::LIM(cfs.getColorLabel(), 0, 5);
         setHasMetadataFlags(true, true);
+        return;
+    }
+    if (cfs.exifAbsentKnown) {
+        setHasMetadataFlags(false, false);
         return;
     }
     const std::unique_ptr<const rtengine::FramesMetaData> md(rtengine::FramesMetaData::fromFile(fname));
@@ -285,9 +344,10 @@ bool getColorFromXmpOrNone(
 
 using namespace rtengine::procparams;
 
-Thumbnail::Thumbnail(CacheManager* cm, const Glib::ustring& fname, CacheImageData* cf) :
+Thumbnail::Thumbnail(CacheManager* cm, const Glib::ustring& fname, CacheImageData* cf, const Glib::ustring& cacheBaseName) :
     fname(fname),
     cfs(*cf),
+    cacheBaseName_(cacheBaseName),
     cachemgr(cm),
     ref(1),
     enqueueNumber(0),
@@ -302,11 +362,9 @@ Thumbnail::Thumbnail(CacheManager* cm, const Glib::ustring& fname, CacheImageDat
     initial_(false)
 {
 
-    loadProcParams ();
+    loadProcParams (false);
 
-    // should be safe to use the unprotected version of loadThumbnail, since we are in the constructor
-    _loadThumbnail ();
-    generateExifDateTimeStrings ();
+    initCachedThumbnailSize ();
 
     if (cfs.rankOld >= 0) {
         // rank and inTrash were found in cache (old style), move them over to pparams or xmp sidecar
@@ -326,8 +384,30 @@ Thumbnail::Thumbnail(CacheManager* cm, const Glib::ustring& fname, CacheImageDat
     tpp = nullptr;
 }
 
-Thumbnail::Thumbnail(CacheManager* cm, const Glib::ustring& fname, const std::string& md5, const std::string &xmpSidecarMd5) :
+void Thumbnail::initCachedThumbnailSize()
+{
+    const auto& options = App::get().options();
+    tw = options.maxThumbnailWidth;
+    th = options.maxThumbnailHeight;
+    imgRatio = -1.f;
+
+    if (cfs.width <= 0 || cfs.height <= 0) {
+        return;
+    }
+
+    const auto& pparams = getProcParamsU();
+    if (pparams.coarse.rotate == 90 || pparams.coarse.rotate == 270) {
+        imgRatio = static_cast<float>(cfs.height) / static_cast<float>(cfs.width);
+    } else {
+        imgRatio = static_cast<float>(cfs.width) / static_cast<float>(cfs.height);
+    }
+
+    tw = std::max(static_cast<int>(imgRatio * static_cast<float>(th)), 1);
+}
+
+Thumbnail::Thumbnail(CacheManager* cm, const Glib::ustring& fname, const std::string& md5, const std::string &xmpSidecarMd5, const Glib::ustring& cacheBaseName) :
     fname(fname),
+    cacheBaseName_(cacheBaseName),
     cachemgr(cm),
     ref(1),
     enqueueNumber(0),
@@ -345,7 +425,7 @@ Thumbnail::Thumbnail(CacheManager* cm, const Glib::ustring& fname, const std::st
 
     cfs.md5 = md5;
     cfs.xmpSidecarMd5 = xmpSidecarMd5;
-    loadProcParams ();
+    loadProcParams (false);
     _generateThumbnailImage ();
     cfs.recentlySaved = false;
 
@@ -364,6 +444,15 @@ Glib::ustring Thumbnail::xmpSidecarPath(const Glib::ustring &imagePath)
 
 void Thumbnail::_generateThumbnailImage()
 {
+    const bool bench = thumbnailBenchEnabled();
+    const auto benchStart = bench ? ThumbnailBenchClock::now() : ThumbnailBenchClock::time_point{};
+    long long imageProbeMs = 0;
+    long long quickRawMs = 0;
+    long long fullRawMs = 0;
+    long long infoMs = 0;
+    long long saveMs = 0;
+    bool quick = false;
+
     //  delete everything loaded into memory
     delete tpp;
     tpp = nullptr;
@@ -375,7 +464,7 @@ void Thumbnail::_generateThumbnailImage()
     imgRatio = -1.;
 
     // generate thumbnail image
-    const std::string ext = getExtension(fname).lowercase();
+    const std::string ext = getExtension(fname).lowercase().raw();
 
     if (ext.empty()) {
         return;
@@ -385,12 +474,24 @@ void Thumbnail::_generateThumbnailImage()
     cfs.exifValid = false;
     cfs.timeValid = false;
 
-    // this will load formats supported by imagio (jpg, png, jxl, and tiff)
-    tpp = rtengine::Thumbnail::loadFromImage(fname, tw, th, -1, pparams->wb.equal, pparams->wb.observer);
+    // This loads formats supported by imagio (jpg, png, jxl, and tiff).
+    // Known RAW originals can skip this guaranteed-fail probe and go straight
+    // to the RAW embedded-preview loader.
+    if (!isRawOriginalExtension(ext)) {
+        const auto stageStart = bench ? ThumbnailBenchClock::now() : ThumbnailBenchClock::time_point{};
+        tpp = rtengine::Thumbnail::loadFromImage(fname, tw, th, -1, pparams->wb.equal, pparams->wb.observer);
+        if (bench) {
+            imageProbeMs = thumbnailBenchMs(stageStart, ThumbnailBenchClock::now());
+        }
+    }
 
     if (tpp) {
         cfs.format = FT_Custom;
+        const auto stageStart = bench ? ThumbnailBenchClock::now() : ThumbnailBenchClock::time_point{};
         infoFromImage(fname);
+        if (bench) {
+            infoMs += thumbnailBenchMs(stageStart, ThumbnailBenchClock::now());
+        }
     }
 
     if (!tpp) {
@@ -398,18 +499,36 @@ void Thumbnail::_generateThumbnailImage()
         //  1. if we are here it's because we aren't in the cache so load the JPG
         //     image out of the RAW. Mark as "quick".
         //  2. if we don't find that then just grab the real image.
-        bool quick = false;
-
         rtengine::eSensorType sensorType = rtengine::ST_NONE;
 
         if (initial_ && options.internalThumbIfUntouched) {
             quick = true;
+            const auto stageStart = bench ? ThumbnailBenchClock::now() : ThumbnailBenchClock::time_point{};
             tpp = rtengine::Thumbnail::loadQuickFromRaw(fname, sensorType, tw, th, 1, TRUE);
+            if (bench) {
+                quickRawMs = thumbnailBenchMs(stageStart, ThumbnailBenchClock::now());
+            }
+        }
+
+        if (!tpp && quick) {
+            const Glib::ustring pairedJpegPreview = findPairedJpegPreview(fname);
+
+            if (!pairedJpegPreview.empty()) {
+                const auto stageStart = bench ? ThumbnailBenchClock::now() : ThumbnailBenchClock::time_point{};
+                tpp = rtengine::Thumbnail::loadFromImage(pairedJpegPreview, tw, th, -1, pparams->wb.equal, pparams->wb.observer);
+                if (bench) {
+                    quickRawMs += thumbnailBenchMs(stageStart, ThumbnailBenchClock::now());
+                }
+            }
         }
 
         if (!tpp) {
             quick = false;
+            const auto stageStart = bench ? ThumbnailBenchClock::now() : ThumbnailBenchClock::time_point{};
             tpp = rtengine::Thumbnail::loadFromRaw(fname, sensorType, tw, th, 1, pparams->wb.equal, pparams->wb.observer, TRUE, &(pparams->raw));
+            if (bench) {
+                fullRawMs = thumbnailBenchMs(stageStart, ThumbnailBenchClock::now());
+            }
         }
 
         cfs.sensortype = sensorType;
@@ -417,7 +536,11 @@ void Thumbnail::_generateThumbnailImage()
         if (tpp) {
             cfs.format = FT_Raw;
             cfs.thumbImgType = quick ? CacheImageData::QUICK_THUMBNAIL : CacheImageData::FULL_THUMBNAIL;
+            const auto stageStart = bench ? ThumbnailBenchClock::now() : ThumbnailBenchClock::time_point{};
             infoFromImage(fname);
+            if (bench) {
+                infoMs += thumbnailBenchMs(stageStart, ThumbnailBenchClock::now());
+            }
 
             if (!quick) {
                 cfs.width = tpp->full_width;
@@ -428,12 +551,37 @@ void Thumbnail::_generateThumbnailImage()
 
     if (tpp) {
         tpp->getAutoWBMultipliers(cfs.redAWBMul, cfs.greenAWBMul, cfs.blueAWBMul);
-        _saveThumbnail();
+        const Glib::ustring cacheDataName = getCacheFileName("data", ".txt");
+        const auto stageStart = bench ? ThumbnailBenchClock::now() : ThumbnailBenchClock::time_point{};
+        cachemgr->invalidateMD5(cacheDataName);
+        _saveThumbnail(false);
         cfs.supported = true;
 
-        cfs.save(getCacheFileName("data", ".txt"));
+        cfs.save(cacheDataName, tpp);
+        cachemgr->invalidateMD5(cacheDataName);
+        if (bench) {
+            saveMs = thumbnailBenchMs(stageStart, ThumbnailBenchClock::now());
+        }
 
-        generateExifDateTimeStrings();
+        invalidateExifDateTimeStrings();
+    }
+
+    if (bench) {
+        std::fprintf(
+            stdout,
+            "RT_THUMBNAIL_BENCH total_ms=%lld image_ms=%lld quickraw_ms=%lld fullraw_ms=%lld info_ms=%lld save_ms=%lld raw=%d quick=%d supported=%d ext=%s file=\"%s\"\n",
+            thumbnailBenchMs(benchStart, ThumbnailBenchClock::now()),
+            imageProbeMs,
+            quickRawMs,
+            fullRawMs,
+            infoMs,
+            saveMs,
+            static_cast<int>(cfs.format == FT_Raw),
+            static_cast<int>(quick),
+            static_cast<int>(tpp != nullptr),
+            ext.c_str(),
+            fname.c_str());
+        std::fflush(stdout);
     }
 }
 
@@ -514,12 +662,16 @@ rtengine::procparams::ProcParams* Thumbnail::createProcParamsForUpdate(bool retu
                     : nullptr,
                 pp_deleter
             );
+            cachemgr->invalidateMD5(outFName);
             if (pp && !pp->pparams->save(outFName)) {
+                cachemgr->invalidateMD5(outFName);
                 loadProcParams();
             }
         } else if (create && defProf != DEFPROFILE_DYNAMIC) {
             const PartialProfile* const p = ProfileStore::getInstance()->getProfile(defProf);
+            cachemgr->invalidateMD5(outFName);
             if (p && !p->pparams->save(outFName)) {
+                cachemgr->invalidateMD5(outFName);
                 loadProcParams();
             }
         }
@@ -542,6 +694,7 @@ rtengine::procparams::ProcParams* Thumbnail::createProcParamsForUpdate(bool retu
 
         // Now they SHOULD be there (and potentially "partial"), so try to load them and store it as a full procparam
         if (success) {
+            cachemgr->invalidateMD5(outFName);
             loadProcParams();
         }
 
@@ -570,30 +723,45 @@ void Thumbnail::notifylisterners_procParamsChanged(int whoChangedIt)
  * The result is a complete ProcParams with default values merged with the values
  * from the loaded ProcParams (sidecar or cache file).
 */
-void Thumbnail::loadProcParams()
+void Thumbnail::loadProcParams(bool resetToDefaults)
 {
     MyMutex::MyLock lock(mutex);
 
     pparamsValid = false;
-    pparams->setDefaults();
+    if (resetToDefaults) {
+        pparams->setDefaults();
+    }
+
+    auto loadProfile = [this](const Glib::ustring& profileName, bool requireModernVersion) -> bool {
+        bool fileExistsKnown = false;
+        const bool presenceKnown = cachemgr->getKnownFilePresence(profileName, fileExistsKnown);
+        if (presenceKnown && !fileExistsKnown) {
+            return false;
+        }
+
+        const int ppres = pparams->load(profileName, nullptr, presenceKnown && fileExistsKnown);
+        return !ppres && (!requireModernVersion || pparams->ppVersion >= 220);
+    };
+
+    auto loadCacheProfile = [this, &loadProfile]() -> bool {
+        return loadProfile(getCacheFileName("profiles", App::PARAM_FILE_EXTENSION), false);
+    };
 
     if (App::get().options().paramsLoadLocation == PLL_Input) {
         // try to load it from params file next to the image file
-        const int ppres = pparams->load(fname + App::PARAM_FILE_EXTENSION);
-        pparamsValid = !ppres && pparams->ppVersion >= 220;
+        pparamsValid = loadProfile(fname + App::PARAM_FILE_EXTENSION, true);
 
         // if no success, try to load the cached version of the procparams
         if (!pparamsValid) {
-            pparamsValid = !pparams->load(getCacheFileName("profiles", App::PARAM_FILE_EXTENSION));
+            pparamsValid = loadCacheProfile();
         }
     } else {
         // try to load it from cache
-        pparamsValid = !pparams->load(getCacheFileName("profiles", App::PARAM_FILE_EXTENSION));
+        pparamsValid = loadCacheProfile();
 
         // if no success, try to load it from params file next to the image file
         if (!pparamsValid) {
-            const int ppres = pparams->load(fname + App::PARAM_FILE_EXTENSION);
-            pparamsValid = !ppres && pparams->ppVersion >= 220;
+            pparamsValid = loadProfile(fname + App::PARAM_FILE_EXTENSION, true);
         }
     }
 }
@@ -632,13 +800,16 @@ void Thumbnail::clearProcParams (int whoClearedIt)
             // remove param file from cache
             Glib::ustring fname_ = getCacheFileName ("profiles", App::PARAM_FILE_EXTENSION);
             g_remove (fname_.c_str ());
+            cachemgr->invalidateMD5(fname_);
 
             // remove param file located next to the file
             fname_ = fname + App::PARAM_FILE_EXTENSION;
             g_remove (fname_.c_str ());
+            cachemgr->invalidateMD5(fname_);
 
             fname_ = removeExtension(fname) + App::PARAM_FILE_EXTENSION;
             g_remove (fname_.c_str ());
+            cachemgr->invalidateMD5(fname_);
 
             if (cfs.format == FT_Raw && App::get().options().internalThumbIfUntouched && cfs.thumbImgType != CacheImageData::QUICK_THUMBNAIL) {
                 // regenerate thumbnail, ie load the quick thumb again. For the rare formats not supporting quick thumbs this will
@@ -756,10 +927,16 @@ void Thumbnail::imageDeveloped ()
 {
 
     cfs.recentlySaved = true;
-    cfs.save (getCacheFileName ("data", ".txt"));
+    const Glib::ustring cacheDataName = getCacheFileName ("data", ".txt");
+    cachemgr->invalidateMD5(cacheDataName);
+    cfs.save (cacheDataName);
+    cachemgr->invalidateMD5(cacheDataName);
 
     if (App::get().options().saveParamsCache) {
-        pparams->save (getCacheFileName ("profiles", App::PARAM_FILE_EXTENSION));
+        const Glib::ustring profileName = getCacheFileName ("profiles", App::PARAM_FILE_EXTENSION);
+        cachemgr->invalidateMD5(profileName);
+        pparams->save (profileName);
+        cachemgr->invalidateMD5(profileName);
     }
 }
 
@@ -896,11 +1073,8 @@ void Thumbnail::getOriginalSize (int& w, int& h) const
     h = th;
 }
 
-rtengine::IImage8* Thumbnail::processThumbImage (const rtengine::procparams::ProcParams& pparams, int h, double& scale)
+rtengine::IImage8* Thumbnail::processThumbImageLocked (const rtengine::procparams::ProcParams& pparams, int h, double& scale, bool cachePixbuf)
 {
-
-    MyMutex::MyLock lock(mutex);
-
     if (!tpp) {
         _loadThumbnail();
 
@@ -922,13 +1096,13 @@ rtengine::IImage8* Thumbnail::processThumbImage (const rtengine::procparams::Pro
     tpp->getDimensions(lastW, lastH, lastScale);
 
     // Cache a Pixbuf copy for instant editor preview on image switch.
-    if (image) {
-        int tw = image->getWidth(), th = image->getHeight();
-        if (tw > 0 && th > 0 && image->getData()) {
+    if (cachePixbuf && image) {
+        int pixW = image->getWidth(), pixH = image->getHeight();
+        if (pixW > 0 && pixH > 0 && image->getData()) {
             auto pb = Gdk::Pixbuf::create_from_data(
-                image->getData(), Gdk::COLORSPACE_RGB, false, 8, tw, th, tw * 3);
+                image->getData(), Gdk::COLORSPACE_RGB, false, 8, pixW, pixH, pixW * 3);
             cachedPixbuf_ = pb->copy();
-            cachedPixbufScale_ = scale;
+            cachedPixbufScale_ = tw > 0 ? static_cast<double>(tw) / pixW : scale;
         }
     }
 
@@ -937,11 +1111,73 @@ rtengine::IImage8* Thumbnail::processThumbImage (const rtengine::procparams::Pro
     return image;
 }
 
-rtengine::IImage8* Thumbnail::upgradeThumbImage (const rtengine::procparams::ProcParams& pparams, int h, double& scale, bool forceUpgrade)
+Glib::RefPtr<Gdk::Pixbuf> Thumbnail::tryLoadCachedPreviewPixbuf(int h, double& scale)
 {
-
     MyMutex::MyLock lock(mutex);
 
+    if (cachedPixbuf_) {
+        scale = cachedPixbufScale_;
+        return cachedPixbuf_;
+    }
+
+    if (!tpp) {
+        _loadThumbnail(false);
+
+        if (!tpp) {
+            scale = 1.0;
+            return {};
+        }
+    }
+
+    rtengine::IImage8* image = nullptr;
+
+    if (cfs.thumbImgType == CacheImageData::QUICK_THUMBNAIL) {
+        image = tpp->quickProcessImage(getProcParamsU(), h, rtengine::TI_Nearest);
+    } else {
+        image = tpp->processImage(getProcParamsU(), static_cast<rtengine::eSensorType>(cfs.sensortype), h, rtengine::TI_Bilinear, &cfs, scale);
+    }
+
+    tpp->getDimensions(lastW, lastH, lastScale);
+    delete tpp;
+    tpp = nullptr;
+
+    if (!image) {
+        scale = 1.0;
+        return {};
+    }
+
+    const int pixW = image->getWidth();
+    const int pixH = image->getHeight();
+    if (pixW > 0 && pixH > 0 && image->getData()) {
+        auto pb = Gdk::Pixbuf::create_from_data(
+            image->getData(), Gdk::COLORSPACE_RGB, false, 8, pixW, pixH, pixW * 3);
+        cachedPixbuf_ = pb->copy();
+        cachedPixbufScale_ = tw > 0 ? static_cast<double>(tw) / pixW : scale;
+        scale = cachedPixbufScale_;
+    }
+
+    delete image;
+    return cachedPixbuf_;
+}
+
+rtengine::IImage8* Thumbnail::processThumbImage (const rtengine::procparams::ProcParams& pparams, int h, double& scale, bool cachePixbuf)
+{
+    MyMutex::MyLock lock(mutex);
+    return processThumbImageLocked(pparams, h, scale, cachePixbuf);
+}
+
+rtengine::IImage8* Thumbnail::processThumbImage (int h, double& scale, rtengine::procparams::CropParams* crop, bool cachePixbuf)
+{
+    MyMutex::MyLock lock(mutex);
+    const auto& pparams = getProcParamsU();
+    if (crop) {
+        *crop = pparams.crop;
+    }
+    return processThumbImageLocked(pparams, h, scale, cachePixbuf);
+}
+
+rtengine::IImage8* Thumbnail::upgradeThumbImageLocked (const rtengine::procparams::ProcParams& pparams, int h, double& scale, bool forceUpgrade, bool cachePixbuf)
+{
     if ( cfs.thumbImgType != CacheImageData::QUICK_THUMBNAIL && !forceUpgrade ) {
         return nullptr;
     }
@@ -956,13 +1192,45 @@ rtengine::IImage8* Thumbnail::upgradeThumbImage (const rtengine::procparams::Pro
     rtengine::IImage8* image = tpp->processImage (pparams, static_cast<rtengine::eSensorType>(cfs.sensortype), h, rtengine::TI_Bilinear, &cfs, scale );
     tpp->getDimensions(lastW, lastH, lastScale);
 
+    if (cachePixbuf && image) {
+        int pixW = image->getWidth(), pixH = image->getHeight();
+        if (pixW > 0 && pixH > 0 && image->getData()) {
+            auto pb = Gdk::Pixbuf::create_from_data(
+                image->getData(), Gdk::COLORSPACE_RGB, false, 8, pixW, pixH, pixW * 3);
+            cachedPixbuf_ = pb->copy();
+            cachedPixbufScale_ = tw > 0 ? static_cast<double>(tw) / pixW : scale;
+        }
+    }
+
     delete tpp;
     tpp = nullptr;
     return image;
 }
 
-void Thumbnail::generateExifDateTimeStrings ()
+rtengine::IImage8* Thumbnail::upgradeThumbImage (const rtengine::procparams::ProcParams& pparams, int h, double& scale, bool forceUpgrade, bool cachePixbuf)
 {
+    MyMutex::MyLock lock(mutex);
+    return upgradeThumbImageLocked(pparams, h, scale, forceUpgrade, cachePixbuf);
+}
+
+rtengine::IImage8* Thumbnail::upgradeThumbImage (int h, double& scale, bool forceUpgrade, rtengine::procparams::CropParams* crop, bool cachePixbuf)
+{
+    MyMutex::MyLock lock(mutex);
+    const auto& pparams = getProcParamsU();
+    if (crop) {
+        *crop = pparams.crop;
+    }
+    return upgradeThumbImageLocked(pparams, h, scale, forceUpgrade, cachePixbuf);
+}
+
+void Thumbnail::generateExifDateTimeStrings () const
+{
+    if (exifDateTimeStringsValid_) {
+        return;
+    }
+
+    exifDateTimeStringsValid_ = true;
+
     const auto& options = App::get().options();
     if (cfs.timeValid) {
         std::string dateFormat = options.dateFormat;
@@ -1012,21 +1280,26 @@ void Thumbnail::generateExifDateTimeStrings ()
     }
 }
 
+void Thumbnail::invalidateExifDateTimeStrings () const
+{
+    exifDateTimeStringsValid_ = false;
+}
+
 const Glib::ustring& Thumbnail::getExifString () const
 {
-
+    generateExifDateTimeStrings();
     return exifString;
 }
 
 const Glib::ustring& Thumbnail::getDateTimeString () const
 {
-
+    generateExifDateTimeStrings();
     return dateTimeString;
 }
 
 const Glib::DateTime& Thumbnail::getDateTime () const
 {
-
+    generateExifDateTimeStrings();
     return dateTime;
 }
 
@@ -1064,6 +1337,7 @@ int Thumbnail::infoFromImage(const Glib::ustring &fname, CacheImageData &cfs)
     int deg = 0;
     cfs.timeValid = false;
     cfs.exifValid = false;
+    cfs.exifAbsentKnown = false;
 
     if (idata->getDateTimeAsTS() > 0) {
         cfs.year         = 1900 + idata->getDateTime().tm_year;
@@ -1093,6 +1367,7 @@ int Thumbnail::infoFromImage(const Glib::ustring &fname, CacheImageData &cfs)
         cfs.rating       = idata->getRating();
         cfs.colorLabel   = idata->getColorLabel();
         cfs.exifValid    = true;
+        cfs.exifAbsentKnown = false;
 
         if (idata->getOrientation() == "Rotate 90 CW") {
             deg = 90;
@@ -1105,7 +1380,9 @@ int Thumbnail::infoFromImage(const Glib::ustring &fname, CacheImageData &cfs)
         cfs.lens     = "Unknown";
         cfs.camMake  = "Unknown";
         cfs.camModel = "Unknown";
+        cfs.exifAbsentKnown = true;
     }
+    cfs.updateCameraName();
 
     // get image filetype
     std::string::size_type idx;
@@ -1116,6 +1393,7 @@ int Thumbnail::infoFromImage(const Glib::ustring &fname, CacheImageData &cfs)
     } else {
         cfs.filetype = "";
     }
+    cfs.updateFiletypeUpper();
 
     idata->getDimensions(cfs.width, cfs.height);
 
@@ -1140,14 +1418,20 @@ void Thumbnail::_loadThumbnail(bool firstTrial)
     tpp->isRaw = (cfs.format == (int) FT_Raw);
 
     // load supplementary data
-    bool succ = tpp->readData (getCacheFileName ("data", ".txt"));
+    bool succ = tpp->readData(getCacheFileName ("data", ".txt"));
 
     if (succ) {
         tpp->getAutoWBMultipliers(cfs.redAWBMul, cfs.greenAWBMul, cfs.blueAWBMul);
     }
 
     // thumbnail image
-    succ = succ && tpp->readImage (getCacheFileName ("images", ""));
+    if (succ) {
+        const Glib::ustring imageCacheName = getCacheFileName("images", ".rtti");
+        bool imageCachePresent = false;
+        const bool imageCachePresenceKnown = cachemgr->getKnownFilePresence(imageCacheName, imageCachePresent);
+        succ = (!imageCachePresenceKnown || imageCachePresent)
+            && tpp->readImageFile(imageCacheName);
+    }
 
     if (!succ && firstTrial) {
         _generateThumbnailImage ();
@@ -1167,7 +1451,12 @@ void Thumbnail::_loadThumbnail(bool firstTrial)
 
     if ( cfs.thumbImgType == CacheImageData::FULL_THUMBNAIL ) {
         // load embedded profile
-        tpp->readEmbProfile (getCacheFileName ("embprofiles", ".icc"));
+        const Glib::ustring embProfileName = getCacheFileName("embprofiles", ".icc");
+        bool embProfilePresent = false;
+        const bool embProfilePresenceKnown = cachemgr->getKnownFilePresence(embProfileName, embProfilePresent);
+        if (!embProfilePresenceKnown || embProfilePresent) {
+            tpp->readEmbProfile(embProfileName);
+        }
 
         tpp->init ();
     }
@@ -1185,23 +1474,34 @@ void Thumbnail::_loadThumbnail(bool firstTrial)
  *  - embedded profile (full thumbnail only)
  *  - LiveThumbData section of the data file
  */
-void Thumbnail::_saveThumbnail ()
+void Thumbnail::_saveThumbnail (bool saveLiveThumbData)
 {
 
     if (!tpp) {
         return;
     }
 
-    g_remove (getCacheFileName ("images", ".rtti").c_str ());
+    const Glib::ustring imageCacheName = getCacheFileName ("images", ".rtti");
+    cachemgr->invalidateMD5(imageCacheName);
+    g_remove (imageCacheName.c_str ());
 
     // save thumbnail image
-    tpp->writeImage (getCacheFileName ("images", ""));
+    tpp->writeImageFile (imageCacheName);
+    cachemgr->invalidateMD5(imageCacheName);
 
     // save embedded profile
-    tpp->writeEmbProfile (getCacheFileName ("embprofiles", ".icc"));
+    const Glib::ustring embProfileName = getCacheFileName ("embprofiles", ".icc");
+    cachemgr->invalidateMD5(embProfileName);
+    tpp->writeEmbProfile (embProfileName);
+    cachemgr->invalidateMD5(embProfileName);
 
-    // save supplementary data
-    tpp->writeData (getCacheFileName ("data", ".txt"));
+    if (saveLiveThumbData) {
+        // save supplementary data
+        const Glib::ustring cacheDataName = getCacheFileName ("data", ".txt");
+        cachemgr->invalidateMD5(cacheDataName);
+        tpp->writeData (cacheDataName);
+        cachemgr->invalidateMD5(cacheDataName);
+    }
 }
 
 /*
@@ -1230,15 +1530,32 @@ void Thumbnail::updateCache (bool updatePParams, bool updateCacheImageData)
 
     if (updatePParams && pparamsValid) {
         const auto& options = App::get().options();
+        const Glib::ustring fileProfileName = options.saveParamsFile ? fname + App::PARAM_FILE_EXTENSION : "";
+        const Glib::ustring cacheProfileName = options.saveParamsCache ? getCacheFileName ("profiles", App::PARAM_FILE_EXTENSION) : "";
+        if (!fileProfileName.empty()) {
+            cachemgr->invalidateMD5(fileProfileName);
+        }
+        if (!cacheProfileName.empty()) {
+            cachemgr->invalidateMD5(cacheProfileName);
+        }
         pparams->save (
-            options.saveParamsFile  ? fname + App::PARAM_FILE_EXTENSION : "",
-            options.saveParamsCache ? getCacheFileName ("profiles", App::PARAM_FILE_EXTENSION) : "",
+            fileProfileName,
+            cacheProfileName,
             true
         );
+        if (!fileProfileName.empty()) {
+            cachemgr->invalidateMD5(fileProfileName);
+        }
+        if (!cacheProfileName.empty()) {
+            cachemgr->invalidateMD5(cacheProfileName);
+        }
     }
 
     if (updateCacheImageData) {
-        cfs.save (getCacheFileName ("data", ".txt"));
+        const Glib::ustring cacheDataName = getCacheFileName ("data", ".txt");
+        cachemgr->invalidateMD5(cacheDataName);
+        cfs.save (cacheDataName);
+        cachemgr->invalidateMD5(cacheDataName);
     }
 
     if (updatePParams && pparamsValid) {
@@ -1259,7 +1576,7 @@ Thumbnail::~Thumbnail ()
 
 Glib::ustring Thumbnail::getCacheFileName (const Glib::ustring& subdir, const Glib::ustring& fext) const
 {
-    return cachemgr->getCacheFileName (subdir, fname, fext, cfs.md5);
+    return cachemgr->getCacheFileNameForBase (subdir, cacheBaseName_, fext);
 }
 
 void Thumbnail::setFileName (const Glib::ustring &fn)
@@ -1267,6 +1584,7 @@ void Thumbnail::setFileName (const Glib::ustring &fn)
 
     fname = fn;
     cfs.md5 = ::getMD5 (fname);
+    cacheBaseName_ = Glib::path_get_basename(fname) + "." + cfs.md5;
 }
 
 int Thumbnail::getRank() const
@@ -1325,6 +1643,18 @@ void Thumbnail::removeThumbnailListener (ThumbnailListener* tnl)
         listeners.erase (f);
         decreaseRef();
     }
+}
+
+bool Thumbnail::removeThumbnailListenerNoRelease (ThumbnailListener* tnl)
+{
+    std::vector<ThumbnailListener*>::iterator f = std::find (listeners.begin(), listeners.end(), tnl);
+
+    if (f == listeners.end()) {
+        return false;
+    }
+
+    listeners.erase(f);
+    return true;
 }
 
 // Calculates the standard filename for the automatically named batch result
@@ -1425,11 +1755,9 @@ void Thumbnail::loadProperties()
 {
     properties = Properties();
 
-    // get initial rank and color from cache or image metadata
-    getRankAndColorFromMetadata(
-        cfs, fname, properties.rank.value, properties.color.value, nullptr, nullptr);
-
     const auto& options = App::get().options();
+    bool needMetadataRank = true;
+    bool needMetadataColor = true;
 
     // update rank and color from procparams or xmp sidecar
     // load trash from procparams
@@ -1437,23 +1765,48 @@ void Thumbnail::loadProperties()
         if (options.thumbnailRankColorMode == Options::ThumbnailPropertyMode::PROCPARAMS) {
             if (pparams->rank >= 0) {
                 properties.rank.value = pparams->rank;
+                needMetadataRank = false;
             }
         }
 
         properties.trashed.value = pparams->inTrash;
         properties.color.value = pparams->colorlabel;
         properties.pick.value = pparams->pickLabel;
+        needMetadataColor = false;
     }
 
-    if (options.thumbnailRankColorMode == Options::ThumbnailPropertyMode::XMP) {
+    const bool sidecarPresenceKnown =
+        rtengine::settings->metadata_xmp_sync != rtengine::Settings::MetadataXmpSync::NONE;
+    const bool shouldLoadXmpSidecar =
+        options.thumbnailRankColorMode == Options::ThumbnailPropertyMode::XMP
+        && (!sidecarPresenceKnown || !cfs.xmpSidecarMd5.empty());
+
+    if (shouldLoadXmpSidecar) {
         try {
             auto xmp = rtengine::Exiv2Metadata::getXmpSidecar(fname);
-            getRankFromXmp(xmp, properties.rank.value);
-            getColorFromXmp(xmp, properties.color.value);
+            if (getRankFromXmp(xmp, properties.rank.value)) {
+                needMetadataRank = false;
+            }
+            if (getColorFromXmp(xmp, properties.color.value)) {
+                needMetadataColor = false;
+            }
         } catch (std::exception &exc) {
             std::cerr << "ERROR loading thumbnail properties data from "
                       << rtengine::Exiv2Metadata::xmpSidecarPath(fname)
                       << ": " << exc.what() << std::endl;
+        }
+    }
+
+    if (needMetadataRank || needMetadataColor) {
+        int metadataRank = properties.rank.value;
+        int metadataColor = properties.color.value;
+        getRankAndColorFromMetadata(
+            cfs, fname, metadataRank, metadataColor, nullptr, nullptr);
+        if (needMetadataRank) {
+            properties.rank.value = metadataRank;
+        }
+        if (needMetadataColor) {
+            properties.color.value = metadataColor;
         }
     }
 }

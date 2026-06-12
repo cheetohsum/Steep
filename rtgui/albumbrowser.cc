@@ -27,7 +27,6 @@
 #include "multilangmgr.h"
 #include "options.h"
 #include "pathutils.h"
-#include "rtimage.h"
 #include "thumbnail.h"
 #include "../rtengine/procparams.h"
 
@@ -183,7 +182,7 @@ AlbumBrowser::AlbumBrowser ()
     // "+" button with dropdown menu
     Gtk::MenuButton* addBtn = Gtk::manage(new Gtk::MenuButton());
     addBtn->set_name("AlbumAddBtn");
-    addBtn->set_image(*Gtk::manage(new RTImage("add-place", Gtk::ICON_SIZE_MENU)));
+    addBtn->set_label("+");
     addBtn->set_relief(Gtk::RELIEF_NONE);
     addBtn->set_tooltip_text(M("ALBUM_CREATE_TOOLTIP"));
 
@@ -215,22 +214,6 @@ AlbumBrowser::AlbumBrowser ()
     headerBar->pack_end(*addBtn, Gtk::PACK_SHRINK);
     headerBar->pack_end(*closeAlbumBtn_, Gtk::PACK_SHRINK);
 
-    auto css = Gtk::CssProvider::create();
-    css->load_from_data(
-        "#AlbumHeader { min-height: 0; padding: 0 4px; }"
-        "#AlbumHeader label { font-size: 11.5px; font-weight: bold; padding: 2px 0; margin: 0; }"
-        "#AlbumAddBtn { min-height: 0; min-width: 0; padding: 0; margin: 0; }"
-        "#AlbumCloseBtn { min-height: 0; min-width: 0; padding: 0 4px; margin: 0; font-size: 12px; color: #e88; }"
-        "#AlbumCloseBtn:hover { color: #f66; }"
-        "#AlbumBrowserTree { font-size: 1.058em; }"
-        "#AlbumBrowserTree header { min-height: 0; padding: 0; }"
-        "#AlbumNewBtn { min-height: 0; min-width: 0; padding: 1px 4px; margin: 0; font-size: 0.85em; }"
-    );
-    headerBar->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-    headerLabel->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-    addBtn->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-    closeAlbumBtn_->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-
     pack_start(*headerBar, Gtk::PACK_SHRINK, 0);
 
     // Scrolled tree view
@@ -243,7 +226,6 @@ AlbumBrowser::AlbumBrowser ()
     treeView_ = Gtk::manage(new AlbumTreeView());
     treeView_->set_name("AlbumBrowserTree");
     treeView_->set_headers_visible(false);
-    treeView_->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
 
     // Hover highlighting: set_hover_selection(true) is required for motion
     // events to reach the bin_window (and thus the virtual override).
@@ -294,13 +276,7 @@ AlbumBrowser::AlbumBrowser ()
     treeView_->set_show_expanders(false);
     treeView_->set_level_indentation(12);
 
-    // Pre-load folder icons; generate chevron rotation frames
-    {
-        auto theme = Gtk::IconTheme::get_default();
-        int iconSz = 16;
-        try { folderClosedPixbuf_ = theme->load_icon("folder-closed-small", iconSz); } catch (...) {}
-        try { folderOpenPixbuf_ = theme->load_icon("folder-open-small", iconSz); } catch (...) {}
-    }
+    // Generate chevron rotation frames.
     chevronFrames_ = generateChevronFrames(6);
     chevronRightPixbuf_ = chevronFrames_.front();
     chevronDownPixbuf_ = chevronFrames_.back();
@@ -352,9 +328,7 @@ AlbumBrowser::AlbumBrowser ()
         auto* pbCR = static_cast<Gtk::CellRendererPixbuf*>(cr);
         int nodeType = (*iter)[columns_.nodeType];
         if (nodeType == static_cast<int>(AlbumNodeType::FOLDER)) {
-            auto path = model_->get_path(iter);
-            bool expanded = treeView_->row_expanded(path);
-            pbCR->property_pixbuf() = expanded ? folderOpenPixbuf_ : folderClosedPixbuf_;
+            pbCR->property_pixbuf().reset_value();
         } else {
             pbCR->property_pixbuf() = (*iter)[columns_.coverPixbuf];
         }
@@ -1596,7 +1570,7 @@ void AlbumBrowser::showContextMenu (GdkEventButton* event, int nodeId)
                                 Thumbnail* thm = CacheManager::getInstance()->getEntry(path);
                                 if (thm) {
                                     double scale = 1.0;
-                                    rtengine::IImage8* im = thm->processThumbImage(thm->getProcParams(), 64, scale);
+                                    rtengine::IImage8* im = thm->processThumbImage(64, scale);
                                     if (im) {
                                         auto pb = Gdk::Pixbuf::create_from_data(
                                             im->getData(), Gdk::COLORSPACE_RGB, false, 8,
@@ -1955,7 +1929,9 @@ bool loadExifForFile (const Glib::ustring& fpath, CacheImageData& cid)
             cid.rating = meta->getRating();
             cid.colorLabel = meta->getColorLabel();
         }
+        cid.updateCameraName();
         cid.filetype = getExtension(fpath).lowercase();
+        cid.updateFiletypeUpper();
         cid.supported = true;
         return true;
     } catch (...) {
@@ -2066,7 +2042,7 @@ void AlbumBrowser::loadCoverThumbnails(int session)
             Thumbnail* thm = CacheManager::getInstance()->getEntry(coverFile);
             if (thm) {
                 double scale = 1.0;
-                rtengine::IImage8* img = thm->processThumbImage(thm->getProcParams(), 32, scale);
+                rtengine::IImage8* img = thm->processThumbImage(32, scale);
                 if (img) {
                     auto pb = Gdk::Pixbuf::create_from_data(
                         img->getData(), Gdk::COLORSPACE_RGB, false, 8,

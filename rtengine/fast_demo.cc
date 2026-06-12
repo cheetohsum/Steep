@@ -62,14 +62,13 @@ void RawImageSource::fast_demosaic()
 {
 
     double progress = 0.0;
-    const bool plistenerActive = plistener;
 
     //int winx=0, winy=0;
     //int winw=W, winh=H;
 
-    if (plistener) {
-        plistener->setProgressStr (Glib::ustring::compose(M("TP_RAW_DMETHOD_PROGRESSBAR"), M("TP_RAW_FAST")));
-        plistener->setProgress (progress);
+    if (ProgressListener* progressListener = plistener) {
+        progressListener->setProgressStr (Glib::ustring::compose(M("TP_RAW_DMETHOD_PROGRESSBAR"), M("TP_RAW_FAST")));
+        progressListener->setProgress (progress);
     }
 
 
@@ -262,9 +261,9 @@ void RawImageSource::fast_demosaic()
         #pragma omp single
 #endif
         {
-            if(plistenerActive) {
+            if (ProgressListener* progressListener = plistener) {
                 progress += 0.1;
-                plistener->setProgress(progress);
+                progressListener->setProgress(progress);
             }
         }
         //%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -471,14 +470,16 @@ void RawImageSource::fast_demosaic()
 
                 }
 
-                if(plistenerActive && ((++progressCounter) % 16 == 0)) {
+                if((++progressCounter) % 16 == 0) {
 #ifdef _OPENMP
                     #pragma omp critical (updateprogress)
 #endif
                     {
-                        progress += progressInc;
-                        progress = min(1.0, progress);
-                        plistener->setProgress (progress);
+                        if (ProgressListener* progressListener = plistener) {
+                            progress += progressInc;
+                            progress = min(1.0, progress);
+                            progressListener->setProgress (progress);
+                        }
                     }
                 }
 
@@ -487,8 +488,8 @@ void RawImageSource::fast_demosaic()
         free(buffer);
     } // End of parallelization
 
-    if(plistenerActive) {
-        plistener->setProgress(1.00);
+    if (ProgressListener* progressListener = plistener) {
+        progressListener->setProgress(1.00);
     }
 
 

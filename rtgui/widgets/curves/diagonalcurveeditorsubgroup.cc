@@ -63,7 +63,9 @@ constexpr int kNumPresets = sizeof(kDiagonalPresets) / sizeof(kDiagonalPresets[0
 
 } // namespace
 
-DiagonalCurveEditorSubGroup::DiagonalCurveEditorSubGroup (CurveEditorGroup* prt, Glib::ustring& curveDir) : CurveEditorSubGroup(curveDir)
+DiagonalCurveEditorSubGroup::DiagonalCurveEditorSubGroup (CurveEditorGroup* prt, Glib::ustring& curveDir) :
+    CurveEditorSubGroup(curveDir),
+    fixedGraphSize_(0)
 {
     const auto& options = App::get().options();
 
@@ -383,14 +385,18 @@ DiagonalCurveEditorSubGroup::DiagonalCurveEditorSubGroup (CurveEditorGroup* prt,
     Gtk::Grid* presetRow = Gtk::manage(new Gtk::Grid());
     presetRow->set_orientation(Gtk::ORIENTATION_HORIZONTAL);
     presetRow->set_column_spacing(4);
-    setExpandAlignProperties(presetRow, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    setExpandAlignProperties(presetRow, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_CENTER);
+    presetRow->set_margin_start(6);
+    presetRow->set_margin_end(6);
 
     presetCombo_ = Gtk::manage(new Gtk::ComboBoxText());
     for (int i = 0; i < kNumPresets; ++i) {
         presetCombo_->append(M(kDiagonalPresets[i].langKey));
     }
     presetCombo_->set_active(0);
-    presetCombo_->set_hexpand(true);
+    presetCombo_->set_hexpand(false);
+    presetCombo_->set_halign(Gtk::ALIGN_FILL);
+    presetCombo_->set_size_request(168, -1);
 
     centerBtn_ = Gtk::manage(new Gtk::Button());
     centerBtn_->set_image(*Gtk::manage(new RTImage("crosshair-node-curve")));
@@ -915,8 +921,7 @@ void DiagonalCurveEditorSubGroup::switchGUI()
             NURBSCoordAdjuster->set_no_show_all(true);
             NURBSCoordAdjuster->hide();
 
-            // Restore full width for curve when button box is hidden
-            customCurve->set_hexpand(true);
+            customCurve->set_hexpand(fixedGraphSize_ <= 0);
         } else {
             // Re-show preset row, button boxes and coordinate adjusters when compact mode is off
             Gtk::Grid* presetRow = static_cast<Gtk::Grid*>(presetCombo_->get_parent());
@@ -941,8 +946,7 @@ void DiagonalCurveEditorSubGroup::switchGUI()
             }
             NURBSCoordAdjuster->set_no_show_all(false);
 
-            // Keep curve expanded so it doesn't shrink
-            customCurve->set_hexpand(true);
+            customCurve->set_hexpand(fixedGraphSize_ <= 0);
         }
 
         //dCurve->typeconn.block(false);
@@ -1632,9 +1636,19 @@ void DiagonalCurveEditorSubGroup::markPresetCustom()
 
 void DiagonalCurveEditorSubGroup::setCurveGraphSize(int size)
 {
-    customCurve->set_size_request(size, size);
-    NURBSCurve->set_size_request(size, size);
-    paramCurve->set_size_request(size, size);
+    fixedGraphSize_ = size;
+
+    auto applySize = [size](Gtk::Widget* curve) {
+        curve->set_size_request(size, size);
+        curve->set_hexpand(false);
+        curve->set_vexpand(false);
+        curve->set_halign(Gtk::ALIGN_CENTER);
+        curve->set_valign(Gtk::ALIGN_START);
+    };
+
+    applySize(customCurve);
+    applySize(NURBSCurve);
+    applySize(paramCurve);
 }
 
 void DiagonalCurveEditorSubGroup::updateBackgroundHistogram (CurveEditor* ce)

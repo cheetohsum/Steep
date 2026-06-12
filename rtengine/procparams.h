@@ -1800,17 +1800,17 @@ struct FilmPresetsParams {
     int saturation;         // -100..100
     int warmth;             // -100..100
     int tint;               // -100..100
-    int fade;               // 0..100
-    int rolloff;            // 0..100
+    int fade;               // -100..100
+    int rolloff;            // -100..100
     int shadowHue;          // 0..360
-    int shadowTint;         // 0..100
+    int shadowTint;         // -100..100
     int highlightHue;       // 0..360
-    int highlightTint;      // 0..100
-    int halation;           // 0..100
+    int highlightTint;      // -100..100
+    int halation;           // -100..100
     int redShift;           // -100..100
     int greenShift;         // -100..100
     int blueShift;          // -100..100
-    int grain;              // 0..100
+    int grain;              // -100..100
     int vibrance;           // -100..100
 
     FilmPresetsParams();
@@ -2170,7 +2170,7 @@ public:
       * @params pedited pointer to a ParamsEdited object (optional) to store which values has been loaded
       * @return Error code (=0 if no error)
       */
-    int load(const Glib::ustring& fname, ParamsEdited* pedited = nullptr);
+    int load(const Glib::ustring& fname, ParamsEdited* pedited = nullptr, bool fileExistsKnown = false);
 
     /** Creates a new instance of ProcParams.
       * @return a pointer to the new ProcParams instance. */

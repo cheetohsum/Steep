@@ -88,6 +88,7 @@ public:
     {
         return filename;
     }
+    std::string getDecoderName() const;
     int get_width()  const
     {
         return width;
@@ -116,6 +117,15 @@ public:
     int get_rawwidth() const
     {
         return raw_width;
+    }
+    int get_rawheight() const
+    {
+        return raw_height;
+    }
+
+    int get_tiff_bps() const
+    {
+        return tiff_bps;
     }
 
     int get_FujiWidth() const

@@ -35,7 +35,37 @@
 
 namespace {
 
+std::string stripSvgMetadata(std::string data)
+{
+    std::string::size_type pos = 0;
+
+    while ((pos = data.find("<metadata", pos)) != std::string::npos) {
+        const auto startEnd = data.find('>', pos);
+        if (startEnd == std::string::npos) {
+            break;
+        }
+
+        const auto end = data.find("</metadata>", startEnd + 1);
+        if (end == std::string::npos) {
+            break;
+        }
+
+        data.erase(pos, end + 11 - pos);
+    }
+
+    return data;
+}
+
 #ifdef SVG_BACKEND_RSVG
+
+struct RsvgHandleDeleter {
+    void operator()(RsvgHandle* handle) const
+    {
+        if (handle) {
+            g_object_unref(handle);
+        }
+    }
+};
 
 Cairo::RefPtr<Cairo::ImageSurface> renderWithRsvg(
     const std::string& data, int logical_width, int logical_height, int device_scale)
@@ -45,11 +75,16 @@ Cairo::RefPtr<Cairo::ImageSurface> renderWithRsvg(
 
     GError* error = nullptr;
     RsvgHandle* handle = rsvg_handle_new_from_data(cdata, data.size(), &error);
+    std::unique_ptr<RsvgHandle, RsvgHandleDeleter> handle_guard(handle);
 
     if (error) {
         rtengine::SvgRenderException e(error->message);
         g_error_free(error);
         throw e;
+    }
+
+    if (!handle) {
+        throw rtengine::SvgRenderException("Failed to parse SVG");
     }
 
     int w = 0;
@@ -79,29 +114,38 @@ Cairo::RefPtr<Cairo::ImageSurface> renderWithRsvg(
                                                w * device_scale,
                                                h * device_scale);
 
-    // Render (and erase with) default surface background
-    Cairo::RefPtr<Cairo::Context> c = Cairo::Context::create(surface);
-    c->set_source_rgba(0., 0., 0., 0.);
-    c->set_operator(Cairo::OPERATOR_CLEAR);
-    c->paint();
+    {
+        // Render (and erase with) default surface background
+        Cairo::RefPtr<Cairo::Context> c = Cairo::Context::create(surface);
+        c->set_source_rgba(0., 0., 0., 0.);
+        c->set_operator(Cairo::OPERATOR_CLEAR);
+        c->paint();
 
-    // Render upscaled surface based on SVG image
-    error = nullptr;
-    RsvgRectangle rect = {
-        .x = 0.,
-        .y = 0.,
-        .width = static_cast<double>(w * device_scale),
-        .height = static_cast<double>(h * device_scale)
-    };
-    c->set_operator(Cairo::OPERATOR_OVER);
-    const bool success = rsvg_handle_render_document(handle, c->cobj(), &rect, &error);
+        // Render upscaled surface based on SVG image
+        error = nullptr;
+        RsvgRectangle rect = {
+            .x = 0.,
+            .y = 0.,
+            .width = static_cast<double>(w * device_scale),
+            .height = static_cast<double>(h * device_scale)
+        };
+        c->set_operator(Cairo::OPERATOR_OVER);
+        const bool success = rsvg_handle_render_document(handle, c->cobj(), &rect, &error);
 
-    if (!success && error) {
-        rtengine::SvgRenderException e(error->message);
-        g_error_free(error);
-        throw e;
+        if (!success) {
+            rtengine::SvgRenderException e(error ? error->message : "Failed to render SVG");
+            if (error) {
+                g_error_free(error);
+            }
+            throw e;
+        }
     }
-    g_object_unref(handle);
+
+    // librsvg 2.62 on Windows can corrupt the process heap when many SVG
+    // handles are destroyed during startup icon creation. Keep successful
+    // handles alive for the lifetime of the process; the number is bounded by
+    // the icon set and avoids a startup crash in GTK/librsvg/libxml teardown.
+    handle_guard.release();
 
     // Set device scale to avoid blur effect
     cairo_surface_set_device_scale(surface->cobj(),
@@ -185,10 +229,12 @@ namespace rtengine {
 Cairo::RefPtr<Cairo::ImageSurface> renderSvg(const std::string& data, int logical_width,
                                              int logical_height, int device_scale)
 {
+    const std::string renderData = stripSvgMetadata(data);
+
 #ifdef SVG_BACKEND_RSVG
-    return renderWithRsvg(data, logical_width, logical_height, device_scale);
+    return renderWithRsvg(renderData, logical_width, logical_height, device_scale);
 #elif SVG_BACKEND_LUNASVG
-    return renderWithLunaSvg(data, logical_width, logical_height, device_scale);
+    return renderWithLunaSvg(renderData, logical_width, logical_height, device_scale);
 #else
     return nullptr;
 #endif

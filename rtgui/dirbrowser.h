@@ -45,6 +45,7 @@ private:
         Gtk::TreeModelColumn<Glib::ustring> dirname;
         Gtk::TreeModelColumn<Glib::RefPtr<Gio::FileMonitor> > monitor;
         Gtk::TreeModelColumn<Glib::ustring> photoCount;
+        Gtk::TreeModelColumn<bool> childrenLoaded;
 
         DirTreeColumns()
         {
@@ -53,6 +54,7 @@ private:
             add(dirname);
             add(monitor);
             add(photoCount);
+            add(childrenLoaded);
         }
     };
 
@@ -76,6 +78,7 @@ private:
     Glib::ustring iremovable;
 
     bool expandSuccess;
+    bool reuseLoadedDirs_;
 
 #ifdef _WIN32
     unsigned int volumes;
@@ -141,7 +144,7 @@ public:
     void row_collapsed  (const Gtk::TreeModel::iterator& iter, const Gtk::TreeModel::Path& path);
     void row_activated  (const Gtk::TreeModel::Path& path, Gtk::TreeViewColumn* column);
     void file_changed   (const Glib::RefPtr<Gio::File>& file, const Glib::RefPtr<Gio::File>& other_file, Gio::FileMonitorEvent event_type, const Gtk::TreeModel::iterator& iter, const Glib::ustring& dirName);
-    void open           (const Glib::ustring& dirName, const Glib::ustring& fileName = ""); // goes to dir "dirName" and selects file "fileName"
+    void open           (const Glib::ustring& dirName, const Glib::ustring& fileName = "", bool collapseTree = true); // goes to dir "dirName" and selects file "fileName"
     void selectDir      (Glib::ustring dir);
 
     DirSelectionSignal dirSelected () const;

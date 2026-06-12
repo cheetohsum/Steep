@@ -19,8 +19,16 @@
  */
 #include "editorpanel.h"
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdarg>
+#include <cstdio>
+#include <cstdlib>
 #include <iostream>
+#include <mutex>
+#include <string>
+#include <thread>
 
 #include "rtengine/array2D.h"
 #include "rtengine/imagesource.h"
@@ -41,12 +49,12 @@
 #include "recentbrowser.h"
 #include "pathutils.h"
 #include "cachemanager.h"
+#include "rawloadactivity.h"
 #include "thumbnail.h"
 #include "toolpanelcoord.h"
 #include "clipboard.h"
 #include "paramsedited.h"
 
-#include <thread>
 #include "widgets/basic/popupbutton.h"
 #include "windows/rtappchooserdialog.h"
 #include "windows/rtwindow.h"
@@ -64,11 +72,145 @@ using ScopeType = Options::ScopeType;
 namespace
 {
 
+static bool editorOpenLogEnabled()
+{
+    static const bool enabled = std::getenv("STEEP_FILESEL_LOG") != nullptr;
+    return enabled;
+}
+
+static long long editorOpenDurationMs(
+    const std::chrono::steady_clock::time_point& from,
+    const std::chrono::steady_clock::time_point& to)
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(to - from).count();
+}
+
+static double previewScaleFromFullSize(
+    const Glib::RefPtr<Gdk::Pixbuf>& pixbuf,
+    int fullW,
+    int fullH,
+    double fallbackScale)
+{
+    if (!pixbuf || pixbuf->get_width() <= 0 || pixbuf->get_height() <= 0 || fullW <= 0 || fullH <= 0) {
+        return fallbackScale > 0.0 ? fallbackScale : 1.0;
+    }
+
+    const double scaleW = static_cast<double>(fullW) / static_cast<double>(pixbuf->get_width());
+    const double scaleH = static_cast<double>(fullH) / static_cast<double>(pixbuf->get_height());
+    const double scale = std::max(scaleW, scaleH);
+    return scale > 0.0 ? scale : (fallbackScale > 0.0 ? fallbackScale : 1.0);
+}
+
+constexpr unsigned int kEditorDirSyncAfterOpenDelayMs = 1250;
+constexpr unsigned int kEditorDirSyncAfterRealizeDelayMs = 500;
+constexpr unsigned int kEditorDirSyncAfterAspectDelayMs = 500;
+constexpr int kEditorDirSyncForegroundQuietMs = 2000;
+constexpr unsigned int kEditorDirSyncQuietRetryMs = 250;
+
+static void editorOpenLog(const char* fmt, ...)
+{
+    static std::mutex logMu;
+    std::lock_guard<std::mutex> lk(logMu);
+    static FILE* f = nullptr;
+    if (!f) {
+        const char* home = std::getenv("USERPROFILE");
+        if (!home) {
+            home = std::getenv("HOME");
+        }
+        std::string path = home ? std::string(home) + "\\steep-fileSel.log" : "steep-fileSel.log";
+        f = std::fopen(path.c_str(), "a");
+    }
+    if (!f) {
+        return;
+    }
+
+    using clk = std::chrono::steady_clock;
+    static auto base = clk::now();
+    const long long tms = editorOpenDurationMs(base, clk::now());
+    std::fprintf(f, "[t=%lldms] ", tms);
+    va_list ap;
+    va_start(ap, fmt);
+    std::vfprintf(f, fmt, ap);
+    va_end(ap);
+    std::fflush(f);
+}
+
+static void lowerEditorCleanupThreadPriority()
+{
+#ifdef _WIN32
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#endif
+}
+
+static void detachEditorProcessorListeners(rtengine::StagedImageProcessor* proc)
+{
+    if (!proc) {
+        return;
+    }
+
+    proc->setProgressListener(nullptr);
+    proc->setPreviewImageListener(nullptr);
+    proc->setHistogramListener(nullptr);
+    proc->setAutoExpListener(nullptr);
+    proc->setAutoCamListener(nullptr);
+    proc->setAutoBlackListener(nullptr);
+    proc->setAutoBlackxListener(nullptr);
+    proc->setFlatFieldAutoClipListener(nullptr);
+    proc->setFrameCountListener(nullptr);
+    proc->setBayerAutoContrastListener(nullptr);
+    proc->setXtransAutoContrastListener(nullptr);
+    proc->setpdSharpenAutoContrastListener(nullptr);
+    proc->setpdSharpenAutoRadiusListener(nullptr);
+    proc->setAutoBWListener(nullptr);
+    proc->setAutoWBListener(nullptr);
+    proc->setAutoColorTonListener(nullptr);
+    proc->setAutoprimListener(nullptr);
+    proc->setCompgamutListener(nullptr);
+    proc->setAutoChromaListener(nullptr);
+    proc->setRetinexListener(nullptr);
+    proc->setWaveletListener(nullptr);
+    proc->setImageTypeListener(nullptr);
+    proc->setLocallabListener(nullptr);
+    proc->setFilmNegListener(nullptr);
+}
+
+#define EDITOR_OPEN_LOG(...) \
+    do { \
+        if (editorOpenLogEnabled()) { \
+            editorOpenLog(__VA_ARGS__); \
+        } \
+    } while (false)
+
+static int editorToolPanelWidth()
+{
+    // ToolPanelWidth is persisted in GTK logical pixels.  Do not run it
+    // through RTScalable again or the overlay sidebar becomes oversized on
+    // high-DPI Windows displays.
+    constexpr int minWidth = 300;
+    constexpr int maxWidth = 340;
+    return std::min(std::max(App::get().options().toolPanelWidth, minWidth), maxWidth);
+}
+
+static int editorToolPanelInsetWidth()
+{
+    return editorToolPanelWidth();
+}
+
+static int editorToolPanelContentWidth()
+{
+    // Leave logical-pixel room for the vertical scrollbar/gutter inside the
+    // fixed overlay panel so edit controls do not disappear under the edge.
+    constexpr int scrollbarGutter = 18;
+    return std::max(180, editorToolPanelWidth() - scrollbarGutter);
+}
+
 // Box that caps its natural width so overlay children don't expand endlessly
 class FixedWidthBox : public Gtk::Box {
 public:
     explicit FixedWidthBox(int width) : fixedWidth_(width) {
         set_orientation(Gtk::ORIENTATION_VERTICAL);
+        set_size_request(fixedWidth_, -1);
+        set_hexpand(false);
     }
     void get_preferred_width_vfunc(int& minimum_width, int& natural_width) const override {
         Gtk::Box::get_preferred_width_vfunc(minimum_width, natural_width);
@@ -82,53 +224,39 @@ private:
 void setprogressStrUI(double val, const Glib::ustring str, MyProgressBar* pProgress)
 {
     if (!str.empty()) {
-        pProgress->set_text(M(str));
+        const Glib::ustring text = M(str);
+        if (pProgress->get_text() != text) {
+            pProgress->set_text(text);
+        }
     }
 
-    if (val >= 0.0) {
+    if (val >= 0.0 && pProgress->get_fraction() != val) {
         pProgress->set_fraction(val);
     }
 
     // Show when there's active progress, hide when done (fraction <= 0 or >= 1)
-    double frac = pProgress->get_fraction();
-    if (frac > 0.0 && frac < 1.0) {
-        pProgress->show();
-    } else if (frac <= 0.0 || frac >= 1.0) {
+    const double frac = pProgress->get_fraction();
+    const bool shouldShow = frac > 0.0 && frac < 1.0;
+    if (shouldShow) {
+        if (!pProgress->get_visible()) {
+            pProgress->show();
+        }
+    } else if (pProgress->get_visible()) {
         pProgress->hide();
     }
 }
 
-#if !defined(__APPLE__) // monitor profile not supported on apple
+std::string editorAlbumPathKey(const std::string& path)
+{
+    std::string key = Glib::ustring(path).casefold().raw();
+    std::replace(key.begin(), key.end(), '\\', '/');
+
+    return key;
+}
+
+#if !defined(__APPLE__) && !defined(_WIN32) // monitor profile not supported on apple; Windows avoids GTK root-window probing during startup
 bool find_default_monitor_profile (GdkWindow *rootwin, Glib::ustring &defprof, Glib::ustring &defprofname)
 {
-#ifdef _WIN32
-    HDC hDC = GetDC (nullptr);
-
-    if (hDC != nullptr) {
-        if (SetICMMode (hDC, ICM_ON)) {
-            char profileName[MAX_PATH + 1];
-            DWORD profileLength = MAX_PATH;
-
-            if (GetICMProfileA (hDC, &profileLength, profileName)) {
-                defprof = Glib::ustring (profileName);
-                defprofname = Glib::path_get_basename (defprof);
-                size_t pos = defprofname.rfind (".");
-
-                if (pos != Glib::ustring::npos) {
-                    defprofname = defprofname.substr (0, pos);
-                }
-
-                defprof = Glib::ustring ("file:") + defprof;
-                return true;
-            }
-
-            // might fail if e.g. the monitor has no profile
-        }
-
-        ReleaseDC (NULL, hDC);
-    }
-
-#else
     // taken from geeqie (image.c) and adapted
     // Originally licensed as GPL v2+, with the following copyright:
     // * Copyright (C) 2006 John Ellis
@@ -163,7 +291,6 @@ bool find_default_monitor_profile (GdkWindow *rootwin, Glib::ustring &defprof, G
         g_free (prof);
     }
 
-#endif
     return false;
 }
 #endif
@@ -424,6 +551,7 @@ private:
         profileBox.append (M ("PREFERENCES_PROFILE_NONE"));
         Glib::ustring defprofname;
 
+#ifndef _WIN32
         if (find_default_monitor_profile (profileBox.get_root_window()->gobj(), defprof, defprofname)) {
             profileBox.append (M ("MONITOR_PROFILE_SYSTEM") + " (" + defprofname + ")");
 
@@ -436,6 +564,9 @@ private:
         } else {
             profileBox.set_active (0);
         }
+#else
+        profileBox.set_active (0);
+#endif
 
         const std::vector<Glib::ustring> profiles = rtengine::ICCStore::getInstance()->getProfiles (rtengine::ICCStore::ProfileType::MONITOR);
 
@@ -778,7 +909,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
       selectedFrame(0), isrc (nullptr), ipc (nullptr), beforeIpc (nullptr), err (0), isProcessing (false),
       histogram_observable(nullptr), histogram_scope_type(ScopeType::NONE)
 {
-
     set_orientation(Gtk::ORIENTATION_VERTICAL);
     epih = new EditorPanelIdleHelper;
     epih->epanel = this;
@@ -1583,7 +1713,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     beforeAfterBox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL));
     beforeAfterBox->set_name ("BeforeAfterContainer");
     beforeAfterBox->set_margin_start(options.showHistory ? options.dirBrowserWidth : 0);
-    beforeAfterBox->set_margin_end(std::min(options.toolPanelWidth, 400));
+    beforeAfterBox->set_margin_end(editorToolPanelInsetWidth());
     beforeAfterBox->pack_start (*afterBox);
 
     MyScrolledToolbar *stb1 = Gtk::manage(new MyScrolledToolbar());
@@ -1591,7 +1721,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     stb1->add(*toolBarPanel);
     // Offset toolbar from sidebars so buttons aren't hidden by the overlay
     stb1->set_margin_start(options.showHistory ? options.dirBrowserWidth : 0);
-    stb1->set_margin_end(std::min(options.toolPanelWidth, 400));
+    stb1->set_margin_end(editorToolPanelInsetWidth());
     editbox->pack_start (*stb1, Gtk::PACK_SHRINK, 0);
     editorToolbarTop_ = stb1;
 
@@ -1778,12 +1908,20 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     leftbox->set_size_request(options.dirBrowserWidth, -1);
 
     // build right side panel
-    vboxright = new FixedWidthBox(options.toolPanelWidth);
+    const int rightPanelWidth = editorToolPanelWidth();
+    const int rightPanelContentWidth = editorToolPanelContentWidth();
+    vboxright = new FixedWidthBox(rightPanelWidth);
 
     vsubboxright = new Gtk::Box (Gtk::ORIENTATION_VERTICAL, 0);
 //    int rightsize = options.fontSize * 44;
 //    vsubboxright->set_size_request (rightsize, rightsize - 50);
-    vsubboxright->set_size_request (std::min(options.toolPanelWidth, 400), -1);
+    vsubboxright->set_size_request(rightPanelWidth, -1);
+    vsubboxright->set_hexpand(false);
+    vsubboxright->set_halign(Gtk::ALIGN_FILL);
+    tpc->modeButtonBar->set_size_request(rightPanelWidth, -1);
+    tpc->modeStack->set_size_request(rightPanelContentWidth, -1);
+    tpc->modeStack->set_hexpand(true);
+    tpc->modeStack->set_halign(Gtk::ALIGN_FILL);
 
     // EXIF info strip above histogram — hover shows full info overlay on preview
     exifInfo = Gtk::manage(new Gtk::Label());
@@ -1965,7 +2103,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         filmstripFullHeight_ = filmstripHeight;
         // Inset filmstrip so sidebars don't overlap its content
         catalogPane->set_margin_start(options.showHistory ? options.dirBrowserWidth : 0);
-        catalogPane->set_margin_end(std::min(options.toolPanelWidth, 400));
+        catalogPane->set_margin_end(editorToolPanelInsetWidth());
         catalogPane->set_vexpand(false);
         catalogPane->set_valign(Gtk::ALIGN_START);
         // Pack filmstrip directly into editbox as its first child (before the toolbar)
@@ -2203,6 +2341,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                 alloc.set_height(sideH);
                 return true;
             } else if (child == vboxright) {
+                const int panelW = std::min(natW, overlayW);
                 // Combine view-transition animation with toggle animation
                 // View transition: drives entry/exit when switching to editor
                 double viewEased;
@@ -2215,10 +2354,10 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                 double toggleEased = 1.0 - std::pow(1.0 - rightAnimFraction_, 3);
                 // Use the minimum — either animation can hide the sidebar
                 double combined = std::min(viewEased, toggleEased);
-                int slideOffset = static_cast<int>(natW * (1.0 - combined));
-                alloc.set_x(overlayW - natW + slideOffset);
+                int slideOffset = static_cast<int>(panelW * (1.0 - combined));
+                alloc.set_x(overlayW - panelW + slideOffset);
                 alloc.set_y(0);
-                alloc.set_width(natW);
+                alloc.set_width(panelW);
                 alloc.set_height(sideH);
                 return true;
             }
@@ -2330,6 +2469,11 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 EditorPanel::~EditorPanel ()
 {
     deferredOpenConn_.disconnect();
+    deferredDirSyncConn_.disconnect();
+    deferredCropEnableConn_.disconnect();
+    ++editorDirSyncGeneration_;
+    pendingEditorDirSyncDir_.clear();
+    pendingEditorDirSyncDue_ = std::chrono::steady_clock::time_point{};
 
     if (beforeAfterCancel_) {
         beforeAfterCancel_->store(true);
@@ -2362,6 +2506,7 @@ EditorPanel::~EditorPanel ()
         rtengine::StagedImageProcessor* old = beforeIpc;
         beforeIpc = nullptr;
         std::thread([old]() {
+            lowerEditorCleanupThreadPriority();
             rtengine::StagedImageProcessor::destroy(old);
         }).detach();
     }
@@ -2414,6 +2559,8 @@ void EditorPanel::rightPaneButtonReleased (GdkEventButton * /*event*/)
 
 void EditorPanel::writeOptions()
 {
+    optionsWritePending_ = false;
+
     if (presetListPanel) {
         presetListPanel->writeOptions();
     }
@@ -2421,6 +2568,124 @@ void EditorPanel::writeOptions()
     if (tpc) {
         tpc->writeOptions();
     }
+}
+
+
+void EditorPanel::scheduleOptionsWrite()
+{
+    if (optionsWritePending_) {
+        return;
+    }
+
+    optionsWritePending_ = true;
+    idle_register.add(
+        [this]() -> bool {
+            writeOptions();
+            return false;
+        },
+        G_PRIORITY_LOW
+    );
+}
+
+void EditorPanel::scheduleEditorDirSync(const Glib::ustring& dirName, const char* source, unsigned int delayMs)
+{
+    if (!editorDirBrowser_ || dirName.empty()) {
+        return;
+    }
+
+    if (dirName == lastSyncedEditorDir_) {
+        EDITOR_OPEN_LOG("[editorOpen] dir sync skipped source=%s sameDir=1 file=%s\n",
+            source ? source : "",
+            dirName.c_str());
+        return;
+    }
+
+    if (!isLeftPanelVisible()) {
+        deferredDirSyncConn_.disconnect();
+        ++editorDirSyncGeneration_;
+        pendingEditorDirSyncDir_ = dirName;
+        pendingEditorDirSyncDue_ = std::chrono::steady_clock::time_point{};
+        EDITOR_OPEN_LOG("[editorOpen] dir sync postponed source=%s hidden=1 file=%s\n",
+            source ? source : "",
+            dirName.c_str());
+        return;
+    }
+
+    const auto requestedDue = std::chrono::steady_clock::now() + std::chrono::milliseconds(delayMs);
+    if (dirName == pendingEditorDirSyncDir_) {
+        if (pendingEditorDirSyncDue_ != std::chrono::steady_clock::time_point{}
+            && (pendingEditorDirSyncDue_ <= requestedDue
+                || !isRawLoadForegroundQuietForMs(kEditorDirSyncForegroundQuietMs))) {
+            EDITOR_OPEN_LOG("[editorOpen] dir sync coalesced source=%s delay=%ums file=%s\n",
+                source ? source : "",
+                delayMs,
+                dirName.c_str());
+            return;
+        }
+
+        EDITOR_OPEN_LOG("[editorOpen] dir sync rescheduled source=%s delay=%ums file=%s\n",
+            source ? source : "",
+            delayMs,
+            dirName.c_str());
+    }
+
+    deferredDirSyncConn_.disconnect();
+    const unsigned int generation = ++editorDirSyncGeneration_;
+    pendingEditorDirSyncDir_ = dirName;
+    pendingEditorDirSyncDue_ = requestedDue;
+
+    EDITOR_OPEN_LOG("[editorOpen] dir sync queued source=%s delay=%ums file=%s\n",
+        source ? source : "",
+        delayMs,
+        dirName.c_str());
+
+    deferredDirSyncConn_ = Glib::signal_timeout().connect(
+        [this, generation, dirName]() -> bool {
+            if (generation != editorDirSyncGeneration_ || !realized || !editorDirBrowser_) {
+                if (generation == editorDirSyncGeneration_) {
+                    pendingEditorDirSyncDir_.clear();
+                    pendingEditorDirSyncDue_ = std::chrono::steady_clock::time_point{};
+                }
+                return false;
+            }
+
+            const int quietRetryMs = rawLoadForegroundQuietRetryMs(
+                kEditorDirSyncForegroundQuietMs,
+                kEditorDirSyncQuietRetryMs);
+            if (quietRetryMs > 0) {
+                EDITOR_OPEN_LOG("[editorOpen] dir sync deferred source=foreground-active retry=%dms file=%s\n",
+                    quietRetryMs,
+                    dirName.c_str());
+                pendingEditorDirSyncDir_.clear();
+                pendingEditorDirSyncDue_ = std::chrono::steady_clock::time_point{};
+                scheduleEditorDirSync(dirName, "foregroundQuiet", static_cast<unsigned int>(quietRetryMs));
+                return false;
+            }
+
+            const bool logDirSync = editorOpenLogEnabled();
+            const auto dirStart = logDirSync
+                ? std::chrono::steady_clock::now()
+                : std::chrono::steady_clock::time_point{};
+
+            pendingEditorDirSyncDir_.clear();
+            pendingEditorDirSyncDue_ = std::chrono::steady_clock::time_point{};
+            editorDirBrowser_->open(dirName, Glib::ustring(), false);
+            lastSyncedEditorDir_ = dirName;
+
+            if (albumBrowser_) {
+                albumBrowser_->setCurrentDirectory(dirName);
+            }
+
+            if (logDirSync) {
+                EDITOR_OPEN_LOG("[editorOpen] dir sync opened duration=%lldms file=%s\n",
+                    editorOpenDurationMs(dirStart, std::chrono::steady_clock::now()),
+                    dirName.c_str());
+            }
+
+            return false;
+        },
+        delayMs,
+        Glib::PRIORITY_LOW);
 }
 
 
@@ -2453,16 +2718,13 @@ void EditorPanel::setAspect ()
     // Sync editor's folder browser with the browser panel's current directory.
     // Only re-open if the directory actually changed to avoid scroll jumps.
     if (fPanel && fPanel->fileCatalog && editorDirBrowser_) {
-        Glib::signal_idle().connect_once([this]() {
+        idle_register.add([this]() -> bool {
             if (realized && fPanel && fPanel->fileCatalog && editorDirBrowser_) {
                 Glib::ustring browserDir = fPanel->fileCatalog->lastSelectedDir();
-                if (!browserDir.empty() && browserDir != lastSyncedEditorDir_) {
-                    lastSyncedEditorDir_ = browserDir;
-                    editorDirBrowser_->open(browserDir);
-                    if (albumBrowser_) albumBrowser_->setCurrentDirectory(browserDir);
-                }
+                scheduleEditorDirSync(browserDir, "setAspect", kEditorDirSyncAfterAspectDelayMs);
             }
-        });
+            return false;
+        }, Glib::PRIORITY_LOW);
     }
 }
 
@@ -2488,20 +2750,40 @@ void EditorPanel::on_realize ()
     //vboxright->set_size_request (options.toolPanelWidth, -1);
     tpc->updateToolState();
 
-    // Initialize editor's folder browser
-    editorDirBrowser_->fillDirTree();
-    editorPlacesBrowser_->refreshPlacesList();
-
     editorPlacesPaned_->set_position(std::max(App::get().options().dirBrowserHeight, 300));
 
-    // Sync with browser's current directory on first show
-    if (fPanel && fPanel->fileCatalog) {
-        Glib::ustring browserDir = fPanel->fileCatalog->lastSelectedDir();
-        if (!browserDir.empty()) {
-            editorDirBrowser_->open(browserDir);
-            if (albumBrowser_) albumBrowser_->setCurrentDirectory(browserDir);
-        }
-    }
+    // Directory/places initialization can scan the filesystem. Keep it off the
+    // first realize path so a newly-opened editor can paint its cached preview.
+    idle_register.add(
+        [this]() -> bool {
+            if (!realized) {
+                return false;
+            }
+
+            const bool logOpen = editorOpenLogEnabled();
+            const auto initStart = logOpen ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+
+            if (editorDirBrowser_) {
+                editorDirBrowser_->fillDirTree();
+            }
+            if (editorPlacesBrowser_) {
+                editorPlacesBrowser_->refreshPlacesList();
+            }
+
+            if (logOpen) {
+                EDITOR_OPEN_LOG("[editorOpen] browser init duration=%lldms file=%s\n",
+                    editorOpenDurationMs(initStart, std::chrono::steady_clock::now()),
+                    fname.c_str());
+            }
+
+            if (fPanel && fPanel->fileCatalog && editorDirBrowser_) {
+                Glib::ustring browserDir = fPanel->fileCatalog->lastSelectedDir();
+                scheduleEditorDirSync(browserDir, "realize", kEditorDirSyncAfterRealizeDelayMs);
+            }
+
+            return false;
+        },
+        Glib::PRIORITY_LOW);
 }
 
 void EditorPanel::updateFilmstripStars(int highlightUpTo)
@@ -2863,7 +3145,13 @@ void EditorPanel::applyEditorFilter()
 
 void EditorPanel::onAlbumSelected (const std::set<std::string>& whitelist)
 {
-    currentAlbumWhitelist_ = whitelist;
+    currentAlbumWhitelist_.clear();
+    currentAlbumWhitelist_.reserve(whitelist.size());
+
+    for (const auto& path : whitelist) {
+        currentAlbumWhitelist_.insert(editorAlbumPathKey(path));
+    }
+
     applyEditorFilter();
 }
 
@@ -2900,7 +3188,7 @@ void EditorPanel::showAlbumView (const Glib::ustring& albumName, const std::vect
     // Add left/right margins to account for sidebar overlays
     const auto& opts = App::get().options();
     albumViewBox_->set_margin_start(hidehp && hidehp->get_active() ? opts.dirBrowserWidth : 0);
-    albumViewBox_->set_margin_end(tbRightPanel_1 && tbRightPanel_1->get_active() ? std::min(opts.toolPanelWidth, 400) : 0);
+    albumViewBox_->set_margin_end(tbRightPanel_1 && tbRightPanel_1->get_active() ? editorToolPanelInsetWidth() : 0);
 
     albumViewStack_->set_visible_child("album");
     albumViewBuilt_ = true;
@@ -3318,7 +3606,7 @@ void EditorPanel::loadAlbumThumbnails (int session, const std::vector<Glib::ustr
                 if (!thm) continue;
 
                 double scale;
-                rtengine::IImage8* img = thm->processThumbImage(thm->getProcParams(), 300, scale);
+                rtengine::IImage8* img = thm->processThumbImage(300, scale);
                 if (!img) {
                     thm->decreaseRef();
                     continue;
@@ -3453,35 +3741,77 @@ void EditorPanel::toggleAlbumView ()
 
 void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
 {
+    using clk = std::chrono::steady_clock;
+    const bool logOpen = editorOpenLogEnabled();
+    const auto openStart = logOpen ? clk::now() : clk::time_point{};
+    EDITOR_OPEN_LOG("[editorOpen] start file=%s\n", tmb ? tmb->getFileName().c_str() : "");
+    if (tmb) {
+        noteRawLoadForegroundActivity(std::string(tmb->getFileName()));
+    }
+
     // Cancel any pending deferred Phase B from a previous open()
     deferredOpenConn_.disconnect();
+    deferredCropEnableConn_.disconnect();
     ++openSession_;
 
     // Sync places paned position from file panel
     if (fPanel && fPanel->placespaned) {
         int pos = fPanel->placespaned->get_position();
-        if (pos >= 200) {
+        if (pos >= 200 && editorPlacesPaned_->get_position() != pos) {
             editorPlacesPaned_->set_position(pos);
         }
     }
 
-    // Save the old preview pixbuf before close() destroys the handler.
-    // This may be a quick preview (correct new image thumbnail) set by
-    // setQuickPreview(), or the previous image's preview as a bridge.
+    // Pick the best placeholder before close() destroys the current handler.
+    // Prefer a correct new-image quick/cached thumbnail; only copy the previous
+    // engine-backed preview when no new-image placeholder is available.
+    const auto placeholderPickStart = logOpen ? clk::now() : clk::time_point{};
     Glib::RefPtr<Gdk::Pixbuf> oldPreview;
     double oldPreviewScale = 1.0;
-    if (previewHandler) {
-        oldPreview = previewHandler->getPreviewPixbuf(oldPreviewScale);
+    Glib::RefPtr<Gdk::Pixbuf> cachedOpenPreview;
+    double cachedOpenPreviewScale = 1.0;
+    const Glib::ustring openFileName = tmb->getFileName();
+    const Glib::ustring quickPreviewFileName = quickPreviewFileName_;
+    quickPreviewFileName_.clear();
+    const bool quickPreviewMatchesOpen = !quickPreviewFileName.empty() && quickPreviewFileName == openFileName;
+    bool placeholderBusy = false;
+    if (previewHandler && quickPreviewMatchesOpen) {
+        oldPreview = previewHandler->tryGetPreviewPixbuf(oldPreviewScale, &placeholderBusy);
+        if (!oldPreview) {
+            cachedOpenPreview = tmb->tryGetCachedPixbuf(cachedOpenPreviewScale);
+        }
+    } else {
+        cachedOpenPreview = tmb->tryGetCachedPixbuf(cachedOpenPreviewScale);
+        if (!cachedOpenPreview && previewHandler) {
+            oldPreview = previewHandler->tryGetPreviewPixbuf(oldPreviewScale, &placeholderBusy);
+        }
+    }
+    if (logOpen) {
+        EDITOR_OPEN_LOG("[editorOpen] placeholder pick duration=%lldms quickMatch=%d cached=%d old=%d busy=%d file=%s\n",
+            editorOpenDurationMs(placeholderPickStart, clk::now()),
+            static_cast<int>(quickPreviewMatchesOpen),
+            static_cast<int>(static_cast<bool>(cachedOpenPreview)),
+            static_cast<int>(static_cast<bool>(oldPreview)),
+            static_cast<int>(placeholderBusy),
+            openFileName.c_str());
     }
 
+    const auto closeStart = logOpen ? clk::now() : clk::time_point{};
     close();
+    if (logOpen) {
+        EDITOR_OPEN_LOG("[editorOpen] close duration=%lldms file=%s\n",
+            editorOpenDurationMs(closeStart, clk::now()),
+            openFileName.c_str());
+    }
 
     isProcessing = true; // prevents closing-on-init
 
     // initialize everything
+    const auto processorSetupStart = logOpen ? clk::now() : clk::time_point{};
     openThm = tmb;
 
-    fname = openThm->getFileName();
+    fname = openFileName;
+    const bool oldPreviewMatchesOpen = oldPreview && quickPreviewMatchesOpen;
     if (fPanel && fPanel->fileCatalog) {
         fPanel->fileCatalog->saveResetState();
     }
@@ -3493,86 +3823,78 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
     ipc = rtengine::StagedImageProcessor::create (isrc);
 
     ipc->setProgressListener (this);
-    colorMgmtToolBar->updateProcessor();
     ipc->setPreviewImageListener (previewHandler);
     ipc->setPreviewScale (10);  // Important
+    if (logOpen) {
+        EDITOR_OPEN_LOG("[editorOpen] processor setup duration=%lldms file=%s\n",
+            editorOpenDurationMs(processorSetupStart, clk::now()),
+            openFileName.c_str());
+    }
 
     // --- Visual pipeline setup (placeholder + crop window) FIRST ---
     // Set up the image area with the new preview handler immediately.
-    // First set the old preview as a bridge placeholder so the image area
-    // always has something to paint (no blank frame). Then generate the
-    // correct thumbnail which replaces the old preview.
+    // First set a quick/cached new-image preview when available; otherwise
+    // bridge with the previous image preview so the image area never blanks.
+    const auto visualSetupStart = logOpen ? clk::now() : clk::time_point{};
+    deferredCropWindowEnable_ = false;
 
     iareapanel->imageArea->setPreviewHandler (previewHandler);
     iareapanel->imageArea->setImProcCoordinator (ipc);
     navigator->previewWindow->setPreviewHandler (previewHandler);
     navigator->previewWindow->setImageArea (iareapanel->imageArea);
 
-    // Show the NEW image's thumbnail as placeholder (correct image, low-res).
-    // Try cached Pixbuf first (free), fall back to processThumbImage (fast
-    // for QUICK_THUMBNAIL, ~100ms for FULL_THUMBNAIL).
+    // Keep something paintable immediately, then replace it with the new
+    // image's cached thumbnail if one is already available. Do not render a
+    // fallback thumbnail synchronously here; this runs on the GTK thread while
+    // the user is waiting for the decoded image to appear.
     {
-        bool placeholderSet = false;
-
-        // Fast path: cached Pixbuf from a previous filmstrip render
-        double cachedScale = 1.0;
-        auto cachedPb = openThm->getCachedPixbuf(cachedScale);
-        if (cachedPb) {
-            int fullW = ipc->getFullWidth();
-            if (fullW > 0) {
-                double displayScale = static_cast<double>(fullW) / cachedPb->get_width();
-                previewHandler->setPlaceholder(cachedPb, displayScale);
-            } else {
-                previewHandler->setPlaceholder(cachedPb, cachedScale);
-            }
-            placeholderSet = true;
+        if (oldPreview) {
+            previewHandler->setPlaceholder(oldPreview, oldPreviewScale);
         }
 
-        // Slow path: generate from thumbnail data
-        if (!placeholderSet) {
-            double thumbScale;
-            rtengine::IImage8* thumbImg = openThm->processThumbImage(
-                openThm->getProcParams(), 400, thumbScale);
-            if (thumbImg) {
-                int tw = thumbImg->getWidth();
-                int th = thumbImg->getHeight();
-                if (tw > 0 && th > 0 && thumbImg->getData()) {
-                    auto pixbuf = Gdk::Pixbuf::create_from_data(
-                        thumbImg->getData(), Gdk::COLORSPACE_RGB, false, 8,
-                        tw, th, tw * 3);
-                    auto copied = pixbuf->copy();
-                    int fullW = ipc->getFullWidth();
-                    if (fullW > 0) {
-                        double scale = static_cast<double>(fullW) / tw;
-                        previewHandler->setPlaceholder(copied, scale);
-                    }
-                }
-                delete thumbImg;
-            }
+        // Fast path: cached Pixbuf from a previous filmstrip render.
+        if (!oldPreviewMatchesOpen && cachedOpenPreview) {
+            const double displayScale = previewScaleFromFullSize(
+                cachedOpenPreview,
+                ipc->getFullWidth(),
+                ipc->getFullHeight(),
+                cachedOpenPreviewScale);
+            previewHandler->setPlaceholder(cachedOpenPreview, displayScale);
         }
     }
 
     // If in single tab mode, the main crop window is not constructed the very first time
     // since there was no resize event
     if (iareapanel->imageArea->mainCropWindow) {
+        if (iareapanel->imageArea->mainCropWindow->cropHandler.getEnabled()) {
+            iareapanel->imageArea->mainCropWindow->cropHandler.setEnabled(false);
+            deferredCropWindowEnable_ = true;
+        }
         iareapanel->imageArea->mainCropWindow->cropHandler.newImage (ipc, false);
     } else {
         Gtk::Allocation alloc;
         iareapanel->imageArea->on_resized (alloc);
+        if (iareapanel->imageArea->mainCropWindow
+            && iareapanel->imageArea->mainCropWindow->cropHandler.getEnabled()) {
+            iareapanel->imageArea->mainCropWindow->cropHandler.setEnabled(false);
+            deferredCropWindowEnable_ = true;
+        }
 
         // When passing a photo as an argument to the RawTherapee executable, the user wants
         // this auto-loaded photo's thumbnail to be selected and visible in the Filmstrip.
         EditorPanel::syncFileBrowser();
     }
 
-    history->resetSnapShotNumber();
-    navigator->setInvalid(ipc->getFullWidth(),ipc->getFullHeight());
-
     // Set fit zoom for the new image so the placeholder renders at the right scale.
     // Normally zoomFit is called by initialImageArrived(), but that only fires when
     // the engine delivers the first crop — too late for the placeholder.
     if (iareapanel->imageArea->mainCropWindow) {
         iareapanel->imageArea->mainCropWindow->zoomFit();
+    }
+    if (logOpen) {
+        EDITOR_OPEN_LOG("[editorOpen] visual setup duration=%lldms file=%s\n",
+            editorOpenDurationMs(visualSetupStart, clk::now()),
+            openFileName.c_str());
     }
 
     // --- Defer heavy tool panel + profile setup to idle callback ---
@@ -3591,11 +3913,34 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
             G_PRIORITY_HIGH_IDLE + 30
         );
     }
+    if (logOpen) {
+        EDITOR_OPEN_LOG("[editorOpen] phaseA duration=%lldms file=%s\n",
+            editorOpenDurationMs(openStart, clk::now()),
+            openFileName.c_str());
+    }
 }
 
-void EditorPanel::setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scale)
+void EditorPanel::setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scale, const Glib::ustring& sourceFile)
 {
-    if (!pixbuf || !previewHandler) return;
+    if (!pixbuf) return;
+
+    if (!previewHandler) {
+        previewHandler = new PreviewHandler();
+        previewHandler->setPlaceholder(pixbuf, scale);
+        quickPreviewFileName_ = sourceFile;
+
+        if (iareapanel && iareapanel->imageArea) {
+            iareapanel->imageArea->setPreviewHandler(previewHandler);
+            iareapanel->imageArea->queue_draw();
+        }
+
+        if (navigator && navigator->previewWindow) {
+            navigator->previewWindow->setPreviewHandler(previewHandler);
+        }
+
+        EDITOR_OPEN_LOG("[editorOpen] quick preview primed placeholder-only file=%s\n", sourceFile.c_str());
+        return;
+    }
 
     // Disconnect the old processor's preview listener so it can't
     // overwrite our placeholder with stale frames. The processing
@@ -3605,7 +3950,11 @@ void EditorPanel::setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scal
         ipc->setPreviewImageListener(nullptr);
     }
 
-    previewHandler->setPlaceholder(pixbuf, scale);
+    if (!previewHandler->trySetPlaceholder(pixbuf, scale)) {
+        EDITOR_OPEN_LOG("[editorOpen] quick preview skipped busy file=%s\n", sourceFile.c_str());
+        return;
+    }
+    quickPreviewFileName_ = sourceFile;
 
     if (iareapanel && iareapanel->imageArea) {
         iareapanel->imageArea->queue_draw();
@@ -3614,84 +3963,230 @@ void EditorPanel::setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scal
 
 void EditorPanel::openPhaseB (Thumbnail* tmb)
 {
+    using clk = std::chrono::steady_clock;
+    const bool logOpen = editorOpenLogEnabled();
+    const auto phaseStart = logOpen ? clk::now() : clk::time_point{};
+    const Glib::ustring phaseFileName = fname;
+    noteRawLoadForegroundActivity(std::string(phaseFileName));
+
+    if (iareapanel && iareapanel->imageArea) {
+        const bool imageAreaMapped = iareapanel->imageArea->get_mapped();
+        const int imageAreaWidth = iareapanel->imageArea->get_allocated_width();
+        const int imageAreaHeight = iareapanel->imageArea->get_allocated_height();
+        const bool imageAreaReady = imageAreaMapped && imageAreaWidth > 1 && imageAreaHeight > 1;
+
+        if (!imageAreaReady) {
+            const unsigned int session = openSession_;
+            EDITOR_OPEN_LOG("[editorOpen] phaseB deferred image-area mapped=%d width=%d height=%d file=%s\n",
+                static_cast<int>(imageAreaMapped), imageAreaWidth, imageAreaHeight, phaseFileName.c_str());
+            deferredOpenConn_ = Glib::signal_timeout().connect(
+                [this, session]() -> bool {
+                    if (session != openSession_ || !openThm) {
+                        return false;
+                    }
+                    if (!iareapanel || !iareapanel->imageArea) {
+                        return true;
+                    }
+                    const bool mapped = iareapanel->imageArea->get_mapped();
+                    const int width = iareapanel->imageArea->get_allocated_width();
+                    const int height = iareapanel->imageArea->get_allocated_height();
+                    if (!mapped || width <= 1 || height <= 1) {
+                        return true;
+                    }
+                    openPhaseB(openThm);
+                    return false;
+                },
+                50);
+            return;
+        }
+    } else {
+        const unsigned int session = openSession_;
+        EDITOR_OPEN_LOG("[editorOpen] phaseB deferred missing-image-area file=%s\n", phaseFileName.c_str());
+        deferredOpenConn_ = Glib::signal_timeout().connect(
+            [this, session]() -> bool {
+                if (session != openSession_ || !openThm) {
+                    return false;
+                }
+                if (!iareapanel || !iareapanel->imageArea) {
+                    return true;
+                }
+                openPhaseB(openThm);
+                return false;
+            },
+            50);
+        return;
+    }
+
+    EDITOR_OPEN_LOG("[editorOpen] phaseB start file=%s\n", phaseFileName.c_str());
+
+    history->resetSnapShotNumber();
+    navigator->setInvalid(ipc->getFullWidth(), ipc->getFullHeight());
+    EDITOR_OPEN_LOG("[editorOpen] phaseB step history-nav file=%s\n", phaseFileName.c_str());
+
     tpc->initImage (ipc, tmb->getType() == FT_Raw);
     tpc->setThumbnail(openThm);
+    EDITOR_OPEN_LOG("[editorOpen] phaseB step tpc-init file=%s\n", phaseFileName.c_str());
 
     // Notify MCP server about the active editor panel
     if (parent && parent->getMcpServer()) {
         parent->getMcpServer()->setEditorPanel(this);
     }
+    EDITOR_OPEN_LOG("[editorOpen] phaseB step mcp file=%s\n", phaseFileName.c_str());
 
     ipc->setHistogramListener (this);
     iareapanel->imageArea->indClippedPanel->silentlyDisableSharpMask();
 
     rtengine::ImageSource* is = isrc->getImageSource();
     is->setProgressListener ( this );
+    EDITOR_OPEN_LOG("[editorOpen] phaseB step listeners file=%s\n", phaseFileName.c_str());
 
     // try to load the last saved parameters from the cache or from the paramfile file
     ProcParams* ldprof = openThm->createProcParamsForUpdate (true, false); // will be freed by initProfile
+    EDITOR_OPEN_LOG("[editorOpen] phaseB step load-profile file=%s\n", phaseFileName.c_str());
 
     const auto& options = App::get().options();
     // initialize profile
     Glib::ustring defProf = openThm->getType() == FT_Raw ? options.defProfRaw : options.defProfImg;
     presetListPanel->setImageProcessor(ipc);
     presetListPanel->setThumbnail(openThm);
+    EDITOR_OPEN_LOG("[editorOpen] phaseB step preset-bind file=%s\n", phaseFileName.c_str());
     presetListPanel->initProfile (defProf, ldprof);
+    tpc->resetChangedState();
+    EDITOR_OPEN_LOG("[editorOpen] phaseB step preset-init file=%s\n", phaseFileName.c_str());
+    colorMgmtToolBar->updateProcessor();
+    EDITOR_OPEN_LOG("[editorOpen] phaseB step color-mgmt file=%s\n", phaseFileName.c_str());
+    if (deferredCropWindowEnable_ && iareapanel->imageArea->mainCropWindow) {
+        const unsigned int session = openSession_;
+        const Glib::ustring cropFileName = phaseFileName;
+        deferredCropEnableConn_.disconnect();
+        deferredCropEnableConn_ = Glib::signal_timeout().connect(
+            [this, session, cropFileName]() -> bool {
+                if (session != openSession_) {
+                    return false;
+                }
+
+                if (deferredCropWindowEnable_
+                    && iareapanel
+                    && iareapanel->imageArea
+                    && iareapanel->imageArea->mainCropWindow) {
+                    deferredCropWindowEnable_ = false;
+                    iareapanel->imageArea->mainCropWindow->enable();
+                    EDITOR_OPEN_LOG("[editorOpen] phaseB delayed crop-enable file=%s\n", cropFileName.c_str());
+                }
+
+                return false;
+            },
+            450,
+            G_PRIORITY_DEFAULT_IDLE
+        );
+        EDITOR_OPEN_LOG("[editorOpen] phaseB step crop-enable-deferred file=%s\n", phaseFileName.c_str());
+    }
 
     presetListPanel->setInitialFileName (fname);
+    EDITOR_OPEN_LOG("[editorOpen] phaseB step initial-filename file=%s\n", phaseFileName.c_str());
 
     openThm->addThumbnailListener (this);
+    EDITOR_OPEN_LOG("[editorOpen] phaseB step thumbnail-listener file=%s\n", phaseFileName.c_str());
 
-    // Update filmstrip action bar stars to reflect opened image's rating
-    filmstripCurrentRating = openThm->getRank();
-    updateFilmstripStars(filmstripCurrentRating);
-
-    // Update filmstrip flag button to reflect opened image's pick state
-    filmstripCurrentPick_ = openThm->getPick();
-    updateFilmstripFlagBtn();
-
-    // Update EXIF info strip
-    {
-        const rtengine::FramesMetaData* idata = ipc->getInitialImage()->getMetaData();
-        if (idata && idata->hasExif()) {
-            Glib::ustring exifStr = Glib::ustring::compose(
-                "<span size='small'>ISO %1    %2mm    f/%3    %4sec</span>",
-                idata->getISOSpeed(),
-                Glib::ustring::format(std::fixed, std::setprecision(0), idata->getFocalLen()),
-                Glib::ustring(idata->apertureToString(idata->getFNumber())),
-                Glib::ustring(idata->shutterToString(idata->getShutterSpeed()))
-            );
-            exifInfo->set_markup(exifStr);
-        } else {
-            exifInfo->set_markup("");
-        }
+    if (logOpen) {
+        EDITOR_OPEN_LOG("[editorOpen] phaseB core duration=%lldms file=%s\n",
+            editorOpenDurationMs(phaseStart, clk::now()),
+            phaseFileName.c_str());
     }
 
-    info_toggled ();
+    const unsigned int metadataSession = openSession_;
+    idle_register.add(
+        [this, metadataSession]() -> bool {
+            if (metadataSession != openSession_ || !ipc || !openThm) {
+                return false;
+            }
 
-    if (beforeIarea) {
-        // Single call handles both cleanup of old state and recreation
-        // for the new image (button is still active, so activation runs).
-        // A second call was redundant and caused an extra RAW file load.
-        beforeAfterToggled();
-    }
+            // Update filmstrip action bar controls only when the visible
+            // state changes; imports commonly have long runs with identical
+            // rating/pick values.
+            const int newRating = openThm->getRank();
+            if (filmstripCurrentRating != newRating) {
+                filmstripCurrentRating = newRating;
+                updateFilmstripStars(filmstripCurrentRating);
+            }
+
+            const int newPick = openThm->getPick();
+            if (filmstripCurrentPick_ != newPick) {
+                filmstripCurrentPick_ = newPick;
+                updateFilmstripFlagBtn();
+            }
+
+            // Update EXIF info strip
+            const rtengine::FramesMetaData* idata = ipc->getInitialImage()->getMetaData();
+            if (idata && idata->hasExif()) {
+                Glib::ustring exifStr = Glib::ustring::compose(
+                    "<span size='small'>ISO %1    %2mm    f/%3    %4sec</span>",
+                    idata->getISOSpeed(),
+                    Glib::ustring::format(std::fixed, std::setprecision(0), idata->getFocalLen()),
+                    Glib::ustring(idata->apertureToString(idata->getFNumber())),
+                    Glib::ustring(idata->shutterToString(idata->getShutterSpeed()))
+                );
+                exifInfo->set_markup(exifStr);
+            } else {
+                exifInfo->set_markup("");
+            }
+
+            info_toggled ();
+
+            if (beforeIarea) {
+                // Single call handles both cleanup of old state and recreation
+                // for the new image (button is still active, so activation runs).
+                // A second call was redundant and caused an extra RAW file load.
+                beforeAfterToggled();
+            }
+
+            return false;
+        },
+        G_PRIORITY_DEFAULT_IDLE
+    );
 
     // Defer directory browser navigation to an idle callback so it doesn't
     // block the image from appearing.  dirBrowser->open() scans the filesystem
     // which is very slow on cross-filesystem mounts (e.g. WSL2 /mnt/c/).
     if (editorDirBrowser_) {
         Glib::ustring dirName = Glib::path_get_dirname(fname);
-        DirBrowser* db = editorDirBrowser_;
-        Glib::signal_idle().connect_once(
-            [db, dirName]() { db->open(dirName); },
-            Glib::PRIORITY_LOW);
+        scheduleEditorDirSync(dirName, "openPhaseB", kEditorDirSyncAfterOpenDelayMs);
     }
+
+    if (logOpen) {
+        EDITOR_OPEN_LOG("[editorOpen] phaseB scheduled duration=%lldms file=%s\n",
+            editorOpenDurationMs(phaseStart, clk::now()),
+            phaseFileName.c_str());
+    }
+    noteRawLoadForegroundActivity(std::string(phaseFileName));
 }
 
 void EditorPanel::close ()
 {
-    // Cancel any pending deferred Phase B from open()
+    using clk = std::chrono::steady_clock;
+    const bool logClose = editorOpenLogEnabled();
+    const Glib::ustring closingFname = fname;
+    auto closeStepStart = logClose ? clk::now() : clk::time_point{};
+    auto logCloseStep = [&](const char* step) {
+        if (!logClose) {
+            return;
+        }
+
+        const auto now = clk::now();
+        EDITOR_OPEN_LOG("[editorOpen] close step %s duration=%lldms file=%s\n",
+            step,
+            editorOpenDurationMs(closeStepStart, now),
+            closingFname.c_str());
+        closeStepStart = now;
+    };
+
+    // Cancel any pending deferred Phase B from open(). Keep the deferred
+    // directory sync alive across same-folder photo switches so the quiet-time
+    // gate can coalesce it instead of re-queuing identical sidebar scans.
     deferredOpenConn_.disconnect();
+    deferredCropEnableConn_.disconnect();
+    deferredCropWindowEnable_ = false;
+    quickPreviewFileName_.clear();
 
     // Clear MCP server reference before closing
     if (parent && parent->getMcpServer()) {
@@ -3700,38 +4195,58 @@ void EditorPanel::close ()
             mcpSrv->setEditorPanel(nullptr);
         }
     }
+    logCloseStep("deferred-cancel");
 
     // Cancel any pending async loads to prevent stale callbacks
     if (beforeAfterCancel_) {
         beforeAfterCancel_->store(true);
         beforeAfterCancel_.reset();
     }
+    logCloseStep("before-after-cancel");
 
-    if (ipc) {
-        // Signal the old processing thread to abort ASAP so it stops
-        // competing for CPU with the new image's processing.
-        ipc->signalStop();
-        if (beforeIpc) {
-            beforeIpc->signalStop();
-        }
+        if (ipc) {
+            // Signal the old processing thread to abort ASAP so it stops
+            // competing for CPU with the new image's processing. Before the
+            // shared tool panel is rebound to another IPC, detach every
+            // listener pointer the old processor might use for late callbacks.
+            ipc->signalStop();
+            if (beforeIpc) {
+                beforeIpc->signalStop();
+            }
+            logCloseStep("signal-stop");
 
-        // Disconnect preset panel from processor before closing
-        presetListPanel->setImageProcessor(nullptr);
+            detachEditorProcessorListeners(ipc);
+            detachEditorProcessorListeners(beforeIpc);
+            setRawLoadEditorActivity(std::string(closingFname), false);
+            logCloseStep("listener-detach");
+
+            // Disconnect preset panel from processor before closing
+            presetListPanel->setImageProcessor(nullptr);
         presetListPanel->setThumbnail(nullptr);
+        logCloseStep("preset-detach");
 
-        // Capture profile data for async save before losing ipc/openThm
+        // Capture profile data for async save before losing ipc/openThm.
+        // Initial profile loading is not a user edit; avoid grabbing the
+        // thumbnail mutex on every browse when nothing changed.
+        const bool paramsChanged = tpc && tpc->getChangedState();
         ProcParams savedParams;
-        ipc->getParams (&savedParams);
+        if (paramsChanged) {
+            ipc->getParams (&savedParams);
+        }
+        logCloseStep("get-params");
 
         tpc->closeImage ();
-        tpc->writeOptions ();
+        scheduleOptionsWrite();
+        logCloseStep("tpc-close");
 
         rtengine::ImageSource* is = isrc->getImageSource();
         is->setProgressListener ( nullptr );
+        logCloseStep("source-detach");
 
         if (beforeIpc) {
             beforeIpc->setPreviewImageListener (nullptr);
         }
+        logCloseStep("before-preview-detach");
 
         // Clear before/after linked view pointers so no stale references
         // remain while the before state is cleaned up in open().
@@ -3739,6 +4254,7 @@ void EditorPanel::close ()
             iareapanel->setBeforeAfterViews (nullptr, iareapanel);
             iareapanel->imageArea->iLinkedImageArea = nullptr;
         }
+        logCloseStep("before-area-detach");
 
         // Disconnect crop handlers from old crops BEFORE deferring IPC
         // destruction.  The deferred thread deletes the IPC which deletes
@@ -3747,35 +4263,65 @@ void EditorPanel::close ()
         if (iareapanel && iareapanel->imageArea->mainCropWindow) {
             iareapanel->imageArea->mainCropWindow->cropHandler.disconnectCrop();
         }
+        logCloseStep("crop-detach");
 
         if (iareapanel) {
             iareapanel->imageArea->setPreviewHandler (nullptr);
             iareapanel->imageArea->setImProcCoordinator (nullptr);
             tpc->editModeSwitchedOff();
         }
+        logCloseStep("imagearea-detach");
 
         navigator->previewWindow->setPreviewHandler (nullptr);
 
         ipc->setPreviewImageListener (nullptr);
+        logCloseStep("preview-detach");
 
         // Defer stopProcessing + IPC destruction to background thread.
         // stopProcessing() blocks until processing finishes, which can
         // take seconds for large RAWs — too long for the UI thread.
+        bool savedFileExists = false;
+        if (!cacheMgr->getKnownFilePresence(fname, savedFileExists)) {
+            savedFileExists = Glib::file_test(fname, Glib::FILE_TEST_EXISTS);
+        }
+        logCloseStep("file-exists");
         {
             rtengine::StagedImageProcessor* old = ipc;
             PreviewHandler* oldHandler = previewHandler;
             Thumbnail* savedThm = nullptr;
+            Thumbnail* releaseThm = nullptr;
+            int releaseRefCount = 0;
             Glib::ustring savedFname = fname;
 
-            if (Glib::file_test(savedFname, Glib::FILE_TEST_EXISTS)) {
+            if (paramsChanged && savedFileExists) {
                 savedThm = openThm;
                 savedThm->increaseRef();
+            }
+
+            if (savedFileExists) {
+                releaseThm = openThm;
+                if (releaseThm->removeThumbnailListenerNoRelease(this)) {
+                    ++releaseRefCount;
+                }
+                ++releaseRefCount;
             }
 
             ipc = nullptr;
             previewHandler = nullptr;
 
-            std::thread([old, oldHandler, savedParams, savedThm, savedFname]() {
+            // Serialize all editor-panel IPC teardowns globally. When the
+            // user clicks two images in quick succession, two close()
+            // calls each spawn a detached cleanup thread; running them
+            // concurrently was racing with OMP workers inside rgbProc and
+            // crashing in Color::RGB2Lab on freed LUT/image buffers.
+            // Holding one mutex across stopProcessing()+destroy() forces
+            // the old image's teardown to fully complete before the next
+            // one starts its own teardown, and also prevents interleaved
+            // OMP pool state changes.
+            static std::mutex s_teardownMutex;
+            std::thread([old, oldHandler, savedParams, savedThm, savedFname, releaseThm, releaseRefCount]() {
+                lowerEditorCleanupThreadPriority();
+                std::lock_guard<std::mutex> lk(s_teardownMutex);
                 old->stopProcessing();
 
                 delete oldHandler;
@@ -3785,14 +4331,32 @@ void EditorPanel::close ()
                     savedThm->setProcParams(savedParams, nullptr, EDITOR);
                     savedThm->decreaseRef();
                 }
+
+                if (releaseThm) {
+                    for (int i = 0; i < releaseRefCount; ++i) {
+                        releaseThm->decreaseRef();
+                    }
+                }
             }).detach();
         }
+        logCloseStep("cleanup-enqueue");
 
-        // If the file was deleted somewhere, the openThm.descreaseRef delete the object, but we don't know here
-        if (Glib::file_test (fname, Glib::FILE_TEST_EXISTS)) {
-            openThm->removeThumbnailListener (this);
-            openThm->decreaseRef ();
+        // Thumbnail ref drops can close cache entries and block on thumbnail
+        // processing; release them in the cleanup thread after the listener is
+        // already detached above.
+        logCloseStep("thumbnail-release");
+    } else if (previewHandler) {
+        if (iareapanel && iareapanel->imageArea) {
+            iareapanel->imageArea->setPreviewHandler(nullptr);
         }
+
+        if (navigator && navigator->previewWindow) {
+            navigator->previewWindow->setPreviewHandler(nullptr);
+        }
+
+        delete previewHandler;
+        previewHandler = nullptr;
+        logCloseStep("preview-only-delete");
     }
 }
 
@@ -3861,32 +4425,77 @@ void EditorPanel::clearParamChanges()
 
 void EditorPanel::setProgress(double p)
 {
-    MyProgressBar* const pl = progressLabel;
+    bool scheduleIdle = false;
 
-    idle_register.add(
-        [p, pl]() -> bool
-        {
-            setprogressStrUI(p, {}, pl);
-            return false;
+    {
+        std::lock_guard<std::mutex> lock(progressUiMutex_);
+        queuedProgressValue_ = p;
+        queuedProgressHasValue_ = true;
+
+        if (!progressUiIdlePending_) {
+            progressUiIdlePending_ = true;
+            scheduleIdle = true;
         }
-    );
+    }
+
+    if (scheduleIdle) {
+        idle_register.add(
+            [this]() -> bool {
+                flushQueuedProgressUI();
+                return false;
+            }
+        );
+    }
 }
 
 void EditorPanel::setProgressStr(const Glib::ustring& str)
 {
-    MyProgressBar* const pl = progressLabel;
+    bool scheduleIdle = false;
 
-    idle_register.add(
-        [str, pl]() -> bool
-        {
-            setprogressStrUI(-1.0, str, pl);
-            return false;
+    {
+        std::lock_guard<std::mutex> lock(progressUiMutex_);
+        queuedProgressStr_ = str;
+
+        if (!progressUiIdlePending_) {
+            progressUiIdlePending_ = true;
+            scheduleIdle = true;
         }
-    );
+    }
+
+    if (scheduleIdle) {
+        idle_register.add(
+            [this]() -> bool {
+                flushQueuedProgressUI();
+                return false;
+            }
+        );
+    }
+}
+
+void EditorPanel::flushQueuedProgressUI()
+{
+    double value = -1.0;
+    Glib::ustring str;
+
+    {
+        std::lock_guard<std::mutex> lock(progressUiMutex_);
+        if (queuedProgressHasValue_) {
+            value = queuedProgressValue_;
+            queuedProgressValue_ = -1.0;
+            queuedProgressHasValue_ = false;
+        }
+        str = queuedProgressStr_;
+        queuedProgressStr_.clear();
+        progressUiIdlePending_ = false;
+    }
+
+    setprogressStrUI(value, str, progressLabel);
 }
 
 void EditorPanel::setProgressState(bool inProcessing)
 {
+    setRawLoadEditorActivity(std::string(fname), inProcessing);
+
     epih->pending++;
 
     idle_register.add(
@@ -4102,7 +4711,24 @@ void EditorPanel::hideHistoryActivated ()
             hpanedr->queue_allocate();
             return true;
         }, 16);
+
+        Glib::ustring dirToSync = pendingEditorDirSyncDir_;
+        if (dirToSync.empty() && !fname.empty()) {
+            dirToSync = Glib::path_get_dirname(fname);
+        }
+        pendingEditorDirSyncDir_.clear();
+        pendingEditorDirSyncDue_ = std::chrono::steady_clock::time_point{};
+        scheduleEditorDirSync(dirToSync, "leftPanelShown", 0);
     } else {
+        if (!fname.empty()) {
+            deferredDirSyncConn_.disconnect();
+            ++editorDirSyncGeneration_;
+            pendingEditorDirSyncDir_ = Glib::path_get_dirname(fname);
+            pendingEditorDirSyncDue_ = std::chrono::steady_clock::time_point{};
+            EDITOR_OPEN_LOG("[editorOpen] dir sync postponed source=leftPanelHidden hidden=1 file=%s\n",
+                pendingEditorDirSyncDir_.c_str());
+        }
+
         // Animate out, then hide
         leftAnimFraction_ = 1.0;
         leftAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
@@ -4186,8 +4812,7 @@ void EditorPanel::tbRightPanel_1_toggled ()
         }
 
         // Update filmstrip + toolbar margins so sidebars don't overlap content
-        const auto& opts = App::get().options();
-        int rightMargin = show ? std::min(opts.toolPanelWidth, 400) : 0;
+        int rightMargin = show ? editorToolPanelInsetWidth() : 0;
         if (catalogPane) {
             catalogPane->set_margin_end(rightMargin);
         }
@@ -4921,9 +5546,6 @@ bool EditorPanel::saveImmediately (const Glib::ustring &filename, const SaveForm
 void EditorPanel::openPreviousEditorImage()
 {
     if (!App::get().isSimpleEditor() && fPanel && !fname.empty()) {
-        if (ipc) {
-            ipc->signalStop();
-        }
         fPanel->fileCatalog->openNextPreviousEditorImage (fname, NAV_PREVIOUS);
     }
 }
@@ -4931,9 +5553,6 @@ void EditorPanel::openPreviousEditorImage()
 void EditorPanel::openNextEditorImage()
 {
     if (!App::get().isSimpleEditor() && fPanel && !fname.empty()) {
-        if (ipc) {
-            ipc->signalStop();
-        }
         fPanel->fileCatalog->openNextPreviousEditorImage (fname, NAV_NEXT);
     }
 }
@@ -5165,6 +5784,7 @@ void EditorPanel::beforeAfterToggled ()
             rtengine::StagedImageProcessor* old = beforeIpc;
             beforeIpc = nullptr;
             std::thread([old]() {
+                lowerEditorCleanupThreadPriority();
                 rtengine::StagedImageProcessor::destroy(old);
             }).detach();
         }
@@ -5226,8 +5846,7 @@ void EditorPanel::beforeAfterToggled ()
 
         std::thread([this, loadFname, loadIsRaw, cancel]() {
             int errorCode = 0;
-            auto* beforeImg = rtengine::InitialImage::load(
-                loadFname, loadIsRaw, &errorCode, nullptr);
+            auto* beforeImg = FilePanel::loadAuxiliaryInitialImage(loadFname, loadIsRaw, &errorCode, cancel);
 
             if (!beforeImg || errorCode || cancel->load()) {
                 if (beforeImg) delete beforeImg;
@@ -5614,4 +6233,3 @@ void EditorPanel::defaultMonitorProfileChanged (const Glib::ustring &profile_nam
 {
     colorMgmtToolBar->defaultMonitorProfileChanged (profile_name, auto_monitor_profile);
 }
-

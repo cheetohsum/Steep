@@ -19,6 +19,7 @@
 #pragma once
 
 #include <set>
+#include <unordered_set>
 #include <vector>
 
 #include "exiffiltersettings.h"
@@ -41,11 +42,12 @@ public:
     bool matchEqual;
     ExifFilterSettings exifFilter;
     std::vector<std::string> vFilterStrings;
-    std::set<std::string> albumWhitelist;
+    std::unordered_set<std::string> albumWhitelist;
 
     // Filetype filter: if non-empty, only show entries whose uppercase
     // extension is in this set.  Empty = show all types.
     std::set<std::string> filetypeFilter;
 
     BrowserFilter ();
+    bool isPassThrough () const;
 };

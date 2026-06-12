@@ -24,12 +24,14 @@
 
 #include <gtkmm.h>
 
+#include <tuple>
+
 class RTSurface;
 
 class RTImageCache final
 {
 private:
-    static std::map<std::pair<Glib::ustring, Gtk::IconSize>, std::shared_ptr<RTSurface>> cache;
+    static std::map<std::tuple<Glib::ustring, int, int>, std::shared_ptr<RTSurface>> cache;
 
 public:
     static std::shared_ptr<RTSurface> getCachedSurface(const Glib::ustring &icon_name, const Gtk::IconSize icon_size);

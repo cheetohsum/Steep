@@ -42,9 +42,8 @@ Glib::ustring FileThumbnailButtonSet::untrashToolTip;
 Glib::ustring FileThumbnailButtonSet::colorLabelToolTip;
 std::array<Glib::ustring, 5> FileThumbnailButtonSet::rankToolTip;
 
-FileThumbnailButtonSet::FileThumbnailButtonSet (FileBrowserEntry* myEntry)
+void FileThumbnailButtonSet::ensureIconsLoaded ()
 {
-
     if (!iconsLoaded) {
         unRankIcon  = std::shared_ptr<RTSurface>(new RTSurface("star-hollow-small", Gtk::ICON_SIZE_BUTTON));
         rankIcon    = std::shared_ptr<RTSurface>(new RTSurface("star-gold-small", Gtk::ICON_SIZE_BUTTON));
@@ -74,6 +73,11 @@ FileThumbnailButtonSet::FileThumbnailButtonSet (FileBrowserEntry* myEntry)
 
         iconsLoaded = true;
     }
+}
+
+FileThumbnailButtonSet::FileThumbnailButtonSet (FileBrowserEntry* myEntry)
+{
+    ensureIconsLoaded();
 
     add(new LWButton(unRankIcon, 0, myEntry, LWButton::Left, LWButton::Center, &unrankToolTip));
 

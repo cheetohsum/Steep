@@ -18,6 +18,10 @@
  */
 #pragma once
 
+#include <chrono>
+#include <cmath>
+#include <mutex>
+
 #include <gtkmm.h>
 
 #include <sigc++/sigc++.h>
@@ -35,24 +39,88 @@ public:
     {
     }
 
+    ~PLDBridge() override
+    {
+        idle_register_.destroy();
+    }
+
     // ProgressListener interface
     void setProgress(double p) override
     {
-        GThreadLock lock;
-        pl->setProgress(p);
+        const bool endpoint = p <= 0.0 || p >= 1.0;
+        const auto now = std::chrono::steady_clock::now();
+        bool emit = false;
+        bool scheduleFlush = false;
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            const bool first = lastProgressTime_ == std::chrono::steady_clock::time_point();
+            const double delta = std::abs(p - lastProgress_);
+            const bool changed = first || delta > 0.000001;
+            const bool movedEnough = first || delta >= 0.02;
+            const bool waitedEnough = changed && now - lastProgressTime_ >= std::chrono::milliseconds(40);
+            emit = (endpoint && changed) || movedEnough || waitedEnough;
+
+            if (!emit) {
+                return;
+            }
+
+            lastProgress_ = p;
+            lastProgressTime_ = now;
+            pendingProgress_ = p;
+            pendingProgressValid_ = true;
+            scheduleFlush = !uiFlushPending_;
+            uiFlushPending_ = true;
+        }
+
+        if (scheduleFlush) {
+            scheduleUIFlush();
+        }
     }
+
     void setProgressStr(const Glib::ustring& str) override
     {
-        GThreadLock lock;
-        Glib::ustring progrstr;
-        progrstr = M(str);
-        pl->setProgressStr(progrstr);
+        bool scheduleFlush = false;
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (str == lastProgressStrKey_) {
+                return;
+            }
+
+            lastProgressStrKey_ = str;
+            pendingProgressStr_ = str;
+            pendingProgressStrValid_ = true;
+            scheduleFlush = !uiFlushPending_;
+            uiFlushPending_ = true;
+        }
+
+        if (scheduleFlush) {
+            scheduleUIFlush();
+        }
     }
 
     void setProgressState(bool inProcessing) override
     {
-        GThreadLock lock;
-        pl->setProgressState(inProcessing);
+        bool scheduleFlush = false;
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            if (lastProgressStateValid_ && lastProgressState_ == inProcessing) {
+                return;
+            }
+
+            lastProgressState_ = inProcessing;
+            lastProgressStateValid_ = true;
+            pendingProgressState_ = inProcessing;
+            pendingProgressStateValid_ = true;
+            scheduleFlush = !uiFlushPending_;
+            uiFlushPending_ = true;
+        }
+
+        if (scheduleFlush) {
+            scheduleUIFlush();
+        }
     }
 
     void error(const Glib::ustring& descr) override
@@ -62,7 +130,71 @@ public:
     }
 
 private:
+    void scheduleUIFlush()
+    {
+        idle_register_.add(
+            [this]() -> bool {
+                flushUI();
+                return false;
+            },
+            G_PRIORITY_DEFAULT_IDLE);
+    }
+
+    void flushUI()
+    {
+        double progress = 0.0;
+        bool progressValid = false;
+        Glib::ustring progressStr;
+        bool progressStrValid = false;
+        bool progressState = false;
+        bool progressStateValid = false;
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            progress = pendingProgress_;
+            progressValid = pendingProgressValid_;
+            pendingProgress_ = 0.0;
+            pendingProgressValid_ = false;
+
+            progressStr = pendingProgressStr_;
+            progressStrValid = pendingProgressStrValid_;
+            pendingProgressStr_.clear();
+            pendingProgressStrValid_ = false;
+
+            progressState = pendingProgressState_;
+            progressStateValid = pendingProgressStateValid_;
+            pendingProgressState_ = false;
+            pendingProgressStateValid_ = false;
+
+            uiFlushPending_ = false;
+        }
+
+        if (progressStrValid) {
+            pl->setProgressStr(M(progressStr));
+        }
+        if (progressValid) {
+            pl->setProgress(progress);
+        }
+        if (progressStateValid) {
+            pl->setProgressState(progressState);
+        }
+    }
+
     rtengine::ProgressListener* const pl;
+    IdleRegister idle_register_;
+    std::mutex mutex_;
+    double lastProgress_ = -1.0;
+    std::chrono::steady_clock::time_point lastProgressTime_;
+    Glib::ustring lastProgressStrKey_;
+    bool lastProgressState_ = false;
+    bool lastProgressStateValid_ = false;
+    bool uiFlushPending_ = false;
+    double pendingProgress_ = 0.0;
+    bool pendingProgressValid_ = false;
+    Glib::ustring pendingProgressStr_;
+    bool pendingProgressStrValid_ = false;
+    bool pendingProgressState_ = false;
+    bool pendingProgressStateValid_ = false;
 };
 
 template<class T>

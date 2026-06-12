@@ -18,6 +18,7 @@
  */
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <clocale>
 
 #include <lcms2.h>
@@ -258,6 +259,11 @@ void scale_colors (rtengine::RawImage *ri, float scale_mul[4], float cblack[4], 
     }
 }
 
+long long thumbBenchMs(std::chrono::steady_clock::time_point start, std::chrono::steady_clock::time_point end)
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+}
+
 }
 
 namespace rtengine
@@ -268,10 +274,25 @@ using namespace procparams;
 Thumbnail* Thumbnail::loadFromImage (const Glib::ustring& fname, int &w, int &h, int fixwh, double wbEq, StandardObserver wbObserver, bool inspectorMode)
 {
 
+    const bool bench = g_getenv("RT_THUMBNAIL_BENCH") != nullptr;
+    const auto benchStart = bench ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    long long loadMs = 0;
+    long long resizeMs = 0;
+    long long histMs = 0;
+    long long autoExpMs = 0;
+    long long initMs = 0;
+    const int boxWidth = w;
+    const int boxHeight = h;
     StdImageSource imgSrc;
+    const int jpegThumbnailDecodeWidth = !inspectorMode && w > 0 ? w : 0;
+    const int jpegThumbnailDecodeHeight = !inspectorMode && h > 0 ? h : 0;
 
-    if (imgSrc.load (fname)) {
+    const auto loadStart = bench ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    if (imgSrc.loadThumbnail (fname, jpegThumbnailDecodeWidth, jpegThumbnailDecodeHeight)) {
         return nullptr;
+    }
+    if (bench) {
+        loadMs = thumbBenchMs(loadStart, std::chrono::steady_clock::now());
     }
 
     ImageIO* img = imgSrc.getImageIO();
@@ -344,7 +365,11 @@ Thumbnail* Thumbnail::loadFromImage (const Glib::ustring& fname, int &w, int &h,
         }
     } else {
         // we want the same image type than the source file
+        const auto resizeStart = bench ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         tpp->thumbImg = resizeToSameType (w, h, TI_Bilinear, img);
+        if (bench) {
+            resizeMs = thumbBenchMs(resizeStart, std::chrono::steady_clock::now());
+        }
 
         // histogram computation
         tpp->aeHistCompression = 3;
@@ -355,6 +380,7 @@ Thumbnail* Thumbnail::loadFromImage (const Glib::ustring& fname, int &w, int &h,
         double avg_b = 0;
         int n = 0;
 
+        const auto histStart = bench ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         if (img->getType() == rtengine::sImage8) {
             Image8 *image = static_cast<Image8*> (img);
             image->computeHistogramAutoWB (avg_r, avg_g, avg_b, n, tpp->aeHistogram, tpp->aeHistCompression);
@@ -367,11 +393,16 @@ Thumbnail* Thumbnail::loadFromImage (const Glib::ustring& fname, int &w, int &h,
         } else {
             printf ("loadFromImage: Unsupported image type \"%s\"!\n", img->getType());
         }
+        if (bench) {
+            histMs = thumbBenchMs(histStart, std::chrono::steady_clock::now());
+        }
 
-        ProcParams paramsForAutoExp; // Dummy for constructor
-        ImProcFunctions ipf (&paramsForAutoExp, false);
-        ipf.getAutoExp (tpp->aeHistogram, tpp->aeHistCompression, 0.02, tpp->aeExposureCompensation, tpp->aeLightness, tpp->aeContrast, tpp->aeBlack, tpp->aeHighlightCompression, tpp->aeHighlightCompressionThreshold);
+        const auto autoExpStart = bench ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        ImProcFunctions::getAutoExp (tpp->aeHistogram, tpp->aeHistCompression, 0.02, tpp->aeExposureCompensation, tpp->aeLightness, tpp->aeContrast, tpp->aeBlack, tpp->aeHighlightCompression, tpp->aeHighlightCompressionThreshold);
         tpp->aeValid = true;
+        if (bench) {
+            autoExpMs = thumbBenchMs(autoExpStart, std::chrono::steady_clock::now());
+        }
 
         if (n > 0) {
             ColorTemp cTemp;
@@ -386,7 +417,31 @@ Thumbnail* Thumbnail::loadFromImage (const Glib::ustring& fname, int &w, int &h,
             cTemp.mul2temp (tpp->redAWBMul, tpp->greenAWBMul, tpp->blueAWBMul, tpp->wbEqual, tpp->wbObserver, tpp->autoWBTemp, tpp->autoWBGreen);
         }
 
+        const auto initStart = bench ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         tpp->init ();
+        if (bench) {
+            initMs = thumbBenchMs(initStart, std::chrono::steady_clock::now());
+        }
+    }
+
+    if (bench && !inspectorMode) {
+        std::fprintf(
+            stdout,
+            "RT_IMAGE_THUMB_BENCH total_ms=%lld load_ms=%lld resize_ms=%lld hist_ms=%lld autoexp_ms=%lld init_ms=%lld source=%dx%d thumb=%dx%d box=%dx%d file=\"%s\"\n",
+            thumbBenchMs(benchStart, std::chrono::steady_clock::now()),
+            loadMs,
+            resizeMs,
+            histMs,
+            autoExpMs,
+            initMs,
+            img->getWidth(),
+            img->getHeight(),
+            w,
+            h,
+            boxWidth,
+            boxHeight,
+            fname.c_str());
+        std::fflush(stdout);
     }
 
     return tpp;
@@ -1006,9 +1061,7 @@ Thumbnail* Thumbnail::loadFromRaw (const Glib::ustring& fname, eSensorType &sens
                 }
             }
         }
-        ProcParams paramsForAutoExp; // Dummy for constructor
-        ImProcFunctions ipf (&paramsForAutoExp, false);
-        ipf.getAutoExp (tpp->aeHistogram, tpp->aeHistCompression, 0.02, tpp->aeExposureCompensation, tpp->aeLightness, tpp->aeContrast, tpp->aeBlack, tpp->aeHighlightCompression, tpp->aeHighlightCompressionThreshold);
+        ImProcFunctions::getAutoExp (tpp->aeHistogram, tpp->aeHistCompression, 0.02, tpp->aeExposureCompensation, tpp->aeLightness, tpp->aeContrast, tpp->aeBlack, tpp->aeHighlightCompression, tpp->aeHighlightCompressionThreshold);
         tpp->aeValid = true;
 
         if (ri->get_colors() == 1) {
@@ -2225,12 +2278,15 @@ unsigned char* Thumbnail::getGrayscaleHistEQ (int trim_width)
 
 bool Thumbnail::writeImage (const Glib::ustring& fname)
 {
+    return writeImageFile(fname + ".rtti");
+}
+
+bool Thumbnail::writeImageFile (const Glib::ustring& fullFName)
+{
 
     if (!thumbImg) {
         return false;
     }
-
-    Glib::ustring fullFName = fname + ".rtti";
 
     FILE* f = ::g_fopen (fullFName.c_str (), "wb");
 
@@ -2263,16 +2319,15 @@ bool Thumbnail::writeImage (const Glib::ustring& fname)
 
 bool Thumbnail::readImage (const Glib::ustring& fname)
 {
+    return readImageFile(fname + ".rtti");
+}
+
+bool Thumbnail::readImageFile (const Glib::ustring& fullFName)
+{
 
     if (thumbImg) {
         delete thumbImg;
         thumbImg = nullptr;
-    }
-
-    Glib::ustring fullFName = fname + ".rtti";
-
-    if (!Glib::file_test(fullFName, Glib::FILE_TEST_EXISTS)) {
-        return false;
     }
 
     FILE* f = ::g_fopen(fullFName.c_str (), "rb");
@@ -2327,13 +2382,20 @@ bool Thumbnail::readData  (const Glib::ustring& fname)
     Glib::KeyFile keyFile;
 
     try {
-        MyMutex::MyLock thmbLock (thumbMutex);
+        keyFile.load_from_file (fname);
+    } catch (Glib::Error&) {
+        return false;
+    }
 
-        try {
-            keyFile.load_from_file (fname);
-        } catch (Glib::Error&) {
-            return false;
-        }
+    return readData(keyFile);
+}
+
+bool Thumbnail::readData  (const Glib::KeyFile& keyFile)
+{
+    setlocale (LC_NUMERIC, "C"); // to set decimal point to "."
+
+    try {
+        MyMutex::MyLock thmbLock (thumbMutex);
 
         if (keyFile.has_group ("LiveThumbData")) {
             if (keyFile.has_key ("LiveThumbData", "CamWBRed")) {
@@ -2442,21 +2504,47 @@ bool Thumbnail::readData  (const Glib::ustring& fname)
         return true;
     } catch (Glib::Error &err) {
         if (settings->verbose) {
-            printf ("Thumbnail::readData / Error code %d while reading values from \"%s\":\n%s\n", err.code(), fname.c_str(), err.what().c_str());
+            printf ("Thumbnail::readData / Error code %d while reading values from parsed cache data:\n%s\n", err.code(), err.what().c_str());
         }
     } catch (...) {
         if (settings->verbose) {
-            printf ("Thumbnail::readData / Unknown exception while trying to load \"%s\"!\n", fname.c_str());
+            printf ("Thumbnail::readData / Unknown exception while reading parsed cache data!\n");
         }
     }
 
     return false;
 }
 
-bool Thumbnail::writeData  (const Glib::ustring& fname)
+void Thumbnail::writeData(Glib::KeyFile& keyFile)
 {
     MyMutex::MyLock thmbLock (thumbMutex);
 
+    keyFile.set_double  ("LiveThumbData", "CamWBRed", camwbRed);
+    keyFile.set_double  ("LiveThumbData", "CamWBGreen", camwbGreen);
+    keyFile.set_double  ("LiveThumbData", "CamWBBlue", camwbBlue);
+    keyFile.set_double  ("LiveThumbData", "RedAWBMul", redAWBMul);
+    keyFile.set_double  ("LiveThumbData", "GreenAWBMul", greenAWBMul);
+    keyFile.set_double  ("LiveThumbData", "BlueAWBMul", blueAWBMul);
+    keyFile.set_double  ("LiveThumbData", "AEExposureCompensation", aeExposureCompensation);
+    keyFile.set_integer ("LiveThumbData", "AELightness", aeLightness);
+    keyFile.set_integer ("LiveThumbData", "AEContrast", aeContrast);
+    keyFile.set_integer ("LiveThumbData", "AEBlack", aeBlack);
+    keyFile.set_integer ("LiveThumbData", "AEHighlightCompression", aeHighlightCompression);
+    keyFile.set_integer ("LiveThumbData", "AEHighlightCompressionThreshold", aeHighlightCompressionThreshold);
+    keyFile.set_double  ("LiveThumbData", "RedMultiplier", redMultiplier);
+    keyFile.set_double  ("LiveThumbData", "GreenMultiplier", greenMultiplier);
+    keyFile.set_double  ("LiveThumbData", "BlueMultiplier", blueMultiplier);
+    keyFile.set_double  ("LiveThumbData", "Scale", scale);
+    keyFile.set_double  ("LiveThumbData", "DefaultGain", defGain);
+    keyFile.set_integer ("LiveThumbData", "ScaleForSave", scaleForSave);
+    keyFile.set_boolean ("LiveThumbData", "GammaCorrected", gammaCorrected);
+    Glib::ArrayHandle<double> cm ((double*)colorMatrix, 9, Glib::OWNERSHIP_NONE);
+    keyFile.set_double_list ("LiveThumbData", "ColorMatrix", cm);
+    keyFile.set_double  ("LiveThumbData", "ScaleGain", scaleGain);
+}
+
+bool Thumbnail::writeData  (const Glib::ustring& fname)
+{
     Glib::ustring keyData;
 
     try {
@@ -2467,28 +2555,7 @@ bool Thumbnail::writeData  (const Glib::ustring& fname)
             keyFile.load_from_file (fname);
         } catch (Glib::Error&) {}
 
-        keyFile.set_double  ("LiveThumbData", "CamWBRed", camwbRed);
-        keyFile.set_double  ("LiveThumbData", "CamWBGreen", camwbGreen);
-        keyFile.set_double  ("LiveThumbData", "CamWBBlue", camwbBlue);
-        keyFile.set_double  ("LiveThumbData", "RedAWBMul", redAWBMul);
-        keyFile.set_double  ("LiveThumbData", "GreenAWBMul", greenAWBMul);
-        keyFile.set_double  ("LiveThumbData", "BlueAWBMul", blueAWBMul);
-        keyFile.set_double  ("LiveThumbData", "AEExposureCompensation", aeExposureCompensation);
-        keyFile.set_integer ("LiveThumbData", "AELightness", aeLightness);
-        keyFile.set_integer ("LiveThumbData", "AEContrast", aeContrast);
-        keyFile.set_integer ("LiveThumbData", "AEBlack", aeBlack);
-        keyFile.set_integer ("LiveThumbData", "AEHighlightCompression", aeHighlightCompression);
-        keyFile.set_integer ("LiveThumbData", "AEHighlightCompressionThreshold", aeHighlightCompressionThreshold);
-        keyFile.set_double  ("LiveThumbData", "RedMultiplier", redMultiplier);
-        keyFile.set_double  ("LiveThumbData", "GreenMultiplier", greenMultiplier);
-        keyFile.set_double  ("LiveThumbData", "BlueMultiplier", blueMultiplier);
-        keyFile.set_double  ("LiveThumbData", "Scale", scale);
-        keyFile.set_double  ("LiveThumbData", "DefaultGain", defGain);
-        keyFile.set_integer ("LiveThumbData", "ScaleForSave", scaleForSave);
-        keyFile.set_boolean ("LiveThumbData", "GammaCorrected", gammaCorrected);
-        Glib::ArrayHandle<double> cm ((double*)colorMatrix, 9, Glib::OWNERSHIP_NONE);
-        keyFile.set_double_list ("LiveThumbData", "ColorMatrix", cm);
-        keyFile.set_double  ("LiveThumbData", "ScaleGain", scaleGain);
+        writeData(keyFile);
 
         keyData = keyFile.to_data ();
 

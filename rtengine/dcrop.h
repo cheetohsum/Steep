@@ -18,6 +18,7 @@
  */
 #pragma once
 
+#include <atomic>
 #include <memory>
 
 #include "rtengine.h"
@@ -62,7 +63,7 @@ protected:
     int upperBorder, leftBorder;            /// extra border size really allocated for image processing
 
     bool cropAllocated;
-    DetailedCropListener* cropImageListener;
+    std::atomic<DetailedCropListener*> cropImageListener;
 
     MyMutex cropMutex;
     ImProcCoordinator* const parent;
@@ -91,6 +92,7 @@ public:
     void fullUpdate  () override;  // called via thread
 
     void setListener    (DetailedCropListener* il) override;
+    void detachListener () override;
     void destroy        () override;
     int get_skip();
     int getLeftBorder();

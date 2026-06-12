@@ -427,6 +427,13 @@ void FlatField::flatFieldAutoSelectChanged()
 
 void FlatField::setShortcutPath(const Glib::ustring& path)
 {
+#ifdef _WIN32
+    // GtkFileChooser's shortcut-folder API is currently unstable in this
+    // Windows/MSYS2 build during startup directory selection. The shortcut is
+    // only a convenience entry, so skip it rather than risking a native crash.
+    (void)path;
+    return;
+#else
     if (path.empty ()) {
         return;
     }
@@ -442,6 +449,7 @@ void FlatField::setShortcutPath(const Glib::ustring& path)
         lastShortcutPath = path;
 
     } catch (Glib::Error&) {}
+#endif
 }
 
 void FlatField::flatFieldAutoClipValueChanged(int n)

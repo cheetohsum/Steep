@@ -31,6 +31,7 @@
 
 #include <atomic>
 #include <map>
+#include <memory>
 #include <thread>
 #include <vector>
 
@@ -92,6 +93,7 @@ public:
 private:
     static constexpr int THUMB_HEIGHT = 56;
     static constexpr int CARD_MIN_WIDTH = 48;
+    static constexpr unsigned int THUMB_START_DELAY_MS = 1200;
 
     // Toolbar callbacks
     void profileFillModeToggled();
@@ -127,9 +129,11 @@ private:
     void cancelHover();
 
     // Thumbnail generation
+    void queueThumbnailGeneration();
     void startThumbnailGeneration();
-    void cancelThumbnailGeneration();
-    void generateThumbnail(const ProfileStoreEntry* entry);
+    void cancelThumbnailGeneration(bool wait);
+    void reapThumbnailThreads(bool wait);
+    void generateThumbnail(const ProfileStoreEntry* entry, ::Thumbnail* thumbnail, unsigned int generation);
     void collectPresetEntries(std::vector<const ProfileStoreEntry*>& entries);
 
     // Layout widgets
@@ -178,7 +182,15 @@ private:
     ::Thumbnail* openThm_;
     std::map<const ProfileStoreEntry*, Glib::RefPtr<Gdk::Pixbuf>> thumbCache_;
     std::thread thumbThread_;
+    std::shared_ptr<std::atomic<bool>> thumbThreadDone_;
+    struct RetiredThumbThread {
+        std::thread thread;
+        std::shared_ptr<std::atomic<bool>> done;
+    };
+    std::vector<RetiredThumbThread> retiredThumbThreads_;
     std::atomic<bool> thumbCancelled_;
+    std::atomic<unsigned int> thumbGeneration_;
+    std::shared_ptr<std::atomic<bool>> thumbAlive_;
 
     // Phase 3: Animated categories
     std::map<int, bool> categoryExpanded_;

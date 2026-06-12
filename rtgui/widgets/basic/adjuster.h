@@ -151,4 +151,6 @@ public:
 
 protected:
     bool on_draw(const Cairo::RefPtr<Cairo::Context>& cr) override;
+    void get_preferred_width_vfunc(int& minimum_width, int& natural_width) const override;
+    void get_preferred_width_for_height_vfunc(int height, int& minimum_width, int& natural_width) const override;
 };

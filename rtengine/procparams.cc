@@ -3396,8 +3396,8 @@ bool FilmSimulationParams::operator !=(const FilmSimulationParams& other) const
 
 FilmPresetsParams::FilmPresetsParams() :
     enabled(false),
-    preset("heritage_gold"),
-    strength(0),
+    preset("cinema_reveal_35"),
+    strength(100),
     contrast(0),
     saturation(0),
     warmth(0),
@@ -5312,13 +5312,20 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
     }
 }
 
-int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited)
+int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fileExistsKnown)
 {
-    setlocale(LC_NUMERIC, "C");  // to set decimal point to "."
-
     if (fname.empty()) {
         return 1;
     }
+
+    if (!fileExistsKnown && !Glib::file_test(fname, Glib::FILE_TEST_EXISTS)) {
+        if (pedited) {
+            pedited->set(false);
+        }
+        return 1;
+    }
+
+    setlocale(LC_NUMERIC, "C");  // to set decimal point to "."
 
     const auto& options = App::get().options();
 
@@ -5335,8 +5342,7 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited)
             pedited = dummy_pedited.get();
         }
 
-        if (!Glib::file_test(fname, Glib::FILE_TEST_EXISTS) ||
-                !keyFile.load_from_file(fname)) {
+        if (!keyFile.load_from_file(fname)) {
             return 1;
         }
 

@@ -19,10 +19,15 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
+#include <deque>
 #include <map>
 #include <mutex>
 #include <set>
+#include <string>
+#include <unordered_set>
 #include <utility>
+#include <vector>
 
 #include <giomm.h>
 
@@ -84,6 +89,7 @@ private:
     bool enabled;
     bool inTabMode;  // Tab mode has e.g. different progress bar handling
     Glib::ustring imageToSelect_fname;
+    std::string imageToSelect_key;
     Glib::ustring refImageForOpen_fname; // Next/previous for Editor's perspective
     eRTNav actionNextPrevious;
 
@@ -180,6 +186,7 @@ private:
 
 
     std::vector<Glib::ustring> fileNameList;
+    std::unordered_set<std::string> queuedPreviewKeys_;
     std::set<Glib::ustring> editedFiles;
     guint modifierKey; // any modifiers held when rank button was pressed
 
@@ -191,13 +198,40 @@ private:
     // threads and process them in batches to avoid thousands of individual
     // idle callbacks that saturate the GTK main loop.
     std::mutex previewBatchMutex_;
-    std::vector<std::pair<int, FileBrowserEntry*>> pendingPreviews_;
+    std::deque<std::pair<int, FileBrowserEntry*>> pendingPreviews_;
+    std::vector<std::pair<int, FileBrowserEntry*>> previewChunkScratch_;
+    std::vector<FileBrowserEntry*> entriesToAddScratch_;
     bool previewBatchPending_ = false;
+    std::atomic<bool> previewBatchFirstDrainPending_{false};
+    std::atomic<unsigned> previewBatchPauseDepth_{0};
+    bool directoryScanComplete_ = true;
+    bool previewsFinishedPending_ = false;
+    bool previewsFinishRetryQueued_ = false;
+    bool folderLoadTimingActive_ = false;
+    bool folderLoadFirstPreviewLogged_ = false;
+    int folderLoadNextPreviewMilestone_ = 0;
+    std::chrono::steady_clock::time_point folderLoadStart_;
+    guint navigationBenchmarkTimeoutId_ = 0;
+    bool navigationBenchmarkStarted_ = false;
+    int navigationBenchmarkRemaining_ = 0;
+    int navigationBenchmarkIntervalMs_ = 0;
+    std::size_t navigationBenchmarkIndex_ = 0;
+    eRTNav navigationBenchmarkDirection_ = NAV_NEXT;
+    bool navigationBenchmarkRawOnly_ = false;
     bool processPendingPreviews_();
+    void schedulePreviewsFinishedRetry_(int dir_id, unsigned int delayMs);
+    void startFolderLoadTiming_();
+    void stopFolderLoadTiming_();
+    void logFolderLoadTiming_(const char* stage) const;
+    void scheduleNavigationBenchmark_();
+    void scheduleNavigationBenchmarkStep_(int dirId);
+    bool runNavigationBenchmarkStep_(int dirId);
+    sigc::connection reparseDirectoryConn_;
+    bool reparseDirectoryQueued_ = false;
+    void scheduleReparseDirectory_();
 
     bool earlySelectDone_ = false;
-
-    std::set<std::string> albumWhitelist_;
+    std::unordered_set<std::string> albumWhitelist_;
     bool inAlbumMode_;
     Glib::ustring savedDirectory_;
 
@@ -210,7 +244,10 @@ private:
     std::set<std::string> knownFiletypes_;       // all types seen (uppercase)
     std::set<std::string> selectedFiletypes_;    // active types (uppercase); empty = all
     bool filetypeBlockSignals_ = false;
+    bool filetypeUpdateQueued_ = false;
     void updateFiletypeFilter();
+    void scheduleFiletypeFilterUpdate_();
+    void flushFiletypeFilterUpdate_();
     void onFiletypeCheckToggled(const std::string& filetype);
     void onFiletypeAllToggled();
     void resetFiletypeFilter();
@@ -222,6 +259,9 @@ private:
 
     void addAndOpenFile (const Glib::ustring& fname);
     void addFile (const Glib::ustring& fName);
+    void addFiles (const std::vector<Glib::ustring>& fNames);
+    void addFiles (std::vector<Glib::ustring>&& fNames);
+    void addFiles (std::vector<Glib::ustring>&& fNames, std::vector<std::string>&& fNameKeys);
     std::vector<Glib::ustring> getFileList(std::vector<Glib::RefPtr<Gio::File>> *dirs_explored = nullptr);
     BrowserFilter getFilter ();
     void refreshDirectoryMonitors(const std::vector<Glib::RefPtr<Gio::File>> &dirs_to_monitor);
@@ -242,9 +282,12 @@ public:
 
     // previewloaderlistener interface
     void previewReady (int dir_id, FileBrowserEntry* fdn) override;
+    void previewReadyBatch (PreviewLoaderListener::PreviewReadyBatch&& entries) override;
     void previewsFinished (int dir_id) override;
     // called asynchronously from the main event loop
     void previewsFinishedUI(int dir_id);
+    void pausePreviewBatchProcessing();
+    void resumePreviewBatchProcessing();
 
     void _refreshProgressBar();
 
@@ -286,7 +329,7 @@ public:
     void refreshHeight ();
 
     void filterApplied() override;
-    void openRequested(const std::vector<Thumbnail*>& tbe) override;
+    void openRequested(const std::vector<Thumbnail*>& tbe, eRTNav preloadDirectionHint = NAV_NONE) override;
     void deleteRequested(const std::vector<FileBrowserEntry*>& tbe, bool inclBatchProcessed, bool onlySelected) override;
     void copyMoveRequested(const std::vector<FileBrowserEntry*>& tbe, bool moveRequested) override;
     void developRequested(const std::vector<FileBrowserEntry*>& tbe, bool fastmode) override;
@@ -330,7 +373,7 @@ public:
 
     void on_realize() override;
     void reparseDirectory ();
-    void _openImage (const std::vector<Thumbnail*>& tmb);
+    void _openImage (const std::vector<Thumbnail*>& tmb, eRTNav preloadDirectionHint = NAV_NONE);
 
     void zoomIn ();
     void zoomOut ();

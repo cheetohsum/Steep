@@ -183,33 +183,33 @@ protected:
     int fw, fh, tr, fullw, fullh;
     int pW, pH;
 
-    ProgressListener* plistener;
-    PreviewImageListener* imageListener;
-    AutoExpListener* aeListener;
-    AutoCamListener* acListener;
-    AutoBlackListener* ablListener;
-    AutoBlackxListener* ablxListener;
-    AutoBWListener* abwListener;
-    AutoWBListener* awbListener;
-    FlatFieldAutoClipListener *flatFieldAutoClipListener;
-    AutoContrastListener *bayerAutoContrastListener;
-    AutoContrastListener *xtransAutoContrastListener;
-    AutoContrastListener *pdSharpenAutoContrastListener;
-    AutoRadiusListener *pdSharpenAutoRadiusListener;
-    FrameCountListener *frameCountListener;
-    ImageTypeListener *imageTypeListener;
-    FilmNegListener *filmNegListener;
-    AutoColorTonListener* actListener;
-    AutoprimListener* primListener;
-    AutoChromaListener* adnListener;
-    WaveletListener* awavListener;
-    RetinexListener* dehaListener;
-    CompgamutListener* acmaxListener;
+    std::atomic<ProgressListener*> plistener;
+    std::atomic<PreviewImageListener*> imageListener;
+    std::atomic<AutoExpListener*> aeListener;
+    std::atomic<AutoCamListener*> acListener;
+    std::atomic<AutoBlackListener*> ablListener;
+    std::atomic<AutoBlackxListener*> ablxListener;
+    std::atomic<AutoBWListener*> abwListener;
+    std::atomic<AutoWBListener*> awbListener;
+    std::atomic<FlatFieldAutoClipListener*> flatFieldAutoClipListener;
+    std::atomic<AutoContrastListener*> bayerAutoContrastListener;
+    std::atomic<AutoContrastListener*> xtransAutoContrastListener;
+    std::atomic<AutoContrastListener*> pdSharpenAutoContrastListener;
+    std::atomic<AutoRadiusListener*> pdSharpenAutoRadiusListener;
+    std::atomic<FrameCountListener*> frameCountListener;
+    std::atomic<ImageTypeListener*> imageTypeListener;
+    std::atomic<FilmNegListener*> filmNegListener;
+    std::atomic<AutoColorTonListener*> actListener;
+    std::atomic<AutoprimListener*> primListener;
+    std::atomic<AutoChromaListener*> adnListener;
+    std::atomic<WaveletListener*> awavListener;
+    std::atomic<RetinexListener*> dehaListener;
+    std::atomic<CompgamutListener*> acmaxListener;
   
 //    LocallabListener* locallListener;
 
     
-    HistogramListener* hListener;
+    std::atomic<HistogramListener*> hListener;
     std::vector<SizeListener*> sizeListeners;
 
     std::vector<Crop*> crops;
@@ -251,7 +251,7 @@ protected:
     MyMutex updaterThreadStart;
     MyMutex paramsUpdateMutex;
     int  changeSinceLast;
-    bool updaterRunning;
+    std::atomic<bool> updaterRunning;
     const std::unique_ptr<ProcParams> nextParams;
     std::atomic<bool> destroying;
     bool utili;
@@ -272,7 +272,7 @@ protected:
     ImProcFunctions ipf;
     
     //locallab
-    LocallabListener* locallListener;
+    std::atomic<LocallabListener*> locallListener;
     LUTf lllocalcurve;
     LUTf cllocalcurve;
     LUTf lclocalcurve;
@@ -472,6 +472,8 @@ public:
         updaterThreadStart.unlock();
     }
 
+    procparams::ProcParams* tryBeginUpdateParams () override;
+
     void setLocallabMaskVisibility(bool previewDeltaE, bool showMaskOverlay, int locallColorMask, int locallColorMaskinv, int locallExpMask, int locallExpMaskinv, int locallSHMask, int locallSHMaskinv, int locallvibMask, int locallsoftMask, int locallblMask, int localltmMask, int locallretiMask, int locallsharMask, int localllcMask, int locallcbMask, int localllogMask, int locall_Mask, int locallcieMask) override
     {
         this->previewDeltaE = previewDeltaE;
@@ -521,10 +523,10 @@ public:
     }
     void setHistogramListener (HistogramListener *h) override
     {
-        if (hListener) {
-            hListener->setObservable(nullptr);
+        HistogramListener* const old = hListener.exchange(h);
+        if (old) {
+            old->setObservable(nullptr);
         }
-        hListener = h;
         if (h) {
             h->setObservable(this);
         }

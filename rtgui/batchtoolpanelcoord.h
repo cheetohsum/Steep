@@ -44,6 +44,9 @@ protected:
     bool blockedUpdate;
     FilePanel* parent;
 
+    sigc::connection initSessionConn_;
+    bool initSessionDeferred_();
+
     void closeSession (bool save = true);
     void initSession ();
 

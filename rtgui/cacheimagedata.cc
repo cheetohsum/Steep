@@ -17,14 +17,16 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "cacheimagedata.h"
+#include <algorithm>
+#include <cctype>
 #include <vector>
 #include <glib/gstdio.h>
 #include <glibmm/keyfile.h>
 #include <glibmm/fileutils.h>
 #include "version.h"
-#include <locale.h>
 
 #include "rtengine/procparams.h"
+#include "rtengine/rtthumbnail.h"
 #include "rtengine/settings.h"
 
 
@@ -50,6 +52,7 @@ CacheImageData::CacheImageData() :
     min(0),
     sec(0),
     exifValid(false),
+    exifAbsentKnown(false),
     frameCount(1),
     fnumber(0.0),
     shutter(0.0),
@@ -73,14 +76,18 @@ CacheImageData::CacheImageData() :
     width(-1),
     height(-1)
 {
+    updateExifStrings();
+    updateFiletypeUpper();
 }
 
 /*
- * Load the General, DateTime, ExifInfo, File info and ExtraRawInfo sections of the image data file
+ * Load the General, DateTime, ExifInfo, File info, ExtraRawInfo and lightweight LiveThumbData sections of the image data file
  */
-int CacheImageData::load (const Glib::ustring& fname)
+int CacheImageData::load (const Glib::ustring& fname, bool fileExistsKnown)
 {
-    setlocale(LC_NUMERIC, "C"); // to set decimal point to "."
+    if (!fileExistsKnown && !Glib::file_test(fname, Glib::FILE_TEST_EXISTS)) {
+        return 1;
+    }
 
     Glib::KeyFile keyFile;
 
@@ -164,12 +171,14 @@ int CacheImageData::load (const Glib::ustring& fname)
             }
 
             exifValid = false;
+            exifAbsentKnown = false;
 
             if (keyFile.has_group ("ExifInfo")) {
                 exifValid = true;
 
                 if (keyFile.has_key ("ExifInfo", "Valid")) {
                     exifValid = keyFile.get_boolean ("ExifInfo", "Valid");
+                    exifAbsentKnown = !exifValid;
                 }
 
                 if (exifValid) {
@@ -230,6 +239,7 @@ int CacheImageData::load (const Glib::ustring& fname)
                     camModel    = keyFile.get_string ("ExifInfo", "CameraModel");
                 }
             }
+            updateCameraName();
 
             if (keyFile.has_group ("FileInfo")) {
                 if (keyFile.has_key ("FileInfo", "Filetype")) {
@@ -248,6 +258,7 @@ int CacheImageData::load (const Glib::ustring& fname)
                     height = keyFile.get_integer("FileInfo", "Height");
                 }
             }
+            updateFiletypeUpper();
 
             if (format == FT_Raw && keyFile.has_group ("ExtraRawInfo")) {
                 if (keyFile.has_key ("ExtraRawInfo", "ThumbImageType")) {
@@ -259,6 +270,18 @@ int CacheImageData::load (const Glib::ustring& fname)
             } else {
                 rotate = 0;
                 thumbImgType = 0;
+            }
+
+            if (keyFile.has_group ("LiveThumbData")) {
+                if (keyFile.has_key ("LiveThumbData", "RedAWBMul")) {
+                    redAWBMul = keyFile.get_double ("LiveThumbData", "RedAWBMul");
+                }
+                if (keyFile.has_key ("LiveThumbData", "GreenAWBMul")) {
+                    greenAWBMul = keyFile.get_double ("LiveThumbData", "GreenAWBMul");
+                }
+                if (keyFile.has_key ("LiveThumbData", "BlueAWBMul")) {
+                    blueAWBMul = keyFile.get_double ("LiveThumbData", "BlueAWBMul");
+                }
             }
 
             return 0;
@@ -280,6 +303,11 @@ int CacheImageData::load (const Glib::ustring& fname)
  * Save the General, DateTime, ExifInfo, File info and ExtraRawInfo sections of the image data file
  */
 int CacheImageData::save (const Glib::ustring& fname)
+{
+    return save(fname, nullptr);
+}
+
+int CacheImageData::save (const Glib::ustring& fname, rtengine::Thumbnail* liveThumbData)
 {
 
     Glib::ustring keyData;
@@ -352,6 +380,10 @@ int CacheImageData::save (const Glib::ustring& fname)
         keyFile.set_integer ("ExtraRawInfo", "SensorType", sensortype);
     }
 
+    if (liveThumbData) {
+        liveThumbData->writeData(keyFile);
+    }
+
     keyData = keyFile.to_data ();
 
     } catch (Glib::Error &err) {
@@ -386,6 +418,27 @@ int CacheImageData::save (const Glib::ustring& fname)
 std::uint32_t CacheImageData::getFixBadPixelsConstant() const
 {
     return 0;
+}
+
+void CacheImageData::updateCameraName()
+{
+    updateExifStrings();
+}
+
+void CacheImageData::updateExifStrings()
+{
+    camera = camMake.raw();
+    camera += ' ';
+    camera += camModel.raw();
+    lensRaw = lens.raw();
+    expcompRaw = expcomp.raw();
+}
+
+void CacheImageData::updateFiletypeUpper()
+{
+    filetypeRaw = filetype.raw();
+    filetypeUpper = filetypeRaw;
+    std::transform(filetypeUpper.begin(), filetypeUpper.end(), filetypeUpper.begin(), ::toupper);
 }
 
 bool CacheImageData::hasFixBadPixelsConstant() const

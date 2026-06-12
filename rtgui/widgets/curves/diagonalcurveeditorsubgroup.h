@@ -83,6 +83,7 @@ protected:
     sigc::connection   presetComboConn_;
     Gtk::Button*       centerBtn_;
     bool               applyingPreset_;
+    int                fixedGraphSize_;
 
     int activeParamControl;
 

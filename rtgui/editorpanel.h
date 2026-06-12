@@ -36,9 +36,12 @@
 #include "rtengine/rtengine.h"
 
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <map>
 #include <memory>
+#include <mutex>
+#include <unordered_set>
 
 #include <gtkmm.h>
 
@@ -90,7 +93,7 @@ public:
 
     void open (Thumbnail* tmb, rtengine::InitialImage* isrc);
     void openPhaseB (Thumbnail* tmb);
-    void setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scale);
+    void setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scale, const Glib::ustring& sourceFile = Glib::ustring());
     void setAspect ();
     void on_realize () override;
     void leftPaneButtonReleased (GdkEventButton *event);
@@ -115,6 +118,8 @@ public:
 
     void writeOptions();
     void writeToolExpandedStatus (std::vector<int> &tpOpen);
+    void scheduleOptionsWrite();
+    void scheduleEditorDirSync(const Glib::ustring& dirName, const char* source, unsigned int delayMs);
     void updateShowtooltipVisibility (bool showtooltip);
 
     void showTopPanel (bool show);
@@ -131,6 +136,7 @@ public:
     void error(const Glib::ustring& title, const Glib::ustring& descr);
     void displayError(const Glib::ustring& title, const Glib::ustring& descr);  // this is called by error in the gtk thread
     void refreshProcessingState (bool inProcessing); // this is called by setProcessingState in the gtk thread
+    void flushQueuedProgressUI();
 
     // PParamsChangeListener interface
     void procParamsChanged(
@@ -223,6 +229,9 @@ public:
     {
         if (ipc) {
             ipc->signalStop();
+        }
+        if (beforeIpc) {
+            beforeIpc->signalStop();
         }
     }
     PreviewModePanel* getPreviewModePanel();
@@ -373,7 +382,7 @@ private:
     AlbumBrowser* albumBrowser_;
     Gtk::Paned* editorPlacesPaned_;
 
-    std::set<std::string> currentAlbumWhitelist_;
+    std::unordered_set<std::string> currentAlbumWhitelist_;
     void onAlbumSelected (const std::set<std::string>& whitelist);
     void onAlbumViewRequested (const Glib::ustring& albumName, const std::vector<Glib::ustring>& files);
     void addCurrentImageToTargetAlbum ();
@@ -509,11 +518,24 @@ private:
 
     // Deferred Phase B (tool panel + profile initialization after placeholder paints)
     sigc::connection deferredOpenConn_;
+    sigc::connection deferredDirSyncConn_;
+    sigc::connection deferredCropEnableConn_;
     unsigned int openSession_ = 0;
+    unsigned int editorDirSyncGeneration_ = 0;
+    Glib::ustring quickPreviewFileName_;
+    bool deferredCropWindowEnable_ = false;
+    bool optionsWritePending_ = false;
+    std::mutex progressUiMutex_;
+    bool progressUiIdlePending_ = false;
+    bool queuedProgressHasValue_ = false;
+    double queuedProgressValue_ = -1.0;
+    Glib::ustring queuedProgressStr_;
 
     rtengine::HistogramObservable* histogram_observable;
     Options::ScopeType histogram_scope_type;
     Glib::ustring lastSyncedEditorDir_;  // prevent redundant dir browser scroll resets
+    Glib::ustring pendingEditorDirSyncDir_;
+    std::chrono::steady_clock::time_point pendingEditorDirSyncDue_;
 
     // View transition animation state
     double editorAnimFraction_ = 1.0;  // 0=hidden, 1=fully shown

@@ -32,8 +32,66 @@
 
 #include <glib/gstdio.h>
 
+#include <chrono>
+#include <cstdarg>
+#include <cstdio>
+#include <cstdlib>
+#include <mutex>
+#include <string>
+
 using namespace rtengine;
 using namespace rtengine::procparams;
+
+namespace
+{
+
+bool presetPanelLogEnabled()
+{
+    static const bool enabled = std::getenv("STEEP_FILESEL_LOG") != nullptr;
+    return enabled;
+}
+
+long long presetPanelDurationMs(
+    const std::chrono::steady_clock::time_point& from,
+    const std::chrono::steady_clock::time_point& to)
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(to - from).count();
+}
+
+void presetPanelLog(const char* fmt, ...)
+{
+    if (!presetPanelLogEnabled()) {
+        return;
+    }
+
+    static std::mutex logMu;
+    std::lock_guard<std::mutex> lock(logMu);
+    static FILE* f = nullptr;
+    if (!f) {
+        const char* home = std::getenv("USERPROFILE");
+        if (!home) {
+            home = std::getenv("HOME");
+        }
+        const std::string path = home ? std::string(home) + "\\steep-fileSel.log" : "steep-fileSel.log";
+        f = std::fopen(path.c_str(), "a");
+    }
+    if (!f) {
+        return;
+    }
+
+    using clk = std::chrono::steady_clock;
+    static const auto base = clk::now();
+    const long long tms = presetPanelDurationMs(base, clk::now());
+    std::fprintf(f, "[t=%lldms] ", tms);
+
+    va_list ap;
+    va_start(ap, fmt);
+    std::vfprintf(f, fmt, ap);
+    va_end(ap);
+    std::fflush(f);
+}
+
+}
 
 PartialPasteDlg* PresetListPanel::partialProfileDlg_ = nullptr;
 Gtk::Window* PresetListPanel::parent_ = nullptr;
@@ -65,7 +123,9 @@ PresetListPanel::PresetListPanel() :
     hasSavedParams_(false),
     lastHoveredEntry_(nullptr),
     openThm_(nullptr),
-    thumbCancelled_(false)
+    thumbCancelled_(false),
+    thumbGeneration_(0),
+    thumbAlive_(std::make_shared<std::atomic<bool>>(true))
 {
     // --- Toolbar (compact) ---
     auto* toolbar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 1));
@@ -208,7 +268,8 @@ PresetListPanel::PresetListPanel() :
 
 PresetListPanel::~PresetListPanel()
 {
-    cancelThumbnailGeneration();
+    thumbAlive_->store(false, std::memory_order_release);
+    cancelThumbnailGeneration(true);
     ProfileStore::getInstance()->removeListener(this);
 
     if (custom_) { custom_->deleteInstance(); delete custom_; }
@@ -760,6 +821,18 @@ void PresetListPanel::clearParamChanges()
 
 void PresetListPanel::initProfile(const Glib::ustring& profileFullPath, ProcParams* lastSaved)
 {
+    const bool logPreset = presetPanelLogEnabled();
+    const auto initStart = logPreset ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    auto logStep = [&](const char* step) {
+        if (logPreset) {
+            presetPanelLog(
+                "[presetPanel] initProfile step=%s elapsed=%lldms profile=%s\n",
+                step,
+                presetPanelDurationMs(initStart, std::chrono::steady_clock::now()),
+                profileFullPath.c_str());
+        }
+    };
+
     const ProfileStoreEntry* pse = nullptr;
     const PartialProfile* defprofile = nullptr;
 
@@ -780,6 +853,7 @@ void PresetListPanel::initProfile(const Glib::ustring& profileFullPath, ProcPara
     specialFlowBox_->hide();
     if (customPSE_) { delete customPSE_; customPSE_ = nullptr; }
     if (lastSavedPSE_) { delete lastSavedPSE_; lastSavedPSE_ = nullptr; }
+    logStep("clear-special");
 
     if (lastSaved) {
         ParamsEdited* pe = new ParamsEdited(true);
@@ -787,37 +861,46 @@ void PresetListPanel::initProfile(const Glib::ustring& profileFullPath, ProcPara
             LocallabParamsEdited::LocallabSpotEdited(true));
         lastsaved_ = new PartialProfile(lastSaved, pe);
     }
+    logStep("last-saved");
 
     updateProfileList();
+    logStep("update-list");
 
     if (lastsaved_) {
         addLastSavedEntry();
     }
+    logStep("add-last-saved");
 
     if (!(pse = ProfileStore::getInstance()->findEntryFromFullPath(profileFullPath))) {
         pse = ProfileStore::getInstance()->getInternalDefaultPSE();
     }
 
     defprofile = ProfileStore::getInstance()->getProfile(pse);
+    logStep("resolve-profile");
 
     if (lastsaved_) {
         selectEntry(lastSavedPSE_, false);
 
         if (tpc_) {
             tpc_->setDefaults(lastsaved_->pparams);
+            logStep("tpc-defaults-last-saved");
             tpc_->profileChange(lastsaved_, EvPhotoLoaded,
                 getCurrentLabel(), nullptr, true);
+            logStep("tpc-profile-last-saved");
         }
     } else {
         selectEntry(pse, false);
 
         if (tpc_) {
             tpc_->setDefaults(defprofile->pparams);
+            logStep("tpc-defaults");
             tpc_->profileChange(defprofile, EvPhotoLoaded, getCurrentLabel());
+            logStep("tpc-profile");
         }
     }
 
-    startThumbnailGeneration();
+    queueThumbnailGeneration();
+    logStep("queue-thumbs");
 }
 
 void PresetListPanel::setInitialFileName(const Glib::ustring& filename)
@@ -1276,41 +1359,103 @@ void PresetListPanel::revertHoverPreview()
 
 void PresetListPanel::setThumbnail(::Thumbnail* thm)
 {
+    cancelThumbnailGeneration(false);
     openThm_ = thm;
-    startThumbnailGeneration();
+    thumbCache_.clear();
+}
+
+void PresetListPanel::queueThumbnailGeneration()
+{
+    cancelThumbnailGeneration(false);
+    thumbCache_.clear();
+
+    if (!openThm_) {
+        return;
+    }
+
+    const unsigned int request = thumbGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1;
+    std::weak_ptr<std::atomic<bool>> alive = thumbAlive_;
+
+    Glib::signal_timeout().connect_once([this, alive, request]() {
+        const auto live = alive.lock();
+        if (live
+            && live->load(std::memory_order_acquire)
+            && request == thumbGeneration_.load(std::memory_order_acquire)) {
+            startThumbnailGeneration();
+        }
+    }, THUMB_START_DELAY_MS, G_PRIORITY_LOW);
 }
 
 void PresetListPanel::startThumbnailGeneration()
 {
-    cancelThumbnailGeneration();
+    cancelThumbnailGeneration(false);
     thumbCache_.clear();
 
     if (!openThm_) return;
 
+    ::Thumbnail* thumbnail = openThm_;
     std::vector<const ProfileStoreEntry*> entries;
     collectPresetEntries(entries);
 
+    const unsigned int generation = thumbGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1;
     thumbCancelled_ = false;
+    thumbThreadDone_ = std::make_shared<std::atomic<bool>>(false);
+    auto done = thumbThreadDone_;
+    thumbnail->increaseRef();
 
-    thumbThread_ = std::thread([this, entries]() {
+    thumbThread_ = std::thread([this, entries, thumbnail, generation, done]() {
         for (const auto* entry : entries) {
-            if (thumbCancelled_) break;
-            generateThumbnail(entry);
+            if (thumbCancelled_.load(std::memory_order_acquire)
+                || generation != thumbGeneration_.load(std::memory_order_acquire)) {
+                break;
+            }
+            generateThumbnail(entry, thumbnail, generation);
         }
+        thumbnail->decreaseRef();
+        done->store(true, std::memory_order_release);
     });
 }
 
-void PresetListPanel::cancelThumbnailGeneration()
+void PresetListPanel::cancelThumbnailGeneration(bool wait)
 {
     thumbCancelled_ = true;
+    thumbGeneration_.fetch_add(1, std::memory_order_acq_rel);
     if (thumbThread_.joinable()) {
-        thumbThread_.join();
+        if (wait) {
+            thumbThread_.join();
+            thumbThreadDone_.reset();
+        } else {
+            retiredThumbThreads_.push_back(
+                {std::move(thumbThread_), thumbThreadDone_}
+            );
+            thumbThreadDone_.reset();
+        }
+    }
+    reapThumbnailThreads(wait);
+}
+
+void PresetListPanel::reapThumbnailThreads(bool wait)
+{
+    for (auto it = retiredThumbThreads_.begin(); it != retiredThumbThreads_.end();) {
+        const bool done = it->done && it->done->load(std::memory_order_acquire);
+        if (wait || done) {
+            if (it->thread.joinable()) {
+                it->thread.join();
+            }
+            it = retiredThumbThreads_.erase(it);
+        } else {
+            ++it;
+        }
     }
 }
 
-void PresetListPanel::generateThumbnail(const ProfileStoreEntry* entry)
+void PresetListPanel::generateThumbnail(const ProfileStoreEntry* entry, ::Thumbnail* thumbnail, unsigned int generation)
 {
-    if (!openThm_) return;
+    if (!thumbnail
+        || thumbCancelled_.load(std::memory_order_acquire)
+        || generation != thumbGeneration_.load(std::memory_order_acquire)) {
+        return;
+    }
 
     const PartialProfile* profile = ProfileStore::getInstance()->getProfile(entry);
     if (!profile) return;
@@ -1324,8 +1469,14 @@ void PresetListPanel::generateThumbnail(const ProfileStoreEntry* entry)
     }
 
     double scale;
-    rtengine::IImage8* img = openThm_->processThumbImage(merged, THUMB_HEIGHT, scale);
+    rtengine::IImage8* img = thumbnail->processThumbImage(merged, THUMB_HEIGHT, scale);
     if (!img) return;
+
+    if (thumbCancelled_.load(std::memory_order_acquire)
+        || generation != thumbGeneration_.load(std::memory_order_acquire)) {
+        delete img;
+        return;
+    }
 
     int w = img->getWidth();
     int h = img->getHeight();
@@ -1337,8 +1488,13 @@ void PresetListPanel::generateThumbnail(const ProfileStoreEntry* entry)
     delete img;
 
     const ProfileStoreEntry* capturedEntry = entry;
-    Glib::signal_idle().connect_once([this, capturedEntry, pixbufCopy]() {
-        if (!thumbCancelled_) {
+    std::weak_ptr<std::atomic<bool>> alive = thumbAlive_;
+    Glib::signal_idle().connect_once([this, alive, capturedEntry, pixbufCopy, generation]() {
+        const auto live = alive.lock();
+        if (live
+            && live->load(std::memory_order_acquire)
+            && !thumbCancelled_.load(std::memory_order_acquire)
+            && generation == thumbGeneration_.load(std::memory_order_acquire)) {
             thumbCache_[capturedEntry] = pixbufCopy;
             auto it = thumbImageMap_.find(capturedEntry);
             if (it != thumbImageMap_.end() && it->second) {

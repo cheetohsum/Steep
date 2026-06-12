@@ -19,8 +19,19 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <cstdarg>
+#include <cstdio>
+#include <cstdlib>
+#include <limits>
 #include <map>
+#include <mutex>
+#include <set>
+#include <string>
 #include <thread>
+#include <utility>
+#include <vector>
 
 #include <glibmm/ustring.h>
 
@@ -37,41 +48,261 @@
 #include "rtimage.h"
 #include "threadutils.h"
 #include "thumbnail.h"
+#include "thumbimageupdater.h"
 
 #include "rtengine/dfmanager.h"
 #include "rtengine/ffmanager.h"
 #include "rtengine/procparams.h"
 
+#ifdef _WIN32
+#include "rtengine/leanwindows.h"
+#endif
+
 namespace
 {
 
-const Glib::ustring* getOriginalExtension (const ThumbBrowserEntryBase* entry)
+using QuickWarmClock = std::chrono::steady_clock;
+
+std::atomic<unsigned> quickPreviewCacheWarmGeneration{0};
+std::mutex fileBrowserPerfLogMutex;
+
+bool fileBrowserPerfLogEnabled()
 {
-    // We use the parsed extensions as a priority list,
-    // i.e. what comes earlier in the list is considered an original of what comes later.
-    typedef std::vector<Glib::ustring> ExtensionVector;
-    typedef ExtensionVector::const_iterator ExtensionIterator;
+    static const bool enabled = std::getenv("STEEP_FILESEL_LOG") != nullptr;
+    return enabled;
+}
 
-    const ExtensionVector& originalExtensions = App::get().options().parsedExtensions;
+long long quickWarmDurationMs(
+    const QuickWarmClock::time_point& start,
+    const QuickWarmClock::time_point& end)
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+}
 
-    // Extract extension from basename
-    const Glib::ustring basename = Glib::path_get_basename (entry->filename.lowercase());
+void fileBrowserPerfLog(const char* fmt, ...)
+{
+    if (!fileBrowserPerfLogEnabled()) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(fileBrowserPerfLogMutex);
+    const char* const home = std::getenv("USERPROFILE");
+    const std::string path = home ? std::string(home) + "\\steep-fileSel.log" : "steep-fileSel.log";
+
+    FILE* const f = std::fopen(path.c_str(), "ab");
+    if (!f) {
+        return;
+    }
+
+    va_list args;
+    va_start(args, fmt);
+    std::vfprintf(f, fmt, args);
+    va_end(args);
+    std::fclose(f);
+}
+
+void lowerQuickPreviewWarmThreadPriority()
+{
+#ifdef _WIN32
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#endif
+}
+
+struct QuickPreviewCacheWarmItem {
+    Thumbnail* thumbnail;
+};
+
+void scheduleCachedQuickPreviewWarm(std::vector<QuickPreviewCacheWarmItem>&& items, int previewHeight)
+{
+    if (items.empty()) {
+        return;
+    }
+
+    const unsigned generation = quickPreviewCacheWarmGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
+    const int height = std::max(1, previewHeight);
+
+    std::thread([items = std::move(items), generation, height]() mutable {
+        lowerQuickPreviewWarmThreadPriority();
+
+        const auto start = QuickWarmClock::now();
+        size_t loaded = 0;
+        size_t missed = 0;
+        size_t remaining = 0;
+
+        for (size_t i = 0; i < items.size(); ++i) {
+            if (quickPreviewCacheWarmGeneration.load(std::memory_order_acquire) != generation) {
+                remaining = items.size() - i;
+                break;
+            }
+
+            double scale = 1.0;
+            auto pixbuf = items[i].thumbnail->tryLoadCachedPreviewPixbuf(height, scale);
+            if (pixbuf) {
+                ++loaded;
+            } else {
+                ++missed;
+            }
+        }
+
+        for (auto& item : items) {
+            item.thumbnail->decreaseRef();
+        }
+
+        fileBrowserPerfLog(
+            "[quickWarm] %s duration=%lldms loaded=%zu missed=%zu remaining=%zu total=%zu\n",
+            remaining > 0 ? "canceled" : "done",
+            quickWarmDurationMs(start, QuickWarmClock::now()),
+            loaded,
+            missed,
+            remaining,
+            items.size());
+    }).detach();
+}
+
+std::string foldedBrowserPathKey(const Glib::ustring& path)
+{
+    std::string key = path.casefold().raw();
+    std::replace(key.begin(), key.end(), '\\', '/');
+
+    return key;
+}
+
+std::string browserPathKey(const Glib::ustring& path)
+{
+    if (Glib::path_is_absolute(path)) {
+        return foldedBrowserPathKey(path);
+    }
+
+    const std::string rawPath = path.raw();
+    Glib::ustring normalized = path;
+
+    try {
+        Glib::RefPtr<Gio::File> file;
+
+        if (rawPath.rfind("file:", 0) == 0) {
+            file = Gio::File::create_for_uri(path);
+        } else {
+            file = Gio::File::create_for_path(path);
+        }
+
+        const Glib::ustring nativePath = file->get_path();
+        if (!nativePath.empty()) {
+            normalized = nativePath;
+        } else {
+            const Glib::ustring parseName = file->get_parse_name();
+            if (!parseName.empty()) {
+                normalized = parseName;
+            }
+        }
+    } catch (const Glib::Exception&) {
+    }
+
+    return foldedBrowserPathKey(normalized);
+}
+
+Glib::ustring getLowercaseExtension (const Glib::ustring& filename)
+{
+    const Glib::ustring basename = Glib::path_get_basename(filename.lowercase());
 
     const Glib::ustring::size_type pos = basename.find_last_of ('.');
     if (pos >= basename.length () - 1) {
-        return nullptr;
+        return {};
     }
 
-    const Glib::ustring extension = basename.substr (pos + 1);
+    return basename.substr(pos + 1);
+}
 
-    // Try to find a matching original extension
-    for (ExtensionIterator originalExtension = originalExtensions.begin(); originalExtension != originalExtensions.end(); ++originalExtension) {
-        if (*originalExtension == extension) {
-            return &*originalExtension;
+bool isRawOriginalExtension(const Glib::ustring& extension)
+{
+    static const std::set<Glib::ustring> rawExtensions = {
+        "3fr", "arw", "arq", "cr2", "cr3", "crf", "crw", "dcr", "dng",
+        "fff", "iiq", "kdc", "mef", "mos", "mrw", "nef", "nrw", "orf",
+        "ori", "pef", "raf", "raw", "rw2", "rwl", "rwz", "sr2", "srf",
+        "srw", "x3f"
+    };
+
+    return rawExtensions.find(extension) != rawExtensions.end();
+}
+
+bool isLikely8BitJpegExtension(const Glib::ustring& extension)
+{
+    return extension == "jpg" || extension == "jpeg" || extension == "jpe";
+}
+
+size_t nonRawBytesPerPixel(rtengine::IIOSampleFormat sampleFormat)
+{
+    if (sampleFormat & rtengine::IIOSF_UNSIGNED_CHAR) {
+        return 4;
+    }
+    if (sampleFormat & rtengine::IIOSF_UNSIGNED_SHORT) {
+        return 8;
+    }
+
+    return 16;
+}
+
+size_t estimateInitialImageBytes(
+    int width,
+    int height,
+    bool isRaw,
+    rtengine::eSensorType sensorType,
+    rtengine::IIOSampleFormat sampleFormat,
+    unsigned int frameCount)
+{
+    if (width <= 0 || height <= 0) {
+        return 0;
+    }
+
+    const size_t bytesPerPixel = isRaw
+        ? ((sensorType == rtengine::ST_BAYER || sensorType == rtengine::ST_FUJI_XTRANS) ? 6 : 12)
+        : nonRawBytesPerPixel(sampleFormat);
+
+    const size_t frames = isRaw ? std::max(1u, frameCount) : 1u;
+    return static_cast<size_t>(width) * static_cast<size_t>(height) * bytesPerPixel * frames;
+}
+
+int getExtensionRank(const Glib::ustring& extension)
+{
+    const auto& originalExtensions = App::get().options().parsedExtensions;
+
+    for (size_t i = 0; i < originalExtensions.size(); ++i) {
+        if (originalExtensions[i] == extension) {
+            return static_cast<int>(i);
         }
     }
 
-    return nullptr;
+    return std::numeric_limits<int>::max() / 4;
+}
+
+int getOriginalPriority(const ThumbBrowserEntryBase* entry)
+{
+    const Glib::ustring extension = getLowercaseExtension(entry->filename);
+
+    if (extension.empty()) {
+        return std::numeric_limits<int>::max() / 2;
+    }
+
+    // Prefer true RAW files over companion rendered files with the same stem.
+    // In particular, RAF must win over an in-camera JPEG sibling even if the
+    // user's extension list happens to place jpg before raf.
+    const int family = isRawOriginalExtension(extension) ? 0 : 1;
+
+    return family * 10000 + getExtensionRank(extension);
+}
+
+std::string originalFamilyKey(const Glib::ustring& filename)
+{
+    const auto basename = Glib::path_get_basename(filename.lowercase());
+
+    const auto pos = basename.find_last_of('.');
+    if (pos >= basename.length() - 1) {
+        return browserPathKey(filename);
+    }
+
+    const auto withoutExtension = basename.substr(0, pos);
+    const auto dirname = Glib::path_get_dirname(filename);
+
+    return browserPathKey(Glib::build_filename(dirname, withoutExtension));
 }
 
 ThumbBrowserEntryBase* selectOriginalEntry (ThumbBrowserEntryBase* original, ThumbBrowserEntryBase* candidate)
@@ -80,51 +311,38 @@ ThumbBrowserEntryBase* selectOriginalEntry (ThumbBrowserEntryBase* original, Thu
         return candidate;
     }
 
-    // The candidate will become the new original, if it has an original extension
-    // and if its extension is higher in the list than the old original.
-    if (const Glib::ustring* candidateExtension = getOriginalExtension (candidate)) {
-        if (const Glib::ustring* originalExtension = getOriginalExtension (original)) {
-            return candidateExtension < originalExtension ? candidate : original;
-        }
+    if (getOriginalPriority(candidate) < getOriginalPriority(original)) {
+        return candidate;
     }
 
     return original;
 }
 
-void findOriginalEntries (const std::vector<ThumbBrowserEntryBase*>& entries)
+std::string browserPathKeyForEntry(const ThumbBrowserEntryBase* entry)
 {
-    // Sort all entries into buckets by basename without extension
-    std::map<Glib::ustring, std::vector<ThumbBrowserEntryBase*>> byBasename;
+    const auto* fileEntry = static_cast<const FileBrowserEntry*>(entry);
+    const std::string& entryKey = fileEntry->getBrowserPathKey();
 
-    for (const auto entry : entries) {
-        const auto basename = Glib::path_get_basename(entry->filename.lowercase());
+    return entryKey.empty() ? browserPathKey(entry->filename) : entryKey;
+}
 
-        const auto pos = basename.find_last_of('.');
-        if (pos >= basename.length() - 1) {
-            entry->setOriginal(nullptr);
-            continue;
-        }
+bool browserPathKeyMatchesEntry(const ThumbBrowserEntryBase* entry, const std::string& key)
+{
+    const auto* fileEntry = static_cast<const FileBrowserEntry*>(entry);
+    const std::string& entryKey = fileEntry->getBrowserPathKey();
 
-        const auto withoutExtension = basename.substr(0, pos);
+    return entryKey.empty() ? browserPathKey(entry->filename) == key : entryKey == key;
+}
 
-        byBasename[withoutExtension].push_back(entry);
+const std::string& originalFamilyKeyForEntry(FileBrowserEntry* entry)
+{
+    const std::string& cachedKey = entry->getBrowserOriginalFamilyKey();
+    if (!cachedKey.empty()) {
+        return cachedKey;
     }
 
-    // Find the original image for each bucket
-    for (const auto& bucket : byBasename) {
-        const auto& lentries = bucket.second;
-        ThumbBrowserEntryBase* original = nullptr;
-
-        // Select the most likely original in a first pass...
-        for (const auto entry : lentries) {
-            original = selectOriginalEntry(original, entry);
-        }
-
-        // ...and link all other images to it in a second pass.
-        for (const auto entry : lentries) {
-            entry->setOriginal(entry != original ? original : nullptr);
-        }
-    }
+    entry->setBrowserOriginalFamilyKey(originalFamilyKey(entry->filename));
+    return entry->getBrowserOriginalFamilyKey();
 }
 
 }
@@ -143,10 +361,12 @@ FileBrowser::FileBrowser () :
     colorLabel_actionData(nullptr),
     bppcl(nullptr),
     tbl(nullptr),
+    filterPassThrough_(true),
     numFiltered(0),
     exportPanel(nullptr)
 {
     session_id_ = 0;
+    selectionNotifyIdlePending_ = false;
 
     ProfileStore::getInstance()->addListener(this);
     const auto& options = App::get().options();
@@ -863,9 +1083,7 @@ void FileBrowser::doubleClicked (ThumbBrowserEntryBase* entry)
 {
 
     if (tbl && entry) {
-        std::vector<Thumbnail*> entries;
-        entries.push_back ((static_cast<FileBrowserEntry*>(entry))->thumbnail);
-        tbl->openRequested (entries);
+        openRequested({static_cast<FileBrowserEntry*>(entry)});
     }
 }
 
@@ -887,22 +1105,355 @@ void FileBrowser::addEntry (FileBrowserEntry* entry)
     );
 }
 
-void FileBrowser::addEntry_ (FileBrowserEntry* entry)
+void FileBrowser::reserveEntries (std::size_t additionalEntries)
 {
-    entry->setParent(this);
+    if (additionalEntries == 0) {
+        return;
+    }
 
-    entry->selected = false;
-    entry->drawable = false;
-    entry->framed = editedFiles.find(entry->filename) != editedFiles.end();
+    MYWRITERLOCK(l, entryRW);
+    const std::size_t target = fd.size() + additionalEntries;
+    fd.reserve(target);
+    entryKeys_.reserve(target);
+    entriesByKey_.reserve(target);
+    if (filter.showOriginal) {
+        originalFamilies_.reserve(target);
+    }
+}
 
-    // add button set to the thumbbrowserentry
-    entry->addButtonSet(new FileThumbnailButtonSet(entry));
-    entry->getThumbButtonSet()->setRank(entry->thumbnail->getRank());
-    entry->getThumbButtonSet()->setColorLabel(entry->thumbnail->getColorLabel());
-    entry->getThumbButtonSet()->setButtonListener(this);
-    entry->resize(getThumbnailHeight());
-    entry->filtered = !checkFilter(entry);
-    insertEntry(entry);
+void FileBrowser::addOriginalFamilyEntry_(ThumbBrowserEntryBase* entry)
+{
+    originalFamilies_[originalFamilyKeyForEntry(static_cast<FileBrowserEntry*>(entry))].push_back(entry);
+}
+
+void FileBrowser::ensureOriginalFamiliesCurrent_()
+{
+    if (originalFamiliesCurrent_) {
+        return;
+    }
+
+    originalFamilies_.clear();
+    originalFamilies_.reserve(fd.size());
+
+    for (auto* entry : fd) {
+        addOriginalFamilyEntry_(entry);
+    }
+
+    originalFamiliesCurrent_ = true;
+}
+
+void FileBrowser::clearOriginalMarks_()
+{
+    for (auto* entry : fd) {
+        entry->setOriginal(nullptr);
+    }
+
+    originalFamilies_.clear();
+    originalFamilies_.rehash(0);
+    originalFamiliesCurrent_ = false;
+}
+
+void FileBrowser::markEntryIndexDirty_()
+{
+    entryIndex_.clear();
+}
+
+ThumbBrowserEntryBase* FileBrowser::findEntryLocked_(const Glib::ustring& fname)
+{
+    const std::string fnameKey = browserPathKey(fname);
+    const auto entry = entriesByKey_.find(fnameKey);
+    if (entry != entriesByKey_.end()) {
+        return entry->second;
+    }
+
+    for (auto* candidate : fd) {
+        if (candidate->filename == fname || browserPathKeyMatchesEntry(candidate, fnameKey)) {
+            entriesByKey_[fnameKey] = candidate;
+            return candidate;
+        }
+    }
+
+    return nullptr;
+}
+
+std::ptrdiff_t FileBrowser::findEntryIndexLocked_(const Glib::ustring& fname)
+{
+    const std::string fnameKey = browserPathKey(fname);
+    ThumbBrowserEntryBase* mappedEntry = nullptr;
+    const auto entry = entriesByKey_.find(fnameKey);
+    if (entry != entriesByKey_.end()) {
+        mappedEntry = entry->second;
+    }
+
+    auto idxIt = entryIndex_.find(fnameKey);
+
+    if (idxIt != entryIndex_.end() && idxIt->second < fd.size()) {
+        const auto* indexedEntry = fd[idxIt->second];
+        if ((mappedEntry && indexedEntry == mappedEntry)
+            || indexedEntry->filename == fname
+            || browserPathKeyMatchesEntry(indexedEntry, fnameKey)) {
+            return static_cast<std::ptrdiff_t>(idxIt->second);
+        }
+    }
+
+    if (mappedEntry) {
+        const auto found = std::find(fd.begin(), fd.end(), mappedEntry);
+        if (found != fd.end()) {
+            const auto index = static_cast<size_t>(std::distance(fd.begin(), found));
+            entryIndex_[fnameKey] = index;
+            return static_cast<std::ptrdiff_t>(index);
+        }
+
+        entriesByKey_.erase(fnameKey);
+    }
+
+    // Defensive fallback: if a caller observes the list between an unusual
+    // mutation and map update, recover once instead of dropping adjacent
+    // preload/refresh for this navigation step.
+    for (size_t i = 0; i < fd.size(); ++i) {
+        if (fd[i]->filename == fname || browserPathKeyMatchesEntry(fd[i], fnameKey)) {
+            entriesByKey_[fnameKey] = fd[i];
+            entryIndex_[fnameKey] = i;
+            return static_cast<std::ptrdiff_t>(i);
+        }
+    }
+
+    return -1;
+}
+
+std::ptrdiff_t FileBrowser::findEntryIndexReadLocked_(const Glib::ustring& fname)
+{
+    const std::string fnameKey = browserPathKey(fname);
+    ThumbBrowserEntryBase* mappedEntry = nullptr;
+    const auto entry = entriesByKey_.find(fnameKey);
+    if (entry != entriesByKey_.end()) {
+        mappedEntry = entry->second;
+    }
+
+    const auto idxIt = entryIndex_.find(fnameKey);
+
+    if (idxIt != entryIndex_.end() && idxIt->second < fd.size()) {
+        const auto* indexedEntry = fd[idxIt->second];
+        if ((mappedEntry && indexedEntry == mappedEntry)
+            || indexedEntry->filename == fname
+            || browserPathKeyMatchesEntry(indexedEntry, fnameKey)) {
+            return static_cast<std::ptrdiff_t>(idxIt->second);
+        }
+    }
+
+    if (mappedEntry) {
+        const auto found = std::find(fd.begin(), fd.end(), mappedEntry);
+        if (found != fd.end()) {
+            return static_cast<std::ptrdiff_t>(std::distance(fd.begin(), found));
+        }
+    }
+
+    for (size_t i = 0; i < fd.size(); ++i) {
+        if (fd[i]->filename == fname || browserPathKeyMatchesEntry(fd[i], fnameKey)) {
+            return static_cast<std::ptrdiff_t>(i);
+        }
+    }
+
+    return -1;
+}
+
+std::ptrdiff_t FileBrowser::findEntryIndexLocked_(ThumbBrowserEntryBase* entry)
+{
+    if (!entry) {
+        return -1;
+    }
+
+    const std::string entryKey = browserPathKeyForEntry(entry);
+    auto idxIt = entryIndex_.find(entryKey);
+
+    if (idxIt != entryIndex_.end() && idxIt->second < fd.size() && fd[idxIt->second] == entry) {
+        return static_cast<std::ptrdiff_t>(idxIt->second);
+    }
+
+    const auto found = std::find(fd.begin(), fd.end(), entry);
+    if (found == fd.end()) {
+        entryIndex_.erase(entryKey);
+        entriesByKey_.erase(entryKey);
+        return -1;
+    }
+
+    const auto index = static_cast<size_t>(std::distance(fd.begin(), found));
+    entryIndex_[entryKey] = index;
+    entriesByKey_[entryKey] = entry;
+
+    return static_cast<std::ptrdiff_t>(index);
+}
+
+void FileBrowser::flushPendingInsertsForSelection_()
+{
+    if (layoutPaused_) {
+        return;
+    }
+
+    bool hasPending = false;
+    {
+        MyMutex::MyLock lock(pendingMutex_);
+        hasPending = !pendingInserts_.empty();
+    }
+
+    if (hasPending) {
+        redraw();
+    }
+}
+
+void FileBrowser::entriesOrderChanged_()
+{
+    markEntryIndexDirty_();
+}
+
+void FileBrowser::entriesInserted_(const std::vector<ThumbBrowserEntryBase*>& entries)
+{
+    entriesByKey_.reserve(entriesByKey_.size() + entries.size());
+
+    for (auto* entry : entries) {
+        const auto* fileEntry = static_cast<FileBrowserEntry*>(entry);
+        const std::string& entryKey = fileEntry->getBrowserPathKey();
+        entriesByKey_[entryKey.empty() ? browserPathKey(entry->filename) : entryKey] = entry;
+    }
+}
+
+void FileBrowser::removeOriginalFamilyEntry_(ThumbBrowserEntryBase* entry)
+{
+    if (!originalFamiliesCurrent_) {
+        return;
+    }
+
+    const std::string familyKey = originalFamilyKeyForEntry(static_cast<FileBrowserEntry*>(entry));
+    auto family = originalFamilies_.find(familyKey);
+
+    if (family == originalFamilies_.end()) {
+        return;
+    }
+
+    auto& entries = family->second;
+    entries.erase(std::remove(entries.begin(), entries.end(), entry), entries.end());
+
+    if (entries.empty()) {
+        originalFamilies_.erase(family);
+    }
+}
+
+void FileBrowser::refreshAllOriginalFamilies_()
+{
+    for (const auto& family : originalFamilies_) {
+        ThumbBrowserEntryBase* original = nullptr;
+
+        for (const auto entry : family.second) {
+            original = selectOriginalEntry(original, entry);
+        }
+
+        for (const auto entry : family.second) {
+            entry->setOriginal(entry != original ? original : nullptr);
+        }
+    }
+}
+
+void FileBrowser::refreshOriginalFamily_(const std::string& familyKey)
+{
+    auto family = originalFamilies_.find(familyKey);
+
+    if (family == originalFamilies_.end()) {
+        return;
+    }
+
+    ThumbBrowserEntryBase* original = nullptr;
+
+    for (const auto entry : family->second) {
+        original = selectOriginalEntry(original, entry);
+    }
+
+    for (const auto entry : family->second) {
+        entry->setOriginal(entry != original ? original : nullptr);
+    }
+
+    if (filter.showOriginal) {
+        for (auto* familyEntry : family->second) {
+            familyEntry->filtered = !checkFilter(familyEntry);
+        }
+    }
+}
+
+bool FileBrowser::addEntry_ (FileBrowserEntry* entry)
+{
+    std::vector<FileBrowserEntry*> entries;
+    entries.push_back(entry);
+    return addEntries_(entries) == 1;
+}
+
+std::size_t FileBrowser::addEntries_ (std::vector<FileBrowserEntry*>& entries)
+{
+    if (entries.empty()) {
+        return 0;
+    }
+
+    std::vector<ThumbBrowserEntryBase*> acceptedEntries;
+    acceptedEntries.reserve(entries.size());
+    std::size_t accepted = 0;
+    const int thumbnailHeight = getThumbnailHeight();
+    const bool maintainOriginalFamilies = filter.showOriginal;
+    const bool hasEditedFiles = !editedFiles.empty();
+
+    for (auto* entry : entries) {
+        std::string computedEntryKey;
+        const std::string& existingEntryKey = entry->getBrowserPathKey();
+        const std::string& entryKey = !existingEntryKey.empty()
+            ? existingEntryKey
+            : (computedEntryKey = browserPathKey(entry->filename));
+        if (!entryKeys_.insert(entryKey).second) {
+            delete entry;
+            continue;
+        }
+        if (existingEntryKey.empty()) {
+            entry->setBrowserPathKey(std::move(computedEntryKey));
+        }
+
+        entry->setParent(this);
+
+        entry->selected = false;
+        entry->drawable = false;
+        entry->framed = hasEditedFiles && editedFiles.find(entry->filename) != editedFiles.end();
+
+        const int rank = entry->thumbnail->getRank();
+        const int colorLabel = entry->thumbnail->getColorLabel();
+        if (rank > 0 || colorLabel > 0) {
+            auto* thumbButtonSet = entry->ensureThumbButtonSet(this);
+            thumbButtonSet->setRank(rank);
+            thumbButtonSet->setColorLabel(colorLabel);
+        }
+        if (maintainOriginalFamilies) {
+            const std::string familyKey = originalFamilyKeyForEntry(entry);
+            addOriginalFamilyEntry_(entry);
+            refreshOriginalFamily_(familyKey);
+        } else if (filterPassThrough_) {
+            entry->filtered = false;
+        } else {
+            entry->filtered = !checkFilter(entry);
+        }
+        if (!entry->filtered) {
+            ++numFiltered;
+        }
+
+        // Establish layout dimensions now, but let the draw/filter paths
+        // request rendered thumbnail pixels only for entries that become
+        // visible. Large folders should not spend CPU on off-screen thumbs.
+        entry->resizeWithoutThumbnailJob(thumbnailHeight);
+
+        entries[accepted++] = entry;
+        acceptedEntries.push_back(entry);
+    }
+
+    entries.resize(accepted);
+    if (accepted > 0 && !maintainOriginalFamilies) {
+        originalFamiliesCurrent_ = false;
+    }
+    insertEntries(acceptedEntries);
+
+    return accepted;
 }
 
 FileBrowserEntry* FileBrowser::delEntry (const Glib::ustring& fname)
@@ -912,8 +1463,24 @@ FileBrowserEntry* FileBrowser::delEntry (const Glib::ustring& fname)
     for (std::vector<ThumbBrowserEntryBase*>::iterator i = fd.begin(); i != fd.end(); ++i)
         if ((*i)->filename == fname) {
             ThumbBrowserEntryBase* entry = *i;
+            clearVisibleEntries_();
+            clearDrawableEntries_();
+            if (filter.showOriginal) {
+                ensureOriginalFamiliesCurrent_();
+            }
             entry->selected = false;
+            const std::string entryKey = browserPathKeyForEntry(entry);
+            entryKeys_.erase(entryKey);
+            entriesByKey_.erase(entryKey);
+            const std::string familyKey = originalFamiliesCurrent_
+                ? originalFamilyKeyForEntry(static_cast<FileBrowserEntry*>(entry))
+                : std::string();
+            removeOriginalFamilyEntry_(entry);
+            if (filter.showOriginal) {
+                refreshOriginalFamily_(familyKey);
+            }
             fd.erase (i);
+            markEntryIndexDirty_();
             std::vector<ThumbBrowserEntryBase*>::iterator j = std::find (selected.begin(), selected.end(), entry);
 
             MYWRITERLOCK_RELEASE(l);
@@ -939,9 +1506,80 @@ FileBrowserEntry* FileBrowser::delEntry (const Glib::ustring& fname)
     return nullptr;
 }
 
+std::vector<FileBrowserEntry*> FileBrowser::delEntries (const std::set<Glib::ustring>& fnames)
+{
+    std::vector<FileBrowserEntry*> removed;
+    removed.reserve(fnames.size());
+
+    bool selectionChanged = false;
+
+    {
+        MYWRITERLOCK(l, entryRW);
+        std::unordered_set<std::string> affectedFamilies;
+        clearVisibleEntries_();
+        clearDrawableEntries_();
+        if (filter.showOriginal) {
+            ensureOriginalFamiliesCurrent_();
+        }
+
+        // Remove matching entries from fd in a single pass
+        auto newEnd = std::stable_partition(fd.begin(), fd.end(),
+            [&fnames](ThumbBrowserEntryBase* e) {
+                return fnames.find(e->filename) == fnames.end();
+            });
+
+        for (auto it = newEnd; it != fd.end(); ++it) {
+            ThumbBrowserEntryBase* entry = *it;
+            entry->selected = false;
+
+            auto j = std::find(selected.begin(), selected.end(), entry);
+            if (j != selected.end()) {
+                if (checkFilter(*j)) {
+                    numFiltered--;
+                }
+                selected.erase(j);
+                selectionChanged = true;
+            }
+
+            if (lastClicked == entry) {
+                lastClicked = nullptr;
+            }
+
+            const std::string entryKey = browserPathKeyForEntry(entry);
+            entryKeys_.erase(entryKey);
+            entriesByKey_.erase(entryKey);
+            if (originalFamiliesCurrent_) {
+                const std::string familyKey = originalFamilyKeyForEntry(static_cast<FileBrowserEntry*>(entry));
+                affectedFamilies.insert(familyKey);
+            }
+            removeOriginalFamilyEntry_(entry);
+            removed.push_back(static_cast<FileBrowserEntry*>(entry));
+        }
+
+        fd.erase(newEnd, fd.end());
+        markEntryIndexDirty_();
+
+        if (filter.showOriginal) {
+            for (const auto& familyKey : affectedFamilies) {
+                refreshOriginalFamily_(familyKey);
+            }
+        }
+    }
+
+    if (selectionChanged) {
+        notifySelectionListener();
+    }
+
+    redraw();
+
+    return removed;
+}
+
 void FileBrowser::close ()
 {
     ++session_id_;
+    clearVisibleEntries_();
+    clearDrawableEntries_();
 
     // Drain any pending deletions from PREVIOUS folder switches immediately.
     // The idle callback runs at G_PRIORITY_LOW which is starved during active
@@ -956,6 +1594,7 @@ void FileBrowser::close ()
     pendingDeletion_.clear();
 
     // Clear any pending batch inserts — move to deferred deletion
+    redrawTimeout_.disconnect();
     {
         MyMutex::MyLock lock(pendingMutex_);
         pendingDeletion_.insert(pendingDeletion_.end(),
@@ -980,6 +1619,13 @@ void FileBrowser::close ()
         // Move entries to deferred deletion instead of blocking the main thread
         pendingDeletion_.insert(pendingDeletion_.end(), fd.begin(), fd.end());
         fd.clear ();
+        entryKeys_.clear();
+        entriesByKey_.clear();
+        originalFamilies_.clear();
+        originalFamilies_.rehash(0);
+        originalFamiliesCurrent_ = true;
+        entryIndex_.clear();
+        lastOpenRequestedFname_.clear();
     }
 
     lastClicked = nullptr;
@@ -2042,24 +2688,62 @@ void FileBrowser::applyPartialMenuItemActivated (ProfileStoreLabel *label)
     }
 }
 
+bool FileBrowser::applyPassThroughFilterFast (const BrowserFilter& filter)
+{
+    if (!filter.isPassThrough() || !filterPassThrough_) {
+        return false;
+    }
+
+    this->filter = filter;
+    filterPassThrough_ = true;
+    if (!layoutPaused_) {
+        flushPendingInserts_();
+    }
+
+    {
+        MYWRITERLOCK(l, entryRW);
+        numFiltered = static_cast<int>(fd.size());
+    }
+
+    tbl->filterApplied();
+    redraw(nullptr, true);
+    return true;
+}
+
 void FileBrowser::applyFilter (const BrowserFilter& filter)
 {
 
+    const bool wasShowingOriginal = this->filter.showOriginal;
     this->filter = filter;
+    filterPassThrough_ = this->filter.isPassThrough();
+    if (!layoutPaused_) {
+        flushPendingInserts_();
+    }
 
     // remove items not complying the filter from the selection
     bool selchanged = false;
     numFiltered = 0;
+    std::vector<ThumbBrowserEntryBase*> newlyVisibleThumbnailEntries;
     {
         MYWRITERLOCK(l, entryRW);
 
         if (filter.showOriginal) {
-            findOriginalEntries(fd);
+            ensureOriginalFamiliesCurrent_();
+            refreshAllOriginalFamilies_();
+        } else if (wasShowingOriginal) {
+            clearOriginalMarks_();
         }
 
         for (size_t i = 0; i < fd.size(); i++) {
-            if (checkFilter(fd[i])) {
+            const bool wasFiltered = fd[i]->filtered;
+            const bool passesFilter = filterPassThrough_ || checkFilter(fd[i]);
+            fd[i]->filtered = !passesFilter;
+
+            if (passesFilter) {
                 numFiltered++;
+                if (wasFiltered) {
+                    newlyVisibleThumbnailEntries.push_back(fd[i]);
+                }
             } else if (fd[i]->selected) {
                 fd[i]->selected = false;
                 std::vector<ThumbBrowserEntryBase*>::iterator j = std::find(selected.begin(), selected.end(), fd[i]);
@@ -2081,19 +2765,36 @@ void FileBrowser::applyFilter (const BrowserFilter& filter)
         notifySelectionListener ();
     }
 
+    std::vector<ThumbImageUpdater::Request> newlyVisibleThumbnailRequests;
+    newlyVisibleThumbnailRequests.reserve(newlyVisibleThumbnailEntries.size());
+    for (auto* entry : newlyVisibleThumbnailEntries) {
+        entry->appendQuickThumbnailJob(newlyVisibleThumbnailRequests);
+    }
+
+    if (!newlyVisibleThumbnailRequests.empty()) {
+        thumbImageUpdater->addBatch(newlyVisibleThumbnailRequests);
+    }
+
     tbl->filterApplied();
-    redraw ();
+    redraw(nullptr, true);
 }
 
 bool FileBrowser::checkFilter (ThumbBrowserEntryBase* entryb) const   // true -> entry complies filter
 {
+    if (filterPassThrough_) {
+        return true;
+    }
 
     FileBrowserEntry* entry = static_cast<FileBrowserEntry*>(entryb);
 
     // Album whitelist filter: if active, only show files in the album
     if (!filter.albumWhitelist.empty()) {
-        std::string fullPath = entry->thumbnail->getFileName();
-        if (filter.albumWhitelist.find(fullPath) == filter.albumWhitelist.end()) {
+        const std::string& entryKey = entry->getBrowserPathKey();
+        const bool inAlbum = entryKey.empty()
+            ? filter.albumWhitelist.find(browserPathKey(entry->filename)) != filter.albumWhitelist.end()
+            : filter.albumWhitelist.find(entryKey) != filter.albumWhitelist.end();
+
+        if (!inAlbum) {
             return false;
         }
     }
@@ -2130,9 +2831,7 @@ bool FileBrowser::checkFilter (ThumbBrowserEntryBase* entryb) const   // true ->
     // Filetype filter from filter bar dropdown
     if (!filter.filetypeFilter.empty()) {
         const CacheImageData* cfs = entry->thumbnail->getCacheImageData();
-        std::string ft = cfs->filetype;
-        std::transform(ft.begin(), ft.end(), ft.begin(), ::toupper);
-        if (filter.filetypeFilter.find(ft) == filter.filetypeFilter.end()) {
+        if (filter.filetypeFilter.find(cfs->getFiletypeUpper()) == filter.filetypeFilter.end()) {
             return false;
         }
     }
@@ -2141,8 +2840,7 @@ bool FileBrowser::checkFilter (ThumbBrowserEntryBase* entryb) const   // true ->
     if (!filter.vFilterStrings.empty()) {
         // check if image's FileName contains queryFileName (case insensitive)
         // TODO should we provide case-sensitive search option via preferences?
-        std::string FileName = Glib::path_get_basename(entry->thumbnail->getFileName());
-        std::transform(FileName.begin(), FileName.end(), FileName.begin(), ::toupper);
+        const std::string& FileName = entry->getBrowserFileNameUpper();
         int iFilenameMatch = 0;
 
         for (const auto& filterString : filter.vFilterStrings) {
@@ -2173,21 +2871,35 @@ bool FileBrowser::checkFilter (ThumbBrowserEntryBase* entryb) const   // true ->
     double tol2 = 1e-8;
 
     if (!cfs->exifValid) {
-        return (!filter.exifFilter.filterCamera || filter.exifFilter.cameras.count(cfs->getCamera()) > 0)
-               && (!filter.exifFilter.filterLens || filter.exifFilter.lenses.count(cfs->lens) > 0)
-               && (!filter.exifFilter.filterFiletype || filter.exifFilter.filetypes.count(cfs->filetype) > 0)
-               && (!filter.exifFilter.filterExpComp || filter.exifFilter.expcomp.count(cfs->expcomp) > 0);
+        return (!filter.exifFilter.filterCamera || filter.exifFilter.cameras.count(cfs->getCameraName()) > 0)
+               && (!filter.exifFilter.filterLens || filter.exifFilter.lenses.count(cfs->getLensRaw()) > 0)
+               && (!filter.exifFilter.filterFiletype || filter.exifFilter.filetypes.count(cfs->getFiletypeRaw()) > 0)
+               && (!filter.exifFilter.filterExpComp || filter.exifFilter.expcomp.count(cfs->getExpCompRaw()) > 0);
+    }
+
+    if (filter.exifFilter.filterShutter) {
+        const double shutter = rtengine::FramesMetaData::shutterFromString(
+            rtengine::FramesMetaData::shutterToString(cfs->shutter));
+        if (shutter < filter.exifFilter.shutterFrom - tol2 || shutter > filter.exifFilter.shutterTo + tol2) {
+            return false;
+        }
+    }
+
+    if (filter.exifFilter.filterFNumber) {
+        const double fnumber = rtengine::FramesMetaData::apertureFromString(
+            rtengine::FramesMetaData::apertureToString(cfs->fnumber));
+        if (fnumber < filter.exifFilter.fnumberFrom - tol2 || fnumber > filter.exifFilter.fnumberTo + tol2) {
+            return false;
+        }
     }
 
     return
-        (!filter.exifFilter.filterShutter || (rtengine::FramesMetaData::shutterFromString(rtengine::FramesMetaData::shutterToString(cfs->shutter)) >= filter.exifFilter.shutterFrom - tol2 && rtengine::FramesMetaData::shutterFromString(rtengine::FramesMetaData::shutterToString(cfs->shutter)) <= filter.exifFilter.shutterTo + tol2))
-        && (!filter.exifFilter.filterFNumber || (rtengine::FramesMetaData::apertureFromString(rtengine::FramesMetaData::apertureToString(cfs->fnumber)) >= filter.exifFilter.fnumberFrom - tol2 && rtengine::FramesMetaData::apertureFromString(rtengine::FramesMetaData::apertureToString(cfs->fnumber)) <= filter.exifFilter.fnumberTo + tol2))
-        && (!filter.exifFilter.filterFocalLen || (cfs->focalLen >= filter.exifFilter.focalFrom - tol && cfs->focalLen <= filter.exifFilter.focalTo + tol))
+        (!filter.exifFilter.filterFocalLen || (cfs->focalLen >= filter.exifFilter.focalFrom - tol && cfs->focalLen <= filter.exifFilter.focalTo + tol))
         && (!filter.exifFilter.filterISO     || (cfs->iso >= filter.exifFilter.isoFrom && cfs->iso <= filter.exifFilter.isoTo))
-        && (!filter.exifFilter.filterExpComp || filter.exifFilter.expcomp.count(cfs->expcomp) > 0)
-        && (!filter.exifFilter.filterCamera  || filter.exifFilter.cameras.count(cfs->getCamera()) > 0)
-        && (!filter.exifFilter.filterLens    || filter.exifFilter.lenses.count(cfs->lens) > 0)
-        && (!filter.exifFilter.filterFiletype  || filter.exifFilter.filetypes.count(cfs->filetype) > 0);
+        && (!filter.exifFilter.filterExpComp || filter.exifFilter.expcomp.count(cfs->getExpCompRaw()) > 0)
+        && (!filter.exifFilter.filterCamera  || filter.exifFilter.cameras.count(cfs->getCameraName()) > 0)
+        && (!filter.exifFilter.filterLens    || filter.exifFilter.lenses.count(cfs->getLensRaw()) > 0)
+        && (!filter.exifFilter.filterFiletype  || filter.exifFilter.filetypes.count(cfs->getFiletypeRaw()) > 0);
 }
 
 void FileBrowser::toTrashRequested (std::vector<FileBrowserEntry*> tbe)
@@ -2272,8 +2984,9 @@ void FileBrowser::rankingRequested (std::vector<FileBrowserEntry*> tbe, int rank
         tbe[i]->thumbnail->updateCache (); // needed to save the colorlabel to disk in the procparam file(s) and the cache image data file
         //TODO? - should update pparams instead?
 
-        if (tbe[i]->getThumbButtonSet()) {
-            tbe[i]->getThumbButtonSet()->setRank (tbe[i]->thumbnail->getRank());
+        auto* thumbButtonSet = rank > 0 ? tbe[i]->ensureThumbButtonSet(this) : tbe[i]->getThumbButtonSet();
+        if (thumbButtonSet) {
+            thumbButtonSet->setRank (tbe[i]->thumbnail->getRank());
         }
 
         // Trigger overlay animation (all entries animate in parallel)
@@ -2305,8 +3018,9 @@ void FileBrowser::colorlabelRequested (std::vector<FileBrowserEntry*> tbe, int c
         tbe[i]->thumbnail->updateCache(); // needed to save the colorlabel to disk in the procparam file(s) and the cache image data file
 
         //TODO? - should update pparams instead?
-        if (tbe[i]->getThumbButtonSet()) {
-            tbe[i]->getThumbButtonSet()->setColorLabel (tbe[i]->thumbnail->getColorLabel());
+        auto* thumbButtonSet = colorlabel > 0 ? tbe[i]->ensureThumbButtonSet(this) : tbe[i]->getThumbButtonSet();
+        if (thumbButtonSet) {
+            thumbButtonSet->setColorLabel (tbe[i]->thumbnail->getColorLabel());
         }
 
         // Trigger overlay animation (all entries animate in parallel)
@@ -2431,60 +3145,59 @@ void FileBrowser::openNextImage()
 {
     MYWRITERLOCK(l, entryRW);
 
-    if (!fd.empty() && selected.size() > 0 && !App::get().options().tabbedUI) {
-        for (size_t i = 0; i < fd.size() - 1; i++) {
-            if (selected[0]->thumbnail->getFileName() == fd[i]->filename) { // located 1-st image in current selection
-                if (i < fd.size() && tbl) {
-                    // find the first not-filtered-out (next) image
-                    for (size_t k = i + 1; k < fd.size(); k++) {
-                        if (!fd[k]->filtered/*checkFilter (fd[k])*/) {
+    if (!fd.empty() && !selected.empty() && !App::get().options().tabbedUI && tbl) {
+        const std::ptrdiff_t current = findEntryIndexLocked_(selected.front());
 
-                            // clear current selection
-                            for (size_t j = 0; j < selected.size(); j++) {
-                                selected[j]->selected = false;
-                            }
+        if (current < 0) {
+            return;
+        }
 
-                            selected.clear();
+        for (size_t k = static_cast<size_t>(current) + 1; k < fd.size(); k++) {
+            if (!fd[k]->filtered/*checkFilter (fd[k])*/) {
 
-                            // set new selection
-                            fd[k]->selected = true;
-                            selected.push_back(fd[k]);
-                            //queue_draw();
-
-                            MYWRITERLOCK_RELEASE(l);
-
-                            // this will require a read access
-                            notifySelectionListener();
-
-                            MYWRITERLOCK_ACQUIRE(l);
-
-                            // scroll to the selected position, centered horizontally in the container
-                            double x1, y1;
-                            getScrollPosition(x1, y1);
-
-                            double x2 = selected[0]->getStartX();
-                            double y2 = selected[0]->getStartY();
-
-                            Thumbnail* thumb = (static_cast<FileBrowserEntry*>(fd[k]))->thumbnail;
-                            int tw = fd[k]->getMinimalWidth(); // thumb width
-
-                            int ww = get_width(); // window width
-
-                            MYWRITERLOCK_RELEASE(l);
-
-                            // scroll only when selected[0] is outside of the displayed bounds
-                            // or less than a thumbnail's width from either edge.
-                            if ((x2 > x1 + ww - 1.5 * tw) || (x2 - tw / 2 < x1)) {
-                                setScrollPosition(x2 - (ww - tw) / 2, y2);
-                            }
-
-                            // open the selected image
-                            tbl->openRequested({thumb});
-
-                            return;
-                        }
-                    }
+                // clear current selection
+                for (size_t j = 0; j < selected.size(); j++) {
+                    selected[j]->selected = false;
                 }
+
+                selected.clear();
+
+                // set new selection
+                fd[k]->selected = true;
+                selected.push_back(fd[k]);
+                //queue_draw();
+
+                // scroll to the selected position, centered horizontally in the container
+                double x1, y1;
+                getScrollPosition(x1, y1);
+
+                double x2 = fd[k]->getStartX();
+                double y2 = fd[k]->getStartY();
+
+                auto* openEntry = static_cast<FileBrowserEntry*>(fd[k]);
+                Thumbnail* thumb = openEntry->thumbnail;
+                const Glib::ustring openFname = fd[k]->filename;
+                int tw = fd[k]->getMinimalWidth(); // thumb width
+
+                int ww = get_width(); // window width
+
+                MYWRITERLOCK_RELEASE(l);
+
+                // open the selected image
+                openEntry->cacheCurrentPreviewForQuickOpen();
+                lastOpenRequestedFname_ = openFname;
+                tbl->openRequested({thumb}, NAV_NEXT);
+
+                // this will require a read access
+                scheduleSelectionNotify();
+
+                // scroll only when selected[0] is outside of the displayed bounds
+                // or less than a thumbnail's width from either edge.
+                if ((x2 > x1 + ww - 1.5 * tw) || (x2 - tw / 2 < x1)) {
+                    setScrollPosition(x2 - (ww - tw) / 2, y2);
+                }
+
+                return;
             }
         }
     }
@@ -2494,60 +3207,60 @@ void FileBrowser::openPrevImage()
 {
     MYWRITERLOCK(l, entryRW);
 
-    if (!fd.empty() && selected.size() > 0 && !App::get().options().tabbedUI) {
-        for (size_t i = 1; i < fd.size(); i++) {
-            if (selected[0]->thumbnail->getFileName() == fd[i]->filename) { // located 1-st image in current selection
-                if (i > 0 && tbl) {
-                    // find the first not-filtered-out (previous) image
-                    for (ssize_t k = (ssize_t)i - 1; k >= 0; k--) {
-                        if (!fd[k]->filtered/*checkFilter (fd[k])*/) {
+    if (!fd.empty() && !selected.empty() && !App::get().options().tabbedUI && tbl) {
+        const std::ptrdiff_t current = findEntryIndexLocked_(selected.front());
 
-                            // clear current selection
-                            for (size_t j = 0; j < selected.size(); j++) {
-                                selected[j]->selected = false;
-                            }
+        if (current <= 0) {
+            return;
+        }
 
-                            selected.clear();
+        // find the first not-filtered-out (previous) image
+        for (std::ptrdiff_t k = current - 1; k >= 0; k--) {
+            if (!fd[k]->filtered/*checkFilter (fd[k])*/) {
 
-                            // set new selection
-                            fd[k]->selected = true;
-                            selected.push_back(fd[k]);
-                            //queue_draw();
-
-                            MYWRITERLOCK_RELEASE(l);
-
-                            // this will require a read access
-                            notifySelectionListener();
-
-                            MYWRITERLOCK_ACQUIRE(l);
-
-                            // scroll to the selected position, centered horizontally in the container
-                            double x1, y1;
-                            getScrollPosition(x1, y1);
-
-                            double x2 = selected[0]->getStartX();
-                            double y2 = selected[0]->getStartY();
-
-                            Thumbnail* thumb = (static_cast<FileBrowserEntry*>(fd[k]))->thumbnail;
-                            int tw = fd[k]->getMinimalWidth(); // thumb width
-
-                            int ww = get_width(); // window width
-
-                            MYWRITERLOCK_RELEASE(l);
-
-                            // scroll only when selected[0] is outside of the displayed bounds
-                            // or less than a thumbnail's width from either edge.
-                            if ((x2 > x1 + ww - 1.5 * tw) || (x2 - tw / 2 < x1)) {
-                                setScrollPosition(x2 - (ww - tw) / 2, y2);
-                            }
-
-                            // open the selected image
-                            tbl->openRequested({thumb});
-
-                            return;
-                        }
-                    }
+                // clear current selection
+                for (size_t j = 0; j < selected.size(); j++) {
+                    selected[j]->selected = false;
                 }
+
+                selected.clear();
+
+                // set new selection
+                fd[k]->selected = true;
+                selected.push_back(fd[k]);
+                //queue_draw();
+
+                // scroll to the selected position, centered horizontally in the container
+                double x1, y1;
+                getScrollPosition(x1, y1);
+
+                double x2 = fd[k]->getStartX();
+                double y2 = fd[k]->getStartY();
+
+                auto* openEntry = static_cast<FileBrowserEntry*>(fd[k]);
+                Thumbnail* thumb = openEntry->thumbnail;
+                const Glib::ustring openFname = fd[k]->filename;
+                int tw = fd[k]->getMinimalWidth(); // thumb width
+
+                int ww = get_width(); // window width
+
+                MYWRITERLOCK_RELEASE(l);
+
+                // open the selected image
+                openEntry->cacheCurrentPreviewForQuickOpen();
+                lastOpenRequestedFname_ = openFname;
+                tbl->openRequested({thumb}, NAV_PREVIOUS);
+
+                // this will require a read access
+                scheduleSelectionNotify();
+
+                // scroll only when selected[0] is outside of the displayed bounds
+                // or less than a thumbnail's width from either edge.
+                if ((x2 > x1 + ww - 1.5 * tw) || (x2 - tw / 2 < x1)) {
+                    setScrollPosition(x2 - (ww - tw) / 2, y2);
+                }
+
+                return;
             }
         }
     }
@@ -2555,11 +3268,30 @@ void FileBrowser::openPrevImage()
 
 void FileBrowser::selectImage(const Glib::ustring& fname, bool doScroll)
 {
+    flushPendingInsertsForSelection_();
+
     MYWRITERLOCK(l, entryRW);
 
     if (!fd.empty() && !App::get().options().tabbedUI) {
-        for (size_t i = 0; i < fd.size(); i++) {
-            if (fname == fd[i]->filename && !fd[i]->filtered) {
+        ThumbBrowserEntryBase* entry = findEntryLocked_(fname);
+        if (entry) {
+            if (!entry->filtered) {
+                const bool alreadyOnlySelected = selected.size() == 1 && selected.front() == entry && entry->selected;
+                if (alreadyOnlySelected) {
+                    const double x = entry->getStartX();
+                    const double y = entry->getStartY();
+                    const int tw = entry->getMinimalWidth();
+                    const int ww = get_width();
+
+                    MYWRITERLOCK_RELEASE(l);
+
+                    if (doScroll) {
+                        setScrollPosition(x - (ww - tw) / 2, y);
+                    }
+
+                    return;
+                }
+
                 // matching file found for sync
 
                 // clear current selection
@@ -2570,26 +3302,23 @@ void FileBrowser::selectImage(const Glib::ustring& fname, bool doScroll)
                 selected.clear();
 
                 // set new selection
-                fd[i]->selected = true;
-                selected.push_back(fd[i]);
+                entry->selected = true;
+                selected.push_back(entry);
                 queue_draw();
 
-                MYWRITERLOCK_RELEASE(l);
-
-                // this will require a read access
-                notifySelectionListener();
-
-                MYWRITERLOCK_ACQUIRE(l);
-
                 // scroll to the selected position, centered horizontally in the container
-                double x = selected[0]->getStartX();
-                double y = selected[0]->getStartY();
+                double x = entry->getStartX();
+                double y = entry->getStartY();
 
-                int tw = fd[i]->getMinimalWidth(); // thumb width
+                int tw = entry->getMinimalWidth(); // thumb width
 
                 int ww = get_width(); // window width
 
                 MYWRITERLOCK_RELEASE(l);
+
+                // Programmatic sync does not need to block the open path on
+                // secondary tool-panel selection updates.
+                scheduleSelectionNotify();
 
                 if (doScroll) {
                     // Center thumb
@@ -2616,16 +3345,291 @@ Thumbnail* FileBrowser::getSelectedThumbnail()
 
 void FileBrowser::openNextPreviousEditorImage (const Glib::ustring& fname, eRTNav nextPrevious)
 {
+    flushPendingInsertsForSelection_();
 
-    // let FileBrowser acquire Editor's perspective
-    selectImage (fname, false);
+    MYWRITERLOCK(l, entryRW);
 
-    // now switch to the requested image
-    if (nextPrevious == NAV_NEXT) {
-        openNextImage();
-    } else if (nextPrevious == NAV_PREVIOUS) {
-        openPrevImage();
+    if (fd.empty() || App::get().options().tabbedUI || !tbl) {
+        return;
     }
+
+    const std::ptrdiff_t current = findEntryIndexLocked_(fname);
+    if (current < 0) {
+        return;
+    }
+
+    const std::ptrdiff_t step = nextPrevious == NAV_PREVIOUS ? -1 : 1;
+    if (nextPrevious != NAV_NEXT && nextPrevious != NAV_PREVIOUS) {
+        return;
+    }
+
+    for (std::ptrdiff_t k = current + step; k >= 0 && k < static_cast<std::ptrdiff_t>(fd.size()); k += step) {
+        if (fd[k]->filtered) {
+            continue;
+        }
+
+        for (size_t j = 0; j < selected.size(); j++) {
+            selected[j]->selected = false;
+        }
+
+        selected.clear();
+
+        fd[k]->selected = true;
+        selected.push_back(fd[k]);
+
+        double x1, y1;
+        getScrollPosition(x1, y1);
+
+        const double x2 = fd[k]->getStartX();
+        const double y2 = fd[k]->getStartY();
+        auto* openEntry = static_cast<FileBrowserEntry*>(fd[k]);
+        Thumbnail* thumb = openEntry->thumbnail;
+        const Glib::ustring openFname = fd[k]->filename;
+        const int tw = fd[k]->getMinimalWidth();
+        const int ww = get_width();
+
+        MYWRITERLOCK_RELEASE(l);
+
+        openEntry->cacheCurrentPreviewForQuickOpen();
+        lastOpenRequestedFname_ = openFname;
+        tbl->openRequested({thumb}, nextPrevious);
+
+        scheduleSelectionNotify();
+
+        if ((x2 > x1 + ww - 1.5 * tw) || (x2 - tw / 2 < x1)) {
+            setScrollPosition(x2 - (ww - tw) / 2, y2);
+        }
+
+        return;
+    }
+}
+
+void FileBrowser::openEditorImage(const Glib::ustring& fname, eRTNav preloadDirectionHint)
+{
+    flushPendingInsertsForSelection_();
+
+    MYWRITERLOCK(l, entryRW);
+
+    if (fd.empty() || App::get().options().tabbedUI || !tbl) {
+        return;
+    }
+
+    const std::ptrdiff_t target = findEntryIndexLocked_(fname);
+    if (target < 0 || fd[target]->filtered) {
+        return;
+    }
+
+    for (size_t j = 0; j < selected.size(); j++) {
+        selected[j]->selected = false;
+    }
+
+    selected.clear();
+
+    fd[target]->selected = true;
+    selected.push_back(fd[target]);
+
+    double x1, y1;
+    getScrollPosition(x1, y1);
+
+    const double x2 = fd[target]->getStartX();
+    const double y2 = fd[target]->getStartY();
+    auto* openEntry = static_cast<FileBrowserEntry*>(fd[target]);
+    Thumbnail* thumb = openEntry->thumbnail;
+    const Glib::ustring openFname = fd[target]->filename;
+    const int tw = fd[target]->getMinimalWidth();
+    const int ww = get_width();
+
+    MYWRITERLOCK_RELEASE(l);
+
+    openEntry->cacheCurrentPreviewForQuickOpen();
+    lastOpenRequestedFname_ = openFname;
+    tbl->openRequested({thumb}, preloadDirectionHint);
+
+    scheduleSelectionNotify();
+
+    if ((x2 > x1 + ww - 1.5 * tw) || (x2 - tw / 2 < x1)) {
+        setScrollPosition(x2 - (ww - tw) / 2, y2);
+    }
+}
+
+std::vector<FileBrowser::AdjacentEntry> FileBrowser::getAdjacentEntries(const Glib::ustring& fname, int count)
+{
+    return getAdjacentEntriesAndRefresh(fname, count, 0, 0);
+}
+
+std::vector<FileBrowser::AdjacentEntry> FileBrowser::getAdjacentEntriesAndRefresh(const Glib::ustring& fname, int preloadCount, int refreshCount, int quickPreviewWarmCount, eRTNav preferredDirection)
+{
+    std::vector<AdjacentEntry> result;
+    result.reserve(static_cast<size_t>(std::max(preloadCount, 0)) * 2);
+    std::vector<FileBrowserEntry*> refreshEntries;
+    refreshEntries.reserve(static_cast<size_t>(std::max(refreshCount, 0)) * 2);
+    std::vector<FileBrowserEntry*> quickPreviewWarmEntries;
+    quickPreviewWarmEntries.reserve(static_cast<size_t>(std::max(quickPreviewWarmCount, 0)) * 2);
+
+    {
+        // Use the writer-side lookup so a cache miss can populate entryIndex_.
+        // The adjacent walk itself is tiny (N +/- kRadius), and avoiding repeated
+        // fallback scans matters more for large folders during rapid navigation.
+        MYWRITERLOCK(l, entryRW);
+
+        const std::ptrdiff_t idx = findEntryIndexLocked_(fname);
+
+        if (idx < 0) return result;
+
+        const int maxCount = std::max({preloadCount, refreshCount, quickPreviewWarmCount});
+        auto collectSide = [&](std::ptrdiff_t start, std::ptrdiff_t step) {
+            std::vector<FileBrowserEntry*> sideEntries;
+            sideEntries.reserve(static_cast<size_t>(std::max(maxCount, 0)));
+
+            for (std::ptrdiff_t k = start; k >= 0 && k < static_cast<std::ptrdiff_t>(fd.size()) && static_cast<int>(sideEntries.size()) < maxCount; k += step) {
+                if (fd[k]->filtered) {
+                    continue;
+                }
+
+                sideEntries.push_back(static_cast<FileBrowserEntry*>(fd[k]));
+            }
+
+            return sideEntries;
+        };
+
+        const bool directionalQuickPreviewWarm =
+            preferredDirection == NAV_NEXT || preferredDirection == NAV_PREVIOUS;
+
+        auto appendEntry = [&](FileBrowserEntry* entry, size_t sideIndex, bool preferredSide) {
+            if (!entry) {
+                return;
+            }
+
+            if (static_cast<int>(sideIndex) < refreshCount) {
+                refreshEntries.push_back(entry);
+            }
+            if (static_cast<int>(sideIndex) < quickPreviewWarmCount
+                && (!directionalQuickPreviewWarm || preferredSide)) {
+                quickPreviewWarmEntries.push_back(entry);
+            }
+            if (static_cast<int>(sideIndex) < preloadCount) {
+                const bool isRaw = entry->thumbnail->getType() == FT_Raw;
+                const CacheImageData* const cfs = entry->thumbnail->getCacheImageData();
+                const int fullW = cfs ? cfs->width : 0;
+                const int fullH = cfs ? cfs->height : 0;
+                const auto sensorType = cfs ? static_cast<rtengine::eSensorType>(cfs->sensortype) : rtengine::ST_NONE;
+                auto sampleFormat = cfs ? cfs->sampleFormat : rtengine::IIOSF_UNKNOWN;
+                if (!isRaw
+                    && sampleFormat == rtengine::IIOSF_UNKNOWN
+                    && isLikely8BitJpegExtension(getLowercaseExtension(entry->filename))) {
+                    sampleFormat = rtengine::IIOSF_UNSIGNED_CHAR;
+                }
+                const unsigned int frameCount = cfs ? std::max(1u, static_cast<unsigned int>(cfs->frameCount)) : 1u;
+                const size_t estimatedBytes = estimateInitialImageBytes(fullW, fullH, isRaw, sensorType, sampleFormat, frameCount);
+
+                result.push_back({
+                    entry->filename,
+                    std::string(entry->filename),
+                    estimatedBytes,
+                    sensorType,
+                    sampleFormat,
+                    frameCount,
+                    isRaw,
+                    preferredSide
+                });
+            }
+        };
+
+        const auto forwardEntries = collectSide(idx + 1, 1);
+        const auto backwardEntries = collectSide(idx - 1, -1);
+        const auto* preferredEntries = &forwardEntries;
+        const auto* oppositeEntries = &backwardEntries;
+        if (preferredDirection == NAV_PREVIOUS) {
+            preferredEntries = &backwardEntries;
+            oppositeEntries = &forwardEntries;
+        }
+
+        size_t preferredStart = 0;
+        size_t oppositeStart = 0;
+
+        if (preferredDirection == NAV_NEXT || preferredDirection == NAV_PREVIOUS) {
+            const size_t preferredLeadCountForDirectionalNav = static_cast<size_t>(std::max(preloadCount, 0));
+            const size_t preferredLeadCount = std::min(preferredLeadCountForDirectionalNav, preferredEntries->size());
+            for (; preferredStart < preferredLeadCount; ++preferredStart) {
+                appendEntry((*preferredEntries)[preferredStart], preferredStart, true);
+            }
+        }
+
+        const size_t interleaveCount = std::max(
+            preferredEntries->size() > preferredStart ? preferredEntries->size() - preferredStart : 0,
+            oppositeEntries->size() > oppositeStart ? oppositeEntries->size() - oppositeStart : 0);
+        for (size_t i = 0; i < interleaveCount; ++i) {
+            const size_t preferredIndex = preferredStart + i;
+            if (preferredIndex < preferredEntries->size()) {
+                appendEntry((*preferredEntries)[preferredIndex], preferredIndex, true);
+            }
+
+            const size_t oppositeIndex = oppositeStart + i;
+            if (oppositeIndex < oppositeEntries->size()) {
+                appendEntry((*oppositeEntries)[oppositeIndex], oppositeIndex, false);
+            }
+        }
+    }
+
+    std::vector<QuickPreviewCacheWarmItem> cacheWarmItems;
+    cacheWarmItems.reserve(quickPreviewWarmEntries.size());
+    size_t quickWarmAlreadyCached = 0;
+    size_t quickWarmFromMemory = 0;
+    size_t quickWarmBusy = 0;
+
+    for (auto* entry : quickPreviewWarmEntries) {
+        if (!entry || !entry->thumbnail) {
+            continue;
+        }
+
+        double cachedScale = 1.0;
+        bool cachedBusy = false;
+        if (entry->thumbnail->tryGetCachedPixbuf(cachedScale, &cachedBusy)) {
+            ++quickWarmAlreadyCached;
+            continue;
+        }
+        if (cachedBusy) {
+            ++quickWarmBusy;
+            continue;
+        }
+
+        if (entry->cacheCurrentPreviewForQuickOpen()) {
+            ++quickWarmFromMemory;
+            continue;
+        }
+
+        entry->thumbnail->increaseRef();
+        cacheWarmItems.push_back({entry->thumbnail});
+    }
+
+    if (quickPreviewWarmCount > 0) {
+        fileBrowserPerfLog(
+            "[quickWarm] scheduled ready=%zu memory=%zu disk=%zu busy=%zu radius=%d anchor=%s\n",
+            quickWarmAlreadyCached,
+            quickWarmFromMemory,
+            cacheWarmItems.size(),
+            quickWarmBusy,
+            quickPreviewWarmCount,
+            fname.c_str());
+    }
+    scheduleCachedQuickPreviewWarm(
+        std::move(cacheWarmItems),
+        App::get().options().maxThumbnailHeight);
+
+    std::vector<ThumbImageUpdater::Request> refreshRequests;
+    refreshRequests.reserve(refreshEntries.size());
+    const bool cacheAdjacentPixbufs = preloadCount > 0;
+    for (auto* entry : refreshEntries) {
+        entry->appendQuickThumbnailJob(refreshRequests, cacheAdjacentPixbufs);
+    }
+    thumbImageUpdater->addBatch(refreshRequests);
+
+    return result;
+}
+
+void FileBrowser::refreshAdjacentThumbnails(const Glib::ustring& fname, int count)
+{
+    getAdjacentEntriesAndRefresh(fname, 0, count, 0);
 }
 
 void FileBrowser::thumbRearrangementNeeded ()
@@ -2647,18 +3651,39 @@ void FileBrowser::selectionChanged ()
 
 void FileBrowser::notifySelectionListener ()
 {
+    if (!tbl) {
+        return;
+    }
 
-    if (tbl) {
+    std::vector<Thumbnail*> thm;
+
+    {
         MYREADERLOCK(l, entryRW);
 
-        std::vector<Thumbnail*> thm;
+        thm.reserve(selected.size());
 
         for (size_t i = 0; i < selected.size(); i++) {
             thm.push_back ((static_cast<FileBrowserEntry*>(selected[i]))->thumbnail);
         }
-
-        tbl->selectionChanged (thm);
     }
+
+    tbl->selectionChanged (thm);
+}
+
+void FileBrowser::scheduleSelectionNotify()
+{
+    if (selectionNotifyIdlePending_) {
+        return;
+    }
+
+    selectionNotifyIdlePending_ = true;
+    idle_register.add(
+        [this]() -> bool {
+            selectionNotifyIdlePending_ = false;
+            notifySelectionListener();
+            return false;
+        },
+        G_PRIORITY_DEFAULT_IDLE);
 }
 
 void FileBrowser::redrawNeeded (LWButton* button)
@@ -2671,7 +3696,7 @@ FileBrowser::type_trash_changed FileBrowser::trash_changed ()
     return m_trash_changed;
 }
 
-FileBrowser::type_save_image_requested FileBrowser::save_image_requested ()
+FileBrowser::type_save_image_requested& FileBrowser::save_image_requested ()
 {
     return m_save_image_requested;
 }
@@ -2799,13 +3824,43 @@ void FileBrowser::openRequested( std::vector<FileBrowserEntry*> mselected)
 {
     std::vector<Thumbnail*> entries;
     // in Single Editor Mode open only last selected image
-    size_t openStart = App::get().options().tabbedUI ? 0 : ( mselected.size() > 0 ? mselected.size() - 1 : 0);
+    const bool tabbedUI = App::get().options().tabbedUI;
+    size_t openStart = tabbedUI ? 0 : ( mselected.size() > 0 ? mselected.size() - 1 : 0);
+    const bool warmQuickPreview = !tabbedUI || mselected.size() == 1;
+    Glib::ustring openFname;
 
     for (size_t i = openStart; i < mselected.size(); i++) {
+        if (warmQuickPreview) {
+            mselected[i]->cacheCurrentPreviewForQuickOpen();
+        }
         entries.push_back (mselected[i]->thumbnail);
+        openFname = mselected[i]->filename;
     }
 
-    tbl->openRequested (entries);
+    eRTNav preloadDirectionHint = NAV_NONE;
+
+    if (entries.size() == 1 && !openFname.empty()) {
+        MYWRITERLOCK(l, entryRW);
+
+        const std::ptrdiff_t current = findEntryIndexLocked_(openFname);
+        const std::ptrdiff_t previous = lastOpenRequestedFname_.empty()
+            ? -1
+            : findEntryIndexLocked_(lastOpenRequestedFname_);
+
+        if (current >= 0 && previous >= 0) {
+            if (current > previous) {
+                preloadDirectionHint = NAV_NEXT;
+            } else if (current < previous) {
+                preloadDirectionHint = NAV_PREVIOUS;
+            }
+        }
+
+        lastOpenRequestedFname_ = openFname;
+    } else if (!openFname.empty()) {
+        lastOpenRequestedFname_ = openFname;
+    }
+
+    tbl->openRequested (entries, preloadDirectionHint);
 }
 
 void FileBrowser::inspectRequested(std::vector<FileBrowserEntry*> mselected)

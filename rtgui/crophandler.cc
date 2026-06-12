@@ -87,7 +87,7 @@ void CropHandler::disconnectCrop ()
     // without leaving a dangling pointer.  Must be called while the
     // crop object is still alive (before IPC destruction).
     if (crop) {
-        crop->setListener(nullptr);
+        crop->detachListener();
         crop = nullptr;
     }
 
@@ -109,7 +109,7 @@ void CropHandler::newImage (StagedImageProcessor* ipc_, bool isDetailWindow)
     // setDetailedCrop() on this CropHandler after we've switched images.
     // The old crop will be destroyed when the old IPC is cleaned up.
     if (crop) {
-        crop->setListener(nullptr);
+        crop->detachListener();
         crop = nullptr;
     }
 

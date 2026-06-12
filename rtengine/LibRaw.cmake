@@ -16,9 +16,16 @@ if(WIN32)
     # shell in order to get its emulation layers set up properly so that
     # auto(re)conf works properly
     set(SHELLARGS "-l")
+    # A login shell can reset PATH and drop the MinGW runtime directory. Keep
+    # it explicit for LibRaw's configure tests so absolute compiler paths can
+    # still find assembler/linker/runtime DLLs.
+    set(MSYS2_PATH_PREFIX "PATH=/mingw64/bin:/usr/bin:/bin:$PATH")
+    set(MSYS2_ACLOCAL_PATH "ACLOCAL_PATH=/mingw64/share/aclocal:/usr/share/aclocal")
 else()
     # let's not import login stuff to not pollute nor slow down the build
     set(SHELLARGS "")
+    set(MSYS2_PATH_PREFIX "PATH=$PATH")
+    set(MSYS2_ACLOCAL_PATH "")
 endif()
 
 add_custom_target(
@@ -59,7 +66,7 @@ find_program(LIBTOOLIZE libtoolize glibtoolize REQUIRED)
 # Git and autotools don't mix well because Git does not preserve timestamp
 # relations or relations between source and generated files, so regenerate:
 execute_process(
-    COMMAND "${SHELL}" ${SHELLARGS} -c "env LIBTOOLIZE=${LIBTOOLIZE} autoreconf --verbose --install --force"
+    COMMAND "${SHELL}" ${SHELLARGS} -c "env ${MSYS2_PATH_PREFIX} ${MSYS2_ACLOCAL_PATH} LIBTOOLIZE=${LIBTOOLIZE} autoreconf --verbose --install --force"
     WORKING_DIRECTORY "${LIBRAW_DIR}"
     RESULT_VARIABLE PROCESS_RESULT
     COMMAND_ECHO STDOUT
@@ -69,7 +76,7 @@ if(PROCESS_RESULT AND NOT PROCESS_RESULT EQUAL 0)
 endif()
 
 execute_process(
-    COMMAND "${SHELL}" ${SHELLARGS} -c "./configure ${CONFIGURE_FLAGS}"
+    COMMAND "${SHELL}" ${SHELLARGS} -c "env ${MSYS2_PATH_PREFIX} ./configure ${CONFIGURE_FLAGS}"
     WORKING_DIRECTORY "${LIBRAW_DIR}"
     RESULT_VARIABLE PROCESS_RESULT
     COMMAND_ECHO STDOUT

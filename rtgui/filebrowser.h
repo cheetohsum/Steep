@@ -28,11 +28,18 @@
 #include "windows/partialpastedlg.h"
 
 #include "rtengine/noncopyable.h"
+#include "rtengine/imageformat.h"
 #include "rtengine/profilestore.h"
 
 #include <gtkmm.h>
 
+#include <cstddef>
 #include <map>
+#include <set>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 
 class FileBrowser;
 class FileBrowserEntry;
@@ -43,7 +50,7 @@ class FileBrowserListener
 public:
     virtual ~FileBrowserListener() = default;
     virtual void filterApplied() = 0;
-    virtual void openRequested(const std::vector<Thumbnail*>& tbe) = 0;
+    virtual void openRequested(const std::vector<Thumbnail*>& tbe, eRTNav preloadDirectionHint = NAV_NONE) = 0;
     virtual void developRequested(const std::vector<FileBrowserEntry*>& tbe, bool fastmode) = 0;
     virtual void renameRequested(const std::vector<FileBrowserEntry*>& tbe) = 0;
     virtual void deleteRequested(const std::vector<FileBrowserEntry*>& tbe, bool inclBatchProcessed, bool onlySelected) = 0;
@@ -70,10 +77,31 @@ private:
 
     IdleRegister idle_register;
     unsigned int session_id_;
+    bool selectionNotifyIdlePending_;
 
     std::vector<ThumbBrowserEntryBase*> pendingDeletion_;
+    std::unordered_set<std::string> entryKeys_;
+    std::unordered_map<std::string, ThumbBrowserEntryBase*> entriesByKey_;
+    std::unordered_map<std::string, std::vector<ThumbBrowserEntryBase*>> originalFamilies_;
+    bool originalFamiliesCurrent_ = true;
+    std::unordered_map<std::string, size_t> entryIndex_;
+    Glib::ustring lastOpenRequestedFname_;
     sigc::connection deletionConnection_;
     bool onDeletionIdle_();
+    void markEntryIndexDirty_();
+    ThumbBrowserEntryBase* findEntryLocked_(const Glib::ustring& fname);
+    std::ptrdiff_t findEntryIndexLocked_(const Glib::ustring& fname);
+    std::ptrdiff_t findEntryIndexReadLocked_(const Glib::ustring& fname);
+    std::ptrdiff_t findEntryIndexLocked_(ThumbBrowserEntryBase* entry);
+    void flushPendingInsertsForSelection_();
+    void entriesOrderChanged_() override;
+    void entriesInserted_(const std::vector<ThumbBrowserEntryBase*>& entries) override;
+    void addOriginalFamilyEntry_(ThumbBrowserEntryBase* entry);
+    void removeOriginalFamilyEntry_(ThumbBrowserEntryBase* entry);
+    void ensureOriginalFamiliesCurrent_();
+    void clearOriginalMarks_();
+    void refreshOriginalFamily_(const std::string& familyKey);
+    void refreshAllOriginalFamilies_();
 
 protected:
     MyImageMenuItem* rank[6];
@@ -144,6 +172,7 @@ protected:
     BatchPParamsChangeListener* bppcl;
     FileBrowserListener* tbl;
     BrowserFilter filter;
+    bool filterPassThrough_;
     int numFiltered;
 
     void toTrashRequested   (std::vector<FileBrowserEntry*> tbe);
@@ -154,6 +183,7 @@ protected:
     void colorlabelRequested   (std::vector<FileBrowserEntry*> tbe, int colorlabel);
     void pickRequested (std::vector<FileBrowserEntry*> tbe, int pick);
     void notifySelectionListener ();
+    void scheduleSelectionNotify ();
     void openRequested( std::vector<FileBrowserEntry*> mselected);
     void inspectRequested( std::vector<FileBrowserEntry*> mselected);
     ExportPanel* exportPanel;
@@ -170,8 +200,11 @@ public:
     ~FileBrowser () override;
 
     void addEntry (FileBrowserEntry* entry);                    ///< Moves the execution to the main UI thread
-    void addEntry_ (FileBrowserEntry* entry);                   ///< Must be called only when the execution is in the main UI thread
+    void reserveEntries (std::size_t additionalEntries);
+    bool addEntry_ (FileBrowserEntry* entry);                   ///< Must be called only when the execution is in the main UI thread
+    std::size_t addEntries_ (std::vector<FileBrowserEntry*>& entries); ///< Keeps only accepted entries in the vector
     FileBrowserEntry*  delEntry (const Glib::ustring& fname);    // return the entry if found here return NULL otherwise
+    std::vector<FileBrowserEntry*> delEntries (const std::set<Glib::ustring>& fnames); // bulk remove, single redraw
     void close ();
 
     unsigned int session_id() const { return session_id_; }
@@ -190,6 +223,7 @@ public:
     void applyPartialMenuItemActivated (ProfileStoreLabel *label);
 
     void applyFilter (const BrowserFilter& filter);
+    bool applyPassThroughFilterFast (const BrowserFilter& filter);
     int getNumFiltered()
     {
         return numFiltered;
@@ -222,9 +256,24 @@ public:
     void selectImage(const Glib::ustring& fname, bool doScroll = true);
     Thumbnail* getSelectedThumbnail();  // returns lastClicked or first selected
 
+    struct AdjacentEntry {
+        Glib::ustring fname;
+        std::string fnameRaw;
+        size_t estimatedBytes;
+        rtengine::eSensorType sensorType;
+        rtengine::IIOSampleFormat sampleFormat;
+        unsigned int frameCount;
+        bool isRaw;
+        bool preferredSide;
+    };
+    std::vector<AdjacentEntry> getAdjacentEntries(const Glib::ustring& fname, int count);
+    std::vector<AdjacentEntry> getAdjacentEntriesAndRefresh(const Glib::ustring& fname, int preloadCount, int refreshCount, int quickPreviewWarmCount = 0, eRTNav preferredDirection = NAV_NONE);
+    void refreshAdjacentThumbnails(const Glib::ustring& fname, int count);
+
     void copyProfile ();
     void pasteProfile ();
     void partPasteProfile ();
+    void openEditorImage(const Glib::ustring& fname, eRTNav preloadDirectionHint = NAV_NONE);
     void openNextPreviousEditorImage(const Glib::ustring& fname, eRTNav eNextPrevious);
 
 #ifdef _WIN32
@@ -244,7 +293,7 @@ public:
     void restoreValue() override;
 
     type_trash_changed trash_changed();
-    type_save_image_requested save_image_requested();
+    type_save_image_requested& save_image_requested();
 
     void setAlbumCoverSetter(std::function<void(const Glib::ustring&)> setter) {
         albumCoverSetter_ = std::move(setter);

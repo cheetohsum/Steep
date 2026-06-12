@@ -101,7 +101,6 @@ ICMPanel::ICMPanel() : FoldableToolPanel(this, TOOL_NAME, M("TP_ICM_LABEL")), iu
     auto& options = App::get().mut_options();
 
     isBatchMode = lastToneCurve = lastApplyLookTable = lastApplyBaselineExposureOffset = lastApplyHueSatMap = false;
-
     ipDialog = Gtk::manage(new MyFileChooserButton(M("TP_ICM_INPUTDLGLABEL"), Gtk::FILE_CHOOSER_ACTION_OPEN));
     ipDialog->set_tooltip_text(M("TP_ICM_INPUTCUSTOM_TOOLTIP"));
     bindCurrentFolder(*ipDialog, options.lastIccDir);
@@ -227,7 +226,6 @@ ICMPanel::ICMPanel() : FoldableToolPanel(this, TOOL_NAME, M("TP_ICM_LABEL")), iu
 
     wProfNames = Gtk::manage(new MyComboBoxText());
     wProfVBox->pack_start(*wProfNames, Gtk::PACK_SHRINK);
-
     std::vector<Glib::ustring> wpnames = rtengine::ICCStore::getInstance()->getWorkingProfiles();
 
     for (size_t i = 0; i < wpnames.size(); i++) {
@@ -675,7 +673,6 @@ ICMPanel::ICMPanel() : FoldableToolPanel(this, TOOL_NAME, M("TP_ICM_LABEL")), iu
 
     oProfNames->append(M("TP_ICM_NOICM"));
     oProfNames->set_active(0);
-
     std::vector<Glib::ustring> opnames = ICCStore::getInstance()->getProfiles(rtengine::ICCStore::ProfileType::OUTPUT);
 
     for (size_t i = 0; i < opnames.size(); i++) {
@@ -772,7 +769,6 @@ ICMPanel::ICMPanel() : FoldableToolPanel(this, TOOL_NAME, M("TP_ICM_LABEL")), iu
 
     ipc = ipDialog->signal_selection_changed().connect(sigc::mem_fun(*this, &ICMPanel::ipSelectionChanged));
     saveRef->signal_pressed().connect(sigc::mem_fun(*this, &ICMPanel::saveReferencePressed));
-
     show_all();
 }
 

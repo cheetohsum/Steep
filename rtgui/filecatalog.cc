@@ -20,12 +20,14 @@
 #include "filecatalog.h"
 
 #include <algorithm>
-#include <functional>
+#include <chrono>
 #include <iterator>
 #include <iostream>
 #include <iomanip>
-#include <numeric>
+#include <memory>
+#include <string>
 #include <thread>
+#include <unordered_set>
 
 #include <glib/gstdio.h>
 
@@ -54,6 +56,165 @@ using namespace std;
 
 namespace {
 
+std::string foldedPathKey(const Glib::ustring& path)
+{
+    std::string key = path.casefold().raw();
+    std::replace(key.begin(), key.end(), '\\', '/');
+
+    return key;
+}
+
+std::string catalogPathKey(const Glib::ustring& path)
+{
+    if (Glib::path_is_absolute(path)) {
+        return foldedPathKey(path);
+    }
+
+    const std::string rawPath = path.raw();
+    Glib::ustring normalized = path;
+
+    try {
+        Glib::RefPtr<Gio::File> file;
+
+        if (rawPath.rfind("file:", 0) == 0) {
+            file = Gio::File::create_for_uri(path);
+        } else {
+            file = Gio::File::create_for_path(path);
+        }
+
+        const Glib::ustring nativePath = file->get_path();
+        if (!nativePath.empty()) {
+            normalized = nativePath;
+        } else {
+            const Glib::ustring parseName = file->get_parse_name();
+            if (!parseName.empty()) {
+                normalized = parseName;
+            }
+        }
+    } catch (const Glib::Exception&) {
+    }
+
+    return foldedPathKey(normalized);
+}
+
+bool folderLoadBenchmarkEnabled()
+{
+    static const bool enabled = []() -> bool {
+        const char* value = g_getenv("RT_FOLDER_LOAD_BENCH");
+
+        return value != nullptr
+            && value[0] != '\0'
+            && g_strcmp0(value, "0") != 0
+            && g_ascii_strcasecmp(value, "false") != 0;
+    }();
+
+    return enabled;
+}
+
+bool navigationBenchmarkEnabled()
+{
+    static const bool enabled = []() -> bool {
+        const char* value = g_getenv("STEEP_NAV_BENCH");
+
+        return value != nullptr
+            && value[0] != '\0'
+            && g_strcmp0(value, "0") != 0
+            && g_ascii_strcasecmp(value, "false") != 0;
+    }();
+
+    return enabled;
+}
+
+bool navigationBenchmarkRawOnlyEnabled()
+{
+    static const bool enabled = []() -> bool {
+        const char* value = g_getenv("STEEP_NAV_BENCH_RAW_ONLY");
+
+        return value != nullptr
+            && value[0] != '\0'
+            && g_strcmp0(value, "0") != 0
+            && g_ascii_strcasecmp(value, "false") != 0;
+    }();
+
+    return enabled;
+}
+
+int navigationBenchmarkEnvInt(const char* name, int fallback, int minimum, int maximum)
+{
+    const char* value = g_getenv(name);
+    if (!value || value[0] == '\0') {
+        return fallback;
+    }
+
+    char* end = nullptr;
+    const gint64 parsed = g_ascii_strtoll(value, &end, 10);
+    if (end == value) {
+        return fallback;
+    }
+
+    return static_cast<int>(std::max<gint64>(
+        minimum,
+        std::min<gint64>(parsed, maximum)));
+}
+
+bool isRawNavigationBenchmarkPath(const Glib::ustring& path)
+{
+    const Glib::ustring basename = Glib::path_get_basename(path);
+    const auto lastdot = basename.find_last_of('.');
+    if (lastdot >= basename.length() - 1) {
+        return false;
+    }
+
+    static const std::set<Glib::ustring> rawExtensions = {
+        "3fr", "arw", "arq", "cr2", "cr3", "crf", "crw", "dcr", "dng",
+        "fff", "iiq", "kdc", "mef", "mos", "mrw", "nef", "nrw", "orf",
+        "ori", "pef", "raf", "raw", "rw2", "rwl", "rwz", "sr2", "srf",
+        "srw", "x3f"
+    };
+
+    return rawExtensions.count(basename.substr(lastdot + 1).lowercase()) > 0;
+}
+
+bool isEnabledImagePath(const Glib::ustring& path)
+{
+    const Glib::ustring basename = Glib::path_get_basename(path);
+    const auto lastdot = basename.find_last_of('.');
+
+    if (lastdot >= basename.length() - 1) {
+        return false;
+    }
+
+    const auto& extensions = App::get().options().parsedExtensionsSet;
+    if (extensions.find(basename.substr(lastdot + 1).lowercase()) == extensions.end()) {
+        return false;
+    }
+
+    try {
+        const auto file = Gio::File::create_for_path(path);
+        return file && file->query_exists();
+    } catch (const Glib::Exception&) {
+        return false;
+    }
+}
+
+bool isXmpSidecarPath(const Glib::ustring& path)
+{
+    const Glib::ustring basename = Glib::path_get_basename(path);
+    const auto lastdot = basename.find_last_of('.');
+
+    return lastdot < basename.length() - 1
+        && basename.substr(lastdot + 1).lowercase() == "xmp";
+}
+
+bool isProcParamSidecarPath(const Glib::ustring& path)
+{
+    const Glib::ustring basename = Glib::path_get_basename(path);
+    const auto lastdot = basename.find_last_of('.');
+
+    return lastdot < basename.length() - 1
+        && basename.substr(lastdot + 1).lowercase() == "pp3";
+}
+
 void getFilesRecursively(
     const Glib::ustring &dir_path,
     int max_depth,
@@ -68,8 +229,7 @@ void getFilesRecursively(
         static const auto enumerate_attrs =
             std::string(G_FILE_ATTRIBUTE_STANDARD_NAME) + "," +
             G_FILE_ATTRIBUTE_STANDARD_TYPE + "," +
-            G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN + "," +
-            G_FILE_ATTRIBUTE_STANDARD_SYMLINK_TARGET;
+            G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN;
         auto enumerator = dir->enumerate_children(
             enumerate_attrs,
             options.browseRecursiveFollowLinks
@@ -129,11 +289,12 @@ void getFilesRecursively(
 
 // Streaming variant: calls onFile for each matching file.
 // Returns false if cancelled (onFile returned false).
+template <typename OnFile>
 bool getFilesRecursivelyStreaming(
     const Glib::ustring &dir_path,
     int max_depth,
     int &dir_quota,
-    std::function<bool(const Glib::ustring&)> onFile,
+    OnFile&& onFile,
     std::vector<Glib::RefPtr<Gio::File>> *directories_explored)
 {
     const auto& options = App::get().options();
@@ -143,8 +304,7 @@ bool getFilesRecursivelyStreaming(
         static const auto enumerate_attrs =
             std::string(G_FILE_ATTRIBUTE_STANDARD_NAME) + "," +
             G_FILE_ATTRIBUTE_STANDARD_TYPE + "," +
-            G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN + "," +
-            G_FILE_ATTRIBUTE_STANDARD_SYMLINK_TARGET;
+            G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN;
         auto enumerator = dir->enumerate_children(
             enumerate_attrs,
             options.browseRecursiveFollowLinks
@@ -154,6 +314,8 @@ bool getFilesRecursivelyStreaming(
         if (directories_explored) {
             directories_explored->push_back(dir);
         }
+
+        std::vector<Glib::ustring> childDirs;
 
         while (true) {
             try {
@@ -168,10 +330,8 @@ bool getFilesRecursivelyStreaming(
 
                 if (file->get_file_type() == Gio::FILE_TYPE_DIRECTORY) {
                     if (max_depth > 0 && dir_quota > 0) {
-                        const Glib::ustring child_dir_path = Glib::build_filename(dir_path, file->get_name());
-                        if (!getFilesRecursivelyStreaming(child_dir_path, max_depth - 1, --dir_quota, onFile, directories_explored)) {
-                            return false;
-                        }
+                        --dir_quota;
+                        childDirs.emplace_back(Glib::build_filename(dir_path, file->get_name()));
                     }
                     continue;
                 }
@@ -195,6 +355,12 @@ bool getFilesRecursivelyStreaming(
                 if (rtengine::settings->verbose) {
                     std::cerr << exception.what() << std::endl;
                 }
+            }
+        }
+
+        for (const auto& child_dir_path : childDirs) {
+            if (!getFilesRecursivelyStreaming(child_dir_path, max_depth - 1, dir_quota, onFile, directories_explored)) {
+                return false;
             }
         }
 
@@ -288,22 +454,6 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     Query->set_max_width_chars (20);
     Query->set_tooltip_markup (M("FILEBROWSER_QUERYHINT"));
 
-    // Force both entries to share identical font, color, and height
-    {
-        auto entryCss = Gtk::CssProvider::create();
-        try {
-            entryCss->load_from_data(
-                "entry { font-size: 8pt; color: #cdd2da; min-height: 22px; padding: 1px 5px; }"
-                "entry:focus { color: #cdd2da; }"
-                "entry:disabled { color: #cdd2da; }"
-                "entry image { color: #cdd2da; }"
-            );
-            BrowsePath->get_style_context()->add_provider(
-                entryCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-            Query->get_style_context()->add_provider(
-                entryCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-        } catch (...) {}
-    }
     Gtk::Box* hbQuery = Gtk::manage(new Gtk::Box ());
     hbQuery->set_valign(Gtk::ALIGN_CENTER);
     buttonQueryClear = Gtk::manage(new Gtk::Button ());
@@ -798,7 +948,9 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     buttonBar->pack_end (*tbRightPanel_1, Gtk::PACK_SHRINK);
 
     // Hide hand tool in browser context — not needed for browsing
-    toolBar->hideHandTool();
+    if (toolBar) {
+        toolBar->hideHandTool();
+    }
 
     // CoarsePanel still exists for editor use but not shown in browser bar
     coarsePanel->set_no_show_all(true);
@@ -886,6 +1038,11 @@ FileCatalog::~FileCatalog()
 {
     colorFadeConn_.disconnect();
     colorCollapseDelay_.disconnect();
+    reparseDirectoryConn_.disconnect();
+    if (navigationBenchmarkTimeoutId_ != 0) {
+        g_source_remove(navigationBenchmarkTimeoutId_);
+        navigationBenchmarkTimeoutId_ = 0;
+    }
     idle_register.destroy();
 
     for (int i = 0; i < 5; i++) {
@@ -994,6 +1151,24 @@ void FileCatalog::closeDir ()
     // ignore old requests
     ++selectedDirectoryId;
     earlySelectDone_ = false;
+    directoryScanComplete_ = true;
+    previewsFinishedPending_ = false;
+    previewsFinishRetryQueued_ = false;
+    previewBatchFirstDrainPending_.store(false, std::memory_order_release);
+    if (navigationBenchmarkTimeoutId_ != 0) {
+        g_source_remove(navigationBenchmarkTimeoutId_);
+        navigationBenchmarkTimeoutId_ = 0;
+    }
+    navigationBenchmarkStarted_ = false;
+    navigationBenchmarkRemaining_ = 0;
+    navigationBenchmarkIntervalMs_ = 0;
+    navigationBenchmarkIndex_ = 0;
+    navigationBenchmarkDirection_ = NAV_NEXT;
+    navigationBenchmarkRawOnly_ = false;
+    stopFolderLoadTiming_();
+    filetypeUpdateQueued_ = false;
+    reparseDirectoryQueued_ = false;
+    reparseDirectoryConn_.disconnect();
 
     // terminate thumbnail preview loading
     previewLoader->removeAllJobs ();
@@ -1015,6 +1190,7 @@ void FileCatalog::closeDir ()
     selectedDirectory = "";
     fileBrowser->close ();
     fileNameList.clear ();
+    queuedPreviewKeys_.clear();
 
     {
         MyMutex::MyLock lock(dirEFSMutex);
@@ -1035,6 +1211,48 @@ void FileCatalog::closeDir ()
     updateFiletypeButtonLabel();
 
     redrawAll ();
+}
+
+void FileCatalog::startFolderLoadTiming_()
+{
+    if (!folderLoadBenchmarkEnabled()) {
+        folderLoadTimingActive_ = false;
+        folderLoadFirstPreviewLogged_ = false;
+        folderLoadNextPreviewMilestone_ = 0;
+        return;
+    }
+
+    folderLoadStart_ = std::chrono::steady_clock::now();
+    folderLoadTimingActive_ = true;
+    folderLoadFirstPreviewLogged_ = false;
+    folderLoadNextPreviewMilestone_ = 16;
+    logFolderLoadTiming_("start");
+}
+
+void FileCatalog::stopFolderLoadTiming_()
+{
+    folderLoadTimingActive_ = false;
+    folderLoadFirstPreviewLogged_ = false;
+    folderLoadNextPreviewMilestone_ = 0;
+}
+
+void FileCatalog::logFolderLoadTiming_(const char* stage) const
+{
+    if (!folderLoadTimingActive_) {
+        return;
+    }
+
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - folderLoadStart_);
+
+    std::cout
+        << "RT_FOLDER_LOAD_BENCH"
+        << " stage=" << stage
+        << " elapsed_ms=" << elapsed.count()
+        << " loaded=" << previewsLoaded
+        << " total=" << previewsToLoad
+        << " dir=\"" << selectedDirectory.raw() << "\""
+        << std::endl;
 }
 
 std::vector<Glib::ustring> FileCatalog::getFileList(std::vector<Glib::RefPtr<Gio::File>> *dirs_explored)
@@ -1076,106 +1294,200 @@ void FileCatalog::dirSelected (const Glib::ustring& dirname, const Glib::ustring
 
         // Tell the preview loader to prioritize jobs near the target image
         // so the filmstrip shows relevant thumbnails first.
-        if (!openfile.empty()) {
-            previewLoader->setPriorityHint(openfile);
-        } else if (!imageToSelect_fname.empty()) {
-            previewLoader->setPriorityHint(imageToSelect_fname);
+        const Glib::ustring priorityFile = !openfile.empty() ? openfile : imageToSelect_fname;
+        std::string priorityFileKey;
+        if (!priorityFile.empty()) {
+            priorityFileKey = openfile.empty() && priorityFile == imageToSelect_fname && !imageToSelect_key.empty()
+                ? imageToSelect_key
+                : catalogPathKey(priorityFile);
+            previewLoader->setPriorityHint(priorityFile, std::move(priorityFileKey));
         }
 
         selectedDirectory = dir->get_parse_name();
+        startFolderLoadTiming_();
 
         BrowsePath->set_text(selectedDirectory);
         buttonBrowsePath->set_image(*iRefreshWhite);
         filepanel->loadingThumbs(M("PROGRESSBAR_LOADINGTHUMBS"), 0);
 
-        // Enumerate files in background thread, then sort by proximity to the
-        // target image so that filmstrip-visible thumbnails load first.
+        // Warm-start the target thumbnail before the directory scanner reaches
+        // it. Large folders can stream for a while before hitting the selected
+        // file; queueing it now makes keyboard navigation and restored
+        // selections feel immediate. The normal scanner path will skip it via
+        // queuedPreviewKeys_ when it arrives later.
+        if (openfile.empty()
+            && !priorityFile.empty()
+            && isEnabledImagePath(priorityFile)
+            && catalogPathKey(Glib::path_get_dirname(priorityFile)) == catalogPathKey(selectedDirectory)) {
+            addFile(priorityFile);
+        }
+
+        // Enumerate files in the background and feed previews progressively.
+        // Large folders should start showing thumbnails while the scan is
+        // still running instead of waiting for a complete file list first.
+        directoryScanComplete_ = false;
+        previewsFinishedPending_ = false;
+        previewBatchFirstDrainPending_.store(true, std::memory_order_release);
         const int dirId = selectedDirectoryId.load();
         const Glib::ustring selDir = selectedDirectory;
-        const Glib::ustring openF = openfile;
-        const Glib::ustring imgTarget = imageToSelect_fname;
-        std::thread([this, dirId, selDir, openF, imgTarget]() {
+        std::thread([this, dirId, selDir]() {
             std::vector<Glib::RefPtr<Gio::File>> allDirs;
             const auto& opts = App::get().options();
             int dirs_left = opts.browseRecursive ? opts.browseRecursiveMaxDirs : 0;
 
             // Phase 1: Collect all filenames (fast — just readdir)
             std::vector<Glib::ustring> allFiles;
-            getFilesRecursivelyStreaming(
+            std::vector<Glib::ustring> batch;
+            std::vector<std::string> batchKeys;
+            constexpr std::size_t INITIAL_BATCH = 1;
+            constexpr std::size_t VIEWPORT_FILL_BATCH = 32;
+            constexpr std::size_t VIEWPORT_FILL_BATCHES = 2;
+            constexpr std::size_t STEADY_BATCH = 256;
+            constexpr std::size_t STEADY_DIRECTORY_SCAN_THRESHOLD = 64;
+            allFiles.reserve(STEADY_BATCH);
+            batch.reserve(STEADY_BATCH);
+            batchKeys.reserve(STEADY_BATCH);
+            const bool deduplicateScan = opts.browseRecursive;
+            std::unordered_set<std::string> seenKeys;
+            if (deduplicateScan) {
+                seenKeys.reserve(STEADY_BATCH * 4);
+            }
+            bool firstBatch = true;
+            std::size_t viewportFillBatchesRemaining = VIEWPORT_FILL_BATCHES;
+            const std::size_t firstBatchPrecomputeThreshold = STEADY_DIRECTORY_SCAN_THRESHOLD;
+            auto dispatchBatch = [
+                this,
+                dirId,
+                &firstBatch,
+                &viewportFillBatchesRemaining,
+                firstBatchPrecomputeThreshold,
+                steadyBatch = STEADY_BATCH
+            ](
+                std::vector<Glib::ustring>& files,
+                std::vector<std::string>& fileKeys) {
+                if (files.empty()) {
+                    return;
+                }
+
+                auto batchToDispatch = std::make_shared<std::vector<Glib::ustring>>();
+                batchToDispatch->swap(files);
+                auto batchKeys = std::make_shared<std::vector<std::string>>();
+                batchKeys->swap(fileKeys);
+                files.reserve(steadyBatch);
+                fileKeys.reserve(steadyBatch);
+                const bool firstDispatch = firstBatch;
+                const bool viewportFillDispatch =
+                    !firstBatch
+                    && viewportFillBatchesRemaining > 0
+                    && batchToDispatch->size() >= VIEWPORT_FILL_BATCH;
+                firstBatch = false;
+                if (viewportFillDispatch) {
+                    --viewportFillBatchesRemaining;
+                }
+                const bool dispatchBeforePrecompute = firstDispatch || viewportFillDispatch;
+
+                if (dirId != selectedDirectoryId.load(std::memory_order_relaxed)) {
+                    return;
+                }
+
+                if (dispatchBeforePrecompute) {
+                    idle_register.add(
+                        [this, dirId, batchToDispatch, batchKeys]() -> bool {
+                            if (dirId == selectedDirectoryId.load()) {
+                                addFiles(std::move(*batchToDispatch), std::move(*batchKeys));
+                            }
+
+                            return false;
+                        },
+                        (firstDispatch || viewportFillDispatch) ? G_PRIORITY_HIGH_IDLE : G_PRIORITY_DEFAULT_IDLE
+                    );
+
+                    // Keep the early UI dispatches immediate. Only the first
+                    // batch gets synchronous warmup; the next viewport-fill
+                    // batches should not compete with preview workers for
+                    // cache locks and disk probes.
+                    if (firstDispatch) {
+                        const auto precomputeFiles = std::make_shared<std::vector<Glib::ustring>>(*batchToDispatch);
+                        cacheMgr->precomputeEntryMD5(*precomputeFiles, firstBatchPrecomputeThreshold);
+                    }
+
+                    return;
+                }
+
+                idle_register.add(
+                    [this, dirId, batchToDispatch, batchKeys]() -> bool {
+                        if (dirId == selectedDirectoryId.load()) {
+                            addFiles(std::move(*batchToDispatch), std::move(*batchKeys));
+                        }
+                        return false;
+                    },
+                    G_PRIORITY_HIGH_IDLE
+                );
+
+                cacheMgr->precomputeEntryMD5(*batchToDispatch, STEADY_DIRECTORY_SCAN_THRESHOLD, false);
+            };
+
+            const bool completed = getFilesRecursivelyStreaming(
                 selDir, opts.browseRecursiveDepth, dirs_left,
                 [&](const Glib::ustring& fname) -> bool {
                     if (dirId != selectedDirectoryId.load(std::memory_order_relaxed)) {
                         return false;
                     }
+
+                    std::string fileKey = catalogPathKey(fname);
+                    if (deduplicateScan && !seenKeys.insert(fileKey).second) {
+                        return true;
+                    }
+
                     allFiles.push_back(fname);
+                    batch.push_back(fname);
+                    batchKeys.push_back(std::move(fileKey));
+
+                    const std::size_t dispatchThreshold = firstBatch
+                        ? INITIAL_BATCH
+                        : (viewportFillBatchesRemaining > 0 ? VIEWPORT_FILL_BATCH : STEADY_BATCH);
+                    if (batch.size() >= dispatchThreshold) {
+                        dispatchBatch(batch, batchKeys);
+                    }
+
                     return true;
                 },
                 &allDirs);
 
-            if (dirId != selectedDirectoryId.load(std::memory_order_relaxed)) return;
+            if (!completed || dirId != selectedDirectoryId.load(std::memory_order_relaxed)) {
+                return;
+            }
 
-            // Phase 1.5: Batch-precompute MD5 hashes for all files.
-            // On Windows this uses a single FindFirstFileW pass per
-            // directory instead of individual GetFileAttributesExW calls
-            // in each preview-loader thread, cutting syscall overhead.
-            cacheMgr->precomputeMD5(allFiles);
+            auto listedFiles = std::make_shared<std::vector<Glib::ustring>>(std::move(allFiles));
 
-            if (dirId != selectedDirectoryId.load(std::memory_order_relaxed)) return;
+            dispatchBatch(batch, batchKeys);
 
-            // Phase 2: Sort by proximity to the target image so filmstrip-
-            // visible thumbnails (near the selected image) load first.
-            const Glib::ustring target = !openF.empty() ? openF : imgTarget;
-            if (!target.empty() && allFiles.size() > 1) {
-                std::sort(allFiles.begin(), allFiles.end());
-                auto it = std::lower_bound(allFiles.begin(), allFiles.end(), target);
-                const size_t targetIdx = static_cast<size_t>(std::distance(allFiles.begin(), it));
-
-                // Build index array sorted by distance from target
-                std::vector<size_t> order(allFiles.size());
-                std::iota(order.begin(), order.end(), 0);
-                std::sort(order.begin(), order.end(), [targetIdx](size_t a, size_t b) {
-                    size_t distA = (a >= targetIdx) ? (a - targetIdx) : (targetIdx - a);
-                    size_t distB = (b >= targetIdx) ? (b - targetIdx) : (targetIdx - b);
-                    return distA < distB;
-                });
-
-                std::vector<Glib::ustring> sorted;
-                sorted.reserve(allFiles.size());
-                for (size_t idx : order) {
-                    sorted.push_back(std::move(allFiles[idx]));
+            idle_register.add([this, dirId, allDirs, listedFiles]() -> bool {
+                if (dirId != selectedDirectoryId.load()) {
+                    return false;
                 }
-                allFiles = std::move(sorted);
-            }
-
-            // Phase 3: Dispatch in batches to main thread
-            const size_t BATCH = 200;
-            for (size_t i = 0; i < allFiles.size(); i += BATCH) {
-                if (dirId != selectedDirectoryId.load(std::memory_order_relaxed)) return;
-                size_t end = std::min(i + BATCH, allFiles.size());
-                std::vector<Glib::ustring> batch(
-                    std::make_move_iterator(allFiles.begin() + i),
-                    std::make_move_iterator(allFiles.begin() + end));
-
-                Glib::signal_idle().connect_once([this, dirId, batch, openF]() {
-                    if (dirId != selectedDirectoryId.load()) return;
-                    for (const auto& f : batch) {
-                        if (openF.empty() || f != openF) {
-                            addFile(f);
-                        }
-                    }
-                });
-            }
-
-            // Final callback: update UI and monitors
-            Glib::signal_idle().connect_once([this, dirId, allDirs]() {
-                if (dirId != selectedDirectoryId.load()) return;
-                fileNameList.clear(); // not needed anymore
+                fileNameList.swap(*listedFiles);
+                directoryScanComplete_ = true;
+                logFolderLoadTiming_("scan-complete");
                 _refreshProgressBar();
-                if (previewsToLoad == 0) {
+                if (fileNameList.empty() && previewsToLoad == 0 && previewsLoaded == 0) {
                     filepanel->loadingThumbs(M("PROGRESSBAR_NOIMAGES"), 0);
                 }
                 refreshDirectoryMonitors(allDirs);
-            });
+                previewLoader->setPostScanDrainMode(true);
+                previewLoader->wakePendingWorkers();
+
+                previewsFinishedPending_ = true;
+                idle_register.add(
+                    [this, dirId]() -> bool
+                    {
+                        previewsFinishedUI(dirId);
+                        return false;
+                    },
+                    G_PRIORITY_HIGH_IDLE + 1
+                );
+                return false;
+            }, G_PRIORITY_HIGH_IDLE);
         }).detach();
     } catch (Glib::Exception& ex) {
         std::cout << ex.what();
@@ -1184,34 +1496,37 @@ void FileCatalog::dirSelected (const Glib::ustring& dirname, const Glib::ustring
 
 void FileCatalog::refreshDirectoryMonitors(const std::vector<Glib::RefPtr<Gio::File>> &dirs_to_monitor)
 {
-    std::vector<Glib::ustring> updated_dir_names;
-    std::transform(
-        dirs_to_monitor.cbegin(), dirs_to_monitor.cend(),
-        std::back_inserter(updated_dir_names),
-        [](const Glib::RefPtr<Gio::File> &updated_dir) { return updated_dir->get_path(); });
+    std::unordered_set<std::string> updatedDirNames;
+    updatedDirNames.reserve(dirs_to_monitor.size());
+
+    for (const auto& updatedDir : dirs_to_monitor) {
+        updatedDirNames.insert(updatedDir->get_path());
+    }
 
     // Remove monitors on directories that are no longer shown.
     dirMonitors.erase(
         std::remove_if(dirMonitors.begin(), dirMonitors.end(),
-            [&updated_dir_names](const FileMonitorInfo &fileMonitorInfo) {
-                return std::find(updated_dir_names.cbegin(), updated_dir_names.cend(), fileMonitorInfo.filePath) == updated_dir_names.cend();
+            [&updatedDirNames](const FileMonitorInfo &fileMonitorInfo) {
+                return updatedDirNames.find(fileMonitorInfo.filePath.raw()) == updatedDirNames.end();
             }),
         dirMonitors.end());
 
     // Add monitors that do not exist yet.
-    std::vector<Glib::ustring> monitored_dir_names;
-    std::transform(
-        dirMonitors.cbegin(), dirMonitors.cend(),
-        std::back_inserter(monitored_dir_names),
-        [](const FileMonitorInfo &dir_monitor) { return dir_monitor.filePath; });
+    std::unordered_set<std::string> monitoredDirNames;
+    monitoredDirNames.reserve(dirMonitors.size() + dirs_to_monitor.size());
+    for (const auto& dirMonitor : dirMonitors) {
+        monitoredDirNames.insert(dirMonitor.filePath.raw());
+    }
+
     for (const auto &dir_to_monitor : dirs_to_monitor) {
         const auto dir_path = dir_to_monitor->get_path();
-        if (std::find(monitored_dir_names.cbegin(), monitored_dir_names.cend(), dir_path) != monitored_dir_names.cend()) {
+        if (monitoredDirNames.find(dir_path) != monitoredDirNames.end()) {
             continue; // A monitor exists already.
         }
         auto dir_monitor = dir_to_monitor->monitor_directory();
         dir_monitor->signal_changed().connect(sigc::bind(sigc::mem_fun(*this, &FileCatalog::on_dir_changed), false));
         dirMonitors.emplace_back(dir_monitor, dir_path);
+        monitoredDirNames.insert(dir_path);
     }
 }
 
@@ -1314,39 +1629,139 @@ void FileCatalog::_refreshProgressBar ()
 
 void FileCatalog::previewReady (int dir_id, FileBrowserEntry* fdn)
 {
+    PreviewLoaderListener::PreviewReadyBatch entries;
+    entries.emplace_back(dir_id, fdn);
+    previewReadyBatch(std::move(entries));
+}
+
+void FileCatalog::previewReadyBatch (PreviewLoaderListener::PreviewReadyBatch&& entries)
+{
+    if (entries.empty()) {
+        return;
+    }
+
+    const int currentDirectoryId = selectedDirectoryId.load(std::memory_order_acquire);
+    auto keep = entries.begin();
+    for (auto it = entries.begin(); it != entries.end(); ++it) {
+        if (it->first == currentDirectoryId) {
+            if (keep != it) {
+                *keep = std::move(*it);
+            }
+            ++keep;
+        } else {
+            delete it->second;
+        }
+    }
+    entries.erase(keep, entries.end());
+    if (entries.empty()) {
+        return;
+    }
+
     // Collect entries from background PreviewLoader threads into a batch.
-    // A single idle callback processes the whole batch, avoiding thousands
-    // of individual idle dispatches that would saturate the GTK main loop
-    // when loading folders with many images.
+    // A single idle source drains the queue in bounded chunks, avoiding both
+    // thousands of idle callbacks and one long GTK-main-loop monopolizer when
+    // loading folders with many images.
     bool needSchedule = false;
     {
         std::lock_guard<std::mutex> lock(previewBatchMutex_);
-        pendingPreviews_.emplace_back(dir_id, fdn);
-        if (!previewBatchPending_) {
+        for (auto& entry : entries) {
+            pendingPreviews_.push_back(std::move(entry));
+        }
+        if (!previewBatchPending_
+            && previewBatchPauseDepth_.load(std::memory_order_acquire) == 0) {
             previewBatchPending_ = true;
             needSchedule = true;
         }
     }
 
     if (needSchedule) {
+        const bool firstDrain = previewBatchFirstDrainPending_.exchange(false, std::memory_order_acq_rel);
+
         idle_register.add(
-            [this]() -> bool {
-                return processPendingPreviews_();
+            [this, firstDrain]() -> bool {
+                const bool keepActive = processPendingPreviews_();
+
+                if (firstDrain && keepActive) {
+                    idle_register.add(
+                        [this]() -> bool {
+                            return processPendingPreviews_();
+                        },
+                        G_PRIORITY_HIGH_IDLE
+                    );
+                    return false;
+                }
+
+                return keepActive;
             },
-            G_PRIORITY_DEFAULT_IDLE
+            G_PRIORITY_HIGH_IDLE
         );
     }
 }
 
 bool FileCatalog::processPendingPreviews_()
 {
-    std::vector<std::pair<int, FileBrowserEntry*>> batch;
-    {
+    using clock = std::chrono::steady_clock;
+
+    if (previewBatchPauseDepth_.load(std::memory_order_acquire) > 0) {
         std::lock_guard<std::mutex> lock(previewBatchMutex_);
-        batch.swap(pendingPreviews_);
+        previewBatchPending_ = false;
+        return false;
     }
 
-    for (auto& p : batch) {
+    constexpr std::size_t MAX_PREVIEWS_PER_IDLE = 128;
+    constexpr std::size_t POST_SCAN_MAX_PREVIEWS_PER_IDLE = 384;
+    constexpr std::size_t INITIAL_MIN_PREVIEWS_PER_IDLE = 4;
+    constexpr std::size_t STEADY_MIN_PREVIEWS_PER_IDLE = 16;
+    constexpr std::size_t POST_SCAN_MIN_PREVIEWS_PER_IDLE = 64;
+    constexpr auto PREVIEW_IDLE_BUDGET = std::chrono::milliseconds(8);
+    constexpr auto POST_SCAN_PREVIEW_IDLE_BUDGET = std::chrono::milliseconds(12);
+    const bool initialDrain = fileBrowser->getEntries().empty();
+    const bool postScanDrain = directoryScanComplete_ && !initialDrain;
+    const std::size_t maxPreviewsPerIdle = postScanDrain
+        ? POST_SCAN_MAX_PREVIEWS_PER_IDLE
+        : MAX_PREVIEWS_PER_IDLE;
+    const std::size_t minPreviewsPerIdle = initialDrain
+        ? INITIAL_MIN_PREVIEWS_PER_IDLE
+        : (postScanDrain ? POST_SCAN_MIN_PREVIEWS_PER_IDLE : STEADY_MIN_PREVIEWS_PER_IDLE);
+    const auto previewIdleBudget = postScanDrain
+        ? POST_SCAN_PREVIEW_IDLE_BUDGET
+        : PREVIEW_IDLE_BUDGET;
+
+    auto& previewChunk = previewChunkScratch_;
+    previewChunk.clear();
+    previewChunk.reserve(maxPreviewsPerIdle);
+
+    auto& entriesToAdd = entriesToAddScratch_;
+    entriesToAdd.clear();
+    entriesToAdd.reserve(maxPreviewsPerIdle);
+    if (!earlySelectDone_ && !imageToSelect_fname.empty() && imageToSelect_key.empty()) {
+        imageToSelect_key = catalogPathKey(imageToSelect_fname);
+    }
+
+    const bool hasSelectTargetKey =
+        !earlySelectDone_ && !imageToSelect_fname.empty() && !imageToSelect_key.empty();
+    bool selectTargetArrived = false;
+
+    const auto start = clock::now();
+    std::size_t processed = 0;
+    bool filetypesChanged = false;
+
+    {
+        std::lock_guard<std::mutex> lock(previewBatchMutex_);
+        const std::size_t count = std::min(pendingPreviews_.size(), maxPreviewsPerIdle);
+
+        for (std::size_t i = 0; i < count; ++i) {
+            previewChunk.push_back(std::move(pendingPreviews_.front()));
+            pendingPreviews_.pop_front();
+        }
+
+    }
+
+    std::size_t nextPreview = 0;
+    while (nextPreview < previewChunk.size()) {
+        std::pair<int, FileBrowserEntry*> p = std::move(previewChunk[nextPreview++]);
+
+        ++processed;
         const int dir_id = p.first;
         FileBrowserEntry* fdn = p.second;
 
@@ -1357,58 +1772,93 @@ bool FileCatalog::processPendingPreviews_()
 
         // put it into the "full directory" browser
         fdn->setImageAreaToolListener(iatlistener);
-        fileBrowser->addEntry_(fdn);
+        entriesToAdd.push_back(fdn);
 
-        // update exif filter settings
-        const CacheImageData* cfs = fdn->thumbnail->getCacheImageData();
-        {
-            MyMutex::MyLock lock(dirEFSMutex);
+        if (processed >= minPreviewsPerIdle
+            && clock::now() - start >= previewIdleBudget) {
+            break;
+        }
+    }
 
+    if (nextPreview < previewChunk.size()) {
+        std::lock_guard<std::mutex> lock(previewBatchMutex_);
+
+        for (std::size_t i = previewChunk.size(); i > nextPreview; --i) {
+            pendingPreviews_.push_front(std::move(previewChunk[i - 1]));
+        }
+    }
+
+    if (!entriesToAdd.empty()) {
+        const std::size_t attempted = entriesToAdd.size();
+        fileBrowser->addEntries_(entriesToAdd);
+        const std::size_t rejected = attempted - entriesToAdd.size();
+
+        if (rejected > 0 && previewsToLoad > 0) {
+            previewsToLoad = std::max(0, previewsToLoad - static_cast<int>(rejected));
+        }
+
+        previewsLoaded += static_cast<int>(entriesToAdd.size());
+        if (hasSelectTargetKey) {
+            for (const FileBrowserEntry* fdn : entriesToAdd) {
+                if (fdn->filename == imageToSelect_fname || fdn->getBrowserPathKey() == imageToSelect_key) {
+                    selectTargetArrived = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    if (!entriesToAdd.empty()) {
+        MyMutex::MyLock lock(dirEFSMutex);
+
+        const auto oldFiletypeCount = dirEFS.filetypes.size();
+        for (const FileBrowserEntry* fdn : entriesToAdd) {
+            const CacheImageData* cfs = fdn->thumbnail->getCacheImageData();
             if (cfs->exifValid) {
-                if (cfs->fnumber < dirEFS.fnumberFrom) {
-                    dirEFS.fnumberFrom = cfs->fnumber;
-                }
-                if (cfs->fnumber > dirEFS.fnumberTo) {
-                    dirEFS.fnumberTo = cfs->fnumber;
-                }
-                if (cfs->shutter < dirEFS.shutterFrom) {
-                    dirEFS.shutterFrom = cfs->shutter;
-                }
-                if (cfs->shutter > dirEFS.shutterTo) {
-                    dirEFS.shutterTo = cfs->shutter;
-                }
-                if (cfs->iso > 0 && cfs->iso < dirEFS.isoFrom) {
-                    dirEFS.isoFrom = cfs->iso;
-                }
-                if (cfs->iso > 0 && cfs->iso > dirEFS.isoTo) {
-                    dirEFS.isoTo = cfs->iso;
-                }
-                if (cfs->focalLen < dirEFS.focalFrom) {
-                    dirEFS.focalFrom = cfs->focalLen;
-                }
-                if (cfs->focalLen > dirEFS.focalTo) {
-                    dirEFS.focalTo = cfs->focalLen;
+                dirEFS.fnumberFrom = std::min(dirEFS.fnumberFrom, cfs->fnumber);
+                dirEFS.fnumberTo = std::max(dirEFS.fnumberTo, cfs->fnumber);
+                dirEFS.shutterFrom = std::min(dirEFS.shutterFrom, cfs->shutter);
+                dirEFS.shutterTo = std::max(dirEFS.shutterTo, cfs->shutter);
+                dirEFS.focalFrom = std::min(dirEFS.focalFrom, cfs->focalLen);
+                dirEFS.focalTo = std::max(dirEFS.focalTo, cfs->focalLen);
+                if (cfs->iso > 0) {
+                    dirEFS.isoFrom = std::min(dirEFS.isoFrom, static_cast<unsigned>(cfs->iso));
+                    dirEFS.isoTo = std::max(dirEFS.isoTo, static_cast<unsigned>(cfs->iso));
                 }
             }
 
-            dirEFS.filetypes.insert(cfs->filetype);
-            dirEFS.cameras.insert(cfs->getCamera());
-            dirEFS.lenses.insert(cfs->lens);
-            dirEFS.expcomp.insert(cfs->expcomp);
+            dirEFS.filetypes.insert(cfs->getFiletypeRaw());
+            dirEFS.cameras.insert(cfs->getCameraName());
+            dirEFS.lenses.insert(cfs->getLensRaw());
+            dirEFS.expcomp.insert(cfs->getExpCompRaw());
         }
 
-        previewsLoaded++;
+        filetypesChanged = dirEFS.filetypes.size() != oldFiletypeCount;
     }
 
-    if (!batch.empty()) {
+    if (processed > 0) {
         _refreshProgressBar();
-        updateFiletypeFilter();
+    }
+    if (folderLoadTimingActive_ && !folderLoadFirstPreviewLogged_ && previewsLoaded > 0) {
+        folderLoadFirstPreviewLogged_ = true;
+        logFolderLoadTiming_("first-preview");
+    }
+    while (folderLoadTimingActive_
+            && folderLoadNextPreviewMilestone_ > 0
+            && previewsLoaded >= folderLoadNextPreviewMilestone_) {
+        const Glib::ustring stage = Glib::ustring::compose(
+            "preview-%1", folderLoadNextPreviewMilestone_);
+        logFolderLoadTiming_(stage.c_str());
+        folderLoadNextPreviewMilestone_ *= 2;
+    }
+    if (filetypesChanged) {
+        scheduleFiletypeFilterUpdate_();
     }
 
     // Early scroll-to-selection: as soon as the target image appears in a
     // batch, select+scroll to it so the user sees it immediately instead of
     // waiting for ALL previews to finish loading.
-    if (!earlySelectDone_ && !imageToSelect_fname.empty()) {
+    if (selectTargetArrived) {
         fileBrowser->selectImage(imageToSelect_fname);
         if (fileBrowser->getSelectedThumbnail()) {
             earlySelectDone_ = true;
@@ -1416,14 +1866,318 @@ bool FileCatalog::processPendingPreviews_()
     }
 
     // Check if more entries arrived while we were processing
+    bool schedulePreviewDrain = false;
+    bool scheduleFinishedCheck = false;
+    int finishedCheckDirId = -1;
     {
         std::lock_guard<std::mutex> lock(previewBatchMutex_);
         if (pendingPreviews_.empty()) {
             previewBatchPending_ = false;
-            return false;  // done — remove idle source
+            scheduleFinishedCheck = previewsFinishedPending_ && directoryScanComplete_;
+            finishedCheckDirId = selectedDirectoryId.load(std::memory_order_relaxed);
+        } else {
+            // More entries pending — keep the idle source active
+            schedulePreviewDrain = true;
         }
     }
-    // More entries pending — keep the idle source active
+
+    if (schedulePreviewDrain) {
+        // Let other high-idle UI work, especially scan-complete, run between
+        // preview chunks instead of monopolizing the GTK main loop.
+        idle_register.add(
+            [this]() -> bool {
+                return processPendingPreviews_();
+            },
+            G_PRIORITY_HIGH_IDLE
+        );
+        return false;
+    }
+
+    if (scheduleFinishedCheck) {
+        idle_register.add(
+            [this, finishedCheckDirId]() -> bool {
+                previewsFinishedUI(finishedCheckDirId);
+                return false;
+            },
+            G_PRIORITY_HIGH_IDLE + 1
+        );
+    }
+
+    return false;
+}
+
+void FileCatalog::pausePreviewBatchProcessing()
+{
+    previewBatchPauseDepth_.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void FileCatalog::resumePreviewBatchProcessing()
+{
+    unsigned depth = previewBatchPauseDepth_.load(std::memory_order_acquire);
+    while (depth > 0) {
+        if (previewBatchPauseDepth_.compare_exchange_weak(
+                depth,
+                depth - 1,
+                std::memory_order_acq_rel,
+                std::memory_order_acquire)) {
+            if (depth > 1) {
+                return;
+            }
+            break;
+        }
+    }
+
+    bool needSchedule = false;
+    {
+        std::lock_guard<std::mutex> lock(previewBatchMutex_);
+        if (!pendingPreviews_.empty() && !previewBatchPending_) {
+            previewBatchPending_ = true;
+            needSchedule = true;
+        }
+    }
+
+    if (needSchedule) {
+        idle_register.add(
+            [this]() -> bool {
+                return processPendingPreviews_();
+            },
+            G_PRIORITY_HIGH_IDLE
+        );
+    }
+}
+
+void FileCatalog::schedulePreviewsFinishedRetry_(int dir_id, unsigned int delayMs)
+{
+    previewsFinishedPending_ = true;
+    if (previewsFinishRetryQueued_) {
+        return;
+    }
+
+    previewsFinishRetryQueued_ = true;
+    Glib::signal_timeout().connect_once(
+        [this, dir_id]() {
+            previewsFinishRetryQueued_ = false;
+            if (previewsFinishedPending_) {
+                previewsFinishedUI(dir_id);
+            }
+        },
+        delayMs,
+        G_PRIORITY_LOW
+    );
+}
+
+void FileCatalog::scheduleNavigationBenchmark_()
+{
+    if (!navigationBenchmarkEnabled()
+        || navigationBenchmarkStarted_
+        || App::get().options().tabbedUI
+        || fileNameList.size() < 2
+        || !fileBrowser) {
+        return;
+    }
+
+    navigationBenchmarkStarted_ = true;
+    navigationBenchmarkRemaining_ = navigationBenchmarkEnvInt("STEEP_NAV_BENCH_COUNT", 8, 1, 200);
+    navigationBenchmarkIntervalMs_ = navigationBenchmarkEnvInt("STEEP_NAV_BENCH_INTERVAL_MS", 1200, 100, 10000);
+    navigationBenchmarkRawOnly_ = navigationBenchmarkRawOnlyEnabled();
+    navigationBenchmarkIndex_ = 0;
+    navigationBenchmarkDirection_ = NAV_NEXT;
+    const int dirId = selectedDirectoryId.load(std::memory_order_acquire);
+
+    if (navigationBenchmarkRawOnly_) {
+        std::size_t rawCount = 0;
+        for (std::size_t i = 0; i < fileNameList.size(); ++i) {
+            if (isRawNavigationBenchmarkPath(fileNameList[i])) {
+                if (rawCount == 0) {
+                    navigationBenchmarkIndex_ = i;
+                }
+                ++rawCount;
+            }
+        }
+
+        if (rawCount < 2) {
+            navigationBenchmarkStarted_ = false;
+            navigationBenchmarkIntervalMs_ = 0;
+            navigationBenchmarkRawOnly_ = false;
+            std::cout
+                << "[navBench] aborted raw_only=1 raw_files=" << rawCount
+                << " files=" << fileNameList.size()
+                << " dir=" << selectedDirectory
+                << std::endl;
+            return;
+        }
+    }
+
+    fileBrowser->selectImage(fileNameList[navigationBenchmarkIndex_], false);
+
+    std::cout
+        << "[navBench] scheduled count=" << navigationBenchmarkRemaining_
+        << " interval_ms=" << navigationBenchmarkIntervalMs_
+        << " raw_only=" << static_cast<int>(navigationBenchmarkRawOnly_)
+        << " files=" << fileNameList.size()
+        << " dir=" << selectedDirectory
+        << std::endl;
+
+    scheduleNavigationBenchmarkStep_(dirId);
+}
+
+void FileCatalog::scheduleNavigationBenchmarkStep_(int dirId)
+{
+    if (!navigationBenchmarkStarted_
+        || navigationBenchmarkRemaining_ <= 0
+        || navigationBenchmarkIntervalMs_ <= 0) {
+        return;
+    }
+
+    if (navigationBenchmarkTimeoutId_ != 0) {
+        g_source_remove(navigationBenchmarkTimeoutId_);
+        navigationBenchmarkTimeoutId_ = 0;
+    }
+
+    struct NavigationBenchmarkTimeoutData {
+        FileCatalog* catalog;
+        int dirId;
+    };
+
+    auto* data = new NavigationBenchmarkTimeoutData{this, dirId};
+    navigationBenchmarkTimeoutId_ = g_timeout_add_full(
+        G_PRIORITY_DEFAULT,
+        navigationBenchmarkIntervalMs_,
+        [](gpointer userData) -> gboolean {
+            auto* timeoutData = static_cast<NavigationBenchmarkTimeoutData*>(userData);
+            timeoutData->catalog->navigationBenchmarkTimeoutId_ = 0;
+            const bool keepRunning = timeoutData->catalog->runNavigationBenchmarkStep_(timeoutData->dirId);
+            if (keepRunning) {
+                timeoutData->catalog->scheduleNavigationBenchmarkStep_(timeoutData->dirId);
+            }
+            return G_SOURCE_REMOVE;
+        },
+        data,
+        [](gpointer userData) {
+            delete static_cast<NavigationBenchmarkTimeoutData*>(userData);
+        });
+}
+
+bool FileCatalog::runNavigationBenchmarkStep_(int dirId)
+{
+    if (!navigationBenchmarkStarted_
+        || dirId != selectedDirectoryId.load(std::memory_order_acquire)
+        || App::get().options().tabbedUI
+        || fileNameList.size() < 2
+        || !fileBrowser) {
+        navigationBenchmarkStarted_ = false;
+        navigationBenchmarkIntervalMs_ = 0;
+        navigationBenchmarkRawOnly_ = false;
+        std::cout
+            << "[navBench] aborted dir_current=" << selectedDirectoryId.load(std::memory_order_acquire)
+            << " dir_expected=" << dirId
+            << " files=" << fileNameList.size()
+            << " tabbed=" << App::get().options().tabbedUI
+            << std::endl;
+        return false;
+    }
+
+    if (navigationBenchmarkRemaining_ <= 0) {
+        navigationBenchmarkStarted_ = false;
+        navigationBenchmarkIntervalMs_ = 0;
+        navigationBenchmarkRawOnly_ = false;
+        std::cout << "[navBench] done" << std::endl;
+        return false;
+    }
+
+    auto findNextBenchmarkIndex = [this](std::size_t start, eRTNav direction, std::size_t& nextIndex) -> bool {
+        if (direction != NAV_NEXT && direction != NAV_PREVIOUS) {
+            return false;
+        }
+
+        if (!navigationBenchmarkRawOnly_) {
+            if (direction == NAV_NEXT) {
+                if (start + 1 >= fileNameList.size()) {
+                    return false;
+                }
+                nextIndex = start + 1;
+                return true;
+            }
+
+            if (start == 0) {
+                return false;
+            }
+            nextIndex = start - 1;
+            return true;
+        }
+
+        if (direction == NAV_NEXT) {
+            for (std::size_t i = start + 1; i < fileNameList.size(); ++i) {
+                if (isRawNavigationBenchmarkPath(fileNameList[i])) {
+                    nextIndex = i;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        for (std::size_t i = start; i > 0; --i) {
+            const std::size_t candidate = i - 1;
+            if (isRawNavigationBenchmarkPath(fileNameList[candidate])) {
+                nextIndex = candidate;
+                return true;
+            }
+        }
+        return false;
+    };
+
+    std::size_t targetIndex = navigationBenchmarkIndex_;
+    if (!findNextBenchmarkIndex(navigationBenchmarkIndex_, navigationBenchmarkDirection_, targetIndex)) {
+        navigationBenchmarkDirection_ = navigationBenchmarkDirection_ == NAV_NEXT ? NAV_PREVIOUS : NAV_NEXT;
+        if (!findNextBenchmarkIndex(navigationBenchmarkIndex_, navigationBenchmarkDirection_, targetIndex)) {
+            navigationBenchmarkStarted_ = false;
+            navigationBenchmarkIntervalMs_ = 0;
+            navigationBenchmarkRawOnly_ = false;
+            std::cout << "[navBench] done" << std::endl;
+            return false;
+        }
+    }
+
+    const eRTNav direction = navigationBenchmarkDirection_;
+    if (direction != NAV_NEXT && direction != NAV_PREVIOUS) {
+        navigationBenchmarkStarted_ = false;
+        navigationBenchmarkIntervalMs_ = 0;
+        navigationBenchmarkRawOnly_ = false;
+        return false;
+    }
+
+    const std::size_t anchorIndex = navigationBenchmarkIndex_;
+    const Glib::ustring anchor = fileNameList[anchorIndex];
+
+    navigationBenchmarkIndex_ = targetIndex;
+
+    const Glib::ustring target = fileNameList[navigationBenchmarkIndex_];
+    const int stepNumber = navigationBenchmarkEnvInt("STEEP_NAV_BENCH_COUNT", 8, 1, 200)
+        - navigationBenchmarkRemaining_ + 1;
+
+    std::cout
+        << "[navBench] step=" << stepNumber
+        << " dir=" << (direction == NAV_NEXT ? "next" : "prev")
+        << " anchor=" << anchor
+        << " target=" << target
+        << std::endl;
+
+    if (navigationBenchmarkRawOnly_) {
+        fileBrowser->openEditorImage(target, direction);
+    } else {
+        fileBrowser->openNextPreviousEditorImage(anchor, direction);
+    }
+
+    --navigationBenchmarkRemaining_;
+
+    if (navigationBenchmarkRemaining_ <= 0) {
+        navigationBenchmarkStarted_ = false;
+        navigationBenchmarkIntervalMs_ = 0;
+        navigationBenchmarkRawOnly_ = false;
+        std::cout << "[navBench] done" << std::endl;
+        return false;
+    }
+
     return true;
 }
 
@@ -1434,7 +2188,28 @@ void FileCatalog::previewsFinishedUI(int dir_id)
         return;
     }
 
-    redrawAll();
+    if (!directoryScanComplete_) {
+        previewsFinishedPending_ = true;
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(previewBatchMutex_);
+        if (previewBatchPending_ || !pendingPreviews_.empty()) {
+            schedulePreviewsFinishedRetry_(dir_id, 25);
+            return;
+        }
+    }
+
+    if (previewLoader->hasPendingWork()) {
+        previewLoader->wakePendingWorkers();
+        schedulePreviewsFinishedRetry_(dir_id, 100);
+        return;
+    }
+
+    previewsFinishedPending_ = false;
+    previewLoader->setPostScanDrainMode(false);
+    logFolderLoadTiming_("finished");
     previewsToLoad = 0;
 
     if (filterPanel) {
@@ -1451,10 +2226,14 @@ void FileCatalog::previewsFinishedUI(int dir_id)
         exportPanel->set_sensitive(true);
     }
 
-    // restart anything that might have been loaded low quality
+    const BrowserFilter finalFilter = getFilter();
+    if (!fileBrowser->applyPassThroughFilterFast(finalFilter)) {
+        fileBrowser->applyFilter(finalFilter);  // refresh total image count
+    }
+    // restart anything visible that might have been loaded low quality
     fileBrowser->refreshQuickThumbImages();
-    fileBrowser->applyFilter(getFilter());  // refresh total image count
     _refreshProgressBar();
+    flushFiletypeFilterUpdate_();
 
     // Now that all types are known, prune any persisted filetype selections
     // that don't exist in this folder
@@ -1486,6 +2265,7 @@ void FileCatalog::previewsFinishedUI(int dir_id)
     if (!imageToSelect_fname.empty()) {
         fileBrowser->selectImage(imageToSelect_fname, false);
         imageToSelect_fname = "";
+        imageToSelect_key.clear();
     }
 
     if (!refImageForOpen_fname.empty() && actionNextPrevious != NAV_NONE) {
@@ -1496,6 +2276,28 @@ void FileCatalog::previewsFinishedUI(int dir_id)
 
     // newly added item might have been already trashed in a previous session
     trashChanged();
+
+    logFolderLoadTiming_("browser-ready");
+    stopFolderLoadTiming_();
+
+    Glib::ustring quickWarmAnchor;
+    if (Thumbnail* selectedThumbnail = fileBrowser->getSelectedThumbnail()) {
+        quickWarmAnchor = selectedThumbnail->getFileName();
+    }
+    if (quickWarmAnchor.empty() && !fileNameList.empty()) {
+        quickWarmAnchor = fileNameList.front();
+    }
+    if (!quickWarmAnchor.empty()) {
+        constexpr int READY_QUICK_PREVIEW_WARM_RADIUS = 16;
+        fileBrowser->getAdjacentEntriesAndRefresh(
+            quickWarmAnchor,
+            0,
+            0,
+            READY_QUICK_PREVIEW_WARM_RADIUS,
+            NAV_NEXT);
+    }
+
+    scheduleNavigationBenchmark_();
 }
 
 void FileCatalog::previewsFinished (int dir_id)
@@ -1507,7 +2309,7 @@ void FileCatalog::previewsFinished (int dir_id)
             return false;
         },
         // keep priority lower than on the other interface functions to make sure callbacks will not be executed out of order
-        G_PRIORITY_DEFAULT_IDLE + 1
+        G_PRIORITY_HIGH_IDLE + 1
     );
 }
 
@@ -1518,7 +2320,7 @@ void FileCatalog::setEnabled (bool e)
 
 void FileCatalog::redrawAll ()
 {
-    fileBrowser->queue_draw ();
+    fileBrowser->redraw ();
 }
 
 void FileCatalog::refreshThumbImages ()
@@ -1552,12 +2354,16 @@ void FileCatalog::refreshHeight ()
     set_size_request(0, newHeight);
 }
 
-void FileCatalog::_openImage(const std::vector<Thumbnail*>& tmb)
+void FileCatalog::_openImage(const std::vector<Thumbnail*>& tmb, eRTNav preloadDirectionHint)
 {
     if (enabled && listener) {
         for (size_t i = 0; i < tmb.size(); i++) {
             // fileSelected does not complete with a fully loaded image, but it does do some preliminary checks
-            if (!listener->fileSelected(tmb[i])) {
+            const bool selected = filepanel && listener == filepanel
+                ? filepanel->fileSelected(tmb[i], preloadDirectionHint)
+                : listener->fileSelected(tmb[i]);
+
+            if (!selected) {
                 tmb[i]->decreaseRef();
             } else if (!App::get().options().tabbedUI) {
                 // allow only one image in single editor mode
@@ -1581,24 +2387,16 @@ void FileCatalog::filterApplied()
     );
 }
 
-void FileCatalog::openRequested(const std::vector<Thumbnail*>& tmb)
+void FileCatalog::openRequested(const std::vector<Thumbnail*>& tmb, eRTNav preloadDirectionHint)
 {
     for (const auto thumb : tmb) {
         thumb->increaseRef();
     }
 
-    if (directOpen_) {
-        // Already on main thread from filmstrip nav — skip idle roundtrip
-        _openImage(tmb);
-    } else {
-        idle_register.add(
-            [this, tmb]() -> bool
-            {
-                _openImage(tmb);
-                return false;
-            }
-        );
-    }
+    // Always open synchronously on the main thread. All callers (click, key
+    // nav, menu) run on the UI thread, and the idle roundtrip added ~300ms
+    // of perceived latency between click and the instant-preview paint.
+    _openImage(tmb, preloadDirectionHint);
 }
 
 void FileCatalog::deleteRequested(const std::vector<FileBrowserEntry*>& tbe, bool inclBatchProcessed, bool onlySelected)
@@ -1640,6 +2438,11 @@ void FileCatalog::deleteRequested(const std::vector<FileBrowserEntry*>& tbe, boo
             filenames.push_back(entry->filename);
         }
 
+        std::set<std::string> filenameKeys;
+        for (const auto& fname : filenames) {
+            filenameKeys.insert(catalogPathKey(fname));
+        }
+
         // Pre-compute batch-processed paths on main thread (needs App::get())
         std::vector<std::pair<Glib::ustring, Glib::ustring>> batchPaths;
         if (inclBatchProcessed) {
@@ -1659,15 +2462,25 @@ void FileCatalog::deleteRequested(const std::vector<FileBrowserEntry*>& tbe, boo
             delete entry;
         }
 
+        for (const auto& key : filenameKeys) {
+            queuedPreviewKeys_.erase(key);
+        }
+        fileNameList.erase(
+            std::remove_if(fileNameList.begin(), fileNameList.end(),
+                [&filenameKeys](const Glib::ustring& fname) {
+                    return filenameKeys.find(catalogPathKey(fname)) != filenameKeys.end();
+                }),
+            fileNameList.end());
+
         previewsLoaded -= static_cast<int>(filenames.size());
         _refreshProgressBar();
 
         // Filesystem + cache deletion on background thread
         const Glib::ustring paramExt = App::PARAM_FILE_EXTENSION;
-        std::thread([filenames = std::move(filenames),
-                     batchPaths = std::move(batchPaths),
-                     paramExt]() {
-            for (const auto& fname : filenames) {
+        const auto filenamesForDelete = std::make_shared<std::vector<Glib::ustring>>(std::move(filenames));
+        const auto batchPathsForDelete = std::make_shared<std::vector<std::pair<Glib::ustring, Glib::ustring>>>(std::move(batchPaths));
+        std::thread([filenamesForDelete, batchPathsForDelete, paramExt]() {
+            for (const auto& fname : *filenamesForDelete) {
                 // delete from cache
                 cacheMgr->deleteEntry(fname);
                 // delete from file system
@@ -1680,7 +2493,7 @@ void FileCatalog::deleteRequested(const std::vector<FileBrowserEntry*>& tbe, boo
                 ::g_remove((removeExtension(fname) + ".THM").c_str());
             }
 
-            for (const auto& bp : batchPaths) {
+            for (const auto& bp : *batchPathsForDelete) {
                 ::g_remove(bp.first.c_str());
                 ::g_remove(bp.second.c_str());
             }
@@ -1758,6 +2571,14 @@ void FileCatalog::copyMoveRequested(const std::vector<FileBrowserEntry*>& tbe, b
                         cacheMgr->renameEntry (src_fPath, tbe[i]->thumbnail->getMD5(), dest_fPath);
                         // remove from browser
                         fileBrowser->delEntry (src_fPath);
+                        const std::string srcKey = catalogPathKey(src_fPath);
+                        queuedPreviewKeys_.erase(srcKey);
+                        fileNameList.erase(
+                            std::remove_if(fileNameList.begin(), fileNameList.end(),
+                                [&srcKey](const Glib::ustring& fname) {
+                                    return catalogPathKey(fname) == srcKey;
+                                }),
+                            fileNameList.end());
 
                         previewsLoaded--;
                     } else {
@@ -2444,7 +3265,13 @@ BrowserFilter FileCatalog::getFilter ()
 
 void FileCatalog::setAlbumWhitelist (const std::set<std::string>& whitelist)
 {
-    albumWhitelist_ = whitelist;
+    albumWhitelist_.clear();
+    albumWhitelist_.reserve(whitelist.size());
+
+    for (const auto& path : whitelist) {
+        albumWhitelist_.insert(catalogPathKey(path));
+    }
+
     filterChanged();
 }
 
@@ -2550,6 +3377,35 @@ void FileCatalog::updateFiletypeFilter ()
     if (!selectedFiletypes_.empty()) {
         filterChanged();
     }
+}
+
+void FileCatalog::scheduleFiletypeFilterUpdate_()
+{
+    if (filetypeUpdateQueued_) {
+        return;
+    }
+
+    filetypeUpdateQueued_ = true;
+    const int dirId = selectedDirectoryId.load();
+
+    Glib::signal_timeout().connect_once(
+        [this, dirId]() {
+            if (dirId != selectedDirectoryId.load() || !filetypeUpdateQueued_) {
+                return;
+            }
+
+            filetypeUpdateQueued_ = false;
+            updateFiletypeFilter();
+        },
+        150,
+        G_PRIORITY_LOW
+    );
+}
+
+void FileCatalog::flushFiletypeFilterUpdate_()
+{
+    filetypeUpdateQueued_ = false;
+    updateFiletypeFilter();
 }
 
 void FileCatalog::onFiletypeCheckToggled (const std::string& filetype)
@@ -2699,68 +3555,189 @@ void FileCatalog::reparseDirectory ()
 
     // check if a thumbnailed file has been deleted or is not in a directory of interest
     const std::vector<ThumbBrowserEntryBase*>& t = fileBrowser->getEntries();
-    std::vector<Glib::ustring> fileNamesToDel;
-    std::vector<Glib::ustring> fileNamesToRemove;
+    std::set<Glib::ustring> fileNamesToDel;
+    std::set<Glib::ustring> fileNamesToRemove;
 
     for (const auto& entry : t) {
         if (!Glib::file_test(entry->filename, Glib::FILE_TEST_EXISTS)) {
-            fileNamesToDel.push_back(entry->filename);
-            fileNamesToRemove.push_back(entry->filename);
+            fileNamesToDel.insert(entry->filename);
+            fileNamesToRemove.insert(entry->filename);
         }
         else if (!App::get().options().browseRecursive && Glib::path_get_dirname(entry->filename) != selectedDirectory) {
-            fileNamesToRemove.push_back(entry->filename);
+            fileNamesToRemove.insert(entry->filename);
         }
     }
 
-    for (const auto& toRemove : fileNamesToRemove) {
-        delete fileBrowser->delEntry(toRemove);
-        --previewsLoaded;
+    if (!fileNamesToRemove.empty()) {
+        const auto removedEntries = fileBrowser->delEntries(fileNamesToRemove);
+
+        for (const auto& toRemove : fileNamesToRemove) {
+            queuedPreviewKeys_.erase(catalogPathKey(toRemove));
+        }
+
+        previewsLoaded = std::max(0, previewsLoaded - static_cast<int>(removedEntries.size()));
+
+        for (auto* removedEntry : removedEntries) {
+            delete removedEntry;
+        }
     }
+
     for (const auto& toDelete : fileNamesToDel) {
         cacheMgr->deleteEntry(toDelete);
     }
 
-    if (!fileNamesToDel.empty()) {
+    if (!fileNamesToDel.empty() || !fileNamesToRemove.empty()) {
         _refreshProgressBar();
     }
 
     // check if a new file has been added
     // build a set of collate-keys for faster search
-    std::set<std::string> oldNames;
+    std::unordered_set<std::string> oldNames;
+    oldNames.reserve(fileNameList.size());
     for (const auto& oldName : fileNameList) {
-        oldNames.insert(oldName.collate_key());
+        oldNames.insert(catalogPathKey(oldName));
     }
 
     std::vector<Glib::RefPtr<Gio::File>> allDirs;
     fileNameList = getFileList(&allDirs);
+    std::vector<Glib::ustring> newNames;
     for (const auto& newName : fileNameList) {
-        if (oldNames.find(newName.collate_key()) == oldNames.end()) {
-            addFile(newName);
-            _refreshProgressBar();
+        if (oldNames.find(catalogPathKey(newName)) == oldNames.end()) {
+            newNames.push_back(newName);
         }
+    }
+
+    if (!newNames.empty()) {
+        addFiles(std::move(newNames));
+        _refreshProgressBar();
     }
 
     refreshDirectoryMonitors(allDirs);
 }
 
+void FileCatalog::scheduleReparseDirectory_()
+{
+    if (reparseDirectoryQueued_) {
+        return;
+    }
+
+    reparseDirectoryQueued_ = true;
+    reparseDirectoryConn_ = Glib::signal_timeout().connect(
+        [this]() -> bool {
+            reparseDirectoryQueued_ = false;
+            reparseDirectory();
+            return false;
+        },
+        150,
+        G_PRIORITY_DEFAULT_IDLE
+    );
+}
+
 void FileCatalog::on_dir_changed (const Glib::RefPtr<Gio::File>& file, const Glib::RefPtr<Gio::File>& other_file, Gio::FileMonitorEvent event_type, bool internal)
 {
+    if (rtengine::settings->metadata_xmp_sync != rtengine::Settings::MetadataXmpSync::NONE
+        && (event_type == Gio::FILE_MONITOR_EVENT_CREATED
+            || event_type == Gio::FILE_MONITOR_EVENT_DELETED
+            || event_type == Gio::FILE_MONITOR_EVENT_CHANGED)
+        && isXmpSidecarPath(file->get_parse_name())) {
+        cacheMgr->invalidateMD5(file->get_parse_name());
+    }
+
+    if ((event_type == Gio::FILE_MONITOR_EVENT_CREATED
+            || event_type == Gio::FILE_MONITOR_EVENT_DELETED
+            || event_type == Gio::FILE_MONITOR_EVENT_CHANGED)
+        && isProcParamSidecarPath(file->get_parse_name())) {
+        cacheMgr->invalidateMD5(file->get_parse_name());
+    }
 
     if ((App::get().options().has_retained_extention(file->get_parse_name())
             && (event_type == Gio::FILE_MONITOR_EVENT_CREATED || event_type == Gio::FILE_MONITOR_EVENT_DELETED || event_type == Gio::FILE_MONITOR_EVENT_CHANGED))
              || (event_type == Gio::FILE_MONITOR_EVENT_CREATED && Glib::file_test(file->get_path(), Glib::FileTest::FILE_TEST_IS_DIR))
              || (event_type == Gio::FILE_MONITOR_EVENT_DELETED && std::find_if(dirMonitors.cbegin(), dirMonitors.cend(), [&file](const FileMonitorInfo &monitor) { return monitor.filePath == file->get_path(); }) != dirMonitors.cend()))
     {
-        reparseDirectory ();
+        scheduleReparseDirectory_();
     }
 }
 
 void FileCatalog::addFile (const Glib::ustring& fName)
 {
     if (!fName.empty()) {
-        previewLoader->add(selectedDirectoryId, fName, this);
+        std::string fileKey = catalogPathKey(fName);
+        if (!queuedPreviewKeys_.insert(fileKey).second) {
+            return;
+        }
+
+        previewsFinishedPending_ = false;
+        previewLoader->add(selectedDirectoryId, fName, std::move(fileKey), this);
         previewsToLoad++;
     }
+}
+
+void FileCatalog::addFiles (const std::vector<Glib::ustring>& fNames)
+{
+    std::vector<Glib::ustring> copy;
+    copy.reserve(fNames.size());
+    copy.insert(copy.end(), fNames.begin(), fNames.end());
+    addFiles(std::move(copy));
+}
+
+void FileCatalog::addFiles (std::vector<Glib::ustring>&& fNames)
+{
+    std::vector<std::string> fNameKeys;
+    fNameKeys.reserve(fNames.size());
+
+    for (const auto& fName : fNames) {
+        fNameKeys.push_back(fName.empty() ? std::string() : catalogPathKey(fName));
+    }
+
+    addFiles(std::move(fNames), std::move(fNameKeys));
+}
+
+void FileCatalog::addFiles (std::vector<Glib::ustring>&& fNames, std::vector<std::string>&& fNameKeys)
+{
+    std::vector<Glib::ustring> toQueue;
+    std::vector<std::string> toQueueKeys;
+    toQueue.reserve(fNames.size());
+    toQueueKeys.reserve(fNames.size());
+    queuedPreviewKeys_.reserve(queuedPreviewKeys_.size() + fNames.size());
+
+    if (fNameKeys.size() != fNames.size()) {
+        fNameKeys.clear();
+        fNameKeys.reserve(fNames.size());
+
+        for (const auto& fName : fNames) {
+            fNameKeys.push_back(fName.empty() ? std::string() : catalogPathKey(fName));
+        }
+    }
+
+    for (std::size_t i = 0; i < fNames.size(); ++i) {
+        auto& fName = fNames[i];
+        if (fName.empty()) {
+            continue;
+        }
+
+        std::string fileKey = std::move(fNameKeys[i]);
+        if (fileKey.empty()) {
+            fileKey = catalogPathKey(fName);
+        }
+
+        if (!queuedPreviewKeys_.insert(fileKey).second) {
+            continue;
+        }
+
+        toQueueKeys.push_back(std::move(fileKey));
+        toQueue.push_back(std::move(fName));
+    }
+
+    if (toQueue.empty()) {
+        return;
+    }
+
+    previewsFinishedPending_ = false;
+    previewsToLoad += static_cast<int>(toQueue.size());
+    fileBrowser->reserveEntries(toQueue.size());
+    cacheMgr->reserveEntries(toQueue.size());
+    previewLoader->addBatch(selectedDirectoryId, std::move(toQueue), std::move(toQueueKeys), this);
 }
 
 void FileCatalog::addAndOpenFile (const Glib::ustring& fname)
@@ -2801,6 +3778,7 @@ void FileCatalog::addAndOpenFile (const Glib::ustring& fname)
         }
 
         FileBrowserEntry* entry = new FileBrowserEntry(tmb, file->get_parse_name());
+        queuedPreviewKeys_.insert(catalogPathKey(entry->filename));
         previewReady(selectedDirectoryId, entry);
         // open the file
         tmb->increaseRef();
@@ -3127,9 +4105,11 @@ void FileCatalog::selectImage (Glib::ustring fname, bool clearFilters)
         //
         // the actual selection of image will be handled asynchronously at the end of FileCatalog::previewsFinishedUI
         imageToSelect_fname = fname;
+        imageToSelect_key = catalogPathKey(fname);
     } else {
         fileBrowser->selectImage(fname);
         imageToSelect_fname = "";
+        imageToSelect_key.clear();
     }
 }
 
@@ -3143,10 +4123,7 @@ void FileCatalog::openNextPreviousEditorImage (Glib::ustring fname, eRTNav nextP
         refImageForOpen_fname = fname;
         actionNextPrevious = nextPrevious;
     } else {
-        // Skip idle dispatch — we're already on the main thread
-        directOpen_ = true;
         fileBrowser->openNextPreviousEditorImage(fname, nextPrevious);
-        directOpen_ = false;
         refImageForOpen_fname = "";
         actionNextPrevious = NAV_NONE;
     }

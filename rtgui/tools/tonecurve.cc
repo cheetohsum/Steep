@@ -64,24 +64,6 @@ ToneCurve::ToneCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_EXPOSURE_LABEL
     autolevels->set_tooltip_markup(M("TP_EXPOSURE_AUTOLEVELS_TOOLTIP"));
     setExpandAlignProperties(autolevels, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
     autolevels->set_can_focus(false);
-    {
-        auto css = Gtk::CssProvider::create();
-        // Offset margin-left by ~half the label column width so button text
-        // centers visually above the slider rather than the full panel width.
-        css->load_from_data(
-            "button { min-height: 0; min-width: 0; padding: 1px 4px; margin: 0 18px 0 50px;"
-            "  font-size: 8px; background: transparent; background-image: none;"
-            "  border: none; box-shadow: none; color: #999; }"
-            " button:hover { color: #ddd; background: rgba(255,255,255,0.06); }"
-        );
-        autolevels->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-        auto* label = dynamic_cast<Gtk::Label*>(autolevels->get_child());
-        if (label) {
-            auto lcss = Gtk::CssProvider::create();
-            lcss->load_from_data("label { font-size: 8px; margin: 0; padding: 0; }");
-            label->get_style_context()->add_provider(lcss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-        }
-    }
     autoconn = autolevels->signal_clicked().connect(sigc::mem_fun(*this, &ToneCurve::autolevels_clicked));
 
     // sclip still created (hidden, value used internally for auto-exposure)
@@ -164,7 +146,10 @@ ToneCurve::ToneCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_EXPOSURE_LABEL
     curveEditorG = new CurveEditorGroup(options.lastToneCurvesDir, M("TP_EXPOSURE_CURVEEDITOR1"));
     curveEditorG->setCurveListener(this);
 
-    shape = static_cast<DiagonalCurveEditor*>(curveEditorG->addCurve(CT_Diagonal, M("TP_RGBCURVES_ALL"), toneCurveMode));
+    toneCurveMode->setPreferredWidth(72, 110);
+    setExpandAlignProperties(toneCurveMode, false, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+
+    shape = static_cast<DiagonalCurveEditor*>(curveEditorG->addCurve(CT_Diagonal, M("TP_RGBCURVES_ALL"), toneCurveMode, false));
     shape->setEditID(EUID_ToneCurve1, BT_IMAGEFLOAT);
     shape->setBottomBarBgGradient(bottomMilestones);
     shape->setLeftBarBgGradient(bottomMilestones);
@@ -190,6 +175,8 @@ ToneCurve::ToneCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_EXPOSURE_LABEL
 
     // This will add the reset button at the end of the curveType buttons
     curveEditorG->curveListComplete();
+
+    curveEditorG->setCurveGraphSize(225);
 
     pack_start(*curveEditorG, Gtk::PACK_SHRINK, 2);
 
@@ -268,7 +255,10 @@ ToneCurve::ToneCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_EXPOSURE_LABEL
     curveEditorG2 = new CurveEditorGroup(options.lastToneCurvesDir, M("TP_EXPOSURE_CURVEEDITOR2"));
     curveEditorG2->setCurveListener(this);
 
-    shape2 = static_cast<DiagonalCurveEditor*>(curveEditorG2->addCurve(CT_Diagonal, "", toneCurveMode2));
+    toneCurveMode2->setPreferredWidth(72, 110);
+    setExpandAlignProperties(toneCurveMode2, false, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+
+    shape2 = static_cast<DiagonalCurveEditor*>(curveEditorG2->addCurve(CT_Diagonal, "", toneCurveMode2, false));
     shape2->setEditID(EUID_ToneCurve2, BT_IMAGEFLOAT);
     shape2->setBottomBarBgGradient(bottomMilestones);
     shape2->setLeftBarBgGradient(bottomMilestones);
@@ -276,6 +266,7 @@ ToneCurve::ToneCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_EXPOSURE_LABEL
     // This will add the reset button at the end of the curveType buttons
     curveEditorG2->curveListComplete();
     curveEditorG2->setTooltip(M("TP_EXPOSURE_CURVEEDITOR2_TOOLTIP"));
+    curveEditorG2->setCurveGraphSize(225);
 
     advBox->pack_start(*curveEditorG2, Gtk::PACK_SHRINK, 2);
 

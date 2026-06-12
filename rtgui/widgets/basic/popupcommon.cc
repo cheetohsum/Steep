@@ -59,8 +59,7 @@ PopUpCommon::PopUpCommon (Gtk::Button* thisButton, const Glib::ustring& label)
 
     // Create the button for showing the pop-up.
     arrowButton = Gtk::manage(new Gtk::Button());
-    Gtk::Image *arrowImage = Gtk::manage(new Gtk::Image());
-    arrowImage->set_from_icon_name("pan-down-symbolic", Gtk::ICON_SIZE_BUTTON);
+    Gtk::Image *arrowImage = Gtk::manage(new RTImage("pan-down-symbolic", Gtk::ICON_SIZE_BUTTON));
     setExpandAlignProperties(arrowButton, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_FILL);
     arrowButton->add(*arrowImage); //menuSymbol);
     arrowImage->show();

@@ -17,15 +17,25 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include <iostream>
+#include <algorithm>
+#include <chrono>
+#include <memory>
+#include <string>
 
 #include "rtengine/rt_math.h"
 
 #include "imagearea.h"
 #include "multilangmgr.h"
+#include "rawloadactivity.h"
 #include "toolpanelcoord.h"
 #include "metadatapanel.h"
 #include "options.h"
 #include "rtimage.h"
+
+#include <cstdarg>
+#include <cstdio>
+#include <cstdlib>
+#include <mutex>
 
 #include "rtengine/imagesource.h"
 #include "rtengine/dfmanager.h"
@@ -39,6 +49,99 @@ using namespace rtengine::procparams;
 
 using Tool = ToolPanelCoordinator::Tool;
 using ToolTree = ToolPanelCoordinator::ToolTree;
+
+namespace
+{
+
+bool toolPanelEditLogEnabled()
+{
+    static const bool enabled = std::getenv("STEEP_FILESEL_LOG") != nullptr;
+    return enabled;
+}
+
+void toolPanelEditLog(const char* fmt, ...)
+{
+    if (!toolPanelEditLogEnabled()) {
+        return;
+    }
+
+    static std::mutex logMutex;
+    std::lock_guard<std::mutex> lock(logMutex);
+
+    static FILE* f = nullptr;
+    if (!f) {
+        const char* home = std::getenv("USERPROFILE");
+        if (!home) {
+            home = std::getenv("HOME");
+        }
+        const std::string path = home ? std::string(home) + "\\steep-fileSel.log" : "steep-fileSel.log";
+        f = std::fopen(path.c_str(), "a");
+    }
+    if (!f) {
+        return;
+    }
+
+    std::fprintf(f, "[edit] ");
+    va_list ap;
+    va_start(ap, fmt);
+    std::vfprintf(f, fmt, ap);
+    va_end(ap);
+    std::fflush(f);
+}
+
+long long toolPanelDurationMs(const std::chrono::steady_clock::time_point& start)
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now() - start)
+        .count();
+}
+
+int sidebarPageWidth()
+{
+    // Match the usable width of the fixed editor sidebar: the outer panel is
+    // clamped in editorpanel.cc and this page leaves room for the scrollbar.
+    constexpr int minPanelWidth = 300;
+    constexpr int maxPanelWidth = 340;
+    constexpr int scrollbarGutter = 18;
+
+    const int panelWidth =
+        std::min(std::max(App::get().options().toolPanelWidth, minPanelWidth), maxPanelWidth);
+
+    return std::max(282, panelWidth - scrollbarGutter);
+}
+
+class SidebarPageBox final : public Gtk::Box
+{
+public:
+    SidebarPageBox() :
+        Gtk::Box(Gtk::ORIENTATION_VERTICAL)
+    {
+        set_size_request(sidebarPageWidth(), -1);
+        set_hexpand(false);
+        set_halign(Gtk::ALIGN_START);
+    }
+
+    void get_preferred_width_vfunc(int& minimum_width, int& natural_width) const override
+    {
+        Gtk::Box::get_preferred_width_vfunc(minimum_width, natural_width);
+        const int width = sidebarPageWidth();
+        minimum_width = std::min(minimum_width, width);
+        natural_width = width;
+    }
+};
+
+void configureSidebarPage(Gtk::Widget* widget)
+{
+    if (!widget) {
+        return;
+    }
+
+    widget->set_size_request(sidebarPageWidth(), -1);
+    widget->set_hexpand(false);
+    widget->set_halign(Gtk::ALIGN_START);
+}
+
+}
 
 const std::vector<ToolTree> EXPOSURE_PANEL_TOOLS = {
     {
@@ -376,8 +479,81 @@ std::unordered_map<std::string, Tool> ToolPanelCoordinator::toolNamesReverseMap;
 
 ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favoritePanelSW(nullptr), hasChanged (false), batch(batch), editDataProvider (nullptr), imageArea_(nullptr), photoLoadedOnce(false), ornamentSurface(new RTSurface("ornament1.svg")), prevMode(EditorMode::EDIT)
 {
-
     colorPickerRow_ = nullptr;
+
+    whitebalance = nullptr;
+    vignetting = nullptr;
+    gradient = nullptr;
+    locallab = nullptr;
+    retinex = nullptr;
+    pcvignette = nullptr;
+    lensgeom = nullptr;
+    lensProf = nullptr;
+    rotate = nullptr;
+    distortion = nullptr;
+    perspective = nullptr;
+    cacorrection = nullptr;
+    colorappearance = nullptr;
+    vibrance = nullptr;
+    chmixer = nullptr;
+    blackwhite = nullptr;
+    resize = nullptr;
+    framing = nullptr;
+    prsharpening = nullptr;
+    icm = nullptr;
+    crop = nullptr;
+    toneCurve = nullptr;
+    shadowshighlights = nullptr;
+    toneEqualizer = nullptr;
+    localContrast = nullptr;
+    texture = nullptr;
+    clarity = nullptr;
+    grain = nullptr;
+    tiltshift = nullptr;
+    lensblur = nullptr;
+    spot = nullptr;
+    defringe = nullptr;
+    compressgamut = nullptr;
+    impulsedenoise = nullptr;
+    aidenoise = nullptr;
+    dirpyrdenoise = nullptr;
+    epd = nullptr;
+    sharpening = nullptr;
+    sharpenEdge = nullptr;
+    sharpenMicro = nullptr;
+    lcurve = nullptr;
+    rgbcurves = nullptr;
+    colortoning = nullptr;
+    colorgrading = nullptr;
+    wavelet = nullptr;
+    dirpyrequalizer = nullptr;
+    hsvequalizer = nullptr;
+    pointcolor = nullptr;
+    softlight = nullptr;
+    dehaze = nullptr;
+    filmSimulation = nullptr;
+    filmPresets = nullptr;
+    sensorbayer = nullptr;
+    sensorxtrans = nullptr;
+    bayerprocess = nullptr;
+    xtransprocess = nullptr;
+    bayerpreprocess = nullptr;
+    preprocess = nullptr;
+    darkframe = nullptr;
+    flatfield = nullptr;
+    rawcacorrection = nullptr;
+    rawexposure = nullptr;
+    preprocessWB = nullptr;
+    bayerrawexposure = nullptr;
+    xtransrawexposure = nullptr;
+    fattal = nullptr;
+    metadata = nullptr;
+    filmNegative = nullptr;
+    pdSharpening = nullptr;
+    toolBar = nullptr;
+    toolPanelNotebook = nullptr;
+    modeButtonBar = nullptr;
+    modeStack = nullptr;
 
     // Legacy panel pointers (no longer used as separate panels)
     favoritePanel   = nullptr;
@@ -392,6 +568,58 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
     locallabPanel   = Gtk::manage(new ToolVBox());
 
     coarse              = Gtk::manage (new CoarsePanel ());
+    if (batch) {
+        toolPanels.push_back(coarse);
+
+        toolBar = new ToolBar();
+        toolBar->setToolBarListener(this);
+        toolBar->hideCropTools();
+
+        toolPanelNotebook = new Gtk::Notebook();
+        toolPanelNotebook->set_name("ToolPanelNotebook");
+
+        favoritePanelSW.reset(nullptr);
+        exposurePanelSW    = nullptr;
+        detailsPanelSW     = nullptr;
+        colorPanelSW       = nullptr;
+        rawPanelSW         = nullptr;
+        advancedPanelSW    = nullptr;
+
+        editPanelSW        = Gtk::manage(new MyScrolledWindow());
+        transformPanelSW   = nullptr;
+        locallabPanelSW    = nullptr;
+        locallabPanelContainer_ = nullptr;
+        editPanelSW->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+        editPanelSW->set_propagate_natural_height(true);
+
+        auto* batchPanel = Gtk::manage(new SidebarPageBox());
+        batchPanel->set_margin_start(8);
+        batchPanel->set_margin_end(8);
+        batchPanel->set_margin_top(8);
+        batchPanel->set_margin_bottom(8);
+        editPanelSW->add(*batchPanel);
+
+        modeButtonBar = Gtk::manage(new ModeButtonBar());
+        modeButtonBar->setModeVisible(EditorMode::PRESETS, false);
+        modeButtonBar->setModeVisible(EditorMode::CROPPING, false);
+        modeButtonBar->setModeVisible(EditorMode::MASK, false);
+
+        modeStack = Gtk::manage(new Gtk::Stack());
+        modeStack->set_hhomogeneous(false);
+        modeStack->set_vhomogeneous(false);
+        modeStack->add(*editPanelSW, "edit");
+        modeStack->show_all();
+        modeStack->set_visible_child("edit");
+
+        modeconn = modeButtonBar->signal_mode_changed().connect(
+            sigc::mem_fun(*this, &ToolPanelCoordinator::modeChanged));
+        modeButtonBar->setActiveMode(EditorMode::EDIT);
+
+        for (auto* toolPanel : toolPanels) {
+            toolPanel->setListener(this);
+        }
+        return;
+    }
     toneCurve           = Gtk::manage (new ToneCurve ());
     shadowshighlights   = Gtk::manage (new ShadowsHighlights ());
     toneEqualizer       = Gtk::manage (new ToneEqualizer ());
@@ -488,6 +716,9 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
             unprocessed_tools.pop_back();
             // Add tool to list of expanders and tool panels.
             FoldableToolPanel *const tool_panel = getFoldableToolPanel(*cur_tool);
+            if (!tool_panel) {
+                continue;
+            }
             expList.push_back(tool_panel->getExpander());
             toolPanels.push_back(tool_panel);
             expanderToToolPanelMap[tool_panel->getExpander()] = tool_panel;
@@ -516,7 +747,7 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
     rawPanelSW         = nullptr;
     advancedPanelSW    = nullptr;
 
-    // Mode-based scrolled windows (no horizontal scroll - content must fit)
+    // Mode-based scrolled windows
     // propagate_natural_height so sidebar shrinks vertically when tools are collapsed
     editPanelSW        = Gtk::manage (new MyScrolledWindow ());
     transformPanelSW   = Gtk::manage (new MyScrolledWindow ());
@@ -563,21 +794,24 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
 
     // Edit panel scrolled window
     Gtk::Box *editPanelContainer =
-        Gtk::manage(new Gtk::Box(Gtk::Orientation::ORIENTATION_VERTICAL));
+        Gtk::manage(new SidebarPageBox());
+    configureSidebarPage(editPanel);
     editPanelSW->add(*editPanelContainer);
     editPanelContainer->pack_start(*editPanel, Gtk::PACK_SHRINK);
     editPanelContainer->pack_start(*vbPanelEnd[0], Gtk::PACK_SHRINK);
 
     // Transform/Crop panel scrolled window
     Gtk::Box *transformPanelContainer =
-        Gtk::manage(new Gtk::Box(Gtk::Orientation::ORIENTATION_VERTICAL));
+        Gtk::manage(new SidebarPageBox());
+    configureSidebarPage(transformPanel);
     transformPanelSW->add(*transformPanelContainer);
     transformPanelContainer->pack_start(*transformPanel, Gtk::PACK_SHRINK);
     transformPanelContainer->pack_start(*vbPanelEnd[1], Gtk::PACK_SHRINK);
 
     // Locallab/Mask panel scrolled window
     locallabPanelContainer_ =
-        Gtk::manage(new Gtk::Box(Gtk::Orientation::ORIENTATION_VERTICAL));
+        Gtk::manage(new SidebarPageBox());
+    configureSidebarPage(locallabPanel);
     locallabPanelSW->add(*locallabPanelContainer_);
     locallabPanelContainer_->pack_start(*locallabPanel, Gtk::PACK_SHRINK);
     locallabPanelContainer_->pack_start(*vbPanelEnd[2], Gtk::PACK_SHRINK);
@@ -852,11 +1086,15 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
     addPanel(spotGroup->getContentBox(), spot, 1);
     spot->setFlatMode(true);
 
-    locallabPanel->pack_start(*maskingGroup, Gtk::PACK_SHRINK);
-    addPanel(maskingGroup->getContentBox(), locallab, 1);
-    locallab->setFlatMode(true);
-    locallab->hideSettingsHeader();
-    locallab->hideToolGroups();
+    if (locallab) {
+        locallabPanel->pack_start(*maskingGroup, Gtk::PACK_SHRINK);
+        addPanel(maskingGroup->getContentBox(), locallab, 1);
+        locallab->setFlatMode(true);
+        locallab->hideSettingsHeader();
+        locallab->hideToolGroups();
+    } else {
+        modeButtonBar->setModeVisible(EditorMode::MASK, false);
+    }
 
     // Show all after populating panels
     modeStack->show_all();
@@ -872,7 +1110,7 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
 
 
     // Hide mask/selective button in batch mode
-    if (batch) {
+    if (batch || !locallab) {
         modeButtonBar->setModeVisible(EditorMode::MASK, false);
     }
 
@@ -1300,7 +1538,7 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
 
 void ToolPanelCoordinator::loadSpotIntoGlobalTools()
 {
-    if (!ipc) return;
+    if (!ipc || !locallab) return;
 
     ProcParams* params = ipc->beginUpdateParams();
     if (params->locallab.spots.empty()) {
@@ -1453,7 +1691,7 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
     }
 
     // Handle Locallab subscription/unsubscription
-    if (photoLoadedOnce) {
+    if (photoLoadedOnce && locallab) {
         if (mode == EditorMode::MASK) {
             toolBar->blockEditDeactivation();
             locallab->subscribe();
@@ -1610,8 +1848,8 @@ void ToolPanelCoordinator::populateEditPanel()
     addPanel(lightGroup->getContentBox(), rgbcurves, 1);
     rgbcurves->setFlatMode(true);
     // Scale curves down ~30% by adding horizontal margins
-    rgbcurves->getExpander()->set_margin_start(30);
-    rgbcurves->getExpander()->set_margin_end(30);
+    rgbcurves->getExpander()->set_margin_start(8);
+    rgbcurves->getExpander()->set_margin_end(8);
 
     // --- Color preview strip ---
     colorStrip_ = Gtk::manage(new PreviewStrip());
@@ -2110,7 +2348,7 @@ void ToolPanelCoordinator::populateEditPanel()
     });
 
     maskingGroup->setResetCallback([this]() {
-        if (!ipc) return;
+        if (!ipc || !locallab) return;
 
         // Unsubscribe geometry editing before modifying spots
         locallab->unsubscribe();
@@ -2322,6 +2560,9 @@ void ToolPanelCoordinator::addPanel(Gtk::Box* where, FoldableToolPanel* panel, i
 
 ToolPanelCoordinator::~ToolPanelCoordinator ()
 {
+    deferredPanelChangePending_ = false;
+    deferredPanelChangeTimerActive_ = false;
+    deferredPanelChangeConn_.disconnect();
     idle_register.destroy();
 
     closeImage();
@@ -2477,7 +2718,12 @@ void ToolPanelCoordinator::refreshPreview (const rtengine::ProcEvent& event)
         return;
     }
 
-    ProcParams* params = ipc->beginUpdateParams ();
+    ProcParams* params = ipc->tryBeginUpdateParams();
+    if (!params) {
+        deferPanelChanged(event, "");
+        return;
+    }
+
     for (auto toolPanel : toolPanels) {
         toolPanel->write (params);
     }
@@ -2487,7 +2733,7 @@ void ToolPanelCoordinator::refreshPreview (const rtengine::ProcEvent& event)
 
 void ToolPanelCoordinator::turnOffMaskOverlay(bool /*forceRedraw*/)
 {
-    if (!ipc) return;
+    if (!ipc || !locallab) return;
 
     hoverMaskApplied_ = false;
     pendingHoverState_ = false;
@@ -2500,7 +2746,12 @@ void ToolPanelCoordinator::turnOffMaskOverlay(bool /*forceRedraw*/)
 
     // Write current GUI state to params before triggering reprocess,
     // otherwise uncommitted slider/adjuster values can be lost.
-    ProcParams* params = ipc->beginUpdateParams();
+    ProcParams* params = ipc->tryBeginUpdateParams();
+    if (!params) {
+        deferPanelChanged(rtengine::EvlocallabshowmaskMethod, "");
+        return;
+    }
+
     if (maskModeActive_) {
         locallab->setSkipToolWrites(true);
     }
@@ -2522,7 +2773,7 @@ void ToolPanelCoordinator::turnOffMaskOverlay(bool /*forceRedraw*/)
 
 void ToolPanelCoordinator::hoverMaskChanged(bool hover, bool forceRedraw)
 {
-    if (!ipc) return;
+    if (!ipc || !locallab) return;
 
     // Cancel any pending debounce
     hoverMaskDebounce_.disconnect();
@@ -2551,7 +2802,13 @@ void ToolPanelCoordinator::hoverMaskChanged(bool hover, bool forceRedraw)
             mv.lcMask, mv.cbMask, mv.logMask, mv.maskMask, mv.cieMask);
         // Write current GUI state to params before triggering reprocess,
         // otherwise uncommitted slider/adjuster values can be lost.
-        ProcParams* params = ipc->beginUpdateParams();
+        ProcParams* params = ipc->tryBeginUpdateParams();
+        if (!params) {
+            hoverMaskApplied_ = false;
+            deferPanelChanged(rtengine::EvlocallabshowmaskMethod, "");
+            return false;
+        }
+
         if (maskModeActive_) {
             locallab->setSkipToolWrites(true);
         }
@@ -2601,16 +2858,64 @@ void ToolPanelCoordinator::applyHoverMask()
     // Unused — logic inlined into hoverMaskChanged
 }
 
+void ToolPanelCoordinator::deferPanelChanged(const rtengine::ProcEvent& event, const Glib::ustring& descr)
+{
+    toolPanelEditLog("defer event=%d timerActive=%d descr=%s\n",
+        int(event), deferredPanelChangeTimerActive_ ? 1 : 0, descr.c_str());
+
+    deferredPanelChangeEvent_ = event;
+    deferredPanelChangeDescr_ = descr;
+    deferredPanelChangePending_ = true;
+
+    if (!deferredPanelChangeTimerActive_) {
+        deferredPanelChangeTimerActive_ = true;
+        deferredPanelChangeConn_ = Glib::signal_timeout().connect(
+            sigc::mem_fun(*this, &ToolPanelCoordinator::retryDeferredPanelChanged),
+            25);
+    }
+}
+
+bool ToolPanelCoordinator::retryDeferredPanelChanged()
+{
+    if (!deferredPanelChangePending_) {
+        toolPanelEditLog("retry-stop no-pending\n");
+        deferredPanelChangeTimerActive_ = false;
+        return false;
+    }
+
+    const rtengine::ProcEvent event = deferredPanelChangeEvent_;
+    const Glib::ustring descr = deferredPanelChangeDescr_;
+    deferredPanelChangePending_ = false;
+    toolPanelEditLog("retry event=%d descr=%s\n", int(event), descr.c_str());
+    panelChanged(event, descr);
+
+    if (!deferredPanelChangePending_) {
+        deferredPanelChangeTimerActive_ = false;
+        return false;
+    }
+
+    return true;
+}
+
 void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const Glib::ustring& descr)
 {
     if (!ipc) {
+        toolPanelEditLog("panelChanged no-ipc event=%d descr=%s\n", int(event), descr.c_str());
+        deferredPanelChangePending_ = false;
         return;
     }
 
+    noteRawLoadForegroundActivity();
 
     int changeFlags = rtengine::RefreshMapper::getInstance()->getAction(event);
+    toolPanelEditLog("panelChanged start event=%d flags=%d descr=%s\n", int(event), changeFlags, descr.c_str());
 
-    ProcParams* params = ipc->beginUpdateParams();
+    ProcParams* params = ipc->tryBeginUpdateParams();
+    if (!params) {
+        toolPanelEditLog("panelChanged busy event=%d flags=%d\n", int(event), changeFlags);
+        deferPanelChanged(event, descr);
+        return;
+    }
 
     // In mask mode, locallab tool widgets are hidden and have stale/default values.
     // Skip their write() to prevent overwriting bridged spot settings (expcomp,
@@ -2719,22 +3024,22 @@ void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const 
      * - Mask preview is stopped when creating, deleting or selecting a spot
      * - Mask preview is also stopped when removing a spot or resetting all mask visibility
      */
-    if (event == rtengine::EvlocallabshowmaskMethod) {
+    if (locallab && event == rtengine::EvlocallabshowmaskMethod) {
         const Locallab::llMaskVisibility maskStruc = locallab->getMaskVisibility();
         ipc->setLocallabMaskVisibility(maskStruc.previewDeltaE, maskStruc.showMaskOverlay, maskStruc.colorMask, maskStruc.colorMaskinv, maskStruc.expMask, maskStruc.expMaskinv,
                 maskStruc.SHMask, maskStruc.SHMaskinv, maskStruc.vibMask, maskStruc.softMask,
                 maskStruc.blMask, maskStruc.tmMask, maskStruc.retiMask, maskStruc.sharMask,
                 maskStruc.lcMask, maskStruc.cbMask, maskStruc.logMask, maskStruc.maskMask, maskStruc.cieMask);
-    } else if (event == rtengine::EvLocallabSpotCreated || event == rtengine::EvLocallabSpotSelected ||
+    } else if (locallab && (event == rtengine::EvLocallabSpotCreated || event == rtengine::EvLocallabSpotSelected ||
             event == rtengine::EvLocallabSpotSelectedWithMask ||
             event == rtengine::EvLocallabSpotDeleted /*|| event == rtengine::Evlocallabshowreset*/ ||
-            event == rtengine::EvlocallabToolRemovedWithRefresh) {
+            event == rtengine::EvlocallabToolRemovedWithRefresh)) {
         locallab->resetMaskVisibility();
         hoverMaskApplied_ = false;
         hoverMaskDebounce_.disconnect();
         hoverMaskWatchdog_.disconnect();
         ipc->setLocallabMaskVisibility(false, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-    } else if (hoverMaskApplied_) {
+    } else if (locallab && hoverMaskApplied_) {
         // Hover overlay is active — re-apply mask visibility so the reprocess
         // triggered by this parameter change renders the overlay with updated values.
         const Locallab::llMaskVisibility mv = locallab->getMaskVisibility();
@@ -2744,6 +3049,10 @@ void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const 
             mv.blMask, mv.tmMask, mv.retiMask, mv.sharMask,
             mv.lcMask, mv.cbMask, mv.logMask, mv.maskMask, mv.cieMask);
     }
+
+    toolPanelEditLog("panelChanged commit event=%d flags=%d expcomp=%.4f brightness=%d contrast=%d wbTemp=%.1f\n",
+        int(event), changeFlags, params->toneCurve.expcomp, params->toneCurve.brightness,
+        params->toneCurve.contrast, static_cast<double>(params->wb.temperature));
 
     ipc->endUpdateParams(changeFlags);    // starts the IPC processing
 
@@ -2769,7 +3078,7 @@ void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const 
 const auto func =
     [this]() -> bool
     {
-        if (photoLoadedOnce && modeButtonBar->getActiveMode() == EditorMode::MASK) {
+        if (locallab && photoLoadedOnce && modeButtonBar->getActiveMode() == EditorMode::MASK) {
             locallab->subscribe();
        }
 
@@ -2798,7 +3107,35 @@ void ToolPanelCoordinator::profileChange(
         return;
     }
 
+    const bool logProfile = toolPanelEditLogEnabled();
+    const auto profileStart = std::chrono::steady_clock::now();
+    auto lastStep = profileStart;
+    const auto logStep =
+        [&](const char* step) {
+            if (!logProfile) {
+                return;
+            }
+
+            const auto now = std::chrono::steady_clock::now();
+            const long long stepMs =
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - lastStep).count();
+            const long long totalMs =
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - profileStart).count();
+            toolPanelEditLog(
+                "profileChange step event=%d fromLastSave=%d step=%s stepMs=%lld totalMs=%lld\n",
+                int(event), fromLastSave ? 1 : 0, step, stepMs, totalMs);
+            lastStep = now;
+        };
+
+    if (logProfile) {
+        toolPanelEditLog(
+            "profileChange start event=%d fromLastSave=%d panels=%zu descr=%s\n",
+            int(event), fromLastSave ? 1 : 0, toolPanels.size(), descr.c_str());
+    }
+
     ProcParams *params = ipc->beginUpdateParams();
+    logStep("begin-update");
+
     ProcParams *mergedParams = new ProcParams();
 
     // Copy the current params as default values for the fusion
@@ -2812,6 +3149,7 @@ void ToolPanelCoordinator::profileChange(
 
     // And apply the partial profile nparams to mergedParams
     nparams->applyTo(mergedParams, fromLastSave);
+    logStep("apply-profile");
 
     // Derive the effective changes, if it's a profile change, to prevent slow RAW rerendering if not necessary
     bool filterRawRefresh = false;
@@ -2828,6 +3166,7 @@ void ToolPanelCoordinator::profileChange(
 
     *params = *mergedParams;
     delete mergedParams;
+    logStep("merge-params");
 
     tr = TR_NONE;
 
@@ -2842,18 +3181,68 @@ void ToolPanelCoordinator::profileChange(
     // trimming overflowing cropped area
     ipc->getInitialImage()->getImageSource()->getFullSize(fw, fh, tr);
     crop->trim(params, fw, fh);
+    logStep("crop-trim");
+
+    std::shared_ptr<ProcParams> deferredMetadataParams;
 
     // updating the GUI with updated values
     for (size_t i = 0; i < toolPanels.size(); i++) {
+        if (event == rtengine::EvPhotoLoaded && toolPanels[i] == metadata) {
+            deferredMetadataParams = std::make_shared<ProcParams>(*params);
+            continue;
+        }
+
+        const auto readStart = std::chrono::steady_clock::now();
         toolPanels[i]->read(params);
+        const long long readMs = toolPanelDurationMs(readStart);
+
+        if (logProfile && readMs > 0) {
+            toolPanelEditLog(
+                "profileChange tool-read event=%d index=%zu name=%s ms=%lld\n",
+                int(event), i, toolPanels[i]->getToolName().c_str(), readMs);
+        }
 
         if (event == rtengine::EvPhotoLoaded || event == rtengine::EvProfileChanged) {
+            const auto curveStart = std::chrono::steady_clock::now();
             toolPanels[i]->autoOpenCurve();
+            const long long curveMs = toolPanelDurationMs(curveStart);
 
-            // For Locallab, reset tool expanders visibility only when a photo or profile is loaded
-            locallab->openAllTools();
+            if (logProfile && curveMs > 0) {
+                toolPanelEditLog(
+                    "profileChange auto-open event=%d index=%zu name=%s ms=%lld\n",
+                    int(event), i, toolPanels[i]->getToolName().c_str(), curveMs);
+            }
         }
     }
+    logStep("tool-reads");
+
+    if (deferredMetadataParams && metadata) {
+        const unsigned metadataGeneration = ++deferredMetadataReadGeneration_;
+        idle_register.add(
+            [this, deferredMetadataParams, metadataGeneration]() -> bool
+            {
+                if (metadata && metadataGeneration == deferredMetadataReadGeneration_) {
+                    metadata->read(deferredMetadataParams.get());
+                }
+
+                return false;
+            });
+    }
+    logStep("metadata-defer");
+
+    if ((event == rtengine::EvPhotoLoaded || event == rtengine::EvProfileChanged) && locallab) {
+        const auto locallabStart = std::chrono::steady_clock::now();
+        // Reset Locallab expander visibility once per loaded profile, not once per tool.
+        locallab->openAllTools();
+
+        if (logProfile) {
+            toolPanelEditLog(
+                "profileChange locallab-open-all event=%d ms=%lld\n",
+                int(event), toolPanelDurationMs(locallabStart));
+        }
+    }
+    logStep("locallab-open-all");
+
     // Update preview strips with new params
     {
         PreviewStrip* strips[] = {exposureStrip_, colorStrip_, detailStrip_, effectsStrip_, bwStrip_};
@@ -2866,50 +3255,62 @@ void ToolPanelCoordinator::profileChange(
             }
         }
     }
+    logStep("preview-strips");
 
     if (event == rtengine::EvPhotoLoaded || event == rtengine::EvProfileChanged || event == rtengine::EvHistoryBrowsed || event == rtengine::EvCTRotate) {
         // updating the "on preview" geometry
         gradient->updateGeometry(params->gradient.centerX, params->gradient.centerY, params->gradient.feather, params->gradient.degree, fw, fh);
     }
+    logStep("gradient-geometry");
 
     // Reset Locallab mask visibility — overlay off by default (hover-driven)
-    locallab->resetMaskVisibility();
+    if (locallab) {
+        locallab->resetMaskVisibility();
+    }
     hoverMaskApplied_ = false;
     hoverMaskDebounce_.disconnect();
     ipc->setLocallabMaskVisibility(false, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+    logStep("reset-mask-visibility");
 
-    // start the IPC processing
+    hasChanged = event != rtengine::EvProfileChangeNotification;
+    captureBaseline();
+    updateResetButtonsFromBaseline();
+    logStep("baseline-reset-buttons");
+
+    for (auto paramcListener : paramcListeners) {
+        paramcListener->procParamsChanged(params, event, descr);
+    }
+    logStep("param-listeners");
+
+    // Locallab spot curves are set visible if at least one photo has been loaded (to avoid
+    // segfault) and locallab panel is active
+    // When a new photo is loaded, Locallab spot curves need to be set visible again
+    const auto func =
+        [this]() -> bool
+        {
+            if (locallab && photoLoadedOnce && modeButtonBar->getActiveMode() == EditorMode::MASK) {
+                locallab->subscribe();
+            }
+
+            return false;
+        };
+
+    if (event == rtengine::EvPhotoLoaded) {
+        idle_register.add(func);
+    }
+    logStep("idle-subscribe");
+
+    photoLoadedOnce = true;
+
+    // Start IPC processing after profile GUI state and listeners have finished
+    // consuming the update params. Starting earlier lets the worker race the
+    // tail of this method during photo-load/profile-change handoff.
     if (filterRawRefresh) {
         ipc->endUpdateParams(rtengine::RefreshMapper::getInstance()->getAction(event) & ALLNORAW);
     } else {
         ipc->endUpdateParams(event);
     }
-    hasChanged = event != rtengine::EvProfileChangeNotification;
-    captureBaseline();
-    updateResetButtons();
-
-    for (auto paramcListener : paramcListeners) {
-        paramcListener->procParamsChanged(params, event, descr);
-    }
-
-    // Locallab spot curves are set visible if at least one photo has been loaded (to avoid
-    // segfault) and locallab panel is active
-    // When a new photo is loaded, Locallab spot curves need to be set visible again
-const auto func =
-    [this]() -> bool
-    {
-        if (photoLoadedOnce && modeButtonBar->getActiveMode() == EditorMode::MASK) {
-            locallab->subscribe();
-        }
-
-        return false;
-    };
-
-if (event == rtengine::EvPhotoLoaded) {
-    idle_register.add(func);
-}
-
-    photoLoadedOnce = true;
+    logStep("end-update");
 }
 
 void ToolPanelCoordinator::setDefaults(const ProcParams* defparams)
@@ -2958,7 +3359,9 @@ void ToolPanelCoordinator::initImage(rtengine::StagedImageProcessor* ipc_, bool 
         ipc->setRetinexListener(retinex);
         ipc->setSizeListener(crop);
         ipc->setSizeListener(resize);
-        ipc->setLocallabListener(locallab);
+        if (locallab) {
+            ipc->setLocallabListener(locallab);
+        }
         ipc->setImageTypeListener(this);
         ipc->setFilmNegListener(filmNegative);
         ipc->setCompgamutListener(compressgamut);
@@ -2981,6 +3384,10 @@ void ToolPanelCoordinator::initImage(rtengine::StagedImageProcessor* ipc_, bool 
 
 void ToolPanelCoordinator::closeImage()
 {
+    deferredPanelChangePending_ = false;
+    deferredPanelChangeTimerActive_ = false;
+    deferredPanelChangeConn_.disconnect();
+
     // Just disconnect — don't call stopProcessing() here.
     // The caller (EditorPanel::close) defers the blocking join
     // and destruction to a background thread.
@@ -3079,7 +3486,9 @@ void ToolPanelCoordinator::writeToolExpandedStatus(std::vector<int> &tpOpen)
 
 void ToolPanelCoordinator::updateShowtooltipVisibility (bool showtooltip)
 {
-    locallab->updateShowtooltipVisibility(showtooltip);
+    if (locallab) {
+        locallab->updateShowtooltipVisibility(showtooltip);
+    }
 }
 
 
@@ -3842,6 +4251,33 @@ void ToolPanelCoordinator::captureBaseline()
     baselineParams_ = bp;
 }
 
+void ToolPanelCoordinator::updateResetButtonsFromBaseline()
+{
+    if (!ipc) return;
+    if (!lightGroup) return;
+    if (suppressResetUpdate_) return;
+
+    lightGroup->setResetVisible(false);
+    colorGroup->setResetVisible(false);
+    detailGroup->setResetVisible(false);
+    effectsGroup->setResetVisible(false);
+
+    ProcParams stock;
+    bwGroup->setResetVisible(!(baselineParams_.blackwhite == stock.blackwhite));
+    spotGroup->setResetVisible(!(baselineParams_.spot == stock.spot));
+    maskingGroup->setResetVisible(locallab && locallab->getSpotCount() > 0);
+
+    if (cropResetBtn_) {
+        cropResetBtn_->set_visible(false);
+        cropResetBtn_->set_no_show_all(true);
+    }
+
+    if (perspResetBtn_) {
+        perspResetBtn_->set_visible(false);
+        perspResetBtn_->set_no_show_all(true);
+    }
+}
+
 void ToolPanelCoordinator::updateResetButtons()
 {
     if (!ipc) return;
@@ -3900,7 +4336,7 @@ void ToolPanelCoordinator::updateResetButtons()
     // Can't use locallab->write() (doesn't populate spots on a fresh ProcParams)
     // and can't use ipc->beginUpdateParams() (interferes with processing pipeline).
     // Query the control panel's treemodel directly via Locallab's expsettings.
-    bool maskingDirty = locallab->getSpotCount() > 0;
+    bool maskingDirty = locallab && locallab->getSpotCount() > 0;
     maskingGroup->setResetVisible(maskingDirty);
 
     // Crop section: crop + rotate

@@ -27,10 +27,69 @@
 #include "rtengine/svgrender.h"
 #include "guiutils.h"
 
+#include <cairomm/context.h>
+
 // Default static parameter values
 double RTScalable::s_dpi = 96.;
 int RTScalable::s_scale = 1;
 sigc::signal<void(double, int)> RTScalable::s_signal_changed;
+
+namespace
+{
+
+Cairo::RefPtr<Cairo::ImageSurface> makeSmallArrowSurface(const Glib::ustring& iconName, int size, int scale)
+{
+    if (iconName != "arrow-up-small"
+        && iconName != "arrow-down-small"
+        && iconName != "arrow-left-small"
+        && iconName != "arrow-right-small"
+        && iconName != "pan-up-symbolic"
+        && iconName != "pan-down-symbolic"
+        && iconName != "pan-start-symbolic"
+        && iconName != "pan-end-symbolic") {
+        return Cairo::RefPtr<Cairo::ImageSurface>();
+    }
+
+    const int scaledSize = size * scale;
+    auto surface = Cairo::ImageSurface::create(Cairo::FORMAT_ARGB32, scaledSize, scaledSize);
+    auto context = Cairo::Context::create(surface);
+
+    context->scale(scale, scale);
+    context->set_source_rgba(0.82, 0.84, 0.88, 0.95);
+
+    const double pad = size * 0.25;
+    const double mid = size * 0.5;
+    const double end = size - pad;
+
+    if (iconName == "arrow-up-small" || iconName == "pan-up-symbolic") {
+        context->move_to(mid, pad);
+        context->line_to(end, end);
+        context->line_to(pad, end);
+    } else if (iconName == "arrow-down-small" || iconName == "pan-down-symbolic") {
+        context->move_to(pad, pad);
+        context->line_to(end, pad);
+        context->line_to(mid, end);
+    } else if (iconName == "arrow-left-small" || iconName == "pan-start-symbolic") {
+        context->move_to(pad, mid);
+        context->line_to(end, pad);
+        context->line_to(end, end);
+    } else {
+        context->move_to(pad, pad);
+        context->line_to(end, mid);
+        context->line_to(pad, end);
+    }
+
+    context->close_path();
+    context->fill();
+
+    cairo_surface_set_device_scale(surface->cobj(),
+        static_cast<double>(scale),
+        static_cast<double>(scale));
+
+    return surface;
+}
+
+}
 
 int RTScalable::getScaleForWindow(const Gtk::Window* window)
 {
@@ -77,6 +136,10 @@ Cairo::RefPtr<Cairo::ImageSurface> RTScalable::loadSurfaceFromIcon(const Glib::u
     // Note: hSize not used because icon are considered squared
     const int size = RTScalable::scalePixelSize(wSize);
 
+    if (auto surface = makeSmallArrowSurface(iconName, size, RTScalable::getScale())) {
+        return surface;
+    }
+
     // Looking for corresponding icon (if existing)
     const auto iconInfo = theme->lookup_icon(iconName, size);
 
@@ -96,6 +159,20 @@ Cairo::RefPtr<Cairo::ImageSurface> RTScalable::loadSurfaceFromIcon(const Glib::u
         } else {
             std::cerr << "Failed to load icon \"" << iconName << "\" for size " << size << "px" << std::endl;
             return surf;
+        }
+    }
+
+    {
+        const auto pos = iconPath.find_last_of('.');
+
+        if (pos < iconPath.length() && iconPath.substr(pos + 1, iconPath.length()).lowercase() == "svg") {
+            const auto pngCachePath = Glib::build_filename(
+                App::get().argv0(), "icons-png-cache", std::to_string(size),
+                iconName + ".png");
+
+            if (Glib::file_test(pngCachePath, Glib::FILE_TEST_EXISTS)) {
+                return RTScalable::loadSurfaceFromPNG(pngCachePath, true);
+            }
         }
     }
 
@@ -167,6 +244,14 @@ Cairo::RefPtr<Cairo::ImageSurface> RTScalable::loadSurfaceFromSVG(const Glib::us
 
     // Create surface from SVG file if file exist
     if (Glib::file_test(path.c_str(), Glib::FILE_TEST_EXISTS)) {
+        const auto pos = path.find_last_of('.');
+        const auto pngPath = pos < path.length()
+            ? path.substr(0, pos) + ".png"
+            : Glib::ustring();
+
+        if (!pngPath.empty() && Glib::file_test(pngPath.c_str(), Glib::FILE_TEST_EXISTS)) {
+            return RTScalable::loadSurfaceFromPNG(pngPath, true);
+        }
         // Read content of SVG file
         std::string svgFile;
         try {

@@ -17,11 +17,15 @@
  *  You should have received a copy of the GNU General Public License
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include <algorithm>
+#include <chrono>
+#include <condition_variable>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <iostream>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <utility>
 #include <vector>
@@ -104,6 +108,114 @@ auto to_long(const Iterator &iter, Integer n = Integer{0}) -> decltype(
     return iter->toLong(n);
 #endif
 }
+
+int fitToJpegDecodeScaleDenom(unsigned int sourceWidth, unsigned int sourceHeight, int targetWidth, int targetHeight)
+{
+    if (targetWidth <= 0 && targetHeight <= 0) {
+        return 1;
+    }
+
+    if (sourceWidth == 0 || sourceHeight == 0) {
+        return 1;
+    }
+
+    int requiredWidth = 1;
+    int requiredHeight = 1;
+
+    if (targetWidth > 0 && targetHeight > 0) {
+        const auto widthForTargetHeight = static_cast<unsigned long long>(targetHeight) * sourceWidth / sourceHeight;
+
+        if (widthForTargetHeight <= static_cast<unsigned int>(targetWidth)) {
+            requiredWidth = std::max(1, static_cast<int>(widthForTargetHeight));
+            requiredHeight = std::max(1, targetHeight);
+        } else {
+            requiredWidth = std::max(1, targetWidth);
+            requiredHeight = std::max(1, static_cast<int>(static_cast<unsigned long long>(targetWidth) * sourceHeight / sourceWidth));
+        }
+
+        for (int denom : {8, 4, 2}) {
+            if ((sourceWidth + denom - 1) / denom >= static_cast<unsigned int>(requiredWidth)
+                && (sourceHeight + denom - 1) / denom >= static_cast<unsigned int>(requiredHeight)) {
+                return denom;
+            }
+        }
+
+        return 1;
+    }
+
+    const unsigned int sourceMax = std::max(sourceWidth, sourceHeight);
+    const int targetMax = std::max(targetWidth, targetHeight);
+
+    for (int denom : {8, 4, 2}) {
+        if ((sourceMax + denom - 1) / denom >= static_cast<unsigned int>(targetMax)) {
+            return denom;
+        }
+    }
+
+    return 1;
+}
+
+long long imageIoBenchMs(std::chrono::steady_clock::time_point start, std::chrono::steady_clock::time_point end)
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
+}
+
+class ThumbnailJpegDecodeGate
+{
+public:
+    explicit ThumbnailJpegDecodeGate(bool enabled):
+        enabled_(enabled)
+    {
+        if (!enabled_) {
+            return;
+        }
+
+        std::unique_lock<std::mutex> lock(mutex());
+        cv().wait(lock, []() {
+            return active() < kMaxConcurrentDecodes;
+        });
+        ++active();
+    }
+
+    ~ThumbnailJpegDecodeGate()
+    {
+        if (!enabled_) {
+            return;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(mutex());
+            --active();
+        }
+        cv().notify_one();
+    }
+
+private:
+    // Scaled thumbnail JPEGs contend badly when many large camera JPEGs decode
+    // at once. Keep this below the preview-loader worker count so cold-folder
+    // reads do not saturate storage with large JPEG scans.
+    static constexpr int kMaxConcurrentDecodes = 3;
+
+    static std::mutex& mutex()
+    {
+        static std::mutex value;
+        return value;
+    }
+
+    static std::condition_variable& cv()
+    {
+        static std::condition_variable value;
+        return value;
+    }
+
+    static int& active()
+    {
+        static int value = 0;
+        return value;
+    }
+
+    bool enabled_;
+};
 
 }
 
@@ -484,8 +596,21 @@ int ImageIO::loadJPEGFromMemory (const char* buffer, int bufsize)
     return IMIO_SUCCESS;
 }
 
-int ImageIO::loadJPEG (const Glib::ustring &fname)
+int ImageIO::loadJPEG (const Glib::ustring &fname, int maxOutputWidth, int maxOutputHeight)
 {
+    const bool scaledThumbnailDecode = maxOutputWidth > 0 || maxOutputHeight > 0;
+    ThumbnailJpegDecodeGate thumbnailDecodeGate(scaledThumbnailDecode);
+    const bool bench = g_getenv("RT_THUMBNAIL_BENCH") != nullptr || g_getenv("RT_JPEG_BENCH") != nullptr;
+    const auto benchStart = bench ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+    long long headerMs = 0;
+    long long iccMs = 0;
+    long long scanMs = 0;
+    unsigned int sourceWidth = 0;
+    unsigned int sourceHeight = 0;
+    unsigned int outputWidth = 0;
+    unsigned int outputHeight = 0;
+    int scaleDenom = 1;
+
     std::unique_ptr<FILE, void (*)(FILE *)> file(
         g_fopen(fname.c_str(), "rb"),
         [](FILE *f) {
@@ -516,7 +641,13 @@ int ImageIO::loadJPEG (const Glib::ustring &fname)
         setup_read_icc_profile (&cinfo);
 
         //jpeg_stdio_src(&cinfo,file);
+        const auto headerStart = bench ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         jpeg_read_header(&cinfo, TRUE);
+        if (bench) {
+            headerMs = imageIoBenchMs(headerStart, std::chrono::steady_clock::now());
+        }
+        sourceWidth = cinfo.image_width;
+        sourceHeight = cinfo.image_height;
 
         //if JPEG is CMYK, then abort reading
         if (cinfo.jpeg_color_space == JCS_CMYK || cinfo.jpeg_color_space == JCS_YCCK) {
@@ -526,7 +657,16 @@ int ImageIO::loadJPEG (const Glib::ustring &fname)
 
         cinfo.out_color_space = JCS_RGB;
 
+        if (maxOutputWidth > 0 || maxOutputHeight > 0) {
+            scaleDenom = fitToJpegDecodeScaleDenom(cinfo.image_width, cinfo.image_height, maxOutputWidth, maxOutputHeight);
+            cinfo.scale_num = 1;
+            cinfo.scale_denom = scaleDenom;
+            cinfo.dct_method = JDCT_IFAST;
+            cinfo.do_fancy_upsampling = FALSE;
+        }
+
         deleteLoadedProfileData();
+        const auto iccStart = bench ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         bool hasprofile = read_icc_profile (&cinfo, (JOCTET**)&loadedProfileData, (unsigned int*)&loadedProfileLength);
 
         if (hasprofile) {
@@ -534,16 +674,22 @@ int ImageIO::loadJPEG (const Glib::ustring &fname)
         } else {
             embProfile = nullptr;
         }
+        if (bench) {
+            iccMs = imageIoBenchMs(iccStart, std::chrono::steady_clock::now());
+        }
 
         jpeg_start_decompress(&cinfo);
 
         unsigned int width = cinfo.output_width;
         unsigned int height = cinfo.output_height;
+        outputWidth = width;
+        outputHeight = height;
 
         allocate (width, height);
 
         unsigned char *row = new unsigned char[width * 3];
 
+        const auto scanStart = bench ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
         while (cinfo.output_scanline < height) {
             if (jpeg_read_scanlines(&cinfo, &row, 1) < 1) {
                 jpeg_finish_decompress(&cinfo);
@@ -558,6 +704,9 @@ int ImageIO::loadJPEG (const Glib::ustring &fname)
                 pl->setProgress ((double)(cinfo.output_scanline) / cinfo.output_height);
             }
         }
+        if (bench) {
+            scanMs = imageIoBenchMs(scanStart, std::chrono::steady_clock::now());
+        }
 
         delete [] row;
 
@@ -568,6 +717,25 @@ int ImageIO::loadJPEG (const Glib::ustring &fname)
         if (pl) {
             pl->setProgressStr ("PROGRESSBAR_READY");
             pl->setProgress (1.0);
+        }
+
+        if (bench && (maxOutputWidth > 0 || maxOutputHeight > 0)) {
+            std::fprintf(
+                stdout,
+                "RT_JPEG_DECODE_BENCH total_ms=%lld header_ms=%lld icc_ms=%lld scan_ms=%lld source=%ux%u output=%ux%u target=%dx%d denom=%d file=\"%s\"\n",
+                imageIoBenchMs(benchStart, std::chrono::steady_clock::now()),
+                headerMs,
+                iccMs,
+                scanMs,
+                sourceWidth,
+                sourceHeight,
+                outputWidth,
+                outputHeight,
+                maxOutputWidth,
+                maxOutputHeight,
+                scaleDenom,
+                fname.c_str());
+            std::fflush(stdout);
         }
 
         return IMIO_SUCCESS;

@@ -21,7 +21,6 @@
 #include <thread>
 
 #include "guiutils.h"
-#include "rtimage.h"
 #include "options.h"
 #include "toolpanel.h"
 
@@ -81,21 +80,10 @@ PlacesBrowser::PlacesBrowser ()
     headerLabel->set_xalign(0.0);
     addPlaceBtn_ = Gtk::manage(new Gtk::Button());
     addPlaceBtn_->set_name("PlacesAddBtn");
-    addPlaceBtn_->set_image(*Gtk::manage(new RTImage("add-place", Gtk::ICON_SIZE_MENU)));
+    addPlaceBtn_->set_label("+");
     addPlaceBtn_->set_relief(Gtk::RELIEF_NONE);
     addPlaceBtn_->set_tooltip_text(M("MAIN_FRAME_PLACES_ADD"));
     addPlaceBtn_->signal_clicked().connect(sigc::mem_fun(*this, &PlacesBrowser::addPressed));
-
-    auto headerCss = Gtk::CssProvider::create();
-    headerCss->load_from_data(
-        "#PlacesHeader { min-height: 0; padding: 0 4px; }"
-        "#PlacesHeader label { font-size: 11.5px; font-weight: bold; padding: 2px 0; margin: 0; }"
-        "#PlacesAddBtn { min-height: 0; min-width: 0; padding: 0; margin: 0; }"
-        "#PlacesBrowserTree { font-size: 1.058em; }"
-    );
-    headerBar->get_style_context()->add_provider(headerCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-    headerLabel->get_style_context()->add_provider(headerCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-    addPlaceBtn_->get_style_context()->add_provider(headerCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
 
     headerBar->pack_start(*headerLabel, Gtk::PACK_EXPAND_WIDGET);
     headerBar->pack_end(*addPlaceBtn_, Gtk::PACK_SHRINK);
@@ -108,7 +96,6 @@ PlacesBrowser::PlacesBrowser ()
 
     treeView = Gtk::manage (new PlacesTreeView ());
     treeView->set_name("PlacesBrowserTree");
-    treeView->get_style_context()->add_provider(headerCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
 
     // Hover highlighting: set_hover_selection(true) is required for motion
     // events to reach the bin_window (and thus the virtual override).
@@ -135,26 +122,16 @@ PlacesBrowser::PlacesBrowser ()
     treeView->set_headers_visible (false);
 
     Gtk::TreeView::Column *iviewcol = Gtk::manage (new Gtk::TreeView::Column (M("MAIN_FRAME_PLACES")));
-    Gtk::CellRendererPixbuf *iconCR  = Gtk::manage (new Gtk::CellRendererPixbuf());
     Gtk::CellRendererText *labelCR  = Gtk::manage (new Gtk::CellRendererText());
     labelCR->property_ellipsize() = Pango::ELLIPSIZE_MIDDLE;
     Gtk::CellRendererText *countCR = Gtk::manage (new Gtk::CellRendererText());
     countCR->property_foreground() = "#888888";
     countCR->property_xalign() = 1.0;
 
-    iviewcol->pack_start (*iconCR, false);
     iviewcol->pack_start (*labelCR, true);
     iviewcol->pack_end (*countCR, false);
 
     // cell_data_funcs for data binding + hover highlighting
-    iviewcol->set_cell_data_func(*iconCR, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
-        auto* pbCR = static_cast<Gtk::CellRendererPixbuf*>(cr);
-        pbCR->property_gicon() = (*iter)[placesColumns.icon];
-        auto rowPath = placesModel->get_path(iter);
-        bool hovered = !hoveredPath_.empty() && rowPath == hoveredPath_;
-        pbCR->property_cell_background_set() = hovered;
-        if (hovered) pbCR->property_cell_background() = Glib::ustring("#3a3f4b");
-    });
     iviewcol->set_cell_data_func(*labelCR, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
         auto* textCR = static_cast<Gtk::CellRendererText*>(cr);
         textCR->property_text() = (*iter)[placesColumns.label];

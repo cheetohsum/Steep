@@ -100,10 +100,15 @@ void Crop::destroy()
 void Crop::setListener(DetailedCropListener* il)
 {
     // We can make reads in the IF, because the mProcessing lock is only needed for change
-    if (cropImageListener != il) {
+    if (cropImageListener.load(std::memory_order_acquire) != il) {
         MyMutex::MyLock lock(cropMutex);
-        cropImageListener = il;
+        cropImageListener.store(il, std::memory_order_release);
     }
+}
+
+void Crop::detachListener()
+{
+    cropImageListener.store(nullptr, std::memory_order_release);
 }
 
 EditUniqueID Crop::getCurrEditID() const
@@ -145,7 +150,7 @@ void Crop::setEditSubscriber(EditSubscriber* newSubscriber)
 bool Crop::hasListener()
 {
     MyMutex::MyLock cropLock(cropMutex);
-    return cropImageListener;
+    return cropImageListener.load(std::memory_order_acquire);
 }
 
 void Crop::update(int todo)
@@ -159,11 +164,12 @@ void Crop::update(int todo)
 
     // give possibility to the listener to modify crop window (as the full image dimensions are already known at this point)
     int wx, wy, ww, wh, ws;
-    const bool overrideWindow = cropImageListener;
+    DetailedCropListener* cropListener = cropImageListener.load(std::memory_order_acquire);
+    const bool overrideWindow = cropListener != nullptr;
     bool spotsDone = false;
 
     if (overrideWindow) {
-        cropImageListener->getWindow(wx, wy, ww, wh, ws);
+        cropListener->getWindow(wx, wy, ww, wh, ws);
     }
 
     // re-allocate sub-images and arrays if their dimensions changed
@@ -316,8 +322,9 @@ void Crop::update(int todo)
                     adjustr = 1.f / 1.2f;
                 }
 
-                if (parent->adnListener) {
-                    parent->adnListener->noiseTilePrev(centerTile_X[poscenterX], centerTile_Y[poscenterY], CenterPreview_X, CenterPreview_Y, crW, trafw * skip);
+                AutoChromaListener* const adn = parent->adnListener.load();
+                if (!parent->destroying && adn) {
+                    adn->noiseTilePrev(centerTile_X[poscenterX], centerTile_Y[poscenterY], CenterPreview_X, CenterPreview_Y, crW, trafw * skip);
                 }
 
                 // I have tried "blind" some solutions..to move review ...but GUI is not my truc !
@@ -395,7 +402,9 @@ void Crop::update(int todo)
                 params.dirpyrDenoise.chroma = chaut / (autoNR * multip * adjustr * lowdenoise);
                 params.dirpyrDenoise.redchro = maxr;
                 params.dirpyrDenoise.bluechro = maxb;
-                parent->adnListener->chromaChanged(params.dirpyrDenoise.chroma, params.dirpyrDenoise.redchro, params.dirpyrDenoise.bluechro);
+                if (!parent->destroying && adn) {
+                    adn->chromaChanged(params.dirpyrDenoise.chroma, params.dirpyrDenoise.redchro, params.dirpyrDenoise.bluechro);
+                }
 
                 delete provicalc;
             }
@@ -605,8 +614,9 @@ void Crop::update(int todo)
             params.dirpyrDenoise.redchro = maxr;
             params.dirpyrDenoise.bluechro = maxb;
             parent->denoiseInfoStore.valid = true;
-            if (parent->adnListener) {
-                parent->adnListener->chromaChanged(params.dirpyrDenoise.chroma, params.dirpyrDenoise.redchro, params.dirpyrDenoise.bluechro);
+            AutoChromaListener* const adn = parent->adnListener.load();
+            if (!parent->destroying && adn) {
+                adn->chromaChanged(params.dirpyrDenoise.chroma, params.dirpyrDenoise.redchro, params.dirpyrDenoise.bluechro);
             }
 
             if (settings->verbose) {
@@ -669,8 +679,9 @@ void Crop::update(int todo)
             parent->imgsrc->convertColorSpace(calclum, params.icm, parent->currWB);  //for denoise luminance curve
         }
 
-        if (skip != 1) if (parent->adnListener) {
-                parent->adnListener->noiseChanged(0.f, 0.f);
+        AutoChromaListener* const adn = parent->adnListener.load();
+        if (skip != 1 && !parent->destroying && adn) {
+                adn->noiseChanged(0.f, 0.f);
             }
 
         if (todo & (M_INIT | M_LINDENOISE | M_HDR)) {
@@ -680,17 +691,18 @@ void Crop::update(int todo)
                 float nresi, highresi;
                 parent->ipf.RGB_denoise(0, origCrop, origCrop, calclum, parent->denoiseInfoStore.ch_M, parent->denoiseInfoStore.max_r, parent->denoiseInfoStore.max_b, parent->imgsrc->isRAW(), /*Roffset,*/ denoiseParams, parent->imgsrc->getDirPyrDenoiseExpComp(), noiseLCurve, noiseCCurve, nresi, highresi);
 
-                if (parent->adnListener) {
-                    parent->adnListener->noiseChanged(nresi, highresi);
+                AutoChromaListener* const adn = parent->adnListener.load();
+                if (!parent->destroying && adn) {
+                    adn->noiseChanged(nresi, highresi);
                 }
 
                 if (settings->leveldnautsimpl == 1) {
-                    if ((denoiseParams.Cmethod == "AUT" || denoiseParams.Cmethod == "PRE") && (parent->adnListener)) { // force display value of sliders
-                        parent->adnListener->chromaChanged(denoiseParams.chroma, denoiseParams.redchro, denoiseParams.bluechro);
+                    if ((denoiseParams.Cmethod == "AUT" || denoiseParams.Cmethod == "PRE") && !parent->destroying && adn) { // force display value of sliders
+                        adn->chromaChanged(denoiseParams.chroma, denoiseParams.redchro, denoiseParams.bluechro);
                     }
                 } else {
-                    if ((denoiseParams.C2method == "AUTO" || denoiseParams.C2method == "PREV") && (parent->adnListener)) { // force display value of sliders
-                        parent->adnListener->chromaChanged(denoiseParams.chroma, denoiseParams.redchro, denoiseParams.bluechro);
+                    if ((denoiseParams.C2method == "AUTO" || denoiseParams.C2method == "PREV") && !parent->destroying && adn) { // force display value of sliders
+                        adn->chromaChanged(denoiseParams.chroma, denoiseParams.redchro, denoiseParams.bluechro);
                     }
                 }
 
@@ -1344,15 +1356,16 @@ void Crop::update(int todo)
                             printf("Pa sautoshar\n");
                         }
                         */
-                        if (parent->locallListener) {
+                        LocallabListener* const locall = parent->locallListener.load();
+                        if (!parent->destroying && locall) {
                             if(params.locallab.spots.at(sp).expblur){//if not enable disable locallListener to avoid bad GUI behavior
-                                parent->locallListener->denChanged(localldenoiselc, params.locallab.selspot);
+                                locall->denChanged(localldenoiselc, params.locallab.selspot);
                                 if (params.locallab.spots.at(sp).lockmadl) {
-                                    parent->locallListener->madChanged(localldenoisemadl, params.locallab.selspot);
+                                    locall->madChanged(localldenoisemadl, params.locallab.selspot);
                                 }
-                                parent->locallListener->den2Changed(localldenoiselc2, params.locallab.selspot);
+                                locall->den2Changed(localldenoiselc2, params.locallab.selspot);
                             }
-                            parent->locallListener->sharaftChanged(locallsharaft,params.locallab.selspot); 
+                            locall->sharaftChanged(locallsharaft,params.locallab.selspot);
                         }
 
             if (sp + 1u < params.locallab.spots.size()) {
@@ -1536,8 +1549,9 @@ void Crop::update(int todo)
 
             int maxL = min(maxlev2, maxlevelcrop);
 
-            if (parent->awavListener) {
-                parent->awavListener->wavChanged(float (maxL));
+            WaveletListener* const awav = parent->awavListener.load();
+            if (!parent->destroying && awav) {
+                awav->wavChanged(float (maxL));
             }
 
             WavCurve wavCLVCurve;
@@ -1736,8 +1750,9 @@ void Crop::update(int todo)
                 parent->ipf.complete_local_contrast(labnCrop, labnCrop, WaveParams, Colparams, icmOpacityCurveWL, skip, level_hr, maxlevpo, wavcurvecont);
                 bool enall = false;
                 enall = wavcurvecont && Colparams.wavExp;//enable message only if curve enable and Expander on
-                if (parent->primListener) {
-                    parent->primListener->wavlocChanged(float (maxlevpo), float (level_hr), enall);
+                AutoprimListener* const autoPrim = parent->primListener.load();
+                if (!parent->destroying && autoPrim) {
+                    autoPrim->wavlocChanged(float (maxlevpo), float (level_hr), enall);
                 }
 
             }
@@ -1952,10 +1967,16 @@ void Crop::update(int todo)
     // all pipette buffer processing should be finished now
     PipetteBuffer::setReady();
 
+    cropListener = cropImageListener.load(std::memory_order_acquire);
+    if (!cropListener || parent->destroying) {
+        return;
+    }
+
     // Computing the preview image, i.e. converting from lab->Monitor color space (soft-proofing disabled) or lab->Output profile->Monitor color space (soft-proofing enabled)
     parent->ipf.lab2monitorRgb(labnCrop, cropImg);
 
-    if (cropImageListener) {
+    cropListener = cropImageListener.load(std::memory_order_acquire);
+    if (cropListener) {
         // Computing the internal image for analysis, i.e. conversion from lab->Output profile (rtSettings.HistogramWorking disabled) or lab->WCS (rtSettings.HistogramWorking enabled)
 
         // internal image in output color space for analysis
@@ -1981,7 +2002,7 @@ void Crop::update(int todo)
             memcpy(finaltrue->data + 3 * i * finalW, cropImgtrue->data + 3 * (i + upperBorder)*cropw + 3 * leftBorder, 3 * finalW);
         }
 
-        cropImageListener->setDetailedCrop(final, finaltrue, params.icm, params.crop, rqcropx, rqcropy, rqcropw, rqcroph, skip);
+        cropListener->setDetailedCrop(final, finaltrue, params.icm, params.crop, rqcropx, rqcropy, rqcropw, rqcroph, skip);
         delete final;
         delete finaltrue;
         delete cropImgtrue;
@@ -2293,10 +2314,13 @@ void Crop::fullUpdate()
         // causing Color::lab2rgb to return a black image on some opens
         //parent->changeSinceLast = 0;
         parent->thread->join();
+        parent->thread = nullptr;
+        parent->updaterRunning = false;
     }
 
-    if (parent->plistener) {
-        parent->plistener->setProgressState(true);
+    ProgressListener* const progress = parent->plistener.load();
+    if (!parent->destroying && progress) {
+        progress->setProgressState(true);
     }
 
     // If there are more update request, the following WHILE will collect it
@@ -2309,8 +2333,9 @@ void Crop::fullUpdate()
 
     updating = false;  // end of crop update
 
-    if (parent->plistener) {
-        parent->plistener->setProgressState(false);
+    ProgressListener* const progressDone = parent->plistener.load();
+    if (progressDone) {
+        progressDone->setProgressState(false);
     }
 
     parent->updaterThreadStart.unlock();

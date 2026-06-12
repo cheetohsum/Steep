@@ -112,6 +112,11 @@ void StdImageSource::getSampleFormat (const Glib::ustring &fname, IIOSampleForma
  */
 int StdImageSource::load (const Glib::ustring &fname)
 {
+    return loadThumbnail(fname, 0, 0);
+}
+
+int StdImageSource::loadThumbnail (const Glib::ustring &fname, int maxJpegOutputWidth, int maxJpegOutputHeight)
+{
 
     fileName = fname;
 
@@ -158,7 +163,7 @@ int StdImageSource::load (const Glib::ustring &fname)
 
     // And load the image!
 
-    int error = img->load (fname);
+    int error = hasJpegExtension(fname) && maxJpegOutputWidth > 0 ? img->loadJPEG(fname, maxJpegOutputWidth, maxJpegOutputHeight) : img->load(fname);
 
     if (error) {
         delete img;

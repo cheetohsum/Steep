@@ -55,8 +55,26 @@ void BatchToolPanelCoordinator::selectionChanged (const std::vector<Thumbnail*>&
             selFileNames.push_back (selected[i]->getFileName ());
         }
 
-        initSession ();
+        // Defer the heavy initSession work so the thumbnail selection
+        // highlight paints immediately without blocking the UI.
+        initSessionConn_.disconnect();
+        initSessionConn_ = Glib::signal_idle().connect(
+            sigc::mem_fun(*this, &BatchToolPanelCoordinator::initSessionDeferred_),
+            G_PRIORITY_DEFAULT_IDLE
+        );
     }
+}
+
+bool BatchToolPanelCoordinator::initSessionDeferred_()
+{
+    initSession();
+
+    // Trigger preload for the selected image so it's ready for the editor
+    if (parent && selected.size() == 1) {
+        parent->preloadAdjacent(selected[0]->getFileName());
+    }
+
+    return false; // one-shot
 }
 
 void BatchToolPanelCoordinator::closeSession (bool save)
@@ -132,6 +150,21 @@ void BatchToolPanelCoordinator::initSession ()
         pparams = selected[0]->getProcParams ();
 
         coarse->initBatchBehavior ();
+
+        if (!crop) {
+            for (auto* toolPanel : toolPanels) {
+                toolPanel->setMultiImage(selected.size() != 1);
+                toolPanel->setDefaults(&pparams, &pparamsEdited);
+                toolPanel->read(&pparams, &pparamsEdited);
+            }
+
+            for (auto* paramcListener : paramcListeners) {
+                paramcListener->procParamsChanged(&pparams, rtengine::EvPhotoLoaded, M("BATCH_PROCESSING"), &pparamsEdited);
+            }
+
+            pparamsEdited.set(false);
+            return;
+        }
 
         int w,h;
         selected[0]->getOriginalSize(w,h);
@@ -462,36 +495,46 @@ void BatchToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, c
     // otherwise we adjust the initial parameters on a per-image basis.
     if (selected.size() == 1) {
         // Compensate rotation on flip
-        if (event == rtengine::EvCTHFlip || event == rtengine::EvCTVFlip) {
+        if (crop && rotate && (event == rtengine::EvCTHFlip || event == rtengine::EvCTVFlip)) {
             if (fabs (pparams.rotate.degree) > 0.001) {
                 pparams.rotate.degree *= -1;
                 rotate->read (&pparams);
             }
         }
 
-        int w, h;
-        selected[0]->getFinalSize (selected[0]->getProcParams (), w, h);
-        crop->setDimensions (w, h);
+        if (crop) {
+            int w, h;
+            selected[0]->getFinalSize (selected[0]->getProcParams (), w, h);
+            crop->setDimensions (w, h);
 
-        // Some transformations change the crop and resize parameter for convenience.
-        if (event == rtengine::EvCTHFlip) {
-            crop->hFlipCrop ();
-            crop->write (&pparams, &pparamsEdited);
-        } else if (event == rtengine::EvCTVFlip) {
-            crop->vFlipCrop ();
-            crop->write (&pparams, &pparamsEdited);
-        } else if (event == rtengine::EvCTRotate) {
-            crop->rotateCrop (pparams.coarse.rotate, pparams.coarse.hflip, pparams.coarse.vflip);
-            crop->write (&pparams, &pparamsEdited);
-            resize->update (pparams.crop.enabled, pparams.crop.w, pparams.crop.h, w, h);
-            resize->write (&pparams, &pparamsEdited);
-            framing->update (w, h);
-            framing->write (&pparams, &pparamsEdited);
-        } else if (event == rtengine::EvCrop) {
-            resize->update (pparams.crop.enabled, pparams.crop.w, pparams.crop.h);
-            resize->write (&pparams, &pparamsEdited);
-            framing->update (w, h);
-            framing->write (&pparams, &pparamsEdited);
+            // Some transformations change the crop and resize parameter for convenience.
+            if (event == rtengine::EvCTHFlip) {
+                crop->hFlipCrop ();
+                crop->write (&pparams, &pparamsEdited);
+            } else if (event == rtengine::EvCTVFlip) {
+                crop->vFlipCrop ();
+                crop->write (&pparams, &pparamsEdited);
+            } else if (event == rtengine::EvCTRotate) {
+                crop->rotateCrop (pparams.coarse.rotate, pparams.coarse.hflip, pparams.coarse.vflip);
+                crop->write (&pparams, &pparamsEdited);
+                if (resize) {
+                    resize->update (pparams.crop.enabled, pparams.crop.w, pparams.crop.h, w, h);
+                    resize->write (&pparams, &pparamsEdited);
+                }
+                if (framing) {
+                    framing->update (w, h);
+                    framing->write (&pparams, &pparamsEdited);
+                }
+            } else if (event == rtengine::EvCrop) {
+                if (resize) {
+                    resize->update (pparams.crop.enabled, pparams.crop.w, pparams.crop.h);
+                    resize->write (&pparams, &pparamsEdited);
+                }
+                if (framing) {
+                    framing->update (w, h);
+                    framing->write (&pparams, &pparamsEdited);
+                }
+            }
         }
     } else {
         // Compensate rotation on flip
@@ -735,13 +778,15 @@ void BatchToolPanelCoordinator::profileChange(
 void BatchToolPanelCoordinator::cropSelectionReady ()
 {
 
-    toolBar->setTool (TMHand);
+    if (toolBar) {
+        toolBar->setTool (TMHand);
+    }
 }
 
 CropGUIListener* BatchToolPanelCoordinator::startCropEditing (Thumbnail* thm)
 {
 
-    if (thm) {
+    if (thm && crop) {
         int w, h;
         thm->getFinalSize (thm->getProcParams (), w, h);
         crop->setDimensions (w, h);
@@ -753,9 +798,11 @@ CropGUIListener* BatchToolPanelCoordinator::startCropEditing (Thumbnail* thm)
 void BatchToolPanelCoordinator::rotateSelectionReady (double rotate_deg, Thumbnail* thm)
 {
 
-    toolBar->setTool (TMHand);
+    if (toolBar) {
+        toolBar->setTool (TMHand);
+    }
 
-    if (rotate_deg != 0.0) {
+    if (rotate && rotate_deg != 0.0) {
         rotate->straighten (rotate_deg);
     }
 }
@@ -764,7 +811,7 @@ void BatchToolPanelCoordinator::spotWBselected (int x, int y, Thumbnail* thm)
 {
 
 //    toolBar->setTool (TOOL_HAND);
-    if (x > 0 && y > 0 && thm) {
+    if (whitebalance && x > 0 && y > 0 && thm) {
         const auto& options = App::get().options();
         for (size_t i = 0; i < selected.size(); i++)
             if (selected[i] == thm) {

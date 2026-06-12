@@ -19,6 +19,7 @@
 #include "adjuster.h"
 
 #include <sigc++/slot.h>
+#include <algorithm>
 #include <cmath>
 
 #include "multilangmgr.h"
@@ -122,27 +123,6 @@ Adjuster::Adjuster(
         return false; // use default formatting
     });
 
-    // Unified spinbutton CSS: hide +/- buttons, compact font, blend into pill row
-    {
-        auto css = Gtk::CssProvider::create();
-        try {
-            css->load_from_data(
-                "spinbutton { background: transparent; border: none; box-shadow: none;"
-                " font-size: 9px; padding: 0 4px 0 0; margin: 0; min-height: 0; max-width: 36px;"
-                " overflow: hidden; color: rgba(255,255,255,0.65); }"
-                " spinbutton entry { background: transparent; border: none; box-shadow: none;"
-                " font-size: 9px; padding: 0; margin: 0; min-height: 0;"
-                " color: rgba(255,255,255,0.65); caret-color: rgba(255,255,255,0.65); }"
-                " spinbutton button { min-width: 0; min-height: 0; max-width: 0; max-height: 0;"
-                " padding: 0; margin: 0; border: none; background: none; opacity: 0; }"
-                " spinbutton button image { min-width: 0; min-height: 0; max-width: 0; max-height: 0; }"
-            );
-            spin->get_style_context()->add_provider(
-                css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200
-            );
-        } catch (...) {}
-    }
-
     // Programmatically disable +/- buttons (some platforms ignore CSS hiding)
     spin->set_numeric(true);
     spin->set_update_policy(Gtk::UPDATE_IF_VALID);
@@ -150,7 +130,7 @@ Adjuster::Adjuster(
     // Note: GtkSpinButton is NOT a GtkContainer on Windows, so
     // gtk_container_forall cannot be used to hide +/- buttons.
     // For named adjusters, spin is hidden entirely and value drawn via Cairo.
-    // For unnamed adjusters, CSS handles button hiding.
+    // For unnamed adjusters, the platform default spin button is kept visible.
 
     reset->set_size_request(-1, RTScalable::scalePixelSize(spin->get_height() > MIN_RESET_BUTTON_HEIGHT ? spin->get_height() : MIN_RESET_BUTTON_HEIGHT));
     slider = Gtk::manage(new MyHScale());
@@ -165,46 +145,12 @@ Adjuster::Adjuster(
             return false; // propagate to default handler
         }, false); // before default handler
 
-    // Inline CSS for slider — taller trough when label is embedded inside
-    {
-        auto sliderCss = Gtk::CssProvider::create();
-        try {
-            if (!adjustmentName.empty()) {
-                // Label-inside-pill: dark pill drawn by Cairo, GTK trough invisible
-                sliderCss->load_from_data(
-                    "scale { padding: 0 0; margin: 0; min-height: 34px; -GtkRange-stepper-size: 0; }"
-                    " scale trough { min-height: 34px; margin: 0; padding: 0;"
-                    "   background-color: transparent; background-image: none; border: none; }"
-                    " scale slider { min-height: 0; min-width: 0; padding: 17px; margin: 0;"
-                    "   background-color: transparent; background-image: none; border: none;"
-                    "   box-shadow: none; border-radius: 50%; }"
-                    " scale button { min-width: 0; min-height: 0; max-width: 0; max-height: 0;"
-                    "   padding: 0; margin: 0; border: none; background: none; opacity: 0; }"
-                );
-                slider->setLabelText(adjustmentName);
-            } else {
-                // No label: compact trough
-                sliderCss->load_from_data(
-                    "scale { padding: 0 4px; margin: 0; min-height: 0; -GtkRange-stepper-size: 0; }"
-                    " scale trough { min-height: 3px; margin: 0; padding: 0;"
-                    "   background-color: transparent; background-image: none; border: none; }"
-                    " scale trough:hover { background-color: rgba(102,153,204,0.06); }"
-                    " scale slider { min-height: 0; min-width: 0; padding: 7px; margin: 0;"
-                    "   background-color: rgba(0,0,0,0.01); background-image: none; border: none;"
-                    "   box-shadow: none; border-radius: 50%; }"
-                    " scale slider:hover { background-color: rgba(102,153,204,0.18); background-image: none; box-shadow: 0 0 6px rgba(102,153,204,0.2); }"
-                    " scale button { min-width: 0; min-height: 0; max-width: 0; max-height: 0;"
-                    "   padding: 0; margin: 0; border: none; background: none; opacity: 0; }"
-                );
-            }
-            slider->get_style_context()->add_provider(
-                sliderCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200
-            );
-        } catch (...) {
-            if (!adjustmentName.empty()) {
-                slider->setLabelText(adjustmentName);
-            }
-        }
+    // Label-inside-pill drawing is handled by MyHScale::on_draw. Avoid
+    // installing per-adjuster CSS providers here; startup creates many
+    // Adjusters and repeated Gtk CSS parsing was crashing during construction
+    // on Windows.
+    if (!adjustmentName.empty()) {
+        slider->setLabelText(adjustmentName);
     }
 
     setLimits(vmin, vmax, vstep, vdefault);
@@ -235,7 +181,7 @@ Adjuster::Adjuster(
     } else {
         // Label-inside-slider: value drawn by Cairo in on_draw, spin hidden
         // Slider fills the full width — pill covers the entire row, perfectly centered
-        set_size_request(200, -1);
+        set_size_request(-1, -1);
         set_margin_top(1);
         set_margin_bottom(1);
         attach(*slider, 0, 0, 1, 1);   // slider fills full width (hexpand=true)
@@ -929,6 +875,26 @@ void Adjuster::hideSpinButton()
 void Adjuster::setSliderMinWidth(int px)
 {
     slider->set_size_request(px, -1);
+}
+
+void Adjuster::get_preferred_width_vfunc(int& minimum_width, int& natural_width) const
+{
+    Gtk::Grid::get_preferred_width_vfunc(minimum_width, natural_width);
+
+    if (!adjustmentName.empty()) {
+        minimum_width = std::min(minimum_width, RTScalable::scalePixelSize(80));
+        natural_width = std::min(natural_width, RTScalable::scalePixelSize(160));
+    }
+}
+
+void Adjuster::get_preferred_width_for_height_vfunc(int height, int& minimum_width, int& natural_width) const
+{
+    Gtk::Grid::get_preferred_width_for_height_vfunc(height, minimum_width, natural_width);
+
+    if (!adjustmentName.empty()) {
+        minimum_width = std::min(minimum_width, RTScalable::scalePixelSize(80));
+        natural_width = std::min(natural_width, RTScalable::scalePixelSize(160));
+    }
 }
 
 bool Adjuster::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)

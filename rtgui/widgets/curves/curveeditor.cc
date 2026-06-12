@@ -324,30 +324,12 @@ void CurveEditor::addButtonCSSClass(const Glib::ustring& cssClass)
 
 void CurveEditor::enableCompactMode(const Glib::ustring& color, const Glib::ustring& checkedColor)
 {
-    const int PRIO = GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200;
-
     // Add a CSS class so we can target this specific button
     curveType->get_style_context()->add_class("curve-dot");
 
-    // 1) Style the toggle button as a tiny colored circle
-    //    GTK3 CSS node for GtkToggleButton is "button"
+    // 1) Keep the compact geometry. Avoid per-widget CSS providers here:
+    // repeated Gtk CSS parsing during startup is fragile on this Windows build.
     curveType->set_size_request(10, 10);
-    {
-        auto css = Gtk::CssProvider::create();
-        try {
-            css->load_from_data(
-                ".curve-dot { min-width: 10px; min-height: 10px; "
-                "padding: 0; margin: 0 3px; "
-                "border-radius: 50%; "
-                "background-color: " + color + "; background-image: none; "
-                "border: 1px solid " + color + "; "
-                "box-shadow: none; -gtk-icon-shadow: none; "
-                "outline: none; }"
-                " .curve-dot:checked { background-color: " + checkedColor + "; background-image: none; "
-                "border-color: " + checkedColor + "; }");
-            curveType->get_style_context()->add_provider(css, PRIO);
-        } catch (...) {}
-    }
 
     // 2) Hide internal label + icon completely
     auto* child = curveType->get_child();
@@ -363,11 +345,6 @@ void CurveEditor::enableCompactMode(const Glib::ustring& color, const Glib::ustr
     {
         // Only target the grid container, not its children
         curveType->buttonGroup->get_style_context()->add_class("curve-dot-group");
-        auto bgCss = Gtk::CssProvider::create();
-        try {
-            bgCss->load_from_data(".curve-dot-group { padding: 0; margin: 0; }");
-            curveType->buttonGroup->get_style_context()->add_provider(bgCss, PRIO);
-        } catch (...) {}
 
         auto children = curveType->buttonGroup->get_children();
         for (auto* w : children) {

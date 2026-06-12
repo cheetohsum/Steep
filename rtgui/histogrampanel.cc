@@ -1051,7 +1051,68 @@ void HistogramRGBAreaVert::get_preferred_width_for_height_vfunc (int height, int
 //
 //
 // HistogramArea
+struct HistogramArea::HistogramUpdateSnapshot {
+    unsigned generation;
+    LUTu histRed;
+    LUTu histGreen;
+    LUTu histBlue;
+    LUTu histLuma;
+    LUTu histChroma;
+    LUTu histRedRaw;
+    LUTu histGreenRaw;
+    LUTu histBlueRaw;
+    int vectorscopeScale;
+    array2D<int> vectorscopeHC;
+    array2D<int> vectorscopeHS;
+    int waveformScale;
+    array2D<int> waveformRed;
+    array2D<int> waveformGreen;
+    array2D<int> waveformBlue;
+    array2D<int> waveformLuma;
+
+    HistogramUpdateSnapshot(
+        unsigned generation,
+        const LUTu& histRed,
+        const LUTu& histGreen,
+        const LUTu& histBlue,
+        const LUTu& histLuma,
+        const LUTu& histChroma,
+        const LUTu& histRedRaw,
+        const LUTu& histGreenRaw,
+        const LUTu& histBlueRaw,
+        int vectorscopeScale,
+        const array2D<int>& vectorscopeHC,
+        const array2D<int>& vectorscopeHS,
+        int waveformScale,
+        const array2D<int>& waveformRed,
+        const array2D<int>& waveformGreen,
+        const array2D<int>& waveformBlue,
+        const array2D<int>& waveformLuma
+    ) :
+        generation(generation),
+        vectorscopeScale(vectorscopeScale),
+        vectorscopeHC(vectorscopeHC),
+        vectorscopeHS(vectorscopeHS),
+        waveformScale(waveformScale),
+        waveformRed(waveformRed),
+        waveformGreen(waveformGreen),
+        waveformBlue(waveformBlue),
+        waveformLuma(waveformLuma)
+    {
+        this->histRed = histRed;
+        this->histGreen = histGreen;
+        this->histBlue = histBlue;
+        this->histLuma = histLuma;
+        this->histChroma = histChroma;
+        this->histRedRaw = histRedRaw;
+        this->histGreenRaw = histGreenRaw;
+        this->histBlueRaw = histBlueRaw;
+    }
+};
+
 HistogramArea::HistogramArea (DrawModeListener *fml) :
+    histogramUpdateIdlePending_(false),
+    histogramUpdateGeneration_(0),
     // Histogram parameters
     vectorscope_scale(0),
     vect_hc(0, 0), vect_hs(0, 0),
@@ -1102,6 +1163,12 @@ HistogramArea::HistogramArea (DrawModeListener *fml) :
 
 HistogramArea::~HistogramArea ()
 {
+    histogramUpdateGeneration_.fetch_add(1, std::memory_order_acq_rel);
+    {
+        std::lock_guard<std::mutex> lock(histogramUpdateMutex_);
+        pendingHistogramUpdate_.reset();
+        histogramUpdateIdlePending_ = false;
+    }
     anim_connection.disconnect();
     idle_register.destroy();
 }
@@ -1192,15 +1259,65 @@ void HistogramArea::update(
     const array2D<int>& waveformLuma
 )
 {
-    // Note: This function is called outside of GUI threads
+    // Note: This function is called outside of GUI threads. Own the data before
+    // queuing the GTK idle; the source processor can be closed before idle runs.
+    const unsigned generation =
+        histogramUpdateGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1;
+    auto snapshot = std::make_shared<HistogramUpdateSnapshot>(
+        generation,
+        histRed,
+        histGreen,
+        histBlue,
+        histLuma,
+        histChroma,
+        histRedRaw,
+        histGreenRaw,
+        histBlueRaw,
+        vectorscopeScale,
+        vectorscopeHC,
+        vectorscopeHS,
+        waveformScale,
+        waveformRed,
+        waveformGreen,
+        waveformBlue,
+        waveformLuma);
+
+    bool scheduleIdle = false;
+    {
+        std::lock_guard<std::mutex> lock(histogramUpdateMutex_);
+        pendingHistogramUpdate_ = std::move(snapshot);
+        if (!histogramUpdateIdlePending_) {
+            histogramUpdateIdlePending_ = true;
+            scheduleIdle = true;
+        }
+    }
+
+    if (!scheduleIdle) {
+        return;
+    }
+
     idle_register.add(
-        [this, &histRed, &histGreen, &histBlue, &histLuma, &histChroma, &histRedRaw,
-                &histGreenRaw, &histBlueRaw, vectorscopeScale, &vectorscopeHC,
-                &vectorscopeHS, waveformScale, &waveformRed, &waveformGreen,
-                &waveformBlue, &waveformLuma]() -> bool {
+        [this]() -> bool {
+        std::shared_ptr<const HistogramUpdateSnapshot> snapshot;
+        {
+            std::lock_guard<std::mutex> lock(histogramUpdateMutex_);
+            snapshot = std::move(pendingHistogramUpdate_);
+            pendingHistogramUpdate_.reset();
+            histogramUpdateIdlePending_ = false;
+        }
+
+        if (!snapshot
+            || snapshot->generation != histogramUpdateGeneration_.load(std::memory_order_acquire)) {
+            return false;
+        }
+
         GThreadLock lock; // All GUI access from idle_add callbacks or separate thread HAVE to be protected
 
-        if (histRed) {
+        if (snapshot->generation != histogramUpdateGeneration_.load(std::memory_order_acquire)) {
+            return false;
+        }
+
+        if (snapshot->histRed) {
             // Save previous histogram data for animation
             if (LUT_valid) {
                 prev_rhist = rhist;
@@ -1215,11 +1332,11 @@ void HistogramArea::update(
 
             switch (scopeType) {
                 case ScopeType::HISTOGRAM:
-                    rhist = histRed;
-                    ghist = histGreen;
-                    bhist = histBlue;
-                    lhist = histLuma;
-                    chist = histChroma;
+                    rhist = snapshot->histRed;
+                    ghist = snapshot->histGreen;
+                    bhist = snapshot->histBlue;
+                    lhist = snapshot->histLuma;
+                    chist = snapshot->histChroma;
                     break;
                 case ScopeType::HISTOGRAM_RAW:
                     // Raw histogram data are always provided (refer below)
@@ -1227,31 +1344,31 @@ void HistogramArea::update(
                 case ScopeType::PARADE:
                 case ScopeType::WAVEFORM: {
                     MYWRITERLOCK(wave_lock, wave_mutex)
-                    waveform_scale = waveformScale;
-                    rwave = waveformRed;
-                    gwave = waveformGreen;
-                    bwave = waveformBlue;
-                    lwave = waveformLuma;
+                    waveform_scale = snapshot->waveformScale;
+                    rwave = snapshot->waveformRed;
+                    gwave = snapshot->waveformGreen;
+                    bwave = snapshot->waveformBlue;
+                    lwave = snapshot->waveformLuma;
                     parade_buffer_r_dirty = parade_buffer_g_dirty = parade_buffer_b_dirty = wave_buffer_dirty = wave_buffer_luma_dirty = true;
                     break;
                 }
                 case ScopeType::VECTORSCOPE_HS:
-                    vectorscope_scale = vectorscopeScale;
-                    vect_hs = vectorscopeHS;
+                    vectorscope_scale = snapshot->vectorscopeScale;
+                    vect_hs = snapshot->vectorscopeHS;
                     vect_hs_buffer_dirty = true;
                     break;
                 case ScopeType::VECTORSCOPE_HC:
-                    vectorscope_scale = vectorscopeScale;
-                    vect_hc = vectorscopeHC;
+                    vectorscope_scale = snapshot->vectorscopeScale;
+                    vect_hc = snapshot->vectorscopeHC;
                     vect_hc_buffer_dirty = true;
                     break;
                 case ScopeType::NONE:
                     break;
             }
             // Raw histogram data are always provided
-            rhistRaw = histRedRaw;
-            ghistRaw = histGreenRaw;
-            bhistRaw = histBlueRaw;
+            rhistRaw = snapshot->histRedRaw;
+            ghistRaw = snapshot->histGreenRaw;
+            bhistRaw = snapshot->histBlueRaw;
 
             // Start animation
             anim_start = std::chrono::steady_clock::now();

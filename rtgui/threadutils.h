@@ -89,6 +89,7 @@ class MyRWMutex :
 {
 public:
     friend class MyReaderLock;
+    friend class MyTryReaderLock;
     friend class MyWriterLock;
 
     MyRWMutex();
@@ -127,6 +128,21 @@ public:
     void acquire (const char* file, int line);
     void release (const char* file, int line);
 #endif
+
+private:
+    MyRWMutex& mutex;
+    bool locked;
+};
+
+class MyTryReaderLock :
+    public rtengine::NonCopyable
+{
+public:
+    explicit MyTryReaderLock (MyRWMutex& mutex);
+    ~MyTryReaderLock ();
+
+    bool owns_lock () const;
+    void release ();
 
 private:
     MyRWMutex& mutex;

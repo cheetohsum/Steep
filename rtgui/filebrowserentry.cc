@@ -18,8 +18,15 @@
  */
 #include "filebrowserentry.h"
 
+#include <algorithm>
+#include <chrono>
+#include <cctype>
 #include <cstring>
 #include <iomanip>
+#include <list>
+#include <mutex>
+#include <unordered_map>
+#include <vector>
 
 #include "cropguilistener.h"
 #include "cursormanager.h"
@@ -43,17 +50,222 @@ std::shared_ptr<RTSurface> FileBrowserEntry::enqueuedIcon(std::shared_ptr<RTSurf
 std::shared_ptr<RTSurface> FileBrowserEntry::hdr(std::shared_ptr<RTSurface>(nullptr));
 std::shared_ptr<RTSurface> FileBrowserEntry::ps(std::shared_ptr<RTSurface>(nullptr));
 
-FileBrowserEntry::FileBrowserEntry (Thumbnail* thm, const Glib::ustring& fname)
-    : ThumbBrowserEntryBase (fname, thm), wasInside(false), iatlistener(nullptr), press_x(0), press_y(0), action_x(0), action_y(0), rot_deg(0.0), landscape(true), cropParams(new rtengine::procparams::CropParams), cropgl(nullptr), state(SNormal), crop_custom_ratio(0.f)
+namespace
 {
+
+struct QueuedImageUpdate {
+    FileBrowserEntryIdleHelper* helper;
+    rtengine::IImage8* img;
+    hidpi::LogicalSize size;
+    int deviceScale;
+    double imageScale;
+    rtengine::procparams::CropParams crop;
+    std::uint64_t generation;
+};
+
+std::mutex queuedImageUpdatesMutex;
+using QueuedImageUpdateList = std::list<QueuedImageUpdate>;
+QueuedImageUpdateList queuedImageUpdates;
+std::unordered_map<FileBrowserEntryIdleHelper*, QueuedImageUpdateList::iterator> queuedImageUpdateIndex;
+bool queuedImageUpdateIdlePending = false;
+std::atomic<unsigned> queuedImageUpdatePauseDepth{0};
+
+void discardQueuedImageUpdate(FileBrowserEntryIdleHelper* helper, rtengine::IImage8* img)
+{
+    delete img;
+
+    if (helper->destroyed) {
+        if (helper->pending == 1) {
+            delete helper;
+        } else {
+            --helper->pending;
+        }
+    } else {
+        --helper->pending;
+        helper->fbentry->discardQueuedImageUpdate();
+    }
+}
+
+void applyQueuedImageUpdate(QueuedImageUpdate& update)
+{
+    FileBrowserEntryIdleHelper* helper = update.helper;
+
+    if (helper->destroyed) {
+        if (helper->pending == 1) {
+            delete helper;
+        } else {
+            --helper->pending;
+        }
+
+        delete update.img;
+        return;
+    }
+
+    if (update.generation != helper->imageUpdateGeneration.load()) {
+        discardQueuedImageUpdate(helper, update.img);
+        return;
+    }
+
+    helper->fbentry->_updateImage(
+        update.img,
+        update.size,
+        update.deviceScale,
+        update.imageScale,
+        update.crop);
+    --helper->pending;
+}
+
+gboolean drainQueuedImageUpdates(gpointer)
+{
+    using clock = std::chrono::steady_clock;
+
+    constexpr std::size_t MAX_UPDATES_PER_IDLE = 64;
+    constexpr std::size_t MIN_UPDATES_PER_IDLE = 8;
+    constexpr std::size_t IMAGE_UPDATE_DRAIN_CHUNK = 8;
+    constexpr auto IMAGE_UPDATE_IDLE_BUDGET = std::chrono::milliseconds(8);
+
+    const auto start = clock::now();
+    std::size_t processed = 0;
+    std::vector<QueuedImageUpdate> updates;
+    updates.reserve(IMAGE_UPDATE_DRAIN_CHUNK);
+
+    {
+        std::lock_guard<std::mutex> lock(queuedImageUpdatesMutex);
+        if (queuedImageUpdatePauseDepth.load(std::memory_order_acquire) > 0) {
+            queuedImageUpdateIdlePending = false;
+            return FALSE;
+        }
+    }
+
+    while (processed < MAX_UPDATES_PER_IDLE) {
+        if (processed >= MIN_UPDATES_PER_IDLE
+            && clock::now() - start >= IMAGE_UPDATE_IDLE_BUDGET) {
+            break;
+        }
+
+        updates.clear();
+        {
+            std::lock_guard<std::mutex> lock(queuedImageUpdatesMutex);
+
+            if (queuedImageUpdatePauseDepth.load(std::memory_order_acquire) > 0) {
+                queuedImageUpdateIdlePending = false;
+                return FALSE;
+            }
+
+            if (queuedImageUpdates.empty()) {
+                queuedImageUpdateIdlePending = false;
+                return FALSE;
+            }
+
+            const std::size_t count = std::min(
+                IMAGE_UPDATE_DRAIN_CHUNK,
+                std::min(queuedImageUpdates.size(), MAX_UPDATES_PER_IDLE - processed)
+            );
+
+            for (std::size_t i = 0; i < count; ++i) {
+                updates.push_back(std::move(queuedImageUpdates.front()));
+                queuedImageUpdateIndex.erase(updates.back().helper);
+                queuedImageUpdates.pop_front();
+            }
+        }
+
+        for (auto& update : updates) {
+            applyQueuedImageUpdate(update);
+            ++processed;
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(queuedImageUpdatesMutex);
+    if (queuedImageUpdates.empty()) {
+        queuedImageUpdateIdlePending = false;
+        return FALSE;
+    }
+
+    return TRUE;
+}
+
+void queueImageUpdate(QueuedImageUpdate&& update)
+{
+    bool schedule = false;
+    {
+        std::lock_guard<std::mutex> lock(queuedImageUpdatesMutex);
+
+        const auto existing = queuedImageUpdateIndex.find(update.helper);
+        if (existing != queuedImageUpdateIndex.end()) {
+            discardQueuedImageUpdate(existing->second->helper, existing->second->img);
+            *existing->second = std::move(update);
+            return;
+        }
+
+        queuedImageUpdates.push_back(std::move(update));
+        auto inserted = queuedImageUpdates.end();
+        --inserted;
+        queuedImageUpdateIndex[inserted->helper] = inserted;
+
+        if (!queuedImageUpdateIdlePending) {
+            queuedImageUpdateIdlePending = true;
+            schedule = queuedImageUpdatePauseDepth.load(std::memory_order_acquire) == 0;
+            if (!schedule) {
+                queuedImageUpdateIdlePending = false;
+            }
+        }
+    }
+
+    if (schedule) {
+        gdk_threads_add_idle_full(G_PRIORITY_LOW, drainQueuedImageUpdates, nullptr, nullptr);
+    }
+}
+
+} // namespace
+
+void FileBrowserEntry::pauseQueuedImageUpdates()
+{
+    queuedImageUpdatePauseDepth.fetch_add(1, std::memory_order_acq_rel);
+}
+
+void FileBrowserEntry::resumeQueuedImageUpdates()
+{
+    unsigned depth = queuedImageUpdatePauseDepth.load(std::memory_order_acquire);
+    while (depth > 0) {
+        if (queuedImageUpdatePauseDepth.compare_exchange_weak(
+                depth,
+                depth - 1,
+                std::memory_order_acq_rel,
+                std::memory_order_acquire)) {
+            if (depth > 1) {
+                return;
+            }
+            break;
+        }
+    }
+
+    bool schedule = false;
+    {
+        std::lock_guard<std::mutex> lock(queuedImageUpdatesMutex);
+        if (!queuedImageUpdates.empty() && !queuedImageUpdateIdlePending) {
+            queuedImageUpdateIdlePending = true;
+            schedule = true;
+        }
+    }
+
+    if (schedule) {
+        gdk_threads_add_idle_full(G_PRIORITY_LOW, drainQueuedImageUpdates, nullptr, nullptr);
+    }
+}
+
+FileBrowserEntry::FileBrowserEntry (Thumbnail* thm, const Glib::ustring& fname)
+    : ThumbBrowserEntryBase (fname, thm), wasInside(false), iatlistener(nullptr), press_x(0), press_y(0), action_x(0), action_y(0), rot_deg(0.0), landscape(true), cropParams(new rtengine::procparams::CropParams), cropgl(nullptr), suppressThumbnailRefresh(false), lazyThumbnailRequestPending(false), thumbnailPreviewUsable_(false), state(SNormal), crop_custom_ratio(0.f)
+{
+    browserFileNameUpper_ = Glib::path_get_basename(fname);
+    std::transform(browserFileNameUpper_.begin(), browserFileNameUpper_.end(), browserFileNameUpper_.begin(), ::toupper);
+
     feih = new FileBrowserEntryIdleHelper;
     feih->fbentry = this;
     feih->destroyed = false;
     feih->pending = 0;
+    feih->imageUpdateGeneration = 0;
 
     italicstyle = thumbnail->getType() != FT_Raw;
-    datetimeline = thumbnail->getDateTimeString ();
-    exifline = thumbnail->getExifString ();
 
     scale = 1;
 
@@ -62,7 +274,7 @@ FileBrowserEntry::FileBrowserEntry (Thumbnail* thm, const Glib::ustring& fname)
 
 FileBrowserEntry::~FileBrowserEntry ()
 {
-    idle_register.destroy();
+    thumbImageUpdater->removeJobs (this);
 
     // so jobs arriving now do nothing
     if (feih->pending) {
@@ -71,8 +283,6 @@ FileBrowserEntry::~FileBrowserEntry ()
         delete feih;
         feih = nullptr;
     }
-
-    thumbImageUpdater->removeJobs (this);
 
     if (thumbnail) {
         thumbnail->removeThumbnailListener (this);
@@ -87,12 +297,17 @@ void FileBrowserEntry::init ()
     enqueuedIcon = std::shared_ptr<RTSurface>(new RTSurface("gears-small", Gtk::ICON_SIZE_SMALL_TOOLBAR));
     hdr = std::shared_ptr<RTSurface>(new RTSurface("filetype-hdr", Gtk::ICON_SIZE_SMALL_TOOLBAR));
     ps = std::shared_ptr<RTSurface>(new RTSurface("filetype-ps", Gtk::ICON_SIZE_SMALL_TOOLBAR));
+    FileThumbnailButtonSet::ensureIconsLoaded();
 }
 
 void FileBrowserEntry::refreshThumbnailImage(bool upgradeHint)
 {
 
     if (!thumbnail) {
+        return;
+    }
+
+    if (suppressThumbnailRefresh) {
         return;
     }
 
@@ -111,9 +326,148 @@ void FileBrowserEntry::refreshQuickThumbnailImage ()
         return;
     }
 
+    if (suppressThumbnailRefresh) {
+        return;
+    }
+
     // Only make a (slow) processed preview if the picture has been edited at all
-    bool upgrade_to_processed = (!App::get().options().internalThumbIfUntouched || thumbnail->isPParamsValid());
-    thumbImageUpdater->add(this, &updatepriority, upgrade_to_processed, false, this);
+    const bool upgrade_to_processed = (!App::get().options().internalThumbIfUntouched || thumbnail->isPParamsValid());
+    const bool request_upgrade = upgrade_to_processed && thumbnail->isQuick();
+    bool usablePreview = thumbnailPreviewUsable_.load(std::memory_order_acquire);
+    if (!usablePreview) {
+        usablePreview = hasUsableThumbnailPreview();
+    }
+    // Paint the cheap quick RAW thumbnail before queueing a processed upgrade.
+    // The redraw after that first paint will ask for the upgrade again.
+    const bool quickFirst = request_upgrade && !usablePreview;
+    const bool queue_upgrade = request_upgrade && !quickFirst;
+
+    if (!queue_upgrade && usablePreview) {
+        return;
+    }
+
+    thumbImageUpdater->add(this, &updatepriority, queue_upgrade, false, this);
+}
+
+void FileBrowserEntry::appendQuickThumbnailJob(std::vector<ThumbImageUpdater::Request>& requests, bool cachePixbuf)
+{
+    if (!thumbnail) {
+        return;
+    }
+
+    if (suppressThumbnailRefresh) {
+        return;
+    }
+
+    double cachedPixbufScale = 1.0;
+    const bool needsCachedPixbuf = cachePixbuf && !thumbnail->tryGetCachedPixbuf(cachedPixbufScale);
+
+    if (!needsCachedPixbuf && lazyThumbnailRequestPending.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    const bool upgrade_to_processed = (!App::get().options().internalThumbIfUntouched || thumbnail->isPParamsValid());
+    const bool request_upgrade = upgrade_to_processed && thumbnail->isQuick();
+    bool usablePreview = thumbnailPreviewUsable_.load(std::memory_order_acquire);
+    if (!usablePreview) {
+        usablePreview = hasUsableThumbnailPreview();
+    }
+    // Paint the cheap quick RAW thumbnail before queueing a processed upgrade.
+    // The redraw after that first paint will ask for the upgrade again.
+    const bool quickFirst = request_upgrade && !usablePreview;
+    const bool queue_upgrade = request_upgrade && !quickFirst;
+
+    if (!needsCachedPixbuf && !queue_upgrade && usablePreview) {
+        return;
+    }
+
+    if (lazyThumbnailRequestPending.exchange(true, std::memory_order_acq_rel) && !needsCachedPixbuf) {
+        return;
+    }
+
+    requests.push_back({this, &updatepriority, queue_upgrade, false, cachePixbuf || shouldCacheRenderedThumbnailPixbuf(), this});
+}
+
+bool FileBrowserEntry::cacheCurrentPreviewForQuickOpen()
+{
+    if (!thumbnail) {
+        return false;
+    }
+
+    double cachedScale = 1.0;
+    bool cachedPixbufBusy = false;
+    if (thumbnail->tryGetCachedPixbuf(cachedScale, &cachedPixbufBusy)) {
+        return true;
+    }
+    if (cachedPixbufBusy) {
+        return false;
+    }
+
+    Glib::RefPtr<Gdk::Pixbuf> pixbuf;
+    double previewScale = 1.0;
+    {
+        MyTryReaderLock lock(lockRW);
+        if (!lock.owns_lock()) {
+            return false;
+        }
+
+        if (preview.empty()
+            || previewDataLayout.width <= 0
+            || previewDataLayout.height <= 0
+            || preview.size() != static_cast<size_t>(previewDataLayout.width * previewDataLayout.height * 3)) {
+            return false;
+        }
+
+        pixbuf = Gdk::Pixbuf::create(
+            Gdk::COLORSPACE_RGB,
+            false,
+            8,
+            previewDataLayout.width,
+            previewDataLayout.height);
+        if (!pixbuf || !pixbuf->get_pixels()) {
+            return false;
+        }
+
+        const int srcStride = previewDataLayout.width * 3;
+        const int dstStride = pixbuf->get_rowstride();
+        guint8* const dstPixels = pixbuf->get_pixels();
+        for (int y = 0; y < previewDataLayout.height; ++y) {
+            std::copy(
+                preview.begin() + static_cast<size_t>(y * srcStride),
+                preview.begin() + static_cast<size_t>((y + 1) * srcStride),
+                dstPixels + y * dstStride);
+        }
+        previewScale = scale;
+    }
+
+    return thumbnail->trySetCachedPixbuf(pixbuf, previewScale, false);
+}
+
+bool FileBrowserEntry::hasUsableThumbnailPreview ()
+{
+    MYREADERLOCK(l, lockRW);
+
+    bool usable = false;
+    if (preview.empty() || activeDeviceScale != pendingDeviceScale) {
+        thumbnailPreviewUsable_.store(false, std::memory_order_release);
+        return false;
+    }
+
+    const hidpi::ScaledDeviceSize device = previewSize.scaleToDevice(activeDeviceScale);
+    const std::size_t expectedSize = static_cast<std::size_t>(device.width) * device.height * 3;
+
+    usable = previewDataLayout.width == device.width
+            && previewDataLayout.height == device.height
+            && preview.size() == expectedSize;
+    thumbnailPreviewUsable_.store(usable, std::memory_order_release);
+
+    return usable;
+}
+
+bool FileBrowserEntry::imageUpdateMatchesCurrentPreview (hidpi::LogicalSize size, int deviceScale)
+{
+    MYREADERLOCK(l, lockRW);
+    return size == previewSize && deviceScale == pendingDeviceScale;
 }
 
 void FileBrowserEntry::calcThumbnailSize ()
@@ -129,10 +483,47 @@ void FileBrowserEntry::calcThumbnailSize ()
         }();
 
         if (ow != previewSize.width || oh != previewSize.height || preview.size() != expected_size) {
+            thumbnailPreviewUsable_.store(false, std::memory_order_release);
             preview.clear();
-            refreshThumbnailImage();
+            lazyThumbnailRequestPending.store(false, std::memory_order_release);
+            if (!filtered) {
+                refreshThumbnailImage();
+            }
         }
     }
+}
+
+void FileBrowserEntry::onDeviceScaleChanged (int newDeviceScale)
+{
+    if (newDeviceScale != activeDeviceScale) {
+        thumbnailPreviewUsable_.store(false, std::memory_order_release);
+    }
+
+    ThumbBrowserEntryBase::onDeviceScaleChanged(newDeviceScale);
+}
+
+std::size_t FileBrowserEntry::getImageAreaIconState ()
+{
+    if (!thumbnail) {
+        return 0;
+    }
+
+    std::size_t state = 0;
+
+    if (thumbnail->isHDR() && hdr) {
+        state |= 1;
+    }
+
+    if (thumbnail->isPixelShift() && ps) {
+        state |= 2;
+    }
+
+    return state;
+}
+
+bool FileBrowserEntry::imageAreaIconsChanged ()
+{
+    return getImageAreaIconState() != bbImageAreaIconState;
 }
 
 std::vector<std::shared_ptr<RTSurface>> FileBrowserEntry::getIconsOnImageArea ()
@@ -230,6 +621,33 @@ FileThumbnailButtonSet* FileBrowserEntry::getThumbButtonSet ()
     return (static_cast<FileThumbnailButtonSet*>(buttonSet));
 }
 
+FileThumbnailButtonSet* FileBrowserEntry::ensureThumbButtonSet (LWButtonListener* listener)
+{
+    auto* thumbButtonSet = getThumbButtonSet();
+
+    if (!thumbButtonSet) {
+        thumbButtonSet = new FileThumbnailButtonSet(this);
+        addButtonSet(thumbButtonSet);
+    }
+
+    thumbButtonSet->setButtonListener(listener);
+    return thumbButtonSet;
+}
+
+void FileBrowserEntry::resizeWithoutThumbnailJob (int h)
+{
+    suppressThumbnailRefresh = true;
+    struct SuppressRefreshGuard {
+        FileBrowserEntry* entry;
+        ~SuppressRefreshGuard()
+        {
+            entry->suppressThumbnailRefresh = false;
+        }
+    } guard{this};
+
+    resize(h);
+}
+
 void FileBrowserEntry::procParamsChanged (Thumbnail* thm, int whoChangedIt, bool upgradeHint)
 {
 
@@ -243,78 +661,100 @@ void FileBrowserEntry::procParamsChanged (Thumbnail* thm, int whoChangedIt, bool
 void FileBrowserEntry::updateImage(const ThumbImageUpdateListener::ImageUpdate& update)
 {
     if (!feih) {
+        lazyThumbnailRequestPending.store(false, std::memory_order_release);
+        delete update.img;
         return;
     }
+
+    if (!imageUpdateMatchesCurrentPreview(update.size, update.device_scale)) {
+        thumbnailPreviewUsable_.store(false, std::memory_order_release);
+        lazyThumbnailRequestPending.store(false, std::memory_order_release);
+        delete update.img;
+        return;
+    }
+
     redrawRequests++;
     feih->pending++;
+    const std::uint64_t generation = ++feih->imageUpdateGeneration;
 
-    idle_register.add(
-        [this, update]() -> bool
-        {
-            if (feih->destroyed) {
-                if (feih->pending == 1) {
-                    delete feih;
-                } else {
-                    --feih->pending;
-                }
-
-                delete update.img;
-                return false;
-            }
-
-            feih->fbentry->_updateImage(update);
-            --feih->pending;
-
-            return false;
-        },
-        G_PRIORITY_LOW
-    );
+    queueImageUpdate({
+        feih,
+        update.img,
+        update.size,
+        update.device_scale,
+        update.scale,
+        update.crop,
+        generation
+    });
 }
 
-void FileBrowserEntry::_updateImage(const ThumbImageUpdateListener::ImageUpdate& update)
+void FileBrowserEntry::discardQueuedImageUpdate()
+{
+    --redrawRequests;
+}
+
+void FileBrowserEntry::_updateImage(
+    rtengine::IImage8* img,
+    hidpi::LogicalSize size,
+    int deviceScale,
+    double imageScale,
+    const rtengine::procparams::CropParams& crop)
 {
     MYWRITERLOCK(l, lockRW);
 
     redrawRequests--;
-    scale = update.scale;
-    *this->cropParams = update.crop;
+    if (!(size == previewSize) || deviceScale != pendingDeviceScale) {
+        thumbnailPreviewUsable_.store(false, std::memory_order_release);
+        lazyThumbnailRequestPending.store(false, std::memory_order_release);
+        delete img;
+        return;
+    }
 
-    int imw = update.img->getWidth();
-    int imh = update.img->getHeight();
+    int imw = img->getWidth();
+    int imh = img->getHeight();
 
     bool newLandscape = imw > imh;
     bool rotated = false;
 
-    if (update.size == previewSize && update.device_scale == pendingDeviceScale) {
-        activeDeviceScale = pendingDeviceScale;
+    scale = imageScale;
+    *this->cropParams = crop;
+    activeDeviceScale = pendingDeviceScale;
 
-        // Check if image has been rotated since last time
-        rotated = !preview.empty() && newLandscape != landscape;
+    // Check if image has been rotated since last time
+    rotated = !preview.empty() && newLandscape != landscape;
 
-        previewDataLayout.width = imw;
-        previewDataLayout.height = imh;
-        int dataSize = imw * imh * 3;
-        preview.resize(dataSize);
-        if (update.img->getData()) {
-            std::copy(update.img->getData(), update.img->getData() + preview.size(), preview.begin());
-        } else {
-            std::fill(preview.begin(), preview.end(), 0);
-        }
+    previewDataLayout.width = imw;
+    previewDataLayout.height = imh;
+    int dataSize = imw * imh * 3;
+    preview.resize(dataSize);
+    if (img->getData()) {
+        std::copy(img->getData(), img->getData() + preview.size(), preview.begin());
+    } else {
+        std::fill(preview.begin(), preview.end(), 0);
+    }
 
-        {
-            GThreadLock lock;
-            updateBackBuffer();
-        }
+    const bool updateBackBufferNow =
+        parent
+        && drawable
+        && insideWindow(0, 0, parent->getDrawingArea()->get_width(), parent->getDrawingArea()->get_height());
+
+    if (updateBackBufferNow) {
+        GThreadLock lock;
+        updateBackBuffer();
+    } else if (backBuffer) {
+        backBuffer->setDirty(true);
     }
 
     landscape = newLandscape;
 
-    delete update.img;
+    delete img;
+    thumbnailPreviewUsable_.store(true, std::memory_order_release);
+    lazyThumbnailRequestPending.store(false, std::memory_order_release);
 
     if (parent) {
         if (rotated) {
             parent->thumbRearrangementNeeded();
-        } else if (redrawRequests == 0) {
+        } else if (updateBackBufferNow && redrawRequests == 0) {
             parent->redrawNeeded(this);
         }
     }
@@ -325,8 +765,10 @@ bool FileBrowserEntry::motionNotify (int x, int y)
 
     const bool b = ThumbBrowserEntryBase::motionNotify(x, y);
 
-    const int ix = x - startx - ofsX;
-    const int iy = y - starty - ofsY;
+    const int offsetX = getOffsetX();
+    const int offsetY = getOffsetY();
+    const int ix = x - startx - offsetX;
+    const int iy = y - starty - offsetY;
 
     Inspector* inspector = parent->getInspector();
 
@@ -484,8 +926,10 @@ bool FileBrowserEntry::pressNotify   (int button, int type, int bstate, int x, i
     }
 
     ToolMode tm = iatlistener->getToolBar()->getTool ();
-    int ix = x - startx - ofsX;
-    int iy = y - starty - ofsY;
+    const int offsetX = getOffsetX();
+    const int offsetY = getOffsetY();
+    int ix = x - startx - offsetX;
+    int iy = y - starty - offsetY;
 
     if (tm == TMNone) {
         return b;
@@ -603,8 +1047,10 @@ bool FileBrowserEntry::releaseNotify (int button, int type, int bstate, int x, i
 
     bool b = ThumbBrowserEntryBase::releaseNotify (button, type, bstate, x, y);
 
-    int ix = x - startx - ofsX;
-    int iy = y - starty - ofsY;
+    const int offsetX = getOffsetX();
+    const int offsetY = getOffsetY();
+    int ix = x - startx - offsetX;
+    int iy = y - starty - offsetY;
 
     if (!b) {
         if (state == SRotateSelecting) {
@@ -849,20 +1295,22 @@ void FileBrowserEntry::drawStraightenGuide (Cairo::RefPtr<Cairo::Context> cr)
 
     {
     MYREADERLOCK(l, lockRW);
-    if (x2 < prevPos.x + ofsX + startx) {
-        y2 = y1 - (double)(y1 - y2) * (x1 - (prevPos.x + ofsX + startx)) / (x1 - x2);
-        x2 = prevPos.x + ofsX + startx;
-    } else if (x2 >= previewSize.width + prevPos.x + ofsX + startx) {
-        y2 = y1 - (double)(y1 - y2) * (x1 - (previewSize.width + prevPos.x + ofsX + startx - 1)) / (x1 - x2);
-        x2 = previewSize.width + prevPos.x + ofsX + startx - 1;
+    const int offsetX = getOffsetX();
+    const int offsetY = getOffsetY();
+    if (x2 < prevPos.x + offsetX + startx) {
+        y2 = y1 - (double)(y1 - y2) * (x1 - (prevPos.x + offsetX + startx)) / (x1 - x2);
+        x2 = prevPos.x + offsetX + startx;
+    } else if (x2 >= previewSize.width + prevPos.x + offsetX + startx) {
+        y2 = y1 - (double)(y1 - y2) * (x1 - (previewSize.width + prevPos.x + offsetX + startx - 1)) / (x1 - x2);
+        x2 = previewSize.width + prevPos.x + offsetX + startx - 1;
     }
 
-    if (y2 < prevPos.y + ofsY + starty) {
-        x2 = x1 - (double)(x1 - x2) * (y1 - (prevPos.y + ofsY + starty)) / (y1 - y2);
-        y2 = prevPos.y + ofsY + starty;
-    } else if (y2 >= previewSize.height + prevPos.y + ofsY + starty) {
-        x2 = x1 - (double)(x1 - x2) * (y1 - (previewSize.height + prevPos.y + ofsY + starty - 1)) / (y1 - y2);
-        y2 = previewSize.height + prevPos.y + ofsY + starty - 1;
+    if (y2 < prevPos.y + offsetY + starty) {
+        x2 = x1 - (double)(x1 - x2) * (y1 - (prevPos.y + offsetY + starty)) / (y1 - y2);
+        y2 = prevPos.y + offsetY + starty;
+    } else if (y2 >= previewSize.height + prevPos.y + offsetY + starty) {
+        x2 = x1 - (double)(x1 - x2) * (y1 - (previewSize.height + prevPos.y + offsetY + starty - 1)) / (y1 - y2);
+        y2 = previewSize.height + prevPos.y + offsetY + starty - 1;
     }
     }
 
@@ -896,4 +1344,3 @@ void FileBrowserEntry::drawStraightenGuide (Cairo::RefPtr<Cairo::Context> cr)
         cr->fill ();
     }
 }
-

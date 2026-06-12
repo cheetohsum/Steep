@@ -18,6 +18,10 @@
  */
 #pragma once
 
+#include <atomic>
+#include <chrono>
+#include <deque>
+#include <memory>
 #include <set>
 #include <string>
 
@@ -40,6 +44,7 @@ class BatchToolPanelCoordinator;
 class EditorPanel;
 class RTWindow;
 class DirBrowser;
+struct PreloadManager;
 
 class FilePanel final :
     public Gtk::Paned,
@@ -80,10 +85,16 @@ public:
 
     // interface fileselectionlistener
     bool fileSelected(Thumbnail* thm) override;
+    bool fileSelected(Thumbnail* thm, eRTNav preloadDirectionHint);
     bool addBatchQueueJobs(const std::vector<BatchQueueEntry*>& entries) override;
 
     void optionsChanged         ();
     bool imageLoaded( Thumbnail* thm, ProgressConnector<rtengine::InitialImage*> * );
+    static rtengine::InitialImage* loadAuxiliaryInitialImage(
+        const Glib::ustring& fname,
+        bool isRaw,
+        int* errorCode,
+        const std::shared_ptr<std::atomic<bool>>& cancel);
 
     bool handleShortcutKey (GdkEventKey* event);
     bool handleShortcutKeyRelease(GdkEventKey *event);
@@ -105,6 +116,14 @@ public:
 
 private:
     void on_NB_switch_page(Gtk::Widget* page, guint page_num);
+    void pauseBackgroundWorkForForeground();
+    void resumeBackgroundWorkAfterForeground();
+    void resumeBackgroundWorkIfCurrent(unsigned generation);
+    void resumeThumbnailWorkIfCurrent(unsigned generation);
+    void resumeThumbnailWorkNow();
+    void resumeBackgroundWorkNow();
+    void cancelScheduledBackgroundResume();
+    void scheduleAdjacentPreload(const Glib::ustring& fname, eRTNav preferredDirection, bool refreshThumbnails);
 
     PlacesBrowser* placesBrowser;
     RecentBrowser* recentBrowser;
@@ -123,14 +142,52 @@ private:
 
     struct pendingLoad {
         bool complete;
+        bool superseded;     // user clicked a newer image; discard result when decode finishes
+        std::shared_ptr<std::atomic<bool>> staleSkipped;
+        std::shared_ptr<std::atomic<bool>> quickPreviewAllowed;
         ProgressConnector<rtengine::InitialImage*> *pc;
         Thumbnail *thm;
         EditorPanel *epanel; // pre-created panel (tabbed mode only)
+        eRTNav preloadDirectionHint;
+        std::chrono::steady_clock::time_point startedAt;
+        sigc::connection delayedStartConn;
+        bool loadStarted;
+        unsigned long long foregroundPriorityId;
     };
     MyMutex pendingLoadMutex;
-    std::vector<struct pendingLoad*> pendingLoads;
+    std::deque<struct pendingLoad*> pendingLoads;
 
     int error;
+
+    // Preload cache for adjacent images (speeds up filmstrip navigation).
+    // Held in a shared_ptr so detached load threads can safely outlive FilePanel.
+    std::shared_ptr<PreloadManager> preload_;
+    std::shared_ptr<std::atomic<unsigned>> foregroundLoadGeneration_;
+    guint backgroundResumeTimeoutId_;
+    unsigned backgroundResumeGeneration_;
+    unsigned adjacentPreloadGeneration_;
+    bool backgroundWorkPausedForForeground_;
+    bool thumbnailWorkPausedForForeground_;
+    bool adjacentPreloadIdlePending_;
+    Glib::ustring adjacentPreloadFname_;
+    eRTNav adjacentPreloadDirection_;
+    bool adjacentPreloadRefreshThumbnails_;
+    Glib::ustring recentDirectionalPreloadFname_;
+    eRTNav recentDirectionalPreloadDirection_;
+    std::chrono::steady_clock::time_point recentDirectionalPreloadUntil_;
+    std::chrono::steady_clock::time_point lastDirectionalSelectionAt_;
+    eRTNav recentDirectionalSelectionDirection_;
+    int recentDirectionalSelectionGapMs_;
+    unsigned recentDirectionalSelectionRunLength_;
+    bool recentDirectionalSelectionWasRaw_;
+    unsigned recentDirectionalRawSelectionRunLength_;
+
+public:
+    void preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDirection = NAV_NONE, bool refreshThumbnails = true);
+
+private:
+
+    void cancelUnstartedPendingLoads(const char* reason, const Glib::ustring& currentFile = Glib::ustring());
 
     IdleRegister idle_register;
 

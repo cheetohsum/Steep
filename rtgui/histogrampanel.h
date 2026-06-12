@@ -18,7 +18,10 @@
  */
 #pragma once
 
+#include <atomic>
 #include <chrono>
+#include <memory>
+#include <mutex>
 #include <vector>
 
 #include <gtkmm.h>
@@ -141,8 +144,14 @@ public:
     static constexpr float MIN_BRIGHT = 0.1;
     static constexpr float MAX_BRIGHT = 3;
 private:
+    struct HistogramUpdateSnapshot;
+
     IdleRegister idle_register;
     type_signal_factor_changed sigFactorChanged;
+    std::mutex histogramUpdateMutex_;
+    std::shared_ptr<const HistogramUpdateSnapshot> pendingHistogramUpdate_;
+    bool histogramUpdateIdlePending_;
+    std::atomic<unsigned> histogramUpdateGeneration_;
 
 protected:
     // Histogram parameters

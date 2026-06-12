@@ -710,6 +710,8 @@ public:
     virtual void fullUpdate  () {}
     /** Sets the listener of the crop. */
     virtual void setListener (DetailedCropListener* il) {}
+    /** Clears a still-live listener without waiting for an in-flight crop update. */
+    virtual void detachListener () { setListener(nullptr); }
     /** Destroys the crop. */
     virtual void destroy () {}
 };
@@ -741,6 +743,7 @@ public:
       * function to start the image update.
       * @param change is the ID of the changed setting */
     virtual procparams::ProcParams* beginUpdateParams () = 0;
+    virtual procparams::ProcParams* tryBeginUpdateParams () = 0;
     /** An essential member function. This indicates that you are ready with the update of the processing parameters you got
       * with the beginUpdateParams call, so the image can be updated. This function returns immediately.
       * The image update starts immediately in the background. If it is ready, the result is passed to a PreviewImageListener

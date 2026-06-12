@@ -296,6 +296,7 @@ private:
     bool bridgeGlobalToSpot(rtengine::procparams::ProcParams* params, const rtengine::ProcEvent& event);
     void loadSpotIntoGlobalTools();
     void updateResetButtons();
+    void updateResetButtonsFromBaseline();
     void captureBaseline();
     rtengine::procparams::ProcParams baselineParams_;
     bool suppressResetUpdate_ = false;
@@ -439,6 +440,10 @@ public:
     bool getChangedState()
     {
         return hasChanged;
+    }
+    void resetChangedState()
+    {
+        hasChanged = false;
     }
     void updateCurveBackgroundHistogram(
         const LUTu& histToneCurve,
@@ -593,5 +598,15 @@ protected:
         bool cloneFavoriteTools);
 
 private:
+    void deferPanelChanged(const rtengine::ProcEvent& event, const Glib::ustring& descr);
+    bool retryDeferredPanelChanged();
+
+    bool deferredPanelChangePending_ = false;
+    bool deferredPanelChangeTimerActive_ = false;
+    rtengine::ProcEvent deferredPanelChangeEvent_;
+    Glib::ustring deferredPanelChangeDescr_;
+    sigc::connection deferredPanelChangeConn_;
+    unsigned deferredMetadataReadGeneration_ = 0;
+
     IdleRegister idle_register;
 };

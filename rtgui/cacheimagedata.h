@@ -18,6 +18,8 @@
  */
 #pragma once
 
+#include <string>
+
 #include <glibmm/ustring.h>
 
 #include "options.h"
@@ -25,6 +27,13 @@
 #include "rtengine/dnggainmap.h"
 #include "rtengine/imageformat.h"
 #include "rtengine/rtengine.h"
+
+namespace rtengine
+{
+
+class Thumbnail;
+
+}
 
 class CacheImageData :
     public rtengine::FramesMetaData
@@ -53,6 +62,7 @@ public:
     char  sec;
     // exif info
     bool  exifValid;
+    bool  exifAbsentKnown;
     unsigned short frameCount;
     double fnumber;
     double shutter;
@@ -68,13 +78,18 @@ public:
     int sensortype;
     rtengine::IIO_Sample_Format sampleFormat;
     Glib::ustring lens;
+    std::string lensRaw;
     Glib::ustring camMake;
     Glib::ustring camModel;
+    std::string camera;
     Glib::ustring filetype;
+    std::string filetypeRaw;
+    std::string filetypeUpper;
     Glib::ustring expcomp;
+    std::string expcompRaw;
 
-    // store a copy of the autoWB's multipliers computed in Thumbnail::_generateThumbnailImage
-    // they are not stored in the cache file by this class, but by rtengine::Thumbnail
+    // store a copy of the autoWB's multipliers computed in Thumbnail::_generateThumbnailImage.
+    // They are saved in the cache file by rtengine::Thumbnail and read here for cheap thumbnail setup.
     // -1 = Unknown
     double redAWBMul, greenAWBMul, blueAWBMul;
 
@@ -92,8 +107,17 @@ public:
 
     CacheImageData ();
 
-    int load (const Glib::ustring& fname);
+    int load (const Glib::ustring& fname, bool fileExistsKnown = false);
     int save (const Glib::ustring& fname);
+    int save (const Glib::ustring& fname, rtengine::Thumbnail* liveThumbData);
+    void updateCameraName();
+    void updateExifStrings();
+    void updateFiletypeUpper();
+    const std::string& getCameraName() const { return camera; }
+    const std::string& getFiletypeRaw() const { return filetypeRaw; }
+    const std::string& getFiletypeUpper() const { return filetypeUpper; }
+    const std::string& getLensRaw() const { return lensRaw; }
+    const std::string& getExpCompRaw() const { return expcompRaw; }
 
     //-------------------------------------------------------------------------
     // FramesMetaData interface
@@ -112,6 +136,7 @@ public:
     double getExpComp() const override { return atof(expcomp.c_str()); }
     std::string getMake() const override { return camMake; }
     std::string getModel() const override { return camModel; }
+    std::string getCamera() const { return camera; }
     std::string getLens() const override { return lens; }
     std::string getOrientation() const override { return ""; } // TODO
     Glib::ustring getFileName() const override { return ""; }

@@ -29,13 +29,6 @@ RecentBrowser::RecentBrowser ()
     recentDirs = Gtk::manage (new MyComboBoxText ());
     recentDirs->set_name("RecentFoldersCombo");
 
-    // Compact inline CSS
-    auto css = Gtk::CssProvider::create();
-    css->load_from_data(
-        "#RecentFoldersCombo { min-height: 0; padding: 1px 4px; font-size: 0.978em; }"
-    );
-    recentDirs->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-
     const auto& options = App::get().options();
     for(size_t i = 0; i < options.recentFolders.size(); i++) {
         recentDirs->append (options.recentFolders[i]);

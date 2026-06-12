@@ -120,6 +120,10 @@ public:
     {
         listener = tpl;
     }
+    const Glib::ustring& getToolName() const
+    {
+        return toolName;
+    }
     virtual void           setEditProvider (EditDataProvider *provider) {}
     virtual void           read            (const rtengine::procparams::ProcParams* pp, const ParamsEdited* pedited = nullptr) {}
     virtual void           write           (rtengine::procparams::ProcParams* pp, ParamsEdited* pedited = nullptr) {}

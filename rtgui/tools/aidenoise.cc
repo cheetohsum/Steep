@@ -130,6 +130,8 @@ AIDenoise::AIDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_AIDENOISE_LAB
         statusLabel->set_text(M("TP_AIDENOISE_STATUS_READY"));
     } else if (aidm.isDetecting()) {
         statusLabel->set_text("Detecting RawRefinery...");
+    } else {
+        statusLabel->set_text(M("TP_AIDENOISE_STATUS_NOT_AVAILABLE"));
     }
 
     show_all();
@@ -267,7 +269,8 @@ void AIDenoise::onDenoiseClicked ()
     }
 
     if (!aidm.isAvailable()) {
-        updateStatus(M("TP_AIDENOISE_STATUS_NOT_AVAILABLE"));
+        updateStatus("Detecting RawRefinery...");
+        aidm.detect();
         return;
     }
 

@@ -178,6 +178,7 @@ BatchQueue::~BatchQueue ()
     }
 
     idle_register.destroy();
+    clearVisibleEntries_();
 
     MYWRITERLOCK(l, entryRW);
 
@@ -494,6 +495,7 @@ void BatchQueue::cancelItems (const std::vector<ThumbBrowserEntryBase*>& items)
 
     {
         MYWRITERLOCK(l, entryRW);
+        clearVisibleEntries_();
 
         for (const auto item : items) {
 
@@ -837,6 +839,7 @@ rtengine::ProcessingJob* BatchQueue::imageReady(rtengine::IImagefloat* img)
 
     {
         MYWRITERLOCK(l, entryRW);
+        clearVisibleEntries_();
 
         delete processing;
         processing = nullptr;

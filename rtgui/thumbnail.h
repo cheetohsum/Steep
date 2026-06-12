@@ -52,6 +52,7 @@ class Thumbnail
 
     Glib::ustring   fname;              // file name corresponding to the thumbnail
     CacheImageData  cfs;                // cache entry corresponding to the thumbnail
+    Glib::ustring   cacheBaseName_;     // basename.md5 used for cache files
     CacheManager*   cachemgr;           // parent
     int             ref;                // variable for reference counting
     int             enqueueNumber;      // the number of instances in the batch queue corresponding to this thumbnail
@@ -73,14 +74,14 @@ class Thumbnail
     double          lastScale;          // scale of the cached ImageIO image
 
     // exif & date/time strings
-    Glib::ustring   exifString;
-    Glib::ustring   dateTimeString;
-    Glib::DateTime  dateTime;
+    mutable Glib::ustring   exifString;
+    mutable Glib::ustring   dateTimeString;
+    mutable Glib::DateTime  dateTime;
+    mutable bool            exifDateTimeStringsValid_ = false;
 
     // Cached low-res pixbuf for instant editor preview on image switch
     Glib::RefPtr<Gdk::Pixbuf> cachedPixbuf_;
     double cachedPixbufScale_ = 1.0;
-
     bool            initial_;
 
     // Properties holds values and edited states for rank, color and trashed
@@ -112,10 +113,14 @@ class Thumbnail
     std::vector<ThumbnailListener*> listeners;
 
     void            _loadThumbnail (bool firstTrial = true);
-    void            _saveThumbnail ();
+    void            _saveThumbnail (bool saveLiveThumbData = true);
     void            _generateThumbnailImage ();
+    void            initCachedThumbnailSize ();
+    rtengine::IImage8* processThumbImageLocked (const rtengine::procparams::ProcParams& pparams, int h, double& scale, bool cachePixbuf);
+    rtengine::IImage8* upgradeThumbImageLocked (const rtengine::procparams::ProcParams& pparams, int h, double& scale, bool forceUpgrade, bool cachePixbuf);
     int             infoFromImage (const Glib::ustring& fname);
-    void            generateExifDateTimeStrings ();
+    void            generateExifDateTimeStrings () const;
+    void            invalidateExifDateTimeStrings () const;
 
     Glib::ustring    getCacheFileName (const Glib::ustring& subdir, const Glib::ustring& fext) const;
 
@@ -125,8 +130,8 @@ class Thumbnail
     void saveXMPSidecarProperties();
 
 public:
-    Thumbnail (CacheManager* cm, const Glib::ustring& fname, CacheImageData* cf);
-    Thumbnail (CacheManager* cm, const Glib::ustring& fname, const std::string& md5, const std::string &xmpSidecarMd5);
+    Thumbnail (CacheManager* cm, const Glib::ustring& fname, CacheImageData* cf, const Glib::ustring& cacheBaseName);
+    Thumbnail (CacheManager* cm, const Glib::ustring& fname, const std::string& md5, const std::string &xmpSidecarMd5, const Glib::ustring& cacheBaseName);
     ~Thumbnail ();
 
     static int infoFromImage(const Glib::ustring &fname, CacheImageData &cfs);
@@ -141,7 +146,7 @@ public:
 
     void              setProcParams (const rtengine::procparams::ProcParams& pp, ParamsEdited* pe = nullptr, int whoChangedIt = -1, bool updateCacheNow = true, bool resetToDefault = false);
     void              clearProcParams (int whoClearedIt = -1);
-    void              loadProcParams ();
+    void              loadProcParams (bool resetToDefaults = true);
 
     void              notifylisterners_procParamsChanged(int whoChangedIt);
 
@@ -156,13 +161,60 @@ public:
     bool              isHDR () const;
 
 //        unsigned char*  getThumbnailImage (int &w, int &h, int fixwh=1); // fixwh = 0: fix w and calculate h, =1: fix h and calculate w
-    rtengine::IImage8* processThumbImage    (const rtengine::procparams::ProcParams& pparams, int h, double& scale);
+    rtengine::IImage8* processThumbImage    (const rtengine::procparams::ProcParams& pparams, int h, double& scale, bool cachePixbuf = false);
+    rtengine::IImage8* processThumbImage    (int h, double& scale, rtengine::procparams::CropParams* crop = nullptr, bool cachePixbuf = false);
     Glib::RefPtr<Gdk::Pixbuf> getCachedPixbuf(double& scale) {
         MyMutex::MyLock lock(mutex);
         scale = cachedPixbufScale_;
         return cachedPixbuf_;
     }
-    rtengine::IImage8* upgradeThumbImage    (const rtengine::procparams::ProcParams& pparams, int h, double& scale, bool forceUpgrade);
+    Glib::RefPtr<Gdk::Pixbuf> tryLoadCachedPreviewPixbuf(int h, double& scale);
+    void setCachedPixbuf(Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scale, bool copyPixbuf = true) {
+        MyMutex::MyLock lock(mutex);
+        cachedPixbuf_ = pixbuf
+            ? (copyPixbuf ? pixbuf->copy() : pixbuf)
+            : Glib::RefPtr<Gdk::Pixbuf>();
+        cachedPixbufScale_ = scale > 0.0 ? scale : 1.0;
+    }
+    bool trySetCachedPixbuf(Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scale, bool copyPixbuf = true) {
+        if (!mutex.trylock()) {
+            return false;
+        }
+
+        struct UnlockGuard {
+            MyMutex& mutex;
+            ~UnlockGuard() { mutex.unlock(); }
+        } guard{mutex};
+
+        cachedPixbuf_ = pixbuf
+            ? (copyPixbuf ? pixbuf->copy() : pixbuf)
+            : Glib::RefPtr<Gdk::Pixbuf>();
+        cachedPixbufScale_ = scale > 0.0 ? scale : 1.0;
+        return true;
+    }
+    Glib::RefPtr<Gdk::Pixbuf> tryGetCachedPixbuf(double& scale, bool* lockBusy = nullptr) {
+        if (lockBusy) {
+            *lockBusy = false;
+        }
+
+        if (!mutex.trylock()) {
+            if (lockBusy) {
+                *lockBusy = true;
+            }
+            scale = 1.0;
+            return {};
+        }
+
+        struct UnlockGuard {
+            MyMutex& mutex;
+            ~UnlockGuard() { mutex.unlock(); }
+        } guard{mutex};
+
+        scale = cachedPixbufScale_;
+        return cachedPixbuf_;
+    }
+    rtengine::IImage8* upgradeThumbImage    (const rtengine::procparams::ProcParams& pparams, int h, double& scale, bool forceUpgrade, bool cachePixbuf = false);
+    rtengine::IImage8* upgradeThumbImage    (int h, double& scale, bool forceUpgrade, rtengine::procparams::CropParams* crop = nullptr, bool cachePixbuf = false);
     void            getThumbnailSize        (int &w, int &h, const rtengine::procparams::ProcParams *pparams = nullptr);
     void            getFinalSize            (const rtengine::procparams::ProcParams& pparams, int& w, int& h);
     void            getOriginalSize         (int& w, int& h) const;
@@ -176,7 +228,7 @@ public:
     void                  applyAutoExp (rtengine::procparams::ProcParams& pparams);
 
     ThFileType      getType () const;
-    Glib::ustring   getFileName () const
+    const Glib::ustring& getFileName () const
     {
         return fname;
     }
@@ -201,6 +253,7 @@ public:
 
     void            addThumbnailListener (ThumbnailListener* tnl);
     void            removeThumbnailListener (ThumbnailListener* tnl);
+    bool            removeThumbnailListenerNoRelease (ThumbnailListener* tnl);
 
     void            increaseRef ();
     void            decreaseRef ();

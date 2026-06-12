@@ -20,17 +20,82 @@
 #include <cmath>
 #include <thread>
 #include <algorithm>
+#include <mutex>
 
 #include "rtengine/rt_math.h"
 
 #include "thumbnail.h"
 #include "../rtengine/iimage.h"
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+namespace
+{
+
+std::mutex& previewStripGenerationMutex()
+{
+    static std::mutex mutex;
+    return mutex;
+}
+
+class PreviewStripOpenMPGuard
+{
+public:
+    PreviewStripOpenMPGuard()
+    {
+#ifdef _OPENMP
+        previousThreads_ = std::max(1, omp_get_max_threads());
+        omp_set_num_threads(1);
+#endif
+    }
+
+    ~PreviewStripOpenMPGuard()
+    {
+#ifdef _OPENMP
+        omp_set_num_threads(previousThreads_);
+#endif
+    }
+
+private:
+#ifdef _OPENMP
+    int previousThreads_ = 1;
+#endif
+};
+
+int visibleWidgetWidth(Gtk::Widget* widget)
+{
+    if (!widget) {
+        return 1;
+    }
+
+    int width = widget->get_allocated_width();
+    Gtk::Widget* child = widget;
+
+    for (Gtk::Widget* parent = child->get_parent(); parent; parent = parent->get_parent()) {
+        const int parentWidth = parent->get_allocated_width();
+        if (parentWidth > 0) {
+            const int x = child->get_allocation().get_x();
+            const int available = x >= 0 && x < parentWidth ? parentWidth - x : parentWidth;
+            width = width > 0 ? std::min(width, available) : available;
+        }
+
+        child = parent;
+    }
+
+    return std::max(1, width);
+}
+
+}
+
 PreviewStrip::PreviewStrip()
 {
     set_can_focus(false);
     add_events(Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::POINTER_MOTION_MASK);
     set_size_request(-1, STRIP_HEIGHT);
+    set_hexpand(true);
+    set_halign(Gtk::ALIGN_FILL);
     set_margin_start(4);
     set_margin_end(4);
     set_margin_top(2);
@@ -39,19 +104,29 @@ PreviewStrip::PreviewStrip()
 
 PreviewStrip::~PreviewStrip()
 {
-    if (cancelToken_) {
-        cancelToken_->store(true);
+    if (aliveToken_) {
+        aliveToken_->store(false, std::memory_order_release);
     }
+    cancelThumbnailGeneration();
     if (debounceConn_.connected()) {
         debounceConn_.disconnect();
     }
     if (dragThrottleConn_.connected()) {
         dragThrottleConn_.disconnect();
     }
+    if (commitConn_.connected()) {
+        commitConn_.disconnect();
+    }
 }
 
 void PreviewStrip::setThumbnail(Thumbnail* thm)
 {
+    if (thumbnail_ != thm) {
+        cancelThumbnailGeneration();
+        thumbnails_.clear();
+        queue_draw();
+    }
+
     thumbnail_ = thm;
     regenerateThumbnails();
 }
@@ -93,6 +168,8 @@ void PreviewStrip::regenerateThumbnails()
         return;
     }
 
+    cancelThumbnailGeneration();
+
     if (debounceConn_.connected()) {
         debounceConn_.disconnect();
     }
@@ -100,7 +177,7 @@ void PreviewStrip::regenerateThumbnails()
     debounceConn_ = Glib::signal_timeout().connect([this]() {
         generateThumbnailsAsync();
         return false;
-    }, 500);
+    }, THUMB_START_DELAY_MS);
 }
 
 void PreviewStrip::generateThumbnailsAsync()
@@ -121,13 +198,23 @@ void PreviewStrip::generateThumbnailsAsync()
     thm->increaseRef(); // prevent thumbnail deletion while thread runs
     ParamModifier modifier = paramModifier_;
     PreviewStrip* self = this;
+    auto alive = aliveToken_;
 
-    std::thread([self, params, thm, cancel, modifier]() {
+    std::thread([self, params, thm, cancel, modifier, alive]() {
+        std::unique_lock<std::mutex> generationLock(previewStripGenerationMutex());
+        if (cancel->load(std::memory_order_acquire)
+            || !alive->load(std::memory_order_acquire)) {
+            thm->decreaseRef();
+            return;
+        }
+
+        PreviewStripOpenMPGuard ompGuard;
         auto results = std::make_shared<std::vector<Glib::RefPtr<Gdk::Pixbuf>>>();
         results->reserve(NUM_THUMBS);
 
         for (int i = 0; i < NUM_THUMBS; ++i) {
-            if (cancel->load()) {
+            if (cancel->load(std::memory_order_acquire)
+                || !alive->load(std::memory_order_acquire)) {
                 thm->decreaseRef();
                 return;
             }
@@ -144,7 +231,8 @@ void PreviewStrip::generateThumbnailsAsync()
                 continue;
             }
 
-            if (cancel->load()) {
+            if (cancel->load(std::memory_order_acquire)
+                || !alive->load(std::memory_order_acquire)) {
                 delete img;
                 thm->decreaseRef();
                 return;
@@ -163,19 +251,35 @@ void PreviewStrip::generateThumbnailsAsync()
 
         thm->decreaseRef();
 
-        if (cancel->load()) return;
+        if (cancel->load(std::memory_order_acquire)
+            || !alive->load(std::memory_order_acquire)) {
+            return;
+        }
 
-        Glib::signal_idle().connect_once([self, results, cancel]() {
-            if (cancel->load()) return;
+        Glib::signal_idle().connect_once([self, results, cancel, alive]() {
+            if (cancel->load(std::memory_order_acquire)
+                || !alive->load(std::memory_order_acquire)) {
+                return;
+            }
             self->thumbnails_ = *results;
             self->queue_draw();
         });
     }).detach();
 }
 
+void PreviewStrip::cancelThumbnailGeneration()
+{
+    if (cancelToken_) {
+        cancelToken_->store(true, std::memory_order_release);
+    }
+    if (debounceConn_.connected()) {
+        debounceConn_.disconnect();
+    }
+}
+
 void PreviewStrip::handleDrag(double x)
 {
-    int w = get_allocated_width();
+    int w = visibleWidgetWidth(this);
     if (w <= 0) return;
     scrubberPos_ = std::max(-1.0, std::min(1.0, (x / w) * 2.0 - 1.0));
     queue_draw();
@@ -186,6 +290,12 @@ Gtk::SizeRequestMode PreviewStrip::get_request_mode_vfunc() const
     return Gtk::SIZE_REQUEST_CONSTANT_SIZE;
 }
 
+void PreviewStrip::get_preferred_width_vfunc(int& min, int& natural) const
+{
+    min = 120;
+    natural = STRIP_WIDTH;
+}
+
 void PreviewStrip::get_preferred_height_vfunc(int& min, int& natural) const
 {
     min = STRIP_HEIGHT;
@@ -194,12 +304,14 @@ void PreviewStrip::get_preferred_height_vfunc(int& min, int& natural) const
 
 bool PreviewStrip::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
 {
-    const int w = get_allocated_width();
+    const int w = visibleWidgetWidth(this);
     const int h = get_allocated_height();
 
     if (w <= 0 || h <= 0) return true;
 
     cr->save();
+    cr->rectangle(0, 0, w, h);
+    cr->clip();
 
     // Pill-shaped clip
     double r = CORNER_RADIUS;
@@ -300,19 +412,19 @@ bool PreviewStrip::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
 bool PreviewStrip::on_button_press_event(GdkEventButton* event)
 {
     if (event->button == 1) {
+        if (commitConn_.connected()) {
+            commitConn_.disconnect();
+        }
+        pendingCommitParams_.reset();
+
         // Snapshot current params as the baseline for this entire drag gesture.
         // All modifier calls during the drag use this snapshot, preventing compounding.
         if (currentParams_) {
             dragBaseParams_ = std::make_shared<rtengine::procparams::ProcParams>(*currentParams_);
         }
         isDragging_ = true;
+        dragPending_ = false;
         handleDrag(event->x);
-
-        if (dragCallback_ && dragBaseParams_ && paramModifier_) {
-            rtengine::procparams::ProcParams pp = *dragBaseParams_;
-            paramModifier_(pp, scrubberPos_);
-            dragCallback_(pp, scrubberPos_);
-        }
         return true;
     }
     return false;
@@ -331,13 +443,26 @@ bool PreviewStrip::on_button_release_event(GdkEventButton* event)
         if (dragBaseParams_ && paramModifier_) {
             rtengine::procparams::ProcParams pp = *dragBaseParams_;
             paramModifier_(pp, scrubberPos_);
-            if (releaseCallback_) {
-                releaseCallback_(pp, scrubberPos_);
-            } else if (dragCallback_) {
-                dragCallback_(pp, scrubberPos_);
+            pendingCommitParams_ = std::make_shared<rtengine::procparams::ProcParams>(pp);
+            pendingCommitPos_ = scrubberPos_;
+
+            if (commitConn_.connected()) {
+                commitConn_.disconnect();
             }
-            // Accept the final modified params as the new baseline.
-            currentParams_ = std::make_shared<rtengine::procparams::ProcParams>(pp);
+
+            commitConn_ = Glib::signal_timeout().connect([this]() {
+                if (pendingCommitParams_) {
+                    if (releaseCallback_) {
+                        releaseCallback_(*pendingCommitParams_, pendingCommitPos_);
+                    } else if (dragCallback_) {
+                        dragCallback_(*pendingCommitParams_, pendingCommitPos_);
+                    }
+                    // Accept the final modified params as the new baseline.
+                    currentParams_ = pendingCommitParams_;
+                    pendingCommitParams_.reset();
+                }
+                return false;
+            }, 150);
         }
         dragBaseParams_.reset();
         return true;
@@ -350,20 +475,22 @@ bool PreviewStrip::on_motion_notify_event(GdkEventMotion* event)
     if (isDragging_) {
         handleDrag(event->x);
 
-        // Throttle: mark drag as pending, fire at most every 150ms
-        dragPending_ = true;
-        if (!dragThrottleConn_.connected()) {
+        if (!dragPending_ && dragBaseParams_ && paramModifier_ && dragCallback_) {
+            dragPending_ = true;
             dragThrottleConn_ = Glib::signal_timeout().connect([this]() {
-                if (dragPending_ && dragCallback_ && dragBaseParams_ && paramModifier_) {
-                    dragPending_ = false;
-                    rtengine::procparams::ProcParams pp = *dragBaseParams_;
-                    paramModifier_(pp, scrubberPos_);
-                    dragCallback_(pp, scrubberPos_);
+                dragPending_ = false;
+                if (!isDragging_ || !dragBaseParams_ || !paramModifier_ || !dragCallback_) {
+                    return false;
                 }
-                // Keep timer alive while dragging
-                return isDragging_;
-            }, 150);
+
+                rtengine::procparams::ProcParams pp = *dragBaseParams_;
+                paramModifier_(pp, scrubberPos_);
+                dragCallback_(pp, scrubberPos_);
+
+                return false;
+            }, 120);
         }
+
         return true;
     }
     return false;

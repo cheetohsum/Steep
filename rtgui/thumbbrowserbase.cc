@@ -14,6 +14,7 @@
  *  You should have received a copy of the GNU General Public License
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include <algorithm>
 #include <numeric>
 
 #include <glibmm/ustring.h>
@@ -62,12 +63,8 @@ ThumbBrowserBase::ThumbBrowserBase ()
 
 void ThumbBrowserBase::scrollChanged ()
 {
-    {
-        MYWRITERLOCK(l, entryRW);
-
-        for (size_t i = 0; i < fd.size(); i++) {
-            fd[i]->setOffset ((int)(hscroll.get_value()), (int)(vscroll.get_value()));
-        }
+    for (auto* entry : visibleEntries_) {
+        entry->setOffset((int)(hscroll.get_value()), (int)(vscroll.get_value()));
     }
 
     internal.setPosition ((int)(hscroll.get_value()), (int)(vscroll.get_value()));
@@ -76,6 +73,79 @@ void ThumbBrowserBase::scrollChanged ()
         internal.setDirty ();
         internal.queue_draw ();
     }
+}
+
+ThumbBrowserBase::ViewportRelation ThumbBrowserBase::viewportRelation_(const ThumbBrowserEntryBase* entry, int x, int y, int w, int h) const
+{
+    const int entryX = entry->getX();
+    const int entryY = entry->getY();
+    const int entryW = entry->getEffectiveWidth();
+    const int entryH = entry->getEffectiveHeight();
+    const int right = x + w;
+    const int bottom = y + h;
+
+    if (arrangement == TB_Horizontal) {
+        if (entryX + entryW < x) {
+            return VREL_BEFORE;
+        }
+        if (entryX > right) {
+            return VREL_AFTER;
+        }
+        if (entryY + entryH < y || entryY > bottom) {
+            return VREL_OUTSIDE;
+        }
+    } else {
+        if (entryY + entryH < y) {
+            return VREL_BEFORE;
+        }
+        if (entryY > bottom) {
+            return VREL_AFTER;
+        }
+        if (entryX + entryW < x || entryX > right) {
+            return VREL_OUTSIDE;
+        }
+    }
+
+    return VREL_INSIDE;
+}
+
+std::size_t ThumbBrowserBase::firstViewportCandidate_(int x, int y) const
+{
+    const int viewportStart = arrangement == TB_Horizontal
+        ? x - getScrollOffsetX()
+        : y - getScrollOffsetY();
+
+    const auto first = std::lower_bound(
+        drawableEntries_.begin(),
+        drawableEntries_.end(),
+        viewportStart,
+        [this](const ThumbBrowserEntryBase* entry, int value)
+        {
+            const int entryEnd = arrangement == TB_Horizontal
+                ? entry->getStartX() + entry->getEffectiveWidth()
+                : entry->getStartY() + entry->getEffectiveHeight();
+
+            return entryEnd < value;
+        });
+
+    return static_cast<std::size_t>(first - drawableEntries_.begin());
+}
+
+void ThumbBrowserBase::rebuildDrawableEntries_()
+{
+    drawableEntries_.clear();
+    drawableEntries_.reserve(fd.size());
+
+    for (auto* entry : fd) {
+        if (entry->drawable) {
+            drawableEntries_.push_back(entry);
+        }
+    }
+}
+
+void ThumbBrowserBase::syncEntryOffset_(ThumbBrowserEntryBase* entry)
+{
+    entry->setOffset((int)(hscroll.get_value()), (int)(vscroll.get_value()));
 }
 
 void ThumbBrowserBase::scroll (int direction, double deltaX, double deltaY)
@@ -586,8 +656,7 @@ void ThumbBrowserBase::configScrollBars ()
             auto ha = hscroll.get_adjustment();
             int iw = internal.get_width();
             ha->set_upper(inW);
-            int stepW = 0;
-            for (const auto* e : fd) { if (!e->filtered) { stepW = e->getEffectiveWidth(); break; } }
+            const int stepW = drawableEntries_.empty() ? 0 : drawableEntries_.front()->getEffectiveWidth();
             ha->set_step_increment(stepW);
             ha->set_page_increment(iw);
             ha->set_page_size(iw);
@@ -602,8 +671,7 @@ void ThumbBrowserBase::configScrollBars ()
 
         auto va = vscroll.get_adjustment();
         va->set_upper(inH);
-        int height = 0;
-        for (const auto* e : fd) { if (!e->filtered) { height = e->getEffectiveHeight(); break; } }
+        const int height = drawableEntries_.empty() ? 0 : drawableEntries_.front()->getEffectiveHeight();
         va->set_step_increment(height);
         va->set_page_increment(height == 0 ? ih : (ih / height) * height);
         va->set_page_size(ih);
@@ -622,11 +690,12 @@ void ThumbBrowserBase::configScrollBars ()
     }
 }
 
-void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry)
+void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry, bool filterStateCurrent)
 {
 
     if (fd.empty()) {
         // nothing to arrange
+        clearDrawableEntries_();
         resizeThumbnailArea(0, 0);
         return;
     }
@@ -644,6 +713,13 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry)
     // We could lock it one more time, there's no harm excepted (negligible) speed penalty
     //GThreadLock lock;
 
+    const bool fullRelayout = !entry;
+    const bool buildDrawableEntriesInline = fullRelayout || arrangement == TB_Horizontal;
+    if (buildDrawableEntriesInline) {
+        drawableEntries_.clear();
+        drawableEntries_.reserve(fd.size());
+    }
+
     int rowHeight = 0;
     if (entry) {
         // we got the reference to the added entry, makes calculation of rowHeight O(1)
@@ -651,13 +727,19 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry)
     } else {
 
         lastRowHeight = 0;
-        for (const auto thumb : fd) {
-            // apply filter
-            thumb->filtered = !checkFilter(thumb);
-            // compute max rowHeight
-            if (!thumb->filtered) {
-                rowHeight = std::max(thumb->getMinimalHeight(), rowHeight);
+        for (auto* thumb : fd) {
+            if (!filterStateCurrent) {
+                thumb->filtered = !checkFilter(thumb);
             }
+
+            if (thumb->filtered) {
+                thumb->setPosition(-10000, -10000, thumb->getMinimalWidth(), 0);
+                thumb->drawable = false;
+                continue;
+            }
+
+            rowHeight = std::max(thumb->getMinimalHeight(), rowHeight);
+            drawableEntries_.push_back(thumb);
         }
     }
 
@@ -666,7 +748,14 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry)
 
         int currx = 0;
 
-        for (unsigned int ct = 0; ct < fd.size(); ) {
+        if (fullRelayout) {
+            for (auto* thumb : drawableEntries_) {
+                const int maxw = thumb->getMinimalWidth();
+                thumb->setPosition(currx, 0, maxw, rowHeight);
+                thumb->drawable = true;
+                currx += maxw;
+            }
+        } else for (unsigned int ct = 0; ct < fd.size(); ) {
             // skip filtered entries — position off-screen
             if (fd[ct]->filtered) {
                 fd[ct]->setPosition(-10000, -10000, fd[ct]->getMinimalWidth(), rowHeight);
@@ -678,24 +767,29 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry)
             const int maxw = fd[ct]->getMinimalWidth();
             fd[ct]->setPosition(currx, 0, maxw, rowHeight);
             fd[ct]->drawable = true;
+            drawableEntries_.push_back(fd[ct]);
             currx += maxw;
             ++ct;
         }
 
+        if (!buildDrawableEntriesInline) {
+            rebuildDrawableEntries_();
+        }
         MYREADERLOCK_RELEASE(l);
         // This will require a Writer access
         resizeThumbnailArea(currx, rowHeight);
     } else {
         const int availWidth = internal.get_width();
+        const std::vector<ThumbBrowserEntryBase*>& layoutEntries = fullRelayout ? drawableEntries_ : fd;
 
         // initial number of columns
         int oldNumOfCols = numOfCols;
         numOfCols = 0;
         int colsWidth = 0;
 
-        for (unsigned int i = 0; i < fd.size(); ++i) {
-            if (!fd[i]->filtered && colsWidth + fd[i]->getMinimalWidth() <= availWidth) {
-                colsWidth += fd[i]->getMinimalWidth();
+        for (unsigned int i = 0; i < layoutEntries.size(); ++i) {
+            if ((fullRelayout || !layoutEntries[i]->filtered) && colsWidth + layoutEntries[i]->getMinimalWidth() <= availWidth) {
+                colsWidth += layoutEntries[i]->getMinimalWidth();
                 ++numOfCols;
                 if(colsWidth > availWidth) {
                     --numOfCols;
@@ -714,12 +808,12 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry)
             // compute column widths
             colWidths.assign(numOfCols, 0);
 
-            for (unsigned int i = 0, j = 0; i < fd.size(); ++i) {
-                if (!fd[i]->filtered && fd[i]->getMinimalWidth() > colWidths[j % numOfCols]) {
-                    colWidths[j % numOfCols] = fd[i]->getMinimalWidth();
+            for (unsigned int i = 0, j = 0; i < layoutEntries.size(); ++i) {
+                if ((fullRelayout || !layoutEntries[i]->filtered) && layoutEntries[i]->getMinimalWidth() > colWidths[j % numOfCols]) {
+                    colWidths[j % numOfCols] = layoutEntries[i]->getMinimalWidth();
                 }
 
-                if (!fd[i]->filtered) {
+                if (fullRelayout || !layoutEntries[i]->filtered) {
                     ++j;
                 }
             }
@@ -791,6 +885,9 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry)
                     if (ct < fd.size()) {
                         fd[ct]->setPosition(currx, curry, colWidths[i], rowHeight);
                         fd[ct]->drawable = true;
+                        if (buildDrawableEntriesInline) {
+                            drawableEntries_.push_back(fd[ct]);
+                        }
                         currx += colWidths[i];
                         ++ct;
                     }
@@ -803,22 +900,27 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry)
         }
 
         // arrange remaining entries, if any, that's the most expensive part
-        for (; ct < fd.size();) {
+        for (; ct < layoutEntries.size();) {
 
             // arrange items in the row
             int currx = 0;
 
-            for (int i = 0; ct < fd.size() && i < numOfCols; ++i) {
+            for (int i = 0; ct < layoutEntries.size() && i < numOfCols; ++i) {
                 // skip filtered entries without consuming a column
-                while (ct < fd.size() && fd[ct]->filtered) {
-                    fd[ct]->setPosition(-10000, -10000, colWidths[i], rowHeight);
-                    fd[ct]->drawable = false;
-                    ++ct;
+                if (!fullRelayout) {
+                    while (ct < layoutEntries.size() && layoutEntries[ct]->filtered) {
+                        layoutEntries[ct]->setPosition(-10000, -10000, colWidths[i], rowHeight);
+                        layoutEntries[ct]->drawable = false;
+                        ++ct;
+                    }
                 }
 
-                if (ct < fd.size()) {
-                    fd[ct]->setPosition(currx, curry, colWidths[i], rowHeight);
-                    fd[ct]->drawable = true;
+                if (ct < layoutEntries.size()) {
+                    layoutEntries[ct]->setPosition(currx, curry, colWidths[i], rowHeight);
+                    layoutEntries[ct]->drawable = true;
+                    if (buildDrawableEntriesInline && !fullRelayout) {
+                        drawableEntries_.push_back(layoutEntries[ct]);
+                    }
                     currx += colWidths[i];
                     ++ct;
                 }
@@ -829,6 +931,9 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry)
             }
         }
 
+        if (!buildDrawableEntriesInline) {
+            rebuildDrawableEntries_();
+        }
         MYREADERLOCK_RELEASE(l);
         // This will require a Writer access
         resizeThumbnailArea(colsWidth, curry);
@@ -892,11 +997,27 @@ bool ThumbBrowserBase::Internal::on_query_tooltip (int x, int y, bool keyboard_t
     {
         MYREADERLOCK(l, parent->entryRW);
 
-        for (size_t i = 0; i < parent->fd.size(); i++)
-            if (parent->fd[i]->drawable && parent->fd[i]->inside (x, y)) {
-                std::tie(ttip, useMarkup) = parent->fd[i]->getToolTip (x, y);
+        const int w = get_width();
+        const int h = get_height();
+
+        const std::size_t first = parent->firstViewportCandidate_(0, 0);
+        for (size_t i = first; i < parent->drawableEntries_.size(); i++) {
+            auto* entry = parent->drawableEntries_[i];
+
+            const auto relation = parent->viewportRelation_(entry, 0, 0, w, h);
+            if (relation == ThumbBrowserBase::VREL_BEFORE || relation == ThumbBrowserBase::VREL_OUTSIDE) {
+                continue;
+            }
+            if (relation == ThumbBrowserBase::VREL_AFTER) {
                 break;
             }
+
+            parent->syncEntryOffset_(entry);
+            if (entry->inside (x, y)) {
+                std::tie(ttip, useMarkup) = entry->getToolTip (x, y);
+                break;
+            }
+        }
     }
 
     if (!ttip.empty()) {
@@ -971,15 +1092,26 @@ void ThumbBrowserBase::buttonPressed (int x, int y, int button, GdkEventType typ
     {
         MYREADERLOCK(l, entryRW);
 
-        for (size_t i = 0; i < fd.size(); i++)
-            if (fd[i]->drawable) {
-                if (fd[i]->inside (x, y) && fd[i]->insideWindow (clx, cly, clw, clh)) {
-                    fileDescr = fd[i];
-                }
+        const std::size_t first = firstViewportCandidate_(clx, cly);
+        for (size_t i = first; i < drawableEntries_.size(); i++) {
+            auto* entry = drawableEntries_[i];
 
-                bool b = fd[i]->pressNotify (button, type, state, x, y);
-                handled = handled || b;
+            const auto relation = viewportRelation_(entry, clx, cly, clw, clh);
+            if (relation == VREL_BEFORE || relation == VREL_OUTSIDE) {
+                continue;
             }
+            if (relation == VREL_AFTER) {
+                break;
+            }
+
+            syncEntryOffset_(entry);
+            if (entry->inside (x, y)) {
+                fileDescr = entry;
+            }
+
+            const bool b = entry->pressNotify (button, type, state, x, y);
+            handled = handled || b;
+        }
     }
 
     if (handled || (fileDescr && fileDescr->processing)) {
@@ -1042,20 +1174,71 @@ bool ThumbBrowserBase::Internal::on_draw(const ::Cairo::RefPtr< Cairo::Context> 
     cr->paint();
 
     style->render_background(cr, 0., 0., logical.width, logical.height);
-    Glib::RefPtr<Pango::Context> context = get_pango_context ();
-    context->set_font_description (style->get_font());
+
+    bool thumbnailPrioritiesChanged = false;
 
     {
         MYWRITERLOCK(l, parent->entryRW);
 
-        for (size_t i = 0; i < parent->fd.size() && !dirty; i++) { // if dirty meanwhile, cancel and wait for next redraw
-            if (!parent->fd[i]->drawable || !parent->fd[i]->insideWindow (0, 0, logical.width, logical.height)) {
-                parent->fd[i]->updatepriority = false;
-            } else {
-                parent->fd[i]->updatepriority = true;
-                parent->fd[i]->draw (cr);
+        parent->previousVisibleEntries_.swap(parent->visibleEntries_);
+        parent->visibleEntries_.clear();
+        parent->visibleEntries_.reserve(parent->previousVisibleEntries_.size());
+        parent->entriesToDraw_.clear();
+        parent->entriesToDraw_.reserve(parent->previousVisibleEntries_.size());
+
+        const std::size_t visibleGeneration = ++parent->visibleGenerationCounter_;
+        const std::size_t first = parent->firstViewportCandidate_(0, 0);
+        for (size_t i = first; i < parent->drawableEntries_.size() && !dirty; i++) { // if dirty meanwhile, cancel and wait for next redraw
+            auto* entry = parent->drawableEntries_[i];
+
+            const auto relation = parent->viewportRelation_(entry, 0, 0, logical.width, logical.height);
+            if (relation == ThumbBrowserBase::VREL_BEFORE || relation == ThumbBrowserBase::VREL_OUTSIDE) {
+                continue;
+            }
+            if (relation == ThumbBrowserBase::VREL_AFTER) {
+                break;
+            }
+
+            parent->syncEntryOffset_(entry);
+            if (!entry->updatepriority) {
+                thumbnailPrioritiesChanged = true;
+            }
+            entry->updatepriority = true;
+            entry->visibleGeneration = visibleGeneration;
+            parent->visibleEntries_.push_back(entry);
+            parent->entriesToDraw_.push_back(entry);
+        }
+
+        for (auto* entry : parent->previousVisibleEntries_) {
+            if (entry->visibleGeneration != visibleGeneration && entry->updatepriority) {
+                entry->updatepriority = false;
+                thumbnailPrioritiesChanged = true;
             }
         }
+
+        parent->previousVisibleEntries_.clear();
+    }
+
+    parent->visibleThumbnailRequests_.clear();
+    parent->visibleThumbnailRequests_.reserve(parent->entriesToDraw_.size());
+    for (auto* entry : parent->entriesToDraw_) {
+        entry->appendQuickThumbnailJob(parent->visibleThumbnailRequests_);
+    }
+
+    for (auto* entry : parent->entriesToDraw_) {
+        if (dirty) {
+            break;
+        }
+        entry->draw(cr);
+    }
+
+    if (!parent->visibleThumbnailRequests_.empty()) {
+        thumbImageUpdater->addBatch(parent->visibleThumbnailRequests_);
+        parent->visibleThumbnailRequests_.clear();
+    }
+    parent->entriesToDraw_.clear();
+    if (thumbnailPrioritiesChanged) {
+        thumbImageUpdater->prioritiesChanged();
     }
     // Frame border removed for cleaner look
 
@@ -1110,14 +1293,25 @@ bool ThumbBrowserBase::Internal::on_button_release_event (GdkEventButton* event)
 
     MYREADERLOCK(l, parent->entryRW);
 
-    for (size_t i = 0; i < parent->fd.size(); i++)
-        if (parent->fd[i]->drawable && parent->fd[i]->insideWindow (0, 0, w, h)) {
-            ThumbBrowserEntryBase* tbe = parent->fd[i];
-            MYREADERLOCK_RELEASE(l);
-            // This will require a Writer access...
-            tbe->releaseNotify (event->button, event->type, event->state, (int)event->x, (int)event->y);
-            MYREADERLOCK_ACQUIRE(l);
+    const std::size_t first = parent->firstViewportCandidate_(0, 0);
+    for (size_t i = first; i < parent->drawableEntries_.size(); i++) {
+        auto* entry = parent->drawableEntries_[i];
+
+        const auto relation = parent->viewportRelation_(entry, 0, 0, w, h);
+        if (relation == ThumbBrowserBase::VREL_BEFORE || relation == ThumbBrowserBase::VREL_OUTSIDE) {
+            continue;
         }
+        if (relation == ThumbBrowserBase::VREL_AFTER) {
+            break;
+        }
+
+        parent->syncEntryOffset_(entry);
+        ThumbBrowserEntryBase* tbe = entry;
+        MYREADERLOCK_RELEASE(l);
+        // This will require a Writer access...
+        tbe->releaseNotify (event->button, event->type, event->state, (int)event->x, (int)event->y);
+        MYREADERLOCK_ACQUIRE(l);
+    }
 
     return true;
 }
@@ -1130,10 +1324,21 @@ bool ThumbBrowserBase::Internal::on_motion_notify_event (GdkEventMotion* event)
 
     MYREADERLOCK(l, parent->entryRW);
 
-    for (size_t i = 0; i < parent->fd.size(); i++)
-        if (parent->fd[i]->drawable && parent->fd[i]->insideWindow (0, 0, w, h)) {
-            parent->fd[i]->motionNotify ((int)event->x, (int)event->y);
+    const std::size_t first = parent->firstViewportCandidate_(0, 0);
+    for (size_t i = first; i < parent->drawableEntries_.size(); i++) {
+        auto* entry = parent->drawableEntries_[i];
+
+        const auto relation = parent->viewportRelation_(entry, 0, 0, w, h);
+        if (relation == ThumbBrowserBase::VREL_BEFORE || relation == ThumbBrowserBase::VREL_OUTSIDE) {
+            continue;
         }
+        if (relation == ThumbBrowserBase::VREL_AFTER) {
+            break;
+        }
+
+        parent->syncEntryOffset_(entry);
+        entry->motionNotify ((int)event->x, (int)event->y);
+    }
 
     return true;
 }
@@ -1160,16 +1365,24 @@ void ThumbBrowserBase::resort ()
                 return options.sortDescending ? !lt : lt;
             }
         );
+        entriesOrderChanged_();
     }
 
     redraw ();
 }
 
-void ThumbBrowserBase::redraw (ThumbBrowserEntryBase* entry)
+void ThumbBrowserBase::redraw (ThumbBrowserEntryBase* entry, bool filterStateCurrent)
 {
 
     GThreadLock lock;
-    arrangeFiles(entry);
+    if (redrawPending_) {
+        redrawTimeout_.disconnect();
+        redrawPending_ = false;
+    }
+    if (!layoutPaused_) {
+        flushPendingInserts_();
+    }
+    arrangeFiles(entry, filterStateCurrent);
     if (arrangement == TB_Horizontal) {
         int allocated = internal.get_allocated_height();
         int content = getEffectiveHeight();
@@ -1252,26 +1465,113 @@ void ThumbBrowserBase::refreshThumbImages ()
 
 void ThumbBrowserBase::refreshQuickThumbImages ()
 {
-    MYWRITERLOCK(l, entryRW);
+    std::vector<ThumbBrowserEntryBase*> entries;
+    std::vector<ThumbBrowserEntryBase*> fallbackEntries;
+    std::vector<ThumbImageUpdater::Request> requests;
 
-    for (size_t i = 0; i < fd.size(); ++i) {
-        fd[i]->refreshQuickThumbnailImage ();
+    {
+        MYWRITERLOCK(l, entryRW);
+
+        const int viewportWidth = internal.get_width();
+        const int viewportHeight = internal.get_height();
+        if (viewportWidth > 0 && viewportHeight > 0 && !drawableEntries_.empty()) {
+            entries.reserve(std::min<std::size_t>(drawableEntries_.size(), 128));
+
+            const std::size_t first = firstViewportCandidate_(0, 0);
+            for (size_t i = first; i < drawableEntries_.size(); ++i) {
+                auto* entry = drawableEntries_[i];
+
+                const auto relation = viewportRelation_(entry, 0, 0, viewportWidth, viewportHeight);
+                if (relation == VREL_BEFORE || relation == VREL_OUTSIDE) {
+                    continue;
+                }
+                if (relation == VREL_AFTER) {
+                    break;
+                }
+
+                entries.push_back(entry);
+            }
+        } else {
+            entries.reserve(visibleEntries_.size());
+
+            for (auto* entry : visibleEntries_) {
+                if (entry->filtered) {
+                    continue;
+                }
+                entries.push_back(entry);
+            }
+        }
+
+        const std::size_t fallbackCount = std::min<std::size_t>(drawableEntries_.size(), 64);
+        fallbackEntries.reserve(fallbackCount);
+
+        for (size_t i = 0; i < fallbackCount; ++i) {
+            auto* entry = drawableEntries_[i];
+            if (entry->filtered) {
+                continue;
+            }
+            fallbackEntries.push_back(entry);
+        }
     }
+
+    requests.reserve(std::max(entries.size(), fallbackEntries.size()));
+    for (auto* entry : entries) {
+        entry->appendQuickThumbnailJob(requests);
+    }
+
+    if (requests.empty()) {
+        for (auto* entry : fallbackEntries) {
+            entry->appendQuickThumbnailJob(requests);
+        }
+    }
+
+    if (!requests.empty()) {
+        thumbImageUpdater->addBatch(requests);
+    }
+}
+
+void ThumbBrowserBase::clearVisibleEntries_()
+{
+    for (auto* entry : visibleEntries_) {
+        entry->updatepriority = false;
+    }
+    visibleEntries_.clear();
+    previousVisibleEntries_.clear();
+    entriesToDraw_.clear();
+    visibleThumbnailRequests_.clear();
+}
+
+void ThumbBrowserBase::clearDrawableEntries_()
+{
+    drawableEntries_.clear();
 }
 
 void ThumbBrowserBase::refreshEditedState (const std::set<Glib::ustring>& efiles)
 {
 
+    if (efiles.empty() && editedFiles.empty()) {
+        return;
+    }
+
     editedFiles = efiles;
+    const bool hasEditedFiles = !editedFiles.empty();
+    bool changed = false;
+
     {
         MYREADERLOCK(l, entryRW);
 
         for (size_t i = 0; i < fd.size(); i++) {
-            fd[i]->framed = editedFiles.find (fd[i]->filename) != editedFiles.end();
+            const bool framed = hasEditedFiles && editedFiles.find (fd[i]->filename) != editedFiles.end();
+            if (fd[i]->framed != framed) {
+                fd[i]->framed = framed;
+                changed = true;
+            }
         }
     }
 
-    queue_draw ();
+    if (changed) {
+        queue_draw ();
+    }
 }
 
 void ThumbBrowserBase::setArrangement (Arrangement a)
@@ -1328,6 +1628,33 @@ void ThumbBrowserBase::insertEntry (ThumbBrowserEntryBase* entry)
         pendingInserts_.push_back(entry);
     }
 
+    schedulePendingInsertRedraw_();
+}
+
+void ThumbBrowserBase::insertEntries (const std::vector<ThumbBrowserEntryBase*>& entries)
+{
+    if (entries.empty()) {
+        return;
+    }
+
+    {
+        MyMutex::MyLock lock(pendingMutex_);
+        pendingInserts_.reserve(pendingInserts_.size() + entries.size());
+        const int xoffset = static_cast<int>(hscroll.get_value());
+        const int yoffset = static_cast<int>(vscroll.get_value());
+
+        for (auto* entry : entries) {
+            entry->onDeviceScaleChanged(lastDeviceScale);
+            entry->setOffset(xoffset, yoffset);
+            pendingInserts_.push_back(entry);
+        }
+    }
+
+    schedulePendingInsertRedraw_();
+}
+
+void ThumbBrowserBase::schedulePendingInsertRedraw_()
+{
     // When layout is paused (during animations), just accumulate entries
     // without scheduling redraw — resumeLayout() will flush them all at once.
     if (layoutPaused_) {
@@ -1341,11 +1668,13 @@ void ThumbBrowserBase::insertEntry (ThumbBrowserEntryBase* entry)
     // a shorter debounce; grid layout is more expensive so we keep 150ms.
     if (!redrawPending_) {
         redrawPending_ = true;
-        const int debounceMs = (arrangement == TB_Horizontal) ? 50 : 150;
+        const int debounceMs = fd.empty()
+            ? 16
+            : (arrangement == TB_Horizontal ? 50 : 150);
         redrawTimeout_ = Glib::signal_timeout().connect(
             sigc::mem_fun(*this, &ThumbBrowserBase::onRedrawIdle_),
             debounceMs,
-            G_PRIORITY_LOW  // lower priority than previewReady callbacks
+            G_PRIORITY_DEFAULT_IDLE + 10
         );
     }
 }
@@ -1376,7 +1705,12 @@ void ThumbBrowserBase::resumeLayout ()
 bool ThumbBrowserBase::onRedrawIdle_ ()
 {
     redrawPending_ = false;
+    redraw();
+    return false;
+}
 
+void ThumbBrowserBase::flushPendingInserts_ ()
+{
     // Collect all pending entries
     std::vector<ThumbBrowserEntryBase*> batch;
     {
@@ -1389,32 +1723,47 @@ bool ThumbBrowserBase::onRedrawIdle_ ()
 
         const auto& options = App::get().options();
         auto cmp = [&](const ThumbBrowserEntryBase* a, const ThumbBrowserEntryBase* b) {
-            bool lt = a->compare(*b, options.sortMethod);
-            return options.sortDescending ? !lt : lt;
+            return options.sortDescending
+                ? b->compare(*a, options.sortMethod)
+                : a->compare(*b, options.sortMethod);
         };
 
-        // Sort the batch
-        std::sort(batch.begin(), batch.end(), cmp);
+        if (batch.size() > 1 && !std::is_sorted(batch.begin(), batch.end(), cmp)) {
+            std::sort(batch.begin(), batch.end(), cmp);
+        }
 
-        // Merge batch into the already-sorted fd vector in one O(N+M) pass
-        std::vector<ThumbBrowserEntryBase*> merged;
-        merged.reserve(fd.size() + batch.size());
-        auto itA = fd.begin();
-        auto itB = batch.begin();
-        while (itA != fd.end() && itB != batch.end()) {
-            if (cmp(*itA, *itB)) {
-                merged.push_back(*itA++);
+        // Merge batch into the already-sorted fd vector in-place from the end.
+        // This keeps the O(N+M) behavior while avoiding a full temporary copy of
+        // the browser list on every thumbnail-load redraw.
+        const std::size_t oldSize = fd.size();
+        const std::size_t batchSize = batch.size();
+        fd.resize(oldSize + batchSize);
+
+        std::size_t ia = oldSize;
+        std::size_t ib = batchSize;
+        std::size_t out = fd.size();
+
+        while (ia > 0 && ib > 0) {
+            ThumbBrowserEntryBase* a = fd[ia - 1];
+            ThumbBrowserEntryBase* b = batch[ib - 1];
+
+            if (cmp(a, b)) {
+                fd[--out] = b;
+                --ib;
             } else {
-                merged.push_back(*itB++);
+                fd[--out] = a;
+                --ia;
             }
         }
-        while (itA != fd.end()) merged.push_back(*itA++);
-        while (itB != batch.end()) merged.push_back(*itB++);
-        fd.swap(merged);
+
+        while (ib > 0) {
+            fd[--out] = batch[--ib];
+        }
+
+        entriesInserted_(batch);
+        entriesOrderChanged_();
     }
 
-    redraw();
-    return false;
 }
 
 void ThumbBrowserBase::getScrollPosition (double& h, double& v)
@@ -1429,6 +1778,16 @@ void ThumbBrowserBase::setScrollPosition (double h, double v)
     vscroll.set_value (v > vscroll.get_adjustment()->get_upper() ? vscroll.get_adjustment()->get_upper() : v);
 }
 
+int ThumbBrowserBase::getScrollOffsetX () const
+{
+    return -static_cast<int>(hscroll.get_value());
+}
+
+int ThumbBrowserBase::getScrollOffsetY () const
+{
+    return -static_cast<int>(vscroll.get_value());
+}
+
 // needed for auto-height in single tab
 int ThumbBrowserBase::getEffectiveHeight()
 {
@@ -1437,12 +1796,10 @@ int ThumbBrowserBase::getEffectiveHeight()
 
     MYREADERLOCK(l, entryRW);
 
-    // Filtered items do not change in size, so take a non-filtered
-    for (size_t i = 0; i < fd.size(); i++)
-        if (!fd[i]->filtered) {
-            h += fd[i]->getEffectiveHeight();
-            break;
-        }
+    // Filtered items do not change in size, so take an arranged drawable entry.
+    if (!drawableEntries_.empty()) {
+        h += drawableEntries_.front()->getEffectiveHeight();
+    }
 
     return h;
 }

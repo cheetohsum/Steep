@@ -23,12 +23,19 @@
 
 #include "rtsurface.h"
 
-std::map<std::pair<Glib::ustring, Gtk::IconSize>, std::shared_ptr<RTSurface>> RTImageCache::cache;
+std::map<std::tuple<Glib::ustring, int, int>, std::shared_ptr<RTSurface>> RTImageCache::cache;
 
 std::shared_ptr<RTSurface> RTImageCache::getCachedSurface(const Glib::ustring &icon_name, const Gtk::IconSize icon_size)
 {
+    int width;
+    int height;
+
+    if (!Gtk::IconSize::lookup(icon_size, width, height)) {
+        width = height = 16;
+    }
+
     // Look for an existing cached icon
-    const auto key = std::pair<Glib::ustring, Gtk::IconSize>(icon_name, icon_size);
+    const auto key = std::make_tuple(icon_name, width, height);
     const auto item = cache.find(key);
 
     if (item != cache.end()) { // A cached icon exists
@@ -53,7 +60,14 @@ void RTImageCache::updateCache()
     }
 }
 
-RTImage::RTImage () {}
+RTImage::RTImage () :
+    Gtk::Image(),
+    size(Gtk::ICON_SIZE_SMALL_TOOLBAR),
+    icon_name(""),
+    surface(),
+    g_icon(Glib::RefPtr<const Gio::Icon>())
+{
+}
 
 RTImage::RTImage (const Glib::ustring& iconName, const Gtk::IconSize iconSize) :
     sigc::trackable(),
@@ -143,7 +157,7 @@ int RTImage::get_width()
     if (surface) {
         return surface->getWidth();
     } else if (g_icon) {
-        Gtk::Image::get_width();
+        return Gtk::Image::get_width();
     }
 
     return -1;
@@ -154,7 +168,7 @@ int RTImage::get_height()
     if (surface) {
         return surface->getHeight();
     } else if (g_icon) {
-        Gtk::Image::get_height();
+        return Gtk::Image::get_height();
     }
 
     return -1;

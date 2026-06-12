@@ -19,7 +19,10 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
+#include <string>
+#include <utility>
 
 #include <gtkmm.h>
 
@@ -41,6 +44,7 @@ struct FileBrowserEntryIdleHelper {
     FileBrowserEntry* fbentry;
     bool destroyed;
     std::atomic<int> pending;
+    std::atomic<std::uint64_t> imageUpdateGeneration;
 };
 
 class FileThumbnailButtonSet;
@@ -59,12 +63,18 @@ class FileBrowserEntry final : public ThumbBrowserEntryBase,
     const std::unique_ptr<rtengine::procparams::CropParams> cropParams;
     CropGUIListener* cropgl;
     FileBrowserEntryIdleHelper* feih;
+    std::string browserPathKey_;
+    std::string browserFileNameUpper_;
+    std::string browserOriginalFamilyKey_;
+    bool suppressThumbnailRefresh;
+    std::atomic<bool> lazyThumbnailRequestPending;
+    std::atomic<bool> thumbnailPreviewUsable_;
 
     ImgEditState state;
     float crop_custom_ratio;
 
-    IdleRegister idle_register;
-
+    bool hasUsableThumbnailPreview ();
+    bool imageUpdateMatchesCurrentPreview (hidpi::LogicalSize size, int deviceScale);
     bool onArea (CursorArea a, int x, int y);
     void updateCursor (int x, int y);
     void drawStraightenGuide (Cairo::RefPtr<Cairo::Context> c);
@@ -82,7 +92,15 @@ public:
     FileBrowserEntry (Thumbnail* thm, const Glib::ustring& fname);
     ~FileBrowserEntry () override;
     static void init ();
+    static void pauseQueuedImageUpdates ();
+    static void resumeQueuedImageUpdates ();
     void draw (Cairo::RefPtr<Cairo::Context> cc) override;
+    const std::string& getBrowserPathKey () const { return browserPathKey_; }
+    void setBrowserPathKey (const std::string& key) { browserPathKey_ = key; }
+    void setBrowserPathKey (std::string&& key) { browserPathKey_ = std::move(key); }
+    const std::string& getBrowserFileNameUpper () const { return browserFileNameUpper_; }
+    const std::string& getBrowserOriginalFamilyKey () const { return browserOriginalFamilyKey_; }
+    void setBrowserOriginalFamilyKey (std::string&& key) { browserOriginalFamilyKey_ = std::move(key); }
 
     void setImageAreaToolListener (ImageAreaToolListener* l)
     {
@@ -90,10 +108,17 @@ public:
     }
 
     FileThumbnailButtonSet* getThumbButtonSet ();
+    FileThumbnailButtonSet* ensureThumbButtonSet (LWButtonListener* listener);
+    void resizeWithoutThumbnailJob (int h);
 
     void refreshThumbnailImage () override;
     void refreshQuickThumbnailImage () override;
+    void appendQuickThumbnailJob (std::vector<ThumbImageUpdater::Request>& requests, bool cachePixbuf = false) override;
+    bool cacheCurrentPreviewForQuickOpen ();
     void calcThumbnailSize () override;
+    void onDeviceScaleChanged (int newDeviceScale) override;
+    std::size_t getImageAreaIconState () override;
+    bool imageAreaIconsChanged () override;
 
     std::vector<std::shared_ptr<RTSurface>> getIconsOnImageArea () override;
     std::vector<std::shared_ptr<RTSurface>> getSpecificityIconsOnImageArea () override;
@@ -103,7 +128,13 @@ public:
     void procParamsChanged (Thumbnail* thm, int whoChangedIt, bool upgradeHint) override;
     // thumbimageupdatelistener interface
     void updateImage(const ThumbImageUpdateListener::ImageUpdate& update) override;
-    void _updateImage(const ThumbImageUpdateListener::ImageUpdate& update); // inside gtk thread
+    void discardQueuedImageUpdate();
+    void _updateImage(
+        rtengine::IImage8* img,
+        hidpi::LogicalSize size,
+        int deviceScale,
+        double imageScale,
+        const rtengine::procparams::CropParams& crop); // inside gtk thread
 
     bool    motionNotify  (int x, int y) override;
     bool    pressNotify   (int button, int type, int bstate, int x, int y) override;

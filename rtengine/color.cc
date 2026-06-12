@@ -18,6 +18,7 @@
 */
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <utility>
 
 #include <glibmm/ustring.h>
@@ -1714,7 +1715,9 @@ void Color::L2XYZ(float L, float &x, float &y, float &z) // for black & white
 
 inline float Color::computeXYZ2Lab(float f)
 {
-    if (f < 0.f) {
+    if (std::isnan(f)) {
+        return 0.f;
+    } else if (f < 0.f) {
         return 327.68 * ((kappa * f / MAXVALF + 16.0) / 116.0);
     } else if (f > 65535.f) {
         return (327.68f * xcbrtf(f / MAXVALF));
@@ -1743,7 +1746,10 @@ void Color::RGB2Lab(float *R, float *G, float *B, float *L, float *a, float *b, 
         const vfloat yv = F2V(wp[1][0]) * rv + F2V(wp[1][1]) * gv + F2V(wp[1][2]) * bv;
         const vfloat zv = F2V(wp[2][0]) * rv + F2V(wp[2][1]) * gv + F2V(wp[2][2]) * bv;
 
-        if (_mm_movemask_ps((vfloat)vorm(vmaskf_gt(vmaxf(xv, vmaxf(yv, zv)), maxvalfv), vmaskf_lt(vminf(xv, vminf(yv, zv)), minvalfv)))) {
+        if (_mm_movemask_ps((vfloat)vorm(
+                vorm(vmaskf_gt(vmaxf(xv, vmaxf(yv, zv)), maxvalfv), vmaskf_lt(vminf(xv, vminf(yv, zv)), minvalfv)),
+                vorm(vmaskf_isnan(xv, yv), vmaskf_isnan(zv))
+            ))) {
             // take slower code path for all 4 pixels if one of the values is > MAXVALF. Still faster than non SSE2 version
             for(int k = 0; k < 4; ++k) {
                 float x = xv[k];

@@ -192,11 +192,10 @@ void RawImageSource::xtrans_interpolate (const int passes, const bool useCieLab,
     constexpr int tsh = ts / 2;  /* half of Tile Size */
 
     double progress = 0.0;
-    const bool plistenerActive = plistener;
 
-    if (plistenerActive) {
-        plistener->setProgressStr (Glib::ustring::compose(M("TP_RAW_DMETHOD_PROGRESSBAR"), M("TP_RAW_XTRANS")));
-        plistener->setProgress (progress);
+    if (ProgressListener* progressListener = plistener) {
+        progressListener->setProgressStr (Glib::ustring::compose(M("TP_RAW_DMETHOD_PROGRESSBAR"), M("TP_RAW_XTRANS")));
+        progressListener->setProgress (progress);
     }
 
     int xtrans[6][6];
@@ -263,9 +262,9 @@ void RawImageSource::xtrans_interpolate (const int passes, const bool useCieLab,
 
     }
 
-    if(plistenerActive) {
+    if (ProgressListener* progressListener = plistener) {
         progress += 0.05;
-        plistener->setProgress(progress);
+        progressListener->setProgress(progress);
     }
 
 
@@ -946,14 +945,16 @@ void RawImageSource::xtrans_interpolate (const int passes, const bool useCieLab,
                         blue[row + top][col + left] = std::max(0.f, avg[2] / avg[3]);
                     }
 
-                if(plistenerActive && ((++progressCounter) % 32 == 0)) {
+                if((++progressCounter) % 32 == 0) {
 #ifdef _OPENMP
                     #pragma omp critical (xtransdemosaic)
 #endif
                     {
-                        progress += progressInc;
-                        progress = min(1.0, progress);
-                        plistener->setProgress (progress);
+                        if (ProgressListener* progressListener = plistener) {
+                            progress += progressInc;
+                            progress = min(1.0, progress);
+                            progressListener->setProgress (progress);
+                        }
                     }
                 }
 

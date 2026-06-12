@@ -18,12 +18,15 @@
  */
 #pragma once
 
+#include <cstddef>
 #include <set>
+#include <vector>
 
 #include <gtkmm.h>
 
 #include "guiutils.h"
 #include "options.h"
+#include "thumbimageupdater.h"
 
 /*
  * Class handling the list of ThumbBrowserEntry objects and their position in it's allocated space
@@ -189,8 +192,10 @@ protected:
 
     std::set<Glib::ustring> editedFiles;
 
-    void arrangeFiles (ThumbBrowserEntryBase* entry = nullptr);
+    void arrangeFiles (ThumbBrowserEntryBase* entry = nullptr, bool filterStateCurrent = false);
     void zoomChanged (bool zoomIn);
+    virtual void entriesOrderChanged_() {}
+    virtual void entriesInserted_(const std::vector<ThumbBrowserEntryBase*>& entries) {}
 
 public:
 
@@ -213,12 +218,13 @@ public:
     }
     void on_style_updated () override;
     void resort (); // re-apply sort method
-    void redraw (ThumbBrowserEntryBase* entry = nullptr);   // arrange files and draw area
+    void redraw (ThumbBrowserEntryBase* entry = nullptr, bool filterStateCurrent = false);   // arrange files and draw area
     void refreshThumbImages (); // refresh thumbnail sizes, re-generate thumbnail images, arrange and draw
     void refreshQuickThumbImages (); // refresh thumbnail sizes, re-generate thumbnail images, arrange and draw
     void refreshEditedState (const std::set<Glib::ustring>& efiles);
 
     void insertEntry (ThumbBrowserEntryBase* entry);
+    void insertEntries (const std::vector<ThumbBrowserEntryBase*>& entries);
 
     // Pause/resume layout during animations to prevent arrangeFiles() from
     // competing with animation frames on the main thread.
@@ -229,14 +235,37 @@ protected:
     bool redrawPending_ = false;
     bool layoutPaused_ = false;
     std::vector<ThumbBrowserEntryBase*> pendingInserts_;
+    std::vector<ThumbBrowserEntryBase*> visibleEntries_;
+    std::vector<ThumbBrowserEntryBase*> previousVisibleEntries_;
+    std::vector<ThumbBrowserEntryBase*> entriesToDraw_;
+    std::vector<ThumbImageUpdater::Request> visibleThumbnailRequests_;
+    std::vector<ThumbBrowserEntryBase*> drawableEntries_;
+    std::size_t visibleGenerationCounter_ = 0;
     MyMutex pendingMutex_;
     sigc::connection redrawTimeout_;
+    void clearVisibleEntries_();
+    void clearDrawableEntries_();
+    void schedulePendingInsertRedraw_();
+    void flushPendingInserts_ ();
 private:
+    enum ViewportRelation {
+        VREL_BEFORE,
+        VREL_INSIDE,
+        VREL_OUTSIDE,
+        VREL_AFTER
+    };
+
+    ViewportRelation viewportRelation_(const ThumbBrowserEntryBase* entry, int x, int y, int w, int h) const;
+    std::size_t firstViewportCandidate_(int x, int y) const;
+    void rebuildDrawableEntries_();
+    void syncEntryOffset_(ThumbBrowserEntryBase* entry);
     bool onRedrawIdle_ ();
 public:
 
     void getScrollPosition (double& h, double& v);
     void setScrollPosition (double h, double v);
+    int getScrollOffsetX () const;
+    int getScrollOffsetY () const;
 
     void setArrangement (Arrangement a);
     void enableTabMode(bool enable);  // set both thumb sizes and arrangements

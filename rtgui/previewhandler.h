@@ -62,6 +62,7 @@ protected:
     std::list<PreviewListener*> listeners;
     MyMutex previewImgMutex;
     Glib::RefPtr<Gdk::Pixbuf> previewImg;
+    bool previewImgReferencesEngineData;
 
 public:
 
@@ -83,6 +84,7 @@ public:
 
     // Set a placeholder preview (e.g. cached thumbnail) before the engine delivers the real image
     void setPlaceholder(Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scale);
+    bool trySetPlaceholder(Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scale);
     bool hasPlaceholder() const;
 
     // with this function it is possible to ask for a rough approximation of a (possibly zoomed) crop of the image
@@ -96,6 +98,35 @@ public:
     Glib::RefPtr<Gdk::Pixbuf> getPreviewPixbuf(double& scale) {
         MyMutex::MyLock lock(previewImgMutex);
         scale = previewScale;
-        return previewImg ? previewImg->copy() : Glib::RefPtr<Gdk::Pixbuf>();
+        if (!previewImg) {
+            return Glib::RefPtr<Gdk::Pixbuf>();
+        }
+
+        return previewImgReferencesEngineData ? previewImg->copy() : previewImg;
+    }
+    Glib::RefPtr<Gdk::Pixbuf> tryGetPreviewPixbuf(double& scale, bool* lockBusy = nullptr) {
+        if (lockBusy) {
+            *lockBusy = false;
+        }
+
+        if (!previewImgMutex.trylock()) {
+            if (lockBusy) {
+                *lockBusy = true;
+            }
+            scale = 1.0;
+            return {};
+        }
+
+        struct UnlockGuard {
+            MyMutex& mutex;
+            ~UnlockGuard() { mutex.unlock(); }
+        } guard{previewImgMutex};
+
+        scale = previewScale;
+        if (!previewImg) {
+            return {};
+        }
+
+        return previewImgReferencesEngineData ? previewImg->copy() : previewImg;
     }
 };

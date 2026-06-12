@@ -136,7 +136,6 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
     wbIcons[toUnderlying(WBEntry::Type::FLASH)]       = "wb-flash-small";
     wbIcons[toUnderlying(WBEntry::Type::LED)]         = "wb-led-small";
     wbIcons[toUnderlying(WBEntry::Type::CUSTOM)]      = "wb-custom-small";
-
     // Method combo setup (packed directly into summary, no grid wrapper)
 
     // Create the Tree model
@@ -147,10 +146,7 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
     // Assign the model to the Combobox
     method->set_model(refTreeModel);
     method->clear(); // Clear default cell layout to add custom one
-    Gtk::CellRendererPixbuf* const renderer_icon = Gtk::manage(new Gtk::CellRendererPixbuf());
-    renderer_icon->property_stock_size() = Gtk::ICON_SIZE_MENU;
-    method->pack_start(*renderer_icon, false);
-    method->add_attribute(*renderer_icon, "icon-name", methodColumns.colIcon);
+    // Avoid the GTK icon theme/SVG loader during startup on Windows.
     Gtk::CellRendererText* const renderer_label = Gtk::manage(new Gtk::CellRendererText());
     renderer_label->property_ellipsize() = Pango::ELLIPSIZE_MIDDLE;
     method->pack_start(*renderer_label, true);
@@ -235,13 +231,11 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
         custom_green = 1.0;
         custom_equal = 1.0;
     }
-
     auto m = ProcEventMapper::getInstance();
     EvWBObserver10 = m->newEvent(WB, "HISTORY_MSG_WBALANCE_OBSERVER10");
     EvWBitcwbprim = m->newEvent(WB, "HISTORY_MSG_WBITC_PRIM");
     EvWBitcwbalg = m->newEvent(WB, "HISTORY_MSG_WBITC_OBS");
     EvWBitcwgreen = m->newEvent(WB, "HISTORY_MSG_WBITC_GREEN");
-
     resetButton = Gtk::manage (new Gtk::Button()); // No label, keep it short
     setExpandAlignProperties(resetButton, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     resetButton->set_relief(Gtk::RELIEF_NONE);
@@ -267,16 +261,6 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
     spotsize = Gtk::manage (new MyComboBoxText ());
     setExpandAlignProperties(spotsize, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     spotsize->set_size_request(36, -1);
-    {
-        auto cssProv = Gtk::CssProvider::create();
-        try {
-            cssProv->load_from_data(
-                "#WB-Size-Helper combobox button { padding: 0 2px; min-height: 16px; min-width: 0; }"
-                " #WB-Size-Helper combobox arrow { min-width: 8px; min-height: 8px; }"
-            );
-            wbsizehelper->get_style_context()->add_provider(cssProv, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-        } catch (...) {}
-    }
     spotsize->append ("2");
 
     const auto& options = App::get().options();
@@ -309,33 +293,28 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
     }
 
     wbsizehelper->attach (*spotsize, 0, 0, 1, 1);
-
     opt = 0;
-
-    Gtk::Image* itempL =  Gtk::manage (new RTImage ("circle-blue-small", Gtk::ICON_SIZE_BUTTON));
-    Gtk::Image* itempR =  Gtk::manage (new RTImage ("circle-yellow-small", Gtk::ICON_SIZE_BUTTON));
-    Gtk::Image* igreenL = Gtk::manage (new RTImage ("circle-magenta-small", Gtk::ICON_SIZE_BUTTON));
-    Gtk::Image* igreenR = Gtk::manage (new RTImage ("circle-green-small", Gtk::ICON_SIZE_BUTTON));
-    Gtk::Image* iblueredL = Gtk::manage (new RTImage ("circle-blue-small", Gtk::ICON_SIZE_BUTTON));
-    Gtk::Image* iblueredR = Gtk::manage (new RTImage ("circle-red-small", Gtk::ICON_SIZE_BUTTON));
-    Gtk::Image* itempbiasL =  Gtk::manage (new RTImage ("circle-blue-small", Gtk::ICON_SIZE_BUTTON));
-    Gtk::Image* itempbiasR =  Gtk::manage (new RTImage ("circle-yellow-small", Gtk::ICON_SIZE_BUTTON));
-
     StudLabel = Gtk::manage(new Gtk::Label("---", Gtk::ALIGN_CENTER));
+#ifndef _WIN32
     StudLabel->set_tooltip_text(M("TP_WBALANCE_STUDLABEL_TOOLTIP"));
+#endif
     PatchLabel = Gtk::manage(new Gtk::Label("---", Gtk::ALIGN_CENTER));
+#ifndef _WIN32
     PatchLabel->set_tooltip_text(M("TP_WBALANCE_PATCHLABEL_TOOLTIP"));
+#endif
     PatchlevelLabel = Gtk::manage(new Gtk::Label("---", Gtk::ALIGN_CENTER));
+#ifndef _WIN32
     PatchlevelLabel->set_tooltip_text(M("TP_WBALANCE_PATCHLEVELLABEL_TOOLTIP"));
-
+#endif
     mulLabel = Gtk::manage(new Gtk::Label("---", Gtk::ALIGN_CENTER));
+#ifndef _WIN32
     mulLabel->set_tooltip_text(M("TP_WBALANCE_MULLABEL_TOOLTIP"));
+#endif
     mulLabel->show();
-
-    temp = Gtk::manage (new Adjuster (M("TP_WBALANCE_TEMPERATURE"), MINTEMP, MAXTEMP, 5, CENTERTEMP, itempL, itempR, &wbSlider2Temp, &wbTemp2Slider));
-    green = Gtk::manage (new Adjuster (M("TP_WBALANCE_GREEN"), MINGREEN, MAXGREEN, 0.001, 1.0, igreenL, igreenR));
-    equal = Gtk::manage (new Adjuster (M("TP_WBALANCE_EQBLUERED"), MINEQUAL, MAXEQUAL, 0.001, 1.0, iblueredL, iblueredR));
-    tempBias = Gtk::manage (new Adjuster(M("TP_WBALANCE_TEMPBIAS"), -1.1, 1.1, 0.005, 0.0, itempbiasL, itempbiasR));
+    temp = Gtk::manage (new Adjuster (M("TP_WBALANCE_TEMPERATURE"), MINTEMP, MAXTEMP, 5, CENTERTEMP, nullptr, nullptr, &wbSlider2Temp, &wbTemp2Slider));
+    green = Gtk::manage (new Adjuster (M("TP_WBALANCE_GREEN"), MINGREEN, MAXGREEN, 0.001, 1.0));
+    equal = Gtk::manage (new Adjuster (M("TP_WBALANCE_EQBLUERED"), MINEQUAL, MAXEQUAL, 0.001, 1.0));
+    tempBias = Gtk::manage (new Adjuster(M("TP_WBALANCE_TEMPBIAS"), -1.1, 1.1, 0.005, 0.0));
     observer10 = Gtk::manage(new CheckBox(M("TP_WBALANCE_OBSERVER10"), multiImage));
 
     // Temperature gradient: blue → neutral → orange
@@ -350,7 +329,6 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
         GradientMilestone(0.5, 0.75, 0.75, 0.75),
         GradientMilestone(1.0, 0.8, 0.3, 0.7)
     });
-
     cache_customTemp (0);
     cache_customGreen (0);
     cache_customEqual (0);
@@ -362,7 +340,6 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
     equal->show ();
     tempBias->show ();
     observer10->show();
-
     itcwbFrame = Gtk::manage(new Gtk::Frame(M("TP_WBALANCE_ITCWB_FRA")));
 
     itcwbFrame->set_label_align(0.025, 0.5);
@@ -402,7 +379,6 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
     pack_start(*PatchLabel);
     pack_start(*PatchlevelLabel);
     green->setLogScale(MAXGREEN / MINGREEN, MINGREEN);
-
     // --- Summary box layout ---
     // "WB ▸" label + Camera dropdown first, then Temp & Tint
     auto* wbHeaderRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
@@ -414,17 +390,6 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
     wbToggleBtn->set_relief(Gtk::RELIEF_NONE);
     wbToggleBtn->set_can_focus(false);
     wbToggleBtn->set_tooltip_text(M("TP_WBALANCE_LABEL"));
-    {
-        auto css = Gtk::CssProvider::create();
-        try {
-            css->load_from_data(
-                "button { background: transparent; border: none; box-shadow: none;"
-                " padding: 0 4px; margin: 0; min-height: 0; min-width: 0; }"
-                " button:hover { background-color: rgba(102,153,204,0.15); border-radius: 3px; }"
-            );
-            wbToggleBtn->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-        } catch (...) {}
-    }
     setExpandAlignProperties(wbToggleBtn, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     wbToggleBtn->signal_clicked().connect([this]() { toggleDetail(); });
 
@@ -460,7 +425,6 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
     advancedSection->hide();
     pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
     Gtk::Box* const advBox = advancedSection->getContentBox();
-
     advBox->pack_start (*equal);
     advBox->pack_start(*observer10);
     advBox->pack_start (*tempBias);

@@ -126,41 +126,12 @@ Defringe::Defringe () : FoldableToolPanel(this, TOOL_NAME, M("TP_DEFRINGE_LABEL"
     purpleBtn = Gtk::manage(new Gtk::ToggleButton());
     purpleBtn->set_active(true);
     purpleBtn->set_size_request(20, 20);
+    purpleBtn->set_label("P");
 
     greenBtn = Gtk::manage(new Gtk::ToggleButton());
     greenBtn->set_active(false);
     greenBtn->set_size_request(20, 20);
-
-    auto css = Gtk::CssProvider::create();
-    css->load_from_data(
-        ".defringe-purple {"
-        "  background-image: none;"
-        "  background-color: #9040a0;"
-        "  border-radius: 50%;"
-        "  min-width: 12px; min-height: 12px;"
-        "  padding: 2px;"
-        "  border: 2px solid transparent;"
-        "}"
-        ".defringe-purple:checked {"
-        "  border: 2px solid #cccccc;"
-        "}"
-        ".defringe-green {"
-        "  background-image: none;"
-        "  background-color: #40a040;"
-        "  border-radius: 50%;"
-        "  min-width: 12px; min-height: 12px;"
-        "  padding: 2px;"
-        "  border: 2px solid transparent;"
-        "}"
-        ".defringe-green:checked {"
-        "  border: 2px solid #cccccc;"
-        "}"
-    );
-
-    purpleBtn->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 100);
-    purpleBtn->get_style_context()->add_class("defringe-purple");
-    greenBtn->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 100);
-    greenBtn->get_style_context()->add_class("defringe-green");
+    greenBtn->set_label("G");
 
     colorBox->pack_start(*purpleBtn, Gtk::PACK_SHRINK);
     colorBox->pack_start(*greenBtn, Gtk::PACK_SHRINK);

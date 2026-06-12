@@ -17,15 +17,25 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <algorithm>
 #include <atomic>
+#include <iterator>
 #include <memory>
 #include <set>
+#include <string>
 #include <thread>
+#include <utility>
+#include <vector>
 #include "cachemanager.h"
 #include "filebrowserentry.h"
 #include "previewloader.h"
 #include "guiutils.h"
+#include "thumbnail.h"
 #include "threadutils.h"
+
+#ifdef _WIN32
+#include "rtengine/leanwindows.h"
+#endif
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -34,14 +44,32 @@
 #define DEBUG(format,args...)
 //#define DEBUG(format,args...) printf("PreviewLoader::%s: " format "\n", __FUNCTION__, ## args)
 
+static void setPreviewWorkerThreadPriority(bool postScanDrain)
+{
+#ifdef _WIN32
+    SetThreadPriority(GetCurrentThread(), postScanDrain ? THREAD_PRIORITY_NORMAL : THREAD_PRIORITY_BELOW_NORMAL);
+#endif
+}
+
 class PreviewLoader::Impl :
     public rtengine::NonCopyable
 {
 public:
     struct Job {
-        Job(int dir_id, const Glib::ustring& dir_entry, PreviewLoaderListener* listener, int generation):
+        Job(int dir_id, const Glib::ustring& dir_entry, PreviewLoaderListener* listener, int generation, std::string&& dir_entry_key = std::string()):
             dir_id_(dir_id),
             dir_entry_(dir_entry),
+            dir_entry_key_(std::move(dir_entry_key)),
+            dir_entry_sort_key_(dir_entry_key_.empty() ? dir_entry_.raw() : dir_entry_key_),
+            listener_(listener),
+            generation_(generation)
+        {}
+
+        Job(int dir_id, Glib::ustring&& dir_entry, PreviewLoaderListener* listener, int generation, std::string&& dir_entry_key = std::string()):
+            dir_id_(dir_id),
+            dir_entry_(std::move(dir_entry)),
+            dir_entry_key_(std::move(dir_entry_key)),
+            dir_entry_sort_key_(dir_entry_key_.empty() ? dir_entry_.raw() : dir_entry_key_),
             listener_(listener),
             generation_(generation)
         {}
@@ -54,6 +82,8 @@ public:
 
         int dir_id_;
         Glib::ustring dir_entry_;
+        std::string dir_entry_key_;
+        std::string dir_entry_sort_key_;
         PreviewLoaderListener* listener_;
         int generation_;
     };
@@ -62,7 +92,7 @@ public:
         bool operator()(const Job& lhs, const Job& rhs) const
         {
             if ( lhs.dir_id_ == rhs.dir_id_ ) {
-                return lhs.dir_entry_ < rhs.dir_entry_;
+                return lhs.dir_entry_sort_key_ < rhs.dir_entry_sort_key_;
             }
 
             return lhs.dir_id_ < rhs.dir_id_;
@@ -71,9 +101,12 @@ public:
 
     typedef std::set<Job, JobCompare> JobSet;
 
-    std::atomic<bool> paused_{false};
+    std::atomic<unsigned> pauseDepth_{0};
+    std::atomic<bool> postScanDrainMode_{false};
     std::atomic<int> generation_{0};
     std::atomic<unsigned> priorityCounter_{0};
+    int maxThreadCount_;
+    int queuedWorkers_ = 0;
 
     Impl(): nConcurrentThreads(0)
     {
@@ -82,22 +115,53 @@ public:
 #else
         int threadCount = std::max(2u, std::thread::hardware_concurrency());
 #endif
-        // Preview loading is I/O-bound (reading cached thumbnails from disk
-        // and, for uncached images, extracting embedded thumbnails from RAW).
-        // Use enough threads to keep the I/O subsystem busy — modern SSDs
-        // handle many concurrent small-file reads easily, and even for
-        // uncached RAW folders the embedded-JPEG extraction benefits from
-        // overlapping I/O with CPU work across more threads.
-        threadCount = std::max(4, std::min(threadCount * 2, 16));
+        // Preview loading is paused around foreground image opens. Use enough
+        // workers to overlap cold-cache preview extraction, while keeping them
+        // below normal priority so GTK stays responsive for early paints.
+        threadCount = std::max(4, std::min(threadCount, 12));
+        maxThreadCount_ = threadCount;
 
-        threadPool_.reset(new Glib::ThreadPool(threadCount, 0));
+        threadPool_.reset(new Glib::ThreadPool(threadCount, true));
     }
 
     std::unique_ptr<Glib::ThreadPool> threadPool_;
     MyMutex mutex_;
     JobSet jobs_;
     Glib::ustring priorityHint_;
+    std::string priorityHintKey_;
+    JobSet::iterator priorityForward_;
+    JobSet::iterator priorityBackward_;
+    bool priorityIteratorsValid_ = false;
     gint nConcurrentThreads;
+
+    void invalidatePriorityIterators_()
+    {
+        priorityIteratorsValid_ = false;
+        priorityForward_ = jobs_.end();
+        priorityBackward_ = jobs_.end();
+    }
+
+    void refreshPriorityIterators_()
+    {
+        if (priorityIteratorsValid_) {
+            return;
+        }
+
+        priorityIteratorsValid_ = true;
+
+        if (jobs_.empty() || priorityHint_.empty()) {
+            priorityForward_ = jobs_.end();
+            priorityBackward_ = jobs_.end();
+            return;
+        }
+
+        const int dir_id = jobs_.begin()->dir_id_;
+        priorityForward_ = jobs_.lower_bound(Job(dir_id, priorityHint_, nullptr, 0, std::string(priorityHintKey_)));
+        priorityBackward_ =
+            priorityForward_ != jobs_.begin()
+                ? std::prev(priorityForward_)
+                : jobs_.end();
+    }
 
     // Pick the best job from the set, considering the priority hint.
     // When a hint is set, alternates between forward and backward neighbors
@@ -105,7 +169,7 @@ public:
     // Returns jobs_.end() if empty or paused.
     JobSet::iterator pickBestJob_()
     {
-        if (jobs_.empty() || paused_.load(std::memory_order_relaxed)) {
+        if (jobs_.empty() || pauseDepth_.load(std::memory_order_relaxed) > 0) {
             return jobs_.end();
         }
 
@@ -113,41 +177,156 @@ public:
             return jobs_.begin();
         }
 
-        int dir_id = jobs_.begin()->dir_id_;
-        auto hint_it = jobs_.lower_bound(Job(dir_id, priorityHint_, nullptr, 0));
+        refreshPriorityIterators_();
 
-        // hint_it points to first job >= hint.  prev(hint_it) is last job < hint.
-        auto fwd = hint_it;
-        auto bwd = (hint_it != jobs_.begin()) ? std::prev(hint_it) : jobs_.end();
-
-        if (fwd != jobs_.end() && bwd != jobs_.end()) {
+        if (priorityForward_ != jobs_.end() && priorityBackward_ != jobs_.end()) {
             // Both directions available — alternate to expand symmetrically
             unsigned count = priorityCounter_.fetch_add(1, std::memory_order_relaxed);
-            return (count % 2 == 0) ? fwd : bwd;
-        } else if (fwd != jobs_.end()) {
-            return fwd;
-        } else if (bwd != jobs_.end()) {
-            return bwd;
+            if (count % 2 == 0) {
+                auto result = priorityForward_;
+                priorityForward_ = std::next(result);
+                return result;
+            }
+
+            auto result = priorityBackward_;
+            priorityBackward_ =
+                result != jobs_.begin()
+                    ? std::prev(result)
+                    : jobs_.end();
+            return result;
+        } else if (priorityForward_ != jobs_.end()) {
+            auto result = priorityForward_;
+            priorityForward_ = std::next(result);
+            return result;
+        } else if (priorityBackward_ != jobs_.end()) {
+            auto result = priorityBackward_;
+            priorityBackward_ =
+                result != jobs_.begin()
+                    ? std::prev(result)
+                    : jobs_.end();
+            return result;
         }
         return jobs_.begin();
     }
 
+    int targetThreadCountLocked_() const
+    {
+        if (postScanDrainMode_.load(std::memory_order_relaxed)) {
+            if (jobs_.size() >= 64) {
+                return maxThreadCount_;
+            }
+
+            if (jobs_.size() >= 8) {
+                return std::min(maxThreadCount_, 4);
+            }
+
+            return std::min(maxThreadCount_, 2);
+        }
+
+        if (jobs_.size() >= 512) {
+            return maxThreadCount_;
+        }
+
+        if (jobs_.size() >= 64) {
+            return std::min(maxThreadCount_, 4);
+        }
+
+        if (jobs_.size() >= 8) {
+            return std::min(maxThreadCount_, 3);
+        }
+
+        return std::min(maxThreadCount_, 2);
+    }
+
+    int scheduleWorkersLocked_()
+    {
+        if (pauseDepth_.load(std::memory_order_relaxed) > 0 || jobs_.empty()) {
+            return 0;
+        }
+
+        const int running = g_atomic_int_get(&nConcurrentThreads);
+        const int capacity = targetThreadCountLocked_() - running - queuedWorkers_;
+        const int usefulWorkers = static_cast<int>(jobs_.size()) - queuedWorkers_;
+        const int toSchedule = std::max(0, std::min(capacity, usefulWorkers));
+        queuedWorkers_ += toSchedule;
+
+        return toSchedule;
+    }
+
+    void pushWorkers_(int count)
+    {
+        for (int i = 0; i < count; ++i) {
+            threadPool_->push(sigc::mem_fun(*this, &PreviewLoader::Impl::processNextJob));
+        }
+    }
+
+    void wakePendingWorkers()
+    {
+        int workersToPush = 0;
+        {
+            MyMutex::MyLock lock(mutex_);
+            workersToPush = scheduleWorkersLocked_();
+        }
+
+        pushWorkers_(workersToPush);
+    }
+
+    bool hasPendingWork()
+    {
+        MyMutex::MyLock lock(mutex_);
+        return !jobs_.empty()
+            || queuedWorkers_ > 0
+            || g_atomic_int_get(&nConcurrentThreads) > 0;
+    }
+
     void processNextJob()
     {
+        setPreviewWorkerThreadPriority(postScanDrainMode_.load(std::memory_order_relaxed));
+
         // Peek at the queue before committing to the concurrent thread count.
         // This ensures no-op tasks (from stale thread pool pushes) don't
         // interfere with the nConcurrentThreads counter.
         {
             MyMutex::MyLock lock(mutex_);
-            if (jobs_.empty() || paused_.load(std::memory_order_relaxed)) {
+            if (queuedWorkers_ > 0) {
+                --queuedWorkers_;
+            }
+
+            if (jobs_.empty() || pauseDepth_.load(std::memory_order_relaxed) > 0) {
                 return;
             }
-        }
 
-        g_atomic_int_inc (&nConcurrentThreads);
+            g_atomic_int_inc (&nConcurrentThreads);
+        }
 
         int lastDirId = -1;
         PreviewLoaderListener* lastListener = nullptr;
+        PreviewLoaderListener* batchListener = nullptr;
+        PreviewLoaderListener::PreviewReadyBatch readyBatch;
+        int batchGeneration = -1;
+        constexpr std::size_t INITIAL_PREVIEW_READY_BATCH_SIZE = 1;
+        // Keep UI feedback frequent for RAW-heavy folders. Waiting for 32
+        // ready entries can hide progress for seconds when cache misses are
+        // expensive; FileCatalog coalesces these callbacks before touching GTK.
+        constexpr std::size_t STEADY_PREVIEW_READY_BATCH_SIZE = 8;
+        bool firstReadyBatchFlushed = false;
+        readyBatch.reserve(STEADY_PREVIEW_READY_BATCH_SIZE);
+        auto flushReadyBatch = [&]() {
+            if (batchListener && !readyBatch.empty()) {
+                if (batchGeneration == generation_.load(std::memory_order_acquire)) {
+                    batchListener->previewReadyBatch(std::move(readyBatch));
+                    firstReadyBatchFlushed = true;
+                } else {
+                    for (auto& entry : readyBatch) {
+                        delete entry.second;
+                    }
+                }
+                readyBatch.clear();
+                readyBatch.reserve(STEADY_PREVIEW_READY_BATCH_SIZE);
+            }
+            batchListener = nullptr;
+            batchGeneration = -1;
+        };
 
         // Loop to drain the queue — each thread processes all available jobs
         // before returning to the thread pool, avoiding thousands of individual
@@ -168,6 +347,8 @@ public:
                 DEBUG("%d job(s) remaining", jobs_.size());
             }
 
+            setPreviewWorkerThreadPriority(postScanDrainMode_.load(std::memory_order_relaxed));
+
             // Skip jobs from a previous directory — removeAllJobs() increments
             // the generation counter, so any job queued before the switch has a
             // stale generation and we can skip the expensive cacheMgr I/O.
@@ -179,8 +360,26 @@ public:
                 Thumbnail* tmb = cacheMgr->getEntry(j.dir_entry_);
 
                 if ( tmb ) {
+                    if (j.generation_ != generation_.load(std::memory_order_acquire)) {
+                        tmb->decreaseRef();
+                        continue;
+                    }
+
                     DEBUG("Preview Ready\n");
-                    j.listener_->previewReady(j.dir_id_, new FileBrowserEntry(tmb, j.dir_entry_));
+                    auto* entry = new FileBrowserEntry(tmb, j.dir_entry_);
+                    entry->setBrowserPathKey(std::move(j.dir_entry_key_));
+                    if (batchListener && (batchListener != j.listener_ || batchGeneration != j.generation_)) {
+                        flushReadyBatch();
+                    }
+                    batchListener = j.listener_;
+                    batchGeneration = j.generation_;
+                    readyBatch.emplace_back(j.dir_id_, entry);
+                    const std::size_t readyBatchTarget = firstReadyBatchFlushed
+                        ? STEADY_PREVIEW_READY_BATCH_SIZE
+                        : INITIAL_PREVIEW_READY_BATCH_SIZE;
+                    if (readyBatch.size() >= readyBatchTarget) {
+                        flushReadyBatch();
+                    }
                 }
 
             } catch (Glib::Error &e) {} catch(...) {}
@@ -189,10 +388,24 @@ public:
             lastListener = j.listener_;
         }
 
-        bool last = g_atomic_int_dec_and_test (&nConcurrentThreads);
+        flushReadyBatch();
+
+        const bool last = g_atomic_int_dec_and_test (&nConcurrentThreads);
+        bool finished = false;
+        int workersToPush = 0;
+        {
+            MyMutex::MyLock lock(mutex_);
+            if (!jobs_.empty()) {
+                workersToPush = scheduleWorkersLocked_();
+            } else if (last && lastListener && queuedWorkers_ == 0) {
+                finished = true;
+            }
+        }
+
+        pushWorkers_(workersToPush);
 
         // signal at end
-        if (last && lastListener && jobs_.empty()) {
+        if (finished) {
             lastListener->previewsFinished(lastDirId);
         }
     }
@@ -215,19 +428,136 @@ PreviewLoader* PreviewLoader::getInstance()
 
 void PreviewLoader::add(int dir_id, const Glib::ustring& dir_entry, PreviewLoaderListener* l)
 {
+    add(dir_id, dir_entry, std::string(), l);
+}
+
+void PreviewLoader::add(int dir_id, const Glib::ustring& dir_entry, std::string&& dir_entry_key, PreviewLoaderListener* l)
+{
     // somebody listening?
     if ( l != nullptr ) {
+        int workersToPush = 0;
         {
             MyMutex::MyLock lock(impl_->mutex_);
 
             // create a new job and append to queue
             DEBUG("saving job %s", dir_entry.c_str());
-            impl_->jobs_.insert(Impl::Job(dir_id, dir_entry, l, impl_->generation_.load(std::memory_order_relaxed)));
+            if (impl_->jobs_.insert(Impl::Job(dir_id, dir_entry, l, impl_->generation_.load(std::memory_order_relaxed), std::move(dir_entry_key))).second) {
+                impl_->invalidatePriorityIterators_();
+                workersToPush = impl_->scheduleWorkersLocked_();
+            }
         }
 
-        // queue a run request
-        DEBUG("adding run request %s", dir_entry.c_str());
-        impl_->threadPool_->push(sigc::mem_fun(*impl_, &PreviewLoader::Impl::processNextJob));
+        if (workersToPush > 0) {
+            DEBUG("adding %d run request(s) for %s", workersToPush, dir_entry.c_str());
+            impl_->pushWorkers_(workersToPush);
+        }
+    }
+}
+
+void PreviewLoader::addBatch(int dir_id, std::vector<Glib::ustring>&& dir_entries, PreviewLoaderListener* l)
+{
+    addBatch(dir_id, std::move(dir_entries), std::vector<std::string>(), l);
+}
+
+void PreviewLoader::addBatch(int dir_id, std::vector<Glib::ustring>&& dir_entries, std::vector<std::string>&& dir_entry_keys, PreviewLoaderListener* l)
+{
+    if (l == nullptr || dir_entries.empty()) {
+        return;
+    }
+
+    constexpr std::size_t SMALL_BATCH_FAST_PATH = 32;
+    const bool haveEntryKeys = dir_entry_keys.size() == dir_entries.size();
+
+    int workersToPush = 0;
+    if (dir_entries.size() <= SMALL_BATCH_FAST_PATH) {
+        {
+            MyMutex::MyLock lock(impl_->mutex_);
+
+            const int generation = impl_->generation_.load(std::memory_order_relaxed);
+            bool inserted = false;
+            for (std::size_t i = 0; i < dir_entries.size(); ++i) {
+                inserted = impl_->jobs_.emplace(
+                    dir_id,
+                    std::move(dir_entries[i]),
+                    l,
+                    generation,
+                    haveEntryKeys ? std::move(dir_entry_keys[i]) : std::string()).second || inserted;
+            }
+
+            if (inserted) {
+                impl_->invalidatePriorityIterators_();
+                workersToPush = impl_->scheduleWorkersLocked_();
+            }
+        }
+
+        if (workersToPush > 0) {
+            impl_->pushWorkers_(workersToPush);
+        }
+
+        return;
+    }
+
+    std::vector<std::size_t> sortedKeyOrder;
+
+    if (haveEntryKeys && !std::is_sorted(dir_entry_keys.begin(), dir_entry_keys.end())) {
+        sortedKeyOrder.reserve(dir_entry_keys.size());
+
+        for (std::size_t i = 0; i < dir_entry_keys.size(); ++i) {
+            sortedKeyOrder.push_back(i);
+        }
+
+        std::sort(
+            sortedKeyOrder.begin(),
+            sortedKeyOrder.end(),
+            [&dir_entry_keys](std::size_t lhs, std::size_t rhs) {
+                return dir_entry_keys[lhs] < dir_entry_keys[rhs];
+            });
+    } else if (!haveEntryKeys && !std::is_sorted(dir_entries.begin(), dir_entries.end())) {
+        std::sort(dir_entries.begin(), dir_entries.end());
+    }
+    {
+        MyMutex::MyLock lock(impl_->mutex_);
+
+        const int generation = impl_->generation_.load(std::memory_order_relaxed);
+        const auto oldSize = impl_->jobs_.size();
+        if (haveEntryKeys) {
+            auto hint = impl_->jobs_.end();
+            if (sortedKeyOrder.empty()) {
+                for (std::size_t i = 0; i < dir_entries.size(); ++i) {
+                    hint = impl_->jobs_.emplace_hint(
+                        hint,
+                        dir_id,
+                        std::move(dir_entries[i]),
+                        l,
+                        generation,
+                        std::move(dir_entry_keys[i]));
+                }
+            } else {
+                for (const std::size_t i : sortedKeyOrder) {
+                    hint = impl_->jobs_.emplace_hint(
+                        hint,
+                        dir_id,
+                        std::move(dir_entries[i]),
+                        l,
+                        generation,
+                        std::move(dir_entry_keys[i]));
+                }
+            }
+        } else {
+            auto hint = impl_->jobs_.end();
+            for (auto& dir_entry : dir_entries) {
+                hint = impl_->jobs_.emplace_hint(hint, dir_id, std::move(dir_entry), l, generation);
+            }
+        }
+
+        if (impl_->jobs_.size() != oldSize) {
+            impl_->invalidatePriorityIterators_();
+            workersToPush = impl_->scheduleWorkersLocked_();
+        }
+    }
+
+    if (workersToPush > 0) {
+        impl_->pushWorkers_(workersToPush);
     }
 }
 
@@ -237,6 +567,10 @@ void PreviewLoader::removeAllJobs()
     MyMutex::MyLock lock(impl_->mutex_);
     impl_->jobs_.clear();
     impl_->priorityHint_.clear();
+    impl_->priorityHintKey_.clear();
+    impl_->invalidatePriorityIterators_();
+    impl_->queuedWorkers_ = 0;
+    impl_->postScanDrainMode_.store(false, std::memory_order_release);
     // Increment generation so in-flight threads that already dequeued a job
     // from the old directory will skip the expensive cacheMgr I/O.
     impl_->generation_.fetch_add(1, std::memory_order_release);
@@ -244,23 +578,74 @@ void PreviewLoader::removeAllJobs()
 
 void PreviewLoader::setPriorityHint(const Glib::ustring& targetFile)
 {
+    std::string targetFileKey;
+
+    if (!targetFile.empty()) {
+        targetFileKey = targetFile.raw();
+    }
+
+    setPriorityHint(targetFile, std::move(targetFileKey));
+}
+
+void PreviewLoader::setPriorityHint(const Glib::ustring& targetFile, std::string&& targetFileKey)
+{
     MyMutex::MyLock lock(impl_->mutex_);
+    if (targetFileKey.empty() && !targetFile.empty()) {
+        targetFileKey = targetFile.raw();
+    }
+
+    if (impl_->priorityHint_ == targetFile && impl_->priorityHintKey_ == targetFileKey) {
+        return;
+    }
+
     impl_->priorityHint_ = targetFile;
+    impl_->priorityHintKey_ = std::move(targetFileKey);
     impl_->priorityCounter_.store(0, std::memory_order_relaxed);
+    impl_->invalidatePriorityIterators_();
 }
 
 void PreviewLoader::pause()
 {
-    impl_->paused_.store(true, std::memory_order_relaxed);
+    impl_->pauseDepth_.fetch_add(1, std::memory_order_acq_rel);
 }
 
 void PreviewLoader::resume()
 {
-    impl_->paused_.store(false, std::memory_order_relaxed);
-
-    // Re-schedule all pending jobs so the thread pool picks them up
-    MyMutex::MyLock lock(impl_->mutex_);
-    for (size_t i = 0; i < impl_->jobs_.size(); ++i) {
-        impl_->threadPool_->push(sigc::mem_fun(*impl_, &PreviewLoader::Impl::processNextJob));
+    unsigned depth = impl_->pauseDepth_.load(std::memory_order_acquire);
+    while (depth > 0) {
+        if (impl_->pauseDepth_.compare_exchange_weak(
+                depth,
+                depth - 1,
+                std::memory_order_acq_rel,
+                std::memory_order_acquire)) {
+            if (depth > 1) {
+                return;
+            }
+            break;
+        }
     }
+
+    // Re-schedule pending jobs without flooding the thread pool with one
+    // task per file.
+    if (impl_->hasPendingWork()) {
+        impl_->wakePendingWorkers();
+    }
+}
+
+void PreviewLoader::setPostScanDrainMode(bool enabled)
+{
+    const bool old = impl_->postScanDrainMode_.exchange(enabled, std::memory_order_acq_rel);
+    if (enabled && !old) {
+        impl_->wakePendingWorkers();
+    }
+}
+
+bool PreviewLoader::hasPendingWork() const
+{
+    return impl_->hasPendingWork();
+}
+
+void PreviewLoader::wakePendingWorkers()
+{
+    impl_->wakePendingWorkers();
 }

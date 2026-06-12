@@ -16,6 +16,7 @@
  *  You should have received a copy of the GNU General Public License
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include <algorithm>
 #include <iomanip>
 
 #include "cropwindow.h"
@@ -2147,14 +2148,26 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
             }
 
             isPreviewImg = true;
+
+            // Save last good frame as bridge for image transitions
+            bridgePixbuf_ = cropHandler.cropPixbuf;
         } else {
-            // cropHandler.cropPixbuf is null
+            // cropHandler.cropPixbuf is null — use rough preview or bridge
             ImageCoord cropPos = cropHandler.getPosition();
             hidpi::ScaledDeviceSize desiredSize = imgAreaSize.scaleToDevice(
                 RTScalable::getScaleForWidget(iarea));
 
-            Glib::RefPtr<Gdk::Pixbuf> rough = iarea->getPreviewHandler()->getRoughImage(
-                cropPos, desiredSize, zoomSteps[cropZoom].zoom);
+            Glib::RefPtr<Gdk::Pixbuf> rough;
+            if (iarea->getPreviewHandler()) {
+                rough = iarea->getPreviewHandler()->getRoughImage(
+                    cropPos, desiredSize, zoomSteps[cropZoom].zoom);
+            }
+
+            // Fall back to bridge pixbuf from last good frame if rough is unavailable
+            // (happens during image transitions when placeholder dimensions don't match)
+            if (!rough && bridgePixbuf_) {
+                rough = bridgePixbuf_;
+            }
 
             if (rough) {
                 hidpi::LogicalCoord offset = windowPos + imgAreaPos + imgPos;
@@ -2554,10 +2567,15 @@ void CropWindow::changeZoom (int zoom, bool notify, int centerx, int centery, bo
     cropLabel = zoomSteps[cropZoom].label;
     cropHandler.setZoom (zoomSteps[cropZoom].czoom, centerx, centery);
 
-    if (notify)
-        for (auto listener : listeners) {
+    if (notify) {
+        const auto notifyListeners = listeners;
+        for (auto listener : notifyListeners) {
+            if (std::find(listeners.begin(), listeners.end(), listener) == listeners.end()) {
+                continue;
+            }
             listener->cropZoomChanged (this);
         }
+    }
 
     if (needsRedraw)
         iarea->redraw ();

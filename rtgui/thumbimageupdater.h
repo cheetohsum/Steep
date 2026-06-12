@@ -18,6 +18,8 @@
  */
 #pragma once
 
+#include <vector>
+
 #include <glib.h>
 
 #include "rtengine/noncopyable.h"
@@ -90,6 +92,20 @@ public:
      * @param l listener waiting on update
      */
     void add(ThumbBrowserEntryBase* tbe, bool* priority, bool upgrade, bool forceUpgrade, ThumbImageUpdateListener* l);
+
+    struct Request {
+        ThumbBrowserEntryBase* tbe;
+        bool* priority;
+        bool upgrade;
+        bool forceUpgrade;
+        bool cachePixbuf;
+        ThumbImageUpdateListener* listener;
+    };
+
+    void addBatch(const std::vector<Request>& requests);
+    void prioritiesChanged();
+    void pause();
+    void resume();
 
     /**
      * @brief Remove jobs associated with listener \c l.

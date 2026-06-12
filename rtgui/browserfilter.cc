@@ -39,3 +39,27 @@ BrowserFilter::BrowserFilter () :
     }
 }
 
+bool BrowserFilter::isPassThrough () const
+{
+    if (!showPicked || !showRejected || !showUnflagged
+        || !showTrash || !showNotTrash || showOriginal
+        || exifFilterEnabled || !vFilterStrings.empty()
+        || !albumWhitelist.empty() || !filetypeFilter.empty()) {
+        return false;
+    }
+
+    for (int i = 0; i < 6; ++i) {
+        if (!showRanked[i] || !showCLabeled[i]) {
+            return false;
+        }
+    }
+
+    for (int i = 0; i < 2; ++i) {
+        if (!showEdited[i] || !showRecentlySaved[i]) {
+            return false;
+        }
+    }
+
+    return true;
+}
+

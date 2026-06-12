@@ -577,18 +577,6 @@ ExpanderBox::ExpanderBox( Gtk::Container *p): pC(p)
     set_border_width(2);
 #endif
 //GTK318
-    // Compact UI: shrink buttons/comboboxes/entries inside tool content
-    {
-        auto css = Gtk::CssProvider::create();
-        css->load_from_data(
-            "combobox { min-height: 0; margin: 1px 0; }"
-            " combobox button { min-height: 0; min-width: 0; padding: 0 2px; margin: 0; }"
-            " button { min-height: 0; min-width: 0; padding: 1px 4px; margin: 1px 0; }"
-            " entry { min-height: 0; padding: 0; margin: 1px 0; }"
-        );
-        get_style_context()->add_provider(
-            css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-    }
 }
 
 void ExpanderBox::setLevel(int level)
@@ -682,19 +670,9 @@ MyExpander::MyExpander(bool useEnabled, Gtk::Widget* titleWidget) :
     summaryBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     summaryBox->set_spacing(0);
     summaryBox->set_border_width(0);
+    summaryBox->set_hexpand(true);
+    summaryBox->set_halign(Gtk::ALIGN_FILL);
     summaryBox->get_style_context()->add_class("MyExpanderSummary");
-    {
-        auto sCSS = Gtk::CssProvider::create();
-        sCSS->load_from_data(
-            "combobox { min-height: 0; margin: 0; }"
-            " combobox button { min-height: 0; min-width: 0; padding: 0 2px; margin: 0; }"
-            " button { min-height: 0; min-width: 0; padding: 1px 4px; margin: 0; }"
-            " entry { min-height: 0; padding: 0; margin: 0; }"
-            " label { font-size: 9px; margin: 0; padding: 0; }"
-        );
-        summaryBox->get_style_context()->add_provider(
-            sCSS, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-    }
     summaryBox->show();
     pack_start(*summaryBox, Gtk::PACK_SHRINK, 0);
 
@@ -768,19 +746,9 @@ MyExpander::MyExpander(bool useEnabled, Glib::ustring titleLabel) :
     summaryBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     summaryBox->set_spacing(0);
     summaryBox->set_border_width(0);
+    summaryBox->set_hexpand(true);
+    summaryBox->set_halign(Gtk::ALIGN_FILL);
     summaryBox->get_style_context()->add_class("MyExpanderSummary");
-    {
-        auto sCSS = Gtk::CssProvider::create();
-        sCSS->load_from_data(
-            "combobox { min-height: 0; margin: 0; }"
-            " combobox button { min-height: 0; min-width: 0; padding: 0 2px; margin: 0; }"
-            " button { min-height: 0; min-width: 0; padding: 1px 4px; margin: 0; }"
-            " entry { min-height: 0; padding: 0; margin: 0; }"
-            " label { font-size: 9px; margin: 0; padding: 0; }"
-        );
-        summaryBox->get_style_context()->add_provider(
-            sCSS, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-    }
     summaryBox->show();
     pack_start(*summaryBox, Gtk::PACK_SHRINK, 0);
 
@@ -1010,21 +978,6 @@ void MyExpander::setFlatMode(bool flat)
     if (expBox) {
         expBox->set_no_show_all(false);
         expBox->set_visible_window(false);
-        auto flatCss = Gtk::CssProvider::create();
-        flatCss->load_from_data(
-            "#ExpanderBox, #ExpanderBox2, #ExpanderBox3 {"
-            "  background-color: transparent; background-image: none;"
-            "  border: none; box-shadow: none; padding: 0; margin: 0;"
-            "}"
-            " #ExpanderBox > box, #ExpanderBox > grid,"
-            " #ExpanderBox2 > box, #ExpanderBox2 > grid,"
-            " #ExpanderBox3 > box, #ExpanderBox3 > grid {"
-            "  background-color: transparent; background-image: none;"
-            "  border: none; box-shadow: none; padding: 0; margin: 0;"
-            "}"
-        );
-        expBox->get_style_context()->add_provider(
-            flatCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 300);
     }
 
     // Force enabled
@@ -1175,6 +1128,9 @@ bool MyExpander::on_enabled_change(GdkEventButton* event)
  */
 MyScrolledWindow::MyScrolledWindow ()
 {
+    set_hexpand(true);
+    set_halign(Gtk::ALIGN_FILL);
+    set_overlay_scrolling(false);
 }
 
 bool MyScrolledWindow::on_scroll_event (GdkEventScroll* event)
@@ -2495,7 +2451,6 @@ Gtk::ToggleButton SpotPicker::spotButtonTemplate(Glib::ustring const &key, const
     setExpandAlignProperties(&spotButton, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
     spotButton.get_style_context()->add_class("independent");
     spotButton.set_tooltip_text(tooltip);
-    spotButton.set_image_from_icon_name("color-picker-small");
     return spotButton;
 }
 
@@ -2649,6 +2604,8 @@ ToolGroup::ToolGroup(const Glib::ustring& label) :
 {
     set_name("ToolGroup");
     get_style_context()->add_class("ToolGroup");
+    set_hexpand(true);
+    set_halign(Gtk::ALIGN_FILL);
 
     // Clickable header: single label with arrow + text via markup
     groupLabel_ = Glib::Markup::escape_text(label);
@@ -2680,35 +2637,29 @@ ToolGroup::ToolGroup(const Glib::ustring& label) :
         if (resetCallback_) resetCallback_();
     });
 
-    // Inline CSS for compact tool group headers + reset button
-    auto tgCss = Gtk::CssProvider::create();
-    tgCss->load_from_data(
-        "#ToolGroupHeader { padding: 1px 4px; min-height: 0; border: none; background: none; background-image: none; box-shadow: none; }"
-        "#ToolGroupHeader:hover { background-color: rgba(130,170,230,0.22); border-radius: 4px; }"
-        "#ToolGroupHeader label { font-size: 10.5px; font-weight: bold; min-height: 0; padding: 0; margin: 0; }"
-        "#ToolGroupReset { padding: 1px 3px; margin: 0 2px; min-height: 12px; min-width: 12px; border: none; background: none; background-image: none; box-shadow: none; }"
-        "#ToolGroupReset:hover { background-color: rgba(200,80,80,0.3); border-radius: 3px; }"
-        "#ToolGroupReset label { font-size: 10.5px; color: #aaaaaa; min-height: 0; padding: 0; margin: 0; }"
-        "#ToolGroupReset:hover label { color: #ffffff; }"
-    );
-    headerBtn->get_style_context()->add_provider(tgCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-    arrowLabel->get_style_context()->add_provider(tgCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-    resetBtn->get_style_context()->add_provider(tgCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
     headerBtn->signal_clicked().connect(
         sigc::mem_fun(*this, &ToolGroup::onHeaderClicked));
 
     // Header row: header button + reset button
     auto* headerRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL));
+    headerRow->set_hexpand(true);
+    headerRow->set_halign(Gtk::ALIGN_FILL);
     headerRow->pack_start(*headerBtn, Gtk::PACK_SHRINK, 0);
     headerRow->pack_start(*resetBtn, Gtk::PACK_SHRINK, 0);
     pack_start(*headerRow, Gtk::PACK_SHRINK, 0);
 
     // Persistent box: always visible even when collapsed (for preview strips)
     persistentBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
+    persistentBox->set_hexpand(true);
+    persistentBox->set_halign(Gtk::ALIGN_FILL);
+    persistentBox->set_margin_end(12);
     pack_start(*persistentBox, Gtk::PACK_SHRINK, 0);
 
     // Content box inside a Revealer for smooth expand/collapse animation
     contentBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
+    contentBox->set_hexpand(true);
+    contentBox->set_halign(Gtk::ALIGN_FILL);
+    contentBox->set_margin_end(12);
     revealer = Gtk::manage(new Gtk::Revealer());
     revealer->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
     revealer->set_transition_duration(200);

@@ -20,6 +20,13 @@ AC_CONFIG_FILES([
 	libraw_r.pc
 ])
 
+PC_OPENMP=
+PACKAGE_REQUIRES=
+PACKAGE_LIBS_PRIVATE=
+AC_SUBST([PC_OPENMP])
+AC_SUBST([PACKAGE_REQUIRES])
+AC_SUBST([PACKAGE_LIBS_PRIVATE])
+
 # check if we want OpenMP support
 AC_ARG_ENABLE([openmp],
 	[  --enable-openmp    Enable OpenMP support],
@@ -30,13 +37,14 @@ AC_ARG_ENABLE([openmp],
 	esac],[openmp=true])
 
 if test x$openmp = xtrue ; then
-	AX_OPENMP([
+	AX_OPENMP([openmp_found=true], [openmp_found=false])
+	if test x$openmp_found = xtrue ; then
 		CXXFLAGS="$CXXFLAGS $OPENMP_CFLAGS"
 		CFLAGS="$CFLAGS $OPENMP_CFLAGS"
-		AC_SUBST([PC_OPENMP],[" $OPENMP_CFLAGS"])		
-	],[
-		AC_MSG_WARN([OpenMP support cannot be enabled because your system doesn't support it.])		
-	])
+		PC_OPENMP=" $OPENMP_CFLAGS"
+	else
+		AC_MSG_WARN([OpenMP support cannot be enabled because your system doesn't support it.])
+	fi
 fi
 
 # check for libjpeg v8
@@ -54,10 +62,10 @@ if test x$jpeg = xtrue; then
                         AC_CHECK_HEADERS([jpeglib.h], [
                                 CPPFLAGS="$CPPFLAGS -DUSE_JPEG -DUSE_JPEG8"
                                 LIBS="$LIBS -ljpeg"
-                                AC_SUBST([PACKAGE_LIBS_PRIVATE],"-ljpeg $PACKAGE_LIBS_PRIVATE")
-                        ], AC_MSG_WARN([no jpeg headers found]))
+                                PACKAGE_LIBS_PRIVATE="-ljpeg $PACKAGE_LIBS_PRIVATE"
+                        ], [:])
                 ],
-                AC_MSG_WARN([libjpeg not found])
+                [:]
         )
 fi
 
@@ -74,9 +82,9 @@ if test x$zlib = xtrue; then
 	PKG_CHECK_MODULES([ZLIB],[zlib],[
 		CPPFLAGS="$CPPFLAGS $ZLIB_CFLAGS -DUSE_ZLIB"
 		LIBS="$LIBS $ZLIB_LIBS"
-		AC_SUBST([PACKAGE_REQUIRES],[zlib])
+		PACKAGE_REQUIRES=zlib
 	],
-		AC_MSG_WARN([zlib support cannot be enabled])
+		[:]
 	)
 fi
 
@@ -93,14 +101,14 @@ if test x$lcms = xtrue; then
 	PKG_CHECK_MODULES([LCMS2],[lcms2],[
 		CPPFLAGS="$CPPFLAGS $LCMS2_CFLAGS -DUSE_LCMS2"
 		LIBS="$LIBS $LCMS2_LIBS"
-	        AC_SUBST([PACKAGE_REQUIRES],[lcms2])
+	        PACKAGE_REQUIRES=lcms2
 	],[
 	PKG_CHECK_MODULES([LCMS],[lcms],[
 		CPPFLAGS="$CPPFLAGS $LCMS_CFLAGS -DUSE_LCMS"
 		LIBS="$LIBS $LCMS_LIBS"
-	        AC_SUBST([PACKAGE_REQUIRES],[lcms])
+	        PACKAGE_REQUIRES=lcms
 	],[
-		AC_MSG_WARN([LCMS support cannot be enabled])
+		:
 	])
 	])
 fi
@@ -125,4 +133,3 @@ AC_SUBST([LIBRAW_SHLIB_VERSION],m4_esyscmd([./shlib-version.sh]))
 AC_SUBST([LIBRAW_RELEASE_VERSION],m4_esyscmd([./version.sh]))
 
 AC_OUTPUT
-

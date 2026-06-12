@@ -73,6 +73,55 @@ MyRWMutex::MyRWMutex() :
     readerCount(0)
 {}
 
+MyTryReaderLock::MyTryReaderLock (MyRWMutex& mutex) :
+    mutex (mutex),
+    locked (false)
+{
+    std::unique_lock<std::mutex> lock (mutex.mutex, std::try_to_lock);
+    if (!lock.owns_lock()) {
+        return;
+    }
+
+    if (mutex.writerCount == 0) {
+        ++mutex.writerCount;
+    } else if (mutex.readerCount == 0) {
+        return;
+    }
+
+    ++mutex.readerCount;
+    locked = true;
+}
+
+MyTryReaderLock::~MyTryReaderLock ()
+{
+    if (locked) {
+        release ();
+    }
+}
+
+bool MyTryReaderLock::owns_lock () const
+{
+    return locked;
+}
+
+void MyTryReaderLock::release ()
+{
+    if (!locked) {
+        return;
+    }
+
+    std::unique_lock<std::mutex> lock (mutex.mutex);
+
+    --mutex.readerCount;
+
+    if (mutex.readerCount == 0) {
+        --mutex.writerCount;
+        mutex.cond.notify_all ();
+    }
+
+    locked = false;
+}
+
 void MyReaderLock::acquire ()
 {
     if (locked) {
@@ -179,6 +228,62 @@ MyRWMutex::MyRWMutex() :
     writerCount(0),
     readerCount(0)
 {}
+
+MyTryReaderLock::MyTryReaderLock (MyRWMutex& mutex) :
+    mutex (mutex),
+    locked (false)
+{
+    std::unique_lock<std::mutex> lock (mutex.mutex, std::try_to_lock);
+    if (!lock.owns_lock()) {
+        return;
+    }
+
+    if (mutex.writerCount == 0) {
+        ++mutex.writerCount;
+        mutex.ownerThread = std::this_thread::get_id ();
+        mutex.lastWriterFile = __FILE__;
+        mutex.lastWriterLine = __LINE__;
+    } else if (mutex.readerCount == 0) {
+        return;
+    }
+
+    ++mutex.readerCount;
+    locked = true;
+}
+
+MyTryReaderLock::~MyTryReaderLock ()
+{
+    if (locked) {
+        release ();
+    }
+}
+
+bool MyTryReaderLock::owns_lock () const
+{
+    return locked;
+}
+
+void MyTryReaderLock::release ()
+{
+    if (!locked) {
+        return;
+    }
+
+    std::unique_lock<std::mutex> lock (mutex.mutex);
+
+    --mutex.readerCount;
+
+    if (mutex.readerCount == 0) {
+        --mutex.writerCount;
+        mutex.cond.notify_all ();
+
+        mutex.ownerThread = std::thread::id();
+        mutex.lastWriterFile = "";
+        mutex.lastWriterLine = 0;
+    }
+
+    locked = false;
+}
 
 void MyReaderLock::acquire (const char* file, int line)
 {

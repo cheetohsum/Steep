@@ -128,6 +128,14 @@ ThumbBrowserEntryBase::ThumbBrowserEntryBase (const Glib::ustring& fname, Thumbn
     dtlabh(0),
     exlabw(0),
     exlabh(0),
+    textMetricsValid_(false),
+    textMetricsInfoW_(0),
+    textMetricsInfoH_(0),
+    textMetricsScaleFactor_(1),
+    textMetricsWithFilename_(WFNAME_NONE),
+    textMetricsShowDateTime_(false),
+    textMetricsShowBasicExif_(false),
+    textMetricsItalicStyle_(false),
     previewSize(0, 0),
     prevPos(0, 0),
     activeDeviceScale(1),
@@ -152,9 +160,10 @@ ThumbBrowserEntryBase::ThumbBrowserEntryBase (const Glib::ustring& fname, Thumbn
     bbSelected(false),
     bbFramed(false),
     bbPreview(nullptr),
+    bbImageAreaIconState(0),
     cursor_type(CSUndefined),
     collate_name(getPaddedName(dispname).casefold_collate_key()),
-    collate_exif(getPaddedName(thm->getExifString()).casefold_collate_key()),
+    collate_exif(),
     collate_ext(([&fname]() -> std::string {
         auto dot = fname.rfind('.');
         if (dot != Glib::ustring::npos) {
@@ -173,6 +182,7 @@ ThumbBrowserEntryBase::ThumbBrowserEntryBase (const Glib::ustring& fname, Thumbn
     edited(false),
     recentlysaved(false),
     updatepriority(false),
+    visibleGeneration(0),
     withFilename(WFNAME_NONE),
     animRatingAlpha_(0),
     animColorAlpha_(0),
@@ -187,6 +197,34 @@ ThumbBrowserEntryBase::~ThumbBrowserEntryBase ()
 {
     animTimerConn_.disconnect();
     delete buttonSet;
+}
+
+void ThumbBrowserEntryBase::ensureInfoLines () const
+{
+    if (infoLinesValid || !thumbnail) {
+        return;
+    }
+
+    datetimeline = thumbnail->getDateTimeString();
+    exifline = thumbnail->getExifString();
+    infoLinesValid = true;
+}
+
+const std::string& ThumbBrowserEntryBase::getExifCollateKey () const
+{
+    if (!collate_exif_valid) {
+        collate_exif = thumbnail
+            ? getPaddedName(thumbnail->getExifString()).casefold_collate_key()
+            : std::string();
+        collate_exif_valid = true;
+    }
+
+    return collate_exif;
+}
+
+bool ThumbBrowserEntryBase::buttonSetVisible () const
+{
+    return buttonSet && buttonSet->shouldShow() && !(parent && parent->isInTabMode());
 }
 
 void ThumbBrowserEntryBase::addButtonSet (LWButtonSet* bs)
@@ -245,9 +283,8 @@ void ThumbBrowserEntryBase::updateBackBuffer ()
     // calculate height of button set (hidden if nothing to show)
     // In filmstrip mode, don't reserve space — overlays are drawn on the image
     int bsHeight = 0;
-    bool inFilmstrip = parent && parent->getLocation() == ThumbBrowserBase::THLOC_EDITOR;
 
-    if (buttonSet && buttonSet->shouldShow() && !inFilmstrip) {
+    if (buttonSetVisible()) {
         int tmp;
         buttonSet->getAllocatedDimensions(tmp, bsHeight);
     }
@@ -277,6 +314,7 @@ void ThumbBrowserEntryBase::updateBackBuffer ()
     // draw icons onto the thumbnail area
     bbIcons = getIconsOnImageArea ();
     bbSpecificityIcons = getSpecificityIconsOnImageArea ();
+    bbImageAreaIconState = getImageAreaIconState ();
 
     int iofs_x = 4, iofs_y = 4;
     int istartx = prevPos.x;
@@ -437,6 +475,14 @@ void ThumbBrowserEntryBase::updateBackBuffer ()
 
 void ThumbBrowserEntryBase::getTextSizes (int& infow, int& infoh)
 {
+    infow = 0;
+    infoh = 0;
+
+    if (withFilename == WFNAME_NONE) {
+        fnlabw = fnlabh = dtlabw = dtlabh = exlabw = exlabh = 0;
+        textMetricsValid_ = false;
+        return;
+    }
 
     if (!parent) {
         return;
@@ -447,38 +493,52 @@ void ThumbBrowserEntryBase::getTextSizes (int& infow, int& infoh)
     // calculate dimensions of the text based fields
 
     Glib::RefPtr<Pango::Context> context = w->get_pango_context () ;
-    context->set_font_description (w->get_style_context()->get_font());
+    Pango::FontDescription fontd = w->get_style_context()->get_font();
+    const Glib::ustring fontKey = fontd.to_string();
+    const auto& options = App::get().options();
+    const bool showDateTime = withFilename == WFNAME_FULL && options.fbShowDateTime;
+    const bool showBasicExif = withFilename == WFNAME_FULL && options.fbShowBasicExif;
+    const int scaleFactor = w->get_scale_factor();
 
+    if (showDateTime || showBasicExif) {
+        ensureInfoLines();
+    }
+
+    if (textMetricsValid_
+        && textMetricsFont_ == fontKey
+        && textMetricsScaleFactor_ == scaleFactor
+        && textMetricsWithFilename_ == withFilename
+        && textMetricsShowDateTime_ == showDateTime
+        && textMetricsShowBasicExif_ == showBasicExif
+        && textMetricsItalicStyle_ == italicstyle) {
+        infow = textMetricsInfoW_;
+        infoh = textMetricsInfoH_;
+        return;
+    }
 
     // filename:
-    Pango::FontDescription fontd = w->get_style_context()->get_font();
     // Reduce text size for thumbnail labels (must match drawing code)
     int baseSize = fontd.get_size();
     fontd.set_size(baseSize * 8 / 10); // 80% of normal size
     fontd.set_weight (Pango::WEIGHT_BOLD);
+    fontd.set_style (italicstyle ? Pango::STYLE_ITALIC : Pango::STYLE_NORMAL);
     context->set_font_description (fontd);
     Glib::RefPtr<Pango::Layout> fn = w->create_pango_layout(dispname);
     fn->get_pixel_size (fnlabw, fnlabh);
 
     // calculate cumulated height of all info fields
     infoh = fnlabh;
-    infow = 0;
 
     if (withFilename == WFNAME_FULL) {
-        const auto& options = App::get().options();
-
         // datetime
         fontd.set_weight (Pango::WEIGHT_NORMAL);
+        fontd.set_style (Pango::STYLE_NORMAL);
         context->set_font_description (fontd);
-        fn = w->create_pango_layout (datetimeline);
-        fn->get_pixel_size (dtlabw, dtlabh);
-
-        // basic exif data
-        fn = w->create_pango_layout (exifline);
-        fn->get_pixel_size (exlabw, exlabh);
 
         // add date/tile size:
-        if (options.fbShowDateTime) {
+        if (showDateTime) {
+            fn = w->create_pango_layout (datetimeline);
+            fn->get_pixel_size (dtlabw, dtlabh);
             infoh += dtlabh;
 
             if (dtlabw + 2 * sideMargin > infow) {
@@ -488,7 +548,10 @@ void ThumbBrowserEntryBase::getTextSizes (int& infow, int& infoh)
             dtlabw = dtlabh = 0;
         }
 
-        if (options.fbShowBasicExif) {
+        // basic exif data
+        if (showBasicExif) {
+            fn = w->create_pango_layout (exifline);
+            fn->get_pixel_size (exlabw, exlabh);
             infoh += exlabh;
 
             if (exlabw + 2 * sideMargin > infow) {
@@ -500,6 +563,16 @@ void ThumbBrowserEntryBase::getTextSizes (int& infow, int& infoh)
     } else {
         dtlabw = dtlabh = exlabw = exlabh = 0;
     }
+
+    textMetricsValid_ = true;
+    textMetricsInfoW_ = infow;
+    textMetricsInfoH_ = infoh;
+    textMetricsScaleFactor_ = scaleFactor;
+    textMetricsWithFilename_ = withFilename;
+    textMetricsShowDateTime_ = showDateTime;
+    textMetricsShowBasicExif_ = showBasicExif;
+    textMetricsItalicStyle_ = italicstyle;
+    textMetricsFont_ = fontKey;
 }
 
 void ThumbBrowserEntryBase::resize (int h)
@@ -513,9 +586,8 @@ void ThumbBrowserEntryBase::resize (int h)
     // dimensions of the button set (hidden if nothing to show)
     // In filmstrip mode, don't reserve space — overlays are drawn on the image
     int bsw = 0, bsh = 0;
-    bool inFilmstrip = parent && parent->getLocation() == ThumbBrowserBase::THLOC_EDITOR;
 
-    if (buttonSet && buttonSet->shouldShow() && !inFilmstrip) {
+    if (buttonSetVisible()) {
         buttonSet->getMinimalDimensions (bsw, bsh);
     }
 
@@ -580,7 +652,9 @@ void ThumbBrowserEntryBase::resize (int h)
         // the existing preview scales fine for a few pixels of difference.
         if (std::abs(previewSize.height - old_preh) > 8 || std::abs(previewSize.width - old_prew) > 8) {
             preview.clear();
-            refreshThumbnailImage ();
+            if (!filtered) {
+                refreshThumbnailImage ();
+            }
         } else if (backBuffer) {
             backBuffer->setDirty(true);
         }
@@ -602,8 +676,17 @@ std::pair<hidpi::LogicalSize, int> ThumbBrowserEntryBase::getDesiredPreviewSize(
 void ThumbBrowserEntryBase::onDeviceScaleChanged(int newDeviceScale) {
     if (newDeviceScale != activeDeviceScale) {
         pendingDeviceScale = newDeviceScale;
-        refreshThumbnailImage();
+        if (!filtered) {
+            refreshThumbnailImage();
+        }
     }
+}
+
+void ThumbBrowserEntryBase::appendQuickThumbnailJob(std::vector<ThumbImageUpdater::Request>& requests, bool cachePixbuf)
+{
+    (void)requests;
+    (void)cachePixbuf;
+    refreshQuickThumbnailImage();
 }
 
 void ThumbBrowserEntryBase::drawFrame (Cairo::RefPtr<Cairo::Context> cc, const Gdk::RGBA& bg, const Gdk::RGBA& fg)
@@ -628,8 +711,7 @@ void ThumbBrowserEntryBase::draw (Cairo::RefPtr<Cairo::Context> cc)
         if (!backBuffer || backBuffer->isDirty()) return true;
 
         if (selected != bbSelected || framed != bbFramed
-                || getIconsOnImageArea() != bbIcons
-                || getSpecificityIconsOnImageArea() != bbSpecificityIcons) {
+                || imageAreaIconsChanged()) {
             return true;
         }
 
@@ -649,8 +731,10 @@ void ThumbBrowserEntryBase::draw (Cairo::RefPtr<Cairo::Context> cc)
     }
     if (!backBuffer->surfaceCreated()) return;
 
-    int x_offset = startx + ofsX;
-    int y_offset = starty + ofsY;
+    const int offsetX = getOffsetX();
+    const int offsetY = getOffsetY();
+    int x_offset = startx + offsetX;
+    int y_offset = starty + offsetY;
     // Clip to entry bounds so no entry can paint outside its area
     cc->save();
     cc->rectangle(x_offset, y_offset, expected.width, expected.height);
@@ -666,7 +750,7 @@ void ThumbBrowserEntryBase::draw (Cairo::RefPtr<Cairo::Context> cc)
     }
 
     // redraw button set above the thumbnail (hidden if no rank/label, or in filmstrip/tab mode)
-    if (buttonSet && buttonSet->shouldShow() && !(parent && parent->isInTabMode())) {
+    if (buttonSetVisible()) {
         buttonSet->setColors (selected ? parent->getSelectedBgColor() : parent->getNormalBgColor(), selected ? parent->getNormalBgColor() : parent->getSelectedBgColor());
         buttonSet->redraw (cc);
     }
@@ -681,7 +765,7 @@ void ThumbBrowserEntryBase::setPosition (int x, int y, int w, int h)
     startx = x;
     starty = y;
 
-    if (buttonSet) {
+    if (buttonSetVisible()) {
         buttonSet->arrangeButtons (ofsX + x + sideMargin, ofsY + y + upperMargin, w - 2 * sideMargin, -1);
     }
 }
@@ -693,15 +777,42 @@ void ThumbBrowserEntryBase::setOffset (int x, int y)
     ofsX = -x;
     ofsY = -y;
 
-    if (buttonSet) {
+    if (buttonSetVisible()) {
         buttonSet->move (ofsX + startx + sideMargin, ofsY + starty + upperMargin);
     }
+}
+
+int ThumbBrowserEntryBase::getOffsetX () const
+{
+    return parent ? parent->getScrollOffsetX() : ofsX;
+}
+
+int ThumbBrowserEntryBase::getOffsetY () const
+{
+    return parent ? parent->getScrollOffsetY() : ofsY;
+}
+
+int ThumbBrowserEntryBase::getX () const
+{
+    return getOffsetX() + startx;
+}
+
+int ThumbBrowserEntryBase::getY () const
+{
+    return getOffsetY() + starty;
+}
+
+bool ThumbBrowserEntryBase::shouldCacheRenderedThumbnailPixbuf () const
+{
+    return parent && parent->getLocation() == ThumbBrowserBase::THLOC_EDITOR;
 }
 
 bool ThumbBrowserEntryBase::inside (int x, int y) const
 {
 
-    return x > ofsX + startx && x < ofsX + startx + expected.width && y > ofsY + starty && y < ofsY + starty + expected.height;
+    const int offsetX = getOffsetX();
+    const int offsetY = getOffsetY();
+    return x > offsetX + startx && x < offsetX + startx + expected.width && y > offsetY + starty && y < offsetY + starty + expected.height;
 }
 
 rtengine::Coord2D ThumbBrowserEntryBase::getPosInImgSpace (int x, int y) const
@@ -709,8 +820,8 @@ rtengine::Coord2D ThumbBrowserEntryBase::getPosInImgSpace (int x, int y) const
     rtengine::Coord2D coord(-1., -1.);
 
     if (!preview.empty()) {
-        x -= ofsX + startx;
-        y -= ofsY + starty;
+        x -= getOffsetX() + startx;
+        y -= getOffsetY() + starty;
 
         if (x >= prevPos.x && x <= prevPos.x + previewSize.width
                 && y >= prevPos.y && y <= prevPos.y + previewSize.height) {
@@ -724,7 +835,9 @@ rtengine::Coord2D ThumbBrowserEntryBase::getPosInImgSpace (int x, int y) const
 bool ThumbBrowserEntryBase::insideWindow (int x, int y, int w, int h) const
 {
 
-    return !(ofsX + startx > x + w || ofsX + startx + expected.width < x || ofsY + starty > y + h || ofsY + starty + expected.height < y);
+    const int offsetX = getOffsetX();
+    const int offsetY = getOffsetY();
+    return !(offsetX + startx > x + w || offsetX + startx + expected.width < x || offsetY + starty > y + h || offsetY + starty + expected.height < y);
 }
 
 std::vector<std::shared_ptr<RTSurface>> ThumbBrowserEntryBase::getIconsOnImageArea()
@@ -737,29 +850,40 @@ std::vector<std::shared_ptr<RTSurface>> ThumbBrowserEntryBase::getSpecificityIco
     return std::vector<std::shared_ptr<RTSurface>>();
 }
 
+std::size_t ThumbBrowserEntryBase::getImageAreaIconState()
+{
+    return 0;
+}
+
+bool ThumbBrowserEntryBase::imageAreaIconsChanged()
+{
+    return getIconsOnImageArea() != bbIcons
+            || getSpecificityIconsOnImageArea() != bbSpecificityIcons;
+}
+
 bool ThumbBrowserEntryBase::motionNotify  (int x, int y)
 {
 
-    return (buttonSet && !(parent && parent->isInTabMode())) ? buttonSet->motionNotify (x, y) : false;
+    return buttonSetVisible() ? buttonSet->motionNotify (x, y) : false;
 }
 
 bool ThumbBrowserEntryBase::pressNotify   (int button, int type, int bstate, int x, int y)
 {
 
-    return (buttonSet && !(parent && parent->isInTabMode())) ? buttonSet->pressNotify (x, y) : false;
+    return buttonSetVisible() ? buttonSet->pressNotify (x, y) : false;
 }
 
 bool ThumbBrowserEntryBase::releaseNotify (int button, int type, int bstate, int x, int y)
 {
 
-    return (buttonSet && !(parent && parent->isInTabMode())) ? buttonSet->releaseNotify (x, y) : false;
+    return buttonSetVisible() ? buttonSet->releaseNotify (x, y) : false;
 }
 
 std::tuple<Glib::ustring, bool> ThumbBrowserEntryBase::getToolTip (int x, int y) const
 {
     Glib::ustring tooltip;
 
-    if (buttonSet) {
+    if (buttonSetVisible()) {
         tooltip = buttonSet->getToolTip(x, y);
     }
 
@@ -771,6 +895,10 @@ std::tuple<Glib::ustring, bool> ThumbBrowserEntryBase::getToolTip (int x, int y)
 
         const auto& options = App::get().options();
         if (withFilename < WFNAME_FULL) {
+            if (options.fbShowDateTime || options.fbShowBasicExif) {
+                ensureInfoLines();
+            }
+
             if (options.fbShowDateTime && !datetimeline.empty()) {
                 tooltip += Glib::ustring("\n") + datetimeline;
             }

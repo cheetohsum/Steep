@@ -17,9 +17,13 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include <cassert>
+#include <chrono>
 #include <cmath>
+#include <cstdarg>
+#include <cstdio>
 #include <cstdlib>
 #include <iostream>
+#include <string>
 
 #include "camconst.h"
 #include "color.h"
@@ -58,6 +62,89 @@
 
 namespace
 {
+
+bool rawLoadTimingLogEnabled()
+{
+    static const bool enabled = std::getenv("STEEP_FILESEL_LOG") != nullptr;
+    return enabled;
+}
+
+void rawLoadTimingLog(const char* fmt, ...)
+{
+    if (!rawLoadTimingLogEnabled()) {
+        return;
+    }
+
+    static FILE* f = nullptr;
+    if (!f) {
+        const char* home = std::getenv("USERPROFILE");
+        if (!home) {
+            home = std::getenv("HOME");
+        }
+        const std::string path = home ? std::string(home) + "\\steep-fileSel.log" : "steep-fileSel.log";
+        f = std::fopen(path.c_str(), "a");
+    }
+    if (!f) {
+        return;
+    }
+
+    using clk = std::chrono::steady_clock;
+    static const auto base = clk::now();
+    const long long tms = std::chrono::duration_cast<std::chrono::milliseconds>(clk::now() - base).count();
+    std::fprintf(f, "[t=%lldms] ", tms);
+
+    va_list ap;
+    va_start(ap, fmt);
+    std::vfprintf(f, fmt, ap);
+    va_end(ap);
+    std::fflush(f);
+}
+
+long long rawLoadDurationMs(
+    const std::chrono::steady_clock::time_point& from,
+    const std::chrono::steady_clock::time_point& to)
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(to - from).count();
+}
+
+void zeroImage(rtengine::Imagefloat* image)
+{
+    if (!image) {
+        return;
+    }
+
+#ifdef _OPENMP
+    #pragma omp parallel for
+#endif
+    for (int i = 0; i < image->getHeight(); ++i) {
+        for (int j = 0; j < image->getWidth(); ++j) {
+            image->r(i, j) = image->g(i, j) = image->b(i, j) = 0.f;
+        }
+    }
+}
+
+bool rawGetImageUsesDemosaicPlanes(const rtengine::RawImage& rawImage)
+{
+    return rawImage.getSensorType() == rtengine::ST_BAYER
+        || rawImage.getSensorType() == rtengine::ST_FUJI_XTRANS
+        || rawImage.get_colors() == 1
+        || rawImage.get_colors() == 3;
+}
+
+bool rawGetImageDemosaicPlanesReady(
+    const array2D<float>& red,
+    const array2D<float>& green,
+    const array2D<float>& blue,
+    int width,
+    int height)
+{
+    return red.getWidth() == width
+        && red.getHeight() == height
+        && green.getWidth() == width
+        && green.getHeight() == height
+        && blue.getWidth() == width
+        && blue.getHeight() == height;
+}
 
 float clipitc(float x)
 {
@@ -757,7 +844,9 @@ void RawImageSource::getWBMults(const ColorTemp &ctemp, const RAWParams &raw, st
 
 void RawImageSource::getImage(const ColorTemp &ctemp, int tran, Imagefloat* image, const PreviewProps &pp, const ToneCurveParams &hrp, const RAWParams &raw)
 {
-    assert(checkRawDataDimensions(rawData, *ri, W, H));
+    if (!image || !ri) {
+        return;
+    }
 
     MyMutex::MyLock lock(getImageMutex);
 
@@ -859,6 +948,25 @@ void RawImageSource::getImage(const ColorTemp &ctemp, int tran, Imagefloat* imag
     }
 
     int maxx = this->W, maxy = this->H, skip = pp.getSkip();
+    const bool usesDemosaicPlanes = rawGetImageUsesDemosaicPlanes(*ri);
+    const bool pixelsReady = usesDemosaicPlanes
+        ? rawGetImageDemosaicPlanesReady(red, green, blue, W, H)
+        : checkRawDataDimensions(rawData, *ri, W, H);
+
+    if (!pixelsReady) {
+        rawLoadTimingLog("[rawGetImage] skipped unprepared srcW=%d srcH=%d rawData=%dx%d red=%dx%d green=%dx%d blue=%dx%d dst=%dx%d sx=%d sy=%d im=%dx%d skip=%d tran=%d colors=%d sensor=%d usesDemosaic=%d\n",
+            W, H,
+            rawData.getWidth(), rawData.getHeight(),
+            red.getWidth(), red.getHeight(),
+            green.getWidth(), green.getHeight(),
+            blue.getWidth(), blue.getHeight(),
+            image->getWidth(), image->getHeight(),
+            sx1, sy1, imwidth, imheight, skip, tran,
+            ri->get_colors(), static_cast<int>(ri->getSensorType()),
+            static_cast<int>(usesDemosaicPlanes));
+        zeroImage(image);
+        return;
+    }
 
     bool iscolor = (hrp.method == "Color" || hrp.method == "Coloropp");
     const bool doClip = (chmax[0] >= clmax[0] || chmax[1] >= clmax[1] || chmax[2] >= clmax[2]) && !hrp.hrenabled && hrp.clampOOG;
@@ -905,7 +1013,6 @@ void RawImageSource::getImage(const ColorTemp &ctemp, int tran, Imagefloat* imag
     rm /= area;
     gm /= area;
     bm /= area;
-
 
 #ifdef _OPENMP
     #pragma omp parallel if(!d1x)       // omp disabled for D1x to avoid race conditions (see Issue 1088 http://code.google.com/p/rawtherapee/issues/detail?id=1088)
@@ -1198,16 +1305,38 @@ int RawImageSource::load(const Glib::ustring &fname, bool firstFrameOnly)
     MyTime t1, t2;
     t1.set();
     fileName = fname;
+    const bool timingLog = rawLoadTimingLogEnabled();
+    const auto totalStart = std::chrono::steady_clock::now();
 
     if (plistener) {
         plistener->setProgressStr("PROGRESSBAR_DECODING");
         plistener->setProgress(0.0);
     }
 
+    const auto identifyStart = std::chrono::steady_clock::now();
     ri = new RawImage(fname);
     int errCode = ri->loadRaw(false, 0, false);
+    if (timingLog) {
+        rawLoadTimingLog("[rawLoad] identify duration=%lldms err=%d decoder=%s frames=%u bits=%d raw=%dx%d image=%dx%d file=%s\n",
+            rawLoadDurationMs(identifyStart, std::chrono::steady_clock::now()),
+            errCode,
+            ri->getDecoderName().c_str(),
+            ri->getFrameCount(),
+            ri->get_tiff_bps(),
+            ri->get_rawwidth(),
+            ri->get_rawheight(),
+            ri->get_width(),
+            ri->get_height(),
+            fname.c_str());
+    }
 
     if (errCode) {
+        if (timingLog) {
+            rawLoadTimingLog("[rawLoad] total duration=%lldms err=%d file=%s\n",
+                rawLoadDurationMs(totalStart, std::chrono::steady_clock::now()),
+                errCode,
+                fname.c_str());
+        }
         return errCode;
     }
 
@@ -1216,6 +1345,7 @@ int RawImageSource::load(const Glib::ustring &fname, bool firstFrameOnly)
     numFrames = firstFrameOnly && (numFrames < 7 || !isHasselblad) ? 1 : ri->getFrameCount();
 
     errCode = 0;
+    const auto loadRawStart = std::chrono::steady_clock::now();
 
     if (numFrames >= 7 && isHasselblad) {
         // special case to avoid crash when loading Hasselblad H6D-100cMS pixelshift files
@@ -1294,15 +1424,37 @@ int RawImageSource::load(const Glib::ustring &fname, bool firstFrameOnly)
     rawDataFrames.resize(riFrames.size());
     rawDataBuffer.clear();
     rawDataBuffer.resize(riFrames.size() - 1);
+    if (timingLog) {
+        rawLoadTimingLog("[rawLoad] loadRaw duration=%lldms err=%d frames=%u firstFrameOnly=%d file=%s\n",
+            rawLoadDurationMs(loadRawStart, std::chrono::steady_clock::now()),
+            errCode,
+            numFrames,
+            static_cast<int>(firstFrameOnly),
+            fname.c_str());
+    }
 
     if (!errCode) {
+        const auto compressStart = std::chrono::steady_clock::now();
         for (unsigned int i = 0; i < numFrames; ++i) {
             riFrames[i]->compress_image(i);
         }
+        if (timingLog) {
+            rawLoadTimingLog("[rawLoad] compress duration=%lldms frames=%u file=%s\n",
+                rawLoadDurationMs(compressStart, std::chrono::steady_clock::now()),
+                numFrames,
+                fname.c_str());
+        }
     } else {
+        if (timingLog) {
+            rawLoadTimingLog("[rawLoad] total duration=%lldms err=%d file=%s\n",
+                rawLoadDurationMs(totalStart, std::chrono::steady_clock::now()),
+                errCode,
+                fname.c_str());
+        }
         return errCode;
     }
 
+    const auto setupStart = std::chrono::steady_clock::now();
     if (numFrames > 1) { // this disables multi frame support for Fuji S5 until I found a solution to handle different dimensions
         if (riFrames[0]->get_width() != riFrames[1]->get_width() || riFrames[0]->get_height() != riFrames[1]->get_height()) {
             numFrames = 1;
@@ -1405,8 +1557,18 @@ int RawImageSource::load(const Glib::ustring &fname, bool firstFrameOnly)
         riFrames[i]->set_prefilters();
     }
 
+    if (timingLog) {
+        rawLoadTimingLog("[rawLoad] setup duration=%lldms width=%d height=%d frames=%u sensor=%d file=%s\n",
+            rawLoadDurationMs(setupStart, std::chrono::steady_clock::now()),
+            W,
+            H,
+            numFrames,
+            static_cast<int>(ri->getSensorType()),
+            fname.c_str());
+    }
 
     // Load complete Exif information
+    const auto metadataStart = std::chrono::steady_clock::now();
     idata = new FramesData(fname); // TODO: std::unique_ptr<>
     idata->setDCRawFrameCount(numFrames);
     {
@@ -1414,11 +1576,11 @@ int RawImageSource::load(const Glib::ustring &fname, bool firstFrameOnly)
         getFullSize(ww, hh);
         idata->setDimensions(ww, hh);
     }
-
-    green(W, H);
-    red(W, H);
-    blue(W, H);
-    //hpmap = allocArray<char>(W, H);
+    if (timingLog) {
+        rawLoadTimingLog("[rawLoad] metadata duration=%lldms file=%s\n",
+            rawLoadDurationMs(metadataStart, std::chrono::steady_clock::now()),
+            fname.c_str());
+    }
 
     if (plistener) {
         plistener->setProgress(1.0);
@@ -1429,6 +1591,11 @@ int RawImageSource::load(const Glib::ustring &fname, bool firstFrameOnly)
 
     if (settings->verbose) {
         printf("Load %s: %d usec\n", fname.c_str(), t2.etime(t1));
+    }
+    if (timingLog) {
+        rawLoadTimingLog("[rawLoad] total duration=%lldms err=0 file=%s\n",
+            rawLoadDurationMs(totalStart, std::chrono::steady_clock::now()),
+            fname.c_str());
     }
 
     return 0; // OK!
@@ -1801,6 +1968,16 @@ void RawImageSource::demosaic(const RAWParams &raw, bool autoContrast, double &c
     t1.set();
 
     const auto& options = App::get().options();
+    if (green.getWidth() != W || green.getHeight() != H) {
+        green(W, H);
+    }
+    if (red.getWidth() != W || red.getHeight() != H) {
+        red(W, H);
+    }
+    if (blue.getWidth() != W || blue.getHeight() != H) {
+        blue(W, H);
+    }
+
     if (ri->getSensorType() == ST_BAYER) {
         if (raw.bayersensor.method == RAWParams::BayerSensor::getMethodString(RAWParams::BayerSensor::Method::HPHD)) {
             hphd_demosaic();

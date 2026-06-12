@@ -176,8 +176,11 @@ bool AIDenoiseManager::testRawRefinery()
 
 void AIDenoiseManager::detect()
 {
+    if (detecting_.exchange(true)) {
+        return;
+    }
+
     available_ = false;
-    detecting_ = true;
 
     // Run detection in a background thread to avoid blocking startup.
     // spawn_command_line_sync has no timeout and can hang if Python is

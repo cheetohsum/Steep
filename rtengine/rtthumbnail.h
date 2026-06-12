@@ -30,6 +30,7 @@
 namespace Glib
 {
 
+class KeyFile;
 class ustring;
 
 }
@@ -110,9 +111,13 @@ public:
 
     unsigned char* getGrayscaleHistEQ (int trim_width);
     bool writeImage (const Glib::ustring& fname);
+    bool writeImageFile (const Glib::ustring& fullFName);
     bool readImage (const Glib::ustring& fname);
+    bool readImageFile (const Glib::ustring& fullFName);
 
     bool readData  (const Glib::ustring& fname);
+    bool readData  (const Glib::KeyFile& keyFile);
+    void writeData (Glib::KeyFile& keyFile);
     bool writeData  (const Glib::ustring& fname);
 
     bool readEmbProfile  (const Glib::ustring& fname);

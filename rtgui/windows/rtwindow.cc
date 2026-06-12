@@ -181,9 +181,7 @@ RTWindow::RTWindow ()
         if (options.fontFamily != "default") { // Set font and size according to user choice
             // Set font and size in css from options
             css = Glib::ustring::compose (
-                "* { font-family: %1; font-size: %2pt }"
-                " #MyExpander * { font-size: 10px; }"
-                " .MyExpanderSummary * { font-size: 10px; }",
+                "* { font-family: %1; font-size: %2pt }",
                 options.fontFamily,
                 options.fontSize); // Font size is in "pt" in options
         } else { // Set font and size according to default values
@@ -204,9 +202,7 @@ RTWindow::RTWindow ()
             }
 #endif
             css = Glib::ustring::compose (
-                "* { font-family: %1; font-size: %2pt }"
-                " #MyExpander * { font-size: 10px; }"
-                " .MyExpanderSummary * { font-size: 10px; }",
+                "* { font-family: %1; font-size: %2pt }",
                 defaultFontFamily,
                 defaultFontSize);
         }
@@ -229,48 +225,6 @@ RTWindow::RTWindow ()
             }
         }
 
-        // Compact UI overrides at high priority to ensure they win over theme CSS
-        {
-            auto cssCompact = Gtk::CssProvider::create();
-            Glib::ustring compactCSS =
-                "#MyExpander * { font-size: 10px; min-height: 0; min-width: 0; }\n"
-                "#MyExpander button,"
-                " .MyExpanderSummary button {"
-                "   min-height: 0; min-width: 0; padding: 0 4px; margin: 0; }\n"
-                "#MyExpander .text-button,"
-                " #MyExpander .image-button,"
-                " #MyExpander .independent,"
-                " .MyExpanderSummary .text-button,"
-                " .MyExpanderSummary .image-button,"
-                " .MyExpanderSummary .independent {"
-                "   min-height: 0; min-width: 0; padding: 0 4px; margin: 0; }\n"
-                "#MyExpander button label,"
-                " .MyExpanderSummary button label {"
-                "   min-height: 0; margin: 0; padding: 0; }\n"
-                "#MyExpander button.combo,"
-                " .MyExpanderSummary button.combo {"
-                "   min-height: 0; min-width: 0;"
-                "   padding: 0 2px; margin: 0; }\n"
-                "#MyExpander combobox,"
-                " .MyExpanderSummary combobox {"
-                "   min-height: 0; margin: 0; padding: 0; }\n"
-                "#MyExpander combobox cellview,"
-                " .MyExpanderSummary combobox cellview {"
-                "   min-height: 0; padding: 0; margin: 0; }\n"
-                "#MyExpander entry,"
-                " .MyExpanderSummary entry {"
-                "   min-height: 0; padding: 0; margin: 0; }\n"
-                ".MyExpanderSummary * { font-size: 10px; min-height: 0; min-width: 0; }\n";
-            try {
-                cssCompact->load_from_data(compactCSS);
-                Gtk::StyleContext::add_provider_for_screen(
-                    screen, cssCompact, GTK_STYLE_PROVIDER_PRIORITY_USER + 200);
-            } catch (Glib::Error &err) {
-                printf("Compact CSS error: %s\n", err.what().c_str());
-            } catch (...) {
-                printf("Compact CSS unknown error\n");
-            }
-        }
     }
 
     // ------- end loading theme files
@@ -354,7 +308,6 @@ RTWindow::RTWindow ()
         if (isSingleTabMode()) {
             createSetmEditor();
         }
-
         mainNB->set_current_page (mainNB->page_num (*fpanel));
 
         // ===== Queue Overlay Drawer =====
@@ -1165,10 +1118,12 @@ RTWindow::RTWindow ()
         // Use an invisible widget as the CSD titlebar so the compositor doesn't add
         // server-side decorations. The real headerBar is packed as a regular widget
         // so it stays visible in fullscreen.
+#ifndef _WIN32
         Gtk::EventBox* fakeTitlebar = Gtk::manage(new Gtk::EventBox());
         fakeTitlebar->set_size_request(-1, 0);
         fakeTitlebar->set_no_show_all(true);
         set_titlebar(*fakeTitlebar);
+#endif
 
         // Wrap headerBar in an EventBox so we can catch clicks on empty areas for dragging
         Gtk::EventBox* headerDragBox = Gtk::manage(new Gtk::EventBox());
@@ -1222,6 +1177,7 @@ RTWindow::RTWindow ()
 
 RTWindow::~RTWindow()
 {
+
     // Stop MCP server before other members are destroyed
     if (mcpServer_) {
         mcpServer_->stop();
@@ -1829,18 +1785,24 @@ void RTWindow::showPreferences ()
 
 void RTWindow::setProgress(double p)
 {
-    prProgBar.set_fraction(p);
+    if (prProgBar.get_fraction() != p) {
+        prProgBar.set_fraction(p);
+    }
 
     if (p > 0.0 && p < 1.0) {
-        prProgBar.show();
+        if (!prProgBar.get_visible()) {
+            prProgBar.show();
+        }
     } else {
-        prProgBar.hide();
+        if (prProgBar.get_visible()) {
+            prProgBar.hide();
+        }
     }
 }
 
 void RTWindow::setProgressStr(const Glib::ustring& str)
 {
-    if (!App::get().options().mainNBVertical) {
+    if (!App::get().options().mainNBVertical && prProgBar.get_text() != str) {
         prProgBar.set_text(str);
     }
 }
@@ -1848,9 +1810,13 @@ void RTWindow::setProgressStr(const Glib::ustring& str)
 void RTWindow::setProgressState(bool inProcessing)
 {
     if (inProcessing) {
-        prProgBar.show();
+        if (!prProgBar.get_visible()) {
+            prProgBar.show();
+        }
     } else {
-        prProgBar.hide();
+        if (prProgBar.get_visible()) {
+            prProgBar.hide();
+        }
     }
 }
 
@@ -1981,12 +1947,26 @@ void RTWindow::syncNavButtons (guint page_num)
 
 void RTWindow::SetEditorCurrent()
 {
-    mainNB->set_current_page (mainNB->page_num (*epanel));
+    if (!mainNB || !epanel) {
+        return;
+    }
+
+    const int targetPage = mainNB->page_num (*epanel);
+    if (targetPage >= 0 && mainNB->get_current_page() != targetPage) {
+        mainNB->set_current_page (targetPage);
+    }
 }
 
 void RTWindow::SetMainCurrent()
 {
-    mainNB->set_current_page (mainNB->page_num (*fpanel));
+    if (!mainNB || !fpanel) {
+        return;
+    }
+
+    const int targetPage = mainNB->page_num (*fpanel);
+    if (targetPage >= 0 && mainNB->get_current_page() != targetPage) {
+        mainNB->set_current_page (targetPage);
+    }
 }
 
 void RTWindow::MoveFileBrowserToMain()
@@ -2188,11 +2168,17 @@ void RTWindow::get_position(int& x, int& y) const
 
 void RTWindow::set_title_decorated (Glib::ustring fname)
 {
-    set_title ("");
+    if (!get_title().empty()) {
+        set_title ("");
+    }
 
     if (headerBar) {
-        headerBar->set_title ("");
-        headerBar->set_subtitle ("");
+        if (!headerBar->get_title().empty()) {
+            headerBar->set_title ("");
+        }
+        if (!headerBar->get_subtitle().empty()) {
+            headerBar->set_subtitle ("");
+        }
     }
 }
 
@@ -2699,4 +2685,8 @@ bool RTWindow::onWindowButtonPress(GdkEventButton* event)
         static_cast<int>(event->x_root), static_cast<int>(event->y_root),
         event->time);
     return true;
+}
+namespace
+{
+
 }

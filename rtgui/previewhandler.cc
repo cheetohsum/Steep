@@ -28,7 +28,8 @@ using namespace rtengine::procparams;
 PreviewHandler::PreviewHandler () :
     image(nullptr),
     cropParams(new procparams::CropParams),
-    previewScale(1.)
+    previewScale(1.),
+    previewImgReferencesEngineData(false)
 {
 
     pih = new PreviewHandlerIdleHelper;
@@ -113,6 +114,7 @@ void PreviewHandler::delImage(IImage8* i)
             delete i;
             pih->phandler->previewImgMutex.lock();
             pih->phandler->previewImg.clear();
+            pih->phandler->previewImgReferencesEngineData = false;
             pih->phandler->previewImgMutex.unlock();
 
             --pih->pending;
@@ -149,8 +151,10 @@ void PreviewHandler::imageReady(const rtengine::procparams::CropParams& cp)
                     pih->phandler->image->getWidth(),
                     pih->phandler->image->getHeight(),
                     3 * pih->phandler->image->getWidth());
+                pih->phandler->previewImgReferencesEngineData = true;
             } else {
                 pih->phandler->previewImg.clear();
+                pih->phandler->previewImgReferencesEngineData = false;
             }
             pih->phandler->previewImgMutex.unlock();
 
@@ -167,10 +171,34 @@ void PreviewHandler::imageReady(const rtengine::procparams::CropParams& cp)
 
 void PreviewHandler::setPlaceholder(Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scale)
 {
-    MyMutex::MyLock lock(previewImgMutex);
-    previewImg = pixbuf;
-    previewScale = scale;
+    {
+        MyMutex::MyLock lock(previewImgMutex);
+        previewImg = pixbuf;
+        previewImgReferencesEngineData = false;
+        previewScale = scale;
+    }
     previewImageChanged();
+}
+
+bool PreviewHandler::trySetPlaceholder(Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scale)
+{
+    if (!previewImgMutex.trylock()) {
+        return false;
+    }
+
+    {
+        struct UnlockGuard {
+            MyMutex& mutex;
+            ~UnlockGuard() { mutex.unlock(); }
+        } guard{previewImgMutex};
+
+        previewImg = pixbuf;
+        previewImgReferencesEngineData = false;
+        previewScale = scale;
+    }
+
+    previewImageChanged();
+    return true;
 }
 
 bool PreviewHandler::hasPlaceholder() const
@@ -186,8 +214,8 @@ Glib::RefPtr<Gdk::Pixbuf> PreviewHandler::getRoughImage (
     Glib::RefPtr<Gdk::Pixbuf> resPixbuf;
     if (!previewImg) return resPixbuf;
 
-    int imgW = image ? image->getWidth() : previewImg->get_width();
-    int imgH = image ? image->getHeight() : previewImg->get_height();
+    const int imgW = previewImg->get_width();
+    const int imgH = previewImg->get_height();
 
     double totalZoom = zoom * previewScale;
 
@@ -224,8 +252,8 @@ hidpi::DevicePixbuf PreviewHandler::getRoughImage (hidpi::LogicalSize desiredSiz
     hidpi::DevicePixbuf result;
     if (!previewImg) return result;
 
-    int imgW = image ? image->getWidth() : previewImg->get_width();
-    int imgH = image ? image->getHeight() : previewImg->get_height();
+    const int imgW = previewImg->get_width();
+    const int imgH = previewImg->get_height();
 
     double zoom1 = (double)max(desiredSize.width, 20) / previewImg->get_width(); // too small values lead to extremely increased processing time in scale function, Issue 2783
     double zoom2 = (double)max(desiredSize.height, 20) / previewImg->get_height();

@@ -18,7 +18,9 @@
  */
 #pragma once
 
-#include <set>
+#include <string>
+#include <utility>
+#include <vector>
 
 #include "rtengine/noncopyable.h"
 
@@ -34,6 +36,8 @@ class FileBrowserEntry;
 class PreviewLoaderListener
 {
 public:
+    using PreviewReadyBatch = std::vector<std::pair<int, FileBrowserEntry*>>;
+
     virtual ~PreviewLoaderListener() = default;
 
     /**
@@ -43,6 +47,12 @@ public:
      * @param fd entry
      */
     virtual void previewReady(int dir_id, FileBrowserEntry* fd) = 0;
+    virtual void previewReadyBatch(PreviewReadyBatch&& entries)
+    {
+        for (auto& entry : entries) {
+            previewReady(entry.first, entry.second);
+        }
+    }
 
     /**
      * @brief all previews have finished loading
@@ -74,6 +84,9 @@ public:
      * @param l listener
      */
     void add(int dir_id, const Glib::ustring& dir_entry, PreviewLoaderListener* l);
+    void add(int dir_id, const Glib::ustring& dir_entry, std::string&& dir_entry_key, PreviewLoaderListener* l);
+    void addBatch(int dir_id, std::vector<Glib::ustring>&& dir_entries, PreviewLoaderListener* l);
+    void addBatch(int dir_id, std::vector<Glib::ustring>&& dir_entries, std::vector<std::string>&& dir_entry_keys, PreviewLoaderListener* l);
 
     /**
      * @brief Stop processing and remove all jobs.
@@ -88,11 +101,15 @@ public:
      * @brief Set a priority hint so jobs near the target file are loaded first.
      */
     void setPriorityHint(const Glib::ustring& targetFile);
+    void setPriorityHint(const Glib::ustring& targetFile, std::string&& targetFileKey);
 
     /** Pause processing — queued jobs stay but no new work starts. */
     void pause();
     /** Resume processing — re-schedules all pending jobs. */
     void resume();
+    void setPostScanDrainMode(bool enabled);
+    bool hasPendingWork() const;
+    void wakePendingWorkers();
 
 private:
 

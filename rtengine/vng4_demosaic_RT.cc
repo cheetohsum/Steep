@@ -103,11 +103,10 @@ void RawImageSource::vng4_demosaic (const array2D<float> &rawData, array2D<float
     chood[] = { -1, -1, -1, 0, -1, +1, 0, +1, +1, +1, +1, 0, +1, -1, 0, -1 };
 
     double progress = 0.0;
-    const bool plistenerActive = plistener;
 
-    if (plistenerActive) {
-        plistener->setProgressStr (Glib::ustring::compose(M("TP_RAW_DMETHOD_PROGRESSBAR"), M("TP_RAW_VNG4")));
-        plistener->setProgress (progress);
+    if (ProgressListener* progressListener = plistener) {
+        progressListener->setProgressStr (Glib::ustring::compose(M("TP_RAW_DMETHOD_PROGRESSBAR"), M("TP_RAW_VNG4")));
+        progressListener->setProgress (progress);
     }
 
     const unsigned prefilters = ri->prefilters;
@@ -288,9 +287,9 @@ void RawImageSource::vng4_demosaic (const array2D<float> &rawData, array2D<float
             }
         }
 
-    if(plistenerActive) {
+    if (ProgressListener* progressListener = plistener) {
         progress = 0.2;
-        plistener->setProgress (progress);
+        progressListener->setProgress (progress);
     }
 
 #ifdef _OPENMP
@@ -372,16 +371,16 @@ void RawImageSource::vng4_demosaic (const array2D<float> &rawData, array2D<float
                 vng4interpolate_row_redblue(ri, rawData, red[row - 1], blue[row - 1], green[row - 2], green[row - 1], green[row], row - 1, W);
             }
 
-            if(plistenerActive) {
-                if((row % progressStep) == 0)
+            if((row % progressStep) == 0)
 #ifdef _OPENMP
-                    #pragma omp critical (updateprogress)
+                #pragma omp critical (updateprogress)
 #endif
                 {
-                    progress += progressInc;
-                    plistener->setProgress (progress);
+                    if (ProgressListener* progressListener = plistener) {
+                        progress += progressInc;
+                        progressListener->setProgress (progress);
+                    }
                 }
-            }
         }
 
         if (firstRow > 2 && firstRow < H - 3) {
@@ -403,8 +402,8 @@ void RawImageSource::vng4_demosaic (const array2D<float> &rawData, array2D<float
     free (code[0][0]);
     free (image);
 
-    if(plistenerActive) {
-        plistener->setProgress (1.0);
+    if (ProgressListener* progressListener = plistener) {
+        progressListener->setProgress (1.0);
     }
 }
 }

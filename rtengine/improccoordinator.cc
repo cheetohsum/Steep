@@ -17,6 +17,7 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include <fstream>
+#include <mutex>
 
 #include <glibmm/thread.h>
 
@@ -262,10 +263,19 @@ ImProcCoordinator::~ImProcCoordinator()
 {
 
     destroying = true;
+    Glib::Thread* threadToJoin = nullptr;
     updaterThreadStart.lock();
 
-    if (updaterRunning && thread) {
-        thread->join();
+    changeSinceLast = 0;
+    if (thread) {
+        threadToJoin = thread;
+        thread = nullptr;
+    }
+    updaterRunning = false;
+    updaterThreadStart.unlock();
+
+    if (threadToJoin) {
+        threadToJoin->join();
     }
 
     mProcessing.lock();
@@ -295,7 +305,6 @@ ImProcCoordinator::~ImProcCoordinator()
         customTransformOut = nullptr;
     }
 
-    updaterThreadStart.unlock();
 }
 
 void ImProcCoordinator::assign(ImageSource* imgsrc)
@@ -391,8 +400,9 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             //rp.deadPixelFilter = rp.hotPixelFilter = false;
         }
 
-        if (frameCountListener) {
-            frameCountListener->FrameCountChanged(imgsrc->getFrameCount(), params->raw.bayersensor.imageNum);
+        FrameCountListener* const frameCount = frameCountListener;
+        if (!destroying && frameCount) {
+            frameCount->FrameCountChanged(imgsrc->getFrameCount(), params->raw.bayersensor.imageNum);
         }
 
         // Abort early if this processor is being shut down (e.g. user switched photos)
@@ -409,24 +419,28 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             imgsrc->setCurrentFrame(params->raw.bayersensor.imageNum);
             imgsrc->preprocess(rp, params->lensProf, params->coarse, reddeha, greendeha, bluedeha, true);
             if(imgsrc->getSensorType() == ST_BAYER) {//Bayer
-                if (ablListener) {
+                AutoBlackListener* const abl = ablListener;
+                if (!destroying && abl) {
                     if(rp.bayersensor.Dehablack) {
-                        ablListener->autoBlackChanged(reddeha, greendeha, bluedeha);
+                        abl->autoBlackChanged(reddeha, greendeha, bluedeha);
                     }
                 }
             } else if(imgsrc->getSensorType() == ST_FUJI_XTRANS) {//X trans
-                if (ablxListener) {
+                AutoBlackxListener* const ablx = ablxListener;
+                if (!destroying && ablx) {
                     if(rp.xtranssensor.Dehablackx) {
-                        ablxListener->autoBlackxChanged(reddeha, greendeha, bluedeha);
+                        ablx->autoBlackxChanged(reddeha, greendeha, bluedeha);
                     }
                 }
             }
-            if (flatFieldAutoClipListener && rp.ff_AutoClipControl) {
-                flatFieldAutoClipListener->flatFieldAutoClipValueChanged(imgsrc->getFlatFieldAutoClipValue());
+            FlatFieldAutoClipListener* const flatFieldClip = flatFieldAutoClipListener;
+            if (!destroying && flatFieldClip && rp.ff_AutoClipControl) {
+                flatFieldClip->flatFieldAutoClipValueChanged(imgsrc->getFlatFieldAutoClipValue());
             }
 
             imgsrc->getRAWHistogram(histRedRaw, histGreenRaw, histBlueRaw);
-            hist_raw_dirty = !(hListener && hListener->updateHistogramRaw());
+            HistogramListener* const rawHistListener = hListener;
+            hist_raw_dirty = !(rawHistListener && !destroying && rawHistListener->updateHistogramRaw());
 
             highDetailPreprocessComputed = highDetailNeeded;
         }
@@ -444,8 +458,9 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
         */
         // If high detail (=100%) is newly selected, do a demosaic update, since the last was just with FAST
 
-        if (imageTypeListener) {
-            imageTypeListener->imageTypeChanged(imgsrc->isRAW(), imgsrc->getSensorType() == ST_BAYER, imgsrc->getSensorType() == ST_FUJI_XTRANS, imgsrc->isMono(), imgsrc->isGainMapSupported());
+        ImageTypeListener* const imageType = imageTypeListener;
+        if (!destroying && imageType) {
+            imageType->imageTypeChanged(imgsrc->isRAW(), imgsrc->getSensorType() == ST_BAYER, imgsrc->getSensorType() == ST_FUJI_XTRANS, imgsrc->isMono(), imgsrc->isGainMapSupported());
         }
 
         bool iscolor = (params->toneCurve.method == "Color" || params->toneCurve.method == "Coloropp");
@@ -481,11 +496,13 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             double contrastThreshold = imgsrc->getSensorType() == ST_BAYER ? params->raw.bayersensor.dualDemosaicContrast : params->raw.xtranssensor.dualDemosaicContrast;
             imgsrc->demosaic(rp, autoContrast, contrastThreshold, params->pdsharpening.enabled);
 
-            if (imgsrc->getSensorType() == ST_BAYER && bayerAutoContrastListener && autoContrast) {
-                bayerAutoContrastListener->autoContrastChanged(contrastThreshold);
-            } else if (imgsrc->getSensorType() == ST_FUJI_XTRANS && xtransAutoContrastListener && autoContrast) {
+            AutoContrastListener* const bayerAutoContrast = bayerAutoContrastListener;
+            AutoContrastListener* const xtransAutoContrast = xtransAutoContrastListener;
+            if (!destroying && imgsrc->getSensorType() == ST_BAYER && bayerAutoContrast && autoContrast) {
+                bayerAutoContrast->autoContrastChanged(contrastThreshold);
+            } else if (!destroying && imgsrc->getSensorType() == ST_FUJI_XTRANS && xtransAutoContrast && autoContrast) {
 
-                xtransAutoContrastListener->autoContrastChanged(contrastThreshold);
+                xtransAutoContrast->autoContrastChanged(contrastThreshold);
             }
 
             // if a demosaic happened we should also call getimage later, so we need to set the M_INIT flag
@@ -502,12 +519,14 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             double pdSharpenRadius = params->pdsharpening.deconvradius;
             imgsrc->captureSharpening(params->pdsharpening, sharpMask, pdSharpencontrastThreshold, pdSharpenRadius);
 
-            if (pdSharpenAutoContrastListener && params->pdsharpening.autoContrast) {
-                pdSharpenAutoContrastListener->autoContrastChanged(pdSharpencontrastThreshold);
+            AutoContrastListener* const pdSharpenAutoContrast = pdSharpenAutoContrastListener;
+            if (!destroying && pdSharpenAutoContrast && params->pdsharpening.autoContrast) {
+                pdSharpenAutoContrast->autoContrastChanged(pdSharpencontrastThreshold);
             }
 
-            if (pdSharpenAutoRadiusListener && params->pdsharpening.autoRadius) {
-                pdSharpenAutoRadiusListener->autoRadiusChanged(pdSharpenRadius);
+            AutoRadiusListener* const pdSharpenAutoRadius = pdSharpenAutoRadiusListener;
+            if (!destroying && pdSharpenAutoRadius && params->pdsharpening.autoRadius) {
+                pdSharpenAutoRadius->autoRadiusChanged(pdSharpenRadius);
             }
         }
 
@@ -549,8 +568,9 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             float minCD, maxCD, mini, maxi, Tmean, Tsigma, Tmin, Tmax;
             imgsrc->retinex(params->icm, params->retinex,  params->toneCurve, cdcurve, mapcurve, dehatransmissionCurve, dehagaintransmissionCurve, conversionBuffer, dehacontlutili, mapcontlutili, useHsl, minCD, maxCD, mini, maxi, Tmean, Tsigma, Tmin, Tmax, histLRETI);   //enabled Retinex
 
-            if (dehaListener) {
-                dehaListener->minmaxChanged(maxCD, minCD, mini, maxi, Tmean, Tsigma, Tmin, Tmax);
+            RetinexListener* const deha = dehaListener;
+            if (!destroying && deha) {
+                deha->minmaxChanged(maxCD, minCD, mini, maxi, Tmean, Tsigma, Tmin, Tmax);
             }
         }
 
@@ -718,12 +738,13 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
 
             int met = 0;
 
-            if (awbListener && params->wb.enabled) {
+            AutoWBListener* const awb = awbListener;
+            if (!destroying && awb && params->wb.enabled) {
                 if (params->wb.method ==  "autitcgreen"  && imgsrc->isRAW()) {//Raw files
                     if (params->wb.itcwb_sampling) {
                         dread = 1;
                         studgood = 1.f;
-                        awbListener->WBChanged(met, params->wb.temperature, params->wb.green, rw, gw, bw, 0, 1, 0, dread, studgood, 0, 0, 0, 0, AutoWBListener::AWBMode::TEMP_CORRELATION_RAW);
+                        awb->WBChanged(met, params->wb.temperature, params->wb.green, rw, gw, bw, 0, 1, 0, dread, studgood, 0, 0, 0, 0, AutoWBListener::AWBMode::TEMP_CORRELATION_RAW);
 
                     } else {
                         minchrom = LIM(minchrom, 0.f, 0.9f);
@@ -732,19 +753,19 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                         maxhist = std::max(maxhist, 1000.f);
                         kmin = std::max(kmin, 18);
                         dread = LIM(dread, 10, 239);
-                        awbListener->WBChanged(met, params->wb.temperature, params->wb.green, rw, gw, bw, temp0, delta, bia, dread, studgood, minchrom, kmin, minhist, maxhist, AutoWBListener::AWBMode::TEMP_CORRELATION_RAW);
+                        awb->WBChanged(met, params->wb.temperature, params->wb.green, rw, gw, bw, temp0, delta, bia, dread, studgood, minchrom, kmin, minhist, maxhist, AutoWBListener::AWBMode::TEMP_CORRELATION_RAW);
                     }
                 } else if (params->wb.method ==  "autitcgreen"  && !imgsrc->isRAW()) {//non raw files
                     params->wb.temperature = tempnotisraw;
                     params->wb.green = greennotisraw;
                     currWB = ColorTemp(params->wb.temperature, params->wb.green, params->wb.equal, params->wb.method, params->wb.observer);
 
-                    awbListener->WBChanged(met, params->wb.temperature, params->wb.green, rw, gw, bw, -1.f,  -1.f, 1, 1, -1.f, -1.f, 1, -1.f, -1.f, AutoWBListener::AWBMode::TEMP_CORRELATION_NON_RAW);//false => hide settings
+                    awb->WBChanged(met, params->wb.temperature, params->wb.green, rw, gw, bw, -1.f,  -1.f, 1, 1, -1.f, -1.f, 1, -1.f, -1.f, AutoWBListener::AWBMode::TEMP_CORRELATION_NON_RAW);//false => hide settings
 
                 } else if (params->wb.method == "autold"){
-                    awbListener->WBChanged(met, params->wb.temperature, params->wb.green, rw, gw, bw, -1.f,  -1.f, 1, 1, -1.f, -1.f, 1, -1.f, -1.f, AutoWBListener::AWBMode::RGB_GREY);
+                    awb->WBChanged(met, params->wb.temperature, params->wb.green, rw, gw, bw, -1.f,  -1.f, 1, 1, -1.f, -1.f, 1, -1.f, -1.f, AutoWBListener::AWBMode::RGB_GREY);
                 } else {
-                    awbListener->WBChanged(met, params->wb.temperature, params->wb.green, rw, gw, bw, -1.f,  -1.f, 1, 1, -1.f, -1.f, 1, -1.f, -1.f, AutoWBListener::AWBMode::NONE);
+                    awb->WBChanged(met, params->wb.temperature, params->wb.green, rw, gw, bw, -1.f,  -1.f, 1, 1, -1.f, -1.f, 1, -1.f, -1.f, AutoWBListener::AWBMode::NONE);
                 }
             }
 
@@ -842,8 +863,9 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 }
 
                 // Perform negative inversion. If needed, upgrade filmNegative params for backwards compatibility with old profiles
-                if (ipf.filmNegativeProcess(orig_prev, orig_prev, params->filmNegative, params->raw, imgsrc, currWB) && filmNegListener) {
-                    filmNegListener->filmRefValuesChanged(params->filmNegative.refInput, params->filmNegative.refOutput);
+                FilmNegListener* const filmNeg = filmNegListener;
+                if (ipf.filmNegativeProcess(orig_prev, orig_prev, params->filmNegative, params->raw, imgsrc, currWB) && !destroying && filmNeg) {
+                    filmNeg->filmRefValuesChanged(params->filmNegative.refInput, params->filmNegative.refOutput);
                 }
 
                 // Process film negative BEFORE colorspace conversion (legacy mode)
@@ -865,8 +887,9 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 bool auto_dy = params->cg.autody;
                 int beginend = 0;
                 ipf.gamutcompr(orig_prev, orig_prev, beginend, mac, mac0, mac1, mac2);
-                if (acmaxListener) {
-                   acmaxListener->achromaticChanged((double) mac, mac0, mac1, mac2, auto_dc, auto_dm, auto_dy);
+                CompgamutListener* const acmax = acmaxListener;
+                if (!destroying && acmax) {
+                   acmax->achromaticChanged((double) mac, mac0, mac1, mac2, auto_dc, auto_dm, auto_dy);
                 }
             }
 
@@ -957,9 +980,11 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 ipf.getAutoExp(aehist, aehistcompr, params->toneCurve.clip, params->toneCurve.expcomp,
                                params->toneCurve.brightness, params->toneCurve.contrast, params->toneCurve.black, params->toneCurve.hlcompr, params->toneCurve.hlcomprthresh);
 
-                if (aeListener)
-                    aeListener->autoExpChanged(params->toneCurve.expcomp, params->toneCurve.brightness, params->toneCurve.contrast,
-                                               params->toneCurve.black, params->toneCurve.hlcompr, params->toneCurve.hlcomprthresh, params->toneCurve.hrenabled);
+                AutoExpListener* const ae = aeListener;
+                if (!destroying && ae) {
+                    ae->autoExpChanged(params->toneCurve.expcomp, params->toneCurve.brightness, params->toneCurve.contrast,
+                                       params->toneCurve.black, params->toneCurve.hlcompr, params->toneCurve.hlcomprthresh, params->toneCurve.hrenabled);
+                }
             }
 
             if (params->toneCurve.histmatching ) {
@@ -985,8 +1010,9 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 params->toneCurve.black = 0;
                 params->toneCurve.fromHistMatching = true;
 
-                if (aeListener) {
-                    aeListener->autoMatchedToneCurveChanged(params->toneCurve.curveMode, params->toneCurve.curve);
+                AutoExpListener* const ae = aeListener;
+                if (!destroying && ae) {
+                    ae->autoMatchedToneCurveChanged(params->toneCurve.curveMode, params->toneCurve.curve);
                 }
             }
 
@@ -1103,8 +1129,9 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                         locsharbef.autoradiusbef = autoradius[sp];
                         locallsharbef.push_back(locsharbef);
  
-                        if (locallListener) {
-                            locallListener->sharbefChanged(locallsharbef,params->locallab.selspot); 
+                        LocallabListener* const locall = locallListener;
+                        if (!destroying && locall) {
+                            locall->sharbefChanged(locallsharbef,params->locallab.selspot);
                         }
                         
                     
@@ -1161,8 +1188,9 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                         locciebef.jz1bef = jz1;
                         locallciebef.push_back(locciebef);
 
-                        if (locallListener) {
-                            locallListener->ciebefChanged(locallciebef,params->locallab.selspot); 
+                        LocallabListener* const locall = locallListener;
+                        if (!destroying && locall) {
+                            locall->ciebefChanged(locallciebef,params->locallab.selspot);
                         }
                     }
                 }
@@ -1801,24 +1829,25 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 locsetlc.isci = isci;
                 locallsetlc.push_back(locsetlc);
                 
-                if (locallListener) {
-                    locallListener->refChanged2(huerefp, chromarefp, lumarefp, fabrefp, params->locallab.selspot);
-                    locallListener->minmaxChanged(locallretiminmax, params->locallab.selspot);
+                LocallabListener* const locall = locallListener;
+                if (!destroying && locall) {
+                    locall->refChanged2(huerefp, chromarefp, lumarefp, fabrefp, params->locallab.selspot);
+                    locall->minmaxChanged(locallretiminmax, params->locallab.selspot);
                     if (params->locallab.spots.at(sp).expprecam) {
-                        locallListener->cieChanged(locallcielc,params->locallab.selspot); 
+                        locall->cieChanged(locallcielc,params->locallab.selspot);
                     }
-                    locallListener->sigChanged(locallciesig,params->locallab.selspot);
+                    locall->sigChanged(locallciesig,params->locallab.selspot);
 
                     if (params->locallab.spots.at(sp).expshadhigh && params->locallab.spots.at(sp).shMethod == "ghs") {
-                        locallListener->ghsbw2Changed(locallshgshbw2,params->locallab.selspot);//Black and White point slider
+                        locall->ghsbw2Changed(locallshgshbw2,params->locallab.selspot);//Black and White point slider
                     }
 
                     if (params->locallab.spots.at(sp).expshadhigh && params->locallab.spots.at(sp).shMethod == "ghs") {
-                        locallListener->ghsbwChanged(locallshgshbw,params->locallab.selspot);//Black and White point infos, SP auto, Middle grey, max RGB
+                        locall->ghsbwChanged(locallshgshbw,params->locallab.selspot);//Black and White point infos, SP auto, Middle grey, max RGB
                     }
 
                     if (params->locallab.spots.at(sp).expshadhigh && params->locallab.spots.at(sp).shMethod == "micha") {
-                        locallListener->michbwChanged(locallshmichbw,params->locallab.selspot);//Subtract Black and White point infos - Michaelis
+                        locall->michbwChanged(locallshmichbw,params->locallab.selspot);//Subtract Black and White point infos - Michaelis
                     }
 
                     /*
@@ -1832,7 +1861,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                    */
                    // if (mainfp[sp] >= 0) {//minimize call to idle register 
                         //used by Global fullimage.
-                    locallListener->maiChanged(locallsetlc,params->locallab.selspot); 
+                    locall->maiChanged(locallsetlc,params->locallab.selspot);
                    // }
 
                 }
@@ -1920,9 +1949,10 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 satPR = (int) 100.f * (moyS - 0.85f * eqty);
             }
 
-            if (actListener && params->colorToning.enabled) {
+            AutoColorTonListener* const act = actListener;
+            if (!destroying && act && params->colorToning.enabled) {
                 if (params->blackwhite.enabled && params->colorToning.autosat) {
-                    actListener->autoColorTonChanged(0, satTH, satPR);    //hide sliders only if autosat
+                    act->autoColorTonChanged(0, satTH, satPR);    //hide sliders only if autosat
                     indi = 0;
                 } else {
                     if (params->colorToning.autosat) {
@@ -1953,19 +1983,32 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 DCPProfileApplyState as;
                 DCPProfile *dcpProf = imgsrc->getDCP(params->icm, as);
 
+                if (destroying) {
+                    return;
+                }
+
+                static std::mutex s_rgbProcMutex;
+                std::lock_guard<std::mutex> rgbProcLock(s_rgbProcMutex);
+
+                if (destroying) {
+                    return;
+                }
+
                 ipf.rgbProc(oprevi, oprevl, nullptr, hltonecurve, shtonecurve, tonecurve, params->toneCurve.saturation,
                             rCurve, gCurve, bCurve, colourToningSatLimit, colourToningSatLimitOpacity, ctColorCurve, ctOpacityCurve, opautili, clToningcurve, cl2Toningcurve, customToneCurve1, customToneCurve2, beforeToneCurveBW, afterToneCurveBW, rrm, ggm, bbm, bwAutoR, bwAutoG, bwAutoB, params->toneCurve.expcomp, params->toneCurve.hlcompr, params->toneCurve.hlcomprthresh, dcpProf, as, histToneCurve);
 
-                if (params->blackwhite.enabled && params->blackwhite.autoc && abwListener) {
+                AutoBWListener* const abw = abwListener;
+                if (!destroying && params->blackwhite.enabled && params->blackwhite.autoc && abw) {
                     if (settings->verbose) {
                         printf("ImProcCoordinator / Auto B&W coefs:   R=%.2f   G=%.2f   B=%.2f\n", static_cast<double>(bwAutoR), static_cast<double>(bwAutoG), static_cast<double>(bwAutoB));
                     }
 
-                    abwListener->BWChanged((float) rrm, (float) ggm, (float) bbm);
+                    abw->BWChanged((float) rrm, (float) ggm, (float) bbm);
                 }
 
-                if (params->colorToning.enabled && params->colorToning.autosat && actListener) {
-                    actListener->autoColorTonChanged(indi, (int) colourToningSatLimit, (int)colourToningSatLimitOpacity);  //change sliders autosat
+                AutoColorTonListener* const act = actListener;
+                if (!destroying && params->colorToning.enabled && params->colorToning.autosat && act) {
+                    act->autoColorTonChanged(indi, (int) colourToningSatLimit, (int)colourToningSatLimitOpacity);  //change sliders autosat
                 }
 
                 // correct GUI black and white with value
@@ -2398,8 +2441,9 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 }
                 maxdat = maxdata / 65535.f;
 
-                if (primListener) {
-                    primListener->maxdatawtrc(maxdat);
+                AutoprimListener* const autoPrim = primListener;
+                if (!destroying && autoPrim) {
+                    autoPrim->maxdatawtrc(maxdat);
                 }
 
                 ipf.rgb2lab(*tmpImage1, *nprevl, params->icm.workingProfile);
@@ -2443,8 +2487,9 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                     grexx = rtengine::LIM(grexx, -0.1f, 0.4f);
                     float greyy = INV_OFFSET_MODIFIER * (gregraphy + 1.f) - CIExy_MARGIN;
                     greyy = rtengine::LIM(greyy, 0.5f, 1.f);
-                    if (primListener) {
-                        primListener->primChanged(redxx, redyy, bluxx, bluyy, grexx, greyy);
+                    AutoprimListener* const autoPrim = primListener;
+                    if (!destroying && autoPrim) {
+                        autoPrim->primChanged(redxx, redyy, bluxx, bluyy, grexx, greyy);
                     }
                 } else {//all other cases - pass Cie xy to update graph Ciexy
                     float r_x =  params->icm.redx;
@@ -2518,11 +2563,12 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                     wx = wx + scalrefi * refin;
                     wy = wx * arefi + brefi;
 
-                    if (primListener) {
+                    AutoprimListener* const autoPrim = primListener;
+                    if (!destroying && autoPrim) {
                         if( params->icm.wprim != ColorManagementParams::Primaries::CUSTOM_POL) {
-                            primListener->iprimChanged(r_x, r_y, b_x, b_y, g_x, g_y, wx, wy, meanx, meany);
+                            autoPrim->iprimChanged(r_x, r_y, b_x, b_y, g_x, g_y, wx, wy, meanx, meany);
                         } else {
-                            primListener->iprimChanged(p[0], p[1], p[4] ,p[5], p[2], p[3], wx, wy, meanx, meany);
+                            autoPrim->iprimChanged(p[0], p[1], p[4] ,p[5], p[2], p[3], wx, wy, meanx, meany);
                         }
                     }
                 }
@@ -2595,25 +2641,28 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 ipf.ciecam_02float(ncie, float (adap), pW, 2, nprevl, params.get(), customColCurve1, customColCurvered, customColCurvegreen, customColCurveblue, customColCurve2, customColCurve3, histLCAM, histCCAM, CAMBrightCurveJ, CAMBrightCurveQ, CAMMean, 0, scale, execsharp, d, dj, yb, 1);
 
                 //call listener
-                if ((params->colorappearance.autodegree || params->colorappearance.autodegreeout) && acListener && params->colorappearance.enabled) {
+                AutoCamListener* const ac = acListener;
+                if (!destroying && (params->colorappearance.autodegree || params->colorappearance.autodegreeout) && ac && params->colorappearance.enabled) {
                     if (params->colorappearance.catmethod == "symg") { //force chromatic adaptation to 90 in symmetric
                         d = 0.9;
                         dj = 0.9;
                     }
 
-                    acListener->autoCamChanged(100.* (double)d, 100.* (double)dj);
+                    ac->autoCamChanged(100.* (double)d, 100.* (double)dj);
                 }
 
-                if (params->colorappearance.autoadapscen && acListener && params->colorappearance.enabled) {
-                    acListener->adapCamChanged(adap);    //real value of adapt scene, force to 400 in symmetric
+                AutoCamListener* const acAdap = acListener;
+                if (!destroying && params->colorappearance.autoadapscen && acAdap && params->colorappearance.enabled) {
+                    acAdap->adapCamChanged(adap);    //real value of adapt scene, force to 400 in symmetric
                 }
 
-                if (params->colorappearance.autoybscen && acListener && params->colorappearance.enabled) {
+                AutoCamListener* const acYb = acListener;
+                if (!destroying && params->colorappearance.autoybscen && acYb && params->colorappearance.enabled) {
                     if (params->colorappearance.catmethod == "symg") { //force yb scene to 18 in symmetric
                         yb = 18;
                     }
 
-                    acListener->ybCamChanged((int) yb);    //real value Yb scene
+                    acYb->ybCamChanged((int) yb);    //real value Yb scene
                 }
 
                 double tempsym = 5003.;
@@ -2659,8 +2708,9 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                     tempsym = params->colorappearance.tempout;
                     greensym = params->colorappearance.greenout;
                 }
-                if (params->colorappearance.enabled  && acListener) {
-                    acListener->wbCamChanged(tempsym, greensym, params->colorappearance.autotempout);    //real temp and tint.
+                AutoCamListener* const acWb = acListener;
+                if (!destroying && params->colorappearance.enabled && acWb) {
+                    acWb->wbCamChanged(tempsym, greensym, params->colorappearance.autotempout);    //real temp and tint.
                 }
 
             } else {
@@ -2777,8 +2827,9 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 }
                 delete provcomp;
             }
-            if (primListener) {
-                primListener->maxdataend(maxdatend, satdatend, gamgain);
+            AutoprimListener* const autoPrim = primListener;
+            if (!destroying && autoPrim) {
+                autoPrim->maxdataend(maxdatend, satdatend, gamgain);
             }
 
         }
@@ -2803,8 +2854,16 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             MyMutex::MyLock prevImgLock(previmg->getMutex());
 
             try {
+                if (destroying) {
+                    return;
+                }
+
                 // Computing the preview image, i.e. converting from WCS->Monitor color space (soft-proofing disabled) or WCS->Printer profile->Monitor color space (soft-proofing enabled)
                 ipf.lab2monitorRgb(nprevl, previmg);
+
+                if (destroying) {
+                    return;
+                }
 
                 // Computing the internal image for analysis, i.e. conversion from WCS->Output profile
                 delete workimg;
@@ -2819,37 +2878,43 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
         if (!resultValid) {
             resultValid = true;
 
-            if (imageListener) {
-                imageListener->setImage(previmg, scale, params->crop);
+            PreviewImageListener* const preview = imageListener;
+            if (!destroying && preview) {
+                preview->setImage(previmg, scale, params->crop);
             }
         }
 
-        if (imageListener)
+        PreviewImageListener* const previewReady = imageListener;
+        if (!destroying && previewReady)
             // TODO: The WB tool should be advertised too in order to get the AutoWB's temp and green values
         {
-            imageListener->imageReady(params->crop);
+            previewReady->imageReady(params->crop);
         }
 
         hist_lrgb_dirty = vectorscope_hc_dirty = vectorscope_hs_dirty = waveform_dirty = true;
 
-        if (hListener) {
-            if (hListener->updateHistogram()) {
+        HistogramListener* const histListener = hListener;
+
+        if (histListener && !destroying) {
+            if (histListener->updateHistogram()) {
                 updateLRGBHistograms();
             }
 
-            if (hListener->updateVectorscopeHC()) {
+            if (!destroying && histListener->updateVectorscopeHC()) {
                 updateVectorscopeHC();
             }
 
-            if (hListener->updateVectorscopeHS()) {
+            if (!destroying && histListener->updateVectorscopeHS()) {
                 updateVectorscopeHS();
             }
 
-            if (hListener->updateWaveform()) {
+            if (!destroying && histListener->updateWaveform()) {
                 updateWaveforms();
             }
 
-            notifyHistogramChanged();
+            if (!destroying && hListener.load() == histListener) {
+                notifyHistogramChanged();
+            }
         }
     }
 
@@ -2901,8 +2966,9 @@ void ImProcCoordinator::freeAll()
 
         ncie      = nullptr;
 
-        if (imageListener) {
-            imageListener->delImage(previmg);
+        PreviewImageListener* const preview = imageListener;
+        if (preview) {
+            preview->delImage(previmg);
         } else {
             delete previmg;
         }
@@ -2979,8 +3045,9 @@ void ImProcCoordinator::setScale(int prevscale)
 
 void ImProcCoordinator::notifyHistogramChanged()
 {
-    if (hListener) {
-        hListener->histogramChanged(
+    HistogramListener* const histListener = hListener;
+    if (!destroying && histListener) {
+        histListener->histogramChanged(
             histRed,
             histGreen,
             histBlue,
@@ -3558,8 +3625,9 @@ void ImProcCoordinator::saveInputICCReference(const Glib::ustring& fname, bool a
     im->saveTIFF(fname, 16, false, true);
     delete im;
 
-    if (plistener) {
-        plistener->setProgressState(false);
+    ProgressListener* const progress = plistener;
+    if (progress) {
+        progress->setProgressState(false);
     }
 
     //im->saveJPEG (fname, 85);
@@ -3590,15 +3658,23 @@ bool ImProcCoordinator::exportDemosaicedTIFF(const Glib::ustring& outputPath)
 void ImProcCoordinator::stopProcessing()
 {
 
+    Glib::Thread* threadToJoin = nullptr;
     updaterThreadStart.lock();
 
-    if (updaterRunning && thread) {
-        destroying = true;
-        changeSinceLast = 0;
-        thread->join();
+    destroying = true;
+    changeSinceLast = 0;
+
+    if (thread) {
+        threadToJoin = thread;
+        thread = nullptr;
     }
+    updaterRunning = false;
 
     updaterThreadStart.unlock();
+
+    if (threadToJoin) {
+        threadToJoin->join();
+    }
 }
 
 void ImProcCoordinator::signalStop()
@@ -3609,21 +3685,23 @@ void ImProcCoordinator::signalStop()
 
 void ImProcCoordinator::startProcessing()
 {
-    if (!destroying) {
-        if (!updaterRunning) {
-            updaterThreadStart.lock();
-            thread = nullptr;
-            updaterRunning = true;
-            updaterThreadStart.unlock();
-
-            //batchThread->yield(); //the running batch should wait other threads to avoid conflict
-
-            thread = Glib::Thread::create(sigc::mem_fun(*this, &ImProcCoordinator::process), 0, true, true, Glib::THREAD_PRIORITY_NORMAL);
-
-        } else {
-            // already running, skip
-        }
+    if (destroying) {
+        return;
     }
+
+    updaterThreadStart.lock();
+    if (!destroying && !updaterRunning) {
+        thread = nullptr;
+        updaterRunning = true;
+
+        // Store the joinable thread handle before releasing the start/stop
+        // mutex. Otherwise a rapid editor close can run stopProcessing()
+        // between updaterRunning=true and thread assignment, miss the handle,
+        // and leave GLib waiting on an invalid thread object later.
+        thread = Glib::Thread::create(sigc::mem_fun(*this, &ImProcCoordinator::process), 0, true, true, Glib::THREAD_PRIORITY_NORMAL);
+    }
+
+    updaterThreadStart.unlock();
 }
 
 void ImProcCoordinator::startProcessing(int changeCode)
@@ -3637,13 +3715,41 @@ void ImProcCoordinator::startProcessing(int changeCode)
 
 void ImProcCoordinator::process()
 {
-    if (plistener) {
-        plistener->setProgressState(true);
+    ProgressListener* progress = plistener;
+    if (!destroying && progress) {
+        progress->setProgressState(true);
     }
 
     paramsUpdateMutex.lock();
 
-    while (changeSinceLast) {
+    while (true) {
+        if (!changeSinceLast) {
+            paramsUpdateMutex.unlock();
+
+            progress = plistener;
+            if (progress) {
+                progress->setProgressState(false);
+            }
+
+            paramsUpdateMutex.lock();
+
+            if (changeSinceLast && !destroying) {
+                paramsUpdateMutex.unlock();
+
+                progress = plistener;
+                if (!destroying && progress) {
+                    progress->setProgressState(true);
+                }
+
+                paramsUpdateMutex.lock();
+                continue;
+            }
+
+            updaterRunning = false;
+            paramsUpdateMutex.unlock();
+            return;
+        }
+
         const bool panningRelatedChange =
             params->toneCurve.isPanningRelatedChange(nextParams->toneCurve)
             || params->labCurve != nextParams->labCurve
@@ -3711,18 +3817,20 @@ void ImProcCoordinator::process()
 
         paramsUpdateMutex.lock();
     }
-
-    paramsUpdateMutex.unlock();
-    updaterRunning = false;
-
-    if (plistener) {
-        plistener->setProgressState(false);
-    }
 }
 
 ProcParams* ImProcCoordinator::beginUpdateParams()
 {
     paramsUpdateMutex.lock();
+
+    return nextParams.get();
+}
+
+ProcParams* ImProcCoordinator::tryBeginUpdateParams()
+{
+    if (!paramsUpdateMutex.trylock()) {
+        return nullptr;
+    }
 
     return nextParams.get();
 }
@@ -3768,7 +3876,8 @@ void ImProcCoordinator::setHighQualComputed()
 
 void ImProcCoordinator::requestUpdateWaveform()
 {
-    if (!hListener) {
+    HistogramListener* const histListener = hListener.load();
+    if (!histListener) {
         return;
     }
 
@@ -3781,7 +3890,8 @@ void ImProcCoordinator::requestUpdateWaveform()
 
 void ImProcCoordinator::requestUpdateHistogram()
 {
-    if (!hListener) {
+    HistogramListener* const histListener = hListener.load();
+    if (!histListener) {
         return;
     }
 
@@ -3794,7 +3904,8 @@ void ImProcCoordinator::requestUpdateHistogram()
 
 void ImProcCoordinator::requestUpdateHistogramRaw()
 {
-    if (!hListener) {
+    HistogramListener* const histListener = hListener.load();
+    if (!histListener) {
         return;
     }
 
@@ -3808,7 +3919,8 @@ void ImProcCoordinator::requestUpdateHistogramRaw()
 
 void ImProcCoordinator::requestUpdateVectorscopeHC()
 {
-    if (!hListener) {
+    HistogramListener* const histListener = hListener.load();
+    if (!histListener) {
         return;
     }
 
@@ -3821,7 +3933,8 @@ void ImProcCoordinator::requestUpdateVectorscopeHC()
 
 void ImProcCoordinator::requestUpdateVectorscopeHS()
 {
-    if (!hListener) {
+    HistogramListener* const histListener = hListener.load();
+    if (!histListener) {
         return;
     }
 

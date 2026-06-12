@@ -23,6 +23,22 @@
 using namespace rtengine;
 using namespace rtengine::procparams;
 
+namespace
+{
+
+int clampFilmValue(int value, int low, int high)
+{
+    return value < low ? low : (value > high ? high : value);
+}
+
+int wrapFilmHue(int value)
+{
+    value %= 360;
+    return value < 0 ? value + 360 : value;
+}
+
+} // namespace
+
 const Glib::ustring FilmPresets::TOOL_NAME = "filmpresets";
 
 const FilmPresets::PresetInfo FilmPresets::presetList[] = {
@@ -38,6 +54,7 @@ const FilmPresets::PresetInfo FilmPresets::presetList[] = {
     {"desert_chrome",   "TP_FILMPRESETS_DESERT_CHROME"},
     {"street_800",      "TP_FILMPRESETS_STREET_800"},
     {"cinematic_500t",  "TP_FILMPRESETS_CINEMATIC_500T"},
+    {"cinema_reveal_35", "TP_FILMPRESETS_CINEMA_REVEAL_35"},
     {"fade_bloom",      "TP_FILMPRESETS_FADE_BLOOM"},
     {"ember",           "TP_FILMPRESETS_EMBER"},
     {"silver_gelatin",  "TP_FILMPRESETS_SILVER_GELATIN"},
@@ -192,8 +209,8 @@ FilmPresets::FilmPresets() :
     detailContent_->pack_start(*toneLabel, Gtk::PACK_SHRINK, 4);
 
     contrast = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_CONTRAST"), -100., 100., 1., 0.));
-    fade = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_FADE"), 0., 100., 1., 0.));
-    rolloff = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_ROLLOFF"), 0., 100., 1., 0.));
+    fade = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_FADE"), -100., 100., 1., 0.));
+    rolloff = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_ROLLOFF"), -100., 100., 1., 0.));
     contrast->setAdjusterListener(this);
     fade->setAdjusterListener(this);
     rolloff->setAdjusterListener(this);
@@ -226,9 +243,9 @@ FilmPresets::FilmPresets() :
     detailContent_->pack_start(*tintingLabel, Gtk::PACK_SHRINK, 4);
 
     shadowHue = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_SHADOWHUE"), 0., 360., 1., 220.));
-    shadowTintAdj = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_SHADOWTINT"), 0., 100., 1., 0.));
+    shadowTintAdj = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_SHADOWTINT"), -100., 100., 1., 0.));
     highlightHue = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_HIGHLIGHTHUE"), 0., 360., 1., 40.));
-    highlightTintAdj = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_HIGHLIGHTTINT"), 0., 100., 1., 0.));
+    highlightTintAdj = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_HIGHLIGHTTINT"), -100., 100., 1., 0.));
     shadowHue->setAdjusterListener(this);
     shadowTintAdj->setAdjusterListener(this);
     highlightHue->setAdjusterListener(this);
@@ -262,7 +279,7 @@ FilmPresets::FilmPresets() :
     filmCharLabel->get_style_context()->add_class("section-label");
     detailContent_->pack_start(*filmCharLabel, Gtk::PACK_SHRINK, 4);
 
-    grainAdj = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_GRAIN"), 0., 100., 1., 0.));
+    grainAdj = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_GRAIN"), -100., 100., 1., 0.));
     grainAdj->setAdjusterListener(this);
     detailContent_->pack_start(*grainAdj);
 
@@ -277,7 +294,7 @@ FilmPresets::FilmPresets() :
     specialLabel->get_style_context()->add_class("section-label");
     detailContent_->pack_start(*specialLabel, Gtk::PACK_SHRINK, 4);
 
-    halationAdj = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_HALATION"), 0., 100., 1., 0.));
+    halationAdj = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_HALATION"), -100., 100., 1., 0.));
     halationAdj->setAdjusterListener(this);
     detailContent_->pack_start(*halationAdj);
 
@@ -473,23 +490,23 @@ void FilmPresets::read(const ProcParams* pp, const ParamsEdited* pedited)
     activePresetIdx_ = findPresetIndex(pp->filmPresets.preset);
     updateButtonLabel();
 
-    strength->setValue(pp->filmPresets.strength);
-    contrast->setValue(pp->filmPresets.contrast);
-    saturation->setValue(pp->filmPresets.saturation);
-    warmth->setValue(pp->filmPresets.warmth);
-    tintAdj->setValue(pp->filmPresets.tint);
-    fade->setValue(pp->filmPresets.fade);
-    rolloff->setValue(pp->filmPresets.rolloff);
-    shadowHue->setValue(pp->filmPresets.shadowHue);
-    shadowTintAdj->setValue(pp->filmPresets.shadowTint);
-    highlightHue->setValue(pp->filmPresets.highlightHue);
-    highlightTintAdj->setValue(pp->filmPresets.highlightTint);
-    halationAdj->setValue(pp->filmPresets.halation);
-    redShift->setValue(pp->filmPresets.redShift);
-    greenShift->setValue(pp->filmPresets.greenShift);
-    blueShift->setValue(pp->filmPresets.blueShift);
-    grainAdj->setValue(pp->filmPresets.grain);
-    vibranceAdj->setValue(pp->filmPresets.vibrance);
+    strength->setValue(clampFilmValue(pp->filmPresets.strength, 0, 100));
+    contrast->setValue(clampFilmValue(pp->filmPresets.contrast, -100, 100));
+    saturation->setValue(clampFilmValue(pp->filmPresets.saturation, -100, 100));
+    warmth->setValue(clampFilmValue(pp->filmPresets.warmth, -100, 100));
+    tintAdj->setValue(clampFilmValue(pp->filmPresets.tint, -100, 100));
+    fade->setValue(clampFilmValue(pp->filmPresets.fade, -100, 100));
+    rolloff->setValue(clampFilmValue(pp->filmPresets.rolloff, -100, 100));
+    shadowHue->setValue(wrapFilmHue(pp->filmPresets.shadowHue));
+    shadowTintAdj->setValue(clampFilmValue(pp->filmPresets.shadowTint, -100, 100));
+    highlightHue->setValue(wrapFilmHue(pp->filmPresets.highlightHue));
+    highlightTintAdj->setValue(clampFilmValue(pp->filmPresets.highlightTint, -100, 100));
+    halationAdj->setValue(clampFilmValue(pp->filmPresets.halation, -100, 100));
+    redShift->setValue(clampFilmValue(pp->filmPresets.redShift, -100, 100));
+    greenShift->setValue(clampFilmValue(pp->filmPresets.greenShift, -100, 100));
+    blueShift->setValue(clampFilmValue(pp->filmPresets.blueShift, -100, 100));
+    grainAdj->setValue(clampFilmValue(pp->filmPresets.grain, -100, 100));
+    vibranceAdj->setValue(clampFilmValue(pp->filmPresets.vibrance, -100, 100));
 
     enableListener();
 }
@@ -610,14 +627,6 @@ void FilmPresets::adjusterChanged(Adjuster* a, double newval)
     if (hoverPresetIdx_ >= 0) {
         hoverTimeout_.disconnect();
         hoverPresetIdx_ = -1;
-    }
-
-    // If user tweaks a slider while on a named preset, switch to Custom
-    if (a != strength) {
-        if (activePresetIdx_ > 0) {
-            activePresetIdx_ = 0;
-            updateButtonLabel();
-        }
     }
 
     if (listener && getEnabled()) {

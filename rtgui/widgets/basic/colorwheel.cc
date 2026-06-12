@@ -343,21 +343,6 @@ ColorWheel::ColorWheel(const Glib::ustring& label)
 
     pack_start(indicatorBox_, Gtk::PACK_SHRINK, 2);
 
-    // Compact CSS for the entry
-    auto css = Gtk::CssProvider::create();
-    css->load_from_data(
-        "#ColorWheelEntry {"
-        "  padding: 0 2px;"
-        "  min-height: 16px;"
-        "  min-width: 28px;"
-        "  font-size: 10px;"
-        "  border: none;"
-        "  background: transparent;"
-        "  color: #999999;"
-        "}");
-    entry_.get_style_context()->add_provider(
-        css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 100);
-
     show_all_children();
     updateIndicator();
 }

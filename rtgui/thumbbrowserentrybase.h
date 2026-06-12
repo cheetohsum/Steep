@@ -18,9 +18,12 @@
  */
 #pragma once
 
-#include <atomic>
-#include <tuple>
 #include <chrono>
+#include <atomic>
+#include <cstddef>
+#include <tuple>
+#include <string>
+#include <vector>
 #include <gtkmm.h>
 
 #include "cursormanager.h"
@@ -29,6 +32,7 @@
 #include "threadutils.h"
 #include "options.h"
 #include "thumbnail.h"
+#include "thumbimageupdater.h"
 #include "widgets/basic/lwbuttonset.h"
 
 #include "rtengine/coord2d.h"
@@ -50,6 +54,15 @@ protected:
     int fnlabw, fnlabh; // dimensions of the filename label
     int dtlabw, dtlabh; // dimensions of the date/time label
     int exlabw, exlabh; // dimensions of the exif label
+    bool textMetricsValid_;
+    int textMetricsInfoW_;
+    int textMetricsInfoH_;
+    int textMetricsScaleFactor_;
+    eWithFilename textMetricsWithFilename_;
+    bool textMetricsShowDateTime_;
+    bool textMetricsShowBasicExif_;
+    bool textMetricsItalicStyle_;
+    Glib::ustring textMetricsFont_;
     hidpi::LogicalSize previewSize;
     hidpi::LogicalCoord prevPos;
 
@@ -94,19 +107,26 @@ protected:
     Glib::RefPtr<BackBuffer> backBuffer;
     bool bbSelected, bbFramed;
     guint8* bbPreview;
+    std::size_t bbImageAreaIconState;
     std::vector<std::shared_ptr<RTSurface>> bbIcons;
     std::vector<std::shared_ptr<RTSurface>> bbSpecificityIcons;
     CursorShape cursor_type;
 
     void drawFrame (Cairo::RefPtr<Cairo::Context> cr, const Gdk::RGBA& bg, const Gdk::RGBA& fg);
     void getTextSizes (int& w, int& h);
+    bool buttonSetVisible () const;
+    void ensureInfoLines () const;
+    const std::string& getExifCollateKey () const;
+    virtual std::size_t getImageAreaIconState ();
+    virtual bool imageAreaIconsChanged ();
 
     // called during updateBackBuffer for custom overlays
     virtual void customBackBufferUpdate (Cairo::RefPtr<Cairo::Context> c) {}
 
 private:
     const std::string collate_name;
-    const std::string collate_exif;
+    mutable std::string collate_exif;
+    mutable bool collate_exif_valid = false;
     const std::string collate_ext;
 
 public:
@@ -115,8 +135,9 @@ public:
 
 // thumbnail preview properties:
     Glib::ustring filename;
-    Glib::ustring exifline;
-    Glib::ustring datetimeline;
+    mutable Glib::ustring exifline;
+    mutable Glib::ustring datetimeline;
+    mutable bool infoLinesValid = false;
 
 // misc attributes
     bool selected;
@@ -128,6 +149,7 @@ public:
     bool edited;
     bool recentlysaved;
     bool updatepriority;
+    std::size_t visibleGeneration;
     eWithFilename withFilename;
 
     explicit ThumbBrowserEntryBase (const Glib::ustring& fname, Thumbnail *thm);
@@ -180,14 +202,11 @@ public:
     {
         return starty;
     }
-    int getX () const
-    {
-        return ofsX + startx;
-    }
-    int getY () const
-    {
-        return ofsY + starty;
-    }
+    int getOffsetX () const;
+    int getOffsetY () const;
+    int getX () const;
+    int getY () const;
+    bool shouldCacheRenderedThumbnailPixbuf () const;
 
     bool inside (int x, int y) const;
     rtengine::Coord2D getPosInImgSpace (int x, int y) const;
@@ -205,7 +224,7 @@ public:
             cmp = thumbnail->getDateTime().compare(other.thumbnail->getDateTime());
             break;
         case Options::SORT_BY_EXIF:
-            cmp = collate_exif.compare(other.collate_exif);
+            cmp = getExifCollateKey().compare(other.getExifCollateKey());
             break;
         case Options::SORT_BY_RANK:
             cmp = thumbnail->getRank() - other.thumbnail->getRank();
@@ -226,10 +245,11 @@ public:
         return cmp < 0;
     }
 
-    void onDeviceScaleChanged(int newDeviceScale);
+    virtual void onDeviceScaleChanged(int newDeviceScale);
 
     virtual void refreshThumbnailImage () = 0;
     virtual void refreshQuickThumbnailImage () {}
+    virtual void appendQuickThumbnailJob (std::vector<ThumbImageUpdater::Request>& requests, bool cachePixbuf = false);
     virtual void calcThumbnailSize () = 0;
 
     virtual void drawProgressBar (Glib::RefPtr<Gdk::Window> win, const Gdk::RGBA& foregr, const Gdk::RGBA& backgr, int x, int w, int y, int h) {}

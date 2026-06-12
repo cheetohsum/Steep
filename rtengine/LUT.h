@@ -461,8 +461,11 @@ public:
     template<typename U = T, typename V, typename = typename std::enable_if<std::is_floating_point<V>::value && std::is_same<U, float>::value>::type>
     T operator[](V index) const
     {
-        int idx = (int)index;  // don't use floor! The difference in negative space is no problems here
+        if (index != index) {
+            return data[0];
+        }
 
+        int idx = (int)index;  // don't use floor! The difference in negative space is no problems here
         if (index < 0.f) {
             if (clip & LUT_CLIP_BELOW) {
                 return data[0];
@@ -488,8 +491,11 @@ public:
     T getVal01(float index) const
     {
         index *= (float)upperBound;
-        int idx = (int)index;  // don't use floor! The difference in negative space is no problems here
+        if (index != index) {
+            return data[0];
+        }
 
+        int idx = (int)index;  // don't use floor! The difference in negative space is no problems here
         if (index < 0.f) {
             if (clip & LUT_CLIP_BELOW) {
                 return data[0];
