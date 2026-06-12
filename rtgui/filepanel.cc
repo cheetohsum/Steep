@@ -2467,17 +2467,24 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
         && recentDirectionalSelectionGapMs_ > PreloadManager::kRapidDecodeDebounceCadenceMs
         && recentDirectionalSelectionGapMs_ <= PreloadManager::kDirectionalScrubDecodeDebounceCadenceMs;
     if (selectedIsRaw && (rapidDirectionalSelection || mediumDirectionalScrub)) {
-        foregroundRequest->decodeStartDelayMs = mediumDirectionalScrub
-            ? std::max(
-                PreloadManager::kDirectionalScrubDecodeDebounceMinMs,
-                std::min(
-                    PreloadManager::kDirectionalScrubDecodeDebounceMaxMs,
-                    recentDirectionalSelectionGapMs_ + PreloadManager::kDirectionalScrubDecodeDebounceExtraMs))
-            : std::max(
-                PreloadManager::kRapidDecodeDebounceMinMs,
-                std::min(
-                    PreloadManager::kRapidDecodeDebounceMaxMs,
-                    recentDirectionalSelectionGapMs_ + PreloadManager::kRapidDecodeDebounceExtraMs));
+        const int directionalScrubDecodeDebounceMaxMs =
+            recentDirectionalSelectionGapMs_ >= 350
+            ? 430
+            : PreloadManager::kDirectionalScrubDecodeDebounceMaxMs;
+        const int decodeDebounceMinMs = mediumDirectionalScrub
+            ? PreloadManager::kDirectionalScrubDecodeDebounceMinMs
+            : PreloadManager::kRapidDecodeDebounceMinMs;
+        const int decodeDebounceMaxMs = mediumDirectionalScrub
+            ? directionalScrubDecodeDebounceMaxMs
+            : PreloadManager::kRapidDecodeDebounceMaxMs;
+        const int decodeDebounceExtraMs = mediumDirectionalScrub
+            ? PreloadManager::kDirectionalScrubDecodeDebounceExtraMs
+            : PreloadManager::kRapidDecodeDebounceExtraMs;
+        foregroundRequest->decodeStartDelayMs = std::max(
+            decodeDebounceMinMs,
+            std::min(
+                decodeDebounceMaxMs,
+                recentDirectionalSelectionGapMs_ + decodeDebounceExtraMs));
         FILESEL_LOG("[fileSel] +%lldms rapid decode debounce mode=%s delay=%dms cadence=%dms run=%u file=%s\n",
             (long long)ms(clk::now()),
             mediumDirectionalScrub ? "scrub" : "rapid",
@@ -2488,11 +2495,14 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
     } else if (!selectedIsRaw
         && rapidDirectionalSelection
         && recentDirectionalSelectionRunLength_ >= PreloadManager::kRapidNonRawDecodeDebounceRunLength) {
+        const int nonRawDecodeDebounceMinMs = PreloadManager::kRapidNonRawDecodeDebounceMinMs;
+        const int nonRawDecodeDebounceMaxMs = PreloadManager::kRapidNonRawDecodeDebounceMaxMs;
+        const int nonRawDecodeDebounceExtraMs = PreloadManager::kRapidNonRawDecodeDebounceExtraMs;
         foregroundRequest->decodeStartDelayMs = std::max(
-            PreloadManager::kRapidNonRawDecodeDebounceMinMs,
+            nonRawDecodeDebounceMinMs,
             std::min(
-                PreloadManager::kRapidNonRawDecodeDebounceMaxMs,
-                recentDirectionalSelectionGapMs_ + PreloadManager::kRapidNonRawDecodeDebounceExtraMs));
+                nonRawDecodeDebounceMaxMs,
+                recentDirectionalSelectionGapMs_ + nonRawDecodeDebounceExtraMs));
         FILESEL_LOG("[fileSel] +%lldms rapid decode debounce mode=rapid-nonraw delay=%dms cadence=%dms run=%u file=%s\n",
             (long long)ms(clk::now()),
             foregroundRequest->decodeStartDelayMs,
