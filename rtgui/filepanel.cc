@@ -682,6 +682,7 @@ struct PreloadManager {
     static constexpr int    kRapidDirectionalCadenceMs = 850;
     static constexpr int    kRapidDirectionalForegroundQuietMs = 600;
     static constexpr int    kRapidImmediateRawForegroundQuietMs = 150;
+    static constexpr int    kMediumImmediateRawForegroundQuietMs = 75;
     static constexpr int    kRapidDecodeDebounceCadenceMs = 200;
     static constexpr int    kRapidDecodeDebounceMinMs = 110;
     static constexpr int    kRapidDecodeDebounceMaxMs = 180;
@@ -3081,6 +3082,12 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
         scheduledImmediateRawQuietMs = std::min(
             scheduledForegroundQuietMs,
             PreloadManager::kRapidImmediateRawForegroundQuietMs);
+        if (recentDirectionalSelectionGapMs_ >= 350
+            && recentDirectionalSelectionGapMs_ <= PreloadManager::kDirectionalScrubDecodeDebounceCadenceMs) {
+            scheduledImmediateRawQuietMs = std::min(
+                scheduledImmediateRawQuietMs,
+                PreloadManager::kMediumImmediateRawForegroundQuietMs);
+        }
     }
     if (rawStrideCanPreloadThroughEditor) {
         scheduledForegroundQuietMs = std::min(
