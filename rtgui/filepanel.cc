@@ -690,11 +690,11 @@ struct PreloadManager {
     static constexpr int    kRapidNonRawDecodeDebounceMaxMs = 150;
     static constexpr int    kRapidNonRawDecodeDebounceExtraMs = 15;
     static constexpr unsigned kRapidNonRawDecodeDebounceRunLength = 2;
-    static constexpr int    kDirectionalScrubDecodeDebounceCadenceMs = 350;
+    static constexpr int    kDirectionalScrubDecodeDebounceCadenceMs = 500;
     static constexpr int    kDirectionalScrubDecodeDebounceMinMs = 260;
     static constexpr int    kDirectionalScrubDecodeDebounceMaxMs = 360;
     static constexpr int    kDirectionalScrubDecodeDebounceExtraMs = 10;
-    static constexpr unsigned kDirectionalScrubDecodeDebounceRunLength = 3;
+    static constexpr unsigned kDirectionalScrubDecodeDebounceRunLength = 2;
     static constexpr int    kNonRawForegroundQuietMs = 125;
     static constexpr int    kDirectionalHintKeepAliveMs = 1500;
     static constexpr int    kPreloadRetryMs = 75;
