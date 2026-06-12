@@ -1710,7 +1710,7 @@ bool FileCatalog::processPendingPreviews_()
 
     constexpr std::size_t MAX_PREVIEWS_PER_IDLE = 128;
     constexpr std::size_t POST_SCAN_MAX_PREVIEWS_PER_IDLE = 384;
-    constexpr std::size_t INITIAL_MIN_PREVIEWS_PER_IDLE = 4;
+    constexpr std::size_t INITIAL_MIN_PREVIEWS_PER_IDLE = 1;
     constexpr std::size_t STEADY_MIN_PREVIEWS_PER_IDLE = 16;
     constexpr std::size_t POST_SCAN_MIN_PREVIEWS_PER_IDLE = 64;
     constexpr auto PREVIEW_IDLE_BUDGET = std::chrono::milliseconds(8);
