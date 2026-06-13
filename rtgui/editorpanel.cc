@@ -3924,7 +3924,10 @@ void EditorPanel::setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scal
 {
     if (!pixbuf) return;
 
-    if (!sourceFile.empty() && sourceFile != fname) {
+    const bool hasDeferredOpen = deferredOpenConn_.connected();
+    const bool hasDeferredCropEnable = deferredCropEnableConn_.connected();
+
+    if (!sourceFile.empty() && sourceFile != fname && (hasDeferredOpen || hasDeferredCropEnable)) {
         deferredOpenConn_.disconnect();
         deferredCropEnableConn_.disconnect();
         deferredCropWindowEnable_ = false;
