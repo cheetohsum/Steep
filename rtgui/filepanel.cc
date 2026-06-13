@@ -694,7 +694,7 @@ struct PreloadManager {
     static constexpr int    kDirectionalScrubDecodeDebounceCadenceMs = 500;
     static constexpr int    kDirectionalScrubDecodeDebounceMinMs = 260;
     static constexpr int    kDirectionalScrubDecodeDebounceMaxMs = 360;
-    static constexpr int    kDirectionalScrubDecodeDebounceExtraMs = 10;
+    static constexpr int    kDirectionalScrubDecodeDebounceExtraMs = 35;
     static constexpr unsigned kDirectionalScrubDecodeDebounceRunLength = 2;
     static constexpr int    kNonRawForegroundQuietMs = 125;
     static constexpr int    kDirectionalHintKeepAliveMs = 1500;
@@ -2593,7 +2593,7 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
             // That racing caused crashes. queue_draw() above is sufficient:
             // GTK paints the override on the next main-loop iteration (a few
             // ms later), still feels instant to the user.
-        } else if (!cachedPixbufBusy && !opts.tabbedUI) {
+        } else if (!opts.tabbedUI) {
             Thumbnail* previewThm = thm;
             previewThm->increaseRef();
             auto previewAllowed = pl->quickPreviewAllowed;
