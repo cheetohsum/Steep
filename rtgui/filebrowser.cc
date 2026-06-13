@@ -122,7 +122,9 @@ void scheduleCachedQuickPreviewWarm(std::vector<QuickPreviewCacheWarmItem>&& ite
     const int height = std::max(1, previewHeight);
 
     std::thread([items = std::move(items), generation, height]() mutable {
-        lowerQuickPreviewWarmThreadPriority();
+        if (items.size() > 2) {
+            lowerQuickPreviewWarmThreadPriority();
+        }
 
         const auto start = QuickWarmClock::now();
         size_t loaded = 0;
