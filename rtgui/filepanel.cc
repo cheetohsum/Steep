@@ -255,6 +255,12 @@ struct RawLoadGate {
         return preloadReadinessLocked(foregroundQuietFor, retryAfter, includeEditorActivity);
     }
 
+    bool hasEditorActivity()
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return !editorActiveFiles.empty();
+    }
+
     PreloadAcquireResult tryAcquirePreload(
         std::chrono::milliseconds foregroundQuietFor,
         std::chrono::milliseconds& retryAfter,
@@ -698,6 +704,7 @@ struct PreloadManager {
     static constexpr unsigned kDirectionalScrubDecodeDebounceRunLength = 2;
     static constexpr int    kMediumRawStrideThroughEditorMinCadenceMs = 350;
     static constexpr int    kThroughEditorRawPreloadThreads = 1;
+    static constexpr int    kThroughEditorRawFullSpeedQuietMs = 150;
     static constexpr int    kNonRawForegroundQuietMs = 125;
     static constexpr int    kDirectionalHintKeepAliveMs = 1500;
     static constexpr int    kPreloadRetryMs = 75;
@@ -3581,11 +3588,17 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
                             static_cast<int>(entry.isRaw), loadFname.c_str());
                     }
                     {
-                        if (entry.isRaw && !includeEditorActivity) {
+                        const bool throughEditorRawPreload = entry.isRaw && !includeEditorActivity;
+                        const bool foregroundRecentlyActive = throughEditorRawPreload
+                            && !isRawLoadForegroundQuietForMs(PreloadManager::kThroughEditorRawFullSpeedQuietMs);
+                        const bool throttleThroughEditorPreload =
+                            throughEditorRawPreload
+                            && (foregroundRecentlyActive || g_rawLoadGate.hasEditorActivity());
+                        if (throttleThroughEditorPreload) {
                             lowerBackgroundPreloadThreadPriority();
                         }
                         BackgroundPreloadOpenMPGuard ompGuard(
-                            entry.isRaw && !includeEditorActivity
+                            throttleThroughEditorPreload
                                 ? PreloadManager::kThroughEditorRawPreloadThreads
                                 : 3);
                         img = rtengine::InitialImage::load(loadFname, entry.isRaw, &err, nullptr);
