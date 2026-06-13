@@ -103,6 +103,11 @@ rtengine::IMFILE* rtengine::fopen (const char* fname)
         return nullptr;
     }
 
+    if (stat_buffer.st_size <= 0) {
+        close(fd);
+        return nullptr;
+    }
+
     void* data = mmap(nullptr, stat_buffer.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
 
     if ( data == MAP_FAILED ) {
