@@ -1433,7 +1433,7 @@ void FileCatalog::dirSelected (const Glib::ustring& dirname, const Glib::ustring
                         rawFiles.push_back(f);
                     }
                 }
-                cacheMgr->precomputeEntryMD5(rawFiles, STEADY_DIRECTORY_SCAN_THRESHOLD, false);
+                cacheMgr->precomputeEntryMD5(rawFiles, STEADY_DIRECTORY_SCAN_THRESHOLD, false, false);
             };
 
             const bool completed = getFilesRecursivelyStreaming(

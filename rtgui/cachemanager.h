@@ -98,7 +98,11 @@ public:
     // uses cached values and chooses between per-file attributes for small
     // batches and a single FindFirstFileW pass per directory for large batches.
     void precomputeMD5 (const std::vector<Glib::ustring>& files, std::size_t directoryScanThreshold = 512);
-    void precomputeEntryMD5 (const std::vector<Glib::ustring>& files, std::size_t directoryScanThreshold = 64, bool precomputeCacheEntries = true);
+    void precomputeEntryMD5 (
+        const std::vector<Glib::ustring>& files,
+        std::size_t directoryScanThreshold = 64,
+        bool precomputeCacheEntries = true,
+        bool precomputeImageMD5 = true);
     bool getKnownFilePresence (const Glib::ustring& fname, bool& present) const;
     bool isFileKnownMissing (const Glib::ustring& fname) const;
     bool isFileKnownPresent (const Glib::ustring& fname) const;

@@ -814,7 +814,8 @@ void CacheManager::precomputeFileStates (
 void CacheManager::precomputeEntryMD5 (
     const std::vector<Glib::ustring>& files,
     std::size_t directoryScanThreshold,
-    bool precomputeCacheEntries)
+    bool precomputeCacheEntries,
+    bool precomputeImageMD5)
 {
     if (files.empty()) {
         return;
@@ -831,7 +832,9 @@ void CacheManager::precomputeEntryMD5 (
         probes.push_back({&f, f.raw()});
     }
 
-    precomputeMD5(files, directoryScanThreshold);
+    if (precomputeImageMD5) {
+        precomputeMD5(files, directoryScanThreshold);
+    }
 
     const bool checkXmpSidecars =
         rtengine::settings->metadata_xmp_sync != rtengine::Settings::MetadataXmpSync::NONE;
