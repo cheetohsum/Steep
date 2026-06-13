@@ -700,7 +700,8 @@ struct PreloadManager {
     static constexpr int    kDirectionalScrubDecodeDebounceCadenceMs = 500;
     static constexpr int    kDirectionalScrubDecodeDebounceMinMs = 260;
     static constexpr int    kDirectionalScrubDecodeDebounceMaxMs = 360;
-    static constexpr int    kDirectionalScrubDecodeDebounceExtraMs = 35;
+    static constexpr int    kDirectionalScrubDecodeDebounceExtraMs = 15;
+    static constexpr int    kMediumDirectionalScrubDecodeDebounceExtraMs = 35;
     static constexpr unsigned kDirectionalScrubDecodeDebounceRunLength = 2;
     static constexpr int    kMediumRawStrideThroughEditorMinCadenceMs = 350;
     static constexpr int    kThroughEditorRawPreloadThreads = 2;
@@ -2504,7 +2505,9 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
             ? directionalScrubDecodeDebounceMaxMs
             : PreloadManager::kRapidDecodeDebounceMaxMs;
         const int decodeDebounceExtraMs = mediumDirectionalScrub
-            ? PreloadManager::kDirectionalScrubDecodeDebounceExtraMs
+            ? (recentDirectionalSelectionGapMs_ >= 350
+                ? PreloadManager::kMediumDirectionalScrubDecodeDebounceExtraMs
+                : PreloadManager::kDirectionalScrubDecodeDebounceExtraMs)
             : PreloadManager::kRapidDecodeDebounceExtraMs;
         foregroundRequest->decodeStartDelayMs = std::max(
             decodeDebounceMinMs,
