@@ -703,7 +703,7 @@ struct PreloadManager {
     static constexpr int    kDirectionalScrubDecodeDebounceExtraMs = 35;
     static constexpr unsigned kDirectionalScrubDecodeDebounceRunLength = 2;
     static constexpr int    kMediumRawStrideThroughEditorMinCadenceMs = 350;
-    static constexpr int    kThroughEditorRawPreloadThreads = 1;
+    static constexpr int    kThroughEditorRawPreloadThreads = 2;
     static constexpr int    kThroughEditorRawFullSpeedQuietMs = 150;
     static constexpr int    kNonRawForegroundQuietMs = 125;
     static constexpr int    kDirectionalHintKeepAliveMs = 1500;
@@ -1232,7 +1232,7 @@ struct PreloadManager {
         std::lock_guard<std::mutex> lk(mutex);
         const bool loadingForeground = loading == fname;
         const bool loadingOther = !loading.empty() && !loadingForeground;
-        const bool queuedForeground = !loadingForeground && isHotWanted(fname);
+        const bool queuedForeground = !loadingForeground && (isHotWanted(fname) || isWanted(fname));
 
         if (loadingForeground) {
             foregroundHandoffSet.insert(fname);
