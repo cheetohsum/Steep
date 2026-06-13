@@ -84,11 +84,11 @@ static void raiseForegroundLoadThreadPriority()
 class BackgroundPreloadOpenMPGuard
 {
 public:
-    BackgroundPreloadOpenMPGuard()
+    explicit BackgroundPreloadOpenMPGuard(int maxThreads = 3)
     {
 #ifdef _OPENMP
         previousThreads_ = std::max(1, omp_get_max_threads());
-        omp_set_num_threads(std::max(1, std::min(previousThreads_, 3)));
+        omp_set_num_threads(std::max(1, std::min(previousThreads_, std::max(1, maxThreads))));
 #endif
     }
 
@@ -696,6 +696,8 @@ struct PreloadManager {
     static constexpr int    kDirectionalScrubDecodeDebounceMaxMs = 360;
     static constexpr int    kDirectionalScrubDecodeDebounceExtraMs = 35;
     static constexpr unsigned kDirectionalScrubDecodeDebounceRunLength = 2;
+    static constexpr int    kMediumRawStrideThroughEditorMinCadenceMs = 350;
+    static constexpr int    kThroughEditorRawPreloadThreads = 1;
     static constexpr int    kNonRawForegroundQuietMs = 125;
     static constexpr int    kDirectionalHintKeepAliveMs = 1500;
     static constexpr int    kPreloadRetryMs = 75;
@@ -2974,8 +2976,12 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
         && recentDirectionalSelectionGapMs_ <= PreloadManager::kRapidDirectionalCadenceMs;
     const bool rawStridePreload = directionalPreload
         && recentDirectionalRawSelectionRunLength_ >= 2;
+    const bool mediumRawStridePreload = rawStridePreload
+        && recentDirectionalSelectionGapMs_ >= PreloadManager::kMediumRawStrideThroughEditorMinCadenceMs
+        && recentDirectionalSelectionGapMs_ <= PreloadManager::kDirectionalScrubDecodeDebounceCadenceMs;
     const bool rawStrideCanPreloadThroughEditor = rawStridePreload
-        && recentDirectionalSelectionGapMs_ > PreloadManager::kRapidDirectionalCadenceMs;
+        && (mediumRawStridePreload
+            || recentDirectionalSelectionGapMs_ > PreloadManager::kRapidDirectionalCadenceMs);
     const int quickPreviewWarmRadius = (!refreshThumbnails && rawStridePreload)
         ? 0
         : PreloadManager::kQuickPreviewWarmRadius;
@@ -3575,7 +3581,13 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
                             static_cast<int>(entry.isRaw), loadFname.c_str());
                     }
                     {
-                        BackgroundPreloadOpenMPGuard ompGuard;
+                        if (entry.isRaw && !includeEditorActivity) {
+                            lowerBackgroundPreloadThreadPriority();
+                        }
+                        BackgroundPreloadOpenMPGuard ompGuard(
+                            entry.isRaw && !includeEditorActivity
+                                ? PreloadManager::kThroughEditorRawPreloadThreads
+                                : 3);
                         img = rtengine::InitialImage::load(loadFname, entry.isRaw, &err, nullptr);
                     }
                     if (logPreload) {
