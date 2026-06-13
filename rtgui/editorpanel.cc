@@ -3924,6 +3924,16 @@ void EditorPanel::setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scal
 {
     if (!pixbuf) return;
 
+    if (!sourceFile.empty() && sourceFile != fname) {
+        deferredOpenConn_.disconnect();
+        deferredCropEnableConn_.disconnect();
+        deferredCropWindowEnable_ = false;
+        ++openSession_;
+        EDITOR_OPEN_LOG("[editorOpen] quick preview canceled deferred phaseB old=%s new=%s\n",
+            fname.c_str(),
+            sourceFile.c_str());
+    }
+
     if (!previewHandler) {
         previewHandler = new PreviewHandler();
         previewHandler->setPlaceholder(pixbuf, scale);
