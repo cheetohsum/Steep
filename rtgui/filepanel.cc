@@ -708,6 +708,7 @@ struct PreloadManager {
 
     enum class ForegroundPriorityResult {
         NotQueued,
+        Queued,
         Loading
     };
 
@@ -1222,12 +1223,19 @@ struct PreloadManager {
         std::lock_guard<std::mutex> lk(mutex);
         const bool loadingForeground = loading == fname;
         const bool loadingOther = !loading.empty() && !loadingForeground;
+        const bool queuedForeground = !loadingForeground && isHotWanted(fname);
 
         if (loadingForeground) {
             foregroundHandoffSet.insert(fname);
             // Foreground can take over an already-started preload via
             // takeOrWaitForLoading(); keep only that image wanted so the
             // decoded result is handed off instead of discarded.
+            keepOnlyForegroundWantedLocked(fname);
+        } else if (queuedForeground) {
+            // The user selected a RAW that was already the hot preload target
+            // but had not entered the RAW gate yet. Keep it as the only preload
+            // candidate so it can still decode and hand off during the delayed
+            // foreground-open window instead of throwing away the prediction.
             keepOnlyForegroundWantedLocked(fname);
         } else {
             // Drop this image from adjacent preloading so the foreground load
@@ -1250,6 +1258,9 @@ struct PreloadManager {
         cv.notify_all();
         if (loadingForeground) {
             return ForegroundPriorityResult::Loading;
+        }
+        if (queuedForeground) {
+            return ForegroundPriorityResult::Queued;
         }
 
         return ForegroundPriorityResult::NotQueued;
@@ -2312,8 +2323,10 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
         : foregroundLoadGeneration_->load(std::memory_order_acquire);
 
     rtengine::InitialImage* cachedImg = nullptr;
+    PreloadManager::ForegroundPriorityResult foregroundPreloadPriority =
+        PreloadManager::ForegroundPriorityResult::NotQueued;
     if (preload_) {
-        preload_->prioritizeForeground(selectedFileNameRaw);
+        foregroundPreloadPriority = preload_->prioritizeForeground(selectedFileNameRaw);
         cachedImg = preload_->take(selectedFileNameRaw);
     }
 
@@ -2720,7 +2733,8 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
     }
 
     if (preload_) {
-        if (!preload_->isLoading(selectedFileNameRaw)) {
+        if (foregroundPreloadPriority == PreloadManager::ForegroundPriorityResult::NotQueued
+            && !preload_->isLoading(selectedFileNameRaw)) {
             scheduleAdjacentPreload(selectedFileName, preloadDirectionHint, false);
         }
     }
