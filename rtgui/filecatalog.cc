@@ -175,23 +175,43 @@ bool isRawNavigationBenchmarkPath(const Glib::ustring& path)
     return rawExtensions.count(basename.substr(lastdot + 1).lowercase()) > 0;
 }
 
-bool isEnabledImagePath(const Glib::ustring& path)
+bool isEnabledImageName(const Glib::ustring& name)
 {
-    const Glib::ustring basename = Glib::path_get_basename(path);
-    const auto lastdot = basename.find_last_of('.');
+    const auto lastdot = name.find_last_of('.');
 
-    if (lastdot >= basename.length() - 1) {
+    if (lastdot >= name.length() - 1) {
         return false;
     }
 
     const auto& extensions = App::get().options().parsedExtensionsSet;
-    if (extensions.find(basename.substr(lastdot + 1).lowercase()) == extensions.end()) {
+    return extensions.find(name.substr(lastdot + 1).lowercase()) != extensions.end();
+}
+
+bool isKnownEmptyFileInfo(const Glib::RefPtr<Gio::FileInfo>& info)
+{
+    return info
+        && info->has_attribute(G_FILE_ATTRIBUTE_STANDARD_SIZE)
+        && info->get_size() <= 0;
+}
+
+bool isEnabledImagePath(const Glib::ustring& path)
+{
+    if (!isEnabledImageName(Glib::path_get_basename(path))) {
         return false;
     }
 
     try {
         const auto file = Gio::File::create_for_path(path);
-        return file && file->query_exists();
+        if (!file) {
+            return false;
+        }
+
+        const auto info = file->query_info(
+            std::string(G_FILE_ATTRIBUTE_STANDARD_TYPE) + "," +
+            G_FILE_ATTRIBUTE_STANDARD_SIZE);
+        return info
+            && info->get_file_type() != Gio::FILE_TYPE_DIRECTORY
+            && !isKnownEmptyFileInfo(info);
     } catch (const Glib::Exception&) {
         return false;
     }
@@ -229,7 +249,8 @@ void getFilesRecursively(
         static const auto enumerate_attrs =
             std::string(G_FILE_ATTRIBUTE_STANDARD_NAME) + "," +
             G_FILE_ATTRIBUTE_STANDARD_TYPE + "," +
-            G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN;
+            G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN + "," +
+            G_FILE_ATTRIBUTE_STANDARD_SIZE;
         auto enumerator = dir->enumerate_children(
             enumerate_attrs,
             options.browseRecursiveFollowLinks
@@ -260,14 +281,7 @@ void getFilesRecursively(
                 }
 
                 const Glib::ustring fname = file->get_name();
-                const auto lastdot = fname.find_last_of('.');
-
-                if (lastdot >= fname.length() - 1) {
-                    continue;
-                }
-
-                const auto& extensions = options.parsedExtensionsSet;
-                if (extensions.find(fname.substr(lastdot + 1).lowercase()) == extensions.end()) {
+                if (!isEnabledImageName(fname) || isKnownEmptyFileInfo(file)) {
                     continue;
                 }
 
@@ -304,7 +318,8 @@ bool getFilesRecursivelyStreaming(
         static const auto enumerate_attrs =
             std::string(G_FILE_ATTRIBUTE_STANDARD_NAME) + "," +
             G_FILE_ATTRIBUTE_STANDARD_TYPE + "," +
-            G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN;
+            G_FILE_ATTRIBUTE_STANDARD_IS_HIDDEN + "," +
+            G_FILE_ATTRIBUTE_STANDARD_SIZE;
         auto enumerator = dir->enumerate_children(
             enumerate_attrs,
             options.browseRecursiveFollowLinks
@@ -337,14 +352,7 @@ bool getFilesRecursivelyStreaming(
                 }
 
                 const Glib::ustring fname = file->get_name();
-                const auto lastdot = fname.find_last_of('.');
-
-                if (lastdot >= fname.length() - 1) {
-                    continue;
-                }
-
-                const auto& extensions = options.parsedExtensionsSet;
-                if (extensions.find(fname.substr(lastdot + 1).lowercase()) == extensions.end()) {
+                if (!isEnabledImageName(fname) || isKnownEmptyFileInfo(file)) {
                     continue;
                 }
 
