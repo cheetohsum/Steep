@@ -700,6 +700,8 @@ struct PreloadManager {
     static constexpr int    kDirectionalHintKeepAliveMs = 1500;
     static constexpr int    kPreloadRetryMs = 75;
     static constexpr int    kPreloadBusyRetryMs = 250;
+    static constexpr int    kRapidHotRawPreloadBusyRetryCadenceMs = 300;
+    static constexpr int    kRapidHotRawPreloadBusyRetryMs = 175;
     static constexpr int    kDelayedRawPreloadReadyPollMs = 10;
     static constexpr int    kCachedOpenPreloadSettleMs = 0;
     static constexpr size_t kFallbackEntryBytes = 256ULL * 1024 * 1024;
@@ -840,6 +842,7 @@ struct PreloadManager {
     int                     interLoadDelayMs = kInterLoadDelayMs;
     int                     foregroundQuietMs = kForegroundQuietMs;
     int                     immediateRawQuietMs = kForegroundQuietMs;
+    int                     hotRawBusyRetryMs = kPreloadBusyRetryMs;
     bool                    rawStrideMode = false;
     bool                    rawStrideCanPreloadThroughEditor = false;
     unsigned                scheduleGeneration = 0;
@@ -3105,6 +3108,12 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
             scheduledImmediateRawQuietMs,
             PreloadManager::kDirectionalThroughEditorRawQuietMs);
     }
+    const int scheduledHotRawBusyRetryMs =
+        directionalPreload
+        && recentDirectionalSelectionGapMs_ > 0
+        && recentDirectionalSelectionGapMs_ <= PreloadManager::kRapidHotRawPreloadBusyRetryCadenceMs
+            ? PreloadManager::kRapidHotRawPreloadBusyRetryMs
+            : PreloadManager::kPreloadBusyRetryMs;
     const size_t scheduledWantedCount = newWantedSet.size();
     const size_t scheduledHotCount = newHotWantedSet.size();
     bool startWorker = false;
@@ -3119,11 +3128,12 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
             && preload_->interLoadDelayMs == scheduledInterLoadDelayMs
             && preload_->foregroundQuietMs == scheduledForegroundQuietMs
             && preload_->immediateRawQuietMs == scheduledImmediateRawQuietMs
+            && preload_->hotRawBusyRetryMs == scheduledHotRawBusyRetryMs
             && preload_->rawStrideMode == rawStridePreload
             && preload_->rawStrideCanPreloadThroughEditor == rawStrideCanPreloadThroughEditor;
 
         if (rawQueueUnchanged) {
-            FILESEL_LOG("[preload] unchanged wanted=%zu hot=%zu dir=%d rawStride=%d throughEditor=%d quiet=%dms immediateRawQuiet=%dms cadence=%dms anchor=%s\n",
+            FILESEL_LOG("[preload] unchanged wanted=%zu hot=%zu dir=%d rawStride=%d throughEditor=%d quiet=%dms immediateRawQuiet=%dms hotBusyRetry=%dms cadence=%dms anchor=%s\n",
                 scheduledWantedCount,
                 scheduledHotCount,
                 static_cast<int>(preferredDirection),
@@ -3131,6 +3141,7 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
                 static_cast<int>(rawStrideCanPreloadThroughEditor),
                 scheduledForegroundQuietMs,
                 scheduledImmediateRawQuietMs,
+                scheduledHotRawBusyRetryMs,
                 recentDirectionalSelectionGapMs_,
                 fname.c_str());
         } else {
@@ -3160,11 +3171,12 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
             preload_->interLoadDelayMs = scheduledInterLoadDelayMs;
             preload_->foregroundQuietMs = scheduledForegroundQuietMs;
             preload_->immediateRawQuietMs = scheduledImmediateRawQuietMs;
+            preload_->hotRawBusyRetryMs = scheduledHotRawBusyRetryMs;
             preload_->rawStrideMode = rawStridePreload;
             preload_->rawStrideCanPreloadThroughEditor = rawStrideCanPreloadThroughEditor;
             ++preload_->scheduleGeneration;
             preload_->cv.notify_all();
-            FILESEL_LOG("[preload] scheduled wanted=%zu hot=%zu dir=%d rawStride=%d throughEditor=%d quiet=%dms immediateRawQuiet=%dms cadence=%dms anchor=%s\n",
+            FILESEL_LOG("[preload] scheduled wanted=%zu hot=%zu dir=%d rawStride=%d throughEditor=%d quiet=%dms immediateRawQuiet=%dms hotBusyRetry=%dms cadence=%dms anchor=%s\n",
                 scheduledWantedCount,
                 scheduledHotCount,
                 static_cast<int>(preferredDirection),
@@ -3172,6 +3184,7 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
                 static_cast<int>(rawStrideCanPreloadThroughEditor),
                 scheduledForegroundQuietMs,
                 scheduledImmediateRawQuietMs,
+                scheduledHotRawBusyRetryMs,
                 recentDirectionalSelectionGapMs_,
                 fname.c_str());
         }
@@ -3266,6 +3279,7 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
             while (true) {
                 FileBrowser::AdjacentEntry entry;
                 bool hotPriorityCandidate = false;
+                int candidateBusyRetryMs = PreloadManager::kPreloadBusyRetryMs;
                 bool waitForDeferredRaw = false;
                 std::chrono::milliseconds deferredRawDelay(0);
                 {
@@ -3382,6 +3396,10 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
                         hotPriorityCandidate =
                             !state->hotWantedEntries.empty()
                             && it == state->hotWantedEntries.begin();
+                        candidateBusyRetryMs =
+                            hotPriorityCandidate && entry.isRaw
+                                ? state->hotRawBusyRetryMs
+                                : PreloadManager::kPreloadBusyRetryMs;
                         setBackgroundPreloadThreadPriority(hotPriorityCandidate);
                     }
                 }
@@ -3438,11 +3456,11 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
                             }
                             if (logPreload) {
                                 FILESEL_LOG("[preload] raw gate busy retry=%dms file=%s\n",
-                                    PreloadManager::kPreloadBusyRetryMs,
+                                    candidateBusyRetryMs,
                                     loadFname.c_str());
                             }
                             rawGateDeferredUntil[loadFname] =
-                                std::chrono::steady_clock::now() + std::chrono::milliseconds(PreloadManager::kPreloadBusyRetryMs);
+                                std::chrono::steady_clock::now() + std::chrono::milliseconds(candidateBusyRetryMs);
                             continue;
                         }
                     } else {
