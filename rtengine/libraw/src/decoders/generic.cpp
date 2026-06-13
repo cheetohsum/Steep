@@ -25,16 +25,36 @@ void LibRaw::unpacked_load_raw()
     ;
   read_shorts(raw_image, raw_width * raw_height);
   fseek(ifp, -2, SEEK_CUR); // avoid EOF error
-  if (maximum < 0xffff || load_flags)
+
+  if (load_flags)
+  {
     for (row = 0; row < raw_height; row++)
     {
       checkCancel();
+      ushort *rp = raw_image + row * raw_width;
       for (col = 0; col < raw_width; col++)
-        if ((RAW(row, col) >>= load_flags) >> bits &&
-            (unsigned)(row - top_margin) < height &&
-            (unsigned)(col - left_margin) < width)
+        rp[col] >>= load_flags;
+    }
+  }
+
+  if (bits < 16)
+  {
+    const int row_start = top_margin < raw_height ? top_margin : raw_height;
+    const int row_end_candidate = (int)top_margin + (int)height;
+    const int row_end = row_end_candidate < (int)raw_height ? row_end_candidate : (int)raw_height;
+    const int col_start = left_margin < raw_width ? left_margin : raw_width;
+    const int col_end_candidate = (int)left_margin + (int)width;
+    const int col_end = col_end_candidate < (int)raw_width ? col_end_candidate : (int)raw_width;
+
+    for (row = row_start; row < row_end; row++)
+    {
+      checkCancel();
+      ushort *rp = raw_image + row * raw_width + col_start;
+      for (col = col_start; col < col_end; col++, rp++)
+        if (*rp >> bits)
           derror();
     }
+  }
 }
 
 void LibRaw::packed_load_raw()
