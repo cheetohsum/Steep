@@ -2673,11 +2673,17 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
         foregroundRequest->decodeStartDelayMs = 0;
         pl->delayedStartConn = Glib::signal_timeout().connect(
             [this, pl, startForegroundLoad, t0, delayedStartMs, selectedFileNameRaw, wakeWhenPreloadReady]() -> bool {
+                const auto now = std::chrono::steady_clock::now();
+                const long long elapsedMs = fileSelDurationMs(t0, now);
+                if (wakeWhenPreloadReady
+                    && elapsedMs >= delayedStartMs - PreloadManager::kPreloadRetryMs) {
+                    g_rawLoadGate.noteForegroundIntent(selectedFileNameRaw);
+                }
                 const bool preloadReady = wakeWhenPreloadReady
                     && preload_
                     && preload_->hasCachedOrLoading(selectedFileNameRaw);
                 const bool delayElapsed =
-                    fileSelDurationMs(t0, std::chrono::steady_clock::now()) >= delayedStartMs;
+                    elapsedMs >= delayedStartMs;
 
                 if (!preloadReady && !delayElapsed) {
                     return true;
