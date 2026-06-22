@@ -746,6 +746,7 @@ struct PreloadManager {
     static constexpr int    kDirectionalScrubDecodeDebounceMaxMs = 360;
     static constexpr int    kDirectionalScrubDecodeDebounceExtraMs = 15;
     static constexpr int    kMediumDirectionalScrubDecodeDebounceExtraMs = 35;
+    static constexpr int    kFastFujiQueuedScrubDecodeDelayMs = 40;
     static constexpr unsigned kDirectionalScrubDecodeDebounceRunLength = 2;
     static constexpr int    kMediumRawStrideThroughEditorMinCadenceMs = 350;
     static constexpr int    kThroughEditorRawPreloadThreads = 4;
@@ -2548,11 +2549,20 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
         const int slowDirectionalScrubExtraMs = recentDirectionalSelectionGapMs_ >= 350
             ? PreloadManager::kMediumDirectionalScrubDecodeDebounceExtraMs
             : PreloadManager::kDirectionalScrubDecodeDebounceExtraMs;
-        const int directionalScrubDecodeDebounceMaxMs = fastFujiMediumScrub
+        const bool waitForActivePreloadHandoff =
+            foregroundPreloadPriority == PreloadManager::ForegroundPriorityResult::Loading;
+        const bool steadyFastFujiScrub =
+            recentDirectionalSelectionGapMs_ >= PreloadManager::kMediumRawStrideThroughEditorMinCadenceMs;
+        const int fastFujiScrubDelayMs = waitForActivePreloadHandoff
             ? PreloadManager::kPreloadRetryMs
+            : (steadyFastFujiScrub
+                ? PreloadManager::kFastFujiQueuedScrubDecodeDelayMs
+                : PreloadManager::kPreloadRetryMs);
+        const int directionalScrubDecodeDebounceMaxMs = fastFujiMediumScrub
+            ? fastFujiScrubDelayMs
             : slowDirectionalScrubMaxMs;
         const int decodeDebounceMinMs = fastFujiMediumScrub
-            ? PreloadManager::kPreloadRetryMs
+            ? fastFujiScrubDelayMs
             : (mediumDirectionalScrub
                 ? PreloadManager::kDirectionalScrubDecodeDebounceMinMs
                 : PreloadManager::kRapidDecodeDebounceMinMs);
