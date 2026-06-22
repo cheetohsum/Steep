@@ -1279,7 +1279,7 @@ struct PreloadManager {
         return true;
     }
 
-    ForegroundPriorityResult prioritizeForeground(const std::string& fname) {
+    ForegroundPriorityResult prioritizeForeground(const std::string& fname, bool keepQueuedForeground = true) {
         std::lock_guard<std::mutex> lk(mutex);
         const bool loadingForeground = loading == fname;
         const bool loadingOther = !loading.empty() && !loadingForeground;
@@ -1291,7 +1291,7 @@ struct PreloadManager {
             // takeOrWaitForLoading(); keep only that image wanted so the
             // decoded result is handed off instead of discarded.
             keepOnlyForegroundWantedLocked(fname);
-        } else if (queuedForeground) {
+        } else if (queuedForeground && keepQueuedForeground) {
             // The user selected a RAW that was already the hot preload target
             // but had not entered the RAW gate yet. Keep it as the only preload
             // candidate so it can still decode and hand off during the delayed
@@ -1299,7 +1299,10 @@ struct PreloadManager {
             keepOnlyForegroundWantedLocked(fname);
         } else {
             // Drop this image from adjacent preloading so the foreground load
-            // has unambiguous ownership of the currently selected file.
+            // has unambiguous ownership of the currently selected file. During
+            // fast RAW strides this also lets the preloader stay pointed at
+            // the next likely RAW instead of decoding an image the user is
+            // already moving past.
             forgetWantedLocked(fname);
         }
 
@@ -1319,7 +1322,7 @@ struct PreloadManager {
         if (loadingForeground) {
             return ForegroundPriorityResult::Loading;
         }
-        if (queuedForeground) {
+        if (queuedForeground && keepQueuedForeground) {
             return ForegroundPriorityResult::Queued;
         }
 
@@ -2386,7 +2389,15 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
     PreloadManager::ForegroundPriorityResult foregroundPreloadPriority =
         PreloadManager::ForegroundPriorityResult::NotQueued;
     if (preload_) {
-        foregroundPreloadPriority = preload_->prioritizeForeground(selectedFileNameRaw);
+        const bool rapidRawStridePredictiveSelection =
+            selectedIsRaw
+            && directionalSelection
+            && recentDirectionalRawSelectionRunLength_ >= PreloadManager::kRapidRawStridePredictiveRunLength
+            && recentDirectionalSelectionGapMs_ > 0
+            && recentDirectionalSelectionGapMs_ <= PreloadManager::kRapidRawStridePredictiveCadenceMs;
+        foregroundPreloadPriority = preload_->prioritizeForeground(
+            selectedFileNameRaw,
+            !rapidRawStridePredictiveSelection);
         cachedImg = preload_->take(selectedFileNameRaw);
     }
 
