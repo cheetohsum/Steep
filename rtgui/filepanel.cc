@@ -746,6 +746,7 @@ struct PreloadManager {
     static constexpr int    kDirectionalScrubDecodeDebounceMaxMs = 360;
     static constexpr int    kDirectionalScrubDecodeDebounceExtraMs = 15;
     static constexpr int    kMediumDirectionalScrubDecodeDebounceExtraMs = 35;
+    static constexpr int    kFastFujiRapidScrubDecodeDelayMs = 45;
     static constexpr int    kFastFujiQueuedScrubDecodeDelayMs = 20;
     static constexpr unsigned kDirectionalScrubDecodeDebounceRunLength = 2;
     static constexpr int    kMediumRawStrideThroughEditorMinCadenceMs = 350;
@@ -2573,7 +2574,7 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
             ? PreloadManager::kPreloadRetryMs
             : (steadyFastFujiScrub
                 ? PreloadManager::kFastFujiQueuedScrubDecodeDelayMs
-                : PreloadManager::kPreloadRetryMs);
+                : PreloadManager::kFastFujiRapidScrubDecodeDelayMs);
         const int directionalScrubDecodeDebounceMaxMs = fastFujiMediumScrub
             ? fastFujiScrubDelayMs
             : slowDirectionalScrubMaxMs;
