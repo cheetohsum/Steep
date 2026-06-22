@@ -2548,10 +2548,10 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
             ? PreloadManager::kMediumDirectionalScrubDecodeDebounceExtraMs
             : PreloadManager::kDirectionalScrubDecodeDebounceExtraMs;
         const int directionalScrubDecodeDebounceMaxMs = fastFujiMediumScrub
-            ? PreloadManager::kRapidNonRawDecodeDebounceMaxMs
+            ? PreloadManager::kPreloadRetryMs
             : slowDirectionalScrubMaxMs;
         const int decodeDebounceMinMs = fastFujiMediumScrub
-            ? PreloadManager::kRapidDecodeDebounceMinMs
+            ? PreloadManager::kPreloadRetryMs
             : (mediumDirectionalScrub
                 ? PreloadManager::kDirectionalScrubDecodeDebounceMinMs
                 : PreloadManager::kRapidDecodeDebounceMinMs);
