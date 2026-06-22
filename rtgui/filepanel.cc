@@ -733,6 +733,7 @@ struct PreloadManager {
     static constexpr int    kRapidDirectionalForegroundQuietMs = 600;
     static constexpr int    kRapidImmediateRawForegroundQuietMs = 150;
     static constexpr int    kMediumImmediateRawForegroundQuietMs = 75;
+    static constexpr int    kRawStrideQuickPreviewWarmRadius = 1;
     static constexpr int    kRapidDecodeDebounceCadenceMs = 200;
     static constexpr int    kRapidDecodeDebounceMinMs = 110;
     static constexpr int    kRapidDecodeDebounceMaxMs = 180;
@@ -3100,8 +3101,13 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
             || mediumRawStridePreload
             || recentDirectionalSelectionGapMs_ > PreloadManager::kRapidDirectionalCadenceMs);
     const bool rawStrideCanBypassDeferredForeground = rapidRawStridePredictivePreload;
+    const Glib::ustring lowerFname = fname.lowercase();
+    const bool fastFujiRawStride =
+        rawStridePreload
+        && lowerFname.length() >= 4
+        && lowerFname.substr(lowerFname.length() - 4) == ".raf";
     const int quickPreviewWarmRadius = (!refreshThumbnails && rawStridePreload)
-        ? 0
+        ? (fastFujiRawStride ? PreloadManager::kRawStrideQuickPreviewWarmRadius : 0)
         : PreloadManager::kQuickPreviewWarmRadius;
 
     // Entries come ordered by likely navigation direction; preserve that as
