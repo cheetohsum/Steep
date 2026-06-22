@@ -2537,21 +2537,32 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
         && recentDirectionalSelectionGapMs_ > PreloadManager::kRapidDecodeDebounceCadenceMs
         && recentDirectionalSelectionGapMs_ <= PreloadManager::kDirectionalScrubDecodeDebounceCadenceMs;
     if (selectedIsRaw && (rapidDirectionalSelection || mediumDirectionalScrub)) {
-        const int directionalScrubDecodeDebounceMaxMs =
-            recentDirectionalSelectionGapMs_ >= 350
+        const Glib::ustring selectedLower = selectedFileName.lowercase();
+        const bool fastFujiRaw = selectedLower.length() >= 4
+            && selectedLower.substr(selectedLower.length() - 4) == ".raf";
+        const bool fastFujiMediumScrub = fastFujiRaw && mediumDirectionalScrub;
+        const int slowDirectionalScrubMaxMs = recentDirectionalSelectionGapMs_ >= 350
             ? 430
             : PreloadManager::kDirectionalScrubDecodeDebounceMaxMs;
-        const int decodeDebounceMinMs = mediumDirectionalScrub
-            ? PreloadManager::kDirectionalScrubDecodeDebounceMinMs
-            : PreloadManager::kRapidDecodeDebounceMinMs;
+        const int slowDirectionalScrubExtraMs = recentDirectionalSelectionGapMs_ >= 350
+            ? PreloadManager::kMediumDirectionalScrubDecodeDebounceExtraMs
+            : PreloadManager::kDirectionalScrubDecodeDebounceExtraMs;
+        const int directionalScrubDecodeDebounceMaxMs = fastFujiMediumScrub
+            ? PreloadManager::kRapidNonRawDecodeDebounceMaxMs
+            : slowDirectionalScrubMaxMs;
+        const int decodeDebounceMinMs = fastFujiMediumScrub
+            ? PreloadManager::kRapidDecodeDebounceMinMs
+            : (mediumDirectionalScrub
+                ? PreloadManager::kDirectionalScrubDecodeDebounceMinMs
+                : PreloadManager::kRapidDecodeDebounceMinMs);
         const int decodeDebounceMaxMs = mediumDirectionalScrub
             ? directionalScrubDecodeDebounceMaxMs
             : PreloadManager::kRapidDecodeDebounceMaxMs;
-        const int decodeDebounceExtraMs = mediumDirectionalScrub
-            ? (recentDirectionalSelectionGapMs_ >= 350
-                ? PreloadManager::kMediumDirectionalScrubDecodeDebounceExtraMs
-                : PreloadManager::kDirectionalScrubDecodeDebounceExtraMs)
-            : PreloadManager::kRapidDecodeDebounceExtraMs;
+        const int decodeDebounceExtraMs = fastFujiMediumScrub
+            ? 0
+            : (mediumDirectionalScrub
+                ? slowDirectionalScrubExtraMs
+                : PreloadManager::kRapidDecodeDebounceExtraMs);
         foregroundRequest->decodeStartDelayMs = std::max(
             decodeDebounceMinMs,
             std::min(
