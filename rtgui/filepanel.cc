@@ -151,7 +151,9 @@ struct RawLoadGate {
     int foregroundWaiting = 0;
     std::unordered_set<std::string> editorActiveFiles;
     std::chrono::steady_clock::time_point lastForegroundActivity;
+    std::chrono::steady_clock::time_point deferredForegroundUntil;
     std::string lastForegroundFile;
+    std::string deferredForegroundFile;
     static constexpr int kForegroundCancelPollMs = 25;
 
     void noteForegroundIntent(const std::string& fname = std::string())
@@ -159,6 +161,45 @@ struct RawLoadGate {
         std::lock_guard<std::mutex> lock(mutex);
         lastForegroundActivity = std::chrono::steady_clock::now();
         lastForegroundFile = fname;
+        deferredForegroundUntil = std::chrono::steady_clock::time_point{};
+        deferredForegroundFile.clear();
+        cv.notify_all();
+    }
+
+    void noteDeferredForeground(const std::string& fname, int delayMs)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        // During scrub debounce, allow same-file preload handoff but keep
+        // unrelated RAW preloads from taking the gate before the clicked file.
+        if (delayMs > 0 && !fname.empty()) {
+            deferredForegroundFile = fname;
+            deferredForegroundUntil = std::chrono::steady_clock::now()
+                + std::chrono::milliseconds(delayMs);
+        } else {
+            deferredForegroundUntil = std::chrono::steady_clock::time_point{};
+            deferredForegroundFile.clear();
+        }
+        cv.notify_all();
+    }
+
+    std::chrono::milliseconds deferredForegroundRetryFor(const std::string& candidate)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (deferredForegroundUntil == std::chrono::steady_clock::time_point{}
+            || deferredForegroundFile.empty()
+            || deferredForegroundFile == candidate) {
+            return std::chrono::milliseconds(0);
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        if (deferredForegroundUntil <= now) {
+            deferredForegroundUntil = std::chrono::steady_clock::time_point{};
+            deferredForegroundFile.clear();
+            return std::chrono::milliseconds(0);
+        }
+
+        return std::chrono::duration_cast<std::chrono::milliseconds>(
+            deferredForegroundUntil - now);
     }
 
     void setEditorActivity(const std::string& fname, bool active)
@@ -217,6 +258,8 @@ struct RawLoadGate {
 
         --foregroundWaiting;
         active = true;
+        deferredForegroundUntil = std::chrono::steady_clock::time_point{};
+        deferredForegroundFile.clear();
         return true;
     }
 
@@ -704,7 +747,7 @@ struct PreloadManager {
     static constexpr int    kMediumDirectionalScrubDecodeDebounceExtraMs = 35;
     static constexpr unsigned kDirectionalScrubDecodeDebounceRunLength = 2;
     static constexpr int    kMediumRawStrideThroughEditorMinCadenceMs = 350;
-    static constexpr int    kThroughEditorRawPreloadThreads = 2;
+    static constexpr int    kThroughEditorRawPreloadThreads = 4;
     static constexpr int    kThroughEditorRawFullSpeedQuietMs = 150;
     static constexpr int    kNonRawForegroundQuietMs = 125;
     static constexpr int    kDirectionalHintKeepAliveMs = 1500;
@@ -2539,6 +2582,11 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
             recentDirectionalSelectionRunLength_,
             selectedFileNameRaw.c_str());
     }
+    if (selectedIsRaw) {
+        g_rawLoadGate.noteDeferredForeground(
+            selectedFileNameRaw,
+            foregroundRequest->decodeStartDelayMs);
+    }
 
     supersedePendingSingleEditorLoads();
 
@@ -3463,6 +3511,22 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
                     const auto gateCandidateStart = std::chrono::steady_clock::now();
                     bool includeEditorActivity = entry.isRaw;
                     if (entry.isRaw) {
+                        const auto deferredForegroundRetry =
+                            g_rawLoadGate.deferredForegroundRetryFor(loadFname);
+                        if (deferredForegroundRetry.count() > 0) {
+                            const auto retryDelay = std::max(
+                                deferredForegroundRetry,
+                                std::chrono::milliseconds(PreloadManager::kPreloadRetryMs));
+                            if (logPreload) {
+                                FILESEL_LOG("[preload] deferred foreground retry=%lldms file=%s\n",
+                                    static_cast<long long>(retryDelay.count()),
+                                    loadFname.c_str());
+                            }
+                            rawGateDeferredUntil[loadFname] =
+                                std::chrono::steady_clock::now() + retryDelay;
+                            continue;
+                        }
+
                         int foregroundQuietMs = PreloadManager::kForegroundQuietMs;
                         {
                             std::lock_guard<std::mutex> lk(state->mutex);
