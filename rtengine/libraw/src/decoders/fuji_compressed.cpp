@@ -16,6 +16,11 @@ it under the terms of the one of two licenses as you choose:
 
  */
 
+#if defined(_WIN32) && defined(_OPENMP) && (defined(__GNUC__) || defined(__clang__))
+// MinGW builds pass -fopenmp, but LibRaw's Windows gate only enables it for MSVC/Intel.
+#define LIBRAW_FORCE_OPENMP
+#endif
+
 #include "../../internal/libraw_cxx_defs.h"
 
 #ifdef _abs
