@@ -170,6 +170,8 @@ it under the terms of the one of two licenses as you choose:
 	void        canon_sraw_load_raw();
 // Adobe DNG
 	void        adobe_copy_pixel (unsigned int row, unsigned int col, ushort **rp);
+	bool        lossless_dng_load_raw_parallel();
+	void        lossless_dng_decode_tile(const uchar *tile_data, size_t tile_size, unsigned int trow, unsigned int tcol);
 	void        lossless_dng_load_raw();
 	void        deflate_dng_load_raw();
 	void        packed_dng_load_raw();
