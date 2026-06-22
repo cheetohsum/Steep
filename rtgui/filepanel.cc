@@ -723,6 +723,7 @@ struct PreloadManager {
     static constexpr int    kQuickPreviewWarmRadius = 2;
     static constexpr int    kStartDelayMs = 1800;
     static constexpr int    kDirectionalStartDelayMs = 125;
+    static constexpr int    kRawStrideDirectionalStartDelayMs = 60;
     static constexpr int    kInterLoadDelayMs = 900;
     static constexpr int    kDirectionalInterLoadDelayMs = 350;
     static constexpr int    kForegroundQuietMs = 900;
@@ -3168,7 +3169,9 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
     }
 
     const int scheduledStartDelayMs = directionalPreload
-        ? PreloadManager::kDirectionalStartDelayMs
+        ? (rawStridePreload
+            ? PreloadManager::kRawStrideDirectionalStartDelayMs
+            : PreloadManager::kDirectionalStartDelayMs)
         : PreloadManager::kStartDelayMs;
     const int scheduledInterLoadDelayMs = directionalPreload
         ? PreloadManager::kDirectionalInterLoadDelayMs
