@@ -2766,47 +2766,62 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
         const int delayedStartMs = foregroundRequest->decodeStartDelayMs;
         const bool wakeWhenPreloadReady = selectedIsRaw && preload_ != nullptr;
         foregroundRequest->decodeStartDelayMs = 0;
-        pl->delayedStartConn = Glib::signal_timeout().connect(
-            [this, pl, startForegroundLoad, t0, delayedStartMs, selectedFileNameRaw, wakeWhenPreloadReady]() -> bool {
-                const auto now = std::chrono::steady_clock::now();
-                const long long elapsedMs = fileSelDurationMs(t0, now);
-                if (wakeWhenPreloadReady
-                    && elapsedMs >= delayedStartMs - PreloadManager::kPreloadRetryMs) {
-                    g_rawLoadGate.noteForegroundIntent(selectedFileNameRaw);
-                }
-                const bool preloadReady = wakeWhenPreloadReady
-                    && preload_
-                    && preload_->hasCachedOrLoading(selectedFileNameRaw);
-                const bool delayElapsed =
-                    elapsedMs >= delayedStartMs;
+        auto markPendingLoadStarted = [this, pl]() {
+            bool shouldStart = false;
+            pendingLoadMutex.lock();
+            if (pl && !pl->superseded) {
+                pl->loadStarted = true;
+                shouldStart = true;
+            }
+            pendingLoadMutex.unlock();
+            return shouldStart;
+        };
+        const bool preloadReadyNow = wakeWhenPreloadReady
+            && preload_
+            && preload_->hasCachedOrLoading(selectedFileNameRaw);
+        if (preloadReadyNow) {
+            if (markPendingLoadStarted()) {
+                FILESEL_LOG("[fileSel] +%lldms immediate startFunc firing delay=%dms reason=preload-ready file=%s\n",
+                    fileSelDurationMs(t0, std::chrono::steady_clock::now()),
+                    delayedStartMs,
+                    selectedFileNameRaw.c_str());
+                startForegroundLoad("preload-ready");
+            }
+        } else {
+            pl->delayedStartConn = Glib::signal_timeout().connect(
+                [this, markPendingLoadStarted, startForegroundLoad, t0, delayedStartMs, selectedFileNameRaw, wakeWhenPreloadReady]() -> bool {
+                    const auto now = std::chrono::steady_clock::now();
+                    const long long elapsedMs = fileSelDurationMs(t0, now);
+                    if (wakeWhenPreloadReady
+                        && elapsedMs >= delayedStartMs - PreloadManager::kPreloadRetryMs) {
+                        g_rawLoadGate.noteForegroundIntent(selectedFileNameRaw);
+                    }
+                    const bool preloadReady = wakeWhenPreloadReady
+                        && preload_
+                        && preload_->hasCachedOrLoading(selectedFileNameRaw);
+                    const bool delayElapsed =
+                        elapsedMs >= delayedStartMs;
 
-                if (!preloadReady && !delayElapsed) {
-                    return true;
-                }
+                    if (!preloadReady && !delayElapsed) {
+                        return true;
+                    }
 
-                bool shouldStart = false;
-                pendingLoadMutex.lock();
-                if (pl && !pl->superseded) {
-                    pl->loadStarted = true;
-                    shouldStart = true;
-                }
-                pendingLoadMutex.unlock();
-
-                if (shouldStart) {
-                    FILESEL_LOG("[fileSel] +%lldms delayed startFunc firing delay=%dms reason=%s file=%s\n",
-                        fileSelDurationMs(t0, std::chrono::steady_clock::now()),
-                        delayedStartMs,
-                        preloadReady ? "preload-ready" : "timer",
-                        selectedFileNameRaw.c_str());
-                    startForegroundLoad(preloadReady ? "preload-ready" : "delayed");
-                }
-                return false;
-            },
-            wakeWhenPreloadReady ? PreloadManager::kDelayedRawPreloadReadyPollMs : delayedStartMs,
-            Glib::PRIORITY_HIGH_IDLE);
-        FILESEL_LOG("[fileSel] +%lldms startFunc delayed delay=%dms\n",
-            (long long)ms(clk::now()),
-            delayedStartMs);
+                    if (markPendingLoadStarted()) {
+                        FILESEL_LOG("[fileSel] +%lldms delayed startFunc firing delay=%dms reason=%s file=%s\n",
+                            fileSelDurationMs(t0, std::chrono::steady_clock::now()),
+                            delayedStartMs,
+                            preloadReady ? "preload-ready" : "timer",
+                            selectedFileNameRaw.c_str());
+                        startForegroundLoad(preloadReady ? "preload-ready" : "delayed");
+                    }
+                    return false;
+                },
+                wakeWhenPreloadReady ? PreloadManager::kDelayedRawPreloadReadyPollMs : delayedStartMs,
+                Glib::PRIORITY_HIGH_IDLE);
+            FILESEL_LOG("[fileSel] +%lldms startFunc delayed delay=%dms\n",
+                (long long)ms(clk::now()),
+                delayedStartMs);
+        }
     } else {
         pendingLoadMutex.lock();
         pl->loadStarted = true;
