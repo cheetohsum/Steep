@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <deque>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
@@ -66,6 +67,15 @@ using QuickWarmClock = std::chrono::steady_clock;
 std::atomic<unsigned> quickPreviewCacheWarmGeneration{0};
 std::mutex fileBrowserPerfLogMutex;
 
+struct QuickPreviewCacheWarmItem {
+    Thumbnail* thumbnail;
+};
+
+std::mutex quickPreviewCacheWarmMutex;
+std::deque<QuickPreviewCacheWarmItem> quickPreviewCacheWarmQueue;
+bool quickPreviewCacheWarmWorkerRunning = false;
+int quickPreviewCacheWarmHeight = 1;
+
 bool fileBrowserPerfLogEnabled()
 {
     static const bool enabled = std::getenv("STEEP_FILESEL_LOG") != nullptr;
@@ -108,54 +118,87 @@ void lowerQuickPreviewWarmThreadPriority()
 #endif
 }
 
-struct QuickPreviewCacheWarmItem {
-    Thumbnail* thumbnail;
-};
-
 void scheduleCachedQuickPreviewWarm(std::vector<QuickPreviewCacheWarmItem>&& items, int previewHeight)
 {
     if (items.empty()) {
         return;
     }
 
-    const unsigned generation = quickPreviewCacheWarmGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
     const int height = std::max(1, previewHeight);
+    size_t replaced = 0;
+    size_t queued = 0;
+    bool startWorker = false;
+    {
+        std::lock_guard<std::mutex> lock(quickPreviewCacheWarmMutex);
+        quickPreviewCacheWarmGeneration.fetch_add(1, std::memory_order_acq_rel);
+        replaced = quickPreviewCacheWarmQueue.size();
+        while (!quickPreviewCacheWarmQueue.empty()) {
+            quickPreviewCacheWarmQueue.front().thumbnail->decreaseRef();
+            quickPreviewCacheWarmQueue.pop_front();
+        }
+        quickPreviewCacheWarmHeight = height;
+        for (auto& item : items) {
+            quickPreviewCacheWarmQueue.push_back(item);
+        }
+        queued = quickPreviewCacheWarmQueue.size();
+        items.clear();
+        if (!quickPreviewCacheWarmWorkerRunning) {
+            quickPreviewCacheWarmWorkerRunning = true;
+            startWorker = true;
+        }
+    }
 
-    std::thread([items = std::move(items), generation, height]() mutable {
+    if (replaced > 0) {
+        fileBrowserPerfLog(
+            "[quickWarm] replaced pending=%zu queued=%zu\n",
+            replaced,
+            queued);
+    }
+
+    if (!startWorker) {
+        return;
+    }
+
+    std::thread([]() {
         lowerQuickPreviewWarmThreadPriority();
 
         const auto start = QuickWarmClock::now();
         size_t loaded = 0;
         size_t missed = 0;
-        size_t remaining = 0;
+        size_t processed = 0;
 
-        for (size_t i = 0; i < items.size(); ++i) {
-            if (quickPreviewCacheWarmGeneration.load(std::memory_order_acquire) != generation) {
-                remaining = items.size() - i;
-                break;
+        while (true) {
+            QuickPreviewCacheWarmItem item{nullptr};
+            int height = 1;
+            {
+                std::lock_guard<std::mutex> lock(quickPreviewCacheWarmMutex);
+                if (quickPreviewCacheWarmQueue.empty()) {
+                    quickPreviewCacheWarmWorkerRunning = false;
+                    break;
+                }
+
+                item = quickPreviewCacheWarmQueue.front();
+                quickPreviewCacheWarmQueue.pop_front();
+                height = quickPreviewCacheWarmHeight;
             }
 
             double scale = 1.0;
-            auto pixbuf = items[i].thumbnail->tryLoadCachedPreviewPixbuf(height, scale);
+            auto pixbuf = item.thumbnail->tryLoadCachedPreviewPixbuf(height, scale);
             if (pixbuf) {
                 ++loaded;
             } else {
                 ++missed;
             }
-        }
-
-        for (auto& item : items) {
             item.thumbnail->decreaseRef();
+            ++processed;
         }
 
         fileBrowserPerfLog(
-            "[quickWarm] %s duration=%lldms loaded=%zu missed=%zu remaining=%zu total=%zu\n",
-            remaining > 0 ? "canceled" : "done",
+            "[quickWarm] done duration=%lldms loaded=%zu missed=%zu processed=%zu\n",
             quickWarmDurationMs(start, QuickWarmClock::now()),
             loaded,
             missed,
-            remaining,
-            items.size());
+            processed);
     }).detach();
 }
 
