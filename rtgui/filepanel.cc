@@ -2929,6 +2929,7 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
     // rendering here; first paint matters more than manufacturing a fallback
     // preview on the GTK thread.
     EditorPanel* quickPreviewTarget = opts.tabbedUI ? pl->epanel : parent->epanel;
+    bool quickPreviewMissed = false;
     if (quickPreviewTarget) {
         Glib::RefPtr<Gdk::Pixbuf> quickPb;
         double displayScale = 1.0;
@@ -2951,6 +2952,7 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
             // GTK paints the override on the next main-loop iteration (a few
             // ms later), still feels instant to the user.
         } else if (!opts.tabbedUI) {
+            quickPreviewMissed = true;
             Thumbnail* previewThm = thm;
             previewThm->increaseRef();
             auto previewAllowed = pl->quickPreviewAllowed;
@@ -3000,6 +3002,16 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
                     Glib::PRIORITY_HIGH_IDLE);
             }).detach();
         }
+    }
+    if (selectedIsRaw && quickPreviewMissed && foregroundRequest->decodeStartDelayMs > PreloadManager::kFastFujiQueuedScrubDecodeDelayMs) {
+        foregroundRequest->decodeStartDelayMs = PreloadManager::kFastFujiQueuedScrubDecodeDelayMs;
+        g_rawLoadGate.noteDeferredForeground(
+            selectedFileNameRaw,
+            foregroundRequest->decodeStartDelayMs);
+        FILESEL_LOG("[fileSel] +%lldms shortened decode debounce for preview miss delay=%dms file=%s\n",
+            (long long)ms(clk::now()),
+            foregroundRequest->decodeStartDelayMs,
+            selectedFileNameRaw.c_str());
     }
 
     ProgressConnector<rtengine::InitialImage*> *ld = new ProgressConnector<rtengine::InitialImage*>();
