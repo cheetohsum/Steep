@@ -750,6 +750,8 @@ struct PreloadManager {
     static constexpr int    kMediumDirectionalScrubDecodeDebounceExtraMs = 35;
     static constexpr int    kFastFujiRapidScrubDecodeDelayMs = 45;
     static constexpr int    kFastFujiQueuedScrubDecodeDelayMs = 20;
+    static constexpr int    kFastFujiSustainedScrubDecodeDelayMs = 140;
+    static constexpr unsigned kFastFujiSustainedScrubRunLength = 4;
     static constexpr unsigned kDirectionalScrubDecodeDebounceRunLength = 2;
     static constexpr int    kMediumRawStrideThroughEditorMinCadenceMs = 350;
     static constexpr int    kThroughEditorRawPreloadThreads = 4;
@@ -767,6 +769,7 @@ struct PreloadManager {
     static constexpr int    kRapidHotRawPreloadBusyRetryMs = 175;
     static constexpr int    kDelayedRawPreloadReadyPollMs = 10;
     static constexpr int    kCachedOpenPreloadSettleMs = 0;
+    static constexpr int    kCachedOpenPreloadStartDelayMs = 500;
     static constexpr size_t kFallbackEntryBytes = 256ULL * 1024 * 1024;
 
     enum class ForegroundPriorityResult {
@@ -1990,7 +1993,11 @@ void FilePanel::resumeBackgroundWorkAfterForeground()
         });
 }
 
-void FilePanel::scheduleAdjacentPreload(const Glib::ustring& fname, eRTNav preferredDirection, bool refreshThumbnails)
+void FilePanel::scheduleAdjacentPreload(
+    const Glib::ustring& fname,
+    eRTNav preferredDirection,
+    bool refreshThumbnails,
+    int minStartDelayMs)
 {
     const auto now = std::chrono::steady_clock::now();
     eRTNav effectiveDirection = preferredDirection;
@@ -2019,9 +2026,11 @@ void FilePanel::scheduleAdjacentPreload(const Glib::ustring& fname, eRTNav prefe
         && adjacentPreloadFname_ == fname
         && adjacentPreloadDirection_ == effectiveDirection) {
         adjacentPreloadRefreshThumbnails_ = adjacentPreloadRefreshThumbnails_ || refreshThumbnails;
-        FILESEL_LOG("[preload] coalesced pending schedule dir=%d refresh=%d anchor=%s\n",
+        adjacentPreloadMinStartDelayMs_ = std::max(adjacentPreloadMinStartDelayMs_, minStartDelayMs);
+        FILESEL_LOG("[preload] coalesced pending schedule dir=%d refresh=%d minStart=%dms anchor=%s\n",
             static_cast<int>(effectiveDirection),
             static_cast<int>(adjacentPreloadRefreshThumbnails_),
+            adjacentPreloadMinStartDelayMs_,
             fname.c_str());
         return;
     }
@@ -2031,6 +2040,7 @@ void FilePanel::scheduleAdjacentPreload(const Glib::ustring& fname, eRTNav prefe
     adjacentPreloadFname_ = fname;
     adjacentPreloadDirection_ = effectiveDirection;
     adjacentPreloadRefreshThumbnails_ = refreshThumbnails;
+    adjacentPreloadMinStartDelayMs_ = minStartDelayMs;
 
     idle_register.add(
         [this, generation]() -> bool {
@@ -2041,8 +2051,10 @@ void FilePanel::scheduleAdjacentPreload(const Glib::ustring& fname, eRTNav prefe
             const Glib::ustring scheduledFname = adjacentPreloadFname_;
             const eRTNav scheduledDirection = adjacentPreloadDirection_;
             const bool scheduledRefresh = adjacentPreloadRefreshThumbnails_;
+            const int scheduledMinStartDelayMs = adjacentPreloadMinStartDelayMs_;
             adjacentPreloadIdlePending_ = false;
-            preloadAdjacent(scheduledFname, scheduledDirection, scheduledRefresh);
+            adjacentPreloadMinStartDelayMs_ = 0;
+            preloadAdjacent(scheduledFname, scheduledDirection, scheduledRefresh, scheduledMinStartDelayMs);
             return false;
         },
         G_PRIORITY_DEFAULT_IDLE);
@@ -2060,6 +2072,7 @@ FilePanel::FilePanel () :
     adjacentPreloadIdlePending_(false),
     adjacentPreloadDirection_(NAV_NONE),
     adjacentPreloadRefreshThumbnails_(false),
+    adjacentPreloadMinStartDelayMs_(0),
     recentDirectionalPreloadDirection_(NAV_NONE),
     recentDirectionalSelectionDirection_(NAV_NONE),
     recentDirectionalSelectionGapMs_(0),
@@ -2691,7 +2704,11 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
                 fileSelDurationMs(t0, clk::now()),
                 fileSelDurationMs(cachedOpenStart, clk::now()),
                 selectedFileNameRaw.c_str());
-            scheduleAdjacentPreload(selectedFileName, preloadDirectionHint, true);
+            scheduleAdjacentPreload(
+                selectedFileName,
+                preloadDirectionHint,
+                true,
+                PreloadManager::kCachedOpenPreloadStartDelayMs);
         }
 
         bool pendingLoadsRemain = false;
@@ -2715,6 +2732,20 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
     foregroundRequest->priorityId = nextForegroundLoadPriorityId();
     foregroundRequest->skipIfStale = skipStaleForegroundLoad;
     foregroundRequest->staleSkipped = std::make_shared<std::atomic<bool>>(false);
+    bool supersedingActiveRawForegroundLoad = false;
+    if (!opts.tabbedUI && selectedIsRaw) {
+        pendingLoadMutex.lock();
+        for (const auto* p : pendingLoads) {
+            if (!p->superseded
+                && p->loadStarted
+                && p->thm
+                && p->thm->getType() == FT_Raw) {
+                supersedingActiveRawForegroundLoad = true;
+                break;
+            }
+        }
+        pendingLoadMutex.unlock();
+    }
     const bool rapidDirectionalSelection = directionalSelection
         && recentDirectionalSelectionGapMs_ > 0
         && recentDirectionalSelectionGapMs_ <= PreloadManager::kRapidDecodeDebounceCadenceMs;
@@ -2737,9 +2768,15 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
             foregroundPreloadPriority == PreloadManager::ForegroundPriorityResult::Loading;
         const bool steadyFastFujiScrub =
             recentDirectionalSelectionGapMs_ >= PreloadManager::kMediumRawStrideThroughEditorMinCadenceMs;
+        const bool sustainedFastFujiScrub =
+            fastFujiMediumScrub
+            && supersedingActiveRawForegroundLoad
+            && recentDirectionalRawSelectionRunLength_ >= PreloadManager::kFastFujiSustainedScrubRunLength;
         const int fastFujiScrubDelayMs = waitForActivePreloadHandoff
             ? PreloadManager::kPreloadRetryMs
-            : (steadyFastFujiScrub
+            : (sustainedFastFujiScrub
+                ? PreloadManager::kFastFujiSustainedScrubDecodeDelayMs
+                : steadyFastFujiScrub
                 ? PreloadManager::kFastFujiQueuedScrubDecodeDelayMs
                 : PreloadManager::kFastFujiRapidScrubDecodeDelayMs);
         const int directionalScrubDecodeDebounceMaxMs = fastFujiMediumScrub
@@ -2763,12 +2800,13 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
             std::min(
                 decodeDebounceMaxMs,
                 recentDirectionalSelectionGapMs_ + decodeDebounceExtraMs));
-        FILESEL_LOG("[fileSel] +%lldms rapid decode debounce mode=%s delay=%dms cadence=%dms run=%u file=%s\n",
+        FILESEL_LOG("[fileSel] +%lldms rapid decode debounce mode=%s delay=%dms cadence=%dms run=%u activeRaw=%d file=%s\n",
             (long long)ms(clk::now()),
             mediumDirectionalScrub ? "scrub" : "rapid",
             foregroundRequest->decodeStartDelayMs,
             recentDirectionalSelectionGapMs_,
             recentDirectionalSelectionRunLength_,
+            static_cast<int>(supersedingActiveRawForegroundLoad),
             selectedFileNameRaw.c_str());
     } else if (!selectedIsRaw
         && rapidDirectionalSelection
@@ -3226,7 +3264,11 @@ bool FilePanel::imageLoaded( Thumbnail* thm, ProgressConnector<rtengine::Initial
     return false; // MUST return false from idle function
 }
 
-void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDirection, bool refreshThumbnails)
+void FilePanel::preloadAdjacent(
+    const Glib::ustring& fname,
+    eRTNav preferredDirection,
+    bool refreshThumbnails,
+    int minStartDelayMs)
 {
     if (!fileCatalog || !fileCatalog->fileBrowser) return;
     if (!preload_ || preload_->stopped) return;
@@ -3393,11 +3435,13 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
         }
     }
 
-    const int scheduledStartDelayMs = directionalPreload
-        ? (rawStridePreload
-            ? PreloadManager::kRawStrideDirectionalStartDelayMs
-            : PreloadManager::kDirectionalStartDelayMs)
-        : PreloadManager::kStartDelayMs;
+    const int scheduledStartDelayMs = std::max(
+        minStartDelayMs,
+        directionalPreload
+            ? (rawStridePreload
+                ? PreloadManager::kRawStrideDirectionalStartDelayMs
+                : PreloadManager::kDirectionalStartDelayMs)
+            : PreloadManager::kStartDelayMs);
     const int scheduledInterLoadDelayMs = directionalPreload
         ? PreloadManager::kDirectionalInterLoadDelayMs
         : PreloadManager::kInterLoadDelayMs;

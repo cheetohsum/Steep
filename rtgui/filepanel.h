@@ -128,7 +128,11 @@ private:
     void resumeThumbnailWorkNow();
     void resumeBackgroundWorkNow();
     void cancelScheduledBackgroundResume();
-    void scheduleAdjacentPreload(const Glib::ustring& fname, eRTNav preferredDirection, bool refreshThumbnails);
+    void scheduleAdjacentPreload(
+        const Glib::ustring& fname,
+        eRTNav preferredDirection,
+        bool refreshThumbnails,
+        int minStartDelayMs = 0);
 
     PlacesBrowser* placesBrowser;
     RecentBrowser* recentBrowser;
@@ -178,6 +182,7 @@ private:
     Glib::ustring adjacentPreloadFname_;
     eRTNav adjacentPreloadDirection_;
     bool adjacentPreloadRefreshThumbnails_;
+    int adjacentPreloadMinStartDelayMs_;
     Glib::ustring recentDirectionalPreloadFname_;
     eRTNav recentDirectionalPreloadDirection_;
     std::chrono::steady_clock::time_point recentDirectionalPreloadUntil_;
@@ -189,7 +194,11 @@ private:
     unsigned recentDirectionalRawSelectionRunLength_;
 
 public:
-    void preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDirection = NAV_NONE, bool refreshThumbnails = true);
+    void preloadAdjacent(
+        const Glib::ustring& fname,
+        eRTNav preferredDirection = NAV_NONE,
+        bool refreshThumbnails = true,
+        int minStartDelayMs = 0);
 
 private:
 
