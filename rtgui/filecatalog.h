@@ -86,6 +86,7 @@ private:
     Glib::ustring selectedDirectory;
     DirectoryResetInfo resetData;
     std::atomic<int> selectedDirectoryId;
+    int readyQuickPreviewWarmDirectoryId_;
     bool enabled;
     bool inTabMode;  // Tab mode has e.g. different progress bar handling
     Glib::ustring imageToSelect_fname;

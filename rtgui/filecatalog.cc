@@ -385,6 +385,7 @@ bool getFilesRecursivelyStreaming(
 FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     filepanel(filepanel),
     selectedDirectoryId(1),
+    readyQuickPreviewWarmDirectoryId_(0),
     actionNextPrevious(NAV_NONE),
     listener(nullptr),
     fslistener(nullptr),
@@ -2304,7 +2305,8 @@ void FileCatalog::previewsFinishedUI(int dir_id)
     if (quickWarmAnchor.empty() && !fileNameList.empty()) {
         quickWarmAnchor = fileNameList.front();
     }
-    if (!quickWarmAnchor.empty()) {
+    if (!quickWarmAnchor.empty() && readyQuickPreviewWarmDirectoryId_ != dir_id) {
+        readyQuickPreviewWarmDirectoryId_ = dir_id;
         constexpr int READY_QUICK_PREVIEW_WARM_RADIUS = 16;
         fileBrowser->getAdjacentEntriesAndRefresh(
             quickWarmAnchor,
