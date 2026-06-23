@@ -756,6 +756,7 @@ struct PreloadManager {
     static constexpr int    kRapidRawStridePredictiveCadenceMs = 300;
     static constexpr int    kRapidRawStridePredictiveRawQuietMs = 40;
     static constexpr int    kRapidRawStridePredictiveRetryMs = 10;
+    static constexpr int    kMediumRawStridePredictiveRetryMs = 40;
     static constexpr unsigned kRapidRawStridePredictiveRunLength = 3;
     static constexpr int    kNonRawForegroundQuietMs = 125;
     static constexpr int    kDirectionalHintKeepAliveMs = 1500;
@@ -905,6 +906,7 @@ struct PreloadManager {
     int                     foregroundQuietMs = kForegroundQuietMs;
     int                     immediateRawQuietMs = kForegroundQuietMs;
     int                     hotRawBusyRetryMs = kPreloadBusyRetryMs;
+    int                     deferredForegroundBypassRetryMs = kPreloadRetryMs;
     bool                    rawStrideMode = false;
     bool                    rawStrideCanPreloadThroughEditor = false;
     bool                    rawStrideCanBypassDeferredForeground = false;
@@ -3096,16 +3098,21 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
         && recentDirectionalRawSelectionRunLength_ >= PreloadManager::kRapidRawStridePredictiveRunLength
         && recentDirectionalSelectionGapMs_ > 0
         && recentDirectionalSelectionGapMs_ <= PreloadManager::kRapidRawStridePredictiveCadenceMs;
-    const bool rawStrideCanPreloadThroughEditor = rawStridePreload
-        && (rapidRawStridePredictivePreload
-            || mediumRawStridePreload
-            || recentDirectionalSelectionGapMs_ > PreloadManager::kRapidDirectionalCadenceMs);
-    const bool rawStrideCanBypassDeferredForeground = rapidRawStridePredictivePreload;
     const Glib::ustring lowerFname = fname.lowercase();
     const bool fastFujiRawStride =
         rawStridePreload
         && lowerFname.length() >= 4
         && lowerFname.substr(lowerFname.length() - 4) == ".raf";
+    const bool rawStrideCanPreloadThroughEditor = rawStridePreload
+        && (rapidRawStridePredictivePreload
+            || mediumRawStridePreload
+            || recentDirectionalSelectionGapMs_ > PreloadManager::kRapidDirectionalCadenceMs);
+    const bool mediumSlowRawStridePredictivePreload =
+        mediumRawStridePreload
+        && !fastFujiRawStride
+        && recentDirectionalRawSelectionRunLength_ >= PreloadManager::kRapidRawStridePredictiveRunLength;
+    const bool rawStrideCanBypassDeferredForeground =
+        rapidRawStridePredictivePreload || mediumSlowRawStridePredictivePreload;
     const int quickPreviewWarmRadius = (!refreshThumbnails && rawStridePreload)
         ? (fastFujiRawStride ? PreloadManager::kRawStrideQuickPreviewWarmRadius : 0)
         : PreloadManager::kQuickPreviewWarmRadius;
@@ -3263,8 +3270,15 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
     if (rawStrideCanBypassDeferredForeground) {
         scheduledImmediateRawQuietMs = std::min(
             scheduledImmediateRawQuietMs,
-            PreloadManager::kRapidRawStridePredictiveRawQuietMs);
+            mediumSlowRawStridePredictivePreload
+                ? PreloadManager::kMediumImmediateRawForegroundQuietMs
+                : PreloadManager::kRapidRawStridePredictiveRawQuietMs);
     }
+    const int scheduledDeferredForegroundBypassRetryMs = rawStrideCanBypassDeferredForeground
+        ? (mediumSlowRawStridePredictivePreload
+            ? PreloadManager::kMediumRawStridePredictiveRetryMs
+            : PreloadManager::kRapidRawStridePredictiveRetryMs)
+        : PreloadManager::kPreloadRetryMs;
     const int scheduledHotRawBusyRetryMs =
         directionalPreload
         && recentDirectionalSelectionGapMs_ > 0
@@ -3286,6 +3300,7 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
             && preload_->foregroundQuietMs == scheduledForegroundQuietMs
             && preload_->immediateRawQuietMs == scheduledImmediateRawQuietMs
             && preload_->hotRawBusyRetryMs == scheduledHotRawBusyRetryMs
+            && preload_->deferredForegroundBypassRetryMs == scheduledDeferredForegroundBypassRetryMs
             && preload_->rawStrideMode == rawStridePreload
             && preload_->rawStrideCanPreloadThroughEditor == rawStrideCanPreloadThroughEditor
             && preload_->rawStrideCanBypassDeferredForeground == rawStrideCanBypassDeferredForeground;
@@ -3331,6 +3346,7 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
             preload_->foregroundQuietMs = scheduledForegroundQuietMs;
             preload_->immediateRawQuietMs = scheduledImmediateRawQuietMs;
             preload_->hotRawBusyRetryMs = scheduledHotRawBusyRetryMs;
+            preload_->deferredForegroundBypassRetryMs = scheduledDeferredForegroundBypassRetryMs;
             preload_->rawStrideMode = rawStridePreload;
             preload_->rawStrideCanPreloadThroughEditor = rawStrideCanPreloadThroughEditor;
             preload_->rawStrideCanBypassDeferredForeground = rawStrideCanBypassDeferredForeground;
@@ -3589,6 +3605,7 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
                     bool includeEditorActivity = entry.isRaw;
                     if (entry.isRaw) {
                         bool bypassDeferredForeground = false;
+                        int deferredForegroundBypassRetryMs = PreloadManager::kPreloadRetryMs;
                         {
                             std::lock_guard<std::mutex> lk(state->mutex);
                             bypassDeferredForeground =
@@ -3596,6 +3613,7 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
                                 && state->rawStrideCanBypassDeferredForeground
                                 && !state->hotWantedEntries.empty()
                                 && state->hotWantedEntries.front().fnameRaw == loadFname;
+                            deferredForegroundBypassRetryMs = state->deferredForegroundBypassRetryMs;
                         }
                         const auto deferredForegroundRetry =
                             bypassDeferredForeground
@@ -3603,7 +3621,7 @@ void FilePanel::preloadAdjacent(const Glib::ustring& fname, eRTNav preferredDire
                                 : g_rawLoadGate.deferredForegroundRetryFor(loadFname);
                         const auto predictiveRetryFloor = std::chrono::milliseconds(
                             bypassDeferredForeground
-                                ? PreloadManager::kRapidRawStridePredictiveRetryMs
+                                ? deferredForegroundBypassRetryMs
                                 : PreloadManager::kPreloadRetryMs);
                         if (deferredForegroundRetry.count() > 0) {
                             const auto retryDelay = std::max(
