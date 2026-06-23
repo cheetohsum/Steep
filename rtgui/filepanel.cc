@@ -1440,6 +1440,12 @@ struct RecentInitialImageCache {
         return img;
     }
 
+    bool contains(const std::string& fname)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        return cache.count(fname) != 0;
+    }
+
     void drop(const std::string& fname, std::vector<rtengine::InitialImage*>* evictedImages)
     {
         std::lock_guard<std::mutex> lock(mutex);
@@ -3393,7 +3399,17 @@ void FilePanel::preloadAdjacent(
         newWanted.emplace_back(e.fnameRaw);
     }
 
+    auto isRecentlyCachedRaw = [this](const FileBrowser::AdjacentEntry& e) {
+        return e.isRaw
+            && recentInitialImageCache_
+            && recentInitialImageCache_->contains(e.fnameRaw);
+    };
+
     auto addHotEntry = [&](const FileBrowser::AdjacentEntry& e) {
+        if (isRecentlyCachedRaw(e)) {
+            FILESEL_LOG("[preload] skipped hot recent raw file=%s\n", e.fnameRaw.c_str());
+            return false;
+        }
         if (!newHotWantedSet.insert(e.fnameRaw).second) {
             return false;
         }
