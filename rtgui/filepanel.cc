@@ -727,6 +727,7 @@ struct PreloadManager {
     static constexpr int    kRawStrideDirectionalStartDelayMs = 60;
     static constexpr int    kInterLoadDelayMs = 900;
     static constexpr int    kDirectionalInterLoadDelayMs = 350;
+    static constexpr int    kRawStrideInterLoadDelayMs = 125;
     static constexpr int    kForegroundQuietMs = 900;
     static constexpr int    kDirectionalForegroundQuietMs = 600;
     static constexpr int    kDirectionalThroughEditorRawQuietMs = 300;
@@ -3487,7 +3488,11 @@ void FilePanel::preloadAdjacent(
                 : PreloadManager::kDirectionalStartDelayMs)
             : PreloadManager::kStartDelayMs);
     const int scheduledInterLoadDelayMs = directionalPreload
-        ? PreloadManager::kDirectionalInterLoadDelayMs
+        ? (rawStridePreload
+            ? (fastFujiRawStride
+                ? PreloadManager::kDirectionalInterLoadDelayMs
+                : PreloadManager::kRawStrideInterLoadDelayMs)
+            : PreloadManager::kDirectionalInterLoadDelayMs)
         : PreloadManager::kInterLoadDelayMs;
     int scheduledForegroundQuietMs = PreloadManager::kForegroundQuietMs;
     if (directionalPreload) {
