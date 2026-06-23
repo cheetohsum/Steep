@@ -21,6 +21,7 @@
 #include <atomic>
 #include <chrono>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <set>
 #include <string>
@@ -45,6 +46,7 @@ class EditorPanel;
 class RTWindow;
 class DirBrowser;
 struct PreloadManager;
+struct RecentInitialImageCache;
 
 class FilePanel final :
     public Gtk::Paned,
@@ -95,6 +97,9 @@ public:
         bool isRaw,
         int* errorCode,
         const std::shared_ptr<std::atomic<bool>>& cancel);
+    std::function<void(rtengine::InitialImage*)> makeRecentInitialImageCacheFunc(
+        const Glib::ustring& fname,
+        bool isRaw);
 
     bool handleShortcutKey (GdkEventKey* event);
     bool handleShortcutKeyRelease(GdkEventKey *event);
@@ -162,6 +167,7 @@ private:
     // Preload cache for adjacent images (speeds up filmstrip navigation).
     // Held in a shared_ptr so detached load threads can safely outlive FilePanel.
     std::shared_ptr<PreloadManager> preload_;
+    std::shared_ptr<RecentInitialImageCache> recentInitialImageCache_;
     std::shared_ptr<std::atomic<unsigned>> foregroundLoadGeneration_;
     guint backgroundResumeTimeoutId_;
     unsigned backgroundResumeGeneration_;

@@ -26,6 +26,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <mutex>
@@ -1334,6 +1335,116 @@ struct PreloadManager {
     }
 };
 
+struct RecentInitialImageCache {
+    static constexpr size_t kMaxBytes = 512ULL * 1024 * 1024;
+    static constexpr size_t kMaxEntries = 3;
+
+    struct Entry {
+        rtengine::InitialImage* img;
+        size_t bytes;
+        std::uint64_t serial;
+    };
+
+    std::mutex mutex;
+    std::unordered_map<std::string, Entry> cache;
+    size_t totalBytes = 0;
+    std::uint64_t nextSerial = 1;
+
+    ~RecentInitialImageCache()
+    {
+        for (auto& item : cache) {
+            item.second.img->decreaseRef();
+        }
+    }
+
+    void eraseLocked(
+        const std::unordered_map<std::string, Entry>::iterator& it,
+        std::vector<rtengine::InitialImage*>* evictedImages)
+    {
+        totalBytes = totalBytes > it->second.bytes ? totalBytes - it->second.bytes : 0;
+        if (evictedImages) {
+            evictedImages->push_back(it->second.img);
+        } else {
+            it->second.img->decreaseRef();
+        }
+        cache.erase(it);
+    }
+
+    bool makeRoomLocked(size_t bytes, std::vector<rtengine::InitialImage*>* evictedImages)
+    {
+        if (bytes > kMaxBytes) {
+            return false;
+        }
+
+        while ((cache.size() >= kMaxEntries) || (totalBytes > kMaxBytes - bytes)) {
+            if (cache.empty()) {
+                return false;
+            }
+
+            auto oldest = cache.begin();
+            for (auto it = std::next(cache.begin()); it != cache.end(); ++it) {
+                if (it->second.serial < oldest->second.serial) {
+                    oldest = it;
+                }
+            }
+            eraseLocked(oldest, evictedImages);
+        }
+
+        return true;
+    }
+
+    bool cacheImage(
+        const std::string& fname,
+        rtengine::InitialImage* img,
+        size_t bytes,
+        std::vector<rtengine::InitialImage*>* evictedImages)
+    {
+        if (!img) {
+            return false;
+        }
+
+        std::lock_guard<std::mutex> lock(mutex);
+        auto existing = cache.find(fname);
+        if (existing != cache.end()) {
+            eraseLocked(existing, evictedImages);
+        }
+
+        if (!makeRoomLocked(bytes, evictedImages)) {
+            return false;
+        }
+
+        cache.emplace(fname, Entry{img, bytes, nextSerial++});
+        totalBytes += bytes;
+        return true;
+    }
+
+    rtengine::InitialImage* take(const std::string& fname, size_t* bytes = nullptr)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        auto it = cache.find(fname);
+        if (it == cache.end()) {
+            return nullptr;
+        }
+
+        rtengine::InitialImage* img = it->second.img;
+        if (bytes) {
+            *bytes = it->second.bytes;
+        }
+        totalBytes = totalBytes > it->second.bytes ? totalBytes - it->second.bytes : 0;
+        cache.erase(it);
+        return img;
+    }
+
+    void drop(const std::string& fname, std::vector<rtengine::InitialImage*>* evictedImages)
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        auto it = cache.find(fname);
+        if (it != cache.end()) {
+            eraseLocked(it, evictedImages);
+        }
+    }
+};
+
 #ifdef _WIN32
 struct PreloadWorkerPriorityHandle {
     explicit PreloadWorkerPriorityHandle(const std::shared_ptr<PreloadManager>& state) :
@@ -1698,6 +1809,40 @@ rtengine::InitialImage* FilePanel::loadAuxiliaryInitialImage(
     return img;
 }
 
+std::function<void(rtengine::InitialImage*)> FilePanel::makeRecentInitialImageCacheFunc(
+    const Glib::ustring& fname,
+    bool isRaw)
+{
+    if (!isRaw || !recentInitialImageCache_) {
+        return {};
+    }
+
+    auto recentCache = recentInitialImageCache_;
+    const std::string fnameRaw(fname);
+    const Glib::ustring fnameCopy(fname);
+
+    return [recentCache, fnameRaw, fnameCopy, isRaw](rtengine::InitialImage* img) {
+        if (!img) {
+            return;
+        }
+
+        const size_t bytes = PreloadManager::estimatedLoadedInitialImageBytes(img, isRaw);
+        std::vector<rtengine::InitialImage*> evictedImages;
+        if (recentCache->cacheImage(fnameRaw, img, bytes, &evictedImages)) {
+            releasePreloadImagesInBackground(std::move(evictedImages), "recent-editor-evict", fnameCopy);
+            FILESEL_LOG("[recentRaw] cached bytes=%zu file=%s\n",
+                bytes,
+                fnameRaw.c_str());
+        } else {
+            img->decreaseRef();
+            releasePreloadImagesInBackground(std::move(evictedImages), "recent-editor-failed", fnameCopy);
+            FILESEL_LOG("[recentRaw] dropped bytes=%zu file=%s\n",
+                bytes,
+                fnameRaw.c_str());
+        }
+    };
+}
+
 void FilePanel::cancelScheduledBackgroundResume()
 {
     if (backgroundResumeTimeoutId_) {
@@ -1923,6 +2068,7 @@ FilePanel::FilePanel () :
     recentDirectionalRawSelectionRunLength_(0)
 {
     preload_ = std::make_shared<PreloadManager>();
+    recentInitialImageCache_ = std::make_shared<RecentInitialImageCache>();
 
 
     const auto& options = App::get().options();
@@ -2403,6 +2549,24 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
             selectedFileNameRaw,
             !rapidRawStridePredictiveSelection);
         cachedImg = preload_->take(selectedFileNameRaw);
+    }
+    if (recentInitialImageCache_ && selectedIsRaw) {
+        if (cachedImg) {
+            std::vector<rtengine::InitialImage*> evictedRecentImages;
+            recentInitialImageCache_->drop(selectedFileNameRaw, &evictedRecentImages);
+            releasePreloadImagesInBackground(
+                std::move(evictedRecentImages),
+                "recent-duplicate",
+                selectedFileName);
+        } else {
+            size_t recentBytes = 0;
+            cachedImg = recentInitialImageCache_->take(selectedFileNameRaw, &recentBytes);
+            if (cachedImg) {
+                FILESEL_LOG("[recentRaw] hit bytes=%zu file=%s\n",
+                    recentBytes,
+                    selectedFileNameRaw.c_str());
+            }
+        }
     }
 
     auto supersedePendingSingleEditorLoads = [&]() {

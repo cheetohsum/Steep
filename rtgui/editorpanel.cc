@@ -25,6 +25,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <functional>
 #include <iostream>
 #include <mutex>
 #include <string>
@@ -4305,6 +4306,8 @@ void EditorPanel::close ()
             Thumbnail* releaseThm = nullptr;
             int releaseRefCount = 0;
             Glib::ustring savedFname = fname;
+            rtengine::InitialImage* recentInitialImage = nullptr;
+            std::function<void(rtengine::InitialImage*)> cacheRecentInitialImage;
 
             if (paramsChanged && savedFileExists) {
                 savedThm = openThm;
@@ -4312,6 +4315,12 @@ void EditorPanel::close ()
             }
 
             if (savedFileExists) {
+                if (fPanel && openThm && openThm->getType() == FT_Raw && isrc) {
+                    recentInitialImage = isrc;
+                    recentInitialImage->increaseRef();
+                    cacheRecentInitialImage = fPanel->makeRecentInitialImageCacheFunc(savedFname, true);
+                }
+
                 releaseThm = openThm;
                 if (releaseThm->removeThumbnailListenerNoRelease(this)) {
                     ++releaseRefCount;
@@ -4332,13 +4341,21 @@ void EditorPanel::close ()
             // one starts its own teardown, and also prevents interleaved
             // OMP pool state changes.
             static std::mutex s_teardownMutex;
-            std::thread([old, oldHandler, savedParams, savedThm, savedFname, releaseThm, releaseRefCount]() {
+            std::thread([old, oldHandler, savedParams, savedThm, savedFname, releaseThm, releaseRefCount, recentInitialImage, cacheRecentInitialImage]() {
                 lowerEditorCleanupThreadPriority();
                 std::lock_guard<std::mutex> lk(s_teardownMutex);
                 old->stopProcessing();
 
                 delete oldHandler;
                 rtengine::StagedImageProcessor::destroy(old);
+
+                if (recentInitialImage) {
+                    if (cacheRecentInitialImage) {
+                        cacheRecentInitialImage(recentInitialImage);
+                    } else {
+                        recentInitialImage->decreaseRef();
+                    }
+                }
 
                 if (savedThm) {
                     savedThm->setProcParams(savedParams, nullptr, EDITOR);
