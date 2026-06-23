@@ -3456,11 +3456,11 @@ void FilePanel::preloadAdjacent(
                 PreloadManager::kMaxEntries);
         const size_t preferredTarget = PreloadManager::kMaxEntries - backtrackReserve;
         const size_t immediateEntries = std::min<size_t>(1, preferredTarget);
-
-        if (rawStridePreload) {
-            // Give RAW neighbors first decode priority only after we have seen
-            // an actual RAW-to-RAW directional stride. Mixed JPG/RAW browsing
-            // keeps the visible next/previous item as the first hot candidate.
+        if (rawStridePreload || recentDirectionalRawSelectionRunLength_ > 0) {
+            // Once the anchor is a RAW, make the nearest RAW neighbor the
+            // first full-image preload candidate immediately. Paired JPGs are
+            // still warmed next, but they should not occupy the sole hot slot
+            // while RAW-to-RAW navigation is still being established.
             const size_t primaryRawSlots = std::min<size_t>(1, preferredTarget);
             addHotWanted(true, false, 1, primaryRawSlots, primaryRawSlots);
             addHotWanted(
