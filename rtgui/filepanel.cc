@@ -769,7 +769,7 @@ struct PreloadManager {
     static constexpr int    kRapidHotRawPreloadBusyRetryMs = 175;
     static constexpr int    kDelayedRawPreloadReadyPollMs = 10;
     static constexpr int    kCachedOpenPreloadSettleMs = 0;
-    static constexpr int    kCachedOpenPreloadStartDelayMs = 500;
+    static constexpr int    kCachedOpenPreloadStartDelayMs = 250;
     static constexpr size_t kFallbackEntryBytes = 256ULL * 1024 * 1024;
 
     enum class ForegroundPriorityResult {
