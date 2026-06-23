@@ -22,9 +22,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <functional>
 #include <iostream>
 #include <mutex>
@@ -141,6 +143,57 @@ static void lowerEditorCleanupThreadPriority()
 #ifdef _WIN32
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
 #endif
+}
+
+class EditorCleanupQueue
+{
+public:
+    void enqueue(std::function<void()> task)
+    {
+        if (!task) {
+            return;
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            tasks_.push_back(std::move(task));
+            if (!workerStarted_) {
+                workerStarted_ = true;
+                std::thread([this]() { run(); }).detach();
+            }
+        }
+
+        cv_.notify_one();
+    }
+
+private:
+    void run()
+    {
+        lowerEditorCleanupThreadPriority();
+
+        while (true) {
+            std::function<void()> task;
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                cv_.wait(lock, [this]() { return !tasks_.empty(); });
+                task = std::move(tasks_.front());
+                tasks_.pop_front();
+            }
+
+            task();
+        }
+    }
+
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    std::deque<std::function<void()>> tasks_;
+    bool workerStarted_ = false;
+};
+
+static EditorCleanupQueue& editorCleanupQueue()
+{
+    static EditorCleanupQueue* queue = new EditorCleanupQueue();
+    return *queue;
 }
 
 static void detachEditorProcessorListeners(rtengine::StagedImageProcessor* proc)
@@ -4340,9 +4393,8 @@ void EditorPanel::close ()
             // the old image's teardown to fully complete before the next
             // one starts its own teardown, and also prevents interleaved
             // OMP pool state changes.
-            static std::mutex s_teardownMutex;
-            std::thread([old, oldHandler, savedParams, savedThm, savedFname, releaseThm, releaseRefCount, recentInitialImage, cacheRecentInitialImage]() {
-                lowerEditorCleanupThreadPriority();
+            editorCleanupQueue().enqueue([old, oldHandler, savedParams, savedThm, savedFname, releaseThm, releaseRefCount, recentInitialImage, cacheRecentInitialImage]() {
+                static std::mutex s_teardownMutex;
                 std::lock_guard<std::mutex> lk(s_teardownMutex);
                 old->stopProcessing();
 
@@ -4367,7 +4419,7 @@ void EditorPanel::close ()
                         releaseThm->decreaseRef();
                     }
                 }
-            }).detach();
+            });
         }
         logCloseStep("cleanup-enqueue");
 
