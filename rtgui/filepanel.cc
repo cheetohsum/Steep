@@ -734,7 +734,7 @@ struct PreloadManager {
     static constexpr int    kRapidDirectionalForegroundQuietMs = 600;
     static constexpr int    kRapidImmediateRawForegroundQuietMs = 150;
     static constexpr int    kMediumImmediateRawForegroundQuietMs = 75;
-    static constexpr int    kRawStrideQuickPreviewWarmRadius = 1;
+    static constexpr int    kRawStrideQuickPreviewWarmRadius = 2;
     static constexpr int    kRapidDecodeDebounceCadenceMs = 200;
     static constexpr int    kRapidDecodeDebounceMinMs = 110;
     static constexpr int    kRapidDecodeDebounceMaxMs = 180;
@@ -768,6 +768,7 @@ struct PreloadManager {
     static constexpr int    kRapidHotRawPreloadBusyRetryCadenceMs = 300;
     static constexpr int    kRapidHotRawPreloadBusyRetryMs = 175;
     static constexpr int    kDelayedRawPreloadReadyPollMs = 10;
+    static constexpr int    kDelayedForegroundPreloadHoldoffMs = 250;
     static constexpr int    kCachedOpenPreloadSettleMs = 0;
     static constexpr int    kCachedOpenPreloadStartDelayMs = 250;
     static constexpr size_t kFallbackEntryBytes = 256ULL * 1024 * 1024;
@@ -2022,10 +2023,30 @@ void FilePanel::scheduleAdjacentPreload(
         recentDirectionalPreloadUntil_ = {};
     }
 
+    const bool directionalRawPreloadSchedule =
+        (effectiveDirection == NAV_NEXT || effectiveDirection == NAV_PREVIOUS)
+        && recentDirectionalRawSelectionRunLength_ > 0;
+    const Glib::ustring scheduleLowerFname = fname.lowercase();
+    const bool fastFujiRawSchedule =
+        scheduleLowerFname.length() >= 4
+        && scheduleLowerFname.substr(scheduleLowerFname.length() - 4) == ".raf";
+    const bool suppressRefreshForRapidRawStride =
+        refreshThumbnails
+        && directionalRawPreloadSchedule
+        && fastFujiRawSchedule
+        && recentDirectionalSelectionGapMs_ > 0
+        && recentDirectionalSelectionGapMs_ <= PreloadManager::kRapidDirectionalCadenceMs;
+    const bool effectiveRefreshThumbnails = refreshThumbnails && !suppressRefreshForRapidRawStride;
+    if (suppressRefreshForRapidRawStride) {
+        FILESEL_LOG("[preload] skipped thumbnail refresh during rapid raw stride cadence=%dms anchor=%s\n",
+            recentDirectionalSelectionGapMs_,
+            fname.c_str());
+    }
+
     if (adjacentPreloadIdlePending_
         && adjacentPreloadFname_ == fname
         && adjacentPreloadDirection_ == effectiveDirection) {
-        adjacentPreloadRefreshThumbnails_ = adjacentPreloadRefreshThumbnails_ || refreshThumbnails;
+        adjacentPreloadRefreshThumbnails_ = adjacentPreloadRefreshThumbnails_ || effectiveRefreshThumbnails;
         adjacentPreloadMinStartDelayMs_ = std::max(adjacentPreloadMinStartDelayMs_, minStartDelayMs);
         FILESEL_LOG("[preload] coalesced pending schedule dir=%d refresh=%d minStart=%dms anchor=%s\n",
             static_cast<int>(effectiveDirection),
@@ -2035,22 +2056,21 @@ void FilePanel::scheduleAdjacentPreload(
         return;
     }
 
-    const bool directionalRawPreloadSchedule =
-        (effectiveDirection == NAV_NEXT || effectiveDirection == NAV_PREVIOUS)
-        && recentDirectionalRawSelectionRunLength_ > 0;
+    const bool lowerPriorityRefreshForFastFujiRawStride =
+        directionalRawPreloadSchedule && fastFujiRawSchedule && effectiveRefreshThumbnails;
     const int idlePriority = directionalRawPreloadSchedule
-        ? G_PRIORITY_HIGH_IDLE
+        ? (lowerPriorityRefreshForFastFujiRawStride ? G_PRIORITY_DEFAULT_IDLE : G_PRIORITY_HIGH_IDLE)
         : G_PRIORITY_DEFAULT_IDLE;
     const unsigned generation = ++adjacentPreloadGeneration_;
     adjacentPreloadIdlePending_ = true;
     adjacentPreloadFname_ = fname;
     adjacentPreloadDirection_ = effectiveDirection;
-    adjacentPreloadRefreshThumbnails_ = refreshThumbnails;
+    adjacentPreloadRefreshThumbnails_ = effectiveRefreshThumbnails;
     adjacentPreloadMinStartDelayMs_ = minStartDelayMs;
     FILESEL_LOG("[preload] registered schedule dir=%d raw=%d refresh=%d minStart=%dms priority=%d anchor=%s\n",
         static_cast<int>(effectiveDirection),
         static_cast<int>(directionalRawPreloadSchedule),
-        static_cast<int>(refreshThumbnails),
+        static_cast<int>(effectiveRefreshThumbnails),
         minStartDelayMs,
         idlePriority,
         fname.c_str());
@@ -2979,6 +2999,17 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
     pl->pc = ld;
 
     auto startForegroundLoad = [this, selectedFileName, selectedFileNameRaw, selectedIsRaw, foregroundRequest, thm, ld, t0](const char* mode) {
+        const Glib::ustring selectedLower = selectedFileName.lowercase();
+        const bool fastFujiRaw =
+            selectedIsRaw
+            && selectedLower.length() >= 4
+            && selectedLower.substr(selectedLower.length() - 4) == ".raf";
+        if (fastFujiRaw) {
+            g_rawLoadGate.noteForegroundIntent(selectedFileNameRaw);
+            g_rawLoadGate.noteDeferredForeground(
+                selectedFileNameRaw,
+                PreloadManager::kDelayedForegroundPreloadHoldoffMs);
+        }
         ld->startFunc(
             sigc::bind(
                 sigc::ptr_fun(&loadInitialImageSerialized),
