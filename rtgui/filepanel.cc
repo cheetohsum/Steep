@@ -2958,7 +2958,7 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
             RTWindow* previewParent = parent;
             const Glib::ustring previewFileName = selectedFileName;
             std::thread([previewThm, previewAllowed, previewRequest, previewParent, previewFileName]() {
-                lowerBackgroundPreloadThreadPriority();
+                setBackgroundPreloadThreadPriority(true);
                 const auto previewStart = std::chrono::steady_clock::now();
                 double previewScale = 1.0;
                 auto pixbuf = previewThm->tryLoadCachedPreviewPixbuf(
