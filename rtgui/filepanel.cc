@@ -754,7 +754,7 @@ struct PreloadManager {
     static constexpr unsigned kFastFujiSustainedScrubRunLength = 4;
     static constexpr unsigned kDirectionalScrubDecodeDebounceRunLength = 2;
     static constexpr int    kMediumRawStrideThroughEditorMinCadenceMs = 350;
-    static constexpr int    kThroughEditorRawPreloadThreads = 4;
+    static constexpr int    kThroughEditorRawPreloadThreads = 6;
     static constexpr int    kThroughEditorRawFullSpeedQuietMs = 150;
     static constexpr int    kRapidRawStridePredictiveCadenceMs = 300;
     static constexpr int    kRapidRawStridePredictiveRawQuietMs = 40;
