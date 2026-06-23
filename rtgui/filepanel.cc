@@ -2035,12 +2035,25 @@ void FilePanel::scheduleAdjacentPreload(
         return;
     }
 
+    const bool directionalRawPreloadSchedule =
+        (effectiveDirection == NAV_NEXT || effectiveDirection == NAV_PREVIOUS)
+        && recentDirectionalRawSelectionRunLength_ > 0;
+    const int idlePriority = directionalRawPreloadSchedule
+        ? G_PRIORITY_HIGH_IDLE
+        : G_PRIORITY_DEFAULT_IDLE;
     const unsigned generation = ++adjacentPreloadGeneration_;
     adjacentPreloadIdlePending_ = true;
     adjacentPreloadFname_ = fname;
     adjacentPreloadDirection_ = effectiveDirection;
     adjacentPreloadRefreshThumbnails_ = refreshThumbnails;
     adjacentPreloadMinStartDelayMs_ = minStartDelayMs;
+    FILESEL_LOG("[preload] registered schedule dir=%d raw=%d refresh=%d minStart=%dms priority=%d anchor=%s\n",
+        static_cast<int>(effectiveDirection),
+        static_cast<int>(directionalRawPreloadSchedule),
+        static_cast<int>(refreshThumbnails),
+        minStartDelayMs,
+        idlePriority,
+        fname.c_str());
 
     idle_register.add(
         [this, generation]() -> bool {
@@ -2057,7 +2070,7 @@ void FilePanel::scheduleAdjacentPreload(
             preloadAdjacent(scheduledFname, scheduledDirection, scheduledRefresh, scheduledMinStartDelayMs);
             return false;
         },
-        G_PRIORITY_DEFAULT_IDLE);
+        idlePriority);
 }
 
 FilePanel::FilePanel () :
@@ -3039,7 +3052,7 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
                     return false;
                 },
                 wakeWhenPreloadReady ? PreloadManager::kDelayedRawPreloadReadyPollMs : delayedStartMs,
-                Glib::PRIORITY_HIGH_IDLE);
+                G_PRIORITY_HIGH);
             FILESEL_LOG("[fileSel] +%lldms startFunc delayed delay=%dms\n",
                 (long long)ms(clk::now()),
                 delayedStartMs);
