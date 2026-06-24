@@ -32,6 +32,7 @@
 #include "cursormanager.h"
 #include "guiutils.h"
 #include "inspector.h"
+#include "previewloader.h"
 #include "rtsurface.h"
 #include "threadutils.h"
 #include "thumbbrowserbase.h"
@@ -340,7 +341,10 @@ void FileBrowserEntry::refreshQuickThumbnailImage ()
     // Paint the cheap quick RAW thumbnail before queueing a processed upgrade.
     // The redraw after that first paint will ask for the upgrade again.
     const bool quickFirst = request_upgrade && !usablePreview;
-    const bool queue_upgrade = request_upgrade && !quickFirst;
+    const bool queue_upgrade =
+        request_upgrade
+        && !quickFirst
+        && !previewLoader->hasPendingWork();
 
     if (!queue_upgrade && usablePreview) {
         return;
@@ -375,7 +379,10 @@ void FileBrowserEntry::appendQuickThumbnailJob(std::vector<ThumbImageUpdater::Re
     // Paint the cheap quick RAW thumbnail before queueing a processed upgrade.
     // The redraw after that first paint will ask for the upgrade again.
     const bool quickFirst = request_upgrade && !usablePreview;
-    const bool queue_upgrade = request_upgrade && !quickFirst;
+    const bool queue_upgrade =
+        request_upgrade
+        && !quickFirst
+        && !previewLoader->hasPendingWork();
 
     if (!needsCachedPixbuf && !queue_upgrade && usablePreview) {
         return;

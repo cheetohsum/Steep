@@ -724,7 +724,7 @@ struct PreloadManager {
     static constexpr int    kQuickPreviewWarmRadius = 2;
     static constexpr int    kStartDelayMs = 1800;
     static constexpr int    kDirectionalStartDelayMs = 125;
-    static constexpr int    kRawStrideDirectionalStartDelayMs = 60;
+    static constexpr int    kRawStrideDirectionalStartDelayMs = 35;
     static constexpr int    kInterLoadDelayMs = 900;
     static constexpr int    kDirectionalInterLoadDelayMs = 350;
     static constexpr int    kRawStrideInterLoadDelayMs = 125;

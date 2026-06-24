@@ -542,7 +542,9 @@ void Thumbnail::_generateThumbnailImage()
                 infoMs += thumbnailBenchMs(stageStart, ThumbnailBenchClock::now());
             }
 
-            if (!quick) {
+            // Embedded RAW previews can report the embedded JPEG dimensions
+            // through Exiv2; the editor placeholder needs the full RAW size.
+            if (tpp->full_width > 0 && tpp->full_height > 0) {
                 cfs.width = tpp->full_width;
                 cfs.height = tpp->full_height;
             }
