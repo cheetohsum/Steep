@@ -3468,7 +3468,9 @@ void FilePanel::preloadAdjacent(
                 PreloadManager::kMaxEntries);
         const size_t preferredTarget = PreloadManager::kMaxEntries - backtrackReserve;
         const size_t immediateEntries = std::min<size_t>(1, preferredTarget);
-        if (rawStridePreload || recentDirectionalRawSelectionRunLength_ > 0) {
+        if (fastFujiRawStride) {
+            addHotWanted(true, false, 1, preferredTarget, preferredTarget);
+        } else if (rawStridePreload || recentDirectionalRawSelectionRunLength_ > 0) {
             // Once the anchor is a RAW, make the nearest RAW neighbor the
             // first full-image preload candidate immediately. Paired JPGs are
             // still warmed next, but they should not occupy the sole hot slot
