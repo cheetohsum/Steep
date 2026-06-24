@@ -749,7 +749,7 @@ struct PreloadManager {
     static constexpr int    kDirectionalScrubDecodeDebounceMaxMs = 360;
     static constexpr int    kDirectionalScrubDecodeDebounceExtraMs = 15;
     static constexpr int    kMediumDirectionalScrubDecodeDebounceExtraMs = 35;
-    static constexpr int    kFastFujiRapidScrubDecodeDelayMs = 45;
+    static constexpr int    kFastFujiRapidScrubDecodeDelayMs = 35;
     static constexpr int    kFastFujiQueuedScrubDecodeDelayMs = 20;
     static constexpr int    kFastFujiSustainedScrubDecodeDelayMs = 140;
     static constexpr unsigned kFastFujiSustainedScrubRunLength = 4;
