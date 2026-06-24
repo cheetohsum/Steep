@@ -3898,12 +3898,14 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
             openFileName.c_str());
     }
 
-    // --- Defer heavy tool panel + profile setup to idle callback ---
-    // Return now so GTK can paint the placeholder preview.  Phase B runs
-    // immediately after the redraw (priority 130 > GTK redraw at 120).
+    // --- Defer heavy tool panel + profile setup briefly ---
+    // Return now so GTK can paint the placeholder preview.  During rapid
+    // navigation, this lets newer opens cancel stale profile/tool setup before
+    // it competes with RAW decode and adjacent preload.
     {
+        constexpr unsigned int phaseBDelayMs = 125;
         const unsigned int session = openSession_;
-        deferredOpenConn_ = Glib::signal_idle().connect(
+        deferredOpenConn_ = Glib::signal_timeout().connect(
             [this, session, tmb]() -> bool {
                 if (session != openSession_) {
                     return false;  // stale: a newer open() superseded us
@@ -3911,6 +3913,7 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
                 openPhaseB(tmb);
                 return false;  // one-shot
             },
+            phaseBDelayMs,
             G_PRIORITY_HIGH_IDLE + 30
         );
     }
