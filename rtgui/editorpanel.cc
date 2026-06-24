@@ -107,6 +107,8 @@ constexpr unsigned int kEditorDirSyncAfterRealizeDelayMs = 500;
 constexpr unsigned int kEditorDirSyncAfterAspectDelayMs = 500;
 constexpr int kEditorDirSyncForegroundQuietMs = 2000;
 constexpr unsigned int kEditorDirSyncQuietRetryMs = 250;
+constexpr unsigned int kEditorPhaseBDelayMs = 125;
+constexpr int kEditorPhaseBRawForegroundQuietMs = 300;
 
 static void editorOpenLog(const char* fmt, ...)
 {
@@ -3903,17 +3905,24 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
     // navigation, this lets newer opens cancel stale profile/tool setup before
     // it competes with RAW decode and adjacent preload.
     {
-        constexpr unsigned int phaseBDelayMs = 125;
         const unsigned int session = openSession_;
+        const bool waitForRawQuiet =
+            tmb
+            && tmb->getType() == FT_Raw;
         deferredOpenConn_ = Glib::signal_timeout().connect(
-            [this, session, tmb]() -> bool {
+            [this, session, tmb, waitForRawQuiet, openFileName]() -> bool {
                 if (session != openSession_) {
                     return false;  // stale: a newer open() superseded us
+                }
+                if (waitForRawQuiet && !isRawLoadForegroundQuietForMs(kEditorPhaseBRawForegroundQuietMs)) {
+                    EDITOR_OPEN_LOG("[editorOpen] phaseB deferred foreground-active file=%s\n",
+                        openFileName.c_str());
+                    return true;
                 }
                 openPhaseB(tmb);
                 return false;  // one-shot
             },
-            phaseBDelayMs,
+            kEditorPhaseBDelayMs,
             G_PRIORITY_HIGH_IDLE + 30
         );
     }
