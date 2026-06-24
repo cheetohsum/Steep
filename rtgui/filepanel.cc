@@ -3368,10 +3368,16 @@ void FilePanel::preloadAdjacent(
         && recentDirectionalSelectionGapMs_ > 0
         && recentDirectionalSelectionGapMs_ <= PreloadManager::kRapidRawStridePredictiveCadenceMs;
     const Glib::ustring lowerFname = fname.lowercase();
+    const bool fastFujiAnchor =
+        lowerFname.length() >= 4
+        && lowerFname.substr(lowerFname.length() - 4) == ".raf";
     const bool fastFujiRawStride =
         rawStridePreload
-        && lowerFname.length() >= 4
-        && lowerFname.substr(lowerFname.length() - 4) == ".raf";
+        && fastFujiAnchor;
+    const bool fastFujiFirstDirectionalPreload =
+        directionalPreload
+        && fastFujiAnchor
+        && !rawStridePreload;
     const bool rawStrideCanPreloadThroughEditor = rawStridePreload
         && (rapidRawStridePredictivePreload
             || mediumRawStridePreload
@@ -3381,7 +3387,9 @@ void FilePanel::preloadAdjacent(
         && !fastFujiRawStride
         && recentDirectionalRawSelectionRunLength_ >= PreloadManager::kRapidRawStridePredictiveRunLength;
     const bool rawStrideCanBypassDeferredForeground =
-        rapidRawStridePredictivePreload || mediumSlowRawStridePredictivePreload;
+        rapidRawStridePredictivePreload
+        || mediumSlowRawStridePredictivePreload
+        || fastFujiFirstDirectionalPreload;
     const int quickPreviewWarmRadius = (!refreshThumbnails && rawStridePreload)
         ? (fastFujiRawStride ? PreloadManager::kRawStrideQuickPreviewWarmRadius : 0)
         : PreloadManager::kQuickPreviewWarmRadius;
@@ -3555,23 +3563,32 @@ void FilePanel::preloadAdjacent(
             PreloadManager::kDirectionalThroughEditorRawQuietMs);
     }
     if (rawStrideCanBypassDeferredForeground) {
+        int bypassImmediateRawQuietMs = PreloadManager::kRapidRawStridePredictiveRawQuietMs;
+        if (mediumSlowRawStridePredictivePreload && !fastFujiFirstDirectionalPreload) {
+            bypassImmediateRawQuietMs = PreloadManager::kMediumImmediateRawForegroundQuietMs;
+        }
         scheduledImmediateRawQuietMs = std::min(
             scheduledImmediateRawQuietMs,
-            mediumSlowRawStridePredictivePreload
-                ? PreloadManager::kMediumImmediateRawForegroundQuietMs
-                : PreloadManager::kRapidRawStridePredictiveRawQuietMs);
+            bypassImmediateRawQuietMs);
     }
-    const int scheduledDeferredForegroundBypassRetryMs = rawStrideCanBypassDeferredForeground
-        ? (mediumSlowRawStridePredictivePreload
-            ? PreloadManager::kMediumRawStridePredictiveRetryMs
-            : PreloadManager::kRapidRawStridePredictiveRetryMs)
-        : PreloadManager::kPreloadRetryMs;
-    const int scheduledHotRawBusyRetryMs =
+
+    int scheduledDeferredForegroundBypassRetryMs = PreloadManager::kPreloadRetryMs;
+    if (rawStrideCanBypassDeferredForeground) {
+        scheduledDeferredForegroundBypassRetryMs =
+            mediumSlowRawStridePredictivePreload && !fastFujiFirstDirectionalPreload
+                ? PreloadManager::kMediumRawStridePredictiveRetryMs
+                : PreloadManager::kRapidRawStridePredictiveRetryMs;
+    }
+
+    int scheduledHotRawBusyRetryMs =
         directionalPreload
         && recentDirectionalSelectionGapMs_ > 0
         && recentDirectionalSelectionGapMs_ <= PreloadManager::kRapidHotRawPreloadBusyRetryCadenceMs
             ? PreloadManager::kRapidHotRawPreloadBusyRetryMs
             : PreloadManager::kPreloadBusyRetryMs;
+    if (fastFujiFirstDirectionalPreload) {
+        scheduledHotRawBusyRetryMs = PreloadManager::kRapidHotRawPreloadBusyRetryMs;
+    }
     const size_t scheduledWantedCount = newWantedSet.size();
     const size_t scheduledHotCount = newHotWantedSet.size();
     bool startWorker = false;
