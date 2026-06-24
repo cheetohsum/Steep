@@ -767,7 +767,7 @@ struct PreloadManager {
     static constexpr int    kPreloadRetryMs = 75;
     static constexpr int    kPreloadBusyRetryMs = 250;
     static constexpr int    kRapidHotRawPreloadBusyRetryCadenceMs = 300;
-    static constexpr int    kRapidHotRawPreloadBusyRetryMs = 175;
+    static constexpr int    kRapidHotRawPreloadBusyRetryMs = 60;
     static constexpr int    kDelayedRawPreloadReadyPollMs = 10;
     static constexpr int    kDelayedForegroundPreloadHoldoffMs = 250;
     static constexpr int    kCachedOpenPreloadSettleMs = 0;
