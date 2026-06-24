@@ -772,7 +772,8 @@ struct PreloadManager {
     static constexpr int    kDelayedRawPreloadReadyPollMs = 10;
     static constexpr int    kDelayedForegroundPreloadHoldoffMs = 250;
     static constexpr int    kCachedOpenPreloadSettleMs = 0;
-    static constexpr int    kCachedOpenPreloadStartDelayMs = 250;
+    // After opening a decoded cache hit, stay ahead of rapid RAW strides.
+    static constexpr int    kCachedOpenPreloadStartDelayMs = 35;
     static constexpr size_t kFallbackEntryBytes = 256ULL * 1024 * 1024;
 
     enum class ForegroundPriorityResult {
