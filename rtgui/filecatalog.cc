@@ -1350,7 +1350,7 @@ void FileCatalog::dirSelected (const Glib::ustring& dirname, const Glib::ustring
             std::vector<std::string> batchKeys;
             constexpr std::size_t INITIAL_BATCH = 1;
             constexpr std::size_t VIEWPORT_FILL_BATCH = 32;
-            constexpr std::size_t VIEWPORT_FILL_BATCHES = 2;
+            constexpr std::size_t VIEWPORT_FILL_BATCHES = 3;
             constexpr std::size_t STEADY_BATCH = 256;
             constexpr std::size_t STEADY_DIRECTORY_SCAN_THRESHOLD = 64;
             allFiles.reserve(STEADY_BATCH);
