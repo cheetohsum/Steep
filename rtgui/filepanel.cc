@@ -760,6 +760,7 @@ struct PreloadManager {
     static constexpr int    kRapidRawStridePredictiveCadenceMs = 300;
     static constexpr int    kRapidRawStridePredictiveRawQuietMs = 40;
     static constexpr int    kRapidRawStridePredictiveRetryMs = 10;
+    static constexpr int    kRapidRawStrideForegroundIntentLeadMs = 25;
     static constexpr int    kMediumRawStridePredictiveRetryMs = 40;
     static constexpr unsigned kRapidRawStridePredictiveRunLength = 3;
     static constexpr int    kNonRawForegroundQuietMs = 125;
@@ -1505,6 +1506,7 @@ struct ForegroundLoadRequest {
     unsigned long long priorityId = 0;
     bool skipIfStale = false;
     int decodeStartDelayMs = 0;
+    int foregroundIntentLeadMs = PreloadManager::kPreloadRetryMs;
 
     bool isStale() const
     {
@@ -2591,13 +2593,13 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
     rtengine::InitialImage* cachedImg = nullptr;
     PreloadManager::ForegroundPriorityResult foregroundPreloadPriority =
         PreloadManager::ForegroundPriorityResult::NotQueued;
+    const bool rapidRawStridePredictiveSelection =
+        selectedIsRaw
+        && directionalSelection
+        && recentDirectionalRawSelectionRunLength_ >= PreloadManager::kRapidRawStridePredictiveRunLength
+        && recentDirectionalSelectionGapMs_ > 0
+        && recentDirectionalSelectionGapMs_ <= PreloadManager::kRapidRawStridePredictiveCadenceMs;
     if (preload_) {
-        const bool rapidRawStridePredictiveSelection =
-            selectedIsRaw
-            && directionalSelection
-            && recentDirectionalRawSelectionRunLength_ >= PreloadManager::kRapidRawStridePredictiveRunLength
-            && recentDirectionalSelectionGapMs_ > 0
-            && recentDirectionalSelectionGapMs_ <= PreloadManager::kRapidRawStridePredictiveCadenceMs;
         foregroundPreloadPriority = preload_->prioritizeForeground(
             selectedFileNameRaw,
             !rapidRawStridePredictiveSelection);
@@ -2797,6 +2799,10 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
         const Glib::ustring selectedLower = selectedFileName.lowercase();
         const bool fastFujiRaw = selectedLower.length() >= 4
             && selectedLower.substr(selectedLower.length() - 4) == ".raf";
+        if (fastFujiRaw && rapidRawStridePredictiveSelection) {
+            foregroundRequest->foregroundIntentLeadMs =
+                PreloadManager::kRapidRawStrideForegroundIntentLeadMs;
+        }
         const bool fastFujiMediumScrub = fastFujiRaw && mediumDirectionalScrub;
         const int slowDirectionalScrubMaxMs = recentDirectionalSelectionGapMs_ >= 350
             ? 430
@@ -3073,12 +3079,13 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
                 startForegroundLoad("preload-ready");
             }
         } else {
+            const int foregroundIntentLeadMs = foregroundRequest->foregroundIntentLeadMs;
             pl->delayedStartConn = Glib::signal_timeout().connect(
-                [this, markPendingLoadStarted, startForegroundLoad, t0, delayedStartMs, selectedFileNameRaw, wakeWhenPreloadReady]() -> bool {
+                [this, markPendingLoadStarted, startForegroundLoad, t0, delayedStartMs, foregroundIntentLeadMs, selectedFileNameRaw, wakeWhenPreloadReady]() -> bool {
                     const auto now = std::chrono::steady_clock::now();
                     const long long elapsedMs = fileSelDurationMs(t0, now);
                     if (wakeWhenPreloadReady
-                        && elapsedMs >= delayedStartMs - PreloadManager::kPreloadRetryMs) {
+                        && elapsedMs >= std::max(0, delayedStartMs - foregroundIntentLeadMs)) {
                         g_rawLoadGate.noteForegroundIntent(selectedFileNameRaw);
                     }
                     const bool preloadReady = wakeWhenPreloadReady
