@@ -44,6 +44,28 @@
 #define DEBUG(format,args...)
 //#define DEBUG(format,args...) printf("PreviewLoader::%s: " format "\n", __FUNCTION__, ## args)
 
+namespace {
+
+bool isRawPreviewPath(const Glib::ustring& path)
+{
+    const Glib::ustring basename = Glib::path_get_basename(path);
+    const auto lastdot = basename.find_last_of('.');
+    if (lastdot >= basename.length() - 1) {
+        return false;
+    }
+
+    static const std::set<Glib::ustring> rawExtensions = {
+        "3fr", "arw", "arq", "cr2", "cr3", "crf", "crw", "dcr", "dng",
+        "fff", "iiq", "kdc", "mef", "mos", "mrw", "nef", "nrw", "orf",
+        "ori", "pef", "raf", "raw", "rw2", "rwl", "rwz", "sr2", "srf",
+        "srw", "x3f"
+    };
+
+    return rawExtensions.count(basename.substr(lastdot + 1).lowercase()) > 0;
+}
+
+}
+
 static void setPreviewWorkerThreadPriority(bool postScanDrain)
 {
 #ifdef _WIN32
@@ -61,6 +83,7 @@ public:
             dir_entry_(dir_entry),
             dir_entry_key_(std::move(dir_entry_key)),
             dir_entry_sort_key_(dir_entry_key_.empty() ? dir_entry_.raw() : dir_entry_key_),
+            is_raw_(isRawPreviewPath(dir_entry_)),
             listener_(listener),
             generation_(generation)
         {}
@@ -70,12 +93,14 @@ public:
             dir_entry_(std::move(dir_entry)),
             dir_entry_key_(std::move(dir_entry_key)),
             dir_entry_sort_key_(dir_entry_key_.empty() ? dir_entry_.raw() : dir_entry_key_),
+            is_raw_(isRawPreviewPath(dir_entry_)),
             listener_(listener),
             generation_(generation)
         {}
 
         Job():
             dir_id_(0),
+            is_raw_(false),
             listener_(nullptr),
             generation_(0)
         {}
@@ -84,6 +109,7 @@ public:
         Glib::ustring dir_entry_;
         std::string dir_entry_key_;
         std::string dir_entry_sort_key_;
+        bool is_raw_;
         PreviewLoaderListener* listener_;
         int generation_;
     };
@@ -141,6 +167,75 @@ public:
         priorityBackward_ = jobs_.end();
     }
 
+    std::pair<JobSet::iterator, std::size_t> findRawForward_(JobSet::iterator start, std::size_t maxSteps)
+    {
+        const int dirId = start == jobs_.end() ? 0 : start->dir_id_;
+        std::size_t steps = 0;
+        for (auto it = start; it != jobs_.end() && it->dir_id_ == dirId && steps <= maxSteps; ++it, ++steps) {
+            if (it->is_raw_) {
+                return {it, steps};
+            }
+        }
+
+        return {jobs_.end(), maxSteps + 1};
+    }
+
+    std::pair<JobSet::iterator, std::size_t> findRawBackward_(JobSet::iterator start, std::size_t maxSteps)
+    {
+        if (start == jobs_.end()) {
+            return {jobs_.end(), maxSteps + 1};
+        }
+
+        const int dirId = start->dir_id_;
+        std::size_t steps = 0;
+        auto it = start;
+        while (steps <= maxSteps) {
+            if (it->dir_id_ != dirId) {
+                break;
+            }
+
+            if (it->is_raw_) {
+                return {it, steps};
+            }
+
+            if (it == jobs_.begin()) {
+                break;
+            }
+
+            --it;
+            ++steps;
+        }
+
+        return {jobs_.end(), maxSteps + 1};
+    }
+
+    JobSet::iterator preferNearbyRaw_(JobSet::iterator preferred, JobSet::iterator alternate)
+    {
+        if (preferred == jobs_.end() || preferred->is_raw_ || jobs_.size() < 4) {
+            return preferred;
+        }
+
+        if (alternate != jobs_.end() && alternate->is_raw_) {
+            return alternate;
+        }
+
+        // RAW quick thumbnails are cheap and unblock RAW navigation previews,
+        // so prefer one nearby without abandoning proximity ordering.
+        constexpr std::size_t kRawPriorityProbe = 12;
+        auto forward = findRawForward_(preferred, kRawPriorityProbe);
+        auto backward = findRawBackward_(preferred, kRawPriorityProbe);
+
+        if (forward.first == jobs_.end()) {
+            return backward.first != jobs_.end() ? backward.first : preferred;
+        }
+
+        if (backward.first == jobs_.end()) {
+            return forward.first;
+        }
+
+        return forward.second <= backward.second ? forward.first : backward.first;
+    }
+
     void refreshPriorityIterators_()
     {
         if (priorityIteratorsValid_) {
@@ -174,7 +269,7 @@ public:
         }
 
         if (priorityHint_.empty()) {
-            return jobs_.begin();
+            return preferNearbyRaw_(jobs_.begin(), jobs_.end());
         }
 
         refreshPriorityIterators_();
@@ -185,6 +280,8 @@ public:
             if (count % 2 == 0) {
                 auto result = priorityForward_;
                 priorityForward_ = std::next(result);
+                result = preferNearbyRaw_(result, priorityBackward_);
+                invalidatePriorityIterators_();
                 return result;
             }
 
@@ -193,10 +290,14 @@ public:
                 result != jobs_.begin()
                     ? std::prev(result)
                     : jobs_.end();
+            result = preferNearbyRaw_(result, priorityForward_);
+            invalidatePriorityIterators_();
             return result;
         } else if (priorityForward_ != jobs_.end()) {
             auto result = priorityForward_;
             priorityForward_ = std::next(result);
+            result = preferNearbyRaw_(result, jobs_.end());
+            invalidatePriorityIterators_();
             return result;
         } else if (priorityBackward_ != jobs_.end()) {
             auto result = priorityBackward_;
@@ -204,9 +305,11 @@ public:
                 result != jobs_.begin()
                     ? std::prev(result)
                     : jobs_.end();
+            result = preferNearbyRaw_(result, jobs_.end());
+            invalidatePriorityIterators_();
             return result;
         }
-        return jobs_.begin();
+        return preferNearbyRaw_(jobs_.begin(), jobs_.end());
     }
 
     int targetThreadCountLocked_() const
