@@ -758,6 +758,7 @@ struct PreloadManager {
     static constexpr int    kThroughEditorRawPreloadThreads = 6;
     static constexpr int    kThroughEditorRawFullSpeedQuietMs = 150;
     static constexpr int    kRapidRawStridePredictiveCadenceMs = 300;
+    static constexpr int    kRapidRawStridePredictiveStartDelayMs = 10;
     static constexpr int    kRapidRawStridePredictiveRawQuietMs = 40;
     static constexpr int    kRapidRawStridePredictiveRetryMs = 5;
     static constexpr int    kRapidRawStrideForegroundIntentLeadMs = 25;
@@ -3529,7 +3530,9 @@ void FilePanel::preloadAdjacent(
     const int scheduledStartDelayMs = std::max(
         minStartDelayMs,
         directionalPreload
-            ? (rawStridePreload
+            ? (rapidRawStridePredictivePreload
+                ? PreloadManager::kRapidRawStridePredictiveStartDelayMs
+                : rawStridePreload
                 ? PreloadManager::kRawStrideDirectionalStartDelayMs
                 : PreloadManager::kDirectionalStartDelayMs)
             : PreloadManager::kStartDelayMs);
