@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
 #include <iterator>
@@ -35,6 +36,7 @@
 #include "thumbbrowserentrybase.h"
 
 #include "guiutils.h"
+#include "rawloadactivity.h"
 #include "threadutils.h"
 #include "thumbnail.h"
 
@@ -57,6 +59,29 @@ static void lowerBackgroundWorkerThreadPriority()
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
 #endif
 }
+
+namespace
+{
+
+constexpr int kRawUpgradeForegroundQuietMs = 600;
+constexpr int kRawUpgradeForegroundRetryMs = 75;
+
+void waitForForegroundRawQuietBeforeUpgrade()
+{
+    while (true) {
+        const int retryMs = rawLoadForegroundQuietRetryMs(
+            kRawUpgradeForegroundQuietMs,
+            kRawUpgradeForegroundRetryMs);
+        if (retryMs <= 0) {
+            return;
+        }
+
+        std::this_thread::sleep_for(
+            std::chrono::milliseconds(std::min(retryMs, kRawUpgradeForegroundRetryMs)));
+    }
+}
+
+} // namespace
 
 class ThumbImageUpdater::Impl :
     public rtengine::NonCopyable
@@ -546,6 +571,9 @@ public:
 
             if ( j.upgrade_ ) {
                 if ( thm->isQuick() || j.force_upgrade_ ) {
+                    if (thm->getType() == FT_Raw) {
+                        waitForForegroundRawQuietBeforeUpgrade();
+                    }
                     img = thm->upgradeThumbImage(preview_height, scale, j.force_upgrade_, &crop, j.cache_pixbuf_);
                 }
             } else {
