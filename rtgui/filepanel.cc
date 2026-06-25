@@ -1343,8 +1343,8 @@ struct PreloadManager {
 };
 
 struct RecentInitialImageCache {
-    static constexpr size_t kMaxBytes = 512ULL * 1024 * 1024;
-    static constexpr size_t kMaxEntries = 3;
+    static constexpr size_t kMaxBytes = 768ULL * 1024 * 1024;
+    static constexpr size_t kMaxEntries = 5;
 
     struct Entry {
         rtengine::InitialImage* img;
