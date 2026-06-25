@@ -2710,6 +2710,25 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
 
         FILESEL_LOG("[fileSel] +%lldms SetEditorCurrent cached\n", (long long)ms(clk::now()));
 
+        EditorPanel* quickPreviewTarget = opts.tabbedUI ? epanel : parent->epanel;
+        if (quickPreviewTarget) {
+            double cachedScale = 1.0;
+            bool cachedPixbufBusy = false;
+            auto quickPb = thm->tryGetCachedPixbuf(cachedScale, &cachedPixbufBusy);
+            FILESEL_LOG("[fileSel] +%lldms cached getCachedPixbuf %s\n",
+                (long long)ms(clk::now()),
+                quickPb ? "HIT" : (cachedPixbufBusy ? "BUSY" : "MISS"));
+            if (quickPb) {
+                const double displayScale = cachedPreviewScaleForEditor(
+                    thm,
+                    quickPb,
+                    cachedScale > 0.0 ? cachedScale : 1.0);
+                quickPreviewTarget->setQuickPreview(quickPb, displayScale, selectedFileName);
+                FILESEL_LOG("[fileSel] +%lldms cached setQuickPreview done\n",
+                    (long long)ms(clk::now()));
+            }
+        }
+
         if (preload_ && PreloadManager::kCachedOpenPreloadSettleMs > 0) {
             const long long preloadSettleWaitMs = preload_->waitForDifferentLoadToSettle(
                 selectedFileNameRaw,

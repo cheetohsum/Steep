@@ -221,7 +221,7 @@ public:
 
         // RAW quick thumbnails are cheap and unblock RAW navigation previews,
         // so prefer one nearby without abandoning proximity ordering.
-        constexpr std::size_t kRawPriorityProbe = 24;
+        constexpr std::size_t kRawPriorityProbe = 28;
         auto forward = findRawForward_(preferred, kRawPriorityProbe);
         auto backward = findRawBackward_(preferred, kRawPriorityProbe);
 
