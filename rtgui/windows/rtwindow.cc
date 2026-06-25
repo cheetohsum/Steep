@@ -121,6 +121,7 @@ RTWindow::RTWindow ()
     , navQueue (nullptr)
     , navEditor (nullptr)
     , navSwitching (false)
+    , suppressEditorSwitchAutoOpen_ (false)
     , mainOverlay (nullptr)
     , queueOverlayBox (nullptr)
     , queueBackdrop (nullptr)
@@ -1335,7 +1336,10 @@ void RTWindow::on_mainNB_switch_page (Gtk::Widget* widget, guint page_num)
             // Auto-open the browser's selected photo in the editor.
             // Skip during hero transition — heavy EditorPanel::open() would block animation.
             // The hero completion callback handles it instead.
-            if (isSingleTabMode() && fpanel && !heroAnimConn_.connected()) {
+            if (isSingleTabMode()
+                && fpanel
+                && !heroAnimConn_.connected()
+                && !suppressEditorSwitchAutoOpen_) {
                 fpanel->openSelectedInEditor();
             }
 
@@ -1953,7 +1957,9 @@ void RTWindow::SetEditorCurrent()
 
     const int targetPage = mainNB->page_num (*epanel);
     if (targetPage >= 0 && mainNB->get_current_page() != targetPage) {
+        suppressEditorSwitchAutoOpen_ = true;
         mainNB->set_current_page (targetPage);
+        suppressEditorSwitchAutoOpen_ = false;
     }
 }
 

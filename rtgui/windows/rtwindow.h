@@ -92,6 +92,7 @@ private:
     Gtk::ToggleButton* navQueue;
     Gtk::ToggleButton* navEditor;
     bool navSwitching; // guard against recursive toggle
+    bool suppressEditorSwitchAutoOpen_;
 
     // Queue overlay drawer
     Gtk::Overlay* mainOverlay;
