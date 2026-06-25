@@ -759,7 +759,7 @@ struct PreloadManager {
     static constexpr int    kThroughEditorRawFullSpeedQuietMs = 150;
     static constexpr int    kRapidRawStridePredictiveCadenceMs = 300;
     static constexpr int    kRapidRawStridePredictiveRawQuietMs = 40;
-    static constexpr int    kRapidRawStridePredictiveRetryMs = 10;
+    static constexpr int    kRapidRawStridePredictiveRetryMs = 5;
     static constexpr int    kRapidRawStrideForegroundIntentLeadMs = 25;
     static constexpr int    kMediumRawStridePredictiveRetryMs = 40;
     static constexpr unsigned kRapidRawStridePredictiveRunLength = 3;
