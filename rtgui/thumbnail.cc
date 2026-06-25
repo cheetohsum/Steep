@@ -22,6 +22,7 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <future>
 #include <sstream>
 #include <iomanip>
 #include <cstdio>
@@ -105,6 +106,83 @@ Glib::ustring findPairedJpegPreview(const Glib::ustring& rawPath)
     }
 
     return {};
+}
+
+void lowerThumbnailMetadataThreadPriority()
+{
+#ifdef _WIN32
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#endif
+}
+
+int populateCacheInfoFromMetadata(
+    const Glib::ustring& fname,
+    CacheImageData& cfs,
+    rtengine::FramesMetaData& idata)
+{
+    int deg = 0;
+    cfs.timeValid = false;
+    cfs.exifValid = false;
+    cfs.exifAbsentKnown = false;
+
+    if (idata.getDateTimeAsTS() > 0) {
+        cfs.year         = 1900 + idata.getDateTime().tm_year;
+        cfs.month        = idata.getDateTime().tm_mon + 1;
+        cfs.day          = idata.getDateTime().tm_mday;
+        cfs.hour         = idata.getDateTime().tm_hour;
+        cfs.min          = idata.getDateTime().tm_min;
+        cfs.sec          = idata.getDateTime().tm_sec;
+        cfs.timeValid    = true;
+    }
+
+    if (idata.hasExif()) {
+        cfs.shutter      = idata.getShutterSpeed ();
+        cfs.fnumber      = idata.getFNumber ();
+        cfs.focalLen     = idata.getFocalLen ();
+        cfs.focalLen35mm = idata.getFocalLen35mm ();
+        cfs.focusDist    = idata.getFocusDist ();
+        cfs.iso          = idata.getISOSpeed ();
+        cfs.expcomp      = idata.expcompToString (idata.getExpComp(), false); // do not mask Zero expcomp
+        cfs.isHDR        = idata.getHDR ();
+        cfs.isPixelShift = idata.getPixelShift ();
+        cfs.frameCount   = idata.getFrameCount ();
+        cfs.sampleFormat = idata.getSampleFormat ();
+        cfs.lens         = idata.getLens();
+        cfs.camMake      = idata.getMake();
+        cfs.camModel     = idata.getModel();
+        cfs.rating       = idata.getRating();
+        cfs.colorLabel   = idata.getColorLabel();
+        cfs.exifValid    = true;
+        cfs.exifAbsentKnown = false;
+
+        if (idata.getOrientation() == "Rotate 90 CW") {
+            deg = 90;
+        } else if (idata.getOrientation() == "Rotate 180") {
+            deg = 180;
+        } else if (idata.getOrientation() == "Rotate 270 CW") {
+            deg = 270;
+        }
+    } else {
+        cfs.lens     = "Unknown";
+        cfs.camMake  = "Unknown";
+        cfs.camModel = "Unknown";
+        cfs.exifAbsentKnown = true;
+    }
+    cfs.updateCameraName();
+
+    std::string::size_type idx;
+    idx = fname.rfind('.');
+
+    if(idx != std::string::npos) {
+        cfs.filetype = fname.substr(idx + 1);
+    } else {
+        cfs.filetype = "";
+    }
+    cfs.updateFiletypeUpper();
+
+    idata.getDimensions(cfs.width, cfs.height);
+
+    return deg;
 }
 
 bool CPBDump(
@@ -452,6 +530,33 @@ void Thumbnail::_generateThumbnailImage()
     long long infoMs = 0;
     long long saveMs = 0;
     bool quick = false;
+    std::future<std::unique_ptr<rtengine::FramesMetaData>> rawMetadataFuture;
+    bool rawMetadataFutureStarted = false;
+
+    auto startRawMetadataFuture = [&]() {
+        if (rawMetadataFutureStarted) {
+            return;
+        }
+
+        rawMetadataFutureStarted = true;
+        const Glib::ustring metadataFname = fname;
+        rawMetadataFuture = std::async(
+            std::launch::async,
+            [metadataFname]() {
+                lowerThumbnailMetadataThreadPriority();
+                return std::unique_ptr<rtengine::FramesMetaData>(rtengine::FramesMetaData::fromFile(metadataFname));
+            });
+    };
+
+    auto applyRawInfoFromFuture = [&]() {
+        if (!rawMetadataFutureStarted) {
+            return infoFromImage(fname);
+        }
+
+        auto idata = rawMetadataFuture.get();
+        rawMetadataFutureStarted = false;
+        return idata ? populateCacheInfoFromMetadata(fname, cfs, *idata) : 0;
+    };
 
     //  delete everything loaded into memory
     delete tpp;
@@ -501,6 +606,10 @@ void Thumbnail::_generateThumbnailImage()
         //  2. if we don't find that then just grab the real image.
         rtengine::eSensorType sensorType = rtengine::ST_NONE;
 
+        if (isRawOriginalExtension(ext)) {
+            startRawMetadataFuture();
+        }
+
         if (initial_ && options.internalThumbIfUntouched) {
             quick = true;
             const auto stageStart = bench ? ThumbnailBenchClock::now() : ThumbnailBenchClock::time_point{};
@@ -537,7 +646,7 @@ void Thumbnail::_generateThumbnailImage()
             cfs.format = FT_Raw;
             cfs.thumbImgType = quick ? CacheImageData::QUICK_THUMBNAIL : CacheImageData::FULL_THUMBNAIL;
             const auto stageStart = bench ? ThumbnailBenchClock::now() : ThumbnailBenchClock::time_point{};
-            infoFromImage(fname);
+            applyRawInfoFromFuture();
             if (bench) {
                 infoMs += thumbnailBenchMs(stageStart, ThumbnailBenchClock::now());
             }
@@ -549,6 +658,11 @@ void Thumbnail::_generateThumbnailImage()
                 cfs.height = tpp->full_height;
             }
         }
+    }
+
+    if (!tpp && rawMetadataFutureStarted) {
+        rawMetadataFuture.get();
+        rawMetadataFutureStarted = false;
     }
 
     if (tpp) {
@@ -1336,70 +1450,7 @@ int Thumbnail::infoFromImage(const Glib::ustring &fname, CacheImageData &cfs)
         return 0;
     }
 
-    int deg = 0;
-    cfs.timeValid = false;
-    cfs.exifValid = false;
-    cfs.exifAbsentKnown = false;
-
-    if (idata->getDateTimeAsTS() > 0) {
-        cfs.year         = 1900 + idata->getDateTime().tm_year;
-        cfs.month        = idata->getDateTime().tm_mon + 1;
-        cfs.day          = idata->getDateTime().tm_mday;
-        cfs.hour         = idata->getDateTime().tm_hour;
-        cfs.min          = idata->getDateTime().tm_min;
-        cfs.sec          = idata->getDateTime().tm_sec;
-        cfs.timeValid    = true;
-    }
-
-    if (idata->hasExif()) {
-        cfs.shutter      = idata->getShutterSpeed ();
-        cfs.fnumber      = idata->getFNumber ();
-        cfs.focalLen     = idata->getFocalLen ();
-        cfs.focalLen35mm = idata->getFocalLen35mm ();
-        cfs.focusDist    = idata->getFocusDist ();
-        cfs.iso          = idata->getISOSpeed ();
-        cfs.expcomp      = idata->expcompToString (idata->getExpComp(), false); // do not mask Zero expcomp
-        cfs.isHDR        = idata->getHDR ();
-        cfs.isPixelShift = idata->getPixelShift ();
-        cfs.frameCount   = idata->getFrameCount ();
-        cfs.sampleFormat = idata->getSampleFormat ();
-        cfs.lens         = idata->getLens();
-        cfs.camMake      = idata->getMake();
-        cfs.camModel     = idata->getModel();
-        cfs.rating       = idata->getRating();
-        cfs.colorLabel   = idata->getColorLabel();
-        cfs.exifValid    = true;
-        cfs.exifAbsentKnown = false;
-
-        if (idata->getOrientation() == "Rotate 90 CW") {
-            deg = 90;
-        } else if (idata->getOrientation() == "Rotate 180") {
-            deg = 180;
-        } else if (idata->getOrientation() == "Rotate 270 CW") {
-            deg = 270;
-        }
-    } else {
-        cfs.lens     = "Unknown";
-        cfs.camMake  = "Unknown";
-        cfs.camModel = "Unknown";
-        cfs.exifAbsentKnown = true;
-    }
-    cfs.updateCameraName();
-
-    // get image filetype
-    std::string::size_type idx;
-    idx = fname.rfind('.');
-
-    if(idx != std::string::npos) {
-        cfs.filetype = fname.substr(idx + 1);
-    } else {
-        cfs.filetype = "";
-    }
-    cfs.updateFiletypeUpper();
-
-    idata->getDimensions(cfs.width, cfs.height);
-
-    return deg;
+    return populateCacheInfoFromMetadata(fname, cfs, *idata);
 }
 
 /*
