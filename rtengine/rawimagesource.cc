@@ -741,6 +741,12 @@ void RawImageSource::prewarmMetadata(const Glib::ustring& fname)
     }
 }
 
+std::unique_ptr<FramesMetaData> RawImageSource::takePrewarmedMetadata(const Glib::ustring& fname)
+{
+    auto metadata = takePrewarmedRawMetadata(fname);
+    return std::unique_ptr<FramesMetaData>(metadata.release());
+}
+
 unsigned RawImageSource::FC(int row, int col) const
 {
     return ri->FC(row, col);

@@ -36,6 +36,7 @@ namespace rtengine
 {
 class PixelsMap;
 class RawImage;
+class FramesMetaData;
 class DiagonalCurve;
 class RetinextransmissionCurve;
 class RetinexgaintransmissionCurve;
@@ -125,6 +126,7 @@ public:
     ~RawImageSource () override;
 
     static void prewarmMetadata(const Glib::ustring& fname);
+    static std::unique_ptr<FramesMetaData> takePrewarmedMetadata(const Glib::ustring& fname);
 
     int load(const Glib::ustring &fname) override { return load(fname, false); }
     int load(const Glib::ustring &fname, bool firstFrameOnly);

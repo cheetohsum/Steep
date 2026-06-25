@@ -33,6 +33,7 @@
 
 #include "rtengine/rt_math.h"
 #include "rtengine/procparams.h"
+#include "rtengine/rawimagesource.h"
 
 #include "batchqueue.h"
 #include "batchqueueentry.h"
@@ -1399,6 +1400,17 @@ void FileCatalog::dirSelected (const Glib::ustring& dirname, const Glib::ustring
                     return;
                 }
 
+                std::vector<Glib::ustring> rawFiles;
+                rawFiles.reserve(batchToDispatch->size());
+                for (const auto& f : *batchToDispatch) {
+                    if (isRawNavigationBenchmarkPath(f)) {
+                        rawFiles.push_back(f);
+                    }
+                }
+                for (const auto& rawFile : rawFiles) {
+                    rtengine::RawImageSource::prewarmMetadata(rawFile);
+                }
+
                 if (dispatchBeforePrecompute) {
                     idle_register.add(
                         [this, dirId, batchToDispatch, batchKeys]() -> bool {
@@ -1435,13 +1447,6 @@ void FileCatalog::dirSelected (const Glib::ustring& dirname, const Glib::ustring
 
                 cacheMgr->precomputeMD5(*batchToDispatch, STEADY_DIRECTORY_SCAN_THRESHOLD);
 
-                std::vector<Glib::ustring> rawFiles;
-                rawFiles.reserve(batchToDispatch->size());
-                for (const auto& f : *batchToDispatch) {
-                    if (isRawNavigationBenchmarkPath(f)) {
-                        rawFiles.push_back(f);
-                    }
-                }
                 cacheMgr->precomputeEntryMD5(rawFiles, STEADY_DIRECTORY_SCAN_THRESHOLD, false, false);
             };
 

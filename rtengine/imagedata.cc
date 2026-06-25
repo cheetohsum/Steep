@@ -32,6 +32,7 @@
 #include "imagedata.h"
 #include "imagesource.h"
 #include "metadata.h"
+#include "rawimagesource.h"
 #include "rt_math.h"
 #include "utils.h"
 
@@ -310,6 +311,10 @@ extern const Settings *settings;
 
 FramesMetaData* FramesMetaData::fromFile(const Glib::ustring& fname)
 {
+    if (auto prewarmed = RawImageSource::takePrewarmedMetadata(fname)) {
+        return prewarmed.release();
+    }
+
     return new FramesData(fname);
 }
 
