@@ -144,7 +144,7 @@ public:
         // Preview loading is paused around foreground image opens. Use enough
         // workers to overlap cold-cache preview extraction, while keeping them
         // below normal priority so GTK stays responsive for early paints.
-        threadCount = std::max(4, std::min(threadCount, 12));
+        threadCount = std::max(4, std::min(threadCount, 8));
         maxThreadCount_ = threadCount;
 
         threadPool_.reset(new Glib::ThreadPool(threadCount, true));
