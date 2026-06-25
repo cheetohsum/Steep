@@ -3770,6 +3770,7 @@ void FilePanel::preloadAdjacent(
                 bool hotPriorityCandidate = false;
                 int candidateBusyRetryMs = PreloadManager::kPreloadBusyRetryMs;
                 bool waitForDeferredRaw = false;
+                int deferredRawWaitFloorMs = PreloadManager::kPreloadRetryMs;
                 std::chrono::milliseconds deferredRawDelay(0);
                 {
                     std::lock_guard<std::mutex> lk(state->mutex);
@@ -3835,6 +3836,9 @@ void FilePanel::preloadAdjacent(
                         waitForDeferredRaw = true;
                         deferredRawDelay = std::chrono::duration_cast<std::chrono::milliseconds>(
                             nearestDeferredRaw - candidateNow);
+                        deferredRawWaitFloorMs = state->rawStrideCanBypassDeferredForeground
+                            ? state->deferredForegroundBypassRetryMs
+                            : PreloadManager::kPreloadRetryMs;
                         return true;
                     };
 
@@ -3851,6 +3855,9 @@ void FilePanel::preloadAdjacent(
                             waitForDeferredRaw = true;
                             deferredRawDelay = std::chrono::duration_cast<std::chrono::milliseconds>(
                                 immediateDeferred->second - candidateNow);
+                            deferredRawWaitFloorMs = state->rawStrideCanBypassDeferredForeground
+                                ? state->deferredForegroundBypassRetryMs
+                                : PreloadManager::kPreloadRetryMs;
                         } else if (candidateReady(*immediateIt, immediateIt->isRaw)) {
                             it = immediateIt;
                         }
@@ -3895,7 +3902,7 @@ void FilePanel::preloadAdjacent(
                 if (waitForDeferredRaw) {
                     if (waitForPreloadWake(std::max(
                             deferredRawDelay,
-                            std::chrono::milliseconds(PreloadManager::kPreloadRetryMs)))) {
+                            std::chrono::milliseconds(std::max(1, deferredRawWaitFloorMs))))) {
                         return;
                     }
                     continue;
