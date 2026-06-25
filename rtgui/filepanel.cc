@@ -735,7 +735,7 @@ struct PreloadManager {
     static constexpr int    kRapidDirectionalForegroundQuietMs = 600;
     static constexpr int    kRapidImmediateRawForegroundQuietMs = 150;
     static constexpr int    kMediumImmediateRawForegroundQuietMs = 75;
-    static constexpr int    kRawStrideQuickPreviewWarmRadius = 2;
+    static constexpr int    kRawStrideQuickPreviewWarmRadius = 1;
     static constexpr int    kRapidDecodeDebounceCadenceMs = 200;
     static constexpr int    kRapidDecodeDebounceMinMs = 110;
     static constexpr int    kRapidDecodeDebounceMaxMs = 180;
@@ -1911,6 +1911,10 @@ void FilePanel::pauseBackgroundWorkForForeground()
 {
     ++backgroundResumeGeneration_;
     cancelScheduledBackgroundResume();
+
+    if (fileCatalog && fileCatalog->fileBrowser) {
+        fileCatalog->fileBrowser->cancelCachedQuickPreviewWarm();
+    }
 
     if (!backgroundWorkPausedForForeground_) {
         fileCatalog->pausePreviewBatchProcessing();

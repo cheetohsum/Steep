@@ -159,6 +159,11 @@ void scheduleCachedQuickPreviewWarm(std::vector<QuickPreviewCacheWarmItem>&& ite
     }).detach();
 }
 
+void cancelCachedQuickPreviewWarmJobs()
+{
+    quickPreviewCacheWarmGeneration.fetch_add(1, std::memory_order_acq_rel);
+}
+
 std::string foldedBrowserPathKey(const Glib::ustring& path)
 {
     std::string key = path.casefold().raw();
@@ -3455,6 +3460,11 @@ void FileBrowser::openEditorImage(const Glib::ustring& fname, eRTNav preloadDire
 std::vector<FileBrowser::AdjacentEntry> FileBrowser::getAdjacentEntries(const Glib::ustring& fname, int count)
 {
     return getAdjacentEntriesAndRefresh(fname, count, 0, 0);
+}
+
+void FileBrowser::cancelCachedQuickPreviewWarm()
+{
+    cancelCachedQuickPreviewWarmJobs();
 }
 
 std::vector<FileBrowser::AdjacentEntry> FileBrowser::getAdjacentEntriesAndRefresh(const Glib::ustring& fname, int preloadCount, int refreshCount, int quickPreviewWarmCount, eRTNav preferredDirection)

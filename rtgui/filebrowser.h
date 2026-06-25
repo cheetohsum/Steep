@@ -268,6 +268,7 @@ public:
     };
     std::vector<AdjacentEntry> getAdjacentEntries(const Glib::ustring& fname, int count);
     std::vector<AdjacentEntry> getAdjacentEntriesAndRefresh(const Glib::ustring& fname, int preloadCount, int refreshCount, int quickPreviewWarmCount = 0, eRTNav preferredDirection = NAV_NONE);
+    void cancelCachedQuickPreviewWarm();
     void refreshAdjacentThumbnails(const Glib::ustring& fname, int count);
 
     void copyProfile ();
