@@ -139,9 +139,10 @@ public:
 #else
         int threadCount = std::max(2u, std::thread::hardware_concurrency());
 #endif
-        // Thumbnail upgrades are background work. Keep them bounded so large
-        // folders don't contend heavily with foreground RAW decoding.
-        threadCount = std::max(1, std::min(threadCount, 2));
+        // Cold folder loads need enough workers to extract first-pass
+        // embedded previews promptly, while still leaving headroom for the
+        // editor and foreground RAW decode.
+        threadCount = std::max(2, std::min(threadCount, 6));
         maxThreadCount_ = threadCount;
 
         threadPool_.reset(new Glib::ThreadPool(threadCount, true));

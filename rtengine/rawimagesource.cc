@@ -137,8 +137,8 @@ RawMetadataPrewarmState& rawMetadataPrewarmState()
     return *state;
 }
 
-constexpr size_t kRawMetadataPrewarmMaxQueue = 12;
-constexpr size_t kRawMetadataPrewarmMaxCache = 8;
+constexpr size_t kRawMetadataPrewarmMaxQueue = 32;
+constexpr size_t kRawMetadataPrewarmMaxCache = 24;
 
 std::string rawMetadataPrewarmKey(const Glib::ustring& fname)
 {

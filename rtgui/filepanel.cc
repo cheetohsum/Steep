@@ -755,12 +755,12 @@ struct PreloadManager {
     static constexpr unsigned kFastFujiSustainedScrubRunLength = 4;
     static constexpr unsigned kDirectionalScrubDecodeDebounceRunLength = 2;
     static constexpr int    kMediumRawStrideThroughEditorMinCadenceMs = 350;
-    static constexpr int    kThroughEditorRawPreloadThreads = 6;
-    static constexpr int    kThroughEditorRawFullSpeedQuietMs = 150;
+    static constexpr int    kThroughEditorRawPreloadThreads = 2;
+    static constexpr int    kThroughEditorRawFullSpeedQuietMs = 250;
     static constexpr int    kRapidRawStridePredictiveCadenceMs = 300;
     static constexpr int    kRapidRawStridePredictiveStartDelayMs = 10;
-    static constexpr int    kRapidRawStridePredictiveRawQuietMs = 25;
-    static constexpr int    kRapidRawStridePredictiveRetryMs = 5;
+    static constexpr int    kRapidRawStridePredictiveRawQuietMs = 125;
+    static constexpr int    kRapidRawStridePredictiveRetryMs = 20;
     static constexpr int    kRapidRawStrideForegroundIntentLeadMs = 25;
     static constexpr int    kMediumRawStridePredictiveRetryMs = 40;
     static constexpr unsigned kRapidRawStridePredictiveRunLength = 3;
@@ -3545,8 +3545,8 @@ void FilePanel::preloadAdjacent(
     }
 
     std::vector<Glib::ustring> rawMetadataPrewarmFiles;
-    rawMetadataPrewarmFiles.reserve(newHotWantedEntries.size());
-    for (const auto& e : newHotWantedEntries) {
+    rawMetadataPrewarmFiles.reserve(entries.size());
+    for (const auto& e : entries) {
         if (e.isRaw) {
             rawMetadataPrewarmFiles.push_back(e.fname);
         }
