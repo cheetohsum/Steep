@@ -2704,11 +2704,7 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
                 parent->addEditorPanel(epanel, selectedFileName);
                 epanel->setAspect();
             }
-        } else {
-            parent->SetEditorCurrent();
         }
-
-        FILESEL_LOG("[fileSel] +%lldms SetEditorCurrent cached\n", (long long)ms(clk::now()));
 
         EditorPanel* quickPreviewTarget = opts.tabbedUI ? epanel : parent->epanel;
         if (quickPreviewTarget) {
@@ -2727,6 +2723,11 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
                 FILESEL_LOG("[fileSel] +%lldms cached setQuickPreview done\n",
                     (long long)ms(clk::now()));
             }
+        }
+
+        if (!opts.tabbedUI) {
+            parent->SetEditorCurrent();
+            FILESEL_LOG("[fileSel] +%lldms SetEditorCurrent cached\n", (long long)ms(clk::now()));
         }
 
         if (preload_ && PreloadManager::kCachedOpenPreloadSettleMs > 0) {
@@ -2932,13 +2933,6 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
     // Resumes in imageLoaded() after the editor opens.
     pauseBackgroundWorkForForeground();
 
-    // Don't signalStop the old processor here; doing so caused OMP workers
-    // in Color::RGB2Lab to race with the new image's processor spinning up,
-    // crashing in LUT::operator[] on freed data. close() in open() handles
-    // the old processor safely on a background cleanup thread after the
-    // RAW decode completes.
-    // Switch to editor view immediately so the user sees the transition
-    // while the image loads in the background.
     if (opts.tabbedUI) {
 #ifdef _WIN32
         int winGdiHandles = GetGuiResources(GetCurrentProcess(), GR_GDIOBJECTS);
@@ -2950,13 +2944,10 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
             ep->setAspect();
             pl->epanel = ep;
         }
-    } else {
-        parent->SetEditorCurrent();
     }
-    FILESEL_LOG("[fileSel] +%lldms SetEditorCurrent\n", (long long)ms(clk::now()));
 
     // Instant thumbnail preview: use the clicked image's cached filmstrip
-    // Pixbuf before kicking the full RAW decode. Avoid synchronous thumbnail
+    // Pixbuf before the editor view switch. Avoid synchronous thumbnail
     // rendering here; first paint matters more than manufacturing a fallback
     // preview on the GTK thread.
     EditorPanel* quickPreviewTarget = opts.tabbedUI ? pl->epanel : parent->epanel;
@@ -3144,6 +3135,17 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
         pl->loadStarted = true;
         pendingLoadMutex.unlock();
         startForegroundLoad("immediate");
+    }
+
+    // Don't signalStop the old processor here; doing so caused OMP workers
+    // in Color::RGB2Lab to race with the new image's processor spinning up,
+    // crashing in LUT::operator[] on freed data. close() in open() handles
+    // the old processor safely on a background cleanup thread after the
+    // RAW decode completes. Start/schedule the new load first, then switch to
+    // the editor view so notebook work does not delay the RAW worker.
+    if (!opts.tabbedUI) {
+        parent->SetEditorCurrent();
+        FILESEL_LOG("[fileSel] +%lldms SetEditorCurrent\n", (long long)ms(clk::now()));
     }
 
     if (preload_) {
