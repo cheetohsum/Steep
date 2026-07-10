@@ -553,6 +553,11 @@ public:
     processQueuedJobs_()
     {
         lowerBackgroundWorkerThreadPriority();
+#ifdef _OPENMP
+        // Thumbnail concurrency comes from this pool; nested OpenMP teams
+        // oversubscribe the CPU and remain allocated for the whole session.
+        omp_set_num_threads(1);
+#endif
 
         {
             std::lock_guard<std::mutex> lock(mutex_);

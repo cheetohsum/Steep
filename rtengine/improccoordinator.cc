@@ -16,10 +16,13 @@
  *  You should have received a copy of the GNU General Public License
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include <condition_variable>
+#include <deque>
 #include <fstream>
+#include <functional>
+#include <future>
 #include <mutex>
-
-#include <glibmm/thread.h>
+#include <thread>
 
 #include "improccoordinator.h"
 
@@ -59,6 +62,56 @@ namespace
 {
 
 constexpr int VECTORSCOPE_SIZE = 128;
+
+class PreviewProcessingExecutor final
+{
+public:
+    static PreviewProcessingExecutor& instance()
+    {
+        // Process-lifetime service: avoiding shutdown-order dependencies is
+        // important because editor processors can be released very late.
+        static PreviewProcessingExecutor* executor = new PreviewProcessingExecutor();
+        return *executor;
+    }
+
+    std::shared_future<void> enqueue(std::function<void()> work)
+    {
+        auto task = std::make_shared<std::packaged_task<void()>>(std::move(work));
+        auto result = task->get_future().share();
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            tasks_.emplace_back([task]() { (*task)(); });
+        }
+        ready_.notify_one();
+        return result;
+    }
+
+private:
+    PreviewProcessingExecutor()
+        : worker_([this]() { run(); })
+    {
+    }
+
+    void run()
+    {
+        while (true) {
+            std::function<void()> task;
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                ready_.wait(lock, [this]() { return !tasks_.empty(); });
+                task = std::move(tasks_.front());
+                tasks_.pop_front();
+            }
+            task();
+        }
+    }
+
+    std::mutex mutex_;
+    std::condition_variable ready_;
+    std::deque<std::function<void()>> tasks_;
+    std::thread worker_;
+};
 
 }
 
@@ -185,7 +238,6 @@ ImProcCoordinator::ImProcCoordinator() :
     lastOutputProfile("BADFOOD"),
     lastOutputIntent(RI__COUNT),
     lastOutputBPC(false),
-    thread(nullptr),
     changeSinceLast(0),
     updaterRunning(false),
     nextParams(new procparams::ProcParams),
@@ -263,19 +315,14 @@ ImProcCoordinator::~ImProcCoordinator()
 {
 
     destroying = true;
-    Glib::Thread* threadToJoin = nullptr;
+    std::shared_future<void> taskToWait;
     updaterThreadStart.lock();
 
-    changeSinceLast = 0;
-    if (thread) {
-        threadToJoin = thread;
-        thread = nullptr;
-    }
-    updaterRunning = false;
+    taskToWait = processingTask;
     updaterThreadStart.unlock();
 
-    if (threadToJoin) {
-        threadToJoin->join();
+    if (taskToWait.valid()) {
+        taskToWait.wait();
     }
 
     mProcessing.lock();
@@ -3658,29 +3705,21 @@ bool ImProcCoordinator::exportDemosaicedTIFF(const Glib::ustring& outputPath)
 void ImProcCoordinator::stopProcessing()
 {
 
-    Glib::Thread* threadToJoin = nullptr;
+    destroying = true;
+    std::shared_future<void> taskToWait;
     updaterThreadStart.lock();
 
-    destroying = true;
-    changeSinceLast = 0;
-
-    if (thread) {
-        threadToJoin = thread;
-        thread = nullptr;
-    }
-    updaterRunning = false;
-
+    taskToWait = processingTask;
     updaterThreadStart.unlock();
 
-    if (threadToJoin) {
-        threadToJoin->join();
+    if (taskToWait.valid()) {
+        taskToWait.wait();
     }
 }
 
 void ImProcCoordinator::signalStop()
 {
     destroying = true;
-    changeSinceLast = 0;
 }
 
 void ImProcCoordinator::startProcessing()
@@ -3691,17 +3730,24 @@ void ImProcCoordinator::startProcessing()
 
     updaterThreadStart.lock();
     if (!destroying && !updaterRunning) {
-        thread = nullptr;
         updaterRunning = true;
-
-        // Store the joinable thread handle before releasing the start/stop
-        // mutex. Otherwise a rapid editor close can run stopProcessing()
-        // between updaterRunning=true and thread assignment, miss the handle,
-        // and leave GLib waiting on an invalid thread object later.
-        thread = Glib::Thread::create(sigc::mem_fun(*this, &ImProcCoordinator::process), 0, true, true, Glib::THREAD_PRIORITY_NORMAL);
+        processingTask = PreviewProcessingExecutor::instance().enqueue([this]() { process(); });
     }
 
     updaterThreadStart.unlock();
+}
+
+bool ImProcCoordinator::scheduleCropUpdate(Crop* crop)
+{
+    updaterThreadStart.lock();
+    if (destroying) {
+        updaterThreadStart.unlock();
+        return false;
+    }
+
+    processingTask = PreviewProcessingExecutor::instance().enqueue([crop]() { crop->fullUpdate(); });
+    updaterThreadStart.unlock();
+    return true;
 }
 
 void ImProcCoordinator::startProcessing(int changeCode)
@@ -3723,6 +3769,15 @@ void ImProcCoordinator::process()
     paramsUpdateMutex.lock();
 
     while (true) {
+        if (destroying) {
+            changeSinceLast = 0;
+            updaterThreadStart.lock();
+            updaterRunning = false;
+            updaterThreadStart.unlock();
+            paramsUpdateMutex.unlock();
+            return;
+        }
+
         if (!changeSinceLast) {
             paramsUpdateMutex.unlock();
 
@@ -3745,7 +3800,21 @@ void ImProcCoordinator::process()
                 continue;
             }
 
+            updaterThreadStart.lock();
+            if (changeSinceLast && !destroying) {
+                updaterThreadStart.unlock();
+                paramsUpdateMutex.unlock();
+
+                progress = plistener;
+                if (progress) {
+                    progress->setProgressState(true);
+                }
+
+                paramsUpdateMutex.lock();
+                continue;
+            }
             updaterRunning = false;
+            updaterThreadStart.unlock();
             paramsUpdateMutex.unlock();
             return;
         }

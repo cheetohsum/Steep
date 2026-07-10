@@ -1604,7 +1604,12 @@ void FileCatalog::enableTabMode(bool enable)
         filterChanged();
     }
 
-    redrawAll();
+    // Entering filmstrip mode is redrawn by ThumbBrowserBase once its entry
+    // geometry lock is available. A second synchronous redraw here can block
+    // the GTK thread behind thumbnail workers while a large folder is loading.
+    if (!enable) {
+        redrawAll();
+    }
 }
 
 void FileCatalog::_refreshProgressBar ()

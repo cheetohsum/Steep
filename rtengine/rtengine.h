@@ -707,6 +707,8 @@ public:
     {
         return false;
     }
+    /** Schedule a full recalculation on the owning processor. */
+    virtual void startUpdate () { fullUpdate(); }
     /** Perform a full recalculation of the part of the image corresponding to the crop. */
     virtual void fullUpdate  () {}
     /** Sets the listener of the crop. */

@@ -19,6 +19,7 @@
 #pragma once
 
 #include <atomic>
+#include <future>
 #include <memory>
 
 #include "array2D.h"
@@ -31,11 +32,6 @@
 #include "rtengine.h"
 
 #include "rtgui/threadutils.h"
-
-namespace Glib
-{
-class Thread;
-}
 
 namespace rtengine
 {
@@ -247,7 +243,7 @@ protected:
     bool lastOutputBPC;
 
     // members of the updater:
-    Glib::Thread* thread;
+    std::shared_future<void> processingTask;
     MyMutex updaterThreadStart;
     MyMutex paramsUpdateMutex;
     int  changeSinceLast;
@@ -263,6 +259,7 @@ protected:
     bool opautili;
     bool wavcontlutili;
     void startProcessing();
+    bool scheduleCropUpdate(Crop* crop);
     void process();
     float colourToningSatLimit;
     float colourToningSatLimitOpacity;

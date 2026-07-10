@@ -260,6 +260,8 @@ private:
     void rebuildDrawableEntries_();
     void syncEntryOffset_(ThumbBrowserEntryBase* entry);
     bool onRedrawIdle_ ();
+    bool applyTabModeEntryGeometry_ (bool enable, unsigned int generation);
+    unsigned int tabModeGeneration_ = 0;
 public:
 
     void getScrollPosition (double& h, double& v);

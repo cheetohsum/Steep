@@ -22,9 +22,11 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <functional>
 #include <iostream>
 #include <mutex>
@@ -144,6 +146,50 @@ static void lowerEditorCleanupThreadPriority()
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
 #endif
 }
+
+class EditorCleanupExecutor final
+{
+public:
+    static EditorCleanupExecutor& instance()
+    {
+        static EditorCleanupExecutor* executor = new EditorCleanupExecutor();
+        return *executor;
+    }
+
+    void enqueue(std::function<void()> work)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            queue_.push_back(std::move(work));
+        }
+        ready_.notify_one();
+    }
+
+private:
+    EditorCleanupExecutor()
+    {
+        std::thread([this]() { run(); }).detach();
+    }
+
+    void run()
+    {
+        lowerEditorCleanupThreadPriority();
+        while (true) {
+            std::function<void()> work;
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                ready_.wait(lock, [this]() { return !queue_.empty(); });
+                work = std::move(queue_.front());
+                queue_.pop_front();
+            }
+            work();
+        }
+    }
+
+    std::mutex mutex_;
+    std::condition_variable ready_;
+    std::deque<std::function<void()>> queue_;
+};
 
 static void detachEditorProcessorListeners(rtengine::StagedImageProcessor* proc)
 {
@@ -2508,10 +2554,9 @@ EditorPanel::~EditorPanel ()
     if (beforeIpc) {
         rtengine::StagedImageProcessor* old = beforeIpc;
         beforeIpc = nullptr;
-        std::thread([old]() {
-            lowerEditorCleanupThreadPriority();
+        EditorCleanupExecutor::instance().enqueue([old]() {
             rtengine::StagedImageProcessor::destroy(old);
-        }).detach();
+        });
     }
 
     beforeIpc = nullptr;
@@ -3701,6 +3746,10 @@ void EditorPanel::hideAlbumView ()
 
 void EditorPanel::closeAlbumView ()
 {
+    if (!tbAlbumView_ || !tbAlbumView_->get_active()) {
+        return;
+    }
+
     hideAlbumView();
     if (albumBrowser_) {
         albumBrowser_->deselectAlbum();
@@ -4350,19 +4399,10 @@ void EditorPanel::close ()
             ipc = nullptr;
             previewHandler = nullptr;
 
-            // Serialize all editor-panel IPC teardowns globally. When the
-            // user clicks two images in quick succession, two close()
-            // calls each spawn a detached cleanup thread; running them
-            // concurrently was racing with OMP workers inside rgbProc and
-            // crashing in Color::RGB2Lab on freed LUT/image buffers.
-            // Holding one mutex across stopProcessing()+destroy() forces
-            // the old image's teardown to fully complete before the next
-            // one starts its own teardown, and also prevents interleaved
-            // OMP pool state changes.
-            static std::mutex s_teardownMutex;
-            std::thread([old, oldHandler, savedParams, savedThm, savedFname, releaseThm, releaseRefCount, recentInitialImage, cacheRecentInitialImage]() {
-                lowerEditorCleanupThreadPriority();
-                std::lock_guard<std::mutex> lk(s_teardownMutex);
+            // A single persistent worker serializes teardown and reuses its
+            // OpenMP team across image switches. Detached cleanup threads left
+            // one retained libgomp team behind for every old image on Windows.
+            EditorCleanupExecutor::instance().enqueue([old, oldHandler, savedParams, savedThm, savedFname, releaseThm, releaseRefCount, recentInitialImage, cacheRecentInitialImage]() {
                 old->stopProcessing();
 
                 delete oldHandler;
@@ -4386,7 +4426,7 @@ void EditorPanel::close ()
                         releaseThm->decreaseRef();
                     }
                 }
-            }).detach();
+            });
         }
         logCloseStep("cleanup-enqueue");
 
@@ -5832,10 +5872,9 @@ void EditorPanel::beforeAfterToggled ()
         if (beforeIpc) {
             rtengine::StagedImageProcessor* old = beforeIpc;
             beforeIpc = nullptr;
-            std::thread([old]() {
-                lowerEditorCleanupThreadPriority();
+            EditorCleanupExecutor::instance().enqueue([old]() {
                 rtengine::StagedImageProcessor::destroy(old);
-            }).detach();
+            });
         }
 
         beforeIpc = nullptr;

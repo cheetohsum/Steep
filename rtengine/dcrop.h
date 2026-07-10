@@ -89,7 +89,8 @@ public:
      */
     bool tryUpdate   () override;
     /** @brief Asynchronously reprocess the detailed crop */
-    void fullUpdate  () override;  // called via thread
+    void startUpdate () override;
+    void fullUpdate  () override;
 
     void setListener    (DetailedCropListener* il) override;
     void detachListener () override;

@@ -122,6 +122,39 @@ void MyTryReaderLock::release ()
     locked = false;
 }
 
+MyTryWriterLock::MyTryWriterLock (MyRWMutex& mutex) :
+    mutex (mutex),
+    locked (false)
+{
+    std::unique_lock<std::mutex> lock (mutex.mutex, std::try_to_lock);
+    if (lock.owns_lock() && mutex.writerCount == 0) {
+        ++mutex.writerCount;
+        locked = true;
+    }
+}
+
+MyTryWriterLock::~MyTryWriterLock ()
+{
+    release ();
+}
+
+bool MyTryWriterLock::owns_lock () const
+{
+    return locked;
+}
+
+void MyTryWriterLock::release ()
+{
+    if (!locked) {
+        return;
+    }
+
+    std::unique_lock<std::mutex> lock (mutex.mutex);
+    --mutex.writerCount;
+    mutex.cond.notify_all ();
+    locked = false;
+}
+
 void MyReaderLock::acquire ()
 {
     if (locked) {
@@ -282,6 +315,45 @@ void MyTryReaderLock::release ()
         mutex.lastWriterLine = 0;
     }
 
+    locked = false;
+}
+
+MyTryWriterLock::MyTryWriterLock (MyRWMutex& mutex) :
+    mutex (mutex),
+    locked (false)
+{
+    std::unique_lock<std::mutex> lock (mutex.mutex, std::try_to_lock);
+    if (lock.owns_lock() && mutex.writerCount == 0) {
+        ++mutex.writerCount;
+        mutex.ownerThread = std::this_thread::get_id ();
+        mutex.lastWriterFile = __FILE__;
+        mutex.lastWriterLine = __LINE__;
+        locked = true;
+    }
+}
+
+MyTryWriterLock::~MyTryWriterLock ()
+{
+    release ();
+}
+
+bool MyTryWriterLock::owns_lock () const
+{
+    return locked;
+}
+
+void MyTryWriterLock::release ()
+{
+    if (!locked) {
+        return;
+    }
+
+    std::unique_lock<std::mutex> lock (mutex.mutex);
+    --mutex.writerCount;
+    mutex.cond.notify_all ();
+    mutex.ownerThread = std::thread::id();
+    mutex.lastWriterFile = "";
+    mutex.lastWriterLine = 0;
     locked = false;
 }
 

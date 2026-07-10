@@ -3850,18 +3850,22 @@ void FileBrowser::openRequested( std::vector<FileBrowserEntry*> mselected)
     eRTNav preloadDirectionHint = NAV_NONE;
 
     if (entries.size() == 1 && !openFname.empty()) {
-        MYWRITERLOCK(l, entryRW);
+        // Direction is only a preload hint. Never block the GTK thread behind
+        // thumbnail/list refresh work just to compute it; opening the selected
+        // image is more important than a directional cache preference.
+        MyTryReaderLock lock(entryRW);
+        if (lock.owns_lock()) {
+            const std::ptrdiff_t current = findEntryIndexLocked_(openFname);
+            const std::ptrdiff_t previous = lastOpenRequestedFname_.empty()
+                ? -1
+                : findEntryIndexLocked_(lastOpenRequestedFname_);
 
-        const std::ptrdiff_t current = findEntryIndexLocked_(openFname);
-        const std::ptrdiff_t previous = lastOpenRequestedFname_.empty()
-            ? -1
-            : findEntryIndexLocked_(lastOpenRequestedFname_);
-
-        if (current >= 0 && previous >= 0) {
-            if (current > previous) {
-                preloadDirectionHint = NAV_NEXT;
-            } else if (current < previous) {
-                preloadDirectionHint = NAV_PREVIOUS;
+            if (current >= 0 && previous >= 0) {
+                if (current > previous) {
+                    preloadDirectionHint = NAV_NEXT;
+                } else if (current < previous) {
+                    preloadDirectionHint = NAV_PREVIOUS;
+                }
             }
         }
 

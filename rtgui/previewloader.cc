@@ -385,6 +385,11 @@ public:
     void processNextJob()
     {
         setPreviewWorkerThreadPriority(postScanDrainMode_.load(std::memory_order_relaxed));
+#ifdef _OPENMP
+        // The pool already runs up to eight jobs concurrently. Prevent each
+        // worker from retaining its own full OpenMP team on Windows.
+        omp_set_num_threads(1);
+#endif
 
         // Peek at the queue before committing to the concurrent thread count.
         // This ensures no-op tasks (from stale thread pool pushes) don't

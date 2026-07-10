@@ -2287,6 +2287,13 @@ bool Crop::tryUpdate()
     return needsNewThread;
 }
 
+void Crop::startUpdate()
+{
+    if (!parent->scheduleCropUpdate(this)) {
+        updating = false;
+    }
+}
+
 /* @brief Handles Crop updating in its own thread
  *
  * This method will cycle updates as long as Crop::newUpdatePending will be true. During the processing,
@@ -2307,15 +2314,6 @@ void Crop::fullUpdate()
         updating = false;
         parent->updaterThreadStart.unlock();
         return;
-    }
-
-    if (parent->updaterRunning && parent->thread) {
-        // Do NOT reset changes here, since in a long chain of events it will lead to chroma_scale not being updated,
-        // causing Color::lab2rgb to return a black image on some opens
-        //parent->changeSinceLast = 0;
-        parent->thread->join();
-        parent->thread = nullptr;
-        parent->updaterRunning = false;
     }
 
     ProgressListener* const progress = parent->plistener.load();

@@ -18,9 +18,14 @@
  */
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
+#include <deque>
+#include <functional>
 #include <mutex>
+#include <thread>
 
 #include <gtkmm.h>
 
@@ -29,6 +34,51 @@
 #include "guiutils.h"
 #include "multilangmgr.h"
 #include "rtengine/rtengine.h"
+
+class SharedProgressWorker final
+{
+public:
+    static SharedProgressWorker& instance()
+    {
+        // This process-lifetime worker keeps OpenMP runtimes from retaining a
+        // new worker team for every short-lived foreground image-load thread.
+        static SharedProgressWorker* worker = new SharedProgressWorker();
+        return *worker;
+    }
+
+    void enqueue(std::function<void()> work)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            queue_.push_back(std::move(work));
+        }
+        ready_.notify_one();
+    }
+
+private:
+    SharedProgressWorker()
+    {
+        std::thread([this]() { run(); }).detach();
+    }
+
+    void run()
+    {
+        while (true) {
+            std::function<void()> work;
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                ready_.wait(lock, [this]() { return !queue_.empty(); });
+                work = std::move(queue_.front());
+                queue_.pop_front();
+            }
+            work();
+        }
+    }
+
+    std::mutex mutex_;
+    std::condition_variable ready_;
+    std::deque<std::function<void()>> queue_;
+};
 
 class PLDBridge final :
     public rtengine::ProgressListener
@@ -205,6 +255,7 @@ class ProgressConnector
     sigc::signal0<bool> opEnd;
     T retval;
     Glib::Thread *workThread;
+    std::atomic<bool> started;
 
     static int emitEndSignalUI (void* data)
     {
@@ -226,18 +277,28 @@ class ProgressConnector
                                   ProgressConnector<T>::emitEndSignalUI,
                                   new sigc::signal0<bool>(opEnd), nullptr);
         workThread = nullptr;
+        started.store(false, std::memory_order_release);
     }
 
 public:
 
-    ProgressConnector (): retval( 0 ), workThread( nullptr ) { }
+    ProgressConnector (): retval( 0 ), workThread( nullptr ), started(false) { }
 
     void startFunc (const sigc::slot0<T>& startHandler, const sigc::slot0<bool>& endHandler )
     {
-        if( !workThread ) {
+        if (!started.exchange(true, std::memory_order_acq_rel)) {
             opStart.connect (startHandler);
             opEnd.connect (endHandler);
             workThread = Glib::Thread::create(sigc::mem_fun(*this, &ProgressConnector<T>::workingThread), 0, true, true, Glib::THREAD_PRIORITY_NORMAL);
+        }
+    }
+
+    void startFuncPersistent (const sigc::slot0<T>& startHandler, const sigc::slot0<bool>& endHandler )
+    {
+        if (!started.exchange(true, std::memory_order_acq_rel)) {
+            opStart.connect(startHandler);
+            opEnd.connect(endHandler);
+            SharedProgressWorker::instance().enqueue([this]() { workingThread(); });
         }
     }
 

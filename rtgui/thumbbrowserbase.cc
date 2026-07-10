@@ -1602,20 +1602,43 @@ void ThumbBrowserBase::enableTabMode(bool enable)
         hscroll.set_no_show_all(false);
     }
 
-    {
-        MYWRITERLOCK(l, entryRW);
+    const unsigned int generation = ++tabModeGeneration_;
+    if (applyTabModeEntryGeometry_(enable, generation)) {
+        Glib::signal_timeout().connect(
+            sigc::bind(
+                sigc::mem_fun(*this, &ThumbBrowserBase::applyTabModeEntryGeometry_),
+                enable,
+                generation),
+            10,
+            G_PRIORITY_HIGH_IDLE);
+    }
+}
 
-        for (size_t i = 0; i < fd.size(); i++) {
-            fd[i]->setMargins(enable ? 0 : 2, enable ? 0 : 2);
-            fd[i]->resize(getThumbnailHeight());
+bool ThumbBrowserBase::applyTabModeEntryGeometry_(bool enable, unsigned int generation)
+{
+    if (generation != tabModeGeneration_) {
+        return false;
+    }
+
+    {
+        MyTryWriterLock lock(entryRW);
+        if (!lock.owns_lock()) {
+            return true;
+        }
+
+        for (auto* entry : fd) {
+            entry->setMargins(enable ? 0 : 2, enable ? 0 : 2);
+            entry->resize(getThumbnailHeight());
         }
     }
 
-    // Only redraw in filmstrip mode — browser mode gets a redraw from
-    // FileCatalog::enableTabMode → filterChanged().
+    // Browser mode gets a redraw from FileCatalog::enableTabMode ->
+    // filterChanged().
     if (enable) {
         redraw();
     }
+
+    return false;
 }
 
 void ThumbBrowserBase::insertEntry (ThumbBrowserEntryBase* entry)

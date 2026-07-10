@@ -26,6 +26,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <deque>
+#include <functional>
 #include <iterator>
 #include <limits>
 #include <memory>
@@ -622,6 +623,11 @@ private:
     void run()
     {
         lowerBackgroundPreloadThreadPriority();
+#ifdef _OPENMP
+        // Image destruction is serialized here; parallel cleanup only leaves
+        // an otherwise-unused OpenMP team resident for the process lifetime.
+        omp_set_num_threads(1);
+#endif
 
         while (true) {
             InitialImageReleaseTask task;
@@ -672,6 +678,55 @@ static InitialImageReleaseQueue& initialImageReleaseQueue()
 {
     static InitialImageReleaseQueue* queue = new InitialImageReleaseQueue();
     return *queue;
+}
+
+class AdjacentPreloadExecutor final
+{
+public:
+    void enqueue(std::function<void()> work)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            queue_.push_back(std::move(work));
+            if (!workerStarted_) {
+                workerStarted_ = true;
+                std::thread([this]() { run(); }).detach();
+            }
+        }
+        cv_.notify_one();
+    }
+
+private:
+    void run()
+    {
+        lowerBackgroundPreloadThreadPriority();
+#ifdef _OPENMP
+        // This worker is reused across preload cycles; cap its retained team.
+        omp_set_num_threads(3);
+#endif
+
+        while (true) {
+            std::function<void()> work;
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                cv_.wait(lock, [this]() { return !queue_.empty(); });
+                work = std::move(queue_.front());
+                queue_.pop_front();
+            }
+            work();
+        }
+    }
+
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    std::deque<std::function<void()>> queue_;
+    bool workerStarted_ = false;
+};
+
+static AdjacentPreloadExecutor& adjacentPreloadExecutor()
+{
+    static AdjacentPreloadExecutor* executor = new AdjacentPreloadExecutor();
+    return *executor;
 }
 
 static void releaseInitialImageInBackground(
@@ -3051,7 +3106,7 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
                 selectedFileNameRaw,
                 PreloadManager::kDelayedForegroundPreloadHoldoffMs);
         }
-        ld->startFunc(
+        ld->startFuncPersistent(
             sigc::bind(
                 sigc::ptr_fun(&loadInitialImageSerialized),
                 selectedFileName,
@@ -3735,7 +3790,7 @@ void FilePanel::preloadAdjacent(
 
     if (startWorker) {
         auto state = preload_;  // capture shared_ptr so thread can outlive `this`
-        std::thread([state]() {
+        adjacentPreloadExecutor().enqueue([state]() {
             const bool logPreload = g_fileSelLogEnabled();
 #ifdef _WIN32
             PreloadWorkerPriorityHandle priorityHandle(state);
@@ -4217,7 +4272,7 @@ void FilePanel::preloadAdjacent(
                     return;
                 }
             }
-        }).detach();
+        });
     }
 
     // Thumbnail refresh, when requested, was folded into the adjacent scan
@@ -4305,12 +4360,14 @@ void FilePanel::onAlbumViewRequested (const Glib::ustring& albumName, const std:
 
 void FilePanel::closeAlbumView ()
 {
+    if (!fileCatalog || !fileCatalog->isInAlbumMode()) {
+        return;
+    }
+
     if (albumBrowser_) {
         albumBrowser_->deselectAlbum();
     }
-    if (fileCatalog) {
-        fileCatalog->exitAlbumMode();
-    }
+    fileCatalog->exitAlbumMode();
 }
 
 void FilePanel::openSelectedInEditor ()

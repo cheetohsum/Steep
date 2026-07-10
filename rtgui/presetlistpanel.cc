@@ -39,6 +39,10 @@
 #include <mutex>
 #include <string>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 using namespace rtengine;
 using namespace rtengine::procparams;
 
@@ -1404,6 +1408,12 @@ void PresetListPanel::startThumbnailGeneration()
     thumbnail->increaseRef();
 
     thumbThread_ = std::thread([this, entries, thumbnail, generation, done]() {
+#ifdef _OPENMP
+        // Preset thumbnails are generated serially on this background thread.
+        // A nested full OpenMP team competes with the editor and remains
+        // allocated after every image switch on Windows.
+        omp_set_num_threads(1);
+#endif
         for (const auto* entry : entries) {
             if (thumbCancelled_.load(std::memory_order_acquire)
                 || generation != thumbGeneration_.load(std::memory_order_acquire)) {

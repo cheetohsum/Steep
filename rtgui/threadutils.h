@@ -90,6 +90,7 @@ class MyRWMutex :
 public:
     friend class MyReaderLock;
     friend class MyTryReaderLock;
+    friend class MyTryWriterLock;
     friend class MyWriterLock;
 
     MyRWMutex();
@@ -140,6 +141,21 @@ class MyTryReaderLock :
 public:
     explicit MyTryReaderLock (MyRWMutex& mutex);
     ~MyTryReaderLock ();
+
+    bool owns_lock () const;
+    void release ();
+
+private:
+    MyRWMutex& mutex;
+    bool locked;
+};
+
+class MyTryWriterLock :
+    public rtengine::NonCopyable
+{
+public:
+    explicit MyTryWriterLock (MyRWMutex& mutex);
+    ~MyTryWriterLock ();
 
     bool owns_lock () const;
     void release ();
