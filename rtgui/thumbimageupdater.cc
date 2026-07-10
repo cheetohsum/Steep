@@ -58,6 +58,21 @@ static void lowerBackgroundWorkerThreadPriority()
 #endif
 }
 
+static bool isJpegThumbnailJob(const ThumbBrowserEntryBase* entry)
+{
+    if (!entry) {
+        return false;
+    }
+
+    const auto dot = entry->filename.find_last_of('.');
+    if (dot == Glib::ustring::npos || dot + 1 >= entry->filename.length()) {
+        return false;
+    }
+
+    const auto extension = entry->filename.substr(dot + 1).lowercase();
+    return extension == "jpg" || extension == "jpeg";
+}
+
 class ThumbImageUpdater::Impl :
     public rtengine::NonCopyable
 {
@@ -73,6 +88,7 @@ public:
             upgrade_(upgrade),
             force_upgrade_(forceUpgrade),
             cache_pixbuf_(cachePixbuf),
+            jpeg_(isJpegThumbnailJob(tbe)),
             listener_(listener)
         {}
 
@@ -82,6 +98,7 @@ public:
             upgrade_(false),
             force_upgrade_(false),
             cache_pixbuf_(false),
+            jpeg_(false),
             listener_(nullptr)
         {}
 
@@ -92,6 +109,7 @@ public:
         bool upgrade_;
         bool force_upgrade_;
         bool cache_pixbuf_;
+        bool jpeg_;
         ThumbImageUpdateListener* listener_;
     };
 
@@ -131,6 +149,7 @@ public:
         maxThreadCount_(1),
         queuedWorkers_(0),
         nonUpgradeJobs_(0),
+        activeJpegJobs_(0),
         pauseDepth_(0),
         priorityScanNeeded_(true)
     {
@@ -184,9 +203,15 @@ public:
 
     std::size_t nonUpgradeJobs_;
 
+    int activeJpegJobs_;
+
     std::atomic<unsigned> pauseDepth_;
 
     bool priorityScanNeeded_;
+
+    // Match ImageIO's scaled-JPEG gate here so workers stay available for
+    // RAW and non-JPEG thumbnails instead of blocking inside the decoder.
+    static constexpr int kMaxConcurrentBackgroundJpegJobs = 3;
 
     struct CallbackLease {
         CallbackLease(Impl& impl, ThumbImageUpdateListener* listener):
@@ -397,6 +422,14 @@ public:
             DEBUG("processing(first) %s", i->tbe_->thumbnail->getFileName().c_str());
         }
 
+        const auto canRun = [this](const Job& job) {
+            return !job.jpeg_
+                || activeJpegJobs_ < kMaxConcurrentBackgroundJpegJobs;
+        };
+        if (i != jobs_.end() && !canRun(*i)) {
+            i = std::find_if(jobs_.begin(), jobs_.end(), canRun);
+        }
+
         return i;
     }
 
@@ -427,6 +460,9 @@ public:
             thm = j.tbe_->thumbnail;
             thm->increaseRef();
             size_and_scale = j.tbe_->getDesiredPreviewSize();
+            if (j.jpeg_) {
+                ++activeJpegJobs_;
+            }
 
             return true;
         }
@@ -443,7 +479,22 @@ public:
 
         const int running = static_cast<int>(active_.load(std::memory_order_relaxed));
         const int capacity = maxThreadCount_ - running - queuedWorkers_;
-        const int usefulWorkers = static_cast<int>(jobs_.size()) - queuedWorkers_;
+        int availableJpegSlots = std::max(
+            0,
+            kMaxConcurrentBackgroundJpegJobs - activeJpegJobs_);
+        int runnableJobs = 0;
+        for (const auto& job : jobs_) {
+            if (!job.jpeg_) {
+                ++runnableJobs;
+            } else if (availableJpegSlots > 0) {
+                --availableJpegSlots;
+                ++runnableJobs;
+            }
+            if (runnableJobs >= capacity + queuedWorkers_) {
+                break;
+            }
+        }
+        const int usefulWorkers = runnableJobs - queuedWorkers_;
         const int toSchedule = std::max(0, std::min(capacity, usefulWorkers));
         queuedWorkers_ += toSchedule;
 
@@ -572,6 +623,10 @@ public:
 
             // Release our reference to the thumbnail.
             thm->decreaseRef();
+            if (j.jpeg_) {
+                std::lock_guard<std::mutex> lock(mutex_);
+                --activeJpegJobs_;
+            }
         }
 
         --active_;
