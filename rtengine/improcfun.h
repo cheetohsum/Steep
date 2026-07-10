@@ -19,6 +19,7 @@
  */
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <vector>
 
@@ -93,6 +94,7 @@ struct DehazeParams;
 struct FattalToneMappingParams;
 struct ColorManagementParams;
 struct DirPyrDenoiseParams;
+struct FilmPresetsParams;
 struct FilmNegativeParams;
 struct CGParams;
 struct LocalContrastParams;
@@ -107,6 +109,32 @@ struct WaveletParams;
 }
 
 enum RenderingIntent : int;
+
+struct FilmLabContext {
+    int originX;
+    int originY;
+    int fullWidth;
+    int fullHeight;
+    int scale;
+    std::uint32_t imageSeed;
+
+    FilmLabContext(
+        int originX_ = 0,
+        int originY_ = 0,
+        int fullWidth_ = 0,
+        int fullHeight_ = 0,
+        int scale_ = 1,
+        std::uint32_t imageSeed_ = 0
+    ) :
+        originX(originX_),
+        originY(originY_),
+        fullWidth(fullWidth_),
+        fullHeight(fullHeight_),
+        scale(scale_),
+        imageSeed(imageSeed_)
+    {
+    }
+};
 
 // From Siril.
 struct ght_compute_params {
@@ -609,7 +637,12 @@ enum class BlurType {
     void toneEqualizer(Imagefloat *rgb);
     void toneEqualizer(Imagefloat *rgb, const procparams::ToneEqualizerParams &params, const Glib::ustring &workingProfile, double scale, bool multiThread);
     void softLight(LabImage *lab, const procparams::SoftLightParams &softLightParams);
-    void filmPresets(LabImage *lab, const procparams::FilmPresetsParams &filmPresetsParams);
+    void filmPresets(
+        LabImage *lab,
+        const procparams::FilmPresetsParams &filmPresetsParams,
+        const FilmLabContext &context = FilmLabContext());
+    void filmPresetsV1(LabImage *lab, const procparams::FilmPresetsParams &filmPresetsParams);
+    static std::uint32_t filmLabSeed(const Glib::ustring& filename);
     void labColorCorrectionRegions(LabImage *lab);
 
     Image8*     lab2rgb(LabImage* lab, int cx, int cy, int cw, int ch, const procparams::ColorManagementParams &icm, bool consider_histogram_settings = true);

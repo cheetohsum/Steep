@@ -802,7 +802,7 @@ bool hasNeutralFilmControls(const procparams::FilmPresetsParams& fp)
 } // namespace
 
 
-void ImProcFunctions::filmPresets(LabImage *lab, const procparams::FilmPresetsParams &fp)
+void ImProcFunctions::filmPresetsV1(LabImage *lab, const procparams::FilmPresetsParams &fp)
 {
     if (!fp.enabled) {
         return;

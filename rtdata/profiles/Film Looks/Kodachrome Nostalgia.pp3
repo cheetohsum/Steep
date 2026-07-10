@@ -1,6 +1,12 @@
 [Film Presets]
 Enabled=true
 Preset=heritage_gold
+ModelVersion=2
+Exposure=0
+PushPull=0
+Process=auto
+Output=projection
+Format=35mm
 Strength=75
 Contrast=10
 Warmth=15

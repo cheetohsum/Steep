@@ -1,6 +1,12 @@
 [Film Presets]
 Enabled=true
 Preset=vivid_chrome
+ModelVersion=2
+Exposure=0
+PushPull=0
+Process=e6
+Output=projection
+Format=35mm
 Strength=85
 Contrast=15
 Saturation=10

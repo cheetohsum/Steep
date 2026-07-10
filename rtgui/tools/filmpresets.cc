@@ -80,6 +80,12 @@ FilmPresets::FilmPresets() :
     EvFilmPresetsEnabled      = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_ENABLED");
     EvFilmPresetsPreset       = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_PRESET");
     EvFilmPresetsStrength     = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_STRENGTH");
+    EvFilmPresetsModel        = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_MODEL");
+    EvFilmPresetsExposure     = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_EXPOSURE");
+    EvFilmPresetsPushPull     = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_PUSHPULL");
+    EvFilmPresetsProcess      = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_PROCESS");
+    EvFilmPresetsOutput       = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_OUTPUT");
+    EvFilmPresetsFormat       = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_FORMAT");
     EvFilmPresetsContrast     = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_CONTRAST");
     EvFilmPresetsSaturation   = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_SATURATION");
     EvFilmPresetsWarmth       = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_WARMTH");
@@ -200,6 +206,65 @@ FilmPresets::FilmPresets() :
 
     // Detail section
     detailContent_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
+
+    auto* labLabel = Gtk::manage(new Gtk::Label());
+    labLabel->set_markup("<small>" + M("TP_FILMPRESETS_SECTION_LAB") + "</small>");
+    labLabel->set_halign(Gtk::ALIGN_START);
+    labLabel->get_style_context()->add_class("section-label");
+    detailContent_->pack_start(*labLabel, Gtk::PACK_SHRINK, 4);
+
+    auto* labGrid = Gtk::manage(new Gtk::Grid());
+    labGrid->set_column_spacing(6);
+    labGrid->set_row_spacing(3);
+    labGrid->set_hexpand(true);
+
+    modelCombo_ = Gtk::manage(new Gtk::ComboBoxText());
+    modelCombo_->append("legacy", M("TP_FILMPRESETS_MODEL_LEGACY"));
+    modelCombo_->append("v2", M("TP_FILMPRESETS_MODEL_V2"));
+    processCombo_ = Gtk::manage(new Gtk::ComboBoxText());
+    processCombo_->append("auto", M("TP_FILMPRESETS_PROCESS_AUTO"));
+    processCombo_->append("c41", "C-41");
+    processCombo_->append("e6", "E-6");
+    processCombo_->append("ecn2", "ECN-2");
+    processCombo_->append("bw", M("TP_FILMPRESETS_PROCESS_BW"));
+    outputCombo_ = Gtk::manage(new Gtk::ComboBoxText());
+    outputCombo_->append("scan", M("TP_FILMPRESETS_OUTPUT_SCAN"));
+    outputCombo_->append("ra4", M("TP_FILMPRESETS_OUTPUT_RA4"));
+    outputCombo_->append("projection", M("TP_FILMPRESETS_OUTPUT_PROJECTION"));
+    outputCombo_->append("cinema", M("TP_FILMPRESETS_OUTPUT_CINEMA"));
+    formatCombo_ = Gtk::manage(new Gtk::ComboBoxText());
+    formatCombo_->append("35mm", "35 mm");
+    formatCombo_->append("120", "120");
+    formatCombo_->append("large", M("TP_FILMPRESETS_FORMAT_LARGE"));
+
+    Gtk::ComboBoxText* labCombos[] = {modelCombo_, processCombo_, outputCombo_, formatCombo_};
+    const char* labComboLabels[] = {
+        "TP_FILMPRESETS_MODEL",
+        "TP_FILMPRESETS_PROCESS",
+        "TP_FILMPRESETS_OUTPUT",
+        "TP_FILMPRESETS_FORMAT"
+    };
+    for (int row = 0; row < 4; ++row) {
+        auto* label = Gtk::manage(new Gtk::Label(M(labComboLabels[row])));
+        label->set_halign(Gtk::ALIGN_START);
+        labCombos[row]->set_hexpand(true);
+        labCombos[row]->set_halign(Gtk::ALIGN_FILL);
+        labGrid->attach(*label, 0, row, 1, 1);
+        labGrid->attach(*labCombos[row], 1, row, 1, 1);
+    }
+    detailContent_->pack_start(*labGrid, Gtk::PACK_SHRINK, 2);
+
+    modelCombo_->signal_changed().connect([this]() { onLabOptionChanged(EvFilmPresetsModel, modelCombo_); });
+    processCombo_->signal_changed().connect([this]() { onLabOptionChanged(EvFilmPresetsProcess, processCombo_); });
+    outputCombo_->signal_changed().connect([this]() { onLabOptionChanged(EvFilmPresetsOutput, outputCombo_); });
+    formatCombo_->signal_changed().connect([this]() { onLabOptionChanged(EvFilmPresetsFormat, formatCombo_); });
+
+    exposureAdj_ = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_EXPOSURE"), -4., 4., 0.1, 0.));
+    pushPullAdj_ = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_PUSHPULL"), -2., 3., 0.1, 0.));
+    exposureAdj_->setAdjusterListener(this);
+    pushPullAdj_->setAdjusterListener(this);
+    detailContent_->pack_start(*exposureAdj_);
+    detailContent_->pack_start(*pushPullAdj_);
 
     // -- Tone --
     auto* toneLabel = Gtk::manage(new Gtk::Label());
@@ -425,6 +490,7 @@ void FilmPresets::onPresetClick(int idx)
     activePresetIdx_ = idx;
     updateButtonLabel();
     presetPopover_->popdown();
+    modelCombo_->set_active_id("v2");
 
     if (idx == 0) {
         // Custom: open dialog instead of inline toggle
@@ -447,6 +513,29 @@ void FilmPresets::onPresetClick(int idx)
     }
 }
 
+void FilmPresets::onLabOptionChanged(ProcEvent event, Gtk::ComboBoxText* combo)
+{
+    updateLabControlSensitivity();
+    if (!listener) {
+        return;
+    }
+
+    autoEnable();
+    if (getEnabled()) {
+        listener->panelChanged(event, combo->get_active_text());
+    }
+}
+
+void FilmPresets::updateLabControlSensitivity()
+{
+    const bool filmLab = modelCombo_->get_active_id() != "legacy";
+    processCombo_->set_sensitive(filmLab);
+    outputCombo_->set_sensitive(filmLab);
+    formatCombo_->set_sensitive(filmLab);
+    exposureAdj_->set_sensitive(filmLab);
+    pushPullAdj_->set_sensitive(filmLab);
+}
+
 void FilmPresets::selectPreset(const Glib::ustring& presetId)
 {
     activePresetIdx_ = findPresetIndex(presetId);
@@ -462,6 +551,8 @@ void FilmPresets::read(const ProcParams* pp, const ParamsEdited* pedited)
     disableListener();
 
     if (pedited) {
+        exposureAdj_->setEditedState(pedited->filmPresets.exposure ? Edited : UnEdited);
+        pushPullAdj_->setEditedState(pedited->filmPresets.pushPull ? Edited : UnEdited);
         strength->setEditedState(pedited->filmPresets.strength ? Edited : UnEdited);
         contrast->setEditedState(pedited->filmPresets.contrast ? Edited : UnEdited);
         saturation->setEditedState(pedited->filmPresets.saturation ? Edited : UnEdited);
@@ -489,6 +580,20 @@ void FilmPresets::read(const ProcParams* pp, const ParamsEdited* pedited)
 
     activePresetIdx_ = findPresetIndex(pp->filmPresets.preset);
     updateButtonLabel();
+
+    modelCombo_->set_active_id(pp->filmPresets.modelVersion < 2 ? "legacy" : "v2");
+    if (!processCombo_->set_active_id(pp->filmPresets.process)) {
+        processCombo_->set_active_id("auto");
+    }
+    if (!outputCombo_->set_active_id(pp->filmPresets.output)) {
+        outputCombo_->set_active_id("scan");
+    }
+    if (!formatCombo_->set_active_id(pp->filmPresets.format)) {
+        formatCombo_->set_active_id("35mm");
+    }
+    exposureAdj_->setValue(pp->filmPresets.exposure);
+    pushPullAdj_->setValue(pp->filmPresets.pushPull);
+    updateLabControlSensitivity();
 
     strength->setValue(clampFilmValue(pp->filmPresets.strength, 0, 100));
     contrast->setValue(clampFilmValue(pp->filmPresets.contrast, -100, 100));
@@ -519,6 +624,13 @@ void FilmPresets::write(ProcParams* pp, ParamsEdited* pedited)
     int effectiveIdx = (hoverPresetIdx_ >= 0) ? hoverPresetIdx_ : activePresetIdx_;
     pp->filmPresets.preset = getPresetId(effectiveIdx);
 
+    pp->filmPresets.modelVersion = modelCombo_->get_active_id() == "legacy" ? 1 : 2;
+    pp->filmPresets.exposure = exposureAdj_->getValue();
+    pp->filmPresets.pushPull = pushPullAdj_->getValue();
+    pp->filmPresets.process = processCombo_->get_active_id();
+    pp->filmPresets.output = outputCombo_->get_active_id();
+    pp->filmPresets.format = formatCombo_->get_active_id();
+
     pp->filmPresets.strength = strength->getValue();
     pp->filmPresets.contrast = contrast->getValue();
     pp->filmPresets.saturation = saturation->getValue();
@@ -540,6 +652,12 @@ void FilmPresets::write(ProcParams* pp, ParamsEdited* pedited)
     if (pedited) {
         pedited->filmPresets.enabled = !get_inconsistent();
         pedited->filmPresets.preset = true;
+        pedited->filmPresets.modelVersion = true;
+        pedited->filmPresets.exposure = exposureAdj_->getEditedState();
+        pedited->filmPresets.pushPull = pushPullAdj_->getEditedState();
+        pedited->filmPresets.process = true;
+        pedited->filmPresets.output = true;
+        pedited->filmPresets.format = true;
         pedited->filmPresets.strength = strength->getEditedState();
         pedited->filmPresets.contrast = contrast->getEditedState();
         pedited->filmPresets.saturation = saturation->getEditedState();
@@ -562,6 +680,8 @@ void FilmPresets::write(ProcParams* pp, ParamsEdited* pedited)
 
 void FilmPresets::setDefaults(const ProcParams* defParams, const ParamsEdited* pedited)
 {
+    exposureAdj_->setDefault(defParams->filmPresets.exposure);
+    pushPullAdj_->setDefault(defParams->filmPresets.pushPull);
     strength->setDefault(defParams->filmPresets.strength);
     contrast->setDefault(defParams->filmPresets.contrast);
     saturation->setDefault(defParams->filmPresets.saturation);
@@ -581,6 +701,8 @@ void FilmPresets::setDefaults(const ProcParams* defParams, const ParamsEdited* p
     vibranceAdj->setDefault(defParams->filmPresets.vibrance);
 
     if (pedited) {
+        exposureAdj_->setDefaultEditedState(pedited->filmPresets.exposure ? Edited : UnEdited);
+        pushPullAdj_->setDefaultEditedState(pedited->filmPresets.pushPull ? Edited : UnEdited);
         strength->setDefaultEditedState(pedited->filmPresets.strength ? Edited : UnEdited);
         contrast->setDefaultEditedState(pedited->filmPresets.contrast ? Edited : UnEdited);
         saturation->setDefaultEditedState(pedited->filmPresets.saturation ? Edited : UnEdited);
@@ -599,6 +721,8 @@ void FilmPresets::setDefaults(const ProcParams* defParams, const ParamsEdited* p
         grainAdj->setDefaultEditedState(pedited->filmPresets.grain ? Edited : UnEdited);
         vibranceAdj->setDefaultEditedState(pedited->filmPresets.vibrance ? Edited : UnEdited);
     } else {
+        exposureAdj_->setDefaultEditedState(Irrelevant);
+        pushPullAdj_->setDefaultEditedState(Irrelevant);
         strength->setDefaultEditedState(Irrelevant);
         contrast->setDefaultEditedState(Irrelevant);
         saturation->setDefaultEditedState(Irrelevant);
@@ -630,7 +754,11 @@ void FilmPresets::adjusterChanged(Adjuster* a, double newval)
     }
 
     if (listener && getEnabled()) {
-        if (a == strength) {
+        if (a == exposureAdj_) {
+            listener->panelChanged(EvFilmPresetsExposure, a->getTextValue());
+        } else if (a == pushPullAdj_) {
+            listener->panelChanged(EvFilmPresetsPushPull, a->getTextValue());
+        } else if (a == strength) {
             listener->panelChanged(EvFilmPresetsStrength, a->getTextValue());
         } else if (a == contrast) {
             listener->panelChanged(EvFilmPresetsContrast, a->getTextValue());
@@ -697,6 +825,8 @@ void FilmPresets::setBatchMode(bool batchMode)
     ToolPanel::setBatchMode(batchMode);
 
     strength->showEditedCB();
+    exposureAdj_->showEditedCB();
+    pushPullAdj_->showEditedCB();
     contrast->showEditedCB();
     saturation->showEditedCB();
     warmth->showEditedCB();

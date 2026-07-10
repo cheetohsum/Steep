@@ -38,6 +38,12 @@ private:
     sigc::connection hoverTimeout_;
 
     Adjuster* strength;
+    Gtk::ComboBoxText* modelCombo_;
+    Gtk::ComboBoxText* processCombo_;
+    Gtk::ComboBoxText* outputCombo_;
+    Gtk::ComboBoxText* formatCombo_;
+    Adjuster* exposureAdj_;
+    Adjuster* pushPullAdj_;
     Adjuster* contrast;
     Adjuster* saturation;
     Adjuster* warmth;
@@ -66,6 +72,12 @@ private:
     rtengine::ProcEvent EvFilmPresetsEnabled;
     rtengine::ProcEvent EvFilmPresetsPreset;
     rtengine::ProcEvent EvFilmPresetsStrength;
+    rtengine::ProcEvent EvFilmPresetsModel;
+    rtengine::ProcEvent EvFilmPresetsExposure;
+    rtengine::ProcEvent EvFilmPresetsPushPull;
+    rtengine::ProcEvent EvFilmPresetsProcess;
+    rtengine::ProcEvent EvFilmPresetsOutput;
+    rtengine::ProcEvent EvFilmPresetsFormat;
     rtengine::ProcEvent EvFilmPresetsContrast;
     rtengine::ProcEvent EvFilmPresetsSaturation;
     rtengine::ProcEvent EvFilmPresetsWarmth;
@@ -89,6 +101,8 @@ private:
     void onPresetHover(int idx);
     void onPresetLeave();
     void onPresetClick(int idx);
+    void onLabOptionChanged(rtengine::ProcEvent event, Gtk::ComboBoxText* combo);
+    void updateLabControlSensitivity();
 
     // Preset IDs and display names
     struct PresetInfo {

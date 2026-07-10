@@ -1786,7 +1786,10 @@ private:
             wavCLVCurve.Reset();
         }
 
-        ipf.filmPresets(labView, params.filmPresets);
+        ipf.filmPresets(
+            labView,
+            params.filmPresets,
+            FilmLabContext(0, 0, fw, fh, 1, ImProcFunctions::filmLabSeed(imgsrc->getFileName())));
         ipf.softLight(labView, params.softlight);
 
 

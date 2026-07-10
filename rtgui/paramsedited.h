@@ -1776,6 +1776,12 @@ struct FilmSimulationParamsEdited {
 struct FilmPresetsParamsEdited {
     bool enabled;
     bool preset;
+    bool modelVersion;
+    bool exposure;
+    bool pushPull;
+    bool process;
+    bool output;
+    bool format;
     bool strength;
     bool contrast;
     bool saturation;

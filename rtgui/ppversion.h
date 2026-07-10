@@ -1,11 +1,13 @@
 #pragma once
 
 // This number has to be incremented whenever the PP3 file format is modified or the behaviour of a tool changes
-#define PPVERSION 353
+#define PPVERSION 354
 #define PPVERSION_AEXP 301 //value of PPVERSION when auto exposure algorithm was modified
 
 /*
-  Log of version changes
+ Log of version changes
+   354  2026-07-10
+        Added versioned Film Lab processing and workflow parameters
    353  2025-07-22
         Slider instead of checkbox for Highlight attenuation Abstract profile
    352  2024-10-27

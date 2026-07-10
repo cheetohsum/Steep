@@ -1733,7 +1733,16 @@ void Crop::update(int todo)
 
         }
         
-        parent->ipf.filmPresets(labnCrop, params.filmPresets);
+        parent->ipf.filmPresets(
+            labnCrop,
+            params.filmPresets,
+            FilmLabContext(
+                trafx,
+                trafy,
+                parent->fw,
+                parent->fh,
+                std::max(skip, 1),
+                ImProcFunctions::filmLabSeed(parent->imgsrc->getFileName())));
         parent->ipf.softLight(labnCrop, params.softlight);
 
         if (params.icm.workingTRC != ColorManagementParams::WorkingTrc::NONE && params.icm.trcExp) {

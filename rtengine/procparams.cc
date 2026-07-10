@@ -3397,6 +3397,12 @@ bool FilmSimulationParams::operator !=(const FilmSimulationParams& other) const
 FilmPresetsParams::FilmPresetsParams() :
     enabled(false),
     preset("cinema_reveal_35"),
+    modelVersion(2),
+    exposure(0.0),
+    pushPull(0.0),
+    process("auto"),
+    output("scan"),
+    format("35mm"),
     strength(100),
     contrast(0),
     saturation(0),
@@ -3422,6 +3428,12 @@ bool FilmPresetsParams::operator==(const FilmPresetsParams &other) const
     return
         enabled == other.enabled
         && preset == other.preset
+        && modelVersion == other.modelVersion
+        && exposure == other.exposure
+        && pushPull == other.pushPull
+        && process == other.process
+        && output == other.output
+        && format == other.format
         && strength == other.strength
         && contrast == other.contrast
         && saturation == other.saturation
@@ -5094,6 +5106,12 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
 // Film presets
         saveToKeyfile(!pedited || pedited->filmPresets.enabled, "Film Presets", "Enabled", filmPresets.enabled, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.preset, "Film Presets", "Preset", filmPresets.preset, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.modelVersion, "Film Presets", "ModelVersion", filmPresets.modelVersion, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.exposure, "Film Presets", "Exposure", filmPresets.exposure, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.pushPull, "Film Presets", "PushPull", filmPresets.pushPull, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.process, "Film Presets", "Process", filmPresets.process, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.output, "Film Presets", "Output", filmPresets.output, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.format, "Film Presets", "Format", filmPresets.format, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.strength, "Film Presets", "Strength", filmPresets.strength, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.contrast, "Film Presets", "Contrast", filmPresets.contrast, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.saturation, "Film Presets", "Saturation", filmPresets.saturation, keyFile);
@@ -7101,6 +7119,19 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
         if (keyFile.has_group("Film Presets")) {
             assignFromKeyfile(keyFile, "Film Presets", "Enabled", filmPresets.enabled, pedited->filmPresets.enabled);
             assignFromKeyfile(keyFile, "Film Presets", "Preset", filmPresets.preset, pedited->filmPresets.preset);
+            if (keyFile.has_key("Film Presets", "ModelVersion")) {
+                assignFromKeyfile(keyFile, "Film Presets", "ModelVersion", filmPresets.modelVersion, pedited->filmPresets.modelVersion);
+            } else {
+                filmPresets.modelVersion = 1;
+                if (pedited) {
+                    pedited->filmPresets.modelVersion = false;
+                }
+            }
+            assignFromKeyfile(keyFile, "Film Presets", "Exposure", filmPresets.exposure, pedited->filmPresets.exposure);
+            assignFromKeyfile(keyFile, "Film Presets", "PushPull", filmPresets.pushPull, pedited->filmPresets.pushPull);
+            assignFromKeyfile(keyFile, "Film Presets", "Process", filmPresets.process, pedited->filmPresets.process);
+            assignFromKeyfile(keyFile, "Film Presets", "Output", filmPresets.output, pedited->filmPresets.output);
+            assignFromKeyfile(keyFile, "Film Presets", "Format", filmPresets.format, pedited->filmPresets.format);
             assignFromKeyfile(keyFile, "Film Presets", "Strength", filmPresets.strength, pedited->filmPresets.strength);
             assignFromKeyfile(keyFile, "Film Presets", "Contrast", filmPresets.contrast, pedited->filmPresets.contrast);
             assignFromKeyfile(keyFile, "Film Presets", "Saturation", filmPresets.saturation, pedited->filmPresets.saturation);

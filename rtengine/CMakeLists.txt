@@ -80,6 +80,7 @@ set(RTENGINESOURCEFILES
     ipsharpen.cc
     ipsharpenedges.cc
     ipfilmpresets.cc
+    ipfilmlab.cc
     ipsoftlight.cc
     iptoneequalizer.cc
     iptransform.cc

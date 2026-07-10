@@ -2377,7 +2377,10 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
 
             }
 
-            ipf.filmPresets(nprevl, params->filmPresets);
+            ipf.filmPresets(
+                nprevl,
+                params->filmPresets,
+                FilmLabContext(0, 0, fw, fh, std::max(scale, 1), ImProcFunctions::filmLabSeed(imgsrc->getFileName())));
             ipf.softLight(nprevl, params->softlight);
 
 

@@ -1,6 +1,12 @@
 [Film Presets]
 Enabled=true
 Preset=golden_hour
+ModelVersion=2
+Exposure=0
+PushPull=0
+Process=c41
+Output=ra4
+Format=35mm
 Strength=75
 Warmth=20
 

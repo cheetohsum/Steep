@@ -967,6 +967,12 @@ void ParamsEdited::set(bool v)
     filmSimulation.strength = v;
     filmPresets.enabled = v;
     filmPresets.preset = v;
+    filmPresets.modelVersion = v;
+    filmPresets.exposure = v;
+    filmPresets.pushPull = v;
+    filmPresets.process = v;
+    filmPresets.output = v;
+    filmPresets.format = v;
     filmPresets.strength = v;
     filmPresets.contrast = v;
     filmPresets.saturation = v;
@@ -2720,6 +2726,12 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         filmSimulation.strength = filmSimulation.strength && p.filmSimulation.strength == other.filmSimulation.strength;
         filmPresets.enabled = filmPresets.enabled && p.filmPresets.enabled == other.filmPresets.enabled;
         filmPresets.preset = filmPresets.preset && p.filmPresets.preset == other.filmPresets.preset;
+        filmPresets.modelVersion = filmPresets.modelVersion && p.filmPresets.modelVersion == other.filmPresets.modelVersion;
+        filmPresets.exposure = filmPresets.exposure && p.filmPresets.exposure == other.filmPresets.exposure;
+        filmPresets.pushPull = filmPresets.pushPull && p.filmPresets.pushPull == other.filmPresets.pushPull;
+        filmPresets.process = filmPresets.process && p.filmPresets.process == other.filmPresets.process;
+        filmPresets.output = filmPresets.output && p.filmPresets.output == other.filmPresets.output;
+        filmPresets.format = filmPresets.format && p.filmPresets.format == other.filmPresets.format;
         filmPresets.strength = filmPresets.strength && p.filmPresets.strength == other.filmPresets.strength;
         filmPresets.contrast = filmPresets.contrast && p.filmPresets.contrast == other.filmPresets.contrast;
         filmPresets.saturation = filmPresets.saturation && p.filmPresets.saturation == other.filmPresets.saturation;
@@ -9119,6 +9131,24 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
     }
     if (filmPresets.preset) {
         toEdit.filmPresets.preset = mods.filmPresets.preset;
+    }
+    if (filmPresets.modelVersion) {
+        toEdit.filmPresets.modelVersion = mods.filmPresets.modelVersion;
+    }
+    if (filmPresets.exposure) {
+        toEdit.filmPresets.exposure = mods.filmPresets.exposure;
+    }
+    if (filmPresets.pushPull) {
+        toEdit.filmPresets.pushPull = mods.filmPresets.pushPull;
+    }
+    if (filmPresets.process) {
+        toEdit.filmPresets.process = mods.filmPresets.process;
+    }
+    if (filmPresets.output) {
+        toEdit.filmPresets.output = mods.filmPresets.output;
+    }
+    if (filmPresets.format) {
+        toEdit.filmPresets.format = mods.filmPresets.format;
     }
     if (filmPresets.strength) {
         toEdit.filmPresets.strength = mods.filmPresets.strength;

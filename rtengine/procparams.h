@@ -1795,6 +1795,12 @@ struct FilmSimulationParams {
 struct FilmPresetsParams {
     bool enabled;
     Glib::ustring preset;  // preset ID: "custom", "heritage_gold", etc.
+    int modelVersion;       // 1 = legacy look engine, 2 = Film Lab
+    double exposure;        // Film-plane exposure in EV
+    double pushPull;        // Development compensation in stops
+    Glib::ustring process;  // auto, c41, e6, ecn2, bw
+    Glib::ustring output;   // scan, ra4, projection, cinema
+    Glib::ustring format;   // 35mm, 120, large
     int strength;           // 0-100
     int contrast;           // -100..100
     int saturation;         // -100..100

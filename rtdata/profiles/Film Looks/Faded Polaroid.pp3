@@ -1,6 +1,12 @@
 [Film Presets]
 Enabled=true
 Preset=fade_bloom
+ModelVersion=2
+Exposure=0
+PushPull=0
+Process=auto
+Output=scan
+Format=35mm
 Strength=70
 Fade=20
 Grain=30

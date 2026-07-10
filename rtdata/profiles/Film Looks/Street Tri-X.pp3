@@ -1,6 +1,12 @@
 [Film Presets]
 Enabled=true
 Preset=street_800
+ModelVersion=2
+Exposure=0
+PushPull=1
+Process=bw
+Output=scan
+Format=35mm
 Strength=85
 Contrast=20
 Grain=25

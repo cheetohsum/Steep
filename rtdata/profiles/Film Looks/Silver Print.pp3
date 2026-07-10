@@ -1,6 +1,12 @@
 [Film Presets]
 Enabled=true
 Preset=silver_gelatin
+ModelVersion=2
+Exposure=0
+PushPull=0
+Process=bw
+Output=ra4
+Format=35mm
 Strength=90
 Contrast=15
 

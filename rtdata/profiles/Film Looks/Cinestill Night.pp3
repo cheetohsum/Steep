@@ -1,6 +1,12 @@
 [Film Presets]
 Enabled=true
 Preset=cinematic_500t
+ModelVersion=2
+Exposure=0
+PushPull=0
+Process=ecn2
+Output=scan
+Format=35mm
 Strength=80
 Contrast=-5
 Halation=40
