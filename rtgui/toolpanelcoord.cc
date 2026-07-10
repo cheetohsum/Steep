@@ -2174,9 +2174,9 @@ void ToolPanelCoordinator::populateEditPanel()
         // Only modify B&W-specific parameters
         blackwhite->disableListener();
         if (t > 0 && f > 0.3) {
-            blackwhite->setBWPreset(3, 2); // ChannelMixer + Orange
+            blackwhite->setBWPreset(4, 2); // Perceptual + Orange
         } else {
-            blackwhite->setBWPreset(1, 0); // Desaturation + No filter
+            blackwhite->setBWPreset(4, 0); // Perceptual + No filter
         }
         blackwhite->getNeutralsSlider()->setValue(pp.blackwhite.neutrals);
         blackwhite->getToneSlider()->setValue(pp.blackwhite.tone);

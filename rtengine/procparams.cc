@@ -2398,7 +2398,7 @@ BlackWhiteParams::BlackWhiteParams() :
     enabled(false),
     filter("None"),
     setting("RGB-Rel"),
-    method("Desaturation"),
+    method("Perceptual"),
     mixerRed(33),
     mixerOrange(33),
     mixerYellow(33),

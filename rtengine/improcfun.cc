@@ -16,6 +16,7 @@
  *  You should have received a copy of the GNU General Public License
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include <array>
 #include <cmath>
 
 #include <glib.h>
@@ -2303,6 +2304,7 @@ void ImProcFunctions::rgbProc(Imagefloat* working, LabImage* lab, PipetteBuffer 
     float chMixBB = params->chmixer.blue[2] / 10.f;
 
     bool blackwhite = params->blackwhite.enabled;
+    const bool perceptualBW = params->blackwhite.method == "Perceptual";
     bool complem = params->blackwhite.enabledcc;
     float bwr = params->blackwhite.mixerRed;
     float bwg = params->blackwhite.mixerGreen;
@@ -2311,8 +2313,9 @@ void ImProcFunctions::rgbProc(Imagefloat* working, LabImage* lab, PipetteBuffer 
     float bwggam = params->blackwhite.gammaGreen;
     float bwbgam = params->blackwhite.gammaBlue;
 
-    // Apply Neutrals (uniform gamma shift) and Tone (differential R/B gamma)
-    {
+    // Legacy profiles retain the original RGB gamma interpretation. In the
+    // perceptual method these controls become midtones and print tone.
+    if (!perceptualBW) {
         float neutrals = static_cast<float>(params->blackwhite.neutrals);
         float tone = static_cast<float>(params->blackwhite.tone);
         bwrgam += neutrals + tone * 0.5f;
@@ -2336,6 +2339,8 @@ void ImProcFunctions::rgbProc(Imagefloat* working, LabImage* lab, PipetteBuffer 
         algm = 1;
     } else if (params->blackwhite.method == "ChannelMixer") {
         algm = 2;
+    } else if (perceptualBW) {
+        algm = 3;
     }
 
     float kcorec = 1.f;
@@ -2366,7 +2371,85 @@ void ImProcFunctions::rgbProc(Imagefloat* working, LabImage* lab, PipetteBuffer 
         gammabwg = 1.f - bwggam / gamvalg;
         gammabwb = 1.f - bwbgam / gamvalb;
     }
-    bool hasgammabw = gammabwr != 1.f || gammabwg != 1.f || gammabwb != 1.f;
+    bool hasgammabw = !perceptualBW && (gammabwr != 1.f || gammabwg != 1.f || gammabwb != 1.f);
+
+    std::array<float, 4096> bwHueGainLut;
+    std::array<float, 65536> bwToneLut;
+    bwHueGainLut.fill(1.f);
+    for (size_t i = 0; i < bwToneLut.size(); ++i) {
+        bwToneLut[i] = static_cast<float>(i);
+    }
+
+    if (perceptualBW) {
+        constexpr std::array<float, 8> centers = {
+            0.f, 1.f / 12.f, 2.f / 12.f, 4.f / 12.f,
+            6.f / 12.f, 8.f / 12.f, 9.f / 12.f, 10.f / 12.f
+        };
+        const std::array<float, 8> controls = {
+            bwr, mixerOrange, mixerYellow, bwg,
+            mixerCyan, bwb, mixerPurple, mixerMagenta
+        };
+        std::array<float, 8> presetEv = {};
+        if (params->blackwhite.setting == "Landscape") {
+            presetEv = {0.25f, 0.35f, 0.18f, 0.05f, -0.12f, -0.35f, -0.2f, 0.1f};
+        } else if (params->blackwhite.setting == "Portrait") {
+            presetEv = {0.18f, 0.3f, 0.14f, -0.05f, -0.08f, -0.12f, 0.f, 0.1f};
+        } else if (params->blackwhite.setting == "Orthochromatic") {
+            presetEv = {-1.1f, -0.5f, 0.05f, 0.3f, 0.35f, 0.35f, 0.1f, -0.45f};
+        } else if (params->blackwhite.setting == "InfraRed") {
+            presetEv = {1.4f, 1.1f, 0.55f, 0.8f, -0.35f, -1.2f, -0.8f, 0.45f};
+        } else if (params->blackwhite.setting == "HighContrast") {
+            presetEv = {0.35f, 0.25f, 0.1f, -0.08f, -0.18f, -0.3f, -0.15f, 0.15f};
+        }
+
+        float filterCenter = -1.f;
+        if (params->blackwhite.filter == "Red") filterCenter = 0.f;
+        else if (params->blackwhite.filter == "Orange") filterCenter = 1.f / 12.f;
+        else if (params->blackwhite.filter == "Yellow") filterCenter = 2.f / 12.f;
+        else if (params->blackwhite.filter == "YellowGreen") filterCenter = 3.f / 12.f;
+        else if (params->blackwhite.filter == "Green") filterCenter = 4.f / 12.f;
+        else if (params->blackwhite.filter == "Cyan") filterCenter = 6.f / 12.f;
+        else if (params->blackwhite.filter == "Blue") filterCenter = 8.f / 12.f;
+        else if (params->blackwhite.filter == "Purple") filterCenter = 9.f / 12.f;
+
+        for (size_t i = 0; i < bwHueGainLut.size(); ++i) {
+            const float hue = static_cast<float>(i) / static_cast<float>(bwHueGainLut.size() - 1);
+            float weightedEv = 0.f;
+            float weightSum = 0.f;
+            for (size_t band = 0; band < centers.size(); ++band) {
+                float distance = std::abs(hue - centers[band]);
+                distance = std::min(distance, 1.f - distance);
+                const float normalized = std::max(0.f, 1.f - distance * 6.f);
+                const float weight = normalized * normalized * (3.f - 2.f * normalized);
+                const float userEv = rtengine::LIM((controls[band] - 33.f) / 67.f, -1.5f, 1.5f) * 1.15f;
+                weightedEv += weight * (userEv + presetEv[band]);
+                weightSum += weight;
+            }
+            float ev = weightSum > 0.f ? weightedEv / weightSum : 0.f;
+            if (filterCenter >= 0.f) {
+                ev += 0.9f * std::cos(2.f * rtengine::RT_PI_F * (hue - filterCenter));
+            }
+            bwHueGainLut[i] = std::exp2(rtengine::LIM(ev, -2.5f, 2.5f));
+        }
+
+        const float contrastPower = std::exp2(static_cast<float>(params->blackwhite.gammaRed) / 125.f);
+        const float midtoneEv = static_cast<float>(params->blackwhite.neutrals) / 100.f;
+        const float highlightEv = static_cast<float>(params->blackwhite.gammaGreen) / 100.f;
+        const float shadowEv = static_cast<float>(params->blackwhite.gammaBlue) / 100.f;
+        auto smoothstep = [](float edge0, float edge1, float value) {
+            const float t = rtengine::LIM((value - edge0) / (edge1 - edge0), 0.f, 1.f);
+            return t * t * (3.f - 2.f * t);
+        };
+        for (size_t i = 0; i < bwToneLut.size(); ++i) {
+            float x = static_cast<float>(i) / 65535.f;
+            const float shadowWeight = 1.f - smoothstep(0.04f, 0.42f, x);
+            const float highlightWeight = smoothstep(0.38f, 0.92f, x);
+            const float midtoneWeight = rtengine::LIM(4.f * x * (1.f - x), 0.f, 1.f);
+            x *= std::exp2(shadowEv * shadowWeight + highlightEv * highlightWeight + midtoneEv * midtoneWeight);
+            x = 0.18f * std::pow(std::max(x / 0.18f, 0.f), contrastPower);
+            bwToneLut[i] = std::max(0.f, x * 65535.f);
+        }
+    }
 
     if (hasColorToning || blackwhite || (params->dirpyrequalizer.cbdlMethod == "bef" && params->dirpyrequalizer.enabled) || split_tiled_parts_1_2) {
         tmpImage.reset(new Imagefloat(working->getWidth(), working->getHeight()));
@@ -3211,6 +3294,61 @@ void ImProcFunctions::rgbProc(Imagefloat* working, LabImage* lab, PipetteBuffer 
                             }
 
 #endif
+                        }
+                    } else if (algm == 3) { // profile-aware perceptual hue mixer
+                        const float printTone = static_cast<float>(params->blackwhite.tone) / 100.f;
+                        const float yRed = static_cast<float>(wp[1][0]);
+                        const float yGreen = static_cast<float>(wp[1][1]);
+                        const float yBlue = static_cast<float>(wp[1][2]);
+                        const float neutralY = yRed + yGreen + yBlue;
+                        for (int i = istart, ti = 0; i < tH; ++i, ++ti) {
+                            for (int j = jstart, tj = 0; j < tW; ++j, ++tj) {
+                                const float sourceR = rtemp[ti * TS + tj];
+                                const float sourceG = gtemp[ti * TS + tj];
+                                const float sourceB = btemp[ti * TS + tj];
+                                const float scale = std::max(65535.f, std::max(sourceR, std::max(sourceG, sourceB)));
+                                float hue = 0.f;
+                                float saturation = 0.f;
+                                float value = 0.f;
+                                Color::rgb2hsv01(
+                                    rtengine::LIM(sourceR / scale, 0.f, 1.f),
+                                    rtengine::LIM(sourceG / scale, 0.f, 1.f),
+                                    rtengine::LIM(sourceB / scale, 0.f, 1.f),
+                                    hue,
+                                    saturation,
+                                    value);
+                                const size_t hueIndex = static_cast<size_t>(rtengine::LIM(
+                                    hue * static_cast<float>(bwHueGainLut.size() - 1),
+                                    0.f,
+                                    static_cast<float>(bwHueGainLut.size() - 1)));
+                                const float chromaWeight = saturation * saturation * (3.f - 2.f * saturation);
+                                const float hueGain = 1.f + (bwHueGainLut[hueIndex] - 1.f) * chromaWeight;
+                                float gray = (yRed * sourceR + yGreen * sourceG + yBlue * sourceB) * hueGain;
+                                const size_t toneIndex = static_cast<size_t>(rtengine::LIM(
+                                    gray, 0.f, static_cast<float>(bwToneLut.size() - 1)));
+                                gray = gray <= 65535.f ? bwToneLut[toneIndex] : gray;
+
+                                float redFactor = 1.f;
+                                float greenFactor = 1.f;
+                                float blueFactor = 1.f;
+                                if (printTone > 0.f) {
+                                    redFactor += 0.1f * printTone;
+                                    greenFactor += 0.025f * printTone;
+                                    blueFactor -= 0.14f * printTone;
+                                } else if (printTone < 0.f) {
+                                    const float cool = -printTone;
+                                    redFactor -= 0.1f * cool;
+                                    greenFactor -= 0.015f * cool;
+                                    blueFactor += 0.13f * cool;
+                                }
+                                const float tonedY = yRed * redFactor
+                                    + yGreen * greenFactor
+                                    + yBlue * blueFactor;
+                                const float toneNormalization = tonedY > 0.f ? neutralY / tonedY : 1.f;
+                                rtemp[ti * TS + tj] = gray * redFactor * toneNormalization;
+                                gtemp[ti * TS + tj] = gray * greenFactor * toneNormalization;
+                                btemp[ti * TS + tj] = gray * blueFactor * toneNormalization;
+                            }
                         }
                     }
                 }
@@ -4366,7 +4504,11 @@ void ImProcFunctions::chromiLuminanceCurve(PipetteBuffer *pipetteBuffer, int pW,
             editWhatever->fill(0.f);
         }
 
-        if (params->blackwhite.enabled && !params->colorToning.enabled) {
+        const bool preservePerceptualPrintTone =
+            params->blackwhite.method == "Perceptual" && params->blackwhite.tone != 0;
+        if (params->blackwhite.enabled
+            && !params->colorToning.enabled
+            && !preservePerceptualPrintTone) {
             for (int i = 0; i < lnew->H; ++i) {
                 for (int j = 0; j < lnew->W; ++j) {
                     lnew->a[i][j] = lnew->b[i][j] = 0.f;
@@ -4455,7 +4597,9 @@ void ImProcFunctions::chromiLuminanceCurve(PipetteBuffer *pipetteBuffer, int pW,
     const bool highlight = params->toneCurve.hrenabled; //Get the value if "highlight reconstruction" is activated
     const int chromaticity = params->labCurve.chromaticity;
     const float chromapro = (chromaticity + 100.0f) / 100.0f;
-    const bool bwonly = params->blackwhite.enabled && !params->colorToning.enabled;
+    const bool bwonly = params->blackwhite.enabled
+        && !params->colorToning.enabled
+        && !(params->blackwhite.method == "Perceptual" && params->blackwhite.tone != 0);
     bool bwq = false;
 //  if(params->ppVersion > 300  && params->labCurve.chromaticity == - 100) bwq = true;
     // const bool bwToning = params->labCurve.chromaticity == - 100  /*|| params->blackwhite.method=="Ch" || params->blackwhite.enabled */ || bwonly;

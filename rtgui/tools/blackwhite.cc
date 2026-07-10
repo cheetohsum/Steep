@@ -58,6 +58,7 @@ BlackWhite::BlackWhite (): FoldableToolPanel(this, TOOL_NAME, M("TP_BWMIX_LABEL"
     method->append (M("TP_BWMIX_MET_DESAT"));
     method->append (M("TP_BWMIX_MET_LUMEQUAL"));
     method->append (M("TP_BWMIX_MET_CHANMIX"));
+    method->append (M("TP_BWMIX_MET_PERCEPTUAL"));
 
     method->set_active (0);
     setExpandAlignProperties(method, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
@@ -77,15 +78,19 @@ BlackWhite::BlackWhite (): FoldableToolPanel(this, TOOL_NAME, M("TP_BWMIX_LABEL"
 
     //----------- Neutrals / Tone / Strength sliders --------------
 
-    bwNeutrals = Gtk::manage(new Adjuster(M("TP_BWMIX_NEUTRALS"), -100, 100, 1, 0));
+    bwNeutrals = Gtk::manage(new Adjuster(M("TP_BWMIX_MIDTONES"), -100, 100, 1, 0));
     bwNeutrals->setAdjusterListener(this);
     getSummaryBox()->pack_start(*bwNeutrals, Gtk::PACK_SHRINK, 0);
 
-    bwTone = Gtk::manage(new Adjuster(M("TP_BWMIX_TONE"), -100, 100, 1, 0));
+    gammaRed = Gtk::manage(new Adjuster(M("TP_BWMIX_CONTRAST"), -100, 100, 1, 0));
+    gammaRed->setAdjusterListener(this);
+    getSummaryBox()->pack_start(*gammaRed, Gtk::PACK_SHRINK, 0);
+
+    bwTone = Gtk::manage(new Adjuster(M("TP_BWMIX_PRINTTONE"), -100, 100, 1, 0));
     bwTone->setAdjusterListener(this);
     getSummaryBox()->pack_start(*bwTone, Gtk::PACK_SHRINK, 0);
 
-    bwStrength = Gtk::manage(new Adjuster(M("TP_BWMIX_STRENGTH"), 0, 100, 1, 100));
+    bwStrength = Gtk::manage(new Adjuster(M("TP_BWMIX_AMOUNT"), 0, 100, 1, 100));
     bwStrength->setAdjusterListener(this);
     getSummaryBox()->pack_start(*bwStrength, Gtk::PACK_SHRINK, 0);
 
@@ -166,20 +171,28 @@ BlackWhite::BlackWhite (): FoldableToolPanel(this, TOOL_NAME, M("TP_BWMIX_LABEL"
 
     mixerRed = Gtk::manage(new Adjuster ("", -100, 200, 1, 33, imgIcon[0]));
     mixerRed->setAdjusterListener (this);
+    mixerRed->set_tooltip_text(M("TP_BWMIX_FILTER_RED"));
     mixerGreen = Gtk::manage(new Adjuster ("", -100, 200, 1, 33, imgIcon[3]));
     mixerGreen->setAdjusterListener (this);
+    mixerGreen->set_tooltip_text(M("TP_BWMIX_FILTER_GREEN"));
     mixerBlue = Gtk::manage(new Adjuster ("", -100, 200, 1, 33, imgIcon[5]));
     mixerBlue->setAdjusterListener (this);
+    mixerBlue->set_tooltip_text(M("TP_BWMIX_FILTER_BLUE"));
     mixerOrange = Gtk::manage(new Adjuster ("", -100, 200, 1, 33, imgIcon[1]));
     mixerOrange->setAdjusterListener (this);
+    mixerOrange->set_tooltip_text(M("TP_BWMIX_FILTER_REDYELLOW"));
     mixerYellow = Gtk::manage(new Adjuster ("", -100, 200, 1, 33, imgIcon[2]));
     mixerYellow->setAdjusterListener (this);
+    mixerYellow->set_tooltip_text(M("TP_BWMIX_FILTER_YELLOW"));
     mixerCyan = Gtk::manage(new Adjuster ("", -100, 200, 1, 33, imgIcon[4]));
     mixerCyan->setAdjusterListener (this);
+    mixerCyan->set_tooltip_text(M("TP_BWMIX_FILTER_BLUEGREEN"));
     mixerPurple = Gtk::manage(new Adjuster ("", -100, 200, 1, 33, imgIcon[6]));
     mixerPurple->setAdjusterListener (this);
+    mixerPurple->set_tooltip_text(M("TP_BWMIX_FILTER_PURPLE"));
     mixerMagenta = Gtk::manage(new Adjuster ("", -100, 200, 1, 33, imgIcon[7]));
     mixerMagenta->setAdjusterListener (this);
+    mixerMagenta->set_tooltip_text(M("TP_BWMIX_FILTER_MAGENTA"));
 
     algoHBox = Gtk::manage (new Gtk::Box ());
     alLabel = nullptr;
@@ -190,11 +203,9 @@ BlackWhite::BlackWhite (): FoldableToolPanel(this, TOOL_NAME, M("TP_BWMIX_LABEL"
     algoconn = algo->signal_changed().connect ( sigc::mem_fun(*this, &BlackWhite::algoChanged) );
 
     gammaFrame = nullptr;
-    gammaRed = Gtk::manage(new Adjuster ("", -100, 100, 1, 0, imgIcon[8]));
-    gammaRed->setAdjusterListener (this);
-    gammaGreen = Gtk::manage(new Adjuster ("", -100, 100, 1, 0, imgIcon[9]));
+    gammaGreen = Gtk::manage(new Adjuster(M("TP_BWMIX_HIGHLIGHTS"), -100, 100, 1, 0));
     gammaGreen->setAdjusterListener (this);
-    gammaBlue = Gtk::manage(new Adjuster ("", -100, 100, 1, 0, imgIcon[10]));
+    gammaBlue = Gtk::manage(new Adjuster(M("TP_BWMIX_SHADOWS"), -100, 100, 1, 0));
     gammaBlue->setAdjusterListener (this);
 
     beforeCurveMode = Gtk::manage (new MyComboBoxText ());
@@ -214,6 +225,38 @@ BlackWhite::BlackWhite (): FoldableToolPanel(this, TOOL_NAME, M("TP_BWMIX_LABEL"
     afterCurveCEG->setCurveListener (this);
     afterCurve = static_cast<DiagonalCurveEditor*>(afterCurveCEG->addCurve(CT_Diagonal, ""));
     afterCurveCEG->curveListComplete();
+
+    filterHBox->set_spacing(4);
+    filterHBox->pack_start(*Gtk::manage(new Gtk::Label(M("TP_BWMIX_FILTER"))), false, false, 0);
+    filterHBox->pack_start(*filter, true, true, 0);
+    settingHBox->set_spacing(4);
+    settingHBox->pack_start(*Gtk::manage(new Gtk::Label(M("TP_BWMIX_SETTING"))), false, false, 0);
+    settingHBox->pack_start(*setting, true, true, 0);
+    autoHBox->set_spacing(4);
+    autoHBox->pack_start(*autoch, true, true, 0);
+    autoHBox->pack_start(*neutral, true, true, 0);
+
+    mixerVBox->set_spacing(2);
+    mixerVBox->pack_start(*mixerRed, Gtk::PACK_SHRINK, 0);
+    mixerVBox->pack_start(*mixerOrange, Gtk::PACK_SHRINK, 0);
+    mixerVBox->pack_start(*mixerYellow, Gtk::PACK_SHRINK, 0);
+    mixerVBox->pack_start(*mixerGreen, Gtk::PACK_SHRINK, 0);
+    mixerVBox->pack_start(*mixerCyan, Gtk::PACK_SHRINK, 0);
+    mixerVBox->pack_start(*mixerBlue, Gtk::PACK_SHRINK, 0);
+    mixerVBox->pack_start(*mixerPurple, Gtk::PACK_SHRINK, 0);
+    mixerVBox->pack_start(*mixerMagenta, Gtk::PACK_SHRINK, 0);
+
+    advancedSection = Gtk::manage(new AdvancedSection(M("TP_GENERAL_ADVANCED")));
+    Gtk::Box* advancedBox = advancedSection->getContentBox();
+    advancedBox->set_spacing(3);
+    advancedBox->pack_start(*filterHBox, Gtk::PACK_SHRINK, 0);
+    advancedBox->pack_start(*settingHBox, Gtk::PACK_SHRINK, 0);
+    advancedBox->pack_start(*autoHBox, Gtk::PACK_SHRINK, 0);
+    advancedBox->pack_start(*mixerVBox, Gtk::PACK_SHRINK, 0);
+    advancedBox->pack_start(*gammaGreen, Gtk::PACK_SHRINK, 0);
+    advancedBox->pack_start(*gammaBlue, Gtk::PACK_SHRINK, 0);
+    advancedBox->pack_start(*luminanceCEG, Gtk::PACK_SHRINK, 0);
+    pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
 
     show_all();
 
@@ -319,13 +362,15 @@ void BlackWhite::read (const ProcParams* pp, const ParamsEdited* pedited)
 
 
     if (pedited && !pedited->blackwhite.method) {
-        method->set_active (4);    // "Unchanged"
+        method->set_active (5);    // "Unchanged"
     } else if (pp->blackwhite.method == "Desaturation") {
         method->set_active (1);
     } else if (pp->blackwhite.method == "LumEqualizer") {
         method->set_active (2);
     } else if (pp->blackwhite.method == "ChannelMixer") {
         method->set_active (3);
+    } else if (pp->blackwhite.method == "Perceptual") {
+        method->set_active (4);
     } else {
         method->set_active (1);    // Default to Desaturation
     }
@@ -515,6 +560,8 @@ void BlackWhite::write (ProcParams* pp, ParamsEdited* pedited)
         pp->blackwhite.method = "LumEqualizer";
     } else if (method->get_active_row_number() == 3) {
         pp->blackwhite.method = "ChannelMixer";
+    } else if (method->get_active_row_number() == 4) {
+        pp->blackwhite.method = "Perceptual";
     } else {
         // Default to Desaturation when method is "Disabled" but tool is enabled
         pp->blackwhite.method = "Desaturation";
@@ -693,6 +740,20 @@ void BlackWhite::methodChanged ()
         setEnabled(true);
     }
 
+    const bool perceptual = row == 4;
+    const bool legacyMixer = row == 3;
+    const bool hueEqualizer = row == 2;
+    advancedSection->set_visible(perceptual || legacyMixer || hueEqualizer);
+    filterHBox->set_visible(perceptual || legacyMixer);
+    settingHBox->set_visible(perceptual || legacyMixer);
+    autoHBox->set_visible(perceptual || legacyMixer);
+    autoch->set_sensitive(legacyMixer);
+    autoch->set_visible(legacyMixer);
+    mixerVBox->set_visible(perceptual || legacyMixer);
+    gammaGreen->set_visible(perceptual);
+    gammaBlue->set_visible(perceptual);
+    luminanceCEG->set_visible(hueEqualizer);
+
     if (listener) {
         listener->panelChanged (EvBWmethod, method->get_active_text ());
     }
@@ -717,8 +778,8 @@ int BlackWhite::getBWPresetIndex () const
     if (method->get_active_row_number() == 0) return 0; // Off
     int m = method->get_active_row_number();
     int f = filter->get_active_row_number();
-    // Filters only apply in ChannelMixer (row 3)
-    if (m != 3 || f == 0) return 1; // plain B/W
+    // Filters apply in the legacy and perceptual mixers.
+    if ((m != 3 && m != 4) || f == 0) return 1; // plain B/W
     switch (f) {
         case 1: return 2; // Red
         case 2: return 3; // Orange
@@ -731,10 +792,10 @@ int BlackWhite::getBWPresetIndex () const
 
 void BlackWhite::enabledChanged ()
 {
-    // When enabled via checkbox and method is "Disabled", auto-select Desaturation
+    // New edits default to the profile-aware method.
     if (getEnabled() && method->get_active_row_number() == 0) {
         methodconn.block(true);
-        method->set_active(1); // Desaturation
+        method->set_active(4);
         methodconn.block(false);
     }
 

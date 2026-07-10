@@ -78,7 +78,7 @@ public:
     Glib::ustring getFilterString  ();
     Glib::ustring getalgoString  ();
 
-    /// Set B&W mode: methodRow (0=Off,1=Desat,2=LumEq,3=ChanMix), filterRow (0=None,1=Red,...).
+    /// Set B&W mode: methodRow (0=Off,1=Desat,2=LumEq,3=Legacy,4=Perceptual).
     void setBWPreset (int methodRow, int filterRow);
     /// Get combo index for external B&W dropdown (0=Off,1=B&W,2=Red,...).
     int getBWPresetIndex () const;
@@ -143,6 +143,7 @@ private:
     Gtk::Frame* mixerFrame;
     Gtk::Box*  mixerVBox;
     Gtk::Frame* gammaFrame;
+    AdvancedSection* advancedSection;
 
     Gtk::Image *imgIcon[11];
 

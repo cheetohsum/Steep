@@ -2135,7 +2135,14 @@ private:
         }
 
       //  bool bwonly = params.blackwhite.enabled && !params.colorToning.enabled && !autili && !butili && !params.colorappearance.enabled;
-        bool bwonly = params.blackwhite.enabled && !params.colorToning.enabled && !autili && !butili && !cam02;
+        const bool preservePerceptualPrintTone =
+            params.blackwhite.method == "Perceptual" && params.blackwhite.tone != 0;
+        bool bwonly = params.blackwhite.enabled
+            && !params.colorToning.enabled
+            && !autili
+            && !butili
+            && !cam02
+            && !preservePerceptualPrintTone;
 
         ///////////// Custom output gamma has been removed, the user now has to create
         ///////////// a new output profile with the ICCProfileCreator
