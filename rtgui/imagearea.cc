@@ -30,7 +30,7 @@
 #include "options.h"
 #include "rtscalable.h"
 
-ImageArea::ImageArea (ImageAreaPanel* p) : parent(p), fullImageWidth(0), fullImageHeight(0)
+ImageArea::ImageArea (ImageAreaPanel* p) : parent(p), quickPreviewFit_(false), fullImageWidth(0), fullImageHeight(0)
 {
 
     cropgl = nullptr;
@@ -148,6 +148,15 @@ void ImageArea::setPreviewHandler (PreviewHandler* ph)
 {
 
     previewHandler = ph;
+    if (!previewHandler) {
+        quickPreviewFit_ = false;
+    }
+}
+
+void ImageArea::setQuickPreviewFit (bool enabled)
+{
+    quickPreviewFit_ = enabled;
+    queue_draw();
 }
 
 void ImageArea::on_style_updated ()
@@ -271,7 +280,39 @@ bool ImageArea::on_draw(const ::Cairo::RefPtr< Cairo::Context> &cr)
 
     int deviceScale = RTScalable::getScaleForWidget(this);
 
-    if (mainCropWindow) {
+    const auto drawFitPreview = [&]() {
+        get_style_context()->render_background(cr, 0, 0, get_width(), get_height());
+
+        double logicalZoom = 1.0;
+        hidpi::DevicePixbuf rough = previewHandler->getRoughImage(
+            hidpi::LogicalSize(get_width(), get_height()),
+            deviceScale,
+            logicalZoom);
+
+        if (!rough) {
+            return;
+        }
+
+        const hidpi::ScaledDeviceSize roughSize = rough.size();
+        const int roughDeviceScale = std::max(1, roughSize.device_scale);
+        const int logicalW = roughSize.width / roughDeviceScale;
+        const int logicalH = roughSize.height / roughDeviceScale;
+        const int x = (get_width() - logicalW) / 2;
+        const int y = (get_height() - logicalH) / 2;
+
+        Gdk::Cairo::set_source_pixbuf(cr, rough.pixbuf(), x, y);
+        auto pattern = hidpi::getSourceForSurface(cr);
+        hidpi::setDeviceScale(pattern->get_surface(), roughDeviceScale);
+        cr->rectangle(x, y, logicalW, logicalH);
+        cr->fill();
+    };
+
+    if (quickPreviewFit_ && previewHandler && get_width() > 1 && get_height() > 1) {
+        // Before the new processor exists, the crop window still describes
+        // the previous photo. Fit the selected photo directly so its cached
+        // preview occupies the same frame as the decoded image will.
+        drawFitPreview();
+    } else if (mainCropWindow) {
         if (deviceScale != mainCropWindow->cropHandler.getDeviceScale()) {
             for (const auto& win : cropWins) {
                 win->cropHandler.setDeviceScale(deviceScale);
@@ -285,28 +326,7 @@ bool ImageArea::on_draw(const ::Cairo::RefPtr< Cairo::Context> &cr)
         // the real processor exists. Draw it directly until open() creates the
         // crop window and hands the same placeholder to the processor-backed
         // PreviewHandler.
-        get_style_context()->render_background(cr, 0, 0, get_width(), get_height());
-
-        double logicalZoom = 1.0;
-        hidpi::DevicePixbuf rough = previewHandler->getRoughImage(
-            hidpi::LogicalSize(get_width(), get_height()),
-            deviceScale,
-            logicalZoom);
-
-        if (rough) {
-            const hidpi::ScaledDeviceSize roughSize = rough.size();
-            const int roughDeviceScale = std::max(1, roughSize.device_scale);
-            const int logicalW = roughSize.width / roughDeviceScale;
-            const int logicalH = roughSize.height / roughDeviceScale;
-            const int x = (get_width() - logicalW) / 2;
-            const int y = (get_height() - logicalH) / 2;
-
-            Gdk::Cairo::set_source_pixbuf(cr, rough.pixbuf(), x, y);
-            auto pattern = hidpi::getSourceForSurface(cr);
-            hidpi::setDeviceScale(pattern->get_surface(), roughDeviceScale);
-            cr->rectangle(x, y, logicalW, logicalH);
-            cr->fill();
-        }
+        drawFitPreview();
     }
 
     for (std::list<CropWindow*>::reverse_iterator i = cropWins.rbegin(); i != cropWins.rend(); ++i) {

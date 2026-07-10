@@ -64,6 +64,7 @@ protected:
     PointerMotionListener* pmlistener;
     PointerMotionListener* pmhlistener;
     ImageAreaToolListener* listener;
+    bool quickPreviewFit_;
 
     CropWindow* getCropWindow (int x, int y);
     Gtk::SizeRequestMode get_request_mode_vfunc () const override;
@@ -125,6 +126,7 @@ public:
         listener = l;
     }
     void            setPreviewHandler        (PreviewHandler* ph);
+    void            setQuickPreviewFit       (bool enabled);
     PreviewHandler* getPreviewHandler        ()
     {
         return previewHandler;

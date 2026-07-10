@@ -3937,6 +3937,13 @@ void EditorPanel::setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scal
 {
     if (!pixbuf) return;
 
+    // A cache miss can finish after the RAW has already opened. Do not let
+    // that late thumbnail detach the live processor or cover its edit output.
+    if (ipc && !sourceFile.empty() && sourceFile == fname) {
+        EDITOR_OPEN_LOG("[editorOpen] late quick preview ignored file=%s\n", sourceFile.c_str());
+        return;
+    }
+
     const bool hasDeferredOpen = deferredOpenConn_.connected();
     const bool hasDeferredCropEnable = deferredCropEnableConn_.connected();
 
@@ -3957,7 +3964,7 @@ void EditorPanel::setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scal
 
         if (iareapanel && iareapanel->imageArea) {
             iareapanel->imageArea->setPreviewHandler(previewHandler);
-            iareapanel->imageArea->queue_draw();
+            iareapanel->imageArea->setQuickPreviewFit(true);
         }
 
         if (navigator && navigator->previewWindow) {
@@ -3983,7 +3990,7 @@ void EditorPanel::setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scal
     quickPreviewFileName_ = sourceFile;
 
     if (iareapanel && iareapanel->imageArea) {
-        iareapanel->imageArea->queue_draw();
+        iareapanel->imageArea->setQuickPreviewFit(true);
     }
 }
 
