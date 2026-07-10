@@ -74,7 +74,8 @@ FilmPresets::FilmPresets() :
     hoverPresetIdx_(-1),
     detailExpanded_(false),
     customDialog_(nullptr),
-    dialogScrolled_(nullptr)
+    dialogScrolled_(nullptr),
+    dialogViewport_(nullptr)
 {
     auto m = ProcEventMapper::getInstance();
     EvFilmPresetsEnabled      = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_ENABLED");
@@ -453,16 +454,17 @@ void FilmPresets::openCustomDialog()
 
         dialogScrolled_ = Gtk::manage(new Gtk::ScrolledWindow());
         dialogScrolled_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+        dialogViewport_ = Gtk::manage(new Gtk::Viewport(
+            Glib::RefPtr<Gtk::Adjustment>(),
+            Glib::RefPtr<Gtk::Adjustment>()));
+        dialogViewport_->set_shadow_type(Gtk::SHADOW_NONE);
+        dialogScrolled_->add(*dialogViewport_);
 
         auto* contentArea = customDialog_->get_content_area();
         contentArea->pack_start(*dialogScrolled_, Gtk::PACK_EXPAND_WIDGET);
 
         customDialog_->signal_delete_event().connect([this](GdkEventAny*) -> bool {
-            if (detailContent_->get_parent() == dialogScrolled_) {
-                dialogScrolled_->remove();
-                detailRevealer_->add(*detailContent_);
-                detailContent_->show_all();
-            }
+            restoreCustomControls();
             customDialog_->hide();
             return true;
         });
@@ -473,14 +475,28 @@ void FilmPresets::openCustomDialog()
         return;
     }
 
-    // Reparent detailContent_ into the dialog's scrolled window
+    // Keep one explicit viewport attached for the dialog's lifetime. Letting
+    // GtkScrolledWindow create an implicit viewport leaves that viewport
+    // behind when the controls are moved back, corrupting the next reopen.
     if (detailContent_->get_parent()) {
         detailContent_->get_parent()->remove(*detailContent_);
     }
-    dialogScrolled_->add(*detailContent_);
+    dialogViewport_->add(*detailContent_);
     detailContent_->show_all();
     customDialog_->show_all();
     customDialog_->present();
+}
+
+void FilmPresets::restoreCustomControls()
+{
+    if (!dialogViewport_ || detailContent_->get_parent() != dialogViewport_) {
+        return;
+    }
+
+    detailContent_->hide();
+    dialogViewport_->remove();
+    detailRevealer_->add(*detailContent_);
+    detailContent_->show_all();
 }
 
 void FilmPresets::onPresetClick(int idx)
@@ -498,11 +514,7 @@ void FilmPresets::onPresetClick(int idx)
     } else {
         // Close custom dialog if visible
         if (customDialog_ && customDialog_->is_visible()) {
-            if (detailContent_->get_parent() == dialogScrolled_) {
-                dialogScrolled_->remove();
-                detailRevealer_->add(*detailContent_);
-                detailContent_->show_all();
-            }
+            restoreCustomControls();
             customDialog_->hide();
         }
     }

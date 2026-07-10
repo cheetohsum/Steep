@@ -68,7 +68,7 @@ protected:
         Gtk::TreeViewColumn* col;
         int cx, cy;
         if (get_path_at_pos(static_cast<int>(event->x), static_cast<int>(event->y), path, col, cx, cy)) {
-            if (path != hoveredPath_) {
+            if (hoveredPath_.empty() || path != hoveredPath_) {
                 hoveredPath_ = path;
                 if (onHoverChanged) onHoverChanged(path);
                 queue_draw();
@@ -263,8 +263,7 @@ AlbumBrowser::AlbumBrowser ()
                     treeView_->set_drag_dest_row(path, Gtk::TREE_VIEW_DROP_AFTER);
                     break;
                 case DropAction::TO_ROOT: {
-                    Gtk::TreeModel::Path empty;
-                    treeView_->set_drag_dest_row(empty, Gtk::TREE_VIEW_DROP_AFTER);
+                    treeView_->unset_rows_drag_dest();
                     break;
                 }
             }
@@ -446,8 +445,7 @@ AlbumBrowser::AlbumBrowser ()
                                                        static_cast<int>(ev->y), path, destNodeId);
                 dragActive_ = false;
                 dropTargetPath_ = Gtk::TreeModel::Path();
-                Gtk::TreeModel::Path empty;
-                treeView_->set_drag_dest_row(empty, Gtk::TREE_VIEW_DROP_AFTER);
+                treeView_->unset_rows_drag_dest();
                 treeView_->queue_draw();
 
                 if (destNodeId != dragSourceNodeId_) {

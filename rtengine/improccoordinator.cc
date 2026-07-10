@@ -66,6 +66,11 @@ constexpr int VECTORSCOPE_SIZE = 128;
 class PreviewProcessingExecutor final
 {
 public:
+    struct TaskHandle {
+        std::shared_future<void> completion;
+        std::function<void()> cancel;
+    };
+
     static PreviewProcessingExecutor& instance()
     {
         // Process-lifetime service: avoiding shutdown-order dependencies is
@@ -74,20 +79,54 @@ public:
         return *executor;
     }
 
-    std::shared_future<void> enqueue(std::function<void()> work)
+    TaskHandle enqueue(std::function<void()> work)
     {
-        auto task = std::make_shared<std::packaged_task<void()>>(std::move(work));
-        auto result = task->get_future().share();
+        auto task = std::make_shared<TaskState>(std::move(work));
+        auto result = task->completion.get_future().share();
 
         {
             std::lock_guard<std::mutex> lock(mutex_);
-            tasks_.emplace_back([task]() { (*task)(); });
+            // The visible image wins over stale work from images the user has
+            // already left. Canceled entries remain cheap no-ops when popped.
+            tasks_.emplace_front(task);
         }
         ready_.notify_one();
-        return result;
+        return {result, [task]() { task->cancel(); }};
     }
 
 private:
+    struct TaskState {
+        explicit TaskState(std::function<void()> work_)
+            : work(std::move(work_))
+        {
+        }
+
+        void run()
+        {
+            if (claimed.exchange(true, std::memory_order_acq_rel)) {
+                return;
+            }
+
+            try {
+                work();
+                completion.set_value();
+            } catch (...) {
+                completion.set_exception(std::current_exception());
+            }
+        }
+
+        void cancel()
+        {
+            if (!claimed.exchange(true, std::memory_order_acq_rel)) {
+                completion.set_value();
+            }
+        }
+
+        std::function<void()> work;
+        std::promise<void> completion;
+        std::atomic<bool> claimed{false};
+    };
+
     PreviewProcessingExecutor()
         : worker_([this]() { run(); })
     {
@@ -96,20 +135,20 @@ private:
     void run()
     {
         while (true) {
-            std::function<void()> task;
+            std::shared_ptr<TaskState> task;
             {
                 std::unique_lock<std::mutex> lock(mutex_);
                 ready_.wait(lock, [this]() { return !tasks_.empty(); });
                 task = std::move(tasks_.front());
                 tasks_.pop_front();
             }
-            task();
+            task->run();
         }
     }
 
     std::mutex mutex_;
     std::condition_variable ready_;
-    std::deque<std::function<void()>> tasks_;
+    std::deque<std::shared_ptr<TaskState>> tasks_;
     std::thread worker_;
 };
 
@@ -316,11 +355,16 @@ ImProcCoordinator::~ImProcCoordinator()
 
     destroying = true;
     std::shared_future<void> taskToWait;
+    std::function<void()> cancelTask;
     updaterThreadStart.lock();
 
     taskToWait = processingTask;
+    cancelTask = cancelProcessingTask;
     updaterThreadStart.unlock();
 
+    if (cancelTask) {
+        cancelTask();
+    }
     if (taskToWait.valid()) {
         taskToWait.wait();
     }
@@ -3710,11 +3754,16 @@ void ImProcCoordinator::stopProcessing()
 
     destroying = true;
     std::shared_future<void> taskToWait;
+    std::function<void()> cancelTask;
     updaterThreadStart.lock();
 
     taskToWait = processingTask;
+    cancelTask = cancelProcessingTask;
     updaterThreadStart.unlock();
 
+    if (cancelTask) {
+        cancelTask();
+    }
     if (taskToWait.valid()) {
         taskToWait.wait();
     }
@@ -3723,6 +3772,13 @@ void ImProcCoordinator::stopProcessing()
 void ImProcCoordinator::signalStop()
 {
     destroying = true;
+    std::function<void()> cancelTask;
+    updaterThreadStart.lock();
+    cancelTask = cancelProcessingTask;
+    updaterThreadStart.unlock();
+    if (cancelTask) {
+        cancelTask();
+    }
 }
 
 void ImProcCoordinator::startProcessing()
@@ -3734,7 +3790,9 @@ void ImProcCoordinator::startProcessing()
     updaterThreadStart.lock();
     if (!destroying && !updaterRunning) {
         updaterRunning = true;
-        processingTask = PreviewProcessingExecutor::instance().enqueue([this]() { process(); });
+        auto task = PreviewProcessingExecutor::instance().enqueue([this]() { process(); });
+        processingTask = task.completion;
+        cancelProcessingTask = std::move(task.cancel);
     }
 
     updaterThreadStart.unlock();
@@ -3748,7 +3806,9 @@ bool ImProcCoordinator::scheduleCropUpdate(Crop* crop)
         return false;
     }
 
-    processingTask = PreviewProcessingExecutor::instance().enqueue([crop]() { crop->fullUpdate(); });
+    auto task = PreviewProcessingExecutor::instance().enqueue([crop]() { crop->fullUpdate(); });
+    processingTask = task.completion;
+    cancelProcessingTask = std::move(task.cancel);
     updaterThreadStart.unlock();
     return true;
 }

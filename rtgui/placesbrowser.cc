@@ -37,7 +37,7 @@ protected:
         Gtk::TreeViewColumn* col;
         int cx, cy;
         if (get_path_at_pos(static_cast<int>(event->x), static_cast<int>(event->y), path, col, cx, cy)) {
-            if (path != hoveredPath_) {
+            if (hoveredPath_.empty() || path != hoveredPath_) {
                 hoveredPath_ = path;
                 if (onHoverChanged) onHoverChanged(path);
                 queue_draw();

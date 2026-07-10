@@ -19,6 +19,7 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
 #include <future>
 #include <memory>
 
@@ -244,6 +245,7 @@ protected:
 
     // members of the updater:
     std::shared_future<void> processingTask;
+    std::function<void()> cancelProcessingTask;
     MyMutex updaterThreadStart;
     MyMutex paramsUpdateMutex;
     int  changeSinceLast;

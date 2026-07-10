@@ -67,7 +67,9 @@ private:
 
     Gtk::Dialog* customDialog_;
     Gtk::ScrolledWindow* dialogScrolled_;
+    Gtk::Viewport* dialogViewport_;
     void openCustomDialog();
+    void restoreCustomControls();
 
     rtengine::ProcEvent EvFilmPresetsEnabled;
     rtengine::ProcEvent EvFilmPresetsPreset;

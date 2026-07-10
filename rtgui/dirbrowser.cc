@@ -997,7 +997,7 @@ bool DirBrowser::onMotionNotify(GdkEventMotion* event)
 
     if (dirtree->get_path_at_pos(static_cast<int>(event->x), static_cast<int>(event->y),
                                   path, column, cell_x, cell_y)) {
-        if (path != hoveredPath_) {
+        if (hoveredPath_.empty() || path != hoveredPath_) {
             hoveredPath_ = path;
 
             if (popupVisible_) {
