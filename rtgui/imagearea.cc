@@ -802,6 +802,10 @@ void ImageArea::setZoom (double zoom)
 
 void ImageArea::initialImageArrived ()
 {
+    // The crop now uses the new image's final dimensions and fit zoom, so it
+    // can replace the viewport-fitted transition preview without a size jump.
+    setQuickPreviewFit(false);
+
     if (mainCropWindow) {
         // If this is the "before" panel, match the "after" panel's zoom and
         // position so the before image shows the same area immediately.

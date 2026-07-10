@@ -3915,6 +3915,11 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
         }
     }
 
+    // close() clears the selection-time fit flag along with the old handler.
+    // Keep every cached or partial frame fitted to the editor viewport until
+    // the new processor delivers its first crop at the final display geometry.
+    iareapanel->imageArea->setQuickPreviewFit(true);
+
     // If in single tab mode, the main crop window is not constructed the very first time
     // since there was no resize event
     if (iareapanel->imageArea->mainCropWindow) {
