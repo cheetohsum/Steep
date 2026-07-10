@@ -770,8 +770,8 @@ struct PreloadManager {
     // Tunables. Keep full-image preloads narrow but useful: directional
     // navigation warms likely forward RAWs first, while the byte cap prevents
     // runaway RAW memory use.
-    static constexpr size_t kMaxBytes    = 1024ULL * 1024 * 1024;
-    static constexpr size_t kMaxEntries  = 3;
+    static constexpr size_t kMaxBytes    = 640ULL * 1024 * 1024;
+    static constexpr size_t kMaxEntries  = 2;
     static constexpr int    kRadius      = 4;
     static constexpr size_t kDirectionalBacktrackEntries = 0;
     static constexpr size_t kDirectionalLeadEntries = 1;
@@ -962,6 +962,7 @@ struct PreloadManager {
     std::unordered_set<std::string> hotWantedSet;
     std::unordered_set<std::string> foregroundHandoffSet;
     std::unordered_set<std::string> foregroundRecycleWantedSet;
+    std::unordered_set<std::string> foregroundPendingSet;
     std::vector<FileBrowser::AdjacentEntry> wantedEntries;
     std::vector<FileBrowser::AdjacentEntry> hotWantedEntries;
     size_t                  totalBytes = 0;
@@ -1282,6 +1283,20 @@ struct PreloadManager {
         cv.notify_all();
     }
 
+    void markForegroundPending(const std::string& fname)
+    {
+        std::lock_guard<std::mutex> lk(mutex);
+        foregroundPendingSet.insert(fname);
+        cv.notify_all();
+    }
+
+    void clearForegroundPending(const std::string& fname)
+    {
+        std::lock_guard<std::mutex> lk(mutex);
+        foregroundPendingSet.erase(fname);
+        cv.notify_all();
+    }
+
     bool cacheDecodedIfHotWanted(
         const std::string& fname,
         rtengine::InitialImage* img,
@@ -1399,8 +1414,8 @@ struct PreloadManager {
 };
 
 struct RecentInitialImageCache {
-    static constexpr size_t kMaxBytes = 768ULL * 1024 * 1024;
-    static constexpr size_t kMaxEntries = 5;
+    static constexpr size_t kMaxBytes = 512ULL * 1024 * 1024;
+    static constexpr size_t kMaxEntries = 3;
 
     struct Entry {
         rtengine::InitialImage* img;
@@ -1948,6 +1963,9 @@ void FilePanel::cancelUnstartedPendingLoads(const char* reason, const Glib::ustr
     }
 
     for (pendingLoad* const pending : canceledLoads) {
+        if (preload_ && pending->thm) {
+            preload_->clearForegroundPending(std::string(pending->thm->getFileName()));
+        }
         if (pending->thm) {
             pending->thm->imageLoad(false);
             pending->thm->decreaseRef();
@@ -2661,9 +2679,11 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
         && recentDirectionalSelectionGapMs_ > 0
         && recentDirectionalSelectionGapMs_ <= PreloadManager::kRapidRawStridePredictiveCadenceMs;
     if (preload_) {
-        foregroundPreloadPriority = preload_->prioritizeForeground(
-            selectedFileNameRaw,
-            !rapidRawStridePredictiveSelection);
+        // A queued prediction has not done useful decode work yet. Give the
+        // clicked file directly to the faster foreground path and retarget the
+        // preloader one image ahead. Only an already-running same-file preload
+        // remains eligible for handoff.
+        foregroundPreloadPriority = preload_->prioritizeForeground(selectedFileNameRaw, false);
         cachedImg = preload_->take(selectedFileNameRaw);
     }
     if (recentInitialImageCache_ && selectedIsRaw) {
@@ -2723,6 +2743,9 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
         }
 
         for (auto* canceled : canceledBeforeStart) {
+            if (preload_ && canceled->thm) {
+                preload_->clearForegroundPending(std::string(canceled->thm->getFileName()));
+            }
             if (canceled->thm) {
                 canceled->thm->imageLoad(false);
                 canceled->thm->decreaseRef();
@@ -2983,6 +3006,9 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
     FILESEL_LOG("[fileSel] +%lldms enqueued (pending=%zu)\n",
            (long long)ms(clk::now()), pendingLoads.size());
     pendingLoadMutex.unlock();
+    if (preload_) {
+        preload_->markForegroundPending(selectedFileNameRaw);
+    }
 
     // Pause preview and thumbnail loading to free IO/CPU for the full image load.
     // Resumes in imageLoaded() after the editor opens.
@@ -3279,6 +3305,9 @@ bool FilePanel::imageLoaded( Thumbnail* thm, ProgressConnector<rtengine::Initial
 
     for (pendingLoad* pl : readyLoads) {
         Thumbnail* const loadThm = pl->thm;
+        if (preload_ && loadThm) {
+            preload_->clearForegroundPending(std::string(loadThm->getFileName()));
+        }
         rtengine::InitialImage* const loadedImage = pl->pc ? pl->pc->returnValue() : nullptr;
         const bool staleSkipped = pl->staleSkipped
             && pl->staleSkipped->load(std::memory_order_acquire);
@@ -3882,7 +3911,8 @@ void FilePanel::preloadAdjacent(
                             }
                         }
                         return state->isHotWanted(e.fnameRaw)
-                            && !state->cache.count(e.fnameRaw);
+                            && !state->cache.count(e.fnameRaw)
+                            && !state->foregroundPendingSet.count(e.fnameRaw);
                     };
 
                     auto findCandidate = [&](bool rawOnly) {
@@ -3900,6 +3930,7 @@ void FilePanel::preloadAdjacent(
                             if (!candidate.isRaw
                                 || !state->isHotWanted(candidate.fnameRaw)
                                 || state->cache.count(candidate.fnameRaw)
+                                || state->foregroundPendingSet.count(candidate.fnameRaw)
                                 || !state->hasRoomForLocked(candidate.fnameRaw, PreloadManager::estimatedEntryBytes(candidate))) {
                                 continue;
                             }
@@ -3932,6 +3963,7 @@ void FilePanel::preloadAdjacent(
                         if (immediateIt->isRaw
                             && state->isHotWanted(immediateIt->fnameRaw)
                             && !state->cache.count(immediateIt->fnameRaw)
+                            && !state->foregroundPendingSet.count(immediateIt->fnameRaw)
                             && state->hasRoomForLocked(immediateIt->fnameRaw, PreloadManager::estimatedEntryBytes(*immediateIt))
                             && immediateDeferred != rawGateDeferredUntil.end()
                             && immediateDeferred->second > candidateNow) {
@@ -4047,7 +4079,12 @@ void FilePanel::preloadAdjacent(
                                 && state->hotWantedEntries.front().fnameRaw == loadFname) {
                                 foregroundQuietMs = state->immediateRawQuietMs;
                             }
-                            includeEditorActivity = !state->rawStrideCanPreloadThroughEditor;
+                            // A low-thread preload that overlaps preview processing can take
+                            // longer than a foreground decode, leaving a later click trapped
+                            // behind its handoff. Wait for the current edit to settle instead;
+                            // the nearest directional RAW can then decode quickly without
+                            // stealing responsiveness from the editor.
+                            includeEditorActivity = true;
                         }
                         loadLease.reset(new RawLoadLease(
                             false,
