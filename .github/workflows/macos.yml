@@ -139,6 +139,8 @@ jobs:
           test -d Steep.app/Contents/Resources/share/icons/rawtherapee
           test -f Steep.app/Contents/Resources/share/models/aidenoise/ShadowWeightedL1.onnx
           test -f Steep.app/Contents/Resources/share/models/segformer_b0_ade20k.onnx
+          onnx_libraries=(Steep.app/Contents/Frameworks/libonnxruntime*.dylib)
+          test -f "${onnx_libraries[0]}"
           sudo rm -rf /Applications/Steep.app
           sudo cp -R Steep.app /Applications
           pkill -f '/Applications/Steep.app/Contents/MacOS/steep' 2>/dev/null || true
@@ -302,6 +304,8 @@ jobs:
           test -d Steep.app/Contents/Resources/share/icons/rawtherapee
           test -f Steep.app/Contents/Resources/share/models/aidenoise/ShadowWeightedL1.onnx
           test -f Steep.app/Contents/Resources/share/models/segformer_b0_ade20k.onnx
+          onnx_libraries=(Steep.app/Contents/Frameworks/libonnxruntime*.dylib)
+          test -f "${onnx_libraries[0]}"
           sudo rm -rf /Applications/Steep.app
           sudo cp -R Steep.app /Applications
           pkill -f '/Applications/Steep.app/Contents/MacOS/steep' 2>/dev/null || true

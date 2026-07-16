@@ -34,6 +34,30 @@ function CheckLink {
     done
 }
 
+function CopyDependencyByName {
+    local dependency_name="$1"
+    local dependency_source=""
+    local search_dir
+
+    for search_dir in "${LOCAL_PREFIX}/lib" /usr/local/lib /opt/homebrew/lib; do
+        if [[ -f "${search_dir}/${dependency_name}" ]]; then
+            dependency_source="${search_dir}/${dependency_name}"
+            break
+        fi
+    done
+
+    if [[ -z "${dependency_source}" ]]; then
+        msgError "Required dependency ${dependency_name} was not found."
+        exit 1
+    fi
+
+    ditto --arch "${arch}" "${dependency_source}" "${LIB}/${dependency_name}" || {
+        msgError "Could not copy ${dependency_source} for architecture ${arch}."
+        exit 1
+    }
+    CheckLink "${LIB}/${dependency_name}"
+}
+
 function ModifyInstallNames {
     find -E "${CONTENTS}" -type f -regex '.*/(steep-cli|steep|.*\.(dylib|so))' | while read -r x; do
         msg "Modifying install names: ${x}"
@@ -213,6 +237,23 @@ cp ${LOCAL_PREFIX}/lib/libomp.dylib "${CONTENTS}/Frameworks"
 
 msg "Copying dependencies from ${GTK_PREFIX}."
 CheckLink "${EXECUTABLE}" 2>&1
+
+# ONNX Runtime uses an @rpath install name, which the generic dependency
+# walker intentionally skips. Copy the exact runtime names referenced by
+# either executable so AI tools work in a self-contained app bundle.
+msg "Copying ONNX Runtime dependencies."
+while read -r onnx_runtime_name; do
+    [[ -n "${onnx_runtime_name}" ]] && CopyDependencyByName "${onnx_runtime_name}"
+done < <(
+    {
+        otool -L "${EXECUTABLE}"
+        otool -L "${EXECUTABLE}-cli"
+    } | awk '$1 ~ /libonnxruntime.*\.dylib$/ {
+        name = $1
+        sub(/^.*\//, "", name)
+        print name
+    }' | sort -u
+)
 
 # Copy libpng16 to the app bundle
 cp ${LOCAL_PREFIX}/lib/libpng16.16.dylib "${CONTENTS}/Frameworks/libpng16.16.dylib"
