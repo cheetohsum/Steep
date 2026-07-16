@@ -141,20 +141,24 @@ jobs:
           test -f Steep.app/Contents/Resources/share/models/segformer_b0_ade20k.onnx
           sudo rm -rf /Applications/Steep.app
           sudo cp -R Steep.app /Applications
-          launch_log="${RUNNER_TEMP}/steep-launch.log"
-          /Applications/Steep.app/Contents/MacOS/steep > "${launch_log}" 2>&1 &
-          app_pid=$!
-          sleep 10
-          if kill -0 "${app_pid}" > /dev/null 2>&1; then
+          pkill -f '/Applications/Steep.app/Contents/MacOS/steep' 2>/dev/null || true
+          open -n -a /Applications/Steep.app
+          app_pid=""
+          for attempt in $(seq 1 30); do
+            app_pid="$(pgrep -f '/Applications/Steep.app/Contents/MacOS/steep' | head -n 1 || true)"
+            test -n "${app_pid}" && break
+            sleep 1
+          done
+          test -n "${app_pid}" && sleep 5
+          if test -n "${app_pid}" && kill -0 "${app_pid}" > /dev/null 2>&1; then
             echo "App launched successfully" >> $GITHUB_STEP_SUMMARY
             kill "${app_pid}"
-            wait "${app_pid}" || true
           else
-            cat "${launch_log}"
+            /usr/bin/log show --last 2m --style compact --predicate 'process == "steep"' | tail -n 300 || true
             for crash_log in "${HOME}"/Library/Logs/DiagnosticReports/[Ss]teep*; do
               test -f "${crash_log}" || continue
               echo "===== ${crash_log} ====="
-              tail -n 200 "${crash_log}"
+              tail -n 1000 "${crash_log}"
             done
             echo "App did not start" >> $GITHUB_STEP_SUMMARY
             exit 1
@@ -300,20 +304,24 @@ jobs:
           test -f Steep.app/Contents/Resources/share/models/segformer_b0_ade20k.onnx
           sudo rm -rf /Applications/Steep.app
           sudo cp -R Steep.app /Applications
-          launch_log="${RUNNER_TEMP}/steep-launch.log"
-          /Applications/Steep.app/Contents/MacOS/steep > "${launch_log}" 2>&1 &
-          app_pid=$!
-          sleep 10
-          if kill -0 "${app_pid}" > /dev/null 2>&1; then
+          pkill -f '/Applications/Steep.app/Contents/MacOS/steep' 2>/dev/null || true
+          open -n -a /Applications/Steep.app
+          app_pid=""
+          for attempt in $(seq 1 30); do
+            app_pid="$(pgrep -f '/Applications/Steep.app/Contents/MacOS/steep' | head -n 1 || true)"
+            test -n "${app_pid}" && break
+            sleep 1
+          done
+          test -n "${app_pid}" && sleep 5
+          if test -n "${app_pid}" && kill -0 "${app_pid}" > /dev/null 2>&1; then
             echo "App launched successfully" >> $GITHUB_STEP_SUMMARY
             kill "${app_pid}"
-            wait "${app_pid}" || true
           else
-            cat "${launch_log}"
+            /usr/bin/log show --last 2m --style compact --predicate 'process == "steep"' | tail -n 300 || true
             for crash_log in "${HOME}"/Library/Logs/DiagnosticReports/[Ss]teep*; do
               test -f "${crash_log}" || continue
               echo "===== ${crash_log} ====="
-              tail -n 200 "${crash_log}"
+              tail -n 1000 "${crash_log}"
             done
             echo "App did not start" >> $GITHUB_STEP_SUMMARY
             exit 1
