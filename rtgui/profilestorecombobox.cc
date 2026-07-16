@@ -24,6 +24,30 @@
 #include "toolpanel.h"
 #include "guiutils.h"
 
+#include <algorithm>
+
+namespace
+{
+
+int rootProfilePriority(const ProfileStoreEntry* entry)
+{
+    if (!entry || entry->type != PSET_FOLDER) {
+        return 2;
+    }
+
+    const auto path = ProfileStore::getInstance()->getPathFromId(entry->folderId);
+    if (path == "${U}") {
+        return 0;
+    }
+    if (path == "${G}") {
+        return 1;
+    }
+
+    return 2;
+}
+
+}
+
 ProfileStoreLabel::ProfileStoreLabel (const ProfileStoreEntry *entry) : Gtk::Label (entry->label), entry (entry)
 {
     set_alignment (0, 0.5);
@@ -64,47 +88,68 @@ const ProfileStoreEntry* ProfileStoreComboBox::getSelectedEntry() const
 /** @brief Recursive method to update the combobox entries */
 void ProfileStoreComboBox::refreshProfileList_ (Gtk::TreeModel::Row *parentRow, int parentFolderId, bool initial, const std::vector<const ProfileStoreEntry*> *entryList)
 {
-    for (auto entry : *entryList) {
-        if (entry->parentFolderId == parentFolderId) {  // filtering the entry of the same folder
-            if (entry->type == PSET_FOLDER) {
-                Glib::ustring folderPath ( ProfileStore::getInstance()->getPathFromId (entry->folderId) );
+    std::vector<const ProfileStoreEntry*> children;
+    for (auto* entry : *entryList) {
+        if (entry->parentFolderId == parentFolderId) {
+            children.push_back(entry);
+        }
+    }
 
-                if (App::get().options().useBundledProfiles || ((folderPath != "${G}" ) && (folderPath != "${U}" ))) {
-                    // creating the new submenu
-                    Gtk::TreeModel::Row newSubMenu;
+    std::stable_sort(children.begin(), children.end(), [initial] (const ProfileStoreEntry* a, const ProfileStoreEntry* b) {
+        if (a->type != b->type) {
+            return a->type == PSET_FOLDER;
+        }
 
-                    if (initial) {
-                        newSubMenu = * (refTreeModel->append());
-                    } else {
-                        newSubMenu = * (refTreeModel->append (parentRow->children()));
-                    }
-
-                    // creating and assigning the custom Label object
-                    newSubMenu[methodColumns.label] = entry->label;
-                    newSubMenu[methodColumns.profileStoreEntry] = entry;
-#if GTK_MAJOR_VERSION == 3 && GTK_MINOR_VERSION == 18
-                    // HACK: Workaround for bug in Gtk+ 3.18...
-                    Gtk::TreeModel::Row menuHeader = * (refTreeModel->append (newSubMenu->children()));
-                    menuHeader[methodColumns.label] = "-";
-                    menuHeader[methodColumns.profileStoreEntry] = entry;
-#endif
-                    refreshProfileList_ (&newSubMenu, entry->folderId, false, entryList);
-                } else {
-                    refreshProfileList_ (parentRow, entry->folderId, true, entryList);
-                }
-            } else {
-                Gtk::TreeModel::Row newItem;
-
-                // creating a menu entry
-                if (initial) {
-                    newItem = * (refTreeModel->append());
-                } else {
-                    newItem = * (refTreeModel->append (parentRow->children()));
-                }
-
-                newItem[methodColumns.label] = entry->label;
-                newItem[methodColumns.profileStoreEntry] = entry;
+        if (initial) {
+            const int aPriority = rootProfilePriority(a);
+            const int bPriority = rootProfilePriority(b);
+            if (aPriority != bPriority) {
+                return aPriority < bPriority;
             }
+        }
+
+        return a->label < b->label;
+    });
+
+    for (auto entry : children) {
+        if (entry->type == PSET_FOLDER) {
+            Glib::ustring folderPath ( ProfileStore::getInstance()->getPathFromId (entry->folderId) );
+
+            if (App::get().options().useBundledProfiles || ((folderPath != "${G}" ) && (folderPath != "${U}" ))) {
+                // creating the new submenu
+                Gtk::TreeModel::Row newSubMenu;
+
+                if (initial) {
+                    newSubMenu = * (refTreeModel->append());
+                } else {
+                    newSubMenu = * (refTreeModel->append (parentRow->children()));
+                }
+
+                // creating and assigning the custom Label object
+                newSubMenu[methodColumns.label] = entry->label;
+                newSubMenu[methodColumns.profileStoreEntry] = entry;
+#if GTK_MAJOR_VERSION == 3 && GTK_MINOR_VERSION == 18
+                // HACK: Workaround for bug in Gtk+ 3.18...
+                Gtk::TreeModel::Row menuHeader = * (refTreeModel->append (newSubMenu->children()));
+                menuHeader[methodColumns.label] = "-";
+                menuHeader[methodColumns.profileStoreEntry] = entry;
+#endif
+                refreshProfileList_ (&newSubMenu, entry->folderId, false, entryList);
+            } else {
+                refreshProfileList_ (parentRow, entry->folderId, true, entryList);
+            }
+        } else {
+            Gtk::TreeModel::Row newItem;
+
+            // creating a menu entry
+            if (initial) {
+                newItem = * (refTreeModel->append());
+            } else {
+                newItem = * (refTreeModel->append (parentRow->children()));
+            }
+
+            newItem[methodColumns.label] = entry->label;
+            newItem[methodColumns.profileStoreEntry] = entry;
         }
     }
 }

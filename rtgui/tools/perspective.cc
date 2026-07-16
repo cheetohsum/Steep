@@ -1233,7 +1233,8 @@ VertexGridSubscriber::VertexGridSubscriber()
         }
     }
 
-    // Create vertex circles (visible + mouse-over)
+    // Keep the visible handles compact while using a larger invisible target
+    // so modifier-click selection is forgiving at any display scale.
     for (int i = 0; i < VERTEX_COUNT; ++i) {
         auto circle = std::unique_ptr<Circle>(new Circle());
         circle->radius = HANDLE_RADIUS;
@@ -1248,8 +1249,16 @@ VertexGridSubscriber::VertexGridSubscriber()
         circle->state = Geometry::NORMAL;
         circle->innerLineWidth = 1.0f;
         visibleGeometry.push_back(circle.get());
-        mouseOverGeometry.push_back(circle.get());
         vertexCircles_.push_back(std::move(circle));
+
+        auto hitCircle = std::unique_ptr<Circle>(new Circle());
+        hitCircle->radius = HANDLE_HIT_RADIUS;
+        hitCircle->filled = true;
+        hitCircle->radiusInImageSpace = false;
+        hitCircle->datum = Geometry::IMAGE;
+        hitCircle->setActive(true);
+        mouseOverGeometry.push_back(hitCircle.get());
+        vertexHitCircles_.push_back(std::move(hitCircle));
     }
 
     // Create grid lines: horizontal + vertical segments
@@ -1291,6 +1300,7 @@ void VertexGridSubscriber::updateGeometry(int iw, int ih)
         double px = (vertices_[i].u + vertices_[i].dx) * iw;
         double py = (vertices_[i].v + vertices_[i].dy) * ih;
         vertexCircles_[i]->center = rtengine::Coord(static_cast<int>(px), static_cast<int>(py));
+        vertexHitCircles_[i]->center = vertexCircles_[i]->center;
         vertexCircles_[i]->state = vertices_[i].selected ? Geometry::ACTIVE : Geometry::NORMAL;
     }
 
@@ -1390,22 +1400,27 @@ bool VertexGridSubscriber::button1Pressed(int modifierKey)
     EditDataProvider* dp = getEditProvider();
     if (!dp || !perspective_) return false;
 
-    // Supplement the button event state with GTK's current modifier snapshot.
-    // Some Linux backends can omit a modifier during rapid modifier-clicks.
+    // Merge both GTK modifier sources. Button-event state can lag behind a
+    // modifier transition on some Windows and Linux input backends.
     GdkModifierType currentModifiers = static_cast<GdkModifierType>(0);
     if (gtk_get_current_event_state(&currentModifiers)) {
         modifierKey |= static_cast<int>(currentModifiers);
+    }
+    if (auto* display = gdk_display_get_default()) {
+        if (auto* keymap = gdk_keymap_get_for_display(display)) {
+            modifierKey |= static_cast<int>(gdk_keymap_get_modifier_state(keymap));
+        }
     }
 
     int objectID = dp->getObject();
     int vertexIdx = vertexAtObject(objectID);
     didDrag_ = false;
     pendingSingleSelect_ = -1;
+    const bool shift = (modifierKey & GDK_SHIFT_MASK) != 0;
+    const bool ctrl = (modifierKey & GDK_CONTROL_MASK) != 0;
+    const bool additive = shift || ctrl;
 
     if (vertexIdx >= 0) {
-        bool shift = (modifierKey & GDK_SHIFT_MASK) != 0;
-        bool ctrl = (modifierKey & GDK_CONTROL_MASK) != 0;
-
         if (!shift && !ctrl && vertices_[vertexIdx].selected) {
             // Clicked an already-selected vertex without modifiers:
             // defer single-select to release so drag keeps multi-selection
@@ -1423,8 +1438,12 @@ bool VertexGridSubscriber::button1Pressed(int modifierKey)
         }
         action = Action::DRAGGING;
     } else {
-        clearSelection();
-        lastSelectedIdx_ = -1;
+        // A narrow miss while adding points should not destroy the current
+        // selection. Plain clicks on the canvas still clear it.
+        if (!additive) {
+            clearSelection();
+            lastSelectedIdx_ = -1;
+        }
         action = Action::NONE;
     }
 

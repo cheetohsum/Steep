@@ -78,6 +78,18 @@ Glib::ustring CropWindow::zoomIntt;
 Glib::ustring CropWindow::zoom100tt;
 Glib::ustring CropWindow::closett;
 
+void CropWindow::refreshEditObjectAt(int x, int y)
+{
+    rtengine::Coord imagePos;
+    screenCoordToImage(x, y, imagePos.x, imagePos.y);
+    iarea->posImage = imagePos;
+    iarea->posScreen.set(x, y);
+
+    rtengine::Coord cropPos;
+    screenCoordToCropCanvas(x, y, cropPos.x, cropPos.y);
+    iarea->setObject(ObjectMOBuffer::getObjectID(cropPos));
+}
+
 CropWindow::CropWindow (ImageArea* parent, bool isLowUpdatePriority_, bool isDetailWindow)
     : ObjectMOBuffer(parent), state(SNormal), press_x(0), press_y(0), action_x(0), action_y(0), pickedObject(-1), pickModifierKey(0), rot_deg(0), onResizeArea(false), deleted(false),
       fitZoomEnabled(true), fitZoom(false), cursor_type(CSArrow), /*isLowUpdatePriority(isLowUpdatePriority_),*/ hoveredPicker(nullptr), cropLabel(Glib::ustring("100%")),
@@ -428,6 +440,17 @@ void CropWindow::buttonPress (int button, int type, int bstate, int x, int y)
                     crop_custom_ratio = 0.f;
                     if ((bstate & GDK_SHIFT_MASK) && cropHandler.cropParams->w > 0 && cropHandler.cropParams->h > 0) {
                         crop_custom_ratio = float(cropHandler.cropParams->w) / float(cropHandler.cropParams->h);
+                    }
+
+                    if ((iarea->getToolMode() == TMHand
+                         || iarea->getToolMode() == TMPerspective
+                         || iarea->getToolMode() == TMPerspectiveGrid)
+                        && editSubscriber
+                        && editSubscriber->getEditingType() == ET_OBJECTS) {
+                        // Resolve from the press location instead of relying on
+                        // a hover-buffer value that can be stale after a
+                        // modifier-key transition.
+                        refreshEditObjectAt(x, y);
                     }
 
                     if (iarea->getToolMode () == TMColorPicker) {

@@ -134,6 +134,7 @@ class CropWindow final : public LWButtonListener, public CropDisplayHandler, pub
     void drawScaledSpotRectangle   (Cairo::RefPtr<Cairo::Context> cr, int rectSize);
     void drawUnscaledSpotRectangle (Cairo::RefPtr<Cairo::Context> cr, int rectSize);
     void drawObservedFrame         (const Cairo::RefPtr<Cairo::Context>& cr);
+    void refreshEditObjectAt       (int x, int y);
     void changeZoom                (int zoom, bool notify = true, int centerx = -1, int centery = -1, bool needsRedraw = true);
     void updateHoveredPicker       (rtengine::Coord *imgPos = nullptr);
     void cycleRGB                  ();

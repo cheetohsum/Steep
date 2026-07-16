@@ -90,6 +90,7 @@ private:
     static constexpr int GRID_SIZE = 10;
     static constexpr int VERTEX_COUNT = GRID_SIZE * GRID_SIZE;
     static constexpr int HANDLE_RADIUS = 3;
+    static constexpr int HANDLE_HIT_RADIUS = 7;
 
     struct GridVertex {
         double u, v;           // base position [0,1]²
@@ -106,6 +107,7 @@ private:
     std::unique_ptr<EditRectangle> canvas_area_;
     std::array<GridVertex, VERTEX_COUNT> vertices_;
     std::vector<std::unique_ptr<Circle>> vertexCircles_;
+    std::vector<std::unique_ptr<Circle>> vertexHitCircles_;
     std::vector<std::unique_ptr<Line>> gridLines_;
     std::array<double, VERTEX_COUNT> startDx_{}, startDy_{};
     int lastSelectedIdx_ = -1;  // anchor for Shift+Ctrl rectangle selection
