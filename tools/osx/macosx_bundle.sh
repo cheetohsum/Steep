@@ -242,9 +242,7 @@ CheckLink "${EXECUTABLE}" 2>&1
 # walker intentionally skips. Copy the exact runtime names referenced by
 # either executable so AI tools work in a self-contained app bundle.
 msg "Copying ONNX Runtime dependencies."
-while read -r onnx_runtime_name; do
-    [[ -n "${onnx_runtime_name}" ]] && CopyDependencyByName "${onnx_runtime_name}"
-done < <(
+onnx_runtime_names="$(
     {
         otool -L "${EXECUTABLE}"
         otool -L "${EXECUTABLE}-cli"
@@ -253,7 +251,10 @@ done < <(
         sub(/^.*\//, "", name)
         print name
     }' | sort -u
-)
+)"
+for onnx_runtime_name in ${onnx_runtime_names}; do
+    [[ -n "${onnx_runtime_name}" ]] && CopyDependencyByName "${onnx_runtime_name}"
+done
 
 # Copy libpng16 to the app bundle
 cp ${LOCAL_PREFIX}/lib/libpng16.16.dylib "${CONTENTS}/Frameworks/libpng16.16.dylib"
