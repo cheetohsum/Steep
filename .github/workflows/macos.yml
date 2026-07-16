@@ -135,10 +135,10 @@ jobs:
       - name: Test-launch the app
         run: |
           cd build
-          test -f Steep.app/Contents/Resources/share/rawtherapee/languages/default
-          test -d Steep.app/Contents/Resources/share/rawtherapee/icons/rawtherapee
-          test -f Steep.app/Contents/Resources/share/rawtherapee/models/aidenoise/ShadowWeightedL1.onnx
-          test -f Steep.app/Contents/Resources/share/rawtherapee/models/segformer_b0_ade20k.onnx
+          test -f Steep.app/Contents/Resources/share/languages/default
+          test -d Steep.app/Contents/Resources/share/icons/rawtherapee
+          test -f Steep.app/Contents/Resources/share/models/aidenoise/ShadowWeightedL1.onnx
+          test -f Steep.app/Contents/Resources/share/models/segformer_b0_ade20k.onnx
           sudo cp -R Steep.app /Applications
           open -a /Applications/Steep.app
           sleep 10
@@ -285,10 +285,10 @@ jobs:
       - name: Test-launch the app
         run: |
           cd build
-          test -f Steep.app/Contents/Resources/share/rawtherapee/languages/default
-          test -d Steep.app/Contents/Resources/share/rawtherapee/icons/rawtherapee
-          test -f Steep.app/Contents/Resources/share/rawtherapee/models/aidenoise/ShadowWeightedL1.onnx
-          test -f Steep.app/Contents/Resources/share/rawtherapee/models/segformer_b0_ade20k.onnx
+          test -f Steep.app/Contents/Resources/share/languages/default
+          test -d Steep.app/Contents/Resources/share/icons/rawtherapee
+          test -f Steep.app/Contents/Resources/share/models/aidenoise/ShadowWeightedL1.onnx
+          test -f Steep.app/Contents/Resources/share/models/segformer_b0_ade20k.onnx
           sudo cp -R Steep.app /Applications
           open -a /Applications/Steep.app
           sleep 10
