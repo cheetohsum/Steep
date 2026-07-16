@@ -139,8 +139,10 @@ jobs:
           test -d Steep.app/Contents/Resources/share/icons/rawtherapee
           test -f Steep.app/Contents/Resources/share/models/aidenoise/ShadowWeightedL1.onnx
           test -f Steep.app/Contents/Resources/share/models/segformer_b0_ade20k.onnx
+          sudo rm -rf /Applications/Steep.app
+          sudo cp -R Steep.app /Applications
           launch_log="${RUNNER_TEMP}/steep-launch.log"
-          Steep.app/Contents/MacOS/steep > "${launch_log}" 2>&1 &
+          /Applications/Steep.app/Contents/MacOS/steep > "${launch_log}" 2>&1 &
           app_pid=$!
           sleep 10
           if kill -0 "${app_pid}" > /dev/null 2>&1; then
@@ -296,8 +298,10 @@ jobs:
           test -d Steep.app/Contents/Resources/share/icons/rawtherapee
           test -f Steep.app/Contents/Resources/share/models/aidenoise/ShadowWeightedL1.onnx
           test -f Steep.app/Contents/Resources/share/models/segformer_b0_ade20k.onnx
+          sudo rm -rf /Applications/Steep.app
+          sudo cp -R Steep.app /Applications
           launch_log="${RUNNER_TEMP}/steep-launch.log"
-          Steep.app/Contents/MacOS/steep > "${launch_log}" 2>&1 &
+          /Applications/Steep.app/Contents/MacOS/steep > "${launch_log}" 2>&1 &
           app_pid=$!
           sleep 10
           if kill -0 "${app_pid}" > /dev/null 2>&1; then
