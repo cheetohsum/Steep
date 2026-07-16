@@ -46,7 +46,7 @@
 #define _stdcall __stdcall
 #endif
 #include <onnxruntime_cxx_api.h>
-#ifdef _WIN32
+#ifdef RT_AI_DENOISE_DIRECTML
 #include <dml_provider_factory.h>
 #endif
 #endif
@@ -682,7 +682,7 @@ void AIDenoiseManager::startDenoising(
                 opts.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
                 opts.DisableMemPattern();
 
-#ifdef _WIN32
+#ifdef RT_AI_DENOISE_DIRECTML
                 if (wantGpu) {
                     try {
                         opts.DisableCpuMemArena();

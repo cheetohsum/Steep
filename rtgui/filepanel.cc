@@ -386,6 +386,8 @@ struct RawLoadGate {
     }
 };
 
+constexpr int RawLoadGate::kForegroundCancelPollMs;
+
 static RawLoadGate g_rawLoadGate;
 
 void noteRawLoadForegroundActivity(const std::string& fname)
@@ -1461,6 +1463,71 @@ struct PreloadManager {
     }
 };
 
+constexpr size_t PreloadManager::kMaxBytes;
+constexpr size_t PreloadManager::kMaxEntries;
+constexpr int PreloadManager::kRadius;
+constexpr size_t PreloadManager::kDirectionalBacktrackEntries;
+constexpr size_t PreloadManager::kDirectionalLeadEntries;
+constexpr int PreloadManager::kThumbnailRefreshRadius;
+constexpr int PreloadManager::kQuickPreviewWarmRadius;
+constexpr int PreloadManager::kStartDelayMs;
+constexpr int PreloadManager::kDirectionalStartDelayMs;
+constexpr int PreloadManager::kRawStrideDirectionalStartDelayMs;
+constexpr int PreloadManager::kInterLoadDelayMs;
+constexpr int PreloadManager::kDirectionalInterLoadDelayMs;
+constexpr int PreloadManager::kRawStrideInterLoadDelayMs;
+constexpr int PreloadManager::kForegroundQuietMs;
+constexpr int PreloadManager::kDirectionalForegroundQuietMs;
+constexpr int PreloadManager::kDirectionalThroughEditorRawQuietMs;
+constexpr int PreloadManager::kRapidDirectionalCadenceMs;
+constexpr int PreloadManager::kRapidDirectionalForegroundQuietMs;
+constexpr int PreloadManager::kRapidImmediateRawForegroundQuietMs;
+constexpr int PreloadManager::kMediumImmediateRawForegroundQuietMs;
+constexpr int PreloadManager::kRawStrideQuickPreviewWarmRadius;
+constexpr int PreloadManager::kRapidDecodeDebounceCadenceMs;
+constexpr int PreloadManager::kRapidDecodeDebounceMinMs;
+constexpr int PreloadManager::kRapidDecodeDebounceMaxMs;
+constexpr int PreloadManager::kRapidDecodeDebounceExtraMs;
+constexpr int PreloadManager::kRapidNonRawDecodeDebounceMinMs;
+constexpr int PreloadManager::kRapidNonRawDecodeDebounceMaxMs;
+constexpr int PreloadManager::kRapidNonRawDecodeDebounceExtraMs;
+constexpr unsigned PreloadManager::kRapidNonRawDecodeDebounceRunLength;
+constexpr int PreloadManager::kDirectionalScrubDecodeDebounceCadenceMs;
+constexpr int PreloadManager::kDirectionalScrubDecodeDebounceMinMs;
+constexpr int PreloadManager::kDirectionalScrubDecodeDebounceMaxMs;
+constexpr int PreloadManager::kDirectionalScrubDecodeDebounceExtraMs;
+constexpr int PreloadManager::kMediumDirectionalScrubDecodeDebounceExtraMs;
+constexpr unsigned PreloadManager::kRawScrubCoalesceRunLength;
+constexpr int PreloadManager::kRawScrubSettleMinMs;
+constexpr int PreloadManager::kRawScrubSettleMaxMs;
+constexpr int PreloadManager::kRawScrubSettlePaddingMs;
+constexpr int PreloadManager::kFastFujiRapidScrubDecodeDelayMs;
+constexpr int PreloadManager::kFastFujiQueuedScrubDecodeDelayMs;
+constexpr int PreloadManager::kFastFujiSustainedScrubDecodeDelayMs;
+constexpr unsigned PreloadManager::kFastFujiSustainedScrubRunLength;
+constexpr unsigned PreloadManager::kDirectionalScrubDecodeDebounceRunLength;
+constexpr int PreloadManager::kMediumRawStrideThroughEditorMinCadenceMs;
+constexpr int PreloadManager::kThroughEditorRawPreloadThreads;
+constexpr int PreloadManager::kThroughEditorRawFullSpeedQuietMs;
+constexpr int PreloadManager::kRapidRawStridePredictiveCadenceMs;
+constexpr int PreloadManager::kRapidRawStridePredictiveStartDelayMs;
+constexpr int PreloadManager::kRapidRawStridePredictiveRawQuietMs;
+constexpr int PreloadManager::kRapidRawStridePredictiveRetryMs;
+constexpr int PreloadManager::kRapidRawStrideForegroundIntentLeadMs;
+constexpr int PreloadManager::kMediumRawStridePredictiveRetryMs;
+constexpr unsigned PreloadManager::kRapidRawStridePredictiveRunLength;
+constexpr int PreloadManager::kNonRawForegroundQuietMs;
+constexpr int PreloadManager::kDirectionalHintKeepAliveMs;
+constexpr int PreloadManager::kPreloadRetryMs;
+constexpr int PreloadManager::kPreloadBusyRetryMs;
+constexpr int PreloadManager::kRapidHotRawPreloadBusyRetryCadenceMs;
+constexpr int PreloadManager::kRapidHotRawPreloadBusyRetryMs;
+constexpr int PreloadManager::kDelayedRawPreloadReadyPollMs;
+constexpr int PreloadManager::kDelayedForegroundPreloadHoldoffMs;
+constexpr int PreloadManager::kCachedOpenPreloadSettleMs;
+constexpr int PreloadManager::kCachedOpenPreloadStartDelayMs;
+constexpr size_t PreloadManager::kFallbackEntryBytes;
+
 struct RecentInitialImageCache {
     static constexpr size_t kMaxBytes = 512ULL * 1024 * 1024;
     static constexpr size_t kMaxEntries = 3;
@@ -1576,6 +1643,9 @@ struct RecentInitialImageCache {
         }
     }
 };
+
+constexpr size_t RecentInitialImageCache::kMaxBytes;
+constexpr size_t RecentInitialImageCache::kMaxEntries;
 
 #ifdef _WIN32
 struct PreloadWorkerPriorityHandle {

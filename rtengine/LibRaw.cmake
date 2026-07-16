@@ -12,15 +12,26 @@ else()
 endif()
 
 if(WIN32)
-    # MSYS2 has a broken setup and apparently requires to run shells as login
-    # shell in order to get its emulation layers set up properly so that
-    # auto(re)conf works properly
-    set(SHELLARGS "-l")
-    # A login shell can reset PATH and drop the MinGW runtime directory. Keep
-    # it explicit for LibRaw's configure tests so absolute compiler paths can
-    # still find assembler/linker/runtime DLLs.
-    set(MSYS2_PATH_PREFIX "PATH=/mingw64/bin:/usr/bin:/bin:$PATH")
-    set(MSYS2_ACLOCAL_PATH "ACLOCAL_PATH=/mingw64/share/aclocal:/usr/share/aclocal")
+    # CMake is already running inside MSYS2. A nested login shell can change to
+    # $HOME and make Autoreconf operate on the wrong directory, so keep this
+    # shell non-login and provide the toolchain paths explicitly.
+    set(SHELLARGS "")
+    set(MSYS2_RUNTIME_PREFIX "$ENV{MSYSTEM_PREFIX}")
+    if(NOT MSYS2_RUNTIME_PREFIX MATCHES "^/")
+        string(
+            REGEX MATCH
+            "/(mingw64|ucrt64|clang64|clangarm64)/bin/"
+            MSYS2_COMPILER_PREFIX_MATCH
+            "${CMAKE_C_COMPILER}"
+        )
+        if(CMAKE_MATCH_1)
+            set(MSYS2_RUNTIME_PREFIX "/${CMAKE_MATCH_1}")
+        else()
+            set(MSYS2_RUNTIME_PREFIX "/mingw64")
+        endif()
+    endif()
+    set(MSYS2_PATH_PREFIX "PATH=${MSYS2_RUNTIME_PREFIX}/bin:/usr/bin:/bin:$PATH")
+    set(MSYS2_ACLOCAL_PATH "ACLOCAL_PATH=${MSYS2_RUNTIME_PREFIX}/share/aclocal:/usr/share/aclocal")
 else()
     # let's not import login stuff to not pollute nor slow down the build
     set(SHELLARGS "")
@@ -35,6 +46,11 @@ add_custom_target(
 
 # Configuration flags.
 set(CONFIGURE_FLAGS "--disable-examples")
+if(WIN32)
+    # Steep links LibRaw statically. Avoid building unused DLLs, which also
+    # require standalone Winsock linkage that the final Steep target supplies.
+    set(CONFIGURE_FLAGS "${CONFIGURE_FLAGS} --disable-shared --enable-static")
+endif()
 set(LIBRAW_CXX_FLAGS "${CXX_FLAGS} -std=gnu++11 -Wno-error=unknown-pragmas")
 # Let the configure script handle OpenMP flags.
 string(REPLACE "${OpenMP_CXX_FLAGS}" "" LIBRAW_CXX_FLAGS "${LIBRAW_CXX_FLAGS}")

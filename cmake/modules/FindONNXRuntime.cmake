@@ -47,6 +47,22 @@ find_package_handle_standard_args(ONNXRuntime
 if(ONNXRuntime_FOUND)
     set(ONNXRuntime_INCLUDE_DIRS ${ONNXRuntime_INCLUDE_DIR})
     set(ONNXRuntime_LIBRARIES ${ONNXRuntime_LIBRARY})
+    set(ONNXRuntime_DML_FOUND FALSE)
+
+    if(WIN32)
+        find_path(ONNXRuntime_DML_INCLUDE_DIR
+            NAMES dml_provider_factory.h
+            PATHS
+                ${ONNXRuntime_ROOT}
+                ${ONNXRUNTIME_ROOT_DIR}
+                ${ONNXRuntime_INCLUDE_DIR}
+            PATH_SUFFIXES
+                include
+        )
+        if(ONNXRuntime_DML_INCLUDE_DIR)
+            set(ONNXRuntime_DML_FOUND TRUE)
+        endif()
+    endif()
 
     if(NOT TARGET onnxruntime::onnxruntime)
         if(WIN32)
@@ -82,4 +98,9 @@ if(ONNXRuntime_FOUND)
     endif()
 endif()
 
-mark_as_advanced(ONNXRuntime_INCLUDE_DIR ONNXRuntime_LIBRARY ONNXRuntime_DLL)
+mark_as_advanced(
+    ONNXRuntime_INCLUDE_DIR
+    ONNXRuntime_LIBRARY
+    ONNXRuntime_DLL
+    ONNXRuntime_DML_INCLUDE_DIR
+)

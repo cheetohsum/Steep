@@ -30,8 +30,8 @@ jobs:
         build_type: [release, debug]
         arch: [x86_64, arm64]
     env:
-      MSYS2_ENV_NAME: ${{ matrix.arch == 'arm64' && 'CLANGARM64' || 'MINGW64' }}
-      MSYS2_ENV_PREFIX: ${{ matrix.arch == 'arm64' && 'clangarm64' || 'mingw64' }}
+      MSYS2_ENV_NAME: ${{ matrix.arch == 'arm64' && 'CLANGARM64' || 'UCRT64' }}
+      MSYS2_ENV_PREFIX: ${{ matrix.arch == 'arm64' && 'clangarm64' || 'ucrt64' }}
     outputs:
       ARTIFACT_NAME_PREFIX: ${{ steps.prepare-artifact-name.outputs.ARTIFACT_NAME_PREFIX }}
       REF_NAME_FILTERED: ${{ steps.prepare-artifact-name.outputs.REF_NAME_FILTERED }}
@@ -84,39 +84,26 @@ jobs:
 
       - name: Install ONNX Runtime
         run: |
-          ONNX_VERSION="1.17.1"
-          if [ "${{matrix.arch}}" == "arm64" ]; then
+          if [ "${{matrix.arch}}" == "x86_64" ]; then
+            ONNX_DIR="$(pwd)/ext/onnxruntime"
+            echo "Using bundled ONNX Runtime with DirectML from ${ONNX_DIR}."
+          else
+            ONNX_VERSION="1.17.1"
             ONNX_ARCHIVE="onnxruntime-win-arm64-${ONNX_VERSION}.zip"
-          else
-            ONNX_ARCHIVE="onnxruntime-win-x64-${ONNX_VERSION}.zip"
-          fi
-          echo "Downloading ONNX Runtime ${ONNX_VERSION} for ${{matrix.arch}}."
-          curl -L -o onnxruntime.zip \
-            "https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/${ONNX_ARCHIVE}"
-          echo "Extracting ONNX Runtime."
-          unzip -q onnxruntime.zip
-          ONNX_DIR="$(pwd)/$(ls -d onnxruntime-win-*)"
-          echo "ONNX Runtime extracted to ${ONNX_DIR}"
+            echo "Downloading ONNX Runtime ${ONNX_VERSION} for ${{matrix.arch}}."
+            curl -L -o onnxruntime.zip \
+              "https://github.com/microsoft/onnxruntime/releases/download/v${ONNX_VERSION}/${ONNX_ARCHIVE}"
+            echo "Extracting ONNX Runtime."
+            unzip -q onnxruntime.zip
+            ONNX_DIR="$(pwd)/$(ls -d onnxruntime-win-*)"
+            echo "ONNX Runtime extracted to ${ONNX_DIR}"
 
-          echo "Patching ONNX Runtime header for MinGW compatibility."
-          # ONNX uses _stdcall (MSVC keyword); GCC only recognizes __stdcall.
-          # Replace _stdcall with nothing (safe on x64/ARM64).
-          sed -i 's/#define ORT_API_CALL _stdcall/#define ORT_API_CALL/' \
-            "${ONNX_DIR}/include/onnxruntime_c_api.h"
-          # Also handle __stdcall variant just in case.
-          sed -i 's/#define ORT_API_CALL __stdcall/#define ORT_API_CALL/' \
-            "${ONNX_DIR}/include/onnxruntime_c_api.h"
-
-          echo "Generating MinGW-compatible import library."
-          cd "${ONNX_DIR}/lib"
-          gendef onnxruntime.dll 2>/dev/null || true
-          if [ -f onnxruntime.def ]; then
-            dlltool -d onnxruntime.def -l libonnxruntime.dll.a -D onnxruntime.dll
-            echo "MinGW import library created."
-          else
-            echo "gendef not available or failed; will link against .lib directly."
+            echo "Patching ONNX Runtime header for MinGW compatibility."
+            sed -i 's/#define ORT_API_CALL _stdcall/#define ORT_API_CALL/' \
+              "${ONNX_DIR}/include/onnxruntime_c_api.h"
+            sed -i 's/#define ORT_API_CALL __stdcall/#define ORT_API_CALL/' \
+              "${ONNX_DIR}/include/onnxruntime_c_api.h"
           fi
-          cd -
 
           echo "ONNX_DIR=${ONNX_DIR}" >> "$(cygpath -u $GITHUB_ENV)"
 
@@ -177,12 +164,9 @@ jobs:
           echo "Copying DLLs and EXEs."
 
           cd ./bin
-          cp \
-            "gdbus.exe" \
-            "gspawn-win64-helper.exe" \
-            "gspawn-win64-helper-console.exe" \
-            ${DLLS[*]} \
-            "$BUILD_DIR"
+          cp "gdbus.exe" ${DLLS[*]} "$BUILD_DIR"
+          find . -maxdepth 1 -type f -name 'gspawn-win*-helper*.exe' \
+            -exec cp '{}' "$BUILD_DIR" ';'
           cd -
 
           echo "Copying Adwaita theme."
@@ -208,34 +192,13 @@ jobs:
           mkdir -p "$BUILD_DIR/share/glib-2.0/schemas"
           cp 'share/glib-2.0/schemas/gschemas.compiled' "$BUILD_DIR/share/glib-2.0/schemas"
 
-          echo "Copying ONNX Runtime DLL."
-          if [ -f "${ONNX_DIR}/lib/onnxruntime.dll" ]; then
-            cp "${ONNX_DIR}/lib/onnxruntime.dll" "$BUILD_DIR"
-          fi
-
-          # Bundle embedded Python + AI Denoise deps (x86_64 only; no arm64 embed available)
-          if [ "${{matrix.arch}}" == "x86_64" ]; then
-            echo "Bundling embedded Python with AI Denoise dependencies."
-            PYTHON_VERSION="3.11.9"
-            PYTHON_DIR="$BUILD_DIR/python"
-            mkdir -p "$PYTHON_DIR"
-            curl -L -o python-embed.zip \
-              "https://www.python.org/ftp/python/${PYTHON_VERSION}/python-${PYTHON_VERSION}-embed-amd64.zip"
-            unzip -q python-embed.zip -d "$PYTHON_DIR"
-            sed -i 's/#import site/import site/' "$PYTHON_DIR/python311._pth"
-            curl -L -o "$PYTHON_DIR/get-pip.py" https://bootstrap.pypa.io/get-pip.py
-            "$PYTHON_DIR/python.exe" "$PYTHON_DIR/get-pip.py" --no-warn-script-location
-            # Install only what the self-contained CLI script needs.
-            # Use --extra-index-url for torch CPU wheels so pip still
-            # checks PyPI for all other packages.
-            "$PYTHON_DIR/python.exe" -m pip install \
-              torch --extra-index-url https://download.pytorch.org/whl/cpu \
-              tifffile platformdirs requests numpy \
-              git+https://github.com/ProGamerGov/blended-tiling.git \
-              --no-warn-script-location
-            rm -f "$PYTHON_DIR/get-pip.py"
-            echo "AI Denoise dependencies bundled successfully."
-          fi
+          echo "Copying ONNX Runtime dependencies."
+          for dll in onnxruntime.dll DirectML.dll; do
+            dll_path="$(find "${ONNX_DIR}" -maxdepth 2 -type f -name "${dll}" -print -quit)"
+            if [ -n "${dll_path}" ]; then
+              cp "${dll_path}" "$BUILD_DIR"
+            fi
+          done
 
           echo "Creating GTK settings.ini."
           mkdir -p "$BUILD_DIR/share/gtk-3.0/"
@@ -449,7 +412,7 @@ jobs:
         working-directory: build/${{env.ARTIFACT_NAME}}
         run: |
           echo "Launching CLI."
-          ./steep-cli.exe
+          ./steep-cli.exe --version
 
       - name: Launch GUI
         working-directory: build/${{env.ARTIFACT_NAME}}
@@ -466,7 +429,7 @@ jobs:
 
           echo "Checking if app launched successfully."
           if [ -f "$STATUS_FILE" ]; then
-            $STATUS=$(cat "$STATUS_FILE")
+            STATUS=$(cat "$STATUS_FILE")
             if [ "$STATUS" == "$FAILURE_MESSAGE" ]; then
               echo "App failed to start."
               exit 1

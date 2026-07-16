@@ -121,9 +121,15 @@ macro(rt_setup_dependencies)
     endif()
 
     # AI Denoise uses ONNX Runtime for native inference (replaces Python).
-    # Try the bundled copy at ext/onnxruntime/ first, then fall back to system.
+    # The bundled runtime is a Windows x86_64 DirectML build. Other platforms
+    # and architectures must use a matching system or workflow-provided build.
     if(NOT TARGET onnxruntime::onnxruntime)
-        if(EXISTS "${CMAKE_SOURCE_DIR}/ext/onnxruntime/include/onnxruntime_c_api.h")
+        string(TOLOWER "${CMAKE_SYSTEM_PROCESSOR}" RT_SYSTEM_PROCESSOR_LOWER)
+        if(
+            WIN32
+            AND RT_SYSTEM_PROCESSOR_LOWER MATCHES "^(amd64|x86_64|x64)$"
+            AND EXISTS "${CMAKE_SOURCE_DIR}/ext/onnxruntime/include/onnxruntime_c_api.h"
+        )
             set(ONNXRuntime_ROOT "${CMAKE_SOURCE_DIR}/ext/onnxruntime")
             find_package(ONNXRuntime QUIET)
         else()
