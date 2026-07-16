@@ -144,8 +144,33 @@ void ProfileStore::_parseProfiles ()
         parseDir (p2, virtualPath, currDir, 0, 0, displayLevel0);
     }
 
-    // sort profiles
-    std::sort (entries.begin(), entries.end(), SortProfiles() );
+    // Keep personal profiles ahead of bundled profiles at the root. Both
+    // folders have the same parent, so a plain label sort puts "Bundled"
+    // first even though the user profile tree is parsed first.
+    const auto rootFolderPriority = [this] (const ProfileStoreEntry* entry) {
+        if (entry->parentFolderId == 0 && entry->type == PSET_FOLDER) {
+            const auto& path = folders.at(entry->folderId);
+
+            if (path == "${U}") {
+                return 0;
+            }
+            if (path == "${G}") {
+                return 1;
+            }
+        }
+
+        return 2;
+    };
+
+    std::sort(entries.begin(), entries.end(), [&rootFolderPriority] (const ProfileStoreEntry* a, const ProfileStoreEntry* b) {
+        if (a->parentFolderId != b->parentFolderId) {
+            return a->parentFolderId < b->parentFolderId;
+        }
+
+        const int aPriority = rootFolderPriority(a);
+        const int bPriority = rootFolderPriority(b);
+        return aPriority == bPriority ? a->label < b->label : aPriority < bPriority;
+    });
 
     // entries and partProfiles are empty, but the entry and profiles already exist (they have survived to clearFileList and clearProfileList)
     if (!internalDefaultEntry) {

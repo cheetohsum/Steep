@@ -1390,6 +1390,13 @@ bool VertexGridSubscriber::button1Pressed(int modifierKey)
     EditDataProvider* dp = getEditProvider();
     if (!dp || !perspective_) return false;
 
+    // Supplement the button event state with GTK's current modifier snapshot.
+    // Some Linux backends can omit a modifier during rapid modifier-clicks.
+    GdkModifierType currentModifiers = static_cast<GdkModifierType>(0);
+    if (gtk_get_current_event_state(&currentModifiers)) {
+        modifierKey |= static_cast<int>(currentModifiers);
+    }
+
     int objectID = dp->getObject();
     int vertexIdx = vertexAtObject(objectID);
     didDrag_ = false;
@@ -1404,7 +1411,9 @@ bool VertexGridSubscriber::button1Pressed(int modifierKey)
             // defer single-select to release so drag keeps multi-selection
             pendingSingleSelect_ = vertexIdx;
         } else {
-            selectVertex(vertexIdx, ctrl, shift);
+            // Shift-click and Ctrl-click both toggle individual vertices.
+            // Shift+Ctrl keeps rectangle selection available from the anchor.
+            selectVertex(vertexIdx, shift || ctrl, shift && ctrl);
         }
 
         // Save start displacements for all vertices

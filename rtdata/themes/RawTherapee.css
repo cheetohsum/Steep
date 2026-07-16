@@ -888,6 +888,15 @@ button.Right {
     font-size: 0.8em;
 }
 
+#PresetListPanel .preset-category-header {
+    padding: 3px 4px;
+    border-radius: 3px;
+}
+
+#PresetListPanel .preset-category-header:hover {
+    background-color: rgba(130,170,230,0.08);
+}
+
 #PresetListPanel .preset-drop-target {
     background-color: rgba(100,160,255,0.15);
     border-radius: 4px;
@@ -2542,4 +2551,3 @@ progressbar progress {
 }
 
 /*** end Queue Overlay Drawer ******************************************************************/
-

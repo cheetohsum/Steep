@@ -95,6 +95,40 @@ void presetPanelLog(const char* fmt, ...)
     std::fflush(f);
 }
 
+Glib::ustring profileCategoryIcon(const ProfileStoreEntry* entry)
+{
+    if (!entry) {
+        return "folder-closed-small";
+    }
+
+    const auto path = ProfileStore::getInstance()->getPathFromId(entry->folderId);
+    if (path == "${U}") {
+        return "profile-user";
+    }
+    if (path == "${G}") {
+        return "profile-bundled";
+    }
+
+    return "folder-closed-small";
+}
+
+Glib::ustring profileCardIcon(const ProfileStoreEntry* entry)
+{
+    if (!entry) {
+        return "profile-filled";
+    }
+
+    const auto path = ProfileStore::getInstance()->getPathFromId(entry->parentFolderId);
+    if (path.compare(0, 4, "${U}") == 0) {
+        return "profile-user";
+    }
+    if (path.compare(0, 4, "${G}") == 0) {
+        return "profile-bundled";
+    }
+
+    return "profile-filled";
+}
+
 }
 
 PartialPasteDlg* PresetListPanel::partialProfileDlg_ = nullptr;
@@ -194,7 +228,7 @@ PresetListPanel::PresetListPanel() :
     {
         auto* vbox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 1));
         vbox->set_halign(Gtk::ALIGN_CENTER);
-        auto* img = Gtk::manage(new Gtk::Image());
+        auto* img = Gtk::manage(new RTImage("profile-partial", Gtk::ICON_SIZE_LARGE_TOOLBAR));
         img->set_size_request(-1, THUMB_HEIGHT);
         img->set_halign(Gtk::ALIGN_CENTER);
         vbox->pack_start(*img, Gtk::PACK_SHRINK);
@@ -222,7 +256,7 @@ PresetListPanel::PresetListPanel() :
     {
         auto* vbox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 1));
         vbox->set_halign(Gtk::ALIGN_CENTER);
-        auto* img = Gtk::manage(new Gtk::Image());
+        auto* img = Gtk::manage(new RTImage("preset-save", Gtk::ICON_SIZE_LARGE_TOOLBAR));
         img->set_size_request(-1, THUMB_HEIGHT);
         img->set_halign(Gtk::ALIGN_CENTER);
         vbox->pack_start(*img, Gtk::PACK_SHRINK);
@@ -335,12 +369,15 @@ void PresetListPanel::buildContent()
                 catBox->get_style_context()->add_class("preset-category");
 
                 auto* headerEvBox = Gtk::manage(new Gtk::EventBox());
+                headerEvBox->get_style_context()->add_class("preset-category-header");
                 auto* headerRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
-                auto* arrowLabel = Gtk::manage(new Gtk::Label());
+                auto* arrowImage = Gtk::manage(new RTImage("expander-open-small", Gtk::ICON_SIZE_MENU));
+                auto* categoryImage = Gtk::manage(new RTImage(profileCategoryIcon(entry), Gtk::ICON_SIZE_MENU));
                 auto* nameLabel = Gtk::manage(new Gtk::Label(entry->label));
                 nameLabel->get_style_context()->add_class("preset-category-label");
                 nameLabel->set_xalign(0.0);
-                headerRow->pack_start(*arrowLabel, Gtk::PACK_SHRINK);
+                headerRow->pack_start(*arrowImage, Gtk::PACK_SHRINK);
+                headerRow->pack_start(*categoryImage, Gtk::PACK_SHRINK);
                 headerRow->pack_start(*nameLabel, Gtk::PACK_EXPAND_WIDGET);
                 headerEvBox->add(*headerRow);
 
@@ -354,16 +391,16 @@ void PresetListPanel::buildContent()
                     expanded = expIt->second;
                 }
                 revealer->set_reveal_child(expanded);
-                arrowLabel->set_text(expanded ? "\xe2\x96\xbe" : "\xe2\x96\xb8");
+                arrowImage->set_from_icon_name(expanded ? "expander-open-small" : "expander-closed-small");
                 categoryExpanded_[entry->folderId] = expanded;
 
                 int folderId = entry->folderId;
                 headerEvBox->signal_button_press_event().connect(
-                    [this, revealer, arrowLabel, folderId](GdkEventButton* event) -> bool {
+                    [this, revealer, arrowImage, folderId](GdkEventButton* event) -> bool {
                         if (event->button == 1) {
                             bool nowExpanded = !revealer->get_reveal_child();
                             revealer->set_reveal_child(nowExpanded);
-                            arrowLabel->set_text(nowExpanded ? "\xe2\x96\xbe" : "\xe2\x96\xb8");
+                            arrowImage->set_from_icon_name(nowExpanded ? "expander-open-small" : "expander-closed-small");
                             categoryExpanded_[folderId] = nowExpanded;
                             return true;
                         }
@@ -440,12 +477,15 @@ void PresetListPanel::buildCategoryContent(
             catBox->get_style_context()->add_class("preset-category");
 
             auto* headerEvBox = Gtk::manage(new Gtk::EventBox());
+            headerEvBox->get_style_context()->add_class("preset-category-header");
             auto* headerRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
-            auto* arrowLabel = Gtk::manage(new Gtk::Label());
+            auto* arrowImage = Gtk::manage(new RTImage("expander-open-small", Gtk::ICON_SIZE_MENU));
+            auto* categoryImage = Gtk::manage(new RTImage(profileCategoryIcon(folder), Gtk::ICON_SIZE_MENU));
             auto* nameLabel = Gtk::manage(new Gtk::Label(folder->label));
             nameLabel->get_style_context()->add_class("preset-category-label");
             nameLabel->set_xalign(0.0);
-            headerRow->pack_start(*arrowLabel, Gtk::PACK_SHRINK);
+            headerRow->pack_start(*arrowImage, Gtk::PACK_SHRINK);
+            headerRow->pack_start(*categoryImage, Gtk::PACK_SHRINK);
             headerRow->pack_start(*nameLabel, Gtk::PACK_EXPAND_WIDGET);
             headerEvBox->add(*headerRow);
 
@@ -459,16 +499,16 @@ void PresetListPanel::buildCategoryContent(
                 expanded = expIt->second;
             }
             revealer->set_reveal_child(expanded);
-            arrowLabel->set_text(expanded ? "\xe2\x96\xbe" : "\xe2\x96\xb8");
+            arrowImage->set_from_icon_name(expanded ? "expander-open-small" : "expander-closed-small");
             categoryExpanded_[folder->folderId] = expanded;
 
             int folderId = folder->folderId;
             headerEvBox->signal_button_press_event().connect(
-                [this, revealer, arrowLabel, folderId](GdkEventButton* event) -> bool {
+                [this, revealer, arrowImage, folderId](GdkEventButton* event) -> bool {
                     if (event->button == 1) {
                         bool nowExpanded = !revealer->get_reveal_child();
                         revealer->set_reveal_child(nowExpanded);
-                        arrowLabel->set_text(nowExpanded ? "\xe2\x96\xbe" : "\xe2\x96\xb8");
+                        arrowImage->set_from_icon_name(nowExpanded ? "expander-open-small" : "expander-closed-small");
                         categoryExpanded_[folderId] = nowExpanded;
                         return true;
                     }
@@ -504,7 +544,7 @@ Gtk::Button* PresetListPanel::createCard(const ProfileStoreEntry* entry)
     auto* vbox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
     vbox->set_halign(Gtk::ALIGN_CENTER);
 
-    auto* img = Gtk::manage(new Gtk::Image());
+    auto* img = Gtk::manage(new RTImage(profileCardIcon(entry), Gtk::ICON_SIZE_LARGE_TOOLBAR));
     img->set_size_request(-1, THUMB_HEIGHT);
     img->set_halign(Gtk::ALIGN_CENTER);
     vbox->pack_start(*img, Gtk::PACK_SHRINK);
