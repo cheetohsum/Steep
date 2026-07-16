@@ -257,6 +257,10 @@ int processLineParams ( int argc, char **argv )
         currParam = currParam.substr (1, currParam.length() - 2);
 #endif
 
+        if (currParam == "--version") {
+            return 0;
+        }
+
         if ( currParam.at (0) == '-' && currParam.size() > 1) {
             switch ( currParam.at (1) ) {
                 case '-':
