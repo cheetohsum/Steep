@@ -24,13 +24,69 @@ function msgError {
 }
 
 function GetDependencies {
-    otool -L "$1" | awk 'NR >= 2 && $1 !~ /^(\/usr\/lib|\/System|@executable_path|@rpath)\// { print $1 }'  2>&1
+    otool -L "$1" | awk 'NR >= 2 && $1 !~ /^(\/usr\/lib|\/System)\// { print $1 }'  2>&1
+}
+
+function ResolveDependency {
+    local binary="$1"
+    local dependency="$2"
+    local relative_name=""
+    local candidate=""
+    local search_dir=""
+
+    case "${dependency}" in
+        @loader_path/*)
+            candidate="$(dirname "${binary}")/${dependency#@loader_path/}"
+            [[ -f "${candidate}" ]] && { printf "%s\n" "${candidate}"; return 0; }
+            relative_name="${dependency#@loader_path/}"
+            ;;
+        @executable_path/*)
+            candidate="${MACOS}/${dependency#@executable_path/}"
+            [[ -f "${candidate}" ]] && { printf "%s\n" "${candidate}"; return 0; }
+            relative_name="${dependency#@executable_path/}"
+            ;;
+        @rpath/*)
+            relative_name="${dependency#@rpath/}"
+            ;;
+        *)
+            [[ -f "${dependency}" ]] && { printf "%s\n" "${dependency}"; return 0; }
+            relative_name="$(basename "${dependency}")"
+            ;;
+    esac
+
+    relative_name="$(basename "${relative_name}")"
+    for search_dir in "$(dirname "${binary}")" "${LOCAL_PREFIX}/lib" "${GTK_PREFIX}/lib" /usr/local/lib /opt/homebrew/lib; do
+        candidate="${search_dir}/${relative_name}"
+        if [[ -f "${candidate}" ]]; then
+            printf "%s\n" "${candidate}"
+            return 0
+        fi
+    done
+
+    for search_dir in "${LOCAL_PREFIX}/Cellar" /usr/local/Cellar /opt/homebrew/Cellar; do
+        [[ -d "${search_dir}" ]] || continue
+        candidate="$(find "${search_dir}" -path "*/lib/${relative_name}" -print -quit)"
+        if [[ -f "${candidate}" ]]; then
+            printf "%s\n" "${candidate}"
+            return 0
+        fi
+    done
+
+    return 1
 }
 
 function CheckLink {
     GetDependencies "$1" | while read -r; do
+        local source=""
         local dest="${LIB}/$(basename "${REPLY}")"
-        test -f "${dest}" || { ditto --arch "${arch}" "${REPLY}" "${dest}"; CheckLink "${dest}"; }
+        source="$(ResolveDependency "$1" "${REPLY}")" || {
+            msgError "Required dependency ${REPLY} referenced by $1 was not found."
+            exit 1
+        }
+        if [[ ! -f "${dest}" ]]; then
+            ditto --arch "${arch}" "${source}" "${dest}" || exit 1
+            CheckLink "${dest}" || exit 1
+        fi
     done
 }
 
@@ -55,7 +111,7 @@ function CopyDependencyByName {
         msgError "Could not copy ${dependency_source} for architecture ${arch}."
         exit 1
     }
-    CheckLink "${LIB}/${dependency_name}"
+    CheckLink "${LIB}/${dependency_name}" || exit 1
 }
 
 function ModifyInstallNames {
@@ -236,11 +292,10 @@ fi
 cp ${LOCAL_PREFIX}/lib/libomp.dylib "${CONTENTS}/Frameworks"
 
 msg "Copying dependencies from ${GTK_PREFIX}."
-CheckLink "${EXECUTABLE}" 2>&1
+CheckLink "${EXECUTABLE}" 2>&1 || exit 1
 
-# ONNX Runtime uses an @rpath install name, which the generic dependency
-# walker intentionally skips. Copy the exact runtime names referenced by
-# either executable so AI tools work in a self-contained app bundle.
+# Keep an explicit ONNX Runtime pass so both executables' exact versioned
+# runtime names are guaranteed to be present for the bundled AI tools.
 msg "Copying ONNX Runtime dependencies."
 onnx_runtime_names="$(
     {
