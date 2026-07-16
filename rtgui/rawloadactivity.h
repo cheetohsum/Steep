@@ -14,3 +14,4 @@ void noteRawLoadForegroundActivity(const std::string& fname = std::string());
 bool isRawLoadForegroundQuietForMs(int quietMs);
 int rawLoadForegroundQuietRetryMs(int quietMs, int minRetryMs);
 void setRawLoadEditorActivity(const std::string& fname, bool active);
+void setRawLoadFirstFramePending(const std::string& fname, bool pending);

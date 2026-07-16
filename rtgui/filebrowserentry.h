@@ -60,6 +60,7 @@ class FileBrowserEntry final : public ThumbBrowserEntryBase,
     int press_x, press_y, action_x, action_y;
     double rot_deg;
     bool landscape;
+    double deliveredPreviewAspectRatio_;
     const std::unique_ptr<rtengine::procparams::CropParams> cropParams;
     CropGUIListener* cropgl;
     FileBrowserEntryIdleHelper* feih;
@@ -69,6 +70,7 @@ class FileBrowserEntry final : public ThumbBrowserEntryBase,
     bool suppressThumbnailRefresh;
     std::atomic<bool> lazyThumbnailRequestPending;
     std::atomic<bool> thumbnailPreviewUsable_;
+    std::atomic<bool> liveEditorPreview_;
 
     ImgEditState state;
     float crop_custom_ratio;
@@ -115,6 +117,11 @@ public:
     void refreshQuickThumbnailImage () override;
     void appendQuickThumbnailJob (std::vector<ThumbImageUpdater::Request>& requests, bool cachePixbuf = false) override;
     bool cacheCurrentPreviewForQuickOpen ();
+    hidpi::ScaledDeviceSize getLivePreviewDeviceSize () const;
+    bool setLiveEditorPreview (
+        const Glib::RefPtr<Gdk::Pixbuf>& pixbuf,
+        double imageScale,
+        const rtengine::procparams::CropParams& crop);
     void calcThumbnailSize () override;
     void onDeviceScaleChanged (int newDeviceScale) override;
     std::size_t getImageAreaIconState () override;
@@ -134,7 +141,8 @@ public:
         hidpi::LogicalSize size,
         int deviceScale,
         double imageScale,
-        const rtengine::procparams::CropParams& crop); // inside gtk thread
+        const rtengine::procparams::CropParams& crop,
+        bool queuedRequest = true); // inside gtk thread
 
     bool    motionNotify  (int x, int y) override;
     bool    pressNotify   (int button, int type, int bstate, int x, int y) override;

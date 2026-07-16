@@ -17,6 +17,8 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "previewhandler.h"
+#include <algorithm>
+#include <utility>
 #include <gtkmm.h>
 #include "rtengine/rtengine.h"
 #include "rtengine/procparams.h"
@@ -25,11 +27,15 @@
 using namespace rtengine;
 using namespace rtengine::procparams;
 
-PreviewHandler::PreviewHandler () :
+PreviewHandler::PreviewHandler (
+    std::function<void()> firstImageReadyCallback,
+    std::function<void()> imageReadyCallback) :
     image(nullptr),
     cropParams(new procparams::CropParams),
     previewScale(1.),
-    previewImgReferencesEngineData(false)
+    previewImgReferencesEngineData(false),
+    firstEngineImageReadyCallback(std::move(firstImageReadyCallback)),
+    engineImageReadyCallback(std::move(imageReadyCallback))
 {
 
     pih = new PreviewHandlerIdleHelper;
@@ -161,6 +167,13 @@ void PreviewHandler::imageReady(const rtengine::procparams::CropParams& cp)
             *pih->phandler->cropParams = cp;
             if (pih->phandler->previewImg) {
                 pih->phandler->previewImageChanged();
+                if (pih->phandler->firstEngineImageReadyCallback) {
+                    auto callback = std::move(pih->phandler->firstEngineImageReadyCallback);
+                    callback();
+                }
+                if (pih->phandler->engineImageReadyCallback) {
+                    pih->phandler->engineImageReadyCallback();
+                }
             }
             --pih->pending;
 
@@ -271,6 +284,43 @@ hidpi::DevicePixbuf PreviewHandler::getRoughImage (hidpi::LogicalSize desiredSiz
 
     result = hidpi::DevicePixbuf(pixbuf, deviceScale);
     return result;
+}
+
+Glib::RefPtr<Gdk::Pixbuf> PreviewHandler::getScaledEnginePreview(
+    int width,
+    int height,
+    double& imageScale)
+{
+    MyMutex::MyLock lock(previewImgMutex);
+    imageScale = 1.0;
+
+    if (!previewImg || width <= 0 || height <= 0) {
+        return {};
+    }
+
+    const int sourceWidth = previewImg->get_width();
+    const int sourceHeight = previewImg->get_height();
+    if (sourceWidth <= 0 || sourceHeight <= 0 || previewScale <= 0.0) {
+        return {};
+    }
+
+    imageScale = std::min(
+        static_cast<double>(width) / (sourceWidth * previewScale),
+        static_cast<double>(height) / (sourceHeight * previewScale));
+
+    auto downsample = [this, width, height]() {
+        if (previewImg->get_width() == width && previewImg->get_height() == height) {
+            return previewImg->copy();
+        }
+        return previewImg->scale_simple(width, height, Gdk::INTERP_BILINEAR);
+    };
+
+    if (previewImgReferencesEngineData && image) {
+        MyMutex::MyLock imageLock(image->getMutex());
+        return downsample();
+    }
+
+    return downsample();
 }
 
 void PreviewHandler::previewImageChanged ()

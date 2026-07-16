@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cctype>
+#include <cmath>
 #include <cstring>
 #include <iomanip>
 #include <list>
@@ -33,12 +34,14 @@
 #include "guiutils.h"
 #include "inspector.h"
 #include "previewloader.h"
+#include "procparamchangers.h"
 #include "rtsurface.h"
 #include "threadutils.h"
 #include "thumbbrowserbase.h"
 #include "thumbnail.h"
 #include "toolbar.h"
 
+#include "rtengine/image8.h"
 #include "rtengine/procparams.h"
 
 #define CROPRESIZEBORDER 4
@@ -255,7 +258,7 @@ void FileBrowserEntry::resumeQueuedImageUpdates()
 }
 
 FileBrowserEntry::FileBrowserEntry (Thumbnail* thm, const Glib::ustring& fname)
-    : ThumbBrowserEntryBase (fname, thm), wasInside(false), iatlistener(nullptr), press_x(0), press_y(0), action_x(0), action_y(0), rot_deg(0.0), landscape(true), cropParams(new rtengine::procparams::CropParams), cropgl(nullptr), suppressThumbnailRefresh(false), lazyThumbnailRequestPending(false), thumbnailPreviewUsable_(false), state(SNormal), crop_custom_ratio(0.f)
+    : ThumbBrowserEntryBase (fname, thm), wasInside(false), iatlistener(nullptr), press_x(0), press_y(0), action_x(0), action_y(0), rot_deg(0.0), landscape(true), deliveredPreviewAspectRatio_(0.0), cropParams(new rtengine::procparams::CropParams), cropgl(nullptr), suppressThumbnailRefresh(false), lazyThumbnailRequestPending(false), thumbnailPreviewUsable_(false), liveEditorPreview_(false), state(SNormal), crop_custom_ratio(0.f)
 {
     browserFileNameUpper_ = Glib::path_get_basename(fname);
     std::transform(browserFileNameUpper_.begin(), browserFileNameUpper_.end(), browserFileNameUpper_.begin(), ::toupper);
@@ -312,6 +315,7 @@ void FileBrowserEntry::refreshThumbnailImage(bool upgradeHint)
         return;
     }
 
+    liveEditorPreview_.store(false, std::memory_order_release);
     thumbImageUpdater->add (this, &updatepriority, upgradeHint, upgradeHint, this);
 }
 
@@ -450,6 +454,50 @@ bool FileBrowserEntry::cacheCurrentPreviewForQuickOpen()
     return thumbnail->trySetCachedPixbuf(pixbuf, previewScale, false);
 }
 
+hidpi::ScaledDeviceSize FileBrowserEntry::getLivePreviewDeviceSize () const
+{
+    return previewSize.scaleToDevice(pendingDeviceScale);
+}
+
+bool FileBrowserEntry::setLiveEditorPreview (
+    const Glib::RefPtr<Gdk::Pixbuf>& pixbuf,
+    double imageScale,
+    const rtengine::procparams::CropParams& crop)
+{
+    if (!pixbuf || !feih || !thumbnail || imageScale <= 0.0) {
+        return false;
+    }
+
+    const hidpi::LogicalSize logicalSize = previewSize;
+    const int deviceScale = pendingDeviceScale;
+    const hidpi::ScaledDeviceSize deviceSize = logicalSize.scaleToDevice(deviceScale);
+    if (pixbuf->get_width() != deviceSize.width || pixbuf->get_height() != deviceSize.height) {
+        return false;
+    }
+
+    auto* image = new rtengine::Image8(deviceSize.width, deviceSize.height);
+    image->setSampleFormat(rtengine::IIOSF_UNSIGNED_CHAR);
+    image->setSampleArrangement(rtengine::IIOSA_CHUNKY);
+    const guint8* source = pixbuf->get_pixels();
+    if (!source) {
+        delete image;
+        return false;
+    }
+
+    const int sourceStride = pixbuf->get_rowstride();
+    for (int y = 0; y < deviceSize.height; ++y) {
+        image->setScanline(y, source + y * sourceStride, 8, 3);
+    }
+
+    // Supersede queued thumbnail renders. Any worker result that arrives after
+    // this point is discarded until a non-editor refresh explicitly wins.
+    liveEditorPreview_.store(true, std::memory_order_release);
+    ++feih->imageUpdateGeneration;
+    thumbnail->trySetCachedPixbuf(pixbuf, 1.0 / imageScale, false);
+    _updateImage(image, logicalSize, deviceScale, imageScale, crop, false);
+    return true;
+}
+
 bool FileBrowserEntry::hasUsableThumbnailPreview ()
 {
     MYREADERLOCK(l, lockRW);
@@ -482,6 +530,11 @@ void FileBrowserEntry::calcThumbnailSize ()
     if (thumbnail) {
         int ow = previewSize.width, oh = previewSize.height;
         thumbnail->getThumbnailSize(previewSize.width, previewSize.height);
+        if (deliveredPreviewAspectRatio_ > 0.0) {
+            previewSize.width = std::max(
+                1,
+                static_cast<int>(std::lround(previewSize.height * deliveredPreviewAspectRatio_)));
+        }
 
         hidpi::ScaledDeviceSize device = previewSize.scaleToDevice(activeDeviceScale);
         size_t expected_size = [&]() {
@@ -490,6 +543,7 @@ void FileBrowserEntry::calcThumbnailSize ()
         }();
 
         if (ow != previewSize.width || oh != previewSize.height || preview.size() != expected_size) {
+            liveEditorPreview_.store(false, std::memory_order_release);
             thumbnailPreviewUsable_.store(false, std::memory_order_release);
             preview.clear();
             lazyThumbnailRequestPending.store(false, std::memory_order_release);
@@ -503,6 +557,7 @@ void FileBrowserEntry::calcThumbnailSize ()
 void FileBrowserEntry::onDeviceScaleChanged (int newDeviceScale)
 {
     if (newDeviceScale != activeDeviceScale) {
+        liveEditorPreview_.store(false, std::memory_order_release);
         thumbnailPreviewUsable_.store(false, std::memory_order_release);
     }
 
@@ -657,7 +712,14 @@ void FileBrowserEntry::resizeWithoutThumbnailJob (int h)
 
 void FileBrowserEntry::procParamsChanged (Thumbnail* thm, int whoChangedIt, bool upgradeHint)
 {
+    if (whoChangedIt == EDITOR && liveEditorPreview_.load(std::memory_order_acquire)) {
+        if (parent) {
+            parent->redrawNeeded(this);
+        }
+        return;
+    }
 
+    liveEditorPreview_.store(false, std::memory_order_release);
     if ( thumbnail->isQuick() ) {
         refreshQuickThumbnailImage ();
     } else {
@@ -668,6 +730,12 @@ void FileBrowserEntry::procParamsChanged (Thumbnail* thm, int whoChangedIt, bool
 void FileBrowserEntry::updateImage(const ThumbImageUpdateListener::ImageUpdate& update)
 {
     if (!feih) {
+        lazyThumbnailRequestPending.store(false, std::memory_order_release);
+        delete update.img;
+        return;
+    }
+
+    if (liveEditorPreview_.load(std::memory_order_acquire)) {
         lazyThumbnailRequestPending.store(false, std::memory_order_release);
         delete update.img;
         return;
@@ -705,11 +773,14 @@ void FileBrowserEntry::_updateImage(
     hidpi::LogicalSize size,
     int deviceScale,
     double imageScale,
-    const rtengine::procparams::CropParams& crop)
+    const rtengine::procparams::CropParams& crop,
+    bool queuedRequest)
 {
     MYWRITERLOCK(l, lockRW);
 
-    redrawRequests--;
+    if (queuedRequest) {
+        redrawRequests--;
+    }
     if (!(size == previewSize) || deviceScale != pendingDeviceScale) {
         thumbnailPreviewUsable_.store(false, std::memory_order_release);
         lazyThumbnailRequestPending.store(false, std::memory_order_release);
@@ -721,14 +792,30 @@ void FileBrowserEntry::_updateImage(
     int imh = img->getHeight();
 
     bool newLandscape = imw > imh;
-    bool rotated = false;
+    bool geometryChanged = false;
+
+    const hidpi::LogicalSize deliveredSize(
+        std::max(1, (imw + deviceScale - 1) / deviceScale),
+        std::max(1, (imh + deviceScale - 1) / deviceScale));
+
+    // Cached metadata can report the embedded preview's orientation instead
+    // of the rendered pixels. Keep browser and filmstrip cells tied to the
+    // aspect ratio users actually see.
+    if (std::abs(deliveredSize.height - previewSize.height) <= 1) {
+        deliveredPreviewAspectRatio_ = static_cast<double>(imw) / imh;
+        if (deliveredSize.width != previewSize.width) {
+            previewSize.width = deliveredSize.width;
+            width = previewSize.width + 2 * sideMargin + 2 * borderWidth;
+            geometryChanged = true;
+        }
+    }
 
     scale = imageScale;
     *this->cropParams = crop;
     activeDeviceScale = pendingDeviceScale;
 
     // Check if image has been rotated since last time
-    rotated = !preview.empty() && newLandscape != landscape;
+    const bool rotated = geometryChanged || (!preview.empty() && newLandscape != landscape);
 
     previewDataLayout.width = imw;
     previewDataLayout.height = imh;

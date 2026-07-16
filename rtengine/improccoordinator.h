@@ -620,7 +620,7 @@ public:
     }
 
     void saveInputICCReference (const Glib::ustring& fname, bool apply_wb) override;
-    bool exportDemosaicedTIFF (const Glib::ustring& outputPath) override;
+    std::unique_ptr<Imagefloat> createDemosaicedImage () override;
 
     InitialImage*  getInitialImage () override
     {

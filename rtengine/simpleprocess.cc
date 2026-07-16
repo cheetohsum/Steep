@@ -837,7 +837,10 @@ private:
         if (params.aiDenoise.enabled && params.aiDenoise.blend > 0) {
             auto& aidm = AIDenoiseManager::getInstance();
             if (aidm.isCacheValid(imgsrc->getFileName(), params.aiDenoise.isoConditioning)) {
-                ImProcFunctions::blendAIDenoise(baseImg, aidm.getCachedResult(), params.aiDenoise.blend / 100.0);
+                const auto dn = aidm.getCachedResult();
+                if (dn) {
+                    ImProcFunctions::blendAIDenoise(baseImg, dn.get(), params.aiDenoise.blend / 100.0);
+                }
             }
         }
 

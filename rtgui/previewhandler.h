@@ -18,6 +18,7 @@
  */
 #pragma once
 
+#include <functional>
 #include <list>
 #include <memory>
 
@@ -63,10 +64,14 @@ protected:
     MyMutex previewImgMutex;
     Glib::RefPtr<Gdk::Pixbuf> previewImg;
     bool previewImgReferencesEngineData;
+    std::function<void()> firstEngineImageReadyCallback;
+    std::function<void()> engineImageReadyCallback;
 
 public:
 
-    PreviewHandler ();
+    explicit PreviewHandler (
+        std::function<void()> firstEngineImageReadyCallback = {},
+        std::function<void()> engineImageReadyCallback = {});
     ~PreviewHandler () override;
 
     void addPreviewImageListener (PreviewListener* l)
@@ -90,6 +95,13 @@ public:
     // with this function it is possible to ask for a rough approximation of a (possibly zoomed) crop of the image
     Glib::RefPtr<Gdk::Pixbuf> getRoughImage(ImageCoord pos, hidpi::ScaledDeviceSize desiredSize, double zoom);
     hidpi::DevicePixbuf getRoughImage(hidpi::LogicalSize desiredSize, int deviceScale, double& outLogicalZoom);
+
+    // Downsample the latest monitor-space engine result without first copying
+    // the full editor preview. imageScale is output pixels per full-size pixel.
+    Glib::RefPtr<Gdk::Pixbuf> getScaledEnginePreview(
+        int width,
+        int height,
+        double& imageScale);
 
     rtengine::procparams::CropParams    getCropParams ();
 

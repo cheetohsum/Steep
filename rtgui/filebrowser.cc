@@ -66,6 +66,60 @@ using QuickWarmClock = std::chrono::steady_clock;
 std::atomic<unsigned> quickPreviewCacheWarmGeneration{0};
 std::mutex fileBrowserPerfLogMutex;
 
+// Tone-only reference captured from DSCF8621.RAF. Camera and geometry state
+// intentionally stay with each destination image.
+void applySteepAutoEditTone(rtengine::procparams::ProcParams& params)
+{
+    auto& tone = params.toneCurve;
+    tone.autoexp = false;
+    tone.clip = 0.02;
+    tone.hrenabled = false;
+    tone.method = "Coloropp";
+    tone.expcomp = 0.58;
+    tone.curve = {DCT_Linear};
+    tone.curve2 = {DCT_Linear};
+    tone.curveR = {DCT_Linear};
+    tone.curveG = {DCT_Linear};
+    tone.curveB = {DCT_Linear};
+    tone.curveMode = rtengine::procparams::ToneCurveMode::STD;
+    tone.curveMode2 = rtengine::procparams::ToneCurveMode::STD;
+    tone.brightness = 7;
+    tone.black = 0;
+    tone.contrast = 5;
+    tone.shcompr = 50;
+    tone.hlcompr = 75;
+    tone.hlbl = 0;
+    tone.hlth = 1.0;
+    tone.hlcomprthresh = 0;
+    tone.histmatching = false;
+    tone.fromHistMatching = false;
+    tone.clampOOG = true;
+
+    auto& shadowsHighlights = params.sh;
+    shadowsHighlights.enabled = true;
+    shadowsHighlights.highlights = 25;
+    shadowsHighlights.htonalwidth = 70;
+    shadowsHighlights.shadows = 10;
+    shadowsHighlights.stonalwidth = 30;
+    shadowsHighlights.radius = 40;
+    shadowsHighlights.lab = false;
+
+    auto& curves = params.rgbCurves;
+    curves.enabled = true;
+    curves.lumamode = false;
+    curves.mastercurve = {
+        DCT_Spline,
+        0.0, 0.0,
+        0.098654708520179366, 0.058295964125560533,
+        0.20673525015387323, 0.21570386001934416,
+        0.51569506726457359, 0.73094170403587488,
+        1.0, 0.99103139013452912
+    };
+    curves.rcurve = {DCT_Spline, 0.0, 0.0, 1.0, 1.0};
+    curves.gcurve = {DCT_Spline, 0.0, 0.0, 1.0, 1.0};
+    curves.bcurve = {DCT_Spline, 0.0, 0.0, 1.0, 1.0};
+}
+
 bool fileBrowserPerfLogEnabled()
 {
     static const bool enabled = std::getenv("STEEP_FILESEL_LOG") != nullptr;
@@ -2019,9 +2073,8 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
             bppcl->endBatchPParamsChange();
         }
     } else if (m == autoEdit) {
-        // Auto-edit: apply gentle adjustments for quick improvement.
-        // Runs in a background thread to avoid freezing the UI when
-        // many images are selected.
+        // Runs in a background thread to avoid freezing the UI when many
+        // images are selected. The absolute recipe makes repeated use safe.
 
         // Hold references so thumbnails stay alive during background work.
         auto thumbnails = std::make_shared<std::vector<Thumbnail*>>();
@@ -2038,25 +2091,7 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
         std::thread([this, thumbnails]() {
             for (auto* thm : *thumbnails) {
                 rtengine::procparams::ProcParams pp = thm->getProcParams();
-
-                // Gentle exposure boost (only if not already raised)
-                if (pp.toneCurve.expcomp < 0.25) {
-                    pp.toneCurve.expcomp = 0.25;
-                }
-                // Mild contrast
-                if (pp.toneCurve.contrast < 10) {
-                    pp.toneCurve.contrast = 10;
-                }
-                // Subtle vibrance
-                pp.vibrance.enabled = true;
-                if (pp.vibrance.pastels < 15) {
-                    pp.vibrance.pastels = 15;
-                }
-                if (pp.vibrance.saturated < 10) {
-                    pp.vibrance.saturated = 10;
-                }
-                // Enable sharpening
-                pp.sharpening.enabled = true;
+                applySteepAutoEditTone(pp);
 
                 // updateCacheNow = false — avoids blocking disk writes;
                 // cache is written when the thumbnail is next closed.
@@ -3462,6 +3497,12 @@ std::vector<FileBrowser::AdjacentEntry> FileBrowser::getAdjacentEntries(const Gl
     return getAdjacentEntriesAndRefresh(fname, count, 0, 0);
 }
 
+FileBrowserEntry* FileBrowser::findEntry(const Glib::ustring& fname)
+{
+    MYWRITERLOCK(l, entryRW);
+    return static_cast<FileBrowserEntry*>(findEntryLocked_(fname));
+}
+
 void FileBrowser::cancelCachedQuickPreviewWarm()
 {
     cancelCachedQuickPreviewWarmJobs();
@@ -3647,7 +3688,9 @@ void FileBrowser::thumbRearrangementNeeded ()
     idle_register.add(
         [this]() -> bool
         {
-            refreshThumbImages();// arrangeFiles is NOT enough
+            // The entry already adopted the delivered pixel geometry. Reflow
+            // without regenerating every thumbnail or restoring stale metadata.
+            redraw();
             return false;
         }
     );

@@ -2913,6 +2913,13 @@ void RawImageSource::retinex(const ColorManagementParams& cmp, const RetinexPara
 
 void RawImageSource::flush()
 {
+    delete redCache;
+    redCache = nullptr;
+    delete greenCache;
+    greenCache = nullptr;
+    delete blueCache;
+    blueCache = nullptr;
+
     for (auto &buffer : rawDataBuffer) {
         buffer.reset();
     }
@@ -2944,6 +2951,9 @@ void RawImageSource::flush()
     if (blueloc) {
         blueloc(0, 0);
     }
+
+    rawDirty = true;
+    rgbSourceModified = false;
 }
 
 void RawImageSource::HLRecovery_Global(const ToneCurveParams &hrp)

@@ -16,7 +16,15 @@ macro(rt_setup_dependencies)
 
     find_package(JPEG REQUIRED)
     find_package(PNG REQUIRED)
-    find_package(TIFF 4.0.4 REQUIRED)
+    if(MINGW)
+        # CMake's FindTIFF module prefers any upstream config package it can
+        # see. Do not let a cached Conda/MSVC package contaminate a MinGW build.
+        set(CMAKE_DISABLE_FIND_PACKAGE_Tiff TRUE)
+    endif()
+    find_package(TIFF 4.0.4 REQUIRED MODULE)
+    if(MINGW)
+        unset(CMAKE_DISABLE_FIND_PACKAGE_Tiff)
+    endif()
     find_package(ZLIB REQUIRED)
 
     # Gtk version shall be greater than 3.24.3 for fixed Hi-DPI support
@@ -110,6 +118,24 @@ macro(rt_setup_dependencies)
 
     if(WITH_AI_MASKING)
         find_package(ONNXRuntime REQUIRED)
+    endif()
+
+    # AI Denoise uses ONNX Runtime for native inference (replaces Python).
+    # Try the bundled copy at ext/onnxruntime/ first, then fall back to system.
+    if(NOT TARGET onnxruntime::onnxruntime)
+        if(EXISTS "${CMAKE_SOURCE_DIR}/ext/onnxruntime/include/onnxruntime_c_api.h")
+            set(ONNXRuntime_ROOT "${CMAKE_SOURCE_DIR}/ext/onnxruntime")
+            find_package(ONNXRuntime QUIET)
+        else()
+            find_package(ONNXRuntime QUIET)
+        endif()
+    endif()
+    if(TARGET onnxruntime::onnxruntime)
+        set(RT_AI_DENOISE_AVAILABLE TRUE)
+        message(STATUS "AI Denoise: ONNX Runtime found, native inference enabled")
+    else()
+        set(RT_AI_DENOISE_AVAILABLE FALSE)
+        message(STATUS "AI Denoise: ONNX Runtime NOT found, AI Denoise disabled")
     endif()
 endmacro()
 

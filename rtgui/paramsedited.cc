@@ -990,6 +990,16 @@ void ParamsEdited::set(bool v)
     filmPresets.blueShift = v;
     filmPresets.grain = v;
     filmPresets.vibrance = v;
+    filmPresets.skinProtection = v;
+    filmPresets.layerCoupling = v;
+    filmPresets.grainSize = v;
+    filmPresets.grainClumping = v;
+    filmPresets.grainColor = v;
+    filmPresets.halationSize = v;
+    filmPresets.halationThreshold = v;
+    filmPresets.halationColor = v;
+    filmPresets.bloom = v;
+    filmPresets.outputSoftness = v;
     softlight.enabled = v;
     softlight.strength = v;
     dehaze.enabled = v;
@@ -2749,6 +2759,16 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         filmPresets.blueShift = filmPresets.blueShift && p.filmPresets.blueShift == other.filmPresets.blueShift;
         filmPresets.grain = filmPresets.grain && p.filmPresets.grain == other.filmPresets.grain;
         filmPresets.vibrance = filmPresets.vibrance && p.filmPresets.vibrance == other.filmPresets.vibrance;
+        filmPresets.skinProtection = filmPresets.skinProtection && p.filmPresets.skinProtection == other.filmPresets.skinProtection;
+        filmPresets.layerCoupling = filmPresets.layerCoupling && p.filmPresets.layerCoupling == other.filmPresets.layerCoupling;
+        filmPresets.grainSize = filmPresets.grainSize && p.filmPresets.grainSize == other.filmPresets.grainSize;
+        filmPresets.grainClumping = filmPresets.grainClumping && p.filmPresets.grainClumping == other.filmPresets.grainClumping;
+        filmPresets.grainColor = filmPresets.grainColor && p.filmPresets.grainColor == other.filmPresets.grainColor;
+        filmPresets.halationSize = filmPresets.halationSize && p.filmPresets.halationSize == other.filmPresets.halationSize;
+        filmPresets.halationThreshold = filmPresets.halationThreshold && p.filmPresets.halationThreshold == other.filmPresets.halationThreshold;
+        filmPresets.halationColor = filmPresets.halationColor && p.filmPresets.halationColor == other.filmPresets.halationColor;
+        filmPresets.bloom = filmPresets.bloom && p.filmPresets.bloom == other.filmPresets.bloom;
+        filmPresets.outputSoftness = filmPresets.outputSoftness && p.filmPresets.outputSoftness == other.filmPresets.outputSoftness;
         softlight.enabled = softlight.enabled && p.softlight.enabled == other.softlight.enabled;
         softlight.strength = softlight.strength && p.softlight.strength == other.softlight.strength;
         dehaze.enabled = dehaze.enabled && p.dehaze.enabled == other.dehaze.enabled;
@@ -9200,6 +9220,36 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
     }
     if (filmPresets.vibrance) {
         toEdit.filmPresets.vibrance = mods.filmPresets.vibrance;
+    }
+    if (filmPresets.skinProtection) {
+        toEdit.filmPresets.skinProtection = mods.filmPresets.skinProtection;
+    }
+    if (filmPresets.layerCoupling) {
+        toEdit.filmPresets.layerCoupling = mods.filmPresets.layerCoupling;
+    }
+    if (filmPresets.grainSize) {
+        toEdit.filmPresets.grainSize = mods.filmPresets.grainSize;
+    }
+    if (filmPresets.grainClumping) {
+        toEdit.filmPresets.grainClumping = mods.filmPresets.grainClumping;
+    }
+    if (filmPresets.grainColor) {
+        toEdit.filmPresets.grainColor = mods.filmPresets.grainColor;
+    }
+    if (filmPresets.halationSize) {
+        toEdit.filmPresets.halationSize = mods.filmPresets.halationSize;
+    }
+    if (filmPresets.halationThreshold) {
+        toEdit.filmPresets.halationThreshold = mods.filmPresets.halationThreshold;
+    }
+    if (filmPresets.halationColor) {
+        toEdit.filmPresets.halationColor = mods.filmPresets.halationColor;
+    }
+    if (filmPresets.bloom) {
+        toEdit.filmPresets.bloom = mods.filmPresets.bloom;
+    }
+    if (filmPresets.outputSoftness) {
+        toEdit.filmPresets.outputSoftness = mods.filmPresets.outputSoftness;
     }
 
     if (softlight.enabled) {

@@ -256,6 +256,14 @@ if(WITH_AI_MASKING)
     target_compile_definitions(rtengine PUBLIC "RT_AI_MASKING")
 endif()
 
+# AI Denoise: native ONNX inference (replaces the Python rawrefinery_cli.py).
+# Linked unconditionally when ONNX Runtime is available; aidenoise.cc has a
+# RT_AI_DENOISE-gated implementation and a stub when the runtime is missing.
+if(RT_AI_DENOISE_AVAILABLE)
+    target_link_libraries(rtengine PUBLIC onnxruntime::onnxruntime)
+    target_compile_definitions(rtengine PUBLIC "RT_AI_DENOISE")
+endif()
+
 if("${SVG_BACKEND}" STREQUAL "librsvg")
     target_link_libraries(rtengine PUBLIC PkgConfig::RSVG)
     target_compile_definitions(rtengine PUBLIC "SVG_BACKEND_RSVG")

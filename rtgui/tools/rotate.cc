@@ -17,6 +17,7 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include <iomanip>
+#include <cmath>
 
 #include "rotate.h"
 
@@ -38,6 +39,7 @@ Rotate::Rotate () : FoldableToolPanel(this, TOOL_NAME, M("TP_ROTATE_LABEL"))
 
     degree = Gtk::manage (new Adjuster ("", -45, 45, 0.01, 0));
     degree->setAdjusterListener (this);
+    degree->setDelay(12, 32);
     degree->hideResetButton();
     degree->hideSpinButton();
     degree->set_halign(Gtk::ALIGN_FILL);
@@ -45,11 +47,38 @@ Rotate::Rotate () : FoldableToolPanel(this, TOOL_NAME, M("TP_ROTATE_LABEL"))
     degree->set_margin_end(10);
     pack_start (*degree, false, false);
 
+    Gtk::Box* autoLevelRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL));
+    autoLevelRow->set_margin_start(10);
+    autoLevelRow->set_margin_end(10);
+    autoLevel = Gtk::manage(new Gtk::Button(M("TP_ROTATE_AUTO_LEVEL")));
+    autoLevel->set_image(*Gtk::manage(new RTImage("rotate-straighten-small", Gtk::ICON_SIZE_BUTTON)));
+    autoLevel->set_always_show_image(true);
+    autoLevel->set_alignment(0.5f, 0.5f);
+    autoLevel->set_tooltip_text(M("TP_ROTATE_AUTO_LEVEL_TOOLTIP"));
+    autoLevel->signal_clicked().connect(sigc::mem_fun(*this, &Rotate::autoLevelPressed));
+    autoLevelRow->pack_end(*autoLevel, false, false);
+    pack_start(*autoLevelRow, false, false);
+
+    autoLevelStatus = Gtk::manage(new Gtk::Label());
+    autoLevelStatus->set_xalign(1.0f);
+    autoLevelStatus->set_line_wrap(true);
+    autoLevelStatus->set_margin_start(10);
+    autoLevelStatus->set_margin_end(10);
+    autoLevelStatus->get_style_context()->add_class("dim-label");
+    autoLevelStatus->set_no_show_all(true);
+    pack_start(*autoLevelStatus, false, false);
+
     degree->setLogScale(2, 0);
 
     setExpandable(false);
     setFlatMode(true);
     show_all ();
+    autoLevelStatus->hide();
+}
+
+Rotate::~Rotate ()
+{
+    autoLevelStatusConn.disconnect();
 }
 
 void Rotate::read (const ProcParams* pp, const ParamsEdited* pedited)
@@ -106,11 +135,50 @@ void Rotate::straighten (double deg)
     }
 }
 
+void Rotate::autoLevelPressed ()
+{
+    if (!rlistener || batchMode) {
+        return;
+    }
+
+    autoLevel->set_sensitive(false);
+    double correction = 0.0;
+    const bool detected = rlistener->autoLevelRequested(correction);
+    autoLevel->set_sensitive(true);
+
+    if (!detected || std::abs(degree->getValue() + correction) > 45.0) {
+        showAutoLevelStatus(M("TP_ROTATE_AUTO_LEVEL_FAILED"));
+        return;
+    }
+
+    if (std::abs(correction) < 0.015) {
+        showAutoLevelStatus(M("TP_ROTATE_AUTO_LEVEL_ALREADY"));
+        return;
+    }
+
+    straighten(correction);
+    showAutoLevelStatus(Glib::ustring::compose(
+        M("TP_ROTATE_AUTO_LEVEL_APPLIED"),
+        Glib::ustring::format(std::fixed, std::setprecision(2), correction)));
+}
+
+void Rotate::showAutoLevelStatus (const Glib::ustring& message)
+{
+    autoLevelStatusConn.disconnect();
+    autoLevelStatus->set_text(message);
+    autoLevelStatus->show();
+    autoLevelStatusConn = Glib::signal_timeout().connect([this]() {
+        autoLevelStatus->hide();
+        return false;
+    }, 3500);
+}
+
 void Rotate::setBatchMode (bool batchMode)
 {
 
     ToolPanel::setBatchMode (batchMode);
     degree->showEditedCB ();
+    autoLevel->set_visible(!batchMode);
 }
 
 void Rotate::setAdjusterBehavior (bool rotadd)

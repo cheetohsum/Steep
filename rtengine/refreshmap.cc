@@ -86,7 +86,7 @@ int refreshmap[rtengine::NUMOFEVENTS] = {
     ALLNORAW,         // EvCTRotate,
     ALLNORAW,         // EvCTHFlip,
     ALLNORAW,         // EvCTVFlip,
-    HDR,        // EvROTDegree,
+    TRANSFORM,  // EvROTDegree,
     HDR,        // EvTransAutoFill,
     HDR,        // EvDISTAmount,
     ALL,              // EvBookmarkSelected,
@@ -1186,8 +1186,8 @@ int refreshmap[rtengine::NUMOFEVENTS] = {
     AUTOEXP,    //Evlocallabsigjz12
     AUTOEXP,    //Evlocallabsigq12
     AUTOEXP,    //Evlocallablogcie
-    ALLNORAW,   //EvAIDNEnabled
-    ALLNORAW,   //EvAIDNBlend
+    AIDENOISE,  //EvAIDNEnabled
+    AIDENOISE,  //EvAIDNBlend
     ALLNORAW,   //EvAIDNBlend (duplicate — compensates for a missing entry earlier in the array)
     LUMINANCECURVE,  //EvColorGradingEnabled
     LUMINANCECURVE,  //EvColorGradingShadows

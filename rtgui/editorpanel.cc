@@ -41,6 +41,7 @@
 #include "soundman.h"
 #include "rtimage.h"
 #include "filepanel.h"
+#include "filebrowserentry.h"
 #include "guiutils.h"
 #include "options.h"
 #include "dirbrowser.h"
@@ -104,13 +105,39 @@ static double previewScaleFromFullSize(
     return scale > 0.0 ? scale : (fallbackScale > 0.0 ? fallbackScale : 1.0);
 }
 
+static bool alignBeforeAfterGeometry(const ProcParams& source, ProcParams& target)
+{
+    LensProfParams lensGeometry = source.lensProf;
+    lensGeometry.useVign = false;
+    lensGeometry.useCA = false;
+
+    const bool changed =
+        target.crop != source.crop
+        || target.coarse != source.coarse
+        || target.commonTrans != source.commonTrans
+        || target.rotate != source.rotate
+        || target.distortion != source.distortion
+        || target.lensProf != lensGeometry
+        || target.perspective != source.perspective;
+
+    target.crop = source.crop;
+    target.coarse = source.coarse;
+    target.commonTrans = source.commonTrans;
+    target.rotate = source.rotate;
+    target.distortion = source.distortion;
+    target.lensProf = std::move(lensGeometry);
+    target.perspective = source.perspective;
+    return changed;
+}
+
 constexpr unsigned int kEditorDirSyncAfterOpenDelayMs = 1250;
 constexpr unsigned int kEditorDirSyncAfterRealizeDelayMs = 500;
 constexpr unsigned int kEditorDirSyncAfterAspectDelayMs = 500;
 constexpr int kEditorDirSyncForegroundQuietMs = 2000;
 constexpr unsigned int kEditorDirSyncQuietRetryMs = 250;
-constexpr unsigned int kEditorPhaseBDelayMs = 125;
-constexpr int kEditorPhaseBRawForegroundQuietMs = 300;
+constexpr unsigned int kEditorPhaseBDelayMs = 50;
+constexpr int kEditorPhaseBRawForegroundQuietMs = 40;
+constexpr unsigned int kEditorHighDetailDelayMs = 450;
 
 static void editorOpenLog(const char* fmt, ...)
 {
@@ -1932,6 +1959,12 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         fbFiletypeBox_->pack_start(*fbFiletypeAllCheck_, Gtk::PACK_SHRINK);
         fbFiletypeBox_->pack_start(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)), Gtk::PACK_SHRINK);
 
+        fbFiletypeDefaultCheck_ = Gtk::manage(new Gtk::CheckButton(M("FILEBROWSER_FILETYPE_DEFAULT")));
+        fbFiletypeDefaultCheck_->set_tooltip_markup(M("FILEBROWSER_FILETYPE_DEFAULT_TOOLTIP"));
+        fbFiletypeDefaultCheck_->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::onEditorFiletypeDefaultToggled));
+        fbFiletypeBox_->pack_end(*fbFiletypeDefaultCheck_, Gtk::PACK_SHRINK);
+        fbFiletypeBox_->pack_end(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)), Gtk::PACK_SHRINK);
+
         fbFiletypePopover_->add(*fbFiletypeBox_);
         fbFiletypePopover_->set_position(Gtk::POS_BOTTOM);
         fbFiletypeButton_->set_popover(*fbFiletypePopover_);
@@ -2520,6 +2553,8 @@ EditorPanel::~EditorPanel ()
     deferredOpenConn_.disconnect();
     deferredDirSyncConn_.disconnect();
     deferredCropEnableConn_.disconnect();
+    filmstripPreviewUpdateConn_.disconnect();
+    pendingFilmstripPreviewFile_.clear();
     ++editorDirSyncGeneration_;
     pendingEditorDirSyncDir_.clear();
     pendingEditorDirSyncDue_ = std::chrono::steady_clock::time_point{};
@@ -3049,6 +3084,7 @@ void EditorPanel::rebuildEditorFiletypePopover()
     }
 
     fbFiletypeAllCheck_->set_active(selected.empty());
+    updateEditorFiletypeDefaultCheck();
     fbFiletypeBox_->show_all();
     fbFiletypeBlockSignals_ = false;
 }
@@ -3077,6 +3113,7 @@ void EditorPanel::onEditorFiletypeCheckToggled(const std::string& ft)
 
     // Update shared state and button labels
     fPanel->fileCatalog->setSelectedFiletypes(sel);
+    updateEditorFiletypeDefaultCheck();
 
     // Update editor button label
     if (sel.empty()) {
@@ -3112,8 +3149,33 @@ void EditorPanel::onEditorFiletypeAllToggled()
         // All unchecked — empty selection means show nothing
     }
     fPanel->fileCatalog->setSelectedFiletypes(sel);
+    updateEditorFiletypeDefaultCheck();
     fbFiletypeButton_->set_label(M("FILEBROWSER_FILETYPE_ALL"));
     applyEditorFilter();
+}
+
+void EditorPanel::onEditorFiletypeDefaultToggled()
+{
+    if (fbFiletypeBlockSignals_ || !fPanel || !fPanel->fileCatalog) {
+        return;
+    }
+
+    fPanel->fileCatalog->setCurrentFiletypeFilterAsDefault(fbFiletypeDefaultCheck_->get_active());
+    updateEditorFiletypeDefaultCheck();
+}
+
+void EditorPanel::updateEditorFiletypeDefaultCheck()
+{
+    if (!fbFiletypeDefaultCheck_ || !fPanel || !fPanel->fileCatalog) {
+        return;
+    }
+
+    const auto& selected = fPanel->fileCatalog->getSelectedFiletypes();
+    const bool wasBlocked = fbFiletypeBlockSignals_;
+    fbFiletypeBlockSignals_ = true;
+    fbFiletypeDefaultCheck_->set_sensitive(!selected.empty());
+    fbFiletypeDefaultCheck_->set_active(fPanel->fileCatalog->isCurrentFiletypeFilterDefault());
+    fbFiletypeBlockSignals_ = wasBlocked;
 }
 
 BrowserFilter EditorPanel::buildEditorFilter()
@@ -3856,6 +3918,9 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
             openFileName.c_str());
     }
 
+    firstEnginePreviewReady_ = false;
+    beforeAfterRefreshPending_ = false;
+
     isProcessing = true; // prevents closing-on-init
 
     // initialize everything
@@ -3863,13 +3928,72 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
     openThm = tmb;
 
     fname = openFileName;
+    if (tmb && tmb->getType() == FT_Raw) {
+        setRawLoadFirstFramePending(std::string(fname), true);
+    }
     const bool oldPreviewMatchesOpen = oldPreview && quickPreviewMatchesOpen;
     if (fPanel && fPanel->fileCatalog) {
         fPanel->fileCatalog->saveResetState();
     }
     lastSaveAsFileName = removeExtension (Glib::path_get_basename (fname));
 
-    previewHandler = new PreviewHandler ();
+    const bool refineHighDetail =
+        tmb
+        && tmb->getType() == FT_Raw
+        && App::get().options().prevdemo == PD_Sidecar;
+    const unsigned int firstFrameSession = openSession_;
+    previewHandler = new PreviewHandler (
+        [this, firstFrameFile = std::string(openFileName), firstFrameSession, openStart, refineHighDetail]() {
+            setRawLoadFirstFramePending(firstFrameFile, false);
+            if (editorOpenLogEnabled()) {
+                EDITOR_OPEN_LOG("[editorOpen] first engine preview after=%lldms file=%s\n",
+                    editorOpenDurationMs(openStart, std::chrono::steady_clock::now()),
+                    firstFrameFile.c_str());
+            }
+
+            if (firstFrameSession != openSession_ || fname != firstFrameFile || !ipc) {
+                return;
+            }
+
+            firstEnginePreviewReady_ = true;
+            if (beforeAfterRefreshPending_ && beforeAfter->get_active()) {
+                beforeAfterRefreshPending_ = false;
+                beforeAfterToggled();
+            }
+
+            if (!refineHighDetail) {
+                return;
+            }
+
+            idle_register.add(
+                [this, firstFrameFile, firstFrameSession]() -> bool {
+                    if (firstFrameSession != openSession_ || fname != firstFrameFile || !ipc) {
+                        return false;
+                    }
+
+                    deferredHighDetailConn_.disconnect();
+                    deferredHighDetailConn_ = Glib::signal_timeout().connect(
+                        [this, firstFrameFile, firstFrameSession]() -> bool {
+                            if (firstFrameSession != openSession_ || fname != firstFrameFile || !ipc) {
+                                return false;
+                            }
+                            if (isProcessing) {
+                                return true;
+                            }
+
+                            EDITOR_OPEN_LOG("[editorOpen] idle high-detail refinement file=%s\n", firstFrameFile.c_str());
+                            ipc->startProcessing(M_HIGHQUAL | M_MONITOR);
+                            return false;
+                        },
+                        kEditorHighDetailDelayMs,
+                        G_PRIORITY_LOW);
+                    return false;
+                },
+                G_PRIORITY_LOW);
+        },
+        [this, previewFile = openFileName, previewSession = firstFrameSession]() {
+            scheduleFilmstripLivePreview(previewFile, previewSession);
+        });
 
     this->isrc = isrc;
     ipc = rtengine::StagedImageProcessor::create (isrc);
@@ -4048,6 +4172,61 @@ void EditorPanel::setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scal
     }
 }
 
+void EditorPanel::scheduleFilmstripLivePreview(
+    const Glib::ustring& sourceFile,
+    unsigned int sourceSession)
+{
+    pendingFilmstripPreviewFile_ = sourceFile;
+    pendingFilmstripPreviewSession_ = sourceSession;
+
+    if (filmstripPreviewUpdateConn_.connected()) {
+        return;
+    }
+
+    filmstripPreviewUpdateConn_ = Glib::signal_idle().connect(
+        [this]() -> bool {
+            const Glib::ustring sourceFile = pendingFilmstripPreviewFile_;
+            const unsigned int sourceSession = pendingFilmstripPreviewSession_;
+            pendingFilmstripPreviewFile_.clear();
+            updateFilmstripLivePreview(sourceFile, sourceSession);
+            return false;
+        },
+        G_PRIORITY_LOW);
+}
+
+void EditorPanel::updateFilmstripLivePreview(
+    const Glib::ustring& sourceFile,
+    unsigned int sourceSession)
+{
+    if (sourceSession != openSession_
+        || sourceFile != fname
+        || !previewHandler
+        || !openThm
+        || !fPanel
+        || !fPanel->fileCatalog
+        || !fPanel->fileCatalog->fileBrowser) {
+        return;
+    }
+
+    auto* entry = fPanel->fileCatalog->fileBrowser->findEntry(sourceFile);
+    if (!entry || entry->thumbnail != openThm) {
+        return;
+    }
+
+    const auto deviceSize = entry->getLivePreviewDeviceSize();
+    double imageScale = 1.0;
+    auto pixbuf = previewHandler->getScaledEnginePreview(
+        deviceSize.width,
+        deviceSize.height,
+        imageScale);
+    if (pixbuf) {
+        entry->setLiveEditorPreview(
+            pixbuf,
+            imageScale,
+            previewHandler->getCropParams());
+    }
+}
+
 void EditorPanel::openPhaseB (Thumbnail* tmb)
 {
     using clk = std::chrono::steady_clock;
@@ -4220,7 +4399,7 @@ void EditorPanel::openPhaseB (Thumbnail* tmb)
 
             info_toggled ();
 
-            if (beforeIarea) {
+            if (beforeAfter->get_active()) {
                 // Single call handles both cleanup of old state and recreation
                 // for the new image (button is still active, so activation runs).
                 // A second call was redundant and caused an extra RAW file load.
@@ -4272,8 +4451,12 @@ void EditorPanel::close ()
     // gate can coalesce it instead of re-queuing identical sidebar scans.
     deferredOpenConn_.disconnect();
     deferredCropEnableConn_.disconnect();
+    deferredHighDetailConn_.disconnect();
+    filmstripPreviewUpdateConn_.disconnect();
+    pendingFilmstripPreviewFile_.clear();
     deferredCropWindowEnable_ = false;
     quickPreviewFileName_.clear();
+    setRawLoadFirstFramePending(std::string(closingFname), false);
 
     // Clear MCP server reference before closing
     if (parent && parent->getMcpServer()) {
@@ -4414,6 +4597,7 @@ void EditorPanel::close ()
                 rtengine::StagedImageProcessor::destroy(old);
 
                 if (recentInitialImage) {
+                    recentInitialImage->getImageSource()->flush();
                     if (cacheRecentInitialImage) {
                         cacheRecentInitialImage(recentInitialImage);
                     } else {
@@ -4509,6 +4693,16 @@ void EditorPanel::procParamsChanged(
     //    selectedFrame = params->raw.xtranssensor.imageNum;
     }
     selectedFrame = rtengine::LIM<int>(selectedFrame, 0, isrc->getImageSource()->getMetaData()->getFrameCount() - 1);
+
+    if (beforeIpc) {
+        ProcParams beforeParams;
+        beforeIpc->getParams(&beforeParams);
+        if (alignBeforeAfterGeometry(*params, beforeParams)) {
+            ProcParams* alignedParams = beforeIpc->beginUpdateParams();
+            *alignedParams = std::move(beforeParams);
+            beforeIpc->endUpdateParams(ev);
+        }
+    }
 
     info_toggled();
 }
@@ -5834,8 +6028,14 @@ void EditorPanel::updateExternalEditorSelection()
 void EditorPanel::historyBeforeLineChanged (const rtengine::procparams::ProcParams& params)
 {
     if (beforeIpc) {
+        ProcParams beforeParams = params;
+        if (ipc) {
+            ProcParams currentParams;
+            ipc->getParams(&currentParams);
+            alignBeforeAfterGeometry(currentParams, beforeParams);
+        }
         ProcParams* pparams = beforeIpc->beginUpdateParams ();
-        *pparams = params;
+        *pparams = std::move(beforeParams);
         beforeIpc->endUpdateParams (rtengine::EvProfileChanged);  // starts the IPC processing
     }
 }
@@ -5884,6 +6084,16 @@ void EditorPanel::beforeAfterToggled ()
 
         beforeIpc = nullptr;
     }
+
+    if (beforeAfter->get_active()
+        && openThm
+        && openThm->getType() == FT_Raw
+        && !firstEnginePreviewReady_) {
+        beforeAfterRefreshPending_ = true;
+        return;
+    }
+
+    beforeAfterRefreshPending_ = false;
 
     if (beforeAfter->get_active ()) {
 
@@ -5936,8 +6146,9 @@ void EditorPanel::beforeAfterToggled ()
         // blocking the GUI during RAW file decoding.
         const auto loadFname = isrc->getImageSource()->getFileName();
         const bool loadIsRaw = openThm->getType() == FT_Raw;
+        const unsigned int loadSession = openSession_;
 
-        std::thread([this, loadFname, loadIsRaw, cancel]() {
+        std::thread([this, loadFname, loadIsRaw, loadSession, cancel]() {
             int errorCode = 0;
             auto* beforeImg = FilePanel::loadAuxiliaryInitialImage(loadFname, loadIsRaw, &errorCode, cancel);
 
@@ -5946,8 +6157,11 @@ void EditorPanel::beforeAfterToggled ()
                 return;
             }
 
-            Glib::signal_idle().connect_once([this, beforeImg, cancel]() {
-                if (cancel->load() || !beforeIarea) {
+            Glib::signal_idle().connect_once([this, beforeImg, loadFname, loadSession, cancel]() {
+                if (cancel->load()
+                    || loadSession != openSession_
+                    || fname != loadFname
+                    || !beforeIarea) {
                     delete beforeImg;
                     return;
                 }
@@ -5968,12 +6182,13 @@ void EditorPanel::beforeAfterToggled ()
                 // so the IPC starts processing with the correct params from the start.
                 {
                     rtengine::procparams::ProcParams beforeParams;
-                    if (!history->blistenerLock) {
-                        // Unlocked: neutral/unedited processing
+                    if (!history->getBeforeLineParams(beforeParams)) {
                         beforeParams = ProcParams();
-                    } else {
-                        // Locked: state before most recent edit
-                        history->getBeforeLineParams(beforeParams);
+                    }
+                    if (ipc) {
+                        ProcParams currentParams;
+                        ipc->getParams(&currentParams);
+                        alignBeforeAfterGeometry(currentParams, beforeParams);
                     }
                     ProcParams* pp = beforeIpc->beginUpdateParams();
                     *pp = beforeParams;

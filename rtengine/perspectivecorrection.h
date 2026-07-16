@@ -55,7 +55,17 @@ public:
         double yaw;
     };
 
+    struct AutoLevelResult
+    {
+        double angle = 0.0;
+        double confidence = 0.0;
+        int horizontal_lines = 0;
+        int vertical_lines = 0;
+        bool success = false;
+    };
+
     static Params autocompute(ImageSource *src, bool corr_pitch, bool corr_yaw, const procparams::ProcParams *pparams, const FramesMetaData *metadata, const std::vector<ControlLine> *control_lines = nullptr);
+    static AutoLevelResult autoLevel(ImageSource *src, const procparams::ProcParams *pparams);
 
     //static void autocrop(int width, int height, bool fixratio, const procparams::PerspectiveParams &params, const FramesMetaData *metadata, int &x, int &y, int &w, int &h);
 };

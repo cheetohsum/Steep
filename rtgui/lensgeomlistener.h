@@ -32,6 +32,7 @@ class LensGeomListener
 public:
     virtual ~LensGeomListener() = default;
     virtual void straightenRequested () = 0;
+    virtual bool autoLevelRequested (double& correction) = 0;
     virtual void autoCropRequested   () = 0;
     virtual double autoDistorRequested () = 0;
     virtual void autoPerspRequested (bool corr_pitch, bool corr_yaw, double& rot, double& pitch, double& yaw, const std::vector<rtengine::ControlLine> *lines = nullptr) = 0;

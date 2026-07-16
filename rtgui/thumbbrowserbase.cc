@@ -15,7 +15,6 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include <algorithm>
-#include <numeric>
 
 #include <glibmm/ustring.h>
 
@@ -779,164 +778,49 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry, bool filterSta
         // This will require a Writer access
         resizeThumbnailArea(currx, rowHeight);
     } else {
-        const int availWidth = internal.get_width();
-        const std::vector<ThumbBrowserEntryBase*>& layoutEntries = fullRelayout ? drawableEntries_ : fd;
-
-        // initial number of columns
-        int oldNumOfCols = numOfCols;
-        numOfCols = 0;
-        int colsWidth = 0;
-
-        for (unsigned int i = 0; i < layoutEntries.size(); ++i) {
-            if ((fullRelayout || !layoutEntries[i]->filtered) && colsWidth + layoutEntries[i]->getMinimalWidth() <= availWidth) {
-                colsWidth += layoutEntries[i]->getMinimalWidth();
-                ++numOfCols;
-                if(colsWidth > availWidth) {
-                    --numOfCols;
-                    break;
-                }
-            }
-        }
-
-        if (numOfCols < 1) {
-            numOfCols = 1;
-        }
-
-        std::vector<int> colWidths;
-
-        for (; numOfCols > 0; --numOfCols) {
-            // compute column widths
-            colWidths.assign(numOfCols, 0);
-
-            for (unsigned int i = 0, j = 0; i < layoutEntries.size(); ++i) {
-                if ((fullRelayout || !layoutEntries[i]->filtered) && layoutEntries[i]->getMinimalWidth() > colWidths[j % numOfCols]) {
-                    colWidths[j % numOfCols] = layoutEntries[i]->getMinimalWidth();
-                }
-
-                if (fullRelayout || !layoutEntries[i]->filtered) {
-                    ++j;
-                }
-            }
-
-            // if not wider than the space available, arrange it and we are ready
-            colsWidth = std::accumulate(colWidths.begin(), colWidths.end(), 0);
-
-            if (numOfCols == 1 || colsWidth < availWidth) {
-                break;
-            }
-        }
-
-        // arrange files
+        const int availWidth = std::max(internal.get_width(), 1);
+        int currx = 0;
         int curry = 0;
-        size_t ct = 0;
-        if (entry) {
-            std::vector<int> oldColWidths;
-            if (oldNumOfCols == numOfCols) {
-                for (; oldNumOfCols > 0; --oldNumOfCols) {
-                    // compute old column widths
-                    oldColWidths.assign(oldNumOfCols, 0);
+        int entriesInRow = 0;
+        int maxEntriesInRow = 0;
+        int maxRowWidth = 0;
 
-                    for (unsigned int i = 0, j = 0; i < fd.size(); ++i) {
-                        if (fd[i] != entry && !fd[i]->filtered && fd[i]->getMinimalWidth() > oldColWidths[j % oldNumOfCols]) {
-                            oldColWidths[j % oldNumOfCols] = fd[i]->getMinimalWidth();
-                        }
+        drawableEntries_.clear();
+        drawableEntries_.reserve(fd.size());
 
-                        if (fd[i] != entry && !fd[i]->filtered) {
-                            ++j;
-                        }
-                    }
-                    if (oldNumOfCols == 1 || std::accumulate(oldColWidths.begin(), oldColWidths.end(), 0) < availWidth) {
-                        break;
-                    }
-                }
+        for (auto* thumb : fd) {
+            if (thumb->filtered) {
+                thumb->setPosition(-10000, -10000, thumb->getMinimalWidth(), rowHeight);
+                thumb->drawable = false;
+                continue;
             }
 
-            bool arrangeAll = true;
-            if (oldNumOfCols == numOfCols) {
-                arrangeAll = false;
-                for (int i = 0; i < numOfCols; ++i) {
-                    if(colWidths[i] != oldColWidths[i]) {
-                        arrangeAll = true;
-                        break;
-                    }
-                }
-            }
-            if (!arrangeAll) {
-                int j = 0;
-                // Find currently added entry
-                for (; ct < fd.size() && fd[ct] != entry; j += !fd[ct]->filtered, ++ct) {
-                }
-                //Calculate the position of currently added entry
-                const int row = j / numOfCols;
-                const int col = j % numOfCols;
-                curry = row * rowHeight;
-                int currx = 0;
-                for (int c = 0; c < col; ++c) {
-                    currx += colWidths[c];
-                }
-                // arrange all entries in the row beginning with the currently added one
-                for (int i = col; ct < fd.size() && i < numOfCols; ++i) {
-                    // skip filtered entries without consuming a column
-                    while (ct < fd.size() && fd[ct]->filtered) {
-                        fd[ct]->setPosition(-10000, -10000, colWidths[i], rowHeight);
-                        fd[ct]->drawable = false;
-                        ++ct;
-                    }
-                    if (ct < fd.size()) {
-                        fd[ct]->setPosition(currx, curry, colWidths[i], rowHeight);
-                        fd[ct]->drawable = true;
-                        if (buildDrawableEntriesInline) {
-                            drawableEntries_.push_back(fd[ct]);
-                        }
-                        currx += colWidths[i];
-                        ++ct;
-                    }
-                }
-
-                if (currx > 0) { // there were thumbnails placed in the row
-                    curry += rowHeight;
-                }
-            }
-        }
-
-        // arrange remaining entries, if any, that's the most expensive part
-        for (; ct < layoutEntries.size();) {
-
-            // arrange items in the row
-            int currx = 0;
-
-            for (int i = 0; ct < layoutEntries.size() && i < numOfCols; ++i) {
-                // skip filtered entries without consuming a column
-                if (!fullRelayout) {
-                    while (ct < layoutEntries.size() && layoutEntries[ct]->filtered) {
-                        layoutEntries[ct]->setPosition(-10000, -10000, colWidths[i], rowHeight);
-                        layoutEntries[ct]->drawable = false;
-                        ++ct;
-                    }
-                }
-
-                if (ct < layoutEntries.size()) {
-                    layoutEntries[ct]->setPosition(currx, curry, colWidths[i], rowHeight);
-                    layoutEntries[ct]->drawable = true;
-                    if (buildDrawableEntriesInline && !fullRelayout) {
-                        drawableEntries_.push_back(layoutEntries[ct]);
-                    }
-                    currx += colWidths[i];
-                    ++ct;
-                }
-            }
-
-            if (currx > 0) { // there were thumbnails placed in the row
+            const int itemWidth = std::max(thumb->getMinimalWidth(), 1);
+            if (currx > 0 && currx + itemWidth > availWidth) {
+                maxRowWidth = std::max(maxRowWidth, currx);
+                maxEntriesInRow = std::max(maxEntriesInRow, entriesInRow);
                 curry += rowHeight;
+                currx = 0;
+                entriesInRow = 0;
             }
+
+            thumb->setPosition(currx, curry, itemWidth, rowHeight);
+            thumb->drawable = true;
+            drawableEntries_.push_back(thumb);
+            currx += itemWidth;
+            ++entriesInRow;
         }
 
-        if (!buildDrawableEntriesInline) {
-            rebuildDrawableEntries_();
+        if (entriesInRow > 0) {
+            maxRowWidth = std::max(maxRowWidth, currx);
+            maxEntriesInRow = std::max(maxEntriesInRow, entriesInRow);
+            curry += rowHeight;
         }
+
+        numOfCols = std::max(maxEntriesInRow, 1);
         MYREADERLOCK_RELEASE(l);
         // This will require a Writer access
-        resizeThumbnailArea(colsWidth, curry);
+        resizeThumbnailArea(maxRowWidth, curry);
     }
 }
 

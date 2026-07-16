@@ -45,6 +45,7 @@ inline struct tm* portable_localtime(const time_t* t, struct tm* result) {
 #include <giomm.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
@@ -673,6 +674,12 @@ std::vector<ToolDef> getToolDefinitions() {
         createObjectSchema({{"params", "object"}}, {"params"})
     });
 
+    tools.push_back({
+        "auto_level",
+        "Detect a reliable horizon or structural lines in the current image and apply a conservative local leveling rotation.",
+        createObjectSchema({}, {})
+    });
+
     // set_tool_enabled
     tools.push_back({
         "set_tool_enabled",
@@ -1142,6 +1149,47 @@ std::string handleToolCall(const std::string& toolName, cJSON* args, McpServer* 
             cJSON_Delete(result);
             return s;
         }
+    }
+
+    if (toolName == "auto_level") {
+        double correction = 0.0;
+        if (!ep->getTpc()->autoLevelRequested(correction)) {
+            cJSON* result = buildToolResult(
+                "No reliable horizon or straight lines were found; the image was left unchanged.", true);
+            std::string s = jsonStr(result);
+            cJSON_Delete(result);
+            return s;
+        }
+
+        ProcParams pp;
+        ep->getIpc()->getParams(&pp);
+        const double new_rotation = pp.rotate.degree + correction;
+        if (std::abs(new_rotation) > 45.0) {
+            cJSON* result = buildToolResult(
+                "The detected correction exceeds the supported rotation range; the image was left unchanged.", true);
+            std::string s = jsonStr(result);
+            cJSON_Delete(result);
+            return s;
+        }
+
+        if (std::abs(correction) >= 0.015) {
+            pp.rotate.degree = new_rotation;
+            PartialProfile profile(true);
+            *profile.pparams = pp;
+            profile.pedited->set(true);
+            ep->getTpc()->profileChange(&profile, rtengine::EvProfileChanged, "MCP: auto_level");
+            profile.deleteInstance();
+        }
+
+        cJSON* payload = cJSON_CreateObject();
+        cJSON_AddNumberToObject(payload, "correction", correction);
+        cJSON_AddNumberToObject(payload, "rotation", new_rotation);
+        cJSON_AddBoolToObject(payload, "alreadyLevel", std::abs(correction) < 0.015);
+        cJSON* result = buildToolResultJson(payload);
+        cJSON_Delete(payload);
+        std::string s = jsonStr(result);
+        cJSON_Delete(result);
+        return s;
     }
 
     if (toolName == "set_tool_enabled") {

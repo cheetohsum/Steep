@@ -76,6 +76,7 @@ enum class ToneCurveMode : int;
 class IImage8;
 class IImage16;
 class IImagefloat;
+class Imagefloat;
 class ImageSource;
 class TweakOperator;
 
@@ -837,10 +838,8 @@ public:
     virtual void        getSoftProofing         (bool &softProof, bool &gamutCheck) = 0;
     virtual ProcEvent   setSharpMask            (bool sharpMask) = 0;
 
-    /** Export RT's demosaiced image as a float32 TIFF for AI denoiser input.
-      * @param outputPath path for the output TIFF file
-      * @return true on success */
-    virtual bool        exportDemosaicedTIFF    (const Glib::ustring& outputPath) = 0;
+    /** Create a full-resolution demosaiced image for native AI denoising. */
+    virtual std::unique_ptr<Imagefloat> createDemosaicedImage () = 0;
 
     virtual ~StagedImageProcessor () {}
 

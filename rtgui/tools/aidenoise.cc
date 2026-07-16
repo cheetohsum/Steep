@@ -18,6 +18,7 @@
  */
 #include <cmath>
 #include <iomanip>
+#include <utility>
 
 #include "aidenoise.h"
 
@@ -119,6 +120,9 @@ AIDenoise::AIDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_AIDENOISE_LAB
         Glib::signal_idle().connect_once([this, success]() {
             if (success) {
                 updateStatus(M("TP_AIDENOISE_STATUS_READY"));
+                if (activateCheck_->get_active() && !imagePath_.empty()) {
+                    onDenoiseClicked();
+                }
             } else {
                 updateStatus(M("TP_AIDENOISE_STATUS_NOT_AVAILABLE"));
             }
@@ -129,9 +133,9 @@ AIDenoise::AIDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_AIDENOISE_LAB
     if (aidm.isAvailable()) {
         statusLabel->set_text(M("TP_AIDENOISE_STATUS_READY"));
     } else if (aidm.isDetecting()) {
-        statusLabel->set_text("Detecting RawRefinery...");
+        statusLabel->set_text(M("TP_AIDENOISE_STATUS_LOADING"));
     } else {
-        statusLabel->set_text(M("TP_AIDENOISE_STATUS_NOT_AVAILABLE"));
+        statusLabel->set_text(M("TP_AIDENOISE_STATUS_READY"));
     }
 
     show_all();
@@ -264,12 +268,12 @@ void AIDenoise::onDenoiseClicked ()
     auto& aidm = rtengine::AIDenoiseManager::getInstance();
 
     if (aidm.isDetecting()) {
-        updateStatus("Detecting RawRefinery... please wait");
+        updateStatus(M("TP_AIDENOISE_STATUS_LOADING"));
         return;
     }
 
     if (!aidm.isAvailable()) {
-        updateStatus("Detecting RawRefinery...");
+        updateStatus(M("TP_AIDENOISE_STATUS_LOADING"));
         aidm.detect();
         return;
     }
@@ -279,22 +283,24 @@ void AIDenoise::onDenoiseClicked ()
         return;
     }
 
-    updateStatus(M("TP_AIDENOISE_STATUS_PROCESSING"));
+    updateStatus(M("TP_AIDENOISE_STATUS_PREPARING"));
     cancelBtn->set_sensitive(true);
 
-    // Export RT's own demosaiced image for the denoiser (correct color space)
-    Glib::ustring inputTiffPath;
-    if (ipc_) {
-        inputTiffPath = Glib::build_filename(Glib::get_tmp_dir(), "rt_aidenoise_input.tif");
-        if (!ipc_->exportDemosaicedTIFF(inputTiffPath)) {
-            updateStatus("Failed to export demosaiced image");
-            cancelBtn->set_sensitive(false);
-            return;
-        }
+    if (!ipc_) {
+        updateStatus("No image processor available");
+        cancelBtn->set_sensitive(false);
+        return;
     }
 
-    // Build output path in /tmp
-    Glib::ustring outputPath = Glib::build_filename(Glib::get_tmp_dir(), "rt_aidenoise_result.tif");
+    std::unique_ptr<rtengine::Imagefloat> inputImage =
+        ipc_->createDemosaicedImage();
+    if (!inputImage) {
+        updateStatus("Failed to prepare image");
+        cancelBtn->set_sensitive(false);
+        return;
+    }
+
+    updateStatus(M("TP_AIDENOISE_STATUS_PROCESSING"));
 
     // Read current params from the UI
     rtengine::procparams::AIDenoiseParams params;
@@ -313,10 +319,11 @@ void AIDenoise::onDenoiseClicked ()
     }
     fprintf(stderr, "AI Denoise: actual ISO from EXIF = %d\n", actualIso);
 
+    const Glib::ustring requestedImagePath = imagePath_;
     aidm.startDenoising(
         imagePath_,
         params,
-        outputPath,
+        std::move(inputImage),
         // Progress callback — dispatch to GTK main thread
         [this](double progress) {
             Glib::signal_idle().connect_once([this, progress]() {
@@ -327,28 +334,32 @@ void AIDenoise::onDenoiseClicked ()
             });
         },
         // Done callback — dispatch to GTK main thread via idle_add (thread-safe)
-        [this](bool success, const Glib::ustring& message) {
+        [this, requestedImagePath](bool success, const Glib::ustring& message) {
             fprintf(stderr, "AI Denoise: doneCb called success=%d, dispatching to main thread\n", (int)success);
             struct IdleData {
                 AIDenoise* self;
                 bool success;
                 Glib::ustring message;
+                Glib::ustring imagePath;
             };
-            auto* data = new IdleData{this, success, message};
+            auto* data = new IdleData{this, success, message, requestedImagePath};
             g_idle_add([](gpointer user_data) -> gboolean {
                 fprintf(stderr, "AI Denoise: g_idle_add callback FIRED\n");
                 auto* d = static_cast<IdleData*>(user_data);
                 auto* self = d->self;
                 bool success = d->success;
                 Glib::ustring message = d->message;
+                Glib::ustring imagePath = d->imagePath;
                 delete d;
 
                 self->cancelBtn->set_sensitive(false);
                 if (success) {
-                    self->updateStatus("Denoised successfully");
+                    self->updateStatus(M("TP_AIDENOISE_STATUS_COMPLETE"));
                     fprintf(stderr, "AI Denoise: Done callback - listener=%p enabled=%d\n",
                             (void*)self->listener, (int)self->getEnabled());
-                    if (self->listener && self->getEnabled()) {
+                    if (self->imagePath_ == imagePath
+                            && self->listener
+                            && self->getEnabled()) {
                         fprintf(stderr, "AI Denoise: Firing panelChanged(EvAIDNBlend)\n");
                         self->listener->panelChanged(EvAIDNBlend,
                             Glib::ustring::format(std::setw(2), std::fixed,
@@ -363,8 +374,9 @@ void AIDenoise::onDenoiseClicked ()
                     } else if (message.find("CUDA") != Glib::ustring::npos
                                || message.find("out of memory") != Glib::ustring::npos) {
                         cleanMsg = "GPU out of memory. Try disabling 'Use GPU'.";
-                    } else if (message.find("No module named") != Glib::ustring::npos) {
-                        cleanMsg = "RawRefinery module not found. Reinstall with: pip install rawrefinery";
+                    } else if (message.find("model") != Glib::ustring::npos
+                               && message.find("not found") != Glib::ustring::npos) {
+                        cleanMsg = M("TP_AIDENOISE_STATUS_NOT_AVAILABLE");
                     } else {
                         // Extract last meaningful line from stderr
                         auto pos = message.rfind("Error during processing:");
@@ -382,7 +394,6 @@ void AIDenoise::onDenoiseClicked ()
                 return G_SOURCE_REMOVE;
             }, data);
         },
-        inputTiffPath,
         actualIso
     );
 }

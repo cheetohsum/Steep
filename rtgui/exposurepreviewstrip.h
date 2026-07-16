@@ -80,9 +80,6 @@ private:
     DragCallback releaseCallback_;
     sigc::connection debounceConn_;
     sigc::connection dragThrottleConn_;
-    sigc::connection commitConn_;
     std::shared_ptr<std::atomic<bool>> cancelToken_;
     std::shared_ptr<std::atomic<bool>> aliveToken_ = std::make_shared<std::atomic<bool>>(true);
-    std::shared_ptr<rtengine::procparams::ProcParams> pendingCommitParams_;
-    double pendingCommitPos_ = 0.0;
 };

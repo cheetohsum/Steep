@@ -65,6 +65,7 @@
 #define HDR                                     (M_SPOT|M_LINDENOISE|M_HDR|M_TRANSFORM|M_BLURMAP|M_AUTOEXP|M_RGBCURVE|M_LUMACURVE|M_LUMINANCE|M_COLOR)
 #define SPOTADJUST                                                       (M_SPOT|M_HDR|M_BLURMAP|M_AUTOEXP|M_RGBCURVE|M_LUMACURVE|M_LUMINANCE|M_COLOR)
 #define TRANSFORM                                                         (M_SPOT|M_HDR|M_TRANSFORM|M_BLURMAP|M_AUTOEXP|M_RGBCURVE|M_LUMACURVE|M_LUMINANCE|M_COLOR)
+#define AIDENOISE                                            (M_LINDENOISE|M_HDR|M_TRANSFORM|M_BLURMAP|M_AUTOEXP|M_RGBCURVE|M_LUMACURVE|M_LUMINANCE|M_COLOR)
 #define AUTOEXP                                                                    (M_SPOT|M_HDR|M_AUTOEXP|M_RGBCURVE|M_LUMACURVE|M_LUMINANCE|M_COLOR)
 #define RGBCURVE                                                                                          (M_RGBCURVE|M_LUMACURVE|M_LUMINANCE|M_COLOR)
 #define LUMINANCECURVE                                                                                               (M_LUMACURVE|M_LUMINANCE|M_COLOR)

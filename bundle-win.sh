@@ -1,25 +1,31 @@
 #!/bin/bash
 set -e
 
-BUILD_DIR="$HOME/build-win/Release"
+SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUILD_DIR="${RT_BUNDLE_DIR:-$SOURCE_DIR/build-win/Release}"
+mkdir -p "$BUILD_DIR"
 
-# Copy binaries from RelWithDebInfo (where ninja install puts them)
-INSTALL_DIR="$HOME/build-win/RelWithDebInfo"
+# Copy freshly built binaries into the bundle when needed.
+INSTALL_DIR="${RT_BUILD_OUTPUT_DIR:-$SOURCE_DIR/build-win/rtgui}"
 for exe in steep.exe steep-cli.exe rawtherapee-cli.exe; do
-    if [ -f "$INSTALL_DIR/$exe" ] && [ "$INSTALL_DIR/$exe" -nt "$BUILD_DIR/$exe" ]; then
+    if [ -f "$INSTALL_DIR/$exe" ] && { [ ! -f "$BUILD_DIR/$exe" ] || [ "$INSTALL_DIR/$exe" -nt "$BUILD_DIR/$exe" ]; }; then
         cp "$INSTALL_DIR/$exe" "$BUILD_DIR/$exe"
     fi
 done
 
 # Copy all required DLLs
-ldd "$BUILD_DIR/steep.exe" | grep mingw64 | awk '{print $3}' | while read dll; do
-    cp -u "$dll" "$BUILD_DIR/" 2>/dev/null || true
-done
+if [ -f "$BUILD_DIR/steep.exe" ]; then
+    ldd "$BUILD_DIR/steep.exe" | grep mingw64 | awk '{print $3}' | while read -r dll; do
+        cp -u "$dll" "$BUILD_DIR/" 2>/dev/null || true
+    done
+fi
 
 # Also get DLLs from rawtherapee-cli
-ldd "$BUILD_DIR/rawtherapee-cli.exe" | grep mingw64 | awk '{print $3}' | while read dll; do
-    cp -u "$dll" "$BUILD_DIR/" 2>/dev/null || true
-done
+if [ -f "$BUILD_DIR/rawtherapee-cli.exe" ]; then
+    ldd "$BUILD_DIR/rawtherapee-cli.exe" | grep mingw64 | awk '{print $3}' | while read -r dll; do
+        cp -u "$dll" "$BUILD_DIR/" 2>/dev/null || true
+    done
+fi
 
 # Copy GTK helper executables
 cp -u /mingw64/bin/gdbus.exe "$BUILD_DIR/" 2>/dev/null || true
@@ -43,30 +49,37 @@ cp /mingw64/share/glib-2.0/schemas/gschemas.compiled "$BUILD_DIR/share/glib-2.0/
 mkdir -p "$BUILD_DIR/share/gtk-3.0"
 printf '[Settings]\ngtk-button-images=1\n' > "$BUILD_DIR/share/gtk-3.0/settings.ini"
 
-# Bundle embedded Python for AI Denoise
-PYTHON_DIR="$BUILD_DIR/python"
-if [ ! -f "$PYTHON_DIR/python.exe" ]; then
-  echo "Bundling embedded Python for AI Denoise..."
-  PYTHON_VERSION="3.11.9"
-  mkdir -p "$PYTHON_DIR"
-  EMBED_ZIP="/tmp/python-embed.zip"
-  if [ ! -f "$EMBED_ZIP" ]; then
-    curl -L -o "$EMBED_ZIP" \
-      "https://www.python.org/ftp/python/${PYTHON_VERSION}/python-${PYTHON_VERSION}-embed-amd64.zip"
-  fi
-  unzip -q "$EMBED_ZIP" -d "$PYTHON_DIR"
-  sed -i 's/#import site/import site/' "$PYTHON_DIR/python311._pth"
-  curl -L -o "$PYTHON_DIR/get-pip.py" https://bootstrap.pypa.io/get-pip.py
-  "$PYTHON_DIR/python.exe" "$PYTHON_DIR/get-pip.py" --no-warn-script-location
-  "$PYTHON_DIR/python.exe" -m pip install \
-    torch --index-url https://download.pytorch.org/whl/cpu \
-    blended-tiling tifffile platformdirs requests numpy \
-    --no-warn-script-location
-  rm -f "$PYTHON_DIR/get-pip.py"
-  echo "Embedded Python bundled."
-else
-  echo "Embedded Python already present, skipping."
+# Bundle ONNX Runtime + DirectML for native AI Denoise.
+# These ship in ext/onnxruntime/bin/ alongside the staged headers and import lib.
+ORT_BIN_SRC="$SOURCE_DIR/ext/onnxruntime/bin"
+if [ -d "$ORT_BIN_SRC" ]; then
+    echo "Bundling ONNX Runtime + DirectML DLLs for AI Denoise..."
+    cp -u "$ORT_BIN_SRC/onnxruntime.dll" "$BUILD_DIR/"
+    cp -u "$ORT_BIN_SRC/DirectML.dll" "$BUILD_DIR/"
 fi
+
+# The converted RawRefinery model is part of Steep's data bundle.
+MODEL_SRC="$SOURCE_DIR/rtdata/models/aidenoise/ShadowWeightedL1.onnx"
+MODEL_DEST="$BUILD_DIR/models/aidenoise"
+mkdir -p "$MODEL_DEST"
+cp -u "$MODEL_SRC" "$MODEL_DEST/"
+
+# Keep the portable bundle's UI strings and third-party notices in sync.
+mkdir -p "$BUILD_DIR/languages" "$BUILD_DIR/licenses"
+cp "$SOURCE_DIR/rtdata/languages/default" "$BUILD_DIR/languages/default"
+cp "$SOURCE_DIR/licenses/RawRefinery_LICENSE" "$BUILD_DIR/licenses/"
+cp "$SOURCE_DIR/licenses/ONNXRuntime_LICENSE" "$BUILD_DIR/licenses/"
+rm -f "$BUILD_DIR/scripts/rawrefinery_cli.py"
+
+for required in \
+    "$BUILD_DIR/onnxruntime.dll" \
+    "$BUILD_DIR/DirectML.dll" \
+    "$MODEL_DEST/ShadowWeightedL1.onnx"; do
+    if [ ! -s "$required" ]; then
+        echo "Missing required AI Denoise bundle component: $required" >&2
+        exit 2
+    fi
+done
 
 echo "DLL bundling done"
 ls "$BUILD_DIR"/*.exe

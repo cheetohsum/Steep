@@ -369,8 +369,8 @@ void Options::setDefaults()
     defProfRaw = DEFPROFILE_RAW;
     defProfImg = DEFPROFILE_IMG;
     dateFormat = "%y-%m-%d";
-    adjusterMinDelay = 100;
-    adjusterMaxDelay = 200;
+    adjusterMinDelay = 35;
+    adjusterMaxDelay = 80;
     startupDir = STARTUPDIR_LAST;
     startupPath = "";
     useBundledProfiles = true;
@@ -470,6 +470,7 @@ void Options::setDefaults()
     parseExtensionsEnabled.clear();
     parsedExtensions.clear();
     parsedExtensionsSet.clear();
+    defaultFiletypeFilter.clear();
     browseRecursive = false;
     browseRecursiveDepth = 10;
     browseRecursiveMaxDirs = 100;
@@ -822,6 +823,12 @@ void Options::readFromFile(Glib::ustring fname)
 
                 if (keyFile.has_key("General", "AdjusterMaxDelay")) {
                     adjusterMaxDelay = keyFile.get_integer("General", "AdjusterMaxDelay");
+                }
+
+                // Migrate the old defaults while preserving explicitly tuned values.
+                if (adjusterMinDelay == 100 && adjusterMaxDelay == 200) {
+                    adjusterMinDelay = 35;
+                    adjusterMaxDelay = 80;
                 }
 
                 if (keyFile.has_key("General", "StoreLastProfile")) {
@@ -1416,6 +1423,10 @@ void Options::readFromFile(Glib::ustring fname)
                     if (!l.empty()) {
                         parseExtensionsEnabled = l;
                     }
+                }
+
+                if (keyFile.has_key("File Browser", "DefaultFiletypeFilter")) {
+                    defaultFiletypeFilter = keyFile.get_string_list("File Browser", "DefaultFiletypeFilter");
                 }
 
                 // check and add extensions that are missing from config
@@ -2640,6 +2651,8 @@ void Options::saveToFile(Glib::ustring fname)
         keyFile.set_string_list("File Browser", "ParseExtensions", pext);
         Glib::ArrayHandle<int> pextena = parseExtensionsEnabled;
         keyFile.set_integer_list("File Browser", "ParseExtensionsEnabled", pextena);
+        Glib::ArrayHandle<Glib::ustring> defaultFiletypes = defaultFiletypeFilter;
+        keyFile.set_string_list("File Browser", "DefaultFiletypeFilter", defaultFiletypes);
         keyFile.set_integer("File Browser", "ThumbnailArrangement", fbArrangement);
         keyFile.set_integer("File Browser", "ThumbnailInterpolation", thumbInterp);
         Glib::ArrayHandle<Glib::ustring> pfav = favoriteDirs;

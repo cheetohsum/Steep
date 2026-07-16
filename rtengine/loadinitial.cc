@@ -51,4 +51,3 @@ void InitialImage::prewarmRawMetadata(const Glib::ustring& fname)
     RawImageSource::prewarmMetadata(fname);
 }
 }
-

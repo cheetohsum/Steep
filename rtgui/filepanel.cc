@@ -141,6 +141,12 @@ static double cachedPreviewScaleForEditor(
 // Foreground opens get priority: background preloads only start when no click-
 // initiated load is active or queued.
 struct RawLoadGate {
+    enum class ActiveOwner {
+        None,
+        Foreground,
+        Preload
+    };
+
     enum class PreloadAcquireResult {
         Acquired,
         Busy,
@@ -149,9 +155,10 @@ struct RawLoadGate {
 
     std::mutex mutex;
     std::condition_variable cv;
-    bool active = false;
+    ActiveOwner activeOwner = ActiveOwner::None;
     int foregroundWaiting = 0;
     std::unordered_set<std::string> editorActiveFiles;
+    std::unordered_set<std::string> firstFramePendingFiles;
     std::chrono::steady_clock::time_point lastForegroundActivity;
     std::chrono::steady_clock::time_point deferredForegroundUntil;
     std::string lastForegroundFile;
@@ -224,6 +231,31 @@ struct RawLoadGate {
         cv.notify_all();
     }
 
+    void setFirstFramePending(const std::string& fname, bool pending)
+    {
+        bool changed = false;
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            if (!fname.empty()) {
+                changed = pending
+                    ? firstFramePendingFiles.insert(fname).second
+                    : firstFramePendingFiles.erase(fname) != 0;
+            } else if (!pending && !firstFramePendingFiles.empty()) {
+                firstFramePendingFiles.clear();
+                changed = true;
+            }
+
+            if (changed && pending) {
+                lastForegroundActivity = std::chrono::steady_clock::now();
+                lastForegroundFile = fname;
+            }
+        }
+
+        if (changed) {
+            cv.notify_all();
+        }
+    }
+
     struct ForegroundPressure {
         bool any = false;
         bool sameFile = false;
@@ -241,7 +273,7 @@ struct RawLoadGate {
             cv.notify_all();
         };
 
-        while (active) {
+        while (activeOwner != ActiveOwner::None) {
             if (shouldCancel()) {
                 stopWaiting();
                 return false;
@@ -250,7 +282,7 @@ struct RawLoadGate {
             cv.wait_for(
                 lock,
                 std::chrono::milliseconds(kForegroundCancelPollMs),
-                [this] { return !active; });
+                [this] { return activeOwner == ActiveOwner::None; });
         }
 
         if (shouldCancel()) {
@@ -259,7 +291,7 @@ struct RawLoadGate {
         }
 
         --foregroundWaiting;
-        active = true;
+        activeOwner = ActiveOwner::Foreground;
         deferredForegroundUntil = std::chrono::steady_clock::time_point{};
         deferredForegroundFile.clear();
         return true;
@@ -277,7 +309,10 @@ struct RawLoadGate {
     {
         retryAfter = std::chrono::milliseconds(0);
 
-        if (active || foregroundWaiting > 0 || (includeEditorActivity && !editorActiveFiles.empty())) {
+        if (activeOwner != ActiveOwner::None
+            || foregroundWaiting > 0
+            || !firstFramePendingFiles.empty()
+            || (includeEditorActivity && !editorActiveFiles.empty())) {
             return PreloadAcquireResult::Busy;
         }
 
@@ -317,7 +352,7 @@ struct RawLoadGate {
             return result;
         }
 
-        active = true;
+        activeOwner = ActiveOwner::Preload;
         return PreloadAcquireResult::Acquired;
     }
 
@@ -328,6 +363,8 @@ struct RawLoadGate {
     {
         std::lock_guard<std::mutex> lock(mutex);
         const bool any = foregroundWaiting > 0
+            || activeOwner == ActiveOwner::Foreground
+            || !firstFramePendingFiles.empty()
             || (includeEditorActivity && !editorActiveFiles.empty())
             || lastForegroundActivity > since;
         return {
@@ -340,7 +377,7 @@ struct RawLoadGate {
     {
         {
             std::lock_guard<std::mutex> lock(mutex);
-            active = false;
+            activeOwner = ActiveOwner::None;
             if (foreground) {
                 lastForegroundActivity = std::chrono::steady_clock::now();
             }
@@ -359,7 +396,8 @@ void noteRawLoadForegroundActivity(const std::string& fname)
 bool isRawLoadForegroundQuietForMs(int quietMs)
 {
     std::lock_guard<std::mutex> lock(g_rawLoadGate.mutex);
-    if (g_rawLoadGate.active || g_rawLoadGate.foregroundWaiting > 0) {
+    if (g_rawLoadGate.activeOwner == RawLoadGate::ActiveOwner::Foreground
+        || g_rawLoadGate.foregroundWaiting > 0) {
         return false;
     }
     if (g_rawLoadGate.lastForegroundActivity == std::chrono::steady_clock::time_point{}) {
@@ -377,7 +415,8 @@ int rawLoadForegroundQuietRetryMs(int quietMs, int minRetryMs)
     const int quietTarget = std::max(0, quietMs);
     std::lock_guard<std::mutex> lock(g_rawLoadGate.mutex);
 
-    if (g_rawLoadGate.active || g_rawLoadGate.foregroundWaiting > 0) {
+    if (g_rawLoadGate.activeOwner == RawLoadGate::ActiveOwner::Foreground
+        || g_rawLoadGate.foregroundWaiting > 0) {
         return minRetry;
     }
     if (g_rawLoadGate.lastForegroundActivity == std::chrono::steady_clock::time_point{}) {
@@ -398,6 +437,11 @@ int rawLoadForegroundQuietRetryMs(int quietMs, int minRetryMs)
 void setRawLoadEditorActivity(const std::string& fname, bool active)
 {
     g_rawLoadGate.setEditorActivity(fname, active);
+}
+
+void setRawLoadFirstFramePending(const std::string& fname, bool pending)
+{
+    g_rawLoadGate.setFirstFramePending(fname, pending);
 }
 
 struct RawLoadLease {
@@ -770,8 +814,8 @@ struct PreloadManager {
     // Tunables. Keep full-image preloads narrow but useful: directional
     // navigation warms likely forward RAWs first, while the byte cap prevents
     // runaway RAW memory use.
-    static constexpr size_t kMaxBytes    = 640ULL * 1024 * 1024;
-    static constexpr size_t kMaxEntries  = 2;
+    static constexpr size_t kMaxBytes    = 384ULL * 1024 * 1024;
+    static constexpr size_t kMaxEntries  = 1;
     static constexpr int    kRadius      = 4;
     static constexpr size_t kDirectionalBacktrackEntries = 0;
     static constexpr size_t kDirectionalLeadEntries = 1;
@@ -804,6 +848,10 @@ struct PreloadManager {
     static constexpr int    kDirectionalScrubDecodeDebounceMaxMs = 360;
     static constexpr int    kDirectionalScrubDecodeDebounceExtraMs = 15;
     static constexpr int    kMediumDirectionalScrubDecodeDebounceExtraMs = 35;
+    static constexpr unsigned kRawScrubCoalesceRunLength = 3;
+    static constexpr int    kRawScrubSettleMinMs = 260;
+    static constexpr int    kRawScrubSettleMaxMs = 480;
+    static constexpr int    kRawScrubSettlePaddingMs = 60;
     static constexpr int    kFastFujiRapidScrubDecodeDelayMs = 35;
     static constexpr int    kFastFujiQueuedScrubDecodeDelayMs = 20;
     static constexpr int    kFastFujiSustainedScrubDecodeDelayMs = 140;
@@ -1809,20 +1857,6 @@ rtengine::InitialImage* FilePanel::loadAuxiliaryInitialImage(
     auto canceled = [&]() {
         return cancel && cancel->load(std::memory_order_acquire);
     };
-    auto sleepCancellable = [&](std::chrono::milliseconds delay) {
-        auto remaining = delay;
-        while (remaining.count() > 0) {
-            if (canceled()) {
-                return true;
-            }
-
-            const auto slice = std::min(remaining, std::chrono::milliseconds(25));
-            std::this_thread::sleep_for(slice);
-            remaining -= slice;
-        }
-
-        return canceled();
-    };
     auto finishCanceled = [&](const char* phase) -> rtengine::InitialImage* {
         if (errorCode) {
             *errorCode = 0;
@@ -1838,45 +1872,12 @@ rtengine::InitialImage* FilePanel::loadAuxiliaryInitialImage(
         FILESEL_LOG("[auxLoad] enter raw=%d file=%s\n", static_cast<int>(isRaw), fnameRaw.c_str());
     }
 
+    // Comparison loading begins only after the main editor has painted its
+    // first engine frame. Waiting on the preload gate here can starve the
+    // before view for the entire editing session because that gate includes
+    // active-editor work.
     if (canceled()) {
-        return finishCanceled("before gate");
-    }
-
-    std::unique_ptr<RawLoadLease> loadLease;
-    if (isRaw) {
-        while (true) {
-            loadLease.reset(new RawLoadLease(
-                false,
-                std::chrono::milliseconds(PreloadManager::kForegroundQuietMs)));
-            if (loadLease->acquired) {
-                break;
-            }
-
-            auto retryDelay = std::chrono::milliseconds(PreloadManager::kPreloadRetryMs);
-            if (loadLease->preloadResult == RawLoadGate::PreloadAcquireResult::TooSoon) {
-                retryDelay = std::max(retryDelay, loadLease->retryAfter);
-            }
-            if (logSelection) {
-                FILESEL_LOG("[auxLoad] +%lldms raw gate deferred retry=%lldms file=%s\n",
-                    elapsedFromStart(),
-                    static_cast<long long>(retryDelay.count()),
-                    fnameRaw.c_str());
-            }
-
-            loadLease.reset();
-            if (sleepCancellable(retryDelay)) {
-                return finishCanceled("waiting for gate");
-            }
-        }
-
-        if (logSelection) {
-            FILESEL_LOG("[auxLoad] +%lldms raw gate acquired file=%s\n",
-                elapsedFromStart(), fnameRaw.c_str());
-        }
-    }
-
-    if (canceled()) {
-        return finishCanceled("after gate");
+        return finishCanceled("before decode");
     }
 
     const auto decodeStart = logSelection ? clk::now() : clk::time_point{};
@@ -2580,8 +2581,11 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
             recentDirectionalSelectionRunLength_ = 1;
         }
         if (selectedIsRaw) {
+            const bool continuingRawScrub = recentDirectionalSelectionWasRaw_
+                && recentDirectionalSelectionGapMs_ > 0
+                && recentDirectionalSelectionGapMs_ <= PreloadManager::kDirectionalScrubDecodeDebounceCadenceMs;
             recentDirectionalRawSelectionRunLength_ =
-                continuingDirectionalRun && recentDirectionalSelectionWasRaw_
+                continuingRawScrub
                     ? recentDirectionalRawSelectionRunLength_ + 1
                     : 1;
         } else {
@@ -2950,13 +2954,36 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
             std::min(
                 decodeDebounceMaxMs,
                 recentDirectionalSelectionGapMs_ + decodeDebounceExtraMs));
-        FILESEL_LOG("[fileSel] +%lldms rapid decode debounce mode=%s delay=%dms cadence=%dms run=%u activeRaw=%d file=%s\n",
+
+        // Once navigation becomes a scrub, keep showing the correctly scaled
+        // cached preview immediately but wait for the run to settle before
+        // starting another full decode. LibRaw cannot safely cancel a decode
+        // already in progress, so latest-only scheduling is the only way to
+        // prevent superseded RAWs from monopolizing the serialized gate.
+        const bool coalesceRawScrub =
+            (recentDirectionalRawSelectionRunLength_ >= PreloadManager::kRawScrubCoalesceRunLength
+                || (recentDirectionalRawSelectionRunLength_ >= 2
+                    && supersedingActiveRawForegroundLoad))
+            && foregroundPreloadPriority != PreloadManager::ForegroundPriorityResult::Loading;
+        if (coalesceRawScrub) {
+            const int scrubSettleMs = std::max(
+                PreloadManager::kRawScrubSettleMinMs,
+                std::min(
+                    PreloadManager::kRawScrubSettleMaxMs,
+                    recentDirectionalSelectionGapMs_
+                        + PreloadManager::kRawScrubSettlePaddingMs));
+            foregroundRequest->decodeStartDelayMs = std::max(
+                foregroundRequest->decodeStartDelayMs,
+                scrubSettleMs);
+        }
+        FILESEL_LOG("[fileSel] +%lldms rapid decode debounce mode=%s delay=%dms cadence=%dms run=%u activeRaw=%d coalesced=%d file=%s\n",
             (long long)ms(clk::now()),
             mediumDirectionalScrub ? "scrub" : "rapid",
             foregroundRequest->decodeStartDelayMs,
             recentDirectionalSelectionGapMs_,
             recentDirectionalSelectionRunLength_,
             static_cast<int>(supersedingActiveRawForegroundLoad),
+            static_cast<int>(coalesceRawScrub),
             selectedFileNameRaw.c_str());
     } else if (!selectedIsRaw
         && rapidDirectionalSelection
@@ -4216,7 +4243,7 @@ void FilePanel::preloadAdjacent(
                         BackgroundPreloadOpenMPGuard ompGuard(
                             throttleThroughEditorPreload
                                 ? PreloadManager::kThroughEditorRawPreloadThreads
-                                : 3);
+                                : 4);
                         img = rtengine::InitialImage::load(loadFname, entry.isRaw, &err, nullptr);
                     }
                     if (logPreload) {

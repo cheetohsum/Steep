@@ -637,9 +637,11 @@ void Crop::update(int todo)
         if (params.aiDenoise.enabled && params.aiDenoise.blend > 0) {
             auto& aidm = AIDenoiseManager::getInstance();
             if (aidm.isCacheValid(parent->imgsrc->getFileName(), params.aiDenoise.isoConditioning)) {
-                const Imagefloat* dn = aidm.getCachedResult();
-                ImProcFunctions::blendAIDenoise(origCrop, dn,
-                    params.aiDenoise.blend / 100.0, trafx, trafy, skip);
+                const auto dn = aidm.getCachedResult();
+                if (dn) {
+                    ImProcFunctions::blendAIDenoise(origCrop, dn.get(),
+                        params.aiDenoise.blend / 100.0, trafx, trafy, skip);
+                }
             }
         }
 

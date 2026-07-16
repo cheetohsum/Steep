@@ -1795,7 +1795,7 @@ struct FilmSimulationParams {
 struct FilmPresetsParams {
     bool enabled;
     Glib::ustring preset;  // preset ID: "custom", "heritage_gold", etc.
-    int modelVersion;       // 1 = legacy look engine, 2 = Film Lab
+    int modelVersion;       // 1 = legacy, 2 = Film Lab, 3 = density-domain Film Lab
     double exposure;        // Film-plane exposure in EV
     double pushPull;        // Development compensation in stops
     Glib::ustring process;  // auto, c41, e6, ecn2, bw
@@ -1818,6 +1818,16 @@ struct FilmPresetsParams {
     int blueShift;          // -100..100
     int grain;              // -100..100
     int vibrance;           // -100..100
+    int skinProtection;     // 0..100
+    int layerCoupling;      // -100..100
+    int grainSize;          // -100..100
+    int grainClumping;      // -100..100
+    int grainColor;         // -100..100
+    int halationSize;       // -100..100
+    int halationThreshold;  // -100..100
+    int halationColor;      // -100..100
+    int bloom;              // -100..100
+    int outputSoftness;     // -100..100
 
     FilmPresetsParams();
 

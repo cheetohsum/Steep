@@ -16,7 +16,10 @@
  *  You should have received a copy of the GNU General Public License
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include <chrono>
 #include <condition_variable>
+#include <cstdlib>
+#include <cstdio>
 #include <deque>
 #include <fstream>
 #include <functional>
@@ -444,11 +447,39 @@ DetailedCrop* ImProcCoordinator::createCrop(::EditDataProvider *editDataProvider
 // todo: bitmask containing desired actions, taken from changesSinceLast
 void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
 {
+    using PreviewClock = std::chrono::steady_clock;
+    const bool tracePipeline = std::getenv("STEEP_PIPELINE_TRACE") != nullptr;
+    const auto traceStart = PreviewClock::now();
+    auto traceLast = traceStart;
+    auto traceStage = [&](const char* stage) {
+        if (!tracePipeline) {
+            return;
+        }
+
+        const auto now = PreviewClock::now();
+        const auto delta = std::chrono::duration_cast<std::chrono::milliseconds>(now - traceLast).count();
+        const auto total = std::chrono::duration_cast<std::chrono::milliseconds>(now - traceStart).count();
+        std::printf("[previewPipeline] stage=%s delta=%lldms total=%lldms todo=0x%x file=%s\n",
+                    stage,
+                    static_cast<long long>(delta),
+                    static_cast<long long>(total),
+                    todo,
+                    imgsrc ? imgsrc->getFileName().c_str() : "");
+        std::fflush(stdout);
+        traceLast = now;
+    };
+
     // TODO Locallab printf
     MyMutex::MyLock processingLock(mProcessing);
+    traceStage("processing-lock");
 
     const auto prevdemo = App::get().options().prevdemo;
-    bool highDetailNeeded = prevdemo == PD_Sidecar ? true : (todo & M_HIGHQUAL);
+    const bool progressiveInitialPreview =
+        prevdemo == PD_Sidecar
+        && !resultValid
+        && (todo & ALL) == ALL
+        && !(todo & M_HIGHQUAL);
+    bool highDetailNeeded = progressiveInitialPreview ? false : (prevdemo == PD_Sidecar || (todo & M_HIGHQUAL));
 
     //    printf("metwb=%s \n", params->wb.method.c_str());
 
@@ -535,6 +566,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
 
             highDetailPreprocessComputed = highDetailNeeded;
         }
+        traceStage("preprocess");
 
         /*
         Demosaic is kicked off only when
@@ -600,6 +632,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             todo |= (M_INIT | M_CSHARP);
 
         }
+        traceStage("demosaic");
 
         if (destroying) {
             return;
@@ -986,7 +1019,9 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
 
 
             ipf.firstAnalysis(orig_prev, *params, vhist16);
+
         }
+        traceStage("source-to-working");
   
         oprevi = orig_prev;
 
@@ -1025,6 +1060,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 delete oprevi;
             }
         }
+        traceStage("hdr-dehaze");
 
         // Remove transformation if unneeded
         bool needstransform = ipf.needsTransform(fw, fh, imgsrc->getRotateDegree(), imgsrc->getMetaData());
@@ -1062,6 +1098,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             ipf.dirpyrequalizer(&labcbdl, scale);
             ipf.lab2rgb(labcbdl, *oprevi, params->icm.workingProfile);
         }
+        traceStage("transform-and-precurve-detail");
 
         if (todo & M_AUTOEXP) {
             if (params->toneCurve.autoexp) {
@@ -1106,6 +1143,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                     ae->autoMatchedToneCurveChanged(params->toneCurve.curveMode, params->toneCurve.curve);
                 }
             }
+            traceStage("auto-exposure-and-histogram-match");
 
             // Encoding log with locallab and SE capture sharpening
             if (params->locallab.enabled && !params->locallab.spots.empty()) {
@@ -1313,6 +1351,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 delete [] caprad;
             }
         }
+        traceStage("auto-and-local-setup");
 
 
         if (destroying) {
@@ -1973,6 +2012,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             //*************************************************************
 
         }
+        traceStage("local-adjustments");
 
         if (destroying) {
             return;
@@ -2104,6 +2144,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
 
                 // correct GUI black and white with value
             }
+            traceStage("rgb-curves");
 
             //  ipf.Lab_Tile(oprevl, oprevl, scale);
 
@@ -2426,6 +2467,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 params->filmPresets,
                 FilmLabContext(0, 0, fw, fh, std::max(scale, 1), ImProcFunctions::filmLabSeed(imgsrc->getFileName())));
             ipf.softLight(nprevl, params->softlight);
+            traceStage("film-lab");
 
 
             if (params->icm.workingTRC != ColorManagementParams::WorkingTrc::NONE && params->icm.trcExp) {
@@ -2929,6 +2971,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
         }
 
         // Update the monitor color transform if necessary
+        traceStage("post-film-processing");
         if ((todo & M_MONITOR) || (lastOutputProfile != params->icm.outputProfile) || lastOutputIntent != params->icm.outputIntent || lastOutputBPC != params->icm.outputBPC) {
             lastOutputProfile = params->icm.outputProfile;
             lastOutputIntent = params->icm.outputIntent;
@@ -2967,6 +3010,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             } catch (std::exception&) {
                 return;
             }
+            traceStage("monitor-conversion");
         }
 
         if (!resultValid) {
@@ -3010,6 +3054,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 notifyHistogramChanged();
             }
         }
+        traceStage("preview-and-histograms");
     }
 
     if (orig_prev != oprevi) {
@@ -3727,26 +3772,23 @@ void ImProcCoordinator::saveInputICCReference(const Glib::ustring& fname, bool a
     //im->saveJPEG (fname, 85);
 }
 
-bool ImProcCoordinator::exportDemosaicedTIFF(const Glib::ustring& outputPath)
+std::unique_ptr<Imagefloat> ImProcCoordinator::createDemosaicedImage()
 {
     MyMutex::MyLock lock(mProcessing);
+
+    if (destroying || !imgsrc || !params) {
+        return nullptr;
+    }
 
     int fW, fH;
     int tr = getCoarseBitMask(params->coarse);
     imgsrc->getFullSize(fW, fH, tr);
 
-    Imagefloat* im = new Imagefloat(fW, fH);
+    std::unique_ptr<Imagefloat> im(new Imagefloat(fW, fH));
     PreviewProps pp(0, 0, fW, fH, 1);
-    imgsrc->getImage(currWB, tr, im, pp, params->toneCurve, params->raw);
+    imgsrc->getImage(currWB, tr, im.get(), pp, params->toneCurve, params->raw);
 
-    int err = im->saveTIFF(outputPath, 32, true/*isFloat*/, true/*uncompressed*/);
-    delete im;
-
-    if (err != 0) {
-        return false;
-    }
-
-    return true;
+    return im;
 }
 
 void ImProcCoordinator::stopProcessing()
@@ -3910,6 +3952,7 @@ void ImProcCoordinator::process()
             || params->vignetting != nextParams->vignetting
             || params->chmixer != nextParams->chmixer
             || params->blackwhite != nextParams->blackwhite
+            || params->aiDenoise != nextParams->aiDenoise
             || params->icm != nextParams->icm
             || params->hsvequalizer != nextParams->hsvequalizer
             || params->pointcolor != nextParams->pointcolor

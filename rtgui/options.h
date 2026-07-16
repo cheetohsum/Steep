@@ -40,12 +40,8 @@
 
 #define THEMEREGEXSTR      "^(.+)\\.css$"
 
-// Default bundled profile name to use for Raw images
-#ifdef _WIN32
-#define DEFPROFILE_RAW      "${G}\\Auto-Matched Curve - ISO Low"
-#else
-#define DEFPROFILE_RAW      "${G}/Auto-Matched Curve - ISO Low"
-#endif
+// Default processing profile to use for Raw images
+#define DEFPROFILE_RAW      "Neutral"
 // Default bundled profile name to use for Standard images
 #define DEFPROFILE_IMG      "Neutral"
 // Profile name to use for internal values' profile
@@ -345,6 +341,7 @@ public:
     std::vector<int> parseExtensionsEnabled;      // List of bool to retain extension or not
     std::vector<Glib::ustring> parsedExtensions;  // List containing all retained extensions (lowercase)
     std::set<std::string> parsedExtensionsSet;  // Set containing all retained extensions (lowercase)
+    std::vector<Glib::ustring> defaultFiletypeFilter; // Startup file-type filter (uppercase)
     bool browseRecursive;
     int browseRecursiveDepth;
     int browseRecursiveMaxDirs;

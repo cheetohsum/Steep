@@ -114,9 +114,6 @@ PreviewStrip::~PreviewStrip()
     if (dragThrottleConn_.connected()) {
         dragThrottleConn_.disconnect();
     }
-    if (commitConn_.connected()) {
-        commitConn_.disconnect();
-    }
 }
 
 void PreviewStrip::setThumbnail(Thumbnail* thm)
@@ -133,11 +130,13 @@ void PreviewStrip::setThumbnail(Thumbnail* thm)
 
 void PreviewStrip::setCurrentParams(const rtengine::procparams::ProcParams& params)
 {
-    // During dragging, ignore external param updates (they contain our own drag offsets).
-    // The drag always works relative to dragBaseParams_ which was captured at drag start.
+    // A strip-generated update is ignored while its gesture is active. External
+    // edits establish a new neutral center instead of compounding the old look.
     if (isDragging_) return;
 
     currentParams_ = std::make_shared<rtengine::procparams::ProcParams>(params);
+    scrubberPos_ = 0.0;
+    queue_draw();
     regenerateThumbnails();
 }
 
@@ -412,11 +411,6 @@ bool PreviewStrip::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
 bool PreviewStrip::on_button_press_event(GdkEventButton* event)
 {
     if (event->button == 1) {
-        if (commitConn_.connected()) {
-            commitConn_.disconnect();
-        }
-        pendingCommitParams_.reset();
-
         // Snapshot current params as the baseline for this entire drag gesture.
         // All modifier calls during the drag use this snapshot, preventing compounding.
         if (currentParams_) {
@@ -433,7 +427,6 @@ bool PreviewStrip::on_button_press_event(GdkEventButton* event)
 bool PreviewStrip::on_button_release_event(GdkEventButton* event)
 {
     if (event->button == 1 && isDragging_) {
-        isDragging_ = false;
         dragPending_ = false;
         if (dragThrottleConn_.connected()) {
             dragThrottleConn_.disconnect();
@@ -443,27 +436,13 @@ bool PreviewStrip::on_button_release_event(GdkEventButton* event)
         if (dragBaseParams_ && paramModifier_) {
             rtengine::procparams::ProcParams pp = *dragBaseParams_;
             paramModifier_(pp, scrubberPos_);
-            pendingCommitParams_ = std::make_shared<rtengine::procparams::ProcParams>(pp);
-            pendingCommitPos_ = scrubberPos_;
-
-            if (commitConn_.connected()) {
-                commitConn_.disconnect();
+            if (releaseCallback_) {
+                releaseCallback_(pp, scrubberPos_);
+            } else if (dragCallback_) {
+                dragCallback_(pp, scrubberPos_);
             }
-
-            commitConn_ = Glib::signal_timeout().connect([this]() {
-                if (pendingCommitParams_) {
-                    if (releaseCallback_) {
-                        releaseCallback_(*pendingCommitParams_, pendingCommitPos_);
-                    } else if (dragCallback_) {
-                        dragCallback_(*pendingCommitParams_, pendingCommitPos_);
-                    }
-                    // Accept the final modified params as the new baseline.
-                    currentParams_ = pendingCommitParams_;
-                    pendingCommitParams_.reset();
-                }
-                return false;
-            }, 150);
         }
+        isDragging_ = false;
         dragBaseParams_.reset();
         return true;
     }

@@ -3419,7 +3419,17 @@ FilmPresetsParams::FilmPresetsParams() :
     greenShift(0),
     blueShift(0),
     grain(0),
-    vibrance(0)
+    vibrance(0),
+    skinProtection(35),
+    layerCoupling(0),
+    grainSize(0),
+    grainClumping(0),
+    grainColor(0),
+    halationSize(0),
+    halationThreshold(0),
+    halationColor(0),
+    bloom(0),
+    outputSoftness(0)
 {
 }
 
@@ -3450,7 +3460,17 @@ bool FilmPresetsParams::operator==(const FilmPresetsParams &other) const
         && greenShift == other.greenShift
         && blueShift == other.blueShift
         && grain == other.grain
-        && vibrance == other.vibrance;
+        && vibrance == other.vibrance
+        && skinProtection == other.skinProtection
+        && layerCoupling == other.layerCoupling
+        && grainSize == other.grainSize
+        && grainClumping == other.grainClumping
+        && grainColor == other.grainColor
+        && halationSize == other.halationSize
+        && halationThreshold == other.halationThreshold
+        && halationColor == other.halationColor
+        && bloom == other.bloom
+        && outputSoftness == other.outputSoftness;
 }
 
 bool FilmPresetsParams::operator!=(const FilmPresetsParams &other) const
@@ -5129,6 +5149,16 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->filmPresets.blueShift, "Film Presets", "BlueShift", filmPresets.blueShift, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.grain, "Film Presets", "Grain", filmPresets.grain, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.vibrance, "Film Presets", "Vibrance", filmPresets.vibrance, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.skinProtection, "Film Presets", "SkinProtection", filmPresets.skinProtection, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.layerCoupling, "Film Presets", "LayerCoupling", filmPresets.layerCoupling, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.grainSize, "Film Presets", "GrainSize", filmPresets.grainSize, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.grainClumping, "Film Presets", "GrainClumping", filmPresets.grainClumping, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.grainColor, "Film Presets", "GrainColor", filmPresets.grainColor, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.halationSize, "Film Presets", "HalationSize", filmPresets.halationSize, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.halationThreshold, "Film Presets", "HalationThreshold", filmPresets.halationThreshold, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.halationColor, "Film Presets", "HalationColor", filmPresets.halationColor, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.bloom, "Film Presets", "Bloom", filmPresets.bloom, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.outputSoftness, "Film Presets", "OutputSoftness", filmPresets.outputSoftness, keyFile);
 
         saveToKeyfile(!pedited || pedited->rgbCurves.enabled, "RGB Curves", "Enabled", rgbCurves.enabled, keyFile);
         saveToKeyfile(!pedited || pedited->rgbCurves.lumamode, "RGB Curves", "LumaMode", rgbCurves.lumamode, keyFile);
@@ -7149,6 +7179,16 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
             assignFromKeyfile(keyFile, "Film Presets", "BlueShift", filmPresets.blueShift, pedited->filmPresets.blueShift);
             assignFromKeyfile(keyFile, "Film Presets", "Grain", filmPresets.grain, pedited->filmPresets.grain);
             assignFromKeyfile(keyFile, "Film Presets", "Vibrance", filmPresets.vibrance, pedited->filmPresets.vibrance);
+            assignFromKeyfile(keyFile, "Film Presets", "SkinProtection", filmPresets.skinProtection, pedited->filmPresets.skinProtection);
+            assignFromKeyfile(keyFile, "Film Presets", "LayerCoupling", filmPresets.layerCoupling, pedited->filmPresets.layerCoupling);
+            assignFromKeyfile(keyFile, "Film Presets", "GrainSize", filmPresets.grainSize, pedited->filmPresets.grainSize);
+            assignFromKeyfile(keyFile, "Film Presets", "GrainClumping", filmPresets.grainClumping, pedited->filmPresets.grainClumping);
+            assignFromKeyfile(keyFile, "Film Presets", "GrainColor", filmPresets.grainColor, pedited->filmPresets.grainColor);
+            assignFromKeyfile(keyFile, "Film Presets", "HalationSize", filmPresets.halationSize, pedited->filmPresets.halationSize);
+            assignFromKeyfile(keyFile, "Film Presets", "HalationThreshold", filmPresets.halationThreshold, pedited->filmPresets.halationThreshold);
+            assignFromKeyfile(keyFile, "Film Presets", "HalationColor", filmPresets.halationColor, pedited->filmPresets.halationColor);
+            assignFromKeyfile(keyFile, "Film Presets", "Bloom", filmPresets.bloom, pedited->filmPresets.bloom);
+            assignFromKeyfile(keyFile, "Film Presets", "OutputSoftness", filmPresets.outputSoftness, pedited->filmPresets.outputSoftness);
         }
 
         if (keyFile.has_group("Film Simulation")) {

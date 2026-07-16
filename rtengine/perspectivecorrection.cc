@@ -47,6 +47,10 @@
 #include "improcfun.h"
 #include "procparams.h"
 #include "rt_math.h"
+#include <algorithm>
+#include <cmath>
+#include <cstdlib>
+#include <memory>
 #include <string.h>
 #include <math.h>
 #include <assert.h>
@@ -54,6 +58,8 @@
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
+#include <utility>
+#include <vector>
 
 #include "rtgui/threadutils.h"
 #include "colortemp.h"
@@ -259,6 +265,273 @@ std::unique_ptr<dt_iop_ashift_line_t[]> toAshiftLines(const std::vector<ControlL
     return retval;
 }
 
+void cleanupDtStructures(dt_iop_ashift_gui_data_t *g)
+{
+    if (g->lines) {
+        free(g->lines);
+        g->lines = nullptr;
+    }
+    if (g->points) {
+        free(g->points);
+        g->points = nullptr;
+    }
+    if (g->points_idx) {
+        free(g->points_idx);
+        g->points_idx = nullptr;
+    }
+    if (g->buf) {
+        free(g->buf);
+        g->buf = nullptr;
+    }
+}
+
+bool prepareAnalysisBuffer(
+    ImageSource *src,
+    const procparams::ProcParams *pparams,
+    int transform,
+    int full_width,
+    int full_height,
+    bool apply_rotation,
+    dt_iop_ashift_gui_data_t *g)
+{
+    const int skip = std::max(static_cast<int>(std::max(full_width, full_height) / 900.f + 0.5f), 1);
+    PreviewProps pp(0, 0, full_width, full_height, skip);
+    int width = 0;
+    int height = 0;
+    src->getSize(pp, width, height);
+    std::unique_ptr<Imagefloat> img(new Imagefloat(width, height));
+
+    ProcParams neutral;
+    neutral.raw.bayersensor.method = RAWParams::BayerSensor::getMethodString(RAWParams::BayerSensor::Method::FAST);
+    neutral.raw.xtranssensor.method = RAWParams::XTransSensor::getMethodString(RAWParams::XTransSensor::Method::FAST);
+    neutral.icm.outputProfile = ColorManagementParams::NoICMString;
+    src->getImage(src->getWB(), transform, img.get(), pp, neutral.toneCurve, neutral.raw);
+    src->convertColorSpace(img.get(), pparams->icm, src->getWB());
+
+    neutral.commonTrans.autofill = false;
+    if (apply_rotation) {
+        neutral.rotate = pparams->rotate;
+    }
+    neutral.distortion = pparams->distortion;
+    neutral.distortion.defish = pparams->distortion.defish;
+    neutral.distortion.focal_length = pparams->distortion.focal_length;
+    neutral.perspective.camera_focal_length = pparams->perspective.camera_focal_length;
+    neutral.perspective.camera_crop_factor = pparams->perspective.camera_crop_factor;
+    neutral.perspective.method = pparams->perspective.method;
+    neutral.lensProf = pparams->lensProf;
+
+    ImProcFunctions ipf(&neutral, true);
+    if (ipf.needsTransform(width, height, src->getRotateDegree(), src->getMetaData())) {
+        std::unique_ptr<Imagefloat> transformed(new Imagefloat(width, height));
+        ipf.transform(
+            img.get(), transformed.get(), 0, 0, 0, 0, width, height, width, height,
+            src->getMetaData(), src->getRotateDegree(), false);
+        img = std::move(transformed);
+    }
+
+    g->buf = static_cast<float *>(malloc(sizeof(float) * width * height * 4));
+    if (!g->buf) {
+        return false;
+    }
+    g->buf_width = width;
+    g->buf_height = height;
+
+    img->normalizeFloatTo1();
+
+#ifdef _OPENMP
+#   pragma omp parallel for
+#endif
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const int i = (y * width + x) * 4;
+            g->buf[i] = img->r(y, x);
+            g->buf[i + 1] = img->g(y, x);
+            g->buf[i + 2] = img->b(y, x);
+            g->buf[i + 3] = 1.f;
+        }
+    }
+
+    return true;
+}
+
+struct LevelSample
+{
+    double angle;
+    double length;
+};
+
+struct LevelEvidence
+{
+    double angle = 0.0;
+    double confidence = 0.0;
+    double total_length = 0.0;
+    double longest_line = 0.0;
+    double deviation = 0.0;
+    int line_count = 0;
+    bool valid = false;
+};
+
+double weightedMedian(std::vector<LevelSample> samples)
+{
+    if (samples.empty()) {
+        return 0.0;
+    }
+
+    std::sort(samples.begin(), samples.end(), [](const LevelSample& lhs, const LevelSample& rhs) {
+        return lhs.angle < rhs.angle;
+    });
+
+    double total_weight = 0.0;
+    for (const auto& sample : samples) {
+        total_weight += sample.length;
+    }
+
+    const double midpoint = total_weight * 0.5;
+    double accumulated = 0.0;
+    for (const auto& sample : samples) {
+        accumulated += sample.length;
+        if (accumulated >= midpoint) {
+            return sample.angle;
+        }
+    }
+
+    return samples.back().angle;
+}
+
+double weightedDeviation(const std::vector<LevelSample>& samples, double median)
+{
+    std::vector<LevelSample> deviations;
+    deviations.reserve(samples.size());
+    for (const auto& sample : samples) {
+        deviations.push_back({std::abs(sample.angle - median), sample.length});
+    }
+    return weightedMedian(std::move(deviations));
+}
+
+bool isLikelyImageBorder(const dt_iop_ashift_line_t& line, bool vertical, int width, int height)
+{
+    const double x_margin = std::max(2.0, width * 0.015);
+    const double y_margin = std::max(2.0, height * 0.015);
+
+    if (vertical) {
+        return (line.p1[0] <= x_margin && line.p2[0] <= x_margin)
+            || (line.p1[0] >= width - x_margin && line.p2[0] >= width - x_margin);
+    }
+
+    return (line.p1[1] <= y_margin && line.p2[1] <= y_margin)
+        || (line.p1[1] >= height - y_margin && line.p2[1] >= height - y_margin);
+}
+
+double lineLevelAngle(const dt_iop_ashift_line_t& line, bool vertical)
+{
+    double angle = std::atan2(line.p2[1] - line.p1[1], line.p2[0] - line.p1[0]) * 180.0 / RT_PI;
+    while (angle <= -90.0) {
+        angle += 180.0;
+    }
+    while (angle > 90.0) {
+        angle -= 180.0;
+    }
+
+    if (vertical) {
+        angle += angle < 0.0 ? 90.0 : -90.0;
+    }
+    return angle;
+}
+
+LevelEvidence analyzeLevelEvidence(const dt_iop_ashift_gui_data_t& g, bool vertical)
+{
+    LevelEvidence result;
+    const double extent = vertical ? g.lines_in_height : g.lines_in_width;
+    if (!g.lines || g.lines_count <= 0 || extent <= 0.0) {
+        return result;
+    }
+
+    int selected_count = 0;
+    for (int i = 0; i < g.lines_count; ++i) {
+        const auto& line = g.lines[i];
+        const bool relevant = (line.type & ASHIFT_LINE_RELEVANT) != 0;
+        const bool line_vertical = (line.type & ASHIFT_LINE_DIRVERT) != 0;
+        if (relevant && line_vertical == vertical && (line.type & ASHIFT_LINE_SELECTED)
+                && !isLikelyImageBorder(line, vertical, g.lines_in_width, g.lines_in_height)) {
+            ++selected_count;
+        }
+    }
+
+    // Darktable's RANSAC deliberately clears selection when only one or two
+    // segments exist. In that case, retain the detector's relevant lines and
+    // let the weighted median and dominance gates below make the decision.
+    const bool selected_only = selected_count >= 2;
+    std::vector<LevelSample> samples;
+    for (int i = 0; i < g.lines_count; ++i) {
+        const auto& line = g.lines[i];
+        const bool relevant = (line.type & ASHIFT_LINE_RELEVANT) != 0;
+        const bool line_vertical = (line.type & ASHIFT_LINE_DIRVERT) != 0;
+        const bool selected = (line.type & ASHIFT_LINE_SELECTED) != 0;
+        if (!relevant || line_vertical != vertical || (selected_only && !selected)
+                || isLikelyImageBorder(line, vertical, g.lines_in_width, g.lines_in_height)) {
+            continue;
+        }
+        samples.push_back({lineLevelAngle(line, vertical), std::max(1.0f, line.length)});
+    }
+
+    if (samples.empty()) {
+        return result;
+    }
+
+    double raw_length = 0.0;
+    for (const auto& sample : samples) {
+        raw_length += sample.length;
+    }
+
+    double median = weightedMedian(samples);
+    double deviation = weightedDeviation(samples, median);
+    const double trim_radius = std::min(3.5, std::max(0.75, deviation * 2.75));
+
+    std::vector<LevelSample> inliers;
+    inliers.reserve(samples.size());
+    for (const auto& sample : samples) {
+        if (std::abs(sample.angle - median) <= trim_radius) {
+            inliers.push_back(sample);
+        }
+    }
+    if (inliers.empty()) {
+        return result;
+    }
+
+    median = weightedMedian(inliers);
+    deviation = weightedDeviation(inliers, median);
+    for (const auto& sample : inliers) {
+        result.total_length += sample.length;
+        result.longest_line = std::max(result.longest_line, sample.length);
+    }
+    result.angle = median;
+    result.deviation = deviation;
+    result.line_count = static_cast<int>(inliers.size());
+
+    const double coverage = result.total_length / extent;
+    const double coverage_score = std::min(1.0, coverage);
+    const double count_score = std::min(1.0, result.line_count / 6.0);
+    const double agreement_score = std::max(0.0, 1.0 - deviation / 2.5);
+    const double dominance = raw_length > 0.0 ? result.total_length / raw_length : 0.0;
+    result.confidence = 0.38 * coverage_score
+        + 0.18 * count_score
+        + 0.30 * agreement_score
+        + 0.14 * dominance;
+    if (result.line_count == 1) {
+        result.confidence *= 0.86;
+    }
+
+    const bool enough_geometry = result.line_count >= 2
+        || (!vertical && result.line_count == 1 && result.longest_line >= extent * 0.55);
+    result.valid = enough_geometry
+        && coverage >= 0.28
+        && dominance >= 0.60
+        && deviation <= 2.5
+        && std::abs(result.angle) <= 15.0
+        && result.confidence >= 0.52;
+    return result;
+}
+
 } // namespace
 
 
@@ -286,57 +559,9 @@ PerspectiveCorrection::Params PerspectiveCorrection::autocompute(ImageSource *sr
     int tr = getCoarseBitMask(pparams->coarse);
     int fw, fh;
     src->getFullSize(fw, fh, tr);
+    bool analysis_buffer_ready = true;
     if (control_lines == nullptr) {
-        int skip = max(float(max(fw, fh)) / 900.f + 0.5f, 1.f);
-        PreviewProps pp(0, 0, fw, fh, skip);
-        int w, h;
-        src->getSize(pp, w, h);
-        std::unique_ptr<Imagefloat> img(new Imagefloat(w, h));
-
-        ProcParams neutral;
-        neutral.raw.bayersensor.method = RAWParams::BayerSensor::getMethodString(RAWParams::BayerSensor::Method::FAST);
-        neutral.raw.xtranssensor.method = RAWParams::XTransSensor::getMethodString(RAWParams::XTransSensor::Method::FAST);
-        neutral.icm.outputProfile = ColorManagementParams::NoICMString;    
-        src->getImage(src->getWB(), tr, img.get(), pp, neutral.toneCurve, neutral.raw);
-        src->convertColorSpace(img.get(), pparams->icm, src->getWB());
-
-        neutral.commonTrans.autofill = false; // Ensures crop factor is correct.
-        // TODO: Ensure image borders of rotated image do not get detected as lines.
-        neutral.rotate = pparams->rotate;
-        neutral.distortion = pparams->distortion;
-        neutral.distortion.defish = pparams->distortion.defish;
-        neutral.distortion.focal_length = pparams->distortion.focal_length;
-        neutral.perspective.camera_focal_length = pparams->perspective.camera_focal_length;
-        neutral.perspective.camera_crop_factor = pparams->perspective.camera_crop_factor;
-        neutral.perspective.method = pparams->perspective.method;
-        neutral.lensProf = pparams->lensProf;
-        ImProcFunctions ipf(&neutral, true);
-        if (ipf.needsTransform(w, h, src->getRotateDegree(), src->getMetaData())) {
-            Imagefloat *tmp = new Imagefloat(w, h);
-            ipf.transform(img.get(), tmp, 0, 0, 0, 0, w, h, w, h,
-                    src->getMetaData(), src->getRotateDegree(), false);
-            img.reset(tmp);
-        }
-
-        // allocate the gui buffer
-        g.buf = static_cast<float *>(malloc(sizeof(float) * w * h * 4));
-        g.buf_width = w;
-        g.buf_height = h;
-
-        img->normalizeFloatTo1();
-
-#ifdef _OPENMP
-#   pragma omp parallel for
-#endif
-        for (int y = 0; y < h; ++y) {
-            for (int x = 0; x < w; ++x) {
-                int i = (y * w + x) * 4;
-                g.buf[i] = img->r(y, x);
-                g.buf[i+1] = img->g(y, x);
-                g.buf[i+2] = img->b(y, x);
-                g.buf[i+3] = 1.f;
-            }
-        }
+        analysis_buffer_ready = prepareAnalysisBuffer(src, pparams, tr, fw, fh, true, &g);
     }
 
     dt_iop_ashift_fitaxis_t fitaxis = ASHIFT_FIT_NONE;
@@ -354,7 +579,9 @@ PerspectiveCorrection::Params PerspectiveCorrection::autocompute(ImageSource *sr
     
     bool res;
     if (control_lines == nullptr) {
-        res = do_get_structure(&module, &p, ASHIFT_ENHANCE_EDGES) && do_fit(&module, &p, fitaxis);
+        res = analysis_buffer_ready
+            && do_get_structure(&module, &p, ASHIFT_ENHANCE_EDGES)
+            && do_fit(&module, &p, fitaxis);
     } else {
         std::unique_ptr<dt_iop_ashift_line_t[]> ashift_lines = toAshiftLines(control_lines);
         dt_iop_ashift_gui_data_t *g = module.gui_data;
@@ -372,11 +599,7 @@ PerspectiveCorrection::Params PerspectiveCorrection::autocompute(ImageSource *sr
         .yaw = p.camera_yaw
     };
 
-    // cleanup the gui
-    if (g.lines) free(g.lines);
-    if (g.points) free(g.points);
-    if (g.points_idx) free(g.points_idx);
-    if (g.buf) free(g.buf);
+    cleanupDtStructures(&g);
 
     if (!res) {
         retval.angle = pparams->perspective.camera_roll;
@@ -384,6 +607,85 @@ PerspectiveCorrection::Params PerspectiveCorrection::autocompute(ImageSource *sr
         retval.yaw = pparams->perspective.camera_yaw;
     }
     return retval;
+}
+
+PerspectiveCorrection::AutoLevelResult PerspectiveCorrection::autoLevel(
+    ImageSource *src,
+    const procparams::ProcParams *pparams)
+{
+    AutoLevelResult result;
+    if (!src || !pparams) {
+        return result;
+    }
+
+    dt_iop_ashift_params_t params;
+    dt_iop_ashift_gui_data_t gui;
+    init_dt_structures(&params, &gui, nullptr);
+    dt_iop_module_t module;
+    module.gui_data = &gui;
+    module.is_raw = src->isRAW();
+
+    const int transform = getCoarseBitMask(pparams->coarse);
+    int full_width = 0;
+    int full_height = 0;
+    src->getFullSize(full_width, full_height, transform);
+
+    const bool prepared = prepareAnalysisBuffer(
+        src, pparams, transform, full_width, full_height, false, &gui);
+    if (prepared) {
+        // Keep ashift's RANSAC selection deterministic across repeated runs.
+        srand(1);
+        if (do_get_structure(&module, &params, ASHIFT_ENHANCE_EDGES)) {
+            const LevelEvidence horizontal = analyzeLevelEvidence(gui, false);
+            const LevelEvidence vertical = analyzeLevelEvidence(gui, true);
+
+            if (horizontal.valid && vertical.valid) {
+                const double disagreement = std::abs(horizontal.angle - vertical.angle);
+                if (disagreement <= 1.25) {
+                    const double horizontal_weight = horizontal.confidence * 1.08;
+                    const double vertical_weight = vertical.confidence;
+                    result.angle = (horizontal.angle * horizontal_weight + vertical.angle * vertical_weight)
+                        / (horizontal_weight + vertical_weight);
+                    result.confidence = std::min(
+                        1.0,
+                        (horizontal.confidence + vertical.confidence) * 0.5
+                            + 0.08 * (1.0 - disagreement / 1.25));
+                    result.horizontal_lines = horizontal.line_count;
+                    result.vertical_lines = vertical.line_count;
+                    result.success = true;
+                } else if (horizontal.confidence + 0.06 - vertical.confidence >= 0.12) {
+                    result.angle = horizontal.angle;
+                    result.confidence = horizontal.confidence;
+                    result.horizontal_lines = horizontal.line_count;
+                    result.success = true;
+                } else if (vertical.confidence - (horizontal.confidence + 0.06) >= 0.16) {
+                    result.angle = vertical.angle;
+                    result.confidence = vertical.confidence;
+                    result.vertical_lines = vertical.line_count;
+                    result.success = true;
+                }
+            } else if (horizontal.valid) {
+                result.angle = horizontal.angle;
+                result.confidence = horizontal.confidence;
+                result.horizontal_lines = horizontal.line_count;
+                result.success = true;
+            } else if (vertical.valid) {
+                result.angle = vertical.angle;
+                result.confidence = vertical.confidence;
+                result.vertical_lines = vertical.line_count;
+                result.success = true;
+            }
+        }
+    }
+
+    if (result.success) {
+        // Analysis deliberately uses the unrotated source. Convert its stable
+        // absolute target into the residual expected by the Rotation control.
+        result.angle -= pparams->rotate.degree;
+    }
+
+    cleanupDtStructures(&gui);
+    return result;
 }
 
 

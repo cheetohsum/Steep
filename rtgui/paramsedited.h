@@ -1799,6 +1799,16 @@ struct FilmPresetsParamsEdited {
     bool blueShift;
     bool grain;
     bool vibrance;
+    bool skinProtection;
+    bool layerCoupling;
+    bool grainSize;
+    bool grainClumping;
+    bool grainColor;
+    bool halationSize;
+    bool halationThreshold;
+    bool halationColor;
+    bool bloom;
+    bool outputSoftness;
 };
 
 struct SoftLightParamsEdited {

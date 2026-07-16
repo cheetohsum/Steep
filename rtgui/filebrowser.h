@@ -254,6 +254,7 @@ public:
     void openNextImage();
     void openPrevImage();
     void selectImage(const Glib::ustring& fname, bool doScroll = true);
+    FileBrowserEntry* findEntry(const Glib::ustring& fname);
     Thumbnail* getSelectedThumbnail();  // returns lastClicked or first selected
 
     struct AdjacentEntry {

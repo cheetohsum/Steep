@@ -51,10 +51,12 @@
 #define DEBUG(format,args...)
 //#define DEBUG(format,args...) printf("ThumbImageUpdate::%s: " format "\n", __FUNCTION__, ## args)
 
-static void lowerBackgroundWorkerThreadPriority()
+static void setThumbnailWorkerThreadPriority(bool foreground)
 {
 #ifdef _WIN32
-    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    SetThreadPriority(
+        GetCurrentThread(),
+        foreground ? THREAD_PRIORITY_NORMAL : THREAD_PRIORITY_BELOW_NORMAL);
 #endif
 }
 
@@ -89,6 +91,7 @@ public:
             force_upgrade_(forceUpgrade),
             cache_pixbuf_(cachePixbuf),
             jpeg_(isJpegThumbnailJob(tbe)),
+            foreground_(false),
             listener_(listener)
         {}
 
@@ -99,6 +102,7 @@ public:
             force_upgrade_(false),
             cache_pixbuf_(false),
             jpeg_(false),
+            foreground_(false),
             listener_(nullptr)
         {}
 
@@ -110,6 +114,7 @@ public:
         bool force_upgrade_;
         bool cache_pixbuf_;
         bool jpeg_;
+        bool foreground_;
         ThumbImageUpdateListener* listener_;
     };
 
@@ -149,6 +154,7 @@ public:
         maxThreadCount_(1),
         queuedWorkers_(0),
         nonUpgradeJobs_(0),
+        foregroundJobCount_(0),
         activeJpegJobs_(0),
         pauseDepth_(0),
         priorityScanNeeded_(true)
@@ -203,6 +209,8 @@ public:
 
     std::size_t nonUpgradeJobs_;
 
+    std::size_t foregroundJobCount_;
+
     int activeJpegJobs_;
 
     std::atomic<unsigned> pauseDepth_;
@@ -212,6 +220,10 @@ public:
     // Match ImageIO's scaled-JPEG gate here so workers stay available for
     // RAW and non-JPEG thumbnails instead of blocking inside the decoder.
     static constexpr int kMaxConcurrentBackgroundJpegJobs = 3;
+
+    // Keep capacity available for thumbnails that become visible after a
+    // background folder scan has already filled the queue.
+    static constexpr int kForegroundWorkerReserve = 2;
 
     struct CallbackLease {
         CallbackLease(Impl& impl, ThumbImageUpdateListener* listener):
@@ -236,6 +248,25 @@ public:
     keyForJob_(const Job& job)
     {
         return JobKey{job.tbe_, job.listener_, job.upgrade_, job.force_upgrade_};
+    }
+
+    void
+    recountForegroundJobsLocked_()
+    {
+        foregroundJobCount_ = static_cast<std::size_t>(std::count_if(
+            jobs_.begin(),
+            jobs_.end(),
+            [](const Job& job) {
+                return job.priority_ && *job.priority_;
+            }));
+    }
+
+    int
+    workerLimitLocked_() const
+    {
+        return foregroundJobCount_ > 0
+            ? maxThreadCount_
+            : std::max(2, maxThreadCount_ - kForegroundWorkerReserve);
     }
 
     JobList::iterator
@@ -267,6 +298,10 @@ public:
     {
         const auto next = std::next(job);
         const bool erasedFirstCachePixbuf = firstCachePixbuf_ == job;
+
+        if (job->priority_ && *job->priority_ && foregroundJobCount_ > 0) {
+            --foregroundJobCount_;
+        }
 
         if (priorityScanHint_ == job) {
             priorityScanHint_ = next;
@@ -304,7 +339,14 @@ public:
         if (existing != jobIndex_.end()) {
             DEBUG("updating job %s", job.tbe_->shortname.c_str());
             // we have one, update queue entry, will be picked up by thread when processed
+            const bool wasForeground = existing->second->priority_ && *existing->second->priority_;
+            const bool isForeground = job.priority_ && *job.priority_;
             existing->second->priority_ = job.priority_;
+            if (isForeground && !wasForeground) {
+                ++foregroundJobCount_;
+            } else if (!isForeground && wasForeground && foregroundJobCount_ > 0) {
+                --foregroundJobCount_;
+            }
             const bool gainedCachePixbuf = job.cache_pixbuf_ && !existing->second->cache_pixbuf_;
             existing->second->cache_pixbuf_ = existing->second->cache_pixbuf_ || job.cache_pixbuf_;
             if (gainedCachePixbuf) {
@@ -321,6 +363,9 @@ public:
         jobs_.push_back(job);
         auto inserted = jobs_.end();
         --inserted;
+        if (job.priority_ && *job.priority_) {
+            ++foregroundJobCount_;
+        }
         jobIndex_.emplace(key, inserted);
         if (job.cache_pixbuf_ && firstCachePixbuf_ == jobs_.end()) {
             firstCachePixbuf_ = inserted;
@@ -445,6 +490,7 @@ public:
 
             // copy found job
             j = *i;
+            j.foreground_ = j.priority_ && *j.priority_;
 
             // remove so not run again
             eraseJobLocked_(i);
@@ -477,8 +523,9 @@ public:
             return 0;
         }
 
+        const int workerLimit = workerLimitLocked_();
         const int running = static_cast<int>(active_.load(std::memory_order_relaxed));
-        const int capacity = maxThreadCount_ - running - queuedWorkers_;
+        const int capacity = workerLimit - running - queuedWorkers_;
         int availableJpegSlots = std::max(
             0,
             kMaxConcurrentBackgroundJpegJobs - activeJpegJobs_);
@@ -552,7 +599,7 @@ public:
     void
     processQueuedJobs_()
     {
-        lowerBackgroundWorkerThreadPriority();
+        setThumbnailWorkerThreadPriority(false);
 #ifdef _OPENMP
         // Thumbnail concurrency comes from this pool; nested OpenMP teams
         // oversubscribe the CPU and remain allocated for the whole session.
@@ -576,6 +623,7 @@ public:
             ++active_;
         }
 
+        bool activeSlotReleased = false;
         while (true) {
             Job j;
             Thumbnail* thm = nullptr;
@@ -588,10 +636,20 @@ public:
                     break;
                 }
 
+                // Once visible work drains, release excess workers so later
+                // visible requests still have pool capacity available.
+                if (static_cast<int>(active_.load(std::memory_order_relaxed)) > workerLimitLocked_()) {
+                    --active_;
+                    activeSlotReleased = true;
+                    break;
+                }
+
                 if (!takeNextJobLocked_(j, thm, size_and_scale)) {
                     break;
                 }
             }
+
+            setThumbnailWorkerThreadPriority(j.foreground_);
 
             // Process using copied data; no more access to j.tbe_.
             double scale = 1.0;
@@ -634,7 +692,9 @@ public:
             }
         }
 
-        --active_;
+        if (!activeSlotReleased) {
+            --active_;
+        }
 
         int workersToPush = 0;
         {
@@ -734,6 +794,7 @@ void ThumbImageUpdater::prioritiesChanged()
     {
         std::lock_guard<std::mutex> lock(impl_->mutex_);
         impl_->priorityScanNeeded_ = true;
+        impl_->recountForegroundJobsLocked_();
         workersToPush = impl_->scheduleWorkersLocked_();
     }
 
@@ -808,6 +869,7 @@ void ThumbImageUpdater::removeAllJobs()
     impl_->firstCachePixbuf_ = impl_->jobs_.end();
     impl_->firstNonUpgrade_ = impl_->jobs_.end();
     impl_->nonUpgradeJobs_ = 0;
+    impl_->foregroundJobCount_ = 0;
     impl_->priorityScanNeeded_ = false;
     // Don't wait for active jobs — they will finish naturally and their
     // results will be harmlessly delivered to entries pending deletion.

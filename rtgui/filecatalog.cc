@@ -20,6 +20,7 @@
 #include "filecatalog.h"
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <iterator>
 #include <iostream>
@@ -407,6 +408,16 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
 
     inTabMode = false;
     inAlbumMode_ = false;
+
+    for (const auto& extension : App::get().options().defaultFiletypeFilter) {
+        std::string normalized = extension.raw();
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char value) {
+            return static_cast<char>(std::toupper(value));
+        });
+        if (!normalized.empty()) {
+            selectedFiletypes_.insert(normalized);
+        }
+    }
 
     set_name ("FileBrowser");
 
@@ -833,15 +844,23 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
         filetypeBox_->set_size_request(140, -1);
 
         filetypeAllCheck_ = Gtk::manage(new Gtk::CheckButton(M("FILEBROWSER_FILETYPE_SELECTALL")));
-        filetypeAllCheck_->set_active(true);
+        filetypeAllCheck_->set_active(selectedFiletypes_.empty());
         filetypeAllCheck_->signal_toggled().connect(sigc::mem_fun(*this, &FileCatalog::onFiletypeAllToggled));
         filetypeBox_->pack_start(*filetypeAllCheck_, Gtk::PACK_SHRINK);
         filetypeBox_->pack_start(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)), Gtk::PACK_SHRINK);
+
+        filetypeDefaultCheck_ = Gtk::manage(new Gtk::CheckButton(M("FILEBROWSER_FILETYPE_DEFAULT")));
+        filetypeDefaultCheck_->set_tooltip_markup(M("FILEBROWSER_FILETYPE_DEFAULT_TOOLTIP"));
+        filetypeDefaultCheck_->signal_toggled().connect(sigc::mem_fun(*this, &FileCatalog::onFiletypeDefaultToggled));
+        filetypeBox_->pack_end(*filetypeDefaultCheck_, Gtk::PACK_SHRINK);
+        filetypeBox_->pack_end(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)), Gtk::PACK_SHRINK);
 
         filetypePopover_->add(*filetypeBox_);
         filetypePopover_->set_position(Gtk::POS_BOTTOM);
         filetypeButton_->set_popover(*filetypePopover_);
         filterBar->pack_start(*filetypeButton_, Gtk::PACK_SHRINK);
+        updateFiletypeButtonLabel();
+        updateFiletypeDefaultCheck_();
     }
 
     // Wrap filterBar in a Revealer
@@ -2263,31 +2282,6 @@ void FileCatalog::previewsFinishedUI(int dir_id)
     _refreshProgressBar();
     flushFiletypeFilterUpdate_();
 
-    // Now that all types are known, prune any persisted filetype selections
-    // that don't exist in this folder
-    if (!selectedFiletypes_.empty()) {
-        std::set<std::string> pruned;
-        for (const auto& ft : selectedFiletypes_) {
-            if (knownFiletypes_.count(ft) > 0) {
-                pruned.insert(ft);
-            }
-        }
-        if (pruned.empty() || pruned == knownFiletypes_) {
-            // None of the filtered types exist here, or all types match — clear filter
-            selectedFiletypes_.clear();
-            filetypeBlockSignals_ = true;
-            for (auto& pair : filetypeChecks_) {
-                pair.second->set_active(true);
-            }
-            filetypeAllCheck_->set_active(true);
-            filetypeBlockSignals_ = false;
-        } else {
-            selectedFiletypes_ = pruned;
-        }
-        updateFiletypeButtonLabel();
-        fileBrowser->applyFilter(getFilter());
-    }
-
     filepanel->loadingThumbs(M("PROGRESSBAR_READY"), 0);
 
     if (!imageToSelect_fname.empty()) {
@@ -3402,6 +3396,7 @@ void FileCatalog::updateFiletypeFilter ()
     filetypeBlockSignals_ = false;
 
     updateFiletypeButtonLabel();
+    updateFiletypeDefaultCheck_();
     // Re-apply filter so newly discovered types respect the selection
     if (!selectedFiletypes_.empty()) {
         filterChanged();
@@ -3463,6 +3458,7 @@ void FileCatalog::onFiletypeCheckToggled (const std::string& filetype)
     filetypeBlockSignals_ = false;
 
     updateFiletypeButtonLabel();
+    updateFiletypeDefaultCheck_();
     filterChanged();
 }
 
@@ -3487,6 +3483,8 @@ void FileCatalog::onFiletypeAllToggled ()
         // The filter will show nothing — user must pick specific types
     }
 
+    updateFiletypeButtonLabel();
+    updateFiletypeDefaultCheck_();
     filterChanged();
 }
 
@@ -3504,7 +3502,76 @@ void FileCatalog::setSelectedFiletypes (const std::set<std::string>& sel)
     filetypeBlockSignals_ = false;
 
     updateFiletypeButtonLabel();
+    updateFiletypeDefaultCheck_();
     filterChanged();
+}
+
+bool FileCatalog::isCurrentFiletypeFilterDefault() const
+{
+    if (selectedFiletypes_.empty()) {
+        return false;
+    }
+
+    std::set<std::string> saved;
+    for (const auto& extension : App::get().options().defaultFiletypeFilter) {
+        std::string normalized = extension.raw();
+        std::transform(normalized.begin(), normalized.end(), normalized.begin(), [](unsigned char value) {
+            return static_cast<char>(std::toupper(value));
+        });
+        if (!normalized.empty()) {
+            saved.insert(normalized);
+        }
+    }
+
+    return selectedFiletypes_ == saved;
+}
+
+void FileCatalog::setCurrentFiletypeFilterAsDefault(bool active)
+{
+    if (!active && !isCurrentFiletypeFilterDefault()) {
+        updateFiletypeDefaultCheck_();
+        return;
+    }
+
+    auto& saved = App::get().mut_options().defaultFiletypeFilter;
+    saved.clear();
+    if (active) {
+        for (const auto& extension : selectedFiletypes_) {
+            saved.emplace_back(extension);
+        }
+    }
+
+    updateFiletypeDefaultCheck_();
+
+    try {
+        Options::save();
+    } catch (Options::Error& error) {
+        Gtk::MessageDialog dialog(
+            getToplevelWindow(this), error.get_msg(), true,
+            Gtk::MESSAGE_WARNING, Gtk::BUTTONS_CLOSE, true);
+        dialog.run();
+    }
+}
+
+void FileCatalog::onFiletypeDefaultToggled()
+{
+    if (filetypeBlockSignals_) {
+        return;
+    }
+
+    setCurrentFiletypeFilterAsDefault(filetypeDefaultCheck_->get_active());
+}
+
+void FileCatalog::updateFiletypeDefaultCheck_()
+{
+    if (!filetypeDefaultCheck_) {
+        return;
+    }
+
+    filetypeBlockSignals_ = true;
+    filetypeDefaultCheck_->set_sensitive(!selectedFiletypes_.empty());
+    filetypeDefaultCheck_->set_active(isCurrentFiletypeFilterDefault());
+    filetypeBlockSignals_ = false;
 }
 
 void FileCatalog::updateFiletypeButtonLabel ()
@@ -3534,6 +3601,7 @@ void FileCatalog::resetFiletypeFilter ()
     filetypeAllCheck_->set_active(true);
     filetypeBlockSignals_ = false;
     filetypeButton_->set_label(M("FILEBROWSER_FILETYPE_ALL"));
+    updateFiletypeDefaultCheck_();
 }
 
 void FileCatalog::saveResetState ()

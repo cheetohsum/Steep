@@ -60,6 +60,17 @@ private:
     Adjuster* blueShift;
     Adjuster* grainAdj;
     Adjuster* vibranceAdj;
+    Adjuster* skinProtectionAdj_;
+    Adjuster* layerCouplingAdj_;
+    Adjuster* grainSizeAdj_;
+    Adjuster* grainClumpingAdj_;
+    Adjuster* grainColorAdj_;
+    Adjuster* halationSizeAdj_;
+    Adjuster* halationThresholdAdj_;
+    Adjuster* halationColorAdj_;
+    Adjuster* bloomAdj_;
+    Adjuster* outputSoftnessAdj_;
+    Gtk::Box* v3Controls_;
 
     Gtk::Box* detailContent_;
     Gtk::Revealer* detailRevealer_;
@@ -96,6 +107,16 @@ private:
     rtengine::ProcEvent EvFilmPresetsBlueShift;
     rtengine::ProcEvent EvFilmPresetsGrain;
     rtengine::ProcEvent EvFilmPresetsVibrance;
+    rtengine::ProcEvent EvFilmPresetsSkinProtection;
+    rtengine::ProcEvent EvFilmPresetsLayerCoupling;
+    rtengine::ProcEvent EvFilmPresetsGrainSize;
+    rtengine::ProcEvent EvFilmPresetsGrainClumping;
+    rtengine::ProcEvent EvFilmPresetsGrainColor;
+    rtengine::ProcEvent EvFilmPresetsHalationSize;
+    rtengine::ProcEvent EvFilmPresetsHalationThreshold;
+    rtengine::ProcEvent EvFilmPresetsHalationColor;
+    rtengine::ProcEvent EvFilmPresetsBloom;
+    rtengine::ProcEvent EvFilmPresetsOutputSoftness;
 
     void toggleDetail();
     void updateButtonLabel();

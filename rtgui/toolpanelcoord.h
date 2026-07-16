@@ -534,6 +534,7 @@ public:
 
     // rotatelistener interface
     void straightenRequested () override;
+    bool autoLevelRequested (double& correction) override;
     void autoCropRequested () override;
     void autoPerspRequested (bool corr_pitch, bool corr_yaw, double& rot, double& pitch, double& yaw, const std::vector<rtengine::ControlLine> *lines = nullptr) override;
     double autoDistorRequested () override;
@@ -598,6 +599,10 @@ protected:
         bool cloneFavoriteTools);
 
 private:
+    void panelChangedFromPreviewStrip(
+        PreviewStrip* source,
+        const rtengine::ProcEvent& event,
+        const Glib::ustring& descr);
     void deferPanelChanged(const rtengine::ProcEvent& event, const Glib::ustring& descr);
     bool retryDeferredPanelChanged();
 
@@ -606,6 +611,8 @@ private:
     rtengine::ProcEvent deferredPanelChangeEvent_;
     Glib::ustring deferredPanelChangeDescr_;
     sigc::connection deferredPanelChangeConn_;
+    PreviewStrip* previewStripChangeSource_ = nullptr;
+    PreviewStrip* deferredPreviewStripChangeSource_ = nullptr;
     unsigned deferredMetadataReadGeneration_ = 0;
 
     IdleRegister idle_register;

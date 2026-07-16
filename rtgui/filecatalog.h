@@ -241,6 +241,7 @@ private:
     Gtk::Popover* filetypePopover_;
     Gtk::Box* filetypeBox_;
     Gtk::CheckButton* filetypeAllCheck_;
+    Gtk::CheckButton* filetypeDefaultCheck_;
     std::map<std::string, Gtk::CheckButton*> filetypeChecks_;
     std::set<std::string> knownFiletypes_;       // all types seen (uppercase)
     std::set<std::string> selectedFiletypes_;    // active types (uppercase); empty = all
@@ -251,6 +252,8 @@ private:
     void flushFiletypeFilterUpdate_();
     void onFiletypeCheckToggled(const std::string& filetype);
     void onFiletypeAllToggled();
+    void onFiletypeDefaultToggled();
+    void updateFiletypeDefaultCheck_();
     void resetFiletypeFilter();
 
     // Color label hover-expand handlers
@@ -419,6 +422,8 @@ public:
     const std::set<std::string>& getKnownFiletypes() const { return knownFiletypes_; }
     const std::set<std::string>& getSelectedFiletypes() const { return selectedFiletypes_; }
     void setSelectedFiletypes(const std::set<std::string>& sel);
+    bool isCurrentFiletypeFilterDefault() const;
+    void setCurrentFiletypeFilterAsDefault(bool active);
     void updateFiletypeButtonLabel();
 
     void on_dir_changed (const Glib::RefPtr<Gio::File>& file, const Glib::RefPtr<Gio::File>& other_file, Gio::FileMonitorEvent event_type, bool internal);

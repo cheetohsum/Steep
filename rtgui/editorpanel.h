@@ -294,6 +294,11 @@ private:
     Gtk::Button* filmstripRejectBtn_;
     int filmstripCurrentPick_;
     void updateFilmstripFlagBtn();
+    void scheduleFilmstripLivePreview(const Glib::ustring& sourceFile, unsigned int sourceSession);
+    void updateFilmstripLivePreview(const Glib::ustring& sourceFile, unsigned int sourceSession);
+    sigc::connection filmstripPreviewUpdateConn_;
+    Glib::ustring pendingFilmstripPreviewFile_;
+    unsigned int pendingFilmstripPreviewSession_ = 0;
 
     // Filmstrip sort
     Gtk::MenuButton* filmstripSortBtn_;
@@ -327,11 +332,14 @@ private:
     Gtk::Popover* fbFiletypePopover_;
     Gtk::Box* fbFiletypeBox_;
     Gtk::CheckButton* fbFiletypeAllCheck_;
+    Gtk::CheckButton* fbFiletypeDefaultCheck_;
     std::map<std::string, Gtk::CheckButton*> fbFiletypeChecks_;
     bool fbFiletypeBlockSignals_ = false;
     void rebuildEditorFiletypePopover();
     void onEditorFiletypeCheckToggled(const std::string& ft);
     void onEditorFiletypeAllToggled();
+    void onEditorFiletypeDefaultToggled();
+    void updateEditorFiletypeDefaultCheck();
 
     void filterBarToggled();
     void filterBarChanged();
@@ -515,11 +523,14 @@ private:
 
     // Cancellation token for async before/after image loading.
     std::shared_ptr<std::atomic<bool>> beforeAfterCancel_;
+    bool firstEnginePreviewReady_ = false;
+    bool beforeAfterRefreshPending_ = false;
 
     // Deferred Phase B (tool panel + profile initialization after placeholder paints)
     sigc::connection deferredOpenConn_;
     sigc::connection deferredDirSyncConn_;
     sigc::connection deferredCropEnableConn_;
+    sigc::connection deferredHighDetailConn_;
     unsigned int openSession_ = 0;
     unsigned int editorDirSyncGeneration_ = 0;
     Glib::ustring quickPreviewFileName_;

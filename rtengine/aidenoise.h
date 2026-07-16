@@ -21,7 +21,6 @@
 #include <atomic>
 #include <functional>
 #include <memory>
-#include <set>
 #include <string>
 
 #include <glibmm/ustring.h>
@@ -33,6 +32,20 @@
 namespace rtengine
 {
 
+// AIDenoiseManager runs RawRefinery's TreeNet denoise model natively via
+// ONNX Runtime (with DirectML acceleration on Windows). There is no Python
+// interpreter, external RawRefinery installation, or subprocess involved.
+//
+// The inference pipeline mirrors rawrefinery_cli.py:
+//   1. Receive Steep's demosaiced image directly in memory
+//   2. Tile to 256x256 with stride 64 (75% overlap)
+//   3. Run model(rgb_tile, iso_cond) in bounded batches
+//   4. Stream the tiles into a cosine-weighted output buffer
+//   5. Remove position-dependent tile bias and preserve highlights
+//
+// The session is reused across invocations and lazily reset on GPU/CPU mode
+// change. The model is shipped in Steep's data bundle, with the historical
+// RawRefinery user-data location retained as a compatibility fallback.
 class AIDenoiseManager
 {
 public:
@@ -41,22 +54,20 @@ public:
     bool isAvailable() const { return available_; }
     bool isDetecting() const { return detecting_; }
     void detect();
-    void detect(const Glib::ustring& pythonPath, const Glib::ustring& scriptPath);
     void setDetectDoneCallback(std::function<void(bool)> cb) { detectDoneCb_ = cb; }
 
     void startDenoising(
         const Glib::ustring& rawPath,
         const procparams::AIDenoiseParams& params,
-        const Glib::ustring& outputPath,
+        std::unique_ptr<Imagefloat> inputImage,
         std::function<void(double)> progressCb,
         std::function<void(bool, const Glib::ustring&)> doneCb,
-        const Glib::ustring& inputTiffPath = "",
         int iso = 0
     );
     void cancel();
 
     bool isCacheValid(const Glib::ustring& rawPath, double iso) const;
-    Imagefloat* getCachedResult() const;
+    std::shared_ptr<const Imagefloat> getCachedResult() const;
     void setCachedResult(std::unique_ptr<Imagefloat> result,
                          const Glib::ustring& rawPath, double iso);
     void clearCache();
@@ -68,28 +79,23 @@ private:
     AIDenoiseManager(const AIDenoiseManager&) = delete;
     AIDenoiseManager& operator=(const AIDenoiseManager&) = delete;
 
-    bool findPython();
-    bool findScript();
-    bool testRawRefinery();
+    // Find the model file on disk; empty string if not found.
+    Glib::ustring findModelPath() const;
+
+    // PIMPL: ONNX Runtime types are kept out of the header so callers don't
+    // need to include onnxruntime headers.
+    struct Impl;
+    std::unique_ptr<Impl> impl_;
 
     std::atomic<bool> available_;
     std::atomic<bool> detecting_;
-    Glib::ustring pythonPath_;
-    Glib::ustring scriptPath_;
-    std::set<Glib::ustring> triedPythonPaths_;
     std::atomic<bool> running_;
     std::atomic<bool> cancelled_;
     std::function<void(bool)> detectDoneCb_;
 
-#ifdef _WIN32
-    void* childProcess_;  // HANDLE on Windows
-#else
-    int childPid_;
-#endif
-
     // Result cache
     mutable MyMutex cacheMutex_;
-    std::unique_ptr<Imagefloat> cachedResult_;
+    std::shared_ptr<Imagefloat> cachedResult_;
     Glib::ustring cachedRawPath_;
     double cachedIso_;
 };

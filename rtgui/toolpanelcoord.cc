@@ -1795,27 +1795,26 @@ void ToolPanelCoordinator::populateEditPanel()
         // Always modify global params — the bridge handles routing to gradient spots.
         pp.sh.enabled = true;
         if (t < 0) {
-            pp.toneCurve.expcomp -= 2.0 * f;
-            pp.toneCurve.brightness -= static_cast<int>(75 * f);
-            pp.toneCurve.contrast += static_cast<int>(47 * f);
-            pp.toneCurve.black += static_cast<int>(600 * f);
-            pp.toneCurve.hlcompr += static_cast<int>(100 * f);
-            pp.sh.shadows = std::min(pp.sh.shadows + static_cast<int>(56 * f), 100);
-            pp.sh.highlights = std::min(pp.sh.highlights + static_cast<int>(60 * f), 100);
-            pp.toneCurve.saturation -= static_cast<int>(20 * f);
+            pp.toneCurve.expcomp -= 1.35 * f;
+            pp.toneCurve.brightness -= static_cast<int>(std::lround(18 * f));
+            pp.toneCurve.contrast += static_cast<int>(std::lround(12 * f));
+            pp.toneCurve.black += static_cast<int>(std::lround(260 * f));
+            pp.toneCurve.hlcompr += static_cast<int>(std::lround(100 * f));
+            pp.sh.shadows = std::min(pp.sh.shadows + static_cast<int>(std::lround(24 * f)), 100);
+            pp.sh.highlights = std::min(pp.sh.highlights + static_cast<int>(std::lround(35 * f)), 100);
         } else {
-            pp.toneCurve.expcomp += 1.5 * f;
-            pp.toneCurve.brightness += static_cast<int>(40 * f);
-            pp.toneCurve.contrast += static_cast<int>(61 * f);
-            pp.toneCurve.black = std::max(pp.toneCurve.black - static_cast<int>(200 * f), 0);
-            pp.toneCurve.hlcompr += static_cast<int>(60 * f);
-            pp.sh.shadows = std::min(pp.sh.shadows + static_cast<int>(58 * f), 100);
-            pp.sh.highlights = std::min(pp.sh.highlights + static_cast<int>(40 * f), 100);
-            pp.toneCurve.saturation += static_cast<int>(15 * f);
+            pp.toneCurve.expcomp += 1.0 * f;
+            pp.toneCurve.brightness += static_cast<int>(std::lround(12 * f));
+            pp.toneCurve.contrast += static_cast<int>(std::lround(8 * f));
+            pp.toneCurve.black -= static_cast<int>(std::lround(220 * f));
+            pp.toneCurve.hlcompr += static_cast<int>(std::lround(140 * f));
+            pp.sh.shadows = std::min(pp.sh.shadows + static_cast<int>(std::lround(18 * f)), 100);
+            pp.sh.highlights = std::min(pp.sh.highlights + static_cast<int>(std::lround(45 * f)), 100);
         }
         pp.toneCurve.brightness = std::max(-100, std::min(100, pp.toneCurve.brightness));
         pp.toneCurve.contrast = std::max(-100, std::min(100, pp.toneCurve.contrast));
-        pp.toneCurve.saturation = std::max(-100, std::min(100, pp.toneCurve.saturation));
+        pp.toneCurve.black = std::max(-16384, std::min(16384, pp.toneCurve.black));
+        pp.toneCurve.hlcompr = std::max(0, std::min(500, pp.toneCurve.hlcompr));
     });
     exposureStrip_->setDragCallback([this](const rtengine::procparams::ProcParams& pp, double) {
         // Always set global sliders — the bridge handles routing to gradient spots.
@@ -1825,15 +1824,14 @@ void ToolPanelCoordinator::populateEditPanel()
         toneCurve->getContrastSlider()->setValue(pp.toneCurve.contrast);
         toneCurve->getBlackSlider()->setValue(pp.toneCurve.black * 100.0 / 16384.0);
         toneCurve->getHlcomprSlider()->setValue(-pp.toneCurve.hlcompr / 5.0);
-        toneCurve->getSaturationSlider()->setValue(pp.toneCurve.saturation);
         toneCurve->enableListener();
         shadowshighlights->disableListener();
-        if (pp.sh.enabled) shadowshighlights->setEnabled(true);
+        shadowshighlights->setEnabled(pp.sh.enabled);
         shadowshighlights->getHighlightsSlider()->setValue(pp.sh.highlights);
         shadowshighlights->getShadowsSlider()->setValue(pp.sh.shadows);
         shadowshighlights->enableListener();
         suppressResetUpdate_ = true;
-        panelChanged(rtengine::EvExpComp, M("GENERAL_CHANGED"));
+        panelChangedFromPreviewStrip(exposureStrip_, rtengine::EvExpComp, M("GENERAL_CHANGED"));
         suppressResetUpdate_ = false;
         lightGroup->setResetVisible(true);
     });
@@ -1861,25 +1859,27 @@ void ToolPanelCoordinator::populateEditPanel()
         pp.vibrance.enabled = true;
         if (t < 0) {
             // Cool/desaturated: lower temperature, reduce vibrance + saturation, shift tint
-            pp.wb.temperature = std::max(1500, pp.wb.temperature - static_cast<int>(2500 * f));
-            pp.wb.green += 0.03 * f; // slight magenta shift for cool tones
-            pp.vibrance.pastels = std::max(-100, pp.vibrance.pastels - static_cast<int>(40 * f));
-            pp.vibrance.saturated = std::max(-100, pp.vibrance.saturated - static_cast<int>(25 * f));
-            pp.toneCurve.saturation = std::max(-100, pp.toneCurve.saturation - static_cast<int>(20 * f));
+            pp.wb.temperature = std::max(1500, static_cast<int>(std::lround(pp.wb.temperature * (1.0 - 0.20 * f))));
+            pp.wb.green += 0.015 * f;
+            pp.vibrance.pastels = std::max(-100, pp.vibrance.pastels - static_cast<int>(std::lround(30 * f)));
+            pp.vibrance.saturated = std::max(-100, pp.vibrance.saturated - static_cast<int>(std::lround(18 * f)));
+            pp.toneCurve.saturation = std::max(-100, pp.toneCurve.saturation - static_cast<int>(std::lround(14 * f)));
         } else {
             // Warm/vibrant: higher temperature, boost vibrance + saturation, warm tint
-            pp.wb.temperature = std::min(25000, pp.wb.temperature + static_cast<int>(2500 * f));
-            pp.wb.green -= 0.02 * f; // slight green shift for warm/golden
-            pp.vibrance.pastels = std::min(100, pp.vibrance.pastels + static_cast<int>(50 * f));
-            pp.vibrance.saturated = std::min(100, pp.vibrance.saturated + static_cast<int>(30 * f));
-            pp.toneCurve.saturation = std::min(100, pp.toneCurve.saturation + static_cast<int>(25 * f));
+            pp.wb.temperature = std::min(25000, static_cast<int>(std::lround(pp.wb.temperature * (1.0 + 0.22 * f))));
+            pp.wb.green -= 0.012 * f;
+            pp.vibrance.pastels = std::min(100, pp.vibrance.pastels + static_cast<int>(std::lround(35 * f)));
+            pp.vibrance.saturated = std::min(100, pp.vibrance.saturated + static_cast<int>(std::lround(20 * f)));
+            pp.toneCurve.saturation = std::min(100, pp.toneCurve.saturation + static_cast<int>(std::lround(16 * f)));
         }
     });
     colorStrip_->setDragCallback([this](const rtengine::procparams::ProcParams& pp, double) {
         whitebalance->disableListener();
         whitebalance->getTempSlider()->setValue(pp.wb.temperature);
+        whitebalance->getGreenSlider()->setValue(pp.wb.green);
         whitebalance->enableListener();
         vibrance->disableListener();
+        vibrance->setEnabled(pp.vibrance.enabled);
         vibrance->getVibranceSlider()->setValue(pp.vibrance.pastels);
         vibrance->getSaturationSlider()->setValue(pp.vibrance.saturated);
         vibrance->enableListener();
@@ -1887,7 +1887,7 @@ void ToolPanelCoordinator::populateEditPanel()
         toneCurve->getSaturationSlider()->setValue(pp.toneCurve.saturation);
         toneCurve->enableListener();
         suppressResetUpdate_ = true;
-        panelChanged(rtengine::EvExpComp, M("GENERAL_CHANGED"));
+        panelChangedFromPreviewStrip(colorStrip_, rtengine::EvExpComp, M("GENERAL_CHANGED"));
         suppressResetUpdate_ = false;
         colorGroup->setResetVisible(true);
     });
@@ -2015,35 +2015,35 @@ void ToolPanelCoordinator::populateEditPanel()
         double f = (1.0 - std::cos(absT * M_PI)) / 2.0;
         if (t < 0) {
             // Soft/smooth: reduce sharpening, boost denoise, reduce dehaze
-            pp.sharpening.amount = std::max(0, pp.sharpening.amount - static_cast<int>(200 * f));
-            pp.dirpyrDenoise.luma = std::min(100.0, pp.dirpyrDenoise.luma + 60.0 * f);
-            pp.dirpyrDenoise.chroma = std::min(100.0, pp.dirpyrDenoise.chroma + 40.0 * f);
+            pp.sharpening.amount = std::max(0, pp.sharpening.amount - static_cast<int>(std::lround(120 * f)));
+            pp.dirpyrDenoise.luma = std::min(100.0, pp.dirpyrDenoise.luma + 30.0 * f);
+            pp.dirpyrDenoise.chroma = std::min(100.0, pp.dirpyrDenoise.chroma + 25.0 * f);
             pp.dirpyrDenoise.enabled = true;
-            pp.dehaze.strength = std::max(0, pp.dehaze.strength - static_cast<int>(40 * f));
+            pp.dehaze.strength = std::max(0, pp.dehaze.strength - static_cast<int>(std::lround(15 * f)));
         } else {
             // Crisp/detailed: boost sharpening and dehaze
-            pp.sharpening.amount = std::min(1000, pp.sharpening.amount + static_cast<int>(300 * f));
+            pp.sharpening.amount = std::min(1000, pp.sharpening.amount + static_cast<int>(std::lround(180 * f)));
             pp.sharpening.enabled = true;
-            pp.dehaze.strength = std::min(100, pp.dehaze.strength + static_cast<int>(50 * f));
+            pp.dehaze.strength = std::min(100, pp.dehaze.strength + static_cast<int>(std::lround(20 * f)));
             pp.dehaze.enabled = true;
         }
     });
     detailStrip_->setDragCallback([this](const rtengine::procparams::ProcParams& pp, double) {
         sharpening->disableListener();
-        if (pp.sharpening.enabled) sharpening->setEnabled(true);
+        sharpening->setEnabled(pp.sharpening.enabled);
         sharpening->getAmountSlider()->setValue(pp.sharpening.amount);
         sharpening->enableListener();
         dirpyrdenoise->disableListener();
-        if (pp.dirpyrDenoise.enabled) dirpyrdenoise->setEnabled(true);
+        dirpyrdenoise->setEnabled(pp.dirpyrDenoise.enabled);
         dirpyrdenoise->getLumaSlider()->setValue(pp.dirpyrDenoise.luma);
         dirpyrdenoise->getChromaSlider()->setValue(pp.dirpyrDenoise.chroma);
         dirpyrdenoise->enableListener();
         dehaze->disableListener();
-        if (pp.dehaze.enabled) dehaze->setEnabled(true);
+        dehaze->setEnabled(pp.dehaze.enabled);
         dehaze->getStrengthSlider()->setValue(pp.dehaze.strength);
         dehaze->enableListener();
         suppressResetUpdate_ = true;
-        panelChanged(rtengine::EvExpComp, M("GENERAL_CHANGED"));
+        panelChangedFromPreviewStrip(detailStrip_, rtengine::EvExpComp, M("GENERAL_CHANGED"));
         suppressResetUpdate_ = false;
         detailGroup->setResetVisible(true);
     });
@@ -2070,53 +2070,43 @@ void ToolPanelCoordinator::populateEditPanel()
         if (std::abs(t) < 0.001) return;
         double absT = std::min(std::abs(t), 1.0);
         double f = (1.0 - std::cos(absT * M_PI)) / 2.0;
+        pp.texture.enabled = true;
+        pp.clarity.enabled = true;
         if (t < 0) {
-            // Matte/faded: lift blacks, reduce contrast, soft light, desaturate
-            pp.toneCurve.contrast -= static_cast<int>(40 * f);
-            pp.toneCurve.contrast = std::max(-100, pp.toneCurve.contrast);
-            pp.toneCurve.black = std::max(0, pp.toneCurve.black - static_cast<int>(300 * f));
-            pp.softlight.strength = std::min(100, pp.softlight.strength + static_cast<int>(70 * f));
-            pp.softlight.enabled = true;
-            pp.toneCurve.saturation -= static_cast<int>(25 * f);
-            pp.toneCurve.saturation = std::max(-100, pp.toneCurve.saturation);
+            // Gentle/clean: soften fine texture and midtone bite while reducing existing artifacts.
+            pp.texture.amount = std::max(-100.0, pp.texture.amount - 28.0 * f);
+            pp.clarity.amount = std::max(-100.0, pp.clarity.amount - 24.0 * f);
+            pp.grain.strength = std::max(0, pp.grain.strength - static_cast<int>(std::lround(30 * f)));
+            pp.pcvignette.strength *= 1.0 - 0.70 * f;
         } else {
-            // Vivid/punchy: contrast, grain, vignette, clarity
-            pp.toneCurve.contrast += static_cast<int>(35 * f);
-            pp.toneCurve.contrast = std::min(100, pp.toneCurve.contrast);
-            pp.grain.strength = std::min(100, pp.grain.strength + static_cast<int>(50 * f));
+            // Textured/cinematic: restrained texture, grain, clarity, and edge falloff.
+            pp.texture.amount = std::min(100.0, pp.texture.amount + 22.0 * f);
+            pp.clarity.amount = std::min(100.0, pp.clarity.amount + 26.0 * f);
+            pp.grain.strength = std::min(100, pp.grain.strength + static_cast<int>(std::lround(35 * f)));
             pp.grain.enabled = true;
-            pp.pcvignette.strength = pp.pcvignette.strength + 2.5 * f;
+            pp.pcvignette.strength = std::min(6.0, pp.pcvignette.strength + 1.8 * f);
             pp.pcvignette.enabled = true;
-            pp.clarity.amount = std::min(100.0, pp.clarity.amount + 40.0 * f);
-            pp.clarity.enabled = true;
-            pp.toneCurve.saturation += static_cast<int>(15 * f);
-            pp.toneCurve.saturation = std::min(100, pp.toneCurve.saturation);
         }
     });
     effectsStrip_->setDragCallback([this](const rtengine::procparams::ProcParams& pp, double) {
-        toneCurve->disableListener();
-        toneCurve->getContrastSlider()->setValue(pp.toneCurve.contrast);
-        toneCurve->getSaturationSlider()->setValue(pp.toneCurve.saturation);
-        toneCurve->getBlackSlider()->setValue(pp.toneCurve.black * 100.0 / 16384.0);
-        toneCurve->enableListener();
-        softlight->disableListener();
-        if (pp.softlight.enabled) softlight->setEnabled(true);
-        softlight->getStrengthSlider()->setValue(pp.softlight.strength);
-        softlight->enableListener();
+        texture->disableListener();
+        texture->setEnabled(pp.texture.enabled);
+        texture->getAmountSlider()->setValue(pp.texture.amount);
+        texture->enableListener();
         grain->disableListener();
-        if (pp.grain.enabled) grain->setEnabled(true);
+        grain->setEnabled(pp.grain.enabled);
         grain->getStrengthSlider()->setValue(pp.grain.strength);
         grain->enableListener();
         pcvignette->disableListener();
-        if (pp.pcvignette.enabled) pcvignette->setEnabled(true);
+        pcvignette->setEnabled(pp.pcvignette.enabled);
         pcvignette->getStrengthSlider()->setValue(pp.pcvignette.strength);
         pcvignette->enableListener();
         clarity->disableListener();
-        if (pp.clarity.enabled) clarity->setEnabled(true);
+        clarity->setEnabled(pp.clarity.enabled);
         clarity->getAmountSlider()->setValue(pp.clarity.amount);
         clarity->enableListener();
         suppressResetUpdate_ = true;
-        panelChanged(rtengine::EvExpComp, M("GENERAL_CHANGED"));
+        panelChangedFromPreviewStrip(effectsStrip_, rtengine::EvExpComp, M("GENERAL_CHANGED"));
         suppressResetUpdate_ = false;
         effectsGroup->setResetVisible(true);
     });
@@ -2145,17 +2135,17 @@ void ToolPanelCoordinator::populateEditPanel()
     // --- B&W preview strip (in advanced group, before blackwhite tool) ---
     bwStrip_ = Gtk::manage(new PreviewStrip());
     bwStrip_->setParamModifier([](rtengine::procparams::ProcParams& pp, double t) {
-        // Always enable B&W for the preview thumbnails
+        if (std::abs(t) < 0.001) return;
+        double absT = std::min(std::abs(t), 1.0);
+        double f = (1.0 - std::cos(absT * M_PI)) / 2.0;
         pp.blackwhite.enabled = true;
         if (pp.blackwhite.method.empty() || pp.blackwhite.method == "Disabled") {
             pp.blackwhite.method = "Desaturation";
         }
-
-        if (std::abs(t) < 0.001) return;
-        double absT = std::min(std::abs(t), 1.0);
-        double f = (1.0 - std::cos(absT * M_PI)) / 2.0;
         if (t < 0) {
             // Subtle: increased neutrals, reduced strength
+            pp.blackwhite.method = "Desaturation";
+            pp.blackwhite.filter = "None";
             pp.blackwhite.neutrals = std::min(100, pp.blackwhite.neutrals + static_cast<int>(20 * f));
             pp.blackwhite.strength = std::max(0, pp.blackwhite.strength - static_cast<int>(30 * f));
         } else {
@@ -2168,22 +2158,12 @@ void ToolPanelCoordinator::populateEditPanel()
             pp.blackwhite.tone = std::min(100, pp.blackwhite.tone + static_cast<int>(30 * f));
         }
     });
-    bwStrip_->setDragCallback([this](const rtengine::procparams::ProcParams& pp, double t) {
-        double absT = std::min(std::abs(t), 1.0);
-        double f = (1.0 - std::cos(absT * M_PI)) / 2.0;
-        // Only modify B&W-specific parameters
+    bwStrip_->setDragCallback([this](const rtengine::procparams::ProcParams& pp, double) {
         blackwhite->disableListener();
-        if (t > 0 && f > 0.3) {
-            blackwhite->setBWPreset(4, 2); // Perceptual + Orange
-        } else {
-            blackwhite->setBWPreset(4, 0); // Perceptual + No filter
-        }
-        blackwhite->getNeutralsSlider()->setValue(pp.blackwhite.neutrals);
-        blackwhite->getToneSlider()->setValue(pp.blackwhite.tone);
-        blackwhite->getStrengthSlider()->setValue(pp.blackwhite.strength);
+        blackwhite->read(&pp);
         blackwhite->enableListener();
         suppressResetUpdate_ = true;
-        panelChanged(rtengine::EvBWmethod, M("GENERAL_CHANGED"));
+        panelChangedFromPreviewStrip(bwStrip_, rtengine::EvBWmethod, M("GENERAL_CHANGED"));
         suppressResetUpdate_ = false;
         bwGroup->setResetVisible(true);
     });
@@ -2563,9 +2543,13 @@ ToolPanelCoordinator::~ToolPanelCoordinator ()
     deferredPanelChangePending_ = false;
     deferredPanelChangeTimerActive_ = false;
     deferredPanelChangeConn_.disconnect();
+    previewStripChangeSource_ = nullptr;
+    deferredPreviewStripChangeSource_ = nullptr;
     idle_register.destroy();
 
-    closeImage();
+    // Gtk-managed tools can already be gone when their parent destroys us.
+    // The editor disconnects them while the widget tree is still intact.
+    ipc = nullptr;
 
     // Block mode change signal to prevent callbacks during destruction
     modeconn.block(true);
@@ -2858,6 +2842,16 @@ void ToolPanelCoordinator::applyHoverMask()
     // Unused — logic inlined into hoverMaskChanged
 }
 
+void ToolPanelCoordinator::panelChangedFromPreviewStrip(
+    PreviewStrip* source,
+    const rtengine::ProcEvent& event,
+    const Glib::ustring& descr)
+{
+    previewStripChangeSource_ = source;
+    panelChanged(event, descr);
+    previewStripChangeSource_ = nullptr;
+}
+
 void ToolPanelCoordinator::deferPanelChanged(const rtengine::ProcEvent& event, const Glib::ustring& descr)
 {
     toolPanelEditLog("defer event=%d timerActive=%d descr=%s\n",
@@ -2865,6 +2859,7 @@ void ToolPanelCoordinator::deferPanelChanged(const rtengine::ProcEvent& event, c
 
     deferredPanelChangeEvent_ = event;
     deferredPanelChangeDescr_ = descr;
+    deferredPreviewStripChangeSource_ = previewStripChangeSource_;
     deferredPanelChangePending_ = true;
 
     if (!deferredPanelChangeTimerActive_) {
@@ -2885,11 +2880,15 @@ bool ToolPanelCoordinator::retryDeferredPanelChanged()
 
     const rtengine::ProcEvent event = deferredPanelChangeEvent_;
     const Glib::ustring descr = deferredPanelChangeDescr_;
+    PreviewStrip* source = deferredPreviewStripChangeSource_;
     deferredPanelChangePending_ = false;
     toolPanelEditLog("retry event=%d descr=%s\n", int(event), descr.c_str());
+    previewStripChangeSource_ = source;
     panelChanged(event, descr);
+    previewStripChangeSource_ = nullptr;
 
     if (!deferredPanelChangePending_) {
+        deferredPreviewStripChangeSource_ = nullptr;
         deferredPanelChangeTimerActive_ = false;
         return false;
     }
@@ -2933,9 +2932,9 @@ void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const 
         locallab->setSkipToolWrites(false);
     }
 
-    // Update preview strips BEFORE bridge zeroes globals, so strips see real values.
-    // This lets strip paramModifiers start from the actual current parameter values.
-    {
+    // Manual edits establish a new center for every strip. Strip-generated
+    // edits retain the existing centers so revisiting a position is absolute.
+    if (!previewStripChangeSource_) {
         PreviewStrip* strips[] = {exposureStrip_, colorStrip_, detailStrip_, effectsStrip_, bwStrip_};
         for (auto* strip : strips) {
             if (strip) strip->setCurrentParams(*params);
@@ -3249,9 +3248,6 @@ void ToolPanelCoordinator::profileChange(
         for (auto* strip : strips) {
             if (strip) {
                 strip->setCurrentParams(*params);
-                if (event == rtengine::EvPhotoLoaded) {
-                    strip->resetScrubber();
-                }
             }
         }
     }
@@ -3387,6 +3383,8 @@ void ToolPanelCoordinator::closeImage()
     deferredPanelChangePending_ = false;
     deferredPanelChangeTimerActive_ = false;
     deferredPanelChangeConn_.disconnect();
+    previewStripChangeSource_ = nullptr;
+    deferredPreviewStripChangeSource_ = nullptr;
 
     // Just disconnect — don't call stopProcessing() here.
     // The caller (EditorPanel::close) defers the blocking join
@@ -3654,6 +3652,29 @@ void ToolPanelCoordinator::straightenRequested()
     }
 
     toolBar->setTool(TMStraighten);
+}
+
+bool ToolPanelCoordinator::autoLevelRequested(double& correction)
+{
+    correction = 0.0;
+    if (!ipc) {
+        return false;
+    }
+
+    rtengine::ImageSource *src = dynamic_cast<rtengine::ImageSource *>(ipc->getInitialImage());
+    if (!src) {
+        return false;
+    }
+
+    rtengine::procparams::ProcParams params;
+    ipc->getParams(&params);
+    const auto result = rtengine::PerspectiveCorrection::autoLevel(src, &params);
+    if (!result.success) {
+        return false;
+    }
+
+    correction = result.angle;
+    return true;
 }
 
 void ToolPanelCoordinator::autoPerspRequested (bool corr_pitch, bool corr_yaw, double& rot, double& pitch, double& yaw, const std::vector<rtengine::ControlLine> *lines)
