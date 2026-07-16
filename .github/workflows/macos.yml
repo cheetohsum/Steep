@@ -139,14 +139,21 @@ jobs:
           test -d Steep.app/Contents/Resources/share/icons/rawtherapee
           test -f Steep.app/Contents/Resources/share/models/aidenoise/ShadowWeightedL1.onnx
           test -f Steep.app/Contents/Resources/share/models/segformer_b0_ade20k.onnx
-          sudo cp -R Steep.app /Applications
-          open -a /Applications/Steep.app
+          launch_log="${RUNNER_TEMP}/steep-launch.log"
+          Steep.app/Contents/MacOS/steep > "${launch_log}" 2>&1 &
+          app_pid=$!
           sleep 10
-          echo "Applications running: $(osascript -e 'tell application "Finder" to get the name of every process whose visible is true' 2>/dev/null || echo 'could not query')" >> $GITHUB_STEP_SUMMARY
-          if pgrep -f steep > /dev/null 2>&1; then
+          if kill -0 "${app_pid}" > /dev/null 2>&1; then
             echo "App launched successfully" >> $GITHUB_STEP_SUMMARY
-            osascript -e 'tell application "Steep" to if it is running then quit' 2>/dev/null || true
+            kill "${app_pid}"
+            wait "${app_pid}" || true
           else
+            cat "${launch_log}"
+            for crash_log in "${HOME}"/Library/Logs/DiagnosticReports/[Ss]teep*; do
+              test -f "${crash_log}" || continue
+              echo "===== ${crash_log} ====="
+              tail -n 200 "${crash_log}"
+            done
             echo "App did not start" >> $GITHUB_STEP_SUMMARY
             exit 1
           fi
@@ -289,14 +296,21 @@ jobs:
           test -d Steep.app/Contents/Resources/share/icons/rawtherapee
           test -f Steep.app/Contents/Resources/share/models/aidenoise/ShadowWeightedL1.onnx
           test -f Steep.app/Contents/Resources/share/models/segformer_b0_ade20k.onnx
-          sudo cp -R Steep.app /Applications
-          open -a /Applications/Steep.app
+          launch_log="${RUNNER_TEMP}/steep-launch.log"
+          Steep.app/Contents/MacOS/steep > "${launch_log}" 2>&1 &
+          app_pid=$!
           sleep 10
-          echo "Applications running: $(osascript -e 'tell application "Finder" to get the name of every process whose visible is true' 2>/dev/null || echo 'could not query')" >> $GITHUB_STEP_SUMMARY
-          if pgrep -f steep > /dev/null 2>&1; then
+          if kill -0 "${app_pid}" > /dev/null 2>&1; then
             echo "App launched successfully" >> $GITHUB_STEP_SUMMARY
-            osascript -e 'tell application "Steep" to if it is running then quit' 2>/dev/null || true
+            kill "${app_pid}"
+            wait "${app_pid}" || true
           else
+            cat "${launch_log}"
+            for crash_log in "${HOME}"/Library/Logs/DiagnosticReports/[Ss]teep*; do
+              test -f "${crash_log}" || continue
+              echo "===== ${crash_log} ====="
+              tail -n 200 "${crash_log}"
+            done
             echo "App did not start" >> $GITHUB_STEP_SUMMARY
             exit 1
           fi
