@@ -16,6 +16,8 @@
  *  You should have received a copy of the GNU General Public License
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include <algorithm>
+
 #include "filethumbnailbuttonset.h"
 
 #include "multilangmgr.h"
@@ -79,13 +81,89 @@ FileThumbnailButtonSet::FileThumbnailButtonSet (FileBrowserEntry* myEntry)
 {
     ensureIconsLoaded();
 
-    add(new LWButton(unRankIcon, 0, myEntry, LWButton::Left, LWButton::Center, &unrankToolTip));
+    constexpr double overlayScale = 0.78;
+
+    add(new LWButton(unRankIcon, 0, myEntry, LWButton::Left, LWButton::Center, &unrankToolTip, overlayScale));
 
     for (int i = 0; i < 5; i++) {
-        add(new LWButton(rankIcon, i + 1, myEntry, LWButton::Left, LWButton::Center, &rankToolTip[i]));
+        add(new LWButton(rankIcon, i + 1, myEntry, LWButton::Left, LWButton::Center, &rankToolTip[i], overlayScale));
     }
 
-    add(new LWButton(colorLabelIcon[0], 8, myEntry, LWButton::Right, LWButton::Center, &colorLabelToolTip));
+    add(new LWButton(colorLabelIcon[0], 8, myEntry, LWButton::Left, LWButton::Center, &colorLabelToolTip, overlayScale));
+}
+
+void FileThumbnailButtonSet::arrangeButtons (int x, int y, int w, int h)
+{
+    constexpr double preferredScale = 0.78;
+    constexpr int groupGap = 2;
+    constexpr int ratingButtonCount = 6;
+    constexpr int labelButtonIndex = 6;
+
+    int naturalWidth = 0;
+    for (auto* button : buttons) {
+        const auto icon = button->getIcon();
+        if (icon) {
+            naturalWidth += icon->getWidth();
+        }
+    }
+
+    double scale = preferredScale;
+    if (w >= 0 && naturalWidth > 0) {
+        scale = std::min(
+            preferredScale,
+            std::max(0.35, static_cast<double>(std::max(1, w - groupGap)) / naturalWidth)
+        );
+    }
+
+    for (auto* button : buttons) {
+        button->setScale(scale);
+    }
+
+    int labelWidth = 0;
+    int labelHeight = 0;
+    buttons[labelButtonIndex]->getSize(labelWidth, labelHeight);
+
+    int ratingWidth = 0;
+    int ratingHeight = 0;
+    for (int i = 0; i < ratingButtonCount; ++i) {
+        int buttonWidth = 0;
+        int buttonHeight = 0;
+        buttons[i]->getSize(buttonWidth, buttonHeight);
+        ratingWidth += buttonWidth;
+        ratingHeight = std::max(ratingHeight, buttonHeight);
+    }
+
+    const int minimumWidth = labelWidth + groupGap + ratingWidth;
+    if (w < 0) {
+        w = minimumWidth;
+    }
+    if (h < 0) {
+        h = std::max(labelHeight, ratingHeight);
+    }
+
+    int ratingX = x + (w - ratingWidth) / 2;
+    int labelX = ratingX - groupGap - labelWidth;
+
+    if (labelX < x) {
+        labelX = x + std::max(0, (w - minimumWidth) / 2);
+        ratingX = labelX + labelWidth + groupGap;
+    }
+
+    buttons[labelButtonIndex]->setPosition(labelX, y + (h - labelHeight) / 2);
+
+    int buttonX = ratingX;
+    for (int i = 0; i < ratingButtonCount; ++i) {
+        int buttonWidth = 0;
+        int buttonHeight = 0;
+        buttons[i]->getSize(buttonWidth, buttonHeight);
+        buttons[i]->setPosition(buttonX, y + (h - buttonHeight) / 2);
+        buttonX += buttonWidth;
+    }
+
+    aw = w;
+    ah = h;
+    ax = x;
+    ay = y;
 }
 
 void FileThumbnailButtonSet::setRank (int stars)

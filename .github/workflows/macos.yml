@@ -133,9 +133,12 @@ jobs:
           zsh -c 'echo "Build completed in $(printf "%0.2f" $(($[$(date +%s)-$(cat build/stamp)]/$((60.))))) minutes"' >> $GITHUB_STEP_SUMMARY
 
       - name: Test-launch the app
-        continue-on-error: true
         run: |
           cd build
+          test -f Steep.app/Contents/Resources/share/rawtherapee/languages/default
+          test -d Steep.app/Contents/Resources/share/rawtherapee/icons/rawtherapee
+          test -f Steep.app/Contents/Resources/share/rawtherapee/models/aidenoise/ShadowWeightedL1.onnx
+          test -f Steep.app/Contents/Resources/share/rawtherapee/models/segformer_b0_ade20k.onnx
           sudo cp -R Steep.app /Applications
           open -a /Applications/Steep.app
           sleep 10
@@ -144,7 +147,8 @@ jobs:
             echo "App launched successfully" >> $GITHUB_STEP_SUMMARY
             osascript -e 'tell application "Steep" to if it is running then quit' 2>/dev/null || true
           else
-            echo "App did not start (may require display)" >> $GITHUB_STEP_SUMMARY
+            echo "App did not start" >> $GITHUB_STEP_SUMMARY
+            exit 1
           fi
 
       - name: Test the -cli
@@ -279,9 +283,12 @@ jobs:
           zsh -c 'echo "Build completed in $(printf "%0.2f" $(($[$(date +%s)-$(cat build/stamp)]/$((60.))))) minutes"' >> $GITHUB_STEP_SUMMARY
 
       - name: Test-launch the app
-        continue-on-error: true
         run: |
           cd build
+          test -f Steep.app/Contents/Resources/share/rawtherapee/languages/default
+          test -d Steep.app/Contents/Resources/share/rawtherapee/icons/rawtherapee
+          test -f Steep.app/Contents/Resources/share/rawtherapee/models/aidenoise/ShadowWeightedL1.onnx
+          test -f Steep.app/Contents/Resources/share/rawtherapee/models/segformer_b0_ade20k.onnx
           sudo cp -R Steep.app /Applications
           open -a /Applications/Steep.app
           sleep 10
@@ -290,7 +297,8 @@ jobs:
             echo "App launched successfully" >> $GITHUB_STEP_SUMMARY
             osascript -e 'tell application "Steep" to if it is running then quit' 2>/dev/null || true
           else
-            echo "App did not start (may require display)" >> $GITHUB_STEP_SUMMARY
+            echo "App did not start" >> $GITHUB_STEP_SUMMARY
+            exit 1
           fi
 
       - name: Test the -cli

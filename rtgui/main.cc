@@ -463,8 +463,14 @@ int main (int argc, char **argv)
     app.setLicensePath(LICENCE_SEARCH_PATH);
 #endif // BUILD_BUNDLE
 
-    app.mut_options().rtSettings.lensfunDbDirectory = LENSFUN_DB_PATH;
-    app.mut_options().rtSettings.lensfunDbBundleDirectory = LENSFUN_DB_PATH;
+    Glib::ustring lensfunDbPath = LENSFUN_DB_PATH;
+#ifdef BUILD_BUNDLE
+    if (!lensfunDbPath.empty() && !Glib::path_is_absolute(lensfunDbPath)) {
+        lensfunDbPath = Glib::build_filename(exePath, lensfunDbPath);
+    }
+#endif
+    app.mut_options().rtSettings.lensfunDbDirectory = lensfunDbPath;
+    app.mut_options().rtSettings.lensfunDbBundleDirectory = lensfunDbPath;
 
 #ifdef _WIN32
     bool consoleOpened = false;

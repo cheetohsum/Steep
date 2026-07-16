@@ -978,15 +978,14 @@ Gtk::Widget* Preferences::getColorManPanel ()
 
     int row = 0;
     gmonitor->attach(*mplabel, 0, row, 1, 1);
-#if defined(__APPLE__) // monitor profile not supported on apple
-    Gtk::Label *osxwarn = Gtk::manage(new Gtk::Label(M("PREFERENCES_MONPROFILE_WARNOSX"), Gtk::ALIGN_START));
-    setExpandAlignProperties(osxwarn, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_CENTER);
-    gmonitor->attach(*osxwarn, 1, row, 1, 1);
-#else
     gmonitor->attach(*monProfile, 1, row, 1, 1);
-#endif
     ++row;
     gmonitor->attach(*cbAutoMonProfile, 1, row, 1, 1);
+#if defined(__APPLE__)
+    cbAutoMonProfile->set_active(false);
+    cbAutoMonProfile->set_sensitive(false);
+    cbAutoMonProfile->set_tooltip_text(M("PREFERENCES_AUTOMONPROFILE_WARNOSX"));
+#endif
     ++row;
     gmonitor->attach(*milabel, 0, row, 1, 1);
     gmonitor->attach(*monIntent, 1, row, 1, 1);
@@ -1966,8 +1965,6 @@ void Preferences::storePreferences()
 
     moptions.rtSettings.printerBPC = prtBPC->get_active();
 
-#if !defined(__APPLE__) // monitor profile not supported on apple
-
     if (!monProfile->get_active_row_number()) {
         moptions.rtSettings.monitorProfile = "";
     } else {
@@ -1993,8 +1990,6 @@ void Preferences::storePreferences()
     moptions.rtSettings.autoMonitorProfile = cbAutoMonProfile->get_active();
     moptions.rtSettings.autocielab = mcie->get_active();
     moptions.rtSettings.itcwb_enable = mwbaena->get_active();
-
-#endif
 
     moptions.rtSettings.iccDirectory = iccDir->get_filename();
 
@@ -2152,7 +2147,6 @@ void Preferences::fillPreferences()
 
     prtBPC->set_active(moptions.rtSettings.printerBPC);
 
-#if !defined(__APPLE__) // monitor profile not supported on apple
     setActiveTextOrIndex(*monProfile, moptions.rtSettings.monitorProfile, 0);
 
     switch (moptions.rtSettings.monitorIntent) {
@@ -2174,6 +2168,9 @@ void Preferences::fillPreferences()
     mcie->set_active(moptions.rtSettings.autocielab);
     mwbaena->set_active(moptions.rtSettings.itcwb_enable);
 
+#if defined(__APPLE__)
+    cbAutoMonProfile->set_active(false);
+#else
     cbAutoMonProfile->set_active(moptions.rtSettings.autoMonitorProfile);
 #endif
 

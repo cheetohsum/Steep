@@ -16,17 +16,20 @@
  *  You should have received a copy of the GNU General Public License
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include <algorithm>
+#include <cmath>
+
 #include "lwbutton.h"
 #include "guiutils.h"
 #include "rtsurface.h"
 
-LWButton::LWButton (std::shared_ptr<RTSurface> i, int aCode, void* aData, Alignment ha, Alignment va, Glib::ustring* tooltip)
-    : xpos(0), ypos(0), halign(ha), valign(va), icon(i), bgr(0.0), bgg(0.0), bgb(0.0), fgr(0.0), fgg(0.0), fgb(0.0), state(Normal), listener(nullptr), actionCode(aCode), actionData(aData), toolTip(tooltip)
+LWButton::LWButton (std::shared_ptr<RTSurface> i, int aCode, void* aData, Alignment ha, Alignment va, Glib::ustring* tooltip, double scale)
+    : xpos(0), ypos(0), halign(ha), valign(va), icon(i), bgr(0.0), bgg(0.0), bgb(0.0), fgr(0.0), fgg(0.0), fgb(0.0), state(Normal), listener(nullptr), actionCode(aCode), actionData(aData), toolTip(tooltip), iconScale(scale > 0.0 ? scale : 1.0)
 {
 
     if (i)  {
-        w = i->getWidth ();
-        h = i->getHeight ();
+        w = std::max(1, static_cast<int>(std::round(i->getWidth() * iconScale)));
+        h = std::max(1, static_cast<int>(std::round(i->getHeight() * iconScale)));
     } else {
         w = h = 2;
     }
@@ -65,11 +68,17 @@ void LWButton::setIcon (std::shared_ptr<RTSurface> i)
     icon = i;
 
     if (i)  {
-        w = i->getWidth ();
-        h = i->getHeight ();
+        w = std::max(1, static_cast<int>(std::round(i->getWidth() * iconScale)));
+        h = std::max(1, static_cast<int>(std::round(i->getHeight() * iconScale)));
     } else {
         w = h = 2;
     }
+}
+
+void LWButton::setScale (double scale)
+{
+    iconScale = scale > 0.0 ? scale : 1.0;
+    setIcon(icon);
 }
 
 std::shared_ptr<RTSurface> LWButton::getIcon () const
@@ -212,8 +221,12 @@ void LWButton::redraw (Cairo::RefPtr<Cairo::Context> context)
     }
 
     if (icon && icon->hasSurface()) {
-        context->set_source (icon->get(), xpos + dilat, ypos + dilat);
+        context->save();
+        context->translate(xpos + dilat, ypos + dilat);
+        context->scale(iconScale, iconScale);
+        context->set_source(icon->get(), 0, 0);
         context->paint ();
+        context->restore();
     }
 }
 

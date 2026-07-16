@@ -208,24 +208,6 @@ DirBrowser::DirBrowser () : dirTreeModel(),
 
     dirtree->set_name("DirBrowserTree");
 
-    // Browse button packed at end of header row (added in fillDirTree via custom header widget)
-    Gtk::Button* browseBtn = Gtk::manage(new Gtk::Button());
-    browseBtn->set_name("DirBrowseBtn");
-    browseBtn->set_label("...");
-    browseBtn->set_relief(Gtk::RELIEF_NONE);
-    browseBtn->set_tooltip_text(M("DIRBROWSER_BROWSE"));
-    browseBtn->signal_clicked().connect(sigc::mem_fun(*this, &DirBrowser::browseForFolder));
-
-    Gtk::Box* headerBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
-    headerBar->set_name("FoldersHeader");
-
-    Gtk::Label* headerLabel = Gtk::manage(new Gtk::Label(M("DIRBROWSER_FOLDERS")));
-    headerLabel->set_xalign(0.0);
-
-    headerBar->pack_start(*headerLabel, Gtk::PACK_EXPAND_WIDGET);
-    headerBar->pack_end(*browseBtn, Gtk::PACK_SHRINK);
-
-    pack_start (*headerBar, Gtk::PACK_SHRINK, 0);
     pack_start (*scrolledwindow4);
     dirtree->show ();
     scrolledwindow4->show ();

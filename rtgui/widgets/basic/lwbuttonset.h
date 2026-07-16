@@ -31,13 +31,13 @@ protected:
     int aw, ah, ax, ay;
 public:
     LWButtonSet ();
-    ~LWButtonSet ();
+    virtual ~LWButtonSet ();
 
     void add (LWButton* b);
 
     void    getMinimalDimensions (int& w, int& h) const;
     void    getAllocatedDimensions (int& w, int& h) const;
-    void    arrangeButtons (int x, int y, int w, int h);
+    virtual void arrangeButtons (int x, int y, int w, int h);
     void    setColors     (const Gdk::RGBA& bg, const Gdk::RGBA& fg);
     bool    motionNotify  (int x, int y);
     bool    pressNotify   (int x, int y);

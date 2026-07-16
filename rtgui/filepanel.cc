@@ -2298,9 +2298,34 @@ FilePanel::FilePanel () :
 
     Gtk::Box* obox = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     obox->get_style_context()->add_class ("plainback");
+
+    auto* folderHeader = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 2));
+    folderHeader->set_name("FoldersHeader");
+
+    auto* browseButton = Gtk::manage(new Gtk::Button());
+    browseButton->set_name("DirBrowseBtn");
+    browseButton->set_relief(Gtk::RELIEF_NONE);
+    browseButton->set_tooltip_text(M("DIRBROWSER_BROWSE"));
+    auto* browseIcon = Gtk::manage(new RTImage("folder-open-small", Gtk::ICON_SIZE_SMALL_TOOLBAR));
+    browseButton->set_image(*browseIcon);
+    browseButton->set_always_show_image(true);
+    browseButton->signal_clicked().connect(sigc::mem_fun(*dirBrowser, &DirBrowser::browseForFolder));
+
+    auto* favoriteButton = Gtk::manage(new Gtk::Button());
+    favoriteButton->set_name("PlacesAddBtn");
+    favoriteButton->set_relief(Gtk::RELIEF_NONE);
+    favoriteButton->set_tooltip_text(M("MAIN_FRAME_PLACES_ADD"));
+    auto* favoriteIcon = Gtk::manage(new RTImage("star-gold-hollow-small", Gtk::ICON_SIZE_SMALL_TOOLBAR));
+    favoriteButton->set_image(*favoriteIcon);
+    favoriteButton->set_always_show_image(true);
+    favoriteButton->signal_clicked().connect(sigc::mem_fun(*placesBrowser, &PlacesBrowser::addPressed));
+
+    folderHeader->pack_start(*browseButton, Gtk::PACK_SHRINK);
+    folderHeader->pack_start(*recentBrowser, Gtk::PACK_SHRINK);
+    folderHeader->pack_start(*favoriteButton, Gtk::PACK_SHRINK);
+    obox->pack_start(*folderHeader, Gtk::PACK_SHRINK, 0);
     obox->pack_start (*dirBrowser, Gtk::PACK_EXPAND_WIDGET, 0);
     dirBrowser->set_size_request(-1, 200);
-    obox->pack_start (*recentBrowser, Gtk::PACK_SHRINK, 4);
     obox->pack_start (*albumBrowser_, Gtk::PACK_SHRINK, 0);
 
     placespaned->pack1 (*placesBrowser, false, false); // no resize, no shrink

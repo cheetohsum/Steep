@@ -1072,6 +1072,7 @@ RTWindow::RTWindow ()
         prProgBar.set_no_show_all(true);
         prProgBar.hide();
 
+#ifndef _WIN32
         // -- Window control buttons (right side) --
         iFullscreen = new RTImage ("fullscreen-enter", Gtk::ICON_SIZE_LARGE_TOOLBAR);
         iFullscreen_exit = new RTImage ("fullscreen-leave", Gtk::ICON_SIZE_LARGE_TOOLBAR);
@@ -1096,6 +1097,7 @@ RTWindow::RTWindow ()
         btn_close->set_image (*Gtk::manage (new RTImage ("window-close", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
         btn_close->set_tooltip_markup (M ("MAIN_BUTTON_CLOSE"));
         btn_close->signal_clicked().connect (sigc::mem_fun (*this, &RTWindow::close_window));
+#endif
 
         // -- Assemble header bar --
         headerBar->pack_start (*optionsBtn);
@@ -1112,9 +1114,11 @@ RTWindow::RTWindow ()
         headerBar->pack_start (*sep2);
         headerBar->pack_start (prProgBar);
 
+#ifndef _WIN32
         headerBar->pack_end (*btn_close);
         headerBar->pack_end (*btn_fullscreen);
         headerBar->pack_end (*btn_minimize);
+#endif
 
         // Use an invisible widget as the CSD titlebar so the compositor doesn't add
         // server-side decorations. The real headerBar is packed as a regular widget

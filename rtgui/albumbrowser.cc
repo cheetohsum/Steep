@@ -170,7 +170,7 @@ AlbumBrowser::AlbumBrowser ()
     globalChangeConn_ = albumsChangedOnDisk_.connect(
         sigc::mem_fun(*this, &AlbumBrowser::onGlobalAlbumsChanged));
 
-    // Header bar: "Albums" label + "+" dropdown button
+    // Header bar: "Albums" label + creation dropdown
     Gtk::Box* headerBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
     headerBar->set_name("AlbumHeader");
 
@@ -179,10 +179,10 @@ AlbumBrowser::AlbumBrowser ()
     headerLabel->set_margin_start(4);
     headerBar->pack_start(*headerLabel, Gtk::PACK_EXPAND_WIDGET);
 
-    // "+" button with dropdown menu
+    // "New" button with dropdown menu
     Gtk::MenuButton* addBtn = Gtk::manage(new Gtk::MenuButton());
     addBtn->set_name("AlbumAddBtn");
-    addBtn->set_label("+");
+    addBtn->set_label(M("ALBUM_NEW"));
     addBtn->set_relief(Gtk::RELIEF_NONE);
     addBtn->set_tooltip_text(M("ALBUM_CREATE_TOOLTIP"));
 

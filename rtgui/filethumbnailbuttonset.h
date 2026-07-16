@@ -55,6 +55,7 @@ public:
     static void ensureIconsLoaded ();
 
     explicit FileThumbnailButtonSet (FileBrowserEntry* myEntry);
+    void    arrangeButtons (int x, int y, int w, int h) override;
     void    setRank (int stars);
     void    setColorLabel (int colorlabel);
 

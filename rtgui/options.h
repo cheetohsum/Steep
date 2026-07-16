@@ -353,6 +353,7 @@ public:
     rtengine::Settings rtSettings;
     bool showtooltip;
     std::vector<Glib::ustring> favoriteDirs;
+    std::vector<Glib::ustring> hiddenDriveRoots;
     std::vector<Glib::ustring> renameTemplates;
     bool renameUseTemplates;
     bool internalThumbIfUntouched;

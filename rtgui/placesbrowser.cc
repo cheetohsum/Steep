@@ -18,10 +18,13 @@
  */
 #include "placesbrowser.h"
 
+#include <algorithm>
 #include <thread>
 
 #include "guiutils.h"
+#include "multilangmgr.h"
 #include "options.h"
+#include "rtimage.h"
 #include "toolpanel.h"
 
 class PlacesTreeView : public Gtk::TreeView {
@@ -73,20 +76,14 @@ PlacesBrowser::PlacesBrowser ()
     set_name("PlacesBrowserWidget");
     set_size_request(-1, 300);
 
-    // Header bar: "Places" label + "+" add-place button
+    // The star is the compact section marker; favoriting lives beside Recent.
     Gtk::Box* headerBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
     headerBar->set_name("PlacesHeader");
-    Gtk::Label* headerLabel = Gtk::manage(new Gtk::Label(M("MAIN_FRAME_PLACES")));
-    headerLabel->set_xalign(0.0);
-    addPlaceBtn_ = Gtk::manage(new Gtk::Button());
-    addPlaceBtn_->set_name("PlacesAddBtn");
-    addPlaceBtn_->set_label("+");
-    addPlaceBtn_->set_relief(Gtk::RELIEF_NONE);
-    addPlaceBtn_->set_tooltip_text(M("MAIN_FRAME_PLACES_ADD"));
-    addPlaceBtn_->signal_clicked().connect(sigc::mem_fun(*this, &PlacesBrowser::addPressed));
-
-    headerBar->pack_start(*headerLabel, Gtk::PACK_EXPAND_WIDGET);
-    headerBar->pack_end(*addPlaceBtn_, Gtk::PACK_SHRINK);
+    auto* headerIcon = Gtk::manage(new RTImage("star-gold-small", Gtk::ICON_SIZE_SMALL_TOOLBAR));
+    headerIcon->set_tooltip_text(M("MAIN_FRAME_PLACES"));
+    headerIcon->set_margin_start(6);
+    headerIcon->set_margin_end(6);
+    headerBar->pack_start(*headerIcon, Gtk::PACK_SHRINK);
     pack_start(*headerBar, Gtk::PACK_SHRINK, 0);
 
     scrollw = Gtk::manage (new Gtk::ScrolledWindow ());
@@ -114,6 +111,15 @@ PlacesBrowser::PlacesBrowser ()
     removeMenuItem = Gtk::manage(new Gtk::MenuItem(M("MAIN_FRAME_PLACES_DEL")));
     removeMenuItem->signal_activate().connect(sigc::mem_fun(*this, &PlacesBrowser::delPressed));
     rightClickMenu->append(*removeMenuItem);
+    hideDriveMenuItem = Gtk::manage(new Gtk::MenuItem(M("MAIN_FRAME_PLACES_HIDE_DRIVE")));
+    hideDriveMenuItem->signal_activate().connect(sigc::mem_fun(*this, &PlacesBrowser::hideSelectedDrive));
+    rightClickMenu->append(*hideDriveMenuItem);
+    hiddenDrivesSeparator = Gtk::manage(new Gtk::SeparatorMenuItem());
+    rightClickMenu->append(*hiddenDrivesSeparator);
+    hiddenDrivesMenuItem = Gtk::manage(new Gtk::MenuItem(M("MAIN_FRAME_PLACES_HIDDEN_DRIVES")));
+    hiddenDrivesMenu = Gtk::manage(new Gtk::Menu());
+    hiddenDrivesMenuItem->set_submenu(*hiddenDrivesMenu);
+    rightClickMenu->append(*hiddenDrivesMenuItem);
     rightClickMenu->show_all();
     treeView->signal_button_press_event().connect(sigc::mem_fun(*this, &PlacesBrowser::onButtonPress), false);
 
@@ -178,9 +184,32 @@ bool compareMountByRoot (Glib::RefPtr<Gio::Mount> a, Glib::RefPtr<Gio::Mount> b)
     return a->get_root()->get_parse_name() < b->get_root()->get_parse_name();
 }
 
+namespace
+{
+
+Glib::ustring hiddenPlaceId(const char* kind, Glib::ustring value)
+{
+#ifdef _WIN32
+    value = value.lowercase();
+#endif
+    return Glib::ustring(kind) + ":" + value;
+}
+
+Glib::ustring volumeHiddenId(const Glib::RefPtr<Gio::Volume>& volume)
+{
+    Glib::ustring value = volume->get_uuid();
+    if (value.empty()) {
+        value = volume->get_name();
+    }
+    return hiddenPlaceId("volume", value);
+}
+
+}
+
 void PlacesBrowser::refreshPlacesList ()
 {
     placesModel->clear ();
+    hiddenDriveLabels_.clear();
 
     const auto& options = App::get().options();
     // append favorites
@@ -250,43 +279,67 @@ void PlacesBrowser::refreshPlacesList ()
         } catch (Gio::Error&) {}
     }
 
-    if (!placesModel->children().empty()) {
-        Gtk::TreeModel::Row newrow = *(placesModel->append());
-        newrow[placesColumns.rowSeparator] = true;
-    }
-
     // scan all drives
+    bool driveSeparatorAdded = false;
+    auto appendDrive = [this, &options, &driveSeparatorAdded](
+            const Glib::ustring& label,
+            const Glib::RefPtr<Gio::Icon>& icon,
+            const Glib::ustring& root,
+            int type,
+            const Glib::ustring& hiddenId) {
+        hiddenDriveLabels_[hiddenId] = label;
+
+        if (std::find(options.hiddenDriveRoots.begin(), options.hiddenDriveRoots.end(), hiddenId)
+                != options.hiddenDriveRoots.end()) {
+            return;
+        }
+
+        if (!driveSeparatorAdded && !placesModel->children().empty()) {
+            Gtk::TreeModel::Row separator = *(placesModel->append());
+            separator[placesColumns.rowSeparator] = true;
+            driveSeparatorAdded = true;
+        }
+
+        Gtk::TreeModel::Row newrow = *(placesModel->append());
+        newrow[placesColumns.label] = label;
+        newrow[placesColumns.icon] = icon;
+        newrow[placesColumns.root] = root;
+        newrow[placesColumns.type] = type;
+        newrow[placesColumns.rowSeparator] = false;
+        newrow[placesColumns.hiddenId] = hiddenId;
+    };
+
     std::vector<Glib::RefPtr<Gio::Drive> > drives = vm->get_connected_drives ();
 
     for (size_t j = 0; j < drives.size (); j++) {
         std::vector<Glib::RefPtr<Gio::Volume> > volumes = drives[j]->get_volumes ();
 
         if (volumes.empty()) {
-            Gtk::TreeModel::Row newrow = *(placesModel->append());
-            newrow[placesColumns.label] = drives[j]->get_name ();
-            newrow[placesColumns.icon]  = drives[j]->get_icon ();
-            newrow[placesColumns.root]  = "";
-            newrow[placesColumns.type]  = 3;
-            newrow[placesColumns.rowSeparator] = false;
+            appendDrive(
+                drives[j]->get_name(),
+                drives[j]->get_icon(),
+                "",
+                3,
+                hiddenPlaceId("drive", drives[j]->get_name()));
         }
 
         for (size_t i = 0; i < volumes.size (); i++) {
             Glib::RefPtr<Gio::Mount> mount = volumes[i]->get_mount ();
 
             if (mount) { // placesed volumes
-                Gtk::TreeModel::Row newrow = *(placesModel->append());
-                newrow[placesColumns.label] = mount->get_name ();
-                newrow[placesColumns.icon]  = mount->get_icon ();
-                newrow[placesColumns.root]  = mount->get_root ()->get_parse_name ();
-                newrow[placesColumns.type]  = 1;
-                newrow[placesColumns.rowSeparator] = false;
+                appendDrive(
+                    mount->get_name(),
+                    mount->get_icon(),
+                    mount->get_root()->get_parse_name(),
+                    1,
+                    volumeHiddenId(volumes[i]));
             } else { // unplacesed volumes
-                Gtk::TreeModel::Row newrow = *(placesModel->append());
-                newrow[placesColumns.label] = volumes[i]->get_name ();
-                newrow[placesColumns.icon]  = volumes[i]->get_icon ();
-                newrow[placesColumns.root]  = "";
-                newrow[placesColumns.type]  = 2;
-                newrow[placesColumns.rowSeparator] = false;
+                appendDrive(
+                    volumes[i]->get_name(),
+                    volumes[i]->get_icon(),
+                    "",
+                    2,
+                    volumeHiddenId(volumes[i]));
             }
         }
     }
@@ -299,19 +352,19 @@ void PlacesBrowser::refreshPlacesList ()
             Glib::RefPtr<Gio::Mount> mount = volumes[i]->get_mount ();
 
             if (mount) { // placesed volumes
-                Gtk::TreeModel::Row newrow = *(placesModel->append());
-                newrow[placesColumns.label] = mount->get_name ();
-                newrow[placesColumns.icon]  = mount->get_icon ();
-                newrow[placesColumns.root]  = mount->get_root ()->get_parse_name ();
-                newrow[placesColumns.type]  = 1;
-                newrow[placesColumns.rowSeparator] = false;
+                appendDrive(
+                    mount->get_name(),
+                    mount->get_icon(),
+                    mount->get_root()->get_parse_name(),
+                    1,
+                    volumeHiddenId(volumes[i]));
             } else { // unplacesed volumes
-                Gtk::TreeModel::Row newrow = *(placesModel->append());
-                newrow[placesColumns.label] = volumes[i]->get_name ();
-                newrow[placesColumns.icon]  = volumes[i]->get_icon ();
-                newrow[placesColumns.root]  = "";
-                newrow[placesColumns.type]  = 2;
-                newrow[placesColumns.rowSeparator] = false;
+                appendDrive(
+                    volumes[i]->get_name(),
+                    volumes[i]->get_icon(),
+                    "",
+                    2,
+                    volumeHiddenId(volumes[i]));
             }
         }
     }
@@ -327,15 +380,17 @@ void PlacesBrowser::refreshPlacesList ()
 
     for (size_t i = 0; i < mounts.size (); i++) {
         if (!mounts[i]->get_volume ()) {
-            Gtk::TreeModel::Row newrow = *(placesModel->append());
-            newrow[placesColumns.label] = mounts[i]->get_name ();
-            newrow[placesColumns.icon]  = mounts[i]->get_icon ();
-            newrow[placesColumns.root]  = mounts[i]->get_root ()->get_parse_name ();
-            newrow[placesColumns.type]  = 1;
-            newrow[placesColumns.rowSeparator] = false;
+            const auto root = mounts[i]->get_root()->get_parse_name();
+            appendDrive(
+                mounts[i]->get_name(),
+                mounts[i]->get_icon(),
+                root,
+                1,
+                hiddenPlaceId("mount", root));
         }
     }
 
+    rebuildHiddenDrivesMenu();
     startPhotoCount();
 }
 
@@ -449,6 +504,66 @@ void PlacesBrowser::delPressed ()
     refreshPlacesList ();
 }
 
+void PlacesBrowser::hideSelectedDrive()
+{
+    const auto selection = treeView->get_selection();
+    const auto iter = selection->get_selected();
+
+    if (!iter) {
+        return;
+    }
+
+    const int type = iter->get_value(placesColumns.type);
+    const Glib::ustring hiddenId = iter->get_value(placesColumns.hiddenId);
+    if (type < 1 || type > 3 || hiddenId.empty()) {
+        return;
+    }
+
+    auto& hiddenDrives = App::get().mut_options().hiddenDriveRoots;
+    if (std::find(hiddenDrives.begin(), hiddenDrives.end(), hiddenId) == hiddenDrives.end()) {
+        hiddenDrives.push_back(hiddenId);
+    }
+
+    refreshPlacesList();
+}
+
+void PlacesBrowser::restoreHiddenDrive(Glib::ustring hiddenId)
+{
+    auto& hiddenDrives = App::get().mut_options().hiddenDriveRoots;
+    hiddenDrives.erase(
+        std::remove(hiddenDrives.begin(), hiddenDrives.end(), hiddenId),
+        hiddenDrives.end());
+    refreshPlacesList();
+}
+
+void PlacesBrowser::rebuildHiddenDrivesMenu()
+{
+    for (auto* child : hiddenDrivesMenu->get_children()) {
+        hiddenDrivesMenu->remove(*child);
+    }
+
+    for (const auto& hiddenId : App::get().options().hiddenDriveRoots) {
+        auto label = hiddenId;
+        const auto labelIt = hiddenDriveLabels_.find(hiddenId);
+        if (labelIt != hiddenDriveLabels_.end()) {
+            label = labelIt->second;
+        } else {
+            const auto separator = hiddenId.find(':');
+            if (separator != Glib::ustring::npos && separator + 1 < hiddenId.size()) {
+                label = hiddenId.substr(separator + 1);
+            }
+        }
+
+        auto* item = Gtk::manage(new Gtk::MenuItem(label));
+        item->set_tooltip_text(hiddenId);
+        item->signal_activate().connect(
+            sigc::bind(sigc::mem_fun(*this, &PlacesBrowser::restoreHiddenDrive), hiddenId));
+        hiddenDrivesMenu->append(*item);
+    }
+
+    hiddenDrivesMenu->show_all();
+}
+
 bool PlacesBrowser::onButtonPress (GdkEventButton* event)
 {
     // Left-click: manually select the row and trigger selectionChanged
@@ -466,19 +581,31 @@ bool PlacesBrowser::onButtonPress (GdkEventButton* event)
         Gtk::TreeModel::Path path;
         bool onRow = treeView->get_path_at_pos(static_cast<int>(event->x), static_cast<int>(event->y), path);
         bool isFavorite = false;
+        bool isDrive = false;
 
         if (onRow) {
             treeView->get_selection()->select(path);
             auto iter = placesModel->get_iter(path);
-            isFavorite = iter && iter->get_value(placesColumns.type) == 5;
+            if (iter) {
+                const int type = iter->get_value(placesColumns.type);
+                isFavorite = type == 5;
+                isDrive = type >= 1 && type <= 3
+                    && !iter->get_value(placesColumns.hiddenId).empty();
+            }
         }
+
+        rebuildHiddenDrivesMenu();
+        const bool hasHiddenDrives = !App::get().options().hiddenDriveRoots.empty();
 
         // Show "Add" if we have a directory selected in the dir browser
         addMenuItem->set_visible(!lastSelectedDir.empty());
         // Show "Remove" only for favorites
         removeMenuItem->set_visible(isFavorite);
+        hideDriveMenuItem->set_visible(isDrive);
+        hiddenDrivesSeparator->set_visible(isDrive || hasHiddenDrives);
+        hiddenDrivesMenuItem->set_visible(hasHiddenDrives);
 
-        if (!lastSelectedDir.empty() || isFavorite) {
+        if (!lastSelectedDir.empty() || isFavorite || isDrive || hasHiddenDrives) {
             rightClickMenu->popup(event->button, event->time);
             return true;
         }

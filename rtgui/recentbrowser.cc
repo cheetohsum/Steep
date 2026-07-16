@@ -24,38 +24,53 @@ using namespace rtengine;
 
 RecentBrowser::RecentBrowser ()
 {
-    set_orientation(Gtk::ORIENTATION_VERTICAL);
+    set_orientation(Gtk::ORIENTATION_HORIZONTAL);
+    set_name("RecentFolders");
 
-    recentDirs = Gtk::manage (new MyComboBoxText ());
-    recentDirs->set_name("RecentFoldersCombo");
+    recentButton = Gtk::manage(new Gtk::MenuButton());
+    recentButton->set_name("RecentFoldersButton");
+    recentButton->set_label(M("MAIN_FRAME_RECENT_SHORT"));
+    recentButton->set_relief(Gtk::RELIEF_NONE);
+    recentButton->set_tooltip_text(M("MAIN_FRAME_RECENT"));
 
-    const auto& options = App::get().options();
-    for(size_t i = 0; i < options.recentFolders.size(); i++) {
-        recentDirs->append (options.recentFolders[i]);
-    }
+    recentMenu = Gtk::manage(new Gtk::Menu());
+    recentButton->set_popup(*recentMenu);
+    pack_start(*recentButton, Gtk::PACK_SHRINK);
 
-    // Set placeholder-like label as first entry if nothing selected
-    if (options.recentFolders.empty()) {
-        recentDirs->append("placeholder_id", M("MAIN_FRAME_RECENT"));
-        recentDirs->set_active_id("placeholder_id");
-    } else {
-        recentDirs->set_active(0);
-    }
-
-    pack_start (*recentDirs, Gtk::PACK_SHRINK, 2);
-
-    conn = recentDirs->signal_changed().connect(sigc::mem_fun(*this, &RecentBrowser::selectionChanged));
+    rebuildMenu();
 
     show_all ();
 }
 
-void RecentBrowser::selectionChanged ()
+void RecentBrowser::rebuildMenu()
 {
+    for (auto* child : recentMenu->get_children()) {
+        recentMenu->remove(*child);
+    }
 
-    Glib::ustring sel = recentDirs->get_active_text ();
+    const auto& folders = App::get().options().recentFolders;
 
-    if (!sel.empty() && selectDir) {
-        selectDir (sel);
+    if (folders.empty()) {
+        auto* emptyItem = Gtk::manage(new Gtk::MenuItem(M("MAIN_FRAME_RECENT")));
+        emptyItem->set_sensitive(false);
+        recentMenu->append(*emptyItem);
+    } else {
+        for (const auto& folder : folders) {
+            auto* item = Gtk::manage(new Gtk::MenuItem(folder));
+            item->set_tooltip_text(folder);
+            item->signal_activate().connect(
+                sigc::bind(sigc::mem_fun(*this, &RecentBrowser::selectRecent), folder));
+            recentMenu->append(*item);
+        }
+    }
+
+    recentMenu->show_all();
+}
+
+void RecentBrowser::selectRecent(Glib::ustring dirname)
+{
+    if (selectDir && !dirname.empty()) {
+        selectDir(dirname);
     }
 }
 
@@ -83,16 +98,5 @@ void RecentBrowser::dirSelected (const Glib::ustring& dirname, const Glib::ustri
         options.recentFolders.insert(options.recentFolders.begin(), dirname);
     }
 
-    conn.block (true);
-
-    if (i > 0) {
-        recentDirs->remove_text (i);
-    }
-
-    if(i != 0) {
-        recentDirs->prepend (dirname);
-    }
-    recentDirs->set_active (0);
-
-    conn.block (false);
+    rebuildMenu();
 }

@@ -4071,8 +4071,9 @@ void ToolPanelCoordinator::editModeSwitchedOff()
 
 void ToolPanelCoordinator::dirSelected(const Glib::ustring& dirname, const Glib::ustring& openfile)
 {
-
-    flatfield->setShortcutPath(dirname);
+    if (flatfield) {
+        flatfield->setShortcutPath(dirname);
+    }
 }
 
 void ToolPanelCoordinator::setEditProvider(EditDataProvider *provider)

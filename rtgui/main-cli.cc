@@ -127,8 +127,14 @@ int main (int argc, char **argv)
 #endif // BUILD_BUNDLE
 
     Options& options = app.mut_options();
-    options.rtSettings.lensfunDbDirectory = LENSFUN_DB_PATH;
-    options.rtSettings.lensfunDbBundleDirectory = LENSFUN_DB_PATH;
+    Glib::ustring lensfunDbPath = LENSFUN_DB_PATH;
+#ifdef BUILD_BUNDLE
+    if (!lensfunDbPath.empty() && !Glib::path_is_absolute(lensfunDbPath)) {
+        lensfunDbPath = Glib::build_filename(exePath, lensfunDbPath);
+    }
+#endif
+    options.rtSettings.lensfunDbDirectory = lensfunDbPath;
+    options.rtSettings.lensfunDbBundleDirectory = lensfunDbPath;
 
     bool quickstart = dontLoadCache (argc, argv);
 

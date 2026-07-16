@@ -45,6 +45,7 @@ private:
         Gtk::TreeModelColumn<int>                        type;
         Gtk::TreeModelColumn<bool>                       rowSeparator;
         Gtk::TreeModelColumn<Glib::ustring>              photoCount;
+        Gtk::TreeModelColumn<Glib::ustring>              hiddenId;
         PlacesColumns()
         {
             add(icon);
@@ -53,6 +54,7 @@ private:
             add(type);
             add(rowSeparator);
             add(photoCount);
+            add(hiddenId);
         }
     };
     PlacesColumns            placesColumns;
@@ -65,10 +67,14 @@ private:
     Glib::RefPtr<Gio::VolumeMonitor> vm;
     DirSelectionSlot             selectDir;
     Glib::ustring                lastSelectedDir;
-    Gtk::Button*                 addPlaceBtn_;
     Gtk::Menu*                   rightClickMenu;
     Gtk::MenuItem*               addMenuItem;
     Gtk::MenuItem*               removeMenuItem;
+    Gtk::MenuItem*               hideDriveMenuItem;
+    Gtk::SeparatorMenuItem*      hiddenDrivesSeparator;
+    Gtk::MenuItem*               hiddenDrivesMenuItem;
+    Gtk::Menu*                   hiddenDrivesMenu;
+    std::map<Glib::ustring, Glib::ustring> hiddenDriveLabels_;
     std::map<Glib::ustring, int> photoCountCache_;
     std::mutex photoCountMutex_;
     std::atomic<bool> countingActive_{false};
@@ -88,6 +94,9 @@ public:
     void selectionChanged ();
     void addPressed ();
     void delPressed ();
+    void hideSelectedDrive();
+    void restoreHiddenDrive(Glib::ustring hiddenId);
+    void rebuildHiddenDrivesMenu();
     bool onButtonPress (GdkEventButton* event);
     void startPhotoCount ();
     static int countPhotosInDir (const Glib::ustring& dirPath);

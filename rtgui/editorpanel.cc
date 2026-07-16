@@ -606,9 +606,7 @@ Glib::ustring getTmpDirectory()
 class EditorPanel::ColorManagementToolbar
 {
 private:
-#if !defined(__APPLE__) // monitor profile not supported on apple
     MyComboBoxText profileBox;
-#endif
     PopUpButton intentBox;
     Gtk::ToggleButton softProof;
     Gtk::ToggleButton spGamutCheck;
@@ -618,7 +616,6 @@ private:
     rtengine::StagedImageProcessor* const& processor;
 
 private:
-#if !defined(__APPLE__) // monitor profile not supported on apple
     void prepareProfileBox ()
     {
         profileBox.setPreferredWidth (70, 200);
@@ -627,7 +624,7 @@ private:
         profileBox.append (M ("PREFERENCES_PROFILE_NONE"));
         Glib::ustring defprofname;
 
-#ifndef _WIN32
+#if defined(__linux__)
         if (find_default_monitor_profile (profileBox.get_root_window()->gobj(), defprof, defprofname)) {
             profileBox.append (M ("MONITOR_PROFILE_SYSTEM") + " (" + defprofname + ")");
 
@@ -652,7 +649,6 @@ private:
 
         profileBox.set_tooltip_text (profileBox.get_active_text ());
     }
-#endif
 
     void prepareIntentBox ()
     {
@@ -688,12 +684,10 @@ private:
         spGamutCheck.show ();
     }
 
-#if !defined(__APPLE__)
     void profileBoxChanged ()
     {
         updateParameters ();
     }
-#endif
 
     void intentBoxChanged (int)
     {
@@ -712,15 +706,11 @@ private:
 
     void updateParameters (bool noEvent = false)
     {
-#if !defined(__APPLE__) // monitor profile not supported on apple
         ConnectionBlocker profileBlocker (profileConn);
-#endif
         ConnectionBlocker intentBlocker (intentConn);
 
         Glib::ustring profile;
         const auto& options = App::get().options();
-
-#if !defined(__APPLE__) // monitor profile not supported on apple
 
         if (!defprof.empty() && profileBox.get_active_row_number () == 1) {
             profile = defprof;
@@ -735,12 +725,6 @@ private:
         } else if (profileBox.get_active_row_number () > 0) {
             profile = profileBox.get_active_text ();
         }
-
-#else
-        profile = options.rtSettings.srgb;
-#endif
-
-#if !defined(__APPLE__) // monitor profile not supported on apple
 
         if (profileBox.get_active_row_number () == 0) {
 
@@ -778,8 +762,6 @@ private:
 
             profileBox.set_tooltip_text (profileBox.get_active_text ());
         }
-
-#endif
         rtengine::RenderingIntent intent;
 
         switch (intentBox.getSelected ()) {
@@ -815,16 +797,10 @@ private:
 
     void updateSoftProofParameters (bool noEvent = false)
     {
-#if !defined(__APPLE__) // monitor profile not supported on apple
         softProof.set_sensitive (profileBox.get_active_row_number () > 0);
         spGamutCheck.set_sensitive(profileBox.get_active_row_number () > 0);
-#endif
-
-
-#if !defined(__APPLE__) // monitor profile not supported on apple
 
         if (profileBox.get_active_row_number () > 0) {
-#endif
 
             if (processor) {
                 if (!noEvent) {
@@ -837,11 +813,7 @@ private:
                     processor->endUpdateParams (rtengine::EvMonitorTransform);
                 }
             }
-
-#if !defined(__APPLE__) // monitor profile not supported on apple
         }
-
-#endif
     }
 
 public:
@@ -849,9 +821,7 @@ public:
         intentBox (Glib::ustring (), true),
         processor (ipc)
     {
-#if !defined(__APPLE__) // monitor profile not supported on apple
         prepareProfileBox ();
-#endif
         prepareIntentBox ();
         prepareSoftProofingBox ();
 
@@ -859,17 +829,13 @@ public:
 
         softproofConn = softProof.signal_toggled().connect (sigc::mem_fun (this, &ColorManagementToolbar::softProofToggled));
         spGamutCheck.signal_toggled().connect (sigc::mem_fun (this, &ColorManagementToolbar::spGamutCheckToggled));
-#if !defined(__APPLE__) // monitor profile not supported on apple
         profileConn = profileBox.signal_changed ().connect (sigc::mem_fun (this, &ColorManagementToolbar::profileBoxChanged));
-#endif
         intentConn = intentBox.signal_changed ().connect (sigc::mem_fun (this, &ColorManagementToolbar::intentBoxChanged));
     }
 
     void pack_right_in (Gtk::Grid* grid)
     {
-#if !defined(__APPLE__) // monitor profile not supported on apple
         grid->attach_next_to (profileBox, Gtk::POS_RIGHT, 1, 1);
-#endif
         grid->attach_next_to (*intentBox.buttonGroup, Gtk::POS_RIGHT, 1, 1);
         grid->attach_next_to (softProof, Gtk::POS_RIGHT, 1, 1);
         grid->attach_next_to (spGamutCheck, Gtk::POS_RIGHT, 1, 1);
@@ -887,7 +853,6 @@ public:
         const auto& options = App::get().options();
 
         ConnectionBlocker intentBlocker (intentConn);
-#if !defined(__APPLE__) // monitor profile not supported on apple
         ConnectionBlocker profileBlocker (profileConn);
 
         if (!defprof.empty() && options.rtSettings.autoMonitorProfile) {
@@ -895,8 +860,6 @@ public:
         } else {
             setActiveTextOrIndex (profileBox, options.rtSettings.monitorProfile, 0);
         }
-
-#endif
 
         switch (options.rtSettings.monitorIntent) {
             default:
@@ -928,14 +891,10 @@ public:
 
         if (auto_monitor_profile && !defprof.empty()) {
             rtengine::ICCStore::getInstance()->setDefaultMonitorProfileName (defprof);
-#ifndef __APPLE__
             profileBox.set_active (1);
-#endif
         } else {
             rtengine::ICCStore::getInstance()->setDefaultMonitorProfileName (profile_name);
-#ifndef __APPLE__
             setActiveTextOrIndex (profileBox, profile_name, 0);
-#endif
         }
     }
 
@@ -949,7 +908,6 @@ public:
     bool getGamutCheck () const { return spGamutCheck.get_active (); }
     void setGamutCheck (bool a) { spGamutCheck.set_active (a); }
 
-#if !defined(__APPLE__)
     int getProfileIndex () const { return profileBox.get_active_row_number (); }
     void setProfileIndex (int i) { profileBox.set_active (i); updateParameters (); }
     int getProfileCount () const { return profileBox.get_model ()->children ().size (); }
@@ -960,12 +918,6 @@ public:
         row.get_value (0, text);
         return text;
     }
-#else
-    int getProfileIndex () const { return 0; }
-    void setProfileIndex (int) {}
-    int getProfileCount () const { return 0; }
-    Glib::ustring getProfileName (int) const { return ""; }
-#endif
 
 };
 

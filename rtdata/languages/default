@@ -12,6 +12,7 @@ ALBUM_CREATE_TOOLTIP;Create album, smart album, or folder
 ALBUM_DELETE;Delete
 ALBUM_EDIT_RULES;Edit rules...
 ALBUM_HEADER;Albums
+ALBUM_NEW;New
 ALBUM_NEW_ALBUM;+ New Album
 ALBUM_RENAME;Rename...
 ALBUM_SEARCH;Search
@@ -2040,9 +2041,12 @@ MAIN_FRAME_FILEBROWSER_TOOLTIP;File browser.\nShortcut: <b>Ctrl-F2</b>
 MAIN_FRAME_PLACES;Places
 MAIN_FRAME_PLACES_ADD;Add
 MAIN_FRAME_PLACES_DEL;Remove
+MAIN_FRAME_PLACES_HIDE_DRIVE;Hide drive
+MAIN_FRAME_PLACES_HIDDEN_DRIVES;Hidden drives
 MAIN_FRAME_QUEUE;Queue
 MAIN_FRAME_QUEUE_TOOLTIP;Processing queue.\nShortcut: <b>Ctrl-F3</b>
 MAIN_FRAME_RECENT;Recent Folders
+MAIN_FRAME_RECENT_SHORT;Recent
 MAIN_MSG_ALREADYEXISTS;File already exists.
 MAIN_MSG_CANNOTLOAD;Cannot load image
 MAIN_MSG_CANNOTSAVE;File saving error
@@ -2251,6 +2255,7 @@ PREFERENCES_APPEARANCE_NAVGUIDECOLOR;Navigator guide color
 PREFERENCES_APPEARANCE_THEME;Theme
 PREFERENCES_APPLNEXTSTARTUP;restart
 PREFERENCES_AUTOMONPROFILE;Use operating system's main monitor color profile
+PREFERENCES_AUTOMONPROFILE_WARNOSX;Automatic system monitor-profile detection is unavailable on macOS. Choose a monitor ICC profile manually.
 PREFERENCES_AUTOSAVE_TP_OPEN;Save tool collapsed/expanded state on exit
 PREFERENCES_BATCH_PROCESSING;Batch Processing
 PREFERENCES_BEHADDALL;All to 'Add'

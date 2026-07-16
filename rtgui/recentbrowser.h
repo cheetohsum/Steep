@@ -29,9 +29,12 @@ public:
     typedef sigc::slot<void, const Glib::ustring&> DirSelectionSlot;
 
 private:
-    Gtk::ComboBoxText*              recentDirs;
-    sigc::connection             conn;
-    DirSelectionSlot             selectDir;
+    Gtk::MenuButton* recentButton;
+    Gtk::Menu* recentMenu;
+    DirSelectionSlot selectDir;
+
+    void rebuildMenu();
+    void selectRecent(Glib::ustring dirname);
 
 public:
 
@@ -39,7 +42,6 @@ public:
 
     void setDirSelector (const DirSelectionSlot& selectDir);
 
-    void selectionChanged ();
     void dirSelected (const Glib::ustring& dirname, const Glib::ustring& openfile);
 };
 

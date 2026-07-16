@@ -48,9 +48,10 @@ private:
     int actionCode;
     void* actionData;
     Glib::ustring* toolTip;
+    double iconScale;
 
 public:
-    LWButton (std::shared_ptr<RTSurface> i, int aCode, void* aData, Alignment ha = Left, Alignment va = Center, Glib::ustring* tooltip = nullptr);
+    LWButton (std::shared_ptr<RTSurface> i, int aCode, void* aData, Alignment ha = Left, Alignment va = Center, Glib::ustring* tooltip = nullptr, double scale = 1.0);
 
     void    getSize             (int& minw, int& minh) const;
     void    getAlignment        (Alignment& ha, Alignment& va) const;
@@ -59,6 +60,7 @@ public:
     void    getPosition         (int& x, int& y) const;
     bool    inside              (int x, int y) const;
     void    setIcon             (std::shared_ptr<RTSurface> i);
+    void    setScale            (double scale);
     std::shared_ptr<RTSurface>  getIcon () const;
     void    setColors           (const Gdk::RGBA& bg, const Gdk::RGBA& fg);
     void    setToolTip          (Glib::ustring* tooltip);

@@ -25,11 +25,11 @@
 #cmakedefine OSX_DEV_BUILD
 
 #if defined(__APPLE__) && !defined(OSX_DEV_BUILD)
-#define DATA_SEARCH_PATH "/Applications/RawTherapee.app/Contents/Resources/share"
-#define DOC_SEARCH_PATH "/Applications/RawTherapee.app/Contents/Resources"
-#define CREDITS_SEARCH_PATH "/Applications/RawTherapee.app/Contents/Resources"
-#define LICENCE_SEARCH_PATH "/Applications/RawTherapee.app/Contents/Resources"
-#define LENSFUN_DB_PATH "${LENSFUNDBDIR}"
+#define DATA_SEARCH_PATH "../Resources/share"
+#define DOC_SEARCH_PATH "../Resources"
+#define CREDITS_SEARCH_PATH "../Resources"
+#define LICENCE_SEARCH_PATH "../Resources"
+#define LENSFUN_DB_PATH "../Resources/share/lensfun"
 #else
 #define DATA_SEARCH_PATH "${DATADIR}"
 #define DOC_SEARCH_PATH "${DOCDIR}"

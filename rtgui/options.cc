@@ -461,6 +461,7 @@ void Options::setDefaults()
     editor_float32 = false;
     editor_bypass_output_profile = false;
     favoriteDirs.clear();
+    hiddenDriveRoots.clear();
     tpOpen.clear();
     autoSaveTpOpen = true;
     //crvOpen.clear ();
@@ -1442,6 +1443,10 @@ void Options::readFromFile(Glib::ustring fname)
 
                 if (keyFile.has_key("File Browser", "FavoriteDirs")) {
                     favoriteDirs = keyFile.get_string_list("File Browser", "FavoriteDirs");
+                }
+
+                if (keyFile.has_key("File Browser", "HiddenDriveRoots")) {
+                    hiddenDriveRoots = keyFile.get_string_list("File Browser", "HiddenDriveRoots");
                 }
 
                 if (keyFile.has_key("File Browser", "RenameTemplates")) {
@@ -2657,6 +2662,8 @@ void Options::saveToFile(Glib::ustring fname)
         keyFile.set_integer("File Browser", "ThumbnailInterpolation", thumbInterp);
         Glib::ArrayHandle<Glib::ustring> pfav = favoriteDirs;
         keyFile.set_string_list("File Browser", "FavoriteDirs", pfav);
+        Glib::ArrayHandle<Glib::ustring> phidden = hiddenDriveRoots;
+        keyFile.set_string_list("File Browser", "HiddenDriveRoots", phidden);
         Glib::ArrayHandle<Glib::ustring> pren = renameTemplates;
         keyFile.set_string_list("File Browser", "RenameTemplates", pren);
         keyFile.set_boolean("File Browser", "RenameUseTemplates", renameUseTemplates);
