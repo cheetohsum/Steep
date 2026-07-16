@@ -24,6 +24,8 @@
 #include "options.h"
 #include "rtengine/procparams.h"
 
+#include <algorithm>
+
 using namespace rtengine;
 using namespace procparams;
 
@@ -379,6 +381,9 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
         case (ControlSpotPanel::SpotCreation): { // Spot creation event
             // Spot creation (default initialization)
             newSpot = new LocallabParams::LocallabSpot();
+            const int requestedShape = expsettings->getPendingShape();
+            const char* requestedShapeNames[] = {"ELI", "RECT", "GRAD"};
+            newSpot->shape = requestedShapeNames[std::max(0, std::min(requestedShape, 2))];
             ControlSpotPanel::SpotRow r;
             r.name = newSpot->name = Glib::ustring("Mask ") + std::to_string(pp->locallab.spots.size() + 1);
             r.isvisible = newSpot->isvisible;
@@ -451,6 +456,11 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                     newSpot->loc.at(2) = rtengine::LIM(int(((double)prH / 2. - 5.) * 2000. / (double)imH), 2, newSpot->loc.at(2));
                     newSpot->loc.at(3) = rtengine::LIM(int(((double)prH / 2. - 5.) * 2000. / (double)imH), 2, newSpot->loc.at(3));
                 }
+            }
+
+            if (requestedShape == 2) {
+                newSpot->loc = {3000, 3000, 3000, 3000};
+                newSpot->transit = 100.;
             }
 
             r.locX = newSpot->loc.at(0);

@@ -208,6 +208,7 @@ public:
     }
 
     int getPendingAIClass() const { return pendingAIClass_; }
+    int getPendingShape() const { return pendingShape_; }
 
     // Control spot creation functions
     /**
@@ -255,11 +256,13 @@ public:
 
 private:
     // Cell renderer
+    void render_details_toggle(Gtk::CellRenderer* cell, const Gtk::TreeModel::iterator& iter);
     void render_preview(Gtk::CellRenderer* cell, const Gtk::TreeModel::iterator& iter);
     void render_name(Gtk::CellRenderer* cell, const Gtk::TreeModel::iterator& iter);
     void render_isvisible(Gtk::CellRenderer* cell, const Gtk::TreeModel::iterator& iter);
 
     void on_button_add();
+    void on_mask_shape_selected(int shape);
     void on_button_delete();
     void on_button_duplicate();
     void on_button_rename();
@@ -323,6 +326,7 @@ private:
         ControlSpots();
 
         Gtk::TreeModelColumn<bool> mouseover; // Used to manage spot enlightening when mouse over
+        Gtk::TreeModelColumn<bool> detailsExpanded;
         Gtk::TreeModelColumn<Glib::ustring> name;
         Gtk::TreeModelColumn<bool> isvisible;
         Gtk::TreeModelColumn<int> curveid; // Associated curve id
@@ -536,16 +540,14 @@ private:
     rtengine::Coord magneticSnap(int imgX, int imgY); // snap to nearest edge
     static void simplifyPolygon(std::vector<rtengine::Coord>& pts, double epsilon);
 
-    // Mask dropdown section
-    Gtk::Button* maskHeaderBtn_;
+    // Per-mask settings section, expanded from the chevron in each mask row
     Gtk::Box* maskDetailBox_;
     Gtk::Revealer* maskRevealer_;
     bool maskDetailExpanded_;
-    Gtk::Label* maskArrowLabel_;
-    Glib::ustring maskSpotName_;  // name of currently selected spot
-    void toggleMaskDetail();
-    void updateMaskLabel();  // refresh arrow+name markup
+    void setMaskDetailExpanded(bool expanded);
     void setMaskControlsSensitive(bool sensitive);
+    void queueMaskPreviewRefresh();
+    void startAIPreviewRefresh();
 
     // Sidebar hover mask overlay
     bool sidebarHoverActive_ = false;
@@ -561,10 +563,12 @@ private:
     // Row background color
     Gdk::RGBA colorMouseover, colorNominal, colorMouseovertext;
 
-    // AI Mask button and dropdown
-    Gtk::Button* button_add_ai_;
-    Gtk::Menu* aiClassMenu_;
+    // Add-mask menu
+    Gtk::Menu* addMaskMenu_;
+    int pendingShape_ = 0;
     int pendingAIClass_ = -1;
+    sigc::connection previewRefresh_;
+    int aiPreviewAttempts_ = 0;
 
     // Treeview mutex
     MyMutex mTreeview;

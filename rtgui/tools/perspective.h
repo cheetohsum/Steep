@@ -68,7 +68,7 @@ private:
 };
 
 // Interactive vertex grid perspective editing.
-// Displays a 7x7 grid of selectable/draggable vertices on the image.
+// Displays a 10x10 grid of selectable/draggable vertices on the image.
 // Users select vertices (especially near corners) and drag to adjust perspective.
 class VertexGridSubscriber : public EditSubscriber
 {
@@ -110,7 +110,7 @@ private:
     std::vector<std::unique_ptr<Circle>> vertexHitCircles_;
     std::vector<std::unique_ptr<Line>> gridLines_;
     std::array<double, VERTEX_COUNT> startDx_{}, startDy_{};
-    int lastSelectedIdx_ = -1;  // anchor for Shift+Ctrl rectangle selection
+    int lastSelectedIdx_ = -1;  // stable anchor for Shift rectangle selection
     int pendingSingleSelect_ = -1; // deferred single-select on release (if no drag)
     bool didDrag_ = false;         // true once drag1 fires after button1Pressed
 

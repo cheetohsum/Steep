@@ -1242,10 +1242,8 @@ VertexGridSubscriber::VertexGridSubscriber()
         circle->radiusInImageSpace = false;
         circle->datum = Geometry::IMAGE;
         circle->setActive(true);
-        circle->setAutoColor(false);
-        circle->setInnerLineColor(0.7, 0.7, 0.7);
-        circle->setOuterLineColor(0.2, 0.2, 0.2);
-        circle->opacity = 60.f;
+        circle->setAutoColor(true);
+        circle->opacity = 75.f;
         circle->state = Geometry::NORMAL;
         circle->innerLineWidth = 1.0f;
         visibleGeometry.push_back(circle.get());
@@ -1360,16 +1358,18 @@ void VertexGridSubscriber::selectVertex(int index, bool addToSelection, bool ran
                 vertices_[r * GRID_SIZE + c].selected = true;
             }
         }
+        // Keep the original anchor so consecutive Shift-clicks extend from
+        // the first plain-clicked vertex instead of walking the anchor.
     } else if (addToSelection) {
         vertices_[index].selected = !vertices_[index].selected;
+        lastSelectedIdx_ = index;
     } else {
         for (auto& vtx : vertices_) {
             vtx.selected = false;
         }
         vertices_[index].selected = true;
+        lastSelectedIdx_ = index;
     }
-
-    lastSelectedIdx_ = index;
 
     for (int i = 0; i < VERTEX_COUNT; ++i) {
         vertexCircles_[i]->state = vertices_[i].selected ? Geometry::ACTIVE : Geometry::NORMAL;
@@ -1425,10 +1425,13 @@ bool VertexGridSubscriber::button1Pressed(int modifierKey)
             // Clicked an already-selected vertex without modifiers:
             // defer single-select to release so drag keeps multi-selection
             pendingSingleSelect_ = vertexIdx;
+        } else if (shift) {
+            // Shift-click selects the inclusive rectangle between the original
+            // anchor and this vertex. Existing selections remain active.
+            selectVertex(vertexIdx, true, true);
         } else {
-            // Shift-click and Ctrl-click both toggle individual vertices.
-            // Shift+Ctrl keeps rectangle selection available from the anchor.
-            selectVertex(vertexIdx, shift || ctrl, shift && ctrl);
+            // Ctrl-click toggles one vertex without clearing the selection.
+            selectVertex(vertexIdx, ctrl, false);
         }
 
         // Save start displacements for all vertices

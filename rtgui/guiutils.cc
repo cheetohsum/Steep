@@ -2620,6 +2620,16 @@ ToolGroup::ToolGroup(const Glib::ustring& label) :
     headerBtn->set_relief(Gtk::RELIEF_NONE);
     headerBtn->set_can_focus(false);
     headerBtn->set_halign(Gtk::ALIGN_START);
+    {
+        auto css = Gtk::CssProvider::create();
+        css->load_from_data(
+            "#ToolGroupHeader, #ToolGroupHeader:hover, #ToolGroupHeader.hovered {"
+            " border: none; border-radius: 0; background-color: transparent;"
+            " background-image: none; box-shadow: none; }"
+        );
+        headerBtn->get_style_context()->add_provider(
+            css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+    }
     headerBtn->add(*arrowLabel);
 
     // Reset button (X) — hidden by default, shown when group has non-default values

@@ -152,8 +152,6 @@ ControlSpotPanel::ControlSpotPanel():
 
 
     // Connect all button signals
-    buttonaddconn_ = button_add_->signal_clicked().connect(
-                         sigc::mem_fun(*this, &ControlSpotPanel::on_button_add));
     buttondeleteconn_ = button_delete_->signal_clicked().connect(
                             sigc::mem_fun(*this, &ControlSpotPanel::on_button_delete));
     buttonduplicateconn_ = button_duplicate_->signal_clicked().connect(
@@ -173,56 +171,49 @@ ControlSpotPanel::ControlSpotPanel():
     hiddenBox->pack_start(*button_visibility_);
     pack_start(*hiddenBox);
 
-    // Single "Add Mask" button visible at top
-    button_add_->set_label(M("TP_LOCALLAB_BUTTON_ADD_MASK"));
+    // One compact Add Mask button with a menu for every primary mask type.
+    button_add_->set_label("");
+    button_add_->set_image(*Gtk::manage(new RTImage("add", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
+    button_add_->set_always_show_image(true);
+    button_add_->set_relief(Gtk::RELIEF_NONE);
+    button_add_->set_tooltip_text(M("TP_LOCALLAB_SETTINGS"));
+    button_add_->set_size_request(32, 30);
     Gtk::Box* const addRow = Gtk::manage(new Gtk::Box());
     addRow->set_halign(Gtk::ALIGN_START);
+    addRow->set_margin_start(4);
     addRow->set_margin_top(4);
     addRow->set_margin_bottom(4);
     addRow->pack_start(*button_add_, Gtk::PACK_SHRINK);
 
-    // "Add AI Mask" button with dropdown class menu
-    button_add_ai_ = Gtk::manage(new Gtk::Button(M("TP_LOCALLAB_BUTTON_ADD_AI_MASK")));
-    aiClassMenu_ = new Gtk::Menu();
-
-    const char* aiClassKeys[] = {
-        "TP_LOCALLAB_AIMASK_CLASS_BACKGROUND",
-        "TP_LOCALLAB_AIMASK_CLASS_PERSON",
-        "TP_LOCALLAB_AIMASK_CLASS_SKY",
-        "TP_LOCALLAB_AIMASK_CLASS_VEGETATION",
-        "TP_LOCALLAB_AIMASK_CLASS_BUILDING",
-        "TP_LOCALLAB_AIMASK_CLASS_VEHICLE",
-        "TP_LOCALLAB_AIMASK_CLASS_ANIMAL",
-        "TP_LOCALLAB_AIMASK_CLASS_FOREGROUND"
-    };
-
-    const char* aiClassIcons[] = {
-        "mask-class-background", "mask-class-person", "mask-class-sky",
-        "mask-class-vegetation", "mask-class-building", "mask-class-vehicle",
-        "mask-class-animal", "mask-class-foreground"
-    };
-
-    for (int i = 0; i < 8; i++) {
+    addMaskMenu_ = new Gtk::Menu();
+    const auto addMaskMenuItem = [this](const char* icon, const Glib::ustring& label, int shape) {
         auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
-        auto* img = Gtk::manage(new RTImage(aiClassIcons[i]));
-        auto* lbl = Gtk::manage(new Gtk::Label(M(aiClassKeys[i])));
+        auto* img = Gtk::manage(new RTImage(icon));
+        auto* lbl = Gtk::manage(new Gtk::Label(label));
         lbl->set_halign(Gtk::ALIGN_START);
         box->pack_start(*img, Gtk::PACK_SHRINK);
         box->pack_start(*lbl, Gtk::PACK_EXPAND_WIDGET);
         auto* mi = Gtk::manage(new Gtk::MenuItem());
         mi->add(*box);
-        mi->signal_activate().connect(
-            sigc::bind(sigc::mem_fun(*this, &ControlSpotPanel::on_ai_mask_selected), i));
-        aiClassMenu_->append(*mi);
-    }
-    aiClassMenu_->show_all();
+        mi->signal_activate().connect([this, shape]() {
+            if (shape < 0) {
+                on_ai_mask_selected(2);
+            } else {
+                on_mask_shape_selected(shape);
+            }
+        });
+        addMaskMenu_->append(*mi);
+    };
+    addMaskMenuItem("mask-ai", M("TP_LOCALLAB_MASKTYPE_AI"), -1);
+    addMaskMenuItem("shape-ellipse", M("TP_LOCALLAB_ELI"), 0);
+    addMaskMenuItem("shape-rectangle", M("TP_LOCALLAB_RECT"), 1);
+    addMaskMenuItem("shape-gradient", M("TP_LOCALLAB_GRAD"), 2);
+    addMaskMenu_->show_all();
 
-    button_add_ai_->signal_clicked().connect([this]() {
-        aiClassMenu_->popup_at_widget(button_add_ai_,
+    buttonaddconn_ = button_add_->signal_clicked().connect([this]() {
+        addMaskMenu_->popup_at_widget(button_add_,
             Gdk::GRAVITY_SOUTH_WEST, Gdk::GRAVITY_NORTH_WEST, nullptr);
     });
-
-    addRow->pack_start(*button_add_ai_, Gtk::PACK_SHRINK, 4);
 
     pack_start(*addRow);
 
@@ -273,10 +264,23 @@ ControlSpotPanel::ControlSpotPanel():
         sigc::mem_fun(*this, &ControlSpotPanel::onTreeviewLeave), false);
 
     // Preview column — small colored square for AI masks
+    auto* detailsCell = Gtk::manage(new Gtk::CellRendererText());
+    detailsCell->property_xalign() = 0.5f;
+    detailsCell->property_ypad() = 11;
+    int cols_count = treeview_->append_column("", *detailsCell);
+    auto col = treeview_->get_column(cols_count - 1);
+    if (col) {
+        col->set_expand(false);
+        col->set_fixed_width(22);
+        col->set_cell_data_func(
+            *detailsCell, sigc::mem_fun(
+                *this, &ControlSpotPanel::render_details_toggle));
+    }
+
     auto* previewCell = Gtk::manage(new Gtk::CellRendererPixbuf());
     previewCell->property_ypad() = 11;
-    int cols_count = treeview_->append_column("", *previewCell);
-    auto col = treeview_->get_column(cols_count - 1);
+    cols_count = treeview_->append_column("", *previewCell);
+    col = treeview_->get_column(cols_count - 1);
 
     if (col) {
         col->set_expand(false);
@@ -716,27 +720,8 @@ ControlSpotPanel::ControlSpotPanel():
     expAdvanced_->add(*advancedBox, false);
     expAdvanced_->setLevel(2);
 
-    // --- Mask dropdown: clickable "Mask" label that expands/collapses ---
+    // Mask-specific controls are revealed by the chevron on the selected row.
     maskDetailExpanded_ = false;
-    maskSpotName_ = "";
-
-    maskArrowLabel_ = Gtk::manage(new Gtk::Label());
-    maskArrowLabel_->set_use_markup(true);
-    maskArrowLabel_->set_can_focus(false);
-    setExpandAlignProperties(maskArrowLabel_, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
-
-    maskHeaderBtn_ = Gtk::manage(new Gtk::Button());
-    maskHeaderBtn_->set_relief(Gtk::RELIEF_NONE);
-    maskHeaderBtn_->set_can_focus(false);
-    maskHeaderBtn_->set_halign(Gtk::ALIGN_START);
-    maskHeaderBtn_->set_margin_top(0);
-    maskHeaderBtn_->set_margin_bottom(0);
-    maskHeaderBtn_->add(*maskArrowLabel_);
-    maskHeaderBtn_->signal_clicked().connect(
-        sigc::mem_fun(*this, &ControlSpotPanel::toggleMaskDetail));
-    // Will be shown/hidden based on spot selection
-
-    pack_start(*maskHeaderBtn_, Gtk::PACK_SHRINK);
 
     maskDetailBox_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
     shapeTypeRow_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
@@ -764,10 +749,11 @@ ControlSpotPanel::ControlSpotPanel():
 
     maskRevealer_ = Gtk::manage(new Gtk::Revealer());
     maskRevealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-    maskRevealer_->set_transition_duration(200);
+    maskRevealer_->set_transition_duration(140);
     maskRevealer_->set_reveal_child(false);
     maskRevealer_->add(*maskDetailBox_);
-    // Will be shown/hidden based on spot selection
+    maskRevealer_->set_no_show_all(true);
+    maskRevealer_->hide();
     pack_start(*maskRevealer_, Gtk::PACK_SHRINK);
 
     // Grey out mask controls until a mask/spot is added
@@ -821,12 +807,8 @@ ControlSpotPanel::ControlSpotPanel():
 */
     set_name("MaskingPanel");
     set_margin_end(6);  // Prevent content clipping at right edge
-    maskSpotName_ = M("TP_LOCALLAB_MASK_SECTION");
-    updateMaskLabel();  // Set initial label text
     show_all();
-    // Show mask section but greyed out (no spots yet)
-    maskDetailExpanded_ = true;
-    maskRevealer_->set_reveal_child(true);
+    maskRevealer_->hide();
     // Hide poly-specific and AI-specific widgets initially
     polyDrawBtn_->hide();
     polyVertexIcon_->hide();
@@ -854,6 +836,9 @@ ControlSpotPanel::ControlSpotPanel():
 
 ControlSpotPanel::~ControlSpotPanel()
 {
+    previewRefresh_.disconnect();
+    aiPreviewRefresh_.disconnect();
+
     // visibleGeometry
     for (auto i = EditSubscriber::visibleGeometry.begin(); i != EditSubscriber::visibleGeometry.end(); ++i) {
         delete *i;
@@ -865,43 +850,22 @@ ControlSpotPanel::~ControlSpotPanel()
     }
 }
 
-void ControlSpotPanel::updateMaskLabel()
+void ControlSpotPanel::setMaskDetailExpanded(bool expanded)
 {
-    const Glib::ustring arrow = maskDetailExpanded_
-        ? "\xe2\x96\xbe"   // ▾
-        : "\xe2\x96\xb8";  // ▸
-    const Glib::ustring name = maskSpotName_.empty()
-        ? M("TP_LOCALLAB_MASK_SECTION")
-        : maskSpotName_;
-    maskArrowLabel_->set_markup(
-        "<span size=\"large\">" + Glib::Markup::escape_text(arrow + "  " + name) + "</span>");
-}
-
-void ControlSpotPanel::setMaskControlsSensitive(bool sensitive)
-{
-    shapeTypeRow_->set_sensitive(sensitive);
-    circrad_->set_sensitive(sensitive);
-    transit_->set_sensitive(sensitive);
-    polyBox_->set_sensitive(sensitive);
-    ctboxaiclass->set_sensitive(sensitive);
-}
-
-void ControlSpotPanel::toggleMaskDetail()
-{
-    maskDetailExpanded_ = !maskDetailExpanded_;
-    updateMaskLabel();
+    const bool hasSelection =
+        treeview_->get_selection()->count_selected_rows() > 0;
+    maskDetailExpanded_ = hasSelection && expanded;
+    maskRevealer_->set_visible(hasSelection);
     if (maskDetailExpanded_) {
-        maskDetailBox_->show();
-        shapeTypeRow_->show();
-        // Show/hide based on mask type
+        maskDetailBox_->show_all();
+
         if (maskType_->getSelected() == 1) {
             ctboxaiclass->show();
         } else {
             ctboxaiclass->hide();
         }
-        // Show/hide based on shape
-        const int shp = shape_->getSelected();
-        if (shp == 3) { // Lasso
+
+        if (shape_->getSelected() == 3) {
             polyBox_->show();
             polyBox_->show_all_children();
             polyDrawBtn_->show();
@@ -917,10 +881,37 @@ void ControlSpotPanel::toggleMaskDetail()
             circrad_->show();
             transit_->show();
         }
-        maskRevealer_->set_reveal_child(true);
-    } else {
-        maskRevealer_->set_reveal_child(false);
     }
+    maskRevealer_->set_reveal_child(maskDetailExpanded_);
+}
+
+void ControlSpotPanel::setMaskControlsSensitive(bool sensitive)
+{
+    shapeTypeRow_->set_sensitive(sensitive);
+    circrad_->set_sensitive(sensitive);
+    transit_->set_sensitive(sensitive);
+    polyBox_->set_sensitive(sensitive);
+    ctboxaiclass->set_sensitive(sensitive);
+}
+
+void ControlSpotPanel::queueMaskPreviewRefresh()
+{
+    if (!previewRefresh_.connected()) {
+        previewRefresh_ = Glib::signal_timeout().connect([this]() {
+            treeview_->queue_draw();
+            return false;
+        }, 16);
+    }
+}
+
+void ControlSpotPanel::startAIPreviewRefresh()
+{
+    aiPreviewRefresh_.disconnect();
+    aiPreviewAttempts_ = 0;
+    aiPreviewRefresh_ = Glib::signal_timeout().connect([this]() {
+        treeview_->queue_draw();
+        return ++aiPreviewAttempts_ < 20;
+    }, 120);
 }
 
 bool ControlSpotPanel::onTreeviewMotion(GdkEventMotion* /*event*/)
@@ -991,6 +982,16 @@ void ControlSpotPanel::setEditProvider(EditDataProvider* provider)
     EditSubscriber::setEditProvider(provider);
 }
 
+void ControlSpotPanel::render_details_toggle(
+    Gtk::CellRenderer* cell, const Gtk::TreeModel::iterator& iter)
+{
+    const auto row = *iter;
+    auto* text = static_cast<Gtk::CellRendererText*>(cell);
+    text->property_text() = row[spots_.detailsExpanded]
+        ? "\xe2\x96\xbe"
+        : "\xe2\x96\xb8";
+}
+
 void ControlSpotPanel::render_preview(
     Gtk::CellRenderer* cell, const Gtk::TreeModel::iterator& iter)
 {
@@ -1029,8 +1030,8 @@ void ControlSpotPanel::render_preview(
     guint8* pixels = pixbuf->get_pixels();
     const int rowstride = pixbuf->get_rowstride();
 
-    const double cx = 0.5 + cxOff;
-    const double cy = 0.5 + cyOff;
+    const double cx = std::max(0.2, std::min(0.8, 0.5 + cxOff * 0.35));
+    const double cy = std::max(0.2, std::min(0.8, 0.5 + cyOff * 0.35));
 
     // For polygon shape, build normalized vertex list and compute bounding box
     std::vector<std::pair<double, double>> polyVerts;
@@ -1052,6 +1053,16 @@ void ControlSpotPanel::render_preview(
             polyMinY = std::min(polyMinY, vy);
             polyMaxX = std::max(polyMaxX, vx);
             polyMaxY = std::max(polyMaxY, vy);
+        }
+
+        const double polyW = std::max(polyMaxX - polyMinX, 1e-6);
+        const double polyH = std::max(polyMaxY - polyMinY, 1e-6);
+        const double scale = 0.78 / std::max(polyW, polyH);
+        const double sourceCx = (polyMinX + polyMaxX) * 0.5;
+        const double sourceCy = (polyMinY + polyMaxY) * 0.5;
+        for (auto& vertex : polyVerts) {
+            vertex.first = 0.5 + (vertex.first - sourceCx) * scale;
+            vertex.second = 0.5 + (vertex.second - sourceCy) * scale;
         }
     }
 
@@ -1176,10 +1187,17 @@ void ControlSpotPanel::render_preview(
                     dist /= std::max(feather, 0.05);
                 } else {
                     // Ellipse or Rectangle
-                    double extR = std::max(rX,  0.01);
-                    double extL = std::max(rXL, 0.01);
-                    double extB = std::max(rY,  0.01);
-                    double extT = std::max(rYT, 0.01);
+                    const double maxExtent = std::max(
+                        std::max(rX, rXL), std::max(rY, rYT));
+                    double previewScale = 1.0;
+                    if (maxExtent > 0.0) {
+                        previewScale = std::max(1.0, 0.24 / maxExtent);
+                        previewScale = std::min(previewScale, 0.42 / maxExtent);
+                    }
+                    double extR = std::max(rX * previewScale, 0.01);
+                    double extL = std::max(rXL * previewScale, 0.01);
+                    double extB = std::max(rY * previewScale, 0.01);
+                    double extT = std::max(rYT * previewScale, 0.01);
 
                     double dx = x - cx;
                     double dy = y - cy;
@@ -1280,6 +1298,12 @@ void ControlSpotPanel::on_button_add()
     listener->panelChanged(EvLocallabSpotCreated, "-");
 }
 
+void ControlSpotPanel::on_mask_shape_selected(int shape)
+{
+    pendingShape_ = std::max(0, std::min(shape, 2));
+    on_button_add();
+}
+
 void ControlSpotPanel::on_ai_mask_selected(int classIndex)
 {
     if (!listener) {
@@ -1292,13 +1316,7 @@ void ControlSpotPanel::on_ai_mask_selected(int classIndex)
     eventType = SpotCreationAI;
     listener->panelChanged(EvLocallabSpotCreated, "-");
 
-    // Schedule a delayed treeview redraw so the preview thumbnail
-    // updates after the engine computes the AI segmentation mask.
-    aiPreviewRefresh_.disconnect();
-    aiPreviewRefresh_ = Glib::signal_timeout().connect([this]() {
-        treeview_->queue_draw();
-        return false; // one-shot
-    }, 1500);
+    startAIPreviewRefresh();
 }
 
 void ControlSpotPanel::on_button_delete()
@@ -1382,9 +1400,6 @@ void ControlSpotPanel::on_button_rename()
             if (controlPanelListener) {
                 controlPanelListener->spotNameChanged(newname);
             }
-            // Update mask dropdown label with new name
-            maskSpotName_ = newname;
-            updateMaskLabel();
         }
     }
 }
@@ -1497,8 +1512,22 @@ bool ControlSpotPanel::onSpotSelectionEvent(GdkEventButton* event)
         int cell_x, cell_y;
 
         if (treeview_->get_path_at_pos(static_cast<int>(event->x), static_cast<int>(event->y), path, column, cell_x, cell_y)) {
-            if (column == treeview_->get_column(1)) {
-                auto iter = treemodel_->get_iter(path);
+            auto iter = treemodel_->get_iter(path);
+            if (column == treeview_->get_column(0) && iter) {
+                Gtk::TreeModel::Row clickedRow = *iter;
+                const bool expand = !clickedRow[spots_.detailsExpanded];
+                for (auto& row : treemodel_->children()) {
+                    row[spots_.detailsExpanded] = false;
+                }
+                clickedRow[spots_.detailsExpanded] = expand;
+                treeview_->get_selection()->select(path);
+                setMaskControlsSensitive(true);
+                setMaskDetailExpanded(expand);
+                treeview_->queue_draw();
+                return true;
+            }
+
+            if (column == treeview_->get_column(3)) {
                 if (iter) {
                     // Select the clicked row's spot
                     treeview_->get_selection()->select(path);
@@ -1520,6 +1549,14 @@ bool ControlSpotPanel::onSpotSelectionEvent(GdkEventButton* event)
                     return true;
                 }
             }
+
+            // Selecting a mask by its preview/name keeps settings collapsed;
+            // the row chevron is the only control that opens them.
+            for (auto& row : treemodel_->children()) {
+                row[spots_.detailsExpanded] = false;
+            }
+            setMaskDetailExpanded(false);
+            treeview_->queue_draw();
         }
     }
 
@@ -1646,10 +1683,8 @@ void ControlSpotPanel::load_ControlSpot_param()
         polyVertexLabel_->hide();
     }
 
-    // Show mask dropdown with the selected spot's name
-    maskSpotName_ = row[spots_.name];
-    updateMaskLabel();
     setMaskControlsSensitive(true);
+    setMaskDetailExpanded(row[spots_.detailsExpanded]);
 }
 
 void ControlSpotPanel::controlspotChanged()
@@ -1666,10 +1701,8 @@ void ControlSpotPanel::controlspotChanged()
     const int selIndex = getSelectedSpot();
 
     if (selIndex == -1) { // No selected spot
-        // Grey out mask controls when no spot is selected
-        maskSpotName_ = M("TP_LOCALLAB_MASK_SECTION");
-        updateMaskLabel();
         setMaskControlsSensitive(false);
+        setMaskDetailExpanded(false);
         return;
     }
 
@@ -1677,10 +1710,9 @@ void ControlSpotPanel::controlspotChanged()
     eventType = SpotSelection;
     const std::unique_ptr<SpotRow> spotRow = getSpot(selIndex);
 
-    // Show the Mask dropdown with the selected spot's name
-    maskSpotName_ = spotRow->name;
-    updateMaskLabel();
     setMaskControlsSensitive(true);
+    const auto selected = treeview_->get_selection()->get_selected();
+    setMaskDetailExpanded(selected && (*selected)[spots_.detailsExpanded]);
     // Image area shall be regenerated if mask or deltaE preview was active when switching spot
     if (maskPrevActive || preview_->get_active()) {
         listener->panelChanged(EvLocallabSpotSelectedWithMask, spotRow->name);
@@ -2270,12 +2302,7 @@ void ControlSpotPanel::aiMaskClassChanged(int /*index*/)
             sel >= 0 && sel < 8 ? M(aiClassKeys[sel]) : "");
     }
 
-    // Schedule delayed treeview redraw to pick up new AI mask data
-    aiPreviewRefresh_.disconnect();
-    aiPreviewRefresh_ = Glib::signal_timeout().connect([this]() {
-        treeview_->queue_draw();
-        return false;
-    }, 1500);
+    startAIPreviewRefresh();
 }
 
 void ControlSpotPanel::updateParamVisibility()
@@ -3420,6 +3447,8 @@ void ControlSpotPanel::updateControlSpotCurve(const Gtk::TreeModel::Row& row)
             EditSubscriber::mouseOverGeometry.at(base + i)->setActive(false);
         }
     }
+
+    queueMaskPreviewRefresh();
 }
 
 void ControlSpotPanel::deleteControlSpotCurve(Gtk::TreeModel::Row& row)
@@ -4267,8 +4296,12 @@ void ControlSpotPanel::addControlSpot(const SpotRow &newSpot)
     MyMutex::MyLock lock(mTreeview);
 
     disableParamlistener(true);
+    for (auto& existingRow : treemodel_->children()) {
+        existingRow[spots_.detailsExpanded] = false;
+    }
     Gtk::TreeModel::Row row = *(treemodel_->append());
     row[spots_.mouseover] = false;
+    row[spots_.detailsExpanded] = true;
     row[spots_.name] = newSpot.name;
     row[spots_.isvisible] = newSpot.isvisible;
     row[spots_.curveid] = 0; // No associated curve
@@ -4356,9 +4389,8 @@ void ControlSpotPanel::deleteControlSpot(const int index)
 
     // Grey out mask controls when no spots remain
     if (treemodel_->children().empty()) {
-        maskSpotName_ = M("TP_LOCALLAB_MASK_SECTION");
-        updateMaskLabel();
         setMaskControlsSensitive(false);
+        setMaskDetailExpanded(false);
     }
 }
 
@@ -4457,6 +4489,7 @@ void ControlSpotPanel::setDefaults(const rtengine::procparams::ProcParams * defP
 ControlSpotPanel::ControlSpots::ControlSpots()
 {
     add(mouseover);
+    add(detailsExpanded);
     add(name);
     add(isvisible);
     add(curveid);
