@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <deque>
 
 namespace rtengine
 {
@@ -32,6 +33,98 @@ constexpr int MAX_MASK_CACHE_DIMENSION = 1024;
 int quantize(float value, float scale)
 {
     return static_cast<int>(std::lround(value * scale));
+}
+
+void extremaFilterHorizontal(const array2D<float>& source, array2D<float>& target,
+                             int width, int height, int radius, bool dilate,
+                             bool multiThread)
+{
+#ifdef _OPENMP
+    #pragma omp parallel for if(multiThread)
+#endif
+    for (int y = 0; y < height; ++y) {
+        std::deque<int> window;
+        const float* const row = source[y];
+
+        const auto append = [&](int x) {
+            while (!window.empty()
+                    && (dilate ? row[x] >= row[window.back()]
+                               : row[x] <= row[window.back()])) {
+                window.pop_back();
+            }
+            window.push_back(x);
+        };
+
+        for (int x = 0; x <= std::min(radius, width - 1); ++x) {
+            append(x);
+        }
+
+        for (int x = 0; x < width; ++x) {
+            target[y][x] = row[window.front()];
+            const int nextLeft = x + 1 - radius;
+            while (!window.empty() && window.front() < nextLeft) {
+                window.pop_front();
+            }
+            const int nextRight = x + radius + 1;
+            if (nextRight < width) {
+                append(nextRight);
+            }
+        }
+    }
+}
+
+void extremaFilterVertical(const array2D<float>& source, array2D<float>& target,
+                           int width, int height, int radius, bool dilate,
+                           bool multiThread)
+{
+#ifdef _OPENMP
+    #pragma omp parallel for if(multiThread)
+#endif
+    for (int x = 0; x < width; ++x) {
+        std::deque<int> window;
+
+        const auto append = [&](int y) {
+            while (!window.empty()
+                    && (dilate ? source[y][x] >= source[window.back()][x]
+                               : source[y][x] <= source[window.back()][x])) {
+                window.pop_back();
+            }
+            window.push_back(y);
+        };
+
+        for (int y = 0; y <= std::min(radius, height - 1); ++y) {
+            append(y);
+        }
+
+        for (int y = 0; y < height; ++y) {
+            target[y][x] = source[window.front()][x];
+            const int nextTop = y + 1 - radius;
+            while (!window.empty() && window.front() < nextTop) {
+                window.pop_front();
+            }
+            const int nextBottom = y + radius + 1;
+            if (nextBottom < height) {
+                append(nextBottom);
+            }
+        }
+    }
+}
+
+std::shared_ptr<array2D<float>> resizeMaskEdges(
+    const std::shared_ptr<array2D<float>>& source, int width, int height,
+    int radius, bool dilate, bool multiThread)
+{
+    if (radius <= 0) {
+        return source;
+    }
+
+    auto horizontal = std::make_shared<array2D<float>>(width, height);
+    auto resized = std::make_shared<array2D<float>>(width, height);
+    extremaFilterHorizontal(*source, *horizontal, width, height,
+                            radius, dilate, multiThread);
+    extremaFilterVertical(*horizontal, *resized, width, height,
+                          radius, dilate, multiThread);
+    return resized;
 }
 
 } // namespace
@@ -54,6 +147,7 @@ bool AIMaskCache::PreparedKey::operator==(const PreparedKey& other) const
         && threshold == other.threshold
         && feather == other.feather
         && blur == other.blur
+        && maskSize == other.maskSize
         && invert == other.invert
         && refineRadius == other.refineRadius
         && refineEps == other.refineEps;
@@ -208,14 +302,15 @@ AIMaskSnapshot AIMaskCache::getMaskSnapshot(AISegClass cls) const
 }
 
 AIMaskSnapshot AIMaskCache::getPreparedMask(
-    AISegClass cls, float threshold, float feather, float blur, bool invert,
-    int refineRadius, float refineEps, bool multiThread)
+    AISegClass cls, float threshold, float feather, float blur, float maskSize,
+    bool invert, int refineRadius, float refineEps, bool multiThread)
 {
     const PreparedKey key {
         static_cast<int>(cls),
         quantize(threshold, 10000.f),
         quantize(feather, 100.f),
         quantize(blur, 100.f),
+        quantize(maskSize, 100.f),
         invert ? 1 : 0,
         refineRadius,
         quantize(refineEps, 1000000.f)
@@ -242,7 +337,8 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
 
         for (auto it = preparedMasks_.rbegin(); it != preparedMasks_.rend(); ++it) {
             if (it->generation == generation_ && it->key == key) {
-                return {it->mask, cachedWidth_, cachedHeight_, fullW_, fullH_};
+                return {it->mask, cachedWidth_, cachedHeight_, fullW_, fullH_,
+                        it->maskX0, it->maskY0, it->maskX1, it->maskY1};
             }
         }
 
@@ -303,15 +399,49 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
     }
 
     const float safeThreshold = LIM(threshold, 0.f, 1.f);
-    const float halfWidth = std::max(0.001f, feather * 0.003f);
+    constexpr float confidenceHalfWidth = 0.015f;
 #ifdef _OPENMP
     #pragma omp parallel for if(multiThread)
 #endif
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
-            float value = LIM(
-                ((*prepared)[y][x] - safeThreshold + halfWidth) / (2.f * halfWidth),
+            (*prepared)[y][x] = LIM(
+                ((*prepared)[y][x] - safeThreshold + confidenceHalfWidth)
+                    / (2.f * confidenceHalfWidth),
                 0.f, 1.f);
+        }
+    }
+
+    const float previewScale = fullWidth > 0 && fullHeight > 0
+        ? std::min(static_cast<float>(width) / fullWidth,
+                   static_cast<float>(height) / fullHeight)
+        : 1.f;
+    const float sizeDelta = maskSize >= 18.f
+        ? maskSize - 18.f
+        : (maskSize - 18.f) * 2.f;
+    const int maxSpatialRadius = std::max(0, std::min(96, std::min(width, height) / 4));
+    const int edgeRadius = std::min(
+        maxSpatialRadius,
+        std::max(0, static_cast<int>(std::lround(std::abs(sizeDelta) * previewScale))));
+    prepared = resizeMaskEdges(prepared, width, height, edgeRadius,
+                               sizeDelta > 0.f, multiThread);
+
+    const int featherRadius = std::min(
+        maxSpatialRadius,
+        std::max(0, static_cast<int>(std::lround(std::max(0.f, feather) * previewScale))));
+    if (featherRadius > 0) {
+        auto feathered = std::make_shared<array2D<float>>(width, height);
+        boxblur(static_cast<float**>(*prepared), static_cast<float**>(*feathered),
+                featherRadius, width, height, multiThread);
+        prepared = std::move(feathered);
+    }
+
+#ifdef _OPENMP
+    #pragma omp parallel for if(multiThread)
+#endif
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            float value = LIM((*prepared)[y][x], 0.f, 1.f);
             if (invert) {
                 value = 1.f - value;
             }
@@ -319,18 +449,38 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
         }
     }
 
+    int maskX0 = width;
+    int maskY0 = height;
+    int maskX1 = 0;
+    int maskY1 = 0;
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            if ((*prepared)[y][x] > 0.f) {
+                maskX0 = std::min(maskX0, x);
+                maskY0 = std::min(maskY0, y);
+                maskX1 = std::max(maskX1, x + 1);
+                maskY1 = std::max(maskY1, y + 1);
+            }
+        }
+    }
+    if (maskX1 == 0 || maskY1 == 0) {
+        maskX0 = maskY0 = maskX1 = maskY1 = 0;
+    }
+
     const std::shared_ptr<const array2D<float>> readyMask = prepared;
     {
         MyMutex::MyLock lock(mutex_);
         if (generation == generation_) {
-            preparedMasks_.push_back({key, generation, readyMask});
+            preparedMasks_.push_back({key, generation, readyMask,
+                                      maskX0, maskY0, maskX1, maskY1});
             while (preparedMasks_.size() > MAX_PREPARED_MASKS) {
                 preparedMasks_.pop_front();
             }
         }
     }
 
-    return {readyMask, width, height, fullWidth, fullHeight};
+    return {readyMask, width, height, fullWidth, fullHeight,
+            maskX0, maskY0, maskX1, maskY1};
 }
 
 float AIMaskCache::getMaskValue(AISegClass cls, int y, int x) const

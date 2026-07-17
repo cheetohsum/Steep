@@ -278,7 +278,9 @@ void Locallab::read(const rtengine::procparams::ProcParams* pp, const ParamsEdit
             r.qualityMethod = 1;
         }
 
-        r.transit = pp->locallab.spots.at(i).transit;
+        r.transit = pp->locallab.spots.at(i).useAIMask
+            ? pp->locallab.spots.at(i).aiMaskFeather
+            : pp->locallab.spots.at(i).transit;
         r.transitweak = pp->locallab.spots.at(i).transitweak;
         r.transitgrad = pp->locallab.spots.at(i).transitgrad;
         r.gradangle = pp->locallab.spots.at(i).gradangle;
@@ -480,7 +482,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                 r.qualityMethod = 1;
             }
 
-            r.transit = newSpot->transit;
+            r.transit = newSpot->useAIMask ? newSpot->aiMaskFeather : newSpot->transit;
             r.transitweak = newSpot->transitweak;
             r.transitgrad = newSpot->transitgrad;
             r.gradangle = newSpot->gradangle;
@@ -599,6 +601,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
             newSpot->aiMaskClass = aiClass;
             newSpot->aiMaskThreshold = 0.3;
             newSpot->aiMaskFeather = 35.0;
+            newSpot->transit = newSpot->aiMaskFeather;
             newSpot->aiMaskOpacity = 1.0;
 
             // Auto-enable exposure tool so per-spot adjustments work through LocalLab
@@ -682,7 +685,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                 r.qualityMethod = 1;
             }
 
-            r.transit = newSpot->transit;
+            r.transit = newSpot->useAIMask ? newSpot->aiMaskFeather : newSpot->transit;
             r.transitweak = newSpot->transitweak;
             r.transitgrad = newSpot->transitgrad;
             r.gradangle = newSpot->gradangle;
@@ -1017,7 +1020,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                 r.qualityMethod = 1;
             }
 
-            r.transit = newSpot->transit;
+            r.transit = newSpot->useAIMask ? newSpot->aiMaskFeather : newSpot->transit;
             r.transitweak = newSpot->transitweak;
             r.transitgrad = newSpot->transitgrad;
             r.gradangle = newSpot->gradangle;
@@ -1261,6 +1264,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                     if (isAI) {
                         pp->locallab.spots.at(pp->locallab.selspot).aiMaskClass = r->aiMaskClass;
                         pp->locallab.spots.at(pp->locallab.selspot).aiMaskThreshold = r->aiMaskThreshold;
+                        pp->locallab.spots.at(pp->locallab.selspot).aiMaskFeather = r->transit;
                         pp->locallab.spots.at(pp->locallab.selspot).spotMethod = "full";
                     }
                     // Polygon mask data

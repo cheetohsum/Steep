@@ -30,8 +30,13 @@ struct AIMaskSnapshot
     int height = 0;
     int fullWidth = 0;
     int fullHeight = 0;
+    int maskX0 = 0;
+    int maskY0 = 0;
+    int maskX1 = 0;
+    int maskY1 = 0;
 
     explicit operator bool() const { return mask && width > 0 && height > 0; }
+    bool hasBounds() const { return maskX1 > maskX0 && maskY1 > maskY0; }
 };
 
 class AIMaskCache
@@ -50,10 +55,11 @@ public:
     AIMaskSnapshot getMaskSnapshot(AISegClass cls) const;
 
     // Return a ready-to-sample mask. Costly blur, guided refinement,
-    // thresholding and inversion are cached per settings tuple.
+    // edge sizing, spatial feathering and inversion are cached per settings tuple.
     AIMaskSnapshot getPreparedMask(AISegClass cls,
                                    float threshold, float feather, float blur,
-                                   bool invert, int refineRadius, float refineEps,
+                                   float maskSize, bool invert,
+                                   int refineRadius, float refineEps,
                                    bool multiThread);
 
     bool hasCachedMasks(const std::string& imageId) const;
@@ -76,6 +82,7 @@ private:
         int threshold;
         int feather;
         int blur;
+        int maskSize;
         int invert;
         int refineRadius;
         int refineEps;
@@ -88,6 +95,10 @@ private:
         PreparedKey key;
         std::uint64_t generation;
         std::shared_ptr<const array2D<float>> mask;
+        int maskX0;
+        int maskY0;
+        int maskX1;
+        int maskY1;
     };
 
     struct RefinedKey

@@ -3625,7 +3625,7 @@ TP_LOCALLAB_CIE_SMOOTH_SIG;Sigmoid based
 TP_LOCALLAB_CIE_SMOOTH_TRC;TRC based
 TP_LOCALLAB_CIE_TOOLNAME;Color Appearance (CAM16 & JzCzHz)
 TP_LOCALLAB_CIRCRADIUS;Mask size
-TP_LOCALLAB_CIRCRAD_TOOLTIP;Contains the references of the spot, useful for shape detection (hue, luma, chroma, Sobel).\nLow values may be useful for processing foliage.\nHigh values may be useful for processing skin.
+TP_LOCALLAB_CIRCRAD_TOOLTIP;Adjusts the mask boundary. For AI masks, values below 18 contract the selection and values above 18 expand it.
 TP_LOCALLAB_CLARICRES;Merge chroma
 TP_LOCALLAB_CLARIFRA;Clarity & Sharp mask/Blend & Soften Images
 TP_LOCALLAB_CLARIJZ_TOOLTIP;Levels 0 to 4 (included): 'Sharp mask' is enabled\nLevels 5 and above: 'Clarity' is enabled.
@@ -4510,7 +4510,7 @@ TP_LOCALLAB_TRANSITGRAD_TOOLTIP;Allows you to vary the y-axis transition.
 TP_LOCALLAB_TRANSITVALUE;Feathering
 TP_LOCALLAB_TRANSITWEAK;Decay (linear-log)
 TP_LOCALLAB_TRANSITWEAK_TOOLTIP;Adjust transition decay function: 1 linear , 2 parabolic, 3 cubic up to ^25.\nCan be used in conjunction with very low transition values to reduce defects (CBDL, Wavelets, Color &amp; Light).
-TP_LOCALLAB_TRANSIT_TOOLTIP;Adjust smoothness of transition between affected and unaffected areas as a percentage of the 'radius'.
+TP_LOCALLAB_TRANSIT_TOOLTIP;Softens the mask edge. Higher values create a wider, smoother transition.
 TP_LOCALLAB_TRANSMISSIONGAIN;Transmission gain
 TP_LOCALLAB_TRANSMISSIONMAP;Transmission map
 TP_LOCALLAB_TRANSMISSION_TOOLTIP;Transmission according to transmission.\nAbscissa: transmission from negative values (min), mean, and positive values (max).\nOrdinate: amplification or reduction.\nYou can adjust this curve to change the Transmission and reduce artifacts.

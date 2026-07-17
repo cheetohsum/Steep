@@ -9903,7 +9903,7 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
     if (lp.useaimask) {
         aiMaskSnapshot = AIMaskCache::getInstance().getPreparedMask(
             static_cast<AISegClass>(lp.aimaskclass),
-            lp.aimaskthr, lp.aimaskfeath, lp.aimaskblur, lp.aimaskinv,
+            lp.aimaskthr, lp.aimaskfeath, lp.aimaskblur, lp.cir, lp.aimaskinv,
             lp.aimaskrefrad, lp.aimaskrefeps, multiThread);
         if (aiMaskSnapshot) {
             aiMaskPtr = aiMaskSnapshot.mask.get();
@@ -15691,14 +15691,46 @@ void ImProcFunctions::Lab_Local(
     }
 
 #ifdef RT_AI_MASKING
-    // When AI mask is active, expand bounding box to cover full image so the
-    // AI segmentation mask can apply everywhere the detected class exists,
-    // not just in the small geometric shape area.
+    // AI edits use the prepared mask's cached bounds. This avoids running every
+    // local-edit stage over the whole preview for a small selected subject.
     if (lp.useaimask) {
-        lp.lxL = std::max(lp.xc, 1.f);
-        lp.lx  = std::max(static_cast<float>(oW) - lp.xc, 1.f);
-        lp.lyT = std::max(lp.yc, 1.f);
-        lp.ly  = std::max(static_cast<float>(oH) - lp.yc, 1.f);
+        const AIMaskSnapshot aiBounds = AIMaskCache::getInstance().getPreparedMask(
+            static_cast<AISegClass>(lp.aimaskclass),
+            lp.aimaskthr, lp.aimaskfeath, lp.aimaskblur, lp.cir, lp.aimaskinv,
+            lp.aimaskrefrad, lp.aimaskrefeps, multiThread);
+
+        if (aiBounds && aiBounds.hasBounds()
+                && aiBounds.fullWidth > 0 && aiBounds.fullHeight > 0 && sk > 0) {
+            constexpr float processingMargin = 16.f;
+            const float scaleX = static_cast<float>(aiBounds.fullWidth)
+                / (static_cast<float>(sk) * aiBounds.width);
+            const float scaleY = static_cast<float>(aiBounds.fullHeight)
+                / (static_cast<float>(sk) * aiBounds.height);
+            const float bx0 = LIM(aiBounds.maskX0 * scaleX - processingMargin,
+                                  0.f, static_cast<float>(oW));
+            const float by0 = LIM(aiBounds.maskY0 * scaleY - processingMargin,
+                                  0.f, static_cast<float>(oH));
+            const float bx1 = LIM(aiBounds.maskX1 * scaleX + processingMargin,
+                                  0.f, static_cast<float>(oW));
+            const float by1 = LIM(aiBounds.maskY1 * scaleY + processingMargin,
+                                  0.f, static_cast<float>(oH));
+
+            lp.xc = 0.5f * (bx0 + bx1);
+            lp.yc = 0.5f * (by0 + by1);
+            lp.lxL = std::max(lp.xc - bx0, 1.f);
+            lp.lx  = std::max(bx1 - lp.xc, 1.f);
+            lp.lyT = std::max(lp.yc - by0, 1.f);
+            lp.ly  = std::max(by1 - lp.yc, 1.f);
+        } else if (aiBounds) {
+            // An empty mask has no visible edit; retain only the minimum work area.
+            lp.lxL = lp.lx = lp.lyT = lp.ly = 4.f;
+        } else {
+            // Preserve correctness while segmentation is still becoming available.
+            lp.lxL = std::max(lp.xc, 1.f);
+            lp.lx  = std::max(static_cast<float>(oW) - lp.xc, 1.f);
+            lp.lyT = std::max(lp.yc, 1.f);
+            lp.ly  = std::max(static_cast<float>(oH) - lp.yc, 1.f);
+        }
     }
 #endif
 
@@ -23751,7 +23783,7 @@ void ImProcFunctions::Lab_Local(
         if (lp.useaimask) {
             aiMaskSnapshotOv = AIMaskCache::getInstance().getPreparedMask(
                 static_cast<AISegClass>(lp.aimaskclass),
-                lp.aimaskthr, lp.aimaskfeath, lp.aimaskblur, lp.aimaskinv,
+                lp.aimaskthr, lp.aimaskfeath, lp.aimaskblur, lp.cir, lp.aimaskinv,
                 lp.aimaskrefrad, lp.aimaskrefeps, true);
             if (aiMaskSnapshotOv) {
                 aiMaskPtrOv = aiMaskSnapshotOv.mask.get();
