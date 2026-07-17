@@ -1068,6 +1068,7 @@ FileCatalog::~FileCatalog()
     colorFadeConn_.disconnect();
     colorCollapseDelay_.disconnect();
     reparseDirectoryConn_.disconnect();
+    filmstripCenterConnection_.disconnect();
     if (navigationBenchmarkTimeoutId_ != 0) {
         g_source_remove(navigationBenchmarkTimeoutId_);
         navigationBenchmarkTimeoutId_ = 0;
@@ -1613,6 +1614,30 @@ void FileCatalog::enableTabMode(bool enable)
 
     fileBrowser->enableTabMode(inTabMode);
 
+    filmstripCenterConnection_.disconnect();
+    if (enable) {
+        auto centerSelected = [this]() {
+            if (!inTabMode) {
+                return;
+            }
+
+            if (Thumbnail* selectedThumbnail = fileBrowser->getSelectedThumbnail()) {
+                fileBrowser->selectImage(selectedThumbnail->getFileName(), true);
+            }
+        };
+
+        // Center once with the existing allocation, then again after GTK has
+        // reparented and allocated the narrower editor filmstrip.
+        centerSelected();
+        filmstripCenterConnection_ = Glib::signal_timeout().connect(
+            [this, centerSelected]() -> bool {
+                centerSelected();
+                return false;
+            },
+            16,
+            G_PRIORITY_HIGH_IDLE);
+    }
+
     // Reset size request now that inTabMode flag is set.
     // In tab mode this clears the large height from browser mode;
     // in browser mode this recalculates the proper height.
@@ -1762,17 +1787,20 @@ bool FileCatalog::processPendingPreviews_()
     constexpr std::size_t POST_SCAN_MIN_PREVIEWS_PER_IDLE = 64;
     constexpr auto PREVIEW_IDLE_BUDGET = std::chrono::milliseconds(8);
     constexpr auto POST_SCAN_PREVIEW_IDLE_BUDGET = std::chrono::milliseconds(12);
+    const bool filmstripDrain = fileBrowser->isInTabMode();
     const bool initialDrain = fileBrowser->getEntries().empty();
     const bool postScanDrain = directoryScanComplete_ && !initialDrain;
-    const std::size_t maxPreviewsPerIdle = postScanDrain
-        ? POST_SCAN_MAX_PREVIEWS_PER_IDLE
-        : MAX_PREVIEWS_PER_IDLE;
-    const std::size_t minPreviewsPerIdle = initialDrain
-        ? INITIAL_MIN_PREVIEWS_PER_IDLE
-        : (postScanDrain ? POST_SCAN_MIN_PREVIEWS_PER_IDLE : STEADY_MIN_PREVIEWS_PER_IDLE);
-    const auto previewIdleBudget = postScanDrain
-        ? POST_SCAN_PREVIEW_IDLE_BUDGET
-        : PREVIEW_IDLE_BUDGET;
+    const std::size_t maxPreviewsPerIdle = filmstripDrain
+        ? 64
+        : (postScanDrain ? POST_SCAN_MAX_PREVIEWS_PER_IDLE : MAX_PREVIEWS_PER_IDLE);
+    const std::size_t minPreviewsPerIdle = filmstripDrain
+        ? 8
+        : (initialDrain
+            ? INITIAL_MIN_PREVIEWS_PER_IDLE
+            : (postScanDrain ? POST_SCAN_MIN_PREVIEWS_PER_IDLE : STEADY_MIN_PREVIEWS_PER_IDLE));
+    const auto previewIdleBudget = filmstripDrain
+        ? std::chrono::milliseconds(3)
+        : (postScanDrain ? POST_SCAN_PREVIEW_IDLE_BUDGET : PREVIEW_IDLE_BUDGET);
 
     auto& previewChunk = previewChunkScratch_;
     previewChunk.clear();

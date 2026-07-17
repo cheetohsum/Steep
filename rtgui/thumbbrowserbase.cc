@@ -1263,10 +1263,63 @@ void ThumbBrowserBase::redraw (ThumbBrowserEntryBase* entry, bool filterStateCur
         redrawTimeout_.disconnect();
         redrawPending_ = false;
     }
+    ThumbBrowserEntryBase* horizontalAnchor = nullptr;
+    double horizontalAnchorOffset = 0.0;
+    bool hasPendingInserts = false;
     if (!layoutPaused_) {
+        {
+            MyMutex::MyLock pendingLock(pendingMutex_);
+            hasPendingInserts = !pendingInserts_.empty();
+        }
+
+        // Sorted batches can insert before the current viewport. Keep the
+        // selected/leftmost visible thumbnail at the same screen coordinate so
+        // background folder loading never makes the filmstrip jump under a
+        // user's wheel or touchpad gesture.
+        if (hasPendingInserts && arrangement == TB_Horizontal && !drawableEntries_.empty()) {
+            const double viewportLeft = hscroll.get_value();
+            const double viewportRight = viewportLeft + std::max(internal.get_width(), 1);
+
+            MYREADERLOCK(entryLock, entryRW);
+            auto isVisible = [viewportLeft, viewportRight](const ThumbBrowserEntryBase* thumb) {
+                return !thumb->filtered
+                    && thumb->getX() + thumb->getEffectiveWidth() > viewportLeft
+                    && thumb->getX() < viewportRight;
+            };
+
+            if (lastClicked && isVisible(lastClicked)) {
+                horizontalAnchor = lastClicked;
+            } else {
+                for (auto* selectedEntry : selected) {
+                    if (isVisible(selectedEntry)) {
+                        horizontalAnchor = selectedEntry;
+                        break;
+                    }
+                }
+            }
+
+            if (!horizontalAnchor) {
+                for (auto* visibleEntry : drawableEntries_) {
+                    if (visibleEntry->getX() + visibleEntry->getEffectiveWidth() > viewportLeft) {
+                        horizontalAnchor = visibleEntry;
+                        break;
+                    }
+                }
+            }
+
+            if (horizontalAnchor) {
+                horizontalAnchorOffset = horizontalAnchor->getX() - viewportLeft;
+            }
+        }
+
         flushPendingInserts_();
     }
     arrangeFiles(entry, filterStateCurrent);
+
+    if (horizontalAnchor && !horizontalAnchor->filtered) {
+        setScrollPosition(horizontalAnchor->getX() - horizontalAnchorOffset, vscroll.get_value());
+    }
+
     if (arrangement == TB_Horizontal) {
         int allocated = internal.get_allocated_height();
         int content = getEffectiveHeight();

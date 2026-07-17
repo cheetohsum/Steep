@@ -225,7 +225,7 @@ public:
       * @param pl is a pointer pointing to an object implementing a progress listener. It can be NULL, in this case progress is not reported.
       * @return an object representing the loaded and pre-processed image */
     static InitialImage* load (const Glib::ustring& fname, bool isRaw, int* errorCode, ProgressListener* pl = nullptr);
-    static void prewarmRawMetadata(const Glib::ustring& fname);
+    static void prewarmRawMetadata(const Glib::ustring& fname, bool highPriority = false);
 };
 
 /** When the preview image is ready for display during staged processing (thus the changes have been updated),

@@ -2406,24 +2406,28 @@ void RTWindow::computeFilmstripTargets()
         capturedMap[ct.entry] = &ct;
     }
 
+    double filmScrollX = 0.0;
+    double filmScrollY = 0.0;
+    fb->getScrollPosition(filmScrollX, filmScrollY);
+
     // Compute horizontal filmstrip positions manually.
     // arrangeFiles() may not have run yet (layout paused + widget not allocated),
     // so we mirror the TB_Horizontal branch: entries placed left-to-right at y=0.
-    // Scroll is at 0 for a freshly-switched filmstrip.
+    // Account for the selected-image centering performed while entering the editor.
     int currx = 0;
     for (auto* entry : entries) {
         if (entry->filtered) continue;
 
         int entryW = entry->getMinimalWidth();
         int entryH = entry->getEffectiveHeight();
+        const int viewportX = currx - static_cast<int>(std::lround(filmScrollX));
 
-        // Check if this entry would be visible in the viewport (scroll=0)
-        if (currx + entryW > 0 && currx < filmVpW) {
+        if (viewportX + entryW > 0 && viewportX < filmVpW) {
             auto it = capturedMap.find(entry);
             if (it != capturedMap.end()) {
                 CapturedThumb* ct = it->second;
                 ct->isHero = true;
-                ct->dstX = filmAbsX + currx;
+                ct->dstX = filmAbsX + viewportX;
                 ct->dstY = filmAbsY;
                 ct->dstW = entryW;
                 ct->dstH = entryH;

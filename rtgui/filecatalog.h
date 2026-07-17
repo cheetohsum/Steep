@@ -213,6 +213,7 @@ private:
     int folderLoadNextPreviewMilestone_ = 0;
     std::chrono::steady_clock::time_point folderLoadStart_;
     guint navigationBenchmarkTimeoutId_ = 0;
+    sigc::connection filmstripCenterConnection_;
     bool navigationBenchmarkStarted_ = false;
     int navigationBenchmarkRemaining_ = 0;
     int navigationBenchmarkIntervalMs_ = 0;

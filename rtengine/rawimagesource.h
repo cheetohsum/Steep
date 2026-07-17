@@ -125,7 +125,7 @@ public:
     RawImageSource ();
     ~RawImageSource () override;
 
-    static void prewarmMetadata(const Glib::ustring& fname);
+    static void prewarmMetadata(const Glib::ustring& fname, bool highPriority = false);
     static std::unique_ptr<FramesMetaData> takePrewarmedMetadata(const Glib::ustring& fname);
 
     int load(const Glib::ustring &fname) override { return load(fname, false); }

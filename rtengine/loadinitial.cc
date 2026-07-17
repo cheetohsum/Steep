@@ -46,8 +46,8 @@ InitialImage* InitialImage::load (const Glib::ustring& fname, bool isRaw, int* e
     return isrc;
 }
 
-void InitialImage::prewarmRawMetadata(const Glib::ustring& fname)
+void InitialImage::prewarmRawMetadata(const Glib::ustring& fname, bool highPriority)
 {
-    RawImageSource::prewarmMetadata(fname);
+    RawImageSource::prewarmMetadata(fname, highPriority);
 }
 }

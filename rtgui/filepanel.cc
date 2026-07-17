@@ -2717,6 +2717,13 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
         return true;
     }
 
+    // Metadata can be parsed while the RAW payload is decoding. Promote the
+    // user-selected file ahead of speculative neighbors so its Exif handoff is
+    // ready by the time RawImageSource finishes loading pixel data.
+    if (selectedIsRaw) {
+        rtengine::InitialImage::prewarmRawMetadata(selectedFileName, true);
+    }
+
     bool recycleSupersededPendingLoad = false;
     if (!opts.tabbedUI && selectedIsRaw) {
         pendingLoadMutex.lock();

@@ -708,7 +708,7 @@ RawImageSource::~RawImageSource()
     }
 }
 
-void RawImageSource::prewarmMetadata(const Glib::ustring& fname)
+void RawImageSource::prewarmMetadata(const Glib::ustring& fname, bool highPriority)
 {
     if (fname.empty()) {
         return;
@@ -719,15 +719,41 @@ void RawImageSource::prewarmMetadata(const Glib::ustring& fname)
     bool startWorker = false;
     {
         std::lock_guard<std::mutex> lock(state.mutex);
-        if (state.cache.count(key) || state.queued.count(key) || state.loading.count(key)) {
+        if (state.cache.count(key) || state.loading.count(key)) {
+            return;
+        }
+
+        if (state.queued.count(key)) {
+            if (highPriority) {
+                const auto queuedIt = std::find_if(
+                    state.queue.begin(),
+                    state.queue.end(),
+                    [&key](const RawMetadataPrewarmEntry& entry) {
+                        return entry.key == key;
+                    });
+                if (queuedIt != state.queue.end() && queuedIt != state.queue.begin()) {
+                    RawMetadataPrewarmEntry entry = std::move(*queuedIt);
+                    state.queue.erase(queuedIt);
+                    state.queue.push_front(std::move(entry));
+                }
+            }
             return;
         }
 
         if (state.queue.size() >= kRawMetadataPrewarmMaxQueue) {
-            return;
+            if (!highPriority) {
+                return;
+            }
+
+            state.queued.erase(state.queue.back().key);
+            state.queue.pop_back();
         }
 
-        state.queue.push_back({key, fname});
+        if (highPriority) {
+            state.queue.push_front({key, fname});
+        } else {
+            state.queue.push_back({key, fname});
+        }
         state.queued.insert(key);
 
         if (!state.workerRunning) {
