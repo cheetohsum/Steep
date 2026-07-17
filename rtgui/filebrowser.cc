@@ -24,6 +24,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <limits>
 #include <map>
 #include <mutex>
@@ -39,6 +40,7 @@
 
 #include "batchqueue.h"
 #include "clipboard.h"
+#include "filepanel.h"
 #include "inspector.h"
 #include "multilangmgr.h"
 #include "options.h"
@@ -52,6 +54,7 @@
 
 #include "rtengine/dfmanager.h"
 #include "rtengine/ffmanager.h"
+#include "rtengine/perspectivecorrection.h"
 #include "rtengine/procparams.h"
 
 #ifdef _WIN32
@@ -119,6 +122,44 @@ void applySteepAutoEditTone(rtengine::procparams::ProcParams& params)
     curves.gcurve = {DCT_Spline, 0.0, 0.0, 1.0, 1.0};
     curves.bcurve = {DCT_Spline, 0.0, 0.0, 1.0, 1.0};
 }
+
+struct AutoEditBatchState {
+    std::vector<Thumbnail*> thumbnails;
+    size_t next = 0;
+
+    ~AutoEditBatchState()
+    {
+        for (auto* thumbnail : thumbnails) {
+            thumbnail->decreaseRef();
+        }
+    }
+};
+
+struct AutoLevelBatchItem {
+    Thumbnail* thumbnail = nullptr;
+    Glib::ustring filename;
+    bool isRaw = false;
+    rtengine::procparams::ProcParams params;
+};
+
+struct AutoLevelBatchState {
+    std::vector<AutoLevelBatchItem> items;
+    std::vector<std::pair<Thumbnail*, rtengine::procparams::ProcParams>> readyResults;
+    std::mutex resultsMutex;
+    std::shared_ptr<std::atomic<bool>> cancel;
+    std::atomic<bool> analysisFinished{false};
+    std::atomic<size_t> analyzed{0};
+    std::atomic<size_t> applied{0};
+    std::atomic<size_t> alreadyLevel{0};
+    size_t prepareIndex = 0;
+
+    ~AutoLevelBatchState()
+    {
+        for (auto& item : items) {
+            item.thumbnail->decreaseRef();
+        }
+    }
+};
 
 bool fileBrowserPerfLogEnabled()
 {
@@ -454,6 +495,8 @@ FileBrowser::FileBrowser () :
     pmenu->attach (*Gtk::manage(aiDenoise = new MyImageMenuItem (M("FILEBROWSER_POPUPAIDENOISE"), "ai-denoise")), 0, 1, p, p + 1);
     p++;
     pmenu->attach (*Gtk::manage(autoEdit = new MyImageMenuItem (M("FILEBROWSER_POPUPAUTOEDIT"), "palette-brush")), 0, 1, p, p + 1);
+    p++;
+    pmenu->attach (*Gtk::manage(autoLevel = new MyImageMenuItem (M("TP_ROTATE_AUTO_LEVEL"), "rotate-straighten-small")), 0, 1, p, p + 1);
     p++;
     pmenu->attach (*Gtk::manage(duplicate = new MyImageMenuItem (M("FILEBROWSER_POPUPDUPLICATE"), "menu-duplicate")), 0, 1, p, p + 1);
     p++;
@@ -1003,6 +1046,7 @@ FileBrowser::FileBrowser () :
     cachemenu->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), cachemenu));
     aiDenoise->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), aiDenoise));
     autoEdit->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), autoEdit));
+    autoLevel->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), autoLevel));
     duplicate->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), duplicate));
 
     addToAlbum->signal_activate().connect([this]() {
@@ -1052,6 +1096,13 @@ FileBrowser::FileBrowser () :
 
 FileBrowser::~FileBrowser ()
 {
+    if (autoLevelCancel_) {
+        autoLevelCancel_->store(true, std::memory_order_release);
+    }
+    autoLevelPollConnection_.disconnect();
+    if (autoLevelThread_.joinable()) {
+        autoLevelThread_.join();
+    }
     idle_register.destroy();
 
     // Cancel deferred deletion callback and flush remaining entries
@@ -1094,6 +1145,8 @@ void FileBrowser::rightClicked ()
         clearprof->set_sensitive (!selected.empty());
         copyTo->set_sensitive (!selected.empty());
         moveTo->set_sensitive (!selected.empty());
+        autoEdit->set_sensitive(!quickActionRunning_ && !selected.empty());
+        autoLevel->set_sensitive(!quickActionRunning_ && !selected.empty());
     }
 
     // submenuDF
@@ -2097,42 +2150,239 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
             bppcl->endBatchPParamsChange();
         }
     } else if (m == autoEdit) {
-        // Runs in a background thread to avoid freezing the UI when many
-        // images are selected. The absolute recipe makes repeated use safe.
+        if (quickActionRunning_) {
+            return;
+        }
 
-        // Hold references so thumbnails stay alive during background work.
-        auto thumbnails = std::make_shared<std::vector<Thumbnail*>>();
-        thumbnails->reserve(mselected.size());
+        auto state = std::make_shared<AutoEditBatchState>();
+        state->thumbnails.reserve(mselected.size());
         for (auto* entry : mselected) {
             entry->thumbnail->increaseRef();
-            thumbnails->push_back(entry->thumbnail);
+            state->thumbnails.push_back(entry->thumbnail);
         }
 
-        if (!mselected.empty() && bppcl) {
-            bppcl->beginBatchPParamsChange(mselected.size());
+        if (state->thumbnails.empty()) {
+            return;
         }
 
-        std::thread([this, thumbnails]() {
-            for (auto* thm : *thumbnails) {
+        quickActionRunning_ = true;
+        autoEdit->set_sensitive(false);
+        autoLevel->set_sensitive(false);
+        tbl->quickActionProgress(M("FILEBROWSER_POPUPAUTOEDIT"), 0.01);
+        if (bppcl) {
+            bppcl->beginBatchPParamsChange(state->thumbnails.size());
+        }
+
+        // Thumbnail listeners and GTK drawing are UI-thread-owned. Process a
+        // bounded slice per idle turn so large selections remain interactive.
+        idle_register.add([this, state]() -> bool {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(4);
+            size_t processed = 0;
+            while (state->next < state->thumbnails.size()
+                    && (processed == 0 || std::chrono::steady_clock::now() < deadline)
+                    && processed < 8) {
+                auto* thm = state->thumbnails[state->next++];
                 rtengine::procparams::ProcParams pp = thm->getProcParams();
                 applySteepAutoEditTone(pp);
-
-                // updateCacheNow = false — avoids blocking disk writes;
-                // cache is written when the thumbnail is next closed.
                 thm->setProcParams(pp, nullptr, FILEBROWSER, false);
+                ++processed;
             }
 
-            // Dispatch cleanup to main thread
-            Glib::signal_idle().connect_once([this, thumbnails]() {
-                if (bppcl) {
-                    bppcl->endBatchPParamsChange();
-                }
-                for (auto* thm : *thumbnails) {
-                    thm->decreaseRef();
-                }
-                queue_draw();
+            tbl->quickActionProgress(
+                Glib::ustring::compose(
+                    "%1 %2/%3",
+                    M("FILEBROWSER_POPUPAUTOEDIT"),
+                    state->next,
+                    state->thumbnails.size()),
+                std::max(0.01, static_cast<double>(state->next) / state->thumbnails.size()));
+
+            if (state->next < state->thumbnails.size()) {
+                return true;
+            }
+
+            if (bppcl) {
+                bppcl->endBatchPParamsChange();
+            }
+            quickActionRunning_ = false;
+            autoEdit->set_sensitive(true);
+            autoLevel->set_sensitive(true);
+            tbl->quickActionProgress(
+                Glib::ustring::compose(
+                    "%1: %2/%3",
+                    M("FILEBROWSER_POPUPAUTOEDIT"),
+                    state->thumbnails.size(),
+                    state->thumbnails.size()),
+                0.0);
+            queue_draw();
+            return false;
+        });
+    } else if (m == autoLevel) {
+        if (quickActionRunning_) {
+            return;
+        }
+
+        auto state = std::make_shared<AutoLevelBatchState>();
+        state->items.reserve(mselected.size());
+        state->cancel = std::make_shared<std::atomic<bool>>(false);
+        for (auto* entry : mselected) {
+            auto* thumbnail = entry->thumbnail;
+            thumbnail->increaseRef();
+            state->items.push_back({
+                thumbnail,
+                thumbnail->getFileName(),
+                thumbnail->getType() == FT_Raw,
+                {}
             });
-        }).detach();
+        }
+
+        if (state->items.empty()) {
+            return;
+        }
+
+        quickActionRunning_ = true;
+        autoEdit->set_sensitive(false);
+        autoLevel->set_sensitive(false);
+        autoLevelCancel_ = state->cancel;
+        if (autoLevelThread_.joinable()) {
+            autoLevelThread_.join();
+        }
+
+        // Copy parameters on GTK's thread in small slices before handing the
+        // image-only analysis to a serial background worker.
+        idle_register.add([this, state]() -> bool {
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(4);
+            size_t prepared = 0;
+            while (state->prepareIndex < state->items.size()
+                    && (prepared == 0 || std::chrono::steady_clock::now() < deadline)
+                    && prepared < 8) {
+                auto& item = state->items[state->prepareIndex++];
+                item.params = item.thumbnail->getProcParams();
+                ++prepared;
+            }
+
+            if (state->prepareIndex < state->items.size()) {
+                return true;
+            }
+
+            tbl->quickActionProgress(M("TP_ROTATE_AUTO_LEVEL"), 0.01);
+            state->readyResults.reserve(state->items.size());
+            autoLevelThread_ = std::thread([state]() {
+                lowerQuickPreviewWarmThreadPriority();
+
+                for (const auto& item : state->items) {
+                    if (state->cancel->load(std::memory_order_acquire)) {
+                        break;
+                    }
+
+                    try {
+                        int errorCode = 0;
+                        auto releaseInitialImage = [](rtengine::InitialImage* image) {
+                            if (image) {
+                                image->decreaseRef();
+                            }
+                        };
+                        std::unique_ptr<rtengine::InitialImage, decltype(releaseInitialImage)> initialImage(
+                            FilePanel::loadAuxiliaryInitialImage(
+                                item.filename,
+                                item.isRaw,
+                                &errorCode,
+                                state->cancel),
+                            releaseInitialImage);
+                        if (initialImage && errorCode == 0
+                                && !state->cancel->load(std::memory_order_acquire)) {
+                            auto* source = initialImage->getImageSource();
+                            const auto detection = rtengine::PerspectiveCorrection::autoLevel(source, &item.params);
+                            if (detection.success) {
+                                if (std::abs(detection.angle) < 0.015) {
+                                    state->alreadyLevel.fetch_add(1, std::memory_order_release);
+                                } else {
+                                    rtengine::procparams::ProcParams leveled = item.params;
+                                    const double newRotation = leveled.rotate.degree + detection.angle;
+                                    if (std::abs(newRotation) <= 45.0) {
+                                        leveled.rotate.degree = newRotation;
+                                        std::lock_guard<std::mutex> lock(state->resultsMutex);
+                                        state->readyResults.emplace_back(item.thumbnail, std::move(leveled));
+                                    }
+                                }
+                            }
+                        }
+                    } catch (const std::exception& error) {
+                        fileBrowserPerfLog("[autoLevelBatch] analysis failed: %s\n", error.what());
+                    } catch (...) {
+                        fileBrowserPerfLog("[autoLevelBatch] analysis failed with an unknown error\n");
+                    }
+
+                    state->analyzed.fetch_add(1, std::memory_order_release);
+                }
+
+                state->analysisFinished.store(true, std::memory_order_release);
+            });
+
+            autoLevelPollConnection_.disconnect();
+            autoLevelPollConnection_ = Glib::signal_timeout().connect(
+                [this, state]() -> bool {
+                    std::vector<std::pair<Thumbnail*, rtengine::procparams::ProcParams>> completed;
+                    {
+                        std::lock_guard<std::mutex> lock(state->resultsMutex);
+                        completed.swap(state->readyResults);
+                    }
+
+                    if (!completed.empty()) {
+                        if (bppcl) {
+                            bppcl->beginBatchPParamsChange(completed.size());
+                        }
+                        for (auto& result : completed) {
+                            result.first->setProcParams(result.second, nullptr, FILEBROWSER, false);
+                        }
+                        if (bppcl) {
+                            bppcl->endBatchPParamsChange();
+                        }
+                        state->applied.fetch_add(completed.size(), std::memory_order_release);
+                        queue_draw();
+                    }
+
+                    const size_t analyzed = state->analyzed.load(std::memory_order_acquire);
+                    tbl->quickActionProgress(
+                        Glib::ustring::compose(
+                            "%1 %2/%3",
+                            M("TP_ROTATE_AUTO_LEVEL"),
+                            analyzed,
+                            state->items.size()),
+                        std::max(0.01, static_cast<double>(analyzed) / state->items.size()));
+
+                    if (!state->analysisFinished.load(std::memory_order_acquire)) {
+                        return true;
+                    }
+
+                    if (autoLevelThread_.joinable()) {
+                        autoLevelThread_.join();
+                    }
+
+                    const size_t applied = state->applied.load(std::memory_order_acquire);
+                    const size_t alreadyLevel = state->alreadyLevel.load(std::memory_order_acquire);
+                    const Glib::ustring resultText = applied > 0
+                        ? Glib::ustring::compose(
+                            "%1: %2/%3",
+                            M("TP_ROTATE_AUTO_LEVEL"),
+                            applied,
+                            state->items.size())
+                        : Glib::ustring::compose(
+                            "%1: %2",
+                            M("TP_ROTATE_AUTO_LEVEL"),
+                            M(alreadyLevel > 0
+                                ? "TP_ROTATE_AUTO_LEVEL_ALREADY"
+                                : "TP_ROTATE_AUTO_LEVEL_FAILED"));
+                    tbl->quickActionProgress(resultText, 0.0);
+                    quickActionRunning_ = false;
+                    autoEdit->set_sensitive(true);
+                    autoLevel->set_sensitive(true);
+                    autoLevelCancel_.reset();
+                    return false;
+                },
+                40,
+                G_PRIORITY_DEFAULT_IDLE);
+            return false;
+        });
     } else if (m == duplicate) {
         // Duplicate: copy each selected file with a _copy suffix
         for (size_t i = 0; i < mselected.size(); i++) {

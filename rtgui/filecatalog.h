@@ -341,6 +341,7 @@ public:
     void renameRequested(const std::vector<FileBrowserEntry*>& tbe) override;
     void selectionChanged(const std::vector<Thumbnail*>& tbe) override;
     void clearFromCacheRequested(const std::vector<FileBrowserEntry*>& tbe, bool leavenotrace) override;
+    void quickActionProgress(const Glib::ustring& text, double progress) override;
     bool isInTabMode() const override;
 
     void emptyTrash ();

@@ -1950,6 +1950,31 @@ rtengine::InitialImage* FilePanel::loadAuxiliaryInitialImage(
         return finishCanceled("before decode");
     }
 
+    std::unique_ptr<RawLoadLease> loadLease;
+    if (isRaw) {
+        while (!canceled()) {
+            loadLease.reset(new RawLoadLease(
+                false,
+                std::chrono::milliseconds(50),
+                false));
+            if (loadLease->acquired) {
+                break;
+            }
+
+            const auto retry = loadLease->preloadResult == RawLoadGate::PreloadAcquireResult::TooSoon
+                ? loadLease->retryAfter
+                : std::chrono::milliseconds(20);
+            loadLease.reset();
+            std::this_thread::sleep_for(std::max(
+                std::chrono::milliseconds(10),
+                std::min(retry, std::chrono::milliseconds(50))));
+        }
+
+        if (canceled()) {
+            return finishCanceled("waiting for raw gate");
+        }
+    }
+
     const auto decodeStart = logSelection ? clk::now() : clk::time_point{};
     auto* img = rtengine::InitialImage::load(fname, isRaw, errorCode, nullptr);
     if (logSelection) {

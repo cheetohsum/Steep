@@ -2438,6 +2438,13 @@ void FileCatalog::filterApplied()
     );
 }
 
+void FileCatalog::quickActionProgress(const Glib::ustring& text, double progress)
+{
+    if (filepanel) {
+        filepanel->loadingThumbs(text, progress);
+    }
+}
+
 void FileCatalog::openRequested(const std::vector<Thumbnail*>& tmb, eRTNav preloadDirectionHint)
 {
     for (const auto thumb : tmb) {

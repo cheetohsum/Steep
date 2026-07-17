@@ -18,6 +18,10 @@
  */
 #pragma once
 
+#include <atomic>
+#include <memory>
+#include <thread>
+
 #include "browserfilter.h"
 #include "exportpanel.h"
 #include "extprog.h"
@@ -57,6 +61,7 @@ public:
     virtual void copyMoveRequested(const std::vector<FileBrowserEntry*>& tbe, bool moveRequested) = 0;
     virtual void selectionChanged(const std::vector<Thumbnail*>& tbe) = 0;
     virtual void clearFromCacheRequested(const std::vector<FileBrowserEntry*>& tbe, bool leavenotrace) = 0;
+    virtual void quickActionProgress(const Glib::ustring& text, double progress) = 0;
     virtual bool isInTabMode() const = 0;
 };
 
@@ -157,6 +162,7 @@ protected:
     MyImageMenuItem* cachemenu;
     MyImageMenuItem* aiDenoise;
     MyImageMenuItem* autoEdit;
+    MyImageMenuItem* autoLevel;
     MyImageMenuItem* duplicate;
     MyImageMenuItem* clearFromCache;
     MyImageMenuItem* clearFromCacheFull;
@@ -196,6 +202,10 @@ protected:
     std::function<void(const Glib::ustring&)> albumCoverSetter_;
     std::function<void(const Glib::ustring&)> addToAlbumSetter_;
     std::function<bool()> isInAlbumMode_;
+    sigc::connection autoLevelPollConnection_;
+    std::thread autoLevelThread_;
+    std::shared_ptr<std::atomic<bool>> autoLevelCancel_;
+    bool quickActionRunning_ = false;
 
 public:
     FileBrowser ();
