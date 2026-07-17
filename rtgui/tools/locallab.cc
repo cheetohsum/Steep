@@ -328,6 +328,7 @@ void Locallab::read(const rtengine::procparams::ProcParams* pp, const ParamsEdit
 
         r.maskType = pp->locallab.spots.at(i).useAIMask ? 1 : 0;
         r.aiMaskClass = pp->locallab.spots.at(i).aiMaskClass;
+        r.aiMaskThreshold = pp->locallab.spots.at(i).aiMaskThreshold;
         r.polyMaskPoints = pp->locallab.spots.at(i).polyMaskPoints;
         r.polyMaskFeather = pp->locallab.spots.at(i).polyMaskFeather;
         r.polyMaskSnapTolerance = pp->locallab.spots.at(i).polyMaskSnapTolerance;
@@ -528,6 +529,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
 
             r.maskType = 0; // Normal mask
             r.aiMaskClass = 0;
+            r.aiMaskThreshold = newSpot->aiMaskThreshold;
             r.polyMaskPoints = newSpot->polyMaskPoints;
             r.polyMaskFeather = newSpot->polyMaskFeather;
             r.polyMaskSnapTolerance = newSpot->polyMaskSnapTolerance;
@@ -725,6 +727,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
 
             r.maskType = 1; // AI Mask
             r.aiMaskClass = aiClass;
+            r.aiMaskThreshold = newSpot->aiMaskThreshold;
             r.polyMaskPoints = newSpot->polyMaskPoints;
             r.polyMaskFeather = newSpot->polyMaskFeather;
             r.polyMaskSnapTolerance = newSpot->polyMaskSnapTolerance;
@@ -1040,6 +1043,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
 
             r.maskType = newSpot->useAIMask ? 1 : 0;
             r.aiMaskClass = newSpot->aiMaskClass;
+            r.aiMaskThreshold = newSpot->aiMaskThreshold;
             r.polyMaskPoints = newSpot->polyMaskPoints;
             r.polyMaskFeather = newSpot->polyMaskFeather;
             r.polyMaskSnapTolerance = newSpot->polyMaskSnapTolerance;
@@ -1230,6 +1234,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                     pp->locallab.spots.at(pp->locallab.selspot).visiaimask = isAI;
                     if (isAI) {
                         pp->locallab.spots.at(pp->locallab.selspot).aiMaskClass = r->aiMaskClass;
+                        pp->locallab.spots.at(pp->locallab.selspot).aiMaskThreshold = r->aiMaskThreshold;
                         pp->locallab.spots.at(pp->locallab.selspot).spotMethod = "full";
                     }
                     // Polygon mask data

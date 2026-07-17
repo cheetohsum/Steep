@@ -102,6 +102,7 @@ public:
         int wavMethod; // 0 = D2, 1 = D4, 2 = D6, 3 = D10, 4 = D14
         int maskType; // 0 = Normal, 1 = AI Mask
         int aiMaskClass; // 0-7 class index
+        double aiMaskThreshold; // Segmentation probability cutoff
         std::vector<int> polyMaskPoints; // Polygon vertices: flattened [x1,y1,x2,y2,...]
         double polyMaskFeather; // Polygon feather width
         double polyMaskSnapTolerance; // Magnetic snap search radius
@@ -375,6 +376,7 @@ private:
         Gtk::TreeModelColumn<int> wavMethod; // 0 = D2, 1 = D4, 2 = D6, 3 = D10, 4 = D14
         Gtk::TreeModelColumn<int> maskType; // 0 = Normal, 1 = AI Mask
         Gtk::TreeModelColumn<int> aiMaskClass; // 0-7 class index
+        Gtk::TreeModelColumn<double> aiMaskThreshold;
         Gtk::TreeModelColumn<std::vector<int>> polyMaskPoints;
         Gtk::TreeModelColumn<double> polyMaskFeather;
         Gtk::TreeModelColumn<double> polyMaskSnapTolerance;
@@ -441,6 +443,7 @@ private:
     sigc::connection maskTypeConn_;
     PopUpButton* const aiMaskClass_;
     sigc::connection aiMaskClassConn_;
+    Adjuster* const aiMaskTolerance_;
     sigc::connection aiPreviewRefresh_; // delayed treeview redraw after AI mask computation
 
     Adjuster* const sensiexclu_;

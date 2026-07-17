@@ -29,7 +29,7 @@ LocallabAIMask::LocallabAIMask():
     LocallabTool(this, M("TP_LOCALLAB_AIMASK_TOOLNAME"), M("TP_LOCALLAB_AIMASK"), false, false),
 
     aiMaskClassCombo(Gtk::manage(new MyComboBoxText())),
-    aiMaskThreshold(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_THRESHOLD"), 0.0, 1.0, 0.01, 0.3))),
+    aiMaskThreshold(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_TOLERANCE"), 0.0, 100.0, 1.0, 70.0))),
     aiMaskFeather(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_FEATHER"), 0.0, 100.0, 1.0, 35.0))),
     aiMaskBlur(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_BLUR"), 0.0, 50.0, 0.1, 0.0))),
     aiMaskInvert(Gtk::manage(new Gtk::CheckButton(M("TP_LOCALLAB_AIMASK_INVERT")))),
@@ -133,7 +133,7 @@ void LocallabAIMask::updateAdviceTooltips(const bool showTooltips)
 {
     if (showTooltips) {
         aiMaskClassCombo->set_tooltip_text(M("TP_LOCALLAB_AIMASK_CLASS_TOOLTIP"));
-        aiMaskThreshold->set_tooltip_text(M("TP_LOCALLAB_AIMASK_THRESHOLD_TOOLTIP"));
+        aiMaskThreshold->set_tooltip_text(M("TP_LOCALLAB_AIMASK_TOLERANCE_TOOLTIP"));
         aiMaskOpacity->set_tooltip_text(M("TP_LOCALLAB_AIMASK_OPACITY_TOOLTIP"));
     } else {
         aiMaskClassCombo->set_tooltip_text("");
@@ -169,7 +169,7 @@ void LocallabAIMask::read(const rtengine::procparams::ProcParams* pp, const Para
         exp->setEnabled(spot.expaimask);
 
         aiMaskClassCombo->set_active(spot.aiMaskClass);
-        aiMaskThreshold->setValue(spot.aiMaskThreshold);
+        aiMaskThreshold->setValue(100.0 * (1.0 - spot.aiMaskThreshold));
         aiMaskFeather->setValue(spot.aiMaskFeather);
         aiMaskBlur->setValue(spot.aiMaskBlur);
         aiMaskInvert->set_active(spot.aiMaskInvert);
@@ -193,7 +193,8 @@ void LocallabAIMask::write(rtengine::procparams::ProcParams* pp, ParamsEdited* p
         spot.useAIMask = exp->getEnabled();
 
         spot.aiMaskClass = aiMaskClassCombo->get_active_row_number();
-        spot.aiMaskThreshold = aiMaskThreshold->getValue();
+        spot.aiMaskThreshold = rtengine::LIM(
+            1.0 - aiMaskThreshold->getValue() / 100.0, 0.0, 1.0);
         spot.aiMaskFeather = aiMaskFeather->getValue();
         spot.aiMaskBlur = aiMaskBlur->getValue();
         spot.aiMaskInvert = aiMaskInvert->get_active();
@@ -212,7 +213,7 @@ void LocallabAIMask::setDefaults(const rtengine::procparams::ProcParams* defPara
     if (index < (int)defParams->locallab.spots.size()) {
         const LocallabParams::LocallabSpot& defSpot = defParams->locallab.spots.at(index);
 
-        aiMaskThreshold->setDefault(defSpot.aiMaskThreshold);
+        aiMaskThreshold->setDefault(100.0 * (1.0 - defSpot.aiMaskThreshold));
         aiMaskFeather->setDefault(defSpot.aiMaskFeather);
         aiMaskBlur->setDefault(defSpot.aiMaskBlur);
         aiMaskOpacity->setDefault(defSpot.aiMaskOpacity);

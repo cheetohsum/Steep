@@ -64,6 +64,7 @@ ControlSpotPanel::ControlSpotPanel():
     avoidgamutMethod_(Gtk::manage(new MyComboBoxText())),
     maskType_(Gtk::manage(new PopUpButton())),
     aiMaskClass_(Gtk::manage(new PopUpButton())),
+    aiMaskTolerance_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_TOLERANCE"), 0, 100, 1, 70))),
 
     sensiexclu_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_SENSIEXCLU"), 0, 100, 1, 12))),
     structexclu_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_STRUCCOL"), 0, 100, 1, 0))),
@@ -529,7 +530,9 @@ ControlSpotPanel::ControlSpotPanel():
     aiMaskClass_->setShowSelectionLabel(true);
     if (showtooltip) {
         aiMaskClass_->set_tooltip_text(M("TP_LOCALLAB_AIMASK_CLASS_TOOLTIP"));
+        aiMaskTolerance_->set_tooltip_text(M("TP_LOCALLAB_AIMASK_TOLERANCE_TOOLTIP"));
     }
+    aiMaskTolerance_->setAdjusterListener(this);
 
     // Quality method (not packed at top level, used internally)
     Gtk::Box* const ctboxqualitymethod = Gtk::manage(new Gtk::Box());
@@ -754,7 +757,7 @@ ControlSpotPanel::ControlSpotPanel():
     shapeTypeRow_->pack_start(*ctboxshape, Gtk::PACK_SHRINK);
     shapeTypeRow_->pack_start(*ctboxmasktype, Gtk::PACK_SHRINK);
 
-    // Polygon inline controls: draw button + vertex icon + count (hidden by default)
+    // Polygon draw control. Point count remains internal to keep the row quiet.
     polyDrawBtn_->set_no_show_all(true);
     shapeTypeRow_->pack_start(*polyDrawBtn_, Gtk::PACK_SHRINK);
 
@@ -768,6 +771,7 @@ ControlSpotPanel::ControlSpotPanel():
 
     maskDetailBox_->pack_start(*shapeTypeRow_, Gtk::PACK_SHRINK);
     maskDetailBox_->pack_start(*ctboxaiclass, Gtk::PACK_SHRINK);
+    maskDetailBox_->pack_start(*aiMaskTolerance_, Gtk::PACK_SHRINK);
     maskDetailBox_->pack_start(*polyBox_, Gtk::PACK_SHRINK);
     maskDetailBox_->pack_start(*circrad_, Gtk::PACK_SHRINK);
     maskDetailBox_->pack_start(*transit_, Gtk::PACK_SHRINK);
@@ -886,16 +890,16 @@ void ControlSpotPanel::setMaskDetailExpanded(bool expanded)
 
         if (maskType_->getSelected() == 1) {
             ctboxaiclass->show();
+            aiMaskTolerance_->show();
         } else {
             ctboxaiclass->hide();
+            aiMaskTolerance_->hide();
         }
 
         if (shape_->getSelected() == 3) {
             polyBox_->show();
             polyBox_->show_all_children();
             polyDrawBtn_->show();
-            polyVertexIcon_->show();
-            polyVertexLabel_->show();
             circrad_->hide();
             transit_->hide();
         } else {
@@ -917,6 +921,7 @@ void ControlSpotPanel::setMaskControlsSensitive(bool sensitive)
     transit_->set_sensitive(sensitive);
     polyBox_->set_sensitive(sensitive);
     ctboxaiclass->set_sensitive(sensitive);
+    aiMaskTolerance_->set_sensitive(sensitive);
 }
 
 void ControlSpotPanel::queueMaskPreviewRefresh()
@@ -1026,6 +1031,7 @@ void ControlSpotPanel::render_preview(
     const int shp    = row[spots_.shape];      // 0=ellipse, 1=rect, 2=gradient, 3=polygon
     const int maskT  = row[spots_.maskType];
     const int cls    = row[spots_.aiMaskClass];
+    const float aiThreshold = static_cast<float>(row[spots_.aiMaskThreshold]);
     const double rX  = (double)row[spots_.locX]  / 3000.0;
     const double rXL = (double)row[spots_.locXL] / 3000.0;
     const double rY  = (double)row[spots_.locY]  / 3000.0;
@@ -1108,8 +1114,11 @@ void ControlSpotPanel::render_preview(
                         static_cast<int>((double)px / std::max(W - 1, 1) * (snapshot.width - 1)),
                         snapshot.width - 1);
                     const float prob = (*snapshot.mask)[my][mx];
-                    const float strength = std::max(
-                        0.f, std::min(1.f, (prob - 0.25f) / 0.2f));
+                    constexpr float transitionWidth = 0.21f;
+                    const float strength = std::max(0.f, std::min(
+                        1.f,
+                        (prob - aiThreshold + transitionWidth * 0.5f) /
+                            transitionWidth));
                     if (strength <= 0.001f) {
                         continue;
                     }
@@ -1648,7 +1657,10 @@ void ControlSpotPanel::load_ControlSpot_param()
 	avoidgamutMethod_->set_active(row[spots_.avoidgamutMethod]);
     maskType_->setSelected(row[spots_.maskType]);
     aiMaskClass_->setSelected(row[spots_.aiMaskClass]);
+    aiMaskTolerance_->setValue(
+        100.0 * (1.0 - static_cast<double>(row[spots_.aiMaskThreshold])));
     ctboxaiclass->set_visible(row[spots_.maskType] == 1);
+    aiMaskTolerance_->set_visible(row[spots_.maskType] == 1);
 
     // Show/hide controls based on shape
     if (shape_->getSelected() == 2) { // Gradient
@@ -1674,8 +1686,6 @@ void ControlSpotPanel::load_ControlSpot_param()
         polyBox_->show();
         polyBox_->show_all_children();
         polyDrawBtn_->show();
-        polyVertexIcon_->show();
-        polyVertexLabel_->show();
         const std::vector<int> pts = row[spots_.polyMaskPoints];
         const int nVerts = static_cast<int>(pts.size()) / 2;
         polyVertexLabel_->set_text(Glib::ustring::compose("%1", nVerts));
@@ -1832,8 +1842,6 @@ void ControlSpotPanel::shapeChanged(int /*index*/)
         polyBox_->show();
         polyBox_->show_all_children();
         polyDrawBtn_->show();
-        polyVertexIcon_->show();
-        polyVertexLabel_->show();
         // Update vertex count label
         const std::vector<int> pts = row[spots_.polyMaskPoints];
         const int nVerts = static_cast<int>(pts.size()) / 2;
@@ -2272,6 +2280,7 @@ void ControlSpotPanel::maskTypeChanged(int /*index*/)
     // Show/hide AI class based on mask type
     if (maskType_->getSelected() == 1) {
         ctboxaiclass->show();
+        aiMaskTolerance_->show();
         // Set spotMethod to "full" for engine compatibility, but do NOT
         // trigger spotMethodChanged() which would expand loc to 3000 and
         // lose the user's geometric boundary. The AI mask + geometric
@@ -2285,6 +2294,7 @@ void ControlSpotPanel::maskTypeChanged(int /*index*/)
         spotMethodconn_.block(false);
     } else {
         ctboxaiclass->hide();
+        aiMaskTolerance_->hide();
     }
 
     if (listener) {
@@ -2729,6 +2739,16 @@ void ControlSpotPanel::adjusterChanged(Adjuster* a, double newval)
         }
     }
 
+    if (a == aiMaskTolerance_) {
+        row[spots_.aiMaskThreshold] = rtengine::LIM(1.0 - newval / 100.0, 0.0, 1.0);
+
+        if (listener) {
+            listener->panelChanged(EvLocallabSpotShape,
+                aiMaskTolerance_->getTextValue());
+        }
+        queueMaskPreviewRefresh();
+    }
+
     if (a == polyFeather_) {
         row[spots_.polyMaskFeather] = polyFeather_->getValue();
 
@@ -3072,6 +3092,7 @@ void ControlSpotPanel::disableParamlistener(bool cond)
 	avoidgamutconn_.block(cond);
     maskTypeConn_.block(cond);
     aiMaskClassConn_.block(cond);
+    aiMaskTolerance_->block(cond);
 
 }
 
@@ -4224,6 +4245,7 @@ std::unique_ptr<ControlSpotPanel::SpotRow> ControlSpotPanel::getSpot(const int i
             r->avoidgamutMethod = row[spots_.avoidgamutMethod];
             r->maskType = row[spots_.maskType];
             r->aiMaskClass = row[spots_.aiMaskClass];
+            r->aiMaskThreshold = row[spots_.aiMaskThreshold];
             r->polyMaskPoints = row[spots_.polyMaskPoints];
             r->polyMaskFeather = row[spots_.polyMaskFeather];
             r->polyMaskSnapTolerance = row[spots_.polyMaskSnapTolerance];
@@ -4370,6 +4392,7 @@ void ControlSpotPanel::addControlSpot(const SpotRow &newSpot)
     row[spots_.avoidgamutMethod] = newSpot.avoidgamutMethod;
     row[spots_.maskType] = newSpot.maskType;
     row[spots_.aiMaskClass] = newSpot.aiMaskClass;
+    row[spots_.aiMaskThreshold] = newSpot.aiMaskThreshold;
     row[spots_.polyMaskPoints] = newSpot.polyMaskPoints;
     row[spots_.polyMaskFeather] = newSpot.polyMaskFeather;
     row[spots_.polyMaskSnapTolerance] = newSpot.polyMaskSnapTolerance;
@@ -4558,6 +4581,7 @@ ControlSpotPanel::ControlSpots::ControlSpots()
 	add(avoidgamutMethod);
     add(maskType);
     add(aiMaskClass);
+    add(aiMaskThreshold);
     add(polyMaskPoints);
     add(polyMaskFeather);
     add(polyMaskSnapTolerance);

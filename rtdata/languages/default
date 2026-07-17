@@ -4055,6 +4055,8 @@ TP_LOCALLAB_AIMASK_CLASS_FOREGROUND;Foreground Object
 TP_LOCALLAB_AIMASK_CLASS_TOOLTIP;Select the semantic class for AI-based mask generation.
 TP_LOCALLAB_AIMASK_THRESHOLD;Threshold
 TP_LOCALLAB_AIMASK_THRESHOLD_TOOLTIP;Probability threshold for mask activation. Lower values include more area.
+TP_LOCALLAB_AIMASK_TOLERANCE;Tolerance
+TP_LOCALLAB_AIMASK_TOLERANCE_TOOLTIP;Controls how readily the AI includes uncertain pixels. Higher values select more area.
 TP_LOCALLAB_AIMASK_FEATHER;Feathering
 TP_LOCALLAB_AIMASK_BLUR;Blur
 TP_LOCALLAB_AIMASK_INVERT;Invert Mask
