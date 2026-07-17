@@ -204,12 +204,7 @@ public:
     /**
      * Reset hover/eye pin state (called on image switch, spot change, etc.)
      */
-    void resetHoverState()
-    {
-        eyePinned_ = false;
-        sidebarHoverActive_ = false;
-        hoveredSpotIndex_ = -1;
-    }
+    void resetHoverState();
 
     int getPendingAIClass() const { return pendingAIClass_; }
     int getPendingShape() const { return pendingShape_; }
@@ -571,6 +566,9 @@ private:
     bool sidebarHoverActive_ = false;
     int hoveredSpotIndex_ = -1;
     bool eyePinned_ = false;  // true = eye clicked to pin overlay on, stays on even without hover
+    void setSidebarHoverGeometry(int spotIndex);
+    void clearSidebarHoverGeometry();
+    void queueCanvasRedraw();
     bool onTreeviewMotion(GdkEventMotion* event);
     bool onTreeviewLeave(GdkEventCrossing* event);
 public:

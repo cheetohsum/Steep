@@ -23741,6 +23741,7 @@ void ImProcFunctions::Lab_Local(
         const int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
         const int xstart = rtengine::max(static_cast<int>(lp.xc - lp.lxL) - cx, 0);
         const int xend = rtengine::min(static_cast<int>(lp.xc + lp.lx) - cx, original->W);
+        array2D<float> hoverMask(original->W, original->H, ARRAY2D_CLEAR_DATA);
 
 #ifdef RT_AI_MASKING
         AIMaskSnapshot aiMaskSnapshotOv;
@@ -23806,11 +23807,37 @@ void ImProcFunctions::Lab_Local(
                     factorx = intp(lp.aimaskopa, aiVal * localFactor, localFactor);
                 }
 #endif
-                // Red overlay proportional to combined mask strength
-                const float maskVal = factorx;
-                transformed->L[y][x] = original->L[y][x] * (1.f - 0.3f * maskVal);
-                transformed->a[y][x] = original->a[y][x] + maskVal * 12000.f;
-                transformed->b[y][x] = original->b[y][x] * (1.f - 0.5f * maskVal);
+                hoverMask[y][x] = LIM01(factorx);
+            }
+        }
+
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(dynamic, 16)
+#endif
+        for (int y = ystart; y < yend; ++y) {
+            for (int x = xstart; x < xend; ++x) {
+                const float maskVal = hoverMask[y][x];
+                const float left = x > 0 ? hoverMask[y][x - 1] : 0.f;
+                const float right = x + 1 < original->W ? hoverMask[y][x + 1] : 0.f;
+                const float above = y > 0 ? hoverMask[y - 1][x] : 0.f;
+                const float below = y + 1 < original->H ? hoverMask[y + 1][x] : 0.f;
+                const float gradient = rtengine::max(
+                    rtengine::max(std::abs(maskVal - left), std::abs(maskVal - right)),
+                    rtengine::max(std::abs(maskVal - above), std::abs(maskVal - below)));
+                const float featherLine = LIM01(1.f - std::abs(maskVal - 0.5f) / 0.16f);
+                const float outline = LIM01(rtengine::max(gradient * 4.f, featherLine));
+
+                const float overlayL = original->L[y][x] * (1.f - 0.3f * maskVal);
+                const float overlayA = original->a[y][x] + maskVal * 12000.f;
+                const float overlayB = original->b[y][x] * (1.f - 0.5f * maskVal);
+                const float lineMix = outline * 0.88f;
+
+                // The white contour follows the effective half-strength edge,
+                // so threshold and feather changes remain readable on any image.
+                transformed->L[y][x] = overlayL * (1.f - lineMix)
+                    + rtengine::max(overlayL, 30000.f) * lineMix;
+                transformed->a[y][x] = overlayA * (1.f - lineMix);
+                transformed->b[y][x] = overlayB * (1.f - lineMix);
             }
         }
     }

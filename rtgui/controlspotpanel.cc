@@ -817,7 +817,14 @@ ControlSpotPanel::ControlSpotPanel():
     maskDetailBox_->pack_start(*shapeTypeRow_, Gtk::PACK_SHRINK);
     maskDetailBox_->pack_start(*ctboxaiclass, Gtk::PACK_SHRINK);
     maskDetailBox_->pack_start(*aiMaskTolerance_, Gtk::PACK_SHRINK);
-    maskDetailBox_->pack_start(*maskBlendMode_->buttonGroup, Gtk::PACK_SHRINK);
+
+    auto* const blendModeRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
+    auto* const blendModeLabel = Gtk::manage(new Gtk::Label(M("TP_LOCALLAB_MASK_BLEND_MODE")));
+    blendModeLabel->set_halign(Gtk::ALIGN_START);
+    blendModeLabel->set_xalign(0.f);
+    blendModeRow->pack_start(*blendModeLabel, Gtk::PACK_SHRINK);
+    blendModeRow->pack_end(*maskBlendMode_->buttonGroup, Gtk::PACK_SHRINK);
+    maskDetailBox_->pack_start(*blendModeRow, Gtk::PACK_SHRINK);
     maskDetailBox_->pack_start(*polyBox_, Gtk::PACK_SHRINK);
     maskDetailBox_->pack_start(*circrad_, Gtk::PACK_SHRINK);
     maskDetailBox_->pack_start(*transit_, Gtk::PACK_SHRINK);
@@ -982,6 +989,97 @@ void ControlSpotPanel::queueMaskPreviewRefresh()
     }
 }
 
+void ControlSpotPanel::queueCanvasRedraw()
+{
+    if (auto* const widget = dynamic_cast<Gtk::Widget*>(getEditProvider())) {
+        widget->queue_draw();
+    }
+}
+
+void ControlSpotPanel::clearSidebarHoverGeometry()
+{
+    for (auto& row : treemodel_->children()) {
+        updateControlSpotCurve(row);
+        const int curveId = row[spots_.curveid];
+        if (curveId <= 0) {
+            continue;
+        }
+
+        const int base = (curveId - 1) * GEOM_PER_SPOT;
+        if (base < 0 || base + GEOM_PER_SPOT > static_cast<int>(visibleGeometry.size())) {
+            continue;
+        }
+        for (int i = 0; i < GEOM_PER_SPOT; ++i) {
+            visibleGeometry.at(base + i)->state = Geometry::NORMAL;
+        }
+    }
+
+    const auto selection = treeview_->get_selection();
+    if (selection->count_selected_rows()) {
+        updateCurveOpacity(*selection->get_selected());
+    }
+    queueCanvasRedraw();
+}
+
+void ControlSpotPanel::setSidebarHoverGeometry(int spotIndex)
+{
+    clearSidebarHoverGeometry();
+
+    int index = 0;
+    for (auto& row : treemodel_->children()) {
+        if (index++ != spotIndex) {
+            continue;
+        }
+
+        const int curveId = row[spots_.curveid];
+        if (curveId <= 0) {
+            return;
+        }
+
+        const int base = (curveId - 1) * GEOM_PER_SPOT;
+        if (base < 0 || base + GEOM_PER_SPOT > static_cast<int>(visibleGeometry.size())) {
+            return;
+        }
+        const int shape = row[spots_.shape];
+        const auto show = [&](int geometryIndex) {
+            auto* const geometry = visibleGeometry.at(base + geometryIndex);
+            geometry->setActive(true);
+            geometry->opacity = 100.;
+            geometry->state = Geometry::PRELIGHT;
+        };
+
+        show(0);
+        if (shape == 0) {
+            show(1);
+            for (int i = 3; i <= 6; ++i) {
+                show(i);
+            }
+        } else if (shape == 1) {
+            show(2);
+            for (int i = 3; i <= 6; ++i) {
+                show(i);
+            }
+        } else if (shape == 2) {
+            for (int i = 7; i <= 9; ++i) {
+                show(i);
+            }
+        } else if (shape == 3) {
+            show(10);
+        }
+
+        queueCanvasRedraw();
+        return;
+    }
+}
+
+void ControlSpotPanel::resetHoverState()
+{
+    clearSidebarHoverGeometry();
+    eyePinned_ = false;
+    sidebarHoverActive_ = false;
+    hoveredSpotIndex_ = -1;
+}
+
 void ControlSpotPanel::startAIPreviewRefresh()
 {
     aiPreviewRefresh_.disconnect();
@@ -1008,6 +1106,7 @@ bool ControlSpotPanel::onTreeviewMotion(GdkEventMotion* event)
                 row[spots_.mouseover] = false;
             }
             treeview_->queue_draw();
+            clearSidebarHoverGeometry();
             if (controlPanelListener) {
                 controlPanelListener->spotHovered(false, false, -1);
             }
@@ -1024,6 +1123,7 @@ bool ControlSpotPanel::onTreeviewMotion(GdkEventMotion* event)
             row[spots_.mouseover] = index++ == hovered;
         }
         treeview_->queue_draw();
+        setSidebarHoverGeometry(hovered);
         if (controlPanelListener) {
             controlPanelListener->spotHovered(true, false, hovered);
         }
@@ -1038,6 +1138,7 @@ bool ControlSpotPanel::onTreeviewLeave(GdkEventCrossing* /*event*/)
         row[spots_.mouseover] = false;
     }
     treeview_->queue_draw();
+    clearSidebarHoverGeometry();
     // Only hide overlay on leave if not eye-pinned
     if (!eyePinned_ && sidebarHoverActive_) {
         sidebarHoverActive_ = false;
@@ -1079,7 +1180,9 @@ bool ControlSpotPanel::isPointerOverTreeview() const
 
 void ControlSpotPanel::resetSidebarHover()
 {
+    clearSidebarHoverGeometry();
     sidebarHoverActive_ = false;
+    hoveredSpotIndex_ = -1;
 }
 
 void ControlSpotPanel::setEditProvider(EditDataProvider* provider)
