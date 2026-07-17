@@ -312,7 +312,6 @@ public:
     void setLabel (Glib::ustring newLabel);
     /// Set a new label string. If it has been instantiated with a Gtk::Widget, this method will do nothing
     void setLabel (Gtk::Widget *newWidget);
-
     /// Get whether the enabled option is set (to true or false) or unset (i.e. undefined)
     bool get_inconsistent();
     /// Set whether the enabled option is set (to true or false) or unset (i.e. undefined)
@@ -941,7 +940,11 @@ public:
     /// Set callback for when reset button is clicked.
     void setResetCallback(std::function<void()> cb);
 
+    /// Add an action widget to the trailing edge of the visible group header.
+    void addHeaderWidget(Gtk::Widget& widget);
+
 private:
+    Gtk::Box* headerRow;
     Gtk::Box* persistentBox;
     Gtk::Box* contentBox;
     Gtk::Revealer* revealer;

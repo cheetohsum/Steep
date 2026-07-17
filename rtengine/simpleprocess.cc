@@ -17,6 +17,8 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <algorithm>
+
 #include <glibmm/thread.h>
 #include <glibmm/ustring.h>
 
@@ -38,6 +40,9 @@
 #include "procparams.h"
 #include "rawimagesource.h"
 #include "aidenoise.h"
+#ifdef RT_AI_MASKING
+#include "aimaskcache.h"
+#endif
 #include "rtengine.h"
 #include "utils.h"
 
@@ -1056,6 +1061,24 @@ private:
         labView = new LabImage(fw, fh);
 
         if (params.locallab.enabled && params.locallab.spots.size() > 0) {
+#ifdef RT_AI_MASKING
+            if (getAISegmentationEngine().isInitialized()) {
+                const bool needsAIMask = std::any_of(
+                    params.locallab.spots.begin(), params.locallab.spots.end(),
+                    [](const procparams::LocallabParams::LocallabSpot& spot) {
+                        return spot.useAIMask;
+                    });
+                if (needsAIMask) {
+                    const int imageWidth = baseImg->getWidth();
+                    const int imageHeight = baseImg->getHeight();
+                    AIMaskCache::getInstance().computeMasks(
+                        imgsrc->getFileName().raw(),
+                        baseImg->r.ptrs, baseImg->g.ptrs, baseImg->b.ptrs,
+                        imageWidth, imageHeight, imageWidth, imageHeight,
+                        params.icm.workingProfile.raw(), true);
+                }
+            }
+#endif
             ipf.rgb2lab(*baseImg, *labView, params.icm.workingProfile);
 
             MyTime t1, t2;

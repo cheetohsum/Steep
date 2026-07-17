@@ -1657,7 +1657,7 @@ LocallabParams::LocallabSpot::LocallabSpot() :
     useAIMask(false),
     aiMaskClass(0),
     aiMaskThreshold(0.3),
-    aiMaskFeather(100.0),
+    aiMaskFeather(35.0),
     aiMaskBlur(0.0),
     aiMaskInvert(false),
     aiMaskOpacity(1.0),

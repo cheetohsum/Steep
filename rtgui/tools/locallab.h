@@ -118,6 +118,7 @@ public:
 
     // Access exposure tool for preview strip routing
     LocallabExposure& getExposureTool() { return expexpose; }
+    Gtk::Button* getAddMaskButton() const { return expsettings->getAddMaskButton(); }
 
     // When true, write() only updates control spot geometry, not tool settings
     void setSkipToolWrites(bool skip) { skipToolWrites_ = skip; }

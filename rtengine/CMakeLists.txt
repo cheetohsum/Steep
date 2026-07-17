@@ -254,6 +254,9 @@ endif()
 if(WITH_AI_MASKING)
     target_link_libraries(rtengine PUBLIC onnxruntime::onnxruntime)
     target_compile_definitions(rtengine PUBLIC "RT_AI_MASKING")
+    if(ONNXRuntime_DML_FOUND)
+        target_compile_definitions(rtengine PRIVATE "RT_AI_MASKING_DIRECTML")
+    endif()
 endif()
 
 # AI Denoise: native ONNX inference (replaces the Python rawrefinery_cli.py).

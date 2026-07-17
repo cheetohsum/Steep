@@ -87,6 +87,26 @@ float clamp(float x, float lo, float hi)
     return fmax(fmin(x, hi), lo);
 }
 
+#ifdef RT_AI_MASKING
+float sampleAIMask(const array2D<float>& mask, int width, int height, float x, float y)
+{
+    if (width <= 0 || height <= 0 || x < 0.f || y < 0.f
+            || x > width - 1.f || y > height - 1.f) {
+        return 0.f;
+    }
+
+    const int x0 = std::min(static_cast<int>(x), width - 1);
+    const int y0 = std::min(static_cast<int>(y), height - 1);
+    const int x1 = std::min(x0 + 1, width - 1);
+    const int y1 = std::min(y0 + 1, height - 1);
+    const float fx = x - x0;
+    const float fy = y - y0;
+    const float top = mask[y0][x0] + fx * (mask[y0][x1] - mask[y0][x0]);
+    const float bottom = mask[y1][x0] + fx * (mask[y1][x1] - mask[y1][x0]);
+    return top + fy * (bottom - top);
+}
+#endif
+
 // Michaelis-Menten equation
 // Curiously we use the Michaelis-Menten equation, which is borrowed from biochemistry to describe enzyme kinetics
 float mm_curve(double x, double S, double K_eff)
@@ -9876,19 +9896,21 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
     const float maxdElim = 5.f + MAXSCOPE * limscope * (1 + 0.1f * lp.thr);
 
 #ifdef RT_AI_MASKING
-    // Get AI mask pointer once before the parallel loop (avoids per-pixel mutex)
+    AIMaskSnapshot aiMaskSnapshot;
     const array2D<float>* aiMaskPtr = nullptr;
     int aiMaskW = 0, aiMaskH = 0;
     int aiFullW = 0, aiFullH = 0;
     if (lp.useaimask) {
-        AIMaskCache& aiCache = AIMaskCache::getInstance();
-        if (aiCache.hasCachedMasks()) {
-            const AISegClass aiCls = static_cast<AISegClass>(lp.aimaskclass);
-            aiMaskPtr = aiCache.getMask(aiCls);
-            aiMaskW = aiCache.getCachedWidth();
-            aiMaskH = aiCache.getCachedHeight();
-            aiFullW = aiCache.getFullWidth();
-            aiFullH = aiCache.getFullHeight();
+        aiMaskSnapshot = AIMaskCache::getInstance().getPreparedMask(
+            static_cast<AISegClass>(lp.aimaskclass),
+            lp.aimaskthr, lp.aimaskfeath, lp.aimaskblur, lp.aimaskinv,
+            lp.aimaskrefrad, lp.aimaskrefeps, multiThread);
+        if (aiMaskSnapshot) {
+            aiMaskPtr = aiMaskSnapshot.mask.get();
+            aiMaskW = aiMaskSnapshot.width;
+            aiMaskH = aiMaskSnapshot.height;
+            aiFullW = aiMaskSnapshot.fullWidth;
+            aiFullH = aiMaskSnapshot.fullHeight;
         }
     }
 #endif
@@ -9938,6 +9960,22 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
                 if(lp.fullim == 3 ) {//disable scope
                     localFactor = 1.f;
                 }
+
+#ifdef RT_AI_MASKING
+                const bool aiMaskActive = aiMaskPtr && aiFullW > 0 && aiFullH > 0;
+                float aiMaskValue = 0.f;
+                if (aiMaskActive) {
+                    const float maskY = static_cast<float>(y + ystart + cy) * sk
+                        * aiMaskH / static_cast<float>(aiFullH);
+                    const float maskX = static_cast<float>(x + xstart + cx) * sk
+                        * aiMaskW / static_cast<float>(aiFullW);
+                    aiMaskValue = sampleAIMask(
+                        *aiMaskPtr, aiMaskW, aiMaskH, maskX, maskY);
+                    if (aiMaskValue <= 0.f) {
+                        continue;
+                    }
+                }
+#endif
 
 //                float hueh = 0;
 #if defined(__SSE2__) || defined(RT_SIMDE)
@@ -10026,55 +10064,10 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
 
                 float factorx = localFactor;
 #ifdef RT_AI_MASKING
-                bool aiMaskActive = false;
-                if (aiMaskPtr && aiFullW > 0 && aiFullH > 0) {
-                    aiMaskActive = true;
-                    // Map processing coordinates to mask coordinates via full-resolution space.
-                    const float my_f = static_cast<float>(y + ystart + cy) * sk * aiMaskH / static_cast<float>(aiFullH);
-                    const float mx_f = static_cast<float>(x + xstart + cx) * sk * aiMaskW / static_cast<float>(aiFullW);
-                    const int my = static_cast<int>(my_f);
-                    const int mx = static_cast<int>(mx_f);
-
-                    float aiVal;
-
-                    // Blur: average over a neighborhood in mask space
-                    const int blurRad = static_cast<int>(lp.aimaskblur * aiMaskW / static_cast<float>(aiFullW));
-                    if (blurRad > 0) {
-                        float sum = 0.f;
-                        int count = 0;
-                        const int y0 = rtengine::max(my - blurRad, 0);
-                        const int y1 = rtengine::min(my + blurRad, aiMaskH - 1);
-                        const int x0 = rtengine::max(mx - blurRad, 0);
-                        const int x1 = rtengine::min(mx + blurRad, aiMaskW - 1);
-                        for (int ay = y0; ay <= y1; ++ay) {
-                            for (int ax = x0; ax <= x1; ++ax) {
-                                sum += (*aiMaskPtr)[ay][ax];
-                                ++count;
-                            }
-                        }
-                        aiVal = count > 0 ? sum / count : 0.f;
-                    } else {
-                        aiVal = (my >= 0 && my < aiMaskH && mx >= 0 && mx < aiMaskW)
-                                ? (*aiMaskPtr)[my][mx] : 0.f;
-                    }
-
-                    // Feathering controls the transition width around the threshold.
-                    // feather=0: hard binary, feather=100: soft (half-width = 0.3)
-                    const float halfWidth = rtengine::max(0.001f, lp.aimaskfeath * 0.003f);
-                    aiVal = LIM((aiVal - lp.aimaskthr + halfWidth) / (2.f * halfWidth), 0.f, 1.f);
-
-                    if (lp.aimaskinv) {
-                        aiVal = 1.f - aiVal;
-                    }
-                    // When AI mask is active, combine with geometric shape.
-                    // For gradient shape, multiply AI mask with gradient localFactor
-                    // so both spatial controls work together.
-                    // For ellipse/rect, AI mask is the primary control (localFactor
-                    // may be 0 outside the geometric boundary).
-                    if (lp.shapmet == 2 && zone > 0) {
-                        factorx = localFactor * lp.aimaskopa * aiVal;
-                    } else {
-                        factorx = lp.aimaskopa * aiVal;
+                if (aiMaskActive) {
+                    factorx = lp.aimaskopa * aiMaskValue;
+                    if (lp.shapmet == 2) {
+                        factorx *= localFactor;
                     }
                 }
 #endif
@@ -23737,18 +23730,21 @@ void ImProcFunctions::Lab_Local(
         const int xend = rtengine::min(static_cast<int>(lp.xc + lp.lx) - cx, original->W);
 
 #ifdef RT_AI_MASKING
+        AIMaskSnapshot aiMaskSnapshotOv;
         const array2D<float>* aiMaskPtrOv = nullptr;
         int aiMaskWOv = 0, aiMaskHOv = 0;
         int aiFullWOv = 0, aiFullHOv = 0;
         if (lp.useaimask) {
-            AIMaskCache& aiCache = AIMaskCache::getInstance();
-            if (aiCache.hasCachedMasks()) {
-                const AISegClass aiCls = static_cast<AISegClass>(lp.aimaskclass);
-                aiMaskPtrOv = aiCache.getMask(aiCls);
-                aiMaskWOv = aiCache.getCachedWidth();
-                aiMaskHOv = aiCache.getCachedHeight();
-                aiFullWOv = aiCache.getFullWidth();
-                aiFullHOv = aiCache.getFullHeight();
+            aiMaskSnapshotOv = AIMaskCache::getInstance().getPreparedMask(
+                static_cast<AISegClass>(lp.aimaskclass),
+                lp.aimaskthr, lp.aimaskfeath, lp.aimaskblur, lp.aimaskinv,
+                lp.aimaskrefrad, lp.aimaskrefeps, true);
+            if (aiMaskSnapshotOv) {
+                aiMaskPtrOv = aiMaskSnapshotOv.mask.get();
+                aiMaskWOv = aiMaskSnapshotOv.width;
+                aiMaskHOv = aiMaskSnapshotOv.height;
+                aiFullWOv = aiMaskSnapshotOv.fullWidth;
+                aiFullHOv = aiMaskSnapshotOv.fullHeight;
             }
         }
 #endif
@@ -23788,38 +23784,12 @@ void ImProcFunctions::Lab_Local(
                 float factorx = localFactor;
 #ifdef RT_AI_MASKING
                 if (aiMaskPtrOv && aiFullWOv > 0 && aiFullHOv > 0) {
-                    const float my_f = static_cast<float>(y + cy) * sk * aiMaskHOv / static_cast<float>(aiFullHOv);
-                    const float mx_f = static_cast<float>(x + cx) * sk * aiMaskWOv / static_cast<float>(aiFullWOv);
-                    const int my = static_cast<int>(my_f);
-                    const int mx = static_cast<int>(mx_f);
-
-                    float aiVal;
-                    const int blurRad = static_cast<int>(lp.aimaskblur * aiMaskWOv / static_cast<float>(aiFullWOv));
-                    if (blurRad > 0) {
-                        float sum = 0.f;
-                        int count = 0;
-                        const int y0 = rtengine::max(my - blurRad, 0);
-                        const int y1 = rtengine::min(my + blurRad, aiMaskHOv - 1);
-                        const int x0 = rtengine::max(mx - blurRad, 0);
-                        const int x1 = rtengine::min(mx + blurRad, aiMaskWOv - 1);
-                        for (int ay = y0; ay <= y1; ++ay) {
-                            for (int ax = x0; ax <= x1; ++ax) {
-                                sum += (*aiMaskPtrOv)[ay][ax];
-                                ++count;
-                            }
-                        }
-                        aiVal = count > 0 ? sum / count : 0.f;
-                    } else {
-                        aiVal = (my >= 0 && my < aiMaskHOv && mx >= 0 && mx < aiMaskWOv)
-                                ? (*aiMaskPtrOv)[my][mx] : 0.f;
-                    }
-
-                    const float halfWidth = rtengine::max(0.001f, lp.aimaskfeath * 0.003f);
-                    aiVal = LIM((aiVal - lp.aimaskthr + halfWidth) / (2.f * halfWidth), 0.f, 1.f);
-
-                    if (lp.aimaskinv) {
-                        aiVal = 1.f - aiVal;
-                    }
+                    const float maskY = static_cast<float>(y + cy) * sk
+                        * aiMaskHOv / static_cast<float>(aiFullHOv);
+                    const float maskX = static_cast<float>(x + cx) * sk
+                        * aiMaskWOv / static_cast<float>(aiFullWOv);
+                    const float aiVal = sampleAIMask(
+                        *aiMaskPtrOv, aiMaskWOv, aiMaskHOv, maskX, maskY);
                     factorx = intp(lp.aimaskopa, aiVal * localFactor, localFactor);
                 }
 #endif

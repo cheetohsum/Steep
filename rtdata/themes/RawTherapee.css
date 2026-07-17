@@ -1648,6 +1648,71 @@ radiobutton.ColorDot:checked > * {
 #ToolGroupHeader.hovered label {
     color: #e2e6ed;
 }
+
+button.curve-channel {
+    min-width: 28px;
+    min-height: 22px;
+    padding: 1px 5px;
+    margin: 0 2px;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 3px;
+    background-color: rgba(0,0,0,0.18);
+    background-image: none;
+    box-shadow: none;
+}
+button.curve-channel label {
+    font-weight: 700;
+}
+button.curve-channel-master { color: #d7d9dd; }
+button.curve-channel-red { color: #f06468; }
+button.curve-channel-green { color: #55c878; }
+button.curve-channel-blue { color: #6695f2; }
+button.curve-channel label { color: inherit; }
+button.curve-channel:checked {
+    border-color: currentColor;
+    background-color: rgba(255,255,255,0.10);
+}
+
+button.mask-add-button {
+    min-width: 22px;
+    min-height: 20px;
+    padding: 0;
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    color: #d7d9dd;
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 2px;
+    background-color: rgba(255,255,255,0.03);
+    background-image: none;
+    box-shadow: none;
+}
+
+button.mask-add-button:hover {
+    color: #ffffff;
+    border-color: rgba(255,255,255,0.25);
+    background-color: rgba(255,255,255,0.08);
+}
+
+#RecentFoldersButton,
+#AlbumAddBtn,
+#RecentFoldersButton > button,
+#AlbumAddBtn > button {
+    padding: 1px 4px;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    background-image: none;
+    box-shadow: none;
+}
+
+#RecentFoldersButton:hover,
+#AlbumAddBtn:hover,
+#RecentFoldersButton > button:hover,
+#AlbumAddBtn > button:hover {
+    color: #e2e6ed;
+    background-color: rgba(255,255,255,0.06);
+}
 /* arrow is now a label, no image rule needed */
 #ToolGroupHeader box {
     margin: 0;

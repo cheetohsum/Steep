@@ -322,29 +322,36 @@ void CurveEditor::addButtonCSSClass(const Glib::ustring& cssClass)
     curveType->get_style_context()->add_class(cssClass);
 }
 
-void CurveEditor::enableCompactMode(const Glib::ustring& color, const Glib::ustring& checkedColor)
+void CurveEditor::enableCompactMode(const Glib::ustring& label, const Glib::ustring& cssClass)
 {
-    // Add a CSS class so we can target this specific button
-    curveType->get_style_context()->add_class("curve-dot");
+    curveType->get_style_context()->add_class("curve-channel");
+    curveType->get_style_context()->add_class(cssClass);
 
-    // 1) Keep the compact geometry. Avoid per-widget CSS providers here:
-    // repeated Gtk CSS parsing during startup is fragile on this Windows build.
-    curveType->set_size_request(10, 10);
+    curveType->set_size_request(30, 24);
 
-    // 2) Hide internal label + icon completely
+    // Replace the popup's curve-type icon with an explicit channel label.
     auto* child = curveType->get_child();
-    if (child) {
-        child->set_no_show_all(true);
-        child->hide();
+    if (auto* grid = dynamic_cast<Gtk::Grid*>(child)) {
+        for (auto* widget : grid->get_children()) {
+            widget->set_no_show_all(true);
+            widget->hide();
+        }
+
+        auto* channelLabel = Gtk::manage(new Gtk::Label(label));
+        channelLabel->set_halign(Gtk::ALIGN_CENTER);
+        channelLabel->set_valign(Gtk::ALIGN_CENTER);
+        grid->attach(*channelLabel, 0, 0, 1, 1);
+        channelLabel->show();
+        grid->show();
     }
 
-    // 3) Remove image-combo class and collapse buttonGroup; hide arrow button
+    // Remove image-combo spacing and keep the curve-type menu on right-click.
     curveType->buttonGroup->get_style_context()->remove_class("image-combo");
     curveType->buttonGroup->set_column_spacing(0);
     curveType->buttonGroup->set_row_spacing(0);
     {
         // Only target the grid container, not its children
-        curveType->buttonGroup->get_style_context()->add_class("curve-dot-group");
+        curveType->buttonGroup->get_style_context()->add_class("curve-channel-group");
 
         auto children = curveType->buttonGroup->get_children();
         for (auto* w : children) {
@@ -355,14 +362,14 @@ void CurveEditor::enableCompactMode(const Glib::ustring& color, const Glib::ustr
         }
     }
 
-    // 4) Right-click shows curve type menu; left-click on active dot does nothing (radio behavior)
+    // Left-click selects this channel; right-click keeps curve-type selection available.
     curveType->signal_button_press_event().connect(
         [this](GdkEventButton* event) -> bool {
             if (event->button == 3) {
                 curveType->triggerShowMenu();
                 return true;
             }
-            // Prevent toggling off the active dot — one channel is always visible
+            // Prevent toggling off the active button; one channel is always visible.
             if (event->button == 1 && curveType->get_active()) {
                 return true;
             }

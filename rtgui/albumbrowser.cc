@@ -177,12 +177,13 @@ AlbumBrowser::AlbumBrowser ()
     Gtk::Label* headerLabel = Gtk::manage(new Gtk::Label(M("ALBUM_HEADER")));
     headerLabel->set_halign(Gtk::ALIGN_START);
     headerLabel->set_margin_start(4);
-    headerBar->pack_start(*headerLabel, Gtk::PACK_EXPAND_WIDGET);
+    headerLabel->set_margin_end(2);
+    headerBar->pack_start(*headerLabel, Gtk::PACK_SHRINK);
 
     // "New" button with dropdown menu
     Gtk::MenuButton* addBtn = Gtk::manage(new Gtk::MenuButton());
     addBtn->set_name("AlbumAddBtn");
-    addBtn->set_label(M("ALBUM_NEW"));
+    addBtn->set_label(M("ALBUM_NEW").lowercase());
     addBtn->set_relief(Gtk::RELIEF_NONE);
     addBtn->set_tooltip_text(M("ALBUM_CREATE_TOOLTIP"));
 
@@ -211,7 +212,7 @@ AlbumBrowser::AlbumBrowser ()
     closeAlbumBtn_->set_no_show_all(true);
     closeAlbumBtn_->signal_clicked().connect(sigc::mem_fun(*this, &AlbumBrowser::deselectAlbum));
 
-    headerBar->pack_end(*addBtn, Gtk::PACK_SHRINK);
+    headerBar->pack_start(*addBtn, Gtk::PACK_SHRINK);
     headerBar->pack_end(*closeAlbumBtn_, Gtk::PACK_SHRINK);
 
     pack_start(*headerBar, Gtk::PACK_SHRINK, 0);
@@ -220,7 +221,8 @@ AlbumBrowser::AlbumBrowser ()
     scrollw_ = Gtk::manage(new Gtk::ScrolledWindow());
     scrollw_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
     scrollw_->set_propagate_natural_height(true);
-    scrollw_->set_max_content_height(160);
+    scrollw_->set_min_content_height(200);
+    scrollw_->set_max_content_height(240);
     scrollw_->set_overlay_scrolling(false);
 
     treeView_ = Gtk::manage(new AlbumTreeView());
@@ -1330,14 +1332,14 @@ void AlbumBrowser::onSelectionChanged ()
                 // Measure new natural height after collapse
                 int minH = 0, natH = 0;
                 treeView_->get_preferred_height(minH, natH);
-                expandAnimTargetH_ = std::max(std::min(natH + 4, 160), 20);
+                expandAnimTargetH_ = std::max(std::min(natH + 4, 240), 20);
                 expandAnimExpanding_ = false;
                 expandAnimFraction_ = 0.0;
                 scrollw_->set_max_content_height(expandAnimStartH_);
                 expandAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
                     expandAnimFraction_ += 16.0 / 150.0; // 150ms collapse
                     if (expandAnimFraction_ >= 1.0) {
-                        scrollw_->set_max_content_height(160);
+                        scrollw_->set_max_content_height(240);
                         scrollw_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
                         return false;
                     }
@@ -1365,14 +1367,14 @@ void AlbumBrowser::onSelectionChanged ()
                 // Measure new natural height after expand
                 int minH = 0, natH = 0;
                 treeView_->get_preferred_height(minH, natH);
-                expandAnimTargetH_ = std::max(std::min(natH + 4, 160), 20);
+                expandAnimTargetH_ = std::max(std::min(natH + 4, 240), 20);
                 expandAnimExpanding_ = true;
                 expandAnimFraction_ = 0.0;
                 scrollw_->set_max_content_height(expandAnimStartH_);
                 expandAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
                     expandAnimFraction_ += 16.0 / 250.0; // 250ms expand
                     if (expandAnimFraction_ >= 1.0) {
-                        scrollw_->set_max_content_height(160);
+                        scrollw_->set_max_content_height(240);
                         scrollw_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
                         return false;
                     }

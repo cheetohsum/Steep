@@ -30,7 +30,7 @@ LocallabAIMask::LocallabAIMask():
 
     aiMaskClassCombo(Gtk::manage(new MyComboBoxText())),
     aiMaskThreshold(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_THRESHOLD"), 0.0, 1.0, 0.01, 0.3))),
-    aiMaskFeather(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_FEATHER"), 0.0, 100.0, 1.0, 100.0))),
+    aiMaskFeather(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_FEATHER"), 0.0, 100.0, 1.0, 35.0))),
     aiMaskBlur(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_BLUR"), 0.0, 50.0, 0.1, 0.0))),
     aiMaskInvert(Gtk::manage(new Gtk::CheckButton(M("TP_LOCALLAB_AIMASK_INVERT")))),
     aiMaskOpacity(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_OPACITY"), 0.0, 1.0, 0.01, 1.0))),

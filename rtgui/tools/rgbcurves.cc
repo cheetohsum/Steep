@@ -67,21 +67,21 @@ RGBCurves::RGBCurves () : FoldableToolPanel(this, TOOL_NAME, M("TP_RGBCURVES_LAB
     // Hide the "Curves:" label and reset button for clean Lightroom look
     curveEditorG->hideHeaderWidgets();
 
-    // Enable compact mode: colored dots with right-click for curve type menu
-    Mshape->enableCompactMode("#777777", "#dddddd");  // All: gray / white
-    Rshape->enableCompactMode("#bb3333", "#ee4444");   // Red
-    Gshape->enableCompactMode("#33aa33", "#44cc44");   // Green
-    Bshape->enableCompactMode("#3355bb", "#4477ee");   // Blue
+    // Explicit channel buttons; right-click still opens the curve-type menu.
+    Mshape->enableCompactMode("RGB", "curve-channel-master");
+    Rshape->enableCompactMode("R", "curve-channel-red");
+    Gshape->enableCompactMode("G", "curve-channel-green");
+    Bshape->enableCompactMode("B", "curve-channel-blue");
 
     // Hide button boxes (+/-, edit, copy/paste/load/save) and coord adjusters (I:/O:)
     curveEditorG->setCompactDisplay(true);
 
-    // Don't let dots expand — keep them tight
+    // Keep channel buttons compact and centered.
     for (auto* editor : {(CurveEditor*)Mshape, (CurveEditor*)Rshape, (CurveEditor*)Gshape, (CurveEditor*)Bshape}) {
         setExpandAlignProperties(editor->getButtonGroup(), false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_CENTER);
     }
 
-    // Find the header row and restructure for centered dots + right-aligned cog
+    // Find the header row and center channels while keeping the cog right-aligned.
     const int PRIO = GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200;
     Gtk::Grid* headerRow = nullptr;
     for (auto* child : curveEditorG->get_children()) {

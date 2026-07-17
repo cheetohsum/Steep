@@ -1,7 +1,7 @@
 # AI Masking Models
 
-Place the DeepLabV3-MobileNetV3 ONNX model file here:
-- `deeplabv3_mobilenetv3.onnx` (~13MB)
+AI masking uses the bundled SegFormer B0 ADE20K model:
+- `segformer_b0_ade20k.onnx` (~15MB)
 
-This model can be exported from torchvision or downloaded pre-converted.
-It is required when building with -DWITH_AI_MASKING=ON.
+It is installed and copied beside runnable Windows builds when
+`-DWITH_AI_MASKING=ON`.

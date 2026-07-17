@@ -172,21 +172,21 @@ ControlSpotPanel::ControlSpotPanel():
     pack_start(*hiddenBox);
 
     // One compact Add Mask button with a menu for every primary mask type.
-    button_add_->set_label("");
-    button_add_->set_image(*Gtk::manage(new RTImage("add", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
-    button_add_->set_always_show_image(true);
+    if (button_add_->get_child()) {
+        button_add_->remove();
+    }
+    auto* addLabel = Gtk::manage(new Gtk::Label("+"));
+    addLabel->set_halign(Gtk::ALIGN_CENTER);
+    addLabel->set_valign(Gtk::ALIGN_CENTER);
+    button_add_->add(*addLabel);
     button_add_->set_relief(Gtk::RELIEF_NONE);
-    button_add_->set_tooltip_text(M("TP_LOCALLAB_SETTINGS"));
-    button_add_->set_size_request(32, 30);
-    Gtk::Box* const addRow = Gtk::manage(new Gtk::Box());
-    addRow->set_halign(Gtk::ALIGN_START);
-    addRow->set_margin_start(4);
-    addRow->set_margin_top(4);
-    addRow->set_margin_bottom(4);
-    addRow->pack_start(*button_add_, Gtk::PACK_SHRINK);
+    button_add_->set_can_focus(false);
+    button_add_->set_tooltip_text(M("TP_LOCALLAB_BUTTON_ADD_MASK"));
+    button_add_->set_size_request(24, 22);
+    button_add_->get_style_context()->add_class("mask-add-button");
 
     addMaskMenu_ = new Gtk::Menu();
-    const auto addMaskMenuItem = [this](const char* icon, const Glib::ustring& label, int shape) {
+    const auto createMaskMenuItem = [](const char* icon, const Glib::ustring& label) {
         auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
         auto* img = Gtk::manage(new RTImage(icon));
         auto* lbl = Gtk::manage(new Gtk::Label(label));
@@ -195,27 +195,52 @@ ControlSpotPanel::ControlSpotPanel():
         box->pack_start(*lbl, Gtk::PACK_EXPAND_WIDGET);
         auto* mi = Gtk::manage(new Gtk::MenuItem());
         mi->add(*box);
+        return mi;
+    };
+
+    auto* aiMenuItem = createMaskMenuItem("mask-ai", M("TP_LOCALLAB_MASKTYPE_AI"));
+    auto* aiClassMenu = Gtk::manage(new Gtk::Menu());
+    const char* aiClassKeys[] = {
+        "TP_LOCALLAB_AIMASK_CLASS_BACKGROUND",
+        "TP_LOCALLAB_AIMASK_CLASS_PERSON",
+        "TP_LOCALLAB_AIMASK_CLASS_SKY",
+        "TP_LOCALLAB_AIMASK_CLASS_VEGETATION",
+        "TP_LOCALLAB_AIMASK_CLASS_BUILDING",
+        "TP_LOCALLAB_AIMASK_CLASS_VEHICLE",
+        "TP_LOCALLAB_AIMASK_CLASS_ANIMAL",
+        "TP_LOCALLAB_AIMASK_CLASS_FOREGROUND"
+    };
+    const char* aiClassIcons[] = {
+        "mask-class-background", "mask-class-person", "mask-class-sky",
+        "mask-class-vegetation", "mask-class-building", "mask-class-vehicle",
+        "mask-class-animal", "mask-class-foreground"
+    };
+    for (int i = 0; i < 8; ++i) {
+        auto* item = createMaskMenuItem(aiClassIcons[i], M(aiClassKeys[i]));
+        item->signal_activate().connect(
+            sigc::bind(sigc::mem_fun(*this, &ControlSpotPanel::on_ai_mask_selected), i));
+        aiClassMenu->append(*item);
+    }
+    aiMenuItem->set_submenu(*aiClassMenu);
+    addMaskMenu_->append(*aiMenuItem);
+
+    const auto addShapeMenuItem = [this, &createMaskMenuItem](
+        const char* icon, const Glib::ustring& label, int shape) {
+        auto* mi = createMaskMenuItem(icon, label);
         mi->signal_activate().connect([this, shape]() {
-            if (shape < 0) {
-                on_ai_mask_selected(2);
-            } else {
-                on_mask_shape_selected(shape);
-            }
+            on_mask_shape_selected(shape);
         });
         addMaskMenu_->append(*mi);
     };
-    addMaskMenuItem("mask-ai", M("TP_LOCALLAB_MASKTYPE_AI"), -1);
-    addMaskMenuItem("shape-ellipse", M("TP_LOCALLAB_ELI"), 0);
-    addMaskMenuItem("shape-rectangle", M("TP_LOCALLAB_RECT"), 1);
-    addMaskMenuItem("shape-gradient", M("TP_LOCALLAB_GRAD"), 2);
+    addShapeMenuItem("shape-ellipse", M("TP_LOCALLAB_ELI"), 0);
+    addShapeMenuItem("shape-rectangle", M("TP_LOCALLAB_RECT"), 1);
+    addShapeMenuItem("shape-gradient", M("TP_LOCALLAB_GRAD"), 2);
     addMaskMenu_->show_all();
 
     buttonaddconn_ = button_add_->signal_clicked().connect([this]() {
         addMaskMenu_->popup_at_widget(button_add_,
             Gdk::GRAVITY_SOUTH_WEST, Gdk::GRAVITY_NORTH_WEST, nullptr);
     });
-
-    pack_start(*addRow);
 
     // Right-click context menu for mask rows
     contextMenu_ = new Gtk::Menu();
@@ -1071,36 +1096,32 @@ void ControlSpotPanel::render_preview(
     bool aiRendered = false;
     if (maskT == 1) {
         const int ci = std::min(std::max(cls, 0), 7);
-        AIMaskCache& aiCache = AIMaskCache::getInstance();
-        // Try to acquire lock without blocking — if the engine is computing
-        // masks, just show the placeholder instead of blocking the GUI thread.
-        if (aiCache.mutex().trylock()) {
-            const array2D<float>* aiMaskData = aiCache.getMaskUnsafe(
-                static_cast<AISegClass>(std::min(std::max(cls, 0), 7)));
-            const int aiMaskW = aiCache.getCachedWidthUnsafe();
-            const int aiMaskH = aiCache.getCachedHeightUnsafe();
-            if (aiMaskData && aiMaskW > 0 && aiMaskH > 0) {
-                for (int py = 0; py < H; py++) {
-                    for (int px = 0; px < W; px++) {
-                        const int my = std::min(static_cast<int>((double)py / (H - 1) * (aiMaskH - 1)), aiMaskH - 1);
-                        const int mx = std::min(static_cast<int>((double)px / (W - 1) * (aiMaskW - 1)), aiMaskW - 1);
-                        const float prob = (*aiMaskData)[my][mx];
-
-                        const float thr = 0.5f;
-                        const float hw = 0.15f;
-                        const float strength = std::max(0.f, std::min(1.f, (prob - thr + hw) / (2.f * hw)));
-                        if (strength <= 0.001f) continue;
-
-                        guint8* p = pixels + py * rowstride + px * 4;
-                        p[0] = classColors[ci][0];
-                        p[1] = classColors[ci][1];
-                        p[2] = classColors[ci][2];
-                        p[3] = (guint8)(strength * 200);
+        const AIMaskSnapshot snapshot = AIMaskCache::getInstance().getMaskSnapshot(
+            static_cast<AISegClass>(ci));
+        if (snapshot) {
+            for (int py = 0; py < H; py++) {
+                for (int px = 0; px < W; px++) {
+                    const int my = std::min(
+                        static_cast<int>((double)py / std::max(H - 1, 1) * (snapshot.height - 1)),
+                        snapshot.height - 1);
+                    const int mx = std::min(
+                        static_cast<int>((double)px / std::max(W - 1, 1) * (snapshot.width - 1)),
+                        snapshot.width - 1);
+                    const float prob = (*snapshot.mask)[my][mx];
+                    const float strength = std::max(
+                        0.f, std::min(1.f, (prob - 0.25f) / 0.2f));
+                    if (strength <= 0.001f) {
+                        continue;
                     }
+
+                    guint8* p = pixels + py * rowstride + px * 4;
+                    p[0] = classColors[ci][0];
+                    p[1] = classColors[ci][1];
+                    p[2] = classColors[ci][2];
+                    p[3] = static_cast<guint8>(strength * 200);
                 }
-                aiRendered = true;
             }
-            aiCache.mutex().unlock();
+            aiRendered = true;
         }
         if (!aiRendered) {
             // No cached AI mask yet or lock busy — dim class-colored placeholder
@@ -4301,7 +4322,7 @@ void ControlSpotPanel::addControlSpot(const SpotRow &newSpot)
     }
     Gtk::TreeModel::Row row = *(treemodel_->append());
     row[spots_.mouseover] = false;
-    row[spots_.detailsExpanded] = true;
+    row[spots_.detailsExpanded] = false;
     row[spots_.name] = newSpot.name;
     row[spots_.isvisible] = newSpot.isvisible;
     row[spots_.curveid] = 0; // No associated curve

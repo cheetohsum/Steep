@@ -29,7 +29,7 @@ RecentBrowser::RecentBrowser ()
 
     recentButton = Gtk::manage(new Gtk::MenuButton());
     recentButton->set_name("RecentFoldersButton");
-    recentButton->set_label(M("MAIN_FRAME_RECENT_SHORT"));
+    recentButton->set_label(M("MAIN_FRAME_RECENT_SHORT").lowercase());
     recentButton->set_relief(Gtk::RELIEF_NONE);
     recentButton->set_tooltip_text(M("MAIN_FRAME_RECENT"));
 

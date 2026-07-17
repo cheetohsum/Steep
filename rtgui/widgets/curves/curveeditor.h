@@ -119,7 +119,7 @@ public:
 
     Gtk::Widget* getButtonGroup();
     void addButtonCSSClass(const Glib::ustring& cssClass);
-    void enableCompactMode(const Glib::ustring& color = "#888", const Glib::ustring& checkedColor = "#ddd");
+    void enableCompactMode(const Glib::ustring& label, const Glib::ustring& cssClass);
     void setCurveDrawColor(double r, double g, double b) { drawR_ = r; drawG_ = g; drawB_ = b; hasDrawColor_ = true; }
     bool hasDrawColor() const { return hasDrawColor_; }
     void getDrawColor(double& r, double& g, double& b) const { r = drawR_; g = drawG_; b = drawB_; }

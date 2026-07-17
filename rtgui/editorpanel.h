@@ -300,13 +300,6 @@ private:
     Glib::ustring pendingFilmstripPreviewFile_;
     unsigned int pendingFilmstripPreviewSession_ = 0;
 
-    // Filmstrip sort
-    Gtk::MenuButton* filmstripSortBtn_;
-    Gtk::Menu* filmstripSortMenu_;
-    Gtk::RadioMenuItem* filmstripSortMethod_[Options::SORT_METHOD_COUNT];
-    Gtk::RadioMenuItem* filmstripSortOrder_[2];
-    void filmstripSortChanged ();
-
     // Album view sort
     Gtk::MenuButton* albumSortBtn_;
     Gtk::Menu* albumSortMenu_;
@@ -393,7 +386,6 @@ private:
     std::unordered_set<std::string> currentAlbumWhitelist_;
     void onAlbumSelected (const std::set<std::string>& whitelist);
     void onAlbumViewRequested (const Glib::ustring& albumName, const std::vector<Glib::ustring>& files);
-    void addCurrentImageToTargetAlbum ();
 
     // Album grid view
     enum class AlbumViewMode { GRID, FIT, COLLAGE };

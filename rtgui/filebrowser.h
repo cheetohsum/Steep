@@ -192,7 +192,9 @@ protected:
     type_save_image_requested m_save_image_requested;
 
     MyImageMenuItem* setAlbumCover;
+    MyImageMenuItem* addToAlbum;
     std::function<void(const Glib::ustring&)> albumCoverSetter_;
+    std::function<void(const Glib::ustring&)> addToAlbumSetter_;
     std::function<bool()> isInAlbumMode_;
 
 public:
@@ -299,6 +301,9 @@ public:
 
     void setAlbumCoverSetter(std::function<void(const Glib::ustring&)> setter) {
         albumCoverSetter_ = std::move(setter);
+    }
+    void setAddToAlbumSetter(std::function<void(const Glib::ustring&)> setter) {
+        addToAlbumSetter_ = std::move(setter);
     }
     void setAlbumModeChecker(std::function<bool()> checker) {
         isInAlbumMode_ = std::move(checker);

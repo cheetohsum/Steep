@@ -977,9 +977,9 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     Gtk::Box* placesObox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     placesObox->get_style_context()->add_class("plainback");
 
+    placesObox->pack_start(*editorRecentBrowser_, Gtk::PACK_SHRINK, 0);
     placesObox->pack_start(*editorDirBrowser_, Gtk::PACK_EXPAND_WIDGET, 0);
     editorDirBrowser_->set_size_request(-1, 200);
-    placesObox->pack_start(*editorRecentBrowser_, Gtk::PACK_SHRINK, 4);
     placesObox->pack_start(*albumBrowser_, Gtk::PACK_SHRINK, 0);
 
     editorPlacesPaned_->pack1(*editorPlacesBrowser_, false, false);
@@ -1102,8 +1102,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     filmstripFlagBtn_ = nullptr;
     filmstripRejectBtn_ = nullptr;
     filmstripCurrentPick_ = 0;
-    filmstripSortBtn_ = nullptr;
-    filmstripSortMenu_ = nullptr;
     albumSortBtn_ = nullptr;
     albumSortMenu_ = nullptr;
     if (!App::get().isSimpleEditor() && filePanel) {
@@ -1185,67 +1183,24 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         applyCSS(sepFlag);
         filmstripActionBar->pack_start(*sepFlag, Gtk::PACK_SHRINK);
 
-        // Star rating buttons: unrank + 5 stars
-        Gtk::Button* unrankBtn = Gtk::manage(new Gtk::Button());
-        unrankBtn->set_image(*Gtk::manage(new RTImage("star-hollow-small", Gtk::ICON_SIZE_MENU)));
-        unrankBtn->set_relief(Gtk::RELIEF_NONE);
-        unrankBtn->set_tooltip_markup(M("FILEBROWSER_UNRANK_TOOLTIP"));
-        unrankBtn->signal_clicked().connect([this]() {
-            if (fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser) {
-                fPanel->fileCatalog->fileBrowser->requestRanking(0);
-                filmstripCurrentRating = 0;
-                updateFilmstripStars(0);
-            }
-        });
-        applyCSS(unrankBtn);
-        filmstripActionBar->pack_start(*unrankBtn, Gtk::PACK_SHRINK);
-
-        for (int i = 0; i < 5; i++) {
-            filmstripRankBtns[i] = Gtk::manage(new Gtk::Button());
-            filmstripRankBtns[i]->set_image(*Gtk::manage(new RTImage("star-small", Gtk::ICON_SIZE_MENU)));
-            filmstripRankBtns[i]->set_relief(Gtk::RELIEF_NONE);
-            filmstripRankBtns[i]->signal_clicked().connect([this, i]() {
-                if (fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser) {
-                    int rank = i + 1;
-                    fPanel->fileCatalog->fileBrowser->requestRanking(rank);
-                    filmstripCurrentRating = rank;
-                    updateFilmstripStars(rank);
-                }
-            });
-            filmstripRankBtns[i]->signal_enter_notify_event().connect([this, i](GdkEventCrossing*) -> bool {
-                updateFilmstripStars(i + 1);
-                return false;
-            });
-            filmstripRankBtns[i]->signal_leave_notify_event().connect([this](GdkEventCrossing*) -> bool {
-                updateFilmstripStars(filmstripCurrentRating);
-                return false;
-            });
-            applyCSS(filmstripRankBtns[i]);
-            filmstripActionBar->pack_start(*filmstripRankBtns[i], Gtk::PACK_SHRINK);
-        }
-
-        auto* sep1 = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
-        applyCSS(sep1);
-        filmstripActionBar->pack_start(*sep1, Gtk::PACK_SHRINK);
-
         // Color label pill — multicolor trigger circle expands on hover
         {
             auto* pillEventBox = Gtk::manage(new Gtk::EventBox());
             auto* pillBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
-            pillBox->set_name("ColorLabelPill");
+            pillBox->set_name("RatingColorPalette");
 
             // Inline CSS for pill shape
             auto pillCss = Gtk::CssProvider::create();
             pillCss->load_from_data(
-                "#ColorLabelPill { border-radius: 12px; }"
+                "#RatingColorPalette { border-radius: 12px; }"
             );
             pillBox->get_style_context()->add_provider(pillCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
 
             // Trigger circle (always visible)
             auto* triggerBtn = Gtk::manage(new Gtk::Button());
-            triggerBtn->set_image(*Gtk::manage(new RTImage("circle-multicolor-small", Gtk::ICON_SIZE_MENU)));
+            triggerBtn->set_image(*Gtk::manage(new RTImage("star-small", Gtk::ICON_SIZE_MENU)));
             triggerBtn->set_relief(Gtk::RELIEF_NONE);
-            triggerBtn->set_tooltip_markup(M("FILEBROWSER_COLORLABEL_TOOLTIP"));
+            triggerBtn->set_tooltip_markup(M("FILEBROWSER_POPUPRANK") + " / " + M("FILEBROWSER_COLORLABEL_TOOLTIP"));
             applyCSS(triggerBtn);
             pillBox->pack_start(*triggerBtn, Gtk::PACK_SHRINK);
 
@@ -1256,6 +1211,48 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
             colorLabelRevealer_->set_reveal_child(false);
 
             auto* labelBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+            auto* unrankBtn = Gtk::manage(new Gtk::Button());
+            unrankBtn->set_image(*Gtk::manage(new RTImage("star-hollow-small", Gtk::ICON_SIZE_MENU)));
+            unrankBtn->set_relief(Gtk::RELIEF_NONE);
+            unrankBtn->set_tooltip_markup(M("FILEBROWSER_UNRANK_TOOLTIP"));
+            unrankBtn->signal_clicked().connect([this]() {
+                if (fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser) {
+                    fPanel->fileCatalog->fileBrowser->requestRanking(0);
+                    filmstripCurrentRating = 0;
+                    updateFilmstripStars(0);
+                }
+            });
+            applyCSS(unrankBtn);
+            labelBox->pack_start(*unrankBtn, Gtk::PACK_SHRINK);
+
+            for (int i = 0; i < 5; ++i) {
+                filmstripRankBtns[i] = Gtk::manage(new Gtk::Button());
+                filmstripRankBtns[i]->set_image(*Gtk::manage(new RTImage("star-small", Gtk::ICON_SIZE_MENU)));
+                filmstripRankBtns[i]->set_relief(Gtk::RELIEF_NONE);
+                filmstripRankBtns[i]->signal_clicked().connect([this, i]() {
+                    if (fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser) {
+                        const int rank = i + 1;
+                        fPanel->fileCatalog->fileBrowser->requestRanking(rank);
+                        filmstripCurrentRating = rank;
+                        updateFilmstripStars(rank);
+                    }
+                });
+                filmstripRankBtns[i]->signal_enter_notify_event().connect([this, i](GdkEventCrossing*) -> bool {
+                    updateFilmstripStars(i + 1);
+                    return false;
+                });
+                filmstripRankBtns[i]->signal_leave_notify_event().connect([this](GdkEventCrossing*) -> bool {
+                    updateFilmstripStars(filmstripCurrentRating);
+                    return false;
+                });
+                applyCSS(filmstripRankBtns[i]);
+                labelBox->pack_start(*filmstripRankBtns[i], Gtk::PACK_SHRINK);
+            }
+
+            auto* paletteSeparator = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
+            applyCSS(paletteSeparator);
+            labelBox->pack_start(*paletteSeparator, Gtk::PACK_SHRINK);
+
             std::array<std::string, 6> clabelIcons = {"circle-gray-small", "circle-red-small", "circle-yellow-small", "circle-green-small", "circle-blue-small", "circle-purple-small"};
             for (int i = 0; i < 6; i++) {
                 Gtk::Button* clabelBtn = Gtk::manage(new Gtk::Button());
@@ -1280,6 +1277,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
             });
             pillEventBox->signal_leave_notify_event().connect([this](GdkEventCrossing*) -> bool {
                 colorLabelRevealer_->set_reveal_child(false);
+                updateFilmstripStars(filmstripCurrentRating);
                 return false;
             });
 
@@ -1289,36 +1287,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         auto* sep2 = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
         applyCSS(sep2);
         filmstripActionBar->pack_start(*sep2, Gtk::PACK_SHRINK);
-
-        // Add to queue button
-        Gtk::Button* queueBtn = Gtk::manage(new Gtk::Button());
-        queueBtn->set_image(*Gtk::manage(new RTImage("gears-small", Gtk::ICON_SIZE_MENU)));
-        queueBtn->set_relief(Gtk::RELIEF_NONE);
-        queueBtn->set_tooltip_markup(M("FILEBROWSER_POPUPPROCESS"));
-        queueBtn->signal_clicked().connect([this]() {
-            if (fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser)
-                fPanel->fileCatalog->fileBrowser->requestDevelop();
-        });
-        applyCSS(queueBtn);
-        filmstripActionBar->pack_start(*queueBtn, Gtk::PACK_SHRINK);
-
-        // Add to Album button
-        auto* sep3 = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
-        applyCSS(sep3);
-        filmstripActionBar->pack_start(*sep3, Gtk::PACK_SHRINK);
-
-        Gtk::Button* addToAlbumBtn = Gtk::manage(new Gtk::Button());
-        addToAlbumBtn->set_image(*Gtk::manage(new RTImage("add-to-album", Gtk::ICON_SIZE_MENU)));
-        addToAlbumBtn->set_relief(Gtk::RELIEF_NONE);
-        addToAlbumBtn->set_tooltip_markup(M("EDITOR_ADD_TO_ALBUM_TOOLTIP"));
-        addToAlbumBtn->signal_clicked().connect(sigc::mem_fun(*this, &EditorPanel::addCurrentImageToTargetAlbum));
-        applyCSS(addToAlbumBtn);
-        filmstripActionBar->pack_start(*addToAlbumBtn, Gtk::PACK_SHRINK);
-
-        // Copy Edit Settings button + filter cog
-        auto* sep4 = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
-        applyCSS(sep4);
-        filmstripActionBar->pack_start(*sep4, Gtk::PACK_SHRINK);
 
         // Build copy filter menu (same structure as file browser)
         {
@@ -1626,6 +1594,8 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         // Group copy + filter as a visually joined button pair
         Gtk::Box* copyGroup = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
         copyGroup->set_name("CopySettingsGroup");
+        copySettingsBtn->set_no_show_all(true);
+        copySettingsBtn->hide();
         copyGroup->pack_start(*copySettingsBtn, Gtk::PACK_SHRINK);
         copyGroup->pack_start(*copyFilterBtn, Gtk::PACK_SHRINK);
         applyCSS(copyGroup);
@@ -1678,56 +1648,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
             filmstripActionBar->pack_start(*extEditorBtn, Gtk::PACK_SHRINK);
         }
 
-        // Sort button with popup menu
-        {
-            auto* sep6 = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
-            applyCSS(sep6);
-            filmstripActionBar->pack_start(*sep6, Gtk::PACK_SHRINK);
-
-            filmstripSortBtn_ = Gtk::manage(new Gtk::MenuButton());
-            filmstripSortBtn_->set_image(*Gtk::manage(new RTImage("menu-sort", Gtk::ICON_SIZE_MENU)));
-            filmstripSortBtn_->set_relief(Gtk::RELIEF_NONE);
-            filmstripSortBtn_->set_tooltip_markup(M("FILEBROWSER_POPUPSORTBY"));
-            applyCSS(filmstripSortBtn_);
-
-            filmstripSortMenu_ = Gtk::manage(new Gtk::Menu());
-
-            // Sort order
-            Gtk::RadioButtonGroup sortOrderGrp;
-            filmstripSortOrder_[0] = Gtk::manage(new Gtk::RadioMenuItem(sortOrderGrp, M("SORT_ASCENDING")));
-            filmstripSortOrder_[1] = Gtk::manage(new Gtk::RadioMenuItem(sortOrderGrp, M("SORT_DESCENDING")));
-            filmstripSortMenu_->append(*filmstripSortOrder_[0]);
-            filmstripSortMenu_->append(*filmstripSortOrder_[1]);
-
-            filmstripSortMenu_->append(*Gtk::manage(new Gtk::SeparatorMenuItem()));
-
-            // Sort methods
-            Gtk::RadioButtonGroup sortMethodGrp;
-            const Glib::ustring sortLabels[Options::SORT_METHOD_COUNT] = {
-                M("SORT_BY_NAME"), M("SORT_BY_DATE"), M("SORT_BY_EXIF"),
-                M("SORT_BY_RANK"), M("SORT_BY_LABEL"), M("SORT_BY_FILETYPE")
-            };
-            for (int i = 0; i < Options::SORT_METHOD_COUNT; i++) {
-                filmstripSortMethod_[i] = Gtk::manage(new Gtk::RadioMenuItem(sortMethodGrp, sortLabels[i]));
-                filmstripSortMenu_->append(*filmstripSortMethod_[i]);
-            }
-
-            // Set initial state from options
-            const auto& opts = App::get().options();
-            filmstripSortOrder_[opts.sortDescending ? 1 : 0]->set_active(true);
-            if (opts.sortMethod >= 0 && opts.sortMethod < Options::SORT_METHOD_COUNT)
-                filmstripSortMethod_[opts.sortMethod]->set_active(true);
-
-            // Connect signals
-            for (int i = 0; i < 2; i++)
-                filmstripSortOrder_[i]->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::filmstripSortChanged));
-            for (int i = 0; i < Options::SORT_METHOD_COUNT; i++)
-                filmstripSortMethod_[i]->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::filmstripSortChanged));
-
-            filmstripSortMenu_->show_all();
-            filmstripSortBtn_->set_popup(*filmstripSortMenu_);
-            filmstripActionBar->pack_start(*filmstripSortBtn_, Gtk::PACK_SHRINK);
-        }
     }
     toolBarPanel->set_center_widget(*filmstripActionBar);
 
@@ -2491,6 +2411,11 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     if (fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser) {
         fPanel->fileCatalog->fileBrowser->save_image_requested().connect(
             sigc::mem_fun(*this, &EditorPanel::saveAsPressed));
+        fPanel->fileCatalog->fileBrowser->setAddToAlbumSetter([this](const Glib::ustring& filePath) {
+            if (albumBrowser_) {
+                albumBrowser_->addFileToTargetAlbum(filePath);
+            }
+        });
     }
 
     if (tbTopPanel_1) {
@@ -2845,27 +2770,6 @@ void EditorPanel::updateFilmstripFlagBtn()
     }
 }
 
-void EditorPanel::filmstripSortChanged ()
-{
-    if (!fPanel || !fPanel->fileCatalog || !fPanel->fileCatalog->fileBrowser) return;
-
-    // Determine which method is active
-    int method = 0;
-    for (int i = 0; i < Options::SORT_METHOD_COUNT; i++) {
-        if (filmstripSortMethod_[i]->get_active()) {
-            method = i;
-            break;
-        }
-    }
-    bool descending = filmstripSortOrder_[1]->get_active();
-
-    auto& opts = App::get().mut_options();
-    opts.sortMethod = Options::SortMethod(method);
-    opts.sortDescending = descending;
-
-    fPanel->fileCatalog->fileBrowser->resort();
-}
-
 void EditorPanel::albumSortChanged ()
 {
     // Determine which method is active
@@ -3215,12 +3119,6 @@ void EditorPanel::onAlbumSelected (const std::set<std::string>& whitelist)
     }
 
     applyEditorFilter();
-}
-
-void EditorPanel::addCurrentImageToTargetAlbum ()
-{
-    if (!albumBrowser_ || fname.empty()) return;
-    albumBrowser_->addFileToTargetAlbum(fname);
 }
 
 void EditorPanel::onAlbumViewRequested (const Glib::ustring& albumName, const std::vector<Glib::ustring>& files)

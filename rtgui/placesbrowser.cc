@@ -76,14 +76,17 @@ PlacesBrowser::PlacesBrowser ()
     set_name("PlacesBrowserWidget");
     set_size_request(-1, 300);
 
-    // The star is the compact section marker; favoriting lives beside Recent.
+    // The compact section header; favoriting lives in the context menu.
     Gtk::Box* headerBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
     headerBar->set_name("PlacesHeader");
-    auto* headerIcon = Gtk::manage(new RTImage("star-gold-small", Gtk::ICON_SIZE_SMALL_TOOLBAR));
+    auto* headerIcon = Gtk::manage(new RTImage("star-small", Gtk::ICON_SIZE_SMALL_TOOLBAR));
     headerIcon->set_tooltip_text(M("MAIN_FRAME_PLACES"));
     headerIcon->set_margin_start(6);
-    headerIcon->set_margin_end(6);
+    headerIcon->set_margin_end(4);
     headerBar->pack_start(*headerIcon, Gtk::PACK_SHRINK);
+    auto* headerLabel = Gtk::manage(new Gtk::Label(M("MAIN_FRAME_PLACES")));
+    headerLabel->set_halign(Gtk::ALIGN_START);
+    headerBar->pack_start(*headerLabel, Gtk::PACK_SHRINK);
     pack_start(*headerBar, Gtk::PACK_SHRINK, 0);
 
     scrollw = Gtk::manage (new Gtk::ScrolledWindow ());

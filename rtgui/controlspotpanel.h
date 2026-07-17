@@ -209,6 +209,7 @@ public:
 
     int getPendingAIClass() const { return pendingAIClass_; }
     int getPendingShape() const { return pendingShape_; }
+    Gtk::Button* getAddMaskButton() const { return button_add_; }
 
     // Control spot creation functions
     /**

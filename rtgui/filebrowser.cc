@@ -457,6 +457,8 @@ FileBrowser::FileBrowser () :
     p++;
     pmenu->attach (*Gtk::manage(duplicate = new MyImageMenuItem (M("FILEBROWSER_POPUPDUPLICATE"), "menu-duplicate")), 0, 1, p, p + 1);
     p++;
+    pmenu->attach (*Gtk::manage(addToAlbum = new MyImageMenuItem (M("EDITOR_ADD_TO_ALBUM_TOOLTIP"), "add-to-album")), 0, 1, p, p + 1);
+    p++;
     pmenu->attach (*Gtk::manage(setAlbumCover = new MyImageMenuItem (M("FILEBROWSER_POPUPSETALBUMCOVER"), "menu-album-cover")), 0, 1, p, p + 1);
     p++;
 
@@ -1003,6 +1005,22 @@ FileBrowser::FileBrowser () :
     autoEdit->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), autoEdit));
     duplicate->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), duplicate));
 
+    addToAlbum->signal_activate().connect([this]() {
+        if (!addToAlbumSetter_) return;
+
+        Glib::ustring selectedFile;
+        {
+            MYREADERLOCK(l, entryRW);
+            if (selected.size() == 1) {
+                selectedFile = static_cast<FileBrowserEntry*>(selected[0])->filename;
+            }
+        }
+
+        if (!selectedFile.empty()) {
+            addToAlbumSetter_(selectedFile);
+        }
+    });
+
     setAlbumCover->signal_activate().connect([this]() {
         if (!albumCoverSetter_) return;
         MYREADERLOCK(l, entryRW);
@@ -1128,6 +1146,12 @@ void FileBrowser::rightClicked ()
     // "Set as album cover" — only when viewing an album and exactly one image is selected
     {
         MYREADERLOCK(l2, entryRW);
+        if (addToAlbumSetter_ && selected.size() == 1) {
+            addToAlbum->show();
+        } else {
+            addToAlbum->hide();
+        }
+
         if (isInAlbumMode_ && isInAlbumMode_() && selected.size() == 1) {
             setAlbumCover->show();
         } else {

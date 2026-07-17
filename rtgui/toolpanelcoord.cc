@@ -1088,6 +1088,7 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
 
     if (locallab) {
         locallabPanel->pack_start(*maskingGroup, Gtk::PACK_SHRINK);
+        maskingGroup->addHeaderWidget(*locallab->getAddMaskButton());
         addPanel(maskingGroup->getContentBox(), locallab, 1);
         locallab->setFlatMode(true);
         locallab->hideSettingsHeader();

@@ -270,6 +270,25 @@ endif()
 set_target_properties(rth PROPERTIES OUTPUT_NAME steep)
 set_target_properties(rth-cli PROPERTIES OUTPUT_NAME steep-cli)
 
+if(WIN32 AND WITH_AI_MASKING)
+    set(AI_MASK_MODEL
+        "${PROJECT_SOURCE_DIR}/rtdata/models/segformer_b0_ade20k.onnx")
+    add_custom_command(
+        TARGET rth POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "$<TARGET_FILE_DIR:rth>/models"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${AI_MASK_MODEL}"
+            "$<TARGET_FILE_DIR:rth>/models/segformer_b0_ade20k.onnx"
+        COMMAND ${CMAKE_COMMAND} -E make_directory
+            "${BUNDLE_BASE_INSTALL_DIR}/models"
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            "${AI_MASK_MODEL}"
+            "${BUNDLE_BASE_INSTALL_DIR}/models/segformer_b0_ade20k.onnx"
+        COMMENT "Bundling the AI masking model"
+    )
+endif()
+
 target_include_directories(rth PRIVATE ${EXTRA_INCDIR})
 target_include_directories(rth-cli PRIVATE ${EXTRA_INCDIR})
 

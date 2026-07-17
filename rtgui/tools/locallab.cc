@@ -592,7 +592,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
             newSpot->expaimask = true;
             newSpot->aiMaskClass = aiClass;
             newSpot->aiMaskThreshold = 0.3;
-            newSpot->aiMaskFeather = 100.0;
+            newSpot->aiMaskFeather = 35.0;
             newSpot->aiMaskOpacity = 1.0;
 
             // Auto-enable exposure tool so per-spot adjustments work through LocalLab

@@ -196,7 +196,18 @@ option(WITH_SYSTEM_KLT "Build using system KLT library." OFF)
 option(WITH_SYSTEM_LIBRAW "Build using system LibRaw library." OFF)
 option(OPTION_OMP "Build with OpenMP support" ON)
 option(WITH_SIMDE "Build with SIMD Everywhere support" OFF)
-option(WITH_AI_MASKING "Enable AI-powered auto masking (requires ONNX Runtime)" OFF)
+set(WITH_AI_MASKING_DEFAULT OFF)
+if(
+    WIN32
+    AND EXISTS "${CMAKE_SOURCE_DIR}/ext/onnxruntime/include/onnxruntime_c_api.h"
+)
+    set(WITH_AI_MASKING_DEFAULT ON)
+endif()
+option(
+    WITH_AI_MASKING
+    "Enable AI-powered auto masking (requires ONNX Runtime)"
+    ${WITH_AI_MASKING_DEFAULT}
+)
 option(
     STRICT_MUTEX
     "True (recommended): MyMutex will behave like POSIX Mutex; False: MyMutex will behave like POSIX RecMutex; Note: forced to ON for Debug builds"

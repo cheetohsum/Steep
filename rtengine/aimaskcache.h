@@ -5,21 +5,17 @@
  *  it under the terms of the GNU General Public License as published by
  *  the Free Software Foundation, either version 3 of the License, or
  *  (at your option) any later version.
- *
- *  RawTherapee is distributed in the hope that it will be useful,
- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *  GNU General Public License for more details.
- *
- *  You should have received a copy of the GNU General Public License
- *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #pragma once
 
 #ifdef RT_AI_MASKING
 
+#include <cstdint>
+#include <deque>
+#include <memory>
 #include <string>
 #include <vector>
+
 #include "array2D.h"
 #include "aisegmentation.h"
 #include "rtgui/threadutils.h"
@@ -27,70 +23,105 @@
 namespace rtengine
 {
 
+struct AIMaskSnapshot
+{
+    std::shared_ptr<const array2D<float>> mask;
+    int width = 0;
+    int height = 0;
+    int fullWidth = 0;
+    int fullHeight = 0;
+
+    explicit operator bool() const { return mask && width > 0 && height > 0; }
+};
+
 class AIMaskCache
 {
 public:
     static AIMaskCache& getInstance();
 
-    // Run segmentation and cache results for the given image identity
-    // fullW/fullH are the full-resolution image dimensions (before any downscaling)
     void computeMasks(const std::string& imageId,
                       float* const* rRows, float* const* gRows, float* const* bRows,
-                      int width, int height, int fullW, int fullH, bool multiThread);
+                      int width, int height, int fullW, int fullH,
+                      const std::string& workingProfile, bool multiThread);
 
-    // Get cached probability for a specific class at a specific pixel (no imageId check)
     float getMaskValue(AISegClass cls, int y, int x) const;
 
-    // Get entire cached mask for a class (no imageId check).
-    // IMPORTANT: caller must hold a ScopedLock from acquireLock() while
-    // using the returned pointer to prevent cache invalidation.
-    const array2D<float>* getMask(AISegClass cls) const;
+    // A shared snapshot stays valid if another image replaces the active cache.
+    AIMaskSnapshot getMaskSnapshot(AISegClass cls) const;
 
-    // Get entire cached mask (unsynchronized — caller must already hold the mutex)
-    const array2D<float>* getMaskUnsafe(AISegClass cls) const;
+    // Return a ready-to-sample mask. Costly blur, guided refinement,
+    // thresholding and inversion are cached per settings tuple.
+    AIMaskSnapshot getPreparedMask(AISegClass cls,
+                                   float threshold, float feather, float blur,
+                                   bool invert, int refineRadius, float refineEps,
+                                   bool multiThread);
 
-    // Expose mutex for callers that need to hold the lock across multiple calls.
-    // Use with MyMutex::MyLock to prevent cache invalidation while using pointers.
-    MyMutex& mutex() const { return mutex_; }
-
-    // Check if masks are cached for this image
     bool hasCachedMasks(const std::string& imageId) const;
-
-    // Check if any masks are cached
     bool hasCachedMasks() const;
 
-    // Invalidate cache for this image
     void invalidate(const std::string& imageId);
-
-    // Invalidate all cached masks
     void invalidateAll();
 
-    // Get cached image dimensions (self-locking)
     int getCachedWidth() const;
     int getCachedHeight() const;
-
-    // Get cached image dimensions (unsynchronized — caller must already hold a ScopedLock)
-    int getCachedWidthUnsafe() const { return cachedWidth_; }
-    int getCachedHeightUnsafe() const { return cachedHeight_; }
-
-    // Get full-resolution image dimensions (needed for coordinate mapping)
     int getFullWidth() const;
     int getFullHeight() const;
-
-    // Unsynchronized versions — caller must already hold the mutex
-    int getFullWidthUnsafe() const { return fullW_; }
-    int getFullHeightUnsafe() const { return fullH_; }
 
 private:
     AIMaskCache();
 
+    struct PreparedKey
+    {
+        int classIndex;
+        int threshold;
+        int feather;
+        int blur;
+        int invert;
+        int refineRadius;
+        int refineEps;
+
+        bool operator==(const PreparedKey& other) const;
+    };
+
+    struct PreparedEntry
+    {
+        PreparedKey key;
+        std::uint64_t generation;
+        std::shared_ptr<const array2D<float>> mask;
+    };
+
+    struct RefinedKey
+    {
+        int classIndex;
+        int blur;
+        int refineRadius;
+        int refineEps;
+
+        bool operator==(const RefinedKey& other) const;
+    };
+
+    struct RefinedEntry
+    {
+        RefinedKey key;
+        std::uint64_t generation;
+        std::shared_ptr<const array2D<float>> mask;
+    };
+
     mutable MyMutex mutex_;
     std::string cachedImageId_;
-    std::vector<array2D<float>> cachedMasks_;
+    std::string cachedWorkingProfile_;
+    std::shared_ptr<const std::vector<array2D<float>>> cachedMasks_;
+    std::shared_ptr<const array2D<float>> cachedGuide_;
+    std::deque<RefinedEntry> refinedMasks_;
+    std::deque<PreparedEntry> preparedMasks_;
+    int sourceWidth_;
+    int sourceHeight_;
     int cachedWidth_;
     int cachedHeight_;
     int fullW_;
     int fullH_;
+    std::uint64_t generation_ = 0;
+    std::uint64_t requestGeneration_ = 0;
 };
 
 } // namespace rtengine

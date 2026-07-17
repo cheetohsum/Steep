@@ -2651,7 +2651,7 @@ ToolGroup::ToolGroup(const Glib::ustring& label) :
         sigc::mem_fun(*this, &ToolGroup::onHeaderClicked));
 
     // Header row: header button + reset button
-    auto* headerRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL));
+    headerRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL));
     headerRow->set_hexpand(true);
     headerRow->set_halign(Gtk::ALIGN_FILL);
     headerRow->pack_start(*headerBtn, Gtk::PACK_SHRINK, 0);
@@ -2722,4 +2722,10 @@ void ToolGroup::setResetVisible(bool visible)
 void ToolGroup::setResetCallback(std::function<void()> cb)
 {
     resetCallback_ = cb;
+}
+
+void ToolGroup::addHeaderWidget(Gtk::Widget& widget)
+{
+    headerRow->pack_end(widget, Gtk::PACK_SHRINK, 0);
+    widget.show_all();
 }

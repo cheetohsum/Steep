@@ -1448,7 +1448,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                     const std::string imageId = imgsrc->getFileName().raw();
                     AIMaskCache::getInstance().computeMasks(
                         imageId, oprevi->r.ptrs, oprevi->g.ptrs, oprevi->b.ptrs,
-                        pW, pH, fw, fh, true);
+                        pW, pH, fw, fh, params->icm.workingProfile.raw(), true);
                 }
             }
 #endif

@@ -18,16 +18,19 @@
 #ifdef RT_AI_MASKING
 
 #include "aisegmentation.h"
-#include "guidedfilter.h"
 #include "opthelper.h"
 #include "rt_math.h"
 
 #include "onnxruntime_compat.h"
+#ifdef RT_AI_MASKING_DIRECTML
+#include <dml_provider_factory.h>
+#endif
 
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <cstdio>
+#include <thread>
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -43,17 +46,19 @@ namespace
 AISegClass adeToAIClass(int adeClass)
 {
     switch (adeClass) {
-        // Person
+        // People and clothing
         case 12: // person
+        case 92: // apparel
             return AISegClass::PERSON;
 
         // Sky
         case 2: // sky
             return AISegClass::SKY;
 
-        // Vegetation: trees, grass, plants, flowers, fields
+        // Natural vegetation and terrain
         case 4:  // tree
         case 9:  // grass
+        case 16: // mountain
         case 17: // plant
         case 29: // field
         case 66: // flower
@@ -62,16 +67,30 @@ AISegClass adeToAIClass(int adeClass)
         case 94: // land
             return AISegClass::VEGETATION;
 
-        // Building: structures, walls, houses, towers
+        // Architecture and permanent structures
         case 0:  // wall
         case 1:  // building
         case 5:  // ceiling
+        case 8:  // windowpane
+        case 14: // door
         case 25: // house
         case 32: // fence
+        case 38: // railing
+        case 40: // base
         case 42: // column
         case 48: // skyscraper
+        case 53: // stairs
+        case 58: // screen door
+        case 59: // stairway
         case 61: // bridge
+        case 79: // hovel
         case 84: // tower
+        case 86: // awning
+        case 88: // booth
+        case 95: // bannister
+        case 106: // canopy
+        case 121: // step
+        case 140: // pier
             return AISegClass::BUILDING;
 
         // Vehicle: cars, buses, trucks, boats, bikes
@@ -83,6 +102,7 @@ AISegClass adeToAIClass(int adeClass)
         case 102: // van
         case 103: // ship
         case 116: // minibike
+        case 122: // tank
         case 127: // bicycle
             return AISegClass::VEHICLE;
 
@@ -90,30 +110,94 @@ AISegClass adeToAIClass(int adeClass)
         case 126: // animal
             return AISegClass::ANIMAL;
 
-        // Foreground objects: furniture, appliances, common indoor objects
+        // Foreground objects: furniture, appliances and portable subjects
         case 7:  // bed
         case 10: // cabinet
         case 15: // table
+        case 18: // curtain
         case 19: // chair
+        case 22: // painting
         case 23: // sofa
         case 24: // shelf
+        case 27: // mirror
+        case 28: // rug
         case 30: // armchair
+        case 31: // seat
         case 33: // desk
         case 35: // wardrobe
         case 36: // lamp
         case 37: // bathtub
+        case 39: // cushion
+        case 41: // box
+        case 43: // signboard
         case 44: // chest of drawers
+        case 45: // counter
         case 47: // sink
+        case 49: // fireplace
         case 50: // refrigerator
+        case 55: // case
+        case 56: // pool table
+        case 57: // pillow
         case 62: // bookcase
+        case 63: // blind
         case 64: // coffee table
         case 65: // toilet
+        case 67: // book
         case 69: // bench
+        case 70: // countertop
         case 71: // stove
+        case 73: // kitchen island
         case 74: // computer
+        case 75: // swivel chair
+        case 77: // bar
+        case 78: // arcade machine
+        case 81: // towel
+        case 82: // light
         case 85: // chandelier
+        case 87: // streetlight
         case 89: // television receiver
+        case 93: // pole
+        case 97: // ottoman
         case 98: // bottle
+        case 99: // buffet
+        case 100: // poster
+        case 101: // stage
+        case 104: // fountain
+        case 105: // conveyor belt
+        case 107: // washer
+        case 108: // plaything
+        case 110: // stool
+        case 111: // barrel
+        case 112: // basket
+        case 114: // tent
+        case 115: // bag
+        case 117: // cradle
+        case 118: // oven
+        case 119: // ball
+        case 120: // food
+        case 123: // trade name
+        case 124: // microwave
+        case 125: // pot
+        case 129: // dishwasher
+        case 130: // screen
+        case 131: // blanket
+        case 132: // sculpture
+        case 133: // hood
+        case 134: // sconce
+        case 135: // vase
+        case 136: // traffic light
+        case 137: // tray
+        case 138: // ashcan
+        case 139: // fan
+        case 141: // CRT screen
+        case 142: // plate
+        case 143: // monitor
+        case 144: // bulletin board
+        case 145: // shower
+        case 146: // radiator
+        case 147: // glass
+        case 148: // clock
+        case 149: // flag
             return AISegClass::FOREGROUND_OBJECT;
 
         // Background: floors, roads, sidewalks, earth, water, etc.
@@ -145,9 +229,11 @@ struct AISegmentationEngine::Impl {
     OrtSessionOptions* sessionOptions;
     OrtMemoryInfo* memoryInfo;
     bool initialized;
+    bool usingDirectML;
 
     Impl() : api(nullptr), env(nullptr), session(nullptr),
-             sessionOptions(nullptr), memoryInfo(nullptr), initialized(false)
+             sessionOptions(nullptr), memoryInfo(nullptr), initialized(false),
+             usingDirectML(false)
     {
     }
 
@@ -190,8 +276,29 @@ bool AISegmentationEngine::init(const std::string& modelPath)
         return false;
     }
 
-    pImpl->api->SetIntraOpNumThreads(pImpl->sessionOptions, 1);
-    pImpl->api->SetSessionGraphOptimizationLevel(pImpl->sessionOptions, ORT_ENABLE_EXTENDED);
+    pImpl->api->SetSessionGraphOptimizationLevel(pImpl->sessionOptions, ORT_ENABLE_ALL);
+
+#ifdef RT_AI_MASKING_DIRECTML
+    pImpl->api->DisableMemPattern(pImpl->sessionOptions);
+    pImpl->api->DisableCpuMemArena(pImpl->sessionOptions);
+    pImpl->api->SetSessionExecutionMode(pImpl->sessionOptions, ORT_SEQUENTIAL);
+    status = OrtSessionOptionsAppendExecutionProvider_DML(pImpl->sessionOptions, 0);
+    if (status) {
+        fprintf(stderr, "AI Masking: DirectML unavailable (%s), using CPU\n",
+                pImpl->api->GetErrorMessage(status));
+        pImpl->api->ReleaseStatus(status);
+    } else {
+        pImpl->usingDirectML = true;
+        fprintf(stderr, "AI Masking: using DirectML execution provider\n");
+    }
+#endif
+
+    if (!pImpl->usingDirectML) {
+        const unsigned int hardwareThreads = std::thread::hardware_concurrency();
+        const int inferenceThreads = static_cast<int>(
+            std::max(1u, std::min(4u, hardwareThreads > 1 ? hardwareThreads / 2 : 1u)));
+        pImpl->api->SetIntraOpNumThreads(pImpl->sessionOptions, inferenceThreads);
+    }
 
 #ifdef _WIN32
     // ONNX Runtime on Windows requires wide-char path
@@ -287,17 +394,27 @@ std::vector<array2D<float>> AISegmentationEngine::segment(
     #pragma omp parallel for if(multiThread)
 #endif
     for (int y = 0; y < modelH; ++y) {
-        const float srcY = y * scaleY;
-        const int sy = std::min(static_cast<int>(srcY), height - 1);
+        const float srcY = std::max(0.f, (y + 0.5f) * scaleY - 0.5f);
+        const int sy0 = std::min(static_cast<int>(srcY), height - 1);
+        const int sy1 = std::min(sy0 + 1, height - 1);
+        const float fy = srcY - sy0;
 
         for (int x = 0; x < modelW; ++x) {
-            const float srcX = x * scaleX;
-            const int sx = std::min(static_cast<int>(srcX), width - 1);
+            const float srcX = std::max(0.f, (x + 0.5f) * scaleX - 0.5f);
+            const int sx0 = std::min(static_cast<int>(srcX), width - 1);
+            const int sx1 = std::min(sx0 + 1, width - 1);
+            const float fx = srcX - sx0;
+
+            const auto sample = [=](float* const* rows) {
+                const float top = rows[sy0][sx0] + fx * (rows[sy0][sx1] - rows[sy0][sx0]);
+                const float bottom = rows[sy1][sx0] + fx * (rows[sy1][sx1] - rows[sy1][sx0]);
+                return top + fy * (bottom - top);
+            };
 
             // Convert linear RGB [0,65535] to sRGB [0,1]
-            const float r = linearToSRGB(rRows[sy][sx] / 65535.f);
-            const float g = linearToSRGB(gRows[sy][sx] / 65535.f);
-            const float b = linearToSRGB(bRows[sy][sx] / 65535.f);
+            const float r = linearToSRGB(sample(rRows) / 65535.f);
+            const float g = linearToSRGB(sample(gRows) / 65535.f);
+            const float b = linearToSRGB(sample(bRows) / 65535.f);
 
             // CHW layout with ImageNet normalization
             inputTensor[0 * modelH * modelW + y * modelW + x] = (r - MEAN_R) / STD_R;
@@ -341,7 +458,7 @@ std::vector<array2D<float>> AISegmentationEngine::segment(
         return result;
     }
 
-    // 3. Postprocess: [1,21,H,W] logits -> softmax -> map to AISegClass -> upscale
+    // 3. Postprocess: ADE logits -> softmax -> map to AISegClass -> upscale
     float* outputData = nullptr;
     pImpl->api->GetTensorMutableData(outputOrt, reinterpret_cast<void**>(&outputData));
 
@@ -390,7 +507,12 @@ std::vector<array2D<float>> AISegmentationEngine::segment(
         }
     }
 
-    // Process each pixel: softmax over ADE20K classes, then accumulate into AISegClass
+    std::vector<int> classMap(outClasses);
+    for (int c = 0; c < outClasses; ++c) {
+        classMap[c] = static_cast<int>(adeToAIClass(c));
+    }
+
+    // Process each pixel: one softmax pass directly into the broader Steep classes.
 #ifdef _OPENMP
     #pragma omp parallel for if(multiThread)
 #endif
@@ -403,28 +525,25 @@ std::vector<array2D<float>> AISegmentationEngine::segment(
                 if (val > maxVal) maxVal = val;
             }
 
-            // Softmax
             float sumExp = 0.f;
-            std::vector<float> probs(outClasses);
+            float groupedExp[static_cast<int>(AISegClass::NUM_CLASSES)] = {};
             for (int c = 0; c < outClasses; ++c) {
-                probs[c] = std::exp(outputData[c * outH * outW + y * outW + x] - maxVal);
-                sumExp += probs[c];
+                const float probability =
+                    std::exp(outputData[c * outH * outW + y * outW + x] - maxVal);
+                groupedExp[classMap[c]] += probability;
+                sumExp += probability;
             }
-            for (int c = 0; c < outClasses; ++c) {
-                probs[c] /= sumExp;
-            }
-
-            // Accumulate into AISegClass (ADE20K has real sky/vegetation classes)
-            for (int c = 0; c < outClasses; ++c) {
-                AISegClass aiClass = adeToAIClass(c);
-                modelMaps[static_cast<int>(aiClass)][y][x] += probs[c];
+            const float inverseSum = sumExp > 0.f ? 1.f / sumExp : 0.f;
+            for (int c = 0; c < numClasses; ++c) {
+                modelMaps[c][y][x] = groupedExp[c] * inverseSum;
             }
         }
     }
 
     pImpl->api->ReleaseValue(outputOrt);
 
-    // 4. Upscale to output resolution via bilinear interpolation + guided filter refinement
+    // 4. Upscale probabilities to the preview resolution. Edge-aware refinement is
+    // cached later with the user's per-mask settings instead of being repeated here.
     for (int c = 0; c < numClasses; ++c) {
         result[c](width, height);
 
@@ -435,13 +554,13 @@ std::vector<array2D<float>> AISegmentationEngine::segment(
         #pragma omp parallel for if(multiThread)
 #endif
         for (int y = 0; y < height; ++y) {
-            const float srcYf = y * yScale;
+            const float srcYf = std::max(0.f, (y + 0.5f) * yScale - 0.5f);
             const int sy0 = std::min(static_cast<int>(srcYf), outH - 1);
             const int sy1 = std::min(sy0 + 1, outH - 1);
             const float fy = srcYf - sy0;
 
             for (int x = 0; x < width; ++x) {
-                const float srcXf = x * xScale;
+                const float srcXf = std::max(0.f, (x + 0.5f) * xScale - 0.5f);
                 const int sx0 = std::min(static_cast<int>(srcXf), outW - 1);
                 const int sx1 = std::min(sx0 + 1, outW - 1);
                 const float fx = srcXf - sx0;
@@ -457,23 +576,6 @@ std::vector<array2D<float>> AISegmentationEngine::segment(
             }
         }
 
-        // Apply guided filter for edge refinement using luminance as guide
-        array2D<float> guide(width, height);
-
-#ifdef _OPENMP
-        #pragma omp parallel for if(multiThread)
-#endif
-        for (int y = 0; y < height; ++y) {
-            for (int x = 0; x < width; ++x) {
-                guide[y][x] = (0.2126f * rRows[y][x] + 0.7152f * gRows[y][x] + 0.0722f * bRows[y][x]) / 65535.f;
-            }
-        }
-
-        // Guided filter: refine mask edges using image luminance as guide.
-        // Use moderate epsilon (0.1) to preserve fine detail like vegetation edges
-        // while still cleaning up noise. Too small epsilon (0.01) aggressively snaps
-        // to luminance edges and cuts off thin features.
-        guidedFilter(guide, result[c], result[c], 6, 0.1f, multiThread);
     }
 
     return result;

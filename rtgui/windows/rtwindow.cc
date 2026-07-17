@@ -1183,9 +1183,20 @@ RTWindow::RTWindow ()
 RTWindow::~RTWindow()
 {
 
-    // Stop MCP server before other members are destroyed
+    // Managed editor panels can outlive this destructor body. Detach them
+    // before mcpServer_ is destroyed so EditorPanel::close() cannot call back
+    // through a partially destroyed RTWindow.
     if (mcpServer_) {
+        mcpServer_->setEditorPanel(nullptr);
         mcpServer_->stop();
+    }
+    if (epanel) {
+        epanel->setParent(nullptr);
+    }
+    for (const auto& entry : epanels) {
+        if (entry.second) {
+            entry.second->setParent(nullptr);
+        }
     }
 
     if (!App::get().isSimpleEditor()) {
