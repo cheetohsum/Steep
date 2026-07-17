@@ -18,7 +18,7 @@
 
 #include <algorithm>
 #include <cmath>
-#include <deque>
+#include <vector>
 
 namespace rtengine
 {
@@ -28,103 +28,137 @@ namespace
 
 constexpr std::size_t MAX_PREPARED_MASKS = 12;
 constexpr std::size_t MAX_REFINED_MASKS = 4;
+constexpr std::size_t MAX_DISTANCE_MASKS = 4;
 constexpr int MAX_MASK_CACHE_DIMENSION = 1024;
+constexpr float DISTANCE_INFINITY = 1.e20f;
 
 int quantize(float value, float scale)
 {
     return static_cast<int>(std::lround(value * scale));
 }
 
-void extremaFilterHorizontal(const array2D<float>& source, array2D<float>& target,
-                             int width, int height, int radius, bool dilate,
-                             bool multiThread)
+void squaredDistanceTransform1D(const float* source, float* target, int length,
+                                std::vector<int>& locations,
+                                std::vector<float>& separators)
 {
+    int envelopeSize = -1;
+    for (int q = 0; q < length; ++q) {
+        if (source[q] >= DISTANCE_INFINITY * 0.5f) {
+            continue;
+        }
+
+        float separator = -DISTANCE_INFINITY;
+        while (envelopeSize >= 0) {
+            const int p = locations[envelopeSize];
+            separator = ((source[q] + static_cast<float>(q * q))
+                         - (source[p] + static_cast<float>(p * p)))
+                / static_cast<float>(2 * (q - p));
+            if (separator > separators[envelopeSize]) {
+                break;
+            }
+            --envelopeSize;
+        }
+
+        ++envelopeSize;
+        locations[envelopeSize] = q;
+        separators[envelopeSize] = envelopeSize == 0
+            ? -DISTANCE_INFINITY
+            : separator;
+        separators[envelopeSize + 1] = DISTANCE_INFINITY;
+    }
+
+    if (envelopeSize < 0) {
+        std::fill(target, target + length, DISTANCE_INFINITY);
+        return;
+    }
+
+    int envelope = 0;
+    for (int q = 0; q < length; ++q) {
+        while (separators[envelope + 1] < q) {
+            ++envelope;
+        }
+        const int delta = q - locations[envelope];
+        target[q] = static_cast<float>(delta * delta)
+            + source[locations[envelope]];
+    }
+}
+
+std::shared_ptr<array2D<float>> distanceToRegion(
+    const array2D<float>& probabilities, float threshold, bool featureInside,
+    int width, int height, bool multiThread)
+{
+    auto horizontal = std::make_shared<array2D<float>>(width, height);
+    auto distance = std::make_shared<array2D<float>>(width, height);
+
+#ifdef _OPENMP
+    #pragma omp parallel if(multiThread)
+#endif
+    {
+        std::vector<float> source(width);
+        std::vector<int> locations(width);
+        std::vector<float> separators(width + 1);
+#ifdef _OPENMP
+        #pragma omp for
+#endif
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                const bool inside = probabilities[y][x] >= threshold;
+                source[x] = inside == featureInside ? 0.f : DISTANCE_INFINITY;
+            }
+            squaredDistanceTransform1D(source.data(), (*horizontal)[y], width,
+                                       locations, separators);
+        }
+    }
+
+#ifdef _OPENMP
+    #pragma omp parallel if(multiThread)
+#endif
+    {
+        std::vector<float> source(height);
+        std::vector<float> target(height);
+        std::vector<int> locations(height);
+        std::vector<float> separators(height + 1);
+#ifdef _OPENMP
+        #pragma omp for
+#endif
+        for (int x = 0; x < width; ++x) {
+            for (int y = 0; y < height; ++y) {
+                source[y] = (*horizontal)[y][x];
+            }
+            squaredDistanceTransform1D(source.data(), target.data(), height,
+                                       locations, separators);
+            for (int y = 0; y < height; ++y) {
+                (*distance)[y][x] = target[y];
+            }
+        }
+    }
+
+    return distance;
+}
+
+std::shared_ptr<array2D<float>> buildSignedDistance(
+    const array2D<float>& probabilities, float threshold,
+    int width, int height, bool multiThread)
+{
+    auto distanceInside = distanceToRegion(
+        probabilities, threshold, true, width, height, multiThread);
+    auto distanceOutside = distanceToRegion(
+        probabilities, threshold, false, width, height, multiThread);
+    auto signedDistance = std::make_shared<array2D<float>>(width, height);
+
 #ifdef _OPENMP
     #pragma omp parallel for if(multiThread)
 #endif
     for (int y = 0; y < height; ++y) {
-        std::deque<int> window;
-        const float* const row = source[y];
-
-        const auto append = [&](int x) {
-            while (!window.empty()
-                    && (dilate ? row[x] >= row[window.back()]
-                               : row[x] <= row[window.back()])) {
-                window.pop_back();
-            }
-            window.push_back(x);
-        };
-
-        for (int x = 0; x <= std::min(radius, width - 1); ++x) {
-            append(x);
-        }
-
         for (int x = 0; x < width; ++x) {
-            target[y][x] = row[window.front()];
-            const int nextLeft = x + 1 - radius;
-            while (!window.empty() && window.front() < nextLeft) {
-                window.pop_front();
-            }
-            const int nextRight = x + radius + 1;
-            if (nextRight < width) {
-                append(nextRight);
-            }
+            const bool inside = probabilities[y][x] >= threshold;
+            (*signedDistance)[y][x] = inside
+                ? std::sqrt((*distanceOutside)[y][x]) - 0.5f
+                : 0.5f - std::sqrt((*distanceInside)[y][x]);
         }
     }
-}
 
-void extremaFilterVertical(const array2D<float>& source, array2D<float>& target,
-                           int width, int height, int radius, bool dilate,
-                           bool multiThread)
-{
-#ifdef _OPENMP
-    #pragma omp parallel for if(multiThread)
-#endif
-    for (int x = 0; x < width; ++x) {
-        std::deque<int> window;
-
-        const auto append = [&](int y) {
-            while (!window.empty()
-                    && (dilate ? source[y][x] >= source[window.back()][x]
-                               : source[y][x] <= source[window.back()][x])) {
-                window.pop_back();
-            }
-            window.push_back(y);
-        };
-
-        for (int y = 0; y <= std::min(radius, height - 1); ++y) {
-            append(y);
-        }
-
-        for (int y = 0; y < height; ++y) {
-            target[y][x] = source[window.front()][x];
-            const int nextTop = y + 1 - radius;
-            while (!window.empty() && window.front() < nextTop) {
-                window.pop_front();
-            }
-            const int nextBottom = y + radius + 1;
-            if (nextBottom < height) {
-                append(nextBottom);
-            }
-        }
-    }
-}
-
-std::shared_ptr<array2D<float>> resizeMaskEdges(
-    const std::shared_ptr<array2D<float>>& source, int width, int height,
-    int radius, bool dilate, bool multiThread)
-{
-    if (radius <= 0) {
-        return source;
-    }
-
-    auto horizontal = std::make_shared<array2D<float>>(width, height);
-    auto resized = std::make_shared<array2D<float>>(width, height);
-    extremaFilterHorizontal(*source, *horizontal, width, height,
-                            radius, dilate, multiThread);
-    extremaFilterVertical(*horizontal, *resized, width, height,
-                          radius, dilate, multiThread);
-    return resized;
+    return signedDistance;
 }
 
 } // namespace
@@ -156,6 +190,15 @@ bool AIMaskCache::PreparedKey::operator==(const PreparedKey& other) const
 bool AIMaskCache::RefinedKey::operator==(const RefinedKey& other) const
 {
     return classIndex == other.classIndex
+        && blur == other.blur
+        && refineRadius == other.refineRadius
+        && refineEps == other.refineEps;
+}
+
+bool AIMaskCache::DistanceKey::operator==(const DistanceKey& other) const
+{
+    return classIndex == other.classIndex
+        && threshold == other.threshold
         && blur == other.blur
         && refineRadius == other.refineRadius
         && refineEps == other.refineEps;
@@ -278,6 +321,7 @@ void AIMaskCache::computeMasks(const std::string& imageId,
     fullW_ = fullW;
     fullH_ = fullH;
     refinedMasks_.clear();
+    distanceMasks_.clear();
     preparedMasks_.clear();
     ++generation_;
 }
@@ -318,9 +362,13 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
     const RefinedKey refinedKey {
         key.classIndex, key.blur, key.refineRadius, key.refineEps
     };
+    const DistanceKey distanceKey {
+        key.classIndex, key.threshold, key.blur, key.refineRadius, key.refineEps
+    };
 
     std::shared_ptr<const array2D<float>> baseMask;
     std::shared_ptr<const array2D<float>> guide;
+    std::shared_ptr<const array2D<float>> signedDistance;
     bool hasRefinedMask = false;
     std::uint64_t generation = 0;
     int width = 0;
@@ -342,19 +390,28 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
             }
         }
 
-        for (auto it = refinedMasks_.rbegin(); it != refinedMasks_.rend(); ++it) {
-            if (it->generation == generation_ && it->key == refinedKey) {
-                baseMask = it->mask;
-                hasRefinedMask = true;
+        for (auto it = distanceMasks_.rbegin(); it != distanceMasks_.rend(); ++it) {
+            if (it->generation == generation_ && it->key == distanceKey) {
+                signedDistance = it->signedDistance;
                 break;
             }
         }
 
-        if (!baseMask) {
-            baseMask = std::shared_ptr<const array2D<float>>(
-                cachedMasks_, &cachedMasks_->at(key.classIndex));
+        if (!signedDistance) {
+            for (auto it = refinedMasks_.rbegin(); it != refinedMasks_.rend(); ++it) {
+                if (it->generation == generation_ && it->key == refinedKey) {
+                    baseMask = it->mask;
+                    hasRefinedMask = true;
+                    break;
+                }
+            }
+
+            if (!baseMask) {
+                baseMask = std::shared_ptr<const array2D<float>>(
+                    cachedMasks_, &cachedMasks_->at(key.classIndex));
+            }
+            guide = cachedGuide_;
         }
-        guide = cachedGuide_;
         generation = generation_;
         width = cachedWidth_;
         height = cachedHeight_;
@@ -362,31 +419,35 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
         fullHeight = fullH_;
     }
 
-    auto prepared = std::make_shared<array2D<float>>(*baseMask);
+    const float safeThreshold = LIM(threshold, 0.f, 1.f);
+    if (!signedDistance) {
+        auto refinedWorking = std::make_shared<array2D<float>>(*baseMask);
 
-    if (!hasRefinedMask) {
-        const float previewScale = fullWidth > 0
-            ? static_cast<float>(width) / static_cast<float>(fullWidth)
-            : 1.f;
-        const int blurRadius = std::max(0, static_cast<int>(std::lround(blur * previewScale)));
-        if (blurRadius > 0) {
-            auto blurred = std::make_shared<array2D<float>>(width, height);
-            boxblur(static_cast<float**>(*prepared), static_cast<float**>(*blurred),
-                    blurRadius, width, height, multiThread);
-            prepared = std::move(blurred);
-        }
+        if (!hasRefinedMask) {
+            const float previewScale = fullWidth > 0
+                ? static_cast<float>(width) / static_cast<float>(fullWidth)
+                : 1.f;
+            const int blurRadius = std::max(
+                0, static_cast<int>(std::lround(blur * previewScale)));
+            if (blurRadius > 0) {
+                auto blurred = std::make_shared<array2D<float>>(width, height);
+                boxblur(static_cast<float**>(*refinedWorking),
+                        static_cast<float**>(*blurred),
+                        blurRadius, width, height, multiThread);
+                refinedWorking = std::move(blurred);
+            }
 
-        if (guide && refineRadius > 0) {
-            const int maxRadius = std::max(1, (std::min(width, height) - 1) / 2 - 1);
-            const int radius = std::min(refineRadius, maxRadius);
-            auto refined = std::make_shared<array2D<float>>(width, height);
-            guidedFilter(*guide, *prepared, *refined, radius,
-                         LIM(refineEps, 0.0001f, 0.5f), multiThread);
-            prepared = std::move(refined);
-        }
+            if (guide && refineRadius > 0) {
+                const int maxRadius = std::max(
+                    1, (std::min(width, height) - 1) / 2 - 1);
+                const int radius = std::min(refineRadius, maxRadius);
+                auto refined = std::make_shared<array2D<float>>(width, height);
+                guidedFilter(*guide, *refinedWorking, *refined, radius,
+                             LIM(refineEps, 0.0001f, 0.5f), multiThread);
+                refinedWorking = std::move(refined);
+            }
 
-        const std::shared_ptr<const array2D<float>> refinedMask = prepared;
-        {
+            const std::shared_ptr<const array2D<float>> refinedMask = refinedWorking;
             MyMutex::MyLock lock(mutex_);
             if (generation == generation_) {
                 refinedMasks_.push_back({refinedKey, generation, refinedMask});
@@ -395,20 +456,15 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
                 }
             }
         }
-        prepared = std::make_shared<array2D<float>>(*refinedMask);
-    }
 
-    const float safeThreshold = LIM(threshold, 0.f, 1.f);
-    constexpr float confidenceHalfWidth = 0.015f;
-#ifdef _OPENMP
-    #pragma omp parallel for if(multiThread)
-#endif
-    for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            (*prepared)[y][x] = LIM(
-                ((*prepared)[y][x] - safeThreshold + confidenceHalfWidth)
-                    / (2.f * confidenceHalfWidth),
-                0.f, 1.f);
+        signedDistance = buildSignedDistance(
+            *refinedWorking, safeThreshold, width, height, multiThread);
+        MyMutex::MyLock lock(mutex_);
+        if (generation == generation_) {
+            distanceMasks_.push_back({distanceKey, generation, signedDistance});
+            while (distanceMasks_.size() > MAX_DISTANCE_MASKS) {
+                distanceMasks_.pop_front();
+            }
         }
     }
 
@@ -416,32 +472,22 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
         ? std::min(static_cast<float>(width) / fullWidth,
                    static_cast<float>(height) / fullHeight)
         : 1.f;
-    const float sizeDelta = maskSize >= 18.f
-        ? maskSize - 18.f
-        : (maskSize - 18.f) * 2.f;
-    const int maxSpatialRadius = std::max(0, std::min(96, std::min(width, height) / 4));
-    const int edgeRadius = std::min(
-        maxSpatialRadius,
-        std::max(0, static_cast<int>(std::lround(std::abs(sizeDelta) * previewScale))));
-    prepared = resizeMaskEdges(prepared, width, height, edgeRadius,
-                               sizeDelta > 0.f, multiThread);
-
-    const int featherRadius = std::min(
-        maxSpatialRadius,
-        std::max(0, static_cast<int>(std::lround(std::max(0.f, feather) * previewScale))));
-    if (featherRadius > 0) {
-        auto feathered = std::make_shared<array2D<float>>(width, height);
-        boxblur(static_cast<float**>(*prepared), static_cast<float**>(*feathered),
-                featherRadius, width, height, multiThread);
-        prepared = std::move(feathered);
-    }
+    const float sizeShift = (maskSize - 18.f) * 0.5f * previewScale;
+    const float featherRadius = std::max(0.f, feather) * 0.5f * previewScale;
+    auto prepared = std::make_shared<array2D<float>>(width, height);
 
 #ifdef _OPENMP
     #pragma omp parallel for if(multiThread)
 #endif
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
-            float value = LIM((*prepared)[y][x], 0.f, 1.f);
+            const float edgeDistance = (*signedDistance)[y][x] + sizeShift;
+            float value = edgeDistance >= 0.f ? 1.f : 0.f;
+            if (featherRadius > 0.01f) {
+                const float transition = LIM(
+                    0.5f + edgeDistance / (2.f * featherRadius), 0.f, 1.f);
+                value = transition * transition * (3.f - 2.f * transition);
+            }
             if (invert) {
                 value = 1.f - value;
             }
@@ -517,6 +563,7 @@ void AIMaskCache::invalidate(const std::string& imageId)
     cachedMasks_.reset();
     cachedGuide_.reset();
     refinedMasks_.clear();
+    distanceMasks_.clear();
     preparedMasks_.clear();
     sourceWidth_ = sourceHeight_ = 0;
     cachedWidth_ = cachedHeight_ = fullW_ = fullH_ = 0;
@@ -532,6 +579,7 @@ void AIMaskCache::invalidateAll()
     cachedMasks_.reset();
     cachedGuide_.reset();
     refinedMasks_.clear();
+    distanceMasks_.clear();
     preparedMasks_.clear();
     sourceWidth_ = sourceHeight_ = 0;
     cachedWidth_ = cachedHeight_ = fullW_ = fullH_ = 0;

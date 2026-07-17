@@ -339,6 +339,11 @@ void Adjuster::setDefault (double def)
     defaultVal = shapeValue(def);
 }
 
+void Adjuster::setResetValue(double value)
+{
+    ctorDefaultVal = shapeValue(value);
+}
+
 void Adjuster::setDefaultEditedState (EditedState eState)
 {
 

@@ -938,6 +938,7 @@ struct local_params {
     float aimaskthr;
     float aimaskfeath;
     float aimaskblur;
+    float aimasksize;
     bool aimaskinv;
     float aimaskopa;
     int aimaskrefrad;
@@ -1677,7 +1678,9 @@ static void calcLocalParams(int sp, int oW, int oH,  const LocallabParams& local
 
     lp.deltaem = locallab.spots.at(sp).deltae;
     lp.scalereti = scaleret;
-    lp.cir = circr;
+    // AI mask sizing is applied only to the final mask. Keep the local edit's
+    // reference sample fixed so resizing a mask cannot change the edit itself.
+    lp.cir = locallab.spots.at(sp).useAIMask ? 18.f : circr;
     lp.recur = recur;
     lp.actsp = acti;
     lp.xc = w * local_center_x;
@@ -2043,6 +2046,7 @@ static void calcLocalParams(int sp, int oW, int oH,  const LocallabParams& local
     lp.aimaskthr = static_cast<float>(locallab.spots.at(sp).aiMaskThreshold);
     lp.aimaskfeath = static_cast<float>(locallab.spots.at(sp).aiMaskFeather);
     lp.aimaskblur = static_cast<float>(locallab.spots.at(sp).aiMaskBlur);
+    lp.aimasksize = circr;
     lp.aimaskinv = locallab.spots.at(sp).aiMaskInvert;
     lp.aimaskopa = static_cast<float>(locallab.spots.at(sp).aiMaskOpacity);
     lp.aimaskrefrad = locallab.spots.at(sp).aiMaskRefineRadius;
@@ -9903,7 +9907,7 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
     if (lp.useaimask) {
         aiMaskSnapshot = AIMaskCache::getInstance().getPreparedMask(
             static_cast<AISegClass>(lp.aimaskclass),
-            lp.aimaskthr, lp.aimaskfeath, lp.aimaskblur, lp.cir, lp.aimaskinv,
+            lp.aimaskthr, lp.aimaskfeath, lp.aimaskblur, lp.aimasksize, lp.aimaskinv,
             lp.aimaskrefrad, lp.aimaskrefeps, multiThread);
         if (aiMaskSnapshot) {
             aiMaskPtr = aiMaskSnapshot.mask.get();
@@ -15694,9 +15698,11 @@ void ImProcFunctions::Lab_Local(
     // AI edits use the prepared mask's cached bounds. This avoids running every
     // local-edit stage over the whole preview for a small selected subject.
     if (lp.useaimask) {
+        // Use fixed maximum edge controls for the work bounds. The underlying
+        // local edit then remains identical while size/feather only change blending.
         const AIMaskSnapshot aiBounds = AIMaskCache::getInstance().getPreparedMask(
             static_cast<AISegClass>(lp.aimaskclass),
-            lp.aimaskthr, lp.aimaskfeath, lp.aimaskblur, lp.cir, lp.aimaskinv,
+            lp.aimaskthr, 100.f, lp.aimaskblur, 150.f, lp.aimaskinv,
             lp.aimaskrefrad, lp.aimaskrefeps, multiThread);
 
         if (aiBounds && aiBounds.hasBounds()
@@ -15715,8 +15721,6 @@ void ImProcFunctions::Lab_Local(
             const float by1 = LIM(aiBounds.maskY1 * scaleY + processingMargin,
                                   0.f, static_cast<float>(oH));
 
-            lp.xc = 0.5f * (bx0 + bx1);
-            lp.yc = 0.5f * (by0 + by1);
             lp.lxL = std::max(lp.xc - bx0, 1.f);
             lp.lx  = std::max(bx1 - lp.xc, 1.f);
             lp.lyT = std::max(lp.yc - by0, 1.f);
@@ -23783,7 +23787,7 @@ void ImProcFunctions::Lab_Local(
         if (lp.useaimask) {
             aiMaskSnapshotOv = AIMaskCache::getInstance().getPreparedMask(
                 static_cast<AISegClass>(lp.aimaskclass),
-                lp.aimaskthr, lp.aimaskfeath, lp.aimaskblur, lp.cir, lp.aimaskinv,
+                lp.aimaskthr, lp.aimaskfeath, lp.aimaskblur, lp.aimasksize, lp.aimaskinv,
                 lp.aimaskrefrad, lp.aimaskrefeps, true);
             if (aiMaskSnapshotOv) {
                 aiMaskPtrOv = aiMaskSnapshotOv.mask.get();

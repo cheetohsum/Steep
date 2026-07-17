@@ -118,12 +118,31 @@ private:
         std::shared_ptr<const array2D<float>> mask;
     };
 
+    struct DistanceKey
+    {
+        int classIndex;
+        int threshold;
+        int blur;
+        int refineRadius;
+        int refineEps;
+
+        bool operator==(const DistanceKey& other) const;
+    };
+
+    struct DistanceEntry
+    {
+        DistanceKey key;
+        std::uint64_t generation;
+        std::shared_ptr<const array2D<float>> signedDistance;
+    };
+
     mutable MyMutex mutex_;
     std::string cachedImageId_;
     std::string cachedWorkingProfile_;
     std::shared_ptr<const std::vector<array2D<float>>> cachedMasks_;
     std::shared_ptr<const array2D<float>> cachedGuide_;
     std::deque<RefinedEntry> refinedMasks_;
+    std::deque<DistanceEntry> distanceMasks_;
     std::deque<PreparedEntry> preparedMasks_;
     int sourceWidth_;
     int sourceHeight_;

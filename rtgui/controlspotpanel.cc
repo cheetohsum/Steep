@@ -1884,6 +1884,8 @@ void ControlSpotPanel::load_ControlSpot_param()
     locYT_->setValue((double)row[spots_.locYT]);
     centerX_->setValue((double)row[spots_.centerX]);
     centerY_->setValue((double)row[spots_.centerY]);
+    circrad_->setResetValue(18.0);
+    transit_->setResetValue(row[spots_.maskType] == 1 ? 35.0 : 60.0);
     circrad_->setValue((double)row[spots_.circrad]);
     qualityMethod_->set_active(row[spots_.qualityMethod]);
     transit_->setValue((double)row[spots_.transit]);
@@ -2543,6 +2545,7 @@ void ControlSpotPanel::maskTypeChanged(int /*index*/)
     Gtk::TreeModel::Row row = *iter;
 
     row[spots_.maskType] = maskType_->getSelected();
+    transit_->setResetValue(maskType_->getSelected() == 1 ? 35.0 : 60.0);
 
     // Show/hide AI class based on mask type
     if (maskType_->getSelected() == 1) {
@@ -4836,7 +4839,9 @@ void ControlSpotPanel::setDefaults(const rtengine::procparams::ProcParams * defP
         centerX_->setDefault((double)defSpot.centerX);
         centerY_->setDefault((double)defSpot.centerY);
         circrad_->setDefault((double)defSpot.circrad);
-        transit_->setDefault(defSpot.transit);
+        transit_->setDefault(defSpot.useAIMask
+            ? defSpot.aiMaskFeather
+            : defSpot.transit);
         transitweak_->setDefault(defSpot.transitweak);
         transitgrad_->setDefault(defSpot.transitgrad);
         gradangle_->setDefault(defSpot.gradangle);
