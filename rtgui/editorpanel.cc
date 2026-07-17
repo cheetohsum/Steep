@@ -1041,8 +1041,8 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 
     if (!App::get().isSimpleEditor() && filePanel) {
         tbTopPanel_1 = new Gtk::ToggleButton ();
-        iTopPanel_1_Show = new RTImage ("panel-to-bottom", Gtk::ICON_SIZE_LARGE_TOOLBAR);
-        iTopPanel_1_Hide = new RTImage ("panel-to-top", Gtk::ICON_SIZE_LARGE_TOOLBAR);
+        iTopPanel_1_Show = new RTImage ("filmstrip-show", Gtk::ICON_SIZE_LARGE_TOOLBAR);
+        iTopPanel_1_Hide = new RTImage ("filmstrip-hide", Gtk::ICON_SIZE_LARGE_TOOLBAR);
         tbTopPanel_1->set_relief (Gtk::RELIEF_NONE);
         tbTopPanel_1->set_active (true);
         tbTopPanel_1->set_tooltip_markup (M ("MAIN_TOOLTIP_SHOWHIDETP1"));

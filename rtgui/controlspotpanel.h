@@ -39,7 +39,7 @@ public:
 
     virtual void resetToolMaskView() = 0;
     virtual void spotNameChanged(const Glib::ustring &newName) = 0;
-    virtual void spotHovered(bool hovered, bool forceRedraw = false) = 0;
+    virtual void spotHovered(bool hovered, bool forceRedraw = false, int spotIndex = -1) = 0;
 };
 
 
@@ -103,6 +103,7 @@ public:
         int maskType; // 0 = Normal, 1 = AI Mask
         int aiMaskClass; // 0-7 class index
         double aiMaskThreshold; // Segmentation probability cutoff
+        int maskBlendMode; // 0 = Normal, 1 = Darken, 2 = Lighten, 3 = Luminosity, 4 = Color
         std::vector<int> polyMaskPoints; // Polygon vertices: flattened [x1,y1,x2,y2,...]
         double polyMaskFeather; // Polygon feather width
         double polyMaskSnapTolerance; // Magnetic snap search radius
@@ -119,7 +120,8 @@ public:
         SpotSelection = 3,
         SpotDuplication = 4,
         SpotAllVisibilityChanged = 5,
-        SpotCreationAI = 6
+        SpotCreationAI = 6,
+        SpotReorder = 7
     };
     IdleRegister idle_register;
 
@@ -172,6 +174,7 @@ public:
      * @return The index of selected spot in treeview (return -1 if no selected spot)
      */
     int getSelectedSpot();
+    const std::vector<int>& getReorderMap() const { return reorderMap_; }
     /**
      * Setter of selected spot
      *
@@ -290,6 +293,13 @@ private:
     void wavMethodChanged();
     void maskTypeChanged(int index);
     void aiMaskClassChanged(int index);
+    void maskBlendModeChanged(int index);
+    void setMaskBlendMode(int mode);
+    void onRowsReordered(const Gtk::TreeModel::Path& path,
+                         const Gtk::TreeModel::iterator& iter,
+                         int* newOrder);
+    void updateAutomaticMaskName(Gtk::TreeModel::Row& row);
+    bool isAutomaticMaskName(const Glib::ustring& name) const;
 
     void updateParamVisibility();
 
@@ -330,6 +340,7 @@ private:
         Gtk::TreeModelColumn<bool> mouseover; // Used to manage spot enlightening when mouse over
         Gtk::TreeModelColumn<bool> detailsExpanded;
         Gtk::TreeModelColumn<Glib::ustring> name;
+        Gtk::TreeModelColumn<bool> nameAutomatic;
         Gtk::TreeModelColumn<bool> isvisible;
         Gtk::TreeModelColumn<int> curveid; // Associated curve id
         Gtk::TreeModelColumn<int> prevMethod; // 0 = hide, 1 = show
@@ -377,6 +388,7 @@ private:
         Gtk::TreeModelColumn<int> maskType; // 0 = Normal, 1 = AI Mask
         Gtk::TreeModelColumn<int> aiMaskClass; // 0-7 class index
         Gtk::TreeModelColumn<double> aiMaskThreshold;
+        Gtk::TreeModelColumn<int> maskBlendMode;
         Gtk::TreeModelColumn<std::vector<int>> polyMaskPoints;
         Gtk::TreeModelColumn<double> polyMaskFeather;
         Gtk::TreeModelColumn<double> polyMaskSnapTolerance;
@@ -444,6 +456,8 @@ private:
     PopUpButton* const aiMaskClass_;
     sigc::connection aiMaskClassConn_;
     Adjuster* const aiMaskTolerance_;
+    PopUpButton* const maskBlendMode_;
+    sigc::connection maskBlendModeConn_;
     sigc::connection aiPreviewRefresh_; // delayed treeview redraw after AI mask computation
 
     Adjuster* const sensiexclu_;
@@ -569,8 +583,12 @@ private:
 
     // Add-mask menu
     Gtk::Menu* addMaskMenu_;
+    Gtk::RadioMenuItem* blendModeMenuItems_[5] = {};
+    bool updatingBlendModeMenu_ = false;
     int pendingShape_ = 0;
     int pendingAIClass_ = -1;
+    std::vector<int> reorderMap_;
+    sigc::connection rowsReorderedConn_;
     sigc::connection previewRefresh_;
     int aiPreviewAttempts_ = 0;
 

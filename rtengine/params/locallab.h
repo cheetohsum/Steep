@@ -54,6 +54,7 @@ struct LocallabParams {
         double polyMaskFeather; // Polygon mask feather width (0-100 pixels)
         double polyMaskSnapTolerance; // Magnetic snap search radius in preview pixels (0-50)
         double polyMaskLegLength; // Minimum distance between freehand lasso points in pixels (1-20)
+        int maskBlendMode; // 0 Normal, 1 Darken, 2 Lighten, 3 Luminosity, 4 Color
         int centerX;
         int centerY;
         int circrad;

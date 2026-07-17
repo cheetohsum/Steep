@@ -1496,6 +1496,7 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
                 locallab.spots.at(j).polyMaskFeather = locallab.spots.at(j).polyMaskFeather && pSpot.polyMaskFeather == otherSpot.polyMaskFeather;
                 locallab.spots.at(j).polyMaskSnapTolerance = locallab.spots.at(j).polyMaskSnapTolerance && pSpot.polyMaskSnapTolerance == otherSpot.polyMaskSnapTolerance;
                 locallab.spots.at(j).polyMaskLegLength = locallab.spots.at(j).polyMaskLegLength && pSpot.polyMaskLegLength == otherSpot.polyMaskLegLength;
+                locallab.spots.at(j).maskBlendMode = locallab.spots.at(j).maskBlendMode && pSpot.maskBlendMode == otherSpot.maskBlendMode;
                 locallab.spots.at(j).centerX = locallab.spots.at(j).centerX && pSpot.centerX == otherSpot.centerX;
                 locallab.spots.at(j).centerY = locallab.spots.at(j).centerY && pSpot.centerY == otherSpot.centerY;
                 locallab.spots.at(j).circrad = locallab.spots.at(j).circrad && pSpot.circrad == otherSpot.circrad;
@@ -4439,6 +4440,10 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
 
         if (locallab.spots.at(i).loc) {
             toEdit.locallab.spots.at(i).loc = mods.locallab.spots.at(i).loc;
+        }
+
+        if (locallab.spots.at(i).maskBlendMode) {
+            toEdit.locallab.spots.at(i).maskBlendMode = mods.locallab.spots.at(i).maskBlendMode;
         }
 
         if (locallab.spots.at(i).centerX) {
@@ -9390,6 +9395,7 @@ LocallabParamsEdited::LocallabSpotEdited::LocallabSpotEdited(bool v) :
     polyMaskFeather(v),
     polyMaskSnapTolerance(v),
     polyMaskLegLength(v),
+    maskBlendMode(v),
     centerX(v),
     centerY(v),
     circrad(v),
@@ -10249,6 +10255,7 @@ void LocallabParamsEdited::LocallabSpotEdited::set(bool v)
     polyMaskFeather = v;
     polyMaskSnapTolerance = v;
     polyMaskLegLength = v;
+    maskBlendMode = v;
     centerX = v;
     centerY = v;
     circrad = v;

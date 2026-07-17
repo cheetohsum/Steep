@@ -287,6 +287,8 @@ private:
     int colorDotActive_ = 0;
 
     bool maskModeActive_ = false;
+    unsigned editGroupRestoreGeneration_ = 0;
+    sigc::connection editGroupCollapseConn_;
     rtengine::procparams::ToneCurveParams savedToneCurve_;
     rtengine::procparams::VibranceParams savedVibrance_;
     rtengine::procparams::SharpeningParams savedSharpening_;
@@ -317,6 +319,8 @@ private:
     sigc::connection hoverMaskWatchdog_;
     bool pendingHoverState_ = false;
     bool hoverMaskApplied_ = false;  // tracks what state was last sent to engine
+    int hoverPreviewSpot_ = -1;
+    int hoverRestoreSpot_ = -1;
     int hoverMissCount_ = 0;  // consecutive watchdog misses before turning off
     void applyHoverMask();
     void turnOffMaskOverlay(bool forceRedraw = false);
@@ -473,7 +477,7 @@ public:
     void panelChanged(const rtengine::ProcEvent& event, const Glib::ustring& descr) override;
     void setTweakOperator (rtengine::TweakOperator *tOperator) override;
     void unsetTweakOperator (rtengine::TweakOperator *tOperator) override;
-    void hoverMaskChanged(bool hover, bool forceRedraw = false) override;
+    void hoverMaskChanged(bool hover, bool forceRedraw = false, int spotIndex = -1) override;
 
     // FilmNegProvider interface
     void imageTypeChanged (bool isRaw, bool isBayer, bool isXtrans, bool isMono = false, bool isGainMapSupported = false) override;

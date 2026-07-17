@@ -329,6 +329,7 @@ void Locallab::read(const rtengine::procparams::ProcParams* pp, const ParamsEdit
         r.maskType = pp->locallab.spots.at(i).useAIMask ? 1 : 0;
         r.aiMaskClass = pp->locallab.spots.at(i).aiMaskClass;
         r.aiMaskThreshold = pp->locallab.spots.at(i).aiMaskThreshold;
+        r.maskBlendMode = pp->locallab.spots.at(i).maskBlendMode;
         r.polyMaskPoints = pp->locallab.spots.at(i).polyMaskPoints;
         r.polyMaskFeather = pp->locallab.spots.at(i).polyMaskFeather;
         r.polyMaskSnapTolerance = pp->locallab.spots.at(i).polyMaskSnapTolerance;
@@ -530,6 +531,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
             r.maskType = 0; // Normal mask
             r.aiMaskClass = 0;
             r.aiMaskThreshold = newSpot->aiMaskThreshold;
+            r.maskBlendMode = newSpot->maskBlendMode;
             r.polyMaskPoints = newSpot->polyMaskPoints;
             r.polyMaskFeather = newSpot->polyMaskFeather;
             r.polyMaskSnapTolerance = newSpot->polyMaskSnapTolerance;
@@ -577,12 +579,14 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
             newSpot = new LocallabParams::LocallabSpot();
             const int aiClass = expsettings->getPendingAIClass();
 
-            // Name after the AI class
-            const char* aiClassNames[] = {
-                "Background", "Person", "Sky", "Vegetation",
-                "Building", "Vehicle", "Animal", "Foreground"
+            // Name after the AI class while preserving locale-aware automatic renaming.
+            const char* aiMaskNameKeys[] = {
+                "TP_LOCALLAB_MASK_NAME_BACKGROUND", "TP_LOCALLAB_MASK_NAME_PERSON",
+                "TP_LOCALLAB_MASK_NAME_SKY", "TP_LOCALLAB_MASK_NAME_VEGETATION",
+                "TP_LOCALLAB_MASK_NAME_BUILDING", "TP_LOCALLAB_MASK_NAME_VEHICLE",
+                "TP_LOCALLAB_MASK_NAME_ANIMAL", "TP_LOCALLAB_MASK_NAME_FOREGROUND"
             };
-            newSpot->name = Glib::ustring(aiClassNames[aiClass]) + " Mask";
+            newSpot->name = M(aiMaskNameKeys[aiClass]);
 
             // Full-image coverage with rectangle shape
             newSpot->spotMethod = "full";
@@ -728,6 +732,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
             r.maskType = 1; // AI Mask
             r.aiMaskClass = aiClass;
             r.aiMaskThreshold = newSpot->aiMaskThreshold;
+            r.maskBlendMode = newSpot->maskBlendMode;
             r.polyMaskPoints = newSpot->polyMaskPoints;
             r.polyMaskFeather = newSpot->polyMaskFeather;
             r.polyMaskSnapTolerance = newSpot->polyMaskSnapTolerance;
@@ -814,6 +819,25 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
             }
 
             break;
+
+        case (ControlSpotPanel::SpotReorder): {
+            const auto& order = expsettings->getReorderMap();
+            if (order.size() == pp->locallab.spots.size()) {
+                const auto previousSpots = pp->locallab.spots;
+                for (size_t i = 0; i < order.size(); ++i) {
+                    const int oldIndex = order[i];
+                    if (oldIndex >= 0 && oldIndex < static_cast<int>(previousSpots.size())) {
+                        pp->locallab.spots[i] = previousSpots[oldIndex];
+                    }
+                }
+            }
+            pp->locallab.selspot = std::max(0, expsettings->getSelectedSpot());
+            if (!pp->locallab.spots.empty()
+                    && pp->locallab.selspot < static_cast<int>(pp->locallab.spots.size())) {
+                spotName = pp->locallab.spots.at(pp->locallab.selspot).name;
+            }
+            break;
+        }
 
         case (ControlSpotPanel::SpotSelection):  // Spot selection event
             pp->locallab.selspot = expsettings->getSelectedSpot();
@@ -1044,6 +1068,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
             r.maskType = newSpot->useAIMask ? 1 : 0;
             r.aiMaskClass = newSpot->aiMaskClass;
             r.aiMaskThreshold = newSpot->aiMaskThreshold;
+            r.maskBlendMode = newSpot->maskBlendMode;
             r.polyMaskPoints = newSpot->polyMaskPoints;
             r.polyMaskFeather = newSpot->polyMaskFeather;
             r.polyMaskSnapTolerance = newSpot->polyMaskSnapTolerance;
@@ -1191,6 +1216,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                     pp->locallab.spots.at(pp->locallab.selspot).denoichmask = r->denoichmask;
                     pp->locallab.spots.at(pp->locallab.selspot).shortc = r->shortc;
                     pp->locallab.spots.at(pp->locallab.selspot).lumask = r->lumask;
+                    pp->locallab.spots.at(pp->locallab.selspot).maskBlendMode = r->maskBlendMode;
                     //pp->locallab.spots.at(pp->locallab.selspot).savrest = r->savrest;
 
                     if (r->complexMethod == 0) {
@@ -1767,10 +1793,10 @@ void Locallab::setHoverMaskOverlay(bool hover)
     hoverMaskOverlay_ = hover;
 }
 
-void Locallab::spotHovered(bool hovered, bool forceRedraw)
+void Locallab::spotHovered(bool hovered, bool forceRedraw, int spotIndex)
 {
     if (listener) {
-        listener->hoverMaskChanged(hovered, forceRedraw);
+        listener->hoverMaskChanged(hovered, forceRedraw, spotIndex);
     }
 }
 

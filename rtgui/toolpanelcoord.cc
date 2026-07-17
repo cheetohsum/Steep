@@ -1651,6 +1651,8 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
 
     // Reparent global ToolGroups between editPanel and locallabPanel
     if (mode == EditorMode::MASK && prevMode != EditorMode::MASK) {
+        ++editGroupRestoreGeneration_;
+        editGroupCollapseConn_.disconnect();
         editPanel->remove(*lightGroup);
         editPanel->remove(*colorGroup);
         editPanel->remove(*detailGroup);
@@ -1684,11 +1686,6 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
         editPanel->pack_start(*detailGroup, Gtk::PACK_SHRINK);
         editPanel->pack_start(*effectsGroup, Gtk::PACK_SHRINK);
         editPanel->pack_start(*calibrationGroup, Gtk::PACK_SHRINK);
-        // Restore edit-pane defaults: main groups expanded, effects/calibration collapsed
-        lightGroup->setExpanded(true);
-        bwGroup->setExpanded(true);
-        colorGroup->setExpanded(true);
-        detailGroup->setExpanded(true);
     }
 
     // Handle Locallab subscription/unsubscription
@@ -1779,6 +1776,45 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
                 locallab->setSkipToolWrites(false);
             }
         }
+    }
+
+    // Reparenting and the mask-overlay refresh both schedule GTK layout work.
+    // Always return to a clean collapsed Edit pane, then enforce that state on
+    // idle so a stack/map transition cannot reveal every group behind us.
+    if (prevMode == EditorMode::MASK && mode != EditorMode::MASK) {
+        const unsigned generation = ++editGroupRestoreGeneration_;
+        auto collapseEditGroups = [this]() {
+            ToolGroup* groups[] = {
+                lightGroup, bwGroup, colorGroup, detailGroup, effectsGroup, calibrationGroup
+            };
+            for (auto* group : groups) {
+                group->setExpanded(false);
+            }
+        };
+        collapseEditGroups();
+        idle_register.add([this, generation]() -> bool {
+            if (generation == editGroupRestoreGeneration_ && prevMode != EditorMode::MASK) {
+                ToolGroup* groups[] = {
+                    lightGroup, bwGroup, colorGroup, detailGroup, effectsGroup, calibrationGroup
+                };
+                for (auto* group : groups) {
+                    group->setExpanded(false);
+                }
+            }
+            return false;
+        });
+        editGroupCollapseConn_.disconnect();
+        editGroupCollapseConn_ = Glib::signal_timeout().connect([this, generation]() -> bool {
+            if (generation == editGroupRestoreGeneration_ && prevMode != EditorMode::MASK) {
+                ToolGroup* groups[] = {
+                    lightGroup, bwGroup, colorGroup, detailGroup, effectsGroup, calibrationGroup
+                };
+                for (auto* group : groups) {
+                    group->setExpanded(false);
+                }
+            }
+            return false;
+        }, 400);
     }
 
     prevMode = mode;
@@ -2737,6 +2773,11 @@ void ToolPanelCoordinator::turnOffMaskOverlay(bool /*forceRedraw*/)
         return;
     }
 
+    if (hoverRestoreSpot_ >= 0
+            && hoverRestoreSpot_ < static_cast<int>(params->locallab.spots.size())) {
+        params->locallab.selspot = hoverRestoreSpot_;
+    }
+
     if (maskModeActive_) {
         locallab->setSkipToolWrites(true);
     }
@@ -2754,9 +2795,11 @@ void ToolPanelCoordinator::turnOffMaskOverlay(bool /*forceRedraw*/)
         params->blackwhite = savedBlackWhite_;
     }
     ipc->endUpdateParams(AUTOEXP);
+    hoverPreviewSpot_ = -1;
+    hoverRestoreSpot_ = -1;
 }
 
-void ToolPanelCoordinator::hoverMaskChanged(bool hover, bool forceRedraw)
+void ToolPanelCoordinator::hoverMaskChanged(bool hover, bool forceRedraw, int spotIndex)
 {
     if (!ipc || !locallab) return;
 
@@ -2770,14 +2813,16 @@ void ToolPanelCoordinator::hoverMaskChanged(bool hover, bool forceRedraw)
         return;
     }
 
-    // Skip if already on
-    if (hoverMaskApplied_) return;
+    if (hoverMaskApplied_ && hoverPreviewSpot_ == spotIndex) return;
+
+    // A row-to-row hover keeps the overlay active, but the previous row's
+    // pointer watchdog must not survive after its connection is replaced.
+    hoverMaskWatchdog_.disconnect();
 
     // Debounce "on" to avoid expensive reprocessing on rapid mouse movement
-    hoverMaskDebounce_ = Glib::signal_timeout().connect([this]() {
+    hoverMaskDebounce_ = Glib::signal_timeout().connect([this, spotIndex]() {
         if (!ipc || !pendingHoverState_) return false;
 
-        hoverMaskApplied_ = true;
         locallab->setHoverMaskOverlay(true);
         const Locallab::llMaskVisibility mv = locallab->getMaskVisibility();
         ipc->setLocallabMaskVisibility(mv.previewDeltaE, mv.showMaskOverlay,
@@ -2792,6 +2837,12 @@ void ToolPanelCoordinator::hoverMaskChanged(bool hover, bool forceRedraw)
             hoverMaskApplied_ = false;
             deferPanelChanged(rtengine::EvlocallabshowmaskMethod, "");
             return false;
+        }
+
+        if (hoverRestoreSpot_ < 0) {
+            hoverRestoreSpot_ = params->locallab.selspot;
+        } else if (hoverRestoreSpot_ < static_cast<int>(params->locallab.spots.size())) {
+            params->locallab.selspot = hoverRestoreSpot_;
         }
 
         if (maskModeActive_) {
@@ -2809,6 +2860,11 @@ void ToolPanelCoordinator::hoverMaskChanged(bool hover, bool forceRedraw)
             params->sh = savedSH_;
             params->blackwhite = savedBlackWhite_;
         }
+        if (spotIndex >= 0 && spotIndex < static_cast<int>(params->locallab.spots.size())) {
+            params->locallab.selspot = spotIndex;
+            hoverPreviewSpot_ = spotIndex;
+        }
+        hoverMaskApplied_ = true;
         ipc->endUpdateParams(AUTOEXP);
 
         // Start watchdog: periodically check actual pointer position
@@ -3036,6 +3092,8 @@ void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const 
             event == rtengine::EvlocallabToolRemovedWithRefresh)) {
         locallab->resetMaskVisibility();
         hoverMaskApplied_ = false;
+        hoverPreviewSpot_ = -1;
+        hoverRestoreSpot_ = -1;
         hoverMaskDebounce_.disconnect();
         hoverMaskWatchdog_.disconnect();
         ipc->setLocallabMaskVisibility(false, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);

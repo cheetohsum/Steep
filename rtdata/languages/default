@@ -2115,7 +2115,7 @@ MAIN_TOOLTIP_PREVIEWSHARPMASK;Preview the <b>sharpening contrast mask</b>.\nShor
 MAIN_TOOLTIP_QINFO;Quick info on the image.\nShortcut: <b>i</b>
 MAIN_TOOLTIP_SHOWHIDELP1;Show/Hide the left panel.\nShortcut: <b>l</b>
 MAIN_TOOLTIP_SHOWHIDERP1;Show/Hide the right panel.\nShortcut: <b>Alt-l</b>
-MAIN_TOOLTIP_SHOWHIDETP1;Show/Hide the top panel.\nShortcut: <b>Shift-l</b>
+MAIN_TOOLTIP_SHOWHIDETP1;Show or hide the filmstrip.\nShortcut: <b>Shift-l</b>
 MAIN_TOOLTIP_THRESHOLD;Threshold
 MAIN_TOOLTIP_TOGGLE;Toggle the <b>Before</b>/<b>After</b> view.\nShortcut: <b>Shift-b</b>
 MCP_MENU_BUTTON;MCP Server...
@@ -4055,8 +4055,28 @@ TP_LOCALLAB_AIMASK_CLASS_FOREGROUND;Foreground Object
 TP_LOCALLAB_AIMASK_CLASS_TOOLTIP;Select the semantic class for AI-based mask generation.
 TP_LOCALLAB_AIMASK_THRESHOLD;Threshold
 TP_LOCALLAB_AIMASK_THRESHOLD_TOOLTIP;Probability threshold for mask activation. Lower values include more area.
-TP_LOCALLAB_AIMASK_TOLERANCE;Tolerance
-TP_LOCALLAB_AIMASK_TOLERANCE_TOOLTIP;Controls how readily the AI includes uncertain pixels. Higher values select more area.
+TP_LOCALLAB_AIMASK_TOLERANCE;Selection Range
+TP_LOCALLAB_AIMASK_TOLERANCE_TOOLTIP;Controls how broadly the AI selection expands into uncertain pixels. Higher values include more area.
+TP_LOCALLAB_MASK_BLEND_MODE;Blend Mode
+TP_LOCALLAB_MASK_BLEND_TOOLTIP;Controls how this mask's adjustment composites with masks below it.
+TP_LOCALLAB_MASK_BLEND_NORMAL;Normal
+TP_LOCALLAB_MASK_BLEND_DARKEN;Darken
+TP_LOCALLAB_MASK_BLEND_LIGHTEN;Lighten
+TP_LOCALLAB_MASK_BLEND_LUMINOSITY;Luminosity
+TP_LOCALLAB_MASK_BLEND_COLOR;Color
+TP_LOCALLAB_MASK_REORDERED;Mask order
+TP_LOCALLAB_MASK_NAME_ELLIPSE;Ellipse Mask
+TP_LOCALLAB_MASK_NAME_RECTANGLE;Rectangle Mask
+TP_LOCALLAB_MASK_NAME_GRADIENT;Gradient Mask
+TP_LOCALLAB_MASK_NAME_LASSO;Lasso Mask
+TP_LOCALLAB_MASK_NAME_BACKGROUND;Background Mask
+TP_LOCALLAB_MASK_NAME_PERSON;Person Mask
+TP_LOCALLAB_MASK_NAME_SKY;Sky Mask
+TP_LOCALLAB_MASK_NAME_VEGETATION;Vegetation Mask
+TP_LOCALLAB_MASK_NAME_BUILDING;Building Mask
+TP_LOCALLAB_MASK_NAME_VEHICLE;Vehicle Mask
+TP_LOCALLAB_MASK_NAME_ANIMAL;Animal Mask
+TP_LOCALLAB_MASK_NAME_FOREGROUND;Foreground Mask
 TP_LOCALLAB_AIMASK_FEATHER;Feathering
 TP_LOCALLAB_AIMASK_BLUR;Blur
 TP_LOCALLAB_AIMASK_INVERT;Invert Mask

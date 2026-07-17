@@ -518,6 +518,7 @@ public:
         bool polyMaskFeather;
         bool polyMaskSnapTolerance;
         bool polyMaskLegLength;
+        bool maskBlendMode;
         bool centerX;
         bool centerY;
         bool circrad;

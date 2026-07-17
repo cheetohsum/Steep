@@ -15622,6 +15622,19 @@ void ImProcFunctions::Lab_Local(
     struct local_params lp;
     calcLocalParams(sp, oW, oH, params->locallab, lp, prevDeltaE, showMaskOverlay, llColorMask, llColorMaskinv, llExpMask, llExpMaskinv, llSHMask, llSHMaskinv, llvibMask, lllcMask, llsharMask, llcbMask, llretiMask, llsoftMask, lltmMask, llblMask, lllogMask, ll_Mask, llcieMask, locwavCurveden, locwavdenutili);
 
+    const int maskBlendMode = LIM(params->locallab.spots.at(sp).maskBlendMode, 0, 4);
+    const bool specializedMaskPreview = prevDeltaE || showMaskOverlay
+        || llColorMask != 0 || llColorMaskinv != 0 || llExpMask != 0
+        || llExpMaskinv != 0 || llSHMask != 0 || llSHMaskinv != 0
+        || llvibMask != 0 || lllcMask != 0 || llsharMask != 0
+        || llcbMask != 0 || llretiMask != 0 || llsoftMask != 0
+        || lltmMask != 0 || llblMask != 0 || lllogMask != 0
+        || ll_Mask != 0 || llcieMask != 0;
+    std::unique_ptr<LabImage> maskBlendBase;
+    if (maskBlendMode != 0 && !specializedMaskPreview) {
+        maskBlendBase.reset(new LabImage(*transformed, true));
+    }
+
     // Pre-rasterize polygon mask if shape is POLY
     // Polygon vertices are stored in full image coordinates, but processing
     // may happen at reduced resolution (preview). Scale vertices to match.
@@ -23804,6 +23817,29 @@ void ImProcFunctions::Lab_Local(
 
 // Gamut and Munsell control - very important do not deactivated to avoid crash
     avoidcolshi(lp, sp, transformed, reserved, cy, cx, sk);
+
+    if (maskBlendBase) {
+#ifdef _OPENMP
+        #pragma omp parallel for if (multiThread)
+#endif
+        for (int y = 0; y < transformed->H; ++y) {
+            for (int x = 0; x < transformed->W; ++x) {
+                const float baseL = maskBlendBase->L[y][x];
+                const float resultL = transformed->L[y][x];
+                if ((maskBlendMode == 1 && resultL >= baseL)
+                        || (maskBlendMode == 2 && resultL <= baseL)) {
+                    transformed->L[y][x] = baseL;
+                    transformed->a[y][x] = maskBlendBase->a[y][x];
+                    transformed->b[y][x] = maskBlendBase->b[y][x];
+                } else if (maskBlendMode == 3) {
+                    transformed->a[y][x] = maskBlendBase->a[y][x];
+                    transformed->b[y][x] = maskBlendBase->b[y][x];
+                } else if (maskBlendMode == 4) {
+                    transformed->L[y][x] = baseL;
+                }
+            }
+        }
+    }
 }
 
 }

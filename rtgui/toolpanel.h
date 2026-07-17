@@ -56,7 +56,7 @@ public:
     virtual void unsetTweakOperator (rtengine::TweakOperator *tOperator) = 0;
     /// @brief Lightweight mask overlay toggle for hover (bypasses heavy AUTOEXP refresh)
     /// @param forceRedraw If true, always trigger a canvas repaint (e.g. for geometry visibility changes)
-    virtual void hoverMaskChanged(bool hover, bool forceRedraw = false) {}
+    virtual void hoverMaskChanged(bool hover, bool forceRedraw = false, int spotIndex = -1) {}
     virtual void cropPreviewModeChanged(bool editingCrop) {}
 };
 

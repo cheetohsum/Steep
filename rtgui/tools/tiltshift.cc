@@ -56,24 +56,27 @@ TiltShift::TiltShift(): FoldableToolPanel(this, TOOL_NAME, M("TP_TILTSHIFT_LABEL
     EvTiltShiftFeather = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_TILTSHIFT_FEATHER");
     EvTiltShiftAngle = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_TILTSHIFT_ANGLE");
 
-    // Label row: "Tilt-Shift" label on the left, edit toggle button on the right
-    editHBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+    amount = Gtk::manage(new Adjuster(M("TP_TILTSHIFT_AMOUNT"), 0., 100., 1., 0.));
+    focusPos = Gtk::manage(new Adjuster(M("TP_TILTSHIFT_FOCUSPOS"), 0., 100., 1., 50.));
+    focusWidth = Gtk::manage(new Adjuster(M("TP_TILTSHIFT_FOCUSWIDTH"), 0., 100., 1., 20.));
+    feather = Gtk::manage(new Adjuster(M("TP_TILTSHIFT_FEATHER"), 0., 100., 1., 50.));
+    angle = Gtk::manage(new Adjuster(M("TP_TILTSHIFT_ANGLE"), -45., 45., 1., 0.));
+
+    // Keep the tool identity, canvas control, and primary amount adjustment on
+    // one compact row. The canvas button intentionally follows the title.
+    editHBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+    editHBox->set_hexpand(true);
     auto *titleLabel = Gtk::manage(new Gtk::Label(M("TP_TILTSHIFT_LABEL")));
     titleLabel->set_halign(Gtk::ALIGN_START);
-    editHBox->pack_start(*titleLabel, Gtk::PACK_EXPAND_WIDGET, 0);
+    editHBox->pack_start(*titleLabel, Gtk::PACK_SHRINK, 0);
 
     edit = Gtk::manage(new Gtk::ToggleButton());
     edit->get_style_context()->add_class("independent");
     edit->add(*Gtk::manage(new RTImage("crosshair-adjust", Gtk::ICON_SIZE_BUTTON)));
     edit->set_tooltip_text(M("EDIT_OBJECT_TOOLTIP"));
     editConn = edit->signal_toggled().connect(sigc::mem_fun(*this, &TiltShift::editToggled));
-    editHBox->pack_end(*edit, Gtk::PACK_SHRINK, 0);
-
-    amount = Gtk::manage(new Adjuster(M("TP_TILTSHIFT_AMOUNT"), 0., 100., 1., 0.));
-    focusPos = Gtk::manage(new Adjuster(M("TP_TILTSHIFT_FOCUSPOS"), 0., 100., 1., 50.));
-    focusWidth = Gtk::manage(new Adjuster(M("TP_TILTSHIFT_FOCUSWIDTH"), 0., 100., 1., 20.));
-    feather = Gtk::manage(new Adjuster(M("TP_TILTSHIFT_FEATHER"), 0., 100., 1., 50.));
-    angle = Gtk::manage(new Adjuster(M("TP_TILTSHIFT_ANGLE"), -45., 45., 1., 0.));
+    editHBox->pack_start(*edit, Gtk::PACK_SHRINK, 0);
+    editHBox->pack_start(*amount, Gtk::PACK_EXPAND_WIDGET, 0);
 
     amount->setAdjusterListener(this);
     focusPos->setAdjusterListener(this);
@@ -93,7 +96,6 @@ TiltShift::TiltShift(): FoldableToolPanel(this, TOOL_NAME, M("TP_TILTSHIFT_LABEL
 
     auto *summaryBox = getSummaryBox();
     summaryBox->pack_start(*editHBox, Gtk::PACK_SHRINK, 0);
-    summaryBox->pack_start(*amount);
 
     detailContent_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     detailContent_->pack_start(*focusPos);
@@ -329,7 +331,7 @@ void TiltShift::enabledChanged()
 void TiltShift::setBatchMode(bool batchMode)
 {
     editConn.disconnect();
-    removeIfThere(this, editHBox, false);
+    removeIfThere(editHBox, edit, false);
     ToolPanel::setBatchMode(batchMode);
 
     amount->showEditedCB();

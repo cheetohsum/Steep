@@ -234,7 +234,7 @@ private:
     // ControlSpotListener function
     void resetToolMaskView() override;
     void spotNameChanged(const Glib::ustring &newName) override;
-    void spotHovered(bool hovered, bool forceRedraw = false) override;
+    void spotHovered(bool hovered, bool forceRedraw = false, int spotIndex = -1) override;
 
     // LocallabToolListener function
     void resetOtherMaskView(LocallabTool* current) override;

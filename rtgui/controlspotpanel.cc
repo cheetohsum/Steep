@@ -65,6 +65,7 @@ ControlSpotPanel::ControlSpotPanel():
     maskType_(Gtk::manage(new PopUpButton())),
     aiMaskClass_(Gtk::manage(new PopUpButton())),
     aiMaskTolerance_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_TOLERANCE"), 0, 100, 1, 70))),
+    maskBlendMode_(Gtk::manage(new PopUpButton())),
 
     sensiexclu_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_SENSIEXCLU"), 0, 100, 1, 12))),
     structexclu_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_STRUCCOL"), 0, 100, 1, 0))),
@@ -256,6 +257,30 @@ ControlSpotPanel::ControlSpotPanel():
         contextMenu_->append(*mi);
     }
     {
+        auto* blendItem = Gtk::manage(new Gtk::MenuItem(M("TP_LOCALLAB_MASK_BLEND_MODE")));
+        auto* blendMenu = Gtk::manage(new Gtk::Menu());
+        Gtk::RadioMenuItem::Group blendGroup;
+        const char* blendKeys[] = {
+            "TP_LOCALLAB_MASK_BLEND_NORMAL",
+            "TP_LOCALLAB_MASK_BLEND_DARKEN",
+            "TP_LOCALLAB_MASK_BLEND_LIGHTEN",
+            "TP_LOCALLAB_MASK_BLEND_LUMINOSITY",
+            "TP_LOCALLAB_MASK_BLEND_COLOR"
+        };
+        for (int i = 0; i < 5; ++i) {
+            auto* item = Gtk::manage(new Gtk::RadioMenuItem(blendGroup, M(blendKeys[i])));
+            blendModeMenuItems_[i] = item;
+            item->signal_toggled().connect([this, item, i]() {
+                if (item->get_active() && !updatingBlendModeMenu_) {
+                    setMaskBlendMode(i);
+                }
+            });
+            blendMenu->append(*item);
+        }
+        blendItem->set_submenu(*blendMenu);
+        contextMenu_->append(*blendItem);
+    }
+    {
         auto* mi = Gtk::manage(new Gtk::MenuItem(M("TP_LOCALLAB_BUTTON_DEL")));
         mi->signal_activate().connect(sigc::mem_fun(*this, &ControlSpotPanel::on_button_delete));
         contextMenu_->append(*mi);
@@ -264,6 +289,9 @@ ControlSpotPanel::ControlSpotPanel():
 
     treemodel_ = Gtk::ListStore::create(spots_);
     treeview_->set_model(treemodel_);
+    treeview_->set_reorderable(true);
+    rowsReorderedConn_ = treemodel_->signal_rows_reordered().connect(
+        sigc::mem_fun(*this, &ControlSpotPanel::onRowsReordered));
     treeview_->set_name("MaskTreeView");
     treeviewconn_ = treeview_->get_selection()->signal_changed().connect(
                         sigc::mem_fun(
@@ -534,6 +562,23 @@ ControlSpotPanel::ControlSpotPanel():
     }
     aiMaskTolerance_->setAdjusterListener(this);
 
+    maskBlendMode_->addEntry("blend-normal", M("TP_LOCALLAB_MASK_BLEND_NORMAL"));
+    maskBlendMode_->addEntry("blend-darken", M("TP_LOCALLAB_MASK_BLEND_DARKEN"));
+    maskBlendMode_->addEntry("blend-lighten", M("TP_LOCALLAB_MASK_BLEND_LIGHTEN"));
+    maskBlendMode_->addEntry("blend-luminosity", M("TP_LOCALLAB_MASK_BLEND_LUMINOSITY"));
+    maskBlendMode_->addEntry("blend-color", M("TP_LOCALLAB_MASK_BLEND_COLOR"));
+    maskBlendMode_->setSelected(0);
+    maskBlendMode_->hideArrowButton();
+    maskBlendMode_->signal_clicked().connect([this]() { maskBlendMode_->triggerShowMenu(); });
+    maskBlendMode_->buttonGroup->set_hexpand(false);
+    maskBlendMode_->buttonGroup->set_halign(Gtk::ALIGN_START);
+    maskBlendMode_->setShowSelectionLabel(true);
+    maskBlendModeConn_ = maskBlendMode_->signal_changed().connect(
+        sigc::mem_fun(*this, &ControlSpotPanel::maskBlendModeChanged));
+    if (showtooltip) {
+        maskBlendMode_->set_tooltip_text(M("TP_LOCALLAB_MASK_BLEND_TOOLTIP"));
+    }
+
     // Quality method (not packed at top level, used internally)
     Gtk::Box* const ctboxqualitymethod = Gtk::manage(new Gtk::Box());
     Gtk::Label* const labelqualitymethod = Gtk::manage(new Gtk::Label(M("TP_LOCALLAB_QUAL_METHOD") + ":"));
@@ -772,6 +817,7 @@ ControlSpotPanel::ControlSpotPanel():
     maskDetailBox_->pack_start(*shapeTypeRow_, Gtk::PACK_SHRINK);
     maskDetailBox_->pack_start(*ctboxaiclass, Gtk::PACK_SHRINK);
     maskDetailBox_->pack_start(*aiMaskTolerance_, Gtk::PACK_SHRINK);
+    maskDetailBox_->pack_start(*maskBlendMode_->buttonGroup, Gtk::PACK_SHRINK);
     maskDetailBox_->pack_start(*polyBox_, Gtk::PACK_SHRINK);
     maskDetailBox_->pack_start(*circrad_, Gtk::PACK_SHRINK);
     maskDetailBox_->pack_start(*transit_, Gtk::PACK_SHRINK);
@@ -887,6 +933,7 @@ void ControlSpotPanel::setMaskDetailExpanded(bool expanded)
     maskRevealer_->set_visible(hasSelection);
     if (maskDetailExpanded_) {
         maskDetailBox_->show_all();
+        maskBlendMode_->buttonGroup->show();
 
         if (maskType_->getSelected() == 1) {
             ctboxaiclass->show();
@@ -922,6 +969,7 @@ void ControlSpotPanel::setMaskControlsSensitive(bool sensitive)
     polyBox_->set_sensitive(sensitive);
     ctboxaiclass->set_sensitive(sensitive);
     aiMaskTolerance_->set_sensitive(sensitive);
+    maskBlendMode_->buttonGroup->set_sensitive(sensitive);
 }
 
 void ControlSpotPanel::queueMaskPreviewRefresh()
@@ -944,17 +992,40 @@ void ControlSpotPanel::startAIPreviewRefresh()
     }, 120);
 }
 
-bool ControlSpotPanel::onTreeviewMotion(GdkEventMotion* /*event*/)
+bool ControlSpotPanel::onTreeviewMotion(GdkEventMotion* event)
 {
-    // Show the selected spot's mask overlay when mouse is anywhere over the treeview.
-    // We do NOT change the selection on hover — that triggers expensive spot-change
-    // events and resets mask visibility, causing stuck/compounding overlays.
-    if (!eyePinned_ && !sidebarHoverActive_) {
-        if (treeview_->get_selection()->count_selected_rows()) {
-            sidebarHoverActive_ = true;
-            if (controlPanelListener) {
-                controlPanelListener->spotHovered(true);
+    if (eyePinned_) {
+        return false;
+    }
+
+    Gtk::TreeModel::Path path;
+    if (!treeview_->get_path_at_pos(
+            static_cast<int>(event->x), static_cast<int>(event->y), path)) {
+        if (sidebarHoverActive_) {
+            hoveredSpotIndex_ = -1;
+            sidebarHoverActive_ = false;
+            for (auto& row : treemodel_->children()) {
+                row[spots_.mouseover] = false;
             }
+            treeview_->queue_draw();
+            if (controlPanelListener) {
+                controlPanelListener->spotHovered(false, false, -1);
+            }
+        }
+        return false;
+    }
+
+    const int hovered = !path.empty() ? path[0] : -1;
+    if (hovered >= 0 && hovered != hoveredSpotIndex_) {
+        hoveredSpotIndex_ = hovered;
+        sidebarHoverActive_ = true;
+        int index = 0;
+        for (auto& row : treemodel_->children()) {
+            row[spots_.mouseover] = index++ == hovered;
+        }
+        treeview_->queue_draw();
+        if (controlPanelListener) {
+            controlPanelListener->spotHovered(true, false, hovered);
         }
     }
     return false;
@@ -963,11 +1034,15 @@ bool ControlSpotPanel::onTreeviewMotion(GdkEventMotion* /*event*/)
 bool ControlSpotPanel::onTreeviewLeave(GdkEventCrossing* /*event*/)
 {
     hoveredSpotIndex_ = -1;
+    for (auto& row : treemodel_->children()) {
+        row[spots_.mouseover] = false;
+    }
+    treeview_->queue_draw();
     // Only hide overlay on leave if not eye-pinned
     if (!eyePinned_ && sidebarHoverActive_) {
         sidebarHoverActive_ = false;
         if (controlPanelListener) {
-            controlPanelListener->spotHovered(false);
+            controlPanelListener->spotHovered(false, false, -1);
         }
     }
     return false;
@@ -1425,12 +1500,88 @@ void ControlSpotPanel::on_button_rename()
         if (newname != actualname) { // Event is only raised if name is updated
             nameChanged_ = true;
             row[spots_.name] = newname;
+            row[spots_.nameAutomatic] = false;
             treeview_->columns_autosize();
             listener->panelChanged(EvLocallabSpotName, newname);
             if (controlPanelListener) {
                 controlPanelListener->spotNameChanged(newname);
             }
         }
+    }
+}
+
+bool ControlSpotPanel::isAutomaticMaskName(const Glib::ustring& name) const
+{
+    const char* automaticNameKeys[] = {
+        "TP_LOCALLAB_MASK_NAME_ELLIPSE", "TP_LOCALLAB_MASK_NAME_RECTANGLE",
+        "TP_LOCALLAB_MASK_NAME_GRADIENT", "TP_LOCALLAB_MASK_NAME_LASSO",
+        "TP_LOCALLAB_MASK_NAME_BACKGROUND", "TP_LOCALLAB_MASK_NAME_PERSON",
+        "TP_LOCALLAB_MASK_NAME_SKY", "TP_LOCALLAB_MASK_NAME_VEGETATION",
+        "TP_LOCALLAB_MASK_NAME_BUILDING", "TP_LOCALLAB_MASK_NAME_VEHICLE",
+        "TP_LOCALLAB_MASK_NAME_ANIMAL", "TP_LOCALLAB_MASK_NAME_FOREGROUND"
+    };
+    for (const char* key : automaticNameKeys) {
+        if (name == M(key)) {
+            return true;
+        }
+    }
+
+    // Profiles created in another locale or an older build retain their
+    // original generated English name.
+    static const char* legacyAutomaticNames[] = {
+        "Ellipse Mask", "Rectangle Mask", "Gradient Mask", "Lasso Mask",
+        "Background Mask", "Person Mask", "Sky Mask", "Vegetation Mask",
+        "Building Mask", "Vehicle Mask", "Animal Mask", "Foreground Mask"
+    };
+    for (const char* automaticName : legacyAutomaticNames) {
+        if (name == automaticName) {
+            return true;
+        }
+    }
+
+    const std::string raw = name.raw();
+    if (raw.rfind("Mask ", 0) != 0 || raw.size() <= 5) {
+        return false;
+    }
+    for (size_t i = 5; i < raw.size(); ++i) {
+        if (raw[i] < '0' || raw[i] > '9') {
+            return false;
+        }
+    }
+    return true;
+}
+
+void ControlSpotPanel::updateAutomaticMaskName(Gtk::TreeModel::Row& row)
+{
+    if (!row[spots_.nameAutomatic]) {
+        return;
+    }
+
+    static const char* shapeNameKeys[] = {
+        "TP_LOCALLAB_MASK_NAME_ELLIPSE", "TP_LOCALLAB_MASK_NAME_RECTANGLE",
+        "TP_LOCALLAB_MASK_NAME_GRADIENT", "TP_LOCALLAB_MASK_NAME_LASSO"
+    };
+    static const char* aiNameKeys[] = {
+        "TP_LOCALLAB_MASK_NAME_BACKGROUND", "TP_LOCALLAB_MASK_NAME_PERSON",
+        "TP_LOCALLAB_MASK_NAME_SKY", "TP_LOCALLAB_MASK_NAME_VEGETATION",
+        "TP_LOCALLAB_MASK_NAME_BUILDING", "TP_LOCALLAB_MASK_NAME_VEHICLE",
+        "TP_LOCALLAB_MASK_NAME_ANIMAL", "TP_LOCALLAB_MASK_NAME_FOREGROUND"
+    };
+
+    const int type = row[spots_.maskType];
+    const int index = type == 1
+        ? rtengine::LIM(static_cast<int>(row[spots_.aiMaskClass]), 0, 7)
+        : rtengine::LIM(static_cast<int>(row[spots_.shape]), 0, 3);
+    const Glib::ustring newName = M(type == 1 ? aiNameKeys[index] : shapeNameKeys[index]);
+    if (row[spots_.name] == newName) {
+        return;
+    }
+
+    row[spots_.name] = newName;
+    nameChanged_ = true;
+    treeview_->columns_autosize();
+    if (controlPanelListener) {
+        controlPanelListener->spotNameChanged(newName);
     }
 }
 
@@ -1529,6 +1680,14 @@ bool ControlSpotPanel::onSpotSelectionEvent(GdkEventButton* event)
         Gtk::TreeModel::Path path;
         if (treeview_->get_path_at_pos(static_cast<int>(event->x), static_cast<int>(event->y), path)) {
             treeview_->get_selection()->select(path);
+            const auto iter = treemodel_->get_iter(path);
+            if (iter) {
+                const int mode = rtengine::LIM(
+                    static_cast<int>((*iter)[spots_.maskBlendMode]), 0, 4);
+                updatingBlendModeMenu_ = true;
+                blendModeMenuItems_[mode]->set_active(true);
+                updatingBlendModeMenu_ = false;
+            }
             contextMenu_->popup(event->button, event->time);
             return true;
         }
@@ -1573,7 +1732,8 @@ bool ControlSpotPanel::onSpotSelectionEvent(GdkEventButton* event)
 
                     if (controlPanelListener) {
                         // forceRedraw=true ensures canvas repaints to show/hide geometry
-                        controlPanelListener->spotHovered(eyePinned_, true);
+                        controlPanelListener->spotHovered(
+                            eyePinned_, true, eyePinned_ ? path[0] : -1);
                     }
 
                     return true;
@@ -1659,6 +1819,9 @@ void ControlSpotPanel::load_ControlSpot_param()
     aiMaskClass_->setSelected(row[spots_.aiMaskClass]);
     aiMaskTolerance_->setValue(
         100.0 * (1.0 - static_cast<double>(row[spots_.aiMaskThreshold])));
+    maskBlendModeConn_.block(true);
+    maskBlendMode_->setSelected(row[spots_.maskBlendMode]);
+    maskBlendModeConn_.block(false);
     ctboxaiclass->set_visible(row[spots_.maskType] == 1);
     aiMaskTolerance_->set_visible(row[spots_.maskType] == 1);
 
@@ -1766,6 +1929,7 @@ void ControlSpotPanel::shapeChanged(int /*index*/)
 
     const int prevShape = row[spots_.shape];
     row[spots_.shape] = shape_->getSelected();
+    updateAutomaticMaskName(row);
 
     // When switching to Gradient or Polygon, save current dimensions and expand bounding box
     if ((shape_->getSelected() == 2 || shape_->getSelected() == 3) && prevShape != 2 && prevShape != 3) {
@@ -2296,6 +2460,7 @@ void ControlSpotPanel::maskTypeChanged(int /*index*/)
         ctboxaiclass->hide();
         aiMaskTolerance_->hide();
     }
+    updateAutomaticMaskName(row);
 
     if (listener) {
         // Use EvLocallabSpotShape (not EvLocallabSpotSelectedWithMask) so the
@@ -2318,6 +2483,7 @@ void ControlSpotPanel::aiMaskClassChanged(int /*index*/)
     Gtk::TreeModel::Row row = *iter;
 
     row[spots_.aiMaskClass] = aiMaskClass_->getSelected();
+    updateAutomaticMaskName(row);
 
     if (listener) {
         const char* aiClassKeys[] = {
@@ -2334,6 +2500,63 @@ void ControlSpotPanel::aiMaskClassChanged(int /*index*/)
     }
 
     startAIPreviewRefresh();
+}
+
+void ControlSpotPanel::maskBlendModeChanged(int /*index*/)
+{
+    setMaskBlendMode(maskBlendMode_->getSelected());
+}
+
+void ControlSpotPanel::setMaskBlendMode(int mode)
+{
+    const auto selection = treeview_->get_selection();
+    if (!selection->count_selected_rows()) {
+        return;
+    }
+
+    mode = rtengine::LIM(mode, 0, 4);
+    Gtk::TreeModel::Row row = *selection->get_selected();
+    if (static_cast<int>(row[spots_.maskBlendMode]) == mode
+            && maskBlendMode_->getSelected() == mode) {
+        return;
+    }
+
+    row[spots_.maskBlendMode] = mode;
+    maskBlendModeConn_.block(true);
+    maskBlendMode_->setSelected(mode);
+    maskBlendModeConn_.block(false);
+    updatingBlendModeMenu_ = true;
+    blendModeMenuItems_[mode]->set_active(true);
+    updatingBlendModeMenu_ = false;
+
+    if (listener) {
+        static const char* blendKeys[] = {
+            "TP_LOCALLAB_MASK_BLEND_NORMAL", "TP_LOCALLAB_MASK_BLEND_DARKEN",
+            "TP_LOCALLAB_MASK_BLEND_LIGHTEN", "TP_LOCALLAB_MASK_BLEND_LUMINOSITY",
+            "TP_LOCALLAB_MASK_BLEND_COLOR"
+        };
+        listener->panelChanged(EvLocallabSpotShape, M(blendKeys[mode]));
+    }
+}
+
+void ControlSpotPanel::onRowsReordered(
+    const Gtk::TreeModel::Path& path,
+    const Gtk::TreeModel::iterator& /*iter*/,
+    int* newOrder)
+{
+    if (!path.empty() || !newOrder || !listener) {
+        return;
+    }
+
+    const int count = static_cast<int>(treemodel_->children().size());
+    reorderMap_.assign(newOrder, newOrder + count);
+    if (count < 2) {
+        return;
+    }
+
+    eventType = SpotReorder;
+    selSpotChanged_ = true;
+    listener->panelChanged(EvLocallabSpotShape, M("TP_LOCALLAB_MASK_REORDERED"));
 }
 
 void ControlSpotPanel::updateParamVisibility()
@@ -3093,6 +3316,7 @@ void ControlSpotPanel::disableParamlistener(bool cond)
     maskTypeConn_.block(cond);
     aiMaskClassConn_.block(cond);
     aiMaskTolerance_->block(cond);
+    maskBlendModeConn_.block(cond);
 
 }
 
@@ -3627,7 +3851,7 @@ bool ControlSpotPanel::mouseOver(int modifierKey)
 
             // Notify listener that mouse left spot area
             if (controlPanelListener) {
-                controlPanelListener->spotHovered(false);
+                controlPanelListener->spotHovered(false, false, -1);
             }
 
             // Actualize lastObject_
@@ -3641,7 +3865,8 @@ bool ControlSpotPanel::mouseOver(int modifierKey)
         // Notify listener that mouse entered a spot (selected spot only)
         if (controlPanelListener) {
             const bool isSelectedSpot = (selRow[spots_.curveid] == curveId_);
-            controlPanelListener->spotHovered(isSelectedSpot);
+            controlPanelListener->spotHovered(
+                isSelectedSpot, false, isSelectedSpot ? getSelectedSpot() : -1);
         }
 
         // Manage mouseOver preview for TreeView
@@ -4246,6 +4471,7 @@ std::unique_ptr<ControlSpotPanel::SpotRow> ControlSpotPanel::getSpot(const int i
             r->maskType = row[spots_.maskType];
             r->aiMaskClass = row[spots_.aiMaskClass];
             r->aiMaskThreshold = row[spots_.aiMaskThreshold];
+            r->maskBlendMode = row[spots_.maskBlendMode];
             r->polyMaskPoints = row[spots_.polyMaskPoints];
             r->polyMaskFeather = row[spots_.polyMaskFeather];
             r->polyMaskSnapTolerance = row[spots_.polyMaskSnapTolerance];
@@ -4346,6 +4572,7 @@ void ControlSpotPanel::addControlSpot(const SpotRow &newSpot)
     row[spots_.mouseover] = false;
     row[spots_.detailsExpanded] = false;
     row[spots_.name] = newSpot.name;
+    row[spots_.nameAutomatic] = isAutomaticMaskName(newSpot.name);
     row[spots_.isvisible] = newSpot.isvisible;
     row[spots_.curveid] = 0; // No associated curve
     row[spots_.prevMethod] = newSpot.prevMethod;
@@ -4393,6 +4620,7 @@ void ControlSpotPanel::addControlSpot(const SpotRow &newSpot)
     row[spots_.maskType] = newSpot.maskType;
     row[spots_.aiMaskClass] = newSpot.aiMaskClass;
     row[spots_.aiMaskThreshold] = newSpot.aiMaskThreshold;
+    row[spots_.maskBlendMode] = newSpot.maskBlendMode;
     row[spots_.polyMaskPoints] = newSpot.polyMaskPoints;
     row[spots_.polyMaskFeather] = newSpot.polyMaskFeather;
     row[spots_.polyMaskSnapTolerance] = newSpot.polyMaskSnapTolerance;
@@ -4535,6 +4763,7 @@ ControlSpotPanel::ControlSpots::ControlSpots()
     add(mouseover);
     add(detailsExpanded);
     add(name);
+    add(nameAutomatic);
     add(isvisible);
     add(curveid);
     add(prevMethod);
@@ -4582,6 +4811,7 @@ ControlSpotPanel::ControlSpots::ControlSpots()
     add(maskType);
     add(aiMaskClass);
     add(aiMaskThreshold);
+    add(maskBlendMode);
     add(polyMaskPoints);
     add(polyMaskFeather);
     add(polyMaskSnapTolerance);
