@@ -42,6 +42,7 @@
 #include "rtimage.h"
 #include "filepanel.h"
 #include "filebrowserentry.h"
+#include "filethumbnailbuttonset.h"
 #include "guiutils.h"
 #include "options.h"
 #include "dirbrowser.h"
@@ -3287,6 +3288,92 @@ void EditorPanel::showAlbumView (const Glib::ustring& albumName, const std::vect
     applyAlbumViewMode();
 }
 
+void EditorPanel::drawAlbumBadges (const Cairo::RefPtr<Cairo::Context>& cr,
+                                   int x, int y, int w, int h,
+                                   const AlbumItemMeta& meta)
+{
+    if (meta.rank <= 0 && meta.pick == 0 && meta.colorLabel <= 0) {
+        return;
+    }
+
+    FileThumbnailButtonSet::ensureIconsLoaded();
+
+    const auto pill = [&cr](double px, double py, double pw, double ph) {
+        constexpr double radius = 3.0;
+        cr->set_source_rgba(0, 0, 0, 0.5);
+        cr->begin_new_path();
+        cr->arc(px + radius, py + radius, radius, M_PI, 1.5 * M_PI);
+        cr->arc(px + pw - radius, py + radius, radius, 1.5 * M_PI, 2.0 * M_PI);
+        cr->arc(px + pw - radius, py + ph - radius, radius, 0, 0.5 * M_PI);
+        cr->arc(px + radius, py + ph - radius, radius, 0.5 * M_PI, M_PI);
+        cr->close_path();
+        cr->fill();
+    };
+
+    // Stars at bottom-left
+    if (meta.rank > 0 && FileThumbnailButtonSet::rankIcon) {
+        auto starSurf = FileThumbnailButtonSet::rankIcon->get();
+        if (starSurf) {
+            const int iconW = FileThumbnailButtonSet::rankIcon->getWidth();
+            const int iconH = FileThumbnailButtonSet::rankIcon->getHeight();
+            constexpr int gap = 1;
+            const int totalW = meta.rank * (iconW + gap) - gap;
+            const int availW = w - 6;
+            double fitScale = 1.0;
+            if (totalW > availW && totalW > 0) {
+                fitScale = static_cast<double>(availW) / totalW;
+            }
+            const double sx = x + 3;
+            const double sy = y + h - iconH * fitScale - 3;
+            pill(sx - 2, sy - 2, totalW * fitScale + 4, iconH * fitScale + 4);
+            double drawX = sx;
+            for (int i = 0; i < meta.rank; ++i) {
+                cr->save();
+                cr->translate(drawX, sy);
+                cr->scale(fitScale, fitScale);
+                cr->set_source(starSurf, 0, 0);
+                cr->rectangle(0, 0, iconW, iconH);
+                cr->fill();
+                cr->restore();
+                drawX += (iconW + gap) * fitScale;
+            }
+        }
+    }
+
+    // Pick/reject flag at top-right
+    if (meta.pick != 0) {
+        auto& iconPtr = meta.pick == 1
+            ? FileThumbnailButtonSet::pickIcon
+            : FileThumbnailButtonSet::rejectIcon;
+        if (iconPtr) {
+            auto flagSurf = iconPtr->get();
+            if (flagSurf) {
+                const int iconW = iconPtr->getWidth();
+                const int iconH = iconPtr->getHeight();
+                const double fx = x + w - iconW - 3;
+                const double fy = y + 3;
+                pill(fx - 2, fy - 2, iconW + 4, iconH + 4);
+                cr->set_source(flagSurf, fx, fy);
+                cr->rectangle(fx, fy, iconW, iconH);
+                cr->fill();
+            }
+        }
+    }
+
+    // Color label circle at top-left
+    if (meta.colorLabel > 0 && meta.colorLabel <= 5
+            && FileThumbnailButtonSet::colorLabelIcon[meta.colorLabel]) {
+        auto circSurf = FileThumbnailButtonSet::colorLabelIcon[meta.colorLabel]->get();
+        if (circSurf) {
+            const int iconW = FileThumbnailButtonSet::colorLabelIcon[meta.colorLabel]->getWidth();
+            const int iconH = FileThumbnailButtonSet::colorLabelIcon[meta.colorLabel]->getHeight();
+            cr->set_source(circSurf, x + 3, y + 3);
+            cr->rectangle(x + 3, y + 3, iconW, iconH);
+            cr->fill();
+        }
+    }
+}
+
 void EditorPanel::rebuildAlbumGrid ()
 {
     if (!albumViewGrid_) return;
@@ -3326,7 +3413,22 @@ void EditorPanel::rebuildAlbumGrid ()
                                     static_cast<double>(thumbH) / srcH);
             int dispW = std::max(1, static_cast<int>(srcW * scale));
             int dispH = std::max(1, static_cast<int>(srcH * scale));
-            thumbImg->set(src->scale_simple(dispW, dispH, Gdk::INTERP_BILINEAR));
+            auto scaled = src->scale_simple(dispW, dispH, Gdk::INTERP_BILINEAR);
+
+            // Composite rank/pick/label badges onto the thumbnail
+            auto metaIt = albumMetaCache_.find(fpath);
+            if (metaIt != albumMetaCache_.end()
+                    && (metaIt->second.rank > 0 || metaIt->second.pick != 0
+                        || metaIt->second.colorLabel > 0)) {
+                auto surface = Cairo::ImageSurface::create(Cairo::FORMAT_ARGB32, dispW, dispH);
+                auto cr = Cairo::Context::create(surface);
+                Gdk::Cairo::set_source_pixbuf(cr, scaled, 0, 0);
+                cr->paint();
+                drawAlbumBadges(cr, 0, 0, dispW, dispH, metaIt->second);
+                scaled = Gdk::Pixbuf::create(surface, 0, 0, dispW, dispH);
+            }
+
+            thumbImg->set(scaled);
         }
 
         itemBox->pack_start(*thumbImg, Gtk::PACK_SHRINK);
@@ -3593,6 +3695,12 @@ bool EditorPanel::onCollageAreaDraw (const Cairo::RefPtr<Cairo::Context>& cr)
             Gdk::Cairo::set_source_pixbuf(cr, scaled, item.x, item.y);
             cr->rectangle(item.x, item.y, item.w, item.h);
             cr->fill();
+
+            // Rank/pick/label badges, same as browser and grid views
+            auto metaIt = albumMetaCache_.find(item.filepath);
+            if (metaIt != albumMetaCache_.end()) {
+                drawAlbumBadges(cr, item.x, item.y, item.w, item.h, metaIt->second);
+            }
         } else {
             // Placeholder rectangle
             cr->set_source_rgba(0.3, 0.3, 0.3, 0.5);
@@ -3683,6 +3791,11 @@ void EditorPanel::loadAlbumThumbnails (int session, const std::vector<Glib::ustr
                     continue;
                 }
 
+                AlbumItemMeta meta;
+                meta.rank = thm->getRank();
+                meta.pick = thm->getPick();
+                meta.colorLabel = thm->getColorLabel();
+
                 int w = img->getWidth();
                 int h = img->getHeight();
                 auto pixbuf = Gdk::Pixbuf::create_from_data(
@@ -3692,10 +3805,11 @@ void EditorPanel::loadAlbumThumbnails (int session, const std::vector<Glib::ustr
                 thm->decreaseRef();
 
                 Glib::ustring capturedPath = fpath;
-                Glib::signal_idle().connect_once([this, session, capturedPath, pixbufCopy]() {
+                Glib::signal_idle().connect_once([this, session, capturedPath, pixbufCopy, meta]() {
                     if (session != albumViewSession_) return;
 
                     albumThumbCache_[capturedPath] = pixbufCopy;
+                    albumMetaCache_[capturedPath] = meta;
                     // Cache aspect ratio
                     if (pixbufCopy->get_height() > 0) {
                         albumAspectCache_[capturedPath] =

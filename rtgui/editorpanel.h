@@ -413,6 +413,18 @@ private:
     sigc::connection albumViewToggleConn_;
     std::map<std::string, Glib::RefPtr<Gdk::Pixbuf>> albumThumbCache_;
 
+    // Rank/pick/label captured when album thumbnails load, so album views
+    // can badge items like the browser does.
+    struct AlbumItemMeta {
+        int rank = 0;
+        int pick = 0;
+        int colorLabel = 0;
+    };
+    std::map<std::string, AlbumItemMeta> albumMetaCache_;
+    void drawAlbumBadges (const Cairo::RefPtr<Cairo::Context>& cr,
+                          int x, int y, int w, int h,
+                          const AlbumItemMeta& meta);
+
     // Album view mode, zoom, info
     AlbumViewMode albumViewMode_;
     int albumThumbHeight_;

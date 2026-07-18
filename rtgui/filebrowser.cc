@@ -4939,12 +4939,16 @@ void FileBrowser::selectImage(const Glib::ustring& fname, bool doScroll)
                     const double x = entry->getStartX();
                     const double y = entry->getStartY();
                     const int tw = entry->getMinimalWidth();
+                    const int th = entry->getMinimalHeight();
                     const int ww = get_width();
+                    const int wh = get_height();
 
                     MYWRITERLOCK_RELEASE(l);
 
                     if (doScroll) {
-                        setScrollPosition(x - (ww - tw) / 2, y);
+                        // Center both axes: horizontal matters in the
+                        // filmstrip, vertical in the browser grid.
+                        setScrollPosition(x - (ww - tw) / 2, y - (wh - th) / 2);
                     }
 
                     return;
@@ -4964,13 +4968,15 @@ void FileBrowser::selectImage(const Glib::ustring& fname, bool doScroll)
                 selected.push_back(entry);
                 queue_draw();
 
-                // scroll to the selected position, centered horizontally in the container
+                // scroll to the selected position, centered in the container
                 double x = entry->getStartX();
                 double y = entry->getStartY();
 
-                int tw = entry->getMinimalWidth(); // thumb width
+                int tw = entry->getMinimalWidth();  // thumb width
+                int th = entry->getMinimalHeight(); // thumb height
 
-                int ww = get_width(); // window width
+                int ww = get_width();  // window width
+                int wh = get_height(); // window height
 
                 MYWRITERLOCK_RELEASE(l);
 
@@ -4979,8 +4985,9 @@ void FileBrowser::selectImage(const Glib::ustring& fname, bool doScroll)
                 scheduleSelectionNotify();
 
                 if (doScroll) {
-                    // Center thumb
-                    setScrollPosition(x - (ww - tw) / 2, y);
+                    // Center thumb on both axes (filmstrip scrolls
+                    // horizontally, browser grid vertically)
+                    setScrollPosition(x - (ww - tw) / 2, y - (wh - th) / 2);
                 }
 
                 return;

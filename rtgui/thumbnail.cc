@@ -1695,6 +1695,9 @@ int Thumbnail::getPick() const
 void Thumbnail::setPick(int pick)
 {
     properties.pick = pick;
+    // Mirror into the cache data so the flag round-trips through the cache
+    // even for images that have no procparams sidecar yet.
+    cfs.pickLabel = pick;
 }
 
 void Thumbnail::addThumbnailListener (ThumbnailListener* tnl)
@@ -1843,6 +1846,10 @@ void Thumbnail::loadProperties()
         properties.color.value = pparams->colorlabel;
         properties.pick.value = pparams->pickLabel;
         needMetadataColor = false;
+    } else {
+        // No procparams (yet) — the pick flag still round-trips through the
+        // cache image data written by setPick()/updateCache().
+        properties.pick.value = cfs.pickLabel;
     }
 
     const bool sidecarPresenceKnown =

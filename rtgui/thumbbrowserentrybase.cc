@@ -224,7 +224,13 @@ const std::string& ThumbBrowserEntryBase::getExifCollateKey () const
 
 bool ThumbBrowserEntryBase::buttonSetVisible () const
 {
-    return buttonSet && buttonSet->shouldShow() && !(parent && parent->isInTabMode());
+    // Retired as a display: rank/label/pick render as image overlays in all
+    // views now (see drawFilmstripOverlays). The legacy button-set badge only
+    // reflected in-session rating actions — its cached state was never
+    // initialized from the thumbnail on folder load — and drawing both would
+    // duplicate the stars. Rating remains available via keyboard shortcuts,
+    // the context menu, and the editor's star bar.
+    return false;
 }
 
 void ThumbBrowserEntryBase::addButtonSet (LWButtonSet* bs)
@@ -743,9 +749,10 @@ void ThumbBrowserEntryBase::draw (Cairo::RefPtr<Cairo::Context> cc)
     cc->paint();
     cc->restore();
 
-    // In filmstrip mode: draw rating/label overlays directly on the image
-    bool inFilmstrip = parent && parent->getLocation() == ThumbBrowserBase::THLOC_EDITOR;
-    if (inFilmstrip && thumbnail) {
+    // Rating/label/pick overlays draw directly on the image in every view
+    // (browser and filmstrip). They read the thumbnail's live state, so
+    // flags and stars are correct immediately after a folder loads.
+    if (thumbnail) {
         drawFilmstripOverlays(cc, x_offset, y_offset);
     }
 

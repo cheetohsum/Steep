@@ -2027,6 +2027,21 @@ void RTWindow::MoveFileBrowserToMain()
         fCatalog->enableTabMode (false);
         fCatalog->tbLeftPanel_1_visible (false);  // Left toggle now in FilePanel footer
         fCatalog->tbRightPanel_1_visible (true);
+
+        // Center the browser on the image that was selected in the filmstrip.
+        // Deferred to a low-priority idle so the re-parented browser has been
+        // allocated and re-arranged first — entry positions are only valid
+        // after that.
+        if (epanel) {
+            const Glib::ustring current = epanel->getFileName();
+            if (!current.empty()) {
+                Glib::signal_idle().connect_once([fCatalog, current]() {
+                    if (fCatalog->fileBrowser) {
+                        fCatalog->fileBrowser->selectImage(current, true);
+                    }
+                }, Glib::PRIORITY_LOW);
+            }
+        }
     }
 }
 
