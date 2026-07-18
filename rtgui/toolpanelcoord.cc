@@ -1151,6 +1151,11 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
     toolBar = new ToolBar();
     toolBar->setToolBarListener(this);
     toolBar->hideCropTools();
+    toolBar->setAutoLevelHandler([this]() {
+        if (rotate) {
+            rotate->requestAutoLevel();
+        }
+    });
 
     // Pack spot WB and color picker into WB's picker row
     if (whitebalance->getPickerRow() && toolBar->getWbTool()) {
@@ -3044,9 +3049,15 @@ void ToolPanelCoordinator::buildQuickEditBar()
     autoDrop->set_valign(Gtk::ALIGN_END);
     autoDrop->set_size_request(24, 22);
     autoDrop->set_popup(*autoMenu);
-    // Open on click only. Popping the menu from enter/motion handlers takes
-    // a GTK grab while the pointer is mid-gesture, which strands the grab
-    // (stuck cursor, clicks swallowed until one is spent dismissing it).
+    // Hover-open: entering the arrow pops the menu without a click.
+    // Enter-notify only (motion re-triggering was the stranded-grab bug).
+    autoDrop->add_events(Gdk::ENTER_NOTIFY_MASK);
+    autoDrop->signal_enter_notify_event().connect([autoDrop](GdkEventCrossing* event) -> bool {
+        if ((!event || event->detail != GDK_NOTIFY_INFERIOR) && !autoDrop->get_active()) {
+            autoDrop->set_active(true);
+        }
+        return false;
+    });
     autoDrop->signal_toggled().connect([this, autoDrop]() {
         if (!autoDrop->get_active()) {
             endQuickPreview(true);
@@ -3123,7 +3134,14 @@ void ToolPanelCoordinator::buildQuickEditBar()
     bwDrop->set_valign(Gtk::ALIGN_END);
     bwDrop->set_size_request(24, 22);
     bwDrop->set_popup(*bwMenu);
-    // Open on click only — hover-opening takes a stray GTK grab (see autoDrop).
+    // Hover-open, enter-notify only (see autoDrop)
+    bwDrop->add_events(Gdk::ENTER_NOTIFY_MASK);
+    bwDrop->signal_enter_notify_event().connect([bwDrop](GdkEventCrossing* event) -> bool {
+        if ((!event || event->detail != GDK_NOTIFY_INFERIOR) && !bwDrop->get_active()) {
+            bwDrop->set_active(true);
+        }
+        return false;
+    });
     bwDrop->signal_toggled().connect([this, bwDrop]() {
         if (!bwDrop->get_active()) {
             endQuickPreview(true);

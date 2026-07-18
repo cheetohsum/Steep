@@ -626,7 +626,43 @@ public:
 namespace {
 
 // Process a stroke-based erase directly on the preview image
-void processStrokeErase(Imagefloat* img, const SpotEntry& entry, const PreviewProps &pp)
+// Zero out mask coverage that earlier stroke entries already repaired, so
+// touching the border of an existing spot never disturbs the overlap.
+void excludePriorStrokeCoverage(std::vector<float>& mask,
+                                int bbW, int bbH, int bbMinX, int bbMinY,
+                                int cropX, int cropY, int skip,
+                                const std::vector<const SpotEntry*>& priorStrokes)
+{
+    for (const auto* prior : priorStrokes) {
+        const float priorRadius = float(prior->radius) / float(skip);
+        for (const auto& pt : prior->strokePoints) {
+            const float cx = float(pt.x - cropX) / float(skip) - bbMinX;
+            const float cy = float(pt.y - cropY) / float(skip) - bbMinY;
+            if (cx < -priorRadius || cy < -priorRadius
+                    || cx > float(bbW) + priorRadius || cy > float(bbH) + priorRadius) {
+                continue;
+            }
+
+            const int pyMin = std::max(0, int(cy - priorRadius));
+            const int pyMax = std::min(bbH - 1, int(cy + priorRadius));
+            const int pxMin = std::max(0, int(cx - priorRadius));
+            const int pxMax = std::min(bbW - 1, int(cx + priorRadius));
+
+            for (int py = pyMin; py <= pyMax; ++py) {
+                for (int px = pxMin; px <= pxMax; ++px) {
+                    const float dx = float(px) - cx;
+                    const float dy = float(py) - cy;
+                    if (dx * dx + dy * dy <= priorRadius * priorRadius) {
+                        mask[py * bbW + px] = 0.f;
+                    }
+                }
+            }
+        }
+    }
+}
+
+void processStrokeErase(Imagefloat* img, const SpotEntry& entry, const PreviewProps &pp,
+                        const std::vector<const SpotEntry*>& priorStrokes)
 {
     if (entry.strokePoints.empty()) return;
 
@@ -689,6 +725,9 @@ void processStrokeErase(Imagefloat* img, const SpotEntry& entry, const PreviewPr
         }
     }
 
+    // Keep the repairs from earlier strokes intact in any overlap
+    excludePriorStrokeCoverage(mask, bbW, bbH, bbMinX, bbMinY, cropX, cropY, skip, priorStrokes);
+
     // Sample average RGB from boundary pixels (where mask transitions from 0 to >0)
     double avgR = 0.0, avgG = 0.0, avgB = 0.0;
     int count = 0;
@@ -734,14 +773,15 @@ void processStrokeErase(Imagefloat* img, const SpotEntry& entry, const PreviewPr
 
 #ifdef RT_AI_MASKING
 // Process a stroke-based AI inpainting directly on the preview image
-void processStrokeAI(Imagefloat* img, const SpotEntry& entry, const PreviewProps &pp)
+void processStrokeAI(Imagefloat* img, const SpotEntry& entry, const PreviewProps &pp,
+                     const std::vector<const SpotEntry*>& priorStrokes)
 {
     if (entry.strokePoints.empty()) return;
 
     auto& engine = rtengine::getAIInpaintingEngine();
     if (!engine.isInitialized()) {
         // Fall back to regular erase if AI engine not available
-        processStrokeErase(img, entry, pp);
+        processStrokeErase(img, entry, pp, priorStrokes);
         return;
     }
 
@@ -814,6 +854,9 @@ void processStrokeAI(Imagefloat* img, const SpotEntry& entry, const PreviewProps
         }
     }
 
+    // Keep the repairs from earlier strokes intact in any overlap
+    excludePriorStrokeCoverage(mask, bbW, bbH, bbMinX, bbMinY, cropX, cropY, skip, priorStrokes);
+
     // Run AI inpainting
     std::vector<float> outR(bbSize), outG(bbSize), outB(bbSize);
     if (engine.inpaint(cropR.data(), cropG.data(), cropB.data(),
@@ -840,17 +883,21 @@ void processStrokeAI(Imagefloat* img, const SpotEntry& entry, const PreviewProps
 
 void ImProcFunctions::removeSpots (Imagefloat* img, ImageSource* imgsrc, const std::vector<SpotEntry> &entries, const PreviewProps &pp, const ColorTemp &currWB, const ColorManagementParams *cmp, int tr)
 {
-    // Process stroke-based entries directly on the image first
+    // Process stroke-based entries directly on the image first. Each entry
+    // knows which strokes came before it, so repainting the border of an
+    // already-repaired spot leaves the earlier repair untouched.
+    std::vector<const SpotEntry*> priorStrokes;
     for (const auto& entry : params->spot.entries) {
         if (entry.isStroke()) {
 #ifdef RT_AI_MASKING
             if (static_cast<int>(entry.method) >= static_cast<int>(SpotMethod::AI_REMOVE)) {
-                processStrokeAI(img, entry, pp);
+                processStrokeAI(img, entry, pp, priorStrokes);
             } else
 #endif
             {
-                processStrokeErase(img, entry, pp);
+                processStrokeErase(img, entry, pp, priorStrokes);
             }
+            priorStrokes.push_back(&entry);
         }
     }
 

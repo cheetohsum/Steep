@@ -71,6 +71,21 @@ ToolBar::ToolBar () : showColPickers(true), listener (nullptr), pickerListener(n
 
     pack_start (*cropTool);
 
+    // One-click auto level, left of the manual line-level (straighten) tool
+    autoLevelBtn = Gtk::manage (new Gtk::Button ());
+    Gtk::Image* autoLevelImg = Gtk::manage (new RTImage ("auto-level", Gtk::ICON_SIZE_LARGE_TOOLBAR));
+    autoLevelBtn->add (*autoLevelImg);
+    autoLevelImg->show ();
+    autoLevelBtn->set_relief(Gtk::RELIEF_NONE);
+    autoLevelBtn->set_tooltip_markup (M("TP_ROTATE_AUTO_LEVEL_TOOLTIP"));
+    autoLevelBtn->show ();
+    autoLevelBtn->signal_clicked().connect([this]() {
+        if (autoLevelHandler_) {
+            autoLevelHandler_();
+        }
+    });
+    pack_start (*autoLevelBtn);
+
     straTool = Gtk::manage (new Gtk::ToggleButton ());
     Gtk::Image* straimg = Gtk::manage (new RTImage ("rotate-straighten", Gtk::ICON_SIZE_LARGE_TOOLBAR));
     straTool->add (*straimg);

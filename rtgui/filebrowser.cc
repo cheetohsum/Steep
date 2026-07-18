@@ -1566,10 +1566,12 @@ FileBrowser::FileBrowser () :
                       [this]() -> Gtk::MenuItem* { return open; });
         addInlineIcon(actionsRow.second, "gears", M("FILEBROWSER_POPUPPROCESS"),
                       [this]() -> Gtk::MenuItem* { return develop; });
-        addInlineIcon(actionsRow.second, "menu-develop-fast", M("FILEBROWSER_POPUPPROCESSFAST"),
-                      [this]() -> Gtk::MenuItem* { return developfast; });
+        addInlineAction(actionsRow.second, "menu-save", M("FILEBROWSER_POPUPSAVEIMAGE"),
+                        [this]() { m_save_image_requested.emit(); });
         addInlineIcon(actionsRow.second, "menu-duplicate", M("FILEBROWSER_POPUPDUPLICATE"),
                       [this]() -> Gtk::MenuItem* { return duplicate; });
+        addInlineAction(actionsRow.second, "external-editor", M("MAIN_BUTTON_SENDTOEDITOR"),
+                        [this]() { m_external_editor_requested.emit(); });
         addInlineIcon(actionsRow.second, "add-to-album", M("EDITOR_ADD_TO_ALBUM_TOOLTIP"),
                       [this]() -> Gtk::MenuItem* { return addToAlbum; });
         inlineAddToAlbumIcon_ = inlineZones->back().widget;
@@ -1783,6 +1785,8 @@ FileBrowser::FileBrowser () :
     developfast->hide();
     pmenu->attach (*Gtk::manage(saveImage = new MyImageMenuItem (M("FILEBROWSER_POPUPSAVEIMAGE"), "menu-save")), 0, 1, p, p + 1);
     p++;
+    saveImage->set_no_show_all(true);
+    saveImage->hide();  // surfaced in the Actions quick-action row
 
     pmenu->attach (*Gtk::manage(new Gtk::SeparatorMenuItem ()), 0, 1, p, p + 1);
     p++;
@@ -1929,6 +1933,8 @@ FileBrowser::FileBrowser () :
             editExternal = new MyImageMenuItem(M("MAIN_BUTTON_SENDTOEDITOR"), "external-editor")),
             0, 1, p, p + 1);
         p++;
+        editExternal->set_no_show_all(true);
+        editExternal->hide();  // surfaced in the Actions quick-action row
     }
 
 #if defined(_WIN32)
@@ -2286,7 +2292,8 @@ FileBrowser::FileBrowser () :
         // tool's options menu directly below it (sort, file operations,
         // open-with, dark frame, flat field, cache)
         {
-            auto addSubmenuTool = [this, inlineZones, makeInlineImage](
+            auto addSubmenuTool = [this, inlineZones, makeInlineImage,
+                                   hitZoneAt, setHover, hoverState](
                                       Gtk::Box* row, const char* icon,
                                       const Glib::ustring& tooltip,
                                       std::function<Gtk::MenuItem*()> parent) {
@@ -2309,6 +2316,52 @@ FileBrowser::FileBrowser () :
                     }
                 };
                 inlineZones->push_back(std::move(zone));
+
+                // While this tool's menu is open it owns the input grab, so
+                // pmenu no longer sees motion. Track motion here instead:
+                // moving over a different tools icon switches menus, moving
+                // back over other menu rows closes this one.
+                if (Gtk::Menu* sub = getMenu()) {
+                    sub->add_events(Gdk::POINTER_MOTION_MASK);
+                    sub->signal_motion_notify_event().connect(
+                        [this, sub, hitZoneAt, setHover, hoverState](GdkEventMotion* event) -> bool {
+                            if (!event) {
+                                return false;
+                            }
+
+                            // Pointer inside the submenu itself: leave it be
+                            if (auto win = sub->get_window()) {
+                                int wx = 0;
+                                int wy = 0;
+                                win->get_origin(wx, wy);
+                                if (event->x_root >= wx && event->y_root >= wy
+                                        && event->x_root < wx + sub->get_allocated_width()
+                                        && event->y_root < wy + sub->get_allocated_height()) {
+                                    return false;
+                                }
+                            }
+
+                            InlineZone* over = hitZoneAt(event->x_root, event->y_root);
+                            if (over && over->hoverMenu) {
+                                // switches menus via the hover timer
+                                setHover(over, event->x_root, event->y_root);
+                            } else if (over) {
+                                // back on a regular row: close this menu
+                                sub->popdown();
+                                if (hoverState->openSubmenu == sub) {
+                                    hoverState->openSubmenu = nullptr;
+                                }
+                                setHover(over, event->x_root, event->y_root);
+                            }
+                            return false;
+                        },
+                        false);
+                    sub->signal_deactivate().connect([sub, hoverState]() {
+                        if (hoverState->openSubmenu == sub) {
+                            hoverState->openSubmenu = nullptr;
+                        }
+                    });
+                }
             };
 
             auto toolsRow = makeInlineRow(M("FILEBROWSER_POPUPTOOLS"));

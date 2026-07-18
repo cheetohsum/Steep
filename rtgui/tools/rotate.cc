@@ -47,17 +47,9 @@ Rotate::Rotate () : FoldableToolPanel(this, TOOL_NAME, M("TP_ROTATE_LABEL"))
     degree->set_margin_end(10);
     pack_start (*degree, false, false);
 
-    Gtk::Box* autoLevelRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL));
-    autoLevelRow->set_margin_start(10);
-    autoLevelRow->set_margin_end(10);
-    autoLevel = Gtk::manage(new Gtk::Button(M("TP_ROTATE_AUTO_LEVEL")));
-    autoLevel->set_image(*Gtk::manage(new RTImage("rotate-straighten-small", Gtk::ICON_SIZE_BUTTON)));
-    autoLevel->set_always_show_image(true);
-    autoLevel->set_alignment(0.5f, 0.5f);
-    autoLevel->set_tooltip_text(M("TP_ROTATE_AUTO_LEVEL_TOOLTIP"));
-    autoLevel->signal_clicked().connect(sigc::mem_fun(*this, &Rotate::autoLevelPressed));
-    autoLevelRow->pack_end(*autoLevel, false, false);
-    pack_start(*autoLevelRow, false, false);
+    // The Auto Level action moved to the editor toolbar (left of the
+    // line-level tool); this panel keeps only the status feedback label.
+    autoLevel = nullptr;
 
     autoLevelStatus = Gtk::manage(new Gtk::Label());
     autoLevelStatus->set_xalign(1.0f);
@@ -141,10 +133,8 @@ void Rotate::autoLevelPressed ()
         return;
     }
 
-    autoLevel->set_sensitive(false);
     double correction = 0.0;
     const bool detected = rlistener->autoLevelRequested(correction);
-    autoLevel->set_sensitive(true);
 
     if (!detected || std::abs(degree->getValue() + correction) > 45.0) {
         showAutoLevelStatus(M("TP_ROTATE_AUTO_LEVEL_FAILED"));
@@ -178,7 +168,6 @@ void Rotate::setBatchMode (bool batchMode)
 
     ToolPanel::setBatchMode (batchMode);
     degree->showEditedCB ();
-    autoLevel->set_visible(!batchMode);
 }
 
 void Rotate::setAdjusterBehavior (bool rotadd)

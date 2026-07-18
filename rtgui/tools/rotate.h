@@ -54,6 +54,8 @@ public:
     void setBatchMode   (bool batchMode) override;
 
     void straighten (double deg);
+    // Public trigger for the editor toolbar's auto-level button
+    void requestAutoLevel () { autoLevelPressed(); }
 
     void adjusterChanged        (Adjuster* a, double newval) override;
     void setAdjusterBehavior    (bool rotadd);

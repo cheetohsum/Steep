@@ -18,6 +18,8 @@
  */
 #pragma once
 
+#include <functional>
+
 #include <gtkmm.h>
 
 #include "toolenum.h"
@@ -63,6 +65,8 @@ protected:
     Gtk::ToggleButton* wbTool;
     Gtk::ToggleButton* colPickerTool;
     Gtk::ToggleButton* cropTool;
+    Gtk::Button* autoLevelBtn = nullptr;
+    std::function<void()> autoLevelHandler_;
     Gtk::ToggleButton* straTool;
     Gtk::ToggleButton* perspTool;
     Gtk::ToggleButton* perspGridTool;
@@ -116,6 +120,9 @@ public:
 
     void hideCropTools();
     void hideHandTool();
+    void setAutoLevelHandler(std::function<void()> handler) {
+        autoLevelHandler_ = std::move(handler);
+    }
 
     Gtk::ToggleButton* getWbTool() { return wbTool; }
     Gtk::ToggleButton* getColPickerTool() { return colPickerTool; }

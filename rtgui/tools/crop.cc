@@ -57,7 +57,7 @@ class Crop::CropRatios final
 public:
     CropRatios() :
         ratios{
-            {M("GENERAL_ASIMAGE"), 0.0},
+            {M("TP_CROP_ASPECTRATIO_ASIMAGE"), 0.0},
             {M("GENERAL_CURRENT"), -1.0}
         }
     {
