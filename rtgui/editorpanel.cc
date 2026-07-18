@@ -1796,6 +1796,35 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         connectToggle(fbRecentlySaved[1]);
         filterBar->pack_start(*fbRecentlySaved[1], Gtk::PACK_SHRINK);
 
+        Gtk::Separator* fsepPick = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
+        filterBar->pack_start(*fsepPick, Gtk::PACK_SHRINK);
+
+        // Pick flag group (picked / unpicked / rejected), mirroring the
+        // browser tab's flag filter buttons
+        fbPicked = Gtk::manage(new Gtk::ToggleButton());
+        fbPicked->set_image(*Gtk::manage(new RTImage("flag-pick", Gtk::ICON_SIZE_MENU)));
+        fbPicked->set_relief(Gtk::RELIEF_NONE);
+        fbPicked->set_tooltip_markup(M("FILEBROWSER_SHOWPICKEDHINT"));
+        applyFilterCss(fbPicked);
+        connectToggle(fbPicked);
+        filterBar->pack_start(*fbPicked, Gtk::PACK_SHRINK);
+
+        fbUnflagged = Gtk::manage(new Gtk::ToggleButton());
+        fbUnflagged->set_image(*Gtk::manage(new RTImage("flag-unflagged", Gtk::ICON_SIZE_MENU)));
+        fbUnflagged->set_relief(Gtk::RELIEF_NONE);
+        fbUnflagged->set_tooltip_markup(M("FILEBROWSER_SHOWUNFLAGGEDHINT"));
+        applyFilterCss(fbUnflagged);
+        connectToggle(fbUnflagged);
+        filterBar->pack_start(*fbUnflagged, Gtk::PACK_SHRINK);
+
+        fbRejected = Gtk::manage(new Gtk::ToggleButton());
+        fbRejected->set_image(*Gtk::manage(new RTImage("flag-reject", Gtk::ICON_SIZE_MENU)));
+        fbRejected->set_relief(Gtk::RELIEF_NONE);
+        fbRejected->set_tooltip_markup(M("FILEBROWSER_SHOWREJECTEDHINT"));
+        applyFilterCss(fbRejected);
+        connectToggle(fbRejected);
+        filterBar->pack_start(*fbRejected, Gtk::PACK_SHRINK);
+
         Gtk::Separator* fsep3 = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
         filterBar->pack_start(*fsep3, Gtk::PACK_SHRINK);
 
@@ -2899,6 +2928,10 @@ void EditorPanel::filterBarClearAll()
         fbRecentlySaved[i]->set_active(false);
     }
 
+    fbPicked->set_active(false);
+    fbUnflagged->set_active(false);
+    fbRejected->set_active(false);
+
     fbSearchEntry->set_text("");
 
     // Reset filetype filter
@@ -3076,6 +3109,14 @@ BrowserFilter EditorPanel::buildEditorFilter()
         for (int i = 0; i < 2; i++) {
             f.showRecentlySaved[i] = fbRecentlySaved[i]->get_active();
         }
+    }
+
+    // Pick flags: if any flag toggle is active, show only those states
+    bool anyPick = fbPicked->get_active() || fbUnflagged->get_active() || fbRejected->get_active();
+    if (anyPick) {
+        f.showPicked = fbPicked->get_active();
+        f.showUnflagged = fbUnflagged->get_active();
+        f.showRejected = fbRejected->get_active();
     }
 
     // Search

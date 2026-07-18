@@ -316,6 +316,9 @@ private:
     Gtk::ToggleButton* fbCLabel[5];
     Gtk::ToggleButton* fbEdited[2];
     Gtk::ToggleButton* fbRecentlySaved[2];
+    Gtk::ToggleButton* fbPicked;      // pick flag == 1
+    Gtk::ToggleButton* fbUnflagged;   // pick flag == 0 ("unpicked")
+    Gtk::ToggleButton* fbRejected;    // pick flag == -1
     Gtk::Button* fbClearAll;
     Gtk::Entry* fbSearchEntry;
     bool filterBarBlockSignals;
