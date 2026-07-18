@@ -3927,16 +3927,21 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
                     }
 
                     deferredHighDetailConn_.disconnect();
+                    // Bounded busy-wait: isProcessing can wedge true (stale
+                    // progress bracket from the previous image's processor),
+                    // and this pass is the only route to settled quality.
+                    auto busyPolls = std::make_shared<int>(0);
                     deferredHighDetailConn_ = Glib::signal_timeout().connect(
-                        [this, firstFrameFile, firstFrameSession]() -> bool {
+                        [this, firstFrameFile, firstFrameSession, busyPolls]() -> bool {
                             if (firstFrameSession != openSession_ || fname != firstFrameFile || !ipc) {
                                 return false;
                             }
-                            if (isProcessing) {
+                            if (isProcessing && ++*busyPolls < 8) {
                                 return true;
                             }
 
-                            EDITOR_OPEN_LOG("[editorOpen] idle high-detail refinement file=%s\n", firstFrameFile.c_str());
+                            EDITOR_OPEN_LOG("[editorOpen] idle high-detail refinement file=%s busyPolls=%d\n",
+                                            firstFrameFile.c_str(), *busyPolls);
                             ipc->startProcessing(M_HIGHQUAL | M_MONITOR);
                             return false;
                         },
@@ -4181,16 +4186,27 @@ void EditorPanel::scheduleFinalPreviewRefinement()
     const unsigned int session = openSession_;
     const Glib::ustring sourceFile = fname;
 
+    // The interactive pipeline renders with the fast preview demosaic; this
+    // deferred pass is the ONLY way the settled full-quality image (and any
+    // non-panning-related crop refresh) reaches the screen. isProcessing is a
+    // last-writer-wins flag fed by several progress sources and can wedge
+    // true (e.g. a processing thread torn down mid-run on image switch), so
+    // the wait must be bounded: after a few busy polls, fire anyway.
+    // startProcessing() just ORs the flags into changeSinceLast, which is
+    // safe while a render is in flight.
+    auto busyPolls = std::make_shared<int>(0);
+
     deferredHighDetailConn_ = Glib::signal_timeout().connect(
-        [this, session, sourceFile]() -> bool {
+        [this, session, sourceFile, busyPolls]() -> bool {
             if (session != openSession_ || fname != sourceFile || !ipc) {
                 return false;
             }
-            if (isProcessing) {
+            if (isProcessing && ++*busyPolls < 8) {
                 return true;
             }
 
-            EDITOR_OPEN_LOG("[editorPreview] finalized settled refinement file=%s\n", sourceFile.c_str());
+            EDITOR_OPEN_LOG("[editorPreview] finalized settled refinement file=%s busyPolls=%d\n",
+                            sourceFile.c_str(), *busyPolls);
             ipc->startProcessing(M_HIGHQUAL | M_MONITOR);
             return false;
         },

@@ -3897,6 +3897,15 @@ void ImProcCoordinator::process()
             updaterRunning = false;
             updaterThreadStart.unlock();
             paramsUpdateMutex.unlock();
+
+            // Balance the setProgressState(true) sent when this thread
+            // started. Skipping it leaves the listener's processing flag
+            // wedged true, which blocks the editor's deferred high-quality
+            // refinement for the next image.
+            progress = plistener;
+            if (progress) {
+                progress->setProgressState(false);
+            }
             return;
         }
 

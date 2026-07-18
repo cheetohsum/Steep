@@ -3042,20 +3042,10 @@ void ToolPanelCoordinator::buildQuickEditBar()
     autoDrop->set_halign(Gtk::ALIGN_END);
     autoDrop->set_valign(Gtk::ALIGN_END);
     autoDrop->set_size_request(24, 22);
-    autoDrop->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::POINTER_MOTION_MASK);
     autoDrop->set_popup(*autoMenu);
-    autoDrop->signal_enter_notify_event().connect([autoDrop](GdkEventCrossing*) -> bool {
-        if (!autoDrop->get_active()) {
-            autoDrop->set_active(true);
-        }
-        return false;
-    });
-    autoDrop->signal_motion_notify_event().connect([autoDrop](GdkEventMotion*) -> bool {
-        if (!autoDrop->get_active()) {
-            autoDrop->set_active(true);
-        }
-        return false;
-    });
+    // Open on click only. Popping the menu from enter/motion handlers takes
+    // a GTK grab while the pointer is mid-gesture, which strands the grab
+    // (stuck cursor, clicks swallowed until one is spent dismissing it).
     autoDrop->signal_toggled().connect([this, autoDrop]() {
         if (!autoDrop->get_active()) {
             endQuickPreview(true);
@@ -3131,20 +3121,8 @@ void ToolPanelCoordinator::buildQuickEditBar()
     bwDrop->set_halign(Gtk::ALIGN_END);
     bwDrop->set_valign(Gtk::ALIGN_END);
     bwDrop->set_size_request(24, 22);
-    bwDrop->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::POINTER_MOTION_MASK);
     bwDrop->set_popup(*bwMenu);
-    bwDrop->signal_enter_notify_event().connect([bwDrop](GdkEventCrossing*) -> bool {
-        if (!bwDrop->get_active()) {
-            bwDrop->set_active(true);
-        }
-        return false;
-    });
-    bwDrop->signal_motion_notify_event().connect([bwDrop](GdkEventMotion*) -> bool {
-        if (!bwDrop->get_active()) {
-            bwDrop->set_active(true);
-        }
-        return false;
-    });
+    // Open on click only — hover-opening takes a stray GTK grab (see autoDrop).
     bwDrop->signal_toggled().connect([this, bwDrop]() {
         if (!bwDrop->get_active()) {
             endQuickPreview(true);
@@ -3293,6 +3271,11 @@ void ToolPanelCoordinator::requestQuickAutoParams(int mode, const Glib::ustring&
                     || !ipc
                     || ipc != targetIpc
                     || quickAutoEditThumbnail_ != thumbnail) {
+                // A stale commit must still release the pending flag, or all
+                // future hover previews stay blocked for this session.
+                if (commit && generationState->load(std::memory_order_acquire) == generation) {
+                    quickAutoEditCommitPending_ = false;
+                }
                 return false;
             }
             if (commit) {
@@ -3389,7 +3372,9 @@ void ToolPanelCoordinator::endQuickPreview(bool restore)
     const ProcParams restoreParams = quickPreviewRestore_;
     quickPreviewActive_ = false;
     quickPreviewVariant_ = -1;
-    if (restore) {
+    if (restore && !commitPending) {
+        // With a commit in flight the committed params land momentarily;
+        // restoring here would just flash the old image and waste a render.
         applyQuickEditParams(restoreParams, "Preview", false);
     }
     if (restore && !commitPending) {
