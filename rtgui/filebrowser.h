@@ -167,6 +167,10 @@ protected:
     // fire through the menu grab)
     Gtk::Window* inlineTipWindow_ = nullptr;
     Gtk::Label* inlineTipLabel_ = nullptr;
+    // Inline actions-row icon for add-to-target-album (shown only when a
+    // target album is configured)
+    Gtk::Widget* inlineAddToAlbumIcon_ = nullptr;
+    std::function<bool()> addToAlbumAvailable_;
     MyImageMenuItem* pasteprof;
     MyImageMenuItem* partpasteprof;
     MyImageMenuItem* applyprof;
@@ -363,6 +367,9 @@ public:
 
     void setAlbumCoverSetter(std::function<void(const Glib::ustring&)> setter) {
         albumCoverSetter_ = std::move(setter);
+    }
+    void setAddToAlbumAvailable(std::function<bool()> available) {
+        addToAlbumAvailable_ = std::move(available);
     }
     void setAddToAlbumSetter(std::function<void(const Glib::ustring&)> setter) {
         addToAlbumSetter_ = std::move(setter);

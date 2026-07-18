@@ -2513,6 +2513,9 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                 albumBrowser_->addFileToTargetAlbum(filePath);
             }
         });
+        fPanel->fileCatalog->fileBrowser->setAddToAlbumAvailable([this]() {
+            return albumBrowser_ && !albumBrowser_->getTargetAlbumName().empty();
+        });
     }
 
     if (tbTopPanel_1) {

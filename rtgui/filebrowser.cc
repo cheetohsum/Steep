@@ -1364,6 +1364,8 @@ FileBrowser::FileBrowser () :
     editExternal(nullptr),
     menuRank(nullptr),
     menuLabel(nullptr),
+    menuFileOperations(nullptr),
+    menuExtProg(nullptr),
     miOpenDefaultViewer(nullptr),
     selectDF(nullptr),
     thisIsDF(nullptr),
@@ -1416,13 +1418,14 @@ FileBrowser::FileBrowser () :
             auto* item = Gtk::manage(new Gtk::MenuItem());
             item->set_name("InlineActionRow");
             auto* vbox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
-            vbox->set_margin_top(4);
-            vbox->set_margin_bottom(2);
+            vbox->set_margin_top(2);
+            vbox->set_margin_bottom(1);
             auto* label = Gtk::manage(new Gtk::Label());
             label->set_markup("<span size='small' alpha='55%'>"
                               + Glib::Markup::escape_text(caption) + "</span>");
             label->set_xalign(0.0);
-            label->set_margin_start(8);
+            // Aligns the caption with the left edge of the first icon
+            label->set_margin_start(6);
             vbox->pack_start(*label, Gtk::PACK_SHRINK);
             auto* row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 2));
             vbox->pack_start(*row, Gtk::PACK_SHRINK);
@@ -1525,6 +1528,10 @@ FileBrowser::FileBrowser () :
                       [this]() -> Gtk::MenuItem* { return autoGradeFilm; }, true);
         addInlineIcon(autoRow.second, "auto-grade-film", M("FILEBROWSER_POPUPAUTOGRADEFILM"),
                       [this]() -> Gtk::MenuItem* { return autoGradedFilm; }, true);
+        addInlineIcon(autoRow.second, "ai-denoise", M("FILEBROWSER_POPUPAIDENOISE"),
+                      [this]() -> Gtk::MenuItem* { return aiDenoise; });
+        addInlineIcon(autoRow.second, "rotate-straighten-small", M("TP_ROTATE_AUTO_LEVEL"),
+                      [this]() -> Gtk::MenuItem* { return autoLevel; });
         pmenu->attach(*autoRow.first, 0, 1, p, p + 1);
         p++;
 
@@ -1550,6 +1557,23 @@ FileBrowser::FileBrowser () :
                             }
                         });
         pmenu->attach(*profileRow.first, 0, 1, p, p + 1);
+        p++;
+
+        // File actions: open / export queue / fast export / duplicate /
+        // add to target album (visible only when a target album is set)
+        auto actionsRow = makeInlineRow(M("FILEBROWSER_POPUPACTIONS"));
+        addInlineIcon(actionsRow.second, "menu-open", M("FILEBROWSER_POPUPOPEN"),
+                      [this]() -> Gtk::MenuItem* { return open; });
+        addInlineIcon(actionsRow.second, "gears", M("FILEBROWSER_POPUPPROCESS"),
+                      [this]() -> Gtk::MenuItem* { return develop; });
+        addInlineIcon(actionsRow.second, "menu-develop-fast", M("FILEBROWSER_POPUPPROCESSFAST"),
+                      [this]() -> Gtk::MenuItem* { return developfast; });
+        addInlineIcon(actionsRow.second, "menu-duplicate", M("FILEBROWSER_POPUPDUPLICATE"),
+                      [this]() -> Gtk::MenuItem* { return duplicate; });
+        addInlineIcon(actionsRow.second, "add-to-album", M("EDITOR_ADD_TO_ALBUM_TOOLTIP"),
+                      [this]() -> Gtk::MenuItem* { return addToAlbum; });
+        inlineAddToAlbumIcon_ = inlineZones->back().widget;
+        pmenu->attach(*actionsRow.first, 0, 1, p, p + 1);
         p++;
 
         // Rotate: counter-clockwise / clockwise (moved from the toolbar)
@@ -1709,18 +1733,26 @@ FileBrowser::FileBrowser () :
             hideTip();
             setHover(nullptr, 0.0, 0.0);
         });
-    }
+
+        // NOTE: the surrounding scope stays open until the bottom tools row
+        // so the row-building lambdas remain available for it.
 
     pmenu->attach (*Gtk::manage(open = new MyImageMenuItem (M("FILEBROWSER_POPUPOPEN"), "menu-open")), 0, 1, p, p + 1);
     p++;
+    open->set_no_show_all(true);
+    open->hide();
     if (options.inspectorWindow) {
         pmenu->attach (*Gtk::manage(inspect = new MyImageMenuItem (M("FILEBROWSER_POPUPINSPECT"), "menu-inspect")), 0, 1, p, p + 1);
         p++;
     }
     pmenu->attach (*Gtk::manage(develop = new MyImageMenuItem (M("FILEBROWSER_POPUPPROCESS"), "gears")), 0, 1, p, p + 1);
     p++;
+    develop->set_no_show_all(true);
+    develop->hide();
     pmenu->attach (*Gtk::manage(developfast = new MyImageMenuItem (M("FILEBROWSER_POPUPPROCESSFAST"), "menu-develop-fast")), 0, 1, p, p + 1);
     p++;
+    developfast->set_no_show_all(true);
+    developfast->hide();
     pmenu->attach (*Gtk::manage(saveImage = new MyImageMenuItem (M("FILEBROWSER_POPUPSAVEIMAGE"), "menu-save")), 0, 1, p, p + 1);
     p++;
 
@@ -1732,6 +1764,8 @@ FileBrowser::FileBrowser () :
      ***********************/
     pmenu->attach (*Gtk::manage(aiDenoise = new MyImageMenuItem (M("FILEBROWSER_POPUPAIDENOISE"), "ai-denoise")), 0, 1, p, p + 1);
     p++;
+    aiDenoise->set_no_show_all(true);
+    aiDenoise->hide();
     {
         int position = 0;
         Gtk::Menu* submenu = Gtk::manage(new Gtk::Menu());
@@ -1760,10 +1794,16 @@ FileBrowser::FileBrowser () :
     p++;
     pmenu->attach (*Gtk::manage(autoLevel = new MyImageMenuItem (M("TP_ROTATE_AUTO_LEVEL"), "rotate-straighten-small")), 0, 1, p, p + 1);
     p++;
+    autoLevel->set_no_show_all(true);
+    autoLevel->hide();
     pmenu->attach (*Gtk::manage(duplicate = new MyImageMenuItem (M("FILEBROWSER_POPUPDUPLICATE"), "menu-duplicate")), 0, 1, p, p + 1);
     p++;
+    duplicate->set_no_show_all(true);
+    duplicate->hide();
     pmenu->attach (*Gtk::manage(addToAlbum = new MyImageMenuItem (M("EDITOR_ADD_TO_ALBUM_TOOLTIP"), "add-to-album")), 0, 1, p, p + 1);
     p++;
+    addToAlbum->set_no_show_all(true);
+    addToAlbum->hide();
     pmenu->attach (*Gtk::manage(setAlbumCover = new MyImageMenuItem (M("FILEBROWSER_POPUPSETALBUMCOVER"), "menu-album-cover")), 0, 1, p, p + 1);
     p++;
 
@@ -1771,6 +1811,9 @@ FileBrowser::FileBrowser () :
     p++;
     pmenu->attach (*Gtk::manage(selall = new MyImageMenuItem (M("FILEBROWSER_POPUPSELECTALL"), "menu-select-all")), 0, 1, p, p + 1);
     p++;
+    // Hidden: Ctrl+A accelerator still routes through this identity item
+    selall->set_no_show_all(true);
+    selall->hide();
 
     /***********************
      * sort
@@ -1791,6 +1834,8 @@ FileBrowser::FileBrowser () :
 
     pmenu->attach (*Gtk::manage(menuSort = new MyImageMenuItem (M("FILEBROWSER_POPUPSORTBY"), "menu-sort")), 0, 1, p, p + 1);
     p++;
+    menuSort->set_no_show_all(true);
+    menuSort->hide();
     Gtk::Menu* submenuSort = Gtk::manage (new Gtk::Menu ());
     Gtk::RadioButtonGroup sortOrderGroup, sortMethodGroup;
     for (size_t i = 0; i < cnameSortOrders.size(); i++) {
@@ -1895,6 +1940,8 @@ FileBrowser::FileBrowser () :
 
             submenuExtProg->show_all ();
             menuExtProg->set_submenu (*submenuExtProg);
+            menuExtProg->set_no_show_all(true);
+            menuExtProg->hide();  // surfaced via the bottom tools row
         } else {
 #ifdef _WIN32
             if (miOpenDefaultViewer) {
@@ -1944,6 +1991,8 @@ FileBrowser::FileBrowser () :
 
         submenuFileOperations->show_all ();
         menuFileOperations->set_submenu (*submenuFileOperations);
+        menuFileOperations->set_no_show_all(true);
+        menuFileOperations->hide();  // surfaced via the bottom tools row
     } else {
         pmenu->attach (*Gtk::manage(trash = new MyImageMenuItem (M("FILEBROWSER_POPUPTRASH"), "menu-trash")), 0, 1, p, p + 1);
         p++;
@@ -2192,16 +2241,81 @@ FileBrowser::FileBrowser () :
     }
 
 
-    pmenu->attach (*Gtk::manage(new Gtk::SeparatorMenuItem ()), 0, 1, p, p + 1);
-    p++;
     pmenu->attach (*Gtk::manage(menuDF = new MyImageMenuItem (M("FILEBROWSER_DARKFRAME"), "menu-darkframe")), 0, 1, p, p + 1);
     p++;
+    menuDF->set_no_show_all(true);
+    menuDF->hide();
     pmenu->attach (*Gtk::manage(menuFF = new MyImageMenuItem (M("FILEBROWSER_FLATFIELD"), "menu-flatfield")), 0, 1, p, p + 1);
     p++;
-
-    pmenu->attach (*Gtk::manage(new Gtk::SeparatorMenuItem ()), 0, 1, p, p + 1);
-    p++;
+    menuFF->set_no_show_all(true);
+    menuFF->hide();
     pmenu->attach (*Gtk::manage(cachemenu = new MyImageMenuItem (M("FILEBROWSER_CACHE"), "menu-cache-clear")), 0, 1, p, p + 1);
+    p++;
+    cachemenu->set_no_show_all(true);
+    cachemenu->hide();
+
+        // Bottom tools group: each icon opens its options menu (sort, file
+        // operations, open-with, dark frame, flat field, cache)
+        {
+            auto addSubmenuTool = [this, addInlineAction](Gtk::Box* row, const char* icon,
+                                                          const Glib::ustring& tooltip,
+                                                          std::function<Gtk::MenuItem*()> parent) {
+                addInlineAction(row, icon, tooltip, [this, parent]() {
+                    Gtk::MenuItem* item = parent();
+                    Gtk::Menu* sub = item ? item->get_submenu() : nullptr;
+                    if (sub) {
+                        sub->popup_at_pointer(nullptr);
+                    }
+                });
+            };
+
+            pmenu->attach(*Gtk::manage(new Gtk::SeparatorMenuItem()), 0, 1, p, p + 1);
+            p++;
+
+            auto toolsRow = makeInlineRow(M("FILEBROWSER_POPUPTOOLS"));
+            addSubmenuTool(toolsRow.second, "menu-sort", M("FILEBROWSER_POPUPSORTBY"),
+                           [this]() -> Gtk::MenuItem* { return menuSort; });
+            if (menuFileOperations) {
+                addSubmenuTool(toolsRow.second, "menu-trash", M("FILEBROWSER_POPUPFILEOPERATIONS"),
+                               [this]() -> Gtk::MenuItem* { return menuFileOperations; });
+            }
+            if (menuExtProg) {
+                addSubmenuTool(toolsRow.second, "open-with", M("FILEBROWSER_EXTPROGMENU"),
+                               [this]() -> Gtk::MenuItem* { return menuExtProg; });
+            }
+            addSubmenuTool(toolsRow.second, "menu-darkframe", M("FILEBROWSER_DARKFRAME"),
+                           [this]() -> Gtk::MenuItem* { return menuDF; });
+            addSubmenuTool(toolsRow.second, "menu-flatfield", M("FILEBROWSER_FLATFIELD"),
+                           [this]() -> Gtk::MenuItem* { return menuFF; });
+            addSubmenuTool(toolsRow.second, "menu-cache-clear", M("FILEBROWSER_CACHE"),
+                           [this]() -> Gtk::MenuItem* { return cachemenu; });
+            pmenu->attach(*toolsRow.first, 0, 1, p, p + 1);
+            p++;
+        }
+    }  // end of inline quick-action scope
+
+    // Compact styling for the remaining regular menu items
+    {
+        auto compactCss = Gtk::CssProvider::create();
+        compactCss->load_from_data(
+            "menuitem { padding: 2px 8px; min-height: 0; }"
+            "menuitem label { font-size: 0.88em; }"
+            "separator { margin: 1px 0; }");
+        std::function<void(Gtk::Widget*)> applyDeep = [&applyDeep, &compactCss](Gtk::Widget* w) {
+            w->get_style_context()->add_provider(compactCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+            if (auto* menuItem = dynamic_cast<Gtk::MenuItem*>(w)) {
+                if (auto* sub = menuItem->get_submenu()) {
+                    applyDeep(sub);
+                }
+            }
+            if (auto* container = dynamic_cast<Gtk::Container*>(w)) {
+                for (auto* child : container->get_children()) {
+                    applyDeep(child);
+                }
+            }
+        };
+        applyDeep(pmenu);
+    }
 
     pmenu->show_all ();
 
@@ -2403,8 +2517,12 @@ FileBrowser::FileBrowser () :
     int c = 0;
     pmenuColorLabels = new Gtk::Menu();
 
+    static const std::array<const char*, 6> popClabelIcons = {
+        "circle-empty-gray-small", "circle-red-small", "circle-yellow-small",
+        "circle-green-small", "circle-blue-small", "circle-purple-small"
+    };
     for (int i = 0; i <= 5; i++) {
-        pmenuColorLabels->attach(*Gtk::manage(colorlabel_pop[i] = new MyImageMenuItem(M(Glib::ustring::compose("%1%2", "FILEBROWSER_POPUPCOLORLABEL", i)), clabelActiveIcons[i])), 0, 1, c, c + 1);
+        pmenuColorLabels->attach(*Gtk::manage(colorlabel_pop[i] = new MyImageMenuItem(M(Glib::ustring::compose("%1%2", "FILEBROWSER_POPUPCOLORLABEL", i)), popClabelIcons[i])), 0, 1, c, c + 1);
         c++;
     }
 
@@ -2557,10 +2675,13 @@ void FileBrowser::rightClicked ()
     // "Set as album cover" — only when viewing an album and exactly one image is selected
     {
         MYREADERLOCK(l2, entryRW);
-        if (addToAlbumSetter_ && selected.size() == 1) {
-            addToAlbum->show();
-        } else {
-            addToAlbum->hide();
+        // The inline actions-row icon replaces the old menu item; it only
+        // appears when a target album has actually been configured.
+        if (inlineAddToAlbumIcon_) {
+            const bool available = addToAlbumSetter_
+                && (!addToAlbumAvailable_ || addToAlbumAvailable_())
+                && selected.size() == 1;
+            inlineAddToAlbumIcon_->set_visible(available);
         }
 
         if (isInAlbumMode_ && isInAlbumMode_() && selected.size() == 1) {
