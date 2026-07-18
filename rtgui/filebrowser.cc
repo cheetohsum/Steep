@@ -1475,6 +1475,30 @@ FileBrowser::FileBrowser () :
         pmenu->attach(*colorRow.first, 0, 1, p, p + 1);
         p++;
 
+        // Rotate: counter-clockwise / clockwise (moved from the toolbar)
+        auto rotateRow = makeInlineRow(M("FILEBROWSER_POPUPROTATE"));
+        {
+            auto addRotateIcon = [this, inlineZones, &rotateRow](const char* icon,
+                                                                 const Glib::ustring& tooltip,
+                                                                 int degrees) {
+                auto* img = Gtk::manage(new RTImage(icon, Gtk::ICON_SIZE_LARGE_TOOLBAR));
+                img->set_margin_start(6);
+                img->set_margin_end(6);
+                img->set_margin_top(4);
+                img->set_margin_bottom(4);
+                img->set_tooltip_text(tooltip);
+                img->set_opacity(0.65);
+                rotateRow.second->pack_start(*img, Gtk::PACK_SHRINK);
+                inlineZones->emplace_back(img, [this, degrees]() {
+                    requestRotateSelected(degrees);
+                });
+            };
+            addRotateIcon("rotate-left-90", M("TP_COARSETRAF_TOOLTIP_ROTLEFT"), 270);
+            addRotateIcon("rotate-right-90", M("TP_COARSETRAF_TOOLTIP_ROTRIGHT"), 90);
+        }
+        pmenu->attach(*rotateRow.first, 0, 1, p, p + 1);
+        p++;
+
         pmenu->attach(*Gtk::manage(new Gtk::SeparatorMenuItem()), 0, 1, p, p + 1);
         p++;
 
@@ -4778,6 +4802,40 @@ void FileBrowser::sortOrderRequested (int order)
     auto& options = App::get().mut_options();
     options.sortDescending = !!order;
     resort ();
+}
+
+void FileBrowser::requestRotateSelected (int degrees)
+{
+    std::vector<FileBrowserEntry*> mselected;
+    {
+        MYREADERLOCK(l, entryRW);
+        mselected.reserve(selected.size());
+        for (auto* sel : selected) {
+            mselected.push_back(static_cast<FileBrowserEntry*>(sel));
+        }
+    }
+
+    if (mselected.empty()) {
+        return;
+    }
+
+    if (bppcl) {
+        bppcl->beginBatchPParamsChange(mselected.size());
+    }
+
+    for (auto* entry : mselected) {
+        entry->thumbnail->createProcParamsForUpdate(false, false, true);
+        rtengine::procparams::ProcParams pp = entry->thumbnail->getProcParams();
+        pp.coarse.rotate = ((pp.coarse.rotate + degrees) % 360 + 360) % 360;
+        entry->thumbnail->setProcParams(pp, nullptr, FILEBROWSER, false);
+        queueThumbnailPersist(entry->thumbnail);
+    }
+
+    if (bppcl) {
+        bppcl->endBatchPParamsChange();
+    }
+
+    queue_draw();
 }
 
 void FileBrowser::queueThumbnailPersist (Thumbnail* thm)

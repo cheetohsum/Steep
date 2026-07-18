@@ -184,7 +184,9 @@ private:
     Gtk::Box* trashButtonBox;
 
     MyHScale* zoomSlider_;
-    Gtk::Button* bRotateCW_;
+    // Magnifier toggle revealing the path/search/reload cluster
+    Gtk::ToggleButton* searchToggle_ = nullptr;
+    Gtk::Revealer* searchRevealer_ = nullptr;
 
     RTImage* progressImage;
     Gtk::Label* progressLabel;

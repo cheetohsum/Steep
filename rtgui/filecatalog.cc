@@ -460,7 +460,31 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     buttonBrowsePath->signal_clicked().connect( sigc::mem_fun(*this, &FileCatalog::buttonBrowsePathPressed) );
     hbBrowsePath->pack_start (*BrowsePath, Gtk::PACK_SHRINK, 0);
     hbBrowsePath->pack_start (*buttonBrowsePath, Gtk::PACK_SHRINK, 0);
-    hbToolBar1->pack_start (*hbBrowsePath, Gtk::PACK_SHRINK, 0);
+
+    // Path + search + reload live behind a magnifier toggle; the cluster
+    // slides out only when needed.
+    searchToggle_ = Gtk::manage(new Gtk::ToggleButton());
+    searchToggle_->set_image(*Gtk::manage(new RTImage("search-toolbar", Gtk::ICON_SIZE_BUTTON)));
+    searchToggle_->set_relief(Gtk::RELIEF_NONE);
+    searchToggle_->set_tooltip_markup(M("FILEBROWSER_SEARCHTOGGLEHINT"));
+    hbToolBar1->pack_start(*searchToggle_, Gtk::PACK_SHRINK, 0);
+
+    searchRevealer_ = Gtk::manage(new Gtk::Revealer());
+    searchRevealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_RIGHT);
+    searchRevealer_->set_transition_duration(180);
+    searchRevealer_->set_reveal_child(false);
+    Gtk::Box* searchCluster = Gtk::manage(new Gtk::Box());
+    searchCluster->pack_start(*hbBrowsePath, Gtk::PACK_SHRINK, 0);
+    searchRevealer_->add(*searchCluster);
+    hbToolBar1->pack_start(*searchRevealer_, Gtk::PACK_SHRINK, 0);
+
+    searchToggle_->signal_toggled().connect([this]() {
+        const bool show = searchToggle_->get_active();
+        searchRevealer_->set_reveal_child(show);
+        if (show && Query) {
+            Query->grab_focus();
+        }
+    });
 
     BrowsePath->signal_activate().connect (sigc::mem_fun(*this, &FileCatalog::buttonBrowsePathPressed)); //respond to the Enter key
     BrowsePath->signal_key_press_event().connect(sigc::mem_fun(*this, &FileCatalog::BrowsePath_key_pressed));
@@ -483,7 +507,8 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     buttonQueryClear->signal_clicked().connect( sigc::mem_fun(*this, &FileCatalog::buttonQueryClearPressed) );
     hbQuery->pack_start (*Query, Gtk::PACK_SHRINK, 0);
     hbQuery->pack_start (*buttonQueryClear, Gtk::PACK_SHRINK, 0);
-    hbToolBar1->pack_start (*hbQuery, Gtk::PACK_SHRINK, 0);
+    // Inside the magnifier-revealed cluster, next to the path entry
+    static_cast<Gtk::Box*>(searchRevealer_->get_child())->pack_start (*hbQuery, Gtk::PACK_SHRINK, 0);
 
     // Hide query clear button by default; show when search text is non-empty
     buttonQueryClear->set_no_show_all(true);
@@ -970,18 +995,7 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     }
     zoomSlider_->signal_value_changed().connect(sigc::mem_fun(*this, &FileCatalog::zoomSliderChanged));
 
-    // Standalone rotate CW button (replaces coarsePanel in browser bar)
-    bRotateCW_ = Gtk::manage(new Gtk::Button());
-    bRotateCW_->set_image(*Gtk::manage(new RTImage("rotate-cw", Gtk::ICON_SIZE_BUTTON)));
-    bRotateCW_->set_relief(Gtk::RELIEF_NONE);
-    bRotateCW_->set_tooltip_markup(M("TP_COARSETRAF_TOOLTIP_ROTRIGHT"));
-    bRotateCW_->set_no_show_all(true);
-    bRotateCW_->hide();
-    bRotateCW_->signal_clicked().connect([this]() {
-        if (coarsePanel) {
-            coarsePanel->rotateRight();
-        }
-    });
+    // Rotate moved to the context menu's inline quick actions
 
     tbRightPanel_1 = new Gtk::ToggleButton ();
     iRightPanel_1_Show = new RTImage("panel-to-left", Gtk::ICON_SIZE_LARGE_TOOLBAR);
@@ -1000,7 +1014,6 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     buttonBar->pack_start (*hbToolBar1, Gtk::PACK_SHRINK, 0);
     zoomSlider_->set_margin_start(8);
     buttonBar->pack_start(*zoomSlider_, Gtk::PACK_SHRINK);
-    buttonBar->pack_start (*bRotateCW_, Gtk::PACK_SHRINK);
     buttonBar->pack_end (*tbRightPanel_1, Gtk::PACK_SHRINK);
 
     // Hide hand tool in browser context — not needed for browsing
@@ -2923,14 +2936,6 @@ void FileCatalog::selectionChanged(const std::vector<Thumbnail*>& tbe)
         }
     }
 
-    // Show rotate button only when images are selected
-    if (bRotateCW_) {
-        if (tbe.empty()) {
-            bRotateCW_->hide();
-        } else {
-            bRotateCW_->show();
-        }
-    }
 }
 
 void FileCatalog::clearFromCacheRequested(const std::vector<FileBrowserEntry*>& tbe, bool leavenotrace)

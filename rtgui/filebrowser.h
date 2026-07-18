@@ -318,6 +318,9 @@ public:
     void cancelCachedQuickPreviewWarm();
     void refreshAdjacentThumbnails(const Glib::ustring& fname, int count);
 
+    // Coarse-rotate the current selection (degrees clockwise: 90 or 270)
+    void requestRotateSelected (int degrees);
+
     // Rejects handling and auto-cull
     std::vector<FileBrowserEntry*> getRejectedEntries ();
     void startAutoCull (int focusTolerance, int exposureTolerance);
