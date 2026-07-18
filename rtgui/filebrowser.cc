@@ -1398,10 +1398,16 @@ FileBrowser::FileBrowser () :
      * identity items created further down.
      ***********************/
     {
-        auto makeInlineRow = [this](const Glib::ustring& caption) {
+        // GtkMenu grabs all input while open, so real buttons inside menu
+        // items never receive clicks. The icons are plain images; presses
+        // are hit-tested at the menu level against each icon's allocation
+        // (same pattern as the Auto Edit submenu hit test below).
+        auto inlineZones = std::make_shared<std::vector<std::pair<Gtk::Widget*, std::function<void()>>>>();
+
+        auto makeInlineRow = [](const Glib::ustring& caption) {
             auto* item = Gtk::manage(new Gtk::MenuItem());
             item->set_name("InlineActionRow");
-            auto* row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 1));
+            auto* row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 2));
             auto* label = Gtk::manage(new Gtk::Label(caption));
             label->set_width_chars(6);
             label->set_xalign(0.0);
@@ -1411,41 +1417,41 @@ FileBrowser::FileBrowser () :
             return std::make_pair(item, row);
         };
 
-        auto addInlineButton = [this](Gtk::Box* row, const char* icon,
-                                      const Glib::ustring& tooltip,
-                                      std::function<Gtk::MenuItem*()> target) {
-            auto* button = Gtk::manage(new Gtk::Button());
-            button->set_image(*Gtk::manage(new RTImage(icon, Gtk::ICON_SIZE_MENU)));
-            button->set_relief(Gtk::RELIEF_NONE);
-            button->set_focus_on_click(false);
-            button->set_tooltip_text(tooltip);
-            button->signal_clicked().connect([this, target]() {
-                pmenu->popdown();
+        auto addInlineIcon = [this, inlineZones](Gtk::Box* row, const char* icon,
+                                                 const Glib::ustring& tooltip,
+                                                 std::function<Gtk::MenuItem*()> target) {
+            auto* img = Gtk::manage(new RTImage(icon, Gtk::ICON_SIZE_MENU));
+            img->set_margin_start(3);
+            img->set_margin_end(3);
+            img->set_margin_top(2);
+            img->set_margin_bottom(2);
+            img->set_tooltip_text(tooltip);
+            row->pack_start(*img, Gtk::PACK_SHRINK);
+            inlineZones->emplace_back(img, [this, target]() {
                 menuItemActivated(target());
             });
-            row->pack_start(*button, Gtk::PACK_SHRINK);
         };
 
         // Flags: pick / unflag / reject
         auto flagRow = makeInlineRow(M("FILEBROWSER_POPUPFLAG"));
-        addInlineButton(flagRow.second, "menu-flag-pick", M("FILEBROWSER_POPUPPICK"),
-                        [this]() -> Gtk::MenuItem* { return pickFlag; });
-        addInlineButton(flagRow.second, "menu-flag-unflagged", M("FILEBROWSER_POPUPUNFLAG"),
-                        [this]() -> Gtk::MenuItem* { return unflagFlag; });
-        addInlineButton(flagRow.second, "menu-flag-reject", M("FILEBROWSER_POPUPREJECT"),
-                        [this]() -> Gtk::MenuItem* { return rejectFlag; });
+        addInlineIcon(flagRow.second, "menu-flag-pick", M("FILEBROWSER_POPUPPICK"),
+                      [this]() -> Gtk::MenuItem* { return pickFlag; });
+        addInlineIcon(flagRow.second, "menu-flag-unflagged", M("FILEBROWSER_POPUPUNFLAG"),
+                      [this]() -> Gtk::MenuItem* { return unflagFlag; });
+        addInlineIcon(flagRow.second, "menu-flag-reject", M("FILEBROWSER_POPUPREJECT"),
+                      [this]() -> Gtk::MenuItem* { return rejectFlag; });
         pmenu->attach(*flagRow.first, 0, 1, p, p + 1);
         p++;
 
         // Rank: none + 1..5 stars
         auto rankRow = makeInlineRow(M("FILEBROWSER_POPUPRANK"));
-        addInlineButton(rankRow.second, "menu-star-empty", M("FILEBROWSER_POPUPUNRANK"),
-                        [this]() -> Gtk::MenuItem* { return rank[0]; });
+        addInlineIcon(rankRow.second, "menu-star-empty", M("FILEBROWSER_POPUPUNRANK"),
+                      [this]() -> Gtk::MenuItem* { return rank[0]; });
         for (int i = 1; i <= 5; i++) {
-            addInlineButton(rankRow.second,
-                            Glib::ustring::compose("menu-star-%1", i).c_str(),
-                            M(Glib::ustring::compose("FILEBROWSER_POPUPRANK%1", i)),
-                            [this, i]() -> Gtk::MenuItem* { return rank[i]; });
+            addInlineIcon(rankRow.second,
+                          Glib::ustring::compose("menu-star-%1", i).c_str(),
+                          M(Glib::ustring::compose("FILEBROWSER_POPUPRANK%1", i)),
+                          [this, i]() -> Gtk::MenuItem* { return rank[i]; });
         }
         pmenu->attach(*rankRow.first, 0, 1, p, p + 1);
         p++;
@@ -1457,15 +1463,53 @@ FileBrowser::FileBrowser () :
         };
         auto colorRow = makeInlineRow(M("FILEBROWSER_POPUPCOLORLABEL"));
         for (int i = 0; i <= 5; i++) {
-            addInlineButton(colorRow.second, inlineClabelIcons[i],
-                            M(Glib::ustring::compose("FILEBROWSER_POPUPCOLORLABEL%1", i)),
-                            [this, i]() -> Gtk::MenuItem* { return colorlabel[i]; });
+            addInlineIcon(colorRow.second, inlineClabelIcons[i],
+                          M(Glib::ustring::compose("FILEBROWSER_POPUPCOLORLABEL%1", i)),
+                          [this, i]() -> Gtk::MenuItem* { return colorlabel[i]; });
         }
         pmenu->attach(*colorRow.first, 0, 1, p, p + 1);
         p++;
 
         pmenu->attach(*Gtk::manage(new Gtk::SeparatorMenuItem()), 0, 1, p, p + 1);
         p++;
+
+        pmenu->signal_button_press_event().connect(
+            [this, inlineZones](GdkEventButton* event) -> bool {
+                if (!event || event->button != 1) {
+                    return false;
+                }
+
+                for (auto& zone : *inlineZones) {
+                    Gtk::Widget* widget = zone.first;
+                    if (!widget->get_visible()) {
+                        continue;
+                    }
+                    auto window = widget->get_window();
+                    if (!window) {
+                        continue;
+                    }
+
+                    int windowX = 0;
+                    int windowY = 0;
+                    window->get_origin(windowX, windowY);
+                    const auto allocation = widget->get_allocation();
+                    const double ix = event->x_root - windowX - allocation.get_x();
+                    const double iy = event->y_root - windowY - allocation.get_y();
+
+                    // Padded hit zone so near-misses on small icons land
+                    if (ix >= -4.0 && iy >= -4.0
+                            && ix < allocation.get_width() + 4.0
+                            && iy < allocation.get_height() + 4.0) {
+                        const auto action = zone.second;
+                        pmenu->popdown();
+                        action();
+                        return true;
+                    }
+                }
+
+                return false;
+            },
+            false);
     }
 
     pmenu->attach (*Gtk::manage(open = new MyImageMenuItem (M("FILEBROWSER_POPUPOPEN"), "menu-open")), 0, 1, p, p + 1);
