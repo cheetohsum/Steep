@@ -1422,14 +1422,17 @@ FileBrowser::FileBrowser () :
             vbox->set_margin_top(2);
             vbox->set_margin_bottom(1);
             auto* label = Gtk::manage(new Gtk::Label());
-            label->set_markup("<span size='small' alpha='55%'>"
+            label->set_markup("<span size='9500' alpha='60%'>"
                               + Glib::Markup::escape_text(caption) + "</span>");
             label->set_xalign(0.0);
+            // PACK_SHRINK children center without explicit start alignment
+            label->set_halign(Gtk::ALIGN_START);
             // Matches the first icon's glyph edge (6px widget margin plus
             // the glyph centering inside the icon's allocation)
             label->set_margin_start(9);
             vbox->pack_start(*label, Gtk::PACK_SHRINK);
             auto* row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 2));
+            row->set_halign(Gtk::ALIGN_START);
             vbox->pack_start(*row, Gtk::PACK_SHRINK);
             item->add(*vbox);
             return std::make_pair(item, row);
@@ -2780,17 +2783,11 @@ void FileBrowser::rightClicked ()
     cachesubmenu->show_all ();
     cachemenu->set_submenu (*cachesubmenu);
 
-    // These actions operate on the current editor and only belong in its filmstrip.
-    if (isInTabMode()) {
-        saveImage->show();
-        if (editExternal) {
-            editExternal->show();
-        }
-    } else {
-        saveImage->hide();
-        if (editExternal) {
-            editExternal->hide();
-        }
+    // Save-image and external-editor live in the inline Actions row now;
+    // their identity items stay hidden in every mode.
+    saveImage->hide();
+    if (editExternal) {
+        editExternal->hide();
     }
 
     // "Set as album cover" — only when viewing an album and exactly one image is selected

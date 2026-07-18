@@ -23,6 +23,7 @@
 #include "imagesource.h"
 #include "imagefloat.h"
 #include "rt_math.h"
+#include <array>
 #include <iostream>
 #include <set>
 #include <unordered_set>
@@ -335,6 +336,25 @@ public:
         return true;
     }
 
+    // Cores (scaled x, y, radius) of spots already processed this pass.
+    // Pixels inside any of them keep their existing repair, so placing a
+    // new spot on the border of an old one never disturbs the overlap.
+    const std::vector<std::array<float, 3>>* priorCores = nullptr;
+
+    bool coveredByPrior(float px, float py) const {
+        if (!priorCores) {
+            return false;
+        }
+        for (const auto& core : *priorCores) {
+            const float ddx = px - core[0];
+            const float ddy = py - core[1];
+            if (ddx * ddx + ddy * ddy <= core[2] * core[2]) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     bool processIntersectionWith(SpotBox &destBox) {
         using procparams::SpotMethod;
         switch (method) {
@@ -365,7 +385,9 @@ public:
                 float dx = float(x - spotArea.x1) - featherRadius;
                 float r = sqrt(dx * dx + dy * dy);
 
-                if (r >= featherRadius) {
+                if (r >= featherRadius
+                        || destBox.coveredByPrior(float(x - spotArea.x1 + destBox.spotArea.x1),
+                                                  float(y - spotArea.y1 + destBox.spotArea.y1))) {
                     ++srcImgX;
                     ++dstImgX;
                     continue;
@@ -440,7 +462,9 @@ public:
                 float dx = float(x - spotArea.x1) - featherRadius;
                 float r = sqrt(dx * dx + dy * dy);
 
-                if (r >= featherRadius) {
+                if (r >= featherRadius
+                        || destBox.coveredByPrior(float(x - spotArea.x1 + destBox.spotArea.x1),
+                                                  float(y - spotArea.y1 + destBox.spotArea.y1))) {
                     ++srcImgX;
                     ++dstImgX;
                     continue;
@@ -516,7 +540,8 @@ public:
                 float dx = float(x - destBox.spotArea.x1) - destBox.featherRadius;
                 float r = sqrt(dx * dx + dy * dy);
 
-                if (r >= destBox.featherRadius) {
+                if (r >= destBox.featherRadius
+                        || destBox.coveredByPrior(float(x), float(y))) {
                     ++dstImgX;
                     continue;
                 }
@@ -555,7 +580,8 @@ public:
                 float dx = float(x - destBox.spotArea.x1) - destBox.featherRadius;
                 float r = sqrt(dx * dx + dy * dy);
 
-                if (r >= destBox.featherRadius) {
+                if (r >= destBox.featherRadius
+                        || destBox.coveredByPrior(float(x), float(y))) {
                     ++dstImgX;
                     continue;
                 }
@@ -905,6 +931,7 @@ void ImProcFunctions::removeSpots (Imagefloat* img, ImageSource* imgsrc, const s
 
     std::vector< std::shared_ptr<SpotBox> > srcSpotBoxs;
     std::vector< std::shared_ptr<SpotBox> > dstSpotBoxs;
+    std::vector<SpotEntry> boxEntries;   // parallel to the box vectors
     int fullImgWidth = 0;
     int fullImgHeight = 0;
     imgsrc->getFullSize(fullImgWidth, fullImgHeight, tr);
@@ -983,6 +1010,7 @@ void ImProcFunctions::removeSpots (Imagefloat* img, ImageSource* imgsrc, const s
         if (srcSpotBox->mutuallyClipImageArea(*dstSpotBox)) {
             srcSpotBoxs.push_back(srcSpotBox);
             dstSpotBoxs.push_back(dstSpotBox);
+            boxEntries.push_back(entry);
         }
 
     }
@@ -996,9 +1024,22 @@ void ImProcFunctions::removeSpots (Imagefloat* img, ImageSource* imgsrc, const s
 
     // Process spots and copy them downstream
 
+    // Cores of already-processed spots (scaled coords): later overlapping
+    // spots must not repaint pixels an earlier spot already repaired.
+    std::vector<std::array<float, 3>> processedCores;
+
     for (auto i = requiredSpots.begin(); i != requiredSpots.end(); i++) {
         // Process
+        dstSpotBoxs.at(*i)->priorCores = &processedCores;
         srcSpotBoxs.at(*i)->processIntersectionWith(*dstSpotBoxs.at(*i));
+
+        {
+            const auto& processedEntry = boxEntries.at(*i);
+            processedCores.push_back({
+                float(processedEntry.targetPos.x) / float(pp.getSkip()),
+                float(processedEntry.targetPos.y) / float(pp.getSkip()),
+                float(processedEntry.radius) / float(pp.getSkip())});
+        }
 
         // Propagate
         std::set<int> positiveSpots;  // For DEBUG purpose only !
