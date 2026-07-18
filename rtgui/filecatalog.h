@@ -137,6 +137,21 @@ private:
     Gtk::ToggleButton* bPicked;
     Gtk::ToggleButton* bRejected;
     Gtk::ToggleButton* bUnflagged;
+
+    // Rejects view: shows only rejected photos, with mass delete
+    Gtk::ToggleButton* bRejectsView = nullptr;
+    Gtk::Box* rejectsButtonBox = nullptr;
+    bool rejectsViewActive_ = false;
+
+    // Right-click menu on the rejected-filter button
+    Gtk::Popover* rejectsPopover_ = nullptr;
+    Gtk::CheckButton* hideRejectsCheck_ = nullptr;
+    Gtk::Scale* cullFocusScale_ = nullptr;
+    Gtk::Scale* cullExposureScale_ = nullptr;
+    Gtk::Button* cullUndoButton_ = nullptr;
+    void showRejectsPopover ();
+    void rejectsViewToggled ();
+    void deleteAllRejects ();
     Gtk::ToggleButton* bTrash;
     Gtk::ToggleButton* bNotTrash;
     Gtk::ToggleButton* bOriginal;
@@ -331,6 +346,10 @@ public:
     // accessors for FileBrowser
     void redrawAll ();
     void refreshThumbImages ();
+    // Re-applies the browser-toolbar filter (used when returning from the
+    // editor so the filmstrip's filter state doesn't linger) and resumes
+    // any paused preview loading.
+    void reapplyBrowserFilter ();
     void refreshHeight ();
 
     void filterApplied() override;

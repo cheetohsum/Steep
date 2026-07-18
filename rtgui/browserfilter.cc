@@ -22,6 +22,7 @@ BrowserFilter::BrowserFilter () :
     showPicked(true),
     showRejected(true),
     showUnflagged(true),
+    hideRejects(false),
     showTrash(true),
     showNotTrash(true),
     showOriginal(false),
@@ -41,7 +42,7 @@ BrowserFilter::BrowserFilter () :
 
 bool BrowserFilter::isPassThrough () const
 {
-    if (!showPicked || !showRejected || !showUnflagged
+    if (!showPicked || !showRejected || !showUnflagged || hideRejects
         || !showTrash || !showNotTrash || showOriginal
         || exifFilterEnabled || !vFilterStrings.empty()
         || !albumWhitelist.empty() || !filetypeFilter.empty()) {

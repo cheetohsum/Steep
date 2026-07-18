@@ -215,6 +215,12 @@ protected:
     sigc::connection autoLevelPollConnection_;
     std::thread autoLevelThread_;
     std::shared_ptr<std::atomic<bool>> autoLevelCancel_;
+
+    // Auto-cull: background analysis marking blatantly bad photos rejected
+    sigc::connection autoCullPollConnection_;
+    std::thread autoCullThread_;
+    std::shared_ptr<std::atomic<bool>> autoCullCancel_;
+    std::vector<std::pair<Thumbnail*, int>> autoCullUndo_; // thumbnail (ref held) + previous pick
     std::unique_ptr<Glib::ThreadPool> autoEditHoverPool_;
     std::shared_ptr<std::atomic<unsigned>> autoEditHoverGeneration_;
     sigc::connection autoEditHoverDelayConnection_;
@@ -303,6 +309,13 @@ public:
     std::vector<AdjacentEntry> getAdjacentEntriesAndRefresh(const Glib::ustring& fname, int preloadCount, int refreshCount, int quickPreviewWarmCount = 0, eRTNav preferredDirection = NAV_NONE);
     void cancelCachedQuickPreviewWarm();
     void refreshAdjacentThumbnails(const Glib::ustring& fname, int count);
+
+    // Rejects handling and auto-cull
+    std::vector<FileBrowserEntry*> getRejectedEntries ();
+    void startAutoCull (int focusTolerance, int exposureTolerance);
+    void undoAutoCull ();
+    bool hasAutoCullUndo () const { return !autoCullUndo_.empty(); }
+    bool isQuickActionRunning () const { return quickActionRunning_; }
 
     void copyProfile ();
     void pasteProfile ();

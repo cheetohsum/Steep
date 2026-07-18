@@ -32,6 +32,10 @@ public:
     bool showPicked;
     bool showRejected;
     bool showUnflagged;
+    // Standing preference: drop rejected photos from browser/filmstrip even
+    // when no explicit pick filter is active. Overridden by the rejects view
+    // and by explicitly filtering for rejected.
+    bool hideRejects;
     bool showTrash;
     bool showNotTrash;
     bool showOriginal;

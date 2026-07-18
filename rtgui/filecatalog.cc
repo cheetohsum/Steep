@@ -717,9 +717,37 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
         bRejected->set_tooltip_markup(M("FILEBROWSER_SHOWREJECTEDHINT"));
         bCateg[22] = bRejected->signal_toggled().connect(sigc::bind(sigc::mem_fun(*this, &FileCatalog::categoryButtonToggled), bRejected, true));
         fltrPickbox->pack_start(*bRejected, Gtk::PACK_SHRINK);
-        bRejected->signal_button_press_event().connect(sigc::mem_fun(*this, &FileCatalog::capture_event), false);
+        // Right-click opens hide-rejects and auto-cull options; other
+        // presses go to the normal modifier-capture path.
+        bRejected->signal_button_press_event().connect(
+            [this](GdkEventButton* event) -> bool {
+                if (event && event->button == 3) {
+                    showRejectsPopover();
+                    return true;
+                }
+                return capture_event(event);
+            },
+            false);
+
+        // Rejects view: shows only rejected photos and offers mass delete
+        bRejectsView = Gtk::manage(new Gtk::ToggleButton());
+        bRejectsView->get_style_context()->add_class("smallbutton");
+        bRejectsView->set_active(false);
+        bRejectsView->set_image(*Gtk::manage(new RTImage("trash-small", Gtk::ICON_SIZE_BUTTON)));
+        bRejectsView->set_relief(Gtk::RELIEF_NONE);
+        bRejectsView->set_tooltip_markup(M("FILEBROWSER_SHOWREJECTSVIEWHINT"));
+        bRejectsView->signal_toggled().connect(sigc::mem_fun(*this, &FileCatalog::rejectsViewToggled));
+        fltrPickbox->pack_start(*bRejectsView, Gtk::PACK_SHRINK);
 
         filterBar->pack_start(*fltrPickbox, Gtk::PACK_SHRINK);
+
+        // "Delete all rejects" action box, shown while the rejects view is active
+        rejectsButtonBox = Gtk::manage(new Gtk::Box());
+        Gtk::Button* deleteRejects = Gtk::manage(new Gtk::Button(M("FILEBROWSER_DELETEREJECTS")));
+        deleteRejects->set_tooltip_markup(M("FILEBROWSER_DELETEREJECTSHINT"));
+        deleteRejects->signal_clicked().connect(sigc::mem_fun(*this, &FileCatalog::deleteAllRejects));
+        rejectsButtonBox->pack_start(*deleteRejects, Gtk::PACK_SHRINK);
+        rejectsButtonBox->show_all();
     }
 
     filterBar->pack_start (*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK);
@@ -1064,6 +1092,7 @@ bool FileCatalog::onColorLabelFadeTick()
 
 FileCatalog::~FileCatalog()
 {
+    delete rejectsPopover_;
     colorFadeConn_.disconnect();
     colorCollapseDelay_.disconnect();
     reparseDirectoryConn_.disconnect();
@@ -2972,8 +3001,23 @@ void FileCatalog::categoryButtonToggled (Gtk::ToggleButton* b, bool isMouseClick
 
         // if no modifier key is pressed,
         if (!(control_down || shift_down)) {
+            // Pick-flag filters (picked/unflagged/rejected, indices 20-22)
+            // form their own independent group: clicking toggles just that
+            // button and leaves the other filter groups untouched.
+            if (toggled_button >= 20 && toggled_button <= 22) {
+                const bool wasActive = buttons & (1 << toggled_button);
+                categoryButtons[toggled_button]->set_active(!wasActive);
+
+                if (!wasActive) {
+                    // a pick filter is now active — clear-filters goes off
+                    categoryButtons[0]->set_active(false);
+                } else if (!(buttons & ~((1u << toggled_button) | 1u))) {
+                    // deactivated the last remaining filter — back to clear
+                    categoryButtons[0]->set_active(true);
+                }
+            }
             // if we're deselecting original (or bNotTrash, which is hidden)
-            if (toggled_button >= 18 && toggled_button <= 19 && (buttons & (1 << toggled_button))) {
+            else if (toggled_button >= 18 && toggled_button <= 19 && (buttons & (1 << toggled_button))) {
                 categoryButtons[0]->set_active (true);
 
                 for (int i = 1; i < numButtons; i++) {
@@ -3172,6 +3216,123 @@ void FileCatalog::categoryButtonToggled (Gtk::ToggleButton* b, bool isMouseClick
     }
 }
 
+void FileCatalog::rejectsViewToggled ()
+{
+    rejectsViewActive_ = bRejectsView && bRejectsView->get_active();
+
+    removeIfThere (hBox, rejectsButtonBox);
+    if (rejectsViewActive_) {
+        hBox->pack_start (*rejectsButtonBox, Gtk::PACK_SHRINK, 4);
+    }
+    hBox->queue_draw ();
+
+    fileBrowser->applyFilter (getFilter ());
+    _refreshProgressBar ();
+}
+
+void FileCatalog::deleteAllRejects ()
+{
+    const auto rejects = fileBrowser->getRejectedEntries ();
+    if (rejects.empty ()) {
+        return;
+    }
+
+    // Standard delete flow with its confirmation dialog; the list holds all
+    // rejected photos of the currently browsed folder.
+    deleteRequested (rejects, false, false);
+}
+
+void FileCatalog::showRejectsPopover ()
+{
+    const auto& options = App::get().options();
+
+    if (!rejectsPopover_) {
+        rejectsPopover_ = new Gtk::Popover(*bRejected);
+
+        auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 6));
+        box->set_margin_start(10);
+        box->set_margin_end(10);
+        box->set_margin_top(8);
+        box->set_margin_bottom(8);
+
+        hideRejectsCheck_ = Gtk::manage(new Gtk::CheckButton(M("FILEBROWSER_HIDEREJECTS")));
+        hideRejectsCheck_->set_tooltip_markup(M("FILEBROWSER_HIDEREJECTSHINT"));
+        hideRejectsCheck_->signal_toggled().connect([this]() {
+            App::get().mut_options().browserHideRejects = hideRejectsCheck_->get_active();
+            fileBrowser->applyFilter(getFilter());
+            _refreshProgressBar();
+        });
+        box->pack_start(*hideRejectsCheck_, Gtk::PACK_SHRINK);
+
+        box->pack_start(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)), Gtk::PACK_SHRINK);
+
+        auto* cullTitle = Gtk::manage(new Gtk::Label());
+        cullTitle->set_markup("<b>" + Glib::Markup::escape_text(M("FILEBROWSER_AUTOCULL")) + "</b>");
+        cullTitle->set_halign(Gtk::ALIGN_START);
+        box->pack_start(*cullTitle, Gtk::PACK_SHRINK);
+
+        auto addScale = [&box](const Glib::ustring& label) {
+            auto* l = Gtk::manage(new Gtk::Label(label));
+            l->set_halign(Gtk::ALIGN_START);
+            box->pack_start(*l, Gtk::PACK_SHRINK);
+            auto* s = Gtk::manage(new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
+            s->set_range(0.0, 100.0);
+            s->set_increments(1.0, 10.0);
+            s->set_digits(0);
+            s->set_draw_value(true);
+            s->set_value_pos(Gtk::POS_RIGHT);
+            s->set_size_request(220, -1);
+            box->pack_start(*s, Gtk::PACK_SHRINK);
+            return s;
+        };
+        cullFocusScale_ = addScale(M("FILEBROWSER_AUTOCULL_FOCUS"));
+        cullExposureScale_ = addScale(M("FILEBROWSER_AUTOCULL_EXPOSURE"));
+
+        auto* runButton = Gtk::manage(new Gtk::Button(M("FILEBROWSER_AUTOCULL_RUN")));
+        runButton->signal_clicked().connect([this]() {
+            auto& mutOptions = App::get().mut_options();
+            mutOptions.autoCullFocusTolerance =
+                static_cast<int>(cullFocusScale_->get_value() + 0.5);
+            mutOptions.autoCullExposureTolerance =
+                static_cast<int>(cullExposureScale_->get_value() + 0.5);
+            rejectsPopover_->popdown();
+            fileBrowser->startAutoCull(
+                mutOptions.autoCullFocusTolerance,
+                mutOptions.autoCullExposureTolerance);
+        });
+        box->pack_start(*runButton, Gtk::PACK_SHRINK);
+
+        cullUndoButton_ = Gtk::manage(new Gtk::Button(M("FILEBROWSER_AUTOCULL_UNDO")));
+        cullUndoButton_->signal_clicked().connect([this]() {
+            fileBrowser->undoAutoCull();
+            cullUndoButton_->set_sensitive(false);
+        });
+        box->pack_start(*cullUndoButton_, Gtk::PACK_SHRINK);
+
+        rejectsPopover_->add(*box);
+        rejectsPopover_->set_position(Gtk::POS_BOTTOM);
+        box->show_all();
+    }
+
+    // Sync current state each time it opens
+    hideRejectsCheck_->set_active(options.browserHideRejects);
+    cullFocusScale_->set_value(options.autoCullFocusTolerance);
+    cullExposureScale_->set_value(options.autoCullExposureTolerance);
+    cullUndoButton_->set_sensitive(
+        fileBrowser->hasAutoCullUndo() && !fileBrowser->isQuickActionRunning());
+
+    rejectsPopover_->popup();
+}
+
+void FileCatalog::reapplyBrowserFilter ()
+{
+    fileBrowser->applyFilter (getFilter ());
+    _refreshProgressBar ();
+    // Nudge preview loading in case background work was left paused by the
+    // editor's foreground-priority machinery.
+    previewLoader->resume ();
+}
+
 void FileCatalog::showRecursiveToggled()
 {
     bool state = bRecursive->get_active();
@@ -3277,6 +3438,19 @@ BrowserFilter FileCatalog::getFilter ()
         filter.showPicked = true;
         filter.showRejected = true;
         filter.showUnflagged = true;
+    }
+
+    // Standing hide-rejects preference — yields when the user explicitly
+    // filters for rejected photos
+    filter.hideRejects = App::get().options().browserHideRejects
+        && !(anyPickFilterActive && bRejected->get_active());
+
+    // The rejects view overrides everything pick-related
+    if (rejectsViewActive_) {
+        filter.showPicked = false;
+        filter.showRejected = true;
+        filter.showUnflagged = false;
+        filter.hideRejects = false;
     }
 
     if (!filterPanel) {

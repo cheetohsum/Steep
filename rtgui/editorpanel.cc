@@ -3190,6 +3190,10 @@ BrowserFilter EditorPanel::buildEditorFilter()
         f.showRejected = fbRejected->get_active();
     }
 
+    // Standing hide-rejects preference (right-click the rejected-filter
+    // button in the browser toolbar), unless rejects are explicitly shown
+    f.hideRejects = App::get().options().browserHideRejects && !fbRejected->get_active();
+
     // Search
     Glib::ustring searchText = fbSearchEntry->get_text();
     if (!searchText.empty()) {
@@ -3216,6 +3220,11 @@ BrowserFilter EditorPanel::buildEditorFilter()
 void EditorPanel::applyEditorFilter()
 {
     if (!fPanel || !fPanel->fileCatalog || !fPanel->fileCatalog->fileBrowser) return;
+
+    // The editor filter bar owns the shared browser's filter only while it
+    // is in filmstrip (tab) mode; in browser view the catalog toolbar owns
+    // it, and applying here would clobber its filters (e.g. show-flagged).
+    if (!fPanel->fileCatalog->isInTabMode()) return;
 
     BrowserFilter f = buildEditorFilter();
     fPanel->fileCatalog->fileBrowser->applyFilter(f);

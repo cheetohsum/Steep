@@ -2173,6 +2173,17 @@ FileBrowser::~FileBrowser ()
     if (autoLevelThread_.joinable()) {
         autoLevelThread_.join();
     }
+    if (autoCullCancel_) {
+        autoCullCancel_->store(true, std::memory_order_release);
+    }
+    autoCullPollConnection_.disconnect();
+    if (autoCullThread_.joinable()) {
+        autoCullThread_.join();
+    }
+    for (auto& undo : autoCullUndo_) {
+        undo.first->decreaseRef();
+    }
+    autoCullUndo_.clear();
     idle_register.destroy();
 
     // Cancel deferred deletion callback and flush remaining entries
@@ -4464,6 +4475,9 @@ bool FileBrowser::checkFilter (ThumbBrowserEntryBase* entryb) const   // true ->
     // return false if pick filter settings are not satisfied
     {
         int pick = entry->thumbnail->getPick();
+        if (filter.hideRejects && pick == -1) {
+            return false;
+        }
         if ((pick == 1 && !filter.showPicked) ||
             (pick == -1 && !filter.showRejected) ||
             (pick == 0 && !filter.showUnflagged)) {
@@ -4718,6 +4732,233 @@ void FileBrowser::requestColorLabel(int colorlabel)
     }
 
     colorlabelRequested (mselected, colorlabel);
+}
+
+std::vector<FileBrowserEntry*> FileBrowser::getRejectedEntries ()
+{
+    std::vector<FileBrowserEntry*> rejects;
+    MYREADERLOCK(l, entryRW);
+
+    for (auto* entry : fd) {
+        auto* fileEntry = static_cast<FileBrowserEntry*>(entry);
+        if (fileEntry->thumbnail && fileEntry->thumbnail->getPick() == -1) {
+            rejects.push_back(fileEntry);
+        }
+    }
+
+    return rejects;
+}
+
+namespace {
+
+// Auto-cull verdict from the same scene statistics the auto-edit uses.
+// Tolerances are 0-100; higher culls more aggressively.
+bool shouldAutoCull (const AutoGradeFeatures& f, int focusTolerance, int exposureTolerance)
+{
+    if (!f.valid) {
+        return false;
+    }
+
+    // Blatant failures regardless of tolerance: essentially uniform black or
+    // white frames (lens cap, misfire, blown test shot).
+    if (f.dynamicRange < 0.06 && (f.medianLuma < 0.05 || f.medianLuma > 0.95)) {
+        return true;
+    }
+
+    // Out of focus: mean local luma gradient (edgeDensity) far below what any
+    // sharp image produces. Sharp frames typically sit well above 0.03.
+    const double focusThreshold = 0.006 + 0.026 * (focusTolerance / 100.0);
+    if (f.edgeDensity < focusThreshold) {
+        return true;
+    }
+
+    // Overexposed: large clipped-highlight coverage on a bright frame.
+    const double overThreshold = 0.85 - 0.55 * (exposureTolerance / 100.0);
+    if (f.highlightFraction > overThreshold && f.medianLuma > 0.55) {
+        return true;
+    }
+
+    // Severely underexposed with no highlights at all. The threshold stays
+    // below real night-scene medians so night photography survives.
+    const double underThreshold = 0.015 + 0.075 * (exposureTolerance / 100.0);
+    if (f.medianLuma < underThreshold && f.highlightFraction < 0.02) {
+        return true;
+    }
+
+    return false;
+}
+
+}
+
+void FileBrowser::startAutoCull (int focusTolerance, int exposureTolerance)
+{
+    if (quickActionRunning_ || !tbl) {
+        return;
+    }
+
+    struct AutoCullState {
+        std::vector<Thumbnail*> thumbnails;      // refs held for the run
+        std::shared_ptr<std::atomic<bool>> cancel;
+        std::mutex resultsMutex;
+        std::vector<Thumbnail*> readyRejects;
+        std::atomic<size_t> analyzed{0};
+        std::atomic<bool> analysisFinished{false};
+    };
+
+    auto state = std::make_shared<AutoCullState>();
+    state->cancel = std::make_shared<std::atomic<bool>>(false);
+    autoCullCancel_ = state->cancel;
+
+    {
+        MYREADERLOCK(l, entryRW);
+        state->thumbnails.reserve(fd.size());
+        for (auto* entry : fd) {
+            auto* fileEntry = static_cast<FileBrowserEntry*>(entry);
+            // Already-rejected images need no analysis
+            if (fileEntry->thumbnail && fileEntry->thumbnail->getPick() != -1) {
+                fileEntry->thumbnail->increaseRef();
+                state->thumbnails.push_back(fileEntry->thumbnail);
+            }
+        }
+    }
+
+    if (state->thumbnails.empty()) {
+        tbl->quickActionProgress(M("FILEBROWSER_AUTOCULL"), 0.0);
+        return;
+    }
+
+    // A fresh run replaces the previous undo set
+    for (auto& undo : autoCullUndo_) {
+        undo.first->decreaseRef();
+    }
+    autoCullUndo_.clear();
+
+    quickActionRunning_ = true;
+    tbl->quickActionProgress(M("FILEBROWSER_AUTOCULL"), 0.01);
+
+    if (autoCullThread_.joinable()) {
+        autoCullThread_.join();
+    }
+
+    autoCullThread_ = std::thread([state, focusTolerance, exposureTolerance]() {
+        for (auto* thm : state->thumbnails) {
+            if (state->cancel->load(std::memory_order_acquire)) {
+                break;
+            }
+
+            try {
+                const AutoGradeFeatures features = analyzeSteepAutoGrade(*thm);
+                if (shouldAutoCull(features, focusTolerance, exposureTolerance)) {
+                    std::lock_guard<std::mutex> lock(state->resultsMutex);
+                    state->readyRejects.push_back(thm);
+                }
+            } catch (...) {
+                fileBrowserPerfLog("[autoCull] analysis failed for %s\n", thm->getFileName().c_str());
+            }
+
+            state->analyzed.fetch_add(1, std::memory_order_release);
+        }
+
+        state->analysisFinished.store(true, std::memory_order_release);
+    });
+
+    autoCullPollConnection_.disconnect();
+    autoCullPollConnection_ = Glib::signal_timeout().connect(
+        [this, state]() -> bool {
+            std::vector<Thumbnail*> culled;
+            {
+                std::lock_guard<std::mutex> lock(state->resultsMutex);
+                culled.swap(state->readyRejects);
+            }
+
+            if (!culled.empty()) {
+                if (bppcl) {
+                    bppcl->beginBatchPParamsChange(culled.size());
+                }
+                for (auto* thm : culled) {
+                    // Record previous state for undo; the undo list owns a ref
+                    thm->increaseRef();
+                    autoCullUndo_.emplace_back(thm, thm->getPick());
+                    thm->setPick(-1);
+                    thm->updateCache();
+                }
+                if (bppcl) {
+                    bppcl->endBatchPParamsChange();
+                }
+                queue_draw();
+            }
+
+            const size_t analyzed = state->analyzed.load(std::memory_order_acquire);
+            tbl->quickActionProgress(
+                Glib::ustring::compose(
+                    "%1 %2/%3",
+                    M("FILEBROWSER_AUTOCULL"),
+                    analyzed,
+                    state->thumbnails.size()),
+                std::max(0.01, static_cast<double>(analyzed) / state->thumbnails.size()));
+
+            if (!state->analysisFinished.load(std::memory_order_acquire)) {
+                return true;
+            }
+
+            if (autoCullThread_.joinable()) {
+                autoCullThread_.join();
+            }
+
+            for (auto* thm : state->thumbnails) {
+                thm->decreaseRef();
+            }
+            state->thumbnails.clear();
+
+            tbl->quickActionProgress(
+                Glib::ustring::compose(
+                    "%1: %2",
+                    M("FILEBROWSER_AUTOCULL"),
+                    Glib::ustring::compose(M("FILEBROWSER_AUTOCULL_RESULT"), autoCullUndo_.size())),
+                0.0);
+            quickActionRunning_ = false;
+
+            // Re-apply so a standing hide-rejects preference takes effect
+            applyFilter(filter);
+            queue_draw();
+            return false;
+        },
+        60,
+        G_PRIORITY_DEFAULT_IDLE);
+}
+
+void FileBrowser::undoAutoCull ()
+{
+    if (autoCullUndo_.empty()) {
+        return;
+    }
+
+    if (bppcl) {
+        bppcl->beginBatchPParamsChange(autoCullUndo_.size());
+    }
+    for (auto& undo : autoCullUndo_) {
+        undo.first->setPick(undo.second);
+        undo.first->updateCache();
+        undo.first->decreaseRef();
+    }
+    if (bppcl) {
+        bppcl->endBatchPParamsChange();
+    }
+
+    const size_t restored = autoCullUndo_.size();
+    autoCullUndo_.clear();
+
+    if (tbl) {
+        tbl->quickActionProgress(
+            Glib::ustring::compose(
+                "%1: %2",
+                M("FILEBROWSER_AUTOCULL_UNDO"),
+                Glib::ustring::compose(M("FILEBROWSER_AUTOCULL_UNDONE"), restored)),
+            0.0);
+    }
+
+    applyFilter(filter);
+    queue_draw();
 }
 
 void FileBrowser::pickRequested (std::vector<FileBrowserEntry*> tbe, int pick)

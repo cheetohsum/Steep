@@ -2028,6 +2028,10 @@ void RTWindow::MoveFileBrowserToMain()
         fCatalog->tbLeftPanel_1_visible (false);  // Left toggle now in FilePanel footer
         fCatalog->tbRightPanel_1_visible (true);
 
+        // The filmstrip's filter must not linger in browser view — restore
+        // the catalog toolbar's filter and resume any paused preview loading.
+        fCatalog->reapplyBrowserFilter ();
+
         // Center the browser on the image that was selected in the filmstrip.
         // Deferred to a low-priority idle so the re-parented browser has been
         // allocated and re-arranged first — entry positions are only valid

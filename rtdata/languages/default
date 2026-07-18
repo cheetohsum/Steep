@@ -267,6 +267,18 @@ FILEBROWSER_SHOWDIRHINT;Clear all filters.\nShortcut: <b>d</b>
 FILEBROWSER_SHOWPICKEDHINT;Show flagged images.\nShortcut: <b>P</b>
 FILEBROWSER_SHOWREJECTEDHINT;Show rejected images.\nShortcut: <b>X</b>
 FILEBROWSER_SHOWUNFLAGGEDHINT;Show unflagged images.\nShortcut: <b>U</b>
+FILEBROWSER_SHOWREJECTSVIEWHINT;Rejects view: show only rejected photos, with mass delete
+FILEBROWSER_DELETEREJECTS;Delete all rejects…
+FILEBROWSER_DELETEREJECTSHINT;Permanently delete every rejected photo in this folder
+FILEBROWSER_HIDEREJECTS;Hide rejected photos
+FILEBROWSER_HIDEREJECTSHINT;Rejected photos stay out of the browser and filmstrip until you filter for them or open the rejects view
+FILEBROWSER_AUTOCULL;Auto-cull
+FILEBROWSER_AUTOCULL_FOCUS;Focus strictness
+FILEBROWSER_AUTOCULL_EXPOSURE;Exposure strictness
+FILEBROWSER_AUTOCULL_RUN;Run auto-cull on this folder
+FILEBROWSER_AUTOCULL_UNDO;Undo last auto-cull
+FILEBROWSER_AUTOCULL_RESULT;%1 photo(s) rejected
+FILEBROWSER_AUTOCULL_UNDONE;%1 photo(s) restored
 FILEBROWSER_SHOWEDITEDHINT;Show edited images.\nShortcut: <b>Shift-7</b>
 FILEBROWSER_SHOWEDITEDNOTHINT;Show not edited images.\nShortcut: <b>Shift-6</b>
 FILEBROWSER_SHOWEXIFINFO;Show Exif info.\n\nShortcuts:\n<b>i</b> - Multiple Editor Tabs Mode,\n<b>Alt-i</b> - Single Editor Tab Mode.

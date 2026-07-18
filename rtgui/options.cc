@@ -421,6 +421,9 @@ void Options::setDefaults()
     thumbSize = 160;
     thumbSizeTab = 120;
     thumbSizeQueue = 160;
+    browserHideRejects = false;
+    autoCullFocusTolerance = 50;
+    autoCullExposureTolerance = 50;
     sameThumbSize = false;               // preferring speed of switch between file browser and single editor tab
     showHistory = true;
     showFilePanelState = 0;             // Not used anymore ; was the thumb strip state
@@ -1388,6 +1391,18 @@ void Options::readFromFile(Glib::ustring fname)
 
                 if (keyFile.has_key("File Browser", "SameThumbSize")) {
                     sameThumbSize = keyFile.get_integer("File Browser", "SameThumbSize");
+                }
+
+                if (keyFile.has_key("File Browser", "HideRejects")) {
+                    browserHideRejects = keyFile.get_boolean("File Browser", "HideRejects");
+                }
+
+                if (keyFile.has_key("File Browser", "AutoCullFocusTolerance")) {
+                    autoCullFocusTolerance = keyFile.get_integer("File Browser", "AutoCullFocusTolerance");
+                }
+
+                if (keyFile.has_key("File Browser", "AutoCullExposureTolerance")) {
+                    autoCullExposureTolerance = keyFile.get_integer("File Browser", "AutoCullExposureTolerance");
                 }
 
                 if (keyFile.has_key("File Browser", "BrowseOnlyRaw")) {
@@ -2660,6 +2675,9 @@ void Options::saveToFile(Glib::ustring fname)
         keyFile.set_integer("File Browser", "ThumbnailSize", thumbSize);
         keyFile.set_integer("File Browser", "ThumbnailSizeTab", thumbSizeTab);
         keyFile.set_boolean("File Browser", "FilmstripSizeMigrated", true);
+        keyFile.set_boolean("File Browser", "HideRejects", browserHideRejects);
+        keyFile.set_integer("File Browser", "AutoCullFocusTolerance", autoCullFocusTolerance);
+        keyFile.set_integer("File Browser", "AutoCullExposureTolerance", autoCullExposureTolerance);
         keyFile.set_integer("File Browser", "ThumbnailSizeQueue", thumbSizeQueue);
         keyFile.set_integer("File Browser", "SameThumbSize", sameThumbSize);
         keyFile.set_integer("File Browser", "MaxPreviewHeight", maxThumbnailHeight);
