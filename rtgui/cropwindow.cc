@@ -546,8 +546,14 @@ void CropWindow::buttonPress (int button, int type, int bstate, int x, int y)
                         state = SResizeW2;
                         press_x = x;
                         action_x = cropHandler.cropParams->w;
-                    } else if (((bstate & GDK_SHIFT_MASK) || iarea->getToolMode() == TMCropSelect)
+                    } else if (((bstate & GDK_SHIFT_MASK) || iarea->getToolMode() == TMCropSelect
+                                || (iarea->getToolMode() == TMHand
+                                    && cropHandler.cropParams->enabled
+                                    && zoomSteps[cropZoom].zoom <= cropHandler.getFitZoom()))
                                && onArea (CropInside, x, y)) {
+                        // Dragging inside the crop moves it. In hand mode this
+                        // applies at fit zoom (panning is a no-op there); when
+                        // zoomed in, plain drag still pans and Shift moves.
                         state = SCropMove;
                         press_x = x;
                         press_y = y;
@@ -670,6 +676,11 @@ void CropWindow::buttonPress (int button, int type, int bstate, int x, int y)
             }
         }
     } else if (button == 3) {
+        // In before/after view a right click offers view options
+        if (iarea && (iarea->isBeforeView || iarea->iLinkedImageArea)) {
+            iarea->showBeforeAfterContextMenu();
+            return;
+        }
         if (iarea->getToolMode () == TMHand || iarea->getToolMode() == TMPerspective
                                 || iarea->getToolMode() == TMPerspectiveGrid) {
             EditSubscriber *editSubscriber = iarea->getCurrSubscriber();
@@ -3079,6 +3090,17 @@ void CropWindow::initialImageArrived ()
 }
 
 void CropWindow::setDisplayPosition (hidpi::LogicalCoord pos) {
+    // Before/after snug mode: butt both fitted images against the center
+    // divider so they sit side by side for comparison on wide monitors.
+    // Centered position => margin each side is pos.x, so right-aligning the
+    // left pane doubles it and left-aligning the right pane zeroes it.
+    if (iarea && App::get().options().beforeAfterSnug) {
+        if (iarea->isBeforeView) {
+            pos.x = std::max(0, 2 * pos.x);
+        } else if (iarea->iLinkedImageArea) {
+            pos.x = 0;
+        }
+    }
     imgPos = pos;
 }
 

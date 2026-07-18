@@ -1151,11 +1151,6 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
     toolBar = new ToolBar();
     toolBar->setToolBarListener(this);
     toolBar->hideCropTools();
-    toolBar->setAutoLevelHandler([this]() {
-        if (rotate) {
-            rotate->requestAutoLevel();
-        }
-    });
 
     // Pack spot WB and color picker into WB's picker row
     if (whitebalance->getPickerRow() && toolBar->getWbTool()) {

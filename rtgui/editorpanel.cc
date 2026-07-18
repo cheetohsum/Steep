@@ -1239,6 +1239,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                 }
             };
             const auto scheduleRatingPaletteClose = [this]() {
+                ratingPaletteOpenConn_.disconnect();
                 ratingPaletteCloseConn_.disconnect();
                 ratingPaletteCloseConn_ = Glib::signal_timeout().connect(
                     [this]() -> bool {
@@ -1252,10 +1253,23 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                     G_PRIORITY_LOW);
             };
 
-            triggerBtn->add_events(Gdk::ENTER_NOTIFY_MASK);
+            triggerBtn->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
             triggerBtn->signal_enter_notify_event().connect(
-                [showRatingPalette](GdkEventCrossing*) -> bool {
-                    showRatingPalette();
+                [this, showRatingPalette](GdkEventCrossing*) -> bool {
+                    // Small hover-intent delay so brushing past the star
+                    // trigger doesn't pop the palette open
+                    ratingPaletteOpenConn_.disconnect();
+                    ratingPaletteOpenConn_ = Glib::signal_timeout().connect(
+                        [showRatingPalette]() -> bool {
+                            showRatingPalette();
+                            return false;
+                        },
+                        200);
+                    return false;
+                });
+            triggerBtn->signal_leave_notify_event().connect(
+                [this](GdkEventCrossing*) -> bool {
+                    ratingPaletteOpenConn_.disconnect();
                     return false;
                 });
             triggerBtn->signal_leave_notify_event().connect(
@@ -2528,6 +2542,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 EditorPanel::~EditorPanel ()
 {
     ratingPaletteCloseConn_.disconnect();
+    ratingPaletteOpenConn_.disconnect();
     filmstripSizeApplyConn_.disconnect();
     delete filmstripSizePopover_;
     deferredOpenConn_.disconnect();
@@ -4697,6 +4712,7 @@ void EditorPanel::close ()
         if (beforeIarea) {
             iareapanel->setBeforeAfterViews (nullptr, iareapanel);
             iareapanel->imageArea->iLinkedImageArea = nullptr;
+            iareapanel->imageArea->isBeforeView = false;
         }
         logCloseStep("before-area-detach");
 
@@ -6337,6 +6353,7 @@ void EditorPanel::beforeAfterToggled ()
 
         iareapanel->setBeforeAfterViews (nullptr, iareapanel);
         iareapanel->imageArea->iLinkedImageArea = nullptr;
+        iareapanel->imageArea->isBeforeView = false;
         delete beforeIarea;
         beforeIarea = nullptr;
 
@@ -6486,6 +6503,9 @@ void EditorPanel::beforeAfterToggled ()
                 beforeIarea->imageArea->setPreviewModePanel (iareapanel->imageArea->previewModePanel);
                 beforeIarea->imageArea->setIndicateClippedPanel (iareapanel->imageArea->indClippedPanel);
                 iareapanel->imageArea->iLinkedImageArea = beforeIarea->imageArea;
+                beforeIarea->imageArea->iLinkedImageArea = iareapanel->imageArea;
+                beforeIarea->imageArea->isBeforeView = true;
+                iareapanel->imageArea->isBeforeView = false;
 
                 iareapanel->setBeforeAfterViews (beforeIarea, iareapanel);
                 beforeIarea->setBeforeAfterViews (beforeIarea, iareapanel);

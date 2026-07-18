@@ -287,6 +287,7 @@ public:
     Glib::ustring version;
     int thumbSize, thumbSizeTab, thumbSizeQueue;
     bool browserHideRejects;        // standing "hide rejected photos" preference
+    bool beforeAfterSnug;           // before/after images butt against the center divider
     int autoCullFocusTolerance;     // 0-100, higher = stricter focus culling
     int autoCullExposureTolerance;  // 0-100, higher = stricter exposure culling
     bool sameThumbSize;     // Will use only one thumb size for the file browser and the single editor tab, and avoid recomputing them

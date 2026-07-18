@@ -1425,7 +1425,9 @@ FileBrowser::FileBrowser () :
             label->set_markup("<span size='small' alpha='55%'>"
                               + Glib::Markup::escape_text(caption) + "</span>");
             label->set_xalign(0.0);
-            label->set_margin_start(0);
+            // Matches the first icon's glyph edge (6px widget margin plus
+            // the glyph centering inside the icon's allocation)
+            label->set_margin_start(9);
             vbox->pack_start(*label, Gtk::PACK_SHRINK);
             auto* row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 2));
             vbox->pack_start(*row, Gtk::PACK_SHRINK);
@@ -1610,9 +1612,9 @@ FileBrowser::FileBrowser () :
                 const double ix = xRoot - windowX - allocation.get_x();
                 const double iy = yRoot - windowY - allocation.get_y();
 
-                if (ix >= -8.0 && iy >= -6.0
-                        && ix < allocation.get_width() + 8.0
-                        && iy < allocation.get_height() + 6.0) {
+                if (ix >= -5.0 && iy >= -5.0
+                        && ix < allocation.get_width() + 5.0
+                        && iy < allocation.get_height() + 5.0) {
                     return &zone;
                 }
             }
@@ -2341,16 +2343,13 @@ FileBrowser::FileBrowser () :
                                 }
                             }
 
+                            // Only ever SWITCH to another tools menu from
+                            // here — never close. The open menu must stay
+                            // open and selectable however the pointer
+                            // travels into it; it closes via click-away,
+                            // Escape, or choosing an item.
                             InlineZone* over = hitZoneAt(event->x_root, event->y_root);
                             if (over && over->hoverMenu) {
-                                // switches menus via the hover timer
-                                setHover(over, event->x_root, event->y_root);
-                            } else if (over) {
-                                // back on a regular row: close this menu
-                                sub->popdown();
-                                if (hoverState->openSubmenu == sub) {
-                                    hoverState->openSubmenu = nullptr;
-                                }
                                 setHover(over, event->x_root, event->y_root);
                             }
                             return false;

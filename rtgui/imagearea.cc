@@ -60,6 +60,37 @@ ImageArea::ImageArea (ImageAreaPanel* p) : parent(p), quickPreviewFit_(false), f
     iLinkedImageArea = nullptr;
 }
 
+void ImageArea::showBeforeAfterContextMenu ()
+{
+    // Built fresh each time — it is tiny and state must reflect the option
+    static Gtk::Menu* menu = nullptr;
+    delete menu;
+    menu = new Gtk::Menu();
+
+    auto* snugItem = Gtk::manage(new Gtk::CheckMenuItem(M("EDITOR_BEFOREAFTER_SNUG")));
+    snugItem->set_active(App::get().options().beforeAfterSnug);
+    snugItem->signal_toggled().connect([this, snugItem]() {
+        App::get().mut_options().beforeAfterSnug = snugItem->get_active();
+        Options::save();
+
+        // Re-fit both panes so the new alignment takes effect immediately
+        if (mainCropWindow) {
+            mainCropWindow->zoomFit();
+        }
+        if (iLinkedImageArea && iLinkedImageArea->mainCropWindow) {
+            iLinkedImageArea->mainCropWindow->zoomFit();
+        }
+        queue_draw();
+        if (iLinkedImageArea) {
+            iLinkedImageArea->queue_draw();
+        }
+    });
+    menu->attach(*snugItem, 0, 1, 0, 1);
+    menu->attach_to_widget(*this);
+    menu->show_all();
+    menu->popup_at_pointer(nullptr);
+}
+
 ImageArea::~ImageArea ()
 {
 

@@ -35,6 +35,7 @@ class Rotate final :
 protected:
     Adjuster*           degree;
     Gtk::Button*        autoLevel;
+    Gtk::Button*        selectStraight = nullptr;
     Gtk::Label*         autoLevelStatus;
     sigc::connection    autoLevelStatusConn;
     LensGeomListener*   rlistener;

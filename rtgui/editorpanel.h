@@ -293,6 +293,7 @@ private:
     void updateFilmstripStars(int highlightUpTo);
     Gtk::Revealer* colorLabelRevealer_;
     sigc::connection ratingPaletteCloseConn_;
+    sigc::connection ratingPaletteOpenConn_;
 
     // Filmstrip flag/reject
     Gtk::Button* filmstripFlagBtn_;

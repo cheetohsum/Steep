@@ -80,8 +80,12 @@ public:
     ZoomPanel* zoomPanel;
     IndicateClippedPanel* indClippedPanel;
     PreviewModePanel* previewModePanel;
-    ImageArea* iLinkedImageArea; // used to set a reference to the Before image area, which is set when before/after view is enabled
+    ImageArea* iLinkedImageArea; // link to the counterpart view while before/after is enabled
+    bool isBeforeView = false;   // true for the 'before' (left) pane of before/after
     bool suppressZoomSync_ = false; // prevents zoom sync recursion between before/after views
+
+    // Right-click context menu for the before/after view (snug-to-divider)
+    void showBeforeAfterContextMenu ();
 
     explicit ImageArea (ImageAreaPanel* p);
     ~ImageArea () override;

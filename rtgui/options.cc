@@ -422,6 +422,7 @@ void Options::setDefaults()
     thumbSizeTab = 120;
     thumbSizeQueue = 160;
     browserHideRejects = false;
+    beforeAfterSnug = false;
     autoCullFocusTolerance = 50;
     autoCullExposureTolerance = 50;
     sameThumbSize = false;               // preferring speed of switch between file browser and single editor tab
@@ -1395,6 +1396,10 @@ void Options::readFromFile(Glib::ustring fname)
 
                 if (keyFile.has_key("File Browser", "HideRejects")) {
                     browserHideRejects = keyFile.get_boolean("File Browser", "HideRejects");
+                }
+
+                if (keyFile.has_key("File Browser", "BeforeAfterSnug")) {
+                    beforeAfterSnug = keyFile.get_boolean("File Browser", "BeforeAfterSnug");
                 }
 
                 if (keyFile.has_key("File Browser", "AutoCullFocusTolerance")) {
@@ -2676,6 +2681,7 @@ void Options::saveToFile(Glib::ustring fname)
         keyFile.set_integer("File Browser", "ThumbnailSizeTab", thumbSizeTab);
         keyFile.set_boolean("File Browser", "FilmstripSizeMigrated", true);
         keyFile.set_boolean("File Browser", "HideRejects", browserHideRejects);
+        keyFile.set_boolean("File Browser", "BeforeAfterSnug", beforeAfterSnug);
         keyFile.set_integer("File Browser", "AutoCullFocusTolerance", autoCullFocusTolerance);
         keyFile.set_integer("File Browser", "AutoCullExposureTolerance", autoCullExposureTolerance);
         keyFile.set_integer("File Browser", "ThumbnailSizeQueue", thumbSizeQueue);

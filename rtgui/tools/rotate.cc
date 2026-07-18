@@ -47,9 +47,29 @@ Rotate::Rotate () : FoldableToolPanel(this, TOOL_NAME, M("TP_ROTATE_LABEL"))
     degree->set_margin_end(10);
     pack_start (*degree, false, false);
 
-    // The Auto Level action moved to the editor toolbar (left of the
-    // line-level tool); this panel keeps only the status feedback label.
-    autoLevel = nullptr;
+    // Auto Level sits left of the Select Straight Line tool
+    Gtk::Box* levelRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+    levelRow->set_margin_start(10);
+    levelRow->set_margin_end(10);
+
+    autoLevel = Gtk::manage(new Gtk::Button(M("TP_ROTATE_AUTO_LEVEL")));
+    autoLevel->set_image(*Gtk::manage(new RTImage("auto-level", Gtk::ICON_SIZE_BUTTON)));
+    autoLevel->set_always_show_image(true);
+    autoLevel->set_tooltip_text(M("TP_ROTATE_AUTO_LEVEL_TOOLTIP"));
+    autoLevel->signal_clicked().connect(sigc::mem_fun(*this, &Rotate::autoLevelPressed));
+    levelRow->pack_start(*autoLevel, true, true);
+
+    selectStraight = Gtk::manage(new Gtk::Button(M("TP_ROTATE_SELECTLINE")));
+    selectStraight->set_image(*Gtk::manage(new RTImage("rotate-straighten-small", Gtk::ICON_SIZE_BUTTON)));
+    selectStraight->set_always_show_image(true);
+    selectStraight->signal_clicked().connect([this]() {
+        if (rlistener) {
+            rlistener->straightenRequested();
+        }
+    });
+    levelRow->pack_start(*selectStraight, true, true);
+
+    pack_start(*levelRow, false, false);
 
     autoLevelStatus = Gtk::manage(new Gtk::Label());
     autoLevelStatus->set_xalign(1.0f);
