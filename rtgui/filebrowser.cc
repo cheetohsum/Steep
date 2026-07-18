@@ -1407,9 +1407,11 @@ FileBrowser::FileBrowser () :
         auto makeInlineRow = [](const Glib::ustring& caption) {
             auto* item = Gtk::manage(new Gtk::MenuItem());
             item->set_name("InlineActionRow");
-            auto* row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 2));
+            auto* row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+            row->set_margin_top(3);
+            row->set_margin_bottom(3);
             auto* label = Gtk::manage(new Gtk::Label(caption));
-            label->set_width_chars(6);
+            label->set_width_chars(7);
             label->set_xalign(0.0);
             label->get_style_context()->add_class("dim-label");
             row->pack_start(*label, Gtk::PACK_SHRINK);
@@ -1421,10 +1423,10 @@ FileBrowser::FileBrowser () :
                                                  const Glib::ustring& tooltip,
                                                  std::function<Gtk::MenuItem*()> target) {
             auto* img = Gtk::manage(new RTImage(icon, Gtk::ICON_SIZE_MENU));
-            img->set_margin_start(3);
-            img->set_margin_end(3);
-            img->set_margin_top(2);
-            img->set_margin_bottom(2);
+            img->set_margin_start(7);
+            img->set_margin_end(7);
+            img->set_margin_top(4);
+            img->set_margin_bottom(4);
             img->set_tooltip_text(tooltip);
             row->pack_start(*img, Gtk::PACK_SHRINK);
             inlineZones->emplace_back(img, [this, target]() {
@@ -1497,9 +1499,10 @@ FileBrowser::FileBrowser () :
                     const double iy = event->y_root - windowY - allocation.get_y();
 
                     // Padded hit zone so near-misses on small icons land
-                    if (ix >= -4.0 && iy >= -4.0
-                            && ix < allocation.get_width() + 4.0
-                            && iy < allocation.get_height() + 4.0) {
+                    // (margins keep neighboring zones from overlapping)
+                    if (ix >= -6.0 && iy >= -6.0
+                            && ix < allocation.get_width() + 6.0
+                            && iy < allocation.get_height() + 6.0) {
                         const auto action = zone.second;
                         pmenu->popdown();
                         action();
