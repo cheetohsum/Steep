@@ -2269,6 +2269,16 @@ FileBrowser::~FileBrowser ()
         undo.first->decreaseRef();
     }
     autoCullUndo_.clear();
+
+    // Flush any deferred rating persistence synchronously so no rank/label/
+    // pick change is lost on teardown.
+    persistConn_.disconnect();
+    while (!persistQueue_.empty()) {
+        Thumbnail* thm = persistQueue_.front();
+        persistQueue_.pop_front();
+        thm->updateCache();
+        thm->decreaseRef();
+    }
     idle_register.destroy();
 
     // Cancel deferred deletion callback and flush remaining entries
@@ -4722,6 +4732,29 @@ void FileBrowser::sortOrderRequested (int order)
     resort ();
 }
 
+void FileBrowser::queueThumbnailPersist (Thumbnail* thm)
+{
+    thm->increaseRef();
+    persistQueue_.push_back(thm);
+
+    if (persistConn_.connected()) {
+        return;
+    }
+
+    persistConn_ = Glib::signal_idle().connect(
+        [this]() -> bool {
+            int budget = 4; // disk writes per idle tick
+            while (budget-- > 0 && !persistQueue_.empty()) {
+                Thumbnail* thm = persistQueue_.front();
+                persistQueue_.pop_front();
+                thm->updateCache();
+                thm->decreaseRef();
+            }
+            return !persistQueue_.empty();
+        },
+        G_PRIORITY_LOW);
+}
+
 void FileBrowser::rankingRequested (std::vector<FileBrowserEntry*> tbe, int rank)
 {
 
@@ -4738,8 +4771,9 @@ void FileBrowser::rankingRequested (std::vector<FileBrowserEntry*> tbe, int rank
         tbe[i]->thumbnail->notifylisterners_procParamsChanged(FILEBROWSER);
 
         tbe[i]->thumbnail->setRank (rank);
-        tbe[i]->thumbnail->updateCache (); // needed to save the colorlabel to disk in the procparam file(s) and the cache image data file
-        //TODO? - should update pparams instead?
+        // Persistence is deferred to idle chunks: the rank applies (and
+        // renders) instantly even for large selections.
+        queueThumbnailPersist (tbe[i]->thumbnail);
 
         auto* thumbButtonSet = rank > 0 ? tbe[i]->ensureThumbButtonSet(this) : tbe[i]->getThumbButtonSet();
         if (thumbButtonSet) {
@@ -4772,9 +4806,7 @@ void FileBrowser::colorlabelRequested (std::vector<FileBrowserEntry*> tbe, int c
         tbe[i]->thumbnail->notifylisterners_procParamsChanged(FILEBROWSER);
 
         tbe[i]->thumbnail->setColorLabel (colorlabel);
-        tbe[i]->thumbnail->updateCache(); // needed to save the colorlabel to disk in the procparam file(s) and the cache image data file
-
-        //TODO? - should update pparams instead?
+        queueThumbnailPersist (tbe[i]->thumbnail);
         auto* thumbButtonSet = colorlabel > 0 ? tbe[i]->ensureThumbButtonSet(this) : tbe[i]->getThumbButtonSet();
         if (thumbButtonSet) {
             thumbButtonSet->setColorLabel (tbe[i]->thumbnail->getColorLabel());
@@ -4859,15 +4891,16 @@ bool shouldAutoCull (const AutoGradeFeatures& f, int focusTolerance, int exposur
     // primary signal is the strong-edge fraction: any in-focus image (even
     // a soft portrait) produces some hard local edges, while a defocused
     // frame has essentially none. Mean gradient stays only as a co-signal.
-    const double strongEdgeThreshold = 0.00003 + 0.00045 * focusT;
+    const double strongEdgeThreshold = 0.00002 + 0.00034 * focusT;
     if (f.strongEdgeFraction < strongEdgeThreshold
-            && f.edgeDensity < 0.010 + 0.012 * focusT) {
+            && f.edgeDensity < 0.008 + 0.010 * focusT) {
         return true;
     }
 
     // Overexposed: TRUE clipped whites dominating the frame. Bright high-key
-    // and snow scenes have lots of bright pixels but few actual clips.
-    const double clipThreshold = 0.70 - 0.45 * exposureT;
+    // and snow scenes have lots of bright pixels but few actual clips. At
+    // default strictness well over half the frame must be genuinely blown.
+    const double clipThreshold = 0.80 - 0.40 * exposureT;
     if (f.clippedFraction > clipThreshold) {
         return true;
     }
@@ -4875,10 +4908,10 @@ bool shouldAutoCull (const AutoGradeFeatures& f, int focusTolerance, int exposur
     // Severely underexposed with nothing bright anywhere and almost no
     // tonal range. Real night scenes keep specular lights (highlights) and
     // far more range than this.
-    const double underThreshold = 0.008 + 0.022 * exposureT;
+    const double underThreshold = 0.005 + 0.018 * exposureT;
     if (f.medianLuma < underThreshold
-            && f.highlightFraction < 0.004
-            && f.dynamicRange < 0.12) {
+            && f.highlightFraction < 0.002
+            && f.dynamicRange < 0.10) {
         return true;
     }
 
@@ -5068,7 +5101,7 @@ void FileBrowser::pickRequested (std::vector<FileBrowserEntry*> tbe, int pick)
         tbe[i]->thumbnail->createProcParamsForUpdate(false, false, true);
         tbe[i]->thumbnail->notifylisterners_procParamsChanged(FILEBROWSER);
         tbe[i]->thumbnail->setPick (pick);
-        tbe[i]->thumbnail->updateCache();
+        queueThumbnailPersist (tbe[i]->thumbnail);
         tbe[i]->startPickAnimation();
     }
 

@@ -38,6 +38,7 @@
 #include <gtkmm.h>
 
 #include <cstddef>
+#include <deque>
 #include <map>
 #include <set>
 #include <string>
@@ -221,6 +222,13 @@ protected:
     std::thread autoCullThread_;
     std::shared_ptr<std::atomic<bool>> autoCullCancel_;
     std::vector<std::pair<Thumbnail*, int>> autoCullUndo_; // thumbnail (ref held) + previous pick
+
+    // Deferred rating persistence: rank/label/pick apply in memory instantly,
+    // the per-image cache/sidecar writes drain in idle chunks so large
+    // selections don't stall the UI
+    std::deque<Thumbnail*> persistQueue_; // refs held
+    sigc::connection persistConn_;
+    void queueThumbnailPersist (Thumbnail* thm);
     std::unique_ptr<Glib::ThreadPool> autoEditHoverPool_;
     std::shared_ptr<std::atomic<unsigned>> autoEditHoverGeneration_;
     sigc::connection autoEditHoverDelayConnection_;

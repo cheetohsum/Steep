@@ -3259,6 +3259,9 @@ void FileCatalog::showRejectsPopover ()
         hideRejectsCheck_->set_tooltip_markup(M("FILEBROWSER_HIDEREJECTSHINT"));
         hideRejectsCheck_->signal_toggled().connect([this]() {
             App::get().mut_options().browserHideRejects = hideRejectsCheck_->get_active();
+            // Persist immediately — the preference must survive even a
+            // crash or force-kill, not just a clean exit.
+            Options::save();
             fileBrowser->applyFilter(getFilter());
             _refreshProgressBar();
         });
@@ -3295,6 +3298,7 @@ void FileCatalog::showRejectsPopover ()
                 static_cast<int>(cullFocusScale_->get_value() + 0.5);
             mutOptions.autoCullExposureTolerance =
                 static_cast<int>(cullExposureScale_->get_value() + 0.5);
+            Options::save();
             rejectsPopover_->popdown();
             fileBrowser->startAutoCull(
                 mutOptions.autoCullFocusTolerance,
