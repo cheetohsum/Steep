@@ -163,6 +163,10 @@ protected:
     // Standalone dropdown menus for the inline profile-operations row
     Gtk::Menu* inlineCopySettingsMenu_ = nullptr;
     Gtk::Menu* inlineApplyMenu_ = nullptr;
+    // Custom hover-pause tooltip for the inline rows (GTK tooltips cannot
+    // fire through the menu grab)
+    Gtk::Window* inlineTipWindow_ = nullptr;
+    Gtk::Label* inlineTipLabel_ = nullptr;
     MyImageMenuItem* pasteprof;
     MyImageMenuItem* partpasteprof;
     MyImageMenuItem* applyprof;

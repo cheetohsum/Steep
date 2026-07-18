@@ -1405,32 +1405,37 @@ FileBrowser::FileBrowser () :
             Gtk::Widget* widget = nullptr;
             std::function<void()> action;                       // click
             std::function<Gtk::MenuItem*()> hoverPreview;       // optional
+            Glib::ustring tip;                                  // hover-pause tooltip
             bool keepMenuOpen = false;                          // dropdowns
         };
         auto inlineZones = std::make_shared<std::vector<InlineZone>>();
 
+        // Caption sits above its icon row in a small dim font, so the icons
+        // form a compact, evenly spaced strip underneath.
         auto makeInlineRow = [](const Glib::ustring& caption) {
             auto* item = Gtk::manage(new Gtk::MenuItem());
             item->set_name("InlineActionRow");
-            auto* row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
-            row->set_margin_top(3);
-            row->set_margin_bottom(3);
-            auto* label = Gtk::manage(new Gtk::Label(caption));
-            label->set_width_chars(7);
+            auto* vbox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
+            vbox->set_margin_top(4);
+            vbox->set_margin_bottom(2);
+            auto* label = Gtk::manage(new Gtk::Label());
+            label->set_markup("<span size='small' alpha='55%'>"
+                              + Glib::Markup::escape_text(caption) + "</span>");
             label->set_xalign(0.0);
-            label->get_style_context()->add_class("dim-label");
-            row->pack_start(*label, Gtk::PACK_SHRINK);
-            item->add(*row);
+            label->set_margin_start(8);
+            vbox->pack_start(*label, Gtk::PACK_SHRINK);
+            auto* row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 2));
+            vbox->pack_start(*row, Gtk::PACK_SHRINK);
+            item->add(*vbox);
             return std::make_pair(item, row);
         };
 
-        auto makeInlineImage = [](Gtk::Box* row, const char* icon, const Glib::ustring& tooltip) {
+        auto makeInlineImage = [](Gtk::Box* row, const char* icon) {
             auto* img = Gtk::manage(new RTImage(icon, Gtk::ICON_SIZE_LARGE_TOOLBAR));
             img->set_margin_start(6);
             img->set_margin_end(6);
-            img->set_margin_top(4);
-            img->set_margin_bottom(4);
-            img->set_tooltip_text(tooltip);
+            img->set_margin_top(2);
+            img->set_margin_bottom(2);
             // Dimmed at rest; the hover tracker below raises the icon under
             // the pointer to full opacity so the target is unmistakable.
             img->set_opacity(0.65);
@@ -1443,9 +1448,10 @@ FileBrowser::FileBrowser () :
                                  const Glib::ustring& tooltip,
                                  std::function<Gtk::MenuItem*()> target,
                                  bool hoverPreviews = false) {
-            auto* img = makeInlineImage(row, icon, tooltip);
+            auto* img = makeInlineImage(row, icon);
             InlineZone zone;
             zone.widget = img;
+            zone.tip = tooltip;
             zone.action = [this, target]() {
                 menuItemActivated(target());
             };
@@ -1460,9 +1466,10 @@ FileBrowser::FileBrowser () :
                                    const Glib::ustring& tooltip,
                                    std::function<void()> action,
                                    bool keepMenuOpen = false) {
-            auto* img = makeInlineImage(row, icon, tooltip);
+            auto* img = makeInlineImage(row, icon);
             InlineZone zone;
             zone.widget = img;
+            zone.tip = tooltip;
             zone.action = std::move(action);
             zone.keepMenuOpen = keepMenuOpen;
             inlineZones->push_back(std::move(zone));
@@ -1606,21 +1613,70 @@ FileBrowser::FileBrowser () :
             },
             false);
 
-        // Hover feedback: the icon under the pointer goes full-opacity, and
-        // auto-look icons live-preview their result on the open image
-        auto hoverState = std::make_shared<InlineZone*>(nullptr);
-        auto setHover = [this, hoverState](InlineZone* hovered) {
-            if (*hoverState == hovered) {
+        // Hover feedback: the icon under the pointer goes full-opacity,
+        // auto-look icons live-preview their result on the open image, and
+        // pausing over any icon shows what it does. GTK's own tooltips
+        // cannot fire through the menu grab, so the tip is a small popup
+        // window managed by the hover tracker.
+        struct HoverState {
+            InlineZone* zone = nullptr;
+            sigc::connection tipTimer;
+            double pointerX = 0.0;
+            double pointerY = 0.0;
+        };
+        auto hoverState = std::make_shared<HoverState>();
+
+        if (!inlineTipWindow_) {
+            inlineTipWindow_ = new Gtk::Window(Gtk::WINDOW_POPUP);
+            inlineTipWindow_->set_type_hint(Gdk::WINDOW_TYPE_HINT_TOOLTIP);
+            inlineTipWindow_->get_style_context()->add_class("tooltip");
+            inlineTipLabel_ = Gtk::manage(new Gtk::Label());
+            inlineTipLabel_->set_margin_start(8);
+            inlineTipLabel_->set_margin_end(8);
+            inlineTipLabel_->set_margin_top(4);
+            inlineTipLabel_->set_margin_bottom(4);
+            inlineTipWindow_->add(*inlineTipLabel_);
+        }
+
+        auto hideTip = [this, hoverState]() {
+            hoverState->tipTimer.disconnect();
+            if (inlineTipWindow_) {
+                inlineTipWindow_->hide();
+            }
+        };
+
+        auto setHover = [this, hoverState, hideTip](InlineZone* hovered, double x, double y) {
+            hoverState->pointerX = x;
+            hoverState->pointerY = y;
+
+            if (hoverState->zone == hovered) {
                 return;
             }
 
-            InlineZone* previous = *hoverState;
+            hideTip();
+
+            InlineZone* previous = hoverState->zone;
             if (previous) {
                 previous->widget->set_opacity(0.65);
             }
-            *hoverState = hovered;
+            hoverState->zone = hovered;
             if (hovered) {
                 hovered->widget->set_opacity(1.0);
+
+                if (!hovered->tip.empty()) {
+                    hoverState->tipTimer = Glib::signal_timeout().connect(
+                        [this, hoverState]() -> bool {
+                            if (hoverState->zone && inlineTipWindow_ && inlineTipLabel_) {
+                                inlineTipLabel_->set_text(hoverState->zone->tip);
+                                inlineTipWindow_->move(
+                                    static_cast<int>(hoverState->pointerX) + 14,
+                                    static_cast<int>(hoverState->pointerY) + 20);
+                                inlineTipWindow_->show_all();
+                            }
+                            return false;
+                        },
+                        450);
+                }
             }
 
             const bool hadPreview = previous && previous->hoverPreview;
@@ -1635,18 +1691,23 @@ FileBrowser::FileBrowser () :
         pmenu->add_events(Gdk::POINTER_MOTION_MASK | Gdk::LEAVE_NOTIFY_MASK);
         pmenu->signal_motion_notify_event().connect(
             [hitZoneAt, setHover](GdkEventMotion* event) -> bool {
-                setHover(event ? hitZoneAt(event->x_root, event->y_root) : nullptr);
+                if (event) {
+                    setHover(hitZoneAt(event->x_root, event->y_root), event->x_root, event->y_root);
+                }
                 return false;
             },
             false);
         pmenu->signal_leave_notify_event().connect(
-            [setHover](GdkEventCrossing*) -> bool {
-                setHover(nullptr);
+            [setHover](GdkEventCrossing* event) -> bool {
+                setHover(nullptr,
+                         event ? event->x_root : 0.0,
+                         event ? event->y_root : 0.0);
                 return false;
             },
             false);
-        pmenu->signal_hide().connect([setHover]() {
-            setHover(nullptr);
+        pmenu->signal_hide().connect([setHover, hideTip]() {
+            hideTip();
+            setHover(nullptr, 0.0, 0.0);
         });
     }
 
@@ -2405,6 +2466,7 @@ FileBrowser::~FileBrowser ()
     delete pmenuColorLabels;
     delete inlineCopySettingsMenu_;
     delete inlineApplyMenu_;
+    delete inlineTipWindow_;
     delete[] amiExtProg;
 }
 
