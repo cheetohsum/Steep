@@ -109,6 +109,8 @@ struct AutoGradeFeatures {
     double skyFraction = 0.0;
     double foliageFraction = 0.0;
     double edgeDensity = 0.0;
+    double strongEdgeFraction = 0.0; // share of neighbor gradients > 0.09 (real edges)
+    double clippedFraction = 0.0;    // share of pixels with luma > 0.985 (true clips)
     unsigned iso = 100;
 };
 
@@ -187,6 +189,7 @@ AutoGradeFeatures analyzeSteepAutoGrade(Thumbnail& thumbnail)
     std::vector<float> luma(pixelCount, 0.f);
     size_t shadows = 0;
     size_t highlights = 0;
+    size_t clipped = 0;
     size_t warm = 0;
     size_t brightWarm = 0;
     size_t cool = 0;
@@ -230,6 +233,7 @@ AutoGradeFeatures analyzeSteepAutoGrade(Thumbnail& thumbnail)
             saturationSum += saturation;
             shadows += luminance < 0.16;
             highlights += luminance > 0.84;
+            clipped += luminance > 0.985;
             warm += saturation > 0.12 && (hue <= 70.0 || hue >= 340.0);
             brightWarm += luminance > 0.55 && saturation > 0.12 && (hue <= 70.0 || hue >= 340.0);
             cool += saturation > 0.12 && hue >= 170.0 && hue <= 270.0;
@@ -256,11 +260,14 @@ AutoGradeFeatures analyzeSteepAutoGrade(Thumbnail& thumbnail)
 
     double edgeSum = 0.0;
     size_t edgeSamples = 0;
+    size_t strongEdges = 0;
     for (int y = 1; y < height; ++y) {
         for (int x = 1; x < width; ++x) {
             const size_t index = static_cast<size_t>(y) * width + x;
-            edgeSum += std::abs(luma[index] - luma[index - 1]);
-            edgeSum += std::abs(luma[index] - luma[index - width]);
+            const double dh = std::abs(luma[index] - luma[index - 1]);
+            const double dv = std::abs(luma[index] - luma[index - width]);
+            edgeSum += dh + dv;
+            strongEdges += (dh > 0.09) + (dv > 0.09);
             edgeSamples += 2;
         }
     }
@@ -281,6 +288,8 @@ AutoGradeFeatures analyzeSteepAutoGrade(Thumbnail& thumbnail)
     features.skyFraction = sky / count;
     features.foliageFraction = foliage / count;
     features.edgeDensity = edgeSamples ? edgeSum / edgeSamples : 0.0;
+    features.strongEdgeFraction = edgeSamples ? static_cast<double>(strongEdges) / edgeSamples : 0.0;
+    features.clippedFraction = clipped / count;
 
     if (features.skinFraction > 0.045
             && features.centerSkinFraction > 0.075
@@ -1353,6 +1362,7 @@ void buildSteepAutoEditParams(
 
 FileBrowser::FileBrowser () :
     editExternal(nullptr),
+    menuRank(nullptr),
     menuLabel(nullptr),
     miOpenDefaultViewer(nullptr),
     selectDF(nullptr),
@@ -1380,6 +1390,84 @@ FileBrowser::FileBrowser () :
 
     int p = 0;
     pmenu = new Gtk::Menu ();
+
+    /***********************
+     * Inline quick actions at the very top: one-click flag / rank /
+     * color-label for the whole selection, no submenu digging. The
+     * buttons route through menuItemActivated() using the hidden
+     * identity items created further down.
+     ***********************/
+    {
+        auto makeInlineRow = [this](const Glib::ustring& caption) {
+            auto* item = Gtk::manage(new Gtk::MenuItem());
+            item->set_name("InlineActionRow");
+            auto* row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 1));
+            auto* label = Gtk::manage(new Gtk::Label(caption));
+            label->set_width_chars(6);
+            label->set_xalign(0.0);
+            label->get_style_context()->add_class("dim-label");
+            row->pack_start(*label, Gtk::PACK_SHRINK);
+            item->add(*row);
+            return std::make_pair(item, row);
+        };
+
+        auto addInlineButton = [this](Gtk::Box* row, const char* icon,
+                                      const Glib::ustring& tooltip,
+                                      std::function<Gtk::MenuItem*()> target) {
+            auto* button = Gtk::manage(new Gtk::Button());
+            button->set_image(*Gtk::manage(new RTImage(icon, Gtk::ICON_SIZE_MENU)));
+            button->set_relief(Gtk::RELIEF_NONE);
+            button->set_focus_on_click(false);
+            button->set_tooltip_text(tooltip);
+            button->signal_clicked().connect([this, target]() {
+                pmenu->popdown();
+                menuItemActivated(target());
+            });
+            row->pack_start(*button, Gtk::PACK_SHRINK);
+        };
+
+        // Flags: pick / unflag / reject
+        auto flagRow = makeInlineRow(M("FILEBROWSER_POPUPFLAG"));
+        addInlineButton(flagRow.second, "menu-flag-pick", M("FILEBROWSER_POPUPPICK"),
+                        [this]() -> Gtk::MenuItem* { return pickFlag; });
+        addInlineButton(flagRow.second, "menu-flag-unflagged", M("FILEBROWSER_POPUPUNFLAG"),
+                        [this]() -> Gtk::MenuItem* { return unflagFlag; });
+        addInlineButton(flagRow.second, "menu-flag-reject", M("FILEBROWSER_POPUPREJECT"),
+                        [this]() -> Gtk::MenuItem* { return rejectFlag; });
+        pmenu->attach(*flagRow.first, 0, 1, p, p + 1);
+        p++;
+
+        // Rank: none + 1..5 stars
+        auto rankRow = makeInlineRow(M("FILEBROWSER_POPUPRANK"));
+        addInlineButton(rankRow.second, "menu-star-empty", M("FILEBROWSER_POPUPUNRANK"),
+                        [this]() -> Gtk::MenuItem* { return rank[0]; });
+        for (int i = 1; i <= 5; i++) {
+            addInlineButton(rankRow.second,
+                            Glib::ustring::compose("menu-star-%1", i).c_str(),
+                            M(Glib::ustring::compose("FILEBROWSER_POPUPRANK%1", i)),
+                            [this, i]() -> Gtk::MenuItem* { return rank[i]; });
+        }
+        pmenu->attach(*rankRow.first, 0, 1, p, p + 1);
+        p++;
+
+        // Color labels: none + 5 colors
+        static const std::array<const char*, 6> inlineClabelIcons = {
+            "circle-empty-gray-small", "circle-red-small", "circle-yellow-small",
+            "circle-green-small", "circle-blue-small", "circle-purple-small"
+        };
+        auto colorRow = makeInlineRow(M("FILEBROWSER_POPUPCOLORLABEL"));
+        for (int i = 0; i <= 5; i++) {
+            addInlineButton(colorRow.second, inlineClabelIcons[i],
+                            M(Glib::ustring::compose("FILEBROWSER_POPUPCOLORLABEL%1", i)),
+                            [this, i]() -> Gtk::MenuItem* { return colorlabel[i]; });
+        }
+        pmenu->attach(*colorRow.first, 0, 1, p, p + 1);
+        p++;
+
+        pmenu->attach(*Gtk::manage(new Gtk::SeparatorMenuItem()), 0, 1, p, p + 1);
+        p++;
+    }
+
     pmenu->attach (*Gtk::manage(open = new MyImageMenuItem (M("FILEBROWSER_POPUPOPEN"), "menu-open")), 0, 1, p, p + 1);
     p++;
     if (options.inspectorWindow) {
@@ -1515,94 +1603,44 @@ FileBrowser::FileBrowser () :
     menuSort->set_submenu (*submenuSort);
 
     /***********************
-     * rank
+     * rank / color labels / pick flags — identity items only.
+     * The visible UI is the inline quick-action rows at the top of the
+     * menu; these MyImageMenuItems remain as hidden targets so
+     * menuItemActivated(), keyboard shortcuts, and the inline buttons
+     * share one activation path. They live in a hidden submenu so the
+     * menu keeps ownership of their lifetime.
      ***********************/
     std::array<std::string, 6> rankIcons = {"menu-star-empty", "menu-star-1", "menu-star-2", "menu-star-3", "menu-star-4", "menu-star-5"};
-
-    if (options.menuGroupRank) {
-        pmenu->attach (*Gtk::manage(menuRank = new MyImageMenuItem (M("FILEBROWSER_POPUPRANK"), "menu-sort-rank")), 0, 1, p, p + 1);
-        p++;
-        Gtk::Menu* submenuRank = Gtk::manage (new Gtk::Menu ());
-        submenuRank->attach (*Gtk::manage(rank[0] = new MyImageMenuItem (M("FILEBROWSER_POPUPUNRANK"), rankIcons[0])), 0, 1, p, p + 1);
-        p++;
-
-        for (int i = 1; i <= 5; i++) {
-            submenuRank->attach (*Gtk::manage(rank[i] = new MyImageMenuItem (M(Glib::ustring::compose("%1%2", "FILEBROWSER_POPUPRANK", i)), rankIcons[i])), 0, 1, p, p + 1);
-            p++;
-        }
-
-        submenuRank->show_all ();
-        menuRank->set_submenu (*submenuRank);
-    } else {
-        pmenu->attach (*Gtk::manage(rank[0] = new MyImageMenuItem (M("FILEBROWSER_POPUPUNRANK"), rankIcons[0])), 0, 1, p, p + 1);
-        p++;
-
-        for (int i = 1; i <= 5; i++) {
-            pmenu->attach (*Gtk::manage(rank[i] = new MyImageMenuItem (M(Glib::ustring::compose("%1%2", "FILEBROWSER_POPUPRANK", i)), rankIcons[i])), 0, 1, p, p + 1);
-            p++;
-        }
-
-        pmenu->attach (*Gtk::manage(new Gtk::SeparatorMenuItem ()), 0, 1, p, p + 1);
-        p++;
-    }
-
-    if (!options.menuGroupRank || !options.menuGroupLabel) { // separate Rank and Color Labels if either is not grouped
-        pmenu->attach (*Gtk::manage(new Gtk::SeparatorMenuItem ()), 0, 1, p, p + 1);
-    }
-
-    p++;
-
-    /***********************
-     * color labels
-     ***********************/
-
-    // Thumbnail context menu
-    // Similar image arrays in filecatalog.cc
     std::array<std::string, 6> clabelActiveIcons = {"circle-empty-gray-small", "circle-red-small", "circle-yellow-small", "circle-green-small", "circle-blue-small", "circle-purple-small"};
-    std::array<std::string, 6> clabelInactiveIcons = {"circle-empty-darkgray-small", "circle-empty-red-small", "circle-empty-yellow-small", "circle-empty-green-small", "circle-empty-blue-small", "circle-empty-purple-small"};
 
-    if (options.menuGroupLabel) {
-        pmenu->attach (*Gtk::manage(menuLabel = new MyImageMenuItem (M("FILEBROWSER_POPUPCOLORLABEL"), "menu-sort-label")), 0, 1, p, p + 1);
-        p++;
-        Gtk::Menu* submenuLabel = Gtk::manage (new Gtk::Menu ());
-
-        for (int i = 0; i <= 5; i++) {
-            submenuLabel->attach(*Gtk::manage(colorlabel[i] = new MyImageMenuItem(M(Glib::ustring::compose("%1%2", "FILEBROWSER_POPUPCOLORLABEL", i)), clabelActiveIcons[i])), 0, 1, p, p + 1);
-            p++;
-        }
-
-        submenuLabel->show_all ();
-        menuLabel->set_submenu (*submenuLabel);
-    } else {
-        for (int i = 0; i <= 5; i++) {
-            pmenu->attach(*Gtk::manage(colorlabel[i] = new MyImageMenuItem(M(Glib::ustring::compose("%1%2", "FILEBROWSER_POPUPCOLORLABEL", i)), clabelInactiveIcons[i])), 0, 1, p, p + 1);
-            p++;
-        }
-    }
-
-    /***********************
-     * pick/reject flags
-     ***********************/
     {
-        MyImageMenuItem* menuFlag = Gtk::manage(new MyImageMenuItem (M("FILEBROWSER_POPUPFLAG"), "menu-flag-pick"));
-        pmenu->attach (*menuFlag, 0, 1, p, p + 1);
+        auto* hiddenActions = Gtk::manage(new MyImageMenuItem(M("FILEBROWSER_POPUPRANK"), "menu-sort-rank"));
+        Gtk::Menu* hiddenSub = Gtk::manage(new Gtk::Menu());
+        int hp = 0;
+
+        hiddenSub->attach(*Gtk::manage(rank[0] = new MyImageMenuItem(M("FILEBROWSER_POPUPUNRANK"), rankIcons[0])), 0, 1, hp, hp + 1);
+        hp++;
+        for (int i = 1; i <= 5; i++) {
+            hiddenSub->attach(*Gtk::manage(rank[i] = new MyImageMenuItem(M(Glib::ustring::compose("%1%2", "FILEBROWSER_POPUPRANK", i)), rankIcons[i])), 0, 1, hp, hp + 1);
+            hp++;
+        }
+        for (int i = 0; i <= 5; i++) {
+            hiddenSub->attach(*Gtk::manage(colorlabel[i] = new MyImageMenuItem(M(Glib::ustring::compose("%1%2", "FILEBROWSER_POPUPCOLORLABEL", i)), clabelActiveIcons[i])), 0, 1, hp, hp + 1);
+            hp++;
+        }
+        hiddenSub->attach(*Gtk::manage(pickFlag = new MyImageMenuItem(M("FILEBROWSER_POPUPPICK"), "menu-flag-pick")), 0, 1, hp, hp + 1);
+        hp++;
+        hiddenSub->attach(*Gtk::manage(unflagFlag = new MyImageMenuItem(M("FILEBROWSER_POPUPUNFLAG"), "menu-flag-unflagged")), 0, 1, hp, hp + 1);
+        hp++;
+        hiddenSub->attach(*Gtk::manage(rejectFlag = new MyImageMenuItem(M("FILEBROWSER_POPUPREJECT"), "menu-flag-reject")), 0, 1, hp, hp + 1);
+        hp++;
+
+        hiddenActions->set_submenu(*hiddenSub);
+        pmenu->attach(*hiddenActions, 0, 1, p, p + 1);
         p++;
-
-        Gtk::Menu* submenuFlag = Gtk::manage (new Gtk::Menu ());
-        int fp = 0;
-        submenuFlag->attach (*Gtk::manage(pickFlag = new MyImageMenuItem (M("FILEBROWSER_POPUPPICK"), "menu-flag-pick")), 0, 1, fp, fp + 1);
-        fp++;
-        submenuFlag->attach (*Gtk::manage(unflagFlag = new MyImageMenuItem (M("FILEBROWSER_POPUPUNFLAG"), "menu-flag-unflagged")), 0, 1, fp, fp + 1);
-        fp++;
-        submenuFlag->attach (*Gtk::manage(rejectFlag = new MyImageMenuItem (M("FILEBROWSER_POPUPREJECT"), "menu-flag-reject")), 0, 1, fp, fp + 1);
-        fp++;
-
-        submenuFlag->show_all ();
-        menuFlag->set_submenu (*submenuFlag);
+        hiddenActions->set_no_show_all(true);
+        hiddenActions->hide();
     }
-
-    pmenu->attach (*Gtk::manage(new Gtk::SeparatorMenuItem ()), 0, 1, p, p + 1);
-    p++;
 
     /***********************
      * external programs
@@ -4752,36 +4790,48 @@ std::vector<FileBrowserEntry*> FileBrowser::getRejectedEntries ()
 namespace {
 
 // Auto-cull verdict from the same scene statistics the auto-edit uses.
-// Tolerances are 0-100; higher culls more aggressively.
+// Tolerances are 0-100; higher culls more aggressively. The verdicts are
+// deliberately conservative: only blatant garbage should ever be flagged.
 bool shouldAutoCull (const AutoGradeFeatures& f, int focusTolerance, int exposureTolerance)
 {
     if (!f.valid) {
         return false;
     }
 
+    const double focusT = focusTolerance / 100.0;
+    const double exposureT = exposureTolerance / 100.0;
+
     // Blatant failures regardless of tolerance: essentially uniform black or
     // white frames (lens cap, misfire, blown test shot).
-    if (f.dynamicRange < 0.06 && (f.medianLuma < 0.05 || f.medianLuma > 0.95)) {
+    if (f.dynamicRange < 0.045 && (f.medianLuma < 0.04 || f.medianLuma > 0.96)) {
         return true;
     }
 
-    // Out of focus: mean local luma gradient (edgeDensity) far below what any
-    // sharp image produces. Sharp frames typically sit well above 0.03.
-    const double focusThreshold = 0.006 + 0.026 * (focusTolerance / 100.0);
-    if (f.edgeDensity < focusThreshold) {
+    // Out of focus. Mean gradient conflates smooth composition with blur —
+    // a tack-sharp portrait against bokeh has a LOW mean gradient — so the
+    // primary signal is the strong-edge fraction: any in-focus image (even
+    // a soft portrait) produces some hard local edges, while a defocused
+    // frame has essentially none. Mean gradient stays only as a co-signal.
+    const double strongEdgeThreshold = 0.00003 + 0.00045 * focusT;
+    if (f.strongEdgeFraction < strongEdgeThreshold
+            && f.edgeDensity < 0.010 + 0.012 * focusT) {
         return true;
     }
 
-    // Overexposed: large clipped-highlight coverage on a bright frame.
-    const double overThreshold = 0.85 - 0.55 * (exposureTolerance / 100.0);
-    if (f.highlightFraction > overThreshold && f.medianLuma > 0.55) {
+    // Overexposed: TRUE clipped whites dominating the frame. Bright high-key
+    // and snow scenes have lots of bright pixels but few actual clips.
+    const double clipThreshold = 0.70 - 0.45 * exposureT;
+    if (f.clippedFraction > clipThreshold) {
         return true;
     }
 
-    // Severely underexposed with no highlights at all. The threshold stays
-    // below real night-scene medians so night photography survives.
-    const double underThreshold = 0.015 + 0.075 * (exposureTolerance / 100.0);
-    if (f.medianLuma < underThreshold && f.highlightFraction < 0.02) {
+    // Severely underexposed with nothing bright anywhere and almost no
+    // tonal range. Real night scenes keep specular lights (highlights) and
+    // far more range than this.
+    const double underThreshold = 0.008 + 0.022 * exposureT;
+    if (f.medianLuma < underThreshold
+            && f.highlightFraction < 0.004
+            && f.dynamicRange < 0.12) {
         return true;
     }
 
