@@ -122,6 +122,7 @@ public:
         const Glib::RefPtr<Gdk::Pixbuf>& pixbuf,
         double imageScale,
         const rtengine::procparams::CropParams& crop);
+    void invalidateTransientPreview(bool refresh);
     void calcThumbnailSize () override;
     void onDeviceScaleChanged (int newDeviceScale) override;
     std::size_t getImageAreaIconState () override;

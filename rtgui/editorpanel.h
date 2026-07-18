@@ -94,6 +94,10 @@ public:
     void open (Thumbnail* tmb, rtengine::InitialImage* isrc);
     void openPhaseB (Thumbnail* tmb);
     void setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scale, const Glib::ustring& sourceFile = Glib::ustring());
+    bool setTransientEditPreview(
+        const Glib::ustring& sourceFile,
+        const rtengine::procparams::ProcParams* params,
+        bool restore);
     void setAspect ();
     void on_realize () override;
     void leftPaneButtonReleased (GdkEventButton *event);
@@ -288,6 +292,7 @@ private:
     Gtk::Menu* editorCopyFilterMenu_;
     void updateFilmstripStars(int highlightUpTo);
     Gtk::Revealer* colorLabelRevealer_;
+    sigc::connection ratingPaletteCloseConn_;
 
     // Filmstrip flag/reject
     Gtk::Button* filmstripFlagBtn_;
@@ -503,6 +508,11 @@ private:
     rtengine::InitialImage* isrc;
     rtengine::StagedImageProcessor* ipc;
     rtengine::StagedImageProcessor* beforeIpc;    // for the before-after view
+    bool transientEditPreviewActive_ = false;
+    Glib::ustring transientEditPreviewFile_;
+    rtengine::procparams::ProcParams transientEditPreviewRestore_;
+
+    void scheduleFinalPreviewRefinement();
 
     EditorPanelIdleHelper* epih;
 

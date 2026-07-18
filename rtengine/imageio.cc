@@ -509,8 +509,10 @@ void my_error_exit (j_common_ptr cinfo)
 }
 
 
-int ImageIO::loadJPEGFromMemory (const char* buffer, int bufsize)
+int ImageIO::loadJPEGFromMemory (const char* buffer, int bufsize, int maxOutputWidth, int maxOutputHeight)
 {
+    const bool scaledThumbnailDecode = maxOutputWidth > 0 || maxOutputHeight > 0;
+    ThumbnailJpegDecodeGate thumbnailDecodeGate(scaledThumbnailDecode);
     jpeg_decompress_struct cinfo;
     jpeg_create_decompress(&cinfo);
     jpeg_memory_src (&cinfo, (const JOCTET*)buffer, bufsize);
@@ -549,6 +551,26 @@ int ImageIO::loadJPEGFromMemory (const char* buffer, int bufsize)
     setup_read_icc_profile (&cinfo);
 
     jpeg_read_header(&cinfo, TRUE);
+
+    // RAW browser previews only need enough decoded pixels to cover their
+    // final tile. libjpeg can avoid decoding the discarded DCT detail.
+    if (cinfo.jpeg_color_space == JCS_CMYK || cinfo.jpeg_color_space == JCS_YCCK) {
+        jpeg_destroy_decompress(&cinfo);
+        return IMIO_READERROR;
+    }
+
+    cinfo.out_color_space = JCS_RGB;
+
+    if (scaledThumbnailDecode) {
+        cinfo.scale_num = 1;
+        cinfo.scale_denom = fitToJpegDecodeScaleDenom(
+            cinfo.image_width,
+            cinfo.image_height,
+            maxOutputWidth,
+            maxOutputHeight);
+        cinfo.dct_method = JDCT_IFAST;
+        cinfo.do_fancy_upsampling = FALSE;
+    }
 
     deleteLoadedProfileData();
     bool hasprofile = read_icc_profile (&cinfo, (JOCTET**)&loadedProfileData, (unsigned int*)&loadedProfileLength);

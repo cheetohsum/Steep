@@ -315,7 +315,7 @@ public:
 
 public:
     bool checkThumbOk() const;
-    Image8 *getThumbnail() const;
+    Image8 *getThumbnail(int maxOutputWidth = 0, int maxOutputHeight = 0) const;
 
 };
 

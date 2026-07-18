@@ -1006,7 +1006,14 @@ void ThumbBrowserBase::buttonPressed (int x, int y, int button, GdkEventType typ
         MYWRITERLOCK(l, entryRW);
 
         if (selected.size() == 1 && type == GDK_2BUTTON_PRESS && button == 1) {
-            doubleClicked (selected[0]);
+            // Opening the editor reparents this browser into the filmstrip and
+            // immediately asks it for the selected thumbnail. Do not carry the
+            // writer lock into that callback: getSelectedThumbnail() takes a
+            // reader lock, which otherwise deadlocks this GTK thread against
+            // itself.
+            ThumbBrowserEntryBase* const openEntry = selected[0];
+            MYWRITERLOCK_RELEASE(l);
+            doubleClicked(openEntry);
         } else if (button == 1 && type == GDK_BUTTON_PRESS) {
             if (fileDescr && (state & GDK_SHIFT_MASK))
                 selectRange (fileDescr, state & GDK_CONTROL_MASK);
@@ -1626,6 +1633,8 @@ void ThumbBrowserBase::schedulePendingInsertRedraw_()
     // of expensive arrangeFiles() calls when loading folders with thousands
     // of images. Filmstrip (horizontal) layout is trivially O(N) so we use
     // a shorter debounce; grid layout is more expensive so we keep 150ms.
+    // PreviewLoader delivers cold results in small batches, preserving visible
+    // progress without repeatedly laying out the entire folder.
     if (!redrawPending_) {
         redrawPending_ = true;
         const int debounceMs = fd.empty()

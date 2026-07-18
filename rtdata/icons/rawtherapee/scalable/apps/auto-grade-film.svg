@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <g fill="none" stroke="#cccccc" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="2.5" y="4" width="15.5" height="16" rx="1.4"/>
+    <path d="M6 4v16M14.5 4v16" opacity="0.65"/>
+    <path d="M2.5 8h3.5M2.5 12h3.5M2.5 16h3.5M14.5 8H18M14.5 12H18M14.5 16H18" opacity="0.75"/>
+    <path d="M19.5 2.75v4.5M17.25 5h4.5"/>
+  </g>
+  <circle cx="8.7" cy="9.1" r="1.35" fill="#e96772"/>
+  <circle cx="11.8" cy="12" r="1.35" fill="#65b8d0"/>
+  <circle cx="8.7" cy="14.9" r="1.35" fill="#e3c85b"/>
+</svg>

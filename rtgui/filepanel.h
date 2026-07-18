@@ -114,6 +114,10 @@ public:
     void getQueueOverlayInsets (int& left, int& top, int& right) const;
     void closeAlbumView ();  // close album view + deselect sidebar
     void openSelectedInEditor ();  // open the selected browser thumbnail in editor
+    bool transientEditPreviewRequested(
+        const Glib::ustring& filename,
+        const rtengine::procparams::ProcParams* params,
+        bool restore);
 
     // Left panel visibility for sync with editor sidebar
     bool isLeftPanelVisible() const { return browserHideLp_ && browserHideLp_->get_active(); }

@@ -90,7 +90,15 @@ public:
         {
             std::lock_guard<std::mutex> lock(mutex_);
             // The visible image wins over stale work from images the user has
-            // already left. Canceled entries remain cheap no-ops when popped.
+            // already left. Remove canceled requests here so a continuous
+            // editing session cannot retain an unbounded stale tail.
+            for (auto it = tasks_.begin(); it != tasks_.end();) {
+                if ((*it)->isCanceled()) {
+                    it = tasks_.erase(it);
+                } else {
+                    ++it;
+                }
+            }
             tasks_.emplace_front(task);
         }
         ready_.notify_one();
@@ -123,6 +131,11 @@ private:
             if (!claimed.exchange(true, std::memory_order_acq_rel)) {
                 completion.set_value();
             }
+        }
+
+        bool isCanceled() const
+        {
+            return claimed.load(std::memory_order_acquire);
         }
 
         std::function<void()> work;
@@ -479,7 +492,11 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
         && !resultValid
         && (todo & ALL) == ALL
         && !(todo & M_HIGHQUAL);
-    bool highDetailNeeded = progressiveInitialPreview ? false : (prevdemo == PD_Sidecar || (todo & M_HIGHQUAL));
+    // Interactive edits use the fast preview demosaic even when the user's
+    // settled-preview preference is Sidecar. EditorPanel coalesces a single
+    // explicit M_HIGHQUAL refinement after the edit stream goes quiet, so
+    // sliders stay responsive without changing the final rendered quality.
+    bool highDetailNeeded = !progressiveInitialPreview && (todo & M_HIGHQUAL);
 
     //    printf("metwb=%s \n", params->wb.method.c_str());
 

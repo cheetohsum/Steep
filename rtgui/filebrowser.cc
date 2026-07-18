@@ -19,14 +19,19 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
+#include <cmath>
+#include <condition_variable>
 #include <cstdarg>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <functional>
 #include <limits>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <set>
 #include <string>
@@ -38,6 +43,7 @@
 
 #include "filebrowser.h"
 
+#include "autoedit.h"
 #include "batchqueue.h"
 #include "clipboard.h"
 #include "filepanel.h"
@@ -54,8 +60,14 @@
 
 #include "rtengine/dfmanager.h"
 #include "rtengine/ffmanager.h"
+#include "rtengine/iimage.h"
+#include "rtengine/imagesource.h"
 #include "rtengine/perspectivecorrection.h"
 #include "rtengine/procparams.h"
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 
 #ifdef _WIN32
 #include "rtengine/leanwindows.h"
@@ -69,16 +81,297 @@ using QuickWarmClock = std::chrono::steady_clock;
 std::atomic<unsigned> quickPreviewCacheWarmGeneration{0};
 std::mutex fileBrowserPerfLogMutex;
 
-// Tone-only reference captured from DSCF8621.RAF. Camera and geometry state
-// intentionally stay with each destination image.
-void applySteepAutoEditTone(rtengine::procparams::ProcParams& params)
+using AutoEditMode = SteepAutoEditMode;
+
+enum class AutoGradeScene {
+    Neutral,
+    Portrait,
+    GoldenHour,
+    Landscape,
+    Night,
+    Urban
+};
+
+struct AutoGradeFeatures {
+    bool valid = false;
+    AutoGradeScene scene = AutoGradeScene::Neutral;
+    double medianLuma = 0.5;
+    double dynamicRange = 0.5;
+    double shadowFraction = 0.0;
+    double highlightFraction = 0.0;
+    double saturation = 0.0;
+    double warmFraction = 0.0;
+    double brightWarmFraction = 0.0;
+    double coolFraction = 0.0;
+    double skinFraction = 0.0;
+    double skinSaturation = 0.0;
+    double centerSkinFraction = 0.0;
+    double skyFraction = 0.0;
+    double foliageFraction = 0.0;
+    double edgeDensity = 0.0;
+    unsigned iso = 100;
+};
+
+const char* autoGradeSceneName(AutoGradeScene scene)
 {
+    switch (scene) {
+        case AutoGradeScene::Portrait: return "portrait";
+        case AutoGradeScene::GoldenHour: return "golden-hour";
+        case AutoGradeScene::Landscape: return "landscape";
+        case AutoGradeScene::Night: return "night";
+        case AutoGradeScene::Urban: return "urban";
+        case AutoGradeScene::Neutral: return "neutral";
+    }
+    return "neutral";
+}
+
+const char* autoEditModeLabel(AutoEditMode mode)
+{
+    switch (mode) {
+        case AutoEditMode::Grade: return "FILEBROWSER_POPUPAUTOGRADE";
+        case AutoEditMode::GradeFilm: return "FILEBROWSER_POPUPAUTOGRADEFILM";
+        case AutoEditMode::Neutral: return "FILEBROWSER_POPUPAUTOEDITNEUTRAL";
+    }
+    return "FILEBROWSER_POPUPAUTOEDITNEUTRAL";
+}
+
+const char* autoEditModeName(AutoEditMode mode)
+{
+    switch (mode) {
+        case AutoEditMode::Grade: return "grade";
+        case AutoEditMode::GradeFilm: return "grade-film-v2";
+        case AutoEditMode::Neutral: return "neutral";
+    }
+    return "neutral";
+}
+
+double hueDegrees(double red, double green, double blue, double maximum, double chroma)
+{
+    if (chroma <= 1e-8) {
+        return 0.0;
+    }
+
+    double hue = 0.0;
+    if (maximum == red) {
+        hue = 60.0 * std::fmod((green - blue) / chroma, 6.0);
+    } else if (maximum == green) {
+        hue = 60.0 * ((blue - red) / chroma + 2.0);
+    } else {
+        hue = 60.0 * ((red - green) / chroma + 4.0);
+    }
+    return hue < 0.0 ? hue + 360.0 : hue;
+}
+
+AutoGradeFeatures analyzeSteepAutoGrade(Thumbnail& thumbnail)
+{
+    AutoGradeFeatures features;
+    if (const auto* cache = thumbnail.getCacheImageData()) {
+        features.iso = std::max(cache->iso, 1u);
+    }
+
+    rtengine::procparams::ProcParams neutral;
+    neutral.setDefaults();
+    double scale = 1.0;
+    std::unique_ptr<rtengine::IImage8> image(thumbnail.processFullThumbImage(neutral, 224, scale));
+    if (!image || !image->getData() || image->getWidth() < 8 || image->getHeight() < 8) {
+        return features;
+    }
+
+    const int width = image->getWidth();
+    const int height = image->getHeight();
+    const auto* pixels = image->getData();
+    const size_t pixelCount = static_cast<size_t>(width) * height;
+    std::array<size_t, 64> histogram{};
+    std::vector<float> luma(pixelCount, 0.f);
+    size_t shadows = 0;
+    size_t highlights = 0;
+    size_t warm = 0;
+    size_t brightWarm = 0;
+    size_t cool = 0;
+    size_t skin = 0;
+    size_t centerSkin = 0;
+    size_t centerPixels = 0;
+    size_t sky = 0;
+    size_t foliage = 0;
+    double saturationSum = 0.0;
+    double skinSaturationSum = 0.0;
+
+    for (int y = 0; y < height; ++y) {
+        const double ny = static_cast<double>(y) / std::max(height - 1, 1);
+        for (int x = 0; x < width; ++x) {
+            const size_t index = static_cast<size_t>(y) * width + x;
+            const double red = pixels[index * 3] / 255.0;
+            const double green = pixels[index * 3 + 1] / 255.0;
+            const double blue = pixels[index * 3 + 2] / 255.0;
+            const double luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+            const double maximum = std::max({red, green, blue});
+            const double minimum = std::min({red, green, blue});
+            const double chroma = maximum - minimum;
+            const double saturation = maximum > 1e-8 ? chroma / maximum : 0.0;
+            const double hue = hueDegrees(red, green, blue, maximum, chroma);
+            const double channelSum = std::max(red + green + blue, 1e-8);
+            const double redShare = red / channelSum;
+            const double greenShare = green / channelSum;
+            const double blueShare = blue / channelSum;
+            const double nx = static_cast<double>(x) / std::max(width - 1, 1);
+            const bool inCenter = nx >= 0.24 && nx <= 0.76 && ny >= 0.16 && ny <= 0.86;
+            const bool isSkin = hue >= 7.0 && hue <= 50.0
+                && saturation >= 0.10 && saturation <= 0.58
+                && luminance >= 0.16 && luminance <= 0.92
+                && red > green * 1.01 && green >= blue * 0.92
+                && redShare >= 0.35 && redShare <= 0.52
+                && greenShare >= 0.25 && greenShare <= 0.40
+                && blueShare >= 0.14 && blueShare <= 0.31;
+
+            luma[index] = static_cast<float>(luminance);
+            histogram[std::min<size_t>(histogram.size() - 1, luminance * histogram.size())]++;
+            saturationSum += saturation;
+            shadows += luminance < 0.16;
+            highlights += luminance > 0.84;
+            warm += saturation > 0.12 && (hue <= 70.0 || hue >= 340.0);
+            brightWarm += luminance > 0.55 && saturation > 0.12 && (hue <= 70.0 || hue >= 340.0);
+            cool += saturation > 0.12 && hue >= 170.0 && hue <= 270.0;
+            skin += isSkin;
+            skinSaturationSum += isSkin ? saturation : 0.0;
+            centerSkin += inCenter && isSkin;
+            centerPixels += inCenter;
+            sky += ny < 0.58 && hue >= 175.0 && hue <= 255.0 && saturation > 0.14 && luminance > 0.28;
+            foliage += hue >= 62.0 && hue <= 168.0 && saturation > 0.18 && luminance > 0.10 && luminance < 0.84;
+        }
+    }
+
+    auto percentile = [&](double fraction) {
+        const size_t target = static_cast<size_t>(std::round(fraction * (pixelCount - 1)));
+        size_t accumulated = 0;
+        for (size_t i = 0; i < histogram.size(); ++i) {
+            accumulated += histogram[i];
+            if (accumulated > target) {
+                return (i + 0.5) / histogram.size();
+            }
+        }
+        return 1.0;
+    };
+
+    double edgeSum = 0.0;
+    size_t edgeSamples = 0;
+    for (int y = 1; y < height; ++y) {
+        for (int x = 1; x < width; ++x) {
+            const size_t index = static_cast<size_t>(y) * width + x;
+            edgeSum += std::abs(luma[index] - luma[index - 1]);
+            edgeSum += std::abs(luma[index] - luma[index - width]);
+            edgeSamples += 2;
+        }
+    }
+
+    const double count = static_cast<double>(pixelCount);
+    features.valid = true;
+    features.medianLuma = percentile(0.5);
+    features.dynamicRange = percentile(0.9) - percentile(0.1);
+    features.shadowFraction = shadows / count;
+    features.highlightFraction = highlights / count;
+    features.saturation = saturationSum / count;
+    features.warmFraction = warm / count;
+    features.brightWarmFraction = brightWarm / count;
+    features.coolFraction = cool / count;
+    features.skinFraction = skin / count;
+    features.skinSaturation = skin ? skinSaturationSum / skin : 0.0;
+    features.centerSkinFraction = centerPixels ? static_cast<double>(centerSkin) / centerPixels : 0.0;
+    features.skyFraction = sky / count;
+    features.foliageFraction = foliage / count;
+    features.edgeDensity = edgeSamples ? edgeSum / edgeSamples : 0.0;
+
+    if (features.skinFraction > 0.045
+            && features.centerSkinFraction > 0.075
+            && features.skinSaturation < 0.44
+            && (features.saturation < 0.33 || features.dynamicRange > 0.28)) {
+        features.scene = AutoGradeScene::Portrait;
+    } else if (features.brightWarmFraction > 0.085
+            && features.warmFraction > features.coolFraction * 1.22) {
+        features.scene = AutoGradeScene::GoldenHour;
+    } else if (features.medianLuma < 0.29 && features.shadowFraction > 0.38) {
+        features.scene = AutoGradeScene::Night;
+    } else if ((features.skyFraction > 0.07 || features.foliageFraction > 0.13)
+            && features.skinFraction < 0.035) {
+        features.scene = AutoGradeScene::Landscape;
+    } else if (features.edgeDensity > 0.075 && features.foliageFraction < 0.10) {
+        features.scene = AutoGradeScene::Urban;
+    }
+
+    return features;
+}
+
+void restoreSteepAutoEditGeometry(
+    const rtengine::procparams::ProcParams& source,
+    rtengine::procparams::ProcParams& target)
+{
+    // Auto Edit owns the tonal recipe, but framing and alignment belong to the
+    // photographer. Preserve them when the neutral profile is constructed.
+    target.crop = source.crop;
+    target.coarse = source.coarse;
+    target.commonTrans = source.commonTrans;
+    target.rotate = source.rotate;
+    target.perspective = source.perspective;
+}
+
+// Start Auto Edit from a known neutral profile so repeated runs and previously
+// edited images produce the same result.
+void applySteepAutoEdit(
+    Thumbnail& thumbnail,
+    const AutoGradeFeatures& features,
+    rtengine::procparams::ProcParams& params)
+{
+    constexpr double AUTO_EDIT_RESPONSE = 0.60;
+    params.setDefaults();
+
     auto& tone = params.toneCurve;
-    tone.autoexp = false;
+    tone.autoexp = true;
     tone.clip = 0.02;
     tone.hrenabled = false;
     tone.method = "Coloropp";
-    tone.expcomp = 0.58;
+    tone.expcomp = std::numeric_limits<double>::quiet_NaN();
+    thumbnail.applyAutoExp(params);
+
+    const bool measuredExposure = std::isfinite(tone.expcomp);
+    if (!measuredExposure) {
+        tone.expcomp = 0.20;
+        tone.brightness = 2;
+        tone.contrast = 0;
+        tone.black = 0;
+        tone.hlcompr = 35;
+        tone.hlcomprthresh = 0;
+    }
+
+    // Give normally exposed and dark frames a modest lift while respecting
+    // the highlight compression selected by histogram analysis.
+    const double exposureLift = tone.expcomp > 0.0
+        ? (tone.hlcompr < 55 ? 0.05 : 0.0)
+        : 0.0;
+    tone.expcomp = std::max(-1.5, std::min(2.75, tone.expcomp + exposureLift));
+
+    // Histogram auto exposure is the primary decision. Scene luminance only
+    // supplies a restrained correction so night remains night and bright
+    // frames retain highlight headroom.
+    if (features.valid) {
+        double intent = 0.0;
+        if (features.medianLuma < 0.19 && features.highlightFraction < 0.09) {
+            intent = features.scene == AutoGradeScene::Night ? 0.02 : 0.12;
+        } else if (features.medianLuma < 0.32 && features.highlightFraction < 0.14) {
+            intent = features.scene == AutoGradeScene::Night ? 0.0 : 0.05;
+        } else if (features.medianLuma > 0.61 || features.highlightFraction > 0.24) {
+            intent = -0.24;
+        }
+        tone.expcomp = std::max(-1.5, std::min(2.75, tone.expcomp + intent));
+        tone.hlcompr = std::max(tone.hlcompr, static_cast<int>(std::round(
+            std::min(78.0, 35.0 + features.highlightFraction * 160.0))));
+    }
+    if (tone.expcomp > 0.0) {
+        tone.expcomp *= AUTO_EDIT_RESPONSE;
+    }
+    tone.brightness = std::max(0, std::min(35, static_cast<int>(std::round(
+        std::max(0, tone.brightness + 2) * AUTO_EDIT_RESPONSE))));
+    tone.contrast = std::max(0, std::min(40, static_cast<int>(std::round(
+        std::max(0, tone.contrast + 5) * AUTO_EDIT_RESPONSE))));
+    tone.autoexp = false;
     tone.curve = {DCT_Linear};
     tone.curve2 = {DCT_Linear};
     tone.curveR = {DCT_Linear};
@@ -86,24 +379,43 @@ void applySteepAutoEditTone(rtengine::procparams::ProcParams& params)
     tone.curveB = {DCT_Linear};
     tone.curveMode = rtengine::procparams::ToneCurveMode::STD;
     tone.curveMode2 = rtengine::procparams::ToneCurveMode::STD;
-    tone.brightness = 7;
-    tone.black = 0;
-    tone.contrast = 5;
     tone.shcompr = 50;
-    tone.hlcompr = 75;
+    tone.hlcompr = std::max(tone.hlcompr, tone.expcomp > 0.25 ? 55 : 35);
     tone.hlbl = 0;
     tone.hlth = 1.0;
-    tone.hlcomprthresh = 0;
     tone.histmatching = false;
     tone.fromHistMatching = false;
     tone.clampOOG = true;
 
+    int highlightRecovery = 16;
+    int shadowLift = 1;
+    if (features.valid) {
+        highlightRecovery = std::max(12, std::min(38, static_cast<int>(std::round(
+            12.0 + features.highlightFraction * 72.0 + std::max(0.0, tone.expcomp) * 5.0))));
+
+        double lift = std::max(0.0, (features.shadowFraction - 0.28) * 12.0)
+            + std::max(0.0, (0.25 - features.medianLuma) * 10.0);
+        if (features.highlightFraction > 0.14) {
+            lift *= 0.40;
+        }
+        if (features.medianLuma > 0.44) {
+            lift *= 0.20;
+        }
+        shadowLift = std::max(0, std::min(4, static_cast<int>(std::round(lift))));
+
+        if (features.scene == AutoGradeScene::Night) {
+            shadowLift = std::min(shadowLift, 3);
+        } else if (features.highlightFraction > 0.24 || features.medianLuma > 0.61) {
+            shadowLift = 0;
+        }
+    }
+
     auto& shadowsHighlights = params.sh;
-    shadowsHighlights.enabled = true;
-    shadowsHighlights.highlights = 25;
+    shadowsHighlights.enabled = highlightRecovery != 0 || shadowLift != 0;
+    shadowsHighlights.highlights = highlightRecovery;
     shadowsHighlights.htonalwidth = 70;
-    shadowsHighlights.shadows = 10;
-    shadowsHighlights.stonalwidth = 30;
+    shadowsHighlights.shadows = shadowLift;
+    shadowsHighlights.stonalwidth = 24 + shadowLift * 2;
     shadowsHighlights.radius = 40;
     shadowsHighlights.lab = false;
 
@@ -113,19 +425,394 @@ void applySteepAutoEditTone(rtengine::procparams::ProcParams& params)
     curves.mastercurve = {
         DCT_Spline,
         0.0, 0.0,
-        0.098654708520179366, 0.058295964125560533,
-        0.20673525015387323, 0.21570386001934416,
-        0.51569506726457359, 0.73094170403587488,
-        1.0, 0.99103139013452912
+        0.098654708520179366,
+            0.098654708520179366 + AUTO_EDIT_RESPONSE * (0.058295964125560533 - 0.098654708520179366),
+        0.20673525015387323,
+            0.20673525015387323 + AUTO_EDIT_RESPONSE * (0.21570386001934416 - 0.20673525015387323),
+        0.51569506726457359,
+            0.51569506726457359 + AUTO_EDIT_RESPONSE * (0.73094170403587488 - 0.51569506726457359),
+        1.0, 1.0 + AUTO_EDIT_RESPONSE * (0.99103139013452912 - 1.0)
     };
     curves.rcurve = {DCT_Spline, 0.0, 0.0, 1.0, 1.0};
     curves.gcurve = {DCT_Spline, 0.0, 0.0, 1.0, 1.0};
     curves.bcurve = {DCT_Spline, 0.0, 0.0, 1.0, 1.0};
 }
 
+void applySteepAutoGrade(
+    const AutoGradeFeatures& features,
+    rtengine::procparams::ProcParams& params)
+{
+    auto& grade = params.colorGrading;
+    grade = rtengine::procparams::ColorGradingParams();
+    grade.enabled = true;
+    grade.shadowsHue = 218.0;
+    grade.shadowsSat = 0.085;
+    grade.shadowsLum = 1.0;
+    grade.midtonesHue = 32.0;
+    grade.midtonesSat = 0.030;
+    grade.midtonesLum = 1.0;
+    grade.highlightsHue = 42.0;
+    grade.highlightsSat = 0.075;
+    grade.highlightsLum = -1.0;
+    grade.blending = 70.0;
+
+    switch (features.scene) {
+        case AutoGradeScene::Portrait:
+            grade.shadowsHue = 218.0;
+            grade.shadowsSat = 0.050;
+            grade.midtonesHue = 28.0;
+            grade.midtonesSat = 0.045;
+            grade.midtonesLum = 1.5;
+            grade.highlightsHue = 40.0;
+            grade.highlightsSat = 0.055;
+            grade.highlightsLum = -0.5;
+            grade.blending = 74.0;
+            grade.balance = 8.0;
+            break;
+        case AutoGradeScene::GoldenHour:
+            grade.shadowsHue = 210.0;
+            grade.shadowsSat = 0.090;
+            grade.midtonesHue = 32.0;
+            grade.midtonesSat = 0.055;
+            grade.highlightsHue = 45.0;
+            grade.highlightsSat = 0.110;
+            grade.highlightsLum = -1.5;
+            grade.blending = 68.0;
+            grade.balance = 5.0;
+            break;
+        case AutoGradeScene::Landscape:
+            grade.shadowsHue = 216.0;
+            grade.shadowsSat = 0.080;
+            grade.midtonesHue = 150.0;
+            grade.midtonesSat = 0.025;
+            grade.highlightsHue = 43.0;
+            grade.highlightsSat = 0.075;
+            grade.blending = 70.0;
+            grade.balance = -4.0;
+            break;
+        case AutoGradeScene::Night:
+            grade.shadowsHue = 220.0;
+            grade.shadowsSat = 0.120;
+            grade.shadowsLum = -1.0;
+            grade.midtonesHue = 198.0;
+            grade.midtonesSat = 0.040;
+            grade.midtonesLum = 0.5;
+            grade.highlightsHue = 35.0;
+            grade.highlightsSat = 0.080;
+            grade.highlightsLum = -1.0;
+            grade.blending = 64.0;
+            grade.balance = -12.0;
+            break;
+        case AutoGradeScene::Urban:
+            grade.shadowsHue = 212.0;
+            grade.shadowsSat = 0.090;
+            grade.midtonesHue = 30.0;
+            grade.midtonesSat = 0.020;
+            grade.highlightsHue = 38.0;
+            grade.highlightsSat = 0.065;
+            grade.blending = 66.0;
+            grade.balance = -3.0;
+            break;
+        case AutoGradeScene::Neutral:
+            break;
+    }
+
+    // A grade should be visibly distinct from the technical correction while
+    // preserving skin and already-saturated colors. The RGB curves create a
+    // restrained cool-shadow/warm-highlight separation; Vibrance supplies
+    // scene-aware chroma without turning the grade into a film simulation.
+    auto& vibrance = params.vibrance;
+    vibrance = rtengine::procparams::VibranceParams();
+    vibrance.enabled = true;
+    vibrance.pastels = 14;
+    vibrance.saturated = 2;
+    vibrance.protectskins = true;
+    vibrance.avoidcolorshift = true;
+    vibrance.pastsattog = true;
+
+    auto& curves = params.rgbCurves;
+    curves.rcurve = {
+        DCT_Spline,
+        0.0, 0.0,
+        0.18, 0.168,
+        0.50, 0.508,
+        0.82, 0.842,
+        1.0, 1.0
+    };
+    curves.gcurve = {
+        DCT_Spline,
+        0.0, 0.0,
+        0.18, 0.182,
+        0.50, 0.50,
+        0.82, 0.818,
+        1.0, 1.0
+    };
+    curves.bcurve = {
+        DCT_Spline,
+        0.0, 0.0,
+        0.18, 0.198,
+        0.50, 0.498,
+        0.82, 0.798,
+        1.0, 1.0
+    };
+
+    int gradeContrast = 3;
+    switch (features.scene) {
+        case AutoGradeScene::Portrait:
+            vibrance.pastels = 10;
+            vibrance.saturated = -2;
+            gradeContrast = 1;
+            break;
+        case AutoGradeScene::GoldenHour:
+            vibrance.pastels = 12;
+            vibrance.saturated = 0;
+            gradeContrast = 2;
+            break;
+        case AutoGradeScene::Landscape:
+            vibrance.pastels = 18;
+            vibrance.saturated = 3;
+            gradeContrast = 4;
+            break;
+        case AutoGradeScene::Night:
+            vibrance.pastels = 9;
+            vibrance.saturated = -3;
+            gradeContrast = 3;
+            break;
+        case AutoGradeScene::Urban:
+            vibrance.pastels = 11;
+            vibrance.saturated = 0;
+            gradeContrast = 5;
+            break;
+        case AutoGradeScene::Neutral:
+            break;
+    }
+
+    params.toneCurve.contrast = std::min(45, params.toneCurve.contrast + gradeContrast);
+    params.sh.highlights = std::min(45, params.sh.highlights + 3);
+    if (features.valid && features.shadowFraction > 0.34 && features.highlightFraction < 0.16) {
+        params.sh.shadows = std::min(30, params.sh.shadows + 1);
+    }
+
+    params.filmPresets.enabled = false;
+}
+
+void applySteepAutoFilm(
+    const AutoGradeFeatures& features,
+    rtengine::procparams::ProcParams& params)
+{
+    auto& film = params.filmPresets;
+    film = rtengine::procparams::FilmPresetsParams();
+    film.enabled = true;
+    film.modelVersion = 2;
+    film.preset = "sovereign";
+    film.process = "c41";
+    film.output = "ra4";
+    film.format = "35mm";
+    film.strength = 36;
+    // Place the digital negative near the stock's intended middle gray. The
+    // film shoulder already protects bright values; routinely underexposing
+    // the film stage only makes the print muddy and buries useful midtones.
+    film.exposure = features.highlightFraction > 0.24 && features.medianLuma >= 0.30
+        ? -0.05
+        : features.highlightFraction > 0.18 && features.medianLuma >= 0.30
+          ? -0.02
+          : features.medianLuma < 0.24
+            ? 0.07
+            : 0.0;
+    film.fade = -8;
+    film.rolloff = features.highlightFraction > 0.22 ? 4 : 0;
+    film.saturation = features.saturation > 0.48 ? -5 : features.saturation < 0.20 ? 2 : 0;
+    film.contrast = features.dynamicRange < 0.38 ? 8 : features.dynamicRange > 0.72 ? 4 : 6;
+    film.shadowHue = 218;
+    film.highlightHue = 40;
+    film.shadowTint = 2;
+    film.highlightTint = 3;
+    const double isoStops = std::max(0.0, std::log2(std::max(features.iso, 100u) / 100.0));
+    film.grain = std::max(
+        7,
+        std::min(26, static_cast<int>(std::round(7.0 + isoStops * 3.5))));
+    film.halation = std::max(
+        5,
+        std::min(14, static_cast<int>(std::round(5.0 + features.highlightFraction * 40.0))));
+    film.skinProtection = 68;
+    film.layerCoupling = 16;
+    film.grainSize = 4;
+    film.grainClumping = 8;
+    film.grainColor = -8;
+    film.halationSize = 8;
+    film.halationThreshold = 12;
+    film.halationColor = 10;
+    film.bloom = 1;
+    film.outputSoftness = 2;
+
+    switch (features.scene) {
+        case AutoGradeScene::Portrait:
+            film.preset = "porcelain_400";
+            film.process = "c41";
+            film.output = "ra4";
+            film.strength = 35;
+            film.contrast = 7;
+            film.fade = -6;
+            film.rolloff = 2;
+            film.saturation -= 2;
+            film.grain = std::min(film.grain, 17);
+            film.halation = std::min(film.halation, 11);
+            film.skinProtection = 90;
+            film.outputSoftness = 3;
+            break;
+        case AutoGradeScene::GoldenHour:
+            film.preset = "golden_hour";
+            film.process = "c41";
+            film.output = "ra4";
+            film.strength = 39;
+            film.contrast = 5;
+            film.warmth = -1;
+            film.halation = std::min(14, film.halation + 2);
+            film.rolloff = std::max(film.rolloff, 2);
+            film.skinProtection = 78;
+            break;
+        case AutoGradeScene::Landscape:
+            film.preset = features.saturation > 0.35 && features.highlightFraction < 0.13
+                ? "vivid_chrome"
+                : "sovereign";
+            if (film.preset == "vivid_chrome") {
+                film.process = "e6";
+                film.output = "projection";
+                film.strength = 30;
+                film.contrast = -8;
+                film.fade = -3;
+                film.rolloff = -4;
+                film.saturation -= 3;
+            } else {
+                film.process = "c41";
+                film.output = "ra4";
+                film.strength = 36;
+                film.contrast = 6;
+            }
+            film.grain = std::min(film.grain, 16);
+            film.halation = std::min(film.halation, 10);
+            film.vibrance = features.saturation < 0.24 ? 3 : 0;
+            break;
+        case AutoGradeScene::Night:
+            film.preset = "cinematic_500t";
+            film.process = "ecn2";
+            film.output = "cinema";
+            film.strength = 39;
+            film.exposure = 0.08;
+            film.contrast = 10;
+            film.fade = 6;
+            film.rolloff = 4;
+            film.warmth = -2;
+            film.grain = std::min(32, film.grain + 6);
+            film.halation = std::min(18, film.halation + 4);
+            film.skinProtection = 68;
+            break;
+        case AutoGradeScene::Urban:
+            film.preset = "street_800";
+            film.process = "c41";
+            film.output = "ra4";
+            film.strength = 37;
+            film.contrast = 2;
+            film.fade = -10;
+            film.rolloff = 0;
+            film.grain = std::min(30, film.grain + 4);
+            film.halation = std::min(film.halation, 11);
+            break;
+        case AutoGradeScene::Neutral:
+            break;
+    }
+
+    const bool darkPrint = features.valid && features.medianLuma < 0.30;
+    if (darkPrint) {
+        // A dark negative needs a longer print exposure and a softer toe, not
+        // another contrast pass. Preserve local color and texture while
+        // keeping the scene recognizably low key.
+        film.exposure = std::max(film.exposure, 0.10);
+        film.fade = std::max(film.fade, 5);
+        film.rolloff = std::max(film.rolloff, 4);
+        const int darkFilmContrast = features.scene == AutoGradeScene::Night
+            ? (features.dynamicRange < 0.18 ? 8 : 10)
+            : (features.dynamicRange < 0.18 ? 3 : 5);
+        film.contrast = std::min(film.contrast, darkFilmContrast);
+    }
+
+    // Keep the technical exposure, stock response, and print curve in their
+    // own lanes. Protect highlight-rich frames with headroom, while allowing
+    // enough negative density for faces and middle values to stay luminous.
+    double exposureCeiling = 0.38;
+    double exposureFloor = -1.5;
+    if (features.medianLuma < 0.14) {
+        exposureCeiling = features.scene == AutoGradeScene::Night ? 1.35 : 1.65;
+        exposureFloor = features.scene == AutoGradeScene::Night ? 0.24 : 0.36;
+    } else if (features.medianLuma < 0.23) {
+        exposureCeiling = features.scene == AutoGradeScene::Night ? 1.15 : 1.45;
+        exposureFloor = features.scene == AutoGradeScene::Night ? 0.16 : 0.28;
+    } else if (features.medianLuma < 0.30) {
+        exposureCeiling = features.scene == AutoGradeScene::Night ? 0.95 : 1.20;
+        exposureFloor = features.scene == AutoGradeScene::Night ? 0.08 : 0.16;
+    } else if (features.highlightFraction > 0.22 || features.medianLuma > 0.62) {
+        exposureCeiling = 0.12;
+    } else if (features.highlightFraction > 0.14 || features.medianLuma > 0.55) {
+        exposureCeiling = 0.22;
+    }
+    params.toneCurve.expcomp = std::max(
+        exposureFloor,
+        std::min(params.toneCurve.expcomp, exposureCeiling));
+    params.toneCurve.brightness = std::min(params.toneCurve.brightness, 3);
+    params.sh.shadows = std::min(params.sh.shadows, features.scene == AutoGradeScene::Night ? 2 : 1);
+    if (darkPrint) {
+        const int inputContrastCeiling = features.dynamicRange < 0.18
+            ? 10
+            : features.dynamicRange < 0.35 ? 12 : 14;
+        params.toneCurve.contrast = std::min(params.toneCurve.contrast, inputContrastCeiling);
+    }
+    params.rgbCurves.mastercurve = {
+        DCT_Spline,
+        0.0, 0.0,
+        0.08, darkPrint ? 0.084 : 0.073,
+        0.20, darkPrint ? 0.232 : 0.215,
+        0.52, darkPrint ? 0.642 : 0.625,
+        0.80, darkPrint ? 0.865 : 0.855,
+        1.0, 0.995
+    };
+}
+
+void prepareAutoLevelImageSource(
+    rtengine::ImageSource* source,
+    const rtengine::procparams::ProcParams& params)
+{
+    if (!source || !source->isRAW()) {
+        return;
+    }
+
+    auto raw = params.raw;
+    raw.bayersensor.method = rtengine::procparams::RAWParams::BayerSensor::getMethodString(
+        rtengine::procparams::RAWParams::BayerSensor::Method::FAST);
+    raw.xtranssensor.method = rtengine::procparams::RAWParams::XTransSensor::getMethodString(
+        rtengine::procparams::RAWParams::XTransSensor::Method::FAST);
+
+    source->setCurrentFrame(raw.bayersensor.imageNum);
+    float redDehaze = 0.f;
+    float greenDehaze = 0.f;
+    float blueDehaze = 0.f;
+    source->preprocess(
+        raw,
+        params.lensProf,
+        params.coarse,
+        redDehaze,
+        greenDehaze,
+        blueDehaze,
+        false);
+    double contrastThreshold = 0.0;
+    source->demosaic(raw, false, contrastThreshold);
+}
+
 struct AutoEditBatchState {
     std::vector<Thumbnail*> thumbnails;
-    size_t next = 0;
+    AutoEditMode mode = AutoEditMode::Neutral;
+    std::atomic<bool> analysisFinished{false};
+    size_t applied = 0;
+    bool finalized = false;
 
     ~AutoEditBatchState()
     {
@@ -151,6 +838,9 @@ struct AutoLevelBatchState {
     std::atomic<size_t> analyzed{0};
     std::atomic<size_t> applied{0};
     std::atomic<size_t> alreadyLevel{0};
+    std::atomic<size_t> loadFailures{0};
+    std::atomic<size_t> detectionFailures{0};
+    std::atomic<double> lastAppliedAngle{0.0};
     size_t prepareIndex = 0;
 
     ~AutoLevelBatchState()
@@ -207,40 +897,46 @@ struct QuickPreviewCacheWarmItem {
     Thumbnail* thumbnail;
 };
 
-void scheduleCachedQuickPreviewWarm(std::vector<QuickPreviewCacheWarmItem>&& items, int previewHeight)
+class QuickPreviewCacheWarmTask final
 {
-    if (items.empty()) {
-        return;
+public:
+    QuickPreviewCacheWarmTask(
+        std::vector<QuickPreviewCacheWarmItem>&& items,
+        unsigned generation,
+        int height)
+        : items_(std::move(items)),
+          generation_(generation),
+          height_(height)
+    {
     }
 
-    const unsigned generation = quickPreviewCacheWarmGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
-    const int height = std::max(1, previewHeight);
+    ~QuickPreviewCacheWarmTask()
+    {
+        for (auto& item : items_) {
+            item.thumbnail->decreaseRef();
+        }
+    }
 
-    std::thread([items = std::move(items), generation, height]() mutable {
-        lowerQuickPreviewWarmThreadPriority();
-
+    void run()
+    {
         const auto start = QuickWarmClock::now();
         size_t loaded = 0;
         size_t missed = 0;
         size_t remaining = 0;
 
-        for (size_t i = 0; i < items.size(); ++i) {
-            if (quickPreviewCacheWarmGeneration.load(std::memory_order_acquire) != generation) {
-                remaining = items.size() - i;
+        for (size_t i = 0; i < items_.size(); ++i) {
+            if (quickPreviewCacheWarmGeneration.load(std::memory_order_acquire) != generation_) {
+                remaining = items_.size() - i;
                 break;
             }
 
             double scale = 1.0;
-            auto pixbuf = items[i].thumbnail->tryLoadCachedPreviewPixbuf(height, scale);
+            auto pixbuf = items_[i].thumbnail->tryLoadCachedPreviewPixbuf(height_, scale);
             if (pixbuf) {
                 ++loaded;
             } else {
                 ++missed;
             }
-        }
-
-        for (auto& item : items) {
-            item.thumbnail->decreaseRef();
         }
 
         fileBrowserPerfLog(
@@ -250,13 +946,87 @@ void scheduleCachedQuickPreviewWarm(std::vector<QuickPreviewCacheWarmItem>&& ite
             loaded,
             missed,
             remaining,
-            items.size());
-    }).detach();
+            items_.size());
+    }
+
+private:
+    std::vector<QuickPreviewCacheWarmItem> items_;
+    unsigned generation_;
+    int height_;
+};
+
+class QuickPreviewCacheWarmExecutor final
+{
+public:
+    void enqueue(std::unique_ptr<QuickPreviewCacheWarmTask> task)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            // A navigation burst only needs the newest neighborhood. Replacing
+            // pending work also releases its thumbnail references immediately.
+            pending_ = std::move(task);
+            if (!workerStarted_) {
+                workerStarted_ = true;
+                std::thread([this]() { run(); }).detach();
+            }
+        }
+        cv_.notify_one();
+    }
+
+    void cancelPending()
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        pending_.reset();
+    }
+
+private:
+    void run()
+    {
+        lowerQuickPreviewWarmThreadPriority();
+#ifdef _OPENMP
+        // Cached-preview warming is latency-insensitive and persistent. A
+        // single OpenMP lane avoids retaining a fresh team per navigation.
+        omp_set_num_threads(1);
+#endif
+        for (;;) {
+            std::unique_ptr<QuickPreviewCacheWarmTask> task;
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                cv_.wait(lock, [this]() { return pending_ != nullptr; });
+                task = std::move(pending_);
+            }
+            task->run();
+        }
+    }
+
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    std::unique_ptr<QuickPreviewCacheWarmTask> pending_;
+    bool workerStarted_ = false;
+};
+
+QuickPreviewCacheWarmExecutor& quickPreviewCacheWarmExecutor()
+{
+    static auto* executor = new QuickPreviewCacheWarmExecutor();
+    return *executor;
+}
+
+void scheduleCachedQuickPreviewWarm(std::vector<QuickPreviewCacheWarmItem>&& items, int previewHeight)
+{
+    if (items.empty()) {
+        return;
+    }
+
+    const unsigned generation = quickPreviewCacheWarmGeneration.fetch_add(1, std::memory_order_acq_rel) + 1;
+    const int height = std::max(1, previewHeight);
+    quickPreviewCacheWarmExecutor().enqueue(
+        std::make_unique<QuickPreviewCacheWarmTask>(std::move(items), generation, height));
 }
 
 void cancelCachedQuickPreviewWarmJobs()
 {
     quickPreviewCacheWarmGeneration.fetch_add(1, std::memory_order_acq_rel);
+    quickPreviewCacheWarmExecutor().cancelPending();
 }
 
 std::string foldedBrowserPathKey(const Glib::ustring& path)
@@ -445,9 +1215,38 @@ const std::string& originalFamilyKeyForEntry(FileBrowserEntry* entry)
     return entry->getBrowserOriginalFamilyKey();
 }
 
+AutoGradeFeatures buildSteepAutoEditParamsInternal(
+    Thumbnail& thumbnail,
+    AutoEditMode mode,
+    const rtengine::procparams::ProcParams& source,
+    rtengine::procparams::ProcParams& result)
+{
+    const AutoGradeFeatures features = analyzeSteepAutoGrade(thumbnail);
+    applySteepAutoEdit(thumbnail, features, result);
+    restoreSteepAutoEditGeometry(source, result);
+
+    if (mode == AutoEditMode::Grade) {
+        applySteepAutoGrade(features, result);
+    } else if (mode == AutoEditMode::GradeFilm) {
+        applySteepAutoFilm(features, result);
+    }
+
+    return features;
+}
+
+}
+
+void buildSteepAutoEditParams(
+    Thumbnail& thumbnail,
+    SteepAutoEditMode mode,
+    const rtengine::procparams::ProcParams& source,
+    rtengine::procparams::ProcParams& result)
+{
+    buildSteepAutoEditParamsInternal(thumbnail, mode, source, result);
 }
 
 FileBrowser::FileBrowser () :
+    editExternal(nullptr),
     menuLabel(nullptr),
     miOpenDefaultViewer(nullptr),
     selectDF(nullptr),
@@ -463,7 +1262,9 @@ FileBrowser::FileBrowser () :
     tbl(nullptr),
     filterPassThrough_(true),
     numFiltered(0),
-    exportPanel(nullptr)
+    exportPanel(nullptr),
+    autoEditHoverPool_(new Glib::ThreadPool(1, true)),
+    autoEditHoverGeneration_(std::make_shared<std::atomic<unsigned>>(0))
 {
     session_id_ = 0;
     selectionNotifyIdlePending_ = false;
@@ -494,7 +1295,64 @@ FileBrowser::FileBrowser () :
      ***********************/
     pmenu->attach (*Gtk::manage(aiDenoise = new MyImageMenuItem (M("FILEBROWSER_POPUPAIDENOISE"), "ai-denoise")), 0, 1, p, p + 1);
     p++;
-    pmenu->attach (*Gtk::manage(autoEdit = new MyImageMenuItem (M("FILEBROWSER_POPUPAUTOEDIT"), "palette-brush")), 0, 1, p, p + 1);
+    {
+        int position = 0;
+        Gtk::Menu* submenu = Gtk::manage(new Gtk::Menu());
+        submenu->attach(
+            *Gtk::manage(autoGrade = new MyImageMenuItem(M("FILEBROWSER_POPUPAUTOGRADE"), "color-circles")),
+            0, 1, position, position + 1);
+        ++position;
+        submenu->attach(
+            *Gtk::manage(autoGradeFilm = new MyImageMenuItem(M("FILEBROWSER_POPUPAUTOGRADEFILM"), "auto-grade-film")),
+            0, 1, position, position + 1);
+        submenu->show_all();
+
+        autoEditMenu = Gtk::manage(new MyImageMenuItem(M("FILEBROWSER_POPUPAUTOEDIT"), "palette-brush"));
+        autoEditMenu->set_submenu(*submenu);
+        auto autoEditHitTest = [this](double rootX, double rootY, int rightInset) {
+            auto window = autoEditMenu->get_window();
+            if (!window) {
+                return false;
+            }
+
+            int windowX = 0;
+            int windowY = 0;
+            window->get_origin(windowX, windowY);
+            const auto allocation = autoEditMenu->get_allocation();
+            const double itemX = rootX - windowX - allocation.get_x();
+            const double itemY = rootY - windowY - allocation.get_y();
+            return itemX >= 0.0
+                && itemY >= 0.0
+                && itemX < allocation.get_width() - rightInset
+                && itemY < allocation.get_height();
+        };
+        pmenu->signal_button_press_event().connect(
+            [this, autoEditHitTest](GdkEventButton* event) {
+                constexpr int SUBMENU_HIT_WIDTH = 34;
+                if (event->button != 1) {
+                    return false;
+                }
+
+                if (autoEditHitTest(event->x_root, event->y_root, SUBMENU_HIT_WIDTH)) {
+                    menuItemActivated(autoEditMenu);
+                    pmenu->popdown();
+                    return true;
+                }
+                return false;
+            },
+            false);
+        pmenu->add_events(Gdk::POINTER_MOTION_MASK);
+        pmenu->signal_motion_notify_event().connect(
+            [this, autoEditHitTest](GdkEventMotion* event) {
+                constexpr int SUBMENU_HIT_WIDTH = 34;
+                if (autoEditHitTest(event->x_root, event->y_root, SUBMENU_HIT_WIDTH)) {
+                    startAutoEditHoverPreview(autoEditMenu);
+                }
+                return false;
+            },
+            false);
+        pmenu->attach(*autoEditMenu, 0, 1, p, p + 1);
+    }
     p++;
     pmenu->attach (*Gtk::manage(autoLevel = new MyImageMenuItem (M("TP_ROTATE_AUTO_LEVEL"), "rotate-straighten-small")), 0, 1, p, p + 1);
     p++;
@@ -639,6 +1497,13 @@ FileBrowser::FileBrowser () :
     /***********************
      * external programs
      * *********************/
+    if (!App::get().isGimpPlugin()) {
+        pmenu->attach(*Gtk::manage(
+            editExternal = new MyImageMenuItem(M("MAIN_BUTTON_SENDTOEDITOR"), "external-editor")),
+            0, 1, p, p + 1);
+        p++;
+    }
+
 #if defined(_WIN32)
     Gtk::manage(miOpenDefaultViewer = new MyImageMenuItem (M("FILEBROWSER_OPENDEFAULTVIEWER"), "external-editor"));
 #endif
@@ -689,6 +1554,9 @@ FileBrowser::FileBrowser () :
             }
         }
 
+        pmenu->attach (*Gtk::manage(new Gtk::SeparatorMenuItem ()), 0, 1, p, p + 1);
+        p++;
+    } else if (editExternal) {
         pmenu->attach (*Gtk::manage(new Gtk::SeparatorMenuItem ()), 0, 1, p, p + 1);
         p++;
     }
@@ -1030,6 +1898,9 @@ FileBrowser::FileBrowser () :
     develop->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), develop));
     developfast->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), developfast));
     saveImage->signal_activate().connect ([this]() { m_save_image_requested.emit(); });
+    if (editExternal) {
+        editExternal->signal_activate().connect([this]() { m_external_editor_requested.emit(); });
+    }
     rename->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), rename));
     remove->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), remove));
     removeInclProc->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), removeInclProc));
@@ -1045,7 +1916,88 @@ FileBrowser::FileBrowser () :
     clearprof->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), clearprof));
     cachemenu->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), cachemenu));
     aiDenoise->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), aiDenoise));
-    autoEdit->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), autoEdit));
+    autoGrade->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), autoGrade));
+    autoGradeFilm->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), autoGradeFilm));
+    auto* autoEditSubmenu = dynamic_cast<Gtk::Menu*>(autoEditMenu->get_submenu());
+    autoEditMenu->signal_select().connect([this, autoEditSubmenu]() {
+        if (!autoEditSubmenu) {
+            return;
+        }
+        // Gtk occasionally misses submenu crossing/prelight events on native
+        // Windows popups. Track the actual GDK pointer while this submenu is
+        // open so Film Lab highlights and previews on the first hover.
+        autoEditHoverTrackingConnection_.disconnect();
+        autoEditHoverTrackingConnection_ = Glib::signal_timeout().connect(
+            [this, autoEditSubmenu]() -> bool {
+                if (!pmenu->get_visible()) {
+                    return false;
+                }
+                if (!autoEditSubmenu->get_visible()) {
+                    return true;
+                }
+
+                auto display = autoEditSubmenu->get_display();
+                if (!display) {
+                    return true;
+                }
+                auto seat = display->get_default_seat();
+                auto device = seat ? seat->get_pointer() : Glib::RefPtr<Gdk::Device>();
+                if (!device) {
+                    return true;
+                }
+
+                const auto pointerIsOver = [&device](Gtk::MenuItem* menuItem) {
+                    auto window = menuItem->get_window();
+                    if (!window) {
+                        return false;
+                    }
+
+                    int pointerX = 0;
+                    int pointerY = 0;
+                    Gdk::ModifierType modifiers;
+                    window->get_device_position(device, pointerX, pointerY, modifiers);
+                    const auto allocation = menuItem->get_allocation();
+                    return pointerX >= allocation.get_x()
+                        && pointerY >= allocation.get_y()
+                        && pointerX < allocation.get_x() + allocation.get_width()
+                        && pointerY < allocation.get_y() + allocation.get_height();
+                };
+
+                Gtk::MenuItem* hoveredItem = pointerIsOver(autoGradeFilm)
+                    ? static_cast<Gtk::MenuItem*>(autoGradeFilm)
+                    : pointerIsOver(autoGrade)
+                      ? static_cast<Gtk::MenuItem*>(autoGrade)
+                      : nullptr;
+                if (hoveredItem) {
+                    gtk_menu_shell_select_item(
+                        GTK_MENU_SHELL(autoEditSubmenu->gobj()),
+                        GTK_WIDGET(hoveredItem->gobj()));
+                    startAutoEditHoverPreview(hoveredItem);
+                }
+                return true;
+            },
+            35,
+            G_PRIORITY_DEFAULT_IDLE);
+    });
+    autoGrade->signal_select().connect(sigc::bind(sigc::mem_fun(*this, &FileBrowser::startAutoEditHoverPreview), autoGrade));
+    autoGradeFilm->signal_select().connect(sigc::bind(sigc::mem_fun(*this, &FileBrowser::startAutoEditHoverPreview), autoGradeFilm));
+    const auto connectAutoEditHoverEvents = [this](Gtk::MenuItem* item) {
+        item->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::POINTER_MOTION_MASK);
+        item->signal_enter_notify_event().connect([this, item](GdkEventCrossing*) -> bool {
+            startAutoEditHoverPreview(item);
+            return false;
+        });
+        item->signal_motion_notify_event().connect([this, item](GdkEventMotion*) -> bool {
+            startAutoEditHoverPreview(item);
+            return false;
+        });
+    };
+    connectAutoEditHoverEvents(autoGrade);
+    connectAutoEditHoverEvents(autoGradeFilm);
+    pmenu->signal_deactivate().connect([this]() {
+        autoEditHoverTrackingConnection_.disconnect();
+        cancelAutoEditHoverPreview(nullptr, true);
+    });
     autoLevel->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), autoLevel));
     duplicate->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), duplicate));
 
@@ -1096,6 +2048,9 @@ FileBrowser::FileBrowser () :
 
 FileBrowser::~FileBrowser ()
 {
+    autoEditHoverTrackingConnection_.disconnect();
+    cancelAutoEditHoverPreview(nullptr, false);
+    autoEditHoverPool_.reset();
     if (autoLevelCancel_) {
         autoLevelCancel_->store(true, std::memory_order_release);
     }
@@ -1145,7 +2100,7 @@ void FileBrowser::rightClicked ()
         clearprof->set_sensitive (!selected.empty());
         copyTo->set_sensitive (!selected.empty());
         moveTo->set_sensitive (!selected.empty());
-        autoEdit->set_sensitive(!quickActionRunning_ && !selected.empty());
+        autoEditMenu->set_sensitive(!quickActionRunning_ && !selected.empty());
         autoLevel->set_sensitive(!quickActionRunning_ && !selected.empty());
     }
 
@@ -1189,11 +2144,17 @@ void FileBrowser::rightClicked ()
     cachesubmenu->show_all ();
     cachemenu->set_submenu (*cachesubmenu);
 
-    // "Save Image" only makes sense in editor's filmstrip (tab mode)
+    // These actions operate on the current editor and only belong in its filmstrip.
     if (isInTabMode()) {
         saveImage->show();
+        if (editExternal) {
+            editExternal->show();
+        }
     } else {
         saveImage->hide();
+        if (editExternal) {
+            editExternal->hide();
+        }
     }
 
     // "Set as album cover" — only when viewing an album and exactly one image is selected
@@ -1292,6 +2253,164 @@ void FileBrowser::clearOriginalMarks_()
 void FileBrowser::markEntryIndexDirty_()
 {
     entryIndex_.clear();
+}
+
+void FileBrowser::startAutoEditHoverPreview(Gtk::MenuItem* item)
+{
+    if (!item || quickActionRunning_) {
+        return;
+    }
+    // Native popup themes may clear GTK's implicit prelight between motion
+    // events. Reassert it before the same-item early return as well.
+    item->set_state_flags(Gtk::STATE_FLAG_PRELIGHT, false);
+    if (autoEditHoverItem_ == item
+            && (autoEditHoverDelayConnection_.connected()
+                || autoEditHoverInFlight_
+                || !autoEditHoverPreviewFile_.empty())) {
+        return;
+    }
+
+    cancelAutoEditHoverPreview(nullptr, true);
+    autoEditHoverItem_ = item;
+
+    autoEditHoverDelayConnection_ = Glib::signal_timeout().connect(
+        [this, item]() -> bool {
+            if (autoEditHoverItem_ != item || quickActionRunning_) {
+                return false;
+            }
+
+            FileBrowserEntry* entry = nullptr;
+            {
+                MYREADERLOCK(l, entryRW);
+                if (!selected.empty()) {
+                    entry = static_cast<FileBrowserEntry*>(selected.back());
+                }
+            }
+            if (!entry || !entry->thumbnail || !autoEditHoverPool_) {
+                autoEditHoverItem_ = nullptr;
+                autoEditHoverInFlight_ = false;
+                return false;
+            }
+
+            const AutoEditMode mode = item == autoGradeFilm
+                ? AutoEditMode::GradeFilm
+                : item == autoGrade
+                 ? AutoEditMode::Grade
+                 : AutoEditMode::Neutral;
+            fileBrowserPerfLog(
+                "[autoEditHover] start mode=%s file=%s\n",
+                autoEditModeName(mode),
+                entry->filename.c_str());
+            const auto desired = entry->getDesiredPreviewSize();
+            const Glib::ustring filename = entry->filename;
+            Thumbnail* const thumbnail = entry->thumbnail;
+            thumbnail->increaseRef();
+            const unsigned generation = autoEditHoverGeneration_->fetch_add(1, std::memory_order_acq_rel) + 1;
+            const auto generationState = autoEditHoverGeneration_;
+            autoEditHoverInFlight_ = true;
+
+            autoEditHoverPool_->push([this, generationState, generation, mode, desired, filename, thumbnail]() {
+                if (generationState->load(std::memory_order_acquire) != generation) {
+                    thumbnail->decreaseRef();
+                    return;
+                }
+
+                const rtengine::procparams::ProcParams sourceParams = thumbnail->getProcParams();
+                rtengine::procparams::ProcParams params;
+                buildSteepAutoEditParamsInternal(*thumbnail, mode, sourceParams, params);
+                if (generationState->load(std::memory_order_acquire) != generation) {
+                    thumbnail->decreaseRef();
+                    return;
+                }
+
+                // Start the full editor preview as soon as the parameters are
+                // ready. Thumbnail rendering continues independently below.
+                auto editorParams = params;
+                idle_register.add(
+                    [this, generationState, generation, filename, editorParams = std::move(editorParams)]() -> bool {
+                        if (generationState->load(std::memory_order_acquire) != generation) {
+                            return false;
+                        }
+
+                        const bool editorApplied = tbl
+                            && tbl->transientEditPreviewRequested(filename, &editorParams, false);
+                        fileBrowserPerfLog(
+                            "[autoEditHover] editor-preview %s file=%s\n",
+                            editorApplied ? "applied" : "no-matching-editor",
+                            filename.c_str());
+                        autoEditHoverInFlight_ = false;
+                        autoEditHoverPreviewFile_ = filename;
+                        return false;
+                    });
+
+                double scale = 1.0;
+                const int previewHeight = desired.first.scaleToDevice(desired.second).height;
+                rtengine::IImage8* image = thumbnail->processFullThumbImage(params, previewHeight, scale);
+                thumbnail->decreaseRef();
+
+                if (!image || generationState->load(std::memory_order_acquire) != generation) {
+                    delete image;
+                    return;
+                }
+
+                const auto crop = params.crop;
+                idle_register.add([this, generationState, generation, mode, desired, filename, image, scale, crop]() -> bool {
+                    if (generationState->load(std::memory_order_acquire) != generation) {
+                        delete image;
+                        return false;
+                    }
+
+                    auto* current = findEntry(filename);
+                    if (!current) {
+                        delete image;
+                        return false;
+                    }
+
+                    ThumbImageUpdateListener::ImageUpdate update(
+                        image,
+                        desired.first,
+                        desired.second,
+                        scale,
+                        crop);
+                    current->updateImage(update);
+                    autoEditHoverPreviewFile_ = filename;
+                    fileBrowserPerfLog(
+                        "[autoEditHover] applied mode=%s file=%s\n",
+                        autoEditModeName(mode),
+                        filename.c_str());
+                    return false;
+                });
+            });
+
+            return false;
+        },
+        110);
+}
+
+void FileBrowser::cancelAutoEditHoverPreview(Gtk::MenuItem* item, bool restore)
+{
+    if (item && autoEditHoverItem_ != item) {
+        return;
+    }
+
+    autoEditHoverDelayConnection_.disconnect();
+    if (autoEditHoverItem_) {
+        autoEditHoverItem_->unset_state_flags(Gtk::STATE_FLAG_PRELIGHT);
+    }
+    autoEditHoverItem_ = nullptr;
+    autoEditHoverInFlight_ = false;
+    autoEditHoverGeneration_->fetch_add(1, std::memory_order_acq_rel);
+
+    if (!autoEditHoverPreviewFile_.empty()) {
+        const Glib::ustring previewFile = autoEditHoverPreviewFile_;
+        if (tbl) {
+            tbl->transientEditPreviewRequested(previewFile, nullptr, restore);
+        }
+        if (auto* entry = findEntry(previewFile)) {
+            entry->invalidateTransientPreview(restore);
+        }
+        autoEditHoverPreviewFile_.clear();
+    }
 }
 
 ThumbBrowserEntryBase* FileBrowser::findEntryLocked_(const Glib::ustring& fname)
@@ -2149,12 +3268,18 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
         if (!mselected.empty() && bppcl) {
             bppcl->endBatchPParamsChange();
         }
-    } else if (m == autoEdit) {
+    } else if (m == autoEditMenu || m == autoGrade || m == autoGradeFilm) {
+        cancelAutoEditHoverPreview(nullptr, false);
         if (quickActionRunning_) {
             return;
         }
 
         auto state = std::make_shared<AutoEditBatchState>();
+        state->mode = m == autoGradeFilm
+            ? AutoEditMode::GradeFilm
+            : m == autoGrade
+             ? AutoEditMode::Grade
+             : AutoEditMode::Neutral;
         state->thumbnails.reserve(mselected.size());
         for (auto* entry : mselected) {
             entry->thumbnail->increaseRef();
@@ -2165,56 +3290,117 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
             return;
         }
 
+        fileBrowserPerfLog(
+            "[autoEditBatch] start count=%zu mode=%s\n",
+            state->thumbnails.size(),
+            autoEditModeName(state->mode));
+
         quickActionRunning_ = true;
-        autoEdit->set_sensitive(false);
+        autoEditMenu->set_sensitive(false);
         autoLevel->set_sensitive(false);
-        tbl->quickActionProgress(M("FILEBROWSER_POPUPAUTOEDIT"), 0.01);
+        tbl->quickActionProgress(M(autoEditModeLabel(state->mode)), 0.01);
         if (bppcl) {
             bppcl->beginBatchPParamsChange(state->thumbnails.size());
         }
 
-        // Thumbnail listeners and GTK drawing are UI-thread-owned. Process a
-        // bounded slice per idle turn so large selections remain interactive.
-        idle_register.add([this, state]() -> bool {
-            const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(4);
-            size_t processed = 0;
-            while (state->next < state->thumbnails.size()
-                    && (processed == 0 || std::chrono::steady_clock::now() < deadline)
-                    && processed < 8) {
-                auto* thm = state->thumbnails[state->next++];
-                rtengine::procparams::ProcParams pp = thm->getProcParams();
-                applySteepAutoEditTone(pp);
-                thm->setProcParams(pp, nullptr, FILEBROWSER, false);
-                ++processed;
+        auto finishBatch = std::make_shared<std::function<void()>>();
+        *finishBatch = [this, state]() {
+            if (state->finalized
+                    || !state->analysisFinished.load(std::memory_order_acquire)
+                    || state->applied < state->thumbnails.size()) {
+                return;
             }
 
-            tbl->quickActionProgress(
-                Glib::ustring::compose(
-                    "%1 %2/%3",
-                    M("FILEBROWSER_POPUPAUTOEDIT"),
-                    state->next,
-                    state->thumbnails.size()),
-                std::max(0.01, static_cast<double>(state->next) / state->thumbnails.size()));
-
-            if (state->next < state->thumbnails.size()) {
-                return true;
-            }
-
+            state->finalized = true;
             if (bppcl) {
                 bppcl->endBatchPParamsChange();
             }
             quickActionRunning_ = false;
-            autoEdit->set_sensitive(true);
+            autoEditMenu->set_sensitive(true);
             autoLevel->set_sensitive(true);
             tbl->quickActionProgress(
                 Glib::ustring::compose(
                     "%1: %2/%3",
-                    M("FILEBROWSER_POPUPAUTOEDIT"),
+                    M(autoEditModeLabel(state->mode)),
                     state->thumbnails.size(),
                     state->thumbnails.size()),
                 0.0);
             queue_draw();
-            return false;
+        };
+
+        // RAW analysis can require upgrading an embedded preview. Keep that
+        // work off GTK's thread, then apply each completed recipe on GTK's
+        // thread so listeners and thumbnail drawing remain correctly owned.
+        autoEditHoverPool_->push([this, state, finishBatch]() {
+            for (size_t index = 0; index < state->thumbnails.size(); ++index) {
+                auto* thm = state->thumbnails[index];
+                AutoGradeFeatures features;
+                rtengine::procparams::ProcParams pp;
+                bool succeeded = true;
+                std::string error;
+
+                try {
+                    const rtengine::procparams::ProcParams sourceParams = thm->getProcParams();
+                    features = buildSteepAutoEditParamsInternal(*thm, state->mode, sourceParams, pp);
+                } catch (const std::exception& exception) {
+                    succeeded = false;
+                    error = exception.what();
+                    pp = thm->getProcParams();
+                } catch (...) {
+                    succeeded = false;
+                    error = "unknown error";
+                    pp = thm->getProcParams();
+                }
+
+                idle_register.add([this, state, finishBatch, thm, features, pp = std::move(pp), succeeded, error = std::move(error)]() mutable -> bool {
+                    if (!succeeded) {
+                        fileBrowserPerfLog(
+                            "[autoEditBatch] failed mode=%s error=%s file=%s\n",
+                            autoEditModeName(state->mode),
+                            error.c_str(),
+                            thm->getFileName().c_str());
+                    } else {
+                        fileBrowserPerfLog(
+                            "[autoEditBatch] mode=%s scene=%s median=%.3f range=%.3f sat=%.3f skin=%.3f skinSat=%.3f sky=%.3f foliage=%.3f edge=%.3f iso=%u exposure=%.3f brightness=%d contrast=%d highlight=%d film=%s strength=%d file=%s\n",
+                            autoEditModeName(state->mode),
+                            autoGradeSceneName(features.scene),
+                            features.medianLuma,
+                            features.dynamicRange,
+                            features.saturation,
+                            features.skinFraction,
+                            features.skinSaturation,
+                            features.skyFraction,
+                            features.foliageFraction,
+                            features.edgeDensity,
+                            features.iso,
+                            pp.toneCurve.expcomp,
+                            pp.toneCurve.brightness,
+                            pp.toneCurve.contrast,
+                            pp.toneCurve.hlcompr,
+                            pp.filmPresets.enabled ? pp.filmPresets.preset.c_str() : "off",
+                            pp.filmPresets.strength,
+                            thm->getFileName().c_str());
+                        thm->setProcParams(pp, nullptr, FILEBROWSER, true);
+                    }
+
+                    ++state->applied;
+                    tbl->quickActionProgress(
+                        Glib::ustring::compose(
+                            "%1 %2/%3",
+                            M(autoEditModeLabel(state->mode)),
+                            state->applied,
+                            state->thumbnails.size()),
+                        std::max(0.01, static_cast<double>(state->applied) / state->thumbnails.size()));
+                    (*finishBatch)();
+                    return false;
+                });
+            }
+
+            state->analysisFinished.store(true, std::memory_order_release);
+            idle_register.add([finishBatch]() -> bool {
+                (*finishBatch)();
+                return false;
+            });
         });
     } else if (m == autoLevel) {
         if (quickActionRunning_) {
@@ -2239,8 +3425,10 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
             return;
         }
 
+        fileBrowserPerfLog("[autoLevelBatch] start count=%zu\n", state->items.size());
+
         quickActionRunning_ = true;
-        autoEdit->set_sensitive(false);
+        autoEditMenu->set_sensitive(false);
         autoLevel->set_sensitive(false);
         autoLevelCancel_ = state->cancel;
         if (autoLevelThread_.joinable()) {
@@ -2291,7 +3479,22 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
                         if (initialImage && errorCode == 0
                                 && !state->cancel->load(std::memory_order_acquire)) {
                             auto* source = initialImage->getImageSource();
+                            const auto prepareStart = QuickWarmClock::now();
+                            prepareAutoLevelImageSource(source, item.params);
+                            const auto detectStart = QuickWarmClock::now();
                             const auto detection = rtengine::PerspectiveCorrection::autoLevel(source, &item.params);
+                            const auto detectEnd = QuickWarmClock::now();
+                            fileBrowserPerfLog(
+                                "[autoLevelBatch] raw=%d prepare=%lldms detect=%lldms success=%d angle=%.4f confidence=%.3f horizontal=%d vertical=%d file=%s\n",
+                                source && source->isRAW() ? 1 : 0,
+                                quickWarmDurationMs(prepareStart, detectStart),
+                                quickWarmDurationMs(detectStart, detectEnd),
+                                detection.success ? 1 : 0,
+                                detection.angle,
+                                detection.confidence,
+                                detection.horizontal_lines,
+                                detection.vertical_lines,
+                                item.filename.c_str());
                             if (detection.success) {
                                 if (std::abs(detection.angle) < 0.015) {
                                     state->alreadyLevel.fetch_add(1, std::memory_order_release);
@@ -2300,15 +3503,22 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
                                     const double newRotation = leveled.rotate.degree + detection.angle;
                                     if (std::abs(newRotation) <= 45.0) {
                                         leveled.rotate.degree = newRotation;
+                                        state->lastAppliedAngle.store(detection.angle, std::memory_order_release);
                                         std::lock_guard<std::mutex> lock(state->resultsMutex);
                                         state->readyResults.emplace_back(item.thumbnail, std::move(leveled));
                                     }
                                 }
+                            } else {
+                                state->detectionFailures.fetch_add(1, std::memory_order_release);
                             }
+                        } else if (!state->cancel->load(std::memory_order_acquire)) {
+                            state->loadFailures.fetch_add(1, std::memory_order_release);
                         }
                     } catch (const std::exception& error) {
+                        state->loadFailures.fetch_add(1, std::memory_order_release);
                         fileBrowserPerfLog("[autoLevelBatch] analysis failed: %s\n", error.what());
                     } catch (...) {
+                        state->loadFailures.fetch_add(1, std::memory_order_release);
                         fileBrowserPerfLog("[autoLevelBatch] analysis failed with an unknown error\n");
                     }
 
@@ -2332,7 +3542,11 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
                             bppcl->beginBatchPParamsChange(completed.size());
                         }
                         for (auto& result : completed) {
-                            result.first->setProcParams(result.second, nullptr, FILEBROWSER, false);
+                            result.first->setProcParams(result.second, nullptr, FILEBROWSER, true);
+                            fileBrowserPerfLog(
+                                "[autoLevelBatch] applied degree=%.4f file=%s\n",
+                                result.second.rotate.degree,
+                                result.first->getFileName().c_str());
                         }
                         if (bppcl) {
                             bppcl->endBatchPParamsChange();
@@ -2360,21 +3574,31 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
 
                     const size_t applied = state->applied.load(std::memory_order_acquire);
                     const size_t alreadyLevel = state->alreadyLevel.load(std::memory_order_acquire);
+                    const size_t loadFailures = state->loadFailures.load(std::memory_order_acquire);
                     const Glib::ustring resultText = applied > 0
-                        ? Glib::ustring::compose(
-                            "%1: %2/%3",
-                            M("TP_ROTATE_AUTO_LEVEL"),
-                            applied,
-                            state->items.size())
+                        ? state->items.size() == 1
+                          ? Glib::ustring::compose(
+                              "%1: %2",
+                              M("TP_ROTATE_AUTO_LEVEL"),
+                              Glib::ustring::compose(
+                                  M("TP_ROTATE_AUTO_LEVEL_APPLIED"),
+                                  std::round(std::abs(state->lastAppliedAngle.load(std::memory_order_acquire)) * 1000.0) / 1000.0))
+                          : Glib::ustring::compose(
+                              "%1: %2/%3",
+                              M("TP_ROTATE_AUTO_LEVEL"),
+                              applied,
+                              state->items.size())
                         : Glib::ustring::compose(
                             "%1: %2",
                             M("TP_ROTATE_AUTO_LEVEL"),
-                            M(alreadyLevel > 0
-                                ? "TP_ROTATE_AUTO_LEVEL_ALREADY"
-                                : "TP_ROTATE_AUTO_LEVEL_FAILED"));
+                            M(loadFailures == state->items.size()
+                                ? "TP_ROTATE_AUTO_LEVEL_LOAD_FAILED"
+                                : alreadyLevel > 0
+                                 ? "TP_ROTATE_AUTO_LEVEL_ALREADY"
+                                 : "TP_ROTATE_AUTO_LEVEL_FAILED"));
                     tbl->quickActionProgress(resultText, 0.0);
                     quickActionRunning_ = false;
-                    autoEdit->set_sensitive(true);
+                    autoEditMenu->set_sensitive(true);
                     autoLevel->set_sensitive(true);
                     autoLevelCancel_.reset();
                     return false;
@@ -4026,6 +5250,11 @@ FileBrowser::type_trash_changed FileBrowser::trash_changed ()
 FileBrowser::type_save_image_requested& FileBrowser::save_image_requested ()
 {
     return m_save_image_requested;
+}
+
+FileBrowser::type_external_editor_requested& FileBrowser::external_editor_requested ()
+{
+    return m_external_editor_requested;
 }
 
 

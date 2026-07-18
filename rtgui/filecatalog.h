@@ -342,6 +342,10 @@ public:
     void selectionChanged(const std::vector<Thumbnail*>& tbe) override;
     void clearFromCacheRequested(const std::vector<FileBrowserEntry*>& tbe, bool leavenotrace) override;
     void quickActionProgress(const Glib::ustring& text, double progress) override;
+    bool transientEditPreviewRequested(
+        const Glib::ustring& filename,
+        const rtengine::procparams::ProcParams* params,
+        bool restore) override;
     bool isInTabMode() const override;
 
     void emptyTrash ();

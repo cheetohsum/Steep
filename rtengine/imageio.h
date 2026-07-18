@@ -100,7 +100,7 @@ public:
     static int getPNGSampleFormat (const Glib::ustring &fname, IIOSampleFormat &sFormat, IIOSampleArrangement &sArrangement);
     static int getTIFFSampleFormat (const Glib::ustring &fname, IIOSampleFormat &sFormat, IIOSampleArrangement &sArrangement);
 
-    int loadJPEGFromMemory (const char* buffer, int bufsize);
+    int loadJPEGFromMemory (const char* buffer, int bufsize, int maxOutputWidth = 0, int maxOutputHeight = 0);
     int loadPPMFromMemory(const char* buffer, int width, int height, bool swap, int bps);
 
     int savePNG (const Glib::ustring &fname, int bps = -1) const;

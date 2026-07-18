@@ -1292,6 +1292,23 @@ rtengine::IImage8* Thumbnail::processThumbImage (int h, double& scale, rtengine:
     return processThumbImageLocked(pparams, h, scale, cachePixbuf);
 }
 
+rtengine::IImage8* Thumbnail::processFullThumbImage(
+    const rtengine::procparams::ProcParams& pparams,
+    int h,
+    double& scale,
+    bool cachePixbuf)
+{
+    MyMutex::MyLock lock(mutex);
+
+    // Auto analysis must not depend on whether the browser happened to finish
+    // upgrading an embedded RAW preview before the command was invoked.
+    if (cfs.thumbImgType == CacheImageData::QUICK_THUMBNAIL) {
+        return upgradeThumbImageLocked(pparams, h, scale, true, cachePixbuf);
+    }
+
+    return processThumbImageLocked(pparams, h, scale, cachePixbuf);
+}
+
 rtengine::IImage8* Thumbnail::upgradeThumbImageLocked (const rtengine::procparams::ProcParams& pparams, int h, double& scale, bool forceUpgrade, bool cachePixbuf)
 {
     if ( cfs.thumbImgType != CacheImageData::QUICK_THUMBNAIL && !forceUpgrade ) {
@@ -1990,8 +2007,19 @@ void Thumbnail::getSpotWB(int x, int y, int rect, double& temp, double& green)
 
 void Thumbnail::applyAutoExp (rtengine::procparams::ProcParams& pparams)
 {
+    MyMutex::MyLock lock(mutex);
+    const bool loadedForAutoExposure = !tpp;
+    if (loadedForAutoExposure) {
+        _loadThumbnail();
+    }
+
     if (tpp) {
         tpp->applyAutoExp (pparams);
+    }
+
+    if (loadedForAutoExposure) {
+        delete tpp;
+        tpp = nullptr;
     }
 }
 

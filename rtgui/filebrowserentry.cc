@@ -498,6 +498,17 @@ bool FileBrowserEntry::setLiveEditorPreview (
     return true;
 }
 
+void FileBrowserEntry::invalidateTransientPreview(bool refresh)
+{
+    if (feih) {
+        ++feih->imageUpdateGeneration;
+    }
+
+    if (refresh) {
+        refreshThumbnailImage();
+    }
+}
+
 bool FileBrowserEntry::hasUsableThumbnailPreview ()
 {
     MYREADERLOCK(l, lockRW);

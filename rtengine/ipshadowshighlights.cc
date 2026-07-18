@@ -35,7 +35,7 @@ namespace rtengine {
 //modifications to pass parameters needs by locallab, to avoid 2 functions - no change in process - J.Desmis march 2019
 void ImProcFunctions::shadowsHighlights(LabImage *lab, bool ena, int labmode, int hightli, int shado, int rad, int scal, int hltonal, int shtonal)
 {
-    if (!ena || (!hightli && !shado)){
+    if (!ena || (hightli == 0 && shado == 0)){
         return;
     }
     const int width = lab->W;
@@ -191,11 +191,11 @@ void ImProcFunctions::shadowsHighlights(LabImage *lab, bool ena, int labmode, in
             }
         };
 
-    if (hightli > 0) {
+    if (hightli != 0) {
         apply(hightli * 0.7, hltonal, true);
     }
 
-    if (shado > 0) {
+    if (shado != 0) {
         apply(shado * 0.6, shtonal, false);
     }
 }

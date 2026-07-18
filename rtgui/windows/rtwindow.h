@@ -231,6 +231,7 @@ public:
     void writeToolExpandedStatus (std::vector<int> &tpOpen);
 
     EditorPanel* getActiveEditorPanel();
+    EditorPanel* getEditorPanelForFile(const Glib::ustring& filename);
 
     void showMcpDialog();
     mcp::McpServer* getMcpServer() { return mcpServer_.get(); }

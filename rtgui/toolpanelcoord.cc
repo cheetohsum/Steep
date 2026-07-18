@@ -19,11 +19,13 @@
 #include <iostream>
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <memory>
 #include <string>
 
 #include "rtengine/rt_math.h"
 
+#include "autoedit.h"
 #include "imagearea.h"
 #include "multilangmgr.h"
 #include "rawloadactivity.h"
@@ -31,6 +33,7 @@
 #include "metadatapanel.h"
 #include "options.h"
 #include "rtimage.h"
+#include "thumbnail.h"
 
 #include <cstdarg>
 #include <cstdio>
@@ -52,6 +55,8 @@ using ToolTree = ToolPanelCoordinator::ToolTree;
 
 namespace
 {
+
+constexpr unsigned int kQuickPreviewHighDetailDelayMs = 650;
 
 bool toolPanelEditLogEnabled()
 {
@@ -479,6 +484,8 @@ std::unordered_map<std::string, Tool> ToolPanelCoordinator::toolNamesReverseMap;
 
 ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favoritePanelSW(nullptr), hasChanged (false), batch(batch), editDataProvider (nullptr), imageArea_(nullptr), photoLoadedOnce(false), ornamentSurface(new RTSurface("ornament1.svg")), prevMode(EditorMode::EDIT)
 {
+    quickAutoEditPool_.reset(new Glib::ThreadPool(1, true));
+    quickAutoEditGeneration_ = std::make_shared<std::atomic<unsigned>>(0);
     colorPickerRow_ = nullptr;
 
     whitebalance = nullptr;
@@ -1686,6 +1693,9 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
         editPanel->pack_start(*detailGroup, Gtk::PACK_SHRINK);
         editPanel->pack_start(*effectsGroup, Gtk::PACK_SHRINK);
         editPanel->pack_start(*calibrationGroup, Gtk::PACK_SHRINK);
+        if (quickEditBar_) {
+            editPanel->reorder_child(*quickEditBar_, 0);
+        }
     }
 
     // Handle Locallab subscription/unsubscription
@@ -1822,6 +1832,8 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
 
 void ToolPanelCoordinator::populateEditPanel()
 {
+    buildQuickEditBar();
+
     // --- Exposure preview strip ---
     exposureStrip_ = Gtk::manage(new PreviewStrip());
     exposureStrip_->setParamModifier([](rtengine::procparams::ProcParams& pp, double t) {
@@ -2577,6 +2589,9 @@ void ToolPanelCoordinator::addPanel(Gtk::Box* where, FoldableToolPanel* panel, i
 
 ToolPanelCoordinator::~ToolPanelCoordinator ()
 {
+    quickAutoEditGeneration_->fetch_add(1, std::memory_order_acq_rel);
+    quickAutoEditPool_.reset();
+    quickPreviewFinalizeConn_.disconnect();
     deferredPanelChangePending_ = false;
     deferredPanelChangeTimerActive_ = false;
     deferredPanelChangeConn_.disconnect();
@@ -2951,6 +2966,445 @@ bool ToolPanelCoordinator::retryDeferredPanelChanged()
     }
 
     return true;
+}
+
+void ToolPanelCoordinator::buildQuickEditBar()
+{
+    quickEditBar_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 3));
+    quickEditBar_->set_name("QuickEditBar");
+    quickEditBar_->set_margin_start(4);
+    quickEditBar_->set_margin_end(4);
+    quickEditBar_->set_margin_top(2);
+    quickEditBar_->set_margin_bottom(4);
+
+    auto* autoButton = Gtk::manage(new Gtk::Button("Auto"));
+    autoButton->set_name("QuickEditButton");
+    autoButton->set_relief(Gtk::RELIEF_NONE);
+    autoButton->set_tooltip_text("Auto Edit");
+    autoButton->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
+    autoButton->signal_enter_notify_event().connect([this](GdkEventCrossing* event) -> bool {
+        if (!event || event->detail != GDK_NOTIFY_INFERIOR) {
+            quickPreviewVariant_ = 0;
+            requestQuickAutoParams(0, "Auto Edit", false);
+        }
+        return false;
+    });
+    autoButton->signal_leave_notify_event().connect([this](GdkEventCrossing* event) -> bool {
+        if (!event || event->detail != GDK_NOTIFY_INFERIOR) {
+            endQuickPreview(true);
+        }
+        return false;
+    });
+    autoButton->signal_clicked().connect([this]() {
+        requestQuickAutoParams(0, "Auto Edit", true);
+    });
+
+    auto* autoMenu = Gtk::manage(new Gtk::Menu());
+    const std::vector<std::pair<Glib::ustring, int>> autoItems = {
+        {"Auto Edit", 0},
+        {"Auto Grade", 1},
+        {"Film Lab", 2}
+    };
+    for (const auto& item : autoItems) {
+        auto* mi = Gtk::manage(new Gtk::MenuItem(item.first));
+        mi->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::POINTER_MOTION_MASK);
+        const auto previewItem = [this, item]() {
+            if (quickPreviewVariant_ == item.second && quickPreviewActive_) {
+                return;
+            }
+            quickPreviewVariant_ = item.second;
+            requestQuickAutoParams(item.second, item.first, false);
+            if (!quickPreviewActive_) {
+                quickPreviewVariant_ = -1;
+            }
+        };
+        mi->signal_select().connect(previewItem);
+        mi->signal_enter_notify_event().connect([previewItem](GdkEventCrossing*) -> bool {
+            previewItem();
+            return false;
+        });
+        mi->signal_motion_notify_event().connect([previewItem](GdkEventMotion*) -> bool {
+            previewItem();
+            return false;
+        });
+        mi->signal_activate().connect([this, item]() {
+            requestQuickAutoParams(item.second, item.first, true);
+        });
+        autoMenu->append(*mi);
+    }
+    autoMenu->show_all();
+
+    auto* autoDrop = Gtk::manage(new Gtk::MenuButton());
+    autoDrop->set_name("QuickEditDrop");
+    autoDrop->set_image(*Gtk::manage(new RTImage("arrow-down-small", Gtk::ICON_SIZE_MENU)));
+    autoDrop->set_relief(Gtk::RELIEF_NONE);
+    autoDrop->set_tooltip_text("Auto options");
+    autoDrop->set_halign(Gtk::ALIGN_END);
+    autoDrop->set_valign(Gtk::ALIGN_END);
+    autoDrop->set_size_request(24, 22);
+    autoDrop->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::POINTER_MOTION_MASK);
+    autoDrop->set_popup(*autoMenu);
+    autoDrop->signal_enter_notify_event().connect([autoDrop](GdkEventCrossing*) -> bool {
+        if (!autoDrop->get_active()) {
+            autoDrop->set_active(true);
+        }
+        return false;
+    });
+    autoDrop->signal_motion_notify_event().connect([autoDrop](GdkEventMotion*) -> bool {
+        if (!autoDrop->get_active()) {
+            autoDrop->set_active(true);
+        }
+        return false;
+    });
+    autoDrop->signal_toggled().connect([this, autoDrop]() {
+        if (!autoDrop->get_active()) {
+            endQuickPreview(true);
+        }
+    });
+
+    auto* bwButton = Gtk::manage(new Gtk::Button("B&W"));
+    bwButton->set_name("QuickEditButton");
+    bwButton->set_relief(Gtk::RELIEF_NONE);
+    bwButton->set_tooltip_text("Black & White");
+    bwButton->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
+    bwButton->signal_enter_notify_event().connect([this](GdkEventCrossing* event) -> bool {
+        if (!event || event->detail != GDK_NOTIFY_INFERIOR) {
+            quickPreviewVariant_ = 100;
+            beginQuickPreview(makeQuickBWParams(0), "Black & White");
+        }
+        return false;
+    });
+    bwButton->signal_leave_notify_event().connect([this](GdkEventCrossing* event) -> bool {
+        if (!event || event->detail != GDK_NOTIFY_INFERIOR) {
+            endQuickPreview(true);
+        }
+        return false;
+    });
+    bwButton->signal_clicked().connect([this]() {
+        applyQuickEditParams(makeQuickBWParams(0), "Black & White", true);
+    });
+
+    auto* bwMenu = Gtk::manage(new Gtk::Menu());
+    const std::vector<std::pair<Glib::ustring, int>> bwItems = {
+        {"Neutral B&W", 0},
+        {"Portrait B&W", 1},
+        {"High Contrast", 2},
+        {"Red Filter", 3},
+        {"Green Filter", 4},
+        {"Infrared", 5}
+    };
+    for (const auto& item : bwItems) {
+        auto* mi = Gtk::manage(new Gtk::MenuItem(item.first));
+        mi->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::POINTER_MOTION_MASK);
+        const auto previewItem = [this, item]() {
+            const int variant = 100 + item.second;
+            if (quickPreviewVariant_ == variant && quickPreviewActive_) {
+                return;
+            }
+            quickPreviewVariant_ = variant;
+            beginQuickPreview(makeQuickBWParams(item.second), item.first);
+            if (!quickPreviewActive_) {
+                quickPreviewVariant_ = -1;
+            }
+        };
+        mi->signal_select().connect(previewItem);
+        mi->signal_enter_notify_event().connect([previewItem](GdkEventCrossing*) -> bool {
+            previewItem();
+            return false;
+        });
+        mi->signal_motion_notify_event().connect([previewItem](GdkEventMotion*) -> bool {
+            previewItem();
+            return false;
+        });
+        mi->signal_activate().connect([this, item]() {
+            applyQuickEditParams(makeQuickBWParams(item.second), item.first, true);
+        });
+        bwMenu->append(*mi);
+    }
+    bwMenu->show_all();
+
+    auto* bwDrop = Gtk::manage(new Gtk::MenuButton());
+    bwDrop->set_name("QuickEditDrop");
+    bwDrop->set_image(*Gtk::manage(new RTImage("arrow-down-small", Gtk::ICON_SIZE_MENU)));
+    bwDrop->set_relief(Gtk::RELIEF_NONE);
+    bwDrop->set_tooltip_text("Black & White options");
+    bwDrop->set_halign(Gtk::ALIGN_END);
+    bwDrop->set_valign(Gtk::ALIGN_END);
+    bwDrop->set_size_request(24, 22);
+    bwDrop->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::POINTER_MOTION_MASK);
+    bwDrop->set_popup(*bwMenu);
+    bwDrop->signal_enter_notify_event().connect([bwDrop](GdkEventCrossing*) -> bool {
+        if (!bwDrop->get_active()) {
+            bwDrop->set_active(true);
+        }
+        return false;
+    });
+    bwDrop->signal_motion_notify_event().connect([bwDrop](GdkEventMotion*) -> bool {
+        if (!bwDrop->get_active()) {
+            bwDrop->set_active(true);
+        }
+        return false;
+    });
+    bwDrop->signal_toggled().connect([this, bwDrop]() {
+        if (!bwDrop->get_active()) {
+            endQuickPreview(true);
+        }
+    });
+
+    auto* autoSplit = Gtk::manage(new Gtk::Overlay());
+    autoSplit->set_name("QuickEditSplit");
+    autoSplit->set_hexpand(true);
+    autoSplit->add(*autoButton);
+    autoSplit->add_overlay(*autoDrop);
+
+    auto* bwSplit = Gtk::manage(new Gtk::Overlay());
+    bwSplit->set_name("QuickEditSplit");
+    bwSplit->set_hexpand(true);
+    bwSplit->add(*bwButton);
+    bwSplit->add_overlay(*bwDrop);
+
+    quickEditBar_->pack_start(*autoSplit, Gtk::PACK_EXPAND_WIDGET, 0);
+    quickEditBar_->pack_start(*bwSplit, Gtk::PACK_EXPAND_WIDGET, 0);
+    editPanel->pack_start(*quickEditBar_, Gtk::PACK_SHRINK, 0);
+    editPanel->reorder_child(*quickEditBar_, 0);
+}
+
+void ToolPanelCoordinator::applyQuickEditParams(ProcParams params, const Glib::ustring& descr, bool commit)
+{
+    if (!ipc) {
+        return;
+    }
+
+    quickPreviewFinalizeConn_.disconnect();
+
+    if (!commit) {
+        // Hover previews must not masquerade as profile changes. Updating the
+        // processor directly keeps the tool widgets and history anchored to
+        // the committed state, so closing a menu cannot race a later click
+        // and restore over it.
+        ProcParams* target = ipc->beginUpdateParams();
+        *target = std::move(params);
+        ipc->endUpdateParams(rtengine::EvProfileChangeNotification);
+        return;
+    }
+
+    quickPreviewActive_ = false;
+    quickPreviewVariant_ = -1;
+    toolPanelEditLog("[quickEdit] commit descr=%s film=%d expcomp=%.4f\n",
+        descr.c_str(), params.filmPresets.enabled, params.toneCurve.expcomp);
+
+    PartialProfile profile(true);
+    profile.set(true);
+    *(profile.pparams) = params;
+    profile.pedited->locallab.spots.resize(params.locallab.spots.size(), LocallabParamsEdited::LocallabSpotEdited(true));
+    profileChange(
+        &profile,
+        commit ? rtengine::EvProfileChanged : rtengine::EvProfileChangeNotification,
+        descr);
+    profile.deleteInstance();
+
+}
+
+void ToolPanelCoordinator::requestQuickAutoParams(int mode, const Glib::ustring& descr, bool commit)
+{
+    toolPanelEditLog(
+        "[quickEdit] request descr=%s mode=%d commit=%d ipc=%d thumbnail=%s\n",
+        descr.c_str(),
+        mode,
+        commit ? 1 : 0,
+        ipc ? 1 : 0,
+        quickAutoEditThumbnail_ ? quickAutoEditThumbnail_->getFileName().c_str() : "none");
+    if (!ipc || !quickAutoEditThumbnail_ || !quickAutoEditPool_ || !quickAutoEditGeneration_) {
+        return;
+    }
+    if (!commit && quickAutoEditCommitPending_) {
+        return;
+    }
+
+    quickPreviewFinalizeConn_.disconnect();
+
+    ProcParams source;
+    if (quickPreviewActive_) {
+        source = quickPreviewRestore_;
+    } else {
+        ipc->getParams(&source);
+    }
+    if (!commit && !quickPreviewActive_) {
+        quickPreviewRestore_ = source;
+        quickPreviewActive_ = true;
+    }
+
+    quickAutoEditCommitPending_ = commit;
+    const unsigned generation = quickAutoEditGeneration_->fetch_add(1, std::memory_order_acq_rel) + 1;
+    const auto generationState = quickAutoEditGeneration_;
+    Thumbnail* const thumbnail = quickAutoEditThumbnail_;
+    rtengine::StagedImageProcessor* const targetIpc = ipc;
+    thumbnail->increaseRef();
+
+    quickAutoEditPool_->push([
+        this,
+        generationState,
+        generation,
+        thumbnail,
+        targetIpc,
+        source = std::move(source),
+        mode,
+        descr,
+        commit
+    ]() mutable {
+        if (generationState->load(std::memory_order_acquire) != generation) {
+            thumbnail->decreaseRef();
+            return;
+        }
+
+        ProcParams params;
+        buildSteepAutoEditParams(
+            *thumbnail,
+            mode >= 2 ? SteepAutoEditMode::GradeFilm
+                      : mode == 1 ? SteepAutoEditMode::Grade : SteepAutoEditMode::Neutral,
+            source,
+            params);
+        toolPanelEditLog(
+            "[quickEdit] analyzed descr=%s commit=%d exposure=%.4f brightness=%d contrast=%d film=%s file=%s\n",
+            descr.c_str(),
+            commit ? 1 : 0,
+            params.toneCurve.expcomp,
+            params.toneCurve.brightness,
+            params.toneCurve.contrast,
+            params.filmPresets.enabled ? params.filmPresets.preset.c_str() : "off",
+            thumbnail->getFileName().c_str());
+        thumbnail->decreaseRef();
+
+        if (generationState->load(std::memory_order_acquire) != generation) {
+            return;
+        }
+
+        idle_register.add([
+            this,
+            generationState,
+            generation,
+            thumbnail,
+            targetIpc,
+            params = std::move(params),
+            descr,
+            commit
+        ]() mutable -> bool {
+            if (generationState->load(std::memory_order_acquire) != generation
+                    || !ipc
+                    || ipc != targetIpc
+                    || quickAutoEditThumbnail_ != thumbnail) {
+                return false;
+            }
+            if (commit) {
+                quickAutoEditCommitPending_ = false;
+            } else if (!quickPreviewActive_) {
+                return false;
+            }
+            applyQuickEditParams(std::move(params), descr, commit);
+            return false;
+        });
+    });
+}
+
+ProcParams ToolPanelCoordinator::makeQuickBWParams(int mode) const
+{
+    ProcParams pp;
+    if (quickPreviewActive_) {
+        pp = quickPreviewRestore_;
+    } else if (ipc) {
+        ipc->getParams(&pp);
+    }
+
+    pp.blackwhite.enabled = true;
+    pp.blackwhite.enabledcc = true;
+    pp.blackwhite.method = mode == 0 ? "Desaturation" : "ChannelMixer";
+    pp.blackwhite.filter = "None";
+    pp.blackwhite.setting = "RGB-Rel";
+    pp.blackwhite.neutrals = 0;
+    pp.blackwhite.tone = 0;
+    pp.blackwhite.strength = 100;
+
+    switch (mode) {
+        case 1:
+            pp.blackwhite.method = "Perceptual";
+            pp.blackwhite.setting = "Portrait";
+            pp.blackwhite.neutrals = 8;
+            pp.blackwhite.tone = 4;
+            break;
+        case 2:
+            pp.blackwhite.method = "ChannelMixer";
+            pp.blackwhite.setting = "HighContrast";
+            pp.blackwhite.neutrals = -10;
+            pp.blackwhite.tone = 10;
+            pp.toneCurve.contrast = std::min(100, pp.toneCurve.contrast + 8);
+            break;
+        case 3:
+            pp.blackwhite.method = "ChannelMixer";
+            pp.blackwhite.filter = "Red";
+            pp.blackwhite.setting = "Panchromatic";
+            pp.blackwhite.neutrals = -4;
+            break;
+        case 4:
+            pp.blackwhite.method = "ChannelMixer";
+            pp.blackwhite.filter = "Green";
+            pp.blackwhite.setting = "Orthochromatic";
+            pp.blackwhite.neutrals = 4;
+            break;
+        case 5:
+            pp.blackwhite.method = "ChannelMixer";
+            pp.blackwhite.filter = "Red";
+            pp.blackwhite.setting = "InfraRed";
+            pp.blackwhite.tone = 18;
+            pp.toneCurve.contrast = std::min(100, pp.toneCurve.contrast + 5);
+            break;
+        default:
+            break;
+    }
+
+    return pp;
+}
+
+void ToolPanelCoordinator::beginQuickPreview(const ProcParams& params, const Glib::ustring& descr)
+{
+    if (!ipc) {
+        return;
+    }
+    if (!quickPreviewActive_) {
+        ipc->getParams(&quickPreviewRestore_);
+        quickPreviewActive_ = true;
+    }
+    applyQuickEditParams(params, descr, false);
+}
+
+void ToolPanelCoordinator::endQuickPreview(bool restore)
+{
+    const bool commitPending = quickAutoEditCommitPending_;
+    if (!commitPending && quickAutoEditGeneration_) {
+        quickAutoEditGeneration_->fetch_add(1, std::memory_order_acq_rel);
+    }
+    if (!quickPreviewActive_) {
+        return;
+    }
+
+    const ProcParams restoreParams = quickPreviewRestore_;
+    quickPreviewActive_ = false;
+    quickPreviewVariant_ = -1;
+    if (restore) {
+        applyQuickEditParams(restoreParams, "Preview", false);
+    }
+    if (restore && !commitPending) {
+        rtengine::StagedImageProcessor* const targetIpc = ipc;
+        quickPreviewFinalizeConn_ = Glib::signal_timeout().connect(
+            [this, targetIpc]() -> bool {
+                if (!ipc || ipc != targetIpc) {
+                    return false;
+                }
+                ipc->startProcessing(M_HIGHQUAL | M_MONITOR);
+                return false;
+            },
+            kQuickPreviewHighDetailDelayMs,
+            G_PRIORITY_LOW);
+    }
 }
 
 void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const Glib::ustring& descr)
@@ -3439,6 +3893,13 @@ void ToolPanelCoordinator::initImage(rtengine::StagedImageProcessor* ipc_, bool 
 
 void ToolPanelCoordinator::closeImage()
 {
+    if (quickAutoEditGeneration_) {
+        quickAutoEditGeneration_->fetch_add(1, std::memory_order_acq_rel);
+    }
+    quickAutoEditThumbnail_ = nullptr;
+    quickAutoEditCommitPending_ = false;
+    quickPreviewActive_ = false;
+    quickPreviewFinalizeConn_.disconnect();
     deferredPanelChangePending_ = false;
     deferredPanelChangeTimerActive_ = false;
     deferredPanelChangeConn_.disconnect();
@@ -4312,6 +4773,14 @@ FoldableToolPanel *ToolPanelCoordinator::getFoldableToolPanel(const ToolTree &to
 
 void ToolPanelCoordinator::setThumbnail(Thumbnail* thm)
 {
+    if (quickAutoEditGeneration_) {
+        quickAutoEditGeneration_->fetch_add(1, std::memory_order_acq_rel);
+    }
+    quickAutoEditThumbnail_ = thm;
+    quickAutoEditCommitPending_ = false;
+    toolPanelEditLog(
+        "[quickEdit] thumbnail=%s\n",
+        thm ? thm->getFileName().c_str() : "none");
     PreviewStrip* strips[] = {exposureStrip_, colorStrip_, detailStrip_, effectsStrip_, bwStrip_};
     for (auto* strip : strips) {
         if (strip) {

@@ -18,7 +18,9 @@
  */
 #pragma once
 
+#include <atomic>
 #include <functional>
+#include <memory>
 #include <unordered_set>
 #include <vector>
 
@@ -234,6 +236,7 @@ protected:
     PreviewStrip* detailStrip_ = nullptr;
     PreviewStrip* effectsStrip_ = nullptr;
     PreviewStrip* bwStrip_ = nullptr;
+    Gtk::Box* quickEditBar_ = nullptr;
 
     ToolBar* toolBar;
     Gtk::Box* colorPickerRow_;
@@ -289,6 +292,14 @@ private:
     bool maskModeActive_ = false;
     unsigned editGroupRestoreGeneration_ = 0;
     sigc::connection editGroupCollapseConn_;
+    bool quickPreviewActive_ = false;
+    int quickPreviewVariant_ = -1;
+    sigc::connection quickPreviewFinalizeConn_;
+    std::unique_ptr<Glib::ThreadPool> quickAutoEditPool_;
+    std::shared_ptr<std::atomic<unsigned>> quickAutoEditGeneration_;
+    Thumbnail* quickAutoEditThumbnail_ = nullptr;
+    bool quickAutoEditCommitPending_ = false;
+    rtengine::procparams::ProcParams quickPreviewRestore_;
     rtengine::procparams::ToneCurveParams savedToneCurve_;
     rtengine::procparams::VibranceParams savedVibrance_;
     rtengine::procparams::SharpeningParams savedSharpening_;
@@ -300,6 +311,12 @@ private:
     void updateResetButtons();
     void updateResetButtonsFromBaseline();
     void captureBaseline();
+    void buildQuickEditBar();
+    void applyQuickEditParams(rtengine::procparams::ProcParams params, const Glib::ustring& descr, bool commit);
+    void requestQuickAutoParams(int mode, const Glib::ustring& descr, bool commit);
+    rtengine::procparams::ProcParams makeQuickBWParams(int mode) const;
+    void beginQuickPreview(const rtengine::procparams::ProcParams& params, const Glib::ustring& descr);
+    void endQuickPreview(bool restore);
     rtengine::procparams::ProcParams baselineParams_;
     bool suppressResetUpdate_ = false;
 

@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <iterator>
 #include <memory>
 #include <set>
@@ -66,10 +67,10 @@ bool isRawPreviewPath(const Glib::ustring& path)
 
 }
 
-static void setPreviewWorkerThreadPriority(bool postScanDrain)
+static void setPreviewWorkerThreadPriority()
 {
 #ifdef _WIN32
-    SetThreadPriority(GetCurrentThread(), postScanDrain ? THREAD_PRIORITY_NORMAL : THREAD_PRIORITY_BELOW_NORMAL);
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
 #endif
 }
 
@@ -133,6 +134,8 @@ public:
     std::atomic<unsigned> priorityCounter_{0};
     int maxThreadCount_;
     int queuedWorkers_ = 0;
+    unsigned fastJobCredit_ = 0;
+    int ioPressure_ = 0;
 
     Impl(): nConcurrentThreads(0)
     {
@@ -312,33 +315,67 @@ public:
         return preferNearbyRaw_(jobs_.begin(), jobs_.end());
     }
 
+    void recordJobDurationLocked_(std::chrono::milliseconds duration)
+    {
+        const auto ms = duration.count();
+
+        if (ms >= 800) {
+            ioPressure_ = std::min(12, ioPressure_ + 3);
+            fastJobCredit_ = 0;
+        } else if (ms >= 250) {
+            ioPressure_ = std::min(12, ioPressure_ + 1);
+            fastJobCredit_ = 0;
+        } else if (ms <= 60) {
+            fastJobCredit_ = std::min(64u, fastJobCredit_ + 1);
+            if (ioPressure_ > 0 && fastJobCredit_ % 4 == 0) {
+                --ioPressure_;
+            }
+        } else {
+            fastJobCredit_ = fastJobCredit_ > 0 ? fastJobCredit_ - 1 : 0;
+            if (ioPressure_ > 0 && ms < 150) {
+                --ioPressure_;
+            }
+        }
+    }
+
     int targetThreadCountLocked_() const
     {
+        int queueTarget;
+
         if (postScanDrainMode_.load(std::memory_order_relaxed)) {
             if (jobs_.size() >= 64) {
-                return maxThreadCount_;
+                queueTarget = maxThreadCount_;
+            } else if (jobs_.size() >= 8) {
+                queueTarget = std::min(maxThreadCount_, 4);
+            } else {
+                queueTarget = std::min(maxThreadCount_, 2);
             }
-
-            if (jobs_.size() >= 8) {
-                return std::min(maxThreadCount_, 4);
-            }
-
-            return std::min(maxThreadCount_, 2);
+        } else if (jobs_.size() >= 512) {
+            queueTarget = maxThreadCount_;
+        } else if (jobs_.size() >= 64) {
+            queueTarget = std::min(maxThreadCount_, 4);
+        } else if (jobs_.size() >= 8) {
+            queueTarget = std::min(maxThreadCount_, 3);
+        } else {
+            queueTarget = std::min(maxThreadCount_, 2);
         }
 
-        if (jobs_.size() >= 512) {
-            return maxThreadCount_;
+        int ioTarget;
+        if (ioPressure_ >= 6) {
+            ioTarget = 2;
+        } else if (ioPressure_ >= 3) {
+            ioTarget = 3;
+        } else if (ioPressure_ >= 1) {
+            ioTarget = 4;
+        } else if (fastJobCredit_ < 8) {
+            ioTarget = 3;
+        } else if (fastJobCredit_ < 24) {
+            ioTarget = 5;
+        } else {
+            ioTarget = maxThreadCount_;
         }
 
-        if (jobs_.size() >= 64) {
-            return std::min(maxThreadCount_, 4);
-        }
-
-        if (jobs_.size() >= 8) {
-            return std::min(maxThreadCount_, 3);
-        }
-
-        return std::min(maxThreadCount_, 2);
+        return std::max(1, std::min(queueTarget, ioTarget));
     }
 
     int scheduleWorkersLocked_()
@@ -384,7 +421,7 @@ public:
 
     void processNextJob()
     {
-        setPreviewWorkerThreadPriority(postScanDrainMode_.load(std::memory_order_relaxed));
+        setPreviewWorkerThreadPriority();
 #ifdef _OPENMP
         // The pool already runs up to eight jobs concurrently. Prevent each
         // worker from retaining its own full OpenMP team on Windows.
@@ -416,7 +453,7 @@ public:
         // Keep UI feedback frequent for RAW-heavy folders. Waiting for 32
         // ready entries can hide progress for seconds when cache misses are
         // expensive; FileCatalog coalesces these callbacks before touching GTK.
-        constexpr std::size_t STEADY_PREVIEW_READY_BATCH_SIZE = 8;
+        constexpr std::size_t STEADY_PREVIEW_READY_BATCH_SIZE = 2;
         bool firstReadyBatchFlushed = false;
         readyBatch.reserve(STEADY_PREVIEW_READY_BATCH_SIZE);
         auto flushReadyBatch = [&]() {
@@ -455,7 +492,7 @@ public:
                 DEBUG("%d job(s) remaining", jobs_.size());
             }
 
-            setPreviewWorkerThreadPriority(postScanDrainMode_.load(std::memory_order_relaxed));
+            setPreviewWorkerThreadPriority();
 
             // Skip jobs from a previous directory — removeAllJobs() increments
             // the generation counter, so any job queued before the switch has a
@@ -464,6 +501,7 @@ public:
                 continue;
             }
 
+            const auto jobStart = std::chrono::steady_clock::now();
             try {
                 Thumbnail* tmb = cacheMgr->getEntry(j.dir_entry_);
 
@@ -492,8 +530,24 @@ public:
 
             } catch (Glib::Error &e) {} catch(...) {}
 
+            int workersToPush = 0;
+            bool retireWorker = false;
+            {
+                MyMutex::MyLock lock(mutex_);
+                recordJobDurationLocked_(std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - jobStart));
+                retireWorker = g_atomic_int_get(&nConcurrentThreads) > targetThreadCountLocked_();
+                if (!retireWorker) {
+                    workersToPush = scheduleWorkersLocked_();
+                }
+            }
+            pushWorkers_(workersToPush);
+
             lastDirId = j.dir_id_;
             lastListener = j.listener_;
+            if (retireWorker) {
+                break;
+            }
         }
 
         flushReadyBatch();

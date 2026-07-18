@@ -62,6 +62,10 @@ public:
     virtual void selectionChanged(const std::vector<Thumbnail*>& tbe) = 0;
     virtual void clearFromCacheRequested(const std::vector<FileBrowserEntry*>& tbe, bool leavenotrace) = 0;
     virtual void quickActionProgress(const Glib::ustring& text, double progress) = 0;
+    virtual bool transientEditPreviewRequested(
+        const Glib::ustring& filename,
+        const rtengine::procparams::ProcParams* params,
+        bool restore) = 0;
     virtual bool isInTabMode() const = 0;
 };
 
@@ -77,6 +81,7 @@ class FileBrowser final : public ThumbBrowserBase,
 private:
     typedef sigc::signal<void> type_trash_changed;
     typedef sigc::signal<void> type_save_image_requested;
+    typedef sigc::signal<void> type_external_editor_requested;
 
     using ThumbBrowserBase::redrawNeeded;
 
@@ -119,6 +124,7 @@ protected:
     MyImageMenuItem* develop;
     MyImageMenuItem* developfast;
     MyImageMenuItem* saveImage;
+    MyImageMenuItem* editExternal;
     MyImageMenuItem* rename;
     MyImageMenuItem* remove;
     MyImageMenuItem* removeInclProc;
@@ -161,7 +167,9 @@ protected:
     MyImageMenuItem* clearprof;
     MyImageMenuItem* cachemenu;
     MyImageMenuItem* aiDenoise;
-    MyImageMenuItem* autoEdit;
+    MyImageMenuItem* autoEditMenu;
+    MyImageMenuItem* autoGrade;
+    MyImageMenuItem* autoGradeFilm;
     MyImageMenuItem* autoLevel;
     MyImageMenuItem* duplicate;
     MyImageMenuItem* clearFromCache;
@@ -196,6 +204,7 @@ protected:
 
     type_trash_changed m_trash_changed;
     type_save_image_requested m_save_image_requested;
+    type_external_editor_requested m_external_editor_requested;
 
     MyImageMenuItem* setAlbumCover;
     MyImageMenuItem* addToAlbum;
@@ -205,7 +214,17 @@ protected:
     sigc::connection autoLevelPollConnection_;
     std::thread autoLevelThread_;
     std::shared_ptr<std::atomic<bool>> autoLevelCancel_;
+    std::unique_ptr<Glib::ThreadPool> autoEditHoverPool_;
+    std::shared_ptr<std::atomic<unsigned>> autoEditHoverGeneration_;
+    sigc::connection autoEditHoverDelayConnection_;
+    sigc::connection autoEditHoverTrackingConnection_;
+    Gtk::MenuItem* autoEditHoverItem_ = nullptr;
+    Glib::ustring autoEditHoverPreviewFile_;
+    bool autoEditHoverInFlight_ = false;
     bool quickActionRunning_ = false;
+
+    void startAutoEditHoverPreview(Gtk::MenuItem* item);
+    void cancelAutoEditHoverPreview(Gtk::MenuItem* item = nullptr, bool restore = true);
 
 public:
     FileBrowser ();
@@ -308,6 +327,7 @@ public:
 
     type_trash_changed trash_changed();
     type_save_image_requested& save_image_requested();
+    type_external_editor_requested& external_editor_requested();
 
     void setAlbumCoverSetter(std::function<void(const Glib::ustring&)> setter) {
         albumCoverSetter_ = std::move(setter);

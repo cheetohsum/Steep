@@ -27,6 +27,7 @@
 #include "multilangmgr.h"
 #include "options.h"
 #include "pathutils.h"
+#include "rtimage.h"
 #include "thumbnail.h"
 #include "../rtengine/procparams.h"
 
@@ -170,15 +171,16 @@ AlbumBrowser::AlbumBrowser ()
     globalChangeConn_ = albumsChangedOnDisk_.connect(
         sigc::mem_fun(*this, &AlbumBrowser::onGlobalAlbumsChanged));
 
-    // Header bar: "Albums" label + creation dropdown
+    // Header bar: albums icon + creation dropdown
     Gtk::Box* headerBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
     headerBar->set_name("AlbumHeader");
 
-    Gtk::Label* headerLabel = Gtk::manage(new Gtk::Label(M("ALBUM_HEADER")));
-    headerLabel->set_halign(Gtk::ALIGN_START);
-    headerLabel->set_margin_start(4);
-    headerLabel->set_margin_end(2);
-    headerBar->pack_start(*headerLabel, Gtk::PACK_SHRINK);
+    auto* headerIcon = Gtk::manage(new RTImage("album-view-grid", Gtk::ICON_SIZE_SMALL_TOOLBAR));
+    headerIcon->set_tooltip_text(M("ALBUM_HEADER"));
+    headerIcon->set_halign(Gtk::ALIGN_START);
+    headerIcon->set_margin_start(4);
+    headerIcon->set_margin_end(2);
+    headerBar->pack_start(*headerIcon, Gtk::PACK_SHRINK);
 
     // "New" button with dropdown menu
     Gtk::MenuButton* addBtn = Gtk::manage(new Gtk::MenuButton());

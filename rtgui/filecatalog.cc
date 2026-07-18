@@ -34,7 +34,6 @@
 
 #include "rtengine/rt_math.h"
 #include "rtengine/procparams.h"
-#include "rtengine/rawimagesource.h"
 
 #include "batchqueue.h"
 #include "batchqueueentry.h"
@@ -1427,10 +1426,6 @@ void FileCatalog::dirSelected (const Glib::ustring& dirname, const Glib::ustring
                         rawFiles.push_back(f);
                     }
                 }
-                for (const auto& rawFile : rawFiles) {
-                    rtengine::RawImageSource::prewarmMetadata(rawFile);
-                }
-
                 if (dispatchBeforePrecompute) {
                     idle_register.add(
                         [this, dirId, batchToDispatch, batchKeys]() -> bool {
@@ -1780,21 +1775,21 @@ bool FileCatalog::processPendingPreviews_()
         return false;
     }
 
-    constexpr std::size_t MAX_PREVIEWS_PER_IDLE = 128;
-    constexpr std::size_t POST_SCAN_MAX_PREVIEWS_PER_IDLE = 384;
+    constexpr std::size_t MAX_PREVIEWS_PER_IDLE = 64;
+    constexpr std::size_t POST_SCAN_MAX_PREVIEWS_PER_IDLE = 128;
     constexpr std::size_t INITIAL_MIN_PREVIEWS_PER_IDLE = 1;
-    constexpr std::size_t STEADY_MIN_PREVIEWS_PER_IDLE = 32;
-    constexpr std::size_t POST_SCAN_MIN_PREVIEWS_PER_IDLE = 64;
-    constexpr auto PREVIEW_IDLE_BUDGET = std::chrono::milliseconds(8);
-    constexpr auto POST_SCAN_PREVIEW_IDLE_BUDGET = std::chrono::milliseconds(12);
+    constexpr std::size_t STEADY_MIN_PREVIEWS_PER_IDLE = 8;
+    constexpr std::size_t POST_SCAN_MIN_PREVIEWS_PER_IDLE = 16;
+    constexpr auto PREVIEW_IDLE_BUDGET = std::chrono::milliseconds(4);
+    constexpr auto POST_SCAN_PREVIEW_IDLE_BUDGET = std::chrono::milliseconds(6);
     const bool filmstripDrain = fileBrowser->isInTabMode();
     const bool initialDrain = fileBrowser->getEntries().empty();
     const bool postScanDrain = directoryScanComplete_ && !initialDrain;
     const std::size_t maxPreviewsPerIdle = filmstripDrain
-        ? 64
+        ? 48
         : (postScanDrain ? POST_SCAN_MAX_PREVIEWS_PER_IDLE : MAX_PREVIEWS_PER_IDLE);
     const std::size_t minPreviewsPerIdle = filmstripDrain
-        ? 8
+        ? 4
         : (initialDrain
             ? INITIAL_MIN_PREVIEWS_PER_IDLE
             : (postScanDrain ? POST_SCAN_MIN_PREVIEWS_PER_IDLE : STEADY_MIN_PREVIEWS_PER_IDLE));
@@ -2443,6 +2438,14 @@ void FileCatalog::quickActionProgress(const Glib::ustring& text, double progress
     if (filepanel) {
         filepanel->loadingThumbs(text, progress);
     }
+}
+
+bool FileCatalog::transientEditPreviewRequested(
+    const Glib::ustring& filename,
+    const rtengine::procparams::ProcParams* params,
+    bool restore)
+{
+    return filepanel && filepanel->transientEditPreviewRequested(filename, params, restore);
 }
 
 void FileCatalog::openRequested(const std::vector<Thumbnail*>& tmb, eRTNav preloadDirectionHint)

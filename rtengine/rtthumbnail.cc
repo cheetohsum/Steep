@@ -530,11 +530,11 @@ Thumbnail* Thumbnail::loadQuickFromRaw (const Glib::ustring& fname, eSensorType 
         return tpp;
     }
 
-    RawImage *ri = new RawImage (fname);
+    RawImage *ri = new RawImage(fname);
     unsigned int imageNum = 0;
-    int r = ri->loadRaw (false, imageNum, false);
+    int r = ri->loadRaw(false, imageNum, false);
 
-    if ( r ) {
+    if (r) {
         delete tpp;
         delete ri;
         sensorType = ST_NONE;
@@ -542,8 +542,10 @@ Thumbnail* Thumbnail::loadQuickFromRaw (const Glib::ustring& fname, eSensorType 
     }
 
     sensorType = ri->getSensorType();
-
-    Image8 *img = ri->getThumbnail();
+    const bool useScaledEmbeddedPreview = !inspectorMode && !forHistogramMatching;
+    Image8 *img = ri->getThumbnail(
+        useScaledEmbeddedPreview ? w : 0,
+        useScaledEmbeddedPreview ? h : 0);
 
     // did we succeed?
     if (!img) {
@@ -600,7 +602,7 @@ Thumbnail* Thumbnail::loadQuickFromRaw (const Glib::ustring& fname, eSensorType 
 
     if (rotate && ri->get_rotateDegree() > 0) {
         std::string fname = ri->get_filename();
-        std::string suffix = fname.length() > 4 ? fname.substr (fname.length() - 3) : "";
+        std::string suffix = fname.length() > 4 ? fname.substr(fname.length() - 3) : "";
 
         for (unsigned int i = 0; i < suffix.length(); i++) {
             suffix[i] = std::tolower (suffix[i]);
@@ -608,7 +610,7 @@ Thumbnail* Thumbnail::loadQuickFromRaw (const Glib::ustring& fname, eSensorType 
 
         // Leaf .mos, Mamiya .mef and Phase One .iiq files have thumbnails already rotated.
         if (suffix != "mos" && suffix != "mef" && suffix != "iiq")  {
-            tpp->thumbImg->rotate (ri->get_rotateDegree());
+            tpp->thumbImg->rotate(ri->get_rotateDegree());
             // width/height may have changed after rotating
             w = tpp->thumbImg->getWidth();
             h = tpp->thumbImg->getHeight();
@@ -1944,8 +1946,20 @@ void Thumbnail::getAutoWBMultipliers (double& rm, double& gm, double& bm)
 
 void Thumbnail::applyAutoExp (procparams::ProcParams& params)
 {
+    if (!params.toneCurve.autoexp) {
+        return;
+    }
 
-    if (params.toneCurve.autoexp && aeHistogram) {
+    // Cached thumbnails retain the auto-exposure result even when the full
+    // histogram is not resident. Reuse it for the standard 2% clipping pass.
+    if (aeValid && params.toneCurve.clip == 0.02) {
+        params.toneCurve.expcomp = aeExposureCompensation;
+        params.toneCurve.brightness = aeLightness;
+        params.toneCurve.contrast = aeContrast;
+        params.toneCurve.black = aeBlack;
+        params.toneCurve.hlcompr = aeHighlightCompression;
+        params.toneCurve.hlcomprthresh = aeHighlightCompressionThreshold;
+    } else if (aeHistogram) {
         ImProcFunctions ipf (&params, false);
         ipf.getAutoExp (aeHistogram, aeHistCompression, params.toneCurve.clip, params.toneCurve.expcomp,
                         params.toneCurve.brightness, params.toneCurve.contrast, params.toneCurve.black, params.toneCurve.hlcompr, params.toneCurve.hlcomprthresh);

@@ -17,6 +17,7 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <algorithm>
 #include <cmath>
 #include <unordered_map>
 
@@ -51,6 +52,13 @@
 
 Glib::RefPtr<Gtk::CssProvider> cssForced;
 Glib::RefPtr<Gtk::CssProvider> cssRT;
+
+static std::string editorFileKey(const Glib::ustring& path)
+{
+    std::string key = path.casefold().raw();
+    std::replace(key.begin(), key.end(), '\\', '/');
+    return key;
+}
 
 #if defined(__APPLE__)
 static gboolean
@@ -1755,6 +1763,26 @@ EditorPanel* RTWindow::getActiveEditorPanel()
     // Fallback: return first editor panel if any
     if (!epanels.empty()) {
         return epanels.begin()->second;
+    }
+
+    return nullptr;
+}
+
+EditorPanel* RTWindow::getEditorPanelForFile(const Glib::ustring& filename)
+{
+    const std::string key = editorFileKey(filename);
+    auto matches = [&key](EditorPanel* panel) {
+        return panel && editorFileKey(panel->getFileName()) == key;
+    };
+
+    if (matches(epanel)) {
+        return epanel;
+    }
+
+    for (const auto& entry : epanels) {
+        if (matches(entry.second)) {
+            return entry.second;
+        }
     }
 
     return nullptr;

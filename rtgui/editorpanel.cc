@@ -137,7 +137,7 @@ constexpr int kEditorDirSyncForegroundQuietMs = 2000;
 constexpr unsigned int kEditorDirSyncQuietRetryMs = 250;
 constexpr unsigned int kEditorPhaseBDelayMs = 50;
 constexpr int kEditorPhaseBRawForegroundQuietMs = 40;
-constexpr unsigned int kEditorHighDetailDelayMs = 450;
+constexpr unsigned int kEditorHighDetailDelayMs = 650;
 
 static void editorOpenLog(const char* fmt, ...)
 {
@@ -977,7 +977,32 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     Gtk::Box* placesObox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     placesObox->get_style_context()->add_class("plainback");
 
-    placesObox->pack_start(*editorRecentBrowser_, Gtk::PACK_SHRINK, 0);
+    auto* folderHeader = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 2));
+    folderHeader->set_name("FoldersHeader");
+
+    auto* browseButton = Gtk::manage(new Gtk::Button());
+    browseButton->set_name("DirBrowseBtn");
+    browseButton->set_relief(Gtk::RELIEF_NONE);
+    browseButton->set_tooltip_text(M("DIRBROWSER_BROWSE"));
+    auto* browseIcon = Gtk::manage(new RTImage("folder-open-small", Gtk::ICON_SIZE_SMALL_TOOLBAR));
+    browseButton->set_image(*browseIcon);
+    browseButton->set_always_show_image(true);
+    browseButton->signal_clicked().connect(sigc::mem_fun(*editorDirBrowser_, &DirBrowser::browseForFolder));
+
+    auto* favoriteButton = Gtk::manage(new Gtk::Button());
+    favoriteButton->set_name("PlacesAddBtn");
+    favoriteButton->set_relief(Gtk::RELIEF_NONE);
+    favoriteButton->set_tooltip_text(M("MAIN_FRAME_PLACES_ADD"));
+    auto* favoriteIcon = Gtk::manage(new RTImage("star-hollow-small", Gtk::ICON_SIZE_SMALL_TOOLBAR));
+    favoriteButton->set_image(*favoriteIcon);
+    favoriteButton->set_always_show_image(true);
+    favoriteButton->signal_clicked().connect(sigc::mem_fun(*editorPlacesBrowser_, &PlacesBrowser::addPressed));
+
+    folderHeader->pack_start(*browseButton, Gtk::PACK_SHRINK);
+    folderHeader->pack_start(*editorRecentBrowser_, Gtk::PACK_SHRINK);
+    folderHeader->pack_start(*favoriteButton, Gtk::PACK_SHRINK);
+
+    placesObox->pack_start(*folderHeader, Gtk::PACK_SHRINK, 0);
     placesObox->pack_start(*editorDirBrowser_, Gtk::PACK_EXPAND_WIDGET, 0);
     editorDirBrowser_->set_size_request(-1, 200);
     placesObox->pack_start(*albumBrowser_, Gtk::PACK_SHRINK, 0);
@@ -1085,7 +1110,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         tbFilterBar->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::filterBarToggled));
     }
 
-    // Album view toggle button
+    // Album view state
     tbAlbumView_ = nullptr;
     albumViewSession_ = 0;
     albumViewMode_ = AlbumViewMode::GRID;
@@ -1104,14 +1129,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     filmstripCurrentPick_ = 0;
     albumSortBtn_ = nullptr;
     albumSortMenu_ = nullptr;
-    if (!App::get().isSimpleEditor() && filePanel) {
-        tbAlbumView_ = Gtk::manage(new Gtk::ToggleButton());
-        tbAlbumView_->set_image(*Gtk::manage(new RTImage("fullscreen-leave", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
-        tbAlbumView_->set_relief(Gtk::RELIEF_NONE);
-        tbAlbumView_->set_tooltip_markup(M("EDITOR_ALBUM_VIEW_TOOLTIP"));
-        albumViewToggleConn_ = tbAlbumView_->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::toggleAlbumView));
-        toolBarPanel->pack_start(*tbAlbumView_, Gtk::PACK_SHRINK, 1);
-    }
 
     // Filmstrip action bar (rating, color label, queue) — centered in toolbar
     filmstripCurrentRating = 0;
@@ -1211,6 +1228,38 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
             colorLabelRevealer_->set_reveal_child(false);
 
             auto* labelBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+            const auto showRatingPalette = [this]() {
+                ratingPaletteCloseConn_.disconnect();
+                if (colorLabelRevealer_) {
+                    colorLabelRevealer_->set_reveal_child(true);
+                }
+            };
+            const auto scheduleRatingPaletteClose = [this]() {
+                ratingPaletteCloseConn_.disconnect();
+                ratingPaletteCloseConn_ = Glib::signal_timeout().connect(
+                    [this]() -> bool {
+                        if (colorLabelRevealer_) {
+                            colorLabelRevealer_->set_reveal_child(false);
+                        }
+                        updateFilmstripStars(filmstripCurrentRating);
+                        return false;
+                    },
+                    180,
+                    G_PRIORITY_LOW);
+            };
+
+            triggerBtn->add_events(Gdk::ENTER_NOTIFY_MASK);
+            triggerBtn->signal_enter_notify_event().connect(
+                [showRatingPalette](GdkEventCrossing*) -> bool {
+                    showRatingPalette();
+                    return false;
+                });
+            triggerBtn->signal_leave_notify_event().connect(
+                [scheduleRatingPaletteClose](GdkEventCrossing*) -> bool {
+                    scheduleRatingPaletteClose();
+                    return false;
+                });
+
             auto* unrankBtn = Gtk::manage(new Gtk::Button());
             unrankBtn->set_image(*Gtk::manage(new RTImage("star-hollow-small", Gtk::ICON_SIZE_MENU)));
             unrankBtn->set_relief(Gtk::RELIEF_NONE);
@@ -1222,6 +1271,17 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                     updateFilmstripStars(0);
                 }
             });
+            unrankBtn->add_events(Gdk::ENTER_NOTIFY_MASK);
+            unrankBtn->signal_enter_notify_event().connect(
+                [showRatingPalette](GdkEventCrossing*) -> bool {
+                    showRatingPalette();
+                    return false;
+                });
+            unrankBtn->signal_leave_notify_event().connect(
+                [scheduleRatingPaletteClose](GdkEventCrossing*) -> bool {
+                    scheduleRatingPaletteClose();
+                    return false;
+                });
             applyCSS(unrankBtn);
             labelBox->pack_start(*unrankBtn, Gtk::PACK_SHRINK);
 
@@ -1237,12 +1297,15 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                         updateFilmstripStars(rank);
                     }
                 });
-                filmstripRankBtns[i]->signal_enter_notify_event().connect([this, i](GdkEventCrossing*) -> bool {
+                filmstripRankBtns[i]->add_events(Gdk::ENTER_NOTIFY_MASK);
+                filmstripRankBtns[i]->signal_enter_notify_event().connect([this, i, showRatingPalette](GdkEventCrossing*) -> bool {
+                    showRatingPalette();
                     updateFilmstripStars(i + 1);
                     return false;
                 });
-                filmstripRankBtns[i]->signal_leave_notify_event().connect([this](GdkEventCrossing*) -> bool {
+                filmstripRankBtns[i]->signal_leave_notify_event().connect([this, scheduleRatingPaletteClose](GdkEventCrossing*) -> bool {
                     updateFilmstripStars(filmstripCurrentRating);
+                    scheduleRatingPaletteClose();
                     return false;
                 });
                 applyCSS(filmstripRankBtns[i]);
@@ -1263,6 +1326,17 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                     if (fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser)
                         fPanel->fileCatalog->fileBrowser->requestColorLabel(i);
                 });
+                clabelBtn->add_events(Gdk::ENTER_NOTIFY_MASK);
+                clabelBtn->signal_enter_notify_event().connect(
+                    [showRatingPalette](GdkEventCrossing*) -> bool {
+                        showRatingPalette();
+                        return false;
+                    });
+                clabelBtn->signal_leave_notify_event().connect(
+                    [scheduleRatingPaletteClose](GdkEventCrossing*) -> bool {
+                        scheduleRatingPaletteClose();
+                        return false;
+                    });
                 applyCSS(clabelBtn);
                 labelBox->pack_start(*clabelBtn, Gtk::PACK_SHRINK);
             }
@@ -1270,14 +1344,16 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
             pillBox->pack_start(*colorLabelRevealer_, Gtk::PACK_SHRINK);
 
             pillEventBox->add(*pillBox);
-            pillEventBox->set_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
-            pillEventBox->signal_enter_notify_event().connect([this](GdkEventCrossing*) -> bool {
-                colorLabelRevealer_->set_reveal_child(true);
+            pillEventBox->set_visible_window(false);
+            pillEventBox->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
+            pillEventBox->signal_enter_notify_event().connect([showRatingPalette](GdkEventCrossing*) -> bool {
+                showRatingPalette();
                 return false;
             });
-            pillEventBox->signal_leave_notify_event().connect([this](GdkEventCrossing*) -> bool {
-                colorLabelRevealer_->set_reveal_child(false);
-                updateFilmstripStars(filmstripCurrentRating);
+            pillEventBox->signal_leave_notify_event().connect([scheduleRatingPaletteClose](GdkEventCrossing* event) -> bool {
+                if (!event || event->detail != GDK_NOTIFY_INFERIOR) {
+                    scheduleRatingPaletteClose();
+                }
                 return false;
             });
 
@@ -1632,21 +1708,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
             }
         }
         filmstripActionBar->pack_start(*copyGroup, Gtk::PACK_SHRINK);
-
-        // Edit in External Editor button
-        if (!App::get().isGimpPlugin()) {
-            auto* sep5 = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
-            applyCSS(sep5);
-            filmstripActionBar->pack_start(*sep5, Gtk::PACK_SHRINK);
-
-            Gtk::Button* extEditorBtn = Gtk::manage(new Gtk::Button());
-            extEditorBtn->set_image(*Gtk::manage(new RTImage("external-editor", Gtk::ICON_SIZE_MENU)));
-            extEditorBtn->set_relief(Gtk::RELIEF_NONE);
-            extEditorBtn->set_tooltip_markup(M("MAIN_BUTTON_SENDTOEDITOR_TOOLTIP"));
-            extEditorBtn->signal_clicked().connect(sigc::mem_fun(*this, &EditorPanel::sendToExternalPressed));
-            applyCSS(extEditorBtn);
-            filmstripActionBar->pack_start(*extEditorBtn, Gtk::PACK_SHRINK);
-        }
 
     }
     toolBarPanel->set_center_widget(*filmstripActionBar);
@@ -2106,7 +2167,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     backBtn->set_image(*Gtk::manage(new RTImage("arrow2-left", Gtk::ICON_SIZE_LARGE_TOOLBAR)));
     backBtn->set_relief(Gtk::RELIEF_NONE);
     backBtn->set_tooltip_text(M("ALBUM_VIEW_BACK"));
-    backBtn->signal_clicked().connect(sigc::mem_fun(*this, &EditorPanel::hideAlbumView));
+    backBtn->signal_clicked().connect(sigc::mem_fun(*this, &EditorPanel::closeAlbumView));
     albumViewHeader_->pack_start(*backBtn, Gtk::PACK_SHRINK);
 
     auto albumHeaderCss = Gtk::CssProvider::create();
@@ -2440,6 +2501,8 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     if (fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser) {
         fPanel->fileCatalog->fileBrowser->save_image_requested().connect(
             sigc::mem_fun(*this, &EditorPanel::saveAsPressed));
+        fPanel->fileCatalog->fileBrowser->external_editor_requested().connect(
+            sigc::mem_fun(*this, &EditorPanel::sendToExternalPressed));
         fPanel->fileCatalog->fileBrowser->setAddToAlbumSetter([this](const Glib::ustring& filePath) {
             if (albumBrowser_) {
                 albumBrowser_->addFileToTargetAlbum(filePath);
@@ -2456,6 +2519,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 
 EditorPanel::~EditorPanel ()
 {
+    ratingPaletteCloseConn_.disconnect();
     deferredOpenConn_.disconnect();
     deferredDirSyncConn_.disconnect();
     deferredCropEnableConn_.disconnect();
@@ -3699,7 +3763,7 @@ void EditorPanel::hideAlbumView ()
 
 void EditorPanel::closeAlbumView ()
 {
-    if (!tbAlbumView_ || !tbAlbumView_->get_active()) {
+    if (!albumViewStack_ || albumViewStack_->get_visible_child_name() != "album") {
         return;
     }
 
@@ -4061,6 +4125,77 @@ void EditorPanel::setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scal
     if (iareapanel && iareapanel->imageArea) {
         iareapanel->imageArea->setQuickPreviewFit(true);
     }
+}
+
+bool EditorPanel::setTransientEditPreview(
+    const Glib::ustring& sourceFile,
+    const rtengine::procparams::ProcParams* params,
+    bool restore)
+{
+    const bool matchesOpenFile = !sourceFile.empty()
+        && editorAlbumPathKey(sourceFile.raw()) == editorAlbumPathKey(fname.raw());
+    if (!ipc || !matchesOpenFile) {
+        return false;
+    }
+
+    // A new transient state supersedes any final-quality pass queued for the
+    // previous state. A fresh one is scheduled after this state is installed.
+    deferredHighDetailConn_.disconnect();
+
+    if (!params) {
+        if (!transientEditPreviewActive_
+                || editorAlbumPathKey(transientEditPreviewFile_.raw()) != editorAlbumPathKey(sourceFile.raw())) {
+            return false;
+        }
+
+        transientEditPreviewActive_ = false;
+        transientEditPreviewFile_.clear();
+        if (!restore) {
+            return true;
+        }
+
+        auto* target = ipc->beginUpdateParams();
+        *target = transientEditPreviewRestore_;
+        ipc->endUpdateParams(rtengine::EvProfileChangeNotification);
+        scheduleFinalPreviewRefinement();
+        return true;
+    }
+
+    if (!transientEditPreviewActive_) {
+        ipc->getParams(&transientEditPreviewRestore_);
+        transientEditPreviewActive_ = true;
+        transientEditPreviewFile_ = sourceFile;
+    } else if (editorAlbumPathKey(transientEditPreviewFile_.raw()) != editorAlbumPathKey(sourceFile.raw())) {
+        return false;
+    }
+
+    auto* target = ipc->beginUpdateParams();
+    *target = *params;
+    ipc->endUpdateParams(rtengine::EvProfileChangeNotification);
+    return true;
+}
+
+void EditorPanel::scheduleFinalPreviewRefinement()
+{
+    deferredHighDetailConn_.disconnect();
+    const unsigned int session = openSession_;
+    const Glib::ustring sourceFile = fname;
+
+    deferredHighDetailConn_ = Glib::signal_timeout().connect(
+        [this, session, sourceFile]() -> bool {
+            if (session != openSession_ || fname != sourceFile || !ipc) {
+                return false;
+            }
+            if (isProcessing) {
+                return true;
+            }
+
+            EDITOR_OPEN_LOG("[editorPreview] finalized settled refinement file=%s\n", sourceFile.c_str());
+            ipc->startProcessing(M_HIGHQUAL | M_MONITOR);
+            return false;
+        },
+        kEditorHighDetailDelayMs,
+        G_PRIORITY_LOW);
 }
 
 void EditorPanel::scheduleFilmstripLivePreview(
@@ -4593,6 +4728,12 @@ void EditorPanel::procParamsChanged(
             *alignedParams = std::move(beforeParams);
             beforeIpc->endUpdateParams(ev);
         }
+    }
+
+    // Slider drags can use responsive preview work while they are active.
+    // Once the edit stream goes quiet, request exactly one full-detail pass.
+    if (ev != rtengine::EvProfileChangeNotification && ev != rtengine::EvPhotoLoaded) {
+        scheduleFinalPreviewRefinement();
     }
 
     info_toggled();
@@ -5429,6 +5570,7 @@ void EditorPanel::procParamsChanged (Thumbnail* thm, int whoChangedIt, bool upgr
         pp.pedited->locallab.spots.resize(pp.pparams->locallab.spots.size(), LocallabParamsEdited::LocallabSpotEdited(true));
         tpc->profileChange (&pp, rtengine::EvProfileChangeNotification, M ("PROGRESSDLG_PROFILECHANGEDINBROWSER"));
         pp.deleteInstance();
+        scheduleFinalPreviewRefinement();
     }
 }
 
@@ -5974,6 +6116,18 @@ void EditorPanel::beforeAfterToggled ()
         }
 
         beforeIpc = nullptr;
+
+        if (iareapanel && iareapanel->imageArea) {
+            idle_register.add([this]() -> bool {
+                if (iareapanel && iareapanel->imageArea) {
+                    Gtk::Allocation alloc = iareapanel->imageArea->get_allocation();
+                    iareapanel->imageArea->on_resized(alloc);
+                    iareapanel->imageArea->initialImageArrived();
+                    iareapanel->imageArea->queue_draw();
+                }
+                return false;
+            });
+        }
     }
 
     if (beforeAfter->get_active()

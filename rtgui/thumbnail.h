@@ -163,6 +163,7 @@ public:
 //        unsigned char*  getThumbnailImage (int &w, int &h, int fixwh=1); // fixwh = 0: fix w and calculate h, =1: fix h and calculate w
     rtengine::IImage8* processThumbImage    (const rtengine::procparams::ProcParams& pparams, int h, double& scale, bool cachePixbuf = false);
     rtengine::IImage8* processThumbImage    (int h, double& scale, rtengine::procparams::CropParams* crop = nullptr, bool cachePixbuf = false);
+    rtengine::IImage8* processFullThumbImage(const rtengine::procparams::ProcParams& pparams, int h, double& scale, bool cachePixbuf = false);
     Glib::RefPtr<Gdk::Pixbuf> getCachedPixbuf(double& scale) {
         MyMutex::MyLock lock(mutex);
         scale = cachedPixbufScale_;

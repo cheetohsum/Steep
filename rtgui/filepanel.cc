@@ -775,6 +775,54 @@ static AdjacentPreloadExecutor& adjacentPreloadExecutor()
     return *executor;
 }
 
+class QuickPreviewFallbackExecutor final
+{
+public:
+    void enqueue(std::function<void()> work)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            // Only the most recently selected image can still be displayed.
+            pending_ = std::move(work);
+            if (!workerStarted_) {
+                workerStarted_ = true;
+                std::thread([this]() { run(); }).detach();
+            }
+        }
+        cv_.notify_one();
+    }
+
+private:
+    void run()
+    {
+        lowerBackgroundPreloadThreadPriority();
+#ifdef _OPENMP
+        omp_set_num_threads(1);
+#endif
+        for (;;) {
+            std::function<void()> work;
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                cv_.wait(lock, [this]() { return static_cast<bool>(pending_); });
+                work = std::move(pending_);
+                pending_ = {};
+            }
+            work();
+        }
+    }
+
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    std::function<void()> pending_;
+    bool workerStarted_ = false;
+};
+
+static QuickPreviewFallbackExecutor& quickPreviewFallbackExecutor()
+{
+    static auto* executor = new QuickPreviewFallbackExecutor();
+    return *executor;
+}
+
 static void releaseInitialImageInBackground(
     rtengine::InitialImage* img,
     const char* reason,
@@ -2340,7 +2388,7 @@ FilePanel::FilePanel () :
     favoriteButton->set_name("PlacesAddBtn");
     favoriteButton->set_relief(Gtk::RELIEF_NONE);
     favoriteButton->set_tooltip_text(M("MAIN_FRAME_PLACES_ADD"));
-    auto* favoriteIcon = Gtk::manage(new RTImage("star-gold-hollow-small", Gtk::ICON_SIZE_SMALL_TOOLBAR));
+    auto* favoriteIcon = Gtk::manage(new RTImage("star-hollow-small", Gtk::ICON_SIZE_SMALL_TOOLBAR));
     favoriteButton->set_image(*favoriteIcon);
     favoriteButton->set_always_show_image(true);
     favoriteButton->signal_clicked().connect(sigc::mem_fun(*placesBrowser, &PlacesBrowser::addPressed));
@@ -3212,19 +3260,22 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
             quickPreviewMissed = true;
             Thumbnail* previewThm = thm;
             previewThm->increaseRef();
+            auto previewThmHolder = std::shared_ptr<Thumbnail>(
+                previewThm,
+                [](Thumbnail* thumbnail) { thumbnail->decreaseRef(); });
             auto previewAllowed = pl->quickPreviewAllowed;
             auto previewRequest = foregroundRequest;
             RTWindow* previewParent = parent;
             const Glib::ustring previewFileName = selectedFileName;
-            std::thread([previewThm, previewAllowed, previewRequest, previewParent, previewFileName]() {
+            quickPreviewFallbackExecutor().enqueue(
+                [previewThmHolder, previewAllowed, previewRequest, previewParent, previewFileName]() {
                 setBackgroundPreloadThreadPriority(true);
                 const auto previewStart = std::chrono::steady_clock::now();
                 double previewScale = 1.0;
-                auto pixbuf = previewThm->tryLoadCachedPreviewPixbuf(
+                auto pixbuf = previewThmHolder->tryLoadCachedPreviewPixbuf(
                     std::max(1, App::get().options().maxThumbnailHeight),
                     previewScale);
-                previewScale = cachedPreviewScaleForEditor(previewThm, pixbuf, previewScale);
-                previewThm->decreaseRef();
+                previewScale = cachedPreviewScaleForEditor(previewThmHolder.get(), pixbuf, previewScale);
 
                 const bool allowed = previewAllowed
                     && previewAllowed->load(std::memory_order_acquire)
@@ -3257,7 +3308,7 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
                             previewFileName.c_str());
                     },
                     Glib::PRIORITY_HIGH_IDLE);
-            }).detach();
+            });
         }
     }
     if (selectedIsRaw && quickPreviewMissed && foregroundRequest->decodeStartDelayMs > PreloadManager::kFastFujiQueuedScrubDecodeDelayMs) {
@@ -4575,6 +4626,19 @@ void FilePanel::openSelectedInEditor ()
 
     thm->increaseRef();
     fileCatalog->openRequested({thm});
+}
+
+bool FilePanel::transientEditPreviewRequested(
+    const Glib::ustring& filename,
+    const rtengine::procparams::ProcParams* params,
+    bool restore)
+{
+    if (!parent) {
+        return false;
+    }
+
+    auto* editor = parent->getEditorPanelForFile(filename);
+    return editor && editor->setTransientEditPreview(filename, params, restore);
 }
 
 void FilePanel::loadingThumbs(Glib::ustring str, double rate)

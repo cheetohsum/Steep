@@ -1571,7 +1571,7 @@ bool RawImage::checkThumbOk() const
 }
 
 
-Image8 *RawImage::getThumbnail() const
+Image8 *RawImage::getThumbnail(int maxOutputWidth, int maxOutputHeight) const
 {
     if (decoder == Decoder::DCRAW) {
         if (!checkThumbOk()) {
@@ -1586,7 +1586,7 @@ Image8 *RawImage::getThumbnail() const
 
         int err = 1;
         if ((unsigned char)data[1] == 0xd8) {
-            err = img->loadJPEGFromMemory(data, get_thumbLength());
+            err = img->loadJPEGFromMemory(data, get_thumbLength(), maxOutputWidth, maxOutputHeight);
         } else if (is_ppmThumb()) {
             err = img->loadPPMFromMemory(data, get_thumbWidth(), get_thumbHeight(), get_thumbSwap(), get_thumbBPS());
         }
@@ -1603,6 +1603,44 @@ Image8 *RawImage::getThumbnail() const
     if (!ifp) {
         return nullptr;
     } else {
+        // LibRaw normally copies the complete embedded JPEG into a temporary
+        // buffer before decoding it. RAW files are already memory mapped here,
+        // so decode a matching, intact JPEG straight from that mapping.
+        const auto& summary = libraw->imgdata.thumbnail;
+        const auto& previews = libraw->imgdata.thumbs_list;
+        for (int i = 0; i < previews.thumbcount && i < LIBRAW_THUMBNAIL_MAXCOUNT; ++i) {
+            const auto& preview = previews.thumblist[i];
+            const bool matchesPrimary = preview.tformat == LIBRAW_INTERNAL_THUMBNAIL_JPEG
+                && preview.tlength == summary.tlength
+                && (!summary.twidth || preview.twidth == summary.twidth)
+                && (!summary.theight || preview.theight == summary.theight);
+            const bool validRange = preview.toffset >= 0
+                && preview.tlength >= 2
+                && preview.toffset <= ifp->size
+                && static_cast<unsigned long long>(preview.tlength)
+                    <= static_cast<unsigned long long>(ifp->size - preview.toffset);
+            if (!matchesPrimary || !validRange) {
+                continue;
+            }
+
+            const char* const jpeg = ifp->data + preview.toffset;
+            if (static_cast<unsigned char>(jpeg[0]) != 0xff
+                    || static_cast<unsigned char>(jpeg[1]) != 0xd8) {
+                continue;
+            }
+
+            std::unique_ptr<Image8> mappedImage(new Image8());
+            mappedImage->setSampleFormat(IIOSF_UNSIGNED_CHAR);
+            mappedImage->setSampleArrangement(IIOSA_CHUNKY);
+            if (mappedImage->loadJPEGFromMemory(
+                    jpeg,
+                    preview.tlength,
+                    maxOutputWidth,
+                    maxOutputHeight) == IMIO_SUCCESS) {
+                return mappedImage.release();
+            }
+        }
+
         int err = libraw->unpack_thumb();
         if (err) {
             return nullptr;
@@ -1617,7 +1655,7 @@ Image8 *RawImage::getThumbnail() const
             img->setSampleFormat(IIOSF_UNSIGNED_CHAR);
             img->setSampleArrangement(IIOSA_CHUNKY);
             if (t.tformat == LIBRAW_THUMBNAIL_JPEG) {
-                err = img->loadJPEGFromMemory(t.thumb, t.tlength);
+                err = img->loadJPEGFromMemory(t.thumb, t.tlength, maxOutputWidth, maxOutputHeight);
             } else {
                 err = img->loadPPMFromMemory(t.thumb, t.twidth, t.theight, false, 8);
             }
