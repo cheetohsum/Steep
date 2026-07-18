@@ -1407,6 +1407,7 @@ FileBrowser::FileBrowser () :
             Gtk::Widget* widget = nullptr;
             std::function<void()> action;                       // click
             std::function<Gtk::MenuItem*()> hoverPreview;       // optional
+            std::function<Gtk::Menu*()> hoverMenu;              // hover-opens options
             Glib::ustring tip;                                  // hover-pause tooltip
             bool keepMenuOpen = false;                          // dropdowns
         };
@@ -1424,8 +1425,7 @@ FileBrowser::FileBrowser () :
             label->set_markup("<span size='small' alpha='55%'>"
                               + Glib::Markup::escape_text(caption) + "</span>");
             label->set_xalign(0.0);
-            // Aligns the caption with the left edge of the first icon
-            label->set_margin_start(6);
+            label->set_margin_start(0);
             vbox->pack_start(*label, Gtk::PACK_SHRINK);
             auto* row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 2));
             vbox->pack_start(*row, Gtk::PACK_SHRINK);
@@ -1645,6 +1645,8 @@ FileBrowser::FileBrowser () :
         struct HoverState {
             InlineZone* zone = nullptr;
             sigc::connection tipTimer;
+            sigc::connection menuTimer;
+            Gtk::Menu* openSubmenu = nullptr;
             double pointerX = 0.0;
             double pointerY = 0.0;
         };
@@ -1655,15 +1657,16 @@ FileBrowser::FileBrowser () :
             inlineTipWindow_->set_type_hint(Gdk::WINDOW_TYPE_HINT_TOOLTIP);
             inlineTipWindow_->get_style_context()->add_class("tooltip");
             inlineTipLabel_ = Gtk::manage(new Gtk::Label());
-            inlineTipLabel_->set_margin_start(8);
-            inlineTipLabel_->set_margin_end(8);
-            inlineTipLabel_->set_margin_top(4);
-            inlineTipLabel_->set_margin_bottom(4);
+            inlineTipLabel_->set_margin_start(6);
+            inlineTipLabel_->set_margin_end(6);
+            inlineTipLabel_->set_margin_top(2);
+            inlineTipLabel_->set_margin_bottom(2);
             inlineTipWindow_->add(*inlineTipLabel_);
         }
 
         auto hideTip = [this, hoverState]() {
             hoverState->tipTimer.disconnect();
+            hoverState->menuTimer.disconnect();
             if (inlineTipWindow_) {
                 inlineTipWindow_->hide();
             }
@@ -1687,11 +1690,36 @@ FileBrowser::FileBrowser () :
             if (hovered) {
                 hovered->widget->set_opacity(1.0);
 
-                if (!hovered->tip.empty()) {
+                if (hovered->hoverMenu) {
+                    // Hovering a tools icon opens its options menu below the
+                    // icon (no tooltip for these — the menu IS the answer)
+                    hoverState->menuTimer = Glib::signal_timeout().connect(
+                        [this, hoverState]() -> bool {
+                            InlineZone* zone = hoverState->zone;
+                            if (zone && zone->hoverMenu) {
+                                if (hoverState->openSubmenu) {
+                                    hoverState->openSubmenu->popdown();
+                                }
+                                Gtk::Menu* sub = zone->hoverMenu();
+                                if (sub) {
+                                    hoverState->openSubmenu = sub;
+                                    sub->popup_at_widget(zone->widget,
+                                                         Gdk::GRAVITY_SOUTH_WEST,
+                                                         Gdk::GRAVITY_NORTH_WEST,
+                                                         nullptr);
+                                }
+                            }
+                            return false;
+                        },
+                        220);
+                } else if (!hovered->tip.empty()) {
                     hoverState->tipTimer = Glib::signal_timeout().connect(
                         [this, hoverState]() -> bool {
                             if (hoverState->zone && inlineTipWindow_ && inlineTipLabel_) {
-                                inlineTipLabel_->set_text(hoverState->zone->tip);
+                                inlineTipLabel_->set_markup(
+                                    "<span size='small'>"
+                                    + Glib::Markup::escape_text(hoverState->zone->tip)
+                                    + "</span>");
                                 inlineTipWindow_->move(
                                     static_cast<int>(hoverState->pointerX) + 14,
                                     static_cast<int>(hoverState->pointerY) + 20);
@@ -2254,23 +2282,34 @@ FileBrowser::FileBrowser () :
     cachemenu->set_no_show_all(true);
     cachemenu->hide();
 
-        // Bottom tools group: each icon opens its options menu (sort, file
-        // operations, open-with, dark frame, flat field, cache)
+        // Bottom tools group: hovering (or clicking) an icon opens that
+        // tool's options menu directly below it (sort, file operations,
+        // open-with, dark frame, flat field, cache)
         {
-            auto addSubmenuTool = [this, addInlineAction](Gtk::Box* row, const char* icon,
-                                                          const Glib::ustring& tooltip,
-                                                          std::function<Gtk::MenuItem*()> parent) {
-                addInlineAction(row, icon, tooltip, [this, parent]() {
+            auto addSubmenuTool = [this, inlineZones, makeInlineImage](
+                                      Gtk::Box* row, const char* icon,
+                                      const Glib::ustring& tooltip,
+                                      std::function<Gtk::MenuItem*()> parent) {
+                auto* img = makeInlineImage(row, icon);
+                const auto getMenu = [parent]() -> Gtk::Menu* {
                     Gtk::MenuItem* item = parent();
-                    Gtk::Menu* sub = item ? item->get_submenu() : nullptr;
-                    if (sub) {
-                        sub->popup_at_pointer(nullptr);
+                    return item ? item->get_submenu() : nullptr;
+                };
+                InlineZone zone;
+                zone.widget = img;
+                zone.tip = tooltip;
+                zone.keepMenuOpen = true;
+                zone.hoverMenu = getMenu;
+                zone.action = [img, getMenu]() {
+                    if (Gtk::Menu* sub = getMenu()) {
+                        sub->popup_at_widget(img,
+                                             Gdk::GRAVITY_SOUTH_WEST,
+                                             Gdk::GRAVITY_NORTH_WEST,
+                                             nullptr);
                     }
-                });
+                };
+                inlineZones->push_back(std::move(zone));
             };
-
-            pmenu->attach(*Gtk::manage(new Gtk::SeparatorMenuItem()), 0, 1, p, p + 1);
-            p++;
 
             auto toolsRow = makeInlineRow(M("FILEBROWSER_POPUPTOOLS"));
             addSubmenuTool(toolsRow.second, "menu-sort", M("FILEBROWSER_POPUPSORTBY"),
@@ -2318,6 +2357,36 @@ FileBrowser::FileBrowser () :
     }
 
     pmenu->show_all ();
+
+    // Collapse separator runs: hidden identity sections leave their old
+    // separators behind, which would otherwise stack into multiple lines.
+    {
+        bool lastWasSeparator = true;  // also hides leading separators
+        Gtk::Widget* pendingSeparator = nullptr;
+        for (auto* child : pmenu->get_children()) {
+            const bool isSeparator = dynamic_cast<Gtk::SeparatorMenuItem*>(child) != nullptr;
+            if (!isSeparator && !child->get_visible()) {
+                continue;  // hidden identity items don't break separator runs
+            }
+            if (isSeparator) {
+                if (lastWasSeparator) {
+                    child->set_no_show_all(true);
+                    child->hide();
+                } else {
+                    lastWasSeparator = true;
+                    pendingSeparator = child;
+                }
+            } else {
+                lastWasSeparator = false;
+                pendingSeparator = nullptr;
+            }
+        }
+        // A separator with nothing visible after it is just a trailing line
+        if (pendingSeparator) {
+            pendingSeparator->set_no_show_all(true);
+            pendingSeparator->hide();
+        }
+    }
 
     /***********************
      * Accelerators
