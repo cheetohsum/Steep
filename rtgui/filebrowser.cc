@@ -1422,12 +1422,15 @@ FileBrowser::FileBrowser () :
         auto addInlineIcon = [this, inlineZones](Gtk::Box* row, const char* icon,
                                                  const Glib::ustring& tooltip,
                                                  std::function<Gtk::MenuItem*()> target) {
-            auto* img = Gtk::manage(new RTImage(icon, Gtk::ICON_SIZE_MENU));
-            img->set_margin_start(7);
-            img->set_margin_end(7);
+            auto* img = Gtk::manage(new RTImage(icon, Gtk::ICON_SIZE_LARGE_TOOLBAR));
+            img->set_margin_start(6);
+            img->set_margin_end(6);
             img->set_margin_top(4);
             img->set_margin_bottom(4);
             img->set_tooltip_text(tooltip);
+            // Dimmed at rest; the hover tracker below raises the icon under
+            // the pointer to full opacity so the target is unmistakable.
+            img->set_opacity(0.65);
             row->pack_start(*img, Gtk::PACK_SHRINK);
             inlineZones->emplace_back(img, [this, target]() {
                 menuItemActivated(target());
@@ -1475,44 +1478,89 @@ FileBrowser::FileBrowser () :
         pmenu->attach(*Gtk::manage(new Gtk::SeparatorMenuItem()), 0, 1, p, p + 1);
         p++;
 
+        // Padded horizontally by half the inter-icon gap so a row has no
+        // dead zones: any click along the row lands on the nearest icon.
+        auto hitZoneAt = [inlineZones](double xRoot, double yRoot) -> Gtk::Widget* {
+            for (auto& zone : *inlineZones) {
+                Gtk::Widget* widget = zone.first;
+                if (!widget->get_visible()) {
+                    continue;
+                }
+                auto window = widget->get_window();
+                if (!window) {
+                    continue;
+                }
+
+                int windowX = 0;
+                int windowY = 0;
+                window->get_origin(windowX, windowY);
+                const auto allocation = widget->get_allocation();
+                const double ix = xRoot - windowX - allocation.get_x();
+                const double iy = yRoot - windowY - allocation.get_y();
+
+                if (ix >= -8.0 && iy >= -6.0
+                        && ix < allocation.get_width() + 8.0
+                        && iy < allocation.get_height() + 6.0) {
+                    return widget;
+                }
+            }
+            return nullptr;
+        };
+
         pmenu->signal_button_press_event().connect(
-            [this, inlineZones](GdkEventButton* event) -> bool {
+            [this, inlineZones, hitZoneAt](GdkEventButton* event) -> bool {
                 if (!event || event->button != 1) {
                     return false;
                 }
 
+                Gtk::Widget* hit = hitZoneAt(event->x_root, event->y_root);
+                if (!hit) {
+                    return false;
+                }
+
                 for (auto& zone : *inlineZones) {
-                    Gtk::Widget* widget = zone.first;
-                    if (!widget->get_visible()) {
-                        continue;
-                    }
-                    auto window = widget->get_window();
-                    if (!window) {
-                        continue;
-                    }
-
-                    int windowX = 0;
-                    int windowY = 0;
-                    window->get_origin(windowX, windowY);
-                    const auto allocation = widget->get_allocation();
-                    const double ix = event->x_root - windowX - allocation.get_x();
-                    const double iy = event->y_root - windowY - allocation.get_y();
-
-                    // Padded hit zone so near-misses on small icons land
-                    // (margins keep neighboring zones from overlapping)
-                    if (ix >= -6.0 && iy >= -6.0
-                            && ix < allocation.get_width() + 6.0
-                            && iy < allocation.get_height() + 6.0) {
+                    if (zone.first == hit) {
                         const auto action = zone.second;
                         pmenu->popdown();
                         action();
                         return true;
                     }
                 }
-
                 return false;
             },
             false);
+
+        // Hover feedback: the icon under the pointer goes full-opacity
+        auto hoverState = std::make_shared<Gtk::Widget*>(nullptr);
+        auto setHover = [inlineZones, hoverState](Gtk::Widget* hovered) {
+            if (*hoverState == hovered) {
+                return;
+            }
+            if (*hoverState) {
+                (*hoverState)->set_opacity(0.65);
+            }
+            *hoverState = hovered;
+            if (hovered) {
+                hovered->set_opacity(1.0);
+            }
+        };
+
+        pmenu->add_events(Gdk::POINTER_MOTION_MASK | Gdk::LEAVE_NOTIFY_MASK);
+        pmenu->signal_motion_notify_event().connect(
+            [hitZoneAt, setHover](GdkEventMotion* event) -> bool {
+                setHover(event ? hitZoneAt(event->x_root, event->y_root) : nullptr);
+                return false;
+            },
+            false);
+        pmenu->signal_leave_notify_event().connect(
+            [setHover](GdkEventCrossing*) -> bool {
+                setHover(nullptr);
+                return false;
+            },
+            false);
+        pmenu->signal_hide().connect([setHover]() {
+            setHover(nullptr);
+        });
     }
 
     pmenu->attach (*Gtk::manage(open = new MyImageMenuItem (M("FILEBROWSER_POPUPOPEN"), "menu-open")), 0, 1, p, p + 1);
