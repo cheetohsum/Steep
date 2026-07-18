@@ -419,7 +419,7 @@ void Options::setDefaults()
     lastCopyMovePath = "";
     version = "0.0.0.0";                // temporary value; will be correctly set in RTWindow::on_realize
     thumbSize = 160;
-    thumbSizeTab = 104;
+    thumbSizeTab = 120;
     thumbSizeQueue = 160;
     sameThumbSize = false;               // preferring speed of switch between file browser and single editor tab
     showHistory = true;
@@ -1364,9 +1364,21 @@ void Options::readFromFile(Glib::ustring fname)
 
                 if (keyFile.has_key("File Browser", "ThumbnailSizeTab")) {
                     thumbSizeTab = keyFile.get_integer("File Browser", "ThumbnailSizeTab");
-                    // Migrate old small filmstrip thumbs to new larger default
-                    if (thumbSizeTab <= 90) {
-                        thumbSizeTab = 104;
+
+                    const bool sizeMigrated =
+                        keyFile.has_key("File Browser", "FilmstripSizeMigrated")
+                        && keyFile.get_boolean("File Browser", "FilmstripSizeMigrated");
+
+                    if (thumbSizeTab < 60) {
+                        // Legacy/garbage value — reset to the current default.
+                        // The floor stays below the filmstrip slider minimum so
+                        // user-chosen small sizes survive reload.
+                        thumbSizeTab = 120;
+                    } else if (!sizeMigrated && thumbSizeTab == 104) {
+                        // One-time bump of the previous default (104) to the
+                        // ~15% taller default. Guarded by FilmstripSizeMigrated
+                        // so a later deliberate 104 is left alone.
+                        thumbSizeTab = 120;
                     }
                 }
 
@@ -2647,6 +2659,7 @@ void Options::saveToFile(Glib::ustring fname)
 #endif
         keyFile.set_integer("File Browser", "ThumbnailSize", thumbSize);
         keyFile.set_integer("File Browser", "ThumbnailSizeTab", thumbSizeTab);
+        keyFile.set_boolean("File Browser", "FilmstripSizeMigrated", true);
         keyFile.set_integer("File Browser", "ThumbnailSizeQueue", thumbSizeQueue);
         keyFile.set_integer("File Browser", "SameThumbSize", sameThumbSize);
         keyFile.set_integer("File Browser", "MaxPreviewHeight", maxThumbnailHeight);

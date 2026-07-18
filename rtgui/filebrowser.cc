@@ -419,19 +419,60 @@ void applySteepAutoEdit(
     shadowsHighlights.radius = 40;
     shadowsHighlights.lab = false;
 
+    // Artistic S-curve emphasis on top of the base recipe. A colorist working
+    // a flat file takes contrast from two places: deeper blacks when the scan
+    // is flat, and brighter upper-mids when there is genuine highlight
+    // headroom. Frames whose statistics allow it get up to an extra ~15% on
+    // either end; frames that cannot take it (clipped highlights, shadow-heavy
+    // night frames, faces) are left on the restrained base curve.
+    double toeBoost = 0.0;   // extra pull-down of the shadow point (0..0.15)
+    double liftBoost = 0.0;  // extra push-up of the bright point (0..0.15)
+    if (features.valid) {
+        // Right side: only brighten when few pixels already sit near clipping.
+        const double headroom = std::max(0.0, (0.12 - features.highlightFraction) / 0.12);
+        liftBoost = 0.15 * std::min(1.0, headroom);
+        if (features.medianLuma > 0.55) {
+            liftBoost *= 0.5;  // high-key frame: restraint, keep the airy top
+        }
+        if (features.scene == AutoGradeScene::Portrait) {
+            liftBoost = std::min(liftBoost, 0.08);  // skin brights must not race to clipping
+        } else if (features.scene == AutoGradeScene::Night) {
+            liftBoost *= 0.7;  // sparkle in the lights without blooming them
+        }
+
+        // Left side: deepen blacks on flat files; ease off when shadows
+        // already dominate the frame.
+        const double flatness = std::max(0.0, (0.62 - features.dynamicRange) / 0.62);
+        const double shadowRoom = std::max(0.0, (0.40 - features.shadowFraction) / 0.40);
+        toeBoost = 0.15 * shadowRoom * (0.5 + 0.5 * flatness);
+        if (features.scene == AutoGradeScene::Night) {
+            toeBoost *= 0.4;   // night keeps its shadow detail and mood
+        } else if (features.scene == AutoGradeScene::Portrait) {
+            toeBoost *= 0.75;  // gentle falloff on faces
+        }
+    }
+
+    constexpr double SHADOW_IN = 0.098654708520179366;
+    constexpr double LOWER_MID_IN = 0.20673525015387323;
+    constexpr double BRIGHT_IN = 0.51569506726457359;
+    double shadowOut = SHADOW_IN + AUTO_EDIT_RESPONSE * (0.058295964125560533 - SHADOW_IN);
+    const double lowerMidOut = LOWER_MID_IN + AUTO_EDIT_RESPONSE * (0.21570386001934416 - LOWER_MID_IN);
+    double brightOut = BRIGHT_IN + AUTO_EDIT_RESPONSE * (0.73094170403587488 - BRIGHT_IN);
+    const double topOut = 1.0 + AUTO_EDIT_RESPONSE * (0.99103139013452912 - 1.0);
+
+    shadowOut *= 1.0 - toeBoost;
+    brightOut = std::min(0.985, brightOut * (1.0 + liftBoost));
+
     auto& curves = params.rgbCurves;
     curves.enabled = true;
     curves.lumamode = false;
     curves.mastercurve = {
         DCT_Spline,
         0.0, 0.0,
-        0.098654708520179366,
-            0.098654708520179366 + AUTO_EDIT_RESPONSE * (0.058295964125560533 - 0.098654708520179366),
-        0.20673525015387323,
-            0.20673525015387323 + AUTO_EDIT_RESPONSE * (0.21570386001934416 - 0.20673525015387323),
-        0.51569506726457359,
-            0.51569506726457359 + AUTO_EDIT_RESPONSE * (0.73094170403587488 - 0.51569506726457359),
-        1.0, 1.0 + AUTO_EDIT_RESPONSE * (0.99103139013452912 - 1.0)
+        SHADOW_IN, shadowOut,
+        LOWER_MID_IN, lowerMidOut,
+        BRIGHT_IN, brightOut,
+        1.0, topOut
     };
     curves.rcurve = {DCT_Spline, 0.0, 0.0, 1.0, 1.0};
     curves.gcurve = {DCT_Spline, 0.0, 0.0, 1.0, 1.0};
@@ -4132,7 +4173,8 @@ int FileBrowser::getThumbnailHeight ()
     const auto& options = App::get().options();
     // The user could have manually forced the option to a too big value
     if (!options.sameThumbSize && getLocation() == THLOC_EDITOR) {
-        return std::max(std::min(options.thumbSizeTab, 132), 10);
+        // Upper bound matches the filmstrip size slider's maximum
+        return std::max(std::min(options.thumbSizeTab, 220), 10);
     } else {
         return std::max(std::min(options.thumbSize, 800), 10);
     }

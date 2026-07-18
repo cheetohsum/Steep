@@ -566,4 +566,13 @@ private:
     double topAnimFraction_ = 1.0;
     sigc::connection topAnimConn_;
     int filmstripFullHeight_ = 0;      // cached filmstrip height for animation
+
+    // Right-click filmstrip size slider (on the show/hide filmstrip button)
+    Gtk::Popover* filmstripSizePopover_ = nullptr;
+    Gtk::Scale* filmstripSizeScale_ = nullptr;
+    sigc::connection filmstripSizeApplyConn_;
+    bool onFilmstripButtonPress (GdkEventButton* event);
+    void showFilmstripSizePopover ();
+    void onFilmstripSizeChanged ();
+    void applyFilmstripSize (int value);
 };

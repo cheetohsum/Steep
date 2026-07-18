@@ -1070,8 +1070,11 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         iTopPanel_1_Hide = new RTImage ("filmstrip-hide", Gtk::ICON_SIZE_LARGE_TOOLBAR);
         tbTopPanel_1->set_relief (Gtk::RELIEF_NONE);
         tbTopPanel_1->set_active (true);
-        tbTopPanel_1->set_tooltip_markup (M ("MAIN_TOOLTIP_SHOWHIDETP1"));
+        tbTopPanel_1->set_tooltip_markup (M ("MAIN_TOOLTIP_SHOWHIDETP1") + Glib::ustring("\n") + M ("EDITOR_FILMSTRIP_SIZE_HINT"));
         tbTopPanel_1->set_image (*iTopPanel_1_Hide);
+        // Right-click opens the filmstrip thumbnail size slider
+        tbTopPanel_1->signal_button_press_event().connect(
+            sigc::mem_fun(*this, &EditorPanel::onFilmstripButtonPress), false);
     }
 
 
@@ -2142,8 +2145,9 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     if (filePanel) {
         catalogPane = new Gtk::Box(Gtk::ORIENTATION_VERTICAL);
         catalogPane->set_name("EditorFilmstripPane");
-        // Size to fit one row of filmstrip thumbnails without vertical scrollbar.
-        int filmstripHeight = std::min(options.thumbSizeTab, 144);
+        // Size to fit one row of filmstrip thumbnails without vertical
+        // scrollbar. Cap matches the filmstrip size slider maximum.
+        int filmstripHeight = std::min(options.thumbSizeTab, 220);
         filmstripFullHeight_ = filmstripHeight;
         // Inset filmstrip so sidebars don't overlap its content
         catalogPane->set_margin_start(options.showHistory ? options.dirBrowserWidth : 0);
@@ -2520,6 +2524,8 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 EditorPanel::~EditorPanel ()
 {
     ratingPaletteCloseConn_.disconnect();
+    filmstripSizeApplyConn_.disconnect();
+    delete filmstripSizePopover_;
     deferredOpenConn_.disconnect();
     deferredDirSyncConn_.disconnect();
     deferredCropEnableConn_.disconnect();
@@ -5288,6 +5294,98 @@ void EditorPanel::tbTopPanel_1_toggled ()
     }
 
     tbShowHideSidePanels_managestate();
+}
+
+bool EditorPanel::onFilmstripButtonPress (GdkEventButton* event)
+{
+    if (!event || event->button != 3) {
+        return false;
+    }
+
+    showFilmstripSizePopover();
+    return true;  // keep right-click from toggling the filmstrip
+}
+
+void EditorPanel::showFilmstripSizePopover ()
+{
+    if (!tbTopPanel_1) {
+        return;
+    }
+
+    if (!filmstripSizePopover_) {
+        filmstripSizePopover_ = new Gtk::Popover(*tbTopPanel_1);
+
+        auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
+        box->set_margin_start(10);
+        box->set_margin_end(10);
+        box->set_margin_top(8);
+        box->set_margin_bottom(8);
+
+        auto* label = Gtk::manage(new Gtk::Label(M("EDITOR_FILMSTRIP_SIZE")));
+        label->set_halign(Gtk::ALIGN_START);
+        box->pack_start(*label, Gtk::PACK_SHRINK);
+
+        filmstripSizeScale_ = Gtk::manage(new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
+        filmstripSizeScale_->set_range(64.0, 200.0);
+        filmstripSizeScale_->set_increments(2.0, 16.0);
+        filmstripSizeScale_->set_digits(0);
+        filmstripSizeScale_->set_draw_value(true);
+        filmstripSizeScale_->set_value_pos(Gtk::POS_RIGHT);
+        filmstripSizeScale_->set_size_request(220, -1);
+        filmstripSizeScale_->signal_value_changed().connect(
+            sigc::mem_fun(*this, &EditorPanel::onFilmstripSizeChanged));
+        box->pack_start(*filmstripSizeScale_, Gtk::PACK_SHRINK);
+
+        filmstripSizePopover_->add(*box);
+        filmstripSizePopover_->set_position(Gtk::POS_BOTTOM);
+        box->show_all();
+    }
+
+    // Same option saveThumbnailHeight() persists for the editor filmstrip
+    const auto& options = App::get().options();
+    filmstripSizeScale_->set_value(
+        !options.sameThumbSize ? options.thumbSizeTab : options.thumbSize);
+
+    filmstripSizePopover_->popup();
+}
+
+void EditorPanel::onFilmstripSizeChanged ()
+{
+    if (!filmstripSizeScale_) {
+        return;
+    }
+
+    const int value = static_cast<int>(filmstripSizeScale_->get_value() + 0.5);
+
+    // Debounce: dragging fires continuously and every resize regenerates
+    // thumbnail renders — apply once the slider settles.
+    filmstripSizeApplyConn_.disconnect();
+    filmstripSizeApplyConn_ = Glib::signal_timeout().connect(
+        [this, value]() -> bool {
+            applyFilmstripSize(value);
+            return false;
+        },
+        120);
+}
+
+void EditorPanel::applyFilmstripSize (int value)
+{
+    const auto& options = App::get().options();
+    const int current = !options.sameThumbSize ? options.thumbSizeTab : options.thumbSize;
+    if (value == current) {
+        return;
+    }
+
+    if (fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser) {
+        // Resizes the entries live and persists the new height into options
+        // (saveThumbnailHeight), so it becomes the user's default.
+        fPanel->fileCatalog->fileBrowser->setThumbnailHeight(value);
+
+        const int actualH = fPanel->fileCatalog->fileBrowser->getEffectiveHeight();
+        if (actualH > 0) {
+            filmstripFullHeight_ = actualH;
+        }
+    }
 }
 
 /*
