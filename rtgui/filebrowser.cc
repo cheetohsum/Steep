@@ -807,13 +807,49 @@ void applySteepAutoFilm(
             : features.dynamicRange < 0.35 ? 12 : 14;
         params.toneCurve.contrast = std::min(params.toneCurve.contrast, inputContrastCeiling);
     }
+
+    // Paper-grade compensation. Printing a flat negative through a soft film
+    // recipe washes the image out — the darkroom answer is a harder paper
+    // grade, not the same soft one. Estimate the wash-out risk from the
+    // source's measured flatness plus how soft this recipe ended up (lifted
+    // fade, low print contrast), then harden the print stage in proportion:
+    // firmer film contrast, less black-lift, and a print curve with a real
+    // toe and a steeper midsection.
+    double washRisk = 0.0;
+    if (features.valid) {
+        const double sourceFlatness = std::max(0.0, (0.55 - features.dynamicRange) / 0.55);
+        const double fadeLift = std::max(0, film.fade) / 10.0;
+        const double softContrast = std::max(0, 8 - film.contrast) / 16.0;
+        washRisk = std::min(1.0, 0.65 * sourceFlatness + 0.20 * fadeLift + 0.15 * softContrast);
+
+        if (washRisk > 0.25) {
+            film.contrast = std::min(12, film.contrast + static_cast<int>(std::round(6.0 * washRisk)));
+
+            // Don't lift blacks the source never had. Scaled by flatness, so
+            // deliberate lifted looks (Night's cinematic fade) survive on
+            // sources with genuine contrast.
+            if (film.fade > 0 && sourceFlatness > 0.30) {
+                film.fade = std::max(-2, film.fade - static_cast<int>(std::round(8.0 * sourceFlatness)));
+            }
+
+            // A washed print also reads desaturated; give the dyes a nudge.
+            if (washRisk > 0.5) {
+                film.saturation = std::min(6, film.saturation + 2);
+            }
+        }
+    }
+
+    const double toeOut = (darkPrint ? 0.084 : 0.073) * (1.0 - 0.45 * washRisk);
+    const double lowerOut = (darkPrint ? 0.232 : 0.215) * (1.0 - 0.07 * washRisk);
+    const double upperOut = std::min(0.70, (darkPrint ? 0.642 : 0.625) * (1.0 + 0.07 * washRisk));
+    const double shoulderOut = std::min(0.90, (darkPrint ? 0.865 : 0.855) * (1.0 + 0.035 * washRisk));
     params.rgbCurves.mastercurve = {
         DCT_Spline,
         0.0, 0.0,
-        0.08, darkPrint ? 0.084 : 0.073,
-        0.20, darkPrint ? 0.232 : 0.215,
-        0.52, darkPrint ? 0.642 : 0.625,
-        0.80, darkPrint ? 0.865 : 0.855,
+        0.08, toeOut,
+        0.20, lowerOut,
+        0.52, upperOut,
+        0.80, shoulderOut,
         1.0, 0.995
     };
 }
