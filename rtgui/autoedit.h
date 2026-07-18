@@ -13,9 +13,10 @@
 class Thumbnail;
 
 enum class SteepAutoEditMode {
-    Neutral,
-    Grade,
-    GradeFilm
+    Neutral,    // technical auto edit only
+    Grade,      // auto edit + color grade
+    GradeFilm,  // auto edit + film stock ("Film Lab")
+    GradedFilm  // auto edit + color grade + film stock, harmonized
 };
 
 // Produces the same scene-analyzed profile used by the file-browser Auto Edit

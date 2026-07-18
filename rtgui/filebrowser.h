@@ -170,6 +170,7 @@ protected:
     MyImageMenuItem* autoEditMenu;
     MyImageMenuItem* autoGrade;
     MyImageMenuItem* autoGradeFilm;
+    MyImageMenuItem* autoGradedFilm;
     MyImageMenuItem* autoLevel;
     MyImageMenuItem* duplicate;
     MyImageMenuItem* clearFromCache;

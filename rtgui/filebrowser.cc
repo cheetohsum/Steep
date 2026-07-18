@@ -129,7 +129,8 @@ const char* autoEditModeLabel(AutoEditMode mode)
 {
     switch (mode) {
         case AutoEditMode::Grade: return "FILEBROWSER_POPUPAUTOGRADE";
-        case AutoEditMode::GradeFilm: return "FILEBROWSER_POPUPAUTOGRADEFILM";
+        case AutoEditMode::GradeFilm: return "FILEBROWSER_POPUPFILMLAB";
+        case AutoEditMode::GradedFilm: return "FILEBROWSER_POPUPAUTOGRADEFILM";
         case AutoEditMode::Neutral: return "FILEBROWSER_POPUPAUTOEDITNEUTRAL";
     }
     return "FILEBROWSER_POPUPAUTOEDITNEUTRAL";
@@ -139,7 +140,8 @@ const char* autoEditModeName(AutoEditMode mode)
 {
     switch (mode) {
         case AutoEditMode::Grade: return "grade";
-        case AutoEditMode::GradeFilm: return "grade-film-v2";
+        case AutoEditMode::GradeFilm: return "film-lab";
+        case AutoEditMode::GradedFilm: return "graded-film-lab";
         case AutoEditMode::Neutral: return "neutral";
     }
     return "neutral";
@@ -1292,6 +1294,26 @@ const std::string& originalFamilyKeyForEntry(FileBrowserEntry* entry)
     return entry->getBrowserOriginalFamilyKey();
 }
 
+// When the color grade and the film stage stack, keep each in its lane: the
+// grade owns color direction (wheels, split-tone channel curves, vibrance),
+// the film stock owns tonal response and texture (curve, grain, halation).
+// Left untamed, both tone shadows cool and highlights warm, doubling the
+// cast into mud — so the film's own split tinting steps back, the grade
+// blends a little lighter, and chroma is not added twice.
+void harmonizeSteepGradeWithFilm(rtengine::procparams::ProcParams& params)
+{
+    auto& film = params.filmPresets;
+    film.shadowTint = (film.shadowTint + 1) / 2;
+    film.highlightTint = (film.highlightTint + 1) / 2;
+    film.saturation = std::max(-100, film.saturation - 2);
+
+    auto& grade = params.colorGrading;
+    grade.blending = std::max(50.0, grade.blending - 8.0);
+
+    auto& vibrance = params.vibrance;
+    vibrance.pastels = std::max(8, vibrance.pastels - 3);
+}
+
 AutoGradeFeatures buildSteepAutoEditParamsInternal(
     Thumbnail& thumbnail,
     AutoEditMode mode,
@@ -1306,6 +1328,13 @@ AutoGradeFeatures buildSteepAutoEditParamsInternal(
         applySteepAutoGrade(features, result);
     } else if (mode == AutoEditMode::GradeFilm) {
         applySteepAutoFilm(features, result);
+    } else if (mode == AutoEditMode::GradedFilm) {
+        // Order matters: the grade disables filmPresets (it is a look of its
+        // own), so the film stage runs after and re-enables its pipeline.
+        // Film's exposure/contrast lanes and print curve legitimately win.
+        applySteepAutoGrade(features, result);
+        applySteepAutoFilm(features, result);
+        harmonizeSteepGradeWithFilm(result);
     }
 
     return features;
@@ -1380,7 +1409,11 @@ FileBrowser::FileBrowser () :
             0, 1, position, position + 1);
         ++position;
         submenu->attach(
-            *Gtk::manage(autoGradeFilm = new MyImageMenuItem(M("FILEBROWSER_POPUPAUTOGRADEFILM"), "auto-grade-film")),
+            *Gtk::manage(autoGradeFilm = new MyImageMenuItem(M("FILEBROWSER_POPUPFILMLAB"), "filmstrip-show")),
+            0, 1, position, position + 1);
+        ++position;
+        submenu->attach(
+            *Gtk::manage(autoGradedFilm = new MyImageMenuItem(M("FILEBROWSER_POPUPAUTOGRADEFILM"), "auto-grade-film")),
             0, 1, position, position + 1);
         submenu->show_all();
 
@@ -1995,6 +2028,7 @@ FileBrowser::FileBrowser () :
     aiDenoise->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), aiDenoise));
     autoGrade->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), autoGrade));
     autoGradeFilm->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), autoGradeFilm));
+    autoGradedFilm->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), autoGradedFilm));
     auto* autoEditSubmenu = dynamic_cast<Gtk::Menu*>(autoEditMenu->get_submenu());
     autoEditMenu->signal_select().connect([this, autoEditSubmenu]() {
         if (!autoEditSubmenu) {
@@ -2040,11 +2074,13 @@ FileBrowser::FileBrowser () :
                         && pointerY < allocation.get_y() + allocation.get_height();
                 };
 
-                Gtk::MenuItem* hoveredItem = pointerIsOver(autoGradeFilm)
-                    ? static_cast<Gtk::MenuItem*>(autoGradeFilm)
-                    : pointerIsOver(autoGrade)
-                      ? static_cast<Gtk::MenuItem*>(autoGrade)
-                      : nullptr;
+                Gtk::MenuItem* hoveredItem = pointerIsOver(autoGradedFilm)
+                    ? static_cast<Gtk::MenuItem*>(autoGradedFilm)
+                    : pointerIsOver(autoGradeFilm)
+                      ? static_cast<Gtk::MenuItem*>(autoGradeFilm)
+                      : pointerIsOver(autoGrade)
+                        ? static_cast<Gtk::MenuItem*>(autoGrade)
+                        : nullptr;
                 if (hoveredItem) {
                     gtk_menu_shell_select_item(
                         GTK_MENU_SHELL(autoEditSubmenu->gobj()),
@@ -2058,6 +2094,7 @@ FileBrowser::FileBrowser () :
     });
     autoGrade->signal_select().connect(sigc::bind(sigc::mem_fun(*this, &FileBrowser::startAutoEditHoverPreview), autoGrade));
     autoGradeFilm->signal_select().connect(sigc::bind(sigc::mem_fun(*this, &FileBrowser::startAutoEditHoverPreview), autoGradeFilm));
+    autoGradedFilm->signal_select().connect(sigc::bind(sigc::mem_fun(*this, &FileBrowser::startAutoEditHoverPreview), autoGradedFilm));
     const auto connectAutoEditHoverEvents = [this](Gtk::MenuItem* item) {
         item->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::POINTER_MOTION_MASK);
         item->signal_enter_notify_event().connect([this, item](GdkEventCrossing*) -> bool {
@@ -2071,6 +2108,7 @@ FileBrowser::FileBrowser () :
     };
     connectAutoEditHoverEvents(autoGrade);
     connectAutoEditHoverEvents(autoGradeFilm);
+    connectAutoEditHoverEvents(autoGradedFilm);
     pmenu->signal_deactivate().connect([this]() {
         autoEditHoverTrackingConnection_.disconnect();
         cancelAutoEditHoverPreview(nullptr, true);
@@ -2369,11 +2407,13 @@ void FileBrowser::startAutoEditHoverPreview(Gtk::MenuItem* item)
                 return false;
             }
 
-            const AutoEditMode mode = item == autoGradeFilm
-                ? AutoEditMode::GradeFilm
-                : item == autoGrade
-                 ? AutoEditMode::Grade
-                 : AutoEditMode::Neutral;
+            const AutoEditMode mode = item == autoGradedFilm
+                ? AutoEditMode::GradedFilm
+                : item == autoGradeFilm
+                 ? AutoEditMode::GradeFilm
+                 : item == autoGrade
+                  ? AutoEditMode::Grade
+                  : AutoEditMode::Neutral;
             fileBrowserPerfLog(
                 "[autoEditHover] start mode=%s file=%s\n",
                 autoEditModeName(mode),
@@ -3345,18 +3385,20 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
         if (!mselected.empty() && bppcl) {
             bppcl->endBatchPParamsChange();
         }
-    } else if (m == autoEditMenu || m == autoGrade || m == autoGradeFilm) {
+    } else if (m == autoEditMenu || m == autoGrade || m == autoGradeFilm || m == autoGradedFilm) {
         cancelAutoEditHoverPreview(nullptr, false);
         if (quickActionRunning_) {
             return;
         }
 
         auto state = std::make_shared<AutoEditBatchState>();
-        state->mode = m == autoGradeFilm
-            ? AutoEditMode::GradeFilm
-            : m == autoGrade
-             ? AutoEditMode::Grade
-             : AutoEditMode::Neutral;
+        state->mode = m == autoGradedFilm
+            ? AutoEditMode::GradedFilm
+            : m == autoGradeFilm
+             ? AutoEditMode::GradeFilm
+             : m == autoGrade
+              ? AutoEditMode::Grade
+              : AutoEditMode::Neutral;
         state->thumbnails.reserve(mselected.size());
         for (auto* entry : mselected) {
             entry->thumbnail->increaseRef();

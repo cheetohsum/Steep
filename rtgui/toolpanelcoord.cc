@@ -3003,7 +3003,8 @@ void ToolPanelCoordinator::buildQuickEditBar()
     const std::vector<std::pair<Glib::ustring, int>> autoItems = {
         {"Auto Edit", 0},
         {"Auto Grade", 1},
-        {"Film Lab", 2}
+        {"Film Lab", 2},
+        {"Auto Grade + Film Lab", 3}
     };
     for (const auto& item : autoItems) {
         auto* mi = Gtk::manage(new Gtk::MenuItem(item.first));
@@ -3238,7 +3239,8 @@ void ToolPanelCoordinator::requestQuickAutoParams(int mode, const Glib::ustring&
         ProcParams params;
         buildSteepAutoEditParams(
             *thumbnail,
-            mode >= 2 ? SteepAutoEditMode::GradeFilm
+            mode >= 3 ? SteepAutoEditMode::GradedFilm
+                      : mode == 2 ? SteepAutoEditMode::GradeFilm
                       : mode == 1 ? SteepAutoEditMode::Grade : SteepAutoEditMode::Neutral,
             source,
             params);
