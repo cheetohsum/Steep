@@ -1106,6 +1106,7 @@ bool FileCatalog::onColorLabelFadeTick()
 FileCatalog::~FileCatalog()
 {
     delete rejectsPopover_;
+    zoomSliderApplyConn_.disconnect();
     colorFadeConn_.disconnect();
     colorCollapseDelay_.disconnect();
     reparseDirectoryConn_.disconnect();
@@ -4157,14 +4158,28 @@ void FileCatalog::zoomOut ()
 }
 void FileCatalog::zoomSliderChanged ()
 {
-    const auto& options = App::get().options();
-    int idx = (int)zoomSlider_->get_value();
-    if (idx < 0) idx = 0;
-    if (idx >= (int)options.thumbnailZoomRatios.size()) idx = options.thumbnailZoomRatios.size() - 1;
+    // Applying on every slider tick resizes every entry and queues a
+    // thumbnail re-render per step — that is the drag lag. Debounce until
+    // the slider settles, and skip no-op re-applies.
+    zoomSliderApplyConn_.disconnect();
+    zoomSliderApplyConn_ = Glib::signal_timeout().connect(
+        [this]() -> bool {
+            const auto& options = App::get().options();
+            int idx = (int)zoomSlider_->get_value();
+            if (idx < 0) idx = 0;
+            if (idx >= (int)options.thumbnailZoomRatios.size()) idx = options.thumbnailZoomRatios.size() - 1;
 
-    int newHeight = (int)(options.thumbnailZoomRatios[idx] * options.maxThumbnailHeight);
-    fileBrowser->setThumbnailHeight(newHeight);
-    refreshHeight();
+            const int newHeight = (int)(options.thumbnailZoomRatios[idx] * options.maxThumbnailHeight);
+            if (newHeight == lastAppliedZoomHeight_) {
+                return false;
+            }
+            lastAppliedZoomHeight_ = newHeight;
+
+            fileBrowser->setThumbnailHeight(newHeight);
+            refreshHeight();
+            return false;
+        },
+        130);
 }
 
 void FileCatalog::refreshEditedState (const std::set<Glib::ustring>& efiles)

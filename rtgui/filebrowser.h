@@ -160,6 +160,9 @@ protected:
     MyImageMenuItem* copyprof;
     MyImageMenuItem* copyprofSettings;
     std::map<std::string, Gtk::CheckMenuItem*> copyFilters_;
+    // Standalone dropdown menus for the inline profile-operations row
+    Gtk::Menu* inlineCopySettingsMenu_ = nullptr;
+    Gtk::Menu* inlineApplyMenu_ = nullptr;
     MyImageMenuItem* pasteprof;
     MyImageMenuItem* partpasteprof;
     MyImageMenuItem* applyprof;

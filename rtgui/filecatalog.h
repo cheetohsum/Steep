@@ -188,6 +188,10 @@ private:
     Gtk::ToggleButton* searchToggle_ = nullptr;
     Gtk::Revealer* searchRevealer_ = nullptr;
 
+    // Debounced thumbnail-zoom application
+    sigc::connection zoomSliderApplyConn_;
+    int lastAppliedZoomHeight_ = -1;
+
     RTImage* progressImage;
     Gtk::Label* progressLabel;
 

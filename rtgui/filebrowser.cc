@@ -1400,9 +1400,14 @@ FileBrowser::FileBrowser () :
     {
         // GtkMenu grabs all input while open, so real buttons inside menu
         // items never receive clicks. The icons are plain images; presses
-        // are hit-tested at the menu level against each icon's allocation
-        // (same pattern as the Auto Edit submenu hit test below).
-        auto inlineZones = std::make_shared<std::vector<std::pair<Gtk::Widget*, std::function<void()>>>>();
+        // are hit-tested at the menu level against each icon's allocation.
+        struct InlineZone {
+            Gtk::Widget* widget = nullptr;
+            std::function<void()> action;                       // click
+            std::function<Gtk::MenuItem*()> hoverPreview;       // optional
+            bool keepMenuOpen = false;                          // dropdowns
+        };
+        auto inlineZones = std::make_shared<std::vector<InlineZone>>();
 
         auto makeInlineRow = [](const Glib::ustring& caption) {
             auto* item = Gtk::manage(new Gtk::MenuItem());
@@ -1419,9 +1424,7 @@ FileBrowser::FileBrowser () :
             return std::make_pair(item, row);
         };
 
-        auto addInlineIcon = [this, inlineZones](Gtk::Box* row, const char* icon,
-                                                 const Glib::ustring& tooltip,
-                                                 std::function<Gtk::MenuItem*()> target) {
+        auto makeInlineImage = [](Gtk::Box* row, const char* icon, const Glib::ustring& tooltip) {
             auto* img = Gtk::manage(new RTImage(icon, Gtk::ICON_SIZE_LARGE_TOOLBAR));
             img->set_margin_start(6);
             img->set_margin_end(6);
@@ -1432,9 +1435,37 @@ FileBrowser::FileBrowser () :
             // the pointer to full opacity so the target is unmistakable.
             img->set_opacity(0.65);
             row->pack_start(*img, Gtk::PACK_SHRINK);
-            inlineZones->emplace_back(img, [this, target]() {
+            return img;
+        };
+
+        auto addInlineIcon = [this, inlineZones, makeInlineImage](
+                                 Gtk::Box* row, const char* icon,
+                                 const Glib::ustring& tooltip,
+                                 std::function<Gtk::MenuItem*()> target,
+                                 bool hoverPreviews = false) {
+            auto* img = makeInlineImage(row, icon, tooltip);
+            InlineZone zone;
+            zone.widget = img;
+            zone.action = [this, target]() {
                 menuItemActivated(target());
-            });
+            };
+            if (hoverPreviews) {
+                zone.hoverPreview = target;
+            }
+            inlineZones->push_back(std::move(zone));
+        };
+
+        auto addInlineAction = [inlineZones, makeInlineImage](
+                                   Gtk::Box* row, const char* icon,
+                                   const Glib::ustring& tooltip,
+                                   std::function<void()> action,
+                                   bool keepMenuOpen = false) {
+            auto* img = makeInlineImage(row, icon, tooltip);
+            InlineZone zone;
+            zone.widget = img;
+            zone.action = std::move(action);
+            zone.keepMenuOpen = keepMenuOpen;
+            inlineZones->push_back(std::move(zone));
         };
 
         // Flags: pick / unflag / reject
@@ -1475,27 +1506,51 @@ FileBrowser::FileBrowser () :
         pmenu->attach(*colorRow.first, 0, 1, p, p + 1);
         p++;
 
+        // Auto looks: edit / grade / film lab / grade+film — hovering an
+        // icon live-previews the look on the open image, same as the old
+        // submenu entries did
+        auto autoRow = makeInlineRow(M("FILEBROWSER_POPUPAUTOEDIT"));
+        addInlineIcon(autoRow.second, "palette-brush", M("FILEBROWSER_POPUPAUTOEDITNEUTRAL"),
+                      [this]() -> Gtk::MenuItem* { return autoEditMenu; }, true);
+        addInlineIcon(autoRow.second, "color-circles", M("FILEBROWSER_POPUPAUTOGRADE"),
+                      [this]() -> Gtk::MenuItem* { return autoGrade; }, true);
+        addInlineIcon(autoRow.second, "filmstrip-show", M("FILEBROWSER_POPUPFILMLAB"),
+                      [this]() -> Gtk::MenuItem* { return autoGradeFilm; }, true);
+        addInlineIcon(autoRow.second, "auto-grade-film", M("FILEBROWSER_POPUPAUTOGRADEFILM"),
+                      [this]() -> Gtk::MenuItem* { return autoGradedFilm; }, true);
+        pmenu->attach(*autoRow.first, 0, 1, p, p + 1);
+        p++;
+
+        // Processing profile operations: copy (all) / copy-settings dropdown /
+        // paste / paste partial / apply dropdown
+        auto profileRow = makeInlineRow(M("FILEBROWSER_POPUPPROFILEOPERATIONS"));
+        addInlineIcon(profileRow.second, "menu-profile-copy", M("FILEBROWSER_COPYPROFILE"),
+                      [this]() -> Gtk::MenuItem* { return copyprof; });
+        addInlineAction(profileRow.second, "arrow-down-small", M("FILEBROWSER_COPYPROFILE_SETTINGS"),
+                        [this]() {
+                            if (inlineCopySettingsMenu_) {
+                                inlineCopySettingsMenu_->popup_at_pointer(nullptr);
+                            }
+                        });
+        addInlineIcon(profileRow.second, "menu-profile-paste", M("FILEBROWSER_PASTEPROFILE"),
+                      [this]() -> Gtk::MenuItem* { return pasteprof; });
+        addInlineIcon(profileRow.second, "menu-profile-partial", M("FILEBROWSER_PARTIALPASTEPROFILE"),
+                      [this]() -> Gtk::MenuItem* { return partpasteprof; });
+        addInlineAction(profileRow.second, "menu-profile-apply", M("FILEBROWSER_APPLYPROFILE"),
+                        [this]() {
+                            if (inlineApplyMenu_) {
+                                inlineApplyMenu_->popup_at_pointer(nullptr);
+                            }
+                        });
+        pmenu->attach(*profileRow.first, 0, 1, p, p + 1);
+        p++;
+
         // Rotate: counter-clockwise / clockwise (moved from the toolbar)
         auto rotateRow = makeInlineRow(M("FILEBROWSER_POPUPROTATE"));
-        {
-            auto addRotateIcon = [this, inlineZones, &rotateRow](const char* icon,
-                                                                 const Glib::ustring& tooltip,
-                                                                 int degrees) {
-                auto* img = Gtk::manage(new RTImage(icon, Gtk::ICON_SIZE_LARGE_TOOLBAR));
-                img->set_margin_start(6);
-                img->set_margin_end(6);
-                img->set_margin_top(4);
-                img->set_margin_bottom(4);
-                img->set_tooltip_text(tooltip);
-                img->set_opacity(0.65);
-                rotateRow.second->pack_start(*img, Gtk::PACK_SHRINK);
-                inlineZones->emplace_back(img, [this, degrees]() {
-                    requestRotateSelected(degrees);
-                });
-            };
-            addRotateIcon("rotate-left-90", M("TP_COARSETRAF_TOOLTIP_ROTLEFT"), 270);
-            addRotateIcon("rotate-right-90", M("TP_COARSETRAF_TOOLTIP_ROTRIGHT"), 90);
-        }
+        addInlineAction(rotateRow.second, "rotate-left-90", M("TP_COARSETRAF_TOOLTIP_ROTLEFT"),
+                        [this]() { requestRotateSelected(270); });
+        addInlineAction(rotateRow.second, "rotate-right-90", M("TP_COARSETRAF_TOOLTIP_ROTRIGHT"),
+                        [this]() { requestRotateSelected(90); });
         pmenu->attach(*rotateRow.first, 0, 1, p, p + 1);
         p++;
 
@@ -1504,9 +1559,9 @@ FileBrowser::FileBrowser () :
 
         // Padded horizontally by half the inter-icon gap so a row has no
         // dead zones: any click along the row lands on the nearest icon.
-        auto hitZoneAt = [inlineZones](double xRoot, double yRoot) -> Gtk::Widget* {
+        auto hitZoneAt = [inlineZones](double xRoot, double yRoot) -> InlineZone* {
             for (auto& zone : *inlineZones) {
-                Gtk::Widget* widget = zone.first;
+                Gtk::Widget* widget = zone.widget;
                 if (!widget->get_visible()) {
                     continue;
                 }
@@ -1525,47 +1580,55 @@ FileBrowser::FileBrowser () :
                 if (ix >= -8.0 && iy >= -6.0
                         && ix < allocation.get_width() + 8.0
                         && iy < allocation.get_height() + 6.0) {
-                    return widget;
+                    return &zone;
                 }
             }
             return nullptr;
         };
 
         pmenu->signal_button_press_event().connect(
-            [this, inlineZones, hitZoneAt](GdkEventButton* event) -> bool {
+            [this, hitZoneAt](GdkEventButton* event) -> bool {
                 if (!event || event->button != 1) {
                     return false;
                 }
 
-                Gtk::Widget* hit = hitZoneAt(event->x_root, event->y_root);
+                InlineZone* hit = hitZoneAt(event->x_root, event->y_root);
                 if (!hit) {
                     return false;
                 }
 
-                for (auto& zone : *inlineZones) {
-                    if (zone.first == hit) {
-                        const auto action = zone.second;
-                        pmenu->popdown();
-                        action();
-                        return true;
-                    }
+                const auto action = hit->action;
+                if (!hit->keepMenuOpen) {
+                    pmenu->popdown();
                 }
-                return false;
+                action();
+                return true;
             },
             false);
 
-        // Hover feedback: the icon under the pointer goes full-opacity
-        auto hoverState = std::make_shared<Gtk::Widget*>(nullptr);
-        auto setHover = [inlineZones, hoverState](Gtk::Widget* hovered) {
+        // Hover feedback: the icon under the pointer goes full-opacity, and
+        // auto-look icons live-preview their result on the open image
+        auto hoverState = std::make_shared<InlineZone*>(nullptr);
+        auto setHover = [this, hoverState](InlineZone* hovered) {
             if (*hoverState == hovered) {
                 return;
             }
-            if (*hoverState) {
-                (*hoverState)->set_opacity(0.65);
+
+            InlineZone* previous = *hoverState;
+            if (previous) {
+                previous->widget->set_opacity(0.65);
             }
             *hoverState = hovered;
             if (hovered) {
-                hovered->set_opacity(1.0);
+                hovered->widget->set_opacity(1.0);
+            }
+
+            const bool hadPreview = previous && previous->hoverPreview;
+            const bool hasPreview = hovered && hovered->hoverPreview;
+            if (hasPreview) {
+                startAutoEditHoverPreview(hovered->hoverPreview());
+            } else if (hadPreview) {
+                cancelAutoEditHoverPreview(nullptr, true);
             }
         };
 
@@ -1624,51 +1687,14 @@ FileBrowser::FileBrowser () :
             0, 1, position, position + 1);
         submenu->show_all();
 
+        // The auto looks live in the inline quick-action row at the top of
+        // the menu; this item (and its submenu) remain hidden as identity
+        // targets for menuItemActivated() and the hover-preview machinery.
         autoEditMenu = Gtk::manage(new MyImageMenuItem(M("FILEBROWSER_POPUPAUTOEDIT"), "palette-brush"));
         autoEditMenu->set_submenu(*submenu);
-        auto autoEditHitTest = [this](double rootX, double rootY, int rightInset) {
-            auto window = autoEditMenu->get_window();
-            if (!window) {
-                return false;
-            }
-
-            int windowX = 0;
-            int windowY = 0;
-            window->get_origin(windowX, windowY);
-            const auto allocation = autoEditMenu->get_allocation();
-            const double itemX = rootX - windowX - allocation.get_x();
-            const double itemY = rootY - windowY - allocation.get_y();
-            return itemX >= 0.0
-                && itemY >= 0.0
-                && itemX < allocation.get_width() - rightInset
-                && itemY < allocation.get_height();
-        };
-        pmenu->signal_button_press_event().connect(
-            [this, autoEditHitTest](GdkEventButton* event) {
-                constexpr int SUBMENU_HIT_WIDTH = 34;
-                if (event->button != 1) {
-                    return false;
-                }
-
-                if (autoEditHitTest(event->x_root, event->y_root, SUBMENU_HIT_WIDTH)) {
-                    menuItemActivated(autoEditMenu);
-                    pmenu->popdown();
-                    return true;
-                }
-                return false;
-            },
-            false);
-        pmenu->add_events(Gdk::POINTER_MOTION_MASK);
-        pmenu->signal_motion_notify_event().connect(
-            [this, autoEditHitTest](GdkEventMotion* event) {
-                constexpr int SUBMENU_HIT_WIDTH = 34;
-                if (autoEditHitTest(event->x_root, event->y_root, SUBMENU_HIT_WIDTH)) {
-                    startAutoEditHoverPreview(autoEditMenu);
-                }
-                return false;
-            },
-            false);
         pmenu->attach(*autoEditMenu, 0, 1, p, p + 1);
+        autoEditMenu->set_no_show_all(true);
+        autoEditMenu->hide();
     }
     p++;
     pmenu->attach (*Gtk::manage(autoLevel = new MyImageMenuItem (M("TP_ROTATE_AUTO_LEVEL"), "rotate-straighten-small")), 0, 1, p, p + 1);
@@ -2044,7 +2070,11 @@ FileBrowser::FileBrowser () :
         return topMenu;
     };
 
-    if (options.menuGroupProfileOperations) {
+    // Profile operations are surfaced as an inline quick-action row at the
+    // top of the menu; the items here stay hidden as identity targets so
+    // menuItemActivated(), accelerators (Ctrl+C/V…), and the inline row
+    // share one activation path.
+    {
         pmenu->attach (*Gtk::manage(menuProfileOperations = new MyImageMenuItem (M("FILEBROWSER_POPUPPROFILEOPERATIONS"), "menu-profile-apply")), 0, 1, p, p + 1);
         p++;
 
@@ -2053,7 +2083,6 @@ FileBrowser::FileBrowser () :
         submenuProfileOperations->attach (*Gtk::manage(copyprof = new MyImageMenuItem (M("FILEBROWSER_COPYPROFILE"), "menu-profile-copy")), 0, 1, p, p + 1);
         p++;
         submenuProfileOperations->attach (*Gtk::manage(copyprofSettings = new MyImageMenuItem (M("FILEBROWSER_COPYPROFILE_SETTINGS"), "gears")), 0, 1, p, p + 1);
-        copyprofSettings->set_submenu (*buildCopyFilterSubmenu());
         p++;
         submenuProfileOperations->attach (*Gtk::manage(pasteprof = new MyImageMenuItem (M("FILEBROWSER_PASTEPROFILE"), "menu-profile-paste")), 0, 1, p, p + 1);
         p++;
@@ -2070,24 +2099,35 @@ FileBrowser::FileBrowser () :
 
         submenuProfileOperations->show_all ();
         menuProfileOperations->set_submenu (*submenuProfileOperations);
-    } else {
-        pmenu->attach (*Gtk::manage(copyprof = new MyImageMenuItem (M("FILEBROWSER_COPYPROFILE"), "menu-profile-copy")), 0, 1, p, p + 1);
-        p++;
-        pmenu->attach (*Gtk::manage(copyprofSettings = new MyImageMenuItem (M("FILEBROWSER_COPYPROFILE_SETTINGS"), "gears")), 0, 1, p, p + 1);
-        copyprofSettings->set_submenu (*buildCopyFilterSubmenu());
-        p++;
-        pmenu->attach (*Gtk::manage(pasteprof = new MyImageMenuItem (M("FILEBROWSER_PASTEPROFILE"), "menu-profile-paste")), 0, 1, p, p + 1);
-        p++;
-        pmenu->attach (*Gtk::manage(partpasteprof = new MyImageMenuItem (M("FILEBROWSER_PARTIALPASTEPROFILE"), "menu-profile-partial")), 0, 1, p, p + 1);
-        p++;
-        pmenu->attach (*Gtk::manage(applyprof = new MyImageMenuItem (M("FILEBROWSER_APPLYPROFILE"), "menu-profile-apply")), 0, 1, p, p + 1);
-        p++;
-        pmenu->attach (*Gtk::manage(applypartprof = new MyImageMenuItem (M("FILEBROWSER_APPLYPROFILE_PARTIAL"), "menu-profile-apply-partial")), 0, 1, p, p + 1);
-        p++;
-        pmenu->attach (*Gtk::manage(resetdefaultprof = new MyImageMenuItem (M("FILEBROWSER_RESETDEFAULTPROFILE"), "menu-profile-reset")), 0, 1, p, p + 1);
-        p++;
-        pmenu->attach (*Gtk::manage(clearprof = new MyImageMenuItem (M("FILEBROWSER_CLEARPROFILE"), "menu-profile-clear")), 0, 1, p, p + 1);
-        p++;
+        menuProfileOperations->set_no_show_all(true);
+        menuProfileOperations->hide();
+    }
+
+    // Standalone dropdowns for the inline profile row: copy-settings
+    // filters and the apply options
+    inlineCopySettingsMenu_ = buildCopyFilterSubmenu();
+
+    inlineApplyMenu_ = new Gtk::Menu();
+    {
+        int ap = 0;
+        const auto addApplyForward = [this, &ap](const Glib::ustring& label, const char* icon,
+                                                 std::function<Gtk::MenuItem*()> identity) {
+            auto* item = Gtk::manage(new MyImageMenuItem(label, icon));
+            item->signal_activate().connect([this, identity]() {
+                menuItemActivated(identity());
+            });
+            inlineApplyMenu_->attach(*item, 0, 1, ap, ap + 1);
+            ++ap;
+        };
+        addApplyForward(M("FILEBROWSER_APPLYPROFILE"), "menu-profile-apply",
+                        [this]() -> Gtk::MenuItem* { return applyprof; });
+        addApplyForward(M("FILEBROWSER_APPLYPROFILE_PARTIAL"), "menu-profile-apply-partial",
+                        [this]() -> Gtk::MenuItem* { return applypartprof; });
+        addApplyForward(M("FILEBROWSER_RESETDEFAULTPROFILE"), "menu-profile-reset",
+                        [this]() -> Gtk::MenuItem* { return resetdefaultprof; });
+        addApplyForward(M("FILEBROWSER_CLEARPROFILE"), "menu-profile-clear",
+                        [this]() -> Gtk::MenuItem* { return clearprof; });
+        inlineApplyMenu_->show_all();
     }
 
 
@@ -2363,6 +2403,8 @@ FileBrowser::~FileBrowser ()
     ProfileStore::getInstance()->removeListener(this);
     delete pmenu;
     delete pmenuColorLabels;
+    delete inlineCopySettingsMenu_;
+    delete inlineApplyMenu_;
     delete[] amiExtProg;
 }
 
