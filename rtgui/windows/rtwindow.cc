@@ -1372,11 +1372,15 @@ void RTWindow::on_mainNB_switch_page (Gtk::Widget* widget, guint page_num)
                 fpanel->openSelectedInEditor();
             }
 
-            // Edit view always opens with the left sidebar collapsed (the
-            // left-edge hot strip re-expands it) — deliberately NOT synced
-            // from the browser, whose left panel is visible by default.
+            // Edit view opens with the left sidebar collapsed by default,
+            // but if the user manually expanded it last time they were in
+            // the editor, that choice sticks across view switches.
             if (isSingleTabMode() && epanel) {
-                epanel->collapseLeftSidebarForEdit();
+                if (App::get().options().editorShowLeftSidebar) {
+                    epanel->setLeftPanelVisible(true);
+                } else {
+                    epanel->collapseLeftSidebarForEdit();
+                }
             }
 
             // Collapse filter bar to prevent overlap with filmstrip
@@ -2074,8 +2078,11 @@ void RTWindow::MoveFileBrowserToEditor()
         fCatalog->tbRightPanel_1_visible (false);
 
         // Edit view opens with the left sidebar collapsed for maximum image
-        // space; the thin hot-strip at the window's left edge re-expands it.
-        epanel->collapseLeftSidebarForEdit();
+        // space (the thin left-edge hot-strip re-expands it) — unless the
+        // user manually kept it open last time they were in the editor.
+        if (!App::get().options().editorShowLeftSidebar) {
+            epanel->collapseLeftSidebarForEdit();
+        }
     }
 }
 

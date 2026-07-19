@@ -297,6 +297,7 @@ private:
     bool ratingPalettePinned_ = false;
     sigc::connection filterBarHoverConn_;
     Gtk::EventBox* leftEdgeExpander_ = nullptr;
+    bool programmaticSidebarChange_ = false;  // suppress preference writes during auto-collapse
 
 public:
     // Collapse the left sidebar when entering edit view (the left-edge

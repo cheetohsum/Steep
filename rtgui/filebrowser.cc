@@ -1598,27 +1598,36 @@ FileBrowser::FileBrowser () :
 
         // Padded horizontally by half the inter-icon gap so a row has no
         // dead zones: any click along the row lands on the nearest icon.
+        // Each zone's root-space origin is derived via translate_coordinates
+        // to its toplevel — mixing get_allocation() with the event window's
+        // origin double-counted the menu's internal offsets and shifted
+        // every hit zone right and below its icon.
         auto hitZoneAt = [inlineZones](double xRoot, double yRoot) -> InlineZone* {
             for (auto& zone : *inlineZones) {
                 Gtk::Widget* widget = zone.widget;
                 if (!widget->get_visible()) {
                     continue;
                 }
-                auto window = widget->get_window();
-                if (!window) {
+                Gtk::Widget* toplevel = widget->get_toplevel();
+                if (!toplevel || !toplevel->get_window()) {
                     continue;
                 }
 
-                int windowX = 0;
-                int windowY = 0;
-                window->get_origin(windowX, windowY);
-                const auto allocation = widget->get_allocation();
-                const double ix = xRoot - windowX - allocation.get_x();
-                const double iy = yRoot - windowY - allocation.get_y();
+                int inTopX = 0;
+                int inTopY = 0;
+                if (!widget->translate_coordinates(*toplevel, 0, 0, inTopX, inTopY)) {
+                    continue;
+                }
+                int topX = 0;
+                int topY = 0;
+                toplevel->get_window()->get_origin(topX, topY);
+
+                const double ix = xRoot - (topX + inTopX);
+                const double iy = yRoot - (topY + inTopY);
 
                 if (ix >= -5.0 && iy >= -5.0
-                        && ix < allocation.get_width() + 5.0
-                        && iy < allocation.get_height() + 5.0) {
+                        && ix < widget->get_allocated_width() + 5.0
+                        && iy < widget->get_allocated_height() + 5.0) {
                     return &zone;
                 }
             }

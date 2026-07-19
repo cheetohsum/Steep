@@ -91,7 +91,7 @@ public:
     void writeOptions();
 
 private:
-    static constexpr int THUMB_HEIGHT = 56;
+    static constexpr int THUMB_HEIGHT = 73;  // ~30% taller previews; card width unchanged
     static constexpr int CARD_MIN_WIDTH = 48;
     static constexpr unsigned int THUMB_START_DELAY_MS = 1200;
 

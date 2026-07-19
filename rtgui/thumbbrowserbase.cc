@@ -1583,11 +1583,12 @@ bool ThumbBrowserBase::applyTabModeEntryGeometry_(bool enable, unsigned int gene
         }
     }
 
-    // Browser mode gets a redraw from FileCatalog::enableTabMode ->
-    // filterChanged().
-    if (enable) {
-        redraw();
-    }
+    // Always re-arrange with the new entry geometry. The browser direction
+    // used to rely on FileCatalog::enableTabMode -> filterChanged() for its
+    // redraw, but when this pass is deferred by a busy entry lock it runs
+    // AFTER that redraw — the browser then kept filmstrip-sized cells and
+    // wrapped rows far short of the window width.
+    redraw();
 
     return false;
 }

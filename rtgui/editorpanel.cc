@@ -1054,10 +1054,10 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 
     const auto& options = App::get().options();
     hidehp->set_relief (Gtk::RELIEF_NONE);
-    hidehp->set_active (options.showHistory);
+    hidehp->set_active (options.editorShowLeftSidebar);
     hidehp->set_tooltip_markup (M ("MAIN_TOOLTIP_HIDEHP"));
 
-    if (options.showHistory) {
+    if (options.editorShowLeftSidebar) {
         hidehp->set_image (*iHistoryHide);
     } else {
         hidehp->set_image (*iHistoryShow);
@@ -2410,7 +2410,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     // Overlay layout: image area fills everything, sidebars float at edges
     hpanedr->add(*albumViewStack_);
 
-    if (!options.showHistory) {
+    if (!options.editorShowLeftSidebar) {
         leftbox->set_no_show_all(true);
         leftAnimFraction_ = 0.0;
     }
@@ -4289,7 +4289,12 @@ void EditorPanel::setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scal
 
     // A cache miss can finish after the RAW has already opened. Do not let
     // that late thumbnail detach the live processor or cover its edit output.
-    if (ipc && !sourceFile.empty() && sourceFile == fname) {
+    // Compare normalized path keys — a raw string compare let same-file
+    // previews through on case/separator differences, freezing the canvas
+    // behind the placeholder (only initialImageArrived clears it, and no
+    // new open ever happens for the same file).
+    if (ipc && !sourceFile.empty()
+            && editorAlbumPathKey(sourceFile.raw()) == editorAlbumPathKey(fname.raw())) {
         EDITOR_OPEN_LOG("[editorOpen] late quick preview ignored file=%s\n", sourceFile.c_str());
         return;
     }
@@ -5135,6 +5140,16 @@ void EditorPanel::refreshProcessingState (bool inProcessingP)
         val = 1.0;
         str = "PROGRESSBAR_PROCESSING";
     } else {
+        // A finished render of the open image must never stay hidden behind a
+        // stale thumbnail placeholder (same-file quick preview or an aborted
+        // switch): drop the overlay so the canvas shows the live result.
+        if (iareapanel && iareapanel->imageArea
+                && !quickPreviewFileName_.empty()
+                && editorAlbumPathKey(quickPreviewFileName_.raw()) == editorAlbumPathKey(fname.raw())) {
+            iareapanel->imageArea->setQuickPreviewFit(false);
+            quickPreviewFileName_.clear();
+        }
+
         // Set proc params of thumbnail. It saves it into the cache and updates the file browser.
         if (ipc && openThm && tpc->getChangedState()) {
             rtengine::procparams::ProcParams pparams;
@@ -5246,7 +5261,11 @@ void EditorPanel::info_toggled ()
 void EditorPanel::collapseLeftSidebarForEdit ()
 {
     if (hidehp && hidehp->get_active()) {
+        // Programmatic collapse — must not overwrite the user's remembered
+        // sidebar preference (options.editorShowLeftSidebar).
+        programmaticSidebarChange_ = true;
         hidehp->set_active(false);  // triggers hideHistoryActivated
+        programmaticSidebarChange_ = false;
     } else if (leftEdgeExpander_) {
         leftEdgeExpander_->set_visible(hidehp && !hidehp->get_active());
     }
@@ -5256,7 +5275,11 @@ void EditorPanel::hideHistoryActivated ()
 {
     auto& options = App::get().mut_options();
     const bool show = hidehp->get_active();
-    options.showHistory = show;
+    // Only genuine user toggles update the remembered preference; the
+    // programmatic collapse on view switches must not.
+    if (!programmaticSidebarChange_) {
+        options.editorShowLeftSidebar = show;
+    }
     hidehp->set_image(show ? *iHistoryHide : *iHistoryShow);
 
     // The left-edge hot strip is only needed while the sidebar is hidden

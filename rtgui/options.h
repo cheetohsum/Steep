@@ -294,6 +294,7 @@ public:
     int autoCullExposureTolerance;  // 0-100, higher = stricter exposure culling
     bool sameThumbSize;     // Will use only one thumb size for the file browser and the single editor tab, and avoid recomputing them
     bool showHistory;
+    bool editorShowLeftSidebar;  // user's last left-sidebar choice in edit view (default collapsed)
     int showFilePanelState; // 0: normal, 1: maximized, 2: normal, 3: hidden
     bool showInfo;
     bool mainNBVertical;  // main notebook vertical tabs?

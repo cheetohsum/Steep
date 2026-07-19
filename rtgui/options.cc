@@ -430,6 +430,7 @@ void Options::setDefaults()
     autoCullExposureTolerance = 50;
     sameThumbSize = false;               // preferring speed of switch between file browser and single editor tab
     showHistory = true;
+    editorShowLeftSidebar = false;
     showFilePanelState = 0;             // Not used anymore ; was the thumb strip state
     showInfo = false;
     cropPPI = 600;
@@ -492,6 +493,9 @@ void Options::setDefaults()
     thumbnailZoomRatios.push_back(0.6);
     thumbnailZoomRatios.push_back(0.8);
     thumbnailZoomRatios.push_back(1.0);
+    thumbnailZoomRatios.push_back(1.25);
+    thumbnailZoomRatios.push_back(1.55);
+    thumbnailZoomRatios.push_back(2.0);
     overlayedFileNames = false;
     filmStripOverlayedFileNames = false;
     internalThumbIfUntouched = true;    // if TRUE, only fast, internal preview images are taken if the image is not edited yet
@@ -1500,6 +1504,12 @@ void Options::readFromFile(Glib::ustring fname)
 
                 if (keyFile.has_key("File Browser", "ThumbnailZoomRatios")) {
                     thumbnailZoomRatios = keyFile.get_double_list("File Browser", "ThumbnailZoomRatios");
+
+                    // Migrate lists saved before the slider range was
+                    // doubled: same lower steps, new 2x upper end.
+                    if (thumbnailZoomRatios.empty() || thumbnailZoomRatios.back() <= 1.0) {
+                        thumbnailZoomRatios = {0.2, 0.3, 0.45, 0.6, 0.8, 1.0, 1.25, 1.55, 2.0};
+                    }
                 }
 
                 if (keyFile.has_key("File Browser", "OverlayedFileNames")) {
@@ -1818,6 +1828,10 @@ void Options::readFromFile(Glib::ustring fname)
 
                 if (keyFile.has_key("GUI", "ShowHistory")) {
                     showHistory = keyFile.get_boolean("GUI", "ShowHistory");
+                }
+
+                if (keyFile.has_key("GUI", "EditorShowLeftSidebar")) {
+                    editorShowLeftSidebar = keyFile.get_boolean("GUI", "EditorShowLeftSidebar");
                 }
 
                 if (keyFile.has_key("GUI", "ShowFilePanelState")) {
@@ -2886,6 +2900,7 @@ void Options::saveToFile(Glib::ustring fname)
         keyFile.set_boolean("GUI", "RememberZoomAndPan", rememberZoomAndPan);
         keyFile.set_integer("GUI", "LastCropSize", lastCropSize);
         keyFile.set_boolean("GUI", "ShowHistory", showHistory);
+        keyFile.set_boolean("GUI", "EditorShowLeftSidebar", editorShowLeftSidebar);
         keyFile.set_integer("GUI", "ShowFilePanelState", showFilePanelState);
         keyFile.set_boolean("GUI", "ShowInfo", showInfo);
         keyFile.set_boolean("GUI", "MainNBVertical", mainNBVertical);
