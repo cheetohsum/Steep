@@ -2148,46 +2148,44 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     // Color management toolbar (buttons moved to Options menu, but keep object alive)
     colorMgmtToolBar.reset (new ColorManagementToolbar (ipc));
 
-    int col = 0;
+    (void)iops;  // grid layout retired — a true center widget below
+
+    // The nav/zoom cluster is a real GtkBox center widget: it stays put no
+    // matter how the left (progress bar) or right content changes width.
+    // Spacer-based centering shifted it whenever a side section resized.
+    Gtk::Box* iopsRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 2));
+    iopsRow->set_name ("IopsPanel");
 
     // --- Left section ---
-    iops->attach(*hidehp, col++, 0, 1, 1);
+    iopsRow->pack_start(*hidehp, Gtk::PACK_SHRINK);
     // send_to_external moved to filmstrip action bar
-    // The progress bar sits in a fixed-width holder: its show/hide must not
-    // change the row's left-section width, or the centered nav/zoom cluster
-    // jumps right while a photo loads and snaps back when it finishes.
+    // Fixed-width holder so the progress bar's show/hide is layout-neutral
     {
         auto* progressHolder = Gtk::manage(new Gtk::Box());
         progressHolder->set_size_request(300, -1);
         progressHolder->pack_start(*progressLabel, Gtk::PACK_SHRINK);
-        iops->attach(*progressHolder, col++, 0, 1, 1);
+        iopsRow->pack_start(*progressHolder, Gtk::PACK_SHRINK);
     }
-
-    // --- Left spacer (expands to push nav buttons to center) ---
-    Gtk::Label* spacerLeft = Gtk::manage(new Gtk::Label(""));
-    setExpandAlignProperties(spacerLeft, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_FILL);
-    iops->attach(*spacerLeft, col++, 0, 1, 1);
 
     // --- Centered navigation buttons with zoom panel in center ---
-    if (!App::get().isSimpleEditor() && !options.tabbedUI) {
-        iops->attach(*navPrev, col++, 0, 1, 1);
+    {
+        Gtk::Box* navCluster = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 2));
+        if (!App::get().isSimpleEditor() && !options.tabbedUI) {
+            navCluster->pack_start(*navPrev, Gtk::PACK_SHRINK);
+        }
+        navCluster->pack_start(*iareapanel->imageArea->zoomPanel, Gtk::PACK_SHRINK);
+        if (!App::get().isSimpleEditor() && !options.tabbedUI) {
+            navCluster->pack_start(*navNext, Gtk::PACK_SHRINK);
+        }
+        iopsRow->set_center_widget(*navCluster);
     }
-    iops->attach(*iareapanel->imageArea->zoomPanel, col++, 0, 1, 1);
-    if (!App::get().isSimpleEditor() && !options.tabbedUI) {
-        iops->attach(*navNext, col++, 0, 1, 1);
-    }
-
-    // --- Right spacer (expands to push nav buttons to center) ---
-    Gtk::Label* spacerRight = Gtk::manage(new Gtk::Label(""));
-    setExpandAlignProperties(spacerRight, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_FILL);
-    iops->attach(*spacerRight, col++, 0, 1, 1);
 
     // --- Right section ---
-    iops->attach(*tbRightPanel_1, col++, 0, 1, 1);
+    iopsRow->pack_end(*tbRightPanel_1, Gtk::PACK_SHRINK);
 
     MyScrolledToolbar *stb2 = Gtk::manage(new MyScrolledToolbar());
     stb2->set_name("EditorToolbarBottom");
-    stb2->add(*iops);
+    stb2->add(*iopsRow);
 
     editbox->pack_start (*stb2, Gtk::PACK_SHRINK, 0);
     editorToolbarBottom_ = stb2;

@@ -229,6 +229,11 @@ void CurveEditorGroup::setCurveGraphSize(int size)
     }
 }
 
+Gtk::Widget* CurveEditorGroup::takeDiagonalCenterButton()
+{
+    return diagonalSubGroup ? diagonalSubGroup->takeCenterButton() : nullptr;
+}
+
 /*
  * Create all the widgets now that the curve list is complete
  * This method should handle all curve number correctly, i.e. eventually display the curve type buttons

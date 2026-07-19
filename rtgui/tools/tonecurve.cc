@@ -233,6 +233,14 @@ ToneCurve::ToneCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_EXPOSURE_LABEL
                     cogBtn->get_style_context()->add_provider(css, PRIO);
                 } catch (...) {}
             }
+            // Midpoint/center button sits between the B chip and the cog
+            if (Gtk::Widget* centerBtn = curveEditorG->takeDiagonalCenterButton()) {
+                setExpandAlignProperties(centerBtn, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+                centerBtn->set_margin_start(2);
+                headerRow->attach(*centerBtn, 7, 0, 1, 1);
+                centerBtn->show_all();
+            }
+
             setExpandAlignProperties(cogBtn, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
             cogBtn->set_margin_start(2);
             headerRow->attach(*cogBtn, 8, 0, 1, 1);

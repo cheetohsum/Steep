@@ -105,10 +105,10 @@ RGBCurves::RGBCurves () : FoldableToolPanel(this, TOOL_NAME, M("TP_RGBCURVES_LAB
         }
 
         // Right spacer balances the expanding label so the channel cluster
-        // (and the cog directly after B) stays centered.
+        // (with midpoint + cog directly after B) stays centered.
         auto* rightSpacer = Gtk::manage(new Gtk::Box());
         setExpandAlignProperties(rightSpacer, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
-        headerRow->attach(*rightSpacer, 7, 0, 1, 1);
+        headerRow->attach(*rightSpacer, 8, 0, 1, 1);
 
         // Create cog button — toggles editing controls visibility
         auto* cogBtn = Gtk::manage(new Gtk::Button());
@@ -130,10 +130,18 @@ RGBCurves::RGBCurves () : FoldableToolPanel(this, TOOL_NAME, M("TP_RGBCURVES_LAB
                 cogBtn->get_style_context()->add_provider(css, PRIO);
             } catch (...) {}
         }
-        // The cog sits immediately to the right of the B channel chip
+        // Midpoint/center button between the B chip and the cog
+        if (Gtk::Widget* centerBtn = curveEditorG->takeDiagonalCenterButton()) {
+            setExpandAlignProperties(centerBtn, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+            centerBtn->set_margin_start(2);
+            headerRow->attach(*centerBtn, 6, 0, 1, 1);
+            centerBtn->show_all();
+        }
+
+        // The cog sits immediately to the right of the midpoint button
         setExpandAlignProperties(cogBtn, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
         cogBtn->set_margin_start(2);
-        headerRow->attach(*cogBtn, 6, 0, 1, 1);
+        headerRow->attach(*cogBtn, 7, 0, 1, 1);
 
         cogBtn->signal_clicked().connect([this]() {
             curveEditorG->toggleCompactDisplay();

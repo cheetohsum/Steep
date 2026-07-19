@@ -93,6 +93,7 @@ public:
     void setCompactDisplay(bool compact);  // Hide button boxes and coord adjusters
     void toggleCompactDisplay();  // Toggle and refresh display
     void setCurveGraphSize(int size);  // Set preferred curve graph size in pixels
+    Gtk::Widget* takeDiagonalCenterButton();  // Detach midpoint button for a tool header
 
 protected:
     //void curveTypeToggled ();

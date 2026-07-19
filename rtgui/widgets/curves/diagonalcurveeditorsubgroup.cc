@@ -175,23 +175,13 @@ DiagonalCurveEditorSubGroup::DiagonalCurveEditorSubGroup (CurveEditorGroup* prt,
     customCoordAdjuster = Gtk::manage (new CoordinateAdjuster(customCurve, this));
     customCoordAdjuster->get_style_context()->add_class("curve-spinbuttonbox");
 
-    // Button box position: 0=above, 1=right, 2=below, 3=left
+    // The button box now lives inline with the preset selector (attached
+    // there after the preset row is built); only the coordinate adjuster
+    // stays with the curve.
     customCurveGrid->add(*customCurveBox);
     customCurve->set_hexpand(true);
-
-    if (options.curvebboxpos == 0) {
-        customCurveGrid->attach_next_to(*custombbox, *customCurveBox, Gtk::POS_TOP, 1, 1);
-        customCurveGrid->attach_next_to(*customCoordAdjuster, *customCurveBox, Gtk::POS_BOTTOM, 1, 1);
-    } else if (options.curvebboxpos == 1) {
-        customCurveGrid->attach_next_to(*custombbox, *customCurveBox, Gtk::POS_RIGHT, 1, 1);
-        customCurveGrid->attach_next_to(*customCoordAdjuster, *customCurveBox, Gtk::POS_BOTTOM, 2, 1);
-    } else if (options.curvebboxpos == 2) {
-        customCurveGrid->attach_next_to(*customCoordAdjuster, *customCurveBox, Gtk::POS_BOTTOM, 1, 1);
-        customCurveGrid->attach_next_to(*custombbox, *customCoordAdjuster, Gtk::POS_BOTTOM, 1, 1);
-    } else if (options.curvebboxpos == 3) {
-        customCurveGrid->attach_next_to(*custombbox, *customCurveBox, Gtk::POS_LEFT, 1, 1);
-        customCurveGrid->attach_next_to(*customCoordAdjuster, *custombbox, Gtk::POS_BOTTOM, 2, 1);
-    }
+    customCurveGrid->attach_next_to(*customCoordAdjuster, *customCurveBox, Gtk::POS_BOTTOM, 1, 1);
+    custombbox_ = custombbox;
 
     customCurveGrid->show_all ();
     customCoordAdjuster->hide();
@@ -268,23 +258,12 @@ DiagonalCurveEditorSubGroup::DiagonalCurveEditorSubGroup (CurveEditorGroup* prt,
     NURBSCoordAdjuster = Gtk::manage (new CoordinateAdjuster(NURBSCurve, this));
     NURBSCoordAdjuster->get_style_context()->add_class("curve-spinbuttonbox");
 
-    // Button box position: 0=above, 1=right, 2=below, 3=left
+    // Button box lives inline with the preset selector (attached below);
+    // only the coordinate adjuster stays with the curve.
     NURBSCurveGrid->add(*NURBSCurveBox);
     NURBSCurve->set_hexpand(true);
-
-    if (options.curvebboxpos == 0) {
-        NURBSCurveGrid->attach_next_to(*NURBSbbox, *NURBSCurveBox, Gtk::POS_TOP, 1, 1);
-        NURBSCurveGrid->attach_next_to(*NURBSCoordAdjuster, *NURBSCurveBox, Gtk::POS_BOTTOM, 1, 1);
-    } else if (options.curvebboxpos == 1) {
-        NURBSCurveGrid->attach_next_to(*NURBSbbox, *NURBSCurveBox, Gtk::POS_RIGHT, 1, 1);
-        NURBSCurveGrid->attach_next_to(*NURBSCoordAdjuster, *NURBSCurveBox, Gtk::POS_BOTTOM, 2, 1);
-    } else if (options.curvebboxpos == 2) {
-        NURBSCurveGrid->attach_next_to(*NURBSCoordAdjuster, *NURBSCurveBox, Gtk::POS_BOTTOM, 1, 1);
-        NURBSCurveGrid->attach_next_to(*NURBSbbox, *NURBSCoordAdjuster, Gtk::POS_BOTTOM, 1, 1);
-    } else if (options.curvebboxpos == 3) {
-        NURBSCurveGrid->attach_next_to(*NURBSbbox, *NURBSCurveBox, Gtk::POS_LEFT, 1, 1);
-        NURBSCurveGrid->attach_next_to(*NURBSCoordAdjuster, *NURBSbbox, Gtk::POS_BOTTOM, 2, 1);
-    }
+    NURBSCurveGrid->attach_next_to(*NURBSCoordAdjuster, *NURBSCurveBox, Gtk::POS_BOTTOM, 1, 1);
+    NURBSbbox_ = NURBSbbox;
 
     NURBSCurveGrid->show_all ();
     NURBSCoordAdjuster->hide();
@@ -419,7 +398,9 @@ DiagonalCurveEditorSubGroup::DiagonalCurveEditorSubGroup (CurveEditorGroup* prt,
     // parametric curve end
 
 
-    // Preset combo + center button (shared across Spline/CatmullRom/NURBS views)
+    // Preset combo (shared across Spline/CatmullRom/NURBS views) with the
+    // per-view editing buttons inline to its right. The center button is
+    // created here but hosted by the tool's header (takeCenterButton).
     Gtk::Grid* presetRow = Gtk::manage(new Gtk::Grid());
     presetRow->set_orientation(Gtk::ORIENTATION_HORIZONTAL);
     presetRow->set_column_spacing(4);
@@ -434,15 +415,19 @@ DiagonalCurveEditorSubGroup::DiagonalCurveEditorSubGroup (CurveEditorGroup* prt,
     presetCombo_->set_active(0);
     presetCombo_->set_hexpand(false);
     presetCombo_->set_halign(Gtk::ALIGN_FILL);
-    presetCombo_->set_size_request(168, -1);
+    presetCombo_->set_size_request(148, -1);
 
     centerBtn_ = Gtk::manage(new Gtk::Button());
     centerBtn_->set_image(*Gtk::manage(new RTImage("crosshair-node-curve")));
     centerBtn_->set_tooltip_text(M("CURVEEDITOR_TOOLTIPCENTER"));
     centerBtn_->set_relief(Gtk::RELIEF_NONE);
-
+    // Owned here until a tool claims it for its header row
     presetRow->add(*presetCombo_);
     presetRow->add(*centerBtn_);
+    setExpandAlignProperties(custombbox, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    setExpandAlignProperties(NURBSbbox, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    presetRow->add(*custombbox);
+    presetRow->add(*NURBSbbox);
 
     presetRow->set_name("CurvePresetRow");
     presetRow->show_all();
@@ -763,6 +748,19 @@ void DiagonalCurveEditorSubGroup::refresh(CurveEditor *curveToRefresh)
 /*
  * Switch the editor widgets to the currently edited curve
  */
+Gtk::Widget* DiagonalCurveEditorSubGroup::takeCenterButton()
+{
+    if (centerBtn_) {
+        if (auto* p = centerBtn_->get_parent()) {
+            // Hold an extra ref across the re-parent so the managed widget
+            // survives removal from its container.
+            centerBtn_->reference();
+            static_cast<Gtk::Container*>(p)->remove(*centerBtn_);
+        }
+    }
+    return centerBtn_;
+}
+
 void DiagonalCurveEditorSubGroup::switchGUI()
 {
 
@@ -878,6 +876,9 @@ void DiagonalCurveEditorSubGroup::switchGUI()
         case (DCT_CatumullRom): {
             Gtk::Grid* presetRow = static_cast<Gtk::Grid*>(presetCombo_->get_parent());
             customCurveGrid->attach_next_to(*presetRow, Gtk::POS_TOP, 1, 1);
+            // Only this view's inline editing buttons are visible
+            if (NURBSbbox_) { NURBSbbox_->set_no_show_all(true); NURBSbbox_->hide(); }
+            if (custombbox_) { custombbox_->set_no_show_all(false); }
             presetRow->show_all();
             customCurve->setPoints(tp == DCT_Spline ? dCurve->customCurveEd : dCurve->catmullRomCurveEd);
             customCurve->setColorProvider(dCurve->getCurveColorProvider(), dCurve->getCurveCallerId());
@@ -927,6 +928,9 @@ void DiagonalCurveEditorSubGroup::switchGUI()
         case (DCT_NURBS): {
             Gtk::Grid* presetRow = static_cast<Gtk::Grid*>(presetCombo_->get_parent());
             NURBSCurveGrid->attach_next_to(*presetRow, Gtk::POS_TOP, 1, 1);
+            // Only this view's inline editing buttons are visible
+            if (custombbox_) { custombbox_->set_no_show_all(true); custombbox_->hide(); }
+            if (NURBSbbox_) { NURBSbbox_->set_no_show_all(false); }
             presetRow->show_all();
             NURBSCurve->setPoints (dCurve->NURBSCurveEd);
             NURBSCurve->setColorProvider(dCurve->getCurveColorProvider(), dCurve->getCurveCallerId());
@@ -944,44 +948,32 @@ void DiagonalCurveEditorSubGroup::switchGUI()
             break;
         }
 
-        // In compact display mode, hide button boxes, preset row, and coordinate adjusters
+        // In compact display mode, hide the preset row (which hosts the
+        // inline editing buttons) and coordinate adjusters
         if (compactDisplay_) {
             Gtk::Grid* presetRow = static_cast<Gtk::Grid*>(presetCombo_->get_parent());
             if (presetRow) { presetRow->set_no_show_all(true); presetRow->hide(); }
 
-            auto* bbox = editPointCustom->get_parent();
-            if (bbox) { bbox->set_no_show_all(true); bbox->hide(); }
             customCoordAdjuster->set_no_show_all(true);
             customCoordAdjuster->hide();
-
-            auto* nbbox = editPointNURBS->get_parent();
-            if (nbbox && nbbox != bbox) { nbbox->set_no_show_all(true); nbbox->hide(); }
             NURBSCoordAdjuster->set_no_show_all(true);
             NURBSCoordAdjuster->hide();
 
             customCurve->set_hexpand(fixedGraphSize_ <= 0);
         } else {
-            // Re-show preset row, button boxes and coordinate adjusters when compact mode is off
+            // Re-show the preset row and coordinate adjusters. The bboxes'
+            // no_show_all flags were set per active view in the switch above,
+            // so show_all only reveals the current view's buttons.
             Gtk::Grid* presetRow = static_cast<Gtk::Grid*>(presetCombo_->get_parent());
             if (presetRow) { presetRow->set_no_show_all(false); presetRow->show_all(); }
 
-            auto* bbox = editPointCustom->get_parent();
-            if (bbox) {
-                bbox->set_no_show_all(false);
-                bbox->show_all();
-                // Make button box NOT expand so it doesn't steal space from curve
-                bbox->set_hexpand(false);
-                bbox->set_vexpand(false);
+            for (Gtk::Grid* bbox : {custombbox_, NURBSbbox_}) {
+                if (bbox) {
+                    bbox->set_hexpand(false);
+                    bbox->set_vexpand(false);
+                }
             }
             customCoordAdjuster->set_no_show_all(false);
-
-            auto* nbbox = editPointNURBS->get_parent();
-            if (nbbox && nbbox != bbox) {
-                nbbox->set_no_show_all(false);
-                nbbox->show_all();
-                nbbox->set_hexpand(false);
-                nbbox->set_vexpand(false);
-            }
             NURBSCoordAdjuster->set_no_show_all(false);
 
             customCurve->set_hexpand(fixedGraphSize_ <= 0);

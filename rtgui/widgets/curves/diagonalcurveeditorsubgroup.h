@@ -82,6 +82,8 @@ protected:
     Gtk::ComboBoxText* presetCombo_;
     sigc::connection   presetComboConn_;
     Gtk::Button*       centerBtn_;
+    Gtk::Grid*         custombbox_ = nullptr;
+    Gtk::Grid*         NURBSbbox_ = nullptr;
     bool               applyingPreset_;
     int                fixedGraphSize_;
 
@@ -92,6 +94,8 @@ public:
     ~DiagonalCurveEditorSubGroup() override;
 
     DiagonalCurveEditor* addCurve(Glib::ustring curveLabel = "");
+    /// Detach the midpoint/center button so a tool can host it in its header
+    Gtk::Widget* takeCenterButton();
     void updateBackgroundHistogram (CurveEditor* ce) override;
     void setCurveGraphSize(int size) override;
     void switchGUI() override;

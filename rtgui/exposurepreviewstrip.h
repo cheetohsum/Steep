@@ -62,7 +62,7 @@ private:
     void handleDrag(double x);
     void cancelThumbnailGeneration();
 
-    static constexpr int STRIP_HEIGHT = 47;  // ~30% taller previews
+    static constexpr int STRIP_HEIGHT = 60;
     static constexpr int STRIP_WIDTH = 220;
     static constexpr int NUM_THUMBS = 6;
     static constexpr unsigned int THUMB_START_DELAY_MS = 1200;
