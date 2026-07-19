@@ -82,6 +82,10 @@ public:
     PreviewModePanel* previewModePanel;
     ImageArea* iLinkedImageArea; // link to the counterpart view while before/after is enabled
     bool isBeforeView = false;   // true for the 'before' (left) pane of before/after
+    // True while the before/after split is showing. Unlike iLinkedImageArea
+    // (nulled during a content-only refresh on image switch), this persists,
+    // so snug positioning doesn't bounce the after pane to center and back.
+    bool inBeforeAfterSplit = false;
     bool suppressZoomSync_ = false; // prevents zoom sync recursion between before/after views
 
     // Right-click context menu for the before/after view (snug-to-divider)

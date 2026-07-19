@@ -6544,6 +6544,9 @@ void EditorPanel::beforeAfterToggled ()
         iareapanel->setBeforeAfterViews (nullptr, iareapanel);
         iareapanel->imageArea->iLinkedImageArea = nullptr;
         iareapanel->imageArea->isBeforeView = false;
+        if (!keepSplit) {
+            iareapanel->imageArea->inBeforeAfterSplit = false;
+        }
         delete beforeIarea;
         beforeIarea = nullptr;
 
@@ -6597,6 +6600,10 @@ void EditorPanel::beforeAfterToggled ()
         beforeAfterCancel_ = cancel;
 
         beforeIarea = new ImageAreaPanel ();
+
+        // Snug positioning applies to the after pane from the first frame —
+        // waiting for the async before-load made it start centered and hop.
+        iareapanel->imageArea->inBeforeAfterSplit = true;
 
         if (!keepSplit) {
             int HeaderBoxHeight = 15;
@@ -6701,6 +6708,8 @@ void EditorPanel::beforeAfterToggled ()
                 beforeIarea->imageArea->iLinkedImageArea = iareapanel->imageArea;
                 beforeIarea->imageArea->isBeforeView = true;
                 iareapanel->imageArea->isBeforeView = false;
+                beforeIarea->imageArea->inBeforeAfterSplit = true;
+                iareapanel->imageArea->inBeforeAfterSplit = true;
 
                 iareapanel->setBeforeAfterViews (beforeIarea, iareapanel);
                 beforeIarea->setBeforeAfterViews (beforeIarea, iareapanel);

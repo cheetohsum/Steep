@@ -27,6 +27,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -172,7 +173,7 @@ public:
 
         std::unique_lock<std::mutex> lock(mutex());
         cv().wait(lock, []() {
-            return active() < kMaxConcurrentDecodes;
+            return active() < maxConcurrentDecodes();
         });
         ++active();
     }
@@ -191,10 +192,20 @@ public:
     }
 
 private:
-    // Scaled thumbnail JPEGs contend badly when many large camera JPEGs decode
-    // at once. Keep this below the preview-loader worker count so cold-folder
-    // reads do not saturate storage with large JPEG scans.
-    static constexpr int kMaxConcurrentDecodes = 3;
+    // Bound concurrent scaled-thumbnail decodes so cold-folder reads do not
+    // saturate storage. A fixed cap of 3 was the cold-load bottleneck on big
+    // machines: the preview loader's 8-12 workers all queued behind it and
+    // per-file wall time was dominated by waiting. Scale with the hardware —
+    // the preview loader's own ioPressure feedback still narrows the worker
+    // pool (and thereby decode demand) when storage is actually slow.
+    static int maxConcurrentDecodes()
+    {
+        static const int value = []() {
+            const int cores = static_cast<int>(std::thread::hardware_concurrency());
+            return std::max(3, std::min(8, cores / 2));
+        }();
+        return value;
+    }
 
     static std::mutex& mutex()
     {

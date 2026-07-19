@@ -2977,14 +2977,37 @@ void ToolPanelCoordinator::buildQuickEditBar()
     quickEditBar_->set_margin_top(2);
     quickEditBar_->set_margin_bottom(4);
 
-    // GtkMenu's own pointer tracking can miss items when the menu opened
-    // from a hover rather than a click — drive item selection from raw
-    // motion so highlight + preview always follow the pointer, and close
-    // the menu (ending any hover preview) when the pointer leaves it.
-    const auto wireHoverMenuBehavior = [](Gtk::Menu* menu, Gtk::MenuButton* drop) {
-        menu->add_events(Gdk::POINTER_MOTION_MASK | Gdk::LEAVE_NOTIFY_MASK);
+    // Root-space rect of a widget — the only coordinate space that is
+    // consistent between menu windows, their items, and normal widgets.
+    const auto widgetRootRect = [](Gtk::Widget* w, int& x, int& y, int& width, int& height) -> bool {
+        Gtk::Widget* top = w->get_toplevel();
+        if (!top || !top->get_window()) {
+            return false;
+        }
+        int ix = 0, iy = 0;
+        if (!w->translate_coordinates(*top, 0, 0, ix, iy)) {
+            return false;
+        }
+        int ox = 0, oy = 0;
+        top->get_window()->get_origin(ox, oy);
+        x = ox + ix;
+        y = oy + iy;
+        width = w->get_allocated_width();
+        height = w->get_allocated_height();
+        return true;
+    };
 
-        menu->signal_motion_notify_event().connect([menu](GdkEventMotion* ev) -> bool {
+    // GtkMenu's own pointer tracking can miss items when the menu opened
+    // from a hover rather than a click. Item selection is driven from raw
+    // motion matched in ROOT coordinates (event-window coordinates are
+    // offset by the menu's internal borders and selected the wrong item),
+    // and closing is driven by polling the pointer position — crossing
+    // events at a grabbed popup's edge are unreliable, which left menus
+    // stuck open.
+    const auto wireHoverMenuBehavior = [widgetRootRect](Gtk::Menu* menu, Gtk::MenuButton* drop) {
+        menu->add_events(Gdk::POINTER_MOTION_MASK);
+
+        menu->signal_motion_notify_event().connect([menu, widgetRootRect](GdkEventMotion* ev) -> bool {
             if (!ev) {
                 return false;
             }
@@ -2993,50 +3016,66 @@ void ToolPanelCoordinator::buildQuickEditBar()
                 if (!mi || !mi->get_visible() || !mi->get_sensitive()) {
                     continue;
                 }
-                const auto alloc = mi->get_allocation();
-                if (ev->y >= alloc.get_y() && ev->y < alloc.get_y() + alloc.get_height()) {
-                    menu->select_item(*mi);
+                int rx = 0, ry = 0, rw = 0, rh = 0;
+                if (!widgetRootRect(mi, rx, ry, rw, rh)) {
+                    continue;
+                }
+                if (ev->y_root >= ry && ev->y_root < ry + rh) {
+                    if (menu->get_active() != mi) {
+                        menu->select_item(*mi);
+                    }
                     break;
                 }
             }
             return false;
         });
 
-        menu->signal_leave_notify_event().connect([menu, drop](GdkEventCrossing* ev) -> bool {
-            if (!ev || ev->detail == GDK_NOTIFY_INFERIOR) {
-                return false;
-            }
+        auto pollConn = std::make_shared<sigc::connection>();
+        auto outsideTicks = std::make_shared<int>(0);
 
-            // Still inside the menu's own bounds (item-to-item crossing)?
-            if (auto win = menu->get_window()) {
-                int wx = 0, wy = 0;
-                win->get_origin(wx, wy);
-                const double pad = 6.0;
-                if (ev->x_root >= wx - pad && ev->y_root >= wy - pad
-                        && ev->x_root < wx + menu->get_allocated_width() + pad
-                        && ev->y_root < wy + menu->get_allocated_height() + pad) {
-                    return false;
-                }
-            }
-
-            // Over the dropdown arrow button itself? Keep the menu open —
-            // closing here would fight the button's hover-open and flicker.
-            Gtk::Widget* toplevel = drop->get_toplevel();
-            if (toplevel && toplevel->get_window()) {
-                int ix = 0, iy = 0;
-                if (drop->translate_coordinates(*toplevel, 0, 0, ix, iy)) {
-                    int ox = 0, oy = 0;
-                    toplevel->get_window()->get_origin(ox, oy);
-                    if (ev->x_root >= ox + ix && ev->y_root >= oy + iy
-                            && ev->x_root < ox + ix + drop->get_allocated_width()
-                            && ev->y_root < oy + iy + drop->get_allocated_height()) {
+        menu->signal_map().connect([menu, drop, pollConn, outsideTicks, widgetRootRect]() {
+            *outsideTicks = 0;
+            pollConn->disconnect();
+            *pollConn = Glib::signal_timeout().connect(
+                [menu, drop, outsideTicks, widgetRootRect]() -> bool {
+                    if (!menu->get_mapped()) {
                         return false;
                     }
-                }
-            }
+                    auto display = Gdk::Display::get_default();
+                    auto seat = display ? display->get_default_seat() : Glib::RefPtr<Gdk::Seat>();
+                    auto pointer = seat ? seat->get_pointer() : Glib::RefPtr<Gdk::Device>();
+                    if (!pointer) {
+                        return true;
+                    }
+                    Glib::RefPtr<Gdk::Screen> screen;
+                    int px = 0, py = 0;
+                    pointer->get_position(screen, px, py);
 
-            drop->set_active(false);  // toggled handler ends the hover preview
-            return false;
+                    const int pad = 8;
+                    bool inside = false;
+                    int rx = 0, ry = 0, rw = 0, rh = 0;
+                    if (widgetRootRect(menu, rx, ry, rw, rh)) {
+                        inside = px >= rx - pad && py >= ry - pad
+                              && px < rx + rw + pad && py < ry + rh + pad;
+                    }
+                    if (!inside && widgetRootRect(drop, rx, ry, rw, rh)) {
+                        inside = px >= rx && py >= ry && px < rx + rw && py < ry + rh;
+                    }
+
+                    if (inside) {
+                        *outsideTicks = 0;
+                        return true;
+                    }
+                    if (++*outsideTicks >= 2) {
+                        drop->set_active(false);  // toggled handler ends the hover preview
+                        return false;
+                    }
+                    return true;
+                },
+                120);
+        });
+        menu->signal_unmap().connect([pollConn]() {
+            pollConn->disconnect();
         });
     };
 

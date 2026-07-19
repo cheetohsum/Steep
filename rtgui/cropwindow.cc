@@ -3133,7 +3133,10 @@ void CropWindow::setDisplayPosition (hidpi::LogicalCoord pos) {
     if (iarea && App::get().options().beforeAfterSnug) {
         if (iarea->isBeforeView) {
             pos.x = std::max(0, 2 * pos.x);
-        } else if (iarea->iLinkedImageArea) {
+        } else if (iarea->inBeforeAfterSplit) {
+            // Keyed on the persistent split flag, NOT the linked-view
+            // pointer: the link is nulled mid-switch while the before pane
+            // rebuilds, which bounced the after image to center and back.
             pos.x = 0;
         }
     }
