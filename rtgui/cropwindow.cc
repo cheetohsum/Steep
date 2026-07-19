@@ -2357,14 +2357,15 @@ void CropWindow::zoomIn (bool toCursor, int cursorX, int cursorY)
         }
     }
 
-    // Skip 3 major steps for stronger zoom
+    // Two major steps per wheel tick — three was too aggressive a jump
+    constexpr int kWheelZoomMajors = 2;
     int z = cropZoom + 1;
     int majorsSkipped = 0;
-    while (z < int(zoomSteps.size()) && majorsSkipped < 3) {
+    while (z < int(zoomSteps.size()) && majorsSkipped < kWheelZoomMajors) {
         if (zoomSteps[z].is_major) {
             ++majorsSkipped;
         }
-        if (majorsSkipped < 3) {
+        if (majorsSkipped < kWheelZoomMajors) {
             ++z;
         }
     }
@@ -2389,14 +2390,15 @@ void CropWindow::zoomOut (bool toCursor, int cursorX, int cursorY)
     }
 
     zoomVersion = exposeVersion;
-    // Skip 3 major steps for stronger zoom
+    // Two major steps per wheel tick — three zoomed out far too much
+    constexpr int kWheelZoomMajors = 2;
     int z = cropZoom - 1;
     int majorsSkipped = 0;
-    while (z >= 0 && majorsSkipped < 3) {
+    while (z >= 0 && majorsSkipped < kWheelZoomMajors) {
         if (zoomSteps[z].is_major) {
             ++majorsSkipped;
         }
-        if (majorsSkipped < 3) {
+        if (majorsSkipped < kWheelZoomMajors) {
             --z;
         }
     }

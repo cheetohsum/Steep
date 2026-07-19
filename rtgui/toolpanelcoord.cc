@@ -2977,6 +2977,69 @@ void ToolPanelCoordinator::buildQuickEditBar()
     quickEditBar_->set_margin_top(2);
     quickEditBar_->set_margin_bottom(4);
 
+    // GtkMenu's own pointer tracking can miss items when the menu opened
+    // from a hover rather than a click — drive item selection from raw
+    // motion so highlight + preview always follow the pointer, and close
+    // the menu (ending any hover preview) when the pointer leaves it.
+    const auto wireHoverMenuBehavior = [](Gtk::Menu* menu, Gtk::MenuButton* drop) {
+        menu->add_events(Gdk::POINTER_MOTION_MASK | Gdk::LEAVE_NOTIFY_MASK);
+
+        menu->signal_motion_notify_event().connect([menu](GdkEventMotion* ev) -> bool {
+            if (!ev) {
+                return false;
+            }
+            for (auto* child : menu->get_children()) {
+                auto* mi = dynamic_cast<Gtk::MenuItem*>(child);
+                if (!mi || !mi->get_visible() || !mi->get_sensitive()) {
+                    continue;
+                }
+                const auto alloc = mi->get_allocation();
+                if (ev->y >= alloc.get_y() && ev->y < alloc.get_y() + alloc.get_height()) {
+                    menu->select_item(*mi);
+                    break;
+                }
+            }
+            return false;
+        });
+
+        menu->signal_leave_notify_event().connect([menu, drop](GdkEventCrossing* ev) -> bool {
+            if (!ev || ev->detail == GDK_NOTIFY_INFERIOR) {
+                return false;
+            }
+
+            // Still inside the menu's own bounds (item-to-item crossing)?
+            if (auto win = menu->get_window()) {
+                int wx = 0, wy = 0;
+                win->get_origin(wx, wy);
+                const double pad = 6.0;
+                if (ev->x_root >= wx - pad && ev->y_root >= wy - pad
+                        && ev->x_root < wx + menu->get_allocated_width() + pad
+                        && ev->y_root < wy + menu->get_allocated_height() + pad) {
+                    return false;
+                }
+            }
+
+            // Over the dropdown arrow button itself? Keep the menu open —
+            // closing here would fight the button's hover-open and flicker.
+            Gtk::Widget* toplevel = drop->get_toplevel();
+            if (toplevel && toplevel->get_window()) {
+                int ix = 0, iy = 0;
+                if (drop->translate_coordinates(*toplevel, 0, 0, ix, iy)) {
+                    int ox = 0, oy = 0;
+                    toplevel->get_window()->get_origin(ox, oy);
+                    if (ev->x_root >= ox + ix && ev->y_root >= oy + iy
+                            && ev->x_root < ox + ix + drop->get_allocated_width()
+                            && ev->y_root < oy + iy + drop->get_allocated_height()) {
+                        return false;
+                    }
+                }
+            }
+
+            drop->set_active(false);  // toggled handler ends the hover preview
+            return false;
+        });
+    };
+
     // Applied-flash: a brief accent pulse confirms the click landed (the
     // flat buttons otherwise give no press feedback at all).
     const auto flashQuickEditButton = [](Gtk::Button* btn) {
@@ -3068,6 +3131,7 @@ void ToolPanelCoordinator::buildQuickEditBar()
             endQuickPreview(true);
         }
     });
+    wireHoverMenuBehavior(autoMenu, autoDrop);
 
     auto* bwButton = Gtk::manage(new Gtk::Button("B&W"));
     bwButton->set_name("QuickEditButton");
@@ -3153,6 +3217,7 @@ void ToolPanelCoordinator::buildQuickEditBar()
             endQuickPreview(true);
         }
     });
+    wireHoverMenuBehavior(bwMenu, bwDrop);
 
     auto* autoSplit = Gtk::manage(new Gtk::Overlay());
     autoSplit->set_name("QuickEditSplit");
