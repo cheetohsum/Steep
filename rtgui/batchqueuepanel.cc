@@ -139,8 +139,8 @@ BatchQueuePanel::BatchQueuePanel (FileCatalog* aFileCatalog) : parent(nullptr)
     saveFormatPanel = Gtk::manage (new SaveFormatPanel ());
     setExpandAlignProperties(saveFormatPanel, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_START);
 
-    // Optional cap on exported image resolution (long edge, px)
-    auto* maxSizeBox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 4));
+    // Optional cap on exported image resolution, tucked under a collapsed
+    // "Options" expander so the format frame stays clean
     auto* maxSizeEnabled = Gtk::manage (new Gtk::CheckButton (M("QUEUE_MAXSIZE_ENABLED")));
     maxSizeEnabled->set_tooltip_text (M("QUEUE_MAXSIZE_ENABLED_HINT"));
     auto* maxSizeSpin = Gtk::manage (new Gtk::SpinButton ());
@@ -148,27 +148,41 @@ BatchQueuePanel::BatchQueuePanel (FileCatalog* aFileCatalog) : parent(nullptr)
     maxSizeSpin->set_increments (128, 512);
     maxSizeSpin->set_digits (0);
     maxSizeSpin->set_tooltip_text (M("QUEUE_MAXSIZE_HINT"));
+
+    auto* maxSizeRow = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 4));
+    auto* maxSizeLabel = Gtk::manage (new Gtk::Label (M("QUEUE_MAXSIZE_LABEL")));
     auto* maxSizePx = Gtk::manage (new Gtk::Label (M("QUEUE_MAXSIZE_PX")));
+    maxSizeRow->set_margin_start (22);  // indent under the checkbox
+    maxSizeRow->pack_start (*maxSizeLabel, Gtk::PACK_SHRINK);
+    maxSizeRow->pack_start (*maxSizeSpin, Gtk::PACK_SHRINK);
+    maxSizeRow->pack_start (*maxSizePx, Gtk::PACK_SHRINK);
+
+    auto* formatOptionsBox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_VERTICAL, 2));
+    formatOptionsBox->set_margin_top (2);
+    formatOptionsBox->pack_start (*maxSizeEnabled, Gtk::PACK_SHRINK);
+    formatOptionsBox->pack_start (*maxSizeRow, Gtk::PACK_SHRINK);
+
+    auto* formatOptionsExpander = Gtk::manage (new Gtk::Expander (M("QUEUE_FORMAT_OPTIONS")));
+    formatOptionsExpander->add (*formatOptionsBox);
     {
         const auto& opts = App::get().options();
         maxSizeEnabled->set_active (opts.exportMaxSizeEnabled);
         maxSizeSpin->set_value (opts.exportMaxLongEdge);
-        maxSizeSpin->set_sensitive (opts.exportMaxSizeEnabled);
+        maxSizeRow->set_sensitive (opts.exportMaxSizeEnabled);
+        // Surface the section when the cap is active so it isn't forgotten
+        formatOptionsExpander->set_expanded (opts.exportMaxSizeEnabled);
     }
-    maxSizeEnabled->signal_toggled().connect ([maxSizeEnabled, maxSizeSpin]() {
+    maxSizeEnabled->signal_toggled().connect ([maxSizeEnabled, maxSizeRow]() {
         App::get().mut_options().exportMaxSizeEnabled = maxSizeEnabled->get_active();
-        maxSizeSpin->set_sensitive (maxSizeEnabled->get_active());
+        maxSizeRow->set_sensitive (maxSizeEnabled->get_active());
     });
     maxSizeSpin->signal_value_changed().connect ([maxSizeSpin]() {
         App::get().mut_options().exportMaxLongEdge = maxSizeSpin->get_value_as_int();
     });
-    maxSizeBox->pack_start (*maxSizeEnabled, Gtk::PACK_SHRINK);
-    maxSizeBox->pack_start (*maxSizeSpin, Gtk::PACK_SHRINK);
-    maxSizeBox->pack_start (*maxSizePx, Gtk::PACK_SHRINK);
 
     auto* formatVBox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_VERTICAL, 2));
     formatVBox->pack_start (*saveFormatPanel, Gtk::PACK_SHRINK);
-    formatVBox->pack_start (*maxSizeBox, Gtk::PACK_SHRINK, 2);
+    formatVBox->pack_start (*formatOptionsExpander, Gtk::PACK_SHRINK, 2);
     fformat->add (*formatVBox);
 
     // Watermark settings
