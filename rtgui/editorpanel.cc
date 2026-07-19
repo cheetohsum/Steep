@@ -4307,6 +4307,26 @@ void EditorPanel::setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scal
         return;
     }
 
+    // With remember-zoom-and-pan active, a successor with identical
+    // dimensions keeps the current zoom and pan (initialImageArrived skips
+    // the re-fit) — showing the fitted placeholder would hop fit->remembered
+    // and back. Keep the live canvas (bridge frame) as the transition.
+    {
+        const auto& opts = App::get().options();
+        if (opts.rememberZoomAndPan && opts.prevdemo == PD_Sidecar && ipc && scale > 0.0) {
+            const int newW = (int)std::lround(pixbuf->get_width() * scale);
+            const int newH = (int)std::lround(pixbuf->get_height() * scale);
+            const int curW = ipc->getFullWidth();
+            const int curH = ipc->getFullHeight();
+            if (curW > 0 && curH > 0
+                    && std::abs(newW - curW) <= 2 && std::abs(newH - curH) <= 2) {
+                EDITOR_OPEN_LOG("[editorOpen] quick preview skipped remember-zoom same-dims file=%s\n",
+                                sourceFile.c_str());
+                return;
+            }
+        }
+    }
+
     const bool hasDeferredOpen = deferredOpenConn_.connected();
     const bool hasDeferredCropEnable = deferredCropEnableConn_.connected();
 

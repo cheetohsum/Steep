@@ -1787,12 +1787,12 @@ void ThumbBrowserBase::redrawNeeded (ThumbBrowserEntryBase* entry)
     // HOMBRE:DELETE ME?
     GThreadLock tLock; // Acquire the GUI
 
-    if (entry->insideWindow (0, 0, internal.get_width(), internal.get_height())) {
-        if (!internal.isDirty ()) {
-            internal.setDirty ();
-            internal.queue_draw ();
-        }
-    }
+    // Unconditional: the viewport + dirty-coalescing guards could strand a
+    // finished thumbnail (dirty set while its queue_draw was swallowed, e.g.
+    // unmapped browser) with no repaint until the user clicked. GTK
+    // coalesces queue_draw calls per frame, so this is cheap.
+    internal.setDirty ();
+    internal.queue_draw ();
 }
 
 

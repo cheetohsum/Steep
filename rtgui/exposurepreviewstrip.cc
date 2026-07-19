@@ -132,7 +132,28 @@ void PreviewStrip::setCurrentParams(const rtengine::procparams::ProcParams& para
 {
     // A strip-generated update is ignored while its gesture is active. External
     // edits establish a new neutral center instead of compounding the old look.
-    if (isDragging_) return;
+    if (isDragging_) {
+        // Guard against a lost button-release (a popup can steal the grab
+        // mid-scrub): if no button is actually held, the drag ended and the
+        // strip must not stay frozen ignoring every future update.
+        bool buttonHeld = false;
+        if (auto win = get_window()) {
+            auto display = Gdk::Display::get_default();
+            auto seat = display ? display->get_default_seat() : Glib::RefPtr<Gdk::Seat>();
+            auto pointer = seat ? seat->get_pointer() : Glib::RefPtr<Gdk::Device>();
+            if (pointer) {
+                int px = 0, py = 0;
+                Gdk::ModifierType mask = static_cast<Gdk::ModifierType>(0);
+                win->get_device_position(pointer, px, py, mask);
+                buttonHeld = (mask & (Gdk::BUTTON1_MASK | Gdk::BUTTON2_MASK | Gdk::BUTTON3_MASK)) != 0;
+            }
+        }
+        if (buttonHeld) {
+            return;
+        }
+        isDragging_ = false;
+        dragPending_ = false;
+    }
 
     currentParams_ = std::make_shared<rtengine::procparams::ProcParams>(params);
     scrubberPos_ = 0.0;
