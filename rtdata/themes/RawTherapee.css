@@ -410,6 +410,17 @@ menu separator {
     padding: 0;
     min-height: 0;
 }
+/* Each nesting level (FileCatalog, FilmstripPanel, FileBrowser, internal)
+   contributed a 1-2px border in filmstrip mode; strip them so the strip
+   hugs the thumbnails. */
+#EditorFilmstripPane #FileCatalog,
+#EditorFilmstripPane #FilmstripPanel,
+#EditorFilmstripPane #FileBrowser,
+#EditorFilmstripPane drawingarea {
+    border: none;
+    margin: 0;
+    padding: 0;
+}
 
 #FileCatalog {
     background-color: #252a32;

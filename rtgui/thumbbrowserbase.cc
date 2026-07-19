@@ -1144,10 +1144,17 @@ Gtk::SizeRequestMode ThumbBrowserBase::Internal::get_request_mode_vfunc () const
 void ThumbBrowserBase::Internal::get_preferred_height_vfunc (int &minimum_height, int &natural_height) const
 {
     if (parent && parent->arrangement == ThumbBrowserBase::TB_Horizontal) {
-        // Filmstrip mode: report actual content height so the parent Box
-        // doesn't over-allocate vertical space (the hardcoded 80px natural
-        // height was creating visible padding above/below thumbnails).
-        int contentH = parent->getEffectiveHeight();
+        // Filmstrip mode: report the entry height only. getEffectiveHeight()
+        // adds the horizontal scrollbar's height, but the scrollbar lives in
+        // its own grid row — including it here double-counted it and left a
+        // scrollbar-sized band of padding below the thumbnails.
+        int contentH = 0;
+        {
+            MYREADERLOCK(l, parent->entryRW);
+            if (!parent->drawableEntries_.empty()) {
+                contentH = parent->drawableEntries_.front()->getEffectiveHeight();
+            }
+        }
         if (contentH <= 0) {
             contentH = parent->getThumbnailHeight();
         }

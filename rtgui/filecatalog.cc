@@ -1631,11 +1631,10 @@ void FileCatalog::enableTabMode(bool enable)
         // Hide the revealer widget entirely so it contributes zero pixels
         filterRevealer_->hide();
 
-        if (options.showFilmStripToolBar) {
-            showToolBar();
-        } else {
-            hideToolBar();
-        }
+        // The catalog toolbar is always hidden in filmstrip mode — its
+        // functions (search, filters, zoom) live elsewhere in the editor,
+        // and the leftover bar only added an empty band above the thumbs.
+        hideToolBar();
 
         fltrVbox1->hide();
         exifInfo->set_active( options.filmStripShowFileNames );
@@ -1682,6 +1681,7 @@ void FileCatalog::enableTabMode(bool enable)
     // In tab mode this clears the large height from browser mode;
     // in browser mode this recalculates the proper height.
     refreshHeight();
+
 
     if (!enable) {
         // Reapply the browser's own filter to clear any editor-applied filter
@@ -4307,7 +4307,8 @@ void FileCatalog::updateFBQueryTB (bool /*singleRow*/)
 
 void FileCatalog::updateFBToolBarVisibility (bool showFilmStripToolBar)
 {
-    if (showFilmStripToolBar) {
+    // The catalog toolbar never shows in filmstrip mode (see enableTabMode)
+    if (showFilmStripToolBar && !inTabMode) {
         showToolBar();
     } else {
         hideToolBar();
@@ -4766,16 +4767,7 @@ bool FileCatalog::handleShortcutKey (GdkEventKey* event)
         switch (event->keyval) {
         case GDK_KEY_t:
         case GDK_KEY_T:
-            if (inTabMode) {
-                if (options.showFilmStripToolBar) {
-                    hideToolBar();
-                } else {
-                    showToolBar();
-                }
-
-                options.showFilmStripToolBar = !options.showFilmStripToolBar;
-            }
-
+            // Catalog toolbar is retired in filmstrip mode — nothing to toggle
             return true;
         }
     }
@@ -4784,17 +4776,7 @@ bool FileCatalog::handleShortcutKey (GdkEventKey* event)
         switch (event->keyval) {
         case GDK_KEY_t:
         case GDK_KEY_T:
-            if (inTabMode) {
-                if (options.showFilmStripToolBar) {
-                    hideToolBar();
-                } else {
-                    showToolBar();
-                }
-
-                options.showFilmStripToolBar = !options.showFilmStripToolBar;
-            }
-
-            refreshHeight();
+            // Catalog toolbar is retired in filmstrip mode — nothing to toggle
             return true;
         }
     }

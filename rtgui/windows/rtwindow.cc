@@ -1372,9 +1372,11 @@ void RTWindow::on_mainNB_switch_page (Gtk::Widget* widget, guint page_num)
                 fpanel->openSelectedInEditor();
             }
 
-            // Sync left panel state: browser → editor
-            if (isSingleTabMode() && epanel && fpanel) {
-                epanel->setLeftPanelVisible(fpanel->isLeftPanelVisible());
+            // Edit view always opens with the left sidebar collapsed (the
+            // left-edge hot strip re-expands it) — deliberately NOT synced
+            // from the browser, whose left panel is visible by default.
+            if (isSingleTabMode() && epanel) {
+                epanel->collapseLeftSidebarForEdit();
             }
 
             // Collapse filter bar to prevent overlap with filmstrip

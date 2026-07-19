@@ -328,7 +328,7 @@ void ThumbBrowserEntryBase::updateBackBuffer ()
 
     const auto& options = App::get().options();
     if ((parent->getLocation() != ThumbBrowserBase::THLOC_EDITOR && options.showFileNames && options.overlayedFileNames)
-            || (parent->getLocation() == ThumbBrowserBase::THLOC_EDITOR && options.filmStripShowFileNames && options.filmStripOverlayedFileNames)) {
+            || (parent->getLocation() == ThumbBrowserBase::THLOC_EDITOR && options.filmStripShowFileNames)) {
         cc->begin_new_path ();
         cc->rectangle (istartx, istarty, previewSize.width, fnlabh + dtlabh + exlabh + 2 * iofs_y);
 
@@ -358,7 +358,7 @@ void ThumbBrowserEntryBase::updateBackBuffer ()
         }
 
         if ((parent->getLocation() != ThumbBrowserBase::THLOC_EDITOR && (!options.showFileNames || !options.overlayedFileNames))
-                || (parent->getLocation() == ThumbBrowserBase::THLOC_EDITOR && (!options.filmStripShowFileNames || !options.filmStripOverlayedFileNames))) {
+                || (parent->getLocation() == ThumbBrowserBase::THLOC_EDITOR && !options.filmStripShowFileNames)) {
             // Draw the transparent black background around icons
             cc->begin_new_path ();
             cc->move_to(istartx - igap, istarty);
@@ -402,7 +402,7 @@ void ThumbBrowserEntryBase::updateBackBuffer ()
         int textposx_fn, textposx_ex, textposx_dt, textposy, textw;
 
         if (! ((parent->getLocation() != ThumbBrowserBase::THLOC_EDITOR && options.overlayedFileNames)
-                || (parent->getLocation() == ThumbBrowserBase::THLOC_EDITOR && options.filmStripOverlayedFileNames)) ) {
+                || parent->getLocation() == ThumbBrowserBase::THLOC_EDITOR) ) {
             textposx_fn = sideMargin;
             textposx_ex = sideMargin;
             textposx_dt = sideMargin;
@@ -619,8 +619,9 @@ void ThumbBrowserEntryBase::resize (int h)
     int infow = 0;
     int infoh = 0;
 
-    if (    (parent->getLocation() != ThumbBrowserBase::THLOC_EDITOR && options.showFileNames && !options.overlayedFileNames)
-            || (parent->getLocation() == ThumbBrowserBase::THLOC_EDITOR && options.filmStripShowFileNames && !options.filmStripOverlayedFileNames)) {
+    // Filmstrip (editor) never reserves a text row — file names there are
+    // always drawn as overlays so the strip stays tight around the images.
+    if (parent->getLocation() != ThumbBrowserBase::THLOC_EDITOR && options.showFileNames && !options.overlayedFileNames) {
         // dimensions of the info text
         getTextSizes (infow, infoh);
         infoh += textGap;
@@ -638,8 +639,7 @@ void ThumbBrowserEntryBase::resize (int h)
 
     width = previewSize.width + 2 * sideMargin + 2 * borderWidth;
 
-    if (    (parent->getLocation() != ThumbBrowserBase::THLOC_EDITOR && options.showFileNames && !options.overlayedFileNames)
-            || (parent->getLocation() == ThumbBrowserBase::THLOC_EDITOR && options.filmStripShowFileNames && !options.filmStripOverlayedFileNames)) {
+    if (parent->getLocation() != ThumbBrowserBase::THLOC_EDITOR && options.showFileNames && !options.overlayedFileNames) {
         width = previewSize.width + 2 * sideMargin + 2 * borderWidth;
 
         if (width < infow + 2 * sideMargin + 2 * borderWidth) {
@@ -747,6 +747,48 @@ void ThumbBrowserEntryBase::draw (Cairo::RefPtr<Cairo::Context> cc)
     cc->clip();
     cc->set_source(backBuffer->getSurface(), x_offset, y_offset);
     cc->paint();
+
+    // Selection highlight: accent frame + soft inner glow drawn just inside
+    // the image bounds so nothing is clipped even in the tight filmstrip.
+    if (selected && previewSize.width > 12 && previewSize.height > 12) {
+        const double ar = 100.0 / 255.0, ag = 160.0 / 255.0, ab = 1.0;  // theme accent
+        const double px = x_offset + prevPos.x;
+        const double py = y_offset + prevPos.y;
+        const double pw = previewSize.width;
+        const double ph = previewSize.height;
+
+        auto roundedInset = [&cc, px, py, pw, ph](double inset, double rad) {
+            const double x0 = px + inset, y0 = py + inset;
+            const double w = pw - 2.0 * inset, h = ph - 2.0 * inset;
+            cc->begin_new_path();
+            cc->arc(x0 + w - rad, y0 + rad, rad, -G_PI / 2.0, 0);
+            cc->arc(x0 + w - rad, y0 + h - rad, rad, 0, G_PI / 2.0);
+            cc->arc(x0 + rad, y0 + h - rad, rad, G_PI / 2.0, G_PI);
+            cc->arc(x0 + rad, y0 + rad, rad, G_PI, 1.5 * G_PI);
+            cc->close_path();
+        };
+
+        cc->set_line_join(Cairo::LINE_JOIN_ROUND);
+
+        // Soft glow bleeding inward from the frame
+        roundedInset(4.0, 3.0);
+        cc->set_source_rgba(ar, ag, ab, 0.14);
+        cc->set_line_width(5.0);
+        cc->stroke();
+
+        // Crisp accent frame hugging the image edge
+        roundedInset(1.25, 3.5);
+        cc->set_source_rgba(ar, ag, ab, 0.95);
+        cc->set_line_width(2.5);
+        cc->stroke();
+
+        // White hairline inside the accent for extra pop
+        roundedInset(3.25, 2.5);
+        cc->set_source_rgba(1.0, 1.0, 1.0, 0.30);
+        cc->set_line_width(1.0);
+        cc->stroke();
+    }
+
     cc->restore();
 
     // Rating/label/pick overlays draw directly on the image in every view
