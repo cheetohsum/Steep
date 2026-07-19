@@ -279,18 +279,24 @@ Steep has the same base dependencies as RawTherapee, plus optional extras.
 ### Linux
 
 ```bash
-# Install dependencies (Debian/Ubuntu)
-sudo apt install build-essential cmake git \
+# Install dependencies (Debian/Ubuntu/Mint)
+sudo apt update
+sudo apt install -y build-essential cmake git \
   libgtk-3-dev libgtkmm-3.0-dev \
-  libraw-dev liblensfun-dev liblcms2-dev \
-  libiptcdata0-dev librsvg2-dev \
+  liblensfun-dev liblensfun-bin liblcms2-dev \
+  libiptcdata0-dev librsvg2-dev libcanberra-gtk3-dev \
   libtiff-dev libjpeg-dev libpng-dev \
+  libgif-dev libwebp-dev libwebpdemux2 \
   zlib1g-dev libexpat1-dev libfftw3-dev \
-  libexiv2-dev libjxl-dev
+  libbrotli-dev libinih-dev gettext \
+  libexiv2-dev
+
+# Optional: JPEG XL support (available on Ubuntu 24.04+/Mint 22+)
+sudo apt install -y libjxl-dev || true
 
 # Clone
 git clone https://github.com/cheetohsum/Steep.git
-cd RawTherapee
+cd Steep
 
 # Configure
 mkdir build && cd build
@@ -305,6 +311,10 @@ make -j$(nproc)
 # Install
 sudo make install
 ```
+
+If cmake reports a missing package (e.g. `exiv2>=0.24 not found`), install the
+matching `-dev` package (`libexiv2-dev` in that example) and re-run cmake.
+On older releases `libtiff-dev` may be named `libtiff5-dev`.
 
 Pre-built Linux AppImages (x86_64 and ARM64) are available from the [Nightly Releases](https://github.com/cheetohsum/Steep/releases/tag/nightly-github-actions).
 
