@@ -167,6 +167,14 @@ BatchQueuePanel::BatchQueuePanel (FileCatalog* aFileCatalog) : parent(nullptr)
     pack_start (*topBox, Gtk::PACK_SHRINK);
     topBox->set_name("BatchQueueButtonsMainContainer");
 
+    // Placeholder expander for the fast-export settings; filled by
+    // embedFastExportSettings() once the file panel hands them over
+    fastExportExpander_ = Gtk::manage(new Gtk::Expander(M("MAIN_TAB_EXPORT")));
+    fastExportExpander_->set_expanded(false);
+    fastExportExpander_->set_no_show_all(true);
+    fastExportExpander_->hide();
+    pack_start(*fastExportExpander_, Gtk::PACK_SHRINK, 4);
+
     topBox->pack_start (*bbox, Gtk::PACK_SHRINK, 4);
     topBox->pack_start (*fdir, Gtk::PACK_SHRINK, 4);
     topBox->pack_start (*fformat, Gtk::PACK_SHRINK, 4);
@@ -501,6 +509,19 @@ void BatchQueuePanel::populateTemplateHelpBuffer(Glib::RefPtr<Gtk::TextBuffer> b
 
     pos = buffer->insert(pos, "\n");
     options = savedOptions; // Do not add any lines in this function below here
+}
+
+void BatchQueuePanel::embedFastExportSettings (Gtk::Widget* widget)
+{
+    if (!widget || !fastExportExpander_) {
+        return;
+    }
+
+    widget->set_size_request(-1, 320);
+    fastExportExpander_->add(*widget);
+    widget->show_all();
+    fastExportExpander_->set_no_show_all(false);
+    fastExportExpander_->show();
 }
 
 void BatchQueuePanel::addBatchQueueJobs(const std::vector<BatchQueueEntry*>& entries, bool head)

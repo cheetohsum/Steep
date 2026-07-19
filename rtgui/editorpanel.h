@@ -294,6 +294,16 @@ private:
     Gtk::Revealer* colorLabelRevealer_;
     sigc::connection ratingPaletteCloseConn_;
     sigc::connection ratingPaletteOpenConn_;
+    bool ratingPalettePinned_ = false;
+    sigc::connection filterBarHoverConn_;
+    Gtk::EventBox* leftEdgeExpander_ = nullptr;
+
+public:
+    // Collapse the left sidebar when entering edit view (the left-edge
+    // hot strip re-expands it)
+    void collapseLeftSidebarForEdit ();
+
+private:
 
     // Filmstrip flag/reject
     Gtk::Button* filmstripFlagBtn_;

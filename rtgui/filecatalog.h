@@ -188,6 +188,13 @@ private:
     Gtk::ToggleButton* searchToggle_ = nullptr;
     Gtk::Revealer* searchRevealer_ = nullptr;
 
+    // Metadata (EXIF) filters popover in the browser filter bar
+    Gtk::MenuButton* metadataFilterButton_ = nullptr;
+    Gtk::Popover* metadataFilterPopover_ = nullptr;
+public:
+    void embedMetadataFilterPanel (Gtk::Widget* panel);
+private:
+
     // Debounced thumbnail-zoom application
     sigc::connection zoomSliderApplyConn_;
     int lastAppliedZoomHeight_ = -1;

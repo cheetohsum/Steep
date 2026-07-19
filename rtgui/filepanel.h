@@ -110,6 +110,10 @@ public:
     // Fade browser content without affecting the left sidebar
     void setContentOpacity (double opacity);
 
+    // Fast-export settings widget (former Fast Export tab content), to be
+    // embedded into the Export/queue tab by RTWindow
+    Gtk::Widget* takeFastExportSettingsWidget () { return fastExportSettingsWidget_; }
+
     // Returns sidebar insets for queue overlay positioning
     void getQueueOverlayInsets (int& left, int& top, int& right) const;
     void closeAlbumView ();  // close album view + deselect sidebar
@@ -141,6 +145,7 @@ private:
     PlacesBrowser* placesBrowser;
     RecentBrowser* recentBrowser;
     AlbumBrowser* albumBrowser_;
+    Gtk::Widget* fastExportSettingsWidget_ = nullptr;
 
     void onAlbumSelected (const std::set<std::string>& whitelist);
     void onAlbumViewRequested (const Glib::ustring& albumName, const std::vector<Glib::ustring>& files);

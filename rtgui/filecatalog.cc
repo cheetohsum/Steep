@@ -3334,6 +3334,33 @@ void FileCatalog::showRejectsPopover ()
     rejectsPopover_->popup();
 }
 
+void FileCatalog::embedMetadataFilterPanel (Gtk::Widget* panel)
+{
+    if (!panel || metadataFilterButton_) {
+        return;
+    }
+
+    // A dropdown in the filter bar hosting the metadata (EXIF) filters:
+    // aperture, shutter, ISO, focal length, exposure compensation, camera
+    // and lens. The panel keeps its existing filter wiring.
+    metadataFilterButton_ = Gtk::manage(new Gtk::MenuButton());
+    metadataFilterButton_->set_image(*Gtk::manage(new RTImage("gears", Gtk::ICON_SIZE_BUTTON)));
+    metadataFilterButton_->set_relief(Gtk::RELIEF_NONE);
+    metadataFilterButton_->set_tooltip_markup(M("FILEBROWSER_METADATAFILTERHINT"));
+
+    metadataFilterPopover_ = Gtk::manage(new Gtk::Popover(*metadataFilterButton_));
+    panel->set_size_request(280, 420);
+    metadataFilterPopover_->add(*panel);
+    metadataFilterPopover_->set_position(Gtk::POS_BOTTOM);
+    panel->show_all();
+    metadataFilterButton_->set_popover(*metadataFilterPopover_);
+
+    if (hbToolBar1) {
+        hbToolBar1->pack_start(*metadataFilterButton_, Gtk::PACK_SHRINK, 0);
+        metadataFilterButton_->show_all();
+    }
+}
+
 void FileCatalog::reapplyBrowserFilter ()
 {
     fileBrowser->applyFilter (getFilter ());

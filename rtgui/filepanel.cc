@@ -2510,13 +2510,21 @@ FilePanel::FilePanel () :
     tpcPaned->pack1 (*tpcBox, false, true);
     tpcPaned->pack2 (*history, true, false);
 
-    rightNotebook->append_page (*sFilterPanel, *filtLab);
-    if (!options.inspectorWindow)
-        rightNotebook->append_page (*inspectorPanel, *inspectLab);
-    rightNotebook->append_page (*tpcPaned, *devLab);
-    //rightNotebook->append_page (*taggingBox, *tagLab); commented out: currently the tab is empty ...
-    rightNotebook->append_page (*sExportPanel, *exportLab);
+    // The legacy right-side tabs are retired: metadata filters moved into
+    // the browser filter bar's Metadata popover, fast-export settings into
+    // the Export (queue) tab, and Inspect/Batch-Edit tabs are gone. The
+    // batch coordinator (tpc) and panels stay alive for param routing.
+    (void)filtLab;
+    (void)inspectLab;
+    (void)devLab;
+    (void)exportLab;
+    if (fileCatalog) {
+        fileCatalog->embedMetadataFilterPanel(sFilterPanel);
+    }
+    fastExportSettingsWidget_ = sExportPanel;
     rightNotebook->set_name ("RightNotebook");
+    rightNotebook->hide();
+    rightNotebook->set_no_show_all(true);
 
     rightBox->pack_start (*rightNotebook);
 

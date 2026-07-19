@@ -314,6 +314,12 @@ RTWindow::RTWindow ()
         // Batch Queue panel (overlay drawer, not a notebook tab)
         bpanel = Gtk::manage ( new BatchQueuePanel (fpanel->fileCatalog) );
 
+        // Fast-export settings (former right-side tab) live in the export
+        // drawer now, collapsed under their own expander
+        if (Gtk::Widget* fastExport = fpanel->takeFastExportSettingsWidget()) {
+            bpanel->embedFastExportSettings(fastExport);
+        }
+
         if (isSingleTabMode()) {
             createSetmEditor();
         }
@@ -2032,6 +2038,9 @@ void RTWindow::MoveFileBrowserToMain()
         // the catalog toolbar's filter and resume any paused preview loading.
         fCatalog->reapplyBrowserFilter ();
 
+        // Browser view keeps its left sidebar visible by default
+        fpanel->setLeftPanelVisible (true);
+
         // Center the browser on the image that was selected in the filmstrip.
         // Deferred to a low-priority idle so the re-parented browser has been
         // allocated and re-arranged first — entry positions are only valid
@@ -2061,6 +2070,10 @@ void RTWindow::MoveFileBrowserToEditor()
         fCatalog->refreshHeight();
         fCatalog->tbLeftPanel_1_visible (false);
         fCatalog->tbRightPanel_1_visible (false);
+
+        // Edit view opens with the left sidebar collapsed for maximum image
+        // space; the thin hot-strip at the window's left edge re-expands it.
+        epanel->collapseLeftSidebarForEdit();
     }
 }
 

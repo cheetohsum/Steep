@@ -58,6 +58,7 @@ class BatchQueuePanel : public Gtk::Box,
     Gtk::ToggleButton* templateHelpButton;
     Gtk::Box* bottomBox;
     Gtk::Box* topBox;
+    Gtk::Expander* fastExportExpander_ = nullptr;
     Gtk::Paned* middleSplitPane;
 
     std::atomic<bool> queueShouldRun;
@@ -69,6 +70,10 @@ public:
     ~BatchQueuePanel() override;
 
     void init (RTWindow* parent);
+
+    // Embed the former Fast Export tab's settings under an expander in the
+    // export drawer's settings area
+    void embedFastExportSettings (Gtk::Widget* widget);
 
     void addBatchQueueJobs(const std::vector<BatchQueueEntry*>& entries , bool head = false);
     void saveOptions ();

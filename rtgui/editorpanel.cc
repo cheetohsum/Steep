@@ -1112,6 +1112,28 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         tbFilterBar->set_relief(Gtk::RELIEF_NONE);
         tbFilterBar->set_tooltip_markup(M("EDITOR_FILTER_TOOLTIP"));
         tbFilterBar->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::filterBarToggled));
+
+        // Hover-expand: resting on the filter button opens the bar; a click
+        // still toggles/pins it exactly as before
+        tbFilterBar->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
+        tbFilterBar->signal_enter_notify_event().connect(
+            [this](GdkEventCrossing*) -> bool {
+                filterBarHoverConn_.disconnect();
+                filterBarHoverConn_ = Glib::signal_timeout().connect(
+                    [this]() -> bool {
+                        if (tbFilterBar && !tbFilterBar->get_active()) {
+                            tbFilterBar->set_active(true);
+                        }
+                        return false;
+                    },
+                    350);
+                return false;
+            });
+        tbFilterBar->signal_leave_notify_event().connect(
+            [this](GdkEventCrossing*) -> bool {
+                filterBarHoverConn_.disconnect();
+                return false;
+            });
     }
 
     // Album view state
@@ -1241,6 +1263,9 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
             const auto scheduleRatingPaletteClose = [this]() {
                 ratingPaletteOpenConn_.disconnect();
                 ratingPaletteCloseConn_.disconnect();
+                if (ratingPalettePinned_) {
+                    return;  // pinned open by a click on the trigger
+                }
                 ratingPaletteCloseConn_ = Glib::signal_timeout().connect(
                     [this]() -> bool {
                         if (colorLabelRevealer_) {
@@ -1252,6 +1277,18 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                     180,
                     G_PRIORITY_LOW);
             };
+
+            // Clicking the trigger pins the palette open until clicked again
+            triggerBtn->signal_clicked().connect([this, showRatingPalette]() {
+                ratingPalettePinned_ = !ratingPalettePinned_;
+                if (ratingPalettePinned_) {
+                    showRatingPalette();
+                } else if (colorLabelRevealer_) {
+                    ratingPaletteCloseConn_.disconnect();
+                    colorLabelRevealer_->set_reveal_child(false);
+                    updateFilmstripStars(filmstripCurrentRating);
+                }
+            });
 
             triggerBtn->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
             triggerBtn->signal_enter_notify_event().connect(
@@ -2427,6 +2464,23 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
             return false;
         }, false);
 
+    // Thin hot-strip at the far left: when the left sidebar is collapsed,
+    // clicking these few pixels re-expands it
+    leftEdgeExpander_ = Gtk::manage(new Gtk::EventBox());
+    leftEdgeExpander_->set_size_request(5, -1);
+    leftEdgeExpander_->set_visible_window(false);
+    leftEdgeExpander_->add_events(Gdk::BUTTON_PRESS_MASK);
+    leftEdgeExpander_->set_tooltip_text(M("MAIN_TOOLTIP_HIDEHP"));
+    leftEdgeExpander_->signal_button_press_event().connect(
+        [this](GdkEventButton*) -> bool {
+            if (hidehp && !hidehp->get_active()) {
+                hidehp->set_active(true);
+            }
+            return true;
+        });
+    leftEdgeExpander_->set_no_show_all(true);
+    pack_start (*leftEdgeExpander_, Gtk::PACK_SHRINK);
+
     pack_start (*hpanedr);
 
     updateHistogramPosition (0, options.histogramPosition);
@@ -2497,6 +2551,17 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 
     // connect event handlers
     beforeAfter->signal_toggled().connect ( sigc::mem_fun (*this, &EditorPanel::beforeAfterToggled) );
+    // Right-click on the before/after toggle offers the view options
+    // (snug-to-divider), same menu as right-clicking the panes themselves
+    beforeAfter->signal_button_press_event().connect(
+        [this](GdkEventButton* event) -> bool {
+            if (event && event->button == 3 && iareapanel && iareapanel->imageArea) {
+                iareapanel->imageArea->showBeforeAfterContextMenu();
+                return true;
+            }
+            return false;
+        },
+        false);
     hidehp->signal_toggled().connect ( sigc::mem_fun (*this, &EditorPanel::hideHistoryActivated) );
     tbRightPanel_1->signal_toggled().connect ( sigc::mem_fun (*this, &EditorPanel::tbRightPanel_1_toggled) );
     // saveimgas and queueimg removed from bottom bar
@@ -4891,6 +4956,13 @@ void EditorPanel::procParamsChanged(
             ProcParams* alignedParams = beforeIpc->beginUpdateParams();
             *alignedParams = std::move(beforeParams);
             beforeIpc->endUpdateParams(ev);
+
+            // Geometry (e.g. the crop) changed — refit the before pane so it
+            // cannot stay stuck showing the old cropped framing after an undo
+            if (beforeIarea && beforeIarea->imageArea
+                    && beforeIarea->imageArea->mainCropWindow) {
+                beforeIarea->imageArea->mainCropWindow->zoomFit();
+            }
         }
     }
 
@@ -5171,12 +5243,26 @@ void EditorPanel::info_toggled ()
     iareapanel->imageArea->setInfoText (std::move(infoString));
 }
 
+void EditorPanel::collapseLeftSidebarForEdit ()
+{
+    if (hidehp && hidehp->get_active()) {
+        hidehp->set_active(false);  // triggers hideHistoryActivated
+    } else if (leftEdgeExpander_) {
+        leftEdgeExpander_->set_visible(hidehp && !hidehp->get_active());
+    }
+}
+
 void EditorPanel::hideHistoryActivated ()
 {
     auto& options = App::get().mut_options();
     const bool show = hidehp->get_active();
     options.showHistory = show;
     hidehp->set_image(show ? *iHistoryHide : *iHistoryShow);
+
+    // The left-edge hot strip is only needed while the sidebar is hidden
+    if (leftEdgeExpander_) {
+        leftEdgeExpander_->set_visible(!show);
+    }
 
     leftAnimConn_.disconnect();
 

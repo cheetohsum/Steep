@@ -227,6 +227,7 @@ FILEBROWSER_POPUPTOOLS;Tools
 TP_CROP_ASPECTRATIO_ASIMAGE;Aspect Ratio - As Image
 EDITOR_BEFOREAFTER_SNUG;Images snug against center divider
 FILEBROWSER_SEARCHTOGGLEHINT;Search, path navigation and reload
+FILEBROWSER_METADATAFILTERHINT;Metadata filters: aperture, shutter, ISO, focal length, exposure, camera, lens
 FILEBROWSER_POPUPSAVEIMAGE;Save image
 FILEBROWSER_POPUPAIDENOISE;AI Denoise
 FILEBROWSER_POPUPAUTOEDIT;Auto Edit

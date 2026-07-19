@@ -1419,6 +1419,7 @@ FileBrowser::FileBrowser () :
             auto* item = Gtk::manage(new Gtk::MenuItem());
             item->set_name("InlineActionRow");
             auto* vbox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
+            vbox->set_halign(Gtk::ALIGN_START);
             vbox->set_margin_top(2);
             vbox->set_margin_bottom(1);
             auto* label = Gtk::manage(new Gtk::Label());
