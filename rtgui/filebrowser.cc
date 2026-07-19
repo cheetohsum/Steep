@@ -1562,6 +1562,8 @@ FileBrowser::FileBrowser () :
                                 inlineApplyMenu_->popup_at_pointer(nullptr);
                             }
                         });
+        addInlineIcon(profileRow.second, "menu-profile-clear", M("FILEBROWSER_CLEARPROFILE"),
+                      [this]() -> Gtk::MenuItem* { return clearprof; });
         pmenu->attach(*profileRow.first, 0, 1, p, p + 1);
         p++;
 
