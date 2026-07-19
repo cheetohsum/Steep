@@ -563,6 +563,9 @@ private:
     unsigned int openSession_ = 0;
     unsigned int editorDirSyncGeneration_ = 0;
     Glib::ustring quickPreviewFileName_;
+    sigc::connection quickPreviewWatchdogConn_;
+    int quickPreviewRecoverAttempts_ = 0;
+    void armQuickPreviewWatchdog();
     bool deferredCropWindowEnable_ = false;
     bool optionsWritePending_ = false;
     std::mutex progressUiMutex_;

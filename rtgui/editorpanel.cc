@@ -2619,7 +2619,9 @@ EditorPanel::~EditorPanel ()
     deferredOpenConn_.disconnect();
     deferredDirSyncConn_.disconnect();
     deferredCropEnableConn_.disconnect();
+    deferredHighDetailConn_.disconnect();
     filmstripPreviewUpdateConn_.disconnect();
+    quickPreviewWatchdogConn_.disconnect();
     pendingFilmstripPreviewFile_.clear();
     ++editorDirSyncGeneration_;
     pendingEditorDirSyncDir_.clear();
@@ -4333,6 +4335,7 @@ void EditorPanel::setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scal
         }
 
         EDITOR_OPEN_LOG("[editorOpen] quick preview primed placeholder-only file=%s\n", sourceFile.c_str());
+        armQuickPreviewWatchdog();
         return;
     }
 
@@ -4353,6 +4356,7 @@ void EditorPanel::setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scal
     if (iareapanel && iareapanel->imageArea) {
         iareapanel->imageArea->setQuickPreviewFit(true);
     }
+    armQuickPreviewWatchdog();
 }
 
 bool EditorPanel::setTransientEditPreview(
@@ -4367,18 +4371,23 @@ bool EditorPanel::setTransientEditPreview(
     }
 
     // A new transient state supersedes any final-quality pass queued for the
-    // previous state. A fresh one is scheduled after this state is installed.
+    // previous state. EVERY exit below must leave a fresh one queued — this
+    // used to reschedule only on the restore path, so a preview that ended
+    // through any other branch left the image at fast-preview quality
+    // permanently (the settled pass is the only route to full quality).
     deferredHighDetailConn_.disconnect();
 
     if (!params) {
         if (!transientEditPreviewActive_
                 || editorAlbumPathKey(transientEditPreviewFile_.raw()) != editorAlbumPathKey(sourceFile.raw())) {
+            scheduleFinalPreviewRefinement();
             return false;
         }
 
         transientEditPreviewActive_ = false;
         transientEditPreviewFile_.clear();
         if (!restore) {
+            scheduleFinalPreviewRefinement();
             return true;
         }
 
@@ -4394,13 +4403,68 @@ bool EditorPanel::setTransientEditPreview(
         transientEditPreviewActive_ = true;
         transientEditPreviewFile_ = sourceFile;
     } else if (editorAlbumPathKey(transientEditPreviewFile_.raw()) != editorAlbumPathKey(sourceFile.raw())) {
+        scheduleFinalPreviewRefinement();
         return false;
     }
 
     auto* target = ipc->beginUpdateParams();
     *target = *params;
     ipc->endUpdateParams(rtengine::EvProfileChangeNotification);
+    scheduleFinalPreviewRefinement();
     return true;
+}
+
+void EditorPanel::armQuickPreviewWatchdog()
+{
+    quickPreviewWatchdogConn_.disconnect();
+    quickPreviewRecoverAttempts_ = 0;
+
+    // The thumbnail placeholder must always be a short-lived transition
+    // state. If it is still covering the canvas seconds later, some link in
+    // the open chain was dropped (a cancelled open, a detached preview
+    // listener) — recover instead of leaving a frozen, unzoomable still.
+    quickPreviewWatchdogConn_ = Glib::signal_timeout().connect(
+        [this]() -> bool {
+            if (!iareapanel || !iareapanel->imageArea
+                    || !iareapanel->imageArea->getQuickPreviewFit()) {
+                return false;  // placeholder resolved normally
+            }
+
+            ++quickPreviewRecoverAttempts_;
+            const bool sameFile = !quickPreviewFileName_.empty() && !fname.empty()
+                && editorAlbumPathKey(quickPreviewFileName_.raw()) == editorAlbumPathKey(fname.raw());
+
+            EDITOR_OPEN_LOG("[editorOpen] quick preview watchdog attempt=%d sameFile=%d qp=%s open=%s\n",
+                            quickPreviewRecoverAttempts_, (int)sameFile,
+                            quickPreviewFileName_.c_str(), fname.c_str());
+
+            if (sameFile && ipc) {
+                // The file is open but its output is hidden or detached:
+                // reattach the preview listener and force a settled render.
+                // refreshProcessingState(false) drops the placeholder when
+                // that render lands.
+                if (previewHandler) {
+                    ipc->setPreviewImageListener(previewHandler);
+                }
+                ipc->startProcessing(M_HIGHQUAL | M_MONITOR);
+            } else if (fPanel && quickPreviewRecoverAttempts_ <= 2) {
+                // The open itself never landed — re-trigger it for the
+                // browser's current selection (the photo this placeholder
+                // was shown for).
+                fPanel->openSelectedInEditor();
+            }
+
+            if (quickPreviewRecoverAttempts_ >= 4) {
+                // Give up hiding: a live (if momentarily stale) canvas beats
+                // a frozen still that ignores zoom.
+                iareapanel->imageArea->setQuickPreviewFit(false);
+                quickPreviewFileName_.clear();
+                return false;
+            }
+            return true;
+        },
+        2500,
+        G_PRIORITY_LOW);
 }
 
 void EditorPanel::scheduleFinalPreviewRefinement()
@@ -4718,6 +4782,7 @@ void EditorPanel::close ()
     deferredCropEnableConn_.disconnect();
     deferredHighDetailConn_.disconnect();
     filmstripPreviewUpdateConn_.disconnect();
+    quickPreviewWatchdogConn_.disconnect();
     pendingFilmstripPreviewFile_.clear();
     deferredCropWindowEnable_ = false;
     quickPreviewFileName_.clear();

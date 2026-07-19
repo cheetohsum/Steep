@@ -131,6 +131,7 @@ public:
     }
     void            setPreviewHandler        (PreviewHandler* ph);
     void            setQuickPreviewFit       (bool enabled);
+    bool            getQuickPreviewFit       () const { return quickPreviewFit_; }
     PreviewHandler* getPreviewHandler        ()
     {
         return previewHandler;
