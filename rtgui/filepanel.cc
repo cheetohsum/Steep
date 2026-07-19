@@ -2568,6 +2568,11 @@ FilePanel::FilePanel () :
 
     pack1(*dirpanedBox, true, true);
     pack2(*rightBox, false, false);
+    // Right sidebar is retired in browser view — its tabs live elsewhere now
+    // (metadata filters in the filter dropdown, fast export in the export
+    // drawer). Keep the widget for layout queries but never show it.
+    rightBox->hide();
+    rightBox->set_no_show_all(true);
 
     fileCatalog->setFileSelectionChangeListener (tpc);
 
@@ -2639,10 +2644,6 @@ void FilePanel::setAspect ()
 
     if (!options.browserDirPanelOpened) {
         fileCatalog->toggleLeftPanel();
-    }
-
-    if (!options.browserToolPanelOpened) {
-        fileCatalog->toggleRightPanel();
     }
 }
 

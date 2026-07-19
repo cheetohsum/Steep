@@ -223,6 +223,8 @@ public:
     bool savesParamsAtExit;
     SaveFormat saveFormat, saveFormatBatch;
     WatermarkOptions watermark;
+    bool exportMaxSizeEnabled;  // cap the pixel size of exported images
+    int exportMaxLongEdge;      // long-edge cap in pixels
     Glib::ustring savePathTemplate;
     Glib::ustring savePathFolder;
     bool saveUsePathTemplate;

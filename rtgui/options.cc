@@ -363,6 +363,9 @@ void Options::setDefaults()
     saveFormatBatch.tiffUncompressed = true;
     saveFormatBatch.saveParams = true;
 
+    exportMaxSizeEnabled = false;
+    exportMaxLongEdge = 3840;
+
     savePathTemplate = "%p1/converted/%f";
     savePathFolder = "";
     saveUsePathTemplate = true;
@@ -1212,6 +1215,12 @@ void Options::readFromFile(Glib::ustring fname)
                 }
                 if (keyFile.has_key("Output", "ConfirmDeleteFiles")) {
                     confirmDeleteFiles = keyFile.get_boolean("Output", "ConfirmDeleteFiles");
+                }
+                if (keyFile.has_key("Output", "ExportMaxSizeEnabled")) {
+                    exportMaxSizeEnabled = keyFile.get_boolean("Output", "ExportMaxSizeEnabled");
+                }
+                if (keyFile.has_key("Output", "ExportMaxLongEdge")) {
+                    exportMaxLongEdge = keyFile.get_integer("Output", "ExportMaxLongEdge");
                 }
             }
 
@@ -2821,6 +2830,8 @@ void Options::saveToFile(Glib::ustring fname)
         keyFile.set_string("Output", "LastSaveAsPath", lastSaveAsPath);
         keyFile.set_boolean("Output", "OverwriteOutputFile", overwriteOutputFile);
         keyFile.set_boolean("Output", "ConfirmDeleteFiles", confirmDeleteFiles);
+        keyFile.set_boolean("Output", "ExportMaxSizeEnabled", exportMaxSizeEnabled);
+        keyFile.set_integer("Output", "ExportMaxLongEdge", exportMaxLongEdge);
 
         keyFile.set_string("Profiles", "Directory", profilePath);
         keyFile.set_boolean("Profiles", "UseBundledProfiles", useBundledProfiles);

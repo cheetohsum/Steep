@@ -997,24 +997,26 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
 
     // Rotate moved to the context menu's inline quick actions
 
+    // Right sidebar is retired in browser view: keep the toggle widget alive
+    // (shortcuts and visibility plumbing still reference it) but never pack
+    // or show it, and keep it inactive so rightBox stays hidden.
     tbRightPanel_1 = new Gtk::ToggleButton ();
     iRightPanel_1_Show = new RTImage("panel-to-left", Gtk::ICON_SIZE_LARGE_TOOLBAR);
     iRightPanel_1_Hide = new RTImage("panel-to-right", Gtk::ICON_SIZE_LARGE_TOOLBAR);
 
     tbRightPanel_1->set_relief(Gtk::RELIEF_NONE);
-    tbRightPanel_1->set_active (true);
-    tbRightPanel_1->set_tooltip_markup (M("MAIN_TOOLTIP_SHOWHIDERP1"));
-    tbRightPanel_1->set_image (*iRightPanel_1_Hide);
+    tbRightPanel_1->set_active (false);
+    tbRightPanel_1->set_no_show_all (true);
+    tbRightPanel_1->set_image (*iRightPanel_1_Show);
     tbRightPanel_1->signal_toggled().connect( sigc::mem_fun(*this, &FileCatalog::tbRightPanel_1_toggled) );
 
     // --- Single row layout ---
-    // [filter] [trash] [info] [BrowsePath + Query] [zoom] [rotate]  ...  [rightPanel]
+    // [filter] [trash] [info] [BrowsePath + Query] [zoom] [rotate]
     buttonBar->pack_start (*bTrash, Gtk::PACK_SHRINK);
     buttonBar->pack_start (*exifInfo, Gtk::PACK_SHRINK);
     buttonBar->pack_start (*hbToolBar1, Gtk::PACK_SHRINK, 0);
     zoomSlider_->set_margin_start(8);
     buttonBar->pack_start(*zoomSlider_, Gtk::PACK_SHRINK);
-    buttonBar->pack_end (*tbRightPanel_1, Gtk::PACK_SHRINK);
 
     // Hide hand tool in browser context — not needed for browsing
     if (toolBar) {
@@ -4384,11 +4386,9 @@ void FileCatalog::tbLeftPanel_1_visible (bool visible)
 }
 void FileCatalog::tbRightPanel_1_visible (bool visible)
 {
-    if (visible) {
-        tbRightPanel_1->show();
-    } else {
-        tbRightPanel_1->hide();
-    }
+    // Right sidebar is retired in browser view — the toggle never shows.
+    (void)visible;
+    tbRightPanel_1->hide();
 }
 void FileCatalog::tbLeftPanel_1_toggled ()
 {
@@ -4407,32 +4407,24 @@ void FileCatalog::tbLeftPanel_1_toggled ()
 
 void FileCatalog::tbRightPanel_1_toggled ()
 {
-    auto& options = App::get().mut_options();
-    if (tbRightPanel_1->get_active()) {
-        filepanel->rightBox->show();
-        tbRightPanel_1->set_image (*iRightPanel_1_Hide);
-        options.browserToolPanelOpened = true;
-    } else {
+    // Right sidebar is retired in browser view — whatever toggles the
+    // button, the panel stays hidden.
+    if (filepanel && filepanel->rightBox) {
         filepanel->rightBox->hide();
-        tbRightPanel_1->set_image (*iRightPanel_1_Show);
-        options.browserToolPanelOpened = false;
     }
+    App::get().mut_options().browserToolPanelOpened = false;
 }
 
 bool FileCatalog::CheckSidePanelsVisibility()
 {
-    return tbLeftPanel_1->get_active() || tbRightPanel_1->get_active();
+    // Right sidebar is retired — only the left panel counts.
+    return tbLeftPanel_1->get_active();
 }
 
 void FileCatalog::toggleSidePanels()
 {
-    // toggle left AND right panels
-
-    bool bAllSidePanelsVisible;
-    bAllSidePanelsVisible = CheckSidePanelsVisibility();
-
-    tbLeftPanel_1->set_active (!bAllSidePanelsVisible);
-    tbRightPanel_1->set_active (!bAllSidePanelsVisible);
+    // Right sidebar is retired — only the left panel toggles.
+    tbLeftPanel_1->set_active (!CheckSidePanelsVisibility());
 }
 
 void FileCatalog::toggleLeftPanel()
@@ -4442,7 +4434,7 @@ void FileCatalog::toggleLeftPanel()
 
 void FileCatalog::toggleRightPanel()
 {
-    tbRightPanel_1->set_active (!tbRightPanel_1->get_active());
+    // Right sidebar is retired in browser view — nothing to toggle.
 }
 
 
@@ -4505,17 +4497,10 @@ bool FileCatalog::handleShortcutKey (GdkEventKey* event)
     // GUI Layout
     switch(event->keyval) {
     case GDK_KEY_l:
-        if (!alt) {
-            tbLeftPanel_1->set_active (!tbLeftPanel_1->get_active());    // toggle left panel
-        }
-
-        if (alt && !ctrl) {
-            tbRightPanel_1->set_active (!tbRightPanel_1->get_active());    // toggle right panel
-        }
-
-        if (alt && ctrl) {
-            tbLeftPanel_1->set_active (!tbLeftPanel_1->get_active()); // toggle left panel
-            tbRightPanel_1->set_active (!tbRightPanel_1->get_active()); // toggle right panel
+        // Right sidebar is retired in browser view — only the left panel
+        // toggles (Alt+L, formerly the right panel, is now a no-op).
+        if (!alt || ctrl) {
+            tbLeftPanel_1->set_active (!tbLeftPanel_1->get_active());
         }
 
         return true;

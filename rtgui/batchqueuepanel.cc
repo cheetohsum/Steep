@@ -138,7 +138,38 @@ BatchQueuePanel::BatchQueuePanel (FileCatalog* aFileCatalog) : parent(nullptr)
     fformat->set_size_request(280, -1);
     saveFormatPanel = Gtk::manage (new SaveFormatPanel ());
     setExpandAlignProperties(saveFormatPanel, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_START);
-    fformat->add (*saveFormatPanel);
+
+    // Optional cap on exported image resolution (long edge, px)
+    auto* maxSizeBox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 4));
+    auto* maxSizeEnabled = Gtk::manage (new Gtk::CheckButton (M("QUEUE_MAXSIZE_ENABLED")));
+    maxSizeEnabled->set_tooltip_text (M("QUEUE_MAXSIZE_ENABLED_HINT"));
+    auto* maxSizeSpin = Gtk::manage (new Gtk::SpinButton ());
+    maxSizeSpin->set_range (256, 20000);
+    maxSizeSpin->set_increments (128, 512);
+    maxSizeSpin->set_digits (0);
+    maxSizeSpin->set_tooltip_text (M("QUEUE_MAXSIZE_HINT"));
+    auto* maxSizePx = Gtk::manage (new Gtk::Label (M("QUEUE_MAXSIZE_PX")));
+    {
+        const auto& opts = App::get().options();
+        maxSizeEnabled->set_active (opts.exportMaxSizeEnabled);
+        maxSizeSpin->set_value (opts.exportMaxLongEdge);
+        maxSizeSpin->set_sensitive (opts.exportMaxSizeEnabled);
+    }
+    maxSizeEnabled->signal_toggled().connect ([maxSizeEnabled, maxSizeSpin]() {
+        App::get().mut_options().exportMaxSizeEnabled = maxSizeEnabled->get_active();
+        maxSizeSpin->set_sensitive (maxSizeEnabled->get_active());
+    });
+    maxSizeSpin->signal_value_changed().connect ([maxSizeSpin]() {
+        App::get().mut_options().exportMaxLongEdge = maxSizeSpin->get_value_as_int();
+    });
+    maxSizeBox->pack_start (*maxSizeEnabled, Gtk::PACK_SHRINK);
+    maxSizeBox->pack_start (*maxSizeSpin, Gtk::PACK_SHRINK);
+    maxSizeBox->pack_start (*maxSizePx, Gtk::PACK_SHRINK);
+
+    auto* formatVBox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_VERTICAL, 2));
+    formatVBox->pack_start (*saveFormatPanel, Gtk::PACK_SHRINK);
+    formatVBox->pack_start (*maxSizeBox, Gtk::PACK_SHRINK, 2);
+    fformat->add (*formatVBox);
 
     // Watermark settings
     fwatermark = Gtk::manage (new Gtk::Frame (M("WATERMARK_TITLE")));

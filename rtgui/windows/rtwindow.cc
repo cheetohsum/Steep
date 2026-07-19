@@ -2032,7 +2032,7 @@ void RTWindow::MoveFileBrowserToMain()
         fpanel->ribbonPane->add (*fCatalog);
         fCatalog->enableTabMode (false);
         fCatalog->tbLeftPanel_1_visible (false);  // Left toggle now in FilePanel footer
-        fCatalog->tbRightPanel_1_visible (true);
+        fCatalog->tbRightPanel_1_visible (false); // Right sidebar retired in browser view
 
         // The filmstrip's filter must not linger in browser view — restore
         // the catalog toolbar's filter and resume any paused preview loading.

@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <mutex>
 
 #include "rtengine/rt_math.h"
 
@@ -119,6 +120,16 @@ void applyWatermark(rtengine::IImagefloat* img, const WatermarkOptions& opts)
         return;
     }
 
+    // This runs on the export worker thread. pango-cairo's DEFAULT font map
+    // is shared with the GUI thread and is not thread-safe — using it here
+    // corrupted cairo's shared caches (surface refcount assertion during
+    // TIFF export). Render with a private font map and serialize renders.
+    static std::mutex watermarkRenderMutex;
+    std::lock_guard<std::mutex> renderLock(watermarkRenderMutex);
+
+    PangoFontMap* privateFontMap = pango_cairo_font_map_new();
+    PangoContext* pangoContext = pango_font_map_create_context(privateFontMap);
+
     const int imgW = img->getWidth();
     const int imgH = img->getHeight();
     if (imgW <= 0 || imgH <= 0) {
@@ -143,7 +154,8 @@ void applyWatermark(rtengine::IImagefloat* img, const WatermarkOptions& opts)
     cairo_surface_t* measureSurf = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1, 1);
     cairo_t* measureCr = cairo_create(measureSurf);
 
-    PangoLayout* layout = pango_cairo_create_layout(measureCr);
+    pango_cairo_update_context(measureCr, pangoContext);
+    PangoLayout* layout = pango_layout_new(pangoContext);
     pango_layout_set_text(layout, opts.text.c_str(), -1);
 
     PangoFontDescription* fontDesc = pango_font_description_new();
@@ -181,6 +193,8 @@ void applyWatermark(rtengine::IImagefloat* img, const WatermarkOptions& opts)
         g_object_unref(layout);
         cairo_destroy(measureCr);
         cairo_surface_destroy(measureSurf);
+        g_object_unref(pangoContext);
+        g_object_unref(privateFontMap);
         return;
     }
 
@@ -193,8 +207,9 @@ void applyWatermark(rtengine::IImagefloat* img, const WatermarkOptions& opts)
     cairo_rotate(cr, rotRad);
     cairo_translate(cr, -textW / 2.0, -textH / 2.0);
 
-    // Re-create layout on the actual surface
-    PangoLayout* wmLayout = pango_cairo_create_layout(cr);
+    // Re-create layout on the actual surface (private font map)
+    pango_cairo_update_context(cr, pangoContext);
+    PangoLayout* wmLayout = pango_layout_new(pangoContext);
     pango_layout_set_text(wmLayout, opts.text.c_str(), -1);
     pango_layout_set_font_description(wmLayout, fontDesc);
 
@@ -214,7 +229,8 @@ void applyWatermark(rtengine::IImagefloat* img, const WatermarkOptions& opts)
         cairo_rotate(shadowCr, rotRad);
         cairo_translate(shadowCr, -textW / 2.0, -textH / 2.0);
 
-        PangoLayout* shadowLayout = pango_cairo_create_layout(shadowCr);
+        pango_cairo_update_context(shadowCr, pangoContext);
+        PangoLayout* shadowLayout = pango_layout_new(pangoContext);
         pango_layout_set_text(shadowLayout, opts.text.c_str(), -1);
         pango_layout_set_font_description(shadowLayout, fontDesc);
 
@@ -262,6 +278,8 @@ void applyWatermark(rtengine::IImagefloat* img, const WatermarkOptions& opts)
     cairo_destroy(measureCr);
     cairo_surface_destroy(measureSurf);
     g_object_unref(layout);
+    g_object_unref(pangoContext);
+    g_object_unref(privateFontMap);
 
     // --- Compute placement position ---
     int posX = 0, posY = 0;

@@ -18,11 +18,13 @@
  */
 #include <glibmm/ustring.h>
 #include <glib/gstdio.h>
+#include <algorithm>
 #include <cstring>
 #include <functional>
 #include "rtengine/imagedata.h"
 #include "rtengine/rt_math.h"
 #include "rtengine/procparams.h"
+#include "rtengine/processingjob.h"
 
 #include <fstream>
 #include <iomanip>
@@ -703,6 +705,35 @@ void BatchQueue::startProcessing ()
 
             // remove button set
             next->removeButtonSet ();
+
+            // Apply the global export size cap (Queue → "Limit export size")
+            // to the job's params just before processing so it also covers
+            // entries reloaded from a saved queue.
+            {
+                const auto& opts = App::get().options();
+                if (opts.exportMaxSizeEnabled && opts.exportMaxLongEdge > 0) {
+                    if (auto* jobImpl = dynamic_cast<rtengine::ProcessingJobImpl*>(next->job)) {
+                        const int cap = opts.exportMaxLongEdge;
+                        auto& rp = jobImpl->pparams.resize;
+
+                        if (!rp.enabled) {
+                            rp.enabled = true;
+                            rp.dataspec = 4; // long edge
+                            rp.longedge = cap;
+                            rp.allowUpscaling = false;
+                            rp.method = "Lanczos";
+                        } else {
+                            // An explicit resize is kept, but its pixel
+                            // targets may not exceed the cap. Percentage
+                            // scale can't be clamped without source dims.
+                            rp.width = std::min(rp.width, cap);
+                            rp.height = std::min(rp.height, cap);
+                            rp.longedge = std::min(rp.longedge, cap);
+                            rp.shortedge = std::min(rp.shortedge, cap);
+                        }
+                    }
+                }
+            }
 
             // start batch processing
             rtengine::startBatchProcessing (next->job, this);
