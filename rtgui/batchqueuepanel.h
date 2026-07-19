@@ -59,6 +59,7 @@ class BatchQueuePanel : public Gtk::Box,
     Gtk::Box* bottomBox;
     Gtk::Box* topBox;
     Gtk::Expander* fastExportExpander_ = nullptr;
+    Gtk::Box* maxSizeSection_ = nullptr;  // export size cap widgets, embedded in SaveFormatPanel's Options expander
     Gtk::Paned* middleSplitPane;
 
     std::atomic<bool> queueShouldRun;

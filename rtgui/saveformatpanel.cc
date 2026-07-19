@@ -232,7 +232,7 @@ void SaveFormatPanel::setCompactMode()
     remove(*savesPP);
 
     // Create collapsed "Options" expander
-    auto* expander = Gtk::manage(new Gtk::Expander("Options"));
+    auto* expander = Gtk::manage(new Gtk::Expander(M("QUEUE_FORMAT_OPTIONS")));
     expander->set_expanded(false);
 
     auto* optBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 2));
@@ -251,8 +251,26 @@ void SaveFormatPanel::setCompactMode()
     expander->show_all();
     expander->set_expanded(false);
 
+    compactOptBox_ = optBox;
+    compactExpander_ = expander;
+
     // Trigger format-specific visibility
     formatChanged();
+}
+
+void SaveFormatPanel::addCompactOption(Gtk::Widget* w)
+{
+    if (compactOptBox_ && w) {
+        compactOptBox_->pack_start(*w, Gtk::PACK_SHRINK);
+        w->show_all();
+    }
+}
+
+void SaveFormatPanel::setCompactOptionsExpanded(bool expanded)
+{
+    if (compactExpander_) {
+        compactExpander_->set_expanded(expanded);
+    }
 }
 
 void SaveFormatPanel::adjusterChanged(Adjuster* a, double newval)

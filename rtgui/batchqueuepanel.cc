@@ -139,8 +139,9 @@ BatchQueuePanel::BatchQueuePanel (FileCatalog* aFileCatalog) : parent(nullptr)
     saveFormatPanel = Gtk::manage (new SaveFormatPanel ());
     setExpandAlignProperties(saveFormatPanel, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_START);
 
-    // Optional cap on exported image resolution, tucked under a collapsed
-    // "Options" expander so the format frame stays clean
+    // Optional cap on exported image resolution. Built here, then embedded
+    // into SaveFormatPanel's own compact-mode "Options" expander in init()
+    // so there is a single Options section in the format frame.
     auto* maxSizeEnabled = Gtk::manage (new Gtk::CheckButton (M("QUEUE_MAXSIZE_ENABLED")));
     maxSizeEnabled->set_tooltip_text (M("QUEUE_MAXSIZE_ENABLED_HINT"));
     auto* maxSizeSpin = Gtk::manage (new Gtk::SpinButton ());
@@ -157,20 +158,15 @@ BatchQueuePanel::BatchQueuePanel (FileCatalog* aFileCatalog) : parent(nullptr)
     maxSizeRow->pack_start (*maxSizeSpin, Gtk::PACK_SHRINK);
     maxSizeRow->pack_start (*maxSizePx, Gtk::PACK_SHRINK);
 
-    auto* formatOptionsBox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_VERTICAL, 2));
-    formatOptionsBox->set_margin_top (2);
-    formatOptionsBox->pack_start (*maxSizeEnabled, Gtk::PACK_SHRINK);
-    formatOptionsBox->pack_start (*maxSizeRow, Gtk::PACK_SHRINK);
-
-    auto* formatOptionsExpander = Gtk::manage (new Gtk::Expander (M("QUEUE_FORMAT_OPTIONS")));
-    formatOptionsExpander->add (*formatOptionsBox);
+    maxSizeSection_ = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_VERTICAL, 2));
+    maxSizeSection_->set_margin_top (2);
+    maxSizeSection_->pack_start (*maxSizeEnabled, Gtk::PACK_SHRINK);
+    maxSizeSection_->pack_start (*maxSizeRow, Gtk::PACK_SHRINK);
     {
         const auto& opts = App::get().options();
         maxSizeEnabled->set_active (opts.exportMaxSizeEnabled);
         maxSizeSpin->set_value (opts.exportMaxLongEdge);
         maxSizeRow->set_sensitive (opts.exportMaxSizeEnabled);
-        // Surface the section when the cap is active so it isn't forgotten
-        formatOptionsExpander->set_expanded (opts.exportMaxSizeEnabled);
     }
     maxSizeEnabled->signal_toggled().connect ([maxSizeEnabled, maxSizeRow]() {
         App::get().mut_options().exportMaxSizeEnabled = maxSizeEnabled->get_active();
@@ -180,10 +176,7 @@ BatchQueuePanel::BatchQueuePanel (FileCatalog* aFileCatalog) : parent(nullptr)
         App::get().mut_options().exportMaxLongEdge = maxSizeSpin->get_value_as_int();
     });
 
-    auto* formatVBox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_VERTICAL, 2));
-    formatVBox->pack_start (*saveFormatPanel, Gtk::PACK_SHRINK);
-    formatVBox->pack_start (*formatOptionsExpander, Gtk::PACK_SHRINK, 2);
-    fformat->add (*formatVBox);
+    fformat->add (*saveFormatPanel);
 
     // Watermark settings
     fwatermark = Gtk::manage (new Gtk::Frame (M("WATERMARK_TITLE")));
@@ -313,6 +306,14 @@ void BatchQueuePanel::init (RTWindow *parent)
 
     saveFormatPanel->init (App::get().options().saveFormatBatch);
     saveFormatPanel->setCompactMode();
+
+    // Fold the export size cap into the panel's single Options expander,
+    // surfacing it when the cap is active so it isn't forgotten.
+    saveFormatPanel->addCompactOption (maxSizeSection_);
+    if (App::get().options().exportMaxSizeEnabled) {
+        saveFormatPanel->setCompactOptionsExpanded (true);
+    }
+
     watermarkPanel->init (App::get().options().watermark);
 }
 

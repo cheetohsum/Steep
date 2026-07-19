@@ -67,7 +67,16 @@ public:
     /// Move subsampling, tiff options, and savesPP into a collapsed "Options" expander.
     void        setCompactMode  ();
 
+    /// Append an extra widget to the compact-mode "Options" expander.
+    /// Only valid after setCompactMode().
+    void        addCompactOption (Gtk::Widget* w);
+
+    /// Expand/collapse the compact-mode "Options" expander.
+    void        setCompactOptionsExpanded (bool expanded);
+
 private:
     bool compactMode_ = false;
     Gtk::Box* subsampRow_ = nullptr;
+    Gtk::Box* compactOptBox_ = nullptr;
+    Gtk::Expander* compactExpander_ = nullptr;
 };
