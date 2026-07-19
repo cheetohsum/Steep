@@ -2540,8 +2540,12 @@ FilePanel::FilePanel () :
     browserHideLp_ = Gtk::manage(new Gtk::ToggleButton());
     browserHideLp_->set_relief(Gtk::RELIEF_NONE);
     browserHideLp_->set_active(options.showHistory);
-    iBrowserLpShow_ = Gtk::manage(new RTImage("panel-to-right", Gtk::ICON_SIZE_LARGE_TOOLBAR));
-    iBrowserLpHide_ = Gtk::manage(new RTImage("panel-to-left", Gtk::ICON_SIZE_LARGE_TOOLBAR));
+    // NOT Gtk::manage'd: set_image() swaps drop the old image from the
+    // button, and a managed image is destroyed on unparent — the next swap
+    // then touched a dead widget (SIGSEGV on Linux). C++-owned, freed in
+    // the destructor like every other swapped button icon pair.
+    iBrowserLpShow_ = new RTImage("panel-to-right", Gtk::ICON_SIZE_LARGE_TOOLBAR);
+    iBrowserLpHide_ = new RTImage("panel-to-left", Gtk::ICON_SIZE_LARGE_TOOLBAR);
     browserHideLp_->set_image(options.showHistory ? *iBrowserLpHide_ : *iBrowserLpShow_);
     browserHideLp_->set_tooltip_markup(M("MAIN_TOOLTIP_SHOWHIDELP1"));
     browserHideLp_->signal_toggled().connect([this]() {
@@ -2598,6 +2602,9 @@ FilePanel::~FilePanel ()
     cancelScheduledBackgroundResume();
     cancelUnstartedPendingLoads("filepanel-destroy");
     resumeBackgroundWorkNow();
+
+    delete iBrowserLpShow_;
+    delete iBrowserLpHide_;
 
     // Signal any in-flight preload threads to discard their results, then
     // drop our ref. The threads hold their own shared_ptr; the manager is

@@ -217,6 +217,6 @@ private:
 
     // Browser footer bar (matches editor's bottom toolbar layout)
     Gtk::ToggleButton* browserHideLp_;
-    Gtk::Image* iBrowserLpShow_;
-    Gtk::Image* iBrowserLpHide_;
+    Gtk::Image* iBrowserLpShow_ = nullptr;  // C++-owned swap icons (never Gtk::manage)
+    Gtk::Image* iBrowserLpHide_ = nullptr;
 };
