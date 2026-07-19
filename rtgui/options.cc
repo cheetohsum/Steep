@@ -516,7 +516,7 @@ void Options::setDefaults()
     histogramScopeType = ScopeType::HISTOGRAM;
     histogramShowOptionButtons = false;
     histogramTraceBrightness = 1;
-    curvebboxpos = 1;
+    curvebboxpos = 0;  // curve editing buttons along the top, not stealing curve width
     complexity = 2;
     spotmet = 0;
     toolPanelSoloMode = false;
@@ -1969,6 +1969,13 @@ void Options::readFromFile(Glib::ustring fname)
 
                 if (keyFile.has_key("GUI", "CurveBBoxPosition")) {
                     curvebboxpos = keyFile.get_integer("GUI", "CurveBBoxPosition");
+
+                    // Migrate right/left button columns to the top row: side
+                    // placement stole horizontal space from the curve and
+                    // made it resize when the controls were revealed.
+                    if (curvebboxpos == 1 || curvebboxpos == 3) {
+                        curvebboxpos = 0;
+                    }
                 }
 
                 if (keyFile.has_key("GUI", "Complexity")) {

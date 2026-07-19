@@ -61,6 +61,41 @@ const CurvePreset kDiagonalPresets[] = {
 
 constexpr int kNumPresets = sizeof(kDiagonalPresets) / sizeof(kDiagonalPresets[0]);
 
+// Replace the copy/paste/load/save button run with one compact dropdown.
+// The original buttons keep their signal wiring but stay hidden; the menu
+// items simply trigger them.
+void consolidateCurveFileButtons(Gtk::Grid* bbox, Gtk::PositionType sideEnd,
+                                 Gtk::Button* copyBtn, Gtk::Button* pasteBtn,
+                                 Gtk::Button* loadBtn, Gtk::Button* saveBtn)
+{
+    for (Gtk::Button* b : {copyBtn, pasteBtn, loadBtn, saveBtn}) {
+        b->set_no_show_all(true);
+        b->hide();
+    }
+
+    auto* menuBtn = Gtk::manage(new Gtk::MenuButton());
+    menuBtn->set_relief(Gtk::RELIEF_NONE);
+    menuBtn->set_image(*Gtk::manage(new RTImage("copy", Gtk::ICON_SIZE_BUTTON)));
+    menuBtn->set_tooltip_text(M("CURVEEDITOR_FILEMENU_HINT"));
+    menuBtn->set_can_focus(false);
+
+    auto* menu = Gtk::manage(new Gtk::Menu());
+    const auto addItem = [menu](const Glib::ustring& label, Gtk::Button* target) {
+        auto* mi = Gtk::manage(new Gtk::MenuItem(label));
+        mi->signal_activate().connect([target]() { target->clicked(); });
+        menu->append(*mi);
+    };
+    addItem(M("CURVEEDITOR_TOOLTIPCOPY"), copyBtn);
+    addItem(M("CURVEEDITOR_TOOLTIPPASTE"), pasteBtn);
+    addItem(M("CURVEEDITOR_TOOLTIPLOAD"), loadBtn);
+    addItem(M("CURVEEDITOR_TOOLTIPSAVE"), saveBtn);
+    menu->show_all();
+    menuBtn->set_popup(*menu);
+
+    setExpandAlignProperties(menuBtn, false, false, Gtk::ALIGN_END, Gtk::ALIGN_CENTER);
+    bbox->attach_next_to(*menuBtn, sideEnd, 1, 1);
+}
+
 } // namespace
 
 DiagonalCurveEditorSubGroup::DiagonalCurveEditorSubGroup (CurveEditorGroup* prt, Glib::ustring& curveDir) :
@@ -135,6 +170,7 @@ DiagonalCurveEditorSubGroup::DiagonalCurveEditorSubGroup (CurveEditorGroup* prt,
     custombbox->attach_next_to(*pasteCustom,     sideEnd, 1, 1);
     custombbox->attach_next_to(*loadCustom,      sideEnd, 1, 1);
     custombbox->attach_next_to(*saveCustom,      sideEnd, 1, 1);
+    consolidateCurveFileButtons(custombbox, sideEnd, copyCustom, pasteCustom, loadCustom, saveCustom);
 
     customCoordAdjuster = Gtk::manage (new CoordinateAdjuster(customCurve, this));
     customCoordAdjuster->get_style_context()->add_class("curve-spinbuttonbox");
@@ -227,6 +263,7 @@ DiagonalCurveEditorSubGroup::DiagonalCurveEditorSubGroup (CurveEditorGroup* prt,
     NURBSbbox->attach_next_to(*pasteNURBS,     sideEnd,   1, 1);
     NURBSbbox->attach_next_to(*loadNURBS,      sideEnd,   1, 1);
     NURBSbbox->attach_next_to(*saveNURBS,      sideEnd,   1, 1);
+    consolidateCurveFileButtons(NURBSbbox, sideEnd, copyNURBS, pasteNURBS, loadNURBS, saveNURBS);
 
     NURBSCoordAdjuster = Gtk::manage (new CoordinateAdjuster(NURBSCurve, this));
     NURBSCoordAdjuster->get_style_context()->add_class("curve-spinbuttonbox");
@@ -320,6 +357,7 @@ DiagonalCurveEditorSubGroup::DiagonalCurveEditorSubGroup (CurveEditorGroup* prt,
     parambbox->attach_next_to(*pasteParam, sideEnd,   1, 1);
     parambbox->attach_next_to(*loadParam,  sideEnd,   1, 1);
     parambbox->attach_next_to(*saveParam,  sideEnd,   1, 1);
+    consolidateCurveFileButtons(parambbox, sideEnd, copyParam, pasteParam, loadParam, saveParam);
 
     saveParam->signal_clicked().connect( sigc::mem_fun(*this, &DiagonalCurveEditorSubGroup::savePressed) );
     loadParam->signal_clicked().connect( sigc::mem_fun(*this, &DiagonalCurveEditorSubGroup::loadPressed) );

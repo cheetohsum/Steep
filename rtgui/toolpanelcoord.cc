@@ -2977,6 +2977,15 @@ void ToolPanelCoordinator::buildQuickEditBar()
     quickEditBar_->set_margin_top(2);
     quickEditBar_->set_margin_bottom(4);
 
+    // Applied-flash: a brief accent pulse confirms the click landed (the
+    // flat buttons otherwise give no press feedback at all).
+    const auto flashQuickEditButton = [](Gtk::Button* btn) {
+        btn->get_style_context()->add_class("quick-applied");
+        Glib::signal_timeout().connect_once([btn]() {
+            btn->get_style_context()->remove_class("quick-applied");
+        }, 900);
+    };
+
     auto* autoButton = Gtk::manage(new Gtk::Button("Auto"));
     autoButton->set_name("QuickEditButton");
     autoButton->set_relief(Gtk::RELIEF_NONE);
@@ -2995,7 +3004,8 @@ void ToolPanelCoordinator::buildQuickEditBar()
         }
         return false;
     });
-    autoButton->signal_clicked().connect([this]() {
+    autoButton->signal_clicked().connect([this, autoButton, flashQuickEditButton]() {
+        flashQuickEditButton(autoButton);
         requestQuickAutoParams(0, "Auto Edit", true);
     });
 
@@ -3077,7 +3087,8 @@ void ToolPanelCoordinator::buildQuickEditBar()
         }
         return false;
     });
-    bwButton->signal_clicked().connect([this]() {
+    bwButton->signal_clicked().connect([this, bwButton, flashQuickEditButton]() {
+        flashQuickEditButton(bwButton);
         applyQuickEditParams(makeQuickBWParams(0), "Black & White", true);
     });
 

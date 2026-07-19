@@ -58,6 +58,7 @@ CURVEEDITOR_CURVES;Curves
 CURVEEDITOR_CUSTOM;Standard
 CURVEEDITOR_DARKS;Darks
 CURVEEDITOR_EDITPOINT_HINT;Enable edition of node in/out values.\n\nRight-click on a node to select it.\nRight-click on empty space to de-select the node.
+CURVEEDITOR_FILEMENU_HINT;Copy, paste, load or save the curve
 CURVEEDITOR_HIGHLIGHTS;Highlights
 CURVEEDITOR_LIGHTS;Lights
 CURVEEDITOR_LINEAR;Linear

@@ -2153,7 +2153,15 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     // --- Left section ---
     iops->attach(*hidehp, col++, 0, 1, 1);
     // send_to_external moved to filmstrip action bar
-    iops->attach(*progressLabel, col++, 0, 1, 1);
+    // The progress bar sits in a fixed-width holder: its show/hide must not
+    // change the row's left-section width, or the centered nav/zoom cluster
+    // jumps right while a photo loads and snaps back when it finishes.
+    {
+        auto* progressHolder = Gtk::manage(new Gtk::Box());
+        progressHolder->set_size_request(300, -1);
+        progressHolder->pack_start(*progressLabel, Gtk::PACK_SHRINK);
+        iops->attach(*progressHolder, col++, 0, 1, 1);
+    }
 
     // --- Left spacer (expands to push nav buttons to center) ---
     Gtk::Label* spacerLeft = Gtk::manage(new Gtk::Label(""));

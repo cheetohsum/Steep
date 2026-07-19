@@ -146,7 +146,7 @@ ToneCurve::ToneCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_EXPOSURE_LABEL
     curveEditorG = new CurveEditorGroup(options.lastToneCurvesDir, M("TP_EXPOSURE_CURVEEDITOR1"));
     curveEditorG->setCurveListener(this);
 
-    toneCurveMode->setPreferredWidth(72, 110);
+    toneCurveMode->setPreferredWidth(52, 88);
     setExpandAlignProperties(toneCurveMode, false, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
 
     shape = static_cast<DiagonalCurveEditor*>(curveEditorG->addCurve(CT_Diagonal, M("TP_RGBCURVES_ALL"), toneCurveMode, false));
@@ -177,6 +177,75 @@ ToneCurve::ToneCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_EXPOSURE_LABEL
     curveEditorG->curveListComplete();
 
     curveEditorG->setCurveGraphSize(225);
+
+    // Compact Lightroom-style header: colored channel chips instead of the
+    // full curve-type combos, editing controls behind a cog.
+    curveEditorG->hideHeaderWidgets();
+    shape->enableCompactMode("RGB", "curve-channel-master");
+    shapeR->enableCompactMode("R", "curve-channel-red");
+    shapeG->enableCompactMode("G", "curve-channel-green");
+    shapeB->enableCompactMode("B", "curve-channel-blue");
+    curveEditorG->setCompactDisplay(true);
+
+    for (auto* editor : {(CurveEditor*)shape, (CurveEditor*)shapeR, (CurveEditor*)shapeG, (CurveEditor*)shapeB}) {
+        setExpandAlignProperties(editor->getButtonGroup(), false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_CENTER);
+    }
+
+    // Center the chip cluster and put the options cog right after the B chip
+    {
+        const int PRIO = GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200;
+        Gtk::Grid* headerRow = nullptr;
+        for (auto* child : curveEditorG->get_children()) {
+            if (auto* grid = dynamic_cast<Gtk::Grid*>(child)) {
+                headerRow = grid;
+                break;
+            }
+        }
+        if (headerRow) {
+            setExpandAlignProperties(headerRow, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+
+            for (auto* child : headerRow->get_children()) {
+                if (auto* lbl = dynamic_cast<Gtk::Label*>(child)) {
+                    lbl->set_no_show_all(false);
+                    lbl->set_label("");
+                    lbl->set_hexpand(true);
+                    lbl->show();
+                    break;
+                }
+            }
+
+            auto* cogBtn = Gtk::manage(new Gtk::Button());
+            auto* cogLabel = Gtk::manage(new Gtk::Label("\xe2\x9a\x99")); // U+2699 gear
+            cogBtn->add(*cogLabel);
+            cogBtn->set_relief(Gtk::RELIEF_NONE);
+            cogBtn->set_can_focus(false);
+            cogBtn->set_tooltip_text(M("TP_RGBCURVES_CHANNEL_OPTIONS"));
+            cogBtn->get_style_context()->add_class("curve-cog-btn");
+            {
+                auto css = Gtk::CssProvider::create();
+                try {
+                    css->load_from_data(
+                        ".curve-cog-btn { min-height: 0; min-width: 0; padding: 1px 4px; margin: 0;"
+                        "  background: transparent; background-image: none;"
+                        "  border: none; box-shadow: none; }"
+                        " .curve-cog-btn label { font-size: 16px; color: #999; }"
+                        " .curve-cog-btn:hover label { color: #ddd; }");
+                    cogBtn->get_style_context()->add_provider(css, PRIO);
+                } catch (...) {}
+            }
+            setExpandAlignProperties(cogBtn, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+            cogBtn->set_margin_start(2);
+            headerRow->attach(*cogBtn, 8, 0, 1, 1);
+
+            auto* rightSpacer = Gtk::manage(new Gtk::Box());
+            setExpandAlignProperties(rightSpacer, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+            headerRow->attach(*rightSpacer, 9, 0, 1, 1);
+
+            cogBtn->signal_clicked().connect([this]() {
+                curveEditorG->toggleCompactDisplay();
+            });
+        }
+    }
 
     pack_start(*curveEditorG, Gtk::PACK_SHRINK, 2);
 

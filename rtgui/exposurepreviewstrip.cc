@@ -323,20 +323,14 @@ bool PreviewStrip::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
     cr->clip();
 
     if (thumbnails_.empty() || thumbnails_.size() < static_cast<size_t>(NUM_THUMBS)) {
+        // Quiet placeholder while previews generate — the finished set is
+        // installed atomically, so the strip reveals all frames at once.
         auto grad = Cairo::LinearGradient::create(0, 0, w, 0);
         grad->add_color_stop_rgb(0, 0.15, 0.15, 0.18);
         grad->add_color_stop_rgb(0.5, 0.25, 0.25, 0.28);
         grad->add_color_stop_rgb(1, 0.35, 0.35, 0.38);
         cr->set_source(grad);
         cr->paint();
-
-        cr->set_source_rgba(1, 1, 1, 0.4);
-        cr->select_font_face("sans-serif", Cairo::FONT_SLANT_NORMAL, Cairo::FONT_WEIGHT_NORMAL);
-        cr->set_font_size(10);
-        Cairo::TextExtents te;
-        cr->get_text_extents("Loading previews...", te);
-        cr->move_to((w - te.width) / 2, (h + te.height) / 2);
-        cr->show_text("Loading previews...");
     } else {
         double slotWidth = static_cast<double>(w) / NUM_THUMBS;
 
