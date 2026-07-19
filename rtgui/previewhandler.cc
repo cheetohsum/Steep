@@ -257,6 +257,19 @@ Glib::RefPtr<Gdk::Pixbuf> PreviewHandler::getRoughImage (
     return resPixbuf;
 }
 
+double PreviewHandler::getFitLogicalZoom (hidpi::LogicalSize desiredSize)
+{
+    MyMutex::MyLock lock(previewImgMutex);
+
+    if (!previewImg || previewScale <= 0.0) {
+        return 0.0;
+    }
+
+    const double zoom1 = (double)std::max(desiredSize.width, 20) / previewImg->get_width();
+    const double zoom2 = (double)std::max(desiredSize.height, 20) / previewImg->get_height();
+    return std::min(zoom1, zoom2) / previewScale;
+}
+
 hidpi::DevicePixbuf PreviewHandler::getRoughImage (hidpi::LogicalSize desiredSize,
                                                    int deviceScale, double& outLogicalZoom)
 {

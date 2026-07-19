@@ -314,9 +314,25 @@ bool ImageArea::on_draw(const ::Cairo::RefPtr< Cairo::Context> &cr)
     const auto drawFitPreview = [&]() {
         get_style_context()->render_background(cr, 0, 0, get_width(), get_height());
 
+        // Pre-snap the fit ratio to the crop window's zoom ladder — that is
+        // the size zoomFit() will land on. Drawing the placeholder at the
+        // exact continuous fit made the image visibly shrink a hair when the
+        // first real render replaced it.
+        hidpi::LogicalSize target(get_width(), get_height());
+        const double exactFit = previewHandler->getFitLogicalZoom(target);
+        if (exactFit > 0.0) {
+            const double snapped = CropWindow::snapZoomToLadderStep(exactFit);
+            if (snapped > 0.0 && snapped < exactFit) {
+                const double f = snapped / exactFit;
+                target = hidpi::LogicalSize(
+                    std::max(20, (int)std::lround(get_width() * f)),
+                    std::max(20, (int)std::lround(get_height() * f)));
+            }
+        }
+
         double logicalZoom = 1.0;
         hidpi::DevicePixbuf rough = previewHandler->getRoughImage(
-            hidpi::LogicalSize(get_width(), get_height()),
+            target,
             deviceScale,
             logicalZoom);
 

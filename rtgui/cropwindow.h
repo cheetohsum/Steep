@@ -158,6 +158,16 @@ class CropWindow final : public LWButtonListener, public CropDisplayHandler, pub
     std::vector<ZoomStep> zoomSteps;
     size_t zoom11index;
 
+    static const std::vector<ZoomStep>& sharedZoomSteps();
+
+public:
+    /// Largest ladder step <= zoom — the value zoomFit() will snap to.
+    /// Used by the loading placeholder so every stage shows the image at
+    /// the exact same display size.
+    static double snapZoomToLadderStep(double zoom);
+
+private:
+
     void initZoomSteps();
     
 public:

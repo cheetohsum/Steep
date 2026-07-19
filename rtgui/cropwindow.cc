@@ -158,26 +158,60 @@ CropWindow::~CropWindow ()
 }
 
 
+const std::vector<CropWindow::ZoomStep>& CropWindow::sharedZoomSteps()
+{
+    static const std::vector<ZoomStep> ladder = []() {
+        std::vector<ZoomStep> steps;
+        steps.push_back(ZoomStep("  1%", 0.01, 999, true));
+        steps.push_back(ZoomStep("  2%", 0.02, 500, true));
+        steps.push_back(ZoomStep("  5%", 0.05, 200, true));
+        steps.push_back(ZoomStep("  6%", 1.0/15.0, 150, true));
+        steps.push_back(ZoomStep("  8%", 1.0/12.0, 120, true));
+        char lbl[64];
+        for (int s = 100; s >= 11; --s) {
+            float z = 10.f / s;
+            snprintf(lbl, sizeof(lbl), "% 2d%%", int(z * 100));
+            bool is_major = (s == s/10 * 10);
+            steps.push_back(ZoomStep(lbl, z, s, is_major));
+        }
+        for (int s = 1; s <= 8; ++s) {
+            snprintf(lbl, sizeof(lbl), "%d00%%", s);
+            steps.push_back(ZoomStep(lbl, s, s * 1000, true));
+        }
+        steps.push_back(ZoomStep("1600%", 16, 16000, true));
+        return steps;
+    }();
+    return ladder;
+}
+
+double CropWindow::snapZoomToLadderStep(double zoom)
+{
+    const auto& steps = sharedZoomSteps();
+    if (steps.empty() || zoom <= 0.0) {
+        return zoom;
+    }
+    if (zoom < steps.front().zoom) {
+        return steps.front().zoom;
+    }
+    for (size_t i = 0; i + 1 < steps.size(); ++i) {
+        if (steps[i].zoom <= zoom && steps[i + 1].zoom > zoom) {
+            return steps[i].zoom;
+        }
+    }
+    return steps.back().zoom;
+}
+
 void CropWindow::initZoomSteps()
 {
-    zoomSteps.push_back(ZoomStep("  1%", 0.01, 999, true));
-    zoomSteps.push_back(ZoomStep("  2%", 0.02, 500, true));
-    zoomSteps.push_back(ZoomStep("  5%", 0.05, 200, true));
-    zoomSteps.push_back(ZoomStep("  6%", 1.0/15.0, 150, true));
-    zoomSteps.push_back(ZoomStep("  8%", 1.0/12.0, 120, true));
-    char lbl[64];
-    for (int s = 100; s >= 11; --s) {
-        float z = 10.f / s;
-        snprintf(lbl, sizeof(lbl), "% 2d%%", int(z * 100));
-        bool is_major = (s == s/10 * 10);
-        zoomSteps.push_back(ZoomStep(lbl, z, s, is_major));
+    zoomSteps = sharedZoomSteps();
+    // Index of the 100% step (first entry with zoom >= 1.0)
+    zoom11index = zoomSteps.size() - 1;
+    for (size_t i = 0; i < zoomSteps.size(); ++i) {
+        if (zoomSteps[i].zoom >= 1.0) {
+            zoom11index = i;
+            break;
+        }
     }
-    zoom11index = zoomSteps.size();
-    for (int s = 1; s <= 8; ++s) {
-        snprintf(lbl, sizeof(lbl), "%d00%%", s);
-        zoomSteps.push_back(ZoomStep(lbl, s, s * 1000, true));
-    }
-    zoomSteps.push_back(ZoomStep("1600%", 16, 16000, true));
 }
 
 void CropWindow::enable()

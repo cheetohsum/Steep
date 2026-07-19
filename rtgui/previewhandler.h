@@ -95,6 +95,9 @@ public:
     // with this function it is possible to ask for a rough approximation of a (possibly zoomed) crop of the image
     Glib::RefPtr<Gdk::Pixbuf> getRoughImage(ImageCoord pos, hidpi::ScaledDeviceSize desiredSize, double zoom);
     hidpi::DevicePixbuf getRoughImage(hidpi::LogicalSize desiredSize, int deviceScale, double& outLogicalZoom);
+    /// Display zoom (relative to the full image) a fit into desiredSize
+    /// would use — pure math, no scaling. 0 if no preview is loaded.
+    double getFitLogicalZoom(hidpi::LogicalSize desiredSize);
 
     // Downsample the latest monitor-space engine result without first copying
     // the full editor preview. imageScale is output pixels per full-size pixel.
