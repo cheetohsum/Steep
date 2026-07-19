@@ -2417,6 +2417,10 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     hpanedr->add(*albumViewStack_);
 
     if (!options.editorShowLeftSidebar) {
+        // Actually hide, not just park off-screen: some GTK builds (the
+        // Linux AppImage's) clamp negative overlay allocations to 0, which
+        // left the "collapsed" sidebar fully visible at startup.
+        leftbox->hide();
         leftbox->set_no_show_all(true);
         leftAnimFraction_ = 0.0;
     }
