@@ -1089,12 +1089,8 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
 
     // Populate Selective panel (spot removal + locallab)
     // spotGroup and maskingGroup already created before populateEditPanel()
-    // Spot Removal lives on the EDIT page: hosting it on the mask page made
-    // "just removing a spot" enter mask mode, which auto-enables locallab
-    // and bridges/zeroes the global tone/vibrance/sharpening/B&W settings —
-    // the user-visible "spot removal disables my edit settings".
-    editPanel->pack_start(*spotGroup, Gtk::PACK_SHRINK);
-    editPanel->reorder_child(*spotGroup, 5);  // after Effects, before Camera
+    // Spot Removal lives on the mask page, above the Masking group.
+    locallabPanel->pack_start(*spotGroup, Gtk::PACK_SHRINK);
     addPanel(spotGroup->getContentBox(), spot, 1);
     spot->setFlatMode(true);
 
