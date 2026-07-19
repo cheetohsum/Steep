@@ -339,8 +339,10 @@ Gtk::SizeRequestMode PreviewWindow::get_request_mode_vfunc () const
 
 void PreviewWindow::get_preferred_height_vfunc (int &minimum_height, int &natural_height) const
 {
-    minimum_height= RTScalable::scalePixelSize(50);
-    natural_height = RTScalable::scalePixelSize(100);
+    // ~30% taller than the historical 50/100 — more visible navigator
+    // preview without widening the right panel.
+    minimum_height= RTScalable::scalePixelSize(65);
+    natural_height = RTScalable::scalePixelSize(130);
 }
 
 void PreviewWindow::get_preferred_width_vfunc (int &minimum_width, int &natural_width) const

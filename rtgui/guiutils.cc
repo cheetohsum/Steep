@@ -1519,9 +1519,10 @@ bool MyHScale::on_draw (const Cairo::RefPtr<Cairo::Context>& cr)
 
     // For labeled sliders: skip GTK default draw entirely (we paint everything).
     // Pill background is drawn by Adjuster::on_draw — don't erase it here.
-    // For unlabeled: let GTK draw first, then overlay our custom elements.
+    // Zoom-style sliders also paint everything themselves.
+    // For other unlabeled: let GTK draw first, then overlay custom elements.
     bool ret = true;
-    if (!hasLbl) {
+    if (!hasLbl && !zoomStyle_) {
         ret = Gtk::Scale::on_draw(cr);
     }
     // (labeled: no erase — Adjuster's pill shows through)
@@ -1536,6 +1537,55 @@ bool MyHScale::on_draw (const Cairo::RefPtr<Cairo::Context>& cr)
     const double rangeMax = get_adjustment()->get_upper();
     const double value = get_value();
     const double range = rangeMax - rangeMin;
+
+    if (!hasLbl && zoomStyle_) {
+        // Modern look: pill trough, accent fill up to the knob, round knob.
+        labelAreaWidth_ = 0.0;
+        const double troughH = 5.0;
+        const double radius = troughH / 2.0;
+        const double ty0 = troughY - radius;
+        const double x0 = padding + radius;
+        const double x1 = padding + troughWidth - radius;
+
+        cr->begin_new_sub_path();
+        cr->arc(x0, ty0 + radius, radius, rtengine::RT_PI * 0.5, rtengine::RT_PI * 1.5);
+        cr->arc(x1, ty0 + radius, radius, rtengine::RT_PI * 1.5, rtengine::RT_PI * 0.5);
+        cr->close_path();
+        cr->set_source_rgba(1.0, 1.0, 1.0, 0.13);
+        cr->fill();
+
+        if (range > 0) {
+            const double valueFrac = (value - rangeMin) / range;
+            const double knobX = sliderStart + valueFrac * (sliderEnd - sliderStart);
+
+            if (knobX > x0) {
+                cr->begin_new_sub_path();
+                cr->arc(x0, ty0 + radius, radius, rtengine::RT_PI * 0.5, rtengine::RT_PI * 1.5);
+                cr->arc(std::max(knobX, x0), ty0 + radius, radius, rtengine::RT_PI * 1.5, rtengine::RT_PI * 0.5);
+                cr->close_path();
+                cr->set_source_rgba(0.392, 0.627, 1.0, 0.75);
+                cr->fill();
+            }
+
+            const bool isHover = get_state_flags() & Gtk::STATE_FLAG_PRELIGHT;
+            const double kr = isHover ? 7.0 : 6.0;
+
+            cr->arc(knobX, troughY + 1.0, kr, 0, 2 * rtengine::RT_PI);
+            cr->set_source_rgba(0.0, 0.0, 0.0, 0.35);
+            cr->fill();
+
+            cr->arc(knobX, troughY, kr, 0, 2 * rtengine::RT_PI);
+            cr->set_source_rgb(isHover ? 0.98 : 0.92, isHover ? 0.98 : 0.93, isHover ? 1.0 : 0.96);
+            cr->fill();
+
+            cr->arc(knobX, troughY, kr - 0.5, 0, 2 * rtengine::RT_PI);
+            cr->set_source_rgba(0.392, 0.627, 1.0, 0.9);
+            cr->set_line_width(1.6);
+            cr->stroke();
+        }
+
+        return true;
+    }
 
     if (hasLbl) {
         // Pill background, value fill, and label text are all drawn by Adjuster::on_draw

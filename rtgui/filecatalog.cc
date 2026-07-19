@@ -953,24 +953,29 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     exifInfo->set_active( options.showFileNames );
     exifInfo->signal_toggled().connect(sigc::mem_fun(*this, &FileCatalog::exifInfoButtonToggled));
 
-    // thumbnail zoom slider — uses MyHScale for custom tick mark drawing
+    // thumbnail zoom slider — MyHScale in zoom style (pill trough + round knob)
     zoomSlider_ = Gtk::manage(new MyHScale());
     zoomSlider_->set_range(0, options.thumbnailZoomRatios.size() - 1);
     zoomSlider_->set_increments(1, 1);
     zoomSlider_->set_draw_value(false);
-    zoomSlider_->set_size_request(200, -1);
+    zoomSlider_->set_size_request(230, -1);
     zoomSlider_->set_valign(Gtk::ALIGN_CENTER);
-    // Same compact slider CSS as Adjuster (MyHScale draws its own thumb)
+    zoomSlider_->setZoomStyle(true);
+    zoomSlider_->set_tooltip_text(M("FILEBROWSER_ZOOMSLIDER_HINT"));
+    // Generous invisible grab area — the knob is easy to catch even with a
+    // quick swipe; visuals are drawn by MyHScale's zoom style.
     {
         auto sliderCss = Gtk::CssProvider::create();
         try {
             sliderCss->load_from_data(
                 "scale { padding: 0; margin: 0; min-height: 0; }"
-                " scale trough { min-height: 3px; margin: 0; padding: 0 4px; }"
-                " scale slider { min-height: 0; min-width: 0; padding: 7px; margin: -7px;"
+                " scale trough { min-height: 3px; margin: 0; padding: 0 4px;"
+                "   background: transparent; border: none; box-shadow: none; }"
+                " scale slider { min-height: 0; min-width: 0; padding: 12px; margin: -12px;"
                 "   background: transparent; border-color: transparent;"
                 "   border: none; box-shadow: none; }"
-                " scale trough highlight { margin: 0; padding: 0; min-height: 0; }"
+                " scale trough highlight { margin: 0; padding: 0; min-height: 0;"
+                "   background: transparent; }"
             );
             zoomSlider_->get_style_context()->add_provider(
                 sliderCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200

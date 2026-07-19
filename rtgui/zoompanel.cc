@@ -48,7 +48,7 @@ ZoomPanel::ZoomPanel (ImageArea* iarea) : iarea(iarea), sliderUpdateInProgress(f
     setExpandAlignProperties (zoomBtn, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_FILL);
 
     zoomDraw = Gtk::manage (new Gtk::DrawingArea ());
-    zoomDraw->set_size_request (34, 26);
+    zoomDraw->set_size_request (46, 30);
     zoomDraw->signal_draw().connect (sigc::mem_fun (*this, &ZoomPanel::onDrawZoom));
     zoomBtn->add (*zoomDraw);
 
@@ -213,41 +213,71 @@ bool ZoomPanel::onDrawZoom (const Cairo::RefPtr<Cairo::Context>& cr)
     int h = zoomDraw->get_allocated_height ();
 
     // Lens center — shifted up-left to leave room for handle
-    double cx = w * 0.40;
-    double cy = h * 0.40;
-    double r = std::min (w, h) * 0.34;
+    double cx = w * 0.42;
+    double cy = h * 0.42;
+    double r = std::min (w, h) * 0.40;
+
+    // Soft accent halo lifts the lens off the toolbar
+    cr->set_source_rgba (0.392, 0.627, 1.0, 0.12);
+    cr->set_line_width (4.0);
+    cr->arc (cx, cy, r + 1.2, 0, 2 * M_PI);
+    cr->stroke ();
+
+    // Glass fill: bright toward the top-left, falls off to a faint tint
+    auto glass = Cairo::RadialGradient::create (cx - r * 0.35, cy - r * 0.35, r * 0.15, cx, cy, r);
+    glass->add_color_stop_rgba (0.0, 0.75, 0.84, 1.0, 0.20);
+    glass->add_color_stop_rgba (1.0, 0.40, 0.56, 0.85, 0.06);
+    cr->set_source (glass);
+    cr->arc (cx, cy, r - 0.6, 0, 2 * M_PI);
+    cr->fill ();
 
     // Lens ring
-    cr->set_source_rgba (0.72, 0.76, 0.82, 0.75);
-    cr->set_line_width (1.6);
+    cr->set_source_rgba (0.82, 0.87, 0.94, 0.92);
+    cr->set_line_width (2.0);
     cr->arc (cx, cy, r, 0, 2 * M_PI);
     cr->stroke ();
 
-    // Subtle glass fill
-    cr->set_source_rgba (0.6, 0.7, 0.85, 0.08);
-    cr->arc (cx, cy, r - 0.8, 0, 2 * M_PI);
-    cr->fill ();
-
-    // Handle
-    double angle = M_PI / 4.0;
-    double hx1 = cx + (r + 1) * std::cos (angle);
-    double hy1 = cy + (r + 1) * std::sin (angle);
-    cr->set_source_rgba (0.72, 0.76, 0.82, 0.75);
-    cr->set_line_width (2.5);
-    cr->set_line_cap (Cairo::LINE_CAP_ROUND);
-    cr->move_to (hx1, hy1);
-    cr->line_to (w * 0.88, h * 0.88);
+    // Specular highlight arc at the top-left of the glass
+    cr->set_source_rgba (1.0, 1.0, 1.0, 0.35);
+    cr->set_line_width (1.4);
+    cr->arc (cx, cy, r - 2.4, M_PI * 1.02, M_PI * 1.44);
     cr->stroke ();
 
-    // Zoom text centered in lens
-    cr->set_source_rgba (0.88, 0.90, 0.93, 0.95);
+    // Handle — thicker, rounded, with a soft shadow underneath
+    double angle = M_PI / 4.0;
+    double hx1 = cx + (r + 0.5) * std::cos (angle);
+    double hy1 = cy + (r + 0.5) * std::sin (angle);
+    cr->set_line_cap (Cairo::LINE_CAP_ROUND);
+    cr->set_source_rgba (0.0, 0.0, 0.0, 0.30);
+    cr->set_line_width (4.2);
+    cr->move_to (hx1 + 0.8, hy1 + 1.0);
+    cr->line_to (w * 0.92 + 0.8, h * 0.92 + 1.0);
+    cr->stroke ();
+    cr->set_source_rgba (0.82, 0.87, 0.94, 0.95);
+    cr->set_line_width (3.4);
+    cr->move_to (hx1, hy1);
+    cr->line_to (w * 0.92, h * 0.92);
+    cr->stroke ();
+
+    // Zoom text centered in the lens, drop-shadowed for contrast
     auto layout = zoomDraw->create_pango_layout (currentZoomText);
     auto font = Pango::FontDescription ("Sans Bold");
-    font.set_absolute_size (7.5 * Pango::SCALE);
+    font.set_absolute_size (9.5 * Pango::SCALE);
     layout->set_font_description (font);
     int tw, th;
     layout->get_pixel_size (tw, th);
-    cr->move_to (cx - tw / 2.0, cy - th / 2.0);
+    const double tx = cx - tw / 2.0;
+    const double ty = cy - th / 2.0;
+
+    cr->set_source_rgba (0.0, 0.0, 0.0, 0.55);
+    cr->move_to (tx + 1.2, ty + 1.4);
+    layout->show_in_cairo_context (cr);
+    cr->set_source_rgba (0.0, 0.0, 0.0, 0.30);
+    cr->move_to (tx + 0.6, ty + 0.8);
+    layout->show_in_cairo_context (cr);
+
+    cr->set_source_rgba (0.97, 0.98, 1.0, 0.98);
+    cr->move_to (tx, ty);
     layout->show_in_cairo_context (cr);
 
     return true;

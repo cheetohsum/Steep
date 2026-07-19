@@ -481,6 +481,9 @@ public:
     bool hasLabel() const;
     double getLabelAreaWidth() const;
 
+    /// Modern pill-trough + round-knob look (browser thumbnail size slider)
+    void setZoomStyle(bool enabled) { zoomStyle_ = enabled; queue_draw(); }
+
 protected:
     bool on_scroll_event (GdkEventScroll* event) override;
     bool on_key_press_event (GdkEventKey* event) override;
@@ -490,6 +493,7 @@ protected:
 private:
     std::vector<GradientMilestone> trackGradient_;
     bool showTickMarks_ = true;
+    bool zoomStyle_ = false;
     Glib::ustring labelText_;
     std::function<void()> labelClickCallback_;
     double labelAreaWidth_ = 0.0;

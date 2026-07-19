@@ -311,6 +311,7 @@ FILEBROWSER_THUMBSIZE;Thumbnail size
 FILEBROWSER_UNRANK_TOOLTIP;Unrank.\nShortcut: <b>0</b>
 FILEBROWSER_ZOOMINHINT;Increase thumbnail size.\n\nShortcuts:\n<b>+</b> - Multiple Editor Tabs Mode,\n<b>Alt</b>-<b>+</b> - Single Editor Tab Mode.
 FILEBROWSER_ZOOMOUTHINT;Decrease thumbnail size.\n\nShortcuts:\n<b>-</b> - Multiple Editor Tabs Mode,\n<b>Alt</b>-<b>-</b> - Single Editor Tab Mode.
+FILEBROWSER_ZOOMSLIDER_HINT;Thumbnail size
 FILECHOOSER_FILTER_ANY;All files
 FILECHOOSER_FILTER_COLPROF;Color profiles (*.icc)
 FILECHOOSER_FILTER_CURVE;Curve files

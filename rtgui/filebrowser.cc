@@ -1596,13 +1596,17 @@ FileBrowser::FileBrowser () :
         pmenu->attach(*Gtk::manage(new Gtk::SeparatorMenuItem()), 0, 1, p, p + 1);
         p++;
 
-        // Padded horizontally by half the inter-icon gap so a row has no
-        // dead zones: any click along the row lands on the nearest icon.
-        // Each zone's root-space origin is derived via translate_coordinates
-        // to its toplevel — mixing get_allocation() with the event window's
-        // origin double-counted the menu's internal offsets and shifted
-        // every hit zone right and below its icon.
+        // Padded so a row has no dead zones: any click along the row lands
+        // on an icon. Zone origins come from translate_coordinates to the
+        // toplevel (allocation+window-origin math double-counted the menu's
+        // internal offsets). Among all padded rects containing the point,
+        // the zone whose CENTER is closest wins — first-match let a
+        // neighbor's padding steal clicks from the left edge of the icon
+        // actually under the pointer.
         auto hitZoneAt = [inlineZones](double xRoot, double yRoot) -> InlineZone* {
+            InlineZone* best = nullptr;
+            double bestDist = 0.0;
+
             for (auto& zone : *inlineZones) {
                 Gtk::Widget* widget = zone.widget;
                 if (!widget->get_visible()) {
@@ -1622,16 +1626,22 @@ FileBrowser::FileBrowser () :
                 int topY = 0;
                 toplevel->get_window()->get_origin(topX, topY);
 
+                const double w = widget->get_allocated_width();
+                const double h = widget->get_allocated_height();
                 const double ix = xRoot - (topX + inTopX);
                 const double iy = yRoot - (topY + inTopY);
 
-                if (ix >= -5.0 && iy >= -5.0
-                        && ix < widget->get_allocated_width() + 5.0
-                        && iy < widget->get_allocated_height() + 5.0) {
-                    return &zone;
+                if (ix >= -7.0 && iy >= -7.0 && ix < w + 7.0 && iy < h + 7.0) {
+                    const double dx = ix - w / 2.0;
+                    const double dy = iy - h / 2.0;
+                    const double dist = dx * dx + dy * dy;
+                    if (!best || dist < bestDist) {
+                        best = &zone;
+                        bestDist = dist;
+                    }
                 }
             }
-            return nullptr;
+            return best;
         };
 
         pmenu->signal_button_press_event().connect(
