@@ -147,7 +147,10 @@ public:
         // Preview loading is paused around foreground image opens. Use enough
         // workers to overlap cold-cache preview extraction, while keeping them
         // below normal priority so GTK stays responsive for early paints.
-        threadCount = std::max(4, std::min(threadCount, 8));
+        // Embedded-JPEG extraction is mostly CPU-bound decode+scale, so on
+        // big machines a wider pool meaningfully cuts first-visit times; the
+        // ioPressure feedback below still throttles slow (spinning) storage.
+        threadCount = std::max(4, std::min(threadCount, 12));
         maxThreadCount_ = threadCount;
 
         threadPool_.reset(new Glib::ThreadPool(threadCount, true));
@@ -350,12 +353,12 @@ public:
             } else {
                 queueTarget = std::min(maxThreadCount_, 2);
             }
-        } else if (jobs_.size() >= 512) {
+        } else if (jobs_.size() >= 256) {
             queueTarget = maxThreadCount_;
         } else if (jobs_.size() >= 64) {
-            queueTarget = std::min(maxThreadCount_, 4);
+            queueTarget = std::min(maxThreadCount_, 8);
         } else if (jobs_.size() >= 8) {
-            queueTarget = std::min(maxThreadCount_, 3);
+            queueTarget = std::min(maxThreadCount_, 4);
         } else {
             queueTarget = std::min(maxThreadCount_, 2);
         }
@@ -367,10 +370,10 @@ public:
             ioTarget = 3;
         } else if (ioPressure_ >= 1) {
             ioTarget = 4;
-        } else if (fastJobCredit_ < 8) {
-            ioTarget = 3;
-        } else if (fastJobCredit_ < 24) {
-            ioTarget = 5;
+        } else if (fastJobCredit_ < 6) {
+            ioTarget = 4;
+        } else if (fastJobCredit_ < 16) {
+            ioTarget = 6;
         } else {
             ioTarget = maxThreadCount_;
         }

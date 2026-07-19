@@ -166,8 +166,9 @@ public:
 #endif
         // Cold folder loads need enough workers to extract first-pass
         // embedded previews promptly, while still leaving headroom for the
-        // editor and foreground RAW decode.
-        threadCount = std::max(2, std::min(threadCount, 8));
+        // editor and foreground RAW decode (workers run below normal
+        // priority, so a wider pool on big machines is safe).
+        threadCount = std::max(2, std::min(threadCount, 12));
         maxThreadCount_ = threadCount;
 
         threadPool_.reset(new Glib::ThreadPool(threadCount, true));

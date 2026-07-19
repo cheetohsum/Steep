@@ -6516,9 +6516,19 @@ void EditorPanel::beforeAfterToggled ()
         return;
     }
 
-    removeIfThere (beforeAfterBox,  beforeBox, false);
-    removeIfThere (afterBox,  afterHeaderBox, false);
-    beforeAfterBox->set_homogeneous (false);
+    // Image switches with before/after active keep the half/half split in
+    // place and swap only the before pane's content. Tearing the whole
+    // split down made the after image re-fit at full width and snap back
+    // to half width every switch — the visible "fidget".
+    const bool splitPacked = beforeBox
+        && beforeBox->get_parent() == static_cast<Gtk::Widget*>(beforeAfterBox);
+    const bool keepSplit = beforeAfter->get_active() && splitPacked;
+
+    if (!keepSplit) {
+        removeIfThere (beforeAfterBox,  beforeBox, false);
+        removeIfThere (afterBox,  afterHeaderBox, false);
+        beforeAfterBox->set_homogeneous (false);
+    }
 
     if (beforeIarea) {
         // Cancel any pending async load
@@ -6554,7 +6564,9 @@ void EditorPanel::beforeAfterToggled ()
 
         beforeIpc = nullptr;
 
-        if (iareapanel && iareapanel->imageArea) {
+        // Only when the split was dissolved does the after pane's size
+        // change and need a re-fit; a content-only refresh keeps geometry.
+        if (!keepSplit && iareapanel && iareapanel->imageArea) {
             idle_register.add([this]() -> bool {
                 if (iareapanel && iareapanel->imageArea) {
                     Gtk::Allocation alloc = iareapanel->imageArea->get_allocation();
@@ -6586,39 +6598,42 @@ void EditorPanel::beforeAfterToggled ()
 
         beforeIarea = new ImageAreaPanel ();
 
-        int HeaderBoxHeight = 15;
+        if (!keepSplit) {
+            int HeaderBoxHeight = 15;
 
-        beforeLabel = Gtk::manage (new Gtk::Label (M ("GENERAL_BEFORE")));
-        beforeLabel->get_style_context()->add_class("ba-label");
-        tbBeforeLock = Gtk::manage (new Gtk::ToggleButton ());
-        tbBeforeLock->get_style_context()->add_class("ba-lock");
-        tbBeforeLock->set_relief(Gtk::RELIEF_NONE);
-        tbBeforeLock->set_tooltip_markup (M ("MAIN_TOOLTIP_BEFOREAFTERLOCK"));
-        tbBeforeLock->signal_toggled().connect ( sigc::mem_fun (*this, &EditorPanel::tbBeforeLock_toggled) );
-        beforeHeaderBox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL));
-        beforeHeaderBox->get_style_context()->add_class("smallbuttonbox");
-        beforeHeaderBox->pack_start (*beforeLabel, Gtk::PACK_EXPAND_WIDGET, 0);
-        beforeHeaderBox->pack_end (*tbBeforeLock, Gtk::PACK_SHRINK, 0);
-        beforeHeaderBox->set_size_request (0, HeaderBoxHeight);
+            beforeLabel = Gtk::manage (new Gtk::Label (M ("GENERAL_BEFORE")));
+            beforeLabel->get_style_context()->add_class("ba-label");
+            tbBeforeLock = Gtk::manage (new Gtk::ToggleButton ());
+            tbBeforeLock->get_style_context()->add_class("ba-lock");
+            tbBeforeLock->set_relief(Gtk::RELIEF_NONE);
+            tbBeforeLock->set_tooltip_markup (M ("MAIN_TOOLTIP_BEFOREAFTERLOCK"));
+            tbBeforeLock->signal_toggled().connect ( sigc::mem_fun (*this, &EditorPanel::tbBeforeLock_toggled) );
+            beforeHeaderBox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL));
+            beforeHeaderBox->get_style_context()->add_class("smallbuttonbox");
+            beforeHeaderBox->pack_start (*beforeLabel, Gtk::PACK_EXPAND_WIDGET, 0);
+            beforeHeaderBox->pack_end (*tbBeforeLock, Gtk::PACK_SHRINK, 0);
+            beforeHeaderBox->set_size_request (0, HeaderBoxHeight);
 
-        history->blistenerLock ? tbBeforeLock->set_image (*iBeforeLockON) : tbBeforeLock->set_image (*iBeforeLockOFF);
-        tbBeforeLock->set_active (history->blistenerLock);
+            history->blistenerLock ? tbBeforeLock->set_image (*iBeforeLockON) : tbBeforeLock->set_image (*iBeforeLockOFF);
+            tbBeforeLock->set_active (history->blistenerLock);
 
-        beforeBox = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
-        beforeBox->pack_start (*beforeHeaderBox, Gtk::PACK_SHRINK, 0);
+            beforeBox = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
+            beforeBox->pack_start (*beforeHeaderBox, Gtk::PACK_SHRINK, 0);
+
+            afterLabel = Gtk::manage (new Gtk::Label (M ("GENERAL_AFTER")));
+            afterLabel->get_style_context()->add_class("ba-label");
+            afterHeaderBox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL));
+            afterHeaderBox->set_size_request (0, HeaderBoxHeight);
+            afterHeaderBox->pack_start (*afterLabel, Gtk::PACK_EXPAND_WIDGET, 0);
+            afterBox->pack_start (*afterHeaderBox, Gtk::PACK_SHRINK, 0);
+            afterBox->reorder_child (*afterHeaderBox, 0);
+
+            beforeAfterBox->pack_start (*beforeBox);
+            beforeAfterBox->reorder_child (*beforeBox, 0);
+            beforeAfterBox->set_homogeneous (true);
+        }
+
         beforeBox->pack_start (*beforeIarea);
-
-        afterLabel = Gtk::manage (new Gtk::Label (M ("GENERAL_AFTER")));
-        afterLabel->get_style_context()->add_class("ba-label");
-        afterHeaderBox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL));
-        afterHeaderBox->set_size_request (0, HeaderBoxHeight);
-        afterHeaderBox->pack_start (*afterLabel, Gtk::PACK_EXPAND_WIDGET, 0);
-        afterBox->pack_start (*afterHeaderBox, Gtk::PACK_SHRINK, 0);
-        afterBox->reorder_child (*afterHeaderBox, 0);
-
-        beforeAfterBox->pack_start (*beforeBox);
-        beforeAfterBox->reorder_child (*beforeBox, 0);
-        beforeAfterBox->set_homogeneous (true);
 
         // Show UI immediately — before panel appears as empty frame
         // while the image loads asynchronously in the background.
