@@ -40,6 +40,7 @@
 #include "batchqueueentry.h"
 #include "soundman.h"
 #include "rtimage.h"
+#include "filecatalog.h"
 #include "filepanel.h"
 #include "filebrowserentry.h"
 #include "filethumbnailbuttonset.h"
@@ -2199,6 +2200,16 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     vboxright->set_name ("EditorModules");
 
     fPanel = filePanel;
+
+    if (filePanel && tpc) {
+        FilePanel* const fp = filePanel;
+        tpc->setDoubleExposureBrowserFilterProvider([fp]() {
+            return fp->fileCatalog ? fp->fileCatalog->getFilter() : BrowserFilter();
+        });
+        tpc->setDoubleExposureBrowserDirProvider([fp]() {
+            return fp->fileCatalog ? fp->fileCatalog->lastSelectedDir() : Glib::ustring();
+        });
+    }
 
     if (filePanel) {
         catalogPane = new Gtk::Box(Gtk::ORIENTATION_VERTICAL);
@@ -5068,7 +5079,13 @@ void EditorPanel::procParamsChanged(
 
     // Slider drags can use responsive preview work while they are active.
     // Once the edit stream goes quiet, request exactly one full-detail pass.
-    if (ev != rtengine::EvProfileChangeNotification && ev != rtengine::EvPhotoLoaded) {
+    // Profile changes MUST schedule it too: editor-side quick actions (Auto
+    // Edit commits, presets) land through profileChange and otherwise leave
+    // the canvas at fast-preview quality with nothing queued to settle it.
+    // Only the photo-load event is excluded — the open path runs its own
+    // deferred refinement. The scheduler self-coalesces, so overlapping
+    // schedules are harmless.
+    if (ev != rtengine::EvPhotoLoaded) {
         scheduleFinalPreviewRefinement();
     }
 

@@ -3522,6 +3522,56 @@ bool DehazeParams::operator !=(const DehazeParams& other) const
 }
 
 
+DoubleExposureParams::Layer::Layer() :
+    path(""),
+    ev(0.0),
+    opacity(100.0)
+{
+}
+
+bool DoubleExposureParams::Layer::operator ==(const Layer& other) const
+{
+    return
+        path == other.path
+        && ev == other.ev
+        && opacity == other.opacity;
+}
+
+bool DoubleExposureParams::Layer::operator !=(const Layer& other) const
+{
+    return !(*this == other);
+}
+
+DoubleExposureParams::DoubleExposureParams() :
+    enabled(false),
+    layers(),
+    blendMode(BlendMode::ADD),
+    autoGain(true),
+    baseEv(0.0),
+    // A mild shadow bias by default: overlays favor the base's shadows (the
+    // classic silhouette look) and it makes stack order matter out of the box
+    // — pure equal-opacity addition is order-free, as on film.
+    fillShadows(25.0)
+{
+}
+
+bool DoubleExposureParams::operator ==(const DoubleExposureParams& other) const
+{
+    return
+        enabled == other.enabled
+        && layers == other.layers
+        && blendMode == other.blendMode
+        && autoGain == other.autoGain
+        && baseEv == other.baseEv
+        && fillShadows == other.fillShadows;
+}
+
+bool DoubleExposureParams::operator !=(const DoubleExposureParams& other) const
+{
+    return !(*this == other);
+}
+
+
 RAWParams::BayerSensor::BayerSensor() :
     method(getMethodString(Method::AMAZE)),
     border(4),
@@ -4055,6 +4105,8 @@ void ProcParams::setDefaults()
 
     dehaze = {};
 
+    doubleExposure = {};
+
     raw = {};
 
     metadata = {};
@@ -4455,6 +4507,24 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->dehaze.showDepthMap, "Dehaze", "ShowDepthMap", dehaze.showDepthMap, keyFile);
         saveToKeyfile(!pedited || pedited->dehaze.depth, "Dehaze", "Depth", dehaze.depth, keyFile);
         saveToKeyfile(!pedited || pedited->dehaze.depth, "Dehaze", "Saturation", dehaze.saturation, keyFile);
+
+// Double Exposure
+        saveToKeyfile(!pedited || pedited->doubleExposure.enabled, "Double Exposure", "Enabled", doubleExposure.enabled, keyFile);
+        saveToKeyfile(!pedited || pedited->doubleExposure.blendMode, "Double Exposure", "BlendMode", static_cast<int>(doubleExposure.blendMode), keyFile);
+        saveToKeyfile(!pedited || pedited->doubleExposure.autoGain, "Double Exposure", "AutoGain", doubleExposure.autoGain, keyFile);
+        saveToKeyfile(!pedited || pedited->doubleExposure.baseEv, "Double Exposure", "BaseEV", doubleExposure.baseEv, keyFile);
+        saveToKeyfile(!pedited || pedited->doubleExposure.fillShadows, "Double Exposure", "FillShadows", doubleExposure.fillShadows, keyFile);
+
+        if (!pedited || pedited->doubleExposure.layers) {
+            keyFile.set_integer("Double Exposure", "LayerCount", static_cast<int>(doubleExposure.layers.size()));
+
+            for (size_t i = 0; i < doubleExposure.layers.size(); ++i) {
+                const std::string prefix = "Layer" + std::to_string(i + 1);
+                keyFile.set_string("Double Exposure", prefix + "Path", doubleExposure.layers[i].path);
+                keyFile.set_double("Double Exposure", prefix + "EV", doubleExposure.layers[i].ev);
+                keyFile.set_double("Double Exposure", prefix + "Opacity", doubleExposure.layers[i].opacity);
+            }
+        }
 
 // Directional pyramid denoising
         saveToKeyfile(!pedited || pedited->dirpyrDenoise.enabled, "Directional Pyramid Denoising", "Enabled", dirpyrDenoise.enabled, keyFile);
@@ -7146,6 +7216,54 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
             }
         }
 
+        if (keyFile.has_group("Double Exposure")) {
+            assignFromKeyfile(keyFile, "Double Exposure", "Enabled", doubleExposure.enabled, pedited->doubleExposure.enabled);
+
+            if (keyFile.has_key("Double Exposure", "BlendMode")) {
+                const int mode = keyFile.get_integer("Double Exposure", "BlendMode");
+
+                if (mode >= 0 && mode <= 3) {
+                    doubleExposure.blendMode = static_cast<DoubleExposureParams::BlendMode>(mode);
+                }
+
+                if (pedited) {
+                    pedited->doubleExposure.blendMode = true;
+                }
+            }
+
+            assignFromKeyfile(keyFile, "Double Exposure", "AutoGain", doubleExposure.autoGain, pedited->doubleExposure.autoGain);
+            assignFromKeyfile(keyFile, "Double Exposure", "BaseEV", doubleExposure.baseEv, pedited->doubleExposure.baseEv);
+            assignFromKeyfile(keyFile, "Double Exposure", "FillShadows", doubleExposure.fillShadows, pedited->doubleExposure.fillShadows);
+
+            if (keyFile.has_key("Double Exposure", "LayerCount")) {
+                const int count = std::max(0, std::min(keyFile.get_integer("Double Exposure", "LayerCount"), 8));
+                doubleExposure.layers.clear();
+
+                for (int i = 1; i <= count; ++i) {
+                    const std::string prefix = "Layer" + std::to_string(i);
+
+                    if (keyFile.has_key("Double Exposure", prefix + "Path")) {
+                        DoubleExposureParams::Layer layer;
+                        layer.path = keyFile.get_string("Double Exposure", prefix + "Path");
+
+                        if (keyFile.has_key("Double Exposure", prefix + "EV")) {
+                            layer.ev = keyFile.get_double("Double Exposure", prefix + "EV");
+                        }
+
+                        if (keyFile.has_key("Double Exposure", prefix + "Opacity")) {
+                            layer.opacity = keyFile.get_double("Double Exposure", prefix + "Opacity");
+                        }
+
+                        doubleExposure.layers.push_back(layer);
+                    }
+                }
+
+                if (pedited) {
+                    pedited->doubleExposure.layers = true;
+                }
+            }
+        }
+
         if (keyFile.has_group("Film Presets")) {
             assignFromKeyfile(keyFile, "Film Presets", "Enabled", filmPresets.enabled, pedited->filmPresets.enabled);
             assignFromKeyfile(keyFile, "Film Presets", "Preset", filmPresets.preset, pedited->filmPresets.preset);
@@ -7833,6 +7951,7 @@ bool ProcParams::operator ==(const ProcParams& other) const
         && colorToning == other.colorToning
         && metadata == other.metadata
         && dehaze == other.dehaze
+        && doubleExposure == other.doubleExposure
         && filmNegative == other.filmNegative;
 }
 

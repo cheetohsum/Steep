@@ -19,6 +19,7 @@
 #pragma once
 
 #include <atomic>
+#include <memory>
 #include <chrono>
 #include <deque>
 #include <map>
@@ -265,6 +266,23 @@ private:
     bool inAlbumMode_;
     Glib::ustring savedDirectory_;
 
+    // Global scope: show matches for the active filter from every folder
+    // steep knows about (favorites, recents, current), streamed in via the
+    // album-mode display rails.
+    Gtk::ToggleButton* bGlobalScope_ = nullptr;
+    sigc::connection globalToggleConn_;
+    sigc::connection globalRescanConn_;
+    bool globalScopeActive_ = false;
+    bool inGlobalStart_ = false;
+    int globalScanGen_ = 0;
+    std::string globalLastScanKey_;
+    std::shared_ptr<std::atomic<bool>> globalAliveToken_;
+    std::shared_ptr<std::atomic<bool>> globalScanCancel_;
+    void globalScopeToggled();
+    void startGlobalScan();
+    void scheduleGlobalRescan();
+    void resetGlobalScopeQuiet();
+
     // Filetype filter dropdown
     Gtk::MenuButton* filetypeButton_;
     Gtk::Popover* filetypePopover_;
@@ -296,11 +314,14 @@ private:
     void addFiles (std::vector<Glib::ustring>&& fNames);
     void addFiles (std::vector<Glib::ustring>&& fNames, std::vector<std::string>&& fNameKeys);
     std::vector<Glib::ustring> getFileList(std::vector<Glib::RefPtr<Gio::File>> *dirs_explored = nullptr);
-    BrowserFilter getFilter ();
     void refreshDirectoryMonitors(const std::vector<Glib::RefPtr<Gio::File>> &dirs_to_monitor);
     void trashChanged ();
 
 public:
+    // Snapshot of the active filter state (used by the double-exposure
+    // picker to inherit the browser's filtering).
+    BrowserFilter getFilter ();
+
     // thumbnail browsers
     FileBrowser* fileBrowser;
 

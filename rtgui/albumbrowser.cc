@@ -24,6 +24,7 @@
 #include "cacheimagedata.h"
 #include "cachemanager.h"
 #include "guiutils.h"
+#include "imagescanhelpers.h"
 #include "multilangmgr.h"
 #include "options.h"
 #include "pathutils.h"
@@ -1873,104 +1874,13 @@ bool matchesRule (const SmartAlbumRule& rule, const CacheImageData& cfs)
     }
 }
 
-std::vector<Glib::ustring> listImageFiles (const Glib::ustring& dirPath)
-{
-    std::vector<Glib::ustring> result;
-    try {
-        auto dir = Gio::File::create_for_path(dirPath);
-        if (!dir->query_exists()) return result;
-
-        const auto& exts = App::get().options().parsedExtensionsSet;
-        auto enumerator = dir->enumerate_children("standard::name,standard::type");
-        while (auto info = enumerator->next_file()) {
-            if (info->get_file_type() != Gio::FILE_TYPE_REGULAR) continue;
-            Glib::ustring name = info->get_name();
-            auto dotPos = name.rfind('.');
-            if (dotPos == Glib::ustring::npos) continue;
-            std::string ext = Glib::ustring(name.substr(dotPos + 1)).lowercase();
-            if (exts.count(ext)) {
-                result.push_back(Glib::build_filename(dirPath, name));
-            }
-        }
-    } catch (...) {}
-    return result;
-}
-
 } // anonymous namespace
 
-namespace {
-
-// Try to load CacheImageData from the cache file without creating a Thumbnail.
-// Returns true if cache data was found and loaded.
-bool loadCacheDataForFile (const Glib::ustring& fpath, CacheImageData& cid)
-{
-    std::string md5 = cacheMgr->getMD5(fpath);
-    if (md5.empty()) return false;
-
-    Glib::ustring cacheName = cacheMgr->getCacheFileName("data", fpath, ".txt", md5);
-    return cid.load(cacheName) == 0 && cid.supported;
-}
-
-// Lightweight EXIF-only read. Does NOT generate thumbnails.
-bool loadExifForFile (const Glib::ustring& fpath, CacheImageData& cid)
-{
-    try {
-        std::unique_ptr<rtengine::FramesMetaData> meta(
-            rtengine::FramesMetaData::fromFile(fpath));
-        if (!meta) return false;
-
-        cid.exifValid = meta->hasExif();
-        if (cid.exifValid) {
-            cid.fnumber = meta->getFNumber();
-            cid.shutter = meta->getShutterSpeed();
-            cid.focalLen = meta->getFocalLen();
-            cid.iso = meta->getISOSpeed();
-            cid.lens = meta->getLens();
-            cid.camMake = meta->getMake();
-            cid.camModel = meta->getModel();
-            cid.rating = meta->getRating();
-            cid.colorLabel = meta->getColorLabel();
-        }
-        cid.updateCameraName();
-        cid.filetype = getExtension(fpath).lowercase();
-        cid.updateFiletypeUpper();
-        cid.supported = true;
-        return true;
-    } catch (...) {
-        return false;
-    }
-}
-
-// Load rank/colorlabel from PP3 sidecar file and overlay onto CacheImageData.
-// Uses the HIGHER of EXIF rating and PP3 rank so both sources are respected.
-// Returns true if a PP3 was found.
-bool loadRankFromPP3 (const Glib::ustring& fpath, CacheImageData& cid)
-{
-    // PP3 sidecar is imagefile.ext.pp3
-    Glib::ustring pp3path = fpath + ".pp3";
-    try {
-        Glib::KeyFile kf;
-        if (!kf.load_from_file(pp3path)) return false;
-        if (kf.has_key("General", "Rank")) {
-            int rank = kf.get_integer("General", "Rank");
-            if (rank >= 0) {
-                // Use the higher of EXIF rating and PP3 rank
-                cid.rating = std::max(cid.rating, rank);
-            }
-        }
-        if (kf.has_key("General", "ColorLabel")) {
-            int cl = kf.get_integer("General", "ColorLabel");
-            if (cl > 0) {
-                cid.colorLabel = cl;
-            }
-        }
-        return true;
-    } catch (...) {
-        return false;
-    }
-}
-
-} // anonymous namespace
+// Folder/metadata scan helpers shared with the double-exposure picker.
+using imagescan::listImageFiles;
+using imagescan::loadCacheDataForFile;
+using imagescan::loadExifForFile;
+using imagescan::loadRankFromPP3;
 
 std::vector<Glib::ustring> AlbumBrowser::evaluateSmartAlbum (const AlbumNode& node)
 {

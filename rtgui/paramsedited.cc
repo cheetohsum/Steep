@@ -1007,6 +1007,12 @@ void ParamsEdited::set(bool v)
     dehaze.showDepthMap = v;
     dehaze.depth = v;
     dehaze.saturation = v;
+    doubleExposure.enabled = v;
+    doubleExposure.layers = v;
+    doubleExposure.blendMode = v;
+    doubleExposure.autoGain = v;
+    doubleExposure.baseEv = v;
+    doubleExposure.fillShadows = v;
     metadata.mode = v;
     metadata.exifKeys = v;
     filmNegative.enabled = v;
@@ -2777,6 +2783,12 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         dehaze.showDepthMap = dehaze.showDepthMap && p.dehaze.showDepthMap == other.dehaze.showDepthMap;
         dehaze.depth = dehaze.depth && p.dehaze.depth == other.dehaze.depth;
         dehaze.saturation = dehaze.saturation && p.dehaze.saturation == other.dehaze.saturation;
+        doubleExposure.enabled = doubleExposure.enabled && p.doubleExposure.enabled == other.doubleExposure.enabled;
+        doubleExposure.layers = doubleExposure.layers && p.doubleExposure.layers == other.doubleExposure.layers;
+        doubleExposure.blendMode = doubleExposure.blendMode && p.doubleExposure.blendMode == other.doubleExposure.blendMode;
+        doubleExposure.autoGain = doubleExposure.autoGain && p.doubleExposure.autoGain == other.doubleExposure.autoGain;
+        doubleExposure.baseEv = doubleExposure.baseEv && p.doubleExposure.baseEv == other.doubleExposure.baseEv;
+        doubleExposure.fillShadows = doubleExposure.fillShadows && p.doubleExposure.fillShadows == other.doubleExposure.fillShadows;
         metadata.mode = metadata.mode && p.metadata.mode == other.metadata.mode;
         metadata.exifKeys = metadata.exifKeys && p.metadata.exifKeys == other.metadata.exifKeys;
         filmNegative.enabled = filmNegative.enabled && p.filmNegative.enabled == other.filmNegative.enabled;
@@ -9283,6 +9295,30 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
 
     if (dehaze.saturation) {
         toEdit.dehaze.saturation = mods.dehaze.saturation;
+    }
+
+    if (doubleExposure.enabled) {
+        toEdit.doubleExposure.enabled = mods.doubleExposure.enabled;
+    }
+
+    if (doubleExposure.layers) {
+        toEdit.doubleExposure.layers = mods.doubleExposure.layers;
+    }
+
+    if (doubleExposure.blendMode) {
+        toEdit.doubleExposure.blendMode = mods.doubleExposure.blendMode;
+    }
+
+    if (doubleExposure.autoGain) {
+        toEdit.doubleExposure.autoGain = mods.doubleExposure.autoGain;
+    }
+
+    if (doubleExposure.baseEv) {
+        toEdit.doubleExposure.baseEv = mods.doubleExposure.baseEv;
+    }
+
+    if (doubleExposure.fillShadows) {
+        toEdit.doubleExposure.fillShadows = mods.doubleExposure.fillShadows;
     }
 
     if (metadata.mode) {

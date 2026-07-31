@@ -65,6 +65,7 @@ set(RTENGINESOURCEFILES
     impulse_denoise.cc
     init.cc
     ipdehaze.cc
+    ipdoubleexposure.cc
     ipgrain.cc
     iplab2rgb.cc
     iplocallab.cc
@@ -97,6 +98,7 @@ set(RTENGINESOURCEFILES
     munselllch.cc
     myfile.cc
     panasonic_decoders.cc
+    partnerimagestore.cc
     pdaflinesfilter.cc
     perspectivecorrection.cc
     PF_correct_RT.cc

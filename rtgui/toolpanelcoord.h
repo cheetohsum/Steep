@@ -42,6 +42,7 @@
 #include "tools/darkframe.h"
 #include "tools/defringe.h"
 #include "tools/dehaze.h"
+#include "tools/doubleexposure.h"
 #include "tools/dirpyrdenoise.h"
 #include "tools/dirpyrequalizer.h"
 #include "tools/distortion.h"
@@ -181,6 +182,7 @@ protected:
     PointColor* pointcolor;
     SoftLight *softlight;
     Dehaze *dehaze;
+    DoubleExposure *doubleExposure;
     FilmSimulation *filmSimulation;
     FilmPresets *filmPresets;
     SensorBayer * sensorbayer;
@@ -407,6 +409,7 @@ public:
         FILM_SIMULATION,
         SOFT_LIGHT,
         DEHAZE,
+        DOUBLE_EXPOSURE,
         SENSOR_BAYER,
         SENSOR_XTRANS,
         BAYER_PROCESS,
@@ -518,6 +521,10 @@ public:
     // init the toolpanelcoordinator with an image & close it
     void initImage(rtengine::StagedImageProcessor* ipc_, bool israw);
     void closeImage();
+
+    // Forward the browser tab's filter to the double-exposure picker.
+    void setDoubleExposureBrowserFilterProvider(std::function<BrowserFilter()> provider);
+    void setDoubleExposureBrowserDirProvider(std::function<Glib::ustring()> provider);
 
     // update the "expanded" state of the Tools
     void updateToolState();

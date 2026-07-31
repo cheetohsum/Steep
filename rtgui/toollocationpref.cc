@@ -167,6 +167,8 @@ Glib::ustring getToolTitleKey(Tool tool)
             return "TP_SOFTLIGHT_LABEL";
         case Tool::DEHAZE:
             return "TP_DEHAZE_LABEL";
+        case Tool::DOUBLE_EXPOSURE:
+            return "TP_DOUBLEEXPOSURE_LABEL";
         case Tool::SENSOR_BAYER:
             return "TP_RAW_SENSOR_BAYER_LABEL";
         case Tool::SENSOR_XTRANS:

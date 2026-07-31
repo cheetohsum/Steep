@@ -87,6 +87,19 @@ CURVEEDITOR_TYPE;Type:
 DIRBROWSER_BROWSE;Browse for Folder
 DIRBROWSER_FOLDERS;Folders
 DONT_SHOW_AGAIN;Don't show this message again.
+DOUBLEEXPOSURE_BASEPLATE;Base plate
+DOUBLEEXPOSURE_COUNT;%1 of %2 images
+DOUBLEEXPOSURE_DIALOG_TITLE;Double exposure — choose exposures
+DOUBLEEXPOSURE_FILTER_ANYSTARS;Rating
+DOUBLEEXPOSURE_FILTER_PICKED;Picked
+DOUBLEEXPOSURE_HIGHRES;High-res preview
+DOUBLEEXPOSURE_NOLAYER;No exposure selected
+DOUBLEEXPOSURE_ORDER_TOOLTIP;Stack order: base plate first, overlays fold in left to right. Order changes the result with opacity, slide sandwich, and fill shadows; pure in-camera addition is order-free, as on film.
+DOUBLEEXPOSURE_PICK_FOLDER;Choose source folder
+DOUBLEEXPOSURE_PREVIEW_EMPTY;Select images on the left to preview the blend
+DOUBLEEXPOSURE_SCOPE_FOLDER;This folder
+DOUBLEEXPOSURE_SCOPE_FOLDER_TOOLTIP;Source folder. Click again to choose a different folder.
+DOUBLEEXPOSURE_SCOPE_GLOBAL_TOOLTIP;Global selects: picked and starred images from every folder steep knows about — favorites, recent folders, and the current folder.
 DYNPROFILEEDITOR_DELETE;Delete
 DYNPROFILEEDITOR_EDIT;Edit
 DYNPROFILEEDITOR_EDIT_RULE;Edit Dynamic Profile Rule
@@ -230,6 +243,9 @@ EDITOR_BEFOREAFTER_SNUG;Images snug against center divider
 FILEBROWSER_SEARCHTOGGLEHINT;Search, path navigation and reload
 FILEBROWSER_METADATAFILTERHINT;Metadata filters: aperture, shutter, ISO, focal length, exposure, camera, lens
 FILEBROWSER_POPUPSAVEIMAGE;Save image
+FILEBROWSER_GLOBALSCOPE;Global selects
+FILEBROWSER_GLOBALSCOPE_PROGRESS;Global selects — %1 found
+FILEBROWSER_GLOBALSCOPE_TOOLTIP;Global scope: show images matching the active filter (flags, stars, color labels, file type) from every folder steep knows — favorites, recent folders, the current folder, and everywhere a select was ever made.
 FILEBROWSER_POPUPAIDENOISE;AI Denoise
 FILEBROWSER_POPUPAUTOEDIT;Auto Edit
 FILEBROWSER_POPUPAUTOEDITNEUTRAL;Neutral Auto Edit
@@ -1538,6 +1554,13 @@ HISTORY_MSG_DEHAZE_SATURATION;Dehaze - Saturation
 HISTORY_MSG_DEHAZE_SHOW_DEPTH_MAP;Dehaze - Show depth map
 HISTORY_MSG_DEHAZE_STRENGTH;Dehaze - Strength
 HISTORY_MSG_DIRPYRDENOISE_GAIN;NR - Compensate for lightness
+HISTORY_MSG_DOUBLEEXPOSURE_AUTOGAIN;Double exposure - Auto film gain
+HISTORY_MSG_DOUBLEEXPOSURE_BASEEV;Double exposure - Base trim
+HISTORY_MSG_DOUBLEEXPOSURE_BLEND;Double exposure - Blend
+HISTORY_MSG_DOUBLEEXPOSURE_ENABLED;Double exposure
+HISTORY_MSG_DOUBLEEXPOSURE_FILLSHADOWS;Double exposure - Fill shadows
+HISTORY_MSG_DOUBLEEXPOSURE_LAYERS;Double exposure - Exposures
+HISTORY_MSG_DOUBLEEXPOSURE_LAYER_SETTINGS;Double exposure - Layer settings
 HISTORY_MSG_DISTORTION_DEFISH;De-fish
 HISTORY_MSG_DISTORTION_DEFISH_FOCAL;De-fish - Focal length
 HISTORY_MSG_DUALDEMOSAIC_AUTO_CONTRAST;Dual demosaic - Auto threshold
@@ -3010,6 +3033,24 @@ TP_DEHAZE_SATURATION;Saturation
 TP_DEHAZE_SHOW_DEPTH_MAP;Show depth map
 TP_DEHAZE_STRENGTH;Haze Removal
 TP_DIRPYRDENOISE_CHROMINANCE_AMZ;Auto multi-zones
+TP_DOUBLEEXPOSURE_AUTOGAIN;Auto film gain
+TP_DOUBLEEXPOSURE_AUTOGAIN_TOOLTIP;Meter every frame down by one stop per extra exposure, the way a film camera compensates a planned multiple exposure. Off gives the blown, luminous "uncompensated" look.
+TP_DOUBLEEXPOSURE_BASEEV;Base exposure trim
+TP_DOUBLEEXPOSURE_BLEND;Blend
+TP_DOUBLEEXPOSURE_BLEND_ADD;In-camera (additive)
+TP_DOUBLEEXPOSURE_BLEND_LIGHTEN;Lighten
+TP_DOUBLEEXPOSURE_BLEND_MULTIPLY;Slide sandwich (multiply)
+TP_DOUBLEEXPOSURE_BLEND_SCREEN;Screen
+TP_DOUBLEEXPOSURE_CHOOSE;Double Exposure
+TP_DOUBLEEXPOSURE_CLEAR;Remove the double exposure from this image
+TP_DOUBLEEXPOSURE_EV;Layer exposure trim
+TP_DOUBLEEXPOSURE_FILLSHADOWS;Fill shadows
+TP_DOUBLEEXPOSURE_FILLSHADOWS_TOOLTIP;Gate the overlays into the shadows of the image below — the classic silhouette double-exposure technique.
+TP_DOUBLEEXPOSURE_LABEL;Double Exposure
+TP_DOUBLEEXPOSURE_LAYER;Layer
+TP_DOUBLEEXPOSURE_MISSING;File not found — this layer will be skipped.
+TP_DOUBLEEXPOSURE_OPACITY;Layer opacity
+TP_DOUBLEEXPOSURE_REMOVE;Remove this exposure
 TP_DIRPYRDENOISE_CHROMINANCE_AUTOGLOBAL;Automatic global
 TP_DIRPYRDENOISE_CHROMINANCE_BLUEYELLOW;Chroma Blue-Yellow
 TP_DIRPYRDENOISE_CHROMINANCE_CURVE;Chrominance curve

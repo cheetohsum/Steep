@@ -1018,6 +1018,12 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 imgsrc->convertColorSpace(orig_prev, params->icm, currWB);
             }
 
+            // Double exposure: fold partner frames into the scene-linear base
+            // before the histogram / auto-exposure and all tone processing.
+            if (params->doubleExposure.enabled && !params->doubleExposure.layers.empty()) {
+                ipf.doubleExposure(orig_prev, params->doubleExposure, params->icm.workingProfile, fw, fh, 0, 0, scale, false);
+            }
+
              if (params->cg.enabled) {//gamut compression
                 float mac = 0.f;
                 float mac0 = 0.f;

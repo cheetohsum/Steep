@@ -141,6 +141,11 @@ public:
     const rtengine::procparams::ProcParams& getProcParams ();
     const rtengine::procparams::ProcParams& getProcParamsU ();  // Unprotected version
 
+    // Copy taken while the params mutex is held. Worker threads MUST use this
+    // instead of copying getProcParams(): that lock releases before the copy
+    // constructor runs, racing GUI-thread setProcParams (heap corruption).
+    rtengine::procparams::ProcParams getProcParamsCopy ();
+
     // Use this to create params on demand for update ; if flaggingMode=true, the procparams is created for a file being flagged (inTrash, rank, colorLabel)
     rtengine::procparams::ProcParams* createProcParamsForUpdate (bool returnParams, bool force, bool flaggingMode = false);
 

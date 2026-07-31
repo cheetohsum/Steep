@@ -1860,6 +1860,42 @@ struct DehazeParams {
 };
 
 /**
+  * Parameters of the double exposure tool: partner images composited onto the
+  * edited image in scene-linear working space, before tone processing.
+  */
+struct DoubleExposureParams {
+    enum class BlendMode {
+        ADD,        // in-camera multiple exposure: light is additive
+        SCREEN,     // projected positives: 1-(1-a)(1-b)
+        MULTIPLY,   // slide sandwich: densities multiply
+        LIGHTEN     // max(a,b)
+    };
+
+    struct Layer {
+        Glib::ustring path; // absolute path of the partner image
+        double ev;          // exposure trim in EV applied to this layer
+        double opacity;     // 0..100
+
+        Layer();
+
+        bool operator==(const Layer &other) const;
+        bool operator!=(const Layer &other) const;
+    };
+
+    bool enabled;
+    std::vector<Layer> layers;
+    BlendMode blendMode;
+    bool autoGain;      // meter every frame down by log2(frames) EV (ADD mode)
+    double baseEv;      // exposure trim for the base plate
+    double fillShadows; // 0..100: gate overlays into the shadows of the accumulated base
+
+    DoubleExposureParams();
+
+    bool operator==(const DoubleExposureParams &other) const;
+    bool operator!=(const DoubleExposureParams &other) const;
+};
+
+/**
   * Parameters for RAW demosaicing, common to all sensor type
   */
 struct RAWParams {
@@ -2149,6 +2185,7 @@ public:
     FilmPresetsParams       filmPresets;     ///< parametric film presets parameters
     SoftLightParams         softlight;       ///< softlight parameters
     DehazeParams            dehaze;          ///< dehaze parameters
+    DoubleExposureParams    doubleExposure;  ///< double exposure compositing parameters
     FilmNegativeParams      filmNegative;    ///< Film negative parameters
     int                     rank;            ///< Custom image quality ranking
     int                     colorlabel;      ///< Custom color label

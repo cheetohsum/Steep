@@ -76,7 +76,6 @@ TiltShift::TiltShift(): FoldableToolPanel(this, TOOL_NAME, M("TP_TILTSHIFT_LABEL
     edit->set_tooltip_text(M("EDIT_OBJECT_TOOLTIP"));
     editConn = edit->signal_toggled().connect(sigc::mem_fun(*this, &TiltShift::editToggled));
     editHBox->pack_start(*edit, Gtk::PACK_SHRINK, 0);
-    editHBox->pack_start(*amount, Gtk::PACK_EXPAND_WIDGET, 0);
 
     amount->setAdjusterListener(this);
     focusPos->setAdjusterListener(this);
@@ -96,6 +95,9 @@ TiltShift::TiltShift(): FoldableToolPanel(this, TOOL_NAME, M("TP_TILTSHIFT_LABEL
 
     auto *summaryBox = getSummaryBox();
     summaryBox->pack_start(*editHBox, Gtk::PACK_SHRINK, 0);
+    // Amount gets its own full-width row so the slider aligns with every
+    // other tool instead of being squeezed right of the title.
+    summaryBox->pack_start(*amount, Gtk::PACK_SHRINK, 0);
 
     detailContent_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     detailContent_->pack_start(*focusPos);

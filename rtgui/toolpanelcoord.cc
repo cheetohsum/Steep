@@ -279,6 +279,10 @@ const std::vector<ToolTree> COLOR_PANEL_TOOLS = {
         .children = {},
     },
     {
+        .id = Tool::DOUBLE_EXPOSURE,
+        .children = {},
+    },
+    {
         .id = Tool::FILM_SIMULATION,
         .children = {},
     },
@@ -538,6 +542,7 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
     pointcolor = nullptr;
     softlight = nullptr;
     dehaze = nullptr;
+    doubleExposure = nullptr;
     filmSimulation = nullptr;
     filmPresets = nullptr;
     sensorbayer = nullptr;
@@ -680,6 +685,7 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
     filmPresets         = Gtk::manage(new FilmPresets());
     softlight           = Gtk::manage(new SoftLight());
     dehaze              = Gtk::manage(new Dehaze());
+    doubleExposure      = Gtk::manage(new DoubleExposure());
     sensorbayer         = Gtk::manage(new SensorBayer());
     sensorxtrans        = Gtk::manage(new SensorXTrans());
     bayerprocess        = Gtk::manage(new BayerProcess());
@@ -1304,6 +1310,8 @@ std::string ToolPanelCoordinator::getToolName(Tool tool)
             return SoftLight::TOOL_NAME;
         case Tool::DEHAZE:
             return Dehaze::TOOL_NAME;
+        case Tool::DOUBLE_EXPOSURE:
+            return DoubleExposure::TOOL_NAME;
         case Tool::SENSOR_BAYER:
             return SensorBayer::TOOL_NAME;
         case Tool::SENSOR_XTRANS:
@@ -1650,6 +1658,17 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
             toolDeselected(cur);
             toolBar->setTool(TMHand);
         }
+    }
+
+    // Entering the CROPPING tab from hand mode: activate the crop tool so the
+    // crop overlay and its handles show immediately (mirror of the deselection
+    // above; crop-box dragging is gated on this tool being active).
+    if (mode == EditorMode::CROPPING && prevMode != EditorMode::CROPPING
+            && toolBar && toolBar->getTool() == TMHand) {
+        toolBar->blockEditDeactivation(false);
+        toolBar->setTool(TMCropSelect);
+        crop->setExpanded(true);
+        expandTransformSection(cropSectionContent_, cropSectionLabel_, M("TP_CROP_LABEL"));
     }
 
     // Crop preview mode: show full image when on crop tab, cropped view otherwise
@@ -2181,6 +2200,9 @@ void ToolPanelCoordinator::populateEditPanel()
     addPanel(effectsGroup->getContentBox(), filmPresets, 1);
     filmPresets->setFlatMode(true);
     filmPresets->collapseDetail();
+    addPanel(effectsGroup->getContentBox(), doubleExposure, 1);
+    doubleExposure->setFlatMode(true);
+    doubleExposure->collapseDetail();
 
     // --- B&W preview strip (in advanced group, before blackwhite tool) ---
     bwStrip_ = Gtk::manage(new PreviewStrip());
@@ -2356,6 +2378,9 @@ void ToolPanelCoordinator::populateEditPanel()
         filmPresets->disableListener();
         filmPresets->read(&dp);
         filmPresets->enableListener();
+        doubleExposure->disableListener();
+        doubleExposure->read(&dp);
+        doubleExposure->enableListener();
         softlight->disableListener();
         softlight->read(&dp);
         softlight->enableListener();
@@ -3953,6 +3978,20 @@ CropGUIListener* ToolPanelCoordinator::getCropGUIListener()
     return crop;
 }
 
+void ToolPanelCoordinator::setDoubleExposureBrowserFilterProvider(std::function<BrowserFilter()> provider)
+{
+    if (doubleExposure) {
+        doubleExposure->setBrowserFilterProvider(std::move(provider));
+    }
+}
+
+void ToolPanelCoordinator::setDoubleExposureBrowserDirProvider(std::function<Glib::ustring()> provider)
+{
+    if (doubleExposure) {
+        doubleExposure->setBrowserDirProvider(std::move(provider));
+    }
+}
+
 void ToolPanelCoordinator::initImage(rtengine::StagedImageProcessor* ipc_, bool raw)
 {
 
@@ -3992,6 +4031,7 @@ void ToolPanelCoordinator::initImage(rtengine::StagedImageProcessor* ipc_, bool 
         ipc->setCompgamutListener(compressgamut);
         flatfield->setShortcutPath(Glib::path_get_dirname(ipc->getInitialImage()->getFileName()));
         aidenoise->setImagePath(ipc->getInitialImage()->getFileName());
+        doubleExposure->setEditedFilePath(ipc->getInitialImage()->getFileName());
         aidenoise->setImProcCoordinator(ipc);
 
         icm->setRawMeta(raw, (const rtengine::FramesData*)pMetaData);
@@ -4513,7 +4553,7 @@ void ToolPanelCoordinator::applyUIComplexity(int complexityLevel)
         Tool::ICM, Tool::WAVELET, Tool::DIR_PYR_EQUALIZER,
         Tool::HSV_EQUALIZER, Tool::POINT_COLOR, Tool::TEXTURE, Tool::CLARITY,
         Tool::GRAIN, Tool::TILT_SHIFT, Tool::FILM_PRESETS, Tool::FILM_SIMULATION, Tool::SOFT_LIGHT,
-        Tool::DEHAZE, Tool::SENSOR_BAYER, Tool::SENSOR_XTRANS,
+        Tool::DEHAZE, Tool::DOUBLE_EXPOSURE, Tool::SENSOR_BAYER, Tool::SENSOR_XTRANS,
         Tool::BAYER_PROCESS, Tool::XTRANS_PROCESS, Tool::BAYER_PREPROCESS,
         Tool::PREPROCESS, Tool::DARKFRAME_TOOL, Tool::FLATFIELD_TOOL,
         Tool::RAW_CA_CORRECTION, Tool::RAW_EXPOSURE, Tool::PREPROCESS_WB,
@@ -4845,6 +4885,8 @@ FoldableToolPanel *ToolPanelCoordinator::getFoldableToolPanel(Tool tool) const
             return softlight;
         case Tool::DEHAZE:
             return dehaze;
+        case Tool::DOUBLE_EXPOSURE:
+            return doubleExposure;
         case Tool::SENSOR_BAYER:
             return sensorbayer;
         case Tool::SENSOR_XTRANS:
@@ -4991,6 +5033,7 @@ void ToolPanelCoordinator::updateResetButtons()
                      || !(current.tiltShift == b.tiltShift)
                      || !(current.pcvignette == b.pcvignette)
                      || !(current.filmPresets == b.filmPresets)
+                     || !(current.doubleExposure == b.doubleExposure)
                      || !(current.softlight == b.softlight);
     effectsGroup->setResetVisible(effectsDirty);
 

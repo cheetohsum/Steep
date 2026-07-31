@@ -580,14 +580,11 @@ void CropWindow::buttonPress (int button, int type, int bstate, int x, int y)
                         state = SResizeW2;
                         press_x = x;
                         action_x = cropHandler.cropParams->w;
-                    } else if (((bstate & GDK_SHIFT_MASK) || iarea->getToolMode() == TMCropSelect
-                                || (iarea->getToolMode() == TMHand
-                                    && cropHandler.cropParams->enabled
-                                    && zoomSteps[cropZoom].zoom <= cropHandler.getFitZoom()))
+                    } else if (((bstate & GDK_SHIFT_MASK) || iarea->getToolMode() == TMCropSelect)
                                && onArea (CropInside, x, y)) {
-                        // Dragging inside the crop moves it. In hand mode this
-                        // applies at fit zoom (panning is a no-op there); when
-                        // zoomed in, plain drag still pans and Shift moves.
+                        // Dragging inside the crop moves it only with the crop
+                        // tool active (or Shift held); plain hand drag pans and
+                        // zooms normally on cropped images.
                         state = SCropMove;
                         press_x = x;
                         press_y = y;

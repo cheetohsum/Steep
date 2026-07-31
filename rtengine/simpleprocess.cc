@@ -37,6 +37,7 @@
 #include "metadata.h"
 #include "mytime.h"
 #include "processingjob.h"
+#include "partnerimagestore.h"
 #include "procparams.h"
 #include "rawimagesource.h"
 #include "aidenoise.h"
@@ -981,6 +982,12 @@ private:
             imgsrc->convertColorSpace(baseImg, params.icm, currWB);
         }
 
+        // Double exposure: full-resolution composite of the partner frames,
+        // mirroring the preview pipeline.
+        if (params.doubleExposure.enabled && !params.doubleExposure.layers.empty()) {
+            ipf.doubleExposure(baseImg, params.doubleExposure, params.icm.workingProfile, fw, fh, 0, 0, 1, true);
+        }
+
         // perform first analysis
         hist16(65536);
 
@@ -1515,6 +1522,12 @@ private:
         // if clut was used and size of clut cache == 1 we free the memory used by the clutstore (default clut cache size = 1 for 32 bit OS)
         if (params.filmSimulation.enabled && !params.filmSimulation.clutFilename.empty() && options.clutCacheSize == 1) {
             CLUTStore::getInstance().clearCache();
+        }
+
+        // Release the full-resolution double-exposure partner buffers (the
+        // preview tier stays cached for the editor).
+        if (params.doubleExposure.enabled && !params.doubleExposure.layers.empty()) {
+            PartnerImageStore::getInstance().clearFullResTier();
         }
 
         // freeing up some memory

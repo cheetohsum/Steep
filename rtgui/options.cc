@@ -757,6 +757,7 @@ void Options::setDefaults()
     lastICCProfCreatorDir = "";
     gimpPluginShowInfoDialog = true;
     maxRecentFolders = 15;
+    globalScanSubfolders = false;
     thumbnailRankColorMode = Options::ThumbnailPropertyMode::PROCPARAMS;
     sortMethod = SORT_BY_NAME;
     sortDescending = false;
@@ -1554,6 +1555,10 @@ void Options::readFromFile(Glib::ustring fname)
 
                 if (keyFile.has_key("File Browser", "MaxRecentFolders")) {
                     maxRecentFolders = keyFile.get_integer("File Browser", "MaxRecentFolders");
+                }
+
+                if (keyFile.has_key("File Browser", "GlobalScanSubfolders")) {
+                    globalScanSubfolders = keyFile.get_boolean("File Browser", "GlobalScanSubfolders");
                 }
 
                 recentFolders.reserve(maxRecentFolders + 10);  // reserve some more than maxRecentFolders, because at runtime it stores more than that
@@ -2747,6 +2752,7 @@ void Options::saveToFile(Glib::ustring fname)
         keyFile.set_boolean("File Browser", "menuGroupProfileOperations", menuGroupProfileOperations);
         keyFile.set_boolean("File Browser", "menuGroupExtProg", menuGroupExtProg);
         keyFile.set_integer("File Browser", "MaxRecentFolders", maxRecentFolders);
+        keyFile.set_boolean("File Browser", "GlobalScanSubfolders", globalScanSubfolders);
         {
             std::vector<Glib::ustring> temp;
             temp.reserve(maxRecentFolders);

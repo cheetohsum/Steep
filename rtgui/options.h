@@ -547,6 +547,7 @@ public:
 
     size_t maxRecentFolders;                   // max. number of recent folders stored in options file
     std::vector<Glib::ustring> recentFolders;  // List containing all recent folders
+    bool globalScanSubfolders;                 // global-scope scans descend into subfolders
 
     enum class ThumbnailPropertyMode {
         PROCPARAMS, // store rank and color in procparams sidecars

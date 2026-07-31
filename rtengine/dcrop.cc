@@ -721,6 +721,12 @@ void Crop::update(int todo)
             parent->ipf.filmNegativeProcess(baseCrop, baseCrop, params.filmNegative);
         }
 
+        // Double exposure: mirror of the main-preview composite, over the
+        // crop's region of the full frame.
+        if (params.doubleExposure.enabled && !params.doubleExposure.layers.empty()) {
+            parent->ipf.doubleExposure(baseCrop, params.doubleExposure, params.icm.workingProfile, parent->fw, parent->fh, trafx, trafy, skip, false);
+        }
+
         if (params.cg.enabled) {//gamut compression
             float mac = 0.f;
             float mac0 = 0.f;

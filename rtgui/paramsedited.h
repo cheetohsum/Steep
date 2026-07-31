@@ -1825,6 +1825,15 @@ struct DehazeParamsEdited {
     bool saturation;
 };
 
+struct DoubleExposureParamsEdited {
+    bool enabled;
+    bool layers;
+    bool blendMode;
+    bool autoGain;
+    bool baseEv;
+    bool fillShadows;
+};
+
 struct RAWParamsEdited {
     struct BayerSensor {
         bool method;
@@ -1990,6 +1999,7 @@ struct ParamsEdited {
     FilmPresetsParamsEdited filmPresets;
     SoftLightParamsEdited softlight;
     DehazeParamsEdited dehaze;
+    DoubleExposureParamsEdited doubleExposure;
     MetaDataParamsEdited metadata;
     FilmNegativeParamsEdited filmNegative;
     bool exif;

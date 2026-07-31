@@ -26,6 +26,7 @@ set(RT_GUI_TOOL_PANEL_SOURCES
     tools/defringe.cc
     tools/dehaze.cc
     tools/dirpyrdenoise.cc
+    tools/doubleexposure.cc
     tools/dirpyrequalizer.cc
     tools/distortion.cc
     tools/epd.cc
@@ -111,6 +112,7 @@ set(RT_GUI_WIDGET_SOURCES
 )
 
 set(RT_GUI_WINDOWS_SOURCES
+    windows/doubleexposuredlg.cc
     windows/editwindow.cc
     windows/historydialog.cc
     windows/iccprofilecreator.cc
@@ -173,6 +175,8 @@ set(NONCLISOURCEFILES
     filethumbnailbuttonset.cc
     filterpanel.cc
     guiutils.cc
+    imagescanhelpers.cc
+    selectsindex.cc
     hidpi.cc
     histogrampanel.cc
     history.cc

@@ -96,6 +96,8 @@ struct AutoGradeFeatures {
     bool valid = false;
     AutoGradeScene scene = AutoGradeScene::Neutral;
     double medianLuma = 0.5;
+    double p10 = 0.10;          // luma percentiles for curve anchor placement
+    double p90 = 0.60;
     double dynamicRange = 0.5;
     double shadowFraction = 0.0;
     double highlightFraction = 0.0;
@@ -275,7 +277,9 @@ AutoGradeFeatures analyzeSteepAutoGrade(Thumbnail& thumbnail)
     const double count = static_cast<double>(pixelCount);
     features.valid = true;
     features.medianLuma = percentile(0.5);
-    features.dynamicRange = percentile(0.9) - percentile(0.1);
+    features.p10 = percentile(0.1);
+    features.p90 = percentile(0.9);
+    features.dynamicRange = features.p90 - features.p10;
     features.shadowFraction = shadows / count;
     features.highlightFraction = highlights / count;
     features.saturation = saturationSum / count;
@@ -336,7 +340,10 @@ void applySteepAutoEdit(
 
     auto& tone = params.toneCurve;
     tone.autoexp = true;
-    tone.clip = 0.02;
+    // Expose right up to the clipping point but not into it: the histogram
+    // target commits essentially no pixels to pure white (0.02 = 2% of the
+    // frame clipped, which visibly ate highlight nuance).
+    tone.clip = 0.001;
     tone.hrenabled = false;
     tone.method = "Coloropp";
     tone.expcomp = std::numeric_limits<double>::quiet_NaN();
@@ -430,14 +437,16 @@ void applySteepAutoEdit(
     shadowsHighlights.radius = 40;
     shadowsHighlights.lab = false;
 
-    // Artistic S-curve emphasis on top of the base recipe. A colorist working
-    // a flat file takes contrast from two places: deeper blacks when the scan
-    // is flat, and brighter upper-mids when there is genuine highlight
-    // headroom. Frames whose statistics allow it get up to an extra ~15% on
-    // either end; frames that cannot take it (clipped highlights, shadow-heavy
-    // night frames, faces) are left on the restrained base curve.
-    double toeBoost = 0.0;   // extra pull-down of the shadow point (0..0.15)
-    double liftBoost = 0.0;  // extra push-up of the bright point (0..0.15)
+    // Dynamic S-curve, anchored to the image's own tonal statistics instead
+    // of fixed control points. The curve pivots on the histogram median (the
+    // same math as the curve editor's "move to middle point" button) with the
+    // toe and shoulder anchors at the image's p10/p90 — so the curve works
+    // the tones the image actually has. Composition drives the strengths: a
+    // colorist takes contrast from deeper blacks on flat scans and brighter
+    // upper-mids when there is genuine highlight headroom; frames that cannot
+    // take it (clipped highlights, night frames, faces) stay restrained.
+    double toeBoost = 0.0;   // extra toe depth from composition (0..0.15)
+    double liftBoost = 0.0;  // extra shoulder lift from composition (0..0.15)
     if (features.valid) {
         // Right side: only brighten when few pixels already sit near clipping.
         const double headroom = std::max(0.0, (0.12 - features.highlightFraction) / 0.12);
@@ -463,16 +472,40 @@ void applySteepAutoEdit(
         }
     }
 
-    constexpr double SHADOW_IN = 0.098654708520179366;
-    constexpr double LOWER_MID_IN = 0.20673525015387323;
-    constexpr double BRIGHT_IN = 0.51569506726457359;
-    double shadowOut = SHADOW_IN + AUTO_EDIT_RESPONSE * (0.058295964125560533 - SHADOW_IN);
-    const double lowerMidOut = LOWER_MID_IN + AUTO_EDIT_RESPONSE * (0.21570386001934416 - LOWER_MID_IN);
-    double brightOut = BRIGHT_IN + AUTO_EDIT_RESPONSE * (0.73094170403587488 - BRIGHT_IN);
-    const double topOut = 1.0 + AUTO_EDIT_RESPONSE * (0.99103139013452912 - 1.0);
+    // Anchor positions from the image's histogram, shifted for the exposure
+    // compensation applied upstream (display-space approximation of the
+    // linear gain, sRGB ~ power 2.2).
+    const double expShift = std::pow(2.0, tone.expcomp / 2.2);
+    const auto anchor = [expShift](double value, double lo, double hi) {
+        return std::max(lo, std::min(hi, value * expShift));
+    };
 
-    shadowOut *= 1.0 - toeBoost;
-    brightOut = std::min(0.985, brightOut * (1.0 + liftBoost));
+    const double mid = anchor(features.valid ? features.medianLuma : 0.30, 0.12, 0.72);
+    const double toe = anchor(features.valid ? features.p10 : 0.10, 0.025, mid - 0.06);
+    const double shoulder = anchor(features.valid ? features.p90 : 0.55, mid + 0.10, 0.93);
+
+    // Output placement. The toe keeps the firm left side the recipe has been
+    // tuned to (deeper still on flat scans via toeBoost); the median pivot
+    // gains a touch of density scaled by flatness; the shoulder rides up to —
+    // never into — the clipping edge.
+    const double flatness = features.valid
+        ? std::max(0.0, (0.62 - features.dynamicRange) / 0.62)
+        : 0.0;
+    double midDrop = 0.07 * (0.5 + 0.5 * flatness);
+    if (features.scene == AutoGradeScene::Night) {
+        midDrop *= 0.3;   // night mids stay where the photographer left them
+    } else if (features.scene == AutoGradeScene::Portrait) {
+        midDrop *= 0.7;   // gentle on faces
+    }
+
+    double toeOut = toe * 0.585 * (1.0 - toeBoost);
+    const double midOut = mid * (1.0 - midDrop);
+    double shoulderOut = std::min(0.955, shoulder * (1.22 + liftBoost));
+    const double topOut = 0.995;
+
+    // Keep the spline monotonic with sensible separation between anchors.
+    toeOut = std::max(0.0, std::min(toeOut, midOut - 0.02));
+    shoulderOut = std::max(shoulderOut, midOut + 0.04);
 
     auto& curves = params.rgbCurves;
     curves.enabled = true;
@@ -480,9 +513,9 @@ void applySteepAutoEdit(
     curves.mastercurve = {
         DCT_Spline,
         0.0, 0.0,
-        SHADOW_IN, shadowOut,
-        LOWER_MID_IN, lowerMidOut,
-        BRIGHT_IN, brightOut,
+        toe, toeOut,
+        mid, midOut,
+        shoulder, shoulderOut,
         1.0, topOut
     };
     curves.rcurve = {DCT_Spline, 0.0, 0.0, 1.0, 1.0};
@@ -2975,7 +3008,7 @@ void FileBrowser::startAutoEditHoverPreview(Gtk::MenuItem* item)
                     return;
                 }
 
-                const rtengine::procparams::ProcParams sourceParams = thumbnail->getProcParams();
+                const rtengine::procparams::ProcParams sourceParams = thumbnail->getProcParamsCopy();
                 rtengine::procparams::ProcParams params;
                 buildSteepAutoEditParamsInternal(*thumbnail, mode, sourceParams, params);
                 if (generationState->load(std::memory_order_acquire) != generation) {
@@ -4002,16 +4035,16 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
                 std::string error;
 
                 try {
-                    const rtengine::procparams::ProcParams sourceParams = thm->getProcParams();
+                    const rtengine::procparams::ProcParams sourceParams = thm->getProcParamsCopy();
                     features = buildSteepAutoEditParamsInternal(*thm, state->mode, sourceParams, pp);
                 } catch (const std::exception& exception) {
                     succeeded = false;
                     error = exception.what();
-                    pp = thm->getProcParams();
+                    pp = thm->getProcParamsCopy();
                 } catch (...) {
                     succeeded = false;
                     error = "unknown error";
-                    pp = thm->getProcParams();
+                    pp = thm->getProcParamsCopy();
                 }
 
                 idle_register.add([this, state, finishBatch, thm, features, pp = std::move(pp), succeeded, error = std::move(error)]() mutable -> bool {
@@ -4302,11 +4335,23 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
 
             try {
                 srcFile->copy(Gio::File::create_for_path(destPath));
-                // Also copy the PP3 sidecar if it exists
-                Glib::ustring pp3Src = srcPath + ".pp3";
-                auto pp3File = Gio::File::create_for_path(pp3Src);
-                if (pp3File->query_exists()) {
-                    pp3File->copy(Gio::File::create_for_path(destPath + ".pp3"));
+
+                // Carry the applied settings to the duplicate: prefer the
+                // in-memory params (covers cache-only edits with no sidecar
+                // written yet), fall back to copying the sidecar file.
+                bool paramsWritten = false;
+
+                if (mselected[i]->thumbnail && mselected[i]->thumbnail->hasProcParams()) {
+                    rtengine::procparams::ProcParams pp = mselected[i]->thumbnail->getProcParams();
+                    paramsWritten = pp.save(destPath + ".pp3") == 0;
+                }
+
+                if (!paramsWritten) {
+                    Glib::ustring pp3Src = srcPath + ".pp3";
+                    auto pp3File = Gio::File::create_for_path(pp3Src);
+                    if (pp3File->query_exists()) {
+                        pp3File->copy(Gio::File::create_for_path(destPath + ".pp3"));
+                    }
                 }
             } catch (const Glib::Error&) {
                 // Silently skip failed copies

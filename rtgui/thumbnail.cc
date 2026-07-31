@@ -17,6 +17,7 @@
  */
 
 #include "cachemanager.h"
+#include "selectsindex.h"
 #include "multilangmgr.h"
 #include "thumbnail.h"
 #include <algorithm>
@@ -709,6 +710,14 @@ bool Thumbnail::isSupported () const
 const ProcParams& Thumbnail::getProcParams ()
 {
     MyMutex::MyLock lock(mutex);
+    return getProcParamsU();
+}
+
+ProcParams Thumbnail::getProcParamsCopy ()
+{
+    MyMutex::MyLock lock(mutex);
+    // The return value is copy-constructed inside this scope, i.e. while the
+    // lock is still held — safe against concurrent setProcParams.
     return getProcParamsU();
 }
 
@@ -1626,6 +1635,10 @@ void Thumbnail::updateCache (bool updatePParams, bool updateCacheImageData)
         cachemgr->invalidateMD5(cacheDataName);
         cfs.save (cacheDataName);
         cachemgr->invalidateMD5(cacheDataName);
+
+        // Write-through to the global selects index so cross-folder discovery
+        // stays complete without rescanning.
+        SelectsIndex::getInstance().note(fname, getRank(), getPick(), getColorLabel());
     }
 
     if (updatePParams && pparamsValid) {

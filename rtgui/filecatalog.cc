@@ -26,6 +26,7 @@
 #include <iostream>
 #include <iomanip>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <unordered_set>
@@ -37,10 +38,12 @@
 
 #include "batchqueue.h"
 #include "batchqueueentry.h"
+#include "cacheimagedata.h"
 #include "cachemanager.h"
 #include "coarsepanel.h"
 #include "filepanel.h"
 #include "guiutils.h"
+#include "imagescanhelpers.h"
 #include "inspector.h"
 #include "multilangmgr.h"
 #include "options.h"
@@ -48,6 +51,7 @@
 #include "placesbrowser.h"
 #include "rtimage.h"
 #include "rtscalable.h"
+#include "selectsindex.h"
 #include "thumbimageupdater.h"
 #include "thumbnail.h"
 #include "toolbar.h"
@@ -553,6 +557,15 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     bFilterToggle_->set_tooltip_markup(M("FILEBROWSER_SHOWDIRHINT"));
     bFilterToggle_->signal_toggled().connect(sigc::mem_fun(*this, &FileCatalog::filterToggled));
     buttonBar->pack_start(*bFilterToggle_, Gtk::PACK_SHRINK);
+
+    // Global scope: apply the active filter across every known folder
+    globalAliveToken_ = std::make_shared<std::atomic<bool>>(true);
+    bGlobalScope_ = Gtk::manage(new Gtk::ToggleButton());
+    bGlobalScope_->set_image(*Gtk::manage(new RTImage("globe-small", Gtk::ICON_SIZE_BUTTON)));
+    bGlobalScope_->set_relief(Gtk::RELIEF_NONE);
+    bGlobalScope_->set_tooltip_text(M("FILEBROWSER_GLOBALSCOPE_TOOLTIP"));
+    globalToggleConn_ = bGlobalScope_->signal_toggled().connect(sigc::mem_fun(*this, &FileCatalog::globalScopeToggled));
+    buttonBar->pack_start(*bGlobalScope_, Gtk::PACK_SHRINK);
 
     // bFilterClear still exists for categoryButtons logic but is not on main bar
     iFilterClear = new RTImage ("filter-clear", Gtk::ICON_SIZE_LARGE_TOOLBAR);
@@ -1112,6 +1125,13 @@ bool FileCatalog::onColorLabelFadeTick()
 
 FileCatalog::~FileCatalog()
 {
+    if (globalAliveToken_) {
+        *globalAliveToken_ = false;
+    }
+    if (globalScanCancel_) {
+        *globalScanCancel_ = true;
+    }
+    globalRescanConn_.disconnect();
     delete rejectsPopover_;
     zoomSliderApplyConn_.disconnect();
     colorFadeConn_.disconnect();
@@ -1347,7 +1367,8 @@ std::vector<Glib::ustring> FileCatalog::getFileList(std::vector<Glib::RefPtr<Gio
 
 void FileCatalog::dirSelected (const Glib::ustring& dirname, const Glib::ustring& openfile)
 {
-    // Exit album mode when navigating to a directory
+    // Navigating to a real directory leaves global scope and album mode
+    resetGlobalScopeQuiet();
     inAlbumMode_ = false;
 
     try {
@@ -3417,26 +3438,29 @@ BrowserFilter FileCatalog::getFilter ()
      * filter is setup in 2 steps
      * Step 1: handle individual filters
     */
+    // A pick-only filter must not zero out the other groups: every chain
+    // treats "some other group is active" as show-all for its own group, and
+    // the pick group belongs in those chains like any other.
     filter.showRanked[0] = bFilterClear->get_active() || bUnRanked->get_active () || bTrash->get_active () || anySupplementaryActive ||
-                           anyCLabelFilterActive || anyEditedFilterActive || anyRecentlySavedFilterActive;
+                           anyCLabelFilterActive || anyEditedFilterActive || anyRecentlySavedFilterActive || anyPickFilterActive;
 
     filter.showCLabeled[0] = bFilterClear->get_active() || bUnCLabeled->get_active () || bTrash->get_active ()  || anySupplementaryActive ||
-                             anyRankFilterActive || anyEditedFilterActive || anyRecentlySavedFilterActive;
+                             anyRankFilterActive || anyEditedFilterActive || anyRecentlySavedFilterActive || anyPickFilterActive;
 
     for (int i = 1; i <= 5; i++) {
         filter.showRanked[i] = bFilterClear->get_active() || bRank[i - 1]->get_active () || bTrash->get_active () || anySupplementaryActive ||
-                               anyCLabelFilterActive || anyEditedFilterActive || anyRecentlySavedFilterActive;
+                               anyCLabelFilterActive || anyEditedFilterActive || anyRecentlySavedFilterActive || anyPickFilterActive;
 
         filter.showCLabeled[i] = bFilterClear->get_active() || bCLabel[i - 1]->get_active () || bTrash->get_active ()  || anySupplementaryActive ||
-                                 anyRankFilterActive || anyEditedFilterActive || anyRecentlySavedFilterActive;
+                                 anyRankFilterActive || anyEditedFilterActive || anyRecentlySavedFilterActive || anyPickFilterActive;
     }
 
     for (int i = 0; i < 2; i++) {
         filter.showEdited[i] = bFilterClear->get_active() || bEdited[i]->get_active () || bTrash->get_active ()  || anySupplementaryActive ||
-                               anyRankFilterActive || anyCLabelFilterActive || anyRecentlySavedFilterActive;
+                               anyRankFilterActive || anyCLabelFilterActive || anyRecentlySavedFilterActive || anyPickFilterActive;
 
         filter.showRecentlySaved[i] = bFilterClear->get_active() || bRecentlySaved[i]->get_active () || bTrash->get_active ()  || anySupplementaryActive ||
-                                      anyRankFilterActive || anyCLabelFilterActive || anyEditedFilterActive;
+                                      anyRankFilterActive || anyCLabelFilterActive || anyEditedFilterActive || anyPickFilterActive;
     }
 
 
@@ -3452,6 +3476,7 @@ BrowserFilter FileCatalog::getFilter ()
             (anyCLabelFilterActive && anyEditedFilterActive ) ||
             (anyCLabelFilterActive && anyRecentlySavedFilterActive ) ||
             (anyEditedFilterActive && anyRecentlySavedFilterActive) ||
+            (anyPickFilterActive && (anyRankFilterActive || anyCLabelFilterActive || anyEditedFilterActive || anyRecentlySavedFilterActive)) ||
             (anySupplementaryActive && (anyRankFilterActive || anyCLabelFilterActive || anyEditedFilterActive || anyRecentlySavedFilterActive))) {
 
         filter.showRanked[0] = anyRankFilterActive ? bUnRanked->get_active () : true;
@@ -3510,6 +3535,12 @@ BrowserFilter FileCatalog::getFilter ()
         filter.exifFilterEnabled = filterPanel->isEnabled ();
     }
 
+    // Global scope spans folders; EXIF bounds derived from one directory's
+    // files would silently hide everything streamed in from elsewhere.
+    if (globalScopeActive_) {
+        filter.exifFilterEnabled = false;
+    }
+
     //TODO add support for more query options. e.g by date, iso, f-number, etc
     //TODO could use date:<value>;iso:<value>  etc
     // default will be filename
@@ -3556,6 +3587,9 @@ void FileCatalog::setAlbumWhitelist (const std::set<std::string>& whitelist)
 
 void FileCatalog::showAlbumFiles (const Glib::ustring& albumName, const std::vector<Glib::ustring>& files)
 {
+    // A real album view takes over from global scope
+    resetGlobalScopeQuiet();
+
     // Save current directory so we can restore when exiting album mode
     if (!inAlbumMode_) {
         savedDirectory_ = selectedDirectory;
@@ -3588,6 +3622,8 @@ void FileCatalog::exitAlbumMode ()
 {
     if (!inAlbumMode_) return;
 
+    resetGlobalScopeQuiet();
+
     inAlbumMode_ = false;
     albumWhitelist_.clear();
 
@@ -3597,6 +3633,371 @@ void FileCatalog::exitAlbumMode ()
     }
 }
 
+namespace
+{
+
+// Cheap CacheImageData-level approximation of FileBrowser::checkFilter for
+// the global scope scan: flags, stars, color labels, and filetype. The
+// heavier per-entry criteria (trash, edited, saved-state, EXIF query) need
+// live Thumbnails and do not participate in cross-folder matching.
+bool cidMatchesBrowserFilter(const BrowserFilter& filter, const CacheImageData& cid, const std::string& upperExt)
+{
+    const int pick = std::max(-1, std::min(1, cid.pickLabel));
+
+    if (filter.hideRejects && pick == -1) {
+        return false;
+    }
+
+    if ((pick == 1 && !filter.showPicked)
+            || (pick == -1 && !filter.showRejected)
+            || (pick == 0 && !filter.showUnflagged)) {
+        return false;
+    }
+
+    const int rank = std::max(0, std::min(5, cid.rating));
+
+    if (!filter.showRanked[rank]) {
+        return false;
+    }
+
+    const int label = std::max(0, std::min(5, cid.colorLabel));
+
+    if (!filter.showCLabeled[label]) {
+        return false;
+    }
+
+    if (!filter.filetypeFilter.empty() && filter.filetypeFilter.find(upperExt) == filter.filetypeFilter.end()) {
+        return false;
+    }
+
+    return true;
+}
+
+// Compact key of the filter fields the global scan matches on. Rescans are
+// triggered only when this changes — filterChanged() also fires for internal
+// reasons (previews finishing, entries streaming in), and rescanning on
+// those spins the scan in a loop.
+std::string filterScanKey(const BrowserFilter& filter)
+{
+    std::string key;
+    key.reserve(64);
+    key += filter.showPicked ? 'P' : '-';
+    key += filter.showRejected ? 'R' : '-';
+    key += filter.showUnflagged ? 'U' : '-';
+    key += filter.hideRejects ? 'h' : '-';
+
+    for (int i = 0; i < 6; ++i) {
+        key += filter.showRanked[i] ? '1' : '0';
+    }
+
+    for (int i = 0; i < 6; ++i) {
+        key += filter.showCLabeled[i] ? '1' : '0';
+    }
+
+    for (const auto& ft : filter.filetypeFilter) {
+        key += '|';
+        key += ft;
+    }
+
+    return key;
+}
+
+} // namespace
+
+void FileCatalog::resetGlobalScopeQuiet ()
+{
+    if (!globalScopeActive_ && (!bGlobalScope_ || !bGlobalScope_->get_active())) {
+        return;
+    }
+
+    globalScopeActive_ = false;
+    ++globalScanGen_;
+    globalRescanConn_.disconnect();
+
+    if (globalScanCancel_) {
+        *globalScanCancel_ = true;
+    }
+
+    if (bGlobalScope_ && bGlobalScope_->get_active()) {
+        globalToggleConn_.block();
+        bGlobalScope_->set_active(false);
+        globalToggleConn_.unblock();
+    }
+}
+
+void FileCatalog::globalScopeToggled ()
+{
+    if (bGlobalScope_->get_active()) {
+        globalScopeActive_ = true;
+
+        if (!inAlbumMode_) {
+            savedDirectory_ = selectedDirectory;
+        }
+
+        startGlobalScan();
+    } else {
+        globalScopeActive_ = false;
+        ++globalScanGen_;
+        globalRescanConn_.disconnect();
+
+        if (globalScanCancel_) {
+            *globalScanCancel_ = true;
+        }
+
+        exitAlbumMode();
+    }
+}
+
+void FileCatalog::startGlobalScan ()
+{
+    const int generation = ++globalScanGen_;
+
+    if (globalScanCancel_) {
+        *globalScanCancel_ = true;
+    }
+
+    globalScanCancel_ = std::make_shared<std::atomic<bool>>(false);
+
+    inGlobalStart_ = true;
+
+    // Album-mode display rails: clear the grid, then stream matches in. The
+    // heavy previews-finished finalize (sorting, quick-thumb warmup, trash
+    // sync…) is deferred until the scan completes — the same
+    // directoryScanComplete_ mechanism directory loading uses; without it the
+    // finalize re-runs on every streamed batch.
+    closeDir();
+    inAlbumMode_ = true;
+    albumWhitelist_.clear();
+    BrowsePath->set_text(M("FILEBROWSER_GLOBALSCOPE"));
+    directoryScanComplete_ = false;
+    previewsToLoad = 0; // fresh accounting for this scan's streamed adds
+    filepanel->loadingThumbs(M("FILEBROWSER_GLOBALSCOPE"), 0);
+    _refreshProgressBar();
+
+    inGlobalStart_ = false;
+
+    const BrowserFilter filter = getFilter();
+    globalLastScanKey_ = filterScanKey(filter);
+    const bool recurse = App::get().options().globalScanSubfolders;
+
+    // Roots: favorites + recents + the folder we came from + every folder the
+    // selects index has ever seen. Dedup by folded path so variants of the
+    // same directory (case, trailing separators) don't get scanned twice.
+    auto indexSnapshot = SelectsIndex::getInstance().snapshot();
+
+    std::vector<Glib::ustring> dirs;
+    std::set<std::string> dirKeys;
+
+    const auto addDir = [&](const Glib::ustring& d) {
+        if (d.empty()) {
+            return;
+        }
+
+        if (dirKeys.insert(foldedPathKey(d)).second) {
+            dirs.push_back(d);
+        }
+    };
+
+    for (const auto& d : App::get().options().favoriteDirs) {
+        addDir(d);
+    }
+
+    for (const auto& d : App::get().options().recentFolders) {
+        addDir(d);
+    }
+
+    addDir(savedDirectory_);
+
+    for (const auto& item : indexSnapshot) {
+        addDir(Glib::path_get_dirname(item.first));
+    }
+
+    auto alive = globalAliveToken_;
+    auto cancel = globalScanCancel_;
+
+    struct ScanShared {
+        std::mutex batchMutex;
+        std::vector<Glib::ustring> batch;
+        std::vector<Glib::ustring> dirs;
+        std::vector<std::pair<Glib::ustring, SelectsIndex::Entry>> indexEntries;
+        std::atomic<size_t> nextDir{0};
+        std::atomic<size_t> scanned{0};
+        std::atomic<size_t> matched{0};
+        std::atomic<int> pendingWorkers{0};
+    };
+
+    auto shared = std::make_shared<ScanShared>();
+    shared->dirs = std::move(dirs);
+    shared->indexEntries = std::move(indexSnapshot);
+
+    const auto postBatch = [this, alive, generation, shared](std::vector<Glib::ustring>&& ready) {
+        if (ready.empty()) {
+            return;
+        }
+
+        Glib::signal_idle().connect_once([this, alive, generation, shared, ready]() {
+            if (!*alive || generation != globalScanGen_ || !globalScopeActive_) {
+                return;
+            }
+
+            for (const auto& f : ready) {
+                addFile(f);
+            }
+
+            fileBrowser->applyFilter(getFilter());
+            // Queue thumbnail rendering for whatever just became visible —
+            // without this, tiles stay gray until a click forces a redraw.
+            fileBrowser->refreshQuickThumbImages();
+            filepanel->loadingThumbs(
+                Glib::ustring::compose(M("FILEBROWSER_GLOBALSCOPE_PROGRESS"), shared->matched.load()), 0);
+            _refreshProgressBar();
+        });
+    };
+
+    const auto pushMatch = [shared, postBatch](const Glib::ustring& fpath) {
+        ++shared->matched;
+        std::vector<Glib::ustring> ready;
+
+        {
+            std::lock_guard<std::mutex> lock(shared->batchMutex);
+            shared->batch.push_back(fpath);
+
+            if (shared->batch.size() >= 64) {
+                ready.swap(shared->batch);
+            }
+        }
+
+        postBatch(std::move(ready));
+    };
+
+    const auto flushRemainder = [shared, postBatch]() {
+        std::vector<Glib::ustring> ready;
+
+        {
+            std::lock_guard<std::mutex> lock(shared->batchMutex);
+            ready.swap(shared->batch);
+        }
+
+        postBatch(std::move(ready));
+    };
+
+    const int workerCount = std::max(2, std::min(6, static_cast<int>(std::thread::hardware_concurrency()) / 2));
+    shared->pendingWorkers = workerCount;
+
+    for (int worker = 0; worker < workerCount; ++worker) {
+        std::thread([this, alive, cancel, generation, filter, recurse, shared, worker, pushMatch, flushRemainder]() {
+            // Worker 0 first streams the index — instant, complete results
+            // from every folder ever flagged, before any folder walking.
+            if (worker == 0) {
+                for (const auto& item : shared->indexEntries) {
+                    if (*cancel) {
+                        break;
+                    }
+
+                    CacheImageData cid;
+                    cid.rating = item.second.rating;
+                    cid.pickLabel = item.second.pick;
+                    cid.colorLabel = item.second.colorLabel;
+                    const std::string ext = getExtension(item.first).uppercase();
+
+                    if (!cidMatchesBrowserFilter(filter, cid, ext)) {
+                        continue;
+                    }
+
+                    if (!Glib::file_test(item.first, Glib::FILE_TEST_EXISTS)) {
+                        SelectsIndex::getInstance().forget(item.first); // prune dead entries
+                        continue;
+                    }
+
+                    pushMatch(item.first);
+                }
+            }
+
+            // Reconciling folder walk: absorbs selects the index missed and
+            // keeps it converged (adds, updates, removals).
+            for (size_t dirIndex = shared->nextDir++; dirIndex < shared->dirs.size(); dirIndex = shared->nextDir++) {
+                if (*cancel) {
+                    break;
+                }
+
+                const auto files = recurse
+                    ? imagescan::listImageFilesRecursive(shared->dirs[dirIndex], 3)
+                    : imagescan::listImageFiles(shared->dirs[dirIndex]);
+
+                for (const auto& fpath : files) {
+                    if (*cancel) {
+                        break;
+                    }
+
+                    ++shared->scanned;
+
+                    CacheImageData cid;
+                    const bool haveCache = imagescan::loadCacheDataFast(fpath, cid);
+                    const std::string ext = getExtension(fpath).uppercase();
+
+                    bool match = haveCache && cidMatchesBrowserFilter(filter, cid, ext);
+
+                    if (!match && Glib::file_test(fpath + ".pp3", Glib::FILE_TEST_EXISTS)) {
+                        // The cache can lag the sidecar for flags/ranks.
+                        imagescan::loadPP3OverlaysFast(fpath, cid);
+                        match = cidMatchesBrowserFilter(filter, cid, ext);
+                    }
+
+                    if (haveCache || match) {
+                        // Converge the index (no-ops when unchanged; all-zero
+                        // state removes the entry). addFile dedups against
+                        // index-streamed entries on the GUI side.
+                        SelectsIndex::getInstance().note(fpath, cid.rating, cid.pickLabel, cid.colorLabel);
+                    }
+
+                    if (match) {
+                        pushMatch(fpath);
+                    }
+                }
+            }
+
+            if (--shared->pendingWorkers == 0) {
+                flushRemainder();
+
+                Glib::signal_idle().connect_once([this, alive, generation, shared]() {
+                    if (!*alive || generation != globalScanGen_) {
+                        return;
+                    }
+
+                    if (App::get().options().rtSettings.verbose) {
+                        fprintf(stderr, "[globalScan] dirs=%zu scanned=%zu matched=%zu\n",
+                                shared->dirs.size(), shared->scanned.load(), shared->matched.load());
+                    }
+
+                    if (!globalScopeActive_) {
+                        return;
+                    }
+
+                    // Release the deferred finalize and invoke it directly:
+                    // previewsFinishedUI has its own retry machinery for
+                    // in-flight preview work, and the pending flag is
+                    // unreliable here (addFile resets it on every streamed
+                    // batch, eating the loader's drain signal).
+                    directoryScanComplete_ = true;
+                    previewsFinishedUI(selectedDirectoryId);
+                });
+            }
+        }).detach();
+    }
+}
+
+void FileCatalog::scheduleGlobalRescan ()
+{
+    globalRescanConn_.disconnect();
+    globalRescanConn_ = Glib::signal_timeout().connect([this]() {
+        if (globalScopeActive_) {
+            startGlobalScan();
+        }
+
+        return false;
+    }, 400);
+}
+
 void FileCatalog::filterChanged ()
 {
     //TODO !!! there is too many repetitive and unnecessary executions of
@@ -3604,6 +4005,15 @@ void FileCatalog::filterChanged ()
     // this needs further analysis and cleanup
     fileBrowser->applyFilter (getFilter());
     _refreshProgressBar();
+
+    // In global scope the matching set spans other folders: re-run the scan
+    // (debounced) when the filter itself changed. filterChanged() also fires
+    // for internal reasons (previews finishing, streamed adds) — rescanning
+    // on those would spin the scan in a loop.
+    if (globalScopeActive_ && !inGlobalStart_
+            && filterScanKey(getFilter()) != globalLastScanKey_) {
+        scheduleGlobalRescan();
+    }
 }
 
 void FileCatalog::updateFiletypeFilter ()
