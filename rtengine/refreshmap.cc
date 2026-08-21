@@ -19,6 +19,9 @@
 #include "refreshmap.h"
 #include "procevents.h"
 
+#include <cstdio>
+#include <cstdlib>
+
 
 
 
@@ -31,13 +34,13 @@ int refreshmap[rtengine::NUMOFEVENTS] = {
     0,              // EvProfileLoaded : obsolete,
     ALL,              // EvProfileChanged,
     ALL,              // EvHistoryBrowsed,
-    AUTOEXP,         // EvBrightness,
-    AUTOEXP,         // EvContrast,
-    AUTOEXP,         // EvBlack,
-    AUTOEXP,         // EvExpComp,
-    AUTOEXP,         // EvHLCompr,
-    AUTOEXP,         // EvSHCompr,
-    AUTOEXP,         // EvToneCurve1,
+    TONE,            // EvBrightness,
+    TONE,            // EvContrast,
+    TONE,            // EvBlack,
+    TONE,            // EvExpComp,
+    TONE,            // EvHLCompr,
+    TONE,            // EvSHCompr,
+    TONE,            // EvToneCurve1,
     AUTOEXP,          // EvAutoExp,
     AUTOEXP,          // EvClip,
     LUMINANCECURVE,   // EvLBrightness,
@@ -67,9 +70,9 @@ int refreshmap[rtengine::NUMOFEVENTS] = {
     WB,               // EvWBMethod,
     WB,               // EvWBTemp,
     WB,               // EvWBGreen,
-    AUTOEXP,         // EvToneCurveMode1,
-    AUTOEXP,         // EvToneCurve2,
-    AUTOEXP,         // EvToneCurveMode2,
+    TONE,            // EvToneCurveMode1,
+    TONE,            // EvToneCurve2,
+    TONE,            // EvToneCurveMode2,
     0,                // EvLDNRadius: obsolete,
     0,                // EvLDNEdgeTolerance: obsolete,
     0,                // EvCDNEnabled:obsolete,
@@ -126,7 +129,7 @@ int refreshmap[rtengine::NUMOFEVENTS] = {
     LUMINANCECURVE,   // EvLbCurve,
     DEMOSAIC,         // EvDemosaicMethod
     DARKFRAME,        // EvPreProcessHotPixel
-    AUTOEXP,         // EvSaturation,
+    TONE,            // EvSaturation,
     AUTOEXP,         // EvHSVEqualizerH,
     AUTOEXP,         // EvHSVEqualizerS,
     AUTOEXP,         // EvHSVEqualizerV,
@@ -134,7 +137,7 @@ int refreshmap[rtengine::NUMOFEVENTS] = {
     DEFRINGE,         // EvDefringeEnabled,
     DEFRINGE,         // EvDefringeRadius,
     DEFRINGE,         // EvDefringeThreshold,
-    AUTOEXP,         // EvHLComprThreshold,
+    TONE,            // EvHLComprThreshold,
     RESIZE,           // EvResizeBoundingBox
     RESIZE,           // EvResizeAppliesTo
     LUMINANCECURVE,   // EvCBAvoidClip,
@@ -1219,8 +1222,24 @@ namespace rtengine
 RefreshMapper::RefreshMapper():
     next_event_(rtengine::NUMOFEVENTS)
 {
+    // Verification switch: STEEP_LEGACY_TONE=1 puts the tone events back on
+    // the old AUTOEXP action, so a single binary can render the same edit
+    // both ways and the two frame dumps can be compared pixel for pixel.
+    const char* const legacyTone = std::getenv("STEEP_LEGACY_TONE");
+    const bool useLegacyTone = legacyTone != nullptr && legacyTone[0] != '\0' && legacyTone[0] != '0';
+
     for (int event = 0; event < rtengine::NUMOFEVENTS; ++event) {
-        actions_[event] = refreshmap[event];
+        int action = refreshmap[event];
+
+        if (useLegacyTone && action == TONE) {
+            action = AUTOEXP;
+        }
+
+        actions_[event] = action;
+    }
+
+    if (useLegacyTone) {
+        std::fprintf(stderr, "STEEP_LEGACY_TONE: tone events mapped back to AUTOEXP\n");
     }
 }
 

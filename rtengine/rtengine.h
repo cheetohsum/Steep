@@ -263,7 +263,13 @@ class DetailedCropListener
 public:
     virtual ~DetailedCropListener() = default;
     /** With this member function the staged processor notifies the listener that the detailed crop image has been updated.
-      * @param img is a pointer to the detailed crop image */
+      * @param img is a pointer to the detailed crop image
+      * @param imgtrue is the same crop converted to the output profile, for
+      *        analysis (navigator readout, colour pickers, clipping and
+      *        focus-mask overlays). It is NULL when the listener reported via
+      *        wantsTrueImage() that nothing is reading it: the conversion is a
+      *        full-precision LCMS pass over the whole visible crop and costs
+      *        more than the rest of the interactive pipeline put together. */
     virtual void setDetailedCrop(
         IImage8* img,
         IImage8* imgtrue,
@@ -276,6 +282,16 @@ public:
         int skip
     ) = 0;
     virtual void getWindow(int& cx, int& cy, int& cw, int& ch, int& skip) = 0;
+
+    /** Whether the output-profile ("true") image is being read right now.
+      * Returning false lets the engine skip an expensive conversion during
+      * interactive edits; it is still produced on settled passes regardless,
+      * so a stale buffer can never outlive the edit that invalidated it by
+      * more than one settled refresh. */
+    virtual bool wantsTrueImage() const
+    {
+        return true;
+    }
 };
 
 /** This listener is used when the full size of the final image has been changed (e.g. rotated by 90 deg.) */

@@ -551,6 +551,9 @@ private:
     rtengine::procparams::ProcParams transientEditPreviewRestore_;
 
     void scheduleFinalPreviewRefinement();
+    void enableDeferredCropWindow(const char* reason);
+    void scheduleBeforePaneRebuild();
+    void startEditLatencyBench();
 
     EditorPanelIdleHelper* epih;
 
@@ -567,13 +570,20 @@ private:
     // Cancellation token for async before/after image loading.
     std::shared_ptr<std::atomic<bool>> beforeAfterCancel_;
     bool firstEnginePreviewReady_ = false;
-    bool beforeAfterRefreshPending_ = false;
+    sigc::connection beforePaneRebuildConn_;
 
     // Deferred Phase B (tool panel + profile initialization after placeholder paints)
     sigc::connection deferredOpenConn_;
     sigc::connection deferredDirSyncConn_;
     sigc::connection deferredCropEnableConn_;
     sigc::connection deferredHighDetailConn_;
+    // STEEP_EDIT_BENCH: synthetic exposure drag used to measure edit latency.
+    sigc::connection editBenchConn_;
+    int editBenchRemaining_ = 0;
+    int editBenchStep_ = 0;
+    double editBenchBaseEv_ = 0.0;
+    bool editBenchRealDrag_ = false;
+    int editBenchTarget_ = 0;
     unsigned int openSession_ = 0;
     unsigned int finalPreviewRefinementGeneration_ = 0;
     unsigned int editorDirSyncGeneration_ = 0;

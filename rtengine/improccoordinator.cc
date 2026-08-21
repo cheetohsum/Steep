@@ -35,6 +35,7 @@
 #include "colortemp.h"
 #include "curves.h"
 #include "dcp.h"
+#include "edittrace.h"
 #include "guidedfilter.h"
 #include "iccstore.h"
 #include "image8.h"
@@ -44,6 +45,7 @@
 #include "labimage.h"
 #include "lcp.h"
 #include "procparams.h"
+#include "previewquality.h"
 #include "tweakoperator.h"
 #include "refreshmap.h"
 #include "utils.h"
@@ -82,9 +84,9 @@ public:
         return *executor;
     }
 
-    TaskHandle enqueue(std::function<void()> work)
+    TaskHandle enqueue(std::function<void()> work, const char* label = "task")
     {
-        auto task = std::make_shared<TaskState>(std::move(work));
+        auto task = std::make_shared<TaskState>(std::move(work), label);
         auto result = task->completion.get_future().share();
 
         {
@@ -107,8 +109,10 @@ public:
 
 private:
     struct TaskState {
-        explicit TaskState(std::function<void()> work_)
-            : work(std::move(work_))
+        TaskState(std::function<void()> work_, const char* label_)
+            : work(std::move(work_)),
+              label(label_),
+              enqueuedUs(rtengine::edittrace::enabled() ? rtengine::edittrace::nowUs() : -1)
         {
         }
 
@@ -116,6 +120,14 @@ private:
         {
             if (claimed.exchange(true, std::memory_order_acq_rel)) {
                 return;
+            }
+
+            if (enqueuedUs >= 0) {
+                // A non-trivial wait here means the single shared worker was
+                // busy with another coordinator's pass (before-pane, crop
+                // fullUpdate) while this edit sat in the queue.
+                rtengine::edittrace::logf("executorRun label=%s queueWait=%.1fms",
+                                          label, (rtengine::edittrace::nowUs() - enqueuedUs) / 1000.0);
             }
 
             try {
@@ -129,6 +141,10 @@ private:
         void cancel()
         {
             if (!claimed.exchange(true, std::memory_order_acq_rel)) {
+                // Release captures immediately. A canceled image-switch task
+                // can otherwise retain a processor until another task happens
+                // to enter the executor and prune the queue.
+                work = {};
                 completion.set_value();
             }
         }
@@ -139,6 +155,8 @@ private:
         }
 
         std::function<void()> work;
+        const char* label;
+        long long enqueuedUs;
         std::promise<void> completion;
         std::atomic<bool> claimed{false};
     };
@@ -173,12 +191,36 @@ private:
 namespace rtengine
 {
 
+/// STEEP_NO_TRANSFORM_CACHE=1 restores the unconditional geometric transform.
+static bool neverCacheTransform()
+{
+    static const bool value = []() {
+        const char* const env = std::getenv("STEEP_NO_TRANSFORM_CACHE");
+        return env != nullptr && env[0] != 0 && env[0] != '0';
+    }();
+
+    return value;
+}
+
+unsigned long long getSettledPreviewSerial(const StagedImageProcessor* processor)
+{
+    const auto* coordinator = dynamic_cast<const ImProcCoordinator*>(processor);
+    return coordinator ? coordinator->getHighDetailPreviewSerial() : 0;
+}
+
+unsigned int getInteractivePassMs(const StagedImageProcessor* processor)
+{
+    const auto* coordinator = dynamic_cast<const ImProcCoordinator*>(processor);
+    return coordinator ? coordinator->getInteractivePassMs() : 0;
+}
+
 ImProcCoordinator::ImProcCoordinator() :
     orig_prev(nullptr),
     oprevi(nullptr),
     spotprev(nullptr),
     oprevl(nullptr),
     nprevl(nullptr),
+    filmLabTap(nullptr),
     fattal_11_dcrop_cache(nullptr),
     previmg(nullptr),
     workimg(nullptr),
@@ -308,6 +350,7 @@ ImProcCoordinator::ImProcCoordinator() :
     colourToningSatLimit(0.f),
     colourToningSatLimitOpacity(0.f),
     highQualityComputed(false),
+    highDetailPreviewSerial(0),
     customTransformIn(nullptr),
     customTransformOut(nullptr),
     ipf(params.get(), true),
@@ -370,20 +413,7 @@ ImProcCoordinator::~ImProcCoordinator()
 {
 
     destroying = true;
-    std::shared_future<void> taskToWait;
-    std::function<void()> cancelTask;
-    updaterThreadStart.lock();
-
-    taskToWait = processingTask;
-    cancelTask = cancelProcessingTask;
-    updaterThreadStart.unlock();
-
-    if (cancelTask) {
-        cancelTask();
-    }
-    if (taskToWait.valid()) {
-        taskToWait.wait();
-    }
+    cancelProcessingTasks(true);
 
     mProcessing.lock();
     mProcessing.unlock();
@@ -392,6 +422,7 @@ ImProcCoordinator::~ImProcCoordinator()
     if (fattal_11_dcrop_cache) {
         delete fattal_11_dcrop_cache;
         fattal_11_dcrop_cache = nullptr;
+        fattalCacheSkip = -1;
     }
 
     std::vector<Crop*> toDel = crops;
@@ -461,22 +492,24 @@ DetailedCrop* ImProcCoordinator::createCrop(::EditDataProvider *editDataProvider
 void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
 {
     using PreviewClock = std::chrono::steady_clock;
-    const bool tracePipeline = std::getenv("STEEP_PIPELINE_TRACE") != nullptr;
+    const bool tracePipeline = std::getenv("STEEP_PIPELINE_TRACE") != nullptr || edittrace::enabled();
     const auto traceStart = PreviewClock::now();
     auto traceLast = traceStart;
+    const unsigned long long traceSerial = currentEditSerialFirst_;
     auto traceStage = [&](const char* stage) {
         if (!tracePipeline) {
             return;
         }
 
         const auto now = PreviewClock::now();
-        const auto delta = std::chrono::duration_cast<std::chrono::milliseconds>(now - traceLast).count();
-        const auto total = std::chrono::duration_cast<std::chrono::milliseconds>(now - traceStart).count();
-        std::printf("[previewPipeline] stage=%s delta=%lldms total=%lldms todo=0x%x file=%s\n",
+        const auto delta = std::chrono::duration_cast<std::chrono::microseconds>(now - traceLast).count();
+        const auto total = std::chrono::duration_cast<std::chrono::microseconds>(now - traceStart).count();
+        std::printf("[previewPipeline] stage=%s delta=%.1fms total=%.1fms todo=0x%x serial=%llu file=%s\n",
                     stage,
-                    static_cast<long long>(delta),
-                    static_cast<long long>(total),
+                    delta / 1000.0,
+                    total / 1000.0,
                     todo,
+                    traceSerial,
                     imgsrc ? imgsrc->getFileName().c_str() : "");
         std::fflush(stdout);
         traceLast = now;
@@ -1074,6 +1107,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             if (fattal_11_dcrop_cache) {
                 delete fattal_11_dcrop_cache;
                 fattal_11_dcrop_cache = nullptr;
+                fattalCacheSkip = -1;
             }
 
             ipf.dehaze(orig_prev, params->dehaze);
@@ -1090,18 +1124,48 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
 
         const bool cam02 = params->colorappearance.modelmethod == "02" && params->colorappearance.enabled;
       //  if ((needstransform || ((todo & (M_TRANSFORM | M_RGBCURVE))  && params->dirpyrequalizer.cbdlMethod == "bef" && params->dirpyrequalizer.enabled && !params->colorappearance.enabled))) {
-        if ((needstransform || ((todo & (M_TRANSFORM | M_RGBCURVE))  && params->dirpyrequalizer.cbdlMethod == "bef" && params->dirpyrequalizer.enabled && !cam02))) {
-            // Forking the image
+        const bool cbdlBefore = (todo & (M_TRANSFORM | M_RGBCURVE))
+            && params->dirpyrequalizer.cbdlMethod == "bef"
+            && params->dirpyrequalizer.enabled && !cam02;
+
+        if (needstransform || cbdlBefore) {
+            // Forking the image. The fork is a persistent buffer rather than a
+            // fresh allocation per pass: the transform depends only on the
+            // working image and the geometry parameters, neither of which a
+            // tone edit touches, so its result is reused until one of them
+            // actually changes. The cbdl "bef" branch further down writes back
+            // into this buffer, so whenever it runs the transform is redone
+            // from the working image and the cache is marked spent.
             assert(oprevi);
             Imagefloat *op = oprevi;
-            oprevi = new Imagefloat(pW, pH);
 
-            if (needstransform)
-                ipf.transform(op, oprevi, 0, 0, 0, 0, pW, pH, fw, fh,
-                              imgsrc->getMetaData(), imgsrc->getRotateDegree(), false);
-            else {
-                op->copyData(oprevi);
+            const bool sizeChanged = !transformedPrev
+                || transformedPrev->getWidth() != pW || transformedPrev->getHeight() != pH;
+
+            if (sizeChanged) {
+                delete transformedPrev;
+                transformedPrev = new Imagefloat(pW, pH);
+                transformedPrevValid = false;
             }
+
+            const bool transformDirty = !transformedPrevValid
+                || cbdlBefore
+                || sizeChanged
+                || (todo & (M_PREPROC | M_RAW | M_INIT | M_LINDENOISE | M_HDR | M_SPOT | M_TRANSFORM))
+                || neverCacheTransform();
+
+            if (transformDirty) {
+                if (needstransform)
+                    ipf.transform(op, transformedPrev, 0, 0, 0, 0, pW, pH, fw, fh,
+                                  imgsrc->getMetaData(), imgsrc->getRotateDegree(), false);
+                else {
+                    op->copyData(transformedPrev);
+                }
+
+                transformedPrevValid = !cbdlBefore;
+            }
+
+            oprevi = transformedPrev;
         }
 
         for (int sp = 0; sp < (int)params->locallab.spots.size(); sp++) {
@@ -2148,8 +2212,19 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                     return;
                 }
 
+                const bool wantFilmTap = params->filmPresets.enabled && params->filmPresets.modelVersion >= 4;
+                if (wantFilmTap) {
+                    if (!filmLabTap || filmLabTap->getWidth() != oprevi->getWidth() || filmLabTap->getHeight() != oprevi->getHeight()) {
+                        delete filmLabTap;
+                        filmLabTap = new Imagefloat(oprevi->getWidth(), oprevi->getHeight());
+                    }
+                } else if (filmLabTap) {
+                    delete filmLabTap;
+                    filmLabTap = nullptr;
+                }
+
                 ipf.rgbProc(oprevi, oprevl, nullptr, hltonecurve, shtonecurve, tonecurve, params->toneCurve.saturation,
-                            rCurve, gCurve, bCurve, colourToningSatLimit, colourToningSatLimitOpacity, ctColorCurve, ctOpacityCurve, opautili, clToningcurve, cl2Toningcurve, customToneCurve1, customToneCurve2, beforeToneCurveBW, afterToneCurveBW, rrm, ggm, bbm, bwAutoR, bwAutoG, bwAutoB, params->toneCurve.expcomp, params->toneCurve.hlcompr, params->toneCurve.hlcomprthresh, dcpProf, as, histToneCurve);
+                            rCurve, gCurve, bCurve, colourToningSatLimit, colourToningSatLimitOpacity, ctColorCurve, ctOpacityCurve, opautili, clToningcurve, cl2Toningcurve, customToneCurve1, customToneCurve2, beforeToneCurveBW, afterToneCurveBW, rrm, ggm, bbm, bwAutoR, bwAutoG, bwAutoB, params->toneCurve.expcomp, params->toneCurve.hlcompr, params->toneCurve.hlcomprthresh, dcpProf, as, histToneCurve, 1, false, filmLabTap);
 
                 AutoBWListener* const abw = abwListener;
                 if (!destroying && params->blackwhite.enabled && params->blackwhite.autoc && abw) {
@@ -2245,7 +2320,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             }
 
             if (params->grain.enabled) {
-                ipf.grainEffect(nprevl, params->grain, fw, fh);
+                ipf.grainEffect(nprevl, params->grain, fw, fh, 0, 0, std::max(scale, 1));
             }
 
             if (params->tiltShift.enabled) {
@@ -2485,10 +2560,12 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
 
             }
 
-            ipf.filmPresets(
-                nprevl,
-                params->filmPresets,
-                FilmLabContext(0, 0, fw, fh, std::max(scale, 1), ImProcFunctions::filmLabSeed(imgsrc->getFileName())));
+            {
+                FilmLabContext filmLabContext(0, 0, fw, fh, std::max(scale, 1), ImProcFunctions::filmLabSeed(imgsrc->getFileName()));
+                filmLabContext.sceneTap = filmLabTap;
+                filmLabContext.rgbSnapshot = oprevl;
+                ipf.filmPresets(nprevl, params->filmPresets, filmLabContext);
+            }
             ipf.softLight(nprevl, params->softlight);
             traceStage("film-lab");
 
@@ -3004,12 +3081,71 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
     }
 
 // process crop, if needed
-    for (size_t i = 0; i < crops.size(); i++)
-        if (crops[i]->hasListener() && (panningRelatedChange || (highDetailNeeded && prevdemo != PD_Sidecar) || (todo & (M_MONITOR | M_RGBCURVE | M_LUMACURVE)) || crops[i]->get_skip() == 1)) {
-            crops[i]->update(todo);     // may call ourselves
-        }
+    int settledCropsRendered = 0;
 
-    if (panningRelatedChange || (todo & M_MONITOR)) {
+    traceStage("preview-done-before-crops");
+
+    for (size_t i = 0; i < crops.size(); i++) {
+        const bool listening = crops[i]->hasListener();
+        const bool wanted = panningRelatedChange
+            || (highDetailNeeded && prevdemo != PD_Sidecar)
+            || (todo & (M_MONITOR | M_RGBCURVE | M_LUMACURVE))
+            || crops[i]->get_skip() == 1;
+
+        if (listening && wanted) {
+            crops[i]->update(todo);     // may call ourselves
+            ++settledCropsRendered;
+        }
+    }
+
+    traceStage("crops-done");
+
+    // The visible canvas is painted by the detail crops, but imageReady()
+    // below reports success off the whole-image preview alone. A settled pass
+    // that renders no crop therefore tells the editor's refinement watchdog
+    // "published" while leaving the canvas on the previous, coarser render —
+    // exactly the "stops improving, stuck at low res" symptom. Flag it.
+    if (highDetailNeeded && settledCropsRendered == 0) {
+        std::fprintf(
+            stderr,
+            "Settled preview rendered no detail crop (crops=%d) for '%s'; canvas keeps the previous render.\n",
+            static_cast<int>(crops.size()),
+            imgsrc ? imgsrc->getFileName().c_str() : "");
+    }
+
+    // Everything below feeds the navigator thumbnail and the histogram /
+    // vectorscope / waveform -- never the canvas, which the detail crops above
+    // have already published. It is also the most expensive part of an
+    // interactive pass (measured ~9ms of ~31ms, mostly the output-profile
+    // conversion for the analysis image). When another edit is already queued
+    // this frame's readouts are about to be replaced unseen, so computing them
+    // only steals time from the edit the user is waiting on. Skip it and let
+    // the next pass -- or the settled refinement, which is never skipped --
+    // publish them.
+    //
+    // Two ways to know this frame's readouts are not worth the time: another
+    // edit is already queued (so they would be replaced unseen), or one was
+    // published very recently. A histogram that refreshes ~12 times a second
+    // reads as live, while the canvas keeps every frame the engine can make.
+    // Settled passes are never skipped, so whatever the drag leaves behind is
+    // corrected as soon as the edit stream goes quiet.
+    constexpr long long kAnalysisMinIntervalUs = 80000;
+    const auto nowSteady = PreviewClock::now();
+    const long long sinceLastAnalysisUs =
+        std::chrono::duration_cast<std::chrono::microseconds>(
+            nowSteady - lastAnalysisPublish).count();
+
+    const bool analysisSupersededSoon =
+        resultValid && !highDetailNeeded
+        && (hasPendingChange() || sinceLastAnalysisUs < kAnalysisMinIntervalUs);
+
+    if (analysisSupersededSoon) {
+        traceStage("preview-publish-skipped");
+    } else {
+        lastAnalysisPublish = nowSteady;
+    }
+
+    if (!analysisSupersededSoon && (panningRelatedChange || (todo & M_MONITOR))) {
         if ((todo != CROP && todo != MINUPDATE) || (todo & M_MONITOR)) {
             MyMutex::MyLock prevImgLock(previmg->getMutex());
 
@@ -3025,12 +3161,45 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                     return;
                 }
 
-                // Computing the internal image for analysis, i.e. conversion from WCS->Output profile
-                delete workimg;
-                workimg = nullptr;
+                // The analysis image (output colour space) feeds only the
+                // histogram, vectorscopes and waveform. Like the crop's own
+                // analysis buffer it costs a full-precision LCMS pass, so
+                // build it when a panel is actually showing one -- or on a
+                // settled pass, which guarantees a fresh buffer once the edit
+                // stream goes quiet.
+                const HistogramListener* const histWanter = hListener;
+                const bool analysisWanted =
+                    highDetailNeeded
+                    || (histWanter
+                        && (histWanter->updateHistogram()
+                            || histWanter->updateVectorscopeHC()
+                            || histWanter->updateVectorscopeHS()
+                            || histWanter->updateWaveform()));
 
-                workimg = ipf.lab2rgb(nprevl, 0, 0, pW, pH, params->icm);
-            } catch (std::exception&) {
+                if (analysisWanted) {
+                    // Computing the internal image for analysis, i.e. conversion from WCS->Output profile
+                    delete workimg;
+                    workimg = nullptr;
+
+                    workimg = ipf.lab2rgb(nprevl, 0, 0, pW, pH, params->icm);
+                    workimgValid = true;
+                } else {
+                    // Stale pixels must never reach a histogram: drop the
+                    // buffer rather than let a panel opened mid-drag read an
+                    // earlier edit's colours.
+                    workimgValid = false;
+                }
+            } catch (std::exception& error) {
+                // Returning here skips imageReady() and the settled-preview
+                // serial bump below, so the editor's deferred high-quality
+                // refinement never sees progress and eventually gives up with
+                // the canvas stuck at fast-demosaic quality. Say so: this used
+                // to fail completely silently.
+                std::fprintf(
+                    stderr,
+                    "Monitor conversion failed, preview left unpublished for '%s': %s\n",
+                    imgsrc ? imgsrc->getFileName().c_str() : "",
+                    error.what());
                 return;
             }
             traceStage("monitor-conversion");
@@ -3050,6 +3219,22 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             // TODO: The WB tool should be advertised too in order to get the AutoWB's temp and green values
         {
             previewReady->imageReady(params->crop);
+            if (highDetailNeeded) {
+                highDetailPreviewSerial.fetch_add(1, std::memory_order_release);
+            }
+
+            if (currentEditSerialFirst_ != 0) {
+                edittrace::logf("previewPublished serial=%llu..%llu oldestAge=%.1fms newestAge=%.1fms highDetail=%d",
+                                currentEditSerialFirst_, currentEditSerialLast_,
+                                edittrace::ageMs(currentEditSerialFirst_),
+                                edittrace::ageMs(currentEditSerialLast_),
+                                static_cast<int>(highDetailNeeded));
+            }
+
+            if (edittrace::dumpDir() != nullptr && previmg && previmg->getData()) {
+                edittrace::dumpFrame("prev", reinterpret_cast<const unsigned char*>(previmg->getData()),
+                                     previmg->getWidth(), previmg->getHeight(), 3 * previmg->getWidth());
+            }
         }
 
         hist_lrgb_dirty = vectorscope_hc_dirty = vectorscope_hs_dirty = waveform_dirty = true;
@@ -3080,9 +3265,23 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
         traceStage("preview-and-histograms");
     }
 
-    if (orig_prev != oprevi) {
-        delete oprevi;
-        oprevi = nullptr;
+    // oprevi either aliases orig_prev or the persistent transform buffer;
+    // neither may be freed here. It is reassigned at the top of every pass.
+    oprevi = nullptr;
+
+    // Publish how long an interactive pass costs, so the GUI can size the
+    // slider debounce to what this pipeline can actually deliver instead of a
+    // fixed guess. Settled passes are excluded: they are a one-off refinement,
+    // not the rate the user is dragging against.
+    if (!highDetailNeeded) {
+        const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 PreviewClock::now() - traceStart).count();
+        // Light smoothing: one slow pass (a first render, a background hiccup)
+        // must not lock the UI into a sluggish cadence for the rest of a drag.
+        const unsigned int previous = lastInteractivePassMs.load(std::memory_order_relaxed);
+        const unsigned int sample = static_cast<unsigned int>(std::max<long long>(0, elapsed));
+        lastInteractivePassMs.store(previous ? (previous + 3 * sample) / 4 : sample,
+                                    std::memory_order_relaxed);
     }
 }
 
@@ -3110,17 +3309,18 @@ void ImProcCoordinator::freeAll()
 
         spotprev = nullptr;
 
-        if (orig_prev != oprevi) {
-            delete oprevi;
-        }
-
         oprevi    = nullptr;
+        delete transformedPrev;
+        transformedPrev = nullptr;
+        transformedPrevValid = false;
         delete orig_prev;
         orig_prev = nullptr;
         delete oprevl;
         oprevl    = nullptr;
         delete nprevl;
         nprevl    = nullptr;
+        delete filmLabTap;
+        filmLabTap = nullptr;
 
         if (ncie) {
             delete ncie;
@@ -3137,6 +3337,7 @@ void ImProcCoordinator::freeAll()
 
         delete workimg;
         workimg = nullptr;
+        workimgValid = false;
 
     }
 
@@ -3189,6 +3390,7 @@ void ImProcCoordinator::setScale(int prevscale)
         //ncie is only used in ImProcCoordinator::updatePreviewImage, it will be allocated on first use and deleted if not used anymore
         previmg = new Image8(pW, pH);
         workimg = new Image8(pW, pH);
+        workimgValid = false;
 
         allocated = true;
     }
@@ -3239,7 +3441,7 @@ void ImProcCoordinator::notifyHistogramChanged()
 bool ImProcCoordinator::updateLRGBHistograms()
 {
 
-    if (!hist_lrgb_dirty) {
+    if (!hist_lrgb_dirty || !workimgValid) {
         return false;
     }
 
@@ -3306,7 +3508,7 @@ bool ImProcCoordinator::updateLRGBHistograms()
 
 bool ImProcCoordinator::updateVectorscopeHC()
 {
-    if (!workimg || !vectorscope_hc_dirty) {
+    if (!workimg || !workimgValid || !vectorscope_hc_dirty) {
         return false;
     }
 
@@ -3357,7 +3559,7 @@ bool ImProcCoordinator::updateVectorscopeHC()
 
 bool ImProcCoordinator::updateVectorscopeHS()
 {
-    if (!workimg || !vectorscope_hs_dirty) {
+    if (!workimg || !workimgValid || !vectorscope_hs_dirty) {
         return false;
     }
 
@@ -3411,7 +3613,7 @@ bool ImProcCoordinator::updateVectorscopeHS()
 
 bool ImProcCoordinator::updateWaveforms()
 {
-    if (!workimg) {
+    if (!workimg || !workimgValid) {
         // free memory
         waveformRed.free();
         waveformGreen.free();
@@ -3818,32 +4020,54 @@ void ImProcCoordinator::stopProcessing()
 {
 
     destroying = true;
-    std::shared_future<void> taskToWait;
-    std::function<void()> cancelTask;
-    updaterThreadStart.lock();
-
-    taskToWait = processingTask;
-    cancelTask = cancelProcessingTask;
-    updaterThreadStart.unlock();
-
-    if (cancelTask) {
-        cancelTask();
-    }
-    if (taskToWait.valid()) {
-        taskToWait.wait();
-    }
+    cancelProcessingTasks(true);
 }
 
 void ImProcCoordinator::signalStop()
 {
     destroying = true;
-    std::function<void()> cancelTask;
+    cancelProcessingTasks(false);
+}
+
+void ImProcCoordinator::cancelProcessingTasks(bool wait)
+{
+    std::vector<ProcessingTaskHandle> tasks;
     updaterThreadStart.lock();
-    cancelTask = cancelProcessingTask;
-    updaterThreadStart.unlock();
-    if (cancelTask) {
-        cancelTask();
+    if (wait) {
+        tasks.swap(processingTasks);
+    } else {
+        tasks = processingTasks;
     }
+    updaterThreadStart.unlock();
+
+    for (auto& task : tasks) {
+        if (task.cancel) {
+            task.cancel();
+        }
+    }
+    if (wait) {
+        for (auto& task : tasks) {
+            if (task.completion.valid()) {
+                task.completion.wait();
+            }
+        }
+    }
+}
+
+void ImProcCoordinator::rememberProcessingTask(
+    std::shared_future<void> completion,
+    std::function<void()> cancel)
+{
+    processingTasks.erase(
+        std::remove_if(
+            processingTasks.begin(),
+            processingTasks.end(),
+            [](const ProcessingTaskHandle& task) {
+                return task.completion.valid()
+                    && task.completion.wait_for(std::chrono::seconds(0)) == std::future_status::ready;
+            }),
+        processingTasks.end());
+    processingTasks.push_back({std::move(completion), std::move(cancel)});
 }
 
 void ImProcCoordinator::startProcessing()
@@ -3855,9 +4079,8 @@ void ImProcCoordinator::startProcessing()
     updaterThreadStart.lock();
     if (!destroying && !updaterRunning) {
         updaterRunning = true;
-        auto task = PreviewProcessingExecutor::instance().enqueue([this]() { process(); });
-        processingTask = task.completion;
-        cancelProcessingTask = std::move(task.cancel);
+        auto task = PreviewProcessingExecutor::instance().enqueue([this]() { process(); }, "preview");
+        rememberProcessingTask(std::move(task.completion), std::move(task.cancel));
     }
 
     updaterThreadStart.unlock();
@@ -3871,9 +4094,8 @@ bool ImProcCoordinator::scheduleCropUpdate(Crop* crop)
         return false;
     }
 
-    auto task = PreviewProcessingExecutor::instance().enqueue([crop]() { crop->fullUpdate(); });
-    processingTask = task.completion;
-    cancelProcessingTask = std::move(task.cancel);
+    auto task = PreviewProcessingExecutor::instance().enqueue([crop]() { crop->fullUpdate(); }, "cropFullUpdate");
+    rememberProcessingTask(std::move(task.completion), std::move(task.cancel));
     updaterThreadStart.unlock();
     return true;
 }
@@ -3998,6 +4220,7 @@ void ImProcCoordinator::process()
             || params->dehaze != nextParams->dehaze
             || params->pdsharpening != nextParams->pdsharpening
             || params->filmNegative != nextParams->filmNegative
+            || params->doubleExposure != nextParams->doubleExposure
             || params->spot.enabled != nextParams->spot.enabled
             || sharpMaskChanged;
 
@@ -4006,6 +4229,19 @@ void ImProcCoordinator::process()
         *params = *nextParams;
         int change = changeSinceLast;
         changeSinceLast = 0;
+
+        // Claim the stamped edits along with the flags: everything submitted
+        // up to this point is satisfied by the pass we are about to run.
+        currentEditSerialFirst_ = pendingEditSerialFirst_;
+        currentEditSerialLast_ = pendingEditSerialLast_;
+        pendingEditSerialFirst_ = 0;
+        pendingEditSerialLast_ = 0;
+
+        if (currentEditSerialFirst_ != 0) {
+            edittrace::logf("passStart serial=%llu..%llu flags=0x%x queued=%.1fms",
+                            currentEditSerialFirst_, currentEditSerialLast_, change,
+                            edittrace::ageMs(currentEditSerialFirst_));
+        }
 
         if (tweakOperator) {
             // TWEAKING THE PROCPARAMS FOR THE SPOT ADJUSTMENT MODE
@@ -4019,7 +4255,20 @@ void ImProcCoordinator::process()
 
         // M_VOID means no update, and is a bit higher that the rest
         if (change & (~M_VOID)) {
-            updatePreviewImage(change, panningRelatedChange);
+            try {
+                updatePreviewImage(change, panningRelatedChange);
+            } catch (const std::exception& error) {
+                std::fprintf(
+                    stderr,
+                    "Preview processing recovered from exception for '%s': %s\n",
+                    imgsrc ? imgsrc->getFileName().c_str() : "",
+                    error.what());
+            } catch (...) {
+                std::fprintf(
+                    stderr,
+                    "Preview processing recovered from unknown exception for '%s'\n",
+                    imgsrc ? imgsrc->getFileName().c_str() : "");
+            }
         }
 
         paramsUpdateMutex.lock();
@@ -4052,8 +4301,37 @@ void ImProcCoordinator::endUpdateParams(int changeFlags)
 {
     changeSinceLast |= changeFlags;
 
+    // Stamp the edit so a single slider tick can be followed from here to the
+    // painted pixels. Two serials are kept per batch: the oldest edit still
+    // unrendered (the true worst-case latency a user perceives) and the
+    // newest (what the next published frame will actually contain).
+    const unsigned long long serial = edittrace::noteSubmit();
+
+    if (serial != 0) {
+        if (pendingEditSerialFirst_ == 0) {
+            pendingEditSerialFirst_ = serial;
+        }
+
+        pendingEditSerialLast_ = serial;
+        edittrace::logf("submit serial=%llu flags=0x%x pendingSince=%llu",
+                        serial, changeFlags, pendingEditSerialFirst_);
+    }
+
     paramsUpdateMutex.unlock();
     startProcessing();
+}
+
+bool ImProcCoordinator::hasPendingChange()
+{
+    // Best-effort peek: a miss just means we do the work we could have skipped.
+    if (!paramsUpdateMutex.trylock()) {
+        return false;
+    }
+
+    const bool pending = changeSinceLast != 0;
+    paramsUpdateMutex.unlock();
+
+    return pending;
 }
 
 bool ImProcCoordinator::getHighQualComputed()

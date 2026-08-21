@@ -37,6 +37,7 @@ set(RTENGINESOURCEFILES
     dual_demosaic_RT.cc
     dynamicprofile.cc
     eahd_demosaic.cc
+    edittrace.cc
     EdgePreservingDecomposition.cc
     fast_demo.cc
     ffmanager.cc

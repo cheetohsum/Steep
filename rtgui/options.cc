@@ -372,8 +372,8 @@ void Options::setDefaults()
     defProfRaw = DEFPROFILE_RAW;
     defProfImg = DEFPROFILE_IMG;
     dateFormat = "%y-%m-%d";
-    adjusterMinDelay = 35;
-    adjusterMaxDelay = 80;
+    adjusterMinDelay = kAdjusterMinDelayDefault;
+    adjusterMaxDelay = kAdjusterMaxDelayDefault;
     startupDir = STARTUPDIR_LAST;
     startupPath = "";
     useBundledProfiles = true;
@@ -847,6 +847,31 @@ void Options::readFromFile(Glib::ustring fname)
                 if (adjusterMinDelay == 100 && adjusterMaxDelay == 200) {
                     adjusterMinDelay = 35;
                     adjusterMaxDelay = 80;
+                }
+
+                // Every previously shipped default throttled a continuous drag
+                // well below what the pipeline can render -- the debounce, not
+                // the engine, was what made dragging feel choppy. The delay is
+                // now paced to the measured render cost at runtime (see
+                // delayed_helper::maxDelayFloorMs), so these act only as a
+                // lower bound. Migrate the known defaults; anything else is
+                // treated as hand-tuned and left alone.
+                if ((adjusterMinDelay == 35 && adjusterMaxDelay == 80)
+                        || (adjusterMinDelay == 8 && adjusterMaxDelay == 20)) {
+                    adjusterMinDelay = kAdjusterMinDelayDefault;
+                    adjusterMaxDelay = kAdjusterMaxDelayDefault;
+                }
+
+                // Experiment hook: STEEP_ADJ_DELAY=min,max
+                if (const char* const override_ = g_getenv("STEEP_ADJ_DELAY")) {
+                    int mn = 0, mx = 0;
+
+                    if (std::sscanf(override_, "%d,%d", &mn, &mx) == 2 && mn >= 0 && mx >= 0) {
+                        adjusterMinDelay = mn;
+                        adjusterMaxDelay = mx;
+                        std::printf("[options] adjuster delay overridden to %d/%d ms\n", mn, mx);
+                        std::fflush(stdout);
+                    }
                 }
 
                 if (keyFile.has_key("General", "StoreLastProfile")) {

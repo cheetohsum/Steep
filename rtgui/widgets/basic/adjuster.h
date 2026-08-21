@@ -115,6 +115,13 @@ public:
     Glib::ustring getTextValue() const;
     void setLabel (const Glib::ustring &lbl);
     void setValue (double a);
+    /**
+     * Move the slider the way a mouse drag does: no signal blocking, so the
+     * value_changed -> DelayedConnection debounce -> adjusterChanged path runs
+     * exactly as it does for a user. Used by the STEEP_EDIT_BENCH harness to
+     * measure real drag behaviour rather than isolated edits.
+     */
+    void benchDragTo (double a);
     void setLimits (double vmin, double vmax, double vstep, double vdefault);
     void setEnabled (bool enabled);
     void setDefault (double def);

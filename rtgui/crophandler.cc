@@ -24,6 +24,7 @@
 #include "imagearea.h"
 
 #include "rtengine/dcrop.h"
+#include "rtengine/edittrace.h"
 #include "rtengine/procparams.h"
 #include "rtengine/refreshmap.h"
 #include "rtengine/rt_math.h"
@@ -95,6 +96,7 @@ void CropHandler::disconnectCrop ()
     redraw_needed = false;
     cropPixbuf.clear();
     cropPixbuftrue.clear();
+    trueImagePresent.store(false, std::memory_order_release);
 
     if (ipc) {
         ipc->delSizeListener(this);
@@ -119,6 +121,7 @@ void CropHandler::newImage (StagedImageProcessor* ipc_, bool isDetailWindow)
     redraw_needed = false;
     cropPixbuf.clear();
     cropPixbuftrue.clear();
+    trueImagePresent.store(false, std::memory_order_release);
 
     ipc = ipc_;
     cx = 0;
@@ -366,6 +369,13 @@ void CropHandler::setDetailedCrop(
         cropimgtrue.clear();
     }
 
+    // A null "true" image means the engine skipped the output-profile
+    // conversion because nothing was reading it (see wantsTrueImage). The
+    // previously converted buffer is kept so an overlay or readout that
+    // becomes active mid-drag still has pixels to work with; it is replaced
+    // on the next pass that produces one.
+    const bool haveTrueImage = imtrue != nullptr;
+
     PendingUpdate received = {};
     received.x = ax;
     received.y = ay;
@@ -379,7 +389,10 @@ void CropHandler::setDetailedCrop(
         cropimg_height = im->getHeight ();
         const std::size_t cropimg_size = 3 * cropimg_width * cropimg_height;
         cropimg.assign(im->getData(), im->getData() + cropimg_size);
-        cropimgtrue.assign(imtrue->getData(), imtrue->getData() + cropimg_size);
+
+        if (haveTrueImage) {
+            cropimgtrue.assign(imtrue->getData(), imtrue->getData() + cropimg_size);
+        }
         pendingUpdate = received;
 
         bool expected = false;
@@ -388,6 +401,10 @@ void CropHandler::setDetailedCrop(
             idle_register.add(
                 [this]() -> bool
                 {
+                    const long long idleStartUs = rtengine::edittrace::enabled()
+                        ? rtengine::edittrace::nowUs() : 0;
+                    long long scaleDoneUs = idleStartUs;
+
                     cimg.lock ();
 
                     if (redraw_needed.exchange(false)) {
@@ -423,10 +440,23 @@ void CropHandler::setDetailedCrop(
                                 tmpPixbuf->scale (cropPixbuf, 0, 0, imw, imh, 0, 0, czoom, czoom, Gdk::INTERP_TILES);
                                 tmpPixbuf.clear ();
 
-                                Glib::RefPtr<Gdk::Pixbuf> tmpPixbuftrue = Gdk::Pixbuf::create_from_data (cropimgtrue.data(), Gdk::COLORSPACE_RGB, false, 8, cropimg_width, cropimg_height, 3 * cropimg_width);
-                                cropPixbuftrue = Gdk::Pixbuf::create (Gdk::COLORSPACE_RGB, false, 8, imw, imh);
-                                tmpPixbuftrue->scale (cropPixbuftrue, 0, 0, imw, imh, 0, 0, czoom, czoom, Gdk::INTERP_TILES);
-                                tmpPixbuftrue.clear ();
+                                if (!cropimgtrue.empty()) {
+                                    Glib::RefPtr<Gdk::Pixbuf> tmpPixbuftrue = Gdk::Pixbuf::create_from_data (cropimgtrue.data(), Gdk::COLORSPACE_RGB, false, 8, cropimg_width, cropimg_height, 3 * cropimg_width);
+                                    cropPixbuftrue = Gdk::Pixbuf::create (Gdk::COLORSPACE_RGB, false, 8, imw, imh);
+                                    tmpPixbuftrue->scale (cropPixbuftrue, 0, 0, imw, imh, 0, 0, czoom, czoom, Gdk::INTERP_TILES);
+                                    tmpPixbuftrue.clear ();
+                                    trueImagePresent.store(true, std::memory_order_release);
+                                } else if (cropPixbuftrue
+                                           && (cropPixbuftrue->get_width() != imw
+                                               || cropPixbuftrue->get_height() != imh)) {
+                                    // Geometry moved under the kept buffer:
+                                    // consumers index it by its own size, but
+                                    // pixels from a different framing would be
+                                    // silently wrong. Drop it instead; every
+                                    // reader null-checks.
+                                    cropPixbuftrue.clear ();
+                                    trueImagePresent.store(false, std::memory_order_release);
+                                }
                             }
 
                             cropimg.clear();
@@ -435,11 +465,33 @@ void CropHandler::setDetailedCrop(
 
                         cimg.unlock ();
 
+                        if (idleStartUs) {
+                            scaleDoneUs = rtengine::edittrace::nowUs();
+                        }
+
                         if (displayHandler) {
                             displayHandler->cropImageUpdated ();
 
                             if (initial.exchange(false)) {
                                 displayHandler->initialImageArrived ();
+                            }
+
+                            // End of the line for one slider tick: engine
+                            // publish -> GUI idle -> pixbuf scale -> redraw.
+                            const unsigned long long serial =
+                                rtengine::edittrace::lastPublishedSerial();
+
+                            if (serial != 0) {
+                                // newestLag is what the user perceives: how
+                                // far behind the slider the picture is.
+                                const unsigned long long newest =
+                                    rtengine::edittrace::lastPublishedNewestSerial();
+                                rtengine::edittrace::logf(
+                                    "cropPainted serial=%llu totalLatency=%.1fms newest=%llu newestLag=%.1fms scaleMs=%.1f drawMs=%.1f",
+                                    serial, rtengine::edittrace::ageMs(serial),
+                                    newest, rtengine::edittrace::ageMs(newest),
+                                    (scaleDoneUs - idleStartUs) / 1000.0,
+                                    (rtengine::edittrace::nowUs() - scaleDoneUs) / 1000.0);
                             }
                         }
                     } else {

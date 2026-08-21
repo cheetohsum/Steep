@@ -19,6 +19,8 @@
 
 #pragma once
 
+#include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <functional>
 #include <tuple>
@@ -30,6 +32,23 @@
 
 namespace delayed_helper
 {
+
+    /**
+     * Lower bound on the debounce's max delay, in milliseconds, published by
+     * whoever knows how expensive a redraw currently is (see
+     * ToolPanelCoordinator::panelChanged). 0 disables it.
+     *
+     * The configured delays are tuned for a responsive pipeline. When the
+     * pipeline is slow -- heavy profile, big sensor -- firing at that rate does
+     * not produce more frames; it queues edits behind a render already in
+     * flight and pushes the picture further behind the slider. Raising the
+     * floor paces the widget to what the engine can actually deliver.
+     */
+    inline std::atomic<unsigned int>& maxDelayFloorMs()
+    {
+        static std::atomic<unsigned int> value{0};
+        return value;
+    }
 
     // C++14
 
@@ -68,6 +87,32 @@ namespace delayed_helper
 
 }
 
+/// Configured max delay raised to the engine-reported floor, if any.
+inline unsigned int effectiveMaxDelayMs(unsigned int configured)
+{
+    return std::max(configured, delayed_helper::maxDelayFloorMs().load(std::memory_order_relaxed));
+}
+
+/**
+ * Configured min delay, likewise paced.
+ *
+ * min is the quiet period that fires the final update once the widget stops
+ * moving, so it wants to stay short. But if it is shorter than the gap between
+ * incoming motion events it fires on nearly every one of them, bypassing the
+ * max-delay pacing entirely and flooding a slow pipeline -- which showed up as
+ * the picture sitting ~20ms further behind the slider for no extra frames.
+ * Holding it at half the floor keeps it out of the way during motion while
+ * still settling promptly afterwards.
+ */
+inline unsigned int effectiveMinDelayMs(unsigned int configured)
+{
+    if (!configured) {
+        return 0;  // 0 means "call synchronously"; never override that
+    }
+
+    return std::max(configured, delayed_helper::maxDelayFloorMs().load(std::memory_order_relaxed) / 2);
+}
+
 template<typename... Ts>
 class DelayedCall final :
     public rtengine::NonCopyable
@@ -104,10 +149,10 @@ public:
         params = std::make_tuple(ts...);
 
         min_timeout.disconnect();
-        min_timeout = Glib::signal_timeout().connect(sigc::mem_fun(*this, &DelayedCall::onMinTimeout), min_delay_ms);
+        min_timeout = Glib::signal_timeout().connect(sigc::mem_fun(*this, &DelayedCall::onMinTimeout), engine_paced ? effectiveMinDelayMs(min_delay_ms) : min_delay_ms);
 
         if (max_delay_ms && !max_timeout.connected()) {
-            max_timeout = Glib::signal_timeout().connect(sigc::mem_fun(*this, &DelayedCall::onMaxTimeout), max_delay_ms);
+            max_timeout = Glib::signal_timeout().connect(sigc::mem_fun(*this, &DelayedCall::onMaxTimeout), engine_paced ? effectiveMaxDelayMs(max_delay_ms) : max_delay_ms);
         }
     }
 
@@ -115,6 +160,17 @@ public:
     {
         min_timeout.disconnect();
         max_timeout.disconnect();
+    }
+
+    /**
+     * Opt in to engine pacing: this call's delays are then held at least as
+     * long as the pipeline needs per update. Only for widgets whose firing
+     * causes a reprocess -- a pointer readout, for instance, costs the engine
+     * nothing and must stay responsive however busy the pipeline is.
+     */
+    void setEnginePaced(bool value)
+    {
+        engine_paced = value;
     }
 
 private:
@@ -140,6 +196,7 @@ private:
 
     unsigned int min_delay_ms;
     unsigned int max_delay_ms;
+    bool engine_paced = false;
 
     sigc::connection min_timeout;
     sigc::connection max_timeout;
@@ -190,6 +247,17 @@ public:
         max_timeout.disconnect();
     }
 
+    /**
+     * Opt in to engine pacing: this connection's delays are then held at least
+     * as long as the pipeline needs per update. Only for widgets whose firing
+     * causes a reprocess -- a pointer readout, for instance, costs the engine
+     * nothing and must stay responsive however busy the pipeline is.
+     */
+    void setEnginePaced(bool value)
+    {
+        engine_paced = value;
+    }
+
 private:
     void onSignal(Ts... ts)
     {
@@ -205,10 +273,10 @@ private:
         params = std::make_tuple(ts...);
 
         min_timeout.disconnect();
-        min_timeout = Glib::signal_timeout().connect(sigc::mem_fun(*this, &DelayedConnection::onMinTimeout), min_delay_ms);
+        min_timeout = Glib::signal_timeout().connect(sigc::mem_fun(*this, &DelayedConnection::onMinTimeout), engine_paced ? effectiveMinDelayMs(min_delay_ms) : min_delay_ms);
 
         if (max_delay_ms && !max_timeout.connected()) {
-            max_timeout = Glib::signal_timeout().connect(sigc::mem_fun(*this, &DelayedConnection::onMaxTimeout), max_delay_ms);
+            max_timeout = Glib::signal_timeout().connect(sigc::mem_fun(*this, &DelayedConnection::onMaxTimeout), engine_paced ? effectiveMaxDelayMs(max_delay_ms) : max_delay_ms);
         }
     }
 
@@ -228,6 +296,7 @@ private:
 
     unsigned int min_delay_ms;
     unsigned int max_delay_ms;
+    bool engine_paced = false;
 
     sigc::connection signal;
     sigc::connection min_timeout;

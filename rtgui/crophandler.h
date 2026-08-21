@@ -108,6 +108,23 @@ public:
         int skip
     ) override;
     void getWindow(int& cwx, int& cwy, int& cww, int& cwh, int& cskip) override;
+    bool wantsTrueImage() const override
+    {
+        // Always produce one when we are holding none: skipping is only ever
+        // safe as "keep the buffer we already have", never as "leave the
+        // consumers with nothing".
+        return trueImageWanted.load(std::memory_order_acquire)
+            || !trueImagePresent.load(std::memory_order_acquire);
+    }
+
+    /** Told by the crop window whether any consumer of the output-profile
+      * image is live: the pointer is over the canvas, a colour picker exists,
+      * or a clipping / focus-mask overlay is switched on. While none are, the
+      * engine skips that conversion during interactive edits. */
+    void setTrueImageWanted(bool wanted)
+    {
+        trueImageWanted.store(wanted, std::memory_order_release);
+    }
 
     // SizeListener interface
     void    sizeChanged  (int w, int h, int ow, int oh) override;
@@ -154,6 +171,9 @@ private:
 
     CropDisplayHandler* displayHandler;
 
+    std::atomic<bool> trueImageWanted{true};
+    /// Mirrors "cropPixbuftrue is non-null", readable from the engine thread.
+    std::atomic<bool> trueImagePresent{false};
     std::atomic<bool> redraw_needed;
     std::atomic<bool> initial;
 

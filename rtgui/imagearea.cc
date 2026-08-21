@@ -18,6 +18,8 @@
  */
 #include "imagearea.h"
 
+#include "rtengine/edittrace.h"
+
 #include <ctime>
 #include <cmath>
 
@@ -341,6 +343,19 @@ void ImageArea::switchPickerVisibility (bool isVisible)
 
 bool ImageArea::on_draw(const ::Cairo::RefPtr< Cairo::Context> &cr)
 {
+    const long long drawStartUs =
+        rtengine::edittrace::verbose() ? rtengine::edittrace::nowUs() : 0;
+    struct DrawTrace {
+        long long start;
+        ~DrawTrace()
+        {
+            if (start) {
+                rtengine::edittrace::logf("imageAreaDraw ms=%.1f",
+                                          (rtengine::edittrace::nowUs() - start) / 1000.0);
+            }
+        }
+    } drawTrace{drawStartUs};
+
     dirty = false;
 
     int deviceScale = RTScalable::getScaleForWidget(this);

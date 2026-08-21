@@ -21,6 +21,7 @@
 #include "alignedbuffer.h"
 #include "color.h"
 #include "iccmatrices.h"
+#include "edittrace.h"
 #include "iccstore.h"
 #include "image8.h"
 #include "imagefloat.h"
@@ -275,11 +276,15 @@ Image8* ImProcFunctions::lab2rgb(LabImage* lab, int cx, int cy, int cw, int ch, 
     if (oprof) {
         const cmsUInt32Number flags = cmsFLAGS_NOOPTIMIZE | cmsFLAGS_NOCACHE | (icm.outputBPC ? cmsFLAGS_BLACKPOINTCOMPENSATION : 0); // NOCACHE is important for thread safety
 
+        const long long traceT0 = edittrace::enabled() ? edittrace::nowUs() : 0;
+
         lcmsMutex->lock();
         cmsHPROFILE LabIProf  = cmsCreateLab4Profile(nullptr);
         cmsHTRANSFORM hTransform = cmsCreateTransform(LabIProf, TYPE_Lab_DBL, oprof, TYPE_RGB_FLT, icm.outputIntent, flags);
         cmsCloseProfile(LabIProf);
         lcmsMutex->unlock();
+
+        const long long traceT1 = edittrace::enabled() ? edittrace::nowUs() : 0;
 
         unsigned char *data = image->data;
 
@@ -315,6 +320,13 @@ Image8* ImProcFunctions::lab2rgb(LabImage* lab, int cx, int cy, int cw, int ch, 
                 copyAndClampLine(outbuffer, data + ix, cw);
             }
         } // End of parallelization
+
+        if (edittrace::enabled()) {
+            const long long traceT2 = edittrace::nowUs();
+            edittrace::logf("lab2rgb size=%dx%d createTransform=%.1fms pixels=%.1fms profile=%s",
+                            cw, ch, (traceT1 - traceT0) / 1000.0, (traceT2 - traceT1) / 1000.0,
+                            profile.c_str());
+        }
 
         cmsDeleteTransform(hTransform);
 

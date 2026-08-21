@@ -495,6 +495,16 @@ public:
         paramcListeners.push_back(pp);
     }
 
+    /**
+     * Drives the exposure slider from the STEEP_EDIT_BENCH harness.
+     *
+     * Sets the widget and raises EvExpComp directly, deliberately bypassing
+     * the Adjuster debounce so the measurement isolates engine latency.
+     *
+     * @return false when the tone curve tool or the processor is unavailable.
+     */
+    bool benchDriveExposure(double ev, bool realDrag = false, int target = 0);
+
     // toolpanellistener interface
     void refreshPreview(const rtengine::ProcEvent& event) override;
     void panelChanged(const rtengine::ProcEvent& event, const Glib::ustring& descr) override;

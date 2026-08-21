@@ -16,7 +16,12 @@
  *  You should have received a copy of the GNU General Public License
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include <iomanip>
 #include <iostream>
+
+#include "rtengine/edittrace.h"
+#include "rtengine/previewquality.h"
+#include "delayed.h"
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -2946,6 +2951,67 @@ void ToolPanelCoordinator::applyHoverMask()
     // Unused — logic inlined into hoverMaskChanged
 }
 
+bool ToolPanelCoordinator::benchDriveExposure(double ev, bool realDrag, int target)
+{
+    if (!ipc) {
+        return false;
+    }
+
+    // target: 0 exposure (TONE), 1 temperature (WB -- rebuilds the working
+    // image), 2 shadows (LUMINANCECURVE). Chosen to cover the three refresh
+    // actions an ordinary edit can raise.
+    Adjuster* slider = nullptr;
+    double value = ev;
+
+    switch (target) {
+        case 1:
+            if (whitebalance) {
+                slider = whitebalance->getTempSlider();
+                value = 5000.0 + ev * 2000.0;   // ev is a small 0..0.2 ramp
+            }
+            break;
+
+        case 2:
+            if (shadowshighlights) {
+                slider = shadowshighlights->getShadowsSlider();
+                value = ev * 200.0;
+            }
+            break;
+
+        default:
+            if (toneCurve) {
+                slider = toneCurve->getExpcompSlider();
+            }
+            break;
+    }
+
+    if (!slider) {
+        return false;
+    }
+
+    if (target != 0) {
+        // Non-exposure targets only make sense in real-drag mode; the direct
+        // path below raises EvExpComp specifically.
+        slider->benchDragTo(value);
+        return true;
+    }
+
+    if (realDrag) {
+        // Full path: widget -> debounce -> adjusterChanged -> panelChanged,
+        // i.e. what a mouse drag actually produces.
+        slider->benchDragTo(ev);
+        return true;
+    }
+
+    // setValue() blocks the delayed change signals, so the edit reaches the
+    // engine exactly once, on our schedule rather than the debounce timer's.
+    slider->setValue(ev);
+    panelChanged(rtengine::EvExpComp,
+                 Glib::ustring::format(std::setw(3), std::fixed, std::setprecision(2), ev));
+
+    return true;
+}
+
 void ToolPanelCoordinator::panelChangedFromPreviewStrip(
     PreviewStrip* source,
     const rtengine::ProcEvent& event,
@@ -3658,6 +3724,26 @@ void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const 
 
     noteRawLoadForegroundActivity();
 
+    // Pace the slider debounce to this image's actual render cost. Measured
+    // on a 26MP frame: at three quarters of a pass the engine is saturated but
+    // not queueing, and both the update rate and the lag are at their best.
+    // Feeding it faster than that (two thirds) bought no extra frames and put
+    // the picture ~22ms further behind the slider; slower simply dropped the
+    // frame rate. The configured delay stays the floor for fast pipelines.
+    {
+        const unsigned int passMs = rtengine::getInteractivePassMs(ipc);
+        const unsigned int floorMs =
+            passMs ? std::min<unsigned int>((passMs * 3u) / 4u, 150u) : 0u;
+        delayed_helper::maxDelayFloorMs().store(floorMs, std::memory_order_relaxed);
+
+        if (rtengine::edittrace::enabled()) {
+            rtengine::edittrace::logf("pacing passMs=%u floorMs=%u", passMs, floorMs);
+        }
+    }
+
+    const long long guiStartUs =
+        rtengine::edittrace::enabled() ? rtengine::edittrace::nowUs() : 0;
+
     int changeFlags = rtengine::RefreshMapper::getInstance()->getAction(event);
     toolPanelEditLog("panelChanged start event=%d flags=%d descr=%s\n", int(event), changeFlags, descr.c_str());
 
@@ -3806,6 +3892,12 @@ void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const 
     toolPanelEditLog("panelChanged commit event=%d flags=%d expcomp=%.4f brightness=%d contrast=%d wbTemp=%.1f\n",
         int(event), changeFlags, params->toneCurve.expcomp, params->toneCurve.brightness,
         params->toneCurve.contrast, static_cast<double>(params->wb.temperature));
+
+    if (rtengine::edittrace::enabled()) {
+        rtengine::edittrace::logf("panelChangedGui event=%d flags=0x%x guiMs=%.1f",
+                                  int(event), changeFlags,
+                                  (rtengine::edittrace::nowUs() - guiStartUs) / 1000.0);
+    }
 
     ipc->endUpdateParams(changeFlags);    // starts the IPC processing
 

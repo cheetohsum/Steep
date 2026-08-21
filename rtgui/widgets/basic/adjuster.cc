@@ -18,6 +18,8 @@
  */
 #include "adjuster.h"
 
+#include "rtengine/edittrace.h"
+
 #include <sigc++/slot.h>
 #include <algorithm>
 #include <cmath>
@@ -213,6 +215,11 @@ Adjuster::Adjuster(
     defaultVal = ctorDefaultVal = shapeValue(vdefault);
     editedState = defEditedState = Irrelevant;
 
+    // Moving an adjuster reprocesses the image, so its debounce is paced to
+    // what the pipeline can currently deliver (see delayed.h).
+    spinChange.setEnginePaced(true);
+    sliderChange.setEnginePaced(true);
+
     spinChange.connect(
         spin->signal_value_changed(),
         sigc::mem_fun(*this, &Adjuster::spinChanged),
@@ -228,6 +235,9 @@ Adjuster::Adjuster(
         sigc::mem_fun(*this, &Adjuster::sliderChanged),
         [this]()
         {
+            if (rtengine::edittrace::verbose()) {
+                rtengine::edittrace::logf("sliderRawEvent");
+            }
             spinChange.block();
             const double v = shapeValue(getSliderValue());
             spin->set_value(addMode ? v : this->slider2value(v));
@@ -536,6 +546,13 @@ void Adjuster::sliderChanged ()
     }
 
     afterReset = false;
+}
+
+void Adjuster::benchDragTo (double a)
+{
+    // Deliberately does NOT block spinChange/sliderChange: the point is to
+    // exercise the same debounce a mouse drag goes through.
+    setSliderValue(addMode ? shapeValue(a) : value2slider(shapeValue(a)));
 }
 
 void Adjuster::setValue (double a)

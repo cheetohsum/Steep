@@ -18,6 +18,11 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <exception>
+
 #include <glibmm/ustring.h>
 #include <glibmm/timer.h>
 
@@ -26,6 +31,7 @@
 #include "curves.h"
 #include "dcp.h"
 #include "dcrop.h"
+#include "edittrace.h"
 #include "guidedfilter.h"
 #include "image8.h"
 #include "imagefloat.h"
@@ -62,7 +68,7 @@ namespace rtengine
 using rtengine::TMatrix;
 
 Crop::Crop(ImProcCoordinator* parent, EditDataProvider *editDataProvider, bool isDetailWindow)
-    : PipetteBuffer(editDataProvider), origCrop(nullptr), spotCrop(nullptr), laboCrop(nullptr), labnCrop(nullptr),
+    : PipetteBuffer(editDataProvider), origCrop(nullptr), spotCrop(nullptr), laboCrop(nullptr), labnCrop(nullptr), filmLabTapCrop(nullptr),
       cropImg(nullptr), shbuf_real(nullptr), transCrop(nullptr), cieCrop(nullptr), shbuffer(nullptr),
       updating(false), newUpdatePending(false), skip(10),
       cropx(0), cropy(0), cropw(-1), croph(-1),
@@ -153,10 +159,47 @@ bool Crop::hasListener()
     return cropImageListener.load(std::memory_order_acquire);
 }
 
+namespace
+{
+
+/// STEEP_NO_TRANSFORM_CACHE=1 restores the unconditional geometric transform.
+bool neverCacheTransform()
+{
+    static const bool value = []() {
+        const char* const env = std::getenv("STEEP_NO_TRANSFORM_CACHE");
+        return env != nullptr && env[0] != '\0' && env[0] != '0';
+    }();
+
+    return value;
+}
+
+}
+
 void Crop::update(int todo)
 {
     MyMutex::MyLock cropLock(cropMutex);
     ProcParams& params = *parent->params;
+
+    // Latency instrumentation: the detail crop is what actually paints the
+    // canvas, so its stage breakdown is the one that matters most. See
+    // edittrace.h.
+    using CropClock = std::chrono::steady_clock;
+    const bool traceCrop = edittrace::enabled();
+    const auto traceStart = CropClock::now();
+    auto traceLast = traceStart;
+    const unsigned long long traceSerial = parent->currentEditSerialFirst_;
+    auto traceStage = [&](const char* stage) {
+        if (!traceCrop) {
+            return;
+        }
+
+        const auto now = CropClock::now();
+        const auto delta = std::chrono::duration_cast<std::chrono::microseconds>(now - traceLast).count();
+        const auto total = std::chrono::duration_cast<std::chrono::microseconds>(now - traceStart).count();
+        edittrace::logf("cropStage stage=%s delta=%.1fms total=%.1fms todo=0x%x skip=%d size=%dx%d serial=%llu",
+                        stage, delta / 1000.0, total / 1000.0, todo, skip, cropw, croph, traceSerial);
+        traceLast = now;
+    };
 //       CropGUIListener* cropgl;
 
     // No need to update todo here, since it has already been changed in ImprocCoordinator::updatePreviewImage,
@@ -180,6 +223,23 @@ void Crop::update(int todo)
     } else {
         needsinitupdate = setCropSizes(wx, wy, ww, wh, ws, true);     // this set skip=ws
     }
+
+    // The output-profile "true" image is only needed by analysis consumers
+    // (navigator readout, colour pickers, clipping / focus-mask overlays).
+    // Producing it is a full-precision Lab->output LCMS conversion of the
+    // whole visible crop -- measured at ~40ms for a 1.6MP fit-zoom crop,
+    // more than the entire rest of an interactive tone edit. Build it on
+    // settled passes and whenever geometry changed, and otherwise only while
+    // something is actually reading it.
+    const bool settledPass = needsinitupdate || (todo & M_HIGHQUAL) || skip == 1;
+    static const bool neverSkipTrueImage = []() {
+        // Verification switch: STEEP_NO_SKIP_TRUE=1 restores the old
+        // unconditional conversion.
+        const char* const value = std::getenv("STEEP_NO_SKIP_TRUE");
+        return value != nullptr && value[0] != '\0' && value[0] != '0';
+    }();
+    const bool wantTrueImage = settledPass || neverSkipTrueImage
+        || (cropListener && cropListener->wantsTrueImage());
 
     // it something has been reallocated, all processing steps have to be performed
     if (needsinitupdate || (todo & M_HIGHQUAL)) {
@@ -748,6 +808,8 @@ void Crop::update(int todo)
 
     }
 
+    traceStage("source-to-working");
+
     // has to be called after setCropSizes! Tools prior to this point can't handle the Edit mechanism, but that shouldn't be a problem.
     createBuffer(cropw, croph);
 
@@ -787,7 +849,24 @@ void Crop::update(int todo)
 
             // fattal needs to work on the full image. So here we get the full
             // image from imgsrc, and replace the denoised crop in case
-            if (!params.dirpyrDenoise.enabled && skip == 1 && parent->fattal_11_dcrop_cache) {
+            // The dehaze/Fattal result for the whole frame depends only on
+            // the source image and the dehaze/Fattal parameters -- never on
+            // where this crop sits -- so it can be reused until something
+            // upstream actually changes. That invalidation already exists:
+            // the preview pipeline drops this cache whenever a pass carries
+            // M_HDR, which every event that alters the source or those tools
+            // does. Tone edits and settled refreshes do not, which is the
+            // point: ToneMapFattal02 measured 6.1s at fit zoom on a 26MP
+            // frame, and it used to be paid on every single pass.
+            //
+            // Only cacheable when nothing splices crop-local pixels into the
+            // frame below (denoise, film negative, spot removal).
+            const bool fattalCacheable = !params.dirpyrDenoise.enabled
+                && !params.filmNegative.enabled
+                && !params.spot.enabled;
+
+            if (fattalCacheable && parent->fattal_11_dcrop_cache
+                    && parent->fattalCacheSkip == skip) {
                 f = parent->fattal_11_dcrop_cache;
                 need_fattal = false;
             } else {
@@ -796,7 +875,9 @@ void Crop::update(int todo)
                 PreviewProps pp(0, 0, parent->fw, parent->fh, skip);
                 int tr = getCoarseBitMask(params.coarse);
                 parent->imgsrc->getImage(parent->currWB, tr, f, pp, params.toneCurve, params.raw);
+                traceStage("hdr-fullframe-getImage");
                 parent->imgsrc->convertColorSpace(f, params.icm, parent->currWB);
+                traceStage("hdr-fullframe-convert");
 
                 if (params.dirpyrDenoise.enabled || params.filmNegative.enabled || params.spot.enabled) {
                     // copy the denoised crop
@@ -816,8 +897,14 @@ void Crop::update(int todo)
                             f->b(dy, dx) = baseCrop->b(y, x);
                         }
                     }
-                } else if (skip == 1) {
+                } else if (fattalCacheable) {
+                    // A different zoom needs a different frame; keep one.
+                    if (parent->fattal_11_dcrop_cache != f) {
+                        delete parent->fattal_11_dcrop_cache;
+                    }
+
                     parent->fattal_11_dcrop_cache = f; // cache this globally
+                    parent->fattalCacheSkip = skip;
                     fattalCrop.release();
                 }
             }
@@ -825,7 +912,9 @@ void Crop::update(int todo)
 
         if (need_fattal) {
             parent->ipf.dehaze(f, params.dehaze);
+            traceStage("hdr-dehaze");
             parent->ipf.ToneMapFattal02(f, params.fattal, 3, 0, nullptr, 0, 0, 0, false);
+            traceStage("hdr-fattal");
         }
 
         // crop back to the size expected by the rest of the pipeline
@@ -855,30 +944,73 @@ void Crop::update(int todo)
         }
     }
 
+    traceStage("spot-and-hdr");
+
     const bool needstransform  = parent->ipf.needsTransform(skips(parent->fw, skip), skips(parent->fh, skip), parent->imgsrc->getRotateDegree(), parent->imgsrc->getMetaData());
     const bool cam02 = params.colorappearance.modelmethod == "02" && params.colorappearance.enabled;
 
     // transform
    // if (needstransform || ((todo & (M_TRANSFORM | M_RGBCURVE)) && params.dirpyrequalizer.cbdlMethod == "bef" && params.dirpyrequalizer.enabled && !params.colorappearance.enabled)) {
-    if (needstransform || ((todo & (M_TRANSFORM | M_RGBCURVE)) && params.dirpyrequalizer.cbdlMethod == "bef" && params.dirpyrequalizer.enabled && !cam02)) {
-        if (!transCrop) {
+    const bool cbdlBefore = (todo & (M_TRANSFORM | M_RGBCURVE))
+        && params.dirpyrequalizer.cbdlMethod == "bef"
+        && params.dirpyrequalizer.enabled && !cam02;
+
+    if (needstransform || cbdlBefore) {
+        const bool sizeChanged = !transCrop
+            || transCrop->getWidth() != cropw || transCrop->getHeight() != croph;
+
+        if (sizeChanged) {
+            delete transCrop;
             transCrop = new Imagefloat(cropw, croph);
+            transCropValid = false;
         }
 
-        if (needstransform)
-            parent->ipf.transform(baseCrop, transCrop, cropx / skip, cropy / skip, trafx / skip, trafy / skip, skips(parent->fw, skip), skips(parent->fh, skip), parent->getFullWidth(), parent->getFullHeight(),
-                                  parent->imgsrc->getMetaData(),
-                                  parent->imgsrc->getRotateDegree(), false);
-        else {
-            baseCrop->copyData(transCrop);
+        // Lens correction, rotation and the rest of the geometric transform
+        // consume the working image and the geometry parameters -- a tone
+        // edit changes neither, so the previous result still stands. Recompute
+        // only when the working image was rebuilt or the geometry moved.
+        //
+        // The cbdl "bef" branch just below writes its result back into this
+        // same buffer, so whenever it runs the transform must be redone from
+        // the working image and the cache is marked spent.
+        // The transform is position dependent -- lens distortion, vignetting
+        // and rotation all key off where this crop sits in the full frame.
+        // Panning changes cropx/cropy/trafx/trafy without changing the crop's
+        // dimensions, so geometry alone is not enough to decide the cache is
+        // still good; the origin and skip have to match too.
+        const bool originMoved = transCropX != cropx || transCropY != cropy
+            || transCropTrafX != trafx || transCropTrafY != trafy
+            || transCropSkip != skip;
+
+        const bool transformDirty = !transCropValid
+            || cbdlBefore
+            || sizeChanged
+            || originMoved
+            || (todo & (M_PREPROC | M_RAW | M_INIT | M_LINDENOISE | M_HDR | M_SPOT | M_TRANSFORM))
+            || neverCacheTransform();
+
+        if (transformDirty) {
+            if (needstransform)
+                parent->ipf.transform(baseCrop, transCrop, cropx / skip, cropy / skip, trafx / skip, trafy / skip, skips(parent->fw, skip), skips(parent->fh, skip), parent->getFullWidth(), parent->getFullHeight(),
+                                      parent->imgsrc->getMetaData(),
+                                      parent->imgsrc->getRotateDegree(), false);
+            else {
+                baseCrop->copyData(transCrop);
+            }
+
+            transCropX = cropx;
+            transCropY = cropy;
+            transCropTrafX = trafx;
+            transCropTrafY = trafy;
+            transCropSkip = skip;
+            transCropValid = !cbdlBefore;
         }
 
-        if (transCrop) {
-            baseCrop = transCrop;
-        }
+        baseCrop = transCrop;
     } else {
         delete transCrop;
         transCrop = nullptr;
+        transCropValid = false;
     }
 
    // if ((todo & (M_TRANSFORM | M_RGBCURVE))  && params.dirpyrequalizer.cbdlMethod == "bef" && params.dirpyrequalizer.enabled && !params.colorappearance.enabled) {
@@ -1397,17 +1529,33 @@ void Crop::update(int todo)
         parent->ipf.lab2rgb(*labnCrop, *baseCrop, params.icm.workingProfile);
     }
 
+    traceStage("transform-and-locallab");
+
     if (todo & M_RGBCURVE) {
         double rrm, ggm, bbm;
         DCPProfileApplyState as;
         DCPProfile *dcpProf = parent->imgsrc->getDCP(params.icm, as);
 
         LUTu histToneCurve;
+
+        const bool wantFilmTap = params.filmPresets.enabled && params.filmPresets.modelVersion >= 4;
+        if (wantFilmTap) {
+            if (!filmLabTapCrop || filmLabTapCrop->getWidth() != laboCrop->W || filmLabTapCrop->getHeight() != laboCrop->H) {
+                delete filmLabTapCrop;
+                filmLabTapCrop = new Imagefloat(laboCrop->W, laboCrop->H);
+            }
+        } else if (filmLabTapCrop) {
+            delete filmLabTapCrop;
+            filmLabTapCrop = nullptr;
+        }
+
         parent->ipf.rgbProc (baseCrop, laboCrop, this, parent->hltonecurve, parent->shtonecurve, parent->tonecurve,
                             params.toneCurve.saturation, parent->rCurve, parent->gCurve, parent->bCurve, parent->colourToningSatLimit, parent->colourToningSatLimitOpacity, parent->ctColorCurve, parent->ctOpacityCurve, parent->opautili, parent->clToningcurve, parent->cl2Toningcurve,
                             parent->customToneCurve1, parent->customToneCurve2, parent->beforeToneCurveBW, parent->afterToneCurveBW, rrm, ggm, bbm,
-                            parent->bwAutoR, parent->bwAutoG, parent->bwAutoB, dcpProf, as, histToneCurve);
+                            parent->bwAutoR, parent->bwAutoG, parent->bwAutoB, dcpProf, as, histToneCurve, 1, false, filmLabTapCrop);
     }
+
+    traceStage("rgb-curves");
 
     // apply luminance operations
     if (todo & (M_LUMINANCE + M_COLOR)) {
@@ -1444,7 +1592,7 @@ void Crop::update(int todo)
         }
 
         if (params.grain.enabled) {
-            parent->ipf.grainEffect(labnCrop, params.grain, parent->fw, parent->fh);
+            parent->ipf.grainEffect(labnCrop, params.grain, parent->fw, parent->fh, trafx, trafy, std::max(skip, 1));
         }
 
         if (params.tiltShift.enabled) {
@@ -1741,16 +1889,18 @@ void Crop::update(int todo)
 
         }
         
-        parent->ipf.filmPresets(
-            labnCrop,
-            params.filmPresets,
-            FilmLabContext(
+        {
+            FilmLabContext filmLabContext(
                 trafx,
                 trafy,
                 parent->fw,
                 parent->fh,
                 std::max(skip, 1),
-                ImProcFunctions::filmLabSeed(parent->imgsrc->getFileName())));
+                ImProcFunctions::filmLabSeed(parent->imgsrc->getFileName()));
+            filmLabContext.sceneTap = filmLabTapCrop;
+            filmLabContext.rgbSnapshot = laboCrop;
+            parent->ipf.filmPresets(labnCrop, params.filmPresets, filmLabContext);
+        }
         parent->ipf.softLight(labnCrop, params.softlight);
 
         if (params.icm.workingTRC != ColorManagementParams::WorkingTrc::NONE && params.icm.trcExp) {
@@ -1989,15 +2139,21 @@ void Crop::update(int todo)
         return;
     }
 
+    traceStage("lab-and-detail");
+
     // Computing the preview image, i.e. converting from lab->Monitor color space (soft-proofing disabled) or lab->Output profile->Monitor color space (soft-proofing enabled)
     parent->ipf.lab2monitorRgb(labnCrop, cropImg);
+
+    traceStage("lab2monitor");
 
     cropListener = cropImageListener.load(std::memory_order_acquire);
     if (cropListener) {
         // Computing the internal image for analysis, i.e. conversion from lab->Output profile (rtSettings.HistogramWorking disabled) or lab->WCS (rtSettings.HistogramWorking enabled)
 
         // internal image in output color space for analysis
-        Image8 *cropImgtrue = parent->ipf.lab2rgb(labnCrop, 0, 0, cropw, croph, params.icm);
+        Image8 *cropImgtrue = wantTrueImage
+            ? parent->ipf.lab2rgb(labnCrop, 0, 0, cropw, croph, params.icm)
+            : nullptr;
 
         int finalW = rqcropw;
 
@@ -2012,14 +2168,44 @@ void Crop::update(int todo)
         }
 
         Image8* final = new Image8(finalW, finalH);
-        Image8* finaltrue = new Image8(finalW, finalH);
+        Image8* finaltrue = cropImgtrue ? new Image8(finalW, finalH) : nullptr;
 
         for (int i = 0; i < finalH; i++) {
             memcpy(final->data + 3 * i * finalW, cropImg->data + 3 * (i + upperBorder)*cropw + 3 * leftBorder, 3 * finalW);
-            memcpy(finaltrue->data + 3 * i * finalW, cropImgtrue->data + 3 * (i + upperBorder)*cropw + 3 * leftBorder, 3 * finalW);
+
+            if (finaltrue) {
+                memcpy(finaltrue->data + 3 * i * finalW, cropImgtrue->data + 3 * (i + upperBorder)*cropw + 3 * leftBorder, 3 * finalW);
+            }
         }
 
+        traceStage("pipette-and-copy");
+
+        if (edittrace::dumpDir() != nullptr) {
+            // Tag by the tone parameters so two runs can be paired by the
+            // edit they represent rather than by arrival order.
+            char tag[128];
+            // The settled marker matters: interactive passes render with the
+            // fast demosaic, so only settled frames are comparable between
+            // two runs.
+            std::snprintf(tag, sizeof(tag), "crop-ev%+.2f-br%d-co%d-s%d",
+                          params.toneCurve.expcomp, params.toneCurve.brightness,
+                          params.toneCurve.contrast, settledPass ? 1 : 0);
+            edittrace::dumpFrame(tag, final->data, finalW, finalH, 3 * finalW);
+        }
+
+        // Hand the serial to the GUI side so the paint can close the loop.
+        edittrace::notePublish(traceSerial, parent->currentEditSerialLast_);
         cropListener->setDetailedCrop(final, finaltrue, params.icm, params.crop, rqcropx, rqcropy, rqcropw, rqcroph, skip);
+
+        if (traceSerial != 0) {
+            edittrace::logf("cropPublished serial=%llu age=%.1fms engine=%.1fms skip=%d size=%dx%d trueImage=%d settled=%d",
+                            traceSerial, edittrace::ageMs(traceSerial),
+                            std::chrono::duration_cast<std::chrono::microseconds>(
+                                CropClock::now() - traceStart).count() / 1000.0,
+                            skip, finalW, finalH,
+                            static_cast<int>(wantTrueImage), static_cast<int>(settledPass));
+        }
+
         delete final;
         delete finaltrue;
         delete cropImgtrue;
@@ -2040,6 +2226,8 @@ void Crop::freeAll()
             transCrop = nullptr;
         }
 
+        transCropValid = false;
+
         if (laboCrop) {
             delete    laboCrop;
             laboCrop = nullptr;
@@ -2049,6 +2237,11 @@ void Crop::freeAll()
         if (labnCrop) {
             delete    labnCrop;
             labnCrop = nullptr;
+        }
+
+        if (filmLabTapCrop) {
+            delete    filmLabTapCrop;
+            filmLabTapCrop = nullptr;
         }
 
         if (cropImg) {
@@ -2216,6 +2409,8 @@ bool Crop::setCropSizes(const int cropX, const int cropY, const int cropW, const
         origCrop->allocate(trafw, trafh);  // Resizing the buffer (optimization)
 
         // if transCrop doesn't exist yet, it'll be created where necessary
+        transCropValid = false;
+
         if (transCrop) {
             transCrop->allocate(cropw, croph);
         }
@@ -2341,11 +2536,24 @@ void Crop::fullUpdate()
     // If there are more update request, the following WHILE will collect it
     newUpdatePending = true;
 
-    while (newUpdatePending) {
-        newUpdatePending = false;
-        update(ALL);
+    // An escaping exception used to skip everything below: updaterThreadStart
+    // stayed locked (so startProcessing/scheduleCropUpdate blocked forever),
+    // `updating` stayed true (so tryUpdate kept deferring to an updater that
+    // no longer existed, and this crop never rendered again), and the progress
+    // bracket never closed. Recover instead — the same contract
+    // ImProcCoordinator::process() applies around updatePreviewImage.
+    try {
+        while (newUpdatePending) {
+            newUpdatePending = false;
+            update(ALL);
+        }
+    } catch (const std::exception& error) {
+        std::fprintf(stderr, "Crop update recovered from exception: %s\n", error.what());
+    } catch (...) {
+        std::fprintf(stderr, "Crop update recovered from unknown exception\n");
     }
 
+    newUpdatePending = false;
     updating = false;  // end of crop update
 
     ProgressListener* const progressDone = parent->plistener.load();

@@ -19,6 +19,8 @@
  */
 #include "editorpanel.h"
 
+#include "rtengine/edittrace.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -139,6 +141,19 @@ constexpr unsigned int kEditorDirSyncAfterAspectDelayMs = 500;
 constexpr int kEditorDirSyncForegroundQuietMs = 2000;
 constexpr unsigned int kEditorDirSyncQuietRetryMs = 250;
 constexpr unsigned int kEditorPhaseBDelayMs = 50;
+// Upper bound on how long the detail crop stays disabled when the engine's
+// first preview frame never arrives (see EditorPanel::enableDeferredCropWindow).
+constexpr unsigned int kEditorCropEnableFallbackMs = 450;
+// The before/after pane's rebuild only needs to get off the phase-B stack, not
+// to wait anything out. Scrubbing is already covered without a long delay here:
+// this timer is session-guarded, and close() cancels an in-flight load on every
+// switch, which drops it out of the RawLoadGate wait before it decodes.
+constexpr unsigned int kBeforePaneRebuildDelayMs = 20;
+// Poll cadence and bound for holding the before pane's pipeline back until
+// the edited image has its first frame. Bounded on purpose: an unbounded
+// wait here would strand the pane empty forever if that frame never lands.
+constexpr unsigned int kBeforePaneAttachPollMs = 15;
+constexpr int kBeforePaneAttachMaxPolls = 60;
 constexpr int kEditorPhaseBRawForegroundQuietMs = 40;
 constexpr unsigned int kEditorHighDetailDelayMs = 650;
 
@@ -2803,6 +2818,7 @@ EditorPanel::~EditorPanel ()
     deferredDirSyncConn_.disconnect();
     deferredCropEnableConn_.disconnect();
     deferredHighDetailConn_.disconnect();
+    editBenchConn_.disconnect();
     filmstripPreviewUpdateConn_.disconnect();
     quickPreviewWatchdogConn_.disconnect();
     pendingFilmstripPreviewFile_.clear();
@@ -4229,6 +4245,7 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
     // Cancel any pending deferred Phase B from a previous open()
     deferredOpenConn_.disconnect();
     deferredCropEnableConn_.disconnect();
+    beforePaneRebuildConn_.disconnect();
     ++openSession_;
 
     // Sync places paned position from file panel
@@ -4282,7 +4299,6 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
     }
 
     firstEnginePreviewReady_ = false;
-    beforeAfterRefreshPending_ = false;
 
     isProcessing = true; // prevents closing-on-init
 
@@ -4319,10 +4335,12 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
             }
 
             firstEnginePreviewReady_ = true;
-            if (beforeAfterRefreshPending_ && beforeAfter->get_active()) {
-                beforeAfterRefreshPending_ = false;
-                beforeAfterToggled();
-            }
+
+            // Decode and the first whole-image pass are done, so the detail
+            // crop -- the thing that actually paints a sharp canvas -- can
+            // render now instead of waiting out the fallback timer. This flag
+            // also releases the before pane's pipeline (scheduleBeforePaneRebuild).
+            enableDeferredCropWindow("first-preview");
 
             if (!refineHighDetail) {
                 return;
@@ -4660,6 +4678,141 @@ void EditorPanel::armQuickPreviewWatchdog()
         G_PRIORITY_LOW);
 }
 
+void EditorPanel::scheduleBeforePaneRebuild()
+{
+    // Replaces gating on the edited image's first frame. That gate suppressed
+    // scrub loads only as a side effect of superseded opens never reaching that
+    // frame -- protection RawLoadGate and close()'s cancel already provide --
+    // while costing every deliberate switch the whole wait. Session-guarded, so
+    // a superseded open drops its rebuild before it starts.
+    beforePaneRebuildConn_.disconnect();
+    const unsigned int session = openSession_;
+
+    beforePaneRebuildConn_ = Glib::signal_timeout().connect(
+        [this, session]() -> bool {
+            if (session == openSession_ && beforeAfter && beforeAfter->get_active()) {
+                beforeAfterToggled();
+            }
+
+            return false;
+        },
+        kBeforePaneRebuildDelayMs);
+}
+
+void EditorPanel::enableDeferredCropWindow(const char* reason)
+{
+    // Armed by openPhaseB, fired by whichever comes first: the engine's first
+    // preview frame or the fallback timer. Both routes land here, so the crop
+    // is enabled exactly once per open.
+    //
+    // The live timer connection IS the armed flag -- deliberately, rather than
+    // a separate bool that could drift out of sync with it (see the crop-enable
+    // latch bug this panel already grew once). It stays connected while its own
+    // callback runs, so the fallback route passes this check too, and it is
+    // still disconnected when a preview frame arrives before openPhaseB has
+    // armed anything, which is when enabling would race the profile load.
+    if (!deferredCropWindowEnable_
+            || !deferredCropEnableConn_.connected()
+            || !iareapanel
+            || !iareapanel->imageArea
+            || !iareapanel->imageArea->mainCropWindow) {
+        return;
+    }
+
+    deferredCropEnableConn_.disconnect();
+    deferredCropWindowEnable_ = false;
+    iareapanel->imageArea->mainCropWindow->enable();
+    EDITOR_OPEN_LOG("[editorOpen] crop-enable reason=%s file=%s\n", reason, fname.c_str());
+}
+
+namespace
+{
+
+int editBenchEnvInt(const char* name, int fallback, int minimum, int maximum)
+{
+    const char* const value = g_getenv(name);
+
+    if (value == nullptr || value[0] == '\0') {
+        return fallback;
+    }
+
+    const int parsed = std::atoi(value);
+
+    return parsed < minimum ? minimum : (parsed > maximum ? maximum : parsed);
+}
+
+}
+
+/**
+ * Synthetic exposure drag for latency measurement.
+ *
+ * STEEP_EDIT_BENCH=<steps> (plus STEEP_EDIT_BENCH_INTERVAL_MS, default 120)
+ * walks the exposure slider back and forth around its opening value once the
+ * image is up, so the engine sees a realistic stream of coalescing edits with
+ * no mouse automation involved. Pair with STEEP_EDIT_TRACE=1 for the
+ * per-stage breakdown and the submit-to-paint latency of every step.
+ */
+void EditorPanel::startEditLatencyBench()
+{
+    if (editBenchConn_.connected() || !tpc || !ipc) {
+        return;
+    }
+
+    const int steps = editBenchEnvInt("STEEP_EDIT_BENCH", 0, 0, 500);
+
+    if (steps <= 0) {
+        return;
+    }
+
+    const int intervalMs = editBenchEnvInt("STEEP_EDIT_BENCH_INTERVAL_MS", 120, 10, 5000);
+    // Real-drag mode moves the widget at mouse-motion rate and lets the
+    // Adjuster debounce decide how many edits reach the engine -- the only
+    // way to see the update rate a user actually gets while dragging.
+    editBenchRealDrag_ = g_getenv("STEEP_EDIT_BENCH_REALDRAG") != nullptr;
+    editBenchTarget_ = editBenchEnvInt("STEEP_EDIT_BENCH_TARGET", 0, 0, 2);
+
+    rtengine::procparams::ProcParams current;
+    ipc->getParams(&current);
+    editBenchBaseEv_ = current.toneCurve.expcomp;
+    editBenchRemaining_ = steps;
+    editBenchStep_ = 0;
+
+    std::printf("[editBench] realDrag=%d starting steps=%d intervalMs=%d baseEv=%.2f file=%s\n",
+                editBenchRealDrag_ ? 1 : 0, steps, intervalMs, editBenchBaseEv_, fname.c_str());
+    std::fflush(stdout);
+
+    const unsigned int session = openSession_;
+
+    editBenchConn_ = Glib::signal_timeout().connect(
+        [this, session]() -> bool {
+            if (session != openSession_ || !tpc || !ipc) {
+                return false;
+            }
+
+            if (editBenchRemaining_ <= 0) {
+                // Settle back on the value the image opened with, so a
+                // measurement run does not leave the profile modified.
+                tpc->benchDriveExposure(editBenchBaseEv_);
+                std::printf("[editBench] finished\n");
+                std::fflush(stdout);
+                return false;
+            }
+
+            --editBenchRemaining_;
+            ++editBenchStep_;
+
+            // Shallow triangle wave: every step is a real tone change, and
+            // the excursion stays well away from clipping.
+            const int phase = editBenchStep_ % 8;
+            const double offset = 0.05 * (phase < 4 ? phase : 8 - phase);
+
+            tpc->benchDriveExposure(editBenchBaseEv_ + offset, editBenchRealDrag_, editBenchTarget_);
+
+            return true;
+        },
+        intervalMs);
+}
+
 void EditorPanel::scheduleFinalPreviewRefinement()
 {
     deferredHighDetailConn_.disconnect();
@@ -4907,26 +5060,20 @@ void EditorPanel::openPhaseB (Thumbnail* tmb)
     EDITOR_OPEN_LOG("[editorOpen] phaseB step color-mgmt file=%s\n", phaseFileName.c_str());
     if (deferredCropWindowEnable_ && iareapanel->imageArea->mainCropWindow) {
         const unsigned int session = openSession_;
-        const Glib::ustring cropFileName = phaseFileName;
         deferredCropEnableConn_.disconnect();
+        // Fallback only: enableDeferredCropWindow() normally runs the moment the
+        // engine hands over its first preview frame, which on a warm switch is
+        // roughly 300ms earlier than this timer. The timer still caps the wait
+        // for opens whose first frame is slow or never arrives at all.
         deferredCropEnableConn_ = Glib::signal_timeout().connect(
-            [this, session, cropFileName]() -> bool {
-                if (session != openSession_) {
-                    return false;
-                }
-
-                if (deferredCropWindowEnable_
-                    && iareapanel
-                    && iareapanel->imageArea
-                    && iareapanel->imageArea->mainCropWindow) {
-                    deferredCropWindowEnable_ = false;
-                    iareapanel->imageArea->mainCropWindow->enable();
-                    EDITOR_OPEN_LOG("[editorOpen] phaseB delayed crop-enable file=%s\n", cropFileName.c_str());
+            [this, session]() -> bool {
+                if (session == openSession_) {
+                    enableDeferredCropWindow("phaseB-timeout");
                 }
 
                 return false;
             },
-            450,
+            kEditorCropEnableFallbackMs,
             G_PRIORITY_DEFAULT_IDLE
         );
         EDITOR_OPEN_LOG("[editorOpen] phaseB step crop-enable-deferred file=%s\n", phaseFileName.c_str());
@@ -4937,6 +5084,14 @@ void EditorPanel::openPhaseB (Thumbnail* tmb)
 
     openThm->addThumbnailListener (this);
     EDITOR_OPEN_LOG("[editorOpen] phaseB step thumbnail-listener file=%s\n", phaseFileName.c_str());
+
+    // Start the comparison pane here rather than from the metadata idle below:
+    // that idle does not run until ~145ms in, which left the second decode
+    // starting no earlier than the edited image's own first frame and the pane
+    // blank for ~450ms of every switch.
+    if (beforeAfter->get_active()) {
+        scheduleBeforePaneRebuild();
+    }
 
     if (logOpen) {
         EDITOR_OPEN_LOG("[editorOpen] phaseB core duration=%lldms file=%s\n",
@@ -4983,12 +5138,6 @@ void EditorPanel::openPhaseB (Thumbnail* tmb)
 
             info_toggled ();
 
-            if (beforeAfter->get_active()) {
-                // Single call handles both cleanup of old state and recreation
-                // for the new image (button is still active, so activation runs).
-                // A second call was redundant and caused an extra RAW file load.
-                beforeAfterToggled();
-            }
 
             return false;
         },
@@ -5014,10 +5163,25 @@ void EditorPanel::openPhaseB (Thumbnail* tmb)
             phaseFileName.c_str());
     }
     noteRawLoadForegroundActivity(std::string(phaseFileName));
+
+    // Latency measurement harness; a no-op unless STEEP_EDIT_BENCH is set.
+    // Delayed past the open's own settled refinement so the bench measures
+    // steady-state editing rather than the tail of the load.
+    if (g_getenv("STEEP_EDIT_BENCH") != nullptr) {
+        const unsigned int benchSession = openSession_;
+        Glib::signal_timeout().connect_once(
+            [this, benchSession]() {
+                if (benchSession == openSession_) {
+                    startEditLatencyBench();
+                }
+            },
+            2500);
+    }
 }
 
 void EditorPanel::close ()
 {
+    beforePaneRebuildConn_.disconnect();
     using clk = std::chrono::steady_clock;
     const bool logClose = editorOpenLogEnabled();
     const Glib::ustring closingFname = fname;
@@ -5041,6 +5205,7 @@ void EditorPanel::close ()
     deferredOpenConn_.disconnect();
     deferredCropEnableConn_.disconnect();
     deferredHighDetailConn_.disconnect();
+    editBenchConn_.disconnect();
     filmstripPreviewUpdateConn_.disconnect();
     quickPreviewWatchdogConn_.disconnect();
     pendingFilmstripPreviewFile_.clear();
@@ -6920,16 +7085,6 @@ void EditorPanel::beforeAfterToggled ()
         }
     }
 
-    if (beforeAfter->get_active()
-        && openThm
-        && openThm->getType() == FT_Raw
-        && !firstEnginePreviewReady_) {
-        beforeAfterRefreshPending_ = true;
-        return;
-    }
-
-    beforeAfterRefreshPending_ = false;
-
     if (beforeAfter->get_active ()) {
 
         // Cancel any previous async load
@@ -6975,6 +7130,8 @@ void EditorPanel::beforeAfterToggled ()
         const bool loadIsRaw = openThm->getType() == FT_Raw;
         const unsigned int loadSession = openSession_;
 
+        EDITOR_OPEN_LOG("[editorOpen] before-pane load queued file=%s\n", loadFname.c_str());
+
         std::thread([this, loadFname, loadIsRaw, loadSession, cancel]() {
             int errorCode = 0;
             auto* beforeImg = FilePanel::loadAuxiliaryInitialImage(loadFname, loadIsRaw, &errorCode, cancel);
@@ -6984,16 +7141,30 @@ void EditorPanel::beforeAfterToggled ()
                 return;
             }
 
-            Glib::signal_idle().connect_once([this, beforeImg, loadFname, loadSession, cancel]() {
+            auto attachPolls = std::make_shared<int>(0);
+
+            Glib::signal_timeout().connect(
+                [this, beforeImg, loadFname, loadSession, cancel, attachPolls]() -> bool {
                 if (cancel->load()
                     || loadSession != openSession_
                     || fname != loadFname
                     || !beforeIarea) {
                     delete beforeImg;
-                    return;
+                    return false;
                 }
 
-                beforePreviewHandler = new PreviewHandler ();
+                // The decode was allowed to overlap the edited image's first
+                // pass because it is one cheap thread; standing up a second
+                // ImProcCoordinator is not, so that waits for the frame the
+                // user is actually looking at.
+                if (!firstEnginePreviewReady_ && ++*attachPolls < kBeforePaneAttachMaxPolls) {
+                    return true;
+                }
+
+                beforePreviewHandler = new PreviewHandler (
+                    [loadFname]() {
+                        EDITOR_OPEN_LOG("[editorOpen] before-pane first frame file=%s\n", loadFname.c_str());
+                    });
 
                 beforeIpc = rtengine::StagedImageProcessor::create (beforeImg);
                 beforeIpc->setPreviewScale (10);
@@ -7025,6 +7196,14 @@ void EditorPanel::beforeAfterToggled ()
                 beforeIarea->imageArea->setPreviewHandler (beforePreviewHandler);
                 beforeIarea->imageArea->setImProcCoordinator (beforeIpc);
 
+                // Paint the coarse whole-image frame as soon as the before
+                // pipeline produces one. Without this the pane draws only
+                // through its crop window, so it stays blank for the extra
+                // ~200ms that the detail crop takes -- the after side has had
+                // its thumbnail up since the switch began. initialImageArrived()
+                // clears the flag when the crop finally lands.
+                beforeIarea->imageArea->setQuickPreviewFit (true);
+
                 beforeIarea->imageArea->setPreviewModePanel (iareapanel->imageArea->previewModePanel);
                 beforeIarea->imageArea->setIndicateClippedPanel (iareapanel->imageArea->indClippedPanel);
                 iareapanel->imageArea->iLinkedImageArea = beforeIarea->imageArea;
@@ -7047,12 +7226,31 @@ void EditorPanel::beforeAfterToggled ()
                     beforeIarea->imageArea->on_resized(alloc);
                 }
 
+                // A fresh CropWindow starts at the minimum zoom (1%), so the
+                // pane's first crop used to render at ~8x the wrong scale and
+                // was thrown away the moment initialImageArrived() synced the
+                // zoom from the after side -- two renders where one will do.
+                // setZoom() suppresses the sync back, so this does not drag the
+                // after pane with it (which is why no refit happens here).
+                {
+                    const double afterZoom = iareapanel->imageArea->getZoom();
+                    if (afterZoom > 0.0) {
+                        beforeIarea->imageArea->setZoom(afterZoom);
+                    }
+                    EDITOR_OPEN_LOG("[editorOpen] before-pane crop zoom set=%.4f after=%.4f\n",
+                        beforeIarea->imageArea->getZoom(), afterZoom);
+                }
+
                 // Clip the before pane to the crop exactly like the after
                 // pane. No refit: the pane's zoom is synced from the after
                 // side, and forcing a fit here would drag that side with it.
                 beforeIarea->imageArea->setCropPreviewSolid (
                     iareapanel->imageArea->isCropPreviewSolid(), false);
-            });
+
+                EDITOR_OPEN_LOG("[editorOpen] before-pane attached file=%s\n", loadFname.c_str());
+                return false;
+            },
+            kBeforePaneAttachPollMs);
         }).detach();
     }
 }

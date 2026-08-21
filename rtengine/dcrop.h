@@ -44,11 +44,24 @@ protected:
     Imagefloat*  spotCrop;   // "one chunk" allocation
     LabImage*    laboCrop;   // "one chunk" allocation
     LabImage*    labnCrop;   // "one chunk" allocation
+    Imagefloat*  filmLabTapCrop; // scene-linear working RGB captured in rgbProc for Film Lab V4
     Image8*      cropImg;    // "one chunk" allocation ; displayed image in monitor color space, showing the output profile as well (soft-proofing enabled, which then correspond to workimg) or not
     float *      shbuf_real;  // "one chunk" allocation
 
     // --- automatically allocated and deleted when necessary, and only renewed on size changes
     Imagefloat*  transCrop;    // "one chunk" allocation, allocated if necessary
+    /// True when transCrop holds the geometric transform of the current
+    /// working image. Tone edits leave both the working image and the
+    /// geometry untouched, so the transform can be reused instead of re-run.
+    bool         transCropValid = false;
+    /// Crop origin and scale the cached transform was computed for. Panning
+    /// keeps the dimensions but moves these, and the transform is position
+    /// dependent, so they are part of the cache key.
+    int          transCropX = -1;
+    int          transCropY = -1;
+    int          transCropTrafX = -1;
+    int          transCropTrafY = -1;
+    int          transCropSkip = -1;
     CieImage*    cieCrop;      // allocating 6 images, each in "one chunk" allocation
     // -----------------------------------------------------------------
     float**         shbuffer;

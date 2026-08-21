@@ -61,6 +61,7 @@
 #include "rtengine/leanwindows.h"
 #include <conio.h>
 #include <windows.h>
+#include <mmsystem.h>
 
 #include <glibmm/thread.h>
 #endif
@@ -466,6 +467,23 @@ int main (int argc, char **argv)
     std::set_terminate(steepTerminateHandler);
 #ifdef _WIN32
     SetUnhandledExceptionFilter(crashHandler);
+
+    // Windows schedules timers on a ~15.6ms tick unless a process asks for
+    // finer resolution, and GLib's main loop inherits that. Every interactive
+    // timeout is rounded up to the next tick, which put a hard floor under the
+    // slider debounce -- a 20ms delay actually fired at ~31ms, so dragging
+    // could not update faster than ~24 times a second no matter how quick the
+    // render was. Released in the RAII guard below at exit.
+    struct TimerResolutionGuard {
+        bool raised;
+        TimerResolutionGuard() : raised(timeBeginPeriod(1) == TIMERR_NOERROR) {}
+        ~TimerResolutionGuard()
+        {
+            if (raised) {
+                timeEndPeriod(1);
+            }
+        }
+    } timerResolutionGuard;
 #endif
     setlocale (LC_ALL, "");
     setlocale (LC_NUMERIC, "C"); // to set decimal point to "."

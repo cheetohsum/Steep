@@ -380,6 +380,13 @@ void CropWindow::leaveNotify (GdkEventCrossing* event)
 void CropWindow::flawnOver (bool isFlawnOver)
 {
     this->isFlawnOver = isFlawnOver;
+
+    if (isFlawnOver) {
+        // The navigator readout under the pointer needs the output-profile
+        // image. Ask for it as soon as the pointer arrives; the expose path
+        // re-evaluates the full condition on the next redraw.
+        cropHandler.setTrueImageWanted(true);
+    }
 }
 
 void CropWindow::scroll (int state, GdkScrollDirection direction, int x, int y, double deltaX, double deltaY)
@@ -1720,7 +1727,16 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
 
 #endif
 
-            if (showcs || showch || showR || showG || showB || showL || showFocusMask) {
+            // Tell the engine whether the output-profile image is being read.
+            // These overlays and the navigator/picker readouts are its only
+            // consumers; while none are live the engine skips a conversion
+            // that costs more than the rest of an interactive edit.
+            const bool overlaysNeedTrueImage =
+                showcs || showch || showR || showG || showB || showL || showFocusMask;
+            cropHandler.setTrueImageWanted(
+                overlaysNeedTrueImage || isFlawnOver || !colorPickers.empty());
+
+            if (overlaysNeedTrueImage && cropHandler.cropPixbuftrue) {
                 Glib::RefPtr<Gdk::Pixbuf> tmp = cropHandler.cropPixbuf->copy ();
                 guint8* pix = tmp->get_pixels();
                 guint8* pixWrkSpace = cropHandler.cropPixbuftrue->get_pixels();

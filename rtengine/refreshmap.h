@@ -67,6 +67,19 @@
 #define TRANSFORM                                                         (M_SPOT|M_HDR|M_TRANSFORM|M_BLURMAP|M_AUTOEXP|M_RGBCURVE|M_LUMACURVE|M_LUMINANCE|M_COLOR)
 #define AIDENOISE                                            (M_LINDENOISE|M_HDR|M_TRANSFORM|M_BLURMAP|M_AUTOEXP|M_RGBCURVE|M_LUMACURVE|M_LUMINANCE|M_COLOR)
 #define AUTOEXP                                                                    (M_SPOT|M_HDR|M_AUTOEXP|M_RGBCURVE|M_LUMACURVE|M_LUMINANCE|M_COLOR)
+// Tone edits (exposure, brightness, contrast, black, saturation, tone curves)
+// change nothing upstream of the tone stage, yet AUTOEXP asks for M_SPOT and
+// M_HDR -- and M_HDR alone forces the whole source-to-working block to re-run
+// on both the preview AND the detail crop: a full-resolution area-averaging
+// read of the raw, highlight recovery, and colour-space conversion, none of
+// which depend on a tone slider. TONE drops those two bits and leaves the
+// tone stage onwards, exactly the footing RGBCURVE events have always had.
+//
+// Spot removal still shows: its result lives in the cached spotprev/spotCrop
+// buffer, which every pass copies back over the working image. Fattal and
+// dehaze likewise stay applied, because they wrote into that same working
+// image in place on the pass that last carried M_HDR.
+#define TONE                                                                                 (M_AUTOEXP|M_RGBCURVE|M_LUMACURVE|M_LUMINANCE|M_COLOR)
 #define RGBCURVE                                                                                          (M_RGBCURVE|M_LUMACURVE|M_LUMINANCE|M_COLOR)
 #define LUMINANCECURVE                                                                                               (M_LUMACURVE|M_LUMINANCE|M_COLOR)
 #define SHARPENING                                                                                                               (M_LUMINANCE|M_COLOR)

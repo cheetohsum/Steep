@@ -231,6 +231,14 @@ public:
     Glib::ustring defProfRaw;
     Glib::ustring defProfImg;
     Glib::ustring dateFormat;
+    // Debounce between a slider moving and the engine being asked to
+    // reprocess. max is the one that matters during a continuous drag: the
+    // min timer keeps being reset by incoming motion, so max sets the update
+    // rate the user actually sees. Kept comfortably below the pipeline's own
+    // per-edit cost, because the engine coalesces anything it cannot keep up
+    // with -- over-driving it is free, under-driving it is visible.
+    static constexpr int kAdjusterMinDelayDefault = 4;
+    static constexpr int kAdjusterMaxDelayDefault = 12;
     int adjusterMinDelay;
     int adjusterMaxDelay;
     int  startupDir;

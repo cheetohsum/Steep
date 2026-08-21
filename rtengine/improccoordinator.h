@@ -19,9 +19,11 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <functional>
 #include <future>
 #include <memory>
+#include <vector>
 
 #include "array2D.h"
 #include "colortemp.h"
@@ -61,12 +63,25 @@ class ImProcCoordinator final : public StagedImageProcessor, public HistogramObs
 protected:
     Imagefloat *orig_prev;
     Imagefloat *oprevi;
+    /// Persistent result of the geometric transform, plus whether it matches
+    /// the current working image. Tone edits change neither the working image
+    /// nor the geometry, so the transform is reused rather than re-run.
+    Imagefloat *transformedPrev = nullptr;
+    bool transformedPrevValid = false;
     Imagefloat *spotprev;
     LabImage *oprevl;
     LabImage *nprevl;
-    Imagefloat *fattal_11_dcrop_cache; // global cache for ToneMapFattal02 used in 1:1 detail windows (except when denoise is active)
+    Imagefloat *filmLabTap; ///< scene-linear working RGB captured in rgbProc for Film Lab V4
+    Imagefloat *fattal_11_dcrop_cache; // whole-frame dehaze+Fattal result shared by the detail crops
+    /// Zoom step (Crop::skip) the Fattal cache was computed at; -1 when empty.
+    int fattalCacheSkip = -1;
     Image8 *previmg;  // displayed image in monitor color space, showing the output profile as well (soft-proofing enabled, which then correspond to workimg) or not
     Image8 *workimg;  // internal image in output color space for analysis
+    // False when workimg holds pixels from an older edit (the conversion is
+    // skipped while no histogram, vectorscope or waveform is on screen), so
+    // a panel opened mid-drag waits for a fresh buffer instead of charting
+    // stale colours.
+    bool workimgValid = false;
     CieImage *ncie;
 
     ImageSource* imgsrc;
@@ -244,11 +259,22 @@ protected:
     bool lastOutputBPC;
 
     // members of the updater:
-    std::shared_future<void> processingTask;
-    std::function<void()> cancelProcessingTask;
+    struct ProcessingTaskHandle {
+        std::shared_future<void> completion;
+        std::function<void()> cancel;
+    };
+    std::vector<ProcessingTaskHandle> processingTasks;
     MyMutex updaterThreadStart;
     MyMutex paramsUpdateMutex;
     int  changeSinceLast;
+    // Latency instrumentation (see edittrace.h). "pending" is written under
+    // paramsUpdateMutex from the GUI thread; "current" is engine-thread only,
+    // handed over when process() claims changeSinceLast. Zero when tracing is
+    // disabled, which is the only state that costs anything.
+    unsigned long long pendingEditSerialFirst_ = 0;
+    unsigned long long pendingEditSerialLast_ = 0;
+    unsigned long long currentEditSerialFirst_ = 0;
+    unsigned long long currentEditSerialLast_ = 0;
     std::atomic<bool> updaterRunning;
     const std::unique_ptr<ProcParams> nextParams;
     std::atomic<bool> destroying;
@@ -262,10 +288,22 @@ protected:
     bool wavcontlutili;
     void startProcessing();
     bool scheduleCropUpdate(Crop* crop);
+    void cancelProcessingTasks(bool wait);
+    void rememberProcessingTask(
+        std::shared_future<void> completion,
+        std::function<void()> cancel);
     void process();
+    /// True when another parameter change is already queued, so the frame
+    /// being finished now will be superseded before anyone sees it.
+    bool hasPendingChange();
     float colourToningSatLimit;
     float colourToningSatLimitOpacity;
     bool highQualityComputed;
+    std::atomic<unsigned long long> highDetailPreviewSerial;
+    std::atomic<unsigned int> lastInteractivePassMs{0};
+    /// When the navigator/histogram image was last refreshed, so interactive
+    /// passes can leave it alone between refreshes. Engine thread only.
+    std::chrono::steady_clock::time_point lastAnalysisPublish{};
     cmsHTRANSFORM customTransformIn;
     cmsHTRANSFORM customTransformOut;
     ImProcFunctions ipf;
@@ -400,6 +438,18 @@ protected:
     int locallcieMask;
 
 public:
+
+    unsigned long long getHighDetailPreviewSerial() const
+    {
+        return highDetailPreviewSerial.load(std::memory_order_acquire);
+    }
+
+    /// Smoothed duration of a recent interactive pass, in ms; 0 until one has
+    /// run. The GUI sizes the slider debounce from this.
+    unsigned int getInteractivePassMs() const
+    {
+        return lastInteractivePassMs.load(std::memory_order_relaxed);
+    }
 
     ImProcCoordinator ();
     ~ImProcCoordinator () override;
