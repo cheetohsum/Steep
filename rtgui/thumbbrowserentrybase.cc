@@ -145,6 +145,7 @@ ThumbBrowserEntryBase::ThumbBrowserEntryBase (const Glib::ustring& fname, Thumbn
     textGap(4),
     sideMargin(2),
     lowerMargin(2),
+    previewSlotClock_(0),
     dispname(Glib::path_get_basename(fname)),
     buttonSet(nullptr),
     width(0),
@@ -305,14 +306,48 @@ void ThumbBrowserEntryBase::updateBackBuffer ()
         prevPos.y = upperMargin + bsHeight + borderWidth + std::max((hh - previewSize.height) / 2, 0);
 
         hidpi::DeviceCoord deviceOffset = prevPos.scaleToDevice(activeDeviceScale);
+        const hidpi::ScaledDeviceSize target = previewSize.scaleToDevice(activeDeviceScale);
 
-        // clang-format off
-        backBuffer->copyRGBCharData(
-            preview.data(),
-            0, 0, previewDataLayout.width, previewDataLayout.height,
-            previewDataLayout.width * 3,
-            deviceOffset.x, deviceOffset.y);
-        // clang-format on
+        if (previewDataLayout.width == target.width && previewDataLayout.height == target.height) {
+            // clang-format off
+            backBuffer->copyRGBCharData(
+                preview.data(),
+                0, 0, previewDataLayout.width, previewDataLayout.height,
+                previewDataLayout.width * 3,
+                deviceOffset.x, deviceOffset.y);
+            // clang-format on
+        } else if (previewDataLayout.width > 0 && previewDataLayout.height > 0
+                   && target.width > 0 && target.height > 0
+                   && preview.size() == static_cast<std::size_t>(previewDataLayout.width) * previewDataLayout.height * 3) {
+            // Pixels rendered for a different cell size (a view switch that has
+            // no retained preview yet). Scale them so the cell keeps showing the
+            // photo until the correctly sized render arrives, instead of
+            // flashing an empty tile.
+            Glib::RefPtr<Gdk::Pixbuf> stale = Gdk::Pixbuf::create_from_data(
+                preview.data(),
+                Gdk::COLORSPACE_RGB,
+                false,
+                8,
+                previewDataLayout.width,
+                previewDataLayout.height,
+                previewDataLayout.width * 3);
+
+            if (stale) {
+                // `cc` carries the surface device scale, so draw in logical
+                // coordinates and let cairo map the device-pixel pixbuf onto
+                // the logical preview rectangle.
+                cc->save();
+                cc->rectangle(prevPos.x, prevPos.y, previewSize.width, previewSize.height);
+                cc->clip();
+                cc->translate(prevPos.x, prevPos.y);
+                cc->scale(
+                    static_cast<double>(previewSize.width) / previewDataLayout.width,
+                    static_cast<double>(previewSize.height) / previewDataLayout.height);
+                Gdk::Cairo::set_source_pixbuf(cc, stale, 0, 0);
+                cc->paint();
+                cc->restore();
+            }
+        }
     }
 
     customBackBufferUpdate (cc);
@@ -581,13 +616,113 @@ void ThumbBrowserEntryBase::getTextSizes (int& infow, int& infoh)
     textMetricsFont_ = fontKey;
 }
 
+bool ThumbBrowserEntryBase::stashPreviewForSize (hidpi::LogicalSize size, int deviceScale)
+{
+    if (preview.empty() || previewDataLayout.width <= 0 || previewDataLayout.height <= 0) {
+        return false;
+    }
+
+    if (preview.size() != static_cast<std::size_t>(previewDataLayout.width) * previewDataLayout.height * 3) {
+        return false;
+    }
+
+    // Reuse the slot already describing this size, otherwise the oldest one.
+    PreviewSlot* target = nullptr;
+
+    for (auto& slot : previewSlots_) {
+        if (slot.valid && slot.logicalSize == size && slot.deviceScale == deviceScale) {
+            target = &slot;
+            break;
+        }
+    }
+
+    if (!target) {
+        for (auto& slot : previewSlots_) {
+            if (!slot.valid) {
+                target = &slot;
+                break;
+            }
+        }
+    }
+
+    if (!target) {
+        target = &previewSlots_[0];
+
+        for (auto& slot : previewSlots_) {
+            if (slot.lastUse < target->lastUse) {
+                target = &slot;
+            }
+        }
+    }
+
+    target->logicalSize = size;
+    target->deviceScale = deviceScale;
+    target->layout = previewDataLayout;
+    target->data = preview;
+    target->valid = true;
+    target->lastUse = ++previewSlotClock_;
+    savePreviewSlotExtras(*target);
+
+    return true;
+}
+
+bool ThumbBrowserEntryBase::restorePreviewForSize (hidpi::LogicalSize size, int deviceScale)
+{
+    for (auto& slot : previewSlots_) {
+        if (!slot.valid || slot.deviceScale != deviceScale || !(slot.logicalSize == size)) {
+            continue;
+        }
+
+        const std::size_t expectedSize =
+            static_cast<std::size_t>(slot.layout.width) * slot.layout.height * 3;
+
+        if (slot.data.size() != expectedSize || expectedSize == 0) {
+            slot.valid = false;
+            continue;
+        }
+
+        // Hand the pixels over rather than copying them: the live `preview`
+        // becomes the only copy of this size again, so an entry never holds
+        // more than one retained size plus the one on screen.
+        preview = std::move(slot.data);
+        previewDataLayout = slot.layout;
+        activeDeviceScale = deviceScale;
+        loadPreviewSlotExtras(slot);
+        slot.data.clear();
+        slot.data.shrink_to_fit();
+        slot.valid = false;
+
+        if (backBuffer) {
+            backBuffer->setDirty(true);
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
+void ThumbBrowserEntryBase::invalidatePreviewSlots ()
+{
+    for (auto& slot : previewSlots_) {
+        slot.valid = false;
+        slot.data.clear();
+        slot.data.shrink_to_fit();
+    }
+}
+
 void ThumbBrowserEntryBase::resize (int h)
 {
     MYWRITERLOCK(l, lockRW);
 
     height = h;
-    int old_preh = previewSize.height;
-    int old_prew = previewSize.width;
+
+    // Retain the pixels rendered for the size we are leaving. The grid and the
+    // filmstrip ask for different heights, so keeping both lets a view switch
+    // restore finished thumbnails instead of re-rendering the folder.
+    if (activeDeviceScale == pendingDeviceScale) {
+        stashPreviewForSize(previewSize, activeDeviceScale);
+    }
 
     // dimensions of the button set (hidden if nothing to show)
     // In filmstrip mode, don't reserve space — overlays are drawn on the image
@@ -651,20 +786,12 @@ void ThumbBrowserEntryBase::resize (int h)
         width = bsw + 2 * sideMargin + 2 * borderWidth;
     }
 
-    if (previewSize.height != old_preh || previewSize.width != old_prew) {
-        // Only regenerate the thumbnail if the size change is significant
-        // (e.g., zoom change or orientation change).  Small changes from
-        // margin adjustments (filmstrip↔browser) just need a dirty flag —
-        // the existing preview scales fine for a few pixels of difference.
-        if (std::abs(previewSize.height - old_preh) > 8 || std::abs(previewSize.width - old_prew) > 8) {
-            preview.clear();
-            if (!filtered) {
-                refreshThumbnailImage ();
-            }
-        } else if (backBuffer) {
-            backBuffer->setDirty(true);
-        }
-    } else if (backBuffer) {
+    // calcThumbnailSize() above already reacted to the size change: it retains
+    // the outgoing pixels in a per-size slot, restores a previously rendered
+    // preview when one exists, and otherwise keeps the stale pixels as a
+    // scaled placeholder. Dropping the preview a second time here would undo
+    // that and force a full re-render of the whole folder on every view switch.
+    if (backBuffer) {
         backBuffer->setDirty(true);    // This will force a backBuffer update on queue_draw
     }
 

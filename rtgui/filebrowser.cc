@@ -40,6 +40,12 @@
 #include <vector>
 
 #include <glibmm/ustring.h>
+#include <giomm/appinfo.h>
+
+#ifdef _WIN32
+#include "rtengine/leanwindows.h"
+#include <gdk/gdkwin32.h>
+#endif
 
 #include "filebrowser.h"
 
@@ -54,6 +60,7 @@
 #include "profilestorecombobox.h"
 #include "procparamchangers.h"
 #include "rtimage.h"
+#include "rtscalable.h"
 #include "threadutils.h"
 #include "thumbnail.h"
 #include "thumbimageupdater.h"
@@ -71,6 +78,7 @@
 
 #ifdef _WIN32
 #include "rtengine/leanwindows.h"
+#include <shellapi.h>
 #endif
 
 namespace
@@ -98,6 +106,7 @@ struct AutoGradeFeatures {
     double medianLuma = 0.5;
     double p10 = 0.10;          // luma percentiles for curve anchor placement
     double p90 = 0.60;
+    double p98 = 0.88;
     double dynamicRange = 0.5;
     double shadowFraction = 0.0;
     double highlightFraction = 0.0;
@@ -150,6 +159,9 @@ const char* autoEditModeName(AutoEditMode mode)
     }
     return "neutral";
 }
+
+// TEMPORARY DIAGNOSTIC (STEEP_FILESEL_LOG=1) — defined further down.
+void fileBrowserPerfLog(const char* fmt, ...);
 
 double hueDegrees(double red, double green, double blue, double maximum, double chroma)
 {
@@ -279,6 +291,7 @@ AutoGradeFeatures analyzeSteepAutoGrade(Thumbnail& thumbnail)
     features.medianLuma = percentile(0.5);
     features.p10 = percentile(0.1);
     features.p90 = percentile(0.9);
+    features.p98 = percentile(0.98);
     features.dynamicRange = features.p90 - features.p10;
     features.shadowFraction = shadows / count;
     features.highlightFraction = highlights / count;
@@ -326,6 +339,171 @@ void restoreSteepAutoEditGeometry(
     target.commonTrans = source.commonTrans;
     target.rotate = source.rotate;
     target.perspective = source.perspective;
+    // The double exposure stack is the photographer's content too -- Auto
+    // Edit re-grades the plate, it must not dismantle the composite.
+    target.doubleExposure = source.doubleExposure;
+}
+
+// Percentiles of the image AS THE TONE CURVE WILL RECEIVE IT, i.e. rendered
+// with the exposure and tone decisions Auto Edit has just made, with the curve
+// itself disabled. Measuring on a neutral render instead reports a far darker
+// image than the curve ever sees, which drags every control point down into
+// the shadows.
+//
+// TWO distributions come back, because two different questions are being
+// asked. "How bright is this picture?" is a luminance question, and drives the
+// exposure decision. "Where does the curve need its control points?" is not:
+// the master curve is applied to R, G and B INDEPENDENTLY, so the values that
+// actually index it are the channel samples, whose spread is typically around
+// twice that of their luma. Sizing the curve's steep region from luma puts a
+// third of the real data out in the flattened toe and shoulder runs.
+// Where Auto Edit wants the two ends of a finished frame to sit: close enough
+// to the limits that the range is used, far enough off them that nothing is
+// welded to the floor or the ceiling. Both ends were previously a side effect
+// of where the data happened to land, which is why frames came back either
+// clipped at both ends or visibly short of both.
+constexpr double kBlackTarget = 0.008;   // ~2/255
+constexpr double kWhiteTarget = 0.985;   // ~251/255
+
+// Specular highlights are allowed to blow; a sky is not. This is the share of
+// channel samples that may sit on the top code before exposure gives ground.
+constexpr double kClipTolerance = 0.002;
+constexpr double kClipRecoveryGain = 12.0;
+
+// How much of the gap to each target a single pass may close. Endpoint
+// placement is a correction to a frame the rest of Auto Edit has already
+// judged, not a second opinion about it, so it never takes the whole gap.
+constexpr double kEndpointAuthority = 0.75;
+
+// ... and a cap on the absolute move, so a frame that is soft on purpose —
+// fog, high key, a low-key studio black — is given some depth rather than
+// dragged all the way into being something it was never meant to be.
+constexpr double kMaxEndpointMove = 0.10;
+
+struct CurveAnchors {
+    // Rec.709 luma — the picture's brightness.
+    double lumaP02 = 0.0;
+    double lumaP10 = 0.0;
+    double lumaMid = 0.0;
+    double lumaP90 = 0.0;
+    double lumaP98 = 1.0;
+    // R/G/B samples pooled — what the per-channel curve is indexed by.
+    double chanP10 = 0.0;
+    double chanMid = 0.0;
+    double chanP90 = 0.0;
+    // The ends of the frame, read off a much finer histogram than the
+    // percentiles above. The 128-bin one resolves to 1/128, which is two
+    // display codes and far too coarse to tell "sitting just off the floor"
+    // from "welded to it" — which is the whole question at the endpoints.
+    double chanLo = 0.0;      // p0.1: the darkest tone that is really there
+    double chanHi = 1.0;      // p99.9: the brightest
+    double clipLow = 0.0;     // share of channel samples pinned at the floor
+    double clipHigh = 0.0;    // ... and at the ceiling
+};
+
+bool measureCurveAnchors(
+    Thumbnail& thumbnail,
+    const rtengine::procparams::ProcParams& params,
+    CurveAnchors& anchors)
+{
+    rtengine::procparams::ProcParams probe = params;
+    probe.rgbCurves = rtengine::procparams::RGBCurvesParams();
+
+    double scale = 1.0;
+    std::unique_ptr<rtengine::IImage8> image(thumbnail.processFullThumbImage(probe, 160, scale));
+
+    if (!image || !image->getData() || image->getWidth() < 8 || image->getHeight() < 8) {
+        return false;
+    }
+
+    const size_t pixelCount = static_cast<size_t>(image->getWidth()) * image->getHeight();
+
+    if (pixelCount == 0) {
+        return false;
+    }
+
+    const auto* pixels = image->getData();
+    std::array<size_t, 128> lumaHist{};
+    std::array<size_t, 128> chanHist{};
+    // A second, per-display-code histogram, used only for the endpoints. The
+    // coarse one above stays exactly as it was so the tuned mid/p10/p90
+    // behaviour does not shift underneath this.
+    std::array<size_t, 256> chanFine{};
+
+    for (size_t i = 0; i < pixelCount; ++i) {
+        const double luminance = (0.2126 * pixels[i * 3]
+                                  + 0.7152 * pixels[i * 3 + 1]
+                                  + 0.0722 * pixels[i * 3 + 2]) / 255.0;
+        lumaHist[std::min<size_t>(lumaHist.size() - 1, luminance * lumaHist.size())]++;
+
+        for (int c = 0; c < 3; ++c) {
+            const unsigned char code = pixels[i * 3 + c];
+            const double value = code / 255.0;
+            chanHist[std::min<size_t>(chanHist.size() - 1, value * chanHist.size())]++;
+            chanFine[code]++;
+        }
+    }
+
+    const auto percentileOf = [](const std::array<size_t, 128>& histogram,
+                                 size_t sampleCount,
+                                 double fraction) {
+        const size_t target = static_cast<size_t>(std::round(fraction * (sampleCount - 1)));
+        size_t accumulated = 0;
+
+        for (size_t i = 0; i < histogram.size(); ++i) {
+            accumulated += histogram[i];
+
+            if (accumulated > target) {
+                return (i + 0.5) / histogram.size();
+            }
+        }
+
+        return 1.0;
+    };
+
+    const auto luma = [&](double fraction) {
+        return percentileOf(lumaHist, pixelCount, fraction);
+    };
+    const auto chan = [&](double fraction) {
+        return percentileOf(chanHist, pixelCount * 3, fraction);
+    };
+
+    anchors.lumaP02 = luma(0.02);
+    anchors.lumaP10 = luma(0.10);
+    anchors.lumaMid = luma(0.50);
+    anchors.lumaP90 = luma(0.90);
+    anchors.lumaP98 = luma(0.98);
+    anchors.chanP10 = chan(0.10);
+    anchors.chanMid = chan(0.50);
+    anchors.chanP90 = chan(0.90);
+
+    const size_t channelSamples = pixelCount * 3;
+    const auto finePercentile = [&](double fraction) {
+        const size_t target = static_cast<size_t>(std::round(fraction * (channelSamples - 1)));
+        size_t accumulated = 0;
+        for (size_t i = 0; i < chanFine.size(); ++i) {
+            accumulated += chanFine[i];
+            if (accumulated > target) {
+                return i / 255.0;
+            }
+        }
+        return 1.0;
+    };
+    anchors.chanLo = finePercentile(0.001);
+    anchors.chanHi = finePercentile(0.999);
+    // "Pinned" means the bottom or top display code: those samples have lost
+    // their value and no curve downstream can give it back.
+    anchors.clipLow = static_cast<double>(chanFine.front()) / channelSamples;
+    anchors.clipHigh = static_cast<double>(chanFine.back()) / channelSamples;
+
+    fileBrowserPerfLog(
+        "[autoCurve]   luma    p02=%.4f p10=%.4f mid=%.4f p90=%.4f p98=%.4f (span=%.4f)\n"
+        "[autoCurve]   channel p10=%.4f mid=%.4f p90=%.4f (span=%.4f)\n",
+        anchors.lumaP02, anchors.lumaP10, anchors.lumaMid, anchors.lumaP90,
+        anchors.lumaP98, anchors.lumaP90 - anchors.lumaP10,
+        anchors.chanP10, anchors.chanMid, anchors.chanP90,
+        anchors.chanP90 - anchors.chanP10);
+    return true;
 }
 
 // Start Auto Edit from a known neutral profile so repeated runs and previously
@@ -335,22 +513,53 @@ void applySteepAutoEdit(
     const AutoGradeFeatures& features,
     rtengine::procparams::ProcParams& params)
 {
-    constexpr double AUTO_EDIT_RESPONSE = 0.60;
     params.setDefaults();
+
+    const auto unit = [](double value) {
+        return std::max(0.0, std::min(1.0, value));
+    };
+
+    // How much this frame needs protecting from an assertive edit, judged
+    // before anything is applied. Blown highlights are the one thing that
+    // cannot be walked back, so they — not a blanket timidity — are what
+    // holds the edit back. Auto Edit used to take a flat 40% haircut off
+    // every decision, which is why frames came back looking untouched.
+    const double protection = features.valid
+        ? std::max(unit((features.clippedFraction - 0.002) / 0.020),
+                   unit((features.highlightFraction - 0.10) / 0.18))
+        : 0.35;
+    const double neutralFlatness = features.valid
+        ? unit((0.62 - features.dynamicRange) / 0.62)
+        : 0.35;
 
     auto& tone = params.toneCurve;
     tone.autoexp = true;
-    // Expose right up to the clipping point but not into it: the histogram
-    // target commits essentially no pixels to pure white (0.02 = 2% of the
-    // frame clipped, which visibly ate highlight nuance).
-    tone.clip = 0.001;
+    // Expose right up to the clipping point but not into it. NOTE: clip is a
+    // PERCENTAGE (the GUI labels it "Clip %"), so 0.02 already commits only
+    // 1 pixel in 5000 to pure white — it is not the 2% it reads like. An
+    // earlier attempt to tighten this to 0.001 silently disabled metering
+    // altogether, because the only path that can honour a non-default clip
+    // needs the raw AE histogram and that is never resident for a
+    // cache-loaded thumbnail.
+    tone.clip = 0.02;
     tone.hrenabled = false;
     tone.method = "Coloropp";
     tone.expcomp = std::numeric_limits<double>::quiet_NaN();
-    thumbnail.applyAutoExp(params);
+    const bool measuredExposure =
+        thumbnail.applyAutoExp(params) && std::isfinite(tone.expcomp);
 
-    const bool measuredExposure = std::isfinite(tone.expcomp);
     if (!measuredExposure) {
+        // No metering available for this frame. These constants are a last
+        // resort, not a recipe: say so, because a silent substitution here
+        // looks exactly like a real measurement downstream.
+        std::fprintf(
+            stderr,
+            "steep: Auto Edit could not meter %s — no auto-exposure data in the "
+            "thumbnail cache; falling back to fixed exposure constants.\n",
+            thumbnail.getFileName().c_str());
+        fileBrowserPerfLog(
+            "[autoCurve] WARNING no metering for %s — using fallback constants\n",
+            thumbnail.getFileName().c_str());
         tone.expcomp = 0.20;
         tone.brightness = 2;
         tone.contrast = 0;
@@ -359,17 +568,27 @@ void applySteepAutoEdit(
         tone.hlcomprthresh = 0;
     }
 
-    // Give normally exposed and dark frames a modest lift while respecting
-    // the highlight compression selected by histogram analysis.
-    const double exposureLift = tone.expcomp > 0.0
-        ? (tone.hlcompr < 55 ? 0.05 : 0.0)
-        : 0.0;
-    tone.expcomp = std::max(-1.5, std::min(2.75, tone.expcomp + exposureLift));
+    // Everything from here down used to ADD to the exposure, and every one of
+    // those additions was calibrated when metering was dead and the starting
+    // point was always the same 0.20 constant. With metering restored they
+    // stack on a number that is already correct: a blanket +0.05, a scene
+    // nudge of up to +0.12, and the mid-target chimp below, which together
+    // moved frames by a third of a stop or more for no measured reason. When
+    // the meter spoke, it owns the exposure; only the chimp survives, as a
+    // bounded trim for frames that land genuinely far from a print mid tone.
+    if (!measuredExposure) {
+        // Give normally exposed and dark frames a modest lift while respecting
+        // the highlight compression selected by histogram analysis.
+        const double exposureLift = tone.expcomp > 0.0
+            ? (tone.hlcompr < 55 ? 0.05 : 0.0)
+            : 0.0;
+        tone.expcomp = std::max(-1.5, std::min(2.75, tone.expcomp + exposureLift));
+    }
 
-    // Histogram auto exposure is the primary decision. Scene luminance only
-    // supplies a restrained correction so night remains night and bright
-    // frames retain highlight headroom.
-    if (features.valid) {
+    // Scene luminance supplies a restrained correction so night remains night
+    // and bright frames retain highlight headroom — but only where no
+    // histogram metering was available to see that for itself.
+    if (features.valid && !measuredExposure) {
         double intent = 0.0;
         if (features.medianLuma < 0.19 && features.highlightFraction < 0.09) {
             intent = features.scene == AutoGradeScene::Night ? 0.02 : 0.12;
@@ -379,16 +598,35 @@ void applySteepAutoEdit(
             intent = -0.24;
         }
         tone.expcomp = std::max(-1.5, std::min(2.75, tone.expcomp + intent));
+    }
+
+    // Highlight compression answers what the source actually holds, so it is
+    // not part of the metering question and runs either way.
+    if (features.valid) {
         tone.hlcompr = std::max(tone.hlcompr, static_cast<int>(std::round(
-            std::min(78.0, 35.0 + features.highlightFraction * 160.0))));
+            std::min(45.0, features.highlightFraction * 120.0))));
     }
     if (tone.expcomp > 0.0) {
-        tone.expcomp *= AUTO_EDIT_RESPONSE;
+        tone.expcomp *= 1.0 - 0.45 * protection;
     }
+    // A floor, not an addition — same reasoning as contrast below. Adding to
+    // a metered value was only ever safe while metering was dead and that
+    // value was always 0.
     tone.brightness = std::max(0, std::min(35, static_cast<int>(std::round(
-        std::max(0, tone.brightness + 2) * AUTO_EDIT_RESPONSE))));
-    tone.contrast = std::max(0, std::min(40, static_cast<int>(std::round(
-        std::max(0, tone.contrast + 5) * AUTO_EDIT_RESPONSE))));
+        std::max(std::max(0, tone.brightness), 3) * (1.0 - 0.40 * protection)))));
+    // Contrast answers the frame: a flat scan wants a lot, a scene that
+    // already carries its own contrast wants little. The old recipe asked for
+    // a fixed +5 and then cut it by 40%, which landed on 3 — invisible.
+    //
+    // This is a FLOOR, not an addition. Adding it was safe only while metering
+    // was broken and the metered contrast was always 0; with metering restored
+    // a frame the meter already read as contrasty (28) got another 17 piled on
+    // and pinned to the 45 ceiling, which — on top of the curve's own S — is
+    // half of why wide-range frames came back too dark.
+    const double contrastWanted = 7.0 + 13.0 * neutralFlatness;
+    tone.contrast = std::max(0, std::min(45, static_cast<int>(std::round(
+        std::max(static_cast<double>(std::max(0, tone.contrast)), contrastWanted)
+        * (1.0 - 0.50 * protection)))));
     tone.autoexp = false;
     tone.curve = {DCT_Linear};
     tone.curve2 = {DCT_Linear};
@@ -397,130 +635,538 @@ void applySteepAutoEdit(
     tone.curveB = {DCT_Linear};
     tone.curveMode = rtengine::procparams::ToneCurveMode::STD;
     tone.curveMode2 = rtengine::procparams::ToneCurveMode::STD;
-    tone.shcompr = 50;
-    tone.hlcompr = std::max(tone.hlcompr, tone.expcomp > 0.25 ? 55 : 35);
+    // Shadow compression lifts the bottom of the frame and highlight
+    // compression pulls the top down: together they walk both ends toward the
+    // middle, which is the flat, uninteresting look. At 50/55 they were
+    // washing the picture out before the curve ever saw it. Spend them only
+    // where the frame genuinely needs rescuing.
+    tone.shcompr = 18;
+    tone.hlcompr = std::min(50, std::max(tone.hlcompr, tone.expcomp > 0.60 ? 30 : 12));
+
+    // A meter that asks for heavy highlight compression has exposed past what
+    // the frame can hold and is buying the top back by squashing it. That
+    // pairing — a big positive exposure plus hlcompr pinned at 50 — is what
+    // reads as "bright and flat on top", and inheriting both halves of it
+    // means accepting the over-exposure to get the rescue. We have our own
+    // shoulder (the curve) and our own highlight recovery, so take the
+    // exposure back down instead and let those hold the highlights.
+    if (measuredExposure && tone.hlcompr > 30 && tone.expcomp > 0.0) {
+        const double excess = unit((tone.hlcompr - 30) / 20.0);
+        tone.expcomp = std::max(0.0, tone.expcomp - 0.35 * excess);
+        tone.hlcompr = static_cast<int>(std::round(30.0 + 10.0 * excess));
+    }
+
     tone.hlbl = 0;
     tone.hlth = 1.0;
     tone.histmatching = false;
     tone.fromHistMatching = false;
     tone.clampOOG = true;
 
-    int highlightRecovery = 16;
-    int shadowLift = 1;
+    // Highlight recovery has to be decided BEFORE the frame is measured. It
+    // pulls the top of the range down over a very wide tonal band (70), so a
+    // measurement taken without it describes a histogram the finished image
+    // never has — and every curve station is then placed against that fiction.
+    // It depends only on the source analysis and the exposure, so nothing here
+    // needs the measurement.
+    int highlightRecovery = 18;
+
     if (features.valid) {
-        highlightRecovery = std::max(12, std::min(38, static_cast<int>(std::round(
-            12.0 + features.highlightFraction * 72.0 + std::max(0.0, tone.expcomp) * 5.0))));
-
-        double lift = std::max(0.0, (features.shadowFraction - 0.28) * 12.0)
-            + std::max(0.0, (0.25 - features.medianLuma) * 10.0);
-        if (features.highlightFraction > 0.14) {
-            lift *= 0.40;
-        }
-        if (features.medianLuma > 0.44) {
-            lift *= 0.20;
-        }
-        shadowLift = std::max(0, std::min(4, static_cast<int>(std::round(lift))));
-
-        if (features.scene == AutoGradeScene::Night) {
-            shadowLift = std::min(shadowLift, 3);
-        } else if (features.highlightFraction > 0.24 || features.medianLuma > 0.61) {
-            shadowLift = 0;
-        }
+        // Recovery darkens the highlights — it buys back detail that is
+        // genuinely at risk and dulls everything else. Only blown frames pay.
+        highlightRecovery = std::max(0, std::min(28, static_cast<int>(std::round(
+            features.highlightFraction * 90.0
+            + std::max(0.0, tone.expcomp - 0.40) * 12.0))));
     }
 
     auto& shadowsHighlights = params.sh;
-    shadowsHighlights.enabled = highlightRecovery != 0 || shadowLift != 0;
+    shadowsHighlights.enabled = highlightRecovery != 0;
     shadowsHighlights.highlights = highlightRecovery;
     shadowsHighlights.htonalwidth = 70;
-    shadowsHighlights.shadows = shadowLift;
-    shadowsHighlights.stonalwidth = 24 + shadowLift * 2;
+    shadowsHighlights.shadows = 0;
+    shadowsHighlights.stonalwidth = 24;
     shadowsHighlights.radius = 40;
     shadowsHighlights.lab = false;
 
-    // Dynamic S-curve, anchored to the image's own tonal statistics instead
-    // of fixed control points. The curve pivots on the histogram median (the
-    // same math as the curve editor's "move to middle point" button) with the
-    // toe and shoulder anchors at the image's p10/p90 — so the curve works
-    // the tones the image actually has. Composition drives the strengths: a
-    // colorist takes contrast from deeper blacks on flat scans and brighter
-    // upper-mids when there is genuine highlight headroom; frames that cannot
-    // take it (clipped highlights, night frames, faces) stay restrained.
-    double toeBoost = 0.0;   // extra toe depth from composition (0..0.15)
-    double liftBoost = 0.0;  // extra shoulder lift from composition (0..0.15)
-    if (features.valid) {
-        // Right side: only brighten when few pixels already sit near clipping.
-        const double headroom = std::max(0.0, (0.12 - features.highlightFraction) / 0.12);
-        liftBoost = 0.15 * std::min(1.0, headroom);
-        if (features.medianLuma > 0.55) {
-            liftBoost *= 0.5;  // high-key frame: restraint, keep the airy top
-        }
-        if (features.scene == AutoGradeScene::Portrait) {
-            liftBoost = std::min(liftBoost, 0.08);  // skin brights must not race to clipping
-        } else if (features.scene == AutoGradeScene::Night) {
-            liftBoost *= 0.7;  // sparkle in the lights without blooming them
+    // Chimp the histogram. Render the frame with what has been chosen so far
+    // and, if the mid tone has not landed where a print would carry it,
+    // correct the EXPOSURE rather than leaving the curve to do the
+    // brightening: lifting mids with a curve compresses everything above
+    // them, while lifting exposure moves the whole frame and lets highlight
+    // recovery hold the top. Headroom keeps the veto.
+    CurveAnchors shot;
+    const bool shotValid = measureCurveAnchors(thumbnail, params, shot);
+
+    const double shotMid = shot.lumaMid;
+    const double shotP90 = shot.lumaP90;
+
+    // Where the mid tone belongs depends on what the picture is. A night
+    // frame carried up to a print's mid tone stops being a night frame — it
+    // should sit low and keep its weight. Everything else wants the print.
+    const bool nightFrame =
+        features.scene == AutoGradeScene::Night && shotValid && shotMid < 0.24;
+    const double midTarget = nightFrame ? 0.31 : 0.45;
+
+    double predictedP10 = shot.chanP10;
+    double predictedMid = shot.chanMid;
+    double predictedP90 = shot.chanP90;
+    double predictedLumaMid = shot.lumaMid;
+    double predictedLumaP10 = shot.lumaP10;
+    double predictedLumaP90 = shot.lumaP90;
+    double predictedLo = shot.chanLo;
+    double predictedHi = shot.chanHi;
+    double evAdd = 0.0;
+    double hiRoomEv = 0.0;
+
+    if (shotValid) {
+        // The median is not the subject. On any frame with a large uniform
+        // area that is not meant to read as mid grey — sky, snow, a dark wall,
+        // a black backdrop — driving it to a print mid tone is simply wrong,
+        // and on this fork's sky-dominated frames it used to spend the whole
+        // +0.75 allowance doing it. So the chimp is a CORRECTION to metering,
+        // not a replacement for it: when the frame was actually metered, the
+        // meter owns the exposure and this may only trim it. The wide old
+        // range survives solely for frames with no metering at all, where
+        // there is nothing better to go on.
+        const double chimpCeiling = measuredExposure ? 0.20 : 0.75;
+        const double chimpFloor = measuredExposure ? -0.20 : -0.50;
+
+        // A metered frame that already lands near a print mid tone does not
+        // need nudging at all. Firing on every small gap is what made this a
+        // second exposure decision rather than a correction to the first.
+        const double deadband = measuredExposure ? 0.08 : 0.0;
+
+        // How much room the TOP of the frame has left, in stops. p90 is far
+        // too deep in the distribution to answer that: it stays under 0.90 —
+        // and so leaves `headroom` at a full 1.0 — on frames whose brightest
+        // tones are already against the ceiling. Ask the brightest tones.
+        hiRoomEv = 2.2 * std::log2(kWhiteTarget / std::max(shot.chanHi, 0.05));
+
+        if (shotMid < midTarget - deadband) {
+            // Display ratio into stops: display ≈ linear^(1/2.2).
+            const double evNeed = 2.2 * std::log2(midTarget / std::max(0.06, shotMid));
+            const double headroom = unit((0.90 - shotP90) / 0.20);
+            // Wanting a brighter mid tone is not permission to put the
+            // highlights into the clip. Whichever runs out first wins.
+            evAdd = std::min({chimpCeiling, evNeed * 0.45, std::max(0.0, hiRoomEv)})
+                * headroom * (1.0 - 0.75 * protection);
+        } else if (shotMid > midTarget + 0.10) {
+            evAdd = std::max(chimpFloor,
+                             -2.2 * std::log2(shotMid / (midTarget + 0.10)) * 0.40);
         }
 
-        // Left side: deepen blacks on flat files; ease off when shadows
-        // already dominate the frame.
-        const double flatness = std::max(0.0, (0.62 - features.dynamicRange) / 0.62);
-        const double shadowRoom = std::max(0.0, (0.40 - features.shadowFraction) / 0.40);
-        toeBoost = 0.15 * shadowRoom * (0.5 + 0.5 * flatness);
-        if (features.scene == AutoGradeScene::Night) {
-            toeBoost *= 0.4;   // night keeps its shadow detail and mood
-        } else if (features.scene == AutoGradeScene::Portrait) {
-            toeBoost *= 0.75;  // gentle falloff on faces
+        // A frame that is already welded to the ceiling has to come down
+        // regardless of where its mid tone sits — this is the case the mid
+        // tone test cannot see, because burning out the top barely moves the
+        // median. Metering exposes to the right and the chimp only ever
+        // pushed further; nothing before this could give exposure back.
+        const double clipExcess = shot.clipHigh - kClipTolerance;
+        if (clipExcess > 0.0) {
+            const double recover = std::min(0.60, 2.2 * std::log2(
+                1.0 + clipExcess * kClipRecoveryGain));
+            evAdd = std::min(evAdd, -recover);
+        } else if (hiRoomEv < 0.0) {
+            evAdd = std::min(evAdd, std::max(-0.60, hiRoomEv));
+        }
+
+        if (std::abs(evAdd) > 0.01) {
+            tone.expcomp = std::max(-1.5, std::min(2.75, tone.expcomp + evAdd));
+            const double gain = std::pow(2.0, evAdd / 2.2);
+            predictedP10 = std::min(0.99, shot.chanP10 * gain);
+            predictedMid = std::min(0.97, shot.chanMid * gain);
+            predictedP90 = std::min(0.995, shot.chanP90 * gain);
+            predictedLumaMid = std::min(0.97, shot.lumaMid * gain);
+            predictedLumaP10 = std::min(0.99, shot.lumaP10 * gain);
+            predictedLumaP90 = std::min(0.995, shot.lumaP90 * gain);
+            predictedLo = std::min(0.99, shot.chanLo * gain);
+            predictedHi = std::min(1.0, shot.chanHi * gain);
         }
     }
 
-    // Anchor positions from the image's histogram, shifted for the exposure
-    // compensation applied upstream (display-space approximation of the
-    // linear gain, sRGB ~ power 2.2).
-    const double expShift = std::pow(2.0, tone.expcomp / 2.2);
-    const auto anchor = [expShift](double value, double lo, double hi) {
-        return std::max(lo, std::min(hi, value * expShift));
+    // The shadow lift genuinely needs the measurement, so it lands after it.
+    // It is capped at 12 on a 0-100 control and only fires on frames that are
+    // both blocked and wide, so leaving it out of the measured histogram costs
+    // far less than leaving highlight recovery out did.
+    int shadowLift = 0;
+
+    if (shotValid) {
+        const double blocked = unit((0.12 - predictedLumaP10) / 0.12);
+        const double depth = unit(((predictedLumaP90 - predictedLumaP10) - 0.35) / 0.35);
+        // Opening shadows is how a picture goes flat. Reserve it for frames
+        // that are genuinely blocked AND carry a wide range — the deep end of
+        // an ordinary photograph should stay deep, and the curve's toe, not
+        // this control, decides how the darks read.
+        double lift = 14.0 * blocked * depth;
+
+        if (features.scene == AutoGradeScene::Night && predictedLumaMid < 0.26) {
+            lift *= 0.45;   // a night scene keeps its own weight
+        }
+
+        shadowLift = std::max(0, std::min(12, static_cast<int>(std::round(lift))));
+    }
+
+    shadowsHighlights.enabled = highlightRecovery != 0 || shadowLift != 0;
+    shadowsHighlights.shadows = shadowLift;
+    shadowsHighlights.stonalwidth = 24 + shadowLift;
+    shadowsHighlights.lab = false;
+
+    // --- Tone curve -------------------------------------------------------
+    //
+    // Built the way a colorist builds one: the control points sit at fixed
+    // stations spread across the range — a toe below the mids, a pivot on the
+    // image's own mid tone, a shoulder up among the lights — and the image
+    // decides how far each station MOVES. Using the image's p10/median/p90 as
+    // the station POSITIONS (the previous design) put all three in the bottom
+    // third of a normally exposed frame: the "highlight" station landed near
+    // 0.25 and everything above it was one long unguided spline segment, which
+    // is what sagged the right-hand side of the curve. Highlights get shaped
+    // where highlights actually live, and white stays at white — holding the
+    // highlights is the exposure metering's job (it targets no clipping), not
+    // a squashed curve top.
+    // Reuse the histogram read taken for the exposure decision, advanced by
+    // whatever correction it prompted; a second full render per image would
+    // buy almost nothing.
+    //
+    // Two distributions, two jobs. The STATION positions come from the channel
+    // percentiles, because R, G and B are what index the curve. The risk and
+    // flatness judgements below are questions about the picture ("is it
+    // bright?", "is it already contrasty?") and stay on luma.
+    const bool measured = shotValid;
+    const double stationP10 = predictedP10;
+    const double stationMid = predictedMid;
+    const double stationP90 = predictedP90;
+
+    const auto unitInterval = [](double value) {
+        return std::max(0.0, std::min(1.0, value));
     };
 
-    const double mid = anchor(features.valid ? features.medianLuma : 0.30, 0.12, 0.72);
-    const double toe = anchor(features.valid ? features.p10 : 0.10, 0.025, mid - 0.06);
-    const double shoulder = anchor(features.valid ? features.p90 : 0.55, mid + 0.10, 0.93);
+    // Fallback path only: approximate the exposure gain in display space.
+    const double expShift = std::pow(2.0, tone.expcomp / 2.2);
+    const double displayMid = measured
+        ? predictedLumaMid
+        : unitInterval((features.valid ? features.medianLuma : 0.30) * expShift);
+    const double displayP90 = measured
+        ? predictedLumaP90
+        : unitInterval((features.valid ? features.p90 : 0.60) * expShift);
+    const double displayRange = measured
+        ? std::max(0.0, predictedLumaP90 - predictedLumaP10)
+        : (features.valid ? features.dynamicRange : 0.50);
 
-    // Output placement. The toe keeps the firm left side the recipe has been
-    // tuned to (deeper still on flat scans via toeBoost); the median pivot
-    // gains a touch of density scaled by flatness; the shoulder rides up to —
-    // never into — the clipping edge.
-    const double flatness = features.valid
-        ? std::max(0.0, (0.62 - features.dynamicRange) / 0.62)
+    const double flatness = unitInterval((0.62 - displayRange) / 0.62);
+
+    // Several stages already act on the upper half — auto exposure, highlight
+    // recovery, global contrast, and this curve. Treat broad or near-clipped
+    // highlights as the strongest warning, then blend in source brightness,
+    // existing contrast, and positive exposure.
+    const double broadHighlightRisk = features.valid
+        ? unitInterval((features.highlightFraction - 0.05) / 0.20)
         : 0.0;
-    double midDrop = 0.07 * (0.5 + 0.5 * flatness);
-    if (features.scene == AutoGradeScene::Night) {
-        midDrop *= 0.3;   // night mids stay where the photographer left them
-    } else if (features.scene == AutoGradeScene::Portrait) {
-        midDrop *= 0.7;   // gentle on faces
+    const double clippingRisk = features.valid
+        ? unitInterval((features.clippedFraction - 0.002) / 0.018)
+        : 0.0;
+    const double upperTailRisk = unitInterval((displayP90 - 0.86) / 0.12);
+    const double brightFrameRisk = unitInterval((displayMid - 0.52) / 0.20);
+    const double existingContrastRisk = unitInterval((displayRange - 0.58) / 0.24);
+    const double positiveExposureRisk = unitInterval(tone.expcomp / 1.0);
+
+    double overtuneRisk = std::max(
+        clippingRisk,
+        unitInterval(
+            0.27 * broadHighlightRisk
+            + 0.27 * upperTailRisk
+            + 0.18 * brightFrameRisk
+            + 0.16 * existingContrastRisk
+            + 0.12 * positiveExposureRisk));
+    // Only treat a frame as a night scene if it actually renders dark. The
+    // scene classifier reads a neutral render, which is far darker than the
+    // finished image, so ordinary photographs get labelled Night and then
+    // damped into inertness by every restraint below.
+    const bool nightLook =
+        features.scene == AutoGradeScene::Night && displayMid < 0.26;
+
+    if (features.scene == AutoGradeScene::Portrait) {
+        overtuneRisk = std::max(overtuneRisk, 0.38);
+    } else if (nightLook) {
+        overtuneRisk = std::max(overtuneRisk, 0.48);
     }
 
-    double toeOut = toe * 0.585 * (1.0 - toeBoost);
-    const double midOut = mid * (1.0 - midDrop);
-    double shoulderOut = std::min(0.955, shoulder * (1.22 + liftBoost));
-    const double topOut = 0.995;
+    // Stations sit either side of the frame's tonal centre — the anchor the
+    // curve turns around. Everything left of it is pulled down, everything
+    // right of it is pushed up, and how far each goes is the image's own
+    // decision. Exposure has already placed the centre, so the curve's whole
+    // job here is contrast about that point.
+    const double pivot = measured
+        ? std::max(0.18, std::min(0.68, stationMid))
+        : std::max(0.18, std::min(0.68, displayMid));
 
-    // Keep the spline monotonic with sensible separation between anchors.
-    toeOut = std::max(0.0, std::min(toeOut, midOut - 0.02));
-    shoulderOut = std::max(shoulderOut, midOut + 0.04);
+    // The stations sit INSIDE the frame's own tonal mass — between the anchor
+    // and each end of where the pixels actually are. Placing them at fixed
+    // fractions of the 0..1 range put them out in empty territory on a
+    // low-contrast frame: the toe landed below the darkest pixel and the
+    // shoulder above the brightest, so pulling them shaped nothing the
+    // picture contained. That, not the amount of pull, is why the results
+    // kept coming back flat.
+    double lowSpan = measured
+        ? std::max(0.04, pivot - stationP10)
+        : pivot * 0.55;
+    double highSpan = measured
+        ? std::max(0.04, stationP90 - pivot)
+        : (1.0 - pivot) * 0.45;
+
+    // Keep the S balanced about its pivot. The skew of a frame's histogram
+    // belongs in where the PIVOT sits, not in how lopsided the curve's shape
+    // is — but with each station placed at 0.85 x its own span, a skewed
+    // frame gets a wildly asymmetric curve. A rock face lit against deep
+    // shade measures mid 0.23 with p90 0.84: lowSpan 0.11, highSpan 0.61.
+    // That parked the shoulder at 0.746, out in a sparse highlight tail, and
+    // since the lift is a share of the station's distance to the pivot it
+    // then pushed that station up by 0.13 — dragging everything from the mid
+    // to the highlights with it. The frame came back too bright, too
+    // contrasty through the middle, and with the shoulder-to-white run
+    // pinned against its 0.50 slope floor, so the brightest tones lost
+    // separation as well. Neither side may now exceed twice the other, which
+    // leaves genuinely balanced frames untouched.
+    constexpr double kMaxSpanRatio = 2.0;
+    const double spanRef = std::min(lowSpan, highSpan);
+    lowSpan = std::min(lowSpan, spanRef * kMaxSpanRatio);
+    highSpan = std::min(highSpan, spanRef * kMaxSpanRatio);
+
+    // How far out the stations sit, as a share of each span.
+    //
+    // This was 0.85, and that width is what kept the curve feeling
+    // constrained no matter how much strength it was given. A station way out
+    // near the end of the data has a long lever to the pivot, so the same
+    // slope demands a large absolute drop — which the 0→toe run cannot
+    // absorb, so the shadow floor clips it. On three of five reference frames
+    // the requested strength was simply being thrown away by that floor, and
+    // the delivered inner slope came out BELOW what was asked for.
+    //
+    // Pulling the stations in is how the manual edit does it: a tight, steep
+    // bump either side of the tonal centre, with the ends left close to
+    // linear. Narrower stations mean the same slope needs a much smaller
+    // move, so the floor stops binding, the ends keep their separation, and
+    // the contrast lands where the pixels actually are.
+    constexpr double kStationReach = 0.60;
+    const double toeIn = std::max(0.02, pivot - kStationReach * lowSpan);
+    const double shoulderIn = std::min(0.98, pivot + kStationReach * highSpan);
+
+    const double shadowRoom = features.valid
+        ? unitInterval((0.40 - features.shadowFraction) / 0.40)
+        : 0.50;
+    const double sourceHeadroom = features.valid
+        ? unitInterval((0.17 - features.highlightFraction) / 0.15)
+        : 0.55;
+    const double displayHeadroom = unitInterval((0.94 - displayP90) / 0.30);
+    double liftPermission =
+        sourceHeadroom * displayHeadroom * (1.0 - 0.65 * overtuneRisk);
+    if (features.scene == AutoGradeScene::Portrait) {
+        liftPermission *= 0.78;
+    } else if (nightLook) {
+        liftPermission *= 0.62;
+    }
+
+    // ONE contrast decision, applied to both sides of the anchor.
+    //
+    // The two sides used to come from unrelated polynomials with different
+    // constants — density from (0.50 + 0.30 x flatness)(0.70 + 0.30 x
+    // shadowRoom)(risk), lift from (0.45 + 0.30 x flatness)(0.45 + 0.55 x
+    // liftPermission). Nothing tied them together, so on a typical frame,
+    // which has plenty of highlight headroom but real shadow content, the
+    // lift systematically came out larger than the density: a rock face
+    // measured toe 0.479 against lift 0.550 and got pushed brighter than it
+    // was pulled darker. That is a brightening move in a contrast curve's
+    // clothing, and it is why frames kept reading too bright even after the
+    // exposure was right.
+    //
+    // Now: a single contrast intent from the frame's flatness, damped once by
+    // overall risk, and then reduced INDEPENDENTLY on each side by that
+    // side's own protection — shadow room on the left, highlight headroom on
+    // the right. Asymmetry can now only come from protection, never from the
+    // shape of two different formulas.
+    // The dampers are multiplicative, so widening any one of them quietly
+    // weakens every frame. Making protection a (0.60 + 0.40 x room) term cost
+    // a real portrait — shadowRoom 0.115, because it HAS shadows, like most
+    // photographs — nearly a third of its curve: toe 0.343 down to 0.302, with
+    // the symmetry clamp taking the lift down with it. Protection now has a
+    // narrower range and the base carries more, so a typical frame lands near
+    // 0.45-0.55 (inner slopes 1.45-1.55) instead of 0.30.
+    // Raised alongside the narrower station reach above: with a shorter lever
+    // to the pivot, a larger strength is both safe and necessary to reach the
+    // same slope. Strength IS the inner slope minus one, so a typical frame
+    // now runs at about 1.55 either side of the tonal centre.
+    const double contrastIntent = (0.62 + 0.28 * flatness) * (1.0 - 0.28 * overtuneRisk);
+
+    double toeStrength = contrastIntent * (0.72 + 0.22 * shadowRoom);
+    if (nightLook) {
+        toeStrength *= 0.70;   // night keeps its shadow detail and mood
+    } else if (features.scene == AutoGradeScene::Portrait) {
+        toeStrength *= 0.88;   // gentle falloff on faces
+    }
+    toeStrength = std::max(0.0, std::min(0.75, toeStrength));
+
+    double liftStrength = contrastIntent * (0.78 + 0.22 * liftPermission);
+    if (nightLook) {
+        liftStrength *= 0.70;
+    } else if (features.scene == AutoGradeScene::Portrait) {
+        liftStrength *= 0.88;
+    }
+    // An S-curve is contrast about the tonal centre, not a brightening
+    // device. Protection may hold the lift back below the density, but it may
+    // never push it above: brightening the highlights harder than the shadows
+    // are deepened is exactly what the eye reads as "too bright".
+    liftStrength = std::max(0.0, std::min({0.70, liftStrength, toeStrength}));
+
+    // Strength IS the slope here: pulling a station away from the anchor by
+    // k x its distance to the anchor makes that segment run at 1+k. These
+    // therefore read directly as the contrast either side of the tonal
+    // centre, applied across the tones the frame actually holds.
+    const double pivotOut = pivot;   // the anchor holds
+    double toeOut = toeIn - toeStrength * (pivot - toeIn);
+    double shoulderOut = shoulderIn + liftStrength * (shoulderIn - pivot);
+    constexpr double whiteOut = 1.0;
+
+    // Highlights keep their separation: the run from the shoulder to white
+    // never falls below this slope.
+    constexpr double minHighlightSlope = 0.50;
+    shoulderOut = std::min(shoulderOut, whiteOut - minHighlightSlope * (1.0 - shoulderIn));
+
+    // Shadows keep theirs too, and this guard matters MORE than the highlight
+    // one because the run it protects is so much shorter. The pull above is
+    // proportional to the toe's distance from the pivot, but the room it has
+    // to fall into is only toeIn — and on a wide-range frame those are wildly
+    // mismatched. A landscape measuring p10=0.07 against a pivot at 0.51 puts
+    // the toe station at 0.139 and then drops it by 0.325 x 0.369 = 0.120,
+    // i.e. to 0.019: the black-to-toe run collapses to slope 0.14 and the
+    // spline clips everything below x=0.067 to pure black. The strength that
+    // did that reads as a mild 0.325, because "strength" describes the
+    // toe->pivot slope and says nothing about the run underneath it. Without
+    // this floor, deep shadows guarantee a crushed toe no matter how gentle
+    // the requested strength.
+    constexpr double minShadowSlope = 0.55;
+    toeOut = std::max(toeOut, minShadowSlope * toeIn);
+
+    // Monotonic, with room between the stations.
+    toeOut = std::max(0.0, std::min(toeOut, pivotOut - 0.03));
+    shoulderOut = std::max(shoulderOut, pivotOut + 0.05);
+
+    // --- Endpoints ---------------------------------------------------------
+    //
+    // Everything above shapes CONTRAST about the pivot and says nothing about
+    // where the two ends of the frame finish. The curve ran 0->0 and 1->1, so
+    // the finished black and white points were whatever exposure happened to
+    // leave: a frame whose data stopped at 0.06 and 0.88 came back visibly
+    // short of both limits and read as flat, while a hot one arrived with its
+    // ends already pinned. Place them deliberately instead.
+    //
+    // These are stations like any other — the spline passes through them — so
+    // the run outside each one is compressed or stretched, not clipped. Only
+    // the ~0.1% of samples beyond them are affected in bulk.
+    std::vector<double> master = {
+        DCT_Spline,
+        0.0, 0.0,
+        toeIn, toeOut,
+        pivot, pivotOut,
+        shoulderIn, shoulderOut,
+        1.0, whiteOut
+    };
+
+    bool blackPlaced = false;
+    bool whitePlaced = false;
+
+    if (measured) {
+        // Pull each end a bounded share of the way to its target. Highlights
+        // additionally defer to overtuneRisk, which already knows when a frame
+        // is bright, contrasty or near-clipped and should be left alone.
+        const double blackAuthority = kEndpointAuthority;
+        const double whiteAuthority = kEndpointAuthority * (1.0 - 0.45 * overtuneRisk);
+
+        // Cap the absolute move as well as the share.
+        const auto boundedMove = [](double from, double target, double authority) {
+            const double move = (target - from) * authority;
+            return from + std::max(-kMaxEndpointMove, std::min(kMaxEndpointMove, move));
+        };
+
+        const double blackIn = predictedLo;
+        const double whiteIn = predictedHi;
+        const double blackOut = boundedMove(blackIn, kBlackTarget, blackAuthority);
+        const double whiteOutPoint = boundedMove(whiteIn, kWhiteTarget, whiteAuthority);
+
+        // A station only earns its place if it sits clear of the toe/shoulder
+        // and keeps the curve monotonic. Frames whose data already reaches the
+        // ends leave both out and keep the plain 0->0, 1->1 run.
+        // The x-separation floors matter twice over: they keep the spline from
+        // ringing between a new station and the fixed 0,0 / 1,1 corner, and
+        // they skip the station entirely when the end is already where we
+        // wanted it, which is the common case on a well-exposed frame.
+        const bool blackUsable =
+            blackIn > 0.012 && blackIn < toeIn - 0.02
+            && blackOut > 0.0005 && blackOut < toeOut - 0.004;
+        const bool whiteUsable =
+            whiteIn < 0.988 && whiteIn > shoulderIn + 0.02
+            && whiteOutPoint < 0.9995 && whiteOutPoint > shoulderOut + 0.004;
+
+        whitePlaced = whiteUsable;
+        blackPlaced = blackUsable;
+        if (whiteUsable) {
+            master.insert(master.end() - 2, {whiteIn, whiteOutPoint});
+        }
+        if (blackUsable) {
+            master.insert(master.begin() + 3, {blackIn, blackOut});
+        }
+    }
 
     auto& curves = params.rgbCurves;
     curves.enabled = true;
     curves.lumamode = false;
-    curves.mastercurve = {
-        DCT_Spline,
-        0.0, 0.0,
-        toe, toeOut,
-        mid, midOut,
-        shoulder, shoulderOut,
-        1.0, topOut
-    };
+    curves.mastercurve = std::move(master);
     curves.rcurve = {DCT_Spline, 0.0, 0.0, 1.0, 1.0};
     curves.gcurve = {DCT_Spline, 0.0, 0.0, 1.0, 1.0};
     curves.bcurve = {DCT_Spline, 0.0, 0.0, 1.0, 1.0};
+
+    // Diagnostics: set STEEP_FILESEL_LOG=1 to trace every Auto Edit decision
+    // into %USERPROFILE%\steep-fileSel.log.
+    fileBrowserPerfLog(
+        "[autoCurve] ==== %s ====\n"
+        "[autoCurve]  features: valid=%d scene=%s medLuma=%.3f p10=%.3f p90=%.3f p98=%.3f range=%.3f\n"
+        "[autoCurve]            shadowFrac=%.3f hlFrac=%.3f clipFrac=%.4f sat=%.3f iso=%u\n"
+        "[autoCurve]            skinFrac=%.3f centerSkin=%.3f skinSat=%.3f sky=%.3f foliage=%.3f\n"
+        "[autoCurve]  protection=%.3f neutralFlatness=%.3f measuredExposure=%d\n"
+        "[autoCurve]  exposure: expcomp=%.3f bright=%d contrast=%d hlcompr=%d shcompr=%d evAdd=%.3f\n"
+        "[autoCurve]  midTarget=%.2f nightFrame=%d shotValid=%d sh: hl=%d shadows=%d\n"
+        "[autoCurve]  stations from channel: p10=%.3f mid=%.3f p90=%.3f\n"
+        "[autoCurve]  picture from luma:     p10=%.3f mid=%.3f p90=%.3f range=%.3f\n"
+        "[autoCurve]  flatness=%.3f overtuneRisk=%.3f nightLook=%d liftPermission=%.3f\n"
+        "[autoCurve]  spans: lowSpan=%.4f highSpan=%.4f  (floor 0.04 hit: low=%d high=%d)\n"
+        "[autoCurve]  strengths: toe=%.3f lift=%.3f\n"
+        "[autoCurve]  endpoints: measured lo=%.4f hi=%.4f  clipLow=%.4f clipHigh=%.4f\n"
+        "[autoCurve]             after exposure lo=%.4f hi=%.4f  hiRoomEv=%.3f\n"
+        "[autoCurve]             placed black=%d white=%d  (targets %.3f / %.3f)\n"
+        "[autoCurve]  CURVE: 0,0  %.5f,%.5f  %.5f,%.5f  %.5f,%.5f  1,1\n"
+        "[autoCurve]  chord slopes: black->toe=%.3f toe->pivot=%.3f pivot->shldr=%.3f shldr->white=%.3f\n",
+        thumbnail.getFileName().c_str(),
+        features.valid ? 1 : 0, autoGradeSceneName(features.scene),
+        features.medianLuma, features.p10, features.p90, features.p98, features.dynamicRange,
+        features.shadowFraction, features.highlightFraction, features.clippedFraction,
+        features.saturation, features.iso,
+        features.skinFraction, features.centerSkinFraction, features.skinSaturation,
+        features.skyFraction, features.foliageFraction,
+        protection, neutralFlatness, measuredExposure ? 1 : 0,
+        tone.expcomp, tone.brightness, tone.contrast, tone.hlcompr, tone.shcompr, evAdd,
+        midTarget, nightFrame ? 1 : 0, shotValid ? 1 : 0, highlightRecovery, shadowLift,
+        stationP10, stationMid, stationP90,
+        predictedLumaP10, displayMid, displayP90, displayRange,
+        flatness, overtuneRisk, nightLook ? 1 : 0, liftPermission,
+        lowSpan, highSpan,
+        (measured && (pivot - stationP10) < 0.04) ? 1 : 0,
+        (measured && (stationP90 - pivot) < 0.04) ? 1 : 0,
+        toeStrength, liftStrength,
+        shot.chanLo, shot.chanHi, shot.clipLow, shot.clipHigh,
+        predictedLo, predictedHi, hiRoomEv,
+        blackPlaced ? 1 : 0, whitePlaced ? 1 : 0, kBlackTarget, kWhiteTarget,
+        toeIn, toeOut, pivot, pivotOut, shoulderIn, shoulderOut,
+        toeIn > 0 ? toeOut / toeIn : 0.0,
+        (pivotOut - toeOut) / std::max(1e-6, pivot - toeIn),
+        (shoulderOut - pivotOut) / std::max(1e-6, shoulderIn - pivot),
+        (1.0 - shoulderOut) / std::max(1e-6, 1.0 - shoulderIn));
 }
 
 void applySteepAutoGrade(
@@ -641,7 +1287,7 @@ void applySteepAutoGrade(
         1.0, 1.0
     };
 
-    int gradeContrast = 3;
+    int gradeContrast = 2;
     switch (features.scene) {
         case AutoGradeScene::Portrait:
             vibrance.pastels = 10;
@@ -651,22 +1297,22 @@ void applySteepAutoGrade(
         case AutoGradeScene::GoldenHour:
             vibrance.pastels = 12;
             vibrance.saturated = 0;
-            gradeContrast = 2;
+            gradeContrast = 1;
             break;
         case AutoGradeScene::Landscape:
             vibrance.pastels = 18;
             vibrance.saturated = 3;
-            gradeContrast = 4;
+            gradeContrast = 3;
             break;
         case AutoGradeScene::Night:
             vibrance.pastels = 9;
             vibrance.saturated = -3;
-            gradeContrast = 3;
+            gradeContrast = 2;
             break;
         case AutoGradeScene::Urban:
             vibrance.pastels = 11;
             vibrance.saturated = 0;
-            gradeContrast = 5;
+            gradeContrast = 3;
             break;
         case AutoGradeScene::Neutral:
             break;
@@ -688,12 +1334,15 @@ void applySteepAutoFilm(
     auto& film = params.filmPresets;
     film = rtengine::procparams::FilmPresetsParams();
     film.enabled = true;
-    film.modelVersion = 2;
+    film.modelVersion = 4;
     film.preset = "sovereign";
     film.process = "c41";
     film.output = "ra4";
     film.format = "35mm";
-    film.strength = 36;
+    // Film Lab v2 could only subtract contrast, so this had to be kept near a
+    // third to stay tolerable, which is also why the stock barely registered.
+    // v3 carries a real print gamma, so the stock can be applied as a stock.
+    film.strength = 62;
     // Place the digital negative near the stock's intended middle gray. The
     // film shoulder already protects bright values; routinely underexposing
     // the film stage only makes the print muddy and buries useful midtones.
@@ -704,10 +1353,10 @@ void applySteepAutoFilm(
           : features.medianLuma < 0.24
             ? 0.07
             : 0.0;
-    film.fade = -8;
+    film.fade = -4;
     film.rolloff = features.highlightFraction > 0.22 ? 4 : 0;
     film.saturation = features.saturation > 0.48 ? -5 : features.saturation < 0.20 ? 2 : 0;
-    film.contrast = features.dynamicRange < 0.38 ? 8 : features.dynamicRange > 0.72 ? 4 : 6;
+    film.contrast = features.dynamicRange < 0.38 ? 6 : features.dynamicRange > 0.72 ? 3 : 4;
     film.shadowHue = 218;
     film.highlightHue = 40;
     film.shadowTint = 2;
@@ -735,9 +1384,9 @@ void applySteepAutoFilm(
             film.preset = "porcelain_400";
             film.process = "c41";
             film.output = "ra4";
-            film.strength = 35;
-            film.contrast = 7;
-            film.fade = -6;
+            film.strength = 60;
+            film.contrast = 5;
+            film.fade = -3;
             film.rolloff = 2;
             film.saturation -= 2;
             film.grain = std::min(film.grain, 17);
@@ -749,8 +1398,8 @@ void applySteepAutoFilm(
             film.preset = "golden_hour";
             film.process = "c41";
             film.output = "ra4";
-            film.strength = 39;
-            film.contrast = 5;
+            film.strength = 66;
+            film.contrast = 4;
             film.warmth = -1;
             film.halation = std::min(14, film.halation + 2);
             film.rolloff = std::max(film.rolloff, 2);
@@ -763,7 +1412,7 @@ void applySteepAutoFilm(
             if (film.preset == "vivid_chrome") {
                 film.process = "e6";
                 film.output = "projection";
-                film.strength = 30;
+                film.strength = 52;
                 film.contrast = -8;
                 film.fade = -3;
                 film.rolloff = -4;
@@ -771,8 +1420,8 @@ void applySteepAutoFilm(
             } else {
                 film.process = "c41";
                 film.output = "ra4";
-                film.strength = 36;
-                film.contrast = 6;
+                film.strength = 62;
+                film.contrast = 5;
             }
             film.grain = std::min(film.grain, 16);
             film.halation = std::min(film.halation, 10);
@@ -782,9 +1431,9 @@ void applySteepAutoFilm(
             film.preset = "cinematic_500t";
             film.process = "ecn2";
             film.output = "cinema";
-            film.strength = 39;
+            film.strength = 66;
             film.exposure = 0.08;
-            film.contrast = 10;
+            film.contrast = 8;
             film.fade = 6;
             film.rolloff = 4;
             film.warmth = -2;
@@ -796,9 +1445,9 @@ void applySteepAutoFilm(
             film.preset = "street_800";
             film.process = "c41";
             film.output = "ra4";
-            film.strength = 37;
+            film.strength = 63;
             film.contrast = 2;
-            film.fade = -10;
+            film.fade = -6;
             film.rolloff = 0;
             film.grain = std::min(30, film.grain + 4);
             film.halation = std::min(film.halation, 11);
@@ -806,6 +1455,13 @@ void applySteepAutoFilm(
         case AutoGradeScene::Neutral:
             break;
     }
+
+    // Grain is deliberately NOT part of the auto film recipe. The film
+    // stage is grain-free by design, and texture is a taste decision the
+    // user makes themselves through Effects > Grain - an auto edit that
+    // ships ~20 strength of grain on every frame took that choice away.
+    // (film.grain writes above are inert; they document per-scene intent
+    // for anyone who wants to dial grain in by hand.)
 
     const bool darkPrint = features.valid && features.medianLuma < 0.30;
     if (darkPrint) {
@@ -821,30 +1477,40 @@ void applySteepAutoFilm(
         film.contrast = std::min(film.contrast, darkFilmContrast);
     }
 
-    // Keep the technical exposure, stock response, and print curve in their
-    // own lanes. Protect highlight-rich frames with headroom, while allowing
-    // enough negative density for faces and middle values to stay luminous.
-    double exposureCeiling = 0.38;
-    double exposureFloor = -1.5;
-    if (features.medianLuma < 0.14) {
-        exposureCeiling = features.scene == AutoGradeScene::Night ? 1.35 : 1.65;
-        exposureFloor = features.scene == AutoGradeScene::Night ? 0.24 : 0.36;
-    } else if (features.medianLuma < 0.23) {
-        exposureCeiling = features.scene == AutoGradeScene::Night ? 1.15 : 1.45;
-        exposureFloor = features.scene == AutoGradeScene::Night ? 0.16 : 0.28;
-    } else if (features.medianLuma < 0.30) {
-        exposureCeiling = features.scene == AutoGradeScene::Night ? 0.95 : 1.20;
-        exposureFloor = features.scene == AutoGradeScene::Night ? 0.08 : 0.16;
-    } else if (features.highlightFraction > 0.22 || features.medianLuma > 0.62) {
-        exposureCeiling = 0.12;
-    } else if (features.highlightFraction > 0.14 || features.medianLuma > 0.55) {
-        exposureCeiling = 0.22;
+    // The exposure, the shadow lift and the tone curve belong to Auto Edit,
+    // and Auto Grade only ever nudges them. This used to be the one mode that
+    // overrode them instead: exposure clamped to +0.38EV (down to +0.12 on
+    // bright frames), brightness to 3, and the measured shadow lift — which
+    // Auto Edit derives from a real render and can take to 12 — crushed to 1.
+    //
+    // Those caps were calibrated against Film Lab v2, which barely changed the
+    // tone, plus a fixed print curve that lifted the upper mid tones (0.52 to
+    // 0.625) and quietly paid for them. Both are gone: v2's replacement
+    // carries a real system gamma that darkens everything below the pivot, and
+    // the lifting curve was removed. Keeping the caps on top of that is what
+    // made Auto Edit + Film land darker than Auto Edit alone on the same
+    // frame. Auto Edit measured the mid tone; let it own the result.
+    //
+    // Two things legitimately stay. The first is the dark-frame exposure
+    // FLOOR: a thin negative needs a longer print exposure, and v3's system
+    // gamma darkens everything under the pivot, so this matters more now than
+    // it did, not less. Only the ceiling above it was doing harm.
+    if (features.valid && features.medianLuma < 0.30) {
+        const bool night = features.scene == AutoGradeScene::Night;
+        double exposureFloor;
+        if (features.medianLuma < 0.14) {
+            exposureFloor = night ? 0.24 : 0.36;
+        } else if (features.medianLuma < 0.23) {
+            exposureFloor = night ? 0.16 : 0.28;
+        } else {
+            exposureFloor = night ? 0.08 : 0.16;
+        }
+        params.toneCurve.expcomp = std::max(params.toneCurve.expcomp, exposureFloor);
     }
-    params.toneCurve.expcomp = std::max(
-        exposureFloor,
-        std::min(params.toneCurve.expcomp, exposureCeiling));
-    params.toneCurve.brightness = std::min(params.toneCurve.brightness, 3);
-    params.sh.shadows = std::min(params.sh.shadows, features.scene == AutoGradeScene::Night ? 2 : 1);
+
+    // The second is the double-compression guard: film's shoulder and hlcompr
+    // both pull highlights down, and on a dark frame the input contrast and
+    // the print gamma both steepen the same mid tones.
     if (darkPrint) {
         const int inputContrastCeiling = features.dynamicRange < 0.18
             ? 10
@@ -855,16 +1521,21 @@ void applySteepAutoFilm(
     // Paper-grade compensation. Printing a flat negative through a soft film
     // recipe washes the image out — the darkroom answer is a harder paper
     // grade, not the same soft one. Estimate the wash-out risk from the
-    // source's measured flatness plus how soft this recipe ended up (lifted
-    // fade, low print contrast), then harden the print stage in proportion:
-    // firmer film contrast, less black-lift, and a print curve with a real
-    // toe and a steeper midsection.
-    double washRisk = 0.0;
+    // source's measured flatness plus how soft this recipe ended up, then
+    // harden the film stage in proportion: firmer contrast, less black lift,
+    // and a shorter print shoulder.
+    //
+    // This used to also spend its correction on an RGB master curve, whose
+    // upper segments ran at slope 0.82 and 0.70 and lifted 0.52 to 0.625 —
+    // measurably flattening and raising exactly the highlights that read as
+    // washed, and doing it *harder* the more wash it detected. The film
+    // output gamma owns print contrast now, so the curve is gone and the
+    // correction goes where the problem is.
     if (features.valid) {
         const double sourceFlatness = std::max(0.0, (0.55 - features.dynamicRange) / 0.55);
         const double fadeLift = std::max(0, film.fade) / 10.0;
         const double softContrast = std::max(0, 8 - film.contrast) / 16.0;
-        washRisk = std::min(1.0, 0.65 * sourceFlatness + 0.20 * fadeLift + 0.15 * softContrast);
+        const double washRisk = std::min(1.0, 0.65 * sourceFlatness + 0.20 * fadeLift + 0.15 * softContrast);
 
         if (washRisk > 0.25) {
             film.contrast = std::min(12, film.contrast + static_cast<int>(std::round(6.0 * washRisk)));
@@ -876,6 +1547,10 @@ void applySteepAutoFilm(
                 film.fade = std::max(-2, film.fade - static_cast<int>(std::round(8.0 * sourceFlatness)));
             }
 
+            // Shorten the print shoulder so highlights climb to white instead
+            // of settling below it, which is where wash actually shows.
+            film.rolloff = std::max(-12, film.rolloff - static_cast<int>(std::round(10.0 * washRisk)));
+
             // A washed print also reads desaturated; give the dyes a nudge.
             if (washRisk > 0.5) {
                 film.saturation = std::min(6, film.saturation + 2);
@@ -883,19 +1558,36 @@ void applySteepAutoFilm(
         }
     }
 
-    const double toeOut = (darkPrint ? 0.084 : 0.073) * (1.0 - 0.45 * washRisk);
-    const double lowerOut = (darkPrint ? 0.232 : 0.215) * (1.0 - 0.07 * washRisk);
-    const double upperOut = std::min(0.70, (darkPrint ? 0.642 : 0.625) * (1.0 + 0.07 * washRisk));
-    const double shoulderOut = std::min(0.90, (darkPrint ? 0.865 : 0.855) * (1.0 + 0.035 * washRisk));
-    params.rgbCurves.mastercurve = {
-        DCT_Spline,
-        0.0, 0.0,
-        0.08, toeOut,
-        0.20, lowerOut,
-        0.52, upperOut,
-        0.80, shoulderOut,
-        1.0, 0.995
-    };
+    // The film stock's own shoulder is now the highlight rendering. Leaving
+    // the exposure stage's highlight compression at up to 50 on top of it put
+    // three compressors in series (hlcompr, film shoulder, print curve), which
+    // is the rest of the wash.
+    //
+    // Shadow compression is NOT the mirror of that and must not be capped
+    // alongside it: shcompr lifts the darks while v3's print toe deepens them,
+    // so the two oppose rather than stack. Capping it here only made the
+    // shadows darker still.
+    params.toneCurve.hlcompr = std::min(params.toneCurve.hlcompr, 15);
+
+    // Film Lab v4 re-applies the display grading - the Contrast slider and
+    // the Auto Edit master S-curve - onto the film's own render as a print
+    // grade. Those numbers were tuned for a chain where they acted once; on
+    // top of the emulsion's H&D and the print gamma they read as over-
+    // separated and slightly dark, so hand back a share of each under film.
+    //
+    // The hand-back started at 0.55/0.60 and read FLAT: an S-curve is also
+    // a chroma amplifier (steep mids multiply channel differences), so film
+    // frames came back both softer and duller than graded ones. With the
+    // base and per-scene contrast trims carrying most of the correction
+    // now, film keeps 75% of the slider and 80% of the curve.
+    params.toneCurve.contrast = static_cast<int>(std::round(params.toneCurve.contrast * 0.75));
+
+    auto& master = params.rgbCurves.mastercurve;
+    if (master.size() > 5 && static_cast<int>(master[0]) == DCT_Spline) {
+        for (size_t i = 1; i + 1 < master.size(); i += 2) {
+            master[i + 1] = master[i] + (master[i + 1] - master[i]) * 0.80;
+        }
+    }
 }
 
 void prepareAutoLevelImageSource(
@@ -1426,6 +2118,39 @@ FileBrowser::FileBrowser () :
     int p = 0;
     pmenu = new Gtk::Menu ();
 
+    // GTK freezes a popup window's repaints until a configure event
+    // confirms each move/resize request. On Windows, a request the OS
+    // treats as a no-op is never confirmed, the freeze leaks, and the
+    // reused menu window stops repainting: fully frozen menus pop up
+    // BLANK, partially frozen ones mix stale and fresh pixels (the
+    // state-aware flag icons losing their pole after flag changes).
+    // A fresh native window cannot be frozen, so make every popup a
+    // first popup: destroy the menu's window whenever it closes.
+    pmenu->signal_hide().connect([this]() {
+        // A short timeout, not a default-priority idle: those starve for
+        // over a second under load and the guard then silently skipped,
+        // letting the next popup reuse the frozen window.
+        Glib::signal_timeout().connect([this]() -> bool {
+            if (!pmenu || pmenu->get_visible()) {
+                return false;  // reopened; the next hide re-arms
+            }
+            Gtk::Widget* top = pmenu->get_toplevel();
+            const bool doIt = top && top->get_realized() && !top->get_mapped();
+            if (g_getenv("STEEP_MENU_SELFTEST") || g_getenv("STEEP_MENU_WATCH")) {
+                if (FILE* log = fopen((Glib::get_tmp_dir() + "/steep_menu_log.txt").c_str(), "a")) {
+                    fprintf(log, "[hide] top=%p realized=%d mapped=%d -> unrealize=%d\n",
+                            (void*)top, top ? (int)top->get_realized() : -1,
+                            top ? (int)top->get_mapped() : -1, (int)doIt);
+                    fclose(log);
+                }
+            }
+            if (doIt) {
+                gtk_widget_unrealize(GTK_WIDGET(top->gobj()));
+            }
+            return false;
+        }, 30);
+    });
+
     /***********************
      * Inline quick actions at the very top: one-click flag / rank /
      * color-label for the whole selection, no submenu digging. The
@@ -1437,7 +2162,8 @@ FileBrowser::FileBrowser () :
         // items never receive clicks. The icons are plain images; presses
         // are hit-tested at the menu level against each icon's allocation.
         struct InlineZone {
-            Gtk::Widget* widget = nullptr;
+            Gtk::Widget* widget = nullptr;                      // fixed hit target
+            Gtk::Widget* visual = nullptr;                      // icon hover feedback
             std::function<void()> action;                       // click
             std::function<Gtk::MenuItem*()> hoverPreview;       // optional
             std::function<Gtk::Menu*()> hoverMenu;              // hover-opens options
@@ -1447,7 +2173,8 @@ FileBrowser::FileBrowser () :
         auto inlineZones = std::make_shared<std::vector<InlineZone>>();
 
         // Caption sits above its icon row in a small dim font, so the icons
-        // form a compact, evenly spaced strip underneath.
+        // form a compact, evenly spaced strip underneath. An empty caption
+        // yields a bare icon strip (flag/rank/color rows are self-evident).
         auto makeInlineRow = [](const Glib::ustring& caption) {
             auto* item = Gtk::manage(new Gtk::MenuItem());
             item->set_name("InlineActionRow");
@@ -1455,34 +2182,76 @@ FileBrowser::FileBrowser () :
             vbox->set_halign(Gtk::ALIGN_START);
             vbox->set_margin_top(2);
             vbox->set_margin_bottom(1);
-            auto* label = Gtk::manage(new Gtk::Label());
-            label->set_markup("<span size='9500' alpha='60%'>"
-                              + Glib::Markup::escape_text(caption) + "</span>");
-            label->set_xalign(0.0);
-            // PACK_SHRINK children center without explicit start alignment
-            label->set_halign(Gtk::ALIGN_START);
-            // Matches the first icon's glyph edge (6px widget margin plus
-            // the glyph centering inside the icon's allocation)
-            label->set_margin_start(9);
-            vbox->pack_start(*label, Gtk::PACK_SHRINK);
-            auto* row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 2));
+            if (!caption.empty()) {
+                auto* label = Gtk::manage(new Gtk::Label());
+                label->set_markup("<span size='9500' alpha='60%'>"
+                                  + Glib::Markup::escape_text(caption) + "</span>");
+                label->set_xalign(0.0);
+                label->set_halign(Gtk::ALIGN_START);
+                // Align exactly with the first action slot below.
+                label->set_margin_start(0);
+                vbox->pack_start(*label, Gtk::PACK_SHRINK);
+            }
+            auto* row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
             row->set_halign(Gtk::ALIGN_START);
             vbox->pack_start(*row, Gtk::PACK_SHRINK);
             item->add(*vbox);
+
+            // Native menu prelight covers the whole row and implies that
+            // caption/whitespace are clickable. Only icon slots are targets.
+            auto rowCss = Gtk::CssProvider::create();
+            rowCss->load_from_data(
+                "#InlineActionRow:hover, #InlineActionRow:active {"
+                " background-image: none;"
+                " background-color: transparent;"
+                "}");
+            item->get_style_context()->add_provider(
+                rowCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 300);
+
             return std::make_pair(item, row);
         };
 
         auto makeInlineImage = [](Gtk::Box* row, const char* icon) {
+            auto* slot = Gtk::manage(new Gtk::EventBox());
+            slot->set_visible_window(false);
+            // The slot must fit the DPI-SCALED icon. A hardcoded 28 was
+            // smaller than the icon at >100% display scaling, so icons
+            // overflowed and drew only their middle strip — with the pick
+            // flag's pole living or dying on a ±1px centering rounding
+            // that differed between first map and re-show.
+            const int slotSize = RTScalable::scalePixelSize(28);
+            slot->set_size_request(slotSize, slotSize);
+            slot->set_halign(Gtk::ALIGN_START);
+            slot->set_valign(Gtk::ALIGN_CENTER);
+
             auto* img = Gtk::manage(new RTImage(icon, Gtk::ICON_SIZE_LARGE_TOOLBAR));
-            img->set_margin_start(6);
-            img->set_margin_end(6);
-            img->set_margin_top(2);
-            img->set_margin_bottom(2);
+            // FILL, not CENTER: the image's natural size can measure
+            // smaller than the painted icon (8px wide under the theme),
+            // and a re-shown widget clips painting to its allocation —
+            // rendering only the icon's middle strip (a pick flag drawn
+            // without its pole). Filling the 28px slot keeps the
+            // allocation larger than anything the icon paints.
+            img->set_halign(Gtk::ALIGN_FILL);
+            img->set_valign(Gtk::ALIGN_FILL);
+            // The theme's `image { padding }` mis-measures these icons
+            // (width 8 for a 24px surface) and shifts the drawn surface
+            // off-center, which is what clipped the pick flag's pole.
+            // Zero the CSS box entirely for the inline icons.
+            static auto imgCss = []() {
+                auto p = Gtk::CssProvider::create();
+                p->load_from_data("image { padding: 0; margin: 0; border-width: 0; }");
+                return p;
+            }();
+            img->get_style_context()->add_provider(
+                imgCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 300);
             // Dimmed at rest; the hover tracker below raises the icon under
             // the pointer to full opacity so the target is unmistakable.
             img->set_opacity(0.65);
-            row->pack_start(*img, Gtk::PACK_SHRINK);
-            return img;
+            slot->add(*img);
+            row->pack_start(*slot, Gtk::PACK_SHRINK);
+            return std::make_pair(
+                static_cast<Gtk::Widget*>(slot),
+                static_cast<Gtk::Widget*>(img));
         };
 
         auto addInlineIcon = [this, inlineZones, makeInlineImage](
@@ -1490,9 +2259,10 @@ FileBrowser::FileBrowser () :
                                  const Glib::ustring& tooltip,
                                  std::function<Gtk::MenuItem*()> target,
                                  bool hoverPreviews = false) {
-            auto* img = makeInlineImage(row, icon);
+            const auto inlineImage = makeInlineImage(row, icon);
             InlineZone zone;
-            zone.widget = img;
+            zone.widget = inlineImage.first;
+            zone.visual = inlineImage.second;
             zone.tip = tooltip;
             zone.action = [this, target]() {
                 menuItemActivated(target());
@@ -1508,28 +2278,39 @@ FileBrowser::FileBrowser () :
                                    const Glib::ustring& tooltip,
                                    std::function<void()> action,
                                    bool keepMenuOpen = false) {
-            auto* img = makeInlineImage(row, icon);
+            const auto inlineImage = makeInlineImage(row, icon);
             InlineZone zone;
-            zone.widget = img;
+            zone.widget = inlineImage.first;
+            zone.visual = inlineImage.second;
             zone.tip = tooltip;
             zone.action = std::move(action);
             zone.keepMenuOpen = keepMenuOpen;
             inlineZones->push_back(std::move(zone));
         };
 
-        // Flags: pick / unflag / reject
-        auto flagRow = makeInlineRow(M("FILEBROWSER_POPUPFLAG"));
+        // Flags: pick / unflag / reject — each icon shows only when the
+        // selection isn't already in that state (rightClicked() toggles
+        // them per popup) — plus rotate ccw/cw to the right
+        auto flagRow = makeInlineRow("");
         addInlineIcon(flagRow.second, "menu-flag-pick", M("FILEBROWSER_POPUPPICK"),
                       [this]() -> Gtk::MenuItem* { return pickFlag; });
+        inlineFlagPickIcon_ = inlineZones->back().widget;
         addInlineIcon(flagRow.second, "menu-flag-unflagged", M("FILEBROWSER_POPUPUNFLAG"),
                       [this]() -> Gtk::MenuItem* { return unflagFlag; });
+        inlineFlagUnflagIcon_ = inlineZones->back().widget;
         addInlineIcon(flagRow.second, "menu-flag-reject", M("FILEBROWSER_POPUPREJECT"),
                       [this]() -> Gtk::MenuItem* { return rejectFlag; });
+        inlineFlagRejectIcon_ = inlineZones->back().widget;
+        addInlineAction(flagRow.second, "rotate-left-90", M("TP_COARSETRAF_TOOLTIP_ROTLEFT"),
+                        [this]() { requestRotateSelected(270); });
+        inlineZones->back().widget->set_margin_start(10);
+        addInlineAction(flagRow.second, "rotate-right-90", M("TP_COARSETRAF_TOOLTIP_ROTRIGHT"),
+                        [this]() { requestRotateSelected(90); });
         pmenu->attach(*flagRow.first, 0, 1, p, p + 1);
         p++;
 
         // Rank: none + 1..5 stars
-        auto rankRow = makeInlineRow(M("FILEBROWSER_POPUPRANK"));
+        auto rankRow = makeInlineRow("");
         addInlineIcon(rankRow.second, "menu-star-empty", M("FILEBROWSER_POPUPUNRANK"),
                       [this]() -> Gtk::MenuItem* { return rank[0]; });
         for (int i = 1; i <= 5; i++) {
@@ -1546,7 +2327,7 @@ FileBrowser::FileBrowser () :
             "circle-empty-gray-small", "circle-red-small", "circle-yellow-small",
             "circle-green-small", "circle-blue-small", "circle-purple-small"
         };
-        auto colorRow = makeInlineRow(M("FILEBROWSER_POPUPCOLORLABEL"));
+        auto colorRow = makeInlineRow("");
         for (int i = 0; i <= 5; i++) {
             addInlineIcon(colorRow.second, inlineClabelIcons[i],
                           M(Glib::ustring::compose("FILEBROWSER_POPUPCOLORLABEL%1", i)),
@@ -1605,6 +2386,8 @@ FileBrowser::FileBrowser () :
         auto actionsRow = makeInlineRow(M("FILEBROWSER_POPUPACTIONS"));
         addInlineIcon(actionsRow.second, "menu-open", M("FILEBROWSER_POPUPOPEN"),
                       [this]() -> Gtk::MenuItem* { return open; });
+        addInlineAction(actionsRow.second, "folder-open-small", M("FILEBROWSER_OPENSOURCEFOLDER"),
+                        [this]() { openSourceFolder(); });
         addInlineIcon(actionsRow.second, "gears", M("FILEBROWSER_POPUPPROCESS"),
                       [this]() -> Gtk::MenuItem* { return develop; });
         addInlineAction(actionsRow.second, "menu-save", M("FILEBROWSER_POPUPSAVEIMAGE"),
@@ -1619,29 +2402,12 @@ FileBrowser::FileBrowser () :
         pmenu->attach(*actionsRow.first, 0, 1, p, p + 1);
         p++;
 
-        // Rotate: counter-clockwise / clockwise (moved from the toolbar)
-        auto rotateRow = makeInlineRow(M("FILEBROWSER_POPUPROTATE"));
-        addInlineAction(rotateRow.second, "rotate-left-90", M("TP_COARSETRAF_TOOLTIP_ROTLEFT"),
-                        [this]() { requestRotateSelected(270); });
-        addInlineAction(rotateRow.second, "rotate-right-90", M("TP_COARSETRAF_TOOLTIP_ROTRIGHT"),
-                        [this]() { requestRotateSelected(90); });
-        pmenu->attach(*rotateRow.first, 0, 1, p, p + 1);
-        p++;
-
         pmenu->attach(*Gtk::manage(new Gtk::SeparatorMenuItem()), 0, 1, p, p + 1);
         p++;
 
-        // Padded so a row has no dead zones: any click along the row lands
-        // on an icon. Zone origins come from translate_coordinates to the
-        // toplevel (allocation+window-origin math double-counted the menu's
-        // internal offsets). Among all padded rects containing the point,
-        // the zone whose CENTER is closest wins — first-match let a
-        // neighbor's padding steal clicks from the left edge of the icon
-        // actually under the pointer.
+        // Hit-test each fixed slot exactly. The former padded image
+        // rectangles overlapped neighboring actions and their captions.
         auto hitZoneAt = [inlineZones](double xRoot, double yRoot) -> InlineZone* {
-            InlineZone* best = nullptr;
-            double bestDist = 0.0;
-
             for (auto& zone : *inlineZones) {
                 Gtk::Widget* widget = zone.widget;
                 if (!widget->get_visible()) {
@@ -1666,17 +2432,11 @@ FileBrowser::FileBrowser () :
                 const double ix = xRoot - (topX + inTopX);
                 const double iy = yRoot - (topY + inTopY);
 
-                if (ix >= -7.0 && iy >= -7.0 && ix < w + 7.0 && iy < h + 7.0) {
-                    const double dx = ix - w / 2.0;
-                    const double dy = iy - h / 2.0;
-                    const double dist = dx * dx + dy * dy;
-                    if (!best || dist < bestDist) {
-                        best = &zone;
-                        bestDist = dist;
-                    }
+                if (ix >= 0.0 && iy >= 0.0 && ix < w && iy < h) {
+                    return &zone;
                 }
             }
-            return best;
+            return nullptr;
         };
 
         pmenu->signal_button_press_event().connect(
@@ -1708,11 +2468,101 @@ FileBrowser::FileBrowser () :
             InlineZone* zone = nullptr;
             sigc::connection tipTimer;
             sigc::connection menuTimer;
+            sigc::connection menuPoll;
             Gtk::Menu* openSubmenu = nullptr;
             double pointerX = 0.0;
             double pointerY = 0.0;
         };
         auto hoverState = std::make_shared<HoverState>();
+
+        // While a tools submenu is open it owns the input grab, and native
+        // Windows popups deliver motion to it sparsely and unreliably - the
+        // motion-driven close below sometimes never fired at all. So the
+        // authoritative open/close decision is this 35ms GDK pointer poll
+        // (same pattern that fixed the auto-edit hover previews): stay open
+        // over the submenu or its anchor icon, close the moment the pointer
+        // rests anywhere else over the context menu, stay for click-away
+        // when it leaves both windows.
+        auto startToolsMenuPoll = std::make_shared<std::function<void(Gtk::Menu*, Gtk::Widget*)>>();
+        *startToolsMenuPoll = [this, hoverState](Gtk::Menu* sub, Gtk::Widget* anchor) {
+            hoverState->menuPoll.disconnect();
+            hoverState->menuPoll = Glib::signal_timeout().connect(
+                [this, hoverState, sub, anchor]() -> bool {
+                    if (hoverState->openSubmenu != sub || !sub->get_visible()) {
+                        return false;
+                    }
+
+                    auto subWindow = sub->get_window();
+                    auto display = sub->get_display();
+                    if (!subWindow || !display) {
+                        return true;
+                    }
+                    auto seat = display->get_default_seat();
+                    auto device = seat ? seat->get_pointer() : Glib::RefPtr<Gdk::Device>();
+                    if (!device) {
+                        return true;
+                    }
+
+                    int rootX = 0;
+                    int rootY = 0;
+                    gdk_device_get_position(device->gobj(), nullptr, &rootX, &rootY);
+
+                    int subX = 0;
+                    int subY = 0;
+                    subWindow->get_origin(subX, subY);
+                    const int subW = sub->get_allocated_width();
+                    const int subH = sub->get_allocated_height();
+                    constexpr int pad = 14;
+
+                    if (rootX >= subX - pad && rootY >= subY - pad
+                            && rootX < subX + subW + pad && rootY < subY + subH + pad) {
+                        return true;
+                    }
+
+                    if (anchor) {
+                        if (auto anchorWindow = anchor->get_window()) {
+                            int ax = 0;
+                            int ay = 0;
+                            anchorWindow->get_origin(ax, ay);
+                            const auto alloc = anchor->get_allocation();
+                            const int ax0 = ax + alloc.get_x() - pad;
+                            const int ay0 = ay + alloc.get_y() - pad;
+                            const int ax1 = ax + alloc.get_x() + alloc.get_width() + pad;
+                            const int ay1 = ay + alloc.get_y() + alloc.get_height() + pad;
+
+                            if (rootX >= ax0 && rootY >= ay0 && rootX < ax1 && rootY < ay1) {
+                                return true;
+                            }
+                        }
+                    }
+
+                    if (auto menuWindow = pmenu->get_window()) {
+                        int px = 0;
+                        int py = 0;
+                        menuWindow->get_origin(px, py);
+                        const int pw = pmenu->get_allocated_width();
+                        const int ph = pmenu->get_allocated_height();
+
+                        if (rootX >= px && rootY >= py && rootX < px + pw && rootY < py + ph) {
+                            sub->popdown();
+                            if (hoverState->openSubmenu == sub) {
+                                hoverState->openSubmenu = nullptr;
+                            }
+                            return false;
+                        }
+                    }
+
+                    return true;
+                },
+                35,
+                G_PRIORITY_DEFAULT_IDLE);
+        };
+
+        // Remembers the item last chosen from each tools submenu, so clicking
+        // that tool's icon again repeats it instead of making the user walk
+        // the submenu a second time. Hovering still opens the menu to pick
+        // something else.
+        auto lastToolChoice = std::make_shared<std::map<Gtk::Menu*, Gtk::MenuItem*>>();
 
         if (!inlineTipWindow_) {
             inlineTipWindow_ = new Gtk::Window(Gtk::WINDOW_POPUP);
@@ -1734,7 +2584,7 @@ FileBrowser::FileBrowser () :
             }
         };
 
-        auto setHover = [this, hoverState, hideTip](InlineZone* hovered, double x, double y) {
+        auto setHover = [this, hoverState, hideTip, startToolsMenuPoll](InlineZone* hovered, double x, double y) {
             hoverState->pointerX = x;
             hoverState->pointerY = y;
 
@@ -1744,19 +2594,25 @@ FileBrowser::FileBrowser () :
 
             hideTip();
 
+            // queue_draw the whole slot, not just the image: the theme can
+            // shrink the image's own clip below the painted icon, and a
+            // partial repaint of that strip mixes fresh and stale pixels
+            // on Windows' reused menu backing store.
             InlineZone* previous = hoverState->zone;
             if (previous) {
-                previous->widget->set_opacity(0.65);
+                previous->visual->set_opacity(0.65);
+                previous->widget->queue_draw();
             }
             hoverState->zone = hovered;
             if (hovered) {
-                hovered->widget->set_opacity(1.0);
+                hovered->visual->set_opacity(1.0);
+                hovered->widget->queue_draw();
 
                 if (hovered->hoverMenu) {
                     // Hovering a tools icon opens its options menu below the
                     // icon (no tooltip for these — the menu IS the answer)
                     hoverState->menuTimer = Glib::signal_timeout().connect(
-                        [this, hoverState]() -> bool {
+                        [this, hoverState, startToolsMenuPoll]() -> bool {
                             InlineZone* zone = hoverState->zone;
                             if (zone && zone->hoverMenu) {
                                 if (hoverState->openSubmenu) {
@@ -1769,6 +2625,7 @@ FileBrowser::FileBrowser () :
                                                          Gdk::GRAVITY_SOUTH_WEST,
                                                          Gdk::GRAVITY_NORTH_WEST,
                                                          nullptr);
+                                    (*startToolsMenuPoll)(sub, zone->widget);
                                 }
                             }
                             return false;
@@ -1812,7 +2669,15 @@ FileBrowser::FileBrowser () :
             },
             false);
         pmenu->signal_leave_notify_event().connect(
-            [setHover](GdkEventCrossing* event) -> bool {
+            [setHover, hoverState](GdkEventCrossing* event) -> bool {
+                // Moving onto an open tools submenu leaves pmenu's window.
+                // Dropping the hover here would cancel the icon highlight and
+                // the hover machinery mid-travel, so keep it while that menu
+                // is up — it closes on click-away, Escape, or a choice.
+                if (hoverState->openSubmenu) {
+                    return false;
+                }
+
                 setHover(nullptr,
                          event ? event->x_root : 0.0,
                          event ? event->y_root : 0.0);
@@ -2353,27 +3218,55 @@ FileBrowser::FileBrowser () :
         // open-with, dark frame, flat field, cache)
         {
             auto addSubmenuTool = [this, inlineZones, makeInlineImage,
-                                   hitZoneAt, setHover, hoverState](
+                                   hitZoneAt, setHover, hoverState, lastToolChoice,
+                                   startToolsMenuPoll](
                                       Gtk::Box* row, const char* icon,
                                       const Glib::ustring& tooltip,
                                       std::function<Gtk::MenuItem*()> parent) {
-                auto* img = makeInlineImage(row, icon);
+                const auto inlineImage = makeInlineImage(row, icon);
+                auto* slot = inlineImage.first;
                 const auto getMenu = [parent]() -> Gtk::Menu* {
                     Gtk::MenuItem* item = parent();
                     return item ? item->get_submenu() : nullptr;
                 };
                 InlineZone zone;
-                zone.widget = img;
+                zone.widget = slot;
+                zone.visual = inlineImage.second;
                 zone.tip = tooltip;
                 zone.keepMenuOpen = true;
                 zone.hoverMenu = getMenu;
-                zone.action = [img, getMenu]() {
-                    if (Gtk::Menu* sub = getMenu()) {
-                        sub->popup_at_widget(img,
-                                             Gdk::GRAVITY_SOUTH_WEST,
-                                             Gdk::GRAVITY_NORTH_WEST,
-                                             nullptr);
+                zone.action = [this, slot, getMenu, hoverState, lastToolChoice, startToolsMenuPoll]() {
+                    Gtk::Menu* sub = getMenu();
+
+                    if (!sub) {
+                        return;
                     }
+
+                    // Second click on the icon repeats the last choice made
+                    // from this menu — the common case is doing the same file
+                    // operation to several images in a row.
+                    const auto remembered = lastToolChoice->find(sub);
+
+                    if (remembered != lastToolChoice->end() && remembered->second
+                            && remembered->second->get_sensitive()) {
+                        Gtk::MenuItem* const repeat = remembered->second;
+
+                        if (hoverState->openSubmenu) {
+                            hoverState->openSubmenu->popdown();
+                            hoverState->openSubmenu = nullptr;
+                        }
+
+                        pmenu->popdown();
+                        repeat->activate();
+                        return;
+                    }
+
+                    hoverState->openSubmenu = sub;
+                    sub->popup_at_widget(slot,
+                                         Gdk::GRAVITY_SOUTH_WEST,
+                                         Gdk::GRAVITY_NORTH_WEST,
+                                         nullptr);
+                    (*startToolsMenuPoll)(sub, slot);
                 };
                 inlineZones->push_back(std::move(zone));
 
@@ -2382,6 +3275,15 @@ FileBrowser::FileBrowser () :
                 // moving over a different tools icon switches menus, moving
                 // back over other menu rows closes this one.
                 if (Gtk::Menu* sub = getMenu()) {
+                    // Remember what gets picked here so the icon can repeat it.
+                    for (Gtk::Widget* child : sub->get_children()) {
+                        if (auto* item = dynamic_cast<Gtk::MenuItem*>(child)) {
+                            item->signal_activate().connect([lastToolChoice, sub, item]() {
+                                (*lastToolChoice)[sub] = item;
+                            });
+                        }
+                    }
+
                     sub->add_events(Gdk::POINTER_MOTION_MASK);
                     sub->signal_motion_notify_event().connect(
                         [this, sub, hitZoneAt, setHover, hoverState](GdkEventMotion* event) -> bool {
@@ -2389,26 +3291,67 @@ FileBrowser::FileBrowser () :
                                 return false;
                             }
 
-                            // Pointer inside the submenu itself: leave it be
                             if (auto win = sub->get_window()) {
                                 int wx = 0;
                                 int wy = 0;
                                 win->get_origin(wx, wy);
+                                const int mw = sub->get_allocated_width();
+                                const int mh = sub->get_allocated_height();
+
+                                // Pointer inside the submenu itself: leave it
+                                // be so GTK highlights the item under it.
                                 if (event->x_root >= wx && event->y_root >= wy
-                                        && event->x_root < wx + sub->get_allocated_width()
-                                        && event->y_root < wy + sub->get_allocated_height()) {
+                                        && event->x_root < wx + mw
+                                        && event->y_root < wy + mh) {
                                     return false;
+                                }
+
+                                // Crossing the gap between the icon and the
+                                // menu. This submenu belongs to pmenu's shell,
+                                // so forwarding motion here lets GTK select
+                                // whatever pmenu row is under the pointer and
+                                // pop the menu down mid-travel. Swallow it:
+                                // the menu must survive the journey into it.
+                                constexpr int travelMargin = 16;
+
+                                if (event->x_root >= wx - travelMargin
+                                        && event->y_root >= wy - travelMargin
+                                        && event->x_root < wx + mw + travelMargin
+                                        && event->y_root < wy + mh + travelMargin) {
+                                    return true;
                                 }
                             }
 
-                            // Only ever SWITCH to another tools menu from
-                            // here — never close. The open menu must stay
-                            // open and selectable however the pointer
-                            // travels into it; it closes via click-away,
-                            // Escape, or choosing an item.
+                            // Well away from the menu. Another tools icon
+                            // switches menus; anywhere else over the context
+                            // menu CLOSES this one — while it is up it owns
+                            // the input grab, so leaving it open deadened
+                            // every other row until a click-away. Outside
+                            // both windows it stays for click-away/Escape.
                             InlineZone* over = hitZoneAt(event->x_root, event->y_root);
                             if (over && over->hoverMenu) {
                                 setHover(over, event->x_root, event->y_root);
+                                return false;
+                            }
+
+                            if (auto pwin = pmenu->get_window()) {
+                                int px = 0;
+                                int py = 0;
+                                pwin->get_origin(px, py);
+                                const int pw = pmenu->get_allocated_width();
+                                const int ph = pmenu->get_allocated_height();
+
+                                if (event->x_root >= px && event->y_root >= py
+                                        && event->x_root < px + pw
+                                        && event->y_root < py + ph) {
+                                    sub->popdown();
+                                    if (hoverState->openSubmenu == sub) {
+                                        hoverState->openSubmenu = nullptr;
+                                    }
+                                    // Hand the row under the pointer its
+                                    // normal hover behaviour immediately.
+                                    setHover(over, event->x_root, event->y_root);
+                                }
                             }
                             return false;
                         },
@@ -2416,6 +3359,7 @@ FileBrowser::FileBrowser () :
                     sub->signal_deactivate().connect([sub, hoverState]() {
                         if (hoverState->openSubmenu == sub) {
                             hoverState->openSubmenu = nullptr;
+                            hoverState->menuPoll.disconnect();
                         }
                     });
                 }
@@ -2581,7 +3525,7 @@ FileBrowser::FileBrowser () :
     autoGradeFilm->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), autoGradeFilm));
     autoGradedFilm->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuItemActivated), autoGradedFilm));
     auto* autoEditSubmenu = dynamic_cast<Gtk::Menu*>(autoEditMenu->get_submenu());
-    autoEditMenu->signal_select().connect([this, autoEditSubmenu]() {
+    const auto armAutoEditHoverTracking = [this, autoEditSubmenu]() {
         if (!autoEditSubmenu) {
             return;
         }
@@ -2642,7 +3586,18 @@ FileBrowser::FileBrowser () :
             },
             35,
             G_PRIORITY_DEFAULT_IDLE);
-    });
+    };
+    // The submenu opens two ways: keyboard/pointer selection of the parent
+    // item, and the inline "Auto looks" icon's hover-menu, which calls
+    // popup_at_widget and never fires the parent's select signal. The
+    // pointer poll is the only reliable hover source on native Windows
+    // popups, so arm it from the submenu's own map signal - that fires for
+    // every opening path - and keep the select hook for redundancy (arming
+    // twice is safe: it replaces the previous poll connection).
+    autoEditMenu->signal_select().connect(armAutoEditHoverTracking);
+    if (autoEditSubmenu) {
+        autoEditSubmenu->signal_map().connect(armAutoEditHoverTracking);
+    }
     autoGrade->signal_select().connect(sigc::bind(sigc::mem_fun(*this, &FileBrowser::startAutoEditHoverPreview), autoGrade));
     autoGradeFilm->signal_select().connect(sigc::bind(sigc::mem_fun(*this, &FileBrowser::startAutoEditHoverPreview), autoGradeFilm));
     autoGradedFilm->signal_select().connect(sigc::bind(sigc::mem_fun(*this, &FileBrowser::startAutoEditHoverPreview), autoGradedFilm));
@@ -2714,6 +3669,192 @@ FileBrowser::FileBrowser () :
     for (int i = 0; i <= 5; i++) {
         colorlabel_pop[i]->signal_activate().connect (sigc::bind(sigc::mem_fun(*this, &FileBrowser::menuColorlabelActivated), colorlabel_pop[i]));
     }
+
+#ifdef _WIN32
+    // STEEP_MENU_SELFTEST=1: autonomously reproduce the flag-row
+    // hide/reshow popup cycle and dump true screen pixels (CAPTUREBLT
+    // catches layered menu windows) plus widget states to %TEMP%.
+    // Diagnostic-only; inert without the env var.
+    if (g_getenv("STEEP_MENU_SELFTEST") || g_getenv("STEEP_MENU_WATCH")) {
+        auto dump = [this](const char* tag) {
+            const std::string logPath = Glib::get_tmp_dir() + "/steep_menu_log.txt";
+            FILE* log = fopen(logPath.c_str(), "a");
+            auto win = pmenu->get_window();
+            if (!win) {
+                if (log) { fprintf(log, "[%s] no window\n", tag); fclose(log); }
+                return;
+            }
+            HWND hwnd = (HWND)GDK_WINDOW_HWND(win->gobj());
+            // Only synthetic (event-less) popups can open BELOW the main
+            // window; raise those so the grab captures the menu. Real
+            // popups are already topmost — leave their z-order alone.
+            if (g_getenv("STEEP_MENU_SELFTEST")) {
+                SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                             SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                Sleep(60);
+            }
+            RECT r;
+            GetWindowRect(hwnd, &r);
+            const int w = r.right - r.left, h = r.bottom - r.top;
+            HDC sdc = GetDC(nullptr);
+            HDC mdc = CreateCompatibleDC(sdc);
+            HBITMAP bmp = CreateCompatibleBitmap(sdc, w, h);
+            SelectObject(mdc, bmp);
+            BitBlt(mdc, 0, 0, w, h, sdc, r.left, r.top, SRCCOPY | CAPTUREBLT);
+            BITMAPINFO bi = {};
+            bi.bmiHeader.biSize = sizeof(bi.bmiHeader);
+            bi.bmiHeader.biWidth = w;
+            bi.bmiHeader.biHeight = -h;
+            bi.bmiHeader.biPlanes = 1;
+            bi.bmiHeader.biBitCount = 32;
+            bi.bmiHeader.biCompression = BI_RGB;
+            auto surf = Cairo::ImageSurface::create(Cairo::FORMAT_RGB24, w, h);
+            GetDIBits(mdc, bmp, 0, h, surf->get_data(), &bi, DIB_RGB_COLORS);
+            surf->mark_dirty();
+            // GTK's own belief of the same instant: offscreen widget draw
+            // (must run on the GUI thread; it is small and fast).
+            Gtk::Allocation ma = pmenu->get_allocation();
+            auto ws = Cairo::ImageSurface::create(
+                Cairo::FORMAT_ARGB32,
+                std::max(1, ma.get_width()), std::max(1, ma.get_height()));
+            {
+                auto wcr = Cairo::Context::create(ws);
+                wcr->set_source_rgb(0.06, 0.08, 0.16);
+                wcr->paint();
+                gtk_widget_draw(GTK_WIDGET(pmenu->gobj()), wcr->cobj());
+            }
+            // PNG encoding is the slow part — keep it off the GUI thread.
+            std::thread([surf, ws, tagStr = std::string(tag)]() {
+                surf->write_to_png(Glib::get_tmp_dir() + "/steep_menu_" + tagStr + ".png");
+                ws->write_to_png(Glib::get_tmp_dir() + "/steep_menu_" + tagStr + "_widget.png");
+            }).detach();
+            DeleteObject(bmp);
+            DeleteDC(mdc);
+            ReleaseDC(nullptr, sdc);
+            if (log) {
+                fprintf(log, "[%s] hwnd=%p hwndVisible=%d rect=(%ld,%ld %dx%d)\n",
+                        tag, (void*)hwnd, (int)IsWindowVisible(hwnd), r.left, r.top, w, h);
+                int i = 0;
+                for (Gtk::Widget* slot : {inlineFlagPickIcon_, inlineFlagUnflagIcon_, inlineFlagRejectIcon_}) {
+                    Gtk::Allocation a = slot->get_allocation();
+                    Gtk::Widget* img = dynamic_cast<Gtk::Bin*>(slot)
+                        ? static_cast<Gtk::Bin*>(slot)->get_child() : nullptr;
+                    Gtk::Allocation ia = img ? img->get_allocation() : Gtk::Allocation();
+                    int minW = -1, natW = -1, minH = -1, natH = -1;
+                    int st = -1, sw = -1, sh = -1;
+                    double dsx = 0.0, dsy = 0.0;
+                    if (img) {
+                        img->get_preferred_width(minW, natW);
+                        img->get_preferred_height(minH, natH);
+                        GtkImage* gi = GTK_IMAGE(img->gobj());
+                        st = (int)gtk_image_get_storage_type(gi);
+                        if (st == GTK_IMAGE_SURFACE) {
+                            cairo_surface_t* cs = nullptr;
+                            g_object_get(gi, "surface", &cs, nullptr);
+                            if (cs) {
+                                sw = cairo_image_surface_get_width(cs);
+                                sh = cairo_image_surface_get_height(cs);
+                                cairo_surface_get_device_scale(cs, &dsx, &dsy);
+                                cairo_surface_destroy(cs);
+                            }
+                        }
+                    }
+                    fprintf(log,
+                        "[%s] slot%d vis=%d map=%d a=(%d,%d %dx%d) img map=%d a=(%d,%d %dx%d) op=%.2f pref=(%d/%d x %d/%d) st=%d surf=%dx%d ds=(%.2f,%.2f)\n",
+                        tag, i++, (int)slot->get_visible(), (int)slot->get_mapped(),
+                        a.get_x(), a.get_y(), a.get_width(), a.get_height(),
+                        img ? (int)img->get_mapped() : -1,
+                        ia.get_x(), ia.get_y(), ia.get_width(), ia.get_height(),
+                        img ? img->get_opacity() : -1.0,
+                        minW, natW, minH, natH, st, sw, sh, dsx, dsy);
+                }
+                fclose(log);
+            }
+        };
+        // STEEP_MENU_WATCH: dump on every REAL popup (map), once, with
+        // rolling ids — reproduce the artifact by hand and the dumps
+        // capture screen truth vs GTK's render at the same instant.
+        if (g_getenv("STEEP_MENU_WATCH")) {
+            auto watchCount = std::make_shared<int>(0);
+            pmenu->signal_map().connect([this, watchCount, dump]() {
+                const int id = ++(*watchCount);
+                Glib::signal_timeout().connect_once([this, id, dump]() {
+                    if (pmenu->get_mapped()) {
+                        dump(("w" + std::to_string(id)).c_str());
+                    }
+                }, 450);
+            });
+        }
+
+        if (g_getenv("STEEP_MENU_SELFTEST")) {
+        auto stage = std::make_shared<int>(0);
+        // Vary the popup position per stage: a same-rect re-popup never
+        // gets a configure event, so GTK's freeze-until-configure keeps
+        // the window from ever painting — a real pathology, but not the
+        // user's (real popups open at the moving pointer).
+        auto popupAt = [this](int xOff) {
+            Gdk::Rectangle r(40 + xOff, 40, 1, 1);
+            pmenu->popup_at_rect(get_window(), r,
+                                 Gdk::GRAVITY_SOUTH_WEST,
+                                 Gdk::GRAVITY_NORTH_WEST, nullptr);
+        };
+        auto pickImage = [this]() -> Gtk::Widget* {
+            auto* bin = dynamic_cast<Gtk::Bin*>(inlineFlagPickIcon_);
+            return bin ? bin->get_child() : nullptr;
+        };
+        Glib::signal_timeout().connect([this, stage, dump, popupAt, pickImage]() -> bool {
+            switch (*stage) {
+            case 0:
+                if (!get_mapped()) {
+                    return true;  // wait for the browser to be on screen
+                }
+                popupAt(0);
+                break;
+            case 1:
+                dump("s1_all");
+                pmenu->popdown();
+                inlineFlagPickIcon_->set_visible(false);
+                break;
+            case 2:
+                popupAt(60);
+                break;
+            case 3:
+                dump("s2_pickhidden");
+                pmenu->popdown();
+                inlineFlagPickIcon_->set_visible(true);
+                inlineFlagUnflagIcon_->set_visible(false);
+                break;
+            case 4:
+                popupAt(120);
+                break;
+            case 5:
+                dump("s3_reshown");
+                // simulate the pointer poll raising the icon under the
+                // pointer, exactly like setHover does
+                if (auto* img = pickImage()) {
+                    img->set_opacity(1.0);
+                    inlineFlagPickIcon_->queue_draw();
+                }
+                break;
+            case 6:
+                dump("s4_hover_on");
+                if (auto* img = pickImage()) {
+                    img->set_opacity(0.65);
+                    inlineFlagPickIcon_->queue_draw();
+                }
+                break;
+            case 7:
+                dump("s5_hover_off");
+                pmenu->popdown();
+                inlineFlagUnflagIcon_->set_visible(true);
+                return false;
+            }
+            ++(*stage);
+            return true;
+        }, 700);
+        }
+    }
+#endif
 }
 
 FileBrowser::~FileBrowser ()
@@ -2857,6 +3998,29 @@ void FileBrowser::rightClicked ()
             inlineAddToAlbumIcon_->set_visible(available);
         }
 
+        // Flag icons: offer only the transitions that would change
+        // something — an icon hides when every selected image already
+        // carries that pick state.
+        {
+            // Empty selection degrades to the unflagged default.
+            bool anyNotPicked = selected.empty(), anyNotUnflagged = false, anyNotRejected = selected.empty();
+            for (const auto entry : selected) {
+                const int pick = entry->thumbnail ? entry->thumbnail->getPick() : 0;
+                anyNotPicked   |= pick != 1;
+                anyNotUnflagged |= pick != 0;
+                anyNotRejected |= pick != -1;
+            }
+            if (inlineFlagPickIcon_) {
+                inlineFlagPickIcon_->set_visible(anyNotPicked);
+            }
+            if (inlineFlagUnflagIcon_) {
+                inlineFlagUnflagIcon_->set_visible(anyNotUnflagged);
+            }
+            if (inlineFlagRejectIcon_) {
+                inlineFlagRejectIcon_->set_visible(anyNotRejected);
+            }
+        }
+
         if (isInAlbumMode_ && isInAlbumMode_() && selected.size() == 1) {
             setAlbumCover->show();
         } else {
@@ -2948,7 +4112,17 @@ void FileBrowser::markEntryIndexDirty_()
 
 void FileBrowser::startAutoEditHoverPreview(Gtk::MenuItem* item)
 {
+    const auto itemName = [this](Gtk::MenuItem* which) -> const char* {
+        return which == autoGradedFilm ? "gradedFilm"
+            : which == autoGradeFilm ? "gradeFilm"
+            : which == autoGrade ? "grade"
+            : which == autoEditMenu ? "parent"
+            : which ? "other" : "null";
+    };
+
     if (!item || quickActionRunning_) {
+        fileBrowserPerfLog("[autoEditHover] enter item=%s REJECT quickAction=%d\n",
+                           itemName(item), quickActionRunning_ ? 1 : 0);
         return;
     }
     // Native popup themes may clear GTK's implicit prelight between motion
@@ -2958,15 +4132,26 @@ void FileBrowser::startAutoEditHoverPreview(Gtk::MenuItem* item)
             && (autoEditHoverDelayConnection_.connected()
                 || autoEditHoverInFlight_
                 || !autoEditHoverPreviewFile_.empty())) {
+        fileBrowserPerfLog(
+            "[autoEditHover] enter item=%s LATCHED delay=%d inflight=%d preview='%s'\n",
+            itemName(item),
+            autoEditHoverDelayConnection_.connected() ? 1 : 0,
+            autoEditHoverInFlight_ ? 1 : 0,
+            autoEditHoverPreviewFile_.c_str());
         return;
     }
 
+    fileBrowserPerfLog("[autoEditHover] enter item=%s ARM (was item=%s)\n",
+                       itemName(item), itemName(autoEditHoverItem_));
     cancelAutoEditHoverPreview(nullptr, true);
     autoEditHoverItem_ = item;
 
     autoEditHoverDelayConnection_ = Glib::signal_timeout().connect(
         [this, item]() -> bool {
             if (autoEditHoverItem_ != item || quickActionRunning_) {
+                fileBrowserPerfLog("[autoEditHover] delay DROPPED itemChanged=%d quickAction=%d\n",
+                                   autoEditHoverItem_ != item ? 1 : 0,
+                                   quickActionRunning_ ? 1 : 0);
                 return false;
             }
 
@@ -3031,8 +4216,16 @@ void FileBrowser::startAutoEditHoverPreview(Gtk::MenuItem* item)
                             "[autoEditHover] editor-preview %s file=%s\n",
                             editorApplied ? "applied" : "no-matching-editor",
                             filename.c_str());
-                        autoEditHoverInFlight_ = false;
-                        autoEditHoverPreviewFile_ = filename;
+                        // Only an editor that actually took the preview may
+                        // claim the "already showing" latch. Setting it here
+                        // unconditionally - before the thumbnail render even
+                        // finished - wedged the hover: a first-attempt render
+                        // failure left nothing visible while the same-item
+                        // guard blocked every re-hover until the pointer
+                        // visited a different item.
+                        if (editorApplied) {
+                            autoEditHoverPreviewFile_ = filename;
+                        }
                         return false;
                     });
 
@@ -3043,6 +4236,25 @@ void FileBrowser::startAutoEditHoverPreview(Gtk::MenuItem* item)
 
                 if (!image || generationState->load(std::memory_order_acquire) != generation) {
                     delete image;
+
+                    // A failed render must unlatch, or the same-item guard
+                    // turns one transient failure (thumb source not resident
+                    // yet, typically) into a dead menu item. Clearing the
+                    // hover item lets the 35ms pointer poll restart the
+                    // preview by itself while the pointer stays put.
+                    if (generationState->load(std::memory_order_acquire) == generation) {
+                        idle_register.add([this, generationState, generation, filename]() -> bool {
+                            if (generationState->load(std::memory_order_acquire) == generation
+                                    && autoEditHoverPreviewFile_.empty()) {
+                                fileBrowserPerfLog(
+                                    "[autoEditHover] render failed, unlatching file=%s\n",
+                                    filename.c_str());
+                                autoEditHoverInFlight_ = false;
+                                autoEditHoverItem_ = nullptr;
+                            }
+                            return false;
+                        });
+                    }
                     return;
                 }
 
@@ -3066,6 +4278,7 @@ void FileBrowser::startAutoEditHoverPreview(Gtk::MenuItem* item)
                         scale,
                         crop);
                     current->updateImage(update);
+                    autoEditHoverInFlight_ = false;
                     autoEditHoverPreviewFile_ = filename;
                     fileBrowserPerfLog(
                         "[autoEditHover] applied mode=%s file=%s\n",
@@ -3086,6 +4299,11 @@ void FileBrowser::cancelAutoEditHoverPreview(Gtk::MenuItem* item, bool restore)
         return;
     }
 
+    if (autoEditHoverDelayConnection_.connected() || autoEditHoverItem_) {
+        fileBrowserPerfLog("[autoEditHover] cancel restore=%d hadDelay=%d\n",
+                           restore ? 1 : 0,
+                           autoEditHoverDelayConnection_.connected() ? 1 : 0);
+    }
     autoEditHoverDelayConnection_.disconnect();
     if (autoEditHoverItem_) {
         autoEditHoverItem_->unset_state_flags(Gtk::STATE_FLAG_PRELIGHT);
@@ -3234,7 +4452,7 @@ std::ptrdiff_t FileBrowser::findEntryIndexLocked_(ThumbBrowserEntryBase* entry)
 
 void FileBrowser::flushPendingInsertsForSelection_()
 {
-    if (layoutPaused_) {
+    if (layoutPaused_()) {
         return;
     }
 
@@ -4055,12 +5273,22 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
                             error.c_str(),
                             thm->getFileName().c_str());
                     } else {
+                        const auto& autoCurve = pp.rgbCurves.mastercurve;
+                        const double autoCurveUpperSlope =
+                            autoCurve.size() >= 9 && autoCurve[7] > autoCurve[5]
+                            ? (autoCurve[8] - autoCurve[6]) / (autoCurve[7] - autoCurve[5])
+                            : 1.0;
                         fileBrowserPerfLog(
-                            "[autoEditBatch] mode=%s scene=%s median=%.3f range=%.3f sat=%.3f skin=%.3f skinSat=%.3f sky=%.3f foliage=%.3f edge=%.3f iso=%u exposure=%.3f brightness=%d contrast=%d highlight=%d film=%s strength=%d file=%s\n",
+                            "[autoEditBatch] mode=%s scene=%s median=%.3f p90=%.3f p98=%.3f range=%.3f highlights=%.3f clipped=%.4f curveUpperSlope=%.3f sat=%.3f skin=%.3f skinSat=%.3f sky=%.3f foliage=%.3f edge=%.3f iso=%u exposure=%.3f brightness=%d contrast=%d highlight=%d film=%s strength=%d file=%s\n",
                             autoEditModeName(state->mode),
                             autoGradeSceneName(features.scene),
                             features.medianLuma,
+                            features.p90,
+                            features.p98,
                             features.dynamicRange,
+                            features.highlightFraction,
+                            features.clippedFraction,
+                            autoCurveUpperSlope,
                             features.saturation,
                             features.skinFraction,
                             features.skinSaturation,
@@ -4942,7 +6170,7 @@ bool FileBrowser::applyPassThroughFilterFast (const BrowserFilter& filter)
 
     this->filter = filter;
     filterPassThrough_ = true;
-    if (!layoutPaused_) {
+    if (!layoutPaused_()) {
         flushPendingInserts_();
     }
 
@@ -4962,7 +6190,7 @@ void FileBrowser::applyFilter (const BrowserFilter& filter)
     const bool wasShowingOriginal = this->filter.showOriginal;
     this->filter = filter;
     filterPassThrough_ = this->filter.isPassThrough();
-    if (!layoutPaused_) {
+    if (!layoutPaused_()) {
         flushPendingInserts_();
     }
 
@@ -5025,8 +6253,42 @@ void FileBrowser::applyFilter (const BrowserFilter& filter)
     redraw(nullptr, true);
 }
 
+bool FileBrowser::pinEntryAfter (const Glib::ustring& path, const Glib::ustring& anchorPath)
+{
+    bool found = false;
+
+    {
+        MYWRITERLOCK(l, entryRW);
+
+        for (auto* entry : fd) {
+            if (entry->filename == path) {
+                entry->pinAfter = anchorPath;
+                found = true;
+                break;
+            }
+        }
+
+        if (found) {
+            applyPinnedOrder_();
+            entriesOrderChanged_();
+        }
+    }
+
+    if (found) {
+        redraw();
+    }
+
+    return found;
+}
+
 bool FileBrowser::checkFilter (ThumbBrowserEntryBase* entryb) const   // true -> entry complies filter
 {
+    // Pinned partners (double-exposure "edit this layer") stay visible next
+    // to their anchor no matter what the browser filter says.
+    if (!entryb->pinAfter.empty()) {
+        return true;
+    }
+
     if (filterPassThrough_) {
         return true;
     }
@@ -5729,6 +6991,7 @@ void FileBrowser::openNextImage()
                 MYWRITERLOCK_RELEASE(l);
 
                 // open the selected image
+                openEntry->retryThumbnailNow();
                 openEntry->cacheCurrentPreviewForQuickOpen();
                 lastOpenRequestedFname_ = openFname;
                 tbl->openRequested({thumb}, NAV_NEXT);
@@ -5792,6 +7055,7 @@ void FileBrowser::openPrevImage()
                 MYWRITERLOCK_RELEASE(l);
 
                 // open the selected image
+                openEntry->retryThumbnailNow();
                 openEntry->cacheCurrentPreviewForQuickOpen();
                 lastOpenRequestedFname_ = openFname;
                 tbl->openRequested({thumb}, NAV_PREVIOUS);
@@ -5942,6 +7206,7 @@ void FileBrowser::openNextPreviousEditorImage (const Glib::ustring& fname, eRTNa
 
         MYWRITERLOCK_RELEASE(l);
 
+        openEntry->retryThumbnailNow();
         openEntry->cacheCurrentPreviewForQuickOpen();
         lastOpenRequestedFname_ = openFname;
         tbl->openRequested({thumb}, nextPrevious);
@@ -5993,6 +7258,7 @@ void FileBrowser::openEditorImage(const Glib::ustring& fname, eRTNav preloadDire
 
     MYWRITERLOCK_RELEASE(l);
 
+    openEntry->retryThumbnailNow();
     openEntry->cacheCurrentPreviewForQuickOpen();
     lastOpenRequestedFname_ = openFname;
     tbl->openRequested({thumb}, preloadDirectionHint);
@@ -6221,6 +7487,7 @@ void FileBrowser::notifySelectionListener ()
     }
 
     std::vector<Thumbnail*> thm;
+    FileBrowserEntry* recoveryEntry = nullptr;
 
     {
         MYREADERLOCK(l, entryRW);
@@ -6230,6 +7497,16 @@ void FileBrowser::notifySelectionListener ()
         for (size_t i = 0; i < selected.size(); i++) {
             thm.push_back ((static_cast<FileBrowserEntry*>(selected[i]))->thumbnail);
         }
+
+        if (lastClicked) {
+            recoveryEntry = static_cast<FileBrowserEntry*>(lastClicked);
+        } else if (selected.size() == 1) {
+            recoveryEntry = static_cast<FileBrowserEntry*>(selected.front());
+        }
+    }
+
+    if (recoveryEntry) {
+        recoveryEntry->retryThumbnailNow();
     }
 
     tbl->selectionChanged (thm);
@@ -6400,6 +7677,7 @@ void FileBrowser::openRequested( std::vector<FileBrowserEntry*> mselected)
     Glib::ustring openFname;
 
     for (size_t i = openStart; i < mselected.size(); i++) {
+        mselected[i]->retryThumbnailNow();
         if (warmQuickPreview) {
             mselected[i]->cacheCurrentPreviewForQuickOpen();
         }
@@ -6435,6 +7713,82 @@ void FileBrowser::openRequested( std::vector<FileBrowserEntry*> mselected)
     }
 
     tbl->openRequested (entries, preloadDirectionHint);
+}
+
+void FileBrowser::openSourceFolder()
+{
+    Glib::ustring sourcePath;
+
+    {
+        MYREADERLOCK(l, entryRW);
+
+        if (!selected.empty()) {
+            sourcePath = static_cast<FileBrowserEntry*>(selected.front())->filename;
+        }
+    }
+
+    if (sourcePath.empty()) {
+        return;
+    }
+
+    bool launchScheduled = false;
+
+#ifdef _WIN32
+    // Windows has no GIO handler registered for a file:// folder URI, so
+    // launch_default_for_uri quietly does nothing. Ask the shell directly,
+    // and use /select so the folder opens with this photo highlighted.
+    {
+        std::string windowsPath = sourcePath.raw();
+
+        for (auto& character : windowsPath) {
+            if (character == '/') {
+                character = '\\';
+            }
+        }
+
+        const std::string argument = "/select,\"" + windowsPath + "\"";
+
+        if (wchar_t* wideArgument = reinterpret_cast<wchar_t*>(
+                g_utf8_to_utf16(argument.c_str(), -1, nullptr, nullptr, nullptr))) {
+            const HINSTANCE result = ShellExecuteW(
+                nullptr, L"open", L"explorer.exe", wideArgument, nullptr, SW_SHOWNORMAL);
+            launchScheduled = reinterpret_cast<INT_PTR>(result) > 32;
+            g_free(wideArgument);
+        }
+    }
+
+    if (launchScheduled) {
+        return;
+    }
+#endif
+
+    try {
+        const auto sourceFile = Gio::File::create_for_path(sourcePath);
+        const auto sourceFolder = sourceFile ? sourceFile->get_parent() : Glib::RefPtr<Gio::File>();
+
+        if (sourceFolder) {
+            // Shell activation may wait on Explorer, D-Bus, or MIME handler
+            // discovery. Never hold GTK's main loop while the OS responds.
+            Gio::AppInfo::launch_default_for_uri_async(sourceFolder->get_uri());
+            launchScheduled = true;
+        }
+    } catch (const Glib::Error& error) {
+        if (App::get().options().rtSettings.verbose) {
+            std::fprintf(stderr, "Could not open source folder for %s: %s\n",
+                         sourcePath.c_str(), error.what().c_str());
+        }
+    }
+
+    if (!launchScheduled) {
+        Gtk::MessageDialog dialog(
+            getToplevelWindow(this),
+            M("FILEBROWSER_OPENSOURCEFOLDERERROR"),
+            false,
+            Gtk::MESSAGE_ERROR,
+            Gtk::BUTTONS_OK,
+            true);
+        dialog.run();
+    }
 }
 
 void FileBrowser::inspectRequested(std::vector<FileBrowserEntry*> mselected)

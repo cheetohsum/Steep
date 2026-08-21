@@ -44,12 +44,21 @@ public:
 
     std::function<bool(GdkEventMotion*)> onMotion;
     std::function<bool(GdkEventCrossing*)> onLeave;
+    // Returns true to consume the press (blocks row activation) — used for
+    // the inline favorite star on the current folder row.
+    std::function<bool(GdkEventButton*)> onButtonPress;
 
     // Clip-reveal state: set by DirBrowser when expanding
     std::string revealParentPath;
     double revealFraction = 1.0;
 
 protected:
+    bool on_button_press_event(GdkEventButton* event) override {
+        if (onButtonPress && onButtonPress(event)) {
+            return true;
+        }
+        return Gtk::TreeView::on_button_press_event(event);
+    }
     bool on_motion_notify_event(GdkEventMotion* event) override {
         if (onMotion) onMotion(event);
         return Gtk::TreeView::on_motion_notify_event(event);
@@ -275,10 +284,92 @@ static std::vector<Glib::RefPtr<Gdk::Pixbuf>> generateChevronFrames(int count)
     return frames;
 }
 
+// Draw a small 5-point star, filled (favorited) or outlined (not yet).
+static Glib::RefPtr<Gdk::Pixbuf> generateStarPixbuf(bool filled)
+{
+    const int sz = 16;
+    auto surface = Cairo::ImageSurface::create(Cairo::FORMAT_ARGB32, sz, sz);
+    auto cr = Cairo::Context::create(surface);
+    const double cx = sz / 2.0, cy = sz / 2.0 + 0.5;
+    const double rOuter = 6.0, rInner = 2.6;
+    for (int i = 0; i < 10; ++i) {
+        double r = (i % 2 == 0) ? rOuter : rInner;
+        double a = -M_PI / 2.0 + i * M_PI / 5.0;
+        double x = cx + r * std::cos(a);
+        double y = cy + r * std::sin(a);
+        if (i == 0) cr->move_to(x, y); else cr->line_to(x, y);
+    }
+    cr->close_path();
+    if (filled) {
+        cr->set_source_rgba(0.95, 0.76, 0.25, 1.0);
+        cr->fill_preserve();
+        cr->set_source_rgba(0.85, 0.65, 0.15, 1.0);
+        cr->set_line_width(1.0);
+        cr->stroke();
+    } else {
+        cr->set_source_rgba(0.62, 0.65, 0.7, 0.9);
+        cr->set_line_width(1.2);
+        cr->set_line_join(Cairo::LINE_JOIN_ROUND);
+        cr->stroke();
+    }
+    return Gdk::Pixbuf::create(surface, 0, 0, sz, sz);
+}
+
+sigc::signal<void>& DirBrowser::favoritesChanged ()
+{
+    static sigc::signal<void> sig;
+    return sig;
+}
+
+bool DirBrowser::isCurrentDirFavorite () const
+{
+    if (currentDir_.empty()) {
+        return false;
+    }
+    for (const auto& fav : App::get().options().favoriteDirs) {
+        if (isSamePath(fav, currentDir_)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void DirBrowser::toggleCurrentDirFavorite ()
+{
+    if (currentDir_.empty()) {
+        return;
+    }
+
+    auto& favs = App::get().mut_options().favoriteDirs;
+    bool removed = false;
+    for (auto it = favs.begin(); it != favs.end(); ++it) {
+        if (isSamePath(*it, currentDir_)) {
+            favs.erase(it);
+            removed = true;
+            break;
+        }
+    }
+    if (!removed) {
+        favs.push_back(currentDir_);
+    }
+
+    try {
+        Options::save();
+    } catch (Options::Error& error) {
+        std::cerr << "Failed to save options: " << error.get_msg() << std::endl;
+    }
+
+    dirtree->queue_draw();
+    favoritesChanged().emit();
+}
+
 void DirBrowser::fillDirTree ()
 {
     //Create the Tree model:
     dirTreeModel = Gtk::TreeStore::create(dtColumns);
+    // A freshly built tree has nothing marked yet; callers re-sync afterwards.
+    currentDir_.clear();
+    currentRowRef_ = Gtk::TreeRowReference();
     dirTreeModel->set_sort_func(
         dtColumns.filename,
         [this](const Gtk::TreeModel::iterator& first, const Gtk::TreeModel::iterator& second) -> int
@@ -316,6 +407,7 @@ void DirBrowser::fillDirTree ()
     tvc.pack_start(*chevronCR, false);
     tvc.set_cell_data_func(*chevronCR, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
         auto* pbCR = static_cast<Gtk::CellRendererPixbuf*>(cr);
+        paintCurrentDirBackground(cr, iter);
         auto path = dirTreeModel->get_path(iter);
         if (path.empty()) {
             pbCR->property_pixbuf() = chevronRightPixbuf_;
@@ -332,8 +424,34 @@ void DirBrowser::fillDirTree ()
         }
     });
 
+    // Favorite star: shown only on the current (open) folder row, to the
+    // left of its name. Filled when the folder is already a starred place;
+    // clicking it toggles the favorite (see the onButtonPress hook below).
+    starFilledPixbuf_ = generateStarPixbuf(true);
+    starHollowPixbuf_ = generateStarPixbuf(false);
+    starCR_ = Gtk::manage(new Gtk::CellRendererPixbuf());
+    starCR_->property_ypad() = 0;
+    starCR_->property_xpad() = 1;
+    tvc.pack_start(*starCR_, false);
+    tvc.set_cell_data_func(*starCR_, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
+        auto* pbCR = static_cast<Gtk::CellRendererPixbuf*>(cr);
+        paintCurrentDirBackground(cr, iter);
+        if (isCurrentDirRow(iter)) {
+            pbCR->property_pixbuf() = isCurrentDirFavorite() ? starFilledPixbuf_ : starHollowPixbuf_;
+            pbCR->property_visible() = true;
+        } else {
+            pbCR->property_pixbuf().reset_value();
+            pbCR->property_visible() = false;
+        }
+    });
+
     tvc.pack_start (crt);
-    tvc.add_attribute(crt, "text", dtColumns.filename);
+    tvc.set_cell_data_func(crt, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
+        auto* textCR = static_cast<Gtk::CellRendererText*>(cr);
+        paintCurrentDirBackground(cr, iter);
+        textCR->property_text() = iter ? iter->get_value(dtColumns.filename) : Glib::ustring();
+        textCR->property_weight() = isCurrentDirRow(iter) ? Pango::WEIGHT_BOLD : Pango::WEIGHT_NORMAL;
+    });
 
     Gtk::CellRendererText* countCR = Gtk::manage(new Gtk::CellRendererText());
     countCR->property_foreground() = "#888888";
@@ -342,7 +460,11 @@ void DirBrowser::fillDirTree ()
     countCR->property_scale() = 0.8;
     countCR->property_xpad() = 8;
     tvc.pack_end(*countCR, false);
-    tvc.add_attribute(*countCR, "text", dtColumns.photoCount);
+    tvc.set_cell_data_func(*countCR, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
+        auto* textCR = static_cast<Gtk::CellRendererText*>(cr);
+        paintCurrentDirBackground(cr, iter);
+        textCR->property_text() = iter ? iter->get_value(dtColumns.photoCount) : Glib::ustring();
+    });
 
     dirtree->append_column(tvc);
 
@@ -355,6 +477,39 @@ void DirBrowser::fillDirTree ()
     dirTreeModel->set_sort_column(dtColumns.filename, options.dirBrowserSortType);
 
     crt.property_ypad() = 0;
+
+    // Clicking the star on the current folder row toggles its favorite
+    // status instead of re-activating the row.
+    dirtree->onButtonPress = [this](GdkEventButton* ev) -> bool {
+        if (ev->button != 1 || ev->type != GDK_BUTTON_PRESS || !starCR_ || !dirTreeModel) {
+            return false;
+        }
+        Gtk::TreeModel::Path path;
+        Gtk::TreeViewColumn* col = nullptr;
+        int cx = 0, cy = 0;
+        if (!dirtree->get_path_at_pos(static_cast<int>(ev->x), static_cast<int>(ev->y), path, col, cx, cy)) {
+            return false;
+        }
+        auto iter = dirTreeModel->get_iter(path);
+        if (!iter || !isCurrentDirRow(iter)) {
+            return false;
+        }
+        // Resolve the star cell's x range within the row
+        tvc.cell_set_cell_data(dirTreeModel, iter, false, dirtree->row_expanded(path));
+        Gdk::Rectangle cellArea;
+        dirtree->get_cell_area(path, tvc, cellArea);
+        int startPos = 0, width = 0;
+        if (!tvc.get_cell_position(*starCR_, startPos, width) || width <= 0) {
+            return false;
+        }
+        const int x0 = cellArea.get_x() + startPos;
+        if (ev->x >= x0 && ev->x < x0 + width) {
+            toggleCurrentDirFavorite();
+            return true;
+        }
+        return false;
+    };
+
     dirtree->signal_row_expanded().connect(sigc::mem_fun(*this, &DirBrowser::row_expanded));
     dirtree->signal_row_collapsed().connect(sigc::mem_fun(*this, &DirBrowser::row_collapsed));
     dirtree->signal_row_activated().connect(sigc::mem_fun(*this, &DirBrowser::row_activated));
@@ -699,6 +854,8 @@ void DirBrowser::row_activated (const Gtk::TreeModel::Path& path, Gtk::TreeViewC
     Glib::ustring dname = iter->get_value (dtColumns.dirname);
 
     if (Glib::file_test (dname, Glib::FILE_TEST_IS_DIR)) {
+        // Clicking a folder opens it, so it becomes the row to keep marked.
+        setCurrentDir (dname, path);
         dirSelectionSignal (dname, Glib::ustring());
 
         expandAnimConn_.disconnect();
@@ -903,11 +1060,60 @@ Gtk::TreePath DirBrowser::expandToDir (const Glib::ustring& absDirPath)
     return path;
 }
 
-void DirBrowser::open (const Glib::ustring& dirname, const Glib::ustring& fileName, bool collapseTree)
+bool DirBrowser::isSamePath (const Glib::ustring& a, const Glib::ustring& b)
 {
+    if (a.empty() || b.empty()) {
+        return false;
+    }
 
-    if (collapseTree) {
-        dirtree->collapse_all ();
+#ifdef _WIN32
+    return a.casefold() == b.casefold();
+#else
+    return a == b;
+#endif
+}
+
+bool DirBrowser::isCurrentDirRow (const Gtk::TreeModel::iterator& iter) const
+{
+    return iter && isSamePath(iter->get_value(dtColumns.dirname), currentDir_);
+}
+
+// Paints the open folder's row so it stays marked even though hover selection
+// keeps moving (and clearing) the GTK selection. The tint is dropped while the
+// row is itself selected, so the two highlights never stack.
+void DirBrowser::paintCurrentDirBackground (Gtk::CellRenderer* renderer, const Gtk::TreeModel::iterator& iter) const
+{
+    bool tint = isCurrentDirRow(iter);
+
+    if (tint && dirTreeModel) {
+        const auto selection = dirtree->get_selection();
+
+        if (selection && selection->is_selected(dirTreeModel->get_path(iter))) {
+            tint = false;
+        }
+    }
+
+    renderer->property_cell_background_set() = tint;
+
+    if (tint) {
+        renderer->property_cell_background_rgba() = Gdk::RGBA("rgba(100,160,255,0.25)");
+    }
+}
+
+void DirBrowser::setCurrentDir (const Glib::ustring& absDirPath, const Gtk::TreeModel::Path& path)
+{
+    currentDir_ = absDirPath;
+    currentRowRef_ = (dirTreeModel && !path.empty())
+        ? Gtk::TreeRowReference(dirTreeModel, path)
+        : Gtk::TreeRowReference();
+
+    dirtree->queue_draw();
+}
+
+Glib::ustring DirBrowser::highlightDirInternal (const Glib::ustring& dirname, bool collapseTree)
+{
+    if (!dirTreeModel) {
+        return Glib::ustring();
     }
 
     // WARNING & TODO: One should test here if the directory/file has R/W access permission to avoid crash
@@ -915,17 +1121,55 @@ void DirBrowser::open (const Glib::ustring& dirname, const Glib::ustring& fileNa
     Glib::RefPtr<Gio::File> dir = Gio::File::create_for_path(dirname);
 
     if( !dir->query_exists()) {
-        return;
+        return Glib::ustring();
     }
 
     Glib::ustring absDirPath = dir->get_parse_name ();
+
+    // Only skip the walk when the row we last expanded to is still in the tree;
+    // a rebuilt or pruned model has to be expanded again.
+    const bool alreadyHighlighted = isSamePath(currentDir_, absDirPath) && currentRowRef_.is_valid();
+
+    if (alreadyHighlighted && !collapseTree) {
+        return absDirPath;
+    }
+
+    if (collapseTree) {
+        dirtree->collapse_all ();
+    }
+
     reuseLoadedDirs_ = !collapseTree;
     Gtk::TreePath path = expandToDir (absDirPath);
     reuseLoadedDirs_ = false;
+
+    setCurrentDir (absDirPath, path);
+
     if (!path.empty()) {
         dirtree->scroll_to_row (path);
         dirtree->get_selection()->select (path);
     }
+
+    return absDirPath;
+}
+
+void DirBrowser::highlightDir (const Glib::ustring& dirname, bool collapseTree)
+{
+    highlightDirInternal(dirname, collapseTree);
+}
+
+Glib::ustring DirBrowser::getHighlightedDir () const
+{
+    return currentDir_;
+}
+
+void DirBrowser::open (const Glib::ustring& dirname, const Glib::ustring& fileName, bool collapseTree)
+{
+    const Glib::ustring absDirPath = highlightDirInternal(dirname, collapseTree);
+
+    if (absDirPath.empty()) {
+        return;
+    }
+
     Glib::ustring absFilePath;
 
     if (!fileName.empty()) {

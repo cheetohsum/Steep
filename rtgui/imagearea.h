@@ -18,6 +18,8 @@
  */
 #pragma once
 
+#include <functional>
+
 #include <gtkmm.h>
 
 #include "cropguilistener.h"
@@ -65,6 +67,9 @@ protected:
     PointerMotionListener* pmhlistener;
     ImageAreaToolListener* listener;
     bool quickPreviewFit_;
+    bool cropPreviewSolid_ = false;  // clip the preview to the crop instead of dimming around it
+    std::function<bool()> beforeLockGet_;
+    std::function<void(bool)> beforeLockSet_;
 
     CropWindow* getCropWindow (int x, int y);
     Gtk::SizeRequestMode get_request_mode_vfunc () const override;
@@ -88,8 +93,15 @@ public:
     bool inBeforeAfterSplit = false;
     bool suppressZoomSync_ = false; // prevents zoom sync recursion between before/after views
 
-    // Right-click context menu for the before/after view (snug-to-divider)
+    // Right-click context menu for the before/after view
     void showBeforeAfterContextMenu ();
+    // Lets the editor panel expose its before-view lock in that menu
+    void setBeforeLockHandlers (const std::function<bool()>& get,
+                                const std::function<void(bool)>& set)
+    {
+        beforeLockGet_ = get;
+        beforeLockSet_ = set;
+    }
 
     explicit ImageArea (ImageAreaPanel* p);
     ~ImageArea () override;
@@ -156,6 +168,11 @@ public:
     int  getSpotWBRectSize  ();
     void redraw             ();
     void setCropPreviewMode (bool editingCrop);
+    void setCropPreviewSolid (bool solid, bool refit = true);
+    bool isCropPreviewSolid () const
+    {
+        return cropPreviewSolid_;
+    }
 
     void zoomFit     ();
     double getZoom   ();

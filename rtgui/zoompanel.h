@@ -36,7 +36,6 @@ protected:
     Gtk::Button*    zoomIn;
     Gtk::Button*    zoomFit;
     Gtk::Button*    zoomFitCrop;
-    Gtk::Button*    zoom11;
     Gtk::Button*    newCrop;
     ImageArea*      iarea;
     bool            sliderUpdateInProgress;

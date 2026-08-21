@@ -150,6 +150,9 @@ public:
     rtengine::procparams::ProcParams* createProcParamsForUpdate (bool returnParams, bool force, bool flaggingMode = false);
 
     void              setProcParams (const rtengine::procparams::ProcParams& pp, ParamsEdited* pe = nullptr, int whoChangedIt = -1, bool updateCacheNow = true, bool resetToDefault = false);
+    // True when `pp` is already what this thumbnail holds on disk, so writing
+    // the sidecar / cache entry / XMP again would be pure I/O for no change.
+    bool              procParamsMatch (const rtengine::procparams::ProcParams& pp);
     void              clearProcParams (int whoClearedIt = -1);
     void              loadProcParams (bool resetToDefaults = true);
 
@@ -231,7 +234,7 @@ public:
     void                  getCamWB  (double& temp, double& green, rtengine::StandardObserver observer) const;
     void                  getAutoWB (double& temp, double& green, double equal, rtengine::StandardObserver observer, double tempBias);
     void                  getSpotWB (int x, int y, int rect, double& temp, double& green);
-    void                  applyAutoExp (rtengine::procparams::ProcParams& pparams);
+    bool                  applyAutoExp (rtengine::procparams::ProcParams& pparams);
 
     ThFileType      getType () const;
     const Glib::ustring& getFileName () const

@@ -100,9 +100,46 @@ private:
     Gtk::ScrolledWindow* scrollw_;
     AlbumTreeView* treeView_;
     Glib::RefPtr<Gtk::TreeStore> model_;
-    Gtk::Menu* addMenu_;  // dropdown for "+" button
+    Gtk::Menu* addMenu_;  // dropdown behind the album icon
     Gtk::Button* closeAlbumBtn_;
     bool selectionChanging_;
+
+    // Header interactions: drag the header to resize the album list, click
+    // it (on empty space) to collapse/expand. The chosen height and the
+    // collapsed state persist in options.
+    Gtk::EventBox* headerEvtBox_ = nullptr;
+    bool headerPressed_ = false;
+    bool headerDragging_ = false;
+    double headerPressRootY_ = 0.0;
+    int headerPressHeight_ = 0;
+    int headerDragHeight_ = 0;
+    sigc::connection headerDragApplyConn_;   // coalesces drag resizes to one per frame
+    void applyPanelSizing();
+    int effMinHeight() const;
+    int effMaxHeight() const;
+
+    // Hover thumbnail popup (mirrors DirBrowser's folder popup): hovering an
+    // album row for a moment shows its photos; once the visible thumbnails
+    // have loaded it slowly scrolls through the rest of the album.
+    Gtk::Window* hoverPopup_ = nullptr;
+    Gtk::Box* hoverBox_ = nullptr;
+    Gtk::Image* hoverImages_[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
+    bool popupVisible_ = false;
+    int hoverPopupSession_ = 0;
+    sigc::connection hoverPopupTimer_;
+    sigc::connection cycleConn_;
+    std::vector<Glib::ustring> cycleFiles_;
+    std::map<int, Glib::RefPtr<Gdk::Pixbuf>> cyclePixbufs_;
+    std::set<int> cycleLoading_;
+    int cycleStart_ = 0;
+    std::function<std::set<std::string>()> filetypeFilterGetter_;
+    void onHoverRowChanged(const Gtk::TreeModel::Path& path);
+    void showAlbumHoverPopup(const Gtk::TreeModel::Path& path);
+    void hideAlbumHoverPopup();
+    void loadCycleThumbsWorker(std::vector<Glib::ustring> files, std::vector<int> indices, int session, bool startCycleWhenDone);
+    void applyCycleImages();
+    void startCycleTimer();
+    std::vector<Glib::ustring> filterByFiletype(const std::vector<Glib::ustring>& paths) const;
 
     // Hover highlighting via AlbumTreeView subclass + cell_data_func
     Gtk::TreeModel::Path hoveredPath_;
@@ -224,4 +261,8 @@ public:
     void setCoverForAlbum(int nodeId, const Glib::ustring& filePath);
     int getSelectedNodeId() const { return selectedNodeId_; }
     void deselectAlbum();
+
+    // Supplies the active filetype filter (uppercase extensions, empty = all)
+    // so hover previews match what the browse/edit tabs would show.
+    void setFiletypeFilterGetter(std::function<std::set<std::string>()> getter) { filetypeFilterGetter_ = std::move(getter); }
 };

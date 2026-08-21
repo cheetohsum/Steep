@@ -30,6 +30,7 @@
 
 class DEThumbGrid;
 class DEBlendPreview;
+struct DEThumbQueue;
 
 // Modal picker for the double exposure tool: a mini file-browser (current
 // folder or global picked/starred selects) on the left, a live approximate
@@ -46,6 +47,19 @@ public:
 
     rtengine::procparams::DoubleExposureParams getResult() const;
 
+    // Non-empty when the user pressed a chip's develop button: the dialog
+    // answered OK and this layer should be opened for editing.
+    Glib::ustring getEditRequestPath() const
+    {
+        return editRequestPath_;
+    }
+
+    // Session-wide template: the last layer settings the user removed or
+    // applied, inherited by newly added exposures (also on other photos).
+    static bool haveStickyLayer();
+    static const rtengine::procparams::DoubleExposureParams::Layer& stickyLayer();
+    static void rememberStickyLayer(const rtengine::procparams::DoubleExposureParams::Layer& layer);
+
 private:
     struct ScanItem {
         Glib::ustring path;
@@ -57,8 +71,16 @@ private:
     void startScan(bool global);
     void onScanPartial(bool global, int generation, const std::vector<ScanItem>& items);
     void onScanDone(bool global, int generation);
-    void requestThumbs(const std::vector<Glib::ustring>& paths, int height);
-    void onThumbLoaded(const Glib::ustring& path, int height, Glib::RefPtr<Gdk::Pixbuf> pixbuf);
+    void requestThumbs(const std::vector<Glib::ustring>& paths, int height, bool neutral = false);
+    void onThumbLoaded(const Glib::ustring& path, int height, bool neutral, Glib::RefPtr<Gdk::Pixbuf> pixbuf);
+    void pumpThumbQueue();
+    // Grid thumbs are decoded for the scrolled viewport only (plus a
+    // screenful of look-ahead): a global scan can stream in thousands of
+    // files and decoding them all would take minutes of CPU and I/O.
+    void requestVisibleThumbs();
+    void scheduleVisibleThumbs();
+    // Coalesces the full grid rebuild while a scan streams results in.
+    void scheduleFilterRefresh();
 
     // -- UI logic --
     void scopeChanged(bool global);
@@ -78,6 +100,7 @@ private:
     const std::vector<ScanItem>& activeItems() const;
 
     Glib::ustring baseImagePath_;
+    Glib::ustring editRequestPath_;
     Glib::ustring folderDir_;
     Glib::ustring browserCurrentDir_;
     rtengine::procparams::DoubleExposureParams params_;
@@ -99,9 +122,16 @@ private:
     std::map<Glib::ustring, Glib::RefPtr<Gdk::Pixbuf>> gridPix_;
     std::map<Glib::ustring, Glib::RefPtr<Gdk::Pixbuf>> bigPix_;
     std::map<Glib::ustring, Glib::RefPtr<Gdk::Pixbuf>> hiPix_;
+    // Neutral (default-params) renders: layer previews plus the base plate's
+    // scene reference for engine-faithful compositing.
+    std::map<Glib::ustring, Glib::RefPtr<Gdk::Pixbuf>> neutralPix_;
+    std::map<Glib::ustring, Glib::RefPtr<Gdk::Pixbuf>> neutralHiPix_;
     std::set<Glib::ustring> pendingThumbs_;
 
     std::shared_ptr<std::atomic<bool>> alive_;
+    std::shared_ptr<DEThumbQueue> thumbQueue_;
+    bool filterRefreshPending_;
+    bool visibleThumbsPending_;
 
     // -- widgets --
     Gtk::ToggleButton* folderBtn_;
@@ -110,15 +140,16 @@ private:
     MyComboBoxText* starsFilter_;
     Gtk::Label* countLabel_;
     Gtk::Spinner* spinner_;
+    Gtk::ScrolledWindow* gridScroll_;
     DEThumbGrid* grid_;
     DEBlendPreview* preview_;
     Gtk::CheckButton* highRes_;
     MyComboBoxText* blendMethod_;
     Gtk::CheckButton* autoGain_;
     Gtk::Scale* baseEvScale_;
-    Gtk::Scale* fillShadowsScale_;
     Gtk::Label* layerLabel_;
     Gtk::Scale* layerEvScale_;
     Gtk::Scale* layerOpacityScale_;
+    Gtk::Scale* gateStrengthScale_;
     Gtk::Box* trayBox_;
 };

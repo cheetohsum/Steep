@@ -59,6 +59,8 @@ public:
 
     Gtk::Paned* placespaned;
     Gtk::Paned* dirpaned;
+    // Left-edge hot strip that replaced the sidebar toggle button
+    Gtk::EventBox* leftEdgeGrip_ = nullptr;
 
     Gtk::Box* rightBox;
 
@@ -122,13 +124,16 @@ public:
         const Glib::ustring& filename,
         const rtengine::procparams::ProcParams* params,
         bool restore);
+    void setEditorProcessingActivity(bool active);
 
     // Left panel visibility for sync with editor sidebar
     bool isLeftPanelVisible() const { return browserHideLp_ && browserHideLp_->get_active(); }
     void setLeftPanelVisible(bool visible) { if (browserHideLp_ && browserHideLp_->get_active() != visible) browserHideLp_->set_active(visible); }
+    void syncDirectoryHighlight(const Glib::ustring& directory);
 
 private:
     void on_NB_switch_page(Gtk::Widget* page, guint page_num);
+    void pauseBackgroundWork();
     void pauseBackgroundWorkForForeground();
     void resumeBackgroundWorkAfterForeground();
     void resumeBackgroundWorkIfCurrent(unsigned generation);
@@ -145,6 +150,8 @@ private:
     PlacesBrowser* placesBrowser;
     RecentBrowser* recentBrowser;
     AlbumBrowser* albumBrowser_;
+    sigc::connection recentHoverTimer_;    // hover-to-open delay for the recent-folders menu
+    sigc::connection favoritesRefreshConn_;
     Gtk::Widget* fastExportSettingsWidget_ = nullptr;
 
     void onAlbumSelected (const std::set<std::string>& whitelist);
@@ -185,6 +192,8 @@ private:
     guint backgroundResumeTimeoutId_;
     unsigned backgroundResumeGeneration_;
     unsigned adjacentPreloadGeneration_;
+    bool foregroundWorkActive_;
+    bool editorProcessingActive_;
     bool backgroundWorkPausedForForeground_;
     bool thumbnailWorkPausedForForeground_;
     bool adjacentPreloadIdlePending_;

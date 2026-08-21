@@ -36,6 +36,7 @@
 #include "rtengine/array2D.h"
 #include "rtengine/imagesource.h"
 #include "rtengine/iccstore.h"
+#include "rtengine/previewquality.h"
 #include "batchqueue.h"
 #include "batchqueueentry.h"
 #include "soundman.h"
@@ -924,17 +925,16 @@ public:
 };
 
 EditorPanel::EditorPanel (FilePanel* filePanel)
-    : catalogPane (nullptr), realized (false), tbBeforeLock (nullptr),
+    : catalogPane (nullptr), realized (false),
       editorToolbarTop_ (nullptr), editorToolbarBottom_ (nullptr),
       iHistoryShow (nullptr), iHistoryHide (nullptr),
       iTopPanel_1_Show (nullptr), iTopPanel_1_Hide (nullptr), iRightPanel_1_Show (nullptr), iRightPanel_1_Hide (nullptr),
-      iBeforeLockON (nullptr), iBeforeLockOFF (nullptr),
       navigatorDialog_ (nullptr), historyDialog_ (nullptr),
       editorPlacesBrowser_ (nullptr), editorRecentBrowser_ (nullptr),
       editorDirBrowser_ (nullptr), editorPlacesPaned_ (nullptr),
       externalEditorChangedSignal (nullptr),
       previewHandler (nullptr), beforePreviewHandler (nullptr),
-      beforeIarea (nullptr), beforeBox (nullptr), afterBox (nullptr), beforeLabel (nullptr), afterLabel (nullptr),
+      beforeIarea (nullptr), beforeBox (nullptr), afterBox (nullptr),
       beforeHeaderBox (nullptr), afterHeaderBox (nullptr), parent (nullptr), parentWindow (nullptr), openThm (nullptr),
       selectedFrame(0), isrc (nullptr), ipc (nullptr), beforeIpc (nullptr), err (0), isProcessing (false),
       histogram_observable(nullptr), histogram_scope_type(ScopeType::NONE)
@@ -991,18 +991,31 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     browseButton->set_always_show_image(true);
     browseButton->signal_clicked().connect(sigc::mem_fun(*editorDirBrowser_, &DirBrowser::browseForFolder));
 
-    auto* favoriteButton = Gtk::manage(new Gtk::Button());
-    favoriteButton->set_name("PlacesAddBtn");
-    favoriteButton->set_relief(Gtk::RELIEF_NONE);
-    favoriteButton->set_tooltip_text(M("MAIN_FRAME_PLACES_ADD"));
-    auto* favoriteIcon = Gtk::manage(new RTImage("star-hollow-small", Gtk::ICON_SIZE_SMALL_TOOLBAR));
-    favoriteButton->set_image(*favoriteIcon);
-    favoriteButton->set_always_show_image(true);
-    favoriteButton->signal_clicked().connect(sigc::mem_fun(*editorPlacesBrowser_, &PlacesBrowser::addPressed));
+    // Hovering the folder icon opens the recent-folders menu after a short
+    // delay; the popup runs from the timer callback, never the enter handler.
+    browseButton->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
+    browseButton->signal_enter_notify_event().connect([this, browseButton](GdkEventCrossing*) -> bool {
+        editorRecentHoverTimer_.disconnect();
+        editorRecentHoverTimer_ = Glib::signal_timeout().connect([this, browseButton]() -> bool {
+            editorRecentBrowser_->popupMenuAt(*browseButton);
+            return false;
+        }, 450);
+        return false;
+    }, false);
+    browseButton->signal_leave_notify_event().connect([this](GdkEventCrossing*) -> bool {
+        editorRecentHoverTimer_.disconnect();
+        return false;
+    }, false);
 
     folderHeader->pack_start(*browseButton, Gtk::PACK_SHRINK);
+    // Recent-folders widget kept for its menu/bookkeeping; button not shown.
+    editorRecentBrowser_->set_no_show_all(true);
+    editorRecentBrowser_->hide();
     folderHeader->pack_start(*editorRecentBrowser_, Gtk::PACK_SHRINK);
-    folderHeader->pack_start(*favoriteButton, Gtk::PACK_SHRINK);
+
+    // Starring happens inline on the selected folder row of the tree.
+    editorFavoritesRefreshConn_ = DirBrowser::favoritesChanged().connect(
+        sigc::mem_fun(*editorPlacesBrowser_, &PlacesBrowser::refreshPlacesList));
 
     placesObox->pack_start(*folderHeader, Gtk::PACK_SHRINK, 0);
     placesObox->pack_start(*editorDirBrowser_, Gtk::PACK_EXPAND_WIDGET, 0);
@@ -1023,6 +1036,12 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     albumBrowser_->albumSelected().connect(sigc::mem_fun(*this, &EditorPanel::onAlbumSelected));
     albumBrowser_->albumViewRequested().connect(sigc::mem_fun(*this, &EditorPanel::onAlbumViewRequested));
     albumBrowser_->setCurrentFilePathGetter([this]() -> Glib::ustring { return fname; });
+    // Album hover previews follow the shared filetype filter
+    albumBrowser_->setFiletypeFilterGetter([this]() -> std::set<std::string> {
+        return (fPanel && fPanel->fileCatalog)
+            ? fPanel->fileCatalog->getSelectedFiletypes()
+            : std::set<std::string>();
+    });
 
     // pack1 is reserved for histogram (when positioned on left side).
     // Use a minimal placeholder to keep the Paned layout stable.
@@ -1042,10 +1061,8 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     beforeAfter = Gtk::manage (new Gtk::ToggleButton ());
     beforeAfter->set_image (*Gtk::manage (new RTImage ("compare", Gtk::ICON_SIZE_MENU)));
     beforeAfter->set_relief (Gtk::RELIEF_NONE);
-    beforeAfter->set_tooltip_markup (M ("MAIN_TOOLTIP_TOGGLE"));
+    beforeAfter->set_tooltip_markup (M ("MAIN_TOOLTIP_TOGGLE") + Glib::ustring("\n\n") + M ("MAIN_TOOLTIP_TOGGLE_MENU"));
 
-    iBeforeLockON = new RTImage ("ba-lock-on", Gtk::ICON_SIZE_SMALL_TOOLBAR);
-    iBeforeLockOFF = new RTImage ("ba-lock-off", Gtk::ICON_SIZE_SMALL_TOOLBAR);
 
 
     hidehp = Gtk::manage (new Gtk::ToggleButton ());
@@ -1057,6 +1074,9 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     hidehp->set_relief (Gtk::RELIEF_NONE);
     hidehp->set_active (options.editorShowLeftSidebar);
     hidehp->set_tooltip_markup (M ("MAIN_TOOLTIP_HIDEHP"));
+    // Retired from the bottom bar in favour of the left edge grip
+    hidehp->set_no_show_all (true);
+    hidehp->hide ();
 
     if (options.editorShowLeftSidebar) {
         hidehp->set_image (*iHistoryHide);
@@ -1074,9 +1094,11 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         tbTopPanel_1->set_active (true);
         tbTopPanel_1->set_tooltip_markup (M ("MAIN_TOOLTIP_SHOWHIDETP1") + Glib::ustring("\n") + M ("EDITOR_FILMSTRIP_SIZE_HINT"));
         tbTopPanel_1->set_image (*iTopPanel_1_Hide);
-        // Right-click opens the filmstrip thumbnail size slider
-        tbTopPanel_1->signal_button_press_event().connect(
-            sigc::mem_fun(*this, &EditorPanel::onFilmstripButtonPress), false);
+        // Retired from the toolbar: the filmstrip is toggled from the edge
+        // grip now. The button stays alive purely as the state holder that
+        // the keyboard shortcuts and tbShowHideSidePanels already drive.
+        tbTopPanel_1->set_no_show_all (true);
+        tbTopPanel_1->hide ();
     }
 
 
@@ -1113,28 +1135,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         tbFilterBar->set_relief(Gtk::RELIEF_NONE);
         tbFilterBar->set_tooltip_markup(M("EDITOR_FILTER_TOOLTIP"));
         tbFilterBar->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::filterBarToggled));
-
-        // Hover-expand: resting on the filter button opens the bar; a click
-        // still toggles/pins it exactly as before
-        tbFilterBar->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
-        tbFilterBar->signal_enter_notify_event().connect(
-            [this](GdkEventCrossing*) -> bool {
-                filterBarHoverConn_.disconnect();
-                filterBarHoverConn_ = Glib::signal_timeout().connect(
-                    [this]() -> bool {
-                        if (tbFilterBar && !tbFilterBar->get_active()) {
-                            tbFilterBar->set_active(true);
-                        }
-                        return false;
-                    },
-                    350);
-                return false;
-            });
-        tbFilterBar->signal_leave_notify_event().connect(
-            [this](GdkEventCrossing*) -> bool {
-                filterBarHoverConn_.disconnect();
-                return false;
-            });
     }
 
     // Album view state
@@ -1161,6 +1161,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     filmstripCurrentRating = 0;
     filmstripActionBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
     filmstripActionBar->set_name("FilmstripActions");
+    Gtk::Box* ratingPaletteOptionsBox = nullptr;
     {
         // Inline CSS for ultra-compact buttons
         auto css = Gtk::CssProvider::create();
@@ -1194,7 +1195,13 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         filmstripCurrentPick_ = 0;
 
         filmstripFlagBtn_ = Gtk::manage(new Gtk::Button());
-        filmstripFlagBtn_->set_image(*Gtk::manage(new RTImage("flag-pick", Gtk::ICON_SIZE_MENU)));
+        // NOT Gtk::manage'd: set_image() swaps drop the old image from the
+        // button and a managed image is destroyed on unparent — the flag
+        // icon then rendered corrupted (missing its pole) on Windows.
+        // C++-owned, freed in the destructor like every other swapped pair.
+        iFilmstripFlagPick_ = new RTImage("flag-pick", Gtk::ICON_SIZE_MENU);
+        iFilmstripFlagUnflag_ = new RTImage("flag-unflagged", Gtk::ICON_SIZE_MENU);
+        filmstripFlagBtn_->set_image(*iFilmstripFlagPick_);
         filmstripFlagBtn_->set_relief(Gtk::RELIEF_NONE);
         filmstripFlagBtn_->set_tooltip_markup(M("FILEBROWSER_POPUPFLAG"));
         filmstripFlagBtn_->signal_clicked().connect([this]() {
@@ -1255,6 +1262,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
             colorLabelRevealer_->set_reveal_child(false);
 
             auto* labelBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+            ratingPaletteOptionsBox = labelBox;
             const auto showRatingPalette = [this]() {
                 ratingPaletteCloseConn_.disconnect();
                 if (colorLabelRevealer_) {
@@ -1343,7 +1351,10 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 
             for (int i = 0; i < 5; ++i) {
                 filmstripRankBtns[i] = Gtk::manage(new Gtk::Button());
-                filmstripRankBtns[i]->set_image(*Gtk::manage(new RTImage("star-small", Gtk::ICON_SIZE_MENU)));
+                // C++-owned swap icons — same rule as the flag button pair.
+                iFilmstripStarGold_[i] = new RTImage("star-gold-small", Gtk::ICON_SIZE_MENU);
+                iFilmstripStarPlain_[i] = new RTImage("star-small", Gtk::ICON_SIZE_MENU);
+                filmstripRankBtns[i]->set_image(*iFilmstripStarPlain_[i]);
                 filmstripRankBtns[i]->set_relief(Gtk::RELIEF_NONE);
                 filmstripRankBtns[i]->signal_clicked().connect([this, i]() {
                     if (fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser) {
@@ -1766,7 +1777,33 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         filmstripActionBar->pack_start(*copyGroup, Gtk::PACK_SHRINK);
 
     }
-    toolBarPanel->set_center_widget(*filmstripActionBar);
+    Gtk::Widget* centeredFilmstripActions = filmstripActionBar;
+    if (ratingPaletteOptionsBox) {
+        ratingPaletteOptionsBox->show_all();
+        filmstripActionBar->show_all();
+
+        int paletteMinimumWidth = 0;
+        int paletteNaturalWidth = 0;
+        int collapsedMinimumWidth = 0;
+        int collapsedNaturalWidth = 0;
+        ratingPaletteOptionsBox->get_preferred_width(paletteMinimumWidth, paletteNaturalWidth);
+        filmstripActionBar->get_preferred_width(collapsedMinimumWidth, collapsedNaturalWidth);
+
+        const int paletteWidth = std::max(paletteMinimumWidth, paletteNaturalWidth);
+        const int collapsedWidth = std::max(collapsedMinimumWidth, collapsedNaturalWidth);
+        auto* filmstripActionAnchor = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+        auto* paletteLeadingReservation = Gtk::manage(new Gtk::Box());
+
+        // GTK recenters a center widget whenever its preferred width changes.
+        // Keep the collapsed controls anchored and consume the right reservation
+        // as the rating palette reveals instead.
+        paletteLeadingReservation->set_size_request(paletteWidth, -1);
+        filmstripActionAnchor->set_size_request(collapsedWidth + 2 * paletteWidth, -1);
+        filmstripActionAnchor->pack_start(*paletteLeadingReservation, Gtk::PACK_SHRINK);
+        filmstripActionAnchor->pack_start(*filmstripActionBar, Gtk::PACK_SHRINK);
+        centeredFilmstripActions = filmstripActionAnchor;
+    }
+    toolBarPanel->set_center_widget(*centeredFilmstripActions);
 
     // Preview channel buttons (R/G/B/L) moved to Options menu
     // toolBarPanel->pack_end   (*iareapanel->imageArea->previewModePanel, Gtk::PACK_SHRINK, 0);
@@ -2110,6 +2147,9 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     tbRightPanel_1->set_relief (Gtk::RELIEF_NONE);
     tbRightPanel_1->set_active (true);
     tbRightPanel_1->set_tooltip_markup (M ("MAIN_TOOLTIP_SHOWHIDERP1"));
+    // Retired from the bottom bar in favour of the right edge grip
+    tbRightPanel_1->set_no_show_all (true);
+    tbRightPanel_1->hide ();
     tbRightPanel_1->set_image (*iRightPanel_1_Hide);
     setExpandAlignProperties (tbRightPanel_1, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_FILL);
 
@@ -2209,6 +2249,11 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         tpc->setDoubleExposureBrowserDirProvider([fp]() {
             return fp->fileCatalog ? fp->fileCatalog->lastSelectedDir() : Glib::ustring();
         });
+        tpc->setDoubleExposureOpenPartnerHandler([fp](const Glib::ustring& path, const Glib::ustring& anchor) {
+            if (fp->fileCatalog) {
+                fp->fileCatalog->openPartnerForEditing(path, anchor);
+            }
+        });
     }
 
     if (filePanel) {
@@ -2226,6 +2271,27 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         // Pack filmstrip directly into editbox as its first child (before the toolbar)
         editbox->pack_start(*catalogPane, false, false, 0);
         editbox->reorder_child(*catalogPane, 0);
+
+        // Browser title pinned above the filmstrip (toggled from the title's
+        // right-click menu in the file browser). Lives in editbox, NOT inside
+        // catalogPane: RTWindow only moves the filmstrip into catalogPane
+        // when it has no children, so catalogPane must stay exclusively the
+        // filmstrip's slot.
+        editorTitleLabel_ = Gtk::manage(new Gtk::Label());
+        editorTitleLabel_->set_name("BrowserPathTitle");
+        editorTitleLabel_->set_ellipsize(Pango::ELLIPSIZE_MIDDLE);
+        editorTitleLabel_->set_max_width_chars(60);
+        editorTitleLabel_->set_halign(Gtk::ALIGN_CENTER);
+        editorTitleLabel_->set_no_show_all(true);
+        editbox->pack_start(*editorTitleLabel_, Gtk::PACK_SHRINK, 0);
+        editbox->reorder_child(*editorTitleLabel_, 0);
+
+        editorTitleConn_ = FileCatalog::browserTitleChanged().connect(
+            sigc::mem_fun(*this, &EditorPanel::updateEditorTitleLabel));
+        if (fPanel && fPanel->fileCatalog) {
+            updateEditorTitleLabel(fPanel->fileCatalog->getBrowserTitleText(),
+                                   fPanel->fileCatalog->getBrowserTitleTooltip());
+        }
     }
 
     // Album grid view
@@ -2482,25 +2548,104 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                 alloc.set_height(sideH);
                 return true;
             }
+            const int gripW = 8;
+
+            // Both sidebar borders are tracked through the same easing the
+            // panels use, so a grip stays glued to a moving edge.
+            int leftEdgeX = 0;
+
+            if (leftbox && leftbox->get_visible()) {
+                int lminW = 0, lnatW = 0;
+                leftbox->get_preferred_width(lminW, lnatW);
+                const double eased = 1.0 - std::pow(1.0 - leftAnimFraction_, 3);
+                leftEdgeX = static_cast<int>(lnatW * eased);
+            }
+
+            int rightEdgeX = overlayW;
+
+            if (vboxright && vboxright->get_visible()) {
+                int rminW = 0, rnatW = 0;
+                vboxright->get_preferred_width(rminW, rnatW);
+                const int panelW = std::min(rnatW, overlayW);
+                double viewEased;
+                if (editorAnimIn_) {
+                    viewEased = 1.0 - std::pow(1.0 - editorAnimFraction_, 3);
+                } else {
+                    viewEased = editorAnimFraction_ * editorAnimFraction_ * editorAnimFraction_;
+                }
+                const double toggleEased = 1.0 - std::pow(1.0 - rightAnimFraction_, 3);
+                rightEdgeX = overlayW - static_cast<int>(panelW * std::min(viewEased, toggleEased));
+            }
+
+            // Top of the image canvas. The grips start there, so they never
+            // reach up into the filmstrip or the toolbar.
+            int canvasTop = 0;
+
+            if (beforeAfterBox && beforeAfterBox->get_realized() && hpanedr->get_realized()) {
+                int tx = 0, ty = 0;
+                if (beforeAfterBox->translate_coordinates(*hpanedr, 0, 0, tx, ty)) {
+                    canvasTop = rtengine::LIM(ty, 0, sideH);
+                }
+            }
+
+            if (child == leftEdgeGrip_) {
+                alloc.set_x(leftEdgeX);
+                alloc.set_y(canvasTop);
+                alloc.set_width(gripW);
+                alloc.set_height(std::max(1, sideH - canvasTop));
+                return true;
+            } else if (child == rightEdgeGrip_) {
+                alloc.set_x(std::max(0, rightEdgeX - gripW));
+                alloc.set_y(canvasTop);
+                alloc.set_width(gripW);
+                alloc.set_height(std::max(1, sideH - canvasTop));
+                return true;
+            } else if (child == topEdgeGrip_) {
+                const int x0 = leftEdgeX + gripW;
+                const int x1 = std::max(x0 + 1, rightEdgeX - gripW);
+                alloc.set_x(x0);
+                alloc.set_y(canvasTop);
+                alloc.set_width(x1 - x0);
+                alloc.set_height(gripW);
+                return true;
+            }
+
             return false;
         }, false);
 
-    // Thin hot-strip at the far left: when the left sidebar is collapsed,
-    // clicking these few pixels re-expands it
-    leftEdgeExpander_ = Gtk::manage(new Gtk::EventBox());
-    leftEdgeExpander_->set_size_request(5, -1);
-    leftEdgeExpander_->set_visible_window(false);
-    leftEdgeExpander_->add_events(Gdk::BUTTON_PRESS_MASK);
-    leftEdgeExpander_->set_tooltip_text(M("MAIN_TOOLTIP_HIDEHP"));
-    leftEdgeExpander_->signal_button_press_event().connect(
-        [this](GdkEventButton*) -> bool {
-            if (hidehp && !hidehp->get_active()) {
-                hidehp->set_active(true);
+    // Edge grips replace the old collapse/expand buttons. Each is a thin
+    // hot strip pinned to the border of the panel it drives, and every one
+    // of them sits over the image canvas in both states -- never over the
+    // sidebar, the filmstrip or the toolbars -- so none of them can swallow
+    // a click meant for a control.
+    {
+        topEdgeGrip_ = createEdgeGrip (false, M("EDITOR_EDGEGRIP_FILMSTRIP"), [this]() {
+            if (tbTopPanel_1) {
+                tbTopPanel_1->set_active(!tbTopPanel_1->get_active());
             }
-            return true;
         });
-    leftEdgeExpander_->set_no_show_all(true);
-    pack_start (*leftEdgeExpander_, Gtk::PACK_SHRINK);
+        // Right-click still opens the filmstrip thumbnail size slider
+        topEdgeGrip_->signal_button_press_event().connect(
+            sigc::mem_fun(*this, &EditorPanel::onFilmstripButtonPress), false);
+
+        leftEdgeGrip_ = createEdgeGrip (true, M("EDITOR_EDGEGRIP_LEFT"), [this]() {
+            if (hidehp) {
+                hidehp->set_active(!hidehp->get_active());
+            }
+        });
+
+        rightEdgeGrip_ = createEdgeGrip (true, M("EDITOR_EDGEGRIP_RIGHT"), [this]() {
+            if (tbRightPanel_1) {
+                tbRightPanel_1->set_active(!tbRightPanel_1->get_active());
+            }
+        });
+
+        // Added after the sidebars so they paint above them; the side grips
+        // come after the top one so they own the corners.
+        hpanedr->add_overlay(*topEdgeGrip_);
+        hpanedr->add_overlay(*leftEdgeGrip_);
+        hpanedr->add_overlay(*rightEdgeGrip_);
+    }
 
     pack_start (*hpanedr);
 
@@ -2523,6 +2668,9 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     tpc->addPParamsChangeListener (presetListPanel);
     tpc->addPParamsChangeListener (history);
     tpc->addPParamsChangeListener (this);
+    iareapanel->imageArea->setBeforeLockHandlers (
+        [this]() { return isBeforeLocked(); },
+        [this](bool locked) { setBeforeLocked(locked); });
     iareapanel->imageArea->setCropGUIListener (tpc->getCropGUIListener());
     iareapanel->imageArea->setPointerMotionListener (navigator);
     iareapanel->imageArea->setImageAreaToolListener (tpc);
@@ -2625,12 +2773,32 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 
 }
 
+void EditorPanel::updateEditorTitleLabel (const Glib::ustring& text, const Glib::ustring& tooltip)
+{
+    if (!editorTitleLabel_) {
+        return;
+    }
+
+    editorTitleLabel_->set_text(text);
+    editorTitleLabel_->set_tooltip_text(tooltip.empty() ? text : tooltip);
+    editorTitleLabel_->set_visible(App::get().options().browserTitlePinToEditor && !text.empty());
+}
+
 EditorPanel::~EditorPanel ()
 {
+    editorRecentHoverTimer_.disconnect();
+    editorFavoritesRefreshConn_.disconnect();
+    editorTitleConn_.disconnect();
     ratingPaletteCloseConn_.disconnect();
     ratingPaletteOpenConn_.disconnect();
     filmstripSizeApplyConn_.disconnect();
     delete filmstripSizePopover_;
+    delete iFilmstripFlagPick_;
+    delete iFilmstripFlagUnflag_;
+    for (int i = 0; i < 5; ++i) {
+        delete iFilmstripStarGold_[i];
+        delete iFilmstripStarPlain_[i];
+    }
     deferredOpenConn_.disconnect();
     deferredDirSyncConn_.disconnect();
     deferredCropEnableConn_.disconnect();
@@ -2705,8 +2873,6 @@ EditorPanel::~EditorPanel ()
     delete iTopPanel_1_Hide;
     delete iHistoryShow;
     delete iHistoryHide;
-    delete iBeforeLockON;
-    delete iBeforeLockOFF;
     delete iRightPanel_1_Show;
     delete iRightPanel_1_Hide;
     delete iShowHideSidePanels_exit;
@@ -2759,7 +2925,7 @@ void EditorPanel::scheduleEditorDirSync(const Glib::ustring& dirName, const char
         return;
     }
 
-    if (dirName == lastSyncedEditorDir_) {
+    if (dirName == lastSyncedEditorDir_ && dirName == editorDirBrowser_->getHighlightedDir()) {
         EDITOR_OPEN_LOG("[editorOpen] dir sync skipped source=%s sameDir=1 file=%s\n",
             source ? source : "",
             dirName.c_str());
@@ -2835,7 +3001,7 @@ void EditorPanel::scheduleEditorDirSync(const Glib::ustring& dirName, const char
 
             pendingEditorDirSyncDir_.clear();
             pendingEditorDirSyncDue_ = std::chrono::steady_clock::time_point{};
-            editorDirBrowser_->open(dirName, Glib::ustring(), false);
+            editorDirBrowser_->highlightDir(dirName);
             lastSyncedEditorDir_ = dirName;
 
             if (albumBrowser_) {
@@ -2852,6 +3018,11 @@ void EditorPanel::scheduleEditorDirSync(const Glib::ustring& dirName, const char
         },
         delayMs,
         Glib::PRIORITY_LOW);
+}
+
+void EditorPanel::syncDirectoryHighlight(const Glib::ustring& directory)
+{
+    scheduleEditorDirSync(directory, "viewSwitch", 0);
 }
 
 
@@ -2955,11 +3126,8 @@ void EditorPanel::on_realize ()
 void EditorPanel::updateFilmstripStars(int highlightUpTo)
 {
     for (int i = 0; i < 5; i++) {
-        if (i < highlightUpTo) {
-            filmstripRankBtns[i]->set_image(*Gtk::manage(new RTImage("star-gold-small", Gtk::ICON_SIZE_MENU)));
-        } else {
-            filmstripRankBtns[i]->set_image(*Gtk::manage(new RTImage("star-small", Gtk::ICON_SIZE_MENU)));
-        }
+        filmstripRankBtns[i]->set_image(
+            i < highlightUpTo ? *iFilmstripStarGold_[i] : *iFilmstripStarPlain_[i]);
     }
 }
 
@@ -2967,11 +3135,11 @@ void EditorPanel::updateFilmstripFlagBtn()
 {
     if (filmstripCurrentPick_ == 1) {
         // Currently flagged — show unflag icon
-        filmstripFlagBtn_->set_image(*Gtk::manage(new RTImage("flag-unflagged", Gtk::ICON_SIZE_MENU)));
+        filmstripFlagBtn_->set_image(*iFilmstripFlagUnflag_);
         filmstripFlagBtn_->set_tooltip_markup(M("FILEBROWSER_POPUPUNFLAG"));
     } else {
         // Not flagged — show flag icon
-        filmstripFlagBtn_->set_image(*Gtk::manage(new RTImage("flag-pick", Gtk::ICON_SIZE_MENU)));
+        filmstripFlagBtn_->set_image(*iFilmstripFlagPick_);
         filmstripFlagBtn_->set_tooltip_markup(M("FILEBROWSER_POPUPFLAG"));
     }
 }
@@ -3078,6 +3246,11 @@ void EditorPanel::collapseFilterBar()
     if (tbFilterBar && tbFilterBar->get_active()) {
         tbFilterBar->set_active(false);  // triggers filterBarToggled → hides
     }
+}
+
+void EditorPanel::restoreEditorFilter()
+{
+    applyEditorFilter();
 }
 
 void EditorPanel::filterBarChanged()
@@ -4155,36 +4328,7 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
                 return;
             }
 
-            idle_register.add(
-                [this, firstFrameFile, firstFrameSession]() -> bool {
-                    if (firstFrameSession != openSession_ || fname != firstFrameFile || !ipc) {
-                        return false;
-                    }
-
-                    deferredHighDetailConn_.disconnect();
-                    // Bounded busy-wait: isProcessing can wedge true (stale
-                    // progress bracket from the previous image's processor),
-                    // and this pass is the only route to settled quality.
-                    auto busyPolls = std::make_shared<int>(0);
-                    deferredHighDetailConn_ = Glib::signal_timeout().connect(
-                        [this, firstFrameFile, firstFrameSession, busyPolls]() -> bool {
-                            if (firstFrameSession != openSession_ || fname != firstFrameFile || !ipc) {
-                                return false;
-                            }
-                            if (isProcessing && ++*busyPolls < 8) {
-                                return true;
-                            }
-
-                            EDITOR_OPEN_LOG("[editorOpen] idle high-detail refinement file=%s busyPolls=%d\n",
-                                            firstFrameFile.c_str(), *busyPolls);
-                            ipc->startProcessing(M_HIGHQUAL | M_MONITOR);
-                            return false;
-                        },
-                        kEditorHighDetailDelayMs,
-                        G_PRIORITY_LOW);
-                    return false;
-                },
-                G_PRIORITY_LOW);
+            scheduleFinalPreviewRefinement();
         },
         [this, previewFile = openFileName, previewSession = firstFrameSession]() {
             scheduleFilmstripLivePreview(previewFile, previewSession);
@@ -4241,18 +4385,26 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
 
     // If in single tab mode, the main crop window is not constructed the very first time
     // since there was no resize event
+    // The re-enable intent must NOT be conditional on the handler being
+    // enabled right now. A rapid switch cancels the previous open's deferred
+    // enable (quick-preview path below) while the handler is already disabled;
+    // this branch would then see getEnabled()==false, never arm the deferred
+    // enable, and the handler would stay disabled for this image AND every
+    // one after it — a disabled crop handler renders no detail crop, so the
+    // canvas stops at the coarse preview and zoom/pan stop responding.
     if (iareapanel->imageArea->mainCropWindow) {
         if (iareapanel->imageArea->mainCropWindow->cropHandler.getEnabled()) {
             iareapanel->imageArea->mainCropWindow->cropHandler.setEnabled(false);
-            deferredCropWindowEnable_ = true;
         }
+        deferredCropWindowEnable_ = true;
         iareapanel->imageArea->mainCropWindow->cropHandler.newImage (ipc, false);
     } else {
         Gtk::Allocation alloc;
         iareapanel->imageArea->on_resized (alloc);
-        if (iareapanel->imageArea->mainCropWindow
-            && iareapanel->imageArea->mainCropWindow->cropHandler.getEnabled()) {
-            iareapanel->imageArea->mainCropWindow->cropHandler.setEnabled(false);
+        if (iareapanel->imageArea->mainCropWindow) {
+            if (iareapanel->imageArea->mainCropWindow->cropHandler.getEnabled()) {
+                iareapanel->imageArea->mainCropWindow->cropHandler.setEnabled(false);
+            }
             deferredCropWindowEnable_ = true;
         }
 
@@ -4348,7 +4500,13 @@ void EditorPanel::setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scal
     if (!sourceFile.empty() && sourceFile != fname && (hasDeferredOpen || hasDeferredCropEnable)) {
         deferredOpenConn_.disconnect();
         deferredCropEnableConn_.disconnect();
-        deferredCropWindowEnable_ = false;
+        // Cancelling the pending enable must not also discard the fact that
+        // the crop handler is still disabled: that timer was the only thing
+        // that would have restored it, so the intent has to survive for the
+        // open we are switching to.
+        deferredCropWindowEnable_ =
+            iareapanel && iareapanel->imageArea && iareapanel->imageArea->mainCropWindow
+            && !iareapanel->imageArea->mainCropWindow->cropHandler.getEnabled();
         ++openSession_;
         EDITOR_OPEN_LOG("[editorOpen] quick preview canceled deferred phaseB old=%s new=%s\n",
             fname.c_str(),
@@ -4507,6 +4665,7 @@ void EditorPanel::scheduleFinalPreviewRefinement()
     deferredHighDetailConn_.disconnect();
     const unsigned int session = openSession_;
     const Glib::ustring sourceFile = fname;
+    const unsigned int refinementGeneration = ++finalPreviewRefinementGeneration_;
 
     // The interactive pipeline renders with the fast preview demosaic; this
     // deferred pass is the ONLY way the settled full-quality image (and any
@@ -4519,17 +4678,78 @@ void EditorPanel::scheduleFinalPreviewRefinement()
     auto busyPolls = std::make_shared<int>(0);
 
     deferredHighDetailConn_ = Glib::signal_timeout().connect(
-        [this, session, sourceFile, busyPolls]() -> bool {
-            if (session != openSession_ || fname != sourceFile || !ipc) {
+        [this, session, sourceFile, refinementGeneration, busyPolls]() -> bool {
+            if (session != openSession_
+                    || refinementGeneration != finalPreviewRefinementGeneration_
+                    || fname != sourceFile
+                    || !ipc) {
                 return false;
             }
             if (isProcessing && ++*busyPolls < 8) {
                 return true;
             }
 
-            EDITOR_OPEN_LOG("[editorPreview] finalized settled refinement file=%s busyPolls=%d\n",
+            const unsigned long long completedSerial =
+                rtengine::getSettledPreviewSerial(ipc);
+            auto attempts = std::make_shared<int>(1);
+            EDITOR_OPEN_LOG("[editorPreview] requested settled refinement file=%s busyPolls=%d attempt=1\n",
                             sourceFile.c_str(), *busyPolls);
+            if (previewHandler) {
+                ipc->setPreviewImageListener(previewHandler);
+            }
             ipc->startProcessing(M_HIGHQUAL | M_MONITOR);
+
+            deferredHighDetailConn_ = Glib::signal_timeout().connect(
+                [this, session, sourceFile, refinementGeneration, completedSerial, attempts]() -> bool {
+                    if (session != openSession_
+                            || refinementGeneration != finalPreviewRefinementGeneration_
+                            || fname != sourceFile
+                            || !ipc) {
+                        return false;
+                    }
+
+                    if (rtengine::getSettledPreviewSerial(ipc) > completedSerial) {
+                        EDITOR_OPEN_LOG("[editorPreview] settled refinement published file=%s attempt=%d\n",
+                                        sourceFile.c_str(), *attempts);
+                        return false;
+                    }
+
+                    if (++*attempts > 4) {
+                        // Repeating M_HIGHQUAL|M_MONITOR has not published
+                        // anything, which means the pipeline keeps aborting
+                        // before imageReady() — most often mid-pipeline state
+                        // left stale by an abort. Nothing else will ever retry
+                        // for this image, so spend one full reprocess to
+                        // rebuild that state rather than leave the canvas
+                        // stuck at fast-demosaic quality forever. Bounded: the
+                        // handler stops here either way.
+                        EDITOR_OPEN_LOG("[editorPreview] settled refinement timed out file=%s attempts=%d forcing full reprocess\n",
+                                        sourceFile.c_str(), *attempts - 1);
+                        std::fprintf(stderr,
+                                     "Settled preview never published for '%s'; forcing a full reprocess.\n",
+                                     sourceFile.c_str());
+
+                        if (previewHandler) {
+                            ipc->setPreviewImageListener(previewHandler);
+                        }
+
+                        ipc->startProcessing(ALL);
+                        return false;
+                    }
+
+                    // Reattaching is harmless and repairs a listener detached
+                    // by a rapid image switch. The processing flags coalesce,
+                    // so retrying cannot create parallel editor renders.
+                    if (previewHandler) {
+                        ipc->setPreviewImageListener(previewHandler);
+                    }
+                    EDITOR_OPEN_LOG("[editorPreview] retrying settled refinement file=%s attempt=%d processing=%d\n",
+                                    sourceFile.c_str(), *attempts, static_cast<int>(isProcessing));
+                    ipc->startProcessing(M_HIGHQUAL | M_MONITOR);
+                    return true;
+                },
+                1500,
+                G_PRIORITY_LOW);
             return false;
         },
         kEditorHighDetailDelayMs,
@@ -4775,11 +4995,16 @@ void EditorPanel::openPhaseB (Thumbnail* tmb)
         G_PRIORITY_DEFAULT_IDLE
     );
 
-    // Defer directory browser navigation to an idle callback so it doesn't
-    // block the image from appearing.  dirBrowser->open() scans the filesystem
-    // which is very slow on cross-filesystem mounts (e.g. WSL2 /mnt/c/).
+    // Defer directory-tree highlighting so filesystem traversal cannot delay
+    // the image from appearing (notably on cross-filesystem WSL2 mounts).
     if (editorDirBrowser_) {
-        Glib::ustring dirName = Glib::path_get_dirname(fname);
+        Glib::ustring dirName;
+        if (fPanel && fPanel->fileCatalog) {
+            dirName = fPanel->fileCatalog->lastSelectedDir();
+        }
+        if (dirName.empty()) {
+            dirName = Glib::path_get_dirname(fname);
+        }
         scheduleEditorDirSync(dirName, "openPhaseB", kEditorDirSyncAfterOpenDelayMs);
     }
 
@@ -4853,6 +5078,9 @@ void EditorPanel::close ()
             detachEditorProcessorListeners(ipc);
             detachEditorProcessorListeners(beforeIpc);
             setRawLoadEditorActivity(std::string(closingFname), false);
+            if (fPanel) {
+                fPanel->setEditorProcessingActivity(false);
+            }
             logCloseStep("listener-detach");
 
             // Disconnect preset panel from processor before closing
@@ -5015,6 +5243,14 @@ void EditorPanel::saveProfile ()
         ProcParams params;
         ipc->getParams (&params);
 
+        // This runs on every switch back to the browser, and setProcParams
+        // rewrites the sidecar, the cache entry and the XMP metadata whenever
+        // it is called with updateCacheNow — even when nothing was edited.
+        // Skip the whole round trip when the parameters already match.
+        if (openThm->procParamsMatch (params)) {
+            return;
+        }
+
         // Will call updateCache, which will update both the cached and sidecar files if necessary
         openThm->setProcParams (params, nullptr, EDITOR);
     }
@@ -5069,10 +5305,13 @@ void EditorPanel::procParamsChanged(
             beforeIpc->endUpdateParams(ev);
 
             // Geometry (e.g. the crop) changed — refit the before pane so it
-            // cannot stay stuck showing the old cropped framing after an undo
+            // cannot stay stuck showing the old cropped framing after an undo.
+            // Routed through the crop-preview helper so a clipped pane refits
+            // to the crop rather than to the discarded frame around it.
             if (beforeIarea && beforeIarea->imageArea
                     && beforeIarea->imageArea->mainCropWindow) {
-                beforeIarea->imageArea->mainCropWindow->zoomFit();
+                beforeIarea->imageArea->setCropPreviewSolid (
+                    iareapanel->imageArea->isCropPreviewSolid());
             }
         }
     }
@@ -5167,21 +5406,54 @@ void EditorPanel::flushQueuedProgressUI()
 
 void EditorPanel::setProgressState(bool inProcessing)
 {
-    setRawLoadEditorActivity(std::string(fname), inProcessing);
+    const unsigned int activitySession = openSession_;
+    const Glib::ustring activityFile = fname;
+    setRawLoadEditorActivity(std::string(activityFile), inProcessing);
+
+    bool scheduleIdle = false;
+    {
+        std::lock_guard<std::mutex> lock(progressUiMutex_);
+        queuedProcessingState_ = inProcessing;
+        queuedProcessingSession_ = activitySession;
+        queuedProcessingFile_ = activityFile;
+        if (!processingStateUiIdlePending_) {
+            processingStateUiIdlePending_ = true;
+            scheduleIdle = true;
+        }
+    }
+
+    if (!scheduleIdle) {
+        return;
+    }
 
     epih->pending++;
-
     idle_register.add(
-        [this, inProcessing]() -> bool
-        {
-            if (epih->destroyed)
+        [this]() -> bool {
+            bool inProcessing = false;
+            unsigned int activitySession = 0;
+            Glib::ustring activityFile;
             {
+                std::lock_guard<std::mutex> lock(progressUiMutex_);
+                inProcessing = queuedProcessingState_;
+                activitySession = queuedProcessingSession_;
+                activityFile = queuedProcessingFile_;
+                processingStateUiIdlePending_ = false;
+            }
+
+            if (epih->destroyed) {
                 if (epih->pending == 1) {
                     delete epih;
                 } else {
                     --epih->pending;
                 }
+                return false;
+            }
 
+            if (activitySession != openSession_ || activityFile != fname) {
+                if (inProcessing) {
+                    setRawLoadEditorActivity(std::string(activityFile), false);
+                }
+                --epih->pending;
                 return false;
             }
 
@@ -5241,6 +5513,10 @@ void EditorPanel::displayError(const Glib::ustring& title, const Glib::ustring& 
 // This is only called from the ThreadUI, so within the gtk thread
 void EditorPanel::refreshProcessingState (bool inProcessingP)
 {
+    if (fPanel) {
+        fPanel->setEditorProcessingActivity(inProcessingP);
+    }
+
     double val;
     Glib::ustring str;
 
@@ -5378,9 +5654,30 @@ void EditorPanel::collapseLeftSidebarForEdit ()
         programmaticSidebarChange_ = true;
         hidehp->set_active(false);  // triggers hideHistoryActivated
         programmaticSidebarChange_ = false;
-    } else if (leftEdgeExpander_) {
-        leftEdgeExpander_->set_visible(hidehp && !hidehp->get_active());
     }
+}
+
+void EditorPanel::setAnimationLayoutPause (bool& flag, bool paused)
+{
+    if (flag == paused) {
+        return;
+    }
+
+    ThumbBrowserBase* browser =
+        (fPanel && fPanel->fileCatalog) ? fPanel->fileCatalog->fileBrowser : nullptr;
+
+    if (!browser) {
+        flag = false;
+        return;
+    }
+
+    if (paused) {
+        browser->pauseLayout();
+    } else {
+        browser->resumeLayout();
+    }
+
+    flag = paused;
 }
 
 void EditorPanel::hideHistoryActivated ()
@@ -5394,23 +5691,23 @@ void EditorPanel::hideHistoryActivated ()
     }
     hidehp->set_image(show ? *iHistoryHide : *iHistoryShow);
 
-    // The left-edge hot strip is only needed while the sidebar is hidden
-    if (leftEdgeExpander_) {
-        leftEdgeExpander_->set_visible(!show);
-    }
-
     leftAnimConn_.disconnect();
+    // A cancelled animation never reaches its terminal frame, so release any
+    // pause it was still holding before starting the next one.
+    setAnimationLayoutPause(leftAnimLayoutPaused_, false);
 
     if (show) {
         // Show immediately, then animate in
         leftbox->set_no_show_all(false);
         leftbox->show_all();
         leftAnimFraction_ = 0.0;
+        setAnimationLayoutPause(leftAnimLayoutPaused_, true);
         leftAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
             leftAnimFraction_ += 16.0 / 200.0; // 200ms
             if (leftAnimFraction_ >= 1.0) {
                 leftAnimFraction_ = 1.0;
                 hpanedr->queue_allocate();
+                setAnimationLayoutPause(leftAnimLayoutPaused_, false);
                 return false;
             }
             hpanedr->queue_allocate();
@@ -5418,6 +5715,9 @@ void EditorPanel::hideHistoryActivated ()
         }, 16);
 
         Glib::ustring dirToSync = pendingEditorDirSyncDir_;
+        if (dirToSync.empty() && fPanel && fPanel->fileCatalog) {
+            dirToSync = fPanel->fileCatalog->lastSelectedDir();
+        }
         if (dirToSync.empty() && !fname.empty()) {
             dirToSync = Glib::path_get_dirname(fname);
         }
@@ -5425,10 +5725,17 @@ void EditorPanel::hideHistoryActivated ()
         pendingEditorDirSyncDue_ = std::chrono::steady_clock::time_point{};
         scheduleEditorDirSync(dirToSync, "leftPanelShown", 0);
     } else {
-        if (!fname.empty()) {
+        Glib::ustring dirToSync;
+        if (fPanel && fPanel->fileCatalog) {
+            dirToSync = fPanel->fileCatalog->lastSelectedDir();
+        }
+        if (dirToSync.empty() && !fname.empty()) {
+            dirToSync = Glib::path_get_dirname(fname);
+        }
+        if (!dirToSync.empty()) {
             deferredDirSyncConn_.disconnect();
             ++editorDirSyncGeneration_;
-            pendingEditorDirSyncDir_ = Glib::path_get_dirname(fname);
+            pendingEditorDirSyncDir_ = dirToSync;
             pendingEditorDirSyncDue_ = std::chrono::steady_clock::time_point{};
             EDITOR_OPEN_LOG("[editorOpen] dir sync postponed source=leftPanelHidden hidden=1 file=%s\n",
                 pendingEditorDirSyncDir_.c_str());
@@ -5436,6 +5743,7 @@ void EditorPanel::hideHistoryActivated ()
 
         // Animate out, then hide
         leftAnimFraction_ = 1.0;
+        setAnimationLayoutPause(leftAnimLayoutPaused_, true);
         leftAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
             leftAnimFraction_ -= 16.0 / 200.0;
             if (leftAnimFraction_ <= 0.0) {
@@ -5443,6 +5751,7 @@ void EditorPanel::hideHistoryActivated ()
                 leftbox->hide();
                 leftbox->set_no_show_all(true);
                 hpanedr->queue_allocate();
+                setAnimationLayoutPause(leftAnimLayoutPaused_, false);
                 return false;
             }
             hpanedr->queue_allocate();
@@ -5537,14 +5846,10 @@ void EditorPanel::tbRightPanel_1_toggled ()
 
 void EditorPanel::tbTopPanel_1_visible (bool visible)
 {
-    if (!tbTopPanel_1) {
-        return;
-    }
-
-    if (visible) {
-        tbTopPanel_1->show();
-    } else {
-        tbTopPanel_1->hide();
+    // The button is no longer in the toolbar -- the filmstrip edge grip
+    // replaced it, so that is what this now shows or hides.
+    if (topEdgeGrip_) {
+        topEdgeGrip_->set_visible(visible);
     }
 }
 
@@ -5611,6 +5916,7 @@ void EditorPanel::tbTopPanel_1_toggled ()
     tbTopPanel_1->set_image(show ? *iTopPanel_1_Hide : *iTopPanel_1_Show);
 
     topAnimConn_.disconnect();
+    setAnimationLayoutPause(topAnimLayoutPaused_, false);
 
     if (show) {
         // Update target from actual content height
@@ -5624,11 +5930,13 @@ void EditorPanel::tbTopPanel_1_toggled ()
         catalogPane->set_size_request(-1, 1);
         catalogPane->show();
         topAnimFraction_ = 0.0;
+        setAnimationLayoutPause(topAnimLayoutPaused_, true);
         topAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
             topAnimFraction_ += 16.0 / 200.0;
             if (topAnimFraction_ >= 1.0) {
                 topAnimFraction_ = 1.0;
                 catalogPane->set_size_request(-1, -1);
+                setAnimationLayoutPause(topAnimLayoutPaused_, false);
                 return false;
             }
             double eased = 1.0 - std::pow(1.0 - topAnimFraction_, 3);
@@ -5639,6 +5947,7 @@ void EditorPanel::tbTopPanel_1_toggled ()
         }, 16);
     } else {
         topAnimFraction_ = 1.0;
+        setAnimationLayoutPause(topAnimLayoutPaused_, true);
         topAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
             topAnimFraction_ -= 16.0 / 200.0;
             if (topAnimFraction_ <= 0.0) {
@@ -5646,6 +5955,7 @@ void EditorPanel::tbTopPanel_1_toggled ()
                 catalogPane->hide();
                 catalogPane->set_size_request(-1, -1);
                 catalogPane->set_opacity(1.0);
+                setAnimationLayoutPause(topAnimLayoutPaused_, false);
                 return false;
             }
             double eased = topAnimFraction_ * topAnimFraction_ * topAnimFraction_;
@@ -5671,12 +5981,15 @@ bool EditorPanel::onFilmstripButtonPress (GdkEventButton* event)
 
 void EditorPanel::showFilmstripSizePopover ()
 {
-    if (!tbTopPanel_1) {
+    Gtk::Widget* anchor = topEdgeGrip_ ? static_cast<Gtk::Widget*>(topEdgeGrip_)
+                                       : static_cast<Gtk::Widget*>(tbTopPanel_1);
+
+    if (!anchor) {
         return;
     }
 
     if (!filmstripSizePopover_) {
-        filmstripSizePopover_ = new Gtk::Popover(*tbTopPanel_1);
+        filmstripSizePopover_ = new Gtk::Popover(*anchor);
 
         auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
         box->set_margin_start(10);
@@ -5718,17 +6031,22 @@ void EditorPanel::onFilmstripSizeChanged ()
         return;
     }
 
-    const int value = static_cast<int>(filmstripSizeScale_->get_value() + 0.5);
-
-    // Debounce: dragging fires continuously and every resize regenerates
-    // thumbnail renders — apply once the slider settles.
-    filmstripSizeApplyConn_.disconnect();
+    // Throttle, not debounce: applying on every slider tick is too heavy
+    // (each resize relayouts the strip and queues thumbnail re-renders),
+    // but the strip should still follow the drag live. One apply per ~80ms
+    // reads the latest slider value at fire time, so the final position is
+    // always applied too.
+    if (filmstripSizeApplyConn_.connected()) {
+        return;
+    }
     filmstripSizeApplyConn_ = Glib::signal_timeout().connect(
-        [this, value]() -> bool {
-            applyFilmstripSize(value);
+        [this]() -> bool {
+            if (filmstripSizeScale_) {
+                applyFilmstripSize(static_cast<int>(filmstripSizeScale_->get_value() + 0.5));
+            }
             return false;
         },
-        120);
+        80);
 }
 
 void EditorPanel::applyFilmstripSize (int value)
@@ -6649,30 +6967,15 @@ void EditorPanel::beforeAfterToggled ()
         if (!keepSplit) {
             int HeaderBoxHeight = 15;
 
-            beforeLabel = Gtk::manage (new Gtk::Label (M ("GENERAL_BEFORE")));
-            beforeLabel->get_style_context()->add_class("ba-label");
-            tbBeforeLock = Gtk::manage (new Gtk::ToggleButton ());
-            tbBeforeLock->get_style_context()->add_class("ba-lock");
-            tbBeforeLock->set_relief(Gtk::RELIEF_NONE);
-            tbBeforeLock->set_tooltip_markup (M ("MAIN_TOOLTIP_BEFOREAFTERLOCK"));
-            tbBeforeLock->signal_toggled().connect ( sigc::mem_fun (*this, &EditorPanel::tbBeforeLock_toggled) );
             beforeHeaderBox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL));
             beforeHeaderBox->get_style_context()->add_class("smallbuttonbox");
-            beforeHeaderBox->pack_start (*beforeLabel, Gtk::PACK_EXPAND_WIDGET, 0);
-            beforeHeaderBox->pack_end (*tbBeforeLock, Gtk::PACK_SHRINK, 0);
             beforeHeaderBox->set_size_request (0, HeaderBoxHeight);
-
-            history->blistenerLock ? tbBeforeLock->set_image (*iBeforeLockON) : tbBeforeLock->set_image (*iBeforeLockOFF);
-            tbBeforeLock->set_active (history->blistenerLock);
 
             beforeBox = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
             beforeBox->pack_start (*beforeHeaderBox, Gtk::PACK_SHRINK, 0);
 
-            afterLabel = Gtk::manage (new Gtk::Label (M ("GENERAL_AFTER")));
-            afterLabel->get_style_context()->add_class("ba-label");
             afterHeaderBox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL));
             afterHeaderBox->set_size_request (0, HeaderBoxHeight);
-            afterHeaderBox->pack_start (*afterLabel, Gtk::PACK_EXPAND_WIDGET, 0);
             afterBox->pack_start (*afterHeaderBox, Gtk::PACK_SHRINK, 0);
             afterBox->reorder_child (*afterHeaderBox, 0);
 
@@ -6747,6 +7050,9 @@ void EditorPanel::beforeAfterToggled ()
                 beforeIarea->imageArea->setIndicateClippedPanel (iareapanel->imageArea->indClippedPanel);
                 iareapanel->imageArea->iLinkedImageArea = beforeIarea->imageArea;
                 beforeIarea->imageArea->iLinkedImageArea = iareapanel->imageArea;
+                beforeIarea->imageArea->setBeforeLockHandlers (
+                    [this]() { return isBeforeLocked(); },
+                    [this](bool locked) { setBeforeLocked(locked); });
                 beforeIarea->imageArea->isBeforeView = true;
                 iareapanel->imageArea->isBeforeView = false;
                 beforeIarea->imageArea->inBeforeAfterSplit = true;
@@ -6761,15 +7067,29 @@ void EditorPanel::beforeAfterToggled ()
                     Gtk::Allocation alloc = beforeIarea->imageArea->get_allocation();
                     beforeIarea->imageArea->on_resized(alloc);
                 }
+
+                // Clip the before pane to the crop exactly like the after
+                // pane. No refit: the pane's zoom is synced from the after
+                // side, and forcing a fit here would drag that side with it.
+                beforeIarea->imageArea->setCropPreviewSolid (
+                    iareapanel->imageArea->isCropPreviewSolid(), false);
             });
         }).detach();
     }
 }
 
-void EditorPanel::tbBeforeLock_toggled ()
+bool EditorPanel::isBeforeLocked () const
 {
-    history->blistenerLock = tbBeforeLock->get_active();
-    tbBeforeLock->get_active() ? tbBeforeLock->set_image (*iBeforeLockON) : tbBeforeLock->set_image (*iBeforeLockOFF);
+    return history && history->blistenerLock;
+}
+
+void EditorPanel::setBeforeLocked (bool locked)
+{
+    if (!history || history->blistenerLock == locked) {
+        return;
+    }
+
+    history->blistenerLock = locked;
 
     // Refresh the before view to reflect the new mode
     rtengine::procparams::ProcParams params;

@@ -44,11 +44,11 @@ ZoomPanel::ZoomPanel (ImageArea* iarea) : iarea(iarea), sliderUpdateInProgress(f
     // Main button: Cairo-drawn magnifying glass with zoom % inside lens
     zoomBtn = Gtk::manage (new Gtk::MenuButton ());
     zoomBtn->set_relief (Gtk::RELIEF_NONE);
-    zoomBtn->set_tooltip_markup (M ("ZOOMPANEL_ZOOM100"));
+    zoomBtn->set_tooltip_markup (M ("ZOOMPANEL_ZOOMMENU"));
     setExpandAlignProperties (zoomBtn, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_FILL);
 
     zoomDraw = Gtk::manage (new Gtk::DrawingArea ());
-    zoomDraw->set_size_request (46, 30);
+    zoomDraw->set_size_request (32, 30);
     zoomDraw->signal_draw().connect (sigc::mem_fun (*this, &ZoomPanel::onDrawZoom));
     zoomBtn->add (*zoomDraw);
 
@@ -156,21 +156,6 @@ ZoomPanel::ZoomPanel (ImageArea* iarea) : iarea(iarea), sliderUpdateInProgress(f
         zoomFitCropClicked ();
     });
 
-    // 100% button
-    zoom11 = Gtk::manage (new Gtk::Button ());
-    {
-        Gtk::Box* hbox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 8));
-        hbox->pack_start (*Gtk::manage (new RTImage ("magnifier-1to1", Gtk::ICON_SIZE_LARGE_TOOLBAR)), false, false);
-        hbox->pack_start (*Gtk::manage (new Gtk::Label (labelOnly (M ("ZOOMPANEL_ZOOM100")))), false, false);
-        zoom11->add (*hbox);
-    }
-    zoom11->set_relief (Gtk::RELIEF_NONE);
-    zoom11->set_tooltip_markup (M ("ZOOMPANEL_ZOOM100"));
-    zoom11->signal_clicked().connect ([this]() {
-        zoomPopover->popdown ();
-        zoom11Clicked ();
-    });
-
     // Separators
     Gtk::Separator* sep1 = Gtk::manage (new Gtk::Separator (Gtk::ORIENTATION_HORIZONTAL));
     Gtk::Separator* sep2 = Gtk::manage (new Gtk::Separator (Gtk::ORIENTATION_HORIZONTAL));
@@ -196,7 +181,6 @@ ZoomPanel::ZoomPanel (ImageArea* iarea) : iarea(iarea), sliderUpdateInProgress(f
     popBox->pack_start (*zoomOut, false, false);
     popBox->pack_start (*zoomFit, false, false);
     popBox->pack_start (*zoomFitCrop, false, false);
-    popBox->pack_start (*zoom11, false, false);
     popBox->pack_start (*sep2, false, false, 4);
     popBox->pack_start (*newCrop, false, false);
 
@@ -209,13 +193,15 @@ ZoomPanel::ZoomPanel (ImageArea* iarea) : iarea(iarea), sliderUpdateInProgress(f
 
 bool ZoomPanel::onDrawZoom (const Cairo::RefPtr<Cairo::Context>& cr)
 {
-    int w = zoomDraw->get_allocated_width ();
-    int h = zoomDraw->get_allocated_height ();
+    const int w = zoomDraw->get_allocated_width ();
+    const int h = zoomDraw->get_allocated_height ();
 
-    // Lens center — shifted up-left to leave room for handle
-    double cx = w * 0.42;
-    double cy = h * 0.42;
-    double r = std::min (w, h) * 0.40;
+    // The lens is drawn as large as the widget allows and the handle is kept
+    // to a short stub in the bottom-right corner: the roomier the glass, the
+    // better three- and four-digit zoom values sit inside it.
+    const double r = std::min (w * 0.40, h * 0.40);
+    const double cx = r + 1.8;
+    const double cy = r + 1.4;
 
     // Soft accent halo lifts the lens off the toolbar
     cr->set_source_rgba (0.392, 0.627, 1.0, 0.12);
@@ -231,6 +217,24 @@ bool ZoomPanel::onDrawZoom (const Cairo::RefPtr<Cairo::Context>& cr)
     cr->arc (cx, cy, r - 0.6, 0, 2 * M_PI);
     cr->fill ();
 
+    // Handle — drawn before the ring so the ring caps it off cleanly
+    const double diag = std::cos (M_PI / 4.0);
+    const double hx1 = cx + (r + 0.5) * diag;
+    const double hy1 = cy + (r + 0.5) * diag;
+    const double hx2 = std::min (cx + (r + 7.5) * diag, w - 2.4);
+    const double hy2 = std::min (cy + (r + 7.5) * diag, h - 2.4);
+    cr->set_line_cap (Cairo::LINE_CAP_ROUND);
+    cr->set_source_rgba (0.0, 0.0, 0.0, 0.30);
+    cr->set_line_width (4.2);
+    cr->move_to (hx1 + 0.8, hy1 + 1.0);
+    cr->line_to (hx2 + 0.8, hy2 + 1.0);
+    cr->stroke ();
+    cr->set_source_rgba (0.82, 0.87, 0.94, 0.95);
+    cr->set_line_width (3.4);
+    cr->move_to (hx1, hy1);
+    cr->line_to (hx2, hy2);
+    cr->stroke ();
+
     // Lens ring
     cr->set_source_rgba (0.82, 0.87, 0.94, 0.92);
     cr->set_line_width (2.0);
@@ -243,31 +247,29 @@ bool ZoomPanel::onDrawZoom (const Cairo::RefPtr<Cairo::Context>& cr)
     cr->arc (cx, cy, r - 2.4, M_PI * 1.02, M_PI * 1.44);
     cr->stroke ();
 
-    // Handle — thicker, rounded, with a soft shadow underneath
-    double angle = M_PI / 4.0;
-    double hx1 = cx + (r + 0.5) * std::cos (angle);
-    double hy1 = cy + (r + 0.5) * std::sin (angle);
-    cr->set_line_cap (Cairo::LINE_CAP_ROUND);
-    cr->set_source_rgba (0.0, 0.0, 0.0, 0.30);
-    cr->set_line_width (4.2);
-    cr->move_to (hx1 + 0.8, hy1 + 1.0);
-    cr->line_to (w * 0.92 + 0.8, h * 0.92 + 1.0);
-    cr->stroke ();
-    cr->set_source_rgba (0.82, 0.87, 0.94, 0.95);
-    cr->set_line_width (3.4);
-    cr->move_to (hx1, hy1);
-    cr->line_to (w * 0.92, h * 0.92);
-    cr->stroke ();
-
-    // Zoom text centered in the lens, drop-shadowed for contrast
+    // Zoom value centered in the lens. The font shrinks until the digits fit
+    // the chord available inside the ring, so "8" and "1600" both stay in.
     auto layout = zoomDraw->create_pango_layout (currentZoomText);
     auto font = Pango::FontDescription ("Sans Bold");
-    font.set_absolute_size (9.5 * Pango::SCALE);
-    layout->set_font_description (font);
-    int tw, th;
-    layout->get_pixel_size (tw, th);
-    const double tx = cx - tw / 2.0;
-    const double ty = cy - th / 2.0;
+    const double maxTextWidth = 2.0 * (r - 2.2);
+    const double maxTextHeight = 2.0 * (r - 1.4);
+    int tw = 0, th = 0;
+    double fontSize = 11.0;
+
+    while (true) {
+        font.set_absolute_size (fontSize * Pango::SCALE);
+        layout->set_font_description (font);
+        layout->get_pixel_size (tw, th);
+
+        if (fontSize <= 6.0 || (tw <= maxTextWidth && th <= maxTextHeight)) {
+            break;
+        }
+
+        fontSize -= 0.5;
+    }
+
+    const double tx = std::round (cx - tw / 2.0);
+    const double ty = std::round (cy - th / 2.0);
 
     cr->set_source_rgba (0.0, 0.0, 0.0, 0.55);
     cr->move_to (tx + 1.2, ty + 1.4);
@@ -328,7 +330,7 @@ void ZoomPanel::refreshZoomLabel ()
 
     if (iarea->mainCropWindow) {
         int z = (int)(iarea->mainCropWindow->getZoom () * 100);
-        currentZoomText = Glib::ustring::compose ("%1%%", z);
+        currentZoomText = Glib::ustring::compose ("%1", z);
         zoomDraw->queue_draw ();
         zoomBtn->queue_draw ();
 

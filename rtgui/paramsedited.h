@@ -155,6 +155,7 @@ struct GrainParamsEdited {
     bool iso;
     bool strength;
     bool scale;
+    bool color;
 };
 
 struct TiltShiftParamsEdited {
@@ -1827,11 +1828,9 @@ struct DehazeParamsEdited {
 
 struct DoubleExposureParamsEdited {
     bool enabled;
-    bool layers;
-    bool blendMode;
+    bool layers; // covers every per-layer field (path, blend, gate, ...)
     bool autoGain;
     bool baseEv;
-    bool fillShadows;
 };
 
 struct RAWParamsEdited {

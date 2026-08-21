@@ -691,9 +691,18 @@ int processLineParams ( int argc, char **argv )
             if (leaveUntouched) {
                 outputFile = outputPath;
             } else {
+                // Look for the extension in the basename only: a dot in a
+                // directory component ("...\.claude\worktrees\...") must not
+                // be mistaken for one, or the filename gets truncated there.
                 Glib::ustring s = outputPath;
-                Glib::ustring::size_type ext = s.find_last_of ('.');
-                outputFile = s.substr (0, ext) + "." + outputType;
+                const Glib::ustring base = Glib::path_get_basename (s);
+                Glib::ustring::size_type ext = base.find_last_of ('.');
+
+                if (ext == Glib::ustring::npos) {
+                    outputFile = s + "." + outputType;
+                } else {
+                    outputFile = s.substr (0, s.length() - (base.length() - ext)) + "." + outputType;
+                }
             }
         }
 

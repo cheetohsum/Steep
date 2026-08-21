@@ -68,6 +68,7 @@ public:
      * @note no locks are held when called back
      */
     virtual void updateImage(const ImageUpdate& update) = 0;
+    virtual void updateImageFailed(hidpi::LogicalSize size, int deviceScale, bool upgrade) = 0;
 };
 
 class ThumbImageUpdater :

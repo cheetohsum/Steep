@@ -67,6 +67,16 @@ void ImageArea::showBeforeAfterContextMenu ()
     delete menu;
     menu = new Gtk::Menu();
 
+    if (beforeLockGet_ && beforeLockSet_) {
+        auto* lockItem = Gtk::manage(new Gtk::CheckMenuItem(M("EDITOR_BEFOREAFTER_LOCK")));
+        lockItem->set_active(beforeLockGet_());
+        lockItem->set_tooltip_markup(M("MAIN_TOOLTIP_BEFOREAFTERLOCK"));
+        lockItem->signal_toggled().connect([this, lockItem]() {
+            beforeLockSet_(lockItem->get_active());
+        });
+        menu->append(*lockItem);
+    }
+
     auto* snugItem = Gtk::manage(new Gtk::CheckMenuItem(M("EDITOR_BEFOREAFTER_SNUG")));
     snugItem->set_active(App::get().options().beforeAfterSnug);
     snugItem->signal_toggled().connect([this, snugItem]() {
@@ -85,7 +95,7 @@ void ImageArea::showBeforeAfterContextMenu ()
             iLinkedImageArea->queue_draw();
         }
     });
-    menu->attach(*snugItem, 0, 1, 0, 1);
+    menu->append(*snugItem);
     menu->attach_to_widget(*this);
     menu->show_all();
     menu->popup_at_pointer(nullptr);
@@ -139,6 +149,7 @@ void ImageArea::on_resized (Gtk::Allocation& req)
             mainCropWindow->cropHandler.setDeviceScale(deviceScale);
 
             mainCropWindow->setPosition (0, 0);
+            mainCropWindow->setSolidCropOverlay (cropPreviewSolid_);
             mainCropWindow->setSize (get_width(), get_height());  // this execute the refresh itself
             mainCropWindow->enable();  // start processing !
         } else {
@@ -289,14 +300,37 @@ void ImageArea::redraw ()
 
 void ImageArea::setCropPreviewMode (bool editingCrop)
 {
+    setCropPreviewSolid (!editingCrop);
+}
+
+void ImageArea::setCropPreviewSolid (bool solid, bool refit)
+{
+    cropPreviewSolid_ = solid;
+
     if (mainCropWindow) {
-        mainCropWindow->setSolidCropOverlay(!editingCrop);
-        if (!editingCrop && mainCropWindow->cropHandler.cropParams->enabled) {
-            mainCropWindow->zoomFitCrop();
-        } else if (editingCrop) {
-            mainCropWindow->zoomFit();
+        mainCropWindow->setSolidCropOverlay(solid);
+
+        // refit == false leaves the current framing alone. The before pane
+        // uses that on setup: its zoom is driven by the after pane, and
+        // refitting here would push a fit zoom back across the link and
+        // undo whatever the user had zoomed to.
+        if (refit) {
+            if (solid && mainCropWindow->cropHandler.cropParams->enabled) {
+                mainCropWindow->zoomFitCrop();
+            } else if (!solid) {
+                mainCropWindow->zoomFit();
+            }
         }
+
         redraw();
+    }
+
+    // The before pane has no tool panel of its own, so it never hears about
+    // crop-tab changes. Drag it along: half a comparison showing the pixels
+    // the crop threw away is noise, not information.
+    if (iLinkedImageArea && iLinkedImageArea->isBeforeView
+            && iLinkedImageArea->cropPreviewSolid_ != solid) {
+        iLinkedImageArea->setCropPreviewSolid (solid, refit);
     }
 }
 

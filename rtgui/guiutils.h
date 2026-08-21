@@ -65,6 +65,20 @@ void setExpandAlignProperties(Gtk::Widget *widget, bool hExpand, bool vExpand, e
 Gtk::Border getPadding(const Glib::RefPtr<Gtk::StyleContext> style);
 
 /**
+ * Builds a thin hot strip that stands in for a panel collapse/expand button.
+ * It only lights up once the pointer has rested on it for a moment, and the
+ * highlight tapers away towards both ends so it reads as a hint rather than
+ * a hard border. Caller owns placement; the strip is Gtk::manage'd.
+ *
+ * @param vertical  true for a tall strip along a side, false for a wide one
+ * @param tooltipMarkup  tooltip shown on the strip
+ * @param onClick  run on left click
+ */
+Gtk::EventBox* createEdgeGrip (bool vertical,
+                               const Glib::ustring& tooltipMarkup,
+                               const std::function<void ()>& onClick);
+
+/**
  * @class IdleRegister
  * 
  * @brief A helper class for registering functions to be called asynchronously when there are no higher priority events pending.

@@ -16,9 +16,17 @@
  */
 #include "doubleexposuredlg.h"
 
+#include "partnerthumb.h"
+
+#include "rtengine/doubleexposureblend.h"
+
 #include <algorithm>
 #include <cmath>
+#include <deque>
+#include <mutex>
+#include <system_error>
 #include <thread>
+#include <unordered_map>
 
 #include <glibmm/miscutils.h>
 
@@ -39,10 +47,31 @@ using rtengine::procparams::DoubleExposureParams;
 namespace
 {
 
+// winpthreads can fail pthread_detach with ESRCH when the thread has already
+// finished, and std::thread::detach turns that into an uncaught
+// std::system_error — i.e. terminate(). Detaching a finished thread is a
+// no-op, so treat the failure as success.
+void detachQuietly(std::thread&& worker)
+{
+    try {
+        worker.detach();
+    } catch (const std::system_error&) {
+    }
+}
+
 constexpr int GRID_THUMB_H = 110;
 constexpr int PREVIEW_THUMB_H = 380;
 constexpr int PREVIEW_THUMB_HI = 1000;
 constexpr size_t MAX_LAYERS = 8;
+
+// Thumbnail decoding is expensive (cache read or generation from the raw,
+// then a full thumb pipeline run), so it runs on a small fixed pool rather
+// than one detached thread per request burst — a global scan used to spawn
+// dozens of them and starve the GUI thread.
+constexpr int THUMB_WORKERS = 3;
+// Fast scrolling can outrun the workers; keep only the most recent viewport
+// requests so the queue can never grow without bound.
+constexpr size_t MAX_GRID_QUEUE = 192;
 
 // sRGB <-> linear helpers for the approximate dialog preview. The real
 // composite happens scene-linearly in the engine; this only needs to be
@@ -58,51 +87,57 @@ float linToSrgb(float v)
     return v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1.f / 2.4f) - 0.055f;
 }
 
-float shadowWeight(float y)
+Glib::RefPtr<Gdk::Pixbuf> pixbufFromThumb(const Glib::ustring& path, int height, bool neutral)
 {
-    constexpr float lo = 0.10f;
-    constexpr float hi = 0.45f;
-
-    if (y <= lo) {
-        return 1.f;
-    }
-
-    if (y >= hi) {
-        return 0.f;
-    }
-
-    const float t = (hi - y) / (hi - lo);
-    return t * t * (3.f - 2.f * t);
+    return partnerthumb::load(path, height, neutral);
 }
 
-Glib::RefPtr<Gdk::Pixbuf> pixbufFromThumb(const Glib::ustring& path, int height)
+// The tray chips need styling that no theme can be trusted to carry: the
+// four overlaid controls must be small enough to fit on a thumbnail, and
+// the selected chip needs a border an image cannot hide. Injected at
+// application priority so it works under any theme (adjuster.cc pattern).
+void ensureChipCss()
 {
-    Thumbnail* thm = CacheManager::getInstance()->getEntry(path);
+    static bool done = false;
 
-    if (!thm) {
-        return {};
+    if (done) {
+        return;
     }
 
-    Glib::RefPtr<Gdk::Pixbuf> result;
-    double scale = 1.0;
-    rtengine::IImage8* img = thm->processThumbImage(height, scale);
+    done = true;
 
-    if (img) {
-        if (img->getWidth() > 0 && img->getHeight() > 0) {
-            const auto pb = Gdk::Pixbuf::create_from_data(
-                img->getData(), Gdk::COLORSPACE_RGB, false, 8,
-                img->getWidth(), img->getHeight(), 3 * img->getWidth());
-            result = pb->copy(); // detach from the IImage8 buffer before deleting it
-        }
-
-        delete img;
+    try {
+        auto css = Gtk::CssProvider::create();
+        css->load_from_data(
+            "#DEChipControls button { padding: 0 3px; margin: 0; min-width: 10px; min-height: 14px; }"
+            "button.de-chip { padding: 1px; margin: 0; }"
+            "button.de-chip-selected { border: 2px solid #E8A33D; border-radius: 3px; padding: 0; }");
+        Gtk::StyleContext::add_provider_for_screen(Gdk::Screen::get_default(), css,
+                                                   GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+    } catch (...) {
     }
-
-    thm->decreaseRef();
-    return result;
 }
 
 } // namespace
+
+// Work queue shared with the decoder threads. Held by shared_ptr so the
+// workers never touch the dialog itself — they only post results back
+// through an idle handler, which re-checks the alive flag on the GUI thread.
+struct DEThumbReq {
+    Glib::ustring path;
+    int height;
+    bool neutral;
+};
+
+struct DEThumbQueue {
+    std::mutex mutex;
+    // Preview-pane renders are what the user is waiting on after a click, so
+    // they jump ahead of the grid backlog.
+    std::deque<DEThumbReq> preview;
+    std::deque<DEThumbReq> grid;
+    int activeWorkers = 0;
+    bool stopped = false;
+};
 
 // ---------------------------------------------------------------------------
 // DEThumbGrid — a lightweight thumbnail grid with click-order selection
@@ -135,19 +170,64 @@ public:
     void setItems(std::vector<Item> items)
     {
         items_ = std::move(items);
+        indexByPath_.clear();
+        indexByPath_.reserve(items_.size());
+
+        for (size_t i = 0; i < items_.size(); ++i) {
+            indexByPath_.emplace(items_[i].path.raw(), i);
+        }
+
         relayout();
         queue_draw();
     }
 
+    // Called once per decoded thumbnail, so it must not be O(items) and must
+    // not repaint the whole grid — only the one cell changed.
     void setItemPixbuf(const Glib::ustring& path, const Glib::RefPtr<Gdk::Pixbuf>& pixbuf)
     {
-        for (auto& item : items_) {
-            if (item.path == path) {
-                item.pixbuf = pixbuf;
-                queue_draw();
-                return;
+        const auto found = indexByPath_.find(path.raw());
+
+        if (found == indexByPath_.end()) {
+            return;
+        }
+
+        const size_t index = found->second;
+        items_[index].pixbuf = pixbuf;
+
+        const int col = static_cast<int>(index) % cols_;
+        const int row = static_cast<int>(index) / cols_;
+        queue_draw_area(col * CELL_W, row * cellH(), CELL_W, cellH());
+    }
+
+    // Paths of cells intersecting the [top, bottom] band (widget coordinates)
+    // that still have no thumbnail.
+    std::vector<Glib::ustring> pathsNeedingPixbuf(double top, double bottom) const
+    {
+        std::vector<Glib::ustring> needed;
+
+        if (items_.empty() || bottom < top) {
+            return needed;
+        }
+
+        const int rows = (static_cast<int>(items_.size()) + cols_ - 1) / cols_;
+        const int firstRow = std::max(0, static_cast<int>(std::floor((top - PAD / 2.0) / cellH())));
+        const int lastRow = std::min(rows - 1, static_cast<int>(std::floor((bottom - PAD / 2.0) / cellH())));
+
+        for (int row = firstRow; row <= lastRow; ++row) {
+            for (int col = 0; col < cols_; ++col) {
+                const size_t index = static_cast<size_t>(row) * cols_ + col;
+
+                if (index >= items_.size()) {
+                    break;
+                }
+
+                if (!items_[index].pixbuf) {
+                    needed.push_back(items_[index].path);
+                }
             }
         }
+
+        return needed;
     }
 
     void setBadges(const std::vector<rtengine::procparams::DoubleExposureParams::Layer>& layers)
@@ -180,6 +260,7 @@ private:
     static constexpr int PAD = 6;
 
     std::vector<Item> items_;
+    std::unordered_map<std::string, size_t> indexByPath_;
     sigc::signal<void, const Glib::ustring&> signalToggled_;
     int cols_ = 1;
     int selectedBadge_ = -1;
@@ -234,7 +315,21 @@ private:
 
         const Gdk::RGBA fg = style->get_color(Gtk::STATE_FLAG_NORMAL);
 
-        for (size_t i = 0; i < items_.size(); ++i) {
+        // Only paint the rows the damage region touches: a global scan can
+        // put thousands of cells in the grid, and every caption costs a
+        // basename allocation plus cairo glyph work.
+        double clipX1, clipY1, clipX2, clipY2;
+        cr->get_clip_extents(clipX1, clipY1, clipX2, clipY2);
+
+        const int rows = (static_cast<int>(items_.size()) + cols_ - 1) / cols_;
+        const int firstRow = std::max(0, static_cast<int>(std::floor((clipY1 - PAD / 2.0) / cellH())));
+        const int lastRow = std::min(rows - 1, static_cast<int>(std::floor((clipY2 - PAD / 2.0) / cellH())));
+        const size_t firstItem = static_cast<size_t>(firstRow) * cols_;
+        const size_t lastItem = lastRow < firstRow
+            ? firstItem
+            : std::min(items_.size(), static_cast<size_t>(lastRow + 1) * cols_);
+
+        for (size_t i = firstItem; i < lastItem; ++i) {
             const Item& item = items_[i];
             const int col = static_cast<int>(i) % cols_;
             const int row = static_cast<int>(i) / cols_;
@@ -422,7 +517,10 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     globalScanRunning_(false),
     folderScanGen_(0),
     globalScanGen_(0),
-    alive_(std::make_shared<std::atomic<bool>>(true))
+    alive_(std::make_shared<std::atomic<bool>>(true)),
+    thumbQueue_(std::make_shared<DEThumbQueue>()),
+    filterRefreshPending_(false),
+    visibleThumbsPending_(false)
 {
     if (browserFilter) {
         browserFilter_ = *browserFilter;
@@ -522,10 +620,16 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     grid_ = Gtk::manage(new DEThumbGrid());
     grid_->signalToggled().connect(sigc::mem_fun(*this, &DoubleExposureDlg::itemToggled));
 
-    Gtk::ScrolledWindow* gridScroll = Gtk::manage(new Gtk::ScrolledWindow());
-    gridScroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
-    gridScroll->add(*grid_);
-    split->pack1(*gridScroll, true, false);
+    gridScroll_ = Gtk::manage(new Gtk::ScrolledWindow());
+    gridScroll_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+    gridScroll_->add(*grid_);
+    split->pack1(*gridScroll_, true, false);
+
+    // Scrolling (and any resize that changes the page geometry) brings new
+    // cells into view: fill those, and only those.
+    const auto gridAdjustment = gridScroll_->get_vadjustment();
+    gridAdjustment->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::scheduleVisibleThumbs));
+    gridAdjustment->signal_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::scheduleVisibleThumbs));
 
     Gtk::Box* right = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 6));
 
@@ -565,7 +669,9 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     blendMethod_->append(M("TP_DOUBLEEXPOSURE_BLEND_SCREEN"));
     blendMethod_->append(M("TP_DOUBLEEXPOSURE_BLEND_MULTIPLY"));
     blendMethod_->append(M("TP_DOUBLEEXPOSURE_BLEND_LIGHTEN"));
-    blendMethod_->set_active(static_cast<int>(params_.blendMode));
+    blendMethod_->append(M("TP_DOUBLEEXPOSURE_BLEND_DARKEN"));
+    blendMethod_->append(M("TP_DOUBLEEXPOSURE_BLEND_DIFFERENCE"));
+    blendMethod_->set_active(0);
     blendMethod_->setPreferredWidth(180, 230);
     blendMethod_->connect(blendMethod_->signal_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::blendControlChanged)));
     blendRow->pack_start(*blendLab, Gtk::PACK_SHRINK);
@@ -581,10 +687,6 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_BASEEV"), baseEvScale_, -4.0, 4.0, 0.05, params_.baseEv), Gtk::PACK_SHRINK);
     baseEvScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::blendControlChanged));
 
-    right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_FILLSHADOWS"), fillShadowsScale_, 0.0, 100.0, 1.0, params_.fillShadows), Gtk::PACK_SHRINK);
-    fillShadowsScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_FILLSHADOWS_TOOLTIP"));
-    fillShadowsScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::blendControlChanged));
-
     Gtk::Separator* sep = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
     right->pack_start(*sep, Gtk::PACK_SHRINK);
 
@@ -597,6 +699,10 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
 
     right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_OPACITY"), layerOpacityScale_, 0.0, 100.0, 1.0, 100.0), Gtk::PACK_SHRINK);
     layerOpacityScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+
+    right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_GATE_STRENGTH"), gateStrengthScale_, 0.0, 100.0, 1.0, 25.0), Gtk::PACK_SHRINK);
+    gateStrengthScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_GATE_TOOLTIP"));
+    gateStrengthScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
 
     split->pack2(*right, true, false);
     content->pack_start(*split, Gtk::PACK_EXPAND_WIDGET);
@@ -627,13 +733,19 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
 // resolution matching the high-res toggle.
 void DoubleExposureDlg::requestPreviewThumbs()
 {
-    std::vector<Glib::ustring> paths = {baseImagePath_};
+    const int height = highRes_ && highRes_->get_active() ? PREVIEW_THUMB_HI : PREVIEW_THUMB_H;
+    // The base is needed twice: styled (what the user's edit looks like) and
+    // neutral (the scene-linear reference the engine actually composites on).
+    requestThumbs({baseImagePath_}, height, false);
+    requestThumbs({baseImagePath_}, height, true);
+
+    std::vector<Glib::ustring> layerPaths;
 
     for (const auto& layer : params_.layers) {
-        paths.push_back(layer.path);
+        layerPaths.push_back(layer.path);
     }
 
-    requestThumbs(paths, highRes_ && highRes_->get_active() ? PREVIEW_THUMB_HI : PREVIEW_THUMB_H);
+    requestThumbs(layerPaths, height, true);
 }
 
 void DoubleExposureDlg::highResToggled()
@@ -667,10 +779,23 @@ void DoubleExposureDlg::openFolderChooser()
 DoubleExposureDlg::~DoubleExposureDlg()
 {
     *alive_ = false;
+
+    // Workers only touch the queue after this point; the idle handlers they
+    // may already have posted bail out on the alive flag.
+    std::lock_guard<std::mutex> lock(thumbQueue_->mutex);
+    thumbQueue_->stopped = true;
+    thumbQueue_->preview.clear();
+    thumbQueue_->grid.clear();
 }
 
 DoubleExposureParams DoubleExposureDlg::getResult() const
 {
+    if (!params_.layers.empty()) {
+        rememberStickyLayer(selectedLayer_ < params_.layers.size()
+                            ? params_.layers[selectedLayer_]
+                            : params_.layers.back());
+    }
+
     return params_;
 }
 
@@ -757,7 +882,7 @@ void DoubleExposureDlg::startScan(bool global)
         filetypes = browserFilter_.filetypeFilter;
     }
 
-    std::thread([this, alive, global, generation, basePath, dirs, filetypes, indexEntries, recurse]() {
+    detachQuietly(std::thread([this, alive, global, generation, basePath, dirs, filetypes, indexEntries, recurse]() {
         std::vector<ScanItem> batch;
         std::set<std::string> seen;
 
@@ -894,7 +1019,7 @@ void DoubleExposureDlg::startScan(bool global)
 
             onScanDone(global, generation);
         });
-    }).detach();
+    }));
 }
 
 void DoubleExposureDlg::onScanPartial(bool global, int generation, const std::vector<ScanItem>& items)
@@ -907,7 +1032,7 @@ void DoubleExposureDlg::onScanPartial(bool global, int generation, const std::ve
     target.insert(target.end(), items.begin(), items.end());
 
     if (global == globalScope_) {
-        applyFilter();
+        scheduleFilterRefresh();
     }
 }
 
@@ -931,22 +1056,25 @@ void DoubleExposureDlg::onScanDone(bool global, int generation)
     }
 
     if (global == globalScope_) {
+        filterRefreshPending_ = false; // supersede any coalesced rebuild
         applyFilter();
     }
 }
 
-void DoubleExposureDlg::requestThumbs(const std::vector<Glib::ustring>& paths, int height)
+void DoubleExposureDlg::requestThumbs(const std::vector<Glib::ustring>& paths, int height, bool neutral)
 {
     std::vector<Glib::ustring> needed;
 
     for (const auto& path : paths) {
-        const Glib::ustring key = path + Glib::ustring::compose("|%1", height);
+        const Glib::ustring key = path + Glib::ustring::compose("|%1|%2", height, neutral ? 1 : 0);
 
         if (pendingThumbs_.count(key)) {
             continue;
         }
 
-        const auto& map = height == GRID_THUMB_H ? gridPix_ : (height == PREVIEW_THUMB_HI ? hiPix_ : bigPix_);
+        const auto& map = height == GRID_THUMB_H ? gridPix_
+                          : (neutral ? (height == PREVIEW_THUMB_HI ? neutralHiPix_ : neutralPix_)
+                                     : (height == PREVIEW_THUMB_HI ? hiPix_ : bigPix_));
 
         if (map.count(path)) {
             continue;
@@ -960,30 +1088,82 @@ void DoubleExposureDlg::requestThumbs(const std::vector<Glib::ustring>& paths, i
         return;
     }
 
-    auto alive = alive_;
+    const bool isGrid = height == GRID_THUMB_H;
 
-    std::thread([this, alive, needed, height]() {
-        for (const auto& path : needed) {
-            if (!*alive) {
-                return;
-            }
+    {
+        std::lock_guard<std::mutex> lock(thumbQueue_->mutex);
+        auto& queue = isGrid ? thumbQueue_->grid : thumbQueue_->preview;
 
-            Glib::RefPtr<Gdk::Pixbuf> pixbuf = pixbufFromThumb(path, height);
-
-            Glib::signal_idle().connect_once([this, alive, path, height, pixbuf]() {
-                if (!*alive) {
-                    return;
-                }
-
-                onThumbLoaded(path, height, pixbuf);
-            });
+        // Newest request first: whatever the viewport shows now matters more
+        // than what it showed two scroll events ago.
+        for (auto it = needed.rbegin(); it != needed.rend(); ++it) {
+            queue.emplace_front(DEThumbReq{*it, height, neutral});
         }
-    }).detach();
+
+        while (thumbQueue_->grid.size() > MAX_GRID_QUEUE) {
+            // Dropped requests must leave pendingThumbs_ too, or the cell
+            // could never be requested again. Safe here: the GUI thread owns
+            // pendingThumbs_ and this runs on it.
+            const auto& stale = thumbQueue_->grid.back();
+            pendingThumbs_.erase(stale.path + Glib::ustring::compose("|%1|%2", stale.height, stale.neutral ? 1 : 0));
+            thumbQueue_->grid.pop_back();
+        }
+    }
+
+    pumpThumbQueue();
 }
 
-void DoubleExposureDlg::onThumbLoaded(const Glib::ustring& path, int height, Glib::RefPtr<Gdk::Pixbuf> pixbuf)
+// Tops the decoder pool back up to THUMB_WORKERS while work is queued.
+void DoubleExposureDlg::pumpThumbQueue()
 {
-    pendingThumbs_.erase(path + Glib::ustring::compose("|%1", height));
+    auto queue = thumbQueue_;
+    auto alive = alive_;
+
+    std::lock_guard<std::mutex> lock(queue->mutex);
+    const size_t queued = queue->preview.size() + queue->grid.size();
+
+    while (queue->activeWorkers < THUMB_WORKERS && static_cast<size_t>(queue->activeWorkers) < queued) {
+        ++queue->activeWorkers;
+
+        detachQuietly(std::thread([this, queue, alive]() {
+            for (;;) {
+                Glib::ustring path;
+                int height = 0;
+
+                bool neutral = false;
+
+                {
+                    std::lock_guard<std::mutex> lock(queue->mutex);
+                    auto& source = !queue->preview.empty() ? queue->preview : queue->grid;
+
+                    if (queue->stopped || source.empty()) {
+                        --queue->activeWorkers;
+                        return;
+                    }
+
+                    path = source.front().path;
+                    height = source.front().height;
+                    neutral = source.front().neutral;
+                    source.pop_front();
+                }
+
+                Glib::RefPtr<Gdk::Pixbuf> pixbuf = pixbufFromThumb(path, height, neutral);
+
+                Glib::signal_idle().connect_once([this, alive, path, height, neutral, pixbuf]() {
+                    if (!*alive) {
+                        return;
+                    }
+
+                    onThumbLoaded(path, height, neutral, pixbuf);
+                });
+            }
+        }));
+    }
+}
+
+void DoubleExposureDlg::onThumbLoaded(const Glib::ustring& path, int height, bool neutral, Glib::RefPtr<Gdk::Pixbuf> pixbuf)
+{
+    pendingThumbs_.erase(path + Glib::ustring::compose("|%1|%2", height, neutral ? 1 : 0));
 
     if (!pixbuf) {
         return;
@@ -992,12 +1172,14 @@ void DoubleExposureDlg::onThumbLoaded(const Glib::ustring& path, int height, Gli
     if (height == GRID_THUMB_H) {
         gridPix_[path] = pixbuf;
         grid_->setItemPixbuf(path, pixbuf);
-    } else if (height == PREVIEW_THUMB_HI) {
-        hiPix_[path] = pixbuf;
+    } else if (neutral) {
+        (height == PREVIEW_THUMB_HI ? neutralHiPix_ : neutralPix_)[path] = pixbuf;
         updatePreview();
+        rebuildTray();
     } else {
-        bigPix_[path] = pixbuf;
+        (height == PREVIEW_THUMB_HI ? hiPix_ : bigPix_)[path] = pixbuf;
         updatePreview();
+        rebuildTray();
     }
 }
 
@@ -1006,6 +1188,18 @@ void DoubleExposureDlg::onThumbLoaded(const Glib::ustring& path, int height, Gli
 void DoubleExposureDlg::scopeChanged(bool global)
 {
     globalScope_ = global;
+
+    // Drop grid decodes queued for the scope we are leaving, so the incoming
+    // viewport is not stuck behind a backlog nobody can see any more.
+    {
+        std::lock_guard<std::mutex> lock(thumbQueue_->mutex);
+
+        for (const auto& stale : thumbQueue_->grid) {
+            pendingThumbs_.erase(stale.path + Glib::ustring::compose("|%1|%2", stale.height, stale.neutral ? 1 : 0));
+        }
+
+        thumbQueue_->grid.clear();
+    }
 
     if (global) {
         folderBtn_->set_active(false);
@@ -1051,18 +1245,73 @@ void DoubleExposureDlg::applyFilter()
 
     countLabel_->set_text(Glib::ustring::compose(M("DOUBLEEXPOSURE_COUNT"), visible.size(), source.size()));
 
-    std::vector<Glib::ustring> thumbRequests;
-
-    for (const auto& gi : visible) {
-        if (!gi.pixbuf) {
-            thumbRequests.push_back(gi.path);
-        }
-    }
-
     grid_->setItems(std::move(visible));
     grid_->setBadges(params_.layers);
     grid_->setSelectedBadge(params_.layers.empty() ? -1 : static_cast<int>(selectedLayer_));
-    requestThumbs(thumbRequests, GRID_THUMB_H);
+    // Deferred: the grid has just been resized, so the scroll adjustment
+    // still reports the previous page geometry.
+    scheduleVisibleThumbs();
+}
+
+// Queues thumbnail decodes for the visible band of the grid plus a screenful
+// above and below, so scrolling finds cells already filled.
+void DoubleExposureDlg::requestVisibleThumbs()
+{
+    if (!gridScroll_ || !grid_) {
+        return;
+    }
+
+    const auto adjustment = gridScroll_->get_vadjustment();
+    const double page = adjustment && adjustment->get_page_size() > 0.0
+        ? adjustment->get_page_size()
+        : gridScroll_->get_allocated_height();
+    const double value = adjustment ? adjustment->get_value() : 0.0;
+
+    requestThumbs(grid_->pathsNeedingPixbuf(value - page, value + 2.0 * page), GRID_THUMB_H);
+}
+
+void DoubleExposureDlg::scheduleVisibleThumbs()
+{
+    if (visibleThumbsPending_) {
+        return;
+    }
+
+    visibleThumbsPending_ = true;
+    auto alive = alive_;
+
+    // Short debounce: a scroll drag emits value_changed continuously, and
+    // each burst would otherwise re-walk the grid.
+    Glib::signal_timeout().connect_once([this, alive]() {
+        if (!*alive) {
+            return;
+        }
+
+        visibleThumbsPending_ = false;
+        requestVisibleThumbs();
+    }, 60);
+}
+
+void DoubleExposureDlg::scheduleFilterRefresh()
+{
+    if (filterRefreshPending_) {
+        return;
+    }
+
+    filterRefreshPending_ = true;
+    auto alive = alive_;
+
+    // Streamed scan batches arrive every few milliseconds; rebuilding the
+    // whole grid for each one is quadratic in the result count.
+    Glib::signal_timeout().connect_once([this, alive]() {
+        if (!*alive) {
+            return;
+        }
+
+        if (filterRefreshPending_) {
+            filterRefreshPending_ = false;
+            applyFilter();
+        }
+    }, 200);
 }
 
 void DoubleExposureDlg::itemToggled(const Glib::ustring& path)
@@ -1080,8 +1329,21 @@ void DoubleExposureDlg::itemToggled(const Glib::ustring& path)
         return;
     }
 
+    // A new exposure inherits the tuned effect instead of resetting it:
+    // from the selected layer when stacking another, or from the last
+    // removed/applied layer when swapping the photo out.
     DoubleExposureParams::Layer layer;
+
+    if (selectedLayer_ < params_.layers.size()) {
+        layer = params_.layers[selectedLayer_];
+    } else if (!params_.layers.empty()) {
+        layer = params_.layers.back();
+    } else if (haveStickyLayer()) {
+        layer = stickyLayer();
+    }
+
     layer.path = path;
+    layer.enabled = true;
     params_.layers.push_back(layer);
     selectedLayer_ = params_.layers.size() - 1;
 
@@ -1089,7 +1351,7 @@ void DoubleExposureDlg::itemToggled(const Glib::ustring& path)
     grid_->setSelectedBadge(static_cast<int>(selectedLayer_));
     rebuildTray();
     syncLayerControls();
-    requestThumbs({path}, highRes_->get_active() ? PREVIEW_THUMB_HI : PREVIEW_THUMB_H);
+    requestThumbs({path}, highRes_->get_active() ? PREVIEW_THUMB_HI : PREVIEW_THUMB_H, true);
     updatePreview();
 }
 
@@ -1111,12 +1373,38 @@ void DoubleExposureDlg::moveLayer(size_t index, int direction)
     updatePreview();
 }
 
+// Last layer settings the user parted with (removed or applied) — the
+// template for the next added exposure, surviving across dialogs so a new
+// base image starts from the same effect.
+namespace
+{
+rtengine::procparams::DoubleExposureParams::Layer stickyLayer_;
+bool haveStickyLayer_ = false;
+}
+
+bool DoubleExposureDlg::haveStickyLayer()
+{
+    return haveStickyLayer_;
+}
+
+const rtengine::procparams::DoubleExposureParams::Layer& DoubleExposureDlg::stickyLayer()
+{
+    return stickyLayer_;
+}
+
+void DoubleExposureDlg::rememberStickyLayer(const rtengine::procparams::DoubleExposureParams::Layer& layer)
+{
+    stickyLayer_ = layer;
+    haveStickyLayer_ = true;
+}
+
 void DoubleExposureDlg::removeLayer(size_t index)
 {
     if (index >= params_.layers.size()) {
         return;
     }
 
+    rememberStickyLayer(params_.layers[index]);
     params_.layers.erase(params_.layers.begin() + index);
 
     if (selectedLayer_ >= params_.layers.size() && selectedLayer_ > 0) {
@@ -1142,56 +1430,128 @@ void DoubleExposureDlg::selectLayer(size_t index)
 
 void DoubleExposureDlg::rebuildTray()
 {
+    ensureChipCss();
+
     for (Gtk::Widget* child : trayBox_->get_children()) {
         trayBox_->remove(*child);
     }
 
-    // base plate chip
-    Gtk::Box* baseChip = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
-    Gtk::Label* baseLabel = Gtk::manage(new Gtk::Label(
-        Glib::ustring::compose("%1 \xC2\xB7 %2", M("DOUBLEEXPOSURE_BASEPLATE"), Glib::path_get_basename(baseImagePath_))));
-    baseChip->pack_start(*baseLabel, Gtk::PACK_SHRINK);
-    baseChip->get_style_context()->add_class("dim-label");
-    trayBox_->pack_start(*baseChip, Gtk::PACK_SHRINK);
+    constexpr int TRAY_H = 48;
+
+    const auto trayThumb = [this](const Glib::ustring& path, bool neutral) -> Glib::RefPtr<Gdk::Pixbuf> {
+        const auto& hiMap = neutral ? neutralHiPix_ : hiPix_;
+        const auto& stdMap = neutral ? neutralPix_ : bigPix_;
+        Glib::RefPtr<Gdk::Pixbuf> pix;
+        auto it = hiMap.find(path);
+
+        if (it != hiMap.end() && it->second) {
+            pix = it->second;
+        }
+
+        if (!pix) {
+            it = stdMap.find(path);
+
+            if (it != stdMap.end() && it->second) {
+                pix = it->second;
+            }
+        }
+
+        if (!pix) {
+            return {};
+        }
+
+        const int w = std::max(1, pix->get_width() * TRAY_H / std::max(1, pix->get_height()));
+        return pix->scale_simple(w, TRAY_H, Gdk::INTERP_BILINEAR);
+    };
+
+    const auto smallButton = [](const char* glyph) {
+        Gtk::Button* b = Gtk::manage(new Gtk::Button(glyph));
+        b->set_relief(Gtk::RELIEF_NONE);
+        b->set_focus_on_click(false);
+        return b;
+    };
+
+    // base plate chip: the thumbnail is the label
+    {
+        Gtk::EventBox* baseChip = Gtk::manage(new Gtk::EventBox());
+        const auto pix = trayThumb(baseImagePath_, false);
+
+        if (pix) {
+            baseChip->add(*Gtk::manage(new Gtk::Image(pix)));
+        } else {
+            baseChip->add(*Gtk::manage(new Gtk::Label(M("DOUBLEEXPOSURE_BASEPLATE"))));
+        }
+
+        baseChip->set_tooltip_text(Glib::ustring::compose("%1 \xC2\xB7 %2",
+                                   M("DOUBLEEXPOSURE_BASEPLATE"), Glib::path_get_basename(baseImagePath_)));
+        trayBox_->pack_start(*baseChip, Gtk::PACK_SHRINK);
+    }
 
     for (size_t i = 0; i < params_.layers.size(); ++i) {
-        Gtk::Label* arrow = Gtk::manage(new Gtk::Label("\xE2\x86\x92")); // →
+        Gtk::Label* arrow = Gtk::manage(new Gtk::Label("\xE2\x86\x92")); // arrow
         arrow->get_style_context()->add_class("dim-label");
         trayBox_->pack_start(*arrow, Gtk::PACK_SHRINK);
 
-        Gtk::Box* chip = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 2));
-        chip->get_style_context()->add_class("linked");
+        const size_t idx = i;
+        const Glib::ustring path = params_.layers[i].path;
 
-        Gtk::Button* label = Gtk::manage(new Gtk::Button(
-            Glib::ustring::compose("%1 \xC2\xB7 %2", i + 1, Glib::path_get_basename(params_.layers[i].path))));
-        label->set_relief(Gtk::RELIEF_NONE);
+        Gtk::Overlay* chip = Gtk::manage(new Gtk::Overlay());
 
-        if (i == selectedLayer_) {
-            // highlight the layer currently bound to the adjustment sliders
-            label->get_style_context()->add_class("suggested-action");
+        Gtk::Button* face = Gtk::manage(new Gtk::Button());
+        face->set_relief(Gtk::RELIEF_NONE);
+        face->get_style_context()->add_class("de-chip");
+        // Wide enough for the overlaid controls even on portrait thumbs.
+        face->set_size_request(88, -1);
+        const auto pix = trayThumb(path, true);
+
+        if (pix) {
+            face->set_image(*Gtk::manage(new Gtk::Image(pix)));
+            face->set_always_show_image(true);
+        } else {
+            face->set_label(Glib::ustring::compose("%1 \xC2\xB7 %2", i + 1, Glib::path_get_basename(path)));
         }
 
-        const size_t idx = i;
-        label->signal_clicked().connect([this, idx]() { selectLayer(idx); });
-        chip->pack_start(*label, Gtk::PACK_SHRINK);
+        face->set_tooltip_text(Glib::path_get_basename(path));
 
-        Gtk::Button* left = Gtk::manage(new Gtk::Button("\xE2\x97\x82")); // ◂
-        left->set_relief(Gtk::RELIEF_NONE);
+        if (i == selectedLayer_) {
+            // amber border: the layer currently bound to the adjustment
+            // sliders (suggested-action is invisible behind a thumbnail)
+            face->get_style_context()->add_class("de-chip-selected");
+        }
+
+        face->signal_clicked().connect([this, idx]() { selectLayer(idx); });
+        chip->add(*face);
+
+        // compact controls over the thumbnail: reorder, develop, remove
+        Gtk::Box* controls = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+        controls->set_name("DEChipControls");
+        controls->set_halign(Gtk::ALIGN_CENTER);
+        controls->set_valign(Gtk::ALIGN_END);
+
+        Gtk::Button* left = smallButton("\xE2\x97\x82"); // left triangle
         left->set_sensitive(i > 0);
         left->signal_clicked().connect([this, idx]() { moveLayer(idx, -1); });
-        chip->pack_start(*left, Gtk::PACK_SHRINK);
+        controls->pack_start(*left, Gtk::PACK_SHRINK);
 
-        Gtk::Button* rightBtn = Gtk::manage(new Gtk::Button("\xE2\x96\xB8")); // ▸
-        rightBtn->set_relief(Gtk::RELIEF_NONE);
+        Gtk::Button* rightBtn = smallButton("\xE2\x96\xB8"); // right triangle
         rightBtn->set_sensitive(i + 1 < params_.layers.size());
         rightBtn->signal_clicked().connect([this, idx]() { moveLayer(idx, 1); });
-        chip->pack_start(*rightBtn, Gtk::PACK_SHRINK);
+        controls->pack_start(*rightBtn, Gtk::PACK_SHRINK);
 
-        Gtk::Button* close = Gtk::manage(new Gtk::Button("\xE2\x9C\x95")); // ✕
-        close->set_relief(Gtk::RELIEF_NONE);
+        Gtk::Button* edit = smallButton("\xE2\x9C\x8E"); // pencil
+        edit->set_tooltip_text(M("TP_DOUBLEEXPOSURE_EDIT"));
+        edit->signal_clicked().connect([this, path]() {
+            editRequestPath_ = path;
+            response(Gtk::RESPONSE_OK);
+        });
+        controls->pack_start(*edit, Gtk::PACK_SHRINK);
+
+        Gtk::Button* close = smallButton("\xE2\x9C\x95"); // multiply sign
+        close->set_tooltip_text(M("TP_DOUBLEEXPOSURE_REMOVE"));
         close->signal_clicked().connect([this, idx]() { removeLayer(idx); });
-        chip->pack_start(*close, Gtk::PACK_SHRINK);
+        controls->pack_start(*close, Gtk::PACK_SHRINK);
 
+        chip->add_overlay(*controls);
         trayBox_->pack_start(*chip, Gtk::PACK_SHRINK);
     }
 
@@ -1206,6 +1566,8 @@ void DoubleExposureDlg::syncLayerControls()
         layerLabel_->set_text(M("DOUBLEEXPOSURE_NOLAYER"));
         layerEvScale_->set_sensitive(false);
         layerOpacityScale_->set_sensitive(false);
+        gateStrengthScale_->set_sensitive(false);
+        blendMethod_->set_sensitive(false);
     } else {
         const auto& layer = params_.layers[selectedLayer_];
         layerLabel_->set_text(Glib::ustring::compose("%1 %2 \xE2\x80\x94 %3",
@@ -1213,11 +1575,24 @@ void DoubleExposureDlg::syncLayerControls()
                               Glib::path_get_basename(layer.path)));
         layerEvScale_->set_sensitive(true);
         layerOpacityScale_->set_sensitive(true);
+        gateStrengthScale_->set_sensitive(true);
+        blendMethod_->set_sensitive(true);
         layerEvScale_->set_value(layer.ev);
         layerOpacityScale_->set_value(layer.opacity);
+        gateStrengthScale_->set_value(layer.gateStrength);
+        blendMethod_->set_active(static_cast<int>(layer.blendMode));
     }
 
-    autoGain_->set_sensitive(blendMethod_->get_active_row_number() == 0);
+    bool anyAdd = false;
+
+    for (const auto& layer : params_.layers) {
+        if (layer.enabled && layer.blendMode == DoubleExposureParams::BlendMode::ADD) {
+            anyAdd = true;
+            break;
+        }
+    }
+
+    autoGain_->set_sensitive(anyAdd);
 
     syncingControls_ = false;
 }
@@ -1230,6 +1605,7 @@ void DoubleExposureDlg::layerControlChanged()
 
     params_.layers[selectedLayer_].ev = layerEvScale_->get_value();
     params_.layers[selectedLayer_].opacity = layerOpacityScale_->get_value();
+    params_.layers[selectedLayer_].gateStrength = gateStrengthScale_->get_value();
     updatePreview();
 }
 
@@ -1239,13 +1615,24 @@ void DoubleExposureDlg::blendControlChanged()
         return;
     }
 
-    const int blendRow = blendMethod_->get_active_row_number();
-    params_.blendMode = static_cast<DoubleExposureParams::BlendMode>(blendRow < 0 ? 0 : blendRow);
+    if (selectedLayer_ < params_.layers.size()) {
+        const int blendRow = blendMethod_->get_active_row_number();
+        params_.layers[selectedLayer_].blendMode = static_cast<DoubleExposureParams::BlendMode>(blendRow < 0 ? 0 : blendRow);
+    }
+
     params_.autoGain = autoGain_->get_active();
     params_.baseEv = baseEvScale_->get_value();
-    params_.fillShadows = fillShadowsScale_->get_value();
 
-    autoGain_->set_sensitive(blendRow == 0);
+    bool anyAdd = false;
+
+    for (const auto& layer : params_.layers) {
+        if (layer.enabled && layer.blendMode == DoubleExposureParams::BlendMode::ADD) {
+            anyAdd = true;
+            break;
+        }
+    }
+
+    autoGain_->set_sensitive(anyAdd);
 
     updatePreview();
 }
@@ -1256,25 +1643,28 @@ void DoubleExposureDlg::updatePreview()
     // fall back to the standard tier so the preview never goes blank.
     const bool wantHi = highRes_ && highRes_->get_active();
 
-    const auto findPix = [this, wantHi](const Glib::ustring& path) -> Glib::RefPtr<Gdk::Pixbuf> {
+    using PixMap = std::map<Glib::ustring, Glib::RefPtr<Gdk::Pixbuf>>;
+    const auto findIn = [wantHi](const PixMap& hiMap, const PixMap& stdMap,
+                                 const Glib::ustring& path) -> Glib::RefPtr<Gdk::Pixbuf> {
         if (wantHi) {
-            const auto hi = hiPix_.find(path);
+            const auto hi = hiMap.find(path);
 
-            if (hi != hiPix_.end() && hi->second) {
+            if (hi != hiMap.end() && hi->second) {
                 return hi->second;
             }
         }
 
-        const auto it = bigPix_.find(path);
-        return it != bigPix_.end() ? it->second : Glib::RefPtr<Gdk::Pixbuf>();
+        const auto it = stdMap.find(path);
+        return it != stdMap.end() ? it->second : Glib::RefPtr<Gdk::Pixbuf>();
     };
 
-    const Glib::RefPtr<Gdk::Pixbuf> base = findPix(baseImagePath_);
+    const Glib::RefPtr<Gdk::Pixbuf> base = findIn(hiPix_, bigPix_, baseImagePath_);
 
     if (!base) {
         preview_->setComposite({});
         return;
     }
+
     const int w = base->get_width();
     const int h = base->get_height();
 
@@ -1283,14 +1673,19 @@ void DoubleExposureDlg::updatePreview()
         return;
     }
 
-    // linearize the base
-    std::vector<float> lin(static_cast<size_t>(w) * h * 3);
+    // The neutral base render is the scene-linear stand-in the engine
+    // actually composites on (the styled thumb has the user's tone edits
+    // baked in, which would corrupt min/max crossovers and gate decisions).
+    const Glib::RefPtr<Gdk::Pixbuf> neutralBase = findIn(neutralHiPix_, neutralPix_, baseImagePath_);
 
     float srgbLut[256];
 
     for (int i = 0; i < 256; ++i) {
         srgbLut[i] = srgbToLin(i / 255.f);
     }
+
+    // linearize the styled base (the user's edit — the display reference)
+    std::vector<float> lin(static_cast<size_t>(w) * h * 3);
 
     const guint8* baseData = base->get_pixels();
     const int baseStride = base->get_rowstride();
@@ -1311,33 +1706,186 @@ void DoubleExposureDlg::updatePreview()
         const Glib::RefPtr<Gdk::Pixbuf> pix;
         float gain;
         float opacity;
+        DoubleExposureParams::BlendMode mode;
+        bool gateOnLayer;
+        float gateLow;
+        float gateHigh;
+        float gateFeather;
+        float gateStrength;
+        float sx = 1.f; // engine cover-fit scales, from the two full-frame aspects
+        float sy = 1.f;
     };
 
     std::vector<LayerPix> layerPix;
-
-    const bool additive = params_.blendMode == DoubleExposureParams::BlendMode::ADD;
-    const float autoGainFactor = (additive && params_.autoGain && !params_.layers.empty())
-                                 ? 1.f / static_cast<float>(params_.layers.size() + 1)
-                                 : 1.f;
+    int addLayers = 0;
 
     for (const auto& layer : params_.layers) {
-        const Glib::RefPtr<Gdk::Pixbuf> pix = findPix(layer.path);
+        if (!layer.enabled) {
+            continue;
+        }
+
+        const Glib::RefPtr<Gdk::Pixbuf> pix = findIn(neutralHiPix_, neutralPix_, layer.path);
 
         if (!pix) {
             continue;
         }
 
-        float gain = static_cast<float>(std::pow(2.0, layer.ev));
+        LayerPix lp {
+            pix,
+            static_cast<float>(std::pow(2.0, layer.ev)),
+            static_cast<float>(layer.opacity) / 100.f,
+            layer.blendMode,
+            layer.gateSource == DoubleExposureParams::GateSource::LAYER,
+            static_cast<float>(layer.gateLow) / 100.f,
+            static_cast<float>(layer.gateHigh) / 100.f,
+            static_cast<float>(layer.gateFeather) / 100.f,
+            static_cast<float>(layer.gateStrength) / 100.f
+        };
 
-        if (additive) {
-            gain *= autoGainFactor;
+        if (lp.mode == DoubleExposureParams::BlendMode::ADD) {
+            ++addLayers;
         }
 
-        layerPix.push_back({pix, gain, static_cast<float>(layer.opacity) / 100.f});
+        layerPix.push_back(lp);
+    }
+
+    const float autoGainFactor = (params_.autoGain && addLayers > 0)
+                                 ? 1.f / static_cast<float>(addLayers + 1)
+                                 : 1.f;
+
+    for (auto& lp : layerPix) {
+        if (lp.mode == DoubleExposureParams::BlendMode::ADD) {
+            lp.gain *= autoGainFactor;
+        }
     }
 
     const float baseGain = static_cast<float>(std::pow(2.0, params_.baseEv)) * autoGainFactor;
-    const float fillAmount = std::max(0.f, std::min(1.f, static_cast<float>(params_.fillShadows) / 100.f));
+
+    // --- geometry: replicate the engine's mapping instead of cover-fitting
+    // the two thumbnails against each other. The engine composites on the
+    // base's FULL (uncropped, coarse-rotated) frame and cover-fits the
+    // partner's full frame over it; the preview shows the base's crop window
+    // into that frame. In normalized full-frame coordinates the whole map
+    // reduces to the two full-frame aspect ratios plus the crop rectangle.
+    float nx0 = 0.f, nxs = 1.f / w;
+    float ny0 = 0.f, nys = 1.f / h;
+    float baseAspect = static_cast<float>(w) / h;
+
+    {
+        Thumbnail* bthm = CacheManager::getInstance()->getEntry(baseImagePath_);
+
+        if (bthm) {
+            const rtengine::procparams::ProcParams bpp = bthm->getProcParamsCopy();
+            const CacheImageData* cid = bthm->getCacheImageData();
+            int fullW = cid ? cid->width : -1;
+            int fullH = cid ? cid->height : -1;
+
+            if (bpp.coarse.rotate == 90 || bpp.coarse.rotate == 270) {
+                const int t = fullW;
+                fullW = fullH;
+                fullH = t;
+            }
+
+            if (fullW > 0 && fullH > 0) {
+                baseAspect = static_cast<float>(fullW) / fullH;
+
+                if (bpp.crop.enabled && bpp.crop.w > 0 && bpp.crop.h > 0) {
+                    nx0 = static_cast<float>(bpp.crop.x) / fullW;
+                    nxs = (static_cast<float>(bpp.crop.w) / w) / fullW;
+                    ny0 = static_cast<float>(bpp.crop.y) / fullH;
+                    nys = (static_cast<float>(bpp.crop.h) / h) / fullH;
+                }
+            }
+
+            bthm->decreaseRef();
+        }
+    }
+
+    for (auto& lp : layerPix) {
+        // The neutral layer thumb spans the partner's full upright frame, so
+        // its aspect is the engine's partner aspect.
+        const float layerAspect = lp.pix->get_height() > 0
+                                  ? static_cast<float>(lp.pix->get_width()) / lp.pix->get_height()
+                                  : baseAspect;
+
+        if (baseAspect >= layerAspect) {
+            lp.sx = 1.f;
+            lp.sy = layerAspect / baseAspect;
+        } else {
+            lp.sx = baseAspect / layerAspect;
+            lp.sy = 1.f;
+        }
+    }
+
+    // Scene-faithful mode: composite on the neutral base exactly like the
+    // engine, then reapply the edit's look as per-channel transfer curves
+    // measured from (neutral -> styled) pixel pairs. Falls back to the styled
+    // base while the neutral render is still loading.
+    const bool sceneFaithful = static_cast<bool>(neutralBase) && !layerPix.empty();
+
+    const guint8* nbData = nullptr;
+    int nbStride = 0, nbCh = 3, nbW = 0, nbH = 0;
+
+    constexpr int TBINS = 64;
+    float toneRatio[3][TBINS];
+
+    if (sceneFaithful) {
+        nbData = neutralBase->get_pixels();
+        nbStride = neutralBase->get_rowstride();
+        nbCh = neutralBase->get_n_channels();
+        nbW = neutralBase->get_width();
+        nbH = neutralBase->get_height();
+
+        double sumS[3][TBINS] = {{0.0}};
+        double sumN[3][TBINS] = {{0.0}};
+
+        for (int y = 0; y < h; ++y) {
+            const float ny = ny0 + (y + 0.5f) * nys;
+            const int nby = std::max(0, std::min(static_cast<int>(ny * nbH), nbH - 1));
+
+            for (int x = 0; x < w; ++x) {
+                const float nx = nx0 + (x + 0.5f) * nxs;
+                const int nbx = std::max(0, std::min(static_cast<int>(nx * nbW), nbW - 1));
+                const guint8* np = nbData + nby * nbStride + nbx * nbCh;
+                const size_t o = (static_cast<size_t>(y) * w + x) * 3;
+
+                for (int c = 0; c < 3; ++c) {
+                    const float n = srgbLut[np[c]];
+                    const int bin = std::min(TBINS - 1, static_cast<int>(n * TBINS));
+                    sumS[c][bin] += lin[o + c];
+                    sumN[c][bin] += n;
+                }
+            }
+        }
+
+        for (int c = 0; c < 3; ++c) {
+            for (int bin = 0; bin < TBINS; ++bin) {
+                toneRatio[c][bin] = sumN[c][bin] > 1e-6 ? static_cast<float>(sumS[c][bin] / sumN[c][bin]) : -1.f;
+            }
+
+            // Fill unpopulated bins from their nearest measured neighbor so
+            // composited values outside the base's range still get a ratio.
+            float last = -1.f;
+
+            for (int bin = 0; bin < TBINS; ++bin) {
+                if (toneRatio[c][bin] < 0.f) {
+                    toneRatio[c][bin] = last;
+                } else {
+                    last = toneRatio[c][bin];
+                }
+            }
+
+            last = 1.f;
+
+            for (int bin = TBINS - 1; bin >= 0; --bin) {
+                if (toneRatio[c][bin] < 0.f) {
+                    toneRatio[c][bin] = last;
+                } else {
+                    last = toneRatio[c][bin];
+                }
+            }
+        }
+    }
 
     auto result = Gdk::Pixbuf::create(Gdk::COLORSPACE_RGB, false, 8, w, h);
     guint8* outData = result->get_pixels();
@@ -1345,20 +1893,35 @@ void DoubleExposureDlg::updatePreview()
 
     for (int y = 0; y < h; ++y) {
         guint8* outRow = outData + y * outStride;
+        const float ny = ny0 + (y + 0.5f) * nys;
+        const int nby = sceneFaithful ? std::max(0, std::min(static_cast<int>(ny * nbH), nbH - 1)) : 0;
 
         for (int x = 0; x < w; ++x) {
             const size_t o = (static_cast<size_t>(y) * w + x) * 3;
-            float r = lin[o] * baseGain;
-            float g = lin[o + 1] * baseGain;
-            float b = lin[o + 2] * baseGain;
+            const float nx = nx0 + (x + 0.5f) * nxs;
+
+            float r, g, b;
+
+            if (sceneFaithful) {
+                const int nbx = std::max(0, std::min(static_cast<int>(nx * nbW), nbW - 1));
+                const guint8* np = nbData + nby * nbStride + nbx * nbCh;
+                r = srgbLut[np[0]] * baseGain;
+                g = srgbLut[np[1]] * baseGain;
+                b = srgbLut[np[2]] * baseGain;
+            } else {
+                r = lin[o] * baseGain;
+                g = lin[o + 1] * baseGain;
+                b = lin[o + 2] * baseGain;
+            }
 
             for (const auto& lp : layerPix) {
-                // cover-fit nearest sample from the layer pixbuf
+                // nearest sample of the layer thumb through the engine's map
                 const int lw = lp.pix->get_width();
                 const int lh = lp.pix->get_height();
-                const float cover = std::max(static_cast<float>(lw) / w, static_cast<float>(lh) / h);
-                int lx = static_cast<int>((x - w * 0.5f) * cover + lw * 0.5f);
-                int ly = static_cast<int>((y - h * 0.5f) * cover + lh * 0.5f);
+                const float un = (nx - 0.5f) * lp.sx + 0.5f;
+                const float vn = (ny - 0.5f) * lp.sy + 0.5f;
+                int lx = static_cast<int>(un * lw);
+                int ly = static_cast<int>(vn * lh);
                 lx = std::max(0, std::min(lx, lw - 1));
                 ly = std::max(0, std::min(ly, lh - 1));
 
@@ -1369,44 +1932,31 @@ void DoubleExposureDlg::updatePreview()
                 float pb = srgbLut[lrow[lx * lch + 2]] * lp.gain;
 
                 float cr, cg, cb;
-
-                switch (params_.blendMode) {
-                    case DoubleExposureParams::BlendMode::SCREEN:
-                        cr = 1.f - (1.f - std::min(1.f, r)) * (1.f - std::min(1.f, pr));
-                        cg = 1.f - (1.f - std::min(1.f, g)) * (1.f - std::min(1.f, pg));
-                        cb = 1.f - (1.f - std::min(1.f, b)) * (1.f - std::min(1.f, pb));
-                        break;
-
-                    case DoubleExposureParams::BlendMode::MULTIPLY:
-                        cr = r * pr;
-                        cg = g * pg;
-                        cb = b * pb;
-                        break;
-
-                    case DoubleExposureParams::BlendMode::LIGHTEN:
-                        cr = std::max(r, pr);
-                        cg = std::max(g, pg);
-                        cb = std::max(b, pb);
-                        break;
-
-                    case DoubleExposureParams::BlendMode::ADD:
-                    default:
-                        cr = r + pr;
-                        cg = g + pg;
-                        cb = b + pb;
-                        break;
-                }
+                rtengine::deblend::blend(lp.mode, 1.f, r, g, b, pr, pg, pb, cr, cg, cb);
 
                 float wgt = lp.opacity;
 
-                if (fillAmount > 0.f) {
-                    const float lum = 0.2126f * r + 0.7152f * g + 0.0722f * b;
-                    wgt *= (1.f - fillAmount) + fillAmount * shadowWeight(lum);
+                if (lp.gateStrength > 0.f) {
+                    const float lum = lp.gateOnLayer ? rtengine::deblend::lum709(pr, pg, pb)
+                                                     : rtengine::deblend::lum709(r, g, b);
+                    wgt *= rtengine::deblend::gateWeight(lp.gateStrength,
+                                                         rtengine::deblend::gateWindow(rtengine::deblend::gateEncode(lum), lp.gateLow, lp.gateHigh, lp.gateFeather));
                 }
 
                 r += wgt * (cr - r);
                 g += wgt * (cg - g);
                 b += wgt * (cb - b);
+            }
+
+            if (sceneFaithful) {
+                // Back to the edit's look: per-channel transfer measured from
+                // the styled render.
+                r = std::max(r, 0.f);
+                g = std::max(g, 0.f);
+                b = std::max(b, 0.f);
+                r *= toneRatio[0][std::min(TBINS - 1, static_cast<int>(r * TBINS))];
+                g *= toneRatio[1][std::min(TBINS - 1, static_cast<int>(g * TBINS))];
+                b *= toneRatio[2][std::min(TBINS - 1, static_cast<int>(b * TBINS))];
             }
 
             outRow[x * 3] = static_cast<guint8>(linToSrgb(r) * 255.f + 0.5f);

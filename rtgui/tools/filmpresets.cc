@@ -78,10 +78,12 @@ FilmPresets::FilmPresets() :
     dialogViewport_(nullptr)
 {
     auto m = ProcEventMapper::getInstance();
-    EvFilmPresetsEnabled      = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_ENABLED");
+    // Enabled and Model rerun rgbProc (RGBCURVE) so the V4 scene tap gets
+    // captured; every other control only needs the Lab stage.
+    EvFilmPresetsEnabled      = m->newEvent(RGBCURVE, "HISTORY_MSG_FILMPRESETS_ENABLED");
     EvFilmPresetsPreset       = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_PRESET");
     EvFilmPresetsStrength     = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_STRENGTH");
-    EvFilmPresetsModel        = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_MODEL");
+    EvFilmPresetsModel        = m->newEvent(RGBCURVE, "HISTORY_MSG_FILMPRESETS_MODEL");
     EvFilmPresetsExposure     = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_EXPOSURE");
     EvFilmPresetsPushPull     = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_PUSHPULL");
     EvFilmPresetsProcess      = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_PROCESS");
@@ -101,13 +103,9 @@ FilmPresets::FilmPresets() :
     EvFilmPresetsRedShift     = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_REDSHIFT");
     EvFilmPresetsGreenShift   = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_GREENSHIFT");
     EvFilmPresetsBlueShift    = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_BLUESHIFT");
-    EvFilmPresetsGrain        = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_GRAIN");
     EvFilmPresetsVibrance     = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_VIBRANCE");
     EvFilmPresetsSkinProtection = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_SKINPROTECTION");
     EvFilmPresetsLayerCoupling = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_LAYERCOUPLING");
-    EvFilmPresetsGrainSize = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_GRAINSIZE");
-    EvFilmPresetsGrainClumping = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_GRAINCLUMPING");
-    EvFilmPresetsGrainColor = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_GRAINCOLOR");
     EvFilmPresetsHalationSize = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_HALATIONSIZE");
     EvFilmPresetsHalationThreshold = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_HALATIONTHRESHOLD");
     EvFilmPresetsHalationColor = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_HALATIONCOLOR");
@@ -233,6 +231,7 @@ FilmPresets::FilmPresets() :
     modelCombo_->append("legacy", M("TP_FILMPRESETS_MODEL_LEGACY"));
     modelCombo_->append("v2", M("TP_FILMPRESETS_MODEL_V2"));
     modelCombo_->append("v3", M("TP_FILMPRESETS_MODEL_V3"));
+    modelCombo_->append("v4", M("TP_FILMPRESETS_MODEL_V4"));
     processCombo_ = Gtk::manage(new Gtk::ComboBoxText());
     processCombo_->append("auto", M("TP_FILMPRESETS_PROCESS_AUTO"));
     processCombo_->append("c41", "C-41");
@@ -241,6 +240,7 @@ FilmPresets::FilmPresets() :
     processCombo_->append("bw", M("TP_FILMPRESETS_PROCESS_BW"));
     outputCombo_ = Gtk::manage(new Gtk::ComboBoxText());
     outputCombo_->append("scan", M("TP_FILMPRESETS_OUTPUT_SCAN"));
+    outputCombo_->append("labscan", M("TP_FILMPRESETS_OUTPUT_LABSCAN"));
     outputCombo_->append("ra4", M("TP_FILMPRESETS_OUTPUT_RA4"));
     outputCombo_->append("projection", M("TP_FILMPRESETS_OUTPUT_PROJECTION"));
     outputCombo_->append("cinema", M("TP_FILMPRESETS_OUTPUT_CINEMA"));
@@ -356,9 +356,6 @@ FilmPresets::FilmPresets() :
     filmCharLabel->get_style_context()->add_class("section-label");
     detailContent_->pack_start(*filmCharLabel, Gtk::PACK_SHRINK, 4);
 
-    grainAdj = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_GRAIN"), -100., 100., 1., 0.));
-    grainAdj->setAdjusterListener(this);
-    detailContent_->pack_start(*grainAdj);
 
     vibranceAdj = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_VIBRANCE"), -100., 100., 1., 0.));
     vibranceAdj->setAdjusterListener(this);
@@ -396,15 +393,6 @@ FilmPresets::FilmPresets() :
     emulsionLabel->get_style_context()->add_class("section-label");
     v3Controls_->pack_start(*emulsionLabel, Gtk::PACK_SHRINK, 4);
 
-    grainSizeAdj_ = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_GRAINSIZE"), -100., 100., 1., 0.));
-    grainClumpingAdj_ = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_GRAINCLUMPING"), -100., 100., 1., 0.));
-    grainColorAdj_ = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_GRAINCOLOR"), -100., 100., 1., 0.));
-    grainSizeAdj_->setAdjusterListener(this);
-    grainClumpingAdj_->setAdjusterListener(this);
-    grainColorAdj_->setAdjusterListener(this);
-    v3Controls_->pack_start(*grainSizeAdj_);
-    v3Controls_->pack_start(*grainClumpingAdj_);
-    v3Controls_->pack_start(*grainColorAdj_);
 
     auto* opticsLabel = Gtk::manage(new Gtk::Label());
     opticsLabel->set_markup("<small>" + Glib::Markup::escape_text(M("TP_FILMPRESETS_SECTION_OPTICS")) + "</small>");
@@ -648,13 +636,9 @@ void FilmPresets::read(const ProcParams* pp, const ParamsEdited* pedited)
         redShift->setEditedState(pedited->filmPresets.redShift ? Edited : UnEdited);
         greenShift->setEditedState(pedited->filmPresets.greenShift ? Edited : UnEdited);
         blueShift->setEditedState(pedited->filmPresets.blueShift ? Edited : UnEdited);
-        grainAdj->setEditedState(pedited->filmPresets.grain ? Edited : UnEdited);
         vibranceAdj->setEditedState(pedited->filmPresets.vibrance ? Edited : UnEdited);
         skinProtectionAdj_->setEditedState(pedited->filmPresets.skinProtection ? Edited : UnEdited);
         layerCouplingAdj_->setEditedState(pedited->filmPresets.layerCoupling ? Edited : UnEdited);
-        grainSizeAdj_->setEditedState(pedited->filmPresets.grainSize ? Edited : UnEdited);
-        grainClumpingAdj_->setEditedState(pedited->filmPresets.grainClumping ? Edited : UnEdited);
-        grainColorAdj_->setEditedState(pedited->filmPresets.grainColor ? Edited : UnEdited);
         halationSizeAdj_->setEditedState(pedited->filmPresets.halationSize ? Edited : UnEdited);
         halationThresholdAdj_->setEditedState(pedited->filmPresets.halationThreshold ? Edited : UnEdited);
         halationColorAdj_->setEditedState(pedited->filmPresets.halationColor ? Edited : UnEdited);
@@ -673,7 +657,8 @@ void FilmPresets::read(const ProcParams* pp, const ParamsEdited* pedited)
 
     modelCombo_->set_active_id(
         pp->filmPresets.modelVersion < 2 ? "legacy"
-        : (pp->filmPresets.modelVersion >= 3 ? "v3" : "v2"));
+        : pp->filmPresets.modelVersion >= 4 ? "v4"
+        : pp->filmPresets.modelVersion == 3 ? "v3" : "v2");
     if (!processCombo_->set_active_id(pp->filmPresets.process)) {
         processCombo_->set_active_id("auto");
     }
@@ -702,13 +687,9 @@ void FilmPresets::read(const ProcParams* pp, const ParamsEdited* pedited)
     redShift->setValue(clampFilmValue(pp->filmPresets.redShift, -100, 100));
     greenShift->setValue(clampFilmValue(pp->filmPresets.greenShift, -100, 100));
     blueShift->setValue(clampFilmValue(pp->filmPresets.blueShift, -100, 100));
-    grainAdj->setValue(clampFilmValue(pp->filmPresets.grain, -100, 100));
     vibranceAdj->setValue(clampFilmValue(pp->filmPresets.vibrance, -100, 100));
     skinProtectionAdj_->setValue(clampFilmValue(pp->filmPresets.skinProtection, 0, 100));
     layerCouplingAdj_->setValue(clampFilmValue(pp->filmPresets.layerCoupling, -100, 100));
-    grainSizeAdj_->setValue(clampFilmValue(pp->filmPresets.grainSize, -100, 100));
-    grainClumpingAdj_->setValue(clampFilmValue(pp->filmPresets.grainClumping, -100, 100));
-    grainColorAdj_->setValue(clampFilmValue(pp->filmPresets.grainColor, -100, 100));
     halationSizeAdj_->setValue(clampFilmValue(pp->filmPresets.halationSize, -100, 100));
     halationThresholdAdj_->setValue(clampFilmValue(pp->filmPresets.halationThreshold, -100, 100));
     halationColorAdj_->setValue(clampFilmValue(pp->filmPresets.halationColor, -100, 100));
@@ -728,7 +709,8 @@ void FilmPresets::write(ProcParams* pp, ParamsEdited* pedited)
 
     pp->filmPresets.modelVersion = modelCombo_->get_active_id() == "legacy"
         ? 1
-        : (modelCombo_->get_active_id() == "v3" ? 3 : 2);
+        : modelCombo_->get_active_id() == "v4" ? 4
+        : modelCombo_->get_active_id() == "v3" ? 3 : 2;
     pp->filmPresets.exposure = exposureAdj_->getValue();
     pp->filmPresets.pushPull = pushPullAdj_->getValue();
     pp->filmPresets.process = processCombo_->get_active_id();
@@ -750,13 +732,9 @@ void FilmPresets::write(ProcParams* pp, ParamsEdited* pedited)
     pp->filmPresets.redShift = redShift->getValue();
     pp->filmPresets.greenShift = greenShift->getValue();
     pp->filmPresets.blueShift = blueShift->getValue();
-    pp->filmPresets.grain = grainAdj->getValue();
     pp->filmPresets.vibrance = vibranceAdj->getValue();
     pp->filmPresets.skinProtection = skinProtectionAdj_->getValue();
     pp->filmPresets.layerCoupling = layerCouplingAdj_->getValue();
-    pp->filmPresets.grainSize = grainSizeAdj_->getValue();
-    pp->filmPresets.grainClumping = grainClumpingAdj_->getValue();
-    pp->filmPresets.grainColor = grainColorAdj_->getValue();
     pp->filmPresets.halationSize = halationSizeAdj_->getValue();
     pp->filmPresets.halationThreshold = halationThresholdAdj_->getValue();
     pp->filmPresets.halationColor = halationColorAdj_->getValue();
@@ -787,13 +765,9 @@ void FilmPresets::write(ProcParams* pp, ParamsEdited* pedited)
         pedited->filmPresets.redShift = redShift->getEditedState();
         pedited->filmPresets.greenShift = greenShift->getEditedState();
         pedited->filmPresets.blueShift = blueShift->getEditedState();
-        pedited->filmPresets.grain = grainAdj->getEditedState();
         pedited->filmPresets.vibrance = vibranceAdj->getEditedState();
         pedited->filmPresets.skinProtection = skinProtectionAdj_->getEditedState();
         pedited->filmPresets.layerCoupling = layerCouplingAdj_->getEditedState();
-        pedited->filmPresets.grainSize = grainSizeAdj_->getEditedState();
-        pedited->filmPresets.grainClumping = grainClumpingAdj_->getEditedState();
-        pedited->filmPresets.grainColor = grainColorAdj_->getEditedState();
         pedited->filmPresets.halationSize = halationSizeAdj_->getEditedState();
         pedited->filmPresets.halationThreshold = halationThresholdAdj_->getEditedState();
         pedited->filmPresets.halationColor = halationColorAdj_->getEditedState();
@@ -821,13 +795,9 @@ void FilmPresets::setDefaults(const ProcParams* defParams, const ParamsEdited* p
     redShift->setDefault(defParams->filmPresets.redShift);
     greenShift->setDefault(defParams->filmPresets.greenShift);
     blueShift->setDefault(defParams->filmPresets.blueShift);
-    grainAdj->setDefault(defParams->filmPresets.grain);
     vibranceAdj->setDefault(defParams->filmPresets.vibrance);
     skinProtectionAdj_->setDefault(defParams->filmPresets.skinProtection);
     layerCouplingAdj_->setDefault(defParams->filmPresets.layerCoupling);
-    grainSizeAdj_->setDefault(defParams->filmPresets.grainSize);
-    grainClumpingAdj_->setDefault(defParams->filmPresets.grainClumping);
-    grainColorAdj_->setDefault(defParams->filmPresets.grainColor);
     halationSizeAdj_->setDefault(defParams->filmPresets.halationSize);
     halationThresholdAdj_->setDefault(defParams->filmPresets.halationThreshold);
     halationColorAdj_->setDefault(defParams->filmPresets.halationColor);
@@ -852,13 +822,9 @@ void FilmPresets::setDefaults(const ProcParams* defParams, const ParamsEdited* p
         redShift->setDefaultEditedState(pedited->filmPresets.redShift ? Edited : UnEdited);
         greenShift->setDefaultEditedState(pedited->filmPresets.greenShift ? Edited : UnEdited);
         blueShift->setDefaultEditedState(pedited->filmPresets.blueShift ? Edited : UnEdited);
-        grainAdj->setDefaultEditedState(pedited->filmPresets.grain ? Edited : UnEdited);
         vibranceAdj->setDefaultEditedState(pedited->filmPresets.vibrance ? Edited : UnEdited);
         skinProtectionAdj_->setDefaultEditedState(pedited->filmPresets.skinProtection ? Edited : UnEdited);
         layerCouplingAdj_->setDefaultEditedState(pedited->filmPresets.layerCoupling ? Edited : UnEdited);
-        grainSizeAdj_->setDefaultEditedState(pedited->filmPresets.grainSize ? Edited : UnEdited);
-        grainClumpingAdj_->setDefaultEditedState(pedited->filmPresets.grainClumping ? Edited : UnEdited);
-        grainColorAdj_->setDefaultEditedState(pedited->filmPresets.grainColor ? Edited : UnEdited);
         halationSizeAdj_->setDefaultEditedState(pedited->filmPresets.halationSize ? Edited : UnEdited);
         halationThresholdAdj_->setDefaultEditedState(pedited->filmPresets.halationThreshold ? Edited : UnEdited);
         halationColorAdj_->setDefaultEditedState(pedited->filmPresets.halationColor ? Edited : UnEdited);
@@ -882,13 +848,9 @@ void FilmPresets::setDefaults(const ProcParams* defParams, const ParamsEdited* p
         redShift->setDefaultEditedState(Irrelevant);
         greenShift->setDefaultEditedState(Irrelevant);
         blueShift->setDefaultEditedState(Irrelevant);
-        grainAdj->setDefaultEditedState(Irrelevant);
         vibranceAdj->setDefaultEditedState(Irrelevant);
         skinProtectionAdj_->setDefaultEditedState(Irrelevant);
         layerCouplingAdj_->setDefaultEditedState(Irrelevant);
-        grainSizeAdj_->setDefaultEditedState(Irrelevant);
-        grainClumpingAdj_->setDefaultEditedState(Irrelevant);
-        grainColorAdj_->setDefaultEditedState(Irrelevant);
         halationSizeAdj_->setDefaultEditedState(Irrelevant);
         halationThresholdAdj_->setDefaultEditedState(Irrelevant);
         halationColorAdj_->setDefaultEditedState(Irrelevant);
@@ -942,20 +904,12 @@ void FilmPresets::adjusterChanged(Adjuster* a, double newval)
             listener->panelChanged(EvFilmPresetsGreenShift, a->getTextValue());
         } else if (a == blueShift) {
             listener->panelChanged(EvFilmPresetsBlueShift, a->getTextValue());
-        } else if (a == grainAdj) {
-            listener->panelChanged(EvFilmPresetsGrain, a->getTextValue());
         } else if (a == vibranceAdj) {
             listener->panelChanged(EvFilmPresetsVibrance, a->getTextValue());
         } else if (a == skinProtectionAdj_) {
             listener->panelChanged(EvFilmPresetsSkinProtection, a->getTextValue());
         } else if (a == layerCouplingAdj_) {
             listener->panelChanged(EvFilmPresetsLayerCoupling, a->getTextValue());
-        } else if (a == grainSizeAdj_) {
-            listener->panelChanged(EvFilmPresetsGrainSize, a->getTextValue());
-        } else if (a == grainClumpingAdj_) {
-            listener->panelChanged(EvFilmPresetsGrainClumping, a->getTextValue());
-        } else if (a == grainColorAdj_) {
-            listener->panelChanged(EvFilmPresetsGrainColor, a->getTextValue());
         } else if (a == halationSizeAdj_) {
             listener->panelChanged(EvFilmPresetsHalationSize, a->getTextValue());
         } else if (a == halationThresholdAdj_) {
@@ -1015,13 +969,9 @@ void FilmPresets::setBatchMode(bool batchMode)
     redShift->showEditedCB();
     greenShift->showEditedCB();
     blueShift->showEditedCB();
-    grainAdj->showEditedCB();
     vibranceAdj->showEditedCB();
     skinProtectionAdj_->showEditedCB();
     layerCouplingAdj_->showEditedCB();
-    grainSizeAdj_->showEditedCB();
-    grainClumpingAdj_->showEditedCB();
-    grainColorAdj_->showEditedCB();
     halationSizeAdj_->showEditedCB();
     halationThresholdAdj_->showEditedCB();
     halationColorAdj_->showEditedCB();

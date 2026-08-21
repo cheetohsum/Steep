@@ -46,6 +46,7 @@
 class FilePanel;
 class CoarsePanel;
 class MyHScale;
+class RTSurface;
 class ToolBar;
 
 /*
@@ -103,6 +104,7 @@ private:
     Gtk::Box* buttonBar;
     MyScrolledToolbar* stb_;
     Gtk::Box* hbToolBar1;
+    Gtk::Box* filterBar_ = nullptr;   // contents of the filter revealer
 
     Gtk::Box* fltrRankbox;
     Gtk::Box* fltrLabelbox;
@@ -174,6 +176,19 @@ private:
 
     Gtk::Entry* BrowsePath;
     Gtk::Button* buttonBrowsePath;
+
+    // Name of whatever the browser is currently showing, centred in the toolbar
+    Gtk::Label* dirTitleLabel_ = nullptr;
+    Gtk::EventBox* dirTitleEvtBox_ = nullptr;
+    Gtk::Menu* titleMenu_ = nullptr;              // right-click menu on the title
+    Gtk::CheckMenuItem* titlePinItem_ = nullptr;
+    Gtk::CheckMenuItem* titleFullPathItem_ = nullptr;
+    bool titleMenuBlock_ = false;
+    Glib::ustring titleName_;      // short display name (folder name / "Album: X")
+    Glib::ustring titleFullPath_;  // full path when showing a real directory, else empty
+    static Glib::ustring directoryTitle (const Glib::ustring& directory);
+    void setBrowserTitle (const Glib::ustring& text, const Glib::ustring& tooltip);
+    void applyBrowserTitle ();
 
     Gtk::Entry* Query;
     Gtk::Button* buttonQueryClear;
@@ -264,20 +279,35 @@ private:
     bool earlySelectDone_ = false;
     std::unordered_set<std::string> albumWhitelist_;
     bool inAlbumMode_;
+    // key -> (path, anchor path) of session-pinned partner files
+    std::map<std::string, std::pair<Glib::ustring, Glib::ustring>> pinnedPartners_;
     Glib::ustring savedDirectory_;
 
     // Global scope: show matches for the active filter from every folder
     // steep knows about (favorites, recents, current), streamed in via the
     // album-mode display rails.
     Gtk::ToggleButton* bGlobalScope_ = nullptr;
+    Gtk::DrawingArea* globalScopeGlobe_ = nullptr;
+    std::shared_ptr<RTSurface> globalScopeGlobeSurface_;
     sigc::connection globalToggleConn_;
     sigc::connection globalRescanConn_;
+    sigc::connection globalGlobeAnimConn_;
     bool globalScopeActive_ = false;
     bool inGlobalStart_ = false;
+    bool globalGlobeScanning_ = false;
+    bool globalGlobeSettling_ = false;
+    double globalGlobeAngle_ = 0.0;
+    double globalGlobeAngularVelocity_ = 0.0;
+    double globalGlobeSettleTarget_ = 0.0;
+    std::chrono::steady_clock::time_point globalGlobeLastTick_;
     int globalScanGen_ = 0;
     std::string globalLastScanKey_;
     std::shared_ptr<std::atomic<bool>> globalAliveToken_;
     std::shared_ptr<std::atomic<bool>> globalScanCancel_;
+    bool drawGlobalScopeGlobe(const Cairo::RefPtr<Cairo::Context>& cr);
+    bool tickGlobalScopeGlobe();
+    void startGlobalScopeGlobe();
+    void settleGlobalScopeGlobe();
     void globalScopeToggled();
     void startGlobalScan();
     void scheduleGlobalRescan();
@@ -431,6 +461,12 @@ public:
     void exitAlbumMode ();
     bool isInAlbumMode () const { return inAlbumMode_; }
 
+    // Surface a double-exposure partner in the strip directly after the
+    // image it composites into, and open it in the editor. The pin lasts
+    // for the session or until the user browses to a different folder.
+    void openPartnerForEditing (const Glib::ustring& path, const Glib::ustring& anchorPath);
+    bool isInRealAlbumMode () const { return inAlbumMode_ && !globalScopeActive_; }
+
     void saveResetState ();
     bool restoreResetState ();
 
@@ -452,6 +488,12 @@ public:
 
     void tbLeftPanel_1_toggled ();
     void tbLeftPanel_1_visible (bool visible);
+    // Top of the thumbnail area, so callers can align an overlay below the
+    // browser's own toolbar instead of on top of it
+    Gtk::Widget* getThumbnailArea()
+    {
+        return hBox;
+    }
     void tbRightPanel_1_toggled ();
     void tbRightPanel_1_visible (bool visible);
 
@@ -476,6 +518,13 @@ public:
 
     void showToolBar();
     void hideToolBar();
+
+    // Browser title (folder/album name centred in the toolbar). The static
+    // signal carries (display text, tooltip) and fires whenever the title or
+    // its display options change, so pinned copies elsewhere can follow.
+    Glib::ustring getBrowserTitleText() const;
+    Glib::ustring getBrowserTitleTooltip() const;
+    static sigc::signal<void, const Glib::ustring&, const Glib::ustring&>& browserTitleChanged();
 
     // Filetype filter state — shared between browser and editor filter bars
     const std::set<std::string>& getKnownFiletypes() const { return knownFiletypes_; }

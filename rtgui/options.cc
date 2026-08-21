@@ -381,6 +381,11 @@ void Options::setDefaults()
     detailWindowHeight = -1;
     dirBrowserWidth = 260;
     dirBrowserHeight = 350;
+    albumPanelHeight = -1;
+    albumPanelCollapsed = false;
+    browserTitleShowFullPath = false;
+    browserTitlePinToEditor = false;
+    showGlobalScopeUnfilteredWarning = true;
     dirBrowserSortType = Gtk::SORT_ASCENDING;
     preferencesWidth = 800;
     preferencesHeight = 600;
@@ -1747,6 +1752,26 @@ void Options::readFromFile(Glib::ustring fname)
                     dirBrowserHeight = keyFile.get_integer("GUI", "DirBrowserHeight");
                 }
 
+                if (keyFile.has_key("GUI", "AlbumPanelHeight")) {
+                    albumPanelHeight = keyFile.get_integer("GUI", "AlbumPanelHeight");
+                }
+
+                if (keyFile.has_key("GUI", "AlbumPanelCollapsed")) {
+                    albumPanelCollapsed = keyFile.get_boolean("GUI", "AlbumPanelCollapsed");
+                }
+
+                if (keyFile.has_key("GUI", "BrowserTitleShowFullPath")) {
+                    browserTitleShowFullPath = keyFile.get_boolean("GUI", "BrowserTitleShowFullPath");
+                }
+
+                if (keyFile.has_key("GUI", "BrowserTitlePinToEditor")) {
+                    browserTitlePinToEditor = keyFile.get_boolean("GUI", "BrowserTitlePinToEditor");
+                }
+
+                if (keyFile.has_key("GUI", "ShowGlobalScopeUnfilteredWarning")) {
+                    showGlobalScopeUnfilteredWarning = keyFile.get_boolean("GUI", "ShowGlobalScopeUnfilteredWarning");
+                }
+
                 if (keyFile.has_key("GUI", "SortType")) {
                     dirBrowserSortType = static_cast<Gtk::SortType>(keyFile.get_integer("GUI", "SortType"));
                 }
@@ -2891,6 +2916,11 @@ void Options::saveToFile(Glib::ustring fname)
         keyFile.set_integer("GUI", "DetailWindowHeight", detailWindowHeight);
         keyFile.set_integer("GUI", "DirBrowserWidth", dirBrowserWidth);
         keyFile.set_integer("GUI", "DirBrowserHeight", dirBrowserHeight);
+        keyFile.set_integer("GUI", "AlbumPanelHeight", albumPanelHeight);
+        keyFile.set_boolean("GUI", "AlbumPanelCollapsed", albumPanelCollapsed);
+        keyFile.set_boolean("GUI", "BrowserTitleShowFullPath", browserTitleShowFullPath);
+        keyFile.set_boolean("GUI", "BrowserTitlePinToEditor", browserTitlePinToEditor);
+        keyFile.set_boolean("GUI", "ShowGlobalScopeUnfilteredWarning", showGlobalScopeUnfilteredWarning);
         keyFile.set_integer("GUI", "SortType", dirBrowserSortType);
         keyFile.set_integer("GUI", "PreferencesWidth", preferencesWidth);
         keyFile.set_integer("GUI", "PreferencesHeight", preferencesHeight);

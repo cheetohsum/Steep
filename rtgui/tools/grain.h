@@ -28,6 +28,7 @@ private:
     Adjuster *strength;
     Adjuster *iso;
     Adjuster *scale;
+    Adjuster *color;
     Gtk::Box* detailContent_;
     Gtk::Revealer* detailRevealer_;
     bool detailExpanded_;
@@ -36,6 +37,7 @@ private:
     rtengine::ProcEvent EvGrainStrength;
     rtengine::ProcEvent EvGrainISO;
     rtengine::ProcEvent EvGrainScale;
+    rtengine::ProcEvent EvGrainColor;
 
     void toggleDetail();
 

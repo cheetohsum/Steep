@@ -1418,6 +1418,17 @@ void RTWindow::on_mainNB_switch_page (Gtk::Widget* widget, guint page_num)
             epanel->closeAlbumView();
         }
 
+        // Both views own a directory tree. Mirror the catalog's final active
+        // directory after all transition state (including album exit) settles.
+        if (isSingleTabMode() && fpanel && fpanel->fileCatalog) {
+            const Glib::ustring directory = fpanel->fileCatalog->lastSelectedDir();
+            if (isEditorPanel(page_num) && epanel) {
+                epanel->syncDirectoryHighlight(directory);
+            } else if (mainNB->get_nth_page(page_num) == fpanel) {
+                fpanel->syncDirectoryHighlight(directory);
+            }
+        }
+
         // Keep header bar nav buttons in sync with notebook page
         syncNavButtons (page_num);
     }
@@ -2073,16 +2084,14 @@ void RTWindow::MoveFileBrowserToEditor()
         epanel->catalogPane->add (*fCatalog);
         epanel->showTopPanel (App::get().options().editorFilmStripOpened);
         fCatalog->enableTabMode (true);
+        epanel->restoreEditorFilter();
         fCatalog->refreshHeight();
         fCatalog->tbLeftPanel_1_visible (false);
         fCatalog->tbRightPanel_1_visible (false);
 
-        // Edit view opens with the left sidebar collapsed for maximum image
-        // space (the thin left-edge hot-strip re-expands it) — unless the
-        // user manually kept it open last time they were in the editor.
-        if (!App::get().options().editorShowLeftSidebar) {
-            epanel->collapseLeftSidebarForEdit();
-        }
+        // The left sidebar state is applied once by on_mainNB_switch_page after
+        // this returns. Collapsing it here as well ran the 200 ms slide (and
+        // the browser re-allocation it drags along) twice per switch.
     }
 }
 

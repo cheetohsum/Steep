@@ -389,6 +389,85 @@ Glib::ustring escapeHtmlChars(const Glib::ustring &src)
     return dst;
 }
 
+Gtk::EventBox* createEdgeGrip (bool vertical,
+                               const Glib::ustring& tooltipMarkup,
+                               const std::function<void ()>& onClick)
+{
+    static Glib::RefPtr<Gtk::CssProvider> gripCss;
+
+    if (!gripCss) {
+        gripCss = Gtk::CssProvider::create();
+        gripCss->load_from_data(
+            "#EdgeGripV, #EdgeGripH {"
+            "  background-color: transparent;"
+            "  background-image: none;"
+            "}"
+            "#EdgeGripV:hover {"
+            "  background-image: linear-gradient(to bottom,"
+            "    rgba(100, 160, 255, 0.00) 0%,"
+            "    rgba(100, 160, 255, 0.72) 22%,"
+            "    rgba(100, 160, 255, 0.72) 78%,"
+            "    rgba(100, 160, 255, 0.00) 100%);"
+            "}"
+            "#EdgeGripH:hover {"
+            "  background-image: linear-gradient(to right,"
+            "    rgba(100, 160, 255, 0.00) 0%,"
+            "    rgba(100, 160, 255, 0.72) 22%,"
+            "    rgba(100, 160, 255, 0.72) 78%,"
+            "    rgba(100, 160, 255, 0.00) 100%);"
+            "}"
+        );
+    }
+
+    auto* grip = Gtk::manage (new Gtk::EventBox ());
+    grip->set_name (vertical ? "EdgeGripV" : "EdgeGripH");
+    grip->set_visible_window (true);
+    grip->add_events (Gdk::BUTTON_PRESS_MASK | Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
+    grip->set_tooltip_markup (tooltipMarkup);
+    grip->get_style_context()->add_provider (gripCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+
+    // An EventBox does not prelight by itself, and the highlight waits for
+    // the pointer to settle: brushing past on the way to the canvas should
+    // not flash a bar.
+    auto hoverConn = std::make_shared<sigc::connection>();
+
+    grip->signal_enter_notify_event().connect (
+        [grip, hoverConn](GdkEventCrossing*) -> bool {
+            hoverConn->disconnect();
+            *hoverConn = Glib::signal_timeout().connect (
+                sigc::track_obj ([grip]() -> bool {
+                    grip->set_state_flags (Gtk::STATE_FLAG_PRELIGHT, false);
+                    return false;
+                }, *grip),
+                300);
+            return false;
+        });
+
+    const auto clearHover = [grip, hoverConn]() {
+        hoverConn->disconnect();
+        grip->unset_state_flags (Gtk::STATE_FLAG_PRELIGHT);
+    };
+
+    grip->signal_leave_notify_event().connect (
+        [clearHover](GdkEventCrossing*) -> bool {
+            clearHover();
+            return false;
+        });
+    grip->signal_unmap().connect (clearHover);
+
+    grip->signal_button_press_event().connect (
+        [onClick](GdkEventButton* event) -> bool {
+            if (event && event->button == 1 && event->type == GDK_BUTTON_PRESS) {
+                onClick();
+                return true;
+            }
+
+            return false;
+        });
+
+    return grip;
+}
+
 void setExpandAlignProperties(Gtk::Widget *widget, bool hExpand, bool vExpand, enum Gtk::Align hAlign, enum Gtk::Align vAlign)
 {
     widget->set_hexpand(hExpand);

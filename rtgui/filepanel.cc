@@ -1968,6 +1968,13 @@ rtengine::InitialImage* FilePanel::loadAuxiliaryInitialImage(
     const std::string fnameRaw(fname);
 
     lowerBackgroundPreloadThreadPriority();
+#ifdef _OPENMP
+    // This function runs on a fresh detached thread for every before/after
+    // RAW load. MinGW libgomp retains that thread's worker team after the
+    // load, so allowing the default team size leaked 15 workers per photo on
+    // a 16-core machine and eventually starved the foreground editor.
+    omp_set_num_threads(1);
+#endif
 
     auto elapsedFromStart = [&]() -> long long {
         return fileSelDurationMs(loadStart, clk::now());
@@ -2124,7 +2131,7 @@ void FilePanel::cancelUnstartedPendingLoads(const char* reason, const Glib::ustr
         currentFile.c_str());
 }
 
-void FilePanel::pauseBackgroundWorkForForeground()
+void FilePanel::pauseBackgroundWork()
 {
     ++backgroundResumeGeneration_;
     cancelScheduledBackgroundResume();
@@ -2146,8 +2153,32 @@ void FilePanel::pauseBackgroundWorkForForeground()
     }
 }
 
+void FilePanel::pauseBackgroundWorkForForeground()
+{
+    foregroundWorkActive_ = true;
+    pauseBackgroundWork();
+}
+
+void FilePanel::setEditorProcessingActivity(bool active)
+{
+    if (editorProcessingActive_ == active) {
+        return;
+    }
+
+    editorProcessingActive_ = active;
+    if (active) {
+        pauseBackgroundWork();
+    } else if (!foregroundWorkActive_) {
+        resumeBackgroundWorkAfterForeground();
+    }
+}
+
 void FilePanel::resumeThumbnailWorkNow()
 {
+    if (foregroundWorkActive_ || editorProcessingActive_) {
+        return;
+    }
+
     if (!thumbnailWorkPausedForForeground_) {
         return;
     }
@@ -2159,6 +2190,10 @@ void FilePanel::resumeThumbnailWorkNow()
 
 void FilePanel::resumeBackgroundWorkNow()
 {
+    if (foregroundWorkActive_ || editorProcessingActive_) {
+        return;
+    }
+
     if (!backgroundWorkPausedForForeground_ && !thumbnailWorkPausedForForeground_) {
         return;
     }
@@ -2195,6 +2230,11 @@ void FilePanel::resumeThumbnailWorkIfCurrent(unsigned generation)
 
 void FilePanel::resumeBackgroundWorkAfterForeground()
 {
+    foregroundWorkActive_ = false;
+    if (editorProcessingActive_) {
+        return;
+    }
+
     if (!backgroundWorkPausedForForeground_ && !thumbnailWorkPausedForForeground_) {
         return;
     }
@@ -2332,6 +2372,8 @@ FilePanel::FilePanel () :
     backgroundResumeTimeoutId_(0),
     backgroundResumeGeneration_(0),
     adjacentPreloadGeneration_(0),
+    foregroundWorkActive_(false),
+    editorProcessingActive_(false),
     backgroundWorkPausedForForeground_(false),
     thumbnailWorkPausedForForeground_(false),
     adjacentPreloadIdlePending_(false),
@@ -2384,18 +2426,34 @@ FilePanel::FilePanel () :
     browseButton->set_always_show_image(true);
     browseButton->signal_clicked().connect(sigc::mem_fun(*dirBrowser, &DirBrowser::browseForFolder));
 
-    auto* favoriteButton = Gtk::manage(new Gtk::Button());
-    favoriteButton->set_name("PlacesAddBtn");
-    favoriteButton->set_relief(Gtk::RELIEF_NONE);
-    favoriteButton->set_tooltip_text(M("MAIN_FRAME_PLACES_ADD"));
-    auto* favoriteIcon = Gtk::manage(new RTImage("star-hollow-small", Gtk::ICON_SIZE_SMALL_TOOLBAR));
-    favoriteButton->set_image(*favoriteIcon);
-    favoriteButton->set_always_show_image(true);
-    favoriteButton->signal_clicked().connect(sigc::mem_fun(*placesBrowser, &PlacesBrowser::addPressed));
+    // Hovering the folder icon opens the recent-folders menu after a short
+    // delay. The popup happens from the timer callback, never from inside
+    // the crossing handler (menus opened in enter handlers strand the grab).
+    browseButton->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
+    browseButton->signal_enter_notify_event().connect([this, browseButton](GdkEventCrossing*) -> bool {
+        recentHoverTimer_.disconnect();
+        recentHoverTimer_ = Glib::signal_timeout().connect([this, browseButton]() -> bool {
+            recentBrowser->popupMenuAt(*browseButton);
+            return false;
+        }, 450);
+        return false;
+    }, false);
+    browseButton->signal_leave_notify_event().connect([this](GdkEventCrossing*) -> bool {
+        recentHoverTimer_.disconnect();
+        return false;
+    }, false);
 
     folderHeader->pack_start(*browseButton, Gtk::PACK_SHRINK);
+    // The recent-folders widget stays alive for its menu and bookkeeping but
+    // its own button is no longer shown — the menu opens from the folder icon.
+    recentBrowser->set_no_show_all(true);
+    recentBrowser->hide();
     folderHeader->pack_start(*recentBrowser, Gtk::PACK_SHRINK);
-    folderHeader->pack_start(*favoriteButton, Gtk::PACK_SHRINK);
+
+    // Starring now happens inline on the selected row of the folder tree;
+    // refresh the Places list whenever a star is toggled there.
+    favoritesRefreshConn_ = DirBrowser::favoritesChanged().connect(
+        sigc::mem_fun(*placesBrowser, &PlacesBrowser::refreshPlacesList));
     obox->pack_start(*folderHeader, Gtk::PACK_SHRINK, 0);
     obox->pack_start (*dirBrowser, Gtk::PACK_EXPAND_WIDGET, 0);
     dirBrowser->set_size_request(-1, 200);
@@ -2415,6 +2473,10 @@ FilePanel::FilePanel () :
     // Wire album selection to filter and album view
     albumBrowser_->albumSelected().connect(sigc::mem_fun(*this, &FilePanel::onAlbumSelected));
     albumBrowser_->albumViewRequested().connect(sigc::mem_fun(*this, &FilePanel::onAlbumViewRequested));
+    // Album hover previews follow the browse tab's filetype filter
+    albumBrowser_->setFiletypeFilterGetter([this]() -> std::set<std::string> {
+        return fileCatalog ? fileCatalog->getSelectedFiletypes() : std::set<std::string>();
+    });
 
     dirpaned->pack1 (*placespaned, false, false);
 
@@ -2530,7 +2592,59 @@ FilePanel::FilePanel () :
 
     // Wrap dirpaned + footer in a vertical box so the footer spans full width
     auto* dirpanedBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
-    dirpanedBox->pack_start(*dirpaned, Gtk::PACK_EXPAND_WIDGET);
+
+    // The left sidebar is toggled by clicking its border, matching the
+    // editor. The strip floats over the thumbnail pane on an overlay, and
+    // starts below the browser toolbar so it cannot eat a toolbar click.
+    {
+        auto* dirOverlay = Gtk::manage(new Gtk::Overlay());
+        dirOverlay->add(*dirpaned);
+
+        leftEdgeGrip_ = createEdgeGrip(true, M("EDITOR_EDGEGRIP_LEFT"), [this]() {
+            if (browserHideLp_) {
+                browserHideLp_->set_active(!browserHideLp_->get_active());
+            }
+        });
+        dirOverlay->add_overlay(*leftEdgeGrip_);
+
+        dirOverlay->signal_get_child_position().connect(
+            [this, dirOverlay](Gtk::Widget* child, Gdk::Rectangle& alloc) -> bool {
+                if (child != leftEdgeGrip_) {
+                    return false;
+                }
+
+                const int gripW = 8;
+                const int overlayH = dirOverlay->get_allocated_height();
+
+                // Window edge when the sidebar is collapsed; just past the
+                // paned handle when it is up, so drag-to-resize still works
+                int edgeX = 0;
+
+                if (placespaned && placespaned->get_visible()) {
+                    int handleSize = 0;
+                    dirpaned->get_style_property("handle-size", handleSize);
+                    edgeX = dirpaned->get_position() + handleSize;
+                }
+
+                int contentTop = 0;
+                Gtk::Widget* content = fileCatalog ? fileCatalog->getThumbnailArea() : nullptr;
+
+                if (content && content->get_realized() && dirOverlay->get_realized()) {
+                    int tx = 0, ty = 0;
+                    if (content->translate_coordinates(*dirOverlay, 0, 0, tx, ty)) {
+                        contentTop = rtengine::LIM(ty, 0, overlayH);
+                    }
+                }
+
+                alloc.set_x(edgeX);
+                alloc.set_y(contentTop);
+                alloc.set_width(gripW);
+                alloc.set_height(std::max(1, overlayH - contentTop));
+                return true;
+            }, false);
+
+        dirpanedBox->pack_start(*dirOverlay, Gtk::PACK_EXPAND_WIDGET);
+    }
 
     // Bottom footer bar matching the editor's EditorToolbarBottom layout
     auto* footerBar = Gtk::manage(new Gtk::Grid());
@@ -2548,6 +2662,9 @@ FilePanel::FilePanel () :
     iBrowserLpHide_ = new RTImage("panel-to-left", Gtk::ICON_SIZE_LARGE_TOOLBAR);
     browserHideLp_->set_image(options.showHistory ? *iBrowserLpHide_ : *iBrowserLpShow_);
     browserHideLp_->set_tooltip_markup(M("MAIN_TOOLTIP_SHOWHIDELP1"));
+    // Retired from the footer in favour of the left edge grip
+    browserHideLp_->set_no_show_all(true);
+    browserHideLp_->hide();
     browserHideLp_->signal_toggled().connect([this]() {
         if (browserHideLp_->get_active()) {
             placespaned->show();
@@ -2569,6 +2686,10 @@ FilePanel::FilePanel () :
     stbFooter->set_vexpand(false);
     stbFooter->add(*footerBar);
     dirpanedBox->pack_start(*stbFooter, Gtk::PACK_SHRINK);
+    // The sidebar toggle was the bar's only control; with it gone the bar is
+    // an empty strip, so it goes too.
+    stbFooter->set_no_show_all(true);
+    stbFooter->hide();
 
     pack1(*dirpanedBox, true, true);
     pack2(*rightBox, false, false);
@@ -2595,12 +2716,17 @@ FilePanel::FilePanel () :
 
 FilePanel::~FilePanel ()
 {
+    recentHoverTimer_.disconnect();
+    favoritesRefreshConn_.disconnect();
+
     if (foregroundLoadGeneration_) {
         foregroundLoadGeneration_->fetch_add(1, std::memory_order_acq_rel);
     }
 
     cancelScheduledBackgroundResume();
     cancelUnstartedPendingLoads("filepanel-destroy");
+    foregroundWorkActive_ = false;
+    editorProcessingActive_ = false;
     resumeBackgroundWorkNow();
 
     delete iBrowserLpShow_;
@@ -2637,6 +2763,13 @@ void FilePanel::setContentOpacity (double opacity)
     // Fade only the content area (thumbnails + right panel), keep left sidebar static
     if (ribbonPane) ribbonPane->set_opacity(opacity);
     if (rightBox) rightBox->set_opacity(opacity);
+}
+
+void FilePanel::syncDirectoryHighlight(const Glib::ustring& directory)
+{
+    if (dirBrowser && !directory.empty()) {
+        dirBrowser->highlightDir(directory);
+    }
 }
 
 void FilePanel::setAspect ()
@@ -4618,7 +4751,7 @@ void FilePanel::onAlbumViewRequested (const Glib::ustring& albumName, const std:
 
 void FilePanel::closeAlbumView ()
 {
-    if (!fileCatalog || !fileCatalog->isInAlbumMode()) {
+    if (!fileCatalog || !fileCatalog->isInRealAlbumMode()) {
         return;
     }
 

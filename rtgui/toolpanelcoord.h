@@ -297,6 +297,9 @@ private:
     bool quickPreviewActive_ = false;
     int quickPreviewVariant_ = -1;
     sigc::connection quickPreviewFinalizeConn_;
+    // Pointer-position polls that close the hover dropdowns. They capture
+    // `this`, so the destructor must be able to stop them.
+    std::vector<std::shared_ptr<sigc::connection>> hoverMenuPollConns_;
     std::unique_ptr<Glib::ThreadPool> quickAutoEditPool_;
     std::shared_ptr<std::atomic<unsigned>> quickAutoEditGeneration_;
     Thumbnail* quickAutoEditThumbnail_ = nullptr;
@@ -525,6 +528,7 @@ public:
     // Forward the browser tab's filter to the double-exposure picker.
     void setDoubleExposureBrowserFilterProvider(std::function<BrowserFilter()> provider);
     void setDoubleExposureBrowserDirProvider(std::function<Glib::ustring()> provider);
+    void setDoubleExposureOpenPartnerHandler(std::function<void(const Glib::ustring&, const Glib::ustring&)> handler);
 
     // update the "expanded" state of the Tools
     void updateToolState();

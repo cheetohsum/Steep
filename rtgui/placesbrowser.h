@@ -75,6 +75,12 @@ private:
     Gtk::MenuItem*               hiddenDrivesMenuItem;
     Gtk::Menu*                   hiddenDrivesMenu;
     std::map<Glib::ustring, Glib::ustring> hiddenDriveLabels_;
+    // Row captured when the context menu was opened. The tree uses hover
+    // selection, so the live selection can move to whatever row lies under
+    // the pointer while the menu closes — menu actions must not re-read it.
+    Glib::ustring                contextMenuHiddenId_;
+    Glib::ustring                contextMenuRoot_;
+    bool                         contextMenuIsFavorite_ = false;
     std::map<Glib::ustring, int> photoCountCache_;
     std::mutex photoCountMutex_;
     std::atomic<bool> countingActive_{false};

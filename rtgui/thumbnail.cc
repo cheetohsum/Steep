@@ -1042,6 +1042,13 @@ void Thumbnail::setProcParams (const ProcParams& pp, ParamsEdited* pe, int whoCh
     }
 }
 
+bool Thumbnail::procParamsMatch (const rtengine::procparams::ProcParams& pp)
+{
+    MyMutex::MyLock lock(mutex);
+
+    return pparamsValid && *pparams == pp;
+}
+
 bool Thumbnail::isRecentlySaved () const
 {
 
@@ -2025,7 +2032,7 @@ void Thumbnail::getSpotWB(int x, int y, int rect, double& temp, double& green)
     }
 }
 
-void Thumbnail::applyAutoExp (rtengine::procparams::ProcParams& pparams)
+bool Thumbnail::applyAutoExp (rtengine::procparams::ProcParams& pparams)
 {
     MyMutex::MyLock lock(mutex);
     const bool loadedForAutoExposure = !tpp;
@@ -2033,14 +2040,17 @@ void Thumbnail::applyAutoExp (rtengine::procparams::ProcParams& pparams)
         _loadThumbnail();
     }
 
+    bool metered = false;
     if (tpp) {
-        tpp->applyAutoExp (pparams);
+        metered = tpp->applyAutoExp (pparams);
     }
 
     if (loadedForAutoExposure) {
         delete tpp;
         tpp = nullptr;
     }
+
+    return metered;
 }
 
 const CacheImageData* Thumbnail::getCacheImageData() const

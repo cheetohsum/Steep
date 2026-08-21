@@ -91,7 +91,7 @@ void CropWindow::refreshEditObjectAt(int x, int y)
 }
 
 CropWindow::CropWindow (ImageArea* parent, bool isLowUpdatePriority_, bool isDetailWindow)
-    : ObjectMOBuffer(parent), state(SNormal), press_x(0), press_y(0), action_x(0), action_y(0), pickedObject(-1), pickModifierKey(0), rot_deg(0), onResizeArea(false), deleted(false),
+    : ObjectMOBuffer(parent), state(SNormal), press_x(0), press_y(0), action_x(0), action_y(0), pickedObject(-1), pickModifierKey(0), rot_deg(0), onResizeArea(false), resizeRightEdge_(0), deleted(false),
       fitZoomEnabled(true), fitZoom(false), cursor_type(CSArrow), /*isLowUpdatePriority(isLowUpdatePriority_),*/ hoveredPicker(nullptr), cropLabel(Glib::ustring("100%")),
       backColor(App::get().options().bgcolor), decorated(true), isFlawnOver(false), titleHeight(30), sideBorderWidth(3), lowerBorderWidth(3),
       upperBorderWidth(1), sepWidth(2), windowPos(30, 30), windowSize(0, 0), imgAreaPos(0, 0), imgAreaSize(0, 0),
@@ -469,6 +469,13 @@ void CropWindow::buttonPress (int button, int type, int bstate, int x, int y)
                 action_y = y;
                 press_x = windowSize.width;
                 press_y = windowSize.height;
+            } else if (onArea (CropResizeBL, x, y)) {
+                state = SCropWinResizeBL;
+                action_x = x;
+                action_y = y;
+                press_x = windowSize.width;
+                press_y = windowSize.height;
+                resizeRightEdge_ = windowPos.x + windowSize.width;
             } else {
                 if (onArea (CropImage, x, y)) {  // events inside of the image domain
                     crop_custom_ratio = 0.f;
@@ -780,14 +787,20 @@ void CropWindow::buttonRelease (int button, int num, int bstate, int x, int y)
 
     bool needRedraw = false;
 
-    if (state == SCropWinResize) {
-        int newWidth = press_x + x - action_x;
+    if (state == SCropWinResize || state == SCropWinResizeBL) {
+        const bool fromLeft = state == SCropWinResizeBL;
+        int newWidth = fromLeft ? rtengine::min<int> (press_x + action_x - x, resizeRightEdge_)
+                                : press_x + x - action_x;
         int newHeight = press_y + y - action_y;
         setSize(newWidth, newHeight);
 
+        if (fromLeft) {
+            setPosition (resizeRightEdge_ - windowSize.width, windowPos.y);
+        }
+
         if (decorated) {
-            options.detailWindowWidth = newWidth;
-            options.detailWindowHeight = newHeight;
+            options.detailWindowWidth = windowSize.width;
+            options.detailWindowHeight = windowSize.height;
         }
 
         state = SNormal;
@@ -995,6 +1008,18 @@ void CropWindow::pointerMoved (int bstate, int x, int y)
         iarea->redraw ();
     } else if (state == SCropWinResize) {
         setSize (press_x + x - action_x, press_y + y - action_y, true);
+
+        for (auto listener : listeners) {
+            listener->cropWindowSizeChanged (this);
+        }
+
+        iarea->redraw ();
+    } else if (state == SCropWinResizeBL) {
+        // Dragging the bottom-left grip grows the window leftwards: the right
+        // edge stays pinned and the origin follows whatever width survives the
+        // minimum-size clamp inside setSize().
+        setSize (rtengine::min<int> (press_x + action_x - x, resizeRightEdge_), press_y + y - action_y, true);
+        setPosition (resizeRightEdge_ - windowSize.width, windowPos.y);
 
         for (auto listener : listeners) {
             listener->cropWindowSizeChanged (this);
@@ -1226,7 +1251,7 @@ void CropWindow::pointerMoved (int bstate, int x, int y)
 
     updateCursor (x, y);
 
-    bool oRA = onArea (CropResize, x, y);
+    bool oRA = onArea (CropResize, x, y) || onArea (CropResizeBL, x, y);
 
     if (oRA != onResizeArea) {
         onResizeArea = oRA;
@@ -1444,8 +1469,11 @@ bool CropWindow::onArea (CursorArea a, int x, int y)
     case CropResize:
         return decorated && x >= windowPos.x + windowSize.width - 16 && y >= windowPos.y + windowSize.height - 16 && x < windowPos.x + windowSize.width && y < windowPos.y + windowSize.height;
 
+    case CropResizeBL:
+        return decorated && x >= windowPos.x && x < windowPos.x + 16 && y >= windowPos.y + windowSize.height - 16 && y < windowPos.y + windowSize.height;
+
     case CropObserved:
-        if (!observedCropWin) {
+        if (!observedFrameVisible ()) {
             return false;
         }
 
@@ -1476,6 +1504,8 @@ void CropWindow::updateCursor (int x, int y)
             newType = editSubscriber->getCursor(iarea->getObject(), cursorX, cursorY);
         } else if (onArea (CropResize, x, y)) {
             newType = CSResizeDiagonal;
+        } else if (onArea (CropResizeBL, x, y)) {
+            newType = CSResizeBottomLeft;
         } else if (tm == TMColorPicker && hoveredPicker) {
             newType = CSMove;
         } else if ((tm == TMHand || (tm == TMCropSelect && cropHandler.cropParams->enabled)) && (onArea (CropTopLeft, x, y))) {
@@ -1565,6 +1595,8 @@ void CropWindow::updateCursor (int x, int y)
         newType = CSResizeBottomRight;
     } else if (state == SCropWinResize) {
         newType = CSResizeDiagonal;
+    } else if (state == SCropWinResizeBL) {
+        newType = CSResizeBottomLeft;
     } else if (state == SDragPicker) {
         newType = CSMove2D;
     } else if (editSubscriber && editSubscriber->getEditingType() == ET_OBJECTS) {
@@ -1623,7 +1655,7 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
     }
 
     // draw image
-    if (state == SCropImgMove || state == SCropWinResize) {
+    if (state == SCropImgMove || state == SCropWinResize || state == SCropWinResizeBL) {
         ImageCoord cropPos = cropHandler.getPosition();
         hidpi::ScaledDeviceSize desiredSize = imgAreaSize.scaleToDevice(
             RTScalable::getScaleForWidget(iarea));
@@ -1645,7 +1677,7 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
             cr->fill();
         }
 
-        if (observedCropWin) {
+        if (observedFrameVisible ()) {
             drawObservedFrame (cr);
         }
     } else {
@@ -2150,7 +2182,7 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
                          cropHandler.isFullDisplay(), false);
             }
 
-            if (observedCropWin) {
+            if (observedFrameVisible ()) {
                 drawObservedFrame (cr);
             }
 
@@ -2284,7 +2316,7 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
                               cropHandler.isFullDisplay(), false);
                 }
 
-                if (observedCropWin) {
+                if (observedFrameVisible ()) {
                     drawObservedFrame (cr);
                 }
             }
@@ -2320,6 +2352,11 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
         for (auto colorPicker : colorPickers) {
             colorPicker->draw(cr);
         }
+    }
+
+    // Last, so the grips stay visible on top of the preview image
+    if (decorated) {
+        drawResizeGrips (cr);
     }
 }
 
@@ -2844,6 +2881,63 @@ void CropWindow::drawDecoration (Cairo::RefPtr<Cairo::Context> cr)
     buttonSet.redraw (cr);
 }
 
+void CropWindow::drawResizeGrips (Cairo::RefPtr<Cairo::Context> cr)
+{
+    const double x0 = windowPos.x;
+    const double x1 = windowPos.x + windowSize.width;
+    const double y1 = windowPos.y + windowSize.height;
+
+    const bool hot = onResizeArea || state == SCropWinResize || state == SCropWinResizeBL;
+    const double alpha = hot ? 0.95 : 0.55;
+
+    cr->save ();
+    cr->set_line_cap (Cairo::LINE_CAP_ROUND);
+
+    // Backdrop wedges so the ridges read against a bright image
+    cr->set_source_rgba (0.0, 0.0, 0.0, hot ? 0.45 : 0.28);
+    cr->move_to (x0, y1 - 16);
+    cr->line_to (x0 + 16, y1);
+    cr->line_to (x0, y1);
+    cr->close_path ();
+    cr->fill ();
+    cr->move_to (x1, y1 - 16);
+    cr->line_to (x1 - 16, y1);
+    cr->line_to (x1, y1);
+    cr->close_path ();
+    cr->fill ();
+
+    // Three ridges per corner, running parallel to that corner's edge
+    for (int i = 0; i < 3; ++i) {
+        const double d = 4.0 + i * 4.0;
+
+        // Bottom-left
+        cr->set_source_rgba (0.0, 0.0, 0.0, 0.5);
+        cr->set_line_width (2.2);
+        cr->move_to (x0 + 2.5, y1 - 1.5 - d);
+        cr->line_to (x0 + 2.5 + d, y1 - 1.5);
+        cr->stroke ();
+        cr->set_source_rgba (0.90, 0.93, 0.98, alpha);
+        cr->set_line_width (1.2);
+        cr->move_to (x0 + 2.5, y1 - 1.5 - d);
+        cr->line_to (x0 + 2.5 + d, y1 - 1.5);
+        cr->stroke ();
+
+        // Bottom-right
+        cr->set_source_rgba (0.0, 0.0, 0.0, 0.5);
+        cr->set_line_width (2.2);
+        cr->move_to (x1 - 2.5 - d, y1 - 1.5);
+        cr->line_to (x1 - 2.5, y1 - 1.5 - d);
+        cr->stroke ();
+        cr->set_source_rgba (0.90, 0.93, 0.98, alpha);
+        cr->set_line_width (1.2);
+        cr->move_to (x1 - 2.5 - d, y1 - 1.5);
+        cr->line_to (x1 - 2.5, y1 - 1.5 - d);
+        cr->stroke ();
+    }
+
+    cr->restore ();
+}
+
 void CropWindow::drawStraightenGuide (Cairo::RefPtr<Cairo::Context> cr)
 {
 
@@ -3066,6 +3160,14 @@ void CropWindow::getObservedFrameArea (int& x, int& y, int& w, int& h) const
 
     w = observedSize.width * zoomSteps[cropZoom].zoom / deviceScale;
     h = observedSize.height * zoomSteps[cropZoom].zoom / deviceScale;
+}
+
+bool CropWindow::observedFrameVisible () const
+{
+    // The navigation guide marking an open detail window is suppressed while
+    // the before/after split is up: it is a red rectangle straddling one half
+    // of a comparison, and it tracks the after pane only.
+    return observedCropWin && !iarea->inBeforeAfterSplit;
 }
 
 void CropWindow::drawObservedFrame (const Cairo::RefPtr<Cairo::Context>& cr)

@@ -85,6 +85,36 @@ protected:
     };
     PreviewDataLayout previewDataLayout;
 
+    // Rendered previews retained per logical size. The browser grid and the
+    // editor filmstrip ask for different heights, so without this every view
+    // switch would drop each entry's pixels and re-run the whole thumbnail
+    // pipeline for the entire folder. Two slots cover both view sizes.
+    struct PreviewSlot {
+        hidpi::LogicalSize logicalSize;
+        int deviceScale = 0;
+        PreviewDataLayout layout;
+        std::vector<guint8> data;
+        double aspect = 0.0;
+        double imgScale = 1.0;
+        bool landscape = false;
+        bool valid = false;
+        unsigned lastUse = 0;
+    };
+    static constexpr std::size_t PREVIEW_SLOT_COUNT = 2;
+    PreviewSlot previewSlots_[PREVIEW_SLOT_COUNT];
+    unsigned previewSlotClock_;
+
+    // Extra per-size state owned by derived entries (image scale, orientation).
+    virtual void savePreviewSlotExtras (PreviewSlot& slot) const { (void)slot; }
+    virtual void loadPreviewSlotExtras (const PreviewSlot& slot) { (void)slot; }
+
+    // Copy the live preview into the slot matching `size` (must be called with
+    // the write lock held). Returns false when there is nothing worth keeping.
+    bool stashPreviewForSize (hidpi::LogicalSize size, int deviceScale);
+    // Restore a previously rendered preview for `size`, if one is retained.
+    bool restorePreviewForSize (hidpi::LogicalSize size, int deviceScale);
+    void invalidatePreviewSlots ();
+
     Glib::ustring dispname;
 
     LWButtonSet* buttonSet;
@@ -135,6 +165,10 @@ public:
 
 // thumbnail preview properties:
     Glib::ustring filename;
+    // Session-pinned entry (e.g. a double-exposure partner surfaced next to
+    // the image it composites into): sorts directly after the entry whose
+    // filename this holds, and bypasses browser filters. Empty = normal.
+    Glib::ustring pinAfter;
     mutable Glib::ustring exifline;
     mutable Glib::ustring datetimeline;
     mutable bool infoLinesValid = false;

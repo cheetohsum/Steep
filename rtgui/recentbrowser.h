@@ -43,6 +43,10 @@ public:
     void setDirSelector (const DirSelectionSlot& selectDir);
 
     void dirSelected (const Glib::ustring& dirname, const Glib::ustring& openfile);
+
+    // Pop the recent-folders menu below an arbitrary anchor widget (used by
+    // the folder header's hover-to-open behavior).
+    void popupMenuAt (Gtk::Widget& anchor);
 };
 
 inline void RecentBrowser::setDirSelector (const RecentBrowser::DirSelectionSlot& selectDir)

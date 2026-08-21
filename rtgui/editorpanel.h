@@ -198,7 +198,8 @@ public:
     void tbRightPanel_1_toggled ();
     void tbTopPanel_1_toggled ();
     void beforeAfterToggled ();
-    void tbBeforeLock_toggled();
+    bool isBeforeLocked() const;
+    void setBeforeLocked(bool locked);
     void saveAsPressed ();
     void queueImgPressed ();
     void sendToExternal();
@@ -220,6 +221,7 @@ public:
 
     void saveProfile ();
     void collapseFilterBar();  // Collapse filter bar to prevent filmstrip overlap
+    void restoreEditorFilter();
     void closeAlbumView ();  // public: close album view + deselect sidebar
     Glib::ustring getShortName ();
     Glib::ustring getFileName () const;
@@ -270,6 +272,7 @@ public:
     // Left panel (history) visibility for sync with browser sidebar
     bool isLeftPanelVisible() const { return hidehp && hidehp->get_active(); }
     void setLeftPanelVisible(bool visible) { if (hidehp && hidehp->get_active() != visible) hidehp->set_active(visible); }
+    void syncDirectoryHighlight(const Glib::ustring& directory);
 
     void defaultMonitorProfileChanged (const Glib::ustring &profile_name, bool auto_monitor_profile);
 
@@ -287,6 +290,11 @@ public:
 private:
     Gtk::Box* filmstripActionBar;
     Gtk::Button* filmstripRankBtns[5];
+    // C++-owned swap icons (never Gtk::manage): set_image() drops the old
+    // image and a managed one is destroyed on unparent — swapping then
+    // renders a corrupted icon on Windows and crashes on Linux.
+    Gtk::Image* iFilmstripStarGold_[5] = {};
+    Gtk::Image* iFilmstripStarPlain_[5] = {};
     int filmstripCurrentRating;
     std::map<std::string, Gtk::CheckMenuItem*> editorCopyFilters_;
     Gtk::Menu* editorCopyFilterMenu_;
@@ -295,8 +303,11 @@ private:
     sigc::connection ratingPaletteCloseConn_;
     sigc::connection ratingPaletteOpenConn_;
     bool ratingPalettePinned_ = false;
-    sigc::connection filterBarHoverConn_;
-    Gtk::EventBox* leftEdgeExpander_ = nullptr;
+    // Thin hot strips along the panel borders; they replaced the
+    // collapse/expand toggle buttons
+    Gtk::EventBox* leftEdgeGrip_ = nullptr;
+    Gtk::EventBox* rightEdgeGrip_ = nullptr;
+    Gtk::EventBox* topEdgeGrip_ = nullptr;
     bool programmaticSidebarChange_ = false;  // suppress preference writes during auto-collapse
 
 public:
@@ -309,6 +320,8 @@ private:
     // Filmstrip flag/reject
     Gtk::Button* filmstripFlagBtn_;
     Gtk::Button* filmstripRejectBtn_;
+    Gtk::Image* iFilmstripFlagPick_ = nullptr;    // C++-owned swap icons (never Gtk::manage)
+    Gtk::Image* iFilmstripFlagUnflag_ = nullptr;
     int filmstripCurrentPick_;
     void updateFilmstripFlagBtn();
     void scheduleFilmstripLivePreview(const Glib::ustring& sourceFile, unsigned int sourceSession);
@@ -381,7 +394,6 @@ private:
     Gtk::ToggleButton* tbShowHideSidePanels;
     Gtk::ToggleButton* tbTopPanel_1;
     Gtk::ToggleButton* tbRightPanel_1;
-    Gtk::ToggleButton* tbBeforeLock;
     //bool bAllSidePanelsVisible;
     Gtk::ToggleButton* beforeAfter;
     Gtk::Overlay* hpanedr;
@@ -392,13 +404,19 @@ private:
     Gtk::Image *iRightPanel_1_Show, *iRightPanel_1_Hide;
     Gtk::Image *iShowHideSidePanels;
     Gtk::Image *iShowHideSidePanels_exit;
-    Gtk::Image *iBeforeLockON, *iBeforeLockOFF;
     Gtk::Paned *leftbox;
     Gtk::Overlay* editOverlay_;
     NavigatorDialog* navigatorDialog_;
     HistoryDialog* historyDialog_;
     PlacesBrowser* editorPlacesBrowser_;
     RecentBrowser* editorRecentBrowser_;
+    sigc::connection editorRecentHoverTimer_;    // hover-to-open delay for the recent-folders menu
+    sigc::connection editorFavoritesRefreshConn_;
+
+    // Browser title pinned above the filmstrip (option browserTitlePinToEditor)
+    Gtk::Label* editorTitleLabel_ = nullptr;
+    sigc::connection editorTitleConn_;
+    void updateEditorTitleLabel (const Glib::ustring& text, const Glib::ustring& tooltip);
     DirBrowser* editorDirBrowser_;
     AlbumBrowser* albumBrowser_;
     Gtk::Paned* editorPlacesPaned_;
@@ -506,8 +524,6 @@ private:
     ImageAreaPanel* beforeIarea;    // for the before-after view
     Gtk::Box* beforeBox;
     Gtk::Box* afterBox;
-    Gtk::Label* beforeLabel;
-    Gtk::Label* afterLabel;
     Gtk::Box* beforeAfterBox;
     Gtk::Box* beforeHeaderBox;
     Gtk::Box* afterHeaderBox;
@@ -561,6 +577,7 @@ private:
     sigc::connection deferredCropEnableConn_;
     sigc::connection deferredHighDetailConn_;
     unsigned int openSession_ = 0;
+    unsigned int finalPreviewRefinementGeneration_ = 0;
     unsigned int editorDirSyncGeneration_ = 0;
     Glib::ustring quickPreviewFileName_;
     sigc::connection quickPreviewWatchdogConn_;
@@ -573,6 +590,10 @@ private:
     bool queuedProgressHasValue_ = false;
     double queuedProgressValue_ = -1.0;
     Glib::ustring queuedProgressStr_;
+    bool processingStateUiIdlePending_ = false;
+    bool queuedProcessingState_ = false;
+    unsigned int queuedProcessingSession_ = 0;
+    Glib::ustring queuedProcessingFile_;
 
     rtengine::HistogramObservable* histogram_observable;
     Options::ScopeType histogram_scope_type;
@@ -592,6 +613,11 @@ private:
     sigc::connection rightAnimConn_;
     double topAnimFraction_ = 1.0;
     sigc::connection topAnimConn_;
+    // Panel slide animations re-allocate the re-parented file browser on every
+    // frame; each allocation would otherwise trigger a full folder relayout.
+    bool leftAnimLayoutPaused_ = false;
+    bool topAnimLayoutPaused_ = false;
+    void setAnimationLayoutPause (bool& flag, bool paused);
     int filmstripFullHeight_ = 0;      // cached filmstrip height for animation
 
     // Right-click filmstrip size slider (on the show/hide filmstrip button)

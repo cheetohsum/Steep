@@ -2618,6 +2618,12 @@ ToolPanelCoordinator::~ToolPanelCoordinator ()
     quickAutoEditGeneration_->fetch_add(1, std::memory_order_acq_rel);
     quickAutoEditPool_.reset();
     quickPreviewFinalizeConn_.disconnect();
+    for (auto& conn : hoverMenuPollConns_) {
+        if (conn) {
+            conn->disconnect();
+        }
+    }
+    hoverMenuPollConns_.clear();
     deferredPanelChangePending_ = false;
     deferredPanelChangeTimerActive_ = false;
     deferredPanelChangeConn_.disconnect();
@@ -3003,6 +3009,25 @@ void ToolPanelCoordinator::buildQuickEditBar()
     quickEditBar_->set_margin_top(2);
     quickEditBar_->set_margin_bottom(4);
 
+    // A crossing event caused by the user actually moving the pointer, as
+    // opposed to one GTK synthesizes when a grab is taken or dropped.
+    //
+    // This distinction is what kept the hover menus stuck open. Closing the
+    // popup drops its pointer grab, and GTK then delivers enter-notify with
+    // mode GDK_CROSSING_UNGRAB / GDK_CROSSING_GTK_UNGRAB to the widgets
+    // underneath — including the dropdown arrow that owns the menu. The arrow
+    // treated that as a genuine hover and re-opened the menu on the same
+    // frame it had just been closed, so the pointer-poll below WAS firing and
+    // its work was being undone instantly. Only a click looked like it
+    // worked, because clicking routes through a different path.
+    const auto isRealCrossing = [](GdkEventCrossing* event) -> bool {
+        if (!event) {
+            return true;   // synthetic call from our own code
+        }
+        return event->detail != GDK_NOTIFY_INFERIOR
+            && event->mode == GDK_CROSSING_NORMAL;
+    };
+
     // Root-space rect of a widget — the only coordinate space that is
     // consistent between menu windows, their items, and normal widgets.
     const auto widgetRootRect = [](Gtk::Widget* w, int& x, int& y, int& width, int& height) -> bool {
@@ -3030,13 +3055,13 @@ void ToolPanelCoordinator::buildQuickEditBar()
     // and closing is driven by polling the pointer position — crossing
     // events at a grabbed popup's edge are unreliable, which left menus
     // stuck open.
-    const auto wireHoverMenuBehavior = [widgetRootRect](Gtk::Menu* menu, Gtk::MenuButton* drop) {
+    const auto wireHoverMenuBehavior = [this, widgetRootRect](Gtk::Menu* menu, Gtk::MenuButton* drop) {
         menu->add_events(Gdk::POINTER_MOTION_MASK);
 
-        menu->signal_motion_notify_event().connect([menu, widgetRootRect](GdkEventMotion* ev) -> bool {
-            if (!ev) {
-                return false;
-            }
+        // Highlight whichever row the pointer is over, given a position in
+        // root coordinates. Selecting the already-selected item is skipped, so
+        // this is safe to call repeatedly.
+        const auto selectRowAt = [menu, widgetRootRect](double xRoot, double yRoot) {
             for (auto* child : menu->get_children()) {
                 auto* mi = dynamic_cast<Gtk::MenuItem*>(child);
                 if (!mi || !mi->get_visible() || !mi->get_sensitive()) {
@@ -3046,62 +3071,125 @@ void ToolPanelCoordinator::buildQuickEditBar()
                 if (!widgetRootRect(mi, rx, ry, rw, rh)) {
                     continue;
                 }
-                if (ev->y_root >= ry && ev->y_root < ry + rh) {
+                if (yRoot >= ry && yRoot < ry + rh
+                        && xRoot >= rx && xRoot < rx + rw) {
                     if (menu->get_active() != mi) {
                         menu->select_item(*mi);
                     }
-                    break;
+                    return;
                 }
+            }
+        };
+
+        menu->signal_motion_notify_event().connect([selectRowAt](GdkEventMotion* ev) -> bool {
+            if (ev) {
+                selectRowAt(ev->x_root, ev->y_root);
             }
             return false;
         });
 
         auto pollConn = std::make_shared<sigc::connection>();
         auto outsideTicks = std::make_shared<int>(0);
+        hoverMenuPollConns_.push_back(pollConn);
 
-        menu->signal_map().connect([menu, drop, pollConn, outsideTicks, widgetRootRect]() {
-            *outsideTicks = 0;
-            pollConn->disconnect();
-            *pollConn = Glib::signal_timeout().connect(
-                [menu, drop, outsideTicks, widgetRootRect]() -> bool {
-                    if (!menu->get_mapped()) {
-                        return false;
-                    }
-                    auto display = Gdk::Display::get_default();
-                    auto seat = display ? display->get_default_seat() : Glib::RefPtr<Gdk::Seat>();
-                    auto pointer = seat ? seat->get_pointer() : Glib::RefPtr<Gdk::Device>();
-                    if (!pointer) {
+        // Poll interval and the grace period before an off-menu pointer
+        // closes the popup. 200ms is long enough to cross the gap between
+        // the arrow and the menu without the menu vanishing under the
+        // pointer, and short enough that leaving feels immediate.
+        constexpr int kPollMs = 50;
+        constexpr int kCloseAfterMs = 200;
+        constexpr int kCloseTicks = kCloseAfterMs / kPollMs;
+
+        // The poll is driven from the BUTTON's toggle, not the menu's map
+        // signal. A Gtk::Menu is show_all()n at build time and its map state
+        // does not reliably transition on popup, so a map-driven poll can
+        // simply never start — which looks identical to a poll that runs and
+        // fails to close anything. The toggle is the one event guaranteed to
+        // fire whenever this menu opens or closes.
+        const auto startPoll =
+            [this, menu, drop, pollConn, outsideTicks, widgetRootRect, selectRowAt]() {
+                *outsideTicks = 0;
+                pollConn->disconnect();
+                *pollConn = Glib::signal_timeout().connect(
+                    [this, menu, drop, outsideTicks, widgetRootRect, selectRowAt]() -> bool {
+                        if (!drop->get_active()) {
+                            toolPanelEditLog("[hoverMenu] poll stop (button inactive)\n");
+                            return false;
+                        }
+                        auto display = Gdk::Display::get_default();
+                        auto seat = display ? display->get_default_seat() : Glib::RefPtr<Gdk::Seat>();
+                        auto pointer = seat ? seat->get_pointer() : Glib::RefPtr<Gdk::Device>();
+                        if (!pointer) {
+                            return true;
+                        }
+                        Glib::RefPtr<Gdk::Screen> screen;
+                        int px = 0, py = 0;
+                        pointer->get_position(screen, px, py);
+
+                        const int pad = 8;
+                        bool inside = false;
+                        int mx = 0, my = 0, mw = 0, mh = 0;
+                        const bool haveMenu = widgetRootRect(menu, mx, my, mw, mh);
+                        if (haveMenu) {
+                            inside = px >= mx - pad && py >= my - pad
+                                  && px < mx + mw + pad && py < my + mh + pad;
+                        }
+                        int dx = 0, dy = 0, dw = 0, dh = 0;
+                        const bool haveDrop = widgetRootRect(drop, dx, dy, dw, dh);
+                        if (!inside && haveDrop) {
+                            inside = px >= dx && py >= dy && px < dx + dw && py < dy + dh;
+                        }
+
+                        toolPanelEditLog(
+                            "[hoverMenu] ptr=%d,%d menu=%d(%d,%d %dx%d) drop=%d(%d,%d %dx%d)"
+                            " inside=%d ticks=%d\n",
+                            px, py, haveMenu ? 1 : 0, mx, my, mw, mh,
+                            haveDrop ? 1 : 0, dx, dy, dw, dh,
+                            inside ? 1 : 0, *outsideTicks);
+
+                        if (inside) {
+                            *outsideTicks = 0;
+                            // Highlight from the polled position, not only
+                            // from motion events. The menu pops up UNDER a
+                            // pointer that is already sitting still, so when
+                            // it lands with the pointer over the first row
+                            // there is no motion to react to and that row
+                            // never lit up — but any later open, where the
+                            // pointer had drifted, worked. That is exactly
+                            // the "first item won't highlight the first time"
+                            // behaviour. Polling covers the stationary case.
+                            if (haveMenu) {
+                                selectRowAt(px, py);
+                            }
+                            return true;
+                        }
+                        if (++*outsideTicks >= kCloseTicks) {
+                            toolPanelEditLog("[hoverMenu] closing after %d outside ticks\n",
+                                             *outsideTicks);
+                            menu->popdown();          // close the popup itself
+                            drop->set_active(false);  // and desync the button
+                            endQuickPreview(true);
+                            return false;
+                        }
                         return true;
-                    }
-                    Glib::RefPtr<Gdk::Screen> screen;
-                    int px = 0, py = 0;
-                    pointer->get_position(screen, px, py);
+                    },
+                    kPollMs);
+            };
 
-                    const int pad = 8;
-                    bool inside = false;
-                    int rx = 0, ry = 0, rw = 0, rh = 0;
-                    if (widgetRootRect(menu, rx, ry, rw, rh)) {
-                        inside = px >= rx - pad && py >= ry - pad
-                              && px < rx + rw + pad && py < ry + rh + pad;
-                    }
-                    if (!inside && widgetRootRect(drop, rx, ry, rw, rh)) {
-                        inside = px >= rx && py >= ry && px < rx + rw && py < ry + rh;
-                    }
-
-                    if (inside) {
-                        *outsideTicks = 0;
-                        return true;
-                    }
-                    if (++*outsideTicks >= 2) {
-                        drop->set_active(false);  // toggled handler ends the hover preview
-                        return false;
-                    }
-                    return true;
-                },
-                120);
+        drop->signal_toggled().connect([this, drop, pollConn, startPoll]() {
+            if (drop->get_active()) {
+                toolPanelEditLog("[hoverMenu] opened, poll starting\n");
+                startPoll();
+            } else {
+                pollConn->disconnect();
+                // Closed by any route — leave, click, Escape, focus loss —
+                // the preview must not outlive the menu that started it.
+                endQuickPreview(true);
+            }
         });
-        menu->signal_unmap().connect([pollConn]() {
+        menu->signal_unmap().connect([this, pollConn]() {
             pollConn->disconnect();
+            endQuickPreview(true);
         });
     };
 
@@ -3119,15 +3207,15 @@ void ToolPanelCoordinator::buildQuickEditBar()
     autoButton->set_relief(Gtk::RELIEF_NONE);
     autoButton->set_tooltip_text("Auto Edit");
     autoButton->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
-    autoButton->signal_enter_notify_event().connect([this](GdkEventCrossing* event) -> bool {
-        if (!event || event->detail != GDK_NOTIFY_INFERIOR) {
+    autoButton->signal_enter_notify_event().connect([this, isRealCrossing](GdkEventCrossing* event) -> bool {
+        if (isRealCrossing(event)) {
             quickPreviewVariant_ = 0;
             requestQuickAutoParams(0, "Auto Edit", false);
         }
         return false;
     });
-    autoButton->signal_leave_notify_event().connect([this](GdkEventCrossing* event) -> bool {
-        if (!event || event->detail != GDK_NOTIFY_INFERIOR) {
+    autoButton->signal_leave_notify_event().connect([this, isRealCrossing](GdkEventCrossing* event) -> bool {
+        if (isRealCrossing(event)) {
             endQuickPreview(true);
         }
         return false;
@@ -3185,17 +3273,23 @@ void ToolPanelCoordinator::buildQuickEditBar()
     // Hover-open: entering the arrow pops the menu without a click.
     // Enter-notify only (motion re-triggering was the stranded-grab bug).
     autoDrop->add_events(Gdk::ENTER_NOTIFY_MASK);
-    autoDrop->signal_enter_notify_event().connect([autoDrop](GdkEventCrossing* event) -> bool {
-        if ((!event || event->detail != GDK_NOTIFY_INFERIOR) && !autoDrop->get_active()) {
+    autoDrop->signal_enter_notify_event().connect(
+        [autoDrop, isRealCrossing, widgetRootRect](GdkEventCrossing* event) -> bool {
+            if (!isRealCrossing(event) || autoDrop->get_active()) {
+                return false;
+            }
+            // Belt and braces alongside the mode check: only open when the
+            // pointer really is over the arrow right now.
+            int rx = 0, ry = 0, rw = 0, rh = 0;
+            if (event && widgetRootRect(autoDrop, rx, ry, rw, rh)) {
+                if (event->x_root < rx || event->y_root < ry
+                        || event->x_root >= rx + rw || event->y_root >= ry + rh) {
+                    return false;
+                }
+            }
             autoDrop->set_active(true);
-        }
-        return false;
-    });
-    autoDrop->signal_toggled().connect([this, autoDrop]() {
-        if (!autoDrop->get_active()) {
-            endQuickPreview(true);
-        }
-    });
+            return false;
+        });
     wireHoverMenuBehavior(autoMenu, autoDrop);
 
     auto* bwButton = Gtk::manage(new Gtk::Button("B&W"));
@@ -3203,15 +3297,15 @@ void ToolPanelCoordinator::buildQuickEditBar()
     bwButton->set_relief(Gtk::RELIEF_NONE);
     bwButton->set_tooltip_text("Black & White");
     bwButton->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
-    bwButton->signal_enter_notify_event().connect([this](GdkEventCrossing* event) -> bool {
-        if (!event || event->detail != GDK_NOTIFY_INFERIOR) {
+    bwButton->signal_enter_notify_event().connect([this, isRealCrossing](GdkEventCrossing* event) -> bool {
+        if (isRealCrossing(event)) {
             quickPreviewVariant_ = 100;
             beginQuickPreview(makeQuickBWParams(0), "Black & White");
         }
         return false;
     });
-    bwButton->signal_leave_notify_event().connect([this](GdkEventCrossing* event) -> bool {
-        if (!event || event->detail != GDK_NOTIFY_INFERIOR) {
+    bwButton->signal_leave_notify_event().connect([this, isRealCrossing](GdkEventCrossing* event) -> bool {
+        if (isRealCrossing(event)) {
             endQuickPreview(true);
         }
         return false;
@@ -3271,17 +3365,23 @@ void ToolPanelCoordinator::buildQuickEditBar()
     bwDrop->set_popup(*bwMenu);
     // Hover-open, enter-notify only (see autoDrop)
     bwDrop->add_events(Gdk::ENTER_NOTIFY_MASK);
-    bwDrop->signal_enter_notify_event().connect([bwDrop](GdkEventCrossing* event) -> bool {
-        if ((!event || event->detail != GDK_NOTIFY_INFERIOR) && !bwDrop->get_active()) {
+    bwDrop->signal_enter_notify_event().connect(
+        [bwDrop, isRealCrossing, widgetRootRect](GdkEventCrossing* event) -> bool {
+            if (!isRealCrossing(event) || bwDrop->get_active()) {
+                return false;
+            }
+            // Belt and braces alongside the mode check: only open when the
+            // pointer really is over the arrow right now.
+            int rx = 0, ry = 0, rw = 0, rh = 0;
+            if (event && widgetRootRect(bwDrop, rx, ry, rw, rh)) {
+                if (event->x_root < rx || event->y_root < ry
+                        || event->x_root >= rx + rw || event->y_root >= ry + rh) {
+                    return false;
+                }
+            }
             bwDrop->set_active(true);
-        }
-        return false;
-    });
-    bwDrop->signal_toggled().connect([this, bwDrop]() {
-        if (!bwDrop->get_active()) {
-            endQuickPreview(true);
-        }
-    });
+            return false;
+        });
     wireHoverMenuBehavior(bwMenu, bwDrop);
 
     auto* autoSplit = Gtk::manage(new Gtk::Overlay());
@@ -3989,6 +4089,13 @@ void ToolPanelCoordinator::setDoubleExposureBrowserDirProvider(std::function<Gli
 {
     if (doubleExposure) {
         doubleExposure->setBrowserDirProvider(std::move(provider));
+    }
+}
+
+void ToolPanelCoordinator::setDoubleExposureOpenPartnerHandler(std::function<void(const Glib::ustring&, const Glib::ustring&)> handler)
+{
+    if (doubleExposure) {
+        doubleExposure->setOpenPartnerHandler(std::move(handler));
     }
 }
 

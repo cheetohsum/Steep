@@ -19,6 +19,7 @@
 #include "placesbrowser.h"
 
 #include <algorithm>
+#include <iostream>
 #include <thread>
 
 #include "guiutils.h"
@@ -84,9 +85,6 @@ PlacesBrowser::PlacesBrowser ()
     headerIcon->set_margin_start(6);
     headerIcon->set_margin_end(4);
     headerBar->pack_start(*headerIcon, Gtk::PACK_SHRINK);
-    auto* headerLabel = Gtk::manage(new Gtk::Label(M("MAIN_FRAME_PLACES")));
-    headerLabel->set_halign(Gtk::ALIGN_START);
-    headerBar->pack_start(*headerLabel, Gtk::PACK_SHRINK);
     pack_start(*headerBar, Gtk::PACK_SHRINK, 0);
 
     scrollw = Gtk::manage (new Gtk::ScrolledWindow ());
@@ -190,6 +188,17 @@ bool compareMountByRoot (Glib::RefPtr<Gio::Mount> a, Glib::RefPtr<Gio::Mount> b)
 namespace
 {
 
+// Persist options right away so hide/favorite changes survive an unclean
+// exit (options are otherwise only written on shutdown).
+void persistOptionsQuiet()
+{
+    try {
+        Options::save();
+    } catch (Options::Error& error) {
+        std::cerr << "Failed to save options: " << error.get_msg() << std::endl;
+    }
+}
+
 Glib::ustring hiddenPlaceId(const char* kind, Glib::ustring value)
 {
 #ifdef _WIN32
@@ -245,42 +254,45 @@ void PlacesBrowser::refreshPlacesList ()
         }
     }
 
-    // append home directory
-    Glib::RefPtr<Gio::File> hfile = Gio::File::create_for_path (userHomeDir());  // Will send back "My documents" on Windows now, which has no restricted access
+    // append home ("My documents" on Windows) and pictures directories.
+    // These carry a hiddenId so they can be hidden like drives.
+    bool specialSeparatorAdded = false;
+    auto appendSpecialDir = [this, &options, &specialSeparatorAdded](
+            const Glib::ustring& dirPath, const Glib::ustring& hiddenId) {
+        Glib::RefPtr<Gio::File> hfile = Gio::File::create_for_path (dirPath);
 
-    if (!placesModel->children().empty()) {
-        Gtk::TreeModel::Row newrow = *(placesModel->append());
-        newrow[placesColumns.rowSeparator] = true;
-    }
+        if (!hfile || !hfile->query_exists()) {
+            return;
+        }
 
-    if (hfile && hfile->query_exists()) {
         try {
             if (auto info = hfile->query_info ()) {
+                hiddenDriveLabels_[hiddenId] = info->get_display_name ();
+
+                if (std::find(options.hiddenDriveRoots.begin(), options.hiddenDriveRoots.end(), hiddenId)
+                        != options.hiddenDriveRoots.end()) {
+                    return;
+                }
+
+                if (!specialSeparatorAdded && !placesModel->children().empty()) {
+                    Gtk::TreeModel::Row separator = *(placesModel->append());
+                    separator[placesColumns.rowSeparator] = true;
+                    specialSeparatorAdded = true;
+                }
+
                 Gtk::TreeModel::Row newrow = *(placesModel->append());
                 newrow[placesColumns.label] = info->get_display_name ();
                 newrow[placesColumns.icon]  = info->get_icon ();
                 newrow[placesColumns.root]  = hfile->get_parse_name ();
                 newrow[placesColumns.type]  = 4;
                 newrow[placesColumns.rowSeparator] = false;
+                newrow[placesColumns.hiddenId] = hiddenId;
             }
         } catch (Gio::Error&) {}
-    }
+    };
 
-    // append pictures directory
-    hfile = Gio::File::create_for_path (userPicturesDir());
-
-    if (hfile && hfile->query_exists()) {
-        try {
-            if (auto info = hfile->query_info ()) {
-                Gtk::TreeModel::Row newrow = *(placesModel->append());
-                newrow[placesColumns.label] = info->get_display_name ();
-                newrow[placesColumns.icon]  = info->get_icon ();
-                newrow[placesColumns.root]  = hfile->get_parse_name ();
-                newrow[placesColumns.type]  = 4;
-                newrow[placesColumns.rowSeparator] = false;
-            }
-        } catch (Gio::Error&) {}
-    }
+    appendSpecialDir(userHomeDir(), "special:home");
+    appendSpecialDir(userPicturesDir(), "special:pictures");
 
     // scan all drives
     bool driveSeparatorAdded = false;
@@ -482,6 +494,7 @@ void PlacesBrowser::addPressed ()
         try {
             if (auto info = hfile->query_info ()) {
                 options.favoriteDirs.push_back (hfile->get_parse_name ());
+                persistOptionsQuiet();
                 refreshPlacesList ();
             }
         } catch(Gio::Error&) {}
@@ -490,18 +503,18 @@ void PlacesBrowser::addPressed ()
 
 void PlacesBrowser::delPressed ()
 {
-
-    // lookup the selected item in the bookmark
-    Glib::RefPtr<Gtk::TreeSelection> selection = treeView->get_selection();
-    Gtk::TreeModel::iterator iter = selection->get_selected();
+    // Use the row captured at right-click time — the hover-selection tree's
+    // live selection is unreliable once the menu has closed.
+    if (!contextMenuIsFavorite_ || contextMenuRoot_.empty()) {
+        return;
+    }
 
     auto& options = App::get().mut_options();
-    if (iter && iter->get_value (placesColumns.type) == 5) {
-        std::vector<Glib::ustring>::iterator i = std::find (options.favoriteDirs.begin(), options.favoriteDirs.end(), iter->get_value (placesColumns.root));
+    std::vector<Glib::ustring>::iterator i = std::find (options.favoriteDirs.begin(), options.favoriteDirs.end(), contextMenuRoot_);
 
-        if (i != options.favoriteDirs.end()) {
-            options.favoriteDirs.erase (i);
-        }
+    if (i != options.favoriteDirs.end()) {
+        options.favoriteDirs.erase (i);
+        persistOptionsQuiet();
     }
 
     refreshPlacesList ();
@@ -509,22 +522,15 @@ void PlacesBrowser::delPressed ()
 
 void PlacesBrowser::hideSelectedDrive()
 {
-    const auto selection = treeView->get_selection();
-    const auto iter = selection->get_selected();
-
-    if (!iter) {
-        return;
-    }
-
-    const int type = iter->get_value(placesColumns.type);
-    const Glib::ustring hiddenId = iter->get_value(placesColumns.hiddenId);
-    if (type < 1 || type > 3 || hiddenId.empty()) {
+    // Use the row captured at right-click time (see delPressed).
+    if (contextMenuHiddenId_.empty()) {
         return;
     }
 
     auto& hiddenDrives = App::get().mut_options().hiddenDriveRoots;
-    if (std::find(hiddenDrives.begin(), hiddenDrives.end(), hiddenId) == hiddenDrives.end()) {
-        hiddenDrives.push_back(hiddenId);
+    if (std::find(hiddenDrives.begin(), hiddenDrives.end(), contextMenuHiddenId_) == hiddenDrives.end()) {
+        hiddenDrives.push_back(contextMenuHiddenId_);
+        persistOptionsQuiet();
     }
 
     refreshPlacesList();
@@ -536,6 +542,7 @@ void PlacesBrowser::restoreHiddenDrive(Glib::ustring hiddenId)
     hiddenDrives.erase(
         std::remove(hiddenDrives.begin(), hiddenDrives.end(), hiddenId),
         hiddenDrives.end());
+    persistOptionsQuiet();
     refreshPlacesList();
 }
 
@@ -584,7 +591,11 @@ bool PlacesBrowser::onButtonPress (GdkEventButton* event)
         Gtk::TreeModel::Path path;
         bool onRow = treeView->get_path_at_pos(static_cast<int>(event->x), static_cast<int>(event->y), path);
         bool isFavorite = false;
-        bool isDrive = false;
+        bool isHideable = false;
+
+        contextMenuHiddenId_.clear();
+        contextMenuRoot_.clear();
+        contextMenuIsFavorite_ = false;
 
         if (onRow) {
             treeView->get_selection()->select(path);
@@ -592,8 +603,16 @@ bool PlacesBrowser::onButtonPress (GdkEventButton* event)
             if (iter) {
                 const int type = iter->get_value(placesColumns.type);
                 isFavorite = type == 5;
-                isDrive = type >= 1 && type <= 3
+                isHideable = type >= 1 && type <= 4
                     && !iter->get_value(placesColumns.hiddenId).empty();
+
+                // Capture the target now: the menu actions run after the
+                // menu closes, when hover selection may have moved on.
+                contextMenuIsFavorite_ = isFavorite;
+                contextMenuRoot_ = iter->get_value(placesColumns.root);
+                if (isHideable) {
+                    contextMenuHiddenId_ = iter->get_value(placesColumns.hiddenId);
+                }
             }
         }
 
@@ -604,11 +623,11 @@ bool PlacesBrowser::onButtonPress (GdkEventButton* event)
         addMenuItem->set_visible(!lastSelectedDir.empty());
         // Show "Remove" only for favorites
         removeMenuItem->set_visible(isFavorite);
-        hideDriveMenuItem->set_visible(isDrive);
-        hiddenDrivesSeparator->set_visible(isDrive || hasHiddenDrives);
+        hideDriveMenuItem->set_visible(isHideable);
+        hiddenDrivesSeparator->set_visible(isHideable || hasHiddenDrives);
         hiddenDrivesMenuItem->set_visible(hasHiddenDrives);
 
-        if (!lastSelectedDir.empty() || isFavorite || isDrive || hasHiddenDrives) {
+        if (!lastSelectedDir.empty() || isFavorite || isHideable || hasHiddenDrives) {
             rightClickMenu->popup(event->button, event->time);
             return true;
         }

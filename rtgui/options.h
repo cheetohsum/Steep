@@ -266,6 +266,11 @@ public:
     int detailWindowHeight;
     int dirBrowserWidth;
     int dirBrowserHeight;
+    int albumPanelHeight;    // manual album sidebar height set by dragging its header; -1 = auto
+    bool albumPanelCollapsed;
+    bool browserTitleShowFullPath;  // browser title shows the full path instead of the folder name
+    bool browserTitlePinToEditor;   // browser title also shown above the editor filmstrip
+    bool showGlobalScopeUnfilteredWarning;  // warn before an unfiltered global-scope scan
     int preferencesWidth;
     int preferencesHeight;
     bool lastShowAllExif;

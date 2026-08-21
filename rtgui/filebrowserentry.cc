@@ -57,6 +57,8 @@ std::shared_ptr<RTSurface> FileBrowserEntry::ps(std::shared_ptr<RTSurface>(nullp
 namespace
 {
 
+constexpr unsigned THUMBNAIL_MAX_RETRIES = 4;
+
 struct QueuedImageUpdate {
     FileBrowserEntryIdleHelper* helper;
     rtengine::IImage8* img;
@@ -64,6 +66,15 @@ struct QueuedImageUpdate {
     int deviceScale;
     double imageScale;
     rtengine::procparams::CropParams crop;
+    std::uint64_t generation;
+    // Rendered for a cell the user can currently see. Those keep flowing while
+    // the foreground pause is held, so opening the editor doesn't leave the
+    // filmstrip full of blank cells for the duration.
+    bool visible;
+};
+
+struct ThumbnailRetry {
+    FileBrowserEntryIdleHelper* helper;
     std::uint64_t generation;
 };
 
@@ -124,6 +135,7 @@ gboolean drainQueuedImageUpdates(gpointer)
     using clock = std::chrono::steady_clock;
 
     constexpr std::size_t MAX_UPDATES_PER_IDLE = 64;
+    constexpr std::size_t PAUSED_MAX_UPDATES_PER_IDLE = 16;
     constexpr std::size_t MIN_UPDATES_PER_IDLE = 8;
     constexpr std::size_t IMAGE_UPDATE_DRAIN_CHUNK = 8;
     constexpr auto IMAGE_UPDATE_IDLE_BUDGET = std::chrono::milliseconds(8);
@@ -133,28 +145,23 @@ gboolean drainQueuedImageUpdates(gpointer)
     std::vector<QueuedImageUpdate> updates;
     updates.reserve(IMAGE_UPDATE_DRAIN_CHUNK);
 
-    {
-        std::lock_guard<std::mutex> lock(queuedImageUpdatesMutex);
-        if (queuedImageUpdatePauseDepth.load(std::memory_order_acquire) > 0) {
-            queuedImageUpdateIdlePending = false;
-            return FALSE;
-        }
-    }
+    // While paused, deliver only results for cells that are on screen, and in
+    // smaller slices so the foreground keeps the GUI thread.
+    const bool visibleOnly =
+        queuedImageUpdatePauseDepth.load(std::memory_order_acquire) > 0;
+    const std::size_t maxUpdates =
+        visibleOnly ? PAUSED_MAX_UPDATES_PER_IDLE : MAX_UPDATES_PER_IDLE;
 
-    while (processed < MAX_UPDATES_PER_IDLE) {
+    while (processed < maxUpdates) {
         if (processed >= MIN_UPDATES_PER_IDLE
             && clock::now() - start >= IMAGE_UPDATE_IDLE_BUDGET) {
             break;
         }
 
         updates.clear();
+        bool pendingRemains = false;
         {
             std::lock_guard<std::mutex> lock(queuedImageUpdatesMutex);
-
-            if (queuedImageUpdatePauseDepth.load(std::memory_order_acquire) > 0) {
-                queuedImageUpdateIdlePending = false;
-                return FALSE;
-            }
 
             if (queuedImageUpdates.empty()) {
                 queuedImageUpdateIdlePending = false;
@@ -163,19 +170,38 @@ gboolean drainQueuedImageUpdates(gpointer)
 
             const std::size_t count = std::min(
                 IMAGE_UPDATE_DRAIN_CHUNK,
-                std::min(queuedImageUpdates.size(), MAX_UPDATES_PER_IDLE - processed)
+                std::min(queuedImageUpdates.size(), maxUpdates - processed)
             );
 
-            for (std::size_t i = 0; i < count; ++i) {
-                updates.push_back(std::move(queuedImageUpdates.front()));
+            for (auto it = queuedImageUpdates.begin();
+                 it != queuedImageUpdates.end() && updates.size() < count;) {
+                if (visibleOnly && !it->visible) {
+                    pendingRemains = true;
+                    ++it;
+                    continue;
+                }
+
+                updates.push_back(std::move(*it));
                 queuedImageUpdateIndex.erase(updates.back().helper);
-                queuedImageUpdates.pop_front();
+                it = queuedImageUpdates.erase(it);
             }
+
+            if (updates.empty()) {
+                // Nothing deliverable right now; the resume path reschedules.
+                queuedImageUpdateIdlePending = false;
+                return FALSE;
+            }
+
+            pendingRemains = pendingRemains || !queuedImageUpdates.empty();
         }
 
         for (auto& update : updates) {
             applyQueuedImageUpdate(update);
             ++processed;
+        }
+
+        if (!pendingRemains) {
+            break;
         }
     }
 
@@ -191,6 +217,7 @@ gboolean drainQueuedImageUpdates(gpointer)
 void queueImageUpdate(QueuedImageUpdate&& update)
 {
     bool schedule = false;
+    const bool wasVisible = update.visible;
     {
         std::lock_guard<std::mutex> lock(queuedImageUpdatesMutex);
 
@@ -198,26 +225,44 @@ void queueImageUpdate(QueuedImageUpdate&& update)
         if (existing != queuedImageUpdateIndex.end()) {
             discardQueuedImageUpdate(existing->second->helper, existing->second->img);
             *existing->second = std::move(update);
-            return;
+        } else {
+            queuedImageUpdates.push_back(std::move(update));
+            auto inserted = queuedImageUpdates.end();
+            --inserted;
+            queuedImageUpdateIndex[inserted->helper] = inserted;
         }
 
-        queuedImageUpdates.push_back(std::move(update));
-        auto inserted = queuedImageUpdates.end();
-        --inserted;
-        queuedImageUpdateIndex[inserted->helper] = inserted;
-
         if (!queuedImageUpdateIdlePending) {
-            queuedImageUpdateIdlePending = true;
-            schedule = queuedImageUpdatePauseDepth.load(std::memory_order_acquire) == 0;
-            if (!schedule) {
-                queuedImageUpdateIdlePending = false;
-            }
+            // Visible results are delivered even while paused, so they must be
+            // able to (re)arm the drain; anything else waits for resume.
+            schedule = wasVisible
+                || queuedImageUpdatePauseDepth.load(std::memory_order_acquire) == 0;
+            queuedImageUpdateIdlePending = schedule;
         }
     }
 
     if (schedule) {
         gdk_threads_add_idle_full(G_PRIORITY_LOW, drainQueuedImageUpdates, nullptr, nullptr);
     }
+}
+
+gboolean thumbnailRetryTimeout(gpointer data)
+{
+    auto* retry = static_cast<ThumbnailRetry*>(data);
+    FileBrowserEntryIdleHelper* helper = retry->helper;
+
+    if (helper->destroyed) {
+        if (helper->pending == 1) {
+            delete helper;
+        } else {
+            --helper->pending;
+        }
+        return G_SOURCE_REMOVE;
+    }
+
+    helper->fbentry->runThumbnailRetry(retry->generation);
+    --helper->pending;
+    return G_SOURCE_REMOVE;
 }
 
 } // namespace
@@ -258,7 +303,7 @@ void FileBrowserEntry::resumeQueuedImageUpdates()
 }
 
 FileBrowserEntry::FileBrowserEntry (Thumbnail* thm, const Glib::ustring& fname)
-    : ThumbBrowserEntryBase (fname, thm), wasInside(false), iatlistener(nullptr), press_x(0), press_y(0), action_x(0), action_y(0), rot_deg(0.0), landscape(true), deliveredPreviewAspectRatio_(0.0), cropParams(new rtengine::procparams::CropParams), cropgl(nullptr), suppressThumbnailRefresh(false), lazyThumbnailRequestPending(false), thumbnailPreviewUsable_(false), liveEditorPreview_(false), state(SNormal), crop_custom_ratio(0.f)
+    : ThumbBrowserEntryBase (fname, thm), wasInside(false), iatlistener(nullptr), press_x(0), press_y(0), action_x(0), action_y(0), rot_deg(0.0), landscape(true), deliveredPreviewAspectRatio_(0.0), cropParams(new rtengine::procparams::CropParams), cropgl(nullptr), suppressThumbnailRefresh(false), lazyThumbnailRequestPending(false), thumbnailPreviewUsable_(false), liveEditorPreview_(false), thumbnailRetryCount_(0), thumbnailRetryGeneration_(0), state(SNormal), crop_custom_ratio(0.f)
 {
     browserFileNameUpper_ = Glib::path_get_basename(fname);
     std::transform(browserFileNameUpper_.begin(), browserFileNameUpper_.end(), browserFileNameUpper_.begin(), ::toupper);
@@ -370,6 +415,11 @@ void FileBrowserEntry::appendQuickThumbnailJob(std::vector<ThumbImageUpdater::Re
     double cachedPixbufScale = 1.0;
     const bool needsCachedPixbuf = cachePixbuf && !thumbnail->tryGetCachedPixbuf(cachedPixbufScale);
 
+    if (!needsCachedPixbuf
+            && thumbnailRetryCount_.load(std::memory_order_acquire) > THUMBNAIL_MAX_RETRIES) {
+        return;
+    }
+
     if (!needsCachedPixbuf && lazyThumbnailRequestPending.load(std::memory_order_acquire)) {
         return;
     }
@@ -397,6 +447,33 @@ void FileBrowserEntry::appendQuickThumbnailJob(std::vector<ThumbImageUpdater::Re
     }
 
     requests.push_back({this, &updatepriority, queue_upgrade, false, cachePixbuf || shouldCacheRenderedThumbnailPixbuf(), this});
+}
+
+void FileBrowserEntry::retryThumbnailNow()
+{
+    if (!thumbnail || hasUsableThumbnailPreview()) {
+        return;
+    }
+
+    thumbnailRetryCount_.store(0, std::memory_order_release);
+    thumbnailRetryGeneration_.fetch_add(1, std::memory_order_acq_rel);
+    lazyThumbnailRequestPending.store(true, std::memory_order_release);
+    refreshQuickThumbnailImage();
+}
+
+void FileBrowserEntry::runThumbnailRetry(std::uint64_t generation)
+{
+    if (generation != thumbnailRetryGeneration_.load(std::memory_order_acquire)
+            || hasUsableThumbnailPreview()) {
+        return;
+    }
+
+    lazyThumbnailRequestPending.store(true, std::memory_order_release);
+    refreshQuickThumbnailImage();
+
+    if (parent) {
+        parent->redrawNeeded(this);
+    }
 }
 
 bool FileBrowserEntry::cacheCurrentPreviewForQuickOpen()
@@ -492,6 +569,11 @@ bool FileBrowserEntry::setLiveEditorPreview (
     // Supersede queued thumbnail renders. Any worker result that arrives after
     // this point is discarded until a non-editor refresh explicitly wins.
     liveEditorPreview_.store(true, std::memory_order_release);
+    {
+        // The editor frame supersedes anything retained for other cell sizes.
+        MYWRITERLOCK(l, lockRW);
+        invalidatePreviewSlots();
+    }
     ++feih->imageUpdateGeneration;
     thumbnail->trySetCachedPixbuf(pixbuf, 1.0 / imageScale, false);
     _updateImage(image, logicalSize, deviceScale, imageScale, crop, false);
@@ -502,6 +584,11 @@ void FileBrowserEntry::invalidateTransientPreview(bool refresh)
 {
     if (feih) {
         ++feih->imageUpdateGeneration;
+    }
+
+    {
+        MYWRITERLOCK(l, lockRW);
+        invalidatePreviewSlots();
     }
 
     if (refresh) {
@@ -555,14 +642,44 @@ void FileBrowserEntry::calcThumbnailSize ()
 
         if (ow != previewSize.width || oh != previewSize.height || preview.size() != expected_size) {
             liveEditorPreview_.store(false, std::memory_order_release);
-            thumbnailPreviewUsable_.store(false, std::memory_order_release);
-            preview.clear();
+            thumbnailRetryCount_.store(0, std::memory_order_release);
+            thumbnailRetryGeneration_.fetch_add(1, std::memory_order_acq_rel);
             lazyThumbnailRequestPending.store(false, std::memory_order_release);
-            if (!filtered) {
+
+            // A preview rendered earlier at exactly this size (typically the
+            // other view's thumbnail height) can be put straight back on
+            // screen — no worker job, no disk read, no pipeline run.
+            if (restorePreviewForSize(previewSize, pendingDeviceScale)) {
+                thumbnailPreviewUsable_.store(true, std::memory_order_release);
+                return;
+            }
+
+            thumbnailPreviewUsable_.store(false, std::memory_order_release);
+
+            // Nothing retained for the new size: keep the stale pixels so the
+            // cell keeps showing the photo (updateBackBuffer scales them to
+            // fit) instead of flashing an empty tile. The re-render is left to
+            // the viewport scan in ThumbBrowserBase::Internal::on_draw, which
+            // only queues work for entries the user can actually see.
+            if (preview.empty() && !filtered) {
                 refreshThumbnailImage();
             }
         }
     }
+}
+
+void FileBrowserEntry::savePreviewSlotExtras (PreviewSlot& slot) const
+{
+    slot.aspect = deliveredPreviewAspectRatio_;
+    slot.imgScale = scale;
+    slot.landscape = landscape;
+}
+
+void FileBrowserEntry::loadPreviewSlotExtras (const PreviewSlot& slot)
+{
+    deliveredPreviewAspectRatio_ = slot.aspect;
+    scale = slot.imgScale;
+    landscape = slot.landscape;
 }
 
 void FileBrowserEntry::onDeviceScaleChanged (int newDeviceScale)
@@ -570,6 +687,8 @@ void FileBrowserEntry::onDeviceScaleChanged (int newDeviceScale)
     if (newDeviceScale != activeDeviceScale) {
         liveEditorPreview_.store(false, std::memory_order_release);
         thumbnailPreviewUsable_.store(false, std::memory_order_release);
+        thumbnailRetryCount_.store(0, std::memory_order_release);
+        thumbnailRetryGeneration_.fetch_add(1, std::memory_order_acq_rel);
     }
 
     ThumbBrowserEntryBase::onDeviceScaleChanged(newDeviceScale);
@@ -731,6 +850,14 @@ void FileBrowserEntry::procParamsChanged (Thumbnail* thm, int whoChangedIt, bool
     }
 
     liveEditorPreview_.store(false, std::memory_order_release);
+
+    // The rendered pixels no longer match the processing parameters, so
+    // previews retained for the other view's size are stale too.
+    {
+        MYWRITERLOCK(l, lockRW);
+        invalidatePreviewSlots();
+    }
+
     if ( thumbnail->isQuick() ) {
         refreshQuickThumbnailImage ();
     } else {
@@ -770,8 +897,46 @@ void FileBrowserEntry::updateImage(const ThumbImageUpdateListener::ImageUpdate& 
         update.device_scale,
         update.scale,
         update.crop,
-        generation
+        generation,
+        updatepriority
     });
+}
+
+void FileBrowserEntry::updateImageFailed(hidpi::LogicalSize size, int deviceScale, bool upgrade)
+{
+    lazyThumbnailRequestPending.store(false, std::memory_order_release);
+
+    if (!feih || liveEditorPreview_.load(std::memory_order_acquire)
+            || !imageUpdateMatchesCurrentPreview(size, deviceScale)) {
+        return;
+    }
+
+    // An upgrade can become unnecessary while queued. Keep an existing quick
+    // preview instead of retrying processed work the user cannot distinguish.
+    if (upgrade && hasUsableThumbnailPreview()) {
+        thumbnailRetryCount_.store(0, std::memory_order_release);
+        return;
+    }
+
+    constexpr unsigned RETRY_DELAYS_MS[THUMBNAIL_MAX_RETRIES] = {50, 150, 400, 1000};
+    const unsigned attempt = thumbnailRetryCount_.fetch_add(1, std::memory_order_acq_rel);
+    if (attempt >= THUMBNAIL_MAX_RETRIES) {
+        return;
+    }
+
+    ++feih->pending;
+    auto* retry = new ThumbnailRetry{
+        feih,
+        thumbnailRetryGeneration_.load(std::memory_order_acquire)
+    };
+    g_timeout_add_full(
+        G_PRIORITY_LOW,
+        RETRY_DELAYS_MS[attempt],
+        thumbnailRetryTimeout,
+        retry,
+        [](gpointer data) {
+            delete static_cast<ThumbnailRetry*>(data);
+        });
 }
 
 void FileBrowserEntry::discardQueuedImageUpdate()
@@ -855,6 +1020,8 @@ void FileBrowserEntry::_updateImage(
     delete img;
     thumbnailPreviewUsable_.store(true, std::memory_order_release);
     lazyThumbnailRequestPending.store(false, std::memory_order_release);
+    thumbnailRetryCount_.store(0, std::memory_order_release);
+    thumbnailRetryGeneration_.fetch_add(1, std::memory_order_acq_rel);
 
     if (parent) {
         if (rotated) {

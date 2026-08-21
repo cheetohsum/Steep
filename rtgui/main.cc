@@ -27,8 +27,12 @@
 #include <giomm.h>
 #include <iostream>
 #include <tiffio.h>
+#include <atomic>
 #include <cstring>
 #include <cstdlib>
+#include <exception>
+#include <system_error>
+#include <typeinfo>
 #include <locale.h>
 #include <lensfun.h>
 
@@ -345,6 +349,61 @@ void show_gimp_plugin_info_dialog(Gtk::Window *parent)
 } // namespace
 
 
+// An uncaught C++ exception ends in terminate()/abort(), which does NOT pass
+// through SetUnhandledExceptionFilter — those crashes previously left nothing
+// but libstdc++'s one-line message. Log the exception and a stack trace so the
+// throwing site can be identified.
+static void steepTerminateHandler()
+{
+    static std::atomic<bool> reentered{false};
+
+    if (reentered.exchange(true)) {
+        std::abort();
+    }
+
+    fprintf(stderr, "\n=== TERMINATE (uncaught exception) ===\n");
+
+    if (auto current = std::current_exception()) {
+        try {
+            std::rethrow_exception(current);
+        } catch (const std::system_error& e) {
+            fprintf(stderr, "std::system_error: %s (code=%d category=%s)\n",
+                    e.what(), e.code().value(), e.code().category().name());
+        } catch (const std::exception& e) {
+            fprintf(stderr, "%s: %s\n", typeid(e).name(), e.what());
+        } catch (...) {
+            fprintf(stderr, "non-standard exception\n");
+        }
+    } else {
+        fprintf(stderr, "no active exception\n");
+    }
+
+#ifdef _WIN32
+    fprintf(stderr, "Stack trace:\n");
+    void* stack[64];
+    USHORT frames = CaptureStackBackTrace(0, 64, stack, NULL);
+
+    for (USHORT i = 0; i < frames; i++) {
+        HMODULE hMod = NULL;
+        char modName[MAX_PATH] = "???";
+
+        if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                               (LPCSTR)stack[i], &hMod)) {
+            GetModuleFileNameA(hMod, modName, MAX_PATH);
+            char* slash = strrchr(modName, '\\');
+            char* name = slash ? slash + 1 : modName;
+            fprintf(stderr, "  [%2d] %p (%s+0x%llx)\n", i, stack[i], name,
+                    (unsigned long long)((char*)stack[i] - (char*)hMod));
+        } else {
+            fprintf(stderr, "  [%2d] %p\n", i, stack[i]);
+        }
+    }
+#endif
+
+    fflush(stderr);
+    std::abort();
+}
+
 #ifdef _WIN32
 static LONG WINAPI crashHandler(EXCEPTION_POINTERS* ep)
 {
@@ -404,6 +463,7 @@ static LONG WINAPI crashHandler(EXCEPTION_POINTERS* ep)
 
 int main (int argc, char **argv)
 {
+    std::set_terminate(steepTerminateHandler);
 #ifdef _WIN32
     SetUnhandledExceptionFilter(crashHandler);
 #endif

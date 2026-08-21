@@ -38,6 +38,12 @@
 #include <sstream>
 #include <thread>
 
+// Album tree area sizing: the minimum height reserved for the album list
+// (its default footprint in the sidebar) and the cap it may grow to before
+// scrolling kicks in.
+constexpr int kAlbumTreeMinHeight = 260;
+constexpr int kAlbumTreeMaxHeight = 340;
+
 // Subclass TreeView: set_hover_selection(true) makes GTK process motion
 // events internally (prelight_or_select). The virtual override intercepts
 // these to track the hovered row for programmatic cell-background highlighting.
@@ -172,23 +178,20 @@ AlbumBrowser::AlbumBrowser ()
     globalChangeConn_ = albumsChangedOnDisk_.connect(
         sigc::mem_fun(*this, &AlbumBrowser::onGlobalAlbumsChanged));
 
-    // Header bar: albums icon + creation dropdown
+    // Header bar: the album icon doubles as the creation dropdown. The bar
+    // sits in an event box so its empty area can be dragged to resize the
+    // album list and clicked to collapse/expand it.
     Gtk::Box* headerBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
     headerBar->set_name("AlbumHeader");
 
-    auto* headerIcon = Gtk::manage(new RTImage("album-view-grid", Gtk::ICON_SIZE_SMALL_TOOLBAR));
-    headerIcon->set_tooltip_text(M("ALBUM_HEADER"));
-    headerIcon->set_halign(Gtk::ALIGN_START);
-    headerIcon->set_margin_start(4);
-    headerIcon->set_margin_end(2);
-    headerBar->pack_start(*headerIcon, Gtk::PACK_SHRINK);
-
-    // "New" button with dropdown menu
     Gtk::MenuButton* addBtn = Gtk::manage(new Gtk::MenuButton());
     addBtn->set_name("AlbumAddBtn");
-    addBtn->set_label(M("ALBUM_NEW").lowercase());
     addBtn->set_relief(Gtk::RELIEF_NONE);
     addBtn->set_tooltip_text(M("ALBUM_CREATE_TOOLTIP"));
+    auto* headerIcon = Gtk::manage(new RTImage("album-view-grid", Gtk::ICON_SIZE_SMALL_TOOLBAR));
+    addBtn->set_image(*headerIcon);
+    addBtn->set_always_show_image(true);
+    addBtn->set_margin_start(2);
 
     addMenu_ = Gtk::manage(new Gtk::Menu());
     auto* miCreateAlbum = Gtk::manage(new Gtk::MenuItem(M("ALBUM_CREATE_ALBUM")));
@@ -218,15 +221,91 @@ AlbumBrowser::AlbumBrowser ()
     headerBar->pack_start(*addBtn, Gtk::PACK_SHRINK);
     headerBar->pack_end(*closeAlbumBtn_, Gtk::PACK_SHRINK);
 
-    pack_start(*headerBar, Gtk::PACK_SHRINK, 0);
+    headerEvtBox_ = Gtk::manage(new Gtk::EventBox());
+    headerEvtBox_->set_tooltip_text(M("ALBUM_HEADER_RESIZE_TIP"));
+    headerEvtBox_->add(*headerBar);
+    headerEvtBox_->add_events(Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::POINTER_MOTION_MASK);
+
+    headerEvtBox_->signal_button_press_event().connect([this](GdkEventButton* ev) -> bool {
+        if (ev->button != 1) {
+            return false;
+        }
+        headerPressed_ = true;
+        headerDragging_ = false;
+        headerPressRootY_ = ev->y_root;
+        headerPressHeight_ = App::get().options().albumPanelCollapsed
+            ? 0 : std::max(scrollw_->get_allocated_height(), 0);
+        headerDragHeight_ = headerPressHeight_;
+        return true;
+    });
+    headerEvtBox_->signal_motion_notify_event().connect([this](GdkEventMotion* ev) -> bool {
+        if (!headerPressed_) {
+            return false;
+        }
+        const double dy = headerPressRootY_ - ev->y_root; // dragging up grows the list
+        if (!headerDragging_ && std::abs(dy) > 4.0) {
+            headerDragging_ = true;
+            expandAnimConn_.disconnect();
+            hideAlbumHoverPopup();
+            App::get().mut_options().albumPanelCollapsed = false;
+            treeView_->show();
+            scrollw_->show();
+        }
+        if (headerDragging_) {
+            const int h = std::max(std::min(headerPressHeight_ + static_cast<int>(dy), 600), 80);
+            if (h != headerDragHeight_) {
+                headerDragHeight_ = h;
+                // Coalesce to one resize per frame: motion events outrun the
+                // frame clock, and relayouting the sidebar for each of them
+                // is what made the drag stutter.
+                if (!headerDragApplyConn_.connected()) {
+                    headerDragApplyConn_ = Glib::signal_timeout().connect([this]() -> bool {
+                        scrollw_->set_min_content_height(headerDragHeight_);
+                        scrollw_->set_max_content_height(headerDragHeight_);
+                        return false;
+                    }, 16);
+                }
+            }
+        }
+        return true;
+    });
+    headerEvtBox_->signal_button_release_event().connect([this](GdkEventButton* ev) -> bool {
+        if (ev->button != 1 || !headerPressed_) {
+            return false;
+        }
+        headerPressed_ = false;
+        headerDragApplyConn_.disconnect();
+        auto& o = App::get().mut_options();
+        if (headerDragging_) {
+            o.albumPanelHeight = headerDragHeight_;
+            o.albumPanelCollapsed = false;
+        } else {
+            o.albumPanelCollapsed = !o.albumPanelCollapsed;
+        }
+        applyPanelSizing();
+        try {
+            Options::save();
+        } catch (Options::Error&) {}
+        return true;
+    });
+    // Resize affordance on the header's own (non-button) area
+    headerEvtBox_->signal_realize().connect([this]() {
+        headerEvtBox_->get_window()->set_cursor(
+            Gdk::Cursor::create(headerEvtBox_->get_display(), "ns-resize"));
+    });
+
+    pack_start(*headerEvtBox_, Gtk::PACK_SHRINK, 0);
 
     // Scrolled tree view
     scrollw_ = Gtk::manage(new Gtk::ScrolledWindow());
     scrollw_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
     scrollw_->set_propagate_natural_height(true);
-    scrollw_->set_min_content_height(200);
-    scrollw_->set_max_content_height(240);
+    scrollw_->set_min_content_height(kAlbumTreeMinHeight);
+    scrollw_->set_max_content_height(kAlbumTreeMaxHeight);
     scrollw_->set_overlay_scrolling(false);
+    // Visibility and height are managed by applyPanelSizing() (collapse state
+    // and manual header-drag height live in options).
+    scrollw_->set_no_show_all(true);
 
     treeView_ = Gtk::manage(new AlbumTreeView());
     treeView_->set_name("AlbumBrowserTree");
@@ -237,7 +316,22 @@ AlbumBrowser::AlbumBrowser ()
     treeView_->set_hover_selection(true);
     treeView_->onHoverChanged = [this](const Gtk::TreeModel::Path& path) {
         hoveredPath_ = path;
+        onHoverRowChanged(path);
     };
+
+    // Hover thumbnail popup (shares DirHoverPopup styling with the folder tree)
+    hoverPopup_ = new Gtk::Window(Gtk::WINDOW_POPUP);
+    hoverPopup_->set_type_hint(Gdk::WINDOW_TYPE_HINT_TOOLTIP);
+    hoverPopup_->set_name("DirHoverPopup");
+    hoverBox_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 3));
+    for (int i = 0; i < 5; i++) {
+        hoverImages_[i] = Gtk::manage(new Gtk::Image());
+        hoverImages_[i]->set_size_request(48, 48);
+        hoverImages_[i]->set_no_show_all(true);
+        hoverBox_->pack_start(*hoverImages_[i], Gtk::PACK_SHRINK);
+    }
+    hoverPopup_->add(*hoverBox_);
+    hoverBox_->show();
 
     // Custom DnD: detect drag by checking motion distance while button held
     dragSourceNodeId_ = -1;
@@ -501,16 +595,28 @@ AlbumBrowser::AlbumBrowser ()
         return false;
     }, false);
 
+    // Hide the hover popup once the list scrolls under the pointer
+    scrollw_->get_vadjustment()->signal_value_changed().connect([this]() {
+        hideAlbumHoverPopup();
+    });
+
     loadAlbums();
     refreshTree();
 
     show_all();
+    applyPanelSizing();
 }
 
 AlbumBrowser::~AlbumBrowser ()
 {
     chevronAnimConn_.disconnect();
+    expandAnimConn_.disconnect();
+    headerDragApplyConn_.disconnect();
+    hoverPopupTimer_.disconnect();
+    cycleConn_.disconnect();
+    ++hoverPopupSession_;
     globalChangeConn_.disconnect();
+    delete hoverPopup_;
 }
 
 void AlbumBrowser::startChevronAnim()
@@ -1314,8 +1420,13 @@ void AlbumBrowser::onSelectionChanged ()
             expandAnimConn_.disconnect();
             bool wasExpanded = treeView_->row_expanded(path);
 
-            // Hide scrollbar during animation to prevent flash
-            scrollw_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_NEVER);
+            // Hide the scrollbar during the animation. POLICY_EXTERNAL, not
+            // POLICY_NEVER: with NEVER, GTK propagates the child's full
+            // minimum height and ignores max_content_height, so the panel
+            // would jump to the full tree height and snap back afterwards.
+            // With EXTERNAL the scrollbar stays hidden while min==max
+            // content height (set each tick below) pins the height exactly.
+            scrollw_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_EXTERNAL);
 
             if (wasExpanded) {
                 // Start chevron collapse animation
@@ -1332,22 +1443,27 @@ void AlbumBrowser::onSelectionChanged ()
                 // Collapse animation: capture height, collapse, animate
                 expandAnimStartH_ = scrollw_->get_allocated_height();
                 treeView_->collapse_row(path);
-                // Measure new natural height after collapse
+                // Measure new natural height after collapse; the target must
+                // match the settled height once min/max are restored, or the
+                // panel snaps at the end of the animation.
                 int minH = 0, natH = 0;
                 treeView_->get_preferred_height(minH, natH);
-                expandAnimTargetH_ = std::max(std::min(natH + 4, 240), 20);
+                expandAnimTargetH_ = std::max(std::min(natH + 4, effMaxHeight()), effMinHeight());
                 expandAnimExpanding_ = false;
                 expandAnimFraction_ = 0.0;
+                scrollw_->set_min_content_height(expandAnimStartH_);
                 scrollw_->set_max_content_height(expandAnimStartH_);
                 expandAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
                     expandAnimFraction_ += 16.0 / 150.0; // 150ms collapse
                     if (expandAnimFraction_ >= 1.0) {
-                        scrollw_->set_max_content_height(240);
+                        scrollw_->set_min_content_height(effMinHeight());
+                        scrollw_->set_max_content_height(effMaxHeight());
                         scrollw_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
                         return false;
                     }
                     double t = expandAnimFraction_ * expandAnimFraction_; // ease-in-quad
                     int h = expandAnimStartH_ + static_cast<int>((expandAnimTargetH_ - expandAnimStartH_) * t);
+                    scrollw_->set_min_content_height(h);
                     scrollw_->set_max_content_height(h);
                     return true;
                 }, 16);
@@ -1367,22 +1483,26 @@ void AlbumBrowser::onSelectionChanged ()
                 // Expand animation: capture height, expand, animate
                 expandAnimStartH_ = scrollw_->get_allocated_height();
                 treeView_->expand_row(path, false);
-                // Measure new natural height after expand
+                // Measure new natural height after expand; target must match
+                // the settled height once min/max are restored (see collapse).
                 int minH = 0, natH = 0;
                 treeView_->get_preferred_height(minH, natH);
-                expandAnimTargetH_ = std::max(std::min(natH + 4, 240), 20);
+                expandAnimTargetH_ = std::max(std::min(natH + 4, effMaxHeight()), effMinHeight());
                 expandAnimExpanding_ = true;
                 expandAnimFraction_ = 0.0;
+                scrollw_->set_min_content_height(expandAnimStartH_);
                 scrollw_->set_max_content_height(expandAnimStartH_);
                 expandAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
                     expandAnimFraction_ += 16.0 / 250.0; // 250ms expand
                     if (expandAnimFraction_ >= 1.0) {
-                        scrollw_->set_max_content_height(240);
+                        scrollw_->set_min_content_height(effMinHeight());
+                        scrollw_->set_max_content_height(effMaxHeight());
                         scrollw_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
                         return false;
                     }
                     double t = 1.0 - std::pow(1.0 - expandAnimFraction_, 4); // ease-out-quart
                     int h = expandAnimStartH_ + static_cast<int>((expandAnimTargetH_ - expandAnimStartH_) * t);
+                    scrollw_->set_min_content_height(h);
                     scrollw_->set_max_content_height(h);
                     return true;
                 }, 16);
@@ -1450,6 +1570,8 @@ void AlbumBrowser::runSmartAlbumSearch (int nodeId, bool openAlbum)
 
 bool AlbumBrowser::onButtonPress (GdkEventButton* event)
 {
+    hideAlbumHoverPopup();
+
     // Left-click: capture source row and start coords for custom DnD.
     // Selection is handled on button RELEASE (see signal_button_release above).
     if (event->type == GDK_BUTTON_PRESS && event->button == 1) {
@@ -1992,6 +2114,283 @@ void AlbumBrowser::loadCoverThumbnails(int session)
             });
         });
     }
+}
+
+// ---- Panel sizing (header drag / collapse) ----
+
+int AlbumBrowser::effMinHeight() const
+{
+    const int h = App::get().options().albumPanelHeight;
+    return h > 0 ? h : kAlbumTreeMinHeight;
+}
+
+int AlbumBrowser::effMaxHeight() const
+{
+    const int h = App::get().options().albumPanelHeight;
+    return h > 0 ? h : kAlbumTreeMaxHeight;
+}
+
+void AlbumBrowser::applyPanelSizing()
+{
+    if (App::get().options().albumPanelCollapsed) {
+        hideAlbumHoverPopup();
+        expandAnimConn_.disconnect();
+        scrollw_->hide();
+        return;
+    }
+
+    scrollw_->set_min_content_height(effMinHeight());
+    scrollw_->set_max_content_height(effMaxHeight());
+    // show_all() skips the scrolled window (no_show_all), so show its
+    // subtree explicitly here.
+    treeView_->show();
+    scrollw_->show();
+}
+
+// ---- Hover preview popup ----
+
+std::vector<Glib::ustring> AlbumBrowser::filterByFiletype(const std::vector<Glib::ustring>& paths) const
+{
+    std::set<std::string> filter;
+    if (filetypeFilterGetter_) {
+        filter = filetypeFilterGetter_();
+    }
+    if (filter.empty()) {
+        return paths;
+    }
+
+    std::vector<Glib::ustring> out;
+    out.reserve(paths.size());
+    for (const auto& p : paths) {
+        const auto dotpos = p.find_last_of('.');
+        if (dotpos == Glib::ustring::npos) {
+            continue;
+        }
+        const std::string ext = p.substr(dotpos + 1).uppercase().raw();
+        if (filter.count(ext)) {
+            out.push_back(p);
+        }
+    }
+    return out;
+}
+
+void AlbumBrowser::onHoverRowChanged(const Gtk::TreeModel::Path& path)
+{
+    if (path.empty() || dragActive_) {
+        hideAlbumHoverPopup();
+        return;
+    }
+
+    auto iter = model_->get_iter(path);
+    const bool isAlbum = iter
+        && (*iter)[columns_.nodeType] == static_cast<int>(AlbumNodeType::ALBUM);
+
+    if (!isAlbum) {
+        hideAlbumHoverPopup();
+        return;
+    }
+
+    if (popupVisible_) {
+        // Already showing — retarget immediately for the new row
+        showAlbumHoverPopup(path);
+    } else {
+        // Delay before showing; fires for whichever row is hovered at expiry
+        hoverPopupTimer_.disconnect();
+        hoverPopupTimer_ = Glib::signal_timeout().connect([this]() -> bool {
+            if (!hoveredPath_.empty()) {
+                showAlbumHoverPopup(hoveredPath_);
+            }
+            return false;
+        }, 500);
+    }
+}
+
+void AlbumBrowser::showAlbumHoverPopup(const Gtk::TreeModel::Path& path)
+{
+    auto iter = path.empty() ? Gtk::TreeModel::iterator() : model_->get_iter(path);
+    if (!iter || (*iter)[columns_.nodeType] != static_cast<int>(AlbumNodeType::ALBUM)) {
+        hideAlbumHoverPopup();
+        return;
+    }
+
+    const int nodeId = (*iter)[columns_.nodeId];
+    AlbumNode* node = findNode(nodeId);
+    if (!node) {
+        hideAlbumHoverPopup();
+        return;
+    }
+
+    std::vector<Glib::ustring> files = filterByFiletype(node->filePaths);
+    if (files.empty()) {
+        hideAlbumHoverPopup();
+        return;
+    }
+
+    // Position to the right of the sidebar, aligned with the hovered row
+    Gdk::Rectangle cellArea;
+    treeView_->get_cell_area(path, *treeView_->get_column(0), cellArea);
+    int root_x = 0, root_y = 0;
+    auto binWin = treeView_->get_bin_window();
+    if (binWin) {
+        int bwx, bwy;
+        binWin->get_origin(bwx, bwy);
+        root_x = bwx;
+        root_y = bwy + cellArea.get_y();
+    }
+    const int popupX = root_x + get_allocated_width() + 4;
+    const int popupY = root_y;
+
+    // Restart the preview for this album
+    cycleConn_.disconnect();
+    const int session = ++hoverPopupSession_;
+    cycleFiles_ = std::move(files);
+    cyclePixbufs_.clear();
+    cycleLoading_.clear();
+    cycleStart_ = 0;
+
+    for (int i = 0; i < 5; i++) {
+        hoverImages_[i]->clear();
+        hoverImages_[i]->hide();
+    }
+
+    hoverPopup_->move(popupX, popupY);
+    hoverPopup_->show();
+    popupVisible_ = true;
+
+    // Load the visible thumbnails; slow scrolling starts once they are in.
+    const int initial = std::min<int>(5, static_cast<int>(cycleFiles_.size()));
+    std::vector<Glib::ustring> initialPaths(cycleFiles_.begin(), cycleFiles_.begin() + initial);
+    std::vector<int> indices;
+    for (int i = 0; i < initial; i++) {
+        indices.push_back(i);
+        cycleLoading_.insert(i);
+    }
+    std::thread(&AlbumBrowser::loadCycleThumbsWorker, this,
+                std::move(initialPaths), std::move(indices), session, true).detach();
+}
+
+void AlbumBrowser::hideAlbumHoverPopup()
+{
+    hoverPopupTimer_.disconnect();
+    cycleConn_.disconnect();
+    ++hoverPopupSession_;
+    cycleFiles_.clear();
+    cyclePixbufs_.clear();
+    cycleLoading_.clear();
+    cycleStart_ = 0;
+    if (popupVisible_) {
+        hoverPopup_->hide();
+        popupVisible_ = false;
+    }
+}
+
+void AlbumBrowser::loadCycleThumbsWorker(std::vector<Glib::ustring> files, std::vector<int> indices, int session, bool startCycleWhenDone)
+{
+    for (size_t i = 0; i < files.size(); ++i) {
+        if (session != hoverPopupSession_) {
+            return;
+        }
+
+        Glib::RefPtr<Gdk::Pixbuf> pixbuf;
+        try {
+            Thumbnail* thm = CacheManager::getInstance()->getEntry(files[i]);
+            if (thm) {
+                double scale = 1.0;
+                rtengine::IImage8* img = thm->processThumbImage(48, scale);
+                if (img) {
+                    auto pb = Gdk::Pixbuf::create_from_data(
+                        img->getData(), Gdk::COLORSPACE_RGB, false, 8,
+                        img->getWidth(), img->getHeight(), img->getWidth() * 3);
+                    pixbuf = pb->copy();
+                    delete img;
+                }
+                thm->decreaseRef();
+            }
+        } catch (...) {}
+
+        const int idx = indices[i];
+        Glib::signal_idle().connect_once([this, session, idx, pixbuf]() {
+            if (session != hoverPopupSession_) {
+                return;
+            }
+            cycleLoading_.erase(idx);
+            // A null entry marks an unloadable file so the cycle can skip past it
+            cyclePixbufs_[idx] = pixbuf;
+            if (popupVisible_) {
+                applyCycleImages();
+            }
+        });
+    }
+
+    if (startCycleWhenDone) {
+        // Queued after the per-thumb idles above, so the visible thumbnails
+        // have all been delivered by the time this starts the scroll.
+        Glib::signal_idle().connect_once([this, session]() {
+            if (session != hoverPopupSession_ || !popupVisible_) {
+                return;
+            }
+            startCycleTimer();
+        });
+    }
+}
+
+void AlbumBrowser::applyCycleImages()
+{
+    const int n = static_cast<int>(cycleFiles_.size());
+    for (int s = 0; s < 5; s++) {
+        int idx;
+        if (n > 5) {
+            idx = (cycleStart_ + s) % n;
+        } else {
+            idx = s;
+            if (idx >= n) {
+                hoverImages_[s]->clear();
+                hoverImages_[s]->hide();
+                continue;
+            }
+        }
+        auto it = cyclePixbufs_.find(idx);
+        if (it == cyclePixbufs_.end()) {
+            continue; // still loading — leave the slot as-is
+        }
+        if (it->second) {
+            hoverImages_[s]->set(it->second);
+            hoverImages_[s]->show();
+        } else {
+            hoverImages_[s]->clear();
+            hoverImages_[s]->hide();
+        }
+    }
+}
+
+void AlbumBrowser::startCycleTimer()
+{
+    if (static_cast<int>(cycleFiles_.size()) <= 5) {
+        return; // the whole album is visible — nothing to scroll through
+    }
+
+    cycleConn_.disconnect();
+    cycleConn_ = Glib::signal_timeout().connect([this]() -> bool {
+        if (!popupVisible_ || static_cast<int>(cycleFiles_.size()) <= 5) {
+            return false;
+        }
+        const int n = static_cast<int>(cycleFiles_.size());
+        const int next = (cycleStart_ + 5) % n;
+        if (!cyclePixbufs_.count(next)) {
+            // Preload the incoming thumbnail; advance on a later tick once
+            // it has finished loading.
+            if (!cycleLoading_.count(next)) {
+                cycleLoading_.insert(next);
+                std::thread(&AlbumBrowser::loadCycleThumbsWorker, this,
+                            std::vector<Glib::ustring>{cycleFiles_[next]},
+                            std::vector<int>{next}, hoverPopupSession_, false).detach();
+            }
+            return true;
+        }
+        cycleStart_ = (cycleStart_ + 1) % n;
+        applyCycleImages();
+        return true;
+    }, 1100);
 }
 
 void AlbumBrowser::deselectAlbum()

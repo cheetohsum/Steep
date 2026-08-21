@@ -226,6 +226,10 @@ public:
     // background folder scan has already filled the queue.
     static constexpr int kForegroundWorkerReserve = 2;
 
+    // Workers allowed to keep filling visible cells while the foreground holds
+    // the pause. Small enough that the editor still gets the machine.
+    static constexpr int kPausedVisibleWorkers = 2;
+
     struct CallbackLease {
         CallbackLease(Impl& impl, ThumbImageUpdateListener* listener):
             impl_(impl),
@@ -434,9 +438,58 @@ public:
         return jobs_.end();
     }
 
+    // While the foreground (editor open / render) holds the pause, only work
+    // the user can actually see is allowed through, on a small slice of the
+    // pool. Freezing outright leaves the filmstrip full of empty cells for the
+    // whole editor open, which is exactly when the user is looking at it.
+    bool
+    visibleOnlyLocked_() const
+    {
+        return pauseDepth_.load(std::memory_order_relaxed) > 0;
+    }
+
+    JobList::iterator
+    pickBestVisibleJobLocked_()
+    {
+        const auto runnableVisible = [this](const Job& job) {
+            return job.priority_
+                && *job.priority_
+                && (!job.jpeg_ || activeJpegJobs_ < kMaxConcurrentBackgroundJpegJobs);
+        };
+
+        JobList::iterator i = findPriorityJobLocked_(true);
+
+        if (i == jobs_.end()) {
+            i = findPriorityJobLocked_();
+        }
+
+        if (i == jobs_.end() || !runnableVisible(*i)) {
+            // priorityScanNeeded_ / foregroundJobCount_ are hints kept in sync
+            // by the viewport scan and can lag; confirm directly before giving
+            // up, and self-heal the counter so workers stop being woken for
+            // work that no longer exists.
+            i = std::find_if(jobs_.begin(), jobs_.end(), runnableVisible);
+
+            if (i != jobs_.end()) {
+                priorityScanNeeded_ = true;
+            } else if (std::none_of(
+                           jobs_.begin(),
+                           jobs_.end(),
+                           [](const Job& job) { return job.priority_ && *job.priority_; })) {
+                foregroundJobCount_ = 0;
+            }
+        }
+
+        return i;
+    }
+
     JobList::iterator
     pickBestJobLocked_()
     {
+        if (visibleOnlyLocked_()) {
+            return pickBestVisibleJobLocked_();
+        }
+
         JobList::iterator i = findPriorityJobLocked_(true);
 
         if (i == jobs_.end()) {
@@ -520,11 +573,20 @@ public:
     int
     scheduleWorkersLocked_()
     {
-        if (jobs_.empty() || pauseDepth_.load(std::memory_order_relaxed) > 0) {
+        if (jobs_.empty()) {
             return 0;
         }
 
-        const int workerLimit = workerLimitLocked_();
+        const bool visibleOnly = visibleOnlyLocked_();
+
+        if (visibleOnly && foregroundJobCount_ == 0) {
+            return 0;
+        }
+
+        const int workerLimit =
+            visibleOnly
+                ? std::min(kPausedVisibleWorkers, maxThreadCount_)
+                : workerLimitLocked_();
         const int running = static_cast<int>(active_.load(std::memory_order_relaxed));
         const int capacity = workerLimit - running - queuedWorkers_;
         int availableJpegSlots = std::max(
@@ -532,6 +594,9 @@ public:
             kMaxConcurrentBackgroundJpegJobs - activeJpegJobs_);
         int runnableJobs = 0;
         for (const auto& job : jobs_) {
+            if (visibleOnly && !(job.priority_ && *job.priority_)) {
+                continue;
+            }
             if (!job.jpeg_) {
                 ++runnableJobs;
             } else if (availableJpegSlots > 0) {
@@ -614,8 +679,9 @@ public:
                 --queuedWorkers_;
             }
 
-            // nothing to do; could be jobs have been removed
-            if ( jobs_.empty() || pauseDepth_.load(std::memory_order_relaxed) > 0 ) {
+            // nothing to do; could be jobs have been removed. While paused,
+            // visible cells are still worth filling — anything else waits.
+            if ( jobs_.empty() || (visibleOnlyLocked_() && foregroundJobCount_ == 0) ) {
                 DEBUG("processing: nothing to do (%d)", jobs_.empty());
                 notifyInactiveLocked_();
                 return;
@@ -633,13 +699,20 @@ public:
             {
                 std::lock_guard<std::mutex> lock(mutex_);
 
-                if (pauseDepth_.load(std::memory_order_relaxed) > 0) {
+                const bool visibleOnly = visibleOnlyLocked_();
+
+                if (visibleOnly && foregroundJobCount_ == 0) {
                     break;
                 }
 
+                const int limit =
+                    visibleOnly
+                        ? std::min(kPausedVisibleWorkers, maxThreadCount_)
+                        : workerLimitLocked_();
+
                 // Once visible work drains, release excess workers so later
                 // visible requests still have pool capacity available.
-                if (static_cast<int>(active_.load(std::memory_order_relaxed)) > workerLimitLocked_()) {
+                if (static_cast<int>(active_.load(std::memory_order_relaxed)) > limit) {
                     --active_;
                     activeSlotReleased = true;
                     break;
@@ -668,21 +741,23 @@ public:
                 img = thm->processThumbImage(preview_height, scale, &crop, j.cache_pixbuf_);
             }
 
-            if (img) {
-                CallbackLease callback(*this, j.listener_);
-                {
-                    std::lock_guard<std::mutex> lock(mutex_);
-                    callback.active_ = beginCallbackLocked_(j.listener_);
-                }
+            CallbackLease callback(*this, j.listener_);
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                callback.active_ = beginCallbackLocked_(j.listener_);
+            }
 
-                if (callback.active_) {
+            if (callback.active_) {
+                if (img) {
                     DEBUG("pushing image %s", thm->getFileName().c_str());
                     ThumbImageUpdateListener::ImageUpdate update(img, logical, device_scale, scale, crop);
                     j.listener_->updateImage(update);
                 } else {
-                    // Listener was removed; discard result, don't callback.
-                    delete img;
+                    j.listener_->updateImageFailed(logical, device_scale, j.upgrade_);
                 }
+            } else {
+                // Listener was removed; discard result, don't callback.
+                delete img;
             }
 
             // Release our reference to the thumbnail.
@@ -854,6 +929,7 @@ void ThumbImageUpdater::removeJobs(ThumbImageUpdateListener* listener)
     // Mark listener as cancelled so any in-flight jobs skip the callback
     // instead of delivering to a deleted object.
     impl_->cancelled_.insert(listener);
+    impl_->notifyInactiveLocked_();
     impl_->inactive_.wait(lock, [this, listener]() {
         return impl_->callbacksInFlight_.find(listener) == impl_->callbacksInFlight_.end();
     });

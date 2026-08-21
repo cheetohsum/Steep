@@ -217,7 +217,14 @@ public:
         return fd;
     }
     void on_style_updated () override;
-    void resort (); // re-apply sort method
+    void resort ();
+
+protected:
+    // Reposition pinned entries (pinAfter set) directly after their anchor.
+    // Caller must hold the entryRW write lock.
+    void applyPinnedOrder_ ();
+
+public: // re-apply sort method
     void redraw (ThumbBrowserEntryBase* entry = nullptr, bool filterStateCurrent = false);   // arrange files and draw area
     void refreshThumbImages (); // refresh thumbnail sizes, re-generate thumbnail images, arrange and draw
     void refreshQuickThumbImages (); // refresh thumbnail sizes, re-generate thumbnail images, arrange and draw
@@ -233,7 +240,13 @@ public:
 
 protected:
     bool redrawPending_ = false;
-    bool layoutPaused_ = false;
+    // Refcounted: the sidebar slide and the filmstrip slide can overlap, and
+    // whichever finishes first must not unpause the other.
+    int layoutPauseDepth_ = 0;
+    bool layoutPaused_ () const { return layoutPauseDepth_ > 0; }
+    // A size-allocate arrived while layout was paused (panel slide animations
+    // re-allocate every frame); one relayout on resume covers them all.
+    bool layoutDeferredResize_ = false;
     std::vector<ThumbBrowserEntryBase*> pendingInserts_;
     std::vector<ThumbBrowserEntryBase*> visibleEntries_;
     std::vector<ThumbBrowserEntryBase*> previousVisibleEntries_;

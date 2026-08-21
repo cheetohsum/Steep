@@ -22,12 +22,14 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cmath>
 #include <iterator>
 #include <iostream>
 #include <iomanip>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <system_error>
 #include <thread>
 #include <unordered_set>
 
@@ -51,6 +53,7 @@
 #include "placesbrowser.h"
 #include "rtimage.h"
 #include "rtscalable.h"
+#include "rtsurface.h"
 #include "selectsindex.h"
 #include "thumbimageupdater.h"
 #include "thumbnail.h"
@@ -60,6 +63,18 @@
 using namespace std;
 
 namespace {
+
+// winpthreads can fail pthread_detach with ESRCH when the thread has already
+// finished, and std::thread::detach turns that into an uncaught
+// std::system_error — i.e. terminate(). Detaching a finished thread is a
+// no-op, so treat the failure as success.
+void detachQuietly(std::thread&& worker)
+{
+    try {
+        worker.detach();
+    } catch (const std::system_error&) {
+    }
+}
 
 std::string foldedPathKey(const Glib::ustring& path)
 {
@@ -538,6 +553,63 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     stb_->add(*buttonBar);
     pack_start (*stb_, Gtk::PACK_SHRINK);
 
+    // Centred title naming the folder (or album) the browser is showing. Sits
+    // in the box's centre slot so it stays put as toolbar buttons come and go.
+    // Wrapped in an event box so it can take a right-click menu (pin above
+    // the editor filmstrip / show the full path).
+    dirTitleLabel_ = Gtk::manage (new Gtk::Label ());
+    dirTitleLabel_->set_name ("BrowserPathTitle");
+    dirTitleLabel_->set_ellipsize (Pango::ELLIPSIZE_MIDDLE);
+    dirTitleLabel_->set_max_width_chars (40);
+    dirTitleLabel_->set_halign (Gtk::ALIGN_CENTER);
+
+    dirTitleEvtBox_ = Gtk::manage (new Gtk::EventBox ());
+    dirTitleEvtBox_->set_visible_window (false);
+    dirTitleEvtBox_->add (*dirTitleLabel_);
+    dirTitleEvtBox_->add_events (Gdk::BUTTON_PRESS_MASK);
+    buttonBar->set_center_widget (*dirTitleEvtBox_);
+
+    titleMenu_ = Gtk::manage (new Gtk::Menu ());
+    titleMenu_->attach_to_widget (*dirTitleEvtBox_);
+    titlePinItem_ = Gtk::manage (new Gtk::CheckMenuItem (M("FILEBROWSER_TITLE_PIN")));
+    titlePinItem_->signal_toggled().connect ([this]() {
+        if (titleMenuBlock_) {
+            return;
+        }
+        App::get().mut_options().browserTitlePinToEditor = titlePinItem_->get_active();
+        try {
+            Options::save();
+        } catch (Options::Error&) {}
+        applyBrowserTitle();
+    });
+    titleMenu_->append (*titlePinItem_);
+    titleFullPathItem_ = Gtk::manage (new Gtk::CheckMenuItem (M("FILEBROWSER_TITLE_FULLPATH")));
+    titleFullPathItem_->signal_toggled().connect ([this]() {
+        if (titleMenuBlock_) {
+            return;
+        }
+        App::get().mut_options().browserTitleShowFullPath = titleFullPathItem_->get_active();
+        try {
+            Options::save();
+        } catch (Options::Error&) {}
+        applyBrowserTitle();
+    });
+    titleMenu_->append (*titleFullPathItem_);
+    titleMenu_->show_all ();
+
+    dirTitleEvtBox_->signal_button_press_event().connect ([this](GdkEventButton* event) -> bool {
+        if (event->type == GDK_BUTTON_PRESS && event->button == 3) {
+            const auto& o = App::get().options();
+            titleMenuBlock_ = true;
+            titlePinItem_->set_active (o.browserTitlePinToEditor);
+            titleFullPathItem_->set_active (o.browserTitleShowFullPath);
+            titleMenuBlock_ = false;
+            titleMenu_->popup_at_pointer (reinterpret_cast<GdkEvent*>(event));
+            return true;
+        }
+        return false;
+    });
+
     tbLeftPanel_1 = new Gtk::ToggleButton ();
     iLeftPanel_1_Show = new RTImage("panel-to-right", Gtk::ICON_SIZE_LARGE_TOOLBAR);
     iLeftPanel_1_Hide = new RTImage("panel-to-left", Gtk::ICON_SIZE_LARGE_TOOLBAR);
@@ -561,7 +633,21 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     // Global scope: apply the active filter across every known folder
     globalAliveToken_ = std::make_shared<std::atomic<bool>>(true);
     bGlobalScope_ = Gtk::manage(new Gtk::ToggleButton());
-    bGlobalScope_->set_image(*Gtk::manage(new RTImage("globe-small", Gtk::ICON_SIZE_BUTTON)));
+    globalScopeGlobeSurface_ = RTImageCache::getCachedSurface("globe-small", Gtk::ICON_SIZE_BUTTON);
+    globalScopeGlobe_ = Gtk::manage(new Gtk::DrawingArea());
+    int globeWidth = 16;
+    int globeHeight = 16;
+    Gtk::IconSize::lookup(Gtk::ICON_SIZE_BUTTON, globeWidth, globeHeight);
+    if (globalScopeGlobeSurface_
+            && globalScopeGlobeSurface_->getWidth() > 0
+            && globalScopeGlobeSurface_->getHeight() > 0) {
+        globeWidth = globalScopeGlobeSurface_->getWidth();
+        globeHeight = globalScopeGlobeSurface_->getHeight();
+    }
+    globalScopeGlobe_->set_size_request(globeWidth, globeHeight);
+    globalScopeGlobe_->signal_draw().connect(
+        sigc::mem_fun(*this, &FileCatalog::drawGlobalScopeGlobe));
+    bGlobalScope_->set_image(*globalScopeGlobe_);
     bGlobalScope_->set_relief(Gtk::RELIEF_NONE);
     bGlobalScope_->set_tooltip_text(M("FILEBROWSER_GLOBALSCOPE_TOOLTIP"));
     globalToggleConn_ = bGlobalScope_->signal_toggled().connect(sigc::mem_fun(*this, &FileCatalog::globalScopeToggled));
@@ -580,6 +666,7 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
 
     // Create the filter bar (will go inside a Revealer)
     Gtk::Box* filterBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL));
+    filterBar_ = filterBar;
     filterBar->set_name("BrowserFilterBar");
     filterBar->pack_start(*bFilterClear, Gtk::PACK_SHRINK);
     filterBar->pack_start(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK);
@@ -887,7 +974,8 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     bRecursive->set_active(options.browseRecursive);
     bRecursive->signal_toggled().connect(sigc::mem_fun(*this, &FileCatalog::showRecursiveToggled));
 
-    // bTrash and bRecursive stay on main bar; bOriginal goes in filter bar
+    // bRecursive stays on the main bar; bOriginal (and, further right,
+    // bTrash + the metadata cog) go in the filter bar
     filterBar->pack_start (*bOriginal, Gtk::PACK_SHRINK);
     // bNotTrash is not packed (removed from UI, always inactive)
 
@@ -927,6 +1015,12 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
         updateFiletypeButtonLabel();
         updateFiletypeDefaultCheck_();
     }
+
+    // Show-trash and the metadata-filter cog live in the filter dropdown,
+    // right of the filetype settings (the cog is appended later by
+    // embedMetadataFilterPanel).
+    filterBar->pack_start(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK);
+    filterBar->pack_start(*bTrash, Gtk::PACK_SHRINK);
 
     // Wrap filterBar in a Revealer
     filterRevealer_ = Gtk::manage(new Gtk::Revealer());
@@ -971,7 +1065,10 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     zoomSlider_->set_range(0, options.thumbnailZoomRatios.size() - 1);
     zoomSlider_->set_increments(1, 1);
     zoomSlider_->set_draw_value(false);
-    zoomSlider_->set_size_request(230, -1);
+    // A real widget height matters here: the grab-area CSS below only extends
+    // clicks WITHIN the widget's allocation, so a skinny allocation made the
+    // slider hard to hit despite the padding.
+    zoomSlider_->set_size_request(230, 28);
     zoomSlider_->set_valign(Gtk::ALIGN_CENTER);
     zoomSlider_->setZoomStyle(true);
     zoomSlider_->set_tooltip_text(M("FILEBROWSER_ZOOMSLIDER_HINT"));
@@ -1029,8 +1126,8 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     tbRightPanel_1->signal_toggled().connect( sigc::mem_fun(*this, &FileCatalog::tbRightPanel_1_toggled) );
 
     // --- Single row layout ---
-    // [filter] [trash] [info] [BrowsePath + Query] [zoom] [rotate]
-    buttonBar->pack_start (*bTrash, Gtk::PACK_SHRINK);
+    // [filter] [info] [BrowsePath + Query] [zoom] [rotate]
+    // (trash + metadata cog moved into the filter dropdown)
     buttonBar->pack_start (*exifInfo, Gtk::PACK_SHRINK);
     buttonBar->pack_start (*hbToolBar1, Gtk::PACK_SHRINK, 0);
     zoomSlider_->set_margin_start(8);
@@ -1132,6 +1229,7 @@ FileCatalog::~FileCatalog()
         *globalScanCancel_ = true;
     }
     globalRescanConn_.disconnect();
+    globalGlobeAnimConn_.disconnect();
     delete rejectsPopover_;
     zoomSliderApplyConn_.disconnect();
     colorFadeConn_.disconnect();
@@ -1190,26 +1288,6 @@ void FileCatalog::filterToggled()
 
     bool show = bFilterToggle_->get_active();
     filterRevealer_->set_reveal_child(show);
-
-    if (!show) {
-        // When hiding filter bar, reset to "show all" (activate bFilterClear)
-        const int numCateg = sizeof(bCateg) / sizeof(bCateg[0]);
-        for (int i = 0; i < numCateg; i++) {
-            bCateg[i].block(true);
-        }
-
-        bFilterClear->set_active(true);
-        for (int i = 1; i < 20; i++) {
-            categoryButtons[i]->set_active(false);
-        }
-
-        for (int i = 0; i < numCateg; i++) {
-            bCateg[i].block(false);
-        }
-
-        fileBrowser->applyFilter(getFilter());
-        fileBrowser->redraw();
-    }
 }
 
 void FileCatalog::exifInfoButtonToggled()
@@ -1365,6 +1443,54 @@ std::vector<Glib::ustring> FileCatalog::getFileList(std::vector<Glib::RefPtr<Gio
     return names;
 }
 
+// Folder name for the toolbar title. Drive/filesystem roots have no meaningful
+// basename, so those fall back to the path itself.
+Glib::ustring FileCatalog::directoryTitle (const Glib::ustring& directory)
+{
+    const Glib::ustring name = Glib::path_get_basename (directory);
+
+    return name.empty() || name == G_DIR_SEPARATOR_S ? directory : name;
+}
+
+void FileCatalog::setBrowserTitle (const Glib::ustring& text, const Glib::ustring& tooltip)
+{
+    titleName_ = text;
+    titleFullPath_ = tooltip;
+    applyBrowserTitle ();
+}
+
+Glib::ustring FileCatalog::getBrowserTitleText () const
+{
+    if (App::get().options().browserTitleShowFullPath && !titleFullPath_.empty()) {
+        return titleFullPath_;
+    }
+    return titleName_;
+}
+
+Glib::ustring FileCatalog::getBrowserTitleTooltip () const
+{
+    return titleFullPath_.empty() ? titleName_ : titleFullPath_;
+}
+
+sigc::signal<void, const Glib::ustring&, const Glib::ustring&>& FileCatalog::browserTitleChanged ()
+{
+    static sigc::signal<void, const Glib::ustring&, const Glib::ustring&> sig;
+    return sig;
+}
+
+void FileCatalog::applyBrowserTitle ()
+{
+    if (!dirTitleLabel_) {
+        return;
+    }
+
+    const Glib::ustring display = getBrowserTitleText ();
+    const Glib::ustring tip = getBrowserTitleTooltip ();
+    dirTitleLabel_->set_text (display);
+    dirTitleLabel_->set_tooltip_text (tip.empty() ? display : tip);
+    browserTitleChanged ().emit (display, tip);
+}
+
 void FileCatalog::dirSelected (const Glib::ustring& dirname, const Glib::ustring& openfile)
 {
     // Navigating to a real directory leaves global scope and album mode
@@ -1381,6 +1507,11 @@ void FileCatalog::dirSelected (const Glib::ustring& dirname, const Glib::ustring
         // Skip reload if same directory is already loaded and no specific file to open
         if (openfile.empty() && selectedDirectory == dir->get_parse_name()) {
             return;
+        }
+
+        if (selectedDirectory != dir->get_parse_name()) {
+            // Partner pins live until the user browses away from this folder.
+            pinnedPartners_.clear();
         }
 
         closeDir();
@@ -1407,6 +1538,7 @@ void FileCatalog::dirSelected (const Glib::ustring& dirname, const Glib::ustring
         startFolderLoadTiming_();
 
         BrowsePath->set_text(selectedDirectory);
+        setBrowserTitle(directoryTitle(selectedDirectory), selectedDirectory);
         buttonBrowsePath->set_image(*iRefreshWhite);
         filepanel->loadingThumbs(M("PROGRESSBAR_LOADINGTHUMBS"), 0);
 
@@ -1420,6 +1552,12 @@ void FileCatalog::dirSelected (const Glib::ustring& dirname, const Glib::ustring
             && isEnabledImagePath(priorityFile)
             && catalogPathKey(Glib::path_get_dirname(priorityFile)) == catalogPathKey(selectedDirectory)) {
             addFile(priorityFile);
+        }
+
+        // Re-surface session-pinned partners (same-folder reloads keep them;
+        // browsing away cleared the map above).
+        for (const auto& pin : pinnedPartners_) {
+            addFile(pin.second.first);
         }
 
         // Enumerate files in the background and feed previews progressively.
@@ -1649,10 +1787,10 @@ void FileCatalog::enableTabMode(bool enable)
         get_style_context()->add_class("filmstrip");
         fileBrowser->get_style_context()->add_class("filmstrip");
 
-        // Collapse the filter bar when entering filmstrip mode to prevent
-        // it from overlapping the filmstrip thumbnails.
+        // Collapse the browser filter UI in filmstrip mode without clearing
+        // its controls; those settings are restored on return to the browser.
         if (bFilterToggle_ && bFilterToggle_->get_active()) {
-            bFilterToggle_->set_active(false);  // triggers filterToggled → hides & clears
+            bFilterToggle_->set_active(false);
         }
         // Hide the revealer widget entirely so it contributes zero pixels
         filterRevealer_->hide();
@@ -1709,17 +1847,14 @@ void FileCatalog::enableTabMode(bool enable)
     refreshHeight();
 
 
-    if (!enable) {
-        // Reapply the browser's own filter to clear any editor-applied filter
-        filterChanged();
-    }
-
+    // Leaving filmstrip mode still has to clear the editor-applied filter, but
+    // that is done once by reapplyBrowserFilter() in RTWindow::MoveFileBrowserToMain
+    // right after this returns. Running filterChanged() and redrawAll() here as
+    // well meant three full O(N) filter+relayout passes per switch.
+    //
     // Entering filmstrip mode is redrawn by ThumbBrowserBase once its entry
     // geometry lock is available. A second synchronous redraw here can block
     // the GTK thread behind thumbnail workers while a large folder is loading.
-    if (!enable) {
-        redrawAll();
-    }
 }
 
 void FileCatalog::_refreshProgressBar ()
@@ -1913,6 +2048,15 @@ bool FileCatalog::processPendingPreviews_()
 
         // put it into the "full directory" browser
         fdn->setImageAreaToolListener(iatlistener);
+
+        {
+            const auto pin = pinnedPartners_.find(catalogPathKey(fdn->filename));
+
+            if (pin != pinnedPartners_.end()) {
+                fdn->pinAfter = pin->second.second;
+            }
+        }
+
         entriesToAdd.push_back(fdn);
 
         if (processed >= minPreviewsPerIdle
@@ -2377,6 +2521,9 @@ void FileCatalog::previewsFinishedUI(int dir_id)
     flushFiletypeFilterUpdate_();
 
     filepanel->loadingThumbs(M("PROGRESSBAR_READY"), 0);
+    if (globalScopeActive_) {
+        settleGlobalScopeGlobe();
+    }
 
     if (!imageToSelect_fname.empty()) {
         fileBrowser->selectImage(imageToSelect_fname, false);
@@ -3383,16 +3530,19 @@ void FileCatalog::embedMetadataFilterPanel (Gtk::Widget* panel)
     panel->show_all();
     metadataFilterButton_->set_popover(*metadataFilterPopover_);
 
-    if (hbToolBar1) {
-        hbToolBar1->pack_start(*metadataFilterButton_, Gtk::PACK_SHRINK, 0);
+    if (filterBar_) {
+        // Into the filter dropdown, right of the filetype settings and trash
+        filterBar_->pack_start(*metadataFilterButton_, Gtk::PACK_SHRINK, 0);
         metadataFilterButton_->show_all();
     }
 }
 
 void FileCatalog::reapplyBrowserFilter ()
 {
-    fileBrowser->applyFilter (getFilter ());
-    _refreshProgressBar ();
+    // Single filter + relayout pass for the whole return-to-browser switch;
+    // enableTabMode(false) deliberately leaves this to us. filterChanged()
+    // also keeps global-scope rescanning consistent.
+    filterChanged ();
     // Nudge preview loading in case background work was left paused by the
     // editor's foreground-priority machinery.
     previewLoader->resume ();
@@ -3605,6 +3755,7 @@ void FileCatalog::showAlbumFiles (const Glib::ustring& albumName, const std::vec
 
     // Update the browse path to show album name
     BrowsePath->set_text(Glib::ustring::compose("Album: %1", albumName));
+    setBrowserTitle(Glib::ustring::compose("Album: %1", albumName), Glib::ustring());
 
     // Add each file from the album
     for (const auto& f : files) {
@@ -3704,6 +3855,117 @@ std::string filterScanKey(const BrowserFilter& filter)
 
 } // namespace
 
+bool FileCatalog::drawGlobalScopeGlobe(const Cairo::RefPtr<Cairo::Context>& cr)
+{
+    if (!globalScopeGlobeSurface_) {
+        return true;
+    }
+
+    const auto surface = globalScopeGlobeSurface_->get();
+    const int iconWidth = globalScopeGlobeSurface_->getWidth();
+    const int iconHeight = globalScopeGlobeSurface_->getHeight();
+
+    if (!surface || iconWidth <= 0 || iconHeight <= 0) {
+        return true;
+    }
+
+    const double centerX = globalScopeGlobe_->get_allocated_width() * 0.5;
+    const double centerY = globalScopeGlobe_->get_allocated_height() * 0.5;
+
+    cr->save();
+    cr->translate(centerX, centerY);
+    cr->rotate(std::fmod(globalGlobeAngle_, 2.0 * rtengine::RT_PI));
+    cr->translate(-iconWidth * 0.5, -iconHeight * 0.5);
+    cr->set_source(surface, 0.0, 0.0);
+    cr->paint();
+    cr->restore();
+
+    return true;
+}
+
+bool FileCatalog::tickGlobalScopeGlobe()
+{
+    const auto now = std::chrono::steady_clock::now();
+    const double elapsed = std::chrono::duration<double>(now - globalGlobeLastTick_).count();
+    const double dt = std::max(0.001, std::min(0.05, elapsed));
+    globalGlobeLastTick_ = now;
+
+    constexpr double SPIN_SPEED = 2.0 * rtengine::RT_PI / 3.8;
+
+    if (globalGlobeScanning_) {
+        const double approach = std::min(1.0, dt * 3.2);
+        globalGlobeAngularVelocity_ +=
+            (SPIN_SPEED - globalGlobeAngularVelocity_) * approach;
+        globalGlobeAngle_ += globalGlobeAngularVelocity_ * dt;
+    } else if (globalGlobeSettling_) {
+        // A damped spring preserves the current motion, then eases into the
+        // nearest visually upright position without an abrupt icon reset.
+        const double error = globalGlobeSettleTarget_ - globalGlobeAngle_;
+        const double acceleration =
+            16.0 * error - 8.0 * globalGlobeAngularVelocity_;
+        globalGlobeAngularVelocity_ += acceleration * dt;
+        globalGlobeAngularVelocity_ = std::max(
+            -SPIN_SPEED,
+            std::min(SPIN_SPEED, globalGlobeAngularVelocity_));
+        globalGlobeAngle_ += globalGlobeAngularVelocity_ * dt;
+
+        if (std::abs(error) < 0.004
+                && std::abs(globalGlobeAngularVelocity_) < 0.02) {
+            globalGlobeAngle_ = 0.0;
+            globalGlobeAngularVelocity_ = 0.0;
+            globalGlobeSettling_ = false;
+        }
+    }
+
+    if (globalScopeGlobe_) {
+        globalScopeGlobe_->queue_draw();
+    }
+
+    return globalGlobeScanning_ || globalGlobeSettling_;
+}
+
+void FileCatalog::startGlobalScopeGlobe()
+{
+    globalGlobeScanning_ = true;
+    globalGlobeSettling_ = false;
+    globalGlobeLastTick_ = std::chrono::steady_clock::now();
+
+    if (!globalGlobeAnimConn_.connected()) {
+        globalGlobeAnimConn_ = Glib::signal_timeout().connect(
+            sigc::mem_fun(*this, &FileCatalog::tickGlobalScopeGlobe),
+            16);
+    }
+}
+
+void FileCatalog::settleGlobalScopeGlobe()
+{
+    globalGlobeScanning_ = false;
+
+    if (std::abs(globalGlobeAngle_) < 0.001
+            && std::abs(globalGlobeAngularVelocity_) < 0.02) {
+        globalGlobeAngle_ = 0.0;
+        globalGlobeAngularVelocity_ = 0.0;
+        globalGlobeSettling_ = false;
+        if (globalScopeGlobe_) {
+            globalScopeGlobe_->queue_draw();
+        }
+        return;
+    }
+
+    // The globe artwork is 180-degree symmetric, so either half-turn is its
+    // exact normal appearance. Choosing the nearest one keeps settling short.
+    globalGlobeSettleTarget_ =
+        std::round(globalGlobeAngle_ / rtengine::RT_PI) * rtengine::RT_PI;
+    globalGlobeSettling_ = true;
+    globalGlobeLastTick_ = std::chrono::steady_clock::now();
+
+    if (!globalGlobeAnimConn_.connected()) {
+        globalGlobeAnimConn_ = Glib::signal_timeout().connect(
+            sigc::mem_fun(*this, &FileCatalog::tickGlobalScopeGlobe),
+            16);
+    }
+}
+
 void FileCatalog::resetGlobalScopeQuiet ()
 {
     if (!globalScopeActive_ && (!bGlobalScope_ || !bGlobalScope_->get_active())) {
@@ -3717,6 +3979,7 @@ void FileCatalog::resetGlobalScopeQuiet ()
     if (globalScanCancel_) {
         *globalScanCancel_ = true;
     }
+    settleGlobalScopeGlobe();
 
     if (bGlobalScope_ && bGlobalScope_->get_active()) {
         globalToggleConn_.block();
@@ -3728,6 +3991,54 @@ void FileCatalog::resetGlobalScopeQuiet ()
 void FileCatalog::globalScopeToggled ()
 {
     if (bGlobalScope_->get_active()) {
+        // Guard against accidental unfiltered global scans — they walk every
+        // known folder and list everything. Dismissable one-time warning.
+        // "No filter applied" here means: no rating/label/edited/saved/flag
+        // buttons, no query text, no filetype filter, no metadata filter, and
+        // not the trash or originals view. The trash plumbing flags and the
+        // standing hide-rejects preference deliberately don't count (they are
+        // always set, so isPassThrough() can't be used).
+        const BrowserFilter scanFilter = getFilter();
+        bool unfiltered = scanFilter.showPicked && scanFilter.showRejected && scanFilter.showUnflagged
+            && !scanFilter.showOriginal && !scanFilter.exifFilterEnabled
+            && scanFilter.vFilterStrings.empty() && scanFilter.filetypeFilter.empty()
+            && !bTrash->get_active();
+        for (int i = 0; unfiltered && i < 6; ++i) {
+            unfiltered = scanFilter.showRanked[i] && scanFilter.showCLabeled[i];
+        }
+        for (int i = 0; unfiltered && i < 2; ++i) {
+            unfiltered = scanFilter.showEdited[i] && scanFilter.showRecentlySaved[i];
+        }
+
+        if (App::get().options().showGlobalScopeUnfilteredWarning && unfiltered) {
+            Gtk::MessageDialog dialog(getToplevelWindow(this),
+                                      M("FILEBROWSER_GLOBALSCOPE_WARNING"), false,
+                                      Gtk::MESSAGE_WARNING, Gtk::BUTTONS_OK_CANCEL, true);
+            dialog.set_secondary_text(M("FILEBROWSER_GLOBALSCOPE_WARNING_SECONDARY"));
+            dialog.set_default_response(Gtk::RESPONSE_CANCEL);
+            Gtk::CheckButton dontShowAgain(M("DONT_SHOW_AGAIN"));
+            dontShowAgain.set_halign(Gtk::ALIGN_START);
+            dialog.get_message_area()->pack_start(dontShowAgain, Gtk::PACK_SHRINK, 4);
+            dontShowAgain.show();
+
+            const int response = dialog.run();
+
+            if (dontShowAgain.get_active()) {
+                App::get().mut_options().showGlobalScopeUnfilteredWarning = false;
+                try {
+                    Options::save();
+                } catch (Options::Error&) {}
+            }
+
+            if (response != Gtk::RESPONSE_OK) {
+                // Revert the toggle without re-entering this handler
+                globalToggleConn_.block();
+                bGlobalScope_->set_active(false);
+                globalToggleConn_.unblock();
+                return;
+            }
+        }
+
         globalScopeActive_ = true;
 
         if (!inAlbumMode_) {
@@ -3743,6 +4054,7 @@ void FileCatalog::globalScopeToggled ()
         if (globalScanCancel_) {
             *globalScanCancel_ = true;
         }
+        settleGlobalScopeGlobe();
 
         exitAlbumMode();
     }
@@ -3757,6 +4069,7 @@ void FileCatalog::startGlobalScan ()
     }
 
     globalScanCancel_ = std::make_shared<std::atomic<bool>>(false);
+    startGlobalScopeGlobe();
 
     inGlobalStart_ = true;
 
@@ -3769,6 +4082,7 @@ void FileCatalog::startGlobalScan ()
     inAlbumMode_ = true;
     albumWhitelist_.clear();
     BrowsePath->set_text(M("FILEBROWSER_GLOBALSCOPE"));
+    setBrowserTitle(M("FILEBROWSER_GLOBALSCOPE"), Glib::ustring());
     directoryScanComplete_ = false;
     previewsToLoad = 0; // fresh accounting for this scan's streamed adds
     filepanel->loadingThumbs(M("FILEBROWSER_GLOBALSCOPE"), 0);
@@ -3881,11 +4195,15 @@ void FileCatalog::startGlobalScan ()
         postBatch(std::move(ready));
     };
 
-    const int workerCount = std::max(2, std::min(6, static_cast<int>(std::thread::hardware_concurrency()) / 2));
+    // Never spawn more workers than there is work for: surplus workers exit
+    // immediately, which is exactly the detach race guarded above.
+    const int workerCount = std::max(1, std::min(
+        std::min(6, static_cast<int>(std::thread::hardware_concurrency()) / 2),
+        static_cast<int>(shared->dirs.size())));
     shared->pendingWorkers = workerCount;
 
     for (int worker = 0; worker < workerCount; ++worker) {
-        std::thread([this, alive, cancel, generation, filter, recurse, shared, worker, pushMatch, flushRemainder]() {
+        detachQuietly(std::thread([this, alive, cancel, generation, filter, recurse, shared, worker, pushMatch, flushRemainder]() {
             // Worker 0 first streams the index — instant, complete results
             // from every folder ever flagged, before any folder walking.
             if (worker == 0) {
@@ -3982,7 +4300,7 @@ void FileCatalog::startGlobalScan ()
                     previewsFinishedUI(selectedDirectoryId);
                 });
             }
-        }).detach();
+        }));
     }
 }
 
@@ -4422,6 +4740,35 @@ void FileCatalog::on_dir_changed (const Glib::RefPtr<Gio::File>& file, const Gli
     }
 }
 
+void FileCatalog::openPartnerForEditing (const Glib::ustring& path, const Glib::ustring& anchorPath)
+{
+    if (path.empty() || !Glib::file_test(path, Glib::FILE_TEST_EXISTS)) {
+        return;
+    }
+
+    pinnedPartners_[catalogPathKey(path)] = std::make_pair(path, anchorPath);
+
+    if (fileBrowser->pinEntryAfter(path, anchorPath)) {
+        // Already in the strip: highlight it like a click would.
+        fileBrowser->selectImage(path);
+    } else {
+        // Not in the strip yet (usually another folder): stream it in. The
+        // preview-ready path stamps the pin when the entry lands, and the
+        // deferred-select machinery highlights it.
+        imageToSelect_fname = path;
+        imageToSelect_key = catalogPathKey(path);
+        earlySelectDone_ = false;
+        addFile(path);
+    }
+
+    Thumbnail* thm = CacheManager::getInstance()->getEntry(path);
+
+    if (thm) {
+        openRequested({thm});
+        thm->decreaseRef();
+    }
+}
+
 void FileCatalog::addFile (const Glib::ustring& fName)
 {
     if (!fName.empty()) {
@@ -4602,10 +4949,14 @@ void FileCatalog::zoomOut ()
 }
 void FileCatalog::zoomSliderChanged ()
 {
-    // Applying on every slider tick resizes every entry and queues a
-    // thumbnail re-render per step — that is the drag lag. Debounce until
-    // the slider settles, and skip no-op re-applies.
-    zoomSliderApplyConn_.disconnect();
+    // Throttle, not debounce: applying on every slider tick resizes every
+    // entry and queues a thumbnail re-render per step, which lags the drag —
+    // but the grid should still follow the drag live. One apply per ~80ms
+    // reads the latest slider value at fire time (so the final position is
+    // always applied), and no-op re-applies are skipped.
+    if (zoomSliderApplyConn_.connected()) {
+        return;
+    }
     zoomSliderApplyConn_ = Glib::signal_timeout().connect(
         [this]() -> bool {
             const auto& options = App::get().options();
@@ -4623,7 +4974,7 @@ void FileCatalog::zoomSliderChanged ()
             refreshHeight();
             return false;
         },
-        130);
+        80);
 }
 
 void FileCatalog::refreshEditedState (const std::set<Glib::ustring>& efiles)

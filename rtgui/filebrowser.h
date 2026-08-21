@@ -170,6 +170,11 @@ protected:
     // Inline actions-row icon for add-to-target-album (shown only when a
     // target album is configured)
     Gtk::Widget* inlineAddToAlbumIcon_ = nullptr;
+    // Inline flag-row icons: each hides when every selected image already
+    // has that pick state, so only the applicable actions show
+    Gtk::Widget* inlineFlagPickIcon_ = nullptr;
+    Gtk::Widget* inlineFlagUnflagIcon_ = nullptr;
+    Gtk::Widget* inlineFlagRejectIcon_ = nullptr;
     std::function<bool()> addToAlbumAvailable_;
     MyImageMenuItem* pasteprof;
     MyImageMenuItem* partpasteprof;
@@ -212,6 +217,7 @@ protected:
     void notifySelectionListener ();
     void scheduleSelectionNotify ();
     void openRequested( std::vector<FileBrowserEntry*> mselected);
+    void openSourceFolder();
     void inspectRequested( std::vector<FileBrowserEntry*> mselected);
     ExportPanel* exportPanel;
 
@@ -289,6 +295,9 @@ public:
     void buttonPressed (LWButton* button, int actionCode, void* actionData) override;
     void redrawNeeded  (LWButton* button) override;
     bool checkFilter (ThumbBrowserEntryBase* entry) const override;
+    // Pin an existing entry so it sorts directly after `anchorPath` and
+    // bypasses filters; returns false if no entry for `path` exists yet.
+    bool pinEntryAfter (const Glib::ustring& path, const Glib::ustring& anchorPath);
     void rightClicked () override;
     void doubleClicked (ThumbBrowserEntryBase* entry) override;
     bool keyPressed (GdkEventKey* event) override;

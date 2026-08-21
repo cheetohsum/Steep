@@ -58,13 +58,9 @@ private:
     Adjuster* redShift;
     Adjuster* greenShift;
     Adjuster* blueShift;
-    Adjuster* grainAdj;
     Adjuster* vibranceAdj;
     Adjuster* skinProtectionAdj_;
     Adjuster* layerCouplingAdj_;
-    Adjuster* grainSizeAdj_;
-    Adjuster* grainClumpingAdj_;
-    Adjuster* grainColorAdj_;
     Adjuster* halationSizeAdj_;
     Adjuster* halationThresholdAdj_;
     Adjuster* halationColorAdj_;
@@ -105,13 +101,9 @@ private:
     rtengine::ProcEvent EvFilmPresetsRedShift;
     rtengine::ProcEvent EvFilmPresetsGreenShift;
     rtengine::ProcEvent EvFilmPresetsBlueShift;
-    rtengine::ProcEvent EvFilmPresetsGrain;
     rtengine::ProcEvent EvFilmPresetsVibrance;
     rtengine::ProcEvent EvFilmPresetsSkinProtection;
     rtengine::ProcEvent EvFilmPresetsLayerCoupling;
-    rtengine::ProcEvent EvFilmPresetsGrainSize;
-    rtengine::ProcEvent EvFilmPresetsGrainClumping;
-    rtengine::ProcEvent EvFilmPresetsGrainColor;
     rtengine::ProcEvent EvFilmPresetsHalationSize;
     rtengine::ProcEvent EvFilmPresetsHalationThreshold;
     rtengine::ProcEvent EvFilmPresetsHalationColor;

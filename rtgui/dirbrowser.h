@@ -91,14 +91,34 @@ private:
 #endif
     void addDir (const Gtk::TreeModel::iterator& iter, const Glib::ustring& dirname);
     Gtk::TreePath expandToDir (const Glib::ustring& dirName);
+    Glib::ustring highlightDirInternal (const Glib::ustring& dirName, bool collapseTree);
     void updateDir (const Gtk::TreeModel::iterator& iter);
     void countPhotosInChildren (const Gtk::TreeModel::iterator& parent);
+
+    // The directory currently open in the catalog. The tree uses hover
+    // selection, so the GTK selection follows the pointer and is dropped when
+    // it leaves the tree; the open folder has to be tracked separately and
+    // painted by the cell renderers.
+    Glib::ustring currentDir_;
+    Gtk::TreeRowReference currentRowRef_;
+
+    static bool isSamePath (const Glib::ustring& a, const Glib::ustring& b);
+    void setCurrentDir (const Glib::ustring& absDirPath, const Gtk::TreeModel::Path& path);
+    bool isCurrentDirRow (const Gtk::TreeModel::iterator& iter) const;
+    void paintCurrentDirBackground (Gtk::CellRenderer* renderer, const Gtk::TreeModel::iterator& iter) const;
 
     IdleRegister idle_register;
 
     // Chevron expand/collapse indicators
     Glib::RefPtr<Gdk::Pixbuf> chevronRightPixbuf_;
     Glib::RefPtr<Gdk::Pixbuf> chevronDownPixbuf_;
+
+    // Inline favorite star shown on the current (open) folder row
+    Gtk::CellRendererPixbuf* starCR_ = nullptr;
+    Glib::RefPtr<Gdk::Pixbuf> starFilledPixbuf_;
+    Glib::RefPtr<Gdk::Pixbuf> starHollowPixbuf_;
+    bool isCurrentDirFavorite () const;
+    void toggleCurrentDirFavorite ();
 
     // Chevron rotation animation
     std::vector<Glib::RefPtr<Gdk::Pixbuf>> chevronFrames_;
@@ -146,8 +166,14 @@ public:
     void file_changed   (const Glib::RefPtr<Gio::File>& file, const Glib::RefPtr<Gio::File>& other_file, Gio::FileMonitorEvent event_type, const Gtk::TreeModel::iterator& iter, const Glib::ustring& dirName);
     void open           (const Glib::ustring& dirName, const Glib::ustring& fileName = "", bool collapseTree = true); // goes to dir "dirName" and selects file "fileName"
     void selectDir      (Glib::ustring dir);
+    void highlightDir   (const Glib::ustring& dirName, bool collapseTree = false);
+    Glib::ustring getHighlightedDir () const;
 
     DirSelectionSignal dirSelected () const;
+
+    // Emitted (by any DirBrowser instance) when the favorites list changes
+    // via the inline star, so every PlacesBrowser can refresh.
+    static sigc::signal<void>& favoritesChanged ();
 };
 
 inline DirBrowser::DirSelectionSignal DirBrowser::dirSelected () const

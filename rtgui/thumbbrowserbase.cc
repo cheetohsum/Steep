@@ -626,6 +626,15 @@ void ThumbBrowserBase::internalAreaResized (Gtk::Allocation& req)
 
     if (inW > 0 && inH > 0) {
         configScrollBars ();
+
+        if (layoutPaused_()) {
+            // A panel slide is re-allocating us on every animation frame. Each
+            // redraw() here is a full O(N) arrangeFiles over the whole folder,
+            // so collapse them into one pass when the animation settles.
+            layoutDeferredResize_ = true;
+            return;
+        }
+
         redraw ();
     }
 }
@@ -1263,10 +1272,36 @@ void ThumbBrowserBase::resort ()
                 return options.sortDescending ? !lt : lt;
             }
         );
+        applyPinnedOrder_();
         entriesOrderChanged_();
     }
 
     redraw ();
+}
+
+void ThumbBrowserBase::applyPinnedOrder_ ()
+{
+    std::vector<ThumbBrowserEntryBase*> pinned;
+
+    for (auto* entry : fd) {
+        if (!entry->pinAfter.empty()) {
+            pinned.push_back(entry);
+        }
+    }
+
+    if (pinned.empty()) {
+        return;
+    }
+
+    fd.erase(std::remove_if(fd.begin(), fd.end(),
+                            [](const ThumbBrowserEntryBase* entry) { return !entry->pinAfter.empty(); }),
+             fd.end());
+
+    for (auto* entry : pinned) {
+        const auto anchor = std::find_if(fd.begin(), fd.end(),
+                                         [entry](const ThumbBrowserEntryBase* a) { return a->filename == entry->pinAfter; });
+        fd.insert(anchor == fd.end() ? fd.end() : anchor + 1, entry);
+    }
 }
 
 void ThumbBrowserBase::redraw (ThumbBrowserEntryBase* entry, bool filterStateCurrent)
@@ -1280,7 +1315,7 @@ void ThumbBrowserBase::redraw (ThumbBrowserEntryBase* entry, bool filterStateCur
     ThumbBrowserEntryBase* horizontalAnchor = nullptr;
     double horizontalAnchorOffset = 0.0;
     bool hasPendingInserts = false;
-    if (!layoutPaused_) {
+    if (!layoutPaused_()) {
         {
             MyMutex::MyLock pendingLock(pendingMutex_);
             hasPendingInserts = !pendingInserts_.empty();
@@ -1632,7 +1667,7 @@ void ThumbBrowserBase::schedulePendingInsertRedraw_()
 {
     // When layout is paused (during animations), just accumulate entries
     // without scheduling redraw — resumeLayout() will flush them all at once.
-    if (layoutPaused_) {
+    if (layoutPaused_()) {
         return;
     }
 
@@ -1658,7 +1693,7 @@ void ThumbBrowserBase::schedulePendingInsertRedraw_()
 
 void ThumbBrowserBase::pauseLayout ()
 {
-    layoutPaused_ = true;
+    ++layoutPauseDepth_;
     // Cancel any pending redraw timer — entries will keep accumulating
     redrawTimeout_.disconnect();
     redrawPending_ = false;
@@ -1666,7 +1701,16 @@ void ThumbBrowserBase::pauseLayout ()
 
 void ThumbBrowserBase::resumeLayout ()
 {
-    layoutPaused_ = false;
+    if (layoutPauseDepth_ > 0) {
+        --layoutPauseDepth_;
+    }
+
+    if (layoutPauseDepth_ > 0) {
+        return;
+    }
+
+    const bool deferredResize = layoutDeferredResize_;
+    layoutDeferredResize_ = false;
 
     // If entries accumulated during the pause, flush them now
     bool hasPending;
@@ -1674,7 +1718,7 @@ void ThumbBrowserBase::resumeLayout ()
         MyMutex::MyLock lock(pendingMutex_);
         hasPending = !pendingInserts_.empty();
     }
-    if (hasPending) {
+    if (hasPending || deferredResize) {
         onRedrawIdle_();
     }
 }
@@ -1737,6 +1781,7 @@ void ThumbBrowserBase::flushPendingInserts_ ()
             fd[--out] = batch[--ib];
         }
 
+        applyPinnedOrder_();
         entriesInserted_(batch);
         entriesOrderChanged_();
     }

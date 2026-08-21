@@ -71,6 +71,8 @@ class FileBrowserEntry final : public ThumbBrowserEntryBase,
     std::atomic<bool> lazyThumbnailRequestPending;
     std::atomic<bool> thumbnailPreviewUsable_;
     std::atomic<bool> liveEditorPreview_;
+    std::atomic<unsigned> thumbnailRetryCount_;
+    std::atomic<std::uint64_t> thumbnailRetryGeneration_;
 
     ImgEditState state;
     float crop_custom_ratio;
@@ -81,6 +83,8 @@ class FileBrowserEntry final : public ThumbBrowserEntryBase,
     void updateCursor (int x, int y);
     void drawStraightenGuide (Cairo::RefPtr<Cairo::Context> c);
     void customBackBufferUpdate (Cairo::RefPtr<Cairo::Context> c) override;
+    void savePreviewSlotExtras (PreviewSlot& slot) const override;
+    void loadPreviewSlotExtras (const PreviewSlot& slot) override;
     void refreshThumbnailImage(bool upgradeHint);
 
 public:
@@ -116,6 +120,8 @@ public:
     void refreshThumbnailImage () override;
     void refreshQuickThumbnailImage () override;
     void appendQuickThumbnailJob (std::vector<ThumbImageUpdater::Request>& requests, bool cachePixbuf = false) override;
+    void retryThumbnailNow ();
+    void runThumbnailRetry (std::uint64_t generation);
     bool cacheCurrentPreviewForQuickOpen ();
     hidpi::ScaledDeviceSize getLivePreviewDeviceSize () const;
     bool setLiveEditorPreview (
@@ -136,6 +142,7 @@ public:
     void procParamsChanged (Thumbnail* thm, int whoChangedIt, bool upgradeHint) override;
     // thumbimageupdatelistener interface
     void updateImage(const ThumbImageUpdateListener::ImageUpdate& update) override;
+    void updateImageFailed(hidpi::LogicalSize size, int deviceScale, bool upgrade) override;
     void discardQueuedImageUpdate();
     void _updateImage(
         rtengine::IImage8* img,

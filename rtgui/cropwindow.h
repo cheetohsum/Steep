@@ -72,6 +72,7 @@ class CropWindow final : public LWButtonListener, public CropDisplayHandler, pub
     int pickModifierKey;
     double rot_deg;
     bool onResizeArea;
+    int resizeRightEdge_;               // pinned right edge while resizing from the bottom-left grip
     bool deleted;
     bool fitZoomEnabled;
     bool fitZoom;
@@ -128,12 +129,14 @@ class CropWindow final : public LWButtonListener, public CropDisplayHandler, pub
     bool onArea                    (CursorArea a, int x, int y);
     void updateCursor              (int x, int y);
     void drawDecoration            (Cairo::RefPtr<Cairo::Context> cr);
+    void drawResizeGrips           (Cairo::RefPtr<Cairo::Context> cr);
     void drawStraightenGuide       (Cairo::RefPtr<Cairo::Context> cr);
     void drawLevelingGrid          (Cairo::RefPtr<Cairo::Context> cr);
     bool showLevelingGrid_;
     void drawScaledSpotRectangle   (Cairo::RefPtr<Cairo::Context> cr, int rectSize);
     void drawUnscaledSpotRectangle (Cairo::RefPtr<Cairo::Context> cr, int rectSize);
     void drawObservedFrame         (const Cairo::RefPtr<Cairo::Context>& cr);
+    bool observedFrameVisible      () const;
     void refreshEditObjectAt       (int x, int y);
     void changeZoom                (int zoom, bool notify = true, int centerx = -1, int centery = -1, bool needsRedraw = true);
     void updateHoveredPicker       (rtengine::Coord *imgPos = nullptr);

@@ -67,6 +67,12 @@ void RecentBrowser::rebuildMenu()
     recentMenu->show_all();
 }
 
+void RecentBrowser::popupMenuAt (Gtk::Widget& anchor)
+{
+    rebuildMenu();
+    recentMenu->popup_at_widget(&anchor, Gdk::GRAVITY_SOUTH_WEST, Gdk::GRAVITY_NORTH_WEST, nullptr);
+}
+
 void RecentBrowser::selectRecent(Glib::ustring dirname)
 {
     if (selectDir && !dirname.empty()) {

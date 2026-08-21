@@ -257,6 +257,7 @@ void ParamsEdited::set(bool v)
     grain.iso = v;
     grain.strength = v;
     grain.scale = v;
+    grain.color = v;
     tiltShift.enabled = v;
     tiltShift.amount = v;
     tiltShift.focusPos = v;
@@ -1009,10 +1010,8 @@ void ParamsEdited::set(bool v)
     dehaze.saturation = v;
     doubleExposure.enabled = v;
     doubleExposure.layers = v;
-    doubleExposure.blendMode = v;
     doubleExposure.autoGain = v;
     doubleExposure.baseEv = v;
-    doubleExposure.fillShadows = v;
     metadata.mode = v;
     metadata.exifKeys = v;
     filmNegative.enabled = v;
@@ -1143,6 +1142,7 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         grain.iso = grain.iso && p.grain.iso == other.grain.iso;
         grain.strength = grain.strength && p.grain.strength == other.grain.strength;
         grain.scale = grain.scale && p.grain.scale == other.grain.scale;
+        grain.color = grain.color && p.grain.color == other.grain.color;
 
         tiltShift.enabled = tiltShift.enabled && p.tiltShift.enabled == other.tiltShift.enabled;
         tiltShift.amount = tiltShift.amount && p.tiltShift.amount == other.tiltShift.amount;
@@ -2785,10 +2785,8 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         dehaze.saturation = dehaze.saturation && p.dehaze.saturation == other.dehaze.saturation;
         doubleExposure.enabled = doubleExposure.enabled && p.doubleExposure.enabled == other.doubleExposure.enabled;
         doubleExposure.layers = doubleExposure.layers && p.doubleExposure.layers == other.doubleExposure.layers;
-        doubleExposure.blendMode = doubleExposure.blendMode && p.doubleExposure.blendMode == other.doubleExposure.blendMode;
         doubleExposure.autoGain = doubleExposure.autoGain && p.doubleExposure.autoGain == other.doubleExposure.autoGain;
         doubleExposure.baseEv = doubleExposure.baseEv && p.doubleExposure.baseEv == other.doubleExposure.baseEv;
-        doubleExposure.fillShadows = doubleExposure.fillShadows && p.doubleExposure.fillShadows == other.doubleExposure.fillShadows;
         metadata.mode = metadata.mode && p.metadata.mode == other.metadata.mode;
         metadata.exifKeys = metadata.exifKeys && p.metadata.exifKeys == other.metadata.exifKeys;
         filmNegative.enabled = filmNegative.enabled && p.filmNegative.enabled == other.filmNegative.enabled;
@@ -3154,6 +3152,10 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
     }
     if (grain.scale) {
         toEdit.grain.scale = mods.grain.scale;
+    }
+
+    if (grain.color) {
+        toEdit.grain.color = mods.grain.color;
     }
 
     if (tiltShift.enabled) {
@@ -9305,20 +9307,12 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
         toEdit.doubleExposure.layers = mods.doubleExposure.layers;
     }
 
-    if (doubleExposure.blendMode) {
-        toEdit.doubleExposure.blendMode = mods.doubleExposure.blendMode;
-    }
-
     if (doubleExposure.autoGain) {
         toEdit.doubleExposure.autoGain = mods.doubleExposure.autoGain;
     }
 
     if (doubleExposure.baseEv) {
         toEdit.doubleExposure.baseEv = mods.doubleExposure.baseEv;
-    }
-
-    if (doubleExposure.fillShadows) {
-        toEdit.doubleExposure.fillShadows = mods.doubleExposure.fillShadows;
     }
 
     if (metadata.mode) {
