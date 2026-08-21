@@ -1,7 +1,7 @@
 [Film Presets]
 Enabled=true
 Preset=fade_bloom
-ModelVersion=2
+ModelVersion=4
 Exposure=0
 PushPull=0
 Process=auto
@@ -9,7 +9,6 @@ Output=scan
 Format=35mm
 Strength=70
 Fade=20
-Grain=30
 Saturation=-15
 
 [Exposure]
@@ -38,3 +37,10 @@ Enabled=true
 Pastels=-15
 Saturated=-20
 ProtectSkins=false
+
+[Grain]
+Enabled=true
+ISO=800
+Strength=40
+Scale=100
+Color=20

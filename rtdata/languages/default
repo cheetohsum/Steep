@@ -12,6 +12,7 @@ ALBUM_CREATE_TOOLTIP;Create album, smart album, or folder
 ALBUM_DELETE;Delete
 ALBUM_EDIT_RULES;Edit rules...
 ALBUM_HEADER;Albums
+ALBUM_HEADER_RESIZE_TIP;Drag to resize the album list, click to collapse or expand it
 ALBUM_NEW;New
 ALBUM_NEW_ALBUM;+ New Album
 ALBUM_RENAME;Rename...
@@ -120,6 +121,9 @@ EDITOR_COPY_SETTINGS_TOOLTIP;Copy edit settings
 EDITOR_FILTER_CLEAR_TOOLTIP;Clear all filters
 EDITOR_FILTER_COLOR;Color:
 EDITOR_FILTER_RATING;Rating:
+EDITOR_EDGEGRIP_FILMSTRIP;Click to show or hide the <b>filmstrip</b>\nRight-click to set the thumbnail size
+EDITOR_EDGEGRIP_LEFT;Click to show or hide the <b>left panel</b>
+EDITOR_EDGEGRIP_RIGHT;Click to show or hide the <b>tool panel</b>
 EDITOR_FILMSTRIP_SIZE;Filmstrip size
 EDITOR_FILMSTRIP_SIZE_HINT;Right-click: adjust filmstrip thumbnail size
 EDITOR_FILTER_SEARCH_PLACEHOLDER;Search
@@ -233,12 +237,19 @@ FILEBROWSER_POPUPMOVEHEAD;Move to head of queue
 FILEBROWSER_POPUPMOVETO;Move to...
 FILEBROWSER_POPUPOPEN;Open
 FILEBROWSER_POPUPOPENINEDITOR;Open in Editor
+FILEBROWSER_OPENSOURCEFOLDER;Open source folder
+FILEBROWSER_OPENSOURCEFOLDERERROR;Could not open the source folder.
 FILEBROWSER_POPUPPROCESS;Add to Export Queue
+FILEBROWSER_GLOBALSCOPE_WARNING;Search everywhere without a filter?
+FILEBROWSER_GLOBALSCOPE_WARNING_SECONDARY;Global scope with no filter applied scans every known folder and lists everything it finds, which can take a long time. Consider setting a rating, flag, or file-type filter first.
+FILEBROWSER_TITLE_FULLPATH;Show full folder path
+FILEBROWSER_TITLE_PIN;Pin above editor filmstrip
 FILEBROWSER_POPUPPROCESSFAST;Put to queue (Fast export)
 FILEBROWSER_POPUPROTATE;Rotate
 FILEBROWSER_POPUPACTIONS;Actions
 FILEBROWSER_POPUPTOOLS;Tools
 TP_CROP_ASPECTRATIO_ASIMAGE;Aspect Ratio - As Image
+EDITOR_BEFOREAFTER_LOCK;Lock the Before view one step back
 EDITOR_BEFOREAFTER_SNUG;Images snug against center divider
 FILEBROWSER_SEARCHTOGGLEHINT;Search, path navigation and reload
 FILEBROWSER_METADATAFILTERHINT;Metadata filters: aperture, shutter, ISO, focal length, exposure, camera, lens
@@ -1558,7 +1569,7 @@ HISTORY_MSG_DOUBLEEXPOSURE_AUTOGAIN;Double exposure - Auto film gain
 HISTORY_MSG_DOUBLEEXPOSURE_BASEEV;Double exposure - Base trim
 HISTORY_MSG_DOUBLEEXPOSURE_BLEND;Double exposure - Blend
 HISTORY_MSG_DOUBLEEXPOSURE_ENABLED;Double exposure
-HISTORY_MSG_DOUBLEEXPOSURE_FILLSHADOWS;Double exposure - Fill shadows
+HISTORY_MSG_DOUBLEEXPOSURE_GATE;Double exposure - Reveal gate
 HISTORY_MSG_DOUBLEEXPOSURE_LAYERS;Double exposure - Exposures
 HISTORY_MSG_DOUBLEEXPOSURE_LAYER_SETTINGS;Double exposure - Layer settings
 HISTORY_MSG_DISTORTION_DEFISH;De-fish
@@ -1652,6 +1663,7 @@ HISTORY_MSG_CLARITY_RADIUS;Clarity - Detail Size
 HISTORY_MSG_GRAIN_ENABLED;Grain
 HISTORY_MSG_GRAIN_STRENGTH;Grain - Strength
 HISTORY_MSG_GRAIN_ISO;Grain - ISO
+HISTORY_MSG_GRAIN_COLOR;Grain - Color
 HISTORY_MSG_GRAIN_SCALE;Grain - Scale
 HISTORY_MSG_TILTSHIFT_ENABLED;Tilt-Shift
 HISTORY_MSG_TILTSHIFT_AMOUNT;Tilt-Shift - Amount
@@ -2091,8 +2103,8 @@ MAIN_FRAME_FILEBROWSER_TOOLTIP;File browser.\nShortcut: <b>Ctrl-F2</b>
 MAIN_FRAME_PLACES;Places
 MAIN_FRAME_PLACES_ADD;Add
 MAIN_FRAME_PLACES_DEL;Remove
-MAIN_FRAME_PLACES_HIDE_DRIVE;Hide drive
-MAIN_FRAME_PLACES_HIDDEN_DRIVES;Hidden drives
+MAIN_FRAME_PLACES_HIDE_DRIVE;Hide
+MAIN_FRAME_PLACES_HIDDEN_DRIVES;Hidden items
 MAIN_FRAME_QUEUE;Queue
 MAIN_FRAME_QUEUE_TOOLTIP;Processing queue.\nShortcut: <b>Ctrl-F3</b>
 MAIN_FRAME_RECENT;Recent Folders
@@ -2168,6 +2180,7 @@ MAIN_TOOLTIP_SHOWHIDERP1;Show/Hide the right panel.\nShortcut: <b>Alt-l</b>
 MAIN_TOOLTIP_SHOWHIDETP1;Show or hide the filmstrip.\nShortcut: <b>Shift-l</b>
 MAIN_TOOLTIP_THRESHOLD;Threshold
 MAIN_TOOLTIP_TOGGLE;Toggle the <b>Before</b>/<b>After</b> view.\nShortcut: <b>Shift-b</b>
+MAIN_TOOLTIP_TOGGLE_MENU;<b>Right-click</b> for view options: lock the <b>Before</b> view, snug the images to the divider.
 MCP_MENU_BUTTON;MCP Server...
 MCP_DIALOG_TITLE;MCP Server
 MCP_DIALOG_HEADER;Model Context Protocol Server
@@ -3038,14 +3051,23 @@ TP_DOUBLEEXPOSURE_AUTOGAIN_TOOLTIP;Meter every frame down by one stop per extra 
 TP_DOUBLEEXPOSURE_BASEEV;Base exposure trim
 TP_DOUBLEEXPOSURE_BLEND;Blend
 TP_DOUBLEEXPOSURE_BLEND_ADD;In-camera (additive)
+TP_DOUBLEEXPOSURE_BLEND_DARKEN;Darken
+TP_DOUBLEEXPOSURE_BLEND_DIFFERENCE;Difference
 TP_DOUBLEEXPOSURE_BLEND_LIGHTEN;Lighten
 TP_DOUBLEEXPOSURE_BLEND_MULTIPLY;Slide sandwich (multiply)
 TP_DOUBLEEXPOSURE_BLEND_SCREEN;Screen
 TP_DOUBLEEXPOSURE_CHOOSE;Double Exposure
 TP_DOUBLEEXPOSURE_CLEAR;Remove the double exposure from this image
+TP_DOUBLEEXPOSURE_EDIT;Develop this exposure in the editor
 TP_DOUBLEEXPOSURE_EV;Layer exposure trim
-TP_DOUBLEEXPOSURE_FILLSHADOWS;Fill shadows
-TP_DOUBLEEXPOSURE_FILLSHADOWS_TOOLTIP;Gate the overlays into the shadows of the image below — the classic silhouette double-exposure technique.
+TP_DOUBLEEXPOSURE_GATE;Reveal in
+TP_DOUBLEEXPOSURE_GATE_BASE;Base luminance
+TP_DOUBLEEXPOSURE_GATE_FEATHER;Reveal feather
+TP_DOUBLEEXPOSURE_GATE_HIGH;Reveal to
+TP_DOUBLEEXPOSURE_GATE_LAYER;Layer luminance
+TP_DOUBLEEXPOSURE_GATE_LOW;Reveal from
+TP_DOUBLEEXPOSURE_GATE_STRENGTH;Reveal strength
+TP_DOUBLEEXPOSURE_GATE_TOOLTIP;Confine this exposure to a luminance band: reveal it only in the shadows or highlights of the image beneath (base luminance) or of the layer itself (layer luminance). From/to bound the band on the tone scale as seen on screen (0 = black, 100 = white), feather softens its edges, and strength 0 turns the gate off.
 TP_DOUBLEEXPOSURE_LABEL;Double Exposure
 TP_DOUBLEEXPOSURE_LAYER;Layer
 TP_DOUBLEEXPOSURE_MISSING;File not found — this layer will be skipped.
@@ -3208,11 +3230,13 @@ TP_FILMPRESETS_MODEL;Engine
 TP_FILMPRESETS_MODEL_LEGACY;Legacy
 TP_FILMPRESETS_MODEL_V2;Film Lab v2
 TP_FILMPRESETS_MODEL_V3;Film Lab v3
+TP_FILMPRESETS_MODEL_V4;Film Lab v4 (scene-referred)
 TP_FILMPRESETS_PROCESS;Process
 TP_FILMPRESETS_PROCESS_AUTO;Stock Default
 TP_FILMPRESETS_PROCESS_BW;B&W
 TP_FILMPRESETS_OUTPUT;Output
 TP_FILMPRESETS_OUTPUT_SCAN;Neutral Scan
+TP_FILMPRESETS_OUTPUT_LABSCAN;Lab Scan
 TP_FILMPRESETS_OUTPUT_RA4;RA-4 Print
 TP_FILMPRESETS_OUTPUT_PROJECTION;Projection
 TP_FILMPRESETS_OUTPUT_CINEMA;Cinema Print
@@ -3561,7 +3585,8 @@ TP_CLARITY_RADIUS;Detail Size
 TP_GRAIN_LABEL;Grain
 TP_GRAIN_STRENGTH;Grain
 TP_GRAIN_ISO;ISO
-TP_GRAIN_SCALE;Scale
+TP_GRAIN_COLOR;Color
+TP_GRAIN_SCALE;Size
 TP_TILTSHIFT_LABEL;Tilt-Shift
 TP_TILTSHIFT_AMOUNT;Amount
 TP_TILTSHIFT_FOCUSPOS;Focus Position
@@ -5446,6 +5471,7 @@ ZOOMPANEL_ZOOM100;Zoom to 100%\nShortcut: <b>z</b>
 ZOOMPANEL_ZOOMFITCROPSCREEN;Fit crop to screen\nShortcut: <b>f</b>
 ZOOMPANEL_ZOOMFITSCREEN;Fit whole image to screen\nShortcut: <b>Alt</b>-<b>f</b>
 ZOOMPANEL_ZOOMIN;Zoom In\nShortcut: <b>+</b>
+ZOOMPANEL_ZOOMMENU;Zoom
 ZOOMPANEL_ZOOMOUT;Zoom Out\nShortcut: <b>-</b>
 //TP_WBALANCE_ITCWBNOPURPLE_TOOLTIP;By default when "Inpaint opposed" is activated, purple colors are not taken into account. However, if the image does not need highlight reconstruction, or if this image naturally contains purple tints (flowers, etc.), it may be necessary to deactivate, to take into account all the colors.
 //TP_WBALANCE_ITCWB_FORCED;Forces use of the entire CIE diagram

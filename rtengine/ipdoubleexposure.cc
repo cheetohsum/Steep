@@ -20,15 +20,18 @@
 // place light stacks on a single frame of film.
 
 #include <cmath>
+#include <cstdio>
 #include <memory>
 #include <vector>
 
 #include "improcfun.h"
 
+#include "doubleexposureblend.h"
 #include "imagefloat.h"
 #include "partnerimagestore.h"
 #include "procparams.h"
 #include "rt_math.h"
+#include "settings.h"
 
 namespace rtengine
 {
@@ -38,9 +41,15 @@ namespace
 
 struct ResolvedLayer {
     std::shared_ptr<PartnerImage> partner;
-    float gain;     // 2^ev, with the auto film gain folded in for additive mode
+    float gain;     // 2^ev, with the auto film gain folded in for ADD layers
     float opacity;  // 0..1
     float invCover; // base full-res px -> partner full-res px (cover fit)
+    procparams::DoubleExposureParams::BlendMode mode;
+    bool gateOnLayer;   // gate luminance source: layer sample vs accumulated base
+    float gateLow;      // window in 0..1 linear luminance
+    float gateHigh;
+    float gateFeather;
+    float gateStrength; // 0..1; 0 = gate off
 };
 
 // Bilinear sample of the partner tier at partner full-frame coords (u, v),
@@ -88,29 +97,11 @@ inline void samplePartner(const PartnerImage& p, float u, float v, float& r, flo
     b = w00 * img.b(y0, x0) + w10 * img.b(y0, x1) + w01 * img.b(y1, x0) + w11 * img.b(y1, x1);
 }
 
-// 1 in deep shadows of the accumulated base, falling to 0 above mid-tones.
-inline float shadowWeight(float y)
-{
-    constexpr float lo = 0.10f;
-    constexpr float hi = 0.45f;
-
-    if (y <= lo) {
-        return 1.f;
-    }
-
-    if (y >= hi) {
-        return 0.f;
-    }
-
-    const float t = (hi - y) / (hi - lo);
-    return t * t * (3.f - 2.f * t);
-}
-
 } // namespace
 
 void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleExposureParams& deParams,
                                      const Glib::ustring& workingProfile,
-                                     int fullW, int fullH, int offX, int offY, int skip, bool fullResPartners)
+                                     int fullW, int fullH, int offX, int offY, float skip, bool fullResPartners)
 {
     if (!rgb || !deParams.enabled || deParams.layers.empty()) {
         return;
@@ -119,7 +110,7 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
     const int W = rgb->getWidth();
     const int H = rgb->getHeight();
 
-    if (W <= 0 || H <= 0 || fullW <= 0 || fullH <= 0 || skip < 1) {
+    if (W <= 0 || H <= 0 || fullW <= 0 || fullH <= 0 || skip <= 0.f) {
         return;
     }
 
@@ -132,6 +123,10 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
     resolved.reserve(deParams.layers.size());
 
     for (const auto& layer : deParams.layers) {
+        if (!layer.enabled) {
+            continue;
+        }
+
         auto partner = PartnerImageStore::getInstance().getPartner(layer.path, workingProfile, fullRes);
 
         if (partner && partner->image && partner->fullWidth > 0 && partner->fullHeight > 0) {
@@ -143,31 +138,49 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
             const float cover = std::max(static_cast<float>(fullW) / partner->fullWidth,
                                          static_cast<float>(fullH) / partner->fullHeight);
             rl.invCover = 1.f / cover;
+            rl.mode = layer.blendMode;
+            rl.gateOnLayer = layer.gateSource == procparams::DoubleExposureParams::GateSource::LAYER;
+            rl.gateLow = LIM01(static_cast<float>(layer.gateLow) / 100.f);
+            rl.gateHigh = LIM01(static_cast<float>(layer.gateHigh) / 100.f);
+            rl.gateFeather = LIM01(static_cast<float>(layer.gateFeather) / 100.f);
+            rl.gateStrength = LIM01(static_cast<float>(layer.gateStrength) / 100.f);
             resolved.push_back(std::move(rl));
         }
+    }
+
+    if (settings->verbose) {
+        std::fprintf(stderr, "[doubleExposure] %dx%d full=%dx%d off=%d,%d skip=%.2f layers=%u resolved=%u fullRes=%d\n",
+                     W, H, fullW, fullH, offX, offY, skip,
+                     static_cast<unsigned>(deParams.layers.size()), static_cast<unsigned>(resolved.size()),
+                     fullResPartners ? 1 : 0);
     }
 
     if (resolved.empty()) {
         return;
     }
 
-    const auto mode = deParams.blendMode;
-    const bool additive = mode == procparams::DoubleExposureParams::BlendMode::ADD;
-
     // In-camera practice: meter every frame of an N-frame multiple exposure
-    // down by log2(N) EV so the summed exposure lands correctly.
-    const float autoGainFactor = (additive && deParams.autoGain)
-                                 ? 1.f / static_cast<float>(resolved.size() + 1)
+    // down by log2(N) EV so the summed exposure lands correctly. Only ADD
+    // layers stack light, so only they (and the base) are metered down.
+    int addLayers = 0;
+
+    for (const auto& rl : resolved) {
+        if (rl.mode == procparams::DoubleExposureParams::BlendMode::ADD) {
+            ++addLayers;
+        }
+    }
+
+    const float autoGainFactor = (deParams.autoGain && addLayers > 0)
+                                 ? 1.f / static_cast<float>(addLayers + 1)
                                  : 1.f;
     const float baseGain = static_cast<float>(std::pow(2.0, deParams.baseEv)) * autoGainFactor;
 
-    if (additive) {
-        for (auto& rl : resolved) {
+    for (auto& rl : resolved) {
+        if (rl.mode == procparams::DoubleExposureParams::BlendMode::ADD) {
             rl.gain *= autoGainFactor;
         }
     }
 
-    const float fillAmount = LIM01(static_cast<float>(deParams.fillShadows) / 100.f);
     constexpr float white = 65535.f;
 
 #ifdef _OPENMP
@@ -195,43 +208,15 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
                 pb = std::max(pb, 0.f) * rl.gain;
 
                 float cr, cg, cb;
-
-                switch (mode) {
-                    case procparams::DoubleExposureParams::BlendMode::SCREEN: {
-                        cr = white * (1.f - (1.f - LIM01(r / white)) * (1.f - LIM01(pr / white)));
-                        cg = white * (1.f - (1.f - LIM01(g / white)) * (1.f - LIM01(pg / white)));
-                        cb = white * (1.f - (1.f - LIM01(b / white)) * (1.f - LIM01(pb / white)));
-                        break;
-                    }
-
-                    case procparams::DoubleExposureParams::BlendMode::MULTIPLY: {
-                        cr = std::max(r, 0.f) * pr / white;
-                        cg = std::max(g, 0.f) * pg / white;
-                        cb = std::max(b, 0.f) * pb / white;
-                        break;
-                    }
-
-                    case procparams::DoubleExposureParams::BlendMode::LIGHTEN: {
-                        cr = std::max(r, pr);
-                        cg = std::max(g, pg);
-                        cb = std::max(b, pb);
-                        break;
-                    }
-
-                    case procparams::DoubleExposureParams::BlendMode::ADD:
-                    default: {
-                        cr = r + pr;
-                        cg = g + pg;
-                        cb = b + pb;
-                        break;
-                    }
-                }
+                deblend::blend(rl.mode, white, r, g, b, pr, pg, pb, cr, cg, cb);
 
                 float w = rl.opacity;
 
-                if (fillAmount > 0.f) {
-                    const float lum = (0.2126f * r + 0.7152f * g + 0.0722f * b) / white;
-                    w *= (1.f - fillAmount) + fillAmount * shadowWeight(lum);
+                if (rl.gateStrength > 0.f) {
+                    const float lum = (rl.gateOnLayer ? deblend::lum709(pr, pg, pb)
+                                                      : deblend::lum709(r, g, b)) / white;
+                    w *= deblend::gateWeight(rl.gateStrength,
+                                             deblend::gateWindow(deblend::gateEncode(lum), rl.gateLow, rl.gateHigh, rl.gateFeather));
                 }
 
                 r += w * (cr - r);

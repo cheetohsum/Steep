@@ -11,11 +11,13 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <vector>
 
 #include "array2D.h"
 #include "boxblur.h"
 #include "color.h"
 #include "iccstore.h"
+#include "imagefloat.h"
 #include "improcfun.h"
 #include "labimage.h"
 #include "procparams.h"
@@ -146,13 +148,59 @@ inline float filmCharacterScale(float strength)
     return 0.75f + 0.50f * LIM(strength, 0.f, 1.f);
 }
 
-inline float halationHighlightSource(float luminanceValue, float peakValue, float thresholdStops)
+// V2's highlight source, kept bit-for-bit because saved edits still render
+// through it. Its threshold is in stops above middle grey; see the note on the
+// V3 version below for why that could never fire.
+inline float halationHighlightSourceV2(float luminanceValue, float peakValue, float thresholdStops)
 {
     const float highlight = std::max(luminanceValue, peakValue * 0.62f);
     const float stops = std::log2(std::max(highlight, 1e-6f) / 0.18f);
     const float excess = std::max(stops - thresholdStops, 0.f);
     const float onset = smoothStep(thresholdStops, thresholdStops + 2.5f, stops);
     return onset * (1.f - std::exp2(-excess * 0.55f));
+}
+
+// Halation is light that made it through the emulsion, bounced off the film
+// base and re-exposed the neighbouring grains, so what drives it is how far a
+// highlight is past the point where the emulsion had anything left to record.
+//
+// This stage runs on a display-referred signal: rgbProc's filmlike_clip has
+// already folded the scene into 0..1 (measured peak: exactly 1.0000), and the
+// tone curve LUT is a second ceiling behind it, so the scene's real specular
+// magnitude is gone before we are called. Keying the onset two stops ABOVE
+// diffuse white - where this used to sit - left the source term at 0.026 for
+// the brightest pixel the pipeline can deliver, which is why halation was
+// invisible at every slider position and every stock. Key it to the top of the
+// range we actually receive, and read intensity from how completely the pixel
+// is blown instead of from a magnitude we no longer have.
+inline float halationHighlightSource(float luminanceValue, float peakValue, float onset)
+{
+    const float highlight = std::max(luminanceValue, peakValue * 0.82f);
+    const float blown = smoothStep(onset, 1.f, highlight);
+
+    // Weight fully clipped pixels well above merely bright ones: those are the
+    // ones that were many stops over in the scene, so a light source halates
+    // and a white shirt barely does.
+    return blown * blown * (0.35f + 0.65f * smoothStep(0.90f, 1.f, highlight));
+}
+
+
+// Three successive box blurs approximate a Gaussian of the same sigma. One box
+// leaves square halos, and a halo around a point highlight is the single place
+// that shows most plainly.
+inline void halationBlur(
+    array2D<float>& source,
+    array2D<float>& destination,
+    array2D<float>& scratch,
+    int radius,
+    int width,
+    int height,
+    bool multiThread)
+{
+    const int pass = std::max(1, static_cast<int>(radius * 0.577f + 0.5f));
+    boxblur(static_cast<float**>(source), static_cast<float**>(destination), pass, width, height, multiThread);
+    boxblur(static_cast<float**>(destination), static_cast<float**>(scratch), pass, width, height, multiThread);
+    boxblur(static_cast<float**>(scratch), static_cast<float**>(destination), pass, width, height, multiThread);
 }
 
 inline void applySaturation(float& r, float& g, float& b, float saturation)
@@ -205,46 +253,9 @@ inline void applyDyeCoupling(float& r, float& g, float& b, StockClass stockClass
     b = bb;
 }
 
-inline std::uint32_t hash32(std::uint32_t value)
-{
-    value ^= value >> 16;
-    value *= 0x7feb352du;
-    value ^= value >> 15;
-    value *= 0x846ca68bu;
-    value ^= value >> 16;
-    return value;
-}
 
-inline float hashNoise(int x, int y, std::uint32_t seed)
-{
-    const std::uint32_t h = hash32(
-        static_cast<std::uint32_t>(x) * 0x1f123bb5u
-        ^ static_cast<std::uint32_t>(y) * 0x5f356495u
-        ^ seed);
-    return static_cast<float>(h & 0x00ffffffu) * (2.f / 16777215.f) - 1.f;
-}
 
-inline float valueNoise(float x, float y, float cellSize, std::uint32_t seed)
-{
-    x /= cellSize;
-    y /= cellSize;
-    const int x0 = static_cast<int>(std::floor(x));
-    const int y0 = static_cast<int>(std::floor(y));
-    const float fx = x - x0;
-    const float fy = y - y0;
-    const float sx = fx * fx * (3.f - 2.f * fx);
-    const float sy = fy * fy * (3.f - 2.f * fy);
-    const float a = intp(sx, hashNoise(x0, y0, seed), hashNoise(x0 + 1, y0, seed));
-    const float b = intp(sx, hashNoise(x0, y0 + 1, seed), hashNoise(x0 + 1, y0 + 1, seed));
-    return intp(sy, a, b);
-}
 
-inline float filmLabGrain(float x, float y, float cellSize, std::uint32_t seed)
-{
-    const float fine = valueNoise(x, y, cellSize, seed);
-    const float clump = valueNoise(x, y, cellSize * 2.7f, seed ^ 0x9e3779b9u);
-    return fine * 0.72f + clump * 0.28f;
-}
 
 inline void hueVector(float hue, float& r, float& g, float& b)
 {
@@ -269,9 +280,76 @@ inline void toCanonical(const LabImage* lab, int row, int col, const float inver
 constexpr int V3_DENSITY_LUT_SIZE = 8192;
 constexpr int V3_OUTPUT_LUT_SIZE = 4096;
 constexpr float V3_MAX_INPUT = 8.f;
-constexpr int V3_GRAIN_TILE_SIZE = 512;
-constexpr int V3_GRAIN_TILE_MASK = V3_GRAIN_TILE_SIZE - 1;
-constexpr int V3_GRAIN_TILE_SHIFT = 9;
+
+// V4 samples the emulsion in log exposure. A linear grid spends nearly all
+// of its entries above middle grey; scene-referred input reaches five stops
+// past diffuse white, and film's toe lives eight stops under middle grey, so
+// the axis that matters is stops. 8192 entries over 22 stops is 0.0027
+// stops per entry.
+constexpr float V4_STOPS_MIN = -14.f;
+constexpr float V4_STOPS_MAX = 8.f;
+
+// Diffuse white, in stops above middle grey.
+constexpr float V3_WHITE_STOPS = 2.4739312f;
+
+// The print is calibrated against one reference negative: a fixed density per
+// stop, which is what the printer's own contrast is set for. A stock that is
+// contrastier than this reference prints contrastier. Calibrating against each
+// stock's *own* gamma cancelled the stock out exactly, which is why every
+// stock used to measure the same contrast. 0.18 density/stop is C-41's ~0.60
+// gamma per log10 exposure; the absolute value only decides where the emulsion
+// sits inside [baseFog, maxDensity].
+constexpr float V3_REFERENCE_GAMMA = 0.18f;
+
+// Toe length the print's shadow expansion is tuned against. The expansion is
+// there to undo the emulsion's toe, so it scales with how much toe there was.
+constexpr float V3_REFERENCE_TOE = 0.26f;
+
+// Stops below middle grey over which the print's shadow expansion ramps in.
+constexpr float V3_PRINT_TOE_STOPS = 4.f;
+
+// Where middle grey sits on Custom's straight line, in stops above base fog.
+// Large enough that diffuse white and three stops of specular clear D-max,
+// small enough that scene black reaches fog instead of floating above it.
+constexpr float V3_CUSTOM_STRAIGHT_OFFSET = 9.5f;
+
+// A negative's own gamma spans 0.84-1.22 across this table, but the medium it
+// is printed onto compensates: Portra on RA-4 and Velvia projected land at
+// similar system gammas, and what separates them is toe and shoulder shape and
+// colour, not global contrast. Passing the stock's gamma through at full
+// weight makes the soft stocks flatter than the source, which is the wash.
+constexpr float V3_STOCK_CONTRAST_WEIGHT = 0.70f;
+
+
+// V4, scene mode only: the input still carries real highlight magnitude, so
+// the source term is the radiant energy past the onset - the light the
+// emulsion could not absorb, which is what actually reaches the base and
+// comes back. A streetlight five stops over exposes the halo many times
+// harder than a white wall half a stop over; the "how blown is it" guesswork
+// in halationHighlightSource exists only because the V2/V3 signal is clipped
+// to 1.0 before the stage runs.
+// Overall fraction of the excess radiance the V4 halo may deposit. Real
+// anti-halation undercoats absorb the large majority of what reaches the
+// base; the visible effect is a bright local fringe precisely BECAUSE the
+// energy is small and concentrated at the contour.
+constexpr float V4_HALATION_ENERGY = 1.25f;
+
+inline float halationHighlightSourceV4(float luminanceValue, float peakValue, float onsetStops)
+{
+    const float highlight = std::max(luminanceValue, peakValue * 0.82f);
+    const float onset = 0.18f * std::exp2(V3_WHITE_STOPS + onsetStops);
+    const float excess = highlight / onset - 1.f;
+
+    if (excess <= 0.f) {
+        return 0.f;
+    }
+
+    // Three stops over the onset reads as nominal full strength; beyond that
+    // the term keeps growing gently so the halo brightness still ranks light
+    // sources, but a single blown streetlamp cannot swamp the blur pyramid.
+    const float normalized = excess * (1.f / 7.f);
+    return normalized / (1.f + 0.25f * normalized);
+}
 
 struct FilmLabV3Profile {
     std::array<float, 3> layerSpeed;
@@ -304,9 +382,8 @@ struct FilmLabV3Process {
 };
 
 struct FilmLabV3Output {
-    float contrast;
-    float toe;
-    float shoulder;
+    float gamma;        // system gamma of negative plus print
+    float toe;          // print's deep-shadow expansion
     float saturation;
     float warmth;
     std::array<float, 9> matrix;
@@ -317,13 +394,23 @@ struct FilmLabV3CurveBank {
     std::array<std::array<float, V3_DENSITY_LUT_SIZE + 1>, 3> density;
     std::array<std::array<float, V3_OUTPUT_LUT_SIZE + 1>, 3> output;
     std::array<float, 3> referenceDensity;
-    std::array<float, 3> densitySlope;
     float baseFog;
     float maxDensity;
     float outputIndexScale;
+    bool stopsIndexed = false; // V4: density grid runs over log2 exposure
 
     float sampleDensity(int channel, float value) const
     {
+        if (stopsIndexed) {
+            const float stops = std::log2(std::max(value, 1e-7f) / 0.18f);
+            const float coordinate = LIM(
+                (stops - V4_STOPS_MIN) * (static_cast<float>(V3_DENSITY_LUT_SIZE) / (V4_STOPS_MAX - V4_STOPS_MIN)),
+                0.f,
+                static_cast<float>(V3_DENSITY_LUT_SIZE));
+            const int index = std::min(static_cast<int>(coordinate), V3_DENSITY_LUT_SIZE - 1);
+            return intp(coordinate - index, density[channel][index + 1], density[channel][index]);
+        }
+
         const float coordinate = LIM(value, 0.f, V3_MAX_INPUT)
             * (static_cast<float>(V3_DENSITY_LUT_SIZE) / V3_MAX_INPUT);
         const int index = std::min(static_cast<int>(coordinate), V3_DENSITY_LUT_SIZE - 1);
@@ -476,17 +563,21 @@ FilmLabV3Process makeV3Process(const Glib::ustring& process)
     return profile;
 }
 
+// A negative is not a picture until something prints it, and the system gamma
+// of negative plus print is what decides whether the result reads as a
+// photograph or a flat scan. The first V3 set these to 1.00-1.12, which made
+// the print undo the negative almost exactly: the stage could only ever
+// subtract contrast, never add it.
 FilmLabV3Output makeV3Output(const Glib::ustring& output)
 {
     FilmLabV3Output profile = {
-        1.f, 0.08f, 0.12f, 1.f, 0.f,
+        1.24f, 0.16f, 1.f, 0.f,
         {{1.f, 0.f, 0.f, 0.f, 1.f, 0.f, 0.f, 0.f, 1.f}},
         0.f
     };
     if (output == "ra4") {
-        profile.contrast = 1.07f;
-        profile.toe = 0.16f;
-        profile.shoulder = 0.18f;
+        profile.gamma = 1.36f;
+        profile.toe = 0.12f;
         profile.saturation = 1.035f;
         profile.warmth = 0.018f;
         profile.matrix = {{
@@ -495,10 +586,22 @@ FilmLabV3Output makeV3Output(const Glib::ustring& output)
             -0.004f, 0.012f, 0.992f
         }};
         profile.softness = 0.08f;
+    } else if (output == "labscan") {
+        // Minilab inversion pipelines run contrastier and a touch richer
+        // than a neutral Status-M read; the spectral side of the look lives
+        // in the labscan receiver chain in makeV4PrintLUT.
+        profile.gamma = 1.30f;
+        profile.toe = 0.14f;
+        profile.saturation = 1.05f;
+        profile.matrix = {{
+            1.006f, -0.004f, -0.002f,
+            -0.003f, 1.008f, -0.005f,
+            -0.002f, 0.006f, 0.996f
+        }};
+        profile.softness = 0.f;
     } else if (output == "projection") {
-        profile.contrast = 1.12f;
+        profile.gamma = 1.46f;
         profile.toe = 0.10f;
-        profile.shoulder = 0.10f;
         profile.saturation = 1.075f;
         profile.matrix = {{
             1.018f, -0.010f, -0.008f,
@@ -507,9 +610,8 @@ FilmLabV3Output makeV3Output(const Glib::ustring& output)
         }};
         profile.softness = -0.05f;
     } else if (output == "cinema") {
-        profile.contrast = 1.025f;
-        profile.toe = 0.15f;
-        profile.shoulder = 0.25f;
+        profile.gamma = 1.28f;
+        profile.toe = 0.14f;
         profile.saturation = 0.965f;
         profile.warmth = 0.012f;
         profile.matrix = {{
@@ -529,27 +631,124 @@ inline float v3DensityResponse(
     float toe,
     float shoulder,
     float baseFog,
-    float maxDensity)
+    float maxDensity,
+    bool straight)
 {
     const float exposed = std::max(value * std::exp2(exposure), 1e-8f);
     const float stops = std::log2(exposed / 0.18f);
-    const float toeStart = -2.75f + toe * 1.12f;
-    const float shoulderStart = 3.35f - shoulder * 0.92f;
-    const float toeSoftness = 0.44f + toe * 0.52f;
-    const float shoulderSoftness = 0.58f + shoulder * 0.58f;
+
+    if (straight) {
+        // Custom is not a film stock, so it gets no toe and no shoulder at
+        // all: a pure straight line, which the print inverts exactly. Nothing
+        // the user has not asked for happens.
+        return LIM(baseFog + gamma * (stops + V3_CUSTOM_STRAIGHT_OFFSET), baseFog, maxDensity);
+    }
+
+    // A colour negative carries roughly six stops below middle grey before the
+    // toe takes over. The first V3 put the toe at -2.75, which threw the
+    // shadow range away and then had to invent it back, lifting blacks by two
+    // stops. Placing it where real film puts it is most of the fix.
+    const float toeStart = -6.20f + toe * 1.60f;
+    const float shoulderStart = 3.60f - shoulder * 0.90f;
+    const float toeSoftness = 0.55f + toe * 1.10f;
+    const float shoulderSoftness = 0.55f + shoulder * 0.75f;
     const float density = baseFog + gamma * (
         softplus(stops - toeStart, toeSoftness)
         - softplus(stops - shoulderStart, shoulderSoftness));
     return LIM(density, baseFog, maxDensity);
 }
 
+// shape(0) = 0 and shape(1) = 1 for every k, so diffuse white lands on paper
+// white by construction and the slope at middle grey is free to be the system
+// gamma. k > 0 compresses highlights into a shoulder, k < 0 expands them.
+inline float printShape(float t, float k)
+{
+    if (std::fabs(k) < 1e-6f) {
+        return t;
+    }
+    return (1.f - std::exp(-k * t)) / (1.f - std::exp(-k));
+}
+
+inline float printShapeSlope(float t, float k)
+{
+    if (std::fabs(k) < 1e-6f) {
+        return 1.f;
+    }
+    return k * std::exp(-k * t) / (1.f - std::exp(-k));
+}
+
+// How far past paper white the V4 print may reach, in output stops. The
+// print shape above was built for input capped at diffuse white; fed real
+// scene radiance its solved k can be small or negative, and the soft stocks
+// then EXPAND super-white input without bound (twilight_160 measured 8x
+// diffuse white at 2.5x linear). A real print cannot: just past the exposure
+// that prints diffuse white the paper sits on Dmin and the sheet has nothing
+// left to give. A third of a stop of sparkle is what survives in practice.
+// Keep in step with PRINT_OVERSHOOT_STOPS in tools/filmsim_probe.py.
+constexpr float V4_PRINT_OVERSHOOT_STOPS = 0.35f;
+
+// k such that printShape'(0) == slope.
+inline float solveShoulderK(float slope)
+{
+    if (std::fabs(slope - 1.f) < 1e-4f) {
+        return 0.f;
+    }
+    float lo = slope > 1.f ? 0.f : -40.f;
+    float hi = slope > 1.f ? 40.f : 0.f;
+    for (int i = 0; i < 60; ++i) {
+        const float mid = 0.5f * (lo + hi);
+        const float value = std::fabs(mid) < 1e-9f ? 1.f : mid / (1.f - std::exp(-mid));
+        if (value < slope) {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    return 0.5f * (lo + hi);
+}
+
+// Integral of smoothstep(0, V3_PRINT_TOE_STOPS, t), so the print's shadow
+// expansion is defined by its *slope* and that slope stays bounded and smooth.
+// Scaling the value instead put a spike in the derivative at the knee, which
+// blocked up shadows on the contrastier stocks.
+inline float printToeIntegral(float t)
+{
+    const float u = std::min(t / V3_PRINT_TOE_STOPS, 1.f);
+    const float u3 = u * u * u;
+    return V3_PRINT_TOE_STOPS * (u3 - 0.5f * u3 * u) + std::max(t - V3_PRINT_TOE_STOPS, 0.f);
+}
+
+inline float printGrade(float stops, float systemGamma, float shoulderK, float whiteStops, float toe, float overshoot)
+{
+    if (stops >= 0.f) {
+        if (overshoot > 0.f && stops > whiteStops) {
+            // Paper saturation: value- and slope-continuous at diffuse
+            // white, approaching paper white + overshoot asymptotically.
+            const float slope = V3_WHITE_STOPS * printShapeSlope(1.f, shoulderK) / whiteStops;
+            const float excess = stops - whiteStops;
+            return V3_WHITE_STOPS + overshoot * (1.f - std::exp(-slope * excess / overshoot));
+        }
+
+        return V3_WHITE_STOPS * printShape(stops / whiteStops, shoulderK);
+    }
+
+    // Below middle grey the print keeps the emulsion's slope, then ramps in a
+    // deep-shadow expansion that reaches full strength four stops down. That
+    // is the paper's toe: normal mid tones, and blacks that land on black
+    // rather than on base fog.
+    return -systemGamma * (-stops + toe * printToeIntegral(-stops));
+}
+
 FilmLabV3CurveBank makeV3Curves(
     const FilmLabV3Profile& stock,
     const FilmLabV3Process& process,
     const FilmLabV3Output& output,
-    const procparams::FilmPresetsParams& fp)
+    const procparams::FilmPresetsParams& fp,
+    bool straight,
+    bool stopsIndexed)
 {
     FilmLabV3CurveBank curves;
+    curves.stopsIndexed = stopsIndexed;
     const float pushPull = LIM(static_cast<float>(fp.pushPull), -2.f, 3.f);
     const float exposure = LIM(static_cast<float>(fp.exposure), -4.f, 4.f) - pushPull * 0.32f;
     const float userContrast = LIM(1.f + fp.contrast / 240.f, 0.58f, 1.48f);
@@ -564,18 +763,27 @@ FilmLabV3CurveBank makeV3Curves(
     curves.maxDensity = LIM(stock.maxDensity + pushPull * 0.07f - std::max(fp.fade, 0) / 900.f, 1.65f, 3.15f);
     curves.outputIndexScale = V3_OUTPUT_LUT_SIZE / std::max(curves.maxDensity - curves.baseFog, 1e-5f);
 
+    float layerToe[3];
+    float layerGamma[3];
+
     for (int channel = 0; channel < 3; ++channel) {
         const float gamma = LIM(
-            0.40f * stock.layerGamma[channel] * process.gamma * userContrast * (1.f + pushPull * 0.065f),
-            0.20f,
-            0.78f);
+            V3_REFERENCE_GAMMA
+            * std::pow(std::max(stock.layerGamma[channel] * process.gamma, 0.05f), V3_STOCK_CONTRAST_WEIGHT)
+            * userContrast * (1.f + pushPull * 0.065f),
+            0.06f,
+            0.45f);
         const float toe = LIM(stock.layerToe[channel] + process.toe - pushPull * 0.025f + userToe, 0.f, 1.15f);
         const float shoulder = LIM(stock.layerShoulder[channel] + process.shoulder + userShoulder, 0.f, 1.45f);
         const float baselineExposure = stock.layerSpeed[channel] + process.speed;
         const float effectiveExposure = baselineExposure + exposure + channelShift[channel];
+        layerToe[channel] = toe;
+        layerGamma[channel] = gamma;
 
         for (int i = 0; i <= V3_DENSITY_LUT_SIZE; ++i) {
-            const float value = V3_MAX_INPUT * i / V3_DENSITY_LUT_SIZE;
+            const float value = stopsIndexed
+                ? 0.18f * std::exp2(V4_STOPS_MIN + (V4_STOPS_MAX - V4_STOPS_MIN) * i / V3_DENSITY_LUT_SIZE)
+                : V3_MAX_INPUT * i / V3_DENSITY_LUT_SIZE;
             curves.density[channel][i] = v3DensityResponse(
                 value,
                 effectiveExposure,
@@ -583,40 +791,60 @@ FilmLabV3CurveBank makeV3Curves(
                 toe,
                 shoulder,
                 curves.baseFog,
-                curves.maxDensity);
+                curves.maxDensity,
+                straight);
         }
 
-        const float baselineGamma = LIM(0.40f * stock.layerGamma[channel] * process.gamma, 0.20f, 0.78f);
+        // The colour head's filtration: a per-channel offset that holds middle
+        // grey neutral. It is an offset and not a slope, so per-layer gamma
+        // differences survive as crossover instead of cancelling out - which
+        // is what used to leave every stock rendering the same picture.
         curves.referenceDensity[channel] = v3DensityResponse(
             0.18f,
             baselineExposure,
-            baselineGamma,
-            LIM(stock.layerToe[channel] + process.toe, 0.f, 1.15f),
-            LIM(stock.layerShoulder[channel] + process.shoulder, 0.f, 1.45f),
+            gamma,
+            toe,
+            shoulder,
             curves.baseFog,
-            curves.maxDensity);
-        curves.densitySlope[channel] = baselineGamma;
+            curves.maxDensity,
+            straight);
+    }
+
+    // Where diffuse white lands after the emulsion, read off the green layer at
+    // its baseline exposure so the user's own exposure is not silently undone,
+    // and shared across channels so a layer's shoulder shows as highlight
+    // colour rather than being balanced away.
+    const float whiteDensity = v3DensityResponse(
+        1.f,
+        stock.layerSpeed[1] + process.speed,
+        layerGamma[1],
+        layerToe[1],
+        LIM(stock.layerShoulder[1] + process.shoulder + userShoulder, 0.f, 1.45f),
+        curves.baseFog,
+        curves.maxDensity,
+        straight);
+    const float whiteStops = std::max(
+        (whiteDensity - curves.referenceDensity[1]) / V3_REFERENCE_GAMMA,
+        0.35f);
+    const float systemGamma = straight ? 1.f : output.gamma;
+    const float shoulderK = solveShoulderK(systemGamma * whiteStops / V3_WHITE_STOPS);
+
+    // Paper saturation past diffuse white only exists for V4: it is the
+    // print-side counterpart of scene-referred input, and Custom stays a
+    // straight line by contract.
+    const float overshoot = (stopsIndexed && !straight) ? V4_PRINT_OVERSHOOT_STOPS : 0.f;
+
+    for (int channel = 0; channel < 3; ++channel) {
+        const float printToe = straight
+            ? 0.f
+            : output.toe * LIM(layerToe[channel] / V3_REFERENCE_TOE, 0.15f, 2.f);
 
         for (int i = 0; i <= V3_OUTPUT_LUT_SIZE; ++i) {
             const float density = curves.baseFog
                 + (curves.maxDensity - curves.baseFog) * i / V3_OUTPUT_LUT_SIZE;
-            float stops = (density - curves.referenceDensity[channel])
-                / std::max(curves.densitySlope[channel], 0.08f);
-            if (stops < 0.f) {
-                stops /= 1.f + output.toe * (-stops) * 0.15f;
-            } else {
-                stops /= 1.f + output.shoulder * stops * 0.15f;
-            }
-            curves.output[channel][i] = LIM(0.18f * std::exp2(stops * output.contrast), 0.f, V3_MAX_INPUT);
-        }
-
-        // Base-plus-fog is a density baseline in the negative, not display haze.
-        // Remove D-min and re-anchor middle gray while retaining toe and shoulder shape.
-        const float outputBlack = curves.output[channel][0];
-        const float outputScale = 0.18f / std::max(0.18f - outputBlack, 1e-6f);
-        for (int i = 0; i <= V3_OUTPUT_LUT_SIZE; ++i) {
+            const float stops = (density - curves.referenceDensity[channel]) / V3_REFERENCE_GAMMA;
             curves.output[channel][i] = LIM(
-                (curves.output[channel][i] - outputBlack) * outputScale,
+                0.18f * std::exp2(printGrade(stops, systemGamma, shoulderK, whiteStops, printToe, overshoot)),
                 0.f,
                 V3_MAX_INPUT);
         }
@@ -636,6 +864,63 @@ inline void toCanonicalV3(const LabImage* lab, int row, int col, const float inv
     b /= MAXVALF;
 }
 
+// Reconstructs the V4 film exposure for one pixel. The film input is the
+// unclipped rgbProc tap carried to canonical AP1, times whatever gain the
+// Lab-domain tools (shadows/highlights, L curve, wavelets, ...) applied on
+// top of rgbProc's output - so those edits survive as local dodges and burns
+// while the tone curve and the out-of-gamut clip, which both sit between the
+// tap and the snapshot, are excluded by construction. The ratio is softened
+// so pixels the tone curve crushed to zero cannot explode it, and capped
+// because a gain past 32x is an edit artefact, not light.
+struct FilmLabV4SceneFetch {
+    const Imagefloat* tap;
+    const LabImage* snapshot;
+    const LabImage* lab;
+    const float (*labInverse)[3]; // XYZ -> AP1, shared with the V3 path
+    float tapMatrix[3][3];        // working RGB -> AP1, 1/MAXVALF folded in
+
+    void fetch(int row, int col, float& sceneR, float& sceneG, float& sceneB,
+               float& labR, float& labG, float& labB, float* displayGain = nullptr) const
+    {
+        const float tr = tap->r(row, col);
+        const float tg = tap->g(row, col);
+        const float tb = tap->b(row, col);
+        const float rawR = tapMatrix[0][0] * tr + tapMatrix[0][1] * tg + tapMatrix[0][2] * tb;
+        const float rawG = tapMatrix[1][0] * tr + tapMatrix[1][1] * tg + tapMatrix[1][2] * tb;
+        const float rawB = tapMatrix[2][0] * tr + tapMatrix[2][1] * tg + tapMatrix[2][2] * tb;
+
+        toCanonicalV3(lab, row, col, labInverse, labR, labG, labB);
+
+        float snapR;
+        float snapG;
+        float snapB;
+        toCanonicalV3(snapshot, row, col, labInverse, snapR, snapG, snapB);
+
+        constexpr float soften = 0.004f;
+        const float gainR = LIM((labR + soften) / (snapR + soften), 0.f, 32.f);
+        const float gainG = LIM((labG + soften) / (snapG + soften), 0.f, 32.f);
+        const float gainB = LIM((labB + soften) / (snapB + soften), 0.f, 32.f);
+        sceneR = std::max(rawR * gainR, 0.f);
+        sceneG = std::max(rawG * gainG, 0.f);
+        sceneB = std::max(rawB * gainB, 0.f);
+
+        // The user's display-domain grading - tone curve, contrast, RGB
+        // curves, HSV, colour toning - lives between the tap and the
+        // snapshot, and the film exposure rightly ignores it (that is what
+        // un-clips the highlights). But ignoring it entirely left every
+        // tone control DEAD in V4: an S-curve no longer deepened shadows,
+        // which read as the film "washing out dark areas". So the same
+        // edits are measured here as per-channel gains against the clipped
+        // tap and handed back to the caller to apply to the film's OUTPUT:
+        // grading the print, exactly like the darkroom would.
+        if (displayGain) {
+            displayGain[0] = LIM((snapR + soften) / (LIM(rawR, 0.f, 1.f) + soften), 0.05f, 8.f);
+            displayGain[1] = LIM((snapG + soften) / (LIM(rawG, 0.f, 1.f) + soften), 0.05f, 8.f);
+            displayGain[2] = LIM((snapB + soften) / (LIM(rawB, 0.f, 1.f) + soften), 0.05f, 8.f);
+        }
+    }
+};
+
 inline void applyV3Spectral(const FilmLabV3Profile& profile, float r, float g, float b, float density[3])
 {
     r = std::max(r, 0.f);
@@ -644,6 +929,650 @@ inline void applyV3Spectral(const FilmLabV3Profile& profile, float r, float g, f
     density[0] = profile.spectral[0] * r + profile.spectral[1] * g + profile.spectral[2] * b;
     density[1] = profile.spectral[3] * r + profile.spectral[4] * g + profile.spectral[5] * b;
     density[2] = profile.spectral[6] * r + profile.spectral[7] * g + profile.spectral[8] * b;
+}
+
+// V4 layer-exposure crosstalk, derived rather than hand-tuned: class-plausible
+// spectral sensitivity lobes integrated against a partition-of-unity
+// reflectance basis under a 5500K illuminant, rows normalised so grey maps to
+// equal layer exposures and the tone pipeline stays untouched. Generated by
+// tools/v4_spectral_gen.py - edit the shapes there, rerun, and paste; the two
+// must stay in step. The V3 matrices in makeV3Profile were nearly diagonal
+// (0.93-0.98), which no real emulsion achieves; the crosstalk this restores
+// is what the V4 couplers below then work against, exactly as in real film.
+// How much of the full physical crosstalk each layer's record carries to
+// the output. A real negative-print system recovers most of the
+// exposure-stage overlap later: masking couplers and the paper's spectral
+// response undo unwanted absorptions at print time. Until Track B's
+// spectral print stage exists there is nothing downstream to do that work,
+// so each matrix row is blended toward identity - "the crosstalk that
+// survives the whole system". Raised from {0.42, 0.28, 0.42} once the
+// spectral print chains landed; 0.68 measurably breaks (warm colours gain
+// +3-4 dL and every output chain drifts - the pairwise couplers cannot
+// counterbalance more without the full per-layer spectral H&D), so this
+// is the ceiling for the current architecture. The green record keeps the least: the masking couplers'
+// primary job in real film is protecting the magenta image, whose layer
+// has the broadest sensitivity and would otherwise wash the magenta-green
+// axis (measured here: -5 to -9 dC on the magenta patch, +3 dL on blue,
+// both traced to green-row off-diagonals).
+// Per-stock V4 character, expressed through the PHYSICAL dials the model
+// now has instead of the legacy scalar table: interimage strength, mask
+// quality, dye purity, and red/blue layer crossover. The green layer is
+// never touched - the tone gates in tools/filmsim_probe.py model the green
+// axis, and mid-grey neutrality re-calibrates per channel anyway, so
+// crossover shows as shadow/highlight colour, exactly like real stock.
+// Stocks stay intentionally fictional; these are class-plausible
+// characters, not measurements of any branded product.
+struct FilmLabV4Character {
+    float couplingMul = 1.f;
+    float maskEfficiencyMul = 1.f;
+    float impurityMul = 1.f;
+    float redGammaMul = 1.f;
+    float blueGammaMul = 1.f;
+    float redToeAdd = 0.f;
+    float blueToeAdd = 0.f;
+};
+
+inline FilmLabV4Character makeV4Character(const Glib::ustring& preset)
+{
+    FilmLabV4Character c;
+
+    if (preset == "heritage_gold") {          // consumer gold: friendly, golden
+        c.couplingMul = 0.90f; c.maskEfficiencyMul = 0.95f; c.impurityMul = 1.15f;
+        c.redGammaMul = 1.020f; c.blueGammaMul = 0.985f;
+    } else if (preset == "porcelain_400") {   // portrait: gentle separations
+        c.couplingMul = 0.85f; c.maskEfficiencyMul = 1.01f; c.impurityMul = 0.90f;
+        c.redToeAdd = 0.02f;
+    } else if (preset == "golden_hour") {     // warm keeper of low sun
+        c.maskEfficiencyMul = 0.97f;
+        c.redGammaMul = 1.022f; c.blueGammaMul = 0.982f;
+    } else if (preset == "nostalgia_200") {   // aged consumer chemistry
+        c.couplingMul = 0.80f; c.maskEfficiencyMul = 0.87f; c.impurityMul = 1.30f;
+        c.blueToeAdd = 0.04f;
+    } else if (preset == "street_800") {      // fast, punchy, blue shadows
+        c.couplingMul = 1.10f; c.impurityMul = 1.10f;
+        c.blueToeAdd = 0.05f; c.blueGammaMul = 1.012f;
+    } else if (preset == "vivid_chrome") {    // the loud slide
+        c.couplingMul = 1.15f; c.impurityMul = 0.80f;
+    } else if (preset == "arctic") {          // cool, clinical slide
+        c.couplingMul = 0.95f; c.blueGammaMul = 1.015f; c.redGammaMul = 0.990f;
+    } else if (preset == "desert_chrome") {   // older warm chrome chemistry
+        c.couplingMul = 0.90f; c.impurityMul = 1.20f;
+        c.redGammaMul = 1.018f; c.blueGammaMul = 0.980f;
+    } else if (preset == "twilight_160") {    // soft tungsten motion stock
+        c.couplingMul = 0.90f; c.maskEfficiencyMul = 1.01f;
+    } else if (preset == "cinematic_500t") {  // the night stock
+        c.couplingMul = 1.05f; c.impurityMul = 1.10f;
+    } else if (preset == "fade_bloom") {      // deliberately faded
+        c.couplingMul = 0.80f; c.impurityMul = 1.30f;
+    } else if (preset == "ember") {           // warm creative
+        c.couplingMul = 1.05f; c.impurityMul = 1.10f;
+        c.redGammaMul = 1.018f;
+    } else if (preset == "analog_dream") {    // the dreamiest
+        c.couplingMul = 0.75f; c.impurityMul = 1.40f;
+        c.redToeAdd = 0.03f;
+    }
+
+    return c;
+}
+
+constexpr float V4_SPECTRAL_STRENGTH[3] = {0.55f, 0.37f, 0.55f};
+
+inline std::array<float, 9> makeV4SpectralMatrix(StockClass stockClass)
+{
+    std::array<float, 9> full;
+
+    switch (stockClass) {
+        case StockClass::Reversal:
+            full = {{
+                0.8538f, 0.1359f, 0.0102f,
+                0.1889f, 0.6391f, 0.1720f,
+                0.0036f, 0.1058f, 0.8906f
+            }};
+            break;
+        case StockClass::MotionNegative:
+            full = {{
+                0.7252f, 0.2483f, 0.0264f,
+                0.3071f, 0.5491f, 0.1438f,
+                0.0126f, 0.2016f, 0.7858f
+            }};
+            break;
+        default: // ColorNegative and Creative
+            full = {{
+                0.7852f, 0.1968f, 0.0180f,
+                0.2514f, 0.5929f, 0.1557f,
+                0.0087f, 0.1761f, 0.8153f
+            }};
+            break;
+    }
+
+    // Rows of both endpoints sum to one, so the blend keeps grey mapping to
+    // equal layer exposures without renormalising.
+    for (int i = 0; i < 9; ++i) {
+        const float identity = (i % 4 == 0) ? 1.f : 0.f;
+        full[i] = identity + (full[i] - identity) * V4_SPECTRAL_STRENGTH[i / 3];
+    }
+
+    return full;
+}
+
+// DIR couplers, V4: development in one layer releases inhibitors that
+// suppress development in the others. The Langmuir isotherm saturates the
+// inhibitor release as density builds, and only the DIFFERENCE between
+// layers acts - so neutral grey is untouched by construction (the colour
+// head calibration stays valid), while any colour difference deepens:
+// the interimage effect that real film uses to buy back the saturation its
+// own spectral crosstalk costs. This replaces V3's zone-weighted density
+// mixing, which was a static grade keyed to mean density.
+constexpr float V4_COUPLER_K = 0.35f;
+constexpr float V4_COUPLER_GAIN = 0.80f;
+
+// The stock table's coupling constants were tuned for V3's desaturating
+// zone-mix, where reversal wanted LESS of it. Real interimage runs the
+// other way: E-6's inhibition is the strongest in the business - it is why
+// slides stay saturated despite their dyes' unwanted absorptions - so the
+// class factor rebalances the table for the V4 restorative couplers
+// without touching V3.
+inline float v4CouplerClassGain(StockClass stockClass)
+{
+    switch (stockClass) {
+        case StockClass::Reversal:
+            return 2.8f;
+        case StockClass::MotionNegative:
+            return 1.1f;
+        default:
+            return 1.0f;
+    }
+}
+
+inline float v4LangmuirInhibitor(float density, float baseFog, float inverseRange)
+{
+    const float normalized = LIM((density - baseFog) * inverseRange, 0.f, 1.f);
+    return normalized / (normalized + V4_COUPLER_K);
+}
+
+inline void applyV4Couplers(float density[3], float amount, float baseFog, float maxDensity)
+{
+    if (amount <= 0.0001f) {
+        return;
+    }
+
+    const float range = std::max(maxDensity - baseFog, 1e-5f);
+    const float inverseRange = 1.f / range;
+    const float inhibitor[3] = {
+        v4LangmuirInhibitor(density[0], baseFog, inverseRange),
+        v4LangmuirInhibitor(density[1], baseFog, inverseRange),
+        v4LangmuirInhibitor(density[2], baseFog, inverseRange)
+    };
+    const float gain = amount * V4_COUPLER_GAIN * range;
+
+    // Pairwise inter-layer inhibition weights - per-layer DIR coupler
+    // loading, a real emulsion-design dial. The green row is heaviest: the
+    // green layer's broad sensitivity is what washes the magenta-green
+    // axis, and it needs strong inhibition from BOTH neighbours to hold
+    // magenta (two dense rivals push together). On a blue subject the two
+    // pushes largely cancel, which a mean-differential formulation cannot
+    // express - it either starves magenta or over-drives blue.
+    constexpr float pairWeight[3][3] = {
+        {0.f, 1.6f, 1.f},
+        {2.4f, 0.f, 2.4f},
+        {1.f, 1.6f, 0.f}
+    };
+
+    for (int channel = 0; channel < 3; ++channel) {
+        float differential = 0.f;
+        for (int other = 0; other < 3; ++other) {
+            differential += pairWeight[channel][other] * (inhibitor[channel] - inhibitor[other]);
+        }
+
+        // A layer denser than its rivals is pushed further up, a thinner
+        // one further down. The push may never take more than a fraction
+        // of the headroom left toward fog or Dmax: development cannot
+        // remove silver that never formed, and a hard clamp here parks
+        // saturated colours in a regime where the gain constant stops
+        // doing anything at all.
+        float delta = gain * 0.5f * differential;
+        const float headroom = delta > 0.f
+            ? maxDensity - density[channel]
+            : density[channel] - baseFog;
+        const float limit = 0.55f * std::max(headroom, 0.f);
+
+        if (delta > limit) {
+            delta = limit;
+        } else if (delta < -limit) {
+            delta = -limit;
+        }
+
+        density[channel] += delta;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// V4 spectral print-through (LUT-B v1).
+//
+// The developed image is three dye clouds, and dyes are not clean: cyan
+// absorbs some green and blue it should pass, magenta eats a large bite of
+// blue, yellow nibbles green. What an output medium reads through those
+// dyes therefore couples the three records - differently for a scanner's
+// narrow bands, RA-4 paper's far-red cyan channel, or a projector's broad
+// view. Colour negative film corrects most of its own impurities with
+// colored masking couplers: the coupler starts colored exactly like its
+// dye's unwanted absorption and is consumed as dye forms, so unwanted
+// absorption stays CONSTANT across exposure (that constant is the orange
+// base, and the colour head's filtration eats it). Reversal has no mask,
+// which is a real part of why slides render colour the way they do.
+//
+// Runtime shape: everything is baked into a small 3D LUT of per-channel
+// ratios against the neutral axis - out_i = printLUT_i(d_i) * S_i(d) /
+// S_i(d_i, d_i, d_i) - so on neutral input the ratio is exactly 1 and the
+// V3-calibrated tone pipeline is preserved bit-for-bit by construction;
+// only colour interactions are added. Tone gates in tools/filmsim_probe.py
+// therefore need no counterpart of this; the empirical gate is the
+// ColorChecker probe (tools/v4_color_probe.py).
+// ---------------------------------------------------------------------------
+
+constexpr int V4_PRINT_BINS = 36;        // 380..730nm, 10nm
+constexpr int V4_PRINT_LUT_SIZE = 21;
+constexpr float V4_PRINT_DYE_SCALE = 0.85f;
+
+inline float v4SpectralGauss(float lambda, float mu, float sigma)
+{
+    const float d = (lambda - mu) / sigma;
+    return std::exp(-0.5f * d * d);
+}
+
+struct FilmLabV4PrintLUT {
+    bool active = false;
+    float baseFog = 0.f;
+    float indexScale = 0.f;
+    std::vector<float> ratio; // SIZE^3 * 3, innermost = channel
+
+    void sample(const float density[3], float out[3]) const
+    {
+        constexpr int N = V4_PRINT_LUT_SIZE;
+        float fx[3];
+        int i0[3];
+        for (int c = 0; c < 3; ++c) {
+            const float x = LIM((density[c] - baseFog) * indexScale, 0.f, static_cast<float>(N - 1));
+            i0[c] = std::min(static_cast<int>(x), N - 2);
+            fx[c] = x - i0[c];
+        }
+        for (int c = 0; c < 3; ++c) {
+            float accum = 0.f;
+            for (int corner = 0; corner < 8; ++corner) {
+                const int di = corner & 1;
+                const int dj = (corner >> 1) & 1;
+                const int dk = (corner >> 2) & 1;
+                const float w = (di ? fx[0] : 1.f - fx[0])
+                    * (dj ? fx[1] : 1.f - fx[1])
+                    * (dk ? fx[2] : 1.f - fx[2]);
+                const int index = (((i0[0] + di) * N + (i0[1] + dj)) * N + (i0[2] + dk)) * 3 + c;
+                accum += w * ratio[index];
+            }
+            out[c] = accum;
+        }
+    }
+};
+
+void makeV4PrintLUT(
+    FilmLabV4PrintLUT& lut,
+    const FilmLabV3CurveBank& curves,
+    StockClass stockClass,
+    const Glib::ustring& outputName,
+    bool multiThread,
+    float maskEfficiencyMul = 1.f,
+    float impurityMul = 1.f)
+{
+    constexpr int N = V4_PRINT_LUT_SIZE;
+
+    // Dye spectral densities, normalised to unit main peak. The unwanted
+    // lobes are the whole point: they are what couples the records.
+    // Channel order follows the records: 0 = red record -> cyan dye,
+    // 1 = green -> magenta, 2 = blue -> yellow.
+    struct Lobe { float weight, mu, sigma; };
+    static const std::vector<Lobe> DYES[3] = {
+        {{1.00f, 655.f, 45.f}, {0.20f, 545.f, 45.f}, {0.09f, 435.f, 35.f}},
+        {{1.00f, 545.f, 42.f}, {0.32f, 435.f, 32.f}, {0.06f, 640.f, 50.f}},
+        {{1.00f, 442.f, 38.f}, {0.06f, 545.f, 40.f}}
+    };
+
+
+    // Reversal's azomethine dyes are engineered much cleaner than a
+    // negative's - they have to be, there is no mask and no print stage to
+    // correct them. The impurity factor scales the unwanted lobes.
+    float maskEfficiency;
+    float dyeImpurity = 1.f;
+    switch (stockClass) {
+        case StockClass::Reversal:
+            maskEfficiency = 0.f;
+            dyeImpurity = 0.15f;
+            break;
+        case StockClass::MotionNegative:
+            maskEfficiency = 0.95f;
+            break;
+        case StockClass::Creative:
+            maskEfficiency = 0.75f;
+            break;
+        default:
+            maskEfficiency = 0.95f;
+            break;
+    }
+
+    maskEfficiency = LIM(maskEfficiency * maskEfficiencyMul, 0.f, 0.99f);
+    dyeImpurity = LIM(dyeImpurity * impurityMul, 0.f, 2.f);
+
+    // Output chain type. A scanner READS the negative through its own
+    // bands; RA-4 and cinema print stock EXPOSE a second emulsion through
+    // an enlarger lamp and are then viewed as reflection/projection; a
+    // slide is VIEWED directly through the projector lamp by the eye.
+    // The ratio-to-neutral factorisation needs each channel's signal to be
+    // driven mostly by its own dye (per-channel separability). Narrow bands
+    // give that; a full CIE-observer integration does not - X spans
+    // 500-680nm, so every channel tracks overall brightness and the
+    // per-axis normalisation degenerates into a brightness comparison that
+    // crushed saturated colours 4x. So even the finished print is read
+    // through densitometer-style bands, and projection is a broad-band
+    // positive read.
+    enum class PrintChain { Receiver, Paper };
+    PrintChain chainType = PrintChain::Receiver;
+    const bool positiveImage = stockClass == StockClass::Reversal;
+    const bool projectionView = outputName == "projection";
+
+    // Read bands: receiver bands for scanner chains, the print stock's
+    // spectral sensitivities for paper chains, broad observer-ish bands for
+    // direct viewing. They double as the masking couplers' "own band".
+    float readMu[3] = {645.f, 545.f, 445.f};
+    float readSigma[3] = {28.f, 28.f, 28.f};
+    float colorGamma = 1.f;
+    float paperGamma = 2.7f;
+    float paperDmax = 2.4f;
+    float lampTempK = 3200.f;
+    float viewTempK = 5000.f;
+
+    if (outputName == "ra4") {
+        chainType = PrintChain::Paper;
+        readMu[0] = 700.f; readMu[1] = 550.f; readMu[2] = 462.f;
+        readSigma[0] = 16.f; readSigma[1] = 22.f; readSigma[2] = 22.f;
+        paperGamma = 1.2f;
+        paperDmax = 2.35f;
+        colorGamma = 1.12f;
+    } else if (outputName == "cinema") {
+        // 2383-class print film: steeper, deeper, colder lamp at review.
+        chainType = PrintChain::Paper;
+        readMu[0] = 690.f; readMu[1] = 545.f; readMu[2] = 445.f;
+        readSigma[0] = 18.f; readSigma[1] = 22.f; readSigma[2] = 22.f;
+        paperGamma = 1.5f;
+        paperDmax = 3.4f;
+        colorGamma = 1.18f;
+        viewTempK = 5400.f;
+    } else if (outputName == "projection") {
+        readMu[0] = 610.f; readMu[1] = 550.f; readMu[2] = 460.f;
+        readSigma[0] = 45.f; readSigma[1] = 45.f; readSigma[2] = 40.f;
+    } else if (outputName == "labscan") {
+        // Minilab scanner: wider bands than Status M plus the colour
+        // contrast its inversion pipeline is known for.
+        readMu[0] = 640.f; readMu[1] = 550.f; readMu[2] = 460.f;
+        readSigma[0] = 34.f; readSigma[1] = 34.f; readSigma[2] = 30.f;
+        colorGamma = 1.18f;
+    }
+
+    // Paper (print stock) dyes: same chemistry family as the negative's but
+    // purer - the print is the last chance to be clean.
+    // Print-stock dyes are the cleanest in the chain - they are chosen for
+    // exactly that - and their impurities land straight on the viewer with
+    // nothing downstream to correct them, so small errors here read as
+    // broad desaturation (first guess at 0.16/0.26 measured -15 dC across
+    // the whole chart).
+    // Narrow main lobes: real print dyes cut steeply outside their band -
+    // a symmetric sigma-40 magenta reached 0.21 absorbance at a 615nm view
+    // band and alone crushed every red's view ratio to 0.37.
+    static const std::vector<Lobe> PAPER_DYES[3] = {
+        {{1.00f, 660.f, 45.f}, {0.06f, 545.f, 42.f}, {0.02f, 435.f, 34.f}},
+        {{1.00f, 545.f, 33.f}, {0.10f, 435.f, 30.f}, {0.02f, 640.f, 48.f}},
+        {{1.00f, 445.f, 34.f}, {0.02f, 545.f, 38.f}}
+    };
+
+    // Densitometer-style bands the finished print is read through.
+    constexpr float printViewMu[3] = {650.f, 535.f, 450.f};
+    constexpr float printViewSigma[3] = {20.f, 22.f, 20.f};
+
+    const auto planck = [](float lambda, float kelvin) {
+        const float lm = lambda * 1e-9f;
+        return 1.f / (lm * lm * lm * lm * lm * (std::exp(0.0143877688f / (lm * kelvin)) - 1.f));
+    };
+
+    // Tabulate spectra once.
+    float dye[3][V4_PRINT_BINS];
+    float coupler[3][V4_PRINT_BINS];
+    float receiver[3][V4_PRINT_BINS];
+    float paperDye[3][V4_PRINT_BINS];
+    float lamp[V4_PRINT_BINS];
+    float printView[3][V4_PRINT_BINS];
+    for (int bin = 0; bin < V4_PRINT_BINS; ++bin) {
+        const float lambda = 380.f + 10.f * bin;
+        lamp[bin] = planck(lambda, lampTempK);
+        for (int c = 0; c < 3; ++c) {
+            printView[c][bin] = v4SpectralGauss(lambda, printViewMu[c], printViewSigma[c]) + 0.005f;
+            float d = 0.f;
+            bool main = true;
+            for (const Lobe& lobe : DYES[c]) {
+                d += lobe.weight * (main ? 1.f : dyeImpurity)
+                    * v4SpectralGauss(lambda, lobe.mu, lobe.sigma);
+                main = false;
+            }
+            dye[c][bin] = d;
+            float pd = 0.f;
+            for (const Lobe& lobe : PAPER_DYES[c]) {
+                pd += lobe.weight * v4SpectralGauss(lambda, lobe.mu, lobe.sigma);
+            }
+            paperDye[c][bin] = pd;
+            // The colored coupler is the dye's own absorption everywhere
+            // OUTSIDE the band its record is read through - main-lobe tails
+            // included, which the first cut missed (an unmasked magenta tail
+            // at 445nm alone put +11 dC on the blue patch). Held before
+            // development, consumed as dye forms.
+            const float ownBand = v4SpectralGauss(lambda, readMu[c], readSigma[c] * 1.6f);
+            coupler[c][bin] = maskEfficiency * d * (1.f - ownBand);
+            // The 3% floor is band leakage plus flare: no real receiver
+            // separates the records perfectly, and it is what keeps the
+            // neutral-ratio contrast physically bounded. Paper sensitivities
+            // are nearly leak-free - a tungsten enlarger lamp is so
+            // red-heavy that even 3% of flat leak would swamp the blue
+            // band's own signal and grey out every print (measured: -15 dC
+            // across the chart).
+            // Paper gets essentially none: under a tungsten enlarger even a
+            // 0.2% flat leak collected 26% of a dense channel's exposure
+            // (the band's own light is crushed by the negative's dye while
+            // red floods through the leak) and greyed the whole print.
+            const float leak = chainType == PrintChain::Paper ? 1e-4f : 0.03f;
+            receiver[c][bin] = v4SpectralGauss(lambda, readMu[c], readSigma[c]) + leak;
+        }
+    }
+
+    // Evaluate one node of the shared chain front half: negative
+    // transmission for the given dye amounts.
+    // A real colour negative spans ~2 density; the receiver chains were
+    // calibrated at a gentler scale, so the paper chain gets the physical
+    // one - its curve is built to accept it.
+    const float chainDyeScale = chainType == PrintChain::Paper ? 2.0f : V4_PRINT_DYE_SCALE;
+
+    const auto transmissionAt = [&](const float amount[3], float T[V4_PRINT_BINS]) {
+        for (int bin = 0; bin < V4_PRINT_BINS; ++bin) {
+            float spectralDensity = 0.f;
+            for (int c = 0; c < 3; ++c) {
+                spectralDensity += chainDyeScale
+                    * (amount[c] * dye[c][bin] + (1.f - amount[c]) * coupler[c][bin]);
+            }
+            T[bin] = std::exp(-2.302585f * spectralDensity);
+        }
+    };
+
+    // Paper chains need the enlarger filtration solved: per-channel paper
+    // exposure at the NEUTRAL MID negative sets the logistic's pivot, which
+    // is exactly what dialling the colour head's Y/M filters until a grey
+    // card prints grey does.
+    float paperPivot[3] = {0.f, 0.f, 0.f};
+
+    if (chainType == PrintChain::Paper) {
+        const float midAmount[3] = {0.5f, 0.5f, 0.5f};
+        float T[V4_PRINT_BINS];
+        transmissionAt(midAmount, T);
+        for (int c = 0; c < 3; ++c) {
+            float exposure = 0.f;
+            for (int bin = 0; bin < V4_PRINT_BINS; ++bin) {
+                exposure += T[bin] * lamp[bin] * receiver[c][bin];
+            }
+            paperPivot[c] = std::log10(std::max(exposure, 1e-12f));
+        }
+    }
+
+    const float range = std::max(curves.maxDensity - curves.baseFog, 1e-5f);
+    lut.baseFog = curves.baseFog;
+    lut.indexScale = (N - 1) / range;
+    lut.ratio.assign(static_cast<size_t>(N) * N * N * 3, 1.f);
+
+    std::vector<float> signal(static_cast<size_t>(N) * N * N * 3);
+
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static) if (multiThread)
+#endif
+    for (int i = 0; i < N; ++i) {
+        for (int j = 0; j < N; ++j) {
+            for (int k = 0; k < N; ++k) {
+                // The grid axes are output densities (bright = high), but
+                // the POSITIVE image being viewed holds dye where light is
+                // absent: a bright red area carries almost no cyan - it is
+                // dense in magenta and yellow. Coupling dye to brightness
+                // instead of darkness put every unwanted absorption on the
+                // wrong colours (measured: blue patches gained chroma from
+                // a magenta absorption that physically tempers them).
+                // Dye convention is the class's chemistry: a slide holds dye
+                // where light was ABSENT (positive image, so invert the
+                // output-density axes), while a negative holds dye where the
+                // record was DENSE - and the chain then re-inverts it, in
+                // the scanner's software or in the paper itself. Feeding a
+                // paper positive-convention dyes double-inverts and puts its
+                // toe and shoulder on the wrong ends. Direct viewing only
+                // makes sense for a positive, so that chain always views the
+                // final positive image.
+                const bool viewsPositive = positiveImage || projectionView;
+                const float axis[3] = {
+                    static_cast<float>(i) / (N - 1),
+                    static_cast<float>(j) / (N - 1),
+                    static_cast<float>(k) / (N - 1)
+                };
+                const float amount[3] = {
+                    viewsPositive ? 1.f - axis[0] : axis[0],
+                    viewsPositive ? 1.f - axis[1] : axis[1],
+                    viewsPositive ? 1.f - axis[2] : axis[2]
+                };
+                float T[V4_PRINT_BINS];
+                transmissionAt(amount, T);
+
+                float s[3] = {0.f, 0.f, 0.f};
+
+                if (chainType == PrintChain::Receiver) {
+                    for (int bin = 0; bin < V4_PRINT_BINS; ++bin) {
+                        s[0] += T[bin] * receiver[0][bin];
+                        s[1] += T[bin] * receiver[1][bin];
+                        s[2] += T[bin] * receiver[2][bin];
+                    }
+                    for (int c = 0; c < 3; ++c) {
+                        if (!positiveImage) {
+                            // The scanner reads the negative; its pipeline
+                            // inverts each channel to deliver the positive.
+                            s[c] = 1.f / std::max(s[c], 1e-6f);
+                        }
+                        if (colorGamma != 1.f) {
+                            s[c] = std::pow(std::max(s[c], 1e-9f), colorGamma);
+                        }
+                    }
+                } else {
+                    // Expose the print stock through the enlarger, develop it
+                    // on its logistic H&D, and view the dye stack it formed.
+                    float paperDensity[3];
+                    for (int c = 0; c < 3; ++c) {
+                        float exposure = 0.f;
+                        for (int bin = 0; bin < V4_PRINT_BINS; ++bin) {
+                            exposure += T[bin] * lamp[bin] * receiver[c][bin];
+                        }
+                        const float logE = std::log10(std::max(exposure, 1e-12f)) - paperPivot[c];
+                        // Negative-working paper darkens with exposure; a
+                        // positive printed on positive-working stock needs
+                        // the reversal-processed curve, which falls.
+                        const float slope = positiveImage ? -paperGamma : paperGamma;
+                        paperDensity[c] = paperDmax / (1.f + std::exp(-2.302585f * slope * logE));
+                    }
+                    for (int bin = 0; bin < V4_PRINT_BINS; ++bin) {
+                        const float stack = paperDensity[0] * paperDye[0][bin]
+                            + paperDensity[1] * paperDye[1][bin]
+                            + paperDensity[2] * paperDye[2][bin];
+                        const float reflect = std::exp(-2.302585f * stack);
+                        s[0] += reflect * printView[0][bin];
+                        s[1] += reflect * printView[1][bin];
+                        s[2] += reflect * printView[2][bin];
+                    }
+                    for (int c = 0; c < 3; ++c) {
+                        if (colorGamma != 1.f) {
+                            s[c] = std::pow(std::max(s[c], 1e-9f), colorGamma);
+                        }
+                    }
+                }
+
+                const size_t base = ((static_cast<size_t>(i) * N + j) * N + k) * 3;
+                for (int c = 0; c < 3; ++c) {
+                    signal[base + c] = s[c];
+                }
+            }
+        }
+    }
+
+    // Normalise against the neutral axis, per channel along its own axis, so
+    // grey input always gets ratio 1 and only off-neutral behaviour remains.
+    float diagonal[3][N];
+    for (int m = 0; m < N; ++m) {
+        const size_t base = ((static_cast<size_t>(m) * N + m) * N + m) * 3;
+        for (int c = 0; c < 3; ++c) {
+            diagonal[c][m] = std::max(signal[base + c], 1e-9f);
+        }
+    }
+
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static) if (multiThread)
+#endif
+    for (int i = 0; i < N; ++i) {
+        for (int j = 0; j < N; ++j) {
+            for (int k = 0; k < N; ++k) {
+                const size_t base = ((static_cast<size_t>(i) * N + j) * N + k) * 3;
+                const int axis[3] = {i, j, k};
+                for (int c = 0; c < 3; ++c) {
+                    lut.ratio[base + c] = LIM(
+                        signal[base + c] / diagonal[c][axis[c]],
+                        0.25f,
+                        4.f);
+                }
+            }
+        }
+    }
+
+    lut.active = true;
+}
+
+// Density gain applied to inhibitor-diffusion differences at edges, and the
+// physical reach of that diffusion in the emulsion. Both V4-only.
+constexpr float V4_ADJACENCY_GAIN = 2.9f;
+constexpr float V4_ADJACENCY_MM = 0.014f;
+
+// Inhibitor-difference soft knee: a moderate edge passes nearly linearly, a
+// black-to-white edge compresses instead of ringing. In density terms the
+// extreme-edge fringe caps near 0.1 - the heavy end of what push-processed
+// stock shows, and the outputSoftness slider scales it down from there.
+constexpr float V4_ADJACENCY_KNEE = 0.09f;
+
+inline float v4AdjacencySignal(const FilmLabV3CurveBank& curves, float luma)
+{
+    const float density = curves.sampleDensity(1, luma);
+    const float inverseRange = 1.f / std::max(curves.maxDensity - curves.baseFog, 1e-5f);
+    return v4LangmuirInhibitor(density, curves.baseFog, inverseRange);
 }
 
 inline void applyV3DensityCoupling(float density[3], StockClass stockClass, float amount, float baseFog, float maxDensity)
@@ -683,14 +1612,6 @@ inline void applyV3DensityCoupling(float density[3], StockClass stockClass, floa
     density[2] = LIM(density[2], baseFog, maxDensity);
 }
 
-inline float v3TileNoise(array2D<float>& tile, int mask, int x, int y, int offsetX, int offsetY)
-{
-    const int blockX = x >> V3_GRAIN_TILE_SHIFT;
-    const int blockY = y >> V3_GRAIN_TILE_SHIFT;
-    const unsigned int tileX = static_cast<unsigned int>(x + blockY * 521 + offsetX) & mask;
-    const unsigned int tileY = static_cast<unsigned int>(y + blockX * 733 + offsetY) & mask;
-    return tile[tileY][tileX];
-}
 
 inline float v3SkinConfidence(float r, float g, float b)
 {
@@ -808,14 +1729,38 @@ void filmPresetsV3(
     LabImage* lab,
     const procparams::FilmPresetsParams& fp,
     const FilmLabContext& context,
-    bool multiThread)
+    bool multiThread,
+    const float (*tapToCanonical)[3])
 {
     const FilmLabStock& stockRecord = findStock(fp.preset);
     const Glib::ustring processName = fp.process == "auto" ? defaultProcess(stockRecord.stockClass) : fp.process;
-    const FilmLabV3Profile stock = makeV3Profile(stockRecord);
+    FilmLabV3Profile stock = makeV3Profile(stockRecord);
     const FilmLabV3Process process = makeV3Process(processName);
     const FilmLabV3Output output = makeV3Output(fp.output);
-    const FilmLabV3CurveBank curves = makeV3Curves(stock, process, output, fp);
+    const bool straightCurve = stockRecord.stockClass == StockClass::Custom;
+    const bool stopsIndexed = fp.modelVersion >= 4;
+
+    FilmLabV4Character character;
+
+    if (stopsIndexed
+            && stockRecord.stockClass != StockClass::Custom
+            && stockRecord.stockClass != StockClass::Monochrome) {
+        stock.spectral = makeV4SpectralMatrix(stockRecord.stockClass);
+        character = makeV4Character(fp.preset);
+        stock.coupling *= character.couplingMul;
+        stock.layerGamma[0] *= character.redGammaMul;
+        stock.layerGamma[2] *= character.blueGammaMul;
+        stock.layerToe[0] += character.redToeAdd;
+        stock.layerToe[2] += character.blueToeAdd;
+    }
+
+    const FilmLabV3CurveBank curves = makeV3Curves(stock, process, output, fp, straightCurve, stopsIndexed);
+
+    FilmLabV4PrintLUT printLUT;
+    if (stopsIndexed && !straightCurve && stockRecord.stockClass != StockClass::Monochrome) {
+        makeV4PrintLUT(printLUT, curves, stockRecord.stockClass, fp.output, multiThread,
+                       character.maskEfficiencyMul, character.impurityMul);
+    }
 
     const TMatrix canonicalMatrix = ICCStore::getInstance()->workingSpaceMatrix("ACESp1");
     const TMatrix canonicalInverse = ICCStore::getInstance()->workingSpaceInverseMatrix("ACESp1");
@@ -828,15 +1773,58 @@ void filmPresetsV3(
         }
     }
 
+    // V4 scene mode needs the tap, the rgbProc snapshot, and matching
+    // geometry; anything missing degrades to the V3 display-referred input,
+    // which keeps the first frame after enabling and any stale-buffer state
+    // rendering instead of failing.
+    const bool sceneMode = fp.modelVersion >= 4
+        && tapToCanonical != nullptr
+        && context.sceneTap != nullptr
+        && context.rgbSnapshot != nullptr
+        && context.sceneTap->getWidth() == lab->W
+        && context.sceneTap->getHeight() == lab->H
+        && context.rgbSnapshot->W == lab->W
+        && context.rgbSnapshot->H == lab->H;
+
+    FilmLabV4SceneFetch sceneFetch;
+    if (sceneMode) {
+        sceneFetch.tap = context.sceneTap;
+        sceneFetch.snapshot = context.rgbSnapshot;
+        sceneFetch.lab = lab;
+        sceneFetch.labInverse = inverse;
+        for (int row = 0; row < 3; ++row) {
+            for (int col = 0; col < 3; ++col) {
+                sceneFetch.tapMatrix[row][col] = tapToCanonical[row][col];
+            }
+        }
+    }
+
     const int scale = std::max(context.scale, 1);
     const int fullWidth = context.fullWidth > 0 ? context.fullWidth : lab->W * scale;
     const int fullHeight = context.fullHeight > 0 ? context.fullHeight : lab->H * scale;
     const int fullShort = std::max(1, std::min(fullWidth, fullHeight));
     const float strength = LIM(fp.strength / 100.f, 0.f, 1.f);
     const float characterScale = filmCharacterScale(strength);
-    const float halation = LIM((stockRecord.halation + fp.halation / 155.f) * characterScale, 0.f, 0.92f);
+
+    // Motion-picture stock carries a remjet anti-halation backing that soaks
+    // up nearly all of the light before it can bounce off the base, so
+    // developed in its native ECN-2 bath it barely halates. Strip the remjet
+    // and cross-process it in C-41 - the CineStill workflow - and the same
+    // emulsion produces the famous red glow. V4 keys this off the process
+    // the user already selects; V2/V3 keep their stock table as tuned.
+    float remjetFactor = 1.f;
+    if (stopsIndexed && stockRecord.stockClass == StockClass::MotionNegative) {
+        remjetFactor = processName == "c41" ? 1.30f : 0.30f;
+    }
+
+    const float halation = LIM((stockRecord.halation + fp.halation / 155.f) * characterScale * remjetFactor, 0.f, 0.92f);
     const float bloom = LIM((stock.bloom + fp.bloom / 180.f) * characterScale, 0.f, 0.65f);
-    const float thresholdStops = LIM(2.1f + fp.halationThreshold / 75.f, 0.75f, 3.45f);
+    // Onset as a fraction of diffuse white, not stops above it - see
+    // halationHighlightSource. Positive slider still means "trigger later".
+    const float halationOnset = LIM(0.78f + fp.halationThreshold / 420.f, 0.45f, 0.97f);
+    // Scene mode has real magnitudes again, so the onset returns to stops
+    // relative to diffuse white: the slider spans +/- two stops.
+    const float halationOnsetStopsV4 = fp.halationThreshold / 50.f;
     const float halationSize = std::exp2(fp.halationSize / 100.f * 1.35f);
     const float halationWarmth = LIM(1.f + fp.halationColor / 160.f, 0.35f, 1.65f);
 
@@ -853,35 +1841,88 @@ void filmPresetsV3(
         halationSource(halationWidth, halationHeight, ARRAY2D_CLEAR_DATA);
         halationInner(halationWidth, halationHeight, ARRAY2D_CLEAR_DATA);
         halationOuter(halationWidth, halationHeight, ARRAY2D_CLEAR_DATA);
+        array2D<float> halationScratch(halationWidth, halationHeight, ARRAY2D_CLEAR_DATA);
 
 #ifdef _OPENMP
         #pragma omp parallel for schedule(static) if (multiThread)
 #endif
         for (int row = 0; row < halationHeight; ++row) {
             for (int col = 0; col < halationWidth; ++col) {
-                const int sourceRow = std::min(row * halationReduction + halationReduction / 2, lab->H - 1);
-                const int sourceCol = std::min(col * halationReduction + halationReduction / 2, lab->W - 1);
-                float r;
-                float g;
-                float b;
-                toCanonicalV3(lab, sourceRow, sourceCol, inverse, r, g, b);
-                const float y = std::max(luminance(r, g, b), 0.f);
-                const float peak = std::max(r, std::max(g, b));
-                halationSource[row][col] = halationHighlightSource(y, peak, thresholdStops);
+                // Average the block rather than sampling its centre. Point
+                // sampling made the highlight mask depend on which pixels the
+                // decimation happened to land on, so the halo shimmered and
+                // moved as the user changed zoom.
+                const int rowStart = row * halationReduction;
+                const int colStart = col * halationReduction;
+                const int rowEnd = std::min(rowStart + halationReduction, lab->H);
+                const int colEnd = std::min(colStart + halationReduction, lab->W);
+                float accumulated = 0.f;
+                int samples = 0;
+                for (int sourceRow = rowStart; sourceRow < rowEnd; ++sourceRow) {
+                    for (int sourceCol = colStart; sourceCol < colEnd; ++sourceCol) {
+                        float r;
+                        float g;
+                        float b;
+
+                        if (sceneMode) {
+                            float labR;
+                            float labG;
+                            float labB;
+                            sceneFetch.fetch(sourceRow, sourceCol, r, g, b, labR, labG, labB);
+                            const float y = std::max(luminance(r, g, b), 0.f);
+                            const float peak = std::max(r, std::max(g, b));
+                            accumulated += halationHighlightSourceV4(y, peak, halationOnsetStopsV4);
+                        } else {
+                            toCanonicalV3(lab, sourceRow, sourceCol, inverse, r, g, b);
+                            const float y = std::max(luminance(r, g, b), 0.f);
+                            const float peak = std::max(r, std::max(g, b));
+                            accumulated += halationHighlightSource(y, peak, halationOnset);
+                        }
+
+                        ++samples;
+                    }
+                }
+                halationSource[row][col] = samples > 0 ? accumulated / samples : 0.f;
             }
         }
 
-        const float baseRadius = fullShort * (0.0011f + halation * 0.0020f) * halationSize;
+        // Halation spreads much further than this used to allow: on a 4000px
+        // frame the old coefficients gave a 5px core and a 16px tail, which
+        // reads as a thin outline rather than a glow. Scattering through the
+        // base and back puts real bleed tens of pixels out at that scale.
+        float innerRadiusPixels;
+        float outerRadiusPixels;
+
+        if (stopsIndexed) {
+            // The halo is a property of the film, not of the frame: light
+            // that pierces the emulsion reflects off the base at the
+            // critical-angle band and re-exposes a RING ~140um out, and a
+            // weaker multiple-bounce tail reaches ~480um. Converting through
+            // the frame's physical short side means a 6x7 or 4x5 frame shows
+            // a proportionally tighter halo than 35mm at the same print
+            // size, which is exactly why large format looks "cleaner".
+            const float frameShortMM = fp.format == "120" ? 56.f
+                : fp.format == "large" ? 95.f : 24.f;
+            const float pixelsPerMM = fullShort / frameShortMM;
+            innerRadiusPixels = 0.140f * pixelsPerMM * halationSize;
+            outerRadiusPixels = 0.480f * pixelsPerMM * halationSize;
+        } else {
+            const float baseRadius = fullShort * (0.0035f + halation * 0.0075f) * halationSize;
+            innerRadiusPixels = baseRadius;
+            outerRadiusPixels = baseRadius * 3.25f;
+        }
+
         const int innerRadius = LIM(
-            static_cast<int>(baseRadius / (scale * halationReduction) + 0.5f),
+            static_cast<int>(innerRadiusPixels / (scale * halationReduction) + 0.5f),
             1,
             48);
         const int outerRadius = LIM(
-            static_cast<int>(baseRadius * 3.25f / (scale * halationReduction) + 0.5f),
+            static_cast<int>(outerRadiusPixels / (scale * halationReduction) + 0.5f),
             innerRadius + 1,
             96);
-        boxblur(static_cast<float**>(halationSource), static_cast<float**>(halationInner), innerRadius, halationWidth, halationHeight, multiThread);
-        boxblur(static_cast<float**>(halationSource), static_cast<float**>(halationOuter), outerRadius, halationWidth, halationHeight, multiThread);
+        halationBlur(halationSource, halationInner, halationScratch, innerRadius, halationWidth, halationHeight, multiThread);
+        halationBlur(halationSource, halationOuter, halationScratch, outerRadius, halationWidth, halationHeight, multiThread);
+        halationScratch.free();
 
 #ifdef _OPENMP
         #pragma omp parallel for schedule(static) if (multiThread)
@@ -889,40 +1930,99 @@ void filmPresetsV3(
         for (int row = 0; row < halationHeight; ++row) {
             for (int col = 0; col < halationWidth; ++col) {
                 const float source = halationSource[row][col];
-                const float inner = std::max(halationInner[row][col] - source * 0.32f, 0.f);
-                const float outer = std::max(halationOuter[row][col] - source * 0.18f, 0.f);
-                halationInner[row][col] = halation * (inner * stock.halationInner + outer * stock.halationOuter);
-                halationOuter[row][col] = bloom * (inner * 0.72f + outer * 0.28f);
+
+                if (stopsIndexed) {
+                    // Film's halation is an edge phenomenon, not a veil: the
+                    // anti-halation layer eats most of the light, and what
+                    // bounces lands in a band just OUTSIDE the highlight's
+                    // contour. Subtracting nearly all of the source's own
+                    // footprint from the ring blur leaves exactly that band;
+                    // the multiple-bounce tail keeps only a quarter of the
+                    // weight so a frame full of blown bokeh gets red fringes
+                    // on every blob instead of one milky global glow - which
+                    // is what an unbudgeted two-Gaussian mix produced.
+                    const float ring = std::max(halationInner[row][col] - source * 0.85f, 0.f);
+                    const float tail = std::max(halationOuter[row][col] - source * 0.30f, 0.f);
+                    halationInner[row][col] = halation * V4_HALATION_ENERGY
+                        * (ring * stock.halationInner + tail * stock.halationOuter * 0.25f);
+                    halationOuter[row][col] = bloom * (ring * 0.72f + tail * 0.28f);
+                } else {
+                    const float inner = std::max(halationInner[row][col] - source * 0.32f, 0.f);
+                    const float outer = std::max(halationOuter[row][col] - source * 0.18f, 0.f);
+                    halationInner[row][col] = halation * (inner * stock.halationInner + outer * stock.halationOuter);
+                    halationOuter[row][col] = bloom * (inner * 0.72f + outer * 0.28f);
+                }
             }
         }
         halationSource.free();
     }
 
-    float grainCells = 2300.f;
-    if (fp.format == "120") {
-        grainCells = 3600.f;
-    } else if (fp.format == "large") {
-        grainCells = 5400.f;
+    // V4 adjacency: the lateral half of the DIR coupler story. The blurred
+    // inhibitor field is built from the same pre-halation scene luminance the
+    // main loop reads, so local-minus-blurred is an unbiased edge signal.
+    array2D<float> adjacencyBlur;
+    float adjacencyGain = 0.f;
+    const float adjacencyStrength = LIM(
+        stock.acutance - output.softness - fp.outputSoftness / 150.f,
+        -0.72f,
+        0.85f) * strength * characterScale;
+
+    if (stopsIndexed && adjacencyStrength > 0.002f && lab->W > 4 && lab->H > 4) {
+        const float frameShortMM = fp.format == "120" ? 56.f
+            : fp.format == "large" ? 95.f : 24.f;
+        const float sigmaPixels = V4_ADJACENCY_MM * (fullShort / frameShortMM) / scale;
+
+        // Below half a pixel the inhibitors diffuse inside one pixel's own
+        // footprint and there is nothing to resolve - which is also why the
+        // effect fades out of a zoomed-out preview, exactly like grain.
+        if (sigmaPixels >= 0.5f) {
+            adjacencyGain = adjacencyStrength * V4_ADJACENCY_GAIN
+                * std::max(curves.maxDensity - curves.baseFog, 1e-5f);
+            array2D<float> adjacencySource(lab->W, lab->H);
+            adjacencyBlur(lab->W, lab->H, ARRAY2D_CLEAR_DATA);
+
+#ifdef _OPENMP
+            #pragma omp parallel for schedule(static) if (multiThread)
+#endif
+            for (int row = 0; row < lab->H; ++row) {
+                for (int col = 0; col < lab->W; ++col) {
+                    float r;
+                    float g;
+                    float b;
+
+                    if (sceneMode) {
+                        float labR;
+                        float labG;
+                        float labB;
+                        sceneFetch.fetch(row, col, r, g, b, labR, labG, labB);
+                    } else {
+                        toCanonicalV3(lab, row, col, inverse, r, g, b);
+                    }
+
+                    adjacencySource[row][col] = v4AdjacencySignal(curves, std::max(luminance(r, g, b), 0.f));
+                }
+            }
+
+            const int radius = LIM(static_cast<int>(sigmaPixels * 1.7f + 0.5f), 1, 6);
+            boxblur(static_cast<float**>(adjacencySource), static_cast<float**>(adjacencyBlur), radius, lab->W, lab->H, multiThread);
+        }
     }
-    const float grainSize = std::exp2(fp.grainSize / 100.f * 1.45f);
-    const float grainCellSize = std::max(fullShort / grainCells * grainSize, 0.72f);
-    const float inverseGrainCellSize = 1.f / grainCellSize;
-    const float inverseDensityRange = 1.f / std::max(curves.maxDensity - curves.baseFog, 1e-5f);
-    const float pushPull = LIM(static_cast<float>(fp.pushPull), -2.f, 3.f);
-    const float grainAmount = LIM(
-        (stockRecord.grain + fp.grain / 145.f)
-        * process.grain
-        * (1.f + std::max(pushPull, 0.f) * 0.15f)
-        * characterScale,
-        0.f,
-        1.15f);
-    const float grainColor = LIM(stock.grainColor + fp.grainColor / 220.f, 0.f, 0.72f);
-    const float grainClumping = LIM(stock.grainClumping + fp.grainClumping / 250.f, 0.04f, 0.72f);
-    const float previewAttenuation = 1.f / std::sqrt(static_cast<float>(scale));
-    const std::uint32_t seed = context.imageSeed ? context.imageSeed : 1u;
+
+    // Grain is deliberately NOT applied by the film stage any more: it is
+    // the standalone Grain tool's job (Effects > Grain), so the two never
+    // stack and the user has one place to control texture.
     const float coupling = LIM(stock.coupling * (1.f + fp.layerCoupling / 120.f), 0.f, 0.58f);
+    // V4 grows its colour separation physically - interimage couplers and
+    // dye absorptions read through the print - so the stock table's legacy
+    // saturation scalar hands most of its excess back. This is the Phase 5
+    // direction: colour from the machinery, not from a multiplier.
+    // ... except for reversal: its spectral viewing stage runs the other
+    // way (unmasked dyes temper colour), so its scalar stays as tuned.
+    const float stockSaturation = (stopsIndexed && stockRecord.stockClass != StockClass::Reversal)
+        ? 1.f + (stockRecord.saturation - 1.f) * 0.35f
+        : stockRecord.saturation;
     const float saturation = LIM(
-        stockRecord.saturation * process.saturation * output.saturation * (1.f + fp.saturation / 160.f),
+        stockSaturation * process.saturation * output.saturation * (1.f + fp.saturation / 160.f),
         0.f,
         1.72f);
     const float vibrance = LIM(fp.vibrance / 100.f, -1.f, 1.f);
@@ -944,19 +2044,6 @@ void filmPresetsV3(
     hueVector(static_cast<float>(fp.highlightHue), highlightVector[0], highlightVector[1], highlightVector[2]);
     const bool outputMatrixActive = fp.output != "scan";
     const bool saturationActive = std::fabs(saturation - 1.f) > 0.0001f;
-    array2D<float> grainTile;
-    if (grainAmount > 0.001f) {
-        grainTile(V3_GRAIN_TILE_SIZE, V3_GRAIN_TILE_SIZE);
-#ifdef _OPENMP
-        #pragma omp parallel for schedule(static) if (multiThread)
-#endif
-        for (int row = 0; row < V3_GRAIN_TILE_SIZE; ++row) {
-            for (int col = 0; col < V3_GRAIN_TILE_SIZE; ++col) {
-                grainTile[row][col] = hashNoise(col, row, seed ^ 0x6a09e667u);
-            }
-        }
-    }
-
 #ifdef _OPENMP
     #pragma omp parallel for schedule(static) if (multiThread)
 #endif
@@ -965,10 +2052,30 @@ void filmPresetsV3(
             float sourceR;
             float sourceG;
             float sourceB;
-            toCanonicalV3(lab, row, col, inverse, sourceR, sourceG, sourceB);
-            float r = sourceR;
-            float g = sourceG;
-            float b = sourceB;
+            float r;
+            float g;
+            float b;
+
+            float displayGain[3] = {1.f, 1.f, 1.f};
+
+            if (sceneMode) {
+                // sourceR/G/B stay display-referred: they are the blend base
+                // for strength < 100 and the skin-protection reference, i.e.
+                // what the user sees with the film stage switched off.
+                sceneFetch.fetch(row, col, r, g, b, sourceR, sourceG, sourceB, displayGain);
+            } else {
+                toCanonicalV3(lab, row, col, inverse, sourceR, sourceG, sourceB);
+                r = sourceR;
+                g = sourceG;
+                b = sourceB;
+            }
+
+            // Must match what the adjacency pre-pass stored: scene
+            // luminance before halation is added.
+            float adjacencySourceLuma = 0.f;
+            if (adjacencyBlur) {
+                adjacencySourceLuma = std::max(luminance(r, g, b), 0.f);
+            }
 
             if (halationInner) {
                 const float lowX = (col + 0.5f) / halationReduction - 0.5f;
@@ -993,72 +2100,65 @@ void filmPresetsV3(
                 curves.sampleDensity(1, layerExposure[1]),
                 curves.sampleDensity(2, layerExposure[2])
             };
-            applyV3DensityCoupling(density, stockRecord.stockClass, coupling, curves.baseFog, curves.maxDensity);
-
-            if (grainAmount > 0.001f) {
-                const float fullX = static_cast<float>(context.originX + col * scale);
-                const float fullY = static_cast<float>(context.originY + row * scale);
-                const float cellX = fullX * inverseGrainCellSize;
-                const float cellY = fullY * inverseGrainCellSize;
-                const int grainX = static_cast<int>(std::floor(cellX));
-                const int grainY = static_cast<int>(std::floor(cellY));
-                const float fine = v3TileNoise(grainTile, V3_GRAIN_TILE_MASK, grainX, grainY, 0, 0);
-                if (scale > 1) {
-                    // A preview pixel integrates several film grains. A single
-                    // achromatic sample avoids resolving detail below its Nyquist limit.
-                    const float previewNoise = fine * grainAmount * 0.028f * previewAttenuation;
-                    density[0] += previewNoise;
-                    density[1] += previewNoise;
-                    density[2] += previewNoise;
-                } else {
-                    const float meanDensity = (density[0] + density[1] + density[2]) / 3.f;
-                    const float normalizedDensity = LIM(
-                        (meanDensity - curves.baseFog) * inverseDensityRange,
-                        0.f,
-                        1.f);
-                    const float densityOffset = (normalizedDensity - stock.grainMidpoint) / std::max(stock.grainWidth, 0.08f);
-                    float densityBell = std::max(1.f - 0.45f * densityOffset * densityOffset, 0.f);
-                    densityBell *= densityBell;
-                    const float densityVariance = 0.34f + 0.82f * densityBell + 0.18f * normalizedDensity;
-                    const float amplitude = grainAmount * densityVariance * 0.034f;
-                    const float cloud = v3TileNoise(
-                        grainTile,
-                        V3_GRAIN_TILE_MASK,
-                        grainX / 4,
-                        grainY / 4,
-                        613,
-                        1429);
-                    const float common = fine * (1.f + cloud * grainClumping * 0.62f);
-                    if (stockRecord.stockClass == StockClass::Monochrome || processName == "bw") {
-                        density[0] += common * amplitude;
-                        density[1] += common * amplitude;
-                        density[2] += common * amplitude;
-                    } else {
-                        const float redGreen = v3TileNoise(grainTile, V3_GRAIN_TILE_MASK, grainX, grainY, 887, 271);
-                        const float blueYellow = v3TileNoise(grainTile, V3_GRAIN_TILE_MASK, grainX, grainY, 1559, 941);
-                        const float neutral = common * (1.f - grainColor);
-                        density[0] += (neutral + (redGreen * 0.72f + blueYellow * 0.28f) * grainColor) * amplitude;
-                        density[1] += (neutral + (-redGreen * 0.46f + blueYellow * 0.16f) * grainColor) * amplitude;
-                        density[2] += (neutral - blueYellow * 0.78f * grainColor) * amplitude;
-                    }
+            if (stopsIndexed) {
+                if (stockRecord.stockClass != StockClass::Monochrome) {
+                    applyV4Couplers(density, coupling * v4CouplerClassGain(stockRecord.stockClass), curves.baseFog, curves.maxDensity);
                 }
-                density[0] = LIM(density[0], curves.baseFog, curves.maxDensity);
-                density[1] = LIM(density[1], curves.baseFog, curves.maxDensity);
-                density[2] = LIM(density[2], curves.baseFog, curves.maxDensity);
+            } else {
+                applyV3DensityCoupling(density, stockRecord.stockClass, coupling, curves.baseFog, curves.maxDensity);
+            }
+
+            if (adjacencyBlur) {
+                // Interimage inhibitors also diffuse laterally: a region
+                // denser than its ~14um neighbourhood developed against less
+                // inhibition than the blurred average says it should have,
+                // so its density rises, and a thinner neighbour falls. That
+                // is film's real edge effect - the acutance the V3 model
+                // faked with an unsharp mask on L.
+                const float local = v4AdjacencySignal(curves, adjacencySourceLuma);
+                const float diff = local - adjacencyBlur[row][col];
+                const float compressed = diff / (1.f + std::fabs(diff) / V4_ADJACENCY_KNEE);
+                const float correction = adjacencyGain * compressed;
+                density[0] = LIM(density[0] + correction, curves.baseFog, curves.maxDensity);
+                density[1] = LIM(density[1] + correction, curves.baseFog, curves.maxDensity);
+                density[2] = LIM(density[2] + correction, curves.baseFog, curves.maxDensity);
             }
 
             r = curves.sampleOutput(0, density[0]);
             g = curves.sampleOutput(1, density[1]);
             b = curves.sampleOutput(2, density[2]);
+
+            if (printLUT.active) {
+                float spectralRatio[3];
+                printLUT.sample(density, spectralRatio);
+                r *= spectralRatio[0];
+                g *= spectralRatio[1];
+                b *= spectralRatio[2];
+            }
+
             if (outputMatrixActive) {
                 applyV3OutputMatrix(output, r, g, b);
             }
 
             if (stockRecord.stockClass == StockClass::Monochrome || processName == "bw") {
                 const float mono = 0.272229f * r + 0.674082f * g + 0.053689f * b;
-                r = mono * 1.004f;
-                g = mono;
-                b = mono * 0.993f;
+
+                if (stopsIndexed) {
+                    // Silver-print image tone: a warmtone paper's fine
+                    // silver warms the mid-dark densities, while paper-base
+                    // highlights and the deepest blacks stay neutral.
+                    const float tone = LIM(mono, 0.f, 1.f);
+                    const float warm = 0.016f
+                        * smoothStep(0.02f, 0.22f, tone)
+                        * (1.f - smoothStep(0.45f, 0.95f, tone));
+                    r = mono * (1.f + warm);
+                    g = mono;
+                    b = mono * (1.f - 1.35f * warm);
+                } else {
+                    r = mono * 1.004f;
+                    g = mono;
+                    b = mono * 0.993f;
+                }
             } else {
                 if (saturationActive) {
                     applySaturation(r, g, b, saturation);
@@ -1072,6 +2172,16 @@ void filmPresetsV3(
                 applyV3ZoneTint(r, g, b, shadowVector, highlightVector, shadowStrength, highlightStrength);
             }
             applyV3SkinProtection(sourceR, sourceG, sourceB, r, g, b, skinProtection);
+
+            // Grade the print: the user's tone curve and display-domain
+            // colour edits act on the film's output, so an S-curve deepens
+            // the rendered shadows exactly as dialled instead of being
+            // silently discarded with the clipped input.
+            if (sceneMode) {
+                r *= displayGain[0];
+                g *= displayGain[1];
+                b *= displayGain[2];
+            }
 
             r = std::max(sourceR + (r - sourceR) * strength, 0.f);
             g = std::max(sourceG + (g - sourceG) * strength, 0.f);
@@ -1090,12 +2200,19 @@ void filmPresetsV3(
     halationSource.free();
     halationInner.free();
     halationOuter.free();
-    grainTile.free();
 
-    const float detailGain = LIM(
+    float detailGain = LIM(
         stock.acutance - output.softness - fp.outputSoftness / 150.f,
         -0.72f,
         0.58f) * strength * characterScale;
+
+    // V4 sharpens through the diffused-inhibitor adjacency effect in the
+    // density domain instead; only the softening direction of this block
+    // (a print's diffusion, outputSoftness < 0 territory) still applies.
+    if (stopsIndexed) {
+        detailGain = std::min(detailGain, 0.f);
+    }
+
     if (std::fabs(detailGain) > 0.002f && lab->W > 2 && lab->H > 2) {
         array2D<float> blurredL(lab->W, lab->H, ARRAY2D_CLEAR_DATA);
         const int radius = LIM(static_cast<int>((1.25f + std::max(detailGain * -2.f, 0.f)) / scale + 0.5f), 1, 3);
@@ -1140,7 +2257,30 @@ void ImProcFunctions::filmPresets(
     }
 
     if (fp.modelVersion >= 3) {
-        filmPresetsV3(lab, fp, context, multiThread);
+        // The tap is captured in the user's working profile at rgbProc's
+        // 0..65535 scale; fold profile -> XYZ -> AP1 and the normalisation
+        // into one matrix so scene mode costs one multiply per channel.
+        float tapToCanonical[3][3];
+        bool haveTapMatrix = false;
+
+        if (fp.modelVersion >= 4 && context.sceneTap && context.rgbSnapshot) {
+            const TMatrix workingMatrix = ICCStore::getInstance()->workingSpaceMatrix(params->icm.workingProfile);
+            const TMatrix canonicalInverse = ICCStore::getInstance()->workingSpaceInverseMatrix("ACESp1");
+
+            for (int row = 0; row < 3; ++row) {
+                for (int col = 0; col < 3; ++col) {
+                    double sum = 0.0;
+                    for (int k = 0; k < 3; ++k) {
+                        sum += canonicalInverse[row][k] * workingMatrix[k][col];
+                    }
+                    tapToCanonical[row][col] = static_cast<float>(sum) / MAXVALF;
+                }
+            }
+
+            haveTapMatrix = true;
+        }
+
+        filmPresetsV3(lab, fp, context, multiThread, haveTapMatrix ? tapToCanonical : nullptr);
         return;
     }
 
@@ -1151,24 +2291,20 @@ void ImProcFunctions::filmPresets(
     float processToe = 0.f;
     float processShoulder = 0.f;
     float processSaturation = 1.f;
-    float processGrain = 1.f;
 
     if (process == "e6") {
         processContrast = 1.10f;
         processToe = -0.05f;
         processShoulder = -0.08f;
         processSaturation = 1.10f;
-        processGrain = 0.82f;
     } else if (process == "ecn2") {
         processContrast = 0.92f;
         processShoulder = 0.16f;
         processSaturation = 0.92f;
-        processGrain = 0.92f;
     } else if (process == "bw") {
         processContrast = 1.05f;
         processToe = 0.08f;
         processSaturation = 0.f;
-        processGrain = 1.16f;
     }
 
     float outputContrast = 1.f;
@@ -1209,13 +2345,6 @@ void ImProcFunctions::filmPresets(
     const float strength = LIM(fp.strength / 100.f, 0.f, 1.f);
     const float characterScale = filmCharacterScale(strength);
     const float halation = LIM((stock.halation + fp.halation / 180.f) * characterScale, 0.f, 0.82f);
-    const float grain = LIM(
-        (stock.grain + fp.grain / 150.f)
-        * processGrain
-        * (1.f + std::max(pushPull, 0.f) * 0.16f)
-        * characterScale,
-        0.f,
-        1.15f);
     const float vibrance = LIM(fp.vibrance / 100.f, -1.f, 1.f);
     const float acutance = LIM(stock.acutance, 0.f, 0.42f);
 
@@ -1277,7 +2406,7 @@ void ImProcFunctions::filmPresets(
                 toCanonical(lab, sourceRow, sourceCol, inverse, r, g, b);
                 const float y = luminance(r, g, b);
                 const float peak = std::max(r, std::max(g, b));
-                halationSource[row][col] = halationHighlightSource(y, peak, 1.9f);
+                halationSource[row][col] = halationHighlightSourceV2(y, peak, 1.9f);
             }
         }
 
@@ -1310,17 +2439,6 @@ void ImProcFunctions::filmPresets(
     }
 
     const int scale = std::max(context.scale, 1);
-    const int fullWidth = context.fullWidth > 0 ? context.fullWidth : lab->W * scale;
-    const int fullHeight = context.fullHeight > 0 ? context.fullHeight : lab->H * scale;
-    const int fullShort = std::max(1, std::min(fullWidth, fullHeight));
-    float grainCells = 2200.f;
-    if (fp.format == "120") {
-        grainCells = 3400.f;
-    } else if (fp.format == "large") {
-        grainCells = 5000.f;
-    }
-    const float grainCellSize = std::max(fullShort / grainCells, 1.f);
-    const std::uint32_t seed = context.imageSeed ? context.imageSeed : 1u;
 
 #ifdef _OPENMP
     #pragma omp parallel for schedule(dynamic, 16) if (multiThread)
@@ -1381,18 +2499,6 @@ void ImProcFunctions::filmPresets(
             r += shadowR * shadowWeight + highlightR * highlightWeight;
             g += shadowG * shadowWeight + highlightG * highlightWeight;
             b += shadowB * shadowWeight + highlightB * highlightWeight;
-
-            if (grain > 0.001f) {
-                const float fullX = static_cast<float>(context.originX + col * scale);
-                const float fullY = static_cast<float>(context.originY + row * scale);
-                const float density = 1.f - smoothStep(0.12f, 0.88f, luminance(r, g, b));
-                const float previewAttenuation = 1.f / std::sqrt(static_cast<float>(scale));
-                const float monochromeNoise = filmLabGrain(fullX, fullY, grainCellSize, seed) * grain * (0.018f + density * 0.022f) * previewAttenuation;
-                const float colorNoise = filmLabGrain(fullX, fullY, grainCellSize * 1.35f, seed ^ 0xa511e9b3u) * grain * 0.0045f * previewAttenuation;
-                r = std::max(r + monochromeNoise + colorNoise, 0.f);
-                g = std::max(g + monochromeNoise, 0.f);
-                b = std::max(b + monochromeNoise - colorNoise, 0.f);
-            }
 
             r = LIM(r, 0.f, 4.f) * MAXVALF;
             g = LIM(g, 0.f, 4.f) * MAXVALF;

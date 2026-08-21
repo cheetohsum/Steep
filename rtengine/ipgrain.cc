@@ -101,6 +101,63 @@ public:
         evaluate_grain_lut(mb, divgr);
     }
     
+    // The improved model used by the standalone Grain tool (Effects >
+    // Grain). Differences from operator() below, which is kept as-is for
+    // the locallab path:
+    //  * Noise is sampled at FULL-image coordinates (origin + i * skip),
+    //    so the pattern is anchored to the image like real grain: the
+    //    detail window, the main preview and the export all show the same
+    //    grain at the same place. The old path restarted the pattern at
+    //    every crop origin and sampled per-buffer-pixel.
+    //  * Amplitude follows Selwyn's law: a preview pixel that integrates
+    //    several grains shows the noise reduced by cell/pixel linear
+    //    ratio, so a zoomed-out preview finally predicts the export. The
+    //    old max(scale/3, 1) divisor was ad hoc and ignored grain size.
+    //  * The Scale slider is grain SIZE (it used to be a second strength
+    //    knob); at its default of 100 the frequency is unchanged, so
+    //    existing exports render identically at default settings.
+    //  * Optional chroma grain: two independent noise fields on a/b, the
+    //    per-layer dye-cloud character of colour film.
+    void render(int isogr, int strengr, int scalegr, int colorgr, Imagefloat *lab, bool multithread)
+    {
+        const double strength = strengr / 100.0;
+        const double octaves = 3.;
+        const double wd = std::min(fw, fh);
+        const double sizeFactor = std::max(scalegr, 10) / 100.0;
+        const double zoom = sizeFactor * (1.0 + 8 * (double(isogr) / GRAIN_SCALE_FACTOR) / 100.0) / 800.0;
+
+        // Dominant-octave wavelength in full-resolution pixels; one output
+        // pixel spans `scale` of them.
+        const double cellPixels = zoom * wd / 1.728;
+        const double selwyn = std::min(1.0, cellPixels / std::max(scale, 1.0));
+
+        const int W = lab->getWidth();
+        const int H = lab->getHeight();
+        float **lab_L = lab->g.ptrs;
+        float **lab_a = lab->r.ptrs;
+        float **lab_b = lab->b.ptrs;
+        const double chromaAmp = strength * (double(colorgr) / 100.0) * 1780.0 * selwyn;
+
+#ifdef _OPENMP
+#       pragma omp parallel for if (multithread)
+#endif
+        for (int j = 0; j < H; ++j) {
+            const double y = (oy + j * scale) / wd;
+            for (int i = 0; i < W; ++i) {
+                const double x = (ox + i * scale) / wd;
+                const double noise = simplex_2d_noise(x, y, octaves, zoom) * selwyn;
+                lab_L[j][i] += lut_lookup(noise * strength * GRAIN_LIGHTNESS_STRENGTH_SCALE, lab_L[j][i] / 32768.f);
+
+                if (colorgr > 0) {
+                    const double noiseA = simplex_2d_noise(x + 17.31, y + 7.77, octaves, zoom);
+                    const double noiseB = simplex_2d_noise(x - 11.13, y + 23.70, octaves, zoom);
+                    lab_a[j][i] += noiseA * chromaAmp;
+                    lab_b[j][i] += noiseB * chromaAmp;
+                }
+            }
+        }
+    }
+
     void operator()(int isogr, int strengr, int scalegr, float divgr, Imagefloat *lab, bool multithread, int call, int fww, int fhh)
     {
         const double strength = (strengr / 100.0);
@@ -385,6 +442,13 @@ void ImProcFunctions::filmGrain(Imagefloat *rgb, int isogr, int strengr, int sca
 
     GrainEvaluator ge(0, 0, bfw, bfh, scale, divgr, call, fw, fh);
     ge(isogr, strengr, scalegr, divgr, rgb, multiThread, call, fw, fh);
+}
+
+void ImProcFunctions::filmGrainV2(Imagefloat *rgb, int isogr, int strengr, int scalegr, int colorgr,
+                                  int originX, int originY, int oscale, int fullW, int fullH)
+{
+    GrainEvaluator ge(originX, originY, fullW, fullH, std::max(oscale, 1), 1.f, 0, fullW, fullH);
+    ge.render(isogr, strengr, scalegr, colorgr, rgb, multiThread);
 }
 
 } // namespace rtengine

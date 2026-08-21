@@ -24,7 +24,8 @@
 using namespace rtengine;
 using namespace rtengine::procparams;
 
-void ImProcFunctions::grainEffect(LabImage *lab, const GrainParams &params, int fw, int fh)
+void ImProcFunctions::grainEffect(LabImage *lab, const GrainParams &params, int fw, int fh,
+                                  int originX, int originY, int oscale)
 {
     if (!params.enabled || params.strength == 0) {
         return;
@@ -45,12 +46,17 @@ void ImProcFunctions::grainEffect(LabImage *lab, const GrainParams &params, int 
         }
     }
 
-    filmGrain(tmp, params.iso, params.strength, params.scale, 1.0f, w, h, 0, fw, fh);
+    filmGrainV2(tmp, params.iso, params.strength, params.scale, params.color, originX, originY, oscale, fw, fh);
 
-    // Copy modified luminance back
+    // Copy luminance - and, when chroma grain ran, a/b - back
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
             lab->L[y][x] = tmp->g(y, x);
+
+            if (params.color > 0) {
+                lab->a[y][x] = tmp->r(y, x);
+                lab->b[y][x] = tmp->b(y, x);
+            }
         }
     }
 

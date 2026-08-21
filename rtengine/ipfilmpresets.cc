@@ -908,7 +908,10 @@ void ImProcFunctions::filmPresetsV1(LabImage *lab, const procparams::FilmPresets
     const float totalTint = LIM(recipe->tint + userTint * 0.5f, -0.65f, 0.65f);
 
     // Grain: recipe plus user trim/boost
-    const float grain = LIM(recipe->grain + userGrain * 0.8f, 0.f, 1.f);
+    // Grain is the standalone Grain tool's job now (Effects > Grain); the
+    // film stage never adds its own, in any model version.
+    const float grain = 0.f;
+    (void) userGrain;
     const float grainCloudMix = 0.48f + 0.22f * smoothstep(0.16f, 0.56f, grain);
     const float grainMottleMix = 0.14f + 0.16f * smoothstep(0.22f, 0.70f, grain);
 

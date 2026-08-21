@@ -440,6 +440,13 @@ menu separator {
     background-color: rgba(102,153,204,0.2);
 }
 
+/* Folder currently open, centred in the file browser toolbar */
+#BrowserPathTitle {
+    font-weight: bold;
+    color: #dfe5ef;
+    padding: 0 12px;
+}
+
 #BeforeAfterContainer frame {
     background-color: #1a1e24;
     padding: 0;
@@ -1048,9 +1055,14 @@ entry:selected {
     -gtk-icon-transform: scale(0.55);
 }
 
-/* Context menus - frosted glass style */
+/* Context menus - frosted glass style.
+   NOTE: the background must stay OPAQUE. An alpha background makes the
+   menu an RGBA layered window on Windows, and GDK's layered-window
+   update path fails to push repaints when the same popup window is
+   re-shown — menus then display stale or blank content (seen as the
+   flag icons losing parts after flag-state changes). */
 menu {
-    background-color: rgba(28, 32, 40, 0.93);
+    background-color: rgb(28, 32, 40);
     color: #e2e6ed;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 10px;
@@ -2647,3 +2659,24 @@ progressbar progress {
 }
 
 /*** end Queue Overlay Drawer ******************************************************************/
+
+/* Double Exposure tray chips: controls overlaid on the thumbnails must be
+   tiny enough that all four fit, and the selected chip needs a border the
+   image cannot hide. */
+#DEChipControls button {
+    padding: 0 3px;
+    margin: 0;
+    min-width: 10px;
+    min-height: 14px;
+}
+
+button.de-chip {
+    padding: 1px;
+    margin: 0;
+}
+
+button.de-chip-selected {
+    border: 2px solid #E8A33D;
+    border-radius: 3px;
+    padding: 0;
+}

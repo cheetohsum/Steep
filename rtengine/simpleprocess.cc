@@ -1513,7 +1513,24 @@ private:
         LUTu histToneCurve;
 
         const auto& options = App::get().options();
-        ipf.rgbProc(baseImg, labView, nullptr, curve1, curve2, curve, params.toneCurve.saturation, rCurve, gCurve, bCurve, satLimit, satLimitOpacity, ctColorCurve, ctOpacityCurve, opautili, clToningcurve, cl2Toningcurve, customToneCurve1, customToneCurve2, customToneCurvebw1, customToneCurvebw2, rrm, ggm, bbm, autor, autog, autob, expcomp, hlcompr, hlcomprthresh, dcpProf, as, histToneCurve, options.chunkSizeRGB, options.measure);
+
+        // Film Lab V4 needs the scene-linear signal from before the tone
+        // curve and out-of-gamut clip, plus a snapshot of rgbProc's output so
+        // the Lab-domain edits applied to labView between here and the film
+        // stage can be isolated as gains. Both buffers live only until the
+        // film stage has run.
+        std::unique_ptr<Imagefloat> filmLabTap;
+        std::unique_ptr<LabImage> filmLabSnapshot;
+
+        if (params.filmPresets.enabled && params.filmPresets.modelVersion >= 4) {
+            filmLabTap.reset(new Imagefloat(baseImg->getWidth(), baseImg->getHeight()));
+        }
+
+        ipf.rgbProc(baseImg, labView, nullptr, curve1, curve2, curve, params.toneCurve.saturation, rCurve, gCurve, bCurve, satLimit, satLimitOpacity, ctColorCurve, ctOpacityCurve, opautili, clToningcurve, cl2Toningcurve, customToneCurve1, customToneCurve2, customToneCurvebw1, customToneCurvebw2, rrm, ggm, bbm, autor, autog, autob, expcomp, hlcompr, hlcomprthresh, dcpProf, as, histToneCurve, options.chunkSizeRGB, options.measure, filmLabTap.get());
+
+        if (filmLabTap) {
+            filmLabSnapshot.reset(new LabImage(*labView, true));
+        }
 
         if (settings->verbose) {
             printf("Output image / Auto B&W coefs:   R=%.2f   G=%.2f   B=%.2f\n", static_cast<double>(autor), static_cast<double>(autog), static_cast<double>(autob));
@@ -1612,7 +1629,7 @@ private:
         }
 
         if (params.grain.enabled) {
-            ipf.grainEffect(labView, params.grain, labView->W, labView->H);
+            ipf.grainEffect(labView, params.grain, labView->W, labView->H, 0, 0, 1);
         }
 
         if (params.tiltShift.enabled) {
@@ -1825,10 +1842,14 @@ private:
             wavCLVCurve.Reset();
         }
 
-        ipf.filmPresets(
-            labView,
-            params.filmPresets,
-            FilmLabContext(0, 0, fw, fh, 1, ImProcFunctions::filmLabSeed(imgsrc->getFileName())));
+        {
+            FilmLabContext filmLabContext(0, 0, fw, fh, 1, ImProcFunctions::filmLabSeed(imgsrc->getFileName()));
+            filmLabContext.sceneTap = filmLabTap.get();
+            filmLabContext.rgbSnapshot = filmLabSnapshot.get();
+            ipf.filmPresets(labView, params.filmPresets, filmLabContext);
+            filmLabTap.reset();
+            filmLabSnapshot.reset();
+        }
         ipf.softLight(labView, params.softlight);
 
 

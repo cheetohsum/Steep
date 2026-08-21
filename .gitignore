@@ -51,3 +51,10 @@ clean
 *.tar
 *.xz
 *.zip
+
+# Probe output from the Film Lab / Double Exposure test harnesses in tools/
+# (renders, sidecars and reference frames — regenerate with the *_probe.py
+# scripts rather than committing them; they run to well over a gigabyte).
+tools/*.tif
+tools/*.pp3
+tools/*.png

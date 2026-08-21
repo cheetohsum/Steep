@@ -1,7 +1,7 @@
 [Film Presets]
 Enabled=true
 Preset=street_800
-ModelVersion=2
+ModelVersion=4
 Exposure=0
 PushPull=1
 Process=bw
@@ -9,7 +9,6 @@ Output=scan
 Format=35mm
 Strength=85
 Contrast=20
-Grain=25
 Saturation=-80
 
 [Exposure]
@@ -29,3 +28,10 @@ Method=usm
 Radius=0.9
 Amount=110
 Threshold=20;80;2000;1200;
+
+[Grain]
+Enabled=true
+ISO=1600
+Strength=45
+Scale=100
+Color=0

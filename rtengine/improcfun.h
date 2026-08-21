@@ -118,6 +118,16 @@ struct FilmLabContext {
     int scale;
     std::uint32_t imageSeed;
 
+    // Scene-referred inputs for model V4. sceneTap is the working-space RGB
+    // captured inside rgbProc before out-of-gamut clipping and the tone curve
+    // destroy highlight magnitude; rgbSnapshot is the Lab image exactly as
+    // rgbProc emitted it. The ratio of the current Lab image to rgbSnapshot
+    // isolates the Lab-domain tools' edits so they survive as local gains on
+    // the unclipped tap. Both stay null for models 1-3 and when the caller
+    // has no valid tap for the current geometry.
+    Imagefloat* sceneTap = nullptr;
+    const LabImage* rgbSnapshot = nullptr;
+
     FilmLabContext(
         int originX_ = 0,
         int originY_ = 0,
@@ -247,13 +257,15 @@ enum class BlurType {
                  const OpacityCurve& ctOpacityCurve, bool opautili, const LUTf& clcurve, const LUTf& cl2curve, const ToneCurve& customToneCurve1,
                  const ToneCurve& customToneCurve2, const ToneCurve& customToneCurvebw1, const ToneCurve& customToneCurvebw2,
                  double &rrm, double &ggm, double &bbm, float &autor, float &autog, float &autob, DCPProfile *dcpProf,
-                 const DCPProfileApplyState& asIn, LUTu& histToneCurve, size_t chunkSize = 1, bool measure = false);
+                 const DCPProfileApplyState& asIn, LUTu& histToneCurve, size_t chunkSize = 1, bool measure = false,
+                 Imagefloat* filmTap = nullptr);
     void rgbProc(Imagefloat* working, LabImage* lab, PipetteBuffer *pipetteBuffer, const LUTf& hltonecurve, const LUTf& shtonecurve, const LUTf& tonecurve,
                  int sat, const LUTf& rCurve, const LUTf& gCurve, const LUTf& bCurve, float satLimit, float satLimitOpacity, const ColorGradientCurve& ctColorCurve,
                  const OpacityCurve& ctOpacityCurve, bool opautili, const LUTf& clcurve, const LUTf& cl2curve, const ToneCurve& customToneCurve1,
                  const ToneCurve& customToneCurve2, const ToneCurve& customToneCurvebw1, const ToneCurve& customToneCurvebw2,
                  double &rrm, double &ggm, double &bbm, float &autor, float &autog, float &autob, double expcomp, int hlcompr,
-                 int hlcomprthresh, DCPProfile *dcpProf, const DCPProfileApplyState& asIn, LUTu& histToneCurve, size_t chunkSize = 1, bool measure = false);
+                 int hlcomprthresh, DCPProfile *dcpProf, const DCPProfileApplyState& asIn, LUTu& histToneCurve, size_t chunkSize = 1, bool measure = false,
+                 Imagefloat* filmTap = nullptr);
     void labtoning(float r, float g, float b, float &ro, float &go, float &bo, int algm, int metchrom, int twoc, float satLimit, float satLimitOpacity, const ColorGradientCurve & ctColorCurve, const OpacityCurve & ctOpacityCurve, const LUTf & clToningcurve, const LUTf & cl2Toningcurve, float iplow, float iphigh, double wp[3][3], double wip[3][3]);
     void toning2col(float r, float g, float b, float &ro, float &go, float &bo, float iplow, float iphigh, float rl, float gl, float bl, float rh, float gh, float bh, float SatLow, float SatHigh, float balanS, float balanH, float reducac, int mode, int preser, float strProtect);
     void toningsmh(float r, float g, float b, float &ro, float &go, float &bo, float RedLow, float GreenLow, float BlueLow, float RedMed, float GreenMed, float BlueMed, float RedHigh, float GreenHigh, float BlueHigh, float reducac, int mode, float strProtect);
@@ -392,6 +404,8 @@ enum class BlurType {
 
     //3 functions from Alberto Griggio, adapted J.Desmis 2019
     void filmGrain(Imagefloat *rgb, int isogr, int strengr, int scalegr,float divgr, int bfw, int bfh, int call, int fw, int fh);
+    void filmGrainV2(Imagefloat *rgb, int isogr, int strengr, int scalegr, int colorgr,
+                     int originX, int originY, int oscale, int fullW, int fullH);
     void log_encode(Imagefloat *rgb, struct local_params & lp, bool multiThread, int bfw, int bfh);
     void getAutoLogloc(int sp, ImageSource *imgsrc, float *sourceg, float *blackev, float *whiteev, bool *blackredu, bool *Autogr, float *sourceab, int *whits, int *blacks, int *whitslog, int *blackslog, int fw, int fh, float xsta, float xend, float ysta, float yend, int SCALE);
 
@@ -623,12 +637,13 @@ enum class BlurType {
 
     void dehaze(Imagefloat *rgb, const procparams::DehazeParams &dehazeParams);
     void dehazeloc(Imagefloat *rgb, const procparams::DehazeParams &dehazeParams, int sk, int sp);
-    void doubleExposure(Imagefloat *rgb, const procparams::DoubleExposureParams &deParams, const Glib::ustring &workingProfile, int fullW, int fullH, int offX, int offY, int skip, bool fullResPartners);
+    void doubleExposure(Imagefloat *rgb, const procparams::DoubleExposureParams &deParams, const Glib::ustring &workingProfile, int fullW, int fullH, int offX, int offY, float skip, bool fullResPartners);
     void ToneMapFattal02(Imagefloat *rgb, const procparams::FattalToneMappingParams &fatParams, int detail_level, int Lalone, float **Lum, int WW, int HH, int algo, bool sat);
     void localContrast(LabImage *lab, float **destination, const procparams::LocalContrastParams &localContrastParams, bool fftwlc, double scale);
     void textureContrast(LabImage *lab, const procparams::TextureParams &params, double scale);
     void clarityContrast(LabImage *lab, const procparams::ClarityParams &params, double scale);
-    void grainEffect(LabImage *lab, const procparams::GrainParams &params, int fw, int fh);
+    void grainEffect(LabImage *lab, const procparams::GrainParams &params, int fw, int fh,
+                     int originX = 0, int originY = 0, int oscale = 1);
     void tiltShiftEffect(LabImage *lab, const procparams::TiltShiftParams &params, int fw, int fh);
     void lensBlur(LabImage *lab, const procparams::LensBlurParams &params, double scale);
     void colorToningLabGrid(LabImage *lab, int xstart, int xend, int ystart, int yend, bool MultiThread);

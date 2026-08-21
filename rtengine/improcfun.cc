@@ -2034,11 +2034,11 @@ void ImProcFunctions::rgbProc(Imagefloat* working, LabImage* lab, PipetteBuffer 
                               const ColorGradientCurve& ctColorCurve, const OpacityCurve& ctOpacityCurve, bool opautili, const LUTf& clToningcurve, const LUTf& cl2Toningcurve,
                               const ToneCurve& customToneCurve1, const ToneCurve& customToneCurve2, const ToneCurve& customToneCurvebw1, const ToneCurve& customToneCurvebw2,
                               double &rrm, double &ggm, double &bbm, float &autor, float &autog, float &autob, DCPProfile *dcpProf, const DCPProfileApplyState& asIn,
-                              LUTu& histToneCurve, size_t chunkSize, bool measure)
+                              LUTu& histToneCurve, size_t chunkSize, bool measure, Imagefloat* filmTap)
 {
     rgbProc(working, lab, pipetteBuffer, hltonecurve, shtonecurve, tonecurve, sat, rCurve, gCurve, bCurve, satLimit, satLimitOpacity, ctColorCurve, ctOpacityCurve, opautili,
             clToningcurve, cl2Toningcurve, customToneCurve1, customToneCurve2,  customToneCurvebw1, customToneCurvebw2, rrm, ggm, bbm, autor, autog, autob,
-            params->toneCurve.expcomp, params->toneCurve.hlcompr, params->toneCurve.hlcomprthresh, dcpProf, asIn, histToneCurve, chunkSize, measure);
+            params->toneCurve.expcomp, params->toneCurve.hlcompr, params->toneCurve.hlcomprthresh, dcpProf, asIn, histToneCurve, chunkSize, measure, filmTap);
 }
 
 // Process RGB image and convert to LAB space
@@ -2047,7 +2047,7 @@ void ImProcFunctions::rgbProc(Imagefloat* working, LabImage* lab, PipetteBuffer 
                               const ColorGradientCurve& ctColorCurve, const OpacityCurve& ctOpacityCurve, bool opautili, const LUTf& clToningcurve, const LUTf& cl2Toningcurve,
                               const ToneCurve& customToneCurve1, const ToneCurve& customToneCurve2, const ToneCurve& customToneCurvebw1, const ToneCurve& customToneCurvebw2,
                               double &rrm, double &ggm, double &bbm, float &autor, float &autog, float &autob, double expcomp, int hlcompr, int hlcomprthresh,
-                              DCPProfile *dcpProf, const DCPProfileApplyState& asIn, LUTu& histToneCurve, size_t chunkSize, bool measure)
+                              DCPProfile *dcpProf, const DCPProfileApplyState& asIn, LUTu& histToneCurve, size_t chunkSize, bool measure, Imagefloat* filmTap)
 {
 
     std::unique_ptr<StopWatch> stop;
@@ -2624,6 +2624,19 @@ void ImProcFunctions::rgbProc(Imagefloat* working, LabImage* lab, PipetteBuffer 
 
                 if (dcpProf) {
                     dcpProf->step2ApplyTile(rtemp, gtemp, btemp, tW - jstart, tH - istart, TS, asIn);
+                }
+
+                // Film Lab V4 scene tap: the last point where highlight
+                // magnitude still exists. One line down, filmlike_clip folds
+                // everything into 0..65535 and the tone curve caps it again.
+                if (filmTap) {
+                    for (int i = istart, ti = 0; i < tH; i++, ti++) {
+                        for (int j = jstart, tj = 0; j < tW; j++, tj++) {
+                            filmTap->r(i, j) = rtemp[ti * TS + tj];
+                            filmTap->g(i, j) = gtemp[ti * TS + tj];
+                            filmTap->b(i, j) = btemp[ti * TS + tj];
+                        }
+                    }
                 }
 
                 if (params->toneCurve.clampOOG) {

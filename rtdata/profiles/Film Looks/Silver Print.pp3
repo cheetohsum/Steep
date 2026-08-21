@@ -1,7 +1,7 @@
 [Film Presets]
 Enabled=true
 Preset=silver_gelatin
-ModelVersion=2
+ModelVersion=4
 Exposure=0
 PushPull=0
 Process=bw

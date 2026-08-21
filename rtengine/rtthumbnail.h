@@ -107,7 +107,8 @@ public:
     void getAutoWB    (double& temp, double& green, double equal, double tempBias, StandardObserver observer);
     void getAutoWBMultipliers (double& rm, double& gm, double& bm);
     void getSpotWB    (const procparams::ProcParams& params, int x, int y, int rect, double& temp, double& green);
-    void applyAutoExp (procparams::ProcParams& pparams);
+    /// @return true when metering actually supplied values.
+    bool applyAutoExp (procparams::ProcParams& pparams);
 
     unsigned char* getGrayscaleHistEQ (int trim_width);
     bool writeImage (const Glib::ustring& fname);

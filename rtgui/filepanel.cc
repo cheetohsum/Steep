@@ -2007,25 +2007,15 @@ rtengine::InitialImage* FilePanel::loadAuxiliaryInitialImage(
 
     std::unique_ptr<RawLoadLease> loadLease;
     if (isRaw) {
-        while (!canceled()) {
-            loadLease.reset(new RawLoadLease(
-                false,
-                std::chrono::milliseconds(50),
-                false));
-            if (loadLease->acquired) {
-                break;
-            }
+        // Foreground priority, not preload: this is content for the photo on
+        // screen right now, and a preload-priority lease was repeatedly jumped
+        // by speculative adjacent preloads -- ~180ms of gate starvation on a
+        // measured switch, most of the before pane's blank time. This still
+        // waits out a decode already in flight, and the cancel predicate drops
+        // a superseded switch out of that wait rather than decoding for it.
+        loadLease.reset(new RawLoadLease(canceled));
 
-            const auto retry = loadLease->preloadResult == RawLoadGate::PreloadAcquireResult::TooSoon
-                ? loadLease->retryAfter
-                : std::chrono::milliseconds(20);
-            loadLease.reset();
-            std::this_thread::sleep_for(std::max(
-                std::chrono::milliseconds(10),
-                std::min(retry, std::chrono::milliseconds(50))));
-        }
-
-        if (canceled()) {
+        if (!loadLease->acquired || canceled()) {
             return finishCanceled("waiting for raw gate");
         }
     }

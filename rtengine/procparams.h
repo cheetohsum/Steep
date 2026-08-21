@@ -246,7 +246,8 @@ struct GrainParams {
     bool enabled;
     int iso;          // Default: 400 (20-6400)
     int strength;     // Default: 0 (0-100)
-    int scale;        // Default: 100 (0-100)
+    int scale;        // Default: 100 (0-100), grain size
+    int color;        // Default: 0 (0-100), chroma grain from per-layer dye clouds
 
     GrainParams();
 
@@ -1868,13 +1869,31 @@ struct DoubleExposureParams {
         ADD,        // in-camera multiple exposure: light is additive
         SCREEN,     // projected positives: 1-(1-a)(1-b)
         MULTIPLY,   // slide sandwich: densities multiply
-        LIGHTEN     // max(a,b)
+        LIGHTEN,    // max(a,b): layer shows only where brighter
+        DARKEN,     // min(a,b): layer shows only where darker
+        ABSDIFF     // |a-b| (DIFFERENCE collides with a wingdi.h macro)
+    };
+
+    // Which luminance the "Reveal in" gate reads.
+    enum class GateSource {
+        BASE,   // the accumulated base below this layer (legacy fill-shadows)
+        LAYER   // the layer's own sample
     };
 
     struct Layer {
         Glib::ustring path; // absolute path of the partner image
+        bool enabled;       // mute toggle; disabled layers are skipped
         double ev;          // exposure trim in EV applied to this layer
         double opacity;     // 0..100
+        BlendMode blendMode;
+        // "Reveal in" gate: confine the layer to a luminance window with
+        // smoothstep feather outside it. Low/high/feather are linear
+        // luminance percent; strength 0 disables the gate.
+        GateSource gateSource;
+        double gateLow;      // 0..100
+        double gateHigh;     // 0..100
+        double gateFeather;  // 0..100
+        double gateStrength; // 0..100
 
         Layer();
 
@@ -1884,10 +1903,8 @@ struct DoubleExposureParams {
 
     bool enabled;
     std::vector<Layer> layers;
-    BlendMode blendMode;
-    bool autoGain;      // meter every frame down by log2(frames) EV (ADD mode)
+    bool autoGain;      // meter every frame down by log2(frames) EV (ADD layers)
     double baseEv;      // exposure trim for the base plate
-    double fillShadows; // 0..100: gate overlays into the shadows of the accumulated base
 
     DoubleExposureParams();
 

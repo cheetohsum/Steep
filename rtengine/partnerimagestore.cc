@@ -55,6 +55,12 @@ std::shared_ptr<rtengine::PartnerImage> decodePartner(const Glib::ustring& path,
     procparams::ProcParams params;
     params.raw.deadPixelFilter = false;
     params.raw.ca_autocorrect = false;
+    // Sensor-clipped highlights must be reconstructed, or the white-balance
+    // multipliers leave them clipped at different per-channel levels — a
+    // magenta cast the composite then smears over the base ("purple blown
+    // skies"). Blend recovery runs inline in getImage and neutralizes them.
+    params.toneCurve.hrenabled = true;
+    params.toneCurve.method = "Blend";
 
     if (!fullRes) {
         // The preview tier never needs full detail: fast demosaic.
