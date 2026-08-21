@@ -947,6 +947,25 @@ void CacheManager::invalidateMD5 (const Glib::ustring& fname) const
     fullyScannedMD5Files_.erase(pathKey);
 }
 
+void CacheManager::noteCacheFileWritten (const Glib::ustring& fname) const
+{
+    std::lock_guard<std::mutex> lock(md5CacheMutex_);
+
+    const std::string fileKey = fname.raw();
+    const std::string dirKey = foldedPathKey(Glib::path_get_dirname(fname));
+    const std::string pathKey = foldedPathKey(fname);
+
+    // The checksum is stale, but the only thing that changed in the directory
+    // is this one file, and it exists now. Record that instead of invalidating
+    // the directory scan.
+    md5Cache_.erase(fileKey);
+    knownPresentFiles_.erase(fileKey);
+
+    if (fullyScannedMD5Dirs_.find(dirKey) != fullyScannedMD5Dirs_.end()) {
+        fullyScannedMD5Files_.insert(pathKey);
+    }
+}
+
 void CacheManager::clearMD5Cache () const
 {
     std::lock_guard<std::mutex> lock(md5CacheMutex_);

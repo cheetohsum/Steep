@@ -60,6 +60,14 @@ ThumbBrowserBase::ThumbBrowserBase ()
     internal.signal_size_allocate().connect( sigc::mem_fun(*this, &ThumbBrowserBase::internalAreaResized) );
 }
 
+ThumbBrowserBase::~ThumbBrowserBase ()
+{
+    // Both timeouts capture `this`; leaving one armed past destruction would
+    // reflow a dead browser.
+    redrawTimeout_.disconnect();
+    relayoutConn_.disconnect();
+}
+
 void ThumbBrowserBase::scrollChanged ()
 {
     for (auto* entry : visibleEntries_) {
@@ -1139,6 +1147,10 @@ bool ThumbBrowserBase::Internal::on_draw(const ::Cairo::RefPtr< Cairo::Context> 
     parent->entriesToDraw_.clear();
     if (thumbnailPrioritiesChanged) {
         thumbImageUpdater->prioritiesChanged();
+        // Tell whoever is still producing entries where the user is looking,
+        // so a folder that is mid-load keeps loading toward the viewport
+        // instead of grinding on in alphabetical order.
+        parent->visibleRangeChanged();
     }
     // Frame border removed for cleaner look
 
@@ -1689,6 +1701,32 @@ void ThumbBrowserBase::schedulePendingInsertRedraw_()
             G_PRIORITY_DEFAULT_IDLE + 10
         );
     }
+}
+
+void ThumbBrowserBase::scheduleRelayout ()
+{
+    if (layoutPaused_()) {
+        // resumeLayout() will run exactly one pass for everything that
+        // accumulated while the animation was in flight.
+        layoutDeferredResize_ = true;
+        return;
+    }
+
+    if (relayoutConn_.connected()) {
+        return;
+    }
+
+    // 60 ms is short enough that a reflow still looks immediate, and long
+    // enough that a burst of finishing thumbnails collapses into one pass
+    // instead of one full arrangeFiles() per thumbnail.
+    relayoutConn_ = Glib::signal_timeout().connect(
+        [this]() -> bool {
+            relayoutConn_.disconnect();
+            redraw();
+            return false;
+        },
+        60,
+        G_PRIORITY_DEFAULT_IDLE + 10);
 }
 
 void ThumbBrowserBase::pauseLayout ()

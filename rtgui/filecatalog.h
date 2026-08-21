@@ -311,6 +311,14 @@ private:
     void globalScopeToggled();
     void startGlobalScan();
     void scheduleGlobalRescan();
+    // Coalesces the filter + viewport refresh that follows each batch of
+    // global-scan matches into one pass per burst.
+    void scheduleGlobalScanRefresh();
+    sigc::connection globalScanRefreshConn_;
+    // Deferred, coalesced filter application (cancelled when the directory is
+    // closed, so filtering a folder that is being discarded costs nothing).
+    void scheduleFilterApply();
+    sigc::connection filterApplyConn_;
     void resetGlobalScopeQuiet();
 
     // Filetype filter dropdown

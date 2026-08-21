@@ -670,12 +670,12 @@ void Thumbnail::_generateThumbnailImage()
         tpp->getAutoWBMultipliers(cfs.redAWBMul, cfs.greenAWBMul, cfs.blueAWBMul);
         const Glib::ustring cacheDataName = getCacheFileName("data", ".txt");
         const auto stageStart = bench ? ThumbnailBenchClock::now() : ThumbnailBenchClock::time_point{};
-        cachemgr->invalidateMD5(cacheDataName);
+        cachemgr->noteCacheFileWritten(cacheDataName);
         _saveThumbnail(false);
         cfs.supported = true;
 
         cfs.save(cacheDataName, tpp);
-        cachemgr->invalidateMD5(cacheDataName);
+        cachemgr->noteCacheFileWritten(cacheDataName);
         if (bench) {
             saveMs = thumbnailBenchMs(stageStart, ThumbnailBenchClock::now());
         }
@@ -787,16 +787,16 @@ rtengine::procparams::ProcParams* Thumbnail::createProcParamsForUpdate(bool retu
                     : nullptr,
                 pp_deleter
             );
-            cachemgr->invalidateMD5(outFName);
+            cachemgr->noteCacheFileWritten(outFName);
             if (pp && !pp->pparams->save(outFName)) {
-                cachemgr->invalidateMD5(outFName);
+                cachemgr->noteCacheFileWritten(outFName);
                 loadProcParams();
             }
         } else if (create && defProf != DEFPROFILE_DYNAMIC) {
             const PartialProfile* const p = ProfileStore::getInstance()->getProfile(defProf);
-            cachemgr->invalidateMD5(outFName);
+            cachemgr->noteCacheFileWritten(outFName);
             if (p && !p->pparams->save(outFName)) {
-                cachemgr->invalidateMD5(outFName);
+                cachemgr->noteCacheFileWritten(outFName);
                 loadProcParams();
             }
         }
@@ -819,7 +819,7 @@ rtengine::procparams::ProcParams* Thumbnail::createProcParamsForUpdate(bool retu
 
         // Now they SHOULD be there (and potentially "partial"), so try to load them and store it as a full procparam
         if (success) {
-            cachemgr->invalidateMD5(outFName);
+            cachemgr->noteCacheFileWritten(outFName);
             loadProcParams();
         }
 
@@ -1060,15 +1060,15 @@ void Thumbnail::imageDeveloped ()
 
     cfs.recentlySaved = true;
     const Glib::ustring cacheDataName = getCacheFileName ("data", ".txt");
-    cachemgr->invalidateMD5(cacheDataName);
+    cachemgr->noteCacheFileWritten(cacheDataName);
     cfs.save (cacheDataName);
-    cachemgr->invalidateMD5(cacheDataName);
+    cachemgr->noteCacheFileWritten(cacheDataName);
 
     if (App::get().options().saveParamsCache) {
         const Glib::ustring profileName = getCacheFileName ("profiles", App::PARAM_FILE_EXTENSION);
-        cachemgr->invalidateMD5(profileName);
+        cachemgr->noteCacheFileWritten(profileName);
         pparams->save (profileName);
-        cachemgr->invalidateMD5(profileName);
+        cachemgr->noteCacheFileWritten(profileName);
     }
 }
 
@@ -1568,25 +1568,25 @@ void Thumbnail::_saveThumbnail (bool saveLiveThumbData)
     }
 
     const Glib::ustring imageCacheName = getCacheFileName ("images", ".rtti");
-    cachemgr->invalidateMD5(imageCacheName);
+    cachemgr->noteCacheFileWritten(imageCacheName);
     g_remove (imageCacheName.c_str ());
 
     // save thumbnail image
     tpp->writeImageFile (imageCacheName);
-    cachemgr->invalidateMD5(imageCacheName);
+    cachemgr->noteCacheFileWritten(imageCacheName);
 
     // save embedded profile
     const Glib::ustring embProfileName = getCacheFileName ("embprofiles", ".icc");
-    cachemgr->invalidateMD5(embProfileName);
+    cachemgr->noteCacheFileWritten(embProfileName);
     tpp->writeEmbProfile (embProfileName);
-    cachemgr->invalidateMD5(embProfileName);
+    cachemgr->noteCacheFileWritten(embProfileName);
 
     if (saveLiveThumbData) {
         // save supplementary data
         const Glib::ustring cacheDataName = getCacheFileName ("data", ".txt");
-        cachemgr->invalidateMD5(cacheDataName);
+        cachemgr->noteCacheFileWritten(cacheDataName);
         tpp->writeData (cacheDataName);
-        cachemgr->invalidateMD5(cacheDataName);
+        cachemgr->noteCacheFileWritten(cacheDataName);
     }
 }
 
@@ -1619,10 +1619,10 @@ void Thumbnail::updateCache (bool updatePParams, bool updateCacheImageData)
         const Glib::ustring fileProfileName = options.saveParamsFile ? fname + App::PARAM_FILE_EXTENSION : "";
         const Glib::ustring cacheProfileName = options.saveParamsCache ? getCacheFileName ("profiles", App::PARAM_FILE_EXTENSION) : "";
         if (!fileProfileName.empty()) {
-            cachemgr->invalidateMD5(fileProfileName);
+            cachemgr->noteCacheFileWritten(fileProfileName);
         }
         if (!cacheProfileName.empty()) {
-            cachemgr->invalidateMD5(cacheProfileName);
+            cachemgr->noteCacheFileWritten(cacheProfileName);
         }
         pparams->save (
             fileProfileName,
@@ -1630,18 +1630,18 @@ void Thumbnail::updateCache (bool updatePParams, bool updateCacheImageData)
             true
         );
         if (!fileProfileName.empty()) {
-            cachemgr->invalidateMD5(fileProfileName);
+            cachemgr->noteCacheFileWritten(fileProfileName);
         }
         if (!cacheProfileName.empty()) {
-            cachemgr->invalidateMD5(cacheProfileName);
+            cachemgr->noteCacheFileWritten(cacheProfileName);
         }
     }
 
     if (updateCacheImageData) {
         const Glib::ustring cacheDataName = getCacheFileName ("data", ".txt");
-        cachemgr->invalidateMD5(cacheDataName);
+        cachemgr->noteCacheFileWritten(cacheDataName);
         cfs.save (cacheDataName);
-        cachemgr->invalidateMD5(cacheDataName);
+        cachemgr->noteCacheFileWritten(cacheDataName);
 
         // Write-through to the global selects index so cross-folder discovery
         // stays complete without rescanning.

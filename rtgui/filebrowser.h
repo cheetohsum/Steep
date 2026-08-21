@@ -89,6 +89,9 @@ private:
     IdleRegister idle_register;
     unsigned int session_id_;
     bool selectionNotifyIdlePending_;
+    // Last file handed to the preview loader as a viewport hint, so scrolling
+    // during a cold load does not re-set the same hint on every frame.
+    Glib::ustring lastViewportHint_;
 
     std::vector<ThumbBrowserEntryBase*> pendingDeletion_;
     std::unordered_set<std::string> entryKeys_;
@@ -359,6 +362,7 @@ public:
 #endif
 
     void thumbRearrangementNeeded () override;
+    void visibleRangeChanged () override;
 
     void selectionChanged () override;
 

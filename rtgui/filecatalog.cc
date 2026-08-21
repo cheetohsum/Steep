@@ -1229,6 +1229,8 @@ FileCatalog::~FileCatalog()
         *globalScanCancel_ = true;
     }
     globalRescanConn_.disconnect();
+    globalScanRefreshConn_.disconnect();
+    filterApplyConn_.disconnect();
     globalGlobeAnimConn_.disconnect();
     delete rejectsPopover_;
     zoomSliderApplyConn_.disconnect();
@@ -1314,6 +1316,9 @@ void FileCatalog::on_realize()
 
 void FileCatalog::closeDir ()
 {
+    // Any filter pass still queued targets entries we are about to destroy.
+    filterApplyConn_.disconnect();
+    globalScanRefreshConn_.disconnect();
 
     if (filterPanel) {
         filterPanel->set_sensitive (false);
@@ -3732,7 +3737,25 @@ void FileCatalog::setAlbumWhitelist (const std::set<std::string>& whitelist)
         albumWhitelist_.insert(catalogPathKey(path));
     }
 
-    filterChanged();
+    // Selecting an album emits this immediately before showAlbumFiles(), which
+    // closes the current directory and applies its own filter. Filtering the
+    // outgoing folder synchronously here was a full O(N) pass plus relayout on
+    // entries that were about to be destroyed — defer it so the album switch
+    // supersedes it (closeDir cancels the pending pass).
+    scheduleFilterApply();
+}
+
+void FileCatalog::scheduleFilterApply ()
+{
+    if (filterApplyConn_.connected()) {
+        return;
+    }
+
+    filterApplyConn_ = Glib::signal_idle().connect([this]() {
+        filterApplyConn_.disconnect();
+        filterChanged();
+        return false;
+    }, Glib::PRIORITY_DEFAULT_IDLE);
 }
 
 void FileCatalog::showAlbumFiles (const Glib::ustring& albumName, const std::vector<Glib::ustring>& files)
@@ -3757,12 +3780,19 @@ void FileCatalog::showAlbumFiles (const Glib::ustring& albumName, const std::vec
     BrowsePath->set_text(Glib::ustring::compose("Album: %1", albumName));
     setBrowserTitle(Glib::ustring::compose("Album: %1", albumName), Glib::ustring());
 
-    // Add each file from the album
+    // Add the album's files as one batch: addFile() takes the loader lock and
+    // evaluates scheduling per file, where addFiles() reserves once and hands
+    // the whole set over in a single call.
+    std::vector<Glib::ustring> existing;
+    existing.reserve(files.size());
+
     for (const auto& f : files) {
         if (Glib::file_test(f, Glib::FILE_TEST_EXISTS)) {
-            addFile(f);
+            existing.push_back(f);
         }
     }
+
+    addFiles(std::move(existing));
 
     // Apply filter and redraw
     fileBrowser->applyFilter(getFilter());
@@ -3975,6 +4005,7 @@ void FileCatalog::resetGlobalScopeQuiet ()
     globalScopeActive_ = false;
     ++globalScanGen_;
     globalRescanConn_.disconnect();
+    globalScanRefreshConn_.disconnect();
 
     if (globalScanCancel_) {
         *globalScanCancel_ = true;
@@ -4050,6 +4081,7 @@ void FileCatalog::globalScopeToggled ()
         globalScopeActive_ = false;
         ++globalScanGen_;
         globalRescanConn_.disconnect();
+        globalScanRefreshConn_.disconnect();
 
         if (globalScanCancel_) {
             *globalScanCancel_ = true;
@@ -4158,13 +4190,13 @@ void FileCatalog::startGlobalScan ()
                 addFile(f);
             }
 
-            fileBrowser->applyFilter(getFilter());
-            // Queue thumbnail rendering for whatever just became visible —
-            // without this, tiles stay gray until a click forces a redraw.
-            fileBrowser->refreshQuickThumbImages();
+            // applyFilter() is a full O(N) checkFilter pass plus a complete
+            // relayout, and refreshQuickThumbImages() rescans the viewport.
+            // Running both per 64-file batch made a global scan quadratic in
+            // the number of matches, so coalesce them across batches.
+            scheduleGlobalScanRefresh();
             filepanel->loadingThumbs(
                 Glib::ustring::compose(M("FILEBROWSER_GLOBALSCOPE_PROGRESS"), shared->matched.load()), 0);
-            _refreshProgressBar();
         });
     };
 
@@ -4314,6 +4346,29 @@ void FileCatalog::scheduleGlobalRescan ()
 
         return false;
     }, 400);
+}
+
+void FileCatalog::scheduleGlobalScanRefresh ()
+{
+    if (globalScanRefreshConn_.connected()) {
+        return;
+    }
+
+    globalScanRefreshConn_ = Glib::signal_timeout().connect([this]() {
+        globalScanRefreshConn_.disconnect();
+
+        if (!globalScopeActive_) {
+            return false;
+        }
+
+        fileBrowser->applyFilter(getFilter());
+        // Queue thumbnail rendering for whatever just became visible —
+        // without this, tiles stay gray until a click forces a redraw.
+        fileBrowser->refreshQuickThumbImages();
+        _refreshProgressBar();
+
+        return false;
+    }, 150, G_PRIORITY_DEFAULT_IDLE + 10);
 }
 
 void FileCatalog::filterChanged ()

@@ -200,6 +200,7 @@ protected:
 public:
 
     ThumbBrowserBase ();
+    ~ThumbBrowserBase () override;
 
     void zoomIn ()
     {
@@ -238,6 +239,9 @@ public: // re-apply sort method
     void pauseLayout ();
     void resumeLayout ();
 
+    // Request a reflow, coalescing bursts into a single pass.
+    void scheduleRelayout ();
+
 protected:
     bool redrawPending_ = false;
     // Refcounted: the sidebar slide and the filmstrip slide can overlap, and
@@ -256,6 +260,10 @@ protected:
     std::size_t visibleGenerationCounter_ = 0;
     MyMutex pendingMutex_;
     sigc::connection redrawTimeout_;
+    // Coalesces "an entry changed shape, reflow the grid" requests. During a
+    // cold folder load essentially every delivered RAW thumbnail raises one,
+    // and each relayout is O(N) over the folder.
+    sigc::connection relayoutConn_;
     void clearVisibleEntries_();
     void clearDrawableEntries_();
     void schedulePendingInsertRedraw_();
@@ -299,6 +307,8 @@ public:
 
     virtual void redrawNeeded (ThumbBrowserEntryBase* entry);
     virtual void thumbRearrangementNeeded () {}
+    // The set of on-screen entries changed (scroll, resize, reflow).
+    virtual void visibleRangeChanged () {}
 
     Gtk::Widget* getDrawingArea ()
     {

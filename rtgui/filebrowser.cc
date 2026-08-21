@@ -57,6 +57,7 @@
 #include "multilangmgr.h"
 #include "options.h"
 #include "paramsedited.h"
+#include "previewloader.h"
 #include "profilestorecombobox.h"
 #include "procparamchangers.h"
 #include "rtimage.h"
@@ -7461,17 +7462,47 @@ void FileBrowser::refreshAdjacentThumbnails(const Glib::ustring& fname, int coun
     getAdjacentEntriesAndRefresh(fname, 0, count, 0);
 }
 
+void FileBrowser::visibleRangeChanged ()
+{
+    // Only worth doing while entries are still being produced. The loader
+    // otherwise works through the folder alphabetically around a hint that was
+    // set once when the directory was opened, so scrolling during a cold load
+    // used to leave the viewport waiting behind unrelated files.
+    if (!previewLoader->hasPendingWork()) {
+        if (!lastViewportHint_.empty()) {
+            lastViewportHint_.clear();
+        }
+        return;
+    }
+
+    Glib::ustring firstVisible;
+    {
+        MYREADERLOCK(l, entryRW);
+
+        if (!visibleEntries_.empty()) {
+            firstVisible = visibleEntries_.front()->filename;
+        }
+    }
+
+    if (firstVisible.empty() || firstVisible == lastViewportHint_) {
+        return;
+    }
+
+    lastViewportHint_ = firstVisible;
+    previewLoader->setPriorityHint(firstVisible);
+}
+
 void FileBrowser::thumbRearrangementNeeded ()
 {
-    idle_register.add(
-        [this]() -> bool
-        {
-            // The entry already adopted the delivered pixel geometry. Reflow
-            // without regenerating every thumbnail or restoring stale metadata.
-            redraw();
-            return false;
-        }
-    );
+    // The entry already adopted the delivered pixel geometry. Reflow without
+    // regenerating every thumbnail or restoring stale metadata.
+    //
+    // This fires for practically every RAW thumbnail during a cold folder load
+    // (the cache records sensor dimensions while the rendered thumb comes from
+    // the embedded JPEG, so the delivered aspect almost always differs from the
+    // predicted one). Registering an idle per delivery made that O(N) reflow
+    // run N times; coalesce the burst into a single pass instead.
+    scheduleRelayout();
 }
 
 void FileBrowser::selectionChanged ()

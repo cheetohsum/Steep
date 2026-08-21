@@ -107,6 +107,11 @@ public:
     bool isFileKnownMissing (const Glib::ustring& fname) const;
     bool isFileKnownPresent (const Glib::ustring& fname) const;
     void invalidateMD5 (const Glib::ustring& fname) const;
+    // Drop a cache file's checksum after (re)writing it, without discarding
+    // the enumeration of its directory. invalidateMD5() forgets the whole
+    // directory, which during a cold folder load throws away the batch scan
+    // the loader just built — once per generated thumbnail.
+    void noteCacheFileWritten (const Glib::ustring& fname) const;
     void clearMD5Cache () const;
 
     Glib::ustring    getCacheFileName (const Glib::ustring& subDir,
