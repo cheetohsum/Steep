@@ -702,6 +702,30 @@ bool ThumbBrowserEntryBase::restorePreviewForSize (hidpi::LogicalSize size, int 
     return false;
 }
 
+void ThumbBrowserEntryBase::releaseOffscreenBuffers ()
+{
+    // Never stall the draw path for a memory optimisation; the sweep will come
+    // round again.
+    MyTryWriterLock lock(lockRW);
+
+    if (!lock.owns_lock()) {
+        return;
+    }
+
+    // The Cairo cell surface is the larger of the two buffers (4 bytes per
+    // device pixel over the whole cell) and is cheap to rebuild from `preview`
+    // — a memcpy plus text and icons, with no worker job and no disk read. The
+    // decoded preview itself is kept precisely so redrawing costs nothing.
+    if (backBuffer) {
+        backBuffer.reset();
+        bbPreview = nullptr;
+    }
+
+    // Previews retained for the other view's size only pay off near the
+    // viewport; far outside it they are just resident memory.
+    invalidatePreviewSlots();
+}
+
 void ThumbBrowserEntryBase::invalidatePreviewSlots ()
 {
     for (auto& slot : previewSlots_) {
@@ -948,14 +972,14 @@ void ThumbBrowserEntryBase::setPosition (int x, int y, int w, int h)
 
 void ThumbBrowserEntryBase::setOffset (int x, int y)
 {
-    MYWRITERLOCK(l, lockRW);
-
+    // getOffsetX/Y read the parent's scroll offset whenever the entry has a
+    // parent, which is always true inside a browser, and the button set is
+    // permanently hidden (see buttonSetVisible). These fields therefore only
+    // matter for a parentless entry, so this does not need the write lock —
+    // taking it here stalled every reader of the entry (including its own
+    // draw) once per visible entry per scroll frame and per pointer event.
     ofsX = -x;
     ofsY = -y;
-
-    if (buttonSetVisible()) {
-        buttonSet->move (ofsX + startx + sideMargin, ofsY + starty + upperMargin);
-    }
 }
 
 int ThumbBrowserEntryBase::getOffsetX () const
@@ -1350,19 +1374,4 @@ bool ThumbBrowserEntryBase::animTick ()
         return false; // disconnect timer
     }
     return true; // continue
-}
-
-Cairo::RefPtr<Cairo::ImageSurface> ThumbBrowserEntryBase::snapshotSurface () const
-{
-    if (!backBuffer || !backBuffer->surfaceCreated()) {
-        return {};
-    }
-    auto src = backBuffer->getSurface();
-    int w = src->get_width();
-    int h = src->get_height();
-    auto copy = Cairo::ImageSurface::create(Cairo::FORMAT_ARGB32, w, h);
-    auto cr = Cairo::Context::create(copy);
-    cr->set_source(src, 0, 0);
-    cr->paint();
-    return copy;
 }

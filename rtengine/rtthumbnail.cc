@@ -1379,7 +1379,15 @@ IImage8* Thumbnail::processImage (const procparams::ProcParams& params, eSensorT
         ipf.filmNegativeProcess(baseImg, baseImg, params.filmNegative);
     }
 
-
+    // Double exposure: mirror of the main-pipeline composite so browser
+    // tiles show the stack too (partners come from the preview-tier cache).
+    // Coarse-rotated bases map slightly differently here (the thumb rotates
+    // later); acceptable at tile size.
+    if (params.doubleExposure.enabled && !params.doubleExposure.layers.empty() && full_width > 0 && fw > 0) {
+        ipf.doubleExposure(baseImg, params.doubleExposure, params.icm.workingProfile,
+                           full_width, full_height, 0, 0,
+                           static_cast<float>(full_width) / fw, false);
+    }
 
     LUTu hist16 (65536);
 
@@ -1944,26 +1952,39 @@ void Thumbnail::getAutoWBMultipliers (double& rm, double& gm, double& bm)
     bm = blueAWBMul;
 }
 
-void Thumbnail::applyAutoExp (procparams::ProcParams& params)
+bool Thumbnail::applyAutoExp (procparams::ProcParams& params)
 {
     if (!params.toneCurve.autoexp) {
-        return;
+        return false;
     }
 
-    // Cached thumbnails retain the auto-exposure result even when the full
-    // histogram is not resident. Reuse it for the standard 2% clipping pass.
-    if (aeValid && params.toneCurve.clip == 0.02) {
+    // Prefer the raw histogram: it is the only path that can honour a clip
+    // point other than the one the cache was built with.
+    if (aeHistogram) {
+        ImProcFunctions ipf (&params, false);
+        ipf.getAutoExp (aeHistogram, aeHistCompression, params.toneCurve.clip, params.toneCurve.expcomp,
+                        params.toneCurve.brightness, params.toneCurve.contrast, params.toneCurve.black, params.toneCurve.hlcompr, params.toneCurve.hlcomprthresh);
+        return true;
+    }
+
+    // The histogram is NOT serialized into the thumbnail cache, so it is
+    // absent for every cache-loaded thumbnail — which is the normal case.
+    // Fall back to the cached results rather than returning silently with the
+    // caller's values untouched: those were computed at the standard 0.02%
+    // clip, which is close enough to any sane request and infinitely better
+    // than no metering at all. Gating this on an exact clip match is what
+    // used to make auto exposure a no-op for cached thumbnails.
+    if (aeValid) {
         params.toneCurve.expcomp = aeExposureCompensation;
         params.toneCurve.brightness = aeLightness;
         params.toneCurve.contrast = aeContrast;
         params.toneCurve.black = aeBlack;
         params.toneCurve.hlcompr = aeHighlightCompression;
         params.toneCurve.hlcomprthresh = aeHighlightCompressionThreshold;
-    } else if (aeHistogram) {
-        ImProcFunctions ipf (&params, false);
-        ipf.getAutoExp (aeHistogram, aeHistCompression, params.toneCurve.clip, params.toneCurve.expcomp,
-                        params.toneCurve.brightness, params.toneCurve.contrast, params.toneCurve.black, params.toneCurve.hlcompr, params.toneCurve.hlcomprthresh);
+        return true;
     }
+
+    return false;
 }
 
 void Thumbnail::getSpotWB (const procparams::ProcParams& params, int xp, int yp, int rect, double& rtemp, double& rgreen)
@@ -2392,7 +2413,10 @@ bool Thumbnail::readImageFile (const Glib::ustring& fullFName)
 
 bool Thumbnail::readData  (const Glib::ustring& fname)
 {
-    setlocale (LC_NUMERIC, "C"); // to set decimal point to "."
+    // LC_NUMERIC is pinned to "C" for the whole process at startup (rtgui/main.cc)
+    // and re-pinned whenever the UI language changes, so it is already correct
+    // here. Calling setlocale() again from a thumbnail worker would mutate
+    // process-global state from a background thread, which is not thread-safe.
     Glib::KeyFile keyFile;
 
     try {
@@ -2406,7 +2430,10 @@ bool Thumbnail::readData  (const Glib::ustring& fname)
 
 bool Thumbnail::readData  (const Glib::KeyFile& keyFile)
 {
-    setlocale (LC_NUMERIC, "C"); // to set decimal point to "."
+    // LC_NUMERIC is pinned to "C" for the whole process at startup (rtgui/main.cc)
+    // and re-pinned whenever the UI language changes, so it is already correct
+    // here. Calling setlocale() again from a thumbnail worker would mutate
+    // process-global state from a background thread, which is not thread-safe.
 
     try {
         MyMutex::MyLock thmbLock (thumbMutex);

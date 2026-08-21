@@ -17,7 +17,6 @@
  */
 #pragma once
 
-#include <functional>
 #include <set>
 #include <vector>
 
@@ -41,7 +40,6 @@ class EditorPanel;
 struct ExternalEditor;
 class FilePanel;
 class PLDBridge;
-class ThumbBrowserEntryBase;
 
 namespace mcp { class McpServer; }
 class RTWindow final :
@@ -102,38 +100,12 @@ private:
     double queueAnimFraction;        // 0.0 = hidden, 1.0 = fully shown
     sigc::connection queueAnimConn;  // animation timer
 
-    // Browser/editor view transition animation
-    sigc::connection viewAnimConn_;  // browser fade animation timer
-
-    // Hero thumbnail transition (browser grid → filmstrip)
-    struct CapturedThumb {
-        Cairo::RefPtr<Cairo::ImageSurface> surface;
-        double srcX, srcY, srcW, srcH;  // browser position (overlay coords)
-        double dstX, dstY, dstW, dstH;  // filmstrip target (overlay coords)
-        bool isHero;                      // true = animates to filmstrip
-        ThumbBrowserEntryBase* entry;     // for matching after reparent
-    };
-    Gtk::EventBox* heroOverlay_;
-    std::vector<CapturedThumb> capturedThumbs_;
-    double heroAnimFraction_;
-    bool heroPageSwitched_;           // true once notebook page has been switched
-    bool heroAnimIn_;                 // true=browser→editor, false=editor→browser
-    sigc::connection heroAnimConn_;
-    double heroFilmX_, heroFilmY_, heroFilmW_, heroFilmH_; // filmstrip clip rect (overlay coords)
-
     // Startup animation overlay
     Gtk::EventBox* startupOverlay_;
     double startupAnimTime_;       // elapsed seconds
     bool startupAnimActive_;
     sigc::connection startupAnimConn_;
     Cairo::RefPtr<Cairo::ImageSurface> logoSurface_;
-
-    void captureVisibleThumbnails();
-    void startHeroTransition();
-    void computeFilmstripTargets();
-    void captureFilmstripThumbnails();
-    void startReverseHeroTransition(std::function<void()> afterPageSwitch);
-    void computeBrowserTargets();
 
     bool isSingleTabMode() const;
 

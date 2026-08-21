@@ -280,6 +280,11 @@ private:
     std::size_t firstViewportCandidate_(int x, int y) const;
     void rebuildDrawableEntries_();
     void syncEntryOffset_(ThumbBrowserEntryBase* entry);
+    // Periodically release cell surfaces for entries far outside the viewport.
+    // Without this, every entry the user has ever scrolled past keeps its
+    // buffers for the whole folder session.
+    void maybeEvictOffscreenBuffers_(std::size_t firstVisible, std::size_t lastVisible);
+    unsigned evictSweepCounter_ = 0;
     bool onRedrawIdle_ ();
     bool applyTabModeEntryGeometry_ (bool enable, unsigned int generation);
     unsigned int tabModeGeneration_ = 0;

@@ -684,7 +684,8 @@ GrainParams::GrainParams():
     enabled(false),
     iso(400),
     strength(0),
-    scale(100)
+    scale(100),
+    color(0)
 {
 }
 
@@ -694,7 +695,8 @@ bool GrainParams::operator==(const GrainParams &other) const
         enabled == other.enabled
         && iso == other.iso
         && strength == other.strength
-        && scale == other.scale;
+        && scale == other.scale
+        && color == other.color;
 }
 
 bool GrainParams::operator!=(const GrainParams &other) const
@@ -3397,7 +3399,7 @@ bool FilmSimulationParams::operator !=(const FilmSimulationParams& other) const
 FilmPresetsParams::FilmPresetsParams() :
     enabled(false),
     preset("cinema_reveal_35"),
-    modelVersion(2),
+    modelVersion(4),
     exposure(0.0),
     pushPull(0.0),
     process("auto"),
@@ -3524,8 +3526,20 @@ bool DehazeParams::operator !=(const DehazeParams& other) const
 
 DoubleExposureParams::Layer::Layer() :
     path(""),
+    enabled(true),
     ev(0.0),
-    opacity(100.0)
+    opacity(100.0),
+    blendMode(BlendMode::ADD),
+    // A mild shadow gate by default: overlays favor the base's shadows (the
+    // classic silhouette look) and it makes stack order matter out of the box
+    // — pure equal-opacity addition is order-free, as on film. The window
+    // (0, 35, feather 33) in perceptual units spans the same envelope as the
+    // legacy linear fill-shadows curve (flat to linear 0.10, gone by 0.45).
+    gateSource(GateSource::BASE),
+    gateLow(0.0),
+    gateHigh(35.0),
+    gateFeather(33.0),
+    gateStrength(25.0)
 {
 }
 
@@ -3533,8 +3547,15 @@ bool DoubleExposureParams::Layer::operator ==(const Layer& other) const
 {
     return
         path == other.path
+        && enabled == other.enabled
         && ev == other.ev
-        && opacity == other.opacity;
+        && opacity == other.opacity
+        && blendMode == other.blendMode
+        && gateSource == other.gateSource
+        && gateLow == other.gateLow
+        && gateHigh == other.gateHigh
+        && gateFeather == other.gateFeather
+        && gateStrength == other.gateStrength;
 }
 
 bool DoubleExposureParams::Layer::operator !=(const Layer& other) const
@@ -3545,13 +3566,8 @@ bool DoubleExposureParams::Layer::operator !=(const Layer& other) const
 DoubleExposureParams::DoubleExposureParams() :
     enabled(false),
     layers(),
-    blendMode(BlendMode::ADD),
     autoGain(true),
-    baseEv(0.0),
-    // A mild shadow bias by default: overlays favor the base's shadows (the
-    // classic silhouette look) and it makes stack order matter out of the box
-    // — pure equal-opacity addition is order-free, as on film.
-    fillShadows(25.0)
+    baseEv(0.0)
 {
 }
 
@@ -3560,10 +3576,8 @@ bool DoubleExposureParams::operator ==(const DoubleExposureParams& other) const
     return
         enabled == other.enabled
         && layers == other.layers
-        && blendMode == other.blendMode
         && autoGain == other.autoGain
-        && baseEv == other.baseEv
-        && fillShadows == other.fillShadows;
+        && baseEv == other.baseEv;
 }
 
 bool DoubleExposureParams::operator !=(const DoubleExposureParams& other) const
@@ -4244,6 +4258,7 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->grain.iso, "Grain", "ISO", grain.iso, keyFile);
         saveToKeyfile(!pedited || pedited->grain.strength, "Grain", "Strength", grain.strength, keyFile);
         saveToKeyfile(!pedited || pedited->grain.scale, "Grain", "Scale", grain.scale, keyFile);
+        saveToKeyfile(!pedited || pedited->grain.color, "Grain", "Color", grain.color, keyFile);
 
 // Tilt-Shift
         saveToKeyfile(!pedited || pedited->tiltShift.enabled, "TiltShift", "Enabled", tiltShift.enabled, keyFile);
@@ -4510,10 +4525,8 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
 
 // Double Exposure
         saveToKeyfile(!pedited || pedited->doubleExposure.enabled, "Double Exposure", "Enabled", doubleExposure.enabled, keyFile);
-        saveToKeyfile(!pedited || pedited->doubleExposure.blendMode, "Double Exposure", "BlendMode", static_cast<int>(doubleExposure.blendMode), keyFile);
         saveToKeyfile(!pedited || pedited->doubleExposure.autoGain, "Double Exposure", "AutoGain", doubleExposure.autoGain, keyFile);
         saveToKeyfile(!pedited || pedited->doubleExposure.baseEv, "Double Exposure", "BaseEV", doubleExposure.baseEv, keyFile);
-        saveToKeyfile(!pedited || pedited->doubleExposure.fillShadows, "Double Exposure", "FillShadows", doubleExposure.fillShadows, keyFile);
 
         if (!pedited || pedited->doubleExposure.layers) {
             keyFile.set_integer("Double Exposure", "LayerCount", static_cast<int>(doubleExposure.layers.size()));
@@ -4521,8 +4534,15 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
             for (size_t i = 0; i < doubleExposure.layers.size(); ++i) {
                 const std::string prefix = "Layer" + std::to_string(i + 1);
                 keyFile.set_string("Double Exposure", prefix + "Path", doubleExposure.layers[i].path);
+                keyFile.set_boolean("Double Exposure", prefix + "Enabled", doubleExposure.layers[i].enabled);
                 keyFile.set_double("Double Exposure", prefix + "EV", doubleExposure.layers[i].ev);
                 keyFile.set_double("Double Exposure", prefix + "Opacity", doubleExposure.layers[i].opacity);
+                keyFile.set_integer("Double Exposure", prefix + "BlendMode", static_cast<int>(doubleExposure.layers[i].blendMode));
+                keyFile.set_integer("Double Exposure", prefix + "GateSource", static_cast<int>(doubleExposure.layers[i].gateSource));
+                keyFile.set_double("Double Exposure", prefix + "GateLow", doubleExposure.layers[i].gateLow);
+                keyFile.set_double("Double Exposure", prefix + "GateHigh", doubleExposure.layers[i].gateHigh);
+                keyFile.set_double("Double Exposure", prefix + "GateFeather", doubleExposure.layers[i].gateFeather);
+                keyFile.set_double("Double Exposure", prefix + "GateStrength", doubleExposure.layers[i].gateStrength);
             }
         }
 
@@ -5443,7 +5463,10 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
         return 1;
     }
 
-    setlocale(LC_NUMERIC, "C");  // to set decimal point to "."
+    // LC_NUMERIC is pinned to "C" for the whole process at startup (rtgui/main.cc)
+    // and re-pinned whenever the UI language changes, so it is already correct
+    // here. Calling setlocale() again from a thumbnail worker would mutate
+    // process-global state from a background thread, which is not thread-safe.
 
     const auto& options = App::get().options();
 
@@ -5713,6 +5736,7 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
             assignFromKeyfile(keyFile, "Grain", "ISO", grain.iso, pedited->grain.iso);
             assignFromKeyfile(keyFile, "Grain", "Strength", grain.strength, pedited->grain.strength);
             assignFromKeyfile(keyFile, "Grain", "Scale", grain.scale, pedited->grain.scale);
+            assignFromKeyfile(keyFile, "Grain", "Color", grain.color, pedited->grain.color);
         }
 
         if (keyFile.has_group("TiltShift")) {
@@ -7219,21 +7243,30 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
         if (keyFile.has_group("Double Exposure")) {
             assignFromKeyfile(keyFile, "Double Exposure", "Enabled", doubleExposure.enabled, pedited->doubleExposure.enabled);
 
+            // Legacy files (pre per-layer blending) carry a group-wide
+            // BlendMode and FillShadows; read them here and fold them into
+            // every layer below so old edits render identically.
+            DoubleExposureParams::BlendMode legacyBlend = DoubleExposureParams::BlendMode::ADD;
+            bool haveLegacyBlend = false;
+            double legacyFill = 0.0;
+            bool haveLegacyFill = false;
+
             if (keyFile.has_key("Double Exposure", "BlendMode")) {
                 const int mode = keyFile.get_integer("Double Exposure", "BlendMode");
 
                 if (mode >= 0 && mode <= 3) {
-                    doubleExposure.blendMode = static_cast<DoubleExposureParams::BlendMode>(mode);
+                    legacyBlend = static_cast<DoubleExposureParams::BlendMode>(mode);
+                    haveLegacyBlend = true;
                 }
+            }
 
-                if (pedited) {
-                    pedited->doubleExposure.blendMode = true;
-                }
+            if (keyFile.has_key("Double Exposure", "FillShadows")) {
+                legacyFill = keyFile.get_double("Double Exposure", "FillShadows");
+                haveLegacyFill = true;
             }
 
             assignFromKeyfile(keyFile, "Double Exposure", "AutoGain", doubleExposure.autoGain, pedited->doubleExposure.autoGain);
             assignFromKeyfile(keyFile, "Double Exposure", "BaseEV", doubleExposure.baseEv, pedited->doubleExposure.baseEv);
-            assignFromKeyfile(keyFile, "Double Exposure", "FillShadows", doubleExposure.fillShadows, pedited->doubleExposure.fillShadows);
 
             if (keyFile.has_key("Double Exposure", "LayerCount")) {
                 const int count = std::max(0, std::min(keyFile.get_integer("Double Exposure", "LayerCount"), 8));
@@ -7246,12 +7279,58 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
                         DoubleExposureParams::Layer layer;
                         layer.path = keyFile.get_string("Double Exposure", prefix + "Path");
 
+                        if (keyFile.has_key("Double Exposure", prefix + "Enabled")) {
+                            layer.enabled = keyFile.get_boolean("Double Exposure", prefix + "Enabled");
+                        }
+
                         if (keyFile.has_key("Double Exposure", prefix + "EV")) {
                             layer.ev = keyFile.get_double("Double Exposure", prefix + "EV");
                         }
 
                         if (keyFile.has_key("Double Exposure", prefix + "Opacity")) {
                             layer.opacity = keyFile.get_double("Double Exposure", prefix + "Opacity");
+                        }
+
+                        if (keyFile.has_key("Double Exposure", prefix + "BlendMode")) {
+                            const int mode = keyFile.get_integer("Double Exposure", prefix + "BlendMode");
+
+                            if (mode >= 0 && mode <= 5) {
+                                layer.blendMode = static_cast<DoubleExposureParams::BlendMode>(mode);
+                            }
+                        } else if (haveLegacyBlend) {
+                            layer.blendMode = legacyBlend;
+                        }
+
+                        if (keyFile.has_key("Double Exposure", prefix + "GateStrength")) {
+                            if (keyFile.has_key("Double Exposure", prefix + "GateSource")) {
+                                const int src = keyFile.get_integer("Double Exposure", prefix + "GateSource");
+
+                                if (src >= 0 && src <= 1) {
+                                    layer.gateSource = static_cast<DoubleExposureParams::GateSource>(src);
+                                }
+                            }
+
+                            if (keyFile.has_key("Double Exposure", prefix + "GateLow")) {
+                                layer.gateLow = keyFile.get_double("Double Exposure", prefix + "GateLow");
+                            }
+
+                            if (keyFile.has_key("Double Exposure", prefix + "GateHigh")) {
+                                layer.gateHigh = keyFile.get_double("Double Exposure", prefix + "GateHigh");
+                            }
+
+                            if (keyFile.has_key("Double Exposure", prefix + "GateFeather")) {
+                                layer.gateFeather = keyFile.get_double("Double Exposure", prefix + "GateFeather");
+                            }
+
+                            layer.gateStrength = keyFile.get_double("Double Exposure", prefix + "GateStrength");
+                        } else if (haveLegacyFill) {
+                            // Legacy fill-shadows: the layer defaults already
+                            // encode the old window; only the strength varied.
+                            layer.gateSource = DoubleExposureParams::GateSource::BASE;
+                            layer.gateLow = 0.0;
+                            layer.gateHigh = 35.0;
+                            layer.gateFeather = 33.0;
+                            layer.gateStrength = legacyFill;
                         }
 
                         doubleExposure.layers.push_back(layer);

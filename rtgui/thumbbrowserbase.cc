@@ -155,6 +155,38 @@ void ThumbBrowserBase::syncEntryOffset_(ThumbBrowserEntryBase* entry)
     entry->setOffset((int)(hscroll.get_value()), (int)(vscroll.get_value()));
 }
 
+void ThumbBrowserBase::maybeEvictOffscreenBuffers_(std::size_t firstVisible, std::size_t lastVisible)
+{
+    // Entries either side of the viewport that stay hydrated, so ordinary
+    // scrolling never hits a released buffer.
+    constexpr std::size_t KEEP_MARGIN = 150;
+    // Not worth sweeping a folder small enough to hold comfortably.
+    constexpr std::size_t MIN_ENTRIES = 400;
+    // The sweep is O(N); run it rarely, not on every frame.
+    constexpr unsigned SWEEP_INTERVAL_FRAMES = 90;
+
+    if (drawableEntries_.size() < MIN_ENTRIES) {
+        return;
+    }
+
+    if (++evictSweepCounter_ < SWEEP_INTERVAL_FRAMES) {
+        return;
+    }
+
+    evictSweepCounter_ = 0;
+
+    const std::size_t lo = firstVisible > KEEP_MARGIN ? firstVisible - KEEP_MARGIN : 0;
+    const std::size_t hi = std::min(drawableEntries_.size(), lastVisible + KEEP_MARGIN);
+
+    for (std::size_t i = 0; i < lo; ++i) {
+        drawableEntries_[i]->releaseOffscreenBuffers();
+    }
+
+    for (std::size_t i = hi; i < drawableEntries_.size(); ++i) {
+        drawableEntries_[i]->releaseOffscreenBuffers();
+    }
+}
+
 void ThumbBrowserBase::scroll (int direction, double deltaX, double deltaY)
 {
     double delta = 0.0;
@@ -1086,7 +1118,14 @@ bool ThumbBrowserBase::Internal::on_draw(const ::Cairo::RefPtr< Cairo::Context> 
     bool thumbnailPrioritiesChanged = false;
 
     {
-        MYWRITERLOCK(l, parent->entryRW);
+        // A reader lock is enough and is what this scan actually needs: it
+        // excludes anything that reshapes `fd` / `drawableEntries_` (all of
+        // which take the write lock) while leaving other readers free. The
+        // state mutated below — the visible-entry vectors, the generation
+        // counter, and each entry's updatepriority flag — is only ever touched
+        // from the GUI thread. Taking the write lock here blocked every reader
+        // of the browser on every single repaint.
+        MYREADERLOCK(l, parent->entryRW);
 
         parent->previousVisibleEntries_.swap(parent->visibleEntries_);
         parent->visibleEntries_.clear();
@@ -1096,6 +1135,7 @@ bool ThumbBrowserBase::Internal::on_draw(const ::Cairo::RefPtr< Cairo::Context> 
 
         const std::size_t visibleGeneration = ++parent->visibleGenerationCounter_;
         const std::size_t first = parent->firstViewportCandidate_(0, 0);
+        std::size_t lastVisibleIndex = first;
         for (size_t i = first; i < parent->drawableEntries_.size() && !dirty; i++) { // if dirty meanwhile, cancel and wait for next redraw
             auto* entry = parent->drawableEntries_[i];
 
@@ -1113,9 +1153,12 @@ bool ThumbBrowserBase::Internal::on_draw(const ::Cairo::RefPtr< Cairo::Context> 
             }
             entry->updatepriority = true;
             entry->visibleGeneration = visibleGeneration;
+            lastVisibleIndex = i;
             parent->visibleEntries_.push_back(entry);
             parent->entriesToDraw_.push_back(entry);
         }
+
+        parent->maybeEvictOffscreenBuffers_(first, lastVisibleIndex);
 
         for (auto* entry : parent->previousVisibleEntries_) {
             if (entry->visibleGeneration != visibleGeneration && entry->updatepriority) {

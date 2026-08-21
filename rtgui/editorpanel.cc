@@ -5885,27 +5885,6 @@ void EditorPanel::animateEditorIn(bool skipFilmstrip)
     hpanedr->queue_allocate();
 }
 
-void EditorPanel::animateEditorOut(std::function<void()> onComplete)
-{
-    // Cancel any running animation
-    editorAnimConn_.disconnect();
-    editorAnimIn_ = false;
-    editorAnimFraction_ = 0.0;  // Instantly at final state
-
-    // Reset opacities
-    if (catalogPane) {
-        catalogPane->set_opacity(1.0);
-    }
-    if (editorToolbarBottom_) {
-        editorToolbarBottom_->set_opacity(1.0);
-    }
-    hpanedr->queue_allocate();
-
-    if (onComplete) {
-        onComplete();
-    }
-}
-
 void EditorPanel::tbTopPanel_1_toggled ()
 {
     if (!catalogPane) return; // catalogPane does not exist in multitab mode

@@ -195,6 +195,10 @@ public:
     }
 
     void updateBackBuffer ();
+    // Drop the cell surface and any retained per-size previews for an entry
+    // that is far outside the viewport. The decoded preview is kept, so
+    // redrawing needs no thumbnail work.
+    void releaseOffscreenBuffers ();
     void resize (int h);
     virtual void draw (Cairo::RefPtr<Cairo::Context> cc);
 
@@ -311,9 +315,6 @@ public:
     void startRatingAnimation ();
     void startColorLabelAnimation ();
     void startPickAnimation ();
-
-    // Get a copy of the cached back-buffer surface for animation snapshots
-    Cairo::RefPtr<Cairo::ImageSurface> snapshotSurface () const;
 
 protected:
     // Animation state

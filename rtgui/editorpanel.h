@@ -37,7 +37,6 @@
 
 #include <atomic>
 #include <chrono>
-#include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -265,9 +264,8 @@ public:
     // Returns sidebar/filmstrip insets for queue overlay positioning
     void getQueueOverlayInsets (int& left, int& top, int& right) const;
 
-    // Animated view transition (browser ↔ editor)
+    // Animated view transition (browser → editor)
     void animateEditorIn(bool skipFilmstrip = false);
-    void animateEditorOut(std::function<void()> onComplete);
 
     // Left panel (history) visibility for sync with browser sidebar
     bool isLeftPanelVisible() const { return hidehp && hidehp->get_active(); }
