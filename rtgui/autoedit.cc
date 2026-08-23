@@ -159,8 +159,14 @@ AutoSceneScores scoreSteepAutoScene(
         ramp(features.foliageFraction, 0.080, 0.180))
         * falloff(features.skinFraction, 0.020, 0.050);
 
+    // edgeDensity sums every neighbour gradient, so a noisy or finely
+    // textured frame scores as highly as an architectural one. The share of
+    // gradients steep enough to be actual edges tells them apart. It is a
+    // modulation rather than a gate, because the threshold for "a real edge"
+    // is not yet measured over a library the way the others are.
     scores.urban = ramp(features.edgeDensity, 0.055, 0.095)
-        * falloff(features.foliageFraction, 0.060, 0.140);
+        * falloff(features.foliageFraction, 0.060, 0.140)
+        * (0.55 + 0.45 * ramp(features.strongEdgeFraction, 0.015, 0.055));
 
     return scores;
 }
@@ -1798,6 +1804,22 @@ void applySteepAutoFilm(
     // The emulsion, the process and the paper come from the dominant trait --
     // and that trait is now argmax over the scores, not whichever branch of an
     // if/else chain happened to be tested first.
+    //
+    // Within a trait there is then a second question, because "dark" covers
+    // both dusk and midnight and "open" covers both a blue hour lake and a
+    // desert at noon. Six of the seventeen stocks in the catalogue were
+    // reachable; these gates take it to eleven. Every one of them is a swap
+    // inside the same family -- a different negative, a different slide -- and
+    // never a change of what kind of picture is being made. Automatic
+    // monochrome is deliberately NOT among them: converting a colour
+    // photograph to black and white off a saturation threshold is a far
+    // stronger decision than anything else here, and belongs to the
+    // photographer.
+    const bool coolDominant =
+        features.coolFraction > features.warmFraction * 1.25
+        && features.coolFraction > 0.10;
+    const bool flatAndDrab = frameRange < 0.34 && features.saturation < 0.22;
+
     switch (features.scene) {
         case AutoGradeScene::Portrait:
             film.preset = "porcelain_400";
@@ -1805,14 +1827,32 @@ void applySteepAutoFilm(
             film.output = "ra4";
             break;
         case AutoGradeScene::GoldenHour:
-            film.preset = "golden_hour";
-            film.process = "c41";
-            film.output = "ra4";
+            if (scores.open > 0.35 && features.saturation > 0.38) {
+                // A saturated warm landscape is what the warm slide is for.
+                film.preset = "desert_chrome";
+                film.process = "e6";
+                film.output = "projection";
+            } else if (scores.lowSun < 0.55) {
+                // Warm, but not decisively low sun: a gentler warm negative
+                // than golden_hour, which is built for the real thing.
+                film.preset = "heritage_gold";
+                film.process = "c41";
+                film.output = "ra4";
+            } else {
+                film.preset = "golden_hour";
+                film.process = "c41";
+                film.output = "ra4";
+            }
             break;
         case AutoGradeScene::Landscape:
             // Saturation is a colour reading and stays on the source; the
             // highlight share is a tonal one and comes off the render.
-            if (chrome) {
+            if (coolDominant && features.saturation > 0.24) {
+                // Blue hour, snow, open water: a cool slide, not a warm one.
+                film.preset = "arctic";
+                film.process = "e6";
+                film.output = "projection";
+            } else if (chrome) {
                 film.preset = "vivid_chrome";
                 film.process = "e6";
                 film.output = "projection";
@@ -1823,9 +1863,17 @@ void applySteepAutoFilm(
             }
             break;
         case AutoGradeScene::Night:
-            film.preset = "cinematic_500t";
-            film.process = "ecn2";
-            film.output = "cinema";
+            if (scores.dark < 0.65) {
+                // Dusk rather than night. The 500T is a stock for actual
+                // darkness; twilight_160 is the same family, half the push.
+                film.preset = "twilight_160";
+                film.process = "ecn2";
+                film.output = "cinema";
+            } else {
+                film.preset = "cinematic_500t";
+                film.process = "ecn2";
+                film.output = "cinema";
+            }
             break;
         case AutoGradeScene::Urban:
             film.preset = "street_800";
@@ -1833,7 +1881,13 @@ void applySteepAutoFilm(
             film.output = "ra4";
             break;
         case AutoGradeScene::Neutral:
-            film.preset = "sovereign";
+            if (flatAndDrab) {
+                // Nothing to lose: a soft, faded stock suits material that
+                // never had contrast, where sovereign just looks thin.
+                film.preset = "nostalgia_200";
+            } else {
+                film.preset = "sovereign";
+            }
             film.process = "c41";
             film.output = "ra4";
             break;
