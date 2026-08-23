@@ -35,7 +35,7 @@ void fileBrowserPerfLog(const char* fmt, ...)
 
     std::lock_guard<std::mutex> lock(fileBrowserPerfLogMutex);
     const char* const home = std::getenv("USERPROFILE");
-    const std::string path = home ? std::string(home) + "\steep-fileSel.log" : "steep-fileSel.log";
+    const std::string path = home ? std::string(home) + "\\steep-fileSel.log" : "steep-fileSel.log";
 
     FILE* const f = std::fopen(path.c_str(), "ab");
     if (!f) {
