@@ -91,6 +91,75 @@ double hueDegrees(double red, double green, double blue, double maximum, double 
     return hue < 0.0 ? hue + 360.0 : hue;
 }
 
+// The one place that decides what a picture IS.
+//
+// Content evidence (skin, sky, foliage, edges) comes off the source and is
+// stable; the tonal evidence is passed in, because it has to be asked twice --
+// once about the neutral render, and again about the frame Auto Edit actually
+// produced. Answering it once, on the neutral render, is what made every
+// third frame in a real library come back labelled "night".
+AutoGradeScene classifySteepAutoGrade(
+    const AutoGradeFeatures& features,
+    double medianLuma,
+    double shadowFraction,
+    double dynamicRange,
+    double brightWarmFraction)
+{
+    if (features.skinFraction > 0.045
+            && features.centerSkinFraction > 0.075
+            && features.skinSaturation < 0.44
+            && (features.saturation < 0.33 || dynamicRange > 0.28)) {
+        return AutoGradeScene::Portrait;
+    }
+
+    if (brightWarmFraction > 0.085
+            && features.warmFraction > features.coolFraction * 1.22) {
+        return AutoGradeScene::GoldenHour;
+    }
+
+    if (medianLuma < 0.29 && shadowFraction > 0.38) {
+        return AutoGradeScene::Night;
+    }
+
+    if ((features.skyFraction > 0.07 || features.foliageFraction > 0.13)
+            && features.skinFraction < 0.035) {
+        return AutoGradeScene::Landscape;
+    }
+
+    if (features.edgeDensity > 0.075 && features.foliageFraction < 0.10) {
+        return AutoGradeScene::Urban;
+    }
+
+    return AutoGradeScene::Neutral;
+}
+
+}
+
+double brightWarmFractionAtGain(const AutoGradeFeatures& features, double gain)
+{
+    if (!features.valid) {
+        return 0.0;
+    }
+
+    if (gain <= 1.0001) {
+        return features.brightWarmFraction;
+    }
+
+    // Which neutral-render luminance lands on 0.55 once the frame is exposed
+    // the way Auto Edit exposes it. Bins are counted from the first one whose
+    // centre clears that, so the answer is the same question the neutral pass
+    // asked, re-asked at the brightness the viewer will see.
+    const double threshold = 0.55 / gain;
+    const size_t bins = features.warmLumaHistogram.size();
+    double fraction = 0.0;
+
+    for (size_t i = 0; i < bins; ++i) {
+        if ((i + 0.5) / bins > threshold) {
+            fraction += features.warmLumaHistogram[i];
+        }
+    }
+
+    return fraction;
 }
 
 // Also used by auto-cull, which judges a frame on the same statistics.
@@ -128,6 +197,7 @@ AutoGradeFeatures analyzeSteepAutoGrade(Thumbnail& thumbnail)
     size_t foliage = 0;
     double saturationSum = 0.0;
     double skinSaturationSum = 0.0;
+    std::array<size_t, 32> warmLumaBins{};
 
     for (int y = 0; y < height; ++y) {
         const double ny = static_cast<double>(y) / std::max(height - 1, 1);
@@ -162,8 +232,14 @@ AutoGradeFeatures analyzeSteepAutoGrade(Thumbnail& thumbnail)
             shadows += luminance < 0.16;
             highlights += luminance > 0.84;
             clipped += luminance > 0.985;
-            warm += saturation > 0.12 && (hue <= 70.0 || hue >= 340.0);
-            brightWarm += luminance > 0.55 && saturation > 0.12 && (hue <= 70.0 || hue >= 340.0);
+            const bool isWarm = saturation > 0.12 && (hue <= 70.0 || hue >= 340.0);
+            warm += isWarm;
+            brightWarm += isWarm && luminance > 0.55;
+
+            if (isWarm) {
+                warmLumaBins[std::min<size_t>(
+                    warmLumaBins.size() - 1, luminance * warmLumaBins.size())]++;
+            }
             cool += saturation > 0.12 && hue >= 170.0 && hue <= 270.0;
             skin += isSkin;
             skinSaturationSum += isSkin ? saturation : 0.0;
@@ -222,22 +298,23 @@ AutoGradeFeatures analyzeSteepAutoGrade(Thumbnail& thumbnail)
     features.strongEdgeFraction = edgeSamples ? static_cast<double>(strongEdges) / edgeSamples : 0.0;
     features.clippedFraction = clipped / count;
 
-    if (features.skinFraction > 0.045
-            && features.centerSkinFraction > 0.075
-            && features.skinSaturation < 0.44
-            && (features.saturation < 0.33 || features.dynamicRange > 0.28)) {
-        features.scene = AutoGradeScene::Portrait;
-    } else if (features.brightWarmFraction > 0.085
-            && features.warmFraction > features.coolFraction * 1.22) {
-        features.scene = AutoGradeScene::GoldenHour;
-    } else if (features.medianLuma < 0.29 && features.shadowFraction > 0.38) {
-        features.scene = AutoGradeScene::Night;
-    } else if ((features.skyFraction > 0.07 || features.foliageFraction > 0.13)
-            && features.skinFraction < 0.035) {
-        features.scene = AutoGradeScene::Landscape;
-    } else if (features.edgeDensity > 0.075 && features.foliageFraction < 0.10) {
-        features.scene = AutoGradeScene::Urban;
+    for (size_t i = 0; i < warmLumaBins.size(); ++i) {
+        features.warmLumaHistogram[i] = static_cast<float>(warmLumaBins[i] / count);
     }
+
+    // Provisional only. "Is this a night scene?" and "is this golden hour?"
+    // are questions about how the picture READS, and this render is not the
+    // picture anyone sees -- classifySteepAutoGrade is called again once the
+    // tonal stage has said what the frame actually becomes. The provisional
+    // label still has to be reasonable, because auto-cull uses it and because
+    // the restraint terms inside applySteepAutoEdit run before the render is
+    // measured.
+    features.scene = classifySteepAutoGrade(
+        features,
+        features.medianLuma,
+        features.shadowFraction,
+        features.dynamicRange,
+        features.brightWarmFraction);
 
     return features;
 }
@@ -316,6 +393,11 @@ struct CurveAnchors {
     double chanHi = 1.0;      // p99.9: the brightest
     double clipLow = 0.0;     // share of channel samples pinned at the floor
     double clipHigh = 0.0;    // ... and at the ceiling
+    // The same two shares the source analysis reports, measured here on the
+    // frame as it actually renders. Thresholds identical to the neutral pass
+    // (0.16 / 0.84) so the two are directly comparable.
+    double lumaShadowFraction = 0.0;
+    double lumaHighFraction = 0.0;
 };
 
 bool measureCurveAnchors(
@@ -406,6 +488,22 @@ bool measureCurveAnchors(
         }
         return 1.0;
     };
+    size_t renderShadows = 0;
+    size_t renderHighlights = 0;
+
+    for (size_t i = 0; i < lumaHist.size(); ++i) {
+        const double centre = (i + 0.5) / lumaHist.size();
+
+        if (centre < 0.16) {
+            renderShadows += lumaHist[i];
+        } else if (centre > 0.84) {
+            renderHighlights += lumaHist[i];
+        }
+    }
+
+    anchors.lumaShadowFraction = static_cast<double>(renderShadows) / pixelCount;
+    anchors.lumaHighFraction = static_cast<double>(renderHighlights) / pixelCount;
+
     anchors.chanLo = finePercentile(0.001);
     anchors.chanHi = finePercentile(0.999);
     // "Pinned" means the bottom or top display code: those samples have lost
@@ -428,9 +526,11 @@ bool measureCurveAnchors(
 void applySteepAutoEdit(
     Thumbnail& thumbnail,
     const AutoGradeFeatures& features,
-    rtengine::procparams::ProcParams& params)
+    rtengine::procparams::ProcParams& params,
+    AutoEditRender& render)
 {
     params.setDefaults();
+    render = AutoEditRender();
 
     const auto unit = [](double value) {
         return std::max(0.0, std::min(1.0, value));
@@ -697,6 +797,28 @@ void applySteepAutoEdit(
             predictedLo = std::min(0.99, shot.chanLo * gain);
             predictedHi = std::min(1.0, shot.chanHi * gain);
         }
+    }
+
+    // Hand the finished tonal state to the look stages. Everything downstream
+    // used to re-read the neutral render's numbers, which describe a picture
+    // that is roughly a stop and a half darker than the one being graded.
+    if (shotValid) {
+        const double gain = std::pow(2.0, evAdd / 2.2);
+        render.valid = true;
+        render.mid = predictedLumaMid;
+        render.p10 = predictedLumaP10;
+        render.p90 = predictedLumaP90;
+        render.p98 = std::min(0.999, shot.lumaP98 * gain);
+        render.range = std::max(0.0, predictedLumaP90 - predictedLumaP10);
+        // The shadow and highlight shares are counted on the rendered
+        // histogram, so they need no gain correction beyond the chimp's own
+        // trim; that trim is bounded to +/-0.20EV on a metered frame, which
+        // moves these by less than the bin width they were counted in.
+        render.shadowFraction = shot.lumaShadowFraction;
+        render.highlightFraction = shot.lumaHighFraction;
+        render.clippedFraction = shot.clipHigh;
+        render.exposure = tone.expcomp;
+        render.gain = std::pow(2.0, tone.expcomp / 2.2);
     }
 
     // The shadow lift genuinely needs the measurement, so it lands after it.
@@ -1088,6 +1210,7 @@ void applySteepAutoEdit(
 
 void applySteepAutoGrade(
     const AutoGradeFeatures& features,
+    const AutoEditRender& render,
     rtengine::procparams::ProcParams& params)
 {
     auto& grade = params.colorGrading;
@@ -1237,7 +1360,13 @@ void applySteepAutoGrade(
 
     params.toneCurve.contrast = std::min(45, params.toneCurve.contrast + gradeContrast);
     params.sh.highlights = std::min(45, params.sh.highlights + 3);
-    if (features.valid && features.shadowFraction > 0.34 && features.highlightFraction < 0.16) {
+    // Judged on the rendered frame: on the neutral render this test read
+    // shadowFraction > 0.34 as true on 80% of frames and highlightFraction
+    // < 0.16 as true on all of them, so it was not a condition.
+    const double shadowShare = render.valid ? render.shadowFraction : features.shadowFraction;
+    const double highlightShare = render.valid ? render.highlightFraction : features.highlightFraction;
+
+    if ((render.valid || features.valid) && shadowShare > 0.34 && highlightShare < 0.16) {
         params.sh.shadows = std::min(30, params.sh.shadows + 1);
     }
 
@@ -1246,8 +1375,25 @@ void applySteepAutoGrade(
 
 void applySteepAutoFilm(
     const AutoGradeFeatures& features,
+    const AutoEditRender& render,
     rtengine::procparams::ProcParams& params)
 {
+    // The negative going into the film stage is the frame Auto Edit rendered,
+    // not the neutral one. Measured over a real library, the neutral render
+    // reports a highlight fraction of 0.000 at the median and never above
+    // 0.104 -- so every highlight threshold below used to be unreachable, and
+    // every median-luma threshold used to be permanently true. These three
+    // read the picture the film actually receives.
+    const bool measured = render.valid;
+    const double frameMid = measured ? render.mid : features.medianLuma;
+    const double frameRange = measured ? render.range : features.dynamicRange;
+    const double frameHighlights = measured ? render.highlightFraction : features.highlightFraction;
+
+    // "Dark" gets ONE definition, shared with the tone stage's nightLook.
+    const bool darkFrame = measured
+        ? frameMid < 0.26
+        : features.valid && features.medianLuma < 0.30;
+
     auto& film = params.filmPresets;
     film = rtengine::procparams::FilmPresetsParams();
     film.enabled = true;
@@ -1263,17 +1409,17 @@ void applySteepAutoFilm(
     // Place the digital negative near the stock's intended middle gray. The
     // film shoulder already protects bright values; routinely underexposing
     // the film stage only makes the print muddy and buries useful midtones.
-    film.exposure = features.highlightFraction > 0.24 && features.medianLuma >= 0.30
+    film.exposure = frameHighlights > 0.24 && !darkFrame
         ? -0.05
-        : features.highlightFraction > 0.18 && features.medianLuma >= 0.30
+        : frameHighlights > 0.18 && !darkFrame
           ? -0.02
-          : features.medianLuma < 0.24
+          : frameMid < 0.20
             ? 0.07
             : 0.0;
     film.fade = -4;
-    film.rolloff = features.highlightFraction > 0.22 ? 4 : 0;
+    film.rolloff = frameHighlights > 0.22 ? 4 : 0;
     film.saturation = features.saturation > 0.48 ? -5 : features.saturation < 0.20 ? 2 : 0;
-    film.contrast = features.dynamicRange < 0.38 ? 6 : features.dynamicRange > 0.72 ? 3 : 4;
+    film.contrast = frameRange < 0.38 ? 6 : frameRange > 0.72 ? 3 : 4;
     film.shadowHue = 218;
     film.highlightHue = 40;
     film.shadowTint = 2;
@@ -1284,7 +1430,7 @@ void applySteepAutoFilm(
         std::min(26, static_cast<int>(std::round(7.0 + isoStops * 3.5))));
     film.halation = std::max(
         5,
-        std::min(14, static_cast<int>(std::round(5.0 + features.highlightFraction * 40.0))));
+        std::min(14, static_cast<int>(std::round(5.0 + frameHighlights * 40.0))));
     film.skinProtection = 68;
     film.layerCoupling = 16;
     film.grainSize = 4;
@@ -1323,7 +1469,9 @@ void applySteepAutoFilm(
             film.skinProtection = 78;
             break;
         case AutoGradeScene::Landscape:
-            film.preset = features.saturation > 0.35 && features.highlightFraction < 0.13
+            // Saturation is a colour reading and stays on the source; the
+            // highlight share is a tonal one and comes off the render.
+            film.preset = features.saturation > 0.35 && frameHighlights < 0.13
                 ? "vivid_chrome"
                 : "sovereign";
             if (film.preset == "vivid_chrome") {
@@ -1380,7 +1528,7 @@ void applySteepAutoFilm(
     // (film.grain writes above are inert; they document per-scene intent
     // for anyone who wants to dial grain in by hand.)
 
-    const bool darkPrint = features.valid && features.medianLuma < 0.30;
+    const bool darkPrint = darkFrame;
     if (darkPrint) {
         // A dark negative needs a longer print exposure and a softer toe, not
         // another contrast pass. Preserve local color and texture while
@@ -1389,8 +1537,8 @@ void applySteepAutoFilm(
         film.fade = std::max(film.fade, 5);
         film.rolloff = std::max(film.rolloff, 4);
         const int darkFilmContrast = features.scene == AutoGradeScene::Night
-            ? (features.dynamicRange < 0.18 ? 8 : 10)
-            : (features.dynamicRange < 0.18 ? 3 : 5);
+            ? (frameRange < 0.18 ? 8 : 10)
+            : (frameRange < 0.18 ? 3 : 5);
         film.contrast = std::min(film.contrast, darkFilmContrast);
     }
 
@@ -1412,12 +1560,15 @@ void applySteepAutoFilm(
     // FLOOR: a thin negative needs a longer print exposure, and v3's system
     // gamma darkens everything under the pivot, so this matters more now than
     // it did, not less. Only the ceiling above it was doing harm.
-    if (features.valid && features.medianLuma < 0.30) {
+    // The tiers keep their original shape (roughly the lower half and the
+    // upper three quarters of the dark band) but are rebased into render
+    // space along with the gate above them.
+    if (darkFrame) {
         const bool night = features.scene == AutoGradeScene::Night;
         double exposureFloor;
-        if (features.medianLuma < 0.14) {
+        if (frameMid < 0.12) {
             exposureFloor = night ? 0.24 : 0.36;
-        } else if (features.medianLuma < 0.23) {
+        } else if (frameMid < 0.20) {
             exposureFloor = night ? 0.16 : 0.28;
         } else {
             exposureFloor = night ? 0.08 : 0.16;
@@ -1429,9 +1580,9 @@ void applySteepAutoFilm(
     // both pull highlights down, and on a dark frame the input contrast and
     // the print gamma both steepen the same mid tones.
     if (darkPrint) {
-        const int inputContrastCeiling = features.dynamicRange < 0.18
+        const int inputContrastCeiling = frameRange < 0.18
             ? 10
-            : features.dynamicRange < 0.35 ? 12 : 14;
+            : frameRange < 0.35 ? 12 : 14;
         params.toneCurve.contrast = std::min(params.toneCurve.contrast, inputContrastCeiling);
     }
 
@@ -1448,8 +1599,8 @@ void applySteepAutoFilm(
     // washed, and doing it *harder* the more wash it detected. The film
     // output gamma owns print contrast now, so the curve is gone and the
     // correction goes where the problem is.
-    if (features.valid) {
-        const double sourceFlatness = std::max(0.0, (0.55 - features.dynamicRange) / 0.55);
+    if (measured || features.valid) {
+        const double sourceFlatness = std::max(0.0, (0.55 - frameRange) / 0.55);
         const double fadeLift = std::max(0, film.fade) / 10.0;
         const double softContrast = std::max(0, 8 - film.contrast) / 16.0;
         const double washRisk = std::min(1.0, 0.65 * sourceFlatness + 0.20 * fadeLift + 0.15 * softContrast);
@@ -1533,20 +1684,55 @@ AutoGradeFeatures buildSteepAutoEditParamsInternal(
     const rtengine::procparams::ProcParams& source,
     rtengine::procparams::ProcParams& result)
 {
-    const AutoGradeFeatures features = analyzeSteepAutoGrade(thumbnail);
-    applySteepAutoEdit(thumbnail, features, result);
+    AutoGradeFeatures features = analyzeSteepAutoGrade(thumbnail);
+    AutoEditRender render;
+    applySteepAutoEdit(thumbnail, features, result, render);
     restoreSteepAutoEditGeometry(source, result);
 
+    // Now that the frame has been rendered, ask what it is a second time.
+    //
+    // The first answer came off a neutral render whose median sits around 0.18
+    // on a real library, so "medianLuma < 0.29" -- the night test -- was true
+    // on 92% of frames and the label stopped carrying information. The tone
+    // stage already worked around this with its own nightLook gate; the look
+    // stages did not, so a third of the library was getting a night cine stock
+    // laid onto an ordinary daylight photograph.
+    const AutoGradeScene provisional = features.scene;
+
+    if (render.valid) {
+        features.scene = classifySteepAutoGrade(
+            features,
+            render.mid,
+            render.shadowFraction,
+            render.range,
+            brightWarmFractionAtGain(features, render.gain));
+    }
+
+    fileBrowserPerfLog(
+        "[autoScene] %s provisional=%s final=%s renderValid=%d "
+        "renderMid=%.3f renderRange=%.3f renderShadow=%.3f renderHigh=%.3f "
+        "gain=%.3f brightWarm=%.4f->%.4f  (source mid=%.3f range=%.3f shadow=%.3f high=%.3f)\n",
+        thumbnail.getFileName().c_str(),
+        autoGradeSceneName(provisional),
+        autoGradeSceneName(features.scene),
+        render.valid ? 1 : 0,
+        render.mid, render.range, render.shadowFraction, render.highlightFraction,
+        render.gain,
+        features.brightWarmFraction,
+        brightWarmFractionAtGain(features, render.gain),
+        features.medianLuma, features.dynamicRange,
+        features.shadowFraction, features.highlightFraction);
+
     if (mode == AutoEditMode::Grade) {
-        applySteepAutoGrade(features, result);
+        applySteepAutoGrade(features, render, result);
     } else if (mode == AutoEditMode::GradeFilm) {
-        applySteepAutoFilm(features, result);
+        applySteepAutoFilm(features, render, result);
     } else if (mode == AutoEditMode::GradedFilm) {
         // Order matters: the grade disables filmPresets (it is a look of its
         // own), so the film stage runs after and re-enables its pipeline.
         // Film's exposure/contrast lanes and print curve legitimately win.
-        applySteepAutoGrade(features, result);
-        applySteepAutoFilm(features, result);
+        applySteepAutoGrade(features, render, result);
+        applySteepAutoFilm(features, render, result);
         harmonizeSteepGradeWithFilm(result);
     }
 
