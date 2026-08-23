@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+"""Summarise what Auto Edit decided, from a STEEP_FILESEL_LOG trace.
+
+Run the app with STEEP_FILESEL_LOG=1, exercise Auto Edit over a folder, then::
+
+    python tools/autoedit_probe.py ~/steep-fileSel.log
+    python tools/autoedit_probe.py before.log after.log     # compare two runs
+
+The point of this is to make a threshold change checkable against real
+photographs instead of argued about. Auto Edit's inputs have twice turned out
+to be saturated at their rails -- values that looked like measurements but were
+constants in practice -- and the only way that was visible was counting them
+over a real library. Check the distributions before retuning anything.
+
+Sections reported:
+
+  scene       which label frames land on, and how the provisional (neutral
+              render) label differs from the final (rendered frame) one
+  scores      spread of each per-trait score, and how often frames are
+              genuinely more than one thing
+  saturation  inputs pinned at 0 or 1 -- a term stuck at a rail is a constant
+              wearing a measurement's clothes, and is the bug to look for
+  curve       toe/lift strengths and how often the symmetry clamp binds
+  exposure    committed EV, flagging anything at the +2.75 ceiling
+"""
+
+import re
+import sys
+from collections import Counter, defaultdict
+
+
+def parse(path):
+    """Yield one dict per Auto Edit invocation found in the trace."""
+    frames = []
+    cur = None
+
+    def num(pattern, line):
+        m = re.search(pattern + r'=(-?[0-9.]+)', line)
+        return float(m.group(1)) if m else None
+
+    for line in open(path, encoding='utf-8', errors='replace'):
+        if '[autoCurve] ==== ' in line:
+            if cur:
+                frames.append(cur)
+            cur = {'file': line.split('==== ')[1].split(' ====')[0].strip()}
+            continue
+        if cur is None:
+            continue
+
+        if 'features: valid' in line:
+            m = re.search(r'scene=(\S+)', line)
+            if m:
+                cur['sourceScene'] = m.group(1)
+            cur['sourceMid'] = num('medLuma', line)
+        elif 'shadowFrac=' in line:
+            cur['sourceShadow'] = num('shadowFrac', line)
+            cur['sourceHigh'] = num('hlFrac', line)
+        elif 'picture from luma' in line:
+            cur['renderMid'] = num('mid', line)
+            cur['renderRange'] = num('range', line)
+        elif 'scores:' in line:
+            for k in ('portrait', 'lowSun', 'open', 'dark', 'urban'):
+                cur[k] = num(k, line)
+        elif 'overtuneRisk=' in line:
+            cur['risk'] = num('overtuneRisk', line)
+        elif 'strengths: toe' in line:
+            cur['toe'] = num('toe', line)
+            cur['lift'] = num('lift', line)
+            m = re.search(r'clamped=(\d)', line)
+            if m:
+                cur['clamped'] = int(m.group(1))
+        elif 'rooms:' in line:
+            cur['shadowRoom'] = num('shadowRoom', line)
+            cur['highlightRoom'] = num('highlightRoom', line)
+        elif 'render fractions:' in line:
+            cur['renderShadow'] = num('shadow', line)
+            cur['renderHigh'] = num('high', line)
+        elif 'exposure: expcomp' in line:
+            cur['expcomp'] = num('expcomp', line)
+        elif '[autoScene]' in line:
+            m = re.search(r'provisional=(\S+) final=(\S+)', line)
+            if m:
+                cur['provisional'], cur['final'] = m.group(1), m.group(2)
+
+    if cur:
+        frames.append(cur)
+
+    # The same frame is re-analysed on every hover; keep one row per distinct
+    # (file, rendered mid) so a long browse does not weight one photo heavily.
+    seen, uniq = set(), []
+    for f in frames:
+        key = (f.get('file'), f.get('renderMid'), f.get('expcomp'))
+        if key not in seen:
+            seen.add(key)
+            uniq.append(f)
+    return uniq
+
+
+def spread(values):
+    values = sorted(v for v in values if v is not None)
+    if not values:
+        return None
+    n = len(values)
+    return (values[0], values[n // 4], values[n // 2], values[3 * n // 4], values[-1])
+
+
+def report(frames, label=''):
+    n = len(frames)
+    if not n:
+        print(f'{label}no Auto Edit activity in this trace')
+        return
+    head = f'{label}{n} frames'
+    print(head)
+    print('=' * len(head))
+
+    scenes = Counter(f.get('final') or f.get('sourceScene') for f in frames)
+    print('\nscene')
+    for name, count in scenes.most_common():
+        print(f'  {name:<14}{count:>4}  ({100 * count / n:3.0f}%)')
+    changed = sum(1 for f in frames
+                  if f.get('provisional') and f['provisional'] != f.get('final'))
+    if changed:
+        moves = Counter(f"{f['provisional']} -> {f['final']}" for f in frames
+                        if f.get('provisional') and f['provisional'] != f['final'])
+        print(f'  reclassified after rendering: {changed} ({100 * changed / n:.0f}%)')
+        for move, count in moves.most_common(6):
+            print(f'    {move:<32}{count:>4}')
+
+    print('\nscores            min    p25    p50    p75    max   >0.5')
+    traits = ('portrait', 'lowSun', 'open', 'dark', 'urban')
+    for trait in traits:
+        s = spread([f.get(trait) for f in frames])
+        if s is None:
+            continue
+        strong = sum(1 for f in frames if (f.get(trait) or 0) > 0.5)
+        print(f'  {trait:<12}' + ''.join(f'{v:7.3f}' for v in s) + f'{strong:6}')
+    blended = [f for f in frames
+               if sum(1 for t in traits if (f.get(t) or 0) > 0.25) > 1]
+    if any(f.get('portrait') is not None for f in frames):
+        print(f'  frames that are more than one thing (2+ traits > 0.25): '
+              f'{len(blended)} ({100 * len(blended) / n:.0f}%)')
+
+    print('\nsaturation  (a term pinned at a rail is a constant, not a measurement)')
+    for name, key, rail in (('shadowRoom', 'shadowRoom', 0.0),
+                            ('highlightRoom', 'highlightRoom', 1.0),
+                            ('portrait', 'portrait', 0.0),
+                            ('dark', 'dark', 0.0)):
+        vals = [f[key] for f in frames if f.get(key) is not None]
+        if not vals:
+            continue
+        pinned = sum(1 for v in vals if abs(v - rail) < 1e-3)
+        print(f'  {name:<14} at {rail:.0f} on {pinned:>4} / {len(vals)} '
+              f'({100 * pinned / len(vals):3.0f}%)')
+
+    toes = [f['toe'] for f in frames if f.get('toe') is not None]
+    if toes:
+        print('\ncurve')
+        for name, key in (('toe', 'toe'), ('lift', 'lift')):
+            s = spread([f.get(key) for f in frames])
+            print(f'  {name:<6}' + ''.join(f'{v:7.3f}' for v in s))
+        clamped = [f['clamped'] for f in frames if f.get('clamped') is not None]
+        if clamped:
+            hit = sum(clamped)
+            print(f'  lift clamped to toe on {hit} / {len(clamped)} '
+                  f'({100 * hit / len(clamped):.0f}%)')
+
+    evs = [f['expcomp'] for f in frames if f.get('expcomp') is not None]
+    if evs:
+        s = spread(evs)
+        print('\nexposure')
+        print('  expcomp' + ''.join(f'{v:7.2f}' for v in s))
+        ceiling = sum(1 for v in evs if v >= 2.74)
+        over = sum(1 for v in evs if v > 2.751)
+        print(f'  at the +2.75 ceiling: {ceiling}   ABOVE it (should be 0): {over}')
+
+
+def main():
+    if len(sys.argv) < 2:
+        print(__doc__)
+        return 1
+    for i, path in enumerate(sys.argv[1:]):
+        if i:
+            print('\n')
+        report(parse(path), label=f'{path}: ' if len(sys.argv) > 2 else '')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())
