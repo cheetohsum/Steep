@@ -93,6 +93,14 @@ struct AutoGradeFeatures {
     // exposure Auto Edit actually committed.
     std::array<float, 32> warmLumaHistogram{};
 
+    // Of the frame's warm pixels, the share sitting below its median
+    // luminance. Low sun lights the bright end and leaves the shade cool; a
+    // colour cast tints everything, shadows included. This is what separates
+    // "the camera got the white balance wrong" from "the light really was
+    // that colour", which the white balance readings alone cannot do.
+    double warmShadowShare = 0.0;
+
+
     AutoSceneScores scores;
 };
 

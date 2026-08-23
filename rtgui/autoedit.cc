@@ -351,9 +351,21 @@ AutoGradeFeatures analyzeSteepAutoGrade(Thumbnail& thumbnail)
     features.strongEdgeFraction = edgeSamples ? static_cast<double>(strongEdges) / edgeSamples : 0.0;
     features.clippedFraction = clipped / count;
 
+    size_t warmBelowMedian = 0;
+    size_t warmTotal = 0;
+
     for (size_t i = 0; i < warmLumaBins.size(); ++i) {
         features.warmLumaHistogram[i] = static_cast<float>(warmLumaBins[i] / count);
+        warmTotal += warmLumaBins[i];
+
+        if ((i + 0.5) / warmLumaBins.size() < features.medianLuma) {
+            warmBelowMedian += warmLumaBins[i];
+        }
     }
+
+    features.warmShadowShare = warmTotal
+        ? static_cast<double>(warmBelowMedian) / warmTotal
+        : 0.0;
 
     // Provisional only. "Is this a night scene?" and "is this golden hour?"
     // are questions about how the picture READS, and this render is not the
@@ -603,6 +615,105 @@ void applySteepAutoEdit(
         ? unit((0.62 - features.dynamicRange) / 0.62)
         : 0.35;
 
+    // --- White balance ----------------------------------------------------
+    //
+    // Auto Edit never touched this. Every photograph came out on camera WB
+    // whatever the light was doing, which is a strange gap in something whose
+    // job is to make a picture look right -- colour is most of what a look is.
+    // Both readings it needs were already sitting in the thumbnail cache:
+    // getCamWB and getAutoWB read stored numbers, neither renders anything, so
+    // the only reason this was never asked is that nobody asked it.
+    //
+    // The disagreement between the two is NOT an error signal by itself. A
+    // camera reporting 3200K on a frame whose grey point says 4600K is either
+    // wrong, or looking at a genuinely warm scene and rendering it faithfully,
+    // and nothing in the two numbers tells you which. What does tell you is
+    // where the warmth sits. Low sun lights the bright end; a cast tints the
+    // shadows too. So a correction that would REMOVE warmth has to earn it
+    // from warmShadowShare, while one that adds warmth -- the camera left a
+    // tungsten interior blue, say -- does not need the same permission.
+    //
+    // Mireds throughout, because equal steps there are equal visual steps:
+    // 500K at the tungsten end is an enormous move and at the shade end is
+    // barely visible.
+    double camTemp = 0.0;
+    double camGreen = 1.0;
+    double autoTemp = -1.0;
+    double autoGreen = -1.0;
+    thumbnail.getCamWB(camTemp, camGreen, params.wb.observer);
+    thumbnail.getAutoWB(autoTemp, autoGreen, params.wb.equal, params.wb.observer,
+                        params.wb.tempBias);
+
+    double wbMiredMove = 0.0;
+    double wbGreenMove = 0.0;
+    bool wbApplied = false;
+
+    if (camTemp > 1000.0 && autoTemp > 1000.0) {
+        const double camMired = 1e6 / camTemp;
+        const double autoMired = 1e6 / autoTemp;
+        const double disagreement = autoMired - camMired;
+
+        // Below this the camera and the grey point effectively agree, and
+        // moving anything would be noise dressed as a decision.
+        constexpr double kDeadband = 12.0;
+        // A bounded correction, never a replacement. At 5000K this is a move
+        // of roughly 400K, which is visible without rewriting the picture.
+        constexpr double kMaxMired = 18.0;
+
+        if (std::abs(disagreement) > kDeadband) {
+            // Positive mired move = cooling the render (removing warmth).
+            const double cooling = disagreement > 0.0 ? 1.0 : 0.0;
+            const double castLike = unit((features.warmShadowShare - 0.35) / 0.25);
+            const double intentionalLight =
+                cooling * (1.0 - castLike) * features.scores.lowSun;
+            const double authority = 0.60 * (1.0 - 0.85 * intentionalLight)
+                * (cooling > 0.0 ? (0.45 + 0.55 * castLike) : 1.0);
+
+            const double wanted = (disagreement - (disagreement > 0.0 ? kDeadband : -kDeadband))
+                * authority;
+            wbMiredMove = std::max(-kMaxMired, std::min(kMaxMired, wanted));
+
+            // Green is the tint axis, and a green or magenta cast is almost
+            // never something a photographer chose, so it needs no equivalent
+            // of the low-sun guard -- only the same restraint about size.
+            if (autoGreen > 0.0) {
+                wbGreenMove = std::max(-0.030, std::min(0.030,
+                    (autoGreen - camGreen) * 0.60));
+            }
+
+            if (std::abs(wbMiredMove) > 0.5 || std::abs(wbGreenMove) > 0.002) {
+                params.wb.method = "Custom";
+                params.wb.temperature = 1e6 / std::max(1.0, camMired + wbMiredMove);
+                params.wb.green = camGreen + wbGreenMove;
+                wbApplied = true;
+            }
+        }
+    }
+
+    // --- Noise ------------------------------------------------------------
+    //
+    // ISO was already being measured and then thrown away: its only consumer
+    // was film.grain, which the engine does not read. Meanwhile the pipeline
+    // routinely applies two stops of exposure and a contrast curve to a high
+    // ISO frame and never once denoises it. Chroma noise is both the more
+    // objectionable artefact and the cheaper one to remove without costing
+    // detail, so it carries most of this; luma denoising stays small and
+    // starts later, because it is what eats texture.
+    const double isoStops = std::log2(std::max(features.iso, 100u) / 100.0);
+    const double chromaNoise = std::min(35.0, std::max(0.0, 5.0 * (isoStops - 1.0)));
+    const double lumaNoise = std::min(18.0, std::max(0.0, 2.5 * (isoStops - 2.5)));
+    // How much this frame's noise should hold the rest of Auto Edit back.
+    // Nothing at ISO 400, everything by ISO 3200.
+    const double noiseRisk = unit((isoStops - 2.0) / 3.0);
+
+    if (chromaNoise > 0.5 || lumaNoise > 0.5) {
+        auto& denoise = params.dirpyrDenoise;
+        denoise.enabled = true;
+        denoise.luma = lumaNoise;
+        denoise.chroma = chromaNoise;
+        denoise.Ldetail = 50.0;
+    }
+
     auto& tone = params.toneCurve;
     tone.autoexp = true;
     // Expose right up to the clipping point but not into it. NOTE: clip is a
@@ -711,7 +822,9 @@ void applySteepAutoEdit(
     // middle, which is the flat, uninteresting look. At 50/55 they were
     // washing the picture out before the curve ever saw it. Spend them only
     // where the frame genuinely needs rescuing.
-    tone.shcompr = 18;
+    // Shadow compression lifts the darks, and the darks are where the noise
+    // lives. On a high ISO frame this is the control that makes grain visible.
+    tone.shcompr = static_cast<int>(std::round(18.0 * (1.0 - 0.55 * noiseRisk)));
     tone.hlcompr = std::min(50, std::max(tone.hlcompr, tone.expcomp > 0.60 ? 30 : 12));
 
     // A meter that asks for heavy highlight compression has exposed past what
@@ -906,6 +1019,9 @@ void applySteepAutoEdit(
         // an ordinary photograph should stay deep, and the curve's toe, not
         // this control, decides how the darks read.
         double lift = 14.0 * blocked * depth;
+
+        // Opening the shadows of a noisy frame opens its noise with them.
+        lift *= 1.0 - 0.60 * noiseRisk;
 
         // A night scene keeps its own weight, in proportion to how much of a
         // night scene it actually is.
@@ -1249,6 +1365,19 @@ void applySteepAutoEdit(
 
     // Diagnostics: set STEEP_FILESEL_LOG=1 to trace every Auto Edit decision
     // into %USERPROFILE%\steep-fileSel.log.
+    fileBrowserPerfLog(
+        "[autoWB] %s cam=%.0fK/%.3f auto=%.0fK/%.3f warmShadowShare=%.3f "
+        "lowSun=%.3f -> applied=%d %.0fK/%.3f (mired move %+.1f)\n"
+        "[autoNoise] iso=%u stops=%.2f luma=%.1f chroma=%.1f noiseRisk=%.2f\n",
+        thumbnail.getFileName().c_str(),
+        camTemp, camGreen, autoTemp, autoGreen,
+        features.warmShadowShare, features.scores.lowSun,
+        wbApplied ? 1 : 0,
+        wbApplied ? params.wb.temperature : camTemp,
+        wbApplied ? params.wb.green : camGreen,
+        wbMiredMove,
+        features.iso, isoStops, lumaNoise, chromaNoise, noiseRisk);
+
     fileBrowserPerfLog(
         "[autoCurve] ==== %s ====\n"
         "[autoCurve]  features: valid=%d scene=%s medLuma=%.3f p10=%.3f p90=%.3f p98=%.3f range=%.3f\n"
