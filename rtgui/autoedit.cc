@@ -704,6 +704,17 @@ void applySteepAutoEdit(
     shadowsHighlights.radius = 40;
     shadowsHighlights.lab = false;
 
+    // One bound on the exposure, applied whatever path set it.
+    //
+    // Every other clamp here lives inside a branch: the fallback constants
+    // clamp, and the chimp clamps only when it actually moves the value. A
+    // metered exposure that landed inside the chimp's deadband therefore
+    // reached the curve unbounded, and a real frame in the trace came through
+    // at +4.15EV. It has to land before the measurement, not after, or every
+    // percentile below would describe a frame a stop and a half brighter than
+    // the one being built.
+    tone.expcomp = std::max(-1.5, std::min(2.75, tone.expcomp));
+
     // Chimp the histogram. Render the frame with what has been chosen so far
     // and, if the mid tone has not landed where a print would carry it,
     // correct the EXPOSURE rather than leaving the curve to do the
@@ -896,9 +907,20 @@ void applySteepAutoEdit(
     // recovery, global contrast, and this curve. Treat broad or near-clipped
     // highlights as the strongest warning, then blend in source brightness,
     // existing contrast, and positive exposure.
-    const double broadHighlightRisk = features.valid
-        ? unitInterval((features.highlightFraction - 0.05) / 0.20)
-        : 0.0;
+    //
+    // "Are the highlights broad?" is a question about the frame this curve is
+    // about to shape, so it is asked of the render. Asked of the source it
+    // was unanswerable: across 98 frames the neutral render's highlight
+    // fraction never once reached the 0.05 where this term starts to ramp, so
+    // it contributed exactly zero to every decision below.
+    const double renderHighlightFraction = measured
+        ? shot.lumaHighFraction
+        : (features.valid ? features.highlightFraction : 0.0);
+    const double renderShadowFraction = measured
+        ? shot.lumaShadowFraction
+        : (features.valid ? features.shadowFraction : 0.30);
+    const double broadHighlightRisk =
+        unitInterval((renderHighlightFraction - 0.05) / 0.20);
     const double clippingRisk = features.valid
         ? unitInterval((features.clippedFraction - 0.002) / 0.018)
         : 0.0;
@@ -922,10 +944,17 @@ void applySteepAutoEdit(
     const bool nightLook =
         features.scene == AutoGradeScene::Night && displayMid < 0.26;
 
+    // A scene label is a reason to be more careful, not a reason to stop
+    // looking. These were floors — max(risk, 0.38) and max(risk, 0.48) — which
+    // meant a frame that measured 0.12 risk had that measurement thrown away
+    // and replaced by a constant because it happened to contain skin. The
+    // trace shows the result plainly: 44 of 98 frames sat in the two narrow
+    // bands those constants define. Nudge instead, so the measurement still
+    // decides the ordering between frames.
     if (features.scene == AutoGradeScene::Portrait) {
-        overtuneRisk = std::max(overtuneRisk, 0.38);
+        overtuneRisk = std::min(1.0, overtuneRisk + 0.15);
     } else if (nightLook) {
-        overtuneRisk = std::max(overtuneRisk, 0.48);
+        overtuneRisk = std::min(1.0, overtuneRisk + 0.22);
     }
 
     // Stations sit either side of the frame's tonal centre — the anchor the
@@ -988,15 +1017,18 @@ void applySteepAutoEdit(
     const double toeIn = std::max(0.02, pivot - kStationReach * lowSpan);
     const double shoulderIn = std::min(0.98, pivot + kStationReach * highSpan);
 
-    const double shadowRoom = features.valid
-        ? unitInterval((0.40 - features.shadowFraction) / 0.40)
-        : 0.50;
-    const double sourceHeadroom = features.valid
-        ? unitInterval((0.17 - features.highlightFraction) / 0.15)
-        : 0.55;
+    // Both of these ask how much room the finished frame has left at one end,
+    // so both read the render. On the neutral one they were stuck at opposite
+    // rails — shadowFraction sat above 0.38 on 73% of frames, pinning
+    // shadowRoom at zero, while highlightFraction never reached 0.17, pinning
+    // highlightRoom at one. Two constants wearing the clothes of measurements,
+    // and between them they are most of why the lift side ended up welded to
+    // the toe on 92% of frames.
+    const double shadowRoom = unitInterval((0.40 - renderShadowFraction) / 0.40);
+    const double highlightRoom = unitInterval((0.17 - renderHighlightFraction) / 0.15);
     const double displayHeadroom = unitInterval((0.94 - displayP90) / 0.30);
     double liftPermission =
-        sourceHeadroom * displayHeadroom * (1.0 - 0.65 * overtuneRisk);
+        highlightRoom * displayHeadroom * (1.0 - 0.65 * overtuneRisk);
     if (features.scene == AutoGradeScene::Portrait) {
         liftPermission *= 0.78;
     } else if (nightLook) {
@@ -1052,7 +1084,14 @@ void applySteepAutoEdit(
     // device. Protection may hold the lift back below the density, but it may
     // never push it above: brightening the highlights harder than the shadows
     // are deepened is exactly what the eye reads as "too bright".
+    // Left as a hard ceiling on purpose. It bound on 92% of frames, but that
+    // was the two room terms above being stuck at their rails, not this rule
+    // being wrong: an S-curve that brightens the highlights harder than it
+    // deepens the shadows reads as "too bright" whatever the frame. Now that
+    // both sides are measured, the trace below reports whether it still bites.
+    const double liftWanted = liftStrength;
     liftStrength = std::max(0.0, std::min({0.70, liftStrength, toeStrength}));
+    const bool liftClamped = liftWanted > liftStrength + 1e-6;
 
     // Strength IS the slope here: pulling a station away from the anchor by
     // k x its distance to the anchor makes that segment run at 1+k. These
@@ -1175,7 +1214,9 @@ void applySteepAutoEdit(
         "[autoCurve]  picture from luma:     p10=%.3f mid=%.3f p90=%.3f range=%.3f\n"
         "[autoCurve]  flatness=%.3f overtuneRisk=%.3f nightLook=%d liftPermission=%.3f\n"
         "[autoCurve]  spans: lowSpan=%.4f highSpan=%.4f  (floor 0.04 hit: low=%d high=%d)\n"
-        "[autoCurve]  strengths: toe=%.3f lift=%.3f\n"
+        "[autoCurve]  strengths: toe=%.3f lift=%.3f (wanted %.3f clamped=%d)\n"
+        "[autoCurve]  rooms: shadowRoom=%.3f highlightRoom=%.3f displayHeadroom=%.3f\n"
+        "[autoCurve]  render fractions: shadow=%.4f high=%.4f  (source shadow=%.4f high=%.4f)\n"
         "[autoCurve]  endpoints: measured lo=%.4f hi=%.4f  clipLow=%.4f clipHigh=%.4f\n"
         "[autoCurve]             after exposure lo=%.4f hi=%.4f  hiRoomEv=%.3f\n"
         "[autoCurve]             placed black=%d white=%d  (targets %.3f / %.3f)\n"
@@ -1197,7 +1238,10 @@ void applySteepAutoEdit(
         lowSpan, highSpan,
         (measured && (pivot - stationP10) < 0.04) ? 1 : 0,
         (measured && (stationP90 - pivot) < 0.04) ? 1 : 0,
-        toeStrength, liftStrength,
+        toeStrength, liftStrength, liftWanted, liftClamped ? 1 : 0,
+        shadowRoom, highlightRoom, displayHeadroom,
+        renderShadowFraction, renderHighlightFraction,
+        features.shadowFraction, features.highlightFraction,
         shot.chanLo, shot.chanHi, shot.clipLow, shot.clipHigh,
         predictedLo, predictedHi, hiRoomEv,
         blackPlaced ? 1 : 0, whitePlaced ? 1 : 0, kBlackTarget, kWhiteTarget,
