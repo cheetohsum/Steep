@@ -139,6 +139,7 @@ set(NONCLISOURCEFILES
     albumbrowser.cc
     alignedmalloc.cc
     aspectratios.cc
+    autoedit.cc
     batchqueue.cc
     batchqueuebuttonset.cc
     batchqueueentry.cc
@@ -211,6 +212,7 @@ set(NONCLISOURCEFILES
     watermarkpanel.cc
     watermarkrenderer.cc
     soundman.cc
+    steepperflog.cc
     threadutils.cc
     thumbbrowserbase.cc
     thumbbrowserentrybase.cc
