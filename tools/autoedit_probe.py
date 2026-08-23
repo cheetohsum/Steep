@@ -22,6 +22,9 @@ Sections reported:
               wearing a measurement's clothes, and is the bug to look for
   curve       toe/lift strengths and how often the symmetry clamp binds
   exposure    committed EV, flagging anything at the +2.75 ceiling
+  stocks      which film emulsions are actually being reached
+  wb          how often white balance is corrected, and by how much
+  noise       ISO-driven denoise
 """
 
 import re
@@ -77,6 +80,20 @@ def parse(path):
             cur['renderHigh'] = num('high', line)
         elif 'exposure: expcomp' in line:
             cur['expcomp'] = num('expcomp', line)
+        elif '[autoFilm] stock=' in line:
+            m = re.search(r'stock=(\S+?)/', line)
+            if m:
+                cur['stock'] = m.group(1)
+        elif '[autoWB]' in line:
+            cur['wbApplied'] = num('applied', line)
+            cur['wbMove'] = num(r'\(mired move ', line.replace('+', ''))
+            m = re.search(r'mired move ([+-][0-9.]+)', line)
+            if m:
+                cur['wbMove'] = float(m.group(1))
+        elif '[autoNoise]' in line:
+            cur['isoStops'] = num('stops', line)
+            cur['nrLuma'] = num('luma', line)
+            cur['nrChroma'] = num('chroma', line)
         elif '[autoScene]' in line:
             m = re.search(r'provisional=(\S+) final=(\S+)', line)
             if m:
@@ -163,6 +180,32 @@ def report(frames, label=''):
             hit = sum(clamped)
             print(f'  lift clamped to toe on {hit} / {len(clamped)} '
                   f'({100 * hit / len(clamped):.0f}%)')
+
+    stocks = Counter(f['stock'] for f in frames if f.get('stock'))
+    if stocks:
+        print(f'\nstocks reached: {len(stocks)}')
+        for name, count in stocks.most_common():
+            print(f'  {name:<18}{count:>4}  ({100 * count / sum(stocks.values()):3.0f}%)')
+
+    wb = [f for f in frames if f.get('wbApplied') is not None]
+    if wb:
+        applied = [f for f in wb if f['wbApplied'] >= 1]
+        print(f'\nwhite balance corrected on {len(applied)} / {len(wb)} '
+              f'({100 * len(applied) / len(wb):.0f}%)')
+        if applied:
+            s_ = spread([abs(f['wbMove']) for f in applied if f.get('wbMove') is not None])
+            if s_:
+                print('  |mired move|' + ''.join(f'{v:7.1f}' for v in s_) + '   (cap 18)')
+
+    nr = [f for f in frames if f.get('nrChroma') is not None]
+    if nr:
+        on = [f for f in nr if f['nrChroma'] > 0.5 or (f.get('nrLuma') or 0) > 0.5]
+        print(f'\ndenoise engaged on {len(on)} / {len(nr)} frames')
+        if on:
+            for name, key in (('luma', 'nrLuma'), ('chroma', 'nrChroma')):
+                s_ = spread([f.get(key) for f in on])
+                if s_:
+                    print(f'  {name:<8}' + ''.join(f'{v:7.1f}' for v in s_))
 
     evs = [f['expcomp'] for f in frames if f.get('expcomp') is not None]
     if evs:
