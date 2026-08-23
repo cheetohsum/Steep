@@ -31,6 +31,7 @@
 #include "thumbnail.h"
 
 #include "rtengine/diagonalcurvetypes.h"
+#include "rtengine/rt_math.h"
 #include "rtengine/iimage.h"
 #include "rtengine/procparams.h"
 
@@ -91,46 +92,98 @@ double hueDegrees(double red, double green, double blue, double maximum, double 
     return hue < 0.0 ? hue + 360.0 : hue;
 }
 
-// The one place that decides what a picture IS.
+// A threshold turned into a slope. Below `low` the evidence says no, above
+// `high` it says yes, and in between it says how much -- which is what a
+// photograph usually has to offer.
+double ramp(double value, double low, double high)
+{
+    return std::max(0.0, std::min(1.0, (value - low) / std::max(1e-6, high - low)));
+}
+
+// The same, inverted: full weight below `low`, none above `high`.
+double falloff(double value, double low, double high)
+{
+    return 1.0 - ramp(value, low, high);
+}
+
+// How dark the frame reads. Split out because applySteepAutoEdit has to ask it
+// again about its own render, and the two answers must agree.
+double sceneDarkScore(double medianLuma, double shadowFraction)
+{
+    return falloff(medianLuma, 0.16, 0.34) * ramp(shadowFraction, 0.28, 0.46);
+}
+
+// What the picture is, as five independent readings rather than one verdict.
+//
+// The old bounds survive as the midpoints of these ramps, so a frame that
+// clearly satisfied a test still scores near 1 and a frame that clearly failed
+// still scores 0. What changes is everything in between, and the fact that a
+// frame can now be two things at once.
 //
 // Content evidence (skin, sky, foliage, edges) comes off the source and is
 // stable; the tonal evidence is passed in, because it has to be asked twice --
 // once about the neutral render, and again about the frame Auto Edit actually
 // produced. Answering it once, on the neutral render, is what made every
 // third frame in a real library come back labelled "night".
-AutoGradeScene classifySteepAutoGrade(
+AutoSceneScores scoreSteepAutoScene(
     const AutoGradeFeatures& features,
     double medianLuma,
     double shadowFraction,
     double dynamicRange,
     double brightWarmFraction)
 {
-    if (features.skinFraction > 0.045
-            && features.centerSkinFraction > 0.075
-            && features.skinSaturation < 0.44
-            && (features.saturation < 0.33 || dynamicRange > 0.28)) {
-        return AutoGradeScene::Portrait;
+    AutoSceneScores scores;
+
+    // A face has to be both present and roughly where a subject sits; a heavy
+    // overall cast that merely resembles skin should not read as a portrait,
+    // which is what the saturation guard is for.
+    const double skinPresent = std::min(
+        ramp(features.skinFraction, 0.030, 0.070),
+        ramp(features.centerSkinFraction, 0.050, 0.110));
+    const double skinPlausible = falloff(features.skinSaturation, 0.44, 0.56);
+    const double notGraphic = std::max(
+        falloff(features.saturation, 0.33, 0.45),
+        ramp(dynamicRange, 0.24, 0.32));
+    scores.portrait = skinPresent * skinPlausible * notGraphic;
+
+    // Warm light rather than warm objects: a warm cast that is also BRIGHT,
+    // and decisively warmer than the frame is cool.
+    const double warmDominance = ramp(
+        features.warmFraction / std::max(1e-4, features.coolFraction), 1.0, 1.6);
+    scores.lowSun = ramp(brightWarmFraction, 0.050, 0.140) * warmDominance;
+
+    scores.dark = sceneDarkScore(medianLuma, shadowFraction);
+
+    scores.open = std::max(
+        ramp(features.skyFraction, 0.040, 0.110),
+        ramp(features.foliageFraction, 0.080, 0.180))
+        * falloff(features.skinFraction, 0.020, 0.050);
+
+    scores.urban = ramp(features.edgeDensity, 0.055, 0.095)
+        * falloff(features.foliageFraction, 0.060, 0.140);
+
+    return scores;
+}
+
+// One word for the picture, for the log and for anything that wants a label.
+// This is now argmax rather than a priority chain: a golden-hour portrait used
+// to be a portrait purely because Portrait was tested first.
+AutoGradeScene dominantScene(const AutoSceneScores& scores)
+{
+    // Below this nothing is really being claimed, and a neutral grade is the
+    // honest answer.
+    constexpr double kFloor = 0.22;
+    const double best = scores.strongest();
+
+    if (best < kFloor) {
+        return AutoGradeScene::Neutral;
     }
 
-    if (brightWarmFraction > 0.085
-            && features.warmFraction > features.coolFraction * 1.22) {
-        return AutoGradeScene::GoldenHour;
-    }
-
-    if (medianLuma < 0.29 && shadowFraction > 0.38) {
-        return AutoGradeScene::Night;
-    }
-
-    if ((features.skyFraction > 0.07 || features.foliageFraction > 0.13)
-            && features.skinFraction < 0.035) {
-        return AutoGradeScene::Landscape;
-    }
-
-    if (features.edgeDensity > 0.075 && features.foliageFraction < 0.10) {
-        return AutoGradeScene::Urban;
-    }
-
-    return AutoGradeScene::Neutral;
+    if (scores.portrait >= best) return AutoGradeScene::Portrait;
+    if (scores.lowSun >= best) return AutoGradeScene::GoldenHour;
+    if (scores.dark >= best) return AutoGradeScene::Night;
+    if (scores.open >= best) return AutoGradeScene::Landscape;
+    return AutoGradeScene::Urban;
 }
 
 }
@@ -309,12 +362,13 @@ AutoGradeFeatures analyzeSteepAutoGrade(Thumbnail& thumbnail)
     // label still has to be reasonable, because auto-cull uses it and because
     // the restraint terms inside applySteepAutoEdit run before the render is
     // measured.
-    features.scene = classifySteepAutoGrade(
+    features.scores = scoreSteepAutoScene(
         features,
         features.medianLuma,
         features.shadowFraction,
         features.dynamicRange,
         features.brightWarmFraction);
+    features.scene = dominantScene(features.scores);
 
     return features;
 }
@@ -730,9 +784,15 @@ void applySteepAutoEdit(
     // Where the mid tone belongs depends on what the picture is. A night
     // frame carried up to a print's mid tone stops being a night frame — it
     // should sit low and keep its weight. Everything else wants the print.
-    const bool nightFrame =
-        features.scene == AutoGradeScene::Night && shotValid && shotMid < 0.24;
-    const double midTarget = nightFrame ? 0.31 : 0.45;
+    //
+    // This used to be a switch on a label plus a hard shotMid < 0.24 gate, so
+    // a frame at 0.239 aimed 0.14 lower than one at 0.241. It is a slope now,
+    // anchored on the same two values: full print target when nothing about
+    // the frame is dark, 0.31 when it thoroughly is.
+    const double darkFrameScore = shotValid
+        ? sceneDarkScore(shotMid, shot.lumaShadowFraction)
+        : (features.scene == AutoGradeScene::Night ? 1.0 : 0.0);
+    const double midTarget = 0.45 - 0.14 * darkFrameScore;
 
     double predictedP10 = shot.chanP10;
     double predictedMid = shot.chanMid;
@@ -847,9 +907,9 @@ void applySteepAutoEdit(
         // this control, decides how the darks read.
         double lift = 14.0 * blocked * depth;
 
-        if (features.scene == AutoGradeScene::Night && predictedLumaMid < 0.26) {
-            lift *= 0.45;   // a night scene keeps its own weight
-        }
+        // A night scene keeps its own weight, in proportion to how much of a
+        // night scene it actually is.
+        lift *= 1.0 - 0.55 * darkFrameScore;
 
         shadowLift = std::max(0, std::min(12, static_cast<int>(std::round(lift))));
     }
@@ -937,25 +997,21 @@ void applySteepAutoEdit(
             + 0.18 * brightFrameRisk
             + 0.16 * existingContrastRisk
             + 0.12 * positiveExposureRisk));
-    // Only treat a frame as a night scene if it actually renders dark. The
-    // scene classifier reads a neutral render, which is far darker than the
-    // finished image, so ordinary photographs get labelled Night and then
-    // damped into inertness by every restraint below.
-    const bool nightLook =
-        features.scene == AutoGradeScene::Night && displayMid < 0.26;
+    // How much of a portrait, and how much of a night scene, this frame is.
+    // Darkness is re-scored against the render for the same reason the
+    // classifier is: the source reading says almost every frame is dark.
+    const double portraitness = features.scores.portrait;
+    const double darkness = darkFrameScore;
 
-    // A scene label is a reason to be more careful, not a reason to stop
+    // A scene reading is a reason to be more careful, not a reason to stop
     // looking. These were floors — max(risk, 0.38) and max(risk, 0.48) — which
     // meant a frame that measured 0.12 risk had that measurement thrown away
-    // and replaced by a constant because it happened to contain skin. The
-    // trace shows the result plainly: 44 of 98 frames sat in the two narrow
-    // bands those constants define. Nudge instead, so the measurement still
+    // and replaced by a constant because it happened to contain skin. The two
+    // constants are the second and third most common values of overtuneRisk in
+    // a real trace. Nudge in proportion instead, so the measurement still
     // decides the ordering between frames.
-    if (features.scene == AutoGradeScene::Portrait) {
-        overtuneRisk = std::min(1.0, overtuneRisk + 0.15);
-    } else if (nightLook) {
-        overtuneRisk = std::min(1.0, overtuneRisk + 0.22);
-    }
+    overtuneRisk = std::min(1.0,
+        overtuneRisk + 0.15 * portraitness + 0.22 * darkness);
 
     // Stations sit either side of the frame's tonal centre — the anchor the
     // curve turns around. Everything left of it is pulled down, everything
@@ -1027,13 +1083,10 @@ void applySteepAutoEdit(
     const double shadowRoom = unitInterval((0.40 - renderShadowFraction) / 0.40);
     const double highlightRoom = unitInterval((0.17 - renderHighlightFraction) / 0.15);
     const double displayHeadroom = unitInterval((0.94 - displayP90) / 0.30);
-    double liftPermission =
-        highlightRoom * displayHeadroom * (1.0 - 0.65 * overtuneRisk);
-    if (features.scene == AutoGradeScene::Portrait) {
-        liftPermission *= 0.78;
-    } else if (nightLook) {
-        liftPermission *= 0.62;
-    }
+    double liftPermission = highlightRoom * displayHeadroom
+        * (1.0 - 0.65 * overtuneRisk)
+        * (1.0 - 0.22 * portraitness)
+        * (1.0 - 0.38 * darkness);
 
     // ONE contrast decision, applied to both sides of the anchor.
     //
@@ -1066,20 +1119,14 @@ void applySteepAutoEdit(
     // now runs at about 1.55 either side of the tonal centre.
     const double contrastIntent = (0.62 + 0.28 * flatness) * (1.0 - 0.28 * overtuneRisk);
 
-    double toeStrength = contrastIntent * (0.72 + 0.22 * shadowRoom);
-    if (nightLook) {
-        toeStrength *= 0.70;   // night keeps its shadow detail and mood
-    } else if (features.scene == AutoGradeScene::Portrait) {
-        toeStrength *= 0.88;   // gentle falloff on faces
-    }
+    // Night keeps its shadow detail and mood; faces want a gentle falloff.
+    const double sceneRestraint =
+        (1.0 - 0.30 * darkness) * (1.0 - 0.12 * portraitness);
+
+    double toeStrength = contrastIntent * (0.72 + 0.22 * shadowRoom) * sceneRestraint;
     toeStrength = std::max(0.0, std::min(0.75, toeStrength));
 
-    double liftStrength = contrastIntent * (0.78 + 0.22 * liftPermission);
-    if (nightLook) {
-        liftStrength *= 0.70;
-    } else if (features.scene == AutoGradeScene::Portrait) {
-        liftStrength *= 0.88;
-    }
+    double liftStrength = contrastIntent * (0.78 + 0.22 * liftPermission) * sceneRestraint;
     // An S-curve is contrast about the tonal centre, not a brightening
     // device. Protection may hold the lift back below the density, but it may
     // never push it above: brightening the highlights harder than the shadows
@@ -1209,10 +1256,11 @@ void applySteepAutoEdit(
         "[autoCurve]            skinFrac=%.3f centerSkin=%.3f skinSat=%.3f sky=%.3f foliage=%.3f\n"
         "[autoCurve]  protection=%.3f neutralFlatness=%.3f measuredExposure=%d\n"
         "[autoCurve]  exposure: expcomp=%.3f bright=%d contrast=%d hlcompr=%d shcompr=%d evAdd=%.3f\n"
-        "[autoCurve]  midTarget=%.2f nightFrame=%d shotValid=%d sh: hl=%d shadows=%d\n"
+        "[autoCurve]  midTarget=%.2f darkFrame=%.3f shotValid=%d sh: hl=%d shadows=%d\n"
         "[autoCurve]  stations from channel: p10=%.3f mid=%.3f p90=%.3f\n"
         "[autoCurve]  picture from luma:     p10=%.3f mid=%.3f p90=%.3f range=%.3f\n"
-        "[autoCurve]  flatness=%.3f overtuneRisk=%.3f nightLook=%d liftPermission=%.3f\n"
+        "[autoCurve]  flatness=%.3f overtuneRisk=%.3f darkness=%.3f liftPermission=%.3f\n"
+        "[autoCurve]  scores: portrait=%.3f lowSun=%.3f open=%.3f dark=%.3f urban=%.3f\n"
         "[autoCurve]  spans: lowSpan=%.4f highSpan=%.4f  (floor 0.04 hit: low=%d high=%d)\n"
         "[autoCurve]  strengths: toe=%.3f lift=%.3f (wanted %.3f clamped=%d)\n"
         "[autoCurve]  rooms: shadowRoom=%.3f highlightRoom=%.3f displayHeadroom=%.3f\n"
@@ -1231,10 +1279,12 @@ void applySteepAutoEdit(
         features.skyFraction, features.foliageFraction,
         protection, neutralFlatness, measuredExposure ? 1 : 0,
         tone.expcomp, tone.brightness, tone.contrast, tone.hlcompr, tone.shcompr, evAdd,
-        midTarget, nightFrame ? 1 : 0, shotValid ? 1 : 0, highlightRecovery, shadowLift,
+        midTarget, darkFrameScore, shotValid ? 1 : 0, highlightRecovery, shadowLift,
         stationP10, stationMid, stationP90,
         predictedLumaP10, displayMid, displayP90, displayRange,
-        flatness, overtuneRisk, nightLook ? 1 : 0, liftPermission,
+        flatness, overtuneRisk, darkness, liftPermission,
+        features.scores.portrait, features.scores.lowSun, features.scores.open,
+        features.scores.dark, features.scores.urban,
         lowSpan, highSpan,
         (measured && (pivot - stationP10) < 0.04) ? 1 : 0,
         (measured && (stationP90 - pivot) < 0.04) ? 1 : 0,
@@ -1252,85 +1302,135 @@ void applySteepAutoEdit(
         (1.0 - shoulderOut) / std::max(1e-6, 1.0 - shoulderIn));
 }
 
+// One scene's contribution to the grade. Every field is numeric so recipes can
+// be mixed; the wheels are mixed as vectors rather than as angles, below.
+struct GradeRecipe {
+    double shadowsHue, shadowsSat, shadowsLum;
+    double midtonesHue, midtonesSat, midtonesLum;
+    double highlightsHue, highlightsSat, highlightsLum;
+    double blending, balance;
+    double pastels, saturated, contrast;
+    double splitDepth;   // multiplier on the channel-curve separation
+};
+
+const GradeRecipe kGradeNeutral{
+    218.0, 0.085,  1.0,   32.0, 0.030, 1.0,   42.0, 0.075, -1.0,
+    70.0,   0.0,   14.0,  2.0,  2.0,   1.00};
+const GradeRecipe kGradePortrait{
+    218.0, 0.050,  1.0,   28.0, 0.045, 1.5,   40.0, 0.055, -0.5,
+    74.0,   8.0,   10.0, -2.0,  1.0,   0.75};
+const GradeRecipe kGradeLowSun{
+    210.0, 0.090,  1.0,   32.0, 0.055, 1.0,   45.0, 0.110, -1.5,
+    68.0,   5.0,   12.0,  0.0,  1.0,   1.15};
+const GradeRecipe kGradeOpen{
+    216.0, 0.080,  1.0,  150.0, 0.025, 1.0,   43.0, 0.075, -1.0,
+    70.0,  -4.0,   18.0,  3.0,  3.0,   1.00};
+const GradeRecipe kGradeDark{
+    220.0, 0.120, -1.0,  198.0, 0.040, 0.5,   35.0, 0.080, -1.0,
+    64.0, -12.0,   9.0,  -3.0,  2.0,   1.35};
+const GradeRecipe kGradeUrban{
+    212.0, 0.090,  1.0,   30.0, 0.020, 1.0,   38.0, 0.065, -1.0,
+    66.0,  -3.0,   11.0,  0.0,  3.0,   1.10};
+
+// A colour wheel mixed as an angle is nonsense: a frame that is half open
+// landscape (green midtones, 150 degrees) and half low sun (orange, 32) would
+// average to 91 and come back yellow-green, a cast neither recipe asked for.
+// Mixed as vectors, two tints that disagree cancel toward neutral, which is
+// what "the picture is a bit of both" should actually look like.
+struct WheelSum {
+    double x = 0.0;
+    double y = 0.0;
+
+    void add(double hueDeg, double sat, double weight)
+    {
+        const double radians = hueDeg * rtengine::RT_PI / 180.0;
+        x += std::cos(radians) * sat * weight;
+        y += std::sin(radians) * sat * weight;
+    }
+
+    double hue() const
+    {
+        if (std::abs(x) < 1e-9 && std::abs(y) < 1e-9) {
+            return 0.0;
+        }
+        const double degrees = std::atan2(y, x) * 180.0 / rtengine::RT_PI;
+        return degrees < 0.0 ? degrees + 360.0 : degrees;
+    }
+
+    double sat() const { return std::sqrt(x * x + y * y); }
+};
+
 void applySteepAutoGrade(
     const AutoGradeFeatures& features,
     const AutoEditRender& render,
     rtengine::procparams::ProcParams& params)
 {
+    // Weights are the scores themselves, with neutral taking up whatever slack
+    // is left. A frame that is 0.8 portrait and 0.5 dark gets both, in
+    // proportion -- where the switch this replaces would have picked one and
+    // discarded the other entirely.
+    const AutoSceneScores& scores = features.scores;
+    const double claimed = scores.portrait + scores.lowSun + scores.open
+                         + scores.dark + scores.urban;
+    const double neutralWeight = std::max(0.0, 1.0 - claimed);
+    const double total = std::max(1e-6, claimed + neutralWeight);
+
+    const struct { const GradeRecipe* recipe; double weight; } mix[] = {
+        {&kGradeNeutral,  neutralWeight / total},
+        {&kGradePortrait, scores.portrait / total},
+        {&kGradeLowSun,   scores.lowSun / total},
+        {&kGradeOpen,     scores.open / total},
+        {&kGradeDark,     scores.dark / total},
+        {&kGradeUrban,    scores.urban / total},
+    };
+
+    WheelSum shadows;
+    WheelSum midtones;
+    WheelSum highlights;
+
+    double shadowsLum = 0.0;
+    double midtonesLum = 0.0;
+    double highlightsLum = 0.0;
+    double blending = 0.0;
+    double balance = 0.0;
+    double pastels = 0.0;
+    double saturated = 0.0;
+    double gradeContrast = 0.0;
+    double splitDepth = 0.0;
+
+    for (const auto& entry : mix) {
+        const GradeRecipe& r = *entry.recipe;
+        const double w = entry.weight;
+
+        shadows.add(r.shadowsHue, r.shadowsSat, w);
+        midtones.add(r.midtonesHue, r.midtonesSat, w);
+        highlights.add(r.highlightsHue, r.highlightsSat, w);
+
+        shadowsLum += r.shadowsLum * w;
+        midtonesLum += r.midtonesLum * w;
+        highlightsLum += r.highlightsLum * w;
+        blending += r.blending * w;
+        balance += r.balance * w;
+        pastels += r.pastels * w;
+        saturated += r.saturated * w;
+        gradeContrast += r.contrast * w;
+        splitDepth += r.splitDepth * w;
+    }
+
     auto& grade = params.colorGrading;
     grade = rtengine::procparams::ColorGradingParams();
     grade.enabled = true;
-    grade.shadowsHue = 218.0;
-    grade.shadowsSat = 0.085;
-    grade.shadowsLum = 1.0;
-    grade.midtonesHue = 32.0;
-    grade.midtonesSat = 0.030;
-    grade.midtonesLum = 1.0;
-    grade.highlightsHue = 42.0;
-    grade.highlightsSat = 0.075;
-    grade.highlightsLum = -1.0;
-    grade.blending = 70.0;
-
-    switch (features.scene) {
-        case AutoGradeScene::Portrait:
-            grade.shadowsHue = 218.0;
-            grade.shadowsSat = 0.050;
-            grade.midtonesHue = 28.0;
-            grade.midtonesSat = 0.045;
-            grade.midtonesLum = 1.5;
-            grade.highlightsHue = 40.0;
-            grade.highlightsSat = 0.055;
-            grade.highlightsLum = -0.5;
-            grade.blending = 74.0;
-            grade.balance = 8.0;
-            break;
-        case AutoGradeScene::GoldenHour:
-            grade.shadowsHue = 210.0;
-            grade.shadowsSat = 0.090;
-            grade.midtonesHue = 32.0;
-            grade.midtonesSat = 0.055;
-            grade.highlightsHue = 45.0;
-            grade.highlightsSat = 0.110;
-            grade.highlightsLum = -1.5;
-            grade.blending = 68.0;
-            grade.balance = 5.0;
-            break;
-        case AutoGradeScene::Landscape:
-            grade.shadowsHue = 216.0;
-            grade.shadowsSat = 0.080;
-            grade.midtonesHue = 150.0;
-            grade.midtonesSat = 0.025;
-            grade.highlightsHue = 43.0;
-            grade.highlightsSat = 0.075;
-            grade.blending = 70.0;
-            grade.balance = -4.0;
-            break;
-        case AutoGradeScene::Night:
-            grade.shadowsHue = 220.0;
-            grade.shadowsSat = 0.120;
-            grade.shadowsLum = -1.0;
-            grade.midtonesHue = 198.0;
-            grade.midtonesSat = 0.040;
-            grade.midtonesLum = 0.5;
-            grade.highlightsHue = 35.0;
-            grade.highlightsSat = 0.080;
-            grade.highlightsLum = -1.0;
-            grade.blending = 64.0;
-            grade.balance = -12.0;
-            break;
-        case AutoGradeScene::Urban:
-            grade.shadowsHue = 212.0;
-            grade.shadowsSat = 0.090;
-            grade.midtonesHue = 30.0;
-            grade.midtonesSat = 0.020;
-            grade.highlightsHue = 38.0;
-            grade.highlightsSat = 0.065;
-            grade.blending = 66.0;
-            grade.balance = -3.0;
-            break;
-        case AutoGradeScene::Neutral:
-            break;
-    }
+    grade.shadowsHue = shadows.hue();
+    grade.shadowsSat = shadows.sat();
+    grade.shadowsLum = shadowsLum;
+    grade.midtonesHue = midtones.hue();
+    grade.midtonesSat = midtones.sat();
+    grade.midtonesLum = midtonesLum;
+    grade.highlightsHue = highlights.hue();
+    grade.highlightsSat = highlights.sat();
+    grade.highlightsLum = highlightsLum;
+    grade.blending = blending;
+    grade.balance = balance;
 
     // A grade should be visibly distinct from the technical correction while
     // preserving skin and already-saturated colors. The RGB curves create a
@@ -1339,71 +1439,46 @@ void applySteepAutoGrade(
     auto& vibrance = params.vibrance;
     vibrance = rtengine::procparams::VibranceParams();
     vibrance.enabled = true;
-    vibrance.pastels = 14;
-    vibrance.saturated = 2;
+    vibrance.pastels = static_cast<int>(std::round(pastels));
+    vibrance.saturated = static_cast<int>(std::round(saturated));
     vibrance.protectskins = true;
     vibrance.avoidcolorshift = true;
     vibrance.pastsattog = true;
 
+    // The channel curves ARE the grade's colour separation, and they used to be
+    // one fixed shape across all six scenes -- the wheels varied, the thing
+    // doing the work did not. They carry the blended depth now, so a night
+    // frame separates harder than a portrait does.
     auto& curves = params.rgbCurves;
     curves.rcurve = {
         DCT_Spline,
         0.0, 0.0,
-        0.18, 0.168,
-        0.50, 0.508,
-        0.82, 0.842,
+        0.18, 0.18 - 0.012 * splitDepth,
+        0.50, 0.50 + 0.008 * splitDepth,
+        0.82, 0.82 + 0.022 * splitDepth,
         1.0, 1.0
     };
     curves.gcurve = {
         DCT_Spline,
         0.0, 0.0,
-        0.18, 0.182,
+        0.18, 0.18 + 0.002 * splitDepth,
         0.50, 0.50,
-        0.82, 0.818,
+        0.82, 0.82 - 0.002 * splitDepth,
         1.0, 1.0
     };
     curves.bcurve = {
         DCT_Spline,
         0.0, 0.0,
-        0.18, 0.198,
-        0.50, 0.498,
-        0.82, 0.798,
+        0.18, 0.18 + 0.018 * splitDepth,
+        0.50, 0.50 - 0.002 * splitDepth,
+        0.82, 0.82 - 0.022 * splitDepth,
         1.0, 1.0
     };
 
-    int gradeContrast = 2;
-    switch (features.scene) {
-        case AutoGradeScene::Portrait:
-            vibrance.pastels = 10;
-            vibrance.saturated = -2;
-            gradeContrast = 1;
-            break;
-        case AutoGradeScene::GoldenHour:
-            vibrance.pastels = 12;
-            vibrance.saturated = 0;
-            gradeContrast = 1;
-            break;
-        case AutoGradeScene::Landscape:
-            vibrance.pastels = 18;
-            vibrance.saturated = 3;
-            gradeContrast = 3;
-            break;
-        case AutoGradeScene::Night:
-            vibrance.pastels = 9;
-            vibrance.saturated = -3;
-            gradeContrast = 2;
-            break;
-        case AutoGradeScene::Urban:
-            vibrance.pastels = 11;
-            vibrance.saturated = 0;
-            gradeContrast = 3;
-            break;
-        case AutoGradeScene::Neutral:
-            break;
-    }
-
-    params.toneCurve.contrast = std::min(45, params.toneCurve.contrast + gradeContrast);
+    params.toneCurve.contrast = std::min(45,
+        params.toneCurve.contrast + static_cast<int>(std::round(gradeContrast)));
     params.sh.highlights = std::min(45, params.sh.highlights + 3);
+
     // Judged on the rendered frame: on the neutral render this test read
     // shadowFraction > 0.34 as true on 80% of frames and highlightFraction
     // < 0.16 as true on all of them, so it was not a condition.
@@ -1414,8 +1489,19 @@ void applySteepAutoGrade(
         params.sh.shadows = std::min(30, params.sh.shadows + 1);
     }
 
+    fileBrowserPerfLog(
+        "[autoGrade] weights neutral=%.2f portrait=%.2f lowSun=%.2f open=%.2f dark=%.2f urban=%.2f\n"
+        "[autoGrade]   wheels sh=%.0f/%.3f mid=%.0f/%.3f hi=%.0f/%.3f blend=%.1f bal=%.1f\n"
+        "[autoGrade]   vibrance pastels=%d saturated=%d contrast=%+.1f splitDepth=%.2f\n",
+        mix[0].weight, mix[1].weight, mix[2].weight, mix[3].weight,
+        mix[4].weight, mix[5].weight,
+        grade.shadowsHue, grade.shadowsSat, grade.midtonesHue, grade.midtonesSat,
+        grade.highlightsHue, grade.highlightsSat, grade.blending, grade.balance,
+        vibrance.pastels, vibrance.saturated, gradeContrast, splitDepth);
+
     params.filmPresets.enabled = false;
 }
+
 
 void applySteepAutoFilm(
     const AutoGradeFeatures& features,
@@ -1433,7 +1519,7 @@ void applySteepAutoFilm(
     const double frameRange = measured ? render.range : features.dynamicRange;
     const double frameHighlights = measured ? render.highlightFraction : features.highlightFraction;
 
-    // "Dark" gets ONE definition, shared with the tone stage's nightLook.
+    // "Dark" gets ONE definition, shared with the tone stage.
     const bool darkFrame = measured
         ? frameMid < 0.26
         : features.valid && features.medianLuma < 0.30;
@@ -1744,12 +1830,13 @@ AutoGradeFeatures buildSteepAutoEditParamsInternal(
     const AutoGradeScene provisional = features.scene;
 
     if (render.valid) {
-        features.scene = classifySteepAutoGrade(
+        features.scores = scoreSteepAutoScene(
             features,
             render.mid,
             render.shadowFraction,
             render.range,
             brightWarmFractionAtGain(features, render.gain));
+        features.scene = dominantScene(features.scores);
     }
 
     fileBrowserPerfLog(

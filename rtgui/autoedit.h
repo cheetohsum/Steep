@@ -21,6 +21,36 @@ enum class SteepAutoEditMode {
     GradedFilm  // auto edit + color grade + film stock, harmonized
 };
 
+// How strongly a frame shows each trait, 0..1, judged independently.
+//
+// These replace a winner-takes-all label. The six scenes were never mutually
+// exclusive -- a portrait can be shot at golden hour, a landscape can be a
+// night scene -- but they were tested in a fixed order by an if/else chain, so
+// whichever came first swallowed the frame whole and the rest of what the
+// picture was got discarded. Scores let a frame be 0.6 of one thing and 0.4 of
+// another, and let the look be blended to match.
+struct AutoSceneScores {
+    double portrait = 0.0;  // faces, present and central
+    double lowSun = 0.0;    // warm light, high in the frame: golden hour
+    double open = 0.0;      // sky and foliage: landscape
+    double dark = 0.0;      // renders low key
+    double urban = 0.0;     // dense edges, little foliage
+
+    // The strongest trait and how far it leads. A frame with nothing above the
+    // noise floor is simply neutral, and should be graded as one.
+    double strongest() const
+    {
+        double best = portrait;
+        best = lowSun > best ? lowSun : best;
+        best = open > best ? open : best;
+        best = dark > best ? dark : best;
+        best = urban > best ? urban : best;
+        return best;
+    }
+};
+
+// Kept as the dominant trait, for logging, auto-cull and anything that wants
+// one word for what a picture is. The grading now reads the scores.
 enum class AutoGradeScene {
     Neutral,
     Portrait,
@@ -62,6 +92,8 @@ struct AutoGradeFeatures {
     // Keeping the distribution lets the same question be re-asked at the
     // exposure Auto Edit actually committed.
     std::array<float, 32> warmLumaHistogram{};
+
+    AutoSceneScores scores;
 };
 
 // Share of the frame that is warm and bright once `gain` (a display-space
