@@ -1572,91 +1572,163 @@ void applySteepAutoFilm(
     film.bloom = 1;
     film.outputSoftness = 2;
 
+    // The stock is chosen, the handling is blended.
+    //
+    // A film stock is a physical object: you cannot load 60% of one emulsion
+    // and 40% of another, and a process is C-41 or it is E-6. So the dominant
+    // trait picks the stock, the process and the paper -- while everything
+    // that is genuinely a matter of degree (print strength, contrast, fade,
+    // shoulder, warmth, skin protection) blends across all five scores. A
+    // golden-hour portrait gets porcelain on RA-4 with low sun's warmth and
+    // shoulder worked into it, instead of one recipe winning and the other
+    // being discarded.
+    struct FilmHandling {
+        double strength, contrast, fade, rolloff, saturation, warmth,
+               skinProtection, softness, halation, vibrance, exposure;
+    };
+
+    const double baseHalation = film.halation;
+    const double baseRolloff = film.rolloff;
+    const double baseSaturation = film.saturation;
+    const double baseContrast = film.contrast;
+    const double baseExposure = film.exposure;
+
+    const bool chrome = features.saturation > 0.35 && frameHighlights < 0.13;
+
+    const FilmHandling handling[] = {
+        // neutral
+        {62, baseContrast, -4, baseRolloff, baseSaturation, 0, 68, 2,
+         baseHalation, 0, baseExposure},
+        // portrait
+        {60, 5, -3, 2, baseSaturation - 2, 0, 90, 3,
+         std::min(baseHalation, 11.0), 0, baseExposure},
+        // low sun
+        {66, 4, -4, std::max(baseRolloff, 2.0), baseSaturation, -1, 78, 2,
+         std::min(14.0, baseHalation + 2), 0, baseExposure},
+        // open
+        {chrome ? 52.0 : 62.0, chrome ? -8.0 : 5.0, chrome ? -3.0 : -4.0,
+         chrome ? -4.0 : baseRolloff, baseSaturation - (chrome ? 3 : 0), 0, 68, 2,
+         std::min(baseHalation, 10.0), features.saturation < 0.24 ? 3.0 : 0.0,
+         baseExposure},
+        // dark
+        {66, 8, 6, 4, baseSaturation, -2, 68, 2,
+         std::min(18.0, baseHalation + 4), 0, 0.08},
+        // urban
+        {63, 2, -6, 0, baseSaturation, 0, 68, 2,
+         std::min(baseHalation, 11.0), 0, baseExposure},
+    };
+
+    const AutoSceneScores& scores = features.scores;
+    const double claimed = scores.portrait + scores.lowSun + scores.open
+                         + scores.dark + scores.urban;
+    const double neutralWeight = std::max(0.0, 1.0 - claimed);
+    const double total = std::max(1e-6, claimed + neutralWeight);
+    const double weights[] = {
+        neutralWeight / total,
+        scores.portrait / total,
+        scores.lowSun / total,
+        scores.open / total,
+        scores.dark / total,
+        scores.urban / total,
+    };
+
+    FilmHandling mixed{};
+
+    for (size_t i = 0; i < sizeof(weights) / sizeof(weights[0]); ++i) {
+        const FilmHandling& h = handling[i];
+        const double w = weights[i];
+        mixed.strength += h.strength * w;
+        mixed.contrast += h.contrast * w;
+        mixed.fade += h.fade * w;
+        mixed.rolloff += h.rolloff * w;
+        mixed.saturation += h.saturation * w;
+        mixed.warmth += h.warmth * w;
+        mixed.skinProtection += h.skinProtection * w;
+        mixed.softness += h.softness * w;
+        mixed.halation += h.halation * w;
+        mixed.vibrance += h.vibrance * w;
+        mixed.exposure += h.exposure * w;
+    }
+
+    const auto toInt = [](double value) {
+        return static_cast<int>(std::round(value));
+    };
+
+    film.strength = toInt(mixed.strength);
+    film.contrast = toInt(mixed.contrast);
+    film.fade = toInt(mixed.fade);
+    film.rolloff = toInt(mixed.rolloff);
+    film.saturation = toInt(mixed.saturation);
+    film.warmth = toInt(mixed.warmth);
+    film.skinProtection = toInt(mixed.skinProtection);
+    film.outputSoftness = toInt(mixed.softness);
+    film.halation = toInt(mixed.halation);
+    film.vibrance = toInt(mixed.vibrance);
+    film.exposure = mixed.exposure;
+
+    // The emulsion, the process and the paper come from the dominant trait --
+    // and that trait is now argmax over the scores, not whichever branch of an
+    // if/else chain happened to be tested first.
     switch (features.scene) {
         case AutoGradeScene::Portrait:
             film.preset = "porcelain_400";
             film.process = "c41";
             film.output = "ra4";
-            film.strength = 60;
-            film.contrast = 5;
-            film.fade = -3;
-            film.rolloff = 2;
-            film.saturation -= 2;
-            film.grain = std::min(film.grain, 17);
-            film.halation = std::min(film.halation, 11);
-            film.skinProtection = 90;
-            film.outputSoftness = 3;
             break;
         case AutoGradeScene::GoldenHour:
             film.preset = "golden_hour";
             film.process = "c41";
             film.output = "ra4";
-            film.strength = 66;
-            film.contrast = 4;
-            film.warmth = -1;
-            film.halation = std::min(14, film.halation + 2);
-            film.rolloff = std::max(film.rolloff, 2);
-            film.skinProtection = 78;
             break;
         case AutoGradeScene::Landscape:
             // Saturation is a colour reading and stays on the source; the
             // highlight share is a tonal one and comes off the render.
-            film.preset = features.saturation > 0.35 && frameHighlights < 0.13
-                ? "vivid_chrome"
-                : "sovereign";
-            if (film.preset == "vivid_chrome") {
+            if (chrome) {
+                film.preset = "vivid_chrome";
                 film.process = "e6";
                 film.output = "projection";
-                film.strength = 52;
-                film.contrast = -8;
-                film.fade = -3;
-                film.rolloff = -4;
-                film.saturation -= 3;
             } else {
+                film.preset = "sovereign";
                 film.process = "c41";
                 film.output = "ra4";
-                film.strength = 62;
-                film.contrast = 5;
             }
-            film.grain = std::min(film.grain, 16);
-            film.halation = std::min(film.halation, 10);
-            film.vibrance = features.saturation < 0.24 ? 3 : 0;
             break;
         case AutoGradeScene::Night:
             film.preset = "cinematic_500t";
             film.process = "ecn2";
             film.output = "cinema";
-            film.strength = 66;
-            film.exposure = 0.08;
-            film.contrast = 8;
-            film.fade = 6;
-            film.rolloff = 4;
-            film.warmth = -2;
-            film.grain = std::min(32, film.grain + 6);
-            film.halation = std::min(18, film.halation + 4);
-            film.skinProtection = 68;
             break;
         case AutoGradeScene::Urban:
             film.preset = "street_800";
             film.process = "c41";
             film.output = "ra4";
-            film.strength = 63;
-            film.contrast = 2;
-            film.fade = -6;
-            film.rolloff = 0;
-            film.grain = std::min(30, film.grain + 4);
-            film.halation = std::min(film.halation, 11);
             break;
         case AutoGradeScene::Neutral:
+            film.preset = "sovereign";
+            film.process = "c41";
+            film.output = "ra4";
             break;
     }
 
-    // Grain is deliberately NOT part of the auto film recipe. The film
-    // stage is grain-free by design, and texture is a taste decision the
-    // user makes themselves through Effects > Grain - an auto edit that
-    // ships ~20 strength of grain on every frame took that choice away.
-    // (film.grain writes above are inert; they document per-scene intent
-    // for anyone who wants to dial grain in by hand.)
+    fileBrowserPerfLog(
+        "[autoFilm] stock=%s/%s/%s weights neutral=%.2f portrait=%.2f lowSun=%.2f "
+        "open=%.2f dark=%.2f urban=%.2f\n"
+        "[autoFilm]   strength=%d contrast=%d fade=%d rolloff=%d sat=%d warmth=%d "
+        "halation=%d skinProt=%d exposure=%.3f\n",
+        film.preset.c_str(), film.process.c_str(), film.output.c_str(),
+        weights[0], weights[1], weights[2], weights[3], weights[4], weights[5],
+        film.strength, film.contrast, film.fade, film.rolloff, film.saturation,
+        film.warmth, film.halation, film.skinProtection, film.exposure);
+
+    // Grain is deliberately NOT part of the auto film recipe. The film stage
+    // is grain-free by design, and texture is a taste decision the user makes
+    // themselves through Effects > Grain - an auto edit that ships ~20
+    // strength of grain on every frame took that choice away.
+    //
+    // Note that the film.grain write above reaches nothing either way: the
+    // engine reads grainSize, grainClumping and grainColor, but never grain
+    // itself. Which means ISO -- the only thing that write consumes -- is
+    // measured by this pipeline and then has no effect on any output.
 
     const bool darkPrint = darkFrame;
     if (darkPrint) {
