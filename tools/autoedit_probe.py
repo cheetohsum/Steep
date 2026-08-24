@@ -21,7 +21,12 @@ Sections reported:
   saturation  inputs pinned at 0 or 1 -- a term stuck at a rail is a constant
               wearing a measurement's clothes, and is the bug to look for
   curve       toe/lift strengths and how often the symmetry clamp binds
-  exposure    committed EV, flagging anything at the +2.75 ceiling
+  exposure    metered EV, the overshoot read back out of the meter's own
+              hlcompr, how much of it was given back, what the render-space
+              chimp then did, and what shipped -- plus a rail check on each
+              of those terms
+  verify      the Phase 4 pass over the finished profile: how often it ran
+              and how far it moved things
   stocks      which film emulsions are actually being reached
   wb          how often white balance is corrected, and by how much
   noise       ISO-driven denoise
@@ -80,6 +85,25 @@ def parse(path):
             cur['renderHigh'] = num('high', line)
         elif 'exposure: expcomp' in line:
             cur['expcomp'] = num('expcomp', line)
+            cur['hlcompr'] = num('hlcompr', line)
+            cur['evAdd'] = num('evAdd', line)
+        elif 'meter: metered=' in line:
+            cur['metered'] = num('metered', line)
+            cur['meteredHlcompr'] = num('meteredHlcompr', line)
+            cur['overRange'] = num('overRange', line)
+            cur['given'] = num('given', line)
+        elif 'brightContent=' in line:
+            cur['ceiling'] = num('ceiling', line)
+            cur['brightContent'] = num('brightContent', line)
+        elif 'highTolerance=' in line:
+            cur['sourceClip'] = num('sourceClip', line)
+            cur['addedClip'] = num('addedClip', line)
+        elif 'reliance=' in line:
+            cur['reliance'] = num('reliance', line)
+            cur['srcDark'] = num('srcDark', line)
+            cur['hold'] = num('hold', line)
+        elif 'probe   headroom=' in line:
+            cur['probeHeadroom'] = num('headroom', line.replace('EV', ''))
         elif '[autoFilm] stock=' in line:
             m = re.search(r'stock=(\S+?)/', line)
             if m:
@@ -94,6 +118,11 @@ def parse(path):
             cur['isoStops'] = num('stops', line)
             cur['nrLuma'] = num('luma', line)
             cur['nrChroma'] = num('chroma', line)
+        elif '[autoVerify]' in line and 'skipped' not in line and 'could not' not in line:
+            cur['verifyApplied'] = num('applied', line)
+            cur['verifyMid'] = num('finishedMid', line)
+        elif '[autoVerify]' in line and 'skipped' in line:
+            cur['verifySkipped'] = 1.0
         elif '[autoScene]' in line:
             m = re.search(r'provisional=(\S+) final=(\S+)', line)
             if m:
@@ -209,12 +238,51 @@ def report(frames, label=''):
 
     evs = [f['expcomp'] for f in frames if f.get('expcomp') is not None]
     if evs:
-        s = spread(evs)
         print('\nexposure')
-        print('  expcomp' + ''.join(f'{v:7.2f}' for v in s))
-        ceiling = sum(1 for v in evs if v >= 2.74)
+        for name, key in (('metered', 'metered'), ('over-range', 'overRange'),
+                          ('given back', 'given'), ('reliance', 'reliance'),
+                          ('chimp move', 'evAdd'), ('committed', 'expcomp'),
+                          ('hlcompr', 'hlcompr'), ('ceiling', 'ceiling')):
+            s_ = spread([f.get(key) for f in frames])
+            if s_:
+                print(f'  {name:<11}' + ''.join(f'{v:7.2f}' for v in s_))
+
+        # The ceiling is derived per frame now, so "at the rail" means the
+        # frame reached ITS ceiling, not a shared constant.
+        pinned = sum(1 for f in frames
+                     if f.get('expcomp') is not None and f.get('ceiling') is not None
+                     and f['expcomp'] >= f['ceiling'] - 0.01)
         over = sum(1 for v in evs if v > 2.751)
-        print(f'  at the +2.75 ceiling: {ceiling}   ABOVE it (should be 0): {over}')
+        print(f'  at their own ceiling: {pinned}/{len(evs)}   '
+              f'above the hard +2.75 (should be 0): {over}')
+
+        # A term stuck at a rail is a constant wearing a measurement's
+        # clothes. This is the check that has caught it three times.
+        for name, key in (('giveback', 'given'), ('chimp move', 'evAdd'),
+                          ('verify move', 'verifyApplied')):
+            vals = [f[key] for f in frames if f.get(key) is not None]
+            if len(vals) >= 8:
+                common = Counter(round(v, 3) for v in vals).most_common(1)[0]
+                share = 100.0 * common[1] / len(vals)
+                # A mode of exactly zero means the deadband held and no
+                # correction was called for, which is the design working.
+                # A mode at any OTHER value on most frames means the term
+                # stopped measuring and became a constant -- the failure this
+                # pipeline has hit three times.
+                flag = ('   <-- PINNED, this term is a constant'
+                        if share > 60 and abs(common[0]) > 0.001 else '')
+                note = ' (deadband held)' if abs(common[0]) <= 0.001 else ''
+                print(f'  {name} most common value {common[0]:+.3f} '
+                      f'on {share:.0f}% of frames{note}{flag}')
+
+    verify = [f for f in frames if f.get('verifyApplied') is not None]
+    if verify:
+        moved = [f for f in verify if abs(f['verifyApplied']) > 0.005]
+        print('\nverification pass (Phase 4, on the finished profile)')
+        print(f'  ran on {len(verify)} frames, moved {len(moved)}')
+        s_ = spread([f['verifyApplied'] for f in moved])
+        if s_:
+            print('  applied' + ''.join(f'{v:7.3f}' for v in s_))
 
 
 def main():

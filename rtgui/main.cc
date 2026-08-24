@@ -36,6 +36,7 @@
 #include <locale.h>
 #include <lensfun.h>
 
+#include "autoedit.h"
 #include "cachemanager.h"
 #include "config.h"
 #include "editorpanel.h"
@@ -288,6 +289,8 @@ private:
     {
         if (create_window()) {
             rtWindow->present();
+            // Debug rig, inert unless STEEP_AUTOEDIT_SELFTEST is set.
+            runSteepAutoEditSelfTest();
         }
     }
 
@@ -670,6 +673,10 @@ int main (int argc, char **argv)
             Gtk::Main m (&argc, &argv);
             gdk_threads_enter();
             const std::unique_ptr<RTWindow> rtWindow (create_rt_window());
+            // Debug rig, inert unless STEEP_AUTOEDIT_SELFTEST is set. This is
+            // the ordinary startup path — RTApplication::on_activate only runs
+            // for the remote/single-instance one — so it has to be here too.
+            runSteepAutoEditSelfTest();
             if (app.isGimpPlugin()) {
                 show_gimp_plugin_info_dialog(rtWindow.get());
             }

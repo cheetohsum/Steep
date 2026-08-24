@@ -23,10 +23,12 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <limits>
 #include <memory>
 #include <vector>
 
+#include "cachemanager.h"
 #include "steepperflog.h"
 #include "thumbnail.h"
 
@@ -111,6 +113,28 @@ double falloff(double value, double low, double high)
 double sceneDarkScore(double medianLuma, double shadowFraction)
 {
     return falloff(medianLuma, 0.16, 0.34) * ramp(shadowFraction, 0.28, 0.46);
+}
+
+// The same question asked of the SOURCE analysis rather than of a render, and
+// it needs its own thresholds because the two spaces are about a stop and a
+// half apart. Measured over 141 real frames the neutral render's median runs
+// p25 0.086 / p50 0.148 / p90 0.336 and its shadow share p50 0.531 / p75
+// 0.772 — so sceneDarkScore's render-space bounds (median under 0.16, shadows
+// over 0.46) are BOTH already satisfied by the typical frame.
+//
+// Using it on source numbers pinned the result at 1.000 on 50% of frames and
+// the giveback hold at 1.000 on 62%: an ordinary ISO 1600 portrait, source
+// median 0.148, was being protected as though it were a night street and kept
+// 0.38EV of exposure it had no claim to. That is the fourth time a term in
+// this pipeline has turned out to be a constant wearing a measurement's
+// clothes, and the first one this file caused itself.
+//
+// Recalibrated, this reads 1.0 on 13% of frames and 0.0 on 65% — and it still
+// says 1.00 for a genuine night frame (median 0.008) and 0.94 for a night
+// street at ISO 10000, while saying 0.00 for that portrait.
+double sourceDarkScore(double medianLuma, double shadowFraction)
+{
+    return falloff(medianLuma, 0.05, 0.13) * ramp(shadowFraction, 0.60, 0.85);
 }
 
 // What the picture is, as five independent readings rather than one verdict.
@@ -436,6 +460,106 @@ constexpr double kWhiteTarget = 0.985;   // ~251/255
 constexpr double kClipTolerance = 0.002;
 constexpr double kClipRecoveryGain = 12.0;
 
+// The constant getAutoExp uses to turn "how far past full scale did the
+// metered gain push the white clip point" into a highlight compression
+// setting (improcfun.cc: `comp = (gain * whiteclip / scale - 1) * 2.3`).
+// Inverting that formula is how the exposure stage recovers the overshoot,
+// so this has to stay in step with the engine.
+constexpr double kMeterHlcomprGain = 2.3;
+
+// A bound on how much of that overshoot may be handed back in one go.
+// hlcompr saturates at 100, so on the frames that overshoot hardest the
+// measurement is an under-read and the giveback is already conservative;
+// this is the backstop for a meter that has gone properly strange.
+constexpr double kMaxOverRangeGiveback = 1.25;
+
+// What is left of highlight compression once the exposure no longer needs
+// rescuing: a deliberate soft roll-off rather than the 30-40 the old
+// blanket trim left on every metered frame.
+//
+// The ceiling is 80 rather than the old 50 because compression is now
+// EARNED — it is what remains of a measured overshoot the exposure did not
+// take back — instead of a blanket rescue. On a scene that genuinely does
+// not fit, a hard shoulder is the right answer and underexposure is not.
+constexpr int kHlcomprFloor = 12;
+constexpr int kHlcomprCeiling = 80;
+
+// getAutoExp clamps hlcompr to 100. A meter that has pinned it there is no
+// longer reporting a metering error — it is reporting a scene that does not
+// fit, and on those frames the compression is doing real work. This is where
+// that reliance starts to count and where it is total.
+constexpr double kHlcomprRelianceLow = 55.0;
+constexpr double kHlcomprRelianceHigh = 100.0;
+
+// How much of the giveback survives on a frame that relies on compression
+// completely. Not zero: even a scene that does not fit is usually metered a
+// little hot on top of that.
+//
+// This started at 0.30, which was measured to stop the giveback crushing
+// dark frames — and then over-corrected. A night frame at ISO 10000 came
+// through at +1.668EV with a measured overshoot of 1.213EV, of which the
+// hold cancelled 0.85EV: dark in the mids (median 0.145) and a full stop
+// over white at the same time. Dark scenes get a partial claim on their
+// exposure, not a near-total one.
+constexpr double kGivebackUnderReliance = 0.55;
+
+// Exposure is gain, and gain amplifies noise. The pipeline already measures
+// how noisy a frame is (noiseRisk, nothing at ISO 400 and everything by ISO
+// 3200) and spent it only on denoise strength — so a frame at ISO 10000 was
+// lifted 1.7 stops and then asked to hide the result. On a high ISO frame the
+// meter's request is the most expensive thing in the pipeline; let the noise
+// hold it back. This is the share of a positive exposure that full noise risk
+// removes.
+constexpr double kNoiseExposureRestraint = 0.20;
+
+// NOTE: there is deliberately no flat minimum on the highlight veto. An
+// earlier version gave it a floor of 0.15EV "so it could always do
+// something", and a trace showed it applying exactly -0.150 on nearly every
+// frame it touched — a constant wearing a measurement's clothes, which is the
+// failure this pipeline has now hit three times. What it has instead is a
+// second MEASURED source of authority: the share of the frame this pipeline
+// put above white. See the comment at its use.
+//
+// The share of channel samples above white that earns the full allowance.
+// This is the p90 of a real distribution (p50 is 0.004), so most frames sit
+// well inside it and only a genuinely blown one reaches the top.
+constexpr double kFullClipAuthorityShare = 0.03;
+constexpr double kMaxClipGiveback = 0.60;
+
+// How much of the room left at the top a mid-tone lift may spend. Never all
+// of it: a lift limited by headroom rather than by need is, by definition,
+// consuming the last of the highlight margin — and it buys very little, since
+// the reason it is small is that there was nowhere to go. One frame took its
+// median from 0.255 to 0.270 (9% of the gap to target) and its brightest
+// tones from 0.967 to 0.985 doing exactly that, which reads as blown from the
+// outside even though nothing measures as clipped.
+constexpr double kLiftHeadroomShare = 0.50;
+
+// The mid-tone deadband, as a SHARE of whatever the target is rather than a
+// flat distance. 0.15 reproduces the old 0.06 at the ordinary target of 0.42
+// while keeping the band proportionate on the dark targets, where a flat
+// number swallowed half a stop of real error.
+constexpr double kMidDeadbandShare = 0.15;
+constexpr double kVerifyDeadbandShare = 0.20;
+
+// The probe render is 8-bit, so everything above white is destroyed before
+// it can be measured — which is exactly the information the exposure stage
+// needs when it has over-exposed. Render the probe this far DOWN and scale
+// the result back up, and the top of the histogram becomes readable again.
+// One stop is ample: the over-range giveback runs first, so the probe sees
+// an exposure that has already had its measured overshoot removed.
+constexpr double kProbeHeadroomEv = 1.0;
+
+// Display gamma, as the rest of this file assumes it: display ~ linear^(1/2.2),
+// so a gain of n stops in scene space is 2^(n/2.2) in display space.
+constexpr double kDisplayGamma = 2.2;
+
+// The hard backstop on exposure. Phase 5 derives the real ceiling from what
+// the frame actually contains; this is only the value that can never be
+// exceeded whatever that derivation says.
+constexpr double kHardExposureCeiling = 2.75;
+constexpr double kExposureFloor = -1.5;
+
 // How much of the gap to each target a single pass may close. Endpoint
 // placement is a correction to a frame the rest of Auto Edit has already
 // judged, not a second opinion about it, so it never takes the whole gap.
@@ -445,6 +569,52 @@ constexpr double kEndpointAuthority = 0.75;
 // fog, high key, a low-key studio black — is given some depth rather than
 // dragged all the way into being something it was never meant to be.
 constexpr double kMaxEndpointMove = 0.10;
+
+// How far past full scale the metered gain pushes the frame's white clip
+// point, in stops, read back out of the meter's own highlight compression.
+//
+// getAutoExp does not return an exposure, it returns a PACKAGE: an exposure
+// together with the compression, black point and contrast that make that
+// exposure survivable. Auto Edit keeps the black and the contrast, but it
+// has its own shoulder and its own highlight recovery, so it cannot keep the
+// compression — and for a long time it kept the exposure that needed it
+// anyway, then took an arbitrary 0.35EV off the top by way of apology.
+//
+// hlcompr is not an opinion, it is arithmetic:
+//
+//     comp    = (gain * whiteclip / scale - 1) * 2.3
+//     hlcompr = 100 * comp / (max(0, expcomp) + 1)
+//
+// so inverting it recovers the overshoot exactly. hlcompr saturates at 100,
+// which makes this an under-read on the frames that overshoot most — an
+// error in the safe direction.
+double meterOverRangeEv(double expcomp, int hlcompr)
+{
+    if (hlcompr <= 0) {
+        return 0.0;
+    }
+
+    const double comp = hlcompr * (std::max(0.0, expcomp) + 1.0) / 100.0;
+    return std::log2(std::max(1e-6, 1.0 + comp / kMeterHlcomprGain));
+}
+
+// The same formula run forwards: what compression an exposure that still
+// overshoots by `residualEv` stops would call for.
+int hlcomprForOverRange(double expcomp, double residualEv)
+{
+    if (residualEv <= 0.0) {
+        return 0;
+    }
+
+    const double comp = (std::pow(2.0, residualEv) - 1.0) * kMeterHlcomprGain;
+    return static_cast<int>(std::round(100.0 * comp / (std::max(0.0, expcomp) + 1.0)));
+}
+
+// A gain of `ev` stops, expressed in display space.
+double displayGain(double ev)
+{
+    return std::pow(2.0, ev / kDisplayGamma);
+}
 
 struct CurveAnchors {
     // Rec.709 luma — the picture's brightness.
@@ -472,13 +642,44 @@ struct CurveAnchors {
     double lumaHighFraction = 0.0;
 };
 
+// `headroomEv` renders the probe that many stops DOWN and scales every
+// measurement back up, which is the only way this function can answer the one
+// question it is most often asked: how far past white is the frame?
+//
+// The probe is 8-bit. At the frame's own exposure every sample above white
+// lands on code 255 and is indistinguishable from every other sample above
+// white, so `chanHi` saturates at 1.0 and `hiRoomEv` reads about -0.05 for a
+// frame that is a full stop over. Rendering a stop down and multiplying by
+// 2^(1/2.2) puts that stop back on the top of the histogram where it can be
+// read, at the cost of one bit of shadow resolution the exposure decision
+// does not use.
+//
+// The probe keeps every other tonal parameter the caller set — highlight
+// compression and the black point included. An earlier version dropped both
+// so that scaling back up would be a clean power law, which measured a chain
+// this pipeline does not ship: with the compression that protects the top
+// taken out, the probe reported blown highlights that the real render never
+// has, and the frames it reported them on were pulled a full stop down. Take
+// the approximation at the very top over a faithless measurement of it.
+//
+// `highTolerance` is the share of channel samples the caller is willing to
+// see above white. chanHi is read at that percentile rather than a fixed
+// p99.9, because specular highlights inside the tolerance are explicitly
+// allowed to blow and should not be steering the exposure.
 bool measureCurveAnchors(
     Thumbnail& thumbnail,
     const rtengine::procparams::ProcParams& params,
-    CurveAnchors& anchors)
+    CurveAnchors& anchors,
+    double headroomEv = kProbeHeadroomEv,
+    double highTolerance = kClipTolerance)
 {
     rtengine::procparams::ProcParams probe = params;
     probe.rgbCurves = rtengine::procparams::RGBCurvesParams();
+    probe.toneCurve.expcomp = params.toneCurve.expcomp - headroomEv;
+
+    // Everything measured below is in probe space; this converts it back to
+    // the space the caller's parameters actually describe.
+    const double recover = displayGain(headroomEv);
 
     double scale = 1.0;
     std::unique_ptr<rtengine::IImage8> image(thumbnail.processFullThumbImage(probe, 160, scale));
@@ -539,14 +740,18 @@ bool measureCurveAnchors(
         return percentileOf(chanHist, pixelCount * 3, fraction);
     };
 
-    anchors.lumaP02 = luma(0.02);
-    anchors.lumaP10 = luma(0.10);
-    anchors.lumaMid = luma(0.50);
-    anchors.lumaP90 = luma(0.90);
-    anchors.lumaP98 = luma(0.98);
-    anchors.chanP10 = chan(0.10);
-    anchors.chanMid = chan(0.50);
-    anchors.chanP90 = chan(0.90);
+    // Back into the caller's space. These are deliberately NOT clamped to 1:
+    // a frame whose median lands above white after the scale-up is telling
+    // the exposure stage something it has never been able to hear before, and
+    // every consumer downstream either clamps for itself or wants the truth.
+    anchors.lumaP02 = luma(0.02) * recover;
+    anchors.lumaP10 = luma(0.10) * recover;
+    anchors.lumaMid = luma(0.50) * recover;
+    anchors.lumaP90 = luma(0.90) * recover;
+    anchors.lumaP98 = luma(0.98) * recover;
+    anchors.chanP10 = chan(0.10) * recover;
+    anchors.chanMid = chan(0.50) * recover;
+    anchors.chanP90 = chan(0.90) * recover;
 
     const size_t channelSamples = pixelCount * 3;
     const auto finePercentile = [&](double fraction) {
@@ -564,7 +769,11 @@ bool measureCurveAnchors(
     size_t renderHighlights = 0;
 
     for (size_t i = 0; i < lumaHist.size(); ++i) {
-        const double centre = (i + 0.5) / lumaHist.size();
+        // The bin centre in the caller's space, not the probe's. Counting
+        // these at the probe exposure would report every frame a stop darker
+        // than it is and hand the scene classifier back the same fallacy that
+        // once had it calling 59% of a daylight library "night".
+        const double centre = (i + 0.5) / lumaHist.size() * recover;
 
         if (centre < 0.16) {
             renderShadows += lumaHist[i];
@@ -576,16 +785,35 @@ bool measureCurveAnchors(
     anchors.lumaShadowFraction = static_cast<double>(renderShadows) / pixelCount;
     anchors.lumaHighFraction = static_cast<double>(renderHighlights) / pixelCount;
 
-    anchors.chanLo = finePercentile(0.001);
-    anchors.chanHi = finePercentile(0.999);
-    // "Pinned" means the bottom or top display code: those samples have lost
-    // their value and no curve downstream can give it back.
+    anchors.chanLo = finePercentile(0.001) * recover;
+    anchors.chanHi = finePercentile(
+        1.0 - std::max(1e-4, std::min(0.20, highTolerance))) * recover;
+
+    // How much of the frame will be at or above white once the headroom is
+    // given back. This used to be the share pinned at code 255, which could
+    // only ever say "something is blown", never "and by this much": at the
+    // frame's own exposure a sample one stop over and a sample four stops
+    // over are the same number. Counted against the scaled threshold it is a
+    // real measurement again.
+    const int whiteCode = static_cast<int>(std::ceil(255.0 / recover));
+    size_t aboveWhite = 0;
+
+    for (size_t code = static_cast<size_t>(std::max(0, whiteCode));
+         code < chanFine.size(); ++code) {
+        aboveWhite += chanFine[code];
+    }
+
+    anchors.clipHigh = static_cast<double>(aboveWhite) / channelSamples;
+    // The shadow end is where the probe's headroom is spent, so this is
+    // pessimistic by construction. Nothing decides on it; it is logged so the
+    // cost of the headroom stays visible.
     anchors.clipLow = static_cast<double>(chanFine.front()) / channelSamples;
-    anchors.clipHigh = static_cast<double>(chanFine.back()) / channelSamples;
 
     fileBrowserPerfLog(
+        "[autoCurve]   probe   headroom=%.2fEV recover=%.4f atExp=%.3f whiteCode=%d\n"
         "[autoCurve]   luma    p02=%.4f p10=%.4f mid=%.4f p90=%.4f p98=%.4f (span=%.4f)\n"
         "[autoCurve]   channel p10=%.4f mid=%.4f p90=%.4f (span=%.4f)\n",
+        headroomEv, recover, probe.toneCurve.expcomp, whiteCode,
         anchors.lumaP02, anchors.lumaP10, anchors.lumaMid, anchors.lumaP90,
         anchors.lumaP98, anchors.lumaP90 - anchors.lumaP10,
         anchors.chanP10, anchors.chanMid, anchors.chanP90,
@@ -756,6 +984,85 @@ void applySteepAutoEdit(
         tone.hlcomprthresh = 0;
     }
 
+    // --- Highlight over-range giveback ------------------------------------
+    //
+    // Read the meter's package before anything below starts editing it: the
+    // exposure it chose, and the highlight compression it chose to survive
+    // that exposure. The second is an exact statement about the first (see
+    // meterOverRangeEv), and it is the only honest measurement this stage
+    // has of how far the meter over-exposed.
+    //
+    // On a real library of 3,686 metered raw frames the median overshoot is
+    // 0.40EV and the p75 is 1.06EV, and it is not evenly spread: 37% of
+    // frames report no overshoot at all and are left untouched here, while
+    // the ones that do report it are exactly the ones that came back blown.
+    // The frame this was built for metered +2.278EV with hlcompr 43, which
+    // is 0.690EV past full scale, and shipping +1.588EV instead is the whole
+    // of the fix for it.
+    //
+    // Note the fallback path is excluded: its hlcompr of 35 is a made-up
+    // constant, and inverting a constant produces a measurement-shaped
+    // number that means nothing.
+    const double meteredExpcomp = tone.expcomp;
+    const int meteredHlcompr = measuredExposure ? tone.hlcompr : 0;
+    const double overRangeEv = measuredExposure
+        ? meterOverRangeEv(meteredExpcomp, meteredHlcompr)
+        : 0.0;
+
+    // ... but the whole overshoot is only ours to take back on a frame that
+    // had a choice. An overshoot has to be paid for either by lowering the
+    // exposure or by compressing the top, and those two bills fall on
+    // different parts of the picture: exposure costs the subject, compression
+    // costs the highlights. When hlcompr comes back pinned at its own ceiling
+    // the meter is saying the scene does not fit, and on those frames the
+    // compression is the cheaper bill — the alternative is not a better
+    // exposure, it is a dark subject in front of a blown window.
+    //
+    // Measured on a real folder, taking the full overshoot from these frames
+    // moved them by more than a stop and landed rendered medians near 0.11,
+    // while the frames that were genuinely too bright barely moved: the
+    // correction came out anti-correlated with brightness, which is the exact
+    // opposite of the intent.
+    const double hlcomprReliance = unit(
+        (meteredHlcompr - kHlcomprRelianceLow)
+        / (kHlcomprRelianceHigh - kHlcomprRelianceLow));
+
+    // The second reason to hold back is the frame itself. This decision has
+    // to be made BEFORE the probe renders, so it cannot ask how bright the
+    // result will be — but the source analysis already knows a night street
+    // when it sees one, and a frame that dark has no exposure to spare for
+    // its highlights. Taking half a stop off one to protect a streetlight
+    // buys a pinpoint and pays for it with the whole picture.
+    //
+    // sourceDarkScore, not sceneDarkScore: the render-space version's bounds
+    // are both already met by the typical neutral render, which pinned this
+    // at 1.000 on half a real library. See the function.
+    const double sourceDarkness = features.valid
+        ? sourceDarkScore(features.medianLuma, features.shadowFraction)
+        : 0.0;
+
+    // The two reasons do not compound. Either is sufficient on its own, and
+    // multiplying them would take the giveback to nearly nothing on the
+    // frames that show both.
+    const double givebackHold = std::max(hlcomprReliance, sourceDarkness);
+    const double overRangeGiven = std::min(kMaxOverRangeGiveback, overRangeEv)
+        * (1.0 - (1.0 - kGivebackUnderReliance) * givebackHold);
+
+    if (overRangeGiven > 0.0) {
+        tone.expcomp -= overRangeGiven;
+    }
+
+    // Noise restraint. See kNoiseExposureRestraint: a high ISO frame cannot
+    // afford the exposure a clean one can, because the exposure is what makes
+    // the grain visible. Proportional to the exposure itself, so a frame that
+    // was not going to be lifted much loses nothing.
+    const double noiseRestraintEv =
+        kNoiseExposureRestraint * noiseRisk * std::max(0.0, tone.expcomp);
+
+    if (noiseRestraintEv > 0.0) {
+        tone.expcomp -= noiseRestraintEv;
+    }
+
     // Everything from here down used to ADD to the exposure, and every one of
     // those additions was calibrated when metering was dead and the starting
     // point was always the same 0.20 constant. With metering restored they
@@ -770,7 +1077,8 @@ void applySteepAutoEdit(
         const double exposureLift = tone.expcomp > 0.0
             ? (tone.hlcompr < 55 ? 0.05 : 0.0)
             : 0.0;
-        tone.expcomp = std::max(-1.5, std::min(2.75, tone.expcomp + exposureLift));
+        tone.expcomp = std::max(kExposureFloor,
+                                std::min(kHardExposureCeiling, tone.expcomp + exposureLift));
     }
 
     // Scene luminance supplies a restrained correction so night remains night
@@ -785,15 +1093,23 @@ void applySteepAutoEdit(
         } else if (features.medianLuma > 0.61 || features.highlightFraction > 0.24) {
             intent = -0.24;
         }
-        tone.expcomp = std::max(-1.5, std::min(2.75, tone.expcomp + intent));
+        tone.expcomp = std::max(kExposureFloor,
+                                std::min(kHardExposureCeiling, tone.expcomp + intent));
     }
 
     // Highlight compression answers what the source actually holds, so it is
-    // not part of the metering question and runs either way.
-    if (features.valid) {
-        tone.hlcompr = std::max(tone.hlcompr, static_cast<int>(std::round(
-            std::min(45.0, features.highlightFraction * 120.0))));
-    }
+    // not part of the metering question and runs either way. It is only a
+    // DEMAND here — every hlcompr decision is settled in one place below,
+    // because the metered value in tone.hlcompr now describes an exposure
+    // that no longer exists.
+    //
+    // The old ceiling on this was 45, set when the exposure it was defending
+    // against went uncorrected. With the overshoot given back, 45 would
+    // simply put back the flat top the giveback exists to remove.
+    const int sourceHlcomprDemand = features.valid
+        ? static_cast<int>(std::round(std::min(30.0, features.highlightFraction * 120.0)))
+        : 0;
+
     if (tone.expcomp > 0.0) {
         tone.expcomp *= 1.0 - 0.45 * protection;
     }
@@ -831,20 +1147,31 @@ void applySteepAutoEdit(
     // Shadow compression lifts the darks, and the darks are where the noise
     // lives. On a high ISO frame this is the control that makes grain visible.
     tone.shcompr = static_cast<int>(std::round(18.0 * (1.0 - 0.55 * noiseRisk)));
-    tone.hlcompr = std::min(50, std::max(tone.hlcompr, tone.expcomp > 0.60 ? 30 : 12));
 
-    // A meter that asks for heavy highlight compression has exposed past what
-    // the frame can hold and is buying the top back by squashing it. That
-    // pairing — a big positive exposure plus hlcompr pinned at 50 — is what
-    // reads as "bright and flat on top", and inheriting both halves of it
-    // means accepting the over-exposure to get the rescue. We have our own
-    // shoulder (the curve) and our own highlight recovery, so take the
-    // exposure back down instead and let those hold the highlights.
-    if (measuredExposure && tone.hlcompr > 30 && tone.expcomp > 0.0) {
-        const double excess = unit((tone.hlcompr - 30) / 20.0);
-        tone.expcomp = std::max(0.0, tone.expcomp - 0.35 * excess);
-        tone.hlcompr = static_cast<int>(std::round(30.0 + 10.0 * excess));
-    }
+    // Highlight compression, settled once, from the exposure that is actually
+    // going to be committed.
+    //
+    // This used to be two rules fighting: a floor that pinned every metered
+    // frame at 30, and a trim that read hlcompr back as evidence of
+    // over-exposure, took an arbitrary 0.35EV off, and then put hlcompr back
+    // at 30-40 anyway. The exposure stage now removes the overshoot itself,
+    // which leaves this with an easy question — how much of the overshoot is
+    // still there? — and the same formula the meter used answers it. Give
+    // the whole overshoot back and this lands at zero by construction, so in
+    // practice the floor below is what decides: a deliberate soft roll-off
+    // instead of a rescue.
+    const double residualOverRangeEv = std::max(0.0, overRangeEv - overRangeGiven);
+    const int residualHlcompr = measuredExposure
+        ? hlcomprForOverRange(tone.expcomp, residualOverRangeEv)
+        : tone.hlcompr;
+
+    tone.hlcompr = std::min(kHlcomprCeiling,
+                            std::max({kHlcomprFloor, residualHlcompr, sourceHlcomprDemand}));
+
+    // Deliberately not re-derived after the chimp: its correction shrinks the
+    // residual overshoot by its own size, which on the frames measured is at
+    // most 0.43EV and usually zero. Worth knowing about, not worth a second
+    // pass — if the chimp's authority is ever widened, revisit this.
 
     tone.hlbl = 0;
     tone.hlth = 1.0;
@@ -886,7 +1213,30 @@ void applySteepAutoEdit(
     // at +4.15EV. It has to land before the measurement, not after, or every
     // percentile below would describe a frame a stop and a half brighter than
     // the one being built.
-    tone.expcomp = std::max(-1.5, std::min(2.75, tone.expcomp));
+    //
+    // The bound itself used to be a flat +2.75EV, and 16% of a real library
+    // sat on it. By this pipeline's own hard-won rule that makes it a
+    // constant wearing a measurement's clothes, and the frames wearing it
+    // were not one kind of frame.
+    //
+    // What separates them is whether the source has any bright content at
+    // all. getAutoExp blends two estimates, and the one that runs away is
+    // expcomp1, which drives the frame's MEAN to 18% grey. On a genuinely
+    // dark scene — a night street, an unlit interior — that is roughly the
+    // right question and a big lift is honest. On a backlit portrait, a
+    // silhouette, or anything with a sky in it, the mean is low because part
+    // of the frame is meant to be dark, and driving it to grey is simply the
+    // wrong question; those frames have bright content sitting right there in
+    // the source analysis saying so. Let the first kind climb. Hold the
+    // second down.
+    const double brightContent = features.valid
+        ? std::max(unit((features.p98 - 0.45) / 0.35),
+                   unit(features.highlightFraction / 0.12))
+        : 0.0;
+    const double exposureCeiling =
+        kHardExposureCeiling - (kHardExposureCeiling - 1.60) * brightContent;
+
+    tone.expcomp = std::max(kExposureFloor, std::min(exposureCeiling, tone.expcomp));
 
     // Chimp the histogram. Render the frame with what has been chosen so far
     // and, if the mid tone has not landed where a print would carry it,
@@ -894,8 +1244,19 @@ void applySteepAutoEdit(
     // brightening: lifting mids with a curve compresses everything above
     // them, while lifting exposure moves the whole frame and lets highlight
     // recovery hold the top. Headroom keeps the veto.
+    // Highlights that were already gone when the file was opened are not this
+    // stage's to give back. A frame shot into a window arrives with 6% of its
+    // channel samples clipped; pulling the exposure down cannot un-clip them,
+    // it only darkens everything that was still intact. So the tolerance the
+    // measurement is read against is the WIDER of what we are willing to blow
+    // and what the source had already blown, and the correction below acts on
+    // the difference — the clipping this pipeline added.
+    const double sourceClip = features.valid ? features.clippedFraction : 0.0;
+    const double highTolerance = std::max(kClipTolerance, sourceClip);
+
     CurveAnchors shot;
-    const bool shotValid = measureCurveAnchors(thumbnail, params, shot);
+    const bool shotValid =
+        measureCurveAnchors(thumbnail, params, shot, kProbeHeadroomEv, highTolerance);
 
     const double shotMid = shot.lumaMid;
     const double shotP90 = shot.lumaP90;
@@ -908,10 +1269,34 @@ void applySteepAutoEdit(
     // a frame at 0.239 aimed 0.14 lower than one at 0.241. It is a slope now,
     // anchored on the same two values: full print target when nothing about
     // the frame is dark, 0.31 when it thoroughly is.
-    const double darkFrameScore = shotValid
-        ? sceneDarkScore(shotMid, shot.lumaShadowFraction)
-        : (features.scene == AutoGradeScene::Night ? 1.0 : 0.0);
-    const double midTarget = 0.45 - 0.14 * darkFrameScore;
+    // "How dark is this frame?" cannot be asked of the render alone, because
+    // the render's darkness has already been altered by the very exposure
+    // being decided. A night scene lifted 2.5 stops reads as only half dark,
+    // which raises its target, which justifies the lift — a loop that pays
+    // for its own conclusion. One frame with a source median of 0.023 scored
+    // 0.494 on the render and was handed a target of 0.32, while other frames
+    // of identical source darkness in the same library render at 0.05-0.13.
+    //
+    // The source reading cannot be contaminated that way, so it acts as a
+    // floor. The render still gets to say a frame is dark when the source
+    // does not.
+    const double darkFrameScore = std::max(
+        shotValid ? sceneDarkScore(shotMid, shot.lumaShadowFraction)
+                  : (features.scene == AutoGradeScene::Night ? 1.0 : 0.0),
+        sourceDarkness);
+    // 0.45 sat above the p75 of what real frames actually render at, so as a
+    // target for the MEDIAN it was a standing instruction to brighten.
+    //
+    // The dark-frame allowance was 0.14, putting a night scene's target at
+    // 0.28. A night frame carried to 0.28 stops being a night frame — and it
+    // is the target that decides both how hard the lift pushes and, through
+    // midAllowance, how much authority the highlight veto gets.
+    //
+    // 0.28 here puts the floor at 0.14, which is where this library actually
+    // renders its darkest material: frames with a source median of 0.008-0.023
+    // come out at 0.016-0.132 on every path that is working. The ones landing
+    // at 0.20 were the outliers, and they are the ones that read as lifted.
+    const double midTarget = 0.42 - 0.28 * darkFrameScore;
 
     double predictedP10 = shot.chanP10;
     double predictedMid = shot.chanMid;
@@ -934,31 +1319,64 @@ void applySteepAutoEdit(
         // meter owns the exposure and this may only trim it. The wide old
         // range survives solely for frames with no metering at all, where
         // there is nothing better to go on.
+        // The asymmetry is deliberate, but it used to be the wrong asymmetry.
+        // Both ends were held to 0.20EV, which meant a frame the meter had
+        // put a full stop too high could be walked back by a fifth of one —
+        // the pipeline could brighten and could not darken. Trusting the
+        // meter upward is the point; distrusting it downward costs nothing,
+        // because a frame this stage wants to darken is a frame that measured
+        // too bright ON ITS OWN RENDER, which is the most direct evidence
+        // available anywhere in Auto Edit.
         const double chimpCeiling = measuredExposure ? 0.20 : 0.75;
-        const double chimpFloor = measuredExposure ? -0.20 : -0.50;
+        const double chimpFloor = measuredExposure ? -0.75 : -0.75;
 
         // A metered frame that already lands near a print mid tone does not
         // need nudging at all. Firing on every small gap is what made this a
         // second exposure decision rather than a correction to the first.
-        const double deadband = measuredExposure ? 0.08 : 0.0;
+        //
+        // One deadband, not two. The bright side used to carry 0.10 on top of
+        // a midTarget of 0.45, so nothing happened at all until the rendered
+        // median passed 0.55 — visibly bright, and still silent.
+        //
+        // And it is a SHARE of the target, not an absolute distance. A flat
+        // 0.06 is ±14% at a target of 0.42 and ±43% at a target of 0.14, so
+        // the darker the frame the wider its dead zone — precisely backwards.
+        // A night frame rendering at 0.198 against a target of 0.14 wanted
+        // half a stop of correction and got nothing, because 0.198 fell two
+        // thousandths short of the flat trigger.
+        const double deadband = measuredExposure ? kMidDeadbandShare * midTarget : 0.0;
 
         // How much room the TOP of the frame has left, in stops. p90 is far
         // too deep in the distribution to answer that: it stays under 0.90 —
         // and so leaves `headroom` at a full 1.0 — on frames whose brightest
         // tones are already against the ceiling. Ask the brightest tones.
-        hiRoomEv = 2.2 * std::log2(kWhiteTarget / std::max(shot.chanHi, 0.05));
+        hiRoomEv = kDisplayGamma * std::log2(kWhiteTarget / std::max(shot.chanHi, 0.05));
 
         if (shotMid < midTarget - deadband) {
             // Display ratio into stops: display ≈ linear^(1/2.2).
-            const double evNeed = 2.2 * std::log2(midTarget / std::max(0.06, shotMid));
+            const double evNeed = kDisplayGamma * std::log2(midTarget / std::max(0.06, shotMid));
             const double headroom = unit((0.90 - shotP90) / 0.20);
             // Wanting a brighter mid tone is not permission to put the
-            // highlights into the clip. Whichever runs out first wins.
-            evAdd = std::min({chimpCeiling, evNeed * 0.45, std::max(0.0, hiRoomEv)})
+            // highlights into the clip — nor to spend the last of the room at
+            // the top, which is what taking all of hiRoomEv amounted to.
+            // Whichever runs out first wins.
+            evAdd = std::min({chimpCeiling,
+                              evNeed * 0.45,
+                              std::max(0.0, hiRoomEv) * kLiftHeadroomShare})
                 * headroom * (1.0 - 0.75 * protection);
-        } else if (shotMid > midTarget + 0.10) {
+        } else if (shotMid > midTarget + deadband) {
+            // Measured from the TARGET, exactly as the lift above is.
+            //
+            // This used to measure from the deadband EDGE — `shotMid /
+            // (midTarget + deadband)` — while the lift measured the full gap
+            // to the target itself. The two sides therefore took the same 45%
+            // of two different quantities, and near the edge the darkening
+            // side collapsed: a frame sitting at 0.203 against a target of
+            // 0.14 asked for 0.53EV of correction and, measured from the
+            // edge, received 0.02EV. The deadband decides WHETHER to act; it
+            // has no business also deciding how much.
             evAdd = std::max(chimpFloor,
-                             -2.2 * std::log2(shotMid / (midTarget + 0.10)) * 0.40);
+                             -kDisplayGamma * std::log2(shotMid / midTarget) * 0.45);
         }
 
         // A frame that is already welded to the ceiling has to come down
@@ -966,18 +1384,98 @@ void applySteepAutoEdit(
         // tone test cannot see, because burning out the top barely moves the
         // median. Metering exposes to the right and the chimp only ever
         // pushed further; nothing before this could give exposure back.
-        const double clipExcess = shot.clipHigh - kClipTolerance;
+        //
+        // Both halves of this now read a probe with a stop of headroom in it,
+        // so both are saying something they could not say before: clipHigh is
+        // the share that will be at or above white at the committed exposure
+        // rather than the share already welded to code 255, and hiRoomEv goes
+        // properly negative instead of bottoming out around -0.05 because
+        // chanHi could never exceed 1.0.
+        //
+        // What it may spend is exactly what the picture can afford: the
+        // distance the median sits above where it was aimed. A frame whose
+        // median is already at or below its target has nothing to give — its
+        // bright areas are the scene, not an exposure error, and a stop taken
+        // out of it to protect 3% of its samples trades the subject for the
+        // window behind them. On such a frame the veto can still cancel a
+        // lift, which is its original job; it just cannot go further and
+        // darken.
+        //
+        // A frame that IS too bright, meanwhile, gets the whole gap rather
+        // than the 45% the mid-tone branch takes: being too bright and
+        // clipping at once is two pieces of evidence, not one.
+        const double midSlackEv = shotMid > midTarget
+            ? kDisplayGamma * std::log2(shotMid / midTarget)
+            : 0.0;
+
+        // Mid-tone slack alone is not enough, because it is zero the moment
+        // the median lands ON its target — and a frame can be perfectly
+        // placed in the mids and still be over-exposed. One came through at
+        // median 0.412 against a target of 0.420, with 3.2% of its channel
+        // samples above white and NONE of them blown in the source: slack
+        // zero, authority zero, and a visibly hot frame committed untouched.
+        //
+        // Clipping this pipeline put there is an exposure error in its own
+        // right. Authority for it scales with how much was blown, gated by
+        // whether the mid tone can afford to pay:
+        //
+        //   - over 141 frame analyses addedClip has p50 0.004 and p90 0.032,
+        //     so a specular highlight buys almost nothing and only a frame in
+        //     the top decile of blown-ness reaches the full allowance;
+        //   - the mid-tone gate is what keeps this off high dynamic range
+        //     frames. A dark subject in front of a bright window sits at
+        //     0.50-0.60 of its target and pays nothing, which is correct:
+        //     darkening it would trade the subject for the window. A frame at
+        //     0.98 of target pays in full.
+        //
+        // Together those reach 4 frames in 141 — the ones that are exposed
+        // right in the mids and blown on top, which is exactly the class this
+        // was missing.
+        const double addedClip = std::max(0.0, shot.clipHigh - highTolerance);
+        const double midAllowance =
+            unit((shotMid / std::max(1e-6, midTarget) - 0.85) / 0.15);
+        const double clipAuthority = kMaxClipGiveback * midAllowance
+            * unit(addedClip / kFullClipAuthorityShare);
+
+        // The third source of authority: whatever the giveback held back.
+        //
+        // That hold is a guess made BEFORE anything was rendered — it protects
+        // a dark or compression-reliant frame from losing exposure it might
+        // need. Once the frame has been rendered the guess can be checked, and
+        // if the frame turns out to be over white anyway then the exposure the
+        // hold was protecting was never needed. Release exactly that much, and
+        // no more than the frame is actually over by.
+        //
+        // This is what reaches the case both other terms miss: dark in the
+        // mids AND over the top, where mid slack is zero and midAllowance
+        // gates the clip term to zero.
+        const double heldBackEv = std::max(0.0, overRangeEv - overRangeGiven);
+        const double releaseAuthority = hiRoomEv < 0.0
+            ? std::min(heldBackEv, -hiRoomEv)
+            : 0.0;
+
+        const double highlightAuthority = std::min(-chimpFloor,
+            std::max({midSlackEv, clipAuthority, releaseAuthority}));
+
+        const double clipExcess = addedClip;
         if (clipExcess > 0.0) {
-            const double recover = std::min(0.60, 2.2 * std::log2(
+            const double recover = std::min(highlightAuthority, kDisplayGamma * std::log2(
                 1.0 + clipExcess * kClipRecoveryGain));
             evAdd = std::min(evAdd, -recover);
         } else if (hiRoomEv < 0.0) {
-            evAdd = std::min(evAdd, std::max(-0.60, hiRoomEv));
+            evAdd = std::min(evAdd, std::max(-highlightAuthority, hiRoomEv));
         }
 
         if (std::abs(evAdd) > 0.01) {
-            tone.expcomp = std::max(-1.5, std::min(2.75, tone.expcomp + evAdd));
-            const double gain = std::pow(2.0, evAdd / 2.2);
+            // Predict from the move that was actually made, not the one that
+            // was wanted. When the ceiling bites — and after Phase 5 it bites
+            // on a real share of frames — those are different numbers, and
+            // every curve station below is placed against this prediction.
+            const double before = tone.expcomp;
+            tone.expcomp = std::max(kExposureFloor,
+                                    std::min(exposureCeiling, tone.expcomp + evAdd));
+            evAdd = tone.expcomp - before;
+            const double gain = displayGain(evAdd);
             predictedP10 = std::min(0.99, shot.chanP10 * gain);
             predictedMid = std::min(0.97, shot.chanMid * gain);
             predictedP90 = std::min(0.995, shot.chanP90 * gain);
@@ -993,7 +1491,7 @@ void applySteepAutoEdit(
     // used to re-read the neutral render's numbers, which describe a picture
     // that is roughly a stop and a half darker than the one being graded.
     if (shotValid) {
-        const double gain = std::pow(2.0, evAdd / 2.2);
+        const double gain = displayGain(evAdd);
         render.valid = true;
         render.mid = predictedLumaMid;
         render.p10 = predictedLumaP10;
@@ -1001,14 +1499,20 @@ void applySteepAutoEdit(
         render.p98 = std::min(0.999, shot.lumaP98 * gain);
         render.range = std::max(0.0, predictedLumaP90 - predictedLumaP10);
         // The shadow and highlight shares are counted on the rendered
-        // histogram, so they need no gain correction beyond the chimp's own
-        // trim; that trim is bounded to +/-0.20EV on a metered frame, which
-        // moves these by less than the bin width they were counted in.
+        // histogram at fixed thresholds, so a chimp move of any size leaves
+        // them describing the frame BEFORE that move. That used to be
+        // harmless because the move was bounded to 0.20EV, which is less than
+        // the bin width they were counted in; it can now reach 0.75EV, so a
+        // large move is one of the things that sends the frame to the
+        // verification pass below rather than something to shrug at here.
         render.shadowFraction = shot.lumaShadowFraction;
         render.highlightFraction = shot.lumaHighFraction;
         render.clippedFraction = shot.clipHigh;
         render.exposure = tone.expcomp;
-        render.gain = std::pow(2.0, tone.expcomp / 2.2);
+        render.gain = displayGain(tone.expcomp);
+        render.midTarget = midTarget;
+        render.exposureCeiling = exposureCeiling;
+        render.chimpMove = evAdd;
     }
 
     // The shadow lift genuinely needs the measurement, so it lands after it.
@@ -1072,7 +1576,7 @@ void applySteepAutoEdit(
     };
 
     // Fallback path only: approximate the exposure gain in display space.
-    const double expShift = std::pow(2.0, tone.expcomp / 2.2);
+    const double expShift = displayGain(tone.expcomp);
     const double displayMid = measured
         ? predictedLumaMid
         : unitInterval((features.valid ? features.medianLuma : 0.30) * expShift);
@@ -1391,6 +1895,10 @@ void applySteepAutoEdit(
         "[autoCurve]            skinFrac=%.3f centerSkin=%.3f skinSat=%.3f sky=%.3f foliage=%.3f\n"
         "[autoCurve]  protection=%.3f neutralFlatness=%.3f measuredExposure=%d\n"
         "[autoCurve]  exposure: expcomp=%.3f bright=%d contrast=%d hlcompr=%d shcompr=%d evAdd=%.3f\n"
+        "[autoCurve]  meter: metered=%.3f meteredHlcompr=%d overRange=%.3f given=%.3f residual=%.3f\n"
+        "[autoCurve]         ceiling=%.2f brightContent=%.3f sourceHlDemand=%d\n"
+        "[autoCurve]         sourceClip=%.4f highTolerance=%.4f addedClip=%.4f\n"
+        "[autoCurve]         reliance=%.3f srcDark=%.3f hold=%.3f noiseTrim=%.3f\n"
         "[autoCurve]  midTarget=%.2f darkFrame=%.3f shotValid=%d sh: hl=%d shadows=%d\n"
         "[autoCurve]  stations from channel: p10=%.3f mid=%.3f p90=%.3f\n"
         "[autoCurve]  picture from luma:     p10=%.3f mid=%.3f p90=%.3f range=%.3f\n"
@@ -1414,6 +1922,10 @@ void applySteepAutoEdit(
         features.skyFraction, features.foliageFraction,
         protection, neutralFlatness, measuredExposure ? 1 : 0,
         tone.expcomp, tone.brightness, tone.contrast, tone.hlcompr, tone.shcompr, evAdd,
+        meteredExpcomp, meteredHlcompr, overRangeEv, overRangeGiven, residualOverRangeEv,
+        exposureCeiling, brightContent, sourceHlcomprDemand,
+        sourceClip, highTolerance, std::max(0.0, shot.clipHigh - highTolerance),
+        hlcomprReliance, sourceDarkness, givebackHold, noiseRestraintEv,
         midTarget, darkFrameScore, shotValid ? 1 : 0, highlightRecovery, shadowLift,
         stationP10, stationMid, stationP90,
         predictedLumaP10, displayMid, displayP90, displayRange,
@@ -2063,6 +2575,152 @@ void harmonizeSteepGradeWithFilm(rtengine::procparams::ProcParams& params)
     vibrance.pastels = std::max(8, vibrance.pastels - 3);
 }
 
+// --- Verification -------------------------------------------------------
+//
+// Everything above measures a render taken BEFORE the look stages run, and
+// the look stages are not passive: the film path applies its own exposure
+// floor, its own print curve and its own contrast ceiling, and the grade
+// path lays a tone response on top of all of it. So the picture the exposure
+// decision was checked against is not the picture that gets made — which is
+// the same class of mistake as judging a look on a neutral render, one level
+// further down the pipeline.
+//
+// This asks the question once more, of the finished profile.
+//
+// It is bounded much harder than the chimp is. By this point three separate
+// stages have had their say and the frame has been measured twice; a large
+// disagreement here means something upstream is wrong and should be found and
+// fixed, not papered over at the last moment. What this is for is the last
+// third of a stop, and for catching a look stage that pushed a frame over
+// after the exposure stage had signed it off.
+constexpr double kVerifyFloor = -0.60;
+constexpr double kVerifyCeiling = 0.20;
+// (The verification pass's deadband is kVerifyDeadbandShare of the target —
+// same reasoning as the chimp's; see kMidDeadbandShare.)
+
+// A second 160px render on every frame is real money on a folder-wide Auto
+// Edit, and on most frames it would only confirm what is already known. Spend
+// it where the first pass says the answer is in doubt.
+bool exposureNeedsVerifying(const AutoEditRender& render)
+{
+    if (!render.valid) {
+        return false;
+    }
+
+    // The pass can only darken a frame whose finished median lands above its
+    // target, and the look stages move the median by well under the distance
+    // from here to there — so a frame already sitting clear of the target has
+    // nothing this pass can act on, and rendering it again just to be told so
+    // costs about 15ms of a folder-wide Auto Edit for nothing.
+    //
+    // "Clipped at all" was the first version of this clause and it fired on
+    // 84% of a real folder to change 8% of it: a single specular highlight
+    // was enough. It takes meaningful clipping now.
+    return render.mid > render.midTarget * (1.0 - kVerifyDeadbandShare)
+        || render.clippedFraction > 4.0 * kClipTolerance
+        || render.exposure >= render.exposureCeiling - 0.02
+        || std::abs(render.chimpMove) > 0.25;
+}
+
+void verifySteepAutoEditExposure(
+    Thumbnail& thumbnail,
+    const AutoGradeFeatures& features,
+    rtengine::procparams::ProcParams& params,
+    AutoEditRender& render)
+{
+    // Same reasoning as the chimp: highlights the source had already lost are
+    // not this pass's to buy back either.
+    const double highTolerance = std::max(
+        kClipTolerance, features.valid ? features.clippedFraction : 0.0);
+
+    CurveAnchors finished;
+
+    if (!measureCurveAnchors(thumbnail, params, finished, kProbeHeadroomEv, highTolerance)) {
+        fileBrowserPerfLog(
+            "[autoVerify] %s could not render the finished profile — exposure stands\n",
+            thumbnail.getFileName().c_str());
+        return;
+    }
+
+    double evAdd = 0.0;
+
+    const double verifyDeadband = kVerifyDeadbandShare * render.midTarget;
+
+    if (finished.lumaMid > render.midTarget + verifyDeadband) {
+        // From the target, not the deadband edge — same correction as the
+        // chimp's; see the comment there.
+        evAdd = std::max(kVerifyFloor,
+                         -kDisplayGamma * std::log2(
+                             finished.lumaMid / render.midTarget) * 0.45);
+    } else if (finished.lumaMid < render.midTarget - verifyDeadband) {
+        evAdd = std::min(kVerifyCeiling,
+                         kDisplayGamma * std::log2(
+                             render.midTarget / std::max(0.06, finished.lumaMid)) * 0.45);
+    }
+
+    // Whatever the mid tone wants, the top has the veto — in one direction
+    // only. A frame that is over white comes down; a frame that is dark does
+    // not get to go up past the point where it would be.
+    const double hiRoomEv = kDisplayGamma * std::log2(
+        kWhiteTarget / std::max(finished.chanHi, 0.05));
+
+    // Bounded by what the mid tone can afford plus what we actually blew, on
+    // the same terms as the chimp — see the long comment there. This pass runs
+    // on high dynamic range scenes too, and on those the highlights are the
+    // part of the picture that was always going to go.
+    const double midSlackEv = finished.lumaMid > render.midTarget
+        ? kDisplayGamma * std::log2(finished.lumaMid / render.midTarget)
+        : 0.0;
+    const double addedClip = std::max(0.0, finished.clipHigh - highTolerance);
+    const double clipExcess = addedClip;
+    const double midAllowance = std::max(0.0, std::min(1.0,
+        (finished.lumaMid / std::max(1e-6, render.midTarget) - 0.85) / 0.15));
+    const double clipAuthority = kMaxClipGiveback * midAllowance
+        * std::max(0.0, std::min(1.0, addedClip / kFullClipAuthorityShare));
+    const double highlightAuthority =
+        std::min(-kVerifyFloor, std::max(midSlackEv, clipAuthority));
+
+    if (clipExcess > 0.0) {
+        const double recover = std::min(highlightAuthority, kDisplayGamma * std::log2(
+            1.0 + clipExcess * kClipRecoveryGain));
+        evAdd = std::min(evAdd, -recover);
+    } else if (hiRoomEv < 0.0) {
+        evAdd = std::min(evAdd, std::max(-highlightAuthority, hiRoomEv));
+    } else {
+        // Same rule as the chimp: a lift may spend part of the room at the
+        // top, never all of it.
+        evAdd = std::min(evAdd, hiRoomEv * kLiftHeadroomShare);
+    }
+
+    const double before = params.toneCurve.expcomp;
+
+    if (std::abs(evAdd) > 0.01) {
+        params.toneCurve.expcomp = std::max(
+            kExposureFloor, std::min(render.exposureCeiling, before + evAdd));
+    }
+
+    const double applied = params.toneCurve.expcomp - before;
+    const double gain = displayGain(applied);
+
+    render.mid = std::min(0.97, finished.lumaMid * gain);
+    render.p10 = std::min(0.99, finished.lumaP10 * gain);
+    render.p90 = std::min(0.995, finished.lumaP90 * gain);
+    render.p98 = std::min(0.999, finished.lumaP98 * gain);
+    render.range = std::max(0.0, render.p90 - render.p10);
+    render.shadowFraction = finished.lumaShadowFraction;
+    render.highlightFraction = finished.lumaHighFraction;
+    render.clippedFraction = finished.clipHigh;
+    render.exposure = params.toneCurve.expcomp;
+    render.gain = displayGain(params.toneCurve.expcomp);
+
+    fileBrowserPerfLog(
+        "[autoVerify] %s finishedMid=%.3f target=%.3f chanHi=%.3f clipHigh=%.4f "
+        "hiRoomEv=%.3f tol=%.4f wanted=%.3f applied=%.3f expcomp %.3f -> %.3f\n",
+        thumbnail.getFileName().c_str(),
+        finished.lumaMid, render.midTarget, finished.chanHi, finished.clipHigh,
+        hiRoomEv, highTolerance, evAdd, applied, before, params.toneCurve.expcomp);
+}
+
 AutoGradeFeatures buildSteepAutoEditParamsInternal(
     Thumbnail& thumbnail,
     AutoEditMode mode,
@@ -2122,6 +2780,20 @@ AutoGradeFeatures buildSteepAutoEditParamsInternal(
         harmonizeSteepGradeWithFilm(result);
     }
 
+    // Last word, on the finished profile — see verifySteepAutoEditExposure.
+    // The Neutral mode has no look stage, so the picture it was measured on
+    // is already the picture that ships and there is nothing left to check.
+    if (mode != AutoEditMode::Neutral && exposureNeedsVerifying(render)) {
+        verifySteepAutoEditExposure(thumbnail, features, result, render);
+    } else if (render.valid) {
+        fileBrowserPerfLog(
+            "[autoVerify] %s skipped mode=%s mid=%.3f target=%.3f clipHigh=%.4f "
+            "expcomp=%.3f ceiling=%.2f chimpMove=%.3f\n",
+            thumbnail.getFileName().c_str(), autoEditModeName(mode),
+            render.mid, render.midTarget, render.clippedFraction,
+            render.exposure, render.exposureCeiling, render.chimpMove);
+    }
+
     return features;
 }
 
@@ -2143,4 +2815,121 @@ void buildSteepAutoEditParams(
     rtengine::procparams::ProcParams& result)
 {
     buildSteepAutoEditParamsInternal(thumbnail, mode, source, result);
+}
+
+// --- Self test ----------------------------------------------------------
+//
+// Auto Edit's decisions have twice been wrong for a reason that was invisible
+// from the outside: an input pinned at a rail, a measurement taken of the
+// wrong render. Both were only ever caught by counting over a real library,
+// and until now counting meant opening the browser, right-clicking a folder
+// and reading a log afterwards.
+//
+//     set STEEP_FILESEL_LOG=1
+//     set STEEP_AUTOEDIT_SELFTEST=D:\Media\Photos\March 2025\DSCF8248.RAF
+//     steep.exe
+//
+// Several frames may be given, separated by ';'. STEEP_AUTOEDIT_SELFTEST_MODE
+// picks the pipeline (neutral | grade | film | graded, default graded), and
+// STEEP_AUTOEDIT_SELFTEST_QUIT=1 exits once the run finishes, which is what
+// makes this usable from a script.
+//
+// Everything it does goes through exactly the same entry point the browser's
+// menu item uses, so there is no second implementation to drift.
+void runSteepAutoEditSelfTest()
+{
+    const char* const targets = g_getenv("STEEP_AUTOEDIT_SELFTEST");
+
+    if (!targets || !*targets) {
+        return;
+    }
+
+    const char* const modeName = g_getenv("STEEP_AUTOEDIT_SELFTEST_MODE");
+    SteepAutoEditMode mode = SteepAutoEditMode::GradedFilm;
+
+    if (modeName) {
+        const Glib::ustring requested(modeName);
+
+        if (requested == "neutral") {
+            mode = SteepAutoEditMode::Neutral;
+        } else if (requested == "grade") {
+            mode = SteepAutoEditMode::Grade;
+        } else if (requested == "film") {
+            mode = SteepAutoEditMode::GradeFilm;
+        } else if (requested != "graded") {
+            std::fprintf(stderr, "steep: unknown STEEP_AUTOEDIT_SELFTEST_MODE '%s'\n", modeName);
+        }
+    }
+
+    fileBrowserPerfLog("[autoSelfTest] ==== begin mode=%s ====\n", autoEditModeName(mode));
+
+    // Split on ';', not on the platform path separator: a Windows path
+    // carries a drive letter and would be cut in half by ':'.
+    std::vector<Glib::ustring> frames;
+    {
+        const Glib::ustring list(targets);
+        Glib::ustring::size_type start = 0;
+
+        for (;;) {
+            const Glib::ustring::size_type end = list.find(';', start);
+            const Glib::ustring piece = end == Glib::ustring::npos
+                ? list.substr(start)
+                : list.substr(start, end - start);
+
+            if (!piece.empty()) {
+                frames.push_back(piece);
+            }
+
+            if (end == Glib::ustring::npos) {
+                break;
+            }
+
+            start = end + 1;
+        }
+    }
+
+    for (const auto& trimmed : frames) {
+        Thumbnail* const thumbnail = cacheMgr->getEntry(trimmed);
+
+        if (!thumbnail) {
+            std::fprintf(stderr, "steep: self test could not open %s\n", trimmed.c_str());
+            fileBrowserPerfLog("[autoSelfTest] MISSING %s\n", trimmed.c_str());
+            continue;
+        }
+
+        try {
+            rtengine::procparams::ProcParams source;
+            source.setDefaults();
+            rtengine::procparams::ProcParams result;
+            const AutoGradeFeatures features =
+                buildSteepAutoEditParamsFeatures(*thumbnail, mode, source, result);
+
+            // One line per frame, so a run over a folder can be diffed
+            // directly without parsing the block trace above it.
+            fileBrowserPerfLog(
+                "[autoSelfTest] %s scene=%s expcomp=%.3f bright=%d contrast=%d "
+                "hlcompr=%d shcompr=%d black=%d shHighlights=%d shShadows=%d\n",
+                trimmed.c_str(), autoGradeSceneName(features.scene),
+                result.toneCurve.expcomp, result.toneCurve.brightness,
+                result.toneCurve.contrast, result.toneCurve.hlcompr,
+                result.toneCurve.shcompr, result.toneCurve.black,
+                result.sh.highlights, result.sh.shadows);
+            std::printf("steep self test: %s expcomp=%+.3f hlcompr=%d contrast=%d scene=%s\n",
+                        thumbnail->getFileName().c_str(),
+                        result.toneCurve.expcomp, result.toneCurve.hlcompr,
+                        result.toneCurve.contrast, autoGradeSceneName(features.scene));
+            std::fflush(stdout);
+        } catch (...) {
+            std::fprintf(stderr, "steep: self test failed on %s\n", trimmed.c_str());
+            fileBrowserPerfLog("[autoSelfTest] FAILED %s\n", trimmed.c_str());
+        }
+
+        thumbnail->decreaseRef();   // balance the ref cacheMgr->getEntry took
+    }
+
+    fileBrowserPerfLog("[autoSelfTest] ==== end ====\n");
+
+    if (g_getenv("STEEP_AUTOEDIT_SELFTEST_QUIT")) {
+        std::exit(0);
+    }
 }

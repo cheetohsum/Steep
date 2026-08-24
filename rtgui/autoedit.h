@@ -125,9 +125,17 @@ struct AutoEditRender {
     double range = 0.50;             // p90 - p10
     double shadowFraction = 0.0;     // share of luma below 0.16
     double highlightFraction = 0.0;  // share of luma above 0.84
-    double clippedFraction = 0.0;    // channel samples pinned at the ceiling
+    double clippedFraction = 0.0;    // channel samples at or above white
     double exposure = 0.0;           // EV the tonal stage committed
     double gain = 1.0;               // that exposure as a display-space multiplier
+
+    // Where the tonal stage was aiming the median, and the most it was
+    // allowed to expose. The verification pass needs both: it re-asks the
+    // same question of the finished picture, and it must not answer it
+    // differently just because the look stage ran in between.
+    double midTarget = 0.42;
+    double exposureCeiling = 2.75;
+    double chimpMove = 0.0;          // EV the render-space correction applied
 };
 
 // Reads the picture with a neutral profile and describes it. Also used by
@@ -137,6 +145,12 @@ AutoGradeFeatures analyzeSteepAutoGrade(Thumbnail& thumbnail);
 const char* autoGradeSceneName(AutoGradeScene scene);
 const char* autoEditModeLabel(SteepAutoEditMode mode);
 const char* autoEditModeName(SteepAutoEditMode mode);
+
+// Runs Auto Edit over named frames at startup and traces every decision, so a
+// change to the tonal rules can be checked against real photographs without
+// driving the browser by hand. Does nothing unless STEEP_AUTOEDIT_SELFTEST is
+// set; see the definition for the variables it reads.
+void runSteepAutoEditSelfTest();
 
 // Produces the same scene-analyzed profile used by the file-browser Auto Edit
 // actions while preserving the source image's framing and alignment.
