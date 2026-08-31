@@ -208,6 +208,49 @@ option(
     "Enable AI-powered auto masking (requires ONNX Runtime)"
     ${WITH_AI_MASKING_DEFAULT}
 )
+
+# The inpainting model behind Remove Object is ~200 MB, which is too large to
+# keep in git -- so it is fetched at configure time instead. Point
+# AI_INPAINT_MODEL_URL at a download and the model lands in rtdata/models and
+# is packaged like any other; leave it empty and the build behaves exactly as
+# it always has, with Remove Object reporting the model as missing at runtime.
+# An existing file is never re-downloaded, so local copies are left alone.
+set(AI_INPAINT_MODEL_URL ""
+    CACHE STRING "URL to fetch the AI inpainting model (lama_inpainting.onnx) from")
+set(AI_INPAINT_MODEL_SHA256 ""
+    CACHE STRING "Expected SHA256 of the AI inpainting model, verified after download")
+
+set(AI_INPAINT_MODEL_PATH "${CMAKE_SOURCE_DIR}/rtdata/models/lama_inpainting.onnx")
+
+if(WITH_AI_MASKING AND AI_INPAINT_MODEL_URL AND NOT EXISTS "${AI_INPAINT_MODEL_PATH}")
+    message(STATUS "Fetching the AI inpainting model (this is a large one-time download)")
+
+    if(AI_INPAINT_MODEL_SHA256)
+        file(DOWNLOAD "${AI_INPAINT_MODEL_URL}" "${AI_INPAINT_MODEL_PATH}"
+            EXPECTED_HASH "SHA256=${AI_INPAINT_MODEL_SHA256}"
+            STATUS AI_INPAINT_DOWNLOAD_STATUS
+            SHOW_PROGRESS)
+    else()
+        file(DOWNLOAD "${AI_INPAINT_MODEL_URL}" "${AI_INPAINT_MODEL_PATH}"
+            STATUS AI_INPAINT_DOWNLOAD_STATUS
+            SHOW_PROGRESS)
+    endif()
+
+    list(GET AI_INPAINT_DOWNLOAD_STATUS 0 AI_INPAINT_DOWNLOAD_CODE)
+
+    if(NOT AI_INPAINT_DOWNLOAD_CODE EQUAL 0)
+        list(GET AI_INPAINT_DOWNLOAD_STATUS 1 AI_INPAINT_DOWNLOAD_MESSAGE)
+        # Leave no truncated file behind: the packaging steps below only test
+        # for existence, and half a model would ship as though it were whole.
+        file(REMOVE "${AI_INPAINT_MODEL_PATH}")
+        message(WARNING
+            "Could not fetch the AI inpainting model: ${AI_INPAINT_DOWNLOAD_MESSAGE}. "
+            "The build continues without it, and Remove Object will report the "
+            "model as missing.")
+    else()
+        message(STATUS "AI inpainting model saved to ${AI_INPAINT_MODEL_PATH}")
+    endif()
+endif()
 option(
     STRICT_MUTEX
     "True (recommended): MyMutex will behave like POSIX Mutex; False: MyMutex will behave like POSIX RecMutex; Note: forced to ON for Debug builds"

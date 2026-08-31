@@ -76,7 +76,7 @@ The Windows installer recognises an existing copy of Steep and updates it in pla
 
 **Smart masks.** Instead of tracing a selection, click what you want and a mask of it is built for you. There's also a lasso that clings to nearby edges as you draw, so a rough outline is usually enough. These feed the existing local-adjustment tools, so anything you can do to a whole photo you can do to just the subject, or just the sky.
 
-**AI denoise.** Denoising through RawRefinery, with an ISO control, a blend slider to dial back how much of the cleaned result you keep, optional GPU acceleration, and results cached per ISO so re-running is quick. It works in the background and can be cancelled.
+**AI denoise.** Machine-learning denoising with an ISO control, a blend slider to dial back how much of the cleaned result you keep, optional GPU acceleration, and results cached per ISO so re-running is quick. It works in the background and can be cancelled. The model ships with Steep and inference runs inside the app, so there is nothing to install. If you already use RawRefinery, Steep will pick up its model too rather than making you keep a second copy.
 
 **Auto Edit.** Right-click photos in the browser and Steep grades them for you — exposure, white balance, and a film stock chosen to suit the picture. There's a neutral variant if you want the correction without the look.
 
@@ -170,11 +170,22 @@ Replace `PORT` with the number the dialog shows.
 | Themes | Working |
 | MCP server | Working |
 | Auto Edit | Working |
-| Smart masks (AI selection, lasso) | Working — needs the optional AI masking build |
-| Smart Tools — Remove Object | Working — needs the inpainting model |
+| Smart masks (AI selection, lasso) | Working |
+| AI denoise | Working |
+| Smart Tools — Remove Object | Working, but see the note below |
 | Smart Tools — Dust, Reflections, Generative Fill | In progress |
-| AI denoise | Working — needs RawRefinery installed separately |
 | Everything RawTherapee already did | Untouched |
+
+Smart masks and AI denoise are switched on in every download here — there is
+nothing extra to fetch or configure. They are only optional if you build it
+yourself, where AI masking is off by default on Linux and macOS unless you
+pass `-DWITH_AI_MASKING=ON`.
+
+Remove Object is the exception. Its model is around 200 MB, which is too big
+to keep in the repository, so whether a given download includes it depends on
+the build having been given somewhere to fetch it from. If it is missing the
+tool says so rather than failing quietly, and the rest of Steep is unaffected.
+See [Building from source](#building-from-source) for how to supply it.
 
 ---
 
@@ -186,7 +197,22 @@ The same as RawTherapee, plus a couple of optional extras.
 
 **Required:** CMake 3.15+, GCC 4.9+ or Clang, GTK+ 3 with gtkmm 3.24, libraw, lensfun, lcms2, libiptcdata, librsvg, libtiff, libjpeg, libpng, zlib, expat, fftw3, exiv2, and libjxl for JPEG-XL.
 
-**Optional:** ONNX Runtime 1.17+ for the AI masking and inpainting tools; Python 3 with RawRefinery for AI denoise.
+**Optional:** ONNX Runtime 1.17+, which turns on smart masks, Remove Object and
+AI denoise. On Windows a copy is included in the repository and these are on by
+default; on Linux and macOS, install it and add `-DWITH_AI_MASKING=ON`.
+
+The mask and denoise models are in the repository and get installed for you.
+The Remove Object model is not — at roughly 200 MB it does not belong in git —
+so point the build at a copy and it will fetch it once and package it like any
+other resource:
+
+```bash
+cmake .. -DWITH_AI_MASKING=ON -DAI_INPAINT_MODEL_URL=https://example.com/lama_inpainting.onnx
+```
+
+Add `-DAI_INPAINT_MODEL_SHA256=<hash>` to have the download verified. An
+existing `rtdata/models/lama_inpainting.onnx` is never re-downloaded, and if the
+URL is left out the build simply carries on without Remove Object.
 
 One note on exiv2: Steep builds against both the 0.27 and 0.28 series, which changed a good deal of their API in between. Either will work.
 
