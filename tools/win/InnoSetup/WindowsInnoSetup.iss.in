@@ -45,7 +45,12 @@
 AppId={{60BBE256-B960-4DA2-9FB7-A61AD3F47D84}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
-VersionInfoVersion={#MyAppVersionNumeric}
+; Left off deliberately. GIT_NUMERIC_VERSION_BS is only a version number
+; when git describe finds a tag; CI clones without tags, so it degrades to
+; "<hash>.<count>" (e.g. 35edaed0b.223) and ISCC rejects it outright:
+;   Value of [Setup] section directive "VersionInfoVersion" is invalid.
+; Nothing here needs it -- AppId alone is what makes updates work.
+;VersionInfoVersion={#MyAppVersionNumeric}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
