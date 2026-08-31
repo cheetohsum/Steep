@@ -42,7 +42,9 @@ namespace
 {
 
 // ADE20K class mapping to AISegClass (150 classes)
-// See: https://huggingface.co/nvidia/segformer-b0-finetuned-ade-512-512
+// Channel order is the standard ADE20K one (0=wall, 2=sky, 4=tree,
+// 12=person). Verified against the model actually shipped -- see
+// rtdata/models/README.md, which records how it was exported and checked.
 AISegClass adeToAIClass(int adeClass)
 {
     switch (adeClass) {

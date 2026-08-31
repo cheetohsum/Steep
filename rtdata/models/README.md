@@ -1,23 +1,43 @@
 # Bundled AI models
 
 Steep ships the models its AI tools need, so there is nothing for users to
-download or configure. They are third-party work, and each carries its own
-licence — see the note at the end, because one of them is a problem.
+download or configure. They are third-party work, and each is under a licence
+that permits redistribution inside a GPL-3.0 release.
 
 ## In this directory
 
-### `segformer_b0_ade20k.onnx` — 15 MB
+### `ade20k_mobilenetv2_c1.onnx` — 8 MB
 
 Semantic segmentation, used by the smart mask tools to work out what is in a
-photo. SegFormer-B0 trained on ADE20K.
+photo. MobileNetV2dilated encoder with a C1_deepsup head, trained on ADE20K's
+150 classes.
 
-- Upstream: NVIDIA's published weights,
-  <https://huggingface.co/nvidia/segformer-b0-finetuned-ade-512-512>, cited in
-  `rtengine/aisegmentation.cc`
-- Paper: *SegFormer: Simple and Efficient Design for Semantic Segmentation with
-  Transformers*, Xie et al., NeurIPS 2021
-- Licence: **NVIDIA Source Code License — non-commercial.** See
-  [UNRESOLVED: the SegFormer licence](#unresolved-the-segformer-licence).
+- Upstream: [CSAILVision/semantic-segmentation-pytorch](https://github.com/CSAILVision/semantic-segmentation-pytorch),
+  MIT CSAIL Computer Vision
+- Licence: BSD-3-Clause
+- Rebuild it with `tools/export_segmentation_model.py`, which downloads the
+  upstream weights, exports the ONNX, and re-runs the checks below
+
+Steep previously used NVIDIA's SegFormer-B0 here. That model is published under
+the NVIDIA Source Code License, which allows use "non-commercially, meaning for
+research or evaluation purposes only" — a restriction GPL-3.0 does not permit a
+distributed work to carry, so it could not be shipped. This model is trained on
+the same dataset with the same class order, so `adeToAIClass()` in
+`rtengine/aisegmentation.cc` needed no changes.
+
+Verified at export time, because a silent mismatch here would mask the wrong
+things rather than fail:
+
+- the exported graph agrees with the source PyTorch model to 2.6e-05
+- dynamic input sizes work, output is input/8 per side
+- channel 0 is wall, 2 is sky, 4 is tree, 12 is person — the four
+  `adeToAIClass()` keys off
+
+One visible trade-off: SegFormer emitted masks at a quarter of the input
+resolution and this emits an eighth, so raw masks are coarser before the edge
+refinement step. It also scores a little lower on ADE20K (34.8 mIoU against
+37.4). The upstream repo has heavier variants, HRNetV2 among them at 43.2, if
+that turns out to matter more than the speed.
 
 Installed with `-DWITH_AI_MASKING=ON`, which is the default on Windows and is
 set explicitly by all three CI workflows.
@@ -68,34 +88,13 @@ the model.
 
 ## A note on licences
 
-LaMa (Apache 2.0) and RawRefinery (MIT) are both fine. Their terms can be
-satisfied inside a GPL-3.0 work, so redistributing those two with Steep is
-allowed. Both require that the original copyright and attribution notices
-survive, which is part of what this file is for.
+All three models are under licences whose terms can be satisfied inside a
+GPL-3.0 work: BSD-3-Clause, MIT and Apache 2.0. Each requires the original
+copyright and attribution notices to survive, which is part of what this file
+is for.
 
-### UNRESOLVED: the SegFormer licence
-
-The SegFormer weights are the exception, and shipping them looks like a genuine
-conflict rather than a technicality.
-
-NVIDIA releases SegFormer under the NVIDIA Source Code License, which says the
-work "may be used non-commercially, meaning for research or evaluation purposes
-only". GPL-3.0 does not allow a distributed work to carry extra restrictions of
-that kind, so a GPL-3.0 release that contains these weights cannot honour both
-licences at once. Anyone using Steep commercially would also be outside
-NVIDIA's terms, whatever our own licence says.
-
-Ways out, roughly in order of least disruption:
-
-1. **Swap the model.** Any reasonably capable segmentation network under a
-   permissive licence would do, and the tool does not depend on SegFormer
-   specifically. Steep used DeepLabV3-MobileNetV3 (BSD-3-Clause, via
-   torchvision) before this, which is one ready answer.
-2. **Stop shipping it.** Treat it the way the inpainting model is treated:
-   fetched only if someone points the build at a copy, so the released binary
-   carries nothing awkward.
-3. **Licence it.** NVIDIA takes commercial enquiries for SegFormer.
-
-Until one of those happens, this is a known issue rather than a settled
-arrangement, and it should not be described as resolved anywhere else in the
-documentation.
+If you swap a model, check that direction of compatibility before shipping it.
+The trap is not obscure: NVIDIA's SegFormer weights sat here for a while and
+are non-commercial, which GPL-3.0 cannot carry. A permissive-sounding project
+licence does not always cover the published weights, so read the terms attached
+to the weights themselves.

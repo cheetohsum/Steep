@@ -128,7 +128,7 @@ int init (const Settings* s, const Glib::ustring& baseDir, const Glib::ustring& 
 
 #ifdef RT_AI_MASKING
     {
-        const Glib::ustring modelPath = Glib::build_filename(baseDir, "models", "segformer_b0_ade20k.onnx");
+        const Glib::ustring modelPath = Glib::build_filename(baseDir, "models", "ade20k_mobilenetv2_c1.onnx");
         fprintf(stderr, "AI Masking: Looking for model at: %s\n", modelPath.c_str());
         if (Glib::file_test(modelPath, Glib::FILE_TEST_EXISTS)) {
             fprintf(stderr, "AI Masking: Model file found, initializing...\n");

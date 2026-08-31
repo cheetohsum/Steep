@@ -281,7 +281,7 @@ set_target_properties(rth-cli PROPERTIES OUTPUT_NAME steep-cli)
 
 if(WIN32 AND WITH_AI_MASKING)
     set(AI_MASK_MODEL
-        "${PROJECT_SOURCE_DIR}/rtdata/models/segformer_b0_ade20k.onnx")
+        "${PROJECT_SOURCE_DIR}/rtdata/models/ade20k_mobilenetv2_c1.onnx")
     set(AI_INPAINT_MODEL
         "${PROJECT_SOURCE_DIR}/rtdata/models/lama_inpainting.onnx")
     add_custom_command(
@@ -290,12 +290,12 @@ if(WIN32 AND WITH_AI_MASKING)
             "$<TARGET_FILE_DIR:rth>/models"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${AI_MASK_MODEL}"
-            "$<TARGET_FILE_DIR:rth>/models/segformer_b0_ade20k.onnx"
+            "$<TARGET_FILE_DIR:rth>/models/ade20k_mobilenetv2_c1.onnx"
         COMMAND ${CMAKE_COMMAND} -E make_directory
             "${BUNDLE_BASE_INSTALL_DIR}/models"
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             "${AI_MASK_MODEL}"
-            "${BUNDLE_BASE_INSTALL_DIR}/models/segformer_b0_ade20k.onnx"
+            "${BUNDLE_BASE_INSTALL_DIR}/models/ade20k_mobilenetv2_c1.onnx"
         COMMENT "Bundling the AI masking model"
     )
     if(EXISTS "${AI_INPAINT_MODEL}")
