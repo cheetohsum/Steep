@@ -811,6 +811,15 @@ public:
 
 };
 
+// The project builds as C++14, where a static constexpr member still needs a
+// definition once it is odr-used -- and binding it to a reference counts, which
+// is exactly what std::min and std::max do with these. Release links anyway
+// because the optimiser folds the constant in and never emits a load; Debug
+// does not, so the Debug half of the CI matrix failed to link without these.
+constexpr int ThumbImageUpdater::Impl::kMaxConcurrentBackgroundJpegJobs;
+constexpr int ThumbImageUpdater::Impl::kForegroundWorkerReserve;
+constexpr int ThumbImageUpdater::Impl::kPausedVisibleWorkers;
+
 ThumbImageUpdater*
 ThumbImageUpdater::getInstance()
 {

@@ -409,6 +409,13 @@ private:
     }
 };
 
+// Needed in C++14: std::max binds these to a reference, which odr-uses them.
+// See the same note in rtgui/thumbimageupdater.cc.
+constexpr int DEThumbGrid::CELL_W;
+constexpr int DEThumbGrid::THUMB_H;
+constexpr int DEThumbGrid::TEXT_H;
+constexpr int DEThumbGrid::PAD;
+
 // ---------------------------------------------------------------------------
 // DEBlendPreview — aspect-fit display of the composited preview pixbuf.
 // ---------------------------------------------------------------------------
