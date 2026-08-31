@@ -39,8 +39,13 @@
 
 #if EXIV2_TEST_VERSION(0,28,0)
 using Exiv2Error = Exiv2::Error;
+// 0.28 dropped BasicIo::AutoPtr (a std::auto_ptr) for UniquePtr. This is the
+// only place in the tree that names the type, and it was the one Exiv2 0.28
+// spelling the port missed.
+using Exiv2BasicIoPtr = Exiv2::BasicIo::UniquePtr;
 #else
 using Exiv2Error = Exiv2::AnyError;
+using Exiv2BasicIoPtr = Exiv2::BasicIo::AutoPtr;
 #endif
 
 
@@ -110,7 +115,7 @@ std::unique_ptr<Exiv2::Image> open_raf_embedded_jpeg(const Glib::ustring& fname)
         return nullptr;
     }
 
-    Exiv2::BasicIo::AutoPtr io(new Exiv2::MemIo);
+    Exiv2BasicIoPtr io(new Exiv2::MemIo);
     io->write(jpeg.data(), static_cast<long>(jpeg.size()));
     io->seek(0, Exiv2::BasicIo::beg);
     auto image = Exiv2::ImageFactory::open(std::move(io));
