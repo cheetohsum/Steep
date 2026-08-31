@@ -39,7 +39,10 @@ function(rt_generate_about_command OUTPUT_VAR ENGINE_TARGET GUI_TARGET)
             -DLFLAGS:STRING=${LFLAGS}
             -DCOMPILER_INFO:STRING=${COMPILER_INFO}
             -DCMAKE_INSTALL_PREFIX:STRING="${CMAKE_INSTALL_PREFIX}"
-            -DBIT_DEPTH:STRING="${CMAKE_SIZEOF_VOID_P}")
+            -DBIT_DEPTH:STRING="${CMAKE_SIZEOF_VOID_P}"
+            # Reaches WindowsInnoSetup.iss.in, so the installer can offer to
+            # fetch the inpainting model when the build did not bake it in.
+            -DAI_INPAINT_MODEL_URL:STRING="${AI_INPAINT_MODEL_URL}")
     elseif(APPLE)
         set(
              ABOUT_COMMAND_WITH_ARGS

@@ -30,6 +30,16 @@
 #define MyBitDepth "${BUILD_BIT_DEPTH}"
 #define MyTargetArchitecture "${ARCHITECTURE_ALLOWED}"
 #define MyInstallMode "${INSTALL_MODE}"
+#define MyInpaintModelUrl "${AI_INPAINT_MODEL_URL}"
+; The Remove Object model is ~200 MB and is not kept in git. A build given
+; AI_INPAINT_MODEL_URL bakes it in, in which case it is already in [Files]
+; below and there is nothing to do here. Otherwise, and only if we have a URL
+; to offer, Setup can fetch it during installation.
+#if FileExists(AddBackslash(MyBuildBasePath) + "models\lama_inpainting.onnx")
+  #define InpaintModelBundled
+#elif MyInpaintModelUrl != ""
+  #define OfferInpaintDownload
+#endif
 #define MySystemName "${SYSTEM_NAME}"
 
 [Setup]
@@ -117,6 +127,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "quicklaunchicon"; Description: "{cm:CreateQuickLaunchIcon}"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked; OnlyBelowVersion: 0,6.1
 Name: regBrowseFolder; Description: "Add ""Browse with Steep"" option to context menu when right-clicking on a folder."; GroupDescription: File extensions:
 Name: regOpenFile; Description: "Add ""Open with Steep"" option to context menu when right-clicking on a file."; GroupDescription: File extensions:
+#ifdef OfferInpaintDownload
+Name: inpaintmodel; Description: "Download the Remove Object model now (about 200 MB)"; GroupDescription: "Smart Tools:"
+#endif
 
 [Files]
 Source: "{#MyBuildBasePath}\steep*.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -134,6 +147,11 @@ Source: "{#MyBuildBasePath}\profiles\*"; DestDir: "{app}\profiles\"; Flags: igno
 Source: "{#MyBuildBasePath}\sounds\*"; DestDir: "{app}\sounds\"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#MyBuildBasePath}\themes\*"; DestDir: "{app}\themes\"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#MyBuildBasePath}\models\*"; DestDir: "{app}\models\"; Flags: skipifsourcedoesntexist ignoreversion recursesubdirs createallsubdirs
+#ifdef OfferInpaintDownload
+; Downloaded into {tmp} by the wizard below; "external" means the compiler does
+; not look for it at build time.
+Source: "{tmp}\lama_inpainting.onnx"; DestDir: "{app}\models"; Flags: external skipifsourcedoesntexist ignoreversion; Tasks: inpaintmodel
+#endif
 Source: "{#MyBuildBasePath}\AboutThisBuild.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#MyBuildBasePath}\AUTHORS.txt"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#MyBuildBasePath}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
@@ -301,6 +319,51 @@ begin
     SetArrayLength(LegacyUninstallers, 0);
   end;
 end;
+
+#ifdef OfferInpaintDownload
+var
+  InpaintDownloadPage: TDownloadWizardPage;
+
+function OnInpaintDownloadProgress(const Url, FileName: String; const Progress, ProgressMax: Int64): Boolean;
+begin
+  Result := True;
+end;
+
+procedure InitializeWizard();
+begin
+  InpaintDownloadPage :=
+    CreateDownloadPage(SetupMessage(msgWizardPreparing),
+                       SetupMessage(msgPreparingDesc),
+                       @OnInpaintDownloadProgress);
+end;
+
+function NextButtonClick(CurPageID: Integer): Boolean;
+begin
+  Result := True;
+
+  if (CurPageID <> wpReady) or (not WizardIsTaskSelected('inpaintmodel')) then
+    exit;
+
+  InpaintDownloadPage.Clear;
+  InpaintDownloadPage.Add('{#MyInpaintModelUrl}', 'lama_inpainting.onnx', '');
+  InpaintDownloadPage.Show;
+  try
+    try
+      InpaintDownloadPage.Download;
+    except
+      // A failed download must not take the installation down with it: the
+      // rest of Steep works without this model, and Remove Object says so.
+      SuppressibleMsgBox(
+        'The Remove Object model could not be downloaded:' + #13#10#13#10 +
+        GetExceptionMessage + #13#10#13#10 +
+        'Setup will continue without it. Everything else is installed as normal.',
+        mbInformation, MB_OK, IDOK);
+    end;
+  finally
+    InpaintDownloadPage.Hide;
+  end;
+end;
+#endif
 
 procedure CurStepChanged(CurStep: TSetupStep);
 var

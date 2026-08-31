@@ -128,33 +128,50 @@ int init (const Settings* s, const Glib::ustring& baseDir, const Glib::ustring& 
 
 #ifdef RT_AI_MASKING
     {
-        const Glib::ustring modelPath = Glib::build_filename(baseDir, "models", "ade20k_mobilenetv2_c1.onnx");
-        fprintf(stderr, "AI Masking: Looking for model at: %s\n", modelPath.c_str());
-        if (Glib::file_test(modelPath, Glib::FILE_TEST_EXISTS)) {
-            fprintf(stderr, "AI Masking: Model file found, initializing...\n");
-            if (!getAISegmentationEngine().init(modelPath)) {
-                fprintf(stderr, "AI Masking: Failed to initialize segmentation engine\n");
-            } else {
-                fprintf(stderr, "AI Masking: Engine initialized successfully\n");
-            }
-        } else {
-            fprintf(stderr, "AI Masking: Model file NOT found at %s\n", modelPath.c_str());
-        }
-    }
+        // Look beside the application first, then in the user's own settings
+        // directory. The second is what makes a model that arrived after
+        // installation work at all: the install tree is read-only for a
+        // system-wide install, so anything downloaded later has nowhere else
+        // to go.
+        const auto findModel = [&](const char* fileName) -> Glib::ustring {
+            const Glib::ustring candidates[] = {
+                Glib::build_filename(baseDir, "models", fileName),
+                Glib::build_filename(userSettingsDir, "models", fileName),
+            };
 
-    // LaMa inpainting model
-    {
-        const Glib::ustring lamaPath = Glib::build_filename(baseDir, "models", "lama_inpainting.onnx");
-        fprintf(stderr, "AI Inpainting: Looking for model at: %s\n", lamaPath.c_str());
-        if (Glib::file_test(lamaPath, Glib::FILE_TEST_EXISTS)) {
-            fprintf(stderr, "AI Inpainting: Model file found, initializing...\n");
-            if (!getAIInpaintingEngine().init(lamaPath)) {
-                fprintf(stderr, "AI Inpainting: Failed to initialize inpainting engine\n");
-            } else {
-                fprintf(stderr, "AI Inpainting: Engine initialized successfully\n");
+            for (const auto& candidate : candidates) {
+                if (Glib::file_test(candidate, Glib::FILE_TEST_EXISTS)) {
+                    return candidate;
+                }
             }
-        } else {
-            fprintf(stderr, "AI Inpainting: Model file NOT found at %s\n", lamaPath.c_str());
+
+            return Glib::ustring();
+        };
+
+        {
+            const Glib::ustring modelPath = findModel("ade20k_mobilenetv2_c1.onnx");
+
+            if (modelPath.empty()) {
+                fprintf(stderr, "AI Masking: no segmentation model under %s or %s\n",
+                        baseDir.c_str(), userSettingsDir.c_str());
+            } else if (!getAISegmentationEngine().init(modelPath)) {
+                fprintf(stderr, "AI Masking: failed to initialise from %s\n", modelPath.c_str());
+            } else {
+                fprintf(stderr, "AI Masking: initialised from %s\n", modelPath.c_str());
+            }
+        }
+
+        {
+            const Glib::ustring lamaPath = findModel("lama_inpainting.onnx");
+
+            if (lamaPath.empty()) {
+                fprintf(stderr, "AI Inpainting: no model under %s or %s\n",
+                        baseDir.c_str(), userSettingsDir.c_str());
+            } else if (!getAIInpaintingEngine().init(lamaPath)) {
+                fprintf(stderr, "AI Inpainting: failed to initialise from %s\n", lamaPath.c_str());
+            } else {
+                fprintf(stderr, "AI Inpainting: initialised from %s\n", lamaPath.c_str());
+            }
         }
     }
 #endif
