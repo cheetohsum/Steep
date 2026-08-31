@@ -92,31 +92,8 @@ Glib::RefPtr<Gdk::Pixbuf> pixbufFromThumb(const Glib::ustring& path, int height,
     return partnerthumb::load(path, height, neutral);
 }
 
-// The tray chips need styling that no theme can be trusted to carry: the
-// four overlaid controls must be small enough to fit on a thumbnail, and
-// the selected chip needs a border an image cannot hide. Injected at
-// application priority so it works under any theme (adjuster.cc pattern).
-void ensureChipCss()
-{
-    static bool done = false;
-
-    if (done) {
-        return;
-    }
-
-    done = true;
-
-    try {
-        auto css = Gtk::CssProvider::create();
-        css->load_from_data(
-            "#DEChipControls button { padding: 0 3px; margin: 0; min-width: 10px; min-height: 14px; }"
-            "button.de-chip { padding: 1px; margin: 0; }"
-            "button.de-chip-selected { border: 2px solid #E8A33D; border-radius: 3px; padding: 0; }");
-        Gtk::StyleContext::add_provider_for_screen(Gdk::Screen::get_default(), css,
-                                                   GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-    } catch (...) {
-    }
-}
+// Tray chip styling (#DEChipControls, .de-chip) lives in
+// themes/common/widgets.css, above every theme.
 
 } // namespace
 
@@ -1430,8 +1407,6 @@ void DoubleExposureDlg::selectLayer(size_t index)
 
 void DoubleExposureDlg::rebuildTray()
 {
-    ensureChipCss();
-
     for (Gtk::Widget* child : trayBox_->get_children()) {
         trayBox_->remove(*child);
     }

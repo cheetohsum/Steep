@@ -140,23 +140,65 @@ LensProfilePanel::LensProfilePanel() :
 
     // Top-level mode radios:
 
-    modesGrid->attach(*corrLensfunAutoRB, 0, 0, 3, 1);
-    modesGrid->attach(*corrLensfunManualRB, 0, 1, 3, 1);
+    // Every source of a lens correction is listed here, always visible, so
+    // the choice is discoverable. Previously "From file metadata" and "LCP
+    // file" lived inside the indented sub-box, which only appeared after
+    // picking "Manually selected" — so from a fresh enable there was no way
+    // to see that they existed.
+    // "None" has to be on screen too. This tool runs in flat mode, which
+    // hides the expander header — and with it the enable checkbox that used
+    // to serve as the off switch. Without a visible "None" there was no way
+    // to turn the correction off, and (worse) a photo with no correction
+    // loaded as "disabled", which hid every option and left the tool blank.
+    Gtk::Label* sourceHeader = Gtk::manage(new Gtk::Label());
+    sourceHeader->set_markup(Glib::ustring("<b>") + M("TP_LENSPROFILE_SOURCE_HEADER") + "</b>");
+    sourceHeader->set_halign(Gtk::ALIGN_START);
+    sourceHeader->set_margin_bottom(2);
 
-    // Manual sub-options (shown when Manually selected or any sub-option is active):
+    // Sits beside the header: whether a photo that carries no correction
+    // (or a manual one from before the lens database was available) should
+    // be put on automatic matching when it opens.
+    defaultAutoChk = Gtk::manage(new Gtk::CheckButton(M("TP_LENSPROFILE_DEFAULT_AUTO")));
+    defaultAutoChk->set_tooltip_text(M("TP_LENSPROFILE_DEFAULT_AUTO_TOOLTIP"));
+    defaultAutoChk->set_active(App::get().options().lensProfDefaultAuto);
+    defaultAutoChk->signal_toggled().connect([this]() {
+        App::get().mut_options().lensProfDefaultAuto = defaultAutoChk->get_active();
+    });
+
+    Gtk::Box* sourceHeaderRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
+    sourceHeaderRow->pack_start(*sourceHeader, Gtk::PACK_SHRINK);
+    sourceHeaderRow->pack_end(*defaultAutoChk, Gtk::PACK_SHRINK);
+
+    // Automatic matching is otherwise silent about what it found; this says
+    // which camera and lens it settled on, right under the option.
+    autoMatchLabel = Gtk::manage(new Gtk::Label());
+    autoMatchLabel->set_halign(Gtk::ALIGN_START);
+    autoMatchLabel->set_margin_start(20);
+    autoMatchLabel->set_line_wrap(true);
+    autoMatchLabel->set_ellipsize(Pango::ELLIPSIZE_MIDDLE);
+    autoMatchLabel->set_no_show_all(true);
+
+    modesGrid->attach(*sourceHeaderRow, 0, 0, 3, 1);
+    modesGrid->attach(*corrOffRB, 0, 1, 3, 1);
+    modesGrid->attach(*corrLensfunAutoRB, 0, 2, 3, 1);
+    modesGrid->attach(*autoMatchLabel, 0, 3, 3, 1);
+    modesGrid->attach(*corrLensfunManualRB, 0, 4, 3, 1);
+    modesGrid->attach(*corrMetadata, 0, 5, 3, 1);
+    modesGrid->attach(*corrLcpFileRB, 0, 6, 3, 1);
+
+    // Sub-options belonging to whichever source is selected: the camera and
+    // lens pickers for manual matching, the file chooser for an LCP.
 
     Gtk::Grid *manualGrid = Gtk::manage(new Gtk::Grid());
     manualGrid->get_style_context()->add_class("grid-spacing");
     setExpandAlignProperties(manualGrid, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
 
-    manualGrid->attach(*corrMetadata, 0, 0, 3, 1);
-    manualGrid->attach(*lensfunCamerasLbl, 0, 1, 1, 1);
-    manualGrid->attach(*lensfunCameras, 1, 1, 1, 1);
-    manualGrid->attach(*lensfunLensesLbl, 0, 2, 1, 1);
-    manualGrid->attach(*lensfunLenses, 1, 2, 1, 1);
-    manualGrid->attach(*warning, 2, 1, 1, 2);
-    manualGrid->attach(*corrLcpFileRB, 0, 3, 1, 1);
-    manualGrid->attach(*corrLcpFileChooser, 1, 3, 1, 1);
+    manualGrid->attach(*lensfunCamerasLbl, 0, 0, 1, 1);
+    manualGrid->attach(*lensfunCameras, 1, 0, 1, 1);
+    manualGrid->attach(*lensfunLensesLbl, 0, 1, 1, 1);
+    manualGrid->attach(*lensfunLenses, 1, 1, 1, 1);
+    manualGrid->attach(*warning, 2, 0, 1, 2);
+    manualGrid->attach(*corrLcpFileChooser, 0, 2, 2, 1);
 
     manualSubBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     manualSubBox->set_margin_start(16);
@@ -211,6 +253,13 @@ LensProfilePanel::LensProfilePanel() :
     corrLensfunAutoRB->signal_toggled().connect(sigc::bind(sigc::mem_fun(*this, &LensProfilePanel::onCorrModeChanged), corrLensfunAutoRB));
     corrLensfunManualRB->signal_toggled().connect(sigc::bind(sigc::mem_fun(*this, &LensProfilePanel::onCorrModeChanged), corrLensfunManualRB));
     corrLcpFileRB->signal_toggled().connect(sigc::bind(sigc::mem_fun(*this, &LensProfilePanel::onCorrModeChanged), corrLcpFileRB));
+    corrOffRB->signal_toggled().connect(sigc::bind(sigc::mem_fun(*this, &LensProfilePanel::onCorrModeChanged), corrOffRB));
+}
+
+LensProfilePanel::~LensProfilePanel()
+{
+    // The deferred "apply automatic" callback captures this.
+    autoDefaultConn_.disconnect();
 }
 
 void LensProfilePanel::read(const rtengine::procparams::ProcParams* pp, const ParamsEdited* pedited)
@@ -238,12 +287,43 @@ void LensProfilePanel::read(const rtengine::procparams::ProcParams* pp, const Pa
         }
     };
 
+    // "Auto by default": a photo carrying no correction, or a manual one with
+    // nothing actually chosen (every manual profile saved while the lens
+    // database was missing looks like this), starts on automatic matching.
+    // A manual profile that names a real lens is left alone — that was a
+    // deliberate choice and overriding it would lose work.
+    const bool autoDefaultWanted = App::get().options().lensProfDefaultAuto
+        && (pp->lensProf.lcMode == procparams::LensProfParams::LcMode::NONE
+            || (pp->lensProf.lcMode == procparams::LensProfParams::LcMode::LENSFUNMANUAL
+                && pp->lensProf.lfCameraModel.empty() && pp->lensProf.lfLens.empty()));
+
+    if (autoDefaultWanted) {
+        setEnabled(true);
+        corrLensfunAutoRB->set_active(true);
+        showContent(true);
+        updateSubOptionVisibility();
+
+        // Apply it for real once the load settles, so the rendered photo and
+        // the panel agree instead of the panel merely claiming automatic.
+        autoDefaultConn_.disconnect();
+        autoDefaultConn_ = Glib::signal_idle().connect([this]() -> bool {
+            if (listener && corrLensfunAutoRB->get_active()) {
+                listener->panelChanged(EvLensCorrMode, M("TP_LENSPROFILE_CORRECTION_AUTOMATCH"));
+            }
+            return false;
+        });
+
+        conUseDist.block(false);
+        enableListener();
+        return;
+    }
+
     switch (pp->lensProf.lcMode) {
         case procparams::LensProfParams::LcMode::LCP: {
             setEnabled(true);
             corrLcpFileRB->set_active(true);
-            setManualParamsVisibility(false);
             showContent(true);
+            updateSubOptionVisibility();
             break;
         }
 
@@ -261,6 +341,7 @@ void LensProfilePanel::read(const rtengine::procparams::ProcParams* pp, const Pa
             setEnabled(true);
             corrLensfunManualRB->set_active(true);
             showContent(true);
+            updateSubOptionVisibility();
             break;
         }
 
@@ -272,7 +353,7 @@ void LensProfilePanel::read(const rtengine::procparams::ProcParams* pp, const Pa
                     corrMetadata->set_active(true);
                     corrMetadata->set_sensitive(true);
                     showContent(true);
-                    setManualParamsVisibility(false);
+                    updateSubOptionVisibility();
                 } else {
                     corrMetadata->set_sensitive(false);
                     setEnabled(false);
@@ -287,10 +368,13 @@ void LensProfilePanel::read(const rtengine::procparams::ProcParams* pp, const Pa
         }
 
         case procparams::LensProfParams::LcMode::NONE: {
+            // The common case for a photo with no correction yet. Keep the
+            // choices on screen — hiding them made the tool look empty and
+            // unusable, which is the state most photos opened in.
             setEnabled(false);
             corrOffRB->set_active(true);
-            setManualParamsVisibility(false);
-            contentWrapper->hide();
+            showContent(false);
+            updateSubOptionVisibility();
             break;
         }
     }
@@ -602,17 +686,25 @@ void LensProfilePanel::enabledChanged()
             corrLensfunAutoRB->set_active(true);
         }
 
-        // Hide manualSubBox if auto is selected
-        if (corrLensfunAutoRB->get_active()) {
-            manualSubBox->hide();
-        }
+        updateSubOptionVisibility();
 
         // Keep correctContent collapsed
         if (!correctExpanded) {
             correctContent->hide();
         }
     } else {
-        contentWrapper->hide();
+        // Keep the options on screen while off. Flat mode hides the expander
+        // header, so hiding the body too would leave nothing at all — and no
+        // way back on, since "None" is one of these radios.
+        contentWrapper->set_no_show_all(false);
+        contentWrapper->show_all();
+        contentWrapper->set_no_show_all(true);
+        corrOffRB->set_active(true);
+        updateSubOptionVisibility();
+
+        if (!correctExpanded) {
+            correctContent->hide();
+        }
     }
 
     if (listener) {
@@ -627,7 +719,14 @@ void LensProfilePanel::onCorrModeChanged(const Gtk::RadioButton* rbChanged)
         // because the method gets called for the enabled AND the disabled RadioButton, we do the processing only for the enabled one
         Glib::ustring mode;
 
-        if (rbChanged == corrLensfunAutoRB) {
+        if (rbChanged == corrOffRB) {
+            // Off switch: the tool's own enable flag follows the choice, so
+            // the options stay on screen and can be picked again.
+            lcModeChanged = true;
+            setEnabled(false);
+            mode = M("GENERAL_NONE");
+
+        } else if (rbChanged == corrLensfunAutoRB) {
             lcModeChanged = true;
             useLensfunChanged = true;
             lensfunAutoChanged = true;
@@ -707,22 +806,12 @@ void LensProfilePanel::onCorrModeChanged(const Gtk::RadioButton* rbChanged)
 
         updateLensfunWarning();
 
-        // Show/hide manual sub-options: visible for everything except Auto
-        if (rbChanged == corrLensfunAutoRB) {
-            manualSubBox->hide();
-            setManualParamsVisibility(false);
-        } else {
-            manualSubBox->set_no_show_all(false);
-            manualSubBox->show_all();
-            manualSubBox->set_no_show_all(true);
-
-            // Camera/Lens only visible for lensfun manual mode
-            if (rbChanged == corrLensfunManualRB) {
-                setManualParamsVisibility(true);
-            } else {
-                setManualParamsVisibility(false);
-            }
+        // Any real correction source implies the tool is on.
+        if (rbChanged != corrOffRB && !getEnabled()) {
+            setEnabled(true);
         }
+
+        updateSubOptionVisibility();
 
         if (listener) {
             listener->panelChanged(EvLensCorrMode, mode);
@@ -929,6 +1018,63 @@ bool LensProfilePanel::checkLensfunCanCorrect(bool automatch)
     write(&lpp);
     const std::unique_ptr<LFModifier> mod(LFDatabase::getInstance()->findModifier(lpp.lensProf, metadata, 100, 100, lpp.coarse, -1));
     return static_cast<bool>(mod);
+}
+
+void LensProfilePanel::updateAutoMatchLabel()
+{
+    if (!corrLensfunAutoRB->get_active()) {
+        autoMatchLabel->hide();
+        return;
+    }
+
+    Glib::ustring text;
+
+    if (batchMode || !metadata) {
+        text = M("TP_LENSPROFILE_AUTOMATCH_UNKNOWN");
+    } else {
+        const LFDatabase* const db = LFDatabase::getInstance();
+        const LFCamera cam = db->findCamera(metadata->getMake(), metadata->getModel(), true);
+        const LFLens lens = db->findLens(cam, metadata->getLens(), true);
+
+        const Glib::ustring camName = cam.getDisplayString();
+        const Glib::ustring lensName = lens.getDisplayString();
+
+        if (camName.empty() && lensName.empty()) {
+            text = M("TP_LENSPROFILE_AUTOMATCH_NONE");
+        } else {
+            text = Glib::ustring::compose("%1 · %2",
+                                          camName.empty() ? M("TP_LENSPROFILE_AUTOMATCH_NOCAM") : camName,
+                                          lensName.empty() ? M("TP_LENSPROFILE_AUTOMATCH_NOLENS") : lensName);
+        }
+    }
+
+    autoMatchLabel->set_markup("<small><i>" + Glib::Markup::escape_text(text) + "</i></small>");
+    autoMatchLabel->set_no_show_all(false);
+    autoMatchLabel->show();
+}
+
+void LensProfilePanel::updateSubOptionVisibility()
+{
+    // The indented box carries only the controls the selected source needs:
+    // camera/lens pickers for manual matching, the file chooser for an LCP.
+    // Automatic and metadata sources need nothing, so it collapses away.
+    const bool manual = corrLensfunManualRB->get_active();
+    const bool lcp = corrLcpFileRB->get_active();
+
+    if (manual || lcp) {
+        manualSubBox->set_no_show_all(false);
+        manualSubBox->show_all();
+        manualSubBox->set_no_show_all(true);
+    }
+
+    setManualParamsVisibility(manual);
+    corrLcpFileChooser->set_visible(lcp);
+
+    if (!manual && !lcp) {
+        manualSubBox->hide();
+    }
+
+    updateAutoMatchLabel();
 }
 
 void LensProfilePanel::setManualParamsVisibility(bool setVisible)

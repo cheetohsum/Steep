@@ -93,6 +93,10 @@ private:
     Gtk::TreePath expandToDir (const Glib::ustring& dirName);
     Glib::ustring highlightDirInternal (const Glib::ustring& dirName, bool collapseTree);
     void updateDir (const Gtk::TreeModel::iterator& iter);
+    void scheduleUpdateDir (const Gtk::TreeModel::iterator& iter);
+    void flushPendingDirUpdates ();
+    std::map<std::string, Gtk::TreeRowReference> pendingDirUpdates_;
+    sigc::connection dirUpdateConn_;
     void countPhotosInChildren (const Gtk::TreeModel::iterator& parent);
 
     // The directory currently open in the catalog. The tree uses hover
@@ -118,6 +122,7 @@ private:
     Glib::RefPtr<Gdk::Pixbuf> starFilledPixbuf_;
     Glib::RefPtr<Gdk::Pixbuf> starHollowPixbuf_;
     bool isCurrentDirFavorite () const;
+    bool isDirFavorite (const Glib::ustring& dir) const;
     void toggleCurrentDirFavorite ();
 
     // Chevron rotation animation

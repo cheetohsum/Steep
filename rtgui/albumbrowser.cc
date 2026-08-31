@@ -526,7 +526,9 @@ AlbumBrowser::AlbumBrowser ()
 
     scrollw_->add(*treeView_);
     pack_start(*scrollw_, Gtk::PACK_SHRINK);
-    set_margin_bottom(8);
+    // No bottom margin: this is the bottom-most sidebar widget in both the
+    // browser and the editor, and any margin here makes the sidebar well end
+    // above the photo area's bottom edge — a visibly misaligned seam.
 
     treeView_->signal_button_press_event().connect(sigc::mem_fun(*this, &AlbumBrowser::onButtonPress), false);
     // Handle left-click selection on button RELEASE so DnD can initiate on press.

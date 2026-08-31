@@ -45,7 +45,10 @@ public:
     explicit RawImage(const Glib::ustring &name);
     ~RawImage();
 
-    int loadRaw(bool loadData, unsigned int imageNum = 0, bool closeFile = true, ProgressListener *plistener = nullptr, double progressRange = 1.0);
+    // thumbnailOnly: this pass will read the header and the embedded preview
+    // and nothing else, so the file is mapped without read-ahead. Do not set
+    // it for a load whose RawImage may later be reused for a full decode.
+    int loadRaw(bool loadData, unsigned int imageNum = 0, bool closeFile = true, ProgressListener *plistener = nullptr, double progressRange = 1.0, bool thumbnailOnly = false);
     void get_colorsCoeff(float* pre_mul_, float* scale_mul_, float* cblack_, bool forceAutoWB);
     void set_prefilters()
     {

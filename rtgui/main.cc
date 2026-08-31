@@ -698,6 +698,12 @@ int main (int argc, char **argv)
         }
     }
 
+    // Editor teardown hands its sidecar/cache writes to a background worker
+    // (see EditorCleanupExecutor); returning from main while one is mid-write
+    // would tear the file. Runs after the window destructors so it also
+    // covers the write enqueued by the final EditorPanel::close().
+    EditorPanel::drainBackgroundSaves();
+
 #ifdef _WIN32
 
     if (consoleOpened) {

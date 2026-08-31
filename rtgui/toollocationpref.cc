@@ -161,6 +161,8 @@ Glib::ustring getToolTitleKey(Tool tool)
             return "TP_CLARITY_LABEL";
         case Tool::GRAIN:
             return "TP_GRAIN_LABEL";
+        case Tool::LIGHT_EFFECTS:
+            return "TP_LIGHTEFFECTS_LABEL";
         case Tool::TILT_SHIFT:
             return "TP_TILTSHIFT_LABEL";
         case Tool::SOFT_LIGHT:

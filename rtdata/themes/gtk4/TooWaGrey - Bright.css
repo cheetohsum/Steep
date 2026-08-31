@@ -1,0 +1,22 @@
+/* Generated from rtdata/themes/TooWaGrey - Bright.css by tools/gen_gtk4_tokens.py.
+   Do not edit — change the theme's palette block and regenerate. */
+
+:root {
+  --steep-surface-0: #ffffff;
+  --steep-surface-1: #f2f2f5;
+  --steep-surface-2: #e9e9ee;
+  --steep-surface-3: #ffffff;
+  --steep-text-hi: #1c1c1e;
+  --steep-text: #3a3a3f;
+  --steep-text-dim: #86868b;
+  --steep-accent: #007aff;
+  --steep-select: #007aff;
+  --steep-attention: #c47f3a;
+  --steep-success: #28a558;
+  --steep-danger: #d70015;
+  --steep-border: #d1d1d6;
+  --steep-border-soft: #e3e3e8;
+  --steep-sel-bg: #007aff;
+  --steep-sel-fg: #ffffff;
+  --steep-wash: #000000;
+}

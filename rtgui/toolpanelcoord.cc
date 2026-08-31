@@ -33,6 +33,11 @@
 #include "autoedit.h"
 #include "imagearea.h"
 #include "multilangmgr.h"
+#include "smartmaskbar.h"
+#ifdef RT_AI_MASKING
+#include "rtengine/aimaskcache.h"
+#include "rtengine/aisegmentation.h"
+#endif
 #include "rawloadactivity.h"
 #include "toolpanelcoord.h"
 #include "metadatapanel.h"
@@ -184,6 +189,10 @@ const std::vector<ToolTree> EXPOSURE_PANEL_TOOLS = {
     },
     {
         .id = Tool::GRAIN,
+        .children = {},
+    },
+    {
+        .id = Tool::LIGHT_EFFECTS,
         .children = {},
     },
     {
@@ -525,6 +534,7 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
     texture = nullptr;
     clarity = nullptr;
     grain = nullptr;
+    lighteffects = nullptr;
     tiltshift = nullptr;
     lensblur = nullptr;
     spot = nullptr;
@@ -684,6 +694,7 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
     texture             = Gtk::manage(new Texture());
     clarity             = Gtk::manage(new Clarity());
     grain               = Gtk::manage(new Grain());
+    lighteffects        = Gtk::manage(new LightEffects());
     tiltshift           = Gtk::manage(new TiltShift());
     lensblur            = Gtk::manage(new LensBlur());
     filmSimulation      = Gtk::manage(new FilmSimulation());
@@ -877,6 +888,8 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
 
         Gtk::Button* toggle = Gtk::manage(new Gtk::Button());
         toggle->set_relief(Gtk::RELIEF_NONE);
+        // Same chrome and type treatment as the Edit pane's group headers
+        toggle->set_name("ToolGroupHeader");
         Gtk::Label* label = Gtk::manage(new Gtk::Label());
         label->set_markup("\u25B8 <b>" + Glib::Markup::escape_text(name) + "</b>");
         toggle->add(*label);
@@ -896,13 +909,19 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
         return {headerRow, content, label};
     };
 
-    // Button row at top: RotL / RotR / FlipH / FlipV
+    // Labeled row at top: Rotate — RotL / RotR / FlipH / FlipV
     {
         Gtk::Box* btnRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
-        btnRow->set_margin_start(4);
+        btnRow->set_margin_start(6);
         btnRow->set_margin_end(4);
         btnRow->set_margin_top(2);
         btnRow->set_margin_bottom(2);
+
+        Gtk::Label* rotateLbl = Gtk::manage(new Gtk::Label());
+        rotateLbl->set_markup("<b>" + Glib::Markup::escape_text(M("TP_COARSETRAF_LABEL_ROTATE")) + "</b>");
+        rotateLbl->get_style_context()->add_class("tool-section-label");
+        rotateLbl->set_margin_end(8);
+        btnRow->pack_start(*rotateLbl, Gtk::PACK_SHRINK);
 
         Gtk::Button* rotL = mkBtn("rotate-left-90", "TP_COARSETRAF_TOOLTIP_ROTLEFT");
         Gtk::Button* rotR = mkBtn("rotate-right-90", "TP_COARSETRAF_TOOLTIP_ROTRIGHT");
@@ -924,16 +943,35 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
 
     transformPanel->pack_start(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)), Gtk::PACK_SHRINK, 2);
 
+    // --- Level section (labeled, above Crop) ---
+    {
+        Gtk::Box* levelHeader = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+        levelHeader->set_margin_start(6);
+        levelHeader->set_margin_end(8);
+        levelHeader->set_margin_top(4);
+
+        Gtk::Label* levelLbl = Gtk::manage(new Gtk::Label());
+        levelLbl->set_markup("<b>" + Glib::Markup::escape_text(M("TP_ROTATE_LABEL_LEVEL")) + "</b>");
+        levelLbl->get_style_context()->add_class("tool-section-label");
+        levelHeader->pack_start(*levelLbl, Gtk::PACK_SHRINK);
+        transformPanel->pack_start(*levelHeader, Gtk::PACK_SHRINK, 0);
+
+        rotate->setParent(transformPanel);
+        rotate->setLevel(1);
+        // rotate already has setFlatMode(true) in its constructor
+        transformPanel->pack_start(*rotate->getExpander(), false, false);
+    }
+
     // --- Crop section (collapsible) ---
     {
         auto sec = mkCollapsible(M("TP_CROP_LABEL"));
         cropSectionContent_ = sec.content;
         cropSectionLabel_ = sec.label;
 
-        // Add straighten, crop-select and reset buttons to header row (after label)
-        Gtk::Button* straighten = mkBtn("rotate-straighten-small", "TP_ROTATE_SELECTLINE");
-        straighten->signal_pressed().connect([this]() { straightenRequested(); });
-        sec.header->pack_start(*straighten, Gtk::PACK_SHRINK);
+        // Crop-select and reset buttons in the header row (after label).
+        // No straighten button here: the Level section directly above owns
+        // that control (rotate.cc's selectStraight), and a second copy of
+        // it one row down was pure duplication.
         sec.header->pack_start(*crop->getSelectCropButton(), Gtk::PACK_SHRINK);
         sec.header->pack_start(*crop->getResetCropButton(), Gtk::PACK_SHRINK);
 
@@ -948,16 +986,6 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
         cropResetBtn_->add(*cropResetLabel);
         cropResetBtn_->set_no_show_all(true);
         cropResetBtn_->set_name("ToolGroupReset");
-        {
-            auto css = Gtk::CssProvider::create();
-            css->load_from_data(
-                "#ToolGroupReset { padding: 1px 3px; margin: 0 2px; min-height: 12px; min-width: 12px; border: none; background: none; background-image: none; box-shadow: none; }"
-                "#ToolGroupReset:hover { background-color: rgba(200,80,80,0.3); border-radius: 3px; }"
-                "#ToolGroupReset label { font-size: 9px; color: #aaaaaa; min-height: 0; padding: 0; margin: 0; }"
-                "#ToolGroupReset:hover label { color: #ffffff; }"
-            );
-            cropResetBtn_->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-        }
         cropResetBtn_->signal_clicked().connect([this]() {
             rtengine::procparams::ProcParams dp;
             crop->disableListener();
@@ -977,25 +1005,19 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
         crop->setParent(sec.content);
         crop->setLevel(1);
         crop->setFlatMode(true);
-        sec.content->pack_start(*crop->getExpander(), false, false);
 
-        // Ratio row always visible below crop header
+        // Aspect ratio + lock go INSIDE the collapsible content, so they
+        // hide with the section by default instead of staying pinned under
+        // the header while the rest of Crop is collapsed.
         Gtk::Widget* ratioRow = crop->getRatioRow();
         ratioRow->set_margin_start(10);
         ratioRow->set_margin_end(4);
-        ratioRow->show_all();
+        sec.content->pack_start(*ratioRow, Gtk::PACK_SHRINK);
+
+        sec.content->pack_start(*crop->getExpander(), false, false);
 
         transformPanel->pack_start(*sec.header, Gtk::PACK_SHRINK);
-        transformPanel->pack_start(*ratioRow, Gtk::PACK_SHRINK);
         transformPanel->pack_start(*sec.content, Gtk::PACK_SHRINK);
-    }
-
-    // --- Rotate section (inline) ---
-    {
-        rotate->setParent(transformPanel);
-        rotate->setLevel(1);
-        // rotate already has setFlatMode(true) in its constructor
-        transformPanel->pack_start(*rotate->getExpander(), false, false);
     }
 
     // --- Perspective section (collapsible) ---
@@ -1039,16 +1061,6 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
         perspResetBtn_->add(*perspResetLabel);
         perspResetBtn_->set_no_show_all(true);
         perspResetBtn_->set_name("ToolGroupReset");
-        {
-            auto css = Gtk::CssProvider::create();
-            css->load_from_data(
-                "#ToolGroupReset { padding: 1px 3px; margin: 0 2px; min-height: 12px; min-width: 12px; border: none; background: none; background-image: none; box-shadow: none; }"
-                "#ToolGroupReset:hover { background-color: rgba(200,80,80,0.3); border-radius: 3px; }"
-                "#ToolGroupReset label { font-size: 9px; color: #aaaaaa; min-height: 0; padding: 0; margin: 0; }"
-                "#ToolGroupReset:hover label { color: #ffffff; }"
-            );
-            perspResetBtn_->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-        }
         perspResetBtn_->signal_clicked().connect([this]() {
             rtengine::procparams::ProcParams dp;
             perspective->disableListener();
@@ -1112,6 +1124,37 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
         locallab->setFlatMode(true);
         locallab->hideSettingsHeader();
         locallab->hideToolGroups();
+
+#ifdef RT_AI_MASKING
+        // Smart Masks chip strip: one-click AI masks, usable while the
+        // Masking group is still collapsed.
+        if (rtengine::getAISegmentationEngine().isInitialized()) {
+            smartMaskBar = Gtk::manage(new SmartMaskBar());
+            maskingGroup->getPersistentBox()->pack_start(*smartMaskBar, Gtk::PACK_SHRINK);
+            smartMaskBar->signalClassRequested().connect([this](int classIndex) {
+                if (locallab) {
+                    locallab->createAIMaskSpot(classIndex);
+                }
+            });
+            smartMaskBar->signalShapeRequested().connect([this](int shape) {
+                if (locallab) {
+                    locallab->createShapeMaskSpot(shape);
+                }
+            });
+            smartMaskBar->setCoverageProvider([this](int classIndex) -> float {
+                if (!ipc || !ipc->getInitialImage()) {
+                    return -1.f;
+                }
+                return rtengine::AIMaskCache::getInstance().getClassCoverage(
+                    ipc->getInitialImage()->getFileName().raw(), classIndex);
+            });
+            smartMaskBar->signalPickRequested().connect([this]() {
+                if (toolBar) {
+                    toolBar->setTool(TMAIMaskPick);
+                }
+            });
+        }
+#endif
     } else {
         modeButtonBar->setModeVisible(EditorMode::MASK, false);
     }
@@ -1123,6 +1166,13 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
     advancedGroup->setExpanded(false);
     calibrationGroup->setExpanded(false);
     effectsGroup->setExpanded(false);
+
+    // Edit pane opens with Exposure & Tone ready to use.
+    resetEditGroupsToDefault();
+
+    // Mask pane: Spot Removal open; Masking closed until the first mask.
+    spotGroup->setExpanded(true);
+    maskingGroup->setExpanded(false);
 
     // Collapse Color Appearance and Wavelet by default
     colorappearance->setExpanded(false);
@@ -1303,6 +1353,8 @@ std::string ToolPanelCoordinator::getToolName(Tool tool)
             return Clarity::TOOL_NAME;
         case Tool::GRAIN:
             return Grain::TOOL_NAME;
+        case Tool::LIGHT_EFFECTS:
+            return LightEffects::TOOL_NAME;
         case Tool::TILT_SHIFT:
             return TiltShift::TOOL_NAME;
         case Tool::LENS_BLUR:
@@ -1629,6 +1681,17 @@ void ToolPanelCoordinator::loadSpotIntoGlobalTools()
     blackwhite->enableListener();
 }
 
+void ToolPanelCoordinator::resetEditGroupsToDefault()
+{
+    ToolGroup* collapsed[] = {
+        bwGroup, colorGroup, detailGroup, effectsGroup, calibrationGroup
+    };
+    for (auto* group : collapsed) {
+        group->setExpanded(false);
+    }
+    lightGroup->setExpanded(true);
+}
+
 void ToolPanelCoordinator::modeChanged(EditorMode mode)
 {
     // Direction-aware slide transition
@@ -1650,9 +1713,20 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
             break;
         case EditorMode::MASK:
             modeStack->set_visible_child("mask");
-            // Auto-expand masking group (the primary tool on this pane)
-            maskingGroup->setExpanded(true);
+            // Masking opens only once it has content; a fresh pane leads
+            // with Spot Removal and the Add-mask header button instead.
+            maskingGroup->setExpanded(locallab && locallab->getSpotCount() > 0);
             break;
+    }
+
+    // Background Smart Mask analysis runs only while the masking pane shows.
+    if (ipc) {
+        ipc->setSmartMaskAnalysisWanted(mode == EditorMode::MASK);
+    }
+
+    // The AI pick tool only makes sense on the masking pane.
+    if (mode != EditorMode::MASK && toolBar && toolBar->getTool() == TMAIMaskPick) {
+        toolBar->setTool(TMHand);
     }
 
     // Deselect active perspective/crop tools when switching away from CROPPING tab
@@ -1673,7 +1747,8 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
         toolBar->blockEditDeactivation(false);
         toolBar->setTool(TMCropSelect);
         crop->setExpanded(true);
-        expandTransformSection(cropSectionContent_, cropSectionLabel_, M("TP_CROP_LABEL"));
+        // The Crop section itself starts collapsed — the crop overlay is
+        // active on the image; panel details open on the header click.
     }
 
     // Crop preview mode: show full image when on crop tab, cropped view otherwise
@@ -1814,39 +1889,22 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
     }
 
     // Reparenting and the mask-overlay refresh both schedule GTK layout work.
-    // Always return to a clean collapsed Edit pane, then enforce that state on
-    // idle so a stack/map transition cannot reveal every group behind us.
+    // Always return to the Edit pane's resting state (Exposure & Tone open,
+    // the rest closed), then enforce it on idle so a stack/map transition
+    // cannot reveal every group behind us.
     if (prevMode == EditorMode::MASK && mode != EditorMode::MASK) {
         const unsigned generation = ++editGroupRestoreGeneration_;
-        auto collapseEditGroups = [this]() {
-            ToolGroup* groups[] = {
-                lightGroup, bwGroup, colorGroup, detailGroup, effectsGroup, calibrationGroup
-            };
-            for (auto* group : groups) {
-                group->setExpanded(false);
-            }
-        };
-        collapseEditGroups();
+        resetEditGroupsToDefault();
         idle_register.add([this, generation]() -> bool {
             if (generation == editGroupRestoreGeneration_ && prevMode != EditorMode::MASK) {
-                ToolGroup* groups[] = {
-                    lightGroup, bwGroup, colorGroup, detailGroup, effectsGroup, calibrationGroup
-                };
-                for (auto* group : groups) {
-                    group->setExpanded(false);
-                }
+                resetEditGroupsToDefault();
             }
             return false;
         });
         editGroupCollapseConn_.disconnect();
         editGroupCollapseConn_ = Glib::signal_timeout().connect([this, generation]() -> bool {
             if (generation == editGroupRestoreGeneration_ && prevMode != EditorMode::MASK) {
-                ToolGroup* groups[] = {
-                    lightGroup, bwGroup, colorGroup, detailGroup, effectsGroup, calibrationGroup
-                };
-                for (auto* group : groups) {
-                    group->setExpanded(false);
-                }
+                resetEditGroupsToDefault();
             }
             return false;
         }, 400);
@@ -2186,28 +2244,34 @@ void ToolPanelCoordinator::populateEditPanel()
     });
     effectsGroup->getPersistentBox()->pack_start(*effectsStrip_, Gtk::PACK_SHRINK);
 
-    // Effects group: Texture, Clarity, Grain, PC Vignette, Gradient, Film Simulation
-    addPanel(effectsGroup->getContentBox(), texture, 1);
-    texture->setFlatMode(true);
-    texture->collapseDetail();
-    addPanel(effectsGroup->getContentBox(), clarity, 1);
-    clarity->setFlatMode(true);
-    clarity->collapseDetail();
-    addPanel(effectsGroup->getContentBox(), grain, 1);
-    grain->setFlatMode(true);
-    grain->collapseDetail();
-    addPanel(effectsGroup->getContentBox(), pcvignette, 1);
-    pcvignette->setFlatMode(true);
-    pcvignette->collapseDetail();
-    addPanel(effectsGroup->getContentBox(), tiltshift, 1);
-    tiltshift->setFlatMode(true);
-    tiltshift->collapseDetail();
-    addPanel(effectsGroup->getContentBox(), filmPresets, 1);
-    filmPresets->setFlatMode(true);
-    filmPresets->collapseDetail();
-    addPanel(effectsGroup->getContentBox(), doubleExposure, 1);
-    doubleExposure->setFlatMode(true);
-    doubleExposure->collapseDetail();
+    // Effects group. Flat mode hides each tool's own header, so without this
+    // the group reads as one long run of sliders separated only by hairlines.
+    // Name each tool instead and drop the hairline.
+    {
+        auto addLabelledEffect = [this](const char* labelKey, FoldableToolPanel* panel, bool collapse) {
+            Gtk::Label* heading = Gtk::manage(new Gtk::Label(M(labelKey)));
+            heading->set_halign(Gtk::ALIGN_START);
+            heading->get_style_context()->add_class("tool-section-label");
+            effectsGroup->getContentBox()->pack_start(*heading, Gtk::PACK_SHRINK);
+
+            addPanel(effectsGroup->getContentBox(), panel, 1);
+            panel->setFlatMode(true);
+            panel->getExpander()->get_style_context()->add_class("labelled-tool");
+
+            if (collapse) {
+                panel->collapseDetail();
+            }
+        };
+
+        addLabelledEffect("TP_TEXTURE_LABEL", texture, true);
+        addLabelledEffect("TP_CLARITY_LABEL", clarity, true);
+        addLabelledEffect("TP_GRAIN_LABEL", grain, true);
+        addLabelledEffect("TP_LIGHTEFFECTS_LABEL", lighteffects, false);
+        addLabelledEffect("TP_PCVIGNETTE_LABEL", pcvignette, true);
+        addLabelledEffect("TP_TILTSHIFT_LABEL", tiltshift, true);
+        addLabelledEffect("TP_FILMPRESETS_LABEL", filmPresets, true);
+        addLabelledEffect("TP_DOUBLEEXPOSURE_LABEL", doubleExposure, true);
+    }
 
     // --- B&W preview strip (in advanced group, before blackwhite tool) ---
     bwStrip_ = Gtk::manage(new PreviewStrip());
@@ -2374,6 +2438,9 @@ void ToolPanelCoordinator::populateEditPanel()
         grain->disableListener();
         grain->read(&dp);
         grain->enableListener();
+        lighteffects->disableListener();
+        lighteffects->read(&dp);
+        lighteffects->enableListener();
         tiltshift->disableListener();
         tiltshift->read(&dp);
         tiltshift->enableListener();
@@ -3114,6 +3181,24 @@ void ToolPanelCoordinator::buildQuickEditBar()
         return true;
     };
 
+    // Highlight one row, skipping the work when it is already highlighted.
+    //
+    // The dedup MUST read get_selected_item(). get_active() is the ComboBox-era
+    // "last selected" row, and gtk_menu_popdown() latches it to whatever was
+    // highlighted when the menu closed -- so gating on it silently refused to
+    // ever re-highlight the row the user last used. That is the row they use
+    // most (Auto Grade + Film Lab), and with the highlight suppressed the
+    // "select" signal never fired either, so the hover preview went with it.
+    const auto ensureRowSelected = [](Gtk::Menu* menu, Gtk::MenuItem* mi) {
+        if (!mi || !menu) {
+            return;
+        }
+        if (menu->get_selected_item() == static_cast<Gtk::Widget*>(mi)) {
+            return;
+        }
+        menu->select_item(*mi);
+    };
+
     // GtkMenu's own pointer tracking can miss items when the menu opened
     // from a hover rather than a click. Item selection is driven from raw
     // motion matched in ROOT coordinates (event-window coordinates are
@@ -3121,13 +3206,15 @@ void ToolPanelCoordinator::buildQuickEditBar()
     // and closing is driven by polling the pointer position — crossing
     // events at a grabbed popup's edge are unreliable, which left menus
     // stuck open.
-    const auto wireHoverMenuBehavior = [this, widgetRootRect](Gtk::Menu* menu, Gtk::MenuButton* drop) {
+    const auto wireHoverMenuBehavior =
+        [this, widgetRootRect, ensureRowSelected](Gtk::Menu* menu, Gtk::MenuButton* drop) {
         menu->add_events(Gdk::POINTER_MOTION_MASK);
 
         // Highlight whichever row the pointer is over, given a position in
         // root coordinates. Selecting the already-selected item is skipped, so
         // this is safe to call repeatedly.
-        const auto selectRowAt = [menu, widgetRootRect](double xRoot, double yRoot) {
+        const auto selectRowAt =
+            [menu, widgetRootRect, ensureRowSelected](double xRoot, double yRoot) {
             for (auto* child : menu->get_children()) {
                 auto* mi = dynamic_cast<Gtk::MenuItem*>(child);
                 if (!mi || !mi->get_visible() || !mi->get_sensitive()) {
@@ -3139,9 +3226,7 @@ void ToolPanelCoordinator::buildQuickEditBar()
                 }
                 if (yRoot >= ry && yRoot < ry + rh
                         && xRoot >= rx && xRoot < rx + rw) {
-                    if (menu->get_active() != mi) {
-                        menu->select_item(*mi);
-                    }
+                    ensureRowSelected(menu, mi);
                     return;
                 }
             }
@@ -3307,17 +3392,29 @@ void ToolPanelCoordinator::buildQuickEditBar()
             }
             quickPreviewVariant_ = item.second;
             requestQuickAutoParams(item.second, item.first, false);
-            if (!quickPreviewActive_) {
+            if (!quickPreviewActive_ || quickAutoEditCommitPending_) {
+                // The request was refused - no processor yet, or a commit is
+                // still landing. Latching the variant anyway would make the
+                // next hover over this same row a silent no-op.
                 quickPreviewVariant_ = -1;
             }
         };
-        mi->signal_select().connect(previewItem);
-        mi->signal_enter_notify_event().connect([previewItem](GdkEventCrossing*) -> bool {
+        // Crossing into a row must move the highlight as well as the preview.
+        // Leaving the highlight to GtkMenu alone let the two disagree: a
+        // hover-opened menu previews a row it never lit up, and when GtkMenu
+        // misses the crossing outright neither happens and the row is dead
+        // until the pointer leaves and comes back.
+        const auto hoverItem = [mi, previewItem, ensureRowSelected]() {
+            ensureRowSelected(dynamic_cast<Gtk::Menu*>(mi->get_parent()), mi);
             previewItem();
+        };
+        mi->signal_select().connect(previewItem);
+        mi->signal_enter_notify_event().connect([hoverItem](GdkEventCrossing*) -> bool {
+            hoverItem();
             return false;
         });
-        mi->signal_motion_notify_event().connect([previewItem](GdkEventMotion*) -> bool {
-            previewItem();
+        mi->signal_motion_notify_event().connect([hoverItem](GdkEventMotion*) -> bool {
+            hoverItem();
             return false;
         });
         mi->signal_activate().connect([this, item]() {
@@ -3404,13 +3501,22 @@ void ToolPanelCoordinator::buildQuickEditBar()
                 quickPreviewVariant_ = -1;
             }
         };
-        mi->signal_select().connect(previewItem);
-        mi->signal_enter_notify_event().connect([previewItem](GdkEventCrossing*) -> bool {
+        // Crossing into a row must move the highlight as well as the preview.
+        // Leaving the highlight to GtkMenu alone let the two disagree: a
+        // hover-opened menu previews a row it never lit up, and when GtkMenu
+        // misses the crossing outright neither happens and the row is dead
+        // until the pointer leaves and comes back.
+        const auto hoverItem = [mi, previewItem, ensureRowSelected]() {
+            ensureRowSelected(dynamic_cast<Gtk::Menu*>(mi->get_parent()), mi);
             previewItem();
+        };
+        mi->signal_select().connect(previewItem);
+        mi->signal_enter_notify_event().connect([hoverItem](GdkEventCrossing*) -> bool {
+            hoverItem();
             return false;
         });
-        mi->signal_motion_notify_event().connect([previewItem](GdkEventMotion*) -> bool {
-            previewItem();
+        mi->signal_motion_notify_event().connect([hoverItem](GdkEventMotion*) -> bool {
+            hoverItem();
             return false;
         });
         mi->signal_activate().connect([this, item]() {
@@ -3688,6 +3794,7 @@ void ToolPanelCoordinator::endQuickPreview(bool restore)
         quickAutoEditGeneration_->fetch_add(1, std::memory_order_acq_rel);
     }
     if (!quickPreviewActive_) {
+        quickPreviewVariant_ = -1;
         return;
     }
 
@@ -3861,6 +3968,12 @@ void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const 
      * - Mask preview is stopped when creating, deleting or selecting a spot
      * - Mask preview is also stopped when removing a spot or resetting all mask visibility
      */
+    // A freshly created mask opens the Masking group so the user sees it;
+    // the group otherwise stays collapsed until it has content.
+    if (locallab && maskingGroup && event == rtengine::EvLocallabSpotCreated) {
+        maskingGroup->setExpanded(true);
+    }
+
     if (locallab && event == rtengine::EvlocallabshowmaskMethod) {
         const Locallab::llMaskVisibility maskStruc = locallab->getMaskVisibility();
         ipc->setLocallabMaskVisibility(maskStruc.previewDeltaE, maskStruc.showMaskOverlay, maskStruc.colorMask, maskStruc.colorMaskinv, maskStruc.expMask, maskStruc.expMaskinv,
@@ -4009,6 +4122,14 @@ void ToolPanelCoordinator::profileChange(
         filterRawRefresh = pe.raw.isUnchanged() && pe.lensProf.isUnchanged() && pe.retinex.isUnchanged() && pe.pdsharpening.isUnchanged();
     }
 
+    // Snapshot for the spot-only fast path below. Only history browsing can
+    // take that path, so nothing else pays for the copy.
+    const bool mayBeSpotOnly = (event == rtengine::EvHistoryBrowsed);
+    ProcParams prevParams;
+    if (mayBeSpotOnly) {
+        prevParams = *params;
+    }
+
     *params = *mergedParams;
     delete mergedParams;
     logStep("merge-params");
@@ -4028,11 +4149,29 @@ void ToolPanelCoordinator::profileChange(
     crop->trim(params, fw, fh);
     logStep("crop-trim");
 
+    // Undoing a brush stroke used to re-run the whole non-raw pipeline,
+    // because EvHistoryBrowsed maps to ALL regardless of what the step
+    // actually changed. When only spot entries differ, the spot refresh
+    // action is exactly right — undo then costs what painting cost.
+    // Whole-struct compare, so a param added later can never silently
+    // slip through this path.
+    bool spotOnlyChange = false;
+    if (mayBeSpotOnly && !(prevParams.spot == params->spot)) {
+        ProcParams probe(prevParams);
+        probe.spot = params->spot;
+        spotOnlyChange = (probe == *params);
+    }
+
     std::shared_ptr<ProcParams> deferredMetadataParams;
 
     // updating the GUI with updated values
     for (size_t i = 0; i < toolPanels.size(); i++) {
-        if (event == rtengine::EvPhotoLoaded && toolPanels[i] == metadata) {
+        // The metadata panel's read() re-opens the file through Exiv2 and
+        // rebuilds the whole Exif tree. Off the critical path for EVERY
+        // event, not just photo load: it used to run synchronously on the
+        // GTK thread for each undo/redo and profile change, stalling the
+        // image update behind a metadata parse.
+        if (toolPanels[i] == metadata) {
             deferredMetadataParams = std::make_shared<ProcParams>(*params);
             continue;
         }
@@ -4147,7 +4286,9 @@ void ToolPanelCoordinator::profileChange(
     // Start IPC processing after profile GUI state and listeners have finished
     // consuming the update params. Starting earlier lets the worker race the
     // tail of this method during photo-load/profile-change handoff.
-    if (filterRawRefresh) {
+    if (spotOnlyChange) {
+        ipc->endUpdateParams(SPOTADJUST);
+    } else if (filterRawRefresh) {
         ipc->endUpdateParams(rtengine::RefreshMapper::getInstance()->getAction(event) & ALLNORAW);
     } else {
         ipc->endUpdateParams(event);
@@ -4202,6 +4343,17 @@ void ToolPanelCoordinator::initImage(rtengine::StagedImageProcessor* ipc_, bool 
     if (ipc) {
         const rtengine::FramesMetaData* pMetaData = ipc->getInitialImage()->getMetaData();
         metadata->setImageData(pMetaData);
+
+        // A fresh coordinator starts disarmed; re-arm background Smart Mask
+        // analysis when the masking pane is already the one showing.
+        ipc->setSmartMaskAnalysisWanted(prevMode == EditorMode::MASK);
+
+        if (spot) {
+            spot->setDustDetector([this](int maxSpots) {
+                return ipc ? ipc->detectDustSpots(maxSpots)
+                           : std::vector<rtengine::procparams::SpotEntry>();
+            });
+        }
 
         ipc->setAutoExpListener(toneCurve);
         ipc->setAutoCamListener(colorappearance);
@@ -4382,6 +4534,27 @@ void ToolPanelCoordinator::spotWBselected(int x, int y, Thumbnail* thm)
         ipc->getSpotWB(x, y, rect, temp, green);
         whitebalance->setWB(temp, green);
     }
+}
+
+void ToolPanelCoordinator::aiMaskPickSelected(int x, int y)
+{
+    if (toolBar) {
+        // One-shot picker: hand the cursor back before anything else.
+        toolBar->setTool(TMHand);
+    }
+
+#ifdef RT_AI_MASKING
+    if (!locallab || !ipc || !ipc->getInitialImage()) {
+        return;
+    }
+
+    const int classIndex = rtengine::AIMaskCache::getInstance().getDominantClassAt(
+        ipc->getInitialImage()->getFileName().raw(), x, y);
+
+    if (classIndex >= 0) {
+        locallab->createAIMaskSpot(classIndex);
+    }
+#endif
 }
 
 void ToolPanelCoordinator::pointColorSelected(int x, int y, Thumbnail* thm)
@@ -4751,7 +4924,7 @@ void ToolPanelCoordinator::applyUIComplexity(int complexityLevel)
         Tool::PR_SHARPENING, Tool::FRAMING, Tool::CROP_TOOL,
         Tool::ICM, Tool::WAVELET, Tool::DIR_PYR_EQUALIZER,
         Tool::HSV_EQUALIZER, Tool::POINT_COLOR, Tool::TEXTURE, Tool::CLARITY,
-        Tool::GRAIN, Tool::TILT_SHIFT, Tool::FILM_PRESETS, Tool::FILM_SIMULATION, Tool::SOFT_LIGHT,
+        Tool::GRAIN, Tool::LIGHT_EFFECTS, Tool::TILT_SHIFT, Tool::FILM_PRESETS, Tool::FILM_SIMULATION, Tool::SOFT_LIGHT,
         Tool::DEHAZE, Tool::DOUBLE_EXPOSURE, Tool::SENSOR_BAYER, Tool::SENSOR_XTRANS,
         Tool::BAYER_PROCESS, Tool::XTRANS_PROCESS, Tool::BAYER_PREPROCESS,
         Tool::PREPROCESS, Tool::DARKFRAME_TOOL, Tool::FLATFIELD_TOOL,
@@ -4888,7 +5061,6 @@ void ToolPanelCoordinator::toolSelected(ToolMode tool)
         case TMCropSelect: {
             toolBar->blockEditDeactivation(false);
             crop->setExpanded(true);
-            expandTransformSection(cropSectionContent_, cropSectionLabel_, M("TP_CROP_LABEL"));
             modeButtonBar->setActiveMode(EditorMode::CROPPING);
             modeChanged(EditorMode::CROPPING);
             break;
@@ -4948,6 +5120,15 @@ void ToolPanelCoordinator::dirSelected(const Glib::ustring& dirname, const Glib:
 {
     if (flatfield) {
         flatfield->setShortcutPath(dirname);
+    }
+}
+
+void ToolPanelCoordinator::setProcessingActivity(bool inProcessing)
+{
+    // Only the Spot tool needs this today: its smart tools run for seconds
+    // and show a busy cursor until their result lands.
+    if (spot) {
+        spot->setProcessingActive(inProcessing);
     }
 }
 
@@ -5072,6 +5253,8 @@ FoldableToolPanel *ToolPanelCoordinator::getFoldableToolPanel(Tool tool) const
             return clarity;
         case Tool::GRAIN:
             return grain;
+        case Tool::LIGHT_EFFECTS:
+            return lighteffects;
         case Tool::TILT_SHIFT:
             return tiltshift;
         case Tool::LENS_BLUR:
@@ -5229,6 +5412,7 @@ void ToolPanelCoordinator::updateResetButtons()
     bool effectsDirty = !(current.texture == b.texture)
                      || !(current.clarity == b.clarity)
                      || !(current.grain == b.grain)
+                     || !(current.lightEffects == b.lightEffects)
                      || !(current.tiltShift == b.tiltShift)
                      || !(current.pcvignette == b.pcvignette)
                      || !(current.filmPresets == b.filmPresets)

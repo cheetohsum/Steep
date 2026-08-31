@@ -256,6 +256,31 @@ struct GrainParams {
 };
 
 /**
+ * Optical light effects: diffusion glow, film halation and lens flare.
+ * All three read the same highlight mask but spread it differently — glow
+ * symmetrically, halation as a warm ring hugging the edge, flare as
+ * directional streaks. Independent of the Film Presets tool's own
+ * stock-specific halation.
+ */
+struct LightEffectsParams {
+    bool enabled;
+    int threshold;      // 0-100: how blown a pixel must be to emit light
+    int glow;           // 0-100 strength
+    int glowRadius;     // 0-100, % of the short edge
+    int halation;       // 0-100 strength
+    int halationSize;   // 0-100 spread
+    int halationWarmth; // 0-100, neutral -> red-orange
+    int flare;          // 0-100 strength
+    int flareLength;    // 0-100, % of the short edge
+    int flareAngle;     // -180..180 degrees
+
+    LightEffectsParams();
+
+    bool operator==(const LightEffectsParams &other) const;
+    bool operator!=(const LightEffectsParams &other) const;
+};
+
+/**
  * Parameters for tilt-shift (miniature/diorama) effect
  */
 struct TiltShiftParams {
@@ -2153,6 +2178,7 @@ public:
     TextureParams           texture;         ///< Texture enhancement parameters
     ClarityParams           clarity;         ///< Clarity parameters
     GrainParams             grain;           ///< Film grain parameters
+    LightEffectsParams      lightEffects;    ///< Glow / halation / flare parameters
     TiltShiftParams         tiltShift;       ///< Tilt-shift effect parameters
     LensBlurParams          lensBlur;        ///< Lens blur parameters
     RGBCurvesParams         rgbCurves;       ///< RGB curves parameters

@@ -19,11 +19,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <memory>
 
 #include "rtengine/rt_math.h"
 
 #include <gtkmm.h>
 #include "rtwindow.h"
+#include "guiutils.h"
 #include "cachemanager.h"
 #include "preferences.h"
 #include "iccprofilecreator.h"
@@ -47,9 +50,13 @@
 #include "tools/filmsimulation.h"
 #include "mcp/mcpserver.h"
 #include "mcp/mcpdialog.h"
+#include "steepperflog.h"
+#include "widgets/basic/adjuster.h"
 
 Glib::RefPtr<Gtk::CssProvider> cssForced;
 Glib::RefPtr<Gtk::CssProvider> cssRT;
+Glib::RefPtr<Gtk::CssProvider> cssSteepPalette;
+Glib::RefPtr<Gtk::CssProvider> cssSteepWidgets;
 
 static std::string editorFileKey(const Glib::ustring& path)
 {
@@ -57,6 +64,86 @@ static std::string editorFileKey(const Glib::ustring& path)
     std::replace(key.begin(), key.end(), '\\', '/');
     return key;
 }
+
+namespace
+{
+
+bool viewSwitchTraceOn()
+{
+    static const bool enabled = std::getenv("STEEP_FILESEL_LOG") != nullptr;
+    return enabled;
+}
+
+// Times the stages of one browser⇄editor view switch. Lines land in the same
+// steep-fileSel.log as the editorOpen/fileSel traces so a switch and the work
+// it triggers can be read together.
+class ViewSwitchTrace
+{
+public:
+    explicit ViewSwitchTrace(const char* direction)
+        : on_(viewSwitchTraceOn()),
+          direction_(direction),
+          start_(on_ ? g_get_monotonic_time() : 0),
+          last_(start_)
+    {
+    }
+
+    void step(const char* name)
+    {
+        if (!on_) {
+            return;
+        }
+
+        const gint64 now = g_get_monotonic_time();
+        fileBrowserPerfLog("[viewSwitch] %s %s %.1fms (t+%.1fms)\n",
+                           direction_, name,
+                           (now - last_) / 1000.0,
+                           (now - start_) / 1000.0);
+        last_ = now;
+    }
+
+    // Logs the handler total, then two async markers: "painted" on the target
+    // page's first draw (what the user actually sees) and "settled" once the
+    // low-priority idle queue drains (how congested the main loop is).
+    void finish(Gtk::Widget* paintTarget)
+    {
+        if (!on_) {
+            return;
+        }
+
+        const gint64 now = g_get_monotonic_time();
+        fileBrowserPerfLog("[viewSwitch] %s handler done (t+%.1fms)\n",
+                           direction_, (now - start_) / 1000.0);
+
+        const gint64 start = start_;
+        const char* const direction = direction_;
+
+        if (paintTarget) {
+            auto conn = std::make_shared<sigc::connection>();
+            *conn = paintTarget->signal_draw().connect_notify(
+                [start, direction, conn](const Cairo::RefPtr<Cairo::Context>&) {
+                    const gint64 painted = g_get_monotonic_time();
+                    fileBrowserPerfLog("[viewSwitch] %s painted (t+%.1fms)\n",
+                                       direction, (painted - start) / 1000.0);
+                    conn->disconnect();
+                });
+        }
+
+        Glib::signal_idle().connect_once([start, direction]() {
+            const gint64 settled = g_get_monotonic_time();
+            fileBrowserPerfLog("[viewSwitch] %s settled (t+%.1fms)\n",
+                               direction, (settled - start) / 1000.0);
+        }, Glib::PRIORITY_LOW);
+    }
+
+private:
+    const bool on_;
+    const char* const direction_;
+    const gint64 start_;
+    gint64 last_;
+};
+
+} // namespace
 
 #if defined(__APPLE__)
 static gboolean
@@ -162,8 +249,25 @@ RTWindow::RTWindow ()
         // Check if the current theme name in options exists, otherwise set it to default one (i.e. "RawTherapee.css")
         auto filename = Glib::build_filename(App::get().argv0(), "themes", options.theme + ".css");
         if (!Glib::file_test(filename, Glib::FILE_TEST_EXISTS)) {
-            options.theme = "RawTherapee";
+            options.theme = "RawTherapee - Modern";
             filename = Glib::build_filename(App::get().argv0(), "themes", options.theme + ".css");
+        }
+
+        // steep_* palette defaults (see themes/common/palette-defaults.css): loaded
+        // BEFORE the theme at the same priority so every token resolves under any
+        // theme, while the theme's own @define-color steep_* entries win (GTK
+        // resolves named colors from the most recently added provider first).
+        // The shared structure layer will join this chain ahead of both.
+        const auto paletteDefaultsPath = Glib::build_filename(App::get().argv0(), "themes", "common", "palette-defaults.css");
+        cssSteepPalette = Gtk::CssProvider::create();
+
+        try {
+            cssSteepPalette->load_from_path (paletteDefaultsPath);
+            Gtk::StyleContext::add_provider_for_screen (screen, cssSteepPalette, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+        } catch (Glib::Error &err) {
+            printf ("Error: Can't load css file \"%s\"\nMessage: %s\n", paletteDefaultsPath.c_str(), err.what().c_str());
+        } catch (...) {
+            printf ("Error: Can't load css file \"%s\"\n", paletteDefaultsPath.c_str());
         }
 
         cssRT = Gtk::CssProvider::create();
@@ -175,6 +279,23 @@ RTWindow::RTWindow ()
             printf ("Error: Can't load css file \"%s\"\nMessage: %s\n", filename.c_str(), err.what().c_str());
         } catch (...) {
             printf ("Error: Can't load css file \"%s\"\n", filename.c_str());
+        }
+
+        // steep widget layer (see themes/common/widgets.css): structural rules for
+        // steep's custom widgets, consolidated from what used to be inline CSS
+        // providers all over rtgui. Sits ABOVE the theme (+200) exactly like the
+        // inline providers it replaced, so themes cannot break widget geometry;
+        // themes recolor these widgets through the steep_* palette tokens instead.
+        const auto widgetsCssPath = Glib::build_filename(App::get().argv0(), "themes", "common", "widgets.css");
+        cssSteepWidgets = Gtk::CssProvider::create();
+
+        try {
+            cssSteepWidgets->load_from_path (widgetsCssPath);
+            Gtk::StyleContext::add_provider_for_screen (screen, cssSteepWidgets, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+        } catch (Glib::Error &err) {
+            printf ("Error: Can't load css file \"%s\"\nMessage: %s\n", widgetsCssPath.c_str(), err.what().c_str());
+        } catch (...) {
+            printf ("Error: Can't load css file \"%s\"\n", widgetsCssPath.c_str());
         }
 
         // Set the font face and size
@@ -227,6 +348,28 @@ RTWindow::RTWindow ()
             }
         }
 
+        // Light themes (steep_wash = black) need dark icon line-art. Must be
+        // decided before the first icon loads (FileBrowserEntry::init below).
+        {
+            Gdk::RGBA wash;
+            if (get_style_context()->lookup_color("steep_wash", wash)) {
+                RTScalable::setIconInkDark(wash.get_red() + wash.get_green() + wash.get_blue() < 1.5);
+            }
+        }
+
+        if (rtengine::settings->verbose) {
+            // Gate check for the token contract: these must differ between themes
+            // (and fall back to palette-defaults.css values for themes without a
+            // steep palette block).
+            const auto ctx = get_style_context();
+            Gdk::RGBA accent, surface;
+            const bool haveAccent = ctx->lookup_color("steep_accent", accent);
+            const bool haveSurface = ctx->lookup_color("steep_surface_1", surface);
+            printf("Theme \"%s\": steep_accent=%s steep_surface_1=%s\n",
+                   options.theme.c_str(),
+                   haveAccent ? accent.to_string().c_str() : "<unresolved>",
+                   haveSurface ? surface.to_string().c_str() : "<unresolved>");
+        }
     }
 
     // ------- end loading theme files
@@ -338,8 +481,11 @@ RTWindow::RTWindow ()
             [this](const Cairo::RefPtr<Cairo::Context>& cr) -> bool {
                 int w = queueBackdrop->get_allocated_width ();
                 int h = queueBackdrop->get_allocated_height ();
-                // Instant darken — full opacity whenever backdrop is visible
-                cr->set_source_rgba (0, 0, 0, 0.55);
+                // Instant darken — full opacity whenever backdrop is visible.
+                // This is the authoritative value: the EventBox has no
+                // visible window, so its #QueueOverlayBackdrop CSS rule is
+                // never applied.
+                cr->set_source_rgba (0, 0, 0, 0.38);
                 cr->rectangle (0, 0, w, h);
                 cr->fill ();
                 return false;
@@ -363,9 +509,31 @@ RTWindow::RTWindow ()
                 cr->clip ();
                 // Translate content upward so it slides into view from above
                 cr->translate (0, -(h - visibleH));
-                // Paint opaque background using the drawer's CSS background-color
-                queueOverlayBox->get_style_context ()->render_background (
-                    cr, 0, 0, w, h);
+                // Background from the drawer's CSS background-color, but in
+                // two bands: solid behind the controls, translucent behind
+                // the photo tray so the photos underneath show through.
+                auto styleCtx = queueOverlayBox->get_style_context ();
+                int trayY = h;
+
+                if (BatchQueue* bq = bpanel->getBatchQueue ()) {
+                    int tx = 0, ty = 0;
+                    if (bq->get_realized ()
+                            && bq->translate_coordinates (*queueOverlayBox, 0, 0, tx, ty)) {
+                        trayY = std::min (h, std::max (0, ty));
+                    }
+                }
+
+                styleCtx->render_background (cr, 0, 0, w, trayY);
+
+                if (trayY < h) {
+                    const Gdk::RGBA bg = styleCtx->get_background_color ();
+                    cr->save ();
+                    cr->set_source_rgba (bg.get_red (), bg.get_green (), bg.get_blue (), 0.55);
+                    cr->rectangle (0, trayY, w, h - trayY);
+                    cr->fill ();
+                    cr->restore ();
+                }
+
                 return false; // default handler draws children (also translated)
             }, false);
         // Hide the bottom zoom slider bar and horizontal scrollbar — not needed in overlay mode
@@ -378,6 +546,14 @@ RTWindow::RTWindow ()
         }
         bpanel->setOverlayMode (true);
         queueOverlayBox->pack_start (*bpanel, true, true);
+
+        // The drawer is sized from the queue's contents, so every change in
+        // queue length has to re-run the overlay's child positioning.
+        bpanel->setQueueSizeCallback ([this](int) {
+            if (mainOverlay) {
+                mainOverlay->queue_resize ();
+            }
+        });
 
         // Add both as overlay children (backdrop first, drawer on top)
         mainOverlay->add_overlay (*queueBackdrop);
@@ -397,8 +573,26 @@ RTWindow::RTWindow ()
                     return true;
                 }
                 if (child == queueOverlayBox) {
-                    // Drawer: top 50% — always full height; animation is via clip in signal_draw
-                    int targetH = static_cast<int>(ph * 0.50);
+                    // Drawer height follows the queue instead of always
+                    // claiming half the window: an empty queue shows just
+                    // its controls (no dark slab of blank photo area), and
+                    // each row of thumbnails grows it until it reaches the
+                    // 50% ceiling. Animation is still via clip in signal_draw.
+                    int minH = 0, natH = 0;
+                    queueOverlayBox->get_preferred_height (minH, natH);
+                    int targetH = std::max (minH, 44);
+
+                    if (BatchQueue* bq = bpanel->getBatchQueue ()) {
+                        if (!bq->getEntries ().empty ()) {
+                            // getEffectiveHeight already accounts for the row
+                            // count at the current tile size.
+                            targetH = std::max (targetH, minH + bq->getEffectiveHeight ());
+                        }
+                    }
+
+                    targetH = std::min (targetH, static_cast<int> (ph * 0.50));
+                    targetH = std::max (targetH, 1);
+
                     alloc.set_x (0);
                     alloc.set_y (0);
                     alloc.set_width (pw);
@@ -467,8 +661,10 @@ RTWindow::RTWindow ()
 
                 if (opacity <= 0.001) return false;
 
-                // Draw fully opaque dark background
-                cr->set_source_rgba (0.08, 0.09, 0.14, opacity);
+                // Backdrop in the theme's panel surface so the splash blends
+                // into whatever theme comes up behind it
+                const Gdk::RGBA splashBg = themeColor(*this, "steep_surface_1", Gdk::RGBA("#14171f"));
+                cr->set_source_rgba (splashBg.get_red(), splashBg.get_green(), splashBg.get_blue(), opacity);
                 cr->rectangle (0, 0, w, h);
                 cr->fill ();
 
@@ -542,7 +738,8 @@ RTWindow::RTWindow ()
                 // === Subtle grid-dot pattern (elevation markers) ===
                 {
                     double dotAlpha = opacity * 0.06;
-                    cr->set_source_rgba(0.4, 0.6, 0.8, dotAlpha);
+                    const Gdk::RGBA dotInk = themeColor(*this, "steep_accent", Gdk::RGBA("#6699cc"));
+                    cr->set_source_rgba(dotInk.get_red(), dotInk.get_green(), dotInk.get_blue(), dotAlpha);
                     double spacing = 30.0;
                     for (double gx = spacing; gx < w; gx += spacing) {
                         for (double gy = spacing; gy < h; gy += spacing) {
@@ -559,7 +756,7 @@ RTWindow::RTWindow ()
                         cx, cy - 10, 0, cx, cy - 10, glowR);
                     gradient->add_color_stop_rgba(0.0, 0.25, 0.45, 0.65, 0.25 * opacity);
                     gradient->add_color_stop_rgba(0.5, 0.15, 0.30, 0.50, 0.10 * opacity);
-                    gradient->add_color_stop_rgba(1.0, 0.08, 0.09, 0.14, 0.0);
+                    gradient->add_color_stop_rgba(1.0, splashBg.get_red(), splashBg.get_green(), splashBg.get_blue(), 0.0);
                     cr->set_source(gradient);
                     cr->rectangle(0, 0, w, h);
                     cr->fill();
@@ -600,7 +797,8 @@ RTWindow::RTWindow ()
                     double textY = cy + 60;
 
                     cr->move_to(textX, textY);
-                    cr->set_source_rgba(0.80, 0.83, 0.88, opacity * 0.9);
+                    const Gdk::RGBA splashInk = themeColor(*this, "steep_text_hi", Gdk::RGBA("#ccd4e0"));
+                    cr->set_source_rgba(splashInk.get_red(), splashInk.get_green(), splashInk.get_blue(), opacity * 0.9);
                     layout->show_in_cairo_context(cr);
                 }
 
@@ -1210,6 +1408,85 @@ void RTWindow::on_realize ()
     if (options.mcpAutoStart && mcpServer_ && !mcpServer_->isRunning()) {
         mcpServer_->start();
     }
+
+    // Main-loop stall probe: a 50ms default-priority heartbeat. Gaps beyond
+    // 250ms mean the GUI thread could not even run timeouts — input and
+    // painting were frozen for that long. Inert unless the perf log is on.
+    if (viewSwitchTraceOn()) {
+        auto lastTick = std::make_shared<gint64>(g_get_monotonic_time());
+        Glib::signal_timeout().connect([lastTick]() -> bool {
+            const gint64 now = g_get_monotonic_time();
+            const double gapMs = (now - *lastTick) / 1000.0;
+            if (gapMs > 250.0) {
+                fileBrowserPerfLog("[loopStall] gap=%.0fms\n", gapMs);
+            }
+            *lastTick = now;
+            return true;
+        }, 50);
+    }
+
+    // Debug rig, inert unless STEEP_SWITCH_SELFTEST is set: after startup has
+    // settled, flip browser⇄editor that many times so [viewSwitch] latency can
+    // be measured hands-free. Nothing gets selected, matching the empty-editor
+    // switch the trace is after. STEEP_SWITCH_SELFTEST_DELAY_MS/_PERIOD_MS
+    // move the flips relative to startup (e.g. into a cold folder load).
+    if (const char* const cyclesEnv = std::getenv("STEEP_SWITCH_SELFTEST")) {
+        if (isSingleTabMode() && epanel && fpanel && mainNB) {
+            const int cycles = std::max(1, std::atoi(cyclesEnv));
+            const char* const delayEnv = std::getenv("STEEP_SWITCH_SELFTEST_DELAY_MS");
+            const char* const periodEnv = std::getenv("STEEP_SWITCH_SELFTEST_PERIOD_MS");
+            const unsigned int delayMs = delayEnv ? std::max(1, std::atoi(delayEnv)) : 15000;
+            const unsigned int periodMs = periodEnv ? std::max(100, std::atoi(periodEnv)) : 2500;
+            Glib::signal_timeout().connect_once([this, cycles, periodMs]() {
+                fileBrowserPerfLog("[viewSwitch] selftest start cycles=%d period=%ums\n",
+                                   cycles, periodMs);
+                auto flip = std::make_shared<int>(0);
+                const bool advance = std::getenv("STEEP_SWITCH_SELFTEST_ADVANCE") != nullptr;
+                Glib::signal_timeout().connect([this, flip, cycles, advance]() -> bool {
+                    // Phase A: empty editor, nothing selected. Phase B: same
+                    // flips with the first image selected — entering the
+                    // editor auto-opens it, matching a real editing session.
+                    // With ADVANCE set, phase B steps to the next image before
+                    // every editor flip so each cycle opens a fresh file.
+                    const int phaseFlips = cycles * 2;
+                    if (*flip == phaseFlips
+                        && fpanel->fileCatalog && fpanel->fileCatalog->fileBrowser) {
+                        fpanel->fileCatalog->fileBrowser->selectFirst(false);
+                        fileBrowserPerfLog("[viewSwitch] selftest selectFirst\n");
+                    } else if (advance && *flip > phaseFlips && (*flip % 2) == 0
+                               && fpanel->fileCatalog && fpanel->fileCatalog->fileBrowser) {
+                        fpanel->fileCatalog->fileBrowser->selectNext(1, false);
+                        fileBrowserPerfLog("[viewSwitch] selftest selectNext\n");
+                    }
+                    const bool toEditor = (*flip % 2) == 0;
+                    fileBrowserPerfLog("[viewSwitch] selftest flip %d -> %s\n",
+                                       *flip, toEditor ? "editor" : "browser");
+                    Gtk::Widget& page = toEditor ? static_cast<Gtk::Widget&>(*epanel)
+                                                 : static_cast<Gtk::Widget&>(*fpanel);
+                    mainNB->set_current_page(mainNB->page_num(page));
+
+                    // With EDIT set, dirty the exposure a beat after each
+                    // phase-B editor flip so the switch back exercises the
+                    // background sidecar save with a real change.
+                    if (toEditor && *flip >= phaseFlips
+                        && std::getenv("STEEP_SWITCH_SELFTEST_EDIT")) {
+                        Glib::signal_timeout().connect_once([this]() {
+                            if (epanel) {
+                                fileBrowserPerfLog("[viewSwitch] selftest nudge exposure\n");
+                                epanel->debugNudgeExposure();
+                            }
+                        }, 4000);
+                    }
+                    ++*flip;
+                    if (*flip >= phaseFlips * 2) {
+                        fileBrowserPerfLog("[viewSwitch] selftest done\n");
+                        return false;
+                    }
+                    return true;
+                }, periodMs);
+            }, delayMs);
+        }
+    }
 }
 
 void RTWindow::showErrors()
@@ -1266,13 +1543,18 @@ bool RTWindow::on_window_state_event (GdkEventWindowState* event)
 void RTWindow::on_mainNB_switch_page (Gtk::Widget* widget, guint page_num)
 {
     if (!on_delete_has_run) {
-        if (isEditorPanel (page_num)) {
+        const bool toEditor = isEditorPanel (page_num);
+        ViewSwitchTrace trace (toEditor ? "->editor" : "->browser");
+
+        if (toEditor) {
             if (isSingleTabMode() && epanel) {
                 MoveFileBrowserToEditor();
+                trace.step ("moveFileBrowserToEditor");
             }
 
             EditorPanel *ep = static_cast<EditorPanel*> (mainNB->get_nth_page (page_num));
             ep->setAspect();
+            trace.step ("setAspect");
 
             if (!isSingleTabMode()) {
                 if (filesEdited.size() > 0) {
@@ -1285,6 +1567,7 @@ void RTWindow::on_mainNB_switch_page (Gtk::Widget* widget, guint page_num)
                 && fpanel
                 && !suppressEditorSwitchAutoOpen_) {
                 fpanel->openSelectedInEditor();
+                trace.step ("openSelectedInEditor");
             }
 
             // Edit view opens with the left sidebar collapsed by default,
@@ -1296,29 +1579,37 @@ void RTWindow::on_mainNB_switch_page (Gtk::Widget* widget, guint page_num)
                 } else {
                     epanel->collapseLeftSidebarForEdit();
                 }
+                trace.step ("leftSidebarState");
             }
 
             // Collapse filter bar to prevent overlap with filmstrip
             ep->collapseFilterBar();
+            trace.step ("collapseFilterBar");
 
             // Animate editor panels in (sidebar slides from right, filmstrip from top)
             if (isSingleTabMode() && epanel) {
                 epanel->animateEditorIn();
+                trace.step ("animateEditorIn");
             }
         } else {
             // in single tab mode with command line filename epanel does not exist yet
             if (isSingleTabMode() && epanel) {
-                // Save profile on leaving the editor panel
-                epanel->saveProfile();
+                // Save profile on leaving the editor panel. The disk writes
+                // run on the cleanup executor: a spun-down HDD used to hold
+                // the whole view switch hostage for its spin-up here.
+                epanel->saveProfileAsync();
+                trace.step ("saveProfile");
 
                 // Sync left panel state: editor → browser
                 if (fpanel) {
                     fpanel->setLeftPanelVisible(epanel->isLeftPanelVisible());
+                    trace.step ("leftSidebarState");
                 }
 
                 // Moving the FileBrowser only if the user has switched to the FileBrowser tab
                 if (mainNB->get_nth_page (page_num) == fpanel) {
                     MoveFileBrowserToMain();
+                    trace.step ("moveFileBrowserToMain");
                 }
             }
         }
@@ -1331,6 +1622,7 @@ void RTWindow::on_mainNB_switch_page (Gtk::Widget* widget, guint page_num)
         if (isSingleTabMode() && epanel) {
             epanel->closeAlbumView();
         }
+        trace.step ("closeAlbumView");
 
         // Both views own a directory tree. Mirror the catalog's final active
         // directory after all transition state (including album exit) settles.
@@ -1341,10 +1633,13 @@ void RTWindow::on_mainNB_switch_page (Gtk::Widget* widget, guint page_num)
             } else if (mainNB->get_nth_page(page_num) == fpanel) {
                 fpanel->syncDirectoryHighlight(directory);
             }
+            trace.step ("syncDirectoryHighlight");
         }
 
         // Keep header bar nav buttons in sync with notebook page
         syncNavButtons (page_num);
+        trace.step ("syncNavButtons");
+        trace.finish(mainNB ? mainNB->get_nth_page (page_num) : nullptr);
     }
 }
 
@@ -1582,6 +1877,9 @@ bool RTWindow::on_delete_event (GdkEventAny* event)
 
     if ((isSingleTabMode() || App::get().isSimpleEditor()) && epanel->isRealized()) {
         epanel->saveProfile();
+        // A view switch may have left its sidecar write on the cleanup
+        // executor; finish it before teardown so the file cannot be torn.
+        EditorPanel::drainBackgroundSaves();
         epanel->writeOptions ();
     } else {
         if (options.multiDisplayMode > 0 && editWindow) {
@@ -1758,6 +2056,22 @@ void RTWindow::showPreferences ()
     fpanel->optionsChanged ();
 
     const auto& options = App::get().options();
+
+    // Setting-row text size can also be changed from Preferences, so push it
+    // into the live Adjusters the same way the right-click slider does.
+    Adjuster::setPillScale(options.adjusterPillScale);
+
+    // Same for the folder name above the filmstrip, and its top/bottom
+    // placement, in every open editor.
+    if (epanel) {
+        epanel->refreshEditorTitleVisibility();
+        epanel->applyFilmstripPlacement();
+    }
+
+    for (const auto& p : epanels) {
+        p.second->refreshEditorTitleVisibility();
+        p.second->applyFilmstripPlacement();
+    }
     if (epanel) {
         epanel->defaultMonitorProfileChanged (options.rtSettings.monitorProfile, options.rtSettings.autoMonitorProfile);
     }
@@ -1781,6 +2095,11 @@ void RTWindow::setProgress(double p)
         if (prProgBar.get_visible()) {
             prProgBar.hide();
         }
+        // Nothing resets the text between jobs, so without this a later
+        // re-show (e.g. a thumbnail progress tick) surfaces the previous
+        // job's label — users saw a stale "Decoding..." during unrelated
+        // background work. Every shower sets its own text.
+        prProgBar.set_text("");
     }
 }
 
@@ -1947,19 +2266,24 @@ void RTWindow::SetMainCurrent()
 void RTWindow::MoveFileBrowserToMain()
 {
     if ( fpanel->ribbonPane->get_children().empty()) {
+        ViewSwitchTrace trace ("->browser.move");
         FileCatalog *fCatalog = fpanel->fileCatalog;
         epanel->catalogPane->remove (*fCatalog);
         fpanel->ribbonPane->add (*fCatalog);
+        trace.step ("reparent");
         fCatalog->enableTabMode (false);
+        trace.step ("enableTabMode(false)");
         fCatalog->tbLeftPanel_1_visible (false);  // Left toggle now in FilePanel footer
         fCatalog->tbRightPanel_1_visible (false); // Right sidebar retired in browser view
 
         // The filmstrip's filter must not linger in browser view — restore
         // the catalog toolbar's filter and resume any paused preview loading.
         fCatalog->reapplyBrowserFilter ();
+        trace.step ("reapplyBrowserFilter");
 
         // Browser view keeps its left sidebar visible by default
         fpanel->setLeftPanelVisible (true);
+        trace.step ("setLeftPanelVisible");
 
         // Center the browser on the image that was selected in the filmstrip.
         // Deferred to a low-priority idle so the re-parented browser has been
@@ -1981,14 +2305,20 @@ void RTWindow::MoveFileBrowserToMain()
 void RTWindow::MoveFileBrowserToEditor()
 {
     if (epanel->catalogPane->get_children().empty() ) {
+        ViewSwitchTrace trace ("->editor.move");
         FileCatalog *fCatalog = fpanel->fileCatalog;
         fpanel->ribbonPane->remove (*fCatalog);
         fCatalog->disableInspector();
         epanel->catalogPane->add (*fCatalog);
+        trace.step ("reparent");
         epanel->showTopPanel (App::get().options().editorFilmStripOpened);
+        trace.step ("showTopPanel");
         fCatalog->enableTabMode (true);
+        trace.step ("enableTabMode(true)");
         epanel->restoreEditorFilter();
+        trace.step ("restoreEditorFilter");
         fCatalog->refreshHeight();
+        trace.step ("refreshHeight");
         fCatalog->tbLeftPanel_1_visible (false);
         fCatalog->tbRightPanel_1_visible (false);
 
@@ -2170,8 +2500,18 @@ void RTWindow::get_position(int& x, int& y) const
 
 void RTWindow::set_title_decorated (Glib::ustring fname)
 {
-    if (!get_title().empty()) {
-        set_title ("");
+    // A real window title: shown by the native Windows titlebar (which
+    // otherwise falls back to "steep.exe"), the taskbar, and alt-tab.
+    // The in-window header bar shows navigation, not text — its title
+    // stays empty.
+    Glib::ustring title = "Steep";
+
+    if (!fname.empty()) {
+        title = Glib::path_get_basename(fname) + " — Steep";
+    }
+
+    if (get_title() != title) {
+        set_title (title);
     }
 
     if (headerBar) {

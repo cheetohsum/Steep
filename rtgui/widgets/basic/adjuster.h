@@ -23,6 +23,8 @@
 #include "guiutils.h"
 
 #include <functional>
+#include <memory>
+#include <vector>
 
 class Adjuster;
 
@@ -75,6 +77,20 @@ protected:
     std::function<void()> labelClickCallback_;
     std::function<void(bool)> interactionCallback_;
 
+    // Click-to-type on the value drawn inside the pill. The popover is built
+    // on first use: a window has hundreds of Adjusters and almost none of
+    // them are ever typed into.
+    std::unique_ptr<Gtk::Popover> valuePopover_;
+    Gtk::Entry* valueEntry_ = nullptr;
+    Gdk::Rectangle valueTextRect_;   // in Adjuster coordinates; width 0 = none
+
+    void beginValueEdit();
+    void commitValueEdit();
+    void applyPillScale();
+
+    static double pillScale_;
+    static std::vector<Adjuster*> instances_;
+
     double shapeValue (double a) const;
     double2double_fun value2slider, slider2value;
 
@@ -82,6 +98,11 @@ protected:
     void setSliderValue(double val);
 
 public:
+    /// Type scale for every setting pill, shared by all Adjusters. The pill
+    /// height follows it so the text stays enclosed. Persisted in Options.
+    static void setPillScale(double scale);
+    static double getPillScale();
+
     Adjuster(
         Glib::ustring vlabel,
         double vmin,

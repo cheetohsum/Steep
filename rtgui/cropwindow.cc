@@ -625,6 +625,10 @@ void CropWindow::buttonPress (int button, int type, int bstate, int x, int y)
                         int spotx, spoty;
                         screenCoordToImage (x, y, spotx, spoty);
                         iarea->pointColorSelected (spotx, spoty);
+                    } else if (iarea->getToolMode () == TMAIMaskPick) {
+                        int spotx, spoty;
+                        screenCoordToImage (x, y, spotx, spoty);
+                        iarea->aiMaskPickSelected (spotx, spoty);
                     } else if (iarea->getToolMode () == TMCropSelect && cropgl) {
                         state = SCropSelecting;
                         screenCoordToImage (x, y, press_x, press_y);
@@ -1551,6 +1555,8 @@ void CropWindow::updateCursor (int x, int y)
                 newType = CSSpotWB;
             } else if (tm == TMPointColorPick) {
                 newType = CSPointColorPick;
+            } else if (tm == TMAIMaskPick) {
+                newType = CSCrosshair;
             } else if (tm == TMCropSelect) {
                 if (cropHandler.cropParams->enabled && onArea(CropInside, x, y)) {
                     newType = CSMove;

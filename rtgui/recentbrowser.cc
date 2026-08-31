@@ -33,8 +33,9 @@ RecentBrowser::RecentBrowser ()
     recentButton->set_relief(Gtk::RELIEF_NONE);
     recentButton->set_tooltip_text(M("MAIN_FRAME_RECENT"));
 
-    recentMenu = Gtk::manage(new Gtk::Menu());
-    recentButton->set_popup(*recentMenu);
+    // Built through the popup factory (GTK4 seam + Windows popup hygiene).
+    recentPopup_ = std::make_unique<steepui::PopupMenu>();
+    recentPopup_->attachTo(*recentButton);
     pack_start(*recentButton, Gtk::PACK_SHRINK);
 
     rebuildMenu();
@@ -44,33 +45,26 @@ RecentBrowser::RecentBrowser ()
 
 void RecentBrowser::rebuildMenu()
 {
-    for (auto* child : recentMenu->get_children()) {
-        recentMenu->remove(*child);
-    }
+    recentPopup_->clear();
 
     const auto& folders = App::get().options().recentFolders;
 
     if (folders.empty()) {
-        auto* emptyItem = Gtk::manage(new Gtk::MenuItem(M("MAIN_FRAME_RECENT")));
-        emptyItem->set_sensitive(false);
-        recentMenu->append(*emptyItem);
+        recentPopup_->addItem(M("MAIN_FRAME_RECENT"), nullptr)->set_sensitive(false);
     } else {
         for (const auto& folder : folders) {
-            auto* item = Gtk::manage(new Gtk::MenuItem(folder));
+            auto* item = recentPopup_->addItem(folder, [this, folder]() {
+                selectRecent(folder);
+            });
             item->set_tooltip_text(folder);
-            item->signal_activate().connect(
-                sigc::bind(sigc::mem_fun(*this, &RecentBrowser::selectRecent), folder));
-            recentMenu->append(*item);
         }
     }
-
-    recentMenu->show_all();
 }
 
 void RecentBrowser::popupMenuAt (Gtk::Widget& anchor)
 {
     rebuildMenu();
-    recentMenu->popup_at_widget(&anchor, Gdk::GRAVITY_SOUTH_WEST, Gdk::GRAVITY_NORTH_WEST, nullptr);
+    recentPopup_->popupAtWidget(anchor);
 }
 
 void RecentBrowser::selectRecent(Glib::ustring dirname)

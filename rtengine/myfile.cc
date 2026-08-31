@@ -17,7 +17,15 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "myfile.h"
+#include <algorithm>
 #include <cstdarg>
+#include <cstring>
+#include <cstdio>
+#include <list>
+#include <map>
+#include <mutex>
+#include <string>
+#include <vector>
 #include "rtengine.h"
 // get mmap() sorted out
 #ifdef MYFILE_MMAP
@@ -72,6 +80,11 @@ int munmap(void *start, size_t length)
 
 rtengine::IMFILE* rtengine::fopen (const char* fname)
 {
+    return fopen(fname, false);
+}
+
+rtengine::IMFILE* rtengine::fopen (const char* fname, bool randomAccess)
+{
     int fd;
 
 #ifdef _WIN32
@@ -80,7 +93,8 @@ rtengine::IMFILE* rtengine::fopen (const char* fname)
     // First convert UTF8 to UTF16, then use Windows function to open the file and convert back to file descriptor.
     std::unique_ptr<wchar_t, GFreeFunc> wfname (reinterpret_cast<wchar_t*>(g_utf8_to_utf16 (fname, -1, NULL, NULL, NULL)), g_free);
 
-    HANDLE hFile = CreateFileW (wfname.get (), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    HANDLE hFile = CreateFileW (wfname.get (), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
+                                randomAccess ? FILE_FLAG_RANDOM_ACCESS : FILE_ATTRIBUTE_NORMAL, NULL);
     if (hFile != INVALID_HANDLE_VALUE) {
         fd = _open_osfhandle((intptr_t)hFile, 0);
     }
@@ -130,9 +144,349 @@ rtengine::IMFILE* rtengine::fopen (const char* fname)
 
 rtengine::IMFILE* rtengine::gfopen (const char* fname)
 {
-    return fopen(fname);
+    return fopen(fname, false);
+}
+
+rtengine::IMFILE* rtengine::gfopen (const char* fname, bool randomAccess)
+{
+    return fopen(fname, randomAccess);
+}
+
+namespace
+{
+
+// One stream at a time: the point is to hand the disk a sequential run per
+// file instead of interleaved clusters from every worker.
+std::mutex& prefetchMutex()
+{
+    static std::mutex instance;
+    return instance;
+}
+
+}
+
+void rtengine::prefetchFileHead (const char* fname, ssize_t bytes)
+{
+    if (!fname || bytes <= 0) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(prefetchMutex());
+    std::vector<char> buffer(static_cast<size_t>(std::min<ssize_t>(bytes, 4 * 1024 * 1024)));
+
+#ifdef _WIN32
+    std::unique_ptr<wchar_t, GFreeFunc> wfname (reinterpret_cast<wchar_t*>(g_utf8_to_utf16 (fname, -1, NULL, NULL, NULL)), g_free);
+
+    if (!wfname) {
+        return;
+    }
+
+    HANDLE hFile = CreateFileW (wfname.get (), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+
+    if (hFile == INVALID_HANDLE_VALUE) {
+        return;
+    }
+
+    for (ssize_t done = 0; done < bytes;) {
+        const DWORD want = static_cast<DWORD>(std::min<ssize_t>(static_cast<ssize_t>(buffer.size()), bytes - done));
+        DWORD got = 0;
+
+        if (!ReadFile(hFile, buffer.data(), want, &got, NULL) || got == 0) {
+            break;
+        }
+
+        done += got;
+    }
+
+    CloseHandle(hFile);
+#else
+    const int fd = ::g_open (fname, O_RDONLY);
+
+    if (fd < 0) {
+        return;
+    }
+
+    for (ssize_t done = 0; done < bytes;) {
+        const ssize_t got = ::read(fd, buffer.data(), std::min<ssize_t>(static_cast<ssize_t>(buffer.size()), bytes - done));
+
+        if (got <= 0) {
+            break;
+        }
+
+        done += got;
+    }
+
+    close(fd);
+#endif
+}
+
+namespace
+{
+
+// A RAW's embedded preview is read twice while its thumbnail is generated:
+// once by the metadata parser and once by the preview decoder, microseconds
+// apart on two threads. On a rotational disk that doubles the cost of a cold
+// folder load, so hold the last few ranges in memory and serve the second
+// reader from there. Deliberately tiny and short-lived: entries survive only
+// until a handful of other files push them out.
+class RangeCache
+{
+public:
+    static RangeCache& get()
+    {
+        static RangeCache instance;
+        return instance;
+    }
+
+    bool take(const std::string& key, std::vector<unsigned char>& out)
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        const auto it = entries_.find(key);
+
+        if (it == entries_.end()) {
+            return false;
+        }
+
+        out = std::move(it->second);
+        bytes_ -= out.size();
+        entries_.erase(it);
+        order_.remove(key);
+        return true;
+    }
+
+    void put(const std::string& key, const std::vector<unsigned char>& data)
+    {
+        if (data.size() < kMinBytes || data.size() > kMaxBytes) {
+            return;
+        }
+
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        if (entries_.count(key)) {
+            return;
+        }
+
+        while (!order_.empty() && (bytes_ + data.size() > kMaxBytes || entries_.size() >= kMaxEntries)) {
+            const auto oldest = order_.front();
+            order_.pop_front();
+            const auto it = entries_.find(oldest);
+
+            if (it != entries_.end()) {
+                bytes_ -= it->second.size();
+                entries_.erase(it);
+            }
+        }
+
+        bytes_ += data.size();
+        entries_.emplace(key, data);
+        order_.push_back(key);
+    }
+
+private:
+    static constexpr size_t kMinBytes = 256 * 1024;
+    static constexpr size_t kMaxBytes = 96u * 1024 * 1024;
+    static constexpr size_t kMaxEntries = 16;
+
+    std::mutex mutex_;
+    std::map<std::string, std::vector<unsigned char>> entries_;
+    std::list<std::string> order_;
+    size_t bytes_ = 0;
+};
+
+std::string rangeKey(const char* fname, ssize_t offset, ssize_t length)
+{
+    return std::string(fname) + '|' + std::to_string(offset) + '|' + std::to_string(length);
+}
+
+}
+
+bool rtengine::readFileRange (const char* fname, ssize_t offset, ssize_t length, std::vector<unsigned char>& out)
+{
+    out.clear();
+
+    if (!fname || offset < 0 || length <= 0) {
+        return false;
+    }
+
+    const std::string key = rangeKey(fname, offset, length);
+
+    // Whoever asks second gets the bytes without touching the disk. The entry
+    // is removed on read: exactly two consumers per file, and holding it any
+    // longer would just waste memory during a folder load.
+    static const bool trace = g_getenv("RT_RANGE_TRACE") != nullptr;
+
+    const auto served = [&](const char* how) {
+        if (trace) {
+            std::fprintf(stderr, "RT_RANGE %s off=%lld len=%lld file=%s\n",
+                how, (long long)offset, (long long)length, fname);
+        }
+    };
+
+    if (RangeCache::get().take(key, out)) {
+        served("hit ");
+        return !out.empty();
+    }
+
+    // The two readers of a RAW preview start at the same moment on different
+    // threads, so an unlocked lookup misses in both and the range gets read
+    // twice. Re-check once this thread owns the read lock: by then the other
+    // one has finished and deposited its bytes.
+    std::lock_guard<std::mutex> lock(prefetchMutex());
+
+    if (RangeCache::get().take(key, out)) {
+        served("hit2");
+        return !out.empty();
+    }
+
+    served("miss");
+    out.resize(static_cast<size_t>(length));
+    ssize_t done = 0;
+
+#ifdef _WIN32
+    std::unique_ptr<wchar_t, GFreeFunc> wfname (reinterpret_cast<wchar_t*>(g_utf8_to_utf16 (fname, -1, NULL, NULL, NULL)), g_free);
+    HANDLE hFile = wfname
+        ? CreateFileW (wfname.get (), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL)
+        : INVALID_HANDLE_VALUE;
+
+    if (hFile == INVALID_HANDLE_VALUE) {
+        out.clear();
+        return false;
+    }
+
+    while (done < length) {
+        const DWORD want = static_cast<DWORD>(std::min<ssize_t>(4 * 1024 * 1024, length - done));
+        OVERLAPPED ov;
+        memset(&ov, 0, sizeof(ov));
+        const ULONGLONG at = static_cast<ULONGLONG>(offset + done);
+        ov.Offset = static_cast<DWORD>(at & 0xffffffffu);
+        ov.OffsetHigh = static_cast<DWORD>(at >> 32);
+        DWORD got = 0;
+
+        if (!ReadFile(hFile, out.data() + done, want, &got, &ov) || got == 0) {
+            break;
+        }
+
+        done += got;
+    }
+
+    CloseHandle(hFile);
+#else
+    const int fd = ::g_open (fname, O_RDONLY);
+
+    if (fd < 0) {
+        out.clear();
+        return false;
+    }
+
+    while (done < length) {
+        const ssize_t got = ::pread(fd, out.data() + done, std::min<ssize_t>(4 * 1024 * 1024, length - done), offset + done);
+
+        if (got <= 0) {
+            break;
+        }
+
+        done += got;
+    }
+
+    close(fd);
+#endif
+
+    out.resize(static_cast<size_t>(done));
+
+    if (done == length) {
+        RangeCache::get().put(key, out);
+    }
+
+    return done > 0;
+}
+
+void rtengine::fprefetch (IMFILE* f, ssize_t offset, ssize_t length)
+{
+    if (!f || f->fd < 0 || !f->data || offset < 0 || length <= 0 || offset >= f->size) {
+        return;
+    }
+
+    length = std::min<ssize_t>(length, f->size - offset);
+
+    std::lock_guard<std::mutex> lock(prefetchMutex());
+
+    constexpr ssize_t chunk = 4 * 1024 * 1024;
+    std::vector<char> buffer(static_cast<size_t>(std::min<ssize_t>(chunk, length)));
+
+#ifdef _WIN32
+    HANDLE handle = reinterpret_cast<HANDLE>(_get_osfhandle(f->fd));
+
+    if (handle == INVALID_HANDLE_VALUE) {
+        return;
+    }
+
+    for (ssize_t done = 0; done < length;) {
+        const DWORD want = static_cast<DWORD>(std::min<ssize_t>(chunk, length - done));
+        OVERLAPPED ov;
+        memset(&ov, 0, sizeof(ov));
+        const ULONGLONG at = static_cast<ULONGLONG>(offset + done);
+        ov.Offset = static_cast<DWORD>(at & 0xffffffffu);
+        ov.OffsetHigh = static_cast<DWORD>(at >> 32);
+        DWORD got = 0;
+
+        if (!ReadFile(handle, buffer.data(), want, &got, &ov) || got == 0) {
+            break;
+        }
+
+        done += got;
+    }
+#else
+    for (ssize_t done = 0; done < length;) {
+        const ssize_t got = ::pread(f->fd, buffer.data(), std::min<ssize_t>(chunk, length - done), offset + done);
+
+        if (got <= 0) {
+            break;
+        }
+
+        done += got;
+    }
+#endif
 }
 #else
+
+void rtengine::fprefetch (IMFILE*, ssize_t, ssize_t)
+{
+}
+
+void rtengine::prefetchFileHead (const char*, ssize_t)
+{
+}
+
+bool rtengine::readFileRange (const char* fname, ssize_t offset, ssize_t length, std::vector<unsigned char>& out)
+{
+    out.clear();
+
+    if (!fname || offset < 0 || length <= 0) {
+        return false;
+    }
+
+    FILE* f = g_fopen(fname, "rb");
+
+    if (!f) {
+        return false;
+    }
+
+    out.resize(static_cast<size_t>(length));
+    size_t got = 0;
+
+    if (fseeko(f, offset, SEEK_SET) == 0) {
+        got = std::fread(out.data(), 1, out.size(), f);
+    }
+
+    std::fclose(f);
+    out.resize(got);
+    return got > 0;
+}
+
+rtengine::IMFILE* rtengine::fopen (const char* fname, bool)
+{
+    return fopen(fname);
+}
 
 rtengine::IMFILE* rtengine::fopen (const char* fname)
 {
@@ -155,6 +509,11 @@ rtengine::IMFILE* rtengine::fopen (const char* fname)
     mf->eof = false;
 
     return mf;
+}
+
+rtengine::IMFILE* rtengine::gfopen (const char* fname, bool)
+{
+    return gfopen(fname);
 }
 
 rtengine::IMFILE* rtengine::gfopen (const char* fname)

@@ -708,6 +708,7 @@ struct LocallabParams {
         double aiMaskOpacity;
         int aiMaskRefineRadius;
         double aiMaskRefineEps;
+        int aiMaskShapeOp; // 0 = blend with shape, 1 = shape adds to mask, 2 = shape cuts from mask
         //ciecam
         bool visicie;
         bool expcie;

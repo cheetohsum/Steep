@@ -194,6 +194,9 @@ BatchQueuePanel::BatchQueuePanel (FileCatalog* aFileCatalog) : parent(nullptr)
 
     // setup signal handlers
     outdirTemplate->signal_changed().connect (sigc::mem_fun(*this, &BatchQueuePanel::saveOptions));
+    // Hovering the field shows what the template actually resolves to.
+    outdirTemplate->signal_changed().connect (sigc::mem_fun(*this, &BatchQueuePanel::updateTemplatePreviewTooltip));
+    updateTemplatePreviewTooltip();
     useTemplate->signal_toggled().connect (sigc::mem_fun(*this, &BatchQueuePanel::saveOptions));
     useFolder->signal_toggled().connect (sigc::mem_fun(*this, &BatchQueuePanel::saveOptions));
     templateHelpButton->signal_toggled().connect (sigc::mem_fun(*this, &BatchQueuePanel::templateHelpButtonToggled));
@@ -223,7 +226,16 @@ BatchQueuePanel::BatchQueuePanel (FileCatalog* aFileCatalog) : parent(nullptr)
     templateHelpTextView->set_editable(false);
     templateHelpTextView->set_wrap_mode(Gtk::WRAP_WORD);
     scrolledTemplateHelpWindow = Gtk::manage(new Gtk::ScrolledWindow());
-    scrolledTemplateHelpWindow->add(*templateHelpTextView);
+
+    // Ready-made templates sit above the reference text: one click for the
+    // common cases, the full specifier documentation underneath for the
+    // rest.
+    {
+        Gtk::Box* helpContent = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
+        helpContent->pack_start(*buildTemplatePresets(), Gtk::PACK_SHRINK);
+        helpContent->pack_start(*templateHelpTextView, Gtk::PACK_EXPAND_WIDGET);
+        scrolledTemplateHelpWindow->add(*helpContent);
+    }
     middleSplitPane->pack1 (*scrolledTemplateHelpWindow);
     middleSplitPane->pack2 (*batchQueue);
     scrolledTemplateHelpWindow->set_visible(false); // initially hidden, templateHelpButton shows it
@@ -374,6 +386,10 @@ void BatchQueuePanel::queueSizeChanged(int qsize, bool queueRunning, bool queueE
 {
     setGuiFromBatchState(queueRunning, qsize);
 
+    if (queueSizeCallback_) {
+        queueSizeCallback_(qsize);
+    }
+
     if (!queueRunning && qsize == 0 && queueShouldRun) {
         // There was work, but it is all done now.
         queueShouldRun = false;
@@ -433,6 +449,161 @@ void BatchQueuePanel::setGuiFromBatchState(bool queueRunning, int qsize)
     fwatermark->set_sensitive (!queueRunning);
 
     updateTab(qsize);
+}
+
+namespace
+{
+// %tP / %tF read the photo's capture or modification time and %r reads its
+// rank, so resolving them against a stand-in path yields a meaningless
+// result (the epoch). Preview text says so instead of inventing a date.
+bool templateUsesPhotoMetadata (const Glib::ustring& templateText)
+{
+    return templateText.find("%tP") != Glib::ustring::npos
+        || templateText.find("%tF") != Glib::ustring::npos
+        || templateText.find("%r") != Glib::ustring::npos;
+}
+}
+
+Glib::ustring BatchQueuePanel::resolveTemplateExample (const Glib::ustring& templateText) const
+{
+    // %tP / %tF / %r reach into the photo itself — its EXIF, its timestamps,
+    // its sidecar. Resolving them against a stand-in path that does not
+    // exist reads metadata from nothing (it crashed on startup), and the
+    // answer would be meaningless anyway. Callers show a note instead.
+    if (templateUsesPhotoMetadata(templateText)) {
+        return Glib::ustring();
+    }
+
+    auto& options = App::get().mut_options();
+
+    // calcAutoFileNameBase reads the template out of Options, so swap it in
+    // and put the user's own settings back afterwards. Same technique the
+    // help text already uses to generate its worked examples.
+    const bool savedUse = options.saveUsePathTemplate;
+    const Glib::ustring savedTemplate = options.savePathTemplate;
+
+    options.saveUsePathTemplate = true;
+    options.savePathTemplate = templateText;
+
+#ifdef _WIN32
+    const Glib::ustring examplePath = M("QUEUE_LOCATION_TEMPLATE_HELP_PATHS_EXAMPLE_WINDOWS");
+#else
+    const Glib::ustring examplePath = M("QUEUE_LOCATION_TEMPLATE_HELP_PATHS_EXAMPLE_LINUX");
+#endif
+
+    Glib::ustring resolved = BatchQueue::calcAutoFileNameBase(examplePath, 1, "jpg");
+
+    options.saveUsePathTemplate = savedUse;
+    options.savePathTemplate = savedTemplate;
+
+    return resolved;
+}
+
+void BatchQueuePanel::updateTemplatePreviewTooltip ()
+{
+    const Glib::ustring templateText = outdirTemplate->get_text();
+
+    if (templateText.empty()) {
+        outdirTemplate->set_tooltip_markup(M("QUEUE_LOCATION_TEMPLATE_TOOLTIP"));
+        return;
+    }
+
+    Glib::ustring body;
+
+    if (templateUsesPhotoMetadata(templateText)) {
+        body = "<i>" + Glib::Markup::escape_text(M("QUEUE_LOCATION_TEMPLATE_PREVIEW_PERPHOTO")) + "</i>";
+    } else {
+        const Glib::ustring resolved = resolveTemplateExample(templateText);
+        body = resolved.empty()
+            ? Glib::Markup::escape_text(M("QUEUE_LOCATION_TEMPLATE_PREVIEW_INVALID"))
+            : "<tt>" + Glib::Markup::escape_text(resolved + ".jpg") + "</tt>";
+    }
+
+    outdirTemplate->set_tooltip_markup(Glib::ustring::compose(
+        "%1\n\n<b>%2</b>\n%3",
+        M("QUEUE_LOCATION_TEMPLATE_TOOLTIP"),
+        Glib::Markup::escape_text(M("QUEUE_LOCATION_TEMPLATE_PREVIEW")),
+        body));
+}
+
+Gtk::Box* BatchQueuePanel::buildTemplatePresets ()
+{
+    // Ready-made templates at the top of the help pane: the syntax is
+    // powerful but nobody should have to learn it to get the common cases.
+    // Every pattern here is one of the documented, verified forms.
+    static const struct {
+        const char* labelKey;
+        const char* pattern;
+    } presets[] = {
+        {"QUEUE_TEMPLATE_PRESET_BESIDE",   "%p1/%f"},
+        {"QUEUE_TEMPLATE_PRESET_SUBFOLDER", "%p1/Exported/%f"},
+        {"QUEUE_TEMPLATE_PRESET_BYFORMAT", "%p1/Exported_%e/%f"},
+        {"QUEUE_TEMPLATE_PRESET_BYDATE",   "%p1/Exported/%tP\"%Y\"/%tP\"%Y-%m\"/%f"},
+        {"QUEUE_TEMPLATE_PRESET_DATENAME", "%p1/Exported/%tP\"%Y%m%d\"_%f"},
+    };
+
+    Gtk::Box* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 2));
+    box->set_margin_start(6);
+    box->set_margin_end(6);
+    box->set_margin_top(6);
+
+    Gtk::Label* heading = Gtk::manage(new Gtk::Label());
+    heading->set_markup("<big><b>" + Glib::Markup::escape_text(M("QUEUE_TEMPLATE_PRESETS_TITLE")) + "</b></big>");
+    heading->set_halign(Gtk::ALIGN_START);
+    box->pack_start(*heading, Gtk::PACK_SHRINK);
+
+    Gtk::Label* intro = Gtk::manage(new Gtk::Label());
+    intro->set_markup("<small>" + Glib::Markup::escape_text(M("QUEUE_TEMPLATE_PRESETS_INTRO")) + "</small>");
+    intro->set_halign(Gtk::ALIGN_START);
+    intro->set_line_wrap(true);
+    box->pack_start(*intro, Gtk::PACK_SHRINK);
+
+    for (const auto& preset : presets) {
+        const Glib::ustring pattern = preset.pattern;
+
+        Gtk::Button* btn = Gtk::manage(new Gtk::Button());
+        btn->set_relief(Gtk::RELIEF_NONE);
+        btn->set_can_focus(false);
+        btn->get_style_context()->add_class("template-preset");
+
+        Gtk::Box* content = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
+        Gtk::Label* name = Gtk::manage(new Gtk::Label());
+        name->set_markup("<b>" + Glib::Markup::escape_text(M(preset.labelKey)) + "</b>");
+        name->set_halign(Gtk::ALIGN_START);
+        content->pack_start(*name, Gtk::PACK_SHRINK);
+
+        Gtk::Label* patternLbl = Gtk::manage(new Gtk::Label());
+        patternLbl->set_markup("<small><tt>" + Glib::Markup::escape_text(pattern) + "</tt></small>");
+        patternLbl->set_halign(Gtk::ALIGN_START);
+        patternLbl->set_ellipsize(Pango::ELLIPSIZE_MIDDLE);
+        content->pack_start(*patternLbl, Gtk::PACK_SHRINK);
+
+        btn->add(*content);
+
+        // Tooltip carries the worked example, or a note where the result
+        // depends on each photo's own metadata and cannot be shown up front.
+        Glib::ustring tip;
+
+        if (templateUsesPhotoMetadata(pattern)) {
+            tip = "<i>" + Glib::Markup::escape_text(M("QUEUE_LOCATION_TEMPLATE_PREVIEW_PERPHOTO")) + "</i>";
+        } else {
+            tip = Glib::Markup::escape_text(M("QUEUE_LOCATION_TEMPLATE_PREVIEW"))
+                + "\n<tt>" + Glib::Markup::escape_text(resolveTemplateExample(pattern) + ".jpg") + "</tt>";
+        }
+
+        btn->set_tooltip_markup(tip);
+
+        btn->signal_clicked().connect([this, pattern]() {
+            outdirTemplate->set_text(pattern);
+            useTemplate->set_active(true);
+        });
+
+        box->pack_start(*btn, Gtk::PACK_SHRINK);
+    }
+
+    box->pack_start(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)), Gtk::PACK_SHRINK, 4);
+
+    return box;
 }
 
 void BatchQueuePanel::templateHelpButtonToggled()

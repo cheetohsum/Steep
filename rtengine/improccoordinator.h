@@ -301,6 +301,10 @@ protected:
     bool highQualityComputed;
     std::atomic<unsigned long long> highDetailPreviewSerial;
     std::atomic<unsigned int> lastInteractivePassMs{0};
+
+    // Armed by the GUI while the masking view is showing; the tail of a
+    // preview pass then segments the current image once (Smart Masks).
+    std::atomic<bool> smartMaskAnalysisWanted_{false};
     /// When the navigator/histogram image was last refreshed, so interactive
     /// passes can leave it alone between refreshes. Engine thread only.
     std::chrono::steady_clock::time_point lastAnalysisPublish{};
@@ -458,6 +462,8 @@ public:
     void        getParams (procparams::ProcParams* dst, bool tweaked=false) override;
 
     void        startProcessing (int changeCode) override;
+    void        setSmartMaskAnalysisWanted (bool wanted) override;
+    std::vector<procparams::SpotEntry> detectDustSpots (int maxSpots) override;
     ProcParams* beginUpdateParams () override;
     void        endUpdateParams (ProcEvent change) override;  // must be called after beginUpdateParams, triggers update
     void        endUpdateParams (int changeFlags) override;

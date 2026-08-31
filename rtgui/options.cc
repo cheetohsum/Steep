@@ -373,6 +373,8 @@ void Options::setDefaults()
     defProfImg = DEFPROFILE_IMG;
     dateFormat = "%y-%m-%d";
     adjusterMinDelay = kAdjusterMinDelayDefault;
+    adjusterPillScale = 1.0;
+    lensProfDefaultAuto = true;
     adjusterMaxDelay = kAdjusterMaxDelayDefault;
     startupDir = STARTUPDIR_LAST;
     startupPath = "";
@@ -385,6 +387,7 @@ void Options::setDefaults()
     albumPanelCollapsed = false;
     browserTitleShowFullPath = false;
     browserTitlePinToEditor = false;
+    filmstripAtBottom = false;
     showGlobalScopeUnfilteredWarning = true;
     dirBrowserSortType = Gtk::SORT_ASCENDING;
     preferencesWidth = 800;
@@ -450,7 +453,7 @@ void Options::setDefaults()
     lastSaveAsPath = "";
     overwriteOutputFile = false;        // if TRUE, existing output JPGs/PNGs are overwritten, instead of adding ..-1.jpg, -2.jpg etc.
     confirmDeleteFiles = true;
-    theme = "RawTherapee";
+    theme = "RawTherapee - Modern";
     maxThumbnailHeight = 250;
     maxThumbnailWidth = 800;
     maxCacheEntries = 20000;
@@ -504,6 +507,7 @@ void Options::setDefaults()
     overlayedFileNames = false;
     filmStripOverlayedFileNames = false;
     internalThumbIfUntouched = true;    // if TRUE, only fast, internal preview images are taken if the image is not edited yet
+    processedRawPreviews = true;        // then upgrade them in the background so the browser matches the editor
     showFileNames = false;
     filmStripShowFileNames = false;
     tabbedUI = false;
@@ -645,6 +649,7 @@ void Options::setDefaults()
     rtSettings.ACESp0 = "RTv2_ACES-AP0";
     rtSettings.ACESp1 = "RTv2_ACES-AP1";
     rtSettings.verbose = false;
+    rtSettings.smartMaskAutoAnalyze = true;
     rtSettings.gamutICC = true;
     rtSettings.gamutLch = true;
     rtSettings.amchroma = 40;//between 20 and 140   low values increase effect..and also artifacts, high values reduces
@@ -839,6 +844,14 @@ void Options::readFromFile(Glib::ustring fname)
                     adjusterMinDelay = keyFile.get_integer("General", "AdjusterMinDelay");
                 }
 
+                if (keyFile.has_key("General", "AdjusterPillScale")) {
+                    adjusterPillScale = keyFile.get_double("General", "AdjusterPillScale");
+                }
+
+                if (keyFile.has_key("General", "LensProfDefaultAuto")) {
+                    lensProfDefaultAuto = keyFile.get_boolean("General", "LensProfDefaultAuto");
+                }
+
                 if (keyFile.has_key("General", "AdjusterMaxDelay")) {
                     adjusterMaxDelay = keyFile.get_integer("General", "AdjusterMaxDelay");
                 }
@@ -919,6 +932,10 @@ void Options::readFromFile(Glib::ustring fname)
 
                 if (keyFile.has_key("General", "Verbose")) {
                     rtSettings.verbose = keyFile.get_boolean("General", "Verbose");
+                }
+
+                if (keyFile.has_key("General", "SmartMaskAutoAnalyze")) {
+                    rtSettings.smartMaskAutoAnalyze = keyFile.get_boolean("General", "SmartMaskAutoAnalyze");
                 }
 
                 if (keyFile.has_key("General", "Detectshape")) {
@@ -1353,6 +1370,21 @@ void Options::readFromFile(Glib::ustring fname)
                 if (keyFile.has_key("Watermark", "Rotation")) {
                     watermark.rotation = keyFile.get_double("Watermark", "Rotation");
                 }
+                if (keyFile.has_key("Watermark", "ImageEnabled")) {
+                    watermark.imageEnabled = keyFile.get_boolean("Watermark", "ImageEnabled");
+                }
+                if (keyFile.has_key("Watermark", "ImagePath")) {
+                    watermark.imagePath = keyFile.get_string("Watermark", "ImagePath");
+                }
+                if (keyFile.has_key("Watermark", "ImagePlacement")) {
+                    watermark.imagePlacement = keyFile.get_integer("Watermark", "ImagePlacement");
+                }
+                if (keyFile.has_key("Watermark", "ImageSizePercent")) {
+                    watermark.imageSizePercent = keyFile.get_double("Watermark", "ImageSizePercent");
+                }
+                if (keyFile.has_key("Watermark", "ImageGap")) {
+                    watermark.imageGap = keyFile.get_integer("Watermark", "ImageGap");
+                }
             }
 
             if (keyFile.has_group("Profiles")) {
@@ -1561,6 +1593,10 @@ void Options::readFromFile(Glib::ustring fname)
 
                 if (keyFile.has_key("File Browser", "InternalThumbIfUntouched")) {
                     internalThumbIfUntouched = keyFile.get_boolean("File Browser", "InternalThumbIfUntouched");
+                }
+
+                if (keyFile.has_key("File Browser", "ProcessedRawPreviews")) {
+                    processedRawPreviews = keyFile.get_boolean("File Browser", "ProcessedRawPreviews");
                 }
 
                 if (keyFile.has_key("File Browser", "menuGroupRank")) {
@@ -1791,6 +1827,10 @@ void Options::readFromFile(Glib::ustring fname)
 
                 if (keyFile.has_key("GUI", "BrowserTitlePinToEditor")) {
                     browserTitlePinToEditor = keyFile.get_boolean("GUI", "BrowserTitlePinToEditor");
+                }
+
+                if (keyFile.has_key("GUI", "FilmstripAtBottom")) {
+                    filmstripAtBottom = keyFile.get_boolean("GUI", "FilmstripAtBottom");
                 }
 
                 if (keyFile.has_key("GUI", "ShowGlobalScopeUnfilteredWarning")) {
@@ -2707,6 +2747,8 @@ void Options::saveToFile(Glib::ustring fname)
         keyFile.set_string("General", "StartupPath", startupPath);
         keyFile.set_string("General", "DateFormat", dateFormat);
         keyFile.set_integer("General", "AdjusterMinDelay", adjusterMinDelay);
+        keyFile.set_double("General", "AdjusterPillScale", adjusterPillScale);
+        keyFile.set_boolean("General", "LensProfDefaultAuto", lensProfDefaultAuto);
         keyFile.set_integer("General", "AdjusterMaxDelay", adjusterMaxDelay);
         keyFile.set_boolean("General", "MultiUser", multiUser);
         keyFile.set_string("General", "Language", language);
@@ -2718,6 +2760,7 @@ void Options::saveToFile(Glib::ustring fname)
         keyFile.set_string("General", "CameraProfilesPath", rtSettings.cameraProfilesPath);
         keyFile.set_string("General", "LensProfilesPath", rtSettings.lensProfilesPath);
         keyFile.set_boolean("General", "Verbose", rtSettings.verbose);
+        keyFile.set_boolean("General", "SmartMaskAutoAnalyze", rtSettings.smartMaskAutoAnalyze);
         keyFile.set_integer("General", "Cropsleep", rtSettings.cropsleep);
         keyFile.set_double("General", "Reduchigh", rtSettings.reduchigh);
         keyFile.set_double("General", "Reduclow", rtSettings.reduclow);
@@ -2796,6 +2839,7 @@ void Options::saveToFile(Glib::ustring fname)
         keyFile.set_boolean("File Browser", "ShowFileNames", showFileNames);
         keyFile.set_boolean("File Browser", "FilmStripShowFileNames", filmStripShowFileNames);
         keyFile.set_boolean("File Browser", "InternalThumbIfUntouched", internalThumbIfUntouched);
+        keyFile.set_boolean("File Browser", "ProcessedRawPreviews", processedRawPreviews);
         keyFile.set_boolean("File Browser", "menuGroupRank", menuGroupRank);
         keyFile.set_boolean("File Browser", "menuGroupLabel", menuGroupLabel);
         keyFile.set_boolean("File Browser", "menuGroupFileOperations", menuGroupFileOperations);
@@ -2897,6 +2941,11 @@ void Options::saveToFile(Glib::ustring fname)
         keyFile.set_integer("Watermark", "MarginX", watermark.marginX);
         keyFile.set_integer("Watermark", "MarginY", watermark.marginY);
         keyFile.set_double("Watermark", "Rotation", watermark.rotation);
+        keyFile.set_boolean("Watermark", "ImageEnabled", watermark.imageEnabled);
+        keyFile.set_string("Watermark", "ImagePath", watermark.imagePath);
+        keyFile.set_integer("Watermark", "ImagePlacement", watermark.imagePlacement);
+        keyFile.set_double("Watermark", "ImageSizePercent", watermark.imageSizePercent);
+        keyFile.set_integer("Watermark", "ImageGap", watermark.imageGap);
 
         keyFile.set_string("Output", "PathTemplate", savePathTemplate);
         keyFile.set_string("Output", "PathFolder", savePathFolder);
@@ -2945,6 +2994,7 @@ void Options::saveToFile(Glib::ustring fname)
         keyFile.set_boolean("GUI", "AlbumPanelCollapsed", albumPanelCollapsed);
         keyFile.set_boolean("GUI", "BrowserTitleShowFullPath", browserTitleShowFullPath);
         keyFile.set_boolean("GUI", "BrowserTitlePinToEditor", browserTitlePinToEditor);
+        keyFile.set_boolean("GUI", "FilmstripAtBottom", filmstripAtBottom);
         keyFile.set_boolean("GUI", "ShowGlobalScopeUnfilteredWarning", showGlobalScopeUnfilteredWarning);
         keyFile.set_integer("GUI", "SortType", dirBrowserSortType);
         keyFile.set_integer("GUI", "PreferencesWidth", preferencesWidth);

@@ -704,6 +704,40 @@ bool GrainParams::operator!=(const GrainParams &other) const
     return !(*this == other);
 }
 
+LightEffectsParams::LightEffectsParams():
+    enabled(false),
+    threshold(70),
+    glow(0),
+    glowRadius(25),
+    halation(0),
+    halationSize(30),
+    halationWarmth(70),
+    flare(0),
+    flareLength(40),
+    flareAngle(0)
+{
+}
+
+bool LightEffectsParams::operator==(const LightEffectsParams &other) const
+{
+    return
+        enabled == other.enabled
+        && threshold == other.threshold
+        && glow == other.glow
+        && glowRadius == other.glowRadius
+        && halation == other.halation
+        && halationSize == other.halationSize
+        && halationWarmth == other.halationWarmth
+        && flare == other.flare
+        && flareLength == other.flareLength
+        && flareAngle == other.flareAngle;
+}
+
+bool LightEffectsParams::operator!=(const LightEffectsParams &other) const
+{
+    return !(*this == other);
+}
+
 TiltShiftParams::TiltShiftParams():
     enabled(false),
     amount(0),
@@ -2133,7 +2167,11 @@ bool DistortionParams::operator !=(const DistortionParams& other) const
 }
 
 LensProfParams::LensProfParams() :
-    lcMode(LcMode::NONE),
+    // Automatic Lensfun matching is the default: a photo whose lens is in the
+    // database gets its distortion and vignetting corrected without anyone
+    // having to find the setting. Cameras with no database entry match
+    // nothing and are left untouched.
+    lcMode(LcMode::LENSFUNAUTOMATCH),
     useDist(true),
     useVign(true),
     useCA(false)
@@ -4115,6 +4153,7 @@ void ProcParams::setDefaults()
 
     filmPresets = {};
 
+    lightEffects = {};
     softlight = {};
 
     dehaze = {};
@@ -4259,6 +4298,17 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->grain.strength, "Grain", "Strength", grain.strength, keyFile);
         saveToKeyfile(!pedited || pedited->grain.scale, "Grain", "Scale", grain.scale, keyFile);
         saveToKeyfile(!pedited || pedited->grain.color, "Grain", "Color", grain.color, keyFile);
+
+        saveToKeyfile(!pedited || pedited->lightEffects.enabled, "Light Effects", "Enabled", lightEffects.enabled, keyFile);
+        saveToKeyfile(!pedited || pedited->lightEffects.threshold, "Light Effects", "Threshold", lightEffects.threshold, keyFile);
+        saveToKeyfile(!pedited || pedited->lightEffects.glow, "Light Effects", "Glow", lightEffects.glow, keyFile);
+        saveToKeyfile(!pedited || pedited->lightEffects.glowRadius, "Light Effects", "GlowRadius", lightEffects.glowRadius, keyFile);
+        saveToKeyfile(!pedited || pedited->lightEffects.halation, "Light Effects", "Halation", lightEffects.halation, keyFile);
+        saveToKeyfile(!pedited || pedited->lightEffects.halationSize, "Light Effects", "HalationSize", lightEffects.halationSize, keyFile);
+        saveToKeyfile(!pedited || pedited->lightEffects.halationWarmth, "Light Effects", "HalationWarmth", lightEffects.halationWarmth, keyFile);
+        saveToKeyfile(!pedited || pedited->lightEffects.flare, "Light Effects", "Flare", lightEffects.flare, keyFile);
+        saveToKeyfile(!pedited || pedited->lightEffects.flareLength, "Light Effects", "FlareLength", lightEffects.flareLength, keyFile);
+        saveToKeyfile(!pedited || pedited->lightEffects.flareAngle, "Light Effects", "FlareAngle", lightEffects.flareAngle, keyFile);
 
 // Tilt-Shift
         saveToKeyfile(!pedited || pedited->tiltShift.enabled, "TiltShift", "Enabled", tiltShift.enabled, keyFile);
@@ -5729,6 +5779,19 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
             assignFromKeyfile(keyFile, "Clarity", "Enabled", clarity.enabled, pedited->clarity.enabled);
             assignFromKeyfile(keyFile, "Clarity", "Radius", clarity.radius, pedited->clarity.radius);
             assignFromKeyfile(keyFile, "Clarity", "Amount", clarity.amount, pedited->clarity.amount);
+        }
+
+        if (keyFile.has_group("Light Effects")) {
+            assignFromKeyfile(keyFile, "Light Effects", "Enabled", lightEffects.enabled, pedited->lightEffects.enabled);
+            assignFromKeyfile(keyFile, "Light Effects", "Threshold", lightEffects.threshold, pedited->lightEffects.threshold);
+            assignFromKeyfile(keyFile, "Light Effects", "Glow", lightEffects.glow, pedited->lightEffects.glow);
+            assignFromKeyfile(keyFile, "Light Effects", "GlowRadius", lightEffects.glowRadius, pedited->lightEffects.glowRadius);
+            assignFromKeyfile(keyFile, "Light Effects", "Halation", lightEffects.halation, pedited->lightEffects.halation);
+            assignFromKeyfile(keyFile, "Light Effects", "HalationSize", lightEffects.halationSize, pedited->lightEffects.halationSize);
+            assignFromKeyfile(keyFile, "Light Effects", "HalationWarmth", lightEffects.halationWarmth, pedited->lightEffects.halationWarmth);
+            assignFromKeyfile(keyFile, "Light Effects", "Flare", lightEffects.flare, pedited->lightEffects.flare);
+            assignFromKeyfile(keyFile, "Light Effects", "FlareLength", lightEffects.flareLength, pedited->lightEffects.flareLength);
+            assignFromKeyfile(keyFile, "Light Effects", "FlareAngle", lightEffects.flareAngle, pedited->lightEffects.flareAngle);
         }
 
         if (keyFile.has_group("Grain")) {
@@ -7983,6 +8046,7 @@ bool ProcParams::operator ==(const ProcParams& other) const
         && texture == other.texture
         && clarity == other.clarity
         && grain == other.grain
+        && lightEffects == other.lightEffects
         && tiltShift == other.tiltShift
         && lensBlur == other.lensBlur
         && labCurve == other.labCurve

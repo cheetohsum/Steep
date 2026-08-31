@@ -28,6 +28,12 @@ public:
     virtual ~ImageAreaToolListener() = default;
     virtual void spotWBselected(int x, int y, Thumbnail* thm = nullptr) = 0;
     virtual void pointColorSelected(int x, int y, Thumbnail* thm = nullptr) = 0;
+    /// Click-to-select for Smart Masks; default no-op so only the editor implements it.
+    virtual void aiMaskPickSelected(int x, int y)
+    {
+        (void)x;
+        (void)y;
+    }
     virtual void sharpMaskSelected(bool sharpMask) = 0;
     virtual int getSpotWBRectSize() const = 0;
     virtual void cropSelectionReady() = 0;

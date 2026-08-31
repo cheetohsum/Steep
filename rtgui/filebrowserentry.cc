@@ -46,6 +46,26 @@
 
 #define CROPRESIZEBORDER 4
 
+namespace
+{
+
+// Whether the cheap embedded camera preview should be replaced by a render
+// through the processing parameters. Edited files always are; untouched RAWs
+// are too when processed previews are on, so the browser shows the same
+// picture the editor opens instead of the camera's own JPEG interpretation.
+bool wantsProcessedPreview(const Thumbnail* thumbnail)
+{
+    const auto& options = App::get().options();
+
+    if (!options.internalThumbIfUntouched || thumbnail->isPParamsValid()) {
+        return true;
+    }
+
+    return options.processedRawPreviews && thumbnail->getType() == FT_Raw;
+}
+
+}
+
 //extern Glib::Threads::Thread* mainThread;
 
 std::shared_ptr<RTSurface> FileBrowserEntry::editedIcon(std::shared_ptr<RTSurface>(nullptr));
@@ -380,8 +400,7 @@ void FileBrowserEntry::refreshQuickThumbnailImage ()
         return;
     }
 
-    // Only make a (slow) processed preview if the picture has been edited at all
-    const bool upgrade_to_processed = (!App::get().options().internalThumbIfUntouched || thumbnail->isPParamsValid());
+    const bool upgrade_to_processed = wantsProcessedPreview(thumbnail);
     const bool request_upgrade = upgrade_to_processed && thumbnail->isQuick();
     bool usablePreview = thumbnailPreviewUsable_.load(std::memory_order_acquire);
     if (!usablePreview) {
@@ -424,7 +443,7 @@ void FileBrowserEntry::appendQuickThumbnailJob(std::vector<ThumbImageUpdater::Re
         return;
     }
 
-    const bool upgrade_to_processed = (!App::get().options().internalThumbIfUntouched || thumbnail->isPParamsValid());
+    const bool upgrade_to_processed = wantsProcessedPreview(thumbnail);
     const bool request_upgrade = upgrade_to_processed && thumbnail->isQuick();
     bool usablePreview = thumbnailPreviewUsable_.load(std::memory_order_acquire);
     if (!usablePreview) {
@@ -708,6 +727,12 @@ std::size_t FileBrowserEntry::getImageAreaIconState ()
 
     if (thumbnail->isPixelShift() && ps) {
         state |= 2;
+    }
+
+    // The export-queue badge is baked into the cached back buffer, so a
+    // change in queue membership has to invalidate it like the others.
+    if (thumbnail->isEnqueued()) {
+        state |= 4;
     }
 
     return state;

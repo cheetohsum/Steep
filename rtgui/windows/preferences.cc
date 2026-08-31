@@ -25,6 +25,7 @@
 #include "addsetids.h"
 #include "cachemanager.h"
 #include "externaleditorpreferences.h"
+#include "guiutils.h"
 #include "multilangmgr.h"
 #include "preferences.h"
 #include "rtimage.h"
@@ -60,7 +61,10 @@ void placeSpinBox(Gtk::Container* where, Gtk::SpinButton* &spin, const std::stri
 }
 }
 
-Glib::RefPtr<Gtk::CssProvider> themecss;
+// The provider the startup theme was loaded into (rtwindow.cc). Switching a
+// theme reloads THIS one rather than stacking a second provider on top of
+// it: see switchThemeTo for why that distinction is load-bearing.
+extern Glib::RefPtr<Gtk::CssProvider> cssRT;
 Glib::RefPtr<Gtk::CssProvider> fontcss;
 
 Preferences::Preferences(RTWindow *rtwindow)
@@ -163,6 +167,22 @@ int Preferences::getThemeRowNumber (const Glib::ustring& name)
     }
 
     return -1;
+}
+
+void Preferences::themeSetActiveRow(int row)
+{
+    if (row < 0 || row >= static_cast<int>(themeNames.size())) {
+        return;
+    }
+
+    themeActiveRow = row;
+    themeBtn->set_label(themeNames.at(row));
+
+    // set_active on a CheckMenuItem re-emits activate; the handler is
+    // idempotent (same row, same theme), so no signal gymnastics needed.
+    if (row < static_cast<int>(themeItems.size()) && !themeItems[row]->get_active()) {
+        themeItems[row]->set_active(true);
+    }
 }
 
 Gtk::Widget* Preferences::getBatchProcPanel()
@@ -1132,6 +1152,19 @@ Gtk::Widget* Preferences::getGeneralPanel()
     curveBBoxPosS = Gtk::manage(new Gtk::ComboBoxText());
     setExpandAlignProperties(curveBBoxPosS, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_BASELINE);
 
+    // Filmstrip belongs with the other editor-layout settings, not under
+    // File Browser: it is part of the editor, and nobody looks for it there.
+    filmstripAtBottomCB = Gtk::manage(new Gtk::CheckButton(M("PREFERENCES_FSTRIP_AT_BOTTOM")));
+    filmstripAtBottomCB->set_tooltip_text(M("PREFERENCES_FSTRIP_AT_BOTTOM_TIP"));
+    setExpandAlignProperties(filmstripAtBottomCB, false, false, Gtk::ALIGN_START, Gtk::ALIGN_BASELINE);
+    workflowGrid->attach_next_to(*filmstripAtBottomCB, *curveBBoxPosL, Gtk::POS_BOTTOM, 2, 1);
+
+    // Previously only reachable from the browser title's context menu.
+    browserTitlePin = Gtk::manage(new Gtk::CheckButton(M("PREFERENCES_FSTRIP_FOLDER_NAME")));
+    browserTitlePin->set_tooltip_text(M("PREFERENCES_FSTRIP_FOLDER_NAME_TIP"));
+    setExpandAlignProperties(browserTitlePin, false, false, Gtk::ALIGN_START, Gtk::ALIGN_BASELINE);
+    workflowGrid->attach_next_to(*browserTitlePin, *filmstripAtBottomCB, Gtk::POS_BOTTOM, 2, 1);
+
     Gtk::Label* complexityL = Gtk::manage(new Gtk::Label(M("PREFERENCES_COMPLEXITYLOC")));
     setExpandAlignProperties(complexityL, false, false, Gtk::ALIGN_START, Gtk::ALIGN_BASELINE);
     complexitylocal = Gtk::manage(new Gtk::ComboBoxText());
@@ -1140,7 +1173,7 @@ Gtk::Widget* Preferences::getGeneralPanel()
     complexitylocal->append(M("PREFERENCES_COMPLEXITY_NORM"));
     complexitylocal->append(M("PREFERENCES_COMPLEXITY_SIMP"));
     complexitylocal->set_active(2);
-    workflowGrid->attach_next_to(*complexityL, *curveBBoxPosL, Gtk::POS_BOTTOM, 1, 1);
+    workflowGrid->attach_next_to(*complexityL, *browserTitlePin, Gtk::POS_BOTTOM, 1, 1);
     workflowGrid->attach_next_to(*complexitylocal, *curveBBoxPosC, Gtk::POS_BOTTOM, 1, 1);
 
 
@@ -1268,12 +1301,40 @@ Gtk::Widget* Preferences::getGeneralPanel()
     Gtk::Label* themeLbl = Gtk::manage(new Gtk::Label(M("PREFERENCES_APPEARANCE_THEME")));
     setExpandAlignProperties(themeLbl, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
 
-    themeCBT = Gtk::manage(new Gtk::ComboBoxText());
-    themeCBT->set_active(0);
     parseThemeDir(Glib::build_filename(App::get().argv0(), "themes"));
-    for (size_t i = 0; i < themeNames.size(); i++) {
-        themeCBT->append(themeNames.at(i));
+
+    // MenuButton + menu instead of a combo: menu items report highlight
+    // (signal_select), which a combo popup does not expose — highlighting a
+    // theme live-previews it, activating commits it, closing the menu without
+    // activating reverts to the committed one. Built through the popup
+    // factory (GTK4 seam + Windows popup hygiene).
+    themeBtn = Gtk::manage(new Gtk::MenuButton());
+    themeBtn->set_label(themeNames.empty() ? Glib::ustring("-") : themeNames.front());
+    themePopup_ = std::make_unique<steepui::PopupMenu>();
+
+    themeItems = themePopup_->addRadioGroup(
+        std::vector<Glib::ustring>(themeNames.begin(), themeNames.end()),
+        0,
+        [this](int i) {
+            // Activate and popdown-hide can arrive in either order, so both
+            // set the final theme; whichever runs last wins, same value.
+            themeSetActiveRow(i);
+            switchThemeTo(themeNames.at(i));
+        });
+
+    for (size_t i = 0; i < themeItems.size(); i++) {
+        themeItems[i]->signal_select().connect([this, i]() {
+            switchThemeTo(themeNames.at(i));
+        });
     }
+
+    themePopup_->menu().signal_hide().connect([this]() {
+        // Leaving the menu without activating anything ends the preview.
+        if (!themeNames.empty()) {
+            switchThemeTo(themeNames.at(themeActiveRow));
+        }
+    });
+    themePopup_->attachTo(*themeBtn);
 
     Gtk::Label* mainFontLbl = Gtk::manage(new Gtk::Label(M("PREFERENCES_APPEARANCE_MAINFONT")));
     setExpandAlignProperties(mainFontLbl, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
@@ -1314,16 +1375,30 @@ Gtk::Widget* Preferences::getGeneralPanel()
 
 
     appearanceGrid->attach(*themeLbl,           0, 0, 1, 1);
-    appearanceGrid->attach(*themeCBT,           1, 0, 1, 1);
+    appearanceGrid->attach(*themeBtn,           1, 0, 1, 1);
     appearanceGrid->attach(*vSep,               2, 1, 1, 2);
     appearanceGrid->attach(*mainFontLbl,        0, 1, 1, 1);
     appearanceGrid->attach(*mainFontFB,         1, 1, 1, 1);
     appearanceGrid->attach(*cropMaskColorLbl,   3, 1, 1, 1);
     appearanceGrid->attach(*cropMaskColorCB,    4, 1, 1, 1);
+    // Also reachable by right-clicking the Edit mode button, but a gesture
+    // is not discoverable — the same setting belongs here.
+    Gtk::Label* pillScaleLbl = Gtk::manage(new Gtk::Label(M("PREFERENCES_APPEARANCE_PILLSCALE")));
+    setExpandAlignProperties(pillScaleLbl, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    pillScaleLbl->set_tooltip_text(M("PREFERENCES_APPEARANCE_PILLSCALE_TIP"));
+
+    pillScaleSB = Gtk::manage(new Gtk::SpinButton());
+    pillScaleSB->set_digits(2);
+    pillScaleSB->set_increments(0.05, 0.1);
+    pillScaleSB->set_range(0.7, 2.2);
+    pillScaleSB->set_tooltip_text(M("PREFERENCES_APPEARANCE_PILLSCALE_TIP"));
+
     appearanceGrid->attach(*colorPickerFontLbl, 0, 2, 1, 1);
     appearanceGrid->attach(*colorPickerFontFB,  1, 2, 1, 1);
     appearanceGrid->attach(*navGuideColorLbl,   3, 2, 1, 1);
     appearanceGrid->attach(*navGuideColorCB,    4, 2, 1, 1);
+    appearanceGrid->attach(*pillScaleLbl,       0, 3, 1, 1);
+    appearanceGrid->attach(*pillScaleSB,        1, 3, 1, 1);
 
     appearanceFrame->add(*appearanceGrid);
     vbGeneral->attach_next_to(*appearanceFrame, *flang, Gtk::POS_BOTTOM, 2, 1);
@@ -1441,7 +1516,6 @@ Gtk::Widget* Preferences::getGeneralPanel()
 
     vbGeneral->attach_next_to (*fdg, *fclip, Gtk::POS_BOTTOM, 2, 1);
     langAutoDetectConn = ckbLangAutoDetect->signal_toggled().connect(sigc::mem_fun(*this, &Preferences::langAutoDetectToggled));
-    tconn = themeCBT->signal_changed().connect ( sigc::mem_fun (*this, &Preferences::themeChanged) );
     fconn = mainFontFB->signal_font_set().connect ( sigc::mem_fun (*this, &Preferences::fontChanged) );
     cpfconn = colorPickerFontFB->signal_font_set().connect ( sigc::mem_fun (*this, &Preferences::cpFontChanged) );
 
@@ -1882,7 +1956,9 @@ void Preferences::storePreferences()
     moptions.shadowThreshold = (int)shThresh->get_value();
     moptions.language = languages->get_active_id();
     moptions.languageAutoDetect = ckbLangAutoDetect->get_active();
-    moptions.theme = themeNames.at (themeCBT->get_active_row_number ());
+    if (!themeNames.empty()) {
+        moptions.theme = themeNames.at (themeActiveRow);
+    }
 
     Gdk::RGBA cropCol = cropMaskColorCB->get_rgba();
     moptions.cutOverlayBrush[0] = cropCol.get_red();
@@ -1898,7 +1974,9 @@ void Preferences::storePreferences()
     Pango::FontDescription fd (mainFontFB->get_font_name());
 
 
-    if (newFont) {
+    // Same guard as fontChanged: never persist a size that would render the
+    // interface unreadable.
+    if (newFont && fd.get_size() / Pango::SCALE >= 4 && !fd.get_family().empty()) {
         moptions.fontFamily = fd.get_family();
         moptions.fontSize = fd.get_size() / Pango::SCALE;
     }
@@ -2020,8 +2098,11 @@ void Preferences::storePreferences()
     moptions.maxThumbnailHeight = (int)maxThumbHeightSB->get_value ();
     moptions.maxCacheEntries = (int)maxCacheEntriesSB->get_value ();
     moptions.overlayedFileNames = overlayedFileNames->get_active();
+    moptions.adjusterPillScale = pillScaleSB->get_value();
     moptions.filmStripOverlayedFileNames = filmStripOverlayedFileNames->get_active();
     moptions.sameThumbSize = sameThumbSize->get_active();
+    moptions.browserTitlePinToEditor = browserTitlePin->get_active();
+    moptions.filmstripAtBottom = filmstripAtBottomCB->get_active();
     moptions.thumbSizeTab = (int)filmstripThumbSizeSB->get_value();
     moptions.thumbSize = (int)browserThumbSizeSB->get_value();
     moptions.internalThumbIfUntouched = ckbInternalThumbIfUntouched->get_active();
@@ -2182,7 +2263,7 @@ void Preferences::fillPreferences()
     languages->set_active_id(moptions.language);
     ckbLangAutoDetect->set_active(moptions.languageAutoDetect);
     int themeNbr = getThemeRowNumber(moptions.theme);
-    themeCBT->set_active (themeNbr == -1 ? 0 : themeNbr);
+    themeSetActiveRow (themeNbr == -1 ? 0 : themeNbr);
 
     Gdk::RGBA cropCol;
     cropCol.set_rgba(moptions.cutOverlayBrush[0], moptions.cutOverlayBrush[1], moptions.cutOverlayBrush[2]);
@@ -2195,16 +2276,19 @@ void Preferences::fillPreferences()
     navGuideColorCB->set_alpha ( (unsigned short) (moptions.navGuideBrush[3] * 65535.0));
 
     const auto& options = App::get().options();
+    // Pango wants "Family Size". Built with a comma these parsed as a family
+    // LIST with no size, so get_size() came back 0 and the whole UI font was
+    // reset to nothing the next time these were read back.
     if (options.fontFamily == "default") {
-        mainFontFB->set_font_name (Glib::ustring::compose ("%1, %2", initialFontFamily, initialFontSize));
+        mainFontFB->set_font_name (Glib::ustring::compose ("%1 %2", initialFontFamily, initialFontSize));
     } else {
-        mainFontFB->set_font_name (Glib::ustring::compose ("%1, %2", options.fontFamily, options.fontSize));
+        mainFontFB->set_font_name (Glib::ustring::compose ("%1 %2", options.fontFamily, options.fontSize));
     }
 
     if (options.CPFontFamily == "default") {
-        colorPickerFontFB->set_font_name (Glib::ustring::compose ("%1, %2", initialFontFamily, initialFontSize));
+        colorPickerFontFB->set_font_name (Glib::ustring::compose ("%1 %2", initialFontFamily, initialFontSize));
     } else {
-        colorPickerFontFB->set_font_name (Glib::ustring::compose ("%1, %2", options.CPFontFamily, options.CPFontSize));
+        colorPickerFontFB->set_font_name (Glib::ustring::compose ("%1 %2", options.CPFontFamily, options.CPFontSize));
     }
 
     showDateTime->set_active(moptions.fbShowDateTime);
@@ -2267,8 +2351,11 @@ void Preferences::fillPreferences()
     maxThumbHeightSB->set_value (moptions.maxThumbnailHeight);
     maxCacheEntriesSB->set_value (moptions.maxCacheEntries);
     overlayedFileNames->set_active(moptions.overlayedFileNames);
+    pillScaleSB->set_value(moptions.adjusterPillScale);
     filmStripOverlayedFileNames->set_active(moptions.filmStripOverlayedFileNames);
     sameThumbSize->set_active(moptions.sameThumbSize);
+    browserTitlePin->set_active(moptions.browserTitlePinToEditor);
+    filmstripAtBottomCB->set_active(moptions.filmstripAtBottom);
     filmstripThumbSizeSB->set_value(moptions.thumbSizeTab);
     browserThumbSizeSB->set_value(moptions.thumbSize);
     ckbInternalThumbIfUntouched->set_active(moptions.internalThumbIfUntouched);
@@ -2437,7 +2524,7 @@ void Preferences::cancelPressed()
 {
     auto& options = App::get().mut_options();
     // set the initial theme back
-    if (themeNames.at (themeCBT->get_active_row_number ()) != options.theme) {
+    if (!themeNames.empty() && themeNames.at (themeActiveRow) != options.theme) {
         switchThemeTo(options.theme);
     }
 
@@ -2473,12 +2560,6 @@ void Preferences::aboutPressed()
     splash->show();
 }
 
-void Preferences::themeChanged()
-{
-
-    moptions.theme = themeNames.at (themeCBT->get_active_row_number ());
-    switchThemeTo(moptions.theme);
-}
 
 void Preferences::forRAWComboChanged()
 {
@@ -2612,26 +2693,49 @@ void Preferences::switchThemeTo(Glib::ustring newTheme)
 
     Glib::ustring filename(Glib::build_filename(App::get().argv0(), "themes", newTheme + ".css"));
 
-    if (!themecss) {
-        themecss = Gtk::CssProvider::create();
-        Glib::RefPtr<Gdk::Screen> screen = Gdk::Screen::get_default();
-        Gtk::StyleContext::add_provider_for_screen(screen, themecss, GTK_STYLE_PROVIDER_PRIORITY_USER);
+    // Reload the theme into the provider startup put it in, rather than adding
+    // a second one above it. Stacking was wrong twice over:
+    //
+    //   * the old theme was never unloaded, so any rule the incoming theme did
+    //     not restate stayed in force -- switching dark to light kept whatever
+    //     the dark theme said about everything the light one is silent on;
+    //   * the extra provider went in at GTK_STYLE_PROVIDER_PRIORITY_USER (800),
+    //     which is exactly where common/widgets.css sits (APPLICATION + 200).
+    //     Equal priority means last-added wins, so after a single switch the
+    //     theme began overriding the widget structure layer that is supposed
+    //     to sit above it, and widget geometry drifted.
+    //
+    // Reusing cssRT makes a switched theme identical to booting into it.
+    if (!cssRT) {
+        return;
     }
 
     try {
-        themecss->load_from_path(filename);
+        cssRT->load_from_path(filename);
     } catch (Glib::Error &err) {
         printf("Error: Can't load css file \"%s\"\nMessage: %s\n", filename.c_str(), err.what().c_str());
     } catch (...) {
         printf("Error: Can't load css file \"%s\"\n", filename.c_str());
     }
+
+    // The steep_* tokens may now resolve differently (cached values belong to
+    // the previous theme).
+    themeColorCacheInvalidate();
 }
 
 void Preferences::fontChanged()
 {
-    newFont = true;
     Pango::FontDescription fd (mainFontFB->get_font_name());
-    switchFontTo(fd.get_family(), fd.get_size() / Pango::SCALE);
+    const int size = fd.get_size() / Pango::SCALE;
+
+    // A description that carries no usable size would otherwise be applied as
+    // "font-size: 0pt" and shrink every label in the program to nothing.
+    if (size < 4 || fd.get_family().empty()) {
+        return;
+    }
+
+    newFont = true;
+    switchFontTo(fd.get_family(), size);
 }
 
 void Preferences::cpFontChanged()

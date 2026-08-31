@@ -19,6 +19,7 @@
 #pragma once
 
 #include <atomic>
+#include <functional>
 
 #include <gtkmm.h>
 
@@ -58,6 +59,7 @@ class BatchQueuePanel : public Gtk::Box,
     Gtk::ToggleButton* templateHelpButton;
     Gtk::Box* bottomBox;
     Gtk::Box* topBox;
+    std::function<void(int)> queueSizeCallback_;
     Gtk::Expander* fastExportExpander_ = nullptr;
     Gtk::Box* maxSizeSection_ = nullptr;  // export size cap widgets, embedded in SaveFormatPanel's Options expander
     Gtk::Paned* middleSplitPane;
@@ -84,6 +86,10 @@ public:
     BatchQueue* getBatchQueue () { return batchQueue; }
     void setOverlayMode (bool overlay);
 
+    /// Told when the queue length changes, so an overlay host can resize a
+    /// content-sized drawer around it.
+    void setQueueSizeCallback (std::function<void(int)> cb) { queueSizeCallback_ = std::move(cb); }
+
     // batchqueuelistener interface
     void queueSizeChanged(int qsize, bool queueRunning, bool queueError, const Glib::ustring& queueErrorMessage) override;
     bool canStartNext() override;
@@ -96,6 +102,13 @@ private:
     void setGuiFromBatchState(bool queueRunning, int qsize);
     void templateHelpButtonToggled();
     void populateTemplateHelpBuffer(Glib::RefPtr<Gtk::TextBuffer> buffer);
+
+    /// Resolve a template against a representative photo path, so both the
+    /// preset buttons and the entry's tooltip can show what it produces.
+    Glib::ustring resolveTemplateExample (const Glib::ustring& templateText) const;
+    /// Refresh the output-template entry's hover text with its resolved form.
+    void updateTemplatePreviewTooltip ();
+    Gtk::Box* buildTemplatePresets ();
 
     void pathFolderChanged ();
     void pathFolderButtonPressed ();

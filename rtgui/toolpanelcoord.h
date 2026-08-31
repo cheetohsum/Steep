@@ -69,6 +69,7 @@
 #include "tools/texture.h"
 #include "tools/clarity.h"
 #include "tools/grain.h"
+#include "tools/lighteffects.h"
 #include "tools/tiltshift.h"
 #include "tools/lensblur.h"
 #include "tools/pcvignette.h"
@@ -112,6 +113,7 @@
 
 class ImageEditorCoordinator;
 class MetaDataPanel;
+class SmartMaskBar;
 
 class ToolPanelCoordinator :
     public ToolPanelListener,
@@ -160,6 +162,7 @@ protected:
     Texture *texture;
     Clarity *clarity;
     Grain *grain;
+    LightEffects *lighteffects;
     TiltShift *tiltshift;
     LensBlur *lensblur;
     Spot* spot;
@@ -232,6 +235,7 @@ protected:
     // Mask mode grouped panels
     ToolGroup* spotGroup;
     ToolGroup* maskingGroup;
+    SmartMaskBar* smartMaskBar = nullptr;
 
     PreviewStrip* exposureStrip_ = nullptr;
     PreviewStrip* colorStrip_ = nullptr;
@@ -278,6 +282,10 @@ protected:
     void populateEditPanel();
 
 private:
+    // The Edit pane's resting state: Exposure & Tone open, every other group
+    // closed. Applied at startup and re-enforced after mask-mode round trips.
+    void resetEditGroupsToDefault();
+
     EditDataProvider *editDataProvider;
     class ImageArea *imageArea_;
     sigc::connection modeconn;
@@ -406,6 +414,7 @@ public:
         TEXTURE,
         CLARITY,
         GRAIN,
+        LIGHT_EFFECTS,
         TILT_SHIFT,
         LENS_BLUR,
         FILM_PRESETS,
@@ -598,6 +607,7 @@ public:
 
     // imageareatoollistener interface
     void spotWBselected(int x, int y, Thumbnail* thm = nullptr) override;
+    void aiMaskPickSelected(int x, int y) override;
     void pointColorSelected(int x, int y, Thumbnail* thm = nullptr) override;
     void sharpMaskSelected(bool sharpMask) override final;
     int getSpotWBRectSize() const override;
@@ -615,6 +625,9 @@ public:
     void editModeSwitchedOff () final;
 
     void setEditProvider(EditDataProvider *provider);
+
+    /// Forwarded from EditorPanel's processing-state changes (GTK thread).
+    void setProcessingActivity(bool inProcessing);
     void setLevelingGridCallback(std::function<void(bool)> cb);
 
     void setThumbnail(Thumbnail* thm);

@@ -225,6 +225,98 @@ Cairo::RefPtr<Cairo::ImageSurface> RTScalable::loadSurfaceFromPNG(const Glib::us
     return surf;
 }
 
+namespace
+{
+
+bool s_iconInkDark = false;
+
+int hexNibble(const char ch)
+{
+    if (ch >= '0' && ch <= '9') return ch - '0';
+    if (ch >= 'a' && ch <= 'f') return ch - 'a' + 10;
+    if (ch >= 'A' && ch <= 'F') return ch - 'A' + 10;
+    return -1;
+}
+
+// Flip the lightness of near-grey hex colors in an SVG source so line art
+// tuned for dark themes stays readable on light ones. Saturated colors
+// (flags, stars, color dots) pass through untouched. Only colors in
+// attribute/style position are considered ('#' preceded by a quote, colon
+// or whitespace) — url(#id) references are left alone.
+std::string recolorSvgForLightTheme(const std::string& svg)
+{
+    std::string out = svg;
+
+    for (size_t i = 1; i + 3 < out.size(); ++i) {
+        if (out[i] != '#') {
+            continue;
+        }
+
+        const char prev = out[i - 1];
+        if (prev != '"' && prev != '\'' && prev != ':' && prev != ' ') {
+            continue;
+        }
+
+        size_t n = 0;
+        while (n < 8 && i + 1 + n < out.size() && hexNibble(out[i + 1 + n]) >= 0) {
+            ++n;
+        }
+        if (n != 3 && n != 6) {
+            continue;
+        }
+
+        int r, g, b;
+        if (n == 6) {
+            r = hexNibble(out[i + 1]) * 16 + hexNibble(out[i + 2]);
+            g = hexNibble(out[i + 3]) * 16 + hexNibble(out[i + 4]);
+            b = hexNibble(out[i + 5]) * 16 + hexNibble(out[i + 6]);
+        } else {
+            r = hexNibble(out[i + 1]) * 17;
+            g = hexNibble(out[i + 2]) * 17;
+            b = hexNibble(out[i + 3]) * 17;
+        }
+
+        const int mx = std::max(r, std::max(g, b));
+        const int mn = std::min(r, std::min(g, b));
+        if (mx - mn > 40) {
+            i += n;
+            continue; // saturated — semantic color, keep
+        }
+
+        r = 255 - r;
+        g = 255 - g;
+        b = 255 - b;
+
+        static const char* hexDigits = "0123456789abcdef";
+        char buf[7] = {
+            hexDigits[(r >> 4) & 15], hexDigits[r & 15],
+            hexDigits[(g >> 4) & 15], hexDigits[g & 15],
+            hexDigits[(b >> 4) & 15], hexDigits[b & 15], 0
+        };
+        if (n == 6) {
+            out.replace(i + 1, 6, buf);
+        } else {
+            const char buf3[4] = { hexDigits[(r >> 4) & 15], hexDigits[(g >> 4) & 15], hexDigits[(b >> 4) & 15], 0 };
+            out.replace(i + 1, 3, buf3);
+        }
+        i += n;
+    }
+
+    return out;
+}
+
+} // namespace
+
+void RTScalable::setIconInkDark(bool dark)
+{
+    s_iconInkDark = dark;
+}
+
+bool RTScalable::getIconInkDark()
+{
+    return s_iconInkDark;
+}
+
 Cairo::RefPtr<Cairo::ImageSurface> RTScalable::loadSurfaceFromSVG(const Glib::ustring &fname, const int width, const int height, const bool is_path)
 {
     GThreadLock lock; // All icon theme access or image access on separate thread HAVE to be protected
@@ -261,6 +353,10 @@ Cairo::RefPtr<Cairo::ImageSurface> RTScalable::loadSurfaceFromSVG(const Glib::us
             std::cerr << "Failed to load SVG file \"" << fname << "\": "
                 << err.what() << "\n";
             return surf;
+        }
+
+        if (s_iconInkDark) {
+            svgFile = recolorSvgForLightTheme(svgFile);
         }
 
         try {

@@ -532,7 +532,10 @@ Thumbnail* Thumbnail::loadQuickFromRaw (const Glib::ustring& fname, eSensorType 
 
     RawImage *ri = new RawImage(fname);
     unsigned int imageNum = 0;
-    int r = ri->loadRaw(false, imageNum, false);
+    // Metadata + embedded preview only: a few scattered structures, so map
+    // without read-ahead. Speculative readahead around those touches was
+    // pulling ~7 MB per file off the disk during cold folder loads.
+    int r = ri->loadRaw(false, imageNum, false, nullptr, 1.0, true);
 
     if (r) {
         delete tpp;

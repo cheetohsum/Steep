@@ -59,7 +59,9 @@ public:
      * @param imageR Red channel data (row-major, linear [0,65535])
      * @param imageG Green channel data
      * @param imageB Blue channel data
-     * @param mask Binary mask (1.0 = inpaint, 0.0 = keep), same dimensions
+     * @param mask Soft mask, same dimensions: any value > 0.05 is filled by
+     *        the model. The output is the model's full reconstruction — the
+     *        caller blends it against the original through this mask.
      * @param width Image width
      * @param height Image height
      * @param outR Output red channel (pre-allocated, same size)

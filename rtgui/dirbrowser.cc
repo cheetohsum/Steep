@@ -252,6 +252,7 @@ DirBrowser::DirBrowser () : dirTreeModel(),
 DirBrowser::~DirBrowser()
 {
     chevronAnimConn_.disconnect();
+    dirUpdateConn_.disconnect();
     hideHoverPopup();
     delete hoverPopup_;
     idle_register.destroy();
@@ -285,7 +286,8 @@ static std::vector<Glib::RefPtr<Gdk::Pixbuf>> generateChevronFrames(int count)
 }
 
 // Draw a small 5-point star, filled (favorited) or outlined (not yet).
-static Glib::RefPtr<Gdk::Pixbuf> generateStarPixbuf(bool filled)
+// Ink comes from the theme so the star matches whatever palette is active.
+static Glib::RefPtr<Gdk::Pixbuf> generateStarPixbuf(bool filled, const Gdk::RGBA& ink)
 {
     const int sz = 16;
     auto surface = Cairo::ImageSurface::create(Cairo::FORMAT_ARGB32, sz, sz);
@@ -301,13 +303,13 @@ static Glib::RefPtr<Gdk::Pixbuf> generateStarPixbuf(bool filled)
     }
     cr->close_path();
     if (filled) {
-        cr->set_source_rgba(0.95, 0.76, 0.25, 1.0);
+        cr->set_source_rgba(ink.get_red(), ink.get_green(), ink.get_blue(), 1.0);
         cr->fill_preserve();
-        cr->set_source_rgba(0.85, 0.65, 0.15, 1.0);
+        cr->set_source_rgba(ink.get_red() * 0.8, ink.get_green() * 0.8, ink.get_blue() * 0.8, 1.0);
         cr->set_line_width(1.0);
         cr->stroke();
     } else {
-        cr->set_source_rgba(0.62, 0.65, 0.7, 0.9);
+        cr->set_source_rgba(ink.get_red(), ink.get_green(), ink.get_blue(), 0.9);
         cr->set_line_width(1.2);
         cr->set_line_join(Cairo::LINE_JOIN_ROUND);
         cr->stroke();
@@ -321,17 +323,22 @@ sigc::signal<void>& DirBrowser::favoritesChanged ()
     return sig;
 }
 
-bool DirBrowser::isCurrentDirFavorite () const
+bool DirBrowser::isDirFavorite (const Glib::ustring& dir) const
 {
-    if (currentDir_.empty()) {
+    if (dir.empty()) {
         return false;
     }
     for (const auto& fav : App::get().options().favoriteDirs) {
-        if (isSamePath(fav, currentDir_)) {
+        if (isSamePath(fav, dir)) {
             return true;
         }
     }
     return false;
+}
+
+bool DirBrowser::isCurrentDirFavorite () const
+{
+    return isDirFavorite(currentDir_);
 }
 
 void DirBrowser::toggleCurrentDirFavorite ()
@@ -427,8 +434,8 @@ void DirBrowser::fillDirTree ()
     // Favorite star: shown only on the current (open) folder row, to the
     // left of its name. Filled when the folder is already a starred place;
     // clicking it toggles the favorite (see the onButtonPress hook below).
-    starFilledPixbuf_ = generateStarPixbuf(true);
-    starHollowPixbuf_ = generateStarPixbuf(false);
+    starFilledPixbuf_ = generateStarPixbuf(true, themeColor(*this, "steep_accent", Gdk::RGBA("#f2c240")));
+    starHollowPixbuf_ = generateStarPixbuf(false, themeColor(*this, "steep_text_dim", Gdk::RGBA("#9ea4b2")));
     starCR_ = Gtk::manage(new Gtk::CellRendererPixbuf());
     starCR_->property_ypad() = 0;
     starCR_->property_xpad() = 1;
@@ -436,8 +443,14 @@ void DirBrowser::fillDirTree ()
     tvc.set_cell_data_func(*starCR_, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
         auto* pbCR = static_cast<Gtk::CellRendererPixbuf*>(cr);
         paintCurrentDirBackground(cr, iter);
-        if (isCurrentDirRow(iter)) {
-            pbCR->property_pixbuf() = isCurrentDirFavorite() ? starFilledPixbuf_ : starHollowPixbuf_;
+        // Starred folders keep their star no matter which row is current;
+        // the hollow "star me" affordance only shows on the current row.
+        const Glib::ustring rowDir = iter ? iter->get_value(dtColumns.dirname) : Glib::ustring();
+        if (!rowDir.empty() && isDirFavorite(rowDir)) {
+            pbCR->property_pixbuf() = starFilledPixbuf_;
+            pbCR->property_visible() = true;
+        } else if (isCurrentDirRow(iter)) {
+            pbCR->property_pixbuf() = starHollowPixbuf_;
             pbCR->property_visible() = true;
         } else {
             pbCR->property_pixbuf().reset_value();
@@ -640,68 +653,13 @@ void DirBrowser::browseForFolder ()
     fc.set_name("RTFileChooser");
     fc.set_default_size(780, 520);
 
-    // Modern styling for the file chooser dialog
-    auto fcCss = Gtk::CssProvider::create();
-    fcCss->load_from_data(
-        "#RTFileChooser {"
-        "  border-radius: 8px;"
-        "}"
-        "#RTFileChooser headerbar {"
-        "  border-radius: 8px 8px 0 0;"
-        "  padding: 4px 10px;"
-        "}"
-        "#RTFileChooser placessidebar {"
-        "  background: alpha(@theme_base_color, 0.6);"
-        "  border-right: 1px solid alpha(@borders, 0.3);"
-        "  padding: 4px 0;"
-        "}"
-        "#RTFileChooser placessidebar row {"
-        "  padding: 4px 8px;"
-        "  margin: 1px 4px;"
-        "  border-radius: 6px;"
-        "}"
-        "#RTFileChooser placessidebar row:selected {"
-        "  border-radius: 6px;"
-        "}"
-        "#RTFileChooser treeview {"
-        "  padding: 2px;"
-        "}"
-        "#RTFileChooser treeview header button {"
-        "  padding: 4px 8px;"
-        "  font-weight: 600;"
-        "}"
-        "#RTFileChooser .dialog-action-box {"
-        "  padding: 8px 12px;"
-        "  border-top: 1px solid alpha(@borders, 0.3);"
-        "}"
-        "#RTFileChooser .dialog-action-box button {"
-        "  border-radius: 6px;"
-        "  padding: 6px 20px;"
-        "  min-height: 0;"
-        "}"
-        "#RTFileChooser .dialog-action-box button:last-child {"
-        "  background: alpha(@theme_selected_bg_color, 0.7);"
-        "  color: @theme_selected_fg_color;"
-        "}"
-        "#RTFileChooser .dialog-action-box button:last-child:hover {"
-        "  background: @theme_selected_bg_color;"
-        "}"
-        "#RTFileChooser .path-bar button {"
-        "  border-radius: 4px;"
-        "  padding: 2px 6px;"
-        "  margin: 1px;"
-        "}"
-    );
-    auto screen = fc.get_screen();
-    Gtk::StyleContext::add_provider_for_screen(
-        screen, fcCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+    // Styling lives in themes/common/widgets.css (#RTFileChooser)
 
     fc.add_button(M("GENERAL_CANCEL"), Gtk::RESPONSE_CANCEL);
     fc.add_button(M("GENERAL_OK"), Gtk::RESPONSE_OK);
     fc.set_default_response(Gtk::RESPONSE_OK);
 
     int result = fc.run();
-    Gtk::StyleContext::remove_provider_for_screen(screen, fcCss);
 
     if (result == Gtk::RESPONSE_OK) {
         Glib::ustring dir = fc.get_filename();
@@ -1096,7 +1054,9 @@ void DirBrowser::paintCurrentDirBackground (Gtk::CellRenderer* renderer, const G
     renderer->property_cell_background_set() = tint;
 
     if (tint) {
-        renderer->property_cell_background_rgba() = Gdk::RGBA("rgba(100,160,255,0.25)");
+        Gdk::RGBA hover = themeColor(*this, "steep_accent", Gdk::RGBA("#64a0ff"));
+        hover.set_alpha(0.25);
+        renderer->property_cell_background_rgba() = hover;
     }
 }
 
@@ -1206,7 +1166,43 @@ void DirBrowser::file_changed (const Glib::RefPtr<Gio::File>& file, const Glib::
         return;
     }
 
-    updateDir (iter);
+    scheduleUpdateDir (iter);
+}
+
+void DirBrowser::scheduleUpdateDir (const Gtk::TreeModel::iterator& iter)
+{
+    // Monitor events come in bursts (imports, tools churning temp files,
+    // sidecar/cache writes). Rescanning synchronously for each one pinned the
+    // GUI thread inside updateDir; coalesce per directory row instead.
+    const Glib::ustring dirName = iter->get_value (dtColumns.dirname);
+    pendingDirUpdates_[dirName.raw()] = Gtk::TreeRowReference (dirTreeModel, dirTreeModel->get_path (iter));
+
+    if (!dirUpdateConn_.connected()) {
+        dirUpdateConn_ = Glib::signal_timeout().connect (
+            [this]() {
+                flushPendingDirUpdates();
+                return false;
+            },
+            250);
+    }
+}
+
+void DirBrowser::flushPendingDirUpdates ()
+{
+    std::map<std::string, Gtk::TreeRowReference> pending;
+    pending.swap (pendingDirUpdates_);
+
+    for (const auto& entry : pending) {
+        if (!entry.second.is_valid()) {
+            continue;
+        }
+
+        Gtk::TreeModel::iterator iter = dirTreeModel->get_iter (entry.second.get_path());
+
+        if (iter) {
+            updateDir (iter);
+        }
+    }
 }
 
 void DirBrowser::selectDir (Glib::ustring dir)

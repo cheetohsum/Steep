@@ -19,6 +19,7 @@
 #include <cstring>
 
 #include <gdkmm/types.h>
+#include "guiutils.h"
 
 #include "myflatcurve.h"
 
@@ -181,8 +182,8 @@ void MyFlatCurve::updateDrawingArea (const ::Cairo::RefPtr< Cairo::Context> &cr)
         leftBar->updateColoredBar(cr);
 
         // now the border
-        c = style->get_border_color(state);
-        cr->set_source_rgb (c.get_red(), c.get_green(), c.get_blue());
+        c = themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff"));
+        cr->set_source_rgba (c.get_red(), c.get_green(), c.get_blue(), 0.5);
         cr->rectangle(0.5, graphY - graphH - 0.5 - 0.5, CBAR_WIDTH + 1, (double)graphH + 1.);
         cr->stroke();
     }
@@ -194,15 +195,15 @@ void MyFlatCurve::updateDrawingArea (const ::Cairo::RefPtr< Cairo::Context> &cr)
         bottomBar->updateColoredBar(cr);
 
         // now the border
-        c = style->get_border_color(state);
-        cr->set_source_rgb (c.get_red(), c.get_green(), c.get_blue());
+        c = themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff"));
+        cr->set_source_rgba (c.get_red(), c.get_green(), c.get_blue(), 0.5);
         cr->rectangle(graphX - 0.5 - 0.5, graphY + RADIUS + CBAR_MARGIN + 0.5, graphW + 1. + 1., CBAR_WIDTH + 1.);
         cr->stroke();
     }
 
     // draw f(x)=0.5 line
-    c = style->get_border_color(state);
-    cr->set_source_rgb (c.get_red(), c.get_green(), c.get_blue());
+    c = themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff"));
+    cr->set_source_rgba (c.get_red(), c.get_green(), c.get_blue(), 0.45);
     const std::valarray<double> ds = {4.};
     cr->set_dash (ds, 0);
     cr->move_to (graphX - 1., graphY - graphH / 2.);
@@ -349,8 +350,8 @@ void MyFlatCurve::updateDrawingArea (const ::Cairo::RefPtr< Cairo::Context> &cr)
     cr->set_line_cap(Cairo::LINE_CAP_SQUARE);
 
     // draw the graph's borders:
-    c = style->get_border_color(state);
-    cr->set_source_rgb (c.get_red(), c.get_green(), c.get_blue());
+    c = themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff"));
+    cr->set_source_rgba (c.get_red(), c.get_green(), c.get_blue(), 0.35);
     cr->rectangle(graphX - 0.5 - 0.5, graphY + 0.5 + 0.5, graphW + 1. + 1., -(graphH + 1. + 1.));
     cr->stroke ();
 

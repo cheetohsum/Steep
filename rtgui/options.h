@@ -139,6 +139,13 @@ struct WatermarkOptions {
     int position = 8;        // 0-8 (TL/TC/TR/CL/C/CR/BL/BC/BR), default BR
     int marginX = 20, marginY = 20;
     double rotation = 0;
+    // Logo/photo shown with (or instead of) the text. It shares the stroke,
+    // shadow, opacity, position, margin and rotation settings above.
+    bool imageEnabled = false;
+    Glib::ustring imagePath;
+    int imagePlacement = 0;      // 0=left of text, 1=right, 2=above, 3=below
+    double imageSizePercent = 6.0; // height, as % of the photo's short edge
+    int imageGap = 8;            // px between logo and text
 };
 
 enum ThFileType {FT_Invalid = -1, FT_None = 0, FT_Raw = 1, FT_Jpeg = 2, FT_Tiff = 3, FT_Png = 4, FT_Custom = 5, FT_Tiff16 = 6, FT_Png16 = 7, FT_Custom16 = 8};
@@ -240,6 +247,10 @@ public:
     static constexpr int kAdjusterMinDelayDefault = 4;
     static constexpr int kAdjusterMaxDelayDefault = 12;
     int adjusterMinDelay;
+    /// Type scale for the Edit pane's setting pills (right-click the Edit mode button).
+    double adjusterPillScale;
+    /// Put photos with no lens correction (or a stale manual one) on automatic matching.
+    bool lensProfDefaultAuto;
     int adjusterMaxDelay;
     int  startupDir;
     Gtk::SortType dirBrowserSortType;
@@ -278,6 +289,7 @@ public:
     bool albumPanelCollapsed;
     bool browserTitleShowFullPath;  // browser title shows the full path instead of the folder name
     bool browserTitlePinToEditor;   // browser title also shown above the editor filmstrip
+    bool filmstripAtBottom;         // filmstrip below the image instead of above it
     bool showGlobalScopeUnfilteredWarning;  // warn before an unfiltered global-scope scan
     int preferencesWidth;
     int preferencesHeight;
@@ -377,6 +389,10 @@ public:
     std::vector<Glib::ustring> renameTemplates;
     bool renameUseTemplates;
     bool internalThumbIfUntouched;
+    // Upgrade untouched RAW thumbnails from the camera's embedded preview to
+    // a render through the default profile (what the editor shows) once the
+    // cheap first pass is on screen. Off keeps the embedded preview forever.
+    bool processedRawPreviews;
     bool overwriteOutputFile;
     bool confirmDeleteFiles;
     int complexity;

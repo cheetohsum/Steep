@@ -19,6 +19,7 @@
 #include <cstring>
 
 #include <gdkmm/types.h>
+#include "guiutils.h"
 
 #include "mydiagonalcurve.h"
 
@@ -311,8 +312,8 @@ void MyDiagonalCurve::updateDrawingArea (const int handle, const ::Cairo::RefPtr
         leftBar->updateColoredBar(cr);
 
         // now the border
-        c = style->get_border_color(state);
-        cr->set_source_rgb (c.get_red(), c.get_green(), c.get_blue());
+        c = themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff"));
+        cr->set_source_rgba (c.get_red(), c.get_green(), c.get_blue(), 0.5);
         cr->rectangle(0.5, graphY - graphH - 0.5 - 0.5, CBAR_WIDTH + 1, (double)graphH + 1. + 1.);
         cr->stroke();
     }
@@ -324,8 +325,8 @@ void MyDiagonalCurve::updateDrawingArea (const int handle, const ::Cairo::RefPtr
         bottomBar->updateColoredBar(cr);
 
         // now the border
-        c = style->get_border_color (state);
-        cr->set_source_rgb (c.get_red(), c.get_green(), c.get_blue());
+        c = themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff"));
+        cr->set_source_rgba (c.get_red(), c.get_green(), c.get_blue(), 0.5);
         cr->rectangle(graphX - 0.5 - 0.5, graphY + CBAR_MARGIN + 0.5, graphW + 1. + 0.5, CBAR_WIDTH + 1.);
         cr->stroke();
     }
@@ -419,7 +420,7 @@ void MyDiagonalCurve::updateDrawingArea (const int handle, const ::Cairo::RefPtr
 
     // draw the grid lines:
     cr->set_line_width (1.0);
-    c = style->get_border_color(state);
+    c = themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff"));
     cr->set_source_rgba (c.get_red(), c.get_green(), c.get_blue(), 0.3);
     cr->set_antialias (Cairo::ANTIALIAS_NONE);
 
@@ -438,7 +439,7 @@ void MyDiagonalCurve::updateDrawingArea (const int handle, const ::Cairo::RefPtr
     if (snapToElmt == -2) {
         cr->set_source_rgb (1.0, 0.0, 0.0);
     } else {
-        cr->set_source_rgb (c.get_red(), c.get_green(), c.get_blue());
+        cr->set_source_rgba (c.get_red(), c.get_green(), c.get_blue(), 0.45);
     }
 
     const std::valarray<double> ds = {4.};

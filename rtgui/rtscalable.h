@@ -70,6 +70,11 @@ public:
     static constexpr double baseDPI = 96.; // Cairo default DPI
 
     static void init(const Gtk::Window* window);
+    // Light themes need dark icon line-art: when set, near-grey colors in
+    // icon SVG sources get their lightness flipped at load time. Set once at
+    // startup (before any icon loads), from the theme's steep_wash token.
+    static void setIconInkDark(bool dark);
+    static bool getIconInkDark();
     static void setDPInScale(const Gtk::Window* window);
     static void setDPInScale(const double newDPI, const int newScale);
     static double getDPI();

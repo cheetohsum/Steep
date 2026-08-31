@@ -810,6 +810,13 @@ void ImageArea::pointColorSelected (int x, int y)
     }
 }
 
+void ImageArea::aiMaskPickSelected (int x, int y)
+{
+    if (listener) {
+        listener->aiMaskPickSelected (x, y);
+    }
+}
+
 void ImageArea::sharpMaskSelected (bool sharpMask)
 {
 

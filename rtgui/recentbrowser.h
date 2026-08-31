@@ -21,6 +21,9 @@
 #include <gtkmm.h>
 
 #include "guiutils.h"
+#include "steeppopup.h"
+
+#include <memory>
 
 class RecentBrowser :
     public Gtk::Box
@@ -30,7 +33,7 @@ public:
 
 private:
     Gtk::MenuButton* recentButton;
-    Gtk::Menu* recentMenu;
+    std::unique_ptr<steepui::PopupMenu> recentPopup_;
     DirSelectionSlot selectDir;
 
     void rebuildMenu();

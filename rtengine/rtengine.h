@@ -744,6 +744,14 @@ public:
     /** Returns the initial image corresponding to the image processor.
       * @return the initial image corresponding to the image processor */
     virtual InitialImage* getInitialImage () = 0;
+    /** Arm or disarm background Smart Mask analysis (one-off segmentation of
+      * the current image at the tail of a preview pass). The GUI arms this
+      * only while the masking view is showing. Default: disarmed. */
+    virtual void setSmartMaskAnalysisWanted (bool wanted) { (void)wanted; }
+    /** Scan the current preview for sensor-dust specks (small dark blobs in
+      * smooth areas) and return ready-to-use spot entries, strongest first.
+      * Runs synchronously; positions and radii are in full-image coordinates. */
+    virtual std::vector<procparams::SpotEntry> detectDustSpots (int maxSpots) { (void)maxSpots; return {}; }
     /** Set the TweakOperator
       * @param tOperator is a pointer to the object that will alter the ProcParams for the rendering */
     virtual void        setTweakOperator (TweakOperator *tOperator) = 0;

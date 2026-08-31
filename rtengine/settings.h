@@ -47,6 +47,7 @@ public:
     bool            autocielab;
     bool            rgbcurveslumamode_gamut;// controls gamut enforcement for RGB curves in lumamode
     bool            verbose;
+    bool            smartMaskAutoAnalyze;   ///< Segment a freshly opened image in the background so Smart Mask presses are instant
     Glib::ustring   darkFramesPath;         ///< The default directory for dark frames
     Glib::ustring   flatFieldsPath;         ///< The default directory for flat fields
     Glib::ustring   cameraProfilesPath;     ///< The default directory for camera profiles

@@ -210,6 +210,22 @@ public:
     int getPendingShape() const { return pendingShape_; }
     Gtk::Button* getAddMaskButton() const { return button_add_; }
 
+    /**
+     * Create a new AI mask spot for the given segmentation class, exactly as
+     * if the class had been picked from the add-mask menu's AI submenu.
+     *
+     * @param classIndex rtengine::AISegClass index (0-7)
+     */
+    void requestAIMaskSpot(int classIndex) { on_ai_mask_selected(classIndex); }
+
+    /**
+     * Create a new shape mask spot, exactly as if the shape had been picked
+     * from the add-mask menu.
+     *
+     * @param shape 0 = ellipse, 1 = rectangle, 2 = gradient
+     */
+    void requestShapeMaskSpot(int shape) { on_mask_shape_selected(shape); }
+
     // Control spot creation functions
     /**
      * Add a new spot (and its associated curve)

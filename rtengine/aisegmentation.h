@@ -35,7 +35,14 @@ enum class AISegClass {
     VEHICLE,
     ANIMAL,
     FOREGROUND_OBJECT,
-    NUM_CLASSES
+    NUM_CLASSES,            ///< = 8: classes the model produces directly
+
+    // Pseudo-classes composed by AIMaskCache from the model output. They live
+    // past NUM_CLASSES so model-facing code (tensor sizing, class grouping)
+    // keeps its 8-class world, while mask consumers may index all of these.
+    SUBJECT = NUM_CLASSES,  ///< person|vehicle|animal|foreground → dominant connected regions, holes filled
+    NOT_SUBJECT,            ///< complement of SUBJECT
+    TOTAL_CLASSES           ///< = 10: model classes + composed pseudo-classes
 };
 
 class AISegmentationEngine : public NonCopyable

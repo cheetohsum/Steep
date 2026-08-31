@@ -143,6 +143,8 @@ protected:
     CursorShape cursor_type;
 
     void drawFrame (Cairo::RefPtr<Cairo::Context> cr, const Gdk::RGBA& bg, const Gdk::RGBA& fg);
+    /// Selection highlight, drawn as a mat hugging the photo.
+    void drawSelectionHighlight (Cairo::RefPtr<Cairo::Context> cr, const Gdk::RGBA& bg);
     void getTextSizes (int& w, int& h);
     bool buttonSetVisible () const;
     void ensureInfoLines () const;
@@ -175,6 +177,7 @@ public:
 
 // misc attributes
     bool selected;
+    bool hovered = false; // pointer rests on this entry (GUI thread only)
     bool drawable;
     bool filtered;
     bool framed;

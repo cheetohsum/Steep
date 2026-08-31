@@ -35,17 +35,34 @@
 [Setup]
 ; NOTE: The value of AppId uniquely identifies this application.
 ; Do not use the same AppId value in installers for other applications.
-; (To generate a new GUID, click Tools | Generate GUID inside the IDE.)
-AppId={#MyAppName}{#MyAppVersion}
+;
+; This MUST stay fixed forever. It used to be {#MyAppName}{#MyAppVersion},
+; which put the version inside the identity, so every build registered as a
+; different product: Windows never recognised an existing Steep, nothing was
+; ever upgraded, and users collected one uninstall entry per build. With a
+; constant AppId, Setup finds the previous install, reuses its directory and
+; Start Menu group, and replaces it in place.
+AppId={{60BBE256-B960-4DA2-9FB7-A61AD3F47D84}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
-;VersionInfoVersion={#MyAppVersionNumeric}
+VersionInfoVersion={#MyAppVersionNumeric}
 AppPublisher={#MyAppPublisher}
 AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
-DefaultDirName={pf}\{#MyAppName}\{#MyAppVersion}
+; No version in the path: an update must land on top of the old install
+; rather than beside it. {autopf} (not {pf}) because PrivilegesRequired=none
+; means Setup may be running unelevated, where Program Files is unwritable.
+DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
+; When a previous install is found, keep where the user put it last time.
+UsePreviousAppDir=yes
+UsePreviousGroup=yes
+UsePreviousTasks=yes
+UsePreviousLanguage=yes
+; Let Setup shut a running Steep instead of failing to overwrite its files.
+CloseApplications=yes
+RestartApplications=no
 AllowNoIcons=yes
 LicenseFile={#MyBuildBasePath}\LICENSE
 OutputDir={#MyBuildBasePath}\..\
@@ -126,12 +143,14 @@ Source: "{#MyBuildBasePath}\gdb.exe"; DestDir: "{app}"; Flags: skipifsourcedoesn
 ; NOTE: Don't use "Flags: ignoreversion" on any shared system files
 
 [Icons]
-Name: "{group}\{#MyAppName} {#MyAppVersion}"; Filename: "{app}\{#MyAppExeName}"
+; Shortcut names carry no version. They used to, which meant an update wrote a
+; second set and left the old ones pointing at files it had just replaced.
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\{cm:ProgramOnTheWeb,{#MyAppName}}"; Filename: "{#MyAppURL}"
-Name: "{group}\{cm:UninstallProgram,{#MyAppName} {#MyAppVersion}}"; Filename: "{uninstallexe}"
-Name: "{commondesktop}\{#MyAppName} {#MyAppVersion}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon and commoninstall
-Name: "{userdesktop}\{#MyAppName} {#MyAppVersion}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon and userinstall
-Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\{#MyAppName} {#MyAppVersion}"; Filename: "{app}\{#MyAppExeName}"; Tasks: quicklaunchicon
+Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
+Name: "{commondesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon and commoninstall
+Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon and userinstall
+Name: "{userappdata}\Microsoft\Internet Explorer\Quick Launch\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: quicklaunchicon
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#StringChange(MyAppName, '&', '&&')}}"; Flags: nowait postinstall skipifsilent
@@ -152,8 +171,143 @@ Root: HKLM; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{#MyApp
 Root: HKLM; Subkey: "SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\{#MyAppCliExeName}"; ValueType: string; ValueData: "{app}\{#MyAppCliExeName}"; Flags: uninsdeletekey; Tasks: commoninstall
 
 [Code]
+// ---------------------------------------------------------------------------
+// Legacy install detection.
+//
+// Installers built before the AppId was made constant registered themselves as
+// "Steep<version>" - a different product identity every build. Windows has no
+// idea those are the same program as this one, so Setup would keep installing
+// alongside them forever. Inno upgrades same-AppId installs by itself; all of
+// the code below exists only to clear out the ones made before that fix.
+// ---------------------------------------------------------------------------
+const
+  UninstallKeyPath = 'Software\Microsoft\Windows\CurrentVersion\Uninstall';
+  ThisUninstallKey = '{60BBE256-B960-4DA2-9FB7-A61AD3F47D84}_is1';
+
+var
+  LegacyUninstallers: TArrayOfString;
+  LegacyCount: Integer;
+
 function IsElevatedUser(): Boolean;
 begin
 Result := IsAdminLoggedOn or IsPowerUserLoggedOn;
 end;
- 
+
+// UninstallString is normally just a quoted path, but it is allowed to carry
+// arguments after it. Take what is between the quotes rather than assuming the
+// last character closes them, or a value like "...unins000.exe" /LOG would be
+// truncated into a path that does not exist.
+function ExtractExePath(const S: String): String;
+var
+  Rest: String;
+  P: Integer;
+begin
+  Result := Trim(S);
+
+  if (Length(Result) >= 2) and (Result[1] = '"') then
+  begin
+    Rest := Copy(Result, 2, Length(Result) - 1);
+    P := Pos('"', Rest);
+    if P > 0 then
+      Result := Copy(Rest, 1, P - 1)
+    else
+      Result := Rest;
+  end;
+end;
+
+procedure ScanRootForLegacy(RootKey: Integer);
+var
+  Names: TArrayOfString;
+  I: Integer;
+  SubKey, DisplayName, UninstStr: String;
+begin
+  if not RegGetSubkeyNames(RootKey, UninstallKeyPath, Names) then
+    exit;
+
+  for I := 0 to GetArrayLength(Names) - 1 do
+  begin
+    // Never match ourselves, or Setup would uninstall the very install it is
+    // supposed to be updating.
+    if CompareText(Names[I], ThisUninstallKey) = 0 then
+      continue;
+
+    SubKey := UninstallKeyPath + '\' + Names[I];
+
+    if not RegQueryStringValue(RootKey, SubKey, 'DisplayName', DisplayName) then
+      continue;
+    if CompareText(Copy(DisplayName, 1, 5), 'Steep') <> 0 then
+      continue;
+    if not RegQueryStringValue(RootKey, SubKey, 'UninstallString', UninstStr) then
+      continue;
+
+    UninstStr := ExtractExePath(UninstStr);
+    if UninstStr = '' then
+      continue;
+    // Skips entries left behind by a hand-deleted install directory.
+    if not FileExists(UninstStr) then
+      continue;
+
+    SetArrayLength(LegacyUninstallers, LegacyCount + 1);
+    LegacyUninstallers[LegacyCount] := UninstStr;
+    LegacyCount := LegacyCount + 1;
+  end;
+end;
+
+procedure FindLegacyInstalls();
+begin
+  LegacyCount := 0;
+  SetArrayLength(LegacyUninstallers, 0);
+  // Both hives, because PrivilegesRequired=none means an earlier install could
+  // be per-machine or per-user, and both registry views, because a 64-bit Setup
+  // does not see WOW6432Node unless it is asked to.
+  ScanRootForLegacy(HKLM);
+  ScanRootForLegacy(HKCU);
+  ScanRootForLegacy(HKLM32);
+  ScanRootForLegacy(HKCU32);
+end;
+
+function InitializeSetup(): Boolean;
+var
+  Msg: String;
+begin
+  Result := True;
+  FindLegacyInstalls();
+
+  if LegacyCount = 0 then
+    exit;
+
+  if WizardSilent then
+    exit;   // unattended (CI, /VERYSILENT): clean up without asking
+
+  if LegacyCount = 1 then
+    Msg := 'An older version of Steep is already installed.'
+  else
+    Msg := IntToStr(LegacyCount) + ' older versions of Steep are already installed.';
+
+  Msg := Msg + #13#10#13#10 +
+         'Remove the old version and update it to this one?' + #13#10#13#10 +
+         'Your settings, profiles and cache are kept either way.';
+
+  // Declining is allowed: those builds really can sit side by side, and
+  // somebody may be keeping one deliberately.
+  if MsgBox(Msg, mbConfirmation, MB_YESNO) <> IDYES then
+  begin
+    LegacyCount := 0;
+    SetArrayLength(LegacyUninstallers, 0);
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  I, ResultCode: Integer;
+begin
+  // Removal happens here, right before files are copied, so backing out of the
+  // wizard earlier leaves the machine untouched.
+  if CurStep <> ssInstall then
+    exit;
+
+  for I := 0 to LegacyCount - 1 do
+    Exec(LegacyUninstallers[I],
+         '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART',
+         '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;

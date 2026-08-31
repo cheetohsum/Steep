@@ -65,6 +65,12 @@ class Thumbnail
 
     const std::unique_ptr<rtengine::procparams::ProcParams>      pparams;
     bool            pparamsValid;
+    // RAM params are ahead of the sidecar/cache on disk. Set by
+    // setProcParams(..., updateCacheNow=false), cleared by any updateCache
+    // write. The editor syncs edited params into the thumbnail RAM-only after
+    // every render, so "params match" alone must never be read as "disk is
+    // up to date".
+    bool            pendingParamsFlush_ = false;
     bool            imageLoading;
 
     // these are the data of the result image of the last getthumbnailimage  call (for caching purposes)
@@ -147,9 +153,22 @@ public:
     rtengine::procparams::ProcParams getProcParamsCopy ();
 
     // Use this to create params on demand for update ; if flaggingMode=true, the procparams is created for a file being flagged (inTrash, rank, colorLabel)
-    rtengine::procparams::ProcParams* createProcParamsForUpdate (bool returnParams, bool force, bool flaggingMode = false);
+    // persist=false builds the starting params for an untouched file in memory only: nothing is written to the
+    // sidecar or cache and the file stays "unedited" (hasProcParams() remains false).
+    /** @param ranProfileBuilder if given, set to true only when a custom
+      * profile builder actually ran — i.e. when the processing parameters
+      * may have changed. Flagging callers use it to avoid re-rendering the
+      * thumbnail for a metadata-only change. */
+    rtengine::procparams::ProcParams* createProcParamsForUpdate (bool returnParams, bool force, bool flaggingMode = false, bool persist = true, bool* ranProfileBuilder = nullptr);
 
     void              setProcParams (const rtengine::procparams::ProcParams& pp, ParamsEdited* pe = nullptr, int whoChangedIt = -1, bool updateCacheNow = true, bool resetToDefault = false);
+    // Completes a setProcParams(..., updateCacheNow=false) from a worker
+    // thread: takes the params mutex and writes sidecar/cache/XMP. Lets the
+    // GUI thread hand the (possibly slow) disk I/O to a background thread.
+    void              flushProcParamsToDisk ();
+    // True while the RAM params carry changes the sidecar/cache have not
+    // seen yet (a RAM-only setProcParams without a later updateCache).
+    bool              hasUnsavedParams ();
     // True when `pp` is already what this thumbnail holds on disk, so writing
     // the sidecar / cache entry / XMP again would be pure I/O for no change.
     bool              procParamsMatch (const rtengine::procparams::ProcParams& pp);

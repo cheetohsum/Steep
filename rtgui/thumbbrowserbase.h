@@ -71,6 +71,7 @@ class ThumbBrowserBase :
         bool on_button_press_event (GdkEventButton* event) override;
         bool on_button_release_event (GdkEventButton* event) override;
         bool on_motion_notify_event (GdkEventMotion* event) override;
+        bool on_leave_notify_event (GdkEventCrossing* event) override;
         bool on_scroll_event (GdkEventScroll* event) override;
         bool on_key_press_event (GdkEventKey* event) override;
         bool on_query_tooltip (int x, int y, bool keyboard_tooltip, const Glib::RefPtr<Gtk::Tooltip>& tooltip);
@@ -241,6 +242,13 @@ public: // re-apply sort method
 
     // Request a reflow, coalescing bursts into a single pass.
     void scheduleRelayout ();
+
+    // Hint drawn centered on the canvas while there are no entries
+    // (e.g. "scanning" / "no photos"). Empty string draws nothing.
+    void setEmptyStateText (const Glib::ustring& text);
+
+protected:
+    Glib::ustring emptyStateText_;
 
 protected:
     bool redrawPending_ = false;

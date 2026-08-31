@@ -50,6 +50,8 @@ class CurveEditor : public EditSubscriber, public rtengine::NonCopyable
     friend class FlatCurveEditor;
 
 protected:
+    /// Set by enableCompactMode: the channel picker is a bare dot, not a chip.
+    bool compactMode_ = false;
 
     /*
      * The curve editor contains only one widget (the curve type button) to receive the signals
@@ -120,6 +122,9 @@ public:
     Gtk::Widget* getButtonGroup();
     void addButtonCSSClass(const Glib::ustring& cssClass);
     void enableCompactMode(const Glib::ustring& label, const Glib::ustring& cssClass);
+    /// True once enableCompactMode has run: the channel picker is a bare dot.
+    bool isCompactMode() const { return compactMode_; }
+
     void setCurveDrawColor(double r, double g, double b) { drawR_ = r; drawG_ = g; drawB_ = b; hasDrawColor_ = true; }
     bool hasDrawColor() const { return hasDrawColor_; }
     void getDrawColor(double& r, double& g, double& b) const { r = drawR_; g = drawG_; b = drawB_; }

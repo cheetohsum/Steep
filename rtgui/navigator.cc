@@ -146,52 +146,6 @@ Navigator::Navigator() :
     LAB_B->set_alignment(Gtk::ALIGN_END);
     LAB_L->set_alignment(Gtk::ALIGN_END);
 
-    // set font family and size
-    /*
-    Glib::ustring fontname;
-
-#ifdef _WIN32
-    fontname = "Droid Sans Mono Slashed"; // font file is provided in the source tree in rtdata/fonts to be installed by the windows installer
-#endif
-
-#ifdef __linux__
-    fontname = "Monospace";
-#endif
-
-#ifdef __APPLE__
-    fontname = "Menlo";
-#endif
-
-    if (0) { // (fontname!=""){
-        Glib::RefPtr<Gtk::CssProvider> cssProvider = Gtk::CssProvider::create();
-
-        if (cssProvider) {
-            cssProvider->load_from_data("Label { font-name: " + fontname + " }");
-            R->get_style_context()->add_provider(cssProvider, GTK_STYLE_PROVIDER_PRIORITY_USER);
-            G->get_style_context()->add_provider(cssProvider, GTK_STYLE_PROVIDER_PRIORITY_USER);
-            B->get_style_context()->add_provider(cssProvider, GTK_STYLE_PROVIDER_PRIORITY_USER);
-            H->get_style_context()->add_provider(cssProvider, GTK_STYLE_PROVIDER_PRIORITY_USER);
-            S->get_style_context()->add_provider(cssProvider, GTK_STYLE_PROVIDER_PRIORITY_USER);
-            V->get_style_context()->add_provider(cssProvider, GTK_STYLE_PROVIDER_PRIORITY_USER);
-            LAB_A->get_style_context()->add_provider(cssProvider, GTK_STYLE_PROVIDER_PRIORITY_USER);
-            LAB_B->get_style_context()->add_provider(cssProvider, GTK_STYLE_PROVIDER_PRIORITY_USER);
-            LAB_L->get_style_context()->add_provider(cssProvider, GTK_STYLE_PROVIDER_PRIORITY_USER);
-
-            lR->get_style_context()->add_provider(cssProvider, GTK_STYLE_PROVIDER_PRIORITY_USER);
-            lG->get_style_context()->add_provider(cssProvider, GTK_STYLE_PROVIDER_PRIORITY_USER);
-            lB->get_style_context()->add_provider(cssProvider, GTK_STYLE_PROVIDER_PRIORITY_USER);
-            lH->get_style_context()->add_provider(cssProvider, GTK_STYLE_PROVIDER_PRIORITY_USER);
-            lS->get_style_context()->add_provider(cssProvider, GTK_STYLE_PROVIDER_PRIORITY_USER);
-            lV->get_style_context()->add_provider(cssProvider, GTK_STYLE_PROVIDER_PRIORITY_USER);
-            lLAB_A->get_style_context()->add_provider(cssProvider, GTK_STYLE_PROVIDER_PRIORITY_USER);
-            lLAB_B->get_style_context()->add_provider(cssProvider, GTK_STYLE_PROVIDER_PRIORITY_USER);
-            lLAB_L->get_style_context()->add_provider(cssProvider, GTK_STYLE_PROVIDER_PRIORITY_USER);
-
-            position->get_style_context()->add_provider(cssProvider, GTK_STYLE_PROVIDER_PRIORITY_USER);
-        }
-    }
-    */
-
     // setup the tables
     Gtk::Grid* table0 = Gtk::manage (new Gtk::Grid()); //rows, cols The main table container
     // let's pack tables1,2-3 into table0

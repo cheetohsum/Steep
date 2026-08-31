@@ -30,6 +30,36 @@
 
 #include <gtkmm.h>
 
+#include <functional>
+
+/**
+ * @brief The brush cursor ring. Draws the normal dashed circle, and while
+ * a smart tool is computing adds a rotating arc around it so the pointer
+ * itself says "still working" — the OS busy cursor is unavailable here
+ * because brush mode hides the system pointer.
+ */
+class BrushCursorRing final : public Circle
+{
+public:
+    /// Rotation phase in turns; negative means idle (no spinner).
+    float busyPhase = -1.f;
+
+    void drawInnerGeometry (Cairo::RefPtr<Cairo::Context> &cr, ObjectMOBuffer *objectBuffer, EditCoordSystem &coordSystem) override;
+};
+
+/**
+ * @brief Brush-stroke area overlay: renders the swept stroke (points +
+ * brush diameter) as a translucent fill with an opaque border around the
+ * whole highlighted region, instead of Polyline's opaque spine.
+ */
+class BrushAreaOverlay final : public Polyline
+{
+public:
+    void drawOuterGeometry (Cairo::RefPtr<Cairo::Context> &cr, ObjectMOBuffer *objectBuffer, EditCoordSystem &coordSystem) override;
+    void drawInnerGeometry (Cairo::RefPtr<Cairo::Context> &cr, ObjectMOBuffer *objectBuffer, EditCoordSystem &coordSystem) override;
+    void drawToMOChannel (Cairo::RefPtr<Cairo::Context> &cr, unsigned short id, ObjectMOBuffer *objectBuffer, EditCoordSystem &coordSystem) override;
+};
+
 /**
  * @brief Let the user create/edit/delete points for Spot Removal tool
  */
@@ -58,11 +88,15 @@ private:
     Line link;                     // to show the link between the Source and Target position
 
     // Phase 2: cursor preview circle
-    Circle cursorPreviewCircle;
+    BrushCursorRing cursorPreviewCircle;
 
     // Phase 4: stroke preview
-    Polyline strokePreviewLine;
+    BrushAreaOverlay strokePreviewLine;
     bool isStrokeDragging = false;
+    // After a brush stroke commits, its spine stays visible briefly so the
+    // user can see where the (asynchronous) repair is landing.
+    bool strokeLingerActive_ = false;
+    sigc::connection strokeLingerConn_;
     std::vector<rtengine::Coord> currentStrokePoints;
 
     OPIcon *getActiveSpotIcon ();
@@ -76,6 +110,22 @@ private:
 
     // Phase 1: method toggle buttons
     int getActiveMethod() const;
+    /// True for the paint-a-stroke methods (Erase + the AI brushes), where
+    /// the on-canvas ring replaces the OS pointer.
+    bool isBrushMethod() const;
+    /// Put away any armed smart tool (used when the section is collapsed).
+    void deselectSmartTools();
+
+    // --- Smart-tool progress feedback ---
+    bool awaitingSmartResult_ = false;   // a smart stroke was committed, result pending
+    bool busySeenActive_ = false;        // ignore a stale idle from the previous render
+    float busyPhase_ = 0.f;
+    sigc::connection busyAnimConn_;
+    sigc::connection busyTimeoutConn_;
+    void startBusyIndicator();
+    void stopBusyIndicator();
+    void finishSmartResult();
+    void queueCanvasRedraw();
     void setActiveMethod(int index);
     void blockMethodButtons(bool block);
     void onMethodButtonToggled(Gtk::ToggleButton* button, int methodIndex);
@@ -104,9 +154,18 @@ protected:
     Gtk::ToggleButton* btnHeal;
     Gtk::ToggleButton* btnErase;
     Gtk::ToggleButton* btnRedEye;
+    Gtk::ToggleButton* btnAIRemove = nullptr;   // Smart Tools: AI object removal brush
+    Gtk::Button* btnAIRemoveReset = nullptr;    // clears every AI removal, shown once applied
+    Gtk::Button* btnAIDust = nullptr;           // Smart Tools: one-press dust scan
+    Gtk::Button* btnAIDustReset = nullptr;      // clears every auto dust spot
+    Gtk::ToggleButton* btnAIReflect = nullptr;  // Smart Tools: glare-reduction brush
+    Gtk::Button* btnAIReflectReset = nullptr;
+    Gtk::ToggleButton* btnAIFill = nullptr;     // Smart Tools: large-area AI fill brush
+    Gtk::Button* btnAIFillReset = nullptr;
+    std::function<std::vector<rtengine::procparams::SpotEntry>(int)> dustDetector_;
     Gtk::Box* methodBox;
     bool blockMethodSignal = false;
-    sigc::connection cloneConn, healConn, eraseConn, redeyeConn;
+    sigc::connection cloneConn, healConn, eraseConn, redeyeConn, aiRemoveConn, aiReflectConn, aiFillConn;
 
     // Phase 3: size preview
     SpotSizePreview* sizePreview;
@@ -115,6 +174,9 @@ protected:
     sigc::connection editConn, editedConn;
 
     void editToggled ();
+    void updateSmartToolIndicators ();
+    void resetEntriesOfMethod (rtengine::procparams::SpotMethod method);
+    void onRemoveDustPressed ();
     void editedToggled ();
     Geometry* getVisibleGeometryFromMO (int MOID);
 
@@ -123,6 +185,20 @@ public:
 
     Spot ();
     ~Spot ();
+
+    /// Told by the editor whether the pipeline is busy, so a committed
+    /// smart-tool stroke can show progress until its result actually lands
+    /// instead of guessing with a fixed timer.
+    void setProcessingActive (bool active);
+
+    /// Provider for the one-press dust scan (wired by ToolPanelCoordinator).
+    void setDustDetector (std::function<std::vector<rtengine::procparams::SpotEntry>(int)> detector)
+    {
+        dustDetector_ = std::move(detector);
+        if (btnAIDust) {
+            btnAIDust->set_sensitive(static_cast<bool>(dustDetector_));
+        }
+    }
 
     void read (const rtengine::procparams::ProcParams* pp, const ParamsEdited* pedited = nullptr) override;
     void write (rtengine::procparams::ProcParams* pp, ParamsEdited* pedited = nullptr) override;

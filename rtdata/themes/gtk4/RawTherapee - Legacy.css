@@ -1,0 +1,22 @@
+/* Generated from rtdata/themes/RawTherapee - Legacy.css by tools/gen_gtk4_tokens.py.
+   Do not edit — change the theme's palette block and regenerate. */
+
+:root {
+  --steep-surface-0: #1d1d1d;
+  --steep-surface-1: #262626;
+  --steep-surface-2: #2f2f2f;
+  --steep-surface-3: #3a3a3a;
+  --steep-text-hi: #f0f0f0;
+  --steep-text: #cfcfcf;
+  --steep-text-dim: #8f8f8f;
+  --steep-accent: #a8b8c8;
+  --steep-select: #4a5560;
+  --steep-attention: #c08858;
+  --steep-success: #58c07a;
+  --steep-danger: #d05f5f;
+  --steep-border: #141414;
+  --steep-border-soft: #404040;
+  --steep-sel-bg: #4a5560;
+  --steep-sel-fg: #f0f0f0;
+  --steep-wash: #ffffff;
+}

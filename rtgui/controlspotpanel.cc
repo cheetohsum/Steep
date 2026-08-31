@@ -237,12 +237,32 @@ ControlSpotPanel::ControlSpotPanel():
     addShapeMenuItem("shape-ellipse", M("TP_LOCALLAB_ELI"), 0);
     addShapeMenuItem("shape-rectangle", M("TP_LOCALLAB_RECT"), 1);
     addShapeMenuItem("shape-gradient", M("TP_LOCALLAB_GRAD"), 2);
+    addShapeMenuItem("shape-polygon", M("TP_LOCALLAB_POLY"), 3);
     addMaskMenu_->show_all();
 
     buttonaddconn_ = button_add_->signal_clicked().connect([this]() {
         addMaskMenu_->popup_at_widget(button_add_,
             Gdk::GRAVITY_SOUTH_WEST, Gdk::GRAVITY_NORTH_WEST, nullptr);
     });
+
+    // Windows freeze-until-configure hygiene, same fix steepui::PopupMenu
+    // carries: destroy the popup's native window shortly after each close so
+    // no later popup inherits a frozen backing window. Capturing the menu by
+    // value is safe — these menus are never deleted (they outlive the panel).
+    const auto armMenuUnfreeze = [](Gtk::Menu* const menu) {
+        menu->signal_hide().connect([menu]() {
+            Glib::signal_timeout().connect([menu]() -> bool {
+                if (!menu->get_visible()) {
+                    Gtk::Widget* top = menu->get_toplevel();
+                    if (top && top->get_realized() && !top->get_mapped()) {
+                        gtk_widget_unrealize(GTK_WIDGET(top->gobj()));
+                    }
+                }
+                return false;
+            }, 30);
+        });
+    };
+    armMenuUnfreeze(addMaskMenu_);
 
     // Right-click context menu for mask rows
     contextMenu_ = new Gtk::Menu();
@@ -286,6 +306,7 @@ ControlSpotPanel::ControlSpotPanel():
         contextMenu_->append(*mi);
     }
     contextMenu_->show_all();
+    armMenuUnfreeze(contextMenu_);
 
     treemodel_ = Gtk::ListStore::create(spots_);
     treeview_->set_model(treemodel_);
@@ -1508,7 +1529,7 @@ void ControlSpotPanel::on_button_add()
 
 void ControlSpotPanel::on_mask_shape_selected(int shape)
 {
-    pendingShape_ = std::max(0, std::min(shape, 2));
+    pendingShape_ = std::max(0, std::min(shape, 3)); // 3 = POLY (Lasso)
     on_button_add();
 }
 
@@ -4106,7 +4127,12 @@ rtengine::Coord ControlSpotPanel::magneticSnap(int imgX, int imgY)
     }
     if (radius <= 0) return {imgX, imgY}; // snapping disabled
     float bestMag = 0.f;
+    float bestScore = 0.f;
     int bestDx = 0, bestDy = 0;
+    // Prefer a near edge over a merely stronger distant one. Scoring on raw
+    // gradient alone let the outline jump between competing edges from one
+    // point to the next, which is what made tracing feel unsteady.
+    const float invRadius = 1.f / static_cast<float>(std::max(1, radius));
 
     // Luminance helper
     auto lum = [&](int x, int y) -> float {
@@ -4130,9 +4156,12 @@ rtengine::Coord ControlSpotPanel::magneticSnap(int imgX, int imgY)
                          -   lum(px-1,py+1) + lum(px+1,py+1);
             const float gy = -lum(px-1,py-1) - 2*lum(px,py-1) - lum(px+1,py-1)
                          +   lum(px-1,py+1) + 2*lum(px,py+1) + lum(px+1,py+1);
-            const float mag = gx * gx + gy * gy;
+            const float mag = std::sqrt(gx * gx + gy * gy);
+            const float dist = std::sqrt(static_cast<float>(dx * dx + dy * dy));
+            const float score = mag * (1.f - 0.6f * dist * invRadius);
 
-            if (mag > bestMag) {
+            if (score > bestScore) {
+                bestScore = score;
                 bestMag = mag;
                 bestDx = dx;
                 bestDy = dy;
@@ -4140,8 +4169,9 @@ rtengine::Coord ControlSpotPanel::magneticSnap(int imgX, int imgY)
         }
     }
 
-    // Only snap if the edge is strong enough (threshold avoids snapping in flat areas)
-    if (bestMag < 500.f) return {imgX, imgY};
+    // Only snap if the edge is strong enough (threshold avoids snapping in
+    // flat areas). ~22 matches the previous squared-magnitude cutoff of 500.
+    if (bestMag < 22.f) return {imgX, imgY};
 
     // Convert preview offset back to image coords
     return {imgX + static_cast<int>(bestDx * scaleX),

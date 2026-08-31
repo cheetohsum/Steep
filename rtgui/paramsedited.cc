@@ -258,6 +258,16 @@ void ParamsEdited::set(bool v)
     grain.strength = v;
     grain.scale = v;
     grain.color = v;
+    lightEffects.enabled = v;
+    lightEffects.threshold = v;
+    lightEffects.glow = v;
+    lightEffects.glowRadius = v;
+    lightEffects.halation = v;
+    lightEffects.halationSize = v;
+    lightEffects.halationWarmth = v;
+    lightEffects.flare = v;
+    lightEffects.flareLength = v;
+    lightEffects.flareAngle = v;
     tiltShift.enabled = v;
     tiltShift.amount = v;
     tiltShift.focusPos = v;
@@ -1143,6 +1153,16 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         grain.strength = grain.strength && p.grain.strength == other.grain.strength;
         grain.scale = grain.scale && p.grain.scale == other.grain.scale;
         grain.color = grain.color && p.grain.color == other.grain.color;
+        lightEffects.enabled = lightEffects.enabled && p.lightEffects.enabled == other.lightEffects.enabled;
+        lightEffects.threshold = lightEffects.threshold && p.lightEffects.threshold == other.lightEffects.threshold;
+        lightEffects.glow = lightEffects.glow && p.lightEffects.glow == other.lightEffects.glow;
+        lightEffects.glowRadius = lightEffects.glowRadius && p.lightEffects.glowRadius == other.lightEffects.glowRadius;
+        lightEffects.halation = lightEffects.halation && p.lightEffects.halation == other.lightEffects.halation;
+        lightEffects.halationSize = lightEffects.halationSize && p.lightEffects.halationSize == other.lightEffects.halationSize;
+        lightEffects.halationWarmth = lightEffects.halationWarmth && p.lightEffects.halationWarmth == other.lightEffects.halationWarmth;
+        lightEffects.flare = lightEffects.flare && p.lightEffects.flare == other.lightEffects.flare;
+        lightEffects.flareLength = lightEffects.flareLength && p.lightEffects.flareLength == other.lightEffects.flareLength;
+        lightEffects.flareAngle = lightEffects.flareAngle && p.lightEffects.flareAngle == other.lightEffects.flareAngle;
 
         tiltShift.enabled = tiltShift.enabled && p.tiltShift.enabled == other.tiltShift.enabled;
         tiltShift.amount = tiltShift.amount && p.tiltShift.amount == other.tiltShift.amount;
@@ -2168,6 +2188,7 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
                 locallab.spots.at(j).aiMaskOpacity = locallab.spots.at(j).aiMaskOpacity && pSpot.aiMaskOpacity == otherSpot.aiMaskOpacity;
                 locallab.spots.at(j).aiMaskRefineRadius = locallab.spots.at(j).aiMaskRefineRadius && pSpot.aiMaskRefineRadius == otherSpot.aiMaskRefineRadius;
                 locallab.spots.at(j).aiMaskRefineEps = locallab.spots.at(j).aiMaskRefineEps && pSpot.aiMaskRefineEps == otherSpot.aiMaskRefineEps;
+                locallab.spots.at(j).aiMaskShapeOp = locallab.spots.at(j).aiMaskShapeOp && pSpot.aiMaskShapeOp == otherSpot.aiMaskShapeOp;
 
                 //ciecam
                 locallab.spots.at(j).visicie = locallab.spots.at(j).visicie && pSpot.visicie == otherSpot.visicie;
@@ -3156,6 +3177,37 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
 
     if (grain.color) {
         toEdit.grain.color = mods.grain.color;
+    }
+
+    if (lightEffects.enabled) {
+        toEdit.lightEffects.enabled = mods.lightEffects.enabled;
+    }
+    if (lightEffects.threshold) {
+        toEdit.lightEffects.threshold = mods.lightEffects.threshold;
+    }
+    if (lightEffects.glow) {
+        toEdit.lightEffects.glow = mods.lightEffects.glow;
+    }
+    if (lightEffects.glowRadius) {
+        toEdit.lightEffects.glowRadius = mods.lightEffects.glowRadius;
+    }
+    if (lightEffects.halation) {
+        toEdit.lightEffects.halation = mods.lightEffects.halation;
+    }
+    if (lightEffects.halationSize) {
+        toEdit.lightEffects.halationSize = mods.lightEffects.halationSize;
+    }
+    if (lightEffects.halationWarmth) {
+        toEdit.lightEffects.halationWarmth = mods.lightEffects.halationWarmth;
+    }
+    if (lightEffects.flare) {
+        toEdit.lightEffects.flare = mods.lightEffects.flare;
+    }
+    if (lightEffects.flareLength) {
+        toEdit.lightEffects.flareLength = mods.lightEffects.flareLength;
+    }
+    if (lightEffects.flareAngle) {
+        toEdit.lightEffects.flareAngle = mods.lightEffects.flareAngle;
     }
 
     if (tiltShift.enabled) {
@@ -7022,6 +7074,10 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
             toEdit.locallab.spots.at(i).aiMaskRefineRadius = mods.locallab.spots.at(i).aiMaskRefineRadius;
         }
 
+        if (locallab.spots.at(i).aiMaskShapeOp) {
+            toEdit.locallab.spots.at(i).aiMaskShapeOp = mods.locallab.spots.at(i).aiMaskShapeOp;
+        }
+
         if (locallab.spots.at(i).aiMaskRefineEps) {
             toEdit.locallab.spots.at(i).aiMaskRefineEps = mods.locallab.spots.at(i).aiMaskRefineEps;
         }
@@ -10077,6 +10133,7 @@ LocallabParamsEdited::LocallabSpotEdited::LocallabSpotEdited(bool v) :
     aiMaskOpacity(v),
     aiMaskRefineRadius(v),
     aiMaskRefineEps(v),
+    aiMaskShapeOp(v),
     //ciecam
     visicie(v),
     complexcie(v),
@@ -10947,6 +11004,7 @@ void LocallabParamsEdited::LocallabSpotEdited::set(bool v)
     aiMaskOpacity = v;
     aiMaskRefineRadius = v;
     aiMaskRefineEps = v;
+    aiMaskShapeOp = v;
     //ciecam
     visicie= v;
     complexcie= v;

@@ -10,12 +10,12 @@ progressbar.vertical {
     min-height: 9em;
 }
 progressbar trough {
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
     border-radius: 0.3em;
 }
 
 progressbar trough progress {
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
     border-radius: 0.3em;
 }
 
@@ -84,11 +84,11 @@ notebook > header tab > grid > image {
 
 notebook > header > tabs > arrow {
     border-radius: 0.2em;
-    padding: 0 0.166666666666666666em;
+    padding: 0 2px;
     margin: 0.5em 0;
 }
 notebook > header.left > tabs > arrow {
-    padding: 0.166666666666666666em 0;
+    padding: 2px 0;
     margin: 0 0.5em;
 }
 
@@ -106,7 +106,7 @@ notebook > header.left > tabs > arrow {
 dialog.csd #PrefNotebook > header,
 dialog.csd #AboutNotebook > header,
 window.csd:not(.fullscreen) #MainNotebook > header.top {
-    border-top-width: 0.083333333333333333em;
+    border-top-width: 1px;
 }
 /**/
 
@@ -117,10 +117,10 @@ window.csd:not(.fullscreen) #MainNotebook > header.top {
 }
 
 #ToolPanelNotebook > header {
-    border-bottom-width: 0.083333333333333333em;
-    margin-left: 0.083333333333333333em;
-    margin-right: 0.083333333333333333em;
-    padding: 0 0.19em;
+    border-bottom-width: 1px;
+    margin-left: 1px;
+    margin-right: 1px;
+    padding: 0 2px;
 }
 #ToolPanelNotebook > header tabs {
     margin: 0;
@@ -131,7 +131,7 @@ window.csd:not(.fullscreen) #MainNotebook > header.top {
 #ToolPanelNotebook > header tab image{
     min-height: 2em;
     min-width: 2em;
-    margin: 0.19em 0.25em 0.333333333333333333em;
+    margin: 2px 0.25em 0.333333333333333333em;
     padding: 0;
 }
 #ToolPanelNotebook > stack {
@@ -152,7 +152,7 @@ window.csd:not(.fullscreen) #MainNotebook > header.top {
 #RightNotebook > stack > :nth-child(1) > * > box,
 #RightNotebook > stack > :nth-child(4) > * > box {
     padding: 0.5em;
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
 }
 
 #PrefNotebook > header {
@@ -209,8 +209,8 @@ window.csd:not(.fullscreen) #MainNotebook > header.top {
 }
 
 #MetaPanelNotebook .view {
-    border-width: 0.083333333333333333em;
-    padding: 0.083333333333333333em 0.25em;
+    border-width: 1px;
+    padding: 1px 0.25em;
 }
 
 #MetaPanelNotebook stack label {
@@ -223,7 +223,7 @@ window.csd:not(.fullscreen) #MainNotebook > header.top {
 
 /*** File Browser ******************************************************************************/
 #FileCatalog {
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
 }
 
 /*?win*/
@@ -292,20 +292,20 @@ window.csd:not(.fullscreen) #MainNotebook > header.top {
 #MyExpander image {
     min-width: 1.333333333333333333em;
     min-height: 0;
-    margin: -0.083333333333333333em 0.125em;
+    margin: -1px 0.125em;
 }
 
 #MyExpander .drawingarea:not(.slider) {
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
 }
 #MyExpander .slider,
 #MyExpander #CurveSHCSelector {
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
 }
 #MyExpander .drawingarea:disabled {
 }
 #ThresholdAdjuster {
-    margin: 0.083333333333333333em 0 0.166666666666666666em 0;
+    margin: 1px 0 2px 0;
 }
 
 /*** end ***************************************************************************************/
@@ -319,8 +319,8 @@ window.csd:not(.fullscreen) #MainNotebook > header.top {
 }
 
 menu {
-    border-width: 0.083333333333333333em;
-    padding: 0.083333333333333333em;
+    border-width: 1px;
+    padding: 1px;
     margin: 0;
     border-radius: 0;
 }
@@ -335,13 +335,13 @@ menu > arrow.bottom:hover {
 
 menuitem {
     padding: 0 0.333333333333333333em;
-    margin: 0.083333333333333333em;
+    margin: 1px;
     min-height: 2em;
 }
 
 menu arrow {
     min-width: 1.333333333333333333em;
-    margin: 0 -0.19em;
+    margin: 0 -2px;
     padding: 0;
     margin: 0 -0.25em 0 0;
 }
@@ -364,9 +364,9 @@ entry > window > frame:not(.dummy) {
     padding: 0;
 }
 entry > window > frame > border:not(.dummy) {
-    padding: 0.083333333333333333em;
-    margin: 0.083333333333333333em;
-    border-width: 0.083333333333333333em;
+    padding: 1px;
+    margin: 1px;
+    border-width: 1px;
 }
 /* end */
 
@@ -374,7 +374,7 @@ entry > window > frame > border:not(.dummy) {
 
 /*** Popover *** Context menu filechooser ******************************************************/
 popover {
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
     border-radius: 0;
     padding: 0;
     margin: 0;
@@ -399,20 +399,20 @@ popover label {
 switch {
     min-height: 2.333333333333333333em;
     min-width: 11em;
-    margin: 0 0.19em;
+    margin: 0 2px;
     padding: 0;
     border-radius: 0.2em;
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
     margin-bottom: 0.5em;
 }
 
 switch slider {
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
     border-radius: 0.2em 0 0 0.2em;
     
     /* Needed to cover the total switch */
-    margin: -0.083333333333333333em;
-    padding: 0.083333333333333333em;
+    margin: -1px;
+    padding: 1px;
 }
 switch:checked  slider{
     border-radius: 0 0.2em 0.2em 0;
@@ -426,10 +426,10 @@ button,
     min-width: 1.666666666666666666em;/*x*/
     margin: 0.125em;
     border-radius: 0.2em;
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
 }
 button.flat {
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
 }
 
 /* Combobox */
@@ -454,7 +454,7 @@ combobox entry.combo + button.combo {
 }
 
 combobox arrow {
-    margin-right: 0.083333333333333333em;
+    margin-right: 1px;
 }
 
 combobox entry.combo + button.combo arrow {
@@ -469,7 +469,7 @@ combobox entry.combo + button.combo arrow {
 }
 
 #ProfilePanel combobox {
-    margin-right: -0.166666666666666666em;
+    margin-right: -2px;
 }
 
 /* Misc */
@@ -604,7 +604,7 @@ messagedialog .dialog-action-area button:not(:only-child):nth-child(2) {
 /* Image close button */
 #MainNotebook > header tab #CloseButton {
     padding: 0;
-    margin: 0.333333333333333333em 0 0.416666666666666666em 0.19em;
+    margin: 0.333333333333333333em 0 0.416666666666666666em 2px;
     min-width: 1.5em;
     min-height: 0;
 }
@@ -620,8 +620,8 @@ messagedialog .dialog-action-area button:not(:only-child):nth-child(2) {
     margin: 0;
 }
 #ToolBarPanelFileBrowser .smallbuttonbox:nth-child(2) {
-    margin-top: 0.166666666666666666em;
-    margin-bottom: -0.166666666666666666em;
+    margin-top: 2px;
+    margin-bottom: -2px;
 }
 #ToolBarPanelFileBrowser .smallbuttonbox button.smallbutton image {
     margin: -1em 0;
@@ -633,7 +633,7 @@ messagedialog .dialog-action-area button:not(:only-child):nth-child(2) {
     min-height: 0;
     min-width: 1.166666666666666666em;
     padding: 0;
-    margin: 0 0.166666666666666666em;
+    margin: 0 2px;
     border: none;
     border-radius: 0;
 }
@@ -650,7 +650,7 @@ messagedialog .dialog-action-area button:not(:only-child):nth-child(2) {
 }
 #IopsPanel .image-combo button.Right image,
 #MyExpander .image-combo button.Right image {
-    margin: 0 -0.083333333333333333em;
+    margin: 0 -1px;
 }
 #IopsPanel .image-combo button.Left,
 #MyExpander .image-combo button.Left {
@@ -673,13 +673,13 @@ messagedialog .dialog-action-area button:not(:only-child):nth-child(2) {
     min-width: 1.666666666666666666em;/*x*/
     margin: 0;
     border-radius: 0 0.2em 0.2em 0;
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
     padding: 0;
 }
 #FileBrowserQueryToolbar entry + button.flat:not(:hover):not(:active),
 #FileBrowserIconToolbar entry + button.flat:not(:hover):not(:active) {
     border-left: none;
-    padding-left: 0.083333333333333333em;
+    padding-left: 1px;
 }
 #FileBrowserIconToolbar box > entry + button.flat {
     margin-top: 0.416666666666666666em;
@@ -705,7 +705,7 @@ messagedialog .dialog-action-area button:not(:only-child):nth-child(2) {
 #PlacesPaned > box:nth-child(1) scrolledwindow + grid > button {
     margin: 0;
     padding: 0;
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
     border-radius: 0;
     min-height: 0.5em;/*x*/
 }
@@ -716,7 +716,7 @@ messagedialog .dialog-action-area button:not(:only-child):nth-child(2) {
 .view button {
     min-height: 2em;
     min-width: 1.333333333333333333em;
-    padding: 0 0.19em;
+    padding: 0 2px;
     margin: 0;
 }
 #pathbarbox button {
@@ -730,10 +730,10 @@ window treeview > header image {
 
 window .view button {
     border: none;
-    border-bottom-width: 0.083333333333333333em;
+    border-bottom-width: 1px;
 }
 dialog .view button {
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
 }
 
 .view header button:not(:first-child):not(:only-child),
@@ -769,7 +769,7 @@ dialog .view button {
 
 /* Popover Filechooser (Create folder) */
 popover button.text-button {
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
 }
 popover button.text-button label {
     padding: 0;
@@ -786,7 +786,7 @@ button.text-button {
 /*** Checkbox & Radio **************************************************************************/
 checkbutton,
 radiobutton {
-    padding: 0.083333333333333333em 0;
+    padding: 1px 0;
     margin: 0.125em;
     min-height: 1.666666666666666666em;/*x*/
 }
@@ -800,7 +800,7 @@ radio {
     min-width: 1.166666666666666666em;
 }
 check {
-    border-radius: 0.166666666666666666em;
+    border-radius: 2px;
 }
 
 radio{
@@ -835,7 +835,7 @@ spinbutton {
     padding: 0 0.333333333333333333em;
     min-height: 1.666666666666666666em;/*x*/
     min-width: 0;
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
 }
 #FileBrowserQueryToolbar entry,
 #FileBrowserIconToolbar entry {
@@ -850,11 +850,11 @@ spinbutton {
 #FileBrowserIconToolbar box > entry {
     margin-top: 0.416666666666666666em;
     margin-bottom: 0.416666666666666666em;
-    margin-left: 0.19em;
+    margin-left: 2px;
     min-height: 0;
 }
 #FileBrowserQueryToolbar box + box > label + entry {
-    margin-left: 0.19em;
+    margin-left: 2px;
 }
 spinbutton {
     padding: 0;
@@ -865,7 +865,7 @@ spinbutton {
     padding: 0;
     min-height: 1.333333333333333333em;
     min-width: 0;
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
 }
 /* Needed for Reset & and Auto button height*/
 #MyExpander button + label + spinbutton {
@@ -924,7 +924,7 @@ spinbutton button:active {
 /* Text selection */
 .view entry {
     margin: 0 -2px;
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
 }
 /* end*/
 
@@ -932,8 +932,8 @@ spinbutton button:active {
 
 /* Curves **************************************************************************************/
 .curve-mainbox {
-    margin: 0.19em;
-    border-width: 0.083333333333333333em;
+    margin: 2px;
+    border-width: 1px;
 }
 .curve-mainbox .curve-curvebox {
     margin: 0;
@@ -942,27 +942,27 @@ spinbutton button:active {
 .curve-mainbox .curve-spinbuttonbox {
     margin: 0;
     padding: 0.25em;
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
 }
 .curve-mainbox .curve-sliderbox {
     margin: 0;
     padding: 0.25em;
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
 }
 .curve-mainbox .curve-buttonbox {
     padding: 0.25em;
 }
 .curve-mainbox.left .curve-buttonbox {
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
 }
 .curve-mainbox.right .curve-buttonbox {
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
 }
 .curve-mainbox.top .curve-buttonbox {
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
 }
 .curve-mainbox.bottom .curve-buttonbox {
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
 }
 .curve-mainbox .curve-buttonbox button.flat {
     margin: 0.095em;
@@ -977,10 +977,10 @@ spinbutton button:active {
     margin: 0.833333333333333333em;
 }
 headerbar {
-    border-bottom-width: 0.083333333333333333em;
+    border-bottom-width: 1px;
     border-radius: 0.416666666666666666em 0.416666666666666666em 0 0;
     min-height: 2em;
-    padding: 0.083333333333333333em 0.416666666666666666em 0;
+    padding: 1px 0.416666666666666666em 0;
     margin: 0;
 }
 
@@ -998,7 +998,7 @@ headerbar button.titlebutton image {
 }
 headerbar button.titlebutton {
     margin: 0 0 0 0.333333333333333333em;
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
     min-width: 1.5em;
     min-height: 1.5em;
     padding: 0;

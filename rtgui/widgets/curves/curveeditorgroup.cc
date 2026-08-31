@@ -149,8 +149,21 @@ void CurveEditorGroup::newLine()
             }
         }
 
+        // Compact channel pickers are bare dots: cluster them in the middle of
+        // the row instead of stretching each one across an equal share of it.
+        const bool compactRow = numberOfPackedCurve < (int)(curveEditors.size())
+                                && curveEditors[numberOfPackedCurve]->isCompactMode();
+
+        if (compactRow) {
+            setExpandAlignProperties(currLine, true, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_START);
+        }
+
         for (int i = numberOfPackedCurve; i < (int)(curveEditors.size()); ++i) {
-            setExpandAlignProperties(curveEditors[i]->curveType->buttonGroup, !rwe, true, Gtk::ALIGN_FILL, Gtk::ALIGN_FILL);
+            const bool compact = curveEditors[i]->isCompactMode();
+            setExpandAlignProperties(curveEditors[i]->curveType->buttonGroup,
+                                     compact ? false : !rwe, true,
+                                     compact ? Gtk::ALIGN_CENTER : Gtk::ALIGN_FILL,
+                                     Gtk::ALIGN_CENTER);
             currLine->attach(*curveEditors[i]->curveType->buttonGroup, x++, 0, 1, 1);
 
             if (curveEditors[i]->relatedWidget != nullptr) {

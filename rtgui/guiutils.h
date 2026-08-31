@@ -65,6 +65,18 @@ void setExpandAlignProperties(Gtk::Widget *widget, bool hExpand, bool vExpand, e
 Gtk::Border getPadding(const Glib::RefPtr<Gtk::StyleContext> style);
 
 /**
+ * Resolve a steep_* palette token (see rtdata/themes/common/palette-defaults.css)
+ * against the active theme. This is how custom Cairo drawing reads theme colors:
+ * the token always resolves because palette-defaults.css is loaded under every
+ * theme; @p fallback is only hit if that file is missing from the install.
+ * Results are cached; the cache is flushed on theme switch. GUI thread only.
+ */
+Gdk::RGBA themeColor(const Glib::RefPtr<Gtk::StyleContext>& ctx, const char* name, const Gdk::RGBA& fallback);
+Gdk::RGBA themeColor(const Gtk::Widget& widget, const char* name, const Gdk::RGBA& fallback);
+/// Flush the themeColor cache. Call when the theme (or a live preview of one) changes.
+void themeColorCacheInvalidate();
+
+/**
  * Builds a thin hot strip that stands in for a panel collapse/expand button.
  * It only lights up once the pointer has rested on it for a moment, and the
  * highlight tapers away towards both ends so it reads as a hint rather than
@@ -919,10 +931,15 @@ public:
     /// Force expanded (e.g. for batch mode).
     void setBatchMode(bool batchMode);
 
+    /// Notified on every expand (true) / collapse (false), so a section can
+    /// put away tools it owns when it is hidden.
+    void setOnToggled(std::function<void(bool)> callback) { onToggled = std::move(callback); }
+
 private:
     Gtk::Box* contentBox;
     RTImage* arrowImage;
     bool expanded;
+    std::function<void(bool)> onToggled;
 
     bool onHeaderClick(GdkEventButton* event);
     void updateArrow();

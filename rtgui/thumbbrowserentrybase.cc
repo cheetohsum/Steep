@@ -16,6 +16,7 @@
  *  You should have received a copy of the GNU General Public License
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include "guiutils.h"
 #include "thumbbrowserentrybase.h"
 
 #include "options.h"
@@ -140,11 +141,11 @@ ThumbBrowserEntryBase::ThumbBrowserEntryBase (const Glib::ustring& fname, Thumbn
     prevPos(0, 0),
     activeDeviceScale(1),
     pendingDeviceScale(1),
-    upperMargin(2),
+    upperMargin(4),
     borderWidth(0),
     textGap(4),
-    sideMargin(2),
-    lowerMargin(2),
+    sideMargin(4),
+    lowerMargin(4),
     previewSlotClock_(0),
     dispname(Glib::path_get_basename(fname)),
     buttonSet(nullptr),
@@ -305,6 +306,9 @@ void ThumbBrowserEntryBase::updateBackBuffer ()
         const int hh = expected.height - (upperMargin + bsHeight + borderWidth + infoh + lowerMargin);
         prevPos.y = upperMargin + bsHeight + borderWidth + std::max((hh - previewSize.height) / 2, 0);
 
+        // Behind the photo, so it shows only as a border around it.
+        drawSelectionHighlight(cc, bgs);
+
         hidpi::DeviceCoord deviceOffset = prevPos.scaleToDevice(activeDeviceScale);
         const hidpi::ScaledDeviceSize target = previewSize.scaleToDevice(activeDeviceScale);
 
@@ -348,6 +352,42 @@ void ThumbBrowserEntryBase::updateBackBuffer ()
                 cc->restore();
             }
         }
+    }
+
+    // Rounded preview corners: the fast path blits raw RGB (no cairo clip
+    // possible), so paint the cell background back over the corner tips.
+    if (!preview.empty() && previewSize.width > 12 && previewSize.height > 12) {
+        const double cr = 3.0;
+        const double x0 = prevPos.x, y0 = prevPos.y;
+        const double x1 = prevPos.x + previewSize.width;
+        const double y1 = prevPos.y + previewSize.height;
+        const Gdk::RGBA& cellBg = selected ? bgs : bgn;
+
+        cc->save();
+        cc->set_source_rgb(cellBg.get_red(), cellBg.get_green(), cellBg.get_blue());
+        // top-left
+        cc->begin_new_path();
+        cc->move_to(x0, y0);
+        cc->line_to(x0, y0 + cr);
+        cc->arc(x0 + cr, y0 + cr, cr, G_PI, 1.5 * G_PI);
+        cc->close_path();
+        // top-right
+        cc->move_to(x1, y0);
+        cc->line_to(x1 - cr, y0);
+        cc->arc(x1 - cr, y0 + cr, cr, 1.5 * G_PI, 2.0 * G_PI);
+        cc->close_path();
+        // bottom-right
+        cc->move_to(x1, y1);
+        cc->line_to(x1, y1 - cr);
+        cc->arc(x1 - cr, y1 - cr, cr, 0, 0.5 * G_PI);
+        cc->close_path();
+        // bottom-left
+        cc->move_to(x0, y1);
+        cc->line_to(x0 + cr, y1);
+        cc->arc(x0 + cr, y1 - cr, cr, 0.5 * G_PI, G_PI);
+        cc->close_path();
+        cc->fill();
+        cc->restore();
     }
 
     customBackBufferUpdate (cc);
@@ -848,12 +888,37 @@ void ThumbBrowserEntryBase::appendQuickThumbnailJob(std::vector<ThumbImageUpdate
 
 void ThumbBrowserEntryBase::drawFrame (Cairo::RefPtr<Cairo::Context> cc, const Gdk::RGBA& bg, const Gdk::RGBA& fg)
 {
-    // Only draw a subtle highlight fill for selected thumbnails — no borders
-    if (selected) {
-        cc->rectangle(0, 0, expected.width, expected.height);
-        cc->set_source_rgb(bg.get_red(), bg.get_green(), bg.get_blue());
-        cc->fill();
+    // The selection highlight is drawn around the photo itself, in
+    // updateBackBuffer once prevPos/previewSize are known. Filling the whole
+    // cell here made the highlight far bigger than the thumbnail it marks.
+}
+
+void ThumbBrowserEntryBase::drawSelectionHighlight (Cairo::RefPtr<Cairo::Context> cc, const Gdk::RGBA& bg)
+{
+    if (!selected || previewSize.width <= 0 || previewSize.height <= 0) {
+        return;
     }
+
+    // Hug the photo with a small even margin, rounded to match the preview's
+    // own corners, so the highlight reads as a mat around the image.
+    constexpr double pad = 3.0;
+    constexpr double radius = 5.0;
+
+    const double x0 = prevPos.x - pad;
+    const double y0 = prevPos.y - pad;
+    const double x1 = prevPos.x + previewSize.width + pad;
+    const double y1 = prevPos.y + previewSize.height + pad;
+
+    cc->save();
+    cc->begin_new_path();
+    cc->arc(x0 + radius, y0 + radius, radius, G_PI, 1.5 * G_PI);
+    cc->arc(x1 - radius, y0 + radius, radius, 1.5 * G_PI, 2.0 * G_PI);
+    cc->arc(x1 - radius, y1 - radius, radius, 0, 0.5 * G_PI);
+    cc->arc(x0 + radius, y1 - radius, radius, 0.5 * G_PI, G_PI);
+    cc->close_path();
+    cc->set_source_rgb(bg.get_red(), bg.get_green(), bg.get_blue());
+    cc->fill();
+    cc->restore();
 }
 
 void ThumbBrowserEntryBase::draw (Cairo::RefPtr<Cairo::Context> cc)
@@ -899,10 +964,33 @@ void ThumbBrowserEntryBase::draw (Cairo::RefPtr<Cairo::Context> cc)
     cc->set_source(backBuffer->getSurface(), x_offset, y_offset);
     cc->paint();
 
+    // Hover hint: one quiet accent stroke — visibly lighter than selection.
+    if (hovered && !selected && previewSize.width > 12 && previewSize.height > 12) {
+        const Gdk::RGBA ringAccent = themeColor(parent->getStyle(), "steep_accent", Gdk::RGBA("#64a0ff"));
+        const double px = x_offset + prevPos.x;
+        const double py = y_offset + prevPos.y;
+        const double pw = previewSize.width;
+        const double ph = previewSize.height;
+        const double inset = 1.25, rad = 3.5;
+        const double hx = px + inset, hy = py + inset;
+        const double hw = pw - 2.0 * inset, hh = ph - 2.0 * inset;
+        cc->begin_new_path();
+        cc->arc(hx + hw - rad, hy + rad, rad, -G_PI / 2.0, 0);
+        cc->arc(hx + hw - rad, hy + hh - rad, rad, 0, G_PI / 2.0);
+        cc->arc(hx + rad, hy + hh - rad, rad, G_PI / 2.0, G_PI);
+        cc->arc(hx + rad, hy + rad, rad, G_PI, 1.5 * G_PI);
+        cc->close_path();
+        cc->set_line_join(Cairo::LINE_JOIN_ROUND);
+        cc->set_source_rgba(ringAccent.get_red(), ringAccent.get_green(), ringAccent.get_blue(), 0.45);
+        cc->set_line_width(1.5);
+        cc->stroke();
+    }
+
     // Selection highlight: accent frame + soft inner glow drawn just inside
     // the image bounds so nothing is clipped even in the tight filmstrip.
     if (selected && previewSize.width > 12 && previewSize.height > 12) {
-        const double ar = 100.0 / 255.0, ag = 160.0 / 255.0, ab = 1.0;  // theme accent
+        const Gdk::RGBA ringAccent = themeColor(parent->getStyle(), "steep_accent", Gdk::RGBA("#64a0ff"));
+        const double ar = ringAccent.get_red(), ag = ringAccent.get_green(), ab = ringAccent.get_blue();
         const double px = x_offset + prevPos.x;
         const double py = y_offset + prevPos.y;
         const double pw = previewSize.width;
@@ -1119,9 +1207,15 @@ void ThumbBrowserEntryBase::drawFilmstripOverlays (Cairo::RefPtr<Cairo::Context>
     int rank = thumbnail->getRank();
     int clabel = thumbnail->getColorLabel();
     int pick = thumbnail->getPick();
-    if (rank <= 0 && clabel <= 0 && pick == 0 && !animRatingActive_ && !animColorActive_ && !animPickActive_) return;
+    // The queue badge belongs in the file browser, where "is this queued?" is
+    // real information. Inside the export queue itself every entry is queued
+    // by definition, so the badge would just stamp every thumbnail.
+    const bool queued = thumbnail->isEnqueued()
+        && parent->location != ThumbBrowserBase::THLOC_BATCHQUEUE;
+    if (rank <= 0 && clabel <= 0 && pick == 0 && !queued && !animRatingActive_ && !animColorActive_ && !animPickActive_) return;
 
-    // Icon area: bottom-left for stars, top-left for color label, top-right for pick flag
+    // Icon area: bottom-left for stars, top-left for color label,
+    // top-right for pick flag, bottom-right for the export-queue badge
     int imgX = x + prevPos.x;
     int imgY = y + prevPos.y;
     int imgW = previewSize.width;
@@ -1260,6 +1354,33 @@ void ThumbBrowserEntryBase::drawFilmstripOverlays (Cairo::RefPtr<Cairo::Context>
                 cc->rectangle(fx, fy, iconW, iconH);
                 cc->fill();
             }
+        }
+    }
+
+    // Draw export-queue badge at bottom-right — the one free corner, and
+    // the only confirmation that "Add to Export Queue" did anything.
+    if (queued && FileThumbnailButtonSet::processIcon) {
+        auto queueSurf = FileThumbnailButtonSet::processIcon->get();
+        if (queueSurf) {
+            const int iconW = FileThumbnailButtonSet::processIcon->getWidth();
+            const int iconH = FileThumbnailButtonSet::processIcon->getHeight();
+            const int qx = imgX + imgW - iconW - 3;
+            const int qy = imgY + imgH - iconH - 3;
+
+            // Semi-transparent backdrop pill, matching the pick flag's
+            cc->set_source_rgba(0, 0, 0, 0.5);
+            const double radius = 3.0;
+            cc->begin_new_path();
+            cc->arc(qx - 2 + radius, qy - 2 + radius, radius, M_PI, 1.5 * M_PI);
+            cc->arc(qx + iconW + 2 - radius, qy - 2 + radius, radius, 1.5 * M_PI, 2.0 * M_PI);
+            cc->arc(qx + iconW + 2 - radius, qy + iconH + 2 - radius, radius, 0, 0.5 * M_PI);
+            cc->arc(qx - 2 + radius, qy + iconH + 2 - radius, radius, 0.5 * M_PI, M_PI);
+            cc->close_path();
+            cc->fill();
+
+            cc->set_source(queueSurf, qx, qy);
+            cc->rectangle(qx, qy, iconW, iconH);
+            cc->fill();
         }
     }
 

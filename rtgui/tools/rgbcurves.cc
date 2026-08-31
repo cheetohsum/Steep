@@ -82,7 +82,6 @@ RGBCurves::RGBCurves () : FoldableToolPanel(this, TOOL_NAME, M("TP_RGBCURVES_LAB
     }
 
     // Find the header row and center channels while keeping the cog right-aligned.
-    const int PRIO = GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200;
     Gtk::Grid* headerRow = nullptr;
     for (auto* child : curveEditorG->get_children()) {
         if (auto* grid = dynamic_cast<Gtk::Grid*>(child)) {
@@ -118,18 +117,7 @@ RGBCurves::RGBCurves () : FoldableToolPanel(this, TOOL_NAME, M("TP_RGBCURVES_LAB
         cogBtn->set_can_focus(false);
         cogBtn->set_tooltip_text(M("TP_RGBCURVES_CHANNEL_OPTIONS"));
         cogBtn->get_style_context()->add_class("curve-cog-btn");
-        {
-            auto css = Gtk::CssProvider::create();
-            try {
-                css->load_from_data(
-                    ".curve-cog-btn { min-height: 0; min-width: 0; padding: 1px 4px; margin: 0;"
-                    "  background: transparent; background-image: none;"
-                    "  border: none; box-shadow: none; }"
-                    " .curve-cog-btn label { font-size: 16px; color: #999; }"
-                    " .curve-cog-btn:hover label { color: #ddd; }");
-                cogBtn->get_style_context()->add_provider(css, PRIO);
-            } catch (...) {}
-        }
+        // Styling lives in themes/common/widgets.css (.curve-cog-btn)
         // Midpoint/center button between the B chip and the cog
         if (Gtk::Widget* centerBtn = curveEditorG->takeDiagonalCenterButton()) {
             setExpandAlignProperties(centerBtn, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
@@ -148,18 +136,8 @@ RGBCurves::RGBCurves () : FoldableToolPanel(this, TOOL_NAME, M("TP_RGBCURVES_LAB
         });
     }
 
-    // Shrink tool button icons when revealed via the cog
-    {
-        auto curveCss = Gtk::CssProvider::create();
-        try {
-            curveCss->load_from_data(
-                "#CurveToolGroup .curve-buttonbox button { padding: 1px; margin: 0; "
-                "  min-height: 18px; min-width: 18px; }"
-                " #CurveToolGroup .curve-buttonbox image { -gtk-icon-size: 14px; }");
-            Gtk::StyleContext::add_provider_for_screen(
-                Gdk::Screen::get_default(), curveCss, PRIO);
-        } catch (...) {}
-    }
+    // Tool button shrink when revealed via the cog lives in
+    // themes/common/widgets.css (#CurveToolGroup .curve-buttonbox)
 
     // Keep the curve graph inside the right sidebar instead of letting GTK
     // expand it under the vertical scrollbar.

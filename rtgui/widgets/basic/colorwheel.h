@@ -55,6 +55,8 @@ public:
 private:
     bool notifyListener();
     void updateFromMouse(double mx, double my);
+    void wheelGeometry(double& cx, double& cy, double& radius) const;
+    void beginDrag(double mx, double my, bool fine);
 
     double hue_;       // 0..360 degrees
     double sat_;       // 0..1
@@ -62,6 +64,14 @@ private:
     ColorWheelListener* listener_;
     bool isDragged_;
     bool edited_;
+    // A drag drives a virtual point rather than the raw pointer, so holding
+    // shift can advance it at a fraction of the pointer's speed. Without the
+    // indirection the puck would snap back to the cursor the moment shift was
+    // released mid-drag.
+    double dragX_;
+    double dragY_;
+    double lastMouseX_;
+    double lastMouseY_;
     sigc::connection delayconn_;
     Cairo::RefPtr<Cairo::ImageSurface> cachedWheel_;
     int cachedSize_;

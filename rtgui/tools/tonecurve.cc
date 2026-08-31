@@ -193,7 +193,6 @@ ToneCurve::ToneCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_EXPOSURE_LABEL
 
     // Center the chip cluster and put the options cog right after the B chip
     {
-        const int PRIO = GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200;
         Gtk::Grid* headerRow = nullptr;
         for (auto* child : curveEditorG->get_children()) {
             if (auto* grid = dynamic_cast<Gtk::Grid*>(child)) {
@@ -221,18 +220,7 @@ ToneCurve::ToneCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_EXPOSURE_LABEL
             cogBtn->set_can_focus(false);
             cogBtn->set_tooltip_text(M("TP_RGBCURVES_CHANNEL_OPTIONS"));
             cogBtn->get_style_context()->add_class("curve-cog-btn");
-            {
-                auto css = Gtk::CssProvider::create();
-                try {
-                    css->load_from_data(
-                        ".curve-cog-btn { min-height: 0; min-width: 0; padding: 1px 4px; margin: 0;"
-                        "  background: transparent; background-image: none;"
-                        "  border: none; box-shadow: none; }"
-                        " .curve-cog-btn label { font-size: 16px; color: #999; }"
-                        " .curve-cog-btn:hover label { color: #ddd; }");
-                    cogBtn->get_style_context()->add_provider(css, PRIO);
-                } catch (...) {}
-            }
+            // Styling lives in themes/common/widgets.css (.curve-cog-btn)
             // Midpoint/center button sits between the B chip and the cog
             if (Gtk::Widget* centerBtn = curveEditorG->takeDiagonalCenterButton()) {
                 setExpandAlignProperties(centerBtn, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);

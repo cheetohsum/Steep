@@ -29,6 +29,7 @@ LocallabAIMask::LocallabAIMask():
     LocallabTool(this, M("TP_LOCALLAB_AIMASK_TOOLNAME"), M("TP_LOCALLAB_AIMASK"), false, false),
 
     aiMaskClassCombo(Gtk::manage(new MyComboBoxText())),
+    aiMaskShapeOpCombo(Gtk::manage(new MyComboBoxText())),
     aiMaskThreshold(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_TOLERANCE"), 0.0, 100.0, 1.0, 70.0))),
     aiMaskFeather(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_FEATHER"), 0.0, 100.0, 1.0, 35.0))),
     aiMaskBlur(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_BLUR"), 0.0, 50.0, 0.1, 0.0))),
@@ -56,6 +57,9 @@ LocallabAIMask::LocallabAIMask():
     aiMaskClassCombo->append(M("TP_LOCALLAB_AIMASK_CLASS_VEHICLE"));
     aiMaskClassCombo->append(M("TP_LOCALLAB_AIMASK_CLASS_ANIMAL"));
     aiMaskClassCombo->append(M("TP_LOCALLAB_AIMASK_CLASS_FOREGROUND"));
+    // Composed pseudo-classes (AISegClass::SUBJECT / NOT_SUBJECT).
+    aiMaskClassCombo->append(M("TP_LOCALLAB_AIMASK_CLASS_SUBJECT"));
+    aiMaskClassCombo->append(M("TP_LOCALLAB_AIMASK_CLASS_NOTSUBJECT"));
     aiMaskClassCombo->set_active(defSpot.aiMaskClass);
     aiMaskClassConn = aiMaskClassCombo->signal_changed().connect(
         sigc::mem_fun(*this, &LocallabAIMask::aiMaskClassChanged));
@@ -81,6 +85,21 @@ LocallabAIMask::LocallabAIMask():
     // Opacity (blend with geometric mask)
     aiMaskOpacity->setAdjusterListener(this);
     pack_start(*aiMaskOpacity);
+
+    // Shape combine: how the spot's own ellipse/rectangle/gradient interacts
+    // with the AI mask — opacity blend, union, or cut-out.
+    Gtk::Box* const shapeOpBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+    Gtk::Label* const shapeOpLabel = Gtk::manage(new Gtk::Label(M("TP_LOCALLAB_AIMASK_SHAPEOP") + ":"));
+    shapeOpLabel->set_halign(Gtk::ALIGN_START);
+    shapeOpBox->pack_start(*shapeOpLabel, Gtk::PACK_SHRINK);
+    aiMaskShapeOpCombo->append(M("TP_LOCALLAB_AIMASK_SHAPEOP_BLEND"));
+    aiMaskShapeOpCombo->append(M("TP_LOCALLAB_AIMASK_SHAPEOP_ADD"));
+    aiMaskShapeOpCombo->append(M("TP_LOCALLAB_AIMASK_SHAPEOP_SUB"));
+    aiMaskShapeOpCombo->set_active(0);
+    aiMaskShapeOpConn = aiMaskShapeOpCombo->signal_changed().connect(
+        sigc::mem_fun(*this, &LocallabAIMask::aiMaskShapeOpChanged));
+    shapeOpBox->pack_start(*aiMaskShapeOpCombo);
+    pack_start(*shapeOpBox);
 
     // Refinement
     Gtk::Frame* const refineFrame = Gtk::manage(new Gtk::Frame(M("TP_LOCALLAB_AIMASK_REFINE")));
@@ -135,10 +154,12 @@ void LocallabAIMask::updateAdviceTooltips(const bool showTooltips)
         aiMaskClassCombo->set_tooltip_text(M("TP_LOCALLAB_AIMASK_CLASS_TOOLTIP"));
         aiMaskThreshold->set_tooltip_text(M("TP_LOCALLAB_AIMASK_TOLERANCE_TOOLTIP"));
         aiMaskOpacity->set_tooltip_text(M("TP_LOCALLAB_AIMASK_OPACITY_TOOLTIP"));
+        aiMaskShapeOpCombo->set_tooltip_text(M("TP_LOCALLAB_AIMASK_SHAPEOP_TOOLTIP"));
     } else {
         aiMaskClassCombo->set_tooltip_text("");
         aiMaskThreshold->set_tooltip_text("");
         aiMaskOpacity->set_tooltip_text("");
+        aiMaskShapeOpCombo->set_tooltip_text("");
     }
 }
 
@@ -147,6 +168,7 @@ void LocallabAIMask::disableListener()
     LocallabTool::disableListener();
     aiMaskClassConn.block(true);
     aiMaskInvertConn.block(true);
+    aiMaskShapeOpConn.block(true);
 }
 
 void LocallabAIMask::enableListener()
@@ -154,6 +176,7 @@ void LocallabAIMask::enableListener()
     LocallabTool::enableListener();
     aiMaskClassConn.block(false);
     aiMaskInvertConn.block(false);
+    aiMaskShapeOpConn.block(false);
 }
 
 void LocallabAIMask::read(const rtengine::procparams::ProcParams* pp, const ParamsEdited* pedited)
@@ -174,6 +197,7 @@ void LocallabAIMask::read(const rtengine::procparams::ProcParams* pp, const Para
         aiMaskBlur->setValue(spot.aiMaskBlur);
         aiMaskInvert->set_active(spot.aiMaskInvert);
         aiMaskOpacity->setValue(spot.aiMaskOpacity);
+        aiMaskShapeOpCombo->set_active(rtengine::LIM(spot.aiMaskShapeOp, 0, 2));
         aiMaskRefineRadius->setValue((double)spot.aiMaskRefineRadius);
         aiMaskRefineEps->setValue(spot.aiMaskRefineEps);
     }
@@ -199,6 +223,7 @@ void LocallabAIMask::write(rtengine::procparams::ProcParams* pp, ParamsEdited* p
         spot.aiMaskBlur = aiMaskBlur->getValue();
         spot.aiMaskInvert = aiMaskInvert->get_active();
         spot.aiMaskOpacity = aiMaskOpacity->getValue();
+        spot.aiMaskShapeOp = rtengine::LIM(aiMaskShapeOpCombo->get_active_row_number(), 0, 2);
         spot.aiMaskRefineRadius = (int)aiMaskRefineRadius->getValue();
         spot.aiMaskRefineEps = aiMaskRefineEps->getValue();
     }
@@ -278,6 +303,16 @@ void LocallabAIMask::aiMaskClassChanged()
         if (listener) {
             listener->panelChanged(EvlocallabAIMask,
                                    aiMaskClassCombo->get_active_text());
+        }
+    }
+}
+
+void LocallabAIMask::aiMaskShapeOpChanged()
+{
+    if (isLocActivated && exp->getEnabled()) {
+        if (listener) {
+            listener->panelChanged(EvlocallabAIMask,
+                                   aiMaskShapeOpCombo->get_active_text());
         }
     }
 }

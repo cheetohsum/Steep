@@ -347,6 +347,8 @@ const char* AISegmentationEngine::getClassName(AISegClass cls)
         case AISegClass::VEHICLE: return "Vehicle";
         case AISegClass::ANIMAL: return "Animal";
         case AISegClass::FOREGROUND_OBJECT: return "Foreground Object";
+        case AISegClass::SUBJECT: return "Subject";
+        case AISegClass::NOT_SUBJECT: return "Everything but Subject";
         default: return "Unknown";
     }
 }

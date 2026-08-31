@@ -106,9 +106,6 @@ Splash::Splash (Gtk::Window& parent, bool modal) : Gtk::Dialog(M("GENERAL_ABOUT"
     closeButton->signal_clicked().connect( sigc::mem_fun(*this, &Splash::closePressed) );
     get_action_area()->pack_start (*closeButton, Gtk::PACK_SHRINK, 0);
 
-    Glib::RefPtr<Gtk::CssProvider> localCSS = Gtk::CssProvider::create();
-    localCSS->load_from_data ("textview { font-family: monospace; }");
-
     // Tab 1: the image
     splashImage = Gtk::manage(new SplashImage ());
     splashImage->set_halign(Gtk::ALIGN_CENTER);
@@ -138,7 +135,8 @@ Splash::Splash (Gtk::Window& parent, bool modal) : Gtk::Dialog(M("GENERAL_ABOUT"
 
             Gtk::ScrolledWindow *buildSW = Gtk::manage (new Gtk::ScrolledWindow());
             Gtk::TextView *buildTV = Gtk::manage (new Gtk::TextView (textBuffer));
-            buildTV->get_style_context()->add_provider(localCSS, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+            // Monospace via themes/common/widgets.css (#AboutBuildText)
+            buildTV->set_name("AboutBuildText");
             buildTV->set_editable(false);
             buildTV->set_left_margin (10);
             buildTV->set_right_margin (5);
@@ -169,7 +167,6 @@ Splash::Splash (Gtk::Window& parent, bool modal) : Gtk::Dialog(M("GENERAL_ABOUT"
 
             Gtk::ScrolledWindow *creditsSW = Gtk::manage (new Gtk::ScrolledWindow());
             Gtk::TextView *creditsTV = Gtk::manage (new Gtk::TextView (textBuffer));
-            //creditsTV->get_style_context()->add_provider(localCSS, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
             creditsTV->set_left_margin (10);
             creditsTV->set_right_margin (5);
             creditsTV->set_wrap_mode(Gtk::WRAP_WORD);
@@ -201,7 +198,6 @@ Splash::Splash (Gtk::Window& parent, bool modal) : Gtk::Dialog(M("GENERAL_ABOUT"
 
             Gtk::ScrolledWindow *licenseSW = Gtk::manage (new Gtk::ScrolledWindow());
             Gtk::TextView *licenseTV = Gtk::manage (new Gtk::TextView (textBuffer));
-            //licenseTV->get_style_context()->add_provider(localCSS, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
 
             // set monospace font to enhance readability of formatted text
             licenseTV->set_left_margin (10);

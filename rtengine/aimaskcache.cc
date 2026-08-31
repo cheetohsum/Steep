@@ -12,6 +12,7 @@
 #include "aimaskcache.h"
 
 #include "boxblur.h"
+#include "edittrace.h"
 #include "guidedfilter.h"
 #include "iccstore.h"
 #include "rt_math.h"
@@ -35,6 +36,148 @@ constexpr float DISTANCE_INFINITY = 1.e20f;
 int quantize(float value, float scale)
 {
     return static_cast<int>(std::lround(value * scale));
+}
+
+/** Compose the SUBJECT pseudo-class from the model output: the union of the
+ *  person/vehicle/animal/foreground-object probabilities, cut down to its
+ *  dominant connected regions (every region at least 30% the size of the
+ *  largest, so a second person in a group shot survives), with interior
+ *  holes filled. NOT_SUBJECT is its complement. Both are appended to @p maps
+ *  in AISegClass order.
+ */
+void appendSubjectMasks(std::vector<array2D<float>>& maps, int width, int height, bool multiThread)
+{
+    if (static_cast<int>(maps.size()) != static_cast<int>(AISegClass::NUM_CLASSES)
+            || width <= 0 || height <= 0) {
+        return;
+    }
+
+    maps.reserve(static_cast<std::size_t>(AISegClass::TOTAL_CLASSES));
+
+    const array2D<float>& person = maps[static_cast<int>(AISegClass::PERSON)];
+    const array2D<float>& vehicle = maps[static_cast<int>(AISegClass::VEHICLE)];
+    const array2D<float>& animal = maps[static_cast<int>(AISegClass::ANIMAL)];
+    const array2D<float>& object = maps[static_cast<int>(AISegClass::FOREGROUND_OBJECT)];
+
+    maps.emplace_back(width, height);
+    array2D<float>& subject = maps[static_cast<int>(AISegClass::SUBJECT)];
+
+#ifdef _OPENMP
+    #pragma omp parallel for if(multiThread)
+#endif
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            subject[y][x] = std::max(std::max(person[y][x], vehicle[y][x]),
+                                     std::max(animal[y][x], object[y][x]));
+        }
+    }
+
+    // The support threshold matches the default mask threshold, so the soft
+    // probability skirt around a kept region survives into the composed map.
+    constexpr float support = 0.3f;
+
+    // Connected components over the support region (4-neighborhood).
+    const int n = width * height;
+    std::vector<int> label(n, 0);
+    std::vector<int> stack;
+    std::vector<int> sizes(1, 0); // 1-based; sizes[0] unused
+    int labelCount = 0;
+
+    for (int seed = 0; seed < n; ++seed) {
+        if (label[seed] != 0 || subject[seed / width][seed % width] <= support) {
+            continue;
+        }
+
+        ++labelCount;
+        int size = 0;
+        stack.assign(1, seed);
+        label[seed] = labelCount;
+
+        while (!stack.empty()) {
+            const int p = stack.back();
+            stack.pop_back();
+            ++size;
+            const int y = p / width;
+            const int x = p % width;
+
+            const auto visit = [&](int q) {
+                if (label[q] == 0 && subject[q / width][q % width] > support) {
+                    label[q] = labelCount;
+                    stack.push_back(q);
+                }
+            };
+            if (y > 0) visit(p - width);
+            if (y < height - 1) visit(p + width);
+            if (x > 0) visit(p - 1);
+            if (x < width - 1) visit(p + 1);
+        }
+
+        sizes.push_back(size);
+    }
+
+    if (labelCount > 0) {
+        int largest = 0;
+        for (int l = 1; l <= labelCount; ++l) {
+            largest = std::max(largest, sizes[l]);
+        }
+        const int keepAbove = std::max(1, largest * 3 / 10);
+        std::vector<char> keep(labelCount + 1, 0);
+        for (int l = 1; l <= labelCount; ++l) {
+            keep[l] = sizes[l] >= keepAbove ? 1 : 0;
+        }
+
+        const auto kept = [&](int p) {
+            return label[p] != 0 && keep[label[p]];
+        };
+
+        // Flood the true outside (non-kept pixels reachable from the border);
+        // what remains un-flooded and non-kept is an interior hole.
+        std::vector<char> outside(n, 0);
+        stack.clear();
+        const auto seedOutside = [&](int p) {
+            if (!outside[p] && !kept(p)) {
+                outside[p] = 1;
+                stack.push_back(p);
+            }
+        };
+        for (int x = 0; x < width; ++x) {
+            seedOutside(x);
+            seedOutside(n - width + x);
+        }
+        for (int y = 0; y < height; ++y) {
+            seedOutside(y * width);
+            seedOutside(y * width + width - 1);
+        }
+        while (!stack.empty()) {
+            const int p = stack.back();
+            stack.pop_back();
+            const int y = p / width;
+            const int x = p % width;
+            if (y > 0) seedOutside(p - width);
+            if (y < height - 1) seedOutside(p + width);
+            if (x > 0) seedOutside(p - 1);
+            if (x < width - 1) seedOutside(p + 1);
+        }
+
+        for (int p = 0; p < n; ++p) {
+            if (!kept(p)) {
+                // Interior holes join the subject; stray blobs and noise go.
+                subject[p / width][p % width] = outside[p] ? 0.f : 1.f;
+            }
+        }
+    }
+
+    maps.emplace_back(width, height);
+    array2D<float>& notSubject = maps[static_cast<int>(AISegClass::NOT_SUBJECT)];
+
+#ifdef _OPENMP
+    #pragma omp parallel for if(multiThread)
+#endif
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            notSubject[y][x] = LIM(1.f - subject[y][x], 0.f, 1.f);
+        }
+    }
 }
 
 void squaredDistanceTransform1D(const float* source, float* target, int length,
@@ -226,6 +369,8 @@ void AIMaskCache::computeMasks(const std::string& imageId,
         request = ++requestGeneration_;
     }
 
+    const long long traceStartUs = edittrace::enabled() ? edittrace::nowUs() : 0;
+
     const float cacheScale = std::min(
         1.f,
         static_cast<float>(MAX_MASK_CACHE_DIMENSION) /
@@ -288,9 +433,46 @@ void AIMaskCache::computeMasks(const std::string& imageId,
     float* const* segmentG = static_cast<float**>(scaledG);
     float* const* segmentB = static_cast<float**>(scaledB);
 
-    auto masks = std::make_shared<const std::vector<array2D<float>>>(
-        engine.segment(segmentR, segmentG, segmentB,
-                       maskWidth, maskHeight, multiThread));
+    const long long traceSegmentUs = edittrace::enabled() ? edittrace::nowUs() : 0;
+    std::vector<array2D<float>> maps = engine.segment(segmentR, segmentG, segmentB,
+                                                      maskWidth, maskHeight, multiThread);
+    if (edittrace::enabled()) {
+        edittrace::logf("[aiMask] segment img=%s src=%dx%d mask=%dx%d infer=%.0fms",
+                        imageId.c_str(), width, height, maskWidth, maskHeight,
+                        (edittrace::nowUs() - traceSegmentUs) / 1000.0);
+    }
+
+    appendSubjectMasks(maps, maskWidth, maskHeight, multiThread);
+
+    auto masks = std::make_shared<const std::vector<array2D<float>>>(std::move(maps));
+
+    std::vector<float> coverage(masks->size(), 0.f);
+    {
+        const float total = static_cast<float>(maskWidth) * static_cast<float>(maskHeight);
+        for (size_t c = 0; c < masks->size(); ++c) {
+            const array2D<float>& map = masks->at(c);
+            int hits = 0;
+#ifdef _OPENMP
+            #pragma omp parallel for reduction(+:hits) if(multiThread)
+#endif
+            for (int y = 0; y < maskHeight; ++y) {
+                for (int x = 0; x < maskWidth; ++x) {
+                    if (map[y][x] > 0.5f) {
+                        ++hits;
+                    }
+                }
+            }
+            coverage[c] = total > 0.f ? hits / total : 0.f;
+        }
+    }
+    if (edittrace::enabled() && coverage.size() >= 10) {
+        edittrace::logf("[aiMask] coverage bg=%d%% person=%d%% sky=%d%% veg=%d%% bldg=%d%% veh=%d%% animal=%d%% fg=%d%% subj=%d%% notsubj=%d%%",
+                        static_cast<int>(coverage[0] * 100), static_cast<int>(coverage[1] * 100),
+                        static_cast<int>(coverage[2] * 100), static_cast<int>(coverage[3] * 100),
+                        static_cast<int>(coverage[4] * 100), static_cast<int>(coverage[5] * 100),
+                        static_cast<int>(coverage[6] * 100), static_cast<int>(coverage[7] * 100),
+                        static_cast<int>(coverage[8] * 100), static_cast<int>(coverage[9] * 100));
+    }
 
     auto guide = std::make_shared<array2D<float>>(maskWidth, maskHeight);
 #ifdef _OPENMP
@@ -307,11 +489,21 @@ void AIMaskCache::computeMasks(const std::string& imageId,
 
     MyMutex::MyLock lock(mutex_);
     if (request != requestGeneration_) {
+        if (edittrace::enabled()) {
+            edittrace::logf("[aiMask] compute discarded (stale) img=%s", imageId.c_str());
+        }
         return;
+    }
+
+    if (edittrace::enabled()) {
+        edittrace::logf("[aiMask] compute done img=%s total=%.0fms",
+                        imageId.c_str(),
+                        (edittrace::nowUs() - traceStartUs) / 1000.0);
     }
 
     cachedMasks_ = std::move(masks);
     cachedGuide_ = std::move(guide);
+    coverage_ = std::move(coverage);
     cachedImageId_ = imageId;
     cachedWorkingProfile_ = workingProfile;
     sourceWidth_ = width;
@@ -419,6 +611,9 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
         fullHeight = fullH_;
     }
 
+    const long long traceStartUs = edittrace::enabled() ? edittrace::nowUs() : 0;
+    const bool traceDistanceHit = static_cast<bool>(signedDistance);
+
     const float safeThreshold = LIM(threshold, 0.f, 1.f);
     if (!signedDistance) {
         auto refinedWorking = std::make_shared<array2D<float>>(*baseMask);
@@ -525,6 +720,14 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
         }
     }
 
+    if (edittrace::enabled()) {
+        edittrace::logf("[aiMask] prepare class=%d dist=%s refined=%s total=%.1fms",
+                        key.classIndex,
+                        traceDistanceHit ? "hit" : "miss",
+                        hasRefinedMask ? "hit" : "miss",
+                        (edittrace::nowUs() - traceStartUs) / 1000.0);
+    }
+
     return {readyMask, width, height, fullWidth, fullHeight,
             maskX0, maskY0, maskX1, maskY1};
 }
@@ -542,6 +745,57 @@ bool AIMaskCache::hasCachedMasks(const std::string& imageId) const
 {
     MyMutex::MyLock lock(mutex_);
     return cachedImageId_ == imageId && cachedMasks_ && !cachedMasks_->empty();
+}
+
+float AIMaskCache::getClassCoverage(const std::string& imageId, int classIndex) const
+{
+    MyMutex::MyLock lock(mutex_);
+    if (cachedImageId_ != imageId || classIndex < 0
+            || classIndex >= static_cast<int>(coverage_.size())) {
+        return -1.f;
+    }
+    return coverage_[classIndex];
+}
+
+int AIMaskCache::getDominantClassAt(const std::string& imageId, int fullX, int fullY) const
+{
+    MyMutex::MyLock lock(mutex_);
+    if (cachedImageId_ != imageId || !cachedMasks_ || cachedMasks_->empty()
+            || fullW_ <= 0 || fullH_ <= 0 || cachedWidth_ <= 0 || cachedHeight_ <= 0) {
+        return -1;
+    }
+
+    const int mx = LIM(fullX * cachedWidth_ / fullW_, 0, cachedWidth_ - 1);
+    const int my = LIM(fullY * cachedHeight_ / fullH_, 0, cachedHeight_ - 1);
+    if (fullX < 0 || fullY < 0 || fullX >= fullW_ || fullY >= fullH_) {
+        return -1;
+    }
+
+    const int modelClasses = std::min<int>(static_cast<int>(AISegClass::NUM_CLASSES),
+                                           cachedMasks_->size());
+    int best = -1;
+    float bestProb = 0.f;
+    for (int c = 0; c < modelClasses; ++c) {
+        const float p = cachedMasks_->at(c)[my][mx];
+        if (p > bestProb) {
+            bestProb = p;
+            best = c;
+        }
+    }
+
+    // A click on any subject-ish class means "select the subject" — the
+    // composed class is the better mask (dominant regions, holes filled).
+    const int subjectIndex = static_cast<int>(AISegClass::SUBJECT);
+    if (best >= 0 && subjectIndex < static_cast<int>(cachedMasks_->size())
+            && (best == static_cast<int>(AISegClass::PERSON)
+                || best == static_cast<int>(AISegClass::VEHICLE)
+                || best == static_cast<int>(AISegClass::ANIMAL)
+                || best == static_cast<int>(AISegClass::FOREGROUND_OBJECT))
+            && cachedMasks_->at(subjectIndex)[my][mx] > 0.5f) {
+        return subjectIndex;
+    }
+
+    return best;
 }
 
 bool AIMaskCache::hasCachedMasks() const
@@ -562,6 +816,7 @@ void AIMaskCache::invalidate(const std::string& imageId)
     cachedWorkingProfile_.clear();
     cachedMasks_.reset();
     cachedGuide_.reset();
+    coverage_.clear();
     refinedMasks_.clear();
     distanceMasks_.clear();
     preparedMasks_.clear();
@@ -578,6 +833,7 @@ void AIMaskCache::invalidateAll()
     cachedWorkingProfile_.clear();
     cachedMasks_.reset();
     cachedGuide_.reset();
+    coverage_.clear();
     refinedMasks_.clear();
     distanceMasks_.clear();
     preparedMasks_.clear();

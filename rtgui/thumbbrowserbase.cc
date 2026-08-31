@@ -18,6 +18,7 @@
 
 #include <glibmm/ustring.h>
 
+#include "guiutils.h"
 #include "hidpi.h"
 #include "inspector.h"
 #include "multilangmgr.h"
@@ -917,7 +918,7 @@ void ThumbBrowserBase::Internal::on_realize()
     bgs = style->get_background_color(Gtk::STATE_FLAG_SELECTED);
 
     set_can_focus(true);
-    add_events(Gdk::EXPOSURE_MASK | Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::POINTER_MOTION_MASK | Gdk::SCROLL_MASK | Gdk::SMOOTH_SCROLL_MASK | Gdk::KEY_PRESS_MASK);
+    add_events(Gdk::EXPOSURE_MASK | Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::POINTER_MOTION_MASK | Gdk::SCROLL_MASK | Gdk::SMOOTH_SCROLL_MASK | Gdk::KEY_PRESS_MASK | Gdk::LEAVE_NOTIFY_MASK);
     set_has_tooltip (true);
     signal_query_tooltip().connect( sigc::mem_fun(*this, &ThumbBrowserBase::Internal::on_query_tooltip) );
 }
@@ -1110,10 +1111,26 @@ bool ThumbBrowserBase::Internal::on_draw(const ::Cairo::RefPtr< Cairo::Context> 
     cr->set_line_join(Cairo::LINE_JOIN_MITER);
 
     // Explicit background fill — macOS Quartz doesn't always honor CSS background-color on DrawingArea
-    cr->set_source_rgb(0.145, 0.165, 0.196); // #252a32
+    const Gdk::RGBA canvasBg = themeColor(*this, "steep_surface_0", Gdk::RGBA("#1a1e24"));
+    cr->set_source_rgb(canvasBg.get_red(), canvasBg.get_green(), canvasBg.get_blue());
     cr->paint();
 
     style->render_background(cr, 0., 0., logical.width, logical.height);
+
+    // Empty state: a quiet centered hint instead of a bare void. The text is
+    // set by the owner (e.g. FileCatalog: "scanning" vs "no photos").
+    {
+        MYREADERLOCK(l, parent->entryRW);
+        if (parent->drawableEntries_.empty() && !parent->emptyStateText_.empty()) {
+            auto layout = create_pango_layout(parent->emptyStateText_);
+            int tw = 0, th = 0;
+            layout->get_pixel_size(tw, th);
+            const Gdk::RGBA dim = themeColor(*this, "steep_text_dim", Gdk::RGBA("#8a92a1"));
+            cr->set_source_rgba(dim.get_red(), dim.get_green(), dim.get_blue(), 0.85);
+            cr->move_to((logical.width - tw) / 2.0, (logical.height - th) / 2.0);
+            layout->show_in_cairo_context(cr);
+        }
+    }
 
     bool thumbnailPrioritiesChanged = false;
 
@@ -1286,6 +1303,7 @@ bool ThumbBrowserBase::Internal::on_motion_notify_event (GdkEventMotion* event)
 
     MYREADERLOCK(l, parent->entryRW);
 
+    bool hoverChanged = false;
     const std::size_t first = parent->firstViewportCandidate_(0, 0);
     for (size_t i = first; i < parent->drawableEntries_.size(); i++) {
         auto* entry = parent->drawableEntries_[i];
@@ -1300,9 +1318,40 @@ bool ThumbBrowserBase::Internal::on_motion_notify_event (GdkEventMotion* event)
 
         parent->syncEntryOffset_(entry);
         entry->motionNotify ((int)event->x, (int)event->y);
+
+        // Hover ring bookkeeping — a per-entry flag, so nothing dangles when
+        // the entry list is rebuilt.
+        const bool nowHovered = entry->inside((int)event->x, (int)event->y);
+        if (nowHovered != entry->hovered) {
+            entry->hovered = nowHovered;
+            hoverChanged = true;
+        }
+    }
+
+    if (hoverChanged) {
+        queue_draw();
     }
 
     return true;
+}
+
+bool ThumbBrowserBase::Internal::on_leave_notify_event (GdkEventCrossing*)
+{
+    MYREADERLOCK(l, parent->entryRW);
+
+    bool hoverChanged = false;
+    for (auto* entry : parent->drawableEntries_) {
+        if (entry->hovered) {
+            entry->hovered = false;
+            hoverChanged = true;
+        }
+    }
+
+    if (hoverChanged) {
+        queue_draw();
+    }
+
+    return false;
 }
 
 bool ThumbBrowserBase::Internal::on_scroll_event (GdkEventScroll* event)
@@ -1310,6 +1359,14 @@ bool ThumbBrowserBase::Internal::on_scroll_event (GdkEventScroll* event)
     // Gtk signals automatically acquire the GUI (i.e. this method is enclosed by gdk_thread_enter and gdk_thread_leave)
     parent->scroll (event->direction, event->delta_x, event->delta_y);
     return true;
+}
+
+void ThumbBrowserBase::setEmptyStateText (const Glib::ustring& text)
+{
+    if (emptyStateText_ != text) {
+        emptyStateText_ = text;
+        internal.queue_draw();
+    }
 }
 
 void ThumbBrowserBase::resort ()

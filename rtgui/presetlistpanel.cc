@@ -602,11 +602,6 @@ Gtk::Button* PresetListPanel::createCard(const ProfileStoreEntry* entry)
     label->set_xalign(0.5);
     label->set_justify(Gtk::JUSTIFY_CENTER);
     label->get_style_context()->add_class("preset-card-label");
-    {
-        auto css = Gtk::CssProvider::create();
-        css->load_from_data("label { font-size: 10px; }");
-        label->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-    }
     vbox->pack_start(*label, Gtk::PACK_SHRINK);
 
     card->add(*vbox);

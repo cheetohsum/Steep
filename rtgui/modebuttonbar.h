@@ -20,6 +20,8 @@
 
 #include <gtkmm.h>
 
+#include <memory>
+
 enum class EditorMode {
     PRESETS,
     EDIT,
@@ -49,6 +51,12 @@ private:
 
     EditorMode activeMode;
     bool blockSignal;
+
+    // Right-click on the Edit button opens a slider that scales the setting
+    // rows' type. Built on first use.
+    void showPillScalePopover();
+    std::unique_ptr<Gtk::Popover> pillScalePopover_;
+    Gtk::Scale* pillScaleSlider_ = nullptr;
 
     sigc::signal<void, EditorMode> modeChangedSignal;
 };

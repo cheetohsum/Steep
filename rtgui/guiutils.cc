@@ -393,38 +393,13 @@ Gtk::EventBox* createEdgeGrip (bool vertical,
                                const Glib::ustring& tooltipMarkup,
                                const std::function<void ()>& onClick)
 {
-    static Glib::RefPtr<Gtk::CssProvider> gripCss;
-
-    if (!gripCss) {
-        gripCss = Gtk::CssProvider::create();
-        gripCss->load_from_data(
-            "#EdgeGripV, #EdgeGripH {"
-            "  background-color: transparent;"
-            "  background-image: none;"
-            "}"
-            "#EdgeGripV:hover {"
-            "  background-image: linear-gradient(to bottom,"
-            "    rgba(100, 160, 255, 0.00) 0%,"
-            "    rgba(100, 160, 255, 0.72) 22%,"
-            "    rgba(100, 160, 255, 0.72) 78%,"
-            "    rgba(100, 160, 255, 0.00) 100%);"
-            "}"
-            "#EdgeGripH:hover {"
-            "  background-image: linear-gradient(to right,"
-            "    rgba(100, 160, 255, 0.00) 0%,"
-            "    rgba(100, 160, 255, 0.72) 22%,"
-            "    rgba(100, 160, 255, 0.72) 78%,"
-            "    rgba(100, 160, 255, 0.00) 100%);"
-            "}"
-        );
-    }
-
+    // Styling (transparent at rest, tapered highlight on hover) lives in
+    // themes/common/widgets.css (#EdgeGripV / #EdgeGripH).
     auto* grip = Gtk::manage (new Gtk::EventBox ());
     grip->set_name (vertical ? "EdgeGripV" : "EdgeGripH");
     grip->set_visible_window (true);
     grip->add_events (Gdk::BUTTON_PRESS_MASK | Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
     grip->set_tooltip_markup (tooltipMarkup);
-    grip->get_style_context()->add_provider (gripCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
 
     // An EventBox does not prelight by itself, and the highlight waits for
     // the pointer to settle: brushing past on the way to the canvas should
@@ -494,6 +469,44 @@ Gtk::Border getPadding(const Glib::RefPtr<Gtk::StyleContext> style)
     }
 
     return padding;
+}
+
+namespace
+{
+// GUI thread only — themeColor/themeColorCacheInvalidate are never called from
+// worker threads, so no locking.
+std::map<std::string, Gdk::RGBA> themeColorCache;
+}
+
+Gdk::RGBA themeColor(const Glib::RefPtr<Gtk::StyleContext>& ctx, const char* name, const Gdk::RGBA& fallback)
+{
+    const auto cached = themeColorCache.find(name);
+    if (cached != themeColorCache.end()) {
+        return cached->second;
+    }
+
+    Gdk::RGBA color = fallback;
+    if (ctx) {
+        Gdk::RGBA looked;
+        if (ctx->lookup_color(name, looked)) {
+            color = looked;
+        }
+    }
+
+    themeColorCache.emplace(name, color);
+    return color;
+}
+
+Gdk::RGBA themeColor(const Gtk::Widget& widget, const char* name, const Gdk::RGBA& fallback)
+{
+    // Read-only lookup; get_style_context() has no const overload returning
+    // a mutable ref, so cast rather than force every caller to be non-const.
+    return themeColor(const_cast<Gtk::Widget&>(widget).get_style_context(), name, fallback);
+}
+
+void themeColorCacheInvalidate()
+{
+    themeColorCache.clear();
 }
 
 bool removeIfThere (Gtk::Container* cont, Gtk::Widget* w, bool increference)
@@ -1630,7 +1643,10 @@ bool MyHScale::on_draw (const Cairo::RefPtr<Cairo::Context>& cr)
         cr->arc(x0, ty0 + radius, radius, rtengine::RT_PI * 0.5, rtengine::RT_PI * 1.5);
         cr->arc(x1, ty0 + radius, radius, rtengine::RT_PI * 1.5, rtengine::RT_PI * 0.5);
         cr->close_path();
-        cr->set_source_rgba(1.0, 1.0, 1.0, 0.13);
+        {
+            const Gdk::RGBA troughWash = themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff"));
+            cr->set_source_rgba(troughWash.get_red(), troughWash.get_green(), troughWash.get_blue(), 0.13);
+        }
         cr->fill();
 
         if (range > 0) {
@@ -1642,7 +1658,8 @@ bool MyHScale::on_draw (const Cairo::RefPtr<Cairo::Context>& cr)
                 cr->arc(x0, ty0 + radius, radius, rtengine::RT_PI * 0.5, rtengine::RT_PI * 1.5);
                 cr->arc(std::max(knobX, x0), ty0 + radius, radius, rtengine::RT_PI * 1.5, rtengine::RT_PI * 0.5);
                 cr->close_path();
-                cr->set_source_rgba(0.392, 0.627, 1.0, 0.75);
+                const Gdk::RGBA accent = themeColor(*this, "steep_accent", Gdk::RGBA("#64a0ff"));
+                cr->set_source_rgba(accent.get_red(), accent.get_green(), accent.get_blue(), 0.75);
                 cr->fill();
             }
 
@@ -1654,11 +1671,15 @@ bool MyHScale::on_draw (const Cairo::RefPtr<Cairo::Context>& cr)
             cr->fill();
 
             cr->arc(knobX, troughY, kr, 0, 2 * rtengine::RT_PI);
-            cr->set_source_rgb(isHover ? 0.98 : 0.92, isHover ? 0.98 : 0.93, isHover ? 1.0 : 0.96);
+            {
+                const Gdk::RGBA knobInk = themeColor(*this, "steep_text_hi", Gdk::RGBA("#eeeef4"));
+                cr->set_source_rgba(knobInk.get_red(), knobInk.get_green(), knobInk.get_blue(), isHover ? 1.0 : 0.92);
+            }
             cr->fill();
 
             cr->arc(knobX, troughY, kr - 0.5, 0, 2 * rtengine::RT_PI);
-            cr->set_source_rgba(0.392, 0.627, 1.0, 0.9);
+            const Gdk::RGBA ringAccent = themeColor(*this, "steep_accent", Gdk::RGBA("#64a0ff"));
+            cr->set_source_rgba(ringAccent.get_red(), ringAccent.get_green(), ringAccent.get_blue(), 0.9);
             cr->set_line_width(1.6);
             cr->stroke();
         }
@@ -1733,7 +1754,8 @@ bool MyHScale::on_draw (const Cairo::RefPtr<Cairo::Context>& cr)
             const int fillRight = std::max(centerX, valueX);
 
             if (fillRight > fillLeft) {
-                cr->set_source_rgba(0.176, 0.498, 0.827, 0.85);
+                const Gdk::RGBA fillAccent = themeColor(*this, "steep_accent", Gdk::RGBA("#64a0ff"));
+                cr->set_source_rgba(fillAccent.get_red(), fillAccent.get_green(), fillAccent.get_blue(), 0.85);
                 cr->rectangle(fillLeft, bipolarY, fillRight - fillLeft, bipolarHeight);
                 cr->fill();
             }
@@ -1751,7 +1773,8 @@ bool MyHScale::on_draw (const Cairo::RefPtr<Cairo::Context>& cr)
                 const int x = padding + static_cast<int>(frac * troughWidth);
                 const bool isCenter = (i == 5);
 
-                cr->set_source_rgba(1.0, 1.0, 1.0, isCenter && isBipolar ? 0.25 : 0.12);
+                const Gdk::RGBA tickWash = themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff"));
+                cr->set_source_rgba(tickWash.get_red(), tickWash.get_green(), tickWash.get_blue(), isCenter && isBipolar ? 0.25 : 0.12);
                 cr->set_line_width(1.0);
                 cr->move_to(x + 0.5, tickTop);
                 cr->line_to(x + 0.5, tickTop + tickHeight + (isCenter && isBipolar ? 1 : 0));
@@ -1780,10 +1803,16 @@ bool MyHScale::on_draw (const Cairo::RefPtr<Cairo::Context>& cr)
             cr->line_to(knobX, troughY + dh);
             cr->line_to(knobX - dw, troughY);
             cr->close_path();
-            cr->set_source_rgb(isHover ? 0.91 : 0.816, isHover ? 0.91 : 0.816, isHover ? 0.91 : 0.816);
+            {
+                const Gdk::RGBA thumbInk = themeColor(*this, "steep_text_hi", Gdk::RGBA("#d0d0d4"));
+                cr->set_source_rgba(thumbInk.get_red(), thumbInk.get_green(), thumbInk.get_blue(), isHover ? 1.0 : 0.85);
+            }
             cr->fill_preserve();
 
-            cr->set_source_rgba(0.4, 0.4, 0.4, 1.0);
+            {
+                const Gdk::RGBA thumbEdge = themeColor(*this, "steep_text_dim", Gdk::RGBA("#666a70"));
+                cr->set_source_rgba(thumbEdge.get_red(), thumbEdge.get_green(), thumbEdge.get_blue(), 1.0);
+            }
             cr->set_line_width(1.0);
             cr->stroke();
         }
@@ -2702,6 +2731,10 @@ void AdvancedSection::setExpanded(bool expand)
         contentBox->hide();
         contentBox->set_no_show_all(true);
     }
+
+    if (onToggled) {
+        onToggled(expanded);
+    }
 }
 
 bool AdvancedSection::getExpanded() const
@@ -2749,16 +2782,7 @@ ToolGroup::ToolGroup(const Glib::ustring& label) :
     headerBtn->set_relief(Gtk::RELIEF_NONE);
     headerBtn->set_can_focus(false);
     headerBtn->set_halign(Gtk::ALIGN_START);
-    {
-        auto css = Gtk::CssProvider::create();
-        css->load_from_data(
-            "#ToolGroupHeader, #ToolGroupHeader:hover, #ToolGroupHeader.hovered {"
-            " border: none; border-radius: 0; background-color: transparent;"
-            " background-image: none; box-shadow: none; }"
-        );
-        headerBtn->get_style_context()->add_provider(
-            css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-    }
+    // Flattening lives in themes/common/widgets.css (#ToolGroupHeader)
     headerBtn->add(*arrowLabel);
 
     // Reset button (X) — hidden by default, shown when group has non-default values

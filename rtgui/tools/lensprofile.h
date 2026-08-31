@@ -32,6 +32,7 @@ public:
     static const Glib::ustring TOOL_NAME;
 
     LensProfilePanel();
+    ~LensProfilePanel() override;
 
     void read(const rtengine::procparams::ProcParams* pp, const ParamsEdited* pedited = nullptr) override;
     void write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited = nullptr) override;
@@ -98,6 +99,10 @@ private:
     bool setLensfunLens(const Glib::ustring& lens);
     bool checkLensfunCanCorrect(bool automatch);
     void setManualParamsVisibility(bool setVisible);
+    /// Show only the sub-controls the selected correction source needs.
+    void updateSubOptionVisibility();
+    /// Refresh the "matched: camera / lens" line under Automatically selected.
+    void updateAutoMatchLabel();
     void updateLensfunWarning();
     void toggleCorrect();
 
@@ -123,6 +128,11 @@ private:
     Gtk::Box* manualSubBox;
     Gtk::Box* correctContent;
     Gtk::Label* correctLabel;
+    /// Shows which camera and lens automatic matching actually found.
+    Gtk::Label* autoMatchLabel;
+    /// Put uncorrected photos on automatic matching when they open.
+    Gtk::CheckButton* defaultAutoChk;
+    sigc::connection autoDefaultConn_;
     bool correctExpanded;
     Gtk::Grid* const modesGrid;
     Gtk::Grid* const distGrid;

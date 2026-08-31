@@ -100,6 +100,17 @@ void BatchQueueEntry::calcThumbnailSize ()
         previewSize.width = options.maxThumbnailWidth;
         previewSize.height = std::max<int>(previewSize.height * s, 1);
     }
+
+    // Ask for the preview once the size is settled. resize() used to do this
+    // for every entry, but that was dropped when the browser moved to
+    // viewport-driven loading — and the queue never joined that path (its
+    // previews come from batchQueueEntryUpdater, not thumbImageUpdater), so
+    // nothing requested them at all. Mirrors FileBrowserEntry, and must run
+    // after previewSize is final: the delivered image is discarded if its
+    // height no longer matches.
+    if (preview.empty() && !filtered) {
+        refreshThumbnailImage();
+    }
 }
 
 

@@ -1,0 +1,22 @@
+/* Generated from rtdata/themes/TooWaBlue.css by tools/gen_gtk4_tokens.py.
+   Do not edit — change the theme's palette block and regenerate. */
+
+:root {
+  --steep-surface-0: #0c1626;
+  --steep-surface-1: #13203a;
+  --steep-surface-2: #1a2a4c;
+  --steep-surface-3: #22355e;
+  --steep-text-hi: #e8eefc;
+  --steep-text: #c2cde4;
+  --steep-text-dim: #7a8cb0;
+  --steep-accent: #4aa8ff;
+  --steep-select: #2d64c8;
+  --steep-attention: #d29752;
+  --steep-success: #46d08c;
+  --steep-danger: #e0566a;
+  --steep-border: #071020;
+  --steep-border-soft: #2c3d68;
+  --steep-sel-bg: #2d64c8;
+  --steep-sel-fg: #eaf2ff;
+  --steep-wash: #ffffff;
+}

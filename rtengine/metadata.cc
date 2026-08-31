@@ -25,8 +25,13 @@
 #include <set>
 
 #include "metadata.h"
+#include "myfile.h"
 #include "settings.h"
 #include "imagedata.h"
+#include "utils.h"
+#include <cstdint>
+#include <cstring>
+#include <vector>
 #include "rtgui/version.h"
 #include "rtgui/pathutils.h"
 #include <ctime>
@@ -64,9 +69,83 @@ private:
 
 constexpr size_t IMAGE_CACHE_SIZE = 200;
 
+// Exiv2's RAF reader parses the embedded JPEG and then, from the offset at
+// byte 100, the raw CFA block -- which modern Fujifilm bodies wrap in a TIFF
+// container, so Exiv2 reads the entire ~50 MB block just to run TiffParser
+// over it. Everything this application consumes (EXIF, makernote, XMP rating)
+// lives in the JPEG's APP1 segment; the block only contributes raw-geometry
+// and black-level tags that LibRaw already provides. Parsing the JPEG alone
+// turns a whole-file read into a ~5 MB one, which is what makes a cold folder
+// of RAFs on a rotational disk load at disk speed instead of crawling.
+std::unique_ptr<Exiv2::Image> open_raf_embedded_jpeg(const Glib::ustring& fname)
+{
+    const Glib::ustring ext = rtengine::getFileExtension(fname).lowercase();
+
+    if (ext != "raf") {
+        return nullptr;
+    }
+
+    std::vector<unsigned char> header;
+
+    if (!rtengine::readFileRange(fname.c_str(), 0, 112, header) || header.size() < 92
+            || std::memcmp(header.data(), "FUJIFILMCCD-RAW", 15) != 0) {
+        return nullptr;
+    }
+
+    const auto be32 = [&header](size_t at) -> std::uint32_t {
+        return (std::uint32_t(header[at]) << 24) | (std::uint32_t(header[at + 1]) << 16)
+            | (std::uint32_t(header[at + 2]) << 8) | std::uint32_t(header[at + 3]);
+    };
+    const std::uint32_t jpegOffset = be32(84);
+    const std::uint32_t jpegLength = be32(88);
+
+    if (jpegLength < 12 || jpegLength > (64u << 20)) {
+        return nullptr;
+    }
+
+    std::vector<unsigned char> jpeg;
+
+    if (!rtengine::readFileRange(fname.c_str(), jpegOffset, jpegLength, jpeg)
+            || jpeg.size() != jpegLength || jpeg[0] != 0xff || jpeg[1] != 0xd8) {
+        return nullptr;
+    }
+
+    Exiv2::BasicIo::AutoPtr io(new Exiv2::MemIo);
+    io->write(jpeg.data(), static_cast<long>(jpeg.size()));
+    io->seek(0, Exiv2::BasicIo::beg);
+    auto image = Exiv2::ImageFactory::open(std::move(io));
+
+    if (!image.get()) {
+        return nullptr;
+    }
+
+    image->readMetadata();
+
+    if (!image->good() || image->exifData().empty()) {
+        return nullptr;
+    }
+
+    // The parsed image lives on in a 200-entry cache; drop the 5 MB JPEG it
+    // was read from (the EXIF/XMP data and pixel dimensions are kept).
+    Exiv2::MemIo empty;
+    image->io().transfer(empty);
+
+    return std::unique_ptr<Exiv2::Image>(image.release());
+}
+
 std::unique_ptr<Exiv2::Image> open_exiv2(const Glib::ustring& fname,
                                          bool check_exif)
 {
+    if (check_exif) {
+        try {
+            if (auto raf = open_raf_embedded_jpeg(fname)) {
+                return raf;
+            }
+        } catch (const std::exception&) {
+            // fall through to the generic reader
+        }
+    }
+
 #ifdef EXV_UNICODE_PATH
     glong ws_size = 0;
     gunichar2* const ws = g_utf8_to_utf16(fname.c_str(), -1, nullptr, &ws_size, nullptr);
@@ -505,7 +584,11 @@ void Exiv2Metadata::saveToXmp(const Glib::ustring &path) const
     if (Exiv2::XmpParser::encode(data, xmp, Exiv2::XmpParser::omitPacketWrapper|Exiv2::XmpParser::useCompactFormat) != 0) {
         err = true;
     } else {
-        FILE *out = g_fopen(path.c_str(), "wb");
+        // ::g_fopen, not g_fopen: outside Windows glib defines g_fopen as a
+        // plain macro for fopen, which then resolves to rtengine::fopen from
+        // myfile.h and returns an IMFILE*. Same guard as imageio.cc and
+        // rtthumbnail.cc already use.
+        FILE *out = ::g_fopen(path.c_str(), "wb");
         if (!out || fputs(data.c_str(), out) == EOF) {
             err = true;
         }

@@ -44,6 +44,8 @@
 
 #include <gtkmm.h>
 
+#include "steeppopup.h"
+
 namespace rtengine
 {
 template<typename T>
@@ -219,6 +221,13 @@ public:
     void toggleSidePanelsZoomFit();
 
     void saveProfile ();
+    // saveProfile with the disk round trip moved off the GUI thread; for the
+    // view-switch path, where a spun-down disk froze the whole switch.
+    void saveProfileAsync ();
+    // Wait for pending background sidecar/cache writes (call before exit).
+    static void drainBackgroundSaves ();
+    // Switch self-test only: leave a real exposure edit on the open image.
+    void debugNudgeExposure ();
     void collapseFilterBar();  // Collapse filter bar to prevent filmstrip overlap
     void restoreEditorFilter();
     void closeAlbumView ();  // public: close album view + deselect sidebar
@@ -330,7 +339,7 @@ private:
 
     // Album view sort
     Gtk::MenuButton* albumSortBtn_;
-    Gtk::Menu* albumSortMenu_;
+    std::unique_ptr<steepui::PopupMenu> albumSortPopup_;
     Gtk::RadioMenuItem* albumSortMethod_[Options::SORT_METHOD_COUNT];
     Gtk::RadioMenuItem* albumSortOrder_[2];
     void albumSortChanged ();
@@ -415,6 +424,20 @@ private:
     Gtk::Label* editorTitleLabel_ = nullptr;
     sigc::connection editorTitleConn_;
     void updateEditorTitleLabel (const Glib::ustring& text, const Glib::ustring& tooltip);
+
+public:
+    /// Re-apply the "folder name above the filmstrip" setting without needing
+    /// the title text to change.
+    void refreshEditorTitleVisibility ();
+    /// Move the filmstrip (and the folder title with it) above or below the
+    /// image, per Options::filmstripAtBottom.
+    void applyFilmstripPlacement ();
+
+private:
+    Gtk::Box* editbox_ = nullptr;   // vertical stack holding filmstrip + canvas
+public:
+
+private:
     DirBrowser* editorDirBrowser_;
     AlbumBrowser* albumBrowser_;
     Gtk::Paned* editorPlacesPaned_;
@@ -495,6 +518,12 @@ private:
     Gtk::Box *vsubboxright;
     Gtk::Box *histogramRow_;
     Gtk::Label *exifInfo;
+    // Hover-expanded metadata block: overlays the histogram (expanding
+    // upward, no layout shift) while the EXIF strip is hovered. Replaces the
+    // old on-image floating info overlay.
+    Gtk::Revealer *exifDetailRevealer_ = nullptr;
+    Gtk::Label *exifDetail_ = nullptr;
+    sigc::connection exifDetailCloseTimer_;
 
     Gtk::Button* queueimg;
     Gtk::Button* saveimgas;

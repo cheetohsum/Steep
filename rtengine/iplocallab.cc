@@ -943,6 +943,13 @@ struct local_params {
     float aimaskopa;
     int aimaskrefrad;
     float aimaskrefeps;
+    int aimaskshapeop; // 0 = blend, 1 = shape adds, 2 = shape cuts
+    // The user's shape extents, stashed before the AI work-bounds override
+    // clobbers lxL/lx/lyT/ly — add/subtract evaluate the shape from these.
+    float aishapelxL;
+    float aishapelx;
+    float aishapelyT;
+    float aishapely;
 #endif
 
 };
@@ -2051,6 +2058,10 @@ static void calcLocalParams(int sp, int oW, int oH,  const LocallabParams& local
     lp.aimaskopa = static_cast<float>(locallab.spots.at(sp).aiMaskOpacity);
     lp.aimaskrefrad = locallab.spots.at(sp).aiMaskRefineRadius;
     lp.aimaskrefeps = static_cast<float>(locallab.spots.at(sp).aiMaskRefineEps);
+    lp.aimaskshapeop = locallab.spots.at(sp).aiMaskShapeOp;
+    // Empty until Lab_Local stashes the real shape extents; an empty shape
+    // makes add a no-op and subtract cut nothing, never garbage.
+    lp.aishapelxL = lp.aishapelx = lp.aishapelyT = lp.aishapely = 0.f;
 #endif
 
 }
@@ -9917,6 +9928,16 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
             aiFullH = aiMaskSnapshot.fullHeight;
         }
     }
+    // For shape add/subtract the user's shape must be evaluated with its real
+    // geometry — lp's extents were repurposed as the AI work bounds.
+    const bool aiShapeOpActive = lp.useaimask && aiMaskPtr && lp.aimaskshapeop != 0;
+    local_params lpAiShape = lp;
+    if (aiShapeOpActive) {
+        lpAiShape.lxL = lp.aishapelxL;
+        lpAiShape.lx = lp.aishapelx;
+        lpAiShape.lyT = lp.aishapelyT;
+        lpAiShape.ly = lp.aishapely;
+    }
 #endif
 
 #ifdef _OPENMP
@@ -9975,7 +9996,10 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
                         * aiMaskW / static_cast<float>(aiFullW);
                     aiMaskValue = sampleAIMask(
                         *aiMaskPtr, aiMaskW, aiMaskH, maskX, maskY);
-                    if (aiMaskValue <= 0.f) {
+                    // In add mode the geometric shape contributes on its own,
+                    // so a zero AI sample cannot skip; a cut of nothing can.
+                    if (aiMaskValue <= 0.f
+                            && (!aiShapeOpActive || lp.aimaskshapeop == 2)) {
                         continue;
                     }
                 }
@@ -10069,9 +10093,24 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
                 float factorx = localFactor;
 #ifdef RT_AI_MASKING
                 if (aiMaskActive) {
-                    factorx = lp.aimaskopa * aiMaskValue;
-                    if (lp.shapmet == 2) {
-                        factorx *= localFactor;
+                    if (aiShapeOpActive) {
+                        // The user's shape with its true geometry, zero outside.
+                        int zoneShape = 0;
+                        float shapeFactor = 1.f;
+                        calcTransitionShape(lox, loy, achm, lpAiShape, zoneShape, shapeFactor);
+                        const float shapeVal = zoneShape > 0 ? LIM01(shapeFactor) : 0.f;
+                        if (lp.aimaskshapeop == 1) {
+                            // Shape adds to the AI selection.
+                            factorx = rtengine::max(lp.aimaskopa * aiMaskValue, shapeVal);
+                        } else {
+                            // Shape cuts out of the AI selection.
+                            factorx = lp.aimaskopa * aiMaskValue * (1.f - shapeVal);
+                        }
+                    } else {
+                        factorx = lp.aimaskopa * aiMaskValue;
+                        if (lp.shapmet == 2) {
+                            factorx *= localFactor;
+                        }
                     }
                 }
 #endif
@@ -15698,6 +15737,13 @@ void ImProcFunctions::Lab_Local(
     // AI edits use the prepared mask's cached bounds. This avoids running every
     // local-edit stage over the whole preview for a small selected subject.
     if (lp.useaimask) {
+        // Keep the user's shape geometry readable after the work-bounds
+        // override below — shape add/subtract evaluates the shape from it.
+        lp.aishapelxL = lp.lxL;
+        lp.aishapelx = lp.lx;
+        lp.aishapelyT = lp.lyT;
+        lp.aishapely = lp.ly;
+
         // Use fixed maximum edge controls for the work bounds. The underlying
         // local edit then remains identical while size/feather only change blending.
         const AIMaskSnapshot aiBounds = AIMaskCache::getInstance().getPreparedMask(
@@ -15721,14 +15767,24 @@ void ImProcFunctions::Lab_Local(
             const float by1 = LIM(aiBounds.maskY1 * scaleY + processingMargin,
                                   0.f, static_cast<float>(oH));
 
-            lp.lxL = std::max(lp.xc - bx0, 1.f);
-            lp.lx  = std::max(bx1 - lp.xc, 1.f);
-            lp.lyT = std::max(lp.yc - by0, 1.f);
-            lp.ly  = std::max(by1 - lp.yc, 1.f);
-        } else if (aiBounds) {
-            // An empty mask has no visible edit; retain only the minimum work area.
+            if (lp.aimaskshapeop == 1) {
+                // Add mode: the geometric shape contributes outside the AI
+                // mask too, so the work area is the union of both bounds.
+                lp.lxL = std::max(lp.lxL, std::max(lp.xc - bx0, 1.f));
+                lp.lx  = std::max(lp.lx,  std::max(bx1 - lp.xc, 1.f));
+                lp.lyT = std::max(lp.lyT, std::max(lp.yc - by0, 1.f));
+                lp.ly  = std::max(lp.ly,  std::max(by1 - lp.yc, 1.f));
+            } else {
+                lp.lxL = std::max(lp.xc - bx0, 1.f);
+                lp.lx  = std::max(bx1 - lp.xc, 1.f);
+                lp.lyT = std::max(lp.yc - by0, 1.f);
+                lp.ly  = std::max(by1 - lp.yc, 1.f);
+            }
+        } else if (aiBounds && lp.aimaskshapeop != 1) {
+            // An empty mask has no visible edit; retain only the minimum work
+            // area. In add mode the shape still edits, so its bounds stand.
             lp.lxL = lp.lx = lp.lyT = lp.ly = 4.f;
-        } else {
+        } else if (!aiBounds) {
             // Preserve correctness while segmentation is still becoming available.
             lp.lxL = std::max(lp.xc, 1.f);
             lp.lx  = std::max(static_cast<float>(oW) - lp.xc, 1.f);
@@ -23797,6 +23853,16 @@ void ImProcFunctions::Lab_Local(
                 aiFullHOv = aiMaskSnapshotOv.fullHeight;
             }
         }
+        // Shape add/subtract: evaluate the shape with its true geometry (lp's
+        // extents were repurposed as the AI work bounds above).
+        const bool aiShapeOpActiveOv = lp.useaimask && aiMaskPtrOv && lp.aimaskshapeop != 0;
+        local_params lpAiShapeOv = lp;
+        if (aiShapeOpActiveOv) {
+            lpAiShapeOv.lxL = lp.aishapelxL;
+            lpAiShapeOv.lx = lp.aishapelx;
+            lpAiShapeOv.lyT = lp.aishapelyT;
+            lpAiShapeOv.ly = lp.aishapely;
+        }
 #endif
 
 #ifdef _OPENMP
@@ -23840,7 +23906,19 @@ void ImProcFunctions::Lab_Local(
                         * aiMaskWOv / static_cast<float>(aiFullWOv);
                     const float aiVal = sampleAIMask(
                         *aiMaskPtrOv, aiMaskWOv, aiMaskHOv, maskX, maskY);
-                    factorx = intp(lp.aimaskopa, aiVal * localFactor, localFactor);
+                    if (aiShapeOpActiveOv) {
+                        int zoneShape = 0;
+                        float shapeFactor = 1.f;
+                        calcTransitionShape(lox, loy, achm, lpAiShapeOv, zoneShape, shapeFactor);
+                        const float shapeVal = zoneShape > 0 ? LIM01(shapeFactor) : 0.f;
+                        if (lp.aimaskshapeop == 1) {
+                            factorx = rtengine::max(lp.aimaskopa * aiVal, shapeVal);
+                        } else {
+                            factorx = lp.aimaskopa * aiVal * (1.f - shapeVal);
+                        }
+                    } else {
+                        factorx = intp(lp.aimaskopa, aiVal * localFactor, localFactor);
+                    }
                 }
 #endif
                 hoverMask[y][x] = LIM01(factorx);

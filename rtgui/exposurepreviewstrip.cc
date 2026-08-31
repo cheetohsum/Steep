@@ -372,8 +372,11 @@ bool PreviewStrip::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
             double offsetY = (h - thumbH * sc) / 2.0;
 
             cr->save();
-            // Clip to this slot
-            cr->rectangle(slotX, 0, slotWidth, h);
+            // Clip to this slot, with a 1px breathing gap between neighbours
+            // so the variants read as distinct frames instead of one smear.
+            const double gapL = (i > 0) ? 1.0 : 0.0;
+            const double gapR = (i < NUM_THUMBS - 1) ? 1.0 : 0.0;
+            cr->rectangle(slotX + gapL, 0, slotWidth - gapL - gapR, h);
             cr->clip();
             cr->translate(slotX + offsetX, offsetY);
             cr->scale(sc, sc);

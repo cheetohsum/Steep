@@ -158,6 +158,19 @@ struct GrainParamsEdited {
     bool color;
 };
 
+struct LightEffectsParamsEdited {
+    bool enabled;
+    bool threshold;
+    bool glow;
+    bool glowRadius;
+    bool halation;
+    bool halationSize;
+    bool halationWarmth;
+    bool flare;
+    bool flareLength;
+    bool flareAngle;
+};
+
 struct TiltShiftParamsEdited {
     bool enabled;
     bool amount;
@@ -1172,6 +1185,7 @@ public:
         bool aiMaskOpacity;
         bool aiMaskRefineRadius;
         bool aiMaskRefineEps;
+        bool aiMaskShapeOp;
         //locallabcie
         bool visicie;
         bool complexcie;
@@ -1947,6 +1961,7 @@ struct ParamsEdited {
     TextureParamsEdited texture;
     ClarityParamsEdited clarity;
     GrainParamsEdited grain;
+    LightEffectsParamsEdited lightEffects;
     TiltShiftParamsEdited tiltShift;
     LensBlurParamsEdited lensBlur;
     RGBCurvesParamsEdited rgbCurves;

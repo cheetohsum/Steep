@@ -1,41 +1,67 @@
 /*
-  This file is part of RawTherapee.
+  steep look — the shared rule sheet behind every steep theme
 
-  Copyright (c) 2015-2020 RawTherapee
-  Contributions by DrSlony, Hombre, TooWaBoo, Thanatomanic
+  Every color in this file is a steep_* token reference (see
+  common/palette-defaults.css for the contract). A theme is a palette:
+  it imports common/size.css, declares its @define-color steep_* block,
+  then imports this file. Hover and raise washes use @steep_wash so light
+  themes (wash = black) darken on hover while dark themes (wash = white)
+  lighten.
 
-  RawTherapee is free software: you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation, either version 3 of the License, or
-  (at your option) any later version.
-
-  RawTherapee is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.
-
-  You should have received a copy of the GNU General Public License
-  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
+  Structure/sizing shared by all themes stays in common/size.css; rules
+  here carry the steep design language: flat fills, one accent, elevation
+  via the four surface tokens, selection as select-fill + accent edge.
 */
 
-/***************************/
-/**/ @import url("./common/size.css"); /**/ /* TODO: Remove this weird dependency */
-/***************************/
+
+/** Motion ************************************************************************************
+   Hover/press/check changes ease instead of snapping. Leaf interactive
+   widgets only — never containers, never layout properties, and text-shadow
+   stays banned. Background-image swaps (the tapered bars) switch instantly
+   by GTK design; the eased background-color carries the softness. **/
+button,
+menuitem,
+modelbutton,
+#NavButton,
+#OptionsMenuButton,
+#ModeButtonBar .ModeButton,
+#MyExpanderTitle,
+#AdvancedSectionHeader,
+#ToolGroupHeader,
+notebook tab,
+scrollbar slider,
+check,
+radio,
+scale slider,
+.preset-card,
+#EdgeGripV,
+#EdgeGripH {
+    transition: background-color 120ms ease, border-color 120ms ease, opacity 120ms ease, color 120ms ease;
+}
 
 /** Set style defaults **/
 * {
-    color: #cdd2da;
+    color: @steep_text;
+    /* Default border color for every border-width set anywhere without an
+       explicit color — otherwise GTK falls back to Adwaita's dark grey,
+       which reads as a stray black outline on light themes. Rules that want
+       a different border set their own color and win by specificity. */
+    border-color: @steep_border;
     text-shadow: none; /* Keep at none, or suffer serious performance issues */
 }
 
 *:disabled {
-    color: rgba(200,210,225,0.25);
+    color: alpha(@steep_text,0.25);
     opacity: 0.8;
 }
 
+/* Selected rows: the full-row select highlight. (The tapered accent-bar
+   language is reserved for tabs/mode buttons — a resting selection in a
+   list reads better as a filled row.) */
 .view:selected:not(check):not(radio) {
-    color: #1a1e24;
-    background-color: #8a92a1;
+    color: @steep_sel_fg;
+    background-color: @steep_select;
+    background-image: none;
 }
 
 /* The Places and Dir browser panels */
@@ -44,190 +70,105 @@ textview.view, treeview.view {
     margin: 0;
 }
 .view, .textview, textview, textview.view, treeview > entry {
-    background-color: #1a1e24;
+    background-color: @steep_surface_0;
 }
 /* The headers of these panels */
 .view .button {
-    background-color: #2e3340;
+    background-color: @steep_surface_2;
 }
 
-/* Mask list treeview — transparent background to blend with panel */
-#MaskTreeView,
-#MaskTreeView.view {
-    background-color: transparent;
-}
-#MaskTreeView row {
-    min-height: 32px;
-    padding: 4px 0;
-}
-#MaskTreeView row:selected {
-    background-color: rgba(100,160,255,0.25);
-}
-#MaskTreeView row:hover:not(:selected) {
-    background-color: rgba(130,170,230,0.10);
-}
-
-/* Masking panel — strip all backgrounds to match surrounding dark panel area.
-   The panel is nested inside multiple flat-mode expanders; ensure every layer
-   is fully transparent and content doesn't overflow to the right.
-   Use high specificity (#MyExpander.flat-mode #MaskingPanel) to beat the
-   flat-mode .ToolParamBlock { margin: 0 } rule. */
-#MyExpander.flat-mode #MaskingPanel,
-#MaskingPanel {
-    background-color: transparent;
-    background-image: none;
-    border: none;
-    box-shadow: none;
-    padding-right: 6px;
-    min-width: 0;
-    color: white;
-}
-#MaskingPanel label {
-    color: white;
-}
-#MaskTreeView,
-#MaskTreeView * {
-    color: white;
-}
-/* Scrolledwindow inside masking panel — no background, constrain width */
-#MaskingPanel scrolledwindow,
-#MaskingPanel scrolledwindow viewport {
-    background-color: transparent;
-    background-image: none;
-    min-width: 0;
-}
-/* Nested boxes/grids inside masking panel — transparent */
-#MaskingPanel > box,
-#MaskingPanel > grid,
-#MaskingPanel box > box {
-    background-color: transparent;
-    background-image: none;
-    border: none;
-    box-shadow: none;
-}
-/* All ancestors of MaskingPanel within the flat-mode expander tree */
-#MyExpander.flat-mode .ToolParamBlock .ToolParamBlock {
-    background-color: transparent;
-    background-image: none;
-    border: none;
-    box-shadow: none;
-}
-
-window > box:not(#MainVBox) {
+window > box {
     padding: 0.416666666666666666em;
 }
 window.background {
-    background-color: #252a32;
+    background-color: @steep_surface_1;
 }
 
 /*** Window decoration *********************************************************/
 .csd:not(.popup):not(tooltip) > decoration {
-    background-color: #252a32;
+    background-color: @steep_surface_1;
     background-image: none;
-    border: none;
-    box-shadow: none;
-    margin: 0;
+    box-shadow: 0 0.25em 0.75em 1px rgba(0, 0, 0, 0.5), 0 0 0 1px @steep_border;
 }
 headerbar {
-    background-color: #252a32;
-    background-image: linear-gradient(rgba(255,255,255,0.05), rgba(0,0,0,0.08));
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
-    border: none;
+    background-color: @steep_surface_2;
+    background-image: none;
+    box-shadow: none;
+    border-bottom: 1px solid @steep_border;
     padding: 0 0.333333em;
     min-height: 2em;
 }
-#MainVBox {
-    margin: 0;
-    padding: 0;
-}
 #RTHeaderBar {
-    margin: 0;
     padding: 0 0.25em;
 }
 #RTHeaderBar .title {
     font-weight: bold;
-    font-size: 1.035em;
-    color: #e2e6ed;
+    font-size: 0.9em;
+    color: @steep_text;
 }
 #RTHeaderBar .subtitle {
-    font-size: 0.8625em;
-    color: #6b7280;
+    font-size: 0.75em;
+    color: @steep_text_dim;
 }
 
 /* Header bar navigation buttons */
 #NavButton {
     padding: 0.25em 0.5em;
-    margin: 0.083333em;
+    margin: 1px;
     border-radius: 0.25em;
     background-color: transparent;
     border: none;
 }
 #NavButton:hover {
-    background-color: rgba(130,170,230,0.08);
+    background-color: alpha(@steep_wash, 0.06);
 }
 #NavButton:checked {
-    background-color: rgba(102,153,204,0.12);
-    box-shadow: inset 0 -0.166666em 0 0 #6699CC;
+    /* No full-button glow: only the bottom bar, tapering at both ends. */
+    background-color: transparent;
+    box-shadow: none;
+    background-image: linear-gradient(to right,
+        alpha(@steep_accent, 0.00) 0%,
+        alpha(@steep_accent, 0.90) 22%,
+        alpha(@steep_accent, 0.90) 78%,
+        alpha(@steep_accent, 0.00) 100%);
+    background-size: 100% 3px;
+    background-repeat: no-repeat;
+    background-position: bottom;
 }
 
 /* Options menu button */
 #OptionsMenuButton {
     padding: 0.25em 0.333333em;
-    margin: 0.083333em;
+    margin: 1px;
     border-radius: 0.25em;
 }
 #OptionsMenuButton:hover {
-    background-color: rgba(130,170,230,0.08);
+    background-color: alpha(@steep_wash, 0.08);
 }
-#OptionsPopover contents {
-    background-color: rgba(30,35,48,0.92);
-    border: 1px solid rgba(120,140,180,0.15);
-    border-radius: 10px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.06);
-    padding: 4px;
-}
-#OptionsPopover separator {
-    background-color: rgba(120,140,180,0.12);
-    min-height: 1px;
-    margin: 2px 6px;
+#OptionsPopover {
+    background-color: @steep_surface_3;
 }
 #OptionsPopover button {
-    padding: 0.333333em 0.666666em;
-    border-radius: 6px;
+    padding: 0.333333em 0.5em;
+    border-radius: 2px;
     min-width: 10em;
 }
 #OptionsPopover button:hover {
-    background-color: rgba(130,170,230,0.12);
-}
-#OptionsPopover checkbutton {
-    padding: 2px 6px;
-    border-radius: 6px;
-}
-#OptionsPopover checkbutton:hover {
-    background-color: rgba(130,170,230,0.08);
-}
-#OptionsPopover combobox button {
-    min-width: 0;
-    padding: 2px 8px;
-    border-radius: 6px;
-    border: 1px solid rgba(120,140,180,0.2);
-}
-#OptionsPopover label {
-    padding: 0 2px;
+    background-color: alpha(@steep_wash, 0.10);
 }
 
 /* Window control buttons */
 #WindowControlButton {
     padding: 0.25em 0.416666em;
-    margin: 0.083333em;
+    margin: 1px;
     border-radius: 0.25em;
 }
 #WindowControlButton:hover {
-    background-color: rgba(130,170,230,0.10);
+    background-color: alpha(@steep_wash, 0.10);
 }
 #WindowCloseButton {
     padding: 0.25em 0.416666em;
-    margin: 0.083333em;
+    margin: 1px;
     border-radius: 0.25em;
 }
 #WindowCloseButton:hover {
@@ -239,7 +180,7 @@ dialog > box {
 dialog.csd #PrefNotebook > header,
 dialog.csd #AboutNotebook > header,
 window.csd:not(.fullscreen) #MainNotebook > header.top {
-    border-top-color: #2c3038;
+    border-top-color: @steep_surface_1;
 }
 
 /* Window state */
@@ -265,30 +206,30 @@ undershoot {
 dialog.background,
 messagedialog.background,
 window.dialog.background {
-    background-color: #2c3038;
-    color: #cdd2da;
+    background-color: @steep_surface_1;
+    color: @steep_text;
 }
 popover, popover.background {
-    background-color: rgba(28,32,40,0.95);
-    background-image: linear-gradient(rgba(255,255,255,0.04), transparent 40%);
-    color: #cdd2da;
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 8px;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.04);
+    background-color: @steep_surface_3;
+    color: @steep_text;
 }
 
 box, grid {
     border-width: 0;
     border-style: none;
     border-radius: 0;
-    margin: 0.083333333333333333em;
+    /* Zero, deliberately: the old global 1px margin gave every container a
+       ring of fuzz that summed differently per panel — the sidebar and the
+       photo area ended at visibly different heights. Spacing is added where
+       wanted, not globally. */
+    margin: 0;
     padding: 0;
     min-height: 0.4166666666666666em;
     min-width: 0.4166666666666666em;
 }
 label {
-    padding: 0.083333333333333333em 0;
-    margin: 0.19em;
+    padding: 1px 0;
+    margin: 2px;
     min-height: 1.333333333333333333em;
 }
 
@@ -300,13 +241,13 @@ frame {
 
 /* Create space between frame contents and frame border */
 frame border {
-    border: 1px solid #1a1e24;
+    border: 1px solid @steep_border;
     border-radius: 0.3333333333333333em;
-    padding: 0.083333333333333333em;
+    padding: 1px;
 }
 
 frame > label {
-    color: #e2e6ed;
+    color: @steep_text_hi;
     padding: 0.416666666666666666em 0.25em;
 }
 
@@ -316,24 +257,26 @@ entry > window > frame {
 }
 
 tooltip {
-    border-radius: 8px;
-    background-color: rgba(20,24,32,0.95);
-    border-style: none;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    border-radius: 0.416666666666666666em;
+    background-color: alpha(@steep_surface_3, 0.97);
+    border: 1px solid @steep_border_soft;
+    box-shadow: none;
     padding: 0;
     margin: 0;
 }
 
 treeview header button {
-    background-image: linear-gradient(#2e3340, #282e38, #252a32);
+    background-image: none;
+    background-color: @steep_surface_2;
+    border-bottom: 1px solid @steep_border;
 }
 
 /*** Separator *********************************************************************************/
 separator,
 .separator {
     border: none;
-    min-width: 0.083333333333333333em;
-    min-height: 0.083333333333333333em;
+    min-width: 1px;
+    min-height: 1px;
 }
 grid separator, box separator {
     background-color: rgba(0, 0, 0, 0.17);
@@ -350,7 +293,7 @@ popover separator:not(:only-child) {
 }
 
 paned.horizontal > separator {
-    margin:  0 0.16666666666666666em;
+    margin:  0 2px;
 }
 
 paned.vertical > separator {
@@ -370,119 +313,54 @@ menu separator {
 }
 
 .scrollableToolbar separator.vertical {
-    margin: 0.19em;
+    margin: 2px;
 }
 
 #MyExpander separator.horizontal {
-    min-height: 0;
-    margin: 0;
-    background: transparent;
-    border: none;
+    margin: 0.25em 2px;
 }
 #MyFileChooserButton separator {
 }
 
 #PlacesPaned .view.separator {
-    min-height: 0.16666666666666666em;
-    color: #252a32;
+    min-height: 2px;
+    color: @steep_surface_2;
 }
 
 #MetaPanelNotebook separator {
-    margin: 0.19em 0;
+    margin: 2px 0;
 }
 /*** end****************************************************************************************/
 
 #FileBrowser {
-    padding: 0.1666666666666666em;
+    padding: 2px;
     margin: 0;
-    background-color: #252a32;
-    min-height: 0;
-}
-#FileBrowser.filmstrip {
-    padding: 0;
-    margin: 0;
-}
-/* Zero all box/grid margins inside filmstrip to prevent global rule compounding */
-#EditorFilmstripPane,
-#EditorFilmstripPane box,
-#EditorFilmstripPane grid {
-    margin: 0;
-    padding: 0;
-    min-height: 0;
-}
-/* Each nesting level (FileCatalog, FilmstripPanel, FileBrowser, internal)
-   contributed a 1-2px border in filmstrip mode; strip them so the strip
-   hugs the thumbnails. */
-#EditorFilmstripPane #FileCatalog,
-#EditorFilmstripPane #FilmstripPanel,
-#EditorFilmstripPane #FileBrowser,
-#EditorFilmstripPane drawingarea {
-    border: none;
-    margin: 0;
-    padding: 0;
 }
 
 #FileCatalog {
-    background-color: #252a32;
+    background-color: @steep_surface_0;
     border: none;
-    padding: 0;
-    margin: 0;
-}
-/* Compact scrollbar in filmstrip — visible but doesn't waste space */
-#FileCatalog scrollbar.horizontal slider {
-    min-height: 6px;
-    border-width: 1px;
-}
-#FileCatalog scrollbar.horizontal {
-    min-height: 8px;
 }
 #FileCatalog:selected {
-    background-color: rgba(102,153,204,0.2);
-}
-
-/* Folder currently open, centred in the file browser toolbar */
-#BrowserPathTitle {
-    font-weight: bold;
-    color: #dfe5ef;
-    padding: 0 12px;
+    background-color: @steep_select;
 }
 
 #BeforeAfterContainer frame {
-    background-color: #1a1e24;
+    background-color: @steep_surface_0;
     padding: 0;
-    margin: 0;
+    margin: 1px;
 }
 
 #BeforeAfterContainer frame border {
     border-radius: 0;
-    border: none;
     margin: 0;
     padding: 0;
-}
-
-#BeforeAfterContainer .ba-label {
-    font-size: 0.8em;
-    font-weight: normal;
-    color: rgba(205,210,218,0.6);
-    padding: 1px 0;
-    min-height: 0;
-}
-
-#BeforeAfterContainer .ba-lock {
-    min-height: 14px;
-    min-width: 14px;
-    padding: 0;
-    margin: 0 2px;
-}
-
-#BeforeAfterContainer .ba-lock image {
-    margin: 0;
 }
 
 
 /* Frames in the toolbox. Not MyExpander frames. */
 eventbox.frame {
-    border-color: rgba(255,255,255,0.06);
+    border-color: @steep_select;
 }
 
 /*** Load - Save dialog ************************************************************************/
@@ -501,19 +379,19 @@ filechooser #pathbarbox {
 
 /* Right side */
 filechooser > box > paned > box:nth-child(3) {
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
     padding: 0;
     margin: 0;
 }
 filechooser > box > paned > box:nth-child(3) > box > * > * > * > frame {
     padding: 0;
-    margin: -0.6666666666666666em -0.083333333333333333em;
+    margin: -0.6666666666666666em -1px;
 }
 /**/
 filechooser placessidebar viewport.frame {
     padding: 0;
-    margin: -0.3333333333333333em 0 -0.083333333333333333em;
-    border-width: 0.083333333333333333em;
+    margin: -0.3333333333333333em 0 -1px;
+    border-width: 1px;
 }
 filechooser placessidebar list row image {
     min-width: 1.333333333333333333em;
@@ -535,25 +413,23 @@ scrollbar {
     border: none;
     margin: 0;
     padding: 0;
-    background-color: rgba(20,24,30,0.5);
+    background-color: @steep_surface_0;
 }
 scrollbar slider {
     padding: 0;
     margin: 0;
-    background-color: rgba(160,175,200,0.35);
-    border-radius: 4px;
-    box-shadow: 0 0 2px rgba(0,0,0,0.3);
+    background-color: alpha(@steep_text_dim, 0.40);
+    border-radius: 0.25em;
 }
 scrollbar slider:hover {
-    background-color: rgba(160,175,200,0.55);
-    box-shadow: 0 0 4px rgba(102,153,204,0.2);
+    background-color: @steep_text_dim;
 }
 
 scrollbar:not(.overlay-indicator).horizontal {
-    border-width: 0 0.083333333333333333em 0.083333333333333333em 0.083333333333333333em;
+    border-width: 0 1px 1px 1px;
 }
 scrollbar:not(.overlay-indicator).vertical {
-    border-width: 0.083333333333333333em 0.083333333333333333em 0.083333333333333333em 0;
+    border-width: 1px 1px 1px 0;
 }
 scrollbar:not(.overlay-indicator).horizontal slider,
 scrollbar.horizontal.hovering slider {
@@ -569,7 +445,7 @@ scrollbar.horizontal.hovering.fine-tune slider {
     /*
     min-height: 0.3333333333333333em;
     border-width: 0.3333333333333333em;
-    margin: 0 -0.0833333333333333em;
+    margin: 0 -1px;
     */
 }
 scrollbar.horizontal.overlay-indicator:not(.hovering) slider {
@@ -577,8 +453,8 @@ scrollbar.horizontal.overlay-indicator:not(.hovering) slider {
     min-height: 0.25em;
     border-width: 0;
     border-radius: 0.25em;
-    margin: 0.166666666666666666em 0.25em;
-    /*margin: 0 0.1666666666666666em;*/
+    margin: 2px 0.25em;
+    /*margin: 0 2px;*/
 }
 
 scrollbar:not(.overlay-indicator).vertical slider,
@@ -591,11 +467,11 @@ scrollbar:not(.overlay-indicator).vertical.fine-tune slider,
 scrollbar.vertical.hovering.fine-tune slider {
     min-width: calc(0.5em - 2px);
     border-width: calc(0.25em + 1px);
-    margin: -0.0833333333333333em 0;
+    margin: -1px 0;
     /*
     min-width: 0.3333333333333333em;
     border-width: 0.3333333333333333em;
-    margin: -0.0833333333333333em 0;
+    margin: -1px 0;
     */
 }
 scrollbar.vertical.overlay-indicator:not(.hovering) slider {
@@ -603,8 +479,8 @@ scrollbar.vertical.overlay-indicator:not(.hovering) slider {
     min-height: 2em;
     border-width: 0;
     border-radius: 0.25em;
-    margin: 0.1666666666666666em 0;
-    /*margin: 0.25em 0.166666666666666666em;*/
+    margin: 2px 0;
+    /*margin: 0.25em 2px;*/
 }
 
 /* Scrollbar stuck workaround */
@@ -626,39 +502,48 @@ scrollbar:not(.overlay-indicator):hover {
 
 /**************************************************/
 
+/* Flat button state ramp: rest is a faint raise, hover one step brighter,
+   active presses down, checked is a selection tint with an accent edge. */
 button  {
     padding: 0;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.15), inset 0 1px 0 rgba(255,255,255,0.04);
+    box-shadow: none;
     min-height: 0.4166666666666666em;
     min-width: 0.4166666666666666em;
-    background-image: linear-gradient(to bottom, rgba(130,150,180,.18), rgba(50,60,80,.18));
-    border: 1px solid rgba(255,255,255,0.08);
+    background-image: none;
+    background-color: alpha(@steep_wash, 0.055);
 }
 
 button:disabled {
     opacity: 1;
+    background-color: alpha(@steep_wash, 0.03);
 }
 
 button.flat  {
     background-image: none;
+    background-color: transparent;
 }
 
 button.flat:checked {
-    background-image: linear-gradient(rgba(30,40,60,.6), rgba(10,15,25,.6));
+    background-color: alpha(@steep_select, 0.35);
 }
 
 checkbutton > check {
-    background-image: linear-gradient(rgba(60,70,90,.6), rgba(40,50,70,.6));
-    border-color: rgba(255,255,255,0.08);
+    background-image: none;
+    background-color: @steep_surface_3;
 }
 
 radiobutton > radio {
-    background-image: linear-gradient(rgba(60,70,90,.6), rgba(40,50,70,.6));
-    border-color: rgba(255,255,255,0.08);
+    background-image: none;
+    background-color: @steep_surface_3;
 }
 
-button.flat:hover, checkbutton:hover > check, radiobutton:hover > radio {
-    background-image: linear-gradient(rgba(80,95,120,.6), rgba(60,75,100,.6));
+button.flat:hover {
+    background-image: none;
+    background-color: alpha(@steep_wash, 0.08);
+}
+checkbutton:hover > check, radiobutton:hover > radio {
+    background-image: none;
+    background-color: shade(@steep_surface_3, 1.25);
 }
 
 button.popupbutton-arrow {
@@ -666,20 +551,23 @@ button.popupbutton-arrow {
 }
 
 button:hover  {
-    background-image: linear-gradient(to bottom, rgba(150,170,200,.2), rgba(80,100,130,.2));
-    box-shadow: 0 0 4px rgba(102,153,204,0.1);
+    background-image: none;
+    background-color: alpha(@steep_wash, 0.10);
 }
 
 button:active  {
-    background-image: linear-gradient(to bottom, rgba(20,30,50,.4), rgba(0,0,0,.3));
+    background-image: none;
+    background-color: alpha(#000000, 0.22);
 }
 
 button:checked  {
-    background-image: linear-gradient(to bottom, rgba(30,40,60,.6), rgba(10,15,25,.6));
+    background-image: none;
+    background-color: alpha(@steep_select, 0.35);
 }
 
 button:checked:hover  {
-    background-image: linear-gradient(to bottom, rgba(50,65,90,.6), rgba(30,40,60,.6));
+    background-image: none;
+    background-color: alpha(@steep_select, 0.45);
 }
 
 /* Save, Cancel, OK ... buttons */
@@ -704,33 +592,34 @@ scale slider {
     margin: -0.4em;
     padding: 0.4em;
     border-radius: 0.8em;
-    border-width: 0.083333333333333333em;
-    background-image: linear-gradient(#3a4050, #343a48, #2e3340);
+    border-width: 1px;
+    background-image: none;
+    background-color: @steep_surface_3;
 }
 scale slider:hover {
-    background-image: linear-gradient(#4a5060, #444a58, #3e4350);
-    box-shadow: 0 0 4px rgba(102,153,204,0.2);
+    background-image: none;
+    background-color: shade(@steep_surface_3, 1.25);
 }
 scale:disabled slider {
     background-image: none;
-    background-color: #444;
-    border-color: #282828;
+    background-color: @steep_surface_2;
+    border-color: @steep_border;
 }
 scale trough {
     margin: 0.5em 0.5em;  /* have to be half of "scale slider / min-width min-height" */
     min-height: 0.2em;
     min-width: 0.2em;
     padding: 0 0.583333333333333333em;
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
     border-radius: 0.333333333333333333em;
-    background-color: rgba(0,0,0,0.2);
+    background-color: rgba(0,0,0,0.15);
 }
 scale:disabled trough {
-    background-color: #444;
-    border-color: #282828;
+    background-color: @steep_surface_2;
+    border-color: @steep_border;
 }
 scale.color trough {
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
     min-height: 0.333333333333333333em;
     min-width: 0.333333333333333333em;
     border-radius: 0;
@@ -755,8 +644,8 @@ scale.fine-tune trough highlight {
 
 /*.EditorTopPanel .button, .ToolBarPanelFileBrowser .button, .EditorZoomPanel .button {*/
 .button {
-    padding: 0.0833333333333333em;
-    margin: 0.0833333333333333em;
+    padding: 1px;
+    margin: 1px;
     padding: 0;
     min-height: 0.4166666666666666em;
     min-width: 0.4166666666666666em;
@@ -775,28 +664,32 @@ scale.fine-tune trough highlight {
 
 /* Better on/off state separation for text toggle buttons, e.g. auto-levels or histogram matching. */
 button.text-button.toggle {
-    background-image: linear-gradient(to bottom, rgba(130,150,180,.15), rgba(50,60,80,.15));
+    background-image: none;
+    background-color: alpha(@steep_wash, 0.055);
 }
 
 button.text-button.toggle:hover {
-    background-image: linear-gradient(to bottom, rgba(150,170,200,.2), rgba(80,100,130,.2));
+    background-image: none;
+    background-color: alpha(@steep_wash, 0.10);
 }
 
 button.text-button.toggle:checked {
-    background-image: linear-gradient(to bottom, rgba(30,40,60,.4), rgba(10,15,25,.4));
+    background-image: none;
+    background-color: alpha(@steep_select, 0.35);
 }
 
 button.text-button.toggle:hover:checked {
-    background-image: linear-gradient(to bottom, rgba(50,65,90,.4), rgba(30,40,60,.4));
+    background-image: none;
+    background-color: alpha(@steep_select, 0.45);
 }
 
 #ShowMaskButton:checked {
-    background-color: rgba(200, 50, 50, 0.7);
+    background-color: alpha(@steep_attention,0.75);
     color: white;
 }
 
 #ShowMaskButton:hover:checked {
-    background-color: rgba(220, 70, 70, 0.8);
+    background-color: alpha(@steep_attention,0.9);
     color: white;
 }
 
@@ -804,21 +697,23 @@ button.text-button.toggle:hover:checked {
 
 .drawingarea {
     border-radius: 0;
-    background-color: #1a1e24;
-    border: 0.0833333333333333em solid #888888;
+    background-color: @steep_surface_0;
+    /* steep_border, not a text tone: the photo canvas is a .drawingarea and
+       a bright outline around it reads as a stray frame on light themes. */
+    border: 1px solid @steep_border;
 }
 .drawingarea:disabled {
-    background-color: #444;
-    border-color: #282828;
+    background-color: @steep_surface_2;
+    border-color: @steep_border;
 }
 
 .drawingarea:selected {
-    background-color: rgba(102,153,204,0.2);
+    background-color: @steep_select;
     border-radius: 1.8333333333333333em;
 }
 
 image {
-    padding: 0.0833333333333333em;
+    padding: 1px;
 }
 
 /* Vertical group of buttons in 1 column */
@@ -870,24 +765,22 @@ button.Right {
 
 /* Preset list panel */
 #PresetListPanel .preset-card {
-    padding: 1px 0;
+    padding: 4px;
     border-radius: 4px;
-    min-width: 48px;
+    min-width: 80px;
 }
 
 #PresetListPanel .preset-card:hover {
-    background-color: rgba(130,170,230,0.08);
+    background-color: alpha(@steep_wash, 0.08);
 }
 
 #PresetListPanel .preset-card.selected {
-    background-color: rgba(100,160,255,0.25);
-    border: 1px solid rgba(100,160,255,0.5);
+    background-color: alpha(@steep_select,0.25);
+    border: 1px solid alpha(@steep_accent, 0.7);
 }
 
 #PresetListPanel .preset-card-label {
-    font-size: 5px;
-    margin-top: 0;
-    padding-top: 0;
+    font-size: 0.72em;
 }
 
 #PresetListPanel .preset-special {
@@ -897,13 +790,13 @@ button.Right {
 }
 
 #PresetListPanel .preset-special.selected {
-    background-color: rgba(100,160,255,0.25);
-    border: 1px solid rgba(100,160,255,0.5);
+    background-color: alpha(@steep_select,0.25);
+    border: 1px solid alpha(@steep_accent, 0.7);
 }
 
-#PresetListPanel .preset-category-label {
+#PresetListPanel .preset-category > label {
     font-weight: bold;
-    font-size: 0.8em;
+    font-size: 0.9em;
 }
 
 #PresetListPanel .preset-category-header {
@@ -912,12 +805,7 @@ button.Right {
 }
 
 #PresetListPanel .preset-category-header:hover {
-    background-color: rgba(130,170,230,0.08);
-}
-
-#PresetListPanel .preset-drop-target {
-    background-color: rgba(100,160,255,0.15);
-    border-radius: 4px;
+    background-color: alpha(@steep_wash, 0.08);
 }
 
 #PresetListPanel box,
@@ -938,13 +826,13 @@ button.Right {
 /* Navigator and History floating dialogs */
 #NavigatorDialog,
 #HistoryDialog {
-    background-color: #2c3038;
+    background-color: @steep_surface_1;
 }
 #NavigatorDialog headerbar,
 #HistoryDialog headerbar {
-    background-color: #252a32;
-    background-image: linear-gradient(rgba(255,255,255,0.03), rgba(0,0,0,0.05));
-    border-bottom-color: #1a1e24;
+    background-color: @steep_surface_2;
+    background-image: none;
+    border-bottom-color: @steep_border;
     min-height: 1.6em;
     padding: 0 0.25em;
 }
@@ -956,7 +844,7 @@ button.Right {
 
 /* Ensure all windows and decorations follow theme */
 decoration {
-    background-color: #2c3038;
+    background-color: @steep_surface_1;
 }
 
 /* Point Color */
@@ -976,9 +864,8 @@ decoration {
 /* [1.23[-][+]] */
 entry, spinbutton {
     min-height: 0.8333333333333333em;
-    background-color: rgba(0,0,0,0.12);
+    background-color: rgba(0,0,0,0.075);
     border-radius: 0.2em;
-    border: 1px solid rgba(255,255,255,0.06);
 }
 
 spinbutton entry {
@@ -990,20 +877,20 @@ spinbutton button {
     border-radius: 0;
 }
 spinbutton button.up {
-    border-radius: 0 0.16666666666666666666em 0.16666666666666666666em 0;
+    border-radius: 0 2px 2px 0;
 }
 
 entry:disabled, spinbutton:disabled {
-    background-color: #252a32;
+    background-color: @steep_surface_2;
 }
 
 entry:hover, spinbutton:hover {
-    background-color: rgba(130,170,230,0.08);
+    background-color: @steep_surface_3;
 }
 
 entry:selected {
-    color: #1a1e24;
-    background-color: #8a92a1;
+    color: @steep_sel_fg;
+    background-color: @steep_select;
 }
 
 /* Hide spinbutton +/- buttons inside Adjusters — must beat #MyExpander button:not(.ColorDot) specificity */
@@ -1055,57 +942,22 @@ entry:selected {
     -gtk-icon-transform: scale(0.55);
 }
 
-/* Context menus - frosted glass style.
-   NOTE: the background must stay OPAQUE. An alpha background makes the
-   menu an RGBA layered window on Windows, and GDK's layered-window
-   update path fails to push repaints when the same popup window is
-   re-shown — menus then display stale or blank content (seen as the
-   flag icons losing parts after flag-state changes). */
+/* Context menus — raised overlay surface, selection-tinted hover pill */
 menu {
-    background-color: rgb(28, 32, 40);
-    color: #e2e6ed;
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    border-radius: 10px;
-    padding: 4px 0;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(255, 255, 255, 0.05);
+    background-color: @steep_surface_3;
+    color: @steep_text;
+    padding: 3px;
 }
 
 /* Context menu item */
 menuitem {
-    padding: 4px 12px;
-    margin: 1px 4px;
-    min-height: 1.1em;
-    border-radius: 6px;
-    transition: background-color 150ms ease;
+    padding: 0.25em 0.4em;
+    margin: 0;
+    min-height: 0.8333333333333333em;
+    border-radius: 4px;
 }
 menuitem:hover {
-    background-color: rgba(102, 153, 204, 0.2);
-    color: #ffffff;
-}
-menuitem label {
-    font-size: 0.92em;
-}
-
-/* Submenu arrows */
-menuitem arrow {
-    color: rgba(255, 255, 255, 0.3);
-    min-width: 1em;
-    min-height: 1em;
-}
-menuitem:hover arrow {
-    color: rgba(255, 255, 255, 0.7);
-}
-
-/* Menu separators */
-menu > separator {
-    margin: 3px 10px;
-    min-height: 1px;
-    background-color: rgba(255, 255, 255, 0.08);
-}
-
-/* Disabled menu items */
-menuitem:disabled label {
-    color: rgba(255, 255, 255, 0.25);
+    background-color: alpha(@steep_select, 0.40);
 }
 
 /* FlowBoxChild */
@@ -1115,7 +967,7 @@ flowboxchild:selected {
 
 /*** EXIF Info Strip ****************************************************************************/
 #ExifInfoLabel {
-    color: #999;
+    color: @steep_text_dim;
     padding: 0.25em 0;
     font-size: 0.85em;
     letter-spacing: 0.05em;
@@ -1135,35 +987,35 @@ flowboxchild:selected {
 
 #HistogramPanel > :nth-child(2) {
     border: none;
-    padding: 0.083333333333333333em 0;
+    padding: 1px 0;
 }
 
 #HistogramArea,
 #HistogramRGBArea {
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
 }
 
-/* All histogram buttons: no background, no border, compact spacing */
+/* All histogram buttons: no background, no border */
 #histButton,
 button.radio#histButton,
 button.toggle#histButton {
-    padding: 0;
+    padding: 1px;
     margin: 0;
-    min-height: 0;
-    min-width: 0;
+    min-height: 1em;
+    min-width: 1em;
     border: none;
     background: none;
     background-image: none;
     box-shadow: none;
     border-radius: 0;
-    outline: none;
+    outline-width: 0;
 }
 
 /* Active scope type: subtle underline only */
 button.radio#histButton:checked {
     background: none;
     background-image: none;
-    box-shadow: inset 0 -2px 0 rgba(180,200,255,0.6);
+    box-shadow: inset 0 -2px 0 alpha(@steep_accent,0.6);
 }
 
 button.radio#histButton:hover,
@@ -1190,7 +1042,7 @@ button.toggle#histButton:hover,
 
 /* Bottom bar with scope buttons */
 #histBottomBar {
-    background: rgba(20,24,30,0.85);
+    background: alpha(@steep_surface_0,0.9);
     padding: 1px 2px;
     border: none;
 }
@@ -1213,7 +1065,7 @@ button.toggle#histButton:hover,
 
 /*** Modules ***********************************************************************************/
 #EditorModules {
-    background-color: #2c3038;
+    background-color: @steep_surface_1;
 }
 
 #EditorModules > box {
@@ -1227,23 +1079,23 @@ button.toggle#histButton:hover,
 }
 
 #MyExpander.withScrollbar { /* This margin is always added */
-    margin-right: 0.1em;
+    margin-right: 0.3em;
 }
 
 #MyExpander.withScrollbar #MyExpander { /* No margin for nested expanders */
     margin-right: 0;
 }
 
-/* Borders between tools removed for cleaner look */
+/* Borders around tools and subtools */
 #MyExpander {
-    border-top: none;
+    border-top: 1px solid rgba(0,0,0,0.3);
 }
 #MyExpander:first-child {
     border-top: none;
 }
 #MyExpander:nth-last-child(1),
 #MyExpander #MyExpander:nth-last-child(1) {
-    border-bottom: none;
+    border-bottom: 1px solid rgba(0,0,0,0.3);
 }
 #MyExpander #MyExpander:nth-last-child(2) {
     border-bottom: none;
@@ -1253,7 +1105,7 @@ button.toggle#histButton:hover,
 #ExpanderBox > .ExpanderContents > * {
     margin: 0;
     min-height: 0;
-    padding: 0;
+    padding: 0 0 0 4px;
 }
 
 /* For sub-tools containers that go below another widget, add some margin
@@ -1273,16 +1125,13 @@ button.toggle#histButton:hover,
     margin: 0;
 }
 
-/* Tool background — glass treatment */
+/* Tool background */
 #ExpanderBox > box,
 #ExpanderBox > grid {
-    background-color: rgba(180,200,230,0.07);
-    background-image: linear-gradient(rgba(255,255,255,0.03), transparent 70%);
-    padding: 0.05em 0 0.05em 6px;
-    border-top: 1px solid rgba(255,255,255,0.06);
+    background-color: @steep_surface_2;
+    padding: 0.02em 0.08em 0.05em 10px;
+    border-top: 1px solid @steep_border_soft;
     border-bottom: none;
-    border-radius: 0 0 4px 4px;
-    box-shadow: inset 0 1px 0 rgba(255,255,255,0.03);
 }
 
 /* Not all combinations below are used, but this makes sure
@@ -1314,16 +1163,15 @@ button.toggle#histButton:hover,
 #LocallabToolPanel > grid,
 #ExpanderBox2 > box,
 #ExpanderBox2 > grid {
-    background-color: rgba(180,200,230,0.06);
-    background-image: linear-gradient(rgba(255,255,255,0.02), transparent 60%);
+    background-color: @steep_surface_2;
     margin: 0;
     padding: 0.2em 0.25em 0.35em 10px;
-    border-top: 1px solid rgba(255,255,255,0.06);
+    border-top: 1px solid @steep_border_soft;
     border-bottom: none;
 }
 
 #MyExpanderTitle label {
-    color: #8a92a1;
+    color: @steep_text;
     padding: 0;
     margin: 0;
     font-size: 1.1em; /* TODO: Does not work? */
@@ -1332,13 +1180,11 @@ button.toggle#histButton:hover,
 
 #MyExpander.Fold > #MyExpanderTitle label,
 #MyExpander.OnOff.enabledTool > #MyExpanderTitle label {
-    color: #e2e6ed;
+    color: @steep_text_hi;
 }
 
 #MyExpanderTitle:hover {
-    background-color: rgba(130,170,230,0.12);
-    border-radius: 4px;
-    box-shadow: 0 1px 4px rgba(0,0,0,0.15);
+    background-color: alpha(@steep_wash, 0.06);
 }
 #MyExpanderTitle eventbox:hover image {
     background-color: transparent;
@@ -1346,7 +1192,7 @@ button.toggle#histButton:hover,
     padding: 0;
 }
 #MyExpanderTitle:hover label {
-    color: #e2e6ed;
+    color: @steep_text_hi;
 }
 
 /* Alignment of tool headers is controlled by the image */
@@ -1357,7 +1203,7 @@ button.toggle#histButton:hover,
 }
 
 /* Summary box - always-visible controls between header and expandable content */
-.MyExpanderSummary { padding: 0.05em 0 0.05em 0; }
+.MyExpanderSummary { padding: 0 0.1em 0.05em 0.3em; }
 .MyExpanderSummary scale {
     margin-right: 0.25em;
 }
@@ -1382,41 +1228,41 @@ button.toggle#histButton:hover,
 
 /* === Compact tool panel layout === */
 
-/* Smaller font in tool content areas */
+/* Dense-panel type size, shared with the left sidebar so both columns read
+   at the same scale (relative so it tracks the user's font preference). */
 #ExpanderBox label,
 #ExpanderBox spinbutton entry,
 .MyExpanderSummary label {
-    font-size: 9px;
+    font-size: 0.85em;
+}
+#PlacesPaned treeview,
+#PlacesPaned .view {
+    font-size: 0.85em;
 }
 
 /* Scale — keep compact but clickable */
 #MyExpander scale {
-    margin: 0;
-    min-height: 0;
+    margin: 0 2px 0 0;
+    min-height: 14px;
     padding: 0;
 }
 
 #MyExpander scale trough {
-    margin: 0;
+    margin: 4px 0;
     padding: 0;
-    min-height: 3px;
-}
-
-#MyExpander scale trough:hover {
-    background-color: rgba(102,153,204,0.06);
+    min-height: 4px;
 }
 
 #MyExpander scale slider {
+    padding: 7px;
+    margin: -7px;
+    border-radius: 7px;
     min-height: 0;
     min-width: 0;
-    padding: 7px;
-    margin: 0;
-    border-radius: 50%;
 }
 
-#MyExpander scale slider:hover {
-    background-color: rgba(102,153,204,0.18);
-    box-shadow: 0 0 6px rgba(102,153,204,0.2);
+#MyExpander scale trough highlight {
+    margin: 0 -1px;
 }
 
 /* Reduce label height/margin for tighter rows + slider alignment */
@@ -1483,59 +1329,12 @@ radiobutton.ColorDot > * {
 .ColorDot:checked,
 radiobutton.ColorDot:checked,
 radiobutton.ColorDot:checked > * {
-    border-color: white;
-    box-shadow: 0 0 3px rgba(255,255,255,0.5);
-}
-
-/* Pagination bar and dots for tool switching */
-#ColorToolStack #MyExpander,
-#ColorToolStack #ExpanderBox,
-#ColorToolStack #ExpanderBox > box,
-#ColorToolStack #ExpanderBox > grid,
-#ColorToolStack .MyExpanderSummary {
-    border: none;
-    border-top: none;
-    border-bottom: none;
-    background-color: transparent;
-    background-image: none;
-    box-shadow: none;
-    padding-top: 0;
-    margin-top: 0;
-}
-#PaginationBar {
-    border: none;
-    background: transparent;
-    box-shadow: none;
-    margin-top: -1px;
-    padding-top: 2px;
-}
-.PaginationDot {
-    min-width: 16px;
-    min-height: 16px;
-    padding: 1px;
-    margin: 0 3px;
-    border-radius: 4px;
-    border: 1px solid rgba(255,255,255,0.15);
-    background-color: transparent;
-    background-image: none;
-    box-shadow: none;
-    transition: all 200ms ease;
-    opacity: 0.45;
-}
-.PaginationDot:checked {
-    border-color: rgba(102,153,204,0.6);
-    background-color: rgba(102,153,204,0.12);
-    box-shadow: 0 0 5px rgba(102,153,204,0.35);
-    opacity: 1.0;
-}
-.PaginationDot:hover:not(:checked) {
-    border-color: rgba(255,255,255,0.35);
-    background-color: rgba(255,255,255,0.05);
-    opacity: 0.75;
+    border-color: @steep_text_hi;
+    box-shadow: 0 0 3px alpha(@steep_text_hi, 0.5);
 }
 
 #LocallabToolPanel separator, #ExpanderBox2 separator, #ExpanderBox3 separator {
-    color: #1a1e24;
+    color: @steep_border_soft;
 }
 
 /* AdvancedSection collapsible header */
@@ -1547,40 +1346,20 @@ radiobutton.ColorDot:checked > * {
     padding: 0.1em 0;
 }
 #AdvancedSectionHeader:hover {
-    background-color: rgba(130,170,230,0.12);
-    border-radius: 4px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    background-color: alpha(@steep_wash, 0.06);
 }
 #AdvancedSectionHeader label {
-    color: #6b7280;
+    color: @steep_text_dim;
     font-size: 0.9em;
-    font-style: italic;
     padding: 0;
     margin: 0;
 }
 #AdvancedSectionHeader:hover label {
-    color: #cdd2da;
+    color: @steep_text_hi;
 }
 #AdvancedSectionHeader image {
     padding: 0.2em;
     margin: 0;
-}
-
-/* Collapsible section headers (▸ Defringe, ▸ Hue, ▸ Bokeh, ▸ Focus Range, ▸ Correct) */
-#CollapsibleHeader {
-    padding: 2px 4px;
-    border-radius: 4px;
-    border: none;
-    background: none;
-    background-image: none;
-    box-shadow: none;
-}
-#CollapsibleHeader:hover {
-    background-color: rgba(130,170,230,0.22);
-    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
-}
-#CollapsibleHeader:hover label {
-    color: #e2e6ed;
 }
 
 /* ColorWheel widget — no dark square background */
@@ -1600,31 +1379,34 @@ radiobutton.ColorDot:checked > * {
 /* Mode Button Bar (LR-style mode switching) */
 #ModeButtonBar {
     margin: 0;
-    padding: 2px 0;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
-    border-top: 1px solid rgba(255,255,255,0.04);
-    background-color: rgba(30,35,45,0.9);
-    background-image: linear-gradient(rgba(255,255,255,0.04), rgba(0,0,0,0.08));
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    padding: 0;
+    border-bottom: 1px solid @steep_border;
+    background-color: @steep_surface_1;
 }
 #ModeButtonBar .ModeButton {
-    border-radius: 4px;
+    border-radius: 0;
     border: none;
     border-bottom: 2px solid transparent;
-    padding: 0.3em 0.5em;
-    margin: 1px 2px;
-    background-color: transparent;
+    padding: 0.2em 0.4em;
+    margin: 0;
+    background-color: @steep_surface_1;
     font-size: 0.95em;
 }
 #ModeButtonBar .ModeButton:checked {
-    border-bottom-color: #6699CC;
-    background-color: rgba(102, 153, 204, 0.18);
-    background-image: linear-gradient(rgba(102,153,204,0.08), transparent);
-    box-shadow: 0 1px 6px rgba(102,153,204,0.25), inset 0 1px 0 rgba(255,255,255,0.06);
+    /* Bottom bar only, tapered at the ends — no full-button glow. */
+    border-bottom-color: transparent;
+    background-color: @steep_surface_1;
+    background-image: linear-gradient(to right,
+        alpha(@steep_accent, 0.00) 0%,
+        alpha(@steep_accent, 0.90) 22%,
+        alpha(@steep_accent, 0.90) 78%,
+        alpha(@steep_accent, 0.00) 100%);
+    background-size: 100% 3px;
+    background-repeat: no-repeat;
+    background-position: bottom;
 }
 #ModeButtonBar .ModeButton:hover:not(:checked) {
-    background-color: rgba(130,170,230,0.12);
-    box-shadow: 0 0 4px rgba(102,153,204,0.1);
+    background-color: rgba(255, 255, 255, 0.05);
 }
 #ModeButtonBar .ModeButton image {
     padding: 0 0.15em;
@@ -1632,7 +1414,7 @@ radiobutton.ColorDot:checked > * {
 
 /* ToolGroup collapsible section headers in Edit mode */
 #ToolGroup {
-    margin: 2px 0;
+    margin: 0;
     padding: 0;
 }
 #ToolGroup .ToolGroupSeparator {
@@ -1643,118 +1425,28 @@ radiobutton.ColorDot:checked > * {
     border: none;
 }
 #ToolGroupHeader {
-    padding: 4px 6px;
+    padding: 0px 4px;
     min-height: 0;
-    background-color: transparent;
-    background-image: none;
-    border: none;
-    border-radius: 0;
-    margin: 1px 4px;
-    box-shadow: none;
 }
-#ToolGroupHeader:hover,
-#ToolGroupHeader.hovered {
-    background-color: transparent;
-    border-color: transparent;
-    box-shadow: none;
+#ToolGroupHeader:hover {
+    background-color: alpha(@steep_wash, 0.06);
 }
 #ToolGroupHeader label {
-    color: #8a92a1;
-    font-weight: 600;
-    font-size: 10px;
-    letter-spacing: 0.05em;
+    color: @steep_text;
+    font-weight: bold;
+    font-size: 0.75em;
+    letter-spacing: 0.06em;
     padding: 0;
     margin: 0;
     min-height: 0;
 }
-#ToolGroupHeader:hover label,
-#ToolGroupHeader.hovered label {
-    color: #e2e6ed;
+#ToolGroupHeader label:first-child {
+    font-size: 0.7em;
+    letter-spacing: 0;
+    margin-right: -1px;
 }
-
-button.curve-channel {
-    min-width: 28px;
-    min-height: 22px;
-    padding: 1px 6px;
-    margin: 0 2px;
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 11px;
-    background-color: rgba(0,0,0,0.18);
-    background-image: none;
-    box-shadow: none;
-}
-button.curve-channel label {
-    font-weight: 700;
-}
-/* Quick edit bar (Auto / B&W): flat buttons still need press feedback —
-   hover tint, pressed fill, and a short "applied" pulse after a commit. */
-#QuickEditButton {
-    border-radius: 4px;
-    transition: background-color 150ms ease;
-}
-#QuickEditButton:hover {
-    background-color: rgba(100,160,255,0.16);
-}
-#QuickEditButton:active {
-    background-color: rgba(100,160,255,0.40);
-}
-#QuickEditButton.quick-applied {
-    background-color: rgba(100,160,255,0.30);
-}
-
-/* Channel chips: tinted fill + colored border at rest, solid channel-color
-   fill with a dark letter when selected — icon-like, not plain letters. */
-button.curve-channel-master { color: #d7d9dd; background-color: rgba(215,217,221,0.10); border-color: rgba(215,217,221,0.40); }
-button.curve-channel-red    { color: #f06468; background-color: rgba(240,100,104,0.14); border-color: rgba(240,100,104,0.55); }
-button.curve-channel-green  { color: #55c878; background-color: rgba(85,200,120,0.14);  border-color: rgba(85,200,120,0.55); }
-button.curve-channel-blue   { color: #6695f2; background-color: rgba(102,149,242,0.16); border-color: rgba(102,149,242,0.55); }
-button.curve-channel label { color: inherit; }
-button.curve-channel:hover { border-color: currentColor; }
-button.curve-channel:checked {
-    border-color: currentColor;
-    background-color: currentColor;
-}
-button.curve-channel:checked label { color: #14171c; }
-
-button.mask-add-button {
-    min-width: 22px;
-    min-height: 20px;
-    padding: 0;
-    margin: 0;
-    font-size: 14px;
-    font-weight: 600;
-    color: #d7d9dd;
-    border: 1px solid rgba(255,255,255,0.12);
-    border-radius: 2px;
-    background-color: rgba(255,255,255,0.03);
-    background-image: none;
-    box-shadow: none;
-}
-
-button.mask-add-button:hover {
-    color: #ffffff;
-    border-color: rgba(255,255,255,0.25);
-    background-color: rgba(255,255,255,0.08);
-}
-
-#RecentFoldersButton,
-#AlbumAddBtn,
-#RecentFoldersButton > button,
-#AlbumAddBtn > button {
-    padding: 1px 4px;
-    border: none;
-    border-radius: 0;
-    background: transparent;
-    background-image: none;
-    box-shadow: none;
-}
-
-#RecentFoldersButton:hover,
-#AlbumAddBtn:hover,
-#RecentFoldersButton > button:hover,
-#AlbumAddBtn > button:hover {
-    color: #e2e6ed;
-    background-color: rgba(255,255,255,0.06);
+#ToolGroupHeader:hover label {
+    color: @steep_text_hi;
 }
 /* arrow is now a label, no image rule needed */
 #ToolGroupHeader box {
@@ -1763,111 +1455,43 @@ button.mask-add-button:hover {
     min-height: 0;
 }
 
-/* Zero-gap contentBox inside ToolGroups */
-#ToolGroup > box {
-    margin: 0;
-    padding: 0;
-    min-height: 0;
-    border: none;
-}
-
-/* Flat mode: header hidden, seamless inline tools */
+/* Flat mode: header hidden, thin separator between tools */
 #MyExpander.flat-mode {
-    border: none;
-    margin: 0;
-    padding: 0;
-}
-#MyExpander.flat-mode .MyExpanderSummary {
-    padding: 0 0 0 0.15em;
-}
-
-/* Flat-mode: ExpanderBox is removed from widget tree.
-   Only summary controls are visible. */
-
-/* Kill borders/shadows in flat-mode children */
-#MyExpander.flat-mode * {
     border-top: none;
     border-bottom: none;
-    box-shadow: none;
-}
-/* Override #ExpanderBox > box/grid border-top (higher specificity needed).
-   Include ExpanderBox2/3 so nested flat-mode expanders (e.g. masking panel
-   at level 2) also get transparent backgrounds. */
-#MyExpander.flat-mode #ExpanderBox,
-#MyExpander.flat-mode #ExpanderBox2,
-#MyExpander.flat-mode #ExpanderBox3 {
-    padding: 0;
-    margin: 0;
-    background-color: transparent;
-    background-image: none;
-}
-#MyExpander.flat-mode #ExpanderBox > box,
-#MyExpander.flat-mode #ExpanderBox > grid,
-#MyExpander.flat-mode #ExpanderBox2 > box,
-#MyExpander.flat-mode #ExpanderBox2 > grid,
-#MyExpander.flat-mode #ExpanderBox3 > box,
-#MyExpander.flat-mode #ExpanderBox3 > grid {
-    border-top: none;
-    background-color: transparent;
-    background-image: none;
-    box-shadow: none;
-    padding: 0;
-    margin: 0;
-    border-radius: 0;
-}
-#MyExpander.flat-mode .ToolParamBlock {
-    padding: 0;
-    margin: 0;
-}
-#MyExpander.flat-mode separator {
-    min-height: 0;
-    background: transparent;
-    border: none;
+    margin-top: 0.3em;
+    padding-top: 0.2em;
+    border-top: 1px solid alpha(@steep_wash, 0.06);
 }
 
-/* Eliminate gaps between consecutive flat-mode tool panels in ToolGroups */
-.ToolGroup #MyExpander.flat-mode {
-    margin: 0;
-    padding: 0;
-    border: none;
-}
-.ToolGroup #MyExpander.flat-mode #ExpanderBox,
-.ToolGroup #MyExpander.flat-mode #ExpanderBox2,
-.ToolGroup #MyExpander.flat-mode #ExpanderBox3 {
-    margin: 0;
-    padding: 0;
-    border: none;
-}
-.ToolGroup #MyExpander.flat-mode #ExpanderBox,
-.ToolGroup #MyExpander.flat-mode #ExpanderBox > box,
-.ToolGroup #MyExpander.flat-mode #ExpanderBox > grid,
-.ToolGroup #MyExpander.flat-mode #ExpanderBox2,
-.ToolGroup #MyExpander.flat-mode #ExpanderBox2 > box,
-.ToolGroup #MyExpander.flat-mode #ExpanderBox2 > grid,
-.ToolGroup #MyExpander.flat-mode #ExpanderBox3,
-.ToolGroup #MyExpander.flat-mode #ExpanderBox3 > box,
-.ToolGroup #MyExpander.flat-mode #ExpanderBox3 > grid {
-    margin: 0;
-    padding: 0;
-    border: none;
+/* First tool in group: no top separator */
+#MyExpander.flat-mode:first-child {
     border-top: none;
+    margin-top: 0;
+    padding-top: 0;
+}
+
+/* Remove ExpanderBox background/border for flat tools */
+#MyExpander.flat-mode #ExpanderBox > box,
+#MyExpander.flat-mode #ExpanderBox > grid {
     background-color: transparent;
-    background-image: none;
-    box-shadow: none;
+    border-top: none;
+    padding: 0 0 0.1em 10px;
 }
-.ToolGroup #MyExpander.flat-mode .ToolParamBlock {
-    padding: 0;
-}
-.ToolGroup #MyExpander.flat-mode .MyExpanderSummary {
-    padding: 0;
-    margin: 0;
+
+/* A tool that carries its own name above it needs no hairline to separate
+   it from the one before (see the Effects group in toolpanelcoord.cc). */
+#MyExpander.flat-mode.labelled-tool {
+    border-top: none;
+    margin-top: 0;
+    padding-top: 0;
 }
 
 /* Tool section labels (within flat-mode tool groups) */
 .tool-section-label {
-    font-size: 10.5px;
+    font-size: 0.85em;
     font-weight: bold;
-    color: #8a92a1;
+    color: @steep_text;
     padding: 0 0 1px 0;
     margin: 0;
 }
@@ -1884,12 +1508,6 @@ button.mask-add-button:hover {
 /* Override global button.combo padding inside tool panels */
 #MyExpander button.combo {
     padding: 0 0 0 0.1em;
-}
-
-/* Hover glow on combobox dropdowns in tool panels */
-#MyExpander combobox button:hover,
-#MyExpander button.combo:hover {
-    background-image: linear-gradient(rgba(130,170,230,0.08), rgba(130,170,230,0.04));
 }
 
 /* Shrink dropdown arrow inside tool panels */
@@ -1937,7 +1555,7 @@ button.mask-add-button:hover {
 }
 
 /* Remove nested box margin in flat-mode */
-#MyExpander.flat-mode box > box {
+#MyExpander.flat-mode #ExpanderBox box > box {
     margin: 0;
 }
 
@@ -1948,7 +1566,7 @@ button.mask-add-button:hover {
 
 /* Editor tab button */
 #MainNotebook grid label, #MainNotebook grid image  {
-    padding: 0.0833333333333333em;
+    padding: 1px;
 }
 /*** end ***************************************************************************************/
 
@@ -1960,32 +1578,30 @@ notebook {
 }
 
 notebook header {
-    box-shadow: 0 1px 4px rgba(0,0,0,0.2);
-    background-color: #252a32;
-    background-image: linear-gradient(rgba(255,255,255,0.03), rgba(0,0,0,0.04));
-    border-width: 0.0833333333333333em;
+    box-shadow: none;
+    background-color: @steep_surface_1;
+    border-width: 1px;
     border-style: none;
-    border-color: #1a1e24;
+    border-color: @steep_sel_fg;
     border-radius: 0;
     padding: 0;
     margin: 0;
 }
 
 notebook tabs {
-    padding: 0.0833333333333333em;
+    padding: 1px;
     margin: 0;
 }
 
 notebook tab {
-    padding: 0.0833333333333333em;
-    margin: 0.1666666666666666em;
+    padding: 1px;
+    margin: 2px;
     min-height: 1.25em;
     min-width: 1.25em;
-    border-radius: 4px;
 }
 
 notebook tab:hover {
-    background-color: rgba(130,170,230,0.08);
+    background-color: alpha(@steep_select, 0.16);
 }
 
 notebook tab button {
@@ -2018,7 +1634,7 @@ notebook.frame {
 
 /* Pad notebooks, makes the other borders look nicer */
 notebook stack {
-    background-color: #2c3038;
+    background-color: @steep_surface_1;
     padding: 0;
     margin: 0;
 }
@@ -2030,7 +1646,7 @@ paned box, paned grid {
 }
 
 paned > separator {
-    background: rgba(0,0,0,0.12);
+    background: rgba(0,0,0,0.075);
     border: none;
     min-width: 0.25em;
     min-height: 0.25em;
@@ -2038,42 +1654,21 @@ paned > separator {
     margin: 0;
 }
 
-/* Ensure margin gaps behind filmstrip/toolbar/beforeAfter match the theme */
-#EditorViewPaned,
-#EditorEditBox,
-#BeforeAfterContainer {
-    background-color: #252a32;
-}
-
-/* Hide the separator between filmstrip and editor */
-#EditorViewPaned > separator {
-    min-height: 0;
-    min-width: 0;
-    margin: 0;
-    padding: 0;
-    border: none;
-    background: none;
-    background-color: transparent;
-    background-image: none;
-    box-shadow: none;
-    opacity: 0;
-}
-
 fontchooser scrolledwindow,
 #PlacesPaned scrolledwindow,
 #HistoryPanel scrolledwindow,
 #Snapshots scrolledwindow {
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
 }
 
 #PlacesPaned {
     margin: 0;
     padding: 0 0.4166666666666666em 0 0;
-    background-color: #252a32;
+    background-color: @steep_surface_1;
 }
 #PlacesPaned > box:nth-child(1) scrolledwindow + grid {
     margin: 0;
-    border-top-width: 0.083333333333333333em;
+    border-top-width: 1px;
 }
 #PlacesPaned  > box:nth-child(3) treeview {
     padding: 0;
@@ -2093,21 +1688,21 @@ fontchooser scrolledwindow,
 }
 
 #MainNotebook header {
-    background-color: #1a1e24;
+    background-color: @steep_surface_0;
     border: 0;
     padding: 0;
 }
 #MainNotebook tabs {
-    background-color: #1a1e24;
+    background-color: @steep_surface_0;
 }
 #MainNotebook tab:hover {
-    background-color: rgba(130,170,230,0.08);
+    background-color: alpha(@steep_select, 0.16);
 }
 #MainNotebook tab:active {
-    border-color: #989898;
+    border-color: @steep_accent;
 }
 #MainNotebook tab:checked {
-    background-color: rgba(102,153,204,0.12);
+    background-color: alpha(@steep_select, 0.32);
 }
 
 #RightNotebook > stack > :nth-child(1) checkbutton + scrolledwindow {
@@ -2123,7 +1718,7 @@ dialog frame {
 #BatchQueueButtonsMainContainer > frame > border,
 dialog frame > border {
     padding: 0;
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
     margin: 0;
 }
 #RightNotebook > stack > scrolledwindow frame > label:not(.dummy),
@@ -2140,23 +1735,23 @@ dialog frame > label:not(.dummy) {
 }
 
 #RightNotebook header {
-    background-color: #1a1e24;
+    background-color: @steep_surface_0;
 }
 #RightNotebook tabs {
-    background-color: #1a1e24;
-    padding-bottom: 0.083333333333333333em;
+    background-color: @steep_surface_0;
+    padding-bottom: 1px;
 }
 #RightNotebook tab:hover {
-    background-color: rgba(130,170,230,0.08);
-    color: #e2e6ed;
+    background-color: alpha(@steep_select, 0.16);
+    color: @steep_text_hi;
 }
 #RightNotebook tab:active {
-    border-color: #A5A5A5;
+    border-color: @steep_accent;
 }
 
 #LabelRightNotebook {
     padding: 0.4166666666666666em;
-    margin: 0.1666666666666666em;
+    margin: 2px;
     font-size: 1.25em;
 }
 
@@ -2173,8 +1768,8 @@ dialog frame > label:not(.dummy) {
 }
 
 #ToolPanelNotebook header tabs {
-    padding: 0.0833333333333333em;
-    background-color: #1a1e24;
+    padding: 1px;
+    background-color: @steep_surface_0;
 }
 
 #ToolPanelNotebook header tab {
@@ -2185,8 +1780,8 @@ dialog frame > label:not(.dummy) {
 /* All tool panels have a frame except for Meta which unlike the rest is a notebook itself.
  * So we use CSS to make it look like a frame. */
 #MetaPanelNotebook > stack > box {
-    border: 0.0833333333333333em solid #1a1e24;
-    background-color: #252a32;
+    border: 1px solid @steep_border;
+    background-color: @steep_surface_2;
     border-radius: 0 0 0.3333333333333333em 0.3333333333333333em;
     border-top-style: none;
     padding: 0 0.25em 0.25em 0.25em;
@@ -2194,8 +1789,8 @@ dialog frame > label:not(.dummy) {
 }
 
 #MetaPanelNotebook header {
-    border: 0.0833333333333333em solid #1a1e24;
-    background-color: #252a32;
+    border: 1px solid @steep_border;
+    background-color: @steep_surface_2;
     border-radius: 0.3333333333333333em 0.3333333333333333em 0 0;
     border-bottom-style: none;
     padding: 0.4166666666666666em;
@@ -2203,7 +1798,7 @@ dialog frame > label:not(.dummy) {
 }
 
 #MetaPanelNotebook > header > tabs {
-    background-color: #252a32;
+    background-color: @steep_surface_2;
 }
 
 #MetaPanelNotebook > header tab {
@@ -2216,11 +1811,11 @@ dialog frame > label:not(.dummy) {
 }
 
 #MetaPanelNotebook entry, #MetaPanelNotebook scrolledwindow, #MetaPanelNotebook combobox {
-    margin: 0.1666666666666666em 0 0.1666666666666666em 0;
+    margin: 2px 0 2px 0;
 }
 
 #MetaPanelNotebook entry {
-    padding: 0 0.0833333333333333em;
+    padding: 0 1px;
 }
 
 #MetaPanelNotebook label {
@@ -2228,10 +1823,10 @@ dialog frame > label:not(.dummy) {
 }
 
 #MetaPanelNotebook text {
-    border-color: #1a1e24;
-    background-color: #1a1e24;
+    border-color: @steep_border;
+    background-color: @steep_surface_0;
     border-style: solid;
-    border-width: 0.0833333333333333em;
+    border-width: 1px;
     border-radius: 0.25em;
 }
 
@@ -2272,7 +1867,7 @@ dialog frame > label:not(.dummy) {
     padding-bottom: 0.25em;
 }
 #PrefNotebook scrolledwindow scrolledwindow {
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
 }
 
 /* Compact preferences layout */
@@ -2319,7 +1914,7 @@ dialog frame > label:not(.dummy) {
     font-size: 1.05em;
     font-weight: bold;
     padding: 0.3em 0.25em 0.15em;
-    color: #e2e6ed;
+    color: @steep_text_hi;
 }
 #PrefNotebook frame {
     margin-bottom: 0.3em;
@@ -2341,23 +1936,15 @@ dialog frame > label:not(.dummy) {
     margin-bottom: 0.02em;
 }
 
-/* Editor toolbars — ensure margins show correct theme background */
-#EditorToolbarTop,
-#EditorToolbarBottom {
-    background-color: #252a32;
-}
+/* Add space between bottom panel and window edge */
 #IopsPanel {
-    padding: 0 0.1666666666666666em 0.1666666666666666em;
-    background-color: #252a32;
+    padding: 0 2px 2px;
 }
 
 #EditorLeftPaned:last-child {
     padding: 0.8333333333333333em 0 0 0.8333333333333333em;
 }
 
-#EditorRightPaned {
-    background-color: #252a32;
-}
 #EditorRightPaned:last-child {
     padding: 0;
 }
@@ -2394,7 +1981,7 @@ dialog frame > label:not(.dummy) {
 
 #Snapshots scrolledwindow + box {
     margin: -8px  0 -4px;
-    border-top-width: 0.083333333333333333em;
+    border-top-width: 1px;
 }
 
 #Navigator box label {
@@ -2404,7 +1991,7 @@ dialog frame > label:not(.dummy) {
 
 /*** PartialPaste ******************************************************************************/
 #PartialPaste {
-    border-width: 0.083333333333333333em;
+    border-width: 1px;
     padding-top: 0.5em;
     padding-bottom: 0.5em;
 }
@@ -2415,10 +2002,10 @@ dialog frame > label:not(.dummy) {
 }
 
 #PartialPaste separator { /* Struggles with #PartialPasteHeaderSep */
-    margin: 0.166666666666666666em 0.5em 0.166666666666666666em 1.166666666666666666em;
+    margin: 2px 0.5em 2px 1.166666666666666666em;
 }
 #PartialPasteHeaderSep.horizontal {
-    margin: 0.166666666666666666em 0.5em;
+    margin: 2px 0.5em;
 }
 
 /*
@@ -2434,7 +2021,7 @@ dialog frame > label:not(.dummy) {
 }
 
 #PartialPasteHeaderSep {
-    background-color: #8a92a1;
+    background-color: @steep_select;
 }
 
 /*** end ***************************************************************************************/
@@ -2442,8 +2029,8 @@ dialog frame > label:not(.dummy) {
 
 /* All MyFileChooserButtons */
 button#MyFileChooserButton {
-    padding: 0.1666666666666666em;
-    margin: 0.1666666666666666em;
+    padding: 2px;
+    margin: 2px;
 }
 
 #ToolPanelNotebook button {
@@ -2451,13 +2038,15 @@ button#MyFileChooserButton {
 }
 
 button.flat {
-    background: none;
+    background-color: transparent;
+    background-image: none;
     border: none;
-    outline: none;
+    outline-width: 0;
 }
 
 button.flat:checked {
-    background: #1a1e24;
+    background-color: alpha(@steep_select, 0.35);
+    background-image: none;
 }
 
 .text-button, .image-button, .independent {
@@ -2493,7 +2082,7 @@ combobox, .popupbutton-arrow {
 
 /* Visual divider between the icon and arrow in the pop-up button. */
 .image-combo button.Left {
-    border-right: solid 0.083333333333333333em #1a1e24;
+    border-right: solid 1px @steep_border;
 }
 
 /* Makes image-combobox small icons centered */
@@ -2503,8 +2092,8 @@ button.toggle > grid > image {
 
 #histButton {
     background: none;
-    min-height: 0;
-    min-width: 0;
+    min-height: 1em;
+    min-width: 1em;
 }
 
 /* -gtk-icon-shadow looks buggy on the small histogram icons */
@@ -2531,118 +2120,34 @@ button.combo, .image-combo .toggle, #MyFileChooserButton {
 
 /*** Progressbar *******************************************************************************/
 progressbar trough {
-    background-color: #252a32;
+    background-color: @steep_surface_0;
     border: none;
 }
 
 progressbar progress {
-    border-color: #252a32;
+    border-color: @steep_surface_2;
     /*border-radius: 0.25em;*/
-    background-color: #215d9c;
+    background-color: @steep_success;
 }
 /*** end ***************************************************************************************/
 
 /* Add padding to grid cells */
 
 .grid-spacing > * {
-    margin: 0.1666666666666666em;
+    margin: 2px;
 }
-
-/*** Curve tool — Lightroom-style colored circle channel buttons ********************************/
-
-/* Base style: small colored circles with hidden content */
-.curve-channel-all,
-.curve-channel-r,
-.curve-channel-g,
-.curve-channel-b {
-    min-width: 16px;
-    min-height: 16px;
-    border-radius: 50%;
-    padding: 0;
-    margin: 1px 4px;
-    background-image: none;
-    box-shadow: none;
-}
-
-/* Hide the label text and curve type icon inside the colored dot buttons */
-.curve-channel-all label,
-.curve-channel-all image,
-.curve-channel-r label,
-.curve-channel-r image,
-.curve-channel-g label,
-.curve-channel-g image,
-.curve-channel-b label,
-.curve-channel-b image {
-    color: transparent;
-    /* -gtk-icon-size not supported on all platforms */
-    min-width: 0;
-    min-height: 0;
-    padding: 0;
-    margin: 0;
-}
-
-/* Also collapse the internal grid container */
-.curve-channel-all grid,
-.curve-channel-r grid,
-.curve-channel-g grid,
-.curve-channel-b grid {
-    min-width: 0;
-    min-height: 0;
-    padding: 0;
-    margin: 0;
-}
-
-/* All channel — gray / white */
-.curve-channel-all {
-    background-color: #777777;
-    border: 1.5px solid #555555;
-}
-.curve-channel-all:checked {
-    background-color: #dddddd;
-    border-color: #bbbbbb;
-}
-
-/* Red channel */
-.curve-channel-r {
-    background-color: #bb3333;
-    border: 1.5px solid #882222;
-}
-.curve-channel-r:checked {
-    background-color: #ee4444;
-    border-color: #cc3333;
-}
-
-/* Green channel */
-.curve-channel-g {
-    background-color: #33aa33;
-    border: 1.5px solid #228822;
-}
-.curve-channel-g:checked {
-    background-color: #44cc44;
-    border-color: #33aa33;
-}
-
-/* Blue channel */
-.curve-channel-b {
-    background-color: #3355bb;
-    border: 1.5px solid #223388;
-}
-.curve-channel-b:checked {
-    background-color: #4477ee;
-    border-color: #3366cc;
-}
-
-/*** end Curve tool ****************************************************************************/
 
 /*** Queue Overlay Drawer **********************************************************************/
 
-#QueueOverlayBackdrop {
-    background-color: rgba(0, 0, 0, 0.55);
-}
+/* NOTE: no #QueueOverlayBackdrop rule here — that EventBox is created with
+   set_visible_window(false) and paints itself in rtwindow.cc, so any CSS
+   background on it is silently ignored. Change the dim there. */
 
+/* Opaque behind the controls. The photo tray below them is painted
+   translucent in rtwindow.cc, which derives its colour from this one. */
 #QueueDrawerBox {
     padding: 2px 4px 0 4px;
-    background-color: #2c3038;
+    background-color: @steep_surface_1;
 }
 
 /* Queue overlay: compact frame styling */
@@ -2660,23 +2165,45 @@ progressbar progress {
 
 /*** end Queue Overlay Drawer ******************************************************************/
 
-/* Double Exposure tray chips: controls overlaid on the thumbnails must be
-   tiny enough that all four fit, and the selected chip needs a border the
-   image cannot hide. */
-#DEChipControls button {
-    padding: 0 3px;
-    margin: 0;
-    min-width: 10px;
-    min-height: 14px;
-}
-
-button.de-chip {
-    padding: 1px;
-    margin: 0;
-}
-
-button.de-chip-selected {
-    border: 2px solid #E8A33D;
+/*** Smart Masks tile grid *********************************************************************/
+/* One-click AI mask tiles in the Masking group (SmartMaskBar). Square-cornered
+   and equal-width to match the Smart Tools grid above (tools/spot.cc). */
+#SmartMaskBar .smart-mask-chip {
+    background-color: @steep_surface_2;
+    border: 1px solid @steep_border_soft;
     border-radius: 3px;
+    padding: 2px 6px;
+    min-height: 22px;
+    color: @steep_text;
+}
+
+#SmartMaskBar .smart-mask-chip:hover {
+    background-color: @steep_surface_3;
+    border-color: alpha(@steep_accent, 0.55);
+    color: @steep_text_hi;
+}
+
+#SmartMaskBar .smart-mask-chip:active {
+    background-color: alpha(@steep_accent, 0.35);
+}
+
+#SmartMaskBar flowboxchild {
     padding: 0;
+}
+
+/*** Keyboard focus ****************************************************************************/
+/* One visible focus ring, everywhere. Placed last so earlier outline
+   suppressions cannot override it. Mouse interaction does not set :focus
+   rings on most widgets; keyboard traversal does. */
+button:focus,
+menuitem:focus,
+entry:focus,
+spinbutton:focus,
+combobox:focus,
+checkbutton:focus,
+radiobutton:focus,
+notebook tab:focus,
+scale:focus {
+    outline: 1px solid alpha(@steep_accent, 0.65);
+    outline-offset: -1px;
 }

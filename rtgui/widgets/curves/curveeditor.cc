@@ -324,37 +324,18 @@ void CurveEditor::addButtonCSSClass(const Glib::ustring& cssClass)
 
 void CurveEditor::enableCompactMode(const Glib::ustring& label, const Glib::ustring& cssClass)
 {
+    compactMode_ = true;
+
     curveType->get_style_context()->add_class("curve-channel");
     curveType->get_style_context()->add_class(cssClass);
 
     curveType->set_size_request(30, 24);
 
-    // Channel color resolved here and applied through widget-level CSS
-    // providers at elevated priority — theme rules kept losing to more
-    // specific selectors, which left the chips as plain uncolored letters.
-    Glib::ustring channelColor = "#d7d9dd";
-    if (cssClass == "curve-channel-red") {
-        channelColor = "#f06468";
-    } else if (cssClass == "curve-channel-green") {
-        channelColor = "#55c878";
-    } else if (cssClass == "curve-channel-blue") {
-        channelColor = "#6695f2";
-    }
-
-    const int chipPrio = GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 400;
-    {
-        auto css = Gtk::CssProvider::create();
-        try {
-            css->load_from_data(Glib::ustring::compose(
-                "button { min-width: 28px; min-height: 22px; padding: 1px 6px; margin: 0 2px;"
-                "  border: 1px solid alpha(%1,0.55); border-radius: 11px;"
-                "  background-color: alpha(%1,0.14); background-image: none; box-shadow: none; }"
-                " button:hover { border-color: %1; }"
-                " button:checked { background-color: %1; border-color: %1; }",
-                channelColor));
-            curveType->get_style_context()->add_provider(css, chipPrio);
-        } catch (...) {}
-    }
+    // Chip look (pill border/fill per channel, dark label on the solid
+    // checked fill) lives in themes/common/widgets.css: button.curve-channel
+    // plus the .curve-channel-red/-green/-blue overrides. Screen-level rules
+    // can match across nodes (button:checked label), which the old
+    // widget-level providers could not — that machinery is gone.
 
     // Replace the popup's curve-type icon with an explicit channel label.
     auto* child = curveType->get_child();
@@ -364,35 +345,20 @@ void CurveEditor::enableCompactMode(const Glib::ustring& label, const Glib::ustr
             widget->hide();
         }
 
-        auto* channelLabel = Gtk::manage(new Gtk::Label(label));
+        // A dot rather than a letter: the channel already reads from colour,
+        // and the per-channel CSS below tints it (and flips it dark against
+        // the solid fill when checked). The letter survives as the tooltip so
+        // the channel is still nameable.
+        auto* channelLabel = Gtk::manage(new Gtk::Label("●"));
+        channelLabel->get_style_context()->add_class("curve-channel-dot");
         channelLabel->set_halign(Gtk::ALIGN_CENTER);
         channelLabel->set_valign(Gtk::ALIGN_CENTER);
         grid->attach(*channelLabel, 0, 0, 1, 1);
         channelLabel->show();
         grid->show();
-
-        // Colored letter at rest, dark letter on the solid checked fill.
-        // Providers swap on toggle because a widget-level provider cannot
-        // match across nodes (button:checked label).
-        auto restCss = Gtk::CssProvider::create();
-        auto checkedCss = Gtk::CssProvider::create();
-        try {
-            restCss->load_from_data(Glib::ustring::compose(
-                "label { color: %1; font-weight: 700; }", channelColor));
-            checkedCss->load_from_data("label { color: #14171c; font-weight: 700; }");
-
-            auto applyLabelStyle = [channelLabel, restCss, checkedCss, chipPrio](bool checked) {
-                auto sc = channelLabel->get_style_context();
-                sc->remove_provider(restCss);
-                sc->remove_provider(checkedCss);
-                sc->add_provider(checked ? checkedCss : restCss, chipPrio);
-            };
-            applyLabelStyle(curveType->get_active());
-            curveType->signal_toggled().connect([this, applyLabelStyle]() {
-                applyLabelStyle(curveType->get_active());
-            });
-        } catch (...) {}
     }
+
+    curveType->set_tooltip_text(label);
 
     // Remove image-combo spacing and keep the curve-type menu on right-click.
     curveType->buttonGroup->get_style_context()->remove_class("image-combo");

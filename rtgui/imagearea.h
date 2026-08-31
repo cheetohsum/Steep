@@ -164,6 +164,7 @@ public:
     void straightenReady    (double rotDeg);
     void spotWBSelected     (int x, int y);
     void pointColorSelected (int x, int y);
+    void aiMaskPickSelected (int x, int y);
     void sharpMaskSelected  (bool sharpMask);
     int  getSpotWBRectSize  ();
     void redraw             ();

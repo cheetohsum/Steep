@@ -35,6 +35,14 @@ class WatermarkPanel : public Gtk::Grid, public AdjusterListener
     Gtk::ColorButton* textColorBtn;
     Adjuster* opacityAdj;
 
+    // Logo / photo shown with (or instead of) the text
+    Gtk::CheckButton* imageEnableChk;
+    Gtk::FileChooserButton* imageChooser;
+    Gtk::Button* imageClearBtn;
+    MyComboBoxText* imagePlacementCombo;
+    Adjuster* imageSizeAdj;
+    Adjuster* imageGapAdj;
+
     // Stroke
     Gtk::CheckButton* strokeEnableChk;
     Gtk::ColorButton* strokeColorBtn;
@@ -60,6 +68,7 @@ class WatermarkPanel : public Gtk::Grid, public AdjusterListener
     void updateSensitivity();
     void sizeModeChanged();
     void showPreview();
+    void imagePlacementChanged();
 
 public:
     WatermarkPanel();

@@ -1,0 +1,244 @@
+/*
+  steep widget layer
+
+  Structural styling for steep's custom widgets, consolidated from what used
+  to be ~24 inline Gtk::CssProvider blocks scattered across the rtgui sources.
+
+  Loaded once by the application (rtwindow.cc) for EVERY theme, at
+  GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200 — above the theme, exactly
+  where the inline providers used to sit, so widget geometry cannot be broken
+  by a theme. Themes control the LOOK of these widgets through the steep_*
+  palette tokens (common/palette-defaults.css), not by out-prioritizing this
+  file.
+
+  Rules of this layer:
+    - Selectors must be scoped to a widget ID or steep-specific class —
+      never bare element selectors, which would leak into every theme's
+      generic widgets.
+    - Colors: currently literals carried over verbatim from the inline
+      blocks (the Phase 1 no-visual-change guarantee); they migrate to
+      @steep_* tokens in the regrade phase.
+    - No CSS parsing belongs back in C++: a new widget's rules go here,
+      keyed by a name/class set at construction. The two documented
+      exceptions (font override, filebrowser context-menu compaction) live
+      in code because they are dynamic or cannot be scoped by selector.
+*/
+
+/*** Filmstrip action bar (editorpanel.cc) *****************************************************/
+/* 20px icons with a light squeeze — compact but visibly clickable. */
+#FilmstripActions { padding: 0; margin: 0; }
+#FilmstripActions button { min-height: 0; min-width: 0; padding: 1px 2px; margin: 0; }
+#FilmstripActions button image { margin: -0.15em 0; padding: 0; min-width: 0; min-height: 0; }
+#FilmstripActions separator { margin: 0 3px; min-width: 1px; }
+
+/* Color-label pill around the rating trigger */
+#RatingColorPalette { border-radius: 12px; }
+
+/* Joined copy/paste split-button */
+#CopySettingsGroup { margin: 0; padding: 0; }
+#CopySettingsGroup > button:first-child {
+    border-top-right-radius: 0; border-bottom-right-radius: 0;
+    margin-right: -2px; padding-right: 1px;
+}
+#CopySettingsGroup > menubutton > button {
+    border-top-left-radius: 0; border-bottom-left-radius: 0;
+    margin-left: -2px; padding-left: 1px;
+    min-width: 12px; padding-right: 2px;
+}
+#CopySettingsGroup > menubutton { margin: 0; padding: 0; }
+#CopySettingsGroup > menubutton image { min-width: 12px; min-height: 12px; }
+
+/*** Editor filter bar (editorpanel.cc) ********************************************************/
+#EditorFilterBar { padding: 2px 6px; }
+#EditorFilterBar button { min-height: 0; min-width: 0; padding: 1px 1px; margin: 0; }
+#EditorFilterBar button image { margin: 0; padding: 0; }
+#EditorFilterBar label { margin: 0 2px; }
+#EditorFilterBar entry { min-height: 0; padding: 1px 4px; }
+
+/*** Album view (editorpanel.cc) ***************************************************************/
+#AlbumViewHeader { padding: 4px 8px; }
+#AlbumViewHeader label { padding: 0; margin: 0; }
+#AlbumViewGrid { padding: 8px; }
+#AlbumViewItem { padding: 4px; }
+#AlbumViewHeader .linked radiobutton { padding: 2px 6px; min-height: 0; min-width: 0; }
+#AlbumViewHeader scale { min-width: 100px; }
+#AlbumViewItem label { font-size: 0.8em; }
+
+/*** File browser context menu — inline quick-action rows (filebrowser.cc) ********************/
+/* Native menu prelight covers the whole row and implies that caption /
+   whitespace are clickable. Only the icon slots are targets. */
+#InlineActionRow:hover, #InlineActionRow:active {
+    background-image: none;
+    background-color: transparent;
+}
+/* LOAD-BEARING (the "poleless flag" fix): themes carry `image { padding }`
+   rules that mis-measure these icons (width 8 for a 24px surface), shifting
+   the drawn surface off-center and clipping it. Zero the CSS box entirely.
+   Verify with STEEP_MENU_SELFTEST after touching anything here. */
+#InlineActionRow image { padding: 0; margin: 0; border-width: 0; }
+
+/*** File browser thumbnail zoom slider (filecatalog.cc) ***************************************/
+/* Generous invisible grab area — visuals are drawn by MyHScale's zoom style.
+   The padding IS the hit area; do not shrink it. */
+#FBZoomSlider { padding: 0; margin: 0; min-height: 0; }
+#FBZoomSlider trough {
+    min-height: 3px; margin: 0; padding: 0 4px;
+    background: transparent; border: none; box-shadow: none;
+}
+#FBZoomSlider slider {
+    min-height: 0; min-width: 0; padding: 12px; margin: -12px;
+    background: transparent; border-color: transparent;
+    border: none; box-shadow: none;
+}
+#FBZoomSlider trough highlight { margin: 0; padding: 0; min-height: 0; background: transparent; }
+
+/*** Pane edge grips (guiutils.cc createEdgeGrip) **********************************************/
+#EdgeGripV, #EdgeGripH {
+    background-color: transparent;
+    background-image: none;
+}
+#EdgeGripV:hover {
+    background-image: linear-gradient(to bottom,
+        alpha(@steep_accent, 0.00) 0%,
+        alpha(@steep_accent, 0.72) 22%,
+        alpha(@steep_accent, 0.72) 78%,
+        alpha(@steep_accent, 0.00) 100%);
+}
+#EdgeGripH:hover {
+    background-image: linear-gradient(to right,
+        alpha(@steep_accent, 0.00) 0%,
+        alpha(@steep_accent, 0.72) 22%,
+        alpha(@steep_accent, 0.72) 78%,
+        alpha(@steep_accent, 0.00) 100%);
+}
+
+/*** Tool group chrome (guiutils.cc ToolGroup, toolpanelcoord.cc) ******************************/
+#ToolGroupHeader, #ToolGroupHeader:hover, #ToolGroupHeader.hovered {
+    border: none; border-radius: 0; background-color: transparent;
+    background-image: none; box-shadow: none;
+}
+/* Reset "×" — one rule set for every #ToolGroupReset (group headers, crop,
+   perspective); formerly duplicated per-button in toolpanelcoord.cc. */
+#ToolGroupReset {
+    padding: 1px 3px; margin: 0 2px; min-height: 12px; min-width: 12px;
+    border: none; background: none; background-image: none; box-shadow: none;
+}
+#ToolGroupReset:hover { background-color: alpha(@steep_danger, 0.35); border-radius: 3px; }
+#ToolGroupReset label { font-size: 9px; color: @steep_text_dim; min-height: 0; padding: 0; margin: 0; }
+#ToolGroupReset:hover label { color: @steep_text_hi; }
+
+/*** Output-template presets (batchqueuepanel.cc) **********************************************/
+/* One-click template rows at the top of the "?" help pane. */
+.template-preset {
+    border: 1px solid @steep_border_soft; border-radius: 3px;
+    background-color: @steep_surface_2; padding: 3px 6px; margin: 1px 0;
+}
+.template-preset:hover {
+    background-color: @steep_surface_3; border-color: alpha(@steep_accent, 0.55);
+}
+.template-preset label { color: @steep_text; }
+.template-preset:hover label { color: @steep_text_hi; }
+
+/*** Smart Tools section (tools/spot.cc) *******************************************************/
+/* Pull the section flush left: cancels the 10px flat-mode tool content indent
+   so its header aligns with the surrounding group headers. */
+.smart-tools { margin-left: -10px; }
+/* Per-tool reset "↺" embedded inside the right edge of its tool button. */
+.smart-tool-reset {
+    padding: 0 3px; margin: 0; min-height: 12px; min-width: 12px;
+    border: none; background: none; background-image: none; box-shadow: none;
+}
+.smart-tool-reset:hover { background-color: alpha(@steep_danger, 0.35); border-radius: 3px; }
+.smart-tool-reset label { font-size: 10px; color: @steep_text_dim; min-height: 0; padding: 0; margin: 0; }
+.smart-tool-reset:hover label { color: @steep_text_hi; }
+
+/*** Preset cards (presetlistpanel.cc) *********************************************************/
+.preset-card-label { font-size: 0.85em; }
+
+/*** Zoom popover (zoompanel.cc) ***************************************************************/
+#ZoomPopover contents { border-radius: 8px; padding: 8px; }
+#ZoomPopover button { border-radius: 4px; padding: 4px 8px; min-height: 0; }
+
+/*** About dialog build tab (splash.cc) ********************************************************/
+#AboutBuildText { font-family: monospace; }
+
+/*** EXIF detail overlay (editorpanel.cc) ******************************************************/
+/* Expands up over the histogram on strip hover — needs an opaque surface. */
+#ExifDetailOverlay {
+    background-color: alpha(@steep_surface_1, 0.97);
+    border-bottom: 1px solid @steep_border_soft;
+    padding: 6px 10px;
+}
+
+/*** Curve editor channel chips (widgets/curves/curveeditor.cc) ********************************/
+/* Neutral chip first; the per-channel classes override it (same specificity,
+   later rules win). The checked label goes dark on the solid fill. */
+/* Channel pickers are bare coloured dots — no pill, no border. Selection
+   reads as a full-strength dot against dimmed siblings, so the chrome that
+   used to box each one in is gone. */
+button.curve-channel {
+    min-width: 0; min-height: 0; padding: 2px 5px; margin: 0;
+    border: none; border-radius: 0;
+    background-color: transparent; background-image: none; box-shadow: none;
+}
+button.curve-channel:hover { background-color: transparent; }
+button.curve-channel:checked { background-color: transparent; }
+
+button.curve-channel label.curve-channel-dot {
+    font-size: 15px;
+    font-weight: 400;
+    opacity: 0.38;
+}
+button.curve-channel:hover label.curve-channel-dot { opacity: 0.72; }
+button.curve-channel:checked label.curve-channel-dot { opacity: 1.0; }
+
+button.curve-channel label { color: #d7d9dd; }
+button.curve-channel-red label { color: #f06468; }
+button.curve-channel-green label { color: #55c878; }
+button.curve-channel-blue label { color: #6695f2; }
+
+/*** Curve editor cog + revealed tool buttons (tools/rgbcurves.cc, tools/tonecurve.cc) *********/
+.curve-cog-btn {
+    min-height: 0; min-width: 0; padding: 1px 4px; margin: 0;
+    background: transparent; background-image: none;
+    border: none; box-shadow: none;
+}
+.curve-cog-btn label { font-size: 16px; color: @steep_text_dim; }
+.curve-cog-btn:hover label { color: @steep_text_hi; }
+
+/* NOTE: the old inline #CurveToolGroup .curve-buttonbox block is NOT carried
+   over — it used -gtk-icon-size (a GTK4 property), so its parse always failed
+   inside a silent try/catch and neither of its rules ever applied. Recreate
+   the intended button shrink with -gtk-icon-transform in the component-polish
+   phase if wanted. */
+
+/*** Browse-for-folder file chooser (dirbrowser.cc) ********************************************/
+/* @theme_* vars resolve against the GTK theme plus the active theme file's
+   redefinitions — same resolution the old inline provider got. */
+#RTFileChooser { border-radius: 8px; }
+#RTFileChooser headerbar { border-radius: 8px 8px 0 0; padding: 4px 10px; }
+#RTFileChooser placessidebar {
+    background: alpha(@theme_base_color, 0.6);
+    border-right: 1px solid alpha(@borders, 0.3);
+    padding: 4px 0;
+}
+#RTFileChooser placessidebar row { padding: 4px 8px; margin: 1px 4px; border-radius: 6px; }
+#RTFileChooser placessidebar row:selected { border-radius: 6px; }
+#RTFileChooser treeview { padding: 2px; }
+#RTFileChooser treeview header button { padding: 4px 8px; font-weight: 600; }
+#RTFileChooser .dialog-action-box {
+    padding: 8px 12px;
+    border-top: 1px solid alpha(@borders, 0.3);
+}
+#RTFileChooser .dialog-action-box button { border-radius: 6px; padding: 6px 20px; min-height: 0; }
+#RTFileChooser .dialog-action-box button:last-child {
+    background: alpha(@theme_selected_bg_color, 0.7);
+    color: @theme_selected_fg_color;
+}
+#RTFileChooser .dialog-action-box button:last-child:hover { background: @theme_selected_bg_color; }
+#RTFileChooser .path-bar button { border-radius: 4px; padding: 2px 6px; margin: 1px; }
+
+/*** Double exposure partner chips (windows/doubleexposuredlg.cc) ******************************/
+#DEChipControls button { padding: 0 3px; margin: 0; min-width: 10px; min-height: 14px; }
+button.de-chip { padding: 1px; margin: 0; }
+button.de-chip-selected { border: 2px solid @steep_accent; border-radius: 3px; padding: 0; }

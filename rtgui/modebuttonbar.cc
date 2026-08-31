@@ -18,7 +18,9 @@
  */
 #include "modebuttonbar.h"
 #include "multilangmgr.h"
+#include "options.h"
 #include "rtimage.h"
+#include "widgets/basic/adjuster.h"
 
 ModeButtonBar::ModeButtonBar() :
     Gtk::Box(Gtk::ORIENTATION_HORIZONTAL),
@@ -48,12 +50,66 @@ ModeButtonBar::ModeButtonBar() :
     cropButton    = createButton("mode-crop",    M("MODE_CROP"),    EditorMode::CROPPING);
     maskButton    = createButton("mode-mask",    M("MODE_MASK"),    EditorMode::MASK);
 
+    // Right-click the Edit button for a slider that scales the type in the
+    // Edit pane's setting rows. Right-click is otherwise unused here, and the
+    // button sits directly above the rows it resizes.
+    editButton->add_events(Gdk::BUTTON_PRESS_MASK);
+    editButton->set_tooltip_text(M("MODE_EDIT") + "\n" + M("MODE_EDIT_PILLSCALE_TIP"));
+
+    editButton->signal_button_press_event().connect(
+        [this](GdkEventButton* event) -> bool {
+            if (event->button == 3) {
+                showPillScalePopover();
+                return true;   // swallow: no context menu, no mode change
+            }
+            return false;
+        }, false);
+
     // Default to Edit mode
     blockSignal = true;
     editButton->set_active(true);
     blockSignal = false;
 
     show_all();
+}
+
+void ModeButtonBar::showPillScalePopover()
+{
+    if (!pillScalePopover_) {
+        pillScalePopover_.reset(new Gtk::Popover());
+        pillScalePopover_->set_relative_to(*editButton);
+        pillScalePopover_->set_position(Gtk::POS_BOTTOM);
+
+        auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
+        box->set_border_width(8);
+
+        auto* caption = Gtk::manage(new Gtk::Label());
+        caption->set_markup("<small>" + Glib::Markup::escape_text(M("MODE_EDIT_PILLSCALE_TITLE")) + "</small>");
+        caption->set_halign(Gtk::ALIGN_START);
+        box->pack_start(*caption, Gtk::PACK_SHRINK);
+
+        pillScaleSlider_ = Gtk::manage(new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
+        pillScaleSlider_->set_range(0.7, 2.2);
+        pillScaleSlider_->set_increments(0.05, 0.1);
+        pillScaleSlider_->set_digits(2);
+        pillScaleSlider_->set_value_pos(Gtk::POS_RIGHT);
+        pillScaleSlider_->set_size_request(180, -1);
+        pillScaleSlider_->signal_value_changed().connect([this]() {
+            Adjuster::setPillScale(pillScaleSlider_->get_value());
+        });
+        box->pack_start(*pillScaleSlider_, Gtk::PACK_SHRINK);
+
+        // Persist once the popover closes rather than on every tick.
+        pillScalePopover_->signal_closed().connect([]() {
+            Options::save();
+        });
+
+        pillScalePopover_->add(*box);
+        box->show_all();
+    }
+
+    pillScaleSlider_->set_value(Adjuster::getPillScale());
+    pillScalePopover_->popup();
 }
 
 sigc::signal<void, EditorMode> ModeButtonBar::signal_mode_changed()

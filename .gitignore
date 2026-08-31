@@ -58,3 +58,11 @@ clean
 tools/*.tif
 tools/*.pp3
 tools/*.png
+rtdata/models/lama_inpainting.onnx
+
+# Run-time debris that lands in the source root.
+*.stackdump
+steep-fileSel.log
+
+# Throwaway GTK4 spike, including a compiled probe binary.
+spike/

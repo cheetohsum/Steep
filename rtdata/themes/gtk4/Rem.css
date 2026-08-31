@@ -1,0 +1,22 @@
+/* Generated from rtdata/themes/Rem.css by tools/gen_gtk4_tokens.py.
+   Do not edit — change the theme's palette block and regenerate. */
+
+:root {
+  --steep-surface-0: #0d1120;
+  --steep-surface-1: #151a30;
+  --steep-surface-2: #1c2240;
+  --steep-surface-3: #232a4e;
+  --steep-text-hi: #d8d6e8;
+  --steep-text: #b4b2c8;
+  --steep-text-dim: #7d84ac;
+  --steep-accent: #8fd9f0;
+  --steep-select: #5f70c0;
+  --steep-attention: #c08858;
+  --steep-success: #65e8a8;
+  --steep-danger: #e0666a;
+  --steep-border: #0a0e1e;
+  --steep-border-soft: #2b3154;
+  --steep-sel-bg: #5f70c0;
+  --steep-sel-fg: #0d1120;
+  --steep-wash: #ffffff;
+}

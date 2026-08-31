@@ -18,6 +18,7 @@
  */
 #include "watermarkpanel.h"
 #include "multilangmgr.h"
+#include "watermarkrenderer.h"
 
 #include "rtengine/rt_math.h"
 
@@ -95,6 +96,67 @@ WatermarkPanel::WatermarkPanel() : previewWindow(nullptr)
     opacityAdj = Gtk::manage(new Adjuster(M("WATERMARK_OPACITY"), 0, 100, 1, 100));
     opacityAdj->setAdjusterListener(this);
     attach(*opacityAdj, 0, row, 2, 1);
+    row++;
+
+    // --- Logo / photo section ---
+    // Sits above stroke and shadow because those apply to everything here.
+    imageEnableChk = Gtk::manage(new Gtk::CheckButton(M("WATERMARK_IMAGE_ENABLE")));
+    imageEnableChk->set_tooltip_text(M("WATERMARK_IMAGE_ENABLE_TOOLTIP"));
+    imageEnableChk->signal_toggled().connect(sigc::mem_fun(*this, &WatermarkPanel::updateSensitivity));
+    attach(*imageEnableChk, 0, row, 2, 1);
+    row++;
+
+    {
+        Gtk::Box* imageRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 2));
+        imageChooser = Gtk::manage(new Gtk::FileChooserButton(M("WATERMARK_IMAGE_CHOOSE"), Gtk::FILE_CHOOSER_ACTION_OPEN));
+
+        auto imageFilter = Gtk::FileFilter::create();
+        imageFilter->set_name(M("WATERMARK_IMAGE_FILTER"));
+        imageFilter->add_pattern("*.png");
+        imageFilter->add_pattern("*.jpg");
+        imageFilter->add_pattern("*.jpeg");
+        imageFilter->add_pattern("*.tif");
+        imageFilter->add_pattern("*.tiff");
+        imageFilter->add_pattern("*.bmp");
+        imageChooser->add_filter(imageFilter);
+        setExpandAlignProperties(imageChooser, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+        imageRow->pack_start(*imageChooser, Gtk::PACK_EXPAND_WIDGET);
+
+        imageClearBtn = Gtk::manage(new Gtk::Button("\xc3\x97"));
+        imageClearBtn->set_relief(Gtk::RELIEF_NONE);
+        imageClearBtn->set_tooltip_text(M("WATERMARK_IMAGE_CLEAR"));
+        imageClearBtn->signal_clicked().connect([this]() {
+            imageChooser->unselect_all();
+            imageChooser->set_filename("");
+        });
+        imageRow->pack_start(*imageClearBtn, Gtk::PACK_SHRINK);
+
+        attach(*makeLabel(M("WATERMARK_IMAGE_FILE")), 0, row, 1, 1);
+        attach(*imageRow, 1, row, 1, 1);
+        row++;
+    }
+
+    imagePlacementCombo = Gtk::manage(new MyComboBoxText());
+    imagePlacementCombo->append(M("WATERMARK_IMAGE_PLACE_LEFT"));
+    imagePlacementCombo->append(M("WATERMARK_IMAGE_PLACE_RIGHT"));
+    imagePlacementCombo->append(M("WATERMARK_IMAGE_PLACE_ABOVE"));
+    imagePlacementCombo->append(M("WATERMARK_IMAGE_PLACE_BELOW"));
+    imagePlacementCombo->set_active(0);
+    imagePlacementCombo->signal_changed().connect(sigc::mem_fun(*this, &WatermarkPanel::imagePlacementChanged));
+    setExpandAlignProperties(imagePlacementCombo, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
+    attach(*makeLabel(M("WATERMARK_IMAGE_PLACEMENT")), 0, row, 1, 1);
+    attach(*imagePlacementCombo, 1, row, 1, 1);
+    row++;
+
+    imageSizeAdj = Gtk::manage(new Adjuster(M("WATERMARK_IMAGE_SIZE"), 0.5, 60.0, 0.5, 6.0));
+    imageSizeAdj->setAdjusterListener(this);
+    imageSizeAdj->set_tooltip_text(M("WATERMARK_IMAGE_SIZE_TOOLTIP"));
+    attach(*imageSizeAdj, 0, row, 2, 1);
+    row++;
+
+    imageGapAdj = Gtk::manage(new Adjuster(M("WATERMARK_IMAGE_GAP"), 0, 200, 1, 8));
+    imageGapAdj->setAdjusterListener(this);
+    attach(*imageGapAdj, 0, row, 2, 1);
     row++;
 
     // --- Stroke section ---
@@ -215,6 +277,16 @@ void WatermarkPanel::init(const WatermarkOptions& opts)
 
     opacityAdj->setValue(opts.opacity * 100.0);
 
+    imageEnableChk->set_active(opts.imageEnabled);
+    if (opts.imagePath.empty()) {
+        imageChooser->unselect_all();
+    } else {
+        imageChooser->set_filename(opts.imagePath);
+    }
+    imagePlacementCombo->set_active(opts.imagePlacement);
+    imageSizeAdj->setValue(opts.imageSizePercent);
+    imageGapAdj->setValue(opts.imageGap);
+
     strokeEnableChk->set_active(opts.strokeEnabled);
     Gdk::RGBA strokeColor;
     strokeColor.set_rgba(opts.strokeR, opts.strokeG, opts.strokeB, opts.strokeA);
@@ -264,6 +336,12 @@ WatermarkOptions WatermarkPanel::getOptions()
 
     opts.opacity = opacityAdj->getValue() / 100.0;
 
+    opts.imageEnabled = imageEnableChk->get_active();
+    opts.imagePath = imageChooser->get_filename();
+    opts.imagePlacement = imagePlacementCombo->get_active_row_number();
+    opts.imageSizePercent = imageSizeAdj->getValue();
+    opts.imageGap = static_cast<int>(imageGapAdj->getValue());
+
     opts.strokeEnabled = strokeEnableChk->get_active();
     auto sc = strokeColorBtn->get_rgba();
     opts.strokeR = sc.get_red();
@@ -300,6 +378,15 @@ void WatermarkPanel::updateSensitivity()
     sizePercentAdj->set_sensitive(en);
     textColorBtn->set_sensitive(en);
     opacityAdj->set_sensitive(en);
+    imageEnableChk->set_sensitive(en);
+    const bool img = en && imageEnableChk->get_active();
+    imageChooser->set_sensitive(img);
+    imageClearBtn->set_sensitive(img);
+    imagePlacementCombo->set_sensitive(img);
+    imageSizeAdj->set_sensitive(img);
+    // The gap and the placement only mean anything when text sits next to
+    // the logo; with an empty text field the logo stands alone.
+    imageGapAdj->set_sensitive(img && !textEntry->get_text().empty());
     strokeEnableChk->set_sensitive(en);
     strokeColorBtn->set_sensitive(en && strokeEnableChk->get_active());
     strokeWidthAdj->set_sensitive(en && strokeEnableChk->get_active());
@@ -313,6 +400,13 @@ void WatermarkPanel::updateSensitivity()
     marginYAdj->set_sensitive(en);
     rotationAdj->set_sensitive(en);
     previewBtn->set_sensitive(en);
+}
+
+void WatermarkPanel::imagePlacementChanged()
+{
+    // Nothing to reconfigure yet — placement is read at render time. Kept as
+    // a hook so the combo has a handler like the other controls.
+    updateSensitivity();
 }
 
 void WatermarkPanel::sizeModeChanged()
@@ -330,10 +424,19 @@ void WatermarkPanel::adjusterChanged(Adjuster* /*a*/, double /*newval*/)
 void WatermarkPanel::showPreview()
 {
     WatermarkOptions opts = getOptions();
+
+    cairo_surface_t* logoSurf = (opts.imageEnabled && !opts.imagePath.empty())
+        ? createWatermarkLogoSurface(opts.imagePath)
+        : nullptr;
+
     Glib::ustring text = opts.text;
-    if (text.empty()) {
+    // Only stand in sample text when there is nothing else to show; with a
+    // logo chosen, an empty text field is a deliberate logo-only watermark
+    // and the preview must reflect that.
+    if (text.empty() && !logoSurf) {
         text = "Sample Watermark";
     }
+    const bool haveText = !text.empty();
 
     // Preview canvas size
     const int canvasW = 600;
@@ -387,6 +490,60 @@ void WatermarkPanel::showPreview()
     PangoRectangle inkRect, logicalRect;
     pango_layout_get_pixel_extents(layout, &inkRect, &logicalRect);
 
+    const double txtW = haveText ? logicalRect.width : 0.0;
+    const double txtH = haveText ? logicalRect.height : 0.0;
+
+    // Same layout rules as the exporter (see watermarkrenderer.cc).
+    double logoW = 0.0, logoH = 0.0;
+    const bool haveLogo = watermarkLogoSize(opts, logoSurf, std::min(canvasW, canvasH), logoW, logoH);
+    const double gap = (haveLogo && haveText) ? opts.imageGap : 0.0;
+    const bool sideBySide = opts.imagePlacement <= 1;
+
+    double contentW, contentH;
+    if (haveLogo && haveText) {
+        if (sideBySide) {
+            contentW = logoW + gap + txtW;
+            contentH = std::max(logoH, txtH);
+        } else {
+            contentW = std::max(logoW, txtW);
+            contentH = logoH + gap + txtH;
+        }
+    } else if (haveLogo) {
+        contentW = logoW;
+        contentH = logoH;
+    } else {
+        contentW = txtW;
+        contentH = txtH;
+    }
+
+    double textOffX = 0, textOffY = 0, logoOffX = 0, logoOffY = 0;
+    if (haveLogo && haveText) {
+        if (sideBySide) {
+            if (opts.imagePlacement == 0) {
+                logoOffX = 0;
+                textOffX = logoW + gap;
+            } else {
+                textOffX = 0;
+                logoOffX = txtW + gap;
+            }
+            logoOffY = (contentH - logoH) / 2.0;
+            textOffY = (contentH - txtH) / 2.0;
+        } else {
+            if (opts.imagePlacement == 2) {
+                logoOffY = 0;
+                textOffY = logoH + gap;
+            } else {
+                textOffY = 0;
+                logoOffY = txtH + gap;
+            }
+            logoOffX = (contentW - logoW) / 2.0;
+            textOffX = (contentW - txtW) / 2.0;
+        }
+    }
+
+    const double logoScaleX = haveLogo ? logoW / cairo_image_surface_get_width(logoSurf) : 1.0;
+    const double logoScaleY = haveLogo ? logoH / cairo_image_surface_get_height(logoSurf) : 1.0;
+
     // Compute position
     double posX = 0, posY = 0;
     int col = opts.position % 3;
@@ -394,49 +551,94 @@ void WatermarkPanel::showPreview()
 
     switch (col) {
     case 0: posX = opts.marginX; break;
-    case 1: posX = (canvasW - logicalRect.width) / 2.0; break;
-    case 2: posX = canvasW - logicalRect.width - opts.marginX; break;
+    case 1: posX = (canvasW - contentW) / 2.0; break;
+    case 2: posX = canvasW - contentW - opts.marginX; break;
     }
     switch (pRow) {
     case 0: posY = opts.marginY; break;
-    case 1: posY = (canvasH - logicalRect.height) / 2.0; break;
-    case 2: posY = canvasH - logicalRect.height - opts.marginY; break;
+    case 1: posY = (canvasH - contentH) / 2.0; break;
+    case 2: posY = canvasH - contentH - opts.marginY; break;
     }
 
     // Apply rotation
     double rotRad = opts.rotation * M_PI / 180.0;
     cairo_save(cr);
-    cairo_translate(cr, posX + logicalRect.width / 2.0, posY + logicalRect.height / 2.0);
+    cairo_translate(cr, posX + contentW / 2.0, posY + contentH / 2.0);
     cairo_rotate(cr, rotRad);
-    cairo_translate(cr, -logicalRect.width / 2.0, -logicalRect.height / 2.0);
+    cairo_translate(cr, -contentW / 2.0, -contentH / 2.0);
 
     double globalAlpha = opts.opacity;
 
-    // Draw shadow
+    // Draw shadow — text and logo share it, as at export time
     if (opts.shadowEnabled) {
-        cairo_save(cr);
-        cairo_move_to(cr, opts.shadowOffsetX, opts.shadowOffsetY);
         cairo_set_source_rgba(cr, opts.shadowR, opts.shadowG, opts.shadowB, opts.shadowA * globalAlpha);
-        pango_cairo_show_layout(cr, layout);
+
+        if (haveText) {
+            cairo_save(cr);
+            cairo_move_to(cr, textOffX + opts.shadowOffsetX, textOffY + opts.shadowOffsetY);
+            pango_cairo_show_layout(cr, layout);
+            cairo_restore(cr);
+        }
+
+        if (haveLogo) {
+            cairo_save(cr);
+            cairo_translate(cr, logoOffX + opts.shadowOffsetX, logoOffY + opts.shadowOffsetY);
+            cairo_scale(cr, logoScaleX, logoScaleY);
+            cairo_set_source_rgba(cr, opts.shadowR, opts.shadowG, opts.shadowB, opts.shadowA * globalAlpha);
+            cairo_mask_surface(cr, logoSurf, 0, 0);
+            cairo_restore(cr);
+        }
+    }
+
+    // Draw stroke — likewise shared
+    if (opts.strokeEnabled && opts.strokeWidth > 0) {
+        if (haveText) {
+            cairo_move_to(cr, textOffX, textOffY);
+            pango_cairo_layout_path(cr, layout);
+            cairo_set_source_rgba(cr, opts.strokeR, opts.strokeG, opts.strokeB, opts.strokeA * globalAlpha);
+            cairo_set_line_width(cr, opts.strokeWidth * 2.0);
+            cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
+            cairo_stroke(cr);
+        }
+
+        if (haveLogo) {
+            constexpr int kSteps = 16;
+            for (int i = 0; i < kSteps; ++i) {
+                const double angle = 2.0 * M_PI * i / kSteps;
+                cairo_save(cr);
+                cairo_translate(cr,
+                                logoOffX + std::cos(angle) * opts.strokeWidth,
+                                logoOffY + std::sin(angle) * opts.strokeWidth);
+                cairo_scale(cr, logoScaleX, logoScaleY);
+                cairo_set_source_rgba(cr, opts.strokeR, opts.strokeG, opts.strokeB, opts.strokeA * globalAlpha);
+                cairo_mask_surface(cr, logoSurf, 0, 0);
+                cairo_restore(cr);
+            }
+        }
+    }
+
+    // Draw the logo, then the text over it
+    if (haveLogo) {
+        cairo_save(cr);
+        cairo_translate(cr, logoOffX, logoOffY);
+        cairo_scale(cr, logoScaleX, logoScaleY);
+        cairo_set_source_surface(cr, logoSurf, 0, 0);
+        cairo_pattern_set_filter(cairo_get_source(cr), CAIRO_FILTER_GOOD);
+        cairo_paint_with_alpha(cr, globalAlpha);
         cairo_restore(cr);
     }
 
-    // Draw stroke
-    if (opts.strokeEnabled && opts.strokeWidth > 0) {
-        cairo_move_to(cr, 0, 0);
-        pango_cairo_layout_path(cr, layout);
-        cairo_set_source_rgba(cr, opts.strokeR, opts.strokeG, opts.strokeB, opts.strokeA * globalAlpha);
-        cairo_set_line_width(cr, opts.strokeWidth * 2.0);
-        cairo_set_line_join(cr, CAIRO_LINE_JOIN_ROUND);
-        cairo_stroke(cr);
+    if (haveText) {
+        cairo_move_to(cr, textOffX, textOffY);
+        cairo_set_source_rgba(cr, opts.textR, opts.textG, opts.textB, opts.textA * globalAlpha);
+        pango_cairo_show_layout(cr, layout);
     }
 
-    // Draw text fill
-    cairo_move_to(cr, 0, 0);
-    cairo_set_source_rgba(cr, opts.textR, opts.textG, opts.textB, opts.textA * globalAlpha);
-    pango_cairo_show_layout(cr, layout);
-
     cairo_restore(cr);
+
+    if (logoSurf) {
+        cairo_surface_destroy(logoSurf);
+    }
 
     g_object_unref(layout);
     pango_font_description_free(fontDesc);

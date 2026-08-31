@@ -18,11 +18,13 @@
  */
 #pragma once
 
+#include <memory>
 #include <vector>
 
 #include <gtkmm.h>
 
 #include "dynamicprofilepanel.h"
+#include "steeppopup.h"
 #include "options.h"
 #include "rtengine/profilestore.h"
 
@@ -172,8 +174,15 @@ class Preferences final :
     Gtk::CheckButton* soloModeCB;
     Gtk::ComboBoxText* uiComplexityCB;
 
-    Gtk::ComboBoxText* themeCBT;
+    // Theme selector: a MenuButton whose menu items live-preview the theme on
+    // highlight (hover), commit on activate, and revert on popdown.
+    Gtk::MenuButton* themeBtn;
+    std::unique_ptr<steepui::PopupMenu> themePopup_;
+    std::vector<Gtk::RadioMenuItem*> themeItems;
+    int themeActiveRow = 0;
+    void themeSetActiveRow(int row);
     Gtk::FontButton* mainFontFB;
+    Gtk::SpinButton* pillScaleSB;
     Gtk::FontButton* colorPickerFontFB;
     Gtk::ColorButton* cropMaskColorCB;
     Gtk::ColorButton* navGuideColorCB;
@@ -190,6 +199,8 @@ class Preferences final :
     Gtk::CheckButton* overlayedFileNames;
     Gtk::CheckButton* filmStripOverlayedFileNames;
     Gtk::CheckButton* sameThumbSize;
+    Gtk::CheckButton* browserTitlePin;
+    Gtk::CheckButton* filmstripAtBottomCB;
     Gtk::SpinButton* filmstripThumbSizeSB;
     Gtk::SpinButton* browserThumbSizeSB;
     Gtk::SpinButton* browseRecursiveDepth;
@@ -277,7 +288,6 @@ class Preferences final :
     void updateDFinfos ();
     void updateFFinfos ();
     void workflowUpdate();
-    void themeChanged  ();
     void fontChanged   ();
     void cpFontChanged ();
     void forRAWComboChanged ();

@@ -49,6 +49,7 @@ set(RT_GUI_TOOL_PANEL_SOURCES
     tools/texture.cc
     tools/clarity.cc
     tools/grain.cc
+    tools/lighteffects.cc
     tools/tiltshift.cc
     tools/lensblur.cc
     tools/locallab.cc
@@ -211,7 +212,9 @@ set(NONCLISOURCEFILES
     saveformatpanel.cc
     watermarkpanel.cc
     watermarkrenderer.cc
+    smartmaskbar.cc
     soundman.cc
+    steeppopup.cc
     steepperflog.cc
     threadutils.cc
     thumbbrowserbase.cc
@@ -279,6 +282,8 @@ set_target_properties(rth-cli PROPERTIES OUTPUT_NAME steep-cli)
 if(WIN32 AND WITH_AI_MASKING)
     set(AI_MASK_MODEL
         "${PROJECT_SOURCE_DIR}/rtdata/models/segformer_b0_ade20k.onnx")
+    set(AI_INPAINT_MODEL
+        "${PROJECT_SOURCE_DIR}/rtdata/models/lama_inpainting.onnx")
     add_custom_command(
         TARGET rth POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory
@@ -293,6 +298,18 @@ if(WIN32 AND WITH_AI_MASKING)
             "${BUNDLE_BASE_INSTALL_DIR}/models/segformer_b0_ade20k.onnx"
         COMMENT "Bundling the AI masking model"
     )
+    if(EXISTS "${AI_INPAINT_MODEL}")
+        add_custom_command(
+            TARGET rth POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${AI_INPAINT_MODEL}"
+                "$<TARGET_FILE_DIR:rth>/models/lama_inpainting.onnx"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${AI_INPAINT_MODEL}"
+                "${BUNDLE_BASE_INSTALL_DIR}/models/lama_inpainting.onnx"
+            COMMENT "Bundling the AI inpainting model"
+        )
+    endif()
 endif()
 
 target_include_directories(rth PRIVATE ${EXTRA_INCDIR})

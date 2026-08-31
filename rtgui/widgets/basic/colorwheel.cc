@@ -21,6 +21,7 @@
 #include <cmath>
 #include <cstdio>
 
+#include "multilangmgr.h"
 #include "options.h"
 
 #include "rtengine/color.h"
@@ -40,6 +41,10 @@ ColorWheelArea::ColorWheelArea()
     , listener_(nullptr)
     , isDragged_(false)
     , edited_(false)
+    , dragX_(0)
+    , dragY_(0)
+    , lastMouseX_(0)
+    , lastMouseY_(0)
     , cachedSize_(0)
 {
     set_can_focus(false);
@@ -64,6 +69,14 @@ void ColorWheelArea::reset()
     sat_ = 0;
     edited_ = false;
     queue_draw();
+
+    // Resets that start on the wheel itself (double-click, right-click) have
+    // nothing else to refresh the wrapper's dot and entry, which would
+    // otherwise keep reading the old saturation.
+    if (owner_) {
+        owner_->updateIndicatorFromArea();
+    }
+
     notifyListener();
 }
 
@@ -75,13 +88,40 @@ bool ColorWheelArea::notifyListener()
     return false; // for signal_timeout
 }
 
-void ColorWheelArea::updateFromMouse(double mx, double my)
+void ColorWheelArea::wheelGeometry(double& cx, double& cy, double& radius) const
 {
     const Gtk::Allocation alloc = get_allocation();
     const int size = std::min(alloc.get_width(), alloc.get_height());
-    const double cx = alloc.get_width() / 2.0;
-    const double cy = alloc.get_height() / 2.0;
-    const double radius = (size - 10) / 2.0; // 5px inset on each side
+    cx = alloc.get_width() / 2.0;
+    cy = alloc.get_height() / 2.0;
+    radius = (size - 10) / 2.0; // 5px inset on each side
+}
+
+// Seed the virtual drag point. A plain drag starts under the pointer, so the
+// puck jumps to the press as it always has. A fine drag starts at the puck
+// instead: shift means "nudge what is already set", and jumping first would
+// discard that value before the first pixel of movement.
+void ColorWheelArea::beginDrag(double mx, double my, bool fine)
+{
+    lastMouseX_ = mx;
+    lastMouseY_ = my;
+
+    if (fine) {
+        double cx, cy, radius;
+        wheelGeometry(cx, cy, radius);
+        const double hueRad = hue_ * rtengine::RT_PI / 180.0;
+        dragX_ = cx + sat_ * radius * std::cos(hueRad);
+        dragY_ = cy - sat_ * radius * std::sin(hueRad);
+    } else {
+        dragX_ = mx;
+        dragY_ = my;
+    }
+}
+
+void ColorWheelArea::updateFromMouse(double mx, double my)
+{
+    double cx, cy, radius;
+    wheelGeometry(cx, cy, radius);
 
     double dx = mx - cx;
     double dy = -(my - cy); // flip Y so up is positive
@@ -212,6 +252,19 @@ void ColorWheelArea::on_style_updated()
 
 bool ColorWheelArea::on_button_press_event(GdkEventButton* event)
 {
+    // Right-click anywhere on the wheel drops the puck back to the centre.
+    // Deliberately not limited to inside the circle: it is a discard gesture,
+    // so being forgiving about aim costs nothing.
+    if (event->button == 3 && event->type == GDK_BUTTON_PRESS) {
+        if (delayconn_.connected()) {
+            delayconn_.disconnect();
+        }
+
+        isDragged_ = false;
+        reset();
+        return true;
+    }
+
     if (event->button != 1) {
         return false;
     }
@@ -224,19 +277,24 @@ bool ColorWheelArea::on_button_press_event(GdkEventButton* event)
 
     if (event->type == GDK_BUTTON_PRESS) {
         // Check if click is inside the wheel
-        const Gtk::Allocation alloc = get_allocation();
-        const int size = std::min(alloc.get_width(), alloc.get_height());
-        const double cx = alloc.get_width() / 2.0;
-        const double cy = alloc.get_height() / 2.0;
-        const double radius = (size - 10) / 2.0;
+        double cx, cy, radius;
+        wheelGeometry(cx, cy, radius);
 
         double dx = event->x - cx;
         double dy = event->y - cy;
         double dist = std::sqrt(dx * dx + dy * dy);
 
         if (dist <= radius + 5) { // slight tolerance
+            const bool fine = event->state & GDK_SHIFT_MASK;
             isDragged_ = true;
-            updateFromMouse(event->x, event->y);
+            beginDrag(event->x, event->y, fine);
+
+            if (fine) {
+                // Nothing has moved yet, so there is nothing to report.
+                return true;
+            }
+
+            updateFromMouse(dragX_, dragY_);
 
             const auto& options = App::get().options();
             if (options.adjusterMinDelay == 0) {
@@ -270,7 +328,33 @@ bool ColorWheelArea::on_motion_notify_event(GdkEventMotion* event)
             delayconn_.disconnect();
         }
 
-        updateFromMouse(event->x, event->y);
+        // Shift advances the puck at a quarter of the pointer's speed. The
+        // scale is applied per motion event, so it can be taken up and dropped
+        // part-way through a drag without the puck lurching.
+        const double speed = (event->state & GDK_SHIFT_MASK) ? 0.25 : 1.0;
+        dragX_ += (event->x - lastMouseX_) * speed;
+        dragY_ += (event->y - lastMouseY_) * speed;
+        lastMouseX_ = event->x;
+        lastMouseY_ = event->y;
+
+        // Pin the virtual point to the wheel. Left to run free it would drift
+        // arbitrarily far outside while the puck sat clamped at the rim, and
+        // the drag would then feel dead until the pointer travelled all the
+        // way back.
+        {
+            double cx, cy, radius;
+            wheelGeometry(cx, cy, radius);
+            const double dx = dragX_ - cx;
+            const double dy = dragY_ - cy;
+            const double dist = std::sqrt(dx * dx + dy * dy);
+
+            if (dist > radius && dist > 0.0) {
+                dragX_ = cx + dx * radius / dist;
+                dragY_ = cy + dy * radius / dist;
+            }
+        }
+
+        updateFromMouse(dragX_, dragY_);
 
         const auto& options = App::get().options();
         if (options.adjusterMinDelay == 0) {
@@ -314,6 +398,8 @@ ColorWheel::ColorWheel(const Glib::ustring& label)
 {
     set_name("ColorWheel");
     area_.setOwner(this);
+    // Shift-to-refine and right-click-to-reset are invisible otherwise.
+    area_.set_tooltip_text(M("COLORWHEEL_TOOLTIP"));
 
     if (!label.empty()) {
         label_.set_halign(Gtk::ALIGN_CENTER);

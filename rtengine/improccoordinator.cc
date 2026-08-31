@@ -30,6 +30,7 @@
 #include "improccoordinator.h"
 
 #include "array2D.h"
+#include "boxblur.h"
 #include "cieimage.h"
 #include "color.h"
 #include "colortemp.h"
@@ -2323,6 +2324,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 ipf.grainEffect(nprevl, params->grain, fw, fh, 0, 0, std::max(scale, 1));
             }
 
+
             if (params->tiltShift.enabled) {
                 ipf.tiltShiftEffect(nprevl, params->tiltShift, fw, fh);
             }
@@ -2567,6 +2569,13 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 ipf.filmPresets(nprevl, params->filmPresets, filmLabContext);
             }
             ipf.softLight(nprevl, params->softlight);
+
+            // After the Lab curves and the film stage: those rewrite a/b, so
+            // halation's warm tint was being flattened out when this ran
+            // earlier alongside grain.
+            if (params->lightEffects.enabled) {
+                ipf.lightEffects(nprevl, params->lightEffects, std::max(scale, 1));
+            }
             traceStage("film-lab");
 
 
@@ -3265,6 +3274,29 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
         traceStage("preview-and-histograms");
     }
 
+#ifdef RT_AI_MASKING
+    // Smart Masks proactive analysis: while the GUI has the masking view
+    // showing (setSmartMaskAnalysisWanted), segment the current image once at
+    // the tail of a pass — after the preview has been published — so the
+    // first AI mask press is instant and the class dropdown can say what the
+    // photo contains. Bounded cost: one inference per image — the cache
+    // check makes every later pass a no-op.
+    if (smartMaskAnalysisWanted_.load(std::memory_order_relaxed)
+            && !destroying && oprevi && pW > 0 && pH > 0
+            && settings->smartMaskAutoAnalyze
+            && getAISegmentationEngine().isInitialized()) {
+        const std::string imageId = imgsrc->getFileName().raw();
+        if (!AIMaskCache::getInstance().hasCachedMasks(imageId)) {
+            if (edittrace::enabled()) {
+                edittrace::logf("[aiMask] proactive analyze img=%s", imageId.c_str());
+            }
+            AIMaskCache::getInstance().computeMasks(
+                imageId, oprevi->r.ptrs, oprevi->g.ptrs, oprevi->b.ptrs,
+                pW, pH, fw, fh, params->icm.workingProfile.raw(), true);
+        }
+    }
+#endif
+
     // oprevi either aliases orig_prev or the persistent transform buffer;
     // neither may be freed here. It is reassigned at the top of every pass.
     oprevi = nullptr;
@@ -3283,6 +3315,153 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
         lastInteractivePassMs.store(previous ? (previous + 3 * sample) / 4 : sample,
                                     std::memory_order_relaxed);
     }
+}
+
+std::vector<procparams::SpotEntry> ImProcCoordinator::detectDustSpots(int maxSpots)
+{
+    // Sensor dust: small dark blobs sitting in otherwise smooth areas. A
+    // background estimate (box blur) gives the residual; candidates must be
+    // clearly darker than their surroundings AND sit where the local activity
+    // is low, or every leaf and window becomes a "speck".
+    std::vector<procparams::SpotEntry> found;
+
+    MyMutex::MyLock lock(mProcessing);
+
+    if (!orig_prev || pW <= 8 || pH <= 8 || scale <= 0) {
+        return found;
+    }
+
+    const int w = pW;
+    const int h = pH;
+
+    array2D<float> lum(w, h);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            lum[y][x] = (orig_prev->r(y, x) + orig_prev->g(y, x) + orig_prev->b(y, x)) / 3.f;
+        }
+    }
+
+    const int blurRadius = std::max(3, std::min(8, 48 / scale + 2));
+    array2D<float> background(w, h);
+    boxblur(static_cast<float**>(lum), static_cast<float**>(background), blurRadius, w, h, true);
+
+    array2D<float> deviation(w, h);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            deviation[y][x] = std::fabs(lum[y][x] - background[y][x]);
+        }
+    }
+    array2D<float> activity(w, h);
+    boxblur(static_cast<float**>(deviation), static_cast<float**>(activity), blurRadius, w, h, true);
+
+    // Dark residual, relative to the local background, in a calm neighborhood.
+    std::vector<char> candidate(static_cast<size_t>(w) * h, 0);
+    for (int y = 1; y < h - 1; ++y) {
+        for (int x = 1; x < w - 1; ++x) {
+            const float resid = background[y][x] - lum[y][x];
+            const float need = std::max(0.06f * background[y][x] + 250.f, 3.5f * activity[y][x]);
+            if (resid > need) {
+                candidate[static_cast<size_t>(y) * w + x] = 1;
+            }
+        }
+    }
+
+    // Connected components; dust is small and roughly round.
+    const int maxArea = std::max(6, std::min(400, (120 / scale + 2) * (120 / scale + 2)));
+    std::vector<int> label(static_cast<size_t>(w) * h, 0);
+    std::vector<int> stack;
+
+    struct Blob {
+        float strength;
+        int cx, cy, radius;
+    };
+    std::vector<Blob> blobs;
+
+    int labelCount = 0;
+    for (int seed = 0; seed < w * h; ++seed) {
+        if (!candidate[seed] || label[seed]) {
+            continue;
+        }
+        ++labelCount;
+        stack.assign(1, seed);
+        label[seed] = labelCount;
+        int minX = w, minY = h, maxX = 0, maxY = 0;
+        long sumX = 0, sumY = 0;
+        float strength = 0.f;
+        int area = 0;
+        while (!stack.empty()) {
+            const int p = stack.back();
+            stack.pop_back();
+            const int y = p / w;
+            const int x = p % w;
+            ++area;
+            sumX += x;
+            sumY += y;
+            minX = std::min(minX, x); maxX = std::max(maxX, x);
+            minY = std::min(minY, y); maxY = std::max(maxY, y);
+            strength = std::max(strength, background[y][x] - lum[y][x]);
+            const auto visit = [&](int q) {
+                if (candidate[q] && !label[q]) {
+                    label[q] = labelCount;
+                    stack.push_back(q);
+                }
+            };
+            if (y > 0) visit(p - w);
+            if (y < h - 1) visit(p + w);
+            if (x > 0) visit(p - 1);
+            if (x < w - 1) visit(p + 1);
+        }
+
+        const int bbW = maxX - minX + 1;
+        const int bbH = maxY - minY + 1;
+        if (area < 2 || area > maxArea) {
+            continue;
+        }
+        if (bbW > 3 * bbH || bbH > 3 * bbW) {
+            continue; // elongated = edge or wire, not a speck
+        }
+
+        Blob b;
+        b.strength = strength;
+        b.cx = static_cast<int>(sumX / area);
+        b.cy = static_cast<int>(sumY / area);
+        b.radius = std::max(bbW, bbH) / 2 + 2;
+        blobs.push_back(b);
+    }
+
+    std::sort(blobs.begin(), blobs.end(),
+              [](const Blob& a, const Blob& b) { return a.strength > b.strength; });
+
+    const int count = std::min<int>(blobs.size(), std::max(0, maxSpots));
+    for (int i = 0; i < count; ++i) {
+        procparams::SpotEntry entry;
+        entry.method = procparams::SpotMethod::AI_DUST;
+        entry.targetPos.set(blobs[i].cx * scale + scale / 2, blobs[i].cy * scale + scale / 2);
+        entry.sourcePos = entry.targetPos;
+        entry.radius = LIM(blobs[i].radius * scale, 8, 200);
+        entry.opacity = 1.f;
+        found.push_back(entry);
+    }
+
+    return found;
+}
+
+void ImProcCoordinator::setSmartMaskAnalysisWanted(bool wanted)
+{
+#ifdef RT_AI_MASKING
+    const bool was = smartMaskAnalysisWanted_.exchange(wanted);
+
+    if (wanted && !was && !destroying
+            && settings->smartMaskAutoAnalyze
+            && getAISegmentationEngine().isInitialized()
+            && imgsrc
+            && !AIMaskCache::getInstance().hasCachedMasks(imgsrc->getFileName().raw())) {
+        // Cheap monitor-only pass; the analysis rides its tail.
+        startProcessing(M_MONITOR);
+    }
+#else
+    (void)wanted;
+#endif
 }
 
 void ImProcCoordinator::setTweakOperator(TweakOperator *tOperator)

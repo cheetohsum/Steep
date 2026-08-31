@@ -156,6 +156,8 @@ public:
         nonUpgradeJobs_(0),
         foregroundJobCount_(0),
         activeJpegJobs_(0),
+        activeUpgradeJobs_(0),
+        maxUpgradeJobs_(2),
         pauseDepth_(0),
         priorityScanNeeded_(true)
     {
@@ -170,6 +172,10 @@ public:
         // priority, so a wider pool on big machines is safe).
         threadCount = std::max(2, std::min(threadCount, 12));
         maxThreadCount_ = threadCount;
+        // A RAW upgrade decodes the whole file (hundreds of ms, hundreds of
+        // MB). Now that every untouched RAW is eligible, keep most of the pool
+        // free for cheap first-pass previews and bound the peak memory.
+        maxUpgradeJobs_ = std::max(2, threadCount / 3);
 
         threadPool_.reset(new Glib::ThreadPool(threadCount, true));
         priorityScanHint_ = jobs_.end();
@@ -213,6 +219,10 @@ public:
     std::size_t foregroundJobCount_;
 
     int activeJpegJobs_;
+
+    int activeUpgradeJobs_;
+
+    int maxUpgradeJobs_;
 
     std::atomic<unsigned> pauseDepth_;
 
@@ -454,7 +464,8 @@ public:
         const auto runnableVisible = [this](const Job& job) {
             return job.priority_
                 && *job.priority_
-                && (!job.jpeg_ || activeJpegJobs_ < kMaxConcurrentBackgroundJpegJobs);
+                && (!job.jpeg_ || activeJpegJobs_ < kMaxConcurrentBackgroundJpegJobs)
+                && (!job.upgrade_ || activeUpgradeJobs_ < maxUpgradeJobs_);
         };
 
         JobList::iterator i = findPriorityJobLocked_(true);
@@ -522,8 +533,8 @@ public:
         }
 
         const auto canRun = [this](const Job& job) {
-            return !job.jpeg_
-                || activeJpegJobs_ < kMaxConcurrentBackgroundJpegJobs;
+            return (!job.jpeg_ || activeJpegJobs_ < kMaxConcurrentBackgroundJpegJobs)
+                && (!job.upgrade_ || activeUpgradeJobs_ < maxUpgradeJobs_);
         };
         if (i != jobs_.end() && !canRun(*i)) {
             i = std::find_if(jobs_.begin(), jobs_.end(), canRun);
@@ -563,6 +574,9 @@ public:
             if (j.jpeg_) {
                 ++activeJpegJobs_;
             }
+            if (j.upgrade_) {
+                ++activeUpgradeJobs_;
+            }
 
             return true;
         }
@@ -592,12 +606,18 @@ public:
         int availableJpegSlots = std::max(
             0,
             kMaxConcurrentBackgroundJpegJobs - activeJpegJobs_);
+        int availableUpgradeSlots = std::max(0, maxUpgradeJobs_ - activeUpgradeJobs_);
         int runnableJobs = 0;
         for (const auto& job : jobs_) {
             if (visibleOnly && !(job.priority_ && *job.priority_)) {
                 continue;
             }
-            if (!job.jpeg_) {
+            if (job.upgrade_) {
+                if (availableUpgradeSlots > 0) {
+                    --availableUpgradeSlots;
+                    ++runnableJobs;
+                }
+            } else if (!job.jpeg_) {
                 ++runnableJobs;
             } else if (availableJpegSlots > 0) {
                 --availableJpegSlots;
@@ -762,9 +782,14 @@ public:
 
             // Release our reference to the thumbnail.
             thm->decreaseRef();
-            if (j.jpeg_) {
+            if (j.jpeg_ || j.upgrade_) {
                 std::lock_guard<std::mutex> lock(mutex_);
-                --activeJpegJobs_;
+                if (j.jpeg_) {
+                    --activeJpegJobs_;
+                }
+                if (j.upgrade_) {
+                    --activeUpgradeJobs_;
+                }
             }
         }
 

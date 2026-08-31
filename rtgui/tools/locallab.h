@@ -120,6 +120,10 @@ public:
     LocallabExposure& getExposureTool() { return expexpose; }
     Gtk::Button* getAddMaskButton() const { return expsettings->getAddMaskButton(); }
 
+    // One-click mask creation (Smart Masks chip strip)
+    void createAIMaskSpot(int classIndex) { expsettings->requestAIMaskSpot(classIndex); }
+    void createShapeMaskSpot(int shape) { expsettings->requestShapeMaskSpot(shape); }
+
     // When true, write() only updates control spot geometry, not tool settings
     void setSkipToolWrites(bool skip) { skipToolWrites_ = skip; }
 

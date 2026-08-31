@@ -18,6 +18,8 @@
  */
 #pragma once
 
+#include <vector>
+
 #include <cstdio>
 #include <cstring>
 
@@ -51,7 +53,27 @@ void imfile_set_plistener(IMFILE *f, rtengine::ProgressListener *plistener, doub
 void imfile_update_progress(IMFILE *f);
 
 IMFILE* fopen (const char* fname);
+IMFILE* fopen (const char* fname, bool randomAccess);
+// Pull [offset, offset+length) of a memory-mapped file into the page cache
+// with large sequential reads, serialised across threads. Touching a mapped
+// range through page faults costs one seek per 64 KB cluster whenever other
+// workers interleave their own files on the same spindle; one sequential
+// read per file is what a rotational disk wants. No-op for in-memory files.
+void fprefetch (IMFILE* f, ssize_t offset, ssize_t length);
+// Same idea before the file is even mapped: pull the first `bytes` of `fname`
+// into the page cache so the header/EXIF parsers that follow (LibRaw identify,
+// Exiv2 on its own handle) hit cache instead of seeking into the file.
+void prefetchFileHead (const char* fname, ssize_t bytes);
+// Read [offset, offset+length) of `fname` into `out` with the same
+// serialisation as the prefetchers, so a parser that wants a byte range
+// costs the disk one sequential run. Returns false if nothing was read.
+bool readFileRange (const char* fname, ssize_t offset, ssize_t length, std::vector<unsigned char>& out);
 IMFILE* gfopen (const char* fname);
+// randomAccess=true opens the file without filesystem read-ahead. Use it for
+// metadata-only passes that touch a few scattered structures: read-ahead
+// turns those touches into megabytes of speculative disk traffic. Never use
+// it for a full image decode, which reads the file front to back.
+IMFILE* gfopen (const char* fname, bool randomAccess);
 IMFILE* fopen (unsigned* buf, int size);
 void fclose (IMFILE* f);
 inline long ftell (IMFILE* f)

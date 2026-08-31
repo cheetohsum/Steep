@@ -207,6 +207,8 @@ FILEBROWSER_DELETEDIALOG_ALL;Are you sure you want to <b>permanently</b> delete 
 FILEBROWSER_DELETEDIALOG_HEADER;File delete confirmation:
 FILEBROWSER_DELETEDIALOG_SELECTED;Are you sure you want to <b>permanently</b> delete the selected <b>%1</b> files?
 FILEBROWSER_DELETEDIALOG_SELECTEDINCLPROC;Are you sure you want to <b>permanently</b> delete the selected <b>%1</b> files, <b>including</b> a queue-processed version?
+FILEBROWSER_EMPTY_NOPHOTOS;No photos in this folder
+FILEBROWSER_EMPTY_SCANNING;Scanning folder…
 FILEBROWSER_EMPTYTRASH;Empty trash
 FILEBROWSER_EMPTYTRASHHINT;<b>Permanently</b> delete all files in trash.
 FILEBROWSER_EXTPROGMENU;Open with
@@ -1649,6 +1651,16 @@ HISTORY_MSG_ICM_WORKING_PRIM_METHOD;Primaries method
 HISTORY_MSG_ICM_WORKING_SLOPE;TRC - Slope
 HISTORY_MSG_ICM_WORKING_TRC_METHOD;TRC method
 HISTORY_MSG_ILLUM;CAL - SC - Illuminant
+HISTORY_MSG_LIGHTEFFECTS_ENABLED;Light effects
+HISTORY_MSG_LIGHTEFFECTS_FLARE;Light effects - Flare
+HISTORY_MSG_LIGHTEFFECTS_FLAREANGLE;Light effects - Flare angle
+HISTORY_MSG_LIGHTEFFECTS_FLARELENGTH;Light effects - Flare length
+HISTORY_MSG_LIGHTEFFECTS_GLOW;Light effects - Glow
+HISTORY_MSG_LIGHTEFFECTS_GLOWRADIUS;Light effects - Glow radius
+HISTORY_MSG_LIGHTEFFECTS_HALATION;Light effects - Halation
+HISTORY_MSG_LIGHTEFFECTS_HALATIONSIZE;Light effects - Halation size
+HISTORY_MSG_LIGHTEFFECTS_HALATIONWARMTH;Light effects - Halation warmth
+HISTORY_MSG_LIGHTEFFECTS_THRESHOLD;Light effects - Threshold
 HISTORY_MSG_LOCALCONTRAST_AMOUNT;Local Contrast - Amount
 HISTORY_MSG_LOCALCONTRAST_DARKNESS;Local Contrast - Darkness
 HISTORY_MSG_LOCALCONTRAST_ENABLED;Local Contrast
@@ -2149,6 +2161,14 @@ MAIN_TAB_TRANSFORM;Transform
 MAIN_TAB_TRANSFORM_TOOLTIP;Shortcut: <b>Alt-t</b>
 MODE_CROP;Crop
 MODE_EDIT;Edit
+MODE_EDIT_PILLSCALE_TIP;Right-click for a slider that resizes the text in the setting rows.
+MODE_EDIT_PILLSCALE_TITLE;Setting text size
+PREFERENCES_FSTRIP_AT_BOTTOM;Put the filmstrip below the image
+PREFERENCES_FSTRIP_AT_BOTTOM_TIP;Moves the editor's filmstrip (and its folder name) beneath the photo instead of above it.
+PREFERENCES_FSTRIP_FOLDER_NAME;Show the folder name above the filmstrip
+PREFERENCES_FSTRIP_FOLDER_NAME_TIP;Pins the browser's folder title above the editor's filmstrip.
+PREFERENCES_APPEARANCE_PILLSCALE;Setting row text size
+PREFERENCES_APPEARANCE_PILLSCALE_TIP;Size of the text in the Edit pane's setting rows. The rows grow with it. Also adjustable by right-clicking the Edit button.
 MODE_MASK;Mask
 MODE_PRESETS;Presets
 TOOLGROUP_ADVANCED;Advanced
@@ -2638,7 +2658,17 @@ QUEUE_LOCATION_TEMPLATE_HELP_TIMESTAMP_BODY;Three different date/time values may
 QUEUE_LOCATION_TEMPLATE_HELP_TIMESTAMP_TITLE;Date and time
 QUEUE_LOCATION_TEMPLATE_HELP_TITLE;Creating an output template
 QUEUE_LOCATION_TEMPLATE_TOOLTIP;Specify the output location based on characteristics such as the source photo's location, rank, trash status or position in the queue.\n\nThe output template field value can include specifiers beginning with <b>%</b>, which are replaced by those characteristics in the actual destination path.\n\nPress the <b>?</b> button for full instructions.
+QUEUE_LOCATION_TEMPLATE_PREVIEW;A photo would be saved as:
+QUEUE_LOCATION_TEMPLATE_PREVIEW_INVALID;(this template does not resolve to a path)
+QUEUE_LOCATION_TEMPLATE_PREVIEW_PERPHOTO;Dates and rank come from each photo, so the real folders will differ.
 QUEUE_LOCATION_TITLE;Output Location
+QUEUE_TEMPLATE_PRESETS_TITLE;Ready-made templates
+QUEUE_TEMPLATE_PRESETS_INTRO;Click one to use it. Each line shows where an example photo would end up.
+QUEUE_TEMPLATE_PRESET_BESIDE;Beside the original photo
+QUEUE_TEMPLATE_PRESET_SUBFOLDER;In an "Exported" subfolder
+QUEUE_TEMPLATE_PRESET_BYFORMAT;In a subfolder per file format
+QUEUE_TEMPLATE_PRESET_BYDATE;In year and month folders, by capture date
+QUEUE_TEMPLATE_PRESET_DATENAME;Named with the capture date
 QUEUE_FORMAT_OPTIONS;Options
 QUEUE_MAXSIZE_ENABLED;Limit maximum image size
 QUEUE_MAXSIZE_ENABLED_HINT;Cap the resolution of exported images.\nImages whose longest edge exceeds this size are downscaled; smaller images are never upscaled.\nIf a photo's processing profile already has a resize, its pixel targets are clamped to this cap.
@@ -2795,6 +2825,7 @@ TP_CHMIXER_GREEN;Green channel
 TP_CHMIXER_LABEL;Channel Mixer
 TP_CHMIXER_RED;Red channel
 TP_COARSETRAF_TOOLTIP_HFLIP;Flip horizontally.
+TP_COARSETRAF_LABEL_ROTATE;Rotate
 TP_COARSETRAF_TOOLTIP_ROTLEFT;Rotate left.\n\nShortcuts:\n<b>[</b> - Multiple Editor Tabs Mode,\n<b>Alt-[</b> - Single Editor Tab Mode.
 TP_COARSETRAF_TOOLTIP_ROTRIGHT;Rotate right.\n\nShortcuts:\n<b>]</b> - Multiple Editor Tabs Mode,\n<b>Alt-]</b> - Single Editor Tab Mode.
 TP_COARSETRAF_TOOLTIP_VFLIP;Flip vertically.
@@ -2969,6 +3000,7 @@ TP_COLORTONING_TWOCOLOR_TOOLTIP;Standard chroma:\nLinear response, a* = b*.\n\nS
 TP_COLORTONING_TWOSTD;Standard chroma
 TP_COLORGRADING_LABEL;Color Grade
 TP_COLORGRADING_SHADOWS;Shadows
+COLORWHEEL_TOOLTIP;Drag to set the tint. Hold Shift while dragging for fine control (quarter speed). Right-click or double-click to reset to neutral.
 TP_COLORGRADING_MIDTONES;Mids
 TP_COLORGRADING_HIGHLIGHTS;Highs
 TP_COLORGRADING_GLOBAL;Global
@@ -3569,8 +3601,31 @@ TP_LENSPROFILE_LENS_WARNING;Warning: the crop factor used for lens profiling is 
 TP_LENSPROFILE_MODE_HEADER;Lens Profile
 TP_LENSPROFILE_USE_CA;Chromatic aberration
 TP_LENSPROFILE_USE_GEOMETRIC;Geometric distortion
+TP_LENSPROFILE_AUTOMATCH_NOCAM;camera not matched
+TP_LENSPROFILE_AUTOMATCH_NOLENS;lens not matched
+TP_LENSPROFILE_AUTOMATCH_NONE;No matching profile found for this photo.
+TP_LENSPROFILE_AUTOMATCH_UNKNOWN;Matched per photo when exporting.
+TP_LENSPROFILE_DEFAULT_AUTO;Auto by default
+TP_LENSPROFILE_DEFAULT_AUTO_TOOLTIP;When a photo opens with no lens correction — or a manual one with nothing selected — switch it to automatic matching.
+TP_LENSPROFILE_SOURCE_HEADER;Correction
 TP_LENSPROFILE_USE_HEADER;Correct
 TP_LENSPROFILE_USE_VIGNETTING;Vignetting
+TP_LIGHTEFFECTS_AMOUNT;Amount
+TP_LIGHTEFFECTS_SHARED;Shared
+TP_LIGHTEFFECTS_FLARE;Flare
+TP_LIGHTEFFECTS_FLAREANGLE;Flare angle
+TP_LIGHTEFFECTS_FLARELENGTH;Flare length
+TP_LIGHTEFFECTS_FLARE_TOOLTIP;Directional streaks from bright points, as light scatters inside the lens.
+TP_LIGHTEFFECTS_GLOW;Glow
+TP_LIGHTEFFECTS_GLOWRADIUS;Glow radius
+TP_LIGHTEFFECTS_GLOW_TOOLTIP;Soft diffusion spreading evenly out of the highlights.
+TP_LIGHTEFFECTS_HALATION;Halation
+TP_LIGHTEFFECTS_HALATIONSIZE;Halation size
+TP_LIGHTEFFECTS_HALATIONWARMTH;Halation warmth
+TP_LIGHTEFFECTS_HALATION_TOOLTIP;A warm fringe hugging the edge of bright areas, as on film where light bounced off the backing. Independent of the Film Presets tool's own halation - if you use both, they add up.
+TP_LIGHTEFFECTS_LABEL;Glow & Halation
+TP_LIGHTEFFECTS_THRESHOLD;Threshold
+TP_LIGHTEFFECTS_THRESHOLD_TOOLTIP;How bright an area must be before it gives off light. All three effects share it.
 TP_LOCALCONTRAST_AMOUNT;Local Contrast
 TP_LOCALCONTRAST_DARKNESS;Darkness level
 TP_LOCALCONTRAST_LABEL;Local Contrast
@@ -4176,6 +4231,20 @@ TP_LOCALLAB_MASK_NAME_BUILDING;Building Mask
 TP_LOCALLAB_MASK_NAME_VEHICLE;Vehicle Mask
 TP_LOCALLAB_MASK_NAME_ANIMAL;Animal Mask
 TP_LOCALLAB_MASK_NAME_FOREGROUND;Foreground Mask
+TP_LOCALLAB_MASK_NAME_SUBJECT;Subject Mask
+TP_LOCALLAB_AIMASK_CLASS_SUBJECT;Subject
+TP_LOCALLAB_AIMASK_CLASS_NOTSUBJECT;Everything but Subject
+TP_LOCALLAB_AIMASK_SHAPEOP;Shape Combine
+TP_LOCALLAB_AIMASK_SHAPEOP_BLEND;Blend
+TP_LOCALLAB_AIMASK_SHAPEOP_ADD;Shape adds to mask
+TP_LOCALLAB_AIMASK_SHAPEOP_SUB;Shape cuts from mask
+TP_LOCALLAB_AIMASK_SHAPEOP_TOOLTIP;How the spot's ellipse, rectangle or gradient combines with the AI mask: blended by opacity, added to the selection, or cut out of it. Resize and move the shape to choose the area.
+TP_LOCALLAB_SMARTMASK_SUBJECT;Subject
+TP_LOCALLAB_SMARTMASK_PICK;Pick
+TP_LOCALLAB_SMARTMASK_PICK_TOOLTIP;Then click something in the photo — an AI mask of it is created with one press.
+TP_LOCALLAB_SMARTMASK_AI_TOOLTIP;Create an AI mask: pick what to select and it is masked with one click.
+TP_LOCALLAB_SMARTMASK_SHAPE_TOOLTIP;Add this mask shape, then drag it into place on the photo.
+TP_LOCALLAB_SMARTMASK_LASSO_TOOLTIP;Draw around what you want to select. The outline clings to nearby edges as you go, so you can trace roughly. Release to close the shape.
 TP_LOCALLAB_AIMASK_FEATHER;Feathering
 TP_LOCALLAB_AIMASK_BLUR;Blur
 TP_LOCALLAB_AIMASK_INVERT;Invert Mask
@@ -4963,6 +5032,7 @@ TP_RGBCURVES_LUMAMODE_TOOLTIP;<b>Luminosity mode</b> allows to vary the contribu
 TP_RGBCURVES_RED;R
 TP_ROTATE_DEGREE;Rotate
 TP_ROTATE_LABEL;Rotate
+TP_ROTATE_LABEL_LEVEL;Level
 TP_ROTATE_AUTO_LEVEL;Auto Level
 TP_ROTATE_AUTO_LEVEL_TOOLTIP;Detect the horizon and strong structural lines, then level the image automatically
 TP_ROTATE_AUTO_LEVEL_FAILED;No reliable horizon or straight lines found
@@ -5031,6 +5101,12 @@ TP_SPOT_AI_REFLECTION;Remove Reflections
 TP_SPOT_AI_DUST;Remove Dust
 TP_SPOT_AI_GENERATIVE;Generative Fill
 TP_SPOT_AI_COMING_SOON;Coming soon
+TP_SPOT_AI_OBJECT_TIP;Paint over the object — the removal applies by itself the moment you release the stroke. Drag for a freeform stroke, click for a single dab.
+TP_SPOT_AI_UNAVAILABLE;The AI inpainting model is not installed.
+TP_SPOT_AI_RESET_TIP;Remove every edit this tool has made to the photo.
+TP_SPOT_AI_DUST_TIP;Scan the photo for sensor dust and heal every speck found. Each spot stays reviewable — click one and press Delete to keep it.
+TP_SPOT_AI_REFLECTION_TIP;Paint over a hazy reflection or veiling glare to lift it — include some clean area in the stroke as the reference. For solid blown-out reflections, use Remove Object instead.
+TP_SPOT_AI_GENERATIVE_TIP;Paint an area — it fills from its surroundings by itself the moment you release the stroke (the thin line marks where, while it processes). Built for larger regions than Remove Object.
 TP_TM_FATTAL_AMOUNT;Dynamic Range
 TP_TM_FATTAL_ANCHOR;Anchor
 TP_TM_FATTAL_LABEL;Dynamic Range Compression
@@ -5435,6 +5511,20 @@ WATERMARK_COLOR;Text Color
 WATERMARK_ENABLE;Enable Watermark
 WATERMARK_FONT;Font
 WATERMARK_FONTSIZE;Font Size (pt)
+WATERMARK_IMAGE_CHOOSE;Choose a logo or photo
+WATERMARK_IMAGE_CLEAR;Remove the image
+WATERMARK_IMAGE_ENABLE;Include an image
+WATERMARK_IMAGE_ENABLE_TOOLTIP;Place a logo or photo in the watermark. Leave the text empty to use the image on its own. The image shares the stroke, shadow, opacity, position and rotation settings.
+WATERMARK_IMAGE_FILE;Image
+WATERMARK_IMAGE_FILTER;Images
+WATERMARK_IMAGE_GAP;Gap to text
+WATERMARK_IMAGE_PLACEMENT;Image position
+WATERMARK_IMAGE_PLACE_ABOVE;Above the text
+WATERMARK_IMAGE_PLACE_BELOW;Below the text
+WATERMARK_IMAGE_PLACE_LEFT;Left of the text
+WATERMARK_IMAGE_PLACE_RIGHT;Right of the text
+WATERMARK_IMAGE_SIZE;Image size
+WATERMARK_IMAGE_SIZE_TOOLTIP;Image height, as a percentage of the photo's short edge, so it scales with the exported size.
 WATERMARK_MARGINX;Margin X
 WATERMARK_MARGINY;Margin Y
 WATERMARK_OPACITY;Opacity
@@ -5452,7 +5542,7 @@ WATERMARK_PREVIEW;Preview
 WATERMARK_ROTATION;Rotation
 WATERMARK_SHADOW_BLUR;Shadow Blur
 WATERMARK_SHADOW_COLOR;Shadow Color
-WATERMARK_SHADOW_ENABLE;Enable Shadow
+WATERMARK_SHADOW_ENABLE;Enable shadow (text and image)
 WATERMARK_SHADOW_OFFSETX;Shadow Offset X
 WATERMARK_SHADOW_OFFSETY;Shadow Offset Y
 WATERMARK_SIZEMODE;Size Mode
@@ -5460,10 +5550,10 @@ WATERMARK_SIZEMODE_FIXED;Fixed (pt)
 WATERMARK_SIZEMODE_PERCENT;% of Short Edge
 WATERMARK_SIZEPERCENT;Size (%)
 WATERMARK_STROKE_COLOR;Stroke Color
-WATERMARK_STROKE_ENABLE;Enable Stroke
+WATERMARK_STROKE_ENABLE;Enable outline (text and image)
 WATERMARK_STROKE_WIDTH;Stroke Width
 WATERMARK_TEXT;Text
-WATERMARK_TEXT_TOOLTIP;Text to render as watermark on exported images
+WATERMARK_TEXT_TOOLTIP;Text to render as watermark on exported images. Leave empty to use only the image.
 WATERMARK_TITLE;Watermark
 ZOOMPANEL_100;(100%)
 ZOOMPANEL_NEWCROPWINDOW;Open (new) detail window

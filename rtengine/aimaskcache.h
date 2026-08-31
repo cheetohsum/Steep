@@ -65,6 +65,18 @@ public:
     bool hasCachedMasks(const std::string& imageId) const;
     bool hasCachedMasks() const;
 
+    /** Fraction of pixels (0..1) whose probability for the class exceeds 0.5,
+     *  measured when the cached masks were computed. Returns -1 when the cache
+     *  holds a different image (or nothing) — callers must treat that as
+     *  "unknown", not "absent". */
+    float getClassCoverage(const std::string& imageId, int classIndex) const;
+
+    /** The class to mask when the user clicks full-image point (x, y):
+     *  the model class with the highest probability there, upgraded to
+     *  SUBJECT when the point sits inside the composed subject. Returns -1
+     *  when the cache holds a different image or the point is outside. */
+    int getDominantClassAt(const std::string& imageId, int fullX, int fullY) const;
+
     void invalidate(const std::string& imageId);
     void invalidateAll();
 
@@ -141,6 +153,7 @@ private:
     std::string cachedWorkingProfile_;
     std::shared_ptr<const std::vector<array2D<float>>> cachedMasks_;
     std::shared_ptr<const array2D<float>> cachedGuide_;
+    std::vector<float> coverage_;
     std::deque<RefinedEntry> refinedMasks_;
     std::deque<DistanceEntry> distanceMasks_;
     std::deque<PreparedEntry> preparedMasks_;

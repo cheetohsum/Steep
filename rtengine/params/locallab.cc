@@ -1664,6 +1664,7 @@ LocallabParams::LocallabSpot::LocallabSpot() :
     aiMaskOpacity(1.0),
     aiMaskRefineRadius(8),
     aiMaskRefineEps(0.01),
+    aiMaskShapeOp(0),
     // ciecam
     visicie(false),
     expcie(false),
@@ -2999,7 +3000,8 @@ bool LocallabParams::LocallabSpot::operator ==(const LocallabSpot& other) const
         && aiMaskInvert == other.aiMaskInvert
         && aiMaskOpacity == other.aiMaskOpacity
         && aiMaskRefineRadius == other.aiMaskRefineRadius
-        && aiMaskRefineEps == other.aiMaskRefineEps;
+        && aiMaskRefineEps == other.aiMaskRefineEps
+        && aiMaskShapeOp == other.aiMaskShapeOp;
     // clang-format on
 }
 
@@ -3990,6 +3992,8 @@ void LoadUtil::aiMask()
     spot.visiaimask = assignFromKeyfile(keyFile, "Locallab", "Expaimask_" + index_str, spot.expaimask, spotEdited.expaimask);
     assignFromKeyfile(keyFile, "Locallab", "UseAIMask_" + index_str, spot.useAIMask, spotEdited.useAIMask);
     assignFromKeyfile(keyFile, "Locallab", "AIMaskClass_" + index_str, spot.aiMaskClass, spotEdited.aiMaskClass);
+    // 0-7 = model classes, 8-9 = composed SUBJECT / NOT_SUBJECT (append-only).
+    spot.aiMaskClass = std::max(0, std::min(spot.aiMaskClass, 9));
     assignFromKeyfile(keyFile, "Locallab", "AIMaskThreshold_" + index_str, spot.aiMaskThreshold, spotEdited.aiMaskThreshold);
     assignFromKeyfile(keyFile, "Locallab", "AIMaskFeather_" + index_str, spot.aiMaskFeather, spotEdited.aiMaskFeather);
     assignFromKeyfile(keyFile, "Locallab", "AIMaskBlur_" + index_str, spot.aiMaskBlur, spotEdited.aiMaskBlur);
@@ -3997,6 +4001,8 @@ void LoadUtil::aiMask()
     assignFromKeyfile(keyFile, "Locallab", "AIMaskOpacity_" + index_str, spot.aiMaskOpacity, spotEdited.aiMaskOpacity);
     assignFromKeyfile(keyFile, "Locallab", "AIMaskRefineRadius_" + index_str, spot.aiMaskRefineRadius, spotEdited.aiMaskRefineRadius);
     assignFromKeyfile(keyFile, "Locallab", "AIMaskRefineEps_" + index_str, spot.aiMaskRefineEps, spotEdited.aiMaskRefineEps);
+    assignFromKeyfile(keyFile, "Locallab", "AIMaskShapeOp_" + index_str, spot.aiMaskShapeOp, spotEdited.aiMaskShapeOp);
+    spot.aiMaskShapeOp = std::max(0, std::min(spot.aiMaskShapeOp, 2));
 
     if (spot.visiaimask) {
         spotEdited.visiaimask = true;
@@ -5069,6 +5075,7 @@ void SaveUtil::aiMask()
         saveToKeyfile(!pedited || spot_edited->aiMaskOpacity, "Locallab", "AIMaskOpacity_" + index_str, spot.aiMaskOpacity, keyFile);
         saveToKeyfile(!pedited || spot_edited->aiMaskRefineRadius, "Locallab", "AIMaskRefineRadius_" + index_str, spot.aiMaskRefineRadius, keyFile);
         saveToKeyfile(!pedited || spot_edited->aiMaskRefineEps, "Locallab", "AIMaskRefineEps_" + index_str, spot.aiMaskRefineEps, keyFile);
+        saveToKeyfile(!pedited || spot_edited->aiMaskShapeOp, "Locallab", "AIMaskShapeOp_" + index_str, spot.aiMaskShapeOp, keyFile);
     }
 }
 

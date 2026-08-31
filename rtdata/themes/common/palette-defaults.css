@@ -1,0 +1,67 @@
+/*
+  steep palette contract — token defaults
+
+  This file defines every steep_* named color the application and the shared
+  structure layer are allowed to reference. It is loaded by the application
+  BEFORE the active theme file, at the same provider priority, so:
+
+    - every steep_* token always resolves, even under a third-party theme
+      that has never heard of this contract;
+    - a theme overrides any subset simply by re-declaring the token
+      (GTK resolves named colors from the most recently added provider first,
+      and within one provider the last definition wins — the same mechanism
+      the TooWa variant themes already rely on).
+
+  Rules of the contract:
+    - Tokens are COLORS ONLY (@define-color cannot carry sizes; structural
+      sizing lives in the shared structure layer, not here).
+    - The application's custom Cairo drawing reads these same tokens through
+      themeColor() in guiutils — so a theme that overrides them recolors the
+      pill sliders, filmstrip, histogram chrome, and overlays too.
+    - Never reference a steep_* token that is not defined in this file.
+
+  The defaults below approximate the stock RawTherapee theme (dark slate),
+  so an unaware theme degrades to a coherent neutral look.
+*/
+
+/* Surfaces — four elevation levels, darkest to most raised.
+   surface_0: canvas behind images, wells (tree views, entries), strips
+   surface_1: panels and window background
+   surface_2: raised chrome — cards, toolbars, tool backgrounds
+   surface_3: menus, popovers, floating overlays */
+@define-color steep_surface_0 #1a1e24;
+@define-color steep_surface_1 #252a32;
+@define-color steep_surface_2 #2c3038;
+@define-color steep_surface_3 #2e3340;
+
+/* Text — three levels of emphasis */
+@define-color steep_text_hi  #e2e6ed;
+@define-color steep_text     #cdd2da;
+@define-color steep_text_dim #8a92a1;
+
+/* Accents — steep_accent is THE interactive color (active underlines, focus
+   rings, slider fills, hover/selection rings). steep_select is an area fill
+   for selected items, always paired with steep_accent at the edge. */
+@define-color steep_accent #2d7fd3;
+@define-color steep_select #2d7fd3;
+
+/* Semantic slots — never used as generic accents.
+   attention: masks / "look here" chrome (copper in Rem)
+   success:   progress bars, completed states
+   danger:    destructive hover states, errors */
+@define-color steep_attention #b87848;
+@define-color steep_success   #55c878;
+@define-color steep_danger    #f06468;
+
+/* Borders — soft for hairline dividers inside a surface,
+   regular for real edges between surfaces. */
+@define-color steep_border      #14171c;
+@define-color steep_border_soft #22262e;
+
+/* Text selection (entries, text views) */
+@define-color steep_sel_bg #2d7fd3;
+@define-color steep_sel_fg #e2e6ed;
+
+/* Hover/raise wash base: fills like alpha(@steep_wash, 0.06) brighten dark
+   themes and darken light ones — light themes MUST override this to black. */
+@define-color steep_wash #ffffff;

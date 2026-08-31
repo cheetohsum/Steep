@@ -143,12 +143,16 @@ void Locallab::hideSettingsHeader()
     // and attach a provider to each intermediate container.  Defer until
     // realize() so the full widget tree is available.
     signal_realize().connect([this]() {
-        auto css = Gtk::CssProvider::create();
-        css->load_from_data(
-            "* { background-color: transparent;"
-            "    background-image: none;"
-            "    border: none;"
-            "    box-shadow: none; }");
+        // Parse once per process — repeated CSS parsing crashed on Windows.
+        static const auto css = []() {
+            auto p = Gtk::CssProvider::create();
+            p->load_from_data(
+                "* { background-color: transparent;"
+                "    background-image: none;"
+                "    border: none;"
+                "    box-shadow: none; }");
+            return p;
+        }();
 
         // Walk from ControlSpotPanel up through Locallab, and two more
         // levels above (ExpanderContents + ExpanderBox wrapping Locallab).
@@ -386,8 +390,8 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
             // Spot creation (default initialization)
             newSpot = new LocallabParams::LocallabSpot();
             const int requestedShape = expsettings->getPendingShape();
-            const char* requestedShapeNames[] = {"ELI", "RECT", "GRAD"};
-            newSpot->shape = requestedShapeNames[std::max(0, std::min(requestedShape, 2))];
+            const char* requestedShapeNames[] = {"ELI", "RECT", "GRAD", "POLY"};
+            newSpot->shape = requestedShapeNames[std::max(0, std::min(requestedShape, 3))];
             ControlSpotPanel::SpotRow r;
             r.name = newSpot->name = Glib::ustring("Mask ") + std::to_string(pp->locallab.spots.size() + 1);
             r.isvisible = newSpot->isvisible;
@@ -579,14 +583,15 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
 
         case (ControlSpotPanel::SpotCreationAI): { // AI Mask spot creation
             newSpot = new LocallabParams::LocallabSpot();
-            const int aiClass = expsettings->getPendingAIClass();
+            const int aiClass = std::max(0, std::min(expsettings->getPendingAIClass(), 9));
 
             // Name after the AI class while preserving locale-aware automatic renaming.
             const char* aiMaskNameKeys[] = {
                 "TP_LOCALLAB_MASK_NAME_BACKGROUND", "TP_LOCALLAB_MASK_NAME_PERSON",
                 "TP_LOCALLAB_MASK_NAME_SKY", "TP_LOCALLAB_MASK_NAME_VEGETATION",
                 "TP_LOCALLAB_MASK_NAME_BUILDING", "TP_LOCALLAB_MASK_NAME_VEHICLE",
-                "TP_LOCALLAB_MASK_NAME_ANIMAL", "TP_LOCALLAB_MASK_NAME_FOREGROUND"
+                "TP_LOCALLAB_MASK_NAME_ANIMAL", "TP_LOCALLAB_MASK_NAME_FOREGROUND",
+                "TP_LOCALLAB_MASK_NAME_SUBJECT", "TP_LOCALLAB_MASK_NAME_BACKGROUND"
             };
             newSpot->name = M(aiMaskNameKeys[aiClass]);
 

@@ -1595,6 +1595,7 @@ void Crop::update(int todo)
             parent->ipf.grainEffect(labnCrop, params.grain, parent->fw, parent->fh, trafx, trafy, std::max(skip, 1));
         }
 
+
         if (params.tiltShift.enabled) {
             parent->ipf.tiltShiftEffect(labnCrop, params.tiltShift, parent->fw, parent->fh);
         }
@@ -1902,6 +1903,10 @@ void Crop::update(int todo)
             parent->ipf.filmPresets(labnCrop, params.filmPresets, filmLabContext);
         }
         parent->ipf.softLight(labnCrop, params.softlight);
+
+        if (params.lightEffects.enabled) {
+            parent->ipf.lightEffects(labnCrop, params.lightEffects, std::max(skip, 1));
+        }
 
         if (params.icm.workingTRC != ColorManagementParams::WorkingTrc::NONE && params.icm.trcExp) {
             const int GW = labnCrop->W;

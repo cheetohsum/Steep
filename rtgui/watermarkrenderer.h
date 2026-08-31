@@ -18,8 +18,25 @@
  */
 #pragma once
 
+#include <cairo.h>
+
 #include "options.h"
 
 namespace rtengine { class IImagefloat; }
 
 void applyWatermark(rtengine::IImagefloat* img, const WatermarkOptions& opts);
+
+/**
+ * @brief Decode the watermark logo, cached by path and modification time.
+ * @return a new surface the caller owns (cairo_surface_destroy), or nullptr
+ *         when there is no usable image. Safe to call from any thread.
+ */
+cairo_surface_t* createWatermarkLogoSurface(const Glib::ustring& path);
+
+/// True when the watermark would draw something — text, a logo, or both.
+bool watermarkHasContent(const WatermarkOptions& opts);
+
+/// Logo size in pixels for a photo whose short edge is @p shortEdge, keeping
+/// the source aspect ratio. Returns false when there is no logo to draw.
+bool watermarkLogoSize(const WatermarkOptions& opts, cairo_surface_t* logo,
+                       int shortEdge, double& outW, double& outH);

@@ -64,6 +64,18 @@ MODEL_DEST="$BUILD_DIR/models/aidenoise"
 mkdir -p "$MODEL_DEST"
 cp -u "$MODEL_SRC" "$MODEL_DEST/"
 
+# Lens correction database. The build points LENSFUN_DB_PATH at
+# <exe>/share/lensfun, but nothing populated it — so Lensfun loaded zero
+# cameras and zero lenses, leaving the Lens Profile camera/lens pickers empty
+# and automatic matching unable to match anything.
+mkdir -p "$BUILD_DIR/share/lensfun"
+cp /mingw64/share/lensfun/version_1/*.xml "$BUILD_DIR/share/lensfun/" 2>/dev/null || true
+
+if ! ls "$BUILD_DIR/share/lensfun/"*.xml >/dev/null 2>&1; then
+    echo "Missing Lensfun database: $BUILD_DIR/share/lensfun" >&2
+    exit 2
+fi
+
 # Keep the portable bundle's UI strings and third-party notices in sync.
 mkdir -p "$BUILD_DIR/languages" "$BUILD_DIR/licenses"
 cp "$SOURCE_DIR/rtdata/languages/default" "$BUILD_DIR/languages/default"

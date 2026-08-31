@@ -617,17 +617,8 @@ FileBrowser::FileBrowser () :
             vbox->pack_start(*row, Gtk::PACK_SHRINK);
             item->add(*vbox);
 
-            // Native menu prelight covers the whole row and implies that
-            // caption/whitespace are clickable. Only icon slots are targets.
-            auto rowCss = Gtk::CssProvider::create();
-            rowCss->load_from_data(
-                "#InlineActionRow:hover, #InlineActionRow:active {"
-                " background-image: none;"
-                " background-color: transparent;"
-                "}");
-            item->get_style_context()->add_provider(
-                rowCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 300);
-
+            // Prelight suppression lives in themes/common/widgets.css
+            // (#InlineActionRow) — only icon slots are click targets.
             return std::make_pair(item, row);
         };
 
@@ -656,14 +647,9 @@ FileBrowser::FileBrowser () :
             // The theme's `image { padding }` mis-measures these icons
             // (width 8 for a 24px surface) and shifts the drawn surface
             // off-center, which is what clipped the pick flag's pole.
-            // Zero the CSS box entirely for the inline icons.
-            static auto imgCss = []() {
-                auto p = Gtk::CssProvider::create();
-                p->load_from_data("image { padding: 0; margin: 0; border-width: 0; }");
-                return p;
-            }();
-            img->get_style_context()->add_provider(
-                imgCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 300);
+            // The zero-box fix lives in themes/common/widgets.css
+            // (#InlineActionRow image) — verify with STEEP_MENU_SELFTEST
+            // if anything about these icons changes.
             // Dimmed at rest; the hover tracker below raises the icon under
             // the pointer to full opacity so the target is unmistakable.
             img->set_opacity(0.65);
@@ -1807,14 +1793,21 @@ FileBrowser::FileBrowser () :
         }
     }  // end of inline quick-action scope
 
-    // Compact styling for the remaining regular menu items
+    // Compact styling for the remaining regular menu items. Stays in code
+    // (not widgets.css): the bare selectors must apply to THIS menu tree
+    // only — screen-wide they would restyle every menu including combobox
+    // popups, and submenus are separate CSS toplevels an ID can't reach.
+    // Parse once per process (repeated CSS parsing crashed on Windows).
     {
-        auto compactCss = Gtk::CssProvider::create();
-        compactCss->load_from_data(
-            "menuitem { padding: 2px 8px; min-height: 0; }"
-            "menuitem label { font-size: 0.88em; }"
-            "separator { margin: 1px 0; }");
-        std::function<void(Gtk::Widget*)> applyDeep = [&applyDeep, &compactCss](Gtk::Widget* w) {
+        static const auto compactCss = []() {
+            auto p = Gtk::CssProvider::create();
+            p->load_from_data(
+                "menuitem { padding: 2px 8px; min-height: 0; }"
+                "menuitem label { font-size: 0.88em; }"
+                "separator { margin: 1px 0; }");
+            return p;
+        }();
+        std::function<void(Gtk::Widget*)> applyDeep = [&applyDeep](Gtk::Widget* w) {
             w->get_style_context()->add_provider(compactCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
             if (auto* menuItem = dynamic_cast<Gtk::MenuItem*>(w)) {
                 if (auto* sub = menuItem->get_submenu()) {
@@ -4963,10 +4956,16 @@ void FileBrowser::rankingRequested (std::vector<FileBrowserEntry*> tbe, int rank
     for (size_t i = 0; i < tbe.size(); i++) {
 
         // try to load the last saved parameters from the cache or from the paramfile file
-        tbe[i]->thumbnail->createProcParamsForUpdate(false, false, true);  // this can execute customprofilebuilder to generate param file in "flagging" mode
+        bool paramsMayHaveChanged = false;
+        tbe[i]->thumbnail->createProcParamsForUpdate(false, false, true, true, &paramsMayHaveChanged);  // this can execute customprofilebuilder to generate param file in "flagging" mode
 
-        // notify listeners TODO: should do this ONLY when params changed by customprofilebuilder?
-        tbe[i]->thumbnail->notifylisterners_procParamsChanged(FILEBROWSER);
+        // Only when a custom profile builder actually rewrote the params.
+        // Notifying unconditionally dropped the rendered preview and forced
+        // a re-render, so the thumbnail blinked out and back on every rank
+        // change even though a rank alters no pixels.
+        if (paramsMayHaveChanged) {
+            tbe[i]->thumbnail->notifylisterners_procParamsChanged(FILEBROWSER);
+        }
 
         tbe[i]->thumbnail->setRank (rank);
         // Persistence is deferred to idle chunks: the rank applies (and
@@ -4998,10 +4997,15 @@ void FileBrowser::colorlabelRequested (std::vector<FileBrowserEntry*> tbe, int c
 
     for (size_t i = 0; i < tbe.size(); i++) {
         // try to load the last saved parameters from the cache or from the paramfile file
-        tbe[i]->thumbnail->createProcParamsForUpdate(false, false, true);  // this can execute customprofilebuilder to generate param file in "flagging" mode
+        bool paramsMayHaveChanged = false;
+        tbe[i]->thumbnail->createProcParamsForUpdate(false, false, true, true, &paramsMayHaveChanged);  // this can execute customprofilebuilder to generate param file in "flagging" mode
 
-        // notify listeners TODO: should do this ONLY when params changed by customprofilebuilder?
-        tbe[i]->thumbnail->notifylisterners_procParamsChanged(FILEBROWSER);
+        // See rankRequested: a colour label changes no pixels, so only a
+        // profile builder that really rewrote the params justifies the
+        // re-render this notification triggers.
+        if (paramsMayHaveChanged) {
+            tbe[i]->thumbnail->notifylisterners_procParamsChanged(FILEBROWSER);
+        }
 
         tbe[i]->thumbnail->setColorLabel (colorlabel);
         queueThumbnailPersist (tbe[i]->thumbnail);
@@ -5296,8 +5300,16 @@ void FileBrowser::pickRequested (std::vector<FileBrowserEntry*> tbe, int pick)
     }
 
     for (size_t i = 0; i < tbe.size(); i++) {
-        tbe[i]->thumbnail->createProcParamsForUpdate(false, false, true);
-        tbe[i]->thumbnail->notifylisterners_procParamsChanged(FILEBROWSER);
+        // A pick flag changes no pixels: notifying unconditionally dropped
+        // the rendered preview and forced a re-render, which is why the
+        // thumbnail vanished for a moment on every flag/unflag.
+        bool paramsMayHaveChanged = false;
+        tbe[i]->thumbnail->createProcParamsForUpdate(false, false, true, true, &paramsMayHaveChanged);
+
+        if (paramsMayHaveChanged) {
+            tbe[i]->thumbnail->notifylisterners_procParamsChanged(FILEBROWSER);
+        }
+
         tbe[i]->thumbnail->setPick (pick);
         queueThumbnailPersist (tbe[i]->thumbnail);
         tbe[i]->startPickAnimation();

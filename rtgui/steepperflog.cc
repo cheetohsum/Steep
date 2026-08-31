@@ -34,7 +34,12 @@ void fileBrowserPerfLog(const char* fmt, ...)
     }
 
     std::lock_guard<std::mutex> lock(fileBrowserPerfLogMutex);
-    const char* const home = std::getenv("USERPROFILE");
+    // Same fallback chain as editorpanel.cc's editorOpenLog so both traces
+    // land in one file (MSYS2 login shells clear USERPROFILE but keep HOME).
+    const char* home = std::getenv("USERPROFILE");
+    if (!home) {
+        home = std::getenv("HOME");
+    }
     const std::string path = home ? std::string(home) + "\\steep-fileSel.log" : "steep-fileSel.log";
 
     FILE* const f = std::fopen(path.c_str(), "ab");

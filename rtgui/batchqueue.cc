@@ -823,7 +823,9 @@ rtengine::ProcessingJob* BatchQueue::imageReady(rtengine::IImagefloat* img)
     if (img && !fname.empty()) {
         // Apply watermark if enabled
         const auto& wmOpts = options.watermark;
-        if (wmOpts.enabled && !wmOpts.text.empty()) {
+        // A logo with no text is a valid watermark, so ask the renderer what
+        // counts as content rather than testing the text here.
+        if (wmOpts.enabled && watermarkHasContent(wmOpts)) {
             applyWatermark(img, wmOpts);
         }
 

@@ -58,21 +58,7 @@ ZoomPanel::ZoomPanel (ImageArea* iarea) : iarea(iarea), sliderUpdateInProgress(f
     zoomPopover = Gtk::manage (new Gtk::Popover ());
     zoomPopover->set_name ("ZoomPopover");
     zoomPopover->set_constrain_to (Gtk::POPOVER_CONSTRAINT_WINDOW);
-
-    // Popover CSS for modern styling
-    auto popCss = Gtk::CssProvider::create ();
-    popCss->load_from_data (
-        "#ZoomPopover contents {"
-        "  border-radius: 8px;"
-        "  padding: 8px;"
-        "}"
-        "#ZoomPopover button {"
-        "  border-radius: 4px;"
-        "  padding: 4px 8px;"
-        "  min-height: 0;"
-        "}"
-    );
-    zoomPopover->get_style_context()->add_provider (popCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+    // Styling lives in themes/common/widgets.css (#ZoomPopover)
 
     Gtk::Box* popBox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_VERTICAL, 2));
     popBox->set_margin_top (10);

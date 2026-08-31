@@ -1,0 +1,22 @@
+/* Generated from rtdata/themes/RawTherapee - Modern.css by tools/gen_gtk4_tokens.py.
+   Do not edit — change the theme's palette block and regenerate. */
+
+:root {
+  --steep-surface-0: #111214;
+  --steep-surface-1: #1a1b1e;
+  --steep-surface-2: #232428;
+  --steep-surface-3: #2d2e34;
+  --steep-text-hi: #f2f2f7;
+  --steep-text: #d3d3da;
+  --steep-text-dim: #8e8e93;
+  --steep-accent: #0a84ff;
+  --steep-select: #2f5fb0;
+  --steep-attention: #d29752;
+  --steep-success: #30d158;
+  --steep-danger: #ff453a;
+  --steep-border: #0b0b0d;
+  --steep-border-soft: #3a3b42;
+  --steep-sel-bg: #2f5fb0;
+  --steep-sel-fg: #ffffff;
+  --steep-wash: #ffffff;
+}

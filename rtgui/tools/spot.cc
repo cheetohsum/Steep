@@ -17,7 +17,9 @@
  *  along with RawTherapee.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "editbuffer.h"
 #include "editcallbacks.h"
+#include "imagearea.h"
 #include "spot.h"
 #include "rtimage.h"
 #include <iomanip>
@@ -25,6 +27,9 @@
 #include "guiutils.h"
 #include "eventmapper.h"
 #include "rtengine/refreshmap.h"
+#ifdef RT_AI_MASKING
+#include "rtengine/aiinpainting.h"
+#endif
 
 using namespace rtengine;
 using namespace rtengine::procparams;
@@ -84,6 +89,133 @@ bool Spot::SpotSizePreview::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
     cr->fill();
 
     return true;
+}
+
+// ---- BrushCursorRing implementation ----
+
+void BrushCursorRing::drawInnerGeometry (Cairo::RefPtr<Cairo::Context> &cr, ObjectMOBuffer *objectBuffer, EditCoordSystem &coordSystem)
+{
+    Circle::drawInnerGeometry (cr, objectBuffer, coordSystem);
+
+    if (!(flags & F_VISIBLE) || busyPhase < 0.f) {
+        return;
+    }
+
+    // Rotating arc riding just outside the brush ring. Brush mode hides the
+    // system pointer, so this is what tells the user the repair is still
+    // being computed rather than finished-and-unchanged.
+    rtengine::Coord centre = center;
+    double radius_ = radiusInImageSpace ? coordSystem.scaleValueToCanvas (double (radius)) : double (radius);
+
+    if (datum == IMAGE) {
+        coordSystem.imageCoordToScreen (center.x, center.y, centre.x, centre.y);
+    } else if (datum == CLICKED_POINT) {
+        centre += objectBuffer->getDataProvider()->posScreen;
+    } else if (datum == CURSOR) {
+        centre += objectBuffer->getDataProvider()->posScreen + objectBuffer->getDataProvider()->deltaScreen;
+    }
+
+    // Keep the spinner legible whatever the brush size / zoom.
+    const double arcRadius = rtengine::max (radius_ + 6., 11.);
+    const double start = double (busyPhase) * 2. * rtengine::RT_PI;
+    const double sweep = 0.62 * rtengine::RT_PI;
+
+    cr->save();
+    cr->unset_dash();
+    cr->set_line_cap (Cairo::LINE_CAP_ROUND);
+
+    // Dark backing so the arc reads on light and dark photos alike.
+    cr->set_line_width (4.);
+    cr->set_source_rgba (0., 0., 0., 0.55);
+    cr->begin_new_path();
+    cr->arc (centre.x + 0.5, centre.y + 0.5, arcRadius, start, start + sweep);
+    cr->stroke();
+
+    cr->set_line_width (2.);
+    cr->set_source_rgba (1.0, 0.78, 0.25, 0.95);
+    cr->begin_new_path();
+    cr->arc (centre.x + 0.5, centre.y + 0.5, arcRadius, start, start + sweep);
+    cr->stroke();
+    cr->restore();
+}
+
+// ---- BrushAreaOverlay implementation ----
+
+void BrushAreaOverlay::drawOuterGeometry (Cairo::RefPtr<Cairo::Context> &cr, ObjectMOBuffer *objectBuffer, EditCoordSystem &coordSystem)
+{
+    // Everything is drawn in the inner pass — the outer dark halo of stock
+    // geometry would double the apparent border width of the overlay.
+}
+
+void BrushAreaOverlay::drawInnerGeometry (Cairo::RefPtr<Cairo::Context> &cr, ObjectMOBuffer *objectBuffer, EditCoordSystem &coordSystem)
+{
+    if (!(flags & F_VISIBLE) || points.empty()) {
+        return;
+    }
+
+    double diameter = lineWidthInImageSpace ? coordSystem.scaleValueToCanvas (double (innerLineWidth)) : double (innerLineWidth);
+    diameter = rtengine::max (diameter, 2.);
+    const double borderWidth = 1.5; // screen-space ring around the whole area
+
+    RGBColor color = innerLineColor;
+
+    const auto buildPath = [&]() {
+        cr->begin_new_path();
+        rtengine::Coord currPos;
+
+        for (unsigned int i = 0; i < points.size(); ++i) {
+            currPos = points.at (i);
+
+            if (datum == IMAGE) {
+                coordSystem.imageCoordToScreen (points.at (i).x, points.at (i).y, currPos.x, currPos.y);
+            } else if (datum == CLICKED_POINT) {
+                currPos += objectBuffer->getDataProvider()->posScreen;
+            } else if (datum == CURSOR) {
+                currPos += objectBuffer->getDataProvider()->posScreen + objectBuffer->getDataProvider()->deltaScreen;
+            }
+
+            if (!i) {
+                cr->move_to (currPos.x + 0.5, currPos.y + 0.5);
+            } else {
+                cr->line_to (currPos.x + 0.5, currPos.y + 0.5);
+            }
+        }
+
+        if (points.size() == 1) {
+            // A degenerate segment so round caps render a single dab as a disc.
+            cr->rel_line_to (0.01, 0.);
+        }
+    };
+
+    cr->save();
+    cr->push_group();
+    cr->set_line_cap (Cairo::LINE_CAP_ROUND);
+    cr->set_line_join (Cairo::LINE_JOIN_ROUND);
+
+    // Pass 1: opaque stroke, wider by the border — its visible remainder
+    // after pass 2 is exactly the outline of the swept area.
+    buildPath();
+    cr->set_source_rgba (color.getR(), color.getG(), color.getB(), 0.9);
+    cr->set_line_width (diameter + 2. * borderWidth);
+    cr->stroke();
+
+    // Pass 2: interior at brush width, SOURCE operator so it *replaces* the
+    // opaque pass inside the area, leaving a translucent fill + border ring.
+    buildPath();
+    cr->set_operator (Cairo::OPERATOR_SOURCE);
+    cr->set_source_rgba (color.getR(), color.getG(), color.getB(), 0.22);
+    cr->set_line_width (diameter);
+    cr->stroke();
+
+    cr->pop_group_to_source();
+    cr->set_operator (Cairo::OPERATOR_OVER);
+    cr->paint();
+    cr->restore();
+}
+
+void BrushAreaOverlay::drawToMOChannel (Cairo::RefPtr<Cairo::Context> &cr, unsigned short id, ObjectMOBuffer *objectBuffer, EditCoordSystem &coordSystem)
+{
+    // Not hoverable — purely a visual overlay.
 }
 
 // ---- Main Spot implementation ----
@@ -151,24 +283,112 @@ Spot::Spot() :
     aiSection = Gtk::manage(new AdvancedSection(M("TP_SPOT_AI_SECTION")));
     Gtk::Box* aiContent = aiSection->getContentBox();
 
-    Gtk::Box* aiRow1 = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
-    Gtk::Box* aiRow2 = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+    // 2×2 grid of equal-width tool buttons; each per-tool reset "↺" floats
+    // inside its button's right edge instead of taking a slot of its own.
+    Gtk::Grid* aiGrid = Gtk::manage(new Gtk::Grid());
+    aiGrid->set_column_homogeneous(true);
+    aiGrid->set_column_spacing(4);
+    aiGrid->set_row_spacing(4);
+    aiGrid->set_hexpand(true);
 
-    auto makeAiButton = [](const Glib::ustring& label, const Glib::ustring& tooltip) -> Gtk::Button* {
-        Gtk::Button* btn = Gtk::manage(new Gtk::Button(label));
-        btn->set_sensitive(false);
-        btn->set_tooltip_text(tooltip);
-        return btn;
+    const auto embedReset = [](Gtk::Button* toolBtn, Gtk::Button* resetBtn) -> Gtk::Widget* {
+        Gtk::Overlay* overlay = Gtk::manage(new Gtk::Overlay());
+        toolBtn->set_hexpand(true);
+        overlay->add(*toolBtn);
+        resetBtn->get_style_context()->add_class("smart-tool-reset");
+        resetBtn->set_halign(Gtk::ALIGN_END);
+        resetBtn->set_valign(Gtk::ALIGN_CENTER);
+        resetBtn->set_margin_end(3);
+        overlay->add_overlay(*resetBtn);
+        return overlay;
     };
 
-    aiRow1->pack_start(*makeAiButton(M("TP_SPOT_AI_OBJECT"), M("TP_SPOT_AI_COMING_SOON")), true, true, 0);
-    aiRow1->pack_start(*makeAiButton(M("TP_SPOT_AI_REFLECTION"), M("TP_SPOT_AI_COMING_SOON")), true, true, 0);
-    aiRow2->pack_start(*makeAiButton(M("TP_SPOT_AI_DUST"), M("TP_SPOT_AI_COMING_SOON")), true, true, 0);
-    aiRow2->pack_start(*makeAiButton(M("TP_SPOT_AI_GENERATIVE"), M("TP_SPOT_AI_COMING_SOON")), true, true, 0);
+    // Remove Object is live: a fifth method toggle driving the AI_REMOVE
+    // brush (paint over the object, LaMa fills it). Available only when the
+    // inpainting engine loaded its model at startup.
+    btnAIRemove = Gtk::manage(new Gtk::ToggleButton(M("TP_SPOT_AI_OBJECT")));
+    btnAIRemove->set_relief(Gtk::RELIEF_NONE);
+#ifdef RT_AI_MASKING
+    if (rtengine::getAIInpaintingEngine().isInitialized()) {
+        btnAIRemove->set_tooltip_text(M("TP_SPOT_AI_OBJECT_TIP"));
+        aiRemoveConn = btnAIRemove->signal_toggled().connect(
+            sigc::bind(sigc::mem_fun(*this, &Spot::onMethodButtonToggled), btnAIRemove, 4));
+    } else
+#endif
+    {
+        btnAIRemove->set_sensitive(false);
+        btnAIRemove->set_tooltip_text(M("TP_SPOT_AI_UNAVAILABLE"));
+    }
+    // Per-tool reset: appears once the tool has been applied.
+    btnAIRemoveReset = Gtk::manage(new Gtk::Button("↺"));
+    btnAIRemoveReset->set_relief(Gtk::RELIEF_NONE);
+    btnAIRemoveReset->set_tooltip_text(M("TP_SPOT_AI_RESET_TIP"));
+    btnAIRemoveReset->set_no_show_all(true);
+    btnAIRemoveReset->signal_clicked().connect(sigc::bind(
+        sigc::mem_fun(*this, &Spot::resetEntriesOfMethod), SpotMethod::AI_REMOVE));
+    aiGrid->attach(*embedReset(btnAIRemove, btnAIRemoveReset), 0, 0, 1, 1);
 
-    aiContent->pack_start(*aiRow1, false, false, 0);
-    aiContent->pack_start(*aiRow2, false, false, 0);
+    // Remove Reflections: a glare-reduction brush — no model needed.
+    btnAIReflect = Gtk::manage(new Gtk::ToggleButton(M("TP_SPOT_AI_REFLECTION")));
+    btnAIReflect->set_relief(Gtk::RELIEF_NONE);
+    btnAIReflect->set_tooltip_text(M("TP_SPOT_AI_REFLECTION_TIP"));
+    aiReflectConn = btnAIReflect->signal_toggled().connect(
+        sigc::bind(sigc::mem_fun(*this, &Spot::onMethodButtonToggled), btnAIReflect, 6));
+    btnAIReflectReset = Gtk::manage(new Gtk::Button("↺"));
+    btnAIReflectReset->set_relief(Gtk::RELIEF_NONE);
+    btnAIReflectReset->set_tooltip_text(M("TP_SPOT_AI_RESET_TIP"));
+    btnAIReflectReset->set_no_show_all(true);
+    btnAIReflectReset->signal_clicked().connect(sigc::bind(
+        sigc::mem_fun(*this, &Spot::resetEntriesOfMethod), SpotMethod::AI_REFLECT));
+    aiGrid->attach(*embedReset(btnAIReflect, btnAIReflectReset), 1, 0, 1, 1);
+    // Remove Dust: one press scans the photo and heals every speck found.
+    // No AI model involved — enabled once the coordinator provides a detector.
+    btnAIDust = Gtk::manage(new Gtk::Button(M("TP_SPOT_AI_DUST")));
+    btnAIDust->set_relief(Gtk::RELIEF_NONE);
+    btnAIDust->set_sensitive(false);
+    btnAIDust->set_tooltip_text(M("TP_SPOT_AI_DUST_TIP"));
+    btnAIDust->signal_clicked().connect(sigc::mem_fun(*this, &Spot::onRemoveDustPressed));
+    btnAIDustReset = Gtk::manage(new Gtk::Button("↺"));
+    btnAIDustReset->set_relief(Gtk::RELIEF_NONE);
+    btnAIDustReset->set_tooltip_text(M("TP_SPOT_AI_RESET_TIP"));
+    btnAIDustReset->set_no_show_all(true);
+    btnAIDustReset->signal_clicked().connect(sigc::bind(
+        sigc::mem_fun(*this, &Spot::resetEntriesOfMethod), SpotMethod::AI_DUST));
+    aiGrid->attach(*embedReset(btnAIDust, btnAIDustReset), 0, 1, 1, 1);
+
+    // Generative Fill: same LaMa engine as Remove Object, tuned for large
+    // areas — bigger context and native-resolution inference.
+    btnAIFill = Gtk::manage(new Gtk::ToggleButton(M("TP_SPOT_AI_GENERATIVE")));
+    btnAIFill->set_relief(Gtk::RELIEF_NONE);
+#ifdef RT_AI_MASKING
+    if (rtengine::getAIInpaintingEngine().isInitialized()) {
+        btnAIFill->set_tooltip_text(M("TP_SPOT_AI_GENERATIVE_TIP"));
+        aiFillConn = btnAIFill->signal_toggled().connect(
+            sigc::bind(sigc::mem_fun(*this, &Spot::onMethodButtonToggled), btnAIFill, 7));
+    } else
+#endif
+    {
+        btnAIFill->set_sensitive(false);
+        btnAIFill->set_tooltip_text(M("TP_SPOT_AI_UNAVAILABLE"));
+    }
+    btnAIFillReset = Gtk::manage(new Gtk::Button("↺"));
+    btnAIFillReset->set_relief(Gtk::RELIEF_NONE);
+    btnAIFillReset->set_tooltip_text(M("TP_SPOT_AI_RESET_TIP"));
+    btnAIFillReset->set_no_show_all(true);
+    btnAIFillReset->signal_clicked().connect(sigc::bind(
+        sigc::mem_fun(*this, &Spot::resetEntriesOfMethod), SpotMethod::AI_FILL));
+    aiGrid->attach(*embedReset(btnAIFill, btnAIFillReset), 1, 1, 1, 1);
+
+    aiContent->pack_start(*aiGrid, false, false, 0);
+    // Cancels the flat-mode tool content indent (see widgets.css) so the
+    // section header lines up with the group headers around it.
+    aiSection->get_style_context()->add_class("smart-tools");
     aiSection->setExpanded(false);
+    aiSection->setOnToggled([this](bool expanded) {
+        if (!expanded) {
+            deselectSmartTools();
+        }
+    });
 
     // Layout: [method buttons] ... [reset] on one row
     labelBox = Gtk::manage (new Gtk::Box());
@@ -221,7 +441,9 @@ Spot::Spot() :
     cursorPreviewCircle.datum = Geometry::IMAGE;
     cursorPreviewCircle.radiusInImageSpace = true;
     cursorPreviewCircle.setDashed(true);
-    cursorPreviewCircle.innerLineWidth = 0.7;
+    // A hairline was invisible at fit zoom; the brush cursor must read clearly.
+    cursorPreviewCircle.innerLineWidth = 1.5;
+    cursorPreviewCircle.setInnerLineColor(1.0, 0.78, 0.25);
     cursorPreviewCircle.setActive(false);
 
     // Phase 4: stroke preview line — width matches brush diameter in image space
@@ -229,6 +451,8 @@ Spot::Spot() :
     strokePreviewLine.setActive(false);
     strokePreviewLine.lineWidthInImageSpace = true;
     strokePreviewLine.innerLineWidth = float(SpotParams::minRadius * 2);
+    // Painted stroke reads as a bright amber ribbon while dragging.
+    strokePreviewLine.setInnerLineColor(1.0, 0.78, 0.25);
 
     auto m = ProcEventMapper::getInstance();
     EvSpotEnabled = m->newEvent(ALLNORAW, "HISTORY_MSG_SPOT");
@@ -237,11 +461,21 @@ Spot::Spot() :
     EvSpotEntryOPA = m->newEvent(SPOTADJUST, "HISTORY_MSG_SPOT_ENTRY");
     EvSpotMethod = m->newEvent(SPOTADJUST, "HISTORY_MSG_SPOT_METHOD");
 
+    // Build the base geometry now — read() skips createGeometry when the
+    // entry count is unchanged, so with zero spots the cursor preview and
+    // stroke ribbon otherwise stay unregistered until the first entry lands
+    // (the "brush only shows after you click once" bug).
+    createGeometry();
+
     show_all();
 }
 
 Spot::~Spot()
 {
+    strokeLingerConn_.disconnect();
+    busyAnimConn_.disconnect();
+    busyTimeoutConn_.disconnect();
+
     // delete all dynamically allocated geometry
     if (EditSubscriber::visibleGeometry.size()) {
         for (size_t i = 0; i < EditSubscriber::visibleGeometry.size() - VISIBLE_OBJECT_COUNT; ++i) { // static visible geometry at the end of the list
@@ -255,12 +489,124 @@ Spot::~Spot()
 
 // Phase 1: Method button helpers
 
+void Spot::queueCanvasRedraw()
+{
+    if (EditDataProvider* provider = getEditProvider()) {
+        // Same EditDataProvider -> ImageArea narrowing ControlSpotPanel uses
+        // to reach the preview widget.
+        static_cast<ImageArea*>(provider)->queue_draw();
+    }
+}
+
+void Spot::startBusyIndicator()
+{
+    if (busyAnimConn_.connected()) {
+        return;
+    }
+
+    busyPhase_ = 0.f;
+    cursorPreviewCircle.busyPhase = 0.f;
+    busyAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
+        busyPhase_ += 0.05f;
+        if (busyPhase_ >= 1.f) {
+            busyPhase_ -= 1.f;
+        }
+        cursorPreviewCircle.busyPhase = busyPhase_;
+        queueCanvasRedraw();
+        return true;
+        // ~14fps: smooth enough for a rotating arc, and each tick repaints
+        // the canvas while the inference is already saturating the CPU.
+    }, 70);
+}
+
+void Spot::stopBusyIndicator()
+{
+    busyAnimConn_.disconnect();
+    busyTimeoutConn_.disconnect();
+
+    if (cursorPreviewCircle.busyPhase >= 0.f) {
+        cursorPreviewCircle.busyPhase = -1.f;
+        queueCanvasRedraw();
+    }
+}
+
+void Spot::finishSmartResult()
+{
+    if (!awaitingSmartResult_) {
+        return;
+    }
+
+    awaitingSmartResult_ = false;
+    busySeenActive_ = false;
+    stopBusyIndicator();
+
+    strokeLingerConn_.disconnect();
+    strokeLingerActive_ = false;
+    strokePreviewLine.setActive(false);
+    strokePreviewLine.points.clear();
+    updateGeometry();
+    queueCanvasRedraw();
+}
+
+void Spot::setProcessingActive(bool active)
+{
+    if (!awaitingSmartResult_) {
+        return;
+    }
+
+    if (active) {
+        busySeenActive_ = true;
+        startBusyIndicator();
+        return;
+    }
+
+    if (!busySeenActive_) {
+        // Idle report from the render that was already running when the
+        // stroke was committed — ours has not started yet.
+        return;
+    }
+
+    finishSmartResult();
+}
+
+void Spot::deselectSmartTools()
+{
+    // Collapsing the section puts the brush away. Leaving a tool armed
+    // behind a collapsed header left the canvas in brush mode with no
+    // visible control explaining why.
+    Gtk::ToggleButton* armed = nullptr;
+
+    if (btnAIRemove && btnAIRemove->get_active()) {
+        armed = btnAIRemove;
+    } else if (btnAIReflect && btnAIReflect->get_active()) {
+        armed = btnAIReflect;
+    } else if (btnAIFill && btnAIFill->get_active()) {
+        armed = btnAIFill;
+    }
+
+    if (armed) {
+        // Untoggling runs onMethodButtonToggled's "already active" branch,
+        // which leaves edit mode and drops the tweak operator.
+        armed->set_active(false);
+    }
+}
+
+bool Spot::isBrushMethod() const
+{
+    const SpotMethod m = static_cast<SpotMethod>(getActiveMethod());
+    return m == SpotMethod::ERASE || m == SpotMethod::AI_REMOVE
+        || m == SpotMethod::AI_REFLECT || m == SpotMethod::AI_FILL;
+}
+
 int Spot::getActiveMethod() const
 {
     if (btnClone->get_active()) return 0;
     if (btnHeal->get_active()) return 1;
     if (btnErase->get_active()) return 2;
     if (btnRedEye->get_active()) return 3;
+    if (btnAIRemove && btnAIRemove->get_active()) return 4;
+    if (btnAIReflect && btnAIReflect->get_active()) return 6;
+    if (btnAIFill && btnAIFill->get_active()) return 7;
     return 0;
 }
 
@@ -271,6 +617,15 @@ void Spot::setActiveMethod(int index)
     btnHeal->set_active(index == 1);
     btnErase->set_active(index == 2);
     btnRedEye->set_active(index == 3);
+    if (btnAIRemove) {
+        btnAIRemove->set_active(index == 4);
+    }
+    if (btnAIReflect) {
+        btnAIReflect->set_active(index == 6);
+    }
+    if (btnAIFill) {
+        btnAIFill->set_active(index == 7);
+    }
     blockMethodButtons(false);
 }
 
@@ -281,11 +636,17 @@ void Spot::blockMethodButtons(bool block)
         healConn.block();
         eraseConn.block();
         redeyeConn.block();
+        aiRemoveConn.block();
+        aiReflectConn.block();
+        aiFillConn.block();
     } else {
         cloneConn.unblock();
         healConn.unblock();
         eraseConn.unblock();
         redeyeConn.unblock();
+        aiRemoveConn.unblock();
+        aiReflectConn.unblock();
+        aiFillConn.unblock();
     }
     blockMethodSignal = block;
 }
@@ -314,6 +675,9 @@ void Spot::onMethodButtonToggled(Gtk::ToggleButton* button, int methodIndex)
     if (button != btnHeal) btnHeal->set_active(false);
     if (button != btnErase) btnErase->set_active(false);
     if (button != btnRedEye) btnRedEye->set_active(false);
+    if (btnAIRemove && button != btnAIRemove) btnAIRemove->set_active(false);
+    if (btnAIReflect && button != btnAIReflect) btnAIReflect->set_active(false);
+    if (btnAIFill && button != btnAIFill) btnAIFill->set_active(false);
     blockMethodButtons(false);
 
     // Auto-activate edit mode
@@ -376,6 +740,8 @@ void Spot::read (const ProcParams* pp, const ParamsEdited* pedited)
         updateGeometry();
     }
 
+    updateSmartToolIndicators ();
+
     enableListener ();
 }
 
@@ -387,6 +753,117 @@ void Spot::write (ProcParams* pp, ParamsEdited* pedited)
     if (pedited) {
         pedited->spot.enabled = !get_inconsistent();
         pedited->spot.entries = editedCheckBox->get_active();
+    }
+}
+
+void Spot::updateSmartToolIndicators()
+{
+    int counts[4] = {0, 0, 0, 0}; // remove, dust, reflect, fill
+    for (const auto& entry : spots) {
+        switch (entry.method) {
+            case SpotMethod::AI_REMOVE:  ++counts[0]; break;
+            case SpotMethod::AI_DUST:    ++counts[1]; break;
+            case SpotMethod::AI_REFLECT: ++counts[2]; break;
+            case SpotMethod::AI_FILL:    ++counts[3]; break;
+            default: break;
+        }
+    }
+
+    const auto apply = [](Gtk::Button* button, Gtk::Button* resetButton,
+                          const Glib::ustring& labelKey, int count) {
+        if (button) {
+            button->set_label(count > 0 ? M(labelKey) + " ✓" : M(labelKey));
+        }
+        if (resetButton) {
+            resetButton->set_visible(count > 0);
+        }
+    };
+
+    apply(btnAIRemove, btnAIRemoveReset, "TP_SPOT_AI_OBJECT", counts[0]);
+    apply(btnAIDust, btnAIDustReset, "TP_SPOT_AI_DUST", counts[1]);
+    apply(btnAIReflect, btnAIReflectReset, "TP_SPOT_AI_REFLECTION", counts[2]);
+    apply(btnAIFill, btnAIFillReset, "TP_SPOT_AI_GENERATIVE", counts[3]);
+}
+
+void Spot::resetEntriesOfMethod(SpotMethod method)
+{
+    bool removed = false;
+    for (auto it = spots.begin(); it != spots.end();) {
+        if (it->method == method) {
+            it = spots.erase(it);
+            removed = true;
+        } else {
+            ++it;
+        }
+    }
+
+    if (removed) {
+        EditSubscriber::action = EditSubscriber::Action::NONE;
+        activeSpot = -1;
+        lastObject = -1;
+
+        if (!batchMode) {
+            createGeometry();
+            updateGeometry();
+        }
+
+        updateSmartToolIndicators();
+
+        if (listener) {
+            listener->panelChanged(edit->get_active() ? EvSpotEntryOPA : EvSpotEntry,
+                                   Glib::ustring::compose(M("TP_SPOT_COUNTLABEL"), spots.size()));
+        }
+    }
+}
+
+void Spot::onRemoveDustPressed()
+{
+    if (!dustDetector_) {
+        return;
+    }
+
+    const auto candidates = dustDetector_(40);
+
+    int added = 0;
+    for (const auto& candidate : candidates) {
+        bool overlaps = false;
+        for (const auto& existing : spots) {
+            const int dx = existing.targetPos.x - candidate.targetPos.x;
+            const int dy = existing.targetPos.y - candidate.targetPos.y;
+            const int lim = existing.radius + candidate.radius;
+            if (dx * dx + dy * dy < lim * lim) {
+                overlaps = true;
+                break;
+            }
+        }
+        if (!overlaps) {
+            spots.push_back(candidate);
+            ++added;
+        }
+    }
+
+    if (added == 0) {
+        return;
+    }
+
+    if (!getEnabled()) {
+        setEnabled(true);
+        enabledChanged();
+    }
+
+    activeSpot = -1;
+    lastObject = -1;
+
+    if (!batchMode) {
+        createGeometry();
+        updateGeometry();
+    }
+
+    updateSmartToolIndicators();
+
+    if (listener) {
+        listener->panelChanged(edit->get_active() ? EvSpotEntryOPA : EvSpotEntry,
+                               Glib::ustring::compose(M("TP_SPOT_COUNTLABEL"), spots.size()));
     }
 }
 
@@ -412,6 +889,7 @@ void Spot::resetPressed()
             lastObject = -1;
             createGeometry();
             updateGeometry();
+            updateSmartToolIndicators();
 
             if (listener) {
                 listener->panelChanged (edit->get_active() ? EvSpotEntryOPA : EvSpotEntry, Glib::ustring::compose (M ("TP_SPOT_COUNTLABEL"), 0));
@@ -439,6 +917,8 @@ void Spot::releaseEdit()
 
     // Reset stroke dragging state
     isStrokeDragging = false;
+    strokeLingerConn_.disconnect();
+    strokeLingerActive_ = false;
     strokePreviewLine.setActive(false);
     strokePreviewLine.points.clear();
     currentStrokePoints.clear();
@@ -513,9 +993,17 @@ void Spot::methodChanged()
         if (spots.at(activeSpot).method != newMethod) {
             spots.at(activeSpot).method = newMethod;
 
-            // For Erase/RedEye, set source = target (no source needed)
-            if (newMethod == SpotMethod::ERASE || newMethod == SpotMethod::REDEYE) {
+            // Everything except Clone/Heal is sourceless: source = target.
+            if (newMethod != SpotMethod::CLONE && newMethod != SpotMethod::HEAL) {
                 spots.at(activeSpot).sourcePos = spots.at(activeSpot).targetPos;
+            }
+
+            // The stroke paths (AI fill, glare) only process stroke entries;
+            // give a converted circle spot a one-point stroke.
+            if ((newMethod == SpotMethod::AI_REMOVE || newMethod == SpotMethod::AI_REFLECT
+                    || newMethod == SpotMethod::AI_FILL)
+                    && spots.at(activeSpot).strokePoints.empty()) {
+                spots.at(activeSpot).strokePoints.push_back(spots.at(activeSpot).targetPos);
             }
 
             updateGeometry();
@@ -622,7 +1110,8 @@ void Spot::updateGeometry()
         dataProvider->getImageSize (imW, imH);
 
         if (activeSpot > -1) {
-            bool hideSource = (spots.at(activeSpot).method == SpotMethod::ERASE || spots.at(activeSpot).method == SpotMethod::REDEYE);
+            bool hideSource = (spots.at(activeSpot).method != SpotMethod::CLONE
+                               && spots.at(activeSpot).method != SpotMethod::HEAL);
 
             // Target point circle
             targetCircle.center = spots.at (activeSpot).targetPos;
@@ -689,13 +1178,17 @@ void Spot::updateGeometry()
                 for (const auto& pt : spots.at(activeSpot).strokePoints) {
                     strokePreviewLine.points.push_back(pt);
                 }
+                strokePreviewLine.innerLineWidth = float(spots.at(activeSpot).radius * 2);
                 strokePreviewLine.setActive(true);
-            } else if (!isStrokeDragging) {
+            } else if (!isStrokeDragging && !strokeLingerActive_) {
                 strokePreviewLine.setActive(false);
             }
 
-            // Hide cursor preview when a spot is active
-            cursorPreviewCircle.setActive(false);
+            // Hide cursor preview when a spot is active — but never in
+            // brush mode, where it is standing in for the hidden pointer.
+            if (!isBrushMethod()) {
+                cursorPreviewCircle.setActive(false);
+            }
         } else {
             targetCircle.state = Geometry::NORMAL;
             sourceCircle.state = Geometry::NORMAL;
@@ -711,7 +1204,7 @@ void Spot::updateGeometry()
             sourceFeatherCircle.setActive (false);
             link.setActive (false);
 
-            if (!isStrokeDragging) {
+            if (!isStrokeDragging && !strokeLingerActive_) {
                 strokePreviewLine.setActive(false);
             }
         }
@@ -779,6 +1272,7 @@ void Spot::deleteSelectedEntry()
 
     createGeometry();
     updateGeometry();
+    updateSmartToolIndicators();
 
     if (listener) {
         listener->panelChanged (EvSpotEntry, M ("TP_SPOT_ENTRYCHANGED"));
@@ -787,6 +1281,14 @@ void Spot::deleteSelectedEntry()
 
 CursorShape Spot::getCursor (int objectID, int xPos, int yPos) const
 {
+    // Brush methods own the pointer: the amber ring IS the cursor, so the
+    // OS one stays hidden and the spot-handle resize arrows never appear.
+    // Painting across an older stroke's handles used to flash those arrows
+    // and blink the ring out, which read as a second, jumpy cursor.
+    if (isBrushMethod()) {
+        return CSEmpty;
+    }
+
     const EditDataProvider* editProvider = getEditProvider();
     if (editProvider && activeSpot > -1) {
         if (draggedSide != DraggedSide::NONE) {
@@ -813,6 +1315,13 @@ CursorShape Spot::getCursor (int objectID, int xPos, int yPos) const
             }
             return CSResizeBottomLeft;
         }
+    }
+
+    // While the brush circle marks the position (or a stroke is being
+    // painted), the OS pointer on top of it is just clutter — hide it.
+    // const_cast: Geometry::isVisible() is a non-const getter.
+    if (isStrokeDragging || const_cast<Spot*>(this)->cursorPreviewCircle.isVisible()) {
+        return CSEmpty;
     }
     return CSCrosshair;
 }
@@ -861,8 +1370,10 @@ bool Spot::mouseOver (int modifierKey)
             lastObject = MO_TARGET_DISK;
         }
 
-        // Phase 2: Show/hide cursor preview circle
-        if (lastObject == -1 && activeSpot == -1 && !isStrokeDragging) {
+        // Phase 2: Show/hide cursor preview circle. In brush mode it stands
+        // in for the hidden OS pointer, so it must keep following the mouse
+        // over existing spots' handles and mid-stroke too.
+        if (isBrushMethod() || (lastObject == -1 && activeSpot == -1 && !isStrokeDragging)) {
             cursorPreviewCircle.center = editProvider->posImage;
             cursorPreviewCircle.radius = spotSize->getIntValue();
             cursorPreviewCircle.setActive(true);
@@ -876,7 +1387,7 @@ bool Spot::mouseOver (int modifierKey)
 
     // Phase 2: Update cursor preview position even when object hasn't changed,
     // but only if the position actually moved (avoid redraw loop)
-    if (editProvider && lastObject == -1 && activeSpot == -1 && !isStrokeDragging) {
+    if (editProvider && (isBrushMethod() || (lastObject == -1 && activeSpot == -1 && !isStrokeDragging))) {
         rtengine::Coord newPos = editProvider->posImage;
         if (newPos != cursorPreviewCircle.center) {
             cursorPreviewCircle.center = newPos;
@@ -895,8 +1406,11 @@ bool Spot::button1Pressed (int modifierKey)
     EditDataProvider* editProvider = getEditProvider();
 
     if (editProvider) {
-        // Hide cursor preview during interaction
-        cursorPreviewCircle.setActive(false);
+        // Hide cursor preview during interaction — except in brush mode,
+        // where it is the pointer and must not blink out on mouse-down.
+        if (!isBrushMethod()) {
+            cursorPreviewCircle.setActive(false);
+        }
 
         // Interact with existing spot (drag target or source)
         if (lastObject > -1) {
@@ -916,8 +1430,11 @@ bool Spot::button1Pressed (int modifierKey)
 
         SpotMethod currentMethod = static_cast<SpotMethod>(getActiveMethod());
 
-        if (currentMethod == SpotMethod::ERASE) {
-            // Erase: start stroke dragging — drag for freeform, single click for circle
+        if (currentMethod == SpotMethod::ERASE || currentMethod == SpotMethod::AI_REMOVE
+                || currentMethod == SpotMethod::AI_REFLECT || currentMethod == SpotMethod::AI_FILL) {
+            // Brush methods: start stroke dragging — drag for freeform, single click for a dab
+            strokeLingerConn_.disconnect();
+            strokeLingerActive_ = false;
             isStrokeDragging = true;
             currentStrokePoints.clear();
             currentStrokePoints.push_back(startPos);
@@ -958,13 +1475,21 @@ bool Spot::button1Released()
     // Phase 4: Handle stroke release
     if (isStrokeDragging) {
         isStrokeDragging = false;
-        strokePreviewLine.setActive(false);
 
-        if (currentStrokePoints.size() >= 2) {
-            // Create stroke-based spot entry
+        const int activeMethod = getActiveMethod();
+        const SpotMethod strokeMethod =
+            activeMethod == 4 ? SpotMethod::AI_REMOVE
+            : activeMethod == 6 ? SpotMethod::AI_REFLECT
+            : activeMethod == 7 ? SpotMethod::AI_FILL
+            : SpotMethod::ERASE;
+
+        // A drag and a single-click dab commit through one path. They used
+        // to differ: the dab created its entry silently, with no overlay
+        // and no spinner, which read as "the tool did not fire".
+        if (!currentStrokePoints.empty()) {
             SpotEntry se;
             se.radius = spotSize->getIntValue();
-            se.method = SpotMethod::ERASE;
+            se.method = strokeMethod;
 
             // Compute bounding box center as targetPos
             int minX = INT_MAX, minY = INT_MAX, maxX = INT_MIN, maxY = INT_MIN;
@@ -976,11 +1501,46 @@ bool Spot::button1Released()
             }
             se.targetPos.set((minX + maxX) / 2, (minY + maxY) / 2);
             se.sourcePos = se.targetPos;
-            se.strokePoints = currentStrokePoints;
+
+            // Erase keeps its classic circle-spot behaviour for a lone
+            // click; the smart tools need the point list to reach their
+            // stroke path at any length.
+            if (currentStrokePoints.size() >= 2 || strokeMethod != SpotMethod::ERASE) {
+                se.strokePoints = currentStrokePoints;
+            }
 
             spots.push_back(se);
             activeSpot = -1;
             lastObject = -1;
+
+            // Keep the translucent area overlay on screen while the repair
+            // renders — the fill is see-through, so it marks where the
+            // result lands without hiding it.
+            strokePreviewLine.setActive(true);
+            strokeLingerActive_ = true;
+            strokeLingerConn_.disconnect();
+
+            if (strokeMethod != SpotMethod::ERASE) {
+                // A smart tool can take many seconds. Hold the overlay and
+                // spin the cursor until the result actually lands (see
+                // setProcessingActive) rather than for a guessed interval;
+                // the long backstop only covers a missed completion signal.
+                awaitingSmartResult_ = true;
+                busySeenActive_ = false;
+                startBusyIndicator();
+                busyTimeoutConn_.disconnect();
+                busyTimeoutConn_ = Glib::signal_timeout().connect([this]() -> bool {
+                    finishSmartResult();
+                    return false;
+                }, 120000);
+            } else {
+                strokeLingerConn_ = Glib::signal_timeout().connect([this]() -> bool {
+                    strokeLingerActive_ = false;
+                    strokePreviewLine.setActive(false);
+                    strokePreviewLine.points.clear();
+                    return false;
+                }, 4000);
+            }
 
             createGeometry();
             updateGeometry();
@@ -988,31 +1548,15 @@ bool Spot::button1Released()
             if (listener) {
                 listener->panelChanged(edit->get_active() ? EvSpotEntryOPA : EvSpotEntry, M("TP_SPOT_ENTRYCHANGED"));
             }
-        } else if (currentStrokePoints.size() == 1) {
-            // Single click without drag — create normal circle spot
-            EditDataProvider* editProvider = getEditProvider();
-            if (editProvider) {
-                SpotEntry se;
-                se.radius = spotSize->getIntValue();
-                se.targetPos = currentStrokePoints[0];
-                se.sourcePos = se.targetPos;
-                se.method = SpotMethod::ERASE;
-                spots.push_back(se);
-                activeSpot = -1;
-                lastObject = -1;
-
-                createGeometry();
-                updateGeometry();
-
-                if (listener) {
-                    listener->panelChanged(edit->get_active() ? EvSpotEntryOPA : EvSpotEntry, M("TP_SPOT_ENTRYCHANGED"));
-                }
-            }
         }
 
         currentStrokePoints.clear();
-        strokePreviewLine.points.clear();
+        if (!strokeLingerActive_) {
+            strokePreviewLine.setActive(false);
+            strokePreviewLine.points.clear();
+        }
         EditSubscriber::action = EditSubscriber::Action::NONE;
+        updateSmartToolIndicators();
         return true;
     }
 
@@ -1109,6 +1653,11 @@ bool Spot::drag1 (int modifierKey)
 
         currentStrokePoints.push_back(pos);
         strokePreviewLine.points.push_back(pos);
+        // Keep the ring under the pointer while painting (the OS cursor is
+        // hidden, so this is the only thing marking where the brush is).
+        cursorPreviewCircle.center = pos;
+        cursorPreviewCircle.radius = spotSize->getIntValue();
+        cursorPreviewCircle.setActive(true);
         updateGeometry();
         return true;
     }
@@ -1270,29 +1819,17 @@ void Spot::switchOffEditMode ()
 
 void Spot::tweakParams(procparams::ProcParams& pparams)
 {
+    // Only pixel-MOVING tools are disabled while editing: spots live in
+    // pre-transform image coordinates, so the preview must show the
+    // untransformed, uncropped frame for clicks to land where the repair
+    // lands. Appearance-only tools (film sim, dehaze, sharpening, local
+    // adjustments, ...) stay enabled — the old blanket disables made
+    // entering the brush visibly strip the user's edits while painting.
     pparams.lensProf = LensProfParams();
     pparams.cacorrection = CACorrParams();
     pparams.distortion = DistortionParams();
     pparams.rotate = RotateParams();
     pparams.perspective = PerspectiveParams();
-    pparams.vignetting = VignettingParams();
-
-    // -> disabling standard crop
     pparams.crop.enabled = false;
-
-    // -> disabling time consuming and unnecessary tool
-    pparams.sh.enabled = false;
-    pparams.blackwhite.enabled = false;
-    pparams.dehaze.enabled = false;
-    pparams.wavelet.enabled = false;
-    pparams.filmSimulation.enabled = false;
-    pparams.sharpenEdge.enabled = false;
-    pparams.sharpenMicro.enabled = false;
-    pparams.sharpening.enabled = false;
-    pparams.softlight.enabled = false;
-    pparams.gradient.enabled = false;
-    pparams.pcvignette.enabled = false;
-    pparams.colorappearance.enabled = false;
-    pparams.locallab.enabled = false;
     pparams.toneCurve.histmatching = false;
 }

@@ -74,6 +74,7 @@ set(RTENGINESOURCEFILES
     iplocalcontrast.cc
     iptextureclarity.cc
     ipgraineffect.cc
+    iplighteffects.cc
     iptiltshift.cc
     iplensblur.cc
     ipresize.cc

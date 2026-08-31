@@ -10,6 +10,11 @@
 *.hpp text
 *.pp3 text
 
+# Shell scripts must stay LF wherever they are checked out. The build runs
+# rtengine/LibRaw-make.sh through bash, and with CRLF endings bash dies on
+# the stray carriage returns before it reaches the first real command.
+*.sh text eol=lf
+
 # Files that will always have CRLF line endings on checkout.
 *.bat text eol=crlf
 *.vcproj text eol=crlf

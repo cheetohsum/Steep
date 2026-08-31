@@ -1632,6 +1632,7 @@ private:
             ipf.grainEffect(labView, params.grain, labView->W, labView->H, 0, 0, 1);
         }
 
+
         if (params.tiltShift.enabled) {
             ipf.tiltShiftEffect(labView, params.tiltShift, labView->W, labView->H);
         }
@@ -1851,6 +1852,10 @@ private:
             filmLabSnapshot.reset();
         }
         ipf.softLight(labView, params.softlight);
+
+        if (params.lightEffects.enabled) {
+            ipf.lightEffects(labView, params.lightEffects, 1);
+        }
 
 
         if (params.icm.workingTRC != ColorManagementParams::WorkingTrc::NONE  && params.icm.trcExp) {

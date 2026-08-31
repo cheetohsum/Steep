@@ -26,6 +26,7 @@ class LocallabAIMask :
 {
 private:
     MyComboBoxText* const aiMaskClassCombo;
+    MyComboBoxText* const aiMaskShapeOpCombo;
     Adjuster* const aiMaskThreshold;
     Adjuster* const aiMaskFeather;
     Adjuster* const aiMaskBlur;
@@ -34,7 +35,7 @@ private:
     Adjuster* const aiMaskRefineRadius;
     Adjuster* const aiMaskRefineEps;
 
-    sigc::connection aiMaskClassConn, aiMaskInvertConn;
+    sigc::connection aiMaskClassConn, aiMaskInvertConn, aiMaskShapeOpConn;
 
     rtengine::ProcEvent EvlocallabAIMask;
 
@@ -70,6 +71,7 @@ private:
     void updateGUIToMode(const modeType complexity) override;
 
     void aiMaskClassChanged();
+    void aiMaskShapeOpChanged();
     void aiMaskInvertChanged();
 };
 

@@ -1073,25 +1073,9 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     zoomSlider_->setZoomStyle(true);
     zoomSlider_->set_tooltip_text(M("FILEBROWSER_ZOOMSLIDER_HINT"));
     // Generous invisible grab area — the knob is easy to catch even with a
-    // quick swipe; visuals are drawn by MyHScale's zoom style.
-    {
-        auto sliderCss = Gtk::CssProvider::create();
-        try {
-            sliderCss->load_from_data(
-                "scale { padding: 0; margin: 0; min-height: 0; }"
-                " scale trough { min-height: 3px; margin: 0; padding: 0 4px;"
-                "   background: transparent; border: none; box-shadow: none; }"
-                " scale slider { min-height: 0; min-width: 0; padding: 12px; margin: -12px;"
-                "   background: transparent; border-color: transparent;"
-                "   border: none; box-shadow: none; }"
-                " scale trough highlight { margin: 0; padding: 0; min-height: 0;"
-                "   background: transparent; }"
-            );
-            zoomSlider_->get_style_context()->add_provider(
-                sliderCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200
-            );
-        } catch (...) {}
-    }
+    // quick swipe; visuals are drawn by MyHScale's zoom style. The grab-area
+    // CSS lives in themes/common/widgets.css (#FBZoomSlider).
+    zoomSlider_->set_name("FBZoomSlider");
     // Set initial slider position based on current thumbnail height
     {
         int curHeight = fileBrowser->getThumbnailHeight();
@@ -1522,6 +1506,9 @@ void FileCatalog::dirSelected (const Glib::ustring& dirname, const Glib::ustring
         closeDir();
         previewsToLoad = 0;
         previewsLoaded = 0;
+        if (fileBrowser) {
+            fileBrowser->setEmptyStateText(M("FILEBROWSER_EMPTY_SCANNING"));
+        }
 
         // if openfile exists, we have to open it first (it is a command line argument)
         if (!openfile.empty()) {
@@ -1900,7 +1887,10 @@ void FileCatalog::_refreshProgressBar ()
             progressLabel->set_text(M("MAIN_FRAME_FILEBROWSER") + " ["
                                     + Glib::ustring::format(previewsLoaded) + "/"
                                     + Glib::ustring::format(previewsToLoad) + "]" );
-            filepanel->loadingThumbs("", (double)previewsLoaded / previewsToLoad);
+            // Always name the work: the shared progress bar's text is
+            // cleared on hide, and an unlabeled tick used to resurface
+            // whatever label the previous job left behind.
+            filepanel->loadingThumbs(M("PROGRESSBAR_LOADINGTHUMBS"), (double)previewsLoaded / previewsToLoad);
         }
     }
 }
@@ -2498,6 +2488,11 @@ void FileCatalog::previewsFinishedUI(int dir_id)
     }
 
     previewsFinishedPending_ = false;
+    if (fileBrowser) {
+        // Only drawn while the canvas has no entries — i.e. a truly empty
+        // (or fully filtered-out) folder once scanning completed.
+        fileBrowser->setEmptyStateText(M("FILEBROWSER_EMPTY_NOPHOTOS"));
+    }
     previewLoader->setPostScanDrainMode(false);
     logFolderLoadTiming_("finished");
     previewsToLoad = 0;

@@ -23,7 +23,11 @@
 #include <sigc++/slot.h>
 #include <algorithm>
 #include <cmath>
+#include <string>
 
+#include <gdk/gdkkeysyms.h>
+
+#include "guiutils.h"
 #include "multilangmgr.h"
 #include "options.h"
 #include "rtimage.h"
@@ -37,10 +41,69 @@ constexpr int MIN_RESET_BUTTON_HEIGHT = 12;
 constexpr int LABEL_FIXED_WIDTH = 38;
 constexpr int SPIN_FIXED_WIDTH = 18;
 
+// Type inside the setting pills. Both the name and the value use it, so they
+// stay matched; kept in one place because the pill is drawn by hand.
+constexpr int ADJUSTER_PILL_FONT_PT = 10;
+// Minimum pill height at scale 1. set_size_request is a floor, so the theme
+// can still ask for more; scaling multiplies this so the text stays enclosed.
+constexpr int ADJUSTER_PILL_BASE_HEIGHT = 20;
+
 double one2one(double val)
 {
     return val;
 }
+}
+
+double Adjuster::pillScale_ = 1.0;
+std::vector<Adjuster*> Adjuster::instances_;
+
+namespace {
+Glib::ustring pillFontName()
+{
+    const int pt = std::max(6, static_cast<int>(std::lround(ADJUSTER_PILL_FONT_PT * Adjuster::getPillScale())));
+    return Glib::ustring::compose("sans %1", pt);
+}
+}
+
+double Adjuster::getPillScale()
+{
+    static bool loaded = false;
+
+    if (!loaded) {
+        // Options are read before any Adjuster exists, so pick the saved
+        // scale up on first use rather than needing an init call.
+        loaded = true;
+        pillScale_ = rtengine::LIM(App::get().options().adjusterPillScale, 0.7, 2.2);
+    }
+
+    return pillScale_;
+}
+
+void Adjuster::setPillScale(double scale)
+{
+    const double clamped = rtengine::LIM(scale, 0.7, 2.2);
+
+    if (std::fabs(clamped - pillScale_) < 0.001) {
+        return;
+    }
+
+    pillScale_ = clamped;
+    App::get().mut_options().adjusterPillScale = clamped;
+
+    for (Adjuster* a : instances_) {
+        a->applyPillScale();
+    }
+}
+
+void Adjuster::applyPillScale()
+{
+    if (!adjustmentName.empty() && slider) {
+        // The pill is the slider, so its height carries the type.
+        slider->set_size_request(-1, static_cast<int>(std::lround(ADJUSTER_PILL_BASE_HEIGHT * getPillScale())));
+    }
+
+    queue_resize();
+    queue_draw();
 }
 
 Adjuster::Adjuster(
@@ -142,7 +205,28 @@ Adjuster::Adjuster(
 
     // Grab focus on first click so default handler processes the click immediately
     slider->signal_button_press_event().connect(
-        [this](GdkEventButton*) -> bool {
+        [this](GdkEventButton* event) -> bool {
+            // Right-click is a reset, the same one double-click performs.
+            // Taken before the default handler so GtkScale never sees the
+            // press and cannot seek the slider on the way past.
+            if (event->button == 3 && event->type == GDK_BUTTON_PRESS) {
+                resetValue(false);
+                return true;
+            }
+
+            // A click on the number itself opens a type-in editor rather than
+            // seeking the slider, so an exact value can be entered.
+            if (event->type == GDK_BUTTON_PRESS && event->button == 1
+                    && valueTextRect_.get_width() > 0) {
+                const double adjusterX = event->x + slider->get_allocation().get_x();
+
+                if (adjusterX >= valueTextRect_.get_x()
+                        && adjusterX <= valueTextRect_.get_x() + valueTextRect_.get_width()) {
+                    beginValueEdit();
+                    return true;   // consume: no seek, no drag
+                }
+            }
+
             slider->grab_focus();
             return false; // propagate to default handler
         }, false); // before default handler
@@ -184,8 +268,10 @@ Adjuster::Adjuster(
         // Label-inside-slider: value drawn by Cairo in on_draw, spin hidden
         // Slider fills the full width — pill covers the entire row, perfectly centered
         set_size_request(-1, -1);
-        set_margin_top(1);
-        set_margin_bottom(1);
+        // Breathing room between stacked pills so they read as separate rows.
+        set_margin_top(3);
+        set_margin_bottom(3);
+        slider->set_size_request(-1, static_cast<int>(std::lround(ADJUSTER_PILL_BASE_HEIGHT * getPillScale())));
         attach(*slider, 0, 0, 1, 1);   // slider fills full width (hexpand=true)
         spin->set_no_show_all(true);
         spin->set_visible(false);       // hidden — value rendered by on_draw
@@ -268,7 +354,8 @@ Adjuster::Adjuster(
         label->add_events(Gdk::BUTTON_PRESS_MASK);
         label->signal_button_press_event().connect(
             [this](GdkEventButton* event) -> bool {
-                if (event->type == GDK_2BUTTON_PRESS && event->button == 1) {
+                if ((event->type == GDK_2BUTTON_PRESS && event->button == 1)
+                        || (event->type == GDK_BUTTON_PRESS && event->button == 3)) {
                     resetValue(false);
                     return true;
                 }
@@ -276,11 +363,15 @@ Adjuster::Adjuster(
             }, false);
     }
 
+    instances_.push_back(this);
+
     show_all();
 }
 
 Adjuster::~Adjuster ()
 {
+    instances_.erase(std::remove(instances_.begin(), instances_.end(), this), instances_.end());
+
 
     sliderChange.block();
     spinChange.block();
@@ -919,75 +1010,158 @@ void Adjuster::get_preferred_width_for_height_vfunc(int height, int& minimum_wid
     }
 }
 
+namespace
+{
+
+// GTK4-seam draw function (docs/gtk4-readiness.md): pure function of
+// (context, state) — the widget's on_draw only gathers the spec.
+struct AdjusterPillSpec {
+    int x = 0;
+    int y = 0;
+    int w = 0;
+    int h = 0;
+    double radius = 4.0;
+    // Fill extent in widget coordinates; fillRight <= fillLeft draws no fill.
+    int fillLeft = 0;
+    int fillRight = 0;
+    Gdk::RGBA well;
+    Gdk::RGBA wash;
+};
+
+void drawAdjusterPill(const Cairo::RefPtr<Cairo::Context>& cr, const AdjusterPillSpec& s)
+{
+    const auto pillPath = [&]() {
+        cr->begin_new_sub_path();
+        cr->arc(s.x + s.radius, s.y + s.radius, s.radius, rtengine::RT_PI, rtengine::RT_PI * 1.5);
+        cr->arc(s.x + s.w - s.radius, s.y + s.radius, s.radius, rtengine::RT_PI * 1.5, 0);
+        cr->arc(s.x + s.w - s.radius, s.y + s.h - s.radius, s.radius, 0, rtengine::RT_PI * 0.5);
+        cr->arc(s.x + s.radius, s.y + s.h - s.radius, s.radius, rtengine::RT_PI * 0.5, rtengine::RT_PI);
+        cr->close_path();
+    };
+
+    // Well background: recesses on dark themes, reads as a white field on
+    // light ones.
+    pillPath();
+    cr->set_source_rgba(s.well.get_red(), s.well.get_green(), s.well.get_blue(), 0.85);
+    cr->fill();
+
+    // Value fill, clipped to the pill, in the theme's wash direction —
+    // lightens dark themes, darkens light ones.
+    if (s.fillRight > s.fillLeft + 1) {
+        cr->save();
+        pillPath();
+        cr->clip();
+        auto fillGrad = Cairo::LinearGradient::create(0, s.y, 0, s.y + s.h);
+        fillGrad->add_color_stop_rgba(0.0, s.wash.get_red(), s.wash.get_green(), s.wash.get_blue(), 0.14);
+        fillGrad->add_color_stop_rgba(1.0, s.wash.get_red(), s.wash.get_green(), s.wash.get_blue(), 0.03);
+        cr->set_source(fillGrad);
+        cr->rectangle(s.fillLeft, s.y, s.fillRight - s.fillLeft, s.h);
+        cr->fill();
+        cr->restore();
+    }
+}
+
+} // namespace
+
+void Adjuster::beginValueEdit()
+{
+    if (!valuePopover_) {
+        valuePopover_.reset(new Gtk::Popover());
+        valuePopover_->set_relative_to(*this);
+        valuePopover_->set_position(Gtk::POS_TOP);
+
+        valueEntry_ = Gtk::manage(new Gtk::Entry());
+        valueEntry_->set_width_chars(7);
+        valueEntry_->set_max_width_chars(9);
+        valueEntry_->set_alignment(1.f);
+        valueEntry_->set_input_purpose(Gtk::INPUT_PURPOSE_DIGITS);
+        valueEntry_->signal_activate().connect(sigc::mem_fun(*this, &Adjuster::commitValueEdit));
+        valueEntry_->signal_key_press_event().connect(
+            [this](GdkEventKey* event) -> bool {
+                if (event->keyval == GDK_KEY_Escape) {
+                    valuePopover_->popdown();   // leave the value untouched
+                    return true;
+                }
+                return false;
+            }, false);
+
+        auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+        box->set_border_width(4);
+        box->pack_start(*valueEntry_, Gtk::PACK_SHRINK);
+        valuePopover_->add(*box);
+        box->show_all();
+    }
+
+    valuePopover_->set_pointing_to(valueTextRect_);
+    valueEntry_->set_text(spin->get_text());
+    valuePopover_->popup();
+    valueEntry_->grab_focus();
+    valueEntry_->select_region(0, -1);
+}
+
+void Adjuster::commitValueEdit()
+{
+    if (!valueEntry_) {
+        return;
+    }
+
+    // Accept either decimal separator whatever the locale, and parse with the
+    // locale-independent reader so "0.33" always means a third.
+    std::string text = valueEntry_->get_text().raw();
+    std::replace(text.begin(), text.end(), ',', '.');
+
+    const char* start = text.c_str();
+    char* end = nullptr;
+    const double parsed = g_ascii_strtod(start, &end);
+
+    if (end != start && std::isfinite(parsed)) {
+        // Same entry point the slider uses, so listeners and the pill update
+        // exactly as they would from a drag.
+        spin->set_value(rtengine::LIM(parsed, vMin, vMax));
+        queue_draw();
+    }
+
+    valuePopover_->popdown();
+}
+
 bool Adjuster::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
 {
     if (!adjustmentName.empty() && slider->get_visible()) {
         // Pill covers only the slider area — right edge stops where spin begins
         const Gtk::Allocation sAlloc = slider->get_allocation();
-        const int pillX = sAlloc.get_x();
-        const int pillW = sAlloc.get_width();
-        const int pillY = 0;
-        const int pillH = get_allocated_height();
-        const double pillR = 4.0;
 
-        if (pillW < 10) {
+        if (sAlloc.get_width() < 10) {
             return Gtk::Grid::on_draw(cr);
         }
 
-        // Slider position for fill calculations
-        const int sliderX = sAlloc.get_x();
-        const int sliderW = sAlloc.get_width();
+        AdjusterPillSpec spec;
+        spec.x = sAlloc.get_x();
+        spec.y = 0;
+        spec.w = sAlloc.get_width();
+        spec.h = get_allocated_height();
+        spec.well = themeColor(*this, "steep_surface_0", Gdk::RGBA("#14171f"));
+        spec.wash = themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff"));
 
-        // --- Pill background ---
-        auto pillPath = [&]() {
-            cr->begin_new_sub_path();
-            cr->arc(pillX + pillR, pillY + pillR, pillR, rtengine::RT_PI, rtengine::RT_PI * 1.5);
-            cr->arc(pillX + pillW - pillR, pillY + pillR, pillR, rtengine::RT_PI * 1.5, 0);
-            cr->arc(pillX + pillW - pillR, pillY + pillH - pillR, pillR, 0, rtengine::RT_PI * 0.5);
-            cr->arc(pillX + pillR, pillY + pillH - pillR, pillR, rtengine::RT_PI * 0.5, rtengine::RT_PI);
-            cr->close_path();
-        };
-
-        pillPath();
-        cr->set_source_rgba(0.0, 0.0, 0.0, 0.3);
-        cr->fill();
-
-        // --- Value fill (within slider range only, clipped to pill) ---
         auto adj = slider->get_adjustment();
         const double rangeMin = adj->get_lower();
-        const double rangeMax = adj->get_upper();
-        const double range = rangeMax - rangeMin;
-        const double val = adj->get_value();
+        const double range = adj->get_upper() - rangeMin;
 
         if (range > 0) {
-            const double valueFrac = (val - rangeMin) / range;
+            const double valueFrac = (adj->get_value() - rangeMin) / range;
 
-            int fillLeft, fillRight;
             if (isBipolar_) {
                 const double centerFrac = (0.0 - rangeMin) / range;
-                const int centerX = sliderX + static_cast<int>(centerFrac * sliderW);
-                const int valueX = sliderX + static_cast<int>(valueFrac * sliderW);
-                fillLeft = std::min(centerX, valueX);
-                fillRight = std::max(centerX, valueX);
+                const int centerX = spec.x + static_cast<int>(centerFrac * spec.w);
+                const int valueX = spec.x + static_cast<int>(valueFrac * spec.w);
+                spec.fillLeft = std::min(centerX, valueX);
+                spec.fillRight = std::max(centerX, valueX);
             } else {
-                fillLeft = sliderX;
-                fillRight = sliderX + static_cast<int>(valueFrac * sliderW);
-            }
-
-            if (fillRight > fillLeft + 1) {
-                cr->save();
-                pillPath();
-                cr->clip();
-                // Vertical gradient fill: brighter at top, darker at bottom
-                auto fillGrad = Cairo::LinearGradient::create(0, pillY, 0, pillY + pillH);
-                fillGrad->add_color_stop_rgba(0.0, 1.0, 1.0, 1.0, 0.14);
-                fillGrad->add_color_stop_rgba(1.0, 1.0, 1.0, 1.0, 0.03);
-                cr->set_source(fillGrad);
-                cr->rectangle(fillLeft, pillY, fillRight - fillLeft, pillH);
-                cr->fill();
-                cr->restore();
+                spec.fillLeft = spec.x;
+                spec.fillRight = spec.x + static_cast<int>(valueFrac * spec.w);
             }
         }
+
+        drawAdjusterPill(cr, spec);
     }
 
     // Draw children, then label text on top
@@ -1002,7 +1176,7 @@ bool Adjuster::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
         const Gtk::Allocation sAlloc = slider->get_allocation();
 
         auto layout = create_pango_layout(adjustmentName);
-        auto fontDesc = Pango::FontDescription("sans 9");
+        auto fontDesc = Pango::FontDescription(pillFontName());
         layout->set_font_description(fontDesc);
 
         const int maxLabelWidth = sAlloc.get_width() / 2;
@@ -1015,21 +1189,33 @@ bool Adjuster::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
         const int textX = sAlloc.get_x() + 10;
         const int textY = pillY + (pillH - logRect.get_height()) / 2;
 
-        cr->set_source_rgba(1.0, 1.0, 1.0, 0.85);
+        const Gdk::RGBA labelInk = themeColor(*this, "steep_text_hi", Gdk::RGBA("#e2e6ed"));
+        cr->set_source_rgba(labelInk.get_red(), labelInk.get_green(), labelInk.get_blue(), 0.95);
         cr->move_to(textX, textY);
         layout->show_in_cairo_context(cr);
 
         // Draw value text on the right side of the pill
         Glib::ustring valStr = spin->get_text();
         auto valLayout = create_pango_layout(valStr);
-        valLayout->set_font_description(Pango::FontDescription("sans 9"));
+        valLayout->set_font_description(Pango::FontDescription(pillFontName()));
         Pango::Rectangle vInk, vLog;
         valLayout->get_pixel_extents(vInk, vLog);
         const int valX = sAlloc.get_x() + sAlloc.get_width() - vLog.get_width() - 10;
         const int valY = pillY + (pillH - vLog.get_height()) / 2;
-        cr->set_source_rgba(1.0, 1.0, 1.0, 0.65);
+        const Gdk::RGBA valueInk = themeColor(*this, "steep_text", Gdk::RGBA("#cdd2da"));
+        cr->set_source_rgba(valueInk.get_red(), valueInk.get_green(), valueInk.get_blue(), 0.85);
         cr->move_to(valX, valY);
         valLayout->show_in_cairo_context(cr);
+
+        // Remember where the number landed so a click on it can open the
+        // type-in editor (see beginValueEdit). Generously padded: the digits
+        // are a small target.
+        valueTextRect_.set_x(valX - 6);
+        valueTextRect_.set_y(pillY);
+        valueTextRect_.set_width(vLog.get_width() + 14);
+        valueTextRect_.set_height(pillH);
+    } else {
+        valueTextRect_.set_width(0);
     }
 
     return true;

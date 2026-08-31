@@ -754,7 +754,7 @@ const ProcParams& Thumbnail::getProcParamsU ()
  *
  *  @return Return a pointer to a ProcPamas structure to be updated if returnParams is true and if everything went fine, NULL otherwise.
  */
-rtengine::procparams::ProcParams* Thumbnail::createProcParamsForUpdate(bool returnParams, bool force, bool flaggingMode)
+rtengine::procparams::ProcParams* Thumbnail::createProcParamsForUpdate(bool returnParams, bool force, bool flaggingMode, bool persist, bool* ranProfileBuilder)
 {
     // try to load the last saved parameters from the cache or from the paramfile file
     ProcParams* ldprof = nullptr;
@@ -766,6 +766,42 @@ rtengine::procparams::ProcParams* Thumbnail::createProcParamsForUpdate(bool retu
     Glib::ustring defaultPparamsPath = options.findProfilePath(defProf);
     const bool create = (!hasProcParams() || force);
     const bool run_cpb = !options.CPBPath.empty() && !defaultPparamsPath.empty() && cfs && cfs->exifValid && create;
+
+    if (ranProfileBuilder) {
+        *ranProfileBuilder = run_cpb;
+    }
+
+    if (!persist && create && !run_cpb) {
+        // Opening an untouched file is not an edit. Build the same starting
+        // parameters the persisting path would have saved and reloaded, but
+        // keep them in memory: no sidecar, no cache profile, pparamsValid
+        // stays false, so the browser keeps treating the file as unedited.
+        // (A custom profile builder still needs the on-disk round trip.)
+        std::unique_ptr<ProcParams> created;
+
+        if (defProf == DEFPROFILE_DYNAMIC) {
+            if (cfs && cfs->exifValid) {
+                const std::unique_ptr<const rtengine::FramesMetaData> imageMetaData(rtengine::FramesMetaData::fromFile(fname));
+                PartialProfile* pp = imageMetaData
+                    ? ProfileStore::getInstance()->loadDynamicProfile(imageMetaData.get(), fname)
+                    : nullptr;
+
+                if (pp) {
+                    created.reset(new ProcParams(*pp->pparams));
+                    pp->deleteInstance();
+                    delete pp;
+                }
+            }
+        } else {
+            const PartialProfile* const p = ProfileStore::getInstance()->getProfile(defProf);
+
+            if (p && p->pparams) {
+                created.reset(new ProcParams(*p->pparams));
+            }
+        }
+
+        return returnParams ? created.release() : nullptr;
+    }
 
     const Glib::ustring outFName =
         (options.paramsLoadLocation == PLL_Input && options.saveParamsFile) ?
@@ -922,6 +958,9 @@ void Thumbnail::clearProcParams (int whoClearedIt)
         if (pparamsValid) {
             updateCache();
         } else {
+            // Nothing valid remains to persist.
+            pendingParamsFlush_ = false;
+
             // remove param file from cache
             Glib::ustring fname_ = getCacheFileName ("profiles", App::PARAM_FILE_EXTENSION);
             g_remove (fname_.c_str ());
@@ -936,7 +975,11 @@ void Thumbnail::clearProcParams (int whoClearedIt)
             g_remove (fname_.c_str ());
             cachemgr->invalidateMD5(fname_);
 
-            if (cfs.format == FT_Raw && App::get().options().internalThumbIfUntouched && cfs.thumbImgType != CacheImageData::QUICK_THUMBNAIL) {
+            // With processed RAW previews the full thumbnail simply re-renders
+            // through the default profile; dropping back to the embedded preview
+            // would only get upgraded again (another RAW decode) moments later.
+            if (cfs.format == FT_Raw && App::get().options().internalThumbIfUntouched && !App::get().options().processedRawPreviews
+                    && cfs.thumbImgType != CacheImageData::QUICK_THUMBNAIL) {
                 // regenerate thumbnail, ie load the quick thumb again. For the rare formats not supporting quick thumbs this will
                 // be a bit slow as a new full thumbnail will be generated unnecessarily, but currently there is no way to pre-check
                 // if the format supports quick thumbs.
@@ -1032,6 +1075,11 @@ void Thumbnail::setProcParams (const ProcParams& pp, ParamsEdited* pe, int whoCh
 
         if (updateCacheNow) {
             updateCache();
+        } else {
+            // RAM moved ahead of the sidecar/cache; remember that a flush is
+            // still owed so the save paths cannot mistake "params match" for
+            // "disk is current".
+            pendingParamsFlush_ = true;
         }
     } // end of mutex lock
 
@@ -1047,6 +1095,19 @@ bool Thumbnail::procParamsMatch (const rtengine::procparams::ProcParams& pp)
     MyMutex::MyLock lock(mutex);
 
     return pparamsValid && *pparams == pp;
+}
+
+void Thumbnail::flushProcParamsToDisk ()
+{
+    MyMutex::MyLock lock(mutex);
+    updateCache();
+}
+
+bool Thumbnail::hasUnsavedParams ()
+{
+    MyMutex::MyLock lock(mutex);
+
+    return pendingParamsFlush_;
 }
 
 bool Thumbnail::isRecentlySaved () const
@@ -1653,6 +1714,9 @@ void Thumbnail::updateCache (bool updatePParams, bool updateCacheImageData)
     }
 
     saveXMPSidecarProperties();
+
+    // Whatever was pending is on disk now (all callers hold the mutex).
+    pendingParamsFlush_ = false;
 }
 
 Thumbnail::~Thumbnail ()

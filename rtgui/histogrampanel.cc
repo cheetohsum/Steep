@@ -1408,8 +1408,12 @@ void HistogramArea::updateDrawingArea (const ::Cairo::RefPtr< Cairo::Context> &c
     // Setup drawing
     cr->set_operator (Cairo::OPERATOR_OVER);
 
-    // Prepare drawing gridlines first
-    cr->set_source_rgba (1., 1., 1., 0.25);
+    // Prepare drawing gridlines first — wash-toned so the grid stays visible
+    // on light-theme histogram backgrounds too
+    {
+        const Gdk::RGBA gridWash = themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff"));
+        cr->set_source_rgba (gridWash.get_red(), gridWash.get_green(), gridWash.get_blue(), 0.25);
+    }
     cr->set_line_width (1.0);
     cr->set_antialias(Cairo::ANTIALIAS_NONE);
     cr->set_line_join(Cairo::LINE_JOIN_MITER);

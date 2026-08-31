@@ -644,6 +644,7 @@ enum class BlurType {
     void clarityContrast(LabImage *lab, const procparams::ClarityParams &params, double scale);
     void grainEffect(LabImage *lab, const procparams::GrainParams &params, int fw, int fh,
                      int originX = 0, int originY = 0, int oscale = 1);
+    void lightEffects(LabImage *lab, const procparams::LightEffectsParams &params, double scaleFactor);
     void tiltShiftEffect(LabImage *lab, const procparams::TiltShiftParams &params, int fw, int fh);
     void lensBlur(LabImage *lab, const procparams::LensBlurParams &params, double scale);
     void colorToningLabGrid(LabImage *lab, int xstart, int xend, int ystart, int yend, bool MultiThread);

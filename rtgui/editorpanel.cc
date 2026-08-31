@@ -81,6 +81,14 @@ using ScopeType = Options::ScopeType;
 namespace
 {
 
+// 20px icons for the filmstrip action bar: MENU (16) reads too small on a
+// large display, LARGE_TOOLBAR (24) crowds the strip.
+Gtk::IconSize filmstripIconSize()
+{
+    static const Gtk::IconSize size = Gtk::IconSize::register_new("steep-filmstrip", 20, 20);
+    return size;
+}
+
 static bool editorOpenLogEnabled()
 {
     static const bool enabled = std::getenv("STEEP_FILESEL_LOG") != nullptr;
@@ -210,6 +218,14 @@ public:
         ready_.notify_one();
     }
 
+    // Blocks until every queued job has finished. Called before process exit
+    // so a deferred sidecar/cache write cannot be torn by the shutdown.
+    void drain()
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        idle_.wait(lock, [this]() { return queue_.empty() && !working_; });
+    }
+
 private:
     EditorCleanupExecutor()
     {
@@ -226,14 +242,22 @@ private:
                 ready_.wait(lock, [this]() { return !queue_.empty(); });
                 work = std::move(queue_.front());
                 queue_.pop_front();
+                working_ = true;
             }
             work();
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                working_ = false;
+            }
+            idle_.notify_all();
         }
     }
 
     std::mutex mutex_;
     std::condition_variable ready_;
+    std::condition_variable idle_;
     std::deque<std::function<void()>> queue_;
+    bool working_ = false;
 };
 
 static void detachEditorProcessorListeners(rtengine::StagedImageProcessor* proc)
@@ -1070,11 +1094,12 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 
     // build the middle of the screen
     Gtk::Box* editbox = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_VERTICAL));
+    editbox_ = editbox;   // kept so the filmstrip can be re-placed later
     editbox->set_name("EditorEditBox");
     editbox->set_spacing(0);
 
     beforeAfter = Gtk::manage (new Gtk::ToggleButton ());
-    beforeAfter->set_image (*Gtk::manage (new RTImage ("compare", Gtk::ICON_SIZE_MENU)));
+    beforeAfter->set_image (*Gtk::manage (new RTImage ("compare", filmstripIconSize())));
     beforeAfter->set_relief (Gtk::RELIEF_NONE);
     beforeAfter->set_tooltip_markup (M ("MAIN_TOOLTIP_TOGGLE") + Glib::ustring("\n\n") + M ("MAIN_TOOLTIP_TOGGLE_MENU"));
 
@@ -1146,7 +1171,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     fbFiletypeAllCheck_ = nullptr;
     if (!App::get().isSimpleEditor() && filePanel) {
         tbFilterBar = Gtk::manage(new Gtk::ToggleButton());
-        tbFilterBar->set_image(*Gtk::manage(new RTImage("filter-modern", Gtk::ICON_SIZE_MENU)));
+        tbFilterBar->set_image(*Gtk::manage(new RTImage("filter-modern", filmstripIconSize())));
         tbFilterBar->set_relief(Gtk::RELIEF_NONE);
         tbFilterBar->set_tooltip_markup(M("EDITOR_FILTER_TOOLTIP"));
         tbFilterBar->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::filterBarToggled));
@@ -1170,7 +1195,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     filmstripRejectBtn_ = nullptr;
     filmstripCurrentPick_ = 0;
     albumSortBtn_ = nullptr;
-    albumSortMenu_ = nullptr;
 
     // Filmstrip action bar (rating, color label, queue) — centered in toolbar
     filmstripCurrentRating = 0;
@@ -1178,32 +1202,17 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     filmstripActionBar->set_name("FilmstripActions");
     Gtk::Box* ratingPaletteOptionsBox = nullptr;
     {
-        // Inline CSS for ultra-compact buttons
-        auto css = Gtk::CssProvider::create();
-        css->load_from_data(
-            "#FilmstripActions { padding: 0; margin: 0; }"
-            "#FilmstripActions button { min-height: 0; min-width: 0; padding: 1px 0; margin: 0; }"
-            "#FilmstripActions button image { margin: -0.4em 0; padding: 0; min-width: 0; min-height: 0; }"
-            "#FilmstripActions separator { margin: 0 3px; min-width: 1px; }"
-        );
-        filmstripActionBar->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-
-        auto applyCSS = [&css](Gtk::Widget* w) {
-            w->get_style_context()->add_provider(css, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-        };
+        // Ultra-compact styling lives in themes/common/widgets.css (#FilmstripActions)
 
         // Before/After compare button
-        applyCSS(beforeAfter);
         filmstripActionBar->pack_start(*beforeAfter, Gtk::PACK_SHRINK);
 
         // Filter bar toggle button
         if (tbFilterBar) {
-            applyCSS(tbFilterBar);
             filmstripActionBar->pack_start(*tbFilterBar, Gtk::PACK_SHRINK);
         }
 
         auto* sep0 = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
-        applyCSS(sep0);
         filmstripActionBar->pack_start(*sep0, Gtk::PACK_SHRINK);
 
         // Flag / Reject buttons
@@ -1214,8 +1223,8 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         // button and a managed image is destroyed on unparent — the flag
         // icon then rendered corrupted (missing its pole) on Windows.
         // C++-owned, freed in the destructor like every other swapped pair.
-        iFilmstripFlagPick_ = new RTImage("flag-pick", Gtk::ICON_SIZE_MENU);
-        iFilmstripFlagUnflag_ = new RTImage("flag-unflagged", Gtk::ICON_SIZE_MENU);
+        iFilmstripFlagPick_ = new RTImage("flag-pick", filmstripIconSize());
+        iFilmstripFlagUnflag_ = new RTImage("flag-unflagged", filmstripIconSize());
         filmstripFlagBtn_->set_image(*iFilmstripFlagPick_);
         filmstripFlagBtn_->set_relief(Gtk::RELIEF_NONE);
         filmstripFlagBtn_->set_tooltip_markup(M("FILEBROWSER_POPUPFLAG"));
@@ -1227,11 +1236,10 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                 updateFilmstripFlagBtn();
             }
         });
-        applyCSS(filmstripFlagBtn_);
         filmstripActionBar->pack_start(*filmstripFlagBtn_, Gtk::PACK_SHRINK);
 
         filmstripRejectBtn_ = Gtk::manage(new Gtk::Button());
-        filmstripRejectBtn_->set_image(*Gtk::manage(new RTImage("flag-reject", Gtk::ICON_SIZE_MENU)));
+        filmstripRejectBtn_->set_image(*Gtk::manage(new RTImage("flag-reject", filmstripIconSize())));
         filmstripRejectBtn_->set_relief(Gtk::RELIEF_NONE);
         filmstripRejectBtn_->set_tooltip_markup(M("FILEBROWSER_POPUPREJECT"));
         filmstripRejectBtn_->signal_clicked().connect([this]() {
@@ -1242,11 +1250,9 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                 updateFilmstripFlagBtn();
             }
         });
-        applyCSS(filmstripRejectBtn_);
         filmstripActionBar->pack_start(*filmstripRejectBtn_, Gtk::PACK_SHRINK);
 
         auto* sepFlag = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
-        applyCSS(sepFlag);
         filmstripActionBar->pack_start(*sepFlag, Gtk::PACK_SHRINK);
 
         // Color label pill — multicolor trigger circle expands on hover
@@ -1255,19 +1261,11 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
             auto* pillBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
             pillBox->set_name("RatingColorPalette");
 
-            // Inline CSS for pill shape
-            auto pillCss = Gtk::CssProvider::create();
-            pillCss->load_from_data(
-                "#RatingColorPalette { border-radius: 12px; }"
-            );
-            pillBox->get_style_context()->add_provider(pillCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-
             // Trigger circle (always visible)
             auto* triggerBtn = Gtk::manage(new Gtk::Button());
-            triggerBtn->set_image(*Gtk::manage(new RTImage("star-small", Gtk::ICON_SIZE_MENU)));
+            triggerBtn->set_image(*Gtk::manage(new RTImage("star-small", filmstripIconSize())));
             triggerBtn->set_relief(Gtk::RELIEF_NONE);
             triggerBtn->set_tooltip_markup(M("FILEBROWSER_POPUPRANK") + " / " + M("FILEBROWSER_COLORLABEL_TOOLTIP"));
-            applyCSS(triggerBtn);
             pillBox->pack_start(*triggerBtn, Gtk::PACK_SHRINK);
 
             // Revealer with the 6 color label buttons
@@ -1340,7 +1338,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                 });
 
             auto* unrankBtn = Gtk::manage(new Gtk::Button());
-            unrankBtn->set_image(*Gtk::manage(new RTImage("star-hollow-small", Gtk::ICON_SIZE_MENU)));
+            unrankBtn->set_image(*Gtk::manage(new RTImage("star-hollow-small", filmstripIconSize())));
             unrankBtn->set_relief(Gtk::RELIEF_NONE);
             unrankBtn->set_tooltip_markup(M("FILEBROWSER_UNRANK_TOOLTIP"));
             unrankBtn->signal_clicked().connect([this]() {
@@ -1361,14 +1359,13 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                     scheduleRatingPaletteClose();
                     return false;
                 });
-            applyCSS(unrankBtn);
             labelBox->pack_start(*unrankBtn, Gtk::PACK_SHRINK);
 
             for (int i = 0; i < 5; ++i) {
                 filmstripRankBtns[i] = Gtk::manage(new Gtk::Button());
                 // C++-owned swap icons — same rule as the flag button pair.
-                iFilmstripStarGold_[i] = new RTImage("star-gold-small", Gtk::ICON_SIZE_MENU);
-                iFilmstripStarPlain_[i] = new RTImage("star-small", Gtk::ICON_SIZE_MENU);
+                iFilmstripStarGold_[i] = new RTImage("star-gold-small", filmstripIconSize());
+                iFilmstripStarPlain_[i] = new RTImage("star-small", filmstripIconSize());
                 filmstripRankBtns[i]->set_image(*iFilmstripStarPlain_[i]);
                 filmstripRankBtns[i]->set_relief(Gtk::RELIEF_NONE);
                 filmstripRankBtns[i]->signal_clicked().connect([this, i]() {
@@ -1390,18 +1387,16 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                     scheduleRatingPaletteClose();
                     return false;
                 });
-                applyCSS(filmstripRankBtns[i]);
                 labelBox->pack_start(*filmstripRankBtns[i], Gtk::PACK_SHRINK);
             }
 
             auto* paletteSeparator = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
-            applyCSS(paletteSeparator);
             labelBox->pack_start(*paletteSeparator, Gtk::PACK_SHRINK);
 
             std::array<std::string, 6> clabelIcons = {"circle-gray-small", "circle-red-small", "circle-yellow-small", "circle-green-small", "circle-blue-small", "circle-purple-small"};
             for (int i = 0; i < 6; i++) {
                 Gtk::Button* clabelBtn = Gtk::manage(new Gtk::Button());
-                clabelBtn->set_image(*Gtk::manage(new RTImage(clabelIcons[i], Gtk::ICON_SIZE_MENU)));
+                clabelBtn->set_image(*Gtk::manage(new RTImage(clabelIcons[i], filmstripIconSize())));
                 clabelBtn->set_relief(Gtk::RELIEF_NONE);
                 clabelBtn->set_tooltip_markup(M("FILEBROWSER_COLORLABEL_TOOLTIP"));
                 clabelBtn->signal_clicked().connect([this, i]() {
@@ -1419,7 +1414,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                         scheduleRatingPaletteClose();
                         return false;
                     });
-                applyCSS(clabelBtn);
                 labelBox->pack_start(*clabelBtn, Gtk::PACK_SHRINK);
             }
             colorLabelRevealer_->add(*labelBox);
@@ -1443,7 +1437,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         }
 
         auto* sep2 = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
-        applyCSS(sep2);
         filmstripActionBar->pack_start(*sep2, Gtk::PACK_SHRINK);
 
         // Build copy filter menu (same structure as file browser)
@@ -1666,7 +1659,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         }
 
         Gtk::Button* copySettingsBtn = Gtk::manage(new Gtk::Button());
-        copySettingsBtn->set_image(*Gtk::manage(new RTImage("copy", Gtk::ICON_SIZE_MENU)));
+        copySettingsBtn->set_image(*Gtk::manage(new RTImage("copy", filmstripIconSize())));
         copySettingsBtn->set_relief(Gtk::RELIEF_NONE);
         copySettingsBtn->set_tooltip_markup(M("EDITOR_COPY_SETTINGS_TOOLTIP"));
         copySettingsBtn->signal_clicked().connect([this]() {
@@ -1744,7 +1737,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         });
         // Copy filter dropdown — inset to the right of the copy button
         Gtk::MenuButton* copyFilterBtn = Gtk::manage(new Gtk::MenuButton());
-        copyFilterBtn->set_image(*Gtk::manage(new RTImage("copy-filter", Gtk::ICON_SIZE_MENU)));
+        copyFilterBtn->set_image(*Gtk::manage(new RTImage("copy-filter", filmstripIconSize())));
         copyFilterBtn->set_relief(Gtk::RELIEF_NONE);
         copyFilterBtn->set_tooltip_markup(M("FILEBROWSER_COPYPROFILE_SETTINGS"));
         copyFilterBtn->set_popup(*editorCopyFilterMenu_);
@@ -1756,39 +1749,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         copySettingsBtn->hide();
         copyGroup->pack_start(*copySettingsBtn, Gtk::PACK_SHRINK);
         copyGroup->pack_start(*copyFilterBtn, Gtk::PACK_SHRINK);
-        applyCSS(copyGroup);
-
-        // Screen-level CSS for the joined pair
-        {
-            static bool cssAdded = false;
-            if (!cssAdded) {
-                auto css = Gtk::CssProvider::create();
-                css->load_from_data(
-                    "#CopySettingsGroup {"
-                    "  margin: 0; padding: 0;"
-                    "}"
-                    "#CopySettingsGroup > button:first-child {"
-                    "  border-top-right-radius: 0; border-bottom-right-radius: 0;"
-                    "  margin-right: -2px; padding-right: 1px;"
-                    "}"
-                    "#CopySettingsGroup > menubutton > button {"
-                    "  border-top-left-radius: 0; border-bottom-left-radius: 0;"
-                    "  margin-left: -2px; padding-left: 1px;"
-                    "  min-width: 12px; padding-right: 2px;"
-                    "}"
-                    "#CopySettingsGroup > menubutton {"
-                    "  margin: 0; padding: 0;"
-                    "}"
-                    "#CopySettingsGroup > menubutton image {"
-                    "  min-width: 12px; min-height: 12px;"
-                    "}"
-                );
-                Gtk::StyleContext::add_provider_for_screen(
-                    Gdk::Screen::get_default(), css,
-                    GTK_STYLE_PROVIDER_PRIORITY_USER + 100);
-                cssAdded = true;
-            }
-        }
+        // Joined-pair styling lives in themes/common/widgets.css (#CopySettingsGroup)
         filmstripActionBar->pack_start(*copyGroup, Gtk::PACK_SHRINK);
 
     }
@@ -1847,19 +1808,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         Gtk::Box* filterBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 1));
         filterBar->set_name("EditorFilterBar");
         filterBar->set_halign(Gtk::ALIGN_CENTER);
-
-        auto filterCss = Gtk::CssProvider::create();
-        filterCss->load_from_data(
-            "#EditorFilterBar { padding: 2px 6px; }"
-            "#EditorFilterBar button { min-height: 0; min-width: 0; padding: 1px 1px; margin: 0; }"
-            "#EditorFilterBar button image { margin: 0; padding: 0; }"
-            "#EditorFilterBar label { margin: 0 2px; }"
-            "#EditorFilterBar entry { min-height: 0; padding: 1px 4px; }"
-        );
-        auto applyFilterCss = [&filterCss](Gtk::Widget* w) {
-            w->get_style_context()->add_provider(filterCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
-        };
-        applyFilterCss(filterBar);
+        // Compact styling lives in themes/common/widgets.css (#EditorFilterBar)
 
         auto connectToggle = [this](Gtk::ToggleButton* tb) {
             tb->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::filterBarChanged));
@@ -1870,7 +1819,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         fbClearAll->set_image(*Gtk::manage(new RTImage("filter-clear", Gtk::ICON_SIZE_MENU)));
         fbClearAll->set_relief(Gtk::RELIEF_NONE);
         fbClearAll->set_tooltip_markup(M("EDITOR_FILTER_CLEAR_TOOLTIP"));
-        applyFilterCss(fbClearAll);
         fbClearAll->signal_clicked().connect(sigc::mem_fun(*this, &EditorPanel::filterBarClearAll));
         filterBar->pack_start(*fbClearAll, Gtk::PACK_SHRINK);
 
@@ -1882,7 +1830,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         fbUnRanked->set_image(*Gtk::manage(new RTImage("star-hollow-small", Gtk::ICON_SIZE_MENU)));
         fbUnRanked->set_relief(Gtk::RELIEF_NONE);
         fbUnRanked->set_tooltip_markup(M("FILEBROWSER_SHOWUNRANKHINT"));
-        applyFilterCss(fbUnRanked);
         connectToggle(fbUnRanked);
         filterBar->pack_start(*fbUnRanked, Gtk::PACK_SHRINK);
 
@@ -1892,7 +1839,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
             fbRank[i]->set_relief(Gtk::RELIEF_NONE);
             Glib::ustring convergent = Glib::ustring::compose("FILEBROWSER_SHOWRANK%1HINT", i + 1);
             fbRank[i]->set_tooltip_markup(M(convergent));
-            applyFilterCss(fbRank[i]);
             connectToggle(fbRank[i]);
             filterBar->pack_start(*fbRank[i], Gtk::PACK_SHRINK);
         }
@@ -1915,7 +1861,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         fbUnCLabeled->set_image(*Gtk::manage(new RTImage(clabelIcons[0], Gtk::ICON_SIZE_MENU)));
         fbUnCLabeled->set_relief(Gtk::RELIEF_NONE);
         fbUnCLabeled->set_tooltip_markup(M(clabelHints[0]));
-        applyFilterCss(fbUnCLabeled);
         connectToggle(fbUnCLabeled);
         filterBar->pack_start(*fbUnCLabeled, Gtk::PACK_SHRINK);
 
@@ -1924,7 +1869,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
             fbCLabel[i]->set_image(*Gtk::manage(new RTImage(clabelIcons[i + 1], Gtk::ICON_SIZE_MENU)));
             fbCLabel[i]->set_relief(Gtk::RELIEF_NONE);
             fbCLabel[i]->set_tooltip_markup(M(clabelHints[i + 1]));
-            applyFilterCss(fbCLabel[i]);
             connectToggle(fbCLabel[i]);
             filterBar->pack_start(*fbCLabel[i], Gtk::PACK_SHRINK);
         }
@@ -1937,7 +1881,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         fbEdited[0]->set_image(*Gtk::manage(new RTImage("tick-hollow-small", Gtk::ICON_SIZE_MENU)));
         fbEdited[0]->set_relief(Gtk::RELIEF_NONE);
         fbEdited[0]->set_tooltip_markup(M("FILEBROWSER_SHOWEDITEDNOTHINT"));
-        applyFilterCss(fbEdited[0]);
         connectToggle(fbEdited[0]);
         filterBar->pack_start(*fbEdited[0], Gtk::PACK_SHRINK);
 
@@ -1945,7 +1888,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         fbEdited[1]->set_image(*Gtk::manage(new RTImage("tick-small", Gtk::ICON_SIZE_MENU)));
         fbEdited[1]->set_relief(Gtk::RELIEF_NONE);
         fbEdited[1]->set_tooltip_markup(M("FILEBROWSER_SHOWEDITEDHINT"));
-        applyFilterCss(fbEdited[1]);
         connectToggle(fbEdited[1]);
         filterBar->pack_start(*fbEdited[1], Gtk::PACK_SHRINK);
 
@@ -1953,7 +1895,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         fbRecentlySaved[0]->set_image(*Gtk::manage(new RTImage("saved-no-small", Gtk::ICON_SIZE_MENU)));
         fbRecentlySaved[0]->set_relief(Gtk::RELIEF_NONE);
         fbRecentlySaved[0]->set_tooltip_markup(M("FILEBROWSER_SHOWRECENTLYSAVEDNOTHINT"));
-        applyFilterCss(fbRecentlySaved[0]);
         connectToggle(fbRecentlySaved[0]);
         filterBar->pack_start(*fbRecentlySaved[0], Gtk::PACK_SHRINK);
 
@@ -1961,7 +1902,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         fbRecentlySaved[1]->set_image(*Gtk::manage(new RTImage("saved-yes-small", Gtk::ICON_SIZE_MENU)));
         fbRecentlySaved[1]->set_relief(Gtk::RELIEF_NONE);
         fbRecentlySaved[1]->set_tooltip_markup(M("FILEBROWSER_SHOWRECENTLYSAVEDHINT"));
-        applyFilterCss(fbRecentlySaved[1]);
         connectToggle(fbRecentlySaved[1]);
         filterBar->pack_start(*fbRecentlySaved[1], Gtk::PACK_SHRINK);
 
@@ -1974,7 +1914,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         fbPicked->set_image(*Gtk::manage(new RTImage("flag-pick", Gtk::ICON_SIZE_MENU)));
         fbPicked->set_relief(Gtk::RELIEF_NONE);
         fbPicked->set_tooltip_markup(M("FILEBROWSER_SHOWPICKEDHINT"));
-        applyFilterCss(fbPicked);
         connectToggle(fbPicked);
         filterBar->pack_start(*fbPicked, Gtk::PACK_SHRINK);
 
@@ -1982,7 +1921,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         fbUnflagged->set_image(*Gtk::manage(new RTImage("flag-unflagged", Gtk::ICON_SIZE_MENU)));
         fbUnflagged->set_relief(Gtk::RELIEF_NONE);
         fbUnflagged->set_tooltip_markup(M("FILEBROWSER_SHOWUNFLAGGEDHINT"));
-        applyFilterCss(fbUnflagged);
         connectToggle(fbUnflagged);
         filterBar->pack_start(*fbUnflagged, Gtk::PACK_SHRINK);
 
@@ -1990,7 +1928,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         fbRejected->set_image(*Gtk::manage(new RTImage("flag-reject", Gtk::ICON_SIZE_MENU)));
         fbRejected->set_relief(Gtk::RELIEF_NONE);
         fbRejected->set_tooltip_markup(M("FILEBROWSER_SHOWREJECTEDHINT"));
-        applyFilterCss(fbRejected);
         connectToggle(fbRejected);
         filterBar->pack_start(*fbRejected, Gtk::PACK_SHRINK);
 
@@ -2001,7 +1938,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         fbSearchEntry = Gtk::manage(new Gtk::Entry());
         fbSearchEntry->set_placeholder_text(M("EDITOR_FILTER_SEARCH_PLACEHOLDER"));
         fbSearchEntry->set_width_chars(15);
-        applyFilterCss(fbSearchEntry);
         fbSearchEntry->signal_changed().connect(sigc::mem_fun(*this, &EditorPanel::filterBarChanged));
         filterBar->pack_start(*fbSearchEntry, Gtk::PACK_SHRINK);
 
@@ -2013,7 +1949,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         fbFiletypeButton_->set_label(M("FILEBROWSER_FILETYPE_ALL"));
         fbFiletypeButton_->set_relief(Gtk::RELIEF_NONE);
         fbFiletypeButton_->set_tooltip_markup(M("FILEBROWSER_FILETYPE_TOOLTIP"));
-        applyFilterCss(fbFiletypeButton_);
 
         fbFiletypePopover_ = Gtk::manage(new Gtk::Popover(*fbFiletypeButton_));
         fbFiletypeBox_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
@@ -2083,24 +2018,83 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     exifInfo->set_margin_top(2);
     exifInfo->set_margin_bottom(2);
 
+    // Hovering the EXIF strip expands the full metadata block UP, overlaying
+    // the histogram — an overlay, not a layout push, so nothing moves under
+    // the cursor. Replaces the old floating on-image info overlay.
+    exifDetail_ = Gtk::manage(new Gtk::Label());
+    exifDetail_->set_name("ExifInfoLabel");
+    exifDetail_->set_halign(Gtk::ALIGN_CENTER);
+    exifDetail_->set_justify(Gtk::JUSTIFY_CENTER);
+    exifDetail_->set_line_wrap(true);
+    exifDetail_->set_max_width_chars(40);
+
+    Gtk::Box* exifDetailBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
+    exifDetailBox->set_name("ExifDetailOverlay");
+    exifDetailBox->pack_start(*exifDetail_, Gtk::PACK_SHRINK);
+
+    Gtk::EventBox* exifDetailEventBox = Gtk::manage(new Gtk::EventBox());
+    exifDetailEventBox->set_visible_window(false);
+    exifDetailEventBox->add(*exifDetailBox);
+    exifDetailEventBox->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
+
+    exifDetailRevealer_ = Gtk::manage(new Gtk::Revealer());
+    exifDetailRevealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_UP);
+    exifDetailRevealer_->set_transition_duration(160);
+    exifDetailRevealer_->set_reveal_child(false);
+    exifDetailRevealer_->set_valign(Gtk::ALIGN_END);
+    exifDetailRevealer_->set_halign(Gtk::ALIGN_FILL);
+    exifDetailRevealer_->add(*exifDetailEventBox);
+
+    const auto openExifDetail = [this]() {
+        exifDetailCloseTimer_.disconnect();
+        if (exifDetailRevealer_ && exifDetail_ && !exifDetail_->get_text().empty()) {
+            exifDetailRevealer_->set_reveal_child(true);
+        }
+    };
+    const auto scheduleExifDetailClose = [this]() {
+        exifDetailCloseTimer_.disconnect();
+        exifDetailCloseTimer_ = Glib::signal_timeout().connect([this]() -> bool {
+            if (exifDetailRevealer_) {
+                exifDetailRevealer_->set_reveal_child(false);
+            }
+            return false;
+        }, 250);
+    };
+
+    exifDetailEventBox->signal_enter_notify_event().connect([openExifDetail](GdkEventCrossing*) -> bool {
+        openExifDetail();
+        return false;
+    });
+    exifDetailEventBox->signal_leave_notify_event().connect([scheduleExifDetailClose](GdkEventCrossing* ev) -> bool {
+        if (ev->detail != GDK_NOTIFY_INFERIOR) {
+            scheduleExifDetailClose();
+        }
+        return false;
+    });
+
     Gtk::EventBox* exifInfoEventBox = Gtk::manage(new Gtk::EventBox());
     exifInfoEventBox->add(*exifInfo);
-    exifInfoEventBox->set_above_child(true);
     exifInfoEventBox->set_visible_window(false);
     exifInfoEventBox->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
-    exifInfoEventBox->signal_enter_notify_event().connect([this](GdkEventCrossing*) -> bool {
-        iareapanel->imageArea->infoEnabled(true);
+    exifInfoEventBox->signal_enter_notify_event().connect([openExifDetail](GdkEventCrossing*) -> bool {
+        openExifDetail();
         return false;
     });
-    exifInfoEventBox->signal_leave_notify_event().connect([this](GdkEventCrossing*) -> bool {
-        iareapanel->imageArea->infoEnabled(false);
+    exifInfoEventBox->signal_leave_notify_event().connect([scheduleExifDetailClose](GdkEventCrossing* ev) -> bool {
+        if (ev->detail != GDK_NOTIFY_INFERIOR) {
+            scheduleExifDetailClose();
+        }
         return false;
     });
-    // Row for histogram (when positioned on the right side)
+    // Row for histogram (when positioned on the right side). Wrapped in an
+    // overlay so the EXIF detail block can expand up OVER it on hover.
     histogramRow_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
     histogramRow_->set_margin_top(0);
     histogramRow_->set_margin_bottom(0);
-    vsubboxright->pack_start(*histogramRow_, Gtk::PACK_SHRINK);
+    Gtk::Overlay* histOverlay = Gtk::manage(new Gtk::Overlay());
+    histOverlay->add(*histogramRow_);
+    histOverlay->add_overlay(*exifDetailRevealer_);
+    vsubboxright->pack_start(*histOverlay, Gtk::PACK_SHRINK);
 
     // EXIF info between histogram and mode bar
     exifInfo->set_margin_top(0);
@@ -2286,6 +2280,9 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         // Pack filmstrip directly into editbox as its first child (before the toolbar)
         editbox->pack_start(*catalogPane, false, false, 0);
         editbox->reorder_child(*catalogPane, 0);
+        // Honour the top/bottom preference. Done again at the end of the
+        // constructor, once the title label exists to travel with it.
+        catalogPane->set_valign(options.filmstripAtBottom ? Gtk::ALIGN_END : Gtk::ALIGN_START);
 
         // Browser title pinned above the filmstrip (toggled from the title's
         // right-click menu in the file browser). Lives in editbox, NOT inside
@@ -2309,6 +2306,9 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         }
     }
 
+    // Both the strip and its title exist now, so settle their placement.
+    applyFilmstripPlacement();
+
     // Album grid view
     albumViewBox_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     albumViewBox_->set_name("AlbumView");
@@ -2324,16 +2324,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     backBtn->signal_clicked().connect(sigc::mem_fun(*this, &EditorPanel::closeAlbumView));
     albumViewHeader_->pack_start(*backBtn, Gtk::PACK_SHRINK);
 
-    auto albumHeaderCss = Gtk::CssProvider::create();
-    albumHeaderCss->load_from_data(
-        "#AlbumViewHeader { padding: 4px 8px; }"
-        "#AlbumViewHeader label { padding: 0; margin: 0; }"
-        "#AlbumViewGrid { padding: 8px; }"
-        "#AlbumViewItem { padding: 4px; }"
-        "#AlbumViewHeader .linked radiobutton { padding: 2px 6px; min-height: 0; min-width: 0; }"
-        "#AlbumViewHeader scale { min-width: 100px; }"
-    );
-    albumViewHeader_->get_style_context()->add_provider(albumHeaderCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
+    // Album view styling lives in themes/common/widgets.css (#AlbumViewHeader etc.)
 
     // View mode segmented control (Grid | Fit | Collage) — left side after back button
     {
@@ -2358,7 +2349,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         modeBox->pack_start(*albumModeGrid_, Gtk::PACK_SHRINK);
         modeBox->pack_start(*albumModeFit_, Gtk::PACK_SHRINK);
         modeBox->pack_start(*albumModeCollage_, Gtk::PACK_SHRINK);
-        modeBox->get_style_context()->add_provider(albumHeaderCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
 
         albumModeGrid_->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::albumViewModeChanged));
         albumModeFit_->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::albumViewModeChanged));
@@ -2382,7 +2372,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     albumZoomSlider_->set_value(albumThumbHeight_);
     albumZoomSlider_->set_draw_value(false);
     albumZoomSlider_->set_size_request(120, -1);
-    albumZoomSlider_->get_style_context()->add_provider(albumHeaderCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
     albumZoomConn_ = albumZoomSlider_->signal_value_changed().connect(sigc::mem_fun(*this, &EditorPanel::albumZoomChanged));
     albumViewHeader_->pack_start(*albumZoomSlider_, Gtk::PACK_SHRINK);
 
@@ -2393,51 +2382,41 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         albumSortBtn_->set_relief(Gtk::RELIEF_NONE);
         albumSortBtn_->set_tooltip_markup(M("FILEBROWSER_POPUPSORTBY"));
 
-        albumSortMenu_ = Gtk::manage(new Gtk::Menu());
-
-        Gtk::RadioButtonGroup aOrderGrp;
-        albumSortOrder_[0] = Gtk::manage(new Gtk::RadioMenuItem(aOrderGrp, M("SORT_ASCENDING")));
-        albumSortOrder_[1] = Gtk::manage(new Gtk::RadioMenuItem(aOrderGrp, M("SORT_DESCENDING")));
-        albumSortMenu_->append(*albumSortOrder_[0]);
-        albumSortMenu_->append(*albumSortOrder_[1]);
-
-        albumSortMenu_->append(*Gtk::manage(new Gtk::SeparatorMenuItem()));
-
-        Gtk::RadioButtonGroup aMethodGrp;
-        const Glib::ustring aLabels[Options::SORT_METHOD_COUNT] = {
-            M("SORT_BY_NAME"), M("SORT_BY_DATE"), M("SORT_BY_EXIF"),
-            M("SORT_BY_RANK"), M("SORT_BY_LABEL"), M("SORT_BY_FILETYPE")
-        };
-        for (int i = 0; i < Options::SORT_METHOD_COUNT; i++) {
-            albumSortMethod_[i] = Gtk::manage(new Gtk::RadioMenuItem(aMethodGrp, aLabels[i]));
-            albumSortMenu_->append(*albumSortMethod_[i]);
-        }
+        // Built through the popup factory (GTK4 seam + Windows popup hygiene).
+        albumSortPopup_ = std::make_unique<steepui::PopupMenu>();
 
         const auto& opts = App::get().options();
-        albumSortOrder_[opts.sortDescending ? 1 : 0]->set_active(true);
-        if (opts.sortMethod >= 0 && opts.sortMethod < Options::SORT_METHOD_COUNT)
-            albumSortMethod_[opts.sortMethod]->set_active(true);
 
-        for (int i = 0; i < 2; i++)
-            albumSortOrder_[i]->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::albumSortChanged));
-        for (int i = 0; i < Options::SORT_METHOD_COUNT; i++)
-            albumSortMethod_[i]->signal_toggled().connect(sigc::mem_fun(*this, &EditorPanel::albumSortChanged));
+        const auto orderItems = albumSortPopup_->addRadioGroup(
+            {M("SORT_ASCENDING"), M("SORT_DESCENDING")},
+            opts.sortDescending ? 1 : 0,
+            [this](int) { albumSortChanged(); });
+        albumSortOrder_[0] = orderItems[0];
+        albumSortOrder_[1] = orderItems[1];
 
-        albumSortMenu_->show_all();
-        albumSortBtn_->set_popup(*albumSortMenu_);
+        albumSortPopup_->addSeparator();
+
+        const auto methodItems = albumSortPopup_->addRadioGroup(
+            {M("SORT_BY_NAME"), M("SORT_BY_DATE"), M("SORT_BY_EXIF"),
+             M("SORT_BY_RANK"), M("SORT_BY_LABEL"), M("SORT_BY_FILETYPE")},
+            (opts.sortMethod >= 0 && opts.sortMethod < Options::SORT_METHOD_COUNT) ? opts.sortMethod : 0,
+            [this](int) { albumSortChanged(); });
+        for (int i = 0; i < Options::SORT_METHOD_COUNT; i++) {
+            albumSortMethod_[i] = methodItems[i];
+        }
+
+        albumSortPopup_->attachTo(*albumSortBtn_);
         albumViewHeader_->pack_start(*albumSortBtn_, Gtk::PACK_SHRINK);
     }
 
     // Album name — right side, expands to fill
     albumNameLabel_ = Gtk::manage(new Gtk::Label());
     albumNameLabel_->set_halign(Gtk::ALIGN_END);
-    albumNameLabel_->get_style_context()->add_provider(albumHeaderCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
     albumViewHeader_->pack_start(*albumNameLabel_, Gtk::PACK_EXPAND_WIDGET);
 
     // Photo count — far right
     albumCountLabel_ = Gtk::manage(new Gtk::Label());
     albumCountLabel_->set_halign(Gtk::ALIGN_END);
-    albumCountLabel_->get_style_context()->add_provider(albumHeaderCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
     albumViewHeader_->pack_end(*albumCountLabel_, Gtk::PACK_SHRINK);
 
     albumViewBox_->pack_start(*albumViewHeader_, Gtk::PACK_SHRINK);
@@ -2457,7 +2436,6 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     albumViewGrid_->set_selection_mode(Gtk::SELECTION_SINGLE);
     albumViewGrid_->set_activate_on_single_click(false);
     albumViewGrid_->set_valign(Gtk::ALIGN_START);
-    albumViewGrid_->get_style_context()->add_provider(albumHeaderCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
 
     // Double-click to open image from grid (defer cacheMgr work off main thread)
     albumViewGrid_->signal_child_activated().connect([this](Gtk::FlowBoxChild* child) {
@@ -2619,7 +2597,11 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                 const int x0 = leftEdgeX + gripW;
                 const int x1 = std::max(x0 + 1, rightEdgeX - gripW);
                 alloc.set_x(x0);
-                alloc.set_y(canvasTop);
+                // The grip opens the filmstrip, so it sits on whichever edge
+                // of the canvas the filmstrip is on.
+                alloc.set_y(App::get().options().filmstripAtBottom
+                            ? std::max(canvasTop, sideH - gripW)
+                            : canvasTop);
                 alloc.set_width(x1 - x0);
                 alloc.set_height(gripW);
                 return true;
@@ -2799,8 +2781,67 @@ void EditorPanel::updateEditorTitleLabel (const Glib::ustring& text, const Glib:
     editorTitleLabel_->set_visible(App::get().options().browserTitlePinToEditor && !text.empty());
 }
 
+void EditorPanel::applyFilmstripPlacement ()
+{
+    // catalogPane only exists in single-tab mode (see tbTopPanel_1_toggled).
+    if (!catalogPane || !editbox_) {
+        return;
+    }
+
+    const bool atBottom = App::get().options().filmstripAtBottom;
+
+    // editbox stacks: [title] [filmstrip] [toolbar] filter bar, image, toolbar.
+    // The whole group travels together — the folder title labels the strip,
+    // and the rating / before-after / sort toolbar belongs beside it rather
+    // than stranded at the top of the window.
+    if (atBottom) {
+        // Appending in order leaves: … toolbar, title, filmstrip (last).
+        if (editorToolbarTop_) {
+            editbox_->reorder_child(*editorToolbarTop_, -1);
+        }
+
+        if (editorTitleLabel_) {
+            editbox_->reorder_child(*editorTitleLabel_, -1);
+        }
+
+        editbox_->reorder_child(*catalogPane, -1);
+        catalogPane->set_valign(Gtk::ALIGN_END);
+    } else {
+        int slot = 0;
+
+        if (editorTitleLabel_) {
+            editbox_->reorder_child(*editorTitleLabel_, slot++);
+        }
+
+        editbox_->reorder_child(*catalogPane, slot++);
+
+        if (editorToolbarTop_) {
+            editbox_->reorder_child(*editorToolbarTop_, slot);
+        }
+
+        catalogPane->set_valign(Gtk::ALIGN_START);
+    }
+
+    // The open/close grip and the queue drawer both anchor off the strip.
+    if (hpanedr) {
+        hpanedr->queue_resize();
+    }
+}
+
+void EditorPanel::refreshEditorTitleVisibility ()
+{
+    // The setting is reachable from Preferences as well as the browser
+    // title's context menu, so it has to be able to take effect without the
+    // title text itself changing.
+    if (editorTitleLabel_) {
+        editorTitleLabel_->set_visible(App::get().options().browserTitlePinToEditor
+                                       && !editorTitleLabel_->get_text().empty());
+    }
+}
+
 EditorPanel::~EditorPanel ()
 {
+    exifDetailCloseTimer_.disconnect();
     editorRecentHoverTimer_.disconnect();
     editorFavoritesRefreshConn_.disconnect();
     editorTitleConn_.disconnect();
@@ -3691,9 +3732,6 @@ void EditorPanel::rebuildAlbumGrid ()
     int thumbW = static_cast<int>(thumbH * 4.0 / 3.0);
     int itemW = thumbW + 20;
 
-    auto labelCss = Gtk::CssProvider::create();
-    labelCss->load_from_data("label { font-size: 0.8em; }");
-
     for (const auto& fpath : currentAlbumFiles_) {
         if (!Glib::file_test(fpath, Glib::FILE_TEST_EXISTS)) continue;
 
@@ -3744,7 +3782,6 @@ void EditorPanel::rebuildAlbumGrid ()
             label->set_ellipsize(Pango::ELLIPSIZE_MIDDLE);
             label->set_max_width_chars(18);
             label->set_tooltip_text(fpath);
-            label->get_style_context()->add_provider(labelCss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION + 200);
             itemBox->pack_start(*label, Gtk::PACK_SHRINK);
         }
 
@@ -5043,8 +5080,11 @@ void EditorPanel::openPhaseB (Thumbnail* tmb)
     is->setProgressListener ( this );
     EDITOR_OPEN_LOG("[editorOpen] phaseB step listeners file=%s\n", phaseFileName.c_str());
 
-    // try to load the last saved parameters from the cache or from the paramfile file
-    ProcParams* ldprof = openThm->createProcParamsForUpdate (true, false); // will be freed by initProfile
+    // try to load the last saved parameters from the cache or from the paramfile file.
+    // For an untouched file this builds the default-profile params in memory only:
+    // merely opening a photo must not write a sidecar or flip it to "edited"
+    // (which used to swap its browser thumbnail to a different render).
+    ProcParams* ldprof = openThm->createProcParamsForUpdate (true, false, false, false); // will be freed by initProfile
     EDITOR_OPEN_LOG("[editorOpen] phaseB step load-profile file=%s\n", phaseFileName.c_str());
 
     const auto& options = App::get().options();
@@ -5132,8 +5172,43 @@ void EditorPanel::openPhaseB (Thumbnail* tmb)
                     Glib::ustring(idata->shutterToString(idata->getShutterSpeed()))
                 );
                 exifInfo->set_markup(exifStr);
+
+                // Extended block revealed on hover: what the strip doesn't say
+                if (exifDetail_) {
+                    int ww = -1, hh = -1;
+                    idata->getDimensions(ww, hh);
+                    if (ww <= 0) {
+                        ww = ipc->getFullWidth();
+                        hh = ipc->getFullHeight();
+                    }
+
+                    Glib::ustring detailStr = Glib::ustring::compose(
+                        "<span size='small'>%1\n%2</span>",
+                        escapeHtmlChars(idata->getMake() + " " + idata->getModel()),
+                        escapeHtmlChars(idata->getLens()));
+
+                    const Glib::ustring expcomp(idata->expcompToString(idata->getExpComp(), true));
+                    if (!expcomp.empty()) {
+                        detailStr += Glib::ustring::compose("<span size='small'>\n%1 EV</span>", expcomp);
+                    }
+
+                    if (ww > 0 && hh > 0) {
+                        detailStr += Glib::ustring::compose(
+                            "<span size='small'>\n%1 MP (%2×%3)</span>",
+                            Glib::ustring::format(std::fixed, std::setprecision(1), (float)ww * hh / 1000000),
+                            ww, hh);
+                    }
+
+                    exifDetail_->set_markup(detailStr);
+                }
             } else {
                 exifInfo->set_markup("");
+                if (exifDetail_) {
+                    exifDetail_->set_markup("");
+                }
+                if (exifDetailRevealer_) {
+                    exifDetailRevealer_->set_reveal_child(false);
+                }
             }
 
             info_toggled ();
@@ -5411,13 +5486,87 @@ void EditorPanel::saveProfile ()
         // This runs on every switch back to the browser, and setProcParams
         // rewrites the sidecar, the cache entry and the XMP metadata whenever
         // it is called with updateCacheNow — even when nothing was edited.
-        // Skip the whole round trip when the parameters already match.
-        if (openThm->procParamsMatch (params)) {
+        // Skip the whole round trip when the parameters already match — but
+        // only if no RAM-only sync (setProgressState runs one after every
+        // render) still owes the disk a flush, or edits would never persist
+        // on a view switch and could be lost entirely on exit.
+        if (openThm->procParamsMatch (params) && !openThm->hasUnsavedParams ()) {
+            return;
+        }
+
+        // A file with no profile on disk that the user never touched has
+        // nothing worth persisting: writing it would create a sidecar, mark
+        // the file edited and re-render its thumbnail. The engine fills in
+        // values on its own after open (camera white balance, auto levels),
+        // so a parameter comparison cannot tell that apart; the tool panels'
+        // change flag can (it is reset right after the profile is applied).
+        if (!openThm->hasProcParams () && tpc && !tpc->getChangedState ()) {
             return;
         }
 
         // Will call updateCache, which will update both the cached and sidecar files if necessary
         openThm->setProcParams (params, nullptr, EDITOR);
+    }
+}
+
+void EditorPanel::saveProfileAsync ()
+{
+    if (!ipc || !openThm) {
+        return;
+    }
+
+    ProcParams params;
+    ipc->getParams (&params);
+
+    // Same RAM-only fast paths as saveProfile — see the comments there.
+    if (openThm->procParamsMatch (params) && !openThm->hasUnsavedParams ()) {
+        EDITOR_OPEN_LOG("[saveAsync] skip match file=%s\n", fname.c_str());
+        return;
+    }
+
+    if (!openThm->hasProcParams () && tpc && !tpc->getChangedState ()) {
+        EDITOR_OPEN_LOG("[saveAsync] skip unchanged file=%s\n", fname.c_str());
+        return;
+    }
+
+    EDITOR_OPEN_LOG("[saveAsync] enqueue file=%s\n", fname.c_str());
+
+    // The RAM update and its listener notifications stay on the GUI thread —
+    // the Thumbnail listener list has no lock of its own. Only the disk round
+    // trip (stat + sidecar + cache + XMP writes) moves to the cleanup
+    // executor: on a spun-down HDD the stat alone can block for seconds,
+    // which used to freeze every editor→browser view switch. The executor
+    // also serializes against image teardown, and RTWindow drains it before
+    // exit so the write cannot be torn.
+    Thumbnail* const thm = openThm;
+    const Glib::ustring file = fname;
+    thm->setProcParams (params, nullptr, EDITOR, /*updateCacheNow=*/false);
+    thm->increaseRef ();
+    EditorCleanupExecutor::instance().enqueue([thm, file]() {
+        // If the file was deleted, do not generate ghost entries. The stat
+        // deliberately happens here — it is the call that wakes the disk.
+        if (Glib::file_test (file, Glib::FILE_TEST_EXISTS)) {
+            thm->flushProcParamsToDisk ();
+            EDITOR_OPEN_LOG("[saveAsync] flushed file=%s\n", file.c_str());
+        } else {
+            EDITOR_OPEN_LOG("[saveAsync] file gone file=%s\n", file.c_str());
+        }
+        thm->decreaseRef ();
+    });
+}
+
+void EditorPanel::drainBackgroundSaves ()
+{
+    EditorCleanupExecutor::instance().drain();
+}
+
+void EditorPanel::debugNudgeExposure ()
+{
+    // Debug rig for the switch self-test: leaves the open image with a real
+    // uncommitted exposure edit so the next view switch exercises the
+    // background sidecar save. Never called outside STEEP_SWITCH_SELFTEST.
+    if (tpc) {
+        tpc->benchDriveExposure(0.30);
     }
 }
 
@@ -5680,6 +5829,10 @@ void EditorPanel::refreshProcessingState (bool inProcessingP)
 {
     if (fPanel) {
         fPanel->setEditorProcessingActivity(inProcessingP);
+    }
+
+    if (tpc) {
+        tpc->setProcessingActivity(inProcessingP);
     }
 
     double val;
@@ -6026,8 +6179,10 @@ void EditorPanel::getQueueOverlayInsets (int& left, int& top, int& right) const
     // Right sidebar inset
     right = (vboxright && vboxright->get_visible()) ? vboxright->get_allocated_width () : 0;
 
-    // Top filmstrip inset
-    top = (catalogPane && catalogPane->get_visible()) ? catalogPane->get_allocated_height () : 0;
+    // Top filmstrip inset — nothing to clear when the strip sits at the
+    // bottom, since the queue drawer comes down from the top.
+    top = (catalogPane && catalogPane->get_visible() && !App::get().options().filmstripAtBottom)
+        ? catalogPane->get_allocated_height () : 0;
 }
 
 void EditorPanel::animateEditorIn(bool skipFilmstrip)
