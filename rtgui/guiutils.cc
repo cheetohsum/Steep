@@ -1417,6 +1417,11 @@ void MyComboBoxText::get_preferred_width_for_height_vfunc (int height, int &mini
 MyComboBox::MyComboBox ()
 {
     minimumWidth = naturalWidth = RTScalable::scalePixelSize(70);
+    // Without these masks the wheel event dies in the combo's internal event
+    // windows: on_scroll_event never runs, so the event is neither handled
+    // here nor passed on, and panel scrolling stalls while the pointer is
+    // over the picker (seen on the lens profile camera/lens combos).
+    add_events(Gdk::SCROLL_MASK|Gdk::SMOOTH_SCROLL_MASK);
 }
 
 bool MyComboBox::on_scroll_event (GdkEventScroll* event)
