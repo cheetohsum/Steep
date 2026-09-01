@@ -20,6 +20,7 @@
 #include <set>
 #include <iostream>
 #include <sstream>
+#include <vector>
 
 #include <glibmm/ustring.h>
 
@@ -27,6 +28,7 @@
 
 #include "guiutils.h"
 #include "rtimage.h"
+#include "rtscalable.h"
 #include "options.h"
 
 #include "rtengine/lcp.h"
@@ -38,6 +40,250 @@ using namespace rtengine;
 using namespace rtengine::procparams;
 
 const Glib::ustring LensProfilePanel::TOOL_NAME = "lensprof";
+
+namespace {
+
+bool tokensMatch(const Glib::ustring& hayFold, const std::vector<Glib::ustring>& tokens)
+{
+    for (const auto& t : tokens) {
+        if (hayFold.find(t) == Glib::ustring::npos) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+std::vector<Glib::ustring> splitTokens(const Glib::ustring& text)
+{
+    std::vector<Glib::ustring> tokens;
+
+    for (const auto& t : Glib::Regex::split_simple("\\s+", text.casefold())) {
+        if (!t.empty()) {
+            tokens.push_back(t);
+        }
+    }
+
+    return tokens;
+}
+
+} // namespace
+
+LensListPicker::LensListPicker() :
+    displayCol_(nullptr),
+    label_(Gtk::manage(new Gtk::Label())),
+    popover_(nullptr),
+    search_(nullptr),
+    view_(nullptr)
+{
+    label_->set_xalign(0.f);
+    label_->set_ellipsize(Pango::ELLIPSIZE_MIDDLE);
+    add(*label_);
+    label_->show();
+    set_size_request(RTScalable::scalePixelSize(50), -1);
+
+    signal_clicked().connect([this]() {
+        if (!popover_) {
+            return;
+        }
+
+        if (popover_->is_visible()) {
+            popover_->popdown();
+        } else {
+            openPopover();
+        }
+    });
+}
+
+void LensListPicker::setModel(const Glib::RefPtr<Gtk::TreeStore>& model,
+                              const Gtk::TreeModelColumn<Glib::ustring>& displayCol)
+{
+    model_ = model;
+    displayCol_ = &displayCol;
+
+    filter_ = Gtk::TreeModelFilter::create(model_);
+    filter_->set_visible_func([this](const Gtk::TreeModel::const_iterator& it) {
+        return rowVisible(it);
+    });
+
+    view_ = Gtk::manage(new Gtk::TreeView(filter_));
+    view_->set_headers_visible(false);
+    view_->set_enable_search(false);
+    view_->set_show_expanders(false);
+    view_->set_level_indentation(RTScalable::scalePixelSize(12));
+    view_->set_activate_on_single_click(true);
+    view_->get_selection()->set_mode(Gtk::SELECTION_BROWSE);
+    // Only model rows are choices; the makes are section headers.
+    view_->get_selection()->set_select_function(
+        [](const Glib::RefPtr<Gtk::TreeModel>&, const Gtk::TreeModel::Path& path, bool) {
+            return path.size() == 2;
+        });
+
+    Gtk::CellRendererText* const renderer = Gtk::manage(new Gtk::CellRendererText());
+    renderer->property_ellipsize() = Pango::ELLIPSIZE_END;
+    Gtk::TreeViewColumn* const col = Gtk::manage(new Gtk::TreeViewColumn());
+    col->pack_start(*renderer, true);
+    col->set_cell_data_func(*renderer, [this, renderer](Gtk::CellRenderer*, const Gtk::TreeModel::iterator& it) {
+        renderer->property_text() = static_cast<Glib::ustring>((*it)[*displayCol_]);
+        renderer->property_weight() = (*it).parent() ? Pango::WEIGHT_NORMAL : Pango::WEIGHT_BOLD;
+    });
+    view_->append_column(*col);
+
+    view_->signal_row_activated().connect([this](const Gtk::TreeModel::Path& path, Gtk::TreeViewColumn*) {
+        if (path.size() != 2) {
+            return;
+        }
+
+        const auto it = filter_->get_iter(path);
+
+        if (it) {
+            commitRow(filter_->convert_iter_to_child_iter(it));
+            popover_->popdown();
+        }
+    });
+
+    search_ = Gtk::manage(new Gtk::SearchEntry());
+    search_->signal_changed().connect([this]() {
+        filter_->refilter();
+        view_->expand_all();
+    });
+    // Enter takes the first model row the search left visible.
+    search_->signal_activate().connect([this]() {
+        for (const auto& make : filter_->children()) {
+            const auto& models = make.children();
+
+            if (!models.empty()) {
+                commitRow(filter_->convert_iter_to_child_iter(models.begin()));
+                popover_->popdown();
+                return;
+            }
+        }
+    });
+
+    Gtk::ScrolledWindow* const scrolled = Gtk::manage(new Gtk::ScrolledWindow());
+    scrolled->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+    scrolled->set_min_content_width(RTScalable::scalePixelSize(300));
+    scrolled->set_max_content_height(RTScalable::scalePixelSize(420));
+    scrolled->set_propagate_natural_height(true);
+    scrolled->add(*view_);
+
+    Gtk::Box* const box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
+    box->pack_start(*search_, Gtk::PACK_SHRINK);
+    box->pack_start(*scrolled, Gtk::PACK_EXPAND_WIDGET);
+
+    popover_ = Gtk::manage(new Gtk::Popover(*this));
+    popover_->set_position(Gtk::POS_BOTTOM);
+    popover_->add(*box);
+    popover_->show_all_children();
+}
+
+Gtk::TreeModel::iterator LensListPicker::get_active() const
+{
+    return active_;
+}
+
+void LensListPicker::set_active(const Gtk::TreeModel::iterator& iter)
+{
+    commitRow(iter);
+}
+
+void LensListPicker::set_active(int)
+{
+    // The only index the panel ever passes is -1: clear, as on a combo.
+    if (!active_) {
+        return;
+    }
+
+    active_ = Gtk::TreeModel::iterator();
+    updateLabel();
+    changed_.emit();
+}
+
+sigc::signal<void>& LensListPicker::signal_changed()
+{
+    return changed_;
+}
+
+void LensListPicker::openPopover()
+{
+    search_->set_text("");
+    view_->expand_all();
+
+    const auto sel = view_->get_selection();
+    sel->unselect_all();
+
+    if (active_) {
+        const auto it = filter_->convert_child_iter_to_iter(active_);
+
+        if (it) {
+            const auto path = filter_->get_path(it);
+            sel->select(it);
+            view_->scroll_to_row(path, 0.5f);
+        }
+    }
+
+    popover_->popup();
+    search_->grab_focus();
+}
+
+void LensListPicker::commitRow(const Gtk::TreeModel::iterator& storeIter)
+{
+    if (!storeIter) {
+        set_active(-1);
+        return;
+    }
+
+    if (active_ && model_->get_path(active_) == model_->get_path(storeIter)) {
+        return;
+    }
+
+    active_ = storeIter;
+    updateLabel();
+    changed_.emit();
+}
+
+bool LensListPicker::rowVisible(const Gtk::TreeModel::const_iterator& iter) const
+{
+    if (!search_) {
+        return true;
+    }
+
+    const Glib::ustring text = search_->get_text();
+
+    if (text.empty()) {
+        return true;
+    }
+
+    const auto tokens = splitTokens(text);
+    const auto& row = *iter;
+    const Glib::ustring own = static_cast<Glib::ustring>(row[*displayCol_]).casefold();
+    const auto parent = row.parent();
+
+    if (parent) {
+        return tokensMatch(static_cast<Glib::ustring>((*parent)[*displayCol_]).casefold() + " " + own, tokens);
+    }
+
+    // A make row survives while any of its models does.
+    for (const auto& child : row.children()) {
+        if (tokensMatch(own + " " + static_cast<Glib::ustring>(child[*displayCol_]).casefold(), tokens)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void LensListPicker::updateLabel()
+{
+    if (active_) {
+        const Glib::ustring text = (*active_)[*displayCol_];
+        label_->set_text(text);
+        set_tooltip_text(text);
+    } else {
+        label_->set_text("");
+        set_tooltip_text("");
+    }
+}
 
 LensProfilePanel::LensProfilePanel() :
     FoldableToolPanel(this, TOOL_NAME, M("TP_LENSPROFILE_LABEL"), false, true),
@@ -63,9 +309,9 @@ LensProfilePanel::LensProfilePanel() :
     corrLcpFileRB(Gtk::manage((new Gtk::RadioButton(corrGroup, M("TP_LENSPROFILE_CORRECTION_LCPFILE"))))),
     corrLcpFileChooser(Gtk::manage((new MyFileChooserButton(M("TP_LENSPROFILE_LABEL"), Gtk::FILE_CHOOSER_ACTION_OPEN)))),
     lensfunCamerasLbl(Gtk::manage((new Gtk::Label(M("EXIFFILTER_CAMERA"))))),
-    lensfunCameras(Gtk::manage((new MyComboBox()))),
+    lensfunCameras(Gtk::manage((new LensListPicker()))),
     lensfunLensesLbl(Gtk::manage((new Gtk::Label(M("EXIFFILTER_LENS"))))),
-    lensfunLenses(Gtk::manage((new MyComboBox()))),
+    lensfunLenses(Gtk::manage((new LensListPicker()))),
     warning(Gtk::manage(new RTImage("warning", Gtk::ICON_SIZE_LARGE_TOOLBAR))),
     ckbUseDist(Gtk::manage((new Gtk::CheckButton(M("TP_LENSPROFILE_USE_GEOMETRIC"))))),
     ckbUseVign(Gtk::manage((new Gtk::CheckButton(M("TP_LENSPROFILE_USE_VIGNETTING"))))),
@@ -93,25 +339,13 @@ LensProfilePanel::LensProfilePanel() :
 
     setExpandAlignProperties(lensfunCamerasLbl, false, false, Gtk::ALIGN_END, Gtk::ALIGN_CENTER);
 
-    lensfunCameras->set_model(lf->lensfunCameraModel);
-    lensfunCameras->pack_start(lf->lensfunModelCam.model);
-    lensfunCameras->setPreferredWidth(50, 120);
+    lensfunCameras->setModel(lf->lensfunCameraModel, lf->lensfunModelCam.model);
     setExpandAlignProperties(lensfunCameras, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
-
-    Gtk::CellRendererText* const camerasCellRenderer = static_cast<Gtk::CellRendererText*>(lensfunCameras->get_first_cell());
-    camerasCellRenderer->property_ellipsize() = Pango::ELLIPSIZE_MIDDLE;
-    camerasCellRenderer->property_ellipsize_set() = true;
 
     setExpandAlignProperties(lensfunLensesLbl, false, false, Gtk::ALIGN_END, Gtk::ALIGN_CENTER);
 
-    lensfunLenses->set_model(lf->lensfunLensModel);
-    lensfunLenses->pack_start(lf->lensfunModelLens.prettylens);
-    lensfunLenses->setPreferredWidth(50, 120);
+    lensfunLenses->setModel(lf->lensfunLensModel, lf->lensfunModelLens.prettylens);
     setExpandAlignProperties(lensfunLenses, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
-
-    Gtk::CellRendererText* const lensesCellRenderer = static_cast<Gtk::CellRendererText*>(lensfunLenses->get_first_cell());
-    lensesCellRenderer->property_ellipsize() = Pango::ELLIPSIZE_MIDDLE;
-    lensesCellRenderer->property_ellipsize_set() = true;
 
     warning->set_tooltip_text(M("TP_LENSPROFILE_LENS_WARNING"));
     warning->hide();

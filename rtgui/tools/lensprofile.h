@@ -24,6 +24,42 @@
 #include "toolpanel.h"
 #include "rtengine/lensmetadata.h"
 
+/// The lensfun camera/lens picker: a button opening a popover with a search
+/// entry and a scrollable make/model list. Replaces the tree-model combo,
+/// whose menu popup neither wheel-scrolls nor opens at the current selection.
+/// Mirrors the MyComboBox API the panel logic was written against:
+/// get_active()/set_active() work in iterators of the shared TreeStore, and
+/// signal_changed fires on any change of the active row, programmatic or not.
+class LensListPicker final : public Gtk::Button
+{
+public:
+    LensListPicker();
+
+    void setModel(const Glib::RefPtr<Gtk::TreeStore>& model,
+                  const Gtk::TreeModelColumn<Glib::ustring>& displayCol);
+
+    Gtk::TreeModel::iterator get_active() const;
+    void set_active(const Gtk::TreeModel::iterator& iter);
+    void set_active(int index); ///< only -1 is meaningful: clears the selection
+    sigc::signal<void>& signal_changed();
+
+private:
+    void openPopover();
+    void commitRow(const Gtk::TreeModel::iterator& storeIter);
+    bool rowVisible(const Gtk::TreeModel::const_iterator& iter) const;
+    void updateLabel();
+
+    Glib::RefPtr<Gtk::TreeStore> model_;
+    const Gtk::TreeModelColumn<Glib::ustring>* displayCol_;
+    Glib::RefPtr<Gtk::TreeModelFilter> filter_;
+    Gtk::TreeModel::iterator active_;
+    Gtk::Label* label_;
+    Gtk::Popover* popover_;
+    Gtk::SearchEntry* search_;
+    Gtk::TreeView* view_;
+    sigc::signal<void> changed_;
+};
+
 class LensProfilePanel final :
     public ToolParamBlock,
     public FoldableToolPanel
@@ -145,9 +181,9 @@ private:
     Gtk::RadioButton* const corrLcpFileRB;
     MyFileChooserButton* const corrLcpFileChooser;
     Gtk::Label* const lensfunCamerasLbl;
-    MyComboBox* const lensfunCameras;
+    LensListPicker* const lensfunCameras;
     Gtk::Label* const lensfunLensesLbl;
-    MyComboBox* const lensfunLenses;
+    LensListPicker* const lensfunLenses;
     Gtk::Image* const warning;
     Gtk::CheckButton* const ckbUseDist;
     Gtk::CheckButton* const ckbUseVign;
