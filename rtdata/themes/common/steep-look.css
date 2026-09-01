@@ -1434,14 +1434,16 @@ radiobutton.ColorDot:checked > * {
 #ToolGroupHeader label {
     color: @steep_text;
     font-weight: bold;
-    font-size: 0.75em;
+    /* Top of the type ladder: above tool titles (1.1em) and tool headings
+       (1em), so a group outranks everything it contains. */
+    font-size: 1.15em;
     letter-spacing: 0.06em;
     padding: 0;
     margin: 0;
     min-height: 0;
 }
 #ToolGroupHeader label:first-child {
-    font-size: 0.7em;
+    font-size: 0.9em;
     letter-spacing: 0;
     margin-right: -1px;
 }
@@ -1506,6 +1508,16 @@ radiobutton.ColorDot:checked > * {
     color: @steep_text_hi;
     padding: 0;
     margin: 4px 0 1px 0;
+}
+
+/* Section labels packed straight into a flat tool's block sit on the tool
+   content inset (10px ExpanderContents padding + 4px child padding), which
+   left them oddly deep against the tool names. Pull them back to a shallow
+   nested step; the size difference carries the hierarchy. Scoped to direct
+   children so row labels inside button rows (Rotate, Level) keep their
+   place. */
+#MyExpander.flat-mode #ExpanderBox > .ExpanderContents > * > .tool-section-label {
+    margin-left: -10px;
 }
 
 /* Compact comboboxes in all tool panels */
