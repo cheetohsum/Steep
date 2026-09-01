@@ -1488,7 +1488,9 @@ radiobutton.ColorDot:checked > * {
     padding-top: 0;
 }
 
-/* Tool section labels (within flat-mode tool groups) */
+/* Tool section labels (within flat-mode tool groups).
+   NOTE: font-size here is dead — the forced-font provider outranks the
+   theme (see the type ladder in widgets.css, which carries the live sizes). */
 .tool-section-label {
     font-size: 0.85em;
     font-weight: bold;
@@ -1509,14 +1511,6 @@ radiobutton.ColorDot:checked > * {
     margin: 4px 0 1px 0;
 }
 
-/* Section labels flush with the tool names: cancels the tool content inset
-   (10px ExpanderContents padding + 4px child padding), same pattern as
-   .smart-tools above. The class is set in code only on section headings
-   packed straight into a flat tool's block (lighteffects.cc), so row labels
-   inside button rows (Rotate, Level) keep their place. */
-#MyExpander.flat-mode .flush-section {
-    margin-left: -14px;
-}
 
 /* Compact comboboxes in all tool panels */
 #MyExpander combobox,

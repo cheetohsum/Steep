@@ -117,6 +117,17 @@
     border: none; border-radius: 0; background-color: transparent;
     background-image: none; box-shadow: none;
 }
+
+/*** Tool panel type ladder ********************************************************************
+   Group name > tool name > section label. These sizes MUST live in this
+   layer: rtwindow.cc adds the forced-font provider ("* { font-size: Npt }")
+   after the theme at the same APPLICATION priority, and GTK lets the
+   later provider win, so every font-size in steep-look.css is dead
+   (verified with tools/gtk_css_probe.py: all labels computed to the same
+   px). At +200 these outrank it. */
+#ToolGroupHeader label { font-size: 1.15em; font-weight: bold; }
+.tool-heading-label    { font-size: 1em;    font-weight: bold; }
+.tool-section-label    { font-size: 0.85em; font-weight: bold; }
 /* Reset "×" — one rule set for every #ToolGroupReset (group headers, crop,
    perspective); formerly duplicated per-button in toolpanelcoord.cc. */
 #ToolGroupReset {
@@ -143,6 +154,13 @@
 /* Pull the section flush left: cancels the 10px flat-mode tool content indent
    so its header aligns with the surrounding group headers. */
 .smart-tools { margin-left: -10px; }
+/* A flat tool whose whole block sits flush (tools/lighteffects.cc): cancels
+   the 10px ExpanderContents inset and the 4px child padding, so its section
+   headings left-align with the tool names and its sliders line up with the
+   summary sliders of neighbouring tools that live outside the inset. Must sit
+   in this layer: the theme's "#ExpanderBox box > box { margin: 0 }" outranks
+   any theme-level rule on specificity. */
+#MyExpander.flat-mode .flush-tool { margin-left: -10px; padding-left: 0; }
 /* Per-tool reset "↺" embedded inside the right edge of its tool button. */
 .smart-tool-reset {
     padding: 0 3px; margin: 0; min-height: 12px; min-width: 12px;
