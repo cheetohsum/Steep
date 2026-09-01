@@ -9136,6 +9136,15 @@ void ImProcFunctions::calc_ref(int sp, LabImage * original, LabImage * transform
         // use in normal mode for all modules except denoise
         struct local_params lp;
         calcLocalParams(sp, oW, oH, params->locallab, lp, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, locwavCurveden, locwavdenutili);
+    // A spot must not undo a global black & white conversion. When blwh is
+    // false the spot writes the ORIGINAL a/b back inside its region, which
+    // restores the pre-conversion colour there -- so a spot left un-bridged
+    // brings that area back in colour while the rest of the photo is grey.
+    // blwh defaults to false, so any spot created while B&W was already on
+    // does exactly that, and with an AI mask over vegetation the area that
+    // comes back is precisely the foliage.
+    lp.blwh = lp.blwh || params->blackwhite.enabled;
+
         int begy = lp.yc - lp.lyT;
         int begx = lp.xc - lp.lxL;
         int yEn = lp.yc + lp.ly;
@@ -15664,6 +15673,15 @@ void ImProcFunctions::Lab_Local(
     constexpr int del = 3; // to avoid crash with [loy - begy] and [lox - begx] and bfh bfw  // with gtk2 [loy - begy-1] [lox - begx -1 ] and del = 1
     struct local_params lp;
     calcLocalParams(sp, oW, oH, params->locallab, lp, prevDeltaE, showMaskOverlay, llColorMask, llColorMaskinv, llExpMask, llExpMaskinv, llSHMask, llSHMaskinv, llvibMask, lllcMask, llsharMask, llcbMask, llretiMask, llsoftMask, lltmMask, llblMask, lllogMask, ll_Mask, llcieMask, locwavCurveden, locwavdenutili);
+    // A spot must not undo a global black & white conversion. When blwh is
+    // false the spot writes the ORIGINAL a/b back inside its region, which
+    // restores the pre-conversion colour there -- so a spot left un-bridged
+    // brings that area back in colour while the rest of the photo is grey.
+    // blwh defaults to false, so any spot created while B&W was already on
+    // does exactly that, and with an AI mask over vegetation the area that
+    // comes back is precisely the foliage.
+    lp.blwh = lp.blwh || params->blackwhite.enabled;
+
 
     const int maskBlendMode = LIM(params->locallab.spots.at(sp).maskBlendMode, 0, 4);
     const bool specializedMaskPreview = prevDeltaE || showMaskOverlay

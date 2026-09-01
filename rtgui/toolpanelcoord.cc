@@ -1442,7 +1442,32 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
         }
     }
 
-    if (!maskModeActive_ && !hasGradient) return false;
+    // Black & white is decided for the whole photo, so it has to reach every
+    // spot, and it has to do so whether or not the mask tab happens to be
+    // open. A spot left with blwh false does not merely miss the effect: see
+    // iplocallab.cc, where the spot writes the ORIGINAL a/b back inside its
+    // region. That restores the pre-conversion colour there and undoes the
+    // global conversion locally. With an AI mask over vegetation that region
+    // is exactly the foliage, so "apply B&W" left the greens behind.
+    bool bwBridged = false;
+
+    if (id == EvBWChmixEnabled || id == EvBWmethod) {
+        for (auto& everySpot : params->locallab.spots) {
+            everySpot.blwh = params->blackwhite.enabled;
+
+            if (everySpot.blwh) {
+                // Desaturation runs inside the colour processing block, so the
+                // engine only reaches it when that block is enabled.
+                everySpot.expcolor = true;
+            }
+        }
+
+        bwBridged = true;
+    }
+
+    if (!maskModeActive_ && !hasGradient) {
+        return bwBridged;
+    }
 
     // Auto-enable locallab when bridging to a gradient spot
     if (hasGradient && !params->locallab.enabled) {
@@ -1523,7 +1548,7 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
     }
 
     // Mask mode: event-specific bridging
-    bool bridged = false;
+    bool bridged = bwBridged;
 
     if (id == EvExpComp || id == EvBlack || id == EvHLCompr || id == EvHLComprThreshold || id == EvSHCompr) {
         spot.expcomp = params->toneCurve.expcomp;
@@ -1583,18 +1608,6 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
         if (spot.highlights != 0 || spot.shadows != 0) {
             spot.expshadhigh = true;
             spot.visishadhigh = true;
-        }
-        bridged = true;
-    }
-
-    if (id == EvBWChmixEnabled || id == EvBWmethod) {
-        // B&W is active when enabled OR when the method is changed to anything
-        // other than its default. Use enabled flag from the write() call.
-        spot.blwh = params->blackwhite.enabled;
-        // B&W desaturation runs inside the color processing block,
-        // so the color tool must be enabled for the engine to reach it.
-        if (spot.blwh) {
-            spot.expcolor = true;
         }
         bridged = true;
     }
