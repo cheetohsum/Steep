@@ -1442,11 +1442,10 @@ radiobutton.ColorDot:checked > * {
     margin: 0;
     min-height: 0;
 }
-#ToolGroupHeader label:first-child {
-    font-size: 0.9em;
-    letter-spacing: 0;
-    margin-right: -1px;
-}
+/* NOTE: no label:first-child override here. The group header is a SINGLE
+   label (arrow + name in one markup string, guiutils.cc ToolGroup), so a
+   first-child rule matches the whole name and silently caps its size —
+   that bug kept group names tiny. The arrow shrinks via <small> markup. */
 #ToolGroupHeader:hover label {
     color: @steep_text_hi;
 }
@@ -1510,14 +1509,13 @@ radiobutton.ColorDot:checked > * {
     margin: 4px 0 1px 0;
 }
 
-/* Section labels packed straight into a flat tool's block sit on the tool
-   content inset (10px ExpanderContents padding + 4px child padding), which
-   left them oddly deep against the tool names. Pull them back to a shallow
-   nested step; the size difference carries the hierarchy. Scoped to direct
-   children so row labels inside button rows (Rotate, Level) keep their
-   place. */
-#MyExpander.flat-mode #ExpanderBox > .ExpanderContents > * > .tool-section-label {
-    margin-left: -10px;
+/* Section labels flush with the tool names: cancels the tool content inset
+   (10px ExpanderContents padding + 4px child padding), same pattern as
+   .smart-tools above. The class is set in code only on section headings
+   packed straight into a flat tool's block (lighteffects.cc), so row labels
+   inside button rows (Rotate, Level) keep their place. */
+#MyExpander.flat-mode .flush-section {
+    margin-left: -14px;
 }
 
 /* Compact comboboxes in all tool panels */

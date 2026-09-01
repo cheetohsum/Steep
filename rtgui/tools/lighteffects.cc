@@ -74,6 +74,9 @@ LightEffects::LightEffects():
         Gtk::Label* heading = Gtk::manage(new Gtk::Label(M(labelKey)));
         heading->set_halign(Gtk::ALIGN_START);
         heading->get_style_context()->add_class("tool-section-label");
+        // flush-section pulls the heading out of the tool content inset so
+        // it left-aligns with the tool names (see steep-look.css).
+        heading->get_style_context()->add_class("flush-section");
         pack_start(*heading, Gtk::PACK_SHRINK);
     };
 
