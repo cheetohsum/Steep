@@ -181,11 +181,13 @@ nothing extra to fetch or configure. They are only optional if you build it
 yourself, where AI masking is off by default on Linux and macOS unless you
 pass `-DWITH_AI_MASKING=ON`.
 
-Remove Object is the exception. Its model is around 200 MB, which is too big
-to keep in the repository, so whether a given download includes it depends on
-the build having been given somewhere to fetch it from. If it is missing the
-tool says so rather than failing quietly, and the rest of Steep is unaffected.
-See [Building from source](#building-from-source) for how to supply it.
+Remove Object is the exception, because its model is around 200 MB — too big to
+keep in the repository, and enough to more than double the size of a download if
+it were simply bundled. So Steep fetches it on demand instead: Smart Tools shows
+a Download button the first time you need it, and the Windows installer offers
+the same thing as an opt-in step. It is a one-off, kept with your settings, and
+the tools work immediately afterwards without a restart. Everything else in
+Steep is unaffected while it downloads.
 
 ---
 

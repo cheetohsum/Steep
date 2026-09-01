@@ -2201,6 +2201,22 @@ MAIN_TOOLTIP_SHOWHIDETP1;Show or hide the filmstrip.\nShortcut: <b>Shift-l</b>
 MAIN_TOOLTIP_THRESHOLD;Threshold
 MAIN_TOOLTIP_TOGGLE;Toggle the <b>Before</b>/<b>After</b> view.\nShortcut: <b>Shift-b</b>
 MAIN_TOOLTIP_TOGGLE_MENU;<b>Right-click</b> for view options: lock the <b>Before</b> view, snug the images to the divider.
+MODELDOWNLOAD_TITLE;Download the Remove Object model
+MODELDOWNLOAD_EXPLAIN;Remove Object needs a one-off download of about 200 MB. It is kept with your settings, so you only do this once. Everything else in Steep works while it downloads.
+MODELDOWNLOAD_STARTING;Starting...
+MODELDOWNLOAD_PROGRESS;%1 of %2
+MODELDOWNLOAD_BUTTON;Download the model (about 200 MB)
+MODELDOWNLOAD_NEEDED;Remove Object and Generative Fill need a one-off model download.
+MODELDOWNLOAD_FAILED;The model could not be downloaded.
+MODELDOWNLOAD_NO_CURL;Steep could not find curl, which it uses to download the model.
+MODELDOWNLOAD_MANUAL;You can download it yourself from:
+
+%1
+
+and save it as:
+
+%2
+MODELDOWNLOAD_BAD_MODEL;The downloaded file could not be loaded as a model. It has been removed; please try again.
 MCP_MENU_BUTTON;MCP Server...
 MCP_DIALOG_TITLE;MCP Server
 MCP_DIALOG_HEADER;Model Context Protocol Server

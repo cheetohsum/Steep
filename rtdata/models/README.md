@@ -82,9 +82,30 @@ cmake .. -DWITH_AI_MASKING=ON -DAI_INPAINT_MODEL_URL=https://example.com/lama_in
 present here is never re-fetched, and leaving the URL unset just means the build
 carries on without Remove Object rather than failing.
 
-CI passes this URL from the `AI_INPAINT_MODEL_URL` repository variable, so
-setting that variable once is all it takes for every published build to include
-the model.
+CI passes this URL from the `AI_INPAINT_MODEL_URL` repository variable. Setting
+that variable once is all it takes.
+
+Baking it in is not the only route, and usually not the one you want: at ~200 MB
+it would take the AppImage from 146 MB to roughly 340 MB for a feature many
+people never touch. So a build without the model still offers it, from two
+places, and both land it in the same spot — `<settings>/models/`, which
+`rtengine/init.cc` searches after the install tree:
+
+- **In the app.** Smart Tools shows a Download button when the model is absent
+  and the build knows a URL. It loads straight away afterwards, without a
+  restart.
+- **In the Windows installer.** An opt-in task on the tasks page, skipped
+  automatically when the build already bundled the model.
+
+The transfer is handed to the platform's curl rather than done in process. In
+process would mean HTTPS, and the vendored httplib is built without TLS while
+neither the AppImage nor the macOS bundle ships glib-networking — so it would
+mean adding a TLS stack to three bundles and trusting it inside each. curl is
+part of macOS, part of Windows since 10/1803, and on essentially every desktop
+Linux; where it is genuinely missing the dialog says so and gives the manual
+path. `--fail` is passed so an HTTP error page can never be saved as though it
+were a model, and the file downloads to `.part` and is renamed only on success,
+so a partial file cannot satisfy the existence check on the next start.
 
 ## A note on licences
 

@@ -213,6 +213,7 @@ set(NONCLISOURCEFILES
     watermarkpanel.cc
     watermarkrenderer.cc
     smartmaskbar.cc
+    modeldownloader.cc
     soundman.cc
     steeppopup.cc
     steepperflog.cc
@@ -269,6 +270,10 @@ rt_setup_target(rth-cli)
 
 #Define a target specific definition to use in code
 target_compile_definitions(rth PUBLIC GUIVERSION)
+# Where the Remove Object model can be fetched from, if anywhere. Empty means
+# the download offer is not shown and the model has to arrive with the build.
+target_compile_definitions(rth PRIVATE
+    "STEEP_INPAINT_MODEL_URL=\"${AI_INPAINT_MODEL_URL}\"")
 target_compile_definitions(rth-cli PUBLIC CLIVERSION)
 
 # Set executables targets properties, i.e. output filename and compile flags

@@ -29,6 +29,7 @@
 #include "rtengine/refreshmap.h"
 #ifdef RT_AI_MASKING
 #include "rtengine/aiinpainting.h"
+#include "modeldownloader.h"
 #endif
 
 using namespace rtengine;
@@ -380,6 +381,46 @@ Spot::Spot() :
     aiGrid->attach(*embedReset(btnAIFill, btnAIFillReset), 1, 1, 1, 1);
 
     aiContent->pack_start(*aiGrid, false, false, 0);
+
+#ifdef RT_AI_MASKING
+    // The inpainting model is ~200 MB and some builds ship without it, so offer
+    // to fetch it rather than leaving the tools greyed out with no explanation.
+    // Only shown when this build knows a URL and the model really is absent.
+    if (!rtengine::getAIInpaintingEngine().isInitialized() && ModelDownloader::isConfigured()) {
+        Gtk::Box* getModelBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 2));
+        getModelBox->set_margin_top(6);
+
+        Gtk::Label* why = Gtk::manage(new Gtk::Label(M("MODELDOWNLOAD_NEEDED")));
+        why->set_line_wrap(true);
+        why->set_xalign(0.f);
+        getModelBox->pack_start(*why, Gtk::PACK_SHRINK);
+
+        Gtk::Button* getModel = Gtk::manage(new Gtk::Button(M("MODELDOWNLOAD_BUTTON")));
+        getModel->signal_clicked().connect([this, getModelBox, getModel]() {
+            Gtk::Window* top = dynamic_cast<Gtk::Window*>(getModel->get_toplevel());
+
+            if (!top || !ModelDownloader::runDialog(*top)) {
+                return;
+            }
+
+            // The engine took the model, so the tools can be used immediately.
+            btnAIRemove->set_sensitive(true);
+            btnAIRemove->set_tooltip_text(M("TP_SPOT_AI_OBJECT_TIP"));
+            aiRemoveConn = btnAIRemove->signal_toggled().connect(
+                sigc::bind(sigc::mem_fun(*this, &Spot::onMethodButtonToggled), btnAIRemove, 4));
+
+            btnAIFill->set_sensitive(true);
+            btnAIFill->set_tooltip_text(M("TP_SPOT_AI_GENERATIVE_TIP"));
+            aiFillConn = btnAIFill->signal_toggled().connect(
+                sigc::bind(sigc::mem_fun(*this, &Spot::onMethodButtonToggled), btnAIFill, 7));
+
+            getModelBox->hide();
+        });
+        getModelBox->pack_start(*getModel, Gtk::PACK_SHRINK);
+
+        aiContent->pack_start(*getModelBox, false, false, 0);
+    }
+#endif
     // Cancels the flat-mode tool content indent (see widgets.css) so the
     // section header lines up with the group headers around it.
     aiSection->get_style_context()->add_class("smart-tools");
