@@ -109,8 +109,6 @@ void LensListPicker::setModel(const Glib::RefPtr<Gtk::TreeStore>& model,
     view_ = Gtk::manage(new Gtk::TreeView(filter_));
     view_->set_headers_visible(false);
     view_->set_enable_search(false);
-    view_->set_show_expanders(false);
-    view_->set_level_indentation(RTScalable::scalePixelSize(12));
     view_->set_activate_on_single_click(true);
     view_->get_selection()->set_mode(Gtk::SELECTION_BROWSE);
     // Only model rows are choices; the makes are section headers.
@@ -130,7 +128,14 @@ void LensListPicker::setModel(const Glib::RefPtr<Gtk::TreeStore>& model,
     view_->append_column(*col);
 
     view_->signal_row_activated().connect([this](const Gtk::TreeModel::Path& path, Gtk::TreeViewColumn*) {
-        if (path.size() != 2) {
+        // Clicking a make folds it open or shut; clicking a model picks it.
+        if (path.size() == 1) {
+            if (view_->row_expanded(path)) {
+                view_->collapse_row(path);
+            } else {
+                view_->expand_row(path, false);
+            }
+
             return;
         }
 
@@ -145,7 +150,15 @@ void LensListPicker::setModel(const Glib::RefPtr<Gtk::TreeStore>& model,
     search_ = Gtk::manage(new Gtk::SearchEntry());
     search_->signal_changed().connect([this]() {
         filter_->refilter();
-        view_->expand_all();
+
+        // While searching, every surviving model is on show; an empty box
+        // returns to the folded makes with only the active one open.
+        if (search_->get_text().empty()) {
+            view_->collapse_all();
+            showActive();
+        } else {
+            view_->expand_all();
+        }
     });
     // Enter takes the first model row the search left visible.
     search_->signal_activate().connect([this]() {
@@ -162,12 +175,19 @@ void LensListPicker::setModel(const Glib::RefPtr<Gtk::TreeStore>& model,
 
     Gtk::ScrolledWindow* const scrolled = Gtk::manage(new Gtk::ScrolledWindow());
     scrolled->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
-    scrolled->set_min_content_width(RTScalable::scalePixelSize(300));
+    // min_content_width is ignored under POLICY_NEVER, so pin the width
+    // directly: without this the popover shrinks to the ellipsized minimum
+    // and the search entry ends up cramped.
+    scrolled->set_size_request(RTScalable::scalePixelSize(340), -1);
     scrolled->set_max_content_height(RTScalable::scalePixelSize(420));
     scrolled->set_propagate_natural_height(true);
     scrolled->add(*view_);
 
-    Gtk::Box* const box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
+    Gtk::Box* const box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 6));
+    box->set_margin_top(8);
+    box->set_margin_bottom(8);
+    box->set_margin_start(8);
+    box->set_margin_end(8);
     box->pack_start(*search_, Gtk::PACK_SHRINK);
     box->pack_start(*scrolled, Gtk::PACK_EXPAND_WIDGET);
 
@@ -207,23 +227,30 @@ sigc::signal<void>& LensListPicker::signal_changed()
 void LensListPicker::openPopover()
 {
     search_->set_text("");
-    view_->expand_all();
-
-    const auto sel = view_->get_selection();
-    sel->unselect_all();
-
-    if (active_) {
-        const auto it = filter_->convert_child_iter_to_iter(active_);
-
-        if (it) {
-            const auto path = filter_->get_path(it);
-            sel->select(it);
-            view_->scroll_to_row(path, 0.5f);
-        }
-    }
+    view_->collapse_all();
+    showActive();
 
     popover_->popup();
     search_->grab_focus();
+}
+
+void LensListPicker::showActive()
+{
+    const auto sel = view_->get_selection();
+    sel->unselect_all();
+
+    if (!active_) {
+        return;
+    }
+
+    const auto it = filter_->convert_child_iter_to_iter(active_);
+
+    if (it) {
+        const auto path = filter_->get_path(it);
+        view_->expand_to_path(path);
+        sel->select(it);
+        view_->scroll_to_row(path, 0.5f);
+    }
 }
 
 void LensListPicker::commitRow(const Gtk::TreeModel::iterator& storeIter)

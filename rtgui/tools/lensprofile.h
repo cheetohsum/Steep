@@ -45,6 +45,7 @@ public:
 
 private:
     void openPopover();
+    void showActive();
     void commitRow(const Gtk::TreeModel::iterator& storeIter);
     bool rowVisible(const Gtk::TreeModel::const_iterator& iter) const;
     void updateLabel();
