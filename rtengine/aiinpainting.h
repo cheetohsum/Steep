@@ -49,9 +49,30 @@ public:
     bool init(const std::string& modelPath);
 
     /**
-     * @brief Check if the engine is ready for inference.
+     * @brief Accept a model now, build the session on a background thread.
+     *
+     * Creating the ONNX session for this model measures around 4.5 seconds,
+     * and doing it inside rtengine::init() stalled every startup by that much
+     * whether or not the user ever reached for Remove Object. The wait now
+     * overlaps with getting the first photo on screen.
+     *
+     * isAvailable() is true as soon as this is called, so the tools can be
+     * offered; inpaint() blocks until the session is actually ready.
+     */
+    void initDeferred(const std::string& modelPath);
+
+    /**
+     * @brief Check if the engine is ready for inference right now.
+     *
+     * Callers deciding whether to OFFER the tools want isAvailable() instead:
+     * during a deferred load the model is on its way but this is still false.
      */
     bool isInitialized() const;
+
+    /**
+     * @brief Whether a model exists for this engine, loaded or still loading.
+     */
+    bool isAvailable() const;
 
     /**
      * @brief Run inpainting on an image region.

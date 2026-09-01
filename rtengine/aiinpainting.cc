@@ -24,6 +24,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <condition_variable>
+#include <mutex>
 #include <thread>
 
 #ifdef _WIN32
@@ -55,9 +57,18 @@ struct AIInpaintingEngine::Impl {
     // between the tiles of one fill.
     std::atomic<int> outputRange;
 
+    // Deferred loading. `available` says a model was handed over; `loading`
+    // says a background thread is still building the session for it. inpaint()
+    // waits on `ready` rather than refusing, so a fill requested during the
+    // load is served late instead of dropped.
+    std::atomic<bool> available;
+    bool loading;
+    std::mutex loadMutex;
+    std::condition_variable ready;
+
     Impl() : api(nullptr), env(nullptr), session(nullptr),
              sessionOptions(nullptr), memoryInfo(nullptr), initialized(false),
-             dynamicDims(-1), outputRange(0)
+             dynamicDims(-1), outputRange(0), available(false), loading(false)
     {
     }
 
@@ -77,7 +88,14 @@ AIInpaintingEngine::AIInpaintingEngine()
 {
 }
 
-AIInpaintingEngine::~AIInpaintingEngine() = default;
+AIInpaintingEngine::~AIInpaintingEngine()
+{
+    // The deferred loader holds a raw `this`. The process-wide instance is
+    // deliberately never deleted so it cannot dangle there, but any other
+    // instance must not be destroyed out from under a load in flight.
+    std::unique_lock<std::mutex> lock(pImpl->loadMutex);
+    pImpl->ready.wait(lock, [this]() { return !pImpl->loading; });
+}
 
 bool AIInpaintingEngine::init(const std::string& modelPath)
 {
@@ -138,10 +156,55 @@ bool AIInpaintingEngine::isInitialized() const
     return pImpl->initialized;
 }
 
+bool AIInpaintingEngine::isAvailable() const
+{
+    return pImpl->available.load() || pImpl->initialized;
+}
+
+void AIInpaintingEngine::initDeferred(const std::string& modelPath)
+{
+    {
+        std::lock_guard<std::mutex> lock(pImpl->loadMutex);
+
+        if (pImpl->initialized || pImpl->loading) {
+            return;
+        }
+
+        pImpl->loading = true;
+    }
+
+    pImpl->available = true;
+
+    std::thread([this, modelPath]() {
+        const bool ok = this->init(modelPath);
+
+        {
+            std::lock_guard<std::mutex> lock(pImpl->loadMutex);
+            pImpl->loading = false;
+
+            if (!ok) {
+                // Nothing usable arrived, so stop advertising it. The tools
+                // read this and go back to being unavailable.
+                pImpl->available = false;
+            }
+        }
+
+        pImpl->ready.notify_all();
+    }).detach();
+}
+
 bool AIInpaintingEngine::inpaint(const float* imageR, const float* imageG, const float* imageB,
                                   const float* mask, int width, int height,
                                   float* outR, float* outG, float* outB)
 {
+    {
+        // A fill asked for while the model is still loading waits for it.
+        // The alternative -- refusing -- makes the tool look broken for the
+        // first few seconds after startup for no good reason.
+        std::unique_lock<std::mutex> lock(pImpl->loadMutex);
+        pImpl->ready.wait(lock, [this]() { return !pImpl->loading; });
+    }
+
     if (!pImpl->initialized) {
         fprintf(stderr, "AI Inpainting: Engine not initialized\n");
         return false;

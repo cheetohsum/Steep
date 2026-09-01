@@ -421,6 +421,10 @@ DiagonalCurveEditorSubGroup::DiagonalCurveEditorSubGroup (CurveEditorGroup* prt,
     centerBtn_->set_image(*Gtk::manage(new RTImage("crosshair-node-curve")));
     centerBtn_->set_tooltip_text(M("CURVEEDITOR_TOOLTIPCENTER"));
     centerBtn_->set_relief(Gtk::RELIEF_NONE);
+    // Shares a header row with the channel dots and the cog, which hold an
+    // icon, a bullet glyph and a gear glyph respectively. They only line up if
+    // all three sit in boxes of the same height -- see widgets.css.
+    centerBtn_->get_style_context()->add_class("curve-center-btn");
     // Owned here until a tool claims it for its header row
     presetRow->add(*presetCombo_);
     presetRow->add(*centerBtn_);

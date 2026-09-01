@@ -283,15 +283,10 @@ bool ModelDownloader::runDialog(Gtk::Window& parent)
     }
 
 #ifdef RT_AI_MASKING
-    // Load it now, so the tools light up without a restart.
-    if (!rtengine::getAIInpaintingEngine().init(modelPath().raw())) {
-        Gtk::MessageDialog err(parent, M("MODELDOWNLOAD_BAD_MODEL"), false,
-                               Gtk::MESSAGE_ERROR, Gtk::BUTTONS_OK, true);
-        err.run();
-        g_remove(modelPath().c_str());
-        return false;
-    }
-
+    // Hand it over so the tools light up without a restart. Deferred, because
+    // building the session takes several seconds and the checksum above has
+    // already established that the file is the one we expected.
+    rtengine::getAIInpaintingEngine().initDeferred(modelPath().raw());
     return true;
 #else
     return false;

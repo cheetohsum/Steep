@@ -310,7 +310,7 @@ Spot::Spot() :
     btnAIRemove = Gtk::manage(new Gtk::ToggleButton(M("TP_SPOT_AI_OBJECT")));
     btnAIRemove->set_relief(Gtk::RELIEF_NONE);
 #ifdef RT_AI_MASKING
-    if (rtengine::getAIInpaintingEngine().isInitialized()) {
+    if (rtengine::getAIInpaintingEngine().isAvailable()) {
         btnAIRemove->set_tooltip_text(M("TP_SPOT_AI_OBJECT_TIP"));
         aiRemoveConn = btnAIRemove->signal_toggled().connect(
             sigc::bind(sigc::mem_fun(*this, &Spot::onMethodButtonToggled), btnAIRemove, 4));
@@ -362,7 +362,7 @@ Spot::Spot() :
     btnAIFill = Gtk::manage(new Gtk::ToggleButton(M("TP_SPOT_AI_GENERATIVE")));
     btnAIFill->set_relief(Gtk::RELIEF_NONE);
 #ifdef RT_AI_MASKING
-    if (rtengine::getAIInpaintingEngine().isInitialized()) {
+    if (rtengine::getAIInpaintingEngine().isAvailable()) {
         btnAIFill->set_tooltip_text(M("TP_SPOT_AI_GENERATIVE_TIP"));
         aiFillConn = btnAIFill->signal_toggled().connect(
             sigc::bind(sigc::mem_fun(*this, &Spot::onMethodButtonToggled), btnAIFill, 7));
@@ -386,7 +386,7 @@ Spot::Spot() :
     // The inpainting model is ~200 MB and some builds ship without it, so offer
     // to fetch it rather than leaving the tools greyed out with no explanation.
     // Only shown when this build knows a URL and the model really is absent.
-    if (!rtengine::getAIInpaintingEngine().isInitialized() && ModelDownloader::isConfigured()) {
+    if (!rtengine::getAIInpaintingEngine().isAvailable() && ModelDownloader::isConfigured()) {
         Gtk::Box* getModelBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 2));
         getModelBox->set_margin_top(6);
 

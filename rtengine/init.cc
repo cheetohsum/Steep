@@ -164,13 +164,16 @@ int init (const Settings* s, const Glib::ustring& baseDir, const Glib::ustring& 
         {
             const Glib::ustring lamaPath = findModel("lama_inpainting.onnx");
 
+            // Deferred: building this session measures ~4.5 s, and paying it
+            // inside init() stalled every startup by that much whether or not
+            // Remove Object was ever used.
             if (lamaPath.empty()) {
                 fprintf(stderr, "AI Inpainting: no model under %s or %s\n",
                         baseDir.c_str(), userSettingsDir.c_str());
-            } else if (!getAIInpaintingEngine().init(lamaPath)) {
-                fprintf(stderr, "AI Inpainting: failed to initialise from %s\n", lamaPath.c_str());
             } else {
-                fprintf(stderr, "AI Inpainting: initialised from %s\n", lamaPath.c_str());
+                getAIInpaintingEngine().initDeferred(lamaPath);
+                fprintf(stderr, "AI Inpainting: loading %s in the background\n",
+                        lamaPath.c_str());
             }
         }
     }
