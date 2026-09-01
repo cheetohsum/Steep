@@ -3433,11 +3433,96 @@ std::vector<procparams::SpotEntry> ImProcCoordinator::detectDustSpots(int maxSpo
               [](const Blob& a, const Blob& b) { return a.strength > b.strength; });
 
     const int count = std::min<int>(blobs.size(), std::max(0, maxSpots));
+
+    // Find somewhere clean to heal each speck from. Handing back
+    // sourcePos == targetPos, as this used to, leaves the healer copying the
+    // speck onto itself -- which is why dust was filled with the surrounding
+    // average instead, and why it came out looking like a blurred patch
+    // rather than removed. A real source lets HEAL carry the surrounding
+    // grain and texture across.
+    const auto findSource = [&](const Blob& blob, int& sx, int& sy) -> bool {
+        // The entry radius below is clamped up to at least 8 full-image
+        // pixels, so a small speck ends up with a circle wider than the blob
+        // that produced it. Size the search off that clamped radius, or the
+        // source circle can overlap the target and heal copies part of the
+        // speck straight back.
+        const int rEntry = LIM(blob.radius * scale, 8, 200);
+        const int r = std::max(blob.radius, (rEntry + scale - 1) / scale);
+        // Ring radii: far enough out that the circles cannot touch, close
+        // enough that the background is still the same background.
+        const int distances[] = { r * 3, r * 5, r * 8 };
+        // Eight directions is enough to find clean ground without turning this
+        // into a search; dust sits in smooth areas by definition.
+        const double angles[] = { 0.0, 0.7853981, 1.5707963, 2.3561944,
+                                  3.1415926, 3.9269908, 4.7123889, 5.4977871 };
+
+        double bestScore = -1.0;
+        bool haveBest = false;
+
+        for (const int dist : distances) {
+            for (const double angle : angles) {
+                const int cx = blob.cx + static_cast<int>(dist * std::cos(angle));
+                const int cy = blob.cy + static_cast<int>(dist * std::sin(angle));
+
+                if (cx - r < 0 || cy - r < 0 || cx + r >= w || cy + r >= h) {
+                    continue;
+                }
+
+                // Score the patch: it should be flat (no edge running through
+                // it) and sit at the same brightness as the speck's
+                // surroundings, or the repair shows as a patch.
+                double residual = 0.0;
+                double mean = 0.0;
+                int n = 0;
+
+                for (int y = cy - r; y <= cy + r; ++y) {
+                    for (int x = cx - r; x <= cx + r; ++x) {
+                        residual += std::fabs(background[y][x] - lum[y][x]);
+                        mean += lum[y][x];
+                        ++n;
+                    }
+                }
+
+                if (n == 0) {
+                    continue;
+                }
+
+                residual /= n;
+                mean /= n;
+
+                const double target = background[blob.cy][blob.cx];
+                const double mismatch = std::fabs(mean - target);
+                // Lower is better on both counts; invert so the best patch
+                // scores highest and one comparison covers both.
+                const double score = -(residual * 2.0 + mismatch);
+
+                if (!haveBest || score > bestScore) {
+                    bestScore = score;
+                    haveBest = true;
+                    sx = cx;
+                    sy = cy;
+                }
+            }
+        }
+
+        return haveBest;
+    };
+
     for (int i = 0; i < count; ++i) {
+        int sx = 0;
+        int sy = 0;
+
+        if (!findSource(blobs[i], sx, sy)) {
+            // Nowhere clean within reach -- too close to an edge, most likely.
+            // Skip rather than emit a spot that heals from itself and appears
+            // to do nothing.
+            continue;
+        }
+
         procparams::SpotEntry entry;
         entry.method = procparams::SpotMethod::AI_DUST;
         entry.targetPos.set(blobs[i].cx * scale + scale / 2, blobs[i].cy * scale + scale / 2);
-        entry.sourcePos = entry.targetPos;
+        entry.sourcePos.set(sx * scale + scale / 2, sy * scale + scale / 2);
         entry.radius = LIM(blobs[i].radius * scale, 8, 200);
         entry.opacity = 1.f;
         found.push_back(entry);

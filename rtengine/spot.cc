@@ -372,8 +372,11 @@ public:
             case SpotMethod::HEAL:    return processHeal(destBox);
             case SpotMethod::ERASE:   return processErase(destBox);
             case SpotMethod::REDEYE:  return processRedEye(destBox);
-            // Auto-detected dust specks: tiny circles, surrounding-average fill.
-            case SpotMethod::AI_DUST: return processErase(destBox);
+            // Auto-detected dust specks. Heal, not erase: erase fills with the
+            // surrounding average, which on anything but a perfectly flat sky
+            // reads as a soft blurred disc where the speck was. Heal carries
+            // the grain and texture over from the source the detector picked.
+            case SpotMethod::AI_DUST: return processHeal(destBox);
             default:                  return processClone(destBox);
         }
     }

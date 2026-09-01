@@ -863,6 +863,12 @@ void Spot::onRemoveDustPressed()
         return;
     }
 
+    // Dust is a one-press action rather than a brush, so it never went through
+    // onMethodButtonToggled and never put away whatever brush was armed --
+    // press it with Generative Fill selected and Fill stayed lit and active
+    // over the canvas. Stand the brushes down first.
+    deselectSmartTools();
+
     const auto candidates = dustDetector_(40);
 
     int added = 0;
