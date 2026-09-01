@@ -112,7 +112,6 @@ jobs:
             -DWITH_SAN="OFF" \
             -DWITH_SYSTEM_KLT="OFF" \
             -DWITH_AI_MASKING=ON \
-            -DAI_INPAINT_MODEL_URL="${{ vars.AI_INPAINT_MODEL_URL }}" \
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DLENSFUNDBDIR="../share/lensfun/version_1" \
             ..
@@ -393,7 +392,6 @@ jobs:
             -DWITH_SYSTEM_KLT="OFF" \
             -DWITH_SIMDE="ON" \
             -DWITH_AI_MASKING=ON \
-            -DAI_INPAINT_MODEL_URL="${{ vars.AI_INPAINT_MODEL_URL }}" \
             -DCMAKE_INSTALL_PREFIX=/usr \
             -DLENSFUNDBDIR="../share/lensfun/version_1" \
             ..

@@ -204,17 +204,18 @@ AI denoise. On Windows a copy is included in the repository and these are on by
 default; on Linux and macOS, install it and add `-DWITH_AI_MASKING=ON`.
 
 The mask and denoise models are in the repository and get installed for you.
-The Remove Object model is not — at roughly 200 MB it does not belong in git —
-so point the build at a copy and it will fetch it once and package it like any
-other resource:
+The Remove Object model is not — at roughly 200 MB it does not belong in git.
+Steep downloads it on demand from its original home on Hugging Face, verified
+against a known checksum, so there is nothing to set up. If you would rather
+have it baked into the build:
 
 ```bash
-cmake .. -DWITH_AI_MASKING=ON -DAI_INPAINT_MODEL_URL=https://example.com/lama_inpainting.onnx
+cmake .. -DWITH_AI_MASKING=ON -DAI_INPAINT_MODEL_BUNDLE=ON
 ```
 
-Add `-DAI_INPAINT_MODEL_SHA256=<hash>` to have the download verified. An
-existing `rtdata/models/lama_inpainting.onnx` is never re-downloaded, and if the
-URL is left out the build simply carries on without Remove Object.
+Add `-DAI_INPAINT_MODEL_BUNDLE=ON` to download it at build time and package it
+instead, which suits an offline install. An existing
+`rtdata/models/lama_inpainting.onnx` is never re-downloaded.
 
 One note on exiv2: Steep builds against both the 0.27 and 0.28 series, which changed a good deal of their API in between. Either will work.
 

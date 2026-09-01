@@ -273,7 +273,8 @@ target_compile_definitions(rth PUBLIC GUIVERSION)
 # Where the Remove Object model can be fetched from, if anywhere. Empty means
 # the download offer is not shown and the model has to arrive with the build.
 target_compile_definitions(rth PRIVATE
-    "STEEP_INPAINT_MODEL_URL=\"${AI_INPAINT_MODEL_URL}\"")
+    "STEEP_INPAINT_MODEL_URL=\"${AI_INPAINT_MODEL_URL}\""
+    "STEEP_INPAINT_MODEL_SHA256=\"${AI_INPAINT_MODEL_SHA256}\"")
 target_compile_definitions(rth-cli PUBLIC CLIVERSION)
 
 # Set executables targets properties, i.e. output filename and compile flags

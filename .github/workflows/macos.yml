@@ -94,7 +94,6 @@ jobs:
             -DCODESIGNID:STRING="$IDENT" \
             -DFANCY_DMG="ON" \
             -DWITH_AI_MASKING=ON \
-            -DAI_INPAINT_MODEL_URL="${{ vars.AI_INPAINT_MODEL_URL }}" \
             ..
             zsh -c 'echo "Configured in $(printf "%0.2f" $(($[$(date +%s)-$(cat configstamp)]/$((60.))))) minutes"' >> $GITHUB_STEP_SUMMARY
       - name: Compile Steep
@@ -259,7 +258,6 @@ jobs:
             -DLOCAL_PREFIX=/opt/homebrew \
             -DFANCY_DMG="ON" \
             -DWITH_AI_MASKING=ON \
-            -DAI_INPAINT_MODEL_URL="${{ vars.AI_INPAINT_MODEL_URL }}" \
             ..
             zsh -c 'echo "Configured in $(printf "%0.2f" $(($[$(date +%s)-$(cat configstamp)]/$((60.))))) minutes"' >> $GITHUB_STEP_SUMMARY
       - name: Compile Steep

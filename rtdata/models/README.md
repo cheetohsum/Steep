@@ -70,17 +70,27 @@ could hold it, but every clone would then pay for it.
   *Resolution-robust Large Mask Inpainting with Fourier Convolutions*, WACV 2022
 - Licence: Apache 2.0
 
-Instead the build fetches it on demand. Give CMake a URL and it downloads the
-model into this directory, after which the normal install and bundle rules
-package it like anything else:
+It is fetched from where it came from originally:
+
+- Source: [Carve/LaMa-ONNX](https://huggingface.co/Carve/LaMa-ONNX), file
+  `lama_fp32.onnx` — an ONNX export of upstream big-lama
+- Licence: Apache 2.0
+- sha256 `1faef5301d78db7dda502fe59966957ec4b79dd64e16f03ed96913c7a4eb68d6`,
+  which is byte-identical to the copy Steep was developed against
+
+That URL and hash are the defaults in `CMakeLists.txt`, so nothing has to be
+hosted and no configuration is needed. Override `AI_INPAINT_MODEL_URL` to point
+elsewhere.
+
+To bake the model into a build instead — worth it for an offline or otherwise
+self-contained install, at the cost of the download size:
 
 ```bash
-cmake .. -DWITH_AI_MASKING=ON -DAI_INPAINT_MODEL_URL=https://example.com/lama_inpainting.onnx
+cmake .. -DWITH_AI_MASKING=ON -DAI_INPAINT_MODEL_BUNDLE=ON
 ```
 
-`-DAI_INPAINT_MODEL_SHA256=<hash>` will verify the download. A file already
-present here is never re-fetched, and leaving the URL unset just means the build
-carries on without Remove Object rather than failing.
+That is off by default on purpose. A file already present here is never
+re-fetched.
 
 CI passes this URL from the `AI_INPAINT_MODEL_URL` repository variable. Setting
 that variable once is all it takes.

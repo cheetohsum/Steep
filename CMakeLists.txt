@@ -209,20 +209,30 @@ option(
     ${WITH_AI_MASKING_DEFAULT}
 )
 
-# The inpainting model behind Remove Object is ~200 MB, which is too large to
-# keep in git -- so it is fetched at configure time instead. Point
-# AI_INPAINT_MODEL_URL at a download and the model lands in rtdata/models and
-# is packaged like any other; leave it empty and the build behaves exactly as
-# it always has, with Remove Object reporting the model as missing at runtime.
-# An existing file is never re-downloaded, so local copies are left alone.
-set(AI_INPAINT_MODEL_URL ""
-    CACHE STRING "URL to fetch the AI inpainting model (lama_inpainting.onnx) from")
-set(AI_INPAINT_MODEL_SHA256 ""
-    CACHE STRING "Expected SHA256 of the AI inpainting model, verified after download")
+# The inpainting model behind Remove Object is ~200 MB, too large for git, so
+# it is fetched rather than committed. This URL is the copy the model was taken
+# from in the first place -- Carve/LaMa-ONNX on Hugging Face, Apache 2.0, and
+# byte-identical to what Steep shipped (sha256 below). Nothing of ours needs
+# hosting.
+set(AI_INPAINT_MODEL_URL
+    "https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx"
+    CACHE STRING "Where Steep fetches the AI inpainting model from")
+set(AI_INPAINT_MODEL_SHA256
+    "1faef5301d78db7dda502fe59966957ec4b79dd64e16f03ed96913c7a4eb68d6"
+    CACHE STRING "Expected SHA256 of the AI inpainting model")
+
+# Downloading it at build time is deliberately NOT the default. Bundling would
+# take the AppImage from 146 MB to roughly 340 MB for a feature many people
+# never open, so by default the app and the Windows installer offer to fetch it
+# on demand instead. Turn this on for an offline or otherwise self-contained
+# build, where paying the size once beats needing a network later.
+option(AI_INPAINT_MODEL_BUNDLE
+       "Download the AI inpainting model at build time and package it" OFF)
 
 set(AI_INPAINT_MODEL_PATH "${CMAKE_SOURCE_DIR}/rtdata/models/lama_inpainting.onnx")
 
-if(WITH_AI_MASKING AND AI_INPAINT_MODEL_URL AND NOT EXISTS "${AI_INPAINT_MODEL_PATH}")
+if(WITH_AI_MASKING AND AI_INPAINT_MODEL_BUNDLE AND AI_INPAINT_MODEL_URL
+   AND NOT EXISTS "${AI_INPAINT_MODEL_PATH}")
     message(STATUS "Fetching the AI inpainting model (this is a large one-time download)")
 
     if(AI_INPAINT_MODEL_SHA256)
@@ -245,12 +255,13 @@ if(WITH_AI_MASKING AND AI_INPAINT_MODEL_URL AND NOT EXISTS "${AI_INPAINT_MODEL_P
         file(REMOVE "${AI_INPAINT_MODEL_PATH}")
         message(WARNING
             "Could not fetch the AI inpainting model: ${AI_INPAINT_DOWNLOAD_MESSAGE}. "
-            "The build continues without it, and Remove Object will report the "
-            "model as missing.")
+            "The build continues without it; Steep will offer to download it on "
+            "demand instead.")
     else()
         message(STATUS "AI inpainting model saved to ${AI_INPAINT_MODEL_PATH}")
     endif()
 endif()
+
 option(
     STRICT_MUTEX
     "True (recommended): MyMutex will behave like POSIX Mutex; False: MyMutex will behave like POSIX RecMutex; Note: forced to ON for Debug builds"

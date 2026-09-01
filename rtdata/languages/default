@@ -2216,6 +2216,8 @@ MODELDOWNLOAD_MANUAL;You can download it yourself from:
 and save it as:
 
 %2
+MODELDOWNLOAD_VERIFYING;Checking the download...
+MODELDOWNLOAD_BAD_CHECKSUM;The download did not match what was expected and has been discarded. Please try again.
 MODELDOWNLOAD_BAD_MODEL;The downloaded file could not be loaded as a model. It has been removed; please try again.
 MCP_MENU_BUTTON;MCP Server...
 MCP_DIALOG_TITLE;MCP Server

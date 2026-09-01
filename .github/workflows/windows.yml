@@ -128,7 +128,6 @@ jobs:
             -DLENSFUNDBDIR="share/lensfun" \
             -DWITH_SIMDE="${{matrix.arch == 'x86_64' && 'OFF' || 'ON'}}" \
             -DWITH_AI_MASKING=ON \
-            -DAI_INPAINT_MODEL_URL="${{ vars.AI_INPAINT_MODEL_URL }}" \
             -DONNXRuntime_ROOT="${ONNX_DIR}" \
             -S . -B build
 

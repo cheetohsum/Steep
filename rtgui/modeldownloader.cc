@@ -36,6 +36,10 @@
 #define STEEP_INPAINT_MODEL_URL ""
 #endif
 
+#ifndef STEEP_INPAINT_MODEL_SHA256
+#define STEEP_INPAINT_MODEL_SHA256 ""
+#endif
+
 namespace
 {
 
@@ -243,6 +247,34 @@ bool ModelDownloader::runDialog(Gtk::Window& parent)
         }
 
         return false;
+    }
+
+    // Check what actually arrived. curl reports transport failures, but not a
+    // truncated proxy response or a tampered file, and loading a corrupt model
+    // fails in a much less obvious place than here.
+    const Glib::ustring expected = STEEP_INPAINT_MODEL_SHA256;
+
+    if (!expected.empty()) {
+        progress.set_text(M("MODELDOWNLOAD_VERIFYING"));
+
+        gchar* contents = nullptr;
+        gsize length = 0;
+        Glib::ustring actual;
+
+        if (g_file_get_contents(partial.c_str(), &contents, &length, nullptr)) {
+            actual = Glib::Checksum::compute_checksum(
+                Glib::Checksum::CHECKSUM_SHA256,
+                std::string(contents, length));
+            g_free(contents);
+        }
+
+        if (actual != expected) {
+            g_remove(partial.c_str());
+            Gtk::MessageDialog err(parent, M("MODELDOWNLOAD_BAD_CHECKSUM"), false,
+                                   Gtk::MESSAGE_ERROR, Gtk::BUTTONS_OK, true);
+            err.run();
+            return false;
+        }
     }
 
     if (g_rename(partial.c_str(), modelPath().c_str()) != 0) {
