@@ -207,6 +207,12 @@ jobs:
           export OUTPUT="$ARTIFACT_NAME.AppImage"
           echo "AppImage file name will be '$OUTPUT'."
 
+          echo "Downloading static AppImage runtime (runs without libfuse2 on the host)."
+          curl --location --fail -o runtime.static \
+            'https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64'
+          head -c 4 runtime.static | cmp -s - <(printf '\177ELF') || { echo "Downloaded runtime is not an ELF binary."; exit 1; }
+          export LDAI_RUNTIME_FILE="$PWD/runtime.static"
+
           echo "Packaging AppImage."
           ./linuxdeploy-x86_64.AppImage \
             --appimage-extract-and-run \
@@ -484,6 +490,12 @@ jobs:
           echo "Generating AppImage file name."
           export OUTPUT="$ARTIFACT_NAME.AppImage"
           echo "AppImage file name will be '$OUTPUT'."
+
+          echo "Downloading static AppImage runtime (runs without libfuse2 on the host)."
+          curl --location --fail -o runtime.static \
+            'https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-aarch64'
+          head -c 4 runtime.static | cmp -s - <(printf '\177ELF') || { echo "Downloaded runtime is not an ELF binary."; exit 1; }
+          export LDAI_RUNTIME_FILE="$PWD/runtime.static"
 
           echo "Packaging AppImage."
           ./linuxdeploy-arm64.AppImage \
