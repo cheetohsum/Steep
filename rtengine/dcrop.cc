@@ -2149,6 +2149,14 @@ void Crop::update(int todo)
     // Computing the preview image, i.e. converting from lab->Monitor color space (soft-proofing disabled) or lab->Output profile->Monitor color space (soft-proofing enabled)
     parent->ipf.lab2monitorRgb(labnCrop, cropImg);
 
+    // Same final force export applies ("Force BW" in simpleprocess.cc), so the
+    // 1:1 detail view matches both the main preview and the exported file.
+    const bool cropBwForced = ImProcFunctions::bwForced(params, parent->autili, parent->butili);
+
+    if (cropBwForced) {
+        ImProcFunctions::forceBWNeutral(cropImg);
+    }
+
     traceStage("lab2monitor");
 
     cropListener = cropImageListener.load(std::memory_order_acquire);
@@ -2159,6 +2167,12 @@ void Crop::update(int todo)
         Image8 *cropImgtrue = wantTrueImage
             ? parent->ipf.lab2rgb(labnCrop, 0, 0, cropw, croph, params.icm)
             : nullptr;
+
+        if (cropImgtrue && cropBwForced) {
+            // Colour pickers read this buffer; they must report the neutral
+            // values the export will actually contain.
+            ImProcFunctions::forceBWNeutral(cropImgtrue);
+        }
 
         int finalW = rqcropw;
 

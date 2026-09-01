@@ -2199,15 +2199,9 @@ private:
             }
         }
 
-      //  bool bwonly = params.blackwhite.enabled && !params.colorToning.enabled && !autili && !butili && !params.colorappearance.enabled;
-        const bool preservePerceptualPrintTone =
-            params.blackwhite.method == "Perceptual" && params.blackwhite.tone != 0;
-        bool bwonly = params.blackwhite.enabled
-            && !params.colorToning.enabled
-            && !autili
-            && !butili
-            && !cam02
-            && !preservePerceptualPrintTone;
+        // The condition is shared with the previews (improccoordinator, dcrop,
+        // rtthumbnail) so that what the screen shows is what the file gets.
+        const bool bwonly = ImProcFunctions::bwForced(params, autili, butili);
 
         ///////////// Custom output gamma has been removed, the user now has to create
         ///////////// a new output profile with the ICCProfileCreator

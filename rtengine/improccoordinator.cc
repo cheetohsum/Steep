@@ -3166,6 +3166,15 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 // Computing the preview image, i.e. converting from WCS->Monitor color space (soft-proofing disabled) or WCS->Printer profile->Monitor color space (soft-proofing enabled)
                 ipf.lab2monitorRgb(nprevl, previmg);
 
+                // Export force-neutralises B&W after its own conversion
+                // ("Force BW" in simpleprocess.cc); without the same step here
+                // the preview shows whatever tint colour grading or film split
+                // toning put back after the conversion, none of which survives
+                // in the exported file.
+                if (ImProcFunctions::bwForced(*params, autili, butili)) {
+                    ImProcFunctions::forceBWNeutral(previmg);
+                }
+
                 if (destroying) {
                     return;
                 }
@@ -3191,6 +3200,14 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                     workimg = nullptr;
 
                     workimg = ipf.lab2rgb(nprevl, 0, 0, pW, pH, params->icm);
+
+                    if (ImProcFunctions::bwForced(*params, autili, butili)) {
+                        // Histogram, vectorscope and waveform must describe
+                        // the neutral image the export produces, not the
+                        // pre-force chroma.
+                        ImProcFunctions::forceBWNeutral(workimg);
+                    }
+
                     workimgValid = true;
                 } else {
                     // Stale pixels must never reach a histogram: drop the

@@ -1856,6 +1856,14 @@ IImage8* Thumbnail::processImage (const procparams::ProcParams& params, eSensorT
     } else {
         readyImg = ipf.lab2rgb(labView, 0, 0, fw, fh, params.icm, false);
     }
+
+    // Export force-neutralises B&W on its final image ("Force BW" in
+    // simpleprocess.cc); thumbnails must agree with it, or a graded B&W photo
+    // shows a colour tint in the file browser that neither the editor preview
+    // nor the exported file has.
+    if (ImProcFunctions::bwForced(params, autili, butili)) {
+        ImProcFunctions::forceBWNeutral(readyImg);
+    }
     delete labView;
     delete baseImg;
 

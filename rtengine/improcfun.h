@@ -304,6 +304,18 @@ enum class BlurType {
     void transform(Imagefloat* original, Imagefloat* transformed, int cx, int cy, int sx, int sy, int oW, int oH, int fW, int fH, const FramesMetaData *metadata, int rawRotationDeg, bool fullImage, bool useOriginalBuffer = false);
     void lab2monitorRgb(LabImage* lab, Image8* image);
 
+    /** True when a black & white conversion must leave the pipeline fully
+      * neutral. The tools that legitimately tint a monochrome image (colour
+      * toning, the Lab a/b curves, CIECAM, Perceptual print tone) switch the
+      * force off; everything else that happens to carry chroma past the
+      * conversion — colour grading, film split toning — gets wiped. Export
+      * has always done this ("Force BW" in simpleprocess.cc); the previews
+      * must apply the identical rule or they show colour the export drops. */
+    static bool bwForced(const procparams::ProcParams& params, bool autili, bool butili);
+    /** The wipe itself, on a final 8-bit RGB image: r = b = g, the same
+      * operation export performs on its float image. */
+    static void forceBWNeutral(Image8* image);
+
     double resizeScale(const procparams::ProcParams* params, int fw, int fh, int &imw, int &imh);
     void resize(Imagefloat* src, Imagefloat* dst, float dScale);
     void Lanczos(const LabImage* src, LabImage* dst, float scale);

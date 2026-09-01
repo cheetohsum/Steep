@@ -224,7 +224,44 @@ void ImProcFunctions::lab2monitorRgb(LabImage* lab, Image8* image)
             }
         } // End of parallelization
     } else {
-        copyAndClamp(lab, image->data, sRGB_xyz, multiThread, 0);//int pro = 0 always sent 'normal' to monitor 
+        copyAndClamp(lab, image->data, sRGB_xyz, multiThread, 0);//int pro = 0 always sent 'normal' to monitor
+    }
+}
+
+// The one place the "when is B&W really B&W" rule lives. Export has forced
+// r=g=b on its final image since forever ("Force BW" in simpleprocess.cc),
+// which silently wipes any chroma later stages put back — colour grading and
+// film split toning both run after the conversion and both carry colour. The
+// previews never applied the same force, so a graded B&W image showed tinted
+// on screen and exported neutral. Every pipeline now asks this.
+bool ImProcFunctions::bwForced(const procparams::ProcParams& params, bool autili, bool butili)
+{
+    const bool preservePerceptualPrintTone =
+        params.blackwhite.method == "Perceptual" && params.blackwhite.tone != 0;
+    const bool cam02 =
+        params.colorappearance.enabled && params.colorappearance.modelmethod == "02";
+
+    return params.blackwhite.enabled
+           && !params.colorToning.enabled
+           && !autili
+           && !butili
+           && !cam02
+           && !preservePerceptualPrintTone;
+}
+
+void ImProcFunctions::forceBWNeutral(Image8* image)
+{
+    if (!image || !image->data) {
+        return;
+    }
+
+    unsigned char* data = image->data;
+    const std::size_t n = static_cast<std::size_t>(image->getWidth()) * image->getHeight();
+
+    for (std::size_t i = 0; i < n; ++i) {
+        // Same choice as export: the green channel survives.
+        data[3 * i] = data[3 * i + 1];
+        data[3 * i + 2] = data[3 * i + 1];
     }
 }
 
