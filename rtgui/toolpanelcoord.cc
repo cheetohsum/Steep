@@ -2264,7 +2264,8 @@ void ToolPanelCoordinator::populateEditPanel()
         auto addLabelledEffect = [this](const char* labelKey, FoldableToolPanel* panel, bool collapse) {
             Gtk::Label* heading = Gtk::manage(new Gtk::Label(M(labelKey)));
             heading->set_halign(Gtk::ALIGN_START);
-            heading->get_style_context()->add_class("tool-section-label");
+            heading->set_xalign(0.f);
+            heading->get_style_context()->add_class("tool-heading-label");
             effectsGroup->getContentBox()->pack_start(*heading, Gtk::PACK_SHRINK);
 
             addPanel(effectsGroup->getContentBox(), panel, 1);

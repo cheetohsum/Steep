@@ -72,7 +72,7 @@ AIDenoise::AIDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_AIDENOISE_LAB
 
     // Clickable label that toggles the settings panel
     sectionLabel_ = Gtk::manage(new Gtk::Label("AI Denoise"));
-    sectionLabel_->get_style_context()->add_class("tool-section-label");
+    sectionLabel_->get_style_context()->add_class("tool-heading-label");
     sectionLabel_->set_halign(Gtk::ALIGN_START);
     auto* labelEvent = Gtk::manage(new Gtk::EventBox());
     labelEvent->add(*sectionLabel_);

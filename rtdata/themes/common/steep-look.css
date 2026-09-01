@@ -1496,6 +1496,18 @@ radiobutton.ColorDot:checked > * {
     margin: 0;
 }
 
+/* Tool name headings: the per-tool titles in labelled groups (Effects) and
+   the clickable tool headings (Grading, Color Mixer, Point Color, AI
+   Denoise). A size up from and brighter than the section labels inside the
+   tools, pinned flush left, so the tool level reads above its sections. */
+.tool-heading-label {
+    font-size: 1em;
+    font-weight: bold;
+    color: @steep_text_hi;
+    padding: 0;
+    margin: 4px 0 1px 0;
+}
+
 /* Compact comboboxes in all tool panels */
 #MyExpander combobox,
 #MyExpander combobox button {

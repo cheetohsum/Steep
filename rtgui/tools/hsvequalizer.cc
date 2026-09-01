@@ -78,7 +78,7 @@ HSVEqualizer::HSVEqualizer () : FoldableToolPanel(this, TOOL_NAME, M("TP_HSVEQUA
     sectionLabel_ = Gtk::manage(new Gtk::Label());
     sectionLabel_->set_markup("<b>\xe2\x96\xb8 Color Mixer</b>");
     sectionLabel_->set_xalign(0.0);
-    sectionLabel_->get_style_context()->add_class("tool-section-label");
+    sectionLabel_->get_style_context()->add_class("tool-heading-label");
     auto* labelEvt = Gtk::manage(new Gtk::EventBox());
     labelEvt->add(*sectionLabel_);
     labelEvt->signal_button_press_event().connect([this](GdkEventButton*) -> bool {
