@@ -1842,9 +1842,10 @@ struct DehazeParamsEdited {
 
 struct DoubleExposureParamsEdited {
     bool enabled;
-    bool layers; // covers every per-layer field (path, blend, gate, ...)
+    bool layers; // covers every per-layer field (path, blend, compare, gate, ...)
     bool autoGain;
     bool baseEv;
+    bool highlightLatitude;
 };
 
 struct RAWParamsEdited {

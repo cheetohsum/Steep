@@ -21,6 +21,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <memory>
 #include <vector>
 
@@ -45,6 +46,8 @@ struct ResolvedLayer {
     float opacity;  // 0..1
     float invCover; // base full-res px -> partner full-res px (cover fit)
     procparams::DoubleExposureParams::BlendMode mode;
+    procparams::DoubleExposureParams::Compare compare; // comparative modes: whole pixel vs per channel
+    float softness;     // comparative hand-over band, stops
     bool gateOnLayer;   // gate luminance source: layer sample vs accumulated base
     float gateLow;      // window in 0..1 linear luminance
     float gateHigh;
@@ -117,7 +120,10 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
     // Interactive pipelines (preview, detail windows) always sample the
     // preview tier: decoding a full raw partner synchronously inside a crop
     // update stalls 1:1 previews for seconds. Only export pays for full res.
-    const bool fullRes = fullResPartners;
+    // STEEP_DE_PREVIEW_TIER=1 forces the preview tier for export too: a
+    // diagnostic switch so steep-cli can reproduce the interactive composite.
+    static const bool forcePreviewTier = std::getenv("STEEP_DE_PREVIEW_TIER") != nullptr;
+    const bool fullRes = fullResPartners && !forcePreviewTier;
 
     std::vector<ResolvedLayer> resolved;
     resolved.reserve(deParams.layers.size());
@@ -139,6 +145,8 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
                                          static_cast<float>(fullH) / partner->fullHeight);
             rl.invCover = 1.f / cover;
             rl.mode = layer.blendMode;
+            rl.compare = layer.compare;
+            rl.softness = std::max(static_cast<float>(layer.softness), 0.f);
             rl.gateOnLayer = layer.gateSource == procparams::DoubleExposureParams::GateSource::LAYER;
             rl.gateLow = LIM01(static_cast<float>(layer.gateLow) / 100.f);
             rl.gateHigh = LIM01(static_cast<float>(layer.gateHigh) / 100.f);
@@ -149,10 +157,10 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
     }
 
     if (settings->verbose) {
-        std::fprintf(stderr, "[doubleExposure] %dx%d full=%dx%d off=%d,%d skip=%.2f layers=%u resolved=%u fullRes=%d\n",
+        std::fprintf(stderr, "[doubleExposure] %dx%d full=%dx%d off=%d,%d skip=%.2f layers=%u resolved=%u fullRes=%d latitude=%.0f\n",
                      W, H, fullW, fullH, offX, offY, skip,
                      static_cast<unsigned>(deParams.layers.size()), static_cast<unsigned>(resolved.size()),
-                     fullResPartners ? 1 : 0);
+                     fullResPartners ? 1 : 0, deParams.highlightLatitude);
     }
 
     if (resolved.empty()) {
@@ -183,6 +191,18 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
 
     constexpr float white = 65535.f;
 
+    // Film shoulder on the finished stack (see deblend::shoulder). Off at 0:
+    // legacy files then clip downstream exactly as they always did. The knee
+    // is measured against ONE frame's white, not the pipeline's: with auto
+    // film gain the averaged stack never passes half white, so a knee in
+    // pipeline units would have nothing to act on. Undoing the gain, then
+    // shouldering, then re-applying it makes the control behave the same
+    // whether the frames were metered down or not.
+    const float latitude = LIM01(static_cast<float>(deParams.highlightLatitude) / 100.f);
+    const bool applyShoulder = latitude > 0.f;
+    const float knee = deblend::latitudeKnee(latitude);
+    const float shoulderWhite = white * autoGainFactor;
+
 #ifdef _OPENMP
     #pragma omp parallel for schedule(dynamic, 16)
 #endif
@@ -208,7 +228,7 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
                 pb = std::max(pb, 0.f) * rl.gain;
 
                 float cr, cg, cb;
-                deblend::blend(rl.mode, white, r, g, b, pr, pg, pb, cr, cg, cb);
+                deblend::blend(rl.mode, rl.compare, rl.softness, white, r, g, b, pr, pg, pb, cr, cg, cb);
 
                 float w = rl.opacity;
 
@@ -222,6 +242,12 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
                 r += w * (cr - r);
                 g += w * (cg - g);
                 b += w * (cb - b);
+            }
+
+            if (applyShoulder) {
+                r = shoulderWhite * deblend::shoulder(std::max(r, 0.f) / shoulderWhite, knee);
+                g = shoulderWhite * deblend::shoulder(std::max(g, 0.f) / shoulderWhite, knee);
+                b = shoulderWhite * deblend::shoulder(std::max(b, 0.f) / shoulderWhite, knee);
             }
 
             rgb->r(y, x) = r;

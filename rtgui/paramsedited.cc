@@ -1022,6 +1022,7 @@ void ParamsEdited::set(bool v)
     doubleExposure.layers = v;
     doubleExposure.autoGain = v;
     doubleExposure.baseEv = v;
+    doubleExposure.highlightLatitude = v;
     metadata.mode = v;
     metadata.exifKeys = v;
     filmNegative.enabled = v;
@@ -2808,6 +2809,7 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         doubleExposure.layers = doubleExposure.layers && p.doubleExposure.layers == other.doubleExposure.layers;
         doubleExposure.autoGain = doubleExposure.autoGain && p.doubleExposure.autoGain == other.doubleExposure.autoGain;
         doubleExposure.baseEv = doubleExposure.baseEv && p.doubleExposure.baseEv == other.doubleExposure.baseEv;
+        doubleExposure.highlightLatitude = doubleExposure.highlightLatitude && p.doubleExposure.highlightLatitude == other.doubleExposure.highlightLatitude;
         metadata.mode = metadata.mode && p.metadata.mode == other.metadata.mode;
         metadata.exifKeys = metadata.exifKeys && p.metadata.exifKeys == other.metadata.exifKeys;
         filmNegative.enabled = filmNegative.enabled && p.filmNegative.enabled == other.filmNegative.enabled;
@@ -9369,6 +9371,10 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
 
     if (doubleExposure.baseEv) {
         toEdit.doubleExposure.baseEv = mods.doubleExposure.baseEv;
+    }
+
+    if (doubleExposure.highlightLatitude) {
+        toEdit.doubleExposure.highlightLatitude = mods.doubleExposure.highlightLatitude;
     }
 
     if (metadata.mode) {

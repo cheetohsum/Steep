@@ -29,8 +29,11 @@ namespace partnerthumb
 // Render a small identification thumbnail for `path` via the cache.
 // `neutral` renders with default params (full frame, no crop/rotation/tone,
 // blend highlight recovery) — the framing the double-exposure engine feeds
-// on; styled renders show the user's own edit of that file.
-inline Glib::RefPtr<Gdk::Pixbuf> load(const Glib::ustring& path, int height, bool neutral)
+// on; styled renders show the user's own edit of that file. `basePlate`
+// (styled only) renders the edit WITHOUT its own double exposure: the picker
+// composites the layers itself, so a base thumb that already carried the
+// stack would show them twice and poison the look-transfer measurement.
+inline Glib::RefPtr<Gdk::Pixbuf> load(const Glib::ustring& path, int height, bool neutral, bool basePlate = false)
 {
     Thumbnail* thm = CacheManager::getInstance()->getEntry(path);
 
@@ -47,6 +50,10 @@ inline Glib::RefPtr<Gdk::Pixbuf> load(const Glib::ustring& path, int height, boo
         neutralParams.toneCurve.hrenabled = true;
         neutralParams.toneCurve.method = "Blend";
         img = thm->processThumbImage(neutralParams, height, scale);
+    } else if (basePlate) {
+        rtengine::procparams::ProcParams plateParams = thm->getProcParamsCopy();
+        plateParams.doubleExposure.enabled = false;
+        img = thm->processThumbImage(plateParams, height, scale);
     } else {
         img = thm->processThumbImage(height, scale);
     }

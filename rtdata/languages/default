@@ -1570,10 +1570,13 @@ HISTORY_MSG_DIRPYRDENOISE_GAIN;NR - Compensate for lightness
 HISTORY_MSG_DOUBLEEXPOSURE_AUTOGAIN;Double exposure - Auto film gain
 HISTORY_MSG_DOUBLEEXPOSURE_BASEEV;Double exposure - Base trim
 HISTORY_MSG_DOUBLEEXPOSURE_BLEND;Double exposure - Blend
+HISTORY_MSG_DOUBLEEXPOSURE_COMPARE;Double exposure - Compare
 HISTORY_MSG_DOUBLEEXPOSURE_ENABLED;Double exposure
 HISTORY_MSG_DOUBLEEXPOSURE_GATE;Double exposure - Reveal gate
+HISTORY_MSG_DOUBLEEXPOSURE_LATITUDE;Double exposure - Highlight latitude
 HISTORY_MSG_DOUBLEEXPOSURE_LAYERS;Double exposure - Exposures
 HISTORY_MSG_DOUBLEEXPOSURE_LAYER_SETTINGS;Double exposure - Layer settings
+HISTORY_MSG_DOUBLEEXPOSURE_SOFTNESS;Double exposure - Transition softness
 HISTORY_MSG_DISTORTION_DEFISH;De-fish
 HISTORY_MSG_DISTORTION_DEFISH_FOCAL;De-fish - Focal length
 HISTORY_MSG_DUALDEMOSAIC_AUTO_CONTRAST;Dual demosaic - Auto threshold
@@ -3101,13 +3104,17 @@ TP_DOUBLEEXPOSURE_AUTOGAIN_TOOLTIP;Meter every frame down by one stop per extra 
 TP_DOUBLEEXPOSURE_BASEEV;Base exposure trim
 TP_DOUBLEEXPOSURE_BLEND;Blend
 TP_DOUBLEEXPOSURE_BLEND_ADD;In-camera (additive)
-TP_DOUBLEEXPOSURE_BLEND_DARKEN;Darken
+TP_DOUBLEEXPOSURE_BLEND_DARKEN;Comparative dark (darken)
 TP_DOUBLEEXPOSURE_BLEND_DIFFERENCE;Difference
-TP_DOUBLEEXPOSURE_BLEND_LIGHTEN;Lighten
+TP_DOUBLEEXPOSURE_BLEND_LIGHTEN;Comparative bright (lighten)
 TP_DOUBLEEXPOSURE_BLEND_MULTIPLY;Slide sandwich (multiply)
 TP_DOUBLEEXPOSURE_BLEND_SCREEN;Screen
 TP_DOUBLEEXPOSURE_CHOOSE;Double Exposure
 TP_DOUBLEEXPOSURE_CLEAR;Remove the double exposure from this image
+TP_DOUBLEEXPOSURE_COMPARE;Compare
+TP_DOUBLEEXPOSURE_COMPARE_CHANNEL;Per channel (legacy)
+TP_DOUBLEEXPOSURE_COMPARE_LUMINANCE;Whole pixel by brightness
+TP_DOUBLEEXPOSURE_COMPARE_TOOLTIP;How comparative bright/dark picks the winner. Whole pixel compares the brightness of the two frames at each position and keeps that frame's colour intact, as an in-camera multiple exposure does. Per channel takes the max/min of each colour channel separately, which invents colours at every edge where the winner changes; kept for edits that were tuned on it.
 TP_DOUBLEEXPOSURE_EDIT;Develop this exposure in the editor
 TP_DOUBLEEXPOSURE_EV;Layer exposure trim
 TP_DOUBLEEXPOSURE_GATE;Reveal in
@@ -3119,10 +3126,14 @@ TP_DOUBLEEXPOSURE_GATE_LOW;Reveal from
 TP_DOUBLEEXPOSURE_GATE_STRENGTH;Reveal strength
 TP_DOUBLEEXPOSURE_GATE_TOOLTIP;Confine this exposure to a luminance band: reveal it only in the shadows or highlights of the image beneath (base luminance) or of the layer itself (layer luminance). From/to bound the band on the tone scale as seen on screen (0 = black, 100 = white), feather softens its edges, and strength 0 turns the gate off.
 TP_DOUBLEEXPOSURE_LABEL;Double Exposure
+TP_DOUBLEEXPOSURE_LATITUDE;Highlight latitude
+TP_DOUBLEEXPOSURE_LATITUDE_TOOLTIP;The film shoulder, applied to the finished stack. Light adds up linearly and the dense areas then stop registering more of it: a bright sky takes little of the second frame while shadows take all of it, the classic silhouette look, with no reveal gate needed. Measured against a single frame's white, so it works the same with Auto film gain on or off. 0 leaves the stack to clip at white further down the pipeline; higher values start the roll-off earlier (100 = from half a frame's white). Film Lab adds its own shoulder after this one.
 TP_DOUBLEEXPOSURE_LAYER;Layer
 TP_DOUBLEEXPOSURE_MISSING;File not found — this layer will be skipped.
 TP_DOUBLEEXPOSURE_OPACITY;Layer opacity
 TP_DOUBLEEXPOSURE_REMOVE;Remove this exposure
+TP_DOUBLEEXPOSURE_SOFTNESS;Transition softness
+TP_DOUBLEEXPOSURE_SOFTNESS_TOOLTIP;Width of the hand-over between the two frames, in stops. 0 picks one frame per pixel outright; around half a stop mixes their colours where the brightnesses nearly tie, the way cameras blend their comparative modes.
 TP_DIRPYRDENOISE_CHROMINANCE_AUTOGLOBAL;Automatic global
 TP_DIRPYRDENOISE_CHROMINANCE_BLUEYELLOW;Chroma Blue-Yellow
 TP_DIRPYRDENOISE_CHROMINANCE_CURVE;Chrominance curve

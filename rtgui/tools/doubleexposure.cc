@@ -65,6 +65,9 @@ DoubleExposure::DoubleExposure() :
     EvDEAutoGain = m->newEvent(HDR, "HISTORY_MSG_DOUBLEEXPOSURE_AUTOGAIN");
     EvDEBaseEv = m->newEvent(HDR, "HISTORY_MSG_DOUBLEEXPOSURE_BASEEV");
     EvDEGate = m->newEvent(HDR, "HISTORY_MSG_DOUBLEEXPOSURE_GATE");
+    EvDECompare = m->newEvent(HDR, "HISTORY_MSG_DOUBLEEXPOSURE_COMPARE");
+    EvDESoftness = m->newEvent(HDR, "HISTORY_MSG_DOUBLEEXPOSURE_SOFTNESS");
+    EvDELatitude = m->newEvent(HDR, "HISTORY_MSG_DOUBLEEXPOSURE_LATITUDE");
 
     chooseButton = Gtk::manage(new Gtk::Button(M("TP_DOUBLEEXPOSURE_CHOOSE")));
     chooseButton->signal_clicked().connect(sigc::mem_fun(*this, &DoubleExposure::openChooser));
@@ -115,6 +118,31 @@ DoubleExposure::DoubleExposure() :
     blendRow->pack_start(*blendMethod, Gtk::PACK_EXPAND_WIDGET);
     blendRow->show_all();
 
+    // Comparative bright/dark only: how the winner is picked and how wide
+    // the hand-over between the two frames is. Both rows hide for the other
+    // modes (no_show_all so a stray show_all() cannot bring them back).
+    compareMode = Gtk::manage(new MyComboBoxText());
+    compareMode->append(M("TP_DOUBLEEXPOSURE_COMPARE_LUMINANCE"));
+    compareMode->append(M("TP_DOUBLEEXPOSURE_COMPARE_CHANNEL"));
+    compareMode->set_active(0);
+    compareMode->setPreferredWidth(150, 200);
+    compareMode->set_tooltip_text(M("TP_DOUBLEEXPOSURE_COMPARE_TOOLTIP"));
+    compareMode->connect(compareMode->signal_changed().connect(sigc::mem_fun(*this, &DoubleExposure::compareChanged)));
+
+    compareRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+    Gtk::Label* compareLabel = Gtk::manage(new Gtk::Label(M("TP_DOUBLEEXPOSURE_COMPARE") + ":", Gtk::ALIGN_START));
+    compareLabel->set_tooltip_text(M("TP_DOUBLEEXPOSURE_COMPARE_TOOLTIP"));
+    compareRow->pack_start(*compareLabel, Gtk::PACK_SHRINK);
+    compareRow->pack_start(*compareMode, Gtk::PACK_EXPAND_WIDGET);
+    compareRow->show_all();
+    compareRow->set_no_show_all(true);
+
+    softness = Gtk::manage(new Adjuster(M("TP_DOUBLEEXPOSURE_SOFTNESS"), 0.0, 2.0, 0.05, 0.5));
+    softness->setAdjusterListener(this);
+    softness->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SOFTNESS_TOOLTIP"));
+    softness->set_no_show_all(true);
+    softness->show();
+
     // "Reveal in" gate: confine the selected layer to a luminance window.
     gateSource = Gtk::manage(new MyComboBoxText());
     gateSource->append(M("TP_DOUBLEEXPOSURE_GATE_BASE"));
@@ -158,6 +186,12 @@ DoubleExposure::DoubleExposure() :
     baseEv->setAdjusterListener(this);
     baseEv->show();
 
+    // The film shoulder on the finished stack (group-wide, mode-independent).
+    highlightLatitude = Gtk::manage(new Adjuster(M("TP_DOUBLEEXPOSURE_LATITUDE"), 0.0, 100.0, 1.0, 50.0));
+    highlightLatitude->setAdjusterListener(this);
+    highlightLatitude->set_tooltip_text(M("TP_DOUBLEEXPOSURE_LATITUDE_TOOLTIP"));
+    highlightLatitude->show();
+
     Gtk::Box* chooseRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 2));
     chooseRow->pack_start(*chooseButton, Gtk::PACK_EXPAND_WIDGET);
     chooseRow->pack_start(*clearButton, Gtk::PACK_SHRINK);
@@ -171,6 +205,8 @@ DoubleExposure::DoubleExposure() :
     pack_start(*layerEv);
     pack_start(*layerOpacity);
     pack_start(*blendRow);
+    pack_start(*compareRow);
+    pack_start(*softness);
     pack_start(*gateRow);
     pack_start(*gateLow);
     pack_start(*gateHigh);
@@ -178,6 +214,7 @@ DoubleExposure::DoubleExposure() :
     pack_start(*gateStrength);
     pack_start(*autoGain);
     pack_start(*baseEv);
+    pack_start(*highlightLatitude);
 
     updateSensitivity();
 }
@@ -364,6 +401,13 @@ void DoubleExposure::loadSelectedLayer()
     gateHigh->setValue(layers[idx].gateHigh);
     gateFeather->setValue(layers[idx].gateFeather);
     gateStrength->setValue(layers[idx].gateStrength);
+
+    compareMode->block(true);
+    compareMode->set_active(layers[idx].compare == DoubleExposureParams::Compare::CHANNEL ? 1 : 0);
+    compareMode->block(false);
+    softness->setValue(layers[idx].softness);
+
+    updateSensitivity();
 }
 
 void DoubleExposure::removeLayer(size_t index)
@@ -396,7 +440,17 @@ void DoubleExposure::updateSensitivity()
     gateHigh->set_sensitive(haveLayers);
     gateFeather->set_sensitive(haveLayers);
     gateStrength->set_sensitive(haveLayers);
+    highlightLatitude->set_sensitive(haveLayers);
     clearButton->set_visible(haveLayers);
+
+    // Compare / softness only mean something for the comparative modes, and
+    // softness only for the whole-pixel compare.
+    const int idx = selectedLayerIndex();
+    const bool comparative = idx >= 0
+                             && (layers[idx].blendMode == DoubleExposureParams::BlendMode::LIGHTEN
+                                 || layers[idx].blendMode == DoubleExposureParams::BlendMode::DARKEN);
+    compareRow->set_visible(haveLayers && comparative);
+    softness->set_visible(haveLayers && comparative && layers[idx].compare == DoubleExposureParams::Compare::LUMINANCE);
 
     // The film-gain compensation only applies to light that stacks: enabled
     // additive layers.
@@ -441,6 +495,7 @@ void DoubleExposure::openChooser()
     current.layers = layers;
     current.autoGain = autoGain->get_active();
     current.baseEv = baseEv->getValue();
+    current.highlightLatitude = highlightLatitude->getValue();
 
     BrowserFilter browserFilter;
     bool haveBrowserFilter = false;
@@ -463,6 +518,7 @@ void DoubleExposure::openChooser()
         layers = result.layers;
         autoGain->set_active(result.autoGain);
         baseEv->setValue(result.baseEv);
+        highlightLatitude->setValue(result.highlightLatitude);
         rebuildLayerRows();
         refreshLayerSelector();
         updateSensitivity();
@@ -495,6 +551,7 @@ void DoubleExposure::read(const ProcParams* pp, const ParamsEdited* pedited)
 
     if (pedited) {
         baseEv->setEditedState(pedited->doubleExposure.baseEv ? Edited : UnEdited);
+        highlightLatitude->setEditedState(pedited->doubleExposure.highlightLatitude ? Edited : UnEdited);
         set_inconsistent(multiImage && !pedited->doubleExposure.enabled);
         autoGain->set_inconsistent(!pedited->doubleExposure.autoGain);
     }
@@ -506,6 +563,7 @@ void DoubleExposure::read(const ProcParams* pp, const ParamsEdited* pedited)
 
     autoGain->set_active(pp->doubleExposure.autoGain);
     baseEv->setValue(pp->doubleExposure.baseEv);
+    highlightLatitude->setValue(pp->doubleExposure.highlightLatitude);
 
     rebuildLayerRows();
     refreshLayerSelector();
@@ -520,25 +578,29 @@ void DoubleExposure::write(ProcParams* pp, ParamsEdited* pedited)
     pp->doubleExposure.layers = layers;
     pp->doubleExposure.autoGain = autoGain->get_active();
     pp->doubleExposure.baseEv = baseEv->getValue();
+    pp->doubleExposure.highlightLatitude = highlightLatitude->getValue();
 
-    // Per-layer edits (EV, opacity, blend, gate) land directly in `layers`
-    // via their change handlers.
+    // Per-layer edits (EV, opacity, blend, compare, softness, gate) land
+    // directly in `layers` via their change handlers.
 
     if (pedited) {
         pedited->doubleExposure.enabled = !get_inconsistent();
         pedited->doubleExposure.layers = layersEdited_;
         pedited->doubleExposure.autoGain = autoGainEdited_ || !autoGain->get_inconsistent();
         pedited->doubleExposure.baseEv = baseEv->getEditedState();
+        pedited->doubleExposure.highlightLatitude = highlightLatitude->getEditedState();
     }
 }
 
 void DoubleExposure::setDefaults(const ProcParams* defParams, const ParamsEdited* pedited)
 {
     baseEv->setDefault(defParams->doubleExposure.baseEv);
+    highlightLatitude->setDefault(defParams->doubleExposure.highlightLatitude);
     layerEv->setDefault(0.0);
     layerOpacity->setDefault(100.0);
 
     const DoubleExposureParams::Layer defLayer;
+    softness->setDefault(defLayer.softness);
     gateLow->setDefault(defLayer.gateLow);
     gateHigh->setDefault(defLayer.gateHigh);
     gateFeather->setDefault(defLayer.gateFeather);
@@ -546,14 +608,16 @@ void DoubleExposure::setDefaults(const ProcParams* defParams, const ParamsEdited
 
     if (pedited) {
         baseEv->setDefaultEditedState(pedited->doubleExposure.baseEv ? Edited : UnEdited);
+        highlightLatitude->setDefaultEditedState(pedited->doubleExposure.highlightLatitude ? Edited : UnEdited);
     } else {
         baseEv->setDefaultEditedState(Irrelevant);
+        highlightLatitude->setDefaultEditedState(Irrelevant);
     }
 }
 
 void DoubleExposure::adjusterChanged(Adjuster* a, double newval)
 {
-    const bool isLayerAdj = a == layerEv || a == layerOpacity;
+    const bool isLayerAdj = a == layerEv || a == layerOpacity || a == softness;
     const bool isGateAdj = a == gateLow || a == gateHigh || a == gateFeather || a == gateStrength;
 
     if (isLayerAdj || isGateAdj) {
@@ -564,6 +628,8 @@ void DoubleExposure::adjusterChanged(Adjuster* a, double newval)
                 layers[idx].ev = newval;
             } else if (a == layerOpacity) {
                 layers[idx].opacity = newval;
+            } else if (a == softness) {
+                layers[idx].softness = newval;
             } else if (a == gateLow) {
                 layers[idx].gateLow = newval;
             } else if (a == gateHigh) {
@@ -578,7 +644,7 @@ void DoubleExposure::adjusterChanged(Adjuster* a, double newval)
             autoEnable();
 
             if (listener && getEnabled()) {
-                listener->panelChanged(isGateAdj ? EvDEGate : EvDELayerSettings, a->getTextValue());
+                listener->panelChanged(isGateAdj ? EvDEGate : (a == softness ? EvDESoftness : EvDELayerSettings), a->getTextValue());
             }
         }
 
@@ -590,6 +656,8 @@ void DoubleExposure::adjusterChanged(Adjuster* a, double newval)
     if (listener && getEnabled()) {
         if (a == baseEv) {
             listener->panelChanged(EvDEBaseEv, a->getTextValue());
+        } else if (a == highlightLatitude) {
+            listener->panelChanged(EvDELatitude, a->getTextValue());
         }
     }
 }
@@ -623,6 +691,36 @@ void DoubleExposure::blendChanged()
 
     if (listener && getEnabled()) {
         listener->panelChanged(EvDEBlend, blendMethod->get_active_text());
+    }
+}
+
+void DoubleExposure::compareChanged()
+{
+    const int idx = selectedLayerIndex();
+
+    if (idx < 0) {
+        return;
+    }
+
+    layers[idx].compare = compareMode->get_active_row_number() == 1
+                          ? DoubleExposureParams::Compare::CHANNEL
+                          : DoubleExposureParams::Compare::LUMINANCE;
+
+    // Layers migrated from per-channel files carry softness 0 (the legacy
+    // pick has no hand-over); switching them to whole-pixel compare should
+    // not land in the hard-edged corner case, so give them the default band.
+    if (layers[idx].compare == DoubleExposureParams::Compare::LUMINANCE && layers[idx].softness <= 0.0) {
+        const DoubleExposureParams::Layer defLayer;
+        layers[idx].softness = defLayer.softness;
+        softness->setValue(layers[idx].softness);
+    }
+
+    layersEdited_ = true;
+    updateSensitivity();
+    autoEnable();
+
+    if (listener && getEnabled()) {
+        listener->panelChanged(EvDECompare, compareMode->get_active_text());
     }
 }
 
@@ -665,4 +763,5 @@ void DoubleExposure::setBatchMode(bool batchMode)
     ToolPanel::setBatchMode(batchMode);
 
     baseEv->showEditedCB();
+    highlightLatitude->showEditedCB();
 }

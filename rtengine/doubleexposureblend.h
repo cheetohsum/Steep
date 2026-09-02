@@ -33,16 +33,52 @@ namespace deblend
 {
 
 using BlendMode = procparams::DoubleExposureParams::BlendMode;
+using Compare = procparams::DoubleExposureParams::Compare;
 
 inline float clamp01w(float v, float white)
 {
     return std::min(std::max(v, 0.f), white);
 }
 
+inline float smoothstep01(float t)
+{
+    t = std::min(std::max(t, 0.f), 1.f);
+    return t * t * (3.f - 2.f * t);
+}
+
+inline float lum709(float r, float g, float b)
+{
+    return 0.2126f * r + 0.7152f * g + 0.0722f * b;
+}
+
+// Comparative bright / dark the way cameras do it: the two pixels are
+// compared by brightness and the winner is kept whole, so no channel is
+// ever taken from the loser and no colour appears that neither frame held.
+// `softnessStops` is the width of the hand-over band in stops: 0 is a hard
+// per-pixel pick (ties keep the base), around half a stop mixes the two
+// colours as their brightnesses approach a tie, which is what Canon's manual
+// describes for its Bright / Dark modes. Returns the fraction of the partner
+// pixel to take.
+inline float compareWeight(float lumBase, float lumPartner, bool keepBrighter, float softnessStops, float white)
+{
+    const float eps = 1e-4f * white;
+    float d = std::log2((std::max(lumPartner, 0.f) + eps) / (std::max(lumBase, 0.f) + eps)); // > 0: partner brighter
+
+    if (!keepBrighter) {
+        d = -d;
+    }
+
+    if (softnessStops <= 0.f) {
+        return d > 0.f ? 1.f : 0.f;
+    }
+
+    return smoothstep01(0.5f + d / softnessStops);
+}
+
 // Composite one partner sample (pr, pg, pb) onto the accumulated base
 // (r, g, b), both scene-linear on a 0..white scale. Returns the un-weighted
 // blend result; opacity/gate weighting is applied by the caller.
-inline void blend(BlendMode mode, float white,
+inline void blend(BlendMode mode, Compare compare, float softnessStops, float white,
                   float r, float g, float b,
                   float pr, float pg, float pb,
                   float& cr, float& cg, float& cb)
@@ -62,17 +98,29 @@ inline void blend(BlendMode mode, float white,
             break;
         }
 
-        case BlendMode::LIGHTEN: {
-            cr = std::max(r, pr);
-            cg = std::max(g, pg);
-            cb = std::max(b, pb);
-            break;
-        }
-
+        case BlendMode::LIGHTEN:
         case BlendMode::DARKEN: {
-            cr = std::min(r, pr);
-            cg = std::min(g, pg);
-            cb = std::min(b, pb);
+            const bool keepBrighter = mode == BlendMode::LIGHTEN;
+
+            if (compare == Compare::CHANNEL) {
+                // Legacy per-channel pick: fringes where the winner flips
+                // between channels, kept for files that were tuned on it.
+                if (keepBrighter) {
+                    cr = std::max(r, pr);
+                    cg = std::max(g, pg);
+                    cb = std::max(b, pb);
+                } else {
+                    cr = std::min(r, pr);
+                    cg = std::min(g, pg);
+                    cb = std::min(b, pb);
+                }
+            } else {
+                const float w = compareWeight(lum709(r, g, b), lum709(pr, pg, pb), keepBrighter, softnessStops, white);
+                cr = r + w * (pr - r);
+                cg = g + w * (pg - g);
+                cb = b + w * (pb - b);
+            }
+
             break;
         }
 
@@ -91,11 +139,6 @@ inline void blend(BlendMode mode, float white,
             break;
         }
     }
-}
-
-inline float lum709(float r, float g, float b)
-{
-    return 0.2126f * r + 0.7152f * g + 0.0722f * b;
 }
 
 // Gate thresholds are perceptual: a window of 0..0.35 means "the darkest
@@ -150,6 +193,33 @@ inline float gateWindow(float lum, float low, float high, float feather)
 inline float gateWeight(float strength, float window)
 {
     return (1.f - strength) + strength * window;
+}
+
+// Highlight latitude: the emulsion's shoulder, applied to the finished stack.
+// Light adds linearly on film and then the dense areas stop registering
+// more of it; that compression is what keeps a second frame out of a bright
+// sky and is the whole silhouette look. Latitude 0..1 sets the knee at
+// 1 - 0.5 * latitude (in white units); below the knee the stack passes
+// through, above it a C1-continuous rational roll-off approaches white
+// asymptotically, so the composite never leaves [0, white] and never relies
+// on the downstream tone curve clipping it. Applied per channel on purpose:
+// film's layers saturate independently. Callers reference `white` to ONE
+// frame's white (i.e. they undo the auto film gain around the call), so a
+// metered-down average still shoulders where a frame was bright.
+inline float latitudeKnee(float latitude01)
+{
+    return 1.f - 0.5f * std::min(std::max(latitude01, 0.f), 1.f);
+}
+
+inline float shoulder(float x01, float knee)
+{
+    if (x01 <= knee) {
+        return x01;
+    }
+
+    const float t = x01 - knee;
+    const float range = 1.f - knee;
+    return knee + range * t / (t + range);
 }
 
 } // namespace deblend

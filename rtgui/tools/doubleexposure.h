@@ -44,6 +44,10 @@ private:
     Adjuster *layerEv;
     Adjuster *layerOpacity;
     MyComboBoxText *blendMethod;
+    Gtk::Box *compareRow;        // comparative modes only
+    MyComboBoxText *compareMode;
+    Adjuster *softness;
+    Adjuster *highlightLatitude;
     MyComboBoxText *gateSource;
     Adjuster *gateLow;
     Adjuster *gateHigh;
@@ -70,6 +74,9 @@ private:
     rtengine::ProcEvent EvDEAutoGain;
     rtengine::ProcEvent EvDEBaseEv;
     rtengine::ProcEvent EvDEGate;
+    rtengine::ProcEvent EvDECompare;
+    rtengine::ProcEvent EvDESoftness;
+    rtengine::ProcEvent EvDELatitude;
 
     void openChooser();
     void clearAll();
@@ -95,6 +102,7 @@ public:
     void adjusterChanged(Adjuster *a, double newval) override;
     void enabledChanged() override;
     void blendChanged();
+    void compareChanged();
     void gateSourceChanged();
     void autoGainToggled();
     void layerSelChanged();

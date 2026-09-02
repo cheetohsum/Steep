@@ -1905,12 +1905,22 @@ struct DoubleExposureParams {
         LAYER   // the layer's own sample
     };
 
+    // How LIGHTEN / DARKEN decide the winner.
+    enum class Compare {
+        LUMINANCE,  // compare pixel brightness, keep the whole pixel (as cameras do)
+        CHANNEL     // legacy per-channel max/min
+    };
+
     struct Layer {
         Glib::ustring path; // absolute path of the partner image
         bool enabled;       // mute toggle; disabled layers are skipped
         double ev;          // exposure trim in EV applied to this layer
         double opacity;     // 0..100
         BlendMode blendMode;
+        // Comparative modes only: whole-pixel brightness compare vs legacy
+        // per-channel, and the hand-over band width in stops (0 = hard pick).
+        Compare compare;
+        double softness;    // stops, 0..2
         // "Reveal in" gate: confine the layer to a luminance window with
         // smoothstep feather outside it. Low/high/feather are linear
         // luminance percent; strength 0 disables the gate.
@@ -1930,6 +1940,9 @@ struct DoubleExposureParams {
     std::vector<Layer> layers;
     bool autoGain;      // meter every frame down by log2(frames) EV (ADD layers)
     double baseEv;      // exposure trim for the base plate
+    // Film shoulder on the finished stack: 0 = off (stack clips downstream as
+    // before), 100 = knee at half white. See deblend::shoulder.
+    double highlightLatitude; // 0..100
 
     DoubleExposureParams();
 

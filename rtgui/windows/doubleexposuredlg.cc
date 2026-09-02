@@ -87,9 +87,9 @@ float linToSrgb(float v)
     return v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1.f / 2.4f) - 0.055f;
 }
 
-Glib::RefPtr<Gdk::Pixbuf> pixbufFromThumb(const Glib::ustring& path, int height, bool neutral)
+Glib::RefPtr<Gdk::Pixbuf> pixbufFromThumb(const Glib::ustring& path, int height, bool neutral, bool basePlate)
 {
-    return partnerthumb::load(path, height, neutral);
+    return partnerthumb::load(path, height, neutral, basePlate);
 }
 
 // Tray chip styling (#DEChipControls, .de-chip) lives in
@@ -104,6 +104,7 @@ struct DEThumbReq {
     Glib::ustring path;
     int height;
     bool neutral;
+    bool basePlate; // styled base render with its own double exposure stripped
 };
 
 struct DEThumbQueue {
@@ -671,6 +672,10 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_BASEEV"), baseEvScale_, -4.0, 4.0, 0.05, params_.baseEv), Gtk::PACK_SHRINK);
     baseEvScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::blendControlChanged));
 
+    right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_LATITUDE"), latitudeScale_, 0.0, 100.0, 1.0, params_.highlightLatitude), Gtk::PACK_SHRINK);
+    latitudeScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_LATITUDE_TOOLTIP"));
+    latitudeScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::blendControlChanged));
+
     Gtk::Separator* sep = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
     right->pack_start(*sep, Gtk::PACK_SHRINK);
 
@@ -684,9 +689,14 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_OPACITY"), layerOpacityScale_, 0.0, 100.0, 1.0, 100.0), Gtk::PACK_SHRINK);
     layerOpacityScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
 
-    right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_GATE_STRENGTH"), gateStrengthScale_, 0.0, 100.0, 1.0, 25.0), Gtk::PACK_SHRINK);
+    right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_GATE_STRENGTH"), gateStrengthScale_, 0.0, 100.0, 1.0, 0.0), Gtk::PACK_SHRINK);
     gateStrengthScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_GATE_TOOLTIP"));
     gateStrengthScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+
+    // Comparative bright/dark only: how wide the hand-over between frames is.
+    right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_SOFTNESS"), softnessScale_, 0.0, 2.0, 0.05, 0.5), Gtk::PACK_SHRINK);
+    softnessScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SOFTNESS_TOOLTIP"));
+    softnessScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
 
     split->pack2(*right, true, false);
     content->pack_start(*split, Gtk::PACK_EXPAND_WIDGET);
@@ -1081,7 +1091,10 @@ void DoubleExposureDlg::requestThumbs(const std::vector<Glib::ustring>& paths, i
         // Newest request first: whatever the viewport shows now matters more
         // than what it showed two scroll events ago.
         for (auto it = needed.rbegin(); it != needed.rend(); ++it) {
-            queue.emplace_front(DEThumbReq{*it, height, neutral});
+            // The base's styled preview render is the plate the dialog
+            // composites onto: strip the image's own double exposure from it.
+            const bool basePlate = !neutral && !isGrid && *it == baseImagePath_;
+            queue.emplace_front(DEThumbReq{*it, height, neutral, basePlate});
         }
 
         while (thumbQueue_->grid.size() > MAX_GRID_QUEUE) {
@@ -1115,6 +1128,7 @@ void DoubleExposureDlg::pumpThumbQueue()
                 int height = 0;
 
                 bool neutral = false;
+                bool basePlate = false;
 
                 {
                     std::lock_guard<std::mutex> lock(queue->mutex);
@@ -1128,10 +1142,11 @@ void DoubleExposureDlg::pumpThumbQueue()
                     path = source.front().path;
                     height = source.front().height;
                     neutral = source.front().neutral;
+                    basePlate = source.front().basePlate;
                     source.pop_front();
                 }
 
-                Glib::RefPtr<Gdk::Pixbuf> pixbuf = pixbufFromThumb(path, height, neutral);
+                Glib::RefPtr<Gdk::Pixbuf> pixbuf = pixbufFromThumb(path, height, neutral, basePlate);
 
                 Glib::signal_idle().connect_once([this, alive, path, height, neutral, pixbuf]() {
                     if (!*alive) {
@@ -1549,19 +1564,24 @@ void DoubleExposureDlg::syncLayerControls()
         layerEvScale_->set_sensitive(false);
         layerOpacityScale_->set_sensitive(false);
         gateStrengthScale_->set_sensitive(false);
+        softnessScale_->set_sensitive(false);
         blendMethod_->set_sensitive(false);
     } else {
         const auto& layer = params_.layers[selectedLayer_];
         layerLabel_->set_text(Glib::ustring::compose("%1 %2 \xE2\x80\x94 %3",
                               M("TP_DOUBLEEXPOSURE_LAYER"), selectedLayer_ + 1,
                               Glib::path_get_basename(layer.path)));
+        const bool comparative = layer.blendMode == DoubleExposureParams::BlendMode::LIGHTEN
+                                 || layer.blendMode == DoubleExposureParams::BlendMode::DARKEN;
         layerEvScale_->set_sensitive(true);
         layerOpacityScale_->set_sensitive(true);
         gateStrengthScale_->set_sensitive(true);
+        softnessScale_->set_sensitive(comparative && layer.compare == DoubleExposureParams::Compare::LUMINANCE);
         blendMethod_->set_sensitive(true);
         layerEvScale_->set_value(layer.ev);
         layerOpacityScale_->set_value(layer.opacity);
         gateStrengthScale_->set_value(layer.gateStrength);
+        softnessScale_->set_value(layer.softness);
         blendMethod_->set_active(static_cast<int>(layer.blendMode));
     }
 
@@ -1588,6 +1608,7 @@ void DoubleExposureDlg::layerControlChanged()
     params_.layers[selectedLayer_].ev = layerEvScale_->get_value();
     params_.layers[selectedLayer_].opacity = layerOpacityScale_->get_value();
     params_.layers[selectedLayer_].gateStrength = gateStrengthScale_->get_value();
+    params_.layers[selectedLayer_].softness = softnessScale_->get_value();
     updatePreview();
 }
 
@@ -1599,11 +1620,16 @@ void DoubleExposureDlg::blendControlChanged()
 
     if (selectedLayer_ < params_.layers.size()) {
         const int blendRow = blendMethod_->get_active_row_number();
-        params_.layers[selectedLayer_].blendMode = static_cast<DoubleExposureParams::BlendMode>(blendRow < 0 ? 0 : blendRow);
+        auto& layer = params_.layers[selectedLayer_];
+        layer.blendMode = static_cast<DoubleExposureParams::BlendMode>(blendRow < 0 ? 0 : blendRow);
+        const bool comparative = layer.blendMode == DoubleExposureParams::BlendMode::LIGHTEN
+                                 || layer.blendMode == DoubleExposureParams::BlendMode::DARKEN;
+        softnessScale_->set_sensitive(comparative && layer.compare == DoubleExposureParams::Compare::LUMINANCE);
     }
 
     params_.autoGain = autoGain_->get_active();
     params_.baseEv = baseEvScale_->get_value();
+    params_.highlightLatitude = latitudeScale_->get_value();
 
     bool anyAdd = false;
 
@@ -1689,6 +1715,8 @@ void DoubleExposureDlg::updatePreview()
         float gain;
         float opacity;
         DoubleExposureParams::BlendMode mode;
+        DoubleExposureParams::Compare compare;
+        float softness;
         bool gateOnLayer;
         float gateLow;
         float gateHigh;
@@ -1717,6 +1745,8 @@ void DoubleExposureDlg::updatePreview()
             static_cast<float>(std::pow(2.0, layer.ev)),
             static_cast<float>(layer.opacity) / 100.f,
             layer.blendMode,
+            layer.compare,
+            std::max(static_cast<float>(layer.softness), 0.f),
             layer.gateSource == DoubleExposureParams::GateSource::LAYER,
             static_cast<float>(layer.gateLow) / 100.f,
             static_cast<float>(layer.gateHigh) / 100.f,
@@ -1742,6 +1772,14 @@ void DoubleExposureDlg::updatePreview()
     }
 
     const float baseGain = static_cast<float>(std::pow(2.0, params_.baseEv)) * autoGainFactor;
+
+    // Film shoulder on the finished stack, same as the engine (white = 1
+    // here), referenced to one frame's white: the auto-gain factor is undone
+    // around the shoulder so the control works with metering on or off.
+    const float latitude = std::min(std::max(static_cast<float>(params_.highlightLatitude) / 100.f, 0.f), 1.f);
+    const bool applyShoulder = latitude > 0.f;
+    const float knee = rtengine::deblend::latitudeKnee(latitude);
+    const float shoulderWhite = autoGainFactor;
 
     // --- geometry: replicate the engine's mapping instead of cover-fitting
     // the two thumbnails against each other. The engine composites on the
@@ -1808,8 +1846,15 @@ void DoubleExposureDlg::updatePreview()
     const guint8* nbData = nullptr;
     int nbStride = 0, nbCh = 3, nbW = 0, nbH = 0;
 
-    constexpr int TBINS = 64;
-    float toneRatio[3][TBINS];
+    // Look transfer, measured from (neutral -> styled) pixel pairs of the base
+    // plate: ONE monotone luminance curve over perceptual bins, read back with
+    // linear interpolation, plus one saturation factor. The earlier per-channel
+    // 64-bin ratio table was piecewise constant, so a smooth sky came out as
+    // hard-edged tonal patches, and its per-channel ratios invented colours
+    // (a B&W edit turned the partner's sky pink and green).
+    constexpr int TBINS = 256;
+    float toneCurve[TBINS];
+    float satFactor = 1.f;
 
     if (sceneFaithful) {
         nbData = neutralBase->get_pixels();
@@ -1818,8 +1863,9 @@ void DoubleExposureDlg::updatePreview()
         nbW = neutralBase->get_width();
         nbH = neutralBase->get_height();
 
-        double sumS[3][TBINS] = {{0.0}};
-        double sumN[3][TBINS] = {{0.0}};
+        double sumS[TBINS] = {0.0};
+        double cnt[TBINS] = {0.0};
+        double chromaS = 0.0, chromaN = 0.0;
 
         for (int y = 0; y < h; ++y) {
             const float ny = ny0 + (y + 0.5f) * nys;
@@ -1831,42 +1877,73 @@ void DoubleExposureDlg::updatePreview()
                 const guint8* np = nbData + nby * nbStride + nbx * nbCh;
                 const size_t o = (static_cast<size_t>(y) * w + x) * 3;
 
-                for (int c = 0; c < 3; ++c) {
-                    const float n = srgbLut[np[c]];
-                    const int bin = std::min(TBINS - 1, static_cast<int>(n * TBINS));
-                    sumS[c][bin] += lin[o + c];
-                    sumN[c][bin] += n;
-                }
+                const float nr = srgbLut[np[0]], ng = srgbLut[np[1]], nb = srgbLut[np[2]];
+                const float sr = lin[o], sg = lin[o + 1], sb = lin[o + 2];
+                const float yn = rtengine::deblend::lum709(nr, ng, nb);
+                const float ys = rtengine::deblend::lum709(sr, sg, sb);
+                const int bin = std::min(TBINS - 1, static_cast<int>(rtengine::deblend::gateEncode(yn) * TBINS));
+                sumS[bin] += ys;
+                cnt[bin] += 1.0;
+                chromaS += std::fabs(sr - ys) + std::fabs(sg - ys) + std::fabs(sb - ys);
+                chromaN += std::fabs(nr - yn) + std::fabs(ng - yn) + std::fabs(nb - yn);
             }
         }
 
-        for (int c = 0; c < 3; ++c) {
-            for (int bin = 0; bin < TBINS; ++bin) {
-                toneRatio[c][bin] = sumN[c][bin] > 1e-6 ? static_cast<float>(sumS[c][bin] / sumN[c][bin]) : -1.f;
-            }
+        // Bin means where the plate has enough samples; interpolate across
+        // the gaps (composited values can land where the plate never did),
+        // then force monotone so the curve behaves like a tone curve.
+        int firstMeasured = -1, lastMeasured = -1;
 
-            // Fill unpopulated bins from their nearest measured neighbor so
-            // composited values outside the base's range still get a ratio.
-            float last = -1.f;
+        for (int bin = 0; bin < TBINS; ++bin) {
+            if (cnt[bin] > 8.0) {
+                toneCurve[bin] = static_cast<float>(sumS[bin] / cnt[bin]);
 
-            for (int bin = 0; bin < TBINS; ++bin) {
-                if (toneRatio[c][bin] < 0.f) {
-                    toneRatio[c][bin] = last;
-                } else {
-                    last = toneRatio[c][bin];
+                if (firstMeasured < 0) {
+                    firstMeasured = bin;
                 }
-            }
 
-            last = 1.f;
-
-            for (int bin = TBINS - 1; bin >= 0; --bin) {
-                if (toneRatio[c][bin] < 0.f) {
-                    toneRatio[c][bin] = last;
-                } else {
-                    last = toneRatio[c][bin];
-                }
+                lastMeasured = bin;
+            } else {
+                toneCurve[bin] = -1.f;
             }
         }
+
+        if (firstMeasured < 0) {
+            // No usable pairs: identity in luminance.
+            for (int bin = 0; bin < TBINS; ++bin) {
+                const float enc = (bin + 0.5f) / TBINS;
+                toneCurve[bin] = enc <= 0.04045f ? enc / 12.92f : std::pow((enc + 0.055f) / 1.055f, 2.4f);
+            }
+        } else {
+            for (int bin = 0; bin < firstMeasured; ++bin) {
+                toneCurve[bin] = toneCurve[firstMeasured];
+            }
+
+            for (int bin = lastMeasured + 1; bin < TBINS; ++bin) {
+                toneCurve[bin] = toneCurve[lastMeasured];
+            }
+
+            int prev = firstMeasured;
+
+            for (int bin = firstMeasured + 1; bin <= lastMeasured; ++bin) {
+                if (toneCurve[bin] < 0.f) {
+                    continue;
+                }
+
+                for (int k = prev + 1; k < bin; ++k) {
+                    const float t = static_cast<float>(k - prev) / (bin - prev);
+                    toneCurve[k] = toneCurve[prev] * (1.f - t) + toneCurve[bin] * t;
+                }
+
+                prev = bin;
+            }
+
+            for (int bin = 1; bin < TBINS; ++bin) {
+                toneCurve[bin] = std::max(toneCurve[bin], toneCurve[bin - 1]);
+            }
+        }
+
+        satFactor = chromaN > 1e-9 ? static_cast<float>(std::min(2.0, chromaS / chromaN)) : 1.f;
     }
 
     auto result = Gdk::Pixbuf::create(Gdk::COLORSPACE_RGB, false, 8, w, h);
@@ -1914,7 +1991,7 @@ void DoubleExposureDlg::updatePreview()
                 float pb = srgbLut[lrow[lx * lch + 2]] * lp.gain;
 
                 float cr, cg, cb;
-                rtengine::deblend::blend(lp.mode, 1.f, r, g, b, pr, pg, pb, cr, cg, cb);
+                rtengine::deblend::blend(lp.mode, lp.compare, lp.softness, 1.f, r, g, b, pr, pg, pb, cr, cg, cb);
 
                 float wgt = lp.opacity;
 
@@ -1930,15 +2007,32 @@ void DoubleExposureDlg::updatePreview()
                 b += wgt * (cb - b);
             }
 
+            if (applyShoulder) {
+                r = shoulderWhite * rtengine::deblend::shoulder(std::max(r, 0.f) / shoulderWhite, knee);
+                g = shoulderWhite * rtengine::deblend::shoulder(std::max(g, 0.f) / shoulderWhite, knee);
+                b = shoulderWhite * rtengine::deblend::shoulder(std::max(b, 0.f) / shoulderWhite, knee);
+            }
+
             if (sceneFaithful) {
-                // Back to the edit's look: per-channel transfer measured from
-                // the styled render.
+                // Back to the edit's look: the plate's luminance curve as a
+                // gain on the composited pixel (hue kept), then its saturation.
                 r = std::max(r, 0.f);
                 g = std::max(g, 0.f);
                 b = std::max(b, 0.f);
-                r *= toneRatio[0][std::min(TBINS - 1, static_cast<int>(r * TBINS))];
-                g *= toneRatio[1][std::min(TBINS - 1, static_cast<int>(g * TBINS))];
-                b *= toneRatio[2][std::min(TBINS - 1, static_cast<int>(b * TBINS))];
+                const float y = rtengine::deblend::lum709(r, g, b);
+                const float pos = std::min(std::max(rtengine::deblend::gateEncode(y) * TBINS - 0.5f, 0.f), static_cast<float>(TBINS - 1));
+                const int i0 = static_cast<int>(pos);
+                const int i1 = std::min(i0 + 1, TBINS - 1);
+                const float f = pos - i0;
+                const float ys = toneCurve[i0] * (1.f - f) + toneCurve[i1] * f;
+                const float gain = ys / std::max(y, 1e-6f);
+                r *= gain;
+                g *= gain;
+                b *= gain;
+                const float yo = rtengine::deblend::lum709(r, g, b);
+                r = yo + (r - yo) * satFactor;
+                g = yo + (g - yo) * satFactor;
+                b = yo + (b - yo) * satFactor;
             }
 
             outRow[x * 3] = static_cast<guint8>(linToSrgb(r) * 255.f + 0.5f);

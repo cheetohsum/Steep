@@ -151,5 +151,7 @@ private:
     Gtk::Scale* layerEvScale_;
     Gtk::Scale* layerOpacityScale_;
     Gtk::Scale* gateStrengthScale_;
+    Gtk::Scale* softnessScale_;
+    Gtk::Scale* latitudeScale_;
     Gtk::Box* trayBox_;
 };

@@ -3568,16 +3568,20 @@ DoubleExposureParams::Layer::Layer() :
     ev(0.0),
     opacity(100.0),
     blendMode(BlendMode::ADD),
-    // A mild shadow gate by default: overlays favor the base's shadows (the
-    // classic silhouette look) and it makes stack order matter out of the box
-    // — pure equal-opacity addition is order-free, as on film. The window
-    // (0, 35, feather 33) in perceptual units spans the same envelope as the
-    // legacy linear fill-shadows curve (flat to linear 0.10, gone by 0.45).
+    compare(Compare::LUMINANCE),
+    softness(0.5),
+    // Gate off by default: the silhouette look comes from the group's
+    // highlight latitude (the film shoulder), driven by how bright the base
+    // actually is, and pure addition stays order-free, as on film. The
+    // window (0, 35, feather 33) in perceptual units is kept as the ready
+    // shadows band for when the gate is turned up; it spans the same envelope
+    // as the legacy linear fill-shadows curve (flat to linear 0.10, gone by
+    // 0.45). Files without a gate key load the legacy strength 25 explicitly.
     gateSource(GateSource::BASE),
     gateLow(0.0),
     gateHigh(35.0),
     gateFeather(33.0),
-    gateStrength(25.0)
+    gateStrength(0.0)
 {
 }
 
@@ -3589,6 +3593,8 @@ bool DoubleExposureParams::Layer::operator ==(const Layer& other) const
         && ev == other.ev
         && opacity == other.opacity
         && blendMode == other.blendMode
+        && compare == other.compare
+        && softness == other.softness
         && gateSource == other.gateSource
         && gateLow == other.gateLow
         && gateHigh == other.gateHigh
@@ -3605,7 +3611,10 @@ DoubleExposureParams::DoubleExposureParams() :
     enabled(false),
     layers(),
     autoGain(true),
-    baseEv(0.0)
+    baseEv(0.0),
+    // Knee at 0.75 white for new edits; files without the key load 0 (the
+    // legacy hard clip) explicitly.
+    highlightLatitude(50.0)
 {
 }
 
@@ -3615,7 +3624,8 @@ bool DoubleExposureParams::operator ==(const DoubleExposureParams& other) const
         enabled == other.enabled
         && layers == other.layers
         && autoGain == other.autoGain
-        && baseEv == other.baseEv;
+        && baseEv == other.baseEv
+        && highlightLatitude == other.highlightLatitude;
 }
 
 bool DoubleExposureParams::operator !=(const DoubleExposureParams& other) const
@@ -4577,6 +4587,7 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->doubleExposure.enabled, "Double Exposure", "Enabled", doubleExposure.enabled, keyFile);
         saveToKeyfile(!pedited || pedited->doubleExposure.autoGain, "Double Exposure", "AutoGain", doubleExposure.autoGain, keyFile);
         saveToKeyfile(!pedited || pedited->doubleExposure.baseEv, "Double Exposure", "BaseEV", doubleExposure.baseEv, keyFile);
+        saveToKeyfile(!pedited || pedited->doubleExposure.highlightLatitude, "Double Exposure", "HighlightLatitude", doubleExposure.highlightLatitude, keyFile);
 
         if (!pedited || pedited->doubleExposure.layers) {
             keyFile.set_integer("Double Exposure", "LayerCount", static_cast<int>(doubleExposure.layers.size()));
@@ -4588,6 +4599,8 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
                 keyFile.set_double("Double Exposure", prefix + "EV", doubleExposure.layers[i].ev);
                 keyFile.set_double("Double Exposure", prefix + "Opacity", doubleExposure.layers[i].opacity);
                 keyFile.set_integer("Double Exposure", prefix + "BlendMode", static_cast<int>(doubleExposure.layers[i].blendMode));
+                keyFile.set_integer("Double Exposure", prefix + "Compare", static_cast<int>(doubleExposure.layers[i].compare));
+                keyFile.set_double("Double Exposure", prefix + "Softness", doubleExposure.layers[i].softness);
                 keyFile.set_integer("Double Exposure", prefix + "GateSource", static_cast<int>(doubleExposure.layers[i].gateSource));
                 keyFile.set_double("Double Exposure", prefix + "GateLow", doubleExposure.layers[i].gateLow);
                 keyFile.set_double("Double Exposure", prefix + "GateHigh", doubleExposure.layers[i].gateHigh);
@@ -7331,6 +7344,23 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
             assignFromKeyfile(keyFile, "Double Exposure", "AutoGain", doubleExposure.autoGain, pedited->doubleExposure.autoGain);
             assignFromKeyfile(keyFile, "Double Exposure", "BaseEV", doubleExposure.baseEv, pedited->doubleExposure.baseEv);
 
+            // Migration contract: a key that is absent means the legacy
+            // behavior, whatever the constructor default is for new edits.
+            // A group that carries layers but no latitude key is a
+            // pre-latitude edit, so the legacy value is written AND flagged
+            // as edited: partial applies (CLI -p, profile paste) go through
+            // ParamsEdited::combine, which would otherwise drop the
+            // assignment and let the constructor default leak in.
+            if (keyFile.has_key("Double Exposure", "HighlightLatitude")) {
+                assignFromKeyfile(keyFile, "Double Exposure", "HighlightLatitude", doubleExposure.highlightLatitude, pedited->doubleExposure.highlightLatitude);
+            } else if (!pedited || keyFile.has_key("Double Exposure", "LayerCount")) {
+                doubleExposure.highlightLatitude = 0.0; // legacy: the stack clipped downstream
+
+                if (pedited) {
+                    pedited->doubleExposure.highlightLatitude = true;
+                }
+            }
+
             if (keyFile.has_key("Double Exposure", "LayerCount")) {
                 const int count = std::max(0, std::min(keyFile.get_integer("Double Exposure", "LayerCount"), 8));
                 doubleExposure.layers.clear();
@@ -7364,6 +7394,22 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
                             layer.blendMode = legacyBlend;
                         }
 
+                        if (keyFile.has_key("Double Exposure", prefix + "Compare")) {
+                            const int cmp = keyFile.get_integer("Double Exposure", prefix + "Compare");
+
+                            if (cmp >= 0 && cmp <= 1) {
+                                layer.compare = static_cast<DoubleExposureParams::Compare>(cmp);
+                            }
+                        } else {
+                            layer.compare = DoubleExposureParams::Compare::CHANNEL; // legacy per-channel pick
+                        }
+
+                        if (keyFile.has_key("Double Exposure", prefix + "Softness")) {
+                            layer.softness = keyFile.get_double("Double Exposure", prefix + "Softness");
+                        } else {
+                            layer.softness = 0.0;
+                        }
+
                         if (keyFile.has_key("Double Exposure", prefix + "GateStrength")) {
                             if (keyFile.has_key("Double Exposure", prefix + "GateSource")) {
                                 const int src = keyFile.get_integer("Double Exposure", prefix + "GateSource");
@@ -7394,6 +7440,14 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
                             layer.gateHigh = 35.0;
                             layer.gateFeather = 33.0;
                             layer.gateStrength = legacyFill;
+                        } else {
+                            // No gate key at all: files from when the
+                            // constructor default was a 25% shadow gate.
+                            layer.gateSource = DoubleExposureParams::GateSource::BASE;
+                            layer.gateLow = 0.0;
+                            layer.gateHigh = 35.0;
+                            layer.gateFeather = 33.0;
+                            layer.gateStrength = 25.0;
                         }
 
                         doubleExposure.layers.push_back(layer);
