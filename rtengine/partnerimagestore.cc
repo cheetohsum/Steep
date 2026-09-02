@@ -44,7 +44,8 @@ bool hasNonRawExtension(const Glib::ustring& path)
 // Decode a file to scene-referred linear working-space RGB. The partner is
 // rendered neutrally (camera WB, default input profile, no creative edits),
 // matching the physics of light hitting the same frame of film.
-std::shared_ptr<rtengine::PartnerImage> decodePartner(const Glib::ustring& path, const Glib::ustring& workingProfile, bool fullRes)
+std::shared_ptr<rtengine::PartnerImage> decodePartner(const Glib::ustring& path, const Glib::ustring& workingProfile, bool fullRes,
+                                                      const rtengine::ColorTemp* wbOverride)
 {
     using namespace rtengine;
 
@@ -104,7 +105,10 @@ std::shared_ptr<rtengine::PartnerImage> decodePartner(const Glib::ustring& path,
     double contrastThresholdDummy = 0.0;
     src->demosaic(params.raw, false, contrastThresholdDummy);
 
-    const ColorTemp wb = src->getWB();
+    // Rendered files (JPEG/TIFF) already carry their white balance in the
+    // pixels; only raw decodes take the override.
+    const bool isRaw = dynamic_cast<RawImageSource*>(src.get()) != nullptr;
+    const ColorTemp wb = (wbOverride && isRaw) ? *wbOverride : src->getWB();
 
     int fw = 0, fh = 0;
     src->getFullSize(fw, fh, TR_NONE);
@@ -171,13 +175,20 @@ PartnerImageStore& PartnerImageStore::getInstance()
     return instance;
 }
 
-std::shared_ptr<PartnerImage> PartnerImageStore::getPartner(const Glib::ustring& path, const Glib::ustring& workingProfile, bool fullRes)
+std::shared_ptr<PartnerImage> PartnerImageStore::getPartner(const Glib::ustring& path, const Glib::ustring& workingProfile, bool fullRes,
+                                                            const ColorTemp* wbOverride)
 {
     if (path.empty()) {
         return nullptr;
     }
 
-    const Glib::ustring key = path + "\n" + workingProfile;
+    Glib::ustring key = path + "\n" + workingProfile;
+
+    if (wbOverride) {
+        key += Glib::ustring::compose("\nwb=%1,%2,%3,%4", wbOverride->getTemp(), wbOverride->getGreen(),
+                                      wbOverride->getEqual(), static_cast<int>(wbOverride->getObserver()));
+    }
+
     Cache<Glib::ustring, std::shared_ptr<PartnerImage>>& cache = fullRes ? fullCache : previewCache;
 
     std::shared_ptr<PartnerImage> result;
@@ -186,7 +197,7 @@ std::shared_ptr<PartnerImage> PartnerImageStore::getPartner(const Glib::ustring&
         return result;
     }
 
-    result = decodePartner(path, workingProfile, fullRes);
+    result = decodePartner(path, workingProfile, fullRes, wbOverride);
 
     if (result) {
         cache.insert(key, result);

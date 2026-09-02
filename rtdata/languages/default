@@ -98,6 +98,7 @@ DOUBLEEXPOSURE_NOLAYER;No exposure selected
 DOUBLEEXPOSURE_ORDER_TOOLTIP;Stack order: base plate first, overlays fold in left to right. Order changes the result with opacity, slide sandwich, and fill shadows; pure in-camera addition is order-free, as on film.
 DOUBLEEXPOSURE_PICK_FOLDER;Choose source folder
 DOUBLEEXPOSURE_PREVIEW_EMPTY;Select images on the left to preview the blend
+DOUBLEEXPOSURE_PREVIEW_HINT;Drag the selected exposure to move it · scroll or drag a corner to resize · double-click to reset
 DOUBLEEXPOSURE_SCOPE_FOLDER;This folder
 DOUBLEEXPOSURE_SCOPE_FOLDER_TOOLTIP;Source folder. Click again to choose a different folder.
 DOUBLEEXPOSURE_SCOPE_GLOBAL_TOOLTIP;Global selects: picked and starred images from every folder steep knows about — favorites, recent folders, and the current folder.
@@ -1576,6 +1577,7 @@ HISTORY_MSG_DOUBLEEXPOSURE_GATE;Double exposure - Reveal gate
 HISTORY_MSG_DOUBLEEXPOSURE_LATITUDE;Double exposure - Highlight latitude
 HISTORY_MSG_DOUBLEEXPOSURE_LAYERS;Double exposure - Exposures
 HISTORY_MSG_DOUBLEEXPOSURE_LAYER_SETTINGS;Double exposure - Layer settings
+HISTORY_MSG_DOUBLEEXPOSURE_PLACEMENT;Double exposure - Layer placement
 HISTORY_MSG_DOUBLEEXPOSURE_SOFTNESS;Double exposure - Transition softness
 HISTORY_MSG_DISTORTION_DEFISH;De-fish
 HISTORY_MSG_DISTORTION_DEFISH_FOCAL;De-fish - Focal length
@@ -3130,8 +3132,13 @@ TP_DOUBLEEXPOSURE_LATITUDE;Highlight latitude
 TP_DOUBLEEXPOSURE_LATITUDE_TOOLTIP;The film shoulder, applied to the finished stack. Light adds up linearly and the dense areas then stop registering more of it: a bright sky takes little of the second frame while shadows take all of it, the classic silhouette look, with no reveal gate needed. Measured against a single frame's white, so it works the same with Auto film gain on or off. 0 leaves the stack to clip at white further down the pipeline; higher values start the roll-off earlier (100 = from half a frame's white). Film Lab adds its own shoulder after this one.
 TP_DOUBLEEXPOSURE_LAYER;Layer
 TP_DOUBLEEXPOSURE_MISSING;File not found — this layer will be skipped.
+TP_DOUBLEEXPOSURE_OFFSETX;Layer position X
+TP_DOUBLEEXPOSURE_OFFSETY;Layer position Y
 TP_DOUBLEEXPOSURE_OPACITY;Layer opacity
+TP_DOUBLEEXPOSURE_PLACEMENT_RESET;Reset placement
+TP_DOUBLEEXPOSURE_PLACEMENT_TOOLTIP;Where this exposure sits over the base frame. Position is the shift of its centre as a percentage of the base width and height; size is a percentage of the fill-the-frame fit. Outside the placed frame the exposure contributes nothing. In the picker you can drag the selected exposure to move it, scroll or drag a corner to resize it, and double-click to reset.
 TP_DOUBLEEXPOSURE_REMOVE;Remove this exposure
+TP_DOUBLEEXPOSURE_SCALE;Layer size
 TP_DOUBLEEXPOSURE_SOFTNESS;Transition softness
 TP_DOUBLEEXPOSURE_SOFTNESS_TOOLTIP;Width of the hand-over between the two frames, in stops. 0 picks one frame per pixel outright; around half a stop mixes their colours where the brightnesses nearly tie, the way cameras blend their comparative modes.
 TP_DIRPYRDENOISE_CHROMINANCE_AUTOGLOBAL;Automatic global

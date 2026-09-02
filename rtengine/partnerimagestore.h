@@ -25,6 +25,7 @@
 namespace rtengine
 {
 
+class ColorTemp;
 class Imagefloat;
 
 // A partner image decoded to scene-referred linear RGB in a given working
@@ -53,8 +54,11 @@ public:
 
     // Returns the decoded partner in the given working profile, or nullptr if
     // the file is missing or cannot be decoded. Decoding happens on the
-    // calling (processing) thread; results are cached.
-    std::shared_ptr<PartnerImage> getPartner(const Glib::ustring& path, const Glib::ustring& workingProfile, bool fullRes);
+    // calling (processing) thread; results are cached. `wbOverride` replaces
+    // the file's own camera white balance (raw files only; rendered files
+    // already carry theirs) and is part of the cache key.
+    std::shared_ptr<PartnerImage> getPartner(const Glib::ustring& path, const Glib::ustring& workingProfile, bool fullRes,
+                                             const ColorTemp* wbOverride = nullptr);
 
     // Frees the (large) full-resolution tier, e.g. after a batch export.
     void clearFullResTier();

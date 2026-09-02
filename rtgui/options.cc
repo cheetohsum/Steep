@@ -768,6 +768,11 @@ void Options::setDefaults()
     gimpPluginShowInfoDialog = true;
     maxRecentFolders = 15;
     globalScanSubfolders = false;
+    dePickerGlobalScope = false;
+    dePickerPickedOnly = false;
+    dePickerMinStars = -1; // -1: seed from the browser filter on first use
+    dePickerHighRes = false;
+    dePickerScroll = 0.0;
     thumbnailRankColorMode = Options::ThumbnailPropertyMode::PROCPARAMS;
     sortMethod = SORT_BY_NAME;
     sortDescending = false;
@@ -1625,6 +1630,26 @@ void Options::readFromFile(Glib::ustring fname)
 
                 if (keyFile.has_key("File Browser", "GlobalScanSubfolders")) {
                     globalScanSubfolders = keyFile.get_boolean("File Browser", "GlobalScanSubfolders");
+                }
+
+                if (keyFile.has_key("File Browser", "DEPickerGlobalScope")) {
+                    dePickerGlobalScope = keyFile.get_boolean("File Browser", "DEPickerGlobalScope");
+                }
+
+                if (keyFile.has_key("File Browser", "DEPickerPickedOnly")) {
+                    dePickerPickedOnly = keyFile.get_boolean("File Browser", "DEPickerPickedOnly");
+                }
+
+                if (keyFile.has_key("File Browser", "DEPickerMinStars")) {
+                    dePickerMinStars = keyFile.get_integer("File Browser", "DEPickerMinStars");
+                }
+
+                if (keyFile.has_key("File Browser", "DEPickerHighRes")) {
+                    dePickerHighRes = keyFile.get_boolean("File Browser", "DEPickerHighRes");
+                }
+
+                if (keyFile.has_key("File Browser", "DEPickerScroll")) {
+                    dePickerScroll = keyFile.get_double("File Browser", "DEPickerScroll");
                 }
 
                 recentFolders.reserve(maxRecentFolders + 10);  // reserve some more than maxRecentFolders, because at runtime it stores more than that
@@ -2847,6 +2872,11 @@ void Options::saveToFile(Glib::ustring fname)
         keyFile.set_boolean("File Browser", "menuGroupExtProg", menuGroupExtProg);
         keyFile.set_integer("File Browser", "MaxRecentFolders", maxRecentFolders);
         keyFile.set_boolean("File Browser", "GlobalScanSubfolders", globalScanSubfolders);
+        keyFile.set_boolean("File Browser", "DEPickerGlobalScope", dePickerGlobalScope);
+        keyFile.set_boolean("File Browser", "DEPickerPickedOnly", dePickerPickedOnly);
+        keyFile.set_integer("File Browser", "DEPickerMinStars", dePickerMinStars);
+        keyFile.set_boolean("File Browser", "DEPickerHighRes", dePickerHighRes);
+        keyFile.set_double("File Browser", "DEPickerScroll", dePickerScroll);
         {
             std::vector<Glib::ustring> temp;
             temp.reserve(maxRecentFolders);

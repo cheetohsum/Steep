@@ -3570,6 +3570,9 @@ DoubleExposureParams::Layer::Layer() :
     blendMode(BlendMode::ADD),
     compare(Compare::LUMINANCE),
     softness(0.5),
+    offsetX(0.0),
+    offsetY(0.0),
+    scale(100.0),
     // Gate off by default: the silhouette look comes from the group's
     // highlight latitude (the film shoulder), driven by how bright the base
     // actually is, and pure addition stays order-free, as on film. The
@@ -3595,6 +3598,9 @@ bool DoubleExposureParams::Layer::operator ==(const Layer& other) const
         && blendMode == other.blendMode
         && compare == other.compare
         && softness == other.softness
+        && offsetX == other.offsetX
+        && offsetY == other.offsetY
+        && scale == other.scale
         && gateSource == other.gateSource
         && gateLow == other.gateLow
         && gateHigh == other.gateHigh
@@ -4601,6 +4607,9 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
                 keyFile.set_integer("Double Exposure", prefix + "BlendMode", static_cast<int>(doubleExposure.layers[i].blendMode));
                 keyFile.set_integer("Double Exposure", prefix + "Compare", static_cast<int>(doubleExposure.layers[i].compare));
                 keyFile.set_double("Double Exposure", prefix + "Softness", doubleExposure.layers[i].softness);
+                keyFile.set_double("Double Exposure", prefix + "OffsetX", doubleExposure.layers[i].offsetX);
+                keyFile.set_double("Double Exposure", prefix + "OffsetY", doubleExposure.layers[i].offsetY);
+                keyFile.set_double("Double Exposure", prefix + "Scale", doubleExposure.layers[i].scale);
                 keyFile.set_integer("Double Exposure", prefix + "GateSource", static_cast<int>(doubleExposure.layers[i].gateSource));
                 keyFile.set_double("Double Exposure", prefix + "GateLow", doubleExposure.layers[i].gateLow);
                 keyFile.set_double("Double Exposure", prefix + "GateHigh", doubleExposure.layers[i].gateHigh);
@@ -7408,6 +7417,20 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
                             layer.softness = keyFile.get_double("Double Exposure", prefix + "Softness");
                         } else {
                             layer.softness = 0.0;
+                        }
+
+                        // Placement defaults (0, 0, 100) ARE the legacy cover
+                        // fit, so absent keys need no explicit fallback.
+                        if (keyFile.has_key("Double Exposure", prefix + "OffsetX")) {
+                            layer.offsetX = keyFile.get_double("Double Exposure", prefix + "OffsetX");
+                        }
+
+                        if (keyFile.has_key("Double Exposure", prefix + "OffsetY")) {
+                            layer.offsetY = keyFile.get_double("Double Exposure", prefix + "OffsetY");
+                        }
+
+                        if (keyFile.has_key("Double Exposure", prefix + "Scale")) {
+                            layer.scale = std::max(1.0, keyFile.get_double("Double Exposure", prefix + "Scale"));
                         }
 
                         if (keyFile.has_key("Double Exposure", prefix + "GateStrength")) {

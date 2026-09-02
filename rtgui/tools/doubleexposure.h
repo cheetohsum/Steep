@@ -43,6 +43,9 @@ private:
     MyComboBoxText *layerSel;
     Adjuster *layerEv;
     Adjuster *layerOpacity;
+    Adjuster *layerOffsetX;
+    Adjuster *layerOffsetY;
+    Adjuster *layerScale;
     MyComboBoxText *blendMethod;
     Gtk::Box *compareRow;        // comparative modes only
     MyComboBoxText *compareMode;
@@ -77,6 +80,7 @@ private:
     rtengine::ProcEvent EvDECompare;
     rtengine::ProcEvent EvDESoftness;
     rtengine::ProcEvent EvDELatitude;
+    rtengine::ProcEvent EvDEPlacement;
 
     void openChooser();
     void clearAll();

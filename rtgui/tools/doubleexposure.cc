@@ -68,6 +68,7 @@ DoubleExposure::DoubleExposure() :
     EvDECompare = m->newEvent(HDR, "HISTORY_MSG_DOUBLEEXPOSURE_COMPARE");
     EvDESoftness = m->newEvent(HDR, "HISTORY_MSG_DOUBLEEXPOSURE_SOFTNESS");
     EvDELatitude = m->newEvent(HDR, "HISTORY_MSG_DOUBLEEXPOSURE_LATITUDE");
+    EvDEPlacement = m->newEvent(HDR, "HISTORY_MSG_DOUBLEEXPOSURE_PLACEMENT");
 
     chooseButton = Gtk::manage(new Gtk::Button(M("TP_DOUBLEEXPOSURE_CHOOSE")));
     chooseButton->signal_clicked().connect(sigc::mem_fun(*this, &DoubleExposure::openChooser));
@@ -99,6 +100,22 @@ DoubleExposure::DoubleExposure() :
     layerOpacity = Gtk::manage(new Adjuster(M("TP_DOUBLEEXPOSURE_OPACITY"), 0.0, 100.0, 1.0, 100.0));
     layerOpacity->setAdjusterListener(this);
     layerOpacity->show();
+
+    // Placement over the base frame; the picker's preview drags these too.
+    layerOffsetX = Gtk::manage(new Adjuster(M("TP_DOUBLEEXPOSURE_OFFSETX"), -150.0, 150.0, 0.5, 0.0));
+    layerOffsetX->setAdjusterListener(this);
+    layerOffsetX->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PLACEMENT_TOOLTIP"));
+    layerOffsetX->show();
+
+    layerOffsetY = Gtk::manage(new Adjuster(M("TP_DOUBLEEXPOSURE_OFFSETY"), -150.0, 150.0, 0.5, 0.0));
+    layerOffsetY->setAdjusterListener(this);
+    layerOffsetY->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PLACEMENT_TOOLTIP"));
+    layerOffsetY->show();
+
+    layerScale = Gtk::manage(new Adjuster(M("TP_DOUBLEEXPOSURE_SCALE"), 10.0, 400.0, 1.0, 100.0));
+    layerScale->setAdjusterListener(this);
+    layerScale->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PLACEMENT_TOOLTIP"));
+    layerScale->show();
 
     blendMethod = Gtk::manage(new MyComboBoxText());
     blendMethod->append(M("TP_DOUBLEEXPOSURE_BLEND_ADD"));
@@ -204,6 +221,9 @@ DoubleExposure::DoubleExposure() :
     pack_start(*layerSelRow);
     pack_start(*layerEv);
     pack_start(*layerOpacity);
+    pack_start(*layerOffsetX);
+    pack_start(*layerOffsetY);
+    pack_start(*layerScale);
     pack_start(*blendRow);
     pack_start(*compareRow);
     pack_start(*softness);
@@ -388,6 +408,9 @@ void DoubleExposure::loadSelectedLayer()
 
     layerEv->setValue(layers[idx].ev);
     layerOpacity->setValue(layers[idx].opacity);
+    layerOffsetX->setValue(layers[idx].offsetX);
+    layerOffsetY->setValue(layers[idx].offsetY);
+    layerScale->setValue(layers[idx].scale);
 
     blendMethod->block(true);
     blendMethod->set_active(static_cast<int>(layers[idx].blendMode));
@@ -434,6 +457,9 @@ void DoubleExposure::updateSensitivity()
     layerSel->set_sensitive(haveLayers);
     layerEv->set_sensitive(haveLayers);
     layerOpacity->set_sensitive(haveLayers);
+    layerOffsetX->set_sensitive(haveLayers);
+    layerOffsetY->set_sensitive(haveLayers);
+    layerScale->set_sensitive(haveLayers);
     blendMethod->set_sensitive(haveLayers);
     gateSource->set_sensitive(haveLayers);
     gateLow->set_sensitive(haveLayers);
@@ -601,6 +627,9 @@ void DoubleExposure::setDefaults(const ProcParams* defParams, const ParamsEdited
 
     const DoubleExposureParams::Layer defLayer;
     softness->setDefault(defLayer.softness);
+    layerOffsetX->setDefault(defLayer.offsetX);
+    layerOffsetY->setDefault(defLayer.offsetY);
+    layerScale->setDefault(defLayer.scale);
     gateLow->setDefault(defLayer.gateLow);
     gateHigh->setDefault(defLayer.gateHigh);
     gateFeather->setDefault(defLayer.gateFeather);
@@ -617,7 +646,8 @@ void DoubleExposure::setDefaults(const ProcParams* defParams, const ParamsEdited
 
 void DoubleExposure::adjusterChanged(Adjuster* a, double newval)
 {
-    const bool isLayerAdj = a == layerEv || a == layerOpacity || a == softness;
+    const bool isPlacementAdj = a == layerOffsetX || a == layerOffsetY || a == layerScale;
+    const bool isLayerAdj = a == layerEv || a == layerOpacity || a == softness || isPlacementAdj;
     const bool isGateAdj = a == gateLow || a == gateHigh || a == gateFeather || a == gateStrength;
 
     if (isLayerAdj || isGateAdj) {
@@ -630,6 +660,12 @@ void DoubleExposure::adjusterChanged(Adjuster* a, double newval)
                 layers[idx].opacity = newval;
             } else if (a == softness) {
                 layers[idx].softness = newval;
+            } else if (a == layerOffsetX) {
+                layers[idx].offsetX = newval;
+            } else if (a == layerOffsetY) {
+                layers[idx].offsetY = newval;
+            } else if (a == layerScale) {
+                layers[idx].scale = newval;
             } else if (a == gateLow) {
                 layers[idx].gateLow = newval;
             } else if (a == gateHigh) {
@@ -644,7 +680,10 @@ void DoubleExposure::adjusterChanged(Adjuster* a, double newval)
             autoEnable();
 
             if (listener && getEnabled()) {
-                listener->panelChanged(isGateAdj ? EvDEGate : (a == softness ? EvDESoftness : EvDELayerSettings), a->getTextValue());
+                listener->panelChanged(isGateAdj ? EvDEGate
+                                       : (a == softness ? EvDESoftness
+                                          : (isPlacementAdj ? EvDEPlacement : EvDELayerSettings)),
+                                       a->getTextValue());
             }
         }
 

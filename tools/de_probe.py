@@ -151,10 +151,12 @@ def row_rgb(path):
     return [px[x, PROBE_ROW] for x in range(W)]
 
 
-def check(name, got, expected, tol=3.0, skip_clipped=False):
+def check(name, got, expected, tol=3.0, skip_clipped=False, skipx=()):
     worst = -1.0
     worst_x = -1
     for x in range(2, W - 2):  # borders can catch resampling edge effects
+        if x in skipx:
+            continue
         e = expected(x)
         if skip_clipped and e >= 254.5:
             continue
@@ -429,6 +431,45 @@ def main():
     diff = max(abs(got[x] - avg[x]) for x in range(200, W - 2))
     print(f"{'PASS' if diff > 6 else 'FAIL'}  {'shoulder engages under avg':34s} max |diff| = {diff:5.2f}")
     ok &= diff > 6
+
+    # ------------------------------------------------------------------
+    # Placement: the partner is cover-fitted, scaled about its centre and
+    # shifted; outside its placed frame it contributes nothing.
+    # ------------------------------------------------------------------
+
+    # T13: same-aspect partner at 50% size -> covers the central half of the
+    # frame (x in [64,192) on the probe row); ADD, auto gain off.
+    pp3 = write_pp3("t13_scale.pp3",
+        "Enabled=true\nAutoGain=false\nBaseEV=0\nHighlightLatitude=0\n"
+        f"LayerCount=1\nLayer1Path={gray_path}\nLayer1Enabled=true\nLayer1EV=0\nLayer1Opacity=100\n"
+        "Layer1BlendMode=0\nLayer1OffsetX=0\nLayer1OffsetY=0\nLayer1Scale=50\n" + GATE_OFF)
+    got = row(render(pp3, "base_grad.png", "t13_scale.tif"))
+
+    def t13_expected(x):
+        inside = 64 <= x < 192
+        return lin_to_srgb(srgb_to_lin(x) + (P_GRAY if inside else 0.0))
+    ok &= check("placement: 50% size, centred", got, t13_expected, skipx=(63, 64, 191, 192))
+
+    # T13b: shifted right by 25% of the frame at 50% size -> x in [128,256).
+    pp3 = write_pp3("t13b_offset.pp3",
+        "Enabled=true\nAutoGain=false\nBaseEV=0\nHighlightLatitude=0\n"
+        f"LayerCount=1\nLayer1Path={gray_path}\nLayer1Enabled=true\nLayer1EV=0\nLayer1Opacity=100\n"
+        "Layer1BlendMode=0\nLayer1OffsetX=25\nLayer1OffsetY=0\nLayer1Scale=50\n" + GATE_OFF)
+    got = row(render(pp3, "base_grad.png", "t13b_offset.tif"))
+
+    def t13b_expected(x):
+        inside = 128 <= x
+        return lin_to_srgb(srgb_to_lin(x) + (P_GRAY if inside else 0.0))
+    ok &= check("placement: shifted +25%", got, t13b_expected, skip_clipped=True, skipx=(127, 128))
+
+    # T13c: placement keys at their defaults must be bitwise the legacy
+    # cover fit (no frame-edge coverage on an untouched layer).
+    pp3 = write_pp3("t13c_default.pp3",
+        "Enabled=true\nAutoGain=false\nBaseEV=0\nHighlightLatitude=0\n"
+        f"LayerCount=1\nLayer1Path={gray_path}\nLayer1Enabled=true\nLayer1EV=0\nLayer1Opacity=100\n"
+        "Layer1BlendMode=4\nLayer1OffsetX=0\nLayer1OffsetY=0\nLayer1Scale=100\n" + GATE_OFF)
+    b = row(render(pp3, "base_grad.png", "t13c_default.tif"))
+    ok &= identical("placement defaults == cover fit", t2, b)
 
     print("\nALL PASS" if ok else "\nFAILURES PRESENT")
     sys.exit(0 if ok else 1)

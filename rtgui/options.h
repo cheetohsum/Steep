@@ -577,6 +577,13 @@ public:
     size_t maxRecentFolders;                   // max. number of recent folders stored in options file
     std::vector<Glib::ustring> recentFolders;  // List containing all recent folders
     bool globalScanSubfolders;                 // global-scope scans descend into subfolders
+    // Double Exposure picker: last-used scope, filters, preview tier and grid
+    // scroll, restored the next time the picker opens.
+    bool dePickerGlobalScope;
+    bool dePickerPickedOnly;
+    int dePickerMinStars;
+    bool dePickerHighRes;
+    double dePickerScroll;
 
     enum class ThumbnailPropertyMode {
         PROCPARAMS, // store rank and color in procparams sidecars

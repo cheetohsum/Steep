@@ -45,6 +45,13 @@ struct ResolvedLayer {
     float gain;     // 2^ev, with the auto film gain folded in for ADD layers
     float opacity;  // 0..1
     float invCover; // base full-res px -> partner full-res px (cover fit)
+    // Placement: centre shift as a fraction of the base frame, scale on top
+    // of the cover fit. `placed` gates the frame-edge coverage so an
+    // untouched layer samples exactly as before (edge-clamped, no border).
+    float offX;
+    float offY;
+    float scale;
+    bool placed;
     procparams::DoubleExposureParams::BlendMode mode;
     procparams::DoubleExposureParams::Compare compare; // comparative modes: whole pixel vs per channel
     float softness;     // comparative hand-over band, stops
@@ -144,6 +151,10 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
             const float cover = std::max(static_cast<float>(fullW) / partner->fullWidth,
                                          static_cast<float>(fullH) / partner->fullHeight);
             rl.invCover = 1.f / cover;
+            rl.offX = static_cast<float>(layer.offsetX) / 100.f;
+            rl.offY = static_cast<float>(layer.offsetY) / 100.f;
+            rl.scale = std::max(0.01f, static_cast<float>(layer.scale) / 100.f);
+            rl.placed = rl.offX != 0.f || rl.offY != 0.f || rl.scale != 1.f;
             rl.mode = layer.blendMode;
             rl.compare = layer.compare;
             rl.softness = std::max(static_cast<float>(layer.softness), 0.f);
@@ -217,8 +228,24 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
             float b = rgb->b(y, x) * baseGain;
 
             for (const auto& rl : resolved) {
-                const float u = (fx - fullW * 0.5f) * rl.invCover + rl.partner->fullWidth * 0.5f;
-                const float v = (fy - fullH * 0.5f) * rl.invCover + rl.partner->fullHeight * 0.5f;
+                const float pW = rl.partner->fullWidth;
+                const float pH = rl.partner->fullHeight;
+                const float u = (fx - fullW * (0.5f + rl.offX)) * rl.invCover / rl.scale + pW * 0.5f;
+                const float v = (fy - fullH * (0.5f + rl.offY)) * rl.invCover / rl.scale + pH * 0.5f;
+
+                // Outside a placed frame the layer is simply absent, with a
+                // one-output-pixel anti-aliased border.
+                float coverage = 1.f;
+
+                if (rl.placed) {
+                    const float edge = std::min(std::min(u, pW - u), std::min(v, pH - v));
+                    const float aa = std::max(skip * rl.invCover / rl.scale, 1e-3f);
+                    coverage = LIM01(edge / aa + 0.5f);
+
+                    if (coverage <= 0.f) {
+                        continue;
+                    }
+                }
 
                 float pr, pg, pb;
                 samplePartner(*rl.partner, u, v, pr, pg, pb);
@@ -230,7 +257,7 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
                 float cr, cg, cb;
                 deblend::blend(rl.mode, rl.compare, rl.softness, white, r, g, b, pr, pg, pb, cr, cg, cb);
 
-                float w = rl.opacity;
+                float w = rl.opacity * coverage;
 
                 if (rl.gateStrength > 0.f) {
                     const float lum = (rl.gateOnLayer ? deblend::lum709(pr, pg, pb)

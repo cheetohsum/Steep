@@ -1921,6 +1921,13 @@ struct DoubleExposureParams {
         // per-channel, and the hand-over band width in stops (0 = hard pick).
         Compare compare;
         double softness;    // stops, 0..2
+        // Placement over the base's full frame: the partner is cover-fitted,
+        // then scaled about its centre and shifted. Offsets are percent of the
+        // base frame width/height, scale is percent of the cover fit. Outside
+        // the placed frame the layer contributes nothing.
+        double offsetX;     // -150..150
+        double offsetY;     // -150..150
+        double scale;       // 10..400, 100 = cover fit
         // "Reveal in" gate: confine the layer to a luminance window with
         // smoothstep feather outside it. Low/high/feather are linear
         // luminance percent; strength 0 disables the gate.

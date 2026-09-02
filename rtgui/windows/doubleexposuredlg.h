@@ -31,6 +31,12 @@
 class DEThumbGrid;
 class DEBlendPreview;
 struct DEThumbQueue;
+struct DEScenePlate;
+
+namespace rtengine
+{
+class ColorTemp;
+}
 
 // Modal picker for the double exposure tool: a mini file-browser (current
 // folder or global picked/starred selects) on the left, a live approximate
@@ -73,6 +79,9 @@ private:
     void onScanDone(bool global, int generation);
     void requestThumbs(const std::vector<Glib::ustring>& paths, int height, bool neutral = false);
     void onThumbLoaded(const Glib::ustring& path, int height, bool neutral, Glib::RefPtr<Gdk::Pixbuf> pixbuf);
+    void requestScenePlates(const std::vector<Glib::ustring>& paths, int height);
+    void onSceneLoaded(const Glib::ustring& path, int height, std::shared_ptr<const DEScenePlate> plate);
+    void initSceneContext();
     void pumpThumbQueue();
     // Grid thumbs are decoded for the scrolled viewport only (plus a
     // screenful of look-ahead): a global scan can stream in thousands of
@@ -95,9 +104,22 @@ private:
     void layerControlChanged();
     void blendControlChanged();
     void highResToggled();
-    void updatePreview();
+    // quick = interactive pass (half resolution, replicated); a full pass
+    // follows once the controls settle.
+    void updatePreview(bool quick = false);
+    // Interactive placement of the selected exposure from the preview.
+    void onPreviewMove(double dxCompositePx, double dyCompositePx);
+    void onPreviewScale(double factor);
+    void onPreviewReset();
+    void syncPlacementControls();
+    void schedulePreviewUpdate();
     void requestPreviewThumbs();
     const std::vector<ScanItem>& activeItems() const;
+    // Puts the grid back where it was when the picker last closed, once the
+    // (streamed) results are tall enough; gives up as soon as the user
+    // scrolls. `final` applies whatever is reachable and stops trying.
+    void restoreScroll(bool final);
+    void savePickerState();
 
     Glib::ustring baseImagePath_;
     Glib::ustring editRequestPath_;
@@ -126,7 +148,23 @@ private:
     // scene reference for engine-faithful compositing.
     std::map<Glib::ustring, Glib::RefPtr<Gdk::Pixbuf>> neutralPix_;
     std::map<Glib::ustring, Glib::RefPtr<Gdk::Pixbuf>> neutralHiPix_;
+    // Scene plates: the engine's own preview-tier decodes (scene-linear,
+    // working profile, full upright frame), area-averaged to the preview
+    // height. The composite runs on these so crossovers, gates and detail
+    // match the canvas; the neutral pixbufs above remain for the tray chips.
+    std::map<Glib::ustring, std::shared_ptr<const DEScenePlate>> scenePix_;
+    std::map<Glib::ustring, std::shared_ptr<const DEScenePlate>> sceneHiPix_;
     std::set<Glib::ustring> pendingThumbs_;
+
+    // Base image context the scene plates must honour: the edit's working
+    // profile (shared cache entries with the engine), a fixed white balance
+    // when the edit uses one, and the coarse rotation the canvas is in.
+    Glib::ustring workingProfile_;
+    std::shared_ptr<const rtengine::ColorTemp> baseWb_;
+    int baseCoarseRotate_ = 0;
+    bool baseHflip_ = false;
+    bool baseVflip_ = false;
+    double workingToSrgb_[3][3] = {{1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
 
     std::shared_ptr<std::atomic<bool>> alive_;
     std::shared_ptr<DEThumbQueue> thumbQueue_;
@@ -153,5 +191,38 @@ private:
     Gtk::Scale* gateStrengthScale_;
     Gtk::Scale* softnessScale_;
     Gtk::Scale* latitudeScale_;
+    Gtk::Scale* offsetXScale_;
+    Gtk::Scale* offsetYScale_;
+    Gtk::Scale* scaleScale_;
+    Gtk::Button* resetPlacement_;
     Gtk::Box* trayBox_;
+
+    // preview pixel -> base full-frame fraction, from the last updatePreview
+    double previewNx0_ = 0.0;
+    double previewNxs_ = 0.0;
+    double previewNy0_ = 0.0;
+    double previewNys_ = 0.0;
+    bool previewUpdatePending_ = false;
+    sigc::connection previewSettle_;
+    double pendingScrollRestore_ = -1.0; // saved grid scroll still to apply, <0 = none
+    double lastRestoredScroll_ = -1.0;   // what we last set, to detect the user scrolling
+
+    // Everything updatePreview needs that depends only on the base (not on
+    // the layers): the linearized styled plate, the crop geometry and the
+    // look-transfer curve. Rebuilt only when the base inputs change, so a
+    // slider drag pays for the composite alone.
+    struct PreviewCache {
+        Glib::RefPtr<Gdk::Pixbuf> styledRef;
+        Glib::RefPtr<Gdk::Pixbuf> neutralRef;
+        std::shared_ptr<const DEScenePlate> plateRef;
+        bool wantHi = false;
+        int w = 0;
+        int h = 0;
+        std::vector<float> lin;
+        float nx0 = 0.f, nxs = 0.f, ny0 = 0.f, nys = 0.f, baseAspect = 1.f;
+        bool haveTransfer = false;
+        float toneCurve[256] = {};
+        float satFactor = 1.f;
+    };
+    PreviewCache previewCache_;
 };

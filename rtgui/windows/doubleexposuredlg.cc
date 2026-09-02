@@ -18,11 +18,16 @@
 
 #include "partnerthumb.h"
 
+#include "rtengine/colortemp.h"
 #include "rtengine/doubleexposureblend.h"
+#include "rtengine/iccstore.h"
+#include "rtengine/imagefloat.h"
+#include "rtengine/partnerimagestore.h"
 
 #include <algorithm>
 #include <cmath>
 #include <deque>
+#include <functional>
 #include <mutex>
 #include <system_error>
 #include <thread>
@@ -43,6 +48,17 @@
 #include "rtengine/iimage.h"
 
 using rtengine::procparams::DoubleExposureParams;
+
+// A scene plate: the engine's own preview-tier decode of one file
+// (scene-linear working-profile RGB, full frame, HL blend, EXIF upright),
+// area-averaged to a preview height, and for the base put into the coarse
+// orientation the canvas is in. Values are 0..1 (white = 1). The picker
+// composites on these so what it shows is what the canvas composites.
+struct DEScenePlate {
+    int w = 0;
+    int h = 0;
+    std::vector<float> rgb; // w * h * 3
+};
 
 namespace
 {
@@ -87,6 +103,52 @@ float linToSrgb(float v)
     return v <= 0.0031308f ? v * 12.92f : 1.055f * std::pow(v, 1.f / 2.4f) - 0.055f;
 }
 
+// Per-pixel encodes through 4096-entry tables with linear interpolation
+// (error far below 1/255). The exact formulas stay in the engine; here they
+// were the single largest cost of an interactive recomposite.
+constexpr int ENC_LUT_N = 4096;
+
+const std::vector<float>& srgbEncodeLut()
+{
+    static const std::vector<float> lut = []() {
+        std::vector<float> v(ENC_LUT_N + 1);
+
+        for (int i = 0; i <= ENC_LUT_N; ++i) {
+            v[i] = linToSrgb(static_cast<float>(i) / ENC_LUT_N);
+        }
+
+        return v;
+    }();
+    return lut;
+}
+
+const std::vector<float>& gateEncodeLut()
+{
+    static const std::vector<float> lut = []() {
+        std::vector<float> v(ENC_LUT_N + 1);
+
+        for (int i = 0; i <= ENC_LUT_N; ++i) {
+            v[i] = rtengine::deblend::gateEncode(static_cast<float>(i) / ENC_LUT_N);
+        }
+
+        return v;
+    }();
+    return lut;
+}
+
+inline float lutEncode(const std::vector<float>& lut, float v)
+{
+    v = std::min(std::max(v, 0.f), 1.f) * ENC_LUT_N;
+    const int i = static_cast<int>(v);
+
+    if (i >= ENC_LUT_N) {
+        return lut[ENC_LUT_N];
+    }
+
+    const float f = v - i;
+    return lut[i] * (1.f - f) + lut[i + 1] * f;
+}
+
 Glib::RefPtr<Gdk::Pixbuf> pixbufFromThumb(const Glib::ustring& path, int height, bool neutral, bool basePlate)
 {
     return partnerthumb::load(path, height, neutral, basePlate);
@@ -97,6 +159,135 @@ Glib::RefPtr<Gdk::Pixbuf> pixbufFromThumb(const Glib::ustring& path, int height,
 
 } // namespace
 
+
+void rotatePlate(DEScenePlate& p, int deg)
+{
+    const int W = p.w, H = p.h;
+    const int nw = (deg == 90 || deg == 270) ? H : W;
+    const int nh = (deg == 90 || deg == 270) ? W : H;
+    std::vector<float> out(static_cast<size_t>(nw) * nh * 3);
+
+    for (int ny = 0; ny < nh; ++ny) {
+        for (int nx = 0; nx < nw; ++nx) {
+            int sx, sy;
+
+            if (deg == 90) {          // clockwise, as PlanarWhateverData::rotate
+                sx = ny;
+                sy = H - 1 - nx;
+            } else if (deg == 270) {
+                sx = W - 1 - ny;
+                sy = nx;
+            } else {
+                sx = W - 1 - nx;
+                sy = H - 1 - ny;
+            }
+
+            const size_t si = (static_cast<size_t>(sy) * W + sx) * 3;
+            const size_t di = (static_cast<size_t>(ny) * nw + nx) * 3;
+            out[di] = p.rgb[si];
+            out[di + 1] = p.rgb[si + 1];
+            out[di + 2] = p.rgb[si + 2];
+        }
+    }
+
+    p.w = nw;
+    p.h = nh;
+    p.rgb.swap(out);
+}
+
+void flipPlate(DEScenePlate& p, bool horizontal)
+{
+    const int W = p.w, H = p.h;
+
+    if (horizontal) {
+        for (int y = 0; y < H; ++y) {
+            for (int x = 0; x < W / 2; ++x) {
+                for (int c = 0; c < 3; ++c) {
+                    std::swap(p.rgb[(static_cast<size_t>(y) * W + x) * 3 + c],
+                              p.rgb[(static_cast<size_t>(y) * W + (W - 1 - x)) * 3 + c]);
+                }
+            }
+        }
+    } else {
+        for (int y = 0; y < H / 2; ++y) {
+            for (int x = 0; x < W; ++x) {
+                for (int c = 0; c < 3; ++c) {
+                    std::swap(p.rgb[(static_cast<size_t>(y) * W + x) * 3 + c],
+                              p.rgb[(static_cast<size_t>(H - 1 - y) * W + x) * 3 + c]);
+                }
+            }
+        }
+    }
+}
+
+// Decode (or fetch from the engine's cache) one file's preview tier and
+// reduce it to a plate `height` pixels tall. Runs on a decoder thread.
+std::shared_ptr<const DEScenePlate> loadScenePlate(const Glib::ustring& path, int height,
+                                                   const Glib::ustring& workingProfile,
+                                                   const rtengine::ColorTemp* wbOverride,
+                                                   int rotate, bool hflip, bool vflip)
+{
+    const auto partner = rtengine::PartnerImageStore::getInstance().getPartner(path, workingProfile, false, wbOverride);
+
+    if (!partner || !partner->image) {
+        return {};
+    }
+
+    const rtengine::Imagefloat& img = *partner->image;
+    const int sw = img.getWidth();
+    const int sh = img.getHeight();
+
+    if (sw <= 0 || sh <= 0 || height <= 0) {
+        return {};
+    }
+
+    const int dh = std::min(height, sh);
+    const int dw = std::max(1, static_cast<int>(std::lround(static_cast<double>(sw) * dh / sh)));
+    std::vector<double> acc(static_cast<size_t>(dw) * dh * 3, 0.0);
+    std::vector<int> cnt(static_cast<size_t>(dw) * dh, 0);
+
+    for (int y = 0; y < sh; ++y) {
+        const int dy = std::min(dh - 1, static_cast<int>(static_cast<long long>(y) * dh / sh));
+
+        for (int x = 0; x < sw; ++x) {
+            const int dx = std::min(dw - 1, static_cast<int>(static_cast<long long>(x) * dw / sw));
+            const size_t o = static_cast<size_t>(dy) * dw + dx;
+            acc[o * 3] += img.r(y, x);
+            acc[o * 3 + 1] += img.g(y, x);
+            acc[o * 3 + 2] += img.b(y, x);
+            ++cnt[o];
+        }
+    }
+
+    auto plate = std::make_shared<DEScenePlate>();
+    plate->w = dw;
+    plate->h = dh;
+    plate->rgb.resize(acc.size());
+
+    for (size_t i = 0; i < cnt.size(); ++i) {
+        const double n = cnt[i] > 0 ? cnt[i] : 1.0;
+
+        for (int c = 0; c < 3; ++c) {
+            plate->rgb[i * 3 + c] = static_cast<float>(std::max(0.0, acc[i * 3 + c] / n) / 65535.0);
+        }
+    }
+
+    // Same order as the thumbnail pipeline: coarse rotation, then flips.
+    if (rotate == 90 || rotate == 180 || rotate == 270) {
+        rotatePlate(*plate, rotate);
+    }
+
+    if (hflip) {
+        flipPlate(*plate, true);
+    }
+
+    if (vflip) {
+        flipPlate(*plate, false);
+    }
+
+    return plate;
+}
+
 // Work queue shared with the decoder threads. Held by shared_ptr so the
 // workers never touch the dialog itself — they only post results back
 // through an idle handler, which re-checks the alive flag on the GUI thread.
@@ -105,6 +296,7 @@ struct DEThumbReq {
     int height;
     bool neutral;
     bool basePlate; // styled base render with its own double exposure stripped
+    bool scene;     // engine decode -> DEScenePlate instead of a pixbuf
 };
 
 struct DEThumbQueue {
@@ -421,14 +613,27 @@ constexpr int DEThumbGrid::PAD;
 // DEBlendPreview — aspect-fit display of the composited preview pixbuf.
 // ---------------------------------------------------------------------------
 
+// The blend preview: paints the composite, and lets the selected exposure be
+// placed by hand — drag inside its frame to move it, drag a corner handle or
+// scroll to resize it about its centre, double-click to reset. Geometry is
+// reported in composite-pixbuf pixels; the dialog converts to frame units.
+constexpr double DE_HANDLE_PX = 6.0; // corner handle half-size, widget pixels
+
 class DEBlendPreview final : public Gtk::DrawingArea
 {
 public:
+    std::function<void(double, double)> onMove;  // drag delta since the last event
+    std::function<void(double)> onScale;         // multiplicative size factor
+    std::function<void()> onReset;               // double-click
+    std::function<void()> onGestureEnd;          // button released after a drag
+
     DEBlendPreview()
     {
         set_size_request(420, 300);
         set_hexpand(true);
         set_vexpand(true);
+        add_events(Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::POINTER_MOTION_MASK
+                   | Gdk::SCROLL_MASK | Gdk::SMOOTH_SCROLL_MASK | Gdk::LEAVE_NOTIFY_MASK);
     }
 
     void setComposite(const Glib::RefPtr<Gdk::Pixbuf>& pixbuf)
@@ -437,8 +642,198 @@ public:
         queue_draw();
     }
 
+    // The selected layer's placed frame, in composite pixel coordinates (may
+    // extend past the composite). Hidden when nothing is selected.
+    void setSelectionFrame(bool visible, double x0, double y0, double x1, double y1)
+    {
+        frameVisible_ = visible;
+        fx0_ = std::min(x0, x1);
+        fx1_ = std::max(x0, x1);
+        fy0_ = std::min(y0, y1);
+        fy1_ = std::max(y0, y1);
+        queue_draw();
+    }
+
 private:
+    enum class Drag { NONE, MOVE, SCALE };
+
     Glib::RefPtr<Gdk::Pixbuf> composite_;
+    bool frameVisible_ = false;
+    double fx0_ = 0.0, fy0_ = 0.0, fx1_ = 0.0, fy1_ = 0.0;
+    // composite -> widget mapping from the last draw
+    double sc_ = 1.0, ox_ = 0.0, oy_ = 0.0;
+    Drag drag_ = Drag::NONE;
+    double lastX_ = 0.0, lastY_ = 0.0;
+    double scaleStartDist_ = 1.0;
+    bool hoverHandle_ = false;
+    bool hoverFrame_ = false;
+
+    double wx(double cx) const { return ox_ + cx * sc_; }
+    double wy(double cy) const { return oy_ + cy * sc_; }
+    double centreX() const { return wx((fx0_ + fx1_) * 0.5); }
+    double centreY() const { return wy((fy0_ + fy1_) * 0.5); }
+
+    bool hitHandle(double x, double y) const
+    {
+        if (!frameVisible_) {
+            return false;
+        }
+
+        const double xs[2] = {wx(fx0_), wx(fx1_)};
+        const double ys[2] = {wy(fy0_), wy(fy1_)};
+
+        for (double hx : xs) {
+            for (double hy : ys) {
+                if (std::fabs(x - hx) <= DE_HANDLE_PX + 3.0 && std::fabs(y - hy) <= DE_HANDLE_PX + 3.0) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    bool hitFrame(double x, double y) const
+    {
+        return frameVisible_ && x >= wx(fx0_) && x <= wx(fx1_) && y >= wy(fy0_) && y <= wy(fy1_);
+    }
+
+    void setCursorName(const char* name)
+    {
+        const auto win = get_window();
+
+        if (win) {
+            win->set_cursor(Gdk::Cursor::create(get_display(), name));
+        }
+    }
+
+    void updateHover(double x, double y)
+    {
+        const bool handle = hitHandle(x, y);
+        const bool frame = !handle && hitFrame(x, y);
+
+        if (handle != hoverHandle_ || frame != hoverFrame_) {
+            hoverHandle_ = handle;
+            hoverFrame_ = frame;
+            setCursorName(handle ? "nwse-resize" : (frame ? "move" : "default"));
+            queue_draw();
+        }
+    }
+
+    bool on_button_press_event(GdkEventButton* e) override
+    {
+        if (e->button != 1) {
+            return false;
+        }
+
+        if (e->type == GDK_2BUTTON_PRESS) {
+            drag_ = Drag::NONE;
+
+            if (frameVisible_ && onReset) {
+                onReset();
+            }
+
+            return true;
+        }
+
+        if (!frameVisible_) {
+            return false;
+        }
+
+        lastX_ = e->x;
+        lastY_ = e->y;
+
+        if (hitHandle(e->x, e->y)) {
+            drag_ = Drag::SCALE;
+            scaleStartDist_ = std::max(1.0, std::hypot(e->x - centreX(), e->y - centreY()));
+            return true;
+        }
+
+        if (hitFrame(e->x, e->y)) {
+            drag_ = Drag::MOVE;
+            return true;
+        }
+
+        return false;
+    }
+
+    bool on_motion_notify_event(GdkEventMotion* e) override
+    {
+        if (drag_ == Drag::MOVE) {
+            if (onMove && sc_ > 0.0) {
+                onMove((e->x - lastX_) / sc_, (e->y - lastY_) / sc_);
+            }
+
+            lastX_ = e->x;
+            lastY_ = e->y;
+            return true;
+        }
+
+        if (drag_ == Drag::SCALE) {
+            const double d = std::max(1.0, std::hypot(e->x - centreX(), e->y - centreY()));
+
+            if (onScale) {
+                onScale(d / scaleStartDist_);
+            }
+
+            scaleStartDist_ = d;
+            return true;
+        }
+
+        updateHover(e->x, e->y);
+        return false;
+    }
+
+    bool on_button_release_event(GdkEventButton* e) override
+    {
+        if (e->button == 1 && drag_ != Drag::NONE) {
+            drag_ = Drag::NONE;
+
+            if (onGestureEnd) {
+                onGestureEnd();
+            }
+
+            updateHover(e->x, e->y);
+            return true;
+        }
+
+        return false;
+    }
+
+    bool on_scroll_event(GdkEventScroll* e) override
+    {
+        if (!frameVisible_ || !onScale) {
+            return false;
+        }
+
+        double steps = 0.0;
+
+        if (e->direction == GDK_SCROLL_UP) {
+            steps = 1.0;
+        } else if (e->direction == GDK_SCROLL_DOWN) {
+            steps = -1.0;
+        } else if (e->direction == GDK_SCROLL_SMOOTH) {
+            steps = -e->delta_y;
+        }
+
+        if (steps == 0.0) {
+            return false;
+        }
+
+        onScale(std::pow(1.06, steps));
+        return true;
+    }
+
+    bool on_leave_notify_event(GdkEventCrossing*) override
+    {
+        if (drag_ == Drag::NONE && (hoverHandle_ || hoverFrame_)) {
+            hoverHandle_ = hoverFrame_ = false;
+            setCursorName("default");
+            queue_draw();
+        }
+
+        return false;
+    }
 
     bool on_draw(const Cairo::RefPtr<Cairo::Context>& cr) override
     {
@@ -463,18 +858,64 @@ private:
             return true;
         }
 
-        const double sc = std::min(static_cast<double>(w) / composite_->get_width(),
-                                   static_cast<double>(h) / composite_->get_height());
-        const double dw = composite_->get_width() * sc;
-        const double dh = composite_->get_height() * sc;
+        sc_ = std::min(static_cast<double>(w) / composite_->get_width(),
+                       static_cast<double>(h) / composite_->get_height());
+        const double dw = composite_->get_width() * sc_;
+        const double dh = composite_->get_height() * sc_;
+        ox_ = (w - dw) / 2.0;
+        oy_ = (h - dh) / 2.0;
 
         cr->save();
-        cr->translate((w - dw) / 2.0, (h - dh) / 2.0);
-        cr->scale(sc, sc);
+        cr->translate(ox_, oy_);
+        cr->scale(sc_, sc_);
         Gdk::Cairo::set_source_pixbuf(cr, composite_, 0, 0);
         cr->paint();
         cr->restore();
 
+        if (!frameVisible_) {
+            return true;
+        }
+
+        // Selected exposure's frame: dark underline so it reads on any
+        // content, then a light dashed line, then the corner handles.
+        const double x0 = wx(fx0_), y0 = wy(fy0_), x1 = wx(fx1_), y1 = wy(fy1_);
+        cr->save();
+        cr->rectangle(0, 0, w, h);
+        cr->clip();
+        cr->set_line_join(Cairo::LINE_JOIN_MITER);
+
+        cr->rectangle(x0, y0, x1 - x0, y1 - y0);
+        cr->set_source_rgba(0.0, 0.0, 0.0, 0.55);
+        cr->set_line_width(3.0);
+        cr->stroke_preserve();
+        cr->set_source_rgba(1.0, 1.0, 1.0, hoverFrame_ || drag_ == Drag::MOVE ? 1.0 : 0.85);
+        cr->set_line_width(1.0);
+        std::vector<double> dash = {6.0, 4.0};
+        cr->set_dash(dash, 0.0);
+        cr->stroke();
+        cr->unset_dash();
+
+        const double xs[2] = {x0, x1};
+        const double ys[2] = {y0, y1};
+
+        for (double hx : xs) {
+            for (double hy : ys) {
+                cr->rectangle(hx - DE_HANDLE_PX, hy - DE_HANDLE_PX, 2.0 * DE_HANDLE_PX, 2.0 * DE_HANDLE_PX);
+                cr->set_source_rgba(0.0, 0.0, 0.0, 0.7);
+                cr->set_line_width(3.0);
+                cr->stroke_preserve();
+
+                if (hoverHandle_ || drag_ == Drag::SCALE) {
+                    cr->set_source_rgb(1.0, 0.80, 0.25);
+                } else {
+                    cr->set_source_rgb(1.0, 1.0, 1.0);
+                }
+
+                cr->fill();
+            }
+        }
+
+        cr->restore();
         return true;
     }
 };
@@ -507,6 +948,8 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     filterRefreshPending_(false),
     visibleThumbsPending_(false)
 {
+    initSceneContext();
+
     if (browserFilter) {
         browserFilter_ = *browserFilter;
     }
@@ -554,11 +997,16 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     scopeBox->pack_start(*globalBtn_, Gtk::PACK_SHRINK);
     toolbar->pack_start(*scopeBox, Gtk::PACK_SHRINK);
 
-    // Seed pick/star filters from the browser tab's current filter state.
+    // Seed pick/star filters from the last picker session; the first time
+    // (nothing saved yet) from the browser tab's current filter state.
     bool seedPicked = false;
     int seedMinStars = 0;
+    const Options& savedOpts = App::get().options();
 
-    if (haveBrowserFilter_) {
+    if (savedOpts.dePickerMinStars >= 0) {
+        seedPicked = savedOpts.dePickerPickedOnly;
+        seedMinStars = std::min(5, savedOpts.dePickerMinStars);
+    } else if (haveBrowserFilter_) {
         seedPicked = browserFilter_.showPicked && !browserFilter_.showUnflagged;
 
         if (!browserFilter_.showRanked[0]) {
@@ -619,10 +1067,20 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     Gtk::Box* right = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 6));
 
     preview_ = Gtk::manage(new DEBlendPreview());
+    preview_->onMove = [this](double dx, double dy) { onPreviewMove(dx, dy); };
+    preview_->onScale = [this](double factor) { onPreviewScale(factor); };
+    preview_->onReset = [this]() { onPreviewReset(); };
     right->pack_start(*preview_, Gtk::PACK_EXPAND_WIDGET);
+
+    Gtk::Label* previewHint = Gtk::manage(new Gtk::Label(M("DOUBLEEXPOSURE_PREVIEW_HINT")));
+    previewHint->set_xalign(0.f);
+    previewHint->set_line_wrap(true);
+    previewHint->get_style_context()->add_class("dim-label");
+    right->pack_start(*previewHint, Gtk::PACK_SHRINK);
 
     highRes_ = Gtk::manage(new Gtk::CheckButton(M("DOUBLEEXPOSURE_HIGHRES")));
     highRes_->set_halign(Gtk::ALIGN_END);
+    highRes_->set_active(App::get().options().dePickerHighRes); // before the handler is wired
     highRes_->signal_toggled().connect(sigc::mem_fun(*this, &DoubleExposureDlg::highResToggled));
     right->pack_start(*highRes_, Gtk::PACK_SHRINK);
 
@@ -698,6 +1156,23 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     softnessScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SOFTNESS_TOOLTIP"));
     softnessScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
 
+    // Placement of the selected exposure over the base frame; the preview
+    // drives the same three values by dragging.
+    right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_OFFSETX"), offsetXScale_, -150.0, 150.0, 0.5, 0.0), Gtk::PACK_SHRINK);
+    offsetXScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PLACEMENT_TOOLTIP"));
+    offsetXScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_OFFSETY"), offsetYScale_, -150.0, 150.0, 0.5, 0.0), Gtk::PACK_SHRINK);
+    offsetYScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PLACEMENT_TOOLTIP"));
+    offsetYScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_SCALE"), scaleScale_, 10.0, 400.0, 1.0, 100.0), Gtk::PACK_SHRINK);
+    scaleScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PLACEMENT_TOOLTIP"));
+    scaleScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+
+    resetPlacement_ = Gtk::manage(new Gtk::Button(M("TP_DOUBLEEXPOSURE_PLACEMENT_RESET")));
+    resetPlacement_->set_halign(Gtk::ALIGN_END);
+    resetPlacement_->signal_clicked().connect(sigc::mem_fun(*this, &DoubleExposureDlg::onPreviewReset));
+    right->pack_start(*resetPlacement_, Gtk::PACK_SHRINK);
+
     split->pack2(*right, true, false);
     content->pack_start(*split, Gtk::PACK_EXPAND_WIDGET);
 
@@ -720,7 +1195,51 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     rebuildTray();
     syncLayerControls();
     requestPreviewThumbs();
-    startScan(false);
+
+    // Resume where the picker was last closed: scope and grid scroll. The
+    // global button's handler runs the scan for that scope.
+    pendingScrollRestore_ = savedOpts.dePickerScroll > 0.0 ? savedOpts.dePickerScroll : -1.0;
+
+    if (savedOpts.dePickerGlobalScope) {
+        globalBtn_->set_active(true);
+    } else {
+        startScan(false);
+    }
+}
+
+void DoubleExposureDlg::savePickerState()
+{
+    Options& o = App::get().mut_options();
+    o.dePickerGlobalScope = globalScope_;
+    o.dePickerPickedOnly = pickedFilter_->get_active();
+    o.dePickerMinStars = std::max(0, starsFilter_->get_active_row_number());
+    o.dePickerHighRes = highRes_->get_active();
+    o.dePickerScroll = gridScroll_ ? gridScroll_->get_vadjustment()->get_value() : 0.0;
+    Options::save();
+}
+
+void DoubleExposureDlg::restoreScroll(bool final)
+{
+    if (pendingScrollRestore_ < 0.0 || !gridScroll_) {
+        return;
+    }
+
+    const auto adj = gridScroll_->get_vadjustment();
+
+    if (lastRestoredScroll_ >= 0.0 && std::fabs(adj->get_value() - lastRestoredScroll_) > 1.0) {
+        // The user scrolled while results were still streaming in: theirs wins.
+        pendingScrollRestore_ = -1.0;
+        return;
+    }
+
+    const double maxValue = std::max(0.0, adj->get_upper() - adj->get_page_size());
+    const double value = std::min(pendingScrollRestore_, maxValue);
+    adj->set_value(value);
+    lastRestoredScroll_ = value;
+
+    if (final || value >= pendingScrollRestore_ - 0.5) {
+        pendingScrollRestore_ = -1.0;
+    }
 }
 
 // Request preview-pane renders of the base plate and every layer at the
@@ -740,6 +1259,12 @@ void DoubleExposureDlg::requestPreviewThumbs()
     }
 
     requestThumbs(layerPaths, height, true);
+
+    // The composite itself runs on the engine's decodes.
+    std::vector<Glib::ustring> scenePaths;
+    scenePaths.push_back(baseImagePath_);
+    scenePaths.insert(scenePaths.end(), layerPaths.begin(), layerPaths.end());
+    requestScenePlates(scenePaths, height);
 }
 
 void DoubleExposureDlg::highResToggled()
@@ -773,6 +1298,8 @@ void DoubleExposureDlg::openFolderChooser()
 DoubleExposureDlg::~DoubleExposureDlg()
 {
     *alive_ = false;
+    previewSettle_.disconnect();
+    savePickerState(); // the widgets outlive this body
 
     // Workers only touch the queue after this point; the idle handlers they
     // may already have posted bail out on the alive flag.
@@ -1052,6 +1579,16 @@ void DoubleExposureDlg::onScanDone(bool global, int generation)
     if (global == globalScope_) {
         filterRefreshPending_ = false; // supersede any coalesced rebuild
         applyFilter();
+
+        // Results are complete: settle the saved scroll on the final geometry.
+        if (pendingScrollRestore_ >= 0.0) {
+            auto alive = alive_;
+            Glib::signal_idle().connect_once([this, alive]() {
+                if (*alive) {
+                    restoreScroll(true);
+                }
+            });
+        }
     }
 }
 
@@ -1094,7 +1631,7 @@ void DoubleExposureDlg::requestThumbs(const std::vector<Glib::ustring>& paths, i
             // The base's styled preview render is the plate the dialog
             // composites onto: strip the image's own double exposure from it.
             const bool basePlate = !neutral && !isGrid && *it == baseImagePath_;
-            queue.emplace_front(DEThumbReq{*it, height, neutral, basePlate});
+            queue.emplace_front(DEThumbReq{*it, height, neutral, basePlate, false});
         }
 
         while (thumbQueue_->grid.size() > MAX_GRID_QUEUE) {
@@ -1122,13 +1659,21 @@ void DoubleExposureDlg::pumpThumbQueue()
     while (queue->activeWorkers < THUMB_WORKERS && static_cast<size_t>(queue->activeWorkers) < queued) {
         ++queue->activeWorkers;
 
-        detachQuietly(std::thread([this, queue, alive]() {
+        const Glib::ustring scenePath = baseImagePath_;
+        const Glib::ustring sceneProfile = workingProfile_;
+        const std::shared_ptr<const rtengine::ColorTemp> sceneWb = baseWb_;
+        const int sceneRotate = baseCoarseRotate_;
+        const bool sceneHflip = baseHflip_;
+        const bool sceneVflip = baseVflip_;
+
+        detachQuietly(std::thread([this, queue, alive, scenePath, sceneProfile, sceneWb, sceneRotate, sceneHflip, sceneVflip]() {
             for (;;) {
                 Glib::ustring path;
                 int height = 0;
 
                 bool neutral = false;
                 bool basePlate = false;
+                bool scene = false;
 
                 {
                     std::lock_guard<std::mutex> lock(queue->mutex);
@@ -1143,7 +1688,27 @@ void DoubleExposureDlg::pumpThumbQueue()
                     height = source.front().height;
                     neutral = source.front().neutral;
                     basePlate = source.front().basePlate;
+                    scene = source.front().scene;
                     source.pop_front();
+                }
+
+                if (scene) {
+                    // Only the base takes the edit's white balance and coarse
+                    // orientation: the engine samples partners upright in
+                    // their own camera balance.
+                    const bool isBase = path == scenePath;
+                    std::shared_ptr<const DEScenePlate> plate = loadScenePlate(
+                        path, height, sceneProfile, isBase ? sceneWb.get() : nullptr,
+                        isBase ? sceneRotate : 0, isBase && sceneHflip, isBase && sceneVflip);
+
+                    Glib::signal_idle().connect_once([this, alive, path, height, plate]() {
+                        if (!*alive) {
+                            return;
+                        }
+
+                        onSceneLoaded(path, height, plate);
+                    });
+                    continue;
                 }
 
                 Glib::RefPtr<Gdk::Pixbuf> pixbuf = pixbufFromThumb(path, height, neutral, basePlate);
@@ -1157,6 +1722,105 @@ void DoubleExposureDlg::pumpThumbQueue()
                 });
             }
         }));
+    }
+}
+
+void DoubleExposureDlg::requestScenePlates(const std::vector<Glib::ustring>& paths, int height)
+{
+    std::vector<Glib::ustring> needed;
+    const auto& map = height == PREVIEW_THUMB_HI ? sceneHiPix_ : scenePix_;
+
+    for (const auto& path : paths) {
+        if (path.empty()) {
+            continue;
+        }
+
+        const Glib::ustring key = path + Glib::ustring::compose("|%1|scene", height);
+
+        if (pendingThumbs_.count(key) || map.count(path)) {
+            continue;
+        }
+
+        pendingThumbs_.insert(key);
+        needed.push_back(path);
+    }
+
+    if (needed.empty()) {
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(thumbQueue_->mutex);
+
+        for (auto it = needed.rbegin(); it != needed.rend(); ++it) {
+            thumbQueue_->preview.emplace_front(DEThumbReq{*it, height, false, false, true});
+        }
+    }
+
+    pumpThumbQueue();
+}
+
+void DoubleExposureDlg::onSceneLoaded(const Glib::ustring& path, int height, std::shared_ptr<const DEScenePlate> plate)
+{
+    pendingThumbs_.erase(path + Glib::ustring::compose("|%1|scene", height));
+
+    if (!plate) {
+        return;
+    }
+
+    (height == PREVIEW_THUMB_HI ? sceneHiPix_ : scenePix_)[path] = std::move(plate);
+    updatePreview();
+}
+
+// What the scene plates must match about the base edit: its working profile
+// (so the store's cache entries are the very ones the engine uses), a fixed
+// white balance when the edit has one, and its coarse orientation. Mirrors
+// the coordinator's WB resolution; auto methods fall back to the camera
+// balance because only the engine can compute them.
+void DoubleExposureDlg::initSceneContext()
+{
+    workingProfile_ = "ProPhoto";
+
+    Thumbnail* thm = baseImagePath_.empty() ? nullptr : CacheManager::getInstance()->getEntry(baseImagePath_);
+
+    if (thm) {
+        const rtengine::procparams::ProcParams bpp = thm->getProcParamsCopy();
+
+        if (!bpp.icm.workingProfile.empty()) {
+            workingProfile_ = bpp.icm.workingProfile;
+        }
+
+        baseCoarseRotate_ = bpp.coarse.rotate;
+        baseHflip_ = bpp.coarse.hflip;
+        baseVflip_ = bpp.coarse.vflip;
+
+        const Glib::ustring method = bpp.wb.method;
+
+        if (!bpp.wb.enabled) {
+            baseWb_ = std::make_shared<const rtengine::ColorTemp>();
+        } else if (method != "Camera" && method.substr(0, 4) != "auto") {
+            baseWb_ = std::make_shared<const rtengine::ColorTemp>(bpp.wb.temperature, bpp.wb.green, bpp.wb.equal,
+                                                                  std::string(method), bpp.wb.observer);
+        }
+
+        thm->decreaseRef();
+    }
+
+    // working profile -> sRGB, both D50-adapted matrices in the ICC store
+    const rtengine::ICCStore* store = rtengine::ICCStore::getInstance();
+    const rtengine::TMatrix wp = store->workingSpaceMatrix(workingProfile_);
+    const rtengine::TMatrix isrgb = store->workingSpaceInverseMatrix("sRGB");
+
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            double v = 0.0;
+
+            for (int k = 0; k < 3; ++k) {
+                v += isrgb[i][k] * wp[k][j];
+            }
+
+            workingToSrgb_[i][j] = v;
+        }
     }
 }
 
@@ -1250,6 +1914,15 @@ void DoubleExposureDlg::applyFilter()
     // Deferred: the grid has just been resized, so the scroll adjustment
     // still reports the previous page geometry.
     scheduleVisibleThumbs();
+
+    if (pendingScrollRestore_ >= 0.0) {
+        auto alive = alive_;
+        Glib::signal_idle().connect_once([this, alive]() {
+            if (*alive) {
+                restoreScroll(false);
+            }
+        });
+    }
 }
 
 // Queues thumbnail decodes for the visible band of the grid plus a screenful
@@ -1565,6 +2238,10 @@ void DoubleExposureDlg::syncLayerControls()
         layerOpacityScale_->set_sensitive(false);
         gateStrengthScale_->set_sensitive(false);
         softnessScale_->set_sensitive(false);
+        offsetXScale_->set_sensitive(false);
+        offsetYScale_->set_sensitive(false);
+        scaleScale_->set_sensitive(false);
+        resetPlacement_->set_sensitive(false);
         blendMethod_->set_sensitive(false);
     } else {
         const auto& layer = params_.layers[selectedLayer_];
@@ -1582,6 +2259,13 @@ void DoubleExposureDlg::syncLayerControls()
         layerOpacityScale_->set_value(layer.opacity);
         gateStrengthScale_->set_value(layer.gateStrength);
         softnessScale_->set_value(layer.softness);
+        offsetXScale_->set_sensitive(true);
+        offsetYScale_->set_sensitive(true);
+        scaleScale_->set_sensitive(true);
+        resetPlacement_->set_sensitive(true);
+        offsetXScale_->set_value(layer.offsetX);
+        offsetYScale_->set_value(layer.offsetY);
+        scaleScale_->set_value(layer.scale);
         blendMethod_->set_active(static_cast<int>(layer.blendMode));
     }
 
@@ -1609,7 +2293,96 @@ void DoubleExposureDlg::layerControlChanged()
     params_.layers[selectedLayer_].opacity = layerOpacityScale_->get_value();
     params_.layers[selectedLayer_].gateStrength = gateStrengthScale_->get_value();
     params_.layers[selectedLayer_].softness = softnessScale_->get_value();
-    updatePreview();
+    params_.layers[selectedLayer_].offsetX = offsetXScale_->get_value();
+    params_.layers[selectedLayer_].offsetY = offsetYScale_->get_value();
+    params_.layers[selectedLayer_].scale = scaleScale_->get_value();
+    schedulePreviewUpdate();
+}
+
+// --- interactive placement from the preview ---
+
+void DoubleExposureDlg::syncPlacementControls()
+{
+    if (selectedLayer_ >= params_.layers.size()) {
+        return;
+    }
+
+    const auto& layer = params_.layers[selectedLayer_];
+    syncingControls_ = true;
+    offsetXScale_->set_value(layer.offsetX);
+    offsetYScale_->set_value(layer.offsetY);
+    scaleScale_->set_value(layer.scale);
+    syncingControls_ = false;
+}
+
+// Motion events arrive faster than the composite can be rebuilt at the
+// high-res tier; coalesce them into one recomposite per idle.
+void DoubleExposureDlg::schedulePreviewUpdate()
+{
+    auto alive = alive_;
+
+    if (!previewUpdatePending_) {
+        previewUpdatePending_ = true;
+
+        Glib::signal_idle().connect_once([this, alive]() {
+            if (!*alive) {
+                return;
+            }
+
+            previewUpdatePending_ = false;
+            updatePreview(true);
+        });
+    }
+
+    // Full-quality pass once the control has been still for a moment.
+    previewSettle_.disconnect();
+    previewSettle_ = Glib::signal_timeout().connect([this, alive]() {
+        if (*alive) {
+            updatePreview(false);
+        }
+
+        return false;
+    }, 220);
+}
+
+void DoubleExposureDlg::onPreviewMove(double dx, double dy)
+{
+    if (selectedLayer_ >= params_.layers.size() || previewNxs_ <= 0.0 || previewNys_ <= 0.0) {
+        return;
+    }
+
+    // composite pixels -> percent of the base's full frame
+    auto& layer = params_.layers[selectedLayer_];
+    layer.offsetX = std::min(std::max(layer.offsetX + dx * previewNxs_ * 100.0, -150.0), 150.0);
+    layer.offsetY = std::min(std::max(layer.offsetY + dy * previewNys_ * 100.0, -150.0), 150.0);
+    syncPlacementControls();
+    schedulePreviewUpdate();
+}
+
+void DoubleExposureDlg::onPreviewScale(double factor)
+{
+    if (selectedLayer_ >= params_.layers.size() || factor <= 0.0) {
+        return;
+    }
+
+    auto& layer = params_.layers[selectedLayer_];
+    layer.scale = std::min(std::max(layer.scale * factor, 10.0), 400.0);
+    syncPlacementControls();
+    schedulePreviewUpdate();
+}
+
+void DoubleExposureDlg::onPreviewReset()
+{
+    if (selectedLayer_ >= params_.layers.size()) {
+        return;
+    }
+
+    auto& layer = params_.layers[selectedLayer_];
+    layer.offsetX = 0.0;
+    layer.offsetY = 0.0;
+    layer.scale = 100.0;
+    syncPlacementControls();
+    schedulePreviewUpdate();
 }
 
 void DoubleExposureDlg::blendControlChanged()
@@ -1642,10 +2415,10 @@ void DoubleExposureDlg::blendControlChanged()
 
     autoGain_->set_sensitive(anyAdd);
 
-    updatePreview();
+    schedulePreviewUpdate();
 }
 
-void DoubleExposureDlg::updatePreview()
+void DoubleExposureDlg::updatePreview(bool quick)
 {
     // Prefer the high-res render when the toggle is on and it has arrived;
     // fall back to the standard tier so the preview never goes blank.
@@ -1666,9 +2439,23 @@ void DoubleExposureDlg::updatePreview()
         return it != stdMap.end() ? it->second : Glib::RefPtr<Gdk::Pixbuf>();
     };
 
+    const auto findPlate = [this, wantHi](const Glib::ustring& path) -> std::shared_ptr<const DEScenePlate> {
+        if (wantHi) {
+            const auto hi = sceneHiPix_.find(path);
+
+            if (hi != sceneHiPix_.end() && hi->second) {
+                return hi->second;
+            }
+        }
+
+        const auto it = scenePix_.find(path);
+        return it != scenePix_.end() ? it->second : std::shared_ptr<const DEScenePlate>();
+    };
+
     const Glib::RefPtr<Gdk::Pixbuf> base = findIn(hiPix_, bigPix_, baseImagePath_);
 
     if (!base) {
+        preview_->setSelectionFrame(false, 0, 0, 0, 0);
         preview_->setComposite({});
         return;
     }
@@ -1677,14 +2464,20 @@ void DoubleExposureDlg::updatePreview()
     const int h = base->get_height();
 
     if (w <= 0 || h <= 0) {
+        preview_->setSelectionFrame(false, 0, 0, 0, 0);
         preview_->setComposite({});
         return;
     }
 
-    // The neutral base render is the scene-linear stand-in the engine
-    // actually composites on (the styled thumb has the user's tone edits
-    // baked in, which would corrupt min/max crossovers and gate decisions).
+    // The scene reference the composite runs on. Preferred: the engine's own
+    // decode of the base (scene plate). Until it arrives: the neutral
+    // thumbnail render; failing that, the styled base itself.
+    const std::shared_ptr<const DEScenePlate> basePlate = findPlate(baseImagePath_);
     const Glib::RefPtr<Gdk::Pixbuf> neutralBase = findIn(neutralHiPix_, neutralPix_, baseImagePath_);
+    const DEScenePlate* nbPlate = basePlate ? basePlate.get() : nullptr;
+
+    const std::vector<float>& srgbEnc = srgbEncodeLut();
+    const std::vector<float>& gateEnc = gateEncodeLut();
 
     float srgbLut[256];
 
@@ -1692,67 +2485,275 @@ void DoubleExposureDlg::updatePreview()
         srgbLut[i] = srgbToLin(i / 255.f);
     }
 
-    // linearize the styled base (the user's edit — the display reference)
-    std::vector<float> lin(static_cast<size_t>(w) * h * 3);
+    const auto workingToSrgb = [this](float& r, float& g, float& b) {
+        const double rr = workingToSrgb_[0][0] * r + workingToSrgb_[0][1] * g + workingToSrgb_[0][2] * b;
+        const double gg = workingToSrgb_[1][0] * r + workingToSrgb_[1][1] * g + workingToSrgb_[1][2] * b;
+        const double bb = workingToSrgb_[2][0] * r + workingToSrgb_[2][1] * g + workingToSrgb_[2][2] * b;
+        r = static_cast<float>(std::max(rr, 0.0));
+        g = static_cast<float>(std::max(gg, 0.0));
+        b = static_cast<float>(std::max(bb, 0.0));
+    };
 
-    const guint8* baseData = base->get_pixels();
-    const int baseStride = base->get_rowstride();
-    const int baseChannels = base->get_n_channels();
+    // Neutral base geometry (plate or thumb), needed by the cache rebuild and
+    // by the composite.
+    const guint8* nbData = nullptr;
+    int nbStride = 0, nbCh = 3, nbW = 0, nbH = 0;
 
-    for (int y = 0; y < h; ++y) {
-        const guint8* row = baseData + y * baseStride;
+    if (nbPlate) {
+        nbW = nbPlate->w;
+        nbH = nbPlate->h;
+    } else if (neutralBase) {
+        nbData = neutralBase->get_pixels();
+        nbStride = neutralBase->get_rowstride();
+        nbCh = neutralBase->get_n_channels();
+        nbW = neutralBase->get_width();
+        nbH = neutralBase->get_height();
+    }
 
-        for (int x = 0; x < w; ++x) {
-            const size_t o = (static_cast<size_t>(y) * w + x) * 3;
-            lin[o] = srgbLut[row[x * baseChannels]];
-            lin[o + 1] = srgbLut[row[x * baseChannels + 1]];
-            lin[o + 2] = srgbLut[row[x * baseChannels + 2]];
+    // Neutral base sample at plate/thumb pixel (nbx, nby) in sRGB-linear.
+    const auto sampleNeutralSrgb = [&](int nbx, int nby, float& r, float& g, float& b) {
+        if (nbPlate) {
+            const size_t o = (static_cast<size_t>(nby) * nbW + nbx) * 3;
+            r = nbPlate->rgb[o];
+            g = nbPlate->rgb[o + 1];
+            b = nbPlate->rgb[o + 2];
+            workingToSrgb(r, g, b);
+        } else {
+            const guint8* np = nbData + nby * nbStride + nbx * nbCh;
+            r = srgbLut[np[0]];
+            g = srgbLut[np[1]];
+            b = srgbLut[np[2]];
+        }
+    };
+
+    // --- base-only work, cached across layer edits ---------------------
+    PreviewCache& pc = previewCache_;
+
+    if (pc.styledRef != base || pc.neutralRef != neutralBase || pc.plateRef != basePlate
+            || pc.wantHi != wantHi || pc.w != w || pc.h != h) {
+        pc.styledRef = base;
+        pc.neutralRef = neutralBase;
+        pc.plateRef = basePlate;
+        pc.wantHi = wantHi;
+        pc.w = w;
+        pc.h = h;
+
+        // linearize the styled base (the user's edit — the display reference)
+        pc.lin.assign(static_cast<size_t>(w) * h * 3, 0.f);
+        {
+            const guint8* baseData = base->get_pixels();
+            const int baseStride = base->get_rowstride();
+            const int baseChannels = base->get_n_channels();
+
+            for (int y = 0; y < h; ++y) {
+                const guint8* row = baseData + y * baseStride;
+
+                for (int x = 0; x < w; ++x) {
+                    const size_t o = (static_cast<size_t>(y) * w + x) * 3;
+                    pc.lin[o] = srgbLut[row[x * baseChannels]];
+                    pc.lin[o + 1] = srgbLut[row[x * baseChannels + 1]];
+                    pc.lin[o + 2] = srgbLut[row[x * baseChannels + 2]];
+                }
+            }
+        }
+
+        // geometry: replicate the engine's mapping. The engine composites on
+        // the base's FULL (uncropped, coarse-rotated) frame and cover-fits the
+        // partner's full frame over it; the preview shows the base's crop
+        // window into that frame. In normalized full-frame coordinates the
+        // map reduces to the two full-frame aspects plus the crop rectangle.
+        pc.nx0 = 0.f;
+        pc.nxs = 1.f / w;
+        pc.ny0 = 0.f;
+        pc.nys = 1.f / h;
+        pc.baseAspect = static_cast<float>(w) / h;
+
+        Thumbnail* bthm = CacheManager::getInstance()->getEntry(baseImagePath_);
+
+        if (bthm) {
+            const rtengine::procparams::ProcParams bpp = bthm->getProcParamsCopy();
+            const CacheImageData* cid = bthm->getCacheImageData();
+            int fullW = cid ? cid->width : -1;
+            int fullH = cid ? cid->height : -1;
+
+            if (bpp.coarse.rotate == 90 || bpp.coarse.rotate == 270) {
+                const int t = fullW;
+                fullW = fullH;
+                fullH = t;
+            }
+
+            if (fullW > 0 && fullH > 0) {
+                pc.baseAspect = static_cast<float>(fullW) / fullH;
+
+                if (bpp.crop.enabled && bpp.crop.w > 0 && bpp.crop.h > 0) {
+                    pc.nx0 = static_cast<float>(bpp.crop.x) / fullW;
+                    pc.nxs = (static_cast<float>(bpp.crop.w) / w) / fullW;
+                    pc.ny0 = static_cast<float>(bpp.crop.y) / fullH;
+                    pc.nys = (static_cast<float>(bpp.crop.h) / h) / fullH;
+                }
+            }
+
+            bthm->decreaseRef();
+        }
+
+        // Look transfer, measured from (neutral -> styled) pixel pairs of the
+        // base plate: ONE monotone luminance curve over perceptual bins, read
+        // back with linear interpolation, plus one saturation factor. Both
+        // sides in sRGB-linear.
+        constexpr int TBINS = 256;
+        pc.haveTransfer = nbW > 0 && nbH > 0;
+        pc.satFactor = 1.f;
+
+        if (pc.haveTransfer) {
+            double sumS[TBINS] = {0.0};
+            double cnt[TBINS] = {0.0};
+            double chromaS = 0.0, chromaN = 0.0;
+
+            for (int y = 0; y < h; ++y) {
+                const float ny = pc.ny0 + (y + 0.5f) * pc.nys;
+                const int nby = std::max(0, std::min(static_cast<int>(ny * nbH), nbH - 1));
+
+                for (int x = 0; x < w; ++x) {
+                    const float nx = pc.nx0 + (x + 0.5f) * pc.nxs;
+                    const int nbx = std::max(0, std::min(static_cast<int>(nx * nbW), nbW - 1));
+                    const size_t o = (static_cast<size_t>(y) * w + x) * 3;
+
+                    float nr, ng, nb;
+                    sampleNeutralSrgb(nbx, nby, nr, ng, nb);
+                    const float sr = pc.lin[o], sg = pc.lin[o + 1], sb = pc.lin[o + 2];
+                    const float yn = rtengine::deblend::lum709(nr, ng, nb);
+                    const float ys = rtengine::deblend::lum709(sr, sg, sb);
+                    const int bin = std::min(TBINS - 1, static_cast<int>(rtengine::deblend::gateEncode(yn) * TBINS));
+                    sumS[bin] += ys;
+                    cnt[bin] += 1.0;
+                    chromaS += std::fabs(sr - ys) + std::fabs(sg - ys) + std::fabs(sb - ys);
+                    chromaN += std::fabs(nr - yn) + std::fabs(ng - yn) + std::fabs(nb - yn);
+                }
+            }
+
+            float* toneCurve = pc.toneCurve;
+            int firstMeasured = -1, lastMeasured = -1;
+
+            for (int bin = 0; bin < TBINS; ++bin) {
+                if (cnt[bin] > 8.0) {
+                    toneCurve[bin] = static_cast<float>(sumS[bin] / cnt[bin]);
+
+                    if (firstMeasured < 0) {
+                        firstMeasured = bin;
+                    }
+
+                    lastMeasured = bin;
+                } else {
+                    toneCurve[bin] = -1.f;
+                }
+            }
+
+            if (firstMeasured < 0) {
+                for (int bin = 0; bin < TBINS; ++bin) {
+                    const float enc = (bin + 0.5f) / TBINS;
+                    toneCurve[bin] = enc <= 0.04045f ? enc / 12.92f : std::pow((enc + 0.055f) / 1.055f, 2.4f);
+                }
+            } else {
+                for (int bin = 0; bin < firstMeasured; ++bin) {
+                    toneCurve[bin] = toneCurve[firstMeasured];
+                }
+
+                for (int bin = lastMeasured + 1; bin < TBINS; ++bin) {
+                    toneCurve[bin] = toneCurve[lastMeasured];
+                }
+
+                int prev = firstMeasured;
+
+                for (int bin = firstMeasured + 1; bin <= lastMeasured; ++bin) {
+                    if (toneCurve[bin] < 0.f) {
+                        continue;
+                    }
+
+                    for (int k = prev + 1; k < bin; ++k) {
+                        const float t = static_cast<float>(k - prev) / (bin - prev);
+                        toneCurve[k] = toneCurve[prev] * (1.f - t) + toneCurve[bin] * t;
+                    }
+
+                    prev = bin;
+                }
+
+                for (int bin = 1; bin < TBINS; ++bin) {
+                    toneCurve[bin] = std::max(toneCurve[bin], toneCurve[bin - 1]);
+                }
+            }
+
+            pc.satFactor = chromaN > 1e-9 ? static_cast<float>(std::min(2.0, chromaS / chromaN)) : 1.f;
         }
     }
 
+    const float nx0 = pc.nx0, nxs = pc.nxs, ny0 = pc.ny0, nys = pc.nys;
+    const float baseAspect = pc.baseAspect;
+    const std::vector<float>& lin = pc.lin;
+    constexpr int TBINS = 256;
+    const float* toneCurve = pc.toneCurve;
+    const float satFactor = pc.satFactor;
+
+    // --- layers -----------------------------------------------------------
     struct LayerPix {
-        const Glib::RefPtr<Gdk::Pixbuf> pix;
-        float gain;
-        float opacity;
-        DoubleExposureParams::BlendMode mode;
-        DoubleExposureParams::Compare compare;
-        float softness;
-        bool gateOnLayer;
-        float gateLow;
-        float gateHigh;
-        float gateFeather;
-        float gateStrength;
+        std::shared_ptr<const DEScenePlate> plate; // engine decode (preferred)
+        Glib::RefPtr<Gdk::Pixbuf> pix;             // neutral thumb (fallback)
+        int srcW = 0;
+        int srcH = 0;
+        float gain = 1.f;
+        float opacity = 1.f;
+        DoubleExposureParams::BlendMode mode = DoubleExposureParams::BlendMode::ADD;
+        DoubleExposureParams::Compare compare = DoubleExposureParams::Compare::LUMINANCE;
+        float softness = 0.f;
+        bool gateOnLayer = false;
+        float gateLow = 0.f;
+        float gateHigh = 0.f;
+        float gateFeather = 0.f;
+        float gateStrength = 0.f;
         float sx = 1.f; // engine cover-fit scales, from the two full-frame aspects
         float sy = 1.f;
+        float offX = 0.f; // placement, fraction of the base frame
+        float offY = 0.f;
+        float scale = 1.f;
+        bool placed = false;
     };
 
     std::vector<LayerPix> layerPix;
     int addLayers = 0;
+    bool allPlates = true;
 
     for (const auto& layer : params_.layers) {
         if (!layer.enabled) {
             continue;
         }
 
-        const Glib::RefPtr<Gdk::Pixbuf> pix = findIn(neutralHiPix_, neutralPix_, layer.path);
+        LayerPix lp;
+        lp.plate = findPlate(layer.path);
+        lp.pix = findIn(neutralHiPix_, neutralPix_, layer.path);
 
-        if (!pix) {
+        if (!lp.plate && !lp.pix) {
             continue;
         }
 
-        LayerPix lp {
-            pix,
-            static_cast<float>(std::pow(2.0, layer.ev)),
-            static_cast<float>(layer.opacity) / 100.f,
-            layer.blendMode,
-            layer.compare,
-            std::max(static_cast<float>(layer.softness), 0.f),
-            layer.gateSource == DoubleExposureParams::GateSource::LAYER,
-            static_cast<float>(layer.gateLow) / 100.f,
-            static_cast<float>(layer.gateHigh) / 100.f,
-            static_cast<float>(layer.gateFeather) / 100.f,
-            static_cast<float>(layer.gateStrength) / 100.f
-        };
+        if (!lp.plate) {
+            allPlates = false;
+        }
+
+        lp.srcW = lp.plate ? lp.plate->w : lp.pix->get_width();
+        lp.srcH = lp.plate ? lp.plate->h : lp.pix->get_height();
+        lp.gain = static_cast<float>(std::pow(2.0, layer.ev));
+        lp.opacity = static_cast<float>(layer.opacity) / 100.f;
+        lp.mode = layer.blendMode;
+        lp.compare = layer.compare;
+        lp.softness = std::max(static_cast<float>(layer.softness), 0.f);
+        lp.gateOnLayer = layer.gateSource == DoubleExposureParams::GateSource::LAYER;
+        lp.gateLow = static_cast<float>(layer.gateLow) / 100.f;
+        lp.gateHigh = static_cast<float>(layer.gateHigh) / 100.f;
+        lp.gateFeather = static_cast<float>(layer.gateFeather) / 100.f;
+        lp.gateStrength = static_cast<float>(layer.gateStrength) / 100.f;
+        lp.offX = static_cast<float>(layer.offsetX) / 100.f;
+        lp.offY = static_cast<float>(layer.offsetY) / 100.f;
+        lp.scale = std::max(0.01f, static_cast<float>(layer.scale) / 100.f);
+        lp.placed = lp.offX != 0.f || lp.offY != 0.f || lp.scale != 1.f;
 
         if (lp.mode == DoubleExposureParams::BlendMode::ADD) {
             ++addLayers;
@@ -1781,181 +2782,81 @@ void DoubleExposureDlg::updatePreview()
     const float knee = rtengine::deblend::latitudeKnee(latitude);
     const float shoulderWhite = autoGainFactor;
 
-    // --- geometry: replicate the engine's mapping instead of cover-fitting
-    // the two thumbnails against each other. The engine composites on the
-    // base's FULL (uncropped, coarse-rotated) frame and cover-fits the
-    // partner's full frame over it; the preview shows the base's crop window
-    // into that frame. In normalized full-frame coordinates the whole map
-    // reduces to the two full-frame aspect ratios plus the crop rectangle.
-    float nx0 = 0.f, nxs = 1.f / w;
-    float ny0 = 0.f, nys = 1.f / h;
-    float baseAspect = static_cast<float>(w) / h;
+    // Scene mode: every input is an engine decode, so the composite runs in
+    // the edit's working profile exactly as the engine does and is converted
+    // to sRGB only for display. Otherwise everything stays in the
+    // thumbnails' sRGB-linear space.
+    const bool sceneMode = static_cast<bool>(basePlate) && allPlates && !layerPix.empty();
+    const bool sceneFaithful = pc.haveTransfer && !layerPix.empty();
 
-    {
-        Thumbnail* bthm = CacheManager::getInstance()->getEntry(baseImagePath_);
-
-        if (bthm) {
-            const rtengine::procparams::ProcParams bpp = bthm->getProcParamsCopy();
-            const CacheImageData* cid = bthm->getCacheImageData();
-            int fullW = cid ? cid->width : -1;
-            int fullH = cid ? cid->height : -1;
-
-            if (bpp.coarse.rotate == 90 || bpp.coarse.rotate == 270) {
-                const int t = fullW;
-                fullW = fullH;
-                fullH = t;
-            }
-
-            if (fullW > 0 && fullH > 0) {
-                baseAspect = static_cast<float>(fullW) / fullH;
-
-                if (bpp.crop.enabled && bpp.crop.w > 0 && bpp.crop.h > 0) {
-                    nx0 = static_cast<float>(bpp.crop.x) / fullW;
-                    nxs = (static_cast<float>(bpp.crop.w) / w) / fullW;
-                    ny0 = static_cast<float>(bpp.crop.y) / fullH;
-                    nys = (static_cast<float>(bpp.crop.h) / h) / fullH;
-                }
-            }
-
-            bthm->decreaseRef();
+    // Cover-fit scales for a layer of the given aspect (engine cover math
+    // reduced to the two full-frame aspect ratios).
+    const auto coverScales = [baseAspect](float layerAspect, float& sx, float& sy) {
+        if (baseAspect >= layerAspect) {
+            sx = 1.f;
+            sy = layerAspect / baseAspect;
+        } else {
+            sx = baseAspect / layerAspect;
+            sy = 1.f;
         }
-    }
+    };
 
     for (auto& lp : layerPix) {
-        // The neutral layer thumb spans the partner's full upright frame, so
-        // its aspect is the engine's partner aspect.
-        const float layerAspect = lp.pix->get_height() > 0
-                                  ? static_cast<float>(lp.pix->get_width()) / lp.pix->get_height()
-                                  : baseAspect;
-
-        if (baseAspect >= layerAspect) {
-            lp.sx = 1.f;
-            lp.sy = layerAspect / baseAspect;
-        } else {
-            lp.sx = baseAspect / layerAspect;
-            lp.sy = 1.f;
-        }
+        const float layerAspect = lp.srcH > 0 ? static_cast<float>(lp.srcW) / lp.srcH : baseAspect;
+        coverScales(layerAspect, lp.sx, lp.sy);
     }
 
-    // Scene-faithful mode: composite on the neutral base exactly like the
-    // engine, then reapply the edit's look as per-channel transfer curves
-    // measured from (neutral -> styled) pixel pairs. Falls back to the styled
-    // base while the neutral render is still loading.
-    const bool sceneFaithful = static_cast<bool>(neutralBase) && !layerPix.empty();
+    // Remember the preview -> full-frame map for the drag handlers, and hand
+    // the selected exposure's placed frame to the preview for its overlay.
+    previewNx0_ = nx0;
+    previewNxs_ = nxs;
+    previewNy0_ = ny0;
+    previewNys_ = nys;
 
-    const guint8* nbData = nullptr;
-    int nbStride = 0, nbCh = 3, nbW = 0, nbH = 0;
+    if (selectedLayer_ < params_.layers.size()) {
+        const auto& sel = params_.layers[selectedLayer_];
+        const std::shared_ptr<const DEScenePlate> selPlate = findPlate(sel.path);
+        const Glib::RefPtr<Gdk::Pixbuf> selPix = findIn(neutralHiPix_, neutralPix_, sel.path);
+        float selAspect = baseAspect;
 
-    // Look transfer, measured from (neutral -> styled) pixel pairs of the base
-    // plate: ONE monotone luminance curve over perceptual bins, read back with
-    // linear interpolation, plus one saturation factor. The earlier per-channel
-    // 64-bin ratio table was piecewise constant, so a smooth sky came out as
-    // hard-edged tonal patches, and its per-channel ratios invented colours
-    // (a B&W edit turned the partner's sky pink and green).
-    constexpr int TBINS = 256;
-    float toneCurve[TBINS];
-    float satFactor = 1.f;
-
-    if (sceneFaithful) {
-        nbData = neutralBase->get_pixels();
-        nbStride = neutralBase->get_rowstride();
-        nbCh = neutralBase->get_n_channels();
-        nbW = neutralBase->get_width();
-        nbH = neutralBase->get_height();
-
-        double sumS[TBINS] = {0.0};
-        double cnt[TBINS] = {0.0};
-        double chromaS = 0.0, chromaN = 0.0;
-
-        for (int y = 0; y < h; ++y) {
-            const float ny = ny0 + (y + 0.5f) * nys;
-            const int nby = std::max(0, std::min(static_cast<int>(ny * nbH), nbH - 1));
-
-            for (int x = 0; x < w; ++x) {
-                const float nx = nx0 + (x + 0.5f) * nxs;
-                const int nbx = std::max(0, std::min(static_cast<int>(nx * nbW), nbW - 1));
-                const guint8* np = nbData + nby * nbStride + nbx * nbCh;
-                const size_t o = (static_cast<size_t>(y) * w + x) * 3;
-
-                const float nr = srgbLut[np[0]], ng = srgbLut[np[1]], nb = srgbLut[np[2]];
-                const float sr = lin[o], sg = lin[o + 1], sb = lin[o + 2];
-                const float yn = rtengine::deblend::lum709(nr, ng, nb);
-                const float ys = rtengine::deblend::lum709(sr, sg, sb);
-                const int bin = std::min(TBINS - 1, static_cast<int>(rtengine::deblend::gateEncode(yn) * TBINS));
-                sumS[bin] += ys;
-                cnt[bin] += 1.0;
-                chromaS += std::fabs(sr - ys) + std::fabs(sg - ys) + std::fabs(sb - ys);
-                chromaN += std::fabs(nr - yn) + std::fabs(ng - yn) + std::fabs(nb - yn);
-            }
+        if (selPlate && selPlate->h > 0) {
+            selAspect = static_cast<float>(selPlate->w) / selPlate->h;
+        } else if (selPix && selPix->get_height() > 0) {
+            selAspect = static_cast<float>(selPix->get_width()) / selPix->get_height();
         }
 
-        // Bin means where the plate has enough samples; interpolate across
-        // the gaps (composited values can land where the plate never did),
-        // then force monotone so the curve behaves like a tone curve.
-        int firstMeasured = -1, lastMeasured = -1;
-
-        for (int bin = 0; bin < TBINS; ++bin) {
-            if (cnt[bin] > 8.0) {
-                toneCurve[bin] = static_cast<float>(sumS[bin] / cnt[bin]);
-
-                if (firstMeasured < 0) {
-                    firstMeasured = bin;
-                }
-
-                lastMeasured = bin;
-            } else {
-                toneCurve[bin] = -1.f;
-            }
-        }
-
-        if (firstMeasured < 0) {
-            // No usable pairs: identity in luminance.
-            for (int bin = 0; bin < TBINS; ++bin) {
-                const float enc = (bin + 0.5f) / TBINS;
-                toneCurve[bin] = enc <= 0.04045f ? enc / 12.92f : std::pow((enc + 0.055f) / 1.055f, 2.4f);
-            }
-        } else {
-            for (int bin = 0; bin < firstMeasured; ++bin) {
-                toneCurve[bin] = toneCurve[firstMeasured];
-            }
-
-            for (int bin = lastMeasured + 1; bin < TBINS; ++bin) {
-                toneCurve[bin] = toneCurve[lastMeasured];
-            }
-
-            int prev = firstMeasured;
-
-            for (int bin = firstMeasured + 1; bin <= lastMeasured; ++bin) {
-                if (toneCurve[bin] < 0.f) {
-                    continue;
-                }
-
-                for (int k = prev + 1; k < bin; ++k) {
-                    const float t = static_cast<float>(k - prev) / (bin - prev);
-                    toneCurve[k] = toneCurve[prev] * (1.f - t) + toneCurve[bin] * t;
-                }
-
-                prev = bin;
-            }
-
-            for (int bin = 1; bin < TBINS; ++bin) {
-                toneCurve[bin] = std::max(toneCurve[bin], toneCurve[bin - 1]);
-            }
-        }
-
-        satFactor = chromaN > 1e-9 ? static_cast<float>(std::min(2.0, chromaS / chromaN)) : 1.f;
+        float sx = 1.f, sy = 1.f;
+        coverScales(selAspect, sx, sy);
+        const double scale = std::max(0.01, sel.scale / 100.0);
+        const double offX = sel.offsetX / 100.0, offY = sel.offsetY / 100.0;
+        const double nxa = 0.5 + offX - 0.5 * scale / sx, nxb = 0.5 + offX + 0.5 * scale / sx;
+        const double nya = 0.5 + offY - 0.5 * scale / sy, nyb = 0.5 + offY + 0.5 * scale / sy;
+        preview_->setSelectionFrame(true, (nxa - nx0) / nxs, (nya - ny0) / nys, (nxb - nx0) / nxs, (nyb - ny0) / nys);
+    } else {
+        preview_->setSelectionFrame(false, 0, 0, 0, 0);
     }
 
+    // --- composite ----------------------------------------------------------
+    // Interactive passes compute every other pixel in both directions and
+    // replicate; the settled pass computes them all. Output stays w x h so
+    // the overlay and drag coordinates never change.
+    const int step = quick ? 2 : 1;
     auto result = Gdk::Pixbuf::create(Gdk::COLORSPACE_RGB, false, 8, w, h);
     guint8* outData = result->get_pixels();
     const int outStride = result->get_rowstride();
+    const int blockRows = (h + step - 1) / step;
+    const LayerPix* layers = layerPix.data();
+    const int nLayers = static_cast<int>(layerPix.size());
 
-    for (int y = 0; y < h; ++y) {
-        guint8* outRow = outData + y * outStride;
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(dynamic, 4)
+#endif
+    for (int by = 0; by < blockRows; ++by) {
+        const int y = by * step;
         const float ny = ny0 + (y + 0.5f) * nys;
-        const int nby = sceneFaithful ? std::max(0, std::min(static_cast<int>(ny * nbH), nbH - 1)) : 0;
+        const int nby = (sceneFaithful && nbH > 0) ? std::max(0, std::min(static_cast<int>(ny * nbH), nbH - 1)) : 0;
 
-        for (int x = 0; x < w; ++x) {
+        for (int x = 0; x < w; x += step) {
             const size_t o = (static_cast<size_t>(y) * w + x) * 3;
             const float nx = nx0 + (x + 0.5f) * nxs;
 
@@ -1963,43 +2864,88 @@ void DoubleExposureDlg::updatePreview()
 
             if (sceneFaithful) {
                 const int nbx = std::max(0, std::min(static_cast<int>(nx * nbW), nbW - 1));
-                const guint8* np = nbData + nby * nbStride + nbx * nbCh;
-                r = srgbLut[np[0]] * baseGain;
-                g = srgbLut[np[1]] * baseGain;
-                b = srgbLut[np[2]] * baseGain;
+
+                if (nbPlate) {
+                    const size_t no = (static_cast<size_t>(nby) * nbW + nbx) * 3;
+                    r = nbPlate->rgb[no];
+                    g = nbPlate->rgb[no + 1];
+                    b = nbPlate->rgb[no + 2];
+
+                    if (!sceneMode) {
+                        workingToSrgb(r, g, b);
+                    }
+                } else {
+                    const guint8* np = nbData + nby * nbStride + nbx * nbCh;
+                    r = srgbLut[np[0]];
+                    g = srgbLut[np[1]];
+                    b = srgbLut[np[2]];
+                }
+
+                r *= baseGain;
+                g *= baseGain;
+                b *= baseGain;
             } else {
                 r = lin[o] * baseGain;
                 g = lin[o + 1] * baseGain;
                 b = lin[o + 2] * baseGain;
             }
 
-            for (const auto& lp : layerPix) {
-                // nearest sample of the layer thumb through the engine's map
-                const int lw = lp.pix->get_width();
-                const int lh = lp.pix->get_height();
-                const float un = (nx - 0.5f) * lp.sx + 0.5f;
-                const float vn = (ny - 0.5f) * lp.sy + 0.5f;
-                int lx = static_cast<int>(un * lw);
-                int ly = static_cast<int>(vn * lh);
-                lx = std::max(0, std::min(lx, lw - 1));
-                ly = std::max(0, std::min(ly, lh - 1));
+            for (int li = 0; li < nLayers; ++li) {
+                const LayerPix& lp = layers[li];
+                const float un = (nx - 0.5f - lp.offX) * lp.sx / lp.scale + 0.5f;
+                const float vn = (ny - 0.5f - lp.offY) * lp.sy / lp.scale + 0.5f;
+                float coverage = 1.f;
 
-                const guint8* lrow = lp.pix->get_pixels() + ly * lp.pix->get_rowstride();
-                const int lch = lp.pix->get_n_channels();
-                float pr = srgbLut[lrow[lx * lch]] * lp.gain;
-                float pg = srgbLut[lrow[lx * lch + 1]] * lp.gain;
-                float pb = srgbLut[lrow[lx * lch + 2]] * lp.gain;
+                if (lp.placed) {
+                    const float aaX = std::max(nxs * lp.sx / lp.scale, 1e-6f);
+                    const float aaY = std::max(nys * lp.sy / lp.scale, 1e-6f);
+                    const float ex = std::min(un, 1.f - un) / aaX;
+                    const float ey = std::min(vn, 1.f - vn) / aaY;
+                    coverage = std::min(std::max(std::min(ex, ey) + 0.5f, 0.f), 1.f);
+
+                    if (coverage <= 0.f) {
+                        continue;
+                    }
+                }
+
+                int lx = static_cast<int>(un * lp.srcW);
+                int ly = static_cast<int>(vn * lp.srcH);
+                lx = std::max(0, std::min(lx, lp.srcW - 1));
+                ly = std::max(0, std::min(ly, lp.srcH - 1));
+
+                float pr, pg, pb;
+
+                if (lp.plate && (sceneMode || !lp.pix)) {
+                    const size_t lo = (static_cast<size_t>(ly) * lp.srcW + lx) * 3;
+                    pr = lp.plate->rgb[lo];
+                    pg = lp.plate->rgb[lo + 1];
+                    pb = lp.plate->rgb[lo + 2];
+
+                    if (!sceneMode) {
+                        workingToSrgb(pr, pg, pb);
+                    }
+                } else {
+                    const guint8* lrow = lp.pix->get_pixels() + ly * lp.pix->get_rowstride();
+                    const int lch = lp.pix->get_n_channels();
+                    pr = srgbLut[lrow[lx * lch]];
+                    pg = srgbLut[lrow[lx * lch + 1]];
+                    pb = srgbLut[lrow[lx * lch + 2]];
+                }
+
+                pr *= lp.gain;
+                pg *= lp.gain;
+                pb *= lp.gain;
 
                 float cr, cg, cb;
                 rtengine::deblend::blend(lp.mode, lp.compare, lp.softness, 1.f, r, g, b, pr, pg, pb, cr, cg, cb);
 
-                float wgt = lp.opacity;
+                float wgt = lp.opacity * coverage;
 
                 if (lp.gateStrength > 0.f) {
                     const float lum = lp.gateOnLayer ? rtengine::deblend::lum709(pr, pg, pb)
                                                      : rtengine::deblend::lum709(r, g, b);
                     wgt *= rtengine::deblend::gateWeight(lp.gateStrength,
-                                                         rtengine::deblend::gateWindow(rtengine::deblend::gateEncode(lum), lp.gateLow, lp.gateHigh, lp.gateFeather));
+                                                         rtengine::deblend::gateWindow(lutEncode(gateEnc, lum), lp.gateLow, lp.gateHigh, lp.gateFeather));
                 }
 
                 r += wgt * (cr - r);
@@ -2013,19 +2959,23 @@ void DoubleExposureDlg::updatePreview()
                 b = shoulderWhite * rtengine::deblend::shoulder(std::max(b, 0.f) / shoulderWhite, knee);
             }
 
+            if (sceneMode) {
+                workingToSrgb(r, g, b);
+            }
+
             if (sceneFaithful) {
                 // Back to the edit's look: the plate's luminance curve as a
                 // gain on the composited pixel (hue kept), then its saturation.
                 r = std::max(r, 0.f);
                 g = std::max(g, 0.f);
                 b = std::max(b, 0.f);
-                const float y = rtengine::deblend::lum709(r, g, b);
-                const float pos = std::min(std::max(rtengine::deblend::gateEncode(y) * TBINS - 0.5f, 0.f), static_cast<float>(TBINS - 1));
+                const float yv = rtengine::deblend::lum709(r, g, b);
+                const float pos = std::min(std::max(lutEncode(gateEnc, yv) * TBINS - 0.5f, 0.f), static_cast<float>(TBINS - 1));
                 const int i0 = static_cast<int>(pos);
                 const int i1 = std::min(i0 + 1, TBINS - 1);
                 const float f = pos - i0;
                 const float ys = toneCurve[i0] * (1.f - f) + toneCurve[i1] * f;
-                const float gain = ys / std::max(y, 1e-6f);
+                const float gain = ys / std::max(yv, 1e-6f);
                 r *= gain;
                 g *= gain;
                 b *= gain;
@@ -2035,9 +2985,22 @@ void DoubleExposureDlg::updatePreview()
                 b = yo + (b - yo) * satFactor;
             }
 
-            outRow[x * 3] = static_cast<guint8>(linToSrgb(r) * 255.f + 0.5f);
-            outRow[x * 3 + 1] = static_cast<guint8>(linToSrgb(g) * 255.f + 0.5f);
-            outRow[x * 3 + 2] = static_cast<guint8>(linToSrgb(b) * 255.f + 0.5f);
+            const guint8 pr8 = static_cast<guint8>(lutEncode(srgbEnc, r) * 255.f + 0.5f);
+            const guint8 pg8 = static_cast<guint8>(lutEncode(srgbEnc, g) * 255.f + 0.5f);
+            const guint8 pb8 = static_cast<guint8>(lutEncode(srgbEnc, b) * 255.f + 0.5f);
+
+            const int yEnd = std::min(h, y + step);
+            const int xEnd = std::min(w, x + step);
+
+            for (int yy = y; yy < yEnd; ++yy) {
+                guint8* outRow = outData + yy * outStride;
+
+                for (int xx = x; xx < xEnd; ++xx) {
+                    outRow[xx * 3] = pr8;
+                    outRow[xx * 3 + 1] = pg8;
+                    outRow[xx * 3 + 2] = pb8;
+                }
+            }
         }
     }
 
