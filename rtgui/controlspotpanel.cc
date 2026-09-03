@@ -2986,6 +2986,24 @@ void ControlSpotPanel::gradTypeChanged(int /*index*/)
         locY_->setValue(toExtent);
         locYT_->setValue(toExtent);
         disableParamlistener(false);
+
+        // Softness decides how much of the radius is ramp. At the stock 60 a
+        // radial is solid out to a fifth of its radius and gone by four
+        // fifths, which reads as a hard blob rather than a fade; at 100 the
+        // falloff runs the whole way from the centre to the edge. Linear
+        // wants the stock value back, where softness is the width of the
+        // transition band instead.
+        const double stockTransit = 60.;
+        const double radialTransit = 100.;
+        const double fromTransit = newType == 1 ? stockTransit : radialTransit;
+        const double toTransit = newType == 1 ? radialTransit : stockTransit;
+
+        if (std::abs(static_cast<double>(row[spots_.transit]) - fromTransit) < 0.01) {
+            row[spots_.transit] = toTransit;
+            disableParamlistener(true);
+            transit_->setValue(toTransit);
+            disableParamlistener(false);
+        }
     }
 
     treeview_->queue_draw();
