@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+  <polyline points="3.00,20.00 3.56,19.50 4.12,19.00 4.69,18.50 5.25,18.00 5.81,17.50 6.38,17.00 6.94,16.50 7.50,16.00 8.06,15.50 8.62,15.00 9.19,14.50 9.75,14.00 10.31,13.50 10.88,13.00 11.44,12.50 12.00,12.00 12.56,11.50 13.12,11.00 13.69,10.50 14.25,10.00 14.81,9.50 15.38,9.00 15.94,8.50 16.50,8.00 17.06,7.50 17.62,7.00 18.19,6.50 18.75,6.00 19.31,5.50 19.88,5.00 20.44,4.50 21.00,4.00"
+    style="fill:none;stroke:#cccccc;stroke-width:1.6;stroke-opacity:0.85;stroke-linecap:round;stroke-linejoin:round"/>
+  <line x1="3" y1="20" x2="21" y2="20" style="stroke:#cccccc;stroke-width:1;stroke-opacity:0.3"/>
+  <line x1="3" y1="20" x2="3" y2="4" style="stroke:#cccccc;stroke-width:1;stroke-opacity:0.3"/>
+</svg>

@@ -57,8 +57,13 @@ class PopUpCommon
 public:
     typedef sigc::signal<void, int> type_signal_changed;
     typedef sigc::signal<void, int> type_signal_item_selected;
+    /// Emitted with the entry index while the pointer rests on it in the open
+    /// menu, and with -1 when the menu closes. Lets a caller preview an entry
+    /// before committing to it; the -1 is the cue to put things back.
+    typedef sigc::signal<void, int> type_signal_hovered;
     type_signal_changed signal_changed();
     type_signal_item_selected signal_item_selected();
+    type_signal_hovered signal_hovered();
     Gtk::Grid* buttonGroup;    // this is the widget to be packed
 
     explicit PopUpCommon (Gtk::Button* button, const Glib::ustring& label = "");
@@ -83,6 +88,9 @@ public:
 private:
     type_signal_changed messageChanged;
     type_signal_item_selected messageItemSelected;
+    type_signal_hovered messageHovered;
+    bool hoverSignalArmed_ = false;
+    void entryHovered(Gtk::Widget* menuItem);
 
     Glib::ustring emptyImageFilename;
     std::vector<Glib::RefPtr<const Gio::Icon>> imageIcons;
@@ -118,6 +126,11 @@ protected:
 inline PopUpCommon::type_signal_changed PopUpCommon::signal_changed ()
 {
     return messageChanged;
+}
+
+inline PopUpCommon::type_signal_hovered PopUpCommon::signal_hovered ()
+{
+    return messageHovered;
 }
 
 inline PopUpCommon::type_signal_item_selected PopUpCommon::signal_item_selected ()

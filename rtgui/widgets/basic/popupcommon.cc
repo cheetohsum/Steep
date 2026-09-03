@@ -133,8 +133,38 @@ bool PopUpCommon::insertEntryImpl(int position, const Glib::ustring& iconName, c
 
     void (PopUpCommon::*entrySelectedFunc)(Gtk::Widget *) = &PopUpCommon::entrySelected;
     newItem->signal_activate ().connect (sigc::bind (sigc::mem_fun (*this, entrySelectedFunc), newItem));
+    newItem->signal_select ().connect (sigc::bind (sigc::mem_fun (*this, &PopUpCommon::entryHovered), newItem));
+
+    // One hide handler for the whole menu, telling listeners to drop whatever
+    // they were previewing. Armed once, on the first entry that wants it.
+    if (!hoverSignalArmed_) {
+        hoverSignalArmed_ = true;
+        menu->signal_hide().connect([this]() { messageHovered.emit(-1); });
+    }
+
     menu->insert(*newItem, position);
     return true;
+}
+
+void PopUpCommon::entryHovered(Gtk::Widget* widget)
+{
+    // signal_select fires as the pointer moves onto an item. Resolve the index
+    // by position: get_active() is latched to the last item USED, not the one
+    // under the pointer, so it cannot answer this question.
+    if (messageHovered.empty()) {
+        return;
+    }
+
+    int i = 0;
+
+    for (const auto& child : menu->get_children()) {
+        if (widget == child) {
+            messageHovered.emit(i);
+            return;
+        }
+
+        i++;
+    }
 }
 
 void PopUpCommon::setEmptyImage(const Glib::ustring &fileName)

@@ -67,8 +67,8 @@ ControlSpotPanel::ControlSpotPanel():
     aiMaskClass_(Gtk::manage(new PopUpButton())),
     aiMaskTolerance_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_TOLERANCE"), 0, 100, 1, 70))),
     maskBlendMode_(Gtk::manage(new PopUpButton())),
-    gradType_(Gtk::manage(new MyComboBoxText())),
-    gradProfile_(Gtk::manage(new MyComboBoxText())),
+    gradType_(Gtk::manage(new PopUpButton())),
+    gradProfile_(Gtk::manage(new PopUpButton())),
     dodgeBurn_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_DODGEBURN"), -100., 100., 1., 0.,
                                         Gtk::manage(new RTImage("circle-black-small")),
                                         Gtk::manage(new RTImage("circle-white-small"))))),
@@ -625,21 +625,37 @@ ControlSpotPanel::ControlSpotPanel():
     // Gradient shaping. Type is the geometry the ramp runs along; profile is
     // the shape of the ramp itself, which is what gradient stops buy you in a
     // drawing program, named rather than dragged.
-    gradType_->append(M("TP_LOCALLAB_GRADTYPE_LINEAR"));
-    gradType_->append(M("TP_LOCALLAB_GRADTYPE_RADIAL"));
-    gradType_->append(M("TP_LOCALLAB_GRADTYPE_MIRROR"));
-    gradType_->set_active(0);
+    gradType_->addEntry("gradient-linear", M("TP_LOCALLAB_GRADTYPE_LINEAR"));
+    gradType_->addEntry("gradient-radial", M("TP_LOCALLAB_GRADTYPE_RADIAL"));
+    gradType_->addEntry("gradient-mirror", M("TP_LOCALLAB_GRADTYPE_MIRROR"));
+    gradType_->setSelected(0);
+    gradType_->hideArrowButton();
+    gradType_->signal_clicked().connect([this]() { gradType_->triggerShowMenu(); });
+    gradType_->buttonGroup->set_hexpand(false);
+    gradType_->buttonGroup->set_halign(Gtk::ALIGN_END);
+    gradType_->setShowSelectionLabel(true);
     gradTypeConn_ = gradType_->signal_changed().connect(
         sigc::mem_fun(*this, &ControlSpotPanel::gradTypeChanged));
+    gradType_->signal_hovered().connect(
+        sigc::mem_fun(*this, &ControlSpotPanel::previewGradType));
 
-    gradProfile_->append(M("TP_LOCALLAB_GRADPROFILE_LINEAR"));
-    gradProfile_->append(M("TP_LOCALLAB_GRADPROFILE_SOFT"));
-    gradProfile_->append(M("TP_LOCALLAB_GRADPROFILE_SMOOTH"));
-    gradProfile_->append(M("TP_LOCALLAB_GRADPROFILE_EASEIN"));
-    gradProfile_->append(M("TP_LOCALLAB_GRADPROFILE_EASEOUT"));
-    gradProfile_->set_active(0);
+    // Each entry's icon is that falloff's own curve, so the menu shows all
+    // five shapes at once; hovering one draws it in the mask swatch.
+    gradProfile_->addEntry("falloff-linear", M("TP_LOCALLAB_GRADPROFILE_LINEAR"));
+    gradProfile_->addEntry("falloff-soft", M("TP_LOCALLAB_GRADPROFILE_SOFT"));
+    gradProfile_->addEntry("falloff-smooth", M("TP_LOCALLAB_GRADPROFILE_SMOOTH"));
+    gradProfile_->addEntry("falloff-easein", M("TP_LOCALLAB_GRADPROFILE_EASEIN"));
+    gradProfile_->addEntry("falloff-easeout", M("TP_LOCALLAB_GRADPROFILE_EASEOUT"));
+    gradProfile_->setSelected(0);
+    gradProfile_->hideArrowButton();
+    gradProfile_->signal_clicked().connect([this]() { gradProfile_->triggerShowMenu(); });
+    gradProfile_->buttonGroup->set_hexpand(false);
+    gradProfile_->buttonGroup->set_halign(Gtk::ALIGN_END);
+    gradProfile_->setShowSelectionLabel(true);
     gradProfileConn_ = gradProfile_->signal_changed().connect(
         sigc::mem_fun(*this, &ControlSpotPanel::gradProfileChanged));
+    gradProfile_->signal_hovered().connect(
+        sigc::mem_fun(*this, &ControlSpotPanel::previewGradProfile));
 
     dbShadowsConn_ = dbShadowsBtn_->signal_toggled().connect(
         sigc::mem_fun(*this, &ControlSpotPanel::dodgeBurnTonesChanged));
@@ -921,7 +937,7 @@ ControlSpotPanel::ControlSpotPanel():
         typeLabel->set_halign(Gtk::ALIGN_START);
         typeLabel->set_xalign(0.f);
         typeRow->pack_start(*typeLabel, Gtk::PACK_SHRINK);
-        typeRow->pack_end(*gradType_, Gtk::PACK_EXPAND_WIDGET);
+        typeRow->pack_end(*gradType_->buttonGroup, Gtk::PACK_SHRINK);
         gradBox_->pack_start(*typeRow, Gtk::PACK_SHRINK);
 
         auto* const profRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
@@ -929,7 +945,7 @@ ControlSpotPanel::ControlSpotPanel():
         profLabel->set_halign(Gtk::ALIGN_START);
         profLabel->set_xalign(0.f);
         profRow->pack_start(*profLabel, Gtk::PACK_SHRINK);
-        profRow->pack_end(*gradProfile_, Gtk::PACK_EXPAND_WIDGET);
+        profRow->pack_end(*gradProfile_->buttonGroup, Gtk::PACK_SHRINK);
         gradBox_->pack_start(*profRow, Gtk::PACK_SHRINK);
     }
     maskDetailBox_->pack_start(*gradBox_, Gtk::PACK_SHRINK);
@@ -1368,6 +1384,17 @@ void ControlSpotPanel::render_preview(
     const double feather = std::max((double)row[spots_.transit] / 100.0, 0.05);
     const double angle = (double)row[spots_.gradangle] * RT_PI_180;
 
+    // A gradient entry being hovered in its menu is drawn instead of the
+    // committed value, so the swatch answers "what would this look like?".
+    const bool isSelectedRow = treeview_->get_selection()->get_selected()
+                               && treeview_->get_selection()->get_selected() == row;
+    const int gradTypeShown = (isSelectedRow && gradTypePreview_ >= 0)
+        ? gradTypePreview_ : rtengine::LIM(static_cast<int>(row[spots_.gradType]), 0, 2);
+    const int gradProfileShown = (isSelectedRow && gradProfilePreview_ >= 0)
+        ? gradProfilePreview_ : rtengine::LIM(static_cast<int>(row[spots_.gradProfile]), 0, 4);
+    const double transitShown = (double)row[spots_.transit];
+    const double transweakShown = std::max((double)row[spots_.transitweak], 0.01);
+
     // Polygon vertices (for shape==3)
     const std::vector<int> polyPts = row[spots_.polyMaskPoints];
     const double polyFeather = (double)row[spots_.polyMaskFeather];
@@ -1540,11 +1567,64 @@ void ControlSpotPanel::render_preview(
                 double dist = 0.0;
 
                 if (shp == 2) {
-                    // Gradient: linear along angle direction from center
-                    double dx = x - cx;
-                    double dy = y - cy;
-                    dist = std::abs(dx * std::sin(angle) - dy * std::cos(angle));
-                    dist /= std::max(feather, 0.05);
+                    // Gradient: mirror what calcTransitiongrad does in the
+                    // engine, so the swatch shows the mask that will actually
+                    // be applied â€” type, falloff profile, width and bias â€” and
+                    // not a stand-in linear ramp for every kind of gradient.
+                    const double halfR = std::max(rX / std::max(rX + rXL, 1e-6), 1e-6);
+                    const double halfL = std::max(rXL / std::max(rX + rXL, 1e-6), 1e-6);
+                    const double halfB = std::max(rY / std::max(rY + rYT, 1e-6), 1e-6);
+                    const double halfT = std::max(rYT / std::max(rY + rYT, 1e-6), 1e-6);
+                    const double ddx = x - cx;
+                    const double ddy = y - cy;
+                    const double nx = ddx / (ddx >= 0.0 ? halfR : halfL);
+                    const double ny = ddy / (ddy >= 0.0 ? halfB : halfT);
+
+                    double t;
+
+                    if (gradTypeShown == 1) {          // Radial
+                        t = 1.0 - 2.0 * std::sqrt(nx * nx + ny * ny);
+                    } else {
+                        const double sinT = std::sin(angle);
+                        const double cosT = std::cos(angle);
+                        const double maxProj = std::max(std::abs(sinT) + std::abs(cosT), 1e-6);
+                        t = (nx * sinT - ny * cosT) / maxProj;
+
+                        if (gradTypeShown == 2) {      // Mirror
+                            t = 1.0 - 2.0 * std::abs(t);
+                        }
+                    }
+
+                    const double ach = std::max(transitShown / 100.0, 0.01);
+
+                    if (t >= ach) {
+                        strength = 1.0;
+                    } else if (t > -ach) {
+                        const double u = std::max(0.0, std::min(1.0, (t + ach) / (2.0 * ach)));
+                        double shaped;
+
+                        switch (gradProfileShown) {
+                            case 1:  shaped = u * u * (3.0 - 2.0 * u); break;
+                            case 2:  shaped = u * u * u * (u * (u * 6.0 - 15.0) + 10.0); break;
+                            case 3:  shaped = u * u; break;
+                            case 4:  shaped = 1.0 - (1.0 - u) * (1.0 - u); break;
+                            default: shaped = u; break;
+                        }
+
+                        strength = std::pow(shaped, transweakShown);
+                    } else {
+                        strength = 0.0;
+                    }
+
+                    // The shared feather/dist path below is for the closed
+                    // shapes; a gradient has already produced its strength.
+                    guint8* p = pixels + py * rowstride + px * 4;
+                    const double s = strength;
+                    p[0] = (guint8)(heatLo[0] + s * (heatHi[0] - heatLo[0]));
+                    p[1] = (guint8)(heatLo[1] + s * (heatHi[1] - heatLo[1]));
+                    p[2] = (guint8)(heatLo[2] + s * (heatHi[2] - heatLo[2]));
+                    p[3] = (guint8)(strength * 200);
+                    continue;
                 } else {
                     // Ellipse or Rectangle
                     const double maxExtent = std::max(
@@ -2123,10 +2203,10 @@ void ControlSpotPanel::load_ControlSpot_param()
     maskBlendMode_->setSelected(row[spots_.maskBlendMode]);
     maskBlendModeConn_.block(false);
     gradTypeConn_.block(true);
-    gradType_->set_active(rtengine::LIM(static_cast<int>(row[spots_.gradType]), 0, 2));
+    gradType_->setSelected(rtengine::LIM(static_cast<int>(row[spots_.gradType]), 0, 2));
     gradTypeConn_.block(false);
     gradProfileConn_.block(true);
-    gradProfile_->set_active(rtengine::LIM(static_cast<int>(row[spots_.gradProfile]), 0, 4));
+    gradProfile_->setSelected(rtengine::LIM(static_cast<int>(row[spots_.gradProfile]), 0, 4));
     gradProfileConn_.block(false);
     {
         const int tones = rtengine::LIM(static_cast<int>(row[spots_.dodgeBurnTones]), 0, 7);
@@ -2826,8 +2906,22 @@ void ControlSpotPanel::aiMaskClassChanged(int /*index*/)
     startAIPreviewRefresh();
 }
 
-void ControlSpotPanel::gradTypeChanged()
+void ControlSpotPanel::previewGradType(int index)
 {
+    // -1 arrives when the menu closes: stop previewing and show the real value.
+    gradTypePreview_ = index >= 0 ? rtengine::LIM(index, 0, 2) : -1;
+    treeview_->queue_draw();
+}
+
+void ControlSpotPanel::previewGradProfile(int index)
+{
+    gradProfilePreview_ = index >= 0 ? rtengine::LIM(index, 0, 4) : -1;
+    treeview_->queue_draw();
+}
+
+void ControlSpotPanel::gradTypeChanged(int /*index*/)
+{
+    gradTypePreview_ = -1;
     const auto s = treeview_->get_selection();
 
     if (!s->count_selected_rows()) {
@@ -2835,15 +2929,22 @@ void ControlSpotPanel::gradTypeChanged()
     }
 
     Gtk::TreeModel::Row row = *(s->get_selected());
-    row[spots_.gradType] = rtengine::LIM(gradType_->get_active_row_number(), 0, 2);
+    row[spots_.gradType] = rtengine::LIM(gradType_->getSelected(), 0, 2);
+    treeview_->queue_draw();
 
     if (listener) {
-        listener->panelChanged(EvLocallabSpotShape, gradType_->get_active_text());
+        static const char* const keys[] = {
+            "TP_LOCALLAB_GRADTYPE_LINEAR", "TP_LOCALLAB_GRADTYPE_RADIAL",
+            "TP_LOCALLAB_GRADTYPE_MIRROR"
+        };
+        listener->panelChanged(EvLocallabSpotShape,
+                               M(keys[rtengine::LIM(gradType_->getSelected(), 0, 2)]));
     }
 }
 
-void ControlSpotPanel::gradProfileChanged()
+void ControlSpotPanel::gradProfileChanged(int /*index*/)
 {
+    gradProfilePreview_ = -1;
     const auto s = treeview_->get_selection();
 
     if (!s->count_selected_rows()) {
@@ -2851,10 +2952,17 @@ void ControlSpotPanel::gradProfileChanged()
     }
 
     Gtk::TreeModel::Row row = *(s->get_selected());
-    row[spots_.gradProfile] = rtengine::LIM(gradProfile_->get_active_row_number(), 0, 4);
+    row[spots_.gradProfile] = rtengine::LIM(gradProfile_->getSelected(), 0, 4);
+    treeview_->queue_draw();
 
     if (listener) {
-        listener->panelChanged(EvLocallabSpotShape, gradProfile_->get_active_text());
+        static const char* const keys[] = {
+            "TP_LOCALLAB_GRADPROFILE_LINEAR", "TP_LOCALLAB_GRADPROFILE_SOFT",
+            "TP_LOCALLAB_GRADPROFILE_SMOOTH", "TP_LOCALLAB_GRADPROFILE_EASEIN",
+            "TP_LOCALLAB_GRADPROFILE_EASEOUT"
+        };
+        listener->panelChanged(EvLocallabSpotShape,
+                               M(keys[rtengine::LIM(gradProfile_->getSelected(), 0, 4)]));
     }
 }
 

@@ -587,10 +587,16 @@ private:
     static void simplifyPolygon(std::vector<rtengine::Coord>& pts, double epsilon);
 
     // Gradient shaping and dodge & burn, both inside the per-mask settings
-    MyComboBoxText* const gradType_;
+    PopUpButton* const gradType_;
     sigc::connection gradTypeConn_;
-    MyComboBoxText* const gradProfile_;
+    PopUpButton* const gradProfile_;
     sigc::connection gradProfileConn_;
+    // While a gradient entry is hovered in its menu, the row swatch draws that
+    // choice instead of the committed one. -1 means nothing is being previewed.
+    int gradTypePreview_ = -1;
+    int gradProfilePreview_ = -1;
+    void previewGradType(int index);
+    void previewGradProfile(int index);
     Adjuster* const dodgeBurn_;
     // One toggle per tonal range, each with its own amount. Nothing ticked
     // means the dodge or burn works the whole scale evenly.
@@ -607,8 +613,8 @@ private:
     void updateDodgeBurnToneVisibility();
     Gtk::Box* gradBox_;        // gradient-only controls (shape == GRAD)
     Gtk::Box* dodgeBurnBox_;   // dodge & burn, shown for every mask
-    void gradTypeChanged();
-    void gradProfileChanged();
+    void gradTypeChanged(int index);
+    void gradProfileChanged(int index);
 
     // Per-mask settings section, expanded from the chevron in each mask row
     Gtk::Box* maskDetailBox_;
