@@ -20962,7 +20962,12 @@ void ImProcFunctions::Lab_Local(
         enablefat = true;;
     }
 
-    bool execex = (lp.exposena && (lp.expcomp != 0.f || lp.blac != 0 || lp.shadex > 0 || lp.hlcomp > 0.f || lp.laplacexp > 0.1f || lp.strexp != 0.f || enablefat || lp.showmaskexpmet == 2 || lp.enaExpMask || lp.showmaskexpmet == 3 || lp.showmaskexpmet == 4  || lp.showmaskexpmet == 5 || lp.prevdE || lp.showMaskOverlay || (exlocalcurve && localexutili)));
+    // NOT lp.showMaskOverlay: the overlay pass rewrites every pixel of the
+    // spot from the mask itself, so anything the exposure tool produces there
+    // is thrown away. Running it anyway cost a full-frame FFT Laplacian --
+    // a measured second -- before the mask preview could appear.
+    bool execex = (lp.exposena && (lp.expcomp != 0.f || lp.blac != 0 || lp.shadex > 0 || lp.hlcomp > 0.f || lp.laplacexp > 0.1f || lp.strexp != 0.f || enablefat || lp.showmaskexpmet == 2 || lp.enaExpMask || lp.showmaskexpmet == 3 || lp.showmaskexpmet == 4  || lp.showmaskexpmet == 5 || lp.prevdE || (exlocalcurve && localexutili)))
+                  && !lp.showMaskOverlay;
 
     llStage("before-exposure");
     if (!lp.invex && execex) {

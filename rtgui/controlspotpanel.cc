@@ -1217,8 +1217,20 @@ void ControlSpotPanel::setSidebarHoverGeometry(int spotIndex)
                 show(i);
             }
         } else if (shape == 2) {
-            for (int i = 7; i <= 9; ++i) {
-                show(i);
+            // Same split as updateControlSpotCurve: a radial is described by
+            // its ellipse and handles, a linear by the two band lines. This
+            // used to show the band lines for both, so hovering a radial drew
+            // bars across the top and bottom of a picture that has none.
+            if (rtengine::LIM(static_cast<int>(row[spots_.gradType]), 0, 1) == 1) {
+                show(1);
+
+                for (int i = 3; i <= 6; ++i) {
+                    show(i);
+                }
+            } else {
+                for (int i = 7; i <= 9; ++i) {
+                    show(i);
+                }
             }
         } else if (shape == 3) {
             show(10);
