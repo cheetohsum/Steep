@@ -1535,13 +1535,16 @@ void Crop::update(int todo)
         // rebuild handed locallab its own output and applied the spot again,
         // and again, once per pass for as long as a slider kept moving. Give
         // the result its own buffer and the cache stays honest AND reusable.
-        if (baseCrop == transCrop) {
-            locallabBase.reset(new Imagefloat(baseCrop->getWidth(), baseCrop->getHeight()));
-            parent->ipf.lab2rgb(*labnCrop, *locallabBase, params.icm.workingProfile);
-            baseCrop = locallabBase.get();
-        } else {
-            parent->ipf.lab2rgb(*labnCrop, *baseCrop, params.icm.workingProfile);
-        }
+        // ALWAYS to its own buffer, whatever baseCrop currently points at.
+        // Guarding this on transCrop alone left the other candidates open:
+        // origCrop and spotCrop are members too, kept across passes and
+        // rebuilt only on flags a slider does not raise. Writing locallab
+        // into any of them hands the spot its own output next pass, which is
+        // why a drag still piled the effect up however the transform cache
+        // behaved.
+        locallabBase.reset(new Imagefloat(baseCrop->getWidth(), baseCrop->getHeight()));
+        parent->ipf.lab2rgb(*labnCrop, *locallabBase, params.icm.workingProfile);
+        baseCrop = locallabBase.get();
     }
 
     traceStage("transform-and-locallab");

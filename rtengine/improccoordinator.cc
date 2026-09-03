@@ -2104,17 +2104,15 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             // and writing locallab's result over it lets the next pass feed
             // the spot its own output. Give the result its own buffer instead
             // of invalidating the cache, so the transform stays reusable.
-            if (oprevi == transformedPrev) {
-                if (!locallabPrev || locallabPrev->getWidth() != pW || locallabPrev->getHeight() != pH) {
-                    delete locallabPrev;
-                    locallabPrev = new Imagefloat(pW, pH);
-                }
-
-                ipf.lab2rgb(*nprevl, *locallabPrev, params->icm.workingProfile);
-                oprevi = locallabPrev;
-            } else {
-                ipf.lab2rgb(*nprevl, *oprevi, params->icm.workingProfile);
+            // Always to its own buffer -- oprevi may alias orig_prev just as
+            // easily as the transform cache, and both outlive the pass.
+            if (!locallabPrev || locallabPrev->getWidth() != pW || locallabPrev->getHeight() != pH) {
+                delete locallabPrev;
+                locallabPrev = new Imagefloat(pW, pH);
             }
+
+            ipf.lab2rgb(*nprevl, *locallabPrev, params->icm.workingProfile);
+            oprevi = locallabPrev;
             //*************************************************************
             // end locallab
             //*************************************************************
