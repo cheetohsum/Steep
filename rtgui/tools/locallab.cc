@@ -337,6 +337,7 @@ void Locallab::read(const rtengine::procparams::ProcParams* pp, const ParamsEdit
         r.aiMaskThreshold = pp->locallab.spots.at(i).aiMaskThreshold;
         r.maskBlendMode = pp->locallab.spots.at(i).maskBlendMode;
         r.gradType = pp->locallab.spots.at(i).gradType;
+        r.gradInvert = pp->locallab.spots.at(i).gradInvert;
         r.gradProfile = pp->locallab.spots.at(i).gradProfile;
         r.dodgeBurn = pp->locallab.spots.at(i).dodgeBurn;
         r.dodgeBurnTones = pp->locallab.spots.at(i).dodgeBurnTones;
@@ -546,6 +547,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
             r.aiMaskThreshold = newSpot->aiMaskThreshold;
             r.maskBlendMode = newSpot->maskBlendMode;
             r.gradType = newSpot->gradType;
+            r.gradInvert = newSpot->gradInvert;
             r.gradProfile = newSpot->gradProfile;
             r.dodgeBurn = newSpot->dodgeBurn;
             r.dodgeBurnTones = newSpot->dodgeBurnTones;
@@ -756,6 +758,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
             r.aiMaskThreshold = newSpot->aiMaskThreshold;
             r.maskBlendMode = newSpot->maskBlendMode;
             r.gradType = newSpot->gradType;
+            r.gradInvert = newSpot->gradInvert;
             r.gradProfile = newSpot->gradProfile;
             r.dodgeBurn = newSpot->dodgeBurn;
             r.dodgeBurnTones = newSpot->dodgeBurnTones;
@@ -1099,6 +1102,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
             r.aiMaskThreshold = newSpot->aiMaskThreshold;
             r.maskBlendMode = newSpot->maskBlendMode;
             r.gradType = newSpot->gradType;
+            r.gradInvert = newSpot->gradInvert;
             r.gradProfile = newSpot->gradProfile;
             r.dodgeBurn = newSpot->dodgeBurn;
             r.dodgeBurnTones = newSpot->dodgeBurnTones;
@@ -1254,6 +1258,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                     pp->locallab.spots.at(pp->locallab.selspot).lumask = r->lumask;
                     pp->locallab.spots.at(pp->locallab.selspot).maskBlendMode = r->maskBlendMode;
                     pp->locallab.spots.at(pp->locallab.selspot).gradType = r->gradType;
+                    pp->locallab.spots.at(pp->locallab.selspot).gradInvert = r->gradInvert;
                     pp->locallab.spots.at(pp->locallab.selspot).gradProfile = r->gradProfile;
                     pp->locallab.spots.at(pp->locallab.selspot).dodgeBurn = r->dodgeBurn;
                     pp->locallab.spots.at(pp->locallab.selspot).dodgeBurnTones = r->dodgeBurnTones;

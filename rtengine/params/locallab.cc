@@ -138,7 +138,10 @@ LocallabParams::LocallabSpot::LocallabSpot() :
     polyMaskLegLength(3.0),
     maskBlendMode(0),
     gradType(0),
-    gradProfile(1),
+    gradInvert(false),
+    // Linear, so a gradient saved before falloff profiles existed still
+    // renders the way it did then.
+    gradProfile(0),
     dodgeBurn(0.),
     dodgeBurnTones(0),
     dodgeBurnShadows(100.),
@@ -2146,6 +2149,7 @@ bool LocallabParams::LocallabSpot::operator ==(const LocallabSpot& other) const
         && polyMaskLegLength == other.polyMaskLegLength
         && maskBlendMode == other.maskBlendMode
         && gradType == other.gradType
+        && gradInvert == other.gradInvert
         && gradProfile == other.gradProfile
         && dodgeBurn == other.dodgeBurn
         && dodgeBurnTones == other.dodgeBurnTones
@@ -3122,13 +3126,15 @@ void LoadUtil::controlSpotSettings()
     assignFromKeyfile(keyFile, "Locallab", "PolyMaskLegLen_" + index_str, spot.polyMaskLegLength, spotEdited.polyMaskLegLength);
     assignFromKeyfile(keyFile, "Locallab", "MaskBlendMode_" + index_str, spot.maskBlendMode, spotEdited.maskBlendMode);
     assignFromKeyfile(keyFile, "Locallab", "GradType_" + index_str, spot.gradType, spotEdited.gradType);
+    assignFromKeyfile(keyFile, "Locallab", "GradInvert_" + index_str, spot.gradInvert, spotEdited.gradInvert);
     assignFromKeyfile(keyFile, "Locallab", "GradProfile_" + index_str, spot.gradProfile, spotEdited.gradProfile);
     assignFromKeyfile(keyFile, "Locallab", "DodgeBurn_" + index_str, spot.dodgeBurn, spotEdited.dodgeBurn);
     assignFromKeyfile(keyFile, "Locallab", "DodgeBurnTones_" + index_str, spot.dodgeBurnTones, spotEdited.dodgeBurnTones);
     assignFromKeyfile(keyFile, "Locallab", "DodgeBurnShadows_" + index_str, spot.dodgeBurnShadows, spotEdited.dodgeBurnShadows);
     assignFromKeyfile(keyFile, "Locallab", "DodgeBurnMids_" + index_str, spot.dodgeBurnMids, spotEdited.dodgeBurnMids);
     assignFromKeyfile(keyFile, "Locallab", "DodgeBurnHighlights_" + index_str, spot.dodgeBurnHighlights, spotEdited.dodgeBurnHighlights);
-    spot.gradType = std::max(0, std::min(spot.gradType, 2));
+    // Mirror used to sit at 2; it is gone, and those spots read as linear.
+    spot.gradType = std::max(0, std::min(spot.gradType, 1));
     spot.gradProfile = std::max(0, std::min(spot.gradProfile, 4));
     spot.dodgeBurn = std::max(-100., std::min(spot.dodgeBurn, 100.));
     spot.dodgeBurnTones = std::max(0, std::min(spot.dodgeBurnTones, 7));
@@ -4390,6 +4396,7 @@ void SaveUtil::controlSpotSettings()
     saveToKeyfile(!pedited || spot_edited->polyMaskLegLength, "Locallab", "PolyMaskLegLen_" + index_str, spot.polyMaskLegLength, keyFile);
     saveToKeyfile(!pedited || spot_edited->maskBlendMode, "Locallab", "MaskBlendMode_" + index_str, spot.maskBlendMode, keyFile);
     saveToKeyfile(!pedited || spot_edited->gradType, "Locallab", "GradType_" + index_str, spot.gradType, keyFile);
+    saveToKeyfile(!pedited || spot_edited->gradInvert, "Locallab", "GradInvert_" + index_str, spot.gradInvert, keyFile);
     saveToKeyfile(!pedited || spot_edited->gradProfile, "Locallab", "GradProfile_" + index_str, spot.gradProfile, keyFile);
     saveToKeyfile(!pedited || spot_edited->dodgeBurn, "Locallab", "DodgeBurn_" + index_str, spot.dodgeBurn, keyFile);
     saveToKeyfile(!pedited || spot_edited->dodgeBurnTones, "Locallab", "DodgeBurnTones_" + index_str, spot.dodgeBurnTones, keyFile);

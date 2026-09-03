@@ -69,6 +69,7 @@ ControlSpotPanel::ControlSpotPanel():
     maskBlendMode_(Gtk::manage(new PopUpButton())),
     gradType_(Gtk::manage(new PopUpButton())),
     gradProfile_(Gtk::manage(new PopUpButton())),
+    gradInvert_(Gtk::manage(new Gtk::CheckButton(M("TP_LOCALLAB_GRADINVERT")))),
     dodgeBurn_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_DODGEBURN"), -100., 100., 1., 0.,
                                         Gtk::manage(new RTImage("circle-black-small")),
                                         Gtk::manage(new RTImage("circle-white-small"))))),
@@ -628,7 +629,6 @@ ControlSpotPanel::ControlSpotPanel():
     // drawing program, named rather than dragged.
     gradType_->addEntry("gradient-linear", M("TP_LOCALLAB_GRADTYPE_LINEAR"));
     gradType_->addEntry("gradient-radial", M("TP_LOCALLAB_GRADTYPE_RADIAL"));
-    gradType_->addEntry("gradient-mirror", M("TP_LOCALLAB_GRADTYPE_MIRROR"));
     gradType_->setSelected(0);
     gradType_->hideArrowButton();
     gradType_->signal_clicked().connect([this]() { gradType_->triggerShowMenu(); });
@@ -657,6 +657,13 @@ ControlSpotPanel::ControlSpotPanel():
         sigc::mem_fun(*this, &ControlSpotPanel::gradProfileChanged));
     gradProfile_->signal_hovered().connect(
         sigc::mem_fun(*this, &ControlSpotPanel::previewGradProfile));
+
+    gradInvertConn_ = gradInvert_->signal_toggled().connect(
+        sigc::mem_fun(*this, &ControlSpotPanel::gradInvertChanged));
+
+    if (showtooltip) {
+        gradInvert_->set_tooltip_text(M("TP_LOCALLAB_GRADINVERT_TOOLTIP"));
+    }
 
     dbShadowsConn_ = dbShadowsBtn_->signal_toggled().connect(
         sigc::mem_fun(*this, &ControlSpotPanel::dodgeBurnTonesChanged));
@@ -948,6 +955,7 @@ ControlSpotPanel::ControlSpotPanel():
         profRow->pack_start(*profLabel, Gtk::PACK_SHRINK);
         profRow->pack_end(*gradProfile_->buttonGroup, Gtk::PACK_SHRINK);
         gradBox_->pack_start(*profRow, Gtk::PACK_SHRINK);
+        gradBox_->pack_start(*gradInvert_, Gtk::PACK_SHRINK);
     }
     maskDetailBox_->pack_start(*gradBox_, Gtk::PACK_SHRINK);
 
@@ -1121,6 +1129,7 @@ void ControlSpotPanel::setMaskControlsSensitive(bool sensitive)
     aiMaskTolerance_->set_sensitive(sensitive);
     maskBlendMode_->buttonGroup->set_sensitive(sensitive);
     gradBox_->set_sensitive(sensitive);
+    gradInvert_->set_sensitive(sensitive);
     dodgeBurnBox_->set_sensitive(sensitive);
     dbShadowsAmt_->set_sensitive(sensitive);
     dbMidsAmt_->set_sensitive(sensitive);
@@ -1606,10 +1615,10 @@ void ControlSpotPanel::render_preview(
                         const double cosT = std::cos(angle);
                         const double maxProj = std::max(std::abs(sinT) + std::abs(cosT), 1e-6);
                         t = (nx * sinT - ny * cosT) / maxProj;
+                    }
 
-                        if (gradTypeShown == 2) {      // Mirror
-                            t = 1.0 - 2.0 * std::abs(t);
-                        }
+                    if (row[spots_.gradInvert]) {
+                        t = -t;
                     }
 
                     const double ach = std::max(transitShown / 100.0, 0.01);
@@ -2220,8 +2229,11 @@ void ControlSpotPanel::load_ControlSpot_param()
     maskBlendMode_->setSelected(row[spots_.maskBlendMode]);
     maskBlendModeConn_.block(false);
     gradTypeConn_.block(true);
-    gradType_->setSelected(rtengine::LIM(static_cast<int>(row[spots_.gradType]), 0, 2));
+    gradType_->setSelected(rtengine::LIM(static_cast<int>(row[spots_.gradType]), 0, 1));
     gradTypeConn_.block(false);
+    gradInvertConn_.block(true);
+    gradInvert_->set_active(row[spots_.gradInvert]);
+    gradInvertConn_.block(false);
     gradProfileConn_.block(true);
     gradProfile_->setSelected(rtengine::LIM(static_cast<int>(row[spots_.gradProfile]), 0, 4));
     gradProfileConn_.block(false);
@@ -2926,7 +2938,7 @@ void ControlSpotPanel::aiMaskClassChanged(int /*index*/)
 void ControlSpotPanel::previewGradType(int index)
 {
     // -1 arrives when the menu closes: stop previewing and show the real value.
-    gradTypePreview_ = index >= 0 ? rtengine::LIM(index, 0, 2) : -1;
+    gradTypePreview_ = index >= 0 ? rtengine::LIM(index, 0, 1) : -1;
     treeview_->queue_draw();
 }
 
@@ -2946,18 +2958,36 @@ void ControlSpotPanel::gradTypeChanged(int /*index*/)
     }
 
     Gtk::TreeModel::Row row = *(s->get_selected());
-    row[spots_.gradType] = rtengine::LIM(gradType_->getSelected(), 0, 2);
+    row[spots_.gradType] = rtengine::LIM(gradType_->getSelected(), 0, 1);
     treeview_->queue_draw();
     // Radial and linear put different handles on the canvas.
     updateControlSpotCurve(row);
 
     if (listener) {
         static const char* const keys[] = {
-            "TP_LOCALLAB_GRADTYPE_LINEAR", "TP_LOCALLAB_GRADTYPE_RADIAL",
-            "TP_LOCALLAB_GRADTYPE_MIRROR"
+            "TP_LOCALLAB_GRADTYPE_LINEAR", "TP_LOCALLAB_GRADTYPE_RADIAL"
         };
         listener->panelChanged(EvLocallabMaskGrade,
-                               M(keys[rtengine::LIM(gradType_->getSelected(), 0, 2)]));
+                               M(keys[rtengine::LIM(gradType_->getSelected(), 0, 1)]));
+    }
+}
+
+void ControlSpotPanel::gradInvertChanged()
+{
+    const auto s = treeview_->get_selection();
+
+    if (!s->count_selected_rows()) {
+        return;
+    }
+
+    Gtk::TreeModel::Row row = *(s->get_selected());
+    row[spots_.gradInvert] = gradInvert_->get_active();
+    treeview_->queue_draw();
+
+    if (listener) {
+        listener->panelChanged(EvLocallabMaskGrade,
+                               gradInvert_->get_active() ? M("GENERAL_ENABLED")
+                                                         : M("GENERAL_DISABLED"));
     }
 }
 
@@ -3844,6 +3874,7 @@ void ControlSpotPanel::disableParamlistener(bool cond)
     aiMaskTolerance_->block(cond);
     maskBlendModeConn_.block(cond);
     gradTypeConn_.block(cond);
+    gradInvertConn_.block(cond);
     gradProfileConn_.block(cond);
     dbShadowsConn_.block(cond);
     dbMidsConn_.block(cond);
@@ -5023,6 +5054,7 @@ std::unique_ptr<ControlSpotPanel::SpotRow> ControlSpotPanel::getSpot(const int i
             r->aiMaskThreshold = row[spots_.aiMaskThreshold];
             r->maskBlendMode = row[spots_.maskBlendMode];
             r->gradType = row[spots_.gradType];
+            r->gradInvert = row[spots_.gradInvert];
             r->gradProfile = row[spots_.gradProfile];
             r->dodgeBurn = row[spots_.dodgeBurn];
             r->dodgeBurnTones = row[spots_.dodgeBurnTones];
@@ -5182,6 +5214,7 @@ void ControlSpotPanel::addControlSpot(const SpotRow &newSpot, bool expandDetails
     row[spots_.aiMaskThreshold] = newSpot.aiMaskThreshold;
     row[spots_.maskBlendMode] = newSpot.maskBlendMode;
     row[spots_.gradType] = newSpot.gradType;
+    row[spots_.gradInvert] = newSpot.gradInvert;
     row[spots_.gradProfile] = newSpot.gradProfile;
     row[spots_.dodgeBurn] = newSpot.dodgeBurn;
     row[spots_.dodgeBurnTones] = newSpot.dodgeBurnTones;
@@ -5385,6 +5418,7 @@ ControlSpotPanel::ControlSpots::ControlSpots()
     add(aiMaskThreshold);
     add(maskBlendMode);
     add(gradType);
+    add(gradInvert);
     add(gradProfile);
     add(dodgeBurn);
     add(dodgeBurnTones);

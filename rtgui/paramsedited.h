@@ -534,6 +534,7 @@ public:
         bool polyMaskLegLength;
         bool maskBlendMode;
         bool gradType;
+        bool gradInvert;
         bool gradProfile;
         bool dodgeBurn;
         bool dodgeBurnTones;

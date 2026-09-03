@@ -835,7 +835,12 @@ struct local_params {
     float adjch;
     int shapmet;
     float gradangle;
-    int gradtype;        // 0 linear, 1 radial, 2 mirror
+    int gradtype;        // 0 linear, 1 radial
+    bool gradinvert;     // swap which side the effect covers
+    // The gradient's own extents. An inverted gradient covers everything
+    // OUTSIDE its shape, so the spot's work bounds are opened to the whole
+    // frame and the geometry is kept here instead.
+    float gradlx, gradlxL, gradly, gradlyT;
     int gradprofile;     // falloff curve across the transition band
     float dodgeburn;     // -100..100, mask-level lighten/darken
     int dodgeburntones;  // bitfield: 0 even, else 1 shadows | 2 midtones | 4 highlights
@@ -1846,7 +1851,22 @@ static void calcLocalParams(int sp, int oW, int oH,  const LocallabParams& local
     lp.transweak = local_transitweak;
     lp.transgrad = local_transitgrad;
     lp.gradangle = locallab.spots.at(sp).gradangle;
-    lp.gradtype = LIM(locallab.spots.at(sp).gradType, 0, 2);
+    lp.gradtype = LIM(locallab.spots.at(sp).gradType, 0, 1);
+    lp.gradinvert = locallab.spots.at(sp).gradInvert;
+    lp.gradlx = lp.lx;
+    lp.gradlxL = lp.lxL;
+    lp.gradly = lp.ly;
+    lp.gradlyT = lp.lyT;
+
+    if (lp.shapmet == 2 && lp.gradinvert) {
+        // Everything outside the gradient is what gets graded, so the loops
+        // have to visit the whole frame. calcTransitiongrad keeps working from
+        // the gradlx.. copies above, so the shape itself is unchanged.
+        lp.lx = std::max(lp.lx, lp.imW);
+        lp.lxL = std::max(lp.lxL, lp.imW);
+        lp.ly = std::max(lp.ly, lp.imH);
+        lp.lyT = std::max(lp.lyT, lp.imH);
+    }
     lp.gradprofile = LIM(locallab.spots.at(sp).gradProfile, 0, 4);
     lp.dodgeburn = LIM(static_cast<float>(locallab.spots.at(sp).dodgeBurn), -100.f, 100.f);
     lp.dodgeburntones = LIM(locallab.spots.at(sp).dodgeBurnTones, 0, 7);
@@ -2205,17 +2225,20 @@ static void calcTransitiongrad(const float lox, const float loy, const float ach
 {
     zone = 0;
 
-    // Check bounding rectangle first
-    if (lox >= lp.xc + lp.lx || lox <= lp.xc - lp.lxL) {
-        return;
-    }
-
-    if (loy >= lp.yc + lp.ly || loy <= lp.yc - lp.lyT) {
-        return;
-    }
-
     const float dx = lox - lp.xc;
     const float dy = loy - lp.yc;
+
+    // Check bounding rectangle first. Outside it there is no gradient left:
+    // no effect normally, and full effect when the gradient is inverted.
+    if (lox >= lp.xc + lp.gradlx || lox <= lp.xc - lp.gradlxL
+            || loy >= lp.yc + lp.gradly || loy <= lp.yc - lp.gradlyT) {
+        if (lp.gradinvert) {
+            zone = 2;
+            localFactor = 1.f;
+        }
+
+        return;
+    }
 
     // Position across the gradient: -1 at the no-effect end, +1 at the full end.
     float t;
@@ -2223,8 +2246,8 @@ static void calcTransitiongrad(const float lox, const float loy, const float ach
     if (lp.gradtype == 1) {
         // Radial: full in the middle, falling away to the spot's own ellipse,
         // so the handles the user drags on the canvas are the outer edge.
-        const float rx = std::max(dx >= 0.f ? lp.lx : lp.lxL, 1.f);
-        const float ry = std::max(dy >= 0.f ? lp.ly : lp.lyT, 1.f);
+        const float rx = std::max(dx >= 0.f ? lp.gradlx : lp.gradlxL, 1.f);
+        const float ry = std::max(dy >= 0.f ? lp.gradly : lp.gradlyT, 1.f);
         const float nx = dx / rx;
         const float ny = dy / ry;
         t = 1.f - 2.f * std::sqrt(nx * nx + ny * ny);
@@ -2239,8 +2262,8 @@ static void calcTransitiongrad(const float lox, const float loy, const float ach
         // so an oversized bounding box doesn't inflate the gradient
         const float imgMaxX = std::max(lp.xc, lp.imW - lp.xc);
         const float imgMaxY = std::max(lp.yc, lp.imH - lp.yc);
-        const float maxX = std::min(std::max(lp.lx, lp.lxL), imgMaxX);
-        const float maxY = std::min(std::max(lp.ly, lp.lyT), imgMaxY);
+        const float maxX = std::min(std::max(lp.gradlx, lp.gradlxL), imgMaxX);
+        const float maxY = std::min(std::max(lp.gradly, lp.gradlyT), imgMaxY);
         const float maxProj = maxX * std::abs(sinT) + maxY * std::abs(cosT);
 
         if (maxProj < 0.001f) {
@@ -2251,12 +2274,10 @@ static void calcTransitiongrad(const float lox, const float loy, const float ach
 
         // Normalized position: -1.0 (no effect side) to +1.0 (full effect side)
         t = proj / maxProj;
+    }
 
-        if (lp.gradtype == 2) {
-            // Mirror: a band centred on the spot that falls away to both
-            // sides - one control instead of two opposed gradients.
-            t = 1.f - 2.f * std::abs(t);
-        }
+    if (lp.gradinvert) {
+        t = -t;
     }
 
     if (t >= ach) {

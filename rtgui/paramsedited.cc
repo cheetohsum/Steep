@@ -1525,6 +1525,7 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
                 locallab.spots.at(j).polyMaskLegLength = locallab.spots.at(j).polyMaskLegLength && pSpot.polyMaskLegLength == otherSpot.polyMaskLegLength;
                 locallab.spots.at(j).maskBlendMode = locallab.spots.at(j).maskBlendMode && pSpot.maskBlendMode == otherSpot.maskBlendMode;
                 locallab.spots.at(j).gradType = locallab.spots.at(j).gradType && pSpot.gradType == otherSpot.gradType;
+                locallab.spots.at(j).gradInvert = locallab.spots.at(j).gradInvert && pSpot.gradInvert == otherSpot.gradInvert;
                 locallab.spots.at(j).gradProfile = locallab.spots.at(j).gradProfile && pSpot.gradProfile == otherSpot.gradProfile;
                 locallab.spots.at(j).dodgeBurn = locallab.spots.at(j).dodgeBurn && pSpot.dodgeBurn == otherSpot.dodgeBurn;
                 locallab.spots.at(j).dodgeBurnTones = locallab.spots.at(j).dodgeBurnTones && pSpot.dodgeBurnTones == otherSpot.dodgeBurnTones;
@@ -4522,6 +4523,9 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
         }
         if (locallab.spots.at(i).gradType) {
             toEdit.locallab.spots.at(i).gradType = mods.locallab.spots.at(i).gradType;
+        }
+        if (locallab.spots.at(i).gradInvert) {
+            toEdit.locallab.spots.at(i).gradInvert = mods.locallab.spots.at(i).gradInvert;
         }
         if (locallab.spots.at(i).gradProfile) {
             toEdit.locallab.spots.at(i).gradProfile = mods.locallab.spots.at(i).gradProfile;
@@ -9517,6 +9521,7 @@ LocallabParamsEdited::LocallabSpotEdited::LocallabSpotEdited(bool v) :
     polyMaskLegLength(v),
     maskBlendMode(v),
     gradType(v),
+    gradInvert(v),
     gradProfile(v),
     dodgeBurn(v),
     dodgeBurnTones(v),
@@ -10385,6 +10390,7 @@ void LocallabParamsEdited::LocallabSpotEdited::set(bool v)
     polyMaskLegLength = v;
     maskBlendMode = v;
     gradType = v;
+    gradInvert = v;
     gradProfile = v;
     dodgeBurn = v;
     dodgeBurnTones = v;

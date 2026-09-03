@@ -104,7 +104,8 @@ public:
         int aiMaskClass; // 0-7 class index
         double aiMaskThreshold; // Segmentation probability cutoff
         int maskBlendMode; // 0 = Normal, 1 = Darken, 2 = Lighten, 3 = Luminosity, 4 = Color
-        int gradType; // 0 = Linear, 1 = Radial, 2 = Mirror
+        int gradType; // 0 = Linear, 1 = Radial
+        bool gradInvert;
         int gradProfile; // 0 = Linear, 1 = Soft, 2 = Smooth, 3 = Ease in, 4 = Ease out
         double dodgeBurn; // -100 (burn) .. +100 (dodge)
         int dodgeBurnTones; // bitfield: 0 = all tones, else 1 shadows | 2 mids | 4 highlights
@@ -411,6 +412,7 @@ private:
         Gtk::TreeModelColumn<double> aiMaskThreshold;
         Gtk::TreeModelColumn<int> maskBlendMode;
         Gtk::TreeModelColumn<int> gradType;
+        Gtk::TreeModelColumn<bool> gradInvert;
         Gtk::TreeModelColumn<int> gradProfile;
         Gtk::TreeModelColumn<double> dodgeBurn;
         Gtk::TreeModelColumn<int> dodgeBurnTones;
@@ -595,6 +597,9 @@ private:
     sigc::connection gradTypeConn_;
     PopUpButton* const gradProfile_;
     sigc::connection gradProfileConn_;
+    Gtk::CheckButton* const gradInvert_;
+    sigc::connection gradInvertConn_;
+    void gradInvertChanged();
     // While a gradient entry is hovered in its menu, the row swatch draws that
     // choice instead of the committed one. -1 means nothing is being previewed.
     int gradTypePreview_ = -1;
