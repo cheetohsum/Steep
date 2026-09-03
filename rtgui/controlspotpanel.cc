@@ -2398,16 +2398,27 @@ void ControlSpotPanel::shapeChanged(int /*index*/)
         savedTransit_ = row[spots_.transit];
         hasSavedDims_ = true;
 
+        // A polygon draws its own outline, so its box may as well be huge.
+        // A gradient must not be: the extents ARE its geometry. At 3000 the
+        // edge sits one and a half image widths out on every side, so the
+        // whole frame falls inside the solid core and resizing it, or
+        // feathering it, changed nothing you could see. Give a gradient an
+        // extent that means something on this picture.
+        const bool toPolygon = shape_->getSelected() == 3;
+        const double extent = toPolygon
+            ? 3000.
+            : (gradType_->getSelected() == 1 ? 320. : 1000.);
+
         disableParamlistener(true);
-        locX_->setValue(3000.);
+        locX_->setValue(extent);
         row[spots_.locX] = locX_->getIntValue();
-        locXL_->setValue(3000.);
+        locXL_->setValue(extent);
         row[spots_.locXL] = locXL_->getIntValue();
-        locY_->setValue(3000.);
+        locY_->setValue(extent);
         row[spots_.locY] = locY_->getIntValue();
-        locYT_->setValue(3000.);
+        locYT_->setValue(extent);
         row[spots_.locYT] = locYT_->getIntValue();
-        transit_->setValue(100.);
+        transit_->setValue(toPolygon ? 100. : 60.);
         row[spots_.transit] = transit_->getValue();
         disableParamlistener(false);
     }
@@ -3013,23 +3024,10 @@ void ControlSpotPanel::gradTypeChanged(int /*index*/)
         locYT_->setValue(toExtent);
         disableParamlistener(false);
 
-        // Softness decides how much of the radius is ramp. At the stock 60 a
-        // radial is solid out to a fifth of its radius and gone by four
-        // fifths, which reads as a hard blob rather than a fade; at 100 the
-        // falloff runs the whole way from the centre to the edge. Linear
-        // wants the stock value back, where softness is the width of the
-        // transition band instead.
-        const double stockTransit = 60.;
-        const double radialTransit = 100.;
-        const double fromTransit = newType == 1 ? stockTransit : radialTransit;
-        const double toTransit = newType == 1 ? radialTransit : stockTransit;
-
-        if (std::abs(static_cast<double>(row[spots_.transit]) - fromTransit) < 0.01) {
-            row[spots_.transit] = toTransit;
-            disableParamlistener(true);
-            transit_->setValue(toTransit);
-            disableParamlistener(false);
-        }
+        // Softness needs no adjusting across the switch any more: for a radial
+        // it is the fraction of the radius given over to the ramp, for a
+        // linear the width of the band between the bars, and 60 reads well
+        // as either.
     }
 
     treeview_->queue_draw();
