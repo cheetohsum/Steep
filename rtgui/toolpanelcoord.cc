@@ -1497,6 +1497,11 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
     if (id == EvBWChmixEnabled || id == EvBWmethod) {
         spot.blwh = params->blackwhite.enabled;
 
+        // The panel's row model is what Locallab::write reads back, so a value
+        // pushed only into procparams survives exactly until the next write --
+        // which is why dragging a handle, or leaving the pane, dropped it.
+        locallab->setSelectedSpotBW(spot.blwh);
+
         if (spot.blwh) {
             // Desaturation runs inside the colour block, so the engine only
             // reaches it when that block is enabled.

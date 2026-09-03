@@ -331,6 +331,15 @@ private:
     void activChanged();
     void avoidnegChanged();
     void blwhChanged();
+public:
+    /**
+     * Set the selected mask's black & white flag from outside, keeping the
+     * row model and the checkbox in step. The row is what Locallab::write
+     * reads, so a value pushed only into procparams is undone by the next
+     * write -- dragging a handle was enough to lose it.
+     */
+    void setSelectedSpotBW(bool value);
+private:
     void recursChanged();
     void laplacChanged();
     void deltaeChanged();

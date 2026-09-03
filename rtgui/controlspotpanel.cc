@@ -3720,6 +3720,26 @@ void ControlSpotPanel::avoidnegChanged()
 
 
 
+void ControlSpotPanel::setSelectedSpotBW(bool value)
+{
+    const auto s = treeview_->get_selection();
+
+    if (!s->count_selected_rows()) {
+        return;
+    }
+
+    Gtk::TreeModel::Row row = *(s->get_selected());
+
+    if (static_cast<bool>(row[spots_.blwh]) == value) {
+        return;
+    }
+
+    row[spots_.blwh] = value;
+    blwhConn_.block(true);
+    blwh_->set_active(value);
+    blwhConn_.block(false);
+}
+
 void ControlSpotPanel::blwhChanged()
 {
     // printf("blwhChanged\n");

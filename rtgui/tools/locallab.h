@@ -123,6 +123,9 @@ public:
     // One-click mask creation (Smart Masks chip strip)
     void createAIMaskSpot(int classIndex) { expsettings->requestAIMaskSpot(classIndex); }
     void createShapeMaskSpot(int shape) { expsettings->requestShapeMaskSpot(shape); }
+    /// Keep the selected mask's black & white flag in the panel's row model,
+    /// which is what the next write() reads back.
+    void setSelectedSpotBW(bool value) { expsettings->setSelectedSpotBW(value); }
 
     // When true, write() only updates control spot geometry, not tool settings
     void setSkipToolWrites(bool skip) { skipToolWrites_ = skip; }
