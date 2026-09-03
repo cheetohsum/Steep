@@ -400,6 +400,18 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
             const int requestedShape = expsettings->getPendingShape();
             const char* requestedShapeNames[] = {"ELI", "RECT", "GRAD", "POLY"};
             newSpot->shape = requestedShapeNames[std::max(0, std::min(requestedShape, 3))];
+
+            if (newSpot->shape == "GRAD") {
+                // A gradient is a way of grading the picture, not a small
+                // patch of it, so it starts fitted to the frame: the extents
+                // scale by the image's own width and height (lx = w * loc /
+                // 2000), so 1000 puts the edge on the frame on every side and
+                // a radial comes out as an ellipse the shape of the photo.
+                // The stock 150 left a gradient covering a 7.5% box in the
+                // middle, which reads as barely working.
+                newSpot->loc = {1000, 1000, 1000, 1000};
+            }
+
             ControlSpotPanel::SpotRow r;
             r.name = newSpot->name = Glib::ustring("Mask ") + std::to_string(pp->locallab.spots.size() + 1);
             r.isvisible = newSpot->isvisible;

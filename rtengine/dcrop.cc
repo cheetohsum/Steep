@@ -1617,6 +1617,8 @@ void Crop::update(int todo)
             parent->ipf.EPDToneMap(labnCrop, 0, skip);
         }
 
+        traceStage("detail-epd");
+
         //parent->ipf.EPDToneMap(labnCrop, 5, 1);    //Go with much fewer than normal iterates for fast redisplay.
         // for all treatments Defringe, Sharpening, Contrast detail , Microcontrast they are activated if "CIECAM" function are disabled
         if (skip == 1) {
@@ -2076,6 +2078,7 @@ void Crop::update(int todo)
         if (params.icm.workingTRC != ColorManagementParams::WorkingTrc::NONE && params.icm.trcExp  && exec) {
 
             //compression gamut and gain at the end of process
+            traceStage("detail-before-gamut");
             const int GW = labnCrop->W;
             const int GH = labnCrop->H;
             TMatrix wprof = ICCStore::getInstance()->workingSpaceMatrix(params.icm.workingProfile);
