@@ -1348,7 +1348,8 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
     ImageSource* imgsrc, const SpotEntry& entry,
     const std::vector<const SpotEntry*>& priorStrokes,
     const std::vector<std::shared_ptr<const AIPatch>>& priorPatches,
-    const ColorTemp& currWB, int tr, const procparams::ProcParams* params)
+    const ColorTemp& currWB, int tr, const procparams::ProcParams* params,
+    bool computeIfMissing)
 {
     auto& engine = rtengine::getAIInpaintingEngine();
     if (!engine.isInitialized() || entry.strokePoints.empty()) {
@@ -1373,6 +1374,13 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
             }
         }
         if (aiPatchPending.count(key)) {
+            if (!computeIfMissing) {
+                // An interactive pass must not block behind a multi-second
+                // inference someone else started; the cheap per-view repair
+                // stands in until that one lands.
+                return nullptr;
+            }
+
             // Another view (preview vs 1:1 crop) is computing this exact
             // patch — wait for its result instead of duplicating a
             // multi-second inference.
@@ -1383,6 +1391,13 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
             break;
         }
     }
+
+    if (!computeIfMissing) {
+        // Nothing cached, and this pass may not build it: let the caller fall
+        // back to the per-view repair so the photo appears straight away.
+        return nullptr;
+    }
+
     aiPatchPending.insert(key);
     const auto abandonPending = [&key]() {
         aiPatchPending.erase(key);
@@ -1857,7 +1872,7 @@ void processStrokeAI(Imagefloat* img, const SpotEntry& entry, const PreviewProps
 
 } // anonymous namespace
 
-void ImProcFunctions::removeSpots (Imagefloat* img, ImageSource* imgsrc, const std::vector<SpotEntry> &entries, const PreviewProps &pp, const ColorTemp &currWB, const ColorManagementParams *cmp, int tr)
+void ImProcFunctions::removeSpots (Imagefloat* img, ImageSource* imgsrc, const std::vector<SpotEntry> &entries, const PreviewProps &pp, const ColorTemp &currWB, const ColorManagementParams *cmp, int tr, bool allowFullResPatch)
 {
     // Process stroke-based entries directly on the image first. Each entry
     // knows which strokes came before it, so repainting the border of an
@@ -1878,7 +1893,8 @@ void ImProcFunctions::removeSpots (Imagefloat* img, ImageSource* imgsrc, const s
                 // cached, blended into this view at its own scale. Falls back
                 // to the per-view path for outsized regions.
                 auto patch = getOrComputeAIPatch(imgsrc, entry, priorStrokes,
-                                                 aiPriorPatches, currWB, tr, params);
+                                                 aiPriorPatches, currWB, tr, params,
+                                                 allowFullResPatch);
                 if (patch) {
                     blitAIPatch(img, pp, *patch);
                     aiPriorPatches.push_back(patch);

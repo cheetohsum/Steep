@@ -1244,37 +1244,53 @@ bool ControlSpotPanel::onTreeviewMotion(GdkEventMotion* event)
     }
 
     Gtk::TreeModel::Path path;
-    if (!treeview_->get_path_at_pos(
-            static_cast<int>(event->x), static_cast<int>(event->y), path)) {
+    Gtk::TreeViewColumn* column = nullptr;
+    int cellX = 0;
+    int cellY = 0;
+    const bool overRow =
+        treeview_->get_path_at_pos(static_cast<int>(event->x), static_cast<int>(event->y),
+                                   path, column, cellX, cellY);
+    // Only the little mask thumbnail arms the preview ON THE PHOTO. The row
+    // highlight still follows the whole row, but the pointer crosses these
+    // rows on its way to every control below the list, and each arming costs
+    // a full pipeline pass.
+    const bool overPreview = overRow && column == treeview_->get_column(1);
+    const int row = (overRow && !path.empty()) ? path[0] : -1;
+
+    // Row highlight: follows the pointer anywhere in the list.
+    if (row != hoveredSpotIndex_) {
+        hoveredSpotIndex_ = row;
+        int index = 0;
+
+        for (auto& r : treemodel_->children()) {
+            r[spots_.mouseover] = index++ == row;
+        }
+
+        treeview_->queue_draw();
+    }
+
+    if (!overPreview) {
         if (sidebarHoverActive_) {
-            hoveredSpotIndex_ = -1;
             sidebarHoverActive_ = false;
-            for (auto& row : treemodel_->children()) {
-                row[spots_.mouseover] = false;
-            }
-            treeview_->queue_draw();
             clearSidebarHoverGeometry();
+
             if (controlPanelListener) {
                 controlPanelListener->spotHovered(false, false, -1);
             }
         }
+
         return false;
     }
 
-    const int hovered = !path.empty() ? path[0] : -1;
-    if (hovered >= 0 && hovered != hoveredSpotIndex_) {
-        hoveredSpotIndex_ = hovered;
+    if (row >= 0 && !sidebarHoverActive_) {
         sidebarHoverActive_ = true;
-        int index = 0;
-        for (auto& row : treemodel_->children()) {
-            row[spots_.mouseover] = index++ == hovered;
-        }
-        treeview_->queue_draw();
-        setSidebarHoverGeometry(hovered);
+        setSidebarHoverGeometry(row);
+
         if (controlPanelListener) {
-            controlPanelListener->spotHovered(true, false, hovered);
+            controlPanelListener->spotHovered(true, false, row);
         }
     }
+
     return false;
 }
 

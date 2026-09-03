@@ -24043,7 +24043,10 @@ void ImProcFunctions::Lab_Local(
         const int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, transformed->H);
         const int xstart = rtengine::max(static_cast<int>(lp.xc - lp.lxL) - cx, 0);
         const int xend = rtengine::min(static_cast<int>(lp.xc + lp.lx) - cx, transformed->W);
-        const float dbStrength = lp.dodgeburn / 100.f; // -1 burn .. +1 dodge
+        // +-100 is +-2 stops at full mask strength. One stop looked timid at
+        // the end of the slider, and a dodge or burn that cannot reach two
+        // stops is not much of a darkroom.
+        const float dbStrength = lp.dodgeburn / 50.f;
 
 #ifdef RT_AI_MASKING
         AIMaskSnapshot aiSnapDb;
@@ -24159,7 +24162,7 @@ void ImProcFunctions::Lab_Local(
                     }
                 }
 
-                const float amount = LIM(dbStrength * factorx * toneWeight, -2.f, 2.f);
+                const float amount = LIM(dbStrength * factorx * toneWeight, -3.f, 3.f);
 
                 if (std::abs(amount) < 0.0005f) {
                     continue;
@@ -24171,11 +24174,20 @@ void ImProcFunctions::Lab_Local(
                 // linear light, where a stop is a stop wherever it lands.
                 const float gain = pow_F(2.f, amount);
                 const float Y = LIM01(Color::L2Y(transformed->L[y][x]) / 65535.f);
-                // Burn multiplies down and cannot reach black; dodge lifts
-                // towards white and cannot pass it. Neither clips.
-                const float outY = amount < 0.f
-                    ? Y * gain
-                    : 1.f - pow_F(1.f - Y, gain);
+                // Both directions are a straight change of exposure, so a
+                // stop asked for is a stop delivered. The earlier dodge
+                // pulled towards white along a curve that flattened long
+                // before full strength, which is why winding the slider up
+                // stopped doing much. Only the top is rolled off, and only
+                // once it runs out of room, so a hard dodge opens the
+                // shadows without flattening the highlights into paper.
+                float outY = Y * gain;
+
+                if (outY > 0.8f) {
+                    outY = 0.8f + 0.2f * (1.f - xexpf(-(outY - 0.8f) * 5.f));
+                }
+
+                outY = LIM01(outY);
                 const float fy = outY > 0.008856452f
                     ? std::cbrt(outY)
                     : (903.2963f * outY + 16.f) / 116.f;

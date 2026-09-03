@@ -982,7 +982,12 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             if ((todo & M_SPOT) && params->spot.enabled && !params->spot.entries.empty()) {
                 spotsDone = true;
                 PreviewProps pp(0, 0, fw, fh, scale);
-                ipf.removeSpots(orig_prev, imgsrc, params->spot.entries, pp, currWB, nullptr, tr);
+                // Only a settled pass may build a generative fill's
+                // full-resolution repair; interactive passes reuse a cached
+                // one or fall back to the per-view repair, so opening a photo
+                // with gen fill on it does not wait on the model.
+                ipf.removeSpots(orig_prev, imgsrc, params->spot.entries, pp, currWB, nullptr, tr,
+                                highDetailNeeded);
             }
 
             denoiseInfoStore.valid = false;
@@ -1091,7 +1096,8 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 allocCache(spotprev);
                 orig_prev->copyData(spotprev);
                 PreviewProps pp(0, 0, fw, fh, scale);
-                ipf.removeSpots(spotprev, imgsrc, params->spot.entries, pp, currWB, &params->icm, tr);
+                ipf.removeSpots(spotprev, imgsrc, params->spot.entries, pp, currWB, &params->icm, tr,
+                                highDetailNeeded);
             } else {
                 if (spotprev) {
                     delete spotprev;

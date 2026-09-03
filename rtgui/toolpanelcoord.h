@@ -318,6 +318,7 @@ private:
     rtengine::procparams::SharpeningParams savedSharpening_;
     rtengine::procparams::SHParams savedSH_;
     rtengine::procparams::BlackWhiteParams savedBlackWhite_;
+    rtengine::procparams::LCurveParams savedLabCurve_;
 
     bool bridgeGlobalToSpot(rtengine::procparams::ProcParams* params, const rtengine::ProcEvent& event);
     void loadSpotIntoGlobalTools();

@@ -631,7 +631,15 @@ enum class BlurType {
     static float MadRgb(const float * DataList, int datalen);
 
     // spot removal tool
-    void removeSpots (rtengine::Imagefloat* img, rtengine::ImageSource* imgsrc, const std::vector<procparams::SpotEntry> &entries, const PreviewProps &pp, const rtengine::ColorTemp &currWB, const procparams::ColorManagementParams *cmp, int tr);
+    /**
+     * @param allowFullResPatch true to let a generative fill compute its
+     *        full-resolution repair here, which costs a fresh full-size pull
+     *        and a multi-second inference. Pass false on interactive passes:
+     *        an already-cached patch is still used, and anything missing
+     *        falls back to the cheap per-view repair, so opening a photo does
+     *        not wait on the model before showing anything.
+     */
+    void removeSpots (rtengine::Imagefloat* img, rtengine::ImageSource* imgsrc, const std::vector<procparams::SpotEntry> &entries, const PreviewProps &pp, const rtengine::ColorTemp &currWB, const procparams::ColorManagementParams *cmp, int tr, bool allowFullResPatch = true);
 
     // pyramid wavelet
     void cbdl_local_temp(float ** src, float ** loctemp, int srcwidth, int srcheight, const float * mult, float kchro, const double dirpyrThreshold, const float mergeL, const float contres, const double skinprot, const bool gamutlab, float b_l, float t_l, float t_r, float b_r,  int choice, int scale, bool multiThread);

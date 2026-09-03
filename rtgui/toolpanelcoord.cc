@@ -1505,6 +1505,30 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
         bridged = true;
     }
 
+    // The tone curve and the L* curve have per-spot counterparts the engine
+    // already turns into LUTs, so they can follow the mask like the sliders do.
+    if (id == EvToneCurve1) {
+        spot.rgbcurve = params->toneCurve.curve;
+
+        if (spot.rgbcurve.size() > 1) {
+            spot.expcolor = true;
+            spot.visicolor = true;
+        }
+
+        bridged = true;
+    }
+
+    if (id == EvLLCurve) {
+        spot.llcurve = params->labCurve.lcurve;
+
+        if (spot.llcurve.size() > 1) {
+            spot.expcolor = true;
+            spot.visicolor = true;
+        }
+
+        bridged = true;
+    }
+
     if (id == EvBrightness || id == EvContrast || id == EvSaturation) {
         spot.lightness = params->toneCurve.brightness;
         spot.contrast = params->toneCurve.contrast;
@@ -1513,6 +1537,21 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
             spot.expcolor = true;
             spot.visicolor = true;
         }
+        bridged = true;
+    }
+
+    // The L* tab keeps its own brightness and contrast, in labCurve rather
+    // than toneCurve. They land on the same two spot fields, so whichever
+    // pair the user reaches for is the one the mask shows.
+    if (id == EvLBrightness || id == EvLContrast) {
+        spot.lightness = params->labCurve.brightness;
+        spot.contrast = params->labCurve.contrast;
+
+        if (spot.lightness != 0 || spot.contrast != 0) {
+            spot.expcolor = true;
+            spot.visicolor = true;
+        }
+
         bridged = true;
     }
 
@@ -1559,6 +1598,7 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
         params->sharpening = savedSharpening_;
         params->sh = savedSH_;
         params->blackwhite = savedBlackWhite_;
+        params->labCurve = savedLabCurve_;
     }
 
     return bridged;
@@ -1776,6 +1816,7 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
                 savedSharpening_ = p->sharpening;
                 savedSH_ = p->sh;
                 savedBlackWhite_ = p->blackwhite;
+                savedLabCurve_ = p->labCurve;
                 maskGlobalsValid_ = true;
                 ipc->endUpdateParams(0);
             }
@@ -1811,6 +1852,7 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
                     p->sharpening = savedSharpening_;
                     p->sh = savedSH_;
                     p->blackwhite = savedBlackWhite_;
+                    p->labCurve = savedLabCurve_;
                 }
 
                 ipc->endUpdateParams(rtengine::RefreshMapper::getInstance()->getAction(
@@ -2852,6 +2894,7 @@ void ToolPanelCoordinator::refreshMaskModeGlobals(const ProcParams* params)
     savedSharpening_ = params->sharpening;
     savedSH_ = params->sh;
     savedBlackWhite_ = params->blackwhite;
+    savedLabCurve_ = params->labCurve;
     maskGlobalsValid_ = true;
 }
 
@@ -2909,6 +2952,7 @@ void ToolPanelCoordinator::turnOffMaskOverlay(bool /*forceRedraw*/)
         params->sharpening = savedSharpening_;
         params->sh = savedSH_;
         params->blackwhite = savedBlackWhite_;
+        params->labCurve = savedLabCurve_;
     }
     ipc->endUpdateParams(AUTOEXP);
     hoverPreviewSpot_ = -1;
@@ -2977,6 +3021,7 @@ void ToolPanelCoordinator::hoverMaskChanged(bool hover, bool forceRedraw, int sp
             params->sharpening = savedSharpening_;
             params->sh = savedSH_;
             params->blackwhite = savedBlackWhite_;
+            params->labCurve = savedLabCurve_;
         }
         if (spotIndex >= 0 && spotIndex < static_cast<int>(params->locallab.spots.size())) {
             params->locallab.selspot = spotIndex;
@@ -3894,7 +3939,11 @@ void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const 
     // Only bridge when the event triggers processing that uses globals (tone curve,
     // locallab, or crop). For unrelated events (sharpening, noise reduction, monitor
     // changes), skip bridging entirely — the previous cycle's results are still valid.
-    if ((changeFlags & (M_AUTOEXP | M_RGBCURVE | M_CROP))
+    // M_LUMACURVE is in this set because the whole L* tab lives there: without
+    // it the bridge never saw EvLBrightness, EvLContrast or EvLLCurve, so
+    // those controls were written to the globals, reverted by the mask-mode
+    // restore, and appeared to do nothing at all on the mask pane.
+    if ((changeFlags & (M_AUTOEXP | M_RGBCURVE | M_LUMACURVE | M_CROP))
             && bridgeGlobalToSpot(params, event)) {
         // Ensure locallab runs. For most bridgeable events (EvExpComp etc.),
         // M_AUTOEXP is already in changeFlags — this is a no-op OR.
@@ -3911,6 +3960,7 @@ void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const 
         params->sharpening = savedSharpening_;
         params->sh = savedSH_;
         params->blackwhite = savedBlackWhite_;
+        params->labCurve = savedLabCurve_;
     }
 
     // Compensate rotation on flip
