@@ -1620,8 +1620,22 @@ void ControlSpotPanel::render_preview(
 
                     double t;
 
+                    const double achPrev = std::max(transitShown / 100.0, 0.01);
+
                     if (gradTypeShown == 1) {          // Radial
-                        t = 1.0 - 2.0 * std::sqrt(nx * nx + ny * ny);
+                        // Mirror the engine: solid to (1 - feather) of the
+                        // radius, gone at the edge.
+                        const double r = std::sqrt(nx * nx + ny * ny);
+                        const double feather = std::min(std::max(achPrev, 0.02), 1.0);
+                        const double inner = 1.0 - feather;
+
+                        if (r <= inner) {
+                            t = 1.0;
+                        } else if (r >= 1.0) {
+                            t = -1.0;
+                        } else {
+                            t = 1.0 - 2.0 * (r - inner) / feather;
+                        }
                     } else {
                         const double sinT = std::sin(angle);
                         const double cosT = std::cos(angle);
@@ -1633,7 +1647,7 @@ void ControlSpotPanel::render_preview(
                         t = -t;
                     }
 
-                    const double ach = std::max(transitShown / 100.0, 0.01);
+                    const double ach = gradTypeShown == 1 ? 1.0 : achPrev;
 
                     if (t >= ach) {
                         strength = 1.0;

@@ -668,7 +668,14 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
                    static_cast<float>(height) / fullHeight)
         : 1.f;
     const float sizeShift = (maskSize - 18.f) * 0.5f * previewScale;
-    const float featherRadius = std::max(0.f, feather) * 0.5f * previewScale;
+    // Feather as a fraction of the mask's own short side, not a count of
+    // pixels scaled down with the preview. The cache tops out at 1024px, so
+    // previewScale runs about 0.16 on a full frame and feather=100 came to
+    // roughly 8 pixels of ramp -- under 1% of the mask, which still reads as
+    // a cut edge however far the slider goes. At 100 the band is now 12% of
+    // the short side, and it means the same thing at any zoom.
+    const float featherRadius = (std::max(0.f, feather) / 100.f) * 0.12f
+                                * static_cast<float>(std::min(width, height));
     auto prepared = std::make_shared<array2D<float>>(width, height);
 
 #ifdef _OPENMP

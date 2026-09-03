@@ -2251,7 +2251,24 @@ static void calcTransitiongrad(const float lox, const float loy, const float ach
         const float ry = std::max(dy >= 0.f ? lp.gradly : lp.gradlyT, 1.f);
         const float nx = dx / rx;
         const float ny = dy / ry;
-        t = 1.f - 2.f * std::sqrt(nx * nx + ny * ny);
+        const float r = std::sqrt(nx * nx + ny * ny);
+
+        // Size and feather are separate here. The mask is solid from the
+        // centre out to (1 - feather) of the radius and reaches nothing
+        // exactly at the edge the handles draw, so growing the ellipse pushes
+        // the ramp outward and leaves a larger untouched core behind it,
+        // instead of stretching one ramp across the whole radius.
+        const float feather = LIM(ach, 0.02f, 1.f);
+        const float inner = 1.f - feather;
+
+        if (r <= inner) {
+            t = 1.f;
+        } else if (r >= 1.f) {
+            t = -1.f;
+        } else {
+            // Map the band to the same -1..+1 the shared code below expects.
+            t = 1.f - 2.f * (r - inner) / feather;
+        }
     } else {
         // Project position onto gradient direction
         const float theta = lp.gradangle * rtengine::RT_PI_F / 180.f;
@@ -2281,11 +2298,16 @@ static void calcTransitiongrad(const float lox, const float loy, const float ach
         t = -t;
     }
 
-    if (t >= ach) {
+    // Radial already scaled its band to the full -1..+1 range, so it compares
+    // against 1 rather than the feather width; linear keeps the band centred
+    // on the spot, where the feather IS the width between the two bars.
+    const float band = lp.gradtype == 1 ? 1.f : ach;
+
+    if (t >= band) {
         zone = 2; // Full effect
-    } else if (t > -ach) {
+    } else if (t > -band) {
         zone = 1; // Transition
-        const float u = (t + ach) / (2.f * ach);
+        const float u = (t + band) / (2.f * band);
         localFactor = pow_F(calcGradProfile(u, lp.gradprofile), lp.transweak);
     }
     // else zone = 0 (outside, no effect)
