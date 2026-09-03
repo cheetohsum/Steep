@@ -21171,10 +21171,14 @@ void ImProcFunctions::Lab_Local(
                         }
 
                         if (lp.expcomp != 0.f) {   // ||  lp.laplacexp > 0.1f
-                            if (lp.laplacexp <= 0.1f) {
-                                lp.laplacexp = 0.2f;  //force to use Laplacian with very small values
-                            }
-
+                            // The Laplacian used to be switched on here for any
+                            // exposure at all, whether or not it had been asked
+                            // for. It is an FFT solve over the whole spot under
+                            // a global lock, and the per-tool timer put this one
+                            // block at 1009.8ms of a crop pass while every other
+                            // tool measured ~0 -- the reason a mask edit took a
+                            // second to appear. Honour the setting instead: at 0
+                            // an exposure change is an exposure change.
                             ImProcFunctions::exlabLocal(lp, 1.f, bfh, bfw, bfhr, bfwr, bufexporig.get(), bufexpfin.get(), hltonecurveloc, shtonecurveloc, tonecurveloc, hueref, lumaref, chromaref);
                         }
                     }
