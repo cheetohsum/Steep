@@ -1527,6 +1527,15 @@ void Crop::update(int todo)
         // NOTE: AI mask baseline save moved to end of processing pipeline (after all global steps)
 
         parent->ipf.lab2rgb(*labnCrop, *baseCrop, params.icm.workingProfile);
+
+        // baseCrop IS the cached transform buffer, and locallab has just
+        // written its result into it. Left marked valid, the next pass that
+        // does not rebuild the transform would feed locallab its own output
+        // and apply the spot a second time, then a third -- which is why a
+        // mask edit looked far too strong while a slider was moving and
+        // dropped back to the real thing on release. Rebuilding the transform
+        // costs a few milliseconds; stacking the edit costs correctness.
+        transCropValid = false;
     }
 
     traceStage("transform-and-locallab");

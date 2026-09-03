@@ -2101,6 +2101,11 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             delete [] autocontrast;
             
             ipf.lab2rgb(*nprevl, *oprevi, params->icm.workingProfile);
+
+            // oprevi is the cached transform buffer; locallab has just written
+            // into it. See the matching note in dcrop.cc -- leaving the cache
+            // marked valid lets the next pass stack locallab on its own output.
+            transformedPrevValid = false;
             //*************************************************************
             // end locallab
             //*************************************************************
