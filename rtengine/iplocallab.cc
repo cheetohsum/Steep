@@ -24119,10 +24119,10 @@ void ImProcFunctions::Lab_Local(
         const int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, transformed->H);
         const int xstart = rtengine::max(static_cast<int>(lp.xc - lp.lxL) - cx, 0);
         const int xend = rtengine::min(static_cast<int>(lp.xc + lp.lx) - cx, transformed->W);
-        // +-100 is +-2 stops at full mask strength. One stop looked timid at
-        // the end of the slider, and a dodge or burn that cannot reach two
-        // stops is not much of a darkroom.
-        const float dbStrength = lp.dodgeburn / 50.f;
+        // +-100 is +-5 stops at full mask strength. Two stops still read as
+        // polite at the very end of the slider; the far end of a control
+        // should be further than you normally want to go.
+        const float dbStrength = lp.dodgeburn / 20.f;
 
 #ifdef RT_AI_MASKING
         AIMaskSnapshot aiSnapDb;
@@ -24238,7 +24238,7 @@ void ImProcFunctions::Lab_Local(
                     }
                 }
 
-                const float amount = LIM(dbStrength * factorx * toneWeight, -3.f, 3.f);
+                const float amount = LIM(dbStrength * factorx * toneWeight, -6.f, 6.f);
 
                 if (std::abs(amount) < 0.0005f) {
                     continue;

@@ -1456,12 +1456,20 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
     // where the spot is. A spot created after B&W was switched on started out
     // disagreeing, and since gradients now cover the frame, growing one grew
     // the hole -- the conversion appeared to fall off as the mask got bigger.
+    // In mask mode the global widgets carry the SELECTED SPOT's values, and
+    // the write loop has already put them into params. Reading blackwhite
+    // from there would sync every spot to a spot's own state and switch the
+    // photo's conversion off; the snapshot holds what the picture really has.
+    const bool photoIsBW = (maskModeActive_ && maskGlobalsValid_)
+        ? savedBlackWhite_.enabled
+        : params->blackwhite.enabled;
+
     for (auto& everySpot : params->locallab.spots) {
-        if (everySpot.blwh == params->blackwhite.enabled) {
+        if (everySpot.blwh == photoIsBW) {
             continue;
         }
 
-        everySpot.blwh = params->blackwhite.enabled;
+        everySpot.blwh = photoIsBW;
 
         if (everySpot.blwh) {
             // Desaturation runs inside the colour processing block, so the

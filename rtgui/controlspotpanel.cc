@@ -2979,7 +2979,7 @@ void ControlSpotPanel::gradTypeChanged(int /*index*/)
     // to a little over half the frame. Only ever from the untouched creation
     // size: a spot whose handles have been dragged keeps what it was given.
     constexpr int kGradFullExtent = 1000;
-    constexpr int kRadialExtent = 550;
+    constexpr int kRadialExtent = 320;
     const int fromExtent = newType == 1 ? kGradFullExtent : kRadialExtent;
     const int toExtent = newType == 1 ? kRadialExtent : kGradFullExtent;
 
