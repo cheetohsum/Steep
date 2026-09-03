@@ -1430,14 +1430,12 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
     const int id = event;
     if (id == EvlocallabshowmaskMethod) return false;
 
-    // Bridge when in mask mode OR when any locallab spot has gradient shape
+    // A gradient spot still needs locallab switched on to render at all.
     bool hasGradient = false;
-    int gradIdx = -1;
-    // Scan all spots for gradient shape regardless of locallab enabled state
-    for (int i = 0; i < (int)params->locallab.spots.size(); ++i) {
-        if (params->locallab.spots.at(i).shape == "GRAD") {
+
+    for (const auto& everySpot : params->locallab.spots) {
+        if (everySpot.shape == "GRAD") {
             hasGradient = true;
-            gradIdx = i;
             break;
         }
     }
@@ -1465,87 +1463,30 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
         bwBridged = true;
     }
 
-    if (!maskModeActive_ && !hasGradient) {
+    if (!maskModeActive_) {
         return bwBridged;
     }
 
-    // Auto-enable locallab when bridging to a gradient spot
     if (hasGradient && !params->locallab.enabled) {
         params->locallab.enabled = true;
     }
 
-    // Use the gradient spot if available, otherwise use selected spot
-    const int idx = hasGradient ? gradIdx : params->locallab.selspot;
+    // Bridge into the spot the user has selected.
+    const int idx = params->locallab.selspot;
     if (idx < 0 || idx >= (int)params->locallab.spots.size()) return false;
 
     auto& spot = params->locallab.spots.at(idx);
 
-    if (hasGradient) {
-        // Gradient mode: copy ALL bridgeable global values to the gradient spot
-        // and zero globals. Must ALWAYS return true because globals are zeroed —
-        // locallab MUST reprocess to compensate via the gradient.
-        spot.expcomp = params->toneCurve.expcomp;
-        spot.black = params->toneCurve.black;
-        spot.hlcompr = params->toneCurve.hlcompr;
-        spot.hlcomprthresh = params->toneCurve.hlcomprthresh;
-        spot.shcompr = params->toneCurve.shcompr;
-        if (spot.expcomp != 0.0 || spot.black != 0 ||
-            spot.hlcompr != 0 || spot.hlcomprthresh != 0 || spot.shcompr != 50) {
-            spot.expexpose = true;
-            spot.visiexpose = true;
-        }
-
-        spot.lightness = params->toneCurve.brightness;
-        spot.contrast = params->toneCurve.contrast;
-        spot.chroma = params->toneCurve.saturation;
-        if (spot.lightness != 0 || spot.contrast != 0 || spot.chroma != 0) {
-            spot.expcolor = true;
-            spot.visicolor = true;
-        }
-
-        spot.saturated = params->vibrance.saturated;
-        spot.pastels = params->vibrance.pastels;
-        spot.psthreshold = params->vibrance.psthreshold;
-        spot.protectskins = params->vibrance.protectskins;
-        spot.avoidcolorshift = params->vibrance.avoidcolorshift;
-        spot.pastsattog = params->vibrance.pastsattog;
-        if (spot.pastels != 0 || spot.saturated != 0) {
-            spot.expvibrance = true;
-            spot.visivibrance = true;
-        }
-
-        spot.sharamount = params->sharpening.amount;
-        spot.sharradius = params->sharpening.radius;
-        spot.sharcontrast = static_cast<int>(params->sharpening.contrast);
-        if (spot.sharamount != 0) {
-            spot.expsharp = true;
-            spot.visisharp = true;
-        }
-
-        spot.highlights = params->sh.highlights;
-        spot.shadows = params->sh.shadows;
-        spot.h_tonalwidth = params->sh.htonalwidth;
-        spot.s_tonalwidth = params->sh.stonalwidth;
-        if (spot.highlights != 0 || spot.shadows != 0) {
-            spot.expshadhigh = true;
-            spot.visishadhigh = true;
-        }
-
-        // Zero ALL bridgeable global params so the effect only applies through
-        // the gradient, not uniformly across the entire image.
-        params->toneCurve.expcomp = 0.0;
-        params->toneCurve.black = 0;
-        params->toneCurve.hlcompr = 0;
-        params->toneCurve.hlcomprthresh = 0;
-        params->toneCurve.shcompr = 50;
-        params->toneCurve.brightness = 0;
-        params->toneCurve.contrast = 0;
-        params->toneCurve.saturation = 0;
-        params->sh.highlights = 0;
-        params->sh.shadows = 0;
-
-        return true;
-    }
+    // NOTE: a gradient spot used to swallow the photo's whole grade. The
+    // moment any spot had GRAD shape, every bridgeable global -- exposure,
+    // black, highlight compression, brightness, contrast, saturation,
+    // vibrance, sharpening, shadows/highlights -- was copied into that spot
+    // and zeroed globally, so the grade that had applied to the whole picture
+    // suddenly applied only through the gradient. Adding a gradient MASK
+    // therefore ramped the exposure across the frame on its own, with nothing
+    // touched. Gradient spots now bridge like every other mask: only the
+    // control the user actually moved, only while the mask pane is open, with
+    // the globals put back afterwards from the mask-mode snapshot.
 
     // Mask mode: event-specific bridging
     bool bridged = bwBridged;

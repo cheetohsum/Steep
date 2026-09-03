@@ -24136,10 +24136,6 @@ void ImProcFunctions::Lab_Local(
 
                 const float Ln = LIM01(transformed->L[y][x] / 32768.f);
 
-                if (Ln <= 0.0001f) {
-                    continue;
-                }
-
                 // Which tones the brush bites into, the way a darkroom worker
                 // picks shadows, midtones or highlights to work. Ranges add
                 // up, each with its own weight, so two can be combined and
@@ -24169,10 +24165,21 @@ void ImProcFunctions::Lab_Local(
                     continue;
                 }
 
-                // amount > 0 lifts, amount < 0 sinks; equal and opposite
-                // exponents keep a dodge and a burn of the same size mirror
-                // images of each other.
-                transformed->L[y][x] = 32768.f * pow_F(Ln, pow_F(2.f, -amount));
+                // Work on luminance, not on the lightness scale. A gamma bend
+                // of L* is pinned at both ends, so burning a bright area moved
+                // it almost not at all - the one place burning is for. Y is
+                // linear light, where a stop is a stop wherever it lands.
+                const float gain = pow_F(2.f, amount);
+                const float Y = LIM01(Color::L2Y(transformed->L[y][x]) / 65535.f);
+                // Burn multiplies down and cannot reach black; dodge lifts
+                // towards white and cannot pass it. Neither clips.
+                const float outY = amount < 0.f
+                    ? Y * gain
+                    : 1.f - pow_F(1.f - Y, gain);
+                const float fy = outY > 0.008856452f
+                    ? std::cbrt(outY)
+                    : (903.2963f * outY + 16.f) / 116.f;
+                transformed->L[y][x] = LIM(327.68f * (116.f * fy - 16.f), 0.f, 32768.f);
             }
         }
     }
