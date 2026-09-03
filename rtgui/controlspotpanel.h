@@ -104,6 +104,10 @@ public:
         int aiMaskClass; // 0-7 class index
         double aiMaskThreshold; // Segmentation probability cutoff
         int maskBlendMode; // 0 = Normal, 1 = Darken, 2 = Lighten, 3 = Luminosity, 4 = Color
+        int gradType; // 0 = Linear, 1 = Radial, 2 = Mirror
+        int gradProfile; // 0 = Linear, 1 = Soft, 2 = Smooth, 3 = Ease in, 4 = Ease out
+        double dodgeBurn; // -100 (burn) .. +100 (dodge)
+        int dodgeBurnRange; // 0 = Even, 1 = Shadows, 2 = Midtones, 3 = Highlights
         std::vector<int> polyMaskPoints; // Polygon vertices: flattened [x1,y1,x2,y2,...]
         double polyMaskFeather; // Polygon feather width
         double polyMaskSnapTolerance; // Magnetic snap search radius
@@ -231,8 +235,11 @@ public:
      * Add a new spot (and its associated curve)
      *
      * @param newSpot A SpotRow structure containing new spot params
+     * @param expandDetails true to open the per-mask settings for the new
+     *        row once it is selected (a mask the user just created); false
+     *        when restoring masks from a profile
      */
-    void addControlSpot(const SpotRow &newSpot);
+    void addControlSpot(const SpotRow &newSpot, bool expandDetails = false);
 
     // Control spot delete function
     /**
@@ -400,6 +407,10 @@ private:
         Gtk::TreeModelColumn<int> aiMaskClass; // 0-7 class index
         Gtk::TreeModelColumn<double> aiMaskThreshold;
         Gtk::TreeModelColumn<int> maskBlendMode;
+        Gtk::TreeModelColumn<int> gradType;
+        Gtk::TreeModelColumn<int> gradProfile;
+        Gtk::TreeModelColumn<double> dodgeBurn;
+        Gtk::TreeModelColumn<int> dodgeBurnRange;
         Gtk::TreeModelColumn<std::vector<int>> polyMaskPoints;
         Gtk::TreeModelColumn<double> polyMaskFeather;
         Gtk::TreeModelColumn<double> polyMaskSnapTolerance;
@@ -569,6 +580,20 @@ private:
     rtengine::Coord magneticSnap(int imgX, int imgY); // snap to nearest edge
     static void simplifyPolygon(std::vector<rtengine::Coord>& pts, double epsilon);
 
+    // Gradient shaping and dodge & burn, both inside the per-mask settings
+    MyComboBoxText* const gradType_;
+    sigc::connection gradTypeConn_;
+    MyComboBoxText* const gradProfile_;
+    sigc::connection gradProfileConn_;
+    Adjuster* const dodgeBurn_;
+    MyComboBoxText* const dodgeBurnRange_;
+    sigc::connection dodgeBurnRangeConn_;
+    Gtk::Box* gradBox_;        // gradient-only controls (shape == GRAD)
+    Gtk::Box* dodgeBurnBox_;   // dodge & burn, shown for every mask
+    void gradTypeChanged();
+    void gradProfileChanged();
+    void dodgeBurnRangeChanged();
+
     // Per-mask settings section, expanded from the chevron in each mask row
     Gtk::Box* maskDetailBox_;
     Gtk::Revealer* maskRevealer_;
@@ -592,8 +617,8 @@ public:
     void resetSidebarHover();
 private:
 
-    // Row background color
-    Gdk::RGBA colorMouseover, colorNominal, colorMouseovertext;
+    // Hover wash on every cell of the hovered row (reads the row model)
+    void applyRowHover(Gtk::CellRenderer* cell, const Gtk::TreeModel::Row& row);
 
     // Add-mask menu
     Gtk::Menu* addMaskMenu_;

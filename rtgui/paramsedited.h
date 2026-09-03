@@ -533,6 +533,10 @@ public:
         bool polyMaskSnapTolerance;
         bool polyMaskLegLength;
         bool maskBlendMode;
+        bool gradType;
+        bool gradProfile;
+        bool dodgeBurn;
+        bool dodgeBurnRange;
         bool centerX;
         bool centerY;
         bool circrad;

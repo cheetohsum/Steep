@@ -1738,8 +1738,11 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
     }
 
     // The AI pick tool only makes sense on the masking pane.
-    if (mode != EditorMode::MASK && toolBar && toolBar->getTool() == TMAIMaskPick) {
-        toolBar->setTool(TMHand);
+    if (mode != EditorMode::MASK) {
+        cancelPendingAIMaskPick();
+        if (toolBar && toolBar->getTool() == TMAIMaskPick) {
+            toolBar->setTool(TMHand);
+        }
     }
 
     // Deselect active perspective/crop tools when switching away from CROPPING tab
@@ -2701,6 +2704,7 @@ void ToolPanelCoordinator::addPanel(Gtk::Box* where, FoldableToolPanel* panel, i
 
 ToolPanelCoordinator::~ToolPanelCoordinator ()
 {
+    aiMaskPickPoll_.disconnect();
     quickAutoEditGeneration_->fetch_add(1, std::memory_order_acq_rel);
     quickAutoEditPool_.reset();
     quickPreviewFinalizeConn_.disconnect();
@@ -4354,6 +4358,9 @@ void ToolPanelCoordinator::initImage(rtengine::StagedImageProcessor* ipc_, bool 
     toneCurve->enableAll();
     toneCurve->enableListener();
 
+    // A pick still waiting on the previous image must not land on this one.
+    cancelPendingAIMaskPick();
+
     if (ipc) {
         const rtengine::FramesMetaData* pMetaData = ipc->getInitialImage()->getMetaData();
         metadata->setImageData(pMetaData);
@@ -4558,17 +4565,64 @@ void ToolPanelCoordinator::aiMaskPickSelected(int x, int y)
     }
 
 #ifdef RT_AI_MASKING
+    cancelPendingAIMaskPick();
     if (!locallab || !ipc || !ipc->getInitialImage()) {
         return;
     }
 
-    const int classIndex = rtengine::AIMaskCache::getInstance().getDominantClassAt(
-        ipc->getInitialImage()->getFileName().raw(), x, y);
+    aiMaskPickX_ = x;
+    aiMaskPickY_ = y;
+    if (completeAIMaskPick()) {
+        return;
+    }
 
+    // The image has not been segmented yet: a pick can be the first thing
+    // the user does on the pane, and background analysis may be switched
+    // off. Ask for a one-shot analysis and finish the pick when it lands;
+    // give up quietly after ~20 s (a busy GPU can push one inference past
+    // 2 s, and the user may have moved on).
+    ipc->requestSmartMaskAnalysis();
+    aiMaskPickAttempts_ = 0;
+    aiMaskPickPoll_ = Glib::signal_timeout().connect([this]() -> bool {
+        if (completeAIMaskPick()) {
+            return false;
+        }
+        if (++aiMaskPickAttempts_ >= 100) {
+            aiMaskPickX_ = aiMaskPickY_ = -1;
+            return false;
+        }
+        return true;
+    }, 200);
+#endif
+}
+
+bool ToolPanelCoordinator::completeAIMaskPick()
+{
+#ifdef RT_AI_MASKING
+    if (aiMaskPickX_ < 0 || aiMaskPickY_ < 0 || !locallab || !ipc || !ipc->getInitialImage()) {
+        aiMaskPickX_ = aiMaskPickY_ = -1;
+        return true;
+    }
+
+    const std::string imageId = ipc->getInitialImage()->getFileName().raw();
+    auto& cache = rtengine::AIMaskCache::getInstance();
+    if (!cache.hasCachedMasks(imageId)) {
+        return false;
+    }
+
+    const int classIndex = cache.getDominantClassAt(imageId, aiMaskPickX_, aiMaskPickY_);
+    aiMaskPickX_ = aiMaskPickY_ = -1;
     if (classIndex >= 0) {
         locallab->createAIMaskSpot(classIndex);
     }
 #endif
+    return true;
+}
+
+void ToolPanelCoordinator::cancelPendingAIMaskPick()
+{
+    aiMaskPickPoll_.disconnect();
+    aiMaskPickX_ = aiMaskPickY_ = -1;
 }
 
 void ToolPanelCoordinator::pointColorSelected(int x, int y, Thumbnail* thm)

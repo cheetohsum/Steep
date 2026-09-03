@@ -765,33 +765,61 @@ int AIMaskCache::getDominantClassAt(const std::string& imageId, int fullX, int f
         return -1;
     }
 
-    const int mx = LIM(fullX * cachedWidth_ / fullW_, 0, cachedWidth_ - 1);
-    const int my = LIM(fullY * cachedHeight_ / fullH_, 0, cachedHeight_ - 1);
     if (fullX < 0 || fullY < 0 || fullX >= fullW_ || fullY >= fullH_) {
         return -1;
     }
 
+    // Map the full-image click into mask space and vote over a small
+    // neighbourhood. The mask is a <=1024px rendering of the preview, so one
+    // mask pixel covers many image pixels and sits on a class boundary far
+    // more often than the click does; a single sample there flips between
+    // the two classes at random. Averaging the softmax over ~1% of the long
+    // edge picks the class that actually dominates under the cursor.
+    const int mx = LIM(fullX * cachedWidth_ / fullW_, 0, cachedWidth_ - 1);
+    const int my = LIM(fullY * cachedHeight_ / fullH_, 0, cachedHeight_ - 1);
+    const int radius = std::max(2, std::max(cachedWidth_, cachedHeight_) / 200);
+    const int x0 = std::max(0, mx - radius);
+    const int x1 = std::min(cachedWidth_ - 1, mx + radius);
+    const int y0 = std::max(0, my - radius);
+    const int y1 = std::min(cachedHeight_ - 1, my + radius);
+
     const int modelClasses = std::min<int>(static_cast<int>(AISegClass::NUM_CLASSES),
                                            cachedMasks_->size());
+    const int subjectIndex = static_cast<int>(AISegClass::SUBJECT);
+    const bool haveSubject = subjectIndex < static_cast<int>(cachedMasks_->size());
+
+    std::vector<double> classSum(modelClasses, 0.0);
+    double subjectSum = 0.0;
+    int samples = 0;
+    for (int y = y0; y <= y1; ++y) {
+        for (int x = x0; x <= x1; ++x) {
+            for (int c = 0; c < modelClasses; ++c) {
+                classSum[c] += cachedMasks_->at(c)[y][x];
+            }
+            if (haveSubject) {
+                subjectSum += cachedMasks_->at(subjectIndex)[y][x];
+            }
+            ++samples;
+        }
+    }
+
     int best = -1;
-    float bestProb = 0.f;
+    double bestSum = 0.0;
     for (int c = 0; c < modelClasses; ++c) {
-        const float p = cachedMasks_->at(c)[my][mx];
-        if (p > bestProb) {
-            bestProb = p;
+        if (classSum[c] > bestSum) {
+            bestSum = classSum[c];
             best = c;
         }
     }
 
     // A click on any subject-ish class means "select the subject" — the
     // composed class is the better mask (dominant regions, holes filled).
-    const int subjectIndex = static_cast<int>(AISegClass::SUBJECT);
-    if (best >= 0 && subjectIndex < static_cast<int>(cachedMasks_->size())
+    if (best >= 0 && haveSubject && samples > 0
             && (best == static_cast<int>(AISegClass::PERSON)
                 || best == static_cast<int>(AISegClass::VEHICLE)
                 || best == static_cast<int>(AISegClass::ANIMAL)
                 || best == static_cast<int>(AISegClass::FOREGROUND_OBJECT))
-            && cachedMasks_->at(subjectIndex)[my][mx] > 0.5f) {
+            && subjectSum / samples > 0.5) {
         return subjectIndex;
     }
 

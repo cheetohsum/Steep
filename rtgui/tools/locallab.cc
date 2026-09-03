@@ -336,6 +336,10 @@ void Locallab::read(const rtengine::procparams::ProcParams* pp, const ParamsEdit
         r.aiMaskClass = pp->locallab.spots.at(i).aiMaskClass;
         r.aiMaskThreshold = pp->locallab.spots.at(i).aiMaskThreshold;
         r.maskBlendMode = pp->locallab.spots.at(i).maskBlendMode;
+        r.gradType = pp->locallab.spots.at(i).gradType;
+        r.gradProfile = pp->locallab.spots.at(i).gradProfile;
+        r.dodgeBurn = pp->locallab.spots.at(i).dodgeBurn;
+        r.dodgeBurnRange = pp->locallab.spots.at(i).dodgeBurnRange;
         r.polyMaskPoints = pp->locallab.spots.at(i).polyMaskPoints;
         r.polyMaskFeather = pp->locallab.spots.at(i).polyMaskFeather;
         r.polyMaskSnapTolerance = pp->locallab.spots.at(i).polyMaskSnapTolerance;
@@ -538,12 +542,16 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
             r.aiMaskClass = 0;
             r.aiMaskThreshold = newSpot->aiMaskThreshold;
             r.maskBlendMode = newSpot->maskBlendMode;
+            r.gradType = newSpot->gradType;
+            r.gradProfile = newSpot->gradProfile;
+            r.dodgeBurn = newSpot->dodgeBurn;
+            r.dodgeBurnRange = newSpot->dodgeBurnRange;
             r.polyMaskPoints = newSpot->polyMaskPoints;
             r.polyMaskFeather = newSpot->polyMaskFeather;
             r.polyMaskSnapTolerance = newSpot->polyMaskSnapTolerance;
             r.polyMaskLegLength = newSpot->polyMaskLegLength;
 
-            expsettings->addControlSpot(r);
+            expsettings->addControlSpot(r, true); // user-made mask: open its settings
 
             // Auto-enable LocalLab when creating a spot
             if (!pp->locallab.enabled) {
@@ -741,12 +749,16 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
             r.aiMaskClass = aiClass;
             r.aiMaskThreshold = newSpot->aiMaskThreshold;
             r.maskBlendMode = newSpot->maskBlendMode;
+            r.gradType = newSpot->gradType;
+            r.gradProfile = newSpot->gradProfile;
+            r.dodgeBurn = newSpot->dodgeBurn;
+            r.dodgeBurnRange = newSpot->dodgeBurnRange;
             r.polyMaskPoints = newSpot->polyMaskPoints;
             r.polyMaskFeather = newSpot->polyMaskFeather;
             r.polyMaskSnapTolerance = newSpot->polyMaskSnapTolerance;
             r.polyMaskLegLength = newSpot->polyMaskLegLength;
 
-            expsettings->addControlSpot(r);
+            expsettings->addControlSpot(r, true); // user-made mask: open its settings
 
             // ProcParams update
             pp->locallab.spots.push_back(*newSpot);
@@ -1077,12 +1089,16 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
             r.aiMaskClass = newSpot->aiMaskClass;
             r.aiMaskThreshold = newSpot->aiMaskThreshold;
             r.maskBlendMode = newSpot->maskBlendMode;
+            r.gradType = newSpot->gradType;
+            r.gradProfile = newSpot->gradProfile;
+            r.dodgeBurn = newSpot->dodgeBurn;
+            r.dodgeBurnRange = newSpot->dodgeBurnRange;
             r.polyMaskPoints = newSpot->polyMaskPoints;
             r.polyMaskFeather = newSpot->polyMaskFeather;
             r.polyMaskSnapTolerance = newSpot->polyMaskSnapTolerance;
             r.polyMaskLegLength = newSpot->polyMaskLegLength;
 
-            expsettings->addControlSpot(r);
+            expsettings->addControlSpot(r, true); // user-made mask: open its settings
 
             // ProcParams update
             pp->locallab.spots.push_back(*newSpot);
@@ -1225,6 +1241,10 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                     pp->locallab.spots.at(pp->locallab.selspot).shortc = r->shortc;
                     pp->locallab.spots.at(pp->locallab.selspot).lumask = r->lumask;
                     pp->locallab.spots.at(pp->locallab.selspot).maskBlendMode = r->maskBlendMode;
+                    pp->locallab.spots.at(pp->locallab.selspot).gradType = r->gradType;
+                    pp->locallab.spots.at(pp->locallab.selspot).gradProfile = r->gradProfile;
+                    pp->locallab.spots.at(pp->locallab.selspot).dodgeBurn = r->dodgeBurn;
+                    pp->locallab.spots.at(pp->locallab.selspot).dodgeBurnRange = r->dodgeBurnRange;
                     //pp->locallab.spots.at(pp->locallab.selspot).savrest = r->savrest;
 
                     if (r->complexMethod == 0) {

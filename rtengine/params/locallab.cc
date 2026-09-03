@@ -137,6 +137,10 @@ LocallabParams::LocallabSpot::LocallabSpot() :
     polyMaskSnapTolerance(10.0),
     polyMaskLegLength(3.0),
     maskBlendMode(0),
+    gradType(0),
+    gradProfile(1),
+    dodgeBurn(0.),
+    dodgeBurnRange(0),
     centerX(0),
     centerY(0),
     circrad(18.),
@@ -2138,6 +2142,10 @@ bool LocallabParams::LocallabSpot::operator ==(const LocallabSpot& other) const
         && polyMaskSnapTolerance == other.polyMaskSnapTolerance
         && polyMaskLegLength == other.polyMaskLegLength
         && maskBlendMode == other.maskBlendMode
+        && gradType == other.gradType
+        && gradProfile == other.gradProfile
+        && dodgeBurn == other.dodgeBurn
+        && dodgeBurnRange == other.dodgeBurnRange
         && centerX == other.centerX
         && centerY == other.centerY
         && circrad == other.circrad
@@ -3107,6 +3115,14 @@ void LoadUtil::controlSpotSettings()
     assignFromKeyfile(keyFile, "Locallab", "PolyMaskSnapTol_" + index_str, spot.polyMaskSnapTolerance, spotEdited.polyMaskSnapTolerance);
     assignFromKeyfile(keyFile, "Locallab", "PolyMaskLegLen_" + index_str, spot.polyMaskLegLength, spotEdited.polyMaskLegLength);
     assignFromKeyfile(keyFile, "Locallab", "MaskBlendMode_" + index_str, spot.maskBlendMode, spotEdited.maskBlendMode);
+    assignFromKeyfile(keyFile, "Locallab", "GradType_" + index_str, spot.gradType, spotEdited.gradType);
+    assignFromKeyfile(keyFile, "Locallab", "GradProfile_" + index_str, spot.gradProfile, spotEdited.gradProfile);
+    assignFromKeyfile(keyFile, "Locallab", "DodgeBurn_" + index_str, spot.dodgeBurn, spotEdited.dodgeBurn);
+    assignFromKeyfile(keyFile, "Locallab", "DodgeBurnRange_" + index_str, spot.dodgeBurnRange, spotEdited.dodgeBurnRange);
+    spot.gradType = std::max(0, std::min(spot.gradType, 2));
+    spot.gradProfile = std::max(0, std::min(spot.gradProfile, 4));
+    spot.dodgeBurn = std::max(-100., std::min(spot.dodgeBurn, 100.));
+    spot.dodgeBurnRange = std::max(0, std::min(spot.dodgeBurnRange, 3));
     assignFromKeyfile(keyFile, "Locallab", "CenterX_" + index_str, spot.centerX, spotEdited.centerX);
     assignFromKeyfile(keyFile, "Locallab", "CenterY_" + index_str, spot.centerY, spotEdited.centerY);
     assignFromKeyfile(keyFile, "Locallab", "Circrad_" + index_str, spot.circrad, spotEdited.circrad);
@@ -4361,6 +4377,10 @@ void SaveUtil::controlSpotSettings()
     saveToKeyfile(!pedited || spot_edited->polyMaskSnapTolerance, "Locallab", "PolyMaskSnapTol_" + index_str, spot.polyMaskSnapTolerance, keyFile);
     saveToKeyfile(!pedited || spot_edited->polyMaskLegLength, "Locallab", "PolyMaskLegLen_" + index_str, spot.polyMaskLegLength, keyFile);
     saveToKeyfile(!pedited || spot_edited->maskBlendMode, "Locallab", "MaskBlendMode_" + index_str, spot.maskBlendMode, keyFile);
+    saveToKeyfile(!pedited || spot_edited->gradType, "Locallab", "GradType_" + index_str, spot.gradType, keyFile);
+    saveToKeyfile(!pedited || spot_edited->gradProfile, "Locallab", "GradProfile_" + index_str, spot.gradProfile, keyFile);
+    saveToKeyfile(!pedited || spot_edited->dodgeBurn, "Locallab", "DodgeBurn_" + index_str, spot.dodgeBurn, keyFile);
+    saveToKeyfile(!pedited || spot_edited->dodgeBurnRange, "Locallab", "DodgeBurnRange_" + index_str, spot.dodgeBurnRange, keyFile);
     saveToKeyfile(!pedited || spot_edited->centerX, "Locallab", "CenterX_" + index_str, spot.centerX, keyFile);
     saveToKeyfile(!pedited || spot_edited->centerY, "Locallab", "CenterY_" + index_str, spot.centerY, keyFile);
     saveToKeyfile(!pedited || spot_edited->circrad, "Locallab", "Circrad_" + index_str, spot.circrad, keyFile);

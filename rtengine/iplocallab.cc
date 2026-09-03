@@ -835,6 +835,10 @@ struct local_params {
     float adjch;
     int shapmet;
     float gradangle;
+    int gradtype;        // 0 linear, 1 radial, 2 mirror
+    int gradprofile;     // falloff curve across the transition band
+    float dodgeburn;     // -100..100, mask-level lighten/darken
+    int dodgeburnrange;  // 0 even, 1 shadows, 2 midtones, 3 highlights
     const float* const* polyMask; // pre-rasterized polygon mask [y][x], nullptr if not polygon
     int polyMaskW, polyMaskH; // dimensions of polygon mask
     int edgwmet;
@@ -1839,6 +1843,10 @@ static void calcLocalParams(int sp, int oW, int oH,  const LocallabParams& local
     lp.transweak = local_transitweak;
     lp.transgrad = local_transitgrad;
     lp.gradangle = locallab.spots.at(sp).gradangle;
+    lp.gradtype = LIM(locallab.spots.at(sp).gradType, 0, 2);
+    lp.gradprofile = LIM(locallab.spots.at(sp).gradProfile, 0, 4);
+    lp.dodgeburn = LIM(static_cast<float>(locallab.spots.at(sp).dodgeBurn), -100.f, 100.f);
+    lp.dodgeburnrange = LIM(locallab.spots.at(sp).dodgeBurnRange, 0, 3);
     lp.rad = radius;
     lp.stren = strength;
     lp.sensbn = local_sensibn;
@@ -2163,6 +2171,30 @@ static void calcTransition(const float lox, const float loy, const float ach, co
     }
 }
 
+/* Shape the 0..1 ramp that runs across a gradient's transition band.
+   This is the falloff profile: where a stop-based editor asks the user to
+   place and drag nodes, a photograph only ever needs a handful of ramp
+   shapes, so they are named instead. The transition width (Softness) says
+   how far the ramp runs and Falloff bias still skews it afterwards, which
+   together cover what stop positions would buy. */
+static inline float calcGradProfile(float u, int profile)
+{
+    u = LIM01(u);
+
+    switch (profile) {
+    case 1: // Soft - smoothstep: no visible edge at either end of the ramp
+        return u * u * (3.f - 2.f * u);
+    case 2: // Smooth - smootherstep: longer flat shoulders, gentler middle
+        return u * u * u * (u * (u * 6.f - 15.f) + 10.f);
+    case 3: // Ease in - holds back, then most of the change near full strength
+        return u * u;
+    case 4: // Ease out - rises at once, then a long tail into full strength
+        return 1.f - (1.f - u) * (1.f - u);
+    default: // Linear - the plain ramp
+        return u;
+    }
+}
+
 static void calcTransitiongrad(const float lox, const float loy, const float ach, const local_params& lp, int &zone, float &localFactor)
 {
     zone = 0;
@@ -2176,36 +2208,57 @@ static void calcTransitiongrad(const float lox, const float loy, const float ach
         return;
     }
 
-    // Project position onto gradient direction
-    const float theta = lp.gradangle * rtengine::RT_PI_F / 180.f;
-    const float sinT = std::sin(theta);
-    const float cosT = std::cos(theta);
     const float dx = lox - lp.xc;
     const float dy = loy - lp.yc;
-    const float proj = dx * sinT - dy * cosT;
 
-    // Max projection distance — capped to image extent from center
-    // so an oversized bounding box doesn't inflate the gradient
-    const float imgMaxX = std::max(lp.xc, lp.imW - lp.xc);
-    const float imgMaxY = std::max(lp.yc, lp.imH - lp.yc);
-    const float maxX = std::min(std::max(lp.lx, lp.lxL), imgMaxX);
-    const float maxY = std::min(std::max(lp.ly, lp.lyT), imgMaxY);
-    const float maxProj = maxX * std::abs(sinT) + maxY * std::abs(cosT);
+    // Position across the gradient: -1 at the no-effect end, +1 at the full end.
+    float t;
 
-    if (maxProj < 0.001f) {
-        zone = 2;
-        localFactor = 1.f;
-        return;
+    if (lp.gradtype == 1) {
+        // Radial: full in the middle, falling away to the spot's own ellipse,
+        // so the handles the user drags on the canvas are the outer edge.
+        const float rx = std::max(dx >= 0.f ? lp.lx : lp.lxL, 1.f);
+        const float ry = std::max(dy >= 0.f ? lp.ly : lp.lyT, 1.f);
+        const float nx = dx / rx;
+        const float ny = dy / ry;
+        t = 1.f - 2.f * std::sqrt(nx * nx + ny * ny);
+    } else {
+        // Project position onto gradient direction
+        const float theta = lp.gradangle * rtengine::RT_PI_F / 180.f;
+        const float sinT = std::sin(theta);
+        const float cosT = std::cos(theta);
+        const float proj = dx * sinT - dy * cosT;
+
+        // Max projection distance — capped to image extent from center
+        // so an oversized bounding box doesn't inflate the gradient
+        const float imgMaxX = std::max(lp.xc, lp.imW - lp.xc);
+        const float imgMaxY = std::max(lp.yc, lp.imH - lp.yc);
+        const float maxX = std::min(std::max(lp.lx, lp.lxL), imgMaxX);
+        const float maxY = std::min(std::max(lp.ly, lp.lyT), imgMaxY);
+        const float maxProj = maxX * std::abs(sinT) + maxY * std::abs(cosT);
+
+        if (maxProj < 0.001f) {
+            zone = 2;
+            localFactor = 1.f;
+            return;
+        }
+
+        // Normalized position: -1.0 (no effect side) to +1.0 (full effect side)
+        t = proj / maxProj;
+
+        if (lp.gradtype == 2) {
+            // Mirror: a band centred on the spot that falls away to both
+            // sides - one control instead of two opposed gradients.
+            t = 1.f - 2.f * std::abs(t);
+        }
     }
-
-    // Normalized position: -1.0 (no effect side) to +1.0 (full effect side)
-    const float t = proj / maxProj;
 
     if (t >= ach) {
         zone = 2; // Full effect
     } else if (t > -ach) {
         zone = 1; // Transition
-        localFactor = pow_F((t + ach) / (2.f * ach), lp.transweak);
+        const float u = (t + ach) / (2.f * ach);
+        localFactor = pow_F(calcGradProfile(u, lp.gradprofile), lp.transweak);
     }
     // else zone = 0 (outside, no effect)
 }
@@ -23970,6 +24023,139 @@ void ImProcFunctions::Lab_Local(
                     + rtengine::max(overlayL, 30000.f) * lineMix;
                 transformed->a[y][x] = overlayA * (1.f - lineMix);
                 transformed->b[y][x] = overlayB * (1.f - lineMix);
+            }
+        }
+    }
+
+// Dodge & burn through the mask. It runs last, so it rides on whatever the
+// spot's other tools left behind, and it reads the very same mask factor
+// they do: a gradient's falloff shapes the lightening exactly as it shapes
+// everything else. The lift is a gamma bend on L*, symmetric in log space,
+// so it cannot clip either end however hard it is pushed.
+    if (lp.dodgeburn != 0.f && !lp.showMaskOverlay) {
+        const int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
+        const int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, transformed->H);
+        const int xstart = rtengine::max(static_cast<int>(lp.xc - lp.lxL) - cx, 0);
+        const int xend = rtengine::min(static_cast<int>(lp.xc + lp.lx) - cx, transformed->W);
+        const float dbStrength = lp.dodgeburn / 100.f; // -1 burn .. +1 dodge
+
+#ifdef RT_AI_MASKING
+        AIMaskSnapshot aiSnapDb;
+        const array2D<float>* aiDbPtr = nullptr;
+        int aiDbW = 0, aiDbH = 0, aiDbFullW = 0, aiDbFullH = 0;
+        if (lp.useaimask) {
+            aiSnapDb = AIMaskCache::getInstance().getPreparedMask(
+                static_cast<AISegClass>(lp.aimaskclass),
+                lp.aimaskthr, lp.aimaskfeath, lp.aimaskblur, lp.aimasksize, lp.aimaskinv,
+                lp.aimaskrefrad, lp.aimaskrefeps, multiThread);
+            if (aiSnapDb) {
+                aiDbPtr = aiSnapDb.mask.get();
+                aiDbW = aiSnapDb.width;
+                aiDbH = aiSnapDb.height;
+                aiDbFullW = aiSnapDb.fullWidth;
+                aiDbFullH = aiSnapDb.fullHeight;
+            }
+        }
+        // Shape add/subtract needs the user's real extents back: lp's were
+        // repurposed as the AI work bounds.
+        const bool aiShapeOpDb = lp.useaimask && aiDbPtr && lp.aimaskshapeop != 0;
+        local_params lpDbShape = lp;
+        if (aiShapeOpDb) {
+            lpDbShape.lxL = lp.aishapelxL;
+            lpDbShape.lx = lp.aishapelx;
+            lpDbShape.lyT = lp.aishapelyT;
+            lpDbShape.ly = lp.aishapely;
+        }
+#endif
+
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(dynamic, 16) if (multiThread)
+#endif
+        for (int y = ystart; y < yend; ++y) {
+            for (int x = xstart; x < xend; ++x) {
+                const int lox = x + cx;
+                const int loy = y + cy;
+                int zone = 0;
+                float localFactor = 1.f;
+                float achm = lp.trans / 100.f;
+
+                if (lp.fullim == 3) {
+                    achm = 1.f;
+                }
+
+                calcTransitionShape(lox, loy, achm, lp, zone, localFactor);
+
+#ifdef RT_AI_MASKING
+                if (!lp.useaimask && zone == 0) {
+                    continue;
+                }
+#else
+                if (zone == 0) {
+                    continue;
+                }
+#endif
+
+                if (lp.fullim == 3) {
+                    localFactor = 1.f;
+                }
+
+                float factorx = localFactor;
+#ifdef RT_AI_MASKING
+                if (aiDbPtr && aiDbFullW > 0 && aiDbFullH > 0) {
+                    const float maskY = static_cast<float>(loy) * sk
+                        * aiDbH / static_cast<float>(aiDbFullH);
+                    const float maskX = static_cast<float>(lox) * sk
+                        * aiDbW / static_cast<float>(aiDbFullW);
+                    const float aiVal = sampleAIMask(*aiDbPtr, aiDbW, aiDbH, maskX, maskY);
+                    if (aiShapeOpDb) {
+                        int zoneShape = 0;
+                        float shapeFactor = 1.f;
+                        calcTransitionShape(lox, loy, achm, lpDbShape, zoneShape, shapeFactor);
+                        const float shapeVal = zoneShape > 0 ? LIM01(shapeFactor) : 0.f;
+                        if (lp.aimaskshapeop == 1) {
+                            factorx = rtengine::max(lp.aimaskopa * aiVal, shapeVal);
+                        } else {
+                            factorx = lp.aimaskopa * aiVal * (1.f - shapeVal);
+                        }
+                    } else {
+                        factorx = intp(lp.aimaskopa, aiVal * localFactor, localFactor);
+                    }
+                }
+#endif
+                factorx = LIM01(factorx);
+
+                if (factorx <= 0.001f) {
+                    continue;
+                }
+
+                const float Ln = LIM01(transformed->L[y][x] / 32768.f);
+
+                if (Ln <= 0.0001f) {
+                    continue;
+                }
+
+                // Which tones the brush bites into, the way a darkroom
+                // worker picks shadows, midtones or highlights to work.
+                float toneWeight = 1.f;
+
+                if (lp.dodgeburnrange == 1) {        // Shadows
+                    toneWeight = SQR(1.f - Ln);
+                } else if (lp.dodgeburnrange == 2) { // Midtones
+                    toneWeight = 4.f * Ln * (1.f - Ln);
+                } else if (lp.dodgeburnrange == 3) { // Highlights
+                    toneWeight = SQR(Ln);
+                }
+
+                const float amount = dbStrength * factorx * toneWeight;
+
+                if (std::abs(amount) < 0.0005f) {
+                    continue;
+                }
+
+                // amount > 0 lifts, amount < 0 sinks; equal and opposite
+                // exponents keep a dodge and a burn of the same size mirror
+                // images of each other.
+                transformed->L[y][x] = 32768.f * pow_F(Ln, pow_F(2.f, -amount));
             }
         }
     }

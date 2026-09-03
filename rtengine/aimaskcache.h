@@ -72,7 +72,8 @@ public:
     float getClassCoverage(const std::string& imageId, int classIndex) const;
 
     /** The class to mask when the user clicks full-image point (x, y):
-     *  the model class with the highest probability there, upgraded to
+     *  the model class with the highest mean probability in a small
+     *  neighbourhood of the point (~1% of the long mask edge), upgraded to
      *  SUBJECT when the point sits inside the composed subject. Returns -1
      *  when the cache holds a different image or the point is outside. */
     int getDominantClassAt(const std::string& imageId, int fullX, int fullY) const;

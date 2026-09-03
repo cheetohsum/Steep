@@ -1524,6 +1524,10 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
                 locallab.spots.at(j).polyMaskSnapTolerance = locallab.spots.at(j).polyMaskSnapTolerance && pSpot.polyMaskSnapTolerance == otherSpot.polyMaskSnapTolerance;
                 locallab.spots.at(j).polyMaskLegLength = locallab.spots.at(j).polyMaskLegLength && pSpot.polyMaskLegLength == otherSpot.polyMaskLegLength;
                 locallab.spots.at(j).maskBlendMode = locallab.spots.at(j).maskBlendMode && pSpot.maskBlendMode == otherSpot.maskBlendMode;
+                locallab.spots.at(j).gradType = locallab.spots.at(j).gradType && pSpot.gradType == otherSpot.gradType;
+                locallab.spots.at(j).gradProfile = locallab.spots.at(j).gradProfile && pSpot.gradProfile == otherSpot.gradProfile;
+                locallab.spots.at(j).dodgeBurn = locallab.spots.at(j).dodgeBurn && pSpot.dodgeBurn == otherSpot.dodgeBurn;
+                locallab.spots.at(j).dodgeBurnRange = locallab.spots.at(j).dodgeBurnRange && pSpot.dodgeBurnRange == otherSpot.dodgeBurnRange;
                 locallab.spots.at(j).centerX = locallab.spots.at(j).centerX && pSpot.centerX == otherSpot.centerX;
                 locallab.spots.at(j).centerY = locallab.spots.at(j).centerY && pSpot.centerY == otherSpot.centerY;
                 locallab.spots.at(j).circrad = locallab.spots.at(j).circrad && pSpot.circrad == otherSpot.circrad;
@@ -4512,6 +4516,18 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
 
         if (locallab.spots.at(i).maskBlendMode) {
             toEdit.locallab.spots.at(i).maskBlendMode = mods.locallab.spots.at(i).maskBlendMode;
+        }
+        if (locallab.spots.at(i).gradType) {
+            toEdit.locallab.spots.at(i).gradType = mods.locallab.spots.at(i).gradType;
+        }
+        if (locallab.spots.at(i).gradProfile) {
+            toEdit.locallab.spots.at(i).gradProfile = mods.locallab.spots.at(i).gradProfile;
+        }
+        if (locallab.spots.at(i).dodgeBurn) {
+            toEdit.locallab.spots.at(i).dodgeBurn = mods.locallab.spots.at(i).dodgeBurn;
+        }
+        if (locallab.spots.at(i).dodgeBurnRange) {
+            toEdit.locallab.spots.at(i).dodgeBurnRange = mods.locallab.spots.at(i).dodgeBurnRange;
         }
 
         if (locallab.spots.at(i).centerX) {
@@ -9488,6 +9504,10 @@ LocallabParamsEdited::LocallabSpotEdited::LocallabSpotEdited(bool v) :
     polyMaskSnapTolerance(v),
     polyMaskLegLength(v),
     maskBlendMode(v),
+    gradType(v),
+    gradProfile(v),
+    dodgeBurn(v),
+    dodgeBurnRange(v),
     centerX(v),
     centerY(v),
     circrad(v),
@@ -10349,6 +10369,10 @@ void LocallabParamsEdited::LocallabSpotEdited::set(bool v)
     polyMaskSnapTolerance = v;
     polyMaskLegLength = v;
     maskBlendMode = v;
+    gradType = v;
+    gradProfile = v;
+    dodgeBurn = v;
+    dodgeBurnRange = v;
     centerX = v;
     centerY = v;
     circrad = v;

@@ -55,6 +55,12 @@ struct LocallabParams {
         double polyMaskSnapTolerance; // Magnetic snap search radius in preview pixels (0-50)
         double polyMaskLegLength; // Minimum distance between freehand lasso points in pixels (1-20)
         int maskBlendMode; // 0 Normal, 1 Darken, 2 Lighten, 3 Luminosity, 4 Color
+        // Gradient mask shaping (shape == GRAD)
+        int gradType;    // 0 Linear, 1 Radial, 2 Mirror (band, symmetric about the centre line)
+        int gradProfile; // falloff curve across the transition: 0 Linear, 1 Soft, 2 Smooth, 3 Ease in, 4 Ease out
+        // Dodge & burn through the mask, applied after every other spot tool
+        double dodgeBurn;   // -100 (burn) .. +100 (dodge); +-100 == +-2 EV at full mask strength
+        int dodgeBurnRange; // tonal range it acts on: 0 Even, 1 Shadows, 2 Midtones, 3 Highlights
         int centerX;
         int centerY;
         int circrad;

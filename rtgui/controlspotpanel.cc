@@ -27,6 +27,7 @@
 #include "eventmapper.h"
 #include "imagearea.h"
 #include "cropwindow.h"
+#include "guiutils.h"
 #ifdef RT_AI_MASKING
 #include "rtengine/aimaskcache.h"
 #endif
@@ -66,6 +67,12 @@ ControlSpotPanel::ControlSpotPanel():
     aiMaskClass_(Gtk::manage(new PopUpButton())),
     aiMaskTolerance_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_TOLERANCE"), 0, 100, 1, 70))),
     maskBlendMode_(Gtk::manage(new PopUpButton())),
+    gradType_(Gtk::manage(new MyComboBoxText())),
+    gradProfile_(Gtk::manage(new MyComboBoxText())),
+    dodgeBurn_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_DODGEBURN"), -100., 100., 1., 0.,
+                                        Gtk::manage(new RTImage("circle-black-small")),
+                                        Gtk::manage(new RTImage("circle-white-small"))))),
+    dodgeBurnRange_(Gtk::manage(new MyComboBoxText())),
 
     sensiexclu_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_SENSIEXCLU"), 0, 100, 1, 12))),
     structexclu_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_STRUCCOL"), 0, 100, 1, 0))),
@@ -339,21 +346,24 @@ ControlSpotPanel::ControlSpotPanel():
         sigc::mem_fun(*this, &ControlSpotPanel::onTreeviewLeave), false);
 
     // Preview column — small colored square for AI masks
+    // Chevron column: opens the per-mask settings of the clicked row.
     auto* detailsCell = Gtk::manage(new Gtk::CellRendererText());
     detailsCell->property_xalign() = 0.5f;
-    detailsCell->property_ypad() = 11;
+    detailsCell->property_xpad() = 4;
+    detailsCell->property_ypad() = 6;
     int cols_count = treeview_->append_column("", *detailsCell);
     auto col = treeview_->get_column(cols_count - 1);
     if (col) {
         col->set_expand(false);
-        col->set_fixed_width(22);
+        col->set_fixed_width(20);
         col->set_cell_data_func(
             *detailsCell, sigc::mem_fun(
                 *this, &ControlSpotPanel::render_details_toggle));
     }
 
     auto* previewCell = Gtk::manage(new Gtk::CellRendererPixbuf());
-    previewCell->property_ypad() = 11;
+    previewCell->property_xpad() = 2;
+    previewCell->property_ypad() = 6;
     cols_count = treeview_->append_column("", *previewCell);
     col = treeview_->get_column(cols_count - 1);
 
@@ -367,7 +377,8 @@ ControlSpotPanel::ControlSpotPanel():
     // Name column
     auto cell = Gtk::manage(new Gtk::CellRendererText());
     cell->property_ellipsize() = Pango::ELLIPSIZE_END;
-    cell->property_ypad() = 11;
+    cell->property_xpad() = 6;
+    cell->property_ypad() = 6;
     cols_count = treeview_->append_column("", *cell);
     col = treeview_->get_column(cols_count - 1);
 
@@ -381,8 +392,8 @@ ControlSpotPanel::ControlSpotPanel():
     // Visibility column — eye icon, toggled via left-click
     auto* pixCell = Gtk::manage(new Gtk::CellRendererPixbuf());
     pixCell->property_stock_size() = Gtk::ICON_SIZE_MENU;
-    pixCell->property_xpad() = 4;
-    pixCell->property_ypad() = 11;
+    pixCell->property_xpad() = 6;
+    pixCell->property_ypad() = 6;
     cols_count = treeview_->append_column("", *pixCell);
     col = treeview_->get_column(cols_count - 1);
 
@@ -396,11 +407,17 @@ ControlSpotPanel::ControlSpotPanel():
     scrolledwindow_->add(*treeview_);
     scrolledwindow_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
     scrolledwindow_->set_shadow_type(Gtk::SHADOW_NONE);
+    // Styled as a rounded well in themes/common/widgets.css (#MaskListWell);
+    // the tree view paints transparent so the well corners show through.
+    scrolledwindow_->set_name("MaskListWell");
     // Start compact — grows as masks are added, caps at 300px then scrolls
     scrolledwindow_->set_min_content_height(40);
     scrolledwindow_->set_max_content_height(300);
     scrolledwindow_->set_propagate_natural_height(true);
     scrolledwindow_->set_margin_end(4);
+    // Hidden while there are no masks: an empty well is just a dark bar.
+    // addControlSpot / deleteControlSpot manage its visibility.
+    scrolledwindow_->set_no_show_all(true);
     pack_start(*scrolledwindow_, Gtk::PACK_SHRINK);
 
     // hishow_ and activ_ are configured here but packed into advancedBox below
@@ -598,6 +615,42 @@ ControlSpotPanel::ControlSpotPanel():
         sigc::mem_fun(*this, &ControlSpotPanel::maskBlendModeChanged));
     if (showtooltip) {
         maskBlendMode_->set_tooltip_text(M("TP_LOCALLAB_MASK_BLEND_TOOLTIP"));
+    }
+
+    // Gradient shaping. Type is the geometry the ramp runs along; profile is
+    // the shape of the ramp itself, which is what gradient stops buy you in a
+    // drawing program, named rather than dragged.
+    gradType_->append(M("TP_LOCALLAB_GRADTYPE_LINEAR"));
+    gradType_->append(M("TP_LOCALLAB_GRADTYPE_RADIAL"));
+    gradType_->append(M("TP_LOCALLAB_GRADTYPE_MIRROR"));
+    gradType_->set_active(0);
+    gradTypeConn_ = gradType_->signal_changed().connect(
+        sigc::mem_fun(*this, &ControlSpotPanel::gradTypeChanged));
+
+    gradProfile_->append(M("TP_LOCALLAB_GRADPROFILE_LINEAR"));
+    gradProfile_->append(M("TP_LOCALLAB_GRADPROFILE_SOFT"));
+    gradProfile_->append(M("TP_LOCALLAB_GRADPROFILE_SMOOTH"));
+    gradProfile_->append(M("TP_LOCALLAB_GRADPROFILE_EASEIN"));
+    gradProfile_->append(M("TP_LOCALLAB_GRADPROFILE_EASEOUT"));
+    gradProfile_->set_active(0);
+    gradProfileConn_ = gradProfile_->signal_changed().connect(
+        sigc::mem_fun(*this, &ControlSpotPanel::gradProfileChanged));
+
+    dodgeBurnRange_->append(M("TP_LOCALLAB_DODGEBURN_RANGE_EVEN"));
+    dodgeBurnRange_->append(M("TP_LOCALLAB_DODGEBURN_RANGE_SHADOWS"));
+    dodgeBurnRange_->append(M("TP_LOCALLAB_DODGEBURN_RANGE_MIDS"));
+    dodgeBurnRange_->append(M("TP_LOCALLAB_DODGEBURN_RANGE_HIGHLIGHTS"));
+    dodgeBurnRange_->set_active(0);
+    dodgeBurnRangeConn_ = dodgeBurnRange_->signal_changed().connect(
+        sigc::mem_fun(*this, &ControlSpotPanel::dodgeBurnRangeChanged));
+
+    dodgeBurn_->setAdjusterListener(this);
+
+    if (showtooltip) {
+        gradType_->set_tooltip_text(M("TP_LOCALLAB_GRADTYPE_TOOLTIP"));
+        gradProfile_->set_tooltip_text(M("TP_LOCALLAB_GRADPROFILE_TOOLTIP"));
+        dodgeBurn_->set_tooltip_text(M("TP_LOCALLAB_DODGEBURN_TOOLTIP"));
+        dodgeBurnRange_->set_tooltip_text(M("TP_LOCALLAB_DODGEBURN_RANGE_TOOLTIP"));
     }
 
     // Quality method (not packed at top level, used internally)
@@ -850,6 +903,44 @@ ControlSpotPanel::ControlSpotPanel():
     maskDetailBox_->pack_start(*circrad_, Gtk::PACK_SHRINK);
     maskDetailBox_->pack_start(*transit_, Gtk::PACK_SHRINK);
 
+    // Gradient controls: only a gradient mask has a direction to run along.
+    gradBox_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
+    gradBox_->set_no_show_all(true);
+    {
+        auto* const typeRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
+        auto* const typeLabel = Gtk::manage(new Gtk::Label(M("TP_LOCALLAB_GRADTYPE")));
+        typeLabel->set_halign(Gtk::ALIGN_START);
+        typeLabel->set_xalign(0.f);
+        typeRow->pack_start(*typeLabel, Gtk::PACK_SHRINK);
+        typeRow->pack_end(*gradType_, Gtk::PACK_EXPAND_WIDGET);
+        gradBox_->pack_start(*typeRow, Gtk::PACK_SHRINK);
+
+        auto* const profRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
+        auto* const profLabel = Gtk::manage(new Gtk::Label(M("TP_LOCALLAB_GRADPROFILE")));
+        profLabel->set_halign(Gtk::ALIGN_START);
+        profLabel->set_xalign(0.f);
+        profRow->pack_start(*profLabel, Gtk::PACK_SHRINK);
+        profRow->pack_end(*gradProfile_, Gtk::PACK_EXPAND_WIDGET);
+        gradBox_->pack_start(*profRow, Gtk::PACK_SHRINK);
+    }
+    maskDetailBox_->pack_start(*gradBox_, Gtk::PACK_SHRINK);
+
+    // Dodge & burn belongs to every mask, not just gradients: the mask says
+    // where, this says how much lighter or darker.
+    dodgeBurnBox_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
+    dodgeBurnBox_->set_no_show_all(true);
+    dodgeBurnBox_->pack_start(*dodgeBurn_, Gtk::PACK_SHRINK);
+    {
+        auto* const rangeRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
+        auto* const rangeLabel = Gtk::manage(new Gtk::Label(M("TP_LOCALLAB_DODGEBURN_RANGE")));
+        rangeLabel->set_halign(Gtk::ALIGN_START);
+        rangeLabel->set_xalign(0.f);
+        rangeRow->pack_start(*rangeLabel, Gtk::PACK_SHRINK);
+        rangeRow->pack_end(*dodgeBurnRange_, Gtk::PACK_EXPAND_WIDGET);
+        dodgeBurnBox_->pack_start(*rangeRow, Gtk::PACK_SHRINK);
+    }
+    maskDetailBox_->pack_start(*dodgeBurnBox_, Gtk::PACK_SHRINK);
+
     maskRevealer_ = Gtk::manage(new Gtk::Revealer());
     maskRevealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
     maskRevealer_->set_transition_duration(140);
@@ -918,23 +1009,6 @@ ControlSpotPanel::ControlSpotPanel():
     polyVertexLabel_->hide();
     polyBox_->hide();
     ctboxaiclass->hide();
-    // Define row background color
-    // Mouseovered spot (opaque orange)
-    colorMouseover.set_red(1.);
-    colorMouseover.set_green(100. / 255.);
-    colorMouseover.set_blue(0.);
-    colorMouseover.set_alpha(1.);
-
-    colorMouseovertext.set_red(0.6);
-    colorMouseovertext.set_green(100. / 255.);
-    colorMouseovertext.set_blue(0.);
-    colorMouseovertext.set_alpha(0.5);
-
-    // Nominal spot (transparent black)
-    colorNominal.set_red(0.);
-    colorNominal.set_green(0.);
-    colorNominal.set_blue(0.);
-    colorNominal.set_alpha(0.);
 }
 
 ControlSpotPanel::~ControlSpotPanel()
@@ -971,6 +1045,17 @@ void ControlSpotPanel::setMaskDetailExpanded(bool expanded)
             aiMaskTolerance_->hide();
         }
 
+        // A gradient is the only shape with a direction and a ramp to shape.
+        if (shape_->getSelected() == 2) {
+            gradBox_->show();
+            gradBox_->show_all_children();
+        } else {
+            gradBox_->hide();
+        }
+
+        dodgeBurnBox_->show();
+        dodgeBurnBox_->show_all_children();
+
         if (shape_->getSelected() == 3) {
             polyBox_->show();
             polyBox_->show_all_children();
@@ -998,6 +1083,8 @@ void ControlSpotPanel::setMaskControlsSensitive(bool sensitive)
     ctboxaiclass->set_sensitive(sensitive);
     aiMaskTolerance_->set_sensitive(sensitive);
     maskBlendMode_->buttonGroup->set_sensitive(sensitive);
+    gradBox_->set_sensitive(sensitive);
+    dodgeBurnBox_->set_sensitive(sensitive);
 }
 
 void ControlSpotPanel::queueMaskPreviewRefresh()
@@ -1216,9 +1303,27 @@ void ControlSpotPanel::render_details_toggle(
 {
     const auto row = *iter;
     auto* text = static_cast<Gtk::CellRendererText*>(cell);
-    text->property_text() = row[spots_.detailsExpanded]
-        ? "\xe2\x96\xbe"
-        : "\xe2\x96\xb8";
+    // Same triangle glyph as the tool-group headers; quiet until opened.
+    text->property_markup() = row[spots_.detailsExpanded]
+        ? "<span size=\"small\">\xe2\x96\xbe</span>"
+        : "<span size=\"small\" alpha=\"55%\">\xe2\x96\xb8</span>";
+    applyRowHover(cell, row);
+}
+
+void ControlSpotPanel::applyRowHover(Gtk::CellRenderer* cell, const Gtk::TreeModel::Row& row)
+{
+    // The hovered row gets the same faint wash every other hover in the UI
+    // uses. A cell background paints over the row's selection fill, so the
+    // selected row keeps its own styling and is never washed.
+    const auto selected = treeview_->get_selection()->get_selected();
+    const bool isSelected = selected && selected == row;
+    if (row[spots_.mouseover] && !isSelected) {
+        Gdk::RGBA wash = themeColor(*treeview_, "steep_wash", Gdk::RGBA("#ffffff"));
+        wash.set_alpha(0.08);
+        cell->property_cell_background_rgba() = wash;
+    } else {
+        cell->property_cell_background_set() = false;
+    }
 }
 
 void ControlSpotPanel::render_preview(
@@ -1244,10 +1349,12 @@ void ControlSpotPanel::render_preview(
     const std::vector<int> polyPts = row[spots_.polyMaskPoints];
     const double polyFeather = (double)row[spots_.polyMaskFeather];
 
-    // AI class colors
+    // AI class colors: model classes 0-7, then the composed SUBJECT and
+    // NOT_SUBJECT pseudo-classes (8, 9)
     static const guint8 classColors[][3] = {
         {128, 128, 128}, {220,  80,  80}, { 80, 140, 220}, { 80, 180,  80},
         {200, 150,  60}, {160,  80, 200}, {220, 180,  50}, { 80, 200, 200},
+        {240, 130,  90}, {110, 120, 150},
     };
 
     // Heat colors for normal masks (warm orange/yellow)
@@ -1300,7 +1407,8 @@ void ControlSpotPanel::render_preview(
 #ifdef RT_AI_MASKING
     bool aiRendered = false;
     if (maskT == 1) {
-        const int ci = std::min(std::max(cls, 0), 7);
+        const int ci = std::min(std::max(cls, 0),
+                                static_cast<int>(AISegClass::TOTAL_CLASSES) - 1);
         const AIMaskSnapshot snapshot = AIMaskCache::getInstance().getMaskSnapshot(
             static_cast<AISegClass>(ci));
         if (snapshot) {
@@ -1477,8 +1585,15 @@ void ControlSpotPanel::render_preview(
             p[0] = 80; p[1] = 85; p[2] = 95; p[3] = 100;
         }
     }
+    // Knock the corner pixels out so the swatch reads as a rounded tile.
+    for (int py : {0, H - 1}) {
+        for (int px : {0, W - 1}) {
+            pixels[py * rowstride + px * 4 + 3] = 0;
+        }
+    }
 
     cp->property_pixbuf() = pixbuf;
+    applyRowHover(cell, row);
 }
 
 void ControlSpotPanel::render_name(
@@ -1487,16 +1602,46 @@ void ControlSpotPanel::render_name(
     auto row = *iter;
     Gtk::CellRendererText *ct = static_cast<Gtk::CellRendererText *>(cell);
 
-    // Render cell text with larger font to match mask dropdown label
-    ct->property_markup() = "<span size=\"large\">" +
-        Glib::Markup::escape_text(Glib::ustring(row[spots_.name])) + "</span>";
-
-    // Render cell background color
-    if (row[spots_.mouseover]) {
-        ct->property_background_rgba() = colorMouseovertext;
+    // Name on the first line; what the mask is on a quiet second line
+    // ("AI mask", "AI mask - Everything but Subject", "Ellipse - Darken").
+    static const Glib::ustring separator = "  \xc2\xb7  ";
+    const Glib::ustring name = row[spots_.name];
+    Glib::ustring detail;
+    if (row[spots_.maskType] == 1) {
+        static const char* const classKeys[] = {
+            "TP_LOCALLAB_AIMASK_CLASS_BACKGROUND", "TP_LOCALLAB_AIMASK_CLASS_PERSON",
+            "TP_LOCALLAB_AIMASK_CLASS_SKY", "TP_LOCALLAB_AIMASK_CLASS_VEGETATION",
+            "TP_LOCALLAB_AIMASK_CLASS_BUILDING", "TP_LOCALLAB_AIMASK_CLASS_VEHICLE",
+            "TP_LOCALLAB_AIMASK_CLASS_ANIMAL", "TP_LOCALLAB_AIMASK_CLASS_FOREGROUND",
+            "TP_LOCALLAB_AIMASK_CLASS_SUBJECT", "TP_LOCALLAB_AIMASK_CLASS_NOTSUBJECT"
+        };
+        const int cls = rtengine::LIM(static_cast<int>(row[spots_.aiMaskClass]), 0, 9);
+        const Glib::ustring className = M(classKeys[cls]);
+        detail = M("TP_LOCALLAB_MASKTYPE_AI");
+        if (name != className) {
+            detail += separator + className;
+        }
     } else {
-        ct->property_background_rgba() = colorNominal;
+        static const char* const shapeKeys[] = {
+            "TP_LOCALLAB_ELI", "TP_LOCALLAB_RECT", "TP_LOCALLAB_GRAD", "TP_LOCALLAB_POLY"
+        };
+        detail = M(shapeKeys[rtengine::LIM(static_cast<int>(row[spots_.shape]), 0, 3)]);
     }
+    const int blend = rtengine::LIM(static_cast<int>(row[spots_.maskBlendMode]), 0, 4);
+    if (blend != 0) {
+        static const char* const blendKeys[] = {
+            "TP_LOCALLAB_MASK_BLEND_NORMAL", "TP_LOCALLAB_MASK_BLEND_DARKEN",
+            "TP_LOCALLAB_MASK_BLEND_LIGHTEN", "TP_LOCALLAB_MASK_BLEND_LUMINOSITY",
+            "TP_LOCALLAB_MASK_BLEND_COLOR"
+        };
+        detail += separator + M(blendKeys[blend]);
+    }
+
+    ct->property_markup() =
+        Glib::Markup::escape_text(name)
+        + "\n<span size=\"small\" alpha=\"60%\">"
+        + Glib::Markup::escape_text(detail) + "</span>";
+    applyRowHover(cell, row);
 }
 
 void ControlSpotPanel::render_isvisible(
@@ -1505,12 +1650,13 @@ void ControlSpotPanel::render_isvisible(
     auto row = *iter;
     Gtk::CellRendererPixbuf *cp = static_cast<Gtk::CellRendererPixbuf *>(cell);
 
-    // Render eye icon based on visibility
-    if (row[spots_.isvisible]) {
-        cp->property_icon_name() = "eye-open";
-    } else {
-        cp->property_icon_name() = "eye-closed";
-    }
+    // Eye = pinned overlay. Open and bright when pinned; otherwise a closed
+    // eye drawn insensitive (dimmed by #MaskTreeView:disabled in widgets.css)
+    // so it does not compete with the name.
+    const bool pinned = row[spots_.isvisible];
+    cp->property_icon_name() = pinned ? "eye-open" : "eye-closed";
+    cp->property_sensitive() = pinned;
+    applyRowHover(cell, row);
 }
 
 void ControlSpotPanel::on_button_add()
@@ -1948,6 +2094,16 @@ void ControlSpotPanel::load_ControlSpot_param()
     maskBlendModeConn_.block(true);
     maskBlendMode_->setSelected(row[spots_.maskBlendMode]);
     maskBlendModeConn_.block(false);
+    gradTypeConn_.block(true);
+    gradType_->set_active(rtengine::LIM(static_cast<int>(row[spots_.gradType]), 0, 2));
+    gradTypeConn_.block(false);
+    gradProfileConn_.block(true);
+    gradProfile_->set_active(rtengine::LIM(static_cast<int>(row[spots_.gradProfile]), 0, 4));
+    gradProfileConn_.block(false);
+    dodgeBurnRangeConn_.block(true);
+    dodgeBurnRange_->set_active(rtengine::LIM(static_cast<int>(row[spots_.dodgeBurnRange]), 0, 3));
+    dodgeBurnRangeConn_.block(false);
+    dodgeBurn_->setValue((double)row[spots_.dodgeBurn]);
     ctboxaiclass->set_visible(row[spots_.maskType] == 1);
     aiMaskTolerance_->set_visible(row[spots_.maskType] == 1);
 
@@ -2629,6 +2785,54 @@ void ControlSpotPanel::aiMaskClassChanged(int /*index*/)
     startAIPreviewRefresh();
 }
 
+void ControlSpotPanel::gradTypeChanged()
+{
+    const auto s = treeview_->get_selection();
+
+    if (!s->count_selected_rows()) {
+        return;
+    }
+
+    Gtk::TreeModel::Row row = *(s->get_selected());
+    row[spots_.gradType] = rtengine::LIM(gradType_->get_active_row_number(), 0, 2);
+
+    if (listener) {
+        listener->panelChanged(EvLocallabSpotShape, gradType_->get_active_text());
+    }
+}
+
+void ControlSpotPanel::gradProfileChanged()
+{
+    const auto s = treeview_->get_selection();
+
+    if (!s->count_selected_rows()) {
+        return;
+    }
+
+    Gtk::TreeModel::Row row = *(s->get_selected());
+    row[spots_.gradProfile] = rtengine::LIM(gradProfile_->get_active_row_number(), 0, 4);
+
+    if (listener) {
+        listener->panelChanged(EvLocallabSpotShape, gradProfile_->get_active_text());
+    }
+}
+
+void ControlSpotPanel::dodgeBurnRangeChanged()
+{
+    const auto s = treeview_->get_selection();
+
+    if (!s->count_selected_rows()) {
+        return;
+    }
+
+    Gtk::TreeModel::Row row = *(s->get_selected());
+    row[spots_.dodgeBurnRange] = rtengine::LIM(dodgeBurnRange_->get_active_row_number(), 0, 3);
+
+    if (listener) {
+        listener->panelChanged(EvLocallabSpotShape, dodgeBurnRange_->get_active_text());
+    }
+}
+
 void ControlSpotPanel::maskBlendModeChanged(int /*index*/)
 {
     setMaskBlendMode(maskBlendMode_->getSelected());
@@ -2965,6 +3169,16 @@ void ControlSpotPanel::adjusterChanged(Adjuster* a, double newval)
         if (listener) {
             listener->panelChanged(EvLocallabSpotTransit, transit_->getTextValue());
         }
+    }
+
+    if (a == dodgeBurn_) {
+        row[spots_.dodgeBurn] = dodgeBurn_->getValue();
+
+        if (listener) {
+            listener->panelChanged(EvLocallabSpotShape, dodgeBurn_->getTextValue());
+        }
+
+        return;
     }
 
     if (a == transitweak_) {
@@ -3444,6 +3658,9 @@ void ControlSpotPanel::disableParamlistener(bool cond)
     aiMaskClassConn_.block(cond);
     aiMaskTolerance_->block(cond);
     maskBlendModeConn_.block(cond);
+    gradTypeConn_.block(cond);
+    gradProfileConn_.block(cond);
+    dodgeBurnRangeConn_.block(cond);
 
 }
 
@@ -4608,6 +4825,10 @@ std::unique_ptr<ControlSpotPanel::SpotRow> ControlSpotPanel::getSpot(const int i
             r->aiMaskClass = row[spots_.aiMaskClass];
             r->aiMaskThreshold = row[spots_.aiMaskThreshold];
             r->maskBlendMode = row[spots_.maskBlendMode];
+            r->gradType = row[spots_.gradType];
+            r->gradProfile = row[spots_.gradProfile];
+            r->dodgeBurn = row[spots_.dodgeBurn];
+            r->dodgeBurnRange = row[spots_.dodgeBurnRange];
             r->polyMaskPoints = row[spots_.polyMaskPoints];
             r->polyMaskFeather = row[spots_.polyMaskFeather];
             r->polyMaskSnapTolerance = row[spots_.polyMaskSnapTolerance];
@@ -4694,7 +4915,7 @@ void ControlSpotPanel::resetDeltaEPreview()
     previewConn_.block(false);
 }
 
-void ControlSpotPanel::addControlSpot(const SpotRow &newSpot)
+void ControlSpotPanel::addControlSpot(const SpotRow &newSpot, bool expandDetails)
 {
     // printf("addControlSpot: %d\n", newSpot.name);
 
@@ -4706,7 +4927,10 @@ void ControlSpotPanel::addControlSpot(const SpotRow &newSpot)
     }
     Gtk::TreeModel::Row row = *(treemodel_->append());
     row[spots_.mouseover] = false;
-    row[spots_.detailsExpanded] = false;
+    // A mask the user just made opens its settings straight away: the
+    // selection that follows (setSelectedSpot) reads this flag. Masks
+    // restored from a profile stay folded.
+    row[spots_.detailsExpanded] = expandDetails;
     row[spots_.name] = newSpot.name;
     row[spots_.nameAutomatic] = isAutomaticMaskName(newSpot.name);
     row[spots_.isvisible] = newSpot.isvisible;
@@ -4757,6 +4981,10 @@ void ControlSpotPanel::addControlSpot(const SpotRow &newSpot)
     row[spots_.aiMaskClass] = newSpot.aiMaskClass;
     row[spots_.aiMaskThreshold] = newSpot.aiMaskThreshold;
     row[spots_.maskBlendMode] = newSpot.maskBlendMode;
+    row[spots_.gradType] = newSpot.gradType;
+    row[spots_.gradProfile] = newSpot.gradProfile;
+    row[spots_.dodgeBurn] = newSpot.dodgeBurn;
+    row[spots_.dodgeBurnRange] = newSpot.dodgeBurnRange;
     row[spots_.polyMaskPoints] = newSpot.polyMaskPoints;
     row[spots_.polyMaskFeather] = newSpot.polyMaskFeather;
     row[spots_.polyMaskSnapTolerance] = newSpot.polyMaskSnapTolerance;
@@ -4766,6 +4994,8 @@ void ControlSpotPanel::addControlSpot(const SpotRow &newSpot)
 
     // Enable mask controls now that a spot exists
     setMaskControlsSensitive(true);
+    treeview_->show();
+    scrolledwindow_->show();
 
     // Add associated control spot curve
     addControlSpotCurve(row);
@@ -4799,6 +5029,7 @@ void ControlSpotPanel::deleteControlSpot(const int index)
     if (treemodel_->children().empty()) {
         setMaskControlsSensitive(false);
         setMaskDetailExpanded(false);
+        scrolledwindow_->hide();
     }
 }
 
@@ -4950,6 +5181,10 @@ ControlSpotPanel::ControlSpots::ControlSpots()
     add(aiMaskClass);
     add(aiMaskThreshold);
     add(maskBlendMode);
+    add(gradType);
+    add(gradProfile);
+    add(dodgeBurn);
+    add(dodgeBurnRange);
     add(polyMaskPoints);
     add(polyMaskFeather);
     add(polyMaskSnapTolerance);

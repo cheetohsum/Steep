@@ -748,6 +748,11 @@ public:
       * the current image at the tail of a preview pass). The GUI arms this
       * only while the masking view is showing. Default: disarmed. */
     virtual void setSmartMaskAnalysisWanted (bool wanted) { (void)wanted; }
+    /** Segment the current image once, now, even when background analysis
+      * is switched off in settings: the user has asked for an AI mask by
+      * clicking the image and the masks do not exist yet. No-op when they
+      * are already cached. */
+    virtual void requestSmartMaskAnalysis () {}
     /** Scan the current preview for sensor-dust specks (small dark blobs in
       * smooth areas) and return ready-to-use spot entries, strongest first.
       * Runs synchronously; positions and radii are in full-image coordinates. */

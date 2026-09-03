@@ -347,6 +347,14 @@ private:
     // Debounced mask overlay toggling
     sigc::connection hoverMaskDebounce_;
     sigc::connection hoverMaskWatchdog_;
+
+    // Smart Mask pick waiting for the image to be segmented (aiMaskPickSelected)
+    sigc::connection aiMaskPickPoll_;
+    int aiMaskPickX_ = -1;
+    int aiMaskPickY_ = -1;
+    int aiMaskPickAttempts_ = 0;
+    bool completeAIMaskPick();
+    void cancelPendingAIMaskPick();
     bool pendingHoverState_ = false;
     bool hoverMaskApplied_ = false;  // tracks what state was last sent to engine
     int hoverPreviewSpot_ = -1;

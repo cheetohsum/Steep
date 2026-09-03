@@ -3298,14 +3298,19 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
     // first AI mask press is instant and the class dropdown can say what the
     // photo contains. Bounded cost: one inference per image — the cache
     // check makes every later pass a no-op.
-    if (smartMaskAnalysisWanted_.load(std::memory_order_relaxed)
+    // A forced request (requestSmartMaskAnalysis) rides the same tail but
+    // ignores the auto-analyze setting; this pass consumes it either way.
+    const bool forcedAnalysis = smartMaskAnalysisForced_.exchange(false, std::memory_order_relaxed);
+    if ((forcedAnalysis
+         || (smartMaskAnalysisWanted_.load(std::memory_order_relaxed)
+             && settings->smartMaskAutoAnalyze))
             && !destroying && oprevi && pW > 0 && pH > 0
-            && settings->smartMaskAutoAnalyze
             && getAISegmentationEngine().isInitialized()) {
         const std::string imageId = imgsrc->getFileName().raw();
         if (!AIMaskCache::getInstance().hasCachedMasks(imageId)) {
             if (edittrace::enabled()) {
-                edittrace::logf("[aiMask] proactive analyze img=%s", imageId.c_str());
+                edittrace::logf("[aiMask] %s analyze img=%s",
+                                forcedAnalysis ? "requested" : "proactive", imageId.c_str());
             }
             AIMaskCache::getInstance().computeMasks(
                 imageId, oprevi->r.ptrs, oprevi->g.ptrs, oprevi->b.ptrs,
@@ -3563,6 +3568,20 @@ void ImProcCoordinator::setSmartMaskAnalysisWanted(bool wanted)
     }
 #else
     (void)wanted;
+#endif
+}
+
+void ImProcCoordinator::requestSmartMaskAnalysis()
+{
+#ifdef RT_AI_MASKING
+    if (destroying || !imgsrc
+            || !getAISegmentationEngine().isInitialized()
+            || AIMaskCache::getInstance().hasCachedMasks(imgsrc->getFileName().raw())) {
+        return;
+    }
+    smartMaskAnalysisForced_.store(true, std::memory_order_relaxed);
+    // Cheap monitor-only pass; the analysis rides its tail.
+    startProcessing(M_MONITOR);
 #endif
 }
 

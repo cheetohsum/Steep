@@ -266,3 +266,42 @@ button.curve-channel-blue label { color: #6695f2; }
 #DEChipControls button { padding: 0 3px; margin: 0; min-width: 10px; min-height: 14px; }
 button.de-chip { padding: 1px; margin: 0; }
 button.de-chip-selected { border: 2px solid @steep_accent; border-radius: 3px; padding: 0; }
+
+/*** Mask list (controlspotpanel.cc) ***********************************************************/
+/* The masks of the current photo, one row each, inside a rounded well. The
+   tree view paints nothing so the well's border and corners stay visible;
+   rows carry their own padding, hover wash (set per cell in C++) and a
+   left accent edge when selected. */
+#MaskListWell {
+    background-color: @steep_surface_1;
+    border: 1px solid @steep_border_soft;
+    border-radius: 5px;
+    padding: 2px;
+    margin: 0 0 6px 0;
+}
+
+#MaskTreeView,
+#MaskTreeView.view {
+    background-color: transparent;
+    background-image: none;
+}
+
+/* Selection: a wash across the row plus a 2px accent edge at its left. GTK
+   paints the row background across the full row width before the cells, so
+   the edge lands once per row and not once per column. */
+#MaskTreeView.view:selected,
+#MaskTreeView.view:selected:focus,
+#MaskTreeView:selected {
+    color: @steep_text_hi;
+    background-color: alpha(@steep_select, 0.32);
+    background-image: linear-gradient(to right, @steep_accent, @steep_accent);
+    background-size: 2px 100%;
+    background-repeat: no-repeat;
+    background-position: left center;
+}
+
+/* The eye of an unpinned mask renders insensitive — keep it a hint. */
+#MaskTreeView cell:disabled,
+#MaskTreeView image:disabled {
+    opacity: 0.4;
+}

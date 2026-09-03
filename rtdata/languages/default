@@ -4250,6 +4250,31 @@ TP_LOCALLAB_AIMASK_TOLERANCE_TOOLTIP;Adjusts how much of the detected subject is
 TP_LOCALLAB_MASK_BLEND_MODE;Mask Blend
 TP_LOCALLAB_MASK_BLEND_TOOLTIP;Chooses how this mask's adjustment blends with the masks beneath it.
 TP_LOCALLAB_MASK_BLEND_NORMAL;Normal
+TP_LOCALLAB_DODGEBURN;Dodge / Burn
+TP_LOCALLAB_DODGEBURN_TOOLTIP;Lightens (right) or darkens (left) through the mask, applied after every other adjustment on this mask.
+The mask decides where; this decides how much. A gradient's falloff shapes the lift exactly as it shapes everything else.
+TP_LOCALLAB_DODGEBURN_RANGE;Acts on
+TP_LOCALLAB_DODGEBURN_RANGE_EVEN;All tones
+TP_LOCALLAB_DODGEBURN_RANGE_SHADOWS;Shadows
+TP_LOCALLAB_DODGEBURN_RANGE_MIDS;Midtones
+TP_LOCALLAB_DODGEBURN_RANGE_HIGHLIGHTS;Highlights
+TP_LOCALLAB_DODGEBURN_RANGE_TOOLTIP;Which tones the dodge or burn bites into, the way a darkroom print is worked selectively.
+TP_LOCALLAB_GRADTYPE;Gradient
+TP_LOCALLAB_GRADTYPE_LINEAR;Linear
+TP_LOCALLAB_GRADTYPE_RADIAL;Radial
+TP_LOCALLAB_GRADTYPE_MIRROR;Mirror
+TP_LOCALLAB_GRADTYPE_TOOLTIP;Linear runs across the frame at the chosen angle.
+Radial is strongest at the centre and fades to the spot's edge, for spotlights and vignettes.
+Mirror is a band centred on the spot that falls away to both sides.
+TP_LOCALLAB_GRADPROFILE;Falloff
+TP_LOCALLAB_GRADPROFILE_LINEAR;Linear
+TP_LOCALLAB_GRADPROFILE_SOFT;Soft
+TP_LOCALLAB_GRADPROFILE_SMOOTH;Smooth
+TP_LOCALLAB_GRADPROFILE_EASEIN;Ease in
+TP_LOCALLAB_GRADPROFILE_EASEOUT;Ease out
+TP_LOCALLAB_GRADPROFILE_TOOLTIP;The shape of the ramp between no effect and full effect.
+Linear is an even ramp. Soft and Smooth round off both ends so no edge shows. Ease in holds back and arrives late; Ease out rises at once then trails off.
+Set how far the ramp runs with Softness, and skew it with Falloff bias under Advanced.
 TP_LOCALLAB_MASK_BLEND_DARKEN;Darken
 TP_LOCALLAB_MASK_BLEND_LIGHTEN;Lighten
 TP_LOCALLAB_MASK_BLEND_LUMINOSITY;Luminosity
