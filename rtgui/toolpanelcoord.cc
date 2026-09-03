@@ -1835,6 +1835,7 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
                 savedSharpening_ = p->sharpening;
                 savedSH_ = p->sh;
                 savedBlackWhite_ = p->blackwhite;
+                maskGlobalsValid_ = true;
                 ipc->endUpdateParams(0);
             }
             maskModeActive_ = true;
@@ -1859,11 +1860,18 @@ void ToolPanelCoordinator::modeChanged(EditorMode mode)
             maskModeActive_ = false;
             if (ipc) {
                 ProcParams* p = ipc->beginUpdateParams();
-                p->toneCurve = savedToneCurve_;
-                p->vibrance = savedVibrance_;
-                p->sharpening = savedSharpening_;
-                p->sh = savedSH_;
-                p->blackwhite = savedBlackWhite_;
+
+                // Only put globals back if they belong to the photo that is
+                // open now; a snapshot taken before an image switch describes
+                // a different picture and must not be stamped onto this one.
+                if (maskGlobalsValid_) {
+                    p->toneCurve = savedToneCurve_;
+                    p->vibrance = savedVibrance_;
+                    p->sharpening = savedSharpening_;
+                    p->sh = savedSH_;
+                    p->blackwhite = savedBlackWhite_;
+                }
+
                 ipc->endUpdateParams(rtengine::RefreshMapper::getInstance()->getAction(
                     rtengine::EvlocallabshowmaskMethod));
 
@@ -2889,6 +2897,23 @@ void ToolPanelCoordinator::refreshPreview (const rtengine::ProcEvent& event)
     ipc->endUpdateParams (event);   // starts the IPC processing
 }
 
+void ToolPanelCoordinator::refreshMaskModeGlobals(const ProcParams* params)
+{
+    // Call with params as the engine holds them, BEFORE the tool panels write
+    // spot values over the global fields â€” that is the only moment the real
+    // globals of the current photo are readable.
+    if (!maskModeActive_ || maskGlobalsValid_ || !params) {
+        return;
+    }
+
+    savedToneCurve_ = params->toneCurve;
+    savedVibrance_ = params->vibrance;
+    savedSharpening_ = params->sharpening;
+    savedSH_ = params->sh;
+    savedBlackWhite_ = params->blackwhite;
+    maskGlobalsValid_ = true;
+}
+
 void ToolPanelCoordinator::turnOffMaskOverlay(bool /*forceRedraw*/)
 {
     if (!ipc || !locallab) return;
@@ -2925,6 +2950,8 @@ void ToolPanelCoordinator::turnOffMaskOverlay(bool /*forceRedraw*/)
             && hoverRestoreSpot_ < static_cast<int>(params->locallab.spots.size())) {
         params->locallab.selspot = hoverRestoreSpot_;
     }
+
+    refreshMaskModeGlobals(params);
 
     if (maskModeActive_) {
         locallab->setSkipToolWrites(true);
@@ -2992,6 +3019,8 @@ void ToolPanelCoordinator::hoverMaskChanged(bool hover, bool forceRedraw, int sp
         } else if (hoverRestoreSpot_ < static_cast<int>(params->locallab.spots.size())) {
             params->locallab.selspot = hoverRestoreSpot_;
         }
+
+        refreshMaskModeGlobals(params);
 
         if (maskModeActive_) {
             locallab->setSkipToolWrites(true);
@@ -3893,6 +3922,8 @@ void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const 
         return;
     }
 
+    refreshMaskModeGlobals(params);
+
     // In mask mode, locallab tool widgets are hidden and have stale/default values.
     // Skip their write() to prevent overwriting bridged spot settings (expcomp,
     // lightness, etc.) that were set by bridgeGlobalToSpot in a previous cycle.
@@ -4374,6 +4405,12 @@ void ToolPanelCoordinator::initImage(rtengine::StagedImageProcessor* ipc_, bool 
 
     // A pick still waiting on the previous image must not land on this one.
     cancelPendingAIMaskPick();
+
+    // The globals stashed on entering mask mode describe the photo that was
+    // open then. Staying in mask mode while opening another one must not
+    // stamp the first photo's tone curve, vibrance, sharpening, shadows or
+    // black-and-white onto it.
+    maskGlobalsValid_ = false;
 
     if (ipc) {
         const rtengine::FramesMetaData* pMetaData = ipc->getInitialImage()->getMetaData();

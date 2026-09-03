@@ -348,6 +348,12 @@ private:
     sigc::connection hoverMaskDebounce_;
     sigc::connection hoverMaskWatchdog_;
 
+    // The mask-mode global snapshot belongs to ONE image. Opening another
+    // photo invalidates it; the next write in mask mode takes a fresh one
+    // before the tool panels overwrite the globals with spot values.
+    bool maskGlobalsValid_ = false;
+    void refreshMaskModeGlobals(const rtengine::procparams::ProcParams* params);
+
     // Smart Mask pick waiting for the image to be segmented (aiMaskPickSelected)
     sigc::connection aiMaskPickPoll_;
     int aiMaskPickX_ = -1;
