@@ -441,6 +441,10 @@ private:
 
     ControlSpots spots_;
     rtengine::ProcEvent EvLocallabavoidgamutMethod;
+    // Grading through a mask touches nothing before locallab, so it asks for
+    // TONE rather than AUTOEXP: AUTOEXP drags M_SPOT (generative fill) and
+    // M_HDR back through the pipeline on every tick of a slider.
+    rtengine::ProcEvent EvLocallabMaskGrade;
     rtengine::ProcEvent EvLocallabavoidnegative;
 
     // Child widgets

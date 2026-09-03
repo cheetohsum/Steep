@@ -149,6 +149,7 @@ ControlSpotPanel::ControlSpotPanel():
     auto m = ProcEventMapper::getInstance();
     EvLocallabavoidgamutMethod = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_GAMUTMUNSEL");
     EvLocallabavoidnegative =  m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_AVOIDNEGATIVE");
+    EvLocallabMaskGrade = m->newEvent(TONE, "HISTORY_MSG_LOCAL_MASKGRADE");
     const bool showtooltip = App::get().options().showtooltip;
 
 //    pack_start(*hishow_);
@@ -2947,13 +2948,15 @@ void ControlSpotPanel::gradTypeChanged(int /*index*/)
     Gtk::TreeModel::Row row = *(s->get_selected());
     row[spots_.gradType] = rtengine::LIM(gradType_->getSelected(), 0, 2);
     treeview_->queue_draw();
+    // Radial and linear put different handles on the canvas.
+    updateControlSpotCurve(row);
 
     if (listener) {
         static const char* const keys[] = {
             "TP_LOCALLAB_GRADTYPE_LINEAR", "TP_LOCALLAB_GRADTYPE_RADIAL",
             "TP_LOCALLAB_GRADTYPE_MIRROR"
         };
-        listener->panelChanged(EvLocallabSpotShape,
+        listener->panelChanged(EvLocallabMaskGrade,
                                M(keys[rtengine::LIM(gradType_->getSelected(), 0, 2)]));
     }
 }
@@ -2977,7 +2980,7 @@ void ControlSpotPanel::gradProfileChanged(int /*index*/)
             "TP_LOCALLAB_GRADPROFILE_SMOOTH", "TP_LOCALLAB_GRADPROFILE_EASEIN",
             "TP_LOCALLAB_GRADPROFILE_EASEOUT"
         };
-        listener->panelChanged(EvLocallabSpotShape,
+        listener->panelChanged(EvLocallabMaskGrade,
                                M(keys[rtengine::LIM(gradProfile_->getSelected(), 0, 4)]));
     }
 }
@@ -3006,7 +3009,7 @@ void ControlSpotPanel::dodgeBurnTonesChanged()
     row[spots_.dodgeBurnTones] = tones;
 
     if (listener) {
-        listener->panelChanged(EvLocallabSpotShape,
+        listener->panelChanged(EvLocallabMaskGrade,
                                tones == 0 ? M("TP_LOCALLAB_DODGEBURN_RANGE_EVEN")
                                           : M("TP_LOCALLAB_DODGEBURN_RANGE"));
     }
@@ -3357,7 +3360,7 @@ void ControlSpotPanel::adjusterChanged(Adjuster* a, double newval)
         row[spots_.dodgeBurnHighlights] = dbHighlightsAmt_->getValue();
 
         if (listener) {
-            listener->panelChanged(EvLocallabSpotShape, a->getTextValue());
+            listener->panelChanged(EvLocallabMaskGrade, a->getTextValue());
         }
 
         return;
@@ -4080,6 +4083,7 @@ void ControlSpotPanel::updateControlSpotCurve(const Gtk::TreeModel::Row& row)
     const int locY_ = row[spots_.locY];
     const int locYT_ = row[spots_.locYT];
     const int shape_ = row[spots_.shape];
+    const int gradType_val = rtengine::LIM(static_cast<int>(row[spots_.gradType]), 0, 2);
     const bool isvisible_ = row[spots_.isvisible];
 
     const int decayX = (double)locX_ * (double)imW / 2000.;
@@ -4228,7 +4232,16 @@ void ControlSpotPanel::updateControlSpotCurve(const Gtk::TreeModel::Row& row)
             for (int i = 3; i <= 6; i++) setGeomActive(i, false, false);
             for (int i = 7; i <= 9; i++) setGeomActive(i, false, false);
             setGeomActive(10, true, true);
-        } else { // 2 = Gradient
+        } else if (gradType_val == 1) { // Gradient, radial
+            // A radial has a size, not a direction, so it gets the ellipse and
+            // its four handles: dragging them in shrinks the radial. The band
+            // lines describe a straight ramp and mean nothing here.
+            setGeomActive(1, true, true);
+            setGeomActive(2, false, false);
+            for (int i = 3; i <= 6; i++) setGeomActive(i, true, true);
+            for (int i = 7; i <= 9; i++) setGeomActive(i, false, false);
+            setGeomActive(10, false, false);
+        } else { // 2 = Gradient, linear or mirror
             setGeomActive(1, false, false);
             setGeomActive(2, false, false);
             for (int i = 3; i <= 6; i++) setGeomActive(i, false, false);
