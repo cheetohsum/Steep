@@ -24057,10 +24057,16 @@ void ImProcFunctions::Lab_Local(
         for (int y = ystart; y < yend; ++y) {
             for (int x = xstart; x < xend; ++x) {
                 const float maskVal = hoverMask[y][x];
-                const float left = x > 0 ? hoverMask[y][x - 1] : 0.f;
-                const float right = x + 1 < original->W ? hoverMask[y][x + 1] : 0.f;
-                const float above = y > 0 ? hoverMask[y - 1][x] : 0.f;
-                const float below = y + 1 < original->H ? hoverMask[y + 1][x] : 0.f;
+                // Sample neighbours only inside the region that was filled.
+                // Reading past it returned 0 from the cleared array, which the
+                // edge detector then read as a cliff and drew as a white bar
+                // along the top and bottom of the spot -- an edge that exists
+                // in the buffer, not in the mask. Outside the region, treat the
+                // neighbour as equal to this pixel: no edge.
+                const float left = x > xstart ? hoverMask[y][x - 1] : maskVal;
+                const float right = x + 1 < xend ? hoverMask[y][x + 1] : maskVal;
+                const float above = y > ystart ? hoverMask[y - 1][x] : maskVal;
+                const float below = y + 1 < yend ? hoverMask[y + 1][x] : maskVal;
                 const float gradient = rtengine::max(
                     rtengine::max(std::abs(maskVal - left), std::abs(maskVal - right)),
                     rtengine::max(std::abs(maskVal - above), std::abs(maskVal - below)));
