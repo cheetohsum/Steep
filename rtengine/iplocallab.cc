@@ -36,6 +36,7 @@
 #include "rt_algo.h"
 #include "settings.h"
 #include "rtgui/options.h"
+#include "edittrace.h"
 #include "utils.h"
 #include "iccmatrices.h"
 #ifdef _OPENMP
@@ -15937,6 +15938,23 @@ void ImProcFunctions::Lab_Local(
     }
 
     const float radius = lp.rad / (sk * 1.4); //0 to 70 ==> see skip
+    // Per-tool timing, so a slow spot says which tool is slow rather than
+    // leaving a single total to guess at. Costs nothing unless tracing is on.
+    const long long llTraceStartUs = rtengine::edittrace::enabled() ? rtengine::edittrace::nowUs() : 0;
+    long long llTraceLastUs = llTraceStartUs;
+    const auto llStage = [&](const char* name) {
+        if (!rtengine::edittrace::enabled()) {
+            return;
+        }
+
+        const long long now = rtengine::edittrace::nowUs();
+        rtengine::edittrace::logf("[locallab] sp=%d call=%d stage=%s delta=%.1fms size=%dx%d",
+                        sp, call, name, (now - llTraceLastUs) / 1000.0,
+                        transformed->W, transformed->H);
+        llTraceLastUs = now;
+    };
+    llStage("setup");
+
     int levred;
     bool noiscfactiv;
 
@@ -15951,6 +15969,7 @@ void ImProcFunctions::Lab_Local(
 //lastsav for save restore image
     lastsav = 0;
 
+    llStage("before-exclude");
     if (lp.excmet == 1 && call <= 3 && lp.activspot) {//exclude
         const int bfh = int (lp.ly + lp.lyT) + del; //bfw bfh real size of square zone
         const int bfw = int (lp.lx + lp.lxL) + del;
@@ -16023,6 +16042,7 @@ void ImProcFunctions::Lab_Local(
     }
 
 //encoding lab at the beginning
+    llStage("before-log");
     if (lp.logena && (call <= 3 || lp.prevdE || lp.showMaskOverlay || lp.showmasklogmet == 2 || lp.enaLMask || lp.showmasklogmet == 3 || lp.showmasklogmet == 4)) {
 
         const int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
@@ -16911,6 +16931,7 @@ void ImProcFunctions::Lab_Local(
     }
 
 //local denoise
+    llStage("before-denoise");
     if (lp.activspot && lp.denoiena && (lp.noiself > 0.f || lp.noiself0 > 0.f || lp.noiself2 > 0.f || lp.wavcurvedenoi ||lp.nlstr > 0 || lp.noiselc > 0.f || lp.noisecf > 0.f || lp.noisecc > 0.f )) {//disable denoise if not used
         constexpr int aut = 0;
         DeNoise(sp, call, aut, noiscfactiv, lp, originalmaskbl.get(), bufmaskblurbl.get(), levred, huerefblur, lumarefblur, chromarefblur, original, transformed, cx, cy, sk, locwavCurvehue, locwavhueutili, locwavCurvehuecont, locwavhueutilicont,
@@ -17268,6 +17289,7 @@ void ImProcFunctions::Lab_Local(
 
     lp.invret = false;//always disabled inverse RETI   too complex todo !!
 
+    llStage("before-retinex");
     if (lp.str >= 0.2f && lp.retiena && call != 2) {
         LabImage *bufreti = nullptr;
         LabImage *bufmask = nullptr;
@@ -18214,6 +18236,7 @@ void ImProcFunctions::Lab_Local(
 //vibrance
     float vibg = params->locallab.spots.at(sp).vibgam;
 
+    llStage("before-vibrance");
     if (lp.expvib && (lp.past != 0.f  || lp.satur != 0.f || lp.strvib != 0.f || vibg != 1.f  || lp.war != 0 || lp.strvibab != 0.f  || lp.strvibh != 0.f || lp.showmaskvibmet == 2 || lp.enavibMask || lp.showmaskvibmet == 3 || lp.showmaskvibmet == 4 || lp.prevdE || lp.showMaskOverlay) && lp.vibena) { //interior ellipse reinforced lightness and chroma  //locallutili
         if (call <= 3) { //simpleprocess, dcrop, improccoordinator
             const int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
@@ -20821,6 +20844,7 @@ void ImProcFunctions::Lab_Local(
 //Sharp methodcap Capture deconvolution
     bool cap = params->locallab.spots.at(sp).methodcap == "cap";
 
+    llStage("before-sharpen");
     if (!lp.invshar && cap && lp.sharpena) {//  &&  lp.fullim >= 2) {//provisory spot normal not possible (allocation memory ??)
         int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
         int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
@@ -20940,6 +20964,7 @@ void ImProcFunctions::Lab_Local(
 
     bool execex = (lp.exposena && (lp.expcomp != 0.f || lp.blac != 0 || lp.shadex > 0 || lp.hlcomp > 0.f || lp.laplacexp > 0.1f || lp.strexp != 0.f || enablefat || lp.showmaskexpmet == 2 || lp.enaExpMask || lp.showmaskexpmet == 3 || lp.showmaskexpmet == 4  || lp.showmaskexpmet == 5 || lp.prevdE || lp.showMaskOverlay || (exlocalcurve && localexutili)));
 
+    llStage("before-exposure");
     if (!lp.invex && execex) {
         int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
         int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
@@ -21498,6 +21523,7 @@ void ImProcFunctions::Lab_Local(
     const float a_scalemerg = (lp.highAmerg - lp.lowAmerg) / factor / scaling;
     const float b_scalemerg = (lp.highBmerg - lp.lowBmerg) / factor / scaling;
 
+    llStage("before-color");
     if (!lp.inv && (lp.chro != 0 || lp.ligh != 0.f || lp.cont != 0 || ctoning || lp.mergemet > 0 ||  lp.strcol != 0.f ||  lp.strcolab != 0.f || lp.qualcurvemet != 0 || lp.showmaskcolmet == 2 || lp.enaColorMask || lp.showmaskcolmet == 3  || lp.showmaskcolmet == 4 || lp.showmaskcolmet == 5 || lp.prevdE || lp.showMaskOverlay || lp.blwh) && lp.colorena) { // || lllocalcurve)) { //interior ellipse reinforced lightness and chroma  //locallutili
         int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
         int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
@@ -22826,6 +22852,7 @@ void ImProcFunctions::Lab_Local(
     }
 
 //begin common mask
+    llStage("before-mask");
     if (lp.maskena) {
         int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
         int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
@@ -23926,6 +23953,7 @@ void ImProcFunctions::Lab_Local(
 
 
 // Show Mask Overlay: standalone red overlay pass using geometric shape + AI mask
+    llStage("before-overlay");
     if (lp.showMaskOverlay) {
         const int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
         const int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
@@ -24036,8 +24064,14 @@ void ImProcFunctions::Lab_Local(
                 const float gradient = rtengine::max(
                     rtengine::max(std::abs(maskVal - left), std::abs(maskVal - right)),
                     rtengine::max(std::abs(maskVal - above), std::abs(maskVal - below)));
-                const float featherLine = LIM01(1.f - std::abs(maskVal - 0.5f) / 0.16f);
-                const float outline = LIM01(rtengine::max(gradient * 4.f, featherLine));
+                // Mark real edges only. The old contour also whitened anything
+                // NEAR half strength, which is fine on a mask with a crisp
+                // border but catastrophic on a gradient: half strength is a
+                // broad region there, so the falloff was painted white and the
+                // decaying red it was supposed to show never appeared. The
+                // local gradient of the mask says where an actual edge is, and
+                // a smooth ramp has none.
+                const float outline = LIM01(gradient * 4.f);
 
                 // The overlay's whole job is to show how strong the mask is,
                 // so the colour has to be proportional to it. Shoving a fixed
