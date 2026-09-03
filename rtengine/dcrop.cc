@@ -1577,7 +1577,8 @@ void Crop::update(int todo)
         parent->ipf.colorGrading(labnCrop, 0, labnCrop->W, 0, labnCrop->H, false);
 
         parent->ipf.shadowsHighlights(labnCrop, params.sh.enabled, params.sh.lab,params.sh.highlights ,params.sh.shadows, params.sh.radius, skip, params.sh.htonalwidth, params.sh.stonalwidth);
-        
+        traceStage("detail-shadowshighlights");
+
         if (params.localContrast.enabled) {
         // Alberto's local contrast
             parent->ipf.localContrast(labnCrop, labnCrop->L, params.localContrast, false, skip);
@@ -1604,8 +1605,11 @@ void Crop::update(int todo)
             parent->ipf.lensBlur(labnCrop, params.lensBlur, skip);
         }
 
+        traceStage("detail-effects");
         parent->ipf.chromiLuminanceCurve(this, 1, labnCrop, labnCrop, parent->chroma_acurve, parent->chroma_bcurve, parent->satcurve, parent->lhskcurve,  parent->clcurve, parent->lumacurve, utili, autili, butili, ccutili, cclutili, clcutili, dummy, dummy);
+        traceStage("detail-chromiluminance");
         parent->ipf.vibrance(labnCrop, params.vibrance, params.toneCurve.hrenabled, params.icm.workingProfile);
+        traceStage("detail-vibrance");
         parent->ipf.labColorCorrectionRegions(labnCrop);
 
        // if ((params.colorappearance.enabled && !params.colorappearance.tonecie) || (!params.colorappearance.enabled)) {
@@ -1628,6 +1632,7 @@ void Crop::update(int todo)
             if ((params.colorappearance.enabled && !settings->autocielab)  || (!cam02)) {
                 parent->ipf.MLmicrocontrast(labnCrop);
                 parent->ipf.sharpening(labnCrop, params.sharpening, parent->sharpMask);
+                traceStage("detail-sharpening");
             }
         }
 
