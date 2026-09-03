@@ -1527,7 +1527,10 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
                 locallab.spots.at(j).gradType = locallab.spots.at(j).gradType && pSpot.gradType == otherSpot.gradType;
                 locallab.spots.at(j).gradProfile = locallab.spots.at(j).gradProfile && pSpot.gradProfile == otherSpot.gradProfile;
                 locallab.spots.at(j).dodgeBurn = locallab.spots.at(j).dodgeBurn && pSpot.dodgeBurn == otherSpot.dodgeBurn;
-                locallab.spots.at(j).dodgeBurnRange = locallab.spots.at(j).dodgeBurnRange && pSpot.dodgeBurnRange == otherSpot.dodgeBurnRange;
+                locallab.spots.at(j).dodgeBurnTones = locallab.spots.at(j).dodgeBurnTones && pSpot.dodgeBurnTones == otherSpot.dodgeBurnTones;
+                locallab.spots.at(j).dodgeBurnShadows = locallab.spots.at(j).dodgeBurnShadows && pSpot.dodgeBurnShadows == otherSpot.dodgeBurnShadows;
+                locallab.spots.at(j).dodgeBurnMids = locallab.spots.at(j).dodgeBurnMids && pSpot.dodgeBurnMids == otherSpot.dodgeBurnMids;
+                locallab.spots.at(j).dodgeBurnHighlights = locallab.spots.at(j).dodgeBurnHighlights && pSpot.dodgeBurnHighlights == otherSpot.dodgeBurnHighlights;
                 locallab.spots.at(j).centerX = locallab.spots.at(j).centerX && pSpot.centerX == otherSpot.centerX;
                 locallab.spots.at(j).centerY = locallab.spots.at(j).centerY && pSpot.centerY == otherSpot.centerY;
                 locallab.spots.at(j).circrad = locallab.spots.at(j).circrad && pSpot.circrad == otherSpot.circrad;
@@ -4526,8 +4529,17 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
         if (locallab.spots.at(i).dodgeBurn) {
             toEdit.locallab.spots.at(i).dodgeBurn = mods.locallab.spots.at(i).dodgeBurn;
         }
-        if (locallab.spots.at(i).dodgeBurnRange) {
-            toEdit.locallab.spots.at(i).dodgeBurnRange = mods.locallab.spots.at(i).dodgeBurnRange;
+        if (locallab.spots.at(i).dodgeBurnTones) {
+            toEdit.locallab.spots.at(i).dodgeBurnTones = mods.locallab.spots.at(i).dodgeBurnTones;
+        }
+        if (locallab.spots.at(i).dodgeBurnShadows) {
+            toEdit.locallab.spots.at(i).dodgeBurnShadows = mods.locallab.spots.at(i).dodgeBurnShadows;
+        }
+        if (locallab.spots.at(i).dodgeBurnMids) {
+            toEdit.locallab.spots.at(i).dodgeBurnMids = mods.locallab.spots.at(i).dodgeBurnMids;
+        }
+        if (locallab.spots.at(i).dodgeBurnHighlights) {
+            toEdit.locallab.spots.at(i).dodgeBurnHighlights = mods.locallab.spots.at(i).dodgeBurnHighlights;
         }
 
         if (locallab.spots.at(i).centerX) {
@@ -9507,7 +9519,10 @@ LocallabParamsEdited::LocallabSpotEdited::LocallabSpotEdited(bool v) :
     gradType(v),
     gradProfile(v),
     dodgeBurn(v),
-    dodgeBurnRange(v),
+    dodgeBurnTones(v),
+    dodgeBurnShadows(v),
+    dodgeBurnMids(v),
+    dodgeBurnHighlights(v),
     centerX(v),
     centerY(v),
     circrad(v),
@@ -10372,7 +10387,10 @@ void LocallabParamsEdited::LocallabSpotEdited::set(bool v)
     gradType = v;
     gradProfile = v;
     dodgeBurn = v;
-    dodgeBurnRange = v;
+    dodgeBurnTones = v;
+    dodgeBurnShadows = v;
+    dodgeBurnMids = v;
+    dodgeBurnHighlights = v;
     centerX = v;
     centerY = v;
     circrad = v;

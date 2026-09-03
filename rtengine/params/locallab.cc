@@ -140,7 +140,10 @@ LocallabParams::LocallabSpot::LocallabSpot() :
     gradType(0),
     gradProfile(1),
     dodgeBurn(0.),
-    dodgeBurnRange(0),
+    dodgeBurnTones(0),
+    dodgeBurnShadows(100.),
+    dodgeBurnMids(100.),
+    dodgeBurnHighlights(100.),
     centerX(0),
     centerY(0),
     circrad(18.),
@@ -2145,7 +2148,10 @@ bool LocallabParams::LocallabSpot::operator ==(const LocallabSpot& other) const
         && gradType == other.gradType
         && gradProfile == other.gradProfile
         && dodgeBurn == other.dodgeBurn
-        && dodgeBurnRange == other.dodgeBurnRange
+        && dodgeBurnTones == other.dodgeBurnTones
+        && dodgeBurnShadows == other.dodgeBurnShadows
+        && dodgeBurnMids == other.dodgeBurnMids
+        && dodgeBurnHighlights == other.dodgeBurnHighlights
         && centerX == other.centerX
         && centerY == other.centerY
         && circrad == other.circrad
@@ -3118,11 +3124,17 @@ void LoadUtil::controlSpotSettings()
     assignFromKeyfile(keyFile, "Locallab", "GradType_" + index_str, spot.gradType, spotEdited.gradType);
     assignFromKeyfile(keyFile, "Locallab", "GradProfile_" + index_str, spot.gradProfile, spotEdited.gradProfile);
     assignFromKeyfile(keyFile, "Locallab", "DodgeBurn_" + index_str, spot.dodgeBurn, spotEdited.dodgeBurn);
-    assignFromKeyfile(keyFile, "Locallab", "DodgeBurnRange_" + index_str, spot.dodgeBurnRange, spotEdited.dodgeBurnRange);
+    assignFromKeyfile(keyFile, "Locallab", "DodgeBurnTones_" + index_str, spot.dodgeBurnTones, spotEdited.dodgeBurnTones);
+    assignFromKeyfile(keyFile, "Locallab", "DodgeBurnShadows_" + index_str, spot.dodgeBurnShadows, spotEdited.dodgeBurnShadows);
+    assignFromKeyfile(keyFile, "Locallab", "DodgeBurnMids_" + index_str, spot.dodgeBurnMids, spotEdited.dodgeBurnMids);
+    assignFromKeyfile(keyFile, "Locallab", "DodgeBurnHighlights_" + index_str, spot.dodgeBurnHighlights, spotEdited.dodgeBurnHighlights);
     spot.gradType = std::max(0, std::min(spot.gradType, 2));
     spot.gradProfile = std::max(0, std::min(spot.gradProfile, 4));
     spot.dodgeBurn = std::max(-100., std::min(spot.dodgeBurn, 100.));
-    spot.dodgeBurnRange = std::max(0, std::min(spot.dodgeBurnRange, 3));
+    spot.dodgeBurnTones = std::max(0, std::min(spot.dodgeBurnTones, 7));
+    spot.dodgeBurnShadows = std::max(0., std::min(spot.dodgeBurnShadows, 200.));
+    spot.dodgeBurnMids = std::max(0., std::min(spot.dodgeBurnMids, 200.));
+    spot.dodgeBurnHighlights = std::max(0., std::min(spot.dodgeBurnHighlights, 200.));
     assignFromKeyfile(keyFile, "Locallab", "CenterX_" + index_str, spot.centerX, spotEdited.centerX);
     assignFromKeyfile(keyFile, "Locallab", "CenterY_" + index_str, spot.centerY, spotEdited.centerY);
     assignFromKeyfile(keyFile, "Locallab", "Circrad_" + index_str, spot.circrad, spotEdited.circrad);
@@ -4380,7 +4392,10 @@ void SaveUtil::controlSpotSettings()
     saveToKeyfile(!pedited || spot_edited->gradType, "Locallab", "GradType_" + index_str, spot.gradType, keyFile);
     saveToKeyfile(!pedited || spot_edited->gradProfile, "Locallab", "GradProfile_" + index_str, spot.gradProfile, keyFile);
     saveToKeyfile(!pedited || spot_edited->dodgeBurn, "Locallab", "DodgeBurn_" + index_str, spot.dodgeBurn, keyFile);
-    saveToKeyfile(!pedited || spot_edited->dodgeBurnRange, "Locallab", "DodgeBurnRange_" + index_str, spot.dodgeBurnRange, keyFile);
+    saveToKeyfile(!pedited || spot_edited->dodgeBurnTones, "Locallab", "DodgeBurnTones_" + index_str, spot.dodgeBurnTones, keyFile);
+    saveToKeyfile(!pedited || spot_edited->dodgeBurnShadows, "Locallab", "DodgeBurnShadows_" + index_str, spot.dodgeBurnShadows, keyFile);
+    saveToKeyfile(!pedited || spot_edited->dodgeBurnMids, "Locallab", "DodgeBurnMids_" + index_str, spot.dodgeBurnMids, keyFile);
+    saveToKeyfile(!pedited || spot_edited->dodgeBurnHighlights, "Locallab", "DodgeBurnHighlights_" + index_str, spot.dodgeBurnHighlights, keyFile);
     saveToKeyfile(!pedited || spot_edited->centerX, "Locallab", "CenterX_" + index_str, spot.centerX, keyFile);
     saveToKeyfile(!pedited || spot_edited->centerY, "Locallab", "CenterY_" + index_str, spot.centerY, keyFile);
     saveToKeyfile(!pedited || spot_edited->circrad, "Locallab", "Circrad_" + index_str, spot.circrad, keyFile);

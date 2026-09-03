@@ -838,7 +838,10 @@ struct local_params {
     int gradtype;        // 0 linear, 1 radial, 2 mirror
     int gradprofile;     // falloff curve across the transition band
     float dodgeburn;     // -100..100, mask-level lighten/darken
-    int dodgeburnrange;  // 0 even, 1 shadows, 2 midtones, 3 highlights
+    int dodgeburntones;  // bitfield: 0 even, else 1 shadows | 2 midtones | 4 highlights
+    float dodgeburnshad; // weight of each enabled range, 0..2
+    float dodgeburnmid;
+    float dodgeburnhigh;
     const float* const* polyMask; // pre-rasterized polygon mask [y][x], nullptr if not polygon
     int polyMaskW, polyMaskH; // dimensions of polygon mask
     int edgwmet;
@@ -1846,7 +1849,10 @@ static void calcLocalParams(int sp, int oW, int oH,  const LocallabParams& local
     lp.gradtype = LIM(locallab.spots.at(sp).gradType, 0, 2);
     lp.gradprofile = LIM(locallab.spots.at(sp).gradProfile, 0, 4);
     lp.dodgeburn = LIM(static_cast<float>(locallab.spots.at(sp).dodgeBurn), -100.f, 100.f);
-    lp.dodgeburnrange = LIM(locallab.spots.at(sp).dodgeBurnRange, 0, 3);
+    lp.dodgeburntones = LIM(locallab.spots.at(sp).dodgeBurnTones, 0, 7);
+    lp.dodgeburnshad = LIM(static_cast<float>(locallab.spots.at(sp).dodgeBurnShadows), 0.f, 200.f) / 100.f;
+    lp.dodgeburnmid = LIM(static_cast<float>(locallab.spots.at(sp).dodgeBurnMids), 0.f, 200.f) / 100.f;
+    lp.dodgeburnhigh = LIM(static_cast<float>(locallab.spots.at(sp).dodgeBurnHighlights), 0.f, 200.f) / 100.f;
     lp.rad = radius;
     lp.stren = strength;
     lp.sensbn = local_sensibn;
@@ -24032,7 +24038,7 @@ void ImProcFunctions::Lab_Local(
 // they do: a gradient's falloff shapes the lightening exactly as it shapes
 // everything else. The lift is a gamma bend on L*, symmetric in log space,
 // so it cannot clip either end however hard it is pushed.
-    if (lp.dodgeburn != 0.f && !lp.showMaskOverlay) {
+    if (lp.dodgeburn != 0.f && lp.activspot && !lp.showMaskOverlay) {
         const int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
         const int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, transformed->H);
         const int xstart = rtengine::max(static_cast<int>(lp.xc - lp.lxL) - cx, 0);
@@ -24134,19 +24140,30 @@ void ImProcFunctions::Lab_Local(
                     continue;
                 }
 
-                // Which tones the brush bites into, the way a darkroom
-                // worker picks shadows, midtones or highlights to work.
+                // Which tones the brush bites into, the way a darkroom worker
+                // picks shadows, midtones or highlights to work. Ranges add
+                // up, each with its own weight, so two can be combined and
+                // one pushed harder than the other. No range picked at all
+                // means work the whole scale evenly.
                 float toneWeight = 1.f;
 
-                if (lp.dodgeburnrange == 1) {        // Shadows
-                    toneWeight = SQR(1.f - Ln);
-                } else if (lp.dodgeburnrange == 2) { // Midtones
-                    toneWeight = 4.f * Ln * (1.f - Ln);
-                } else if (lp.dodgeburnrange == 3) { // Highlights
-                    toneWeight = SQR(Ln);
+                if (lp.dodgeburntones != 0) {
+                    toneWeight = 0.f;
+
+                    if (lp.dodgeburntones & 1) {
+                        toneWeight += lp.dodgeburnshad * SQR(1.f - Ln);
+                    }
+
+                    if (lp.dodgeburntones & 2) {
+                        toneWeight += lp.dodgeburnmid * 4.f * Ln * (1.f - Ln);
+                    }
+
+                    if (lp.dodgeburntones & 4) {
+                        toneWeight += lp.dodgeburnhigh * SQR(Ln);
+                    }
                 }
 
-                const float amount = dbStrength * factorx * toneWeight;
+                const float amount = LIM(dbStrength * factorx * toneWeight, -2.f, 2.f);
 
                 if (std::abs(amount) < 0.0005f) {
                     continue;

@@ -4254,11 +4254,15 @@ TP_LOCALLAB_DODGEBURN;Dodge / Burn
 TP_LOCALLAB_DODGEBURN_TOOLTIP;Lightens (right) or darkens (left) through the mask, applied after every other adjustment on this mask.
 The mask decides where; this decides how much. A gradient's falloff shapes the lift exactly as it shapes everything else.
 TP_LOCALLAB_DODGEBURN_RANGE;Acts on
+TP_LOCALLAB_DODGEBURN_AMT_SHADOWS;Shadow amount
+TP_LOCALLAB_DODGEBURN_AMT_MIDS;Midtone amount
+TP_LOCALLAB_DODGEBURN_AMT_HIGHLIGHTS;Highlight amount
 TP_LOCALLAB_DODGEBURN_RANGE_EVEN;All tones
 TP_LOCALLAB_DODGEBURN_RANGE_SHADOWS;Shadows
 TP_LOCALLAB_DODGEBURN_RANGE_MIDS;Midtones
 TP_LOCALLAB_DODGEBURN_RANGE_HIGHLIGHTS;Highlights
 TP_LOCALLAB_DODGEBURN_RANGE_TOOLTIP;Which tones the dodge or burn bites into, the way a darkroom print is worked selectively.
+Tick any combination; each range you switch on gets its own amount, so one can be pushed harder than another. Tick nothing to work the whole scale evenly.
 TP_LOCALLAB_GRADTYPE;Gradient
 TP_LOCALLAB_GRADTYPE_LINEAR;Linear
 TP_LOCALLAB_GRADTYPE_RADIAL;Radial

@@ -107,7 +107,10 @@ public:
         int gradType; // 0 = Linear, 1 = Radial, 2 = Mirror
         int gradProfile; // 0 = Linear, 1 = Soft, 2 = Smooth, 3 = Ease in, 4 = Ease out
         double dodgeBurn; // -100 (burn) .. +100 (dodge)
-        int dodgeBurnRange; // 0 = Even, 1 = Shadows, 2 = Midtones, 3 = Highlights
+        int dodgeBurnTones; // bitfield: 0 = all tones, else 1 shadows | 2 mids | 4 highlights
+        double dodgeBurnShadows;
+        double dodgeBurnMids;
+        double dodgeBurnHighlights;
         std::vector<int> polyMaskPoints; // Polygon vertices: flattened [x1,y1,x2,y2,...]
         double polyMaskFeather; // Polygon feather width
         double polyMaskSnapTolerance; // Magnetic snap search radius
@@ -410,7 +413,10 @@ private:
         Gtk::TreeModelColumn<int> gradType;
         Gtk::TreeModelColumn<int> gradProfile;
         Gtk::TreeModelColumn<double> dodgeBurn;
-        Gtk::TreeModelColumn<int> dodgeBurnRange;
+        Gtk::TreeModelColumn<int> dodgeBurnTones;
+        Gtk::TreeModelColumn<double> dodgeBurnShadows;
+        Gtk::TreeModelColumn<double> dodgeBurnMids;
+        Gtk::TreeModelColumn<double> dodgeBurnHighlights;
         Gtk::TreeModelColumn<std::vector<int>> polyMaskPoints;
         Gtk::TreeModelColumn<double> polyMaskFeather;
         Gtk::TreeModelColumn<double> polyMaskSnapTolerance;
@@ -586,13 +592,23 @@ private:
     MyComboBoxText* const gradProfile_;
     sigc::connection gradProfileConn_;
     Adjuster* const dodgeBurn_;
-    MyComboBoxText* const dodgeBurnRange_;
-    sigc::connection dodgeBurnRangeConn_;
+    // One toggle per tonal range, each with its own amount. Nothing ticked
+    // means the dodge or burn works the whole scale evenly.
+    Gtk::CheckButton* const dbShadowsBtn_;
+    Gtk::CheckButton* const dbMidsBtn_;
+    Gtk::CheckButton* const dbHighlightsBtn_;
+    sigc::connection dbShadowsConn_;
+    sigc::connection dbMidsConn_;
+    sigc::connection dbHighlightsConn_;
+    Adjuster* const dbShadowsAmt_;
+    Adjuster* const dbMidsAmt_;
+    Adjuster* const dbHighlightsAmt_;
+    void dodgeBurnTonesChanged();
+    void updateDodgeBurnToneVisibility();
     Gtk::Box* gradBox_;        // gradient-only controls (shape == GRAD)
     Gtk::Box* dodgeBurnBox_;   // dodge & burn, shown for every mask
     void gradTypeChanged();
     void gradProfileChanged();
-    void dodgeBurnRangeChanged();
 
     // Per-mask settings section, expanded from the chevron in each mask row
     Gtk::Box* maskDetailBox_;

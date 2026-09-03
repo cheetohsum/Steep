@@ -339,7 +339,10 @@ void Locallab::read(const rtengine::procparams::ProcParams* pp, const ParamsEdit
         r.gradType = pp->locallab.spots.at(i).gradType;
         r.gradProfile = pp->locallab.spots.at(i).gradProfile;
         r.dodgeBurn = pp->locallab.spots.at(i).dodgeBurn;
-        r.dodgeBurnRange = pp->locallab.spots.at(i).dodgeBurnRange;
+        r.dodgeBurnTones = pp->locallab.spots.at(i).dodgeBurnTones;
+        r.dodgeBurnShadows = pp->locallab.spots.at(i).dodgeBurnShadows;
+        r.dodgeBurnMids = pp->locallab.spots.at(i).dodgeBurnMids;
+        r.dodgeBurnHighlights = pp->locallab.spots.at(i).dodgeBurnHighlights;
         r.polyMaskPoints = pp->locallab.spots.at(i).polyMaskPoints;
         r.polyMaskFeather = pp->locallab.spots.at(i).polyMaskFeather;
         r.polyMaskSnapTolerance = pp->locallab.spots.at(i).polyMaskSnapTolerance;
@@ -545,7 +548,10 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
             r.gradType = newSpot->gradType;
             r.gradProfile = newSpot->gradProfile;
             r.dodgeBurn = newSpot->dodgeBurn;
-            r.dodgeBurnRange = newSpot->dodgeBurnRange;
+            r.dodgeBurnTones = newSpot->dodgeBurnTones;
+            r.dodgeBurnShadows = newSpot->dodgeBurnShadows;
+            r.dodgeBurnMids = newSpot->dodgeBurnMids;
+            r.dodgeBurnHighlights = newSpot->dodgeBurnHighlights;
             r.polyMaskPoints = newSpot->polyMaskPoints;
             r.polyMaskFeather = newSpot->polyMaskFeather;
             r.polyMaskSnapTolerance = newSpot->polyMaskSnapTolerance;
@@ -752,7 +758,10 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
             r.gradType = newSpot->gradType;
             r.gradProfile = newSpot->gradProfile;
             r.dodgeBurn = newSpot->dodgeBurn;
-            r.dodgeBurnRange = newSpot->dodgeBurnRange;
+            r.dodgeBurnTones = newSpot->dodgeBurnTones;
+            r.dodgeBurnShadows = newSpot->dodgeBurnShadows;
+            r.dodgeBurnMids = newSpot->dodgeBurnMids;
+            r.dodgeBurnHighlights = newSpot->dodgeBurnHighlights;
             r.polyMaskPoints = newSpot->polyMaskPoints;
             r.polyMaskFeather = newSpot->polyMaskFeather;
             r.polyMaskSnapTolerance = newSpot->polyMaskSnapTolerance;
@@ -1092,7 +1101,10 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
             r.gradType = newSpot->gradType;
             r.gradProfile = newSpot->gradProfile;
             r.dodgeBurn = newSpot->dodgeBurn;
-            r.dodgeBurnRange = newSpot->dodgeBurnRange;
+            r.dodgeBurnTones = newSpot->dodgeBurnTones;
+            r.dodgeBurnShadows = newSpot->dodgeBurnShadows;
+            r.dodgeBurnMids = newSpot->dodgeBurnMids;
+            r.dodgeBurnHighlights = newSpot->dodgeBurnHighlights;
             r.polyMaskPoints = newSpot->polyMaskPoints;
             r.polyMaskFeather = newSpot->polyMaskFeather;
             r.polyMaskSnapTolerance = newSpot->polyMaskSnapTolerance;
@@ -1244,7 +1256,10 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                     pp->locallab.spots.at(pp->locallab.selspot).gradType = r->gradType;
                     pp->locallab.spots.at(pp->locallab.selspot).gradProfile = r->gradProfile;
                     pp->locallab.spots.at(pp->locallab.selspot).dodgeBurn = r->dodgeBurn;
-                    pp->locallab.spots.at(pp->locallab.selspot).dodgeBurnRange = r->dodgeBurnRange;
+                    pp->locallab.spots.at(pp->locallab.selspot).dodgeBurnTones = r->dodgeBurnTones;
+                    pp->locallab.spots.at(pp->locallab.selspot).dodgeBurnShadows = r->dodgeBurnShadows;
+                    pp->locallab.spots.at(pp->locallab.selspot).dodgeBurnMids = r->dodgeBurnMids;
+                    pp->locallab.spots.at(pp->locallab.selspot).dodgeBurnHighlights = r->dodgeBurnHighlights;
                     //pp->locallab.spots.at(pp->locallab.selspot).savrest = r->savrest;
 
                     if (r->complexMethod == 0) {

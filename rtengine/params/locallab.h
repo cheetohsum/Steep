@@ -60,7 +60,14 @@ struct LocallabParams {
         int gradProfile; // falloff curve across the transition: 0 Linear, 1 Soft, 2 Smooth, 3 Ease in, 4 Ease out
         // Dodge & burn through the mask, applied after every other spot tool
         double dodgeBurn;   // -100 (burn) .. +100 (dodge); +-100 == +-2 EV at full mask strength
-        int dodgeBurnRange; // tonal range it acts on: 0 Even, 1 Shadows, 2 Midtones, 3 Highlights
+        // Tonal ranges it acts on, as a bitfield: 0 = evenly across all tones,
+        // otherwise any mix of 1 shadows | 2 midtones | 4 highlights. Each
+        // enabled range carries its own weight in percent, so one range can be
+        // pushed harder than another.
+        int dodgeBurnTones;
+        double dodgeBurnShadows;
+        double dodgeBurnMids;
+        double dodgeBurnHighlights;
         int centerX;
         int centerY;
         int circrad;

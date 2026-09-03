@@ -286,18 +286,15 @@ button.de-chip-selected { border: 2px solid @steep_accent; border-radius: 3px; p
     background-image: none;
 }
 
-/* Selection: a wash across the row plus a 2px accent edge at its left. GTK
-   paints the row background across the full row width before the cells, so
-   the edge lands once per row and not once per column. */
+/* Selection: a plain wash across the row. No edge stripe here - GTK paints
+   this background once per CELL, not once per row, so any background-image
+   lands again at every column boundary as a stray vertical bar. */
 #MaskTreeView.view:selected,
 #MaskTreeView.view:selected:focus,
 #MaskTreeView:selected {
     color: @steep_text_hi;
     background-color: alpha(@steep_select, 0.32);
-    background-image: linear-gradient(to right, @steep_accent, @steep_accent);
-    background-size: 2px 100%;
-    background-repeat: no-repeat;
-    background-position: left center;
+    background-image: none;
 }
 
 /* The eye of an unpinned mask renders insensitive — keep it a hint. */

@@ -72,7 +72,12 @@ ControlSpotPanel::ControlSpotPanel():
     dodgeBurn_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_DODGEBURN"), -100., 100., 1., 0.,
                                         Gtk::manage(new RTImage("circle-black-small")),
                                         Gtk::manage(new RTImage("circle-white-small"))))),
-    dodgeBurnRange_(Gtk::manage(new MyComboBoxText())),
+    dbShadowsBtn_(Gtk::manage(new Gtk::CheckButton(M("TP_LOCALLAB_DODGEBURN_RANGE_SHADOWS")))),
+    dbMidsBtn_(Gtk::manage(new Gtk::CheckButton(M("TP_LOCALLAB_DODGEBURN_RANGE_MIDS")))),
+    dbHighlightsBtn_(Gtk::manage(new Gtk::CheckButton(M("TP_LOCALLAB_DODGEBURN_RANGE_HIGHLIGHTS")))),
+    dbShadowsAmt_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_DODGEBURN_AMT_SHADOWS"), 0., 200., 1., 100.))),
+    dbMidsAmt_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_DODGEBURN_AMT_MIDS"), 0., 200., 1., 100.))),
+    dbHighlightsAmt_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_DODGEBURN_AMT_HIGHLIGHTS"), 0., 200., 1., 100.))),
 
     sensiexclu_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_SENSIEXCLU"), 0, 100, 1, 12))),
     structexclu_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_STRUCCOL"), 0, 100, 1, 0))),
@@ -636,21 +641,25 @@ ControlSpotPanel::ControlSpotPanel():
     gradProfileConn_ = gradProfile_->signal_changed().connect(
         sigc::mem_fun(*this, &ControlSpotPanel::gradProfileChanged));
 
-    dodgeBurnRange_->append(M("TP_LOCALLAB_DODGEBURN_RANGE_EVEN"));
-    dodgeBurnRange_->append(M("TP_LOCALLAB_DODGEBURN_RANGE_SHADOWS"));
-    dodgeBurnRange_->append(M("TP_LOCALLAB_DODGEBURN_RANGE_MIDS"));
-    dodgeBurnRange_->append(M("TP_LOCALLAB_DODGEBURN_RANGE_HIGHLIGHTS"));
-    dodgeBurnRange_->set_active(0);
-    dodgeBurnRangeConn_ = dodgeBurnRange_->signal_changed().connect(
-        sigc::mem_fun(*this, &ControlSpotPanel::dodgeBurnRangeChanged));
+    dbShadowsConn_ = dbShadowsBtn_->signal_toggled().connect(
+        sigc::mem_fun(*this, &ControlSpotPanel::dodgeBurnTonesChanged));
+    dbMidsConn_ = dbMidsBtn_->signal_toggled().connect(
+        sigc::mem_fun(*this, &ControlSpotPanel::dodgeBurnTonesChanged));
+    dbHighlightsConn_ = dbHighlightsBtn_->signal_toggled().connect(
+        sigc::mem_fun(*this, &ControlSpotPanel::dodgeBurnTonesChanged));
 
     dodgeBurn_->setAdjusterListener(this);
+    dbShadowsAmt_->setAdjusterListener(this);
+    dbMidsAmt_->setAdjusterListener(this);
+    dbHighlightsAmt_->setAdjusterListener(this);
 
     if (showtooltip) {
         gradType_->set_tooltip_text(M("TP_LOCALLAB_GRADTYPE_TOOLTIP"));
         gradProfile_->set_tooltip_text(M("TP_LOCALLAB_GRADPROFILE_TOOLTIP"));
         dodgeBurn_->set_tooltip_text(M("TP_LOCALLAB_DODGEBURN_TOOLTIP"));
-        dodgeBurnRange_->set_tooltip_text(M("TP_LOCALLAB_DODGEBURN_RANGE_TOOLTIP"));
+        dbShadowsBtn_->set_tooltip_text(M("TP_LOCALLAB_DODGEBURN_RANGE_TOOLTIP"));
+        dbMidsBtn_->set_tooltip_text(M("TP_LOCALLAB_DODGEBURN_RANGE_TOOLTIP"));
+        dbHighlightsBtn_->set_tooltip_text(M("TP_LOCALLAB_DODGEBURN_RANGE_TOOLTIP"));
     }
 
     // Quality method (not packed at top level, used internally)
@@ -931,14 +940,24 @@ ControlSpotPanel::ControlSpotPanel():
     dodgeBurnBox_->set_no_show_all(true);
     dodgeBurnBox_->pack_start(*dodgeBurn_, Gtk::PACK_SHRINK);
     {
-        auto* const rangeRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
         auto* const rangeLabel = Gtk::manage(new Gtk::Label(M("TP_LOCALLAB_DODGEBURN_RANGE")));
         rangeLabel->set_halign(Gtk::ALIGN_START);
         rangeLabel->set_xalign(0.f);
-        rangeRow->pack_start(*rangeLabel, Gtk::PACK_SHRINK);
-        rangeRow->pack_end(*dodgeBurnRange_, Gtk::PACK_EXPAND_WIDGET);
+        dodgeBurnBox_->pack_start(*rangeLabel, Gtk::PACK_SHRINK);
+
+        auto* const rangeRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 10));
+        rangeRow->pack_start(*dbShadowsBtn_, Gtk::PACK_SHRINK);
+        rangeRow->pack_start(*dbMidsBtn_, Gtk::PACK_SHRINK);
+        rangeRow->pack_start(*dbHighlightsBtn_, Gtk::PACK_SHRINK);
         dodgeBurnBox_->pack_start(*rangeRow, Gtk::PACK_SHRINK);
     }
+    // Each range's amount appears only once that range is switched on.
+    dbShadowsAmt_->set_no_show_all(true);
+    dbMidsAmt_->set_no_show_all(true);
+    dbHighlightsAmt_->set_no_show_all(true);
+    dodgeBurnBox_->pack_start(*dbShadowsAmt_, Gtk::PACK_SHRINK);
+    dodgeBurnBox_->pack_start(*dbMidsAmt_, Gtk::PACK_SHRINK);
+    dodgeBurnBox_->pack_start(*dbHighlightsAmt_, Gtk::PACK_SHRINK);
     maskDetailBox_->pack_start(*dodgeBurnBox_, Gtk::PACK_SHRINK);
 
     maskRevealer_ = Gtk::manage(new Gtk::Revealer());
@@ -1055,6 +1074,7 @@ void ControlSpotPanel::setMaskDetailExpanded(bool expanded)
 
         dodgeBurnBox_->show();
         dodgeBurnBox_->show_all_children();
+        updateDodgeBurnToneVisibility();
 
         if (shape_->getSelected() == 3) {
             polyBox_->show();
@@ -1085,6 +1105,9 @@ void ControlSpotPanel::setMaskControlsSensitive(bool sensitive)
     maskBlendMode_->buttonGroup->set_sensitive(sensitive);
     gradBox_->set_sensitive(sensitive);
     dodgeBurnBox_->set_sensitive(sensitive);
+    dbShadowsAmt_->set_sensitive(sensitive);
+    dbMidsAmt_->set_sensitive(sensitive);
+    dbHighlightsAmt_->set_sensitive(sensitive);
 }
 
 void ControlSpotPanel::queueMaskPreviewRefresh()
@@ -1650,12 +1673,12 @@ void ControlSpotPanel::render_isvisible(
     auto row = *iter;
     Gtk::CellRendererPixbuf *cp = static_cast<Gtk::CellRendererPixbuf *>(cell);
 
-    // Eye = pinned overlay. Open and bright when pinned; otherwise a closed
-    // eye drawn insensitive (dimmed by #MaskTreeView:disabled in widgets.css)
-    // so it does not compete with the name.
-    const bool pinned = row[spots_.isvisible];
-    cp->property_icon_name() = pinned ? "eye-open" : "eye-closed";
-    cp->property_sensitive() = pinned;
+    // Eye = whether this mask's edits apply. An active mask gets the open eye
+    // at full strength; a switched-off one gets a closed eye drawn
+    // insensitive, so the row reads as muted without disappearing.
+    const bool active = row[spots_.activ];
+    cp->property_icon_name() = active ? "eye-open" : "eye-closed";
+    cp->property_sensitive() = active;
     applyRowHover(cell, row);
 }
 
@@ -1988,22 +2011,27 @@ bool ControlSpotPanel::onSpotSelectionEvent(GdkEventButton* event)
 
             if (column == treeview_->get_column(3)) {
                 if (iter) {
-                    // Select the clicked row's spot
+                    // The eye switches the mask's edits on and off. Peeking at
+                    // what a mask covers is what hovering its row does, so the
+                    // eye is free to mean what it means everywhere else.
                     treeview_->get_selection()->select(path);
 
-                    // Toggle pinned mask overlay
-                    eyePinned_ = !eyePinned_;
-                    sidebarHoverActive_ = eyePinned_;
-
-                    // Update eye icon and geometry visibility
                     Gtk::TreeModel::Row row = *iter;
-                    row[spots_.isvisible] = eyePinned_;
-                    updateControlSpotCurve(row);
+                    const bool active = !row[spots_.activ];
+                    row[spots_.activ] = active;
 
-                    if (controlPanelListener) {
-                        // forceRedraw=true ensures canvas repaints to show/hide geometry
-                        controlPanelListener->spotHovered(
-                            eyePinned_, true, eyePinned_ ? path[0] : -1);
+                    // Keep the Advanced checkbox showing the same value.
+                    activConn_.block(true);
+                    activ_->set_active(active);
+                    activConn_.block(false);
+
+                    updateControlSpotCurve(row);
+                    treeview_->queue_draw();
+
+                    if (listener) {
+                        listener->panelChanged(Evlocallabactiv,
+                                               active ? M("GENERAL_ENABLED")
+                                                      : M("GENERAL_DISABLED"));
                     }
 
                     return true;
@@ -2100,10 +2128,23 @@ void ControlSpotPanel::load_ControlSpot_param()
     gradProfileConn_.block(true);
     gradProfile_->set_active(rtengine::LIM(static_cast<int>(row[spots_.gradProfile]), 0, 4));
     gradProfileConn_.block(false);
-    dodgeBurnRangeConn_.block(true);
-    dodgeBurnRange_->set_active(rtengine::LIM(static_cast<int>(row[spots_.dodgeBurnRange]), 0, 3));
-    dodgeBurnRangeConn_.block(false);
+    {
+        const int tones = rtengine::LIM(static_cast<int>(row[spots_.dodgeBurnTones]), 0, 7);
+        dbShadowsConn_.block(true);
+        dbMidsConn_.block(true);
+        dbHighlightsConn_.block(true);
+        dbShadowsBtn_->set_active(tones & 1);
+        dbMidsBtn_->set_active(tones & 2);
+        dbHighlightsBtn_->set_active(tones & 4);
+        dbShadowsConn_.block(false);
+        dbMidsConn_.block(false);
+        dbHighlightsConn_.block(false);
+    }
     dodgeBurn_->setValue((double)row[spots_.dodgeBurn]);
+    dbShadowsAmt_->setValue((double)row[spots_.dodgeBurnShadows]);
+    dbMidsAmt_->setValue((double)row[spots_.dodgeBurnMids]);
+    dbHighlightsAmt_->setValue((double)row[spots_.dodgeBurnHighlights]);
+    updateDodgeBurnToneVisibility();
     ctboxaiclass->set_visible(row[spots_.maskType] == 1);
     aiMaskTolerance_->set_visible(row[spots_.maskType] == 1);
 
@@ -2817,19 +2858,33 @@ void ControlSpotPanel::gradProfileChanged()
     }
 }
 
-void ControlSpotPanel::dodgeBurnRangeChanged()
+void ControlSpotPanel::updateDodgeBurnToneVisibility()
 {
+    dbShadowsAmt_->set_visible(dbShadowsBtn_->get_active());
+    dbMidsAmt_->set_visible(dbMidsBtn_->get_active());
+    dbHighlightsAmt_->set_visible(dbHighlightsBtn_->get_active());
+}
+
+void ControlSpotPanel::dodgeBurnTonesChanged()
+{
+    updateDodgeBurnToneVisibility();
+
     const auto s = treeview_->get_selection();
 
     if (!s->count_selected_rows()) {
         return;
     }
 
+    const int tones = (dbShadowsBtn_->get_active() ? 1 : 0)
+                    | (dbMidsBtn_->get_active() ? 2 : 0)
+                    | (dbHighlightsBtn_->get_active() ? 4 : 0);
     Gtk::TreeModel::Row row = *(s->get_selected());
-    row[spots_.dodgeBurnRange] = rtengine::LIM(dodgeBurnRange_->get_active_row_number(), 0, 3);
+    row[spots_.dodgeBurnTones] = tones;
 
     if (listener) {
-        listener->panelChanged(EvLocallabSpotShape, dodgeBurnRange_->get_active_text());
+        listener->panelChanged(EvLocallabSpotShape,
+                               tones == 0 ? M("TP_LOCALLAB_DODGEBURN_RANGE_EVEN")
+                                          : M("TP_LOCALLAB_DODGEBURN_RANGE"));
     }
 }
 
@@ -3171,11 +3226,14 @@ void ControlSpotPanel::adjusterChanged(Adjuster* a, double newval)
         }
     }
 
-    if (a == dodgeBurn_) {
+    if (a == dodgeBurn_ || a == dbShadowsAmt_ || a == dbMidsAmt_ || a == dbHighlightsAmt_) {
         row[spots_.dodgeBurn] = dodgeBurn_->getValue();
+        row[spots_.dodgeBurnShadows] = dbShadowsAmt_->getValue();
+        row[spots_.dodgeBurnMids] = dbMidsAmt_->getValue();
+        row[spots_.dodgeBurnHighlights] = dbHighlightsAmt_->getValue();
 
         if (listener) {
-            listener->panelChanged(EvLocallabSpotShape, dodgeBurn_->getTextValue());
+            listener->panelChanged(EvLocallabSpotShape, a->getTextValue());
         }
 
         return;
@@ -3660,7 +3718,9 @@ void ControlSpotPanel::disableParamlistener(bool cond)
     maskBlendModeConn_.block(cond);
     gradTypeConn_.block(cond);
     gradProfileConn_.block(cond);
-    dodgeBurnRangeConn_.block(cond);
+    dbShadowsConn_.block(cond);
+    dbMidsConn_.block(cond);
+    dbHighlightsConn_.block(cond);
 
 }
 
@@ -4828,7 +4888,10 @@ std::unique_ptr<ControlSpotPanel::SpotRow> ControlSpotPanel::getSpot(const int i
             r->gradType = row[spots_.gradType];
             r->gradProfile = row[spots_.gradProfile];
             r->dodgeBurn = row[spots_.dodgeBurn];
-            r->dodgeBurnRange = row[spots_.dodgeBurnRange];
+            r->dodgeBurnTones = row[spots_.dodgeBurnTones];
+            r->dodgeBurnShadows = row[spots_.dodgeBurnShadows];
+            r->dodgeBurnMids = row[spots_.dodgeBurnMids];
+            r->dodgeBurnHighlights = row[spots_.dodgeBurnHighlights];
             r->polyMaskPoints = row[spots_.polyMaskPoints];
             r->polyMaskFeather = row[spots_.polyMaskFeather];
             r->polyMaskSnapTolerance = row[spots_.polyMaskSnapTolerance];
@@ -4984,7 +5047,10 @@ void ControlSpotPanel::addControlSpot(const SpotRow &newSpot, bool expandDetails
     row[spots_.gradType] = newSpot.gradType;
     row[spots_.gradProfile] = newSpot.gradProfile;
     row[spots_.dodgeBurn] = newSpot.dodgeBurn;
-    row[spots_.dodgeBurnRange] = newSpot.dodgeBurnRange;
+    row[spots_.dodgeBurnTones] = newSpot.dodgeBurnTones;
+    row[spots_.dodgeBurnShadows] = newSpot.dodgeBurnShadows;
+    row[spots_.dodgeBurnMids] = newSpot.dodgeBurnMids;
+    row[spots_.dodgeBurnHighlights] = newSpot.dodgeBurnHighlights;
     row[spots_.polyMaskPoints] = newSpot.polyMaskPoints;
     row[spots_.polyMaskFeather] = newSpot.polyMaskFeather;
     row[spots_.polyMaskSnapTolerance] = newSpot.polyMaskSnapTolerance;
@@ -5184,7 +5250,10 @@ ControlSpotPanel::ControlSpots::ControlSpots()
     add(gradType);
     add(gradProfile);
     add(dodgeBurn);
-    add(dodgeBurnRange);
+    add(dodgeBurnTones);
+    add(dodgeBurnShadows);
+    add(dodgeBurnMids);
+    add(dodgeBurnHighlights);
     add(polyMaskPoints);
     add(polyMaskFeather);
     add(polyMaskSnapTolerance);

@@ -2893,12 +2893,23 @@ void ToolPanelCoordinator::turnOffMaskOverlay(bool /*forceRedraw*/)
 {
     if (!ipc || !locallab) return;
 
+    const bool wasApplied = hoverMaskApplied_;
+
     hoverMaskApplied_ = false;
     pendingHoverState_ = false;
     hoverMaskDebounce_.disconnect();
     hoverMaskWatchdog_.disconnect();
 
     locallab->setHoverMaskOverlay(false);
+
+    if (!wasApplied) {
+        // The overlay never went on: the pointer only crossed the list on its
+        // way somewhere else. Reprocessing here spent a full pipeline pass to
+        // remove something that was never drawn, once per trip, which is a
+        // large part of why the mask pane felt slow to answer every edit.
+        return;
+    }
+
     ipc->setLocallabMaskVisibility(false, false,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
 
@@ -3028,7 +3039,10 @@ void ToolPanelCoordinator::hoverMaskChanged(bool hover, bool forceRedraw, int sp
         }, 500);
 
         return false;  // one-shot debounce
-    }, 100);
+        // Long enough that the pointer has to rest on a row to mean it. A
+        // shorter wait armed a full reprocess for a pointer merely travelling
+        // across the list to reach the controls below it.
+    }, 500);
 }
 
 void ToolPanelCoordinator::applyHoverMask()

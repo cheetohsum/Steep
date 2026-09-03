@@ -536,7 +536,10 @@ public:
         bool gradType;
         bool gradProfile;
         bool dodgeBurn;
-        bool dodgeBurnRange;
+        bool dodgeBurnTones;
+        bool dodgeBurnShadows;
+        bool dodgeBurnMids;
+        bool dodgeBurnHighlights;
         bool centerX;
         bool centerY;
         bool circrad;
