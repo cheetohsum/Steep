@@ -24119,10 +24119,9 @@ void ImProcFunctions::Lab_Local(
         const int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, transformed->H);
         const int xstart = rtengine::max(static_cast<int>(lp.xc - lp.lxL) - cx, 0);
         const int xend = rtengine::min(static_cast<int>(lp.xc + lp.lx) - cx, transformed->W);
-        // +-100 is +-5 stops at full mask strength. Two stops still read as
-        // polite at the very end of the slider; the far end of a control
-        // should be further than you normally want to go.
-        const float dbStrength = lp.dodgeburn / 20.f;
+        // +-100 is about +-7 stops at full mask strength. The far end of a
+        // control should be further than you normally want to go.
+        const float dbStrength = lp.dodgeburn / 14.f;
 
 #ifdef RT_AI_MASKING
         AIMaskSnapshot aiSnapDb;
@@ -24259,8 +24258,12 @@ void ImProcFunctions::Lab_Local(
                 // shadows without flattening the highlights into paper.
                 float outY = Y * gain;
 
-                if (outY > 0.8f) {
-                    outY = 0.8f + 0.2f * (1.f - xexpf(-(outY - 0.8f) * 5.f));
+                // Roll off only the last of the range. A knee at 0.8 met
+                // almost every pixel once the gain passed a few stops, so a
+                // hard dodge spent its strength inside the shoulder and the
+                // end of the slider stopped doing much.
+                if (outY > 0.94f) {
+                    outY = 0.94f + 0.06f * (1.f - xexpf(-(outY - 0.94f) * 16.f));
                 }
 
                 outY = LIM01(outY);
