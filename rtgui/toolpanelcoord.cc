@@ -1449,17 +1449,28 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
     // is exactly the foliage, so "apply B&W" left the greens behind.
     bool bwBridged = false;
 
-    if (id == EvBWChmixEnabled || id == EvBWmethod) {
-        for (auto& everySpot : params->locallab.spots) {
-            everySpot.blwh = params->blackwhite.enabled;
-
-            if (everySpot.blwh) {
-                // Desaturation runs inside the colour processing block, so the
-                // engine only reaches it when that block is enabled.
-                everySpot.expcolor = true;
-            }
+    // Keep every spot's black & white flag in step with the photo's, on any
+    // event rather than only when the B&W tool itself is touched. A spot that
+    // disagrees does not merely miss the conversion: it writes the ORIGINAL
+    // a/b back inside its own region, so the picture goes colour again exactly
+    // where the spot is. A spot created after B&W was switched on started out
+    // disagreeing, and since gradients now cover the frame, growing one grew
+    // the hole -- the conversion appeared to fall off as the mask got bigger.
+    for (auto& everySpot : params->locallab.spots) {
+        if (everySpot.blwh == params->blackwhite.enabled) {
+            continue;
         }
 
+        everySpot.blwh = params->blackwhite.enabled;
+
+        if (everySpot.blwh) {
+            // Desaturation runs inside the colour processing block, so the
+            // engine only reaches it when that block is enabled.
+            everySpot.expcolor = true;
+        }
+
+        // Only claim a bridge when something actually moved, so an unrelated
+        // event does not force locallab to run for nothing.
         bwBridged = true;
     }
 
