@@ -83,6 +83,8 @@ Crop::Crop(ImProcCoordinator* parent, EditDataProvider *editDataProvider, bool i
 
 Crop::~Crop()
 {
+    delete locallabCrop;
+    locallabCrop = nullptr;
 
     MyMutex::MyLock cropLock(cropMutex);
 
@@ -250,10 +252,6 @@ void Crop::update(int todo)
     parent->ipf.setScale(skip);
 
     Imagefloat* baseCrop = origCrop;
-    // Locallab's RGB result goes here rather than over the cached transform,
-    // so the transform stays reusable and the spot cannot be fed its own
-    // output on the next pass.
-    std::unique_ptr<Imagefloat> locallabBase;
     int widIm = parent->fw;//full image
     int heiIm = parent->fh;
 
@@ -1542,9 +1540,16 @@ void Crop::update(int todo)
         // into any of them hands the spot its own output next pass, which is
         // why a drag still piled the effect up however the transform cache
         // behaved.
-        locallabBase.reset(new Imagefloat(baseCrop->getWidth(), baseCrop->getHeight()));
-        parent->ipf.lab2rgb(*labnCrop, *locallabBase, params.icm.workingProfile);
-        baseCrop = locallabBase.get();
+        const int llW = baseCrop->getWidth();
+        const int llH = baseCrop->getHeight();
+
+        if (!locallabCrop || locallabCrop->getWidth() != llW || locallabCrop->getHeight() != llH) {
+            delete locallabCrop;
+            locallabCrop = new Imagefloat(llW, llH);
+        }
+
+        parent->ipf.lab2rgb(*labnCrop, *locallabCrop, params.icm.workingProfile);
+        baseCrop = locallabCrop;
     }
 
     traceStage("transform-and-locallab");

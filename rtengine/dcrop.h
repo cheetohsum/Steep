@@ -50,6 +50,10 @@ protected:
 
     // --- automatically allocated and deleted when necessary, and only renewed on size changes
     Imagefloat*  transCrop;    // "one chunk" allocation, allocated if necessary
+    /// Locallab's RGB output. Kept and reused across passes: allocating a
+    /// crop-sized image on every pass churned tens of megabytes per slider
+    /// tick and eventually stalled the pipeline outright.
+    Imagefloat*  locallabCrop = nullptr;
     /// True when transCrop holds the geometric transform of the current
     /// working image. Tone edits leave both the working image and the
     /// geometry untouched, so the transform can be reused instead of re-run.
