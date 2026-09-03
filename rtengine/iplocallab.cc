@@ -24039,9 +24039,19 @@ void ImProcFunctions::Lab_Local(
                 const float featherLine = LIM01(1.f - std::abs(maskVal - 0.5f) / 0.16f);
                 const float outline = LIM01(rtengine::max(gradient * 4.f, featherLine));
 
-                const float overlayL = original->L[y][x] * (1.f - 0.3f * maskVal);
-                const float overlayA = original->a[y][x] + maskVal * 12000.f;
-                const float overlayB = original->b[y][x] * (1.f - 0.5f * maskVal);
+                // The overlay's whole job is to show how strong the mask is,
+                // so the colour has to be proportional to it. Shoving a fixed
+                // amount into a* did not do that: +12000 is about 36 a* units,
+                // enough to run out of red long before half strength, so a
+                // gentle falloff came out as a flat slab of colour that
+                // disagreed with the swatch in the sidebar. Blend towards the
+                // marker colour instead -- half a mask now really does read as
+                // half the tint.
+                constexpr float markerA = 9000.f;
+                constexpr float markerB = -1500.f;
+                const float overlayL = original->L[y][x] * (1.f - 0.45f * maskVal);
+                const float overlayA = intp(maskVal, markerA, original->a[y][x]);
+                const float overlayB = intp(maskVal, markerB, original->b[y][x]);
                 const float lineMix = outline * 0.88f;
 
                 // The white contour follows the effective half-strength edge,
