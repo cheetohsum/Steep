@@ -2958,7 +2958,36 @@ void ControlSpotPanel::gradTypeChanged(int /*index*/)
     }
 
     Gtk::TreeModel::Row row = *(s->get_selected());
-    row[spots_.gradType] = rtengine::LIM(gradType_->getSelected(), 0, 1);
+    const int newType = rtengine::LIM(gradType_->getSelected(), 0, 1);
+    row[spots_.gradType] = newType;
+
+    // A linear gradient wants to span the frame, since outside its box there
+    // is no effect at all. A radial at that size is the whole picture and
+    // reads as doing nothing in particular, so switching to one pulls it in
+    // to a little over half the frame. Only ever from the untouched creation
+    // size: a spot whose handles have been dragged keeps what it was given.
+    constexpr int kGradFullExtent = 1000;
+    constexpr int kRadialExtent = 550;
+    const int fromExtent = newType == 1 ? kGradFullExtent : kRadialExtent;
+    const int toExtent = newType == 1 ? kRadialExtent : kGradFullExtent;
+
+    if (static_cast<int>(row[spots_.locX]) == fromExtent
+            && static_cast<int>(row[spots_.locXL]) == fromExtent
+            && static_cast<int>(row[spots_.locY]) == fromExtent
+            && static_cast<int>(row[spots_.locYT]) == fromExtent) {
+        row[spots_.locX] = toExtent;
+        row[spots_.locXL] = toExtent;
+        row[spots_.locY] = toExtent;
+        row[spots_.locYT] = toExtent;
+
+        disableParamlistener(true);
+        locX_->setValue(toExtent);
+        locXL_->setValue(toExtent);
+        locY_->setValue(toExtent);
+        locYT_->setValue(toExtent);
+        disableParamlistener(false);
+    }
+
     treeview_->queue_draw();
     // Radial and linear put different handles on the canvas.
     updateControlSpotCurve(row);

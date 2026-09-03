@@ -250,6 +250,10 @@ void Crop::update(int todo)
     parent->ipf.setScale(skip);
 
     Imagefloat* baseCrop = origCrop;
+    // Locallab's RGB result goes here rather than over the cached transform,
+    // so the transform stays reusable and the spot cannot be fed its own
+    // output on the next pass.
+    std::unique_ptr<Imagefloat> locallabBase;
     int widIm = parent->fw;//full image
     int heiIm = parent->fh;
 
@@ -1526,16 +1530,18 @@ void Crop::update(int todo)
 
         // NOTE: AI mask baseline save moved to end of processing pipeline (after all global steps)
 
-        parent->ipf.lab2rgb(*labnCrop, *baseCrop, params.icm.workingProfile);
-
-        // baseCrop IS the cached transform buffer, and locallab has just
-        // written its result into it. Left marked valid, the next pass that
-        // does not rebuild the transform would feed locallab its own output
-        // and apply the spot a second time, then a third -- which is why a
-        // mask edit looked far too strong while a slider was moving and
-        // dropped back to the real thing on release. Rebuilding the transform
-        // costs a few milliseconds; stacking the edit costs correctness.
-        transCropValid = false;
+        // Writing straight back over baseCrop would corrupt the cached
+        // transform it points at: the next pass that skipped the transform
+        // rebuild handed locallab its own output and applied the spot again,
+        // and again, once per pass for as long as a slider kept moving. Give
+        // the result its own buffer and the cache stays honest AND reusable.
+        if (baseCrop == transCrop) {
+            locallabBase.reset(new Imagefloat(baseCrop->getWidth(), baseCrop->getHeight()));
+            parent->ipf.lab2rgb(*labnCrop, *locallabBase, params.icm.workingProfile);
+            baseCrop = locallabBase.get();
+        } else {
+            parent->ipf.lab2rgb(*labnCrop, *baseCrop, params.icm.workingProfile);
+        }
     }
 
     traceStage("transform-and-locallab");

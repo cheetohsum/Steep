@@ -2100,12 +2100,21 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             delete [] scopefp;
             delete [] autocontrast;
             
-            ipf.lab2rgb(*nprevl, *oprevi, params->icm.workingProfile);
+            // Same trap as dcrop: oprevi may BE the cached transform buffer,
+            // and writing locallab's result over it lets the next pass feed
+            // the spot its own output. Give the result its own buffer instead
+            // of invalidating the cache, so the transform stays reusable.
+            if (oprevi == transformedPrev) {
+                if (!locallabPrev || locallabPrev->getWidth() != pW || locallabPrev->getHeight() != pH) {
+                    delete locallabPrev;
+                    locallabPrev = new Imagefloat(pW, pH);
+                }
 
-            // oprevi is the cached transform buffer; locallab has just written
-            // into it. See the matching note in dcrop.cc -- leaving the cache
-            // marked valid lets the next pass stack locallab on its own output.
-            transformedPrevValid = false;
+                ipf.lab2rgb(*nprevl, *locallabPrev, params->icm.workingProfile);
+                oprevi = locallabPrev;
+            } else {
+                ipf.lab2rgb(*nprevl, *oprevi, params->icm.workingProfile);
+            }
             //*************************************************************
             // end locallab
             //*************************************************************
@@ -3624,6 +3633,8 @@ void ImProcCoordinator::freeAll()
         delete transformedPrev;
         transformedPrev = nullptr;
         transformedPrevValid = false;
+        delete locallabPrev;
+        locallabPrev = nullptr;
         delete orig_prev;
         orig_prev = nullptr;
         delete oprevl;

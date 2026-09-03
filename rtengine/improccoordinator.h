@@ -67,6 +67,9 @@ protected:
     /// the current working image. Tone edits change neither the working image
     /// nor the geometry, so the transform is reused rather than re-run.
     Imagefloat *transformedPrev = nullptr;
+    /// Locallab's RGB output, kept apart from the cached transform so a spot
+    /// is never handed its own result as input on the next pass.
+    Imagefloat *locallabPrev = nullptr;
     bool transformedPrevValid = false;
     Imagefloat *spotprev;
     LabImage *oprevl;
