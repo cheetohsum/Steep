@@ -1456,31 +1456,12 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
     // where the spot is. A spot created after B&W was switched on started out
     // disagreeing, and since gradients now cover the frame, growing one grew
     // the hole -- the conversion appeared to fall off as the mask got bigger.
-    // In mask mode the global widgets carry the SELECTED SPOT's values, and
-    // the write loop has already put them into params. Reading blackwhite
-    // from there would sync every spot to a spot's own state and switch the
-    // photo's conversion off; the snapshot holds what the picture really has.
-    const bool photoIsBW = (maskModeActive_ && maskGlobalsValid_)
-        ? savedBlackWhite_.enabled
-        : params->blackwhite.enabled;
-
-    for (auto& everySpot : params->locallab.spots) {
-        if (everySpot.blwh == photoIsBW) {
-            continue;
-        }
-
-        everySpot.blwh = photoIsBW;
-
-        if (everySpot.blwh) {
-            // Desaturation runs inside the colour processing block, so the
-            // engine only reaches it when that block is enabled.
-            everySpot.expcolor = true;
-        }
-
-        // Only claim a bridge when something actually moved, so an unrelated
-        // event does not force locallab to run for nothing.
-        bwBridged = true;
-    }
+    // Nothing to sync here. spot.blwh means "desaturate inside this mask", and
+    // the engine already does `lp.blwh = lp.blwh || blackwhite.enabled`, so a
+    // photo converted as a whole reaches every spot without help -- which is
+    // what stops a spot restoring colour inside its own region. Forcing the
+    // flag from the GUI as well only overwrote what a mask had been told to
+    // do, which is why black & white on a mask did nothing.
 
     if (!maskModeActive_) {
         return bwBridged;
@@ -1509,6 +1490,22 @@ bool ToolPanelCoordinator::bridgeGlobalToSpot(ProcParams* params, const rtengine
 
     // Mask mode: event-specific bridging
     bool bridged = bwBridged;
+
+    // Black & white belongs to the selected mask here: the widget carries that
+    // spot's value, and the photo's own conversion is put back with the rest
+    // of the globals afterwards. Setting it desaturates inside the mask.
+    if (id == EvBWChmixEnabled || id == EvBWmethod) {
+        spot.blwh = params->blackwhite.enabled;
+
+        if (spot.blwh) {
+            // Desaturation runs inside the colour block, so the engine only
+            // reaches it when that block is enabled.
+            spot.expcolor = true;
+            spot.visicolor = true;
+        }
+
+        bridged = true;
+    }
 
     if (id == EvExpComp || id == EvBlack || id == EvHLCompr || id == EvHLComprThreshold || id == EvSHCompr) {
         spot.expcomp = params->toneCurve.expcomp;
