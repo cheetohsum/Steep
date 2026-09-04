@@ -24076,7 +24076,18 @@ void ImProcFunctions::Lab_Local(
                             factorx = lp.aimaskopa * aiVal * (1.f - shapeVal);
                         }
                     } else {
-                        factorx = intp(lp.aimaskopa, aiVal * localFactor, localFactor);
+                        // Exactly what the effect pass computes, and it is not
+                        // the geometric transition: an AI mask stands on its
+                        // own for every shape but the gradient, which is a
+                        // shaping tool rather than a boundary. Multiplying by
+                        // the transition here drew the selection fading away
+                        // towards the spot's edge while the render was applying
+                        // it at full strength out to the frame.
+                        factorx = lp.aimaskopa * aiVal;
+
+                        if (lp.shapmet == 2) {
+                            factorx *= localFactor;
+                        }
                     }
                 }
 #endif
@@ -24090,27 +24101,29 @@ void ImProcFunctions::Lab_Local(
         for (int y = ystart; y < yend; ++y) {
             for (int x = xstart; x < xend; ++x) {
                 const float maskVal = hoverMask[y][x];
-                // Sample neighbours only inside the region that was filled.
-                // Reading past it returned 0 from the cleared array, which the
-                // edge detector then read as a cliff and drew as a white bar
-                // along the top and bottom of the spot -- an edge that exists
-                // in the buffer, not in the mask. Outside the region, treat the
-                // neighbour as equal to this pixel: no edge.
-                const float left = x > xstart ? hoverMask[y][x - 1] : maskVal;
-                const float right = x + 1 < xend ? hoverMask[y][x + 1] : maskVal;
-                const float above = y > ystart ? hoverMask[y - 1][x] : maskVal;
-                const float below = y + 1 < yend ? hoverMask[y + 1][x] : maskVal;
-                const float gradient = rtengine::max(
-                    rtengine::max(std::abs(maskVal - left), std::abs(maskVal - right)),
-                    rtengine::max(std::abs(maskVal - above), std::abs(maskVal - below)));
-                // Mark real edges only. The old contour also whitened anything
-                // NEAR half strength, which is fine on a mask with a crisp
-                // border but catastrophic on a gradient: half strength is a
-                // broad region there, so the falloff was painted white and the
-                // decaying red it was supposed to show never appeared. The
-                // local gradient of the mask says where an actual edge is, and
-                // a smooth ramp has none.
-                const float outline = LIM01(gradient * 4.f);
+                // The contour is the half-strength boundary -- the same line
+                // the refine editor draws, so the two views agree about where
+                // the selection ends.
+                //
+                // It used to be "anywhere the mask changes quickly", which
+                // sounds equivalent and is not: how quickly a feathered edge
+                // changes per pixel depends on how far the preview is zoomed
+                // out. At editor size a feather falls off over a handful of
+                // pixels, so the entire feather passed the test and was painted
+                // white -- a broad halo hugging the subject, reading as "not
+                // selected here" across the very band that is selected. A
+                // crossing of one half is the same line at any scale.
+                //
+                // Neighbours are read only inside the region that was filled;
+                // past it the cleared array holds zeroes that would draw a
+                // border of their own.
+                const bool inside = maskVal >= 0.5f;
+                const bool edge =
+                    (x > xstart && (hoverMask[y][x - 1] >= 0.5f) != inside)
+                    || (x + 1 < xend && (hoverMask[y][x + 1] >= 0.5f) != inside)
+                    || (y > ystart && (hoverMask[y - 1][x] >= 0.5f) != inside)
+                    || (y + 1 < yend && (hoverMask[y + 1][x] >= 0.5f) != inside);
+                const float outline = edge ? 1.f : 0.f;
 
                 // The overlay's whole job is to show how strong the mask is,
                 // so the colour has to be proportional to it. Shoving a fixed
