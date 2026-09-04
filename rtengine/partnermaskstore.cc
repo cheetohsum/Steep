@@ -178,6 +178,8 @@ std::shared_ptr<PartnerMask> computeMask(const Glib::ustring& path, const Glib::
     }
 
     appendSubjectMasks(maps, maskW, maskH, multiThread);
+    applySubjectModel(maps, static_cast<float**>(scaledR), static_cast<float**>(scaledG),
+                      static_cast<float**>(scaledB), maskW, maskH, multiThread);
 
     if (wanted >= static_cast<int>(maps.size())) {
         return nullptr;

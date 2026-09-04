@@ -59,6 +59,7 @@ tools/*.tif
 tools/*.pp3
 tools/*.png
 rtdata/models/lama_inpainting.onnx
+rtdata/models/u2net_subject.onnx
 
 # Run-time debris that lands in the source root.
 *.stackdump

@@ -291,6 +291,8 @@ if(WIN32 AND WITH_AI_MASKING)
         "${PROJECT_SOURCE_DIR}/rtdata/models/ade20k_mobilenetv2_c1.onnx")
     set(AI_INPAINT_MODEL
         "${PROJECT_SOURCE_DIR}/rtdata/models/lama_inpainting.onnx")
+    set(AI_SUBJECT_MODEL
+        "${PROJECT_SOURCE_DIR}/rtdata/models/u2net_subject.onnx")
     add_custom_command(
         TARGET rth POST_BUILD
         COMMAND ${CMAKE_COMMAND} -E make_directory
@@ -315,6 +317,18 @@ if(WIN32 AND WITH_AI_MASKING)
                 "${AI_INPAINT_MODEL}"
                 "${BUNDLE_BASE_INSTALL_DIR}/models/lama_inpainting.onnx"
             COMMENT "Bundling the AI inpainting model"
+        )
+    endif()
+    if(EXISTS "${AI_SUBJECT_MODEL}")
+        add_custom_command(
+            TARGET rth POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${AI_SUBJECT_MODEL}"
+                "$<TARGET_FILE_DIR:rth>/models/u2net_subject.onnx"
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${AI_SUBJECT_MODEL}"
+                "${BUNDLE_BASE_INSTALL_DIR}/models/u2net_subject.onnx"
+            COMMENT "Bundling the AI subject model"
         )
     endif()
 endif()

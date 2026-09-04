@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "aisegmentation.h"
+#include "aisubjectmodel.h"
 #include "array2D.h"
 #include "rt_math.h"
 
@@ -187,6 +188,50 @@ inline void appendSubjectMasks(std::vector<array2D<float>>& maps, int width, int
             notSubject[y][x] = LIM(1.f - subject[y][x], 0.f, 1.f);
         }
     }
+}
+
+/** Replaces the composed SUBJECT (and its complement) with a purpose-built
+ *  saliency model's answer, when one is loaded. The composition above is a
+ *  reasonable guess assembled out of a scene parser's object classes; U^2-Net
+ *  was trained to do this one job, and on anything with fur or hair the
+ *  difference is not subtle. Falls back silently, so a build without the
+ *  model — or one where it is still loading — keeps the composed subject.
+ */
+inline bool applySubjectModel(std::vector<array2D<float>>& maps,
+                              float* const* rRows, float* const* gRows, float* const* bRows,
+                              int width, int height, bool multiThread)
+{
+    if (static_cast<int>(maps.size()) < static_cast<int>(AISegClass::TOTAL_CLASSES)) {
+        return false;
+    }
+
+    AISubjectEngine& engine = getAISubjectEngine();
+
+    if (!engine.isInitialized()) {
+        return false;
+    }
+
+    array2D<float> saliency = engine.saliency(rRows, gRows, bRows, width, height, multiThread);
+
+    if (saliency.getWidth() != width || saliency.getHeight() != height) {
+        return false;
+    }
+
+    array2D<float>& subject = maps[static_cast<int>(AISegClass::SUBJECT)];
+    array2D<float>& notSubject = maps[static_cast<int>(AISegClass::NOT_SUBJECT)];
+
+#ifdef _OPENMP
+    #pragma omp parallel for if(multiThread)
+#endif
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const float value = LIM01(saliency[y][x]);
+            subject[y][x] = value;
+            notSubject[y][x] = 1.f - value;
+        }
+    }
+
+    return true;
 }
 
 } // namespace rtengine

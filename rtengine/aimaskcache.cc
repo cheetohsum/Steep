@@ -304,6 +304,7 @@ void AIMaskCache::computeMasks(const std::string& imageId,
     }
 
     appendSubjectMasks(maps, maskWidth, maskHeight, multiThread);
+    applySubjectModel(maps, segmentR, segmentG, segmentB, maskWidth, maskHeight, multiThread);
 
     auto masks = std::make_shared<const std::vector<array2D<float>>>(std::move(maps));
 

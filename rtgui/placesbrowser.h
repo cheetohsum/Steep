@@ -46,6 +46,10 @@ private:
         Gtk::TreeModelColumn<bool>                       rowSeparator;
         Gtk::TreeModelColumn<Glib::ustring>              photoCount;
         Gtk::TreeModelColumn<Glib::ustring>              hiddenId;
+        // The drive a row lives on, shown in its own narrow column at the
+        // left: "D  Photos" rather than a folder name with no idea where it
+        // is, or a drive named after a letter it already shows.
+        Gtk::TreeModelColumn<Glib::ustring>              driveLetter;
         PlacesColumns()
         {
             add(icon);
@@ -55,6 +59,7 @@ private:
             add(rowSeparator);
             add(photoCount);
             add(hiddenId);
+            add(driveLetter);
         }
     };
     PlacesColumns            placesColumns;

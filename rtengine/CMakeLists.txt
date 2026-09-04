@@ -174,7 +174,7 @@ if(NOT WITH_SYSTEM_KLT)
 endif()
 
 if(WITH_AI_MASKING)
-    list(APPEND RTENGINESOURCEFILES aisegmentation.cc aimaskcache.cc aiinpainting.cc)
+    list(APPEND RTENGINESOURCEFILES aisegmentation.cc aimaskcache.cc aiinpainting.cc aisubjectmodel.cc)
 endif()
 
 add_library(rtengine STATIC "${RTENGINESOURCEFILES}")

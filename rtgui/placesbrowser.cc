@@ -129,16 +129,29 @@ PlacesBrowser::PlacesBrowser ()
     treeView->set_headers_visible (false);
 
     Gtk::TreeView::Column *iviewcol = Gtk::manage (new Gtk::TreeView::Column (M("MAIN_FRAME_PLACES")));
+    Gtk::CellRendererText *driveCR = Gtk::manage (new Gtk::CellRendererText());
+    driveCR->property_foreground() = "#888888";
+    driveCR->property_xalign() = 0.0;
+    driveCR->property_width_chars() = 2;
     Gtk::CellRendererText *labelCR  = Gtk::manage (new Gtk::CellRendererText());
     labelCR->property_ellipsize() = Pango::ELLIPSIZE_MIDDLE;
     Gtk::CellRendererText *countCR = Gtk::manage (new Gtk::CellRendererText());
     countCR->property_foreground() = "#888888";
     countCR->property_xalign() = 1.0;
 
+    iviewcol->pack_start (*driveCR, false);
     iviewcol->pack_start (*labelCR, true);
     iviewcol->pack_end (*countCR, false);
 
     // cell_data_funcs for data binding + hover highlighting
+    iviewcol->set_cell_data_func(*driveCR, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
+        auto* textCR = static_cast<Gtk::CellRendererText*>(cr);
+        textCR->property_text() = (*iter)[placesColumns.driveLetter];
+        auto rowPath = placesModel->get_path(iter);
+        bool hovered = !hoveredPath_.empty() && rowPath == hoveredPath_;
+        textCR->property_cell_background_set() = hovered;
+        if (hovered) textCR->property_cell_background() = Glib::ustring("#3a3f4b");
+    });
     iviewcol->set_cell_data_func(*labelCR, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
         auto* textCR = static_cast<Gtk::CellRendererText*>(cr);
         textCR->property_text() = (*iter)[placesColumns.label];
@@ -199,6 +212,35 @@ void persistOptionsQuiet()
     }
 }
 
+// "E:\\Photos" -> "E". Empty off Windows and for anything without one, so
+// the column simply stays blank rather than inventing a letter.
+Glib::ustring driveLetterOf(const Glib::ustring& path)
+{
+    if (path.size() >= 2 && path[1] == ':') {
+        return Glib::ustring(1, path[0]).uppercase();
+    }
+
+    return Glib::ustring();
+}
+
+// Windows names a drive "Local Disk (C:)"; the letter has its own column now,
+// so the parenthetical is redundant. A volume with a real name keeps it.
+Glib::ustring withoutDriveSuffix(const Glib::ustring& name)
+{
+    const auto open = name.rfind(" (");
+
+    if (open != Glib::ustring::npos && name.size() >= open + 5
+            && name[open + 3] == ':' && name[name.size() - 1] == ')') {
+        const Glib::ustring trimmed = name.substr(0, open);
+
+        if (!trimmed.empty()) {
+            return trimmed;
+        }
+    }
+
+    return name;
+}
+
 Glib::ustring hiddenPlaceId(const char* kind, Glib::ustring value)
 {
 #ifdef _WIN32
@@ -231,20 +273,30 @@ void PlacesBrowser::refreshPlacesList ()
         if (fav && fav->query_exists()) {
             try {
                 if (auto info = fav->query_info ()) {
-                    // Show "Parent/Folder" so user can tell nesting context
+                    // "Parent/Folder" for nesting context -- but a folder
+                    // sitting at a drive root has no parent worth naming, and
+                    // asking for one produced labels like "/Photos". The
+                    // drive letter says where it is instead, in its own
+                    // column, so the prefix is only added when the parent is
+                    // a real folder.
+                    const Glib::ustring path = fav->get_parse_name();
                     Glib::ustring displayLabel = info->get_display_name();
                     auto parent = fav->get_parent();
-                    if (parent) {
+
+                    if (parent && parent->get_parent()) {
                         try {
                             auto parentInfo = parent->query_info();
-                            if (parentInfo) {
+
+                            if (parentInfo && !parentInfo->get_display_name().empty()) {
                                 displayLabel = parentInfo->get_display_name()
                                     + "/" + displayLabel;
                             }
                         } catch (...) {}
                     }
+
                     Gtk::TreeModel::Row newrow = *(placesModel->append());
                     newrow[placesColumns.label] = displayLabel;
+                    newrow[placesColumns.driveLetter] = driveLetterOf(path);
                     newrow[placesColumns.icon]  = info->get_icon ();
                     newrow[placesColumns.root]  = fav->get_parse_name ();
                     newrow[placesColumns.type]  = 5;
@@ -282,6 +334,7 @@ void PlacesBrowser::refreshPlacesList ()
 
                 Gtk::TreeModel::Row newrow = *(placesModel->append());
                 newrow[placesColumns.label] = info->get_display_name ();
+                newrow[placesColumns.driveLetter] = driveLetterOf(hfile->get_parse_name());
                 newrow[placesColumns.icon]  = info->get_icon ();
                 newrow[placesColumns.root]  = hfile->get_parse_name ();
                 newrow[placesColumns.type]  = 4;
@@ -316,7 +369,8 @@ void PlacesBrowser::refreshPlacesList ()
         }
 
         Gtk::TreeModel::Row newrow = *(placesModel->append());
-        newrow[placesColumns.label] = label;
+        newrow[placesColumns.label] = withoutDriveSuffix(label);
+        newrow[placesColumns.driveLetter] = driveLetterOf(root);
         newrow[placesColumns.icon] = icon;
         newrow[placesColumns.root] = root;
         newrow[placesColumns.type] = type;

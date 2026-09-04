@@ -39,6 +39,7 @@
 #include "aidenoise.h"
 #ifdef RT_AI_MASKING
 #include "aisegmentation.h"
+#include "aisubjectmodel.h"
 #include "aiinpainting.h"
 #endif
 
@@ -158,6 +159,21 @@ int init (const Settings* s, const Glib::ustring& baseDir, const Glib::ustring& 
                 fprintf(stderr, "AI Masking: failed to initialise from %s\n", modelPath.c_str());
             } else {
                 fprintf(stderr, "AI Masking: initialised from %s\n", modelPath.c_str());
+            }
+        }
+
+        {
+            const Glib::ustring subjectPath = findModel("u2net_subject.onnx");
+
+            // Deferred: the session for a 170 MB model takes seconds to build,
+            // and nothing needs it until a subject mask is asked for. Until it
+            // is ready the composed-from-classes subject stands in.
+            if (subjectPath.empty()) {
+                fprintf(stderr, "AI Subject: no model under %s or %s\n",
+                        baseDir.c_str(), userSettingsDir.c_str());
+            } else {
+                getAISubjectEngine().initDeferred(subjectPath);
+                fprintf(stderr, "AI Subject: loading %s in the background\n", subjectPath.c_str());
             }
         }
 
