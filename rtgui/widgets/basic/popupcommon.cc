@@ -24,6 +24,8 @@
 #include "guiutils.h"
 #include "multilangmgr.h"
 #include "popupcommon.h"
+
+#include <functional>
 #include "rtimage.h"
 #include "threadutils.h"
 
@@ -144,6 +146,42 @@ bool PopUpCommon::insertEntryImpl(int position, const Glib::ustring& iconName, c
 
     menu->insert(*newItem, position);
     return true;
+}
+
+void PopUpCommon::setEntryLabel(int i, const Glib::ustring& label)
+{
+    if (!menu || i < 0 || i >= getEntryCount() || label.empty()) {
+        return;
+    }
+
+    const auto children = menu->get_children();
+
+    if (i >= static_cast<int>(children.size())) {
+        return;
+    }
+
+    // MyImageMenuItem keeps its text in a Gtk::Label somewhere below it; find
+    // it rather than assuming the layout, which differs between the plain and
+    // radio flavours.
+    std::function<Gtk::Label*(Gtk::Widget*)> findLabel = [&](Gtk::Widget* w) -> Gtk::Label* {
+        if (auto* lbl = dynamic_cast<Gtk::Label*>(w)) {
+            return lbl;
+        }
+
+        if (auto* container = dynamic_cast<Gtk::Container*>(w)) {
+            for (Gtk::Widget* child : container->get_children()) {
+                if (Gtk::Label* found = findLabel(child)) {
+                    return found;
+                }
+            }
+        }
+
+        return nullptr;
+    };
+
+    if (Gtk::Label* lbl = findLabel(children[i])) {
+        lbl->set_text(label);
+    }
 }
 
 void PopUpCommon::entryHovered(Gtk::Widget* widget)

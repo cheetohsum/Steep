@@ -155,8 +155,23 @@ inline void appendSubjectMasks(std::vector<array2D<float>>& maps, int width, int
 
         for (int p = 0; p < n; ++p) {
             if (!kept(p)) {
-                // Interior holes join the subject; stray blobs and noise go.
-                subject[p / width][p % width] = outside[p] ? 0.f : 1.f;
+                if (!outside[p]) {
+                    // An interior hole is part of the subject: the model
+                    // rarely fires on an eye or a dark patch of fur, and the
+                    // user did not ask for a subject with holes in it.
+                    subject[p / width][p % width] = 1.f;
+                } else {
+                    // Everything else is held BELOW the support threshold
+                    // rather than zeroed. Zeroing threw away the model's own
+                    // ordering, and with it the tolerance control: a region
+                    // the model gave 0.28 became a flat 0, so lowering the
+                    // threshold could never reach it however far it went.
+                    // Capped like this the default behaviour is unchanged --
+                    // nothing here passes 0.3 -- but a subject the model was
+                    // unsure about can now be dialled in, strongest first.
+                    float& value = subject[p / width][p % width];
+                    value = std::min(value, support * 0.99f);
+                }
             }
         }
     }

@@ -81,6 +81,10 @@ public:
     void show ();
     void set_tooltip_text (const Glib::ustring &text);
     void setItemSensitivity (int i, bool isSensitive);
+    /// Replaces one entry's text, for labels that carry live information —
+    /// how much of the picture a class covers, say, which is only known once
+    /// the picture has been looked at.
+    void setEntryLabel (int i, const Glib::ustring& label);
     void triggerShowMenu();    // Show the popup menu programmatically
     void hideArrowButton();    // Hide the dropdown arrow button
     void setShowSelectionLabel(bool show);  // Show selected entry's text inside the button

@@ -208,10 +208,12 @@ ControlSpotPanel::ControlSpotPanel():
     button_add_->get_style_context()->add_class("mask-add-button");
 
     addMaskMenu_ = new Gtk::Menu();
-    const auto createMaskMenuItem = [](const char* icon, const Glib::ustring& label) {
+    Gtk::Label* lastMaskMenuLabel = nullptr;
+    const auto createMaskMenuItem = [&lastMaskMenuLabel](const char* icon, const Glib::ustring& label) {
         auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
         auto* img = Gtk::manage(new RTImage(icon));
         auto* lbl = Gtk::manage(new Gtk::Label(label));
+        lastMaskMenuLabel = lbl;
         lbl->set_halign(Gtk::ALIGN_START);
         box->pack_start(*img, Gtk::PACK_SHRINK);
         box->pack_start(*lbl, Gtk::PACK_EXPAND_WIDGET);
@@ -239,10 +241,13 @@ ControlSpotPanel::ControlSpotPanel():
     };
     for (int i = 0; i < 8; ++i) {
         auto* item = createMaskMenuItem(aiClassIcons[i], M(aiClassKeys[i]));
+        aiClassMenuLabels_.push_back(lastMaskMenuLabel);
+        aiClassNames_.push_back(M(aiClassKeys[i]));
         item->signal_activate().connect(
             sigc::bind(sigc::mem_fun(*this, &ControlSpotPanel::on_ai_mask_selected), i));
         aiClassMenu->append(*item);
     }
+    aiClassMenu->signal_show().connect(sigc::mem_fun(*this, &ControlSpotPanel::refreshClassCoverage));
     aiMenuItem->set_submenu(*aiClassMenu);
     addMaskMenu_->append(*aiMenuItem);
 
@@ -602,7 +607,10 @@ ControlSpotPanel::ControlSpotPanel():
                            sigc::mem_fun(
                                *this, &ControlSpotPanel::aiMaskClassChanged));
     aiMaskClass_->hideArrowButton();
-    aiMaskClass_->signal_clicked().connect([this]() { aiMaskClass_->triggerShowMenu(); });
+    aiMaskClass_->signal_clicked().connect([this]() {
+        refreshClassCoverage();
+        aiMaskClass_->triggerShowMenu();
+    });
     aiMaskClass_->buttonGroup->set_hexpand(false);
     aiMaskClass_->buttonGroup->set_halign(Gtk::ALIGN_START);
     ctboxaiclass->pack_start(*aiMaskClass_->buttonGroup, Gtk::PACK_SHRINK);
@@ -2955,6 +2963,30 @@ void ControlSpotPanel::maskTypeChanged(int /*index*/)
 
 // The editor paints over the photo in the engine's own framing, which is the
 // frame the mask is found in.
+// "Sky  22%" rather than "Sky": which classes this particular picture
+// actually contains is the first thing worth knowing, and until now the only
+// way to find out was to pick one and look.
+void ControlSpotPanel::refreshClassCoverage()
+{
+    if (!coverageProvider_) {
+        return;
+    }
+
+    for (size_t i = 0; i < aiClassNames_.size(); ++i) {
+        const float coverage = coverageProvider_(static_cast<int>(i));
+        const Glib::ustring text = coverage < 0.f
+                                   ? aiClassNames_[i]
+                                   : Glib::ustring::compose("%1  %2%%", aiClassNames_[i],
+                                           static_cast<int>(std::lround(coverage * 100.f)));
+
+        if (i < aiClassMenuLabels_.size() && aiClassMenuLabels_[i]) {
+            aiClassMenuLabels_[i]->set_text(text);
+        }
+
+        aiMaskClass_->setEntryLabel(static_cast<int>(i), text);
+    }
+}
+
 void ControlSpotPanel::openMaskEditor()
 {
 #ifdef RT_AI_MASKING

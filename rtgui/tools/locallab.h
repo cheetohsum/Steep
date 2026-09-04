@@ -120,6 +120,11 @@ public:
         expsettings->setEditedFilePath(path);
     }
 
+    void setCoverageProvider(std::function<float(int)> provider)
+    {
+        expsettings->setCoverageProvider(std::move(provider));
+    }
+
     static const Glib::ustring TOOL_NAME;
 
     Locallab();

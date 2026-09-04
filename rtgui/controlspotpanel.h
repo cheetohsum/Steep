@@ -317,6 +317,7 @@ private:
     void maskTypeChanged(int index);
     void aiMaskClassChanged(int index);
     void openMaskEditor();
+    void refreshClassCoverage();
 
 public:
     // The mask editor paints over the photo itself; fed by the coordinator
@@ -326,8 +327,19 @@ public:
         editedFilePath_ = path;
     }
 
+    // How much of the picture each AI class covers, 0..1, or negative when
+    // the picture has not been segmented yet. Shown beside the class names so
+    // it is obvious which ones are worth choosing.
+    void setCoverageProvider(std::function<float(int)> provider)
+    {
+        coverageProvider_ = std::move(provider);
+    }
+
 private:
     Glib::ustring editedFilePath_;
+    std::function<float(int)> coverageProvider_;
+    std::vector<Gtk::Label*> aiClassMenuLabels_;
+    std::vector<Glib::ustring> aiClassNames_;
 
     void maskBlendModeChanged(int index);
     void setMaskBlendMode(int mode);
