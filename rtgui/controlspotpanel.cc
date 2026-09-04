@@ -3030,7 +3030,7 @@ void ControlSpotPanel::openMaskEditor()
     const Glib::ustring encoded = row[spots_.aiMaskPaint];
     rtengine::MaskPaint paint = rtengine::MaskPaint::decode(encoded);
 
-    if (!maskpaint::refine(dynamic_cast<Gtk::Window*>(get_toplevel()), editedFilePath_, automatic, paint)) {
+    if (!maskpaint::refine(dynamic_cast<Gtk::Window*>(get_toplevel()), editedFilePath_, automatic, paint, true)) {
         return;
     }
 

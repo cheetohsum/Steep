@@ -57,11 +57,29 @@ public:
         }
     };
 
+    // Where the shown picture sits inside the frame the mask covers, in
+    // normalised mask-frame coordinates. A partner is shown whole, so the
+    // default is the whole frame; a cropped photo shows only part of the
+    // frame its mask was found in, and strokes have to be recorded against
+    // the frame rather than against what happens to be on screen.
+    struct Window {
+        double x0 = 0.0;
+        double y0 = 0.0;
+        double x1 = 1.0;
+        double y1 = 1.0;
+
+        bool whole() const
+        {
+            return x0 == 0.0 && y0 == 0.0 && x1 == 1.0 && y1 == 1.0;
+        }
+    };
+
     MaskPaintDlg(Gtk::Window* parent,
                  const Glib::ustring& title,
                  const Glib::RefPtr<Gdk::Pixbuf>& picture,
                  const AutoMask& automatic,
-                 const rtengine::MaskPaint& initial);
+                 const rtengine::MaskPaint& initial,
+                 const Window& window);
     ~MaskPaintDlg() override;
 
     rtengine::MaskPaint getResult() const;
@@ -91,8 +109,13 @@ namespace maskpaint
 // Opens the editor over the picture at `imagePath`, rendered in the engine's
 // own framing so the strokes land where the mask does. Returns true when the
 // user accepted, with `paint` updated.
+// `editFraming` shows the picture as the edit does -- the coarse rotation and
+// the crop applied -- and maps the strokes back into the frame the mask lives
+// in. Off, the file is shown whole and upright, which is how a double
+// exposure partner is masked.
 bool refine(Gtk::Window* parent, const Glib::ustring& imagePath,
-            const MaskPaintDlg::AutoMask& automatic, rtengine::MaskPaint& paint);
+            const MaskPaintDlg::AutoMask& automatic, rtengine::MaskPaint& paint,
+            bool editFraming = false);
 
 #ifdef RT_AI_MASKING
 // The double exposure partner's segmented mask, ready to show underneath.

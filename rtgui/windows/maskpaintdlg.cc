@@ -21,6 +21,9 @@
 
 #include "multilangmgr.h"
 #include "../partnerthumb.h"
+#include "../cachemanager.h"
+#include "../cacheimagedata.h"
+#include "../thumbnail.h"
 
 #ifdef RT_AI_MASKING
 #include "rtengine/partnermaskstore.h"
@@ -48,9 +51,10 @@ public:
 
     MaskPaintCanvas(const Glib::RefPtr<Gdk::Pixbuf>& picture,
                     const MaskPaintDlg::AutoMask& automatic,
-                    const rtengine::MaskPaint& initial) :
+                    const rtengine::MaskPaint& initial,
+                    const MaskPaintDlg::Window& window) :
         picture_(picture),
-        paint_(initial)
+        window_(window)
     {
         set_size_request(520, 380);
         set_hexpand(true);
@@ -65,8 +69,19 @@ public:
             return;
         }
 
-        // The automatic mask is resampled to the picture's own size, so every
-        // buffer here shares one coordinate system.
+        // A brush the user sizes against what is on screen has to be recorded
+        // as a fraction of the whole frame, which is larger when the picture
+        // is cropped.
+        const double spanX = std::max(1e-6, window_.x1 - window_.x0);
+        const double spanY = std::max(1e-6, window_.y1 - window_.y0);
+        const int frameW = automatic.valid() ? automatic.width : width_;
+        const int frameH = automatic.valid() ? automatic.height : height_;
+        radiusToFrame_ = std::min(spanX * frameW, spanY * frameH)
+                         / std::max(1, std::min(frameW, frameH));
+
+        // The automatic mask is resampled through that window onto the shown
+        // picture, so every buffer here shares one coordinate system: the
+        // picture's own.
         automatic_(width_, height_);
 
         for (int y = 0; y < height_; ++y) {
@@ -74,10 +89,12 @@ public:
                 float value = 0.f;
 
                 if (automatic.valid()) {
+                    const double fx = window_.x0 + (x + 0.5) / width_ * spanX;
+                    const double fy = window_.y0 + (y + 0.5) / height_ * spanY;
                     const int sx = std::min(automatic.width - 1,
-                                            static_cast<int>((x + 0.5) * automatic.width / width_));
+                                            std::max(0, static_cast<int>(fx * automatic.width)));
                     const int sy = std::min(automatic.height - 1,
-                                            static_cast<int>((y + 0.5) * automatic.height / height_));
+                                            std::max(0, static_cast<int>(fy * automatic.height)));
                     value = automatic.values[static_cast<size_t>(sy) * automatic.width + sx];
                 }
 
@@ -85,14 +102,17 @@ public:
             }
         }
 
+        paint_ = toDisplay(initial);
+
         baked_(width_, height_);
         shown_(width_, height_);
         rebake();
     }
 
-    const rtengine::MaskPaint& paint() const
+    // Strokes leave in the frame's coordinates, whatever the window shows.
+    rtengine::MaskPaint paint() const
     {
-        return paint_;
+        return toFrame(paint_);
     }
 
     void setBrush(double radius, double hardness, double strength, bool add)
@@ -147,7 +167,9 @@ public:
 
 private:
     Glib::RefPtr<Gdk::Pixbuf> picture_;
-    rtengine::MaskPaint paint_;
+    MaskPaintDlg::Window window_;
+    double radiusToFrame_ = 1.0;   // display-relative radius -> frame-relative
+    rtengine::MaskPaint paint_;    // held in the shown picture's coordinates
     array2D<float> automatic_;   // the mask as it arrived
     array2D<float> baked_;       // plus every finished stroke
     array2D<float> shown_;       // plus the one being drawn
@@ -170,6 +192,52 @@ private:
     double sc_ = 1.0;
     double ox_ = 0.0;
     double oy_ = 0.0;
+
+    // The two conversions, and the only places the window is applied to
+    // strokes: everything between them is in the shown picture's coordinates.
+    rtengine::MaskPaint toDisplay(const rtengine::MaskPaint& frame) const
+    {
+        if (window_.whole() && radiusToFrame_ == 1.0) {
+            return frame;
+        }
+
+        const double spanX = std::max(1e-6, window_.x1 - window_.x0);
+        const double spanY = std::max(1e-6, window_.y1 - window_.y0);
+        rtengine::MaskPaint out = frame;
+
+        for (auto& stroke : out.strokes) {
+            stroke.radius /= std::max(1e-6, radiusToFrame_);
+
+            for (auto& point : stroke.points) {
+                point.x = (point.x - window_.x0) / spanX;
+                point.y = (point.y - window_.y0) / spanY;
+            }
+        }
+
+        return out;
+    }
+
+    rtengine::MaskPaint toFrame(const rtengine::MaskPaint& display) const
+    {
+        if (window_.whole() && radiusToFrame_ == 1.0) {
+            return display;
+        }
+
+        const double spanX = std::max(1e-6, window_.x1 - window_.x0);
+        const double spanY = std::max(1e-6, window_.y1 - window_.y0);
+        rtengine::MaskPaint out = display;
+
+        for (auto& stroke : out.strokes) {
+            stroke.radius *= radiusToFrame_;
+
+            for (auto& point : stroke.points) {
+                point.x = window_.x0 + point.x * spanX;
+                point.y = window_.y0 + point.y * spanY;
+            }
+        }
+
+        return out;
+    }
 
     void rebake()
     {
@@ -457,7 +525,8 @@ MaskPaintDlg::MaskPaintDlg(Gtk::Window* parent,
                            const Glib::ustring& title,
                            const Glib::RefPtr<Gdk::Pixbuf>& picture,
                            const AutoMask& automatic,
-                           const rtengine::MaskPaint& initial) :
+                           const rtengine::MaskPaint& initial,
+                           const Window& window) :
     Gtk::Dialog(title, true)
 {
     if (parent) {
@@ -479,7 +548,7 @@ MaskPaintDlg::MaskPaintDlg(Gtk::Window* parent,
     content->set_spacing(6);
     content->set_border_width(6);
 
-    canvas_ = Gtk::manage(new MaskPaintCanvas(shown, automatic, initial));
+    canvas_ = Gtk::manage(new MaskPaintCanvas(shown, automatic, initial, window));
     const bool emptySelection = !automatic.valid()
                                 || std::none_of(automatic.values.begin(), automatic.values.end(),
                                                 [](float v) { return v > 0.5f; });
@@ -604,22 +673,70 @@ void MaskPaintDlg::updateCounts()
 namespace maskpaint
 {
 
+// Where the edit's crop sits inside the coarse-rotated full frame, which is
+// the frame the mask covers. Coarse 90/270 turns swap the cached dimensions,
+// which are stored EXIF-upright.
+MaskPaintDlg::Window cropWindow(const Glib::ustring& path)
+{
+    MaskPaintDlg::Window window;
+
+    Thumbnail* thumb = CacheManager::getInstance()->getEntry(path);
+
+    if (!thumb) {
+        return window;
+    }
+
+    const rtengine::procparams::ProcParams params = thumb->getProcParamsCopy();
+    const CacheImageData* cfs = thumb->getCacheImageData();
+
+    if (cfs && params.crop.enabled && params.crop.w > 0 && params.crop.h > 0) {
+        const int coarse = params.coarse.rotate;
+        const bool swap = coarse == 90 || coarse == 270;
+        const double fw = swap ? cfs->height : cfs->width;
+        const double fh = swap ? cfs->width : cfs->height;
+
+        if (fw > 0.0 && fh > 0.0) {
+            window.x0 = std::min(1.0, std::max(0.0, params.crop.x / fw));
+            window.y0 = std::min(1.0, std::max(0.0, params.crop.y / fh));
+            window.x1 = std::min(1.0, std::max(window.x0, (params.crop.x + params.crop.w) / fw));
+            window.y1 = std::min(1.0, std::max(window.y0, (params.crop.y + params.crop.h) / fh));
+        }
+    }
+
+    thumb->decreaseRef();
+    return window;
+}
+
 bool refine(Gtk::Window* parent, const Glib::ustring& imagePath,
-            const MaskPaintDlg::AutoMask& automatic, rtengine::MaskPaint& paint)
+            const MaskPaintDlg::AutoMask& automatic, rtengine::MaskPaint& paint,
+            bool editFraming)
 {
     if (imagePath.empty()) {
         return false;
     }
 
-    // Neutral framing: the engine finds masks on the upright, uncropped frame,
-    // so that is the picture the strokes have to be painted on.
-    Glib::RefPtr<Gdk::Pixbuf> picture = partnerthumb::load(imagePath, 900, true, false);
+    MaskPaintDlg::Window window;
+    Glib::RefPtr<Gdk::Pixbuf> picture;
+
+    if (editFraming) {
+        // The photo as the edit shows it -- turned and cropped -- because a
+        // mask painted over a picture in a different shape from the one on
+        // the canvas is worse than no mask editor at all. The frame the mask
+        // itself lives in is the coarse-rotated, UNCROPPED one, so the crop
+        // becomes a window onto it rather than a new coordinate system.
+        picture = partnerthumb::load(imagePath, 900, false, false);
+        window = cropWindow(imagePath);
+    } else {
+        // A double exposure partner is masked in its own upright full frame,
+        // and the engine samples it the same way.
+        picture = partnerthumb::load(imagePath, 900, true, false);
+    }
 
     if (!picture) {
         return false;
     }
 
-    MaskPaintDlg dialog(parent, M("MASKPAINT_TITLE"), picture, automatic, paint);
+    MaskPaintDlg dialog(parent, M("MASKPAINT_TITLE"), picture, automatic, paint, window);
 
     if (dialog.run() != Gtk::RESPONSE_OK) {
         return false;

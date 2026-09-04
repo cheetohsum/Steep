@@ -370,7 +370,7 @@ void LocallabAIMask::openMaskEditor()
 
     rtengine::MaskPaint paint = paint_;
 
-    if (!maskpaint::refine(dynamic_cast<Gtk::Window*>(get_toplevel()), editedFilePath_, automatic, paint)) {
+    if (!maskpaint::refine(dynamic_cast<Gtk::Window*>(get_toplevel()), editedFilePath_, automatic, paint, true)) {
         return;
     }
 
