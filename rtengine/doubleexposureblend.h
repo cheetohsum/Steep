@@ -261,6 +261,10 @@ struct Frame {
     float stagger = 0.f;  // odd-row shift, fraction of a tile
     int count = 6;        // RADIAL: copies around the ring
     float ring = 0.f;     // RADIAL: ring radius, in source-rect units
+    // RADIAL: how much of a half-wedge the hand-over between neighbouring
+    // copies is spread over. 0 partitions the plane hard, which shows as a
+    // straight line radiating from the centre wherever the two copies differ.
+    float handover = 0.f;
     // Soft frame edge, in source-rect units. 0 keeps the old hard edge, where
     // coverage only ever ramps across the single output pixel that straddles
     // the boundary.
@@ -311,15 +315,48 @@ inline void applyLayer(Frame& f, const procparams::DoubleExposureParams::Layer& 
     // copies, and never to a seamless grid.
     const bool seamlessGrid = (layer.pattern == Pattern::REPEAT || layer.pattern == Pattern::MIRROR)
                               && f.cell <= 1.f;
-    f.edge = seamlessGrid
-             ? 0.f
-             : std::max(0.f, static_cast<float>(layer.edgeFeather)) / 100.f
-               * 0.25f * std::min(f.srcW, f.srcH);
+    const float blend01 = std::min(std::max(static_cast<float>(layer.edgeFeather), 0.f), 100.f) / 100.f;
+    f.edge = seamlessGrid ? 0.f : blend01 * 0.25f * std::min(f.srcW, f.srcH);
+
+    // Radial copies do not have an edge against the base where they meet each
+    // other -- they have a boundary, and the sample jumps across it. Edge
+    // blend widens that into a hand-over: half the wedge at full strength.
+    f.handover = 0.5f * blend01;
 
     // A plain mirror still covers the base exactly, so it alone does not need
     // the placed path; everything else moves the frame's edges into view.
     f.placed = f.offX != 0.f || f.offY != 0.f || f.scale != 1.f
                || layer.rotate != 0.0 || f.pattern != Pattern::OFF || cropped;
+}
+
+// Where one base pixel reads from. Radial copies can need two: the layer is
+// sampled once per copy, and near the boundary between two of them the pair
+// is mixed rather than one being picked outright.
+struct Placed {
+    float u = 0.f;
+    float v = 0.f;
+    float coverage = 0.f;
+    float u2 = 0.f;         // the neighbouring radial copy, when mix > 0
+    float v2 = 0.f;
+    float coverage2 = 0.f;
+    float mix = 0.f;        // how much of that neighbour to take, 0..0.5
+    bool present = false;
+};
+
+// Frame-edge coverage for a point already reduced to source coordinates.
+inline float frameCoverage(const Frame& f, float u, float v, float aa)
+{
+    const float ex = std::min(u - f.srcX0, f.srcX0 + f.srcW - u);
+    const float ey = std::min(v - f.srcY0, f.srcY0 + f.srcH - v);
+    const float dist = std::min(ex, ey);
+
+    if (f.edge > aa) {
+        // Smoothstep over the blend band: a linear ramp this wide reads as a
+        // visible gradient wedge, an S-curve as the frame simply thinning out.
+        return deblend::smoothstep01(dist / f.edge);
+    }
+
+    return std::min(std::max(dist / aa + 0.5f, 0.f), 1.f);
 }
 
 // Maps base-frame point (fx, fy) to source coordinates (u, v). `aaStep` is
@@ -355,11 +392,10 @@ inline bool map(const Frame& f, float fx, float fy, float aaStep,
         // N copies stood around a ring, each turned to face outward. A point
         // belongs to the copy whose spoke it is nearest to — the copies are
         // equidistant from the centre, so that is also the nearest copy.
-        // Where two copies would overlap, the nearer one wins outright rather
-        // than both being sampled: one layer contributes one sample per pixel.
         constexpr float twoPi = 6.28318530717958647692f;
         const float step = twoPi / static_cast<float>(f.count);
-        const float spoke = std::floor(std::atan2(sv, su) / step + 0.5f) * step;
+        const float k = std::atan2(sv, su) / step;
+        const float spoke = std::floor(k + 0.5f) * step;
         const float c = std::cos(spoke);
         const float sn = std::sin(spoke);
         const float rx = c * su + sn * sv;
@@ -400,19 +436,73 @@ inline bool map(const Frame& f, float fx, float fy, float aaStep,
     v = sv + f.srcY0 + f.srcH * 0.5f;
 
     const float aa = std::max(aaStep * f.invCover / f.scale, 1e-6f);
-    const float ex = std::min(u - f.srcX0, f.srcX0 + f.srcW - u);
-    const float ey = std::min(v - f.srcY0, f.srcY0 + f.srcH - v);
-    const float dist = std::min(ex, ey);
-
-    if (f.edge > aa) {
-        // Smoothstep over the blend band: a linear ramp this wide reads as a
-        // visible gradient wedge, an S-curve as the frame simply thinning out.
-        coverage = deblend::smoothstep01(dist / f.edge);
-    } else {
-        coverage = std::min(std::max(dist / aa + 0.5f, 0.f), 1.f);
-    }
+    coverage = frameCoverage(f, u, v, aa);
 
     return coverage > 0.f;
+}
+
+// The same map, plus the neighbouring radial copy where one is being handed
+// over to. Every caller should use this; the three-output form above is what
+// it is built on and stays for the cases that cannot take two samples.
+inline Placed place(const Frame& f, float fx, float fy, float aaStep)
+{
+    Placed out;
+    out.present = map(f, fx, fy, aaStep, out.u, out.v, out.coverage);
+
+    if (f.pattern != Pattern::RADIAL || f.handover <= 0.f || f.count < 2) {
+        return out;
+    }
+
+    // How far into its own wedge this point sits: 0 on the spoke, 0.5 at the
+    // boundary with the next copy.
+    constexpr float twoPi = 6.28318530717958647692f;
+    const float step = twoPi / static_cast<float>(f.count);
+
+    float dx = fx - f.baseW * (0.5f + f.offX);
+    float dy = fy - f.baseH * (0.5f + f.offY);
+
+    if (f.sinA != 0.f) {
+        const float qx = f.cosA * dx + f.sinA * dy;
+        const float qy = f.cosA * dy - f.sinA * dx;
+        dx = qx;
+        dy = qy;
+    }
+
+    const float su = f.flip * dx * f.invCover / f.scale;
+    const float sv = dy * f.invCover / f.scale;
+    const float k = std::atan2(sv, su) / step;
+    const float k0 = std::floor(k + 0.5f);
+    const float frac = std::fabs(k - k0);
+    const float t = (0.5f - frac) / f.handover;
+
+    if (t >= 1.f) {
+        return out;   // well inside this copy's wedge
+    }
+
+    // At the boundary the two copies weigh equally; the mix falls to nothing
+    // by the time the hand-over band is crossed.
+    out.mix = 0.5f * (1.f - deblend::smoothstep01(t));
+
+    const float spoke = (k0 + (k > k0 ? 1.f : -1.f)) * step;
+    const float c = std::cos(spoke);
+    const float sn = std::sin(spoke);
+    const float rx = c * su + sn * sv;
+    const float ry = c * sv - sn * su;
+    out.u2 = rx - f.ring + f.srcX0 + f.srcW * 0.5f;
+    out.v2 = ry + f.srcY0 + f.srcH * 0.5f;
+
+    const float aa = std::max(aaStep * f.invCover / f.scale, 1e-6f);
+    out.coverage2 = frameCoverage(f, out.u2, out.v2, aa);
+
+    if (!out.present && out.coverage2 > 0.f) {
+        // The neighbour reaches here even though this copy does not.
+        out.present = true;
+        out.u = out.u2;
+        out.v = out.v2;
+        out.coverage = 0.f;
+    }
+
+    return out;
 }
 
 } // namespace deplace

@@ -64,15 +64,6 @@ struct ResolvedLayer {
     float gateStrength; // 0..1; 0 = gate off
 };
 
-// Where one layer landed at one pixel, kept between the two passes: the film
-// gain cannot be known until every layer's coverage is.
-struct Hit {
-    float u;
-    float v;
-    float coverage;
-    bool present;
-};
-
 // Bilinear sample of the partner tier at partner full-frame coords (u, v),
 // edge-clamped.
 inline void samplePartner(const PartnerImage& p, float u, float v, float& r, float& g, float& b)
@@ -260,7 +251,9 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
     for (int y = 0; y < H; ++y) {
         const float fy = offY + (y + 0.5f) * skip;
 
-        std::vector<Hit> hits(resolved.size());
+        // Where each layer landed at this pixel, kept between the two passes:
+        // the film gain cannot be known until every layer's coverage is.
+        std::vector<deplace::Placed> hits(resolved.size());
 
         for (int x = 0; x < W; ++x) {
             const float fx = offX + (x + 0.5f) * skip;
@@ -271,11 +264,11 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
             float framesHere = 0.f;
 
             for (size_t li = 0; li < resolved.size(); ++li) {
-                Hit& hit = hits[li];
-                hit.present = deplace::map(resolved[li].frame, fx, fy, skip, hit.u, hit.v, hit.coverage);
+                deplace::Placed& hit = hits[li];
+                hit = deplace::place(resolved[li].frame, fx, fy, skip);
 
                 if (hit.present && resolved[li].mode == procparams::DoubleExposureParams::BlendMode::ADD) {
-                    framesHere += hit.coverage;
+                    framesHere += hit.coverage + hit.mix * (hit.coverage2 - hit.coverage);
                 }
             }
 
@@ -289,7 +282,7 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
 
             for (size_t li = 0; li < resolved.size(); ++li) {
                 const ResolvedLayer& rl = resolved[li];
-                const Hit& hit = hits[li];
+                const deplace::Placed& hit = hits[li];
 
                 if (!hit.present) {
                     continue;
@@ -297,12 +290,23 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
 
                 const float u = hit.u;
                 const float v = hit.v;
-                const float coverage = hit.coverage;
+                float coverage = hit.coverage;
                 const float gain = rl.mode == procparams::DoubleExposureParams::BlendMode::ADD
                                    ? rl.gain * gainFactor : rl.gain;
 
                 float pr, pg, pb;
                 samplePartner(*rl.partner, u, v, pr, pg, pb);
+
+                if (hit.mix > 0.f) {
+                    // Hand over to the neighbouring radial copy rather than
+                    // picking one and leaving a line where they meet.
+                    float nr, ng, nb;
+                    samplePartner(*rl.partner, hit.u2, hit.v2, nr, ng, nb);
+                    pr += hit.mix * (nr - pr);
+                    pg += hit.mix * (ng - pg);
+                    pb += hit.mix * (nb - pb);
+                    coverage += hit.mix * (hit.coverage2 - coverage);
+                }
 
                 pr = std::max(pr, 0.f) * gain;
                 pg = std::max(pg, 0.f) * gain;
@@ -315,7 +319,13 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
 
 #ifdef RT_AI_MASKING
                 if (rl.mask) {
-                    w *= rl.mask->sample(u, v);
+                    float m = rl.mask->sample(u, v);
+
+                    if (hit.mix > 0.f) {
+                        m += hit.mix * (rl.mask->sample(hit.u2, hit.v2) - m);
+                    }
+
+                    w *= m;
 
                     if (w <= 0.f) {
                         continue;

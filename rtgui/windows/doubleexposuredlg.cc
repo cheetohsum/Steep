@@ -1194,7 +1194,7 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     gridAdjustment->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::scheduleVisibleThumbs));
     gridAdjustment->signal_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::scheduleVisibleThumbs));
 
-    Gtk::Box* right = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 6));
+    Gtk::Box* right = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 2));
 
     preview_ = Gtk::manage(new DEBlendPreview());
     preview_->onMove = [this](double dx, double dy) { onPreviewMove(dx, dy); };
@@ -1220,21 +1220,23 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     // of them side by side, which is what keeps this panel short enough to
     // leave the preview the room it deserves.
     auto makeCell = [](const Glib::ustring& label, Gtk::Scale*& outScale, double lo, double hi, double step, double value) {
-        Gtk::Box* cell = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
-        Gtk::Label* lab = Gtk::manage(new Gtk::Label(label));
-        lab->set_halign(Gtk::ALIGN_CENTER);
+        Gtk::Box* cell = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+        Gtk::Label* lab = Gtk::manage(new Gtk::Label(label, Gtk::ALIGN_START));
+        lab->set_xalign(0.f);
         lab->set_ellipsize(Pango::ELLIPSIZE_END);
+        lab->set_max_width_chars(16);
         lab->get_style_context()->add_class("dim-label");
         outScale = Gtk::manage(new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
         outScale->set_range(lo, hi);
         outScale->set_increments(step, step * 5);
         outScale->set_value(value);
         outScale->set_draw_value(true);
-        outScale->set_value_pos(Gtk::POS_BOTTOM);
+        outScale->set_value_pos(Gtk::POS_RIGHT);
         outScale->set_digits(step < 1.0 ? 2 : 0);
         outScale->set_hexpand(true);
+        outScale->set_valign(Gtk::ALIGN_CENTER);
         cell->pack_start(*lab, Gtk::PACK_SHRINK);
-        cell->pack_start(*outScale, Gtk::PACK_SHRINK);
+        cell->pack_start(*outScale, Gtk::PACK_EXPAND_WIDGET);
         cell->set_hexpand(true);
         return cell;
     };
@@ -1266,13 +1268,13 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     blendMethod_->connect(blendMethod_->signal_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::blendControlChanged)));
     blendRow->pack_start(*blendLab, Gtk::PACK_SHRINK);
     blendRow->pack_start(*blendMethod_, Gtk::PACK_EXPAND_WIDGET);
-    right->pack_start(*blendRow, Gtk::PACK_SHRINK);
 
     autoGain_ = Gtk::manage(new Gtk::CheckButton(M("TP_DOUBLEEXPOSURE_AUTOGAIN")));
     autoGain_->set_active(params_.autoGain);
     autoGain_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_AUTOGAIN_TOOLTIP"));
     autoGain_->signal_toggled().connect(sigc::mem_fun(*this, &DoubleExposureDlg::blendControlChanged));
-    right->pack_start(*autoGain_, Gtk::PACK_SHRINK);
+    blendRow->pack_start(*autoGain_, Gtk::PACK_SHRINK);
+    right->pack_start(*blendRow, Gtk::PACK_SHRINK);
 
     Gtk::Widget* baseEvCell = makeCell(M("TP_DOUBLEEXPOSURE_BASEEV"), baseEvScale_, -4.0, 4.0, 0.05, params_.baseEv);
     baseEvScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::blendControlChanged));
@@ -1314,7 +1316,7 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     // to begin with: most of the work here is choosing frames and setting
     // their tone, and the preview drags all three of these anyway.
     adjustExpander_ = Gtk::manage(new Gtk::Expander(M("TP_DOUBLEEXPOSURE_LAYERADJUST")));
-    Gtk::Box* adjustBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
+    Gtk::Box* adjustBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 2));
     adjustExpander_->add(*adjustBox);
     adjustExpander_->set_expanded(false);
     right->pack_start(*adjustExpander_, Gtk::PACK_SHRINK);
@@ -1349,7 +1351,7 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     adjustBox->pack_start(*rotRow, Gtk::PACK_SHRINK);
 
     patternExpander_ = Gtk::manage(new Gtk::Expander(M("TP_DOUBLEEXPOSURE_PATTERN")));
-    Gtk::Box* patternBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
+    Gtk::Box* patternBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 2));
     patternExpander_->add(*patternBox);
     patternExpander_->set_expanded(false);
     right->pack_start(*patternExpander_, Gtk::PACK_SHRINK);
@@ -1387,7 +1389,17 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     Gtk::Widget* diameterCell = makeCell(M("TP_DOUBLEEXPOSURE_PATTERN_DIAMETER"), patternDiameterScale_, 0.0, 200.0, 1.0, 60.0);
     patternDiameterScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_DIAMETER_TOOLTIP"));
     patternDiameterScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
-    radialRow_ = makeRow({countCell, diameterCell});
+    // Selection feather rides beside the ring controls: with a cut-out motif
+    // the two are adjusted together. It stays when the pattern is a grid (or
+    // off) and the ring controls step aside, so the row is shown whenever
+    // either half of it has something to say.
+    Gtk::Widget* subjFeatherCell = makeCell(M("TP_DOUBLEEXPOSURE_SUBJECT_FEATHER"), subjectFeatherScale_, 0.0, 100.0, 1.0, 25.0);
+    subjectFeatherScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SUBJECT_FEATHER_TOOLTIP"));
+    subjectFeatherScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    ringCountCell_ = countCell;
+    ringDiameterCell_ = diameterCell;
+    subjectFeatherCell_ = subjFeatherCell;
+    radialRow_ = makeRow({countCell, diameterCell, subjFeatherCell});
     patternBox->pack_start(*radialRow_, Gtk::PACK_SHRINK);
 
     flipH_ = Gtk::manage(new Gtk::CheckButton(M("TP_DOUBLEEXPOSURE_FLIPH")));
@@ -1427,10 +1439,6 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     subjectRow_->pack_start(*subjectCrop_, Gtk::PACK_SHRINK);
     patternBox->pack_start(*subjectRow_, Gtk::PACK_SHRINK);
 
-    Gtk::Box* subjFeatherRow = makeRow({makeCell(M("TP_DOUBLEEXPOSURE_SUBJECT_FEATHER"), subjectFeatherScale_, 0.0, 100.0, 1.0, 25.0)});
-    subjectFeatherScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SUBJECT_FEATHER_TOOLTIP"));
-    subjectFeatherScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
-    patternBox->pack_start(*subjFeatherRow, Gtk::PACK_SHRINK);
 
 #ifdef RT_AI_MASKING
     const bool haveSegmentation = rtengine::getAISegmentationEngine().isInitialized();
@@ -1438,11 +1446,11 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     const bool haveSegmentation = false;
 #endif
 
+    haveSegmentation_ = haveSegmentation;
+
     if (!haveSegmentation) {
         subjectRow_->set_no_show_all(true);
         subjectRow_->hide();
-        subjFeatherRow->set_no_show_all(true);
-        subjFeatherRow->hide();
     }
 
     resetPlacement_ = Gtk::manage(new Gtk::Button(M("TP_DOUBLEEXPOSURE_PLACEMENT_RESET")));
@@ -2652,7 +2660,7 @@ void DoubleExposureDlg::syncLayerControls()
         rotateRight_->set_sensitive(true);
         flipH_->set_sensitive(true);
         patternMethod_->set_sensitive(true);
-        showPatternRows(layer.pattern);
+        showPatternRows(layer.pattern, layer.maskClass != DoubleExposureParams::MaskClass::OFF);
         rotateScale_->set_value(layer.rotate);
         flipH_->set_active(layer.flipH);
         patternMethod_->set_active(static_cast<int>(layer.pattern));
@@ -2725,7 +2733,8 @@ void DoubleExposureDlg::layerControlChanged()
     params_.layers[selectedLayer_].cropToSubject = subjectCrop_->get_active();
     params_.layers[selectedLayer_].maskFeather = subjectFeatherScale_->get_value();
 
-    showPatternRows(params_.layers[selectedLayer_].pattern);
+    showPatternRows(params_.layers[selectedLayer_].pattern,
+                    params_.layers[selectedLayer_].maskClass != DoubleExposureParams::MaskClass::OFF);
     const bool masked = params_.layers[selectedLayer_].maskClass != DoubleExposureParams::MaskClass::OFF;
     subjectInvert_->set_sensitive(masked);
     subjectCrop_->set_sensitive(masked);
@@ -2737,15 +2746,20 @@ void DoubleExposureDlg::layerControlChanged()
 
 // --- interactive placement from the preview ---
 
-// Only the chosen pattern's own controls are on show.
-void DoubleExposureDlg::showPatternRows(DoubleExposureParams::Pattern pattern)
+// Only the chosen pattern's own controls are on show, and the selection
+// feather only when a selection is being used.
+void DoubleExposureDlg::showPatternRows(DoubleExposureParams::Pattern pattern, bool masked)
 {
     const bool grid = pattern == DoubleExposureParams::Pattern::REPEAT
                       || pattern == DoubleExposureParams::Pattern::MIRROR;
     const bool radial = pattern == DoubleExposureParams::Pattern::RADIAL;
+    const bool feather = masked && haveSegmentation_;
 
     gridRow_->set_visible(grid);
-    radialRow_->set_visible(radial);
+    ringCountCell_->set_visible(radial);
+    ringDiameterCell_->set_visible(radial);
+    subjectFeatherCell_->set_visible(feather);
+    radialRow_->set_visible(radial || feather);
     patternSpacingScale_->set_sensitive(grid);
     patternStaggerScale_->set_sensitive(grid);
     patternCountScale_->set_sensitive(radial);
@@ -3342,18 +3356,13 @@ void DoubleExposureDlg::updatePreview(bool quick)
     const LayerPix* layers = layerPix.data();
     const int nLayers = static_cast<int>(layerPix.size());
 
-    struct LayerHit {
-        float u;
-        float v;
-        float coverage;
-        bool present;
-    };
+
 
 #ifdef _OPENMP
     #pragma omp parallel for schedule(dynamic, 4)
 #endif
     for (int by = 0; by < blockRows; ++by) {
-        std::vector<LayerHit> hits(std::max(1, nLayers));
+        std::vector<rtengine::deplace::Placed> hits(std::max(1, nLayers));
         const int y = by * step;
         const float ny = ny0 + (y + 0.5f) * nys;
         const int nby = (sceneFaithful && nbH > 0) ? std::max(0, std::min(static_cast<int>(ny * nbH), nbH - 1)) : 0;
@@ -3366,12 +3375,11 @@ void DoubleExposureDlg::updatePreview(bool quick)
             float framesHere = 0.f;
 
             for (int li = 0; li < nLayers; ++li) {
-                LayerHit& hit = hits[li];
-                hit.present = rtengine::deplace::map(layers[li].frame, nx, ny * invBaseAspect, nxs,
-                                                    hit.u, hit.v, hit.coverage);
+                rtengine::deplace::Placed& hit = hits[li];
+                hit = rtengine::deplace::place(layers[li].frame, nx, ny * invBaseAspect, nxs);
 
                 if (hit.present && layers[li].mode == DoubleExposureParams::BlendMode::ADD) {
-                    framesHere += hit.coverage;
+                    framesHere += hit.coverage + hit.mix * (hit.coverage2 - hit.coverage);
                 }
             }
 
@@ -3411,41 +3419,54 @@ void DoubleExposureDlg::updatePreview(bool quick)
 
             for (int li = 0; li < nLayers; ++li) {
                 const LayerPix& lp = layers[li];
-                const LayerHit& hit = hits[li];
+                const rtengine::deplace::Placed& hit = hits[li];
 
                 if (!hit.present) {
                     continue;
                 }
 
-                const float coverage = hit.coverage;
+                float coverage = hit.coverage + hit.mix * (hit.coverage2 - hit.coverage);
 
                 // Back to 0..1 of the source rect: the frame works in units
                 // where the source is one wide and 1/aspect tall.
-                const float un = hit.u;
-                const float vn = hit.v * lp.srcAspect;
+                // One read of the layer at source coordinates (u, v), which
+                // the frame gives in units where the source is one wide.
+                const auto readLayer = [&](float u, float v, float& pr, float& pg, float& pb) {
+                    int lx = static_cast<int>(u * lp.srcW);
+                    int ly = static_cast<int>(v * lp.srcAspect * lp.srcH);
+                    lx = std::max(0, std::min(lx, lp.srcW - 1));
+                    ly = std::max(0, std::min(ly, lp.srcH - 1));
 
-                int lx = static_cast<int>(un * lp.srcW);
-                int ly = static_cast<int>(vn * lp.srcH);
-                lx = std::max(0, std::min(lx, lp.srcW - 1));
-                ly = std::max(0, std::min(ly, lp.srcH - 1));
+                    if (lp.plate && (sceneMode || !lp.pix)) {
+                        const size_t lo = (static_cast<size_t>(ly) * lp.srcW + lx) * 3;
+                        pr = lp.plate->rgb[lo];
+                        pg = lp.plate->rgb[lo + 1];
+                        pb = lp.plate->rgb[lo + 2];
+
+                        if (!sceneMode) {
+                            workingToSrgb(pr, pg, pb);
+                        }
+                    } else {
+                        const guint8* lrow = lp.pix->get_pixels() + ly * lp.pix->get_rowstride();
+                        const int lch = lp.pix->get_n_channels();
+                        pr = srgbLut[lrow[lx * lch]];
+                        pg = srgbLut[lrow[lx * lch + 1]];
+                        pb = srgbLut[lrow[lx * lch + 2]];
+                    }
+                };
 
                 float pr, pg, pb;
+                readLayer(hit.u, hit.v, pr, pg, pb);
 
-                if (lp.plate && (sceneMode || !lp.pix)) {
-                    const size_t lo = (static_cast<size_t>(ly) * lp.srcW + lx) * 3;
-                    pr = lp.plate->rgb[lo];
-                    pg = lp.plate->rgb[lo + 1];
-                    pb = lp.plate->rgb[lo + 2];
-
-                    if (!sceneMode) {
-                        workingToSrgb(pr, pg, pb);
-                    }
-                } else {
-                    const guint8* lrow = lp.pix->get_pixels() + ly * lp.pix->get_rowstride();
-                    const int lch = lp.pix->get_n_channels();
-                    pr = srgbLut[lrow[lx * lch]];
-                    pg = srgbLut[lrow[lx * lch + 1]];
-                    pb = srgbLut[lrow[lx * lch + 2]];
+                if (hit.mix > 0.f) {
+                    // Hand over to the neighbouring radial copy, as the engine
+                    // does, or the picker would show a boundary the render
+                    // no longer has.
+                    float nr, ng, nb;
+                    readLayer(hit.u2, hit.v2, nr, ng, nb);
+                    pr += hit.mix * (nr - pr);
+                    pg += hit.mix * (ng - pg);
+                    pb += hit.mix * (nb - pb);
                 }
 
                 const float gain = lp.mode == DoubleExposureParams::BlendMode::ADD
@@ -3461,7 +3482,17 @@ void DoubleExposureDlg::updatePreview(bool quick)
 
 #ifdef RT_AI_MASKING
                 if (lp.mask) {
-                    wgt *= lp.mask->sample(un * lp.mask->fullWidth, vn * lp.mask->fullHeight);
+                    const auto maskAt = [&](float u, float v) {
+                        return lp.mask->sample(u * lp.mask->fullWidth,
+                                               v * lp.srcAspect * lp.mask->fullHeight);
+                    };
+                    float m = maskAt(hit.u, hit.v);
+
+                    if (hit.mix > 0.f) {
+                        m += hit.mix * (maskAt(hit.u2, hit.v2) - m);
+                    }
+
+                    wgt *= m;
 
                     if (wgt <= 0.f) {
                         continue;

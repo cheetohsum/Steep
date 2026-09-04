@@ -114,7 +114,7 @@ private:
     void onPreviewRotate(double degrees);
     void nudgeRotation(double degrees);
     void onPreviewReset();
-    void showPatternRows(rtengine::procparams::DoubleExposureParams::Pattern pattern);
+    void showPatternRows(rtengine::procparams::DoubleExposureParams::Pattern pattern, bool masked);
     void syncPlacementControls();
     void schedulePreviewUpdate();
     void requestPreviewThumbs();
@@ -209,7 +209,11 @@ private:
     Gtk::Scale* patternDiameterScale_;
     Gtk::Scale* edgeFeatherScale_;
     Gtk::Box* gridRow_;    // spacing + stagger, for the two grid patterns
-    Gtk::Box* radialRow_;  // count + diameter, for the radial one
+    Gtk::Box* radialRow_;  // count + diameter + selection feather
+    Gtk::Widget* ringCountCell_;
+    Gtk::Widget* ringDiameterCell_;
+    Gtk::Widget* subjectFeatherCell_;
+    bool haveSegmentation_ = false;
     Gtk::Expander* adjustExpander_;
     Gtk::Expander* patternExpander_;
     Gtk::Box* subjectRow_;

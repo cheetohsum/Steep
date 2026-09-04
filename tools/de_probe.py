@@ -130,6 +130,13 @@ def make_inputs():
         for y in range(GEO):
             hramp_px[x, y] = (x, x, x)
             vramp_px[x, y] = (y, y, y)
+    square = Image.new("RGB", (GEO, GEO))
+    square_px = square.load()
+    for x in range(GEO):
+        for y in range(GEO):
+            square_px[x, y] = (x, x, x)
+    square.save(os.path.join(HERE, "base_square.png"))
+
     hramp.save(os.path.join(HERE, "partner_hramp.png"))
     vramp.save(os.path.join(HERE, "partner_vramp.png"))
 
@@ -199,6 +206,13 @@ def row_rgb(path):
     assert im.size == (W, H), im.size
     px = im.load()
     return [px[x, PROBE_ROW] for x in range(W)]
+
+
+def any_row(path, y):
+    """One row of a render of any size - the square base is not 256x64."""
+    im = Image.open(path).convert("RGB")
+    px = im.load()
+    return [px[x, y][1] for x in range(im.size[0])], im.size[0]
 
 
 def col(path, x=W // 2):
@@ -736,6 +750,33 @@ def main():
     moved = max(abs(wide[x] - got[x]) for x in range(2, W - 2))
     print(f"{'PASS' if moved > 20 else 'FAIL'}  {'radial: diameter moves copies':34s} max |diff| = {moved}")
     ok &= moved > 20
+
+    # T18d: where two radial copies meet, the sample jumps from one to the
+    # other. Edge blend hands over between them instead, which is a different
+    # thing from fading the frame's edge and needs its own check. Four copies
+    # on a square base put two boundaries across a horizontal line a quarter
+    # of the way down; the measure is the largest step between neighbouring
+    # pixels along it.
+    def square_pp3(name, keys):
+        return write_pp3(name,
+            "Enabled=true\nAutoGain=false\nBaseEV=0\nHighlightLatitude=0\n"
+            f"LayerCount=1\nLayer1Path={vramp_path}\nLayer1Enabled=true\nLayer1EV=0\nLayer1Opacity=100\n"
+            "Layer1BlendMode=0\nLayer1Scale=45\nLayer1Pattern=3\nLayer1PatternCount=4\n"
+            "Layer1PatternDiameter=70\n" + keys + GATE_OFF)
+
+    def worst_step(values, width):
+        return max(abs(values[x + 1] - values[x]) for x in range(2, width - 3))
+
+    hardVals, wide = any_row(render(square_pp3("t18d_hard.pp3", "Layer1EdgeFeather=0\n"),
+                                    "base_square.png", "t18d_hard.tif"), GEO // 4)
+    softVals, _ = any_row(render(square_pp3("t18d_soft.pp3", "Layer1EdgeFeather=100\n"),
+                                 "base_square.png", "t18d_soft.tif"), GEO // 4)
+    stepHard = worst_step(hardVals, wide)
+    stepSoft = worst_step(softVals, wide)
+    good = stepSoft * 2 < stepHard
+    print(f"{'PASS' if good else 'FAIL'}  {'radial hand-over softens seams':34s} "
+          f"worst step: hard = {stepHard}, soft = {stepSoft}")
+    ok &= good
 
     # ------------------------------------------------------------------
     # Subject selection. The model is not the thing under test here - the
