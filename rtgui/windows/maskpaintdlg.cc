@@ -383,19 +383,16 @@ private:
                     const float value = std::min(std::max(shown_[y][x], 0.f), 1.f);
                     guint8* px = row + x * 4;
 
-                    if (value >= 0.5f) {
-                        const float t = (value - 0.5f) * 2.f;   // 0 at the edge, 1 inside
-                        px[0] = 255;
-                        px[1] = 45;
-                        px[2] = 55;
-                        px[3] = static_cast<guint8>((70.f + 100.f * t));
-                    } else {
-                        const float t = 1.f - value * 2.f;      // 1 well outside
-                        px[0] = 6;
-                        px[1] = 8;
-                        px[2] = 14;
-                        px[3] = static_cast<guint8>(120.f * t);
-                    }
+                    // One continuous ramp from "not selected" to "fully
+                    // selected". The previous version split at the half-way
+                    // mark and jumped from a dim wash to a red one, so a
+                    // brush with a long soft falloff drew what looked like a
+                    // hard-edged blob -- the very thing the hardness control
+                    // exists to avoid showing.
+                    px[0] = static_cast<guint8>(10.f + 245.f * value);
+                    px[1] = static_cast<guint8>(14.f + 31.f * value);
+                    px[2] = static_cast<guint8>(22.f + 33.f * value);
+                    px[3] = static_cast<guint8>(105.f + 55.f * value);
                 }
             }
 
@@ -405,8 +402,8 @@ private:
             // A line on the half-way contour, so the boundary is visible even
             // where the picture underneath is busy.
             cr->save();
-            cr->set_line_width(1.5 / std::max(sc_, 0.01));
-            cr->set_source_rgba(1.0, 0.95, 0.6, 0.9);
+            cr->set_line_width(1.0 / std::max(sc_, 0.01));
+            cr->set_source_rgba(1.0, 0.95, 0.6, 0.45);
 
             for (int y = 1; y < height_; ++y) {
                 for (int x = 1; x < width_; ++x) {
@@ -516,8 +513,8 @@ MaskPaintDlg::MaskPaintDlg(Gtk::Window* parent,
 
     Gtk::Box* brushRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 12));
     brushRow->pack_start(*makeCell(M("MASKPAINT_SIZE"), sizeScale_, 0.5, 50.0, 0.5, 8.0), Gtk::PACK_EXPAND_WIDGET);
-    brushRow->pack_start(*makeCell(M("MASKPAINT_HARDNESS"), hardnessScale_, 0.0, 100.0, 1.0, 25.0), Gtk::PACK_EXPAND_WIDGET);
-    brushRow->pack_start(*makeCell(M("MASKPAINT_STRENGTH"), strengthScale_, 10.0, 100.0, 1.0, 100.0), Gtk::PACK_EXPAND_WIDGET);
+    brushRow->pack_start(*makeCell(M("MASKPAINT_HARDNESS"), hardnessScale_, 0.0, 100.0, 0.5, 25.0), Gtk::PACK_EXPAND_WIDGET);
+    brushRow->pack_start(*makeCell(M("MASKPAINT_STRENGTH"), strengthScale_, 5.0, 100.0, 0.5, 100.0), Gtk::PACK_EXPAND_WIDGET);
     content->pack_start(*brushRow, Gtk::PACK_SHRINK);
 
     Gtk::Box* modeRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));

@@ -2967,12 +2967,21 @@ void ControlSpotPanel::openMaskEditor()
     const auto iter = s->get_selected();
     Gtk::TreeModel::Row row = *iter;
 
+    // Exactly what the engine asks for, or the editor shows a selection that
+    // is not the one being edited: the prepared mask is grown or shrunk by
+    // (maskSize - 18), and maskSize is the spot's own radius.
+    const rtengine::procparams::LocallabParams::LocallabSpot defSpot;
     MaskPaintDlg::AutoMask automatic;
     const rtengine::AIMaskSnapshot snapshot = rtengine::AIMaskCache::getInstance().getPreparedMask(
         static_cast<rtengine::AISegClass>(rtengine::LIM(static_cast<int>(row[spots_.aiMaskClass]), 0, 9)),
         static_cast<float>(rtengine::LIM(1.0 - aiMaskTolerance_->getValue() / 100.0, 0.0, 1.0)),
         static_cast<float>(transit_->getValue()),
-        0.f, 18.f, false, 8, 0.01f, rtengine::MaskPaint(), true);
+        static_cast<float>(defSpot.aiMaskBlur),
+        static_cast<float>(circrad_->getValue()),
+        defSpot.aiMaskInvert,
+        defSpot.aiMaskRefineRadius,
+        static_cast<float>(defSpot.aiMaskRefineEps),
+        rtengine::MaskPaint(), true);
 
     if (snapshot) {
         automatic.width = snapshot.width;

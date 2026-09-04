@@ -4377,7 +4377,7 @@ TP_LOCALLAB_AIMASK_NORMAL;Normal
 TP_LOCALLAB_AIMASK_OPACITY;AI/Geometric Blend
 TP_LOCALLAB_AIMASK_OPACITY_TOOLTIP;Blend between geometric mask (0) and AI mask (1).
 TP_LOCALLAB_AIMASK_REFINE;Edge Refinement
-TP_LOCALLAB_AIMASK_REFINE_BYHAND;Refine by hand…
+TP_LOCALLAB_AIMASK_REFINE_BYHAND;Refine
 TP_LOCALLAB_AIMASK_REFINE_BYHAND_TOOLTIP;Correct the selection with a brush: paint parts of the photo in or out. The segmentation is only ever a guess, and this is where you disagree with it. Strokes are kept as brush marks, so they follow the selection if you change its settings afterwards.
 TP_LOCALLAB_AIMASK_REFINE_RADIUS;Guided Filter Radius
 TP_LOCALLAB_AIMASK_REFINE_EPS;Guided Filter Epsilon
