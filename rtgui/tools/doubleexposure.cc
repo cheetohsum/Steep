@@ -327,7 +327,6 @@ DoubleExposure::DoubleExposure() :
     adjustSection->getContentBox()->pack_start(*layerScale);
     adjustSection->getContentBox()->pack_start(*layerRotate);
     adjustSection->getContentBox()->pack_start(*layerFlipH);
-    adjustSection->getContentBox()->pack_start(*edgeFeather);
     adjustSection->setExpanded(false);
 
     patternSection = Gtk::manage(new AdvancedSection(M("TP_DOUBLEEXPOSURE_PATTERN")));
@@ -350,6 +349,7 @@ DoubleExposure::DoubleExposure() :
     pack_start(*blendRow);
     pack_start(*compareRow);
     pack_start(*softness);
+    pack_start(*edgeFeather);
     pack_start(*gateRow);
     pack_start(*gateLow);
     pack_start(*gateHigh);

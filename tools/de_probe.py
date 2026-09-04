@@ -671,6 +671,25 @@ def main():
     absent = row(render(edge_pp3("t19_absent.pp3", ""), "base_grad.png", "t19_absent.tif"))
     ok &= identical("edge key absent == hard edge", absent, hard)
 
+    # T19d: the film gain must follow where the layer actually lands. Metering
+    # the base down for a second exposure that is absent here leaves a step at
+    # the frame's edge that no amount of edge blending can remove, because the
+    # discontinuity is in the base's own gain. Outside a half-size frame the
+    # render must therefore be the base, untouched.
+    metered = row(render(write_pp3("t19d_metered.pp3",
+        "Enabled=true\nAutoGain=true\nBaseEV=0\nHighlightLatitude=0\n"
+        f"LayerCount=1\nLayer1Path={gray_path}\nLayer1Enabled=true\nLayer1EV=0\nLayer1Opacity=100\n"
+        "Layer1BlendMode=0\nLayer1Scale=50\nLayer1EdgeFeather=0\n" + GATE_OFF),
+        "base_grad.png", "t19d_metered.tif"))
+    outside = max(abs(metered[x] - x) for x in range(2, 56))
+    # x = 128 is no use as the inside sample: the gray partner is 128 there
+    # too, so half of each averages back to the base value.
+    inside = metered[80] - 80
+    good = outside <= 1 and inside > 20
+    print(f"{'PASS' if good else 'FAIL'}  {'film gain follows coverage':34s} "
+          f"outside |err| = {outside}, inside = +{inside}")
+    ok &= good
+
     # ------------------------------------------------------------------
     # Radial repeat: N copies stood around a ring, each turned to face
     # outward. With two copies the ring lies along the probe row, so both

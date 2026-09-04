@@ -208,10 +208,8 @@ private:
     Gtk::Scale* patternCountScale_;
     Gtk::Scale* patternDiameterScale_;
     Gtk::Scale* edgeFeatherScale_;
-    Gtk::Box* patternSpacingRow_;
-    Gtk::Box* patternStaggerRow_;
-    Gtk::Box* patternCountRow_;
-    Gtk::Box* patternDiameterRow_;
+    Gtk::Box* gridRow_;    // spacing + stagger, for the two grid patterns
+    Gtk::Box* radialRow_;  // count + diameter, for the radial one
     Gtk::Expander* adjustExpander_;
     Gtk::Expander* patternExpander_;
     Gtk::Box* subjectRow_;

@@ -64,6 +64,15 @@ struct ResolvedLayer {
     float gateStrength; // 0..1; 0 = gate off
 };
 
+// Where one layer landed at one pixel, kept between the two passes: the film
+// gain cannot be known until every layer's coverage is.
+struct Hit {
+    float u;
+    float v;
+    float coverage;
+    bool present;
+};
+
 // Bilinear sample of the partner tier at partner full-frame coords (u, v),
 // edge-clamped.
 inline void samplePartner(const PartnerImage& p, float u, float v, float& r, float& g, float& b)
@@ -213,6 +222,14 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
     // In-camera practice: meter every frame of an N-frame multiple exposure
     // down by log2(N) EV so the summed exposure lands correctly. Only ADD
     // layers stack light, so only they (and the base) are metered down.
+    //
+    // How many frames land is a per-pixel question once a layer can be placed,
+    // tiled or cut out: outside its frame there is only one exposure, and
+    // metering the base down for a second one that is not there leaves a hard
+    // step at the boundary that no amount of edge blending can remove -- the
+    // discontinuity is in the base's own gain. So the count follows coverage.
+    // A layer that covers everything contributes exactly 1, which is what the
+    // whole-frame case has always done.
     int addLayers = 0;
 
     for (const auto& rl : resolved) {
@@ -221,16 +238,8 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
         }
     }
 
-    const float autoGainFactor = (deParams.autoGain && addLayers > 0)
-                                 ? 1.f / static_cast<float>(addLayers + 1)
-                                 : 1.f;
-    const float baseGain = static_cast<float>(std::pow(2.0, deParams.baseEv)) * autoGainFactor;
-
-    for (auto& rl : resolved) {
-        if (rl.mode == procparams::DoubleExposureParams::BlendMode::ADD) {
-            rl.gain *= autoGainFactor;
-        }
-    }
+    const bool meterFrames = deParams.autoGain && addLayers > 0;
+    const float baseEvGain = static_cast<float>(std::pow(2.0, deParams.baseEv));
 
     constexpr float white = 65535.f;
 
@@ -244,7 +253,6 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
     const float latitude = LIM01(static_cast<float>(deParams.highlightLatitude) / 100.f);
     const bool applyShoulder = latitude > 0.f;
     const float knee = deblend::latitudeKnee(latitude);
-    const float shoulderWhite = white * autoGainFactor;
 
 #ifdef _OPENMP
     #pragma omp parallel for schedule(dynamic, 16)
@@ -252,28 +260,53 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
     for (int y = 0; y < H; ++y) {
         const float fy = offY + (y + 0.5f) * skip;
 
+        std::vector<Hit> hits(resolved.size());
+
         for (int x = 0; x < W; ++x) {
             const float fx = offX + (x + 0.5f) * skip;
+
+            // Where each layer lands, and how much of it is here. Outside a
+            // placed frame the layer is simply absent, with a one-output-pixel
+            // anti-aliased border (wider, if its edge is set to blend).
+            float framesHere = 0.f;
+
+            for (size_t li = 0; li < resolved.size(); ++li) {
+                Hit& hit = hits[li];
+                hit.present = deplace::map(resolved[li].frame, fx, fy, skip, hit.u, hit.v, hit.coverage);
+
+                if (hit.present && resolved[li].mode == procparams::DoubleExposureParams::BlendMode::ADD) {
+                    framesHere += hit.coverage;
+                }
+            }
+
+            const float gainFactor = meterFrames ? 1.f / (1.f + framesHere) : 1.f;
+            const float baseGain = baseEvGain * gainFactor;
+            const float shoulderWhite = white * gainFactor;
 
             float r = rgb->r(y, x) * baseGain;
             float g = rgb->g(y, x) * baseGain;
             float b = rgb->b(y, x) * baseGain;
 
-            for (const auto& rl : resolved) {
-                // Outside a placed frame the layer is simply absent, with a
-                // one-output-pixel anti-aliased border.
-                float u, v, coverage;
+            for (size_t li = 0; li < resolved.size(); ++li) {
+                const ResolvedLayer& rl = resolved[li];
+                const Hit& hit = hits[li];
 
-                if (!deplace::map(rl.frame, fx, fy, skip, u, v, coverage)) {
+                if (!hit.present) {
                     continue;
                 }
+
+                const float u = hit.u;
+                const float v = hit.v;
+                const float coverage = hit.coverage;
+                const float gain = rl.mode == procparams::DoubleExposureParams::BlendMode::ADD
+                                   ? rl.gain * gainFactor : rl.gain;
 
                 float pr, pg, pb;
                 samplePartner(*rl.partner, u, v, pr, pg, pb);
 
-                pr = std::max(pr, 0.f) * rl.gain;
-                pg = std::max(pg, 0.f) * rl.gain;
-                pb = std::max(pb, 0.f) * rl.gain;
+                pr = std::max(pr, 0.f) * gain;
+                pg = std::max(pg, 0.f) * gain;
+                pb = std::max(pb, 0.f) * gain;
 
                 float cr, cg, cb;
                 deblend::blend(rl.mode, rl.compare, rl.softness, white, r, g, b, pr, pg, pb, cr, cg, cb);

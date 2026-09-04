@@ -1215,22 +1215,38 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     highRes_->signal_toggled().connect(sigc::mem_fun(*this, &DoubleExposureDlg::highResToggled));
     right->pack_start(*highRes_, Gtk::PACK_SHRINK);
 
-    // blend controls
-    auto makeScaleRow = [](const Glib::ustring& label, Gtk::Scale*& outScale, double lo, double hi, double step, double value) {
-        Gtk::Box* row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
-        Gtk::Label* lab = Gtk::manage(new Gtk::Label(label, Gtk::ALIGN_START));
-        lab->set_size_request(150, -1);
-        lab->set_xalign(0.f);
+    // A slider and its name, stacked: the name centred above the track rather
+    // than in a fixed column beside it. That frees the width for two or three
+    // of them side by side, which is what keeps this panel short enough to
+    // leave the preview the room it deserves.
+    auto makeCell = [](const Glib::ustring& label, Gtk::Scale*& outScale, double lo, double hi, double step, double value) {
+        Gtk::Box* cell = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
+        Gtk::Label* lab = Gtk::manage(new Gtk::Label(label));
+        lab->set_halign(Gtk::ALIGN_CENTER);
+        lab->set_ellipsize(Pango::ELLIPSIZE_END);
+        lab->get_style_context()->add_class("dim-label");
         outScale = Gtk::manage(new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
         outScale->set_range(lo, hi);
         outScale->set_increments(step, step * 5);
         outScale->set_value(value);
         outScale->set_draw_value(true);
-        outScale->set_value_pos(Gtk::POS_RIGHT);
+        outScale->set_value_pos(Gtk::POS_BOTTOM);
         outScale->set_digits(step < 1.0 ? 2 : 0);
         outScale->set_hexpand(true);
-        row->pack_start(*lab, Gtk::PACK_SHRINK);
-        row->pack_start(*outScale, Gtk::PACK_EXPAND_WIDGET);
+        cell->pack_start(*lab, Gtk::PACK_SHRINK);
+        cell->pack_start(*outScale, Gtk::PACK_SHRINK);
+        cell->set_hexpand(true);
+        return cell;
+    };
+
+    // Cells across one row, sharing the width evenly.
+    auto makeRow = [](std::initializer_list<Gtk::Widget*> cells) {
+        Gtk::Box* row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 12));
+
+        for (Gtk::Widget* cell : cells) {
+            row->pack_start(*cell, Gtk::PACK_EXPAND_WIDGET);
+        }
+
         return row;
     };
 
@@ -1258,12 +1274,12 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     autoGain_->signal_toggled().connect(sigc::mem_fun(*this, &DoubleExposureDlg::blendControlChanged));
     right->pack_start(*autoGain_, Gtk::PACK_SHRINK);
 
-    right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_BASEEV"), baseEvScale_, -4.0, 4.0, 0.05, params_.baseEv), Gtk::PACK_SHRINK);
+    Gtk::Widget* baseEvCell = makeCell(M("TP_DOUBLEEXPOSURE_BASEEV"), baseEvScale_, -4.0, 4.0, 0.05, params_.baseEv);
     baseEvScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::blendControlChanged));
-
-    right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_LATITUDE"), latitudeScale_, 0.0, 100.0, 1.0, params_.highlightLatitude), Gtk::PACK_SHRINK);
+    Gtk::Widget* latitudeCell = makeCell(M("TP_DOUBLEEXPOSURE_LATITUDE"), latitudeScale_, 0.0, 100.0, 1.0, params_.highlightLatitude);
     latitudeScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_LATITUDE_TOOLTIP"));
     latitudeScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::blendControlChanged));
+    right->pack_start(*makeRow({baseEvCell, latitudeCell}), Gtk::PACK_SHRINK);
 
     Gtk::Separator* sep = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
     right->pack_start(*sep, Gtk::PACK_SHRINK);
@@ -1272,20 +1288,25 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     layerLabel_->set_xalign(0.f);
     right->pack_start(*layerLabel_, Gtk::PACK_SHRINK);
 
-    right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_EV"), layerEvScale_, -4.0, 4.0, 0.05, 0.0), Gtk::PACK_SHRINK);
+    Gtk::Widget* evCell = makeCell(M("TP_DOUBLEEXPOSURE_EV"), layerEvScale_, -4.0, 4.0, 0.05, 0.0);
     layerEvScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
-
-    right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_OPACITY"), layerOpacityScale_, 0.0, 100.0, 1.0, 100.0), Gtk::PACK_SHRINK);
+    Gtk::Widget* opacityCell = makeCell(M("TP_DOUBLEEXPOSURE_OPACITY"), layerOpacityScale_, 0.0, 100.0, 1.0, 100.0);
     layerOpacityScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
-
-    right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_GATE_STRENGTH"), gateStrengthScale_, 0.0, 100.0, 1.0, 0.0), Gtk::PACK_SHRINK);
+    Gtk::Widget* gateCell = makeCell(M("TP_DOUBLEEXPOSURE_GATE_STRENGTH"), gateStrengthScale_, 0.0, 100.0, 1.0, 0.0);
     gateStrengthScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_GATE_TOOLTIP"));
     gateStrengthScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    right->pack_start(*makeRow({evCell, opacityCell, gateCell}), Gtk::PACK_SHRINK);
 
     // Comparative bright/dark only: how wide the hand-over between frames is.
-    right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_SOFTNESS"), softnessScale_, 0.0, 2.0, 0.05, 0.5), Gtk::PACK_SHRINK);
+    // Edge blend sits beside it: both are about how one frame gives way to
+    // another, one in tone and one in place.
+    Gtk::Widget* softnessCell = makeCell(M("TP_DOUBLEEXPOSURE_SOFTNESS"), softnessScale_, 0.0, 2.0, 0.05, 0.5);
     softnessScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SOFTNESS_TOOLTIP"));
     softnessScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    Gtk::Widget* edgeCell = makeCell(M("TP_DOUBLEEXPOSURE_EDGEFEATHER"), edgeFeatherScale_, 0.0, 100.0, 1.0, 35.0);
+    edgeFeatherScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_EDGEFEATHER_TOOLTIP"));
+    edgeFeatherScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    right->pack_start(*makeRow({softnessCell, edgeCell}), Gtk::PACK_SHRINK);
 
     // Placement of the selected exposure over the base frame; the preview
     // drives the same three values by dragging.
@@ -1298,20 +1319,21 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     adjustExpander_->set_expanded(false);
     right->pack_start(*adjustExpander_, Gtk::PACK_SHRINK);
 
-    adjustBox->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_OFFSETX"), offsetXScale_, -150.0, 150.0, 0.5, 0.0), Gtk::PACK_SHRINK);
+    Gtk::Widget* offXCell = makeCell(M("TP_DOUBLEEXPOSURE_OFFSETX"), offsetXScale_, -150.0, 150.0, 0.5, 0.0);
     offsetXScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PLACEMENT_TOOLTIP"));
     offsetXScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
-    adjustBox->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_OFFSETY"), offsetYScale_, -150.0, 150.0, 0.5, 0.0), Gtk::PACK_SHRINK);
+    Gtk::Widget* offYCell = makeCell(M("TP_DOUBLEEXPOSURE_OFFSETY"), offsetYScale_, -150.0, 150.0, 0.5, 0.0);
     offsetYScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PLACEMENT_TOOLTIP"));
     offsetYScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
-    adjustBox->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_SCALE"), scaleScale_, 10.0, 400.0, 1.0, 100.0), Gtk::PACK_SHRINK);
+    Gtk::Widget* sizeCell = makeCell(M("TP_DOUBLEEXPOSURE_SCALE"), scaleScale_, 10.0, 400.0, 1.0, 100.0);
     scaleScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PLACEMENT_TOOLTIP"));
     scaleScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    adjustBox->pack_start(*makeRow({offXCell, offYCell, sizeCell}), Gtk::PACK_SHRINK);
 
     // Rotation, with quarter turns to hand and a mirror toggle. The preview's
     // grip drives the same value.
     Gtk::Box* rotRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
-    Gtk::Box* rotScaleRow = makeScaleRow(M("TP_DOUBLEEXPOSURE_ROTATE"), rotateScale_, -180.0, 180.0, 0.5, 0.0);
+    Gtk::Widget* rotScaleRow = makeCell(M("TP_DOUBLEEXPOSURE_ROTATE"), rotateScale_, -180.0, 180.0, 0.5, 0.0);
     rotateScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_ROTATE_TOOLTIP"));
     rotateScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
     rotRow->pack_start(*rotScaleRow, Gtk::PACK_EXPAND_WIDGET);
@@ -1323,6 +1345,7 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     rotateRight_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_ROTATE_RIGHT"));
     rotateRight_->signal_clicked().connect([this]() { nudgeRotation(90.0); });
     rotRow->pack_start(*rotateRight_, Gtk::PACK_SHRINK);
+    rotRow->set_valign(Gtk::ALIGN_END);
     adjustBox->pack_start(*rotRow, Gtk::PACK_SHRINK);
 
     patternExpander_ = Gtk::manage(new Gtk::Expander(M("TP_DOUBLEEXPOSURE_PATTERN")));
@@ -1348,34 +1371,30 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     patRow->pack_start(*patternMethod_, Gtk::PACK_EXPAND_WIDGET);
     patternBox->pack_start(*patRow, Gtk::PACK_SHRINK);
 
-    patternSpacingRow_ = makeScaleRow(M("TP_DOUBLEEXPOSURE_PATTERN_SPACING"), patternSpacingScale_, 0.0, 200.0, 1.0, 0.0);
-    patternBox->pack_start(*patternSpacingRow_, Gtk::PACK_SHRINK);
+    Gtk::Widget* spacingCell = makeCell(M("TP_DOUBLEEXPOSURE_PATTERN_SPACING"), patternSpacingScale_, 0.0, 200.0, 1.0, 0.0);
     patternSpacingScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_SPACING_TOOLTIP"));
     patternSpacingScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
-    patternStaggerRow_ = makeScaleRow(M("TP_DOUBLEEXPOSURE_PATTERN_STAGGER"), patternStaggerScale_, 0.0, 100.0, 1.0, 0.0);
-    patternBox->pack_start(*patternStaggerRow_, Gtk::PACK_SHRINK);
+    Gtk::Widget* staggerCell = makeCell(M("TP_DOUBLEEXPOSURE_PATTERN_STAGGER"), patternStaggerScale_, 0.0, 100.0, 1.0, 0.0);
     patternStaggerScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_STAGGER_TOOLTIP"));
     patternStaggerScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    gridRow_ = makeRow({spacingCell, staggerCell});
+    patternBox->pack_start(*gridRow_, Gtk::PACK_SHRINK);
 
     // Radial's own pair: how many copies, and how wide a ring they stand on.
-    patternCountRow_ = makeScaleRow(M("TP_DOUBLEEXPOSURE_PATTERN_COUNT"), patternCountScale_, 1.0, 24.0, 1.0, 6.0);
-    patternBox->pack_start(*patternCountRow_, Gtk::PACK_SHRINK);
+    Gtk::Widget* countCell = makeCell(M("TP_DOUBLEEXPOSURE_PATTERN_COUNT"), patternCountScale_, 1.0, 24.0, 1.0, 6.0);
     patternCountScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_COUNT_TOOLTIP"));
     patternCountScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
-    patternDiameterRow_ = makeScaleRow(M("TP_DOUBLEEXPOSURE_PATTERN_DIAMETER"), patternDiameterScale_, 0.0, 200.0, 1.0, 60.0);
-    patternBox->pack_start(*patternDiameterRow_, Gtk::PACK_SHRINK);
+    Gtk::Widget* diameterCell = makeCell(M("TP_DOUBLEEXPOSURE_PATTERN_DIAMETER"), patternDiameterScale_, 0.0, 200.0, 1.0, 60.0);
     patternDiameterScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_DIAMETER_TOOLTIP"));
     patternDiameterScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    radialRow_ = makeRow({countCell, diameterCell});
+    patternBox->pack_start(*radialRow_, Gtk::PACK_SHRINK);
 
     flipH_ = Gtk::manage(new Gtk::CheckButton(M("TP_DOUBLEEXPOSURE_FLIPH")));
     flipH_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_FLIPH_TOOLTIP"));
     flipH_->signal_toggled().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
     adjustBox->pack_start(*flipH_, Gtk::PACK_SHRINK);
 
-    adjustBox->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_EDGEFEATHER"), edgeFeatherScale_, 0.0, 100.0, 1.0, 35.0),
-                          Gtk::PACK_SHRINK);
-    edgeFeatherScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_EDGEFEATHER_TOOLTIP"));
-    edgeFeatherScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
 
     // Subject selection, segmented on the partner itself. Hidden outright
     // when this build has no segmentation model rather than shown dead.
@@ -1408,7 +1427,7 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     subjectRow_->pack_start(*subjectCrop_, Gtk::PACK_SHRINK);
     patternBox->pack_start(*subjectRow_, Gtk::PACK_SHRINK);
 
-    Gtk::Box* subjFeatherRow = makeScaleRow(M("TP_DOUBLEEXPOSURE_SUBJECT_FEATHER"), subjectFeatherScale_, 0.0, 100.0, 1.0, 25.0);
+    Gtk::Box* subjFeatherRow = makeRow({makeCell(M("TP_DOUBLEEXPOSURE_SUBJECT_FEATHER"), subjectFeatherScale_, 0.0, 100.0, 1.0, 25.0)});
     subjectFeatherScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SUBJECT_FEATHER_TOOLTIP"));
     subjectFeatherScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
     patternBox->pack_start(*subjFeatherRow, Gtk::PACK_SHRINK);
@@ -2725,10 +2744,8 @@ void DoubleExposureDlg::showPatternRows(DoubleExposureParams::Pattern pattern)
                       || pattern == DoubleExposureParams::Pattern::MIRROR;
     const bool radial = pattern == DoubleExposureParams::Pattern::RADIAL;
 
-    patternSpacingRow_->set_visible(grid);
-    patternStaggerRow_->set_visible(grid);
-    patternCountRow_->set_visible(radial);
-    patternDiameterRow_->set_visible(radial);
+    gridRow_->set_visible(grid);
+    radialRow_->set_visible(radial);
     patternSpacingScale_->set_sensitive(grid);
     patternStaggerScale_->set_sensitive(grid);
     patternCountScale_->set_sensitive(radial);
@@ -3258,17 +3275,11 @@ void DoubleExposureDlg::updatePreview(bool quick)
         layerPix.push_back(lp);
     }
 
-    const float autoGainFactor = (params_.autoGain && addLayers > 0)
-                                 ? 1.f / static_cast<float>(addLayers + 1)
-                                 : 1.f;
-
-    for (auto& lp : layerPix) {
-        if (lp.mode == DoubleExposureParams::BlendMode::ADD) {
-            lp.gain *= autoGainFactor;
-        }
-    }
-
-    const float baseGain = static_cast<float>(std::pow(2.0, params_.baseEv)) * autoGainFactor;
+    // The film gain follows how many frames actually land on each pixel, as
+    // the engine does: metering the base down for a layer that is absent here
+    // would leave a step at its edge.
+    const bool meterFrames = params_.autoGain && addLayers > 0;
+    const float baseEvGain = static_cast<float>(std::pow(2.0, params_.baseEv));
 
     // Film shoulder on the finished stack, same as the engine (white = 1
     // here), referenced to one frame's white: the auto-gain factor is undone
@@ -3276,7 +3287,6 @@ void DoubleExposureDlg::updatePreview(bool quick)
     const float latitude = std::min(std::max(static_cast<float>(params_.highlightLatitude) / 100.f, 0.f), 1.f);
     const bool applyShoulder = latitude > 0.f;
     const float knee = rtengine::deblend::latitudeKnee(latitude);
-    const float shoulderWhite = autoGainFactor;
 
     // Scene mode: every input is an engine decode, so the composite runs in
     // the edit's working profile exactly as the engine does and is converted
@@ -3332,10 +3342,18 @@ void DoubleExposureDlg::updatePreview(bool quick)
     const LayerPix* layers = layerPix.data();
     const int nLayers = static_cast<int>(layerPix.size());
 
+    struct LayerHit {
+        float u;
+        float v;
+        float coverage;
+        bool present;
+    };
+
 #ifdef _OPENMP
     #pragma omp parallel for schedule(dynamic, 4)
 #endif
     for (int by = 0; by < blockRows; ++by) {
+        std::vector<LayerHit> hits(std::max(1, nLayers));
         const int y = by * step;
         const float ny = ny0 + (y + 0.5f) * nys;
         const int nby = (sceneFaithful && nbH > 0) ? std::max(0, std::min(static_cast<int>(ny * nbH), nbH - 1)) : 0;
@@ -3343,6 +3361,23 @@ void DoubleExposureDlg::updatePreview(bool quick)
         for (int x = 0; x < w; x += step) {
             const size_t o = (static_cast<size_t>(y) * w + x) * 3;
             const float nx = nx0 + (x + 0.5f) * nxs;
+
+            // Pass one: where does each layer land, and how much of it.
+            float framesHere = 0.f;
+
+            for (int li = 0; li < nLayers; ++li) {
+                LayerHit& hit = hits[li];
+                hit.present = rtengine::deplace::map(layers[li].frame, nx, ny * invBaseAspect, nxs,
+                                                    hit.u, hit.v, hit.coverage);
+
+                if (hit.present && layers[li].mode == DoubleExposureParams::BlendMode::ADD) {
+                    framesHere += hit.coverage;
+                }
+            }
+
+            const float gainFactor = meterFrames ? 1.f / (1.f + framesHere) : 1.f;
+            const float baseGain = baseEvGain * gainFactor;
+            const float shoulderWhite = gainFactor;
 
             float r, g, b;
 
@@ -3376,16 +3411,18 @@ void DoubleExposureDlg::updatePreview(bool quick)
 
             for (int li = 0; li < nLayers; ++li) {
                 const LayerPix& lp = layers[li];
-                float u, v, coverage;
+                const LayerHit& hit = hits[li];
 
-                if (!rtengine::deplace::map(lp.frame, nx, ny * invBaseAspect, nxs, u, v, coverage)) {
+                if (!hit.present) {
                     continue;
                 }
 
+                const float coverage = hit.coverage;
+
                 // Back to 0..1 of the source rect: the frame works in units
                 // where the source is one wide and 1/aspect tall.
-                const float un = u;
-                const float vn = v * lp.srcAspect;
+                const float un = hit.u;
+                const float vn = hit.v * lp.srcAspect;
 
                 int lx = static_cast<int>(un * lp.srcW);
                 int ly = static_cast<int>(vn * lp.srcH);
@@ -3411,9 +3448,11 @@ void DoubleExposureDlg::updatePreview(bool quick)
                     pb = srgbLut[lrow[lx * lch + 2]];
                 }
 
-                pr *= lp.gain;
-                pg *= lp.gain;
-                pb *= lp.gain;
+                const float gain = lp.mode == DoubleExposureParams::BlendMode::ADD
+                                   ? lp.gain * gainFactor : lp.gain;
+                pr *= gain;
+                pg *= gain;
+                pb *= gain;
 
                 float cr, cg, cb;
                 rtengine::deblend::blend(lp.mode, lp.compare, lp.softness, 1.f, r, g, b, pr, pg, pb, cr, cg, cb);
