@@ -1452,7 +1452,8 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     subjectEdit_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SUBJECT_EDIT_TOOLTIP"));
     subjectEdit_->signal_clicked().connect(sigc::mem_fun(*this, &DoubleExposureDlg::openMaskEditor));
     subjectRow_->pack_start(*subjectEdit_, Gtk::PACK_SHRINK);
-    patternBox->pack_start(*subjectRow_, Gtk::PACK_SHRINK);
+    adjustBox->pack_start(*subjectRow_, Gtk::PACK_SHRINK);
+    adjustBox->reorder_child(*subjectRow_, 2);   // directly under the rotation
 
 
 #ifdef RT_AI_MASKING

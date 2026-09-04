@@ -3175,7 +3175,7 @@ TP_DOUBLEEXPOSURE_PATTERN_TOOLTIP;Repeats this exposure across the base frame, o
 TP_DOUBLEEXPOSURE_PLACEMENT_RESET;Reset placement
 TP_DOUBLEEXPOSURE_PLACEMENT_TOOLTIP;Where this exposure sits over the base frame. Position is the shift of its centre as a percentage of the base width and height; size is a percentage of the fill-the-frame fit. Outside the placed frame the exposure contributes nothing. In the picker you can drag the selected exposure to move it, scroll or drag a corner to resize it, and double-click to reset.
 TP_DOUBLEEXPOSURE_REMOVE;Remove this exposure
-TP_DOUBLEEXPOSURE_ROTATE;Rotate exposure
+TP_DOUBLEEXPOSURE_ROTATE;Rotation
 TP_DOUBLEEXPOSURE_ROTATE_LEFT;Turn a quarter anticlockwise
 TP_DOUBLEEXPOSURE_ROTATE_RIGHT;Turn a quarter clockwise
 TP_DOUBLEEXPOSURE_ROTATE_TOOLTIP;Turns this exposure about its own centre; positive angles turn it clockwise. In the picker, drag the grip above the selected exposure's frame, holding Shift to snap to 15-degree steps.
