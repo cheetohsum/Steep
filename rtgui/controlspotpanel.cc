@@ -1469,7 +1469,24 @@ void ControlSpotPanel::render_preview(
     static const guint8 heatHi[3]  = {255, 170,  40};
     static const guint8 heatLo[3]  = { 60,  90, 160};
 
-    const int W = 28, H = 18;
+    // The swatch takes the picture's own shape. A fixed landscape tile
+    // showed a portrait photo's mask lying on its side, which is a poor way
+    // to answer "where on the picture is this?".
+    int swatchImW = 3, swatchImH = 2;
+
+    if (EditDataProvider* sizeProv = getEditProvider()) {
+        int provW = 0, provH = 0;
+        sizeProv->getImageSize(provW, provH);
+
+        if (provW > 0 && provH > 0) {
+            swatchImW = provW;
+            swatchImH = provH;
+        }
+    }
+
+    const double swatchFit = std::min(28.0 / swatchImW, 18.0 / swatchImH);
+    const int W = std::max(8, static_cast<int>(std::lround(swatchImW * swatchFit)));
+    const int H = std::max(8, static_cast<int>(std::lround(swatchImH * swatchFit)));
     auto pixbuf = Gdk::Pixbuf::create(Gdk::COLORSPACE_RGB, true, 8, W, H);
     pixbuf->fill(0x00000000);
     guint8* pixels = pixbuf->get_pixels();

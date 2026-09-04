@@ -58,6 +58,7 @@ clean
 tools/*.tif
 tools/*.pp3
 tools/*.png
+tools/*.jpg
 rtdata/models/lama_inpainting.onnx
 rtdata/models/u2net_subject.onnx
 tools/_u2net/
