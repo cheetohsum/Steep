@@ -384,15 +384,15 @@ private:
                     guint8* px = row + x * 4;
 
                     // One continuous ramp from "not selected" to "fully
-                    // selected". The previous version split at the half-way
-                    // mark and jumped from a dim wash to a red one, so a
-                    // brush with a long soft falloff drew what looked like a
-                    // hard-edged blob -- the very thing the hardness control
-                    // exists to avoid showing.
-                    px[0] = static_cast<guint8>(10.f + 245.f * value);
-                    px[1] = static_cast<guint8>(14.f + 31.f * value);
-                    px[2] = static_cast<guint8>(22.f + 33.f * value);
-                    px[3] = static_cast<guint8>(105.f + 55.f * value);
+                    // selected", ending on a red strong enough to read over
+                    // any picture. Splitting at the half-way mark, as this
+                    // once did, made a soft brush look hard-edged; being too
+                    // gentle at the top end made a real selection look like
+                    // nothing at all.
+                    px[0] = static_cast<guint8>(6.f + 249.f * value);
+                    px[1] = static_cast<guint8>(9.f + 25.f * value);
+                    px[2] = static_cast<guint8>(16.f + 34.f * value);
+                    px[3] = static_cast<guint8>(120.f + 85.f * value);
                 }
             }
 
@@ -403,7 +403,7 @@ private:
             // where the picture underneath is busy.
             cr->save();
             cr->set_line_width(1.0 / std::max(sc_, 0.01));
-            cr->set_source_rgba(1.0, 0.95, 0.6, 0.45);
+            cr->set_source_rgba(1.0, 0.96, 0.65, 0.7);
 
             for (int y = 1; y < height_; ++y) {
                 for (int x = 1; x < width_; ++x) {
@@ -480,13 +480,17 @@ MaskPaintDlg::MaskPaintDlg(Gtk::Window* parent,
     content->set_border_width(6);
 
     canvas_ = Gtk::manage(new MaskPaintCanvas(shown, automatic, initial));
+    const bool emptySelection = !automatic.valid()
+                                || std::none_of(automatic.values.begin(), automatic.values.end(),
+                                                [](float v) { return v > 0.5f; });
     canvas_->onStrokes = [this]() { onStrokesChanged(); };
     canvas_->onBrushResize = [this](double factor) {
         sizeScale_->set_value(std::min(std::max(sizeScale_->get_value() * factor, 0.5), 50.0));
     };
     content->pack_start(*canvas_, Gtk::PACK_EXPAND_WIDGET);
 
-    Gtk::Label* hint = Gtk::manage(new Gtk::Label(M("MASKPAINT_HINT"), Gtk::ALIGN_START));
+    Gtk::Label* hint = Gtk::manage(new Gtk::Label(
+        emptySelection ? M("MASKPAINT_EMPTY") : M("MASKPAINT_HINT"), Gtk::ALIGN_START));
     hint->set_xalign(0.f);
     hint->get_style_context()->add_class("dim-label");
     content->pack_start(*hint, Gtk::PACK_SHRINK);

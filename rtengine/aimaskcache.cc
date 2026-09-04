@@ -224,7 +224,8 @@ void AIMaskCache::computeMasks(const std::string& imageId,
         if (cachedImageId_ == imageId
                 && cachedWorkingProfile_ == workingProfile
                 && sourceWidth_ == width && sourceHeight_ == height
-                && fullW_ == fullW && fullH_ == fullH && cachedMasks_) {
+                && fullW_ == fullW && fullH_ == fullH && cachedMasks_
+                && cachedSubjectModel_ == getAISubjectEngine().isInitialized()) {
             return;
         }
         request = ++requestGeneration_;
@@ -304,7 +305,8 @@ void AIMaskCache::computeMasks(const std::string& imageId,
     }
 
     appendSubjectMasks(maps, maskWidth, maskHeight, multiThread);
-    applySubjectModel(maps, segmentR, segmentG, segmentB, maskWidth, maskHeight, multiThread);
+    const bool usedSubjectModel = applySubjectModel(maps, segmentR, segmentG, segmentB,
+                                                    maskWidth, maskHeight, multiThread);
 
     auto masks = std::make_shared<const std::vector<array2D<float>>>(std::move(maps));
 
@@ -367,6 +369,7 @@ void AIMaskCache::computeMasks(const std::string& imageId,
     cachedGuide_ = std::move(guide);
     coverage_ = std::move(coverage);
     cachedImageId_ = imageId;
+    cachedSubjectModel_ = usedSubjectModel;
     cachedWorkingProfile_ = workingProfile;
     sourceWidth_ = width;
     sourceHeight_ = height;

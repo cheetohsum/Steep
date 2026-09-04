@@ -1321,6 +1321,8 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     Gtk::Box* adjustBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 2));
     adjustExpander_->add(*adjustBox);
     adjustExpander_->set_expanded(false);
+    // Remembered so the selection row can be slipped in just above it.
+    const int adjustPosition = static_cast<int>(right->get_children().size());
     right->pack_start(*adjustExpander_, Gtk::PACK_SHRINK);
 
     Gtk::Widget* offXCell = makeCell(M("TP_DOUBLEEXPOSURE_OFFSETX"), offsetXScale_, -150.0, 150.0, 0.5, 0.0);
@@ -1452,8 +1454,11 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     subjectEdit_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SUBJECT_EDIT_TOOLTIP"));
     subjectEdit_->signal_clicked().connect(sigc::mem_fun(*this, &DoubleExposureDlg::openMaskEditor));
     subjectRow_->pack_start(*subjectEdit_, Gtk::PACK_SHRINK);
-    adjustBox->pack_start(*subjectRow_, Gtk::PACK_SHRINK);
-    adjustBox->reorder_child(*subjectRow_, 2);   // directly under the rotation
+    // Above the section, not inside it: what a layer is made of is not a
+    // detail of where its frame sits, and it should not need a disclosure
+    // opened to be seen.
+    right->pack_start(*subjectRow_, Gtk::PACK_SHRINK);
+    right->reorder_child(*subjectRow_, adjustPosition);
 
 
 #ifdef RT_AI_MASKING

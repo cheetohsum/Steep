@@ -195,6 +195,12 @@ void AISubjectEngine::initDeferred(const std::string& modelPath)
 {
     // Building a session for a 170 MB model takes seconds; startup should not
     // wait for a model that is only wanted once a subject mask is asked for.
+    // Anything segmented while this is still loading holds the
+    // composed-from-classes subject. The caches record whether this model was
+    // available when they computed, so those entries stop matching the moment
+    // it is -- see cachedSubjectModel_ in AIMaskCache and the key in
+    // PartnerMaskStore. Clearing them from here instead would race whatever
+    // pass is running.
     std::thread([this, modelPath]() {
         this->init(modelPath);
     }).detach();

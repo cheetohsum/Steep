@@ -25,6 +25,7 @@
 
 #include "aisegmentation.h"
 #include "aisubject.h"
+#include "aisubjectmodel.h"
 #include "boxblur.h"
 #include "iccstore.h"
 #include "imagefloat.h"
@@ -391,9 +392,12 @@ Glib::ustring PartnerMaskStore::makeKey(const Glib::ustring& path, const Glib::u
                                         procparams::DoubleExposureParams::MaskClass cls,
                                         double feather, bool invert, const MaskPaint& paint)
 {
-    return Glib::ustring::compose("%1|%2|%3|%4|%5|%6", path, workingProfile,
+    // The subject model loads on a worker some seconds after startup; a mask
+    // composed without it must not be handed back once it is available.
+    return Glib::ustring::compose("%1|%2|%3|%4|%5|%6|%7", path, workingProfile,
                                   static_cast<int>(cls), static_cast<int>(std::lround(feather)),
-                                  invert ? 1 : 0, paint.hash());
+                                  invert ? 1 : 0, paint.hash(),
+                                  getAISubjectEngine().isInitialized() ? 1 : 0);
 }
 
 void PartnerMaskStore::clearCache()

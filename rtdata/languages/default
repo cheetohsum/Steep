@@ -3135,6 +3135,7 @@ TP_DOUBLEEXPOSURE_FLIPH;Mirror
 TP_DOUBLEEXPOSURE_FLIPH_TOOLTIP;Flip this exposure left to right before it is turned and placed. Useful for facing a repeated motif both ways, or for matching the direction of a subject in the base frame.
 MASKPAINT_CLEAR;Clear all
 MASKPAINT_EXCLUDE;Paint out
+MASKPAINT_EMPTY;This selection is empty — the automatic one found nothing here. Paint it in by hand, or close this and try another class.
 MASKPAINT_HARDNESS;Hardness
 MASKPAINT_HINT;Drag to paint. The right mouse button paints the opposite way, the scroll wheel resizes the brush. Strokes are kept as brush marks, not as a fixed picture, so they follow the selection if you change its settings afterwards.
 MASKPAINT_INCLUDE;Paint in

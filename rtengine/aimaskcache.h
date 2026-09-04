@@ -155,6 +155,10 @@ private:
     mutable MyMutex mutex_;
     std::string cachedImageId_;
     std::string cachedWorkingProfile_;
+    // Whether the subject model was loaded when these maps were computed. It
+    // arrives on a worker some seconds after startup, and maps composed
+    // without it must not be reused once it is there.
+    bool cachedSubjectModel_ = false;
     std::shared_ptr<const std::vector<array2D<float>>> cachedMasks_;
     std::shared_ptr<const array2D<float>> cachedGuide_;
     std::vector<float> coverage_;
