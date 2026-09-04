@@ -847,6 +847,54 @@ def main():
     print(f"{'PASS' if moved > 20 else 'FAIL'}  {'crop changes the framing':34s} max |diff| = {moved}")
     ok &= moved > 20
 
+    # ------------------------------------------------------------------
+    # Hand-painted corrections. A segmentation is a guess; the strokes are
+    # where the user disagrees with it. They are stored as brush geometry in
+    # normalised coordinates, so what matters here is that they reach the
+    # render at all, land where they were painted, and cost nothing when
+    # there are none.
+    # ------------------------------------------------------------------
+
+    # T20: a wide "paint out" stroke along the top of the sky must remove the
+    # layer there and leave the rest of the selection alone. The stroke runs
+    # across the frame at 10% down with a radius of 12% of the short side.
+    painted = col(render(scene_pp3("t20_paint.pp3",
+        "Layer1MaskClass=3\nLayer1MaskFeather=25\n"
+        "Layer1MaskPaint=s,0.0600,0.900,1.000,0.0500,0.3600,0.9500,0.3600\n"),
+        "base_grad.png", "t20_paint.tif"))
+
+    # Only partner rows 129..255 of 384 are visible - the cover fit shows the
+    # middle third - so a stroke has to be placed in that band to be seen at
+    # all. Normalised y = 0.36 is partner row 138, which is base row 5; a
+    # radius of 6% of the short side reaches about 11 base rows either way.
+    top = max(abs(painted[y] - plain[y]) for y in range(2, 8))
+    kept = max(abs(painted[y] - plain[y]) for y in range(24, horizon_row - 6))
+    good = top <= 2 and kept > 20
+    print(f"{'PASS' if good else 'FAIL'}  {'painted-out band leaves the base':34s} "
+          f"under stroke = {top}, elsewhere = {kept}")
+    ok &= good
+
+    # T20b: no strokes must be bitwise the unpainted render - the key is
+    # absent in every file written before the editor existed.
+    unpainted = col(render(scene_pp3("t20b_none.pp3",
+        "Layer1MaskClass=3\nLayer1MaskFeather=25\n"), "base_grad.png", "t20b_none.tif"))
+    ident = max(abs(unpainted[y] - sky[y]) for y in range(H))
+    print(f"{'PASS' if ident == 0 else 'FAIL'}  {'no strokes == unpainted':34s} max |diff| = {ident}")
+    ok &= ident == 0
+
+    # T20c: painting in reaches where the segmentation found nothing. Partner
+    # row 0.62 * 384 = 238 is base row 55, below the horizon, where the sky
+    # class found nothing at all.
+    added = col(render(scene_pp3("t20c_add.pp3",
+        "Layer1MaskClass=3\nLayer1MaskFeather=25\n"
+        "Layer1MaskPaint=a,0.0800,0.900,1.000,0.5000,0.6200\n"),
+        "base_grad.png", "t20c_add.tif"))
+    below = max(abs(added[y] - plain[y]) for y in range(H - 8, H - 2))
+    good = below > 20
+    print(f"{'PASS' if good else 'FAIL'}  {'painted-in band reaches the base':34s} "
+          f"under stroke = {below}")
+    ok &= good
+
     print("\nALL PASS" if ok else "\nFAILURES PRESENT")
     sys.exit(0 if ok else 1)
 

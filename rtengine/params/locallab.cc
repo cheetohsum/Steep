@@ -1675,6 +1675,7 @@ LocallabParams::LocallabSpot::LocallabSpot() :
     aiMaskRefineRadius(8),
     aiMaskRefineEps(0.01),
     aiMaskShapeOp(0),
+    aiMaskPaint(),
     // ciecam
     visicie(false),
     expcie(false),
@@ -3019,7 +3020,8 @@ bool LocallabParams::LocallabSpot::operator ==(const LocallabSpot& other) const
         && aiMaskOpacity == other.aiMaskOpacity
         && aiMaskRefineRadius == other.aiMaskRefineRadius
         && aiMaskRefineEps == other.aiMaskRefineEps
-        && aiMaskShapeOp == other.aiMaskShapeOp;
+        && aiMaskShapeOp == other.aiMaskShapeOp
+        && aiMaskPaint == other.aiMaskPaint;
     // clang-format on
 }
 
@@ -4037,6 +4039,11 @@ void LoadUtil::aiMask()
     assignFromKeyfile(keyFile, "Locallab", "AIMaskRefineEps_" + index_str, spot.aiMaskRefineEps, spotEdited.aiMaskRefineEps);
     assignFromKeyfile(keyFile, "Locallab", "AIMaskShapeOp_" + index_str, spot.aiMaskShapeOp, spotEdited.aiMaskShapeOp);
     spot.aiMaskShapeOp = std::max(0, std::min(spot.aiMaskShapeOp, 2));
+
+    if (keyFile.has_key("Locallab", "AIMaskPaint_" + index_str)) {
+        spot.aiMaskPaint = MaskPaint::decode(keyFile.get_string("Locallab", "AIMaskPaint_" + index_str));
+        spotEdited.aiMaskPaint = true;
+    }
 
     if (spot.visiaimask) {
         spotEdited.visiaimask = true;
@@ -5118,6 +5125,12 @@ void SaveUtil::aiMask()
         saveToKeyfile(!pedited || spot_edited->aiMaskRefineRadius, "Locallab", "AIMaskRefineRadius_" + index_str, spot.aiMaskRefineRadius, keyFile);
         saveToKeyfile(!pedited || spot_edited->aiMaskRefineEps, "Locallab", "AIMaskRefineEps_" + index_str, spot.aiMaskRefineEps, keyFile);
         saveToKeyfile(!pedited || spot_edited->aiMaskShapeOp, "Locallab", "AIMaskShapeOp_" + index_str, spot.aiMaskShapeOp, keyFile);
+
+        // Written only when there is something painted, so a spot that has
+        // never been through the mask editor gains no key.
+        if ((!pedited || spot_edited->aiMaskPaint) && !spot.aiMaskPaint.empty()) {
+            keyFile.set_string("Locallab", "AIMaskPaint_" + index_str, spot.aiMaskPaint.encode());
+        }
     }
 }
 

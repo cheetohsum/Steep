@@ -21,6 +21,8 @@
 #include "eventmapper.h"
 #include "options.h"
 #include "rtengine/procparams.h"
+#include "rtengine/aimaskcache.h"
+#include "../windows/maskpaintdlg.h"
 
 using namespace rtengine;
 using namespace procparams;
@@ -36,7 +38,8 @@ LocallabAIMask::LocallabAIMask():
     aiMaskInvert(Gtk::manage(new Gtk::CheckButton(M("TP_LOCALLAB_AIMASK_INVERT")))),
     aiMaskOpacity(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_OPACITY"), 0.0, 1.0, 0.01, 1.0))),
     aiMaskRefineRadius(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_REFINE_RADIUS"), 1, 32, 1, 8))),
-    aiMaskRefineEps(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_REFINE_EPS"), 0.001, 0.5, 0.001, 0.01)))
+    aiMaskRefineEps(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_REFINE_EPS"), 0.001, 0.5, 0.001, 0.01))),
+    aiMaskEdit(Gtk::manage(new Gtk::Button(M("TP_LOCALLAB_AIMASK_REFINE_BYHAND"))))
 {
     set_orientation(Gtk::ORIENTATION_VERTICAL);
 
@@ -113,6 +116,10 @@ LocallabAIMask::LocallabAIMask():
 
     refineFrame->add(*refineBox);
     pack_start(*refineFrame);
+
+    aiMaskEdit->set_tooltip_text(M("TP_LOCALLAB_AIMASK_REFINE_BYHAND_TOOLTIP"));
+    aiMaskEdit->signal_clicked().connect(sigc::mem_fun(*this, &LocallabAIMask::openMaskEditor));
+    pack_start(*aiMaskEdit);
 }
 
 LocallabAIMask::~LocallabAIMask()
@@ -200,6 +207,7 @@ void LocallabAIMask::read(const rtengine::procparams::ProcParams* pp, const Para
         aiMaskShapeOpCombo->set_active(rtengine::LIM(spot.aiMaskShapeOp, 0, 2));
         aiMaskRefineRadius->setValue((double)spot.aiMaskRefineRadius);
         aiMaskRefineEps->setValue(spot.aiMaskRefineEps);
+        paint_ = spot.aiMaskPaint;
     }
 
     enableListener();
@@ -226,6 +234,7 @@ void LocallabAIMask::write(rtengine::procparams::ProcParams* pp, ParamsEdited* p
         spot.aiMaskShapeOp = rtengine::LIM(aiMaskShapeOpCombo->get_active_row_number(), 0, 2);
         spot.aiMaskRefineRadius = (int)aiMaskRefineRadius->getValue();
         spot.aiMaskRefineEps = aiMaskRefineEps->getValue();
+        spot.aiMaskPaint = paint_;
     }
 
     // Note: No need to manage pedited as batch mode is deactivated for Locallab
@@ -328,3 +337,46 @@ void LocallabAIMask::aiMaskInvertChanged()
 }
 
 #endif // RT_AI_MASKING
+
+// Hand-correcting the selection, over the photo in the engine's own framing:
+// the mask is found on the upright, uncropped frame, so that is what the
+// strokes have to be painted on.
+void LocallabAIMask::openMaskEditor()
+{
+    MaskPaintDlg::AutoMask automatic;
+    const AIMaskSnapshot snapshot = AIMaskCache::getInstance().getPreparedMask(
+        static_cast<AISegClass>(aiMaskClassCombo->get_active_row_number()),
+        static_cast<float>(rtengine::LIM(1.0 - aiMaskThreshold->getValue() / 100.0, 0.0, 1.0)),
+        static_cast<float>(aiMaskFeather->getValue()),
+        static_cast<float>(aiMaskBlur->getValue()),
+        18.f,
+        aiMaskInvert->get_active(),
+        static_cast<int>(aiMaskRefineRadius->getValue()),
+        static_cast<float>(aiMaskRefineEps->getValue()),
+        rtengine::MaskPaint(),
+        true);
+
+    if (snapshot) {
+        automatic.width = snapshot.width;
+        automatic.height = snapshot.height;
+        automatic.values.resize(static_cast<size_t>(automatic.width) * automatic.height);
+
+        for (int y = 0; y < automatic.height; ++y) {
+            for (int x = 0; x < automatic.width; ++x) {
+                automatic.values[static_cast<size_t>(y) * automatic.width + x] = (*snapshot.mask)[y][x];
+            }
+        }
+    }
+
+    rtengine::MaskPaint paint = paint_;
+
+    if (!maskpaint::refine(dynamic_cast<Gtk::Window*>(get_toplevel()), editedFilePath_, automatic, paint)) {
+        return;
+    }
+
+    paint_ = paint;
+
+    if (isLocActivated && listener) {
+        listener->panelChanged(EvlocallabAIMask, M("HISTORY_CHANGED"));
+    }
+}

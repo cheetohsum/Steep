@@ -18,6 +18,7 @@
 
 #include "array2D.h"
 #include "aisegmentation.h"
+#include "maskpaint.h"
 #include "rtgui/threadutils.h"
 
 namespace rtengine
@@ -60,6 +61,7 @@ public:
                                    float threshold, float feather, float blur,
                                    float maskSize, bool invert,
                                    int refineRadius, float refineEps,
+                                   const MaskPaint& paint,
                                    bool multiThread);
 
     bool hasCachedMasks(const std::string& imageId) const;
@@ -99,6 +101,7 @@ private:
         int invert;
         int refineRadius;
         int refineEps;
+        unsigned int paint;   // hash of the hand-painted corrections
 
         bool operator==(const PreparedKey& other) const;
     };

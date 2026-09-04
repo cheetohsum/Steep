@@ -34,12 +34,23 @@ private:
     Adjuster* const aiMaskOpacity;
     Adjuster* const aiMaskRefineRadius;
     Adjuster* const aiMaskRefineEps;
+    Gtk::Button* const aiMaskEdit;
+    // The file the strokes are painted over, and the strokes themselves: the
+    // spot's own copy is only readable while read()/write() run.
+    Glib::ustring editedFilePath_;
+    rtengine::MaskPaint paint_;
 
     sigc::connection aiMaskClassConn, aiMaskInvertConn, aiMaskShapeOpConn;
 
     rtengine::ProcEvent EvlocallabAIMask;
 
 public:
+    // Fed by the tool panel coordinator when a photo is opened.
+    void setEditedFilePath(const Glib::ustring& path)
+    {
+        editedFilePath_ = path;
+    }
+
     LocallabAIMask();
     ~LocallabAIMask();
 
@@ -60,6 +71,8 @@ public:
     void enableListener() override;
     void read(const rtengine::procparams::ProcParams* pp, const ParamsEdited* pedited = nullptr) override;
     void write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited = nullptr) override;
+    void openMaskEditor();
+
     void setDefaults(const rtengine::procparams::ProcParams* defParams, const ParamsEdited* pedited = nullptr) override;
     void adjusterChanged(Adjuster* a, double newval) override;
 

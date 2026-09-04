@@ -3627,6 +3627,7 @@ bool DoubleExposureParams::Layer::operator ==(const Layer& other) const
         && maskFeather == other.maskFeather
         && maskInvert == other.maskInvert
         && cropToSubject == other.cropToSubject
+        && maskPaint == other.maskPaint
         && gateSource == other.gateSource
         && gateLow == other.gateLow
         && gateHigh == other.gateHigh
@@ -4648,6 +4649,13 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
                 keyFile.set_double("Double Exposure", prefix + "MaskFeather", doubleExposure.layers[i].maskFeather);
                 keyFile.set_boolean("Double Exposure", prefix + "MaskInvert", doubleExposure.layers[i].maskInvert);
                 keyFile.set_boolean("Double Exposure", prefix + "CropToSubject", doubleExposure.layers[i].cropToSubject);
+
+                // Only written when something has been painted, so a file
+                // that has not been touched by the mask editor gains no key.
+                if (!doubleExposure.layers[i].maskPaint.empty()) {
+                    keyFile.set_string("Double Exposure", prefix + "MaskPaint",
+                                       doubleExposure.layers[i].maskPaint.encode());
+                }
                 keyFile.set_integer("Double Exposure", prefix + "GateSource", static_cast<int>(doubleExposure.layers[i].gateSource));
                 keyFile.set_double("Double Exposure", prefix + "GateLow", doubleExposure.layers[i].gateLow);
                 keyFile.set_double("Double Exposure", prefix + "GateHigh", doubleExposure.layers[i].gateHigh);
@@ -7530,6 +7538,11 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
 
                         if (keyFile.has_key("Double Exposure", prefix + "CropToSubject")) {
                             layer.cropToSubject = keyFile.get_boolean("Double Exposure", prefix + "CropToSubject");
+                        }
+
+                        if (keyFile.has_key("Double Exposure", prefix + "MaskPaint")) {
+                            layer.maskPaint = MaskPaint::decode(
+                                keyFile.get_string("Double Exposure", prefix + "MaskPaint"));
                         }
 
                         if (keyFile.has_key("Double Exposure", prefix + "GateStrength")) {

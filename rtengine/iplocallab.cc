@@ -956,6 +956,7 @@ struct local_params {
     float aimaskopa;
     int aimaskrefrad;
     float aimaskrefeps;
+    MaskPaint aimaskpaint;
     int aimaskshapeop; // 0 = blend, 1 = shape adds, 2 = shape cuts
     // The user's shape extents, stashed before the AI work-bounds override
     // clobbers lxL/lx/lyT/ly — add/subtract evaluate the shape from these.
@@ -2093,6 +2094,7 @@ static void calcLocalParams(int sp, int oW, int oH,  const LocallabParams& local
     lp.aimaskopa = static_cast<float>(locallab.spots.at(sp).aiMaskOpacity);
     lp.aimaskrefrad = locallab.spots.at(sp).aiMaskRefineRadius;
     lp.aimaskrefeps = static_cast<float>(locallab.spots.at(sp).aiMaskRefineEps);
+    lp.aimaskpaint = locallab.spots.at(sp).aiMaskPaint;
     lp.aimaskshapeop = locallab.spots.at(sp).aiMaskShapeOp;
     // Empty until Lab_Local stashes the real shape extents; an empty shape
     // makes add a no-op and subtract cut nothing, never garbage.
@@ -10031,7 +10033,7 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
         aiMaskSnapshot = AIMaskCache::getInstance().getPreparedMask(
             static_cast<AISegClass>(lp.aimaskclass),
             lp.aimaskthr, lp.aimaskfeath, lp.aimaskblur, lp.aimasksize, lp.aimaskinv,
-            lp.aimaskrefrad, lp.aimaskrefeps, multiThread);
+            lp.aimaskrefrad, lp.aimaskrefeps, lp.aimaskpaint, multiThread);
         if (aiMaskSnapshot) {
             aiMaskPtr = aiMaskSnapshot.mask.get();
             aiMaskW = aiMaskSnapshot.width;
@@ -15870,7 +15872,7 @@ void ImProcFunctions::Lab_Local(
         const AIMaskSnapshot aiBounds = AIMaskCache::getInstance().getPreparedMask(
             static_cast<AISegClass>(lp.aimaskclass),
             lp.aimaskthr, 100.f, lp.aimaskblur, 150.f, lp.aimaskinv,
-            lp.aimaskrefrad, lp.aimaskrefeps, multiThread);
+            lp.aimaskrefrad, lp.aimaskrefeps, lp.aimaskpaint, multiThread);
 
         if (aiBounds && aiBounds.hasBounds()
                 && aiBounds.fullWidth > 0 && aiBounds.fullHeight > 0 && sk > 0) {
@@ -24001,7 +24003,7 @@ void ImProcFunctions::Lab_Local(
             aiMaskSnapshotOv = AIMaskCache::getInstance().getPreparedMask(
                 static_cast<AISegClass>(lp.aimaskclass),
                 lp.aimaskthr, lp.aimaskfeath, lp.aimaskblur, lp.aimasksize, lp.aimaskinv,
-                lp.aimaskrefrad, lp.aimaskrefeps, true);
+                lp.aimaskrefrad, lp.aimaskrefeps, lp.aimaskpaint, true);
             if (aiMaskSnapshotOv) {
                 aiMaskPtrOv = aiMaskSnapshotOv.mask.get();
                 aiMaskWOv = aiMaskSnapshotOv.width;
@@ -24157,7 +24159,7 @@ void ImProcFunctions::Lab_Local(
             aiSnapDb = AIMaskCache::getInstance().getPreparedMask(
                 static_cast<AISegClass>(lp.aimaskclass),
                 lp.aimaskthr, lp.aimaskfeath, lp.aimaskblur, lp.aimasksize, lp.aimaskinv,
-                lp.aimaskrefrad, lp.aimaskrefeps, multiThread);
+                lp.aimaskrefrad, lp.aimaskrefeps, lp.aimaskpaint, multiThread);
             if (aiSnapDb) {
                 aiDbPtr = aiSnapDb.mask.get();
                 aiDbW = aiSnapDb.width;

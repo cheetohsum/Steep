@@ -4467,6 +4467,7 @@ void ToolPanelCoordinator::initImage(rtengine::StagedImageProcessor* ipc_, bool 
         flatfield->setShortcutPath(Glib::path_get_dirname(ipc->getInitialImage()->getFileName()));
         aidenoise->setImagePath(ipc->getInitialImage()->getFileName());
         doubleExposure->setEditedFilePath(ipc->getInitialImage()->getFileName());
+        locallab->setEditedFilePath(ipc->getInitialImage()->getFileName());
         aidenoise->setImProcCoordinator(ipc);
 
         icm->setRawMeta(raw, (const rtengine::FramesData*)pMetaData);

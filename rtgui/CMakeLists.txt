@@ -114,6 +114,7 @@ set(RT_GUI_WIDGET_SOURCES
 
 set(RT_GUI_WINDOWS_SOURCES
     windows/doubleexposuredlg.cc
+    windows/maskpaintdlg.cc
     windows/editwindow.cc
     windows/historydialog.cc
     windows/iccprofilecreator.cc

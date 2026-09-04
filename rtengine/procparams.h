@@ -29,6 +29,7 @@
 #include "params/threshold.h"
 
 #include "coord.h"
+#include "maskpaint.h"
 #include "noncopyable.h"
 
 struct ParamsEdited;
@@ -1974,6 +1975,8 @@ struct DoubleExposureParams {
         double maskFeather; // 0..100
         bool maskInvert;
         bool cropToSubject;
+        // Hand-painted corrections on top of the segmentation.
+        MaskPaint maskPaint;
         // "Reveal in" gate: confine the layer to a luminance window with
         // smoothstep feather outside it. Low/high/feather are linear
         // luminance percent; strength 0 disables the gate.

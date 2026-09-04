@@ -31,6 +31,8 @@ class KeyFile;
 
 struct ParamsEdited;
 
+#include "../maskpaint.h"
+
 namespace rtengine {
 namespace procparams {
 
@@ -723,6 +725,7 @@ struct LocallabParams {
         int aiMaskRefineRadius;
         double aiMaskRefineEps;
         int aiMaskShapeOp; // 0 = blend with shape, 1 = shape adds to mask, 2 = shape cuts from mask
+        MaskPaint aiMaskPaint; // hand-painted corrections on top of the segmentation
         //ciecam
         bool visicie;
         bool expcie;

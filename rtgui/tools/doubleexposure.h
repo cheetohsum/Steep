@@ -61,6 +61,7 @@ private:
     MyComboBoxText *subjectMethod;
     Gtk::CheckButton *subjectInvert;
     Gtk::CheckButton *subjectCrop;
+    Gtk::Button *subjectEdit;
     Adjuster *subjectFeather;
     sigc::connection flipConn;
     sigc::connection subjectInvertConn;
@@ -80,6 +81,7 @@ private:
 
     std::vector<rtengine::procparams::DoubleExposureParams::Layer> layers;
     Glib::ustring editedFilePath_;
+    Glib::ustring workingProfile_;   // from the last read, for the mask store
     std::function<BrowserFilter()> browserFilterProvider_;
     std::function<Glib::ustring()> browserDirProvider_;
     std::function<void(const Glib::ustring&, const Glib::ustring&)> openPartnerHandler_;
@@ -132,6 +134,7 @@ public:
     void flipToggled();
     void subjectChanged();
     void subjectToggled();
+    void openMaskEditor();
     void autoGainToggled();
     void layerSelChanged();
 

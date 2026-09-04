@@ -95,6 +95,7 @@ set(RTENGINESOURCEFILES
     lcp.cc
     lensmetadata.cc
     lmmse_demosaic.cc
+    maskpaint.cc
     loadinitial.cc
     metadata.cc
     munselllch.cc

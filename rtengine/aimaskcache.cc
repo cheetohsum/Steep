@@ -11,6 +11,7 @@
 
 #include "aimaskcache.h"
 #include "aisubject.h"
+#include "maskpaint.h"
 
 #include "boxblur.h"
 #include "edittrace.h"
@@ -186,7 +187,8 @@ bool AIMaskCache::PreparedKey::operator==(const PreparedKey& other) const
         && maskSize == other.maskSize
         && invert == other.invert
         && refineRadius == other.refineRadius
-        && refineEps == other.refineEps;
+        && refineEps == other.refineEps
+        && paint == other.paint;
 }
 
 bool AIMaskCache::RefinedKey::operator==(const RefinedKey& other) const
@@ -398,7 +400,8 @@ AIMaskSnapshot AIMaskCache::getMaskSnapshot(AISegClass cls) const
 
 AIMaskSnapshot AIMaskCache::getPreparedMask(
     AISegClass cls, float threshold, float feather, float blur, float maskSize,
-    bool invert, int refineRadius, float refineEps, bool multiThread)
+    bool invert, int refineRadius, float refineEps, const MaskPaint& paint,
+    bool multiThread)
 {
     const PreparedKey key {
         static_cast<int>(cls),
@@ -408,7 +411,8 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
         quantize(maskSize, 100.f),
         invert ? 1 : 0,
         refineRadius,
-        quantize(refineEps, 1000000.f)
+        quantize(refineEps, 1000000.f),
+        paint.hash()
     };
     const RefinedKey refinedKey {
         key.classIndex, key.blur, key.refineRadius, key.refineEps
@@ -554,6 +558,10 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
             }
             (*prepared)[y][x] = value < 0.001f ? 0.f : (value > 0.999f ? 1.f : value);
         }
+    }
+
+    if (!paint.empty()) {
+        paint.apply(*prepared, width, height, multiThread);
     }
 
     int maskX0 = width;

@@ -170,7 +170,8 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
 
 #ifdef RT_AI_MASKING
             rl.mask = PartnerMaskStore::getInstance().getMask(layer.path, workingProfile, layer.maskClass,
-                                                              layer.maskFeather, layer.maskInvert, multiThread);
+                                                              layer.maskFeather, layer.maskInvert,
+                                                              layer.maskPaint, multiThread);
 
             // Cropping to the subject is the whole of "pattern this subject":
             // the source rect becomes the mask's bounding box and every step

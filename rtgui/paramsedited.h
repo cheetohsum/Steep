@@ -1194,6 +1194,7 @@ public:
         bool aiMaskRefineRadius;
         bool aiMaskRefineEps;
         bool aiMaskShapeOp;
+        bool aiMaskPaint;
         //locallabcie
         bool visicie;
         bool complexcie;

@@ -79,7 +79,8 @@ int classIndex(procparams::DoubleExposureParams::MaskClass cls)
 // Segment the partner and reduce it to the one class the layer asked for.
 std::shared_ptr<PartnerMask> computeMask(const Glib::ustring& path, const Glib::ustring& workingProfile,
                                          procparams::DoubleExposureParams::MaskClass cls,
-                                         double feather, bool invert, bool multiThread)
+                                         double feather, bool invert, const MaskPaint& paint,
+                                         bool multiThread)
 {
     const int wanted = classIndex(cls);
 
@@ -211,25 +212,9 @@ std::shared_ptr<PartnerMask> computeMask(const Glib::ustring& path, const Glib::
         }
     }
 
-    // Bounds come from the UNBLURRED class, so a heavy feather does not creep
-    // the crop outward; the box is then padded by the feather so a softened
-    // edge is not clipped by its own bounding box.
-    int bx0 = maskW;
-    int by0 = maskH;
-    int bx1 = -1;
-    int by1 = -1;
-
-    for (int y = 0; y < maskH; ++y) {
-        for (int x = 0; x < maskW; ++x) {
-            if (chosen[y][x] > 0.5f) {
-                bx0 = std::min(bx0, x);
-                by0 = std::min(by0, y);
-                bx1 = std::max(bx1, x);
-                by1 = std::max(by1, y);
-            }
-        }
-    }
-
+    // Inversion belongs to the automatic selection, so it happens before the
+    // strokes: the user paints on what they can see, and what they see is the
+    // inverted mask.
     if (invert) {
 #ifdef _OPENMP
         #pragma omp parallel for if(multiThread)
@@ -239,11 +224,34 @@ std::shared_ptr<PartnerMask> computeMask(const Glib::ustring& path, const Glib::
                 result->mask[y][x] = LIM01(1.f - result->mask[y][x]);
             }
         }
+    }
 
-        // What is left is everything but the class, which spans the frame.
-        bx0 = by0 = 0;
-        bx1 = maskW - 1;
-        by1 = maskH - 1;
+    if (!paint.empty()) {
+        paint.apply(result->mask, maskW, maskH, multiThread);
+    }
+
+    // Bounds come from the UNBLURRED class, so a heavy feather does not creep
+    // the crop outward; the box is then padded by the feather so a softened
+    // edge is not clipped by its own bounding box. Once anything has been
+    // inverted or painted, though, the class no longer describes what is
+    // selected, and the finished mask has to be measured instead.
+    const bool measureFinished = invert || !paint.empty();
+    int bx0 = maskW;
+    int by0 = maskH;
+    int bx1 = -1;
+    int by1 = -1;
+
+    for (int y = 0; y < maskH; ++y) {
+        for (int x = 0; x < maskW; ++x) {
+            const float value = measureFinished ? result->mask[y][x] : chosen[y][x];
+
+            if (value > 0.5f) {
+                bx0 = std::min(bx0, x);
+                by0 = std::min(by0, y);
+                bx1 = std::max(bx1, x);
+                by1 = std::max(by1, y);
+            }
+        }
     }
 
     if (bx1 >= bx0 && by1 >= by0) {
@@ -332,13 +340,14 @@ PartnerMaskStore& PartnerMaskStore::getInstance()
 std::shared_ptr<const PartnerMask> PartnerMaskStore::getMask(const Glib::ustring& path,
                                                              const Glib::ustring& workingProfile,
                                                              procparams::DoubleExposureParams::MaskClass cls,
-                                                             double feather, bool invert, bool multiThread)
+                                                             double feather, bool invert,
+                                                             const MaskPaint& paint, bool multiThread)
 {
     if (path.empty() || cls == procparams::DoubleExposureParams::MaskClass::OFF) {
         return nullptr;
     }
 
-    const Glib::ustring key = makeKey(path, workingProfile, cls, feather, invert);
+    const Glib::ustring key = makeKey(path, workingProfile, cls, feather, invert, paint);
 
     std::shared_ptr<PartnerMask> result;
 
@@ -346,7 +355,7 @@ std::shared_ptr<const PartnerMask> PartnerMaskStore::getMask(const Glib::ustring
         return result;
     }
 
-    result = computeMask(path, workingProfile, cls, feather, invert, multiThread);
+    result = computeMask(path, workingProfile, cls, feather, invert, paint, multiThread);
 
     if (result) {
         cache.insert(key, result);
@@ -358,7 +367,8 @@ std::shared_ptr<const PartnerMask> PartnerMaskStore::getMask(const Glib::ustring
 std::shared_ptr<const PartnerMask> PartnerMaskStore::peekMask(const Glib::ustring& path,
                                                               const Glib::ustring& workingProfile,
                                                               procparams::DoubleExposureParams::MaskClass cls,
-                                                              double feather, bool invert)
+                                                              double feather, bool invert,
+                                                              const MaskPaint& paint)
 {
     if (path.empty() || cls == procparams::DoubleExposureParams::MaskClass::OFF) {
         return nullptr;
@@ -366,7 +376,7 @@ std::shared_ptr<const PartnerMask> PartnerMaskStore::peekMask(const Glib::ustrin
 
     std::shared_ptr<PartnerMask> result;
 
-    if (cache.get(makeKey(path, workingProfile, cls, feather, invert), result)) {
+    if (cache.get(makeKey(path, workingProfile, cls, feather, invert, paint), result)) {
         return result;
     }
 
@@ -377,11 +387,11 @@ std::shared_ptr<const PartnerMask> PartnerMaskStore::peekMask(const Glib::ustrin
 // on every value it passes through.
 Glib::ustring PartnerMaskStore::makeKey(const Glib::ustring& path, const Glib::ustring& workingProfile,
                                         procparams::DoubleExposureParams::MaskClass cls,
-                                        double feather, bool invert)
+                                        double feather, bool invert, const MaskPaint& paint)
 {
-    return Glib::ustring::compose("%1|%2|%3|%4|%5", path, workingProfile,
+    return Glib::ustring::compose("%1|%2|%3|%4|%5|%6", path, workingProfile,
                                   static_cast<int>(cls), static_cast<int>(std::lround(feather)),
-                                  invert ? 1 : 0);
+                                  invert ? 1 : 0, paint.hash());
 }
 
 void PartnerMaskStore::clearCache()

@@ -59,6 +59,7 @@ private:
     LocallabMask expmask;
 #ifdef RT_AI_MASKING
     LocallabAIMask expaimask;
+
 #endif
     Locallabcie expcie;
 
@@ -109,6 +110,15 @@ private:
     Glib::ustring spotName;
 
 public:
+    // The mask editor paints over the photo itself, so the AI mask tool needs
+    // to know which file that is.
+    void setEditedFilePath(const Glib::ustring& path)
+    {
+#ifdef RT_AI_MASKING
+        expaimask.setEditedFilePath(path);
+#endif
+    }
+
     static const Glib::ustring TOOL_NAME;
 
     Locallab();

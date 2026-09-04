@@ -26,6 +26,11 @@
 
 #include "eventmapper.h"
 #include "windows/doubleexposuredlg.h"
+#include "windows/maskpaintdlg.h"
+
+#ifdef RT_AI_MASKING
+#include "rtengine/partnermaskstore.h"
+#endif
 
 #include "rtengine/procparams.h"
 
@@ -213,6 +218,11 @@ DoubleExposure::DoubleExposure() :
     subjectCropConn = subjectCrop->signal_toggled().connect(sigc::mem_fun(*this, &DoubleExposure::subjectToggled));
     subjectOptionsRow->pack_start(*subjectInvert, Gtk::PACK_SHRINK);
     subjectOptionsRow->pack_start(*subjectCrop, Gtk::PACK_SHRINK);
+
+    subjectEdit = Gtk::manage(new Gtk::Button(M("TP_DOUBLEEXPOSURE_SUBJECT_EDIT")));
+    subjectEdit->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SUBJECT_EDIT_TOOLTIP"));
+    subjectEdit->signal_clicked().connect(sigc::mem_fun(*this, &DoubleExposure::openMaskEditor));
+    subjectOptionsRow->pack_end(*subjectEdit, Gtk::PACK_SHRINK);
     subjectOptionsRow->show_all();
     subjectOptionsRow->set_no_show_all(true);
 
@@ -661,6 +671,7 @@ void DoubleExposure::updateSensitivity()
 #endif
     const bool masked = idx >= 0 && layers[idx].maskClass != DoubleExposureParams::MaskClass::OFF;
     subjectRow->set_visible(haveSegmentation && haveLayers);
+    subjectEdit->set_sensitive(haveLayers && masked);
     subjectOptionsRow->set_visible(haveSegmentation && haveLayers && masked);
     subjectFeather->set_visible(haveSegmentation && haveLayers && masked);
     subjectMethod->set_sensitive(haveLayers);
@@ -760,6 +771,8 @@ void DoubleExposure::openChooser()
 
 void DoubleExposure::read(const ProcParams* pp, const ParamsEdited* pedited)
 {
+    workingProfile_ = pp->icm.workingProfile;
+
     disableListener();
 
     if (pedited) {
@@ -1049,6 +1062,43 @@ void DoubleExposure::subjectChanged()
     if (listener && getEnabled()) {
         listener->panelChanged(EvDESubject, subjectMethod->get_active_text());
     }
+}
+
+// Hand-correcting the selection. The segmentation is recomputed here rather
+// than waited for: the user has just asked to see it, so paying for it on the
+// spot is the least surprising thing to do, and it warms the cache the
+// composite is about to read.
+void DoubleExposure::openMaskEditor()
+{
+#ifdef RT_AI_MASKING
+    const int idx = selectedLayerIndex();
+
+    if (idx < 0 || layers[idx].maskClass == DoubleExposureParams::MaskClass::OFF) {
+        return;
+    }
+
+    auto& layer = layers[idx];
+    // The edit's own working profile, so this shares the cache entry the
+    // composite is about to read instead of segmenting the same file twice.
+    auto mask = rtengine::PartnerMaskStore::getInstance().getMask(
+                    layer.path, workingProfile_, layer.maskClass, layer.maskFeather,
+                    layer.maskInvert, rtengine::MaskPaint(), true);
+
+    rtengine::MaskPaint paint = layer.maskPaint;
+
+    if (!maskpaint::refine(dynamic_cast<Gtk::Window*>(get_toplevel()), layer.path,
+                           maskpaint::fromPartner(mask), paint)) {
+        return;
+    }
+
+    layer.maskPaint = paint;
+    layersEdited_ = true;
+    autoEnable();
+
+    if (listener && getEnabled()) {
+        listener->panelChanged(EvDESubject, M("HISTORY_CHANGED"));
+    }
+#endif
 }
 
 void DoubleExposure::subjectToggled()

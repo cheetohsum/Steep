@@ -17,6 +17,7 @@
 #include "doubleexposuredlg.h"
 
 #include "partnerthumb.h"
+#include "maskpaintdlg.h"
 
 #include "rtengine/colortemp.h"
 #include "rtengine/doubleexposureblend.h"
@@ -306,6 +307,7 @@ struct DEThumbReq {
     int maskClass = 0;
     double maskFeather = 0.0;
     bool maskInvert = false;
+    rtengine::MaskPaint maskPaint;
 };
 
 struct DEThumbQueue {
@@ -1437,6 +1439,10 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     subjectCrop_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SUBJECT_CROP_TOOLTIP"));
     subjectCrop_->signal_toggled().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
     subjectRow_->pack_start(*subjectCrop_, Gtk::PACK_SHRINK);
+    subjectEdit_ = Gtk::manage(new Gtk::Button(M("TP_DOUBLEEXPOSURE_SUBJECT_EDIT")));
+    subjectEdit_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SUBJECT_EDIT_TOOLTIP"));
+    subjectEdit_->signal_clicked().connect(sigc::mem_fun(*this, &DoubleExposureDlg::openMaskEditor));
+    subjectRow_->pack_start(*subjectEdit_, Gtk::PACK_SHRINK);
     patternBox->pack_start(*subjectRow_, Gtk::PACK_SHRINK);
 
 
@@ -1917,7 +1923,7 @@ void DoubleExposureDlg::requestThumbs(const std::vector<Glib::ustring>& paths, i
             // The base's styled preview render is the plate the dialog
             // composites onto: strip the image's own double exposure from it.
             const bool basePlate = !neutral && !isGrid && *it == baseImagePath_;
-            queue.emplace_front(DEThumbReq{*it, height, neutral, basePlate, false, false, 0, 0.0, false});
+            queue.emplace_front(DEThumbReq{*it, height, neutral, basePlate, false, false, 0, 0.0, false, {}});
         }
 
         while (thumbQueue_->grid.size() > MAX_GRID_QUEUE) {
@@ -1964,6 +1970,7 @@ void DoubleExposureDlg::pumpThumbQueue()
                 int maskClass = 0;
                 double maskFeather = 0.0;
                 bool maskInvert = false;
+                rtengine::MaskPaint maskPaint;
 
                 {
                     std::lock_guard<std::mutex> lock(queue->mutex);
@@ -1983,6 +1990,7 @@ void DoubleExposureDlg::pumpThumbQueue()
                     maskClass = source.front().maskClass;
                     maskFeather = source.front().maskFeather;
                     maskInvert = source.front().maskInvert;
+                    maskPaint = source.front().maskPaint;
                     source.pop_front();
                 }
 
@@ -1996,7 +2004,7 @@ void DoubleExposureDlg::pumpThumbQueue()
                     rtengine::PartnerMaskStore::getInstance().getMask(
                         path, sceneProfile,
                         static_cast<DoubleExposureParams::MaskClass>(maskClass),
-                        maskFeather, maskInvert, true);
+                        maskFeather, maskInvert, maskPaint, true);
 
                     Glib::signal_idle().connect_once([this, alive]() {
                         if (!*alive) {
@@ -2061,14 +2069,14 @@ void DoubleExposureDlg::requestPartnerMasks()
         }
 
         if (rtengine::PartnerMaskStore::getInstance().peekMask(layer.path, workingProfile_,
-                layer.maskClass, layer.maskFeather, layer.maskInvert)) {
+                layer.maskClass, layer.maskFeather, layer.maskInvert, layer.maskPaint)) {
             continue;
         }
 
-        const Glib::ustring key = layer.path + Glib::ustring::compose("|mask|%1|%2|%3",
+        const Glib::ustring key = layer.path + Glib::ustring::compose("|mask|%1|%2|%3|%4",
                                   static_cast<int>(layer.maskClass),
                                   static_cast<int>(std::lround(layer.maskFeather)),
-                                  layer.maskInvert ? 1 : 0);
+                                  layer.maskInvert ? 1 : 0, layer.maskPaint.hash());
 
         if (pendingThumbs_.count(key)) {
             continue;
@@ -2077,7 +2085,7 @@ void DoubleExposureDlg::requestPartnerMasks()
         pendingThumbs_.insert(key);
         needed.push_back(DEThumbReq{layer.path, 0, false, false, false, true,
                                     static_cast<int>(layer.maskClass), layer.maskFeather,
-                                    layer.maskInvert});
+                                    layer.maskInvert, layer.maskPaint});
     }
 
     if (needed.empty()) {
@@ -2124,7 +2132,7 @@ void DoubleExposureDlg::requestScenePlates(const std::vector<Glib::ustring>& pat
         std::lock_guard<std::mutex> lock(thumbQueue_->mutex);
 
         for (auto it = needed.rbegin(); it != needed.rend(); ++it) {
-            thumbQueue_->preview.emplace_front(DEThumbReq{*it, height, false, false, true, false, 0, 0.0, false});
+            thumbQueue_->preview.emplace_front(DEThumbReq{*it, height, false, false, true, false, 0, 0.0, false, {}});
         }
     }
 
@@ -2625,6 +2633,7 @@ void DoubleExposureDlg::syncLayerControls()
         subjectMethod_->set_sensitive(false);
         subjectInvert_->set_sensitive(false);
         subjectCrop_->set_sensitive(false);
+        subjectEdit_->set_sensitive(false);
         subjectFeatherScale_->set_sensitive(false);
         resetPlacement_->set_sensitive(false);
         blendMethod_->set_sensitive(false);
@@ -2681,6 +2690,7 @@ void DoubleExposureDlg::syncLayerControls()
         subjectMethod_->set_sensitive(true);
         subjectInvert_->set_sensitive(masked);
         subjectCrop_->set_sensitive(masked);
+        subjectEdit_->set_sensitive(masked);
         subjectFeatherScale_->set_sensitive(masked);
         subjectMethod_->set_active(static_cast<int>(layer.maskClass));
         subjectInvert_->set_active(layer.maskInvert);
@@ -2738,6 +2748,7 @@ void DoubleExposureDlg::layerControlChanged()
     const bool masked = params_.layers[selectedLayer_].maskClass != DoubleExposureParams::MaskClass::OFF;
     subjectInvert_->set_sensitive(masked);
     subjectCrop_->set_sensitive(masked);
+    subjectEdit_->set_sensitive(masked);
     subjectFeatherScale_->set_sensitive(masked);
 
     requestPartnerMasks();
@@ -2835,6 +2846,38 @@ void DoubleExposureDlg::onPreviewScale(double factor)
     layer.scale = std::min(std::max(layer.scale * factor, 10.0), 400.0);
     syncPlacementControls();
     schedulePreviewUpdate();
+}
+
+void DoubleExposureDlg::openMaskEditor()
+{
+#ifdef RT_AI_MASKING
+    if (selectedLayer_ >= params_.layers.size()) {
+        return;
+    }
+
+    auto& layer = params_.layers[selectedLayer_];
+
+    if (layer.maskClass == DoubleExposureParams::MaskClass::OFF) {
+        return;
+    }
+
+    // Computed here rather than waited for: the user has just asked to see
+    // the selection, so paying for it on the spot is the least surprising
+    // thing to do, and it warms the cache the preview reads.
+    auto mask = rtengine::PartnerMaskStore::getInstance().getMask(
+                    layer.path, workingProfile_, layer.maskClass, layer.maskFeather,
+                    layer.maskInvert, rtengine::MaskPaint(), true);
+
+    rtengine::MaskPaint paint = layer.maskPaint;
+
+    if (!maskpaint::refine(this, layer.path, maskpaint::fromPartner(mask), paint)) {
+        return;
+    }
+
+    layer.maskPaint = paint;
+    requestPartnerMasks();
+    schedulePreviewUpdate();
+#endif
 }
 
 void DoubleExposureDlg::onPreviewRotate(double degrees)
@@ -3266,7 +3309,8 @@ void DoubleExposureDlg::updatePreview(bool quick)
         // Cache-only: a redraw never waits on inference. requestPartnerMasks
         // warms these on the decoder pool and asks for another pass.
         lp.mask = rtengine::PartnerMaskStore::getInstance().peekMask(
-                      layer.path, workingProfile_, layer.maskClass, layer.maskFeather, layer.maskInvert);
+                      layer.path, workingProfile_, layer.maskClass, layer.maskFeather,
+                      layer.maskInvert, layer.maskPaint);
 
         if (layer.cropToSubject && lp.mask && lp.mask->hasBounds() && lp.mask->fullWidth > 0) {
             // The engine's source rect, in the picker's width-normalised units.

@@ -2198,6 +2198,7 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
                 locallab.spots.at(j).aiMaskRefineRadius = locallab.spots.at(j).aiMaskRefineRadius && pSpot.aiMaskRefineRadius == otherSpot.aiMaskRefineRadius;
                 locallab.spots.at(j).aiMaskRefineEps = locallab.spots.at(j).aiMaskRefineEps && pSpot.aiMaskRefineEps == otherSpot.aiMaskRefineEps;
                 locallab.spots.at(j).aiMaskShapeOp = locallab.spots.at(j).aiMaskShapeOp && pSpot.aiMaskShapeOp == otherSpot.aiMaskShapeOp;
+                locallab.spots.at(j).aiMaskPaint = locallab.spots.at(j).aiMaskPaint && pSpot.aiMaskPaint == otherSpot.aiMaskPaint;
 
                 //ciecam
                 locallab.spots.at(j).visicie = locallab.spots.at(j).visicie && pSpot.visicie == otherSpot.visicie;
@@ -7108,6 +7109,10 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
             toEdit.locallab.spots.at(i).aiMaskRefineRadius = mods.locallab.spots.at(i).aiMaskRefineRadius;
         }
 
+        if (locallab.spots.at(i).aiMaskPaint) {
+            toEdit.locallab.spots.at(i).aiMaskPaint = mods.locallab.spots.at(i).aiMaskPaint;
+        }
+
         if (locallab.spots.at(i).aiMaskShapeOp) {
             toEdit.locallab.spots.at(i).aiMaskShapeOp = mods.locallab.spots.at(i).aiMaskShapeOp;
         }
@@ -10180,6 +10185,7 @@ LocallabParamsEdited::LocallabSpotEdited::LocallabSpotEdited(bool v) :
     aiMaskRefineRadius(v),
     aiMaskRefineEps(v),
     aiMaskShapeOp(v),
+    aiMaskPaint(v),
     //ciecam
     visicie(v),
     complexcie(v),
@@ -11059,6 +11065,7 @@ void LocallabParamsEdited::LocallabSpotEdited::set(bool v)
     aiMaskRefineRadius = v;
     aiMaskRefineEps = v;
     aiMaskShapeOp = v;
+    aiMaskPaint = v;
     //ciecam
     visicie= v;
     complexcie= v;

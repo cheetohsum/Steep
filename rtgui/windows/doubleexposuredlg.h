@@ -112,6 +112,7 @@ private:
     void onPreviewMove(double dxCompositePx, double dyCompositePx);
     void onPreviewScale(double factor);
     void onPreviewRotate(double degrees);
+    void openMaskEditor();
     void nudgeRotation(double degrees);
     void onPreviewReset();
     void showPatternRows(rtengine::procparams::DoubleExposureParams::Pattern pattern, bool masked);
@@ -220,6 +221,7 @@ private:
     MyComboBoxText* subjectMethod_;
     Gtk::CheckButton* subjectInvert_;
     Gtk::CheckButton* subjectCrop_;
+    Gtk::Button* subjectEdit_;
     Gtk::Scale* subjectFeatherScale_;
     Gtk::Button* resetPlacement_;
     Gtk::Box* trayBox_;

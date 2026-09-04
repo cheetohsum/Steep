@@ -79,7 +79,8 @@ public:
     std::shared_ptr<const PartnerMask> getMask(const Glib::ustring& path,
                                                const Glib::ustring& workingProfile,
                                                procparams::DoubleExposureParams::MaskClass cls,
-                                               double feather, bool invert, bool multiThread);
+                                               double feather, bool invert, const MaskPaint& paint,
+                                               bool multiThread);
 
     // Cache-only lookup. The picker's preview uses this so a redraw never
     // stalls on a segmentation; a warm-up request on its own worker fills
@@ -87,7 +88,7 @@ public:
     std::shared_ptr<const PartnerMask> peekMask(const Glib::ustring& path,
                                                 const Glib::ustring& workingProfile,
                                                 procparams::DoubleExposureParams::MaskClass cls,
-                                                double feather, bool invert);
+                                                double feather, bool invert, const MaskPaint& paint);
 
     void clearCache();
 
@@ -96,7 +97,7 @@ private:
 
     static Glib::ustring makeKey(const Glib::ustring& path, const Glib::ustring& workingProfile,
                                  procparams::DoubleExposureParams::MaskClass cls,
-                                 double feather, bool invert);
+                                 double feather, bool invert, const MaskPaint& paint);
 
     Cache<Glib::ustring, std::shared_ptr<PartnerMask>> cache;
 };

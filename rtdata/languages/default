@@ -3133,6 +3133,18 @@ TP_DOUBLEEXPOSURE_GATE_STRENGTH;Reveal strength
 TP_DOUBLEEXPOSURE_GATE_TOOLTIP;Confine this exposure to a luminance band: reveal it only in the shadows or highlights of the image beneath (base luminance) or of the layer itself (layer luminance). From/to bound the band on the tone scale as seen on screen (0 = black, 100 = white), feather softens its edges, and strength 0 turns the gate off.
 TP_DOUBLEEXPOSURE_FLIPH;Mirror
 TP_DOUBLEEXPOSURE_FLIPH_TOOLTIP;Flip this exposure left to right before it is turned and placed. Useful for facing a repeated motif both ways, or for matching the direction of a subject in the base frame.
+MASKPAINT_CLEAR;Clear all
+MASKPAINT_EXCLUDE;Paint out
+MASKPAINT_HARDNESS;Hardness
+MASKPAINT_HINT;Drag to paint. The right mouse button paints the opposite way, the scroll wheel resizes the brush. Strokes are kept as brush marks, not as a fixed picture, so they follow the selection if you change its settings afterwards.
+MASKPAINT_INCLUDE;Paint in
+MASKPAINT_NOSTROKES;Nothing painted
+MASKPAINT_SHOWMASK;Show selection
+MASKPAINT_SIZE;Brush size
+MASKPAINT_STRENGTH;Strength
+MASKPAINT_STROKES;%1 strokes
+MASKPAINT_TITLE;Refine selection by hand
+MASKPAINT_UNDO;Undo stroke
 TP_DOUBLEEXPOSURE_LABEL;Double Exposure
 TP_DOUBLEEXPOSURE_LATITUDE;Highlight latitude
 TP_DOUBLEEXPOSURE_LATITUDE_TOOLTIP;The film shoulder, applied to the finished stack. Light adds up linearly and the dense areas then stop registering more of it: a bright sky takes little of the second frame while shadows take all of it, the classic silhouette look, with no reveal gate needed. Measured against a single frame's white, so it works the same with Auto film gain on or off. 0 leaves the stack to clip at white further down the pipeline; higher values start the roll-off earlier (100 = from half a frame's white). Film Lab adds its own shoulder after this one.
@@ -3170,6 +3182,8 @@ TP_DOUBLEEXPOSURE_SUBJECT_ANIMAL;Animals
 TP_DOUBLEEXPOSURE_SUBJECT_BUILDING;Buildings
 TP_DOUBLEEXPOSURE_SUBJECT_CROP;Crop
 TP_DOUBLEEXPOSURE_SUBJECT_CROP_TOOLTIP;Treat the selection's bounding box as the exposure's frame instead of the whole picture. Combined with Pattern this is what repeats a cut-out subject as a motif rather than tiling the entire photograph.
+TP_DOUBLEEXPOSURE_SUBJECT_EDIT;Refineâ¦
+TP_DOUBLEEXPOSURE_SUBJECT_EDIT_TOOLTIP;Correct the selection by hand: paint parts of the partner in or out with a brush. The segmentation is only ever a guess, and this is where you disagree with it.
 TP_DOUBLEEXPOSURE_SUBJECT_FEATHER;Selection feather
 TP_DOUBLEEXPOSURE_SUBJECT_FEATHER_TOOLTIP;Softens the selection's edge. A segmented boundary is only ever an estimate, and a hard edge on an estimate is what reads as a cut-out; a little softness lets the exposure sit in the frame instead of on top of it.
 TP_DOUBLEEXPOSURE_SUBJECT_INVERT;Invert
@@ -4359,6 +4373,8 @@ TP_LOCALLAB_AIMASK_NORMAL;Normal
 TP_LOCALLAB_AIMASK_OPACITY;AI/Geometric Blend
 TP_LOCALLAB_AIMASK_OPACITY_TOOLTIP;Blend between geometric mask (0) and AI mask (1).
 TP_LOCALLAB_AIMASK_REFINE;Edge Refinement
+TP_LOCALLAB_AIMASK_REFINE_BYHAND;Refine by hand…
+TP_LOCALLAB_AIMASK_REFINE_BYHAND_TOOLTIP;Correct the selection with a brush: paint parts of the photo in or out. The segmentation is only ever a guess, and this is where you disagree with it. Strokes are kept as brush marks, so they follow the selection if you change its settings afterwards.
 TP_LOCALLAB_AIMASK_REFINE_RADIUS;Guided Filter Radius
 TP_LOCALLAB_AIMASK_REFINE_EPS;Guided Filter Epsilon
 TP_LOCALLAB_MASKTYPE;Type
