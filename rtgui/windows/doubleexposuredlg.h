@@ -215,7 +215,7 @@ private:
     Gtk::Box* radialRow_;  // count + diameter + selection feather
     Gtk::Widget* ringCountCell_;
     Gtk::Widget* ringDiameterCell_;
-    Gtk::Widget* ringTwistCell_;
+    Gtk::Box* twistRow_;
     Gtk::Widget* subjectFeatherCell_;
     bool haveSegmentation_ = false;
     Gtk::Expander* adjustExpander_;

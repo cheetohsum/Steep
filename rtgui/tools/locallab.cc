@@ -334,6 +334,7 @@ void Locallab::read(const rtengine::procparams::ProcParams* pp, const ParamsEdit
 
         r.maskType = pp->locallab.spots.at(i).useAIMask ? 1 : 0;
         r.aiMaskClass = pp->locallab.spots.at(i).aiMaskClass;
+        r.aiMaskPaint = pp->locallab.spots.at(i).aiMaskPaint.encode();
         r.aiMaskThreshold = pp->locallab.spots.at(i).aiMaskThreshold;
         r.maskBlendMode = pp->locallab.spots.at(i).maskBlendMode;
         r.gradType = pp->locallab.spots.at(i).gradType;
@@ -556,6 +557,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
 
             r.maskType = 0; // Normal mask
             r.aiMaskClass = 0;
+            r.aiMaskPaint = "";
             r.aiMaskThreshold = newSpot->aiMaskThreshold;
             r.maskBlendMode = newSpot->maskBlendMode;
             r.gradType = newSpot->gradType;
@@ -767,6 +769,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
 
             r.maskType = 1; // AI Mask
             r.aiMaskClass = aiClass;
+            r.aiMaskPaint = "";
             r.aiMaskThreshold = newSpot->aiMaskThreshold;
             r.maskBlendMode = newSpot->maskBlendMode;
             r.gradType = newSpot->gradType;
@@ -1111,6 +1114,7 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
 
             r.maskType = newSpot->useAIMask ? 1 : 0;
             r.aiMaskClass = newSpot->aiMaskClass;
+            r.aiMaskPaint = newSpot->aiMaskPaint.encode();
             r.aiMaskThreshold = newSpot->aiMaskThreshold;
             r.maskBlendMode = newSpot->maskBlendMode;
             r.gradType = newSpot->gradType;
@@ -1320,6 +1324,8 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                     pp->locallab.spots.at(pp->locallab.selspot).visiaimask = isAI;
                     if (isAI) {
                         pp->locallab.spots.at(pp->locallab.selspot).aiMaskClass = r->aiMaskClass;
+                        pp->locallab.spots.at(pp->locallab.selspot).aiMaskPaint =
+                            rtengine::MaskPaint::decode(r->aiMaskPaint);
                         pp->locallab.spots.at(pp->locallab.selspot).aiMaskThreshold = r->aiMaskThreshold;
                         pp->locallab.spots.at(pp->locallab.selspot).aiMaskFeather = r->transit;
                         pp->locallab.spots.at(pp->locallab.selspot).spotMethod = "full";

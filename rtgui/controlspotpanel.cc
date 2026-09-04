@@ -20,6 +20,11 @@
 
 #include "rtengine/rt_math.h"
 #include "controlspotpanel.h"
+#include "windows/maskpaintdlg.h"
+
+#ifdef RT_AI_MASKING
+#include "rtengine/aimaskcache.h"
+#endif
 #include "editwidgets.h"
 #include "options.h"
 #include "rtengine/procparams.h"
@@ -65,6 +70,7 @@ ControlSpotPanel::ControlSpotPanel():
     avoidgamutMethod_(Gtk::manage(new MyComboBoxText())),
     maskType_(Gtk::manage(new PopUpButton())),
     aiMaskClass_(Gtk::manage(new PopUpButton())),
+    aiMaskEdit_(Gtk::manage(new Gtk::Button(M("TP_LOCALLAB_AIMASK_REFINE_BYHAND")))),
     aiMaskTolerance_(Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_TOLERANCE"), 0, 100, 1, 70))),
     maskBlendMode_(Gtk::manage(new PopUpButton())),
     gradType_(Gtk::manage(new PopUpButton())),
@@ -601,6 +607,12 @@ ControlSpotPanel::ControlSpotPanel():
     aiMaskClass_->buttonGroup->set_halign(Gtk::ALIGN_START);
     ctboxaiclass->pack_start(*aiMaskClass_->buttonGroup, Gtk::PACK_SHRINK);
     aiMaskClass_->setShowSelectionLabel(true);
+
+    // Hand-correcting the automatic selection, next to the class that made it.
+    aiMaskEdit_->set_tooltip_text(M("TP_LOCALLAB_AIMASK_REFINE_BYHAND_TOOLTIP"));
+    aiMaskEdit_->signal_clicked().connect(sigc::mem_fun(*this, &ControlSpotPanel::openMaskEditor));
+    aiMaskEdit_->show();
+    ctboxaiclass->pack_end(*aiMaskEdit_, Gtk::PACK_SHRINK);
     if (showtooltip) {
         aiMaskClass_->set_tooltip_text(M("TP_LOCALLAB_AIMASK_CLASS_TOOLTIP"));
         aiMaskTolerance_->set_tooltip_text(M("TP_LOCALLAB_AIMASK_TOLERANCE_TOOLTIP"));
@@ -2941,6 +2953,56 @@ void ControlSpotPanel::maskTypeChanged(int /*index*/)
     }
 }
 
+// The editor paints over the photo in the engine's own framing, which is the
+// frame the mask is found in.
+void ControlSpotPanel::openMaskEditor()
+{
+#ifdef RT_AI_MASKING
+    const auto s = treeview_->get_selection();
+
+    if (!s->count_selected_rows() || editedFilePath_.empty()) {
+        return;
+    }
+
+    const auto iter = s->get_selected();
+    Gtk::TreeModel::Row row = *iter;
+
+    MaskPaintDlg::AutoMask automatic;
+    const rtengine::AIMaskSnapshot snapshot = rtengine::AIMaskCache::getInstance().getPreparedMask(
+        static_cast<rtengine::AISegClass>(rtengine::LIM(static_cast<int>(row[spots_.aiMaskClass]), 0, 9)),
+        static_cast<float>(rtengine::LIM(1.0 - aiMaskTolerance_->getValue() / 100.0, 0.0, 1.0)),
+        static_cast<float>(transit_->getValue()),
+        0.f, 18.f, false, 8, 0.01f, rtengine::MaskPaint(), true);
+
+    if (snapshot) {
+        automatic.width = snapshot.width;
+        automatic.height = snapshot.height;
+        automatic.values.resize(static_cast<size_t>(automatic.width) * automatic.height);
+
+        for (int y = 0; y < automatic.height; ++y) {
+            for (int x = 0; x < automatic.width; ++x) {
+                automatic.values[static_cast<size_t>(y) * automatic.width + x] = (*snapshot.mask)[y][x];
+            }
+        }
+    }
+
+    const Glib::ustring encoded = row[spots_.aiMaskPaint];
+    rtengine::MaskPaint paint = rtengine::MaskPaint::decode(encoded);
+
+    if (!maskpaint::refine(dynamic_cast<Gtk::Window*>(get_toplevel()), editedFilePath_, automatic, paint)) {
+        return;
+    }
+
+    row[spots_.aiMaskPaint] = paint.encode();
+
+    if (listener) {
+        listener->panelChanged(EvLocallabSpotShape, M("TP_LOCALLAB_AIMASK_REFINE_BYHAND"));
+    }
+
+    startAIPreviewRefresh();
+#endif
+}
+
 void ControlSpotPanel::aiMaskClassChanged(int /*index*/)
 {
     const auto s = treeview_->get_selection();
@@ -5142,6 +5204,7 @@ std::unique_ptr<ControlSpotPanel::SpotRow> ControlSpotPanel::getSpot(const int i
             r->avoidgamutMethod = row[spots_.avoidgamutMethod];
             r->maskType = row[spots_.maskType];
             r->aiMaskClass = row[spots_.aiMaskClass];
+            r->aiMaskPaint = row[spots_.aiMaskPaint];
             r->aiMaskThreshold = row[spots_.aiMaskThreshold];
             r->maskBlendMode = row[spots_.maskBlendMode];
             r->gradType = row[spots_.gradType];
@@ -5302,6 +5365,7 @@ void ControlSpotPanel::addControlSpot(const SpotRow &newSpot, bool expandDetails
     row[spots_.avoidgamutMethod] = newSpot.avoidgamutMethod;
     row[spots_.maskType] = newSpot.maskType;
     row[spots_.aiMaskClass] = newSpot.aiMaskClass;
+    row[spots_.aiMaskPaint] = newSpot.aiMaskPaint;
     row[spots_.aiMaskThreshold] = newSpot.aiMaskThreshold;
     row[spots_.maskBlendMode] = newSpot.maskBlendMode;
     row[spots_.gradType] = newSpot.gradType;
@@ -5506,6 +5570,7 @@ ControlSpotPanel::ControlSpots::ControlSpots()
 	add(avoidgamutMethod);
     add(maskType);
     add(aiMaskClass);
+    add(aiMaskPaint);
     add(aiMaskThreshold);
     add(maskBlendMode);
     add(gradType);

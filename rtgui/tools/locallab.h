@@ -117,6 +117,7 @@ public:
 #ifdef RT_AI_MASKING
         expaimask.setEditedFilePath(path);
 #endif
+        expsettings->setEditedFilePath(path);
     }
 
     static const Glib::ustring TOOL_NAME;

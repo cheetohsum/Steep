@@ -368,7 +368,10 @@ private:
         cr->paint();
 
         if (showMask_) {
-            // The mask as a red wash, the way the masking tab shows one.
+            // Selected areas take a red wash; everything else is dimmed. A
+            // tint alone reads poorly over a picture that is already warm or
+            // already dark -- what makes a selection legible is the contrast
+            // between what is in it and what is not.
             auto overlay = Gdk::Pixbuf::create(Gdk::COLORSPACE_RGB, true, 8, width_, height_);
             guint8* data = overlay->get_pixels();
             const int stride = overlay->get_rowstride();
@@ -378,15 +381,51 @@ private:
 
                 for (int x = 0; x < width_; ++x) {
                     const float value = std::min(std::max(shown_[y][x], 0.f), 1.f);
-                    row[x * 4] = 255;
-                    row[x * 4 + 1] = 40;
-                    row[x * 4 + 2] = 40;
-                    row[x * 4 + 3] = static_cast<guint8>(value * 150.f);
+                    guint8* px = row + x * 4;
+
+                    if (value >= 0.5f) {
+                        const float t = (value - 0.5f) * 2.f;   // 0 at the edge, 1 inside
+                        px[0] = 255;
+                        px[1] = 45;
+                        px[2] = 55;
+                        px[3] = static_cast<guint8>((70.f + 100.f * t));
+                    } else {
+                        const float t = 1.f - value * 2.f;      // 1 well outside
+                        px[0] = 6;
+                        px[1] = 8;
+                        px[2] = 14;
+                        px[3] = static_cast<guint8>(120.f * t);
+                    }
                 }
             }
 
             Gdk::Cairo::set_source_pixbuf(cr, overlay, 0, 0);
             cr->paint();
+
+            // A line on the half-way contour, so the boundary is visible even
+            // where the picture underneath is busy.
+            cr->save();
+            cr->set_line_width(1.5 / std::max(sc_, 0.01));
+            cr->set_source_rgba(1.0, 0.95, 0.6, 0.9);
+
+            for (int y = 1; y < height_; ++y) {
+                for (int x = 1; x < width_; ++x) {
+                    const bool in = shown_[y][x] >= 0.5f;
+
+                    if (in != (shown_[y][x - 1] >= 0.5f)) {
+                        cr->move_to(x, y);
+                        cr->line_to(x, y + 1);
+                    }
+
+                    if (in != (shown_[y - 1][x] >= 0.5f)) {
+                        cr->move_to(x, y);
+                        cr->line_to(x + 1, y);
+                    }
+                }
+            }
+
+            cr->stroke();
+            cr->restore();
         }
 
         cr->restore();

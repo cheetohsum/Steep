@@ -161,7 +161,7 @@ DoubleExposure::DoubleExposure() :
     flipConn = layerFlipH->signal_toggled().connect(sigc::mem_fun(*this, &DoubleExposure::flipToggled));
     layerFlipH->show();
 
-    patternSpacing = Gtk::manage(new Adjuster(M("TP_DOUBLEEXPOSURE_PATTERN_SPACING"), 0.0, 200.0, 1.0, 0.0));
+    patternSpacing = Gtk::manage(new Adjuster(M("TP_DOUBLEEXPOSURE_PATTERN_SPACING"), -90.0, 200.0, 1.0, 0.0));
     patternSpacing->setAdjusterListener(this);
     patternSpacing->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_SPACING_TOOLTIP"));
     patternSpacing->set_no_show_all(true);
@@ -676,7 +676,7 @@ void DoubleExposure::updateSensitivity()
     patternCount->set_visible(haveLayers && radial);
     patternDiameter->set_visible(haveLayers && radial);
     patternUpright->set_visible(haveLayers && radial);
-    patternTwist->set_visible(haveLayers && radial);
+    patternTwist->set_visible(haveLayers && tiled);
 
     if (haveLayers && tiled) {
         patternSection->setExpanded(true);

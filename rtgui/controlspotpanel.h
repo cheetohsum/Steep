@@ -102,6 +102,7 @@ public:
         int wavMethod; // 0 = D2, 1 = D4, 2 = D6, 3 = D10, 4 = D14
         int maskType; // 0 = Normal, 1 = AI Mask
         int aiMaskClass; // 0-7 class index
+        Glib::ustring aiMaskPaint; // hand-painted corrections, encoded
         double aiMaskThreshold; // Segmentation probability cutoff
         int maskBlendMode; // 0 = Normal, 1 = Darken, 2 = Lighten, 3 = Luminosity, 4 = Color
         int gradType; // 0 = Linear, 1 = Radial
@@ -315,6 +316,19 @@ private:
     void wavMethodChanged();
     void maskTypeChanged(int index);
     void aiMaskClassChanged(int index);
+    void openMaskEditor();
+
+public:
+    // The mask editor paints over the photo itself; fed by the coordinator
+    // when a picture is opened.
+    void setEditedFilePath(const Glib::ustring& path)
+    {
+        editedFilePath_ = path;
+    }
+
+private:
+    Glib::ustring editedFilePath_;
+
     void maskBlendModeChanged(int index);
     void setMaskBlendMode(int mode);
     void onRowsReordered(const Gtk::TreeModel::Path& path,
@@ -418,6 +432,7 @@ private:
         Gtk::TreeModelColumn<int> wavMethod; // 0 = D2, 1 = D4, 2 = D6, 3 = D10, 4 = D14
         Gtk::TreeModelColumn<int> maskType; // 0 = Normal, 1 = AI Mask
         Gtk::TreeModelColumn<int> aiMaskClass; // 0-7 class index
+        Gtk::TreeModelColumn<Glib::ustring> aiMaskPaint;
         Gtk::TreeModelColumn<double> aiMaskThreshold;
         Gtk::TreeModelColumn<int> maskBlendMode;
         Gtk::TreeModelColumn<int> gradType;
@@ -498,6 +513,7 @@ private:
     sigc::connection maskTypeConn_;
     PopUpButton* const aiMaskClass_;
     sigc::connection aiMaskClassConn_;
+    Gtk::Button* const aiMaskEdit_;
     Adjuster* const aiMaskTolerance_;
     PopUpButton* const maskBlendMode_;
     sigc::connection maskBlendModeConn_;

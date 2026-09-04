@@ -1957,7 +1957,7 @@ struct DoubleExposureParams {
         // is `scale`; spacing widens the pitch so the base shows through the
         // gutters, and stagger offsets odd rows into a brick course.
         Pattern pattern;
-        double patternSpacing; // 0..200 percent of the tile added as a gutter
+        double patternSpacing; // -90..200 percent; negative overlaps the tiles
         double patternStagger; // 0..100 percent of a tile, odd rows only
         // Radial only: how many copies go round the ring, and how wide the
         // ring is as a percentage of the base frame's width.

@@ -1379,7 +1379,7 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     patRow->pack_start(*patternUpright_, Gtk::PACK_SHRINK);
     patternBox->pack_start(*patRow, Gtk::PACK_SHRINK);
 
-    Gtk::Widget* spacingCell = makeCell(M("TP_DOUBLEEXPOSURE_PATTERN_SPACING"), patternSpacingScale_, 0.0, 200.0, 1.0, 0.0);
+    Gtk::Widget* spacingCell = makeCell(M("TP_DOUBLEEXPOSURE_PATTERN_SPACING"), patternSpacingScale_, -90.0, 200.0, 1.0, 0.0);
     patternSpacingScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_SPACING_TOOLTIP"));
     patternSpacingScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
     Gtk::Widget* staggerCell = makeCell(M("TP_DOUBLEEXPOSURE_PATTERN_STAGGER"), patternStaggerScale_, 0.0, 100.0, 1.0, 0.0);
@@ -1405,12 +1405,13 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     Gtk::Widget* twistCell = makeCell(M("TP_DOUBLEEXPOSURE_PATTERN_TWIST"), patternTwistScale_, -180.0, 180.0, 1.0, 0.0);
     patternTwistScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_TWIST_TOOLTIP"));
     patternTwistScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
-    ringTwistCell_ = twistCell;
     ringCountCell_ = countCell;
     ringDiameterCell_ = diameterCell;
     subjectFeatherCell_ = subjFeatherCell;
-    radialRow_ = makeRow({countCell, diameterCell, twistCell, subjFeatherCell});
+    radialRow_ = makeRow({countCell, diameterCell, subjFeatherCell});
     patternBox->pack_start(*radialRow_, Gtk::PACK_SHRINK);
+    twistRow_ = makeRow({twistCell});
+    patternBox->pack_start(*twistRow_, Gtk::PACK_SHRINK);
 
     flipH_ = Gtk::manage(new Gtk::CheckButton(M("TP_DOUBLEEXPOSURE_FLIPH")));
     flipH_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_FLIPH_TOOLTIP"));
@@ -2781,14 +2782,14 @@ void DoubleExposureDlg::showPatternRows(DoubleExposureParams::Pattern pattern, b
     gridRow_->set_visible(grid);
     ringCountCell_->set_visible(radial);
     ringDiameterCell_->set_visible(radial);
-    ringTwistCell_->set_visible(radial);
+    twistRow_->set_visible(grid || radial);
     subjectFeatherCell_->set_visible(feather);
     radialRow_->set_visible(radial || feather);
     patternSpacingScale_->set_sensitive(grid);
     patternStaggerScale_->set_sensitive(grid);
     patternCountScale_->set_sensitive(radial);
     patternDiameterScale_->set_sensitive(radial);
-    patternTwistScale_->set_sensitive(radial);
+    patternTwistScale_->set_sensitive(grid || radial);
     patternUpright_->set_visible(radial);
 }
 

@@ -300,7 +300,10 @@ inline void applyLayer(Frame& f, const procparams::DoubleExposureParams::Layer& 
     f.flip = layer.flipH ? -1.f : 1.f;
 
     f.pattern = layer.pattern;
-    f.cell = 1.f + std::max(0.f, static_cast<float>(layer.patternSpacing)) / 100.f;
+    // Negative spacing draws the tiles closer than their own frames, so they
+    // overlap; the pitch is floored well above zero so a cell always has room
+    // to hold something.
+    f.cell = std::max(0.1f, 1.f + static_cast<float>(layer.patternSpacing) / 100.f);
     f.stagger = std::min(std::max(static_cast<float>(layer.patternStagger) / 100.f, 0.f), 1.f);
 
     // The ring is measured on the base frame, like every other placement
@@ -457,6 +460,21 @@ inline bool map(const Frame& f, float fx, float fy, float aaStep,
 
         su = rx * cw;
         sv = ry * ch;
+
+        if (f.twist != 0.f) {
+            // Counted outward in rings from the middle tile, so the twist
+            // grows as the pattern echoes out rather than running along the
+            // rows. Turned about the tile's own centre, in source units, or
+            // an oblong tile would shear instead of turning.
+            const float ring = std::max(std::fabs(col), std::fabs(row));
+            const float orient = ring * f.twist;
+            const float oc = std::cos(orient);
+            const float os = std::sin(orient);
+            const float px = su;
+            const float py = sv;
+            su = oc * px + os * py;
+            sv = oc * py - os * px;
+        }
     }
 
     u = su + f.srcX0 + f.srcW * 0.5f;

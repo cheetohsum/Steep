@@ -634,6 +634,40 @@ def main():
                 lambda x: lin_to_srgb(srgb_to_lin(x) + sample_ramp(tile_u(x, mirror=True))),
                 skip_clipped=True, skipx={x for x in range(W) if seam(x, mirror=True)})
 
+    # T15d: negative spacing draws the tiles closer than their own frames, so
+    # the grid gets denser. With the pitch halved the ramp repeats twice as
+    # often, which the count of sawtooth resets along the row measures.
+    def resets(values):
+        n = 0
+        for x in range(3, W - 3):
+            if values[x] - values[x + 1] > 40:
+                n += 1
+        return n
+
+    tight = row(render(geo_pp3("t15d_tight.pp3", hramp_path,
+                               "Layer1Scale=25\nLayer1Pattern=1\nLayer1PatternSpacing=-50\n"),
+                       "base_grad.png", "t15d_tight.tif"))
+    loose = row(render(geo_pp3("t15d_loose.pp3", hramp_path,
+                               "Layer1Scale=25\nLayer1Pattern=1\nLayer1PatternSpacing=0\n"),
+                       "base_grad.png", "t15d_loose.tif"))
+    good = resets(tight) > resets(loose)
+    print(f"{'PASS' if good else 'FAIL'}  {'negative spacing packs tiles in':34s} "
+          f"resets: -50 = {resets(tight)}, 0 = {resets(loose)}")
+    ok &= good
+
+    # T15e: the twist reaches the grid patterns too, counted outward in rings
+    # from the middle tile, and zero twist changes nothing.
+    twisted_grid = row(render(geo_pp3("t15e_twist.pp3", hramp_path,
+                                      "Layer1Scale=25\nLayer1Pattern=1\nLayer1PatternTwist=30\n"),
+                              "base_grad.png", "t15e_twist.tif"))
+    moved = max(abs(twisted_grid[x] - loose[x]) for x in range(2, W - 2))
+    print(f"{'PASS' if moved > 20 else 'FAIL'}  {'grid twist turns outer tiles':34s} max |diff| = {moved}")
+    ok &= moved > 20
+    ok &= identical("grid twist 0 == no twist", loose,
+                    row(render(geo_pp3("t15e_zero.pp3", hramp_path,
+                                       "Layer1Scale=25\nLayer1Pattern=1\nLayer1PatternTwist=0\n"),
+                               "base_grad.png", "t15e_zero.tif")))
+
     # T15c: a full tile of spacing leaves the base untouched in the gutters.
     got = row(render(geo_pp3("t15c_gutter.pp3", hramp_path,
                              "Layer1Scale=25\nLayer1Pattern=1\nLayer1PatternSpacing=100\n"),
