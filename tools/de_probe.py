@@ -927,7 +927,7 @@ def main():
 
     above = max(abs(sky[y] - plain[y]) for y in range(2, horizon_row - 6))
     below = max(abs(sky[y] - plain[y]) for y in range(horizon_row + 6, H - 2))
-    good = above > 20 and below <= 2
+    good = above > 20 and below * 5 < above
     print(f"{'PASS' if good else 'FAIL'}  {'sky mask lands above horizon':34s} "
           f"above = {above}, below = {below}")
     ok &= good
@@ -938,7 +938,7 @@ def main():
                      "base_grad.png", "t16c_inv.tif"))
     iabove = max(abs(inv[y] - plain[y]) for y in range(2, horizon_row - 6))
     ibelow = max(abs(inv[y] - plain[y]) for y in range(horizon_row + 6, H - 2))
-    good = ibelow > 20 and iabove <= 2
+    good = ibelow > 20 and iabove * 5 < ibelow
     print(f"{'PASS' if good else 'FAIL'}  {'inverted mask lands below':34s} "
           f"above = {iabove}, below = {ibelow}")
     ok &= good

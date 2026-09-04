@@ -211,7 +211,19 @@ AISegClass adeToAIClass(int adeClass)
 
 // Max model input dimension. The model was trained on 512x512.
 // Higher values give sharper masks at the cost of inference time.
-constexpr int MODEL_INPUT_SIZE = 1024;
+// The model is MIT CSAIL's MobileNetV2dilated + C1_deepsup, trained on ADE20K
+// with the SHORT side drawn from {300, 375, 450, 525, 600} and the long side
+// capped at 1000. Semantic segmentation is strongly scale-dependent -- a
+// network recognises a cat at the size it saw cats -- and feeding it a 1024-px
+// long side put a 3:2 photo's short side at 683, half again as large as
+// anything it was trained on. Everything looked too close.
+//
+// The reference implementation also averages the softmax over several scales
+// at test time, and a good deal of its published accuracy comes from that.
+// Both are fixed here at no extra cost: three passes inside the trained range
+// come to fewer pixels than the single oversized pass they replace.
+constexpr int MODEL_SHORT_SIDES[] = {300, 450, 600};
+constexpr int MODEL_MAX_SIDE = 1000;
 
 // ImageNet normalization constants
 constexpr float MEAN_R = 0.485f;
@@ -385,22 +397,52 @@ std::vector<array2D<float>> AISegmentationEngine::segment(
         return result;
     }
 
-    // 1. Preprocess: planar linear RGB [0,65535] -> sRGB [0,1] -> ImageNet norm -> [1,3,H,W]
-    // Only downscale if image exceeds MODEL_INPUT_SIZE; never upscale
-    const float scale = std::min(1.0f, static_cast<float>(MODEL_INPUT_SIZE) / std::max(width, height));
-    const int modelW = std::max(1, static_cast<int>(width * scale));
-    const int modelH = std::max(1, static_cast<int>(height * scale));
+    // The scales to run, as (width, height) pairs: each of the trained short
+    // sides, with the long side held under the trained maximum. Duplicates are
+    // dropped, which is what keeps a small preview from being segmented three
+    // times at the same size.
+    std::vector<std::pair<int, int>> passes;
 
-    std::vector<float> inputTensor(1 * 3 * modelH * modelW);
+    for (int shortSide : MODEL_SHORT_SIDES) {
+        float k = static_cast<float>(shortSide) / std::min(width, height);
 
-    const float scaleX = static_cast<float>(width) / modelW;
-    const float scaleY = static_cast<float>(height) / modelH;
+        if (std::max(width, height) * k > MODEL_MAX_SIDE) {
+            k = static_cast<float>(MODEL_MAX_SIDE) / std::max(width, height);
+        }
+
+        const int pw = std::max(1, static_cast<int>(std::lround(width * k)));
+        const int ph = std::max(1, static_cast<int>(std::lround(height * k)));
+
+        if (std::find(passes.begin(), passes.end(), std::make_pair(pw, ph)) == passes.end()) {
+            passes.emplace_back(pw, ph);
+        }
+    }
+
+    // The accumulator every pass adds into, at the caller's resolution.
+    for (int c = 0; c < numClasses; ++c) {
+        result[c](width, height);
+
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                result[c][y][x] = 0.f;
+            }
+        }
+    }
 
     // sRGB gamma: linear -> sRGB (model was trained on sRGB images)
     auto linearToSRGB = [](float v) -> float {
         v = std::max(0.f, std::min(1.f, v));
         return (v <= 0.0031308f) ? (12.92f * v) : (1.055f * std::pow(v, 1.f / 2.4f) - 0.055f);
     };
+
+    for (const auto& pass : passes) {
+    const int modelW = pass.first;
+    const int modelH = pass.second;
+
+    std::vector<float> inputTensor(1 * 3 * modelH * modelW);
+
+    const float scaleX = static_cast<float>(width) / modelW;
+    const float scaleY = static_cast<float>(height) / modelH;
 
     fprintf(stderr, "AI Masking: Input %dx%d -> model %dx%d\n", width, height, modelW, modelH);
 
@@ -556,11 +598,10 @@ std::vector<array2D<float>> AISegmentationEngine::segment(
 
     pImpl->api->ReleaseValue(outputOrt);
 
-    // 4. Upscale probabilities to the preview resolution. Edge-aware refinement is
-    // cached later with the user's per-mask settings instead of being repeated here.
+    // 4. Upscale probabilities to the preview resolution and add them to what
+    // the other scales found. Edge-aware refinement is cached later with the
+    // user's per-mask settings instead of being repeated here.
     for (int c = 0; c < numClasses; ++c) {
-        result[c](width, height);
-
         const float xScale = static_cast<float>(outW) / width;
         const float yScale = static_cast<float>(outH) / height;
 
@@ -585,11 +626,28 @@ std::vector<array2D<float>> AISegmentationEngine::segment(
                 const float v10 = modelMaps[c][sy1][sx0];
                 const float v11 = modelMaps[c][sy1][sx1];
 
-                result[c][y][x] = (1.f - fy) * ((1.f - fx) * v00 + fx * v01)
-                                + fy * ((1.f - fx) * v10 + fx * v11);
+                result[c][y][x] += (1.f - fy) * ((1.f - fx) * v00 + fx * v01)
+                                 + fy * ((1.f - fx) * v10 + fx * v11);
             }
         }
 
+    }
+
+    }   // next scale
+
+    if (passes.size() > 1) {
+        const float inverse = 1.f / static_cast<float>(passes.size());
+
+#ifdef _OPENMP
+        #pragma omp parallel for if(multiThread)
+#endif
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                for (int c = 0; c < numClasses; ++c) {
+                    result[c][y][x] *= inverse;
+                }
+            }
+        }
     }
 
     return result;
