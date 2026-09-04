@@ -321,7 +321,9 @@ void AIMaskCache::computeMasks(const std::string& imageId,
 #endif
             for (int y = 0; y < maskHeight; ++y) {
                 for (int x = 0; x < maskWidth; ++x) {
-                    if (map[y][x] > 0.5f) {
+                    // The default mask threshold, so this trace and the
+                    // coverage the user is shown mean the same thing.
+                    if (map[y][x] > 0.3f) {
                         ++hits;
                     }
                 }
@@ -625,14 +627,43 @@ bool AIMaskCache::hasCachedMasks(const std::string& imageId) const
     return cachedImageId_ == imageId && cachedMasks_ && !cachedMasks_->empty();
 }
 
-float AIMaskCache::getClassCoverage(const std::string& imageId, int classIndex) const
+float AIMaskCache::getClassCoverage(const std::string& imageId, int classIndex,
+                                    float threshold) const
 {
     MyMutex::MyLock lock(mutex_);
-    if (cachedImageId_ != imageId || classIndex < 0
-            || classIndex >= static_cast<int>(coverage_.size())) {
+
+    if (cachedImageId_ != imageId || !cachedMasks_) {
         return -1.f;
     }
-    return coverage_[classIndex];
+
+    if (classIndex < 0 || classIndex >= static_cast<int>(cachedMasks_->size())) {
+        return 0.f;
+    }
+
+    // Measured here rather than when the maps were built, because the
+    // threshold is the user's tolerance and it moves. A class sitting at 0.35
+    // covers a great deal at the default tolerance and nothing at all at 0.5,
+    // which is how a mask plainly doing something came to be labelled 0%.
+    const array2D<float>& map = cachedMasks_->at(classIndex);
+    const int w = cachedWidth_;
+    const int h = cachedHeight_;
+
+    if (w <= 0 || h <= 0) {
+        return 0.f;
+    }
+
+    const float cut = LIM(threshold, 0.f, 1.f);
+    int hits = 0;
+
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            if (map[y][x] > cut) {
+                ++hits;
+            }
+        }
+    }
+
+    return static_cast<float>(hits) / (static_cast<float>(w) * h);
 }
 
 int AIMaskCache::getDominantClassAt(const std::string& imageId, int fullX, int fullY) const

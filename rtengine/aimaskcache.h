@@ -67,11 +67,14 @@ public:
     bool hasCachedMasks(const std::string& imageId) const;
     bool hasCachedMasks() const;
 
-    /** Fraction of pixels (0..1) whose probability for the class exceeds 0.5,
-     *  measured when the cached masks were computed. Returns -1 when the cache
-     *  holds a different image (or nothing) — callers must treat that as
-     *  "unknown", not "absent". */
-    float getClassCoverage(const std::string& imageId, int classIndex) const;
+    /** Fraction of pixels (0..1) whose probability for the class passes
+     *  @p threshold — the same threshold the mask itself is built at, so the
+     *  number answers "how much of this picture would this class select?"
+     *  rather than a fixed 0.5 that a mask at another tolerance disagrees
+     *  with. Returns -1 when the cache holds a different image (or nothing) —
+     *  callers must treat that as "unknown", not "absent". */
+    float getClassCoverage(const std::string& imageId, int classIndex,
+                           float threshold = 0.3f) const;
 
     /** The class to mask when the user clicks full-image point (x, y):
      *  the model class with the highest mean probability in a small

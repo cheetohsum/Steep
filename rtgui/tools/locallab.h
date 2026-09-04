@@ -120,7 +120,7 @@ public:
         expsettings->setEditedFilePath(path);
     }
 
-    void setCoverageProvider(std::function<float(int)> provider)
+    void setCoverageProvider(std::function<float(int, float)> provider)
     {
         expsettings->setCoverageProvider(std::move(provider));
     }

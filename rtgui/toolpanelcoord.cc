@@ -1148,13 +1148,13 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
                 return rtengine::AIMaskCache::getInstance().getClassCoverage(
                     ipc->getInitialImage()->getFileName().raw(), classIndex);
             });
-            locallab->setCoverageProvider([this](int classIndex) -> float {
+            locallab->setCoverageProvider([this](int classIndex, float threshold) -> float {
                 if (!ipc || !ipc->getInitialImage()) {
                     return -1.f;
                 }
 
                 return rtengine::AIMaskCache::getInstance().getClassCoverage(
-                    ipc->getInitialImage()->getFileName().raw(), classIndex);
+                    ipc->getInitialImage()->getFileName().raw(), classIndex, threshold);
             });
             smartMaskBar->signalPickRequested().connect([this]() {
                 if (toolBar) {

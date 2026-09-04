@@ -330,14 +330,15 @@ public:
     // How much of the picture each AI class covers, 0..1, or negative when
     // the picture has not been segmented yet. Shown beside the class names so
     // it is obvious which ones are worth choosing.
-    void setCoverageProvider(std::function<float(int)> provider)
+    // Takes the class index and the threshold the mask is built at.
+    void setCoverageProvider(std::function<float(int, float)> provider)
     {
         coverageProvider_ = std::move(provider);
     }
 
 private:
     Glib::ustring editedFilePath_;
-    std::function<float(int)> coverageProvider_;
+    std::function<float(int, float)> coverageProvider_;
     std::vector<Gtk::Label*> aiClassMenuLabels_;
     std::vector<Glib::ustring> aiClassNames_;
 

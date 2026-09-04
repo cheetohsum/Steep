@@ -2990,11 +2990,19 @@ void ControlSpotPanel::refreshClassCoverage()
     }
 
     for (size_t i = 0; i < aiClassNames_.size(); ++i) {
-        const float coverage = coverageProvider_(static_cast<int>(i));
-        const Glib::ustring text = coverage < 0.f
-                                   ? aiClassNames_[i]
-                                   : Glib::ustring::compose("%1  %2%%", aiClassNames_[i],
-                                           static_cast<int>(std::lround(coverage * 100.f)));
+        const float coverage = coverageProvider_(
+            static_cast<int>(i),
+            static_cast<float>(rtengine::LIM(1.0 - aiMaskTolerance_->getValue() / 100.0, 0.0, 1.0)));
+        Glib::ustring text = aiClassNames_[i];
+
+        if (coverage >= 0.f) {
+            // Rounding a real if small coverage to "0%" said the class was
+            // absent when a mask built on it plainly was not.
+            const int percent = static_cast<int>(std::lround(coverage * 100.f));
+            text = coverage > 0.f && percent == 0
+                   ? Glib::ustring::compose("%1  <1%%", aiClassNames_[i])
+                   : Glib::ustring::compose("%1  %2%%", aiClassNames_[i], percent);
+        }
 
         if (i < aiClassMenuLabels_.size() && aiClassMenuLabels_[i]) {
             aiClassMenuLabels_[i]->set_text(text);

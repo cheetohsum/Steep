@@ -197,7 +197,9 @@ std::shared_ptr<PartnerMask> computeMask(const Glib::ustring& path, const Glib::
 
             for (int y = 0; y < maskH; ++y) {
                 for (int x = 0; x < maskW; ++x) {
-                    if (maps[c][y][x] > 0.5f) {
+                    // The same cut the locallab coverage uses, and the
+                    // default a mask is built at.
+                    if (maps[c][y][x] > 0.3f) {
                         ++hits;
                     }
                 }

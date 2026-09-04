@@ -108,8 +108,12 @@ Glib::ustring subjectEntryLabel(int row, const std::vector<float>& coverage)
         return name;
     }
 
-    return Glib::ustring::compose("%1  %2%%", name,
-                                  static_cast<int>(std::lround(coverage[index] * 100.f)));
+    const int percent = static_cast<int>(std::lround(coverage[index] * 100.f));
+
+    // A class a mask can plainly be built on must not read as absent.
+    return coverage[index] > 0.f && percent == 0
+           ? Glib::ustring::compose("%1  <1%%", name)
+           : Glib::ustring::compose("%1  %2%%", name, percent);
 }
 #endif
 
