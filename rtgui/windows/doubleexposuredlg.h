@@ -113,6 +113,7 @@ private:
     void onPreviewScale(double factor);
     void onPreviewRotate(double degrees);
     void openMaskEditor();
+    void refreshSubjectLabels(const Glib::ustring& path);
     void nudgeRotation(double degrees);
     void onPreviewReset();
     void showPatternRows(rtengine::procparams::DoubleExposureParams::Pattern pattern, bool masked);

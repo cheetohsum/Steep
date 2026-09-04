@@ -19,6 +19,7 @@
 #ifdef RT_AI_MASKING
 
 #include <memory>
+#include <vector>
 
 #include <glibmm/ustring.h>
 
@@ -90,6 +91,12 @@ public:
                                                 procparams::DoubleExposureParams::MaskClass cls,
                                                 double feather, bool invert, const MaskPaint& paint);
 
+    // What fraction of the partner each class covers, 0..1, indexed by
+    // AISegClass. Empty until the file has been segmented at least once --
+    // the numbers are a by-product of asking for a mask, never a reason to
+    // segment on their own.
+    std::vector<float> getCoverage(const Glib::ustring& path, const Glib::ustring& workingProfile);
+
     void clearCache();
 
 private:
@@ -100,6 +107,7 @@ private:
                                  double feather, bool invert, const MaskPaint& paint);
 
     Cache<Glib::ustring, std::shared_ptr<PartnerMask>> cache;
+    Cache<Glib::ustring, std::shared_ptr<std::vector<float>>> coverageCache;
 };
 
 } // namespace rtengine

@@ -58,6 +58,63 @@ void detachQuietly(std::thread&& thread)
 
 } // namespace
 
+
+namespace
+{
+
+#ifdef RT_AI_MASKING
+// "Animals  4%" rather than "Animals". Which classes a partner actually
+// contains is the first thing worth knowing before choosing one, and the
+// numbers are a by-product of a segmentation that has already happened -- no
+// coverage is ever a reason to run one.
+Glib::ustring subjectEntryLabel(int row, const std::vector<float>& coverage)
+{
+    static const char* keys[] = {
+        "TP_DOUBLEEXPOSURE_SUBJECT_OFF",
+        "TP_DOUBLEEXPOSURE_SUBJECT_SUBJECT",
+        "TP_DOUBLEEXPOSURE_SUBJECT_PERSON",
+        "TP_DOUBLEEXPOSURE_SUBJECT_SKY",
+        "TP_DOUBLEEXPOSURE_SUBJECT_VEGETATION",
+        "TP_DOUBLEEXPOSURE_SUBJECT_BUILDING",
+        "TP_DOUBLEEXPOSURE_SUBJECT_VEHICLE",
+        "TP_DOUBLEEXPOSURE_SUBJECT_ANIMAL"
+    };
+
+    if (row < 0 || row > 7) {
+        return Glib::ustring();
+    }
+
+    const Glib::ustring name = M(keys[row]);
+
+    // Row 0 is "the whole frame", which has no class to measure.
+    if (row == 0 || coverage.empty()) {
+        return name;
+    }
+
+    static const rtengine::AISegClass classes[] = {
+        rtengine::AISegClass::BACKGROUND,   // unused
+        rtengine::AISegClass::SUBJECT,
+        rtengine::AISegClass::PERSON,
+        rtengine::AISegClass::SKY,
+        rtengine::AISegClass::VEGETATION,
+        rtengine::AISegClass::BUILDING,
+        rtengine::AISegClass::VEHICLE,
+        rtengine::AISegClass::ANIMAL
+    };
+
+    const size_t index = static_cast<size_t>(classes[row]);
+
+    if (index >= coverage.size()) {
+        return name;
+    }
+
+    return Glib::ustring::compose("%1  %2%%", name,
+                                  static_cast<int>(std::lround(coverage[index] * 100.f)));
+}
+#endif
+
+} // namespace
+
 DoubleExposure::DoubleExposure() :
     FoldableToolPanel(this, TOOL_NAME, M("TP_DOUBLEEXPOSURE_LABEL"), false, true),
     aliveToken_(std::make_shared<std::atomic<bool>>(true)),
@@ -577,9 +634,25 @@ void DoubleExposure::loadSelectedLayer()
     patternMethod->set_active(static_cast<int>(layers[idx].pattern));
     patternMethod->block(false);
 
+#ifdef RT_AI_MASKING
+    {
+        const std::vector<float> coverage =
+            rtengine::PartnerMaskStore::getInstance().getCoverage(layers[idx].path, workingProfile_);
+        subjectMethod->block(true);
+        subjectMethod->remove_all();
+
+        for (int row = 0; row <= 7; ++row) {
+            subjectMethod->append(subjectEntryLabel(row, coverage));
+        }
+
+        subjectMethod->set_active(static_cast<int>(layers[idx].maskClass));
+        subjectMethod->block(false);
+    }
+#else
     subjectMethod->block(true);
     subjectMethod->set_active(static_cast<int>(layers[idx].maskClass));
     subjectMethod->block(false);
+#endif
 
     subjectInvertConn.block(true);
     subjectInvert->set_active(layers[idx].maskInvert);

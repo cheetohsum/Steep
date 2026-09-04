@@ -21,18 +21,20 @@ SCENE_W, SCENE_H = 512, 384
 HORIZON = int(SCENE_H * 0.55)   # 211: sky above, ground below
 
 
-def make_scene(path):
-    im = Image.new("RGB", (SCENE_W, SCENE_H))
+def make_scene(path, w=SCENE_W, h=SCENE_H):
+    horizon = int(h * 0.55)
+    im = Image.new("RGB", (w, h))
     px = im.load()
-    for y in range(SCENE_H):
-        for x in range(SCENE_W):
-            if y < HORIZON:
-                t = y / HORIZON
+    for y in range(h):
+        for x in range(w):
+            if y < horizon:
+                t = y / horizon
                 px[x, y] = (int(90 + 90 * t), int(140 + 70 * t), int(225 - 25 * t))
             else:
-                t = (y - HORIZON) / (SCENE_H - HORIZON)
+                t = (y - horizon) / (h - horizon)
                 px[x, y] = (int(70 - 20 * t), int(110 - 40 * t), int(50 - 20 * t))
     im.save(path)
+    return horizon
 
 
 def render(pp3, base, out):
@@ -100,6 +102,25 @@ def main():
         good = (above > 20) == wanted_above and (below > 20) == wanted_below
         print(f"{'PASS' if good else 'FAIL'}  {name:34s} above = +{above}, below = +{below}")
         ok &= good
+
+    # Every check above is on a landscape frame, and so was every double
+    # exposure check -- an orientation fault in the mask geometry would have
+    # gone unseen by all of them, on a portrait photo of exactly the kind
+    # people put subjects in.
+    tall = os.path.join(HERE, "ll_scene_tall.png")
+    tall_horizon = make_scene(tall, 384, 512)
+    tall_base = Image.open(tall).convert("RGB").load()
+
+    path = os.path.join(HERE, "ll_tall.pp3")
+    with open(path, "w", newline="\n") as f:
+        f.write(SPOT + "AIMaskClass_0=2\nAIMaskInvert_0=false\n")
+
+    tall_out = Image.open(render(path, tall, "ll_out_tall.tif")).convert("RGB").load()
+    above = max(tall_out[192, y][1] - tall_base[192, y][1] for y in (30, 120, 220))
+    below = max(tall_out[192, y][1] - tall_base[192, y][1] for y in (340, 420, 490))
+    good = above > 20 and below * 5 < above
+    print(f"{'PASS' if good else 'FAIL'}  {'portrait frame lines up too':34s} above = +{above}, below = +{below}")
+    ok &= good
 
     print("\nALL PASS" if ok else "\nFAILURES PRESENT")
     sys.exit(0 if ok else 1)

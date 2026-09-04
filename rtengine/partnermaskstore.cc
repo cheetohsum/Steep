@@ -81,7 +81,7 @@ int classIndex(procparams::DoubleExposureParams::MaskClass cls)
 std::shared_ptr<PartnerMask> computeMask(const Glib::ustring& path, const Glib::ustring& workingProfile,
                                          procparams::DoubleExposureParams::MaskClass cls,
                                          double feather, bool invert, const MaskPaint& paint,
-                                         bool multiThread)
+                                         bool multiThread, std::vector<float>* coverageOut)
 {
     const int wanted = classIndex(cls);
 
@@ -184,6 +184,27 @@ std::shared_ptr<PartnerMask> computeMask(const Glib::ustring& path, const Glib::
 
     if (wanted >= static_cast<int>(maps.size())) {
         return nullptr;
+    }
+
+    if (coverageOut) {
+        // Measured on the finished class maps, before this one mask's own
+        // feather and strokes narrow it to a single class.
+        coverageOut->assign(maps.size(), 0.f);
+        const float total = static_cast<float>(maskW) * maskH;
+
+        for (size_t c = 0; c < maps.size(); ++c) {
+            int hits = 0;
+
+            for (int y = 0; y < maskH; ++y) {
+                for (int x = 0; x < maskW; ++x) {
+                    if (maps[c][y][x] > 0.5f) {
+                        ++hits;
+                    }
+                }
+            }
+
+            (*coverageOut)[c] = total > 0.f ? hits / total : 0.f;
+        }
     }
 
     auto result = std::make_shared<PartnerMask>();
@@ -330,7 +351,8 @@ float PartnerMask::sample(float u, float v) const
 }
 
 PartnerMaskStore::PartnerMaskStore() :
-    cache(8)
+    cache(8),
+    coverageCache(8)
 {
 }
 
@@ -358,10 +380,15 @@ std::shared_ptr<const PartnerMask> PartnerMaskStore::getMask(const Glib::ustring
         return result;
     }
 
-    result = computeMask(path, workingProfile, cls, feather, invert, paint, multiThread);
+    auto coverage = std::make_shared<std::vector<float>>();
+    result = computeMask(path, workingProfile, cls, feather, invert, paint, multiThread, coverage.get());
 
     if (result) {
         cache.insert(key, result);
+
+        if (!coverage->empty()) {
+            coverageCache.insert(path + "\n" + workingProfile, coverage);
+        }
     }
 
     return result;
@@ -400,9 +427,22 @@ Glib::ustring PartnerMaskStore::makeKey(const Glib::ustring& path, const Glib::u
                                   getAISubjectEngine().isInitialized() ? 1 : 0);
 }
 
+std::vector<float> PartnerMaskStore::getCoverage(const Glib::ustring& path,
+                                                 const Glib::ustring& workingProfile)
+{
+    std::shared_ptr<std::vector<float>> found;
+
+    if (coverageCache.get(path + "\n" + workingProfile, found) && found) {
+        return *found;
+    }
+
+    return {};
+}
+
 void PartnerMaskStore::clearCache()
 {
     cache.clear();
+    coverageCache.clear();
 }
 
 } // namespace rtengine

@@ -620,6 +620,63 @@ constexpr int DEThumbGrid::THUMB_H;
 constexpr int DEThumbGrid::TEXT_H;
 constexpr int DEThumbGrid::PAD;
 
+
+namespace
+{
+
+#ifdef RT_AI_MASKING
+// "Animals  4%" rather than "Animals". Which classes a partner actually
+// contains is the first thing worth knowing before choosing one, and the
+// numbers are a by-product of a segmentation that has already happened -- no
+// coverage is ever a reason to run one.
+Glib::ustring subjectEntryLabel(int row, const std::vector<float>& coverage)
+{
+    static const char* keys[] = {
+        "TP_DOUBLEEXPOSURE_SUBJECT_OFF",
+        "TP_DOUBLEEXPOSURE_SUBJECT_SUBJECT",
+        "TP_DOUBLEEXPOSURE_SUBJECT_PERSON",
+        "TP_DOUBLEEXPOSURE_SUBJECT_SKY",
+        "TP_DOUBLEEXPOSURE_SUBJECT_VEGETATION",
+        "TP_DOUBLEEXPOSURE_SUBJECT_BUILDING",
+        "TP_DOUBLEEXPOSURE_SUBJECT_VEHICLE",
+        "TP_DOUBLEEXPOSURE_SUBJECT_ANIMAL"
+    };
+
+    if (row < 0 || row > 7) {
+        return Glib::ustring();
+    }
+
+    const Glib::ustring name = M(keys[row]);
+
+    // Row 0 is "the whole frame", which has no class to measure.
+    if (row == 0 || coverage.empty()) {
+        return name;
+    }
+
+    static const rtengine::AISegClass classes[] = {
+        rtengine::AISegClass::BACKGROUND,   // unused
+        rtengine::AISegClass::SUBJECT,
+        rtengine::AISegClass::PERSON,
+        rtengine::AISegClass::SKY,
+        rtengine::AISegClass::VEGETATION,
+        rtengine::AISegClass::BUILDING,
+        rtengine::AISegClass::VEHICLE,
+        rtengine::AISegClass::ANIMAL
+    };
+
+    const size_t index = static_cast<size_t>(classes[row]);
+
+    if (index >= coverage.size()) {
+        return name;
+    }
+
+    return Glib::ustring::compose("%1  %2%%", name,
+                                  static_cast<int>(std::lround(coverage[index] * 100.f)));
+}
+#endif
+
+} // namespace
+
 // ---------------------------------------------------------------------------
 // DEBlendPreview — aspect-fit display of the composited preview pixbuf.
 // ---------------------------------------------------------------------------
@@ -2704,6 +2761,9 @@ void DoubleExposureDlg::syncLayerControls()
         }
 
         const bool masked = layer.maskClass != DoubleExposureParams::MaskClass::OFF;
+#ifdef RT_AI_MASKING
+        refreshSubjectLabels(layer.path);
+#endif
         subjectMethod_->set_sensitive(true);
         subjectInvert_->set_sensitive(masked);
         subjectCrop_->set_sensitive(masked);
@@ -2868,6 +2928,27 @@ void DoubleExposureDlg::onPreviewScale(double factor)
     layer.scale = std::min(std::max(layer.scale * factor, 10.0), 400.0);
     syncPlacementControls();
     schedulePreviewUpdate();
+}
+
+// The class list carries how much of this partner each class covers, once it
+// has been segmented; before that it reads as plain names.
+void DoubleExposureDlg::refreshSubjectLabels(const Glib::ustring& path)
+{
+#ifdef RT_AI_MASKING
+    const std::vector<float> coverage =
+        rtengine::PartnerMaskStore::getInstance().getCoverage(path, workingProfile_);
+
+    const int sel = subjectMethod_->get_active_row_number();
+    subjectMethod_->block(true);
+    subjectMethod_->remove_all();
+
+    for (int row = 0; row <= 7; ++row) {
+        subjectMethod_->append(subjectEntryLabel(row, coverage));
+    }
+
+    subjectMethod_->set_active(sel < 0 ? 0 : sel);
+    subjectMethod_->block(false);
+#endif
 }
 
 void DoubleExposureDlg::openMaskEditor()
