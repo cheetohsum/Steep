@@ -117,6 +117,47 @@ DoubleExposure::DoubleExposure() :
     layerScale->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PLACEMENT_TOOLTIP"));
     layerScale->show();
 
+    layerRotate = Gtk::manage(new Adjuster(M("TP_DOUBLEEXPOSURE_ROTATE"), -180.0, 180.0, 0.5, 0.0));
+    layerRotate->setAdjusterListener(this);
+    layerRotate->set_tooltip_text(M("TP_DOUBLEEXPOSURE_ROTATE_TOOLTIP"));
+    layerRotate->show();
+
+    // Patterning turns the placed frame into one tile of a grid; its size is
+    // the Layer size above, so there is no second size control.
+    patternMethod = Gtk::manage(new MyComboBoxText());
+    patternMethod->append(M("TP_DOUBLEEXPOSURE_PATTERN_OFF"));
+    patternMethod->append(M("TP_DOUBLEEXPOSURE_PATTERN_REPEAT"));
+    patternMethod->append(M("TP_DOUBLEEXPOSURE_PATTERN_MIRROR"));
+    patternMethod->set_active(0);
+    patternMethod->setPreferredWidth(150, 200);
+    patternMethod->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_TOOLTIP"));
+    patternMethod->connect(patternMethod->signal_changed().connect(sigc::mem_fun(*this, &DoubleExposure::patternChanged)));
+    patternMethod->show();
+
+    Gtk::Box* patternRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+    Gtk::Label* patternLabel = Gtk::manage(new Gtk::Label(M("TP_DOUBLEEXPOSURE_PATTERN") + ":", Gtk::ALIGN_START));
+    patternLabel->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_TOOLTIP"));
+    patternRow->pack_start(*patternLabel, Gtk::PACK_SHRINK);
+    patternRow->pack_start(*patternMethod, Gtk::PACK_EXPAND_WIDGET);
+
+    layerFlipH = Gtk::manage(new Gtk::CheckButton(M("TP_DOUBLEEXPOSURE_FLIPH")));
+    layerFlipH->set_tooltip_text(M("TP_DOUBLEEXPOSURE_FLIPH_TOOLTIP"));
+    flipConn = layerFlipH->signal_toggled().connect(sigc::mem_fun(*this, &DoubleExposure::flipToggled));
+    patternRow->pack_start(*layerFlipH, Gtk::PACK_SHRINK);
+    patternRow->show_all();
+
+    patternSpacing = Gtk::manage(new Adjuster(M("TP_DOUBLEEXPOSURE_PATTERN_SPACING"), 0.0, 200.0, 1.0, 0.0));
+    patternSpacing->setAdjusterListener(this);
+    patternSpacing->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_SPACING_TOOLTIP"));
+    patternSpacing->set_no_show_all(true);
+    patternSpacing->show();
+
+    patternStagger = Gtk::manage(new Adjuster(M("TP_DOUBLEEXPOSURE_PATTERN_STAGGER"), 0.0, 100.0, 1.0, 0.0));
+    patternStagger->setAdjusterListener(this);
+    patternStagger->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_STAGGER_TOOLTIP"));
+    patternStagger->set_no_show_all(true);
+    patternStagger->show();
+
     blendMethod = Gtk::manage(new MyComboBoxText());
     blendMethod->append(M("TP_DOUBLEEXPOSURE_BLEND_ADD"));
     blendMethod->append(M("TP_DOUBLEEXPOSURE_BLEND_SCREEN"));
@@ -224,6 +265,10 @@ DoubleExposure::DoubleExposure() :
     pack_start(*layerOffsetX);
     pack_start(*layerOffsetY);
     pack_start(*layerScale);
+    pack_start(*layerRotate);
+    pack_start(*patternRow);
+    pack_start(*patternSpacing);
+    pack_start(*patternStagger);
     pack_start(*blendRow);
     pack_start(*compareRow);
     pack_start(*softness);
@@ -411,6 +456,17 @@ void DoubleExposure::loadSelectedLayer()
     layerOffsetX->setValue(layers[idx].offsetX);
     layerOffsetY->setValue(layers[idx].offsetY);
     layerScale->setValue(layers[idx].scale);
+    layerRotate->setValue(layers[idx].rotate);
+    patternSpacing->setValue(layers[idx].patternSpacing);
+    patternStagger->setValue(layers[idx].patternStagger);
+
+    flipConn.block(true);
+    layerFlipH->set_active(layers[idx].flipH);
+    flipConn.block(false);
+
+    patternMethod->block(true);
+    patternMethod->set_active(static_cast<int>(layers[idx].pattern));
+    patternMethod->block(false);
 
     blendMethod->block(true);
     blendMethod->set_active(static_cast<int>(layers[idx].blendMode));
@@ -460,6 +516,9 @@ void DoubleExposure::updateSensitivity()
     layerOffsetX->set_sensitive(haveLayers);
     layerOffsetY->set_sensitive(haveLayers);
     layerScale->set_sensitive(haveLayers);
+    layerRotate->set_sensitive(haveLayers);
+    layerFlipH->set_sensitive(haveLayers);
+    patternMethod->set_sensitive(haveLayers);
     blendMethod->set_sensitive(haveLayers);
     gateSource->set_sensitive(haveLayers);
     gateLow->set_sensitive(haveLayers);
@@ -477,6 +536,11 @@ void DoubleExposure::updateSensitivity()
                                  || layers[idx].blendMode == DoubleExposureParams::BlendMode::DARKEN);
     compareRow->set_visible(haveLayers && comparative);
     softness->set_visible(haveLayers && comparative && layers[idx].compare == DoubleExposureParams::Compare::LUMINANCE);
+
+    // Gutters and brick courses only exist once the frame repeats.
+    const bool tiled = idx >= 0 && layers[idx].pattern != DoubleExposureParams::Pattern::OFF;
+    patternSpacing->set_visible(haveLayers && tiled);
+    patternStagger->set_visible(haveLayers && tiled);
 
     // The film-gain compensation only applies to light that stacks: enabled
     // additive layers.
@@ -630,6 +694,9 @@ void DoubleExposure::setDefaults(const ProcParams* defParams, const ParamsEdited
     layerOffsetX->setDefault(defLayer.offsetX);
     layerOffsetY->setDefault(defLayer.offsetY);
     layerScale->setDefault(defLayer.scale);
+    layerRotate->setDefault(defLayer.rotate);
+    patternSpacing->setDefault(defLayer.patternSpacing);
+    patternStagger->setDefault(defLayer.patternStagger);
     gateLow->setDefault(defLayer.gateLow);
     gateHigh->setDefault(defLayer.gateHigh);
     gateFeather->setDefault(defLayer.gateFeather);
@@ -646,7 +713,8 @@ void DoubleExposure::setDefaults(const ProcParams* defParams, const ParamsEdited
 
 void DoubleExposure::adjusterChanged(Adjuster* a, double newval)
 {
-    const bool isPlacementAdj = a == layerOffsetX || a == layerOffsetY || a == layerScale;
+    const bool isPlacementAdj = a == layerOffsetX || a == layerOffsetY || a == layerScale
+                                || a == layerRotate || a == patternSpacing || a == patternStagger;
     const bool isLayerAdj = a == layerEv || a == layerOpacity || a == softness || isPlacementAdj;
     const bool isGateAdj = a == gateLow || a == gateHigh || a == gateFeather || a == gateStrength;
 
@@ -666,6 +734,12 @@ void DoubleExposure::adjusterChanged(Adjuster* a, double newval)
                 layers[idx].offsetY = newval;
             } else if (a == layerScale) {
                 layers[idx].scale = newval;
+            } else if (a == layerRotate) {
+                layers[idx].rotate = newval;
+            } else if (a == patternSpacing) {
+                layers[idx].patternSpacing = newval;
+            } else if (a == patternStagger) {
+                layers[idx].patternStagger = newval;
             } else if (a == gateLow) {
                 layers[idx].gateLow = newval;
             } else if (a == gateHigh) {
@@ -779,6 +853,43 @@ void DoubleExposure::gateSourceChanged()
 
     if (listener && getEnabled()) {
         listener->panelChanged(EvDEGate, gateSource->get_active_text());
+    }
+}
+
+void DoubleExposure::patternChanged()
+{
+    const int idx = selectedLayerIndex();
+
+    if (idx < 0) {
+        return;
+    }
+
+    const int row = patternMethod->get_active_row_number();
+    layers[idx].pattern = static_cast<DoubleExposureParams::Pattern>(row < 0 ? 0 : row);
+    layersEdited_ = true;
+    updateSensitivity();
+    autoEnable();
+
+    if (listener && getEnabled()) {
+        listener->panelChanged(EvDEPlacement, patternMethod->get_active_text());
+    }
+}
+
+void DoubleExposure::flipToggled()
+{
+    const int idx = selectedLayerIndex();
+
+    if (idx < 0) {
+        return;
+    }
+
+    layers[idx].flipH = layerFlipH->get_active();
+    layersEdited_ = true;
+    autoEnable();
+
+    if (listener && getEnabled()) {
+        listener->panelChanged(EvDEPlacement,
+                               layerFlipH->get_active() ? M("GENERAL_ENABLED") : M("GENERAL_DISABLED"));
     }
 }
 

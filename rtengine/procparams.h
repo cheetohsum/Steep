@@ -1911,6 +1911,27 @@ struct DoubleExposureParams {
         CHANNEL     // legacy per-channel max/min
     };
 
+    // Repeating the layer's frame across the base, as a photogram of one
+    // negative printed over and over.
+    enum class Pattern {
+        OFF,        // one frame, placed
+        REPEAT,     // tile the frame edge to edge
+        MIRROR      // reflect alternate tiles, so they meet without a seam
+    };
+
+    // Which part of the partner the layer is confined to, segmented on the
+    // partner itself. OFF is the whole frame and costs nothing.
+    enum class MaskClass {
+        OFF,
+        SUBJECT,
+        PERSON,
+        SKY,
+        VEGETATION,
+        BUILDING,
+        VEHICLE,
+        ANIMAL
+    };
+
     struct Layer {
         Glib::ustring path; // absolute path of the partner image
         bool enabled;       // mute toggle; disabled layers are skipped
@@ -1928,6 +1949,22 @@ struct DoubleExposureParams {
         double offsetX;     // -150..150
         double offsetY;     // -150..150
         double scale;       // 10..400, 100 = cover fit
+        double rotate;      // -180..180 degrees, positive turns the frame clockwise
+        bool flipH;         // mirror the frame, applied before the rotation
+        // Patterning: the placed frame becomes one tile of a grid. Its size
+        // is `scale`; spacing widens the pitch so the base shows through the
+        // gutters, and stagger offsets odd rows into a brick course.
+        Pattern pattern;
+        double patternSpacing; // 0..200 percent of the tile added as a gutter
+        double patternStagger; // 0..100 percent of a tile, odd rows only
+        // Subject selection, segmented on the partner image. The layer is
+        // weighted by the mask; cropToSubject additionally makes the mask's
+        // bounding box the source frame, so patterning repeats the cut-out
+        // rather than the whole picture.
+        MaskClass maskClass;
+        double maskFeather; // 0..100
+        bool maskInvert;
+        bool cropToSubject;
         // "Reveal in" gate: confine the layer to a luminance window with
         // smoothstep feather outside it. Low/high/feather are linear
         // luminance percent; strength 0 disables the gate.

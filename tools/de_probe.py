@@ -22,6 +22,7 @@ CLI = r"C:\msys64\home\alexr\build-hw\Release\steep-cli.exe"
 
 W, H = 256, 64
 PROBE_ROW = H // 2
+GEO = 256  # square geometry fixtures
 
 # Working profile pinned to sRGB for the chromatic cases (default is
 # ProPhoto, under which per-channel and luminance math is no longer
@@ -113,6 +114,37 @@ def make_inputs():
     gray.save(os.path.join(HERE, "partner_gray.png"))
     red.save(os.path.join(HERE, "base_red.png"))
     blue.save(os.path.join(HERE, "partner_blue.png"))
+
+    # Geometry fixtures. Square, so a cover fit onto the 256x64 base is
+    # exactly 1:1 horizontally and the probe row reads the partner's middle.
+    # One ramps across, one ramps down: a quarter turn swaps which of them
+    # varies along the probe row, which is what makes rotation checkable
+    # from a single row of pixels.
+    hramp = Image.new("RGB", (GEO, GEO))
+    hramp_px = hramp.load()
+    vramp = Image.new("RGB", (GEO, GEO))
+    vramp_px = vramp.load()
+    for x in range(GEO):
+        for y in range(GEO):
+            hramp_px[x, y] = (x, x, x)
+            vramp_px[x, y] = (y, y, y)
+    hramp.save(os.path.join(HERE, "partner_hramp.png"))
+    vramp.save(os.path.join(HERE, "partner_vramp.png"))
+
+
+def sample_ramp(u):
+    """Linear value the engine reads from a 256-wide ramp at continuous
+    coordinate u — samplePartner's bilinear fetch of the LINEARIZED pixels,
+    edge-clamped, at skip 1."""
+    tu = u - 0.5
+    x0 = math.floor(tu)
+    dx = tu - x0
+    if x0 < 0:
+        x0, dx = 0, 0.0
+    elif x0 > GEO - 1:
+        x0, dx = GEO - 1, 0.0
+    x1 = min(x0 + 1, GEO - 1)
+    return srgb_to_lin(x0) + dx * (srgb_to_lin(x1) - srgb_to_lin(x0))
 
 
 def write_pp3(name, body, extra=""):
@@ -470,6 +502,113 @@ def main():
         "Layer1BlendMode=4\nLayer1OffsetX=0\nLayer1OffsetY=0\nLayer1Scale=100\n" + GATE_OFF)
     b = row(render(pp3, "base_grad.png", "t13c_default.tif"))
     ok &= identical("placement defaults == cover fit", t2, b)
+
+    # ------------------------------------------------------------------
+    # Rotation. A square partner cover-fits the 256x64 base 1:1 across, so
+    # the probe row reads the partner's middle. Turning it a quarter swaps
+    # the axes: the across-ramp goes flat and the down-ramp starts varying.
+    # ------------------------------------------------------------------
+    hramp_path = os.path.join(HERE, "partner_hramp.png").replace("\\", "/")
+    vramp_path = os.path.join(HERE, "partner_vramp.png").replace("\\", "/")
+
+    def geo_pp3(name, partner, extra_keys):
+        return write_pp3(name,
+            "Enabled=true\nAutoGain=false\nBaseEV=0\nHighlightLatitude=0\n"
+            f"LayerCount=1\nLayer1Path={partner}\nLayer1Enabled=true\nLayer1EV=0\nLayer1Opacity=100\n"
+            "Layer1BlendMode=0\n" + extra_keys + GATE_OFF)
+
+    # T14: the down-ramp unturned reads its own middle row everywhere, so
+    # the layer contributes one constant value across the frame.
+    got = row(render(geo_pp3("t14_vramp.pp3", vramp_path, ""), "base_grad.png", "t14_vramp.tif"))
+    ok &= check("rotate 0: down-ramp is flat", got,
+                lambda x: lin_to_srgb(srgb_to_lin(x) + sample_ramp(GEO / 2 + 0.5)),
+                skip_clipped=True)
+
+    # T14a: turned a quarter clockwise, the same partner ramps along the row
+    # - and backwards, because the inverse map reads v = 256 - fx.
+    got = row(render(geo_pp3("t14a_rot90.pp3", vramp_path, "Layer1Rotate=90\n"),
+                     "base_grad.png", "t14a_rot90.tif"))
+    ok &= check("rotate 90: down-ramp reads across", got,
+                lambda x: lin_to_srgb(srgb_to_lin(x) + sample_ramp(GEO - (x + 0.5))),
+                skip_clipped=True)
+
+    # T14b: the across-ramp turned a quarter goes flat, at its own middle.
+    got = row(render(geo_pp3("t14b_rot90h.pp3", hramp_path, "Layer1Rotate=90\n"),
+                     "base_grad.png", "t14b_rot90h.tif"))
+    ok &= check("rotate 90: across-ramp goes flat", got,
+                lambda x: lin_to_srgb(srgb_to_lin(x) + sample_ramp(GEO / 2 + 0.5)),
+                skip_clipped=True)
+
+    # T14c: mirroring the across-ramp reverses it.
+    got = row(render(geo_pp3("t14c_flip.pp3", hramp_path, "Layer1FlipH=true\n"),
+                     "base_grad.png", "t14c_flip.tif"))
+    ok &= check("mirror: across-ramp reverses", got,
+                lambda x: lin_to_srgb(srgb_to_lin(x) + sample_ramp(GEO - (x + 0.5))),
+                skip_clipped=True)
+
+    # T14d: an unturned, unmirrored layer must still be bitwise the legacy
+    # cover fit - the new keys may not disturb an untouched exposure.
+    a = row(render(geo_pp3("t14d_plain.pp3", hramp_path, ""), "base_grad.png", "t14d_plain.tif"))
+    b = row(render(geo_pp3("t14d_zero.pp3", hramp_path,
+                           "Layer1Rotate=0\nLayer1Pattern=0\nLayer1FlipH=false\n"),
+                   "base_grad.png", "t14d_zero.tif"))
+    ok &= identical("rotate/pattern zero == untouched", a, b)
+
+    # ------------------------------------------------------------------
+    # Patterning. At quarter size the tile is 64 base px wide, so the frame
+    # holds four of them; the across-ramp then reads as a sawtooth.
+    # ------------------------------------------------------------------
+    def tile_u(x, mirror=False, spacing=0.0, stagger=0.0):
+        """deplace::map's wrap, for a square partner at 25% over the base."""
+        scale = 0.25
+        su = (x + 0.5 - W / 2) / scale       # invCover is 1 for this pair
+        sv = (PROBE_ROW + 0.5 - H / 2) / scale
+        cw = GEO * (1.0 + spacing)
+        tx = su / cw
+        ty = sv / cw
+        row_i = math.floor(ty + 0.5)
+        if stagger and (int(row_i) & 1):
+            tx += stagger
+        col = math.floor(tx + 0.5)
+        rx = tx - col
+        if mirror and (int(col) & 1):
+            rx = -rx
+        return rx * cw + GEO / 2
+
+    # The seam between tiles is anti-aliased over aa = 1/scale source px, so
+    # the columns that land on a tile edge are not hand-computable.
+    def seam(x, **kw):
+        u = tile_u(x, **kw)
+        return u < 6.0 or u > GEO - 6.0
+
+    got = row(render(geo_pp3("t15_repeat.pp3", hramp_path, "Layer1Scale=25\nLayer1Pattern=1\n"),
+                     "base_grad.png", "t15_repeat.tif"))
+    ok &= check("repeat: four tiles of the ramp", got,
+                lambda x: lin_to_srgb(srgb_to_lin(x) + sample_ramp(tile_u(x))),
+                skip_clipped=True, skipx={x for x in range(W) if seam(x)})
+
+    # T15b: mirrored tiles reflect their neighbours, so the sawtooth becomes
+    # a triangle wave and the seams stop jumping.
+    got = row(render(geo_pp3("t15b_mirror.pp3", hramp_path, "Layer1Scale=25\nLayer1Pattern=2\n"),
+                     "base_grad.png", "t15b_mirror.tif"))
+    ok &= check("mirrored tiles reflect", got,
+                lambda x: lin_to_srgb(srgb_to_lin(x) + sample_ramp(tile_u(x, mirror=True))),
+                skip_clipped=True, skipx={x for x in range(W) if seam(x, mirror=True)})
+
+    # T15c: a full tile of spacing leaves the base untouched in the gutters.
+    got = row(render(geo_pp3("t15c_gutter.pp3", hramp_path,
+                             "Layer1Scale=25\nLayer1Pattern=1\nLayer1PatternSpacing=100\n"),
+                     "base_grad.png", "t15c_gutter.tif"))
+    plain = row(render(geo_pp3("t15c_base.pp3", hramp_path, "Layer1Opacity=0\n"),
+                       "base_grad.png", "t15c_base.tif"))
+    gutters = [x for x in range(2, W - 2)
+               if not (-8.0 < tile_u(x, spacing=1.0) < GEO + 8.0)]
+    worst = max(abs(got[x] - plain[x]) for x in gutters) if gutters else 99.0
+    status = "PASS" if worst <= 1 and len(gutters) > 20 else "FAIL"
+    print(f"{status}  {'spacing 100: gutters are base':34s} worst |err| = {worst:5.2f}"
+          f"  over {len(gutters)} px")
+    ok &= worst <= 1 and len(gutters) > 20
+
 
     print("\nALL PASS" if ok else "\nFAILURES PRESENT")
     sys.exit(0 if ok else 1)

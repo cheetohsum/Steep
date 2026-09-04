@@ -3573,6 +3573,15 @@ DoubleExposureParams::Layer::Layer() :
     offsetX(0.0),
     offsetY(0.0),
     scale(100.0),
+    rotate(0.0),
+    flipH(false),
+    pattern(Pattern::OFF),
+    patternSpacing(0.0),
+    patternStagger(0.0),
+    maskClass(MaskClass::OFF),
+    maskFeather(25.0),
+    maskInvert(false),
+    cropToSubject(false),
     // Gate off by default: the silhouette look comes from the group's
     // highlight latitude (the film shoulder), driven by how bright the base
     // actually is, and pure addition stays order-free, as on film. The
@@ -3601,6 +3610,15 @@ bool DoubleExposureParams::Layer::operator ==(const Layer& other) const
         && offsetX == other.offsetX
         && offsetY == other.offsetY
         && scale == other.scale
+        && rotate == other.rotate
+        && flipH == other.flipH
+        && pattern == other.pattern
+        && patternSpacing == other.patternSpacing
+        && patternStagger == other.patternStagger
+        && maskClass == other.maskClass
+        && maskFeather == other.maskFeather
+        && maskInvert == other.maskInvert
+        && cropToSubject == other.cropToSubject
         && gateSource == other.gateSource
         && gateLow == other.gateLow
         && gateHigh == other.gateHigh
@@ -4610,6 +4628,15 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
                 keyFile.set_double("Double Exposure", prefix + "OffsetX", doubleExposure.layers[i].offsetX);
                 keyFile.set_double("Double Exposure", prefix + "OffsetY", doubleExposure.layers[i].offsetY);
                 keyFile.set_double("Double Exposure", prefix + "Scale", doubleExposure.layers[i].scale);
+                keyFile.set_double("Double Exposure", prefix + "Rotate", doubleExposure.layers[i].rotate);
+                keyFile.set_boolean("Double Exposure", prefix + "FlipH", doubleExposure.layers[i].flipH);
+                keyFile.set_integer("Double Exposure", prefix + "Pattern", static_cast<int>(doubleExposure.layers[i].pattern));
+                keyFile.set_double("Double Exposure", prefix + "PatternSpacing", doubleExposure.layers[i].patternSpacing);
+                keyFile.set_double("Double Exposure", prefix + "PatternStagger", doubleExposure.layers[i].patternStagger);
+                keyFile.set_integer("Double Exposure", prefix + "MaskClass", static_cast<int>(doubleExposure.layers[i].maskClass));
+                keyFile.set_double("Double Exposure", prefix + "MaskFeather", doubleExposure.layers[i].maskFeather);
+                keyFile.set_boolean("Double Exposure", prefix + "MaskInvert", doubleExposure.layers[i].maskInvert);
+                keyFile.set_boolean("Double Exposure", prefix + "CropToSubject", doubleExposure.layers[i].cropToSubject);
                 keyFile.set_integer("Double Exposure", prefix + "GateSource", static_cast<int>(doubleExposure.layers[i].gateSource));
                 keyFile.set_double("Double Exposure", prefix + "GateLow", doubleExposure.layers[i].gateLow);
                 keyFile.set_double("Double Exposure", prefix + "GateHigh", doubleExposure.layers[i].gateHigh);
@@ -7431,6 +7458,53 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
 
                         if (keyFile.has_key("Double Exposure", prefix + "Scale")) {
                             layer.scale = std::max(1.0, keyFile.get_double("Double Exposure", prefix + "Scale"));
+                        }
+
+                        // Rotation, patterning and subject selection all
+                        // default to the identity, so a file written before
+                        // they existed renders exactly as it always did.
+                        if (keyFile.has_key("Double Exposure", prefix + "Rotate")) {
+                            layer.rotate = keyFile.get_double("Double Exposure", prefix + "Rotate");
+                        }
+
+                        if (keyFile.has_key("Double Exposure", prefix + "FlipH")) {
+                            layer.flipH = keyFile.get_boolean("Double Exposure", prefix + "FlipH");
+                        }
+
+                        if (keyFile.has_key("Double Exposure", prefix + "Pattern")) {
+                            const int pat = keyFile.get_integer("Double Exposure", prefix + "Pattern");
+
+                            if (pat >= 0 && pat <= 2) {
+                                layer.pattern = static_cast<DoubleExposureParams::Pattern>(pat);
+                            }
+                        }
+
+                        if (keyFile.has_key("Double Exposure", prefix + "PatternSpacing")) {
+                            layer.patternSpacing = keyFile.get_double("Double Exposure", prefix + "PatternSpacing");
+                        }
+
+                        if (keyFile.has_key("Double Exposure", prefix + "PatternStagger")) {
+                            layer.patternStagger = keyFile.get_double("Double Exposure", prefix + "PatternStagger");
+                        }
+
+                        if (keyFile.has_key("Double Exposure", prefix + "MaskClass")) {
+                            const int cls = keyFile.get_integer("Double Exposure", prefix + "MaskClass");
+
+                            if (cls >= 0 && cls <= 7) {
+                                layer.maskClass = static_cast<DoubleExposureParams::MaskClass>(cls);
+                            }
+                        }
+
+                        if (keyFile.has_key("Double Exposure", prefix + "MaskFeather")) {
+                            layer.maskFeather = keyFile.get_double("Double Exposure", prefix + "MaskFeather");
+                        }
+
+                        if (keyFile.has_key("Double Exposure", prefix + "MaskInvert")) {
+                            layer.maskInvert = keyFile.get_boolean("Double Exposure", prefix + "MaskInvert");
+                        }
+
+                        if (keyFile.has_key("Double Exposure", prefix + "CropToSubject")) {
+                            layer.cropToSubject = keyFile.get_boolean("Double Exposure", prefix + "CropToSubject");
                         }
 
                         if (keyFile.has_key("Double Exposure", prefix + "GateStrength")) {

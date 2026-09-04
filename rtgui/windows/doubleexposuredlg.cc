@@ -624,6 +624,7 @@ class DEBlendPreview final : public Gtk::DrawingArea
 public:
     std::function<void(double, double)> onMove;  // drag delta since the last event
     std::function<void(double)> onScale;         // multiplicative size factor
+    std::function<void(double)> onRotate;        // absolute angle in degrees
     std::function<void()> onReset;               // double-click
     std::function<void()> onGestureEnd;          // button released after a drag
 
@@ -643,23 +644,26 @@ public:
     }
 
     // The selected layer's placed frame, in composite pixel coordinates (may
-    // extend past the composite). Hidden when nothing is selected.
-    void setSelectionFrame(bool visible, double x0, double y0, double x1, double y1)
+    // extend past the composite), turned by `angleDeg` about its centre.
+    // Hidden when nothing is selected.
+    void setSelectionFrame(bool visible, double x0, double y0, double x1, double y1, double angleDeg = 0.0)
     {
         frameVisible_ = visible;
         fx0_ = std::min(x0, x1);
         fx1_ = std::max(x0, x1);
         fy0_ = std::min(y0, y1);
         fy1_ = std::max(y0, y1);
+        angle_ = angleDeg;
         queue_draw();
     }
 
 private:
-    enum class Drag { NONE, MOVE, SCALE };
+    enum class Drag { NONE, MOVE, SCALE, ROTATE };
 
     Glib::RefPtr<Gdk::Pixbuf> composite_;
     bool frameVisible_ = false;
     double fx0_ = 0.0, fy0_ = 0.0, fx1_ = 0.0, fy1_ = 0.0;
+    double angle_ = 0.0; // degrees, clockwise, as the engine turns the layer
     // composite -> widget mapping from the last draw
     double sc_ = 1.0, ox_ = 0.0, oy_ = 0.0;
     Drag drag_ = Drag::NONE;
@@ -667,11 +671,51 @@ private:
     double scaleStartDist_ = 1.0;
     bool hoverHandle_ = false;
     bool hoverFrame_ = false;
+    bool hoverRotate_ = false;
 
     double wx(double cx) const { return ox_ + cx * sc_; }
     double wy(double cy) const { return oy_ + cy * sc_; }
     double centreX() const { return wx((fx0_ + fx1_) * 0.5); }
     double centreY() const { return wy((fy0_ + fy1_) * 0.5); }
+
+    // A turned frame is hit-tested by turning the pointer back instead: the
+    // rest of the geometry then stays axis-aligned, as it was before layers
+    // could rotate.
+    void unrotate(double x, double y, double& lx, double& ly) const
+    {
+        const double cx = centreX(), cy = centreY();
+        const double a = angle_ * M_PI / 180.0;
+        const double dx = x - cx, dy = y - cy;
+        lx = cx + dx * std::cos(a) + dy * std::sin(a);
+        ly = cy - dx * std::sin(a) + dy * std::cos(a);
+    }
+
+    void rotatePoint(double lx, double ly, double& x, double& y) const
+    {
+        const double cx = centreX(), cy = centreY();
+        const double a = angle_ * M_PI / 180.0;
+        const double dx = lx - cx, dy = ly - cy;
+        x = cx + dx * std::cos(a) - dy * std::sin(a);
+        y = cy + dx * std::sin(a) + dy * std::cos(a);
+    }
+
+    // Grip for turning the frame, held off the top edge like a print being
+    // squared up on the easel.
+    void rotateGrip(double& gx, double& gy) const
+    {
+        rotatePoint((wx(fx0_) + wx(fx1_)) * 0.5, wy(fy0_) - 20.0, gx, gy);
+    }
+
+    bool hitRotate(double x, double y) const
+    {
+        if (!frameVisible_) {
+            return false;
+        }
+
+        double gx, gy;
+        rotateGrip(gx, gy);
+        return std::hypot(x - gx, y - gy) <= DE_HANDLE_PX + 4.0;
+    }
 
     bool hitHandle(double x, double y) const
     {
@@ -679,12 +723,14 @@ private:
             return false;
         }
 
+        double lx, ly;
+        unrotate(x, y, lx, ly);
         const double xs[2] = {wx(fx0_), wx(fx1_)};
         const double ys[2] = {wy(fy0_), wy(fy1_)};
 
         for (double hx : xs) {
             for (double hy : ys) {
-                if (std::fabs(x - hx) <= DE_HANDLE_PX + 3.0 && std::fabs(y - hy) <= DE_HANDLE_PX + 3.0) {
+                if (std::fabs(lx - hx) <= DE_HANDLE_PX + 3.0 && std::fabs(ly - hy) <= DE_HANDLE_PX + 3.0) {
                     return true;
                 }
             }
@@ -695,7 +741,19 @@ private:
 
     bool hitFrame(double x, double y) const
     {
-        return frameVisible_ && x >= wx(fx0_) && x <= wx(fx1_) && y >= wy(fy0_) && y <= wy(fy1_);
+        if (!frameVisible_) {
+            return false;
+        }
+
+        double lx, ly;
+        unrotate(x, y, lx, ly);
+        return lx >= wx(fx0_) && lx <= wx(fx1_) && ly >= wy(fy0_) && ly <= wy(fy1_);
+    }
+
+    // Angle that puts the grip under the pointer.
+    double angleAt(double x, double y) const
+    {
+        return std::atan2(y - centreY(), x - centreX()) * 180.0 / M_PI + 90.0;
     }
 
     void setCursorName(const char* name)
@@ -709,13 +767,15 @@ private:
 
     void updateHover(double x, double y)
     {
-        const bool handle = hitHandle(x, y);
-        const bool frame = !handle && hitFrame(x, y);
+        const bool rotate = hitRotate(x, y);
+        const bool handle = !rotate && hitHandle(x, y);
+        const bool frame = !rotate && !handle && hitFrame(x, y);
 
-        if (handle != hoverHandle_ || frame != hoverFrame_) {
+        if (handle != hoverHandle_ || frame != hoverFrame_ || rotate != hoverRotate_) {
             hoverHandle_ = handle;
             hoverFrame_ = frame;
-            setCursorName(handle ? "nwse-resize" : (frame ? "move" : "default"));
+            hoverRotate_ = rotate;
+            setCursorName(rotate ? "grab" : (handle ? "nwse-resize" : (frame ? "move" : "default")));
             queue_draw();
         }
     }
@@ -742,6 +802,12 @@ private:
 
         lastX_ = e->x;
         lastY_ = e->y;
+
+        if (hitRotate(e->x, e->y)) {
+            drag_ = Drag::ROTATE;
+            setCursorName("grabbing");
+            return true;
+        }
 
         if (hitHandle(e->x, e->y)) {
             drag_ = Drag::SCALE;
@@ -777,6 +843,30 @@ private:
             }
 
             scaleStartDist_ = d;
+            return true;
+        }
+
+        if (drag_ == Drag::ROTATE) {
+            if (onRotate) {
+                double a = angleAt(e->x, e->y);
+
+                // Shift snaps to the quarter turns, for squaring a frame up
+                // against the horizon.
+                if (e->state & GDK_SHIFT_MASK) {
+                    a = std::round(a / 15.0) * 15.0;
+                }
+
+                while (a > 180.0) {
+                    a -= 360.0;
+                }
+
+                while (a < -180.0) {
+                    a += 360.0;
+                }
+
+                onRotate(a);
+            }
+
             return true;
         }
 
@@ -826,8 +916,8 @@ private:
 
     bool on_leave_notify_event(GdkEventCrossing*) override
     {
-        if (drag_ == Drag::NONE && (hoverHandle_ || hoverFrame_)) {
-            hoverHandle_ = hoverFrame_ = false;
+        if (drag_ == Drag::NONE && (hoverHandle_ || hoverFrame_ || hoverRotate_)) {
+            hoverHandle_ = hoverFrame_ = hoverRotate_ = false;
             setCursorName("default");
             queue_draw();
         }
@@ -883,6 +973,37 @@ private:
         cr->rectangle(0, 0, w, h);
         cr->clip();
         cr->set_line_join(Cairo::LINE_JOIN_MITER);
+
+        // Everything below is drawn in the frame's own orientation, which is
+        // also how the hit tests read it (see unrotate).
+        if (angle_ != 0.0) {
+            cr->translate(centreX(), centreY());
+            cr->rotate(angle_ * M_PI / 180.0);
+            cr->translate(-centreX(), -centreY());
+        }
+
+        // The grip that turns the frame, on a short stalk off the top edge.
+        {
+            const double gx = (x0 + x1) * 0.5;
+            const double gy = y0 - 20.0;
+            cr->move_to(gx, y0);
+            cr->line_to(gx, gy);
+            cr->set_source_rgba(0.0, 0.0, 0.0, 0.55);
+            cr->set_line_width(3.0);
+            cr->stroke_preserve();
+            cr->set_source_rgba(1.0, 1.0, 1.0, 0.85);
+            cr->set_line_width(1.0);
+            cr->stroke();
+
+            cr->arc(gx, gy, DE_HANDLE_PX, 0.0, 2.0 * M_PI);
+            cr->set_source_rgba(0.0, 0.0, 0.0, 0.7);
+            cr->set_line_width(3.0);
+            cr->stroke_preserve();
+            cr->set_source_rgb(hoverRotate_ || drag_ == Drag::ROTATE ? 1.0 : 1.0,
+                               hoverRotate_ || drag_ == Drag::ROTATE ? 0.80 : 1.0,
+                               hoverRotate_ || drag_ == Drag::ROTATE ? 0.25 : 1.0);
+            cr->fill();
+        }
 
         cr->rectangle(x0, y0, x1 - x0, y1 - y0);
         cr->set_source_rgba(0.0, 0.0, 0.0, 0.55);
@@ -1069,6 +1190,7 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     preview_ = Gtk::manage(new DEBlendPreview());
     preview_->onMove = [this](double dx, double dy) { onPreviewMove(dx, dy); };
     preview_->onScale = [this](double factor) { onPreviewScale(factor); };
+    preview_->onRotate = [this](double degrees) { onPreviewRotate(degrees); };
     preview_->onReset = [this]() { onPreviewReset(); };
     right->pack_start(*preview_, Gtk::PACK_EXPAND_WIDGET);
 
@@ -1167,6 +1289,50 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_SCALE"), scaleScale_, 10.0, 400.0, 1.0, 100.0), Gtk::PACK_SHRINK);
     scaleScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PLACEMENT_TOOLTIP"));
     scaleScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+
+    // Rotation, with quarter turns to hand and a mirror toggle. The preview's
+    // grip drives the same value.
+    Gtk::Box* rotRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+    Gtk::Box* rotScaleRow = makeScaleRow(M("TP_DOUBLEEXPOSURE_ROTATE"), rotateScale_, -180.0, 180.0, 0.5, 0.0);
+    rotateScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_ROTATE_TOOLTIP"));
+    rotateScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    rotRow->pack_start(*rotScaleRow, Gtk::PACK_EXPAND_WIDGET);
+    rotateLeft_ = Gtk::manage(new Gtk::Button("\xE2\x86\xBA")); // anticlockwise open circle arrow
+    rotateLeft_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_ROTATE_LEFT"));
+    rotateLeft_->signal_clicked().connect([this]() { nudgeRotation(-90.0); });
+    rotRow->pack_start(*rotateLeft_, Gtk::PACK_SHRINK);
+    rotateRight_ = Gtk::manage(new Gtk::Button("\xE2\x86\xBB")); // clockwise open circle arrow
+    rotateRight_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_ROTATE_RIGHT"));
+    rotateRight_->signal_clicked().connect([this]() { nudgeRotation(90.0); });
+    rotRow->pack_start(*rotateRight_, Gtk::PACK_SHRINK);
+    right->pack_start(*rotRow, Gtk::PACK_SHRINK);
+
+    Gtk::Box* patRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+    Gtk::Label* patLab = Gtk::manage(new Gtk::Label(M("TP_DOUBLEEXPOSURE_PATTERN"), Gtk::ALIGN_START));
+    patLab->set_size_request(150, -1);
+    patLab->set_xalign(0.f);
+    patternMethod_ = Gtk::manage(new MyComboBoxText());
+    patternMethod_->append(M("TP_DOUBLEEXPOSURE_PATTERN_OFF"));
+    patternMethod_->append(M("TP_DOUBLEEXPOSURE_PATTERN_REPEAT"));
+    patternMethod_->append(M("TP_DOUBLEEXPOSURE_PATTERN_MIRROR"));
+    patternMethod_->set_active(0);
+    patternMethod_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_TOOLTIP"));
+    patternMethod_->setPreferredWidth(120, 180);
+    patternMethod_->connect(patternMethod_->signal_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged)));
+    patRow->pack_start(*patLab, Gtk::PACK_SHRINK);
+    patRow->pack_start(*patternMethod_, Gtk::PACK_EXPAND_WIDGET);
+    flipH_ = Gtk::manage(new Gtk::CheckButton(M("TP_DOUBLEEXPOSURE_FLIPH")));
+    flipH_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_FLIPH_TOOLTIP"));
+    flipH_->signal_toggled().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    patRow->pack_start(*flipH_, Gtk::PACK_SHRINK);
+    right->pack_start(*patRow, Gtk::PACK_SHRINK);
+
+    right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_PATTERN_SPACING"), patternSpacingScale_, 0.0, 200.0, 1.0, 0.0), Gtk::PACK_SHRINK);
+    patternSpacingScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_SPACING_TOOLTIP"));
+    patternSpacingScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_PATTERN_STAGGER"), patternStaggerScale_, 0.0, 100.0, 1.0, 0.0), Gtk::PACK_SHRINK);
+    patternStaggerScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_STAGGER_TOOLTIP"));
+    patternStaggerScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
 
     resetPlacement_ = Gtk::manage(new Gtk::Button(M("TP_DOUBLEEXPOSURE_PLACEMENT_RESET")));
     resetPlacement_->set_halign(Gtk::ALIGN_END);
@@ -2241,6 +2407,13 @@ void DoubleExposureDlg::syncLayerControls()
         offsetXScale_->set_sensitive(false);
         offsetYScale_->set_sensitive(false);
         scaleScale_->set_sensitive(false);
+        rotateScale_->set_sensitive(false);
+        rotateLeft_->set_sensitive(false);
+        rotateRight_->set_sensitive(false);
+        flipH_->set_sensitive(false);
+        patternMethod_->set_sensitive(false);
+        patternSpacingScale_->set_sensitive(false);
+        patternStaggerScale_->set_sensitive(false);
         resetPlacement_->set_sensitive(false);
         blendMethod_->set_sensitive(false);
     } else {
@@ -2266,6 +2439,21 @@ void DoubleExposureDlg::syncLayerControls()
         offsetXScale_->set_value(layer.offsetX);
         offsetYScale_->set_value(layer.offsetY);
         scaleScale_->set_value(layer.scale);
+
+        // Spacing and stagger only mean anything once the frame repeats.
+        const bool tiled = layer.pattern != DoubleExposureParams::Pattern::OFF;
+        rotateScale_->set_sensitive(true);
+        rotateLeft_->set_sensitive(true);
+        rotateRight_->set_sensitive(true);
+        flipH_->set_sensitive(true);
+        patternMethod_->set_sensitive(true);
+        patternSpacingScale_->set_sensitive(tiled);
+        patternStaggerScale_->set_sensitive(tiled);
+        rotateScale_->set_value(layer.rotate);
+        flipH_->set_active(layer.flipH);
+        patternMethod_->set_active(static_cast<int>(layer.pattern));
+        patternSpacingScale_->set_value(layer.patternSpacing);
+        patternStaggerScale_->set_value(layer.patternStagger);
         blendMethod_->set_active(static_cast<int>(layer.blendMode));
     }
 
@@ -2296,6 +2484,18 @@ void DoubleExposureDlg::layerControlChanged()
     params_.layers[selectedLayer_].offsetX = offsetXScale_->get_value();
     params_.layers[selectedLayer_].offsetY = offsetYScale_->get_value();
     params_.layers[selectedLayer_].scale = scaleScale_->get_value();
+    params_.layers[selectedLayer_].rotate = rotateScale_->get_value();
+    params_.layers[selectedLayer_].flipH = flipH_->get_active();
+    const int patternRow = patternMethod_->get_active_row_number();
+    params_.layers[selectedLayer_].pattern =
+        static_cast<DoubleExposureParams::Pattern>(patternRow < 0 ? 0 : patternRow);
+    params_.layers[selectedLayer_].patternSpacing = patternSpacingScale_->get_value();
+    params_.layers[selectedLayer_].patternStagger = patternStaggerScale_->get_value();
+
+    const bool tiled = params_.layers[selectedLayer_].pattern != DoubleExposureParams::Pattern::OFF;
+    patternSpacingScale_->set_sensitive(tiled);
+    patternStaggerScale_->set_sensitive(tiled);
+
     schedulePreviewUpdate();
 }
 
@@ -2312,6 +2512,7 @@ void DoubleExposureDlg::syncPlacementControls()
     offsetXScale_->set_value(layer.offsetX);
     offsetYScale_->set_value(layer.offsetY);
     scaleScale_->set_value(layer.scale);
+    rotateScale_->set_value(layer.rotate);
     syncingControls_ = false;
 }
 
@@ -2371,6 +2572,40 @@ void DoubleExposureDlg::onPreviewScale(double factor)
     schedulePreviewUpdate();
 }
 
+void DoubleExposureDlg::onPreviewRotate(double degrees)
+{
+    if (selectedLayer_ >= params_.layers.size()) {
+        return;
+    }
+
+    params_.layers[selectedLayer_].rotate = std::min(std::max(degrees, -180.0), 180.0);
+    syncPlacementControls();
+    schedulePreviewUpdate();
+}
+
+// Quarter turns, wrapping the long way round rather than stopping at the end
+// of the slider.
+void DoubleExposureDlg::nudgeRotation(double degrees)
+{
+    if (selectedLayer_ >= params_.layers.size()) {
+        return;
+    }
+
+    double a = params_.layers[selectedLayer_].rotate + degrees;
+
+    while (a > 180.0) {
+        a -= 360.0;
+    }
+
+    while (a < -180.0) {
+        a += 360.0;
+    }
+
+    params_.layers[selectedLayer_].rotate = a;
+    syncPlacementControls();
+    schedulePreviewUpdate();
+}
+
 void DoubleExposureDlg::onPreviewReset()
 {
     if (selectedLayer_ >= params_.layers.size()) {
@@ -2381,6 +2616,7 @@ void DoubleExposureDlg::onPreviewReset()
     layer.offsetX = 0.0;
     layer.offsetY = 0.0;
     layer.scale = 100.0;
+    layer.rotate = 0.0;
     syncPlacementControls();
     schedulePreviewUpdate();
 }
@@ -2709,12 +2945,11 @@ void DoubleExposureDlg::updatePreview(bool quick)
         float gateHigh = 0.f;
         float gateFeather = 0.f;
         float gateStrength = 0.f;
-        float sx = 1.f; // engine cover-fit scales, from the two full-frame aspects
-        float sy = 1.f;
-        float offX = 0.f; // placement, fraction of the base frame
-        float offY = 0.f;
-        float scale = 1.f;
-        bool placed = false;
+        // Cover fit, placement, rotation and tiling. Built in units where the
+        // base frame is one wide, so deplace::map does exactly what it does
+        // for the engine and the two renders cannot disagree.
+        rtengine::deplace::Frame frame;
+        float srcAspect = 1.f;
     };
 
     std::vector<LayerPix> layerPix;
@@ -2750,10 +2985,13 @@ void DoubleExposureDlg::updatePreview(bool quick)
         lp.gateHigh = static_cast<float>(layer.gateHigh) / 100.f;
         lp.gateFeather = static_cast<float>(layer.gateFeather) / 100.f;
         lp.gateStrength = static_cast<float>(layer.gateStrength) / 100.f;
-        lp.offX = static_cast<float>(layer.offsetX) / 100.f;
-        lp.offY = static_cast<float>(layer.offsetY) / 100.f;
-        lp.scale = std::max(0.01f, static_cast<float>(layer.scale) / 100.f);
-        lp.placed = lp.offX != 0.f || lp.offY != 0.f || lp.scale != 1.f;
+        lp.srcAspect = lp.srcH > 0 ? static_cast<float>(lp.srcW) / lp.srcH : baseAspect;
+        lp.frame.baseW = 1.f;
+        lp.frame.baseH = 1.f / baseAspect;
+        lp.frame.srcW = 1.f;
+        lp.frame.srcH = 1.f / lp.srcAspect;
+        lp.frame.invCover = 1.f / std::max(lp.frame.baseW / lp.frame.srcW, lp.frame.baseH / lp.frame.srcH);
+        rtengine::deplace::applyLayer(lp.frame, layer, false);
 
         if (lp.mode == DoubleExposureParams::BlendMode::ADD) {
             ++addLayers;
@@ -2789,23 +3027,6 @@ void DoubleExposureDlg::updatePreview(bool quick)
     const bool sceneMode = static_cast<bool>(basePlate) && allPlates && !layerPix.empty();
     const bool sceneFaithful = pc.haveTransfer && !layerPix.empty();
 
-    // Cover-fit scales for a layer of the given aspect (engine cover math
-    // reduced to the two full-frame aspect ratios).
-    const auto coverScales = [baseAspect](float layerAspect, float& sx, float& sy) {
-        if (baseAspect >= layerAspect) {
-            sx = 1.f;
-            sy = layerAspect / baseAspect;
-        } else {
-            sx = baseAspect / layerAspect;
-            sy = 1.f;
-        }
-    };
-
-    for (auto& lp : layerPix) {
-        const float layerAspect = lp.srcH > 0 ? static_cast<float>(lp.srcW) / lp.srcH : baseAspect;
-        coverScales(layerAspect, lp.sx, lp.sy);
-    }
-
     // Remember the preview -> full-frame map for the drag handlers, and hand
     // the selected exposure's placed frame to the preview for its overlay.
     previewNx0_ = nx0;
@@ -2825,15 +3046,17 @@ void DoubleExposureDlg::updatePreview(bool quick)
             selAspect = static_cast<float>(selPix->get_width()) / selPix->get_height();
         }
 
-        float sx = 1.f, sy = 1.f;
-        coverScales(selAspect, sx, sy);
+        // The frame's own extent, before rotation: the overlay turns it.
+        const double sx = baseAspect >= selAspect ? 1.0 : baseAspect / selAspect;
+        const double sy = baseAspect >= selAspect ? selAspect / baseAspect : 1.0;
         const double scale = std::max(0.01, sel.scale / 100.0);
         const double offX = sel.offsetX / 100.0, offY = sel.offsetY / 100.0;
         const double nxa = 0.5 + offX - 0.5 * scale / sx, nxb = 0.5 + offX + 0.5 * scale / sx;
         const double nya = 0.5 + offY - 0.5 * scale / sy, nyb = 0.5 + offY + 0.5 * scale / sy;
-        preview_->setSelectionFrame(true, (nxa - nx0) / nxs, (nya - ny0) / nys, (nxb - nx0) / nxs, (nyb - ny0) / nys);
+        preview_->setSelectionFrame(true, (nxa - nx0) / nxs, (nya - ny0) / nys, (nxb - nx0) / nxs, (nyb - ny0) / nys,
+                                    sel.rotate);
     } else {
-        preview_->setSelectionFrame(false, 0, 0, 0, 0);
+        preview_->setSelectionFrame(false, 0, 0, 0, 0, 0.0);
     }
 
     // --- composite ----------------------------------------------------------
@@ -2841,6 +3064,9 @@ void DoubleExposureDlg::updatePreview(bool quick)
     // replicate; the settled pass computes them all. Output stays w x h so
     // the overlay and drag coordinates never change.
     const int step = quick ? 2 : 1;
+    // Vertical base coordinates go to the frame in physical units, so a
+    // rotation is a real rotation and not one skewed by the frame's aspect.
+    const float invBaseAspect = 1.f / baseAspect;
     auto result = Gdk::Pixbuf::create(Gdk::COLORSPACE_RGB, false, 8, w, h);
     guint8* outData = result->get_pixels();
     const int outStride = result->get_rowstride();
@@ -2892,21 +3118,16 @@ void DoubleExposureDlg::updatePreview(bool quick)
 
             for (int li = 0; li < nLayers; ++li) {
                 const LayerPix& lp = layers[li];
-                const float un = (nx - 0.5f - lp.offX) * lp.sx / lp.scale + 0.5f;
-                const float vn = (ny - 0.5f - lp.offY) * lp.sy / lp.scale + 0.5f;
-                float coverage = 1.f;
+                float u, v, coverage;
 
-                if (lp.placed) {
-                    const float aaX = std::max(nxs * lp.sx / lp.scale, 1e-6f);
-                    const float aaY = std::max(nys * lp.sy / lp.scale, 1e-6f);
-                    const float ex = std::min(un, 1.f - un) / aaX;
-                    const float ey = std::min(vn, 1.f - vn) / aaY;
-                    coverage = std::min(std::max(std::min(ex, ey) + 0.5f, 0.f), 1.f);
-
-                    if (coverage <= 0.f) {
-                        continue;
-                    }
+                if (!rtengine::deplace::map(lp.frame, nx, ny * invBaseAspect, nxs, u, v, coverage)) {
+                    continue;
                 }
+
+                // Back to 0..1 of the source rect: the frame works in units
+                // where the source is one wide and 1/aspect tall.
+                const float un = u;
+                const float vn = v * lp.srcAspect;
 
                 int lx = static_cast<int>(un * lp.srcW);
                 int ly = static_cast<int>(vn * lp.srcH);

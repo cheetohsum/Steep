@@ -46,6 +46,12 @@ private:
     Adjuster *layerOffsetX;
     Adjuster *layerOffsetY;
     Adjuster *layerScale;
+    Adjuster *layerRotate;
+    Gtk::CheckButton *layerFlipH;
+    MyComboBoxText *patternMethod;
+    Adjuster *patternSpacing;    // tiled layers only
+    Adjuster *patternStagger;    // tiled layers only
+    sigc::connection flipConn;
     MyComboBoxText *blendMethod;
     Gtk::Box *compareRow;        // comparative modes only
     MyComboBoxText *compareMode;
@@ -108,6 +114,8 @@ public:
     void blendChanged();
     void compareChanged();
     void gateSourceChanged();
+    void patternChanged();
+    void flipToggled();
     void autoGainToggled();
     void layerSelChanged();
 

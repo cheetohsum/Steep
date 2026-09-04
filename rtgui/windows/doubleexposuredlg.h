@@ -110,6 +110,8 @@ private:
     // Interactive placement of the selected exposure from the preview.
     void onPreviewMove(double dxCompositePx, double dyCompositePx);
     void onPreviewScale(double factor);
+    void onPreviewRotate(double degrees);
+    void nudgeRotation(double degrees);
     void onPreviewReset();
     void syncPlacementControls();
     void schedulePreviewUpdate();
@@ -194,6 +196,13 @@ private:
     Gtk::Scale* offsetXScale_;
     Gtk::Scale* offsetYScale_;
     Gtk::Scale* scaleScale_;
+    Gtk::Scale* rotateScale_;
+    Gtk::Button* rotateLeft_;
+    Gtk::Button* rotateRight_;
+    Gtk::CheckButton* flipH_;
+    MyComboBoxText* patternMethod_;
+    Gtk::Scale* patternSpacingScale_;
+    Gtk::Scale* patternStaggerScale_;
     Gtk::Button* resetPlacement_;
     Gtk::Box* trayBox_;
 

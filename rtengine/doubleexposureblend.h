@@ -224,4 +224,149 @@ inline float shoulder(float x01, float knee)
 
 } // namespace deblend
 
+// Where a base pixel lands in the partner. This is the ONLY copy of that
+// map: the engine composite and the picker dialog's preview both call it, so
+// a placed, rotated or tiled layer cannot look one way in the picker and
+// another in the render — the two bugs this tool has produced most.
+//
+// The map is unit-agnostic: only the ratios between the base frame and the
+// source rect matter, so the engine can work in partner pixels while the
+// dialog works with the base width normalised to 1, and neither has to
+// convert. Rotation is a real rotation in whichever units the caller uses,
+// which is why the caller must pass a *physical* frame size (pixels, or a
+// width-normalised size that accounts for the aspect) rather than a unit
+// square.
+namespace deplace
+{
+
+using Pattern = procparams::DoubleExposureParams::Pattern;
+
+struct Frame {
+    // Base frame and source rect, in the caller's units.
+    float baseW = 1.f;
+    float baseH = 1.f;
+    float srcX0 = 0.f;   // the source rect is the whole partner frame unless
+    float srcY0 = 0.f;   // the layer is cropped to its subject
+    float srcW = 1.f;
+    float srcH = 1.f;
+    float invCover = 1.f; // 1 / max(baseW / srcW, baseH / srcH)
+    float scale = 1.f;    // 1 = cover fit
+    float offX = 0.f;     // centre shift, fraction of the base frame
+    float offY = 0.f;
+    float cosA = 1.f;     // rotation of the layer, as its inverse
+    float sinA = 0.f;
+    float flip = 1.f;     // -1 mirrors the layer horizontally
+    Pattern pattern = Pattern::OFF;
+    float cell = 1.f;     // tile pitch in source-rect widths; > 1 leaves a gutter
+    float stagger = 0.f;  // odd-row shift, fraction of a tile
+    // False keeps the legacy path bitwise: no rotation, no wrap, no frame
+    // edge — the partner is simply edge-clamped over the whole base, which
+    // is how every layer behaved before placement existed.
+    bool placed = false;
+};
+
+// True when the cell index is odd, for either sign. Mirror tiling reflects
+// odd cells so neighbours meet on the same source edge.
+inline bool oddCell(float cellIndex)
+{
+    return (static_cast<long long>(cellIndex) & 1LL) != 0LL;
+}
+
+// Fills in everything the layer's own parameters decide. The caller still
+// supplies the two frame geometries, which only it knows.
+inline void applyLayer(Frame& f, const procparams::DoubleExposureParams::Layer& layer, bool cropped)
+{
+    constexpr float degToRad = 3.14159265358979323846f / 180.f;
+
+    f.offX = static_cast<float>(layer.offsetX) / 100.f;
+    f.offY = static_cast<float>(layer.offsetY) / 100.f;
+    f.scale = std::max(0.01f, static_cast<float>(layer.scale) / 100.f);
+
+    const float angle = static_cast<float>(layer.rotate) * degToRad;
+    f.cosA = std::cos(angle);
+    f.sinA = std::sin(angle);
+    f.flip = layer.flipH ? -1.f : 1.f;
+
+    f.pattern = layer.pattern;
+    f.cell = 1.f + std::max(0.f, static_cast<float>(layer.patternSpacing)) / 100.f;
+    f.stagger = std::min(std::max(static_cast<float>(layer.patternStagger) / 100.f, 0.f), 1.f);
+
+    // A plain mirror still covers the base exactly, so it alone does not need
+    // the placed path; everything else moves the frame's edges into view.
+    f.placed = f.offX != 0.f || f.offY != 0.f || f.scale != 1.f
+               || layer.rotate != 0.0 || f.pattern != Pattern::OFF || cropped;
+}
+
+// Maps base-frame point (fx, fy) to source coordinates (u, v). `aaStep` is
+// the size of one output pixel in base units, which sets the width of the
+// anti-aliased frame edge. Returns false where the layer is absent.
+inline bool map(const Frame& f, float fx, float fy, float aaStep,
+                float& u, float& v, float& coverage)
+{
+    float dx = fx - f.baseW * (0.5f + f.offX);
+    float dy = fy - f.baseH * (0.5f + f.offY);
+
+    if (f.sinA != 0.f) {
+        const float qx = f.cosA * dx + f.sinA * dy;
+        const float qy = f.cosA * dy - f.sinA * dx;
+        dx = qx;
+        dy = qy;
+    }
+
+    // Written in this order so an unrotated, unplaced layer reproduces the
+    // original expression bit for bit.
+    float su = f.flip * dx * f.invCover / f.scale;
+    float sv = dy * f.invCover / f.scale;
+
+    coverage = 1.f;
+
+    if (!f.placed) {
+        u = su + f.srcX0 + f.srcW * 0.5f;
+        v = sv + f.srcY0 + f.srcH * 0.5f;
+        return true;
+    }
+
+    if (f.pattern != Pattern::OFF) {
+        const float cw = f.srcW * f.cell;
+        const float ch = f.srcH * f.cell;
+
+        float tx = su / cw;
+        const float ty = sv / ch;
+        const float row = std::floor(ty + 0.5f);
+
+        if (f.stagger != 0.f && oddCell(row)) {
+            tx += f.stagger;
+        }
+
+        const float col = std::floor(tx + 0.5f);
+        float rx = tx - col;
+        float ry = ty - row;
+
+        if (f.pattern == Pattern::MIRROR) {
+            if (oddCell(col)) {
+                rx = -rx;
+            }
+
+            if (oddCell(row)) {
+                ry = -ry;
+            }
+        }
+
+        su = rx * cw;
+        sv = ry * ch;
+    }
+
+    u = su + f.srcX0 + f.srcW * 0.5f;
+    v = sv + f.srcY0 + f.srcH * 0.5f;
+
+    const float aa = std::max(aaStep * f.invCover / f.scale, 1e-6f);
+    const float ex = std::min(u - f.srcX0, f.srcX0 + f.srcW - u);
+    const float ey = std::min(v - f.srcY0, f.srcY0 + f.srcH - v);
+    coverage = std::min(std::max(std::min(ex, ey) / aa + 0.5f, 0.f), 1.f);
+
+    return coverage > 0.f;
+}
+
+} // namespace deplace
+
 } // namespace rtengine
