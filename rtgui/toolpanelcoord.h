@@ -98,6 +98,7 @@
 #include "tools/tonecurve.h"
 #include "tools/toneequalizer.h"
 #include "toolbar.h"
+#include "aimaskthumb.h"
 #include "toolpanel.h"
 #include "tools/vibrance.h"
 #include "tools/vignetting.h"
@@ -369,8 +370,8 @@ private:
     int hoverMissCount_ = 0;  // consecutive watchdog misses before turning off
     void applyHoverMask();
     void turnOffMaskOverlay(bool forceRedraw = false);
-    Glib::RefPtr<Gdk::Pixbuf> editedImageMaskThumb(int classIndex, float threshold,
-                                                   int maxW, int maxH);
+    aimaskthumb::Tile editedImageMaskThumb(int classIndex, float threshold,
+                                           int maxW, int maxH);
 
 public:
     enum class Panel {

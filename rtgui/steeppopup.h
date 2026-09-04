@@ -48,6 +48,11 @@ public:
     /// Plain activatable item.
     Gtk::MenuItem* addItem(const Glib::ustring& label, std::function<void()> onActivate);
 
+    /// The same with an icon ahead of a left-aligned label, which is how the
+    /// rest of the application's menus read. @p iconName is an RTImage name.
+    Gtk::MenuItem* addItem(const Glib::ustring& iconName, const Glib::ustring& label,
+                           std::function<void()> onActivate);
+
     void addSeparator();
 
     /** Exclusive radio row set. @p activeIndex is applied before handlers

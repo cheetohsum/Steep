@@ -14,6 +14,7 @@
  *  You should have received a copy of the GNU General Public License
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include "rtimage.h"
 #include "steeppopup.h"
 
 namespace steepui
@@ -55,6 +56,31 @@ Gtk::MenuItem* PopupMenu::addItem(const Glib::ustring& label, std::function<void
         item->signal_activate().connect([cb = std::move(onActivate)]() { cb(); });
     }
     menu_.append(*item);
+    return item;
+}
+
+Gtk::MenuItem* PopupMenu::addItem(const Glib::ustring& iconName, const Glib::ustring& label,
+                                  std::function<void()> onActivate)
+{
+    Gtk::MenuItem* item = addItem(label, std::move(onActivate));
+
+    if (iconName.empty()) {
+        return item;
+    }
+
+    // Same row shape as the mask menus: icon, gap, label hard against it.
+    Gtk::Box* row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+    Gtk::Label* text = Gtk::manage(new Gtk::Label(label));
+    text->set_halign(Gtk::ALIGN_START);
+    row->pack_start(*Gtk::manage(new RTImage(iconName)), Gtk::PACK_SHRINK);
+    row->pack_start(*text, Gtk::PACK_EXPAND_WIDGET);
+
+    if (item->get_child()) {
+        item->remove();
+    }
+
+    item->add(*row);
+    row->show_all();
     return item;
 }
 

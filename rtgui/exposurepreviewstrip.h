@@ -58,6 +58,7 @@ private:
     bool on_button_press_event(GdkEventButton* event) override;
     bool on_button_release_event(GdkEventButton* event) override;
     bool on_motion_notify_event(GdkEventMotion* event) override;
+    bool on_leave_notify_event(GdkEventCrossing* event) override;
     Gtk::SizeRequestMode get_request_mode_vfunc() const override;
     void get_preferred_width_vfunc(int& min, int& natural) const override;
     void get_preferred_height_vfunc(int& min, int& natural) const override;
@@ -78,6 +79,8 @@ private:
     std::vector<Glib::RefPtr<Gdk::Pixbuf>> thumbnails_;
     double scrubberPos_ = 0.0; // -1.0 to 1.0
     bool isDragging_ = false;
+    /// The pointer is near enough to the scrubber to grab it.
+    bool handleHover_ = false;
     bool dragPending_ = false; // throttled drag waiting to fire
     ParamModifier paramModifier_;
     DragCallback dragCallback_;

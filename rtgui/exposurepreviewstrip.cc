@@ -92,7 +92,8 @@ int visibleWidgetWidth(Gtk::Widget* widget)
 PreviewStrip::PreviewStrip()
 {
     set_can_focus(false);
-    add_events(Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::POINTER_MOTION_MASK);
+    add_events(Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::POINTER_MOTION_MASK
+               | Gdk::LEAVE_NOTIFY_MASK);
     set_size_request(-1, STRIP_HEIGHT);
     set_hexpand(true);
     set_halign(Gtk::ALIGN_FILL);
@@ -391,26 +392,39 @@ bool PreviewStrip::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
         }
     }
 
-    // Scrubber line
+    // Scrubber line. It thickens and brightens when the pointer is close
+    // enough to grab it, which is the only cue that the strip is draggable
+    // rather than a row of pictures.
     {
-        double scrubX = (scrubberPos_ + 1.0) / 2.0 * w;
+        const double scrubX = (scrubberPos_ + 1.0) / 2.0 * w;
+        const bool live = handleHover_ || isDragging_;
+        const double grip = live ? 6.0 : 4.0;
 
-        cr->set_source_rgba(1, 1, 1, 0.85);
-        cr->set_line_width(2.0);
+        if (live) {
+            // A soft halo, so the line stands off a busy thumbnail.
+            cr->set_source_rgba(0, 0, 0, 0.35);
+            cr->set_line_width(4.0);
+            cr->move_to(scrubX, 0);
+            cr->line_to(scrubX, h);
+            cr->stroke();
+        }
+
+        cr->set_source_rgba(1, 1, 1, live ? 1.0 : 0.85);
+        cr->set_line_width(live ? 2.5 : 2.0);
         cr->move_to(scrubX, 0);
         cr->line_to(scrubX, h);
         cr->stroke();
 
-        cr->set_source_rgba(1, 1, 1, 0.9);
-        cr->move_to(scrubX - 4, 0);
-        cr->line_to(scrubX + 4, 0);
-        cr->line_to(scrubX, 5);
+        cr->set_source_rgba(1, 1, 1, live ? 1.0 : 0.9);
+        cr->move_to(scrubX - grip, 0);
+        cr->line_to(scrubX + grip, 0);
+        cr->line_to(scrubX, grip + 1.0);
         cr->close_path();
         cr->fill();
 
-        cr->move_to(scrubX - 4, h);
-        cr->line_to(scrubX + 4, h);
-        cr->line_to(scrubX, h - 5);
+        cr->move_to(scrubX - grip, h);
+        cr->line_to(scrubX + grip, h);
+        cr->line_to(scrubX, h - grip - 1.0);
         cr->close_path();
         cr->fill();
     }
@@ -490,8 +504,28 @@ bool PreviewStrip::on_button_release_event(GdkEventButton* event)
     return false;
 }
 
+bool PreviewStrip::on_leave_notify_event(GdkEventCrossing*)
+{
+    if (handleHover_) {
+        handleHover_ = false;
+        queue_draw();
+    }
+
+    return false;
+}
+
 bool PreviewStrip::on_motion_notify_event(GdkEventMotion* event)
 {
+    // Within this many pixels of the line, a press would take hold of it.
+    constexpr double GRAB_PX = 10.0;
+    const double scrubX = (scrubberPos_ + 1.0) / 2.0 * get_allocated_width();
+    const bool near = std::abs(event->x - scrubX) <= GRAB_PX;
+
+    if (near != handleHover_) {
+        handleHover_ = near;
+        queue_draw();
+    }
+
     if (isDragging_) {
         handleDrag(event->x);
 

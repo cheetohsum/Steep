@@ -331,19 +331,56 @@ Adjuster::Adjuster(
             queue_draw(); // redraw Cairo value text
         }
     );
+    // The number is a control of its own -- clicking it types a value in --
+    // and nothing said so. It now lights up under the pointer, which is the
+    // usual way a widget admits to being clickable.
+    slider->add_events(Gdk::POINTER_MOTION_MASK | Gdk::LEAVE_NOTIFY_MASK);
+    slider->signal_motion_notify_event().connect(
+    [this](GdkEventMotion* event) -> bool {
+        const bool over = valueTextRect_.get_width() > 0
+                          && event->x + slider->get_allocation().get_x() >= valueTextRect_.get_x()
+                          && event->x + slider->get_allocation().get_x()
+                          <= valueTextRect_.get_x() + valueTextRect_.get_width();
+
+        if (over != valueHover_) {
+            valueHover_ = over;
+            queue_draw();
+        }
+
+        return false;
+    }, false);
+    slider->signal_leave_notify_event().connect(
+    [this](GdkEventCrossing*) -> bool {
+        if (valueHover_) {
+            valueHover_ = false;
+            queue_draw();
+        }
+
+        return false;
+    }, false);
+
     reset->signal_button_release_event().connect_notify( sigc::mem_fun(*this, &Adjuster::resetPressed) );
 
-    // Double-click on slider resets to default (after=true so GTK drag handler runs first)
-    // Skip reset when click is in the label area and a labelClickCallback is set
+    // Double-click opens the type-in editor. Reset stays on the right button,
+    // which is the gesture that cannot be confused with wanting to set a
+    // particular number. (after=true so GTK's drag handler runs first.)
     slider->signal_button_press_event().connect(
         [this](GdkEventButton* event) -> bool {
             if (event->type == GDK_2BUTTON_PRESS && event->button == 1) {
-                // Don't reset if clicking in the label area (label click handles that)
+                // Don't act if clicking in the label area (label click handles that)
                 if (labelClickCallback_ && slider->getLabelAreaWidth() > 0
                     && event->x < slider->getLabelAreaWidth()) {
                     return false;
                 }
-                resetValue(false);
+
+                // Only the pill draws its own number; an unnamed adjuster has
+                // a real spin button already, and nothing to pop up.
+                if (valueTextRect_.get_width() > 0) {
+                    beginValueEdit();
+                } else {
+                    resetValue(false);
+                }
+
                 return true;
             }
             return false;
@@ -354,11 +391,21 @@ Adjuster::Adjuster(
         label->add_events(Gdk::BUTTON_PRESS_MASK);
         label->signal_button_press_event().connect(
             [this](GdkEventButton* event) -> bool {
-                if ((event->type == GDK_2BUTTON_PRESS && event->button == 1)
-                        || (event->type == GDK_BUTTON_PRESS && event->button == 3)) {
+                if (event->type == GDK_BUTTON_PRESS && event->button == 3) {
                     resetValue(false);
                     return true;
                 }
+
+                if (event->type == GDK_2BUTTON_PRESS && event->button == 1) {
+                    if (valueTextRect_.get_width() > 0) {
+                        beginValueEdit();
+                    } else {
+                        resetValue(false);
+                    }
+
+                    return true;
+                }
+
                 return false;
             }, false);
     }
@@ -1202,8 +1249,30 @@ bool Adjuster::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
         valLayout->get_pixel_extents(vInk, vLog);
         const int valX = sAlloc.get_x() + sAlloc.get_width() - vLog.get_width() - 10;
         const int valY = pillY + (pillH - vLog.get_height()) / 2;
-        const Gdk::RGBA valueInk = themeColor(*this, "steep_text", Gdk::RGBA("#cdd2da"));
-        cr->set_source_rgba(valueInk.get_red(), valueInk.get_green(), valueInk.get_blue(), 0.85);
+        // Under the pointer the number gets a well to sit in and its full
+        // strength, so "you can type here" is visible before the click.
+        if (valueHover_) {
+            const double padX = 5.0;
+            const double boxX = valX - padX;
+            const double boxY = pillY + 2;
+            const double boxW = vLog.get_width() + padX * 2;
+            const double boxH = pillH - 4;
+            const double radius = std::min(6.0, boxH / 2.0);
+
+            cr->begin_new_path();
+            cr->arc(boxX + radius, boxY + radius, radius, M_PI, 1.5 * M_PI);
+            cr->arc(boxX + boxW - radius, boxY + radius, radius, 1.5 * M_PI, 2.0 * M_PI);
+            cr->arc(boxX + boxW - radius, boxY + boxH - radius, radius, 0.0, 0.5 * M_PI);
+            cr->arc(boxX + radius, boxY + boxH - radius, radius, 0.5 * M_PI, M_PI);
+            cr->close_path();
+            cr->set_source_rgba(1.0, 1.0, 1.0, 0.10);
+            cr->fill();
+        }
+
+        const Gdk::RGBA valueInk = themeColor(*this, valueHover_ ? "steep_text_hi" : "steep_text",
+                                              Gdk::RGBA(valueHover_ ? "#e8ecf3" : "#cdd2da"));
+        cr->set_source_rgba(valueInk.get_red(), valueInk.get_green(), valueInk.get_blue(),
+                            valueHover_ ? 1.0 : 0.85);
         cr->move_to(valX, valY);
         valLayout->show_in_cairo_context(cr);
 

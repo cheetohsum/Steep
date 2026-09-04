@@ -27,6 +27,7 @@
 #include "rtengine/coord.h"
 #include "editcallbacks.h"
 #include "threadutils.h"
+#include "aimaskthumb.h"
 #include "toolpanel.h"
 #include "widgets/basic/adjuster.h"
 #include "widgets/basic/popupbutton.h"
@@ -332,15 +333,16 @@ public:
     // it is obvious which ones are worth choosing.
     // Takes the class index and the threshold the mask is built at, and
     // renders a thumbnail of what that class selects in this picture.
-    void setThumbProvider(std::function<Glib::RefPtr<Gdk::Pixbuf>(int, float)> provider)
+    void setThumbProvider(std::function<aimaskthumb::Tile(int, float)> provider)
     {
         thumbProvider_ = std::move(provider);
     }
 
 private:
     Glib::ustring editedFilePath_;
-    std::function<Glib::RefPtr<Gdk::Pixbuf>(int, float)> thumbProvider_;
+    std::function<aimaskthumb::Tile(int, float)> thumbProvider_;
     std::vector<Gtk::Image*> aiClassMenuThumbs_;
+    std::vector<Gtk::MenuItem*> aiClassMenuItems_;
     std::vector<Glib::ustring> aiClassNames_;
 
     void maskBlendModeChanged(int index);

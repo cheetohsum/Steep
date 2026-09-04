@@ -226,6 +226,9 @@ private:
     Gtk::Expander* patternExpander_;
     Gtk::Box* subjectRow_;
     Gtk::CellRendererPixbuf subjectTileCell_;
+    /// Which class row each visible row of the list stands for. A class the
+    /// partner holds none of is left out, so the two stop agreeing.
+    std::vector<int> subjectRows_;
     MyComboBoxText* subjectMethod_;
     Gtk::CheckButton* subjectInvert_;
     Gtk::CheckButton* subjectCrop_;

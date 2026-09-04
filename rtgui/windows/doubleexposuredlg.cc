@@ -2833,7 +2833,12 @@ void DoubleExposureDlg::syncLayerControls()
         subjectCrop_->set_sensitive(masked);
         subjectEdit_->set_sensitive(masked);
         subjectFeatherScale_->set_sensitive(masked);
+#ifndef RT_AI_MASKING
+        // With masking built in, refreshSubjectLabels above rebuilt the list
+        // and selected this layer's class within it; the row number here is
+        // no longer the class number.
         subjectMethod_->set_active(static_cast<int>(layer.maskClass));
+#endif
         subjectInvert_->set_active(layer.maskInvert);
         subjectCrop_->set_active(layer.cropToSubject);
         subjectFeatherScale_->set_value(layer.maskFeather);
@@ -2879,9 +2884,13 @@ void DoubleExposureDlg::layerControlChanged()
     params_.layers[selectedLayer_].patternUpright = patternUpright_->get_active();
     params_.layers[selectedLayer_].patternTwist = patternTwistScale_->get_value();
     params_.layers[selectedLayer_].edgeFeather = edgeFeatherScale_->get_value();
+    // Back through the map: absent classes are left out of the list, so the
+    // row the user picked is not the class it names.
     const int subjectRow = subjectMethod_->get_active_row_number();
+    const int subjectClassRow = subjectRow >= 0 && subjectRow < static_cast<int>(subjectRows_.size())
+                                ? subjectRows_[subjectRow] : 0;
     params_.layers[selectedLayer_].maskClass =
-        static_cast<DoubleExposureParams::MaskClass>(subjectRow < 0 ? 0 : subjectRow);
+        static_cast<DoubleExposureParams::MaskClass>(subjectClassRow);
     params_.layers[selectedLayer_].maskInvert = subjectInvert_->get_active();
     params_.layers[selectedLayer_].cropToSubject = subjectCrop_->get_active();
     params_.layers[selectedLayer_].maskFeather = subjectFeatherScale_->get_value();
@@ -3017,7 +3026,9 @@ void DoubleExposureDlg::renderSubjectTile(const Gtk::TreeModel::const_iterator& 
         return;
     }
 
-    const int cls = subjectRowClass(path[0]);
+    const int row = path[0] < static_cast<int>(subjectRows_.size())
+                    ? subjectRows_[path[0]] : -1;
+    const int cls = subjectRowClass(row);
 
     if (cls < 0) {
         return;
@@ -3041,15 +3052,36 @@ void DoubleExposureDlg::refreshSubjectLabels(const Glib::ustring& path)
 #ifdef RT_AI_MASKING
     requestCoverage(path);
 
-    const int sel = subjectMethod_->get_active_row_number();
+    const auto view = rtengine::PartnerMaskStore::getInstance().getClassView(path, workingProfile_);
+    const int chosen = selectedLayer_ < params_.layers.size()
+                       ? static_cast<int>(params_.layers[selectedLayer_].maskClass) : 0;
+
     subjectMethod_->block(true);
     subjectMethod_->remove_all();
+    subjectRows_.clear();
 
     for (int row = 0; row <= 7; ++row) {
-        subjectMethod_->append(subjectEntryLabel(row));
+        // "The whole frame" always stands, and so does whatever this layer is
+        // already set to. Otherwise a class is offered only while it might be
+        // there: unmeasured, or measured and actually present. A partner with
+        // no animal in it should not offer to cut one out.
+        bool offer = row == 0 || row == chosen || !view;
+
+        if (!offer) {
+            const int cls = subjectRowClass(row);
+            offer = cls >= 0 && cls < static_cast<int>(view->coverage.size())
+                    && view->coverage[cls] > 0.f;
+        }
+
+        if (offer) {
+            subjectRows_.push_back(row);
+            subjectMethod_->append(subjectEntryLabel(row));
+        }
     }
 
-    subjectMethod_->set_active(sel < 0 ? 0 : sel);
+    const auto at = std::find(subjectRows_.begin(), subjectRows_.end(), chosen);
+    subjectMethod_->set_active(at == subjectRows_.end()
+                               ? 0 : static_cast<int>(at - subjectRows_.begin()));
     subjectMethod_->block(false);
 #endif
 }

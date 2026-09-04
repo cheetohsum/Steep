@@ -1629,27 +1629,37 @@ bool PresetListPanel::isUserPreset(const ProfileStoreEntry* entry) const
 // Context menus (Phase 4)
 // ============================================================
 
+// Built through the shared popup builder rather than a bare Gtk::Menu: it is
+// the one place menus are made, which is where the icon rows, the left-aligned
+// labels and the Windows unfreeze-on-close fix all live. This menu had none of
+// them and read as a plainer thing than the rest of the application.
 void PresetListPanel::showCardContextMenu(GdkEventButton* event, const ProfileStoreEntry* entry)
 {
-    auto* menu = Gtk::manage(new Gtk::Menu());
+    if (!cardMenu_) {
+        cardMenu_ = std::unique_ptr<steepui::PopupMenu>(new steepui::PopupMenu());
+    }
+
+    cardMenu_->clear();
 
     // "Copy Edit Settings" — always available when an image is open
     if (ipc_) {
-        auto* copyItem = Gtk::manage(new Gtk::MenuItem(M("PRESET_COPY_SETTINGS")));
-        copyItem->signal_activate().connect([this]() {
-            if (!ipc_) return;
+        cardMenu_->addItem("preset-copy", M("PRESET_COPY_SETTINGS"), [this]() {
+            if (!ipc_) {
+                return;
+            }
+
             ProcParams currentParams;
             ipc_->getParams(&currentParams, false);
             clipboard.setProcParams(currentParams);
         });
-        menu->append(*copyItem);
     }
 
     // "Paste Clipboard Settings" — visible when clipboard has data
     if (clipboard.hasProcParams()) {
-        auto* pasteItem = Gtk::manage(new Gtk::MenuItem(M("PRESET_PASTE_CLIPBOARD")));
-        pasteItem->signal_activate().connect([this]() {
-            if (!clipboard.hasProcParams()) return;
+        cardMenu_->addItem("preset-paste", M("PRESET_PASTE_CLIPBOARD"), [this]() {
+            if (!clipboard.hasProcParams()) {
+                return;
+            }
 
             if (!custom_) {
                 custom_ = new PartialProfile(true);
@@ -1660,50 +1670,38 @@ void PresetListPanel::showCardContextMenu(GdkEventButton* event, const ProfileSt
             custom_->pedited->set(true);
             custom_->pedited->locallab.spots.clear();
             custom_->pedited->locallab.spots.resize(pp.locallab.spots.size(),
-                LocallabParamsEdited::LocallabSpotEdited(true));
+                    LocallabParamsEdited::LocallabSpotEdited(true));
 
             addCustomEntry();
             selectEntry(customPSE_, false);
             changeTo(custom_, M("HISTORY_FROMCLIPBOARD"));
         });
-        menu->append(*pasteItem);
-        menu->append(*Gtk::manage(new Gtk::SeparatorMenuItem()));
+        cardMenu_->addSeparator();
     }
 
     // "Apply" — always available
-    auto* applyItem = Gtk::manage(new Gtk::MenuItem(M("PRESET_APPLY")));
-    applyItem->signal_activate().connect([this, entry]() {
+    cardMenu_->addItem("menu-profile-apply", M("PRESET_APPLY"), [this, entry]() {
         selectEntry(entry);
     });
-    menu->append(*applyItem);
 
     if (isUserPreset(entry)) {
-        // "Rename"
-        auto* renameItem = Gtk::manage(new Gtk::MenuItem(M("PRESET_RENAME")));
-        renameItem->signal_activate().connect([this, entry]() {
+        cardMenu_->addItem("menu-rename", M("PRESET_RENAME"), [this, entry]() {
             renamePreset(entry);
         });
-        menu->append(*renameItem);
 
-        // "Save Current Settings"
-        auto* overwriteItem = Gtk::manage(new Gtk::MenuItem(M("PRESET_SAVE_CURRENT")));
-        overwriteItem->signal_activate().connect([this, entry]() {
+        cardMenu_->addItem("preset-save", M("PRESET_SAVE_CURRENT"), [this, entry]() {
             overwritePreset(entry);
         });
-        menu->append(*overwriteItem);
 
-        menu->append(*Gtk::manage(new Gtk::SeparatorMenuItem()));
+        cardMenu_->addSeparator();
 
-        // "Delete"
-        auto* deleteItem = Gtk::manage(new Gtk::MenuItem(M("PRESET_DELETE")));
-        deleteItem->signal_activate().connect([this, entry]() {
+        cardMenu_->addItem("menu-delete", M("PRESET_DELETE"), [this, entry]() {
             deletePreset(entry);
         });
-        menu->append(*deleteItem);
     }
 
-    menu->show_all();
-    menu->popup(event->button, event->time);
+    cardMenu_->menu().show_all();
+    cardMenu_->popupAtPointer(reinterpret_cast<const GdkEvent*>(event));
 }
 
 void PresetListPanel::renamePreset(const ProfileStoreEntry* entry)

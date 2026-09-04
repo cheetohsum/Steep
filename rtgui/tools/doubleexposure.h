@@ -62,6 +62,9 @@ private:
     Gtk::Box *subjectRow;        // hidden without a segmentation model
     Gtk::Box *subjectOptionsRow;
     Gtk::CellRendererPixbuf subjectTileCell;
+    /// Which class row each visible row of the list stands for. A class the
+    /// partner holds none of is left out, so the two stop agreeing.
+    std::vector<int> subjectRows_;
     MyComboBoxText *subjectMethod;
     Gtk::CheckButton *subjectInvert;
     Gtk::CheckButton *subjectCrop;

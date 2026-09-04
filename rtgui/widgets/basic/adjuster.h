@@ -82,7 +82,9 @@ protected:
     // them are ever typed into.
     std::unique_ptr<Gtk::Popover> valuePopover_;
     Gtk::Entry* valueEntry_ = nullptr;
-    Gdk::Rectangle valueTextRect_;   // in Adjuster coordinates; width 0 = none
+    Gdk::Rectangle valueTextRect_;
+    /// The pointer is over the number, so a click there would type into it.
+    bool valueHover_ = false;   // in Adjuster coordinates; width 0 = none
 
     void beginValueEdit();
     void commitValueEdit();

@@ -16,6 +16,8 @@
  */
 #pragma once
 
+#include "aimaskthumb.h"
+
 #include <gtkmm.h>
 #include <sigc++/sigc++.h>
 
@@ -66,7 +68,7 @@ public:
      *  the picture has not been segmented yet. Queried each time the AI
      *  dropdown opens. A class list asks where things are, and a picture
      *  answers that better than a percentage does. */
-    void setThumbProvider(std::function<Glib::RefPtr<Gdk::Pixbuf>(int)> provider)
+    void setThumbProvider(std::function<aimaskthumb::Tile(int)> provider)
     {
         thumbProvider_ = std::move(provider);
     }
@@ -86,7 +88,7 @@ private:
     sigc::signal<void, int> classRequested_;
     sigc::signal<void, int> shapeRequested_;
     sigc::signal<void> pickRequested_;
-    std::function<Glib::RefPtr<Gdk::Pixbuf>(int)> thumbProvider_;
+    std::function<aimaskthumb::Tile(int)> thumbProvider_;
     std::vector<AIMenuEntry> aiMenuEntries_;
     std::unique_ptr<steepui::PopupMenu> aiMenu_;
 };

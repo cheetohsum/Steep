@@ -18,6 +18,8 @@
  */
 #pragma once
 
+#include "steeppopup.h"
+
 #include "guiutils.h"
 #include "pparamschangelistener.h"
 #include "profilechangelistener.h"
@@ -197,6 +199,9 @@ private:
 
     // Phase 4: Context menu
     void showCardContextMenu(GdkEventButton* event, const ProfileStoreEntry* entry);
+    /// Owns the card context menu; it outlives each popup and is rebuilt for
+    /// every one, since which rows apply depends on the card and clipboard.
+    std::unique_ptr<steepui::PopupMenu> cardMenu_;
     void renamePreset(const ProfileStoreEntry* entry);
     void overwritePreset(const ProfileStoreEntry* entry);
     void deletePreset(const ProfileStoreEntry* entry);

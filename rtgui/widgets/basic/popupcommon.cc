@@ -148,6 +148,24 @@ bool PopUpCommon::insertEntryImpl(int position, const Glib::ustring& iconName, c
     return true;
 }
 
+void PopUpCommon::setEntryVisible(int i, bool visible)
+{
+    if (!menu || i < 0 || i >= getEntryCount()) {
+        return;
+    }
+
+    const auto children = menu->get_children();
+
+    if (i >= static_cast<int>(children.size())) {
+        return;
+    }
+
+    // The selection must remain reachable whatever the list thinks of it.
+    const bool show = visible || i == selected;
+    children[i]->set_no_show_all(!show);
+    children[i]->set_visible(show);
+}
+
 void PopUpCommon::setEntryImage(int i, const Glib::RefPtr<Gdk::Pixbuf>& pixbuf)
 {
     if (!menu || !pixbuf || i < 0 || i >= getEntryCount()) {

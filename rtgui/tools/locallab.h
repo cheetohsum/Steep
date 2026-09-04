@@ -120,7 +120,7 @@ public:
         expsettings->setEditedFilePath(path);
     }
 
-    void setThumbProvider(std::function<Glib::RefPtr<Gdk::Pixbuf>(int, float)> provider)
+    void setThumbProvider(std::function<aimaskthumb::Tile(int, float)> provider)
     {
         expsettings->setThumbProvider(std::move(provider));
     }

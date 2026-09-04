@@ -1098,15 +1098,21 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
         lensgeom->setLevel(1);
         sec.content->pack_start(*lensgeom->getExpander(), false, false);
 
-        distortion->setFlatMode(true);
-        distortion->setParent(lensgeom->getSubToolsContainer());
-        distortion->setLevel(2);
-        lensgeom->getSubToolsContainer()->pack_start(*distortion->getExpander(), false, false);
+        // Siblings of the lens tool, not children of it. Nested at level 2
+        // they were stepped in by 10px against everything else in the panel
+        // and drawn on their own background; and being flat, they showed no
+        // name -- so the section offered two unexplained "Amount" sliders,
+        // one of them the distortion, one of them the vignette. Their own
+        // headers say which is which.
+        distortion->setFlatMode(false);
+        distortion->setParent(sec.content);
+        distortion->setLevel(1);
+        sec.content->pack_start(*distortion->getExpander(), false, false);
 
-        vignetting->setFlatMode(true);
-        vignetting->setParent(lensgeom->getSubToolsContainer());
-        vignetting->setLevel(2);
-        lensgeom->getSubToolsContainer()->pack_start(*vignetting->getExpander(), false, false);
+        vignetting->setFlatMode(false);
+        vignetting->setParent(sec.content);
+        vignetting->setLevel(1);
+        sec.content->pack_start(*vignetting->getExpander(), false, false);
 
         transformPanel->pack_start(*sec.header, Gtk::PACK_SHRINK);
         transformPanel->pack_start(*sec.content, Gtk::PACK_SHRINK);
@@ -1145,10 +1151,10 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
             });
             // The bar has no tolerance of its own -- it creates the spot -- so
             // its tiles are drawn at the threshold a new mask is built at.
-            smartMaskBar->setThumbProvider([this](int classIndex) -> Glib::RefPtr<Gdk::Pixbuf> {
+            smartMaskBar->setThumbProvider([this](int classIndex) -> aimaskthumb::Tile {
                 return editedImageMaskThumb(classIndex, 0.3f, 36, 26);
             });
-            locallab->setThumbProvider([this](int classIndex, float threshold) -> Glib::RefPtr<Gdk::Pixbuf> {
+            locallab->setThumbProvider([this](int classIndex, float threshold) -> aimaskthumb::Tile {
                 return editedImageMaskThumb(classIndex, threshold, 32, 22);
             });
             smartMaskBar->signalPickRequested().connect([this]() {
@@ -1422,27 +1428,39 @@ bool ToolPanelCoordinator::isFavoritable(Tool tool)
 // A tile of the edited picture with one AI class lit up in it, sized to the
 // picture's own proportions so a portrait frame reads as one. Empty until the
 // picture has been segmented, which is the caller's cue to show nothing.
-Glib::RefPtr<Gdk::Pixbuf> ToolPanelCoordinator::editedImageMaskThumb(int classIndex,
+aimaskthumb::Tile ToolPanelCoordinator::editedImageMaskThumb(int classIndex,
         float threshold, int maxW, int maxH)
 {
+    aimaskthumb::Tile tile;
 #ifdef RT_AI_MASKING
 
     if (!ipc || !ipc->getInitialImage()) {
-        return Glib::RefPtr<Gdk::Pixbuf>();
+        return tile;
     }
+
+    // Presence is decided on the full mask, not on the tile: a class covering
+    // a handful of pixels is still in the picture, and would disappear from a
+    // thumbnail long before it disappeared from the photograph.
+    const float coverage = rtengine::AIMaskCache::getInstance().getClassCoverage(
+                               ipc->getInitialImage()->getFileName().raw(), classIndex, threshold);
+
+    if (coverage < 0.f) {
+        return tile;
+    }
+
+    tile.measured = true;
+    tile.present = coverage > 0.f;
 
     int imW = 0;
     int imH = 0;
     ipc->getInitialImage()->getImageSource()->getFullSize(imW, imH);
 
-    if (imW <= 0 || imH <= 0) {
-        return Glib::RefPtr<Gdk::Pixbuf>();
+    if (imW > 0 && imH > 0) {
+        tile.image = aimaskthumb::fromEditedImage(classIndex, threshold, imW, imH, maxW, maxH);
     }
 
-    return aimaskthumb::fromEditedImage(classIndex, threshold, imW, imH, maxW, maxH);
-#else
-    return Glib::RefPtr<Gdk::Pixbuf>();
 #endif
+    return tile;
 }
 
 void ToolPanelCoordinator::notebookPageChanged(Gtk::Widget* page, guint page_num)

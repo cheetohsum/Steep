@@ -33,6 +33,23 @@ struct PartnerClassView;
 namespace aimaskthumb
 {
 
+/** A tile, and the two facts a list needs to decide whether to offer the class
+ *  at all. "Not measured" and "measured, and there is none of it" look the
+ *  same in a picture and must not be treated the same: only the second is a
+ *  reason to leave the class out.
+ */
+struct Tile {
+    Glib::RefPtr<Gdk::Pixbuf> image;
+    bool measured = false;
+    bool present = false;
+
+    /// True when the picture has been looked at and holds none of this class.
+    bool absent() const
+    {
+        return measured && !present;
+    }
+};
+
 /// Per-class marker colour, indexed by rtengine::AISegClass. Out-of-range
 /// indices get the neutral grey, so a caller need not range-check first.
 const guint8* classColour(int classIndex);

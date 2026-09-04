@@ -161,11 +161,17 @@ void SmartMaskBar::refreshAIMenuThumbs()
             continue;
         }
 
-        const Glib::RefPtr<Gdk::Pixbuf> tile =
-            thumbProvider_ ? thumbProvider_(entry.classIndex) : Glib::RefPtr<Gdk::Pixbuf>();
+        const aimaskthumb::Tile tile =
+            thumbProvider_ ? thumbProvider_(entry.classIndex) : aimaskthumb::Tile();
 
-        if (tile) {
-            entry.thumb->set(tile);
+        // A class this picture holds none of is not worth offering. Only a
+        // measured, genuinely empty one is dropped -- before the picture has
+        // been segmented every class stays on the list.
+        entry.item->set_no_show_all(tile.absent());
+        entry.item->set_visible(!tile.absent());
+
+        if (tile.image) {
+            entry.thumb->set(tile.image);
             entry.thumb->show();
         } else {
             // Nothing measured yet: an empty row rather than a misleading one.

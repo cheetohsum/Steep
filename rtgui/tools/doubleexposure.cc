@@ -15,6 +15,7 @@
  *  You should have received a copy of the GNU General Public License
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include <algorithm>
 #include <cmath>
 #include <thread>
 
@@ -624,7 +625,9 @@ void DoubleExposure::renderSubjectTile(const Gtk::TreeModel::const_iterator& ite
         return;
     }
 
-    const int cls = subjectRowClass(path[0]);
+    const int row = path[0] < static_cast<int>(subjectRows_.size())
+                    ? subjectRows_[path[0]] : -1;
+    const int cls = subjectRowClass(row);
 
     if (cls < 0) {
         return;
@@ -744,14 +747,35 @@ void DoubleExposure::loadSelectedLayer()
     {
         requestCoverage(layers[idx].path);
 
+        const auto view = rtengine::PartnerMaskStore::getInstance().getClassView(
+                              layers[idx].path, workingProfile_);
+        const int chosen = static_cast<int>(layers[idx].maskClass);
+
         subjectMethod->block(true);
         subjectMethod->remove_all();
+        subjectRows_.clear();
 
         for (int row = 0; row <= 7; ++row) {
-            subjectMethod->append(subjectEntryLabel(row));
+            // "The whole frame" always stands, and so does whatever this layer
+            // is already set to. Otherwise a class is offered only while it
+            // might be there: unmeasured, or measured and actually present.
+            bool offer = row == 0 || row == chosen || !view;
+
+            if (!offer) {
+                const int cls = subjectRowClass(row);
+                offer = cls >= 0 && cls < static_cast<int>(view->coverage.size())
+                        && view->coverage[cls] > 0.f;
+            }
+
+            if (offer) {
+                subjectRows_.push_back(row);
+                subjectMethod->append(subjectEntryLabel(row));
+            }
         }
 
-        subjectMethod->set_active(static_cast<int>(layers[idx].maskClass));
+        const auto at = std::find(subjectRows_.begin(), subjectRows_.end(), chosen);
+        subjectMethod->set_active(at == subjectRows_.end()
+                                  ? 0 : static_cast<int>(at - subjectRows_.begin()));
         subjectMethod->block(false);
     }
 #else
@@ -1274,8 +1298,12 @@ void DoubleExposure::subjectChanged()
         return;
     }
 
+    // Back through the map: absent classes are left out of the list, so the
+    // row the user picked is not the class it names.
     const int row = subjectMethod->get_active_row_number();
-    layers[idx].maskClass = static_cast<DoubleExposureParams::MaskClass>(row < 0 ? 0 : row);
+    const int classRow = row >= 0 && row < static_cast<int>(subjectRows_.size())
+                         ? subjectRows_[row] : 0;
+    layers[idx].maskClass = static_cast<DoubleExposureParams::MaskClass>(classRow);
     layersEdited_ = true;
     updateSensitivity();
     autoEnable();

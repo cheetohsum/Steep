@@ -257,6 +257,7 @@ ControlSpotPanel::ControlSpotPanel():
         auto* item = createMaskMenuItem(aiClassIcons[i], M(aiClassKeys[i]));
         addMenuThumb(item);
         aiClassMenuThumbs_.push_back(lastMaskMenuThumb);
+        aiClassMenuItems_.push_back(item);
         aiClassNames_.push_back(M(aiClassKeys[i]));
         item->signal_activate().connect(
             sigc::bind(sigc::mem_fun(*this, &ControlSpotPanel::on_ai_mask_selected), i));
@@ -3010,11 +3011,11 @@ void ControlSpotPanel::refreshClassThumbs()
         rtengine::LIM(1.0 - aiMaskTolerance_->getValue() / 100.0, 0.0, 1.0));
 
     for (size_t i = 0; i < aiClassNames_.size(); ++i) {
-        const Glib::RefPtr<Gdk::Pixbuf> tile = thumbProvider_(static_cast<int>(i), threshold);
+        const aimaskthumb::Tile tile = thumbProvider_(static_cast<int>(i), threshold);
 
         if (i < aiClassMenuThumbs_.size() && aiClassMenuThumbs_[i]) {
-            if (tile) {
-                aiClassMenuThumbs_[i]->set(tile);
+            if (tile.image) {
+                aiClassMenuThumbs_[i]->set(tile.image);
                 aiClassMenuThumbs_[i]->show();
             } else {
                 aiClassMenuThumbs_[i]->clear();
@@ -3022,8 +3023,18 @@ void ControlSpotPanel::refreshClassThumbs()
             }
         }
 
-        if (tile) {
-            aiMaskClass_->setEntryImage(static_cast<int>(i), tile);
+        // A class the picture holds none of is dropped from both lists. Only
+        // a measured, genuinely empty one -- an unsegmented picture keeps all
+        // of them, because nothing is yet known either way.
+        if (i < aiClassMenuItems_.size() && aiClassMenuItems_[i]) {
+            aiClassMenuItems_[i]->set_no_show_all(tile.absent());
+            aiClassMenuItems_[i]->set_visible(!tile.absent());
+        }
+
+        aiMaskClass_->setEntryVisible(static_cast<int>(i), !tile.absent());
+
+        if (tile.image) {
+            aiMaskClass_->setEntryImage(static_cast<int>(i), tile.image);
         }
     }
 }
