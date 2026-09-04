@@ -20,6 +20,8 @@
 
 #include "doubleexposure.h"
 
+#include "rtengine/aisegmentation.h"
+
 #include "partnerthumb.h"
 
 #include "eventmapper.h"
@@ -69,6 +71,7 @@ DoubleExposure::DoubleExposure() :
     EvDESoftness = m->newEvent(HDR, "HISTORY_MSG_DOUBLEEXPOSURE_SOFTNESS");
     EvDELatitude = m->newEvent(HDR, "HISTORY_MSG_DOUBLEEXPOSURE_LATITUDE");
     EvDEPlacement = m->newEvent(HDR, "HISTORY_MSG_DOUBLEEXPOSURE_PLACEMENT");
+    EvDESubject = m->newEvent(HDR, "HISTORY_MSG_DOUBLEEXPOSURE_SUBJECT");
 
     chooseButton = Gtk::manage(new Gtk::Button(M("TP_DOUBLEEXPOSURE_CHOOSE")));
     chooseButton->signal_clicked().connect(sigc::mem_fun(*this, &DoubleExposure::openChooser));
@@ -157,6 +160,48 @@ DoubleExposure::DoubleExposure() :
     patternStagger->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_STAGGER_TOOLTIP"));
     patternStagger->set_no_show_all(true);
     patternStagger->show();
+
+    // Subject selection, segmented on the partner itself. The whole group is
+    // hidden when this build has no segmentation model, rather than offered
+    // and dead; the params stay in the file either way.
+    subjectMethod = Gtk::manage(new MyComboBoxText());
+    subjectMethod->append(M("TP_DOUBLEEXPOSURE_SUBJECT_OFF"));
+    subjectMethod->append(M("TP_DOUBLEEXPOSURE_SUBJECT_SUBJECT"));
+    subjectMethod->append(M("TP_DOUBLEEXPOSURE_SUBJECT_PERSON"));
+    subjectMethod->append(M("TP_DOUBLEEXPOSURE_SUBJECT_SKY"));
+    subjectMethod->append(M("TP_DOUBLEEXPOSURE_SUBJECT_VEGETATION"));
+    subjectMethod->append(M("TP_DOUBLEEXPOSURE_SUBJECT_BUILDING"));
+    subjectMethod->append(M("TP_DOUBLEEXPOSURE_SUBJECT_VEHICLE"));
+    subjectMethod->append(M("TP_DOUBLEEXPOSURE_SUBJECT_ANIMAL"));
+    subjectMethod->set_active(0);
+    subjectMethod->setPreferredWidth(150, 200);
+    subjectMethod->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SUBJECT_TOOLTIP"));
+    subjectMethod->connect(subjectMethod->signal_changed().connect(sigc::mem_fun(*this, &DoubleExposure::subjectChanged)));
+
+    subjectRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+    Gtk::Label* subjectLabel = Gtk::manage(new Gtk::Label(M("TP_DOUBLEEXPOSURE_SUBJECT") + ":", Gtk::ALIGN_START));
+    subjectLabel->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SUBJECT_TOOLTIP"));
+    subjectRow->pack_start(*subjectLabel, Gtk::PACK_SHRINK);
+    subjectRow->pack_start(*subjectMethod, Gtk::PACK_EXPAND_WIDGET);
+    subjectRow->show_all();
+    subjectRow->set_no_show_all(true);
+
+    subjectOptionsRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
+    subjectInvert = Gtk::manage(new Gtk::CheckButton(M("TP_DOUBLEEXPOSURE_SUBJECT_INVERT")));
+    subjectInvert->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SUBJECT_INVERT_TOOLTIP"));
+    subjectInvertConn = subjectInvert->signal_toggled().connect(sigc::mem_fun(*this, &DoubleExposure::subjectToggled));
+    subjectCrop = Gtk::manage(new Gtk::CheckButton(M("TP_DOUBLEEXPOSURE_SUBJECT_CROP")));
+    subjectCrop->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SUBJECT_CROP_TOOLTIP"));
+    subjectCropConn = subjectCrop->signal_toggled().connect(sigc::mem_fun(*this, &DoubleExposure::subjectToggled));
+    subjectOptionsRow->pack_start(*subjectInvert, Gtk::PACK_SHRINK);
+    subjectOptionsRow->pack_start(*subjectCrop, Gtk::PACK_SHRINK);
+    subjectOptionsRow->show_all();
+    subjectOptionsRow->set_no_show_all(true);
+
+    subjectFeather = Gtk::manage(new Adjuster(M("TP_DOUBLEEXPOSURE_SUBJECT_FEATHER"), 0.0, 100.0, 1.0, 25.0));
+    subjectFeather->setAdjusterListener(this);
+    subjectFeather->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SUBJECT_FEATHER_TOOLTIP"));
+    subjectFeather->set_no_show_all(true);
 
     blendMethod = Gtk::manage(new MyComboBoxText());
     blendMethod->append(M("TP_DOUBLEEXPOSURE_BLEND_ADD"));
@@ -269,6 +314,9 @@ DoubleExposure::DoubleExposure() :
     pack_start(*patternRow);
     pack_start(*patternSpacing);
     pack_start(*patternStagger);
+    pack_start(*subjectRow);
+    pack_start(*subjectOptionsRow);
+    pack_start(*subjectFeather);
     pack_start(*blendRow);
     pack_start(*compareRow);
     pack_start(*softness);
@@ -468,6 +516,20 @@ void DoubleExposure::loadSelectedLayer()
     patternMethod->set_active(static_cast<int>(layers[idx].pattern));
     patternMethod->block(false);
 
+    subjectMethod->block(true);
+    subjectMethod->set_active(static_cast<int>(layers[idx].maskClass));
+    subjectMethod->block(false);
+
+    subjectInvertConn.block(true);
+    subjectInvert->set_active(layers[idx].maskInvert);
+    subjectInvertConn.block(false);
+
+    subjectCropConn.block(true);
+    subjectCrop->set_active(layers[idx].cropToSubject);
+    subjectCropConn.block(false);
+
+    subjectFeather->setValue(layers[idx].maskFeather);
+
     blendMethod->block(true);
     blendMethod->set_active(static_cast<int>(layers[idx].blendMode));
     blendMethod->block(false);
@@ -541,6 +603,19 @@ void DoubleExposure::updateSensitivity()
     const bool tiled = idx >= 0 && layers[idx].pattern != DoubleExposureParams::Pattern::OFF;
     patternSpacing->set_visible(haveLayers && tiled);
     patternStagger->set_visible(haveLayers && tiled);
+
+    // Subject selection needs a segmentation model; without one the controls
+    // are absent rather than present and inert.
+#ifdef RT_AI_MASKING
+    const bool haveSegmentation = rtengine::getAISegmentationEngine().isInitialized();
+#else
+    const bool haveSegmentation = false;
+#endif
+    const bool masked = idx >= 0 && layers[idx].maskClass != DoubleExposureParams::MaskClass::OFF;
+    subjectRow->set_visible(haveSegmentation && haveLayers);
+    subjectOptionsRow->set_visible(haveSegmentation && haveLayers && masked);
+    subjectFeather->set_visible(haveSegmentation && haveLayers && masked);
+    subjectMethod->set_sensitive(haveLayers);
 
     // The film-gain compensation only applies to light that stacks: enabled
     // additive layers.
@@ -697,6 +772,7 @@ void DoubleExposure::setDefaults(const ProcParams* defParams, const ParamsEdited
     layerRotate->setDefault(defLayer.rotate);
     patternSpacing->setDefault(defLayer.patternSpacing);
     patternStagger->setDefault(defLayer.patternStagger);
+    subjectFeather->setDefault(defLayer.maskFeather);
     gateLow->setDefault(defLayer.gateLow);
     gateHigh->setDefault(defLayer.gateHigh);
     gateFeather->setDefault(defLayer.gateFeather);
@@ -715,7 +791,9 @@ void DoubleExposure::adjusterChanged(Adjuster* a, double newval)
 {
     const bool isPlacementAdj = a == layerOffsetX || a == layerOffsetY || a == layerScale
                                 || a == layerRotate || a == patternSpacing || a == patternStagger;
-    const bool isLayerAdj = a == layerEv || a == layerOpacity || a == softness || isPlacementAdj;
+    const bool isSubjectAdj = a == subjectFeather;
+    const bool isLayerAdj = a == layerEv || a == layerOpacity || a == softness
+                            || isPlacementAdj || isSubjectAdj;
     const bool isGateAdj = a == gateLow || a == gateHigh || a == gateFeather || a == gateStrength;
 
     if (isLayerAdj || isGateAdj) {
@@ -740,6 +818,8 @@ void DoubleExposure::adjusterChanged(Adjuster* a, double newval)
                 layers[idx].patternSpacing = newval;
             } else if (a == patternStagger) {
                 layers[idx].patternStagger = newval;
+            } else if (a == subjectFeather) {
+                layers[idx].maskFeather = newval;
             } else if (a == gateLow) {
                 layers[idx].gateLow = newval;
             } else if (a == gateHigh) {
@@ -756,7 +836,8 @@ void DoubleExposure::adjusterChanged(Adjuster* a, double newval)
             if (listener && getEnabled()) {
                 listener->panelChanged(isGateAdj ? EvDEGate
                                        : (a == softness ? EvDESoftness
-                                          : (isPlacementAdj ? EvDEPlacement : EvDELayerSettings)),
+                                          : (isSubjectAdj ? EvDESubject
+                                             : (isPlacementAdj ? EvDEPlacement : EvDELayerSettings))),
                                        a->getTextValue());
             }
         }
@@ -890,6 +971,43 @@ void DoubleExposure::flipToggled()
     if (listener && getEnabled()) {
         listener->panelChanged(EvDEPlacement,
                                layerFlipH->get_active() ? M("GENERAL_ENABLED") : M("GENERAL_DISABLED"));
+    }
+}
+
+void DoubleExposure::subjectChanged()
+{
+    const int idx = selectedLayerIndex();
+
+    if (idx < 0) {
+        return;
+    }
+
+    const int row = subjectMethod->get_active_row_number();
+    layers[idx].maskClass = static_cast<DoubleExposureParams::MaskClass>(row < 0 ? 0 : row);
+    layersEdited_ = true;
+    updateSensitivity();
+    autoEnable();
+
+    if (listener && getEnabled()) {
+        listener->panelChanged(EvDESubject, subjectMethod->get_active_text());
+    }
+}
+
+void DoubleExposure::subjectToggled()
+{
+    const int idx = selectedLayerIndex();
+
+    if (idx < 0) {
+        return;
+    }
+
+    layers[idx].maskInvert = subjectInvert->get_active();
+    layers[idx].cropToSubject = subjectCrop->get_active();
+    layersEdited_ = true;
+    autoEnable();
+
+    if (listener && getEnabled()) {
+        listener->panelChanged(EvDESubject, M("HISTORY_CHANGED"));
     }
 }
 

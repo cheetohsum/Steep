@@ -51,7 +51,15 @@ private:
     MyComboBoxText *patternMethod;
     Adjuster *patternSpacing;    // tiled layers only
     Adjuster *patternStagger;    // tiled layers only
+    Gtk::Box *subjectRow;        // hidden without a segmentation model
+    Gtk::Box *subjectOptionsRow;
+    MyComboBoxText *subjectMethod;
+    Gtk::CheckButton *subjectInvert;
+    Gtk::CheckButton *subjectCrop;
+    Adjuster *subjectFeather;
     sigc::connection flipConn;
+    sigc::connection subjectInvertConn;
+    sigc::connection subjectCropConn;
     MyComboBoxText *blendMethod;
     Gtk::Box *compareRow;        // comparative modes only
     MyComboBoxText *compareMode;
@@ -87,6 +95,7 @@ private:
     rtengine::ProcEvent EvDESoftness;
     rtengine::ProcEvent EvDELatitude;
     rtengine::ProcEvent EvDEPlacement;
+    rtengine::ProcEvent EvDESubject;
 
     void openChooser();
     void clearAll();
@@ -116,6 +125,8 @@ public:
     void gateSourceChanged();
     void patternChanged();
     void flipToggled();
+    void subjectChanged();
+    void subjectToggled();
     void autoGainToggled();
     void layerSelChanged();
 

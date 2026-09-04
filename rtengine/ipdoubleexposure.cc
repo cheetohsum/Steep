@@ -30,6 +30,7 @@
 #include "doubleexposureblend.h"
 #include "imagefloat.h"
 #include "partnerimagestore.h"
+#include "partnermaskstore.h"
 #include "procparams.h"
 #include "rt_math.h"
 #include "settings.h"
@@ -47,6 +48,12 @@ struct ResolvedLayer {
     // Cover fit, placement, rotation and tiling, in partner full-res pixels.
     // See deplace::map — the picker's preview builds the same frame.
     deplace::Frame frame;
+#ifdef RT_AI_MASKING
+    // Subject selection, segmented on the partner. Null when the layer asks
+    // for no mask, or when segmentation is unavailable — the layer then
+    // renders unmasked rather than disappearing.
+    std::shared_ptr<const PartnerMask> mask;
+#endif
     procparams::DoubleExposureParams::BlendMode mode;
     procparams::DoubleExposureParams::Compare compare; // comparative modes: whole pixel vs per channel
     float softness;     // comparative hand-over band, stops
@@ -153,8 +160,26 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
             fr.srcY0 = 0.f;
             fr.srcW = static_cast<float>(partner->fullWidth);
             fr.srcH = static_cast<float>(partner->fullHeight);
+            bool cropped = false;
+
+#ifdef RT_AI_MASKING
+            rl.mask = PartnerMaskStore::getInstance().getMask(layer.path, workingProfile, layer.maskClass,
+                                                              layer.maskFeather, layer.maskInvert, multiThread);
+
+            // Cropping to the subject is the whole of "pattern this subject":
+            // the source rect becomes the mask's bounding box and every step
+            // downstream — cover fit, frame edge, tiling — follows it.
+            if (layer.cropToSubject && rl.mask && rl.mask->hasBounds()) {
+                fr.srcX0 = static_cast<float>(rl.mask->x0);
+                fr.srcY0 = static_cast<float>(rl.mask->y0);
+                fr.srcW = static_cast<float>(rl.mask->x1 - rl.mask->x0);
+                fr.srcH = static_cast<float>(rl.mask->y1 - rl.mask->y0);
+                cropped = true;
+            }
+#endif
+
             fr.invCover = 1.f / std::max(fr.baseW / fr.srcW, fr.baseH / fr.srcH);
-            deplace::applyLayer(fr, layer, false);
+            deplace::applyLayer(fr, layer, cropped);
 
             rl.mode = layer.blendMode;
             rl.compare = layer.compare;
@@ -248,6 +273,16 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
                 deblend::blend(rl.mode, rl.compare, rl.softness, white, r, g, b, pr, pg, pb, cr, cg, cb);
 
                 float w = rl.opacity * coverage;
+
+#ifdef RT_AI_MASKING
+                if (rl.mask) {
+                    w *= rl.mask->sample(u, v);
+
+                    if (w <= 0.f) {
+                        continue;
+                    }
+                }
+#endif
 
                 if (rl.gateStrength > 0.f) {
                     const float lum = (rl.gateOnLayer ? deblend::lum709(pr, pg, pb)

@@ -23,6 +23,8 @@ CLI = r"C:\msys64\home\alexr\build-hw\Release\steep-cli.exe"
 W, H = 256, 64
 PROBE_ROW = H // 2
 GEO = 256  # square geometry fixtures
+SCENE_W, SCENE_H = 512, 384  # segmentation fixture
+SCENE_HORIZON = 0.55         # fraction of SCENE_H above which it is sky
 
 # Working profile pinned to sRGB for the chromatic cases (default is
 # ProPhoto, under which per-channel and luminance math is no longer
@@ -131,6 +133,22 @@ def make_inputs():
     hramp.save(os.path.join(HERE, "partner_hramp.png"))
     vramp.save(os.path.join(HERE, "partner_vramp.png"))
 
+    # A scene the segmentation model can find something in: sky over ground,
+    # with the horizon at 55% down the frame. Subject selection is judged on
+    # real photographs, but the plumbing - decode, segment, feather, bounding
+    # box, weight - is checkable against a boundary we placed ourselves.
+    scene = Image.new("RGB", (SCENE_W, SCENE_H))
+    scene_px = scene.load()
+    for y in range(SCENE_H):
+        for x in range(SCENE_W):
+            if y < SCENE_H * SCENE_HORIZON:
+                t = y / (SCENE_H * SCENE_HORIZON)
+                scene_px[x, y] = (int(90 + 90 * t), int(140 + 70 * t), int(225 - 25 * t))
+            else:
+                t = (y - SCENE_H * SCENE_HORIZON) / (SCENE_H * (1 - SCENE_HORIZON))
+                scene_px[x, y] = (int(70 - 20 * t), int(110 - 40 * t), int(50 - 20 * t))
+    scene.save(os.path.join(HERE, "partner_scene.png"))
+
 
 def sample_ramp(u):
     """Linear value the engine reads from a 256-wide ramp at continuous
@@ -181,6 +199,13 @@ def row_rgb(path):
     assert im.size == (W, H), im.size
     px = im.load()
     return [px[x, PROBE_ROW] for x in range(W)]
+
+
+def col(path, x=W // 2):
+    im = Image.open(path).convert("RGB")
+    assert im.size == (W, H), im.size
+    px = im.load()
+    return [px[x, y][1] for y in range(H)]
 
 
 def check(name, got, expected, tol=3.0, skip_clipped=False, skipx=()):
@@ -609,6 +634,75 @@ def main():
           f"  over {len(gutters)} px")
     ok &= worst <= 1 and len(gutters) > 20
 
+
+    # ------------------------------------------------------------------
+    # Subject selection. The model is not the thing under test here - the
+    # plumbing is: that a class map reaches the weight, that inverting it
+    # swaps which half of the frame the layer lands in, and above all that
+    # asking for no mask changes nothing at all.
+    # ------------------------------------------------------------------
+    scene_path = os.path.join(HERE, "partner_scene.png").replace("\\", "/")
+
+    def scene_pp3(name, extra_keys):
+        return write_pp3(name,
+            "Enabled=true\nAutoGain=false\nBaseEV=0\nHighlightLatitude=0\n"
+            f"LayerCount=1\nLayer1Path={scene_path}\nLayer1Enabled=true\nLayer1EV=0\nLayer1Opacity=100\n"
+            "Layer1BlendMode=0\n" + extra_keys + GATE_OFF)
+
+    # T16: an explicit "whole frame" must be bitwise the same as no key.
+    a = col(render(scene_pp3("t16_none.pp3", ""), "base_grad.png", "t16_none.tif"))
+    b = col(render(scene_pp3("t16_off.pp3", "Layer1MaskClass=0\nLayer1MaskFeather=25\n"),
+                   "base_grad.png", "t16_off.tif"))
+    ident = max(abs(a[y] - b[y]) for y in range(H))
+    print(f"{'PASS' if ident == 0 else 'FAIL'}  {'mask off == no mask':34s} max |diff| = {ident}")
+    ok &= ident == 0
+
+    # The base is 256x64 and the partner 512x384, so the cover fit shows the
+    # partner's middle 128 rows: base row y reads partner row 2y + 129. The
+    # horizon at 0.55 * 384 = 211 therefore lands on base row 41.
+    horizon_row = int((SCENE_H * SCENE_HORIZON - (SCENE_H / 2 - H)) / 2)
+
+    sky = col(render(scene_pp3("t16b_sky.pp3", "Layer1MaskClass=3\nLayer1MaskFeather=25\n"),
+                     "base_grad.png", "t16b_sky.tif"))
+    plain = col(render(scene_pp3("t16b_plain.pp3", "Layer1Opacity=0\n"),
+                       "base_grad.png", "t16b_plain.tif"))
+
+    above = max(abs(sky[y] - plain[y]) for y in range(2, horizon_row - 6))
+    below = max(abs(sky[y] - plain[y]) for y in range(horizon_row + 6, H - 2))
+    good = above > 20 and below <= 2
+    print(f"{'PASS' if good else 'FAIL'}  {'sky mask lands above horizon':34s} "
+          f"above = {above}, below = {below}")
+    ok &= good
+
+    # T16c: inverting it swaps the two halves.
+    inv = col(render(scene_pp3("t16c_inv.pp3",
+                               "Layer1MaskClass=3\nLayer1MaskFeather=25\nLayer1MaskInvert=true\n"),
+                     "base_grad.png", "t16c_inv.tif"))
+    iabove = max(abs(inv[y] - plain[y]) for y in range(2, horizon_row - 6))
+    ibelow = max(abs(inv[y] - plain[y]) for y in range(horizon_row + 6, H - 2))
+    good = ibelow > 20 and iabove <= 2
+    print(f"{'PASS' if good else 'FAIL'}  {'inverted mask lands below':34s} "
+          f"above = {iabove}, below = {ibelow}")
+    ok &= good
+
+    # T17: cropping to the subject makes the selection's bounding box the
+    # exposure's frame. The sky box is the top 220 rows of the partner, so
+    # the cover fit now shows sky everywhere instead of sky over a horizon -
+    # which is what lets a pattern repeat a cut-out rather than a picture.
+    crop = col(render(scene_pp3("t17_crop.pp3",
+                                "Layer1MaskClass=3\nLayer1MaskFeather=25\nLayer1CropToSubject=true\n"),
+                      "base_grad.png", "t17_crop.tif"))
+    cabove = max(abs(crop[y] - plain[y]) for y in range(2, horizon_row - 6))
+    cbelow = max(abs(crop[y] - plain[y]) for y in range(horizon_row + 6, H - 2))
+    good = cabove > 20 and cbelow > 20
+    print(f"{'PASS' if good else 'FAIL'}  {'crop to subject fills the frame':34s} "
+          f"above = {cabove}, below = {cbelow}")
+    ok &= good
+
+    # T17b: the same keys one flag apart must not render the same picture.
+    moved = max(abs(sky[y] - crop[y]) for y in range(H))
+    print(f"{'PASS' if moved > 20 else 'FAIL'}  {'crop changes the framing':34s} max |diff| = {moved}")
+    ok &= moved > 20
 
     print("\nALL PASS" if ok else "\nFAILURES PRESENT")
     sys.exit(0 if ok else 1)

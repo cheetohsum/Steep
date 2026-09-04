@@ -101,6 +101,7 @@ set(RTENGINESOURCEFILES
     myfile.cc
     panasonic_decoders.cc
     partnerimagestore.cc
+    partnermaskstore.cc
     pdaflinesfilter.cc
     perspectivecorrection.cc
     PF_correct_RT.cc

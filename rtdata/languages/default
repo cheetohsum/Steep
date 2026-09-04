@@ -1578,6 +1578,7 @@ HISTORY_MSG_DOUBLEEXPOSURE_LATITUDE;Double exposure - Highlight latitude
 HISTORY_MSG_DOUBLEEXPOSURE_LAYERS;Double exposure - Exposures
 HISTORY_MSG_DOUBLEEXPOSURE_LAYER_SETTINGS;Double exposure - Layer settings
 HISTORY_MSG_DOUBLEEXPOSURE_PLACEMENT;Double exposure - Layer placement
+HISTORY_MSG_DOUBLEEXPOSURE_SUBJECT;Double exposure - Subject selection
 HISTORY_MSG_DOUBLEEXPOSURE_SOFTNESS;Double exposure - Transition softness
 HISTORY_MSG_DISTORTION_DEFISH;De-fish
 HISTORY_MSG_DISTORTION_DEFISH_FOCAL;De-fish - Focal length
@@ -3156,6 +3157,22 @@ TP_DOUBLEEXPOSURE_ROTATE_RIGHT;Turn a quarter clockwise
 TP_DOUBLEEXPOSURE_ROTATE_TOOLTIP;Turns this exposure about its own centre; positive angles turn it clockwise. In the picker, drag the grip above the selected exposure's frame, holding Shift to snap to 15-degree steps.
 TP_DOUBLEEXPOSURE_SCALE;Layer size
 TP_DOUBLEEXPOSURE_SOFTNESS;Transition softness
+TP_DOUBLEEXPOSURE_SUBJECT;Use only
+TP_DOUBLEEXPOSURE_SUBJECT_ANIMAL;Animals
+TP_DOUBLEEXPOSURE_SUBJECT_BUILDING;Buildings
+TP_DOUBLEEXPOSURE_SUBJECT_CROP;Crop
+TP_DOUBLEEXPOSURE_SUBJECT_CROP_TOOLTIP;Treat the selection's bounding box as the exposure's frame instead of the whole picture. Combined with Pattern this is what repeats a cut-out subject as a motif rather than tiling the entire photograph.
+TP_DOUBLEEXPOSURE_SUBJECT_FEATHER;Selection feather
+TP_DOUBLEEXPOSURE_SUBJECT_FEATHER_TOOLTIP;Softens the selection's edge. A segmented boundary is only ever an estimate, and a hard edge on an estimate is what reads as a cut-out; a little softness lets the exposure sit in the frame instead of on top of it.
+TP_DOUBLEEXPOSURE_SUBJECT_INVERT;Invert
+TP_DOUBLEEXPOSURE_SUBJECT_INVERT_TOOLTIP;Use everything except the selection — the sky's surroundings rather than the sky, say.
+TP_DOUBLEEXPOSURE_SUBJECT_OFF;The whole frame
+TP_DOUBLEEXPOSURE_SUBJECT_PERSON;People
+TP_DOUBLEEXPOSURE_SUBJECT_SKY;Sky
+TP_DOUBLEEXPOSURE_SUBJECT_SUBJECT;The subject
+TP_DOUBLEEXPOSURE_SUBJECT_TOOLTIP;Confine this exposure to part of its own picture, found automatically. The subject is whoever or whatever the frame is about — people, animals, vehicles and foreground objects taken together, holes filled in; the named classes select one kind of thing outright. The rest of the exposure contributes nothing.
+TP_DOUBLEEXPOSURE_SUBJECT_VEGETATION;Foliage
+TP_DOUBLEEXPOSURE_SUBJECT_VEHICLE;Vehicles
 TP_DOUBLEEXPOSURE_SOFTNESS_TOOLTIP;Width of the hand-over between the two frames, in stops. 0 picks one frame per pixel outright; around half a stop mixes their colours where the brightnesses nearly tie, the way cameras blend their comparative modes.
 TP_DIRPYRDENOISE_CHROMINANCE_AUTOGLOBAL;Automatic global
 TP_DIRPYRDENOISE_CHROMINANCE_BLUEYELLOW;Chroma Blue-Yellow

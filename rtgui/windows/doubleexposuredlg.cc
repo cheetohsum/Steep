@@ -22,7 +22,9 @@
 #include "rtengine/doubleexposureblend.h"
 #include "rtengine/iccstore.h"
 #include "rtengine/imagefloat.h"
+#include "rtengine/aisegmentation.h"
 #include "rtengine/partnerimagestore.h"
+#include "rtengine/partnermaskstore.h"
 
 #include <algorithm>
 #include <cmath>
@@ -297,6 +299,12 @@ struct DEThumbReq {
     bool neutral;
     bool basePlate; // styled base render with its own double exposure stripped
     bool scene;     // engine decode -> DEScenePlate instead of a pixbuf
+    // Segment the partner and leave the result in PartnerMaskStore, so the
+    // preview can read it without ever stalling a redraw on inference.
+    bool maskWarm = false;
+    int maskClass = 0;
+    double maskFeather = 0.0;
+    bool maskInvert = false;
 };
 
 struct DEThumbQueue {
@@ -1334,6 +1342,55 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     patternStaggerScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_STAGGER_TOOLTIP"));
     patternStaggerScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
 
+    // Subject selection, segmented on the partner itself. Hidden outright
+    // when this build has no segmentation model rather than shown dead.
+    subjectRow_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+    Gtk::Label* subjLab = Gtk::manage(new Gtk::Label(M("TP_DOUBLEEXPOSURE_SUBJECT"), Gtk::ALIGN_START));
+    subjLab->set_size_request(150, -1);
+    subjLab->set_xalign(0.f);
+    subjectMethod_ = Gtk::manage(new MyComboBoxText());
+    subjectMethod_->append(M("TP_DOUBLEEXPOSURE_SUBJECT_OFF"));
+    subjectMethod_->append(M("TP_DOUBLEEXPOSURE_SUBJECT_SUBJECT"));
+    subjectMethod_->append(M("TP_DOUBLEEXPOSURE_SUBJECT_PERSON"));
+    subjectMethod_->append(M("TP_DOUBLEEXPOSURE_SUBJECT_SKY"));
+    subjectMethod_->append(M("TP_DOUBLEEXPOSURE_SUBJECT_VEGETATION"));
+    subjectMethod_->append(M("TP_DOUBLEEXPOSURE_SUBJECT_BUILDING"));
+    subjectMethod_->append(M("TP_DOUBLEEXPOSURE_SUBJECT_VEHICLE"));
+    subjectMethod_->append(M("TP_DOUBLEEXPOSURE_SUBJECT_ANIMAL"));
+    subjectMethod_->set_active(0);
+    subjectMethod_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SUBJECT_TOOLTIP"));
+    subjectMethod_->setPreferredWidth(120, 180);
+    subjectMethod_->connect(subjectMethod_->signal_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged)));
+    subjectRow_->pack_start(*subjLab, Gtk::PACK_SHRINK);
+    subjectRow_->pack_start(*subjectMethod_, Gtk::PACK_EXPAND_WIDGET);
+    subjectInvert_ = Gtk::manage(new Gtk::CheckButton(M("TP_DOUBLEEXPOSURE_SUBJECT_INVERT")));
+    subjectInvert_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SUBJECT_INVERT_TOOLTIP"));
+    subjectInvert_->signal_toggled().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    subjectRow_->pack_start(*subjectInvert_, Gtk::PACK_SHRINK);
+    subjectCrop_ = Gtk::manage(new Gtk::CheckButton(M("TP_DOUBLEEXPOSURE_SUBJECT_CROP")));
+    subjectCrop_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SUBJECT_CROP_TOOLTIP"));
+    subjectCrop_->signal_toggled().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    subjectRow_->pack_start(*subjectCrop_, Gtk::PACK_SHRINK);
+    right->pack_start(*subjectRow_, Gtk::PACK_SHRINK);
+
+    Gtk::Box* subjFeatherRow = makeScaleRow(M("TP_DOUBLEEXPOSURE_SUBJECT_FEATHER"), subjectFeatherScale_, 0.0, 100.0, 1.0, 25.0);
+    subjectFeatherScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SUBJECT_FEATHER_TOOLTIP"));
+    subjectFeatherScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    right->pack_start(*subjFeatherRow, Gtk::PACK_SHRINK);
+
+#ifdef RT_AI_MASKING
+    const bool haveSegmentation = rtengine::getAISegmentationEngine().isInitialized();
+#else
+    const bool haveSegmentation = false;
+#endif
+
+    if (!haveSegmentation) {
+        subjectRow_->set_no_show_all(true);
+        subjectRow_->hide();
+        subjFeatherRow->set_no_show_all(true);
+        subjFeatherRow->hide();
+    }
+
     resetPlacement_ = Gtk::manage(new Gtk::Button(M("TP_DOUBLEEXPOSURE_PLACEMENT_RESET")));
     resetPlacement_->set_halign(Gtk::ALIGN_END);
     resetPlacement_->signal_clicked().connect(sigc::mem_fun(*this, &DoubleExposureDlg::onPreviewReset));
@@ -1431,6 +1488,7 @@ void DoubleExposureDlg::requestPreviewThumbs()
     scenePaths.push_back(baseImagePath_);
     scenePaths.insert(scenePaths.end(), layerPaths.begin(), layerPaths.end());
     requestScenePlates(scenePaths, height);
+    requestPartnerMasks();
 }
 
 void DoubleExposureDlg::highResToggled()
@@ -1797,7 +1855,7 @@ void DoubleExposureDlg::requestThumbs(const std::vector<Glib::ustring>& paths, i
             // The base's styled preview render is the plate the dialog
             // composites onto: strip the image's own double exposure from it.
             const bool basePlate = !neutral && !isGrid && *it == baseImagePath_;
-            queue.emplace_front(DEThumbReq{*it, height, neutral, basePlate, false});
+            queue.emplace_front(DEThumbReq{*it, height, neutral, basePlate, false, false, 0, 0.0, false});
         }
 
         while (thumbQueue_->grid.size() > MAX_GRID_QUEUE) {
@@ -1840,6 +1898,10 @@ void DoubleExposureDlg::pumpThumbQueue()
                 bool neutral = false;
                 bool basePlate = false;
                 bool scene = false;
+                bool maskWarm = false;
+                int maskClass = 0;
+                double maskFeather = 0.0;
+                bool maskInvert = false;
 
                 {
                     std::lock_guard<std::mutex> lock(queue->mutex);
@@ -1855,8 +1917,30 @@ void DoubleExposureDlg::pumpThumbQueue()
                     neutral = source.front().neutral;
                     basePlate = source.front().basePlate;
                     scene = source.front().scene;
+                    maskWarm = source.front().maskWarm;
+                    maskClass = source.front().maskClass;
+                    maskFeather = source.front().maskFeather;
+                    maskInvert = source.front().maskInvert;
                     source.pop_front();
                 }
+
+#ifdef RT_AI_MASKING
+                if (maskWarm) {
+                    rtengine::PartnerMaskStore::getInstance().getMask(
+                        path, sceneProfile,
+                        static_cast<DoubleExposureParams::MaskClass>(maskClass),
+                        maskFeather, maskInvert, true);
+
+                    Glib::signal_idle().connect_once([this, alive]() {
+                        if (!*alive) {
+                            return;
+                        }
+
+                        schedulePreviewUpdate();
+                    });
+                    continue;
+                }
+#endif
 
                 if (scene) {
                     // Only the base takes the edit's white balance and coarse
@@ -1891,6 +1975,60 @@ void DoubleExposureDlg::pumpThumbQueue()
     }
 }
 
+// Segmentation is the one input the preview cannot compute on the spot, so
+// the stack's masks are warmed on the decoder pool and the preview reads
+// whatever is cached. Until one arrives its layer simply renders unmasked.
+void DoubleExposureDlg::requestPartnerMasks()
+{
+#ifdef RT_AI_MASKING
+    if (!rtengine::getAISegmentationEngine().isInitialized()) {
+        return;
+    }
+
+    std::vector<DEThumbReq> needed;
+
+    for (const auto& layer : params_.layers) {
+        if (!layer.enabled || layer.path.empty()
+                || layer.maskClass == DoubleExposureParams::MaskClass::OFF) {
+            continue;
+        }
+
+        if (rtengine::PartnerMaskStore::getInstance().peekMask(layer.path, workingProfile_,
+                layer.maskClass, layer.maskFeather, layer.maskInvert)) {
+            continue;
+        }
+
+        const Glib::ustring key = layer.path + Glib::ustring::compose("|mask|%1|%2|%3",
+                                  static_cast<int>(layer.maskClass),
+                                  static_cast<int>(std::lround(layer.maskFeather)),
+                                  layer.maskInvert ? 1 : 0);
+
+        if (pendingThumbs_.count(key)) {
+            continue;
+        }
+
+        pendingThumbs_.insert(key);
+        needed.push_back(DEThumbReq{layer.path, 0, false, false, false, true,
+                                    static_cast<int>(layer.maskClass), layer.maskFeather,
+                                    layer.maskInvert});
+    }
+
+    if (needed.empty()) {
+        return;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(thumbQueue_->mutex);
+
+        for (auto it = needed.rbegin(); it != needed.rend(); ++it) {
+            thumbQueue_->preview.emplace_front(*it);
+        }
+    }
+
+    pumpThumbQueue();
+#endif
+}
+
 void DoubleExposureDlg::requestScenePlates(const std::vector<Glib::ustring>& paths, int height)
 {
     std::vector<Glib::ustring> needed;
@@ -1919,7 +2057,7 @@ void DoubleExposureDlg::requestScenePlates(const std::vector<Glib::ustring>& pat
         std::lock_guard<std::mutex> lock(thumbQueue_->mutex);
 
         for (auto it = needed.rbegin(); it != needed.rend(); ++it) {
-            thumbQueue_->preview.emplace_front(DEThumbReq{*it, height, false, false, true});
+            thumbQueue_->preview.emplace_front(DEThumbReq{*it, height, false, false, true, false, 0, 0.0, false});
         }
     }
 
@@ -2414,6 +2552,10 @@ void DoubleExposureDlg::syncLayerControls()
         patternMethod_->set_sensitive(false);
         patternSpacingScale_->set_sensitive(false);
         patternStaggerScale_->set_sensitive(false);
+        subjectMethod_->set_sensitive(false);
+        subjectInvert_->set_sensitive(false);
+        subjectCrop_->set_sensitive(false);
+        subjectFeatherScale_->set_sensitive(false);
         resetPlacement_->set_sensitive(false);
         blendMethod_->set_sensitive(false);
     } else {
@@ -2454,6 +2596,16 @@ void DoubleExposureDlg::syncLayerControls()
         patternMethod_->set_active(static_cast<int>(layer.pattern));
         patternSpacingScale_->set_value(layer.patternSpacing);
         patternStaggerScale_->set_value(layer.patternStagger);
+
+        const bool masked = layer.maskClass != DoubleExposureParams::MaskClass::OFF;
+        subjectMethod_->set_sensitive(true);
+        subjectInvert_->set_sensitive(masked);
+        subjectCrop_->set_sensitive(masked);
+        subjectFeatherScale_->set_sensitive(masked);
+        subjectMethod_->set_active(static_cast<int>(layer.maskClass));
+        subjectInvert_->set_active(layer.maskInvert);
+        subjectCrop_->set_active(layer.cropToSubject);
+        subjectFeatherScale_->set_value(layer.maskFeather);
         blendMethod_->set_active(static_cast<int>(layer.blendMode));
     }
 
@@ -2491,11 +2643,22 @@ void DoubleExposureDlg::layerControlChanged()
         static_cast<DoubleExposureParams::Pattern>(patternRow < 0 ? 0 : patternRow);
     params_.layers[selectedLayer_].patternSpacing = patternSpacingScale_->get_value();
     params_.layers[selectedLayer_].patternStagger = patternStaggerScale_->get_value();
+    const int subjectRow = subjectMethod_->get_active_row_number();
+    params_.layers[selectedLayer_].maskClass =
+        static_cast<DoubleExposureParams::MaskClass>(subjectRow < 0 ? 0 : subjectRow);
+    params_.layers[selectedLayer_].maskInvert = subjectInvert_->get_active();
+    params_.layers[selectedLayer_].cropToSubject = subjectCrop_->get_active();
+    params_.layers[selectedLayer_].maskFeather = subjectFeatherScale_->get_value();
 
     const bool tiled = params_.layers[selectedLayer_].pattern != DoubleExposureParams::Pattern::OFF;
     patternSpacingScale_->set_sensitive(tiled);
     patternStaggerScale_->set_sensitive(tiled);
+    const bool masked = params_.layers[selectedLayer_].maskClass != DoubleExposureParams::MaskClass::OFF;
+    subjectInvert_->set_sensitive(masked);
+    subjectCrop_->set_sensitive(masked);
+    subjectFeatherScale_->set_sensitive(masked);
 
+    requestPartnerMasks();
     schedulePreviewUpdate();
 }
 
@@ -2950,6 +3113,9 @@ void DoubleExposureDlg::updatePreview(bool quick)
         // for the engine and the two renders cannot disagree.
         rtengine::deplace::Frame frame;
         float srcAspect = 1.f;
+#ifdef RT_AI_MASKING
+        std::shared_ptr<const rtengine::PartnerMask> mask;
+#endif
     };
 
     std::vector<LayerPix> layerPix;
@@ -2988,10 +3154,31 @@ void DoubleExposureDlg::updatePreview(bool quick)
         lp.srcAspect = lp.srcH > 0 ? static_cast<float>(lp.srcW) / lp.srcH : baseAspect;
         lp.frame.baseW = 1.f;
         lp.frame.baseH = 1.f / baseAspect;
+        lp.frame.srcX0 = 0.f;
+        lp.frame.srcY0 = 0.f;
         lp.frame.srcW = 1.f;
         lp.frame.srcH = 1.f / lp.srcAspect;
+        bool cropped = false;
+
+#ifdef RT_AI_MASKING
+        // Cache-only: a redraw never waits on inference. requestPartnerMasks
+        // warms these on the decoder pool and asks for another pass.
+        lp.mask = rtengine::PartnerMaskStore::getInstance().peekMask(
+                      layer.path, workingProfile_, layer.maskClass, layer.maskFeather, layer.maskInvert);
+
+        if (layer.cropToSubject && lp.mask && lp.mask->hasBounds() && lp.mask->fullWidth > 0) {
+            // The engine's source rect, in the picker's width-normalised units.
+            const float toUnit = 1.f / lp.mask->fullWidth;
+            lp.frame.srcX0 = lp.mask->x0 * toUnit;
+            lp.frame.srcY0 = lp.mask->y0 * toUnit;
+            lp.frame.srcW = (lp.mask->x1 - lp.mask->x0) * toUnit;
+            lp.frame.srcH = (lp.mask->y1 - lp.mask->y0) * toUnit;
+            cropped = true;
+        }
+#endif
+
         lp.frame.invCover = 1.f / std::max(lp.frame.baseW / lp.frame.srcW, lp.frame.baseH / lp.frame.srcH);
-        rtengine::deplace::applyLayer(lp.frame, layer, false);
+        rtengine::deplace::applyLayer(lp.frame, layer, cropped);
 
         if (lp.mode == DoubleExposureParams::BlendMode::ADD) {
             ++addLayers;
@@ -3161,6 +3348,16 @@ void DoubleExposureDlg::updatePreview(bool quick)
                 rtengine::deblend::blend(lp.mode, lp.compare, lp.softness, 1.f, r, g, b, pr, pg, pb, cr, cg, cb);
 
                 float wgt = lp.opacity * coverage;
+
+#ifdef RT_AI_MASKING
+                if (lp.mask) {
+                    wgt *= lp.mask->sample(un * lp.mask->fullWidth, vn * lp.mask->fullHeight);
+
+                    if (wgt <= 0.f) {
+                        continue;
+                    }
+                }
+#endif
 
                 if (lp.gateStrength > 0.f) {
                     const float lum = lp.gateOnLayer ? rtengine::deblend::lum709(pr, pg, pb)

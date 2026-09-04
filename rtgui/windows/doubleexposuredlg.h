@@ -80,6 +80,7 @@ private:
     void requestThumbs(const std::vector<Glib::ustring>& paths, int height, bool neutral = false);
     void onThumbLoaded(const Glib::ustring& path, int height, bool neutral, Glib::RefPtr<Gdk::Pixbuf> pixbuf);
     void requestScenePlates(const std::vector<Glib::ustring>& paths, int height);
+    void requestPartnerMasks();
     void onSceneLoaded(const Glib::ustring& path, int height, std::shared_ptr<const DEScenePlate> plate);
     void initSceneContext();
     void pumpThumbQueue();
@@ -203,6 +204,11 @@ private:
     MyComboBoxText* patternMethod_;
     Gtk::Scale* patternSpacingScale_;
     Gtk::Scale* patternStaggerScale_;
+    Gtk::Box* subjectRow_;
+    MyComboBoxText* subjectMethod_;
+    Gtk::CheckButton* subjectInvert_;
+    Gtk::CheckButton* subjectCrop_;
+    Gtk::Scale* subjectFeatherScale_;
     Gtk::Button* resetPlacement_;
     Gtk::Box* trayBox_;
 
