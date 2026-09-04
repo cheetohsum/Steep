@@ -90,6 +90,7 @@ private:
     std::function<void(const Glib::ustring&, const Glib::ustring&)> openPartnerHandler_;
     std::map<Glib::ustring, Glib::RefPtr<Gdk::Pixbuf>> rowThumbs_;
     std::set<Glib::ustring> pendingRowThumbs_;
+    std::set<Glib::ustring> pendingCoverage_;
     std::shared_ptr<std::atomic<bool>> aliveToken_;
     bool layersEdited_;
     bool autoGainEdited_;
@@ -111,6 +112,7 @@ private:
     void clearAll();
     void rebuildLayerRows();
     void requestRowThumbs(const std::vector<Glib::ustring>& paths);
+    void requestCoverage(const Glib::ustring& path);
     void refreshLayerSelector();
     void loadSelectedLayer();
     void removeLayer(size_t index);

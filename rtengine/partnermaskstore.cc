@@ -77,22 +77,17 @@ int classIndex(procparams::DoubleExposureParams::MaskClass cls)
     }
 }
 
-// Segment the partner and reduce it to the one class the layer asked for.
-std::shared_ptr<PartnerMask> computeMask(const Glib::ustring& path, const Glib::ustring& workingProfile,
-                                         procparams::DoubleExposureParams::MaskClass cls,
-                                         double feather, bool invert, const MaskPaint& paint,
-                                         bool multiThread, std::vector<float>* coverageOut)
+// The one expensive step: decode the partner, scale it down and put it through
+// the models. Split out of the mask because the class list's coverage numbers
+// need exactly this and nothing that comes after it.
+bool segmentPartner(const Glib::ustring& path, const Glib::ustring& workingProfile,
+                    bool multiThread, std::vector<array2D<float>>& maps,
+                    int& maskW, int& maskH, int& fullW, int& fullH)
 {
-    const int wanted = classIndex(cls);
-
-    if (wanted < 0) {
-        return nullptr;
-    }
-
     AISegmentationEngine& engine = getAISegmentationEngine();
 
     if (!engine.isInitialized()) {
-        return nullptr;
+        return false;
     }
 
     // The composite has already decoded and cached this partner, so the input
@@ -100,7 +95,7 @@ std::shared_ptr<PartnerMask> computeMask(const Glib::ustring& path, const Glib::
     auto partner = PartnerImageStore::getInstance().getPartner(path, workingProfile, false);
 
     if (!partner || !partner->image || partner->fullWidth <= 0 || partner->fullHeight <= 0) {
-        return nullptr;
+        return false;
     }
 
     const Imagefloat& img = *partner->image;
@@ -108,13 +103,13 @@ std::shared_ptr<PartnerMask> computeMask(const Glib::ustring& path, const Glib::
     const int srcH = img.getHeight();
 
     if (srcW <= 0 || srcH <= 0) {
-        return nullptr;
+        return false;
     }
 
     const float cacheScale = std::min(1.f, static_cast<float>(MAX_PARTNER_MASK_DIMENSION)
                                       / static_cast<float>(std::max(srcW, srcH)));
-    const int maskW = std::max(1, static_cast<int>(std::lround(srcW * cacheScale)));
-    const int maskH = std::max(1, static_cast<int>(std::lround(srcH * cacheScale)));
+    maskW = std::max(1, static_cast<int>(std::lround(srcW * cacheScale)));
+    maskH = std::max(1, static_cast<int>(std::lround(srcH * cacheScale)));
 
     array2D<float> scaledR(maskW, maskH);
     array2D<float> scaledG(maskW, maskH);
@@ -169,18 +164,70 @@ std::shared_ptr<PartnerMask> computeMask(const Glib::ustring& path, const Glib::
         }
     }
 
-    std::vector<array2D<float>> maps = engine.segment(static_cast<float**>(scaledR),
+    maps = engine.segment(static_cast<float**>(scaledR),
                                                       static_cast<float**>(scaledG),
                                                       static_cast<float**>(scaledB),
                                                       maskW, maskH, multiThread);
 
     if (static_cast<int>(maps.size()) != static_cast<int>(AISegClass::NUM_CLASSES)) {
-        return nullptr;
+        return false;
     }
 
     appendSubjectMasks(maps, maskW, maskH, multiThread);
     applySubjectModel(maps, static_cast<float**>(scaledR), static_cast<float**>(scaledG),
                       static_cast<float**>(scaledB), maskW, maskH, multiThread);
+
+    fullW = partner->fullWidth;
+    fullH = partner->fullHeight;
+    return true;
+}
+
+// How much of the frame each class claims, at the same cut a mask is built at.
+std::vector<float> measureCoverage(const std::vector<array2D<float>>& maps, int maskW, int maskH)
+{
+    std::vector<float> coverage(maps.size(), 0.f);
+    const float total = static_cast<float>(maskW) * maskH;
+
+    for (size_t c = 0; c < maps.size(); ++c) {
+        int hits = 0;
+
+        for (int y = 0; y < maskH; ++y) {
+            for (int x = 0; x < maskW; ++x) {
+                // The same cut the locallab coverage uses, and the default a
+                // mask is built at.
+                if (maps[c][y][x] > 0.3f) {
+                    ++hits;
+                }
+            }
+        }
+
+        coverage[c] = total > 0.f ? hits / total : 0.f;
+    }
+
+    return coverage;
+}
+
+// Segment the partner and reduce it to the one class the layer asked for.
+std::shared_ptr<PartnerMask> computeMask(const Glib::ustring& path, const Glib::ustring& workingProfile,
+                                         procparams::DoubleExposureParams::MaskClass cls,
+                                         double feather, bool invert, const MaskPaint& paint,
+                                         bool multiThread, std::vector<float>* coverageOut)
+{
+    const int wanted = classIndex(cls);
+
+    if (wanted < 0) {
+        return nullptr;
+    }
+
+    std::vector<array2D<float>> maps;
+    int maskW = 0;
+    int maskH = 0;
+    int fullW = 0;
+    int fullH = 0;
+
+    if (!segmentPartner(path, workingProfile, multiThread, maps, maskW, maskH, fullW, fullH)) {
+        return nullptr;
+    }
 
     if (wanted >= static_cast<int>(maps.size())) {
         return nullptr;
@@ -189,31 +236,14 @@ std::shared_ptr<PartnerMask> computeMask(const Glib::ustring& path, const Glib::
     if (coverageOut) {
         // Measured on the finished class maps, before this one mask's own
         // feather and strokes narrow it to a single class.
-        coverageOut->assign(maps.size(), 0.f);
-        const float total = static_cast<float>(maskW) * maskH;
-
-        for (size_t c = 0; c < maps.size(); ++c) {
-            int hits = 0;
-
-            for (int y = 0; y < maskH; ++y) {
-                for (int x = 0; x < maskW; ++x) {
-                    // The same cut the locallab coverage uses, and the
-                    // default a mask is built at.
-                    if (maps[c][y][x] > 0.3f) {
-                        ++hits;
-                    }
-                }
-            }
-
-            (*coverageOut)[c] = total > 0.f ? hits / total : 0.f;
-        }
+        *coverageOut = measureCoverage(maps, maskW, maskH);
     }
 
     auto result = std::make_shared<PartnerMask>();
     result->width = maskW;
     result->height = maskH;
-    result->fullWidth = partner->fullWidth;
-    result->fullHeight = partner->fullHeight;
+    result->fullWidth = fullW;
+    result->fullHeight = fullH;
     result->mask(maskW, maskH);
 
     array2D<float>& chosen = maps[wanted];
@@ -354,7 +384,7 @@ float PartnerMask::sample(float u, float v) const
 
 PartnerMaskStore::PartnerMaskStore() :
     cache(8),
-    coverageCache(8)
+    coverageCache(16)   // two readings per file while the subject model loads
 {
 }
 
@@ -389,7 +419,7 @@ std::shared_ptr<const PartnerMask> PartnerMaskStore::getMask(const Glib::ustring
         cache.insert(key, result);
 
         if (!coverage->empty()) {
-            coverageCache.insert(path + "\n" + workingProfile, coverage);
+            coverageCache.insert(coverageKey(path, workingProfile), coverage);
         }
     }
 
@@ -429,16 +459,77 @@ Glib::ustring PartnerMaskStore::makeKey(const Glib::ustring& path, const Glib::u
                                   getAISubjectEngine().isInitialized() ? 1 : 0);
 }
 
+// Keyed on whether the subject model was loaded, for the same reason the mask
+// is: a reading taken before it arrived understates what SUBJECT can select.
+Glib::ustring PartnerMaskStore::coverageKey(const Glib::ustring& path,
+                                            const Glib::ustring& workingProfile, bool subjectReady)
+{
+    return path + "\n" + workingProfile + (subjectReady ? "\n1" : "\n0");
+}
+
+Glib::ustring PartnerMaskStore::coverageKey(const Glib::ustring& path,
+                                            const Glib::ustring& workingProfile)
+{
+    return coverageKey(path, workingProfile, getAISubjectEngine().isInitialized());
+}
+
 std::vector<float> PartnerMaskStore::getCoverage(const Glib::ustring& path,
                                                  const Glib::ustring& workingProfile)
 {
+    const bool ready = getAISubjectEngine().isInitialized();
     std::shared_ptr<std::vector<float>> found;
 
-    if (coverageCache.get(path + "\n" + workingProfile, found) && found) {
+    if (coverageCache.get(coverageKey(path, workingProfile, ready), found) && found) {
+        return *found;
+    }
+
+    // An older reading is worth more than no reading: the list must not drop
+    // back to bare names for the seconds it takes to measure again.
+    if (coverageCache.get(coverageKey(path, workingProfile, !ready), found) && found) {
         return *found;
     }
 
     return {};
+}
+
+bool PartnerMaskStore::hasCoverage(const Glib::ustring& path, const Glib::ustring& workingProfile)
+{
+    std::shared_ptr<std::vector<float>> found;
+    return coverageCache.get(coverageKey(path, workingProfile), found) && found;
+}
+
+bool PartnerMaskStore::warmCoverage(const Glib::ustring& path, const Glib::ustring& workingProfile,
+                                    bool multiThread)
+{
+    if (path.empty() || hasCoverage(path, workingProfile)) {
+        return true;
+    }
+
+    std::vector<array2D<float>> maps;
+    int maskW = 0;
+    int maskH = 0;
+    int fullW = 0;
+    int fullH = 0;
+
+    if (!segmentPartner(path, workingProfile, multiThread, maps, maskW, maskH, fullW, fullH)) {
+        return false;
+    }
+
+    auto coverage = std::make_shared<std::vector<float>>(measureCoverage(maps, maskW, maskH));
+
+    if (settings->verbose) {
+        std::fprintf(stderr, "[partnerCoverage] %s subject=%.3f person=%.3f animal=%.3f\n",
+                     path.c_str(),
+                     coverage->size() > static_cast<size_t>(AISegClass::SUBJECT)
+                     ? (*coverage)[static_cast<size_t>(AISegClass::SUBJECT)] : -1.f,
+                     coverage->size() > static_cast<size_t>(AISegClass::PERSON)
+                     ? (*coverage)[static_cast<size_t>(AISegClass::PERSON)] : -1.f,
+                     coverage->size() > static_cast<size_t>(AISegClass::ANIMAL)
+                     ? (*coverage)[static_cast<size_t>(AISegClass::ANIMAL)] : -1.f);
+    }
+
+    coverageCache.insert(coverageKey(path, workingProfile), coverage);
+    return true;
 }
 
 void PartnerMaskStore::clearCache()

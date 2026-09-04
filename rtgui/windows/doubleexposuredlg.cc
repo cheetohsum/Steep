@@ -24,6 +24,7 @@
 #include "rtengine/iccstore.h"
 #include "rtengine/imagefloat.h"
 #include "rtengine/aisegmentation.h"
+#include "rtengine/aisubjectmodel.h"
 #include "rtengine/settings.h"
 #include "rtengine/partnerimagestore.h"
 #include "rtengine/partnermaskstore.h"
@@ -2071,6 +2072,21 @@ void DoubleExposureDlg::pumpThumbQueue()
                 }
 
 #ifdef RT_AI_MASKING
+                if (maskWarm && maskClass < 0) {
+                    // No class: this one is only after the numbers the class
+                    // list is labelled with.
+                    rtengine::PartnerMaskStore::getInstance().warmCoverage(path, sceneProfile, true);
+
+                    Glib::signal_idle().connect_once([this, alive, path]() {
+                        if (!*alive) {
+                            return;
+                        }
+
+                        onCoverageMeasured(path);
+                    });
+                    continue;
+                }
+
                 if (maskWarm) {
                     if (rtengine::settings->verbose) {
                         std::fprintf(stderr, "[dePickerWarm] %s class=%d feather=%.0f\n",
@@ -2177,6 +2193,55 @@ void DoubleExposureDlg::requestPartnerMasks()
     }
 
     pumpThumbQueue();
+#endif
+}
+
+// A partner's class coverage is only known once it has been segmented, and
+// until this existed nothing segmented a partner until a class had already
+// been picked -- so the numbers meant to help make that choice only appeared
+// after it had been made. One segmentation per file, on the same pool as the
+// thumbnails, and the list relabels itself when it lands.
+void DoubleExposureDlg::requestCoverage(const Glib::ustring& path)
+{
+#ifdef RT_AI_MASKING
+    if (path.empty() || !rtengine::getAISegmentationEngine().isInitialized()) {
+        return;
+    }
+
+    if (rtengine::PartnerMaskStore::getInstance().hasCoverage(path, workingProfile_)) {
+        return;
+    }
+
+    // The subject model loads a few seconds after startup, and a reading taken
+    // before it did is worth taking again -- hence its state in the key.
+    const Glib::ustring key = path + "|coverage|"
+                              + (rtengine::getAISubjectEngine().isInitialized() ? "1" : "0");
+
+    if (pendingThumbs_.count(key)) {
+        return;
+    }
+
+    pendingThumbs_.insert(key);
+
+    {
+        std::lock_guard<std::mutex> lock(thumbQueue_->mutex);
+        thumbQueue_->preview.emplace_back(
+            DEThumbReq{path, 0, false, false, false, true, -1, 0.0, false, {}});
+    }
+
+    pumpThumbQueue();
+#endif
+}
+
+void DoubleExposureDlg::onCoverageMeasured(const Glib::ustring& path)
+{
+#ifdef RT_AI_MASKING
+    // Only the layer on show is labelled, so a measurement for any other one
+    // just sits in the store until its layer is selected.
+    if (selectedLayer_ < params_.layers.size() && params_.layers[selectedLayer_].path == path) {
+        refreshSubjectLabels(path);
+    }
+
 #endif
 }
 
@@ -2939,6 +3004,8 @@ void DoubleExposureDlg::onPreviewScale(double factor)
 void DoubleExposureDlg::refreshSubjectLabels(const Glib::ustring& path)
 {
 #ifdef RT_AI_MASKING
+    requestCoverage(path);
+
     const std::vector<float> coverage =
         rtengine::PartnerMaskStore::getInstance().getCoverage(path, workingProfile_);
 

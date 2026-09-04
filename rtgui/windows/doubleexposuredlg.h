@@ -81,6 +81,8 @@ private:
     void onThumbLoaded(const Glib::ustring& path, int height, bool neutral, Glib::RefPtr<Gdk::Pixbuf> pixbuf);
     void requestScenePlates(const std::vector<Glib::ustring>& paths, int height);
     void requestPartnerMasks();
+    void requestCoverage(const Glib::ustring& path);
+    void onCoverageMeasured(const Glib::ustring& path);
     void onSceneLoaded(const Glib::ustring& path, int height, std::shared_ptr<const DEScenePlate> plate);
     void initSceneContext();
     void pumpThumbQueue();

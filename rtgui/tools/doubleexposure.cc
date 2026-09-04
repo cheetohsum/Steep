@@ -21,6 +21,7 @@
 #include "doubleexposure.h"
 
 #include "rtengine/aisegmentation.h"
+#include "rtengine/aisubjectmodel.h"
 
 #include "partnerthumb.h"
 
@@ -444,6 +445,23 @@ DoubleExposure::DoubleExposure() :
     pack_start(*highlightLatitude);
 
     updateSensitivity();
+
+#ifdef RT_AI_MASKING
+    // Opening the tool is the moment its class list starts being read, and
+    // nothing else refreshes at that moment. The idle step lets the expander
+    // finish toggling first, so getExpanded() answers about the new state.
+    {
+        auto alive = aliveToken_;
+        getExpander()->signal_button_release_event().connect_notify(
+        [this, alive](GdkEventButton*) {
+            Glib::signal_idle().connect_once([this, alive]() {
+                if (*alive) {
+                    loadSelectedLayer();
+                }
+            });
+        });
+    }
+#endif
 }
 
 DoubleExposure::~DoubleExposure()
@@ -588,6 +606,55 @@ void DoubleExposure::requestRowThumbs(const std::vector<Glib::ustring>& paths)
     }));
 }
 
+// A partner's class coverage is only known once it has been segmented, and
+// nothing segments one until a class has been picked -- so the numbers meant
+// to inform that choice only turned up after it had been made. One
+// segmentation per file, on its own thread, and only while the tool is open:
+// a collapsed panel is nobody reading the numbers.
+void DoubleExposure::requestCoverage(const Glib::ustring& path)
+{
+#ifdef RT_AI_MASKING
+    if (path.empty() || workingProfile_.empty() || !getExpanded()
+            || !rtengine::getAISegmentationEngine().isInitialized()) {
+        return;
+    }
+
+    if (rtengine::PartnerMaskStore::getInstance().hasCoverage(path, workingProfile_)) {
+        return;
+    }
+
+    // The subject model loads a few seconds after startup, and a reading taken
+    // before it did is worth taking again -- hence its state in the key.
+    const Glib::ustring key = path + "|" + workingProfile_ + "|"
+                              + (rtengine::getAISubjectEngine().isInitialized() ? "1" : "0");
+
+    if (!pendingCoverage_.insert(key).second) {
+        return;
+    }
+
+    auto alive = aliveToken_;
+    const Glib::ustring profile = workingProfile_;
+
+    detachQuietly(std::thread([this, alive, path, profile]() {
+        rtengine::PartnerMaskStore::getInstance().warmCoverage(path, profile, true);
+
+        Glib::signal_idle().connect_once([this, alive, path]() {
+            if (!*alive) {
+                return;
+            }
+
+            const int idx = selectedLayerIndex();
+
+            // Any other layer's numbers just wait in the store until its turn.
+            if (idx >= 0 && static_cast<size_t>(idx) < layers.size()
+                    && layers[idx].path == path) {
+                loadSelectedLayer();
+            }
+        });
+    }));
+#endif
+}
+
 void DoubleExposure::refreshLayerSelector()
 {
     layerSel->block(true);
@@ -640,6 +707,8 @@ void DoubleExposure::loadSelectedLayer()
 
 #ifdef RT_AI_MASKING
     {
+        requestCoverage(layers[idx].path);
+
         const std::vector<float> coverage =
             rtengine::PartnerMaskStore::getInstance().getCoverage(layers[idx].path, workingProfile_);
         subjectMethod->block(true);

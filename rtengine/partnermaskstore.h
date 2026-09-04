@@ -92,10 +92,19 @@ public:
                                                 double feather, bool invert, const MaskPaint& paint);
 
     // What fraction of the partner each class covers, 0..1, indexed by
-    // AISegClass. Empty until the file has been segmented at least once --
-    // the numbers are a by-product of asking for a mask, never a reason to
-    // segment on their own.
+    // AISegClass. Empty until the file has been measured, which warmCoverage
+    // does; a redraw must never wait on it.
     std::vector<float> getCoverage(const Glib::ustring& path, const Glib::ustring& workingProfile);
+
+    // Whether a current reading exists — the gate on asking for one, kept
+    // apart from getCoverage because that one will hand back an older reading
+    // rather than let the numbers vanish.
+    bool hasCoverage(const Glib::ustring& path, const Glib::ustring& workingProfile);
+
+    // Segments the partner for its coverage alone, with no mask to show for
+    // it. Blocking: call it on a worker, as the picker does.
+    bool warmCoverage(const Glib::ustring& path, const Glib::ustring& workingProfile,
+                      bool multiThread);
 
     void clearCache();
 
@@ -105,6 +114,10 @@ private:
     static Glib::ustring makeKey(const Glib::ustring& path, const Glib::ustring& workingProfile,
                                  procparams::DoubleExposureParams::MaskClass cls,
                                  double feather, bool invert, const MaskPaint& paint);
+
+    static Glib::ustring coverageKey(const Glib::ustring& path, const Glib::ustring& workingProfile,
+                                     bool subjectReady);
+    static Glib::ustring coverageKey(const Glib::ustring& path, const Glib::ustring& workingProfile);
 
     Cache<Glib::ustring, std::shared_ptr<PartnerMask>> cache;
     Cache<Glib::ustring, std::shared_ptr<std::vector<float>>> coverageCache;
