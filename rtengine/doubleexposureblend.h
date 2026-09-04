@@ -261,6 +261,10 @@ struct Frame {
     float stagger = 0.f;  // odd-row shift, fraction of a tile
     int count = 6;        // RADIAL: copies around the ring
     float ring = 0.f;     // RADIAL: ring radius, in source-rect units
+    // Soft frame edge, in source-rect units. 0 keeps the old hard edge, where
+    // coverage only ever ramps across the single output pixel that straddles
+    // the boundary.
+    float edge = 0.f;
     // False keeps the legacy path bitwise: no rotation, no wrap, no frame
     // edge — the partner is simply edge-clamped over the whole base, which
     // is how every layer behaved before placement existed.
@@ -298,6 +302,19 @@ inline void applyLayer(Frame& f, const procparams::DoubleExposureParams::Layer& 
     // The caller must have filled in the two frame geometries by now.
     f.count = std::min(std::max(static_cast<int>(std::lround(layer.patternCount)), 1), 24);
     f.ring = 0.5f * static_cast<float>(layer.patternDiameter) / 100.f * f.baseW * f.invCover / f.scale;
+
+    // A soft edge is what stops a copy ending on a line, but edge-to-edge
+    // tiling has no outer edge to soften: every pixel there belongs to some
+    // cell, so fading the cell boundary would let the base through as a seam
+    // -- exactly the artefact this is meant to remove. So it applies to a
+    // placed frame, to tiles with a gutter between them, and to the radial
+    // copies, and never to a seamless grid.
+    const bool seamlessGrid = (layer.pattern == Pattern::REPEAT || layer.pattern == Pattern::MIRROR)
+                              && f.cell <= 1.f;
+    f.edge = seamlessGrid
+             ? 0.f
+             : std::max(0.f, static_cast<float>(layer.edgeFeather)) / 100.f
+               * 0.25f * std::min(f.srcW, f.srcH);
 
     // A plain mirror still covers the base exactly, so it alone does not need
     // the placed path; everything else moves the frame's edges into view.
@@ -385,7 +402,15 @@ inline bool map(const Frame& f, float fx, float fy, float aaStep,
     const float aa = std::max(aaStep * f.invCover / f.scale, 1e-6f);
     const float ex = std::min(u - f.srcX0, f.srcX0 + f.srcW - u);
     const float ey = std::min(v - f.srcY0, f.srcY0 + f.srcH - v);
-    coverage = std::min(std::max(std::min(ex, ey) / aa + 0.5f, 0.f), 1.f);
+    const float dist = std::min(ex, ey);
+
+    if (f.edge > aa) {
+        // Smoothstep over the blend band: a linear ramp this wide reads as a
+        // visible gradient wedge, an S-curve as the frame simply thinning out.
+        coverage = deblend::smoothstep01(dist / f.edge);
+    } else {
+        coverage = std::min(std::max(dist / aa + 0.5f, 0.f), 1.f);
+    }
 
     return coverage > 0.f;
 }

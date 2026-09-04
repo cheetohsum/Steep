@@ -244,7 +244,7 @@ def check_rgb(name, got, expected, tol=3.0, skip=lambda x: False):
 
 
 def identical(name, a, b):
-    ident = max(abs(a[x] - b[x]) for x in range(W))
+    ident = max(abs(a[x] - b[x]) for x in range(len(a)))
     print(f"{'PASS' if ident == 0 else 'FAIL'}  {name:34s} max |diff| = {ident}")
     return ident == 0
 
@@ -634,6 +634,42 @@ def main():
           f"  over {len(gutters)} px")
     ok &= worst <= 1 and len(gutters) > 20
 
+
+    # ------------------------------------------------------------------
+    # Edge blend. A placed frame at half size stops dead at x = 64 and 192
+    # unless its edge is faded; the check counts how many columns sit part
+    # way between "base alone" and "base plus partner" along one of those
+    # boundaries. A hard edge crosses in a single pixel.
+    # ------------------------------------------------------------------
+    def edge_pp3(name, extra_keys):
+        return write_pp3(name,
+            "Enabled=true\nAutoGain=false\nBaseEV=0\nHighlightLatitude=0\n"
+            f"LayerCount=1\nLayer1Path={hramp_path}\nLayer1Enabled=true\nLayer1EV=0\nLayer1Opacity=100\n"
+            "Layer1BlendMode=0\nLayer1Scale=50\n" + extra_keys + GATE_OFF)
+
+    hard = row(render(edge_pp3("t19_hard.pp3", "Layer1EdgeFeather=0\n"),
+                      "base_grad.png", "t19_hard.tif"))
+    soft = row(render(edge_pp3("t19_soft.pp3", "Layer1EdgeFeather=60\n"),
+                      "base_grad.png", "t19_soft.tif"))
+
+    # The band is where the two renders disagree: they differ only in how the
+    # frame's edge is weighted, so anywhere they agree the edge is not acting.
+    band = [x for x in range(2, W - 2) if abs(soft[x] - hard[x]) > 2]
+    good = len(band) >= 8 and all(x < 110 or x > 145 for x in band)
+    print(f"{'PASS' if good else 'FAIL'}  {'edge blend softens the frame':34s} "
+          f"band = {len(band)} px, nearest to centre = "
+          f"{min((abs(x - 128) for x in band), default=-1)}")
+    ok &= good
+
+    # T19b: it must still reach full strength away from the edge, or "blend"
+    # would just mean "fade the whole layer out".
+    ok &= identical("edge blend leaves the middle",
+                    [soft[x] for x in range(118, 138)], [hard[x] for x in range(118, 138)])
+
+    # T19c: absent means an edit made before this existed, which kept its hard
+    # edge - so no key at all must be bitwise the hard render.
+    absent = row(render(edge_pp3("t19_absent.pp3", ""), "base_grad.png", "t19_absent.tif"))
+    ok &= identical("edge key absent == hard edge", absent, hard)
 
     # ------------------------------------------------------------------
     # Radial repeat: N copies stood around a ring, each turned to face

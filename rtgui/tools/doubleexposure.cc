@@ -168,6 +168,11 @@ DoubleExposure::DoubleExposure() :
     patternCount->set_no_show_all(true);
     patternCount->show();
 
+    edgeFeather = Gtk::manage(new Adjuster(M("TP_DOUBLEEXPOSURE_EDGEFEATHER"), 0.0, 100.0, 1.0, 35.0));
+    edgeFeather->setAdjusterListener(this);
+    edgeFeather->set_tooltip_text(M("TP_DOUBLEEXPOSURE_EDGEFEATHER_TOOLTIP"));
+    edgeFeather->show();
+
     patternDiameter = Gtk::manage(new Adjuster(M("TP_DOUBLEEXPOSURE_PATTERN_DIAMETER"), 0.0, 200.0, 1.0, 60.0));
     patternDiameter->setAdjusterListener(this);
     patternDiameter->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_DIAMETER_TOOLTIP"));
@@ -322,6 +327,7 @@ DoubleExposure::DoubleExposure() :
     adjustSection->getContentBox()->pack_start(*layerScale);
     adjustSection->getContentBox()->pack_start(*layerRotate);
     adjustSection->getContentBox()->pack_start(*layerFlipH);
+    adjustSection->getContentBox()->pack_start(*edgeFeather);
     adjustSection->setExpanded(false);
 
     patternSection = Gtk::manage(new AdvancedSection(M("TP_DOUBLEEXPOSURE_PATTERN")));
@@ -330,6 +336,9 @@ DoubleExposure::DoubleExposure() :
     patternSection->getContentBox()->pack_start(*patternStagger);
     patternSection->getContentBox()->pack_start(*patternCount);
     patternSection->getContentBox()->pack_start(*patternDiameter);
+    patternSection->getContentBox()->pack_start(*subjectRow);
+    patternSection->getContentBox()->pack_start(*subjectOptionsRow);
+    patternSection->getContentBox()->pack_start(*subjectFeather);
     patternSection->setExpanded(false);
 
     pack_start(*layersBox);
@@ -338,9 +347,6 @@ DoubleExposure::DoubleExposure() :
     pack_start(*layerOpacity);
     pack_start(*adjustSection);
     pack_start(*patternSection);
-    pack_start(*subjectRow);
-    pack_start(*subjectOptionsRow);
-    pack_start(*subjectFeather);
     pack_start(*blendRow);
     pack_start(*compareRow);
     pack_start(*softness);
@@ -533,6 +539,7 @@ void DoubleExposure::loadSelectedLayer()
     patternStagger->setValue(layers[idx].patternStagger);
     patternCount->setValue(layers[idx].patternCount);
     patternDiameter->setValue(layers[idx].patternDiameter);
+    edgeFeather->setValue(layers[idx].edgeFeather);
 
     flipConn.block(true);
     layerFlipH->set_active(layers[idx].flipH);
@@ -606,6 +613,7 @@ void DoubleExposure::updateSensitivity()
     layerScale->set_sensitive(haveLayers);
     layerRotate->set_sensitive(haveLayers);
     layerFlipH->set_sensitive(haveLayers);
+    edgeFeather->set_sensitive(haveLayers);
     patternMethod->set_sensitive(haveLayers);
     blendMethod->set_sensitive(haveLayers);
     gateSource->set_sensitive(haveLayers);
@@ -814,6 +822,7 @@ void DoubleExposure::setDefaults(const ProcParams* defParams, const ParamsEdited
     patternStagger->setDefault(defLayer.patternStagger);
     patternCount->setDefault(defLayer.patternCount);
     patternDiameter->setDefault(defLayer.patternDiameter);
+    edgeFeather->setDefault(defLayer.edgeFeather);
     subjectFeather->setDefault(defLayer.maskFeather);
     gateLow->setDefault(defLayer.gateLow);
     gateHigh->setDefault(defLayer.gateHigh);
@@ -833,7 +842,7 @@ void DoubleExposure::adjusterChanged(Adjuster* a, double newval)
 {
     const bool isPlacementAdj = a == layerOffsetX || a == layerOffsetY || a == layerScale
                                 || a == layerRotate || a == patternSpacing || a == patternStagger
-                                || a == patternCount || a == patternDiameter;
+                                || a == patternCount || a == patternDiameter || a == edgeFeather;
     const bool isSubjectAdj = a == subjectFeather;
     const bool isLayerAdj = a == layerEv || a == layerOpacity || a == softness
                             || isPlacementAdj || isSubjectAdj;
@@ -865,6 +874,8 @@ void DoubleExposure::adjusterChanged(Adjuster* a, double newval)
                 layers[idx].patternCount = newval;
             } else if (a == patternDiameter) {
                 layers[idx].patternDiameter = newval;
+            } else if (a == edgeFeather) {
+                layers[idx].edgeFeather = newval;
             } else if (a == subjectFeather) {
                 layers[idx].maskFeather = newval;
             } else if (a == gateLow) {

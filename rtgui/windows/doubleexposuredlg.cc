@@ -1372,6 +1372,11 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     flipH_->signal_toggled().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
     adjustBox->pack_start(*flipH_, Gtk::PACK_SHRINK);
 
+    adjustBox->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_EDGEFEATHER"), edgeFeatherScale_, 0.0, 100.0, 1.0, 35.0),
+                          Gtk::PACK_SHRINK);
+    edgeFeatherScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_EDGEFEATHER_TOOLTIP"));
+    edgeFeatherScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+
     // Subject selection, segmented on the partner itself. Hidden outright
     // when this build has no segmentation model rather than shown dead.
     subjectRow_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
@@ -1401,12 +1406,12 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     subjectCrop_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SUBJECT_CROP_TOOLTIP"));
     subjectCrop_->signal_toggled().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
     subjectRow_->pack_start(*subjectCrop_, Gtk::PACK_SHRINK);
-    right->pack_start(*subjectRow_, Gtk::PACK_SHRINK);
+    patternBox->pack_start(*subjectRow_, Gtk::PACK_SHRINK);
 
     Gtk::Box* subjFeatherRow = makeScaleRow(M("TP_DOUBLEEXPOSURE_SUBJECT_FEATHER"), subjectFeatherScale_, 0.0, 100.0, 1.0, 25.0);
     subjectFeatherScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SUBJECT_FEATHER_TOOLTIP"));
     subjectFeatherScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
-    right->pack_start(*subjFeatherRow, Gtk::PACK_SHRINK);
+    patternBox->pack_start(*subjFeatherRow, Gtk::PACK_SHRINK);
 
 #ifdef RT_AI_MASKING
     const bool haveSegmentation = rtengine::getAISegmentationEngine().isInitialized();
@@ -2589,6 +2594,7 @@ void DoubleExposureDlg::syncLayerControls()
         patternStaggerScale_->set_sensitive(false);
         patternCountScale_->set_sensitive(false);
         patternDiameterScale_->set_sensitive(false);
+        edgeFeatherScale_->set_sensitive(false);
         subjectMethod_->set_sensitive(false);
         subjectInvert_->set_sensitive(false);
         subjectCrop_->set_sensitive(false);
@@ -2635,6 +2641,8 @@ void DoubleExposureDlg::syncLayerControls()
         patternStaggerScale_->set_value(layer.patternStagger);
         patternCountScale_->set_value(layer.patternCount);
         patternDiameterScale_->set_value(layer.patternDiameter);
+        edgeFeatherScale_->set_sensitive(true);
+        edgeFeatherScale_->set_value(layer.edgeFeather);
 
         // A patterned exposure opens its own section: settings that are doing
         // something should not be hidden behind a closed header.
@@ -2690,6 +2698,7 @@ void DoubleExposureDlg::layerControlChanged()
     params_.layers[selectedLayer_].patternStagger = patternStaggerScale_->get_value();
     params_.layers[selectedLayer_].patternCount = patternCountScale_->get_value();
     params_.layers[selectedLayer_].patternDiameter = patternDiameterScale_->get_value();
+    params_.layers[selectedLayer_].edgeFeather = edgeFeatherScale_->get_value();
     const int subjectRow = subjectMethod_->get_active_row_number();
     params_.layers[selectedLayer_].maskClass =
         static_cast<DoubleExposureParams::MaskClass>(subjectRow < 0 ? 0 : subjectRow);

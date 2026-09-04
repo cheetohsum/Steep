@@ -53,6 +53,7 @@ private:
     Adjuster *patternStagger;    // tiled layers only
     Adjuster *patternCount;      // radial only
     Adjuster *patternDiameter;   // radial only
+    Adjuster *edgeFeather;
     AdvancedSection *adjustSection;
     AdvancedSection *patternSection;
     Gtk::Box *subjectRow;        // hidden without a segmentation model

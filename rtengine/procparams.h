@@ -1962,6 +1962,10 @@ struct DoubleExposureParams {
         // ring is as a percentage of the base frame's width.
         double patternCount;    // 1..24
         double patternDiameter; // 0..200
+        // Softens the placed frame's own edge so a copy fades into the base
+        // and into its neighbours instead of stopping on a line. 0..100 as a
+        // fraction of the source frame's short side; 0 is the old hard edge.
+        double edgeFeather;
         // Subject selection, segmented on the partner image. The layer is
         // weighted by the mask; cropToSubject additionally makes the mask's
         // bounding box the source frame, so patterning repeats the cut-out

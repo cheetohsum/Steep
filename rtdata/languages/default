@@ -3119,6 +3119,8 @@ TP_DOUBLEEXPOSURE_COMPARE;Compare
 TP_DOUBLEEXPOSURE_COMPARE_CHANNEL;Per channel (legacy)
 TP_DOUBLEEXPOSURE_COMPARE_LUMINANCE;Whole pixel by brightness
 TP_DOUBLEEXPOSURE_COMPARE_TOOLTIP;How comparative bright/dark picks the winner. Whole pixel compares the brightness of the two frames at each position and keeps that frame's colour intact, as an in-camera multiple exposure does. Per channel takes the max/min of each colour channel separately, which invents colours at every edge where the winner changes; kept for edits that were tuned on it.
+TP_DOUBLEEXPOSURE_EDGEFEATHER;Edge blend
+TP_DOUBLEEXPOSURE_EDGEFEATHER_TOOLTIP;Fades the exposure out at the edge of its frame instead of stopping on a line, so a placed frame settles into the picture and repeated copies run into one another. Measured as a fraction of the frame's short side. It has nothing to soften on tiles laid edge to edge — there the copies already meet — so it applies to a placed frame, to tiles with a gap between them, and to radial copies.
 TP_DOUBLEEXPOSURE_EDIT;Develop this exposure in the editor
 TP_DOUBLEEXPOSURE_EV;Layer exposure trim
 TP_DOUBLEEXPOSURE_GATE;Reveal in

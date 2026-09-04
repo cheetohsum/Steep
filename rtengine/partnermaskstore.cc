@@ -247,7 +247,14 @@ std::shared_ptr<PartnerMask> computeMask(const Glib::ustring& path, const Glib::
     }
 
     if (bx1 >= bx0 && by1 >= by0) {
-        const int pad = static_cast<int>(std::ceil(radius)) + 1;
+        // Room to breathe around the subject. The feather needs its own width
+        // or a softened edge is clipped by the box that produced it, and a
+        // little beyond that keeps a repeated motif from touching its
+        // neighbours -- an animal cut out flush with its own outline reads as
+        // a sticker, not as a second exposure.
+        const int margin = static_cast<int>(std::lround(
+                               0.08f * std::min(bx1 - bx0 + 1, by1 - by0 + 1)));
+        const int pad = static_cast<int>(std::ceil(radius)) + 1 + std::max(2, margin);
         bx0 = std::max(0, bx0 - pad);
         by0 = std::max(0, by0 - pad);
         bx1 = std::min(maskW - 1, bx1 + pad);

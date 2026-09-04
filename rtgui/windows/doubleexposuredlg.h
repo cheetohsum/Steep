@@ -207,6 +207,7 @@ private:
     Gtk::Scale* patternStaggerScale_;
     Gtk::Scale* patternCountScale_;
     Gtk::Scale* patternDiameterScale_;
+    Gtk::Scale* edgeFeatherScale_;
     Gtk::Box* patternSpacingRow_;
     Gtk::Box* patternStaggerRow_;
     Gtk::Box* patternCountRow_;
