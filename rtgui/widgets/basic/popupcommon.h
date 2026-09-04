@@ -85,6 +85,9 @@ public:
     /// how much of the picture a class covers, say, which is only known once
     /// the picture has been looked at.
     void setEntryLabel (int i, const Glib::ustring& label);
+    /// Replaces one entry's icon with a rendered tile — a thumbnail of what
+    /// choosing it would select, which a fixed icon cannot show.
+    void setEntryImage (int i, const Glib::RefPtr<Gdk::Pixbuf>& pixbuf);
     void triggerShowMenu();    // Show the popup menu programmatically
     void hideArrowButton();    // Hide the dropdown arrow button
     void setShowSelectionLabel(bool show);  // Show selected entry's text inside the button

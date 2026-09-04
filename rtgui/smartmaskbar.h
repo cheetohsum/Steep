@@ -61,30 +61,32 @@ public:
         return pickRequested_;
     }
 
-    /** Coverage callback: given an AISegClass index, return the fraction of
-     *  the current photo it covers (0..1), or a negative value for "unknown".
-     *  Queried each time the AI dropdown opens; classes below ~2% are dimmed
-     *  and detected classes show their share. */
-    void setCoverageProvider(std::function<float(int)> provider)
+    /** Tile callback: given an AISegClass index, render a thumbnail of the
+     *  frame with that class lit up in it, or return an empty pointer when
+     *  the picture has not been segmented yet. Queried each time the AI
+     *  dropdown opens. A class list asks where things are, and a picture
+     *  answers that better than a percentage does. */
+    void setThumbProvider(std::function<Glib::RefPtr<Gdk::Pixbuf>(int)> provider)
     {
-        coverageProvider_ = std::move(provider);
+        thumbProvider_ = std::move(provider);
     }
 
 private:
     struct AIMenuEntry {
         Gtk::MenuItem* item = nullptr;
+        Gtk::Image* thumb = nullptr;
         Glib::ustring baseLabel;
         int classIndex = 0;
     };
 
     Gtk::Button* makeChip(Gtk::FlowBox* flow, const Glib::ustring& icon,
                           const Glib::ustring& label, const Glib::ustring& tooltip);
-    void refreshAIMenuCoverage();
+    void refreshAIMenuThumbs();
 
     sigc::signal<void, int> classRequested_;
     sigc::signal<void, int> shapeRequested_;
     sigc::signal<void> pickRequested_;
-    std::function<float(int)> coverageProvider_;
+    std::function<Glib::RefPtr<Gdk::Pixbuf>(int)> thumbProvider_;
     std::vector<AIMenuEntry> aiMenuEntries_;
     std::unique_ptr<steepui::PopupMenu> aiMenu_;
 };

@@ -154,6 +154,7 @@ set(NONCLISOURCEFILES
     clipboard.cc
     coarsepanel.cc
     controllines.cc
+    aimaskthumb.cc
     controlspotpanel.cc
     crophandler.cc
     cropwindow.cc

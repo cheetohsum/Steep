@@ -62,6 +62,20 @@ struct PartnerMask {
     float sample(float u, float v) const;
 };
 
+/** What one segmentation of a partner tells us about every class at once: how
+ *  much of the frame each covers, and a thumbnail of where. Both fall out of
+ *  the same class maps, and neither is worth a second segmentation.
+ */
+struct PartnerClassView {
+    /// 0..1 by AISegClass.
+    std::vector<float> coverage;
+    /// Tiles are in the partner's own proportions, so a portrait partner
+    /// reads as one. Probability as 0..255, row-major, one per class.
+    int thumbWidth = 0;
+    int thumbHeight = 0;
+    std::vector<std::vector<unsigned char>> thumbs;
+};
+
 // LRU of segmented partner masks, one entry per (file, profile, class,
 // feather). Segmentation runs on the calling thread the first time a mask is
 // asked for; the picker warms the cache on its own workers so an edit rarely
@@ -96,6 +110,11 @@ public:
     // does; a redraw must never wait on it.
     std::vector<float> getCoverage(const Glib::ustring& path, const Glib::ustring& workingProfile);
 
+    /// Coverage and tiles together, or nullptr when this partner has not been
+    /// measured. Shared, so it stays valid if the cache turns over.
+    std::shared_ptr<const PartnerClassView> getClassView(const Glib::ustring& path,
+                                                         const Glib::ustring& workingProfile);
+
     // Whether a current reading exists — the gate on asking for one, kept
     // apart from getCoverage because that one will hand back an older reading
     // rather than let the numbers vanish.
@@ -120,7 +139,7 @@ private:
     static Glib::ustring coverageKey(const Glib::ustring& path, const Glib::ustring& workingProfile);
 
     Cache<Glib::ustring, std::shared_ptr<PartnerMask>> cache;
-    Cache<Glib::ustring, std::shared_ptr<std::vector<float>>> coverageCache;
+    Cache<Glib::ustring, std::shared_ptr<PartnerClassView>> coverageCache;
 };
 
 } // namespace rtengine

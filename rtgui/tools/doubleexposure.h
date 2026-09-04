@@ -61,6 +61,7 @@ private:
     AdvancedSection *patternSection;
     Gtk::Box *subjectRow;        // hidden without a segmentation model
     Gtk::Box *subjectOptionsRow;
+    Gtk::CellRendererPixbuf subjectTileCell;
     MyComboBoxText *subjectMethod;
     Gtk::CheckButton *subjectInvert;
     Gtk::CheckButton *subjectCrop;
@@ -113,6 +114,7 @@ private:
     void rebuildLayerRows();
     void requestRowThumbs(const std::vector<Glib::ustring>& paths);
     void requestCoverage(const Glib::ustring& path);
+    void renderSubjectTile(const Gtk::TreeModel::const_iterator& iter);
     void refreshLayerSelector();
     void loadSelectedLayer();
     void removeLayer(size_t index);

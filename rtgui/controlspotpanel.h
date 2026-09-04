@@ -317,7 +317,7 @@ private:
     void maskTypeChanged(int index);
     void aiMaskClassChanged(int index);
     void openMaskEditor();
-    void refreshClassCoverage();
+    void refreshClassThumbs();
 
 public:
     // The mask editor paints over the photo itself; fed by the coordinator
@@ -330,16 +330,17 @@ public:
     // How much of the picture each AI class covers, 0..1, or negative when
     // the picture has not been segmented yet. Shown beside the class names so
     // it is obvious which ones are worth choosing.
-    // Takes the class index and the threshold the mask is built at.
-    void setCoverageProvider(std::function<float(int, float)> provider)
+    // Takes the class index and the threshold the mask is built at, and
+    // renders a thumbnail of what that class selects in this picture.
+    void setThumbProvider(std::function<Glib::RefPtr<Gdk::Pixbuf>(int, float)> provider)
     {
-        coverageProvider_ = std::move(provider);
+        thumbProvider_ = std::move(provider);
     }
 
 private:
     Glib::ustring editedFilePath_;
-    std::function<float(int, float)> coverageProvider_;
-    std::vector<Gtk::Label*> aiClassMenuLabels_;
+    std::function<Glib::RefPtr<Gdk::Pixbuf>(int, float)> thumbProvider_;
+    std::vector<Gtk::Image*> aiClassMenuThumbs_;
     std::vector<Glib::ustring> aiClassNames_;
 
     void maskBlendModeChanged(int index);

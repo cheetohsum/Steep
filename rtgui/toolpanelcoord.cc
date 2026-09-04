@@ -40,6 +40,8 @@
 #endif
 #include "rawloadactivity.h"
 #include "toolpanelcoord.h"
+
+#include "aimaskthumb.h"
 #include "metadatapanel.h"
 #include "options.h"
 #include "rtimage.h"
@@ -1141,20 +1143,13 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
                     locallab->createShapeMaskSpot(shape);
                 }
             });
-            smartMaskBar->setCoverageProvider([this](int classIndex) -> float {
-                if (!ipc || !ipc->getInitialImage()) {
-                    return -1.f;
-                }
-                return rtengine::AIMaskCache::getInstance().getClassCoverage(
-                    ipc->getInitialImage()->getFileName().raw(), classIndex);
+            // The bar has no tolerance of its own -- it creates the spot -- so
+            // its tiles are drawn at the threshold a new mask is built at.
+            smartMaskBar->setThumbProvider([this](int classIndex) -> Glib::RefPtr<Gdk::Pixbuf> {
+                return editedImageMaskThumb(classIndex, 0.3f, 36, 26);
             });
-            locallab->setCoverageProvider([this](int classIndex, float threshold) -> float {
-                if (!ipc || !ipc->getInitialImage()) {
-                    return -1.f;
-                }
-
-                return rtengine::AIMaskCache::getInstance().getClassCoverage(
-                    ipc->getInitialImage()->getFileName().raw(), classIndex, threshold);
+            locallab->setThumbProvider([this](int classIndex, float threshold) -> Glib::RefPtr<Gdk::Pixbuf> {
+                return editedImageMaskThumb(classIndex, threshold, 32, 22);
             });
             smartMaskBar->signalPickRequested().connect([this]() {
                 if (toolBar) {
@@ -1422,6 +1417,32 @@ bool ToolPanelCoordinator::isFavoritable(Tool tool)
         default:
             return true;
     }
+}
+
+// A tile of the edited picture with one AI class lit up in it, sized to the
+// picture's own proportions so a portrait frame reads as one. Empty until the
+// picture has been segmented, which is the caller's cue to show nothing.
+Glib::RefPtr<Gdk::Pixbuf> ToolPanelCoordinator::editedImageMaskThumb(int classIndex,
+        float threshold, int maxW, int maxH)
+{
+#ifdef RT_AI_MASKING
+
+    if (!ipc || !ipc->getInitialImage()) {
+        return Glib::RefPtr<Gdk::Pixbuf>();
+    }
+
+    int imW = 0;
+    int imH = 0;
+    ipc->getInitialImage()->getImageSource()->getFullSize(imW, imH);
+
+    if (imW <= 0 || imH <= 0) {
+        return Glib::RefPtr<Gdk::Pixbuf>();
+    }
+
+    return aimaskthumb::fromEditedImage(classIndex, threshold, imW, imH, maxW, maxH);
+#else
+    return Glib::RefPtr<Gdk::Pixbuf>();
+#endif
 }
 
 void ToolPanelCoordinator::notebookPageChanged(Gtk::Widget* page, guint page_num)

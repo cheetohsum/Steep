@@ -148,6 +148,42 @@ bool PopUpCommon::insertEntryImpl(int position, const Glib::ustring& iconName, c
     return true;
 }
 
+void PopUpCommon::setEntryImage(int i, const Glib::RefPtr<Gdk::Pixbuf>& pixbuf)
+{
+    if (!menu || !pixbuf || i < 0 || i >= getEntryCount()) {
+        return;
+    }
+
+    const auto children = menu->get_children();
+
+    if (i >= static_cast<int>(children.size())) {
+        return;
+    }
+
+    // Found rather than assumed, for the same reason setEntryLabel hunts for
+    // its label: the plain and radio flavours nest differently.
+    std::function<Gtk::Image*(Gtk::Widget*)> findImage = [&](Gtk::Widget* w) -> Gtk::Image* {
+        if (auto* img = dynamic_cast<Gtk::Image*>(w)) {
+            return img;
+        }
+
+        if (auto* container = dynamic_cast<Gtk::Container*>(w)) {
+            for (Gtk::Widget* child : container->get_children()) {
+                if (Gtk::Image* found = findImage(child)) {
+                    return found;
+                }
+            }
+        }
+
+        return nullptr;
+    };
+
+    if (Gtk::Image* image = findImage(children[i])) {
+        image->set(pixbuf);
+        image->show();
+    }
+}
+
 void PopUpCommon::setEntryLabel(int i, const Glib::ustring& label)
 {
     if (!menu || i < 0 || i >= getEntryCount() || label.empty()) {

@@ -120,9 +120,9 @@ public:
         expsettings->setEditedFilePath(path);
     }
 
-    void setCoverageProvider(std::function<float(int, float)> provider)
+    void setThumbProvider(std::function<Glib::RefPtr<Gdk::Pixbuf>(int, float)> provider)
     {
-        expsettings->setCoverageProvider(std::move(provider));
+        expsettings->setThumbProvider(std::move(provider));
     }
 
     static const Glib::ustring TOOL_NAME;

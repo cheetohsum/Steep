@@ -16,6 +16,7 @@
  */
 #include "doubleexposuredlg.h"
 
+#include "aimaskthumb.h"
 #include "partnerthumb.h"
 #include "maskpaintdlg.h"
 
@@ -630,7 +631,7 @@ namespace
 // contains is the first thing worth knowing before choosing one, and the
 // numbers are a by-product of a segmentation that has already happened -- no
 // coverage is ever a reason to run one.
-Glib::ustring subjectEntryLabel(int row, const std::vector<float>& coverage)
+Glib::ustring subjectEntryLabel(int row)
 {
     static const char* keys[] = {
         "TP_DOUBLEEXPOSURE_SUBJECT_OFF",
@@ -643,19 +644,15 @@ Glib::ustring subjectEntryLabel(int row, const std::vector<float>& coverage)
         "TP_DOUBLEEXPOSURE_SUBJECT_ANIMAL"
     };
 
-    if (row < 0 || row > 7) {
-        return Glib::ustring();
-    }
+    return row >= 0 && row <= 7 ? M(keys[row]) : Glib::ustring();
+}
 
-    const Glib::ustring name = M(keys[row]);
-
-    // Row 0 is "the whole frame", which has no class to measure.
-    if (row == 0 || coverage.empty()) {
-        return name;
-    }
-
+// Row order in the list is not class order: row 0 is "the whole frame", which
+// has no class to show.
+int subjectRowClass(int row)
+{
     static const rtengine::AISegClass classes[] = {
-        rtengine::AISegClass::BACKGROUND,   // unused
+        rtengine::AISegClass::BACKGROUND,   // unused: row 0 is the whole frame
         rtengine::AISegClass::SUBJECT,
         rtengine::AISegClass::PERSON,
         rtengine::AISegClass::SKY,
@@ -665,18 +662,7 @@ Glib::ustring subjectEntryLabel(int row, const std::vector<float>& coverage)
         rtengine::AISegClass::ANIMAL
     };
 
-    const size_t index = static_cast<size_t>(classes[row]);
-
-    if (index >= coverage.size()) {
-        return name;
-    }
-
-    const int percent = static_cast<int>(std::lround(coverage[index] * 100.f));
-
-    // A class a mask can plainly be built on must not read as absent.
-    return coverage[index] > 0.f && percent == 0
-           ? Glib::ustring::compose("%1  <1%%", name)
-           : Glib::ustring::compose("%1  %2%%", name, percent);
+    return row >= 1 && row <= 7 ? static_cast<int>(classes[row]) : -1;
 }
 #endif
 
@@ -1500,6 +1486,15 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     subjectMethod_->append(M("TP_DOUBLEEXPOSURE_SUBJECT_ANIMAL"));
     subjectMethod_->set_active(0);
     subjectMethod_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SUBJECT_TOOLTIP"));
+
+#ifdef RT_AI_MASKING
+    // A second renderer after the text, filled per row: the list says which
+    // classes are in this partner far better by showing them than by
+    // reporting percentages next to their names.
+    subjectMethod_->pack_start(subjectTileCell_, false);
+    subjectMethod_->set_cell_data_func(subjectTileCell_,
+                                       sigc::mem_fun(*this, &DoubleExposureDlg::renderSubjectTile));
+#endif
     subjectMethod_->setPreferredWidth(120, 180);
     subjectMethod_->connect(subjectMethod_->signal_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged)));
     subjectRow_->pack_start(*subjLab, Gtk::PACK_SHRINK);
@@ -2999,22 +2994,59 @@ void DoubleExposureDlg::onPreviewScale(double factor)
     schedulePreviewUpdate();
 }
 
-// The class list carries how much of this partner each class covers, once it
-// has been segmented; before that it reads as plain names.
+// One row's tile. The partner was segmented for its coverage; the tiles came
+// out of the same pass, so this costs a lookup.
+void DoubleExposureDlg::renderSubjectTile(const Gtk::TreeModel::const_iterator& iter)
+{
+#ifdef RT_AI_MASKING
+    subjectTileCell_.property_pixbuf() = Glib::RefPtr<Gdk::Pixbuf>();
+
+    if (!iter || selectedLayer_ >= params_.layers.size()) {
+        return;
+    }
+
+    const auto model = subjectMethod_->get_model();
+
+    if (!model) {
+        return;
+    }
+
+    const Gtk::TreeModel::Path path = model->get_path(iter);
+
+    if (path.empty()) {
+        return;
+    }
+
+    const int cls = subjectRowClass(path[0]);
+
+    if (cls < 0) {
+        return;
+    }
+
+    const auto view = rtengine::PartnerMaskStore::getInstance().getClassView(
+                          params_.layers[selectedLayer_].path, workingProfile_);
+
+    if (view) {
+        subjectTileCell_.property_pixbuf() =
+            aimaskthumb::fromPartnerView(*view, cls, 0.3f, 30, 22);
+    }
+
+#endif
+}
+
+// The class list shows where each class lands in this partner, once it has
+// been segmented; before that it is plain names.
 void DoubleExposureDlg::refreshSubjectLabels(const Glib::ustring& path)
 {
 #ifdef RT_AI_MASKING
     requestCoverage(path);
-
-    const std::vector<float> coverage =
-        rtengine::PartnerMaskStore::getInstance().getCoverage(path, workingProfile_);
 
     const int sel = subjectMethod_->get_active_row_number();
     subjectMethod_->block(true);
     subjectMethod_->remove_all();
 
     for (int row = 0; row <= 7; ++row) {
-        subjectMethod_->append(subjectEntryLabel(row, coverage));
+        subjectMethod_->append(subjectEntryLabel(row));
     }
 
     subjectMethod_->set_active(sel < 0 ? 0 : sel);

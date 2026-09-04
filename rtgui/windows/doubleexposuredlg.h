@@ -116,6 +116,7 @@ private:
     void onPreviewRotate(double degrees);
     void openMaskEditor();
     void refreshSubjectLabels(const Glib::ustring& path);
+    void renderSubjectTile(const Gtk::TreeModel::const_iterator& iter);
     void nudgeRotation(double degrees);
     void onPreviewReset();
     void showPatternRows(rtengine::procparams::DoubleExposureParams::Pattern pattern, bool masked);
@@ -224,6 +225,7 @@ private:
     Gtk::Expander* adjustExpander_;
     Gtk::Expander* patternExpander_;
     Gtk::Box* subjectRow_;
+    Gtk::CellRendererPixbuf subjectTileCell_;
     MyComboBoxText* subjectMethod_;
     Gtk::CheckButton* subjectInvert_;
     Gtk::CheckButton* subjectCrop_;

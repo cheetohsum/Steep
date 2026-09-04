@@ -87,14 +87,32 @@ SmartMaskBar::SmartMaskBar() :
         Gtk::MenuItem* item = aiMenu_->addItem(label, [this, classIndex]() {
             classRequested_.emit(classIndex);
         });
-        aiMenuEntries_.push_back({item, label, classIndex});
+
+        // The row is rebuilt as name-then-tile. The plain label the menu made
+        // is dropped rather than reparented: taking a managed child out of a
+        // container destroys it, and putting it back is not worth the care
+        // when a fresh label costs nothing.
+        Gtk::Image* thumb = Gtk::manage(new Gtk::Image());
+        Gtk::Box* row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 10));
+        Gtk::Label* text = Gtk::manage(new Gtk::Label(label));
+        text->set_halign(Gtk::ALIGN_START);
+        row->pack_start(*text, Gtk::PACK_EXPAND_WIDGET);
+        row->pack_end(*thumb, Gtk::PACK_SHRINK);
+
+        if (item->get_child()) {
+            item->remove();
+        }
+
+        item->add(*row);
+        row->show_all();
+        aiMenuEntries_.push_back({item, thumb, label, classIndex});
     }
 
     Gtk::Button* aiBtn = makeChip(flow, "mask-ai",
                                   M("TP_LOCALLAB_MASKTYPE_AI") + " ▾",
                                   M("TP_LOCALLAB_SMARTMASK_AI_TOOLTIP"));
     aiBtn->signal_clicked().connect([this, aiBtn]() {
-        refreshAIMenuCoverage();
+        refreshAIMenuThumbs();
         aiMenu_->popupAtWidget(*aiBtn);
     });
 
@@ -136,35 +154,23 @@ SmartMaskBar::SmartMaskBar() :
 
 SmartMaskBar::~SmartMaskBar() = default;
 
-void SmartMaskBar::refreshAIMenuCoverage()
+void SmartMaskBar::refreshAIMenuThumbs()
 {
-    // Below this share of the frame a class is present in name only.
-    constexpr float dimBelow = 0.02f;
-
     for (auto& entry : aiMenuEntries_) {
-        const float coverage = coverageProvider_ ? coverageProvider_(entry.classIndex) : -1.f;
-
-        Glib::ustring label = entry.baseLabel;
-        double opacity = 1.0;
-
-        if (coverage >= 0.f) {
-            // Dimming is how the classes are ranked; it must not swallow the
-            // figure as well. A class covering a fraction of a percent is
-            // exactly where the number is worth reading, and showing none
-            // there was indistinguishable from never having measured.
-            if (coverage < dimBelow) {
-                opacity = 0.45;
-            }
-
-            const int percent = static_cast<int>(coverage * 100.f + 0.5f);
-            label += coverage > 0.f && percent == 0
-                     ? Glib::ustring(" · <1%")
-                     : Glib::ustring::compose(" · %1%%", percent);
+        if (!entry.thumb) {
+            continue;
         }
 
-        entry.item->set_opacity(opacity);
-        if (Gtk::Label* lbl = dynamic_cast<Gtk::Label*>(entry.item->get_child())) {
-            lbl->set_text(label);
+        const Glib::RefPtr<Gdk::Pixbuf> tile =
+            thumbProvider_ ? thumbProvider_(entry.classIndex) : Glib::RefPtr<Gdk::Pixbuf>();
+
+        if (tile) {
+            entry.thumb->set(tile);
+            entry.thumb->show();
+        } else {
+            // Nothing measured yet: an empty row rather than a misleading one.
+            entry.thumb->clear();
+            entry.thumb->hide();
         }
     }
 }

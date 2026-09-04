@@ -182,11 +182,23 @@ bool segmentPartner(const Glib::ustring& path, const Glib::ustring& workingProfi
     return true;
 }
 
-// How much of the frame each class claims, at the same cut a mask is built at.
-std::vector<float> measureCoverage(const std::vector<array2D<float>>& maps, int maskW, int maskH)
+// The largest side of a class tile. It is read at the size of a menu row, so
+// this is already generous; what it must not be is another segmentation.
+constexpr int CLASS_THUMB_MAX = 48;
+
+// How much of the frame each class claims, at the same cut a mask is built at,
+// and a small picture of where it claims it.
+PartnerClassView measureClasses(const std::vector<array2D<float>>& maps, int maskW, int maskH)
 {
-    std::vector<float> coverage(maps.size(), 0.f);
+    PartnerClassView view;
+    view.coverage.assign(maps.size(), 0.f);
+
     const float total = static_cast<float>(maskW) * maskH;
+    const double fit = std::min(1.0, static_cast<double>(CLASS_THUMB_MAX)
+                                / std::max(1, std::max(maskW, maskH)));
+    view.thumbWidth = std::max(4, static_cast<int>(std::lround(maskW * fit)));
+    view.thumbHeight = std::max(4, static_cast<int>(std::lround(maskH * fit)));
+    view.thumbs.assign(maps.size(), {});
 
     for (size_t c = 0; c < maps.size(); ++c) {
         int hits = 0;
@@ -201,10 +213,36 @@ std::vector<float> measureCoverage(const std::vector<array2D<float>>& maps, int 
             }
         }
 
-        coverage[c] = total > 0.f ? hits / total : 0.f;
+        view.coverage[c] = total > 0.f ? hits / total : 0.f;
+
+        // Averaged down rather than point-sampled: a thin selection that a
+        // sample would miss entirely still leaves a mark this way.
+        auto& tile = view.thumbs[c];
+        tile.assign(static_cast<size_t>(view.thumbWidth) * view.thumbHeight, 0);
+
+        for (int ty = 0; ty < view.thumbHeight; ++ty) {
+            const int y0 = ty * maskH / view.thumbHeight;
+            const int y1 = std::max(y0 + 1, (ty + 1) * maskH / view.thumbHeight);
+
+            for (int tx = 0; tx < view.thumbWidth; ++tx) {
+                const int x0 = tx * maskW / view.thumbWidth;
+                const int x1 = std::max(x0 + 1, (tx + 1) * maskW / view.thumbWidth);
+                float sum = 0.f;
+
+                for (int y = y0; y < y1; ++y) {
+                    for (int x = x0; x < x1; ++x) {
+                        sum += maps[c][y][x];
+                    }
+                }
+
+                const float mean = sum / ((y1 - y0) * (x1 - x0));
+                tile[static_cast<size_t>(ty) * view.thumbWidth + tx] =
+                    static_cast<unsigned char>(LIM(mean, 0.f, 1.f) * 255.f + 0.5f);
+            }
+        }
     }
 
-    return coverage;
+    return view;
 }
 
 // Segment the partner and reduce it to the one class the layer asked for.
@@ -236,7 +274,7 @@ std::shared_ptr<PartnerMask> computeMask(const Glib::ustring& path, const Glib::
     if (coverageOut) {
         // Measured on the finished class maps, before this one mask's own
         // feather and strokes narrow it to a single class.
-        *coverageOut = measureCoverage(maps, maskW, maskH);
+        *coverageOut = measureClasses(maps, maskW, maskH).coverage;
     }
 
     auto result = std::make_shared<PartnerMask>();
@@ -412,14 +450,18 @@ std::shared_ptr<const PartnerMask> PartnerMaskStore::getMask(const Glib::ustring
         return result;
     }
 
-    auto coverage = std::make_shared<std::vector<float>>();
-    result = computeMask(path, workingProfile, cls, feather, invert, paint, multiThread, coverage.get());
+    std::vector<float> coverage;
+    result = computeMask(path, workingProfile, cls, feather, invert, paint, multiThread, &coverage);
 
     if (result) {
         cache.insert(key, result);
 
-        if (!coverage->empty()) {
-            coverageCache.insert(coverageKey(path, workingProfile), coverage);
+        // Numbers only: a mask asked for by name does not pay to tile every
+        // class. warmCoverage does that, and its entry wins if it gets there.
+        if (!coverage.empty() && !hasCoverage(path, workingProfile)) {
+            auto view = std::make_shared<PartnerClassView>();
+            view->coverage = std::move(coverage);
+            coverageCache.insert(coverageKey(path, workingProfile), view);
         }
     }
 
@@ -473,28 +515,35 @@ Glib::ustring PartnerMaskStore::coverageKey(const Glib::ustring& path,
     return coverageKey(path, workingProfile, getAISubjectEngine().isInitialized());
 }
 
+std::shared_ptr<const PartnerClassView> PartnerMaskStore::getClassView(
+    const Glib::ustring& path, const Glib::ustring& workingProfile)
+{
+    const bool ready = getAISubjectEngine().isInitialized();
+    std::shared_ptr<PartnerClassView> found;
+
+    if (coverageCache.get(coverageKey(path, workingProfile, ready), found) && found) {
+        return found;
+    }
+
+    // An older reading is worth more than no reading: the list must not fall
+    // back to bare names for the seconds it takes to measure again.
+    if (coverageCache.get(coverageKey(path, workingProfile, !ready), found) && found) {
+        return found;
+    }
+
+    return nullptr;
+}
+
 std::vector<float> PartnerMaskStore::getCoverage(const Glib::ustring& path,
                                                  const Glib::ustring& workingProfile)
 {
-    const bool ready = getAISubjectEngine().isInitialized();
-    std::shared_ptr<std::vector<float>> found;
-
-    if (coverageCache.get(coverageKey(path, workingProfile, ready), found) && found) {
-        return *found;
-    }
-
-    // An older reading is worth more than no reading: the list must not drop
-    // back to bare names for the seconds it takes to measure again.
-    if (coverageCache.get(coverageKey(path, workingProfile, !ready), found) && found) {
-        return *found;
-    }
-
-    return {};
+    const auto view = getClassView(path, workingProfile);
+    return view ? view->coverage : std::vector<float>();
 }
 
 bool PartnerMaskStore::hasCoverage(const Glib::ustring& path, const Glib::ustring& workingProfile)
 {
-    std::shared_ptr<std::vector<float>> found;
+    std::shared_ptr<PartnerClassView> found;
     return coverageCache.get(coverageKey(path, workingProfile), found) && found;
 }
 
@@ -515,20 +564,20 @@ bool PartnerMaskStore::warmCoverage(const Glib::ustring& path, const Glib::ustri
         return false;
     }
 
-    auto coverage = std::make_shared<std::vector<float>>(measureCoverage(maps, maskW, maskH));
+    auto view = std::make_shared<PartnerClassView>(measureClasses(maps, maskW, maskH));
 
     if (settings->verbose) {
-        std::fprintf(stderr, "[partnerCoverage] %s subject=%.3f person=%.3f animal=%.3f\n",
-                     path.c_str(),
-                     coverage->size() > static_cast<size_t>(AISegClass::SUBJECT)
-                     ? (*coverage)[static_cast<size_t>(AISegClass::SUBJECT)] : -1.f,
-                     coverage->size() > static_cast<size_t>(AISegClass::PERSON)
-                     ? (*coverage)[static_cast<size_t>(AISegClass::PERSON)] : -1.f,
-                     coverage->size() > static_cast<size_t>(AISegClass::ANIMAL)
-                     ? (*coverage)[static_cast<size_t>(AISegClass::ANIMAL)] : -1.f);
+        const auto share = [&view](AISegClass cls) {
+            return view->coverage.size() > static_cast<size_t>(cls)
+                   ? view->coverage[static_cast<size_t>(cls)] : -1.f;
+        };
+        std::fprintf(stderr, "[partnerCoverage] %s tile=%dx%d subject=%.3f person=%.3f animal=%.3f\n",
+                     path.c_str(), view->thumbWidth, view->thumbHeight,
+                     share(AISegClass::SUBJECT), share(AISegClass::PERSON),
+                     share(AISegClass::ANIMAL));
     }
 
-    coverageCache.insert(coverageKey(path, workingProfile), coverage);
+    coverageCache.insert(coverageKey(path, workingProfile), view);
     return true;
 }
 

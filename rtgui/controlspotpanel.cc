@@ -20,6 +20,8 @@
 
 #include "rtengine/rt_math.h"
 #include "controlspotpanel.h"
+
+#include "aimaskthumb.h"
 #include "windows/maskpaintdlg.h"
 
 #ifdef RT_AI_MASKING
@@ -222,6 +224,18 @@ ControlSpotPanel::ControlSpotPanel():
         return mi;
     };
 
+    Gtk::Image* lastMaskMenuThumb = nullptr;
+    // A class row ends with a picture of what it would pick out. Only the AI
+    // rows get one; a rectangle is its own explanation.
+    const auto addMenuThumb = [&lastMaskMenuThumb](Gtk::MenuItem* item) {
+        lastMaskMenuThumb = nullptr;
+
+        if (auto* box = dynamic_cast<Gtk::Box*>(item->get_child())) {
+            lastMaskMenuThumb = Gtk::manage(new Gtk::Image());
+            box->pack_end(*lastMaskMenuThumb, Gtk::PACK_SHRINK);
+        }
+    };
+
     auto* aiMenuItem = createMaskMenuItem("mask-ai", M("TP_LOCALLAB_MASKTYPE_AI"));
     auto* aiClassMenu = Gtk::manage(new Gtk::Menu());
     const char* aiClassKeys[] = {
@@ -241,13 +255,14 @@ ControlSpotPanel::ControlSpotPanel():
     };
     for (int i = 0; i < 8; ++i) {
         auto* item = createMaskMenuItem(aiClassIcons[i], M(aiClassKeys[i]));
-        aiClassMenuLabels_.push_back(lastMaskMenuLabel);
+        addMenuThumb(item);
+        aiClassMenuThumbs_.push_back(lastMaskMenuThumb);
         aiClassNames_.push_back(M(aiClassKeys[i]));
         item->signal_activate().connect(
             sigc::bind(sigc::mem_fun(*this, &ControlSpotPanel::on_ai_mask_selected), i));
         aiClassMenu->append(*item);
     }
-    aiClassMenu->signal_show().connect(sigc::mem_fun(*this, &ControlSpotPanel::refreshClassCoverage));
+    aiClassMenu->signal_show().connect(sigc::mem_fun(*this, &ControlSpotPanel::refreshClassThumbs));
     aiMenuItem->set_submenu(*aiClassMenu);
     addMaskMenu_->append(*aiMenuItem);
 
@@ -608,7 +623,7 @@ ControlSpotPanel::ControlSpotPanel():
                                *this, &ControlSpotPanel::aiMaskClassChanged));
     aiMaskClass_->hideArrowButton();
     aiMaskClass_->signal_clicked().connect([this]() {
-        refreshClassCoverage();
+        refreshClassThumbs();
         aiMaskClass_->triggerShowMenu();
     });
     aiMaskClass_->buttonGroup->set_hexpand(false);
@@ -2980,35 +2995,36 @@ void ControlSpotPanel::maskTypeChanged(int /*index*/)
 
 // The editor paints over the photo in the engine's own framing, which is the
 // frame the mask is found in.
-// "Sky  22%" rather than "Sky": which classes this particular picture
-// actually contains is the first thing worth knowing, and until now the only
-// way to find out was to pick one and look.
-void ControlSpotPanel::refreshClassCoverage()
+// A tile of the picture with the class lit up in it, rather than "Sky  22%".
+// Which classes a photo actually contains is the first thing worth knowing,
+// and a number says how much without ever saying where.
+void ControlSpotPanel::refreshClassThumbs()
 {
-    if (!coverageProvider_) {
+    if (!thumbProvider_) {
         return;
     }
 
+    // Measured at the tolerance this spot is set to, so the tile shows the
+    // selection the spot would actually make.
+    const float threshold = static_cast<float>(
+        rtengine::LIM(1.0 - aiMaskTolerance_->getValue() / 100.0, 0.0, 1.0));
+
     for (size_t i = 0; i < aiClassNames_.size(); ++i) {
-        const float coverage = coverageProvider_(
-            static_cast<int>(i),
-            static_cast<float>(rtengine::LIM(1.0 - aiMaskTolerance_->getValue() / 100.0, 0.0, 1.0)));
-        Glib::ustring text = aiClassNames_[i];
+        const Glib::RefPtr<Gdk::Pixbuf> tile = thumbProvider_(static_cast<int>(i), threshold);
 
-        if (coverage >= 0.f) {
-            // Rounding a real if small coverage to "0%" said the class was
-            // absent when a mask built on it plainly was not.
-            const int percent = static_cast<int>(std::lround(coverage * 100.f));
-            text = coverage > 0.f && percent == 0
-                   ? Glib::ustring::compose("%1  <1%%", aiClassNames_[i])
-                   : Glib::ustring::compose("%1  %2%%", aiClassNames_[i], percent);
+        if (i < aiClassMenuThumbs_.size() && aiClassMenuThumbs_[i]) {
+            if (tile) {
+                aiClassMenuThumbs_[i]->set(tile);
+                aiClassMenuThumbs_[i]->show();
+            } else {
+                aiClassMenuThumbs_[i]->clear();
+                aiClassMenuThumbs_[i]->hide();
+            }
         }
 
-        if (i < aiClassMenuLabels_.size() && aiClassMenuLabels_[i]) {
-            aiClassMenuLabels_[i]->set_text(text);
+        if (tile) {
+            aiMaskClass_->setEntryImage(static_cast<int>(i), tile);
         }
-
-        aiMaskClass_->setEntryLabel(static_cast<int>(i), text);
     }
 }
 

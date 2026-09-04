@@ -369,6 +369,8 @@ private:
     int hoverMissCount_ = 0;  // consecutive watchdog misses before turning off
     void applyHoverMask();
     void turnOffMaskOverlay(bool forceRedraw = false);
+    Glib::RefPtr<Gdk::Pixbuf> editedImageMaskThumb(int classIndex, float threshold,
+                                                   int maxW, int maxH);
 
 public:
     enum class Panel {
