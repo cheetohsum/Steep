@@ -726,6 +726,32 @@ def main():
                 lambda x: lin_to_srgb(srgb_to_lin(x) + sample_ramp(radial_u(x))),
                 skip_clipped=True, skipx={126, 127, 128, 129})
 
+    # T18e: kept upright, only a copy's position turns, not the copy. With
+    # two copies the far one is no longer a half-turn of the near one but the
+    # same picture shifted the other way, which the across-ramp shows plainly.
+    got_up = row(render(geo_pp3("t18e_upright.pp3", hramp_path,
+                                "Layer1Pattern=3\nLayer1PatternCount=2\nLayer1PatternDiameter=50\n"
+                                "Layer1PatternUpright=true\n"),
+                        "base_grad.png", "t18e_upright.tif"))
+
+    def upright_u(x, count=2, diameter=50.0):
+        ring = 0.5 * (diameter / 100.0) * W
+        su = x + 0.5 - W / 2
+        sv = PROBE_ROW + 0.5 - H / 2
+        step = 2 * math.pi / count
+        spoke = math.floor(math.atan2(sv, su) / step + 0.5) * step
+        return su - ring * math.cos(spoke) + GEO / 2
+
+    ok &= check("radial upright: copies stand", got_up,
+                lambda x: lin_to_srgb(srgb_to_lin(x) + sample_ramp(upright_u(x))),
+                skip_clipped=True, skipx={126, 127, 128, 129})
+
+    # T18f: and it is not the same picture as the turned version.
+    turned_vs_upright = max(abs(got_up[x] - got[x]) for x in range(2, W - 2))
+    print(f"{'PASS' if turned_vs_upright > 20 else 'FAIL'}  {'upright differs from turned':34s} "
+          f"max |diff| = {turned_vs_upright}")
+    ok &= turned_vs_upright > 20
+
     # T18b: the count actually counts. One copy stands alone on the +x spoke,
     # so the far side of the frame is left to the base; two copies reach it.
     # (A column would have done for six-versus-two, but only weakly - along

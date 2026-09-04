@@ -3105,7 +3105,7 @@ TP_DEHAZE_STRENGTH;Haze Removal
 TP_DIRPYRDENOISE_CHROMINANCE_AMZ;Auto multi-zones
 TP_DOUBLEEXPOSURE_AUTOGAIN;Auto film gain
 TP_DOUBLEEXPOSURE_AUTOGAIN_TOOLTIP;Meter every frame down by one stop per extra exposure, the way a film camera compensates a planned multiple exposure. Off gives the blown, luminous "uncompensated" look.
-TP_DOUBLEEXPOSURE_BASEEV;Base exposure trim
+TP_DOUBLEEXPOSURE_BASEEV;Base exposure
 TP_DOUBLEEXPOSURE_BLEND;Blend
 TP_DOUBLEEXPOSURE_BLEND_ADD;In-camera (additive)
 TP_DOUBLEEXPOSURE_BLEND_DARKEN;Comparative dark (darken)
@@ -3122,7 +3122,7 @@ TP_DOUBLEEXPOSURE_COMPARE_TOOLTIP;How comparative bright/dark picks the winner. 
 TP_DOUBLEEXPOSURE_EDGEFEATHER;Edge blend
 TP_DOUBLEEXPOSURE_EDGEFEATHER_TOOLTIP;Fades the exposure out at the edge of its frame instead of stopping on a line, so a placed frame settles into the picture and repeated copies run into one another. Measured as a fraction of the frame's short side. It has nothing to soften on tiles laid edge to edge — there the copies already meet — so it applies to a placed frame, to tiles with a gap between them, and to radial copies.
 TP_DOUBLEEXPOSURE_EDIT;Develop this exposure in the editor
-TP_DOUBLEEXPOSURE_EV;Layer exposure trim
+TP_DOUBLEEXPOSURE_EV;Layer exposure
 TP_DOUBLEEXPOSURE_GATE;Reveal in
 TP_DOUBLEEXPOSURE_GATE_BASE;Base luminance
 TP_DOUBLEEXPOSURE_GATE_FEATHER;Reveal feather
@@ -3166,6 +3166,8 @@ TP_DOUBLEEXPOSURE_PATTERN_REPEAT;Repeat
 TP_DOUBLEEXPOSURE_PATTERN_SPACING;Tile spacing
 TP_DOUBLEEXPOSURE_PATTERN_SPACING_TOOLTIP;Widens the grid without changing the tile, so the base shows through the gaps between exposures. 0 lays the tiles edge to edge; 100 leaves a gap the width of a whole tile.
 TP_DOUBLEEXPOSURE_PATTERN_STAGGER;Row offset
+TP_DOUBLEEXPOSURE_PATTERN_UPRIGHT;Keep upright
+TP_DOUBLEEXPOSURE_PATTERN_UPRIGHT_TOOLTIP;Spread the copies round the ring but leave them standing the way the picture does, instead of turning each one to face outward. A rosette becomes a circle of figures all the right way up.
 TP_DOUBLEEXPOSURE_PATTERN_STAGGER_TOOLTIP;Shifts every other row sideways, laying the tiles in a brick course instead of a strict grid. 50 puts each row half a tile out of step with the one above.
 TP_DOUBLEEXPOSURE_PATTERN_TOOLTIP;Repeats this exposure across the base frame, one copy per placed frame — the size you set with Layer size, so a small frame gives many copies. Repeat lays the same picture in every tile; Repeat, mirrored flips alternate tiles so neighbours meet on the same edge and the grid has no visible seams; Radial repeat stands a given number of copies around a ring instead of a grid, each turned to face outward.
 TP_DOUBLEEXPOSURE_PLACEMENT_RESET;Reset placement
@@ -3182,7 +3184,7 @@ TP_DOUBLEEXPOSURE_SUBJECT_ANIMAL;Animals
 TP_DOUBLEEXPOSURE_SUBJECT_BUILDING;Buildings
 TP_DOUBLEEXPOSURE_SUBJECT_CROP;Crop
 TP_DOUBLEEXPOSURE_SUBJECT_CROP_TOOLTIP;Treat the selection's bounding box as the exposure's frame instead of the whole picture. Combined with Pattern this is what repeats a cut-out subject as a motif rather than tiling the entire photograph.
-TP_DOUBLEEXPOSURE_SUBJECT_EDIT;Refineâ¦
+TP_DOUBLEEXPOSURE_SUBJECT_EDIT;Refine
 TP_DOUBLEEXPOSURE_SUBJECT_EDIT_TOOLTIP;Correct the selection by hand: paint parts of the partner in or out with a brush. The segmentation is only ever a guess, and this is where you disagree with it.
 TP_DOUBLEEXPOSURE_SUBJECT_FEATHER;Selection feather
 TP_DOUBLEEXPOSURE_SUBJECT_FEATHER_TOOLTIP;Softens the selection's edge. A segmented boundary is only ever an estimate, and a hard edge on an estimate is what reads as a cut-out; a little softness lets the exposure sit in the frame instead of on top of it.

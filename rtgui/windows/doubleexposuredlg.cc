@@ -1373,6 +1373,10 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     patternMethod_->connect(patternMethod_->signal_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged)));
     patRow->pack_start(*patLab, Gtk::PACK_SHRINK);
     patRow->pack_start(*patternMethod_, Gtk::PACK_EXPAND_WIDGET);
+    patternUpright_ = Gtk::manage(new Gtk::CheckButton(M("TP_DOUBLEEXPOSURE_PATTERN_UPRIGHT")));
+    patternUpright_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_UPRIGHT_TOOLTIP"));
+    patternUpright_->signal_toggled().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    patRow->pack_start(*patternUpright_, Gtk::PACK_SHRINK);
     patternBox->pack_start(*patRow, Gtk::PACK_SHRINK);
 
     Gtk::Widget* spacingCell = makeCell(M("TP_DOUBLEEXPOSURE_PATTERN_SPACING"), patternSpacingScale_, 0.0, 200.0, 1.0, 0.0);
@@ -2677,6 +2681,7 @@ void DoubleExposureDlg::syncLayerControls()
         patternStaggerScale_->set_value(layer.patternStagger);
         patternCountScale_->set_value(layer.patternCount);
         patternDiameterScale_->set_value(layer.patternDiameter);
+        patternUpright_->set_active(layer.patternUpright);
         edgeFeatherScale_->set_sensitive(true);
         edgeFeatherScale_->set_value(layer.edgeFeather);
 
@@ -2735,6 +2740,7 @@ void DoubleExposureDlg::layerControlChanged()
     params_.layers[selectedLayer_].patternStagger = patternStaggerScale_->get_value();
     params_.layers[selectedLayer_].patternCount = patternCountScale_->get_value();
     params_.layers[selectedLayer_].patternDiameter = patternDiameterScale_->get_value();
+    params_.layers[selectedLayer_].patternUpright = patternUpright_->get_active();
     params_.layers[selectedLayer_].edgeFeather = edgeFeatherScale_->get_value();
     const int subjectRow = subjectMethod_->get_active_row_number();
     params_.layers[selectedLayer_].maskClass =
@@ -2775,6 +2781,7 @@ void DoubleExposureDlg::showPatternRows(DoubleExposureParams::Pattern pattern, b
     patternStaggerScale_->set_sensitive(grid);
     patternCountScale_->set_sensitive(radial);
     patternDiameterScale_->set_sensitive(radial);
+    patternUpright_->set_visible(radial);
 }
 
 void DoubleExposureDlg::syncPlacementControls()

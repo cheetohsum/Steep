@@ -148,7 +148,13 @@ DoubleExposure::DoubleExposure() :
     patternLabel->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_TOOLTIP"));
     patternRow->pack_start(*patternLabel, Gtk::PACK_SHRINK);
     patternRow->pack_start(*patternMethod, Gtk::PACK_EXPAND_WIDGET);
+
+    patternUpright = Gtk::manage(new Gtk::CheckButton(M("TP_DOUBLEEXPOSURE_PATTERN_UPRIGHT")));
+    patternUpright->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_UPRIGHT_TOOLTIP"));
+    uprightConn = patternUpright->signal_toggled().connect(sigc::mem_fun(*this, &DoubleExposure::uprightToggled));
+    patternRow->pack_start(*patternUpright, Gtk::PACK_SHRINK);
     patternRow->show_all();
+    patternRow->set_no_show_all(true);
 
     layerFlipH = Gtk::manage(new Gtk::CheckButton(M("TP_DOUBLEEXPOSURE_FLIPH")));
     layerFlipH->set_tooltip_text(M("TP_DOUBLEEXPOSURE_FLIPH_TOOLTIP"));
@@ -549,6 +555,10 @@ void DoubleExposure::loadSelectedLayer()
     patternStagger->setValue(layers[idx].patternStagger);
     patternCount->setValue(layers[idx].patternCount);
     patternDiameter->setValue(layers[idx].patternDiameter);
+
+    uprightConn.block(true);
+    patternUpright->set_active(layers[idx].patternUpright);
+    uprightConn.block(false);
     edgeFeather->setValue(layers[idx].edgeFeather);
 
     flipConn.block(true);
@@ -657,6 +667,7 @@ void DoubleExposure::updateSensitivity()
     patternStagger->set_visible(haveLayers && grid);
     patternCount->set_visible(haveLayers && radial);
     patternDiameter->set_visible(haveLayers && radial);
+    patternUpright->set_visible(haveLayers && radial);
 
     if (haveLayers && tiled) {
         patternSection->setExpanded(true);
@@ -1042,6 +1053,24 @@ void DoubleExposure::flipToggled()
     if (listener && getEnabled()) {
         listener->panelChanged(EvDEPlacement,
                                layerFlipH->get_active() ? M("GENERAL_ENABLED") : M("GENERAL_DISABLED"));
+    }
+}
+
+void DoubleExposure::uprightToggled()
+{
+    const int idx = selectedLayerIndex();
+
+    if (idx < 0) {
+        return;
+    }
+
+    layers[idx].patternUpright = patternUpright->get_active();
+    layersEdited_ = true;
+    autoEnable();
+
+    if (listener && getEnabled()) {
+        listener->panelChanged(EvDEPlacement,
+                               patternUpright->get_active() ? M("GENERAL_ENABLED") : M("GENERAL_DISABLED"));
     }
 }
 

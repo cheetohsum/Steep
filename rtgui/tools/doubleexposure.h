@@ -53,6 +53,8 @@ private:
     Adjuster *patternStagger;    // tiled layers only
     Adjuster *patternCount;      // radial only
     Adjuster *patternDiameter;   // radial only
+    Gtk::CheckButton *patternUpright;
+    sigc::connection uprightConn;
     Adjuster *edgeFeather;
     AdvancedSection *adjustSection;
     AdvancedSection *patternSection;
@@ -132,6 +134,7 @@ public:
     void gateSourceChanged();
     void patternChanged();
     void flipToggled();
+    void uprightToggled();
     void subjectChanged();
     void subjectToggled();
     void openMaskEditor();

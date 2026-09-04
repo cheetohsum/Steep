@@ -3580,6 +3580,7 @@ DoubleExposureParams::Layer::Layer() :
     patternStagger(0.0),
     patternCount(6.0),
     patternDiameter(60.0),
+    patternUpright(false),
     // New exposures blend their edges; files written before this existed load
     // 0 explicitly, so an edit made with hard edges keeps them.
     edgeFeather(35.0),
@@ -3622,6 +3623,7 @@ bool DoubleExposureParams::Layer::operator ==(const Layer& other) const
         && patternStagger == other.patternStagger
         && patternCount == other.patternCount
         && patternDiameter == other.patternDiameter
+        && patternUpright == other.patternUpright
         && edgeFeather == other.edgeFeather
         && maskClass == other.maskClass
         && maskFeather == other.maskFeather
@@ -4644,6 +4646,7 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
                 keyFile.set_double("Double Exposure", prefix + "PatternStagger", doubleExposure.layers[i].patternStagger);
                 keyFile.set_double("Double Exposure", prefix + "PatternCount", doubleExposure.layers[i].patternCount);
                 keyFile.set_double("Double Exposure", prefix + "PatternDiameter", doubleExposure.layers[i].patternDiameter);
+                keyFile.set_boolean("Double Exposure", prefix + "PatternUpright", doubleExposure.layers[i].patternUpright);
                 keyFile.set_double("Double Exposure", prefix + "EdgeFeather", doubleExposure.layers[i].edgeFeather);
                 keyFile.set_integer("Double Exposure", prefix + "MaskClass", static_cast<int>(doubleExposure.layers[i].maskClass));
                 keyFile.set_double("Double Exposure", prefix + "MaskFeather", doubleExposure.layers[i].maskFeather);
@@ -7512,6 +7515,10 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
 
                         if (keyFile.has_key("Double Exposure", prefix + "PatternDiameter")) {
                             layer.patternDiameter = keyFile.get_double("Double Exposure", prefix + "PatternDiameter");
+                        }
+
+                        if (keyFile.has_key("Double Exposure", prefix + "PatternUpright")) {
+                            layer.patternUpright = keyFile.get_boolean("Double Exposure", prefix + "PatternUpright");
                         }
 
                         // Absent means an edit made before edges could blend:

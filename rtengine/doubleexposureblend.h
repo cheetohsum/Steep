@@ -261,6 +261,7 @@ struct Frame {
     float stagger = 0.f;  // odd-row shift, fraction of a tile
     int count = 6;        // RADIAL: copies around the ring
     float ring = 0.f;     // RADIAL: ring radius, in source-rect units
+    bool upright = false; // RADIAL: leave the copies standing as the picture does
     // RADIAL: how much of a half-wedge the hand-over between neighbouring
     // copies is spread over. 0 partitions the plane hard, which shows as a
     // straight line radiating from the centre wherever the two copies differ.
@@ -322,6 +323,7 @@ inline void applyLayer(Frame& f, const procparams::DoubleExposureParams::Layer& 
     // other -- they have a boundary, and the sample jumps across it. Edge
     // blend widens that into a hand-over: half the wedge at full strength.
     f.handover = 0.5f * blend01;
+    f.upright = layer.patternUpright;
 
     // A plain mirror still covers the base exactly, so it alone does not need
     // the placed path; everything else moves the frame's edges into view.
@@ -398,10 +400,19 @@ inline bool map(const Frame& f, float fx, float fy, float aaStep,
         const float spoke = std::floor(k + 0.5f) * step;
         const float c = std::cos(spoke);
         const float sn = std::sin(spoke);
-        const float rx = c * su + sn * sv;
-        const float ry = c * sv - sn * su;
-        su = rx - f.ring;
-        sv = ry;
+
+        if (f.upright) {
+            // Spread round the ring but left standing: only the copy's
+            // position turns, not the copy. A row of figures on a circle all
+            // the right way up, rather than a rosette.
+            su -= f.ring * c;
+            sv -= f.ring * sn;
+        } else {
+            const float rx = c * su + sn * sv;
+            const float ry = c * sv - sn * su;
+            su = rx - f.ring;
+            sv = ry;
+        }
     } else if (f.pattern != Pattern::OFF) {
         const float cw = f.srcW * f.cell;
         const float ch = f.srcH * f.cell;
@@ -486,10 +497,16 @@ inline Placed place(const Frame& f, float fx, float fy, float aaStep)
     const float spoke = (k0 + (k > k0 ? 1.f : -1.f)) * step;
     const float c = std::cos(spoke);
     const float sn = std::sin(spoke);
-    const float rx = c * su + sn * sv;
-    const float ry = c * sv - sn * su;
-    out.u2 = rx - f.ring + f.srcX0 + f.srcW * 0.5f;
-    out.v2 = ry + f.srcY0 + f.srcH * 0.5f;
+
+    if (f.upright) {
+        out.u2 = su - f.ring * c + f.srcX0 + f.srcW * 0.5f;
+        out.v2 = sv - f.ring * sn + f.srcY0 + f.srcH * 0.5f;
+    } else {
+        const float rx = c * su + sn * sv;
+        const float ry = c * sv - sn * su;
+        out.u2 = rx - f.ring + f.srcX0 + f.srcW * 0.5f;
+        out.v2 = ry + f.srcY0 + f.srcH * 0.5f;
+    }
 
     const float aa = std::max(aaStep * f.invCover / f.scale, 1e-6f);
     out.coverage2 = frameCoverage(f, out.u2, out.v2, aa);
