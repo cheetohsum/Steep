@@ -46,6 +46,10 @@ public:
     void setParamModifier(ParamModifier mod);
     void setDragCallback(DragCallback cb);
     void setReleaseCallback(DragCallback cb);
+
+    /// What a right-click or a double-click on the strip does. Sliders reset
+    /// on both, and this reads as one.
+    void setResetCallback(std::function<void()> cb);
     void regenerateThumbnails();
     void resetScrubber();
 
@@ -78,6 +82,7 @@ private:
     ParamModifier paramModifier_;
     DragCallback dragCallback_;
     DragCallback releaseCallback_;
+    std::function<void()> resetCallback_;
     sigc::connection debounceConn_;
     sigc::connection dragThrottleConn_;
     std::shared_ptr<std::atomic<bool>> cancelToken_;

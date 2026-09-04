@@ -2882,6 +2882,13 @@ void ToolGroup::setResetCallback(std::function<void()> cb)
     resetCallback_ = cb;
 }
 
+void ToolGroup::triggerReset()
+{
+    if (resetCallback_) {
+        resetCallback_();
+    }
+}
+
 void ToolGroup::addHeaderWidget(Gtk::Widget& widget)
 {
     headerRow->pack_end(widget, Gtk::PACK_SHRINK, 0);

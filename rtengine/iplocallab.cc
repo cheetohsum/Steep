@@ -24243,7 +24243,19 @@ void ImProcFunctions::Lab_Local(
                             factorx = lp.aimaskopa * aiVal * (1.f - shapeVal);
                         }
                     } else {
-                        factorx = intp(lp.aimaskopa, aiVal * localFactor, localFactor);
+                        // The same rule the other tools follow. Multiplying by
+                        // the transition looked like a gentle edge and was not:
+                        // the shape here is an ellipse inscribed in the AI
+                        // mask's own bounding box, and calcTransition only
+                        // writes localFactor inside the transition band -- so
+                        // outside it the 1.f above stood. The result was a ring
+                        // of dead effect cutting across the selection, full
+                        // strength on both sides of it.
+                        factorx = lp.aimaskopa * aiVal;
+
+                        if (lp.shapmet == 2) {
+                            factorx *= localFactor;
+                        }
                     }
                 }
 #endif

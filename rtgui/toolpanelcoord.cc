@@ -2500,6 +2500,25 @@ void ToolPanelCoordinator::populateEditPanel()
         effectsGroup->setResetVisible(false);
     });
 
+    // A group's scrubber is one of its controls, so resetting from it means
+    // the same thing as pressing the group's own reset.
+    const struct {
+        PreviewStrip* strip;
+        ToolGroup* group;
+    } strips[] = {
+        {exposureStrip_, lightGroup}, {bwStrip_, bwGroup}, {colorStrip_, colorGroup},
+        {detailStrip_, detailGroup}, {effectsStrip_, effectsGroup}
+    };
+
+    for (const auto& entry : strips) {
+        if (entry.strip) {
+            ToolGroup* group = entry.group;
+            entry.strip->setResetCallback([group]() {
+                group->triggerReset();
+            });
+        }
+    }
+
     spotGroup->setResetCallback([this]() {
         ProcParams dp;
         spot->disableListener();

@@ -975,6 +975,10 @@ public:
     /// Set callback for when reset button is clicked.
     void setResetCallback(std::function<void()> cb);
 
+    /// Run that same callback from somewhere other than the button — the
+    /// group's scrubber resets the group, so the two cannot drift apart.
+    void triggerReset();
+
     /// Add an action widget to the trailing edge of the visible group header.
     void addHeaderWidget(Gtk::Widget& widget);
 

@@ -176,6 +176,11 @@ void PreviewStrip::setReleaseCallback(DragCallback cb)
     releaseCallback_ = cb;
 }
 
+void PreviewStrip::setResetCallback(std::function<void()> cb)
+{
+    resetCallback_ = std::move(cb);
+}
+
 void PreviewStrip::resetScrubber()
 {
     scrubberPos_ = 0.0;
@@ -428,6 +433,24 @@ bool PreviewStrip::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
 
 bool PreviewStrip::on_button_press_event(GdkEventButton* event)
 {
+    // The same two gestures every slider in the app answers to. A double-click
+    // arrives after an ordinary press has already begun a drag, so the drag has
+    // to be abandoned here or its release would re-apply what was just undone.
+    if (resetCallback_
+            && ((event->button == 3 && event->type == GDK_BUTTON_PRESS)
+                || (event->button == 1 && event->type == GDK_2BUTTON_PRESS))) {
+        isDragging_ = false;
+        dragPending_ = false;
+        dragBaseParams_.reset();
+
+        if (dragThrottleConn_.connected()) {
+            dragThrottleConn_.disconnect();
+        }
+
+        resetCallback_();
+        return true;
+    }
+
     if (event->button == 1) {
         // Snapshot current params as the baseline for this entire drag gesture.
         // All modifier calls during the drag use this snapshot, preventing compounding.

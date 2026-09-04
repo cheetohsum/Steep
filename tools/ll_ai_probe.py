@@ -122,6 +122,35 @@ def main():
     print(f"{'PASS' if good else 'FAIL'}  {'portrait frame lines up too':34s} above = +{above}, below = +{below}")
     ok &= good
 
+    # Dodge/burn multiplied the AI mask by the spot's transition, and that
+    # transition is an ellipse inscribed in the AI mask's own bounding box.
+    # calcTransition writes localFactor only inside the transition band, so
+    # outside it the caller's 1.f stood: full strength within the ellipse, full
+    # strength beyond it, and nothing in the band between -- not a soft edge but
+    # a ring of dead effect cutting across the selection. One sample cannot see
+    # that; the row has to be scanned.
+    db = SPOT.replace("Expexpose_0=true\nVisiexpose_0=true\nExpcomp_0=3\n", "")
+    row = None
+
+    for tag, amount in (("dboff", 0), ("dbon", 80)):
+        path = os.path.join(HERE, "ll_%s.pp3" % tag)
+
+        with open(path, "w", newline="\n") as f:
+            f.write(db + "AIMaskClass_0=2\nAIMaskInvert_0=false\n"
+                    "DodgeBurn_0=%d\nDodgeBurnTones_0=0\n" % amount)
+
+        img = Image.open(render(path, scene, "ll_out_%s.tif" % tag)).convert("RGB").load()
+
+        if row is None:
+            row = [img[x, 60][1] for x in range(0, SCENE_W, 4)]
+        else:
+            row = [img[x, 60][1] - was for x, was in zip(range(0, SCENE_W, 4), row)]
+
+    good = min(row) > 20 and max(row) - min(row) <= 6
+    print(f"{'PASS' if good else 'FAIL'}  {'dodge/burn is even across it':34s} "
+          f"lift = {min(row)}..{max(row)} across the row")
+    ok &= good
+
     print("\nALL PASS" if ok else "\nFAILURES PRESENT")
     sys.exit(0 if ok else 1)
 
