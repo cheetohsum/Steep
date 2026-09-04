@@ -114,6 +114,7 @@ private:
     void onPreviewRotate(double degrees);
     void nudgeRotation(double degrees);
     void onPreviewReset();
+    void showPatternRows(rtengine::procparams::DoubleExposureParams::Pattern pattern);
     void syncPlacementControls();
     void schedulePreviewUpdate();
     void requestPreviewThumbs();
@@ -204,6 +205,14 @@ private:
     MyComboBoxText* patternMethod_;
     Gtk::Scale* patternSpacingScale_;
     Gtk::Scale* patternStaggerScale_;
+    Gtk::Scale* patternCountScale_;
+    Gtk::Scale* patternDiameterScale_;
+    Gtk::Box* patternSpacingRow_;
+    Gtk::Box* patternStaggerRow_;
+    Gtk::Box* patternCountRow_;
+    Gtk::Box* patternDiameterRow_;
+    Gtk::Expander* adjustExpander_;
+    Gtk::Expander* patternExpander_;
     Gtk::Box* subjectRow_;
     MyComboBoxText* subjectMethod_;
     Gtk::CheckButton* subjectInvert_;

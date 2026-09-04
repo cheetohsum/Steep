@@ -3578,6 +3578,8 @@ DoubleExposureParams::Layer::Layer() :
     pattern(Pattern::OFF),
     patternSpacing(0.0),
     patternStagger(0.0),
+    patternCount(6.0),
+    patternDiameter(60.0),
     maskClass(MaskClass::OFF),
     maskFeather(25.0),
     maskInvert(false),
@@ -3615,6 +3617,8 @@ bool DoubleExposureParams::Layer::operator ==(const Layer& other) const
         && pattern == other.pattern
         && patternSpacing == other.patternSpacing
         && patternStagger == other.patternStagger
+        && patternCount == other.patternCount
+        && patternDiameter == other.patternDiameter
         && maskClass == other.maskClass
         && maskFeather == other.maskFeather
         && maskInvert == other.maskInvert
@@ -4633,6 +4637,8 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
                 keyFile.set_integer("Double Exposure", prefix + "Pattern", static_cast<int>(doubleExposure.layers[i].pattern));
                 keyFile.set_double("Double Exposure", prefix + "PatternSpacing", doubleExposure.layers[i].patternSpacing);
                 keyFile.set_double("Double Exposure", prefix + "PatternStagger", doubleExposure.layers[i].patternStagger);
+                keyFile.set_double("Double Exposure", prefix + "PatternCount", doubleExposure.layers[i].patternCount);
+                keyFile.set_double("Double Exposure", prefix + "PatternDiameter", doubleExposure.layers[i].patternDiameter);
                 keyFile.set_integer("Double Exposure", prefix + "MaskClass", static_cast<int>(doubleExposure.layers[i].maskClass));
                 keyFile.set_double("Double Exposure", prefix + "MaskFeather", doubleExposure.layers[i].maskFeather);
                 keyFile.set_boolean("Double Exposure", prefix + "MaskInvert", doubleExposure.layers[i].maskInvert);
@@ -7474,7 +7480,7 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
                         if (keyFile.has_key("Double Exposure", prefix + "Pattern")) {
                             const int pat = keyFile.get_integer("Double Exposure", prefix + "Pattern");
 
-                            if (pat >= 0 && pat <= 2) {
+                            if (pat >= 0 && pat <= 3) {
                                 layer.pattern = static_cast<DoubleExposureParams::Pattern>(pat);
                             }
                         }
@@ -7485,6 +7491,14 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
 
                         if (keyFile.has_key("Double Exposure", prefix + "PatternStagger")) {
                             layer.patternStagger = keyFile.get_double("Double Exposure", prefix + "PatternStagger");
+                        }
+
+                        if (keyFile.has_key("Double Exposure", prefix + "PatternCount")) {
+                            layer.patternCount = keyFile.get_double("Double Exposure", prefix + "PatternCount");
+                        }
+
+                        if (keyFile.has_key("Double Exposure", prefix + "PatternDiameter")) {
+                            layer.patternDiameter = keyFile.get_double("Double Exposure", prefix + "PatternDiameter");
                         }
 
                         if (keyFile.has_key("Double Exposure", prefix + "MaskClass")) {

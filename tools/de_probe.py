@@ -636,6 +636,53 @@ def main():
 
 
     # ------------------------------------------------------------------
+    # Radial repeat: N copies stood around a ring, each turned to face
+    # outward. With two copies the ring lies along the probe row, so both
+    # are readable from it - and the far one arrives turned a half turn,
+    # which is what makes the check worth writing.
+    # ------------------------------------------------------------------
+    def radial_u(x, count=2, diameter=50.0):
+        ring = 0.5 * (diameter / 100.0) * W        # invCover and scale are 1
+        su = x + 0.5 - W / 2
+        sv = PROBE_ROW + 0.5 - H / 2
+        step = 2 * math.pi / count
+        spoke = math.floor(math.atan2(sv, su) / step + 0.5) * step
+        rx = math.cos(spoke) * su + math.sin(spoke) * sv
+        return rx - ring + GEO / 2
+
+    got = row(render(geo_pp3("t18_radial.pp3", hramp_path,
+                             "Layer1Pattern=3\nLayer1PatternCount=2\nLayer1PatternDiameter=50\n"),
+                     "base_grad.png", "t18_radial.tif"))
+    ok &= check("radial: two copies, one turned", got,
+                lambda x: lin_to_srgb(srgb_to_lin(x) + sample_ramp(radial_u(x))),
+                skip_clipped=True, skipx={126, 127, 128, 129})
+
+    # T18b: the count actually counts. One copy stands alone on the +x spoke,
+    # so the far side of the frame is left to the base; two copies reach it.
+    # (A column would have done for six-versus-two, but only weakly - along
+    # the centre line both resolve to the same pair of spokes.)
+    one = row(render(geo_pp3("t18b_one.pp3", hramp_path,
+                             "Layer1Pattern=3\nLayer1PatternCount=1\nLayer1PatternDiameter=50\n"),
+                     "base_grad.png", "t18b_one.tif"))
+    bare = row(render(geo_pp3("t18b_bare.pp3", hramp_path, "Layer1Opacity=0\n"),
+                      "base_grad.png", "t18b_bare.tif"))
+    far = range(2, 56)
+    alone = max(abs(one[x] - bare[x]) for x in far)
+    paired = max(abs(got[x] - bare[x]) for x in far)
+    good = alone <= 1 and paired > 20
+    print(f"{'PASS' if good else 'FAIL'}  {'radial: one copy leaves the far side':34s} "
+          f"one = {alone}, two = {paired}")
+    ok &= good
+
+    # T18c: widening the ring moves the copies outward, so the frame changes.
+    wide = row(render(geo_pp3("t18c_wide.pp3", hramp_path,
+                              "Layer1Pattern=3\nLayer1PatternCount=2\nLayer1PatternDiameter=150\n"),
+                      "base_grad.png", "t18c_wide.tif"))
+    moved = max(abs(wide[x] - got[x]) for x in range(2, W - 2))
+    print(f"{'PASS' if moved > 20 else 'FAIL'}  {'radial: diameter moves copies':34s} max |diff| = {moved}")
+    ok &= moved > 20
+
+    # ------------------------------------------------------------------
     # Subject selection. The model is not the thing under test here - the
     # plumbing is: that a class map reaches the weight, that inverting it
     # swaps which half of the frame the layer lands in, and above all that

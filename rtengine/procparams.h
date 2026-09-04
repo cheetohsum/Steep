@@ -1916,7 +1916,8 @@ struct DoubleExposureParams {
     enum class Pattern {
         OFF,        // one frame, placed
         REPEAT,     // tile the frame edge to edge
-        MIRROR      // reflect alternate tiles, so they meet without a seam
+        MIRROR,     // reflect alternate tiles, so they meet without a seam
+        RADIAL      // N copies around a ring, each turned to face outward
     };
 
     // Which part of the partner the layer is confined to, segmented on the
@@ -1957,6 +1958,10 @@ struct DoubleExposureParams {
         Pattern pattern;
         double patternSpacing; // 0..200 percent of the tile added as a gutter
         double patternStagger; // 0..100 percent of a tile, odd rows only
+        // Radial only: how many copies go round the ring, and how wide the
+        // ring is as a percentage of the base frame's width.
+        double patternCount;    // 1..24
+        double patternDiameter; // 0..200
         // Subject selection, segmented on the partner image. The layer is
         // weighted by the mask; cropToSubject additionally makes the mask's
         // bounding box the source frame, so patterning repeats the cut-out

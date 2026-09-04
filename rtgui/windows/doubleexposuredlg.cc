@@ -639,7 +639,7 @@ public:
 
     DEBlendPreview()
     {
-        set_size_request(420, 300);
+        set_size_request(560, 420);
         set_hexpand(true);
         set_vexpand(true);
         add_events(Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::POINTER_MOTION_MASK
@@ -1088,7 +1088,7 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
         set_transient_for(*parent);
     }
 
-    set_default_size(1060, 680);
+    set_default_size(1380, 900);
 
     Gtk::Box* content = get_content_area();
     content->set_spacing(8);
@@ -1178,7 +1178,7 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
 
     // --- main split: grid | preview + controls ---
     Gtk::Paned* split = Gtk::manage(new Gtk::Paned(Gtk::ORIENTATION_HORIZONTAL));
-    split->set_position(480);
+    split->set_position(400);
 
     grid_ = Gtk::manage(new DEThumbGrid());
     grid_->signalToggled().connect(sigc::mem_fun(*this, &DoubleExposureDlg::itemToggled));
@@ -1289,13 +1289,22 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
 
     // Placement of the selected exposure over the base frame; the preview
     // drives the same three values by dragging.
-    right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_OFFSETX"), offsetXScale_, -150.0, 150.0, 0.5, 0.0), Gtk::PACK_SHRINK);
+    // Where the exposure sits, turns and mirrors. Behind a header and closed
+    // to begin with: most of the work here is choosing frames and setting
+    // their tone, and the preview drags all three of these anyway.
+    adjustExpander_ = Gtk::manage(new Gtk::Expander(M("TP_DOUBLEEXPOSURE_LAYERADJUST")));
+    Gtk::Box* adjustBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
+    adjustExpander_->add(*adjustBox);
+    adjustExpander_->set_expanded(false);
+    right->pack_start(*adjustExpander_, Gtk::PACK_SHRINK);
+
+    adjustBox->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_OFFSETX"), offsetXScale_, -150.0, 150.0, 0.5, 0.0), Gtk::PACK_SHRINK);
     offsetXScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PLACEMENT_TOOLTIP"));
     offsetXScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
-    right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_OFFSETY"), offsetYScale_, -150.0, 150.0, 0.5, 0.0), Gtk::PACK_SHRINK);
+    adjustBox->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_OFFSETY"), offsetYScale_, -150.0, 150.0, 0.5, 0.0), Gtk::PACK_SHRINK);
     offsetYScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PLACEMENT_TOOLTIP"));
     offsetYScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
-    right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_SCALE"), scaleScale_, 10.0, 400.0, 1.0, 100.0), Gtk::PACK_SHRINK);
+    adjustBox->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_SCALE"), scaleScale_, 10.0, 400.0, 1.0, 100.0), Gtk::PACK_SHRINK);
     scaleScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PLACEMENT_TOOLTIP"));
     scaleScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
 
@@ -1314,7 +1323,13 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     rotateRight_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_ROTATE_RIGHT"));
     rotateRight_->signal_clicked().connect([this]() { nudgeRotation(90.0); });
     rotRow->pack_start(*rotateRight_, Gtk::PACK_SHRINK);
-    right->pack_start(*rotRow, Gtk::PACK_SHRINK);
+    adjustBox->pack_start(*rotRow, Gtk::PACK_SHRINK);
+
+    patternExpander_ = Gtk::manage(new Gtk::Expander(M("TP_DOUBLEEXPOSURE_PATTERN")));
+    Gtk::Box* patternBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
+    patternExpander_->add(*patternBox);
+    patternExpander_->set_expanded(false);
+    right->pack_start(*patternExpander_, Gtk::PACK_SHRINK);
 
     Gtk::Box* patRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
     Gtk::Label* patLab = Gtk::manage(new Gtk::Label(M("TP_DOUBLEEXPOSURE_PATTERN"), Gtk::ALIGN_START));
@@ -1324,24 +1339,38 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     patternMethod_->append(M("TP_DOUBLEEXPOSURE_PATTERN_OFF"));
     patternMethod_->append(M("TP_DOUBLEEXPOSURE_PATTERN_REPEAT"));
     patternMethod_->append(M("TP_DOUBLEEXPOSURE_PATTERN_MIRROR"));
+    patternMethod_->append(M("TP_DOUBLEEXPOSURE_PATTERN_RADIAL"));
     patternMethod_->set_active(0);
     patternMethod_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_TOOLTIP"));
     patternMethod_->setPreferredWidth(120, 180);
     patternMethod_->connect(patternMethod_->signal_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged)));
     patRow->pack_start(*patLab, Gtk::PACK_SHRINK);
     patRow->pack_start(*patternMethod_, Gtk::PACK_EXPAND_WIDGET);
+    patternBox->pack_start(*patRow, Gtk::PACK_SHRINK);
+
+    patternSpacingRow_ = makeScaleRow(M("TP_DOUBLEEXPOSURE_PATTERN_SPACING"), patternSpacingScale_, 0.0, 200.0, 1.0, 0.0);
+    patternBox->pack_start(*patternSpacingRow_, Gtk::PACK_SHRINK);
+    patternSpacingScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_SPACING_TOOLTIP"));
+    patternSpacingScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    patternStaggerRow_ = makeScaleRow(M("TP_DOUBLEEXPOSURE_PATTERN_STAGGER"), patternStaggerScale_, 0.0, 100.0, 1.0, 0.0);
+    patternBox->pack_start(*patternStaggerRow_, Gtk::PACK_SHRINK);
+    patternStaggerScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_STAGGER_TOOLTIP"));
+    patternStaggerScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+
+    // Radial's own pair: how many copies, and how wide a ring they stand on.
+    patternCountRow_ = makeScaleRow(M("TP_DOUBLEEXPOSURE_PATTERN_COUNT"), patternCountScale_, 1.0, 24.0, 1.0, 6.0);
+    patternBox->pack_start(*patternCountRow_, Gtk::PACK_SHRINK);
+    patternCountScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_COUNT_TOOLTIP"));
+    patternCountScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    patternDiameterRow_ = makeScaleRow(M("TP_DOUBLEEXPOSURE_PATTERN_DIAMETER"), patternDiameterScale_, 0.0, 200.0, 1.0, 60.0);
+    patternBox->pack_start(*patternDiameterRow_, Gtk::PACK_SHRINK);
+    patternDiameterScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_DIAMETER_TOOLTIP"));
+    patternDiameterScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+
     flipH_ = Gtk::manage(new Gtk::CheckButton(M("TP_DOUBLEEXPOSURE_FLIPH")));
     flipH_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_FLIPH_TOOLTIP"));
     flipH_->signal_toggled().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
-    patRow->pack_start(*flipH_, Gtk::PACK_SHRINK);
-    right->pack_start(*patRow, Gtk::PACK_SHRINK);
-
-    right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_PATTERN_SPACING"), patternSpacingScale_, 0.0, 200.0, 1.0, 0.0), Gtk::PACK_SHRINK);
-    patternSpacingScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_SPACING_TOOLTIP"));
-    patternSpacingScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
-    right->pack_start(*makeScaleRow(M("TP_DOUBLEEXPOSURE_PATTERN_STAGGER"), patternStaggerScale_, 0.0, 100.0, 1.0, 0.0), Gtk::PACK_SHRINK);
-    patternStaggerScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_STAGGER_TOOLTIP"));
-    patternStaggerScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    adjustBox->pack_start(*flipH_, Gtk::PACK_SHRINK);
 
     // Subject selection, segmented on the partner itself. Hidden outright
     // when this build has no segmentation model rather than shown dead.
@@ -1395,7 +1424,7 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     resetPlacement_ = Gtk::manage(new Gtk::Button(M("TP_DOUBLEEXPOSURE_PLACEMENT_RESET")));
     resetPlacement_->set_halign(Gtk::ALIGN_END);
     resetPlacement_->signal_clicked().connect(sigc::mem_fun(*this, &DoubleExposureDlg::onPreviewReset));
-    right->pack_start(*resetPlacement_, Gtk::PACK_SHRINK);
+    adjustBox->pack_start(*resetPlacement_, Gtk::PACK_SHRINK);
 
     split->pack2(*right, true, false);
     content->pack_start(*split, Gtk::PACK_EXPAND_WIDGET);
@@ -2558,6 +2587,8 @@ void DoubleExposureDlg::syncLayerControls()
         patternMethod_->set_sensitive(false);
         patternSpacingScale_->set_sensitive(false);
         patternStaggerScale_->set_sensitive(false);
+        patternCountScale_->set_sensitive(false);
+        patternDiameterScale_->set_sensitive(false);
         subjectMethod_->set_sensitive(false);
         subjectInvert_->set_sensitive(false);
         subjectCrop_->set_sensitive(false);
@@ -2588,20 +2619,28 @@ void DoubleExposureDlg::syncLayerControls()
         offsetYScale_->set_value(layer.offsetY);
         scaleScale_->set_value(layer.scale);
 
-        // Spacing and stagger only mean anything once the frame repeats.
+        // Spacing and stagger belong to the grid patterns, the ring controls
+        // to the radial one; only one pair is ever on show.
         const bool tiled = layer.pattern != DoubleExposureParams::Pattern::OFF;
         rotateScale_->set_sensitive(true);
         rotateLeft_->set_sensitive(true);
         rotateRight_->set_sensitive(true);
         flipH_->set_sensitive(true);
         patternMethod_->set_sensitive(true);
-        patternSpacingScale_->set_sensitive(tiled);
-        patternStaggerScale_->set_sensitive(tiled);
+        showPatternRows(layer.pattern);
         rotateScale_->set_value(layer.rotate);
         flipH_->set_active(layer.flipH);
         patternMethod_->set_active(static_cast<int>(layer.pattern));
         patternSpacingScale_->set_value(layer.patternSpacing);
         patternStaggerScale_->set_value(layer.patternStagger);
+        patternCountScale_->set_value(layer.patternCount);
+        patternDiameterScale_->set_value(layer.patternDiameter);
+
+        // A patterned exposure opens its own section: settings that are doing
+        // something should not be hidden behind a closed header.
+        if (tiled) {
+            patternExpander_->set_expanded(true);
+        }
 
         const bool masked = layer.maskClass != DoubleExposureParams::MaskClass::OFF;
         subjectMethod_->set_sensitive(true);
@@ -2649,6 +2688,8 @@ void DoubleExposureDlg::layerControlChanged()
         static_cast<DoubleExposureParams::Pattern>(patternRow < 0 ? 0 : patternRow);
     params_.layers[selectedLayer_].patternSpacing = patternSpacingScale_->get_value();
     params_.layers[selectedLayer_].patternStagger = patternStaggerScale_->get_value();
+    params_.layers[selectedLayer_].patternCount = patternCountScale_->get_value();
+    params_.layers[selectedLayer_].patternDiameter = patternDiameterScale_->get_value();
     const int subjectRow = subjectMethod_->get_active_row_number();
     params_.layers[selectedLayer_].maskClass =
         static_cast<DoubleExposureParams::MaskClass>(subjectRow < 0 ? 0 : subjectRow);
@@ -2656,9 +2697,7 @@ void DoubleExposureDlg::layerControlChanged()
     params_.layers[selectedLayer_].cropToSubject = subjectCrop_->get_active();
     params_.layers[selectedLayer_].maskFeather = subjectFeatherScale_->get_value();
 
-    const bool tiled = params_.layers[selectedLayer_].pattern != DoubleExposureParams::Pattern::OFF;
-    patternSpacingScale_->set_sensitive(tiled);
-    patternStaggerScale_->set_sensitive(tiled);
+    showPatternRows(params_.layers[selectedLayer_].pattern);
     const bool masked = params_.layers[selectedLayer_].maskClass != DoubleExposureParams::MaskClass::OFF;
     subjectInvert_->set_sensitive(masked);
     subjectCrop_->set_sensitive(masked);
@@ -2669,6 +2708,23 @@ void DoubleExposureDlg::layerControlChanged()
 }
 
 // --- interactive placement from the preview ---
+
+// Only the chosen pattern's own controls are on show.
+void DoubleExposureDlg::showPatternRows(DoubleExposureParams::Pattern pattern)
+{
+    const bool grid = pattern == DoubleExposureParams::Pattern::REPEAT
+                      || pattern == DoubleExposureParams::Pattern::MIRROR;
+    const bool radial = pattern == DoubleExposureParams::Pattern::RADIAL;
+
+    patternSpacingRow_->set_visible(grid);
+    patternStaggerRow_->set_visible(grid);
+    patternCountRow_->set_visible(radial);
+    patternDiameterRow_->set_visible(radial);
+    patternSpacingScale_->set_sensitive(grid);
+    patternStaggerScale_->set_sensitive(grid);
+    patternCountScale_->set_sensitive(radial);
+    patternDiameterScale_->set_sensitive(radial);
+}
 
 void DoubleExposureDlg::syncPlacementControls()
 {

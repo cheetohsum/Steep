@@ -259,6 +259,8 @@ struct Frame {
     Pattern pattern = Pattern::OFF;
     float cell = 1.f;     // tile pitch in source-rect widths; > 1 leaves a gutter
     float stagger = 0.f;  // odd-row shift, fraction of a tile
+    int count = 6;        // RADIAL: copies around the ring
+    float ring = 0.f;     // RADIAL: ring radius, in source-rect units
     // False keeps the legacy path bitwise: no rotation, no wrap, no frame
     // edge — the partner is simply edge-clamped over the whole base, which
     // is how every layer behaved before placement existed.
@@ -290,6 +292,12 @@ inline void applyLayer(Frame& f, const procparams::DoubleExposureParams::Layer& 
     f.pattern = layer.pattern;
     f.cell = 1.f + std::max(0.f, static_cast<float>(layer.patternSpacing)) / 100.f;
     f.stagger = std::min(std::max(static_cast<float>(layer.patternStagger) / 100.f, 0.f), 1.f);
+
+    // The ring is measured on the base frame, like every other placement
+    // control, then carried into source-rect units the same way a position is.
+    // The caller must have filled in the two frame geometries by now.
+    f.count = std::min(std::max(static_cast<int>(std::lround(layer.patternCount)), 1), 24);
+    f.ring = 0.5f * static_cast<float>(layer.patternDiameter) / 100.f * f.baseW * f.invCover / f.scale;
 
     // A plain mirror still covers the base exactly, so it alone does not need
     // the placed path; everything else moves the frame's edges into view.
@@ -326,7 +334,22 @@ inline bool map(const Frame& f, float fx, float fy, float aaStep,
         return true;
     }
 
-    if (f.pattern != Pattern::OFF) {
+    if (f.pattern == Pattern::RADIAL) {
+        // N copies stood around a ring, each turned to face outward. A point
+        // belongs to the copy whose spoke it is nearest to — the copies are
+        // equidistant from the centre, so that is also the nearest copy.
+        // Where two copies would overlap, the nearer one wins outright rather
+        // than both being sampled: one layer contributes one sample per pixel.
+        constexpr float twoPi = 6.28318530717958647692f;
+        const float step = twoPi / static_cast<float>(f.count);
+        const float spoke = std::floor(std::atan2(sv, su) / step + 0.5f) * step;
+        const float c = std::cos(spoke);
+        const float sn = std::sin(spoke);
+        const float rx = c * su + sn * sv;
+        const float ry = c * sv - sn * su;
+        su = rx - f.ring;
+        sv = ry;
+    } else if (f.pattern != Pattern::OFF) {
         const float cw = f.srcW * f.cell;
         const float ch = f.srcH * f.cell;
 

@@ -3135,19 +3135,25 @@ TP_DOUBLEEXPOSURE_LABEL;Double Exposure
 TP_DOUBLEEXPOSURE_LATITUDE;Highlight latitude
 TP_DOUBLEEXPOSURE_LATITUDE_TOOLTIP;The film shoulder, applied to the finished stack. Light adds up linearly and the dense areas then stop registering more of it: a bright sky takes little of the second frame while shadows take all of it, the classic silhouette look, with no reveal gate needed. Measured against a single frame's white, so it works the same with Auto film gain on or off. 0 leaves the stack to clip at white further down the pipeline; higher values start the roll-off earlier (100 = from half a frame's white). Film Lab adds its own shoulder after this one.
 TP_DOUBLEEXPOSURE_LAYER;Layer
+TP_DOUBLEEXPOSURE_LAYERADJUST;Layer adjust
 TP_DOUBLEEXPOSURE_MISSING;File not found — this layer will be skipped.
 TP_DOUBLEEXPOSURE_OFFSETX;Layer position X
 TP_DOUBLEEXPOSURE_OFFSETY;Layer position Y
 TP_DOUBLEEXPOSURE_OPACITY;Layer opacity
 TP_DOUBLEEXPOSURE_PATTERN;Pattern
 TP_DOUBLEEXPOSURE_PATTERN_MIRROR;Repeat, mirrored
+TP_DOUBLEEXPOSURE_PATTERN_COUNT;Repeats
+TP_DOUBLEEXPOSURE_PATTERN_COUNT_TOOLTIP;How many copies of the exposure stand around the ring. Each is turned to face outward, so six of a single figure reads as a rosette and two reads as a reflection across the frame.
+TP_DOUBLEEXPOSURE_PATTERN_DIAMETER;Ring diameter
+TP_DOUBLEEXPOSURE_PATTERN_DIAMETER_TOOLTIP;How far out the copies stand from the centre, as a percentage of the frame's width. 0 stacks them all in the middle; 100 puts them on a circle as wide as the picture, leaving the centre open.
+TP_DOUBLEEXPOSURE_PATTERN_RADIAL;Radial repeat
 TP_DOUBLEEXPOSURE_PATTERN_OFF;Off
 TP_DOUBLEEXPOSURE_PATTERN_REPEAT;Repeat
 TP_DOUBLEEXPOSURE_PATTERN_SPACING;Tile spacing
 TP_DOUBLEEXPOSURE_PATTERN_SPACING_TOOLTIP;Widens the grid without changing the tile, so the base shows through the gaps between exposures. 0 lays the tiles edge to edge; 100 leaves a gap the width of a whole tile.
 TP_DOUBLEEXPOSURE_PATTERN_STAGGER;Row offset
 TP_DOUBLEEXPOSURE_PATTERN_STAGGER_TOOLTIP;Shifts every other row sideways, laying the tiles in a brick course instead of a strict grid. 50 puts each row half a tile out of step with the one above.
-TP_DOUBLEEXPOSURE_PATTERN_TOOLTIP;Repeats this exposure across the base frame, one tile per placed frame — the size you set with Layer size, so a small frame gives many tiles. Repeat lays the same picture in every tile; Repeat, mirrored flips alternate tiles so neighbours meet on the same edge and the grid has no visible seams.
+TP_DOUBLEEXPOSURE_PATTERN_TOOLTIP;Repeats this exposure across the base frame, one copy per placed frame — the size you set with Layer size, so a small frame gives many copies. Repeat lays the same picture in every tile; Repeat, mirrored flips alternate tiles so neighbours meet on the same edge and the grid has no visible seams; Radial repeat stands a given number of copies around a ring instead of a grid, each turned to face outward.
 TP_DOUBLEEXPOSURE_PLACEMENT_RESET;Reset placement
 TP_DOUBLEEXPOSURE_PLACEMENT_TOOLTIP;Where this exposure sits over the base frame. Position is the shift of its centre as a percentage of the base width and height; size is a percentage of the fill-the-frame fit. Outside the placed frame the exposure contributes nothing. In the picker you can drag the selected exposure to move it, scroll or drag a corner to resize it, and double-click to reset.
 TP_DOUBLEEXPOSURE_REMOVE;Remove this exposure

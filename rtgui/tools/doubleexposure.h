@@ -51,6 +51,10 @@ private:
     MyComboBoxText *patternMethod;
     Adjuster *patternSpacing;    // tiled layers only
     Adjuster *patternStagger;    // tiled layers only
+    Adjuster *patternCount;      // radial only
+    Adjuster *patternDiameter;   // radial only
+    AdvancedSection *adjustSection;
+    AdvancedSection *patternSection;
     Gtk::Box *subjectRow;        // hidden without a segmentation model
     Gtk::Box *subjectOptionsRow;
     MyComboBoxText *subjectMethod;
