@@ -38,6 +38,10 @@ namespace
 // geometry, so what is replayed at full resolution is not what is shown here.
 constexpr int MAX_CANVAS = 1100;
 
+// Past this the picture is only being magnified, but a big brush circle on a
+// blurry edge is still easier to place than a small one on a sharp edge.
+constexpr double MAX_ZOOM = 8.0;
+
 } // namespace
 
 // ---------------------------------------------------------------------------
@@ -193,6 +197,15 @@ private:
     double ox_ = 0.0;
     double oy_ = 0.0;
 
+    // 1 is the whole picture in the window; the pan is an offset away from
+    // centred, in widget pixels.
+    double zoom_ = 1.0;
+    double panX_ = 0.0;
+    double panY_ = 0.0;
+    bool panning_ = false;
+    double panLastX_ = 0.0;
+    double panLastY_ = 0.0;
+
     // The two conversions, and the only places the window is applied to
     // strokes: everything between them is in the shown picture's coordinates.
     rtengine::MaskPaint toDisplay(const rtengine::MaskPaint& frame) const
@@ -346,6 +359,15 @@ private:
 
     bool on_button_press_event(GdkEventButton* e) override
     {
+        // Both buttons that paint are spoken for, so the middle one moves the
+        // picture -- the only way to reach a corner once zoomed in.
+        if (e->button == 2) {
+            panning_ = true;
+            panLastX_ = e->x;
+            panLastY_ = e->y;
+            return true;
+        }
+
         if (e->button != 1 && e->button != 3) {
             return false;
         }
@@ -362,6 +384,15 @@ private:
         pointerY_ = e->y;
         pointerIn_ = true;
 
+        if (panning_) {
+            panX_ += e->x - panLastX_;
+            panY_ += e->y - panLastY_;
+            panLastX_ = e->x;
+            panLastY_ = e->y;
+            queue_draw();
+            return true;
+        }
+
         if (drawing_) {
             extendStroke(e->x, e->y);
         } else {
@@ -373,6 +404,11 @@ private:
 
     bool on_button_release_event(GdkEventButton* e) override
     {
+        if (e->button == 2 && panning_) {
+            panning_ = false;
+            return true;
+        }
+
         if (e->button == 1 || e->button == 3) {
             endStroke();
             return true;
@@ -400,12 +436,50 @@ private:
             steps = -e->delta_y;
         }
 
-        if (steps == 0.0 || !onBrushResize) {
+        if (steps == 0.0) {
             return false;
         }
 
-        onBrushResize(std::pow(1.12, steps));
+        // Scrolling moves the view, Ctrl-scrolling changes the tool. Correcting
+        // a mask by hand means getting close to an edge far more often than it
+        // means resizing the brush, so the plain gesture is the zoom.
+        if (e->state & GDK_CONTROL_MASK) {
+            if (onBrushResize) {
+                onBrushResize(std::pow(1.12, steps));
+            }
+
+            return true;
+        }
+
+        zoomAt(e->x, e->y, std::pow(1.15, steps));
         return true;
+    }
+
+    // Holds the picture point under the pointer still, so the view opens out
+    // around what is being looked at rather than around the middle of the frame.
+    void zoomAt(double px, double py, double factor)
+    {
+        const double w = get_allocated_width();
+        const double h = get_allocated_height();
+
+        if (sc_ <= 0.0 || width_ <= 0 || w <= 0.0 || h <= 0.0) {
+            return;
+        }
+
+        const double before = zoom_;
+        zoom_ = std::min(MAX_ZOOM, std::max(1.0, zoom_ * factor));
+
+        if (zoom_ == before) {
+            return;
+        }
+
+        const double imgX = (px - ox_) / sc_;
+        const double imgY = (py - oy_) / sc_;
+        const double scaled = std::min(w / width_, h / height_) * zoom_;
+
+        panX_ = px - imgX * scaled - (w - width_ * scaled) / 2.0;
+        panY_ = py - imgY * scaled - (h - height_ * scaled) / 2.0;
+        queue_draw();
     }
 
 public:
@@ -425,9 +499,31 @@ private:
             return true;
         }
 
-        sc_ = std::min(static_cast<double>(w) / width_, static_cast<double>(h) / height_);
-        ox_ = (w - width_ * sc_) / 2.0;
-        oy_ = (h - height_ * sc_) / 2.0;
+        sc_ = std::min(static_cast<double>(w) / width_, static_cast<double>(h) / height_) * zoom_;
+
+        // Zoomed in, the picture has to keep covering the window; at the fitted
+        // size it sits in the middle. Either way it cannot be pushed off an edge.
+        const double drawnW = width_ * sc_;
+        const double drawnH = height_ * sc_;
+        const double slackX = std::max(0.0, (drawnW - w) / 2.0);
+        const double slackY = std::max(0.0, (drawnH - h) / 2.0);
+        panX_ = std::min(slackX, std::max(-slackX, panX_));
+        panY_ = std::min(slackY, std::max(-slackY, panY_));
+
+        ox_ = (w - drawnW) / 2.0 + panX_;
+        oy_ = (h - drawnH) / 2.0 + panY_;
+
+        // Only the part of the picture the window can actually show needs an
+        // overlay built for it. Without this, panning around at 8x would rebuild
+        // and rescan every pixel of the frame for each mouse move.
+        const int vx0 = std::max(0, static_cast<int>(std::floor(-ox_ / sc_)) - 1);
+        const int vy0 = std::max(0, static_cast<int>(std::floor(-oy_ / sc_)) - 1);
+        const int vx1 = std::min(width_, static_cast<int>(std::ceil((w - ox_) / sc_)) + 1);
+        const int vy1 = std::min(height_, static_cast<int>(std::ceil((h - oy_) / sc_)) + 1);
+
+        if (vx1 <= vx0 || vy1 <= vy0) {
+            return true;
+        }
 
         cr->save();
         cr->translate(ox_, oy_);
@@ -440,16 +536,16 @@ private:
             // tint alone reads poorly over a picture that is already warm or
             // already dark -- what makes a selection legible is the contrast
             // between what is in it and what is not.
-            auto overlay = Gdk::Pixbuf::create(Gdk::COLORSPACE_RGB, true, 8, width_, height_);
+            auto overlay = Gdk::Pixbuf::create(Gdk::COLORSPACE_RGB, true, 8, vx1 - vx0, vy1 - vy0);
             guint8* data = overlay->get_pixels();
             const int stride = overlay->get_rowstride();
 
-            for (int y = 0; y < height_; ++y) {
-                guint8* row = data + y * stride;
+            for (int y = vy0; y < vy1; ++y) {
+                guint8* row = data + (y - vy0) * stride;
 
-                for (int x = 0; x < width_; ++x) {
+                for (int x = vx0; x < vx1; ++x) {
                     const float value = std::min(std::max(shown_[y][x], 0.f), 1.f);
-                    guint8* px = row + x * 4;
+                    guint8* px = row + (x - vx0) * 4;
 
                     // One continuous ramp from "not selected" to "fully
                     // selected", ending on a red strong enough to read over
@@ -464,7 +560,7 @@ private:
                 }
             }
 
-            Gdk::Cairo::set_source_pixbuf(cr, overlay, 0, 0);
+            Gdk::Cairo::set_source_pixbuf(cr, overlay, vx0, vy0);
             cr->paint();
 
             // A line on the half-way contour, so the boundary is visible even
@@ -473,8 +569,8 @@ private:
             cr->set_line_width(1.0 / std::max(sc_, 0.01));
             cr->set_source_rgba(1.0, 0.96, 0.65, 0.7);
 
-            for (int y = 1; y < height_; ++y) {
-                for (int x = 1; x < width_; ++x) {
+            for (int y = std::max(1, vy0); y < vy1; ++y) {
+                for (int x = std::max(1, vx0); x < vx1; ++x) {
                     const bool in = shown_[y][x] >= 0.5f;
 
                     if (in != (shown_[y][x - 1] >= 0.5f)) {
