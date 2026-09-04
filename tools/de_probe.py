@@ -668,6 +668,39 @@ def main():
                                        "Layer1Scale=25\nLayer1Pattern=1\nLayer1PatternTwist=0\n"),
                                "base_grad.png", "t15e_zero.tif")))
 
+    # T15f: tiles laid edge to edge meet on a seam, not on an edge: the
+    # sample jumps from the end of one copy to the start of the next. Edge
+    # blend hands the two over to each other rather than fading either into
+    # the base, which would put a line of base where the seam was. Measured
+    # as the worst step between neighbouring pixels along the row.
+    def worst_step_row(values):
+        return max(abs(values[x + 1] - values[x]) for x in range(2, W - 3))
+
+    seamHard = row(render(geo_pp3("t15f_hard.pp3", hramp_path,
+                                  "Layer1Scale=25\nLayer1Pattern=1\nLayer1EdgeFeather=0\n"),
+                          "base_grad.png", "t15f_hard.tif"))
+    seamSoft = row(render(geo_pp3("t15f_soft.pp3", hramp_path,
+                                  "Layer1Scale=25\nLayer1Pattern=1\nLayer1EdgeFeather=100\n"),
+                          "base_grad.png", "t15f_soft.tif"))
+    hardStep = worst_step_row(seamHard)
+    softStep = worst_step_row(seamSoft)
+    good = softStep * 2 < hardStep
+    print(f"{'PASS' if good else 'FAIL'}  {'grid hand-over softens seams':34s} "
+          f"worst step: hard = {hardStep}, soft = {softStep}")
+    ok &= good
+
+    # T15g: and it hands over rather than fading out -- the base must not show
+    # through at the seam, which a frame-edge fade would have caused. Compare
+    # against the layer at full strength: the seam columns stay well above
+    # what the base alone would give.
+    bare15 = row(render(geo_pp3("t15g_bare.pp3", hramp_path, "Layer1Opacity=0\n"),
+                        "base_grad.png", "t15g_bare.tif"))
+    seamCols = [x for x in range(2, W - 2) if seam(x)]
+    lowest = min(seamSoft[x] - bare15[x] for x in seamCols)
+    print(f"{'PASS' if lowest > 20 else 'FAIL'}  {'grid seams keep the layer':34s} "
+          f"least contribution = {lowest}")
+    ok &= lowest > 20
+
     # T15c: a full tile of spacing leaves the base untouched in the gutters.
     got = row(render(geo_pp3("t15c_gutter.pp3", hramp_path,
                              "Layer1Scale=25\nLayer1Pattern=1\nLayer1PatternSpacing=100\n"),

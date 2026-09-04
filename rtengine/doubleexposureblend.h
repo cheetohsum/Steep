@@ -312,20 +312,20 @@ inline void applyLayer(Frame& f, const procparams::DoubleExposureParams::Layer& 
     f.count = std::min(std::max(static_cast<int>(std::lround(layer.patternCount)), 1), 24);
     f.ring = 0.5f * static_cast<float>(layer.patternDiameter) / 100.f * f.baseW * f.invCover / f.scale;
 
-    // A soft edge is what stops a copy ending on a line, but edge-to-edge
-    // tiling has no outer edge to soften: every pixel there belongs to some
-    // cell, so fading the cell boundary would let the base through as a seam
-    // -- exactly the artefact this is meant to remove. So it applies to a
-    // placed frame, to tiles with a gutter between them, and to the radial
-    // copies, and never to a seamless grid.
-    const bool seamlessGrid = (layer.pattern == Pattern::REPEAT || layer.pattern == Pattern::MIRROR)
-                              && f.cell <= 1.f;
+    // Two different things can happen at the edge of a copy, and edge blend
+    // drives both. Where a copy meets the BASE -- a placed frame, a tile with
+    // a gutter round it, a radial copy standing on its own -- the copy fades
+    // out. Where a copy meets ANOTHER COPY -- tiles laid edge to edge or
+    // overlapping, neighbouring radial wedges -- fading would let the base
+    // through as a seam, which is the artefact being removed; there the two
+    // copies hand over to each other instead.
+    const bool touching = (layer.pattern == Pattern::REPEAT || layer.pattern == Pattern::MIRROR)
+                          && f.cell <= 1.f;
     const float blend01 = std::min(std::max(static_cast<float>(layer.edgeFeather), 0.f), 100.f) / 100.f;
-    f.edge = seamlessGrid ? 0.f : blend01 * 0.25f * std::min(f.srcW, f.srcH);
+    f.edge = touching ? 0.f : blend01 * 0.25f * std::min(f.srcW, f.srcH);
 
-    // Radial copies do not have an edge against the base where they meet each
-    // other -- they have a boundary, and the sample jumps across it. Edge
-    // blend widens that into a hand-over: half the wedge at full strength.
+    // How far either hand-over is spread: half a wedge, or half a cell, at
+    // full strength.
     f.handover = 0.5f * blend01;
     f.upright = layer.patternUpright;
     f.twist = static_cast<float>(layer.patternTwist) * degToRad;
@@ -378,6 +378,64 @@ inline void placeCopy(const Frame& f, float copyIndex, float step, float& su, fl
     sv = oc * py - os * px;
 }
 
+// One grid tile: the point's offset within cell (col, row), turned by the
+// twist that cell's ring has accumulated. Shared by the map and by the
+// hand-over, so a tile and its neighbour are placed by the same expression.
+inline void placeTile(const Frame& f, float tx, float ty, float col, float row,
+                      float cw, float ch, float& su, float& sv)
+{
+    float rx = tx - col;
+    float ry = ty - row;
+
+    if (f.pattern == Pattern::MIRROR) {
+        if (oddCell(col)) {
+            rx = -rx;
+        }
+
+        if (oddCell(row)) {
+            ry = -ry;
+        }
+    }
+
+    su = rx * cw;
+    sv = ry * ch;
+
+    if (f.twist != 0.f) {
+        // Counted outward in rings from the middle tile, so the twist grows
+        // as the pattern echoes out rather than running along the rows.
+        // Turned about the tile's own centre, in source units, or an oblong
+        // tile would shear instead of turning.
+        const float ring = std::max(std::fabs(col), std::fabs(row));
+        const float orient = ring * f.twist;
+        const float oc = std::cos(orient);
+        const float os = std::sin(orient);
+        const float px = su;
+        const float py = sv;
+        su = oc * px + os * py;
+        sv = oc * py - os * px;
+    }
+}
+
+// The base point reduced to source-rect units about the layer's centre,
+// before any pattern has decided which copy it belongs to.
+inline void toCentre(const Frame& f, float fx, float fy, float& su, float& sv)
+{
+    float dx = fx - f.baseW * (0.5f + f.offX);
+    float dy = fy - f.baseH * (0.5f + f.offY);
+
+    if (f.sinA != 0.f) {
+        const float qx = f.cosA * dx + f.sinA * dy;
+        const float qy = f.cosA * dy - f.sinA * dx;
+        dx = qx;
+        dy = qy;
+    }
+
+    // Written in this order so an unrotated, unplaced layer reproduces the
+    // original expression bit for bit.
+    su = f.flip * dx * f.invCover / f.scale;
+    sv = dy * f.invCover / f.scale;
+}
+
 // Frame-edge coverage for a point already reduced to source coordinates.
 inline float frameCoverage(const Frame& f, float u, float v, float aa)
 {
@@ -400,20 +458,8 @@ inline float frameCoverage(const Frame& f, float u, float v, float aa)
 inline bool map(const Frame& f, float fx, float fy, float aaStep,
                 float& u, float& v, float& coverage)
 {
-    float dx = fx - f.baseW * (0.5f + f.offX);
-    float dy = fy - f.baseH * (0.5f + f.offY);
-
-    if (f.sinA != 0.f) {
-        const float qx = f.cosA * dx + f.sinA * dy;
-        const float qy = f.cosA * dy - f.sinA * dx;
-        dx = qx;
-        dy = qy;
-    }
-
-    // Written in this order so an unrotated, unplaced layer reproduces the
-    // original expression bit for bit.
-    float su = f.flip * dx * f.invCover / f.scale;
-    float sv = dy * f.invCover / f.scale;
+    float su, sv;
+    toCentre(f, fx, fy, su, sv);
 
     coverage = 1.f;
 
@@ -444,37 +490,7 @@ inline bool map(const Frame& f, float fx, float fy, float aaStep,
             tx += f.stagger;
         }
 
-        const float col = std::floor(tx + 0.5f);
-        float rx = tx - col;
-        float ry = ty - row;
-
-        if (f.pattern == Pattern::MIRROR) {
-            if (oddCell(col)) {
-                rx = -rx;
-            }
-
-            if (oddCell(row)) {
-                ry = -ry;
-            }
-        }
-
-        su = rx * cw;
-        sv = ry * ch;
-
-        if (f.twist != 0.f) {
-            // Counted outward in rings from the middle tile, so the twist
-            // grows as the pattern echoes out rather than running along the
-            // rows. Turned about the tile's own centre, in source units, or
-            // an oblong tile would shear instead of turning.
-            const float ring = std::max(std::fabs(col), std::fabs(row));
-            const float orient = ring * f.twist;
-            const float oc = std::cos(orient);
-            const float os = std::sin(orient);
-            const float px = su;
-            const float py = sv;
-            su = oc * px + os * py;
-            sv = oc * py - os * px;
-        }
+        placeTile(f, tx, ty, std::floor(tx + 0.5f), row, cw, ch, su, sv);
     }
 
     u = su + f.srcX0 + f.srcW * 0.5f;
@@ -494,7 +510,58 @@ inline Placed place(const Frame& f, float fx, float fy, float aaStep)
     Placed out;
     out.present = map(f, fx, fy, aaStep, out.u, out.v, out.coverage);
 
-    if (f.pattern != Pattern::RADIAL || f.handover <= 0.f || f.count < 2) {
+    if (!f.placed || f.handover <= 0.f) {
+        return out;
+    }
+
+    const float aaEdge = std::max(aaStep * f.invCover / f.scale, 1e-6f);
+
+    if ((f.pattern == Pattern::REPEAT || f.pattern == Pattern::MIRROR) && f.cell <= 1.f) {
+        // Tiles that touch hand over to the neighbour across whichever of the
+        // two boundaries is nearer. A pixel near a corner has three
+        // neighbours, but one layer affords one extra sample, and the long
+        // edges are what read as seams.
+        float su, sv;
+        toCentre(f, fx, fy, su, sv);
+
+        const float cw = f.srcW * f.cell;
+        const float ch = f.srcH * f.cell;
+        float tx = su / cw;
+        const float ty = sv / ch;
+        const float row = std::floor(ty + 0.5f);
+
+        if (f.stagger != 0.f && oddCell(row)) {
+            tx += f.stagger;
+        }
+
+        const float col = std::floor(tx + 0.5f);
+        const float rx = tx - col;
+        const float ry = ty - row;
+
+        // Distance to the nearest cell edge, in half-cells.
+        const float dxEdge = 0.5f - std::fabs(rx);
+        const float dyEdge = 0.5f - std::fabs(ry);
+        const bool acrossX = dxEdge <= dyEdge;
+        const float t = (acrossX ? dxEdge : dyEdge) / (0.5f * f.handover);
+
+        if (t >= 1.f) {
+            return out;   // well inside this tile
+        }
+
+        out.mix = 0.5f * (1.f - deblend::smoothstep01(t));
+
+        const float nCol = acrossX ? col + (rx > 0.f ? 1.f : -1.f) : col;
+        const float nRow = acrossX ? row : row + (ry > 0.f ? 1.f : -1.f);
+
+        float nu, nv;
+        placeTile(f, tx, ty, nCol, nRow, cw, ch, nu, nv);
+        out.u2 = nu + f.srcX0 + f.srcW * 0.5f;
+        out.v2 = nv + f.srcY0 + f.srcH * 0.5f;
+        out.coverage2 = frameCoverage(f, out.u2, out.v2, aaEdge);
+        return out;
+    }
+
+    if (f.pattern != Pattern::RADIAL || f.count < 2) {
         return out;
     }
 
@@ -503,18 +570,8 @@ inline Placed place(const Frame& f, float fx, float fy, float aaStep)
     constexpr float twoPi = 6.28318530717958647692f;
     const float step = twoPi / static_cast<float>(f.count);
 
-    float dx = fx - f.baseW * (0.5f + f.offX);
-    float dy = fy - f.baseH * (0.5f + f.offY);
-
-    if (f.sinA != 0.f) {
-        const float qx = f.cosA * dx + f.sinA * dy;
-        const float qy = f.cosA * dy - f.sinA * dx;
-        dx = qx;
-        dy = qy;
-    }
-
-    const float su = f.flip * dx * f.invCover / f.scale;
-    const float sv = dy * f.invCover / f.scale;
+    float su, sv;
+    toCentre(f, fx, fy, su, sv);
     const float k = std::atan2(sv, su) / step;
     const float k0 = std::floor(k + 0.5f);
     const float frac = std::fabs(k - k0);
@@ -534,8 +591,7 @@ inline Placed place(const Frame& f, float fx, float fy, float aaStep)
     out.u2 = nu + f.srcX0 + f.srcW * 0.5f;
     out.v2 = nv + f.srcY0 + f.srcH * 0.5f;
 
-    const float aa = std::max(aaStep * f.invCover / f.scale, 1e-6f);
-    out.coverage2 = frameCoverage(f, out.u2, out.v2, aa);
+    out.coverage2 = frameCoverage(f, out.u2, out.v2, aaEdge);
 
     if (!out.present && out.coverage2 > 0.f) {
         // The neighbour reaches here even though this copy does not.
