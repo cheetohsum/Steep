@@ -179,6 +179,12 @@ DoubleExposure::DoubleExposure() :
     patternCount->set_no_show_all(true);
     patternCount->show();
 
+    patternTwist = Gtk::manage(new Adjuster(M("TP_DOUBLEEXPOSURE_PATTERN_TWIST"), -180.0, 180.0, 1.0, 0.0));
+    patternTwist->setAdjusterListener(this);
+    patternTwist->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_TWIST_TOOLTIP"));
+    patternTwist->set_no_show_all(true);
+    patternTwist->show();
+
     edgeFeather = Gtk::manage(new Adjuster(M("TP_DOUBLEEXPOSURE_EDGEFEATHER"), 0.0, 100.0, 1.0, 35.0));
     edgeFeather->setAdjusterListener(this);
     edgeFeather->set_tooltip_text(M("TP_DOUBLEEXPOSURE_EDGEFEATHER_TOOLTIP"));
@@ -351,6 +357,7 @@ DoubleExposure::DoubleExposure() :
     patternSection->getContentBox()->pack_start(*patternStagger);
     patternSection->getContentBox()->pack_start(*patternCount);
     patternSection->getContentBox()->pack_start(*patternDiameter);
+    patternSection->getContentBox()->pack_start(*patternTwist);
     patternSection->getContentBox()->pack_start(*subjectRow);
     patternSection->getContentBox()->pack_start(*subjectOptionsRow);
     patternSection->getContentBox()->pack_start(*subjectFeather);
@@ -555,6 +562,7 @@ void DoubleExposure::loadSelectedLayer()
     patternStagger->setValue(layers[idx].patternStagger);
     patternCount->setValue(layers[idx].patternCount);
     patternDiameter->setValue(layers[idx].patternDiameter);
+    patternTwist->setValue(layers[idx].patternTwist);
 
     uprightConn.block(true);
     patternUpright->set_active(layers[idx].patternUpright);
@@ -668,6 +676,7 @@ void DoubleExposure::updateSensitivity()
     patternCount->set_visible(haveLayers && radial);
     patternDiameter->set_visible(haveLayers && radial);
     patternUpright->set_visible(haveLayers && radial);
+    patternTwist->set_visible(haveLayers && radial);
 
     if (haveLayers && tiled) {
         patternSection->setExpanded(true);
@@ -846,6 +855,7 @@ void DoubleExposure::setDefaults(const ProcParams* defParams, const ParamsEdited
     patternStagger->setDefault(defLayer.patternStagger);
     patternCount->setDefault(defLayer.patternCount);
     patternDiameter->setDefault(defLayer.patternDiameter);
+    patternTwist->setDefault(defLayer.patternTwist);
     edgeFeather->setDefault(defLayer.edgeFeather);
     subjectFeather->setDefault(defLayer.maskFeather);
     gateLow->setDefault(defLayer.gateLow);
@@ -866,7 +876,8 @@ void DoubleExposure::adjusterChanged(Adjuster* a, double newval)
 {
     const bool isPlacementAdj = a == layerOffsetX || a == layerOffsetY || a == layerScale
                                 || a == layerRotate || a == patternSpacing || a == patternStagger
-                                || a == patternCount || a == patternDiameter || a == edgeFeather;
+                                || a == patternCount || a == patternDiameter || a == patternTwist
+                                || a == edgeFeather;
     const bool isSubjectAdj = a == subjectFeather;
     const bool isLayerAdj = a == layerEv || a == layerOpacity || a == softness
                             || isPlacementAdj || isSubjectAdj;
@@ -898,6 +909,8 @@ void DoubleExposure::adjusterChanged(Adjuster* a, double newval)
                 layers[idx].patternCount = newval;
             } else if (a == patternDiameter) {
                 layers[idx].patternDiameter = newval;
+            } else if (a == patternTwist) {
+                layers[idx].patternTwist = newval;
             } else if (a == edgeFeather) {
                 layers[idx].edgeFeather = newval;
             } else if (a == subjectFeather) {

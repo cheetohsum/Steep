@@ -209,11 +209,13 @@ private:
     Gtk::Scale* patternCountScale_;
     Gtk::Scale* patternDiameterScale_;
     Gtk::CheckButton* patternUpright_;
+    Gtk::Scale* patternTwistScale_;
     Gtk::Scale* edgeFeatherScale_;
     Gtk::Box* gridRow_;    // spacing + stagger, for the two grid patterns
     Gtk::Box* radialRow_;  // count + diameter + selection feather
     Gtk::Widget* ringCountCell_;
     Gtk::Widget* ringDiameterCell_;
+    Gtk::Widget* ringTwistCell_;
     Gtk::Widget* subjectFeatherCell_;
     bool haveSegmentation_ = false;
     Gtk::Expander* adjustExpander_;

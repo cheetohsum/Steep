@@ -3166,6 +3166,8 @@ TP_DOUBLEEXPOSURE_PATTERN_REPEAT;Repeat
 TP_DOUBLEEXPOSURE_PATTERN_SPACING;Tile spacing
 TP_DOUBLEEXPOSURE_PATTERN_SPACING_TOOLTIP;Widens the grid without changing the tile, so the base shows through the gaps between exposures. 0 lays the tiles edge to edge; 100 leaves a gap the width of a whole tile.
 TP_DOUBLEEXPOSURE_PATTERN_STAGGER;Row offset
+TP_DOUBLEEXPOSURE_PATTERN_TWIST;Twist per copy
+TP_DOUBLEEXPOSURE_PATTERN_TWIST_TOOLTIP;Turns each copy a little further than the one before, going round the ring: at 5 the first stands as placed, the second is turned 5 degrees, the third 10, and so on. It adds to whichever way the copies already face, so it works with Keep upright on or off.
 TP_DOUBLEEXPOSURE_PATTERN_UPRIGHT;Keep upright
 TP_DOUBLEEXPOSURE_PATTERN_UPRIGHT_TOOLTIP;Spread the copies round the ring but leave them standing the way the picture does, instead of turning each one to face outward. A rosette becomes a circle of figures all the right way up.
 TP_DOUBLEEXPOSURE_PATTERN_STAGGER_TOOLTIP;Shifts every other row sideways, laying the tiles in a brick course instead of a strict grid. 50 puts each row half a tile out of step with the one above.

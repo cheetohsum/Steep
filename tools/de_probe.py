@@ -752,6 +752,28 @@ def main():
           f"max |diff| = {turned_vs_upright}")
     ok &= turned_vs_upright > 20
 
+    # T18g: the twist adds to whichever way the copies already face, and it
+    # accumulates by position round the ring. With two copies, keeping them
+    # upright and twisting each by half a turn has to reproduce the turned
+    # arrangement exactly - copy 0 gets nothing, copy 1 gets 180 degrees,
+    # which is where facing outward would have put it. Two different routes
+    # through the same expression must land on the same picture.
+    twisted = row(render(geo_pp3("t18g_twist.pp3", hramp_path,
+                                 "Layer1Pattern=3\nLayer1PatternCount=2\nLayer1PatternDiameter=50\n"
+                                 "Layer1PatternUpright=true\nLayer1PatternTwist=180\n"),
+                         "base_grad.png", "t18g_twist.tif"))
+    agree = max(abs(twisted[x] - got[x]) for x in range(2, W - 2))
+    print(f"{'PASS' if agree <= 1 else 'FAIL'}  {'twist 180 upright == turned':34s} max |diff| = {agree}")
+    ok &= agree <= 1
+
+    # T18h: and zero twist leaves the upright arrangement exactly as it was,
+    # so the key can be absent from every file written before it existed.
+    ok &= identical("twist 0 == no twist", got_up,
+                    row(render(geo_pp3("t18h_zero.pp3", hramp_path,
+                                       "Layer1Pattern=3\nLayer1PatternCount=2\nLayer1PatternDiameter=50\n"
+                                       "Layer1PatternUpright=true\nLayer1PatternTwist=0\n"),
+                               "base_grad.png", "t18h_zero.tif")))
+
     # T18b: the count actually counts. One copy stands alone on the +x spoke,
     # so the far side of the frame is left to the base; two copies reach it.
     # (A column would have done for six-versus-two, but only weakly - along

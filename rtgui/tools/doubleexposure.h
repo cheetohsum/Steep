@@ -54,6 +54,7 @@ private:
     Adjuster *patternCount;      // radial only
     Adjuster *patternDiameter;   // radial only
     Gtk::CheckButton *patternUpright;
+    Adjuster *patternTwist;      // radial only
     sigc::connection uprightConn;
     Adjuster *edgeFeather;
     AdvancedSection *adjustSection;

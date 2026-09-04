@@ -262,6 +262,7 @@ struct Frame {
     int count = 6;        // RADIAL: copies around the ring
     float ring = 0.f;     // RADIAL: ring radius, in source-rect units
     bool upright = false; // RADIAL: leave the copies standing as the picture does
+    float twist = 0.f;    // RADIAL: radians added per copy round the ring
     // RADIAL: how much of a half-wedge the hand-over between neighbouring
     // copies is spread over. 0 partitions the plane hard, which shows as a
     // straight line radiating from the centre wherever the two copies differ.
@@ -324,6 +325,7 @@ inline void applyLayer(Frame& f, const procparams::DoubleExposureParams::Layer& 
     // blend widens that into a hand-over: half the wedge at full strength.
     f.handover = 0.5f * blend01;
     f.upright = layer.patternUpright;
+    f.twist = static_cast<float>(layer.patternTwist) * degToRad;
 
     // A plain mirror still covers the base exactly, so it alone does not need
     // the placed path; everything else moves the frame's edges into view.
@@ -344,6 +346,34 @@ struct Placed {
     float mix = 0.f;        // how much of that neighbour to take, 0..0.5
     bool present = false;
 };
+
+// One radial copy: it stands at `ring` along its own spoke, turned by
+// `orient` — the spoke itself when the copies face outward, nothing when they
+// are kept upright, plus the twist accumulated by its place round the ring.
+// Both modes are the same expression, which is why they cannot drift apart.
+inline void placeCopy(const Frame& f, float copyIndex, float step, float& su, float& sv)
+{
+    const float spoke = copyIndex * step;
+    const float cs = std::cos(spoke);
+    const float sn = std::sin(spoke);
+
+    // Numbered 0..count-1 round the ring, so the twist accumulates in a fixed
+    // order instead of jumping where atan2 wraps.
+    float ordinal = std::fmod(copyIndex, static_cast<float>(f.count));
+
+    if (ordinal < 0.f) {
+        ordinal += static_cast<float>(f.count);
+    }
+
+    const float orient = (f.upright ? 0.f : spoke) + ordinal * f.twist;
+    const float oc = std::cos(orient);
+    const float os = std::sin(orient);
+
+    const float px = su - f.ring * cs;
+    const float py = sv - f.ring * sn;
+    su = oc * px + os * py;
+    sv = oc * py - os * px;
+}
 
 // Frame-edge coverage for a point already reduced to source coordinates.
 inline float frameCoverage(const Frame& f, float u, float v, float aa)
@@ -397,22 +427,8 @@ inline bool map(const Frame& f, float fx, float fy, float aaStep,
         constexpr float twoPi = 6.28318530717958647692f;
         const float step = twoPi / static_cast<float>(f.count);
         const float k = std::atan2(sv, su) / step;
-        const float spoke = std::floor(k + 0.5f) * step;
-        const float c = std::cos(spoke);
-        const float sn = std::sin(spoke);
-
-        if (f.upright) {
-            // Spread round the ring but left standing: only the copy's
-            // position turns, not the copy. A row of figures on a circle all
-            // the right way up, rather than a rosette.
-            su -= f.ring * c;
-            sv -= f.ring * sn;
-        } else {
-            const float rx = c * su + sn * sv;
-            const float ry = c * sv - sn * su;
-            su = rx - f.ring;
-            sv = ry;
-        }
+        const float k0 = std::floor(k + 0.5f);
+        placeCopy(f, k0, step, su, sv);
     } else if (f.pattern != Pattern::OFF) {
         const float cw = f.srcW * f.cell;
         const float ch = f.srcH * f.cell;
@@ -494,19 +510,11 @@ inline Placed place(const Frame& f, float fx, float fy, float aaStep)
     // by the time the hand-over band is crossed.
     out.mix = 0.5f * (1.f - deblend::smoothstep01(t));
 
-    const float spoke = (k0 + (k > k0 ? 1.f : -1.f)) * step;
-    const float c = std::cos(spoke);
-    const float sn = std::sin(spoke);
-
-    if (f.upright) {
-        out.u2 = su - f.ring * c + f.srcX0 + f.srcW * 0.5f;
-        out.v2 = sv - f.ring * sn + f.srcY0 + f.srcH * 0.5f;
-    } else {
-        const float rx = c * su + sn * sv;
-        const float ry = c * sv - sn * su;
-        out.u2 = rx - f.ring + f.srcX0 + f.srcW * 0.5f;
-        out.v2 = ry + f.srcY0 + f.srcH * 0.5f;
-    }
+    float nu = su;
+    float nv = sv;
+    placeCopy(f, k0 + (k > k0 ? 1.f : -1.f), step, nu, nv);
+    out.u2 = nu + f.srcX0 + f.srcW * 0.5f;
+    out.v2 = nv + f.srcY0 + f.srcH * 0.5f;
 
     const float aa = std::max(aaStep * f.invCover / f.scale, 1e-6f);
     out.coverage2 = frameCoverage(f, out.u2, out.v2, aa);

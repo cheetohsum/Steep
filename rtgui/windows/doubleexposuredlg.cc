@@ -1402,10 +1402,14 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     Gtk::Widget* subjFeatherCell = makeCell(M("TP_DOUBLEEXPOSURE_SUBJECT_FEATHER"), subjectFeatherScale_, 0.0, 100.0, 1.0, 25.0);
     subjectFeatherScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SUBJECT_FEATHER_TOOLTIP"));
     subjectFeatherScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    Gtk::Widget* twistCell = makeCell(M("TP_DOUBLEEXPOSURE_PATTERN_TWIST"), patternTwistScale_, -180.0, 180.0, 1.0, 0.0);
+    patternTwistScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PATTERN_TWIST_TOOLTIP"));
+    patternTwistScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    ringTwistCell_ = twistCell;
     ringCountCell_ = countCell;
     ringDiameterCell_ = diameterCell;
     subjectFeatherCell_ = subjFeatherCell;
-    radialRow_ = makeRow({countCell, diameterCell, subjFeatherCell});
+    radialRow_ = makeRow({countCell, diameterCell, twistCell, subjFeatherCell});
     patternBox->pack_start(*radialRow_, Gtk::PACK_SHRINK);
 
     flipH_ = Gtk::manage(new Gtk::CheckButton(M("TP_DOUBLEEXPOSURE_FLIPH")));
@@ -2682,6 +2686,7 @@ void DoubleExposureDlg::syncLayerControls()
         patternCountScale_->set_value(layer.patternCount);
         patternDiameterScale_->set_value(layer.patternDiameter);
         patternUpright_->set_active(layer.patternUpright);
+        patternTwistScale_->set_value(layer.patternTwist);
         edgeFeatherScale_->set_sensitive(true);
         edgeFeatherScale_->set_value(layer.edgeFeather);
 
@@ -2741,6 +2746,7 @@ void DoubleExposureDlg::layerControlChanged()
     params_.layers[selectedLayer_].patternCount = patternCountScale_->get_value();
     params_.layers[selectedLayer_].patternDiameter = patternDiameterScale_->get_value();
     params_.layers[selectedLayer_].patternUpright = patternUpright_->get_active();
+    params_.layers[selectedLayer_].patternTwist = patternTwistScale_->get_value();
     params_.layers[selectedLayer_].edgeFeather = edgeFeatherScale_->get_value();
     const int subjectRow = subjectMethod_->get_active_row_number();
     params_.layers[selectedLayer_].maskClass =
@@ -2775,12 +2781,14 @@ void DoubleExposureDlg::showPatternRows(DoubleExposureParams::Pattern pattern, b
     gridRow_->set_visible(grid);
     ringCountCell_->set_visible(radial);
     ringDiameterCell_->set_visible(radial);
+    ringTwistCell_->set_visible(radial);
     subjectFeatherCell_->set_visible(feather);
     radialRow_->set_visible(radial || feather);
     patternSpacingScale_->set_sensitive(grid);
     patternStaggerScale_->set_sensitive(grid);
     patternCountScale_->set_sensitive(radial);
     patternDiameterScale_->set_sensitive(radial);
+    patternTwistScale_->set_sensitive(radial);
     patternUpright_->set_visible(radial);
 }
 
