@@ -134,6 +134,12 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
     static const bool forcePreviewTier = std::getenv("STEEP_DE_PREVIEW_TIER") != nullptr;
     const bool fullRes = fullResPartners && !forcePreviewTier;
 
+    if (settings->verbose) {
+        std::fprintf(stderr, "[doubleExposure] enter %dx%d full=%dx%d skip=%.2f layers=%u fullRes=%d\n",
+                     W, H, fullW, fullH, skip, static_cast<unsigned>(deParams.layers.size()),
+                     fullResPartners ? 1 : 0);
+    }
+
     std::vector<ResolvedLayer> resolved;
     resolved.reserve(deParams.layers.size());
 

@@ -23,6 +23,7 @@
 #include "rtengine/iccstore.h"
 #include "rtengine/imagefloat.h"
 #include "rtengine/aisegmentation.h"
+#include "rtengine/settings.h"
 #include "rtengine/partnerimagestore.h"
 #include "rtengine/partnermaskstore.h"
 
@@ -1926,6 +1927,11 @@ void DoubleExposureDlg::pumpThumbQueue()
 
 #ifdef RT_AI_MASKING
                 if (maskWarm) {
+                    if (rtengine::settings->verbose) {
+                        std::fprintf(stderr, "[dePickerWarm] %s class=%d feather=%.0f\n",
+                                     path.c_str(), maskClass, maskFeather);
+                    }
+
                     rtengine::PartnerMaskStore::getInstance().getMask(
                         path, sceneProfile,
                         static_cast<DoubleExposureParams::MaskClass>(maskClass),

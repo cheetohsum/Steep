@@ -28,6 +28,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <mutex>
 #include <cstring>
 #include <cstdio>
 #include <thread>
@@ -359,6 +360,15 @@ std::vector<array2D<float>> AISegmentationEngine::segment(
     float* const* rRows, float* const* gRows, float* const* bRows,
     int width, int height, bool multiThread) const
 {
+    // One session, shared by every caller. ONNX Runtime's DirectML provider
+    // is not safe for concurrent Run on the same session, and there are now
+    // callers on the thumbnail and picker worker pools as well as the
+    // coordinator, so inference is serialised here rather than at each of
+    // them. Inference is GPU-bound and already internally parallel; the lock
+    // costs queueing, not throughput.
+    static std::mutex inferenceMutex;
+    std::lock_guard<std::mutex> inferenceLock(inferenceMutex);
+
     const int numClasses = static_cast<int>(AISegClass::NUM_CLASSES);
     std::vector<array2D<float>> result(numClasses);
 
