@@ -146,13 +146,20 @@ void SmartMaskBar::refreshAIMenuCoverage()
 
         Glib::ustring label = entry.baseLabel;
         double opacity = 1.0;
+
         if (coverage >= 0.f) {
+            // Dimming is how the classes are ranked; it must not swallow the
+            // figure as well. A class covering a fraction of a percent is
+            // exactly where the number is worth reading, and showing none
+            // there was indistinguishable from never having measured.
             if (coverage < dimBelow) {
                 opacity = 0.45;
-            } else {
-                label += Glib::ustring::compose(" · %1%%",
-                                                static_cast<int>(coverage * 100.f + 0.5f));
             }
+
+            const int percent = static_cast<int>(coverage * 100.f + 0.5f);
+            label += coverage > 0.f && percent == 0
+                     ? Glib::ustring(" · <1%")
+                     : Glib::ustring::compose(" · %1%%", percent);
         }
 
         entry.item->set_opacity(opacity);
