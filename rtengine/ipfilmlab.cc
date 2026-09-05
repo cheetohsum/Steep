@@ -60,22 +60,22 @@ struct FilmLabStock {
 // Stock, processing, output medium, and user grading remain independent below.
 constexpr FilmLabStock STOCKS[] = {
     {"custom",           StockClass::Custom,         100.f, 1.00f, 0.00f, 0.00f, 1.00f,  0.00f,  0.00f,  0.00f,  0.00f,  0.00f, 0.00f, 0.00f, 0.00f},
-    {"heritage_gold",    StockClass::ColorNegative,  200.f, 1.07f, 0.23f, 0.38f, 1.13f,  0.15f, -0.01f,  0.07f,  0.02f, -0.07f, 0.24f, 0.07f, 0.18f},
-    {"porcelain_400",    StockClass::ColorNegative,  400.f, 0.93f, 0.29f, 0.58f, 0.90f,  0.04f,  0.02f,  0.02f,  0.00f, -0.02f, 0.22f, 0.04f, 0.11f},
-    {"vivid_chrome",     StockClass::Reversal,         50.f, 1.30f, 0.07f, 0.11f, 1.40f, -0.01f,  0.01f,  0.00f,  0.02f, -0.01f, 0.10f, 0.01f, 0.30f},
-    {"arctic",           StockClass::Reversal,        100.f, 1.17f, 0.09f, 0.16f, 1.17f, -0.13f, -0.01f, -0.06f,  0.01f,  0.08f, 0.14f, 0.01f, 0.23f},
-    {"sovereign",        StockClass::ColorNegative,  160.f, 1.05f, 0.20f, 0.35f, 1.05f,  0.04f,  0.01f,  0.02f,  0.01f, -0.02f, 0.18f, 0.04f, 0.18f},
-    {"golden_hour",      StockClass::ColorNegative,  200.f, 1.02f, 0.25f, 0.45f, 1.11f,  0.22f,  0.01f,  0.10f,  0.03f, -0.10f, 0.22f, 0.09f, 0.11f},
-    {"twilight_160",     StockClass::MotionNegative, 160.f, 0.94f, 0.24f, 0.64f, 0.88f, -0.07f,  0.00f, -0.03f,  0.01f,  0.06f, 0.20f, 0.07f, 0.09f},
-    {"nostalgia_200",    StockClass::ColorNegative,  200.f, 0.92f, 0.34f, 0.52f, 0.77f,  0.11f,  0.05f,  0.04f,  0.01f, -0.05f, 0.31f, 0.05f, 0.07f},
-    {"desert_chrome",    StockClass::Reversal,         64.f, 1.20f, 0.11f, 0.15f, 1.30f,  0.18f, -0.03f,  0.09f,  0.04f, -0.10f, 0.12f, 0.02f, 0.25f},
-    {"street_800",       StockClass::ColorNegative,  800.f, 1.13f, 0.31f, 0.44f, 0.86f, -0.01f,  0.01f, -0.01f,  0.01f,  0.01f, 0.55f, 0.05f, 0.24f},
-    {"cinematic_500t",   StockClass::MotionNegative, 500.f, 0.92f, 0.26f, 0.65f, 0.85f, -0.11f,  0.00f, -0.06f,  0.00f,  0.08f, 0.30f, 0.25f, 0.08f},
-    {"fade_bloom",       StockClass::Creative,        200.f, 0.79f, 0.50f, 0.62f, 0.68f,  0.08f,  0.06f,  0.04f,  0.00f, -0.03f, 0.39f, 0.21f, 0.03f},
-    {"ember",            StockClass::Creative,        400.f, 1.13f, 0.22f, 0.37f, 1.12f,  0.23f,  0.04f,  0.11f,  0.01f, -0.10f, 0.30f, 0.14f, 0.16f},
-    {"silver_gelatin",   StockClass::Monochrome,      400.f, 1.22f, 0.26f, 0.28f, 0.00f,  0.00f,  0.00f,  0.02f,  0.04f, -0.06f, 0.48f, 0.00f, 0.32f},
-    {"analog_dream",     StockClass::Creative,        200.f, 0.84f, 0.43f, 0.68f, 0.78f,  0.09f,  0.06f,  0.05f, -0.01f, -0.03f, 0.43f, 0.19f, 0.03f},
-    {"cinema_reveal_35", StockClass::MotionNegative, 250.f, 0.96f, 0.24f, 0.63f, 0.94f, -0.02f,  0.01f, -0.01f,  0.01f,  0.02f, 0.24f, 0.12f, 0.13f}
+    {"heritage_gold",    StockClass::ColorNegative,  200.f, 1.13f, 0.22f, 0.36f, 1.21f,  0.17f, -0.02f,  0.08f,  0.02f, -0.08f, 0.24f, 0.07f, 0.19f},
+    {"porcelain_400",    StockClass::ColorNegative,  400.f, 0.92f, 0.29f, 0.67f, 0.97f,  0.11f,  0.08f,  0.05f,  0.00f, -0.05f, 0.22f, 0.04f, 0.10f},
+    {"vivid_chrome",     StockClass::Reversal,         50.f, 1.32f, 0.07f, 0.10f, 1.46f, -0.01f, -0.05f,  0.00f,  0.02f, -0.01f, 0.10f, 0.01f, 0.31f},
+    {"arctic",           StockClass::Reversal,        100.f, 1.19f, 0.09f, 0.15f, 1.22f, -0.16f, -0.02f, -0.08f,  0.01f,  0.10f, 0.14f, 0.01f, 0.24f},
+    {"sovereign",        StockClass::ColorNegative,  160.f, 1.09f, 0.19f, 0.33f, 1.09f,  0.03f,  0.00f,  0.02f,  0.01f, -0.02f, 0.18f, 0.03f, 0.19f},
+    {"golden_hour",      StockClass::ColorNegative,  200.f, 0.98f, 0.26f, 0.48f, 1.05f,  0.29f, -0.08f,  0.12f,  0.04f, -0.12f, 0.22f, 0.09f, 0.10f},
+    {"twilight_160",     StockClass::MotionNegative, 160.f, 0.99f, 0.21f, 0.56f, 1.00f,  0.20f,  0.05f,  0.07f,  0.01f, -0.07f, 0.20f, 0.06f, 0.12f},
+    {"nostalgia_200",    StockClass::ColorNegative,  200.f, 0.92f, 0.33f, 0.50f, 0.70f,  0.07f, -0.16f,  0.03f,  0.07f, -0.04f, 0.34f, 0.05f, 0.06f},
+    {"desert_chrome",    StockClass::Reversal,         64.f, 1.22f, 0.11f, 0.14f, 1.34f,  0.20f, -0.04f,  0.10f,  0.05f, -0.11f, 0.12f, 0.02f, 0.26f},
+    {"street_800",       StockClass::ColorNegative,  800.f, 1.19f, 0.31f, 0.42f, 0.76f, -0.01f,  0.04f, -0.01f,  0.01f,  0.01f, 0.60f, 0.05f, 0.28f},
+    {"cinematic_500t",   StockClass::MotionNegative, 500.f, 0.92f, 0.26f, 0.64f, 0.79f, -0.16f, -0.10f, -0.08f,  0.02f,  0.11f, 0.30f, 0.30f, 0.08f},
+    {"fade_bloom",       StockClass::Creative,        200.f, 0.79f, 0.49f, 0.63f, 0.52f,  0.03f,  0.22f,  0.03f, -0.03f,  0.00f, 0.39f, 0.24f, 0.03f},
+    {"ember",            StockClass::Creative,        400.f, 1.19f, 0.21f, 0.35f, 1.21f,  0.28f,  0.13f,  0.12f,  0.00f, -0.11f, 0.30f, 0.14f, 0.17f},
+    {"silver_gelatin",   StockClass::Monochrome,      400.f, 1.24f, 0.26f, 0.27f, 0.00f,  0.00f,  0.00f,  0.02f,  0.04f, -0.06f, 0.50f, 0.00f, 0.34f},
+    {"analog_dream",     StockClass::Creative,        200.f, 0.84f, 0.48f, 0.72f, 0.66f,  0.13f,  0.02f,  0.06f, -0.01f, -0.05f, 0.43f, 0.42f, 0.02f},
+    {"cinema_reveal_35", StockClass::MotionNegative, 250.f, 0.99f, 0.23f, 0.71f, 0.98f,  0.00f,  0.00f,  0.00f,  0.01f,  0.00f, 0.24f, 0.08f, 0.14f}
 };
 
 inline float smoothStep(float edge0, float edge1, float value)
@@ -986,8 +986,8 @@ inline FilmLabV4Character makeV4Character(const Glib::ustring& preset)
         c.maskEfficiencyMul = 0.97f;
         c.redGammaMul = 1.022f; c.blueGammaMul = 0.982f;
     } else if (preset == "nostalgia_200") {   // aged consumer chemistry
-        c.couplingMul = 0.80f; c.maskEfficiencyMul = 0.87f; c.impurityMul = 1.30f;
-        c.blueToeAdd = 0.04f;
+        c.couplingMul = 0.72f; c.maskEfficiencyMul = 0.80f; c.impurityMul = 1.45f;
+        c.blueToeAdd = 0.05f;
     } else if (preset == "street_800") {      // fast, punchy, blue shadows
         c.couplingMul = 1.10f; c.impurityMul = 1.10f;
         c.blueToeAdd = 0.05f; c.blueGammaMul = 1.012f;
@@ -998,18 +998,20 @@ inline FilmLabV4Character makeV4Character(const Glib::ustring& preset)
     } else if (preset == "desert_chrome") {   // older warm chrome chemistry
         c.couplingMul = 0.88f; c.impurityMul = 1.30f;
         c.redGammaMul = 1.026f; c.blueGammaMul = 0.972f;
-    } else if (preset == "twilight_160") {    // soft tungsten motion stock
-        c.couplingMul = 0.90f; c.maskEfficiencyMul = 1.01f;
+    } else if (preset == "twilight_160") {    // soft warm consumer stock
+        c.couplingMul = 0.88f; c.maskEfficiencyMul = 0.96f; c.impurityMul = 1.12f;
+        c.redGammaMul = 1.014f;
     } else if (preset == "cinematic_500t") {  // the night stock
         c.couplingMul = 1.05f; c.impurityMul = 1.10f;
+        c.blueGammaMul = 1.016f; c.redGammaMul = 0.988f;
     } else if (preset == "fade_bloom") {      // deliberately faded
-        c.couplingMul = 0.80f; c.impurityMul = 1.30f;
+        c.couplingMul = 0.68f; c.impurityMul = 1.50f;
     } else if (preset == "ember") {           // warm creative
         c.couplingMul = 1.05f; c.impurityMul = 1.10f;
         c.redGammaMul = 1.018f;
     } else if (preset == "analog_dream") {    // the dreamiest
-        c.couplingMul = 0.75f; c.impurityMul = 1.40f;
-        c.redToeAdd = 0.03f;
+        c.couplingMul = 0.70f; c.impurityMul = 1.45f;
+        c.redToeAdd = 0.035f;
     }
 
     return c;

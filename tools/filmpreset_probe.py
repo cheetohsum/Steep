@@ -163,9 +163,16 @@ def main():
     print("  %-18s %7s %7s %7s %9s %7s" %
           ("preset", "warm", "yellow", "chroma", "contrast", "split"))
 
+    vectors = {}
+
     for preset in PRESETS:
         shot = sample(render(preset, PP3.format(on="true", preset=preset), chart))
         rows[preset] = measure(base, shot)
+        # Every patch, every channel, as a move away from the untouched
+        # picture, so a preset that does little sits near the origin rather
+        # than near its neighbours by accident.
+        vectors[preset] = [c - d for k in sorted(shot)
+                           for c, d in zip(shot[k], base[k])]
         print("  %-18s %+7.1f %+7.1f %+7.1f %+9.1f %+7.1f"
               % (preset, rows[preset]["warm"], rows[preset]["yellow"],
                  rows[preset]["chroma"], rows[preset]["contrast"], rows[preset]["split"]))
@@ -199,13 +206,17 @@ def main():
         ok = True
 
         # Sixteen presets are only worth having if they render sixteen
-        # different pictures. Two that agree on every axis are one preset.
+        # different pictures. Compared on the whole patch vector rather than on
+        # the five summary axes: a pair can differ on an aggregate and still
+        # look like each other, which is how five stocks once sat within seven
+        # counts while passing a gate that only asked about the summaries.
         for i, a in enumerate(PRESETS):
             for b in PRESETS[i + 1:]:
-                apart = max(abs(rows[a][k] - rows[b][k]) for k in rows[a])
+                apart = max(abs(x - y) for x, y in zip(vectors[a], vectors[b]))
 
-                if apart < 2.0:
-                    print("FAIL  %s and %s render the same picture (%.1f apart)"
+                if apart < 12.0:
+                    print("FAIL  %s and %s render nearly the same picture "
+                          "(%.1f counts apart at their most different patch)"
                           % (a, b, apart))
                     ok = False
 
