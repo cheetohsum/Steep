@@ -81,6 +81,13 @@ protected:
 
     void updateDrawingArea (const int handle, const ::Cairo::RefPtr< Cairo::Context> &cr);
     void interpolate ();
+
+    /** Where a click would put a new node, and whether to show it. Set while
+     *  the pointer is inside the graph but not within grabbing distance of an
+     *  existing node -- the two cases a single "+" cursor could not tell
+     *  apart. Column is in graph pixels. */
+    bool addPreview_ = false;
+    int addPreviewCol_ = 0;
     void findClosestPoint();
     CursorShape motionNotify(CursorShape type, double minDistanceX, double minDistanceY, int num);
     std::vector<double> get_vector (int veclen) override;

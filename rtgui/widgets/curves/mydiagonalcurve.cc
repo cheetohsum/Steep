@@ -639,6 +639,38 @@ void MyDiagonalCurve::updateDrawingArea (const int handle, const ::Cairo::RefPtr
             }
 
         }
+
+        // Where a click would land. The cursor showed "+" both when about to
+        // take hold of an existing node and when about to make a new one,
+        // which are different things to be about to do. Near a node the
+        // cursor is now a move and the node is lit; away from one, this lights
+        // the stretch of curve under the pointer and marks the node it would
+        // gain -- a hollow ring, so it reads as not there yet.
+        if (addPreview_ && grab_point == -1 && edited_point == -1) {
+            const int lastCol = static_cast<int>(graphW) - 1;
+            const int col = rtengine::LIM(addPreviewCol_, 0, lastCol);
+            const double px = graphX + col;
+            const double py = static_cast<double>(getVal(point, col)) * -graphH + graphY;
+
+            cr->save();
+            cr->set_line_width(2.5);
+            cr->set_source_rgba(1.0, 1.0, 1.0, 0.35);
+            const int from = rtengine::LIM(col - 14, 0, lastCol);
+            const int to = rtengine::LIM(col + 14, 0, lastCol);
+            cr->move_to(graphX + from, static_cast<double>(getVal(point, from)) * -graphH + graphY);
+
+            for (int i = from + 1; i <= to; ++i) {
+                cr->line_to(graphX + i, static_cast<double>(getVal(point, i)) * -graphH + graphY);
+            }
+
+            cr->stroke();
+
+            cr->set_line_width(1.5);
+            cr->set_source_rgba(1.0, 1.0, 1.0, 0.9);
+            cr->arc(px, py, RADIUS + 1.5, 0, 2 * rtengine::RT_PI);
+            cr->stroke();
+            cr->restore();
+        }
     }
 }
 
@@ -720,6 +752,7 @@ bool MyDiagonalCurve::handleEvents (GdkEvent* event)
 
                     grab_point = closest_point;
                     lit_point = closest_point;
+                    addPreview_ = false;
                     ugpX = curve.x.at(closest_point);
                     ugpY = curve.y.at(closest_point);
                 } else if (event->button.button == 3) {
@@ -810,6 +843,7 @@ bool MyDiagonalCurve::handleEvents (GdkEvent* event)
             if (grab_point == -1) {
                 new_type = CSArrow;
                 lit_point = -1;
+                addPreview_ = false;
                 pipetteR = pipetteG = pipetteB = -1.f;
                 queue_draw();
             }
@@ -836,22 +870,37 @@ bool MyDiagonalCurve::handleEvents (GdkEvent* event)
                     int previous_lit_point = lit_point;
                     findClosestPoint();
 
+                    const bool previousAddPreview = addPreview_;
+                    const int previousAddCol = addPreviewCol_;
+
                     {
                     int extendedGraphW = graphW + RADIUS + 1;
                     int extendedGraphH = graphH + RADIUS + 1;
+
                     if (cursorX < -RADIUS || cursorX > extendedGraphW || cursorY < -RADIUS || cursorY > extendedGraphH) {
                         // the cursor has left the graph area
                         new_type = CSArrow;
                         lit_point = -1;
+                        addPreview_ = false;
                     } else if (distanceX <= minDistanceX) {
-                        // the cursor is close to an existing point
-                        new_type = CSPlus; // Shown when hovering over node snapping distance (not necessarily over node).
+                        // The cursor is close to an existing point: a press
+                        // takes hold of that one rather than making another,
+                        // and the cursor says so.
+                        new_type = CSMove2D;
                         lit_point = closest_point;
+                        addPreview_ = false;
                     } else {
                         // the cursor is inside the graph but away from existing points
                         new_type = CSPlus;
                         lit_point = -1;
+                        addPreview_ = curve.type != DCT_Parametric;
+                        addPreviewCol_ = cursorX;
                     }
+                    }
+
+                    if (addPreview_ != previousAddPreview
+                            || (addPreview_ && addPreviewCol_ != previousAddCol)) {
+                        queue_draw();
                     }
 
                     if (lit_point != previous_lit_point) {
