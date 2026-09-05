@@ -60,22 +60,22 @@ struct FilmLabStock {
 // Stock, processing, output medium, and user grading remain independent below.
 constexpr FilmLabStock STOCKS[] = {
     {"custom",           StockClass::Custom,         100.f, 1.00f, 0.00f, 0.00f, 1.00f,  0.00f,  0.00f,  0.00f,  0.00f,  0.00f, 0.00f, 0.00f, 0.00f},
-    {"heritage_gold",    StockClass::ColorNegative,  200.f, 1.04f, 0.23f, 0.38f, 1.06f,  0.11f, -0.01f,  0.05f,  0.01f, -0.05f, 0.24f, 0.06f, 0.18f},
-    {"porcelain_400",    StockClass::ColorNegative,  400.f, 0.96f, 0.28f, 0.52f, 0.93f,  0.03f,  0.02f,  0.02f,  0.00f, -0.02f, 0.22f, 0.04f, 0.12f},
-    {"vivid_chrome",     StockClass::Reversal,         50.f, 1.22f, 0.08f, 0.14f, 1.27f, -0.01f,  0.01f,  0.00f,  0.02f, -0.01f, 0.10f, 0.01f, 0.27f},
-    {"arctic",           StockClass::Reversal,        100.f, 1.12f, 0.10f, 0.18f, 1.10f, -0.08f, -0.01f, -0.04f,  0.01f,  0.05f, 0.14f, 0.01f, 0.22f},
-    {"sovereign",        StockClass::ColorNegative,  160.f, 1.03f, 0.20f, 0.35f, 1.02f,  0.04f,  0.01f,  0.02f,  0.01f, -0.02f, 0.18f, 0.04f, 0.17f},
-    {"golden_hour",      StockClass::ColorNegative,  200.f, 1.00f, 0.25f, 0.45f, 1.03f,  0.16f,  0.01f,  0.07f,  0.02f, -0.07f, 0.22f, 0.08f, 0.11f},
-    {"twilight_160",     StockClass::MotionNegative, 160.f, 0.94f, 0.24f, 0.58f, 0.91f, -0.04f,  0.00f, -0.02f,  0.01f,  0.04f, 0.20f, 0.07f, 0.10f},
-    {"nostalgia_200",    StockClass::ColorNegative,  200.f, 0.92f, 0.34f, 0.49f, 0.84f,  0.09f,  0.03f,  0.04f,  0.00f, -0.04f, 0.28f, 0.05f, 0.08f},
-    {"desert_chrome",    StockClass::Reversal,         64.f, 1.15f, 0.12f, 0.17f, 1.17f,  0.10f, -0.02f,  0.05f,  0.01f, -0.05f, 0.12f, 0.02f, 0.24f},
-    {"street_800",       StockClass::ColorNegative,  800.f, 1.07f, 0.30f, 0.44f, 0.91f, -0.01f,  0.01f, -0.01f,  0.01f,  0.01f, 0.48f, 0.05f, 0.20f},
-    {"cinematic_500t",   StockClass::MotionNegative, 500.f, 0.92f, 0.26f, 0.63f, 0.88f, -0.07f,  0.00f, -0.04f,  0.00f,  0.05f, 0.30f, 0.18f, 0.09f},
-    {"fade_bloom",       StockClass::Creative,        200.f, 0.84f, 0.47f, 0.58f, 0.76f,  0.08f,  0.04f,  0.04f,  0.00f, -0.03f, 0.35f, 0.17f, 0.03f},
-    {"ember",            StockClass::Creative,        400.f, 1.08f, 0.22f, 0.39f, 1.05f,  0.17f,  0.03f,  0.08f,  0.01f, -0.07f, 0.30f, 0.13f, 0.16f},
-    {"silver_gelatin",   StockClass::Monochrome,      400.f, 1.14f, 0.25f, 0.31f, 0.00f,  0.00f,  0.00f,  0.02f,  0.04f, -0.06f, 0.42f, 0.00f, 0.28f},
-    {"analog_dream",     StockClass::Creative,        200.f, 0.89f, 0.40f, 0.62f, 0.82f,  0.07f,  0.05f,  0.04f, -0.01f, -0.02f, 0.39f, 0.14f, 0.04f},
-    {"cinema_reveal_35", StockClass::MotionNegative, 250.f, 0.96f, 0.24f, 0.57f, 0.93f, -0.02f,  0.01f, -0.01f,  0.01f,  0.02f, 0.24f, 0.11f, 0.13f}
+    {"heritage_gold",    StockClass::ColorNegative,  200.f, 1.07f, 0.23f, 0.38f, 1.13f,  0.15f, -0.01f,  0.07f,  0.02f, -0.07f, 0.24f, 0.07f, 0.18f},
+    {"porcelain_400",    StockClass::ColorNegative,  400.f, 0.93f, 0.29f, 0.58f, 0.90f,  0.04f,  0.02f,  0.02f,  0.00f, -0.02f, 0.22f, 0.04f, 0.11f},
+    {"vivid_chrome",     StockClass::Reversal,         50.f, 1.30f, 0.07f, 0.11f, 1.40f, -0.01f,  0.01f,  0.00f,  0.02f, -0.01f, 0.10f, 0.01f, 0.30f},
+    {"arctic",           StockClass::Reversal,        100.f, 1.17f, 0.09f, 0.16f, 1.17f, -0.13f, -0.01f, -0.06f,  0.01f,  0.08f, 0.14f, 0.01f, 0.23f},
+    {"sovereign",        StockClass::ColorNegative,  160.f, 1.05f, 0.20f, 0.35f, 1.05f,  0.04f,  0.01f,  0.02f,  0.01f, -0.02f, 0.18f, 0.04f, 0.18f},
+    {"golden_hour",      StockClass::ColorNegative,  200.f, 1.02f, 0.25f, 0.45f, 1.11f,  0.22f,  0.01f,  0.10f,  0.03f, -0.10f, 0.22f, 0.09f, 0.11f},
+    {"twilight_160",     StockClass::MotionNegative, 160.f, 0.94f, 0.24f, 0.64f, 0.88f, -0.07f,  0.00f, -0.03f,  0.01f,  0.06f, 0.20f, 0.07f, 0.09f},
+    {"nostalgia_200",    StockClass::ColorNegative,  200.f, 0.92f, 0.34f, 0.52f, 0.77f,  0.11f,  0.05f,  0.04f,  0.01f, -0.05f, 0.31f, 0.05f, 0.07f},
+    {"desert_chrome",    StockClass::Reversal,         64.f, 1.20f, 0.11f, 0.15f, 1.30f,  0.18f, -0.03f,  0.09f,  0.04f, -0.10f, 0.12f, 0.02f, 0.25f},
+    {"street_800",       StockClass::ColorNegative,  800.f, 1.13f, 0.31f, 0.44f, 0.86f, -0.01f,  0.01f, -0.01f,  0.01f,  0.01f, 0.55f, 0.05f, 0.24f},
+    {"cinematic_500t",   StockClass::MotionNegative, 500.f, 0.92f, 0.26f, 0.65f, 0.85f, -0.11f,  0.00f, -0.06f,  0.00f,  0.08f, 0.30f, 0.25f, 0.08f},
+    {"fade_bloom",       StockClass::Creative,        200.f, 0.79f, 0.50f, 0.62f, 0.68f,  0.08f,  0.06f,  0.04f,  0.00f, -0.03f, 0.39f, 0.21f, 0.03f},
+    {"ember",            StockClass::Creative,        400.f, 1.13f, 0.22f, 0.37f, 1.12f,  0.23f,  0.04f,  0.11f,  0.01f, -0.10f, 0.30f, 0.14f, 0.16f},
+    {"silver_gelatin",   StockClass::Monochrome,      400.f, 1.22f, 0.26f, 0.28f, 0.00f,  0.00f,  0.00f,  0.02f,  0.04f, -0.06f, 0.48f, 0.00f, 0.32f},
+    {"analog_dream",     StockClass::Creative,        200.f, 0.84f, 0.43f, 0.68f, 0.78f,  0.09f,  0.06f,  0.05f, -0.01f, -0.03f, 0.43f, 0.19f, 0.03f},
+    {"cinema_reveal_35", StockClass::MotionNegative, 250.f, 0.96f, 0.24f, 0.63f, 0.94f, -0.02f,  0.01f, -0.01f,  0.01f,  0.02f, 0.24f, 0.12f, 0.13f}
 };
 
 inline float smoothStep(float edge0, float edge1, float value)
@@ -992,12 +992,12 @@ inline FilmLabV4Character makeV4Character(const Glib::ustring& preset)
         c.couplingMul = 1.10f; c.impurityMul = 1.10f;
         c.blueToeAdd = 0.05f; c.blueGammaMul = 1.012f;
     } else if (preset == "vivid_chrome") {    // the loud slide
-        c.couplingMul = 1.15f; c.impurityMul = 0.80f;
+        c.couplingMul = 1.24f; c.impurityMul = 0.74f;
     } else if (preset == "arctic") {          // cool, clinical slide
         c.couplingMul = 0.95f; c.blueGammaMul = 1.015f; c.redGammaMul = 0.990f;
     } else if (preset == "desert_chrome") {   // older warm chrome chemistry
-        c.couplingMul = 0.90f; c.impurityMul = 1.20f;
-        c.redGammaMul = 1.018f; c.blueGammaMul = 0.980f;
+        c.couplingMul = 0.88f; c.impurityMul = 1.30f;
+        c.redGammaMul = 1.026f; c.blueGammaMul = 0.972f;
     } else if (preset == "twilight_160") {    // soft tungsten motion stock
         c.couplingMul = 0.90f; c.maskEfficiencyMul = 1.01f;
     } else if (preset == "cinematic_500t") {  // the night stock
