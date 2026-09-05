@@ -2402,6 +2402,14 @@ void ControlSpotPanel::controlspotChanged()
     // Reset hover so overlay re-triggers for newly selected spot
     sidebarHoverActive_ = false;
 
+    // Both the spot that lost the selection and the one that gained it have
+    // to redraw, so every row is asked again rather than just the new one.
+    for (auto& row : treemodel_->children()) {
+        updateControlSpotCurve(row);
+    }
+
+    queueCanvasRedraw();
+
     // Raise event
     const int selIndex = getSelectedSpot();
 
@@ -4487,8 +4495,18 @@ void ControlSpotPanel::updateControlSpotCurve(const Gtk::TreeModel::Row& row)
         EditSubscriber::mouseOverGeometry.at(base + idx)->setActive(mo);
     };
 
+    // Only the spot being worked on puts handles on the picture. Every visible
+    // spot used to draw its own, dimmed to a quarter -- with a few masks the
+    // photograph disappeared under ellipses and grips, none of which said
+    // which mask it belonged to, and grabbing the one you wanted was luck.
+    // Hovering a row in the mask list still previews that spot's outline
+    // (setSidebarHoverGeometry), which is the way to look at another one.
+    const auto selection_ = treeview_->get_selection();
+    const bool isselected_ = selection_ && selection_->count_selected_rows()
+                             && selection_->get_selected() == row;
+
     // Update shape visibility according to shape type and spot visibility
-    if (isvisible_) {
+    if (isvisible_ && isselected_) {
         setGeomActive(0, true, true); // centerCircle always visible
 
         if (shape_ == 0) { // Ellipse
@@ -4581,12 +4599,13 @@ void ControlSpotPanel::updateCurveOpacity(const Gtk::TreeModel::Row& selectedRow
         return;
     }
 
+    // The unselected spots are no longer drawn at all (updateControlSpotCurve),
+    // so the 25% they used to be dimmed to is moot; the one that is drawn can
+    // have the canvas to itself and be fully legible.
     for (int it_ = 0; it_ < (int) EditSubscriber::visibleGeometry.size(); it_++) {
-        if ((it_ < ((curveid_ - 1) * GEOM_PER_SPOT)) || (it_ > ((curveid_ - 1) * GEOM_PER_SPOT) + GEOM_PER_SPOT - 1)) { // it_ does not belong to selected curve
-            EditSubscriber::visibleGeometry.at(it_)->opacity = 25.;
-        } else {
-            EditSubscriber::visibleGeometry.at(it_)->opacity = 75.;
-        }
+        const bool mine = it_ >= (curveid_ - 1) * GEOM_PER_SPOT
+                          && it_ <= (curveid_ - 1) * GEOM_PER_SPOT + GEOM_PER_SPOT - 1;
+        EditSubscriber::visibleGeometry.at(it_)->opacity = mine ? 100. : 25.;
     }
 }
 

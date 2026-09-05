@@ -104,16 +104,30 @@ HSVEqualizer::HSVEqualizer () : FoldableToolPanel(this, TOOL_NAME, M("TP_HSVEQUA
             int h = channelDots[i]->get_allocated_height();
             double r = std::min(w, h) / 2.0 - 1.0;
             double cx = w / 2.0, cy = h / 2.0;
+            const bool hovered = hoveredChannel == i;
+
+            // A dot under the pointer swells slightly and takes a halo: eight
+            // small circles in a row otherwise give no sign that they are
+            // buttons, nor which one a click would land on.
+            if (hovered) {
+                cr->arc(cx, cy, r, 0, 2 * M_PI);
+                cr->set_source_rgba(1.0, 1.0, 1.0, 0.22);
+                cr->set_line_width(3.0);
+                cr->stroke();
+            }
 
             // Filled color circle
-            cr->arc(cx, cy, r, 0, 2 * M_PI);
+            cr->arc(cx, cy, hovered ? r : r - 0.5, 0, 2 * M_PI);
             cr->set_source_rgb(dR, dG, dB);
             cr->fill_preserve();
 
-            // Border: white if selected, dim otherwise
+            // Border: white if selected, brighter under the pointer, dim otherwise
             if (activeChannel == i) {
                 cr->set_source_rgb(1.0, 1.0, 1.0);
                 cr->set_line_width(1.5);
+            } else if (hovered) {
+                cr->set_source_rgba(1.0, 1.0, 1.0, 0.7);
+                cr->set_line_width(1.0);
             } else {
                 cr->set_source_rgba(1.0, 1.0, 1.0, 0.2);
                 cr->set_line_width(0.5);
@@ -125,6 +139,20 @@ HSVEqualizer::HSVEqualizer () : FoldableToolPanel(this, TOOL_NAME, M("TP_HSVEQUA
         auto* evBox = Gtk::manage(new Gtk::EventBox());
         evBox->add(*channelDots[i]);
         evBox->set_tooltip_text(M(CHANNEL_KEYS[i]));
+        evBox->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
+        evBox->signal_enter_notify_event().connect([this, i](GdkEventCrossing*) -> bool {
+            hoveredChannel = i;
+            channelDots[i]->queue_draw();
+            return false;
+        });
+        evBox->signal_leave_notify_event().connect([this, i](GdkEventCrossing*) -> bool {
+            if (hoveredChannel == i) {
+                hoveredChannel = -1;
+                channelDots[i]->queue_draw();
+            }
+
+            return false;
+        });
         evBox->signal_button_press_event().connect([this, i](GdkEventButton*) -> bool {
             onChannelSelected(i);
             // Redraw all dots to update selection ring

@@ -50,6 +50,8 @@ protected:
     Gtk::Box* channelBar;
     std::array<Gtk::DrawingArea*, 8> channelDots;
     int activeChannel;
+    /// Which dot the pointer is on, or -1.
+    int hoveredChannel = -1;
 
     // Per-channel H/S/L sliders
     Adjuster* hueAdj;

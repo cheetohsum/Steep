@@ -48,7 +48,8 @@ ColorWheelArea::ColorWheelArea()
     , cachedSize_(0)
 {
     set_can_focus(false);
-    add_events(Gdk::EXPOSURE_MASK | Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::POINTER_MOTION_MASK);
+    add_events(Gdk::EXPOSURE_MASK | Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::POINTER_MOTION_MASK
+               | Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
     set_name("ColorWheel");
     get_style_context()->add_class("drawingarea");
 }
@@ -205,6 +206,16 @@ bool ColorWheelArea::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
     cr->set_source(cachedWheel_, 0, 0);
     cr->paint();
 
+    // A bright rim while the pointer is on it. The wheel is a disc of colour
+    // with no chrome of its own, so without this there is nothing to say it
+    // is a control rather than a picture of one.
+    if (hover_ || isDragged_) {
+        cr->set_source_rgba(1.0, 1.0, 1.0, isDragged_ ? 0.55 : 0.35);
+        cr->set_line_width(isDragged_ ? 2.0 : 1.5);
+        cr->arc(cx, cy, radius, 0, 2 * rtengine::RT_PI);
+        cr->stroke();
+    }
+
     // Draw center crosshair
     cr->set_source_rgba(0.5, 0.5, 0.5, 0.6);
     cr->set_line_width(1.0);
@@ -219,9 +230,14 @@ bool ColorWheelArea::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
     double puckX = cx + sat_ * radius * std::cos(hueRad);
     double puckY = cy - sat_ * radius * std::sin(hueRad);
 
+    // The puck grows a little under the pointer -- it is the thing being
+    // dragged, and it is small.
+    const bool puckLive = puckHover_ || isDragged_;
+    const double puckR = puckLive ? 8.0 : 6.0;
+
     // Puck shadow
     cr->set_source_rgba(0, 0, 0, 0.3);
-    cr->arc(puckX + 1, puckY + 1, 7, 0, 2 * rtengine::RT_PI);
+    cr->arc(puckX + 1, puckY + 1, puckR + 1.0, 0, 2 * rtengine::RT_PI);
     cr->fill();
 
     // Puck fill with selected color
@@ -230,14 +246,14 @@ bool ColorWheelArea::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
         float hueNorm = static_cast<float>(hue_ / 360.0);
         rtengine::Color::hsv2rgb01(hueNorm, static_cast<float>(sat_), 0.65f, r, g, b);
         cr->set_source_rgb(r, g, b);
-        cr->arc(puckX, puckY, 6, 0, 2 * rtengine::RT_PI);
+        cr->arc(puckX, puckY, puckR, 0, 2 * rtengine::RT_PI);
         cr->fill();
     }
 
     // Puck white outline
-    cr->set_source_rgb(1, 1, 1);
-    cr->set_line_width(2.0);
-    cr->arc(puckX, puckY, 6, 0, 2 * rtengine::RT_PI);
+    cr->set_source_rgba(1, 1, 1, puckLive ? 1.0 : 0.85);
+    cr->set_line_width(puckLive ? 2.5 : 2.0);
+    cr->arc(puckX, puckY, puckR, 0, 2 * rtengine::RT_PI);
     cr->stroke();
 
     return false;
@@ -321,8 +337,45 @@ bool ColorWheelArea::on_button_release_event(GdkEventButton* event)
     return false;
 }
 
+bool ColorWheelArea::on_enter_notify_event(GdkEventCrossing*)
+{
+    hover_ = true;
+    queue_draw();
+    return false;
+}
+
+bool ColorWheelArea::on_leave_notify_event(GdkEventCrossing*)
+{
+    hover_ = false;
+    puckHover_ = false;
+    queue_draw();
+    return false;
+}
+
 bool ColorWheelArea::on_motion_notify_event(GdkEventMotion* event)
 {
+    // Which of the two hover states applies is decided here rather than in the
+    // draw, which has no pointer to ask about.
+    {
+        double cx = 0.0;
+        double cy = 0.0;
+        double radius = 0.0;
+        wheelGeometry(cx, cy, radius);
+
+        const double hueRad = hue_ * rtengine::RT_PI / 180.0;
+        const double puckX = cx + sat_ * radius * std::cos(hueRad);
+        const double puckY = cy - sat_ * radius * std::sin(hueRad);
+        const double dx = event->x - puckX;
+        const double dy = event->y - puckY;
+        const bool onPuck = dx * dx + dy * dy <= 12.0 * 12.0;
+
+        if (onPuck != puckHover_ || !hover_) {
+            puckHover_ = onPuck;
+            hover_ = true;
+            queue_draw();
+        }
+    }
+
     if (isDragged_) {
         if (delayconn_.connected()) {
             delayconn_.disconnect();

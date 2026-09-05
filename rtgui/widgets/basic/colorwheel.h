@@ -47,6 +47,8 @@ public:
     bool on_button_press_event(GdkEventButton* event) override;
     bool on_button_release_event(GdkEventButton* event) override;
     bool on_motion_notify_event(GdkEventMotion* event) override;
+    bool on_enter_notify_event(GdkEventCrossing* event) override;
+    bool on_leave_notify_event(GdkEventCrossing* event) override;
     Gtk::SizeRequestMode get_request_mode_vfunc() const override;
     void get_preferred_width_vfunc(int& minimum_width, int& natural_width) const override;
     void get_preferred_height_for_width_vfunc(int width, int& minimum_height, int& natural_height) const override;
@@ -63,6 +65,9 @@ private:
     ColorWheel* owner_;
     ColorWheelListener* listener_;
     bool isDragged_;
+    /// The pointer is over the wheel, and over the puck in particular.
+    bool hover_ = false;
+    bool puckHover_ = false;
     bool edited_;
     // A drag drives a virtual point rather than the raw pointer, so holding
     // shift can advance it at a fraction of the pointer's speed. Without the

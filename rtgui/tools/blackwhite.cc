@@ -252,12 +252,17 @@ BlackWhite::BlackWhite (): FoldableToolPanel(this, TOOL_NAME, M("TP_BWMIX_LABEL"
     advancedBox->pack_start(*filterHBox, Gtk::PACK_SHRINK, 0);
     advancedBox->pack_start(*settingHBox, Gtk::PACK_SHRINK, 0);
     advancedBox->pack_start(*autoHBox, Gtk::PACK_SHRINK, 0);
-    // The mixer's rows are unnamed adjusters led by a colour swatch, which
-    // starts hard against the left edge; a named adjuster draws its name 10px
-    // into the slider. Side by side the two kinds disagreed about where a row
-    // begins, and Highlights and Shadows -- the only named ones here -- read
-    // as the indented pair. The swatches move to meet them.
+    // A named adjuster draws its name 10px into its slider; everything else in
+    // this section -- the mixer's colour swatches, and the plain labels on the
+    // filter and setting rows -- starts hard against the left edge. Highlights
+    // and Shadows are the only named rows here, so they were the ones that
+    // looked stepped in. Last time only the swatches were moved to meet them,
+    // which left the two label rows behind and the mismatch still visible;
+    // every row in the block now begins at the same place.
     mixerVBox->set_margin_start(10);
+    filterHBox->set_margin_start(10);
+    settingHBox->set_margin_start(10);
+    autoHBox->set_margin_start(10);
     advancedBox->pack_start(*mixerVBox, Gtk::PACK_SHRINK, 0);
     advancedBox->pack_start(*gammaGreen, Gtk::PACK_SHRINK, 0);
     advancedBox->pack_start(*gammaBlue, Gtk::PACK_SHRINK, 0);

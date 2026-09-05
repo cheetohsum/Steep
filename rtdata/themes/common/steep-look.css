@@ -1337,6 +1337,34 @@ radiobutton.ColorDot:checked > * {
     color: @steep_border_soft;
 }
 
+/* Point Color: the target rows and the little toolbar above them. A coloured
+   bullet in a list is easy to miss as something you can click, and the row is
+   the whole hit area, so the row is what lights up. */
+#PointColorTargetList {
+    background-color: transparent;
+}
+#PointColorTargetList:hover,
+#PointColorTargetList row:hover {
+    background-color: alpha(@steep_wash, 0.10);
+}
+#PointColorTargetList:selected,
+#PointColorTargetList row:selected {
+    background-color: alpha(@steep_accent, 0.28);
+}
+#PointColorToolbar button {
+    border-radius: 4px;
+    background-color: transparent;
+    border: 1px solid transparent;
+}
+#PointColorToolbar button:hover {
+    background-color: alpha(@steep_wash, 0.12);
+    border-color: alpha(@steep_wash, 0.20);
+}
+#PointColorToolbar button:active,
+#PointColorToolbar button:checked {
+    background-color: alpha(@steep_accent, 0.30);
+}
+
 /* Transform's sections. A tool's parameter block carries a 10px left step
    (see #ExpanderBox > box) and no right padding, which puts every row a notch
    in from the panel's own edge and pushes the value a pill draws at its far
