@@ -1128,8 +1128,22 @@ void applySteepAutoEdit(
     // and pinned to the 45 ceiling, which — on top of the curve's own S — is
     // half of why wide-range frames came back too dark.
     const double contrastWanted = 7.0 + 13.0 * neutralFlatness;
+
+    // And a ceiling, for the mirror image of the same mistake. The meter and
+    // the master curve both read flatness, and both answer it with contrast --
+    // the meter through this slider, the curve through the depth of its S. On
+    // a flat frame that one measurement gets spent twice. DSCF0266 metered 35
+    // here and then took a 1.60 midtone slope on top of it, which put it first
+    // of sixty frames for the two combined, against a median well under half
+    // that. So the flatter the frame, the less of the meter's contrast is
+    // kept: the curve is about to take that share itself, and it is the better
+    // placed of the two to spend it, being shaped to the frame's own stations
+    // rather than applied as a global slope.
+    const double curveShare = 0.55 * neutralFlatness;
+    const double meteredCeiling = 45.0 * (1.0 - curveShare);
     tone.contrast = std::max(0, std::min(45, static_cast<int>(std::round(
-        std::max(static_cast<double>(std::max(0, tone.contrast)), contrastWanted)
+        std::max(std::min(static_cast<double>(std::max(0, tone.contrast)), meteredCeiling),
+                 contrastWanted)
         * (1.0 - 0.50 * protection)))));
     tone.autoexp = false;
     tone.curve = {DCT_Linear};
@@ -1746,8 +1760,15 @@ void applySteepAutoEdit(
     const double contrastIntent = (0.62 + 0.28 * flatness) * (1.0 - 0.28 * overtuneRisk);
 
     // Night keeps its shadow detail and mood; faces want a gentle falloff.
+    //
+    // The face share was 0.12, which is not a gentle falloff, it is a nod at
+    // one. Measured over sixty frames, portraits ran a midtone slope of 1.28
+    // to 1.65 -- the same spread as everything else -- so the term was not
+    // doing what its own comment claims. A face is where hard midtones are
+    // least forgivable: skin has almost no texture to lose, so the contrast
+    // lands entirely on the transitions between lit and shadowed cheek.
     const double sceneRestraint =
-        (1.0 - 0.30 * darkness) * (1.0 - 0.12 * portraitness);
+        (1.0 - 0.30 * darkness) * (1.0 - 0.20 * portraitness);
 
     double toeStrength = contrastIntent * (0.72 + 0.22 * shadowRoom) * sceneRestraint;
     toeStrength = std::max(0.0, std::min(0.75, toeStrength));
