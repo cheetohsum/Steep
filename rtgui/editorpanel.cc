@@ -1541,18 +1541,26 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 
             editorCopyFilterMenu_->attach(*Gtk::manage(new Gtk::SeparatorMenuItem()), 0, 1, p, p + 1); p++;
 
-            // Global All / None
-            auto* copyAll = Gtk::manage(new MyImageMenuItem(M("GENERAL_ALL"), "menu-select-all"));
-            preventCloseAction(copyAll, [this]() {
-                for (auto& kv : editorCopyFilters_) kv.second->set_active(true);
-            });
-            editorCopyFilterMenu_->attach(*copyAll, 0, 1, p, p + 1); p++;
+            // One row rather than two. With nothing ticked the only useful
+            // action is "All", and with anything ticked it is "None" -- so
+            // the row simply says which of the two it is about to do, and
+            // half the list stops being permanently inapplicable.
+            auto* copyToggle = Gtk::manage(new MyImageMenuItem(M("GENERAL_ALL"), "menu-select-all"));
+            copyFilterToggle_ = copyToggle;
+            preventCloseAction(copyToggle, [this]() {
+                bool any = false;
 
-            auto* copyNone = Gtk::manage(new MyImageMenuItem(M("GENERAL_NONE"), "menu-select-none"));
-            preventCloseAction(copyNone, [this]() {
-                for (auto& kv : editorCopyFilters_) kv.second->set_active(false);
+                for (auto& kv : editorCopyFilters_) {
+                    any = any || kv.second->get_active();
+                }
+
+                for (auto& kv : editorCopyFilters_) {
+                    kv.second->set_active(!any);
+                }
+
+                refreshCopyFilterToggle();
             });
-            editorCopyFilterMenu_->attach(*copyNone, 0, 1, p, p + 1); p++;
+            editorCopyFilterMenu_->attach(*copyToggle, 0, 1, p, p + 1); p++;
 
             editorCopyFilterMenu_->attach(*Gtk::manage(new Gtk::SeparatorMenuItem()), 0, 1, p, p + 1); p++;
 
@@ -1571,20 +1579,28 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                     item->set_active(true);
                     editorCopyFilters_[kv.first] = item;
                     preventClose(item);
+                    item->signal_toggled().connect(
+                        sigc::mem_fun(*this, &EditorPanel::refreshCopyFilterToggle));
                     children.push_back(item);
                 }
 
-                auto* grpAll = Gtk::manage(new MyImageMenuItem(M("GENERAL_ALL"), "menu-select-all"));
-                preventCloseAction(grpAll, [children]() {
-                    for (auto* c : children) c->set_active(true);
-                });
-                sub->attach(*grpAll, 0, 1, s, s + 1); s++;
+                // The same one row, for this group alone.
+                auto* grpToggle = Gtk::manage(new MyImageMenuItem(M("GENERAL_ALL"), "menu-select-all"));
+                copyFilterGroupToggles_.push_back({grpToggle, children});
+                preventCloseAction(grpToggle, [this, children]() {
+                    bool any = false;
 
-                auto* grpNone = Gtk::manage(new MyImageMenuItem(M("GENERAL_NONE"), "menu-select-none"));
-                preventCloseAction(grpNone, [children]() {
-                    for (auto* c : children) c->set_active(false);
+                    for (auto* c : children) {
+                        any = any || c->get_active();
+                    }
+
+                    for (auto* c : children) {
+                        c->set_active(!any);
+                    }
+
+                    refreshCopyFilterToggle();
                 });
-                sub->attach(*grpNone, 0, 1, s, s + 1); s++;
+                sub->attach(*grpToggle, 0, 1, s, s + 1); s++;
 
                 sub->attach(*Gtk::manage(new Gtk::SeparatorMenuItem()), 0, 1, s, s + 1); s++;
 
@@ -1655,6 +1671,12 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
             editorCopyFilterMenu_->attach(*locallabItem, 0, 1, p, p + 1);
             p++;
 
+            // Ticks can change while the menu is closed (a group submenu,
+            // another session's defaults), so the wording is settled each
+            // time it opens rather than only when something is clicked.
+            editorCopyFilterMenu_->signal_show().connect(
+                sigc::mem_fun(*this, &EditorPanel::refreshCopyFilterToggle));
+            refreshCopyFilterToggle();
             editorCopyFilterMenu_->show_all();
         }
 
@@ -2768,6 +2790,39 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     }
 
 
+}
+
+// Each toggle row says what it would do, not what it is. Recomputed whenever
+// a tick changes, and once as the menu opens, since nothing else tells it.
+void EditorPanel::refreshCopyFilterToggle()
+{
+    const auto setRow = [](Gtk::MenuItem* row, bool any) {
+        if (!row) {
+            return;
+        }
+
+        if (const Gtk::Label* label = dynamic_cast<const MyImageMenuItem*>(row)->getLabel()) {
+            const_cast<Gtk::Label*>(label)->set_text(M(any ? "GENERAL_NONE" : "GENERAL_ALL"));
+        }
+    };
+
+    bool anyAll = false;
+
+    for (auto& kv : editorCopyFilters_) {
+        anyAll = anyAll || kv.second->get_active();
+    }
+
+    setRow(copyFilterToggle_, anyAll);
+
+    for (const auto& group : copyFilterGroupToggles_) {
+        bool any = false;
+
+        for (auto* child : group.second) {
+            any = any || child->get_active();
+        }
+
+        setRow(group.first, any);
+    }
 }
 
 void EditorPanel::updateEditorTitleLabel (const Glib::ustring& text, const Glib::ustring& tooltip)

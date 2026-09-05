@@ -84,7 +84,9 @@ protected:
     Gtk::Entry* valueEntry_ = nullptr;
     Gdk::Rectangle valueTextRect_;
     /// The pointer is over the number, so a click there would type into it.
-    bool valueHover_ = false;   // in Adjuster coordinates; width 0 = none
+    bool valueHover_ = false;
+    /// The pointer is anywhere on the slider, so it is the one being adjusted.
+    bool rowHover_ = false;   // in Adjuster coordinates; width 0 = none
 
     void beginValueEdit();
     void commitValueEdit();

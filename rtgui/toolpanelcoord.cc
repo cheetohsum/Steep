@@ -883,7 +883,9 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
     struct CollapsibleSection { Gtk::Box* header; Gtk::Box* content; Gtk::Label* label; };
     auto mkCollapsible = [](const Glib::ustring& name) -> CollapsibleSection {
         Gtk::Box* headerRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
-        headerRow->set_margin_start(6);
+        // Flush with the panel: the toggle's own 4px of padding is what sets
+        // where the title starts, and the rows below it are set to match.
+        headerRow->set_margin_start(0);
         headerRow->set_margin_end(8);
         headerRow->set_margin_top(4);
         headerRow->set_margin_bottom(0);
@@ -898,6 +900,7 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
         headerRow->pack_start(*toggle, Gtk::PACK_SHRINK);
 
         Gtk::Box* content = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
+        content->set_name("TransformSection");
         content->set_no_show_all(true);
 
         toggle->signal_clicked().connect([content, label, name]() {

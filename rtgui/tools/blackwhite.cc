@@ -252,13 +252,15 @@ BlackWhite::BlackWhite (): FoldableToolPanel(this, TOOL_NAME, M("TP_BWMIX_LABEL"
     advancedBox->pack_start(*filterHBox, Gtk::PACK_SHRINK, 0);
     advancedBox->pack_start(*settingHBox, Gtk::PACK_SHRINK, 0);
     advancedBox->pack_start(*autoHBox, Gtk::PACK_SHRINK, 0);
-    // Highlights and Shadows are sliders like the mixer's, and belong in the
-    // same container as them: packed a level higher they picked up a
-    // different left offset and sat stepped in from the sliders above.
-    // Each still shows and hides on its own.
-    mixerVBox->pack_start(*gammaGreen, Gtk::PACK_SHRINK, 0);
-    mixerVBox->pack_start(*gammaBlue, Gtk::PACK_SHRINK, 0);
+    // The mixer's rows are unnamed adjusters led by a colour swatch, which
+    // starts hard against the left edge; a named adjuster draws its name 10px
+    // into the slider. Side by side the two kinds disagreed about where a row
+    // begins, and Highlights and Shadows -- the only named ones here -- read
+    // as the indented pair. The swatches move to meet them.
+    mixerVBox->set_margin_start(10);
     advancedBox->pack_start(*mixerVBox, Gtk::PACK_SHRINK, 0);
+    advancedBox->pack_start(*gammaGreen, Gtk::PACK_SHRINK, 0);
+    advancedBox->pack_start(*gammaBlue, Gtk::PACK_SHRINK, 0);
     advancedBox->pack_start(*luminanceCEG, Gtk::PACK_SHRINK, 0);
     pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
 

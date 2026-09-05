@@ -1337,6 +1337,22 @@ radiobutton.ColorDot:checked > * {
     color: @steep_border_soft;
 }
 
+/* Transform's sections. A tool's parameter block carries a 10px left step
+   (see #ExpanderBox > box) and no right padding, which puts every row a notch
+   in from the panel's own edge and pushes the value a pill draws at its far
+   right off the side of the page. Here the step comes off and the room goes
+   to the right instead, where the numbers are. */
+#TransformSection #ExpanderBox > box,
+#TransformSection #ExpanderBox > grid,
+#TransformSection #MyExpander.flat-mode #ExpanderBox > box,
+#TransformSection #MyExpander.flat-mode #ExpanderBox > grid {
+    /* 4px is where the section's own title starts: its header row sits at the
+       panel edge and its button carries 4px of padding. Rows and the title
+       they sit under now share a left edge. */
+    padding-left: 4px;
+    padding-right: 8px;
+}
+
 /* AdvancedSection collapsible header */
 #AdvancedSection {
     margin: 0;

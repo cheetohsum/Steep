@@ -335,6 +335,7 @@ Adjuster::Adjuster(
     // and nothing said so. It now lights up under the pointer, which is the
     // usual way a widget admits to being clickable.
     slider->add_events(Gdk::POINTER_MOTION_MASK | Gdk::LEAVE_NOTIFY_MASK);
+    slider->add_events(Gdk::ENTER_NOTIFY_MASK);
     slider->signal_motion_notify_event().connect(
     [this](GdkEventMotion* event) -> bool {
         const bool over = valueTextRect_.get_width() > 0
@@ -342,8 +343,18 @@ Adjuster::Adjuster(
                           && event->x + slider->get_allocation().get_x()
                           <= valueTextRect_.get_x() + valueTextRect_.get_width();
 
-        if (over != valueHover_) {
+        if (over != valueHover_ || !rowHover_) {
             valueHover_ = over;
+            rowHover_ = true;
+            queue_draw();
+        }
+
+        return false;
+    }, false);
+    slider->signal_enter_notify_event().connect(
+    [this](GdkEventCrossing*) -> bool {
+        if (!rowHover_) {
+            rowHover_ = true;
             queue_draw();
         }
 
@@ -351,8 +362,9 @@ Adjuster::Adjuster(
     }, false);
     slider->signal_leave_notify_event().connect(
     [this](GdkEventCrossing*) -> bool {
-        if (valueHover_) {
+        if (valueHover_ || rowHover_) {
             valueHover_ = false;
+            rowHover_ = false;
             queue_draw();
         }
 
@@ -1236,8 +1248,12 @@ bool Adjuster::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
         const int textX = sAlloc.get_x() + 10;
         const int textY = pillY + (pillH - logRect.get_height()) / 2;
 
+        // The name brightens with the pointer anywhere on the row, so it is
+        // clear which slider a wheel or a drag is about to move -- a stack of
+        // them otherwise gives no sign of which one is under the hand.
         const Gdk::RGBA labelInk = themeColor(*this, "steep_text_hi", Gdk::RGBA("#e2e6ed"));
-        cr->set_source_rgba(labelInk.get_red(), labelInk.get_green(), labelInk.get_blue(), 0.95);
+        cr->set_source_rgba(labelInk.get_red(), labelInk.get_green(), labelInk.get_blue(),
+                            rowHover_ ? 1.0 : 0.8);
         cr->move_to(textX, textY);
         layout->show_in_cairo_context(cr);
 

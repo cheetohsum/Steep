@@ -304,6 +304,11 @@ private:
     Gtk::Image* iFilmstripStarPlain_[5] = {};
     int filmstripCurrentRating;
     std::map<std::string, Gtk::CheckMenuItem*> editorCopyFilters_;
+    /// One row that reads "All" or "None" depending on what is ticked below
+    /// it, for the whole list and for each group.
+    Gtk::MenuItem* copyFilterToggle_ = nullptr;
+    std::vector<std::pair<Gtk::MenuItem*, std::vector<Gtk::CheckMenuItem*>>> copyFilterGroupToggles_;
+    void refreshCopyFilterToggle();
     Gtk::Menu* editorCopyFilterMenu_;
     void updateFilmstripStars(int highlightUpTo);
     Gtk::Revealer* colorLabelRevealer_;
