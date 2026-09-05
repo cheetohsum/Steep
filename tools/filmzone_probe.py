@@ -68,6 +68,9 @@ def main():
     # offsets live in C++ and it cannot see them at all. A toe offset lifts
     # black in one channel, so that check has to happen here, on a real render.
     black = {}
+    # How bright each zone actually came out, so the checks below can tell a
+    # measurement from a rounding step.
+    levels = {}
 
     rows = {}
     header = "  %-18s" % "stock" + "".join("%16s" % ("%s r-b/g-b" % z[0]) for z in ZONES)
@@ -85,6 +88,7 @@ def main():
         rows[preset] = {"zones": zones, "swing": max(rb) - min(rb), "flip": flip}
 
         black[preset] = (sum(shot["grey8"]) - sum(base["grey8"])) / 3.0
+        levels[preset] = {name: sum(shot[key]) / 3.0 for name, key in ZONES}
         cells = "".join("%+7.1f /%+7.1f" % zones[name] for name, _ in ZONES)
         print("  %-18s%s%8.1f%7s" % (preset, cells, rows[preset]["swing"],
                                      "yes" if flip else "-"))
@@ -137,14 +141,37 @@ def main():
         # number that is large in the deepest patch and ordinary in every other
         # one is a toe offset showing its seam, and looks like a crushed shadow
         # rather than like film.
+        # Judged on whichever axis the stock is using. Reading a green-signature
+        # stock on red-minus-blue measures its noise and calls it a step.
         for preset, r in rows.items():
-            deep = abs(r["zones"]["deep"][0])
-            rest = max(abs(r["zones"][z][0]) for z in ("shadow", "mid", "upper", "high"))
+            def axis(zone):
+                return max(abs(r["zones"][zone][0]), abs(r["zones"][zone][1]))
+
+            deep = axis("deep")
+            rest = max(axis(z) for z in ("shadow", "mid", "upper", "high"))
 
             if deep > 8.0 and deep > 2.5 * max(rest, 0.5):
                 print("FAIL  %s casts %.1f in the deepest patch against %.1f "
                       "anywhere else: a step, not a gradient" % (preset, deep, rest))
                 ok = False
+
+        # A shadow can carry a cast; it should not become a colour. Judged on
+        # the darkest zone that still renders above 20 counts: below that a
+        # film curve has crushed the patch to single digits, where one count
+        # is a tenth of the level and the percentage is measuring rounding.
+        for preset, r in rows.items():
+            for name, _ in ZONES:
+                if levels[preset][name] < 20.0:
+                    continue
+
+                cast_here = max(abs(r["zones"][name][0]), abs(r["zones"][name][1]))
+
+                if cast_here > 55.0:
+                    print("FAIL  %s casts %.1f%% of level in its %s zone; want 55"
+                          % (preset, cast_here, name))
+                    ok = False
+
+                break
 
         # Black lift, measured rather than modelled, because the toe offsets
         # that produce shadow crossover are exactly the dial that spends it.

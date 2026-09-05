@@ -1816,6 +1816,8 @@ struct FilmPresetsParamsEdited {
     bool rolloff;
     bool shadowHue;
     bool shadowTint;
+    bool midHue;
+    bool midTint;
     bool highlightHue;
     bool highlightTint;
     bool halation;

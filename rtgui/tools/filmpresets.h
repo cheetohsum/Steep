@@ -52,6 +52,8 @@ private:
     Adjuster* rolloff;
     Adjuster* shadowHue;
     Adjuster* shadowTintAdj;
+    Adjuster* midHue;
+    Adjuster* midTintAdj;
     Adjuster* highlightHue;
     Adjuster* highlightTintAdj;
     Adjuster* halationAdj;
@@ -95,6 +97,8 @@ private:
     rtengine::ProcEvent EvFilmPresetsRolloff;
     rtengine::ProcEvent EvFilmPresetsShadowHue;
     rtengine::ProcEvent EvFilmPresetsShadowTint;
+    rtengine::ProcEvent EvFilmPresetsMidHue;
+    rtengine::ProcEvent EvFilmPresetsMidTint;
     rtengine::ProcEvent EvFilmPresetsHighlightHue;
     rtengine::ProcEvent EvFilmPresetsHighlightTint;
     rtengine::ProcEvent EvFilmPresetsHalation;

@@ -97,6 +97,8 @@ FilmPresets::FilmPresets() :
     EvFilmPresetsRolloff      = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_ROLLOFF");
     EvFilmPresetsShadowHue    = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_SHADOWHUE");
     EvFilmPresetsShadowTint   = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_SHADOWTINT");
+    EvFilmPresetsMidHue = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_MIDHUE");
+    EvFilmPresetsMidTint = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_MIDTINT");
     EvFilmPresetsHighlightHue = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_HIGHLIGHTHUE");
     EvFilmPresetsHighlightTint= m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_HIGHLIGHTTINT");
     EvFilmPresetsHalation     = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_HALATION");
@@ -321,14 +323,20 @@ FilmPresets::FilmPresets() :
 
     shadowHue = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_SHADOWHUE"), 0., 360., 1., 220.));
     shadowTintAdj = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_SHADOWTINT"), -100., 100., 1., 0.));
+    midHue = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_MIDHUE"), 0., 360., 1., 35.));
+    midTintAdj = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_MIDTINT"), -100., 100., 1., 0.));
     highlightHue = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_HIGHLIGHTHUE"), 0., 360., 1., 40.));
     highlightTintAdj = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_HIGHLIGHTTINT"), -100., 100., 1., 0.));
     shadowHue->setAdjusterListener(this);
     shadowTintAdj->setAdjusterListener(this);
+    midHue->setAdjusterListener(this);
+    midTintAdj->setAdjusterListener(this);
     highlightHue->setAdjusterListener(this);
     highlightTintAdj->setAdjusterListener(this);
     detailContent_->pack_start(*shadowHue);
     detailContent_->pack_start(*shadowTintAdj);
+    detailContent_->pack_start(*midHue);
+    detailContent_->pack_start(*midTintAdj);
     detailContent_->pack_start(*highlightHue);
     detailContent_->pack_start(*highlightTintAdj);
 
@@ -630,6 +638,8 @@ void FilmPresets::read(const ProcParams* pp, const ParamsEdited* pedited)
         rolloff->setEditedState(pedited->filmPresets.rolloff ? Edited : UnEdited);
         shadowHue->setEditedState(pedited->filmPresets.shadowHue ? Edited : UnEdited);
         shadowTintAdj->setEditedState(pedited->filmPresets.shadowTint ? Edited : UnEdited);
+        midHue->setEditedState(pedited->filmPresets.midHue ? Edited : UnEdited);
+        midTintAdj->setEditedState(pedited->filmPresets.midTint ? Edited : UnEdited);
         highlightHue->setEditedState(pedited->filmPresets.highlightHue ? Edited : UnEdited);
         highlightTintAdj->setEditedState(pedited->filmPresets.highlightTint ? Edited : UnEdited);
         halationAdj->setEditedState(pedited->filmPresets.halation ? Edited : UnEdited);
@@ -681,6 +691,8 @@ void FilmPresets::read(const ProcParams* pp, const ParamsEdited* pedited)
     rolloff->setValue(clampFilmValue(pp->filmPresets.rolloff, -100, 100));
     shadowHue->setValue(wrapFilmHue(pp->filmPresets.shadowHue));
     shadowTintAdj->setValue(clampFilmValue(pp->filmPresets.shadowTint, -100, 100));
+    midHue->setValue(wrapFilmHue(pp->filmPresets.midHue));
+    midTintAdj->setValue(pp->filmPresets.midTint);
     highlightHue->setValue(wrapFilmHue(pp->filmPresets.highlightHue));
     highlightTintAdj->setValue(clampFilmValue(pp->filmPresets.highlightTint, -100, 100));
     halationAdj->setValue(clampFilmValue(pp->filmPresets.halation, -100, 100));
@@ -726,6 +738,8 @@ void FilmPresets::write(ProcParams* pp, ParamsEdited* pedited)
     pp->filmPresets.rolloff = rolloff->getValue();
     pp->filmPresets.shadowHue = shadowHue->getValue();
     pp->filmPresets.shadowTint = shadowTintAdj->getValue();
+    pp->filmPresets.midHue = midHue->getValue();
+    pp->filmPresets.midTint = midTintAdj->getValue();
     pp->filmPresets.highlightHue = highlightHue->getValue();
     pp->filmPresets.highlightTint = highlightTintAdj->getValue();
     pp->filmPresets.halation = halationAdj->getValue();
@@ -759,6 +773,8 @@ void FilmPresets::write(ProcParams* pp, ParamsEdited* pedited)
         pedited->filmPresets.rolloff = rolloff->getEditedState();
         pedited->filmPresets.shadowHue = shadowHue->getEditedState();
         pedited->filmPresets.shadowTint = shadowTintAdj->getEditedState();
+        pedited->filmPresets.midHue = midHue->getEditedState();
+        pedited->filmPresets.midTint = midTintAdj->getEditedState();
         pedited->filmPresets.highlightHue = highlightHue->getEditedState();
         pedited->filmPresets.highlightTint = highlightTintAdj->getEditedState();
         pedited->filmPresets.halation = halationAdj->getEditedState();
@@ -789,6 +805,8 @@ void FilmPresets::setDefaults(const ProcParams* defParams, const ParamsEdited* p
     rolloff->setDefault(defParams->filmPresets.rolloff);
     shadowHue->setDefault(defParams->filmPresets.shadowHue);
     shadowTintAdj->setDefault(defParams->filmPresets.shadowTint);
+    midHue->setDefault(defParams->filmPresets.midHue);
+    midTintAdj->setDefault(defParams->filmPresets.midTint);
     highlightHue->setDefault(defParams->filmPresets.highlightHue);
     highlightTintAdj->setDefault(defParams->filmPresets.highlightTint);
     halationAdj->setDefault(defParams->filmPresets.halation);
@@ -816,6 +834,8 @@ void FilmPresets::setDefaults(const ProcParams* defParams, const ParamsEdited* p
         rolloff->setDefaultEditedState(pedited->filmPresets.rolloff ? Edited : UnEdited);
         shadowHue->setDefaultEditedState(pedited->filmPresets.shadowHue ? Edited : UnEdited);
         shadowTintAdj->setDefaultEditedState(pedited->filmPresets.shadowTint ? Edited : UnEdited);
+        midHue->setDefaultEditedState(pedited->filmPresets.midHue ? Edited : UnEdited);
+        midTintAdj->setDefaultEditedState(pedited->filmPresets.midTint ? Edited : UnEdited);
         highlightHue->setDefaultEditedState(pedited->filmPresets.highlightHue ? Edited : UnEdited);
         highlightTintAdj->setDefaultEditedState(pedited->filmPresets.highlightTint ? Edited : UnEdited);
         halationAdj->setDefaultEditedState(pedited->filmPresets.halation ? Edited : UnEdited);
@@ -842,6 +862,8 @@ void FilmPresets::setDefaults(const ProcParams* defParams, const ParamsEdited* p
         rolloff->setDefaultEditedState(Irrelevant);
         shadowHue->setDefaultEditedState(Irrelevant);
         shadowTintAdj->setDefaultEditedState(Irrelevant);
+        midHue->setDefaultEditedState(Irrelevant);
+        midTintAdj->setDefaultEditedState(Irrelevant);
         highlightHue->setDefaultEditedState(Irrelevant);
         highlightTintAdj->setDefaultEditedState(Irrelevant);
         halationAdj->setDefaultEditedState(Irrelevant);
@@ -892,6 +914,10 @@ void FilmPresets::adjusterChanged(Adjuster* a, double newval)
             listener->panelChanged(EvFilmPresetsShadowHue, a->getTextValue());
         } else if (a == shadowTintAdj) {
             listener->panelChanged(EvFilmPresetsShadowTint, a->getTextValue());
+        } else if (a == midHue) {
+            listener->panelChanged(EvFilmPresetsMidHue, a->getTextValue());
+        } else if (a == midTintAdj) {
+            listener->panelChanged(EvFilmPresetsMidTint, a->getTextValue());
         } else if (a == highlightHue) {
             listener->panelChanged(EvFilmPresetsHighlightHue, a->getTextValue());
         } else if (a == highlightTintAdj) {

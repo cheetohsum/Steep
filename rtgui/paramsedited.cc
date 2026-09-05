@@ -993,6 +993,8 @@ void ParamsEdited::set(bool v)
     filmPresets.rolloff = v;
     filmPresets.shadowHue = v;
     filmPresets.shadowTint = v;
+    filmPresets.midHue = v;
+    filmPresets.midTint = v;
     filmPresets.highlightHue = v;
     filmPresets.highlightTint = v;
     filmPresets.halation = v;
@@ -2789,6 +2791,8 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         filmPresets.rolloff = filmPresets.rolloff && p.filmPresets.rolloff == other.filmPresets.rolloff;
         filmPresets.shadowHue = filmPresets.shadowHue && p.filmPresets.shadowHue == other.filmPresets.shadowHue;
         filmPresets.shadowTint = filmPresets.shadowTint && p.filmPresets.shadowTint == other.filmPresets.shadowTint;
+        filmPresets.midHue = filmPresets.midHue && p.filmPresets.midHue == other.filmPresets.midHue;
+        filmPresets.midTint = filmPresets.midTint && p.filmPresets.midTint == other.filmPresets.midTint;
         filmPresets.highlightHue = filmPresets.highlightHue && p.filmPresets.highlightHue == other.filmPresets.highlightHue;
         filmPresets.highlightTint = filmPresets.highlightTint && p.filmPresets.highlightTint == other.filmPresets.highlightTint;
         filmPresets.halation = filmPresets.halation && p.filmPresets.halation == other.filmPresets.halation;
@@ -9311,6 +9315,14 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
     if (filmPresets.shadowTint) {
         toEdit.filmPresets.shadowTint = mods.filmPresets.shadowTint;
     }
+    if (filmPresets.midHue) {
+        toEdit.filmPresets.midHue = mods.filmPresets.midHue;
+    }
+
+    if (filmPresets.midTint) {
+        toEdit.filmPresets.midTint = mods.filmPresets.midTint;
+    }
+
     if (filmPresets.highlightHue) {
         toEdit.filmPresets.highlightHue = mods.filmPresets.highlightHue;
     }

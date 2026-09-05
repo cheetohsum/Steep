@@ -69,3 +69,8 @@ steep-fileSel.log
 
 # Throwaway GTK4 spike, including a compiled probe binary.
 spike/
+tools/fz_*
+tools/fs_*
+tools/fp_*
+tools/q_*
+tools/chk_*

@@ -3452,6 +3452,8 @@ FilmPresetsParams::FilmPresetsParams() :
     rolloff(0),
     shadowHue(220),
     shadowTint(0),
+    midHue(35),
+    midTint(0),
     highlightHue(40),
     highlightTint(0),
     halation(0),
@@ -3493,6 +3495,8 @@ bool FilmPresetsParams::operator==(const FilmPresetsParams &other) const
         && rolloff == other.rolloff
         && shadowHue == other.shadowHue
         && shadowTint == other.shadowTint
+        && midHue == other.midHue
+        && midTint == other.midTint
         && highlightHue == other.highlightHue
         && highlightTint == other.highlightTint
         && halation == other.halation
@@ -5355,6 +5359,8 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->filmPresets.rolloff, "Film Presets", "Rolloff", filmPresets.rolloff, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.shadowHue, "Film Presets", "ShadowHue", filmPresets.shadowHue, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.shadowTint, "Film Presets", "ShadowTint", filmPresets.shadowTint, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.midHue, "Film Presets", "MidHue", filmPresets.midHue, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.midTint, "Film Presets", "MidTint", filmPresets.midTint, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.highlightHue, "Film Presets", "HighlightHue", filmPresets.highlightHue, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.highlightTint, "Film Presets", "HighlightTint", filmPresets.highlightTint, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.halation, "Film Presets", "Halation", filmPresets.halation, keyFile);
@@ -7634,6 +7640,8 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
             assignFromKeyfile(keyFile, "Film Presets", "Rolloff", filmPresets.rolloff, pedited->filmPresets.rolloff);
             assignFromKeyfile(keyFile, "Film Presets", "ShadowHue", filmPresets.shadowHue, pedited->filmPresets.shadowHue);
             assignFromKeyfile(keyFile, "Film Presets", "ShadowTint", filmPresets.shadowTint, pedited->filmPresets.shadowTint);
+            assignFromKeyfile(keyFile, "Film Presets", "MidHue", filmPresets.midHue, pedited->filmPresets.midHue);
+            assignFromKeyfile(keyFile, "Film Presets", "MidTint", filmPresets.midTint, pedited->filmPresets.midTint);
             assignFromKeyfile(keyFile, "Film Presets", "HighlightHue", filmPresets.highlightHue, pedited->filmPresets.highlightHue);
             assignFromKeyfile(keyFile, "Film Presets", "HighlightTint", filmPresets.highlightTint, pedited->filmPresets.highlightTint);
             assignFromKeyfile(keyFile, "Film Presets", "Halation", filmPresets.halation, pedited->filmPresets.halation);

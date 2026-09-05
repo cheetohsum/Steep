@@ -1026,8 +1026,8 @@ inline FilmLabV4Character makeV4Character(const Glib::ustring& preset)
         // is a crossover rather than a colour balance -- which is exactly why
         // the stock could never quite reach it before.
         c.couplingMul = 1.05f; c.impurityMul = 1.10f;
-        c.redToeAdd = -0.009f; c.redGammaMul = 1.074f;
-        c.blueToeAdd = -0.026f; c.blueGammaMul = 0.922f;
+        c.redToeAdd = -0.004f; c.redGammaMul = 1.030f;
+        c.blueToeAdd = -0.008f; c.blueGammaMul = 0.976f;
     } else if (preset == "fade_bloom") {      // deliberately faded
         // Magenta where the dyes have gone, the green record surviving best
         // at the top.
@@ -1048,6 +1048,88 @@ inline FilmLabV4Character makeV4Character(const Glib::ustring& preset)
     }
 
     return c;
+}
+
+/** What a stock does to a zone, as a grade rather than as chemistry.
+ *
+ *  Kept out of FilmLabStock deliberately: that table describes sensitometry,
+ *  and a hue pushed into the shadows is a decision about how a picture should
+ *  look. Hues are degrees; tints are in the same units as the user's slider
+ *  divided by 520, so 0.19 is about where that slider reaches at 100.
+ */
+struct FilmLabZoneGrade {
+    float shadowHue = 220.f;
+    float shadowTint = 0.f;
+    float midHue = 35.f;
+    float midTint = 0.f;
+    float highlightHue = 40.f;
+    float highlightTint = 0.f;
+};
+
+inline FilmLabZoneGrade makeZoneGrade(const Glib::ustring& preset)
+{
+    FilmLabZoneGrade g;
+
+    if (preset == "heritage_gold") {
+        // What V1 always had: blue-purple shadows under a golden highlight.
+        g.shadowHue = 222.f; g.shadowTint = 0.10f;
+        g.highlightHue = 36.f; g.highlightTint = 0.12f;
+    } else if (preset == "porcelain_400") {
+        // Nothing in the shadows -- a portrait stock that tints them is a
+        // portrait stock with a colour cast on a chin. Warmth in the mids,
+        // where skin actually sits.
+        g.midHue = 25.f; g.midTint = 0.06f;
+        g.highlightHue = 45.f; g.highlightTint = 0.07f;
+    } else if (preset == "vivid_chrome") {
+        g.shadowHue = 240.f; g.shadowTint = 0.06f;
+        g.highlightHue = 35.f; g.highlightTint = 0.05f;
+    } else if (preset == "arctic") {
+        // Cool at both ends, which is the one stock where that is the point.
+        g.shadowHue = 210.f; g.shadowTint = 0.09f;
+        g.highlightHue = 200.f; g.highlightTint = 0.08f;
+    } else if (preset == "golden_hour") {
+        g.shadowHue = 215.f; g.shadowTint = 0.08f;
+        g.highlightHue = 32.f; g.highlightTint = 0.16f;
+    } else if (preset == "twilight_160") {
+        g.shadowHue = 35.f; g.shadowTint = 0.09f;
+        g.highlightHue = 48.f; g.highlightTint = 0.12f;
+    } else if (preset == "nostalgia_200") {
+        g.shadowHue = 140.f; g.shadowTint = 0.09f;
+        g.highlightHue = 50.f; g.highlightTint = 0.06f;
+    } else if (preset == "desert_chrome") {
+        g.shadowHue = 200.f; g.shadowTint = 0.08f;
+        g.midHue = 45.f; g.midTint = 0.08f;
+        g.highlightHue = 40.f; g.highlightTint = 0.14f;
+    } else if (preset == "street_800") {
+        g.shadowHue = 130.f; g.shadowTint = 0.09f;
+        g.highlightHue = 45.f; g.highlightTint = 0.04f;
+    } else if (preset == "cinematic_500t") {
+        g.shadowHue = 190.f; g.shadowTint = 0.05f;
+        g.highlightHue = 30.f; g.highlightTint = 0.12f;
+    } else if (preset == "fade_bloom") {
+        // Expired: magenta where the dyes have gone, yellowed at the top.
+        g.shadowHue = 320.f; g.shadowTint = 0.14f;
+        g.midHue = 300.f; g.midTint = 0.05f;
+        g.highlightHue = 60.f; g.highlightTint = 0.10f;
+    } else if (preset == "ember") {
+        g.shadowHue = 280.f; g.shadowTint = 0.12f;
+        g.highlightHue = 45.f; g.highlightTint = 0.20f;
+    } else if (preset == "silver_gelatin") {
+        // A toned print: cool in the shadows, barely warm in the highlights.
+        g.shadowHue = 220.f; g.shadowTint = 0.06f;
+        g.highlightHue = 40.f; g.highlightTint = 0.03f;
+    } else if (preset == "analog_dream") {
+        g.shadowHue = 205.f; g.shadowTint = 0.09f;
+        g.midHue = 30.f; g.midTint = 0.08f;
+        g.highlightHue = 40.f; g.highlightTint = 0.16f;
+    } else if (preset == "cinema_reveal_35") {
+        g.shadowHue = 220.f; g.shadowTint = 0.04f;
+        g.highlightHue = 42.f; g.highlightTint = 0.05f;
+    }
+
+    // sovereign keeps every default: it is the stock you choose when you want
+    // the photograph rather than a look, and a grade would be a look.
+    return g;
 }
 
 constexpr float V4_SPECTRAL_STRENGTH[3] = {0.55f, 0.37f, 0.55f};
@@ -1709,25 +1791,32 @@ inline void applyV3ZoneTint(
     float& g,
     float& b,
     const float shadowVector[3],
+    const float midVector[3],
     const float highlightVector[3],
     float shadowStrength,
+    float midStrength,
     float highlightStrength)
 {
     const float y = std::max(luminance(r, g, b), 0.f);
     const float shadow = 1.f - smoothStep(0.10f, 0.48f, y);
     const float highlight = smoothStep(0.40f, 0.96f, y);
+    // The middle was always computed here and then dropped, which left a hole
+    // between the two ramps -- a midtone got almost nothing from either. It is
+    // also the only zone in which "warm mid over cool shadow" can be said.
     const float middle = std::max(1.f - shadow - highlight, 0.f);
     const float sum = std::max(shadow + middle + highlight, 1e-5f);
     const float shadowWeight = shadow / sum;
+    const float midWeight = middle / sum;
     const float highlightWeight = highlight / sum;
 
     const float shadowAmount = shadowStrength * shadowWeight;
+    const float midAmount = midStrength * midWeight;
     const float highlightAmount = highlightStrength * highlightWeight;
     const float originalY = std::max(luminance(r, g, b), 1e-6f);
     constexpr float LOG2_TO_LINEAR = 0.69314718f;
-    r *= std::max(1.f + LOG2_TO_LINEAR * (shadowVector[0] * shadowAmount + highlightVector[0] * highlightAmount), 0.25f);
-    g *= std::max(1.f + LOG2_TO_LINEAR * (shadowVector[1] * shadowAmount + highlightVector[1] * highlightAmount), 0.25f);
-    b *= std::max(1.f + LOG2_TO_LINEAR * (shadowVector[2] * shadowAmount + highlightVector[2] * highlightAmount), 0.25f);
+    r *= std::max(1.f + LOG2_TO_LINEAR * (shadowVector[0] * shadowAmount + midVector[0] * midAmount + highlightVector[0] * highlightAmount), 0.25f);
+    g *= std::max(1.f + LOG2_TO_LINEAR * (shadowVector[1] * shadowAmount + midVector[1] * midAmount + highlightVector[1] * highlightAmount), 0.25f);
+    b *= std::max(1.f + LOG2_TO_LINEAR * (shadowVector[2] * shadowAmount + midVector[2] * midAmount + highlightVector[2] * highlightAmount), 0.25f);
     const float adjustedY = std::max(luminance(r, g, b), 1e-6f);
     const float scale = originalY / adjustedY;
     r *= scale;
@@ -2070,13 +2159,33 @@ void filmPresetsV3(
         std::exp2(-tint * 0.28f),
         std::exp2(-warmth + tint * 0.15f)
     };
-    const float shadowStrength = fp.shadowTint / 520.f;
-    const float highlightStrength = fp.highlightTint / 520.f;
-    const bool zoneTintActive = std::fabs(shadowStrength) > 0.0001f || std::fabs(highlightStrength) > 0.0001f;
+    // The stock brings a grade of its own and the sliders trim it, which is
+    // how every other dial in this model already behaves. V4 only: a V3 edit
+    // renders as it always did.
+    const FilmLabZoneGrade zone = stopsIndexed ? makeZoneGrade(fp.preset) : FilmLabZoneGrade();
+    const float shadowStrength = zone.shadowTint + fp.shadowTint / 520.f;
+    const float midStrength = zone.midTint + fp.midTint / 520.f;
+    const float highlightStrength = zone.highlightTint + fp.highlightTint / 520.f;
+
+    // The stock's hue stands until the user moves that slider off the value
+    // the panel opens at; then it is theirs. A stock with no tint of its own
+    // has no opinion about hue either, so the slider wins by default there.
+    const float shadowHueDeg = (zone.shadowTint > 0.f && fp.shadowHue == 220)
+                               ? zone.shadowHue : static_cast<float>(fp.shadowHue);
+    const float highlightHueDeg = (zone.highlightTint > 0.f && fp.highlightHue == 40)
+                                  ? zone.highlightHue : static_cast<float>(fp.highlightHue);
+
+    const bool zoneTintActive = std::fabs(shadowStrength) > 0.0001f
+                                || std::fabs(midStrength) > 0.0001f
+                                || std::fabs(highlightStrength) > 0.0001f;
     float shadowVector[3];
+    float midVector[3];
     float highlightVector[3];
-    hueVector(static_cast<float>(fp.shadowHue), shadowVector[0], shadowVector[1], shadowVector[2]);
-    hueVector(static_cast<float>(fp.highlightHue), highlightVector[0], highlightVector[1], highlightVector[2]);
+    hueVector(shadowHueDeg, shadowVector[0], shadowVector[1], shadowVector[2]);
+    const float midHueDeg = (zone.midTint > 0.f && fp.midHue == 35)
+                            ? zone.midHue : static_cast<float>(fp.midHue);
+    hueVector(midHueDeg, midVector[0], midVector[1], midVector[2]);
+    hueVector(highlightHueDeg, highlightVector[0], highlightVector[1], highlightVector[2]);
     const bool outputMatrixActive = fp.output != "scan";
     const bool saturationActive = std::fabs(saturation - 1.f) > 0.0001f;
 #ifdef _OPENMP
@@ -2204,7 +2313,8 @@ void filmPresetsV3(
                 applyV3ColorBalance(r, g, b, colorBalance);
             }
             if (zoneTintActive) {
-                applyV3ZoneTint(r, g, b, shadowVector, highlightVector, shadowStrength, highlightStrength);
+                applyV3ZoneTint(r, g, b, shadowVector, midVector, highlightVector,
+                                shadowStrength, midStrength, highlightStrength);
             }
             applyV3SkinProtection(sourceR, sourceG, sourceB, r, g, b, skinProtection);
 

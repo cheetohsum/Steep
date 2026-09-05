@@ -1837,6 +1837,8 @@ struct FilmPresetsParams {
     int rolloff;            // -100..100
     int shadowHue;          // 0..360
     int shadowTint;         // -100..100
+    int midHue;             // 0..360, the zone between the other two
+    int midTint;            // -100..100
     int highlightHue;       // 0..360
     int highlightTint;      // -100..100
     int halation;           // -100..100
