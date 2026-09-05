@@ -1958,26 +1958,42 @@ struct GradeRecipe {
     double blending, balance;
     double pastels, saturated, contrast;
     double splitDepth;   // multiplier on the channel-curve separation
+    // How far the red and blue curves part company, per end of the scale.
+    // Positive shadowSplit cools the shadows; positive highlightSplit warms
+    // the highlights. Separating the two ends lets a scene be graded at one
+    // end and left alone at the other, which one depth multiplier cannot say.
+    double shadowSplit;
+    double highlightSplit;
 };
 
+//                shadow hue/sat/lum   midtone hue/sat/lum  highlight hue/sat/lum
+//                blend  balance  pastels sat contrast splitDepth  shSplit hiSplit
 const GradeRecipe kGradeNeutral{
     218.0, 0.085,  1.0,   32.0, 0.030, 1.0,   42.0, 0.075, -1.0,
-    70.0,   0.0,   14.0,  2.0,  2.0,   1.00};
+    70.0,   0.0,   14.0,  2.0,  2.0,   1.00,   1.00, 1.00};
+// A tint on a face in shadow is the one an audience spots at once, so this
+// recipe grades the highlights and very nearly leaves the shadows alone.
 const GradeRecipe kGradePortrait{
-    218.0, 0.050,  1.0,   28.0, 0.045, 1.5,   40.0, 0.055, -0.5,
-    74.0,   8.0,   10.0, -2.0,  1.0,   0.75};
+    216.0, 0.045,  1.0,   28.0, 0.045, 1.5,   40.0, 0.060, -0.5,
+    74.0,   8.0,   10.0, -2.0,  1.0,   0.75,   0.45, 1.05};
+// Late light: the warmest and widest split of the six, amber over real blue.
 const GradeRecipe kGradeLowSun{
-    210.0, 0.090,  1.0,   32.0, 0.055, 1.0,   45.0, 0.110, -1.5,
-    68.0,   5.0,   12.0,  0.0,  1.0,   1.15};
+    204.0, 0.105,  1.0,   34.0, 0.055, 1.0,   52.0, 0.125, -1.5,
+    68.0,   5.0,   12.0,  0.0,  1.0,   1.15,   1.20, 1.45};
+// Open ground: shadows take the colour of what is above them, which outdoors
+// under foliage and sky is green, not blue-violet.
 const GradeRecipe kGradeOpen{
-    216.0, 0.080,  1.0,  150.0, 0.025, 1.0,   43.0, 0.075, -1.0,
-    70.0,  -4.0,   18.0,  3.0,  3.0,   1.00};
+    172.0, 0.075,  1.0,  150.0, 0.025, 1.0,   58.0, 0.070, -1.0,
+    70.0,  -4.0,   18.0,  3.0,  3.0,   1.00,   0.85, 0.95};
+// Night. Teal rather than blue-violet is most of the difference between a
+// frame that reads as night and one that reads as underexposed.
 const GradeRecipe kGradeDark{
-    220.0, 0.120, -1.0,  198.0, 0.040, 0.5,   35.0, 0.080, -1.0,
-    64.0, -12.0,   9.0,  -3.0,  2.0,   1.35};
+    192.0, 0.130, -1.0,  198.0, 0.040, 0.5,   34.0, 0.085, -1.0,
+    64.0, -12.0,   9.0,  -3.0,  2.0,   1.35,   1.55, 0.90};
+// A city after dark: cool cyan shade against sodium light.
 const GradeRecipe kGradeUrban{
-    212.0, 0.090,  1.0,   30.0, 0.020, 1.0,   38.0, 0.065, -1.0,
-    66.0,  -3.0,   11.0,  0.0,  3.0,   1.10};
+    198.0, 0.095,  1.0,   30.0, 0.020, 1.0,   36.0, 0.075, -1.0,
+    66.0,  -3.0,   11.0,  0.0,  3.0,   1.10,   1.25, 1.15};
 
 // A colour wheel mixed as an angle is nonsense: a frame that is half open
 // landscape (green midtones, 150 degrees) and half low sun (orange, 32) would
@@ -2044,6 +2060,8 @@ void applySteepAutoGrade(
     double saturated = 0.0;
     double gradeContrast = 0.0;
     double splitDepth = 0.0;
+    double shadowSplit = 0.0;
+    double highlightSplit = 0.0;
 
     for (const auto& entry : mix) {
         const GradeRecipe& r = *entry.recipe;
@@ -2062,6 +2080,8 @@ void applySteepAutoGrade(
         saturated += r.saturated * w;
         gradeContrast += r.contrast * w;
         splitDepth += r.splitDepth * w;
+        shadowSplit += r.shadowSplit * w;
+        highlightSplit += r.highlightSplit * w;
     }
 
     auto& grade = params.colorGrading;
@@ -2097,28 +2117,35 @@ void applySteepAutoGrade(
     // doing the work did not. They carry the blended depth now, so a night
     // frame separates harder than a portrait does.
     auto& curves = params.rgbCurves;
+    // The two ends of the crossover are separately weighted now. One depth
+    // multiplier could only make the same shape louder, so a night frame and a
+    // sunset frame were given the same curve at different volumes; a night
+    // frame wants its separation low down and a sunset wants it up top.
+    const double shadowEnd = splitDepth * shadowSplit;
+    const double highlightEnd = splitDepth * highlightSplit;
+
     curves.rcurve = {
         DCT_Spline,
         0.0, 0.0,
-        0.18, 0.18 - 0.012 * splitDepth,
+        0.18, 0.18 - 0.012 * shadowEnd,
         0.50, 0.50 + 0.008 * splitDepth,
-        0.82, 0.82 + 0.022 * splitDepth,
+        0.82, 0.82 + 0.022 * highlightEnd,
         1.0, 1.0
     };
     curves.gcurve = {
         DCT_Spline,
         0.0, 0.0,
-        0.18, 0.18 + 0.002 * splitDepth,
+        0.18, 0.18 + 0.002 * shadowEnd,
         0.50, 0.50,
-        0.82, 0.82 - 0.002 * splitDepth,
+        0.82, 0.82 - 0.002 * highlightEnd,
         1.0, 1.0
     };
     curves.bcurve = {
         DCT_Spline,
         0.0, 0.0,
-        0.18, 0.18 + 0.018 * splitDepth,
+        0.18, 0.18 + 0.018 * shadowEnd,
         0.50, 0.50 - 0.002 * splitDepth,
-        0.82, 0.82 - 0.022 * splitDepth,
+        0.82, 0.82 - 0.022 * highlightEnd,
         1.0, 1.0
     };
 
@@ -2139,12 +2166,14 @@ void applySteepAutoGrade(
     fileBrowserPerfLog(
         "[autoGrade] weights neutral=%.2f portrait=%.2f lowSun=%.2f open=%.2f dark=%.2f urban=%.2f\n"
         "[autoGrade]   wheels sh=%.0f/%.3f mid=%.0f/%.3f hi=%.0f/%.3f blend=%.1f bal=%.1f\n"
-        "[autoGrade]   vibrance pastels=%d saturated=%d contrast=%+.1f splitDepth=%.2f\n",
+        "[autoGrade]   vibrance pastels=%d saturated=%d contrast=%+.1f splitDepth=%.2f"
+        " shSplit=%.2f hiSplit=%.2f\n",
         mix[0].weight, mix[1].weight, mix[2].weight, mix[3].weight,
         mix[4].weight, mix[5].weight,
         grade.shadowsHue, grade.shadowsSat, grade.midtonesHue, grade.midtonesSat,
         grade.highlightsHue, grade.highlightsSat, grade.blending, grade.balance,
-        vibrance.pastels, vibrance.saturated, gradeContrast, splitDepth);
+        vibrance.pastels, vibrance.saturated, gradeContrast, splitDepth,
+        shadowSplit, highlightSplit);
 
     params.filmPresets.enabled = false;
 }
