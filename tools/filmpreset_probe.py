@@ -232,4 +232,7 @@ def main():
         sys.exit(0 if ok else 1)
 
 
-main()
+# Importable: filmzone_probe reuses the chart, the render and the sampling
+# rather than keeping a second copy of them that could drift.
+if __name__ == "__main__":
+    main()

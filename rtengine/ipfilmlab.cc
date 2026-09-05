@@ -976,42 +976,75 @@ inline FilmLabV4Character makeV4Character(const Glib::ustring& preset)
 {
     FilmLabV4Character c;
 
-    if (preset == "heritage_gold") {          // consumer gold: friendly, golden
+    if (preset == "heritage_gold") {          // blue-purple shadows under gold
         c.couplingMul = 0.90f; c.maskEfficiencyMul = 0.95f; c.impurityMul = 1.15f;
-        c.redGammaMul = 1.020f; c.blueGammaMul = 0.985f;
+        c.redToeAdd = 0.024f; c.redGammaMul = 1.062f;
+        c.blueToeAdd = -0.011f; c.blueGammaMul = 0.955f;
     } else if (preset == "porcelain_400") {   // portrait: gentle separations
         c.couplingMul = 0.85f; c.maskEfficiencyMul = 1.01f; c.impurityMul = 0.90f;
-        c.redToeAdd = 0.02f;
-    } else if (preset == "golden_hour") {     // warm keeper of low sun
-        c.maskEfficiencyMul = 0.97f;
-        c.redGammaMul = 1.022f; c.blueGammaMul = 0.982f;
-    } else if (preset == "nostalgia_200") {   // aged consumer chemistry
-        c.couplingMul = 0.72f; c.maskEfficiencyMul = 0.80f; c.impurityMul = 1.45f;
-        c.blueToeAdd = 0.05f;
-    } else if (preset == "street_800") {      // fast, punchy, blue shadows
-        c.couplingMul = 1.10f; c.impurityMul = 1.10f;
-        c.blueToeAdd = 0.05f; c.blueGammaMul = 1.012f;
+        c.redToeAdd = 0.011f; c.redGammaMul = 1.022f;
+        c.blueToeAdd = 0.008f; c.blueGammaMul = 0.990f;
     } else if (preset == "vivid_chrome") {    // the loud slide
         c.couplingMul = 1.24f; c.impurityMul = 0.74f;
+        c.redToeAdd = 0.026f; c.redGammaMul = 1.070f;
+        c.blueToeAdd = -0.013f; c.blueGammaMul = 0.976f;
     } else if (preset == "arctic") {          // cool, clinical slide
-        c.couplingMul = 0.95f; c.blueGammaMul = 1.015f; c.redGammaMul = 0.990f;
-    } else if (preset == "desert_chrome") {   // older warm chrome chemistry
-        c.couplingMul = 0.88f; c.impurityMul = 1.30f;
-        c.redGammaMul = 1.026f; c.blueGammaMul = 0.972f;
+        // Cool at both ends, on purpose: the one stock whose point is that it
+        // never warms up anywhere.
+        c.couplingMul = 0.95f;
+        c.redToeAdd = 0.013f; c.redGammaMul = 0.976f;
+        c.blueToeAdd = -0.018f; c.blueGammaMul = 1.034f;
+    } else if (preset == "sovereign") {       // the reference stock
+        // Nearly parallel layers, deliberately. Sovereign is what you choose
+        // when you want the photograph and not a look.
+        c.redToeAdd = 0.000f; c.redGammaMul = 1.000f;
+        c.blueToeAdd = 0.000f; c.blueGammaMul = 1.000f;
+    } else if (preset == "golden_hour") {     // warm keeper of low sun
+        c.maskEfficiencyMul = 0.97f;
+        c.redToeAdd = 0.022f; c.redGammaMul = 1.066f;
+        c.blueToeAdd = -0.009f; c.blueGammaMul = 0.962f;
     } else if (preset == "twilight_160") {    // soft warm consumer stock
         c.couplingMul = 0.88f; c.maskEfficiencyMul = 0.96f; c.impurityMul = 1.12f;
-        c.redGammaMul = 1.014f;
+        c.redToeAdd = 0.021f; c.redGammaMul = 1.054f;
+        c.blueToeAdd = -0.006f; c.blueGammaMul = 0.972f;
+    } else if (preset == "nostalgia_200") {   // aged consumer chemistry
+        // Yellow-green low down, cooler up top: the blue layer starts late and
+        // then climbs hardest, which is what aged chemistry does.
+        c.couplingMul = 0.72f; c.maskEfficiencyMul = 0.80f; c.impurityMul = 1.45f;
+        c.redToeAdd = -0.007f; c.redGammaMul = 0.980f;
+        c.blueToeAdd = 0.012f; c.blueGammaMul = 1.060f;
+    } else if (preset == "desert_chrome") {   // older warm chrome chemistry
+        c.couplingMul = 0.88f; c.impurityMul = 1.30f;
+        c.redToeAdd = 0.025f; c.redGammaMul = 1.068f;
+        c.blueToeAdd = -0.014f; c.blueGammaMul = 0.944f;
+    } else if (preset == "street_800") {      // fast, punchy, blue shadows
+        c.couplingMul = 1.10f; c.impurityMul = 1.10f;
+        c.redToeAdd = 0.009f; c.redGammaMul = 1.000f;
+        c.blueToeAdd = -0.022f; c.blueGammaMul = 1.038f;
     } else if (preset == "cinematic_500t") {  // the night stock
+        // Teal shadows under warm highlights is the entire signature, and it
+        // is a crossover rather than a colour balance -- which is exactly why
+        // the stock could never quite reach it before.
         c.couplingMul = 1.05f; c.impurityMul = 1.10f;
-        c.blueGammaMul = 1.016f; c.redGammaMul = 0.988f;
+        c.redToeAdd = -0.009f; c.redGammaMul = 1.074f;
+        c.blueToeAdd = -0.026f; c.blueGammaMul = 0.922f;
     } else if (preset == "fade_bloom") {      // deliberately faded
+        // Magenta where the dyes have gone, the green record surviving best
+        // at the top.
         c.couplingMul = 0.68f; c.impurityMul = 1.50f;
-    } else if (preset == "ember") {           // warm creative
+        c.redToeAdd = -0.018f; c.redGammaMul = 0.956f;
+        c.blueToeAdd = -0.017f; c.blueGammaMul = 0.962f;
+    } else if (preset == "ember") {           // warm creative, cross-processed
         c.couplingMul = 1.05f; c.impurityMul = 1.10f;
-        c.redGammaMul = 1.018f;
+        c.redToeAdd = 0.027f; c.redGammaMul = 1.075f;
+        c.blueToeAdd = -0.025f; c.blueGammaMul = 0.960f;
     } else if (preset == "analog_dream") {    // the dreamiest
         c.couplingMul = 0.70f; c.impurityMul = 1.45f;
-        c.redToeAdd = 0.035f;
+        c.redToeAdd = 0.017f; c.redGammaMul = 1.045f;
+        c.blueToeAdd = -0.013f; c.blueGammaMul = 0.974f;
+    } else if (preset == "cinema_reveal_35") { // restrained modern print
+        c.redToeAdd = 0.002f; c.redGammaMul = 1.018f;
+        c.blueToeAdd = -0.001f; c.blueGammaMul = 0.990f;
     }
 
     return c;
