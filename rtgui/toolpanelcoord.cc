@@ -2988,7 +2988,7 @@ void ToolPanelCoordinator::refreshMaskModeGlobals(const ProcParams* params)
     maskGlobalsValid_ = true;
 }
 
-void ToolPanelCoordinator::turnOffMaskOverlay(bool /*forceRedraw*/)
+void ToolPanelCoordinator::turnOffMaskOverlay(bool force)
 {
     if (!ipc || !locallab) return;
 
@@ -3001,11 +3001,16 @@ void ToolPanelCoordinator::turnOffMaskOverlay(bool /*forceRedraw*/)
 
     locallab->setHoverMaskOverlay(false);
 
-    if (!wasApplied) {
+    if (!wasApplied && !force) {
         // The overlay never went on: the pointer only crossed the list on its
         // way somewhere else. Reprocessing here spent a full pipeline pass to
         // remove something that was never drawn, once per trip, which is a
         // large part of why the mask pane felt slow to answer every edit.
+        //
+        // The caller can insist anyway. This bookkeeping tracks what the GUI
+        // believes it last sent, and after an image change that belief is
+        // about a different photograph, so trusting it would leave the engine
+        // showing a mask preview nobody can turn off.
         return;
     }
 
@@ -4493,7 +4498,31 @@ void ToolPanelCoordinator::initImage(rtengine::StagedImageProcessor* ipc_, bool 
     // black-and-white onto it.
     maskGlobalsValid_ = false;
 
+    // And neither must its mask preview. That preview is session state rather
+    // than a parameter -- flags on the coordinator, plus the hover bookkeeping
+    // here -- and while any of it is set, dcrop renders the mask instead of
+    // the photograph: black and white, colour toning, the RGB curves, the
+    // channel mixer, the HSV equaliser, film simulation, vibrance and the Lab
+    // curves all switched off, and iplocallab writing a = 0 over the frame.
+    // Left standing across an image change, the next photo opened grey with
+    // every colour tool disabled, which is neither a parameter anyone could
+    // see in a .pp3 nor anything a relaunch would reproduce.
+    hoverMaskApplied_ = false;
+    pendingHoverState_ = false;
+    hoverPreviewSpot_ = -1;
+    hoverMaskDebounce_.disconnect();
+    hoverMaskWatchdog_.disconnect();
+
+    if (locallab) {
+        locallab->setHoverMaskOverlay(false);
+    }
+
     if (ipc) {
+        // Start the new image's processor with no mask preview, whatever the
+        // panel still remembers about the last one.
+        ipc->setLocallabMaskVisibility(false, false,
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+
         const rtengine::FramesMetaData* pMetaData = ipc->getInitialImage()->getMetaData();
         metadata->setImageData(pMetaData);
 

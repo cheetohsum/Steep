@@ -369,7 +369,10 @@ private:
     int hoverRestoreSpot_ = -1;
     int hoverMissCount_ = 0;  // consecutive watchdog misses before turning off
     void applyHoverMask();
-    void turnOffMaskOverlay(bool forceRedraw = false);
+    /// @param force clear the engine's mask preview even when this panel
+    ///        believes it never turned one on -- true after an image change,
+    ///        when that belief describes the previous photograph.
+    void turnOffMaskOverlay(bool force = false);
     aimaskthumb::Tile editedImageMaskThumb(int classIndex, float threshold,
                                            int maxW, int maxH);
 
