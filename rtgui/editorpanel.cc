@@ -2517,6 +2517,16 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         leftAnimFraction_ = 0.0;
     }
 
+    // Whatever inset the floating left sidebar needs, take it from the sidebar
+    // itself rather than from a copy of options.dirBrowserWidth made here: the
+    // width can change from the file browser afterwards, and a stale copy puts
+    // the filmstrip -- most visibly the scrollbar along its bottom edge --
+    // underneath the sidebar.
+    leftbox->signal_size_allocate().connect(
+    [this](Gtk::Allocation& allocation) {
+        applyLeftSidebarInset(leftbox->get_visible() ? allocation.get_width() : 0);
+    });
+
     // Sidebars float at full height over the entire editor (filmstrip + image)
     hpanedr->add_overlay(*leftbox);
     hpanedr->add_overlay(*vboxright);
@@ -2794,6 +2804,36 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 
 // Each toggle row says what it would do, not what it is. Recomputed whenever
 // a tick changes, and once as the menu opens, since nothing else tells it.
+// Everything that has to stand clear of the floating left sidebar, kept at one
+// width. Called both when the sidebar is toggled and whenever it is allocated,
+// so a resize from the file browser reaches the filmstrip too.
+void EditorPanel::applyLeftSidebarInset(int width)
+{
+    const int inset = std::max(0, width);
+
+    if (inset == leftSidebarInset_) {
+        return;
+    }
+
+    leftSidebarInset_ = inset;
+
+    if (catalogPane) {
+        catalogPane->set_margin_start(inset);
+    }
+
+    if (albumViewBox_) {
+        albumViewBox_->set_margin_start(inset);
+    }
+
+    if (editorToolbarTop_) {
+        editorToolbarTop_->set_margin_start(inset);
+    }
+
+    if (beforeAfterBox) {
+        beforeAfterBox->set_margin_start(inset);
+    }
+}
+
 void EditorPanel::refreshCopyFilterToggle()
 {
     const auto setRow = [](Gtk::MenuItem* row, bool any) {
@@ -6132,20 +6172,11 @@ void EditorPanel::hideHistoryActivated ()
         }, 16);
     }
 
-    // Update filmstrip + toolbar margins so sidebars don't overlap content
-    int leftMargin = show ? options.dirBrowserWidth : 0;
-    if (catalogPane) {
-        catalogPane->set_margin_start(leftMargin);
-    }
-    if (albumViewBox_) {
-        albumViewBox_->set_margin_start(leftMargin);
-    }
-    if (editorToolbarTop_) {
-        editorToolbarTop_->set_margin_start(leftMargin);
-    }
-    if (beforeAfterBox) {
-        beforeAfterBox->set_margin_start(leftMargin);
-    }
+    // Update filmstrip + toolbar margins so sidebars don't overlap content.
+    // The sidebar's own allocation refines this as soon as it has one; this
+    // call is what covers the moment before that, when it is being hidden and
+    // will not be allocated again.
+    applyLeftSidebarInset(show ? options.dirBrowserWidth : 0);
 
     tbShowHideSidePanels_managestate();
 }

@@ -245,6 +245,9 @@ private:
     bool previewUpdatePending_ = false;
     sigc::connection previewSettle_;
     double pendingScrollRestore_ = -1.0; // saved grid scroll still to apply, <0 = none
+    /// Open on the photograph being edited rather than on the saved position,
+    /// while the list being built still might contain it.
+    bool pendingScrollToBase_ = false;
     double lastRestoredScroll_ = -1.0;   // what we last set, to detect the user scrolling
 
     // Everything updatePreview needs that depends only on the base (not on

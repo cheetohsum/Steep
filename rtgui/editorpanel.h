@@ -289,6 +289,10 @@ public:
     void showHistoryDialog();
 
     Gtk::Box* catalogPane;
+    /// Width the floating left sidebar currently occupies, and the start
+    /// margin every widget that must clear it is held at.
+    int leftSidebarInset_ = -1;
+    void applyLeftSidebarInset(int width);
 
     // MCP server access
     rtengine::StagedImageProcessor* getIpc() const { return ipc; }

@@ -664,9 +664,12 @@ void ThumbBrowserBase::resizeThumbnailArea (int w, int h)
 
 void ThumbBrowserBase::internalAreaResized (Gtk::Allocation& req)
 {
+    // Unconditionally: the scrollbars have to be told about a resize even when
+    // no thumbnails are arranged yet, which is the state a folder open passes
+    // through. configScrollBars decides for itself what that means.
+    configScrollBars ();
 
     if (inW > 0 && inH > 0) {
-        configScrollBars ();
 
         if (layoutPaused_()) {
             // A panel slide is re-allocating us on every animation frame. Each
@@ -699,7 +702,17 @@ void ThumbBrowserBase::configScrollBars ()
     // HOMBRE:DELETE ME?
     GThreadLock tLock; // Acquire the GUI
 
-    if (inW > 0 && inH > 0) {
+    if (inW <= 0 || inH <= 0) {
+        // Nothing is arranged yet -- a folder is opening, or this browser has
+        // just been emptied. There is nothing to scroll, and leaving the bars
+        // as the previous folder left them shows a scrollbar sized against a
+        // content width that no longer exists.
+        hscroll.hide();
+        vscroll.hide();
+        return;
+    }
+
+    {
         int ih = internal.get_height();
         if (arrangement == TB_Horizontal) {
             auto ha = hscroll.get_adjustment();

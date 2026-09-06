@@ -366,6 +366,24 @@ public:
 
     // Called once per decoded thumbnail, so it must not be O(items) and must
     // not repaint the whole grid — only the one cell changed.
+    /// Top of the row holding @p path, in grid pixels, or -1 when the path is
+    /// not in the list being shown.
+    int rowTopOf(const Glib::ustring& path) const
+    {
+        const auto it = indexByPath_.find(path);
+
+        if (it == indexByPath_.end() || cols_ <= 0) {
+            return -1;
+        }
+
+        return static_cast<int>(it->second / cols_) * cellH();
+    }
+
+    int rowHeight() const
+    {
+        return cellH();
+    }
+
     void setItemPixbuf(const Glib::ustring& path, const Glib::RefPtr<Gdk::Pixbuf>& pixbuf)
     {
         const auto found = indexByPath_.find(path.raw());
@@ -1164,6 +1182,11 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
         }
     });
     globalBtn_->signal_toggled().connect([this]() {
+        // A rebuilt list is a fresh chance to land on the base image: it may
+        // be absent from the selects index and present in the folder, or the
+        // other way about.
+        pendingScrollToBase_ = true;
+
         if (globalBtn_->get_active()) {
             scopeChanged(true);
         } else if (!folderBtn_->get_active()) {
@@ -1561,6 +1584,9 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
 
     // Resume where the picker was last closed: scope and grid scroll. The
     // global button's handler runs the scan for that scope.
+    // Where the picker opens: on the photograph being edited if the list
+    // contains it, otherwise back where it was last closed.
+    pendingScrollToBase_ = true;
     pendingScrollRestore_ = savedOpts.dePickerScroll > 0.0 ? savedOpts.dePickerScroll : -1.0;
 
     if (savedOpts.dePickerGlobalScope) {
@@ -1583,11 +1609,52 @@ void DoubleExposureDlg::savePickerState()
 
 void DoubleExposureDlg::restoreScroll(bool final)
 {
-    if (pendingScrollRestore_ < 0.0 || !gridScroll_) {
+    if ((pendingScrollRestore_ < 0.0 && !pendingScrollToBase_) || !gridScroll_) {
         return;
     }
 
     const auto adj = gridScroll_->get_vadjustment();
+
+    // The base image takes precedence over the remembered position while the
+    // list still might contain it. Results stream in, so a lookup that fails
+    // now can succeed on the next pass; only the final pass gives up on it.
+    if (pendingScrollToBase_ && grid_) {
+        const int rowTop = grid_->rowTopOf(baseImagePath_);
+
+        if (rowTop >= 0) {
+            // A third from the top rather than flush against it: the frames
+            // shot just before this one are as likely to be wanted as the
+            // ones after, and they are the rows above.
+            const double lead = adj->get_page_size() / 3.0;
+            const double target = std::max(0.0, rowTop - lead);
+            const double limit = std::max(0.0, adj->get_upper() - adj->get_page_size());
+            const double landed = std::min(target, limit);
+
+            adj->set_value(landed);
+            lastRestoredScroll_ = landed;
+
+            // Only settle once the grid has stopped growing under us, or the
+            // row will move after we have already scrolled to it.
+            if (final || landed >= target - 0.5) {
+                pendingScrollToBase_ = false;
+                pendingScrollRestore_ = -1.0;
+            }
+
+            return;
+        }
+
+        if (final) {
+            // Not in this list -- global mode showing the selects index, say.
+            // Fall through to the remembered position from here on.
+            pendingScrollToBase_ = false;
+        } else {
+            return;
+        }
+    }
+
+    if (pendingScrollRestore_ < 0.0) {
+        return;
+    }
 
     if (lastRestoredScroll_ >= 0.0 && std::fabs(adj->get_value() - lastRestoredScroll_) > 1.0) {
         // The user scrolled while results were still streaming in: theirs wins.
