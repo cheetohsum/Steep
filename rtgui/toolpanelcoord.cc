@@ -53,6 +53,7 @@
 #include <mutex>
 
 #include "rtengine/imagesource.h"
+#include "rtengine/profilestore.h"
 #include "rtengine/dfmanager.h"
 #include "rtengine/ffmanager.h"
 #include "rtengine/improcfun.h"
@@ -2026,7 +2027,7 @@ void ToolPanelCoordinator::populateEditPanel()
         pp.toneCurve.black = std::max(-16384, std::min(16384, pp.toneCurve.black));
         pp.toneCurve.hlcompr = std::max(0, std::min(500, pp.toneCurve.hlcompr));
     });
-    exposureStrip_->setDragCallback([this](const rtengine::procparams::ProcParams& pp, double) {
+    exposureStrip_->setDragCallback([this](const rtengine::procparams::ProcParams& pp, double scrubber) {
         // Always set global sliders — the bridge handles routing to gradient spots.
         toneCurve->disableListener();
         toneCurve->getExpcompSlider()->setValue(pp.toneCurve.expcomp);
@@ -2040,10 +2041,17 @@ void ToolPanelCoordinator::populateEditPanel()
         shadowshighlights->getHighlightsSlider()->setValue(pp.sh.highlights);
         shadowshighlights->getShadowsSlider()->setValue(pp.sh.shadows);
         shadowshighlights->enableListener();
+        // The real comparison writes every panel, and this fires on each motion
+        // event, so assert the X while the handle is off centre and pay for the
+        // honest answer only when it lands back on it.
         suppressResetUpdate_ = true;
         panelChangedFromPreviewStrip(exposureStrip_, rtengine::EvExpComp, M("GENERAL_CHANGED"));
         suppressResetUpdate_ = false;
-        lightGroup->setResetVisible(true);
+        if (std::abs(scrubber) < 0.001) {
+            updateResetButtons();
+        } else {
+            lightGroup->setResetVisible(true);
+        }
     });
     lightGroup->getPersistentBox()->pack_start(*exposureStrip_, Gtk::PACK_SHRINK);
 
@@ -2083,7 +2091,7 @@ void ToolPanelCoordinator::populateEditPanel()
             pp.toneCurve.saturation = std::min(100, pp.toneCurve.saturation + static_cast<int>(std::lround(16 * f)));
         }
     });
-    colorStrip_->setDragCallback([this](const rtengine::procparams::ProcParams& pp, double) {
+    colorStrip_->setDragCallback([this](const rtengine::procparams::ProcParams& pp, double scrubber) {
         whitebalance->disableListener();
         whitebalance->getTempSlider()->setValue(pp.wb.temperature);
         whitebalance->getGreenSlider()->setValue(pp.wb.green);
@@ -2096,10 +2104,17 @@ void ToolPanelCoordinator::populateEditPanel()
         toneCurve->disableListener();
         toneCurve->getSaturationSlider()->setValue(pp.toneCurve.saturation);
         toneCurve->enableListener();
+        // The real comparison writes every panel, and this fires on each motion
+        // event, so assert the X while the handle is off centre and pay for the
+        // honest answer only when it lands back on it.
         suppressResetUpdate_ = true;
         panelChangedFromPreviewStrip(colorStrip_, rtengine::EvExpComp, M("GENERAL_CHANGED"));
         suppressResetUpdate_ = false;
-        colorGroup->setResetVisible(true);
+        if (std::abs(scrubber) < 0.001) {
+            updateResetButtons();
+        } else {
+            colorGroup->setResetVisible(true);
+        }
     });
     colorGroup->getPersistentBox()->pack_start(*colorStrip_, Gtk::PACK_SHRINK);
 
@@ -2238,7 +2253,7 @@ void ToolPanelCoordinator::populateEditPanel()
             pp.dehaze.enabled = true;
         }
     });
-    detailStrip_->setDragCallback([this](const rtengine::procparams::ProcParams& pp, double) {
+    detailStrip_->setDragCallback([this](const rtengine::procparams::ProcParams& pp, double scrubber) {
         sharpening->disableListener();
         sharpening->setEnabled(pp.sharpening.enabled);
         sharpening->getAmountSlider()->setValue(pp.sharpening.amount);
@@ -2252,10 +2267,17 @@ void ToolPanelCoordinator::populateEditPanel()
         dehaze->setEnabled(pp.dehaze.enabled);
         dehaze->getStrengthSlider()->setValue(pp.dehaze.strength);
         dehaze->enableListener();
+        // The real comparison writes every panel, and this fires on each motion
+        // event, so assert the X while the handle is off centre and pay for the
+        // honest answer only when it lands back on it.
         suppressResetUpdate_ = true;
         panelChangedFromPreviewStrip(detailStrip_, rtengine::EvExpComp, M("GENERAL_CHANGED"));
         suppressResetUpdate_ = false;
-        detailGroup->setResetVisible(true);
+        if (std::abs(scrubber) < 0.001) {
+            updateResetButtons();
+        } else {
+            detailGroup->setResetVisible(true);
+        }
     });
     detailGroup->getPersistentBox()->pack_start(*detailStrip_, Gtk::PACK_SHRINK);
 
@@ -2298,7 +2320,7 @@ void ToolPanelCoordinator::populateEditPanel()
             pp.pcvignette.enabled = true;
         }
     });
-    effectsStrip_->setDragCallback([this](const rtengine::procparams::ProcParams& pp, double) {
+    effectsStrip_->setDragCallback([this](const rtengine::procparams::ProcParams& pp, double scrubber) {
         texture->disableListener();
         texture->setEnabled(pp.texture.enabled);
         texture->getAmountSlider()->setValue(pp.texture.amount);
@@ -2315,10 +2337,17 @@ void ToolPanelCoordinator::populateEditPanel()
         clarity->setEnabled(pp.clarity.enabled);
         clarity->getAmountSlider()->setValue(pp.clarity.amount);
         clarity->enableListener();
+        // The real comparison writes every panel, and this fires on each motion
+        // event, so assert the X while the handle is off centre and pay for the
+        // honest answer only when it lands back on it.
         suppressResetUpdate_ = true;
         panelChangedFromPreviewStrip(effectsStrip_, rtengine::EvExpComp, M("GENERAL_CHANGED"));
         suppressResetUpdate_ = false;
-        effectsGroup->setResetVisible(true);
+        if (std::abs(scrubber) < 0.001) {
+            updateResetButtons();
+        } else {
+            effectsGroup->setResetVisible(true);
+        }
     });
     effectsGroup->getPersistentBox()->pack_start(*effectsStrip_, Gtk::PACK_SHRINK);
 
@@ -2378,14 +2407,21 @@ void ToolPanelCoordinator::populateEditPanel()
             pp.blackwhite.tone = std::min(100, pp.blackwhite.tone + static_cast<int>(30 * f));
         }
     });
-    bwStrip_->setDragCallback([this](const rtengine::procparams::ProcParams& pp, double) {
+    bwStrip_->setDragCallback([this](const rtengine::procparams::ProcParams& pp, double scrubber) {
         blackwhite->disableListener();
         blackwhite->read(&pp);
         blackwhite->enableListener();
+        // The real comparison writes every panel, and this fires on each motion
+        // event, so assert the X while the handle is off centre and pay for the
+        // honest answer only when it lands back on it.
         suppressResetUpdate_ = true;
         panelChangedFromPreviewStrip(bwStrip_, rtengine::EvBWmethod, M("GENERAL_CHANGED"));
         suppressResetUpdate_ = false;
-        bwGroup->setResetVisible(true);
+        if (std::abs(scrubber) < 0.001) {
+            updateResetButtons();
+        } else {
+            bwGroup->setResetVisible(true);
+        }
     });
 
     // B&W group: dedicated Black & White section
@@ -2434,112 +2470,24 @@ void ToolPanelCoordinator::populateEditPanel()
 
     // --- Reset callbacks for each group ---
     lightGroup->setResetCallback([this]() {
-        ProcParams dp;
-        toneCurve->disableListener();
-        toneCurve->read(&dp);
-        toneCurve->enableListener();
-        shadowshighlights->disableListener();
-        shadowshighlights->read(&dp);
-        shadowshighlights->enableListener();
-        rgbcurves->disableListener();
-        rgbcurves->read(&dp);
-        rgbcurves->enableListener();
-        if (exposureStrip_) exposureStrip_->resetScrubber();
-        suppressResetUpdate_ = true;
-        panelChanged(rtengine::EvProfileChanged, M("GENERAL_CHANGED"));
-        suppressResetUpdate_ = false;
-        lightGroup->setResetVisible(false);
+        resetGroupToNeutral({toneCurve, shadowshighlights, rgbcurves}, exposureStrip_);
     });
 
     bwGroup->setResetCallback([this]() {
-        ProcParams dp;
-        blackwhite->disableListener();
-        blackwhite->read(&dp);
-        blackwhite->enableListener();
-        if (bwStrip_) bwStrip_->resetScrubber();
-        suppressResetUpdate_ = true;
-        panelChanged(rtengine::EvProfileChanged, M("GENERAL_CHANGED"));
-        suppressResetUpdate_ = false;
-        bwGroup->setResetVisible(false);
+        resetGroupToNeutral({blackwhite}, bwStrip_);
     });
 
     colorGroup->setResetCallback([this]() {
-        ProcParams dp;
-        whitebalance->disableListener();
-        whitebalance->read(&dp);
-        whitebalance->enableListener();
-        vibrance->disableListener();
-        vibrance->read(&dp);
-        vibrance->enableListener();
-        hsvequalizer->disableListener();
-        hsvequalizer->read(&dp);
-        hsvequalizer->enableListener();
-        colorgrading->disableListener();
-        colorgrading->read(&dp);
-        colorgrading->enableListener();
-        pointcolor->disableListener();
-        pointcolor->read(&dp);
-        pointcolor->enableListener();
-        if (colorStrip_) colorStrip_->resetScrubber();
-        suppressResetUpdate_ = true;
-        panelChanged(rtengine::EvProfileChanged, M("GENERAL_CHANGED"));
-        suppressResetUpdate_ = false;
-        colorGroup->setResetVisible(false);
+        resetGroupToNeutral({whitebalance, vibrance, hsvequalizer, colorgrading, pointcolor}, colorStrip_);
     });
 
     detailGroup->setResetCallback([this]() {
-        ProcParams dp;
-        // Reset the tools that the detail strip modifies
-        sharpening->disableListener();
-        sharpening->read(&dp);
-        sharpening->enableListener();
-        dirpyrdenoise->disableListener();
-        dirpyrdenoise->read(&dp);
-        dirpyrdenoise->enableListener();
-        dehaze->disableListener();
-        dehaze->read(&dp);
-        dehaze->enableListener();
-        if (detailStrip_) detailStrip_->resetScrubber();
-        suppressResetUpdate_ = true;
-        panelChanged(rtengine::EvProfileChanged, M("GENERAL_CHANGED"));
-        suppressResetUpdate_ = false;
-        detailGroup->setResetVisible(false);
+        resetGroupToNeutral({sharpening, dirpyrdenoise, dehaze}, detailStrip_);
     });
 
     effectsGroup->setResetCallback([this]() {
-        ProcParams dp;
-        texture->disableListener();
-        texture->read(&dp);
-        texture->enableListener();
-        clarity->disableListener();
-        clarity->read(&dp);
-        clarity->enableListener();
-        grain->disableListener();
-        grain->read(&dp);
-        grain->enableListener();
-        lighteffects->disableListener();
-        lighteffects->read(&dp);
-        lighteffects->enableListener();
-        tiltshift->disableListener();
-        tiltshift->read(&dp);
-        tiltshift->enableListener();
-        pcvignette->disableListener();
-        pcvignette->read(&dp);
-        pcvignette->enableListener();
-        filmPresets->disableListener();
-        filmPresets->read(&dp);
-        filmPresets->enableListener();
-        doubleExposure->disableListener();
-        doubleExposure->read(&dp);
-        doubleExposure->enableListener();
-        softlight->disableListener();
-        softlight->read(&dp);
-        softlight->enableListener();
-        if (effectsStrip_) effectsStrip_->resetScrubber();
-        suppressResetUpdate_ = true;
-        panelChanged(rtengine::EvProfileChanged, M("GENERAL_CHANGED"));
-        suppressResetUpdate_ = false;
-        effectsGroup->setResetVisible(false);
+        resetGroupToNeutral({texture, clarity, grain, lighteffects, tiltshift, pcvignette,
+                             filmPresets, doubleExposure, softlight}, effectsStrip_);
     });
 
     // A group's scrubber is one of its controls, so resetting from it means
@@ -2562,14 +2510,7 @@ void ToolPanelCoordinator::populateEditPanel()
     }
 
     spotGroup->setResetCallback([this]() {
-        ProcParams dp;
-        spot->disableListener();
-        spot->read(&dp);
-        spot->enableListener();
-        suppressResetUpdate_ = true;
-        panelChanged(rtengine::EvProfileChanged, M("GENERAL_CHANGED"));
-        suppressResetUpdate_ = false;
-        spotGroup->setResetVisible(false);
+        resetGroupToNeutral({spot}, nullptr);
     });
 
     maskingGroup->setResetCallback([this]() {
@@ -4403,8 +4344,15 @@ void ToolPanelCoordinator::profileChange(
     logStep("reset-mask-visibility");
 
     hasChanged = event != rtengine::EvProfileChangeNotification;
-    captureBaseline();
-    updateResetButtonsFromBaseline();
+
+    // Only opening a photograph re-establishes what "as opened" means. Every
+    // other profile change is an edit -- Auto Edit committing, a preset being
+    // applied, a step browsed in history -- and taking those as the new clean
+    // state is what used to leave the groups with no X to press afterwards.
+    if (event == rtengine::EvPhotoLoaded) {
+        captureBaseline();
+    }
+    updateResetButtons();
     logStep("baseline-reset-buttons");
 
     for (auto paramcListener : paramcListeners) {
@@ -4576,6 +4524,8 @@ void ToolPanelCoordinator::initImage(rtengine::StagedImageProcessor* ipc_, bool 
 
     toneCurve->setRaw(raw);
     hasChanged = true;
+    isRawImage_ = raw;
+    captureNeutralReference();
     captureBaseline();
     updateResetButtons();
 }
@@ -5571,32 +5521,235 @@ void ToolPanelCoordinator::captureBaseline()
     baselineParams_ = bp;
 }
 
-void ToolPanelCoordinator::updateResetButtonsFromBaseline()
+void ToolPanelCoordinator::resetGroupToNeutral(
+    std::initializer_list<ToolPanel*> panels, PreviewStrip* strip)
 {
-    if (!ipc) return;
-    if (!lightGroup) return;
-    if (suppressResetUpdate_) return;
+    const ProcParams& neutral = neutralReference();
 
-    lightGroup->setResetVisible(false);
-    colorGroup->setResetVisible(false);
-    detailGroup->setResetVisible(false);
-    effectsGroup->setResetVisible(false);
-
-    ProcParams stock;
-    bwGroup->setResetVisible(!(baselineParams_.blackwhite == stock.blackwhite));
-    spotGroup->setResetVisible(!(baselineParams_.spot == stock.spot));
-    maskingGroup->setResetVisible(locallab && locallab->getSpotCount() > 0);
-
-    if (cropResetBtn_) {
-        cropResetBtn_->set_visible(false);
-        cropResetBtn_->set_no_show_all(true);
+    for (ToolPanel* panel : panels) {
+        if (!panel) {
+            continue;
+        }
+        panel->disableListener();
+        panel->read(&neutral);
+        panel->enableListener();
     }
 
-    if (perspResetBtn_) {
-        perspResetBtn_->set_visible(false);
-        perspResetBtn_->set_no_show_all(true);
+    if (strip) {
+        strip->resetScrubber();
     }
+
+    // On the Mask pane the tool widgets show a spot's values, so panelChanged
+    // stamps the photograph's real globals back over whatever they wrote. That
+    // restore does not know a reset from an accident, and it swallowed the
+    // group's reset whole: the sliders went to zero and the picture did not
+    // move. Reset the stashed globals alongside the widgets.
+    if (maskModeActive_) {
+        // Fill the stash from the engine first when it is empty, or
+        // panelChanged's own refresh runs after this and re-reads the very
+        // values being cleared. It is empty on the first change after a photo
+        // is opened on the Mask pane, which is exactly when a reset is likely.
+        if (!maskGlobalsValid_ && ipc) {
+            ProcParams live;
+            ipc->getParams(&live);
+            refreshMaskModeGlobals(&live);
+        }
+
+        for (ToolPanel* panel : panels) {
+            if (panel == toneCurve) {
+                savedToneCurve_ = neutral.toneCurve;
+            } else if (panel == shadowshighlights) {
+                savedSH_ = neutral.sh;
+            } else if (panel == vibrance) {
+                savedVibrance_ = neutral.vibrance;
+            } else if (panel == sharpening) {
+                savedSharpening_ = neutral.sharpening;
+            } else if (panel == blackwhite) {
+                savedBlackWhite_ = neutral.blackwhite;
+            }
+        }
+    }
+
+    // panelChanged re-reads every panel and settles the group's X itself. If
+    // some part of the group did not actually come back, the X stays lit and
+    // says so, rather than being hidden by hand while the edit is still there.
+    panelChanged(rtengine::EvProfileChanged, M("GENERAL_CHANGED"));
 }
+
+void ToolPanelCoordinator::captureNeutralReference()
+{
+    // The photograph with nothing on it. Not "the state it was opened in":
+    // a photo opened after Auto Edit ran on it, or with a preset already
+    // applied, arrives edited, and taking that as clean is what used to make
+    // the group X vanish exactly when there was most to undo.
+    //
+    // The default processing profile is what the application itself would have
+    // applied had no profile existed, so it is the honest zero -- and using it
+    // rather than a bare ProcParams means a user who has set their own raw
+    // default does not see every group permanently marked as edited.
+    ProcParams profile;
+
+    if (const ProcParams* def =
+            ProfileStore::getInstance()->getDefaultProcParams(isRawImage_)) {
+        profile = *def;
+    }
+
+    // Cached by value rather than by the store's pointer. Saving or renaming
+    // any preset re-parses the whole profile store, which deletes and rebuilds
+    // the very object the default profile points at -- and the allocator
+    // usually hands back the same address, so a pointer check would report a
+    // hit and keep serving a reference built from the profile as it was before
+    // the edit. Comparing the profile itself costs one struct compare per
+    // photo opened, against a read and a write over twenty-odd panels.
+    if (neutralValid_ && isRawImage_ == neutralIsRaw_ && profile == neutralSource_) {
+        // The round trip below depends on nothing else about this photograph:
+        // the one value that IS per-photo, camera white balance, is excluded
+        // from the comparison and re-derived by the panel on reset.
+        return;
+    }
+
+    // Put the profile through the panels and take it back out.
+    //
+    // Several controls do not store what they show: highlight compression is
+    // minus a fifth of its slider and comes back quantised, camera white
+    // balance is read off the file rather than out of the profile. Compared
+    // field by field against what write() produces, a stored profile never
+    // matches itself, and every group would sit there reporting an edit that
+    // does not exist. Round-tripping states the reference in the panels' own
+    // vocabulary, which is the vocabulary the comparison is made in.
+    //
+    // Safe here and only here: initImage runs before the photograph's own
+    // profile is loaded, so these widgets are about to be overwritten anyway.
+    // Only the panels the groups actually compare are cycled -- Locallab in
+    // particular must not be torn down and rebuilt for a measurement.
+    const std::vector<ToolPanel*> panels = groupToolPanels();
+
+    for (ToolPanel* panel : panels) {
+        if (!panel) {
+            continue;
+        }
+        panel->disableListener();
+        panel->read(&profile);
+        panel->enableListener();
+    }
+
+    ProcParams roundTripped;
+
+    for (ToolPanel* panel : panels) {
+        if (panel) {
+            panel->write(&roundTripped);
+        }
+    }
+
+    neutralParams_ = roundTripped;
+    neutralSource_ = std::move(profile);
+    neutralIsRaw_ = isRawImage_;
+    neutralValid_ = true;
+}
+
+std::vector<ToolPanel*> ToolPanelCoordinator::groupToolPanels() const
+{
+    // Every panel whose parameters a tool group's X judges and restores.
+    return {
+        // Light
+        toneCurve, shadowshighlights, rgbcurves,
+        // Black & white
+        blackwhite,
+        // Colour
+        whitebalance, vibrance, hsvequalizer, colorgrading, pointcolor,
+        // Detail
+        sharpening, dirpyrdenoise, dehaze,
+        // Effects
+        texture, clarity, grain, lighteffects, tiltshift, pcvignette,
+        filmPresets, doubleExposure, softlight,
+        // Spot removal
+        spot,
+    };
+}
+
+namespace {
+
+rtengine::procparams::WBEntry::Type wbMethodType(const Glib::ustring& method)
+{
+    for (const auto& entry : rtengine::procparams::WBParams::getWbEntries()) {
+        if (entry.ppLabel == method) {
+            return entry.type;
+        }
+    }
+
+    // WhiteBalance::read falls back to Camera for a method it does not know.
+    return rtengine::procparams::WBEntry::Type::CAMERA;
+}
+
+// White balance the user did not choose.
+//
+// Some of what sits in WBParams never came from the profile and cannot survive
+// a trip through the panel, so comparing it field by field reports an edit
+// nobody made. Which fields those are depends on the method, and
+// WhiteBalance::read is the authority: Camera takes temperature and tint off
+// the file and pins the equaliser to 1, the auto methods have the engine
+// measure them and push them into the sliders, and a named preset takes its
+// temperature from the entry table. Only under Custom is every number one
+// that somebody typed.
+rtengine::procparams::WBParams wbAsChosen(const rtengine::procparams::WBParams& wb)
+{
+    using Type = rtengine::procparams::WBEntry::Type;
+
+    rtengine::procparams::WBParams out = wb;
+
+    // Not a setting at all: a file-format marker, stamped to 0 or 1 when a
+    // sidecar written by an older release is read. Left in the comparison it
+    // reported the Colour group as edited on every legacy photo, permanently.
+    out.compat_version = 0;
+
+    switch (wbMethodType(out.method)) {
+        case Type::CAMERA:
+            out.temperature = 0;
+            out.green = 0.0;
+            out.equal = 0.0;
+            break;
+
+        case Type::AUTO:
+            out.temperature = 0;
+            out.green = 0.0;
+            break;
+
+        case Type::CUSTOM:
+            break;
+
+        default:
+            // A named preset's temperature is the table's, but its tint is
+            // still the user's and read()/write() carry that faithfully.
+            out.temperature = 0;
+            break;
+    }
+
+    return out;
+}
+
+bool wbDiffers(const rtengine::procparams::WBParams& a,
+               const rtengine::procparams::WBParams& b)
+{
+    return !(wbAsChosen(a) == wbAsChosen(b));
+}
+
+bool toneCurveDiffers(const rtengine::procparams::ToneCurveParams& a,
+                      const rtengine::procparams::ToneCurveParams& b)
+{
+    rtengine::procparams::ToneCurveParams x = a;
+    rtengine::procparams::ToneCurveParams y = b;
+
+    // Bookkeeping rather than a setting, and asymmetric besides: ICMPanel::write
+    // forces it false on every pass over the tool panels, so the side of the
+    // comparison built from all of them can never carry it, and the Light group
+    // would sit permanently lit with an X that could not clear itself.
+    x.fromHistMatching = false;
+    y.fromHistMatching = false;
+
+    return !(x == y);
+}
+
+}  // namespace
 
 void ToolPanelCoordinator::updateResetButtons()
 {
@@ -5610,49 +5763,77 @@ void ToolPanelCoordinator::updateResetButtons()
         toolPanel->write(&current);
     }
 
+    // Tool groups are judged against the unedited photograph, geometry against
+    // the file as it was opened. An edit is an edit whoever made it -- Auto
+    // Edit, a preset, or the user in a previous session -- and each group's X
+    // is the only way to take that group's share of it back off.
+    const ProcParams& n = neutralParams_;
     const ProcParams& b = baselineParams_;
 
-    // Light group: toneCurve + shadowshighlights + rgbcurves
-    bool lightDirty = !(current.toneCurve == b.toneCurve)
-                   || !(current.sh == b.sh)
-                   || !(current.rgbCurves == b.rgbCurves);
+    // Light group: toneCurve + shadowshighlights + rgbcurves.
+    // This is where most of Auto Edit's brightening lands: exposure
+    // compensation, brightness, black point, highlight compression and the
+    // master RGB curve.
+    bool lightDirty = toneCurveDiffers(current.toneCurve, n.toneCurve)
+                   || !(current.sh == n.sh)
+                   || !(current.rgbCurves == n.rgbCurves);
     lightGroup->setResetVisible(lightDirty);
 
-    // B&W group — compare against factory defaults so X shows whenever B&W is enabled
-    ProcParams stock;
-    bool bwDirty = !(current.blackwhite == stock.blackwhite);
+    bool bwDirty = !(current.blackwhite == n.blackwhite);
     bwGroup->setResetVisible(bwDirty);
 
-    // Color group: wb + vibrance + hsvequalizer + colorgrading + pointcolor
-    bool wbDirty = !(current.wb == b.wb);
-    bool vibDirty = !(current.vibrance == b.vibrance);
-    bool hsvDirty = !(current.hsvequalizer == b.hsvequalizer);
-    bool cgDirty = !(current.colorGrading == b.colorGrading);
-    bool pcDirty = !(current.pointcolor == b.pointcolor);
+    // Color group: wb + vibrance + hsvequalizer + colorgrading + pointcolor.
+    // Colour grading carries per-zone luminance, so Auto Edit lightens here too.
+    bool wbDirty = wbDiffers(current.wb, n.wb);
+    bool vibDirty = !(current.vibrance == n.vibrance);
+    bool hsvDirty = !(current.hsvequalizer == n.hsvequalizer);
+    bool cgDirty = !(current.colorGrading == n.colorGrading);
+    bool pcDirty = !(current.pointcolor == n.pointcolor);
     bool colorDirty = wbDirty || vibDirty || hsvDirty || cgDirty || pcDirty;
     colorGroup->setResetVisible(colorDirty);
 
     // Detail group: sharpening + dirpyrdenoise + dehaze
-    bool detailDirty = !(current.sharpening == b.sharpening)
-                    || !(current.dirpyrDenoise == b.dirpyrDenoise)
-                    || !(current.dehaze == b.dehaze);
+    bool detailDirty = !(current.sharpening == n.sharpening)
+                    || !(current.dirpyrDenoise == n.dirpyrDenoise)
+                    || !(current.dehaze == n.dehaze);
     detailGroup->setResetVisible(detailDirty);
 
-    // Effects group: texture + clarity + grain + tiltshift + pcvignette + filmPresets + softlight
-    bool effectsDirty = !(current.texture == b.texture)
-                     || !(current.clarity == b.clarity)
-                     || !(current.grain == b.grain)
-                     || !(current.lightEffects == b.lightEffects)
-                     || !(current.tiltShift == b.tiltShift)
-                     || !(current.pcvignette == b.pcvignette)
-                     || !(current.filmPresets == b.filmPresets)
-                     || !(current.doubleExposure == b.doubleExposure)
-                     || !(current.softlight == b.softlight);
+    // Effects group: texture + clarity + grain + tiltshift + pcvignette + filmPresets + softlight.
+    // Film Lab applies its own exposure and print curve, the last place Auto
+    // Edit can change how bright the picture reads.
+    bool effectsDirty = !(current.texture == n.texture)
+                     || !(current.clarity == n.clarity)
+                     || !(current.grain == n.grain)
+                     || !(current.lightEffects == n.lightEffects)
+                     || !(current.tiltShift == n.tiltShift)
+                     || !(current.pcvignette == n.pcvignette)
+                     || !(current.filmPresets == n.filmPresets)
+                     || !(current.doubleExposure == n.doubleExposure)
+                     || !(current.softlight == n.softlight);
     effectsGroup->setResetVisible(effectsDirty);
 
-    // Spot removal group — compare against factory defaults (like B&W)
-    bool spotDirty = !(current.spot == stock.spot);
+    bool spotDirty = !(current.spot == n.spot);
     spotGroup->setResetVisible(spotDirty);
+
+    // Guarded at the call site: this runs on every slider tick, and the
+    // sub-struct comparisons below walk the tone and RGB curve vectors.
+    if (toolPanelEditLogEnabled()) {
+        toolPanelEditLog(
+            "[groupReset] light=%d(tone=%d sh=%d rgb=%d) bw=%d color=%d(wb=%d vib=%d hsv=%d cg=%d pc=%d)"
+            " detail=%d(sharp=%d denoise=%d dehaze=%d) effects=%d spot=%d\n",
+            lightDirty ? 1 : 0,
+            toneCurveDiffers(current.toneCurve, n.toneCurve) ? 1 : 0,
+            (current.sh == n.sh) ? 0 : 1,
+            (current.rgbCurves == n.rgbCurves) ? 0 : 1,
+            bwDirty ? 1 : 0,
+            colorDirty ? 1 : 0, wbDirty ? 1 : 0, vibDirty ? 1 : 0, hsvDirty ? 1 : 0,
+            cgDirty ? 1 : 0, pcDirty ? 1 : 0,
+            detailDirty ? 1 : 0,
+            (current.sharpening == n.sharpening) ? 0 : 1,
+            (current.dirpyrDenoise == n.dirpyrDenoise) ? 0 : 1,
+            (current.dehaze == n.dehaze) ? 0 : 1,
+            effectsDirty ? 1 : 0, spotDirty ? 1 : 0);
+    }
 
     // Masking group — dirty when any spots exist in the control panel.
     // Can't use locallab->write() (doesn't populate spots on a fresh ProcParams)

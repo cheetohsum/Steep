@@ -20,6 +20,7 @@
 
 #include <atomic>
 #include <functional>
+#include <initializer_list>
 #include <memory>
 #include <unordered_set>
 #include <vector>
@@ -324,15 +325,42 @@ private:
     bool bridgeGlobalToSpot(rtengine::procparams::ProcParams* params, const rtengine::ProcEvent& event);
     void loadSpotIntoGlobalTools();
     void updateResetButtons();
-    void updateResetButtonsFromBaseline();
     void captureBaseline();
+    void captureNeutralReference();
+    /// The panels the tool groups' reset buttons judge and restore.
+    std::vector<ToolPanel*> groupToolPanels() const;
+    /// Put a tool group back to the unedited photograph and let the X settle.
+    void resetGroupToNeutral(std::initializer_list<ToolPanel*> panels,
+                             PreviewStrip* strip);
+    /// The photo with no edits on it: the default processing profile for this
+    /// image type. Group reset restores it, and a group shows its X whenever
+    /// it differs from it.
+    const rtengine::procparams::ProcParams& neutralReference() const
+    {
+        return neutralParams_;
+    }
     void buildQuickEditBar();
     void applyQuickEditParams(rtengine::procparams::ProcParams params, const Glib::ustring& descr, bool commit);
     void requestQuickAutoParams(int mode, const Glib::ustring& descr, bool commit);
     rtengine::procparams::ProcParams makeQuickBWParams(int mode) const;
     void beginQuickPreview(const rtengine::procparams::ProcParams& params, const Glib::ustring& descr);
     void endQuickPreview(bool restore);
+    // What the panels wrote when the photo was opened. Geometry (crop, rotate,
+    // perspective) is judged against this, because "uncropped" is a property of
+    // the file rather than of the profile.
     rtengine::procparams::ProcParams baselineParams_;
+    // What the photo looks like with nothing applied. Every tool group is
+    // judged against this, so an edit made by Auto Edit, by a preset, or in an
+    // earlier session all read as an edit and can all be cleared.
+    rtengine::procparams::ProcParams neutralParams_;
+    // The default profile neutralParams_ was built from, kept by value so the
+    // round trip through the tool panels is paid once per session rather than
+    // once per photo, without trusting a pointer the profile store may free
+    // and reallocate at the same address.
+    rtengine::procparams::ProcParams neutralSource_;
+    bool neutralIsRaw_ = true;
+    bool neutralValid_ = false;
+    bool isRawImage_ = true;
     bool suppressResetUpdate_ = false;
 
     // Collapsible transform sections (content box + label for programmatic expand)
