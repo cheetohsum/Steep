@@ -66,6 +66,24 @@ jobs:
             exiv2:p
             ${{matrix.arch == 'x86_64' && '' || 'meson:p'}}
 
+      # MSYS2 published glib2 2.90.0 on 2026-09-09 while glibmm is still the
+      # 2.66.9 build from July. 2.90 renamed the class structs that giomm's
+      # `using` declarations name -- glib now says `struct GEmblemClass` where
+      # giomm still says `struct _GEmblemClass` -- so every gtkmm3 project
+      # stops compiling inside <giomm.h>, ours included, in headers neither we
+      # nor gtkmm control. Arch is still on 2.88.3; hold here until MSYS2 ships
+      # a glibmm built against 2.90, then delete this step.
+      - name: Hold glib2 at the version glibmm was built against
+        run: |
+          if [ '${{matrix.arch}}' = 'arm64' ]; then
+            package='mingw-w64-clang-aarch64-glib2-2.88.3-1-any.pkg.tar.zst'
+          else
+            package='mingw-w64-ucrt-x86_64-glib2-2.88.3-1-any.pkg.tar.zst'
+          fi
+          echo "Holding glib2 at ${package}."
+          pacman -U --noconfirm --needed "https://repo.msys2.org/mingw/${MSYS2_ENV_PREFIX}/${package}"
+          pacman -Q ${package%%-2.88.3*}
+
       - name: Install SIMDe
         if: ${{matrix.arch != 'x86_64'}}
         run: |
