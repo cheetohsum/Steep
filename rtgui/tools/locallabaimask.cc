@@ -336,8 +336,6 @@ void LocallabAIMask::aiMaskInvertChanged()
     }
 }
 
-#endif // RT_AI_MASKING
-
 // Hand-correcting the selection, over the photo in the engine's own framing:
 // the mask is found on the upright, uncropped frame, so that is what the
 // strokes have to be painted on.
@@ -380,3 +378,5 @@ void LocallabAIMask::openMaskEditor()
         listener->panelChanged(EvlocallabAIMask, M("HISTORY_CHANGED"));
     }
 }
+
+#endif // RT_AI_MASKING
