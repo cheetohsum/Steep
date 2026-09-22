@@ -19,10 +19,55 @@
 #include <gtkmm.h>
 
 #include <functional>
+#include <map>
 #include <vector>
 
 namespace steepui
 {
+
+// Shared scrollable surface for film/grading presets and settings lists.
+void styleListPopover(Gtk::Popover& popover, Gtk::ScrolledWindow& scroll, Gtk::ListBox& list);
+
+class ListPopover : public Gtk::Popover
+{
+public:
+    explicit ListPopover(Gtk::Widget& anchor);
+    ~ListPopover() override;
+    Gtk::ListBoxRow* addItem(const Glib::ustring& label, std::function<void()> activate,
+                            std::function<void()> preview = {});
+    void addSeparator();
+    void clear();
+    Gtk::ListBox& list() { return list_; }
+    sigc::signal<void>& signal_preview_left() { return previewLeft_; }
+
+private:
+    Gtk::ScrolledWindow scroll_;
+    Gtk::ListBox list_;
+    struct Actions { std::function<void()> activate, preview; };
+    std::map<Gtk::ListBoxRow*, Actions> actions_;
+    Gtk::ListBoxRow* hovered_ = nullptr;
+    bool keyboardNavigation_ = false;
+    sigc::signal<void> previewLeft_;
+    std::vector<sigc::connection> connections_;
+    void hover(Gtk::ListBoxRow* row);
+};
+
+// Present existing copy-filter actions without duplicating their state or
+// clipboard logic. Navigation stays inside one scrollable popover.
+class MenuListPopover final : public ListPopover
+{
+public:
+    MenuListPopover(Gtk::Widget& anchor, Gtk::Menu& model);
+    ~MenuListPopover() override;
+private:
+    Gtk::Menu& model_;
+    std::vector<Gtk::Menu*> parents_;
+    std::vector<sigc::connection> bindings_;
+    sigc::connection navigation_;
+    sigc::connection show_, hide_;
+    void showPage(Gtk::Menu& menu);
+    void navigate(Gtk::Menu& menu);
+};
 
 /** Popup menu builder — the designated home for GtkMenu usage.
  *

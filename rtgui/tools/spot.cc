@@ -292,16 +292,44 @@ Spot::Spot() :
     aiGrid->set_row_spacing(4);
     aiGrid->set_hexpand(true);
 
-    const auto embedReset = [](Gtk::Button* toolBtn, Gtk::Button* resetBtn) -> Gtk::Widget* {
-        Gtk::Overlay* overlay = Gtk::manage(new Gtk::Overlay());
+    int smartIndex = 0;
+    const auto embedReset = [this, &smartIndex](Gtk::Button* toolBtn, Gtk::Button* resetBtn) -> Gtk::Widget* {
+        // The reset owns its space; it must not cover the tool's status hitbox.
+        const int index = smartIndex++;
+        Gtk::Box* outer = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+        Gtk::Box* content = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 3));
+        auto* label = Gtk::manage(new Gtk::Label(toolBtn->get_label()));
+        label->set_ellipsize(Pango::ELLIPSIZE_END);
+        label->set_xalign(0.f);
+        toolBtn->remove();
+        toolBtn->add(*content);
+        toolBtn->get_style_context()->add_class("smart-tool");
+        content->pack_start(*label, Gtk::PACK_EXPAND_WIDGET);
+        smartStatusHit_[index] = Gtk::manage(new Gtk::EventBox());
+        smartStatusHit_[index]->set_visible_window(false);
+        smartStatusHit_[index]->get_style_context()->add_class("smart-tool-status");
+        smartStatusHit_[index]->set_size_request(20, 20);
+        smartStatus_[index] = Gtk::manage(new Gtk::Stack());
+        smartStatus_[index]->set_transition_type(Gtk::STACK_TRANSITION_TYPE_NONE);
+        auto* empty = Gtk::manage(new Gtk::Label());
+        auto* tick = Gtk::manage(new RTImage("tick"));
+        auto* error = Gtk::manage(new RTImage("warning"));
+        smartSpinner_[index] = Gtk::manage(new Gtk::Spinner());
+        smartSpinner_[index]->set_size_request(16, 16);
+        smartStatus_[index]->add(*empty, "idle");
+        smartStatus_[index]->add(*tick, "ready");
+        smartStatus_[index]->add(*error, "failed");
+        smartStatus_[index]->add(*smartSpinner_[index], "busy");
+        smartStatusHit_[index]->add(*smartStatus_[index]);
+        content->pack_end(*smartStatusHit_[index], Gtk::PACK_SHRINK);
         toolBtn->set_hexpand(true);
-        overlay->add(*toolBtn);
+        outer->pack_start(*toolBtn, Gtk::PACK_EXPAND_WIDGET);
         resetBtn->get_style_context()->add_class("smart-tool-reset");
         resetBtn->set_halign(Gtk::ALIGN_END);
         resetBtn->set_valign(Gtk::ALIGN_CENTER);
         resetBtn->set_margin_end(3);
-        overlay->add_overlay(*resetBtn);
-        return overlay;
+        outer->pack_end(*resetBtn, Gtk::PACK_SHRINK);
+        return outer;
     };
 
     // Remove Object is live: a fifth method toggle driving the AI_REMOVE
@@ -381,6 +409,48 @@ Spot::Spot() :
     aiGrid->attach(*embedReset(btnAIFill, btnAIFillReset), 1, 1, 1, 1);
 
     aiContent->pack_start(*aiGrid, false, false, 0);
+
+    // Status arrays use method order (Remove, Dust, Reflections, Fill).
+    std::swap(smartStatus_[1], smartStatus_[2]);
+    std::swap(smartSpinner_[1], smartSpinner_[2]);
+    std::swap(smartStatusHit_[1], smartStatusHit_[2]);
+    Gtk::Box* repairActions = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 2));
+    const auto action = [repairActions](const char* icon, const char* tip) {
+        auto* button = Gtk::manage(new Gtk::Button());
+        button->add(*Gtk::manage(new RTImage(icon)));
+        button->set_relief(Gtk::RELIEF_NONE);
+        button->set_tooltip_text(M(tip));
+        button->get_style_context()->add_class("smart-repair-action");
+        button->set_no_show_all(true);
+        repairActions->pack_end(*button, Gtk::PACK_SHRINK);
+        return button;
+    };
+    smartCancel_ = action("cancel", "TP_SMART_CANCEL");
+    smartRetry_ = action("refresh", "TP_SMART_RETRY");
+    smartUpgrade_ = action("menu-profile-apply", "TP_SMART_UPGRADE");
+    smartCancel_->signal_clicked().connect([this]() {
+        if (cancelRepair_) cancelRepair_();
+        dustPollConn_.disconnect(); dustScanning_ = false; dustFuture_ = {};
+        updateSmartToolIndicators();
+    });
+    smartRetry_->signal_clicked().connect([this]() { if (retryRepair_) retryRepair_(); startStatusPolling(); });
+    smartUpgrade_->signal_clicked().connect([this]() {
+        for (auto& entry : spots) {
+            if (int(entry.method) >= int(SpotMethod::AI_REMOVE)) entry.repairVersion = 2;
+        }
+        updateSmartToolIndicators();
+        if (listener) listener->panelChanged(EvSpotEntry, M("TP_SMART_UPGRADE_HISTORY"));
+        startStatusPolling();
+    });
+    aiContent->pack_start(*repairActions, Gtk::PACK_SHRINK);
+    dustSensitivity_ = Gtk::manage(new Adjuster(M("TP_SMART_DUST_SENSITIVITY"), 0, 100, 1, 50));
+    repairFeather_ = Gtk::manage(new Adjuster(M("TP_SMART_FEATHER"), 0, 100, 1, 35));
+    reflectionStrength_ = Gtk::manage(new Adjuster(M("TP_SMART_GLARE_STRENGTH"), 0, 100, 1, 65));
+    reflectionStrength_->setAdjusterListener(this);
+    repairFeather_->setAdjusterListener(this);
+    aiContent->pack_start(*dustSensitivity_, Gtk::PACK_SHRINK);
+    aiContent->pack_start(*repairFeather_, Gtk::PACK_SHRINK);
+    aiContent->pack_start(*reflectionStrength_, Gtk::PACK_SHRINK);
 
 #ifdef RT_AI_MASKING
     // The inpainting model is ~200 MB and some builds ship without it, so offer
@@ -513,6 +583,8 @@ Spot::Spot() :
 
 Spot::~Spot()
 {
+    statusPollConn_.disconnect();
+    dustPollConn_.disconnect();
     strokeLingerConn_.disconnect();
     busyAnimConn_.disconnect();
     busyTimeoutConn_.disconnect();
@@ -541,6 +613,8 @@ void Spot::queueCanvasRedraw()
 
 void Spot::startBusyIndicator()
 {
+    startStatusPolling();
+    if (smartStatusProvider_) return; // The fixed-size tool spinner avoids full-canvas timer repaints.
     if (busyAnimConn_.connected()) {
         return;
     }
@@ -591,6 +665,11 @@ void Spot::finishSmartResult()
 
 void Spot::setProcessingActive(bool active)
 {
+    if (smartStatusProvider_) {
+        if (active) startStatusPolling();
+        else pollSmartStatus();
+        return;
+    }
     if (!awaitingSmartResult_) {
         return;
     }
@@ -744,6 +823,19 @@ void Spot::onMethodButtonToggled(Gtk::ToggleButton* button, int methodIndex)
 // Phase 3: AdjusterListener
 void Spot::adjusterChanged(Adjuster* a, double newval)
 {
+    if (a == reflectionStrength_ || a == repairFeather_) {
+        auto it = std::find_if(spots.rbegin(), spots.rend(), [a, this](const SpotEntry& entry) {
+            return entry.repairVersion >= 2 && entry.isStroke()
+                && (a == reflectionStrength_ ? entry.method == SpotMethod::AI_REFLECT : int(entry.method) == getActiveMethod());
+        });
+        if (it != spots.rend()) {
+            if (a == reflectionStrength_) it->opacity = float(newval / 100.);
+            else it->feather = float(newval / 100.);
+            if (listener) listener->panelChanged(EvSpotEntry, M("TP_SPOT_ENTRYCHANGED"));
+            startStatusPolling();
+        }
+        return;
+    }
     if (a == spotSize) {
         sizePreview->setValue(int(newval));
 
@@ -756,6 +848,9 @@ void Spot::adjusterChanged(Adjuster* a, double newval)
 
 void Spot::read (const ProcParams* pp, const ParamsEdited* pedited)
 {
+    dustPollConn_.disconnect();
+    dustFuture_ = {};
+    dustScanning_ = false;
     disableListener ();
 
     size_t oldSize = spots.size();
@@ -813,7 +908,7 @@ void Spot::updateSmartToolIndicators()
     const auto apply = [](Gtk::Button* button, Gtk::Button* resetButton,
                           const Glib::ustring& labelKey, int count) {
         if (button) {
-            button->set_label(count > 0 ? M(labelKey) + " ✓" : M(labelKey));
+            (void)labelKey;
         }
         if (resetButton) {
             resetButton->set_visible(count > 0);
@@ -824,6 +919,45 @@ void Spot::updateSmartToolIndicators()
     apply(btnAIDust, btnAIDustReset, "TP_SPOT_AI_DUST", counts[1]);
     apply(btnAIReflect, btnAIReflectReset, "TP_SPOT_AI_REFLECTION", counts[2]);
     apply(btnAIFill, btnAIFillReset, "TP_SPOT_AI_GENERATIVE", counts[3]);
+    pollSmartStatus();
+}
+
+void Spot::startStatusPolling()
+{
+    if (statusPollConn_.connected() || !smartStatusProvider_) return;
+    statusPollConn_ = Glib::signal_timeout().connect([this]() {
+        pollSmartStatus();
+        const auto s = smartStatusProvider_();
+        return dustScanning_ || (s.stage != SmartRepairStage::Idle && s.stage != SmartRepairStage::Ready
+            && s.stage != SmartRepairStage::Failed && s.stage != SmartRepairStage::Cancelled);
+    }, 100);
+}
+
+void Spot::pollSmartStatus()
+{
+    if (!smartStatus_[0]) return;
+    const auto status = smartStatusProvider_ ? smartStatusProvider_() : SmartRepairStatus{};
+    const bool failed = status.stage == SmartRepairStage::Failed;
+    const bool cancelled = status.stage == SmartRepairStage::Cancelled;
+    const bool busy = status.stage != SmartRepairStage::Idle && status.stage != SmartRepairStage::Ready && !failed && !cancelled;
+    const char* tip = failed ? "TP_SMART_FAILED" : cancelled ? "TP_SMART_CANCELLED" : busy ? "TP_SMART_WORKING" : "TP_SMART_READY";
+    for (int i = 0; i < 4; ++i) {
+        const bool present = status.methods & (1u << i);
+        const bool spin = (present && busy) || (i == 1 && dustScanning_);
+        const char* view = spin ? "busy" : present && failed ? "failed" : present && status.stage == SmartRepairStage::Ready ? "ready" : "idle";
+        if (smartStatus_[i]->get_visible_child_name() != view) {
+            smartStatus_[i]->set_visible_child(view);
+            if (spin) smartSpinner_[i]->start(); else smartSpinner_[i]->stop();
+        }
+        smartStatusHit_[i]->set_tooltip_text(M(i == 1 && dustScanning_ ? "TP_SMART_DUST_SCANNING" : tip));
+    }
+    if (smartCancel_) smartCancel_->set_visible(busy || dustScanning_);
+    if (smartRetry_) smartRetry_->set_visible(failed || cancelled);
+    if (btnAIDust) btnAIDust->set_sensitive(bool(dustDetector_) && !dustScanning_);
+    if (smartUpgrade_) smartUpgrade_->set_visible(std::any_of(spots.begin(), spots.end(), [](const SpotEntry& e) {
+        return int(e.method) >= int(SpotMethod::AI_REMOVE) && e.repairVersion < 2;
+    }));
+    if (awaitingSmartResult_ && (status.stage == SmartRepairStage::Ready || failed || cancelled)) finishSmartResult();
 }
 
 void Spot::resetEntriesOfMethod(SpotMethod method)
@@ -869,7 +1003,24 @@ void Spot::onRemoveDustPressed()
     // over the canvas. Stand the brushes down first.
     deselectSmartTools();
 
-    const auto candidates = dustDetector_(40);
+    dustFuture_ = dustDetector_(200, dustSensitivity_->getValue());
+    if (!dustFuture_.valid()) return;
+    dustScanning_ = true;
+    pollSmartStatus();
+    dustPollConn_.disconnect();
+    dustPollConn_ = Glib::signal_timeout().connect([this]() {
+        if (dustFuture_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return true;
+        dustScanning_ = false;
+        try { applyDustCandidates(dustFuture_.get()); }
+        catch (...) { btnAIDust->set_tooltip_text(M("TP_SMART_FAILED")); }
+        dustFuture_ = {};
+        pollSmartStatus();
+        return false;
+    }, 100);
+}
+
+void Spot::applyDustCandidates(const std::vector<SpotEntry>& candidates)
+{
 
     int added = 0;
     for (const auto& candidate : candidates) {
@@ -1537,6 +1688,9 @@ bool Spot::button1Released()
             SpotEntry se;
             se.radius = spotSize->getIntValue();
             se.method = strokeMethod;
+            se.repairVersion = 2;
+            se.feather = float(repairFeather_->getValue() / 100.);
+            if (strokeMethod == SpotMethod::AI_REFLECT) se.opacity = float(reflectionStrength_->getValue() / 100.);
 
             // Compute bounding box center as targetPos
             int minX = INT_MAX, minY = INT_MAX, maxX = INT_MIN, maxY = INT_MIN;
@@ -1576,7 +1730,7 @@ bool Spot::button1Released()
                 busySeenActive_ = false;
                 startBusyIndicator();
                 busyTimeoutConn_.disconnect();
-                busyTimeoutConn_ = Glib::signal_timeout().connect([this]() -> bool {
+                if (!smartStatusProvider_) busyTimeoutConn_ = Glib::signal_timeout().connect([this]() -> bool {
                     finishSmartResult();
                     return false;
                 }, 120000);

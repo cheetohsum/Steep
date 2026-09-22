@@ -4726,6 +4726,7 @@ bool ControlSpotPanel::mouseOver(int modifierKey)
         }
 
         const int method = shapeMethod_->get_active_row_number();
+        const bool symmetric = gradientgeometry::symmetricResize(selRow[spots_.shape], selRow[spots_.gradType], method);
 
         // Circle, Arcellipses and Rectangle
         if (rem >= 0 && rem < 3) {
@@ -4750,7 +4751,7 @@ bool ControlSpotPanel::mouseOver(int modifierKey)
         if (rem == 3) {
             EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 3)->state = Geometry::PRELIGHT;
 
-            if (method == 1 || method == 3) { // Symmetrical cases
+            if (symmetric) {
                 EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 4)->state = Geometry::PRELIGHT;
             }
         }
@@ -4759,7 +4760,7 @@ bool ControlSpotPanel::mouseOver(int modifierKey)
         if (rem == 4) {
             EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 4)->state = Geometry::PRELIGHT;
 
-            if (method == 1 || method == 3) { // Symmetrical cases
+            if (symmetric) {
                 EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 3)->state = Geometry::PRELIGHT;
             }
         }
@@ -4768,7 +4769,7 @@ bool ControlSpotPanel::mouseOver(int modifierKey)
         if (rem == 5) {
             EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 5)->state = Geometry::PRELIGHT;
 
-            if (method == 1 || method == 3) { // Symmetrical cases
+            if (symmetric) {
                 EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 6)->state = Geometry::PRELIGHT;
             }
         }
@@ -4777,7 +4778,7 @@ bool ControlSpotPanel::mouseOver(int modifierKey)
         if (rem == 6) {
             EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 6)->state = Geometry::PRELIGHT;
 
-            if (method == 1 || method == 3) { // Symmetrical cases
+            if (symmetric) {
                 EditSubscriber::visibleGeometry.at((curveId_ - 1) * GEOM_PER_SPOT + 5)->state = Geometry::PRELIGHT;
             }
         }
@@ -4940,6 +4941,7 @@ void ControlSpotPanel::simplifyPolygon(std::vector<rtengine::Coord>& pts, double
 
 bool ControlSpotPanel::button1Pressed(int modifierKey)
 {
+    gradientDragActive_ = false;
     EditDataProvider *provider = getEditProvider();
     const auto s = treeview_->get_selection();
 
@@ -4990,12 +4992,36 @@ bool ControlSpotPanel::button1Pressed(int modifierKey)
     }
 
     lastCoord_.set(provider->posImage.x + provider->deltaImage.x, provider->posImage.y + provider->deltaImage.y);
+    const auto selected = s->get_selected();
+    const int handle = lastObject_ % GEOM_PER_SPOT;
+    if (selected && (handle == 7 || handle == 8)
+        && (*selected)[spots_.shape] == 2 && (*selected)[spots_.gradType] != 1) {
+        int width = 0, height = 0;
+        provider->getImageSize(width, height);
+        if (width > 0 && height > 0) {
+            const Gtk::TreeModel::Row row = *selected;
+            auto& band = gradientDragBand_;
+            band.width = width; band.height = height;
+            band.x = width * (0.5 + static_cast<int>(row[spots_.centerX]) / 2000.);
+            band.y = height * (0.5 + static_cast<int>(row[spots_.centerY]) / 2000.);
+            band.right = static_cast<int>(row[spots_.locX]) * width / 2000.;
+            band.left = static_cast<int>(row[spots_.locXL]) * width / 2000.;
+            band.bottom = static_cast<int>(row[spots_.locY]) * height / 2000.;
+            band.top = static_cast<int>(row[spots_.locYT]) * height / 2000.;
+            const double theta = static_cast<double>(row[spots_.gradangle]) * rtengine::RT_PI / 180.;
+            band.nx = std::sin(theta); band.ny = -std::cos(theta);
+            band.transit = row[spots_.transit];
+            gradientDragStart_ = lastCoord_;
+            gradientDragActive_ = true;
+        }
+    }
     EditSubscriber::action = EditSubscriber::Action::DRAGGING;
     return true;
 }
 
 bool ControlSpotPanel::button1Released()
 {
+    gradientDragActive_ = false;
     // Handle polygon freehand draw release — close and store the polygon
     if (polyDragging_ && polyDrawing_) {
         polyDragging_ = false;
@@ -5088,6 +5114,7 @@ bool ControlSpotPanel::drag1(int modifierKey)
     provider->getImageSize(imW, imH);
     const int rem = lastObject_ % GEOM_PER_SPOT;
     const int method = shapeMethod_->get_active_row_number();
+    const bool symmetric = gradientgeometry::symmetricResize(row[spots_.shape], row[spots_.gradType], method);
     Coord newCoord = Coord(provider->posImage.x + provider->deltaImage.x, provider->posImage.y + provider->deltaImage.y);
 
     // Circle, Ellipses and Rectangle
@@ -5112,7 +5139,7 @@ bool ControlSpotPanel::drag1(int modifierKey)
         locX_->setValue(locX_->getValue() + deltaX);
         row[spots_.locX] = locX_->getIntValue();
 
-        if (method == 1 || method == 3) { // Symmetrical cases
+        if (symmetric) {
             disableParamlistener(true);
             locXL_->setValue(locX_->getValue());
             disableParamlistener(false);
@@ -5132,7 +5159,7 @@ bool ControlSpotPanel::drag1(int modifierKey)
         locXL_->setValue(locXL_->getValue() + deltaXL);
         row[spots_.locXL] = locXL_->getIntValue();
 
-        if (method == 1 || method == 3) { // Symmetrical cases
+        if (symmetric) {
             disableParamlistener(true);
             locX_->setValue(locXL_->getValue());
             disableParamlistener(false);
@@ -5152,7 +5179,7 @@ bool ControlSpotPanel::drag1(int modifierKey)
         locY_->setValue(locY_->getValue() + deltaY);
         row[spots_.locY] = locY_->getIntValue();
 
-        if (method == 1 || method == 3) { // Symmetrical cases
+        if (symmetric) {
             disableParamlistener(true);
             locYT_->setValue(locY_->getValue());
             disableParamlistener(false);
@@ -5172,7 +5199,7 @@ bool ControlSpotPanel::drag1(int modifierKey)
         locYT_->setValue(locYT_->getValue() + deltaYT);
         row[spots_.locYT] = locYT_->getIntValue();
 
-        if (method == 1 || method == 3) { // Symmetrical cases
+        if (symmetric) {
             disableParamlistener(true);
             locY_->setValue(locYT_->getValue());
             disableParamlistener(false);
@@ -5186,28 +5213,27 @@ bool ControlSpotPanel::drag1(int modifierKey)
         }
     }
 
-    // Gradient line drag — adjust transit (width of gradient transition)
-    if (rem == 7 || rem == 8) {
-        const double cx = (double)imW / 2. + centerX_->getValue() * (double)imW / 2000.;
-        const double cy = (double)imH / 2. + centerY_->getValue() * (double)imH / 2000.;
-        const double theta = gradangle_->getValue() * rtengine::RT_PI / 180.0;
-        const double sinT = std::sin(theta);
-        const double cosT = std::cos(theta);
-        // Project mouse position onto gradient direction from center
-        const double dx = (double)newCoord.x - cx;
-        const double dy = (double)newCoord.y - cy;
-        const double proj = std::abs(dx * sinT - dy * cosT);
-        // Compute maxProj (matching engine and visualization)
-        const double imgMaxX = std::max(cx, (double)imW - cx);
-        const double imgMaxY = std::max(cy, (double)imH - cy);
-        const double maxProj = imgMaxX * std::abs(sinT) + imgMaxY * std::abs(cosT);
-        // Convert distance to transit value: proj = maxProj * (transit/100)
-        if (maxProj > 0.001) {
-            double newTransit = (proj / maxProj) * 100.0;
-            newTransit = rtengine::LIM(newTransit, 0.5, 100.0);
-            transit_->setValue(newTransit);
-            row[spots_.transit] = transit_->getValue();
-        }
+    // Linear handles move independently; the radial handles above remain symmetric.
+    if ((rem == 7 || rem == 8) && gradientDragActive_) {
+        const double travel = (newCoord.x - gradientDragStart_.x) * gradientDragBand_.nx
+                            + (newCoord.y - gradientDragStart_.y) * gradientDragBand_.ny;
+        const auto band = gradientgeometry::resize(gradientDragBand_, rem == 7 ? 1 : -1, travel);
+        disableParamlistener(true);
+        centerX_->setValue((band.x / band.width - 0.5) * 2000.);
+        centerY_->setValue((band.y / band.height - 0.5) * 2000.);
+        locX_->setValue(band.right * 2000. / band.width);
+        locXL_->setValue(band.left * 2000. / band.width);
+        locY_->setValue(band.bottom * 2000. / band.height);
+        locYT_->setValue(band.top * 2000. / band.height);
+        transit_->setValue(band.transit);
+        row[spots_.centerX] = centerX_->getIntValue();
+        row[spots_.centerY] = centerY_->getIntValue();
+        row[spots_.locX] = locX_->getIntValue();
+        row[spots_.locXL] = locXL_->getIntValue();
+        row[spots_.locY] = locY_->getIntValue();
+        row[spots_.locYT] = locYT_->getIntValue();
+        row[spots_.transit] = transit_->getValue();
+        disableParamlistener(false);
 
         updateControlSpotCurve(row);
 

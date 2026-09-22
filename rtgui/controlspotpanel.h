@@ -26,6 +26,7 @@
 
 #include "rtengine/coord.h"
 #include "editcallbacks.h"
+#include "gradientgeometry.h"
 #include "threadutils.h"
 #include "aimaskthumb.h"
 #include "toolpanel.h"
@@ -603,6 +604,9 @@ private:
     ControlPanelListener* controlPanelListener;
     int lastObject_;
     rtengine::Coord lastCoord_;
+    rtengine::Coord gradientDragStart_;
+    gradientgeometry::LinearBand gradientDragBand_;
+    bool gradientDragActive_ = false;
     bool nbSpotChanged_;
     bool selSpotChanged_;
     bool nameChanged_;

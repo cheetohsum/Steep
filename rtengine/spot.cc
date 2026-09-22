@@ -26,7 +26,12 @@
 #include "iccstore.h"
 #include "imagesource.h"
 #include "imagefloat.h"
+#include "stdimagesource.h"
+#include <glib/gstdio.h>
 #include "rt_math.h"
+#include "repairmath.h"
+#include "gauss.h"
+#include "guidedfilter.h"
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -876,7 +881,11 @@ void processStrokeReflect(Imagefloat* img, const SpotEntry& entry, const Preview
         }
     }
 
-    excludePriorStrokeCoverage(mask, bbW, bbH, bbMinX, bbMinY, cropX, cropY, skip, priorStrokes);
+    if (entry.repairVersion < 2) {
+        excludePriorStrokeCoverage(mask, bbW, bbH, bbMinX, bbMinY, cropX, cropY, skip, priorStrokes);
+    } else {
+        for (auto& value : mask) value = repairmath::smoothstep(value);
+    }
 
     // A reflection or glare rides on the scene as a bright LOW-FREQUENCY
     // layer. Estimate that layer per pixel (blurred min-channel) and remove
@@ -893,6 +902,18 @@ void processStrokeReflect(Imagefloat* img, const SpotEntry& entry, const Preview
     array2D<float> veilBlur(bbW, bbH);
     const int veilRadius = std::max(4, std::min(std::min(bbW, bbH) / 4, int(featherRadius)));
     boxblur(static_cast<float**>(veil), static_cast<float**>(veilBlur), veilRadius, bbW, bbH, true);
+    if (entry.repairVersion >= 2 && bbW >= 8 && bbH >= 8) {
+        array2D<float> guide(bbW, bbH), estimate(bbW, bbH);
+        for (int y = 0; y < bbH; ++y) {
+            for (int x = 0; x < bbW; ++x) {
+                guide[y][x] = std::max(0.f, veil[y][x]) / 65535.f;
+                estimate[y][x] = std::max(0.f, veilBlur[y][x]) / 65535.f;
+            }
+        }
+        guidedFilter(guide, estimate, veilBlur, std::max(1, veilRadius / 2), .0025f, true, 1);
+        for (int y = 0; y < bbH; ++y)
+            for (int x = 0; x < bbW; ++x) veilBlur[y][x] *= 65535.f;
+    }
 
     // The anchor: the least-hazy tenth of the painted region keeps its look.
     std::vector<float> veilSamples;
@@ -915,10 +936,18 @@ void processStrokeReflect(Imagefloat* img, const SpotEntry& entry, const Preview
         for (int px = 0; px < bbW; ++px) {
             const float m = mask[py * bbW + px];
             if (m <= 0.f) continue;
-            const float g = strength * std::max(0.f, veilBlur[py][px] - veilFloor);
+            float g = strength * std::max(0.f, veilBlur[py][px] - veilFloor);
             if (g < 1.f || g >= 65534.f) continue;
             const int ix = bbMinX + px;
             const int iy = bbMinY + py;
+            if (entry.repairVersion >= 2) {
+                const float lo = std::max(0.f, std::min({img->r(iy, ix), img->g(iy, ix), img->b(iy, ix)}));
+                const float hi = std::max({img->r(iy, ix), img->g(iy, ix), img->b(iy, ix), 1.f});
+                // Bound subtraction before any channel can go negative, and
+                // protect saturated colors and deep shadows from hue shifts.
+                const float protection = repairmath::smoothstep(lo / 6000.f) * (.35f + .65f * lo / hi);
+                g = std::min(g * protection, .45f * lo);
+            }
             const float rescale = 65535.f / (65535.f - g);
             const auto unveil = [g, rescale](float v) {
                 return std::max(0.f, (v - g) * rescale);
@@ -973,6 +1002,11 @@ struct AIPatch {
     int x0, y0, w, h;                       // full-image coordinates, skip 1
     std::vector<float> fillR, fillG, fillB; // the repair, linear [0,65535]
     std::vector<float> mask;                // soft blend mask 0..1
+    bool delta = false;
+    int fullW = 0, fullH = 0;
+    std::vector<float> workR, workG, workB;
+    procparams::RAWParams raw;
+    procparams::ColorManagementParams icm;
 };
 
 std::mutex aiPatchMutex;
@@ -1027,6 +1061,7 @@ std::uint64_t hashEntryChain(const SpotEntry& entry,
                             static_cast<int>(e.feather * 1000.f),
                             static_cast<int>(e.opacity * 1000.f)};
         h = hashInts(h, meta, 4);
+        if (e.repairVersion >= 2) h = hashInts(h, &e.repairVersion, 1);
         for (const auto& pt : e.strokePoints) {
             const int xy[] = {pt.x, pt.y};
             h = hashInts(h, xy, 2);
@@ -1042,6 +1077,16 @@ std::uint64_t hashEntryChain(const SpotEntry& entry,
     // Image identity: the cache is process-global, so patches must never
     // leak between images (editor tabs, before/after, batch queue).
     h = hashString(h, fileName);
+    GStatBuf stat;
+    if (entry.repairVersion >= 2 && g_stat(fileName.c_str(), &stat) == 0) {
+        h = hashDouble(h, double(stat.st_size));
+        h = hashDouble(h, double(stat.st_mtime));
+    }
+    if (entry.repairVersion >= 2) {
+        h = hashDouble(h, currWB.getEqual());
+        const int observer = int(currWB.getObserver());
+        h = hashInts(h, &observer, 1);
+    }
     // The upstream knobs getImage actually consumes. Deliberately NOT
     // toneCurve.expcomp: getImage never reads it, and auto-exposure
     // rewrites it mid-pass, which used to guarantee a cache miss on the
@@ -1204,31 +1249,32 @@ bool inpaintTiled(AIInpaintingEngine& engine,
                   const std::vector<float>& inB, const std::vector<float>& mask,
                   int w, int h,
                   std::vector<float>& fillR, std::vector<float>& fillG,
-                  std::vector<float>& fillB)
+                  std::vector<float>& fillB, int version, const SmartRepairJob& job)
 {
     const long long pixels = static_cast<long long>(w) * h;
 
     // Pass 1: structure at reduced size.
-    const double structScale = std::sqrt(500000.0 / pixels);
-    const int sw = std::max(64, static_cast<int>(w * structScale));
-    const int sh = std::max(64, static_cast<int>(h * structScale));
+    const double structScale = version >= 2 ? std::min(1., 512. / std::max(w, h)) : std::sqrt(500000.0 / pixels);
+    const int sw = std::max(version >= 2 ? 1 : 64, static_cast<int>(w * structScale));
+    const int sh = std::max(version >= 2 ? 1 : 64, static_cast<int>(h * structScale));
+    const auto resizePlane = version >= 2 ? repairmath::resample : resamplePlaneSpot;
     std::vector<float> smallR(sw * sh), smallG(sw * sh), smallB(sw * sh), smallM(sw * sh);
-    resamplePlaneSpot(inR.data(), w, h, smallR.data(), sw, sh);
-    resamplePlaneSpot(inG.data(), w, h, smallG.data(), sw, sh);
-    resamplePlaneSpot(inB.data(), w, h, smallB.data(), sw, sh);
-    resamplePlaneSpot(mask.data(), w, h, smallM.data(), sw, sh);
+    resizePlane(inR.data(), w, h, smallR.data(), sw, sh);
+    resizePlane(inG.data(), w, h, smallG.data(), sw, sh);
+    resizePlane(inB.data(), w, h, smallB.data(), sw, sh);
+    resizePlane(mask.data(), w, h, smallM.data(), sw, sh);
 
     std::vector<float> structR(sw * sh), structG(sw * sh), structB(sw * sh);
     if (!engine.inpaint(smallR.data(), smallG.data(), smallB.data(), smallM.data(),
-                        sw, sh, structR.data(), structG.data(), structB.data())) {
+                        sw, sh, structR.data(), structG.data(), structB.data(), version, job)) {
         return false;
     }
 
     // Seed: original content outside the mask, upscaled structure inside.
     std::vector<float> seedR(pixels), seedG(pixels), seedB(pixels);
-    resamplePlaneSpot(structR.data(), sw, sh, seedR.data(), w, h);
-    resamplePlaneSpot(structG.data(), sw, sh, seedG.data(), w, h);
-    resamplePlaneSpot(structB.data(), sw, sh, seedB.data(), w, h);
+    resizePlane(structR.data(), sw, sh, seedR.data(), w, h);
+    resizePlane(structG.data(), sw, sh, seedG.data(), w, h);
+    resizePlane(structB.data(), sw, sh, seedB.data(), w, h);
     for (long long i = 0; i < pixels; ++i) {
         if (mask[i] <= 0.05f) {
             seedR[i] = inR[i];
@@ -1245,16 +1291,25 @@ bool inpaintTiled(AIInpaintingEngine& engine,
     // edges. The blur also attenuates thin line ghosts the structure pass
     // itself hallucinates.
     constexpr int SPLIT_RADIUS = 12;
+    const auto lowpass = [version](float* src, float* dst, int width, int height) {
+        if (version < 2) { boxblur(src, dst, SPLIT_RADIUS, width, height, false); return; }
+        std::vector<float*> rows(height), outRows(height);
+        for (int y = 0; y < height; ++y) {
+            rows[y] = const_cast<float*>(src + size_t(y) * width);
+            outRows[y] = dst + size_t(y) * width;
+        }
+        gaussianBlur(rows.data(), outRows.data(), width, height, 5.0);
+    };
     std::vector<float> lowR(pixels), lowG(pixels), lowB(pixels);
-    boxblur(seedR.data(), lowR.data(), SPLIT_RADIUS, w, h, true);
-    boxblur(seedG.data(), lowG.data(), SPLIT_RADIUS, w, h, true);
-    boxblur(seedB.data(), lowB.data(), SPLIT_RADIUS, w, h, true);
+    lowpass(seedR.data(), lowR.data(), w, h);
+    lowpass(seedG.data(), lowG.data(), w, h);
+    lowpass(seedB.data(), lowB.data(), w, h);
 
     // Pass 2: overlapping tiles over the masked region. 640px measured
     // fastest end-to-end: LaMa's FFT cost grows superlinearly, so fewer
     // bigger tiles (768) actually lose to more smaller ones.
-    constexpr int TILE = 640;
-    constexpr int STRIDE = 512;
+    const int TILE = version >= 2 ? engine.tileSize() : 640;
+    const int STRIDE = std::max(1, TILE - 128);
     constexpr float RAMP = 64.f; // feather width inside the overlap
 
     std::vector<float> accR(pixels, 0.f), accG(pixels, 0.f), accB(pixels, 0.f), accW(pixels, 0.f);
@@ -1263,6 +1318,7 @@ bool inpaintTiled(AIInpaintingEngine& engine,
     std::vector<float> tlowR(TILE * TILE), tlowG(TILE * TILE), tlowB(TILE * TILE);
 
     for (int ty = 0; ty < h; ty += STRIDE) {
+        if (job) job->checkpoint();
         const int y0 = std::min(ty, std::max(0, h - TILE));
         const int th = std::min(TILE, h - y0);
         for (int tx = 0; tx < w; tx += STRIDE) {
@@ -1291,28 +1347,34 @@ bool inpaintTiled(AIInpaintingEngine& engine,
             }
 
             if (!engine.inpaint(tileR.data(), tileG.data(), tileB.data(), tileM.data(),
-                                tw, th, tofR.data(), tofG.data(), tofB.data())) {
+                                tw, th, tofR.data(), tofG.data(), tofB.data(), version, job)) {
                 return false;
             }
 
             // The tile's own low frequencies are its private hallucination —
             // discard them inside the mask and ride on the shared structure.
-            boxblur(tofR.data(), tlowR.data(), 12, tw, th, false);
-            boxblur(tofG.data(), tlowG.data(), 12, tw, th, false);
-            boxblur(tofB.data(), tlowB.data(), 12, tw, th, false);
+            lowpass(tofR.data(), tlowR.data(), tw, th);
+            lowpass(tofG.data(), tlowG.data(), tw, th);
+            lowpass(tofB.data(), tlowB.data(), tw, th);
 
             for (int y = 0; y < th; ++y) {
-                const float wy = std::min({1.f, (y + 1) / RAMP, (th - y) / RAMP});
+                const float wy = version >= 2 ? repairmath::overlapWeight(y, th, y0 == 0, y0 + th == h, 128)
+                    : std::min({1.f, (y + 1) / RAMP, (th - y) / RAMP});
                 for (int x = 0; x < tw; ++x) {
-                    const float wx = std::min({1.f, (x + 1) / RAMP, (tw - x) / RAMP});
+                    const float wx = version >= 2 ? repairmath::overlapWeight(x, tw, x0 == 0, x0 + tw == w, 128)
+                        : std::min({1.f, (x + 1) / RAMP, (tw - x) / RAMP});
                     const float wgt = std::max(0.01f, wy * wx);
                     const long long di = static_cast<long long>(y0 + y) * w + x0 + x;
                     const long long si = static_cast<long long>(y) * tw + x;
                     float vr = tofR[si], vg = tofG[si], vb = tofB[si];
                     if (mask[di] > 0.05f) {
-                        vr = lowR[di] + (tofR[si] - tlowR[si]);
-                        vg = lowG[di] + (tofG[si] - tlowG[si]);
-                        vb = lowB[di] + (tofB[si] - tlowB[si]);
+                        // Where a tile invents a different edge, do not paste
+                        // its high-pass outline on top of the global structure.
+                        const float mismatch = (std::fabs(tlowR[si] - lowR[di]) + std::fabs(tlowG[si] - lowG[di]) + std::fabs(tlowB[si] - lowB[di])) / 3.f;
+                        const float agreement = version >= 2 ? 1.f / (1.f + mismatch / 900.f) : 1.f;
+                        vr = lowR[di] + agreement * (tofR[si] - tlowR[si]);
+                        vg = lowG[di] + agreement * (tofG[si] - tlowG[si]);
+                        vb = lowB[di] + agreement * (tofB[si] - tlowB[si]);
                     }
                     accR[di] += vr * wgt;
                     accG[di] += vg * wgt;
@@ -1349,10 +1411,10 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
     const std::vector<const SpotEntry*>& priorStrokes,
     const std::vector<std::shared_ptr<const AIPatch>>& priorPatches,
     const ColorTemp& currWB, int tr, const procparams::ProcParams* params,
-    bool computeIfMissing)
+    bool computeIfMissing, const SmartRepairJob& job)
 {
     auto& engine = rtengine::getAIInpaintingEngine();
-    if (!engine.isInitialized() || entry.strokePoints.empty()) {
+    if (!engine.isAvailable() || entry.strokePoints.empty()) {
         return nullptr;
     }
 
@@ -1362,9 +1424,10 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
     std::unique_lock<std::mutex> lock(aiPatchMutex);
 
     for (;;) {
+        if (job) job->checkpoint();
         bool waiting = false;
         for (auto it = aiPatchCache.begin(); it != aiPatchCache.end(); ++it) {
-            if ((*it)->key == key) {
+            if ((*it)->key == key && (*it)->raw == params->raw && (*it)->icm == params->icm) {
                 // LRU refresh: keep live patches at the back so eviction hits
                 // strokes that are no longer part of the current edit.
                 auto hit = *it;
@@ -1385,7 +1448,7 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
             // patch — wait for its result instead of duplicating a
             // multi-second inference.
             waiting = true;
-            aiPatchCv.wait(lock);
+            aiPatchCv.wait_for(lock, std::chrono::milliseconds(50));
         }
         if (!waiting) {
             break;
@@ -1399,6 +1462,16 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
     }
 
     aiPatchPending.insert(key);
+    struct PendingGuard {
+        std::unique_lock<std::mutex>& lock;
+        std::uint64_t key;
+        ~PendingGuard() {
+            if (!lock.owns_lock()) lock.lock();
+            aiPatchPending.erase(key);
+            aiPatchCv.notify_all();
+        }
+    } pendingGuard{lock, key};
+    if (job) job->setStage(SmartRepairStage::Preparing);
     const auto abandonPending = [&key]() {
         aiPatchPending.erase(key);
         aiPatchCv.notify_all();
@@ -1470,6 +1543,12 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
             for (int x = ox0; x <= ox1; ++x) {
                 const long long di = static_cast<long long>(y - by0) * w + (x - bx0);
                 const long long si = static_cast<long long>(y - prior->y0) * prior->w + (x - prior->x0);
+                if (prior->delta) {
+                    inR[di] += prior->fillR[si];
+                    inG[di] += prior->fillG[si];
+                    inB[di] += prior->fillB[si];
+                    continue;
+                }
                 const float m = prior->mask[si];
                 if (m > 0.f) {
                     inR[di] = inR[di] * (1.f - m) + prior->fillR[si] * m;
@@ -1500,6 +1579,7 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
                 } else if (dist < featherRadius) {
                     val = (featherRadius - dist) / (featherRadius - radius);
                 }
+                if (entry.repairVersion >= 2) val = repairmath::smoothstep(val);
                 mask[static_cast<long long>(py) * w + px] =
                     std::max(mask[static_cast<long long>(py) * w + px], val);
             }
@@ -1507,11 +1587,44 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
     }
 
     // Keep earlier stroke repairs intact where they overlap this stroke.
-    excludePriorStrokeCoverage(mask, w, h, bx0, by0, 0, 0, 1, priorStrokes);
+    if (entry.repairVersion < 2) excludePriorStrokeCoverage(mask, w, h, bx0, by0, 0, 0, 1, priorStrokes);
 
     // Probe the color transform while imgsrc access is still serialized.
     float toSRGB[3][3], fromSRGB[3][3];
-    const bool colorMapped = probeCameraToSRGB(imgsrc, currWB, params, toSRGB, fromSRGB);
+    bool colorMapped = probeCameraToSRGB(imgsrc, currWB, params, toSRGB, fromSRGB);
+    if (!colorMapped && entry.repairVersion >= 2 && imgsrc->isRAW()) {
+        // Generate in calibrated camera color; the user's nonlinear input
+        // look is applied afterwards, once, by the normal photo pipeline.
+        auto matrixParams = *params;
+        matrixParams.icm.inputProfile = "(camera)";
+        colorMapped = probeCameraToSRGB(imgsrc, currWB, &matrixParams, toSRGB, fromSRGB);
+    }
+    struct ProfilePair {
+        cmsHTRANSFORM forward = nullptr, inverse = nullptr;
+        ~ProfilePair() {
+            if (forward) cmsDeleteTransform(forward);
+            if (inverse) cmsDeleteTransform(inverse);
+        }
+    } profile;
+    if (!colorMapped && entry.repairVersion >= 2) {
+        if (!dynamic_cast<StdImageSource*>(imgsrc)) return nullptr;
+        cmsHPROFILE input = nullptr;
+        const auto& name = params->icm.inputProfile;
+        if (!name.empty() && name != "(embedded)" && name != "(camera)" && name != "(cameraICC)") {
+            input = ICCStore::getInstance()->getProfile(name);
+        }
+        if (!input) input = imgsrc->getEmbeddedProfile();
+        if (!input || cmsGetColorSpace(input) != cmsSigRgbData) input = ICCStore::getInstance()->getsRGBProfile();
+        const auto linearSRGB = ICCStore::getInstance()->workingSpace("sRGB");
+        {
+            MyMutex::MyLock cmsLock(*lcmsMutex);
+            profile.forward = cmsCreateTransform(input, TYPE_RGB_FLT, linearSRGB, TYPE_RGB_FLT,
+                INTENT_RELATIVE_COLORIMETRIC, cmsFLAGS_NOOPTIMIZE | cmsFLAGS_NOCACHE);
+            profile.inverse = cmsCreateTransform(linearSRGB, TYPE_RGB_FLT, input, TYPE_RGB_FLT,
+                INTENT_RELATIVE_COLORIMETRIC, cmsFLAGS_NOOPTIMIZE | cmsFLAGS_NOCACHE);
+        }
+        if (!profile.forward || !profile.inverse) return nullptr;
+    }
 
     // The image pull is done. The multi-second inference must not hold the
     // mutex: cache hits for other strokes (and the other pipeline thread's
@@ -1520,6 +1633,20 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
 
     // Run the model in linear sRGB, not camera primaries (greenish fills).
     std::vector<float> mappedR, mappedG, mappedB;
+    const auto transformPlanes = [w, h](cmsHTRANSFORM transform, std::vector<float>& r, std::vector<float>& g, std::vector<float>& b) {
+        Imagefloat image(w, h);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                const size_t i = size_t(y) * w + x;
+                image.r(y, x) = r[i] / 65535.f; image.g(y, x) = g[i] / 65535.f; image.b(y, x) = b[i] / 65535.f;
+            }
+        image.ExecCMSTransform(transform);
+        for (int y = 0; y < h; ++y)
+            for (int x = 0; x < w; ++x) {
+                const size_t i = size_t(y) * w + x;
+                r[i] = image.r(y, x) * 65535.f; g[i] = image.g(y, x) * 65535.f; b[i] = image.b(y, x) * 65535.f;
+            }
+    };
     if (colorMapped) {
         mappedR.resize(pixels);
         mappedG.resize(pixels);
@@ -1531,9 +1658,13 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
             mappedB[i] = toSRGB[2][0] * r + toSRGB[2][1] * g + toSRGB[2][2] * b;
         }
     }
-    const std::vector<float>& srcR = colorMapped ? mappedR : inR;
-    const std::vector<float>& srcG = colorMapped ? mappedG : inG;
-    const std::vector<float>& srcB = colorMapped ? mappedB : inB;
+    if (profile.forward) {
+        mappedR = inR; mappedG = inG; mappedB = inB;
+        transformPlanes(profile.forward, mappedR, mappedG, mappedB);
+    }
+    const std::vector<float>& srcR = colorMapped || profile.forward ? mappedR : inR;
+    const std::vector<float>& srcG = colorMapped || profile.forward ? mappedG : inG;
+    const std::vector<float>& srcB = colorMapped || profile.forward ? mappedB : inB;
 
     const long long traceStartUs = edittrace::enabled() ? edittrace::nowUs() : 0;
 
@@ -1541,9 +1672,9 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
     bool ok;
     if (pixels <= 700000) {
         ok = engine.inpaint(srcR.data(), srcG.data(), srcB.data(), mask.data(),
-                            w, h, fillR.data(), fillG.data(), fillB.data());
+                            w, h, fillR.data(), fillG.data(), fillB.data(), entry.repairVersion, job);
     } else {
-        ok = inpaintTiled(engine, srcR, srcG, srcB, mask, w, h, fillR, fillG, fillB);
+        ok = inpaintTiled(engine, srcR, srcG, srcB, mask, w, h, fillR, fillG, fillB, entry.repairVersion, job);
     }
 
     if (edittrace::enabled()) {
@@ -1569,6 +1700,8 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
         }
     }
 
+    if (profile.inverse) transformPlanes(profile.inverse, fillR, fillG, fillB);
+
     // Grain matching at full resolution — it then downsamples into every
     // view exactly the way the surrounding real grain does.
     std::vector<float> residuals;
@@ -1584,7 +1717,7 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
     if (residuals.size() > 64) {
         const size_t n = residuals.size() * 2 / 5;
         std::nth_element(residuals.begin(), residuals.begin() + n, residuals.end());
-        const float grainSigma = std::min(residuals[n] * 1.2f, 1200.f);
+        const float grainSigma = std::min(residuals[n] * (entry.repairVersion >= 2 ? .65f : 1.2f), entry.repairVersion >= 2 ? 400.f : 1200.f);
         if (grainSigma > 0.f) {
             std::mt19937 rng(static_cast<std::uint32_t>(key));
             std::normal_distribution<float> grain(0.f, grainSigma);
@@ -1600,11 +1733,48 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
     }
 
     auto patch = std::make_shared<AIPatch>();
+    patch->raw = params->raw;
+    patch->icm = params->icm;
     patch->key = key;
     patch->x0 = bx0;
     patch->y0 = by0;
     patch->w = w;
     patch->h = h;
+    patch->fullW = fw;
+    patch->fullH = fh;
+    if (entry.repairVersion >= 2) {
+        if (job) job->setStage(SmartRepairStage::Blending);
+        Imagefloat original(w, h), repaired(w, h);
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                const size_t i = size_t(y) * w + x;
+                const float m = mask[i] * std::max(0.f, std::min(1.f, entry.opacity));
+                original.r(y, x) = inR[i]; original.g(y, x) = inG[i]; original.b(y, x) = inB[i];
+                fillR[i] = m * (fillR[i] - inR[i]);
+                fillG[i] = m * (fillG[i] - inG[i]);
+                fillB[i] = m * (fillB[i] - inB[i]);
+                repaired.r(y, x) = inR[i] + fillR[i];
+                repaired.g(y, x) = inG[i] + fillG[i];
+                repaired.b(y, x) = inB[i] + fillB[i];
+            }
+        }
+        // Transform the original and composite, not a color-space delta:
+        // input profiles may contain nonlinear tables.
+        imgsrc->convertColorSpace(&original, params->icm, currWB);
+        imgsrc->convertColorSpace(&repaired, params->icm, currWB);
+        patch->workR.resize(pixels); patch->workG.resize(pixels); patch->workB.resize(pixels);
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                const size_t i = size_t(y) * w + x;
+                patch->workR[i] = repaired.r(y, x) - original.r(y, x);
+                patch->workG[i] = repaired.g(y, x) - original.g(y, x);
+                patch->workB[i] = repaired.b(y, x) - original.b(y, x);
+            }
+        }
+        patch->delta = true;
+        mask.clear();
+        mask.shrink_to_fit();
+    }
     patch->fillR = std::move(fillR);
     patch->fillG = std::move(fillG);
     patch->fillB = std::move(fillB);
@@ -1614,13 +1784,16 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
     abandonPending(); // waiters wake and find the patch in the cache
     aiPatchCache.push_back(patch);
 
+    const auto storedPixels = [](const std::shared_ptr<const AIPatch>& p) {
+        return static_cast<long long>(p->w) * p->h * (p->delta ? 6 : 4) / 4;
+    };
     long long totalPixels = 0;
     for (const auto& cached : aiPatchCache) {
-        totalPixels += static_cast<long long>(cached->w) * cached->h;
+        totalPixels += storedPixels(cached);
     }
     while (aiPatchCache.size() > 1
             && (aiPatchCache.size() > MAX_AI_PATCHES || totalPixels > MAX_AI_PATCH_TOTAL_PIXELS)) {
-        totalPixels -= static_cast<long long>(aiPatchCache.front()->w) * aiPatchCache.front()->h;
+        totalPixels -= storedPixels(aiPatchCache.front());
         aiPatchCache.pop_front();
     }
 
@@ -1628,7 +1801,7 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
 }
 
 // Blend a finished patch into a view buffer at that view's scale and crop.
-void blitAIPatch(Imagefloat* img, const PreviewProps& pp, const AIPatch& patch)
+void blitAIPatch(Imagefloat* img, const PreviewProps& pp, const AIPatch& patch, bool workingSpace)
 {
     const int skip = pp.getSkip();
     const int cropX = pp.getX();
@@ -1643,6 +1816,17 @@ void blitAIPatch(Imagefloat* img, const PreviewProps& pp, const AIPatch& patch)
 
     for (int vy = vy0; vy <= vy1; ++vy) {
         for (int vx = vx0; vx <= vx1; ++vx) {
+            if (patch.delta) {
+                const int ix = cropX + vx * skip, iy = cropY + vy * skip;
+                const auto sample = [&](const std::vector<float>& data) {
+                    return repairmath::averageDelta(data, patch.w, patch.h, ix - patch.x0, iy - patch.y0,
+                                                   skip, patch.fullW, patch.fullH, ix, iy);
+                };
+                img->r(vy, vx) += sample(workingSpace ? patch.workR : patch.fillR);
+                img->g(vy, vx) += sample(workingSpace ? patch.workG : patch.fillG);
+                img->b(vy, vx) += sample(workingSpace ? patch.workB : patch.fillB);
+                continue;
+            }
             // The full-resolution block this view pixel covers, patch-local.
             const int px0 = std::max(0, cropX + vx * skip - patch.x0);
             const int py0 = std::max(0, cropY + vy * skip - patch.y0);
@@ -1872,8 +2056,10 @@ void processStrokeAI(Imagefloat* img, const SpotEntry& entry, const PreviewProps
 
 } // anonymous namespace
 
-void ImProcFunctions::removeSpots (Imagefloat* img, ImageSource* imgsrc, const std::vector<SpotEntry> &entries, const PreviewProps &pp, const ColorTemp &currWB, const ColorManagementParams *cmp, int tr, bool allowFullResPatch)
+void ImProcFunctions::removeSpots (Imagefloat* img, ImageSource* imgsrc, const std::vector<SpotEntry> &entries, const PreviewProps &pp, const ColorTemp &currWB, const ColorManagementParams *cmp, int tr, bool allowFullResPatch, const SmartRepairJob& repairJob)
 {
+    bool allRepairsReady = true;
+    if (repairJob && repairJob->suspended) allowFullResPatch = false;
     // Process stroke-based entries directly on the image first. Each entry
     // knows which strokes came before it, so repainting the border of an
     // already-repaired spot leaves the earlier repair untouched.
@@ -1882,6 +2068,7 @@ void ImProcFunctions::removeSpots (Imagefloat* img, ImageSource* imgsrc, const s
     std::vector<std::shared_ptr<const AIPatch>> aiPriorPatches;
 #endif
     for (const auto& entry : params->spot.entries) {
+        if (repairJob) repairJob->checkpoint();
         if (entry.isStroke()) {
             if (entry.method == SpotMethod::AI_REFLECT) {
                 // Model-free glare reduction; available in every build.
@@ -1894,16 +2081,29 @@ void ImProcFunctions::removeSpots (Imagefloat* img, ImageSource* imgsrc, const s
                 // to the per-view path for outsized regions.
                 auto patch = getOrComputeAIPatch(imgsrc, entry, priorStrokes,
                                                  aiPriorPatches, currWB, tr, params,
-                                                 allowFullResPatch);
+                                                 allowFullResPatch, repairJob);
                 if (patch) {
-                    blitAIPatch(img, pp, *patch);
+                    blitAIPatch(img, pp, *patch, cmp != nullptr);
                     aiPriorPatches.push_back(patch);
                 } else {
-                    processStrokeAI(img, entry, pp, priorStrokes);
+                    allRepairsReady = false;
+                    if (entry.repairVersion < 2) processStrokeAI(img, entry, pp, priorStrokes);
+                    else if (allowFullResPatch) {
+                        if (repairJob) repairJob->stage = SmartRepairStage::Failed;
+                        else throw std::runtime_error("Smart repair failed: model unavailable, invalid output, or region exceeds the repair memory limit");
+                    }
                 }
             } else
 #endif
             {
+#ifndef RT_AI_MASKING
+                if (entry.repairVersion >= 2 && static_cast<int>(entry.method) >= static_cast<int>(SpotMethod::AI_REMOVE)) {
+                    allRepairsReady = false;
+                    if (repairJob) repairJob->stage = SmartRepairStage::Failed;
+                    else throw std::runtime_error("This build cannot render the saved AI repair");
+                    continue;
+                }
+#endif
                 processStrokeErase(img, entry, pp, priorStrokes);
             }
             priorStrokes.push_back(&entry);
@@ -2050,6 +2250,10 @@ void ImProcFunctions::removeSpots (Imagefloat* img, ImageSource* imgsrc, const s
     for (auto i : visibleSpots) {
         f += dstSpotBoxs.at(i)->copyImgTo(cropBox) ? 1 : 0;
     }
+    if (repairJob && allRepairsReady) {
+        repairJob->composed = true;
+        repairJob->setStage(SmartRepairStage::Presenting);
+    }
 }
 
 }
@@ -2095,4 +2299,3 @@ std::unordered_set<int> calcSpotDependencies(const std::set<int> &visibleSpots, 
 }
 
 }
-

@@ -50,6 +50,19 @@ using namespace rtengine::procparams;
 namespace
 {
 
+void mergePresetPreview(const PartialProfile& profile, ProcParams& params, bool filled)
+{
+    if (filled && profile.pedited && !profile.pedited->filmLook) {
+        ParamsEdited mask(true);
+        mask.locallab.spots.resize(profile.pparams->locallab.spots.size(),
+            LocallabParamsEdited::LocallabSpotEdited(true));
+        PartialProfile full(profile.pparams, &mask, false);
+        full.applyTo(&params);
+    } else {
+        profile.applyTo(&params);
+    }
+}
+
 bool presetPanelLogEnabled()
 {
     static const bool enabled = std::getenv("STEEP_FILESEL_LOG") != nullptr;
@@ -713,7 +726,7 @@ void PresetListPanel::selectEntry(const ProfileStoreEntry* entry, bool fireChang
     } else if (entry) {
         const PartialProfile* s = ProfileStore::getInstance()->getProfile(entry);
         if (s) {
-            if (fillMode_->get_active() && s->pedited) {
+            if (fillMode_->get_active() && s->pedited && !s->pedited->filmLook) {
                 ParamsEdited pe(true);
                 pe.locallab.spots.resize(s->pparams->locallab.spots.size(),
                     LocallabParamsEdited::LocallabSpotEdited(true));
@@ -1421,7 +1434,7 @@ void PresetListPanel::applyHoverPreview(const ProfileStoreEntry* entry)
     if (!profile) return;
 
     ProcParams merged = savedParams_;
-    profile->applyTo(&merged);
+    mergePresetPreview(*profile, merged, fillMode_->get_active());
 
     ProcParams* params = ipc_->beginUpdateParams();
     *params = merged;
@@ -1479,6 +1492,15 @@ void PresetListPanel::startThumbnailGeneration()
     if (!openThm_) return;
 
     ::Thumbnail* thumbnail = openThm_;
+    ProcParams baseline;
+    if (hasSavedParams_) {
+        baseline = savedParams_;
+    } else if (ipc_) {
+        ipc_->getParams(&baseline, false);
+    } else {
+        baseline = thumbnail->getProcParamsCopy();
+    }
+    const bool filled = fillMode_->get_active();
     std::vector<const ProfileStoreEntry*> entries;
     collectPresetEntries(entries);
 
@@ -1488,7 +1510,7 @@ void PresetListPanel::startThumbnailGeneration()
     auto done = thumbThreadDone_;
     thumbnail->increaseRef();
 
-    thumbThread_ = std::thread([this, entries, thumbnail, generation, done]() {
+    thumbThread_ = std::thread([this, entries, thumbnail, generation, done, baseline, filled]() {
 #ifdef _OPENMP
         // Preset thumbnails are generated serially on this background thread.
         // A nested full OpenMP team competes with the editor and remains
@@ -1500,7 +1522,7 @@ void PresetListPanel::startThumbnailGeneration()
                 || generation != thumbGeneration_.load(std::memory_order_acquire)) {
                 break;
             }
-            generateThumbnail(entry, thumbnail, generation);
+            generateThumbnail(entry, thumbnail, generation, baseline, filled);
         }
         thumbnail->decreaseRef();
         done->store(true, std::memory_order_release);
@@ -1540,7 +1562,8 @@ void PresetListPanel::reapThumbnailThreads(bool wait)
     }
 }
 
-void PresetListPanel::generateThumbnail(const ProfileStoreEntry* entry, ::Thumbnail* thumbnail, unsigned int generation)
+void PresetListPanel::generateThumbnail(const ProfileStoreEntry* entry, ::Thumbnail* thumbnail,
+                                      unsigned int generation, const ProcParams& baseline, bool filled)
 {
     if (!thumbnail
         || thumbCancelled_.load(std::memory_order_acquire)
@@ -1551,13 +1574,8 @@ void PresetListPanel::generateThumbnail(const ProfileStoreEntry* entry, ::Thumbn
     const PartialProfile* profile = ProfileStore::getInstance()->getProfile(entry);
     if (!profile) return;
 
-    ProcParams merged;
-    merged.setDefaults();
-    if (profile->pedited) {
-        profile->pedited->combine(merged, *profile->pparams, true);
-    } else {
-        merged = *profile->pparams;
-    }
+    ProcParams merged = baseline;
+    mergePresetPreview(*profile, merged, filled);
 
     double scale;
     rtengine::IImage8* img = thumbnail->processThumbImage(merged, THUMB_HEIGHT, scale);

@@ -1215,8 +1215,11 @@ IImage8* Thumbnail::quickProcessImage (const procparams::ProcParams& params, int
 }
 
 // Full thumbnail processing, second stage if complete profile exists
-IImage8* Thumbnail::processImage (const procparams::ProcParams& params, eSensorType sensorType, int rheight, TypeInterpolation interp, const FramesMetaData *metadata, double& myscale, bool forMonitor, bool forHistogramMatching)
+IImage8* Thumbnail::processImage (const procparams::ProcParams& params, eSensorType sensorType, int rheight, TypeInterpolation interp, const FramesMetaData *metadata, double& myscale, bool forMonitor, bool forHistogramMatching, Imagefloat** analysisImage)
 {
+    if (analysisImage) {
+        *analysisImage = nullptr;
+    }
     const std::string camName = metadata->getCamera();
     const float shutter = metadata->getShutterSpeed();
     const float fnumber = metadata->getFNumber();
@@ -1532,7 +1535,15 @@ IImage8* Thumbnail::processImage (const procparams::ProcParams& params, eSensorT
     }
 
     LUTu histToneCurve;
-    ipf.rgbProc (baseImg, labView, nullptr, curve1, curve2, curve, params.toneCurve.saturation, rCurve, gCurve, bCurve, satLimit, satLimitOpacity, ctColorCurve, ctOpacityCurve, opautili, clToningcurve, cl2Toningcurve, customToneCurve1, customToneCurve2, customToneCurvebw1, customToneCurvebw2, rrm, ggm, bbm, autor, autog, autob, expcomp, hlcompr, hlcomprthresh, dcpProf, as, histToneCurve);
+    std::unique_ptr<Imagefloat> filmTap;
+    std::unique_ptr<LabImage> filmSnapshot;
+    if (params.filmPresets.enabled && params.filmPresets.modelVersion >= 4) {
+        filmTap.reset(new Imagefloat(fw, fh));
+    }
+    ipf.rgbProc (baseImg, labView, nullptr, curve1, curve2, curve, params.toneCurve.saturation, rCurve, gCurve, bCurve, satLimit, satLimitOpacity, ctColorCurve, ctOpacityCurve, opautili, clToningcurve, cl2Toningcurve, customToneCurve1, customToneCurve2, customToneCurvebw1, customToneCurvebw2, rrm, ggm, bbm, autor, autog, autob, expcomp, hlcompr, hlcomprthresh, dcpProf, as, histToneCurve, 1, false, filmTap.get());
+    if (filmTap) {
+        filmSnapshot.reset(new LabImage(*labView, true));
+    }
 
     // freeing up some memory
     customToneCurve1.Reset();
@@ -1610,6 +1621,18 @@ IImage8* Thumbnail::processImage (const procparams::ProcParams& params, eSensorT
         ipf.EPDToneMap (labView, 5, 6);
     }
 
+    const double filmScale = std::max(1.0, scale *
+        (params.coarse.rotate == 90 || params.coarse.rotate == 270
+            ? thumbImg->getWidth() : thumbImg->getHeight()) / fh);
+    FilmLabContext filmContext(0, 0, std::lround(fw * filmScale), std::lround(fh * filmScale),
+                              std::max(1, static_cast<int>(std::lround(filmScale))),
+                              ImProcFunctions::filmLabSeed(metadata->getFileName()));
+    filmContext.samplingScale = filmScale;
+    filmContext.sceneTap = filmTap.get();
+    filmContext.rgbSnapshot = filmSnapshot.get();
+    ipf.filmPresets(labView, params.filmPresets, filmContext);
+    filmTap.reset();
+    filmSnapshot.reset();
     ipf.softLight(labView, params.softlight);
 
     if (params.icm.workingTRC != ColorManagementParams::WorkingTrc::NONE && params.icm.trcExp) {
@@ -1847,6 +1870,24 @@ IImage8* Thumbnail::processImage (const procparams::ProcParams& params, eSensorT
 
     // color processing
     //ipf.colorCurve (labView, labView);
+
+    // Analysis sees the actual film/curve result before thumbnail crop dimming.
+    // Use a fixed display space, independent of the user's monitor profile.
+    if (analysisImage) {
+        auto analysisIcm = params.icm;
+        analysisIcm.outputProfile = settings->srgb;
+        int cx = 0, cy = 0, cw = fw, ch = fh;
+        if (params.crop.enabled) {
+            cx = LIM(static_cast<int>(params.crop.x / filmScale), 0, fw - 1);
+            cy = LIM(static_cast<int>(params.crop.y / filmScale), 0, fh - 1);
+            cw = LIM(static_cast<int>(std::ceil(params.crop.w / filmScale)), 1, fw - cx);
+            ch = LIM(static_cast<int>(std::ceil(params.crop.h / filmScale)), 1, fh - cy);
+        }
+        *analysisImage = ipf.lab2rgbOut(labView, cx, cy, cw, ch, analysisIcm);
+        delete labView;
+        delete baseImg;
+        return nullptr;
+    }
 
     // obtain final image
     Image8* readyImg = nullptr;

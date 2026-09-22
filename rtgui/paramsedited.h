@@ -1803,6 +1803,7 @@ struct FilmPresetsParamsEdited {
     bool preset;
     bool modelVersion;
     bool exposure;
+    bool printExposure;
     bool pushPull;
     bool process;
     bool output;
@@ -1966,6 +1967,8 @@ struct FilmNegativeParamsEdited {
 };
 
 struct ParamsEdited {
+    // Application policy for versioned film-only recipes, never image state.
+    bool filmLook;
     GeneralParamsEdited general;
     ToneCurveParamsEdited toneCurve;
     LCurveParamsEdited labCurve;

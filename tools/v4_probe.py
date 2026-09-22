@@ -30,7 +30,7 @@ import sys
 from PIL import Image
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-CLI = r"C:\msys64\home\alexr\build-hw\Release\steep-cli.exe"
+CLI = os.environ.get("STEEP_CLI", "steep-cli")
 
 W = H = 800
 PATCH = 80

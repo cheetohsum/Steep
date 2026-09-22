@@ -35,6 +35,7 @@
 #include "rtengine/diagonalcurvetypes.h"
 #include "rtengine/rt_math.h"
 #include "rtengine/iimage.h"
+#include "rtengine/imagefloat.h"
 #include "rtengine/procparams.h"
 
 const char* autoGradeSceneName(AutoGradeScene scene)
@@ -432,6 +433,7 @@ void restoreSteepAutoEditGeometry(
     // The double exposure stack is the photographer's content too -- Auto
     // Edit re-grades the plate, it must not dismantle the composite.
     target.doubleExposure = source.doubleExposure;
+    target.locallab = source.locallab;
 }
 
 // Percentiles of the image AS THE TONE CURVE WILL RECEIVE IT, i.e. rendered
@@ -640,7 +642,65 @@ struct CurveAnchors {
     // (0.16 / 0.84) so the two are directly comparable.
     double lumaShadowFraction = 0.0;
     double lumaHighFraction = 0.0;
+    double meanChroma = 0.0;
 };
+
+bool measureFinishedLook(Thumbnail& thumbnail,
+                         const rtengine::procparams::ProcParams& params,
+                         CurveAnchors& out, double highTolerance)
+{
+    auto image = thumbnail.processAnalysisImage(params, 192);
+    if (!image || image->getWidth() < 1 || image->getHeight() < 1) {
+        return false;
+    }
+    std::vector<double> luma;
+    std::vector<double> channels;
+    const size_t count = static_cast<size_t>(image->getWidth()) * image->getHeight();
+    luma.reserve(count);
+    channels.reserve(count * 3);
+    out = CurveAnchors();
+    for (int y = 0; y < image->getHeight(); ++y) {
+        for (int x = 0; x < image->getWidth(); ++x) {
+            const double rgb[] = {image->r(y, x) / 65535.0,
+                                  image->g(y, x) / 65535.0,
+                                  image->b(y, x) / 65535.0};
+            for (double value : rgb) {
+                if (!std::isfinite(value)) {
+                    return false;
+                }
+                channels.push_back(value);
+                out.clipHigh += value >= 0.999;
+                out.clipLow += value <= 0.001;
+            }
+            const double value = 0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2];
+            luma.push_back(value);
+            out.lumaShadowFraction += value < 0.16;
+            out.lumaHighFraction += value > 0.84;
+            out.meanChroma += *std::max_element(rgb, rgb + 3) - *std::min_element(rgb, rgb + 3);
+        }
+    }
+    std::sort(luma.begin(), luma.end());
+    std::sort(channels.begin(), channels.end());
+    const auto percentile = [](const std::vector<double>& values, double fraction) {
+        return values[static_cast<size_t>(std::round(fraction * (values.size() - 1)))];
+    };
+    out.lumaP02 = percentile(luma, 0.02);
+    out.lumaP10 = percentile(luma, 0.10);
+    out.lumaMid = percentile(luma, 0.50);
+    out.lumaP90 = percentile(luma, 0.90);
+    out.lumaP98 = percentile(luma, 0.98);
+    out.chanP10 = percentile(channels, 0.10);
+    out.chanMid = percentile(channels, 0.50);
+    out.chanP90 = percentile(channels, 0.90);
+    out.chanLo = percentile(channels, 0.001);
+    out.chanHi = percentile(channels, 1.0 - std::max(0.001, std::min(0.20, highTolerance)));
+    out.clipHigh /= channels.size();
+    out.clipLow /= channels.size();
+    out.lumaShadowFraction /= count;
+    out.lumaHighFraction /= count;
+    out.meanChroma /= count;
+    return true;
+}
 
 // `headroomEv` renders the probe that many stops DOWN and scales every
 // measurement back up, which is the only way this function can answer the one
@@ -1784,6 +1844,7 @@ void applySteepAutoEdit(
     // deepens the shadows reads as "too bright" whatever the frame. Now that
     // both sides are measured, the trace below reports whether it still bites.
     const double liftWanted = liftStrength;
+    liftStrength *= 1.0 - 0.20 * overtuneRisk;
     liftStrength = std::max(0.0, std::min({0.70, liftStrength, toeStrength}));
     const bool liftClamped = liftWanted > liftStrength + 1e-6;
 
@@ -1794,6 +1855,7 @@ void applySteepAutoEdit(
     const double pivotOut = pivot;   // the anchor holds
     double toeOut = toeIn - toeStrength * (pivot - toeIn);
     double shoulderOut = shoulderIn + liftStrength * (shoulderIn - pivot);
+    shoulderOut = std::min(shoulderOut, shoulderIn + 0.08 * (1.0 - 0.50 * overtuneRisk));
     constexpr double whiteOut = 1.0;
 
     // Highlights keep their separation: the run from the shoulder to white
@@ -2224,7 +2286,7 @@ void applySteepAutoFilm(
     auto& film = params.filmPresets;
     film = rtengine::procparams::FilmPresetsParams();
     film.enabled = true;
-    film.modelVersion = 4;
+    film.modelVersion = 5;
     film.preset = "sovereign";
     film.process = "c41";
     film.output = "ra4";
@@ -2685,7 +2747,7 @@ void verifySteepAutoEditExposure(
 
     CurveAnchors finished;
 
-    if (!measureCurveAnchors(thumbnail, params, finished, kProbeHeadroomEv, highTolerance)) {
+    if (!measureFinishedLook(thumbnail, params, finished, highTolerance)) {
         fileBrowserPerfLog(
             "[autoVerify] %s could not render the finished profile — exposure stands\n",
             thumbnail.getFileName().c_str());
@@ -2771,6 +2833,66 @@ void verifySteepAutoEditExposure(
         hiRoomEv, highTolerance, evAdd, applied, before, params.toneCurve.expcomp);
 }
 
+void verifySteepAutoFilm(Thumbnail& thumbnail,
+                         const rtengine::procparams::ProcParams& tonalBase,
+                         rtengine::procparams::ProcParams& params)
+{
+    CurveAnchors base, finished;
+    if (!measureFinishedLook(thumbnail, tonalBase, base, kClipTolerance)
+        || !measureFinishedLook(thumbnail, params, finished, kClipTolerance)) {
+        return;
+    }
+    // Judge the film against the photograph's own tonal edit, not a universal
+    // middle gray. This preserves night scenes and intentional high-key light.
+    const double minMid = base.lumaMid * 0.88;
+    const double maxMid = base.lumaMid * 1.08;
+    const double clipLimit = base.clipHigh + 0.003;
+    const double minRange = (base.lumaP90 - base.lumaP10) * 0.82;
+    const double maxChroma = base.meanChroma * 1.22 + 0.015;
+    const auto penalty = [&](const CurveAnchors& look) {
+        return std::max(0.0, minMid - look.lumaMid)
+            + std::max(0.0, look.lumaMid - maxMid)
+            + 3.0 * std::max(0.0, look.clipHigh - clipLimit)
+            + std::max(0.0, minRange - (look.lumaP90 - look.lumaP10))
+            + std::max(0.0, look.meanChroma - maxChroma);
+    };
+    const double initialPenalty = penalty(finished);
+    if (initialPenalty < 0.005) {
+        return;
+    }
+    const auto original = params;
+    auto& film = params.filmPresets;
+    const double targetMid = std::max(minMid, std::min(maxMid, finished.lumaMid));
+    double printMove = kDisplayGamma * std::log2(std::max(0.025, targetMid)
+                                             / std::max(0.025, finished.lumaMid));
+    printMove = std::max(-0.35, std::min(0.45, printMove / std::max(0.35, film.strength / 100.0)));
+    if (printMove > 0.0 && finished.clipHigh > clipLimit) {
+        printMove = 0.0;
+    }
+    film.printExposure = printMove;
+    if (finished.meanChroma > maxChroma) {
+        film.saturation -= std::min(12, static_cast<int>(std::ceil(
+            80.0 * (finished.meanChroma - maxChroma) / std::max(0.05, finished.meanChroma))));
+    }
+    if (finished.lumaP90 - finished.lumaP10 < minRange && finished.clipHigh <= clipLimit) {
+        film.contrast = std::min(12, film.contrast + 3);
+        film.fade = std::min(film.fade, 0);
+    }
+    if (finished.clipHigh > clipLimit) {
+        film.printExposure = std::min(film.printExposure, -0.10);
+        film.rolloff = std::min(18, film.rolloff + 3);
+    }
+    CurveAnchors corrected;
+    if (!measureFinishedLook(thumbnail, params, corrected, kClipTolerance)
+        || penalty(corrected) >= initialPenalty
+        || corrected.clipHigh > std::max(clipLimit, finished.clipHigh) + 0.001) {
+        params = original;
+    }
+    fileBrowserPerfLog("[autoFilmVerify] %s baseMid=%.4f filmMid=%.4f penalty=%.4f printEV=%.3f\n",
+                       thumbnail.getFileName().c_str(), base.lumaMid, finished.lumaMid,
+                       initialPenalty, params.filmPresets.printExposure);
+}
+
 AutoGradeFeatures buildSteepAutoEditParamsInternal(
     Thumbnail& thumbnail,
     AutoEditMode mode,
@@ -2817,6 +2939,7 @@ AutoGradeFeatures buildSteepAutoEditParamsInternal(
         features.medianLuma, features.dynamicRange,
         features.shadowFraction, features.highlightFraction);
 
+    const auto tonalBase = result;
     if (mode == AutoEditMode::Grade) {
         applySteepAutoGrade(features, render, result);
     } else if (mode == AutoEditMode::GradeFilm) {
@@ -2833,7 +2956,9 @@ AutoGradeFeatures buildSteepAutoEditParamsInternal(
     // Last word, on the finished profile — see verifySteepAutoEditExposure.
     // The Neutral mode has no look stage, so the picture it was measured on
     // is already the picture that ships and there is nothing left to check.
-    if (mode != AutoEditMode::Neutral && exposureNeedsVerifying(render)) {
+    if (result.filmPresets.enabled && result.filmPresets.modelVersion >= 5) {
+        verifySteepAutoFilm(thumbnail, tonalBase, result);
+    } else if (mode != AutoEditMode::Neutral && exposureNeedsVerifying(render)) {
         verifySteepAutoEditExposure(thumbnail, features, result, render);
     } else if (render.valid) {
         fileBrowserPerfLog(
@@ -2938,10 +3063,12 @@ void runSteepAutoEditSelfTest()
         }
     }
 
+    int failures = 0;
     for (const auto& trimmed : frames) {
         Thumbnail* const thumbnail = cacheMgr->getEntry(trimmed);
 
         if (!thumbnail) {
+            ++failures;
             std::fprintf(stderr, "steep: self test could not open %s\n", trimmed.c_str());
             fileBrowserPerfLog("[autoSelfTest] MISSING %s\n", trimmed.c_str());
             continue;
@@ -2953,6 +3080,34 @@ void runSteepAutoEditSelfTest()
             rtengine::procparams::ProcParams result;
             const AutoGradeFeatures features =
                 buildSteepAutoEditParamsFeatures(*thumbnail, mode, source, result);
+
+            if (g_getenv("STEEP_FILMLAB_VERIFY")) {
+                rtengine::procparams::ProcParams repeated;
+                buildSteepAutoEditParamsFeatures(*thumbnail, mode, source, repeated);
+                CurveAnchors filmLook, plainLook, curvedLook;
+                auto film = source;
+                film.filmPresets.enabled = true;
+                film.filmPresets.modelVersion = 5;
+                film.filmPresets.preset = "sovereign";
+                film.filmPresets.strength = 100;
+                film.toneCurve.expcomp = 1.0;
+                auto plain = film;
+                plain.filmPresets.enabled = false;
+                auto curved = film;
+                curved.rgbCurves.enabled = true;
+                curved.rgbCurves.mastercurve = {DCT_Spline, 0.0, 0.0, 0.5, 0.30, 1.0, 1.0};
+                const bool measured = measureFinishedLook(*thumbnail, film, filmLook, kClipTolerance)
+                    && measureFinishedLook(*thumbnail, plain, plainLook, kClipTolerance)
+                    && measureFinishedLook(*thumbnail, curved, curvedLook, kClipTolerance);
+                const bool filmSeen = std::abs(filmLook.lumaMid - plainLook.lumaMid)
+                    + std::abs(filmLook.meanChroma - plainLook.meanChroma) > 0.001;
+                const bool curveSeen = std::abs(filmLook.lumaMid - curvedLook.lumaMid) > 0.001;
+                const bool deterministic = result == repeated;
+                const bool passed = measured && filmSeen && curveSeen && deterministic;
+                failures += !passed;
+                std::printf("Film Lab analysis: measured=%d film=%d curve=%d deterministic=%d %s\n",
+                            measured, filmSeen, curveSeen, deterministic, passed ? "PASS" : "FAIL");
+            }
 
             // One line per frame, so a run over a folder can be diffed
             // directly without parsing the block trace above it.
@@ -2970,6 +3125,7 @@ void runSteepAutoEditSelfTest()
                         result.toneCurve.contrast, autoGradeSceneName(features.scene));
             std::fflush(stdout);
         } catch (...) {
+            ++failures;
             std::fprintf(stderr, "steep: self test failed on %s\n", trimmed.c_str());
             fileBrowserPerfLog("[autoSelfTest] FAILED %s\n", trimmed.c_str());
         }
@@ -2980,6 +3136,6 @@ void runSteepAutoEditSelfTest()
     fileBrowserPerfLog("[autoSelfTest] ==== end ====\n");
 
     if (g_getenv("STEEP_AUTOEDIT_SELFTEST_QUIT")) {
-        std::exit(0);
+        std::exit(failures ? 1 : 0);
     }
 }

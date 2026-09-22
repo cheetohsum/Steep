@@ -74,3 +74,4 @@ tools/fs_*
 tools/fp_*
 tools/q_*
 tools/chk_*
+/test-output/

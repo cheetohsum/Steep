@@ -230,6 +230,11 @@ protected:
     std::vector<Crop*> crops;
 
     bool resultValid;
+    SmartRepairJob smartRepairRequest_;
+    SmartRepairJob smartRepairPass_;
+    std::unique_ptr<ProcParams> repairRequestParams_;
+    unsigned int repairGeneration_ = 0;
+    void updateSmartRepairRequest(bool force = false);
 
     MyMutex minit;  // to gain mutually exclusive access to ... to what exactly?
 
@@ -471,6 +476,11 @@ public:
     void        setSmartMaskAnalysisWanted (bool wanted) override;
     void        requestSmartMaskAnalysis () override;
     std::vector<procparams::SpotEntry> detectDustSpots (int maxSpots) override;
+    std::vector<procparams::SpotEntry> detectDustSpots(int maxSpots, double sensitivity);
+    std::shared_future<std::vector<procparams::SpotEntry>> requestDustSpots(int maxSpots, double sensitivity) override;
+    SmartRepairStatus getSmartRepairStatus() const override;
+    void cancelSmartRepairs() override;
+    void retrySmartRepairs() override;
     ProcParams* beginUpdateParams () override;
     void        endUpdateParams (ProcEvent change) override;  // must be called after beginUpdateParams, triggers update
     void        endUpdateParams (int changeFlags) override;

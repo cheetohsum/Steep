@@ -261,7 +261,7 @@ private:
 
     // Internal drawing functions
     void updateDrawingArea (const ::Cairo::RefPtr< Cairo::Context> &cr);
-    void drawCurve(const Cairo::RefPtr<Cairo::Context> &cr, const LUTu & data, const double scale, const int hsize, const int vsize);
+    void drawCurve(const Cairo::RefPtr<Cairo::Context> &cr, const LUTu & data, const double scale, const int hsize, const int vsize, bool filled = true);
     void drawMarks(const Cairo::RefPtr<Cairo::Context> &cr, const LUTu & data, const double scale, const int wsize, int & ui, int & oi);
     void drawParade(const Cairo::RefPtr<Cairo::Context> &cr, const int hsize, const int vsize);
     void drawVectorscope(const Cairo::RefPtr<Cairo::Context> &cr, const int hsize, const int vsize);
@@ -374,6 +374,8 @@ public:
     void pointerMoved (bool validPos, const rtengine::procparams::ColorManagementParams &cmp, int x, int y, int r, int g, int b, bool isRaw = false) override;
 
     void reorder (Gtk::PositionType position);
+    void setControlsContainer(Gtk::Box* container);
+    void setMinimumPlotHeight(int height) { histogramArea->set_size_request(-1, height); }
     void red_toggled ();
     void green_toggled ();
     void blue_toggled ();

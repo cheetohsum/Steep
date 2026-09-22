@@ -34,6 +34,7 @@
 #include "color.h"
 #include "colortemp.h"
 #include "curves.h"
+#include "filmlikeclip.h"
 #include "dcp.h"
 #include "EdgePreservingDecomposition.h"
 #include "iccmatrices.h"

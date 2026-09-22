@@ -492,6 +492,8 @@ DetailedCrop* ImProcCoordinator::createCrop(::EditDataProvider *editDataProvider
 // todo: bitmask containing desired actions, taken from changesSinceLast
 void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
 {
+    // A repair must start from source pixels, never the previous composite.
+    if (todo & M_SPOT) todo |= M_INIT;
     using PreviewClock = std::chrono::steady_clock;
     const bool tracePipeline = std::getenv("STEEP_PIPELINE_TRACE") != nullptr || edittrace::enabled();
     const auto traceStart = PreviewClock::now();
@@ -979,7 +981,10 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             ipf.setScale(scale);
             imgsrc->getImage(currWB, tr, orig_prev, pp, params->toneCurve, params->raw);
 
-            if ((todo & M_SPOT) && params->spot.enabled && !params->spot.entries.empty()) {
+            delete spotprev;
+            spotprev = nullptr;
+
+            if (params->spot.enabled && !params->spot.entries.empty()) {
                 spotsDone = true;
                 PreviewProps pp(0, 0, fw, fh, scale);
                 // Only a settled pass may build a generative fill's
@@ -987,7 +992,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 // one or fall back to the per-view repair, so opening a photo
                 // with gen fill on it does not wait on the model.
                 ipf.removeSpots(orig_prev, imgsrc, params->spot.entries, pp, currWB, nullptr, tr,
-                                highDetailNeeded);
+                                highDetailNeeded, smartRepairPass_);
             }
 
             denoiseInfoStore.valid = false;
@@ -1097,7 +1102,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 orig_prev->copyData(spotprev);
                 PreviewProps pp(0, 0, fw, fh, scale);
                 ipf.removeSpots(spotprev, imgsrc, params->spot.entries, pp, currWB, &params->icm, tr,
-                                highDetailNeeded);
+                                highDetailNeeded, smartRepairPass_);
             } else {
                 if (spotprev) {
                     delete spotprev;
@@ -3262,9 +3267,12 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
         if (!destroying && previewReady)
             // TODO: The WB tool should be advertised too in order to get the AutoWB's temp and green values
         {
-            previewReady->imageReady(params->crop);
+            previewReady->imageReady(params->crop, smartRepairPass_);
             if (highDetailNeeded) {
                 highDetailPreviewSerial.fetch_add(1, std::memory_order_release);
+                edittrace::logf("settledPublished engine=%.1fms crops=%d file=%s",
+                    std::chrono::duration<double, std::milli>(PreviewClock::now() - traceStart).count(),
+                    settledCropsRendered, imgsrc->getFileName().c_str());
             }
 
             if (currentEditSerialFirst_ != 0) {
@@ -3359,6 +3367,29 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
 
 std::vector<procparams::SpotEntry> ImProcCoordinator::detectDustSpots(int maxSpots)
 {
+    return detectDustSpots(maxSpots, 50.);
+}
+
+std::shared_future<std::vector<procparams::SpotEntry>> ImProcCoordinator::requestDustSpots(int maxSpots, double sensitivity)
+{
+    auto promise = std::make_shared<std::promise<std::vector<procparams::SpotEntry>>>();
+    auto future = promise->get_future().share();
+    updaterThreadStart.lock();
+    if (destroying) {
+        promise->set_value({});
+    } else {
+        auto task = PreviewProcessingExecutor::instance().enqueue([this, promise, maxSpots, sensitivity]() {
+            try { promise->set_value(destroying ? std::vector<procparams::SpotEntry>{} : detectDustSpots(maxSpots, sensitivity)); }
+            catch (...) { promise->set_exception(std::current_exception()); }
+        }, "dustScan");
+        rememberProcessingTask(std::move(task.completion), std::move(task.cancel));
+    }
+    updaterThreadStart.unlock();
+    return future;
+}
+
+std::vector<procparams::SpotEntry> ImProcCoordinator::detectDustSpots(int maxSpots, double sensitivity)
+{
     // Sensor dust: small dark blobs sitting in otherwise smooth areas. A
     // background estimate (box blur) gives the residual; candidates must be
     // clearly darker than their surroundings AND sit where the local activity
@@ -3367,12 +3398,13 @@ std::vector<procparams::SpotEntry> ImProcCoordinator::detectDustSpots(int maxSpo
 
     MyMutex::MyLock lock(mProcessing);
 
-    if (!orig_prev || pW <= 8 || pH <= 8 || scale <= 0) {
+    if (destroying || !orig_prev || pW <= 8 || pH <= 8 || scale <= 0) {
         return found;
     }
 
     const int w = pW;
     const int h = pH;
+    const int scale = this->scale;
 
     array2D<float> lum(w, h);
     for (int y = 0; y < h; ++y) {
@@ -3380,6 +3412,7 @@ std::vector<procparams::SpotEntry> ImProcCoordinator::detectDustSpots(int maxSpo
             lum[y][x] = (orig_prev->r(y, x) + orig_prev->g(y, x) + orig_prev->b(y, x)) / 3.f;
         }
     }
+    lock.release(); // Detection owns its snapshot, not the rendering pipeline.
 
     const int blurRadius = std::max(3, std::min(8, 48 / scale + 2));
     array2D<float> background(w, h);
@@ -3399,7 +3432,8 @@ std::vector<procparams::SpotEntry> ImProcCoordinator::detectDustSpots(int maxSpo
     for (int y = 1; y < h - 1; ++y) {
         for (int x = 1; x < w - 1; ++x) {
             const float resid = background[y][x] - lum[y][x];
-            const float need = std::max(0.06f * background[y][x] + 250.f, 3.5f * activity[y][x]);
+            const float factor = float(1.35 - .007 * std::max(0., std::min(100., sensitivity)));
+            const float need = factor * std::max(0.06f * background[y][x] + 250.f, 3.5f * activity[y][x]);
             if (resid > need) {
                 candidate[static_cast<size_t>(y) * w + x] = 1;
             }
@@ -3419,6 +3453,7 @@ std::vector<procparams::SpotEntry> ImProcCoordinator::detectDustSpots(int maxSpo
 
     int labelCount = 0;
     for (int seed = 0; seed < w * h; ++seed) {
+        if (destroying) return {};
         if (!candidate[seed] || label[seed]) {
             continue;
         }
@@ -3517,6 +3552,7 @@ std::vector<procparams::SpotEntry> ImProcCoordinator::detectDustSpots(int maxSpo
 
                 for (int y = cy - r; y <= cy + r; ++y) {
                     for (int x = cx - r; x <= cx + r; ++x) {
+                        if (candidate[size_t(y) * w + x]) { residual += 65535.; }
                         residual += std::fabs(background[y][x] - lum[y][x]);
                         mean += lum[y][x];
                         ++n;
@@ -3565,6 +3601,7 @@ std::vector<procparams::SpotEntry> ImProcCoordinator::detectDustSpots(int maxSpo
         entry.sourcePos.set(sx * scale + scale / 2, sy * scale + scale / 2);
         entry.radius = LIM(blobs[i].radius * scale, 8, 200);
         entry.opacity = 1.f;
+        entry.repairVersion = 2;
         found.push_back(entry);
     }
 
@@ -4351,6 +4388,7 @@ void ImProcCoordinator::signalStop()
 
 void ImProcCoordinator::cancelProcessingTasks(bool wait)
 {
+    cancelSmartRepairs();
     std::vector<ProcessingTaskHandle> tasks;
     updaterThreadStart.lock();
     if (wait) {
@@ -4547,6 +4585,7 @@ void ImProcCoordinator::process()
         sharpMaskChanged = false;
 
         *params = *nextParams;
+        smartRepairPass_ = std::atomic_load(&smartRepairRequest_);
         int change = changeSinceLast;
         changeSinceLast = 0;
 
@@ -4577,7 +4616,10 @@ void ImProcCoordinator::process()
         if (change & (~M_VOID)) {
             try {
                 updatePreviewImage(change, panningRelatedChange);
+            } catch (const SmartRepairCancelled&) {
+                // The next queued parameter snapshot owns the replacement.
             } catch (const std::exception& error) {
+                if (smartRepairPass_ && !smartRepairPass_->cancelled) smartRepairPass_->stage = SmartRepairStage::Failed;
                 std::fprintf(
                     stderr,
                     "Preview processing recovered from exception for '%s': %s\n",
@@ -4619,6 +4661,7 @@ void ImProcCoordinator::endUpdateParams(ProcEvent change)
 
 void ImProcCoordinator::endUpdateParams(int changeFlags)
 {
+    updateSmartRepairRequest();
     changeSinceLast |= changeFlags;
 
     // Stamp the edit so a single slider tick can be followed from here to the
@@ -4639,6 +4682,60 @@ void ImProcCoordinator::endUpdateParams(int changeFlags)
 
     paramsUpdateMutex.unlock();
     startProcessing();
+}
+
+void ImProcCoordinator::updateSmartRepairRequest(bool force)
+{
+    // Called under paramsUpdateMutex. Compare against the last submitted
+    // snapshot, never the parameters currently being read by a worker.
+    if (!force && repairRequestParams_
+        && repairRequestParams_->spot == nextParams->spot
+        && repairRequestParams_->raw == nextParams->raw
+        && repairRequestParams_->wb == nextParams->wb
+        && repairRequestParams_->coarse == nextParams->coarse
+        && repairRequestParams_->icm == nextParams->icm
+        && repairRequestParams_->toneCurve.hrenabled == nextParams->toneCurve.hrenabled
+        && repairRequestParams_->toneCurve.method == nextParams->toneCurve.method
+        && repairRequestParams_->toneCurve.hlbl == nextParams->toneCurve.hlbl
+        && repairRequestParams_->toneCurve.hlth == nextParams->toneCurve.hlth) return;
+    cancelSmartRepairs();
+    repairRequestParams_.reset(new ProcParams(*nextParams));
+    unsigned int methods = 0;
+    if (nextParams->spot.enabled) {
+        for (const auto& entry : nextParams->spot.entries) {
+            const int m = int(entry.method) - int(procparams::SpotMethod::AI_REMOVE);
+            if (m >= 0 && m < 4) methods |= 1u << m;
+        }
+    }
+    SmartRepairJob request;
+    if (methods) request = std::make_shared<SmartRepairControl>(++repairGeneration_, methods);
+    std::atomic_store(&smartRepairRequest_, std::move(request));
+}
+
+SmartRepairStatus ImProcCoordinator::getSmartRepairStatus() const
+{
+    auto job = std::atomic_load(&smartRepairRequest_);
+    return job ? job->status() : SmartRepairStatus{};
+}
+
+void ImProcCoordinator::cancelSmartRepairs()
+{
+    auto job = std::atomic_load(&smartRepairRequest_);
+    if (job) {
+        job->cancel();
+        auto suspended = std::make_shared<SmartRepairControl>(job->generation, job->methods);
+        suspended->suspended = true;
+        suspended->stage = SmartRepairStage::Cancelled;
+        std::atomic_compare_exchange_strong(&smartRepairRequest_, &job, suspended);
+    }
+}
+
+void ImProcCoordinator::retrySmartRepairs()
+{
+    paramsUpdateMutex.lock();
+    updateSmartRepairRequest(true);
+    paramsUpdateMutex.unlock();
+    startProcessing(SPOTADJUST | M_HIGHQUAL);
 }
 
 bool ImProcCoordinator::hasPendingChange()

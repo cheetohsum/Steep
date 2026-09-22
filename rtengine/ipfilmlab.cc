@@ -11,11 +11,18 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <deque>
+#include <memory>
+#include <mutex>
 #include <vector>
 
 #include "array2D.h"
 #include "boxblur.h"
+#include "filmlaboptics.h"
+#include "filmlikeclip.h"
+#include "gauss.h"
 #include "color.h"
+#include "curves.h"
 #include "iccstore.h"
 #include "imagefloat.h"
 #include "improcfun.h"
@@ -833,6 +840,8 @@ FilmLabV3CurveBank makeV3Curves(
     // print-side counterpart of scene-referred input, and Custom stays a
     // straight line by contract.
     const float overshoot = (stopsIndexed && !straight) ? V4_PRINT_OVERSHOOT_STOPS : 0.f;
+    const bool finalPrintShoulder = fp.modelVersion >= 5 && !straight;
+    const float whiteSlope = V3_WHITE_STOPS * printShapeSlope(1.f, shoulderK) / whiteStops;
 
     for (int channel = 0; channel < 3; ++channel) {
         const float printToe = straight
@@ -843,8 +852,14 @@ FilmLabV3CurveBank makeV3Curves(
             const float density = curves.baseFog
                 + (curves.maxDensity - curves.baseFog) * i / V3_OUTPUT_LUT_SIZE;
             const float stops = (density - curves.referenceDensity[channel]) / V3_REFERENCE_GAMMA;
+            // V5 reserves display headroom after color grading/print exposure.
+            // Do not flatten distinct densities into V4's narrow overshoot
+            // band first. This extension matches value and slope at white.
+            const float printStops = finalPrintShoulder && stops > whiteStops
+                ? V3_WHITE_STOPS + whiteSlope * (stops - whiteStops)
+                : printGrade(stops, systemGamma, shoulderK, whiteStops, printToe, overshoot);
             curves.output[channel][i] = LIM(
-                0.18f * std::exp2(printGrade(stops, systemGamma, shoulderK, whiteStops, printToe, overshoot)),
+                0.18f * std::exp2(printStops),
                 0.f,
                 V3_MAX_INPUT);
         }
@@ -878,6 +893,8 @@ struct FilmLabV4SceneFetch {
     const LabImage* lab;
     const float (*labInverse)[3]; // XYZ -> AP1, shared with the V3 path
     float tapMatrix[3][3];        // working RGB -> AP1, 1/MAXVALF folded in
+    bool workingClipReference = false;
+    bool clampOOG = true;
 
     void fetch(int row, int col, float& sceneR, float& sceneG, float& sceneB,
                float& labR, float& labG, float& labB, float* displayGain = nullptr) const
@@ -914,9 +931,31 @@ struct FilmLabV4SceneFetch {
         // tap and handed back to the caller to apply to the film's OUTPUT:
         // grading the print, exactly like the darkroom would.
         if (displayGain) {
-            displayGain[0] = LIM((snapR + soften) / (LIM(rawR, 0.f, 1.f) + soften), 0.05f, 8.f);
-            displayGain[1] = LIM((snapG + soften) / (LIM(rawG, 0.f, 1.f) + soften), 0.05f, 8.f);
-            displayGain[2] = LIM((snapB + soften) / (LIM(rawB, 0.f, 1.f) + soften), 0.05f, 8.f);
+            float baseR = LIM(rawR, 0.f, 1.f);
+            float baseG = LIM(rawG, 0.f, 1.f);
+            float baseB = LIM(rawB, 0.f, 1.f);
+            if (workingClipReference) {
+                // Clipping AP1 channels is not the clipping rgbProc performed.
+                // Match its working-space reference before measuring the grade,
+                // or even an identity edit invents a colored band at white.
+                float cr = tr, cg = tg, cb = tb;
+                if (clampOOG) {
+                    cr = std::max(cr, 0.f);
+                    cg = std::max(cg, 0.f);
+                    cb = std::max(cb, 0.f);
+                    if (OOG(cr) || OOG(cg) || OOG(cb)) {
+                        filmlike_clip(&cr, &cg, &cb);
+                    }
+                } else {
+                    setUnlessOOG(cr, cg, cb, CLIP(cr), CLIP(cg), CLIP(cb));
+                }
+                baseR = tapMatrix[0][0] * cr + tapMatrix[0][1] * cg + tapMatrix[0][2] * cb;
+                baseG = tapMatrix[1][0] * cr + tapMatrix[1][1] * cg + tapMatrix[1][2] * cb;
+                baseB = tapMatrix[2][0] * cr + tapMatrix[2][1] * cg + tapMatrix[2][2] * cb;
+            }
+            displayGain[0] = LIM((snapR + soften) / std::max(baseR + soften, soften), 0.05f, 8.f);
+            displayGain[1] = LIM((snapG + soften) / std::max(baseG + soften, soften), 0.05f, 8.f);
+            displayGain[2] = LIM((snapB + soften) / std::max(baseB + soften, soften), 0.05f, 8.f);
         }
     }
 };
@@ -1849,20 +1888,80 @@ inline float sampleV3Plane(array2D<float>& plane, int width, int height, float x
     return intp(fy, bottom, top);
 }
 
+struct FilmLabRenderTables {
+    procparams::FilmPresetsParams key;
+    FilmLabV3CurveBank curves;
+    FilmLabV4PrintLUT print;
+};
+
+std::shared_ptr<const FilmLabRenderTables> filmLabTables(
+    const procparams::FilmPresetsParams& fp, const FilmLabV3Profile& stock,
+    const FilmLabV3Process& process, const FilmLabV3Output& output,
+    const FilmLabStock& record, const FilmLabV4Character& character, bool multiThread)
+{
+    // Only parameters consumed by the density/print tables belong in this key.
+    // Optical and output-mix drags can reuse the expensive spectral integral.
+    procparams::FilmPresetsParams key;
+    key.modelVersion = fp.modelVersion;
+    key.preset = fp.preset;
+    key.process = fp.process;
+    key.output = fp.output;
+    key.exposure = fp.exposure;
+    key.pushPull = fp.pushPull;
+    key.contrast = fp.contrast;
+    key.fade = fp.fade;
+    key.rolloff = fp.rolloff;
+    key.redShift = fp.redShift;
+    key.greenShift = fp.greenShift;
+    key.blueShift = fp.blueShift;
+    static std::mutex mutex;
+    static std::deque<std::shared_ptr<const FilmLabRenderTables>> cache;
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        for (const auto& entry : cache) {
+            if (entry->key == key) {
+                return entry;
+            }
+        }
+    }
+    auto entry = std::make_shared<FilmLabRenderTables>();
+    entry->key = key;
+    const bool straight = record.stockClass == StockClass::Custom;
+    entry->curves = makeV3Curves(stock, process, output, fp, straight, fp.modelVersion >= 4);
+    if (fp.modelVersion >= 4 && !straight && record.stockClass != StockClass::Monochrome) {
+        makeV4PrintLUT(entry->print, entry->curves, record.stockClass, fp.output, multiThread,
+                       character.maskEfficiencyMul, character.impurityMul);
+    }
+    {
+        std::lock_guard<std::mutex> lock(mutex);
+        for (const auto& existing : cache) {
+            if (existing->key == key) {
+                return existing;
+            }
+        }
+        cache.push_front(entry);
+        if (cache.size() > 4) {
+            cache.pop_back();
+        }
+    }
+    return entry;
+}
+
 void filmPresetsV3(
     LabImage* lab,
     const procparams::FilmPresetsParams& fp,
     const FilmLabContext& context,
     bool multiThread,
-    const float (*tapToCanonical)[3])
+    const float (*tapToCanonical)[3],
+    bool clampOOG)
 {
     const FilmLabStock& stockRecord = findStock(fp.preset);
     const Glib::ustring processName = fp.process == "auto" ? defaultProcess(stockRecord.stockClass) : fp.process;
     FilmLabV3Profile stock = makeV3Profile(stockRecord);
     const FilmLabV3Process process = makeV3Process(processName);
     const FilmLabV3Output output = makeV3Output(fp.output);
-    const bool straightCurve = stockRecord.stockClass == StockClass::Custom;
     const bool stopsIndexed = fp.modelVersion >= 4;
+    const bool materialModel = fp.modelVersion >= 5;
 
     FilmLabV4Character character;
 
@@ -1878,22 +1977,26 @@ void filmPresetsV3(
         stock.layerToe[2] += character.blueToeAdd;
     }
 
-    const FilmLabV3CurveBank curves = makeV3Curves(stock, process, output, fp, straightCurve, stopsIndexed);
-
-    FilmLabV4PrintLUT printLUT;
-    if (stopsIndexed && !straightCurve && stockRecord.stockClass != StockClass::Monochrome) {
-        makeV4PrintLUT(printLUT, curves, stockRecord.stockClass, fp.output, multiThread,
-                       character.maskEfficiencyMul, character.impurityMul);
-    }
+    const auto tables = filmLabTables(fp, stock, process, output, stockRecord, character, multiThread);
+    const auto& curves = tables->curves;
+    const auto& printLUT = tables->print;
 
     const TMatrix canonicalMatrix = ICCStore::getInstance()->workingSpaceMatrix("ACESp1");
     const TMatrix canonicalInverse = ICCStore::getInstance()->workingSpaceInverseMatrix("ACESp1");
+    const TMatrix displayInverse = ICCStore::getInstance()->workingSpaceInverseMatrix("sRGB");
+    const TMatrix displayForward = ICCStore::getInstance()->workingSpaceMatrix("sRGB");
     float matrix[3][3];
     float inverse[3][3];
+    float displayMatrix[3][3] = {};
+    float displayToCanonical[3][3] = {};
     for (int row = 0; row < 3; ++row) {
         for (int col = 0; col < 3; ++col) {
             matrix[row][col] = static_cast<float>(canonicalMatrix[row][col]);
             inverse[row][col] = static_cast<float>(canonicalInverse[row][col]);
+            for (int k = 0; k < 3; ++k) {
+                displayMatrix[row][col] += displayInverse[row][k] * canonicalMatrix[k][col];
+                displayToCanonical[row][col] += canonicalInverse[row][k] * displayForward[k][col];
+            }
         }
     }
 
@@ -1916,6 +2019,8 @@ void filmPresetsV3(
         sceneFetch.snapshot = context.rgbSnapshot;
         sceneFetch.lab = lab;
         sceneFetch.labInverse = inverse;
+        sceneFetch.workingClipReference = materialModel;
+        sceneFetch.clampOOG = clampOOG;
         for (int row = 0; row < 3; ++row) {
             for (int col = 0; col < 3; ++col) {
                 sceneFetch.tapMatrix[row][col] = tapToCanonical[row][col];
@@ -1928,7 +2033,7 @@ void filmPresetsV3(
     const int fullHeight = context.fullHeight > 0 ? context.fullHeight : lab->H * scale;
     const int fullShort = std::max(1, std::min(fullWidth, fullHeight));
     const float strength = LIM(fp.strength / 100.f, 0.f, 1.f);
-    const float characterScale = filmCharacterScale(strength);
+    const float characterScale = materialModel ? 1.f : filmCharacterScale(strength);
 
     // Motion-picture stock carries a remjet anti-halation backing that soaks
     // up nearly all of the light before it can bounce off the base, so
@@ -1937,8 +2042,15 @@ void filmPresetsV3(
     // emulsion produces the famous red glow. V4 keys this off the process
     // the user already selects; V2/V3 keep their stock table as tuned.
     float remjetFactor = 1.f;
-    if (stopsIndexed && stockRecord.stockClass == StockClass::MotionNegative) {
+    if (stopsIndexed && !materialModel && stockRecord.stockClass == StockClass::MotionNegative) {
         remjetFactor = processName == "c41" ? 1.30f : 0.30f;
+    }
+    if (materialModel) {
+        // Construction at exposure, not the subsequently selected chemistry.
+        remjetFactor = stockRecord.stockClass == StockClass::MotionNegative ? 0.30f : 0.55f;
+        if (fp.preset == "cinema_reveal_35" || fp.preset == "ember") {
+            remjetFactor = 1.f;
+        }
     }
 
     const float halation = LIM((stockRecord.halation + fp.halation / 155.f) * characterScale * remjetFactor, 0.f, 0.92f);
@@ -1955,10 +2067,12 @@ void filmPresetsV3(
     array2D<float> halationSource;
     array2D<float> halationInner;
     array2D<float> halationOuter;
+    array2D<float> materialHalo[3];
+    array2D<float> materialBloom[3];
     int halationReduction = 1;
     int halationWidth = 0;
     int halationHeight = 0;
-    if (halation > 0.001f || bloom > 0.001f) {
+    if (!materialModel && (halation > 0.001f || bloom > 0.001f)) {
         halationReduction = scale <= 1 ? 4 : (scale <= 2 ? 2 : 1);
         halationWidth = std::max(1, (lab->W + halationReduction - 1) / halationReduction);
         halationHeight = std::max(1, (lab->H + halationReduction - 1) / halationReduction);
@@ -2081,6 +2195,81 @@ void filmPresetsV3(
         halationSource.free();
     }
 
+    const float opticalScale = materialModel && context.samplingScale > 0.0
+        ? context.samplingScale : static_cast<float>(scale);
+    const float negativeGain = std::exp2(LIM(static_cast<float>(fp.exposure), -4.f, 4.f)
+        - LIM(static_cast<float>(fp.pushPull), -2.f, 3.f) * 0.32f);
+    const float opticalOnset = std::exp2(fp.halationThreshold / 50.f);
+    const float bloomFraction = materialModel ? bloom * 0.08f : 0.f;
+    if (materialModel && (halation > 0.001f || bloomFraction > 0.0001f)) {
+        halationReduction = opticalScale <= 1.f ? 4 : (opticalScale <= 2.f ? 2 : 1);
+        halationWidth = (lab->W + halationReduction - 1) / halationReduction;
+        halationHeight = (lab->H + halationReduction - 1) / halationReduction;
+        array2D<float> source[3];
+        for (int c = 0; c < 3; ++c) {
+            source[c](halationWidth, halationHeight);
+            materialHalo[c](halationWidth, halationHeight);
+            materialBloom[c](halationWidth, halationHeight);
+        }
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(static) if (multiThread)
+#endif
+        for (int y = 0; y < halationHeight; ++y) {
+            for (int x = 0; x < halationWidth; ++x) {
+                float sum[3] = {};
+                int count = 0;
+                for (int sy = y * halationReduction; sy < std::min((y + 1) * halationReduction, lab->H); ++sy) {
+                    for (int sx = x * halationReduction; sx < std::min((x + 1) * halationReduction, lab->W); ++sx) {
+                        float r, g, b, lr, lg, lb;
+                        if (sceneMode) {
+                            sceneFetch.fetch(sy, sx, r, g, b, lr, lg, lb);
+                        } else {
+                            toCanonicalV3(lab, sy, sx, inverse, r, g, b);
+                        }
+                        const float weight = filmoptics::highlightWeight(
+                            std::max(r, std::max(g, b)) * negativeGain, opticalOnset);
+                        sum[0] += std::max(r, 0.f) * weight;
+                        sum[1] += std::max(g, 0.f) * weight;
+                        sum[2] += std::max(b, 0.f) * weight;
+                        ++count;
+                    }
+                }
+                for (int c = 0; c < 3; ++c) {
+                    source[c][y][x] = sum[c] / count;
+                }
+            }
+        }
+        const float frameMM = fp.format == "120" ? 56.f : fp.format == "large" ? 95.f : 24.f;
+        const float pixelsPerMM = fullShort / frameMM / (opticalScale * halationReduction);
+        const float innerSigma = 0.09f * pixelsPerMM * halationSize;
+        const float outerSigma = 0.28f * pixelsPerMM * halationSize;
+        const float bloomSigma = 0.38f * pixelsPerMM * halationSize;
+        array2D<float> outer(halationWidth, halationHeight);
+        const float returnFraction[3] = {0.12f * halationWarmth, 0.035f, 0.008f / halationWarmth};
+        for (int c = 0; c < 3; ++c) {
+#ifdef _OPENMP
+            #pragma omp parallel if (multiThread)
+#endif
+            {
+                // Small thumbnail planes cannot support the recursive filter's
+                // boundary stencil. Below that size the spatial effect is unresolved.
+                const bool tiny = halationWidth < 8 || halationHeight < 8;
+                gaussianBlur(source[c], materialHalo[c], halationWidth, halationHeight, tiny ? 0.0 : innerSigma);
+                gaussianBlur(source[c], outer, halationWidth, halationHeight, tiny ? 0.0 : outerSigma);
+                gaussianBlur(source[c], materialBloom[c], halationWidth, halationHeight, tiny ? 0.0 : bloomSigma);
+            }
+#ifdef _OPENMP
+            #pragma omp parallel for schedule(static) if (multiThread)
+#endif
+            for (int y = 0; y < halationHeight; ++y) {
+                for (int x = 0; x < halationWidth; ++x) {
+                    materialHalo[c][y][x] = halation * returnFraction[c] * std::max(0.f,
+                        0.85f * materialHalo[c][y][x] + 0.15f * outer[y][x]);
+                }
+            }
+        }
+    }
+
     // V4 adjacency: the lateral half of the DIR coupler story. The blurred
     // inhibitor field is built from the same pre-halation scene luminance the
     // main loop reads, so local-minus-blurred is an unbiased edge signal.
@@ -2089,7 +2278,7 @@ void filmPresetsV3(
     const float adjacencyStrength = LIM(
         stock.acutance - output.softness - fp.outputSoftness / 150.f,
         -0.72f,
-        0.85f) * strength * characterScale;
+        0.85f) * (materialModel ? 1.f : strength) * characterScale;
 
     if (stopsIndexed && adjacencyStrength > 0.002f && lab->W > 4 && lab->H > 4) {
         const float frameShortMM = fp.format == "120" ? 56.f
@@ -2188,6 +2377,10 @@ void filmPresetsV3(
     hueVector(highlightHueDeg, highlightVector[0], highlightVector[1], highlightVector[2]);
     const bool outputMatrixActive = fp.output != "scan";
     const bool saturationActive = std::fabs(saturation - 1.f) > 0.0001f;
+    const float printGain = std::exp2(LIM(static_cast<float>(fp.printExposure), -2.f, 2.f));
+    const bool finalPrintShoulder = materialModel && stockRecord.stockClass != StockClass::Custom;
+    const bool monochromeOutput = stockRecord.stockClass == StockClass::Monochrome || processName == "bw";
+    const float couplerStrength = coupling * v4CouplerClassGain(stockRecord.stockClass);
 #ifdef _OPENMP
     #pragma omp parallel for schedule(static) if (multiThread)
 #endif
@@ -2221,7 +2414,23 @@ void filmPresetsV3(
                 adjacencySourceLuma = std::max(luminance(r, g, b), 0.f);
             }
 
-            if (halationInner) {
+            if (materialHalo[0]) {
+                const float lowX = (col + 0.5f) / halationReduction - 0.5f;
+                const float lowY = (row + 0.5f) / halationReduction - 0.5f;
+                const float weight = filmoptics::highlightWeight(
+                    std::max(r, std::max(g, b)) * negativeGain, opticalOnset);
+                float* rgb[] = {&r, &g, &b};
+                for (int c = 0; c < 3; ++c) {
+                    // At preview scale the optical planes already match the
+                    // image grid; interpolation at integer coordinates is redundant.
+                    const float reflected = halationReduction == 1 ? materialHalo[c][row][col]
+                        : sampleV3Plane(materialHalo[c], halationWidth, halationHeight, lowX, lowY);
+                    const float scattered = halationReduction == 1 ? materialBloom[c][row][col]
+                        : sampleV3Plane(materialBloom[c], halationWidth, halationHeight, lowX, lowY);
+                    *rgb[c] = std::max(0.f, *rgb[c] * (1.f - bloomFraction * weight)
+                        + bloomFraction * scattered + reflected);
+                }
+            } else if (halationInner) {
                 const float lowX = (col + 0.5f) / halationReduction - 0.5f;
                 const float lowY = (row + 0.5f) / halationReduction - 0.5f;
                 const float halationEnergy = sampleV3Plane(halationInner, halationWidth, halationHeight, lowX, lowY);
@@ -2246,7 +2455,7 @@ void filmPresetsV3(
             };
             if (stopsIndexed) {
                 if (stockRecord.stockClass != StockClass::Monochrome) {
-                    applyV4Couplers(density, coupling * v4CouplerClassGain(stockRecord.stockClass), curves.baseFog, curves.maxDensity);
+                    applyV4Couplers(density, couplerStrength, curves.baseFog, curves.maxDensity);
                 }
             } else {
                 applyV3DensityCoupling(density, stockRecord.stockClass, coupling, curves.baseFog, curves.maxDensity);
@@ -2284,7 +2493,7 @@ void filmPresetsV3(
                 applyV3OutputMatrix(output, r, g, b);
             }
 
-            if (stockRecord.stockClass == StockClass::Monochrome || processName == "bw") {
+            if (monochromeOutput) {
                 const float mono = 0.272229f * r + 0.674082f * g + 0.053689f * b;
 
                 if (stopsIndexed) {
@@ -2328,6 +2537,36 @@ void filmPresetsV3(
                 b *= displayGain[2];
             }
 
+            if (materialModel) {
+                r *= printGain;
+                g *= printGain;
+                b *= printGain;
+                // Apply the display shoulder after grading/print exposure.
+                // Chroma must approach the display white point smoothly, not
+                // preserve a saturated dye plateau at arbitrarily high light.
+                if (finalPrintShoulder) {
+                    float dr = displayMatrix[0][0] * r + displayMatrix[0][1] * g + displayMatrix[0][2] * b;
+                    float dg = displayMatrix[1][0] * r + displayMatrix[1][1] * g + displayMatrix[1][2] * b;
+                    float db = displayMatrix[2][0] * r + displayMatrix[2][1] * g + displayMatrix[2][2] * b;
+                    filmoptics::mapPrintHighlights(dr, dg, db);
+                    r = displayToCanonical[0][0] * dr + displayToCanonical[0][1] * dg + displayToCanonical[0][2] * db;
+                    g = displayToCanonical[1][0] * dr + displayToCanonical[1][1] * dg + displayToCanonical[1][2] * db;
+                    b = displayToCanonical[2][0] * dr + displayToCanonical[2][1] * dg + displayToCanonical[2][2] * db;
+                }
+                const float y = luminance(r, g, b);
+                if (!finalPrintShoulder && y > 0.0001f && y < 0.9999f) {
+                    const float peak = std::max(r, std::max(g, b));
+                    const float low = std::min(r, std::min(g, b));
+                    const float extent = std::max((peak - y) / (1.f - y), (y - low) / y);
+                    if (extent > 0.85f) {
+                        const float compressed = 0.85f + 0.15f * (1.f - std::exp(-(extent - 0.85f) / 0.15f));
+                        const float chromaScale = compressed / extent;
+                        r = y + (r - y) * chromaScale;
+                        g = y + (g - y) * chromaScale;
+                        b = y + (b - y) * chromaScale;
+                    }
+                }
+            }
             r = std::max(sourceR + (r - sourceR) * strength, 0.f);
             g = std::max(sourceG + (g - sourceG) * strength, 0.f);
             b = std::max(sourceB + (b - sourceB) * strength, 0.f);
@@ -2425,7 +2664,7 @@ void ImProcFunctions::filmPresets(
             haveTapMatrix = true;
         }
 
-        filmPresetsV3(lab, fp, context, multiThread, haveTapMatrix ? tapToCanonical : nullptr);
+        filmPresetsV3(lab, fp, context, multiThread, haveTapMatrix ? tapToCanonical : nullptr, params->toneCurve.clampOOG);
         return;
     }
 

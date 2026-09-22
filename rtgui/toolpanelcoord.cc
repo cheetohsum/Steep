@@ -1760,6 +1760,7 @@ void ToolPanelCoordinator::resetEditGroupsToDefault()
 
 void ToolPanelCoordinator::modeChanged(EditorMode mode)
 {
+    if (gradingPresets_) gradingPresets_->dismiss();
     // Direction-aware slide transition
     bool goingRight = static_cast<int>(mode) > static_cast<int>(prevMode);
     modeStack->set_transition_type(
@@ -2147,6 +2148,10 @@ void ToolPanelCoordinator::populateEditPanel()
     dotBar->set_margin_bottom(2);
     dotBar->set_name("PaginationBar");
 
+    auto* presetSpacer = Gtk::manage(new Gtk::Box());
+    presetSpacer->set_size_request(42, -1);
+    dotBar->pack_start(*presetSpacer, Gtk::PACK_SHRINK);
+
     const char* tooltips[] = {"Color Mixer", "Grading", "Point Color"};
     const char* icons[] = {"page-colormixer", "page-grading", "page-pointcolor"};
     for (int i = 0; i < 3; i++) {
@@ -2169,6 +2174,11 @@ void ToolPanelCoordinator::populateEditPanel()
                 colorDotActive_ = i;
                 const char* names[] = {"mixer", "grading", "pointcolor"};
                 colorToolStack_->set_visible_child(names[i]);
+                if (gradingPresets_) {
+                    gradingPresets_->dismiss();
+                    gradingPresets_->set_visible(i == 1);
+                    if (i == 1) gradingPresets_->warm();
+                }
                 colorDotBlock_ = false;
             } else {
                 // Don't allow deactivating active dot
@@ -2179,6 +2189,49 @@ void ToolPanelCoordinator::populateEditPanel()
         });
         dotBar->pack_start(*colorDots_[i], Gtk::PACK_SHRINK, 3);
     }
+
+    gradingPresets_.reset(new GradingPresetMenu(
+        [this](ProcParams& params, Thumbnail*& thumbnail) {
+            if (!ipc || maskModeActive_ || quickAutoEditCommitPending_) return false;
+            if (quickPreviewActive_) params = quickPreviewRestore_;
+            else ipc->getParams(&params);
+            thumbnail = quickAutoEditThumbnail_;
+            return true;
+        },
+        [this](const ColorGradingParams& grade, const Glib::ustring& name, bool commit) {
+            if (!ipc || maskModeActive_ || quickAutoEditCommitPending_) return;
+            if (quickAutoEditGeneration_) ++*quickAutoEditGeneration_;
+            if (commit) {
+                endQuickPreview(true);
+                gradingPreviewActive_ = false;
+                PartialProfile profile(true);
+                profile.set(false);
+                profile.pparams->colorGrading = grade;
+                ParamsEdited all(true);
+                profile.pedited->colorGrading = all.colorGrading;
+                // Preserve tone-curve provenance as well as its numeric values.
+                profileChange(&profile, rtengine::EvProfileChanged, M("TP_GRADING_PRESETS") + ": " + name, nullptr, true);
+                profile.deleteInstance();
+            } else {
+                ProcParams params;
+                if (quickPreviewActive_) params = quickPreviewRestore_;
+                else ipc->getParams(&params);
+                params.colorGrading = grade;
+                gradingPreviewActive_ = true;
+                beginQuickPreview(params, name);
+            }
+        },
+        [this]() {
+            if (gradingPreviewActive_) {
+                gradingPreviewActive_ = false;
+                endQuickPreview(true);
+            }
+        }));
+    gradingPresets_->set_no_show_all(true);
+    auto* presetSlot = Gtk::manage(new Gtk::Box());
+    presetSlot->set_size_request(42, -1);
+    presetSlot->pack_start(*gradingPresets_, Gtk::PACK_SHRINK);
+    dotBar->pack_start(*presetSlot, Gtk::PACK_SHRINK);
 
     // Activate first dot
     colorDotBlock_ = true;
@@ -2726,6 +2779,7 @@ void ToolPanelCoordinator::addPanel(Gtk::Box* where, FoldableToolPanel* panel, i
 
 ToolPanelCoordinator::~ToolPanelCoordinator ()
 {
+    if (gradingPresets_) gradingPresets_->shutdown();
     aiMaskPickPoll_.disconnect();
     quickAutoEditGeneration_->fetch_add(1, std::memory_order_acq_rel);
     quickAutoEditPool_.reset();
@@ -3695,6 +3749,7 @@ void ToolPanelCoordinator::applyQuickEditParams(ProcParams params, const Glib::u
 
 void ToolPanelCoordinator::requestQuickAutoParams(int mode, const Glib::ustring& descr, bool commit)
 {
+    if (gradingPresets_) gradingPresets_->dismiss();
     toolPanelEditLog(
         "[quickEdit] request descr=%s mode=%d commit=%d ipc=%d thumbnail=%s\n",
         descr.c_str(),
@@ -3906,6 +3961,7 @@ void ToolPanelCoordinator::endQuickPreview(bool restore)
 
 void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const Glib::ustring& descr)
 {
+    if (gradingPresets_) gradingPresets_->dismiss();
     if (!ipc) {
         toolPanelEditLog("panelChanged no-ipc event=%d descr=%s\n", int(event), descr.c_str());
         deferredPanelChangePending_ = false;
@@ -3914,16 +3970,14 @@ void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const 
 
     noteRawLoadForegroundActivity();
 
-    // Pace the slider debounce to this image's actual render cost. Measured
-    // on a 26MP frame: at three quarters of a pass the engine is saturated but
-    // not queueing, and both the update rate and the lag are at their best.
-    // Feeding it faster than that (two thirds) bought no extra frames and put
-    // the picture ~22ms further behind the slider; slower simply dropped the
-    // frame rate. The configured delay stays the floor for fast pipelines.
+    // Pace sustained drags to one measured pass. Submitting faster can keep
+    // the latest value waiting behind a whole render even after expensive
+    // effects are optimized. Release still flushes immediately; configured
+    // delays remain the floor for fast pipelines.
     {
         const unsigned int passMs = rtengine::getInteractivePassMs(ipc);
         const unsigned int floorMs =
-            passMs ? std::min<unsigned int>((passMs * 3u) / 4u, 150u) : 0u;
+            std::min<unsigned int>(passMs, 150u);
         delayed_helper::maxDelayFloorMs().store(floorMs, std::memory_order_relaxed);
 
         if (rtengine::edittrace::enabled()) {
@@ -4149,6 +4203,7 @@ void ToolPanelCoordinator::profileChange(
     bool fromLastSave
 )
 {
+    if (gradingPresets_) gradingPresets_->dismiss();
     int fw, fh, tr;
 
     if (!ipc) {
@@ -4479,10 +4534,12 @@ void ToolPanelCoordinator::initImage(rtengine::StagedImageProcessor* ipc_, bool 
         ipc->setSmartMaskAnalysisWanted(prevMode == EditorMode::MASK);
 
         if (spot) {
-            spot->setDustDetector([this](int maxSpots) {
-                return ipc ? ipc->detectDustSpots(maxSpots)
-                           : std::vector<rtengine::procparams::SpotEntry>();
+            spot->setDustDetector([this](int maxSpots, double sensitivity) {
+                return ipc ? ipc->requestDustSpots(maxSpots, sensitivity)
+                           : std::shared_future<std::vector<rtengine::procparams::SpotEntry>>{};
             });
+            spot->setSmartRepairProvider([this]() { return ipc ? ipc->getSmartRepairStatus() : rtengine::SmartRepairStatus{}; },
+                [this]() { if (ipc) ipc->cancelSmartRepairs(); }, [this]() { if (ipc) ipc->retrySmartRepairs(); });
         }
 
         ipc->setAutoExpListener(toneCurve);
@@ -4533,6 +4590,7 @@ void ToolPanelCoordinator::initImage(rtengine::StagedImageProcessor* ipc_, bool 
 
 void ToolPanelCoordinator::closeImage()
 {
+    if (gradingPresets_) gradingPresets_->dismiss();
     if (quickAutoEditGeneration_) {
         quickAutoEditGeneration_->fetch_add(1, std::memory_order_acq_rel);
     }

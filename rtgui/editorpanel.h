@@ -107,6 +107,10 @@ public:
     void setParent (RTWindow* p)
     {
         parent = p;
+        if (!p) {
+            // Managed editors can outlive the window's FilePanel during teardown.
+            fPanel = nullptr;
+        }
     }
 
     void setParentWindow (Gtk::Window* p)
@@ -526,13 +530,16 @@ private:
     Gtk::Box *vboxright;
     Gtk::Box *vsubboxright;
     Gtk::Box *histogramRow_;
+    Gtk::Box *histogramControlsRow_ = nullptr;
     Gtk::Label *exifInfo;
     // Hover-expanded metadata block: overlays the histogram (expanding
     // upward, no layout shift) while the EXIF strip is hovered. Replaces the
     // old on-image floating info overlay.
     Gtk::Revealer *exifDetailRevealer_ = nullptr;
     Gtk::Label *exifDetail_ = nullptr;
+    sigc::connection exifDetailOpenTimer_;
     sigc::connection exifDetailCloseTimer_;
+    sigc::connection exifInfoUnmapConn_;
 
     Gtk::Button* queueimg;
     Gtk::Button* saveimgas;
@@ -588,7 +595,7 @@ private:
     Glib::ustring transientEditPreviewFile_;
     rtengine::procparams::ProcParams transientEditPreviewRestore_;
 
-    void scheduleFinalPreviewRefinement();
+    void scheduleFinalPreviewRefinement(bool imageOpen = false);
     void enableDeferredCropWindow(const char* reason);
     void scheduleBeforePaneRebuild();
     void startEditLatencyBench();

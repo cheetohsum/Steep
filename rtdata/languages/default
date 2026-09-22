@@ -354,6 +354,7 @@ FILECHOOSER_FILTER_TIFF;TIFF files
 GENERAL_ABOUT;About
 GENERAL_AFTER;After
 GENERAL_ALL;All
+GENERAL_BACK;Back
 GENERAL_APPLY;Apply
 GENERAL_ASIMAGE;As Image
 GENERAL_AUTO;Automatic
@@ -380,6 +381,48 @@ GENERAL_OTHER;Other
 GENERAL_PORTRAIT;Portrait
 GENERAL_RESET;Reset
 GENERAL_SAVE;Save
+TP_GRADING_PRESETS;Grading presets
+TP_GRADING_PERSONAL;My grade
+TP_GRADING_BUNDLED;Built-in grade
+TP_GRADING_RECOMMENDED;Suggested for this photo's colors and lighting
+TP_GRADING_RESET;Reset grade
+TP_GRADING_SAVE;Save current grade...
+TP_GRADING_MANAGE;Manage my grades...
+TP_GRADING_NAME;Grade name
+TP_GRADING_RENAME;Rename
+TP_GRADING_UPDATE;Update
+TP_GRADING_DUPLICATE;Duplicate
+TP_GRADING_DELETE;Delete
+TP_GRADING_CONFIRM_UPDATE;Replace this preset with the current grade?
+TP_GRADING_CONFIRM_DELETE;Delete this grading preset?
+TP_GRADING_UNREADABLE;Some personal grades could not be read
+TP_GRADING_ERROR;Could not update grading presets
+TP_GRADING_WARM_PAPER;Warm Paper
+TP_GRADING_COOL_DAYLIGHT;Cool Daylight
+TP_GRADING_AMBER_SLATE;Amber & Slate
+TP_GRADING_ROSE_OLIVE;Rose & Olive
+TP_GRADING_SOFT_PORTRAIT;Soft Portrait
+TP_GRADING_COPPER_DUSK;Copper Dusk
+TP_GRADING_NIGHT_CYAN;Night Cyan
+TP_GRADING_QUIET_PLUM;Quiet Plum
+TP_GRADING_TEAL_AMBER;Teal & Amber
+TP_GRADING_BLUE_GOLD;Blue & Gold
+TP_GRADING_INDIGO_ROSE;Indigo & Rose
+TP_GRADING_LAVENDER_CREAM;Lavender & Cream
+TP_GRADING_SAGE_COPPER;Sage & Copper
+TP_GRADING_EMERALD_PEACH;Emerald & Peach
+TP_GRADING_FOREST_BRASS;Forest & Brass
+TP_GRADING_COASTAL_PEACH;Coastal Peach
+TP_GRADING_ROSEWATER;Rosewater
+TP_GRADING_APRICOT_LIGHT;Apricot Light
+TP_GRADING_GOLDEN_AMBER;Golden Amber
+TP_GRADING_SILVER_BLUE;Silver Blue
+TP_GRADING_GLACIER;Glacier
+TP_GRADING_NOCTURNE;Nocturne
+TP_GRADING_NEON_ORCHID;Neon Orchid
+TP_GRADING_PETROL_RUST;Petrol & Rust
+TP_GRADING_SUGGESTED;Recommended
+TP_GRADING_MORE;More grades
 GENERAL_SAVE_AS;Save as...
 GENERAL_SLIDER;Slider
 GENERAL_UNCHANGED;(Unchanged)
@@ -3361,6 +3404,9 @@ TP_FILMPRESETS_MODEL_LEGACY;Legacy
 TP_FILMPRESETS_MODEL_V2;Film Lab v2
 TP_FILMPRESETS_MODEL_V3;Film Lab v3
 TP_FILMPRESETS_MODEL_V4;Film Lab v4 (scene-referred)
+TP_FILMPRESETS_MODEL_V5;Film Lab v5 (material response)
+TP_FILMPRESETS_PRINTEXPOSURE;Print Exposure
+HISTORY_MSG_FILMPRESETS_PRINTEXPOSURE;Film Print Exposure
 TP_FILMPRESETS_PROCESS;Process
 TP_FILMPRESETS_PROCESS_AUTO;Stock Default
 TP_FILMPRESETS_PROCESS_BW;B&W
@@ -5231,6 +5277,18 @@ TP_SPOT_AI_OBJECT;Remove Object
 TP_SPOT_AI_REFLECTION;Remove Reflections
 TP_SPOT_AI_DUST;Remove Dust
 TP_SPOT_AI_GENERATIVE;Generative Fill
+TP_SMART_CANCEL;Cancel pending repair
+TP_SMART_RETRY;Retry repair
+TP_SMART_UPGRADE;Recompute existing smart repairs with improved edge blending
+TP_SMART_UPGRADE_HISTORY;Recompute smart repairs
+TP_SMART_FAILED;Repair failed or exceeds the processing limit. Retry or use a smaller region.
+TP_SMART_CANCELLED;Repair cancelled
+TP_SMART_WORKING;Preparing the final repair
+TP_SMART_READY;Final repair applied
+TP_SMART_DUST_SCANNING;Scanning for dust
+TP_SMART_DUST_SENSITIVITY;Sensitivity
+TP_SMART_FEATHER;Feather
+TP_SMART_GLARE_STRENGTH;Glare reduction
 TP_SPOT_AI_COMING_SOON;Coming soon
 TP_SPOT_AI_OBJECT_TIP;Paint over the object — the removal applies by itself the moment you release the stroke. Drag for a freeform stroke, click for a single dab.
 TP_SPOT_AI_UNAVAILABLE;The AI inpainting model is not installed.

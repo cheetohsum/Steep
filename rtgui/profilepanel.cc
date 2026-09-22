@@ -767,7 +767,7 @@ void ProfilePanel::selection_changed ()
         const PartialProfile* s = ProfileStore::getInstance()->getProfile (pse);
 
         if (s) {
-            if (fillMode->get_active() && s->pedited) {
+            if (fillMode->get_active() && s->pedited && !s->pedited->filmLook) {
                 ParamsEdited pe(true);
 
                 // Setting LocallabSpotEdited number coherent with spots number in s->pparams

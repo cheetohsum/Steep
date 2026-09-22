@@ -769,7 +769,14 @@ FileBrowser::FileBrowser () :
         addInlineAction(profileRow.second, "arrow-down-small", M("FILEBROWSER_COPYPROFILE_SETTINGS"),
                         [this]() {
                             if (inlineCopySettingsMenu_) {
-                                inlineCopySettingsMenu_->popup_at_pointer(nullptr);
+                                if (!copySettingsPopover_) {
+                                    copySettingsPopover_ = std::make_unique<steepui::MenuListPopover>(*this, *inlineCopySettingsMenu_);
+                                    copySettingsPopover_->reference();
+                                }
+                                int x = 0, y = 0;
+                                get_pointer(x, y);
+                                copySettingsPopover_->set_pointing_to(Gdk::Rectangle(x, y, 1, 1));
+                                copySettingsPopover_->popup();
                             }
                         });
         addInlineIcon(profileRow.second, "menu-profile-paste", M("FILEBROWSER_PASTEPROFILE"),
@@ -1403,6 +1410,8 @@ FileBrowser::FileBrowser () :
 
         // Prevent menu close on plain MenuItem click
         auto preventCloseAction = [](Gtk::MenuItem* item, std::function<void()> action) {
+            item->get_style_context()->add_class("keep-open");
+            item->signal_activate().connect(action);
             item->signal_button_release_event().connect(
                 [action](GdkEventButton*) {
                     action();
@@ -2315,6 +2324,7 @@ FileBrowser::~FileBrowser ()
     ProfileStore::getInstance()->removeListener(this);
     delete pmenu;
     delete pmenuColorLabels;
+    copySettingsPopover_.reset();
     delete inlineCopySettingsMenu_;
     delete inlineApplyMenu_;
     delete inlineTipWindow_;

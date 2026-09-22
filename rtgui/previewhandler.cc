@@ -130,12 +130,12 @@ void PreviewHandler::delImage(IImage8* i)
     );
 }
 
-void PreviewHandler::imageReady(const rtengine::procparams::CropParams& cp)
+void PreviewHandler::imageReady(const rtengine::procparams::CropParams& cp, const rtengine::SmartRepairJob& repair)
 {
     pih->pending++;
 
     idle_register.add(
-        [this, cp]() -> bool
+        [this, cp, repair]() -> bool
         {
             if (pih->destroyed) {
                 if (pih->pending == 1) {
@@ -167,6 +167,10 @@ void PreviewHandler::imageReady(const rtengine::procparams::CropParams& cp)
             *pih->phandler->cropParams = cp;
             if (pih->phandler->previewImg) {
                 pih->phandler->previewImageChanged();
+                if (repair && repair->composed && !repair->cancelled) {
+                    auto expected = rtengine::SmartRepairStage::Presenting;
+                    repair->stage.compare_exchange_strong(expected, rtengine::SmartRepairStage::Ready);
+                }
                 if (pih->phandler->firstEngineImageReadyCallback) {
                     auto callback = std::move(pih->phandler->firstEngineImageReadyCallback);
                     callback();

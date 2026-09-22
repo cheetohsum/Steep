@@ -28,6 +28,7 @@
 #include "filebrowserentry.h"
 #include "pparamschangelistener.h"
 #include "thumbbrowserbase.h"
+#include "steeppopup.h"
 #include "widgets/basic/lwbutton.h"
 #include "windows/partialpastedlg.h"
 
@@ -165,6 +166,7 @@ protected:
     std::map<std::string, Gtk::CheckMenuItem*> copyFilters_;
     // Standalone dropdown menus for the inline profile-operations row
     Gtk::Menu* inlineCopySettingsMenu_ = nullptr;
+    std::unique_ptr<steepui::MenuListPopover> copySettingsPopover_;
     Gtk::Menu* inlineApplyMenu_ = nullptr;
     // Custom hover-pause tooltip for the inline rows (GTK tooltips cannot
     // fire through the menu grab)

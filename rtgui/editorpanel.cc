@@ -163,7 +163,8 @@ constexpr unsigned int kBeforePaneRebuildDelayMs = 20;
 constexpr unsigned int kBeforePaneAttachPollMs = 15;
 constexpr int kBeforePaneAttachMaxPolls = 60;
 constexpr int kEditorPhaseBRawForegroundQuietMs = 40;
-constexpr unsigned int kEditorHighDetailDelayMs = 650;
+constexpr unsigned int kEditorHighDetailDelayMs = 250;
+constexpr unsigned int kEditorOpenHighDetailDelayMs = 35;
 
 static void editorOpenLog(const char* fmt, ...)
 {
@@ -245,6 +246,8 @@ private:
                 working_ = true;
             }
             work();
+            // Captured image/cache owners must be released before drain returns.
+            work = {};
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 working_ = false;
@@ -1454,6 +1457,8 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
             };
 
             auto preventCloseAction = [](Gtk::MenuItem* item, std::function<void()> action) {
+                item->get_style_context()->add_class("keep-open");
+                item->signal_activate().connect(action);
                 item->signal_button_release_event().connect(
                     [action](GdkEventButton*) {
                         action();
@@ -1762,7 +1767,10 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         copyFilterBtn->set_image(*Gtk::manage(new RTImage("copy-filter", filmstripIconSize())));
         copyFilterBtn->set_relief(Gtk::RELIEF_NONE);
         copyFilterBtn->set_tooltip_markup(M("FILEBROWSER_COPYPROFILE_SETTINGS"));
-        copyFilterBtn->set_popup(*editorCopyFilterMenu_);
+        auto* copyPopover = Gtk::manage(new steepui::MenuListPopover(*copyFilterBtn, *editorCopyFilterMenu_));
+        editorCopyFilterMenu_->attach_to_widget(*copyFilterBtn);
+        copyPopover->signal_show().connect(sigc::mem_fun(*this, &EditorPanel::refreshCopyFilterToggle));
+        copyFilterBtn->set_popover(*copyPopover);
 
         // Group copy + filter as a visually joined button pair
         Gtk::Box* copyGroup = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
@@ -2032,7 +2040,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     tpc->modeStack->set_hexpand(true);
     tpc->modeStack->set_halign(Gtk::ALIGN_FILL);
 
-    // EXIF info strip above histogram — hover shows full info overlay on preview
+    // The summary is the fixed lower edge of the upward metadata reveal.
     exifInfo = Gtk::manage(new Gtk::Label());
     exifInfo->set_name("ExifInfoLabel");
     exifInfo->set_markup("<span size='small'>  </span>");
@@ -2040,28 +2048,35 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     exifInfo->set_margin_top(2);
     exifInfo->set_margin_bottom(2);
 
-    // Hovering the EXIF strip expands the full metadata block UP, overlaying
-    // the histogram — an overlay, not a layout push, so nothing moves under
-    // the cursor. Replaces the old floating on-image info overlay.
+    // Only the plot sits behind the reveal. Scope controls have their own
+    // row below the summary, outside the overlay's paint and input region.
     exifDetail_ = Gtk::manage(new Gtk::Label());
     exifDetail_->set_name("ExifInfoLabel");
     exifDetail_->set_halign(Gtk::ALIGN_CENTER);
     exifDetail_->set_justify(Gtk::JUSTIFY_CENTER);
     exifDetail_->set_line_wrap(true);
-    exifDetail_->set_max_width_chars(40);
+    exifDetail_->set_line_wrap_mode(Pango::WRAP_WORD_CHAR);
+    exifDetail_->set_max_width_chars(30);
 
     Gtk::Box* exifDetailBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
     exifDetailBox->set_name("ExifDetailOverlay");
     exifDetailBox->pack_start(*exifDetail_, Gtk::PACK_SHRINK);
 
+    auto* exifDetailScroll = Gtk::manage(new Gtk::ScrolledWindow());
+    exifDetailScroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+    exifDetailScroll->set_shadow_type(Gtk::SHADOW_NONE);
+    exifDetailScroll->set_propagate_natural_height(true);
+    exifDetailScroll->set_max_content_height(RTScalable::scalePixelSize(148));
+    exifDetailScroll->add(*exifDetailBox);
+
     Gtk::EventBox* exifDetailEventBox = Gtk::manage(new Gtk::EventBox());
     exifDetailEventBox->set_visible_window(false);
-    exifDetailEventBox->add(*exifDetailBox);
+    exifDetailEventBox->add(*exifDetailScroll);
     exifDetailEventBox->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
 
     exifDetailRevealer_ = Gtk::manage(new Gtk::Revealer());
     exifDetailRevealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_UP);
-    exifDetailRevealer_->set_transition_duration(160);
+    exifDetailRevealer_->set_transition_duration(260);
     exifDetailRevealer_->set_reveal_child(false);
     exifDetailRevealer_->set_valign(Gtk::ALIGN_END);
     exifDetailRevealer_->set_halign(Gtk::ALIGN_FILL);
@@ -2069,18 +2084,23 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 
     const auto openExifDetail = [this]() {
         exifDetailCloseTimer_.disconnect();
-        if (exifDetailRevealer_ && exifDetail_ && !exifDetail_->get_text().empty()) {
-            exifDetailRevealer_->set_reveal_child(true);
+        if (exifDetailRevealer_->get_reveal_child() || exifDetailOpenTimer_.connected()) {
+            return;
         }
+        exifDetailOpenTimer_ = Glib::signal_timeout().connect([this]() -> bool {
+            if (!exifDetail_->get_text().empty()) exifDetailRevealer_->set_reveal_child(true);
+            return false;
+        }, 120);
     };
     const auto scheduleExifDetailClose = [this]() {
+        exifDetailOpenTimer_.disconnect();
         exifDetailCloseTimer_.disconnect();
         exifDetailCloseTimer_ = Glib::signal_timeout().connect([this]() -> bool {
             if (exifDetailRevealer_) {
                 exifDetailRevealer_->set_reveal_child(false);
             }
             return false;
-        }, 250);
+        }, 180);
     };
 
     exifDetailEventBox->signal_enter_notify_event().connect([openExifDetail](GdkEventCrossing*) -> bool {
@@ -2095,6 +2115,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     });
 
     Gtk::EventBox* exifInfoEventBox = Gtk::manage(new Gtk::EventBox());
+    exifInfoEventBox->set_name("ExifInfoStrip");
     exifInfoEventBox->add(*exifInfo);
     exifInfoEventBox->set_visible_window(false);
     exifInfoEventBox->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
@@ -2107,6 +2128,11 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
             scheduleExifDetailClose();
         }
         return false;
+    });
+    exifInfoUnmapConn_ = exifInfoEventBox->signal_unmap().connect([this]() {
+        exifDetailOpenTimer_.disconnect();
+        exifDetailCloseTimer_.disconnect();
+        exifDetailRevealer_->set_reveal_child(false);
     });
     // Row for histogram (when positioned on the right side). Wrapped in an
     // overlay so the EXIF detail block can expand up OVER it on hover.
@@ -2122,6 +2148,8 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     exifInfo->set_margin_top(0);
     exifInfo->set_margin_bottom(0);
     vsubboxright->pack_start(*exifInfoEventBox, Gtk::PACK_SHRINK);
+    histogramControlsRow_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
+    vsubboxright->pack_start(*histogramControlsRow_, Gtk::PACK_SHRINK);
 
     // Mode button bar + stack
     vsubboxright->pack_start (*tpc->modeButtonBar, Gtk::PACK_SHRINK, 0);
@@ -2625,38 +2653,37 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                 alloc.set_width(gripW);
                 alloc.set_height(std::max(1, sideH - canvasTop));
                 return true;
-            } else if (child == topEdgeGrip_) {
-                const int x0 = leftEdgeX + gripW;
-                const int x1 = std::max(x0 + 1, rightEdgeX - gripW);
-                alloc.set_x(x0);
-                // The grip opens the filmstrip, so it sits on whichever edge
-                // of the canvas the filmstrip is on.
-                alloc.set_y(App::get().options().filmstripAtBottom
-                            ? std::max(canvasTop, sideH - gripW)
-                            : canvasTop);
-                alloc.set_width(x1 - x0);
-                alloc.set_height(gripW);
-                return true;
             }
 
             return false;
         }, false);
 
-    // Edge grips replace the old collapse/expand buttons. Each is a thin
-    // hot strip pinned to the border of the panel it drives, and every one
-    // of them sits over the image canvas in both states -- never over the
-    // sidebar, the filmstrip or the toolbars -- so none of them can swallow
-    // a click meant for a control.
-    {
-        topEdgeGrip_ = createEdgeGrip (false, M("EDITOR_EDGEGRIP_FILMSTRIP"), [this]() {
+    // Keep the filmstrip grip in normal layout, outside catalogPane. An
+    // overlay anchored from the canvas can lag a collapse/reparent allocation
+    // and leave its input window behind or under the image area's windows.
+    if (catalogPane) {
+        topEdgeGrip_ = createEdgeGrip(false, M("EDITOR_EDGEGRIP_FILMSTRIP"), [this]() {
             if (tbTopPanel_1) {
                 tbTopPanel_1->set_active(!tbTopPanel_1->get_active());
             }
         });
-        // Right-click still opens the filmstrip thumbnail size slider
+        topEdgeGrip_->set_size_request(-1, 10);
+        topEdgeGrip_->set_vexpand(false);
+        auto* marker = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
+        marker->set_name("FilmstripGripMarker");
+        marker->set_size_request(48, 2);
+        marker->set_halign(Gtk::ALIGN_CENTER);
+        marker->set_valign(Gtk::ALIGN_CENTER);
+        topEdgeGrip_->add(*marker);
         topEdgeGrip_->signal_button_press_event().connect(
             sigc::mem_fun(*this, &EditorPanel::onFilmstripButtonPress), false);
+        editbox->pack_start(*topEdgeGrip_, Gtk::PACK_SHRINK);
+        applyFilmstripPlacement();
+    }
 
+    // The side grips remain overlays along the image canvas, clear of the
+    // filmstrip and toolbars. They never cover the filmstrip grip's own row.
+    {
         leftEdgeGrip_ = createEdgeGrip (true, M("EDITOR_EDGEGRIP_LEFT"), [this]() {
             if (hidehp) {
                 hidehp->set_active(!hidehp->get_active());
@@ -2669,9 +2696,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
             }
         });
 
-        // Added after the sidebars so they paint above them; the side grips
-        // come after the top one so they own the corners.
-        hpanedr->add_overlay(*topEdgeGrip_);
+        // Added after the sidebars so they paint above them.
         hpanedr->add_overlay(*leftEdgeGrip_);
         hpanedr->add_overlay(*rightEdgeGrip_);
     }
@@ -2832,6 +2857,9 @@ void EditorPanel::applyLeftSidebarInset(int width)
     if (beforeAfterBox) {
         beforeAfterBox->set_margin_start(inset);
     }
+    if (topEdgeGrip_) {
+        topEdgeGrip_->set_margin_start(inset);
+    }
 }
 
 void EditorPanel::refreshCopyFilterToggle()
@@ -2917,6 +2945,19 @@ void EditorPanel::applyFilmstripPlacement ()
         catalogPane->set_valign(Gtk::ALIGN_START);
     }
 
+    if (topEdgeGrip_) {
+        // Remove its old slot first so the canvas index is independent of
+        // the previous top/bottom placement.
+        editbox_->reorder_child(*topEdgeGrip_, -1);
+        const auto children = editbox_->get_children();
+        const auto canvas = std::find(children.begin(), children.end(), beforeAfterBox);
+        if (canvas != children.end()) {
+            editbox_->reorder_child(*topEdgeGrip_, std::distance(children.begin(), canvas) + (atBottom ? 1 : 0));
+        }
+        topEdgeGrip_->set_margin_start(beforeAfterBox->get_margin_start());
+        topEdgeGrip_->set_margin_end(beforeAfterBox->get_margin_end());
+    }
+
     // The open/close grip and the queue drawer both anchor off the strip.
     if (hpanedr) {
         hpanedr->queue_resize();
@@ -2936,6 +2977,8 @@ void EditorPanel::refreshEditorTitleVisibility ()
 
 EditorPanel::~EditorPanel ()
 {
+    exifInfoUnmapConn_.disconnect();
+    exifDetailOpenTimer_.disconnect();
     exifDetailCloseTimer_.disconnect();
     editorRecentHoverTimer_.disconnect();
     editorFavoritesRefreshConn_.disconnect();
@@ -3001,6 +3044,10 @@ EditorPanel::~EditorPanel ()
 
     close ();
 
+    // close() defers processor destruction; finish it before the GUI and engine
+    // dependencies are destroyed. Ordinary photo switches still clean up async.
+    EditorCleanupExecutor::instance().drain();
+
     if (epih->pending) {
         epih->destroyed = true;
     } else {
@@ -3015,6 +3062,7 @@ EditorPanel::~EditorPanel ()
     delete navigator;
     delete history;
     delete editorPlacesPaned_;
+    if (histogramPanel) histogramPanel->setControlsContainer(nullptr);
     delete leftbox;
     delete vsubboxright;
     delete vboxright;
@@ -4478,7 +4526,7 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
                 return;
             }
 
-            scheduleFinalPreviewRefinement();
+            scheduleFinalPreviewRefinement(true);
         },
         [this, previewFile = openFileName, previewSession = firstFrameSession]() {
             scheduleFilmstripLivePreview(previewFile, previewSession);
@@ -4945,40 +4993,30 @@ void EditorPanel::startEditLatencyBench()
         intervalMs);
 }
 
-void EditorPanel::scheduleFinalPreviewRefinement()
+void EditorPanel::scheduleFinalPreviewRefinement(bool imageOpen)
 {
     deferredHighDetailConn_.disconnect();
     const unsigned int session = openSession_;
     const Glib::ustring sourceFile = fname;
     const unsigned int refinementGeneration = ++finalPreviewRefinementGeneration_;
 
-    // The interactive pipeline renders with the fast preview demosaic; this
-    // deferred pass is the ONLY way the settled full-quality image (and any
-    // non-panning-related crop refresh) reaches the screen. isProcessing is a
-    // last-writer-wins flag fed by several progress sources and can wedge
-    // true (e.g. a processing thread torn down mid-run on image switch), so
-    // the wait must be bounded: after a few busy polls, fire anyway.
-    // startProcessing() just ORs the flags into changeSinceLast, which is
-    // safe while a render is in flight.
-    auto busyPolls = std::make_shared<int>(0);
+    // Queue settled quality after the input quiet period. The processor
+    // coalesces flags safely during an in-flight render; waiting on the
+    // aggregate progress flag can stall refinement for unrelated work.
 
     deferredHighDetailConn_ = Glib::signal_timeout().connect(
-        [this, session, sourceFile, refinementGeneration, busyPolls]() -> bool {
+        [this, session, sourceFile, refinementGeneration]() -> bool {
             if (session != openSession_
                     || refinementGeneration != finalPreviewRefinementGeneration_
                     || fname != sourceFile
                     || !ipc) {
                 return false;
             }
-            if (isProcessing && ++*busyPolls < 8) {
-                return true;
-            }
-
             const unsigned long long completedSerial =
                 rtengine::getSettledPreviewSerial(ipc);
             auto attempts = std::make_shared<int>(1);
-            EDITOR_OPEN_LOG("[editorPreview] requested settled refinement file=%s busyPolls=%d attempt=1\n",
-                            sourceFile.c_str(), *busyPolls);
+            EDITOR_OPEN_LOG("[editorPreview] requested settled refinement file=%s attempt=1\n",
+                            sourceFile.c_str());
             if (previewHandler) {
                 ipc->setPreviewImageListener(previewHandler);
             }
@@ -5037,7 +5075,7 @@ void EditorPanel::scheduleFinalPreviewRefinement()
                 G_PRIORITY_LOW);
             return false;
         },
-        kEditorHighDetailDelayMs,
+        imageOpen ? kEditorOpenHighDetailDelayMs : kEditorHighDetailDelayMs,
         G_PRIORITY_LOW);
 }
 
@@ -5260,7 +5298,7 @@ void EditorPanel::openPhaseB (Thumbnail* tmb)
             const rtengine::FramesMetaData* idata = ipc->getInitialImage()->getMetaData();
             if (idata && idata->hasExif()) {
                 Glib::ustring exifStr = Glib::ustring::compose(
-                    "<span size='small'>ISO %1    %2mm    f/%3    %4sec</span>",
+                    "ISO %1    %2mm    f/%3    %4sec",
                     idata->getISOSpeed(),
                     Glib::ustring::format(std::fixed, std::setprecision(0), idata->getFocalLen()),
                     Glib::ustring(idata->apertureToString(idata->getFNumber())),
@@ -5277,19 +5315,28 @@ void EditorPanel::openPhaseB (Thumbnail* tmb)
                         hh = ipc->getFullHeight();
                     }
 
+                    const Glib::ustring make = idata->getMake(), model = idata->getModel();
+                    const auto camera = model.casefold().find(make.casefold()) == 0 ? model : make + " " + model;
                     Glib::ustring detailStr = Glib::ustring::compose(
-                        "<span size='small'>%1\n%2</span>",
-                        escapeHtmlChars(idata->getMake() + " " + idata->getModel()),
+                        "%1\n%2",
+                        escapeHtmlChars(camera),
                         escapeHtmlChars(idata->getLens()));
+
+                    const auto captured = idata->getDateTime();
+                    if (captured.tm_year > 0 && captured.tm_mday > 0) {
+                        std::ostringstream date;
+                        date << std::put_time(&captured, "%Y-%m-%d  %H:%M:%S");
+                        detailStr += "\n" + escapeHtmlChars(date.str());
+                    }
 
                     const Glib::ustring expcomp(idata->expcompToString(idata->getExpComp(), true));
                     if (!expcomp.empty()) {
-                        detailStr += Glib::ustring::compose("<span size='small'>\n%1 EV</span>", expcomp);
+                        detailStr += Glib::ustring::compose("\n%1 EV", escapeHtmlChars(expcomp));
                     }
 
                     if (ww > 0 && hh > 0) {
                         detailStr += Glib::ustring::compose(
-                            "<span size='small'>\n%1 MP (%2×%3)</span>",
+                            "\n%1 MP (%2×%3)",
                             Glib::ustring::format(std::fixed, std::setprecision(1), (float)ww * hh / 1000000),
                             ww, hh);
                     }
@@ -6243,6 +6290,9 @@ void EditorPanel::tbRightPanel_1_toggled ()
         if (beforeAfterBox) {
             beforeAfterBox->set_margin_end(rightMargin);
         }
+        if (topEdgeGrip_) {
+            topEdgeGrip_->set_margin_end(rightMargin);
+        }
 
         tbShowHideSidePanels_managestate();
     }
@@ -6253,6 +6303,7 @@ void EditorPanel::tbTopPanel_1_visible (bool visible)
     // The button is no longer in the toolbar -- the filmstrip edge grip
     // replaced it, so that is what this now shows or hides.
     if (topEdgeGrip_) {
+        topEdgeGrip_->set_no_show_all(!visible);
         topEdgeGrip_->set_visible(visible);
     }
 }
@@ -6321,6 +6372,7 @@ void EditorPanel::tbTopPanel_1_toggled ()
             if (topAnimFraction_ >= 1.0) {
                 topAnimFraction_ = 1.0;
                 catalogPane->set_size_request(-1, -1);
+                catalogPane->set_opacity(1.0);
                 setAnimationLayoutPause(topAnimLayoutPaused_, false);
                 return false;
             }
@@ -7784,6 +7836,8 @@ void EditorPanel::updateHistogramPosition (int oldPosition, int newPosition)
             }
 
             leftbox->set_position(options.histogramHeight);
+            histogramPanel->setControlsContainer(nullptr);
+            histogramPanel->setMinimumPlotHeight(-1);
             histogramPanel->reorder (Gtk::POS_LEFT);
             break;
 
@@ -7794,17 +7848,17 @@ void EditorPanel::updateHistogramPosition (int oldPosition, int newPosition)
             if (oldPosition == 0) {
                 // There was no Histogram before, so we create it
                 histogramPanel = Gtk::manage (new HistogramPanel ());
-                histogramPanel->set_size_request(-1, 120);
                 histogramRow_->pack_start (*histogramPanel);
             } else if (oldPosition == 1) {
                 // The histogram was on the left side, so we move it to the right
                 histogramPanel->reference();
                 removeIfThere (leftbox, histogramPanel, false);
-                histogramPanel->set_size_request(-1, 120);
                 histogramRow_->pack_start (*histogramPanel);
                 histogramPanel->unreference();
             }
 
+            histogramPanel->setControlsContainer(histogramControlsRow_);
+            histogramPanel->setMinimumPlotHeight(RTScalable::scalePixelSize(156));
             histogramPanel->reorder (Gtk::POS_RIGHT);
             break;
     }

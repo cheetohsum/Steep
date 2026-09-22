@@ -135,7 +135,8 @@ private:
     void startThumbnailGeneration();
     void cancelThumbnailGeneration(bool wait);
     void reapThumbnailThreads(bool wait);
-    void generateThumbnail(const ProfileStoreEntry* entry, ::Thumbnail* thumbnail, unsigned int generation);
+    void generateThumbnail(const ProfileStoreEntry* entry, ::Thumbnail* thumbnail, unsigned int generation,
+                           const rtengine::procparams::ProcParams& baseline, bool filled);
     void collectPresetEntries(std::vector<const ProfileStoreEntry*>& entries);
 
     // Layout widgets

@@ -1244,6 +1244,7 @@ struct SpotEntry {
     float feather;
     float opacity;
     SpotMethod method;
+    int repairVersion = 1; // Saved legacy repairs retain their original rendering.
     std::vector<Coord> strokePoints;  // non-empty = stroke-based spot
 
     SpotEntry();
@@ -1824,6 +1825,7 @@ struct FilmPresetsParams {
     Glib::ustring preset;  // preset ID: "custom", "heritage_gold", etc.
     int modelVersion;       // 1 = legacy, 2 = Film Lab, 3 = density-domain Film Lab
     double exposure;        // Film-plane exposure in EV
+    double printExposure;   // V5 output placement in EV, independent of the negative.
     double pushPull;        // Development compensation in stops
     Glib::ustring process;  // auto, c41, e6, ecn2, bw
     Glib::ustring output;   // scan, ra4, projection, cinema

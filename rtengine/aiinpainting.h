@@ -21,6 +21,7 @@
 #include <string>
 #include <vector>
 #include <memory>
+#include "smartrepair.h"
 
 namespace rtengine
 {
@@ -92,11 +93,16 @@ public:
      */
     bool inpaint(const float* imageR, const float* imageG, const float* imageB,
                  const float* mask, int width, int height,
-                 float* outR, float* outG, float* outB);
+                 float* outR, float* outG, float* outB,
+                 int version = 1, const SmartRepairJob& job = {});
+
+    int tileSize() const;
 
 private:
     struct Impl;
     std::unique_ptr<Impl> pImpl;
+    bool inpaintLegacy(const float*, const float*, const float*, const float*, int, int, float*, float*, float*);
+    bool inpaintV2(const float*, const float*, const float*, const float*, int, int, float*, float*, float*, const SmartRepairJob&);
 };
 
 /**

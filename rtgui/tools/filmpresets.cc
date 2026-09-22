@@ -17,6 +17,7 @@
 #include "filmpresets.h"
 
 #include "eventmapper.h"
+#include "steeppopup.h"
 
 #include "rtengine/procparams.h"
 
@@ -85,6 +86,7 @@ FilmPresets::FilmPresets() :
     EvFilmPresetsStrength     = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_STRENGTH");
     EvFilmPresetsModel        = m->newEvent(RGBCURVE, "HISTORY_MSG_FILMPRESETS_MODEL");
     EvFilmPresetsExposure     = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_EXPOSURE");
+    EvFilmPresetsPrintExposure = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_PRINTEXPOSURE");
     EvFilmPresetsPushPull     = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_PUSHPULL");
     EvFilmPresetsProcess      = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_PROCESS");
     EvFilmPresetsOutput       = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_OUTPUT");
@@ -150,15 +152,12 @@ FilmPresets::FilmPresets() :
     presetListBox_ = Gtk::manage(new Gtk::ListBox());
     presetListBox_->set_selection_mode(Gtk::SELECTION_BROWSE);
     presetListBox_->set_activate_on_single_click(true);
+    steepui::styleListPopover(*presetPopover_, *scrolled, *presetListBox_);
 
     for (int i = 0; i < numPresets; ++i) {
         auto* row = Gtk::manage(new Gtk::ListBoxRow());
         auto* label = Gtk::manage(new Gtk::Label(M(presetList[i].langKey)));
         label->set_halign(Gtk::ALIGN_START);
-        label->set_margin_start(6);
-        label->set_margin_end(12);
-        label->set_margin_top(3);
-        label->set_margin_bottom(3);
         row->add(*label);
         presetListBox_->append(*row);
     }
@@ -234,6 +233,7 @@ FilmPresets::FilmPresets() :
     modelCombo_->append("v2", M("TP_FILMPRESETS_MODEL_V2"));
     modelCombo_->append("v3", M("TP_FILMPRESETS_MODEL_V3"));
     modelCombo_->append("v4", M("TP_FILMPRESETS_MODEL_V4"));
+    modelCombo_->append("v5", M("TP_FILMPRESETS_MODEL_V5"));
     processCombo_ = Gtk::manage(new Gtk::ComboBoxText());
     processCombo_->append("auto", M("TP_FILMPRESETS_PROCESS_AUTO"));
     processCombo_->append("c41", "C-41");
@@ -278,6 +278,9 @@ FilmPresets::FilmPresets() :
     exposureAdj_->setAdjusterListener(this);
     pushPullAdj_->setAdjusterListener(this);
     detailContent_->pack_start(*exposureAdj_);
+    printExposureAdj_ = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_PRINTEXPOSURE"), -2., 2., 0.05, 0.));
+    printExposureAdj_->setAdjusterListener(this);
+    detailContent_->pack_start(*printExposureAdj_);
     detailContent_->pack_start(*pushPullAdj_);
 
     // -- Tone --
@@ -603,11 +606,13 @@ void FilmPresets::onLabOptionChanged(ProcEvent event, Gtk::ComboBoxText* combo)
 void FilmPresets::updateLabControlSensitivity()
 {
     const bool filmLab = modelCombo_->get_active_id() != "legacy";
-    const bool filmLabV3 = modelCombo_->get_active_id() == "v3";
+    const bool filmLabV3 = modelCombo_->get_active_id() == "v3"
+        || modelCombo_->get_active_id() == "v4" || modelCombo_->get_active_id() == "v5";
     processCombo_->set_sensitive(filmLab);
     outputCombo_->set_sensitive(filmLab);
     formatCombo_->set_sensitive(filmLab);
     exposureAdj_->set_sensitive(filmLab);
+    printExposureAdj_->set_sensitive(modelCombo_->get_active_id() == "v5");
     pushPullAdj_->set_sensitive(filmLab);
     v3Controls_->set_visible(filmLabV3);
 }
@@ -628,6 +633,7 @@ void FilmPresets::read(const ProcParams* pp, const ParamsEdited* pedited)
 
     if (pedited) {
         exposureAdj_->setEditedState(pedited->filmPresets.exposure ? Edited : UnEdited);
+        printExposureAdj_->setEditedState(pedited->filmPresets.printExposure ? Edited : UnEdited);
         pushPullAdj_->setEditedState(pedited->filmPresets.pushPull ? Edited : UnEdited);
         strength->setEditedState(pedited->filmPresets.strength ? Edited : UnEdited);
         contrast->setEditedState(pedited->filmPresets.contrast ? Edited : UnEdited);
@@ -667,7 +673,8 @@ void FilmPresets::read(const ProcParams* pp, const ParamsEdited* pedited)
 
     modelCombo_->set_active_id(
         pp->filmPresets.modelVersion < 2 ? "legacy"
-        : pp->filmPresets.modelVersion >= 4 ? "v4"
+        : pp->filmPresets.modelVersion >= 5 ? "v5"
+        : pp->filmPresets.modelVersion == 4 ? "v4"
         : pp->filmPresets.modelVersion == 3 ? "v3" : "v2");
     if (!processCombo_->set_active_id(pp->filmPresets.process)) {
         processCombo_->set_active_id("auto");
@@ -679,6 +686,7 @@ void FilmPresets::read(const ProcParams* pp, const ParamsEdited* pedited)
         formatCombo_->set_active_id("35mm");
     }
     exposureAdj_->setValue(pp->filmPresets.exposure);
+    printExposureAdj_->setValue(pp->filmPresets.printExposure);
     pushPullAdj_->setValue(pp->filmPresets.pushPull);
     updateLabControlSensitivity();
 
@@ -721,9 +729,11 @@ void FilmPresets::write(ProcParams* pp, ParamsEdited* pedited)
 
     pp->filmPresets.modelVersion = modelCombo_->get_active_id() == "legacy"
         ? 1
+        : modelCombo_->get_active_id() == "v5" ? 5
         : modelCombo_->get_active_id() == "v4" ? 4
         : modelCombo_->get_active_id() == "v3" ? 3 : 2;
     pp->filmPresets.exposure = exposureAdj_->getValue();
+    pp->filmPresets.printExposure = printExposureAdj_->getValue();
     pp->filmPresets.pushPull = pushPullAdj_->getValue();
     pp->filmPresets.process = processCombo_->get_active_id();
     pp->filmPresets.output = outputCombo_->get_active_id();
@@ -760,6 +770,7 @@ void FilmPresets::write(ProcParams* pp, ParamsEdited* pedited)
         pedited->filmPresets.preset = true;
         pedited->filmPresets.modelVersion = true;
         pedited->filmPresets.exposure = exposureAdj_->getEditedState();
+        pedited->filmPresets.printExposure = printExposureAdj_->getEditedState();
         pedited->filmPresets.pushPull = pushPullAdj_->getEditedState();
         pedited->filmPresets.process = true;
         pedited->filmPresets.output = true;
@@ -795,6 +806,7 @@ void FilmPresets::write(ProcParams* pp, ParamsEdited* pedited)
 void FilmPresets::setDefaults(const ProcParams* defParams, const ParamsEdited* pedited)
 {
     exposureAdj_->setDefault(defParams->filmPresets.exposure);
+    printExposureAdj_->setDefault(defParams->filmPresets.printExposure);
     pushPullAdj_->setDefault(defParams->filmPresets.pushPull);
     strength->setDefault(defParams->filmPresets.strength);
     contrast->setDefault(defParams->filmPresets.contrast);
@@ -824,6 +836,7 @@ void FilmPresets::setDefaults(const ProcParams* defParams, const ParamsEdited* p
 
     if (pedited) {
         exposureAdj_->setDefaultEditedState(pedited->filmPresets.exposure ? Edited : UnEdited);
+        printExposureAdj_->setDefaultEditedState(pedited->filmPresets.printExposure ? Edited : UnEdited);
         pushPullAdj_->setDefaultEditedState(pedited->filmPresets.pushPull ? Edited : UnEdited);
         strength->setDefaultEditedState(pedited->filmPresets.strength ? Edited : UnEdited);
         contrast->setDefaultEditedState(pedited->filmPresets.contrast ? Edited : UnEdited);
@@ -852,6 +865,7 @@ void FilmPresets::setDefaults(const ProcParams* defParams, const ParamsEdited* p
         outputSoftnessAdj_->setDefaultEditedState(pedited->filmPresets.outputSoftness ? Edited : UnEdited);
     } else {
         exposureAdj_->setDefaultEditedState(Irrelevant);
+        printExposureAdj_->setDefaultEditedState(Irrelevant);
         pushPullAdj_->setDefaultEditedState(Irrelevant);
         strength->setDefaultEditedState(Irrelevant);
         contrast->setDefaultEditedState(Irrelevant);
@@ -894,6 +908,8 @@ void FilmPresets::adjusterChanged(Adjuster* a, double newval)
     if (listener && getEnabled()) {
         if (a == exposureAdj_) {
             listener->panelChanged(EvFilmPresetsExposure, a->getTextValue());
+        } else if (a == printExposureAdj_) {
+            listener->panelChanged(EvFilmPresetsPrintExposure, a->getTextValue());
         } else if (a == pushPullAdj_) {
             listener->panelChanged(EvFilmPresetsPushPull, a->getTextValue());
         } else if (a == strength) {
@@ -980,6 +996,7 @@ void FilmPresets::setBatchMode(bool batchMode)
 
     strength->showEditedCB();
     exposureAdj_->showEditedCB();
+    printExposureAdj_->showEditedCB();
     pushPullAdj_->showEditedCB();
     contrast->showEditedCB();
     saturation->showEditedCB();

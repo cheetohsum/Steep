@@ -30,6 +30,7 @@
 #include "pipettebuffer.h"
 #include "array2D.h"
 #include "imagesource.h"
+#include "smartrepair.h"
 #include <cairomm/cairomm.h>
 
 namespace Glib
@@ -117,6 +118,7 @@ struct FilmLabContext {
     int fullHeight;
     int scale;
     std::uint32_t imageSeed;
+    double samplingScale = 0.0; // Fractional full-image pixels per thumbnail pixel.
 
     // Scene-referred inputs for model V4. sceneTap is the working-space RGB
     // captured inside rgbProc before out-of-gamut clipping and the tone curve
@@ -639,7 +641,7 @@ enum class BlurType {
      *        falls back to the cheap per-view repair, so opening a photo does
      *        not wait on the model before showing anything.
      */
-    void removeSpots (rtengine::Imagefloat* img, rtengine::ImageSource* imgsrc, const std::vector<procparams::SpotEntry> &entries, const PreviewProps &pp, const rtengine::ColorTemp &currWB, const procparams::ColorManagementParams *cmp, int tr, bool allowFullResPatch = true);
+    void removeSpots (rtengine::Imagefloat* img, rtengine::ImageSource* imgsrc, const std::vector<procparams::SpotEntry> &entries, const PreviewProps &pp, const rtengine::ColorTemp &currWB, const procparams::ColorManagementParams *cmp, int tr, bool allowFullResPatch = true, const SmartRepairJob& repairJob = {});
 
     // pyramid wavelet
     void cbdl_local_temp(float ** src, float ** loctemp, int srcwidth, int srcheight, const float * mult, float kchro, const double dirpyrThreshold, const float mergeL, const float contres, const double skinprot, const bool gamutlab, float b_l, float t_l, float t_r, float b_r,  int choice, int scale, bool multiThread);

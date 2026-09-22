@@ -666,6 +666,11 @@ bool ThumbBrowserEntryBase::stashPreviewForSize (hidpi::LogicalSize size, int de
         return false;
     }
 
+    const auto renderedSize = size.scaleToDevice(deviceScale);
+    if (renderedSize.width != previewDataLayout.width || renderedSize.height != previewDataLayout.height) {
+        return false; // A scaled placeholder is not a finished render at this size.
+    }
+
     // Reuse the slot already describing this size, otherwise the oldest one.
     PreviewSlot* target = nullptr;
 

@@ -218,6 +218,8 @@ set(NONCLISOURCEFILES
     modeldownloader.cc
     soundman.cc
     steeppopup.cc
+    gradingpresets.cc
+    gradingpresetmenu.cc
     steepperflog.cc
     threadutils.cc
     thumbbrowserbase.cc
@@ -351,6 +353,40 @@ target_link_libraries(rth-cli PRIVATE
     PkgConfig::GTKMM
     ${EXTRA_LIB_RTGUI}
 )
+
+option(STEEP_BUILD_PROFILE_TESTS "Build native film recipe regression tests" OFF)
+if(STEEP_BUILD_PROFILE_TESTS)
+    find_package(Threads REQUIRED)
+    add_executable(steep-interactive-refresh-tests
+        ../tools/interactive_refresh_tests.cc ../rtengine/refreshmap.cc)
+    target_include_directories(steep-interactive-refresh-tests PRIVATE ${PROJECT_SOURCE_DIR})
+    add_executable(steep-gradient-geometry-tests ../tools/gradient_geometry_tests.cc)
+    target_include_directories(steep-gradient-geometry-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_executable(steep-thumbnail-size-tests ../tools/thumbnail_size_snapshot_tests.cc)
+    target_include_directories(steep-thumbnail-size-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(steep-thumbnail-size-tests PRIVATE Threads::Threads)
+    add_executable(steep-histogram-style-tests ../tools/histogram_style_tests.cc)
+    target_include_directories(steep-histogram-style-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(steep-histogram-style-tests PRIVATE PkgConfig::GTKMM)
+    set(PROFILE_TEST_SOURCES ${CLISOURCEFILES})
+    list(REMOVE_ITEM PROFILE_TEST_SOURCES main-cli.cc)
+    add_executable(steep-profile-tests ../tools/film_look_tests.cc ${PROFILE_TEST_SOURCES})
+    add_dependencies(steep-profile-tests UpdateInfo)
+    target_include_directories(steep-profile-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_BINARY_DIR}/rtgui ${EXTRA_INCDIR})
+    target_link_directories(steep-profile-tests PRIVATE ${EXTRA_LIBDIR})
+    target_compile_definitions(steep-profile-tests PRIVATE CLIVERSION)
+    rt_setup_target(steep-profile-tests)
+    target_link_libraries(steep-profile-tests PRIVATE rtengine PkgConfig::GTKMM ${EXTRA_LIB_RTGUI})
+    add_executable(steep-grading-tests ../tools/grading_preset_tests.cc gradingpresets.cc ${PROFILE_TEST_SOURCES})
+    add_dependencies(steep-grading-tests UpdateInfo)
+    target_include_directories(steep-grading-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_BINARY_DIR}/rtgui ${EXTRA_INCDIR})
+    target_link_directories(steep-grading-tests PRIVATE ${EXTRA_LIBDIR})
+    target_compile_definitions(steep-grading-tests PRIVATE CLIVERSION)
+    rt_setup_target(steep-grading-tests)
+    target_link_libraries(steep-grading-tests PRIVATE rtengine PkgConfig::GTKMM ${EXTRA_LIB_RTGUI})
+endif()
 
 if(TCMALLOC_FOUND)
     target_link_libraries(rth PRIVATE TCMALLOC::TCMALLOC)

@@ -680,9 +680,6 @@ void FileBrowserEntry::calcThumbnailSize ()
             // fit) instead of flashing an empty tile. The re-render is left to
             // the viewport scan in ThumbBrowserBase::Internal::on_draw, which
             // only queues work for entries the user can actually see.
-            if (preview.empty() && !filtered) {
-                refreshThumbnailImage();
-            }
         }
     }
 }

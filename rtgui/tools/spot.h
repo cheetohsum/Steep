@@ -31,6 +31,8 @@
 #include <gtkmm.h>
 
 #include <functional>
+#include <future>
+#include "rtengine/smartrepair.h"
 
 /**
  * @brief The brush cursor ring. Draws the normal dashed circle, and while
@@ -127,6 +129,19 @@ private:
     void finishSmartResult();
     void queueCanvasRedraw();
     void setActiveMethod(int index);
+    Gtk::Stack* smartStatus_[4] = {};
+    Gtk::Spinner* smartSpinner_[4] = {};
+    Gtk::EventBox* smartStatusHit_[4] = {};
+    Gtk::Button *smartCancel_ = nullptr, *smartRetry_ = nullptr, *smartUpgrade_ = nullptr;
+    Adjuster *dustSensitivity_ = nullptr, *repairFeather_ = nullptr, *reflectionStrength_ = nullptr;
+    sigc::connection statusPollConn_, dustPollConn_;
+    std::function<rtengine::SmartRepairStatus()> smartStatusProvider_;
+    std::function<void()> cancelRepair_, retryRepair_;
+    std::shared_future<std::vector<rtengine::procparams::SpotEntry>> dustFuture_;
+    bool dustScanning_ = false;
+    void pollSmartStatus();
+    void startStatusPolling();
+    void applyDustCandidates(const std::vector<rtengine::procparams::SpotEntry>& candidates);
     void blockMethodButtons(bool block);
     void onMethodButtonToggled(Gtk::ToggleButton* button, int methodIndex);
 
@@ -162,7 +177,7 @@ protected:
     Gtk::Button* btnAIReflectReset = nullptr;
     Gtk::ToggleButton* btnAIFill = nullptr;     // Smart Tools: large-area AI fill brush
     Gtk::Button* btnAIFillReset = nullptr;
-    std::function<std::vector<rtengine::procparams::SpotEntry>(int)> dustDetector_;
+    std::function<std::shared_future<std::vector<rtengine::procparams::SpotEntry>>(int, double)> dustDetector_;
     Gtk::Box* methodBox;
     bool blockMethodSignal = false;
     sigc::connection cloneConn, healConn, eraseConn, redeyeConn, aiRemoveConn, aiReflectConn, aiFillConn;
@@ -192,12 +207,20 @@ public:
     void setProcessingActive (bool active);
 
     /// Provider for the one-press dust scan (wired by ToolPanelCoordinator).
-    void setDustDetector (std::function<std::vector<rtengine::procparams::SpotEntry>(int)> detector)
+    void setDustDetector (std::function<std::shared_future<std::vector<rtengine::procparams::SpotEntry>>(int, double)> detector)
     {
         dustDetector_ = std::move(detector);
         if (btnAIDust) {
             btnAIDust->set_sensitive(static_cast<bool>(dustDetector_));
         }
+    }
+
+    void setSmartRepairProvider(std::function<rtengine::SmartRepairStatus()> status,
+                               std::function<void()> cancel, std::function<void()> retry) {
+        smartStatusProvider_ = std::move(status);
+        cancelRepair_ = std::move(cancel);
+        retryRepair_ = std::move(retry);
+        startStatusPolling();
     }
 
     void read (const rtengine::procparams::ProcParams* pp, const ParamsEdited* pedited = nullptr) override;

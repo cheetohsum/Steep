@@ -24,6 +24,7 @@
 #include <ctime>
 #include <string>
 #include <memory>
+#include <future>
 
 #include <glibmm/ustring.h>
 
@@ -33,6 +34,7 @@
 #include "imageformat.h"
 #include "procevents.h"
 #include "settings.h"
+#include "smartrepair.h"
 
 #include "rtgui/threadutils.h"
 
@@ -251,7 +253,7 @@ public:
     virtual void delImage(IImage8* img) = 0;
     /** With this member function the staged processor notifies the listener that the preview image has been updated.
       * @param cp holds the coordinates of the current crop rectangle */
-    virtual void imageReady(const procparams::CropParams& cp) = 0;
+    virtual void imageReady(const procparams::CropParams& cp, const SmartRepairJob& repair = {}) = 0;
 };
 
 /** When the detailed crop image is ready for display during staged processing (thus the changes have been updated),
@@ -757,6 +759,10 @@ public:
       * smooth areas) and return ready-to-use spot entries, strongest first.
       * Runs synchronously; positions and radii are in full-image coordinates. */
     virtual std::vector<procparams::SpotEntry> detectDustSpots (int maxSpots) { (void)maxSpots; return {}; }
+    virtual std::shared_future<std::vector<procparams::SpotEntry>> requestDustSpots(int, double) { return {}; }
+    virtual SmartRepairStatus getSmartRepairStatus() const { return {}; }
+    virtual void cancelSmartRepairs() {}
+    virtual void retrySmartRepairs() {}
     /** Set the TweakOperator
       * @param tOperator is a pointer to the object that will alter the ProcParams for the rendering */
     virtual void        setTweakOperator (TweakOperator *tOperator) = 0;

@@ -25,6 +25,7 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <mutex>
@@ -66,7 +67,7 @@ struct AISubjectEngine::Impl {
     OrtSession* session = nullptr;
     OrtSessionOptions* sessionOptions = nullptr;
     OrtMemoryInfo* memoryInfo = nullptr;
-    bool initialized = false;
+    std::atomic<bool> initialized{false};
     bool usingDirectML = false;
     std::string inputName;
     std::string outputName;
@@ -347,8 +348,11 @@ array2D<float> AISubjectEngine::saliency(float* const* rRows, float* const* gRow
 
 AISubjectEngine& getAISubjectEngine()
 {
-    static AISubjectEngine instance;
-    return instance;
+    // Process lifetime, like the inpainting engine: a short export can finish
+    // while the loader still owns `this`. Static destruction races that load,
+    // and joining under Windows DLL teardown can deadlock model initialization.
+    static auto* instance = new AISubjectEngine();
+    return *instance;
 }
 
 } // namespace rtengine

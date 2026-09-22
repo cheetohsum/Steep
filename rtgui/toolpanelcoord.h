@@ -28,6 +28,7 @@
 #include <gtkmm.h>
 
 #include "modebuttonbar.h"
+#include "gradingpresetmenu.h"
 #include "tools/bayerpreprocess.h"
 #include "tools/bayerprocess.h"
 #include "tools/bayerrawexposure.h"
@@ -300,6 +301,8 @@ private:
     Gtk::ToggleButton* colorDots_[3] = {};
     bool colorDotBlock_ = false;
     int colorDotActive_ = 0;
+    std::unique_ptr<GradingPresetMenu> gradingPresets_;
+    bool gradingPreviewActive_ = false;
 
     bool maskModeActive_ = false;
     unsigned editGroupRestoreGeneration_ = 0;

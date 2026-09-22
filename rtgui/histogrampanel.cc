@@ -17,6 +17,7 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "histogrampanel.h"
+#include "histogramrgbstyle.h"
 #include "multilangmgr.h"
 #include "guiutils.h"
 #include "options.h"
@@ -413,6 +414,8 @@ HistogramPanel::HistogramPanel () :
 HistogramPanel::~HistogramPanel ()
 {
     pointer_moved_delayed_call.cancel();
+    // EditorPanel returns the controls before teardown; GTK children may
+    // already be destroyed when this managed widget's destructor runs.
 
     delete redImage;
     delete greenImage;
@@ -430,6 +433,21 @@ HistogramPanel::~HistogramPanel ()
     delete valueImage_g;
     delete chroImage_g;
     delete barImage_g;
+}
+
+void HistogramPanel::setControlsContainer(Gtk::Box* container)
+{
+    auto* parent = dynamic_cast<Gtk::Container*>(bottomBarRevealer->get_parent());
+    Gtk::Container* target = container ? static_cast<Gtk::Container*>(container) : this;
+    if (parent == target) return;
+    bottomBarRevealer->reference();
+    if (parent) parent->remove(*bottomBarRevealer);
+    if (container) {
+        container->pack_start(*bottomBarRevealer, Gtk::PACK_SHRINK);
+    } else {
+        attach_next_to(*bottomBarRevealer, *gfxOverlay, Gtk::POS_BOTTOM, 1, 1);
+    }
+    bottomBarRevealer->unreference();
 }
 
 void HistogramPanel::showRGBBar()
@@ -1391,7 +1409,7 @@ void HistogramArea::update(
     );
 }
 
-void HistogramArea::updateDrawingArea (const ::Cairo::RefPtr< Cairo::Context> &cr)
+void HistogramArea::updateDrawingArea (const ::Cairo::RefPtr< Cairo::Context> &targetCr)
 {
     // Do not update drawing area if widget is not realized
     if (!get_realized ()) {
@@ -1404,6 +1422,15 @@ void HistogramArea::updateDrawingArea (const ::Cairo::RefPtr< Cairo::Context> &c
     Glib::RefPtr<Gdk::Window> window = get_window();
     int winx, winy, winw, winh;
     window->get_geometry(winx, winy, winw, winh);
+
+    if (winw <= 0 || winh <= 0) return;
+    // Cairo's Win32 backend can fault on SCREEN contour strokes. Keep the
+    // layered drawing in a bounded image surface and only OVER-blit to GTK.
+    const int deviceScale = std::max(1, get_scale_factor());
+    auto surface = Cairo::ImageSurface::create(Cairo::FORMAT_ARGB32,
+                                               winw * deviceScale, winh * deviceScale);
+    cairo_surface_set_device_scale(surface->cobj(), deviceScale, deviceScale);
+    auto cr = Cairo::Context::create(surface);
 
     // Setup drawing
     cr->set_operator (Cairo::OPERATOR_OVER);
@@ -1566,65 +1593,42 @@ void HistogramArea::updateDrawingArea (const ::Cairo::RefPtr< Cairo::Context> &c
 
         if (needLuma && !rawMode) {
             drawCurve(cr, anim_lhist_lut, realhistheight, winw, winh);
-            cr->set_source_rgba (0.65, 0.65, 0.65, 0.65);
+            cr->set_source_rgba (0.65, 0.65, 0.65, (needRed || needGreen || needBlue) ? 0.18 : 0.65);
             cr->fill ();
+            cr->set_source_rgba (0.65, 0.65, 0.65, 0.65);
             drawMarks(cr, anim_lhist_lut, realhistheight, winw, ui, oi);
         }
 
         if (needChroma && !rawMode) {
-            drawCurve(cr, anim_chist_lut, realhistheight, winw, winh);
+            drawCurve(cr, anim_chist_lut, realhistheight, winw, winh, false);
             cr->set_source_rgb (0.9, 0.9, 0.);
             cr->stroke ();
             drawMarks(cr, anim_chist_lut, realhistheight, winw, ui, oi);
         }
 
-        // Phase 1: Draw RGB channels as filled glass areas with additive
-        // blending for natural color mixing at overlaps:
-        // R+G=Yellow, R+B=Magenta, G+B=Cyan, R+G+B=White
-        cr->set_operator(Cairo::OPERATOR_ADD);
+        const Gdk::RGBA wash = themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff"));
+        const bool lightTheme = wash.get_red()+wash.get_green()+wash.get_blue() < 1.5;
+        const LUTu* channels[] = {&rhchanged, &ghchanged, &bhchanged};
+        histogramstyle::drawRGB(cr, winw, winh, {{needRed, needGreen, needBlue}}, lightTheme,
+            [&](int channel, bool filled) {
+                drawCurve(cr, *channels[channel], realhistheight, winw, winh, filled);
+            });
 
-        if (needRed) {
-            drawCurve(cr, rhchanged, realhistheight, winw, winh);
-            cr->set_source_rgba(1.0, 0.0, 0.0, 0.45);
-            cr->fill();
-        }
-
-        if (needGreen) {
-            drawCurve(cr, ghchanged, realhistheight, winw, winh);
-            cr->set_source_rgba(0.0, 1.0, 0.0, 0.45);
-            cr->fill();
-        }
-
-        if (needBlue) {
-            drawCurve(cr, bhchanged, realhistheight, winw, winh);
-            cr->set_source_rgba(0.0, 0.4, 1.0, 0.45);
-            cr->fill();
-        }
-
-        // Phase 2: Draw subtle edge lines and clipping marks with normal compositing
+        // Clipping marks remain crisp and are not part of the halo treatment.
         cr->set_operator(Cairo::OPERATOR_OVER);
         cr->set_line_width(1.0);
 
         if (needRed) {
-            drawCurve(cr, rhchanged, realhistheight, winw, winh);
-            cr->set_source_rgba(1.0, 0.3, 0.3, 0.35);
-            cr->stroke();
             cr->set_source_rgba(1.0, 0.0, 0.0, 0.9);
             drawMarks(cr, rhchanged, realhistheight, winw, ui, oi);
         }
 
         if (needGreen) {
-            drawCurve(cr, ghchanged, realhistheight, winw, winh);
-            cr->set_source_rgba(0.3, 1.0, 0.3, 0.35);
-            cr->stroke();
             cr->set_source_rgba(0.0, 1.0, 0.0, 0.9);
             drawMarks(cr, ghchanged, realhistheight, winw, ui, oi);
         }
 
         if (needBlue) {
-            drawCurve(cr, bhchanged, realhistheight, winw, winh);
-            cr->set_source_rgba(0.3, 0.5, 1.0, 0.35);
-            cr->stroke();
             cr->set_source_rgba(0.0, 0.4, 1.0, 0.9);
             drawMarks(cr, bhchanged, realhistheight, winw, ui, oi);
         }
@@ -1637,6 +1641,12 @@ void HistogramArea::updateDrawingArea (const ::Cairo::RefPtr< Cairo::Context> &c
         drawVectorscope(cr, winw, winh);
     }
     MYREADERLOCK_RELEASE(wave_lock);
+
+    targetCr->save();
+    targetCr->set_operator(Cairo::OPERATOR_OVER);
+    targetCr->set_source(surface, 0, 0);
+    targetCr->paint();
+    targetCr->restore();
 }
 
 bool HistogramArea::updatePointer(const int r, const int g, const int b, const rtengine::procparams::ColorManagementParams *cmp)
@@ -1686,10 +1696,9 @@ void HistogramArea::on_realize ()
 }
 
 void HistogramArea::drawCurve(const Cairo::RefPtr<Cairo::Context> &cr,
-                              const LUTu & data, const double scale, const int hsize, const int vsize)
+                              const LUTu & data, const double scale, const int hsize, const int vsize, bool filled)
 {
-    cr->set_line_width(1.);
-    cr->move_to (padding, vsize - 1);
+    if (filled) cr->move_to(padding, vsize - 1);
     const double new_scale = scale <= 0.0 ? 0.001 : scale; // avoid division by zero and negative values
 
     for (int i = 0; i < 256; i++) {
@@ -1707,10 +1716,14 @@ void HistogramArea::drawCurve(const Cairo::RefPtr<Cairo::Context> &cr,
         double posX = padding + iscaled * (hsize - padding * 2.0) / 255.0;
         double posY = vsize - 2 + val * (4 - vsize) / vsize;
 
-        cr->line_to (posX, posY);
+        if (!filled && i == 0) cr->move_to(posX, posY);
+        else cr->line_to(posX, posY);
     }
 
-    cr->line_to (hsize - padding, vsize - 1);
+    if (filled) {
+        cr->line_to(hsize - padding, vsize - 1);
+        cr->close_path();
+    }
 }
 
 void HistogramArea::drawMarks(const Cairo::RefPtr<Cairo::Context> &cr,

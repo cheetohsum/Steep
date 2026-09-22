@@ -163,6 +163,7 @@ ParamsEdited::ParamsEdited(bool value)
 
 void ParamsEdited::set(bool v)
 {
+    filmLook = false;
 
     general.rank         = v;
     general.colorlabel   = v;
@@ -980,6 +981,7 @@ void ParamsEdited::set(bool v)
     filmPresets.preset = v;
     filmPresets.modelVersion = v;
     filmPresets.exposure = v;
+    filmPresets.printExposure = v;
     filmPresets.pushPull = v;
     filmPresets.process = v;
     filmPresets.output = v;
@@ -2778,6 +2780,7 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         filmPresets.preset = filmPresets.preset && p.filmPresets.preset == other.filmPresets.preset;
         filmPresets.modelVersion = filmPresets.modelVersion && p.filmPresets.modelVersion == other.filmPresets.modelVersion;
         filmPresets.exposure = filmPresets.exposure && p.filmPresets.exposure == other.filmPresets.exposure;
+        filmPresets.printExposure = filmPresets.printExposure && p.filmPresets.printExposure == other.filmPresets.printExposure;
         filmPresets.pushPull = filmPresets.pushPull && p.filmPresets.pushPull == other.filmPresets.pushPull;
         filmPresets.process = filmPresets.process && p.filmPresets.process == other.filmPresets.process;
         filmPresets.output = filmPresets.output && p.filmPresets.output == other.filmPresets.output;
@@ -9275,6 +9278,9 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
     }
     if (filmPresets.exposure) {
         toEdit.filmPresets.exposure = mods.filmPresets.exposure;
+    }
+    if (filmPresets.printExposure) {
+        toEdit.filmPresets.printExposure = mods.filmPresets.printExposure;
     }
     if (filmPresets.pushPull) {
         toEdit.filmPresets.pushPull = mods.filmPresets.pushPull;

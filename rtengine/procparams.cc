@@ -1901,14 +1901,14 @@ bool SpotEntry::operator ==(const SpotEntry& other) const
 {
     return other.sourcePos == sourcePos && other.targetPos == targetPos &&
            other.radius == radius && other.feather == feather && other.opacity == opacity &&
-           other.method == method && other.strokePoints == strokePoints;
+           other.method == method && other.repairVersion == repairVersion && other.strokePoints == strokePoints;
 }
 
 bool SpotEntry::operator !=(const SpotEntry& other) const
 {
     return other.sourcePos != sourcePos || other.targetPos != targetPos ||
            other.radius != radius || other.feather != feather || other.opacity != opacity ||
-           other.method != method || other.strokePoints != strokePoints;
+           other.method != method || other.repairVersion != repairVersion || other.strokePoints != strokePoints;
 }
 
 SpotParams::SpotParams() :
@@ -3439,6 +3439,7 @@ FilmPresetsParams::FilmPresetsParams() :
     preset("cinema_reveal_35"),
     modelVersion(4),
     exposure(0.0),
+    printExposure(0.0),
     pushPull(0.0),
     process("auto"),
     output("scan"),
@@ -3482,6 +3483,7 @@ bool FilmPresetsParams::operator==(const FilmPresetsParams &other) const
         && preset == other.preset
         && modelVersion == other.modelVersion
         && exposure == other.exposure
+        && printExposure == other.printExposure
         && pushPull == other.pushPull
         && process == other.process
         && output == other.output
@@ -5242,7 +5244,7 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
 //Spot removal
         saveToKeyfile(!pedited || pedited->spot.enabled, "Spot removal", "Enabled", spot.enabled, keyFile);
         for (size_t i = 0; i < spot.entries.size (); ++i) {
-            std::vector<double> entry(8);
+            std::vector<double> entry(9);
 
             entry[0] = double (spot.entries.at (i).sourcePos.x);
             entry[1] = double (spot.entries.at (i).sourcePos.y);
@@ -5252,6 +5254,7 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
             entry[5] = double (spot.entries.at (i).feather);
             entry[6] = double (spot.entries.at (i).opacity);
             entry[7] = double (static_cast<int>(spot.entries.at (i).method));
+            entry[8] = spot.entries.at(i).repairVersion;
 
             std::stringstream ss;
             ss << "Spot" << (i + 1);
@@ -5346,6 +5349,7 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->filmPresets.preset, "Film Presets", "Preset", filmPresets.preset, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.modelVersion, "Film Presets", "ModelVersion", filmPresets.modelVersion, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.exposure, "Film Presets", "Exposure", filmPresets.exposure, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.printExposure, "Film Presets", "PrintExposure", filmPresets.printExposure, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.pushPull, "Film Presets", "PushPull", filmPresets.pushPull, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.process, "Film Presets", "Process", filmPresets.process, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.output, "Film Presets", "Output", filmPresets.output, keyFile);
@@ -5615,6 +5619,24 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
 
         if (!keyFile.load_from_file(fname)) {
             return 1;
+        }
+
+        const bool filmLook = keyFile.has_group("Steep Look");
+        if (filmLook) {
+            if (keyFile.get_integer("Steep Look", "Version") != 1
+                || keyFile.get_string("Steep Look", "Kind") != "film"
+                || !keyFile.has_group("Film Presets")
+                || keyFile.get_integer("Film Presets", "ModelVersion") != 5) {
+                return 1;
+            }
+            for (const auto& group : keyFile.get_groups()) {
+                if (group != "Steep Look" && group != "Film Presets" && group != "Version") {
+                    return 1;
+                }
+            }
+            // A look owns the complete film stage, not the photograph's WB,
+            // exposure, geometry, local edits, grain, or processing profile.
+            filmPresets = FilmPresetsParams();
         }
 
         ppVersion = PPVERSION;
@@ -6627,6 +6649,9 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
                     const double epsilon = 0.001;  // to circumvent rounding of integer saved as double
                     SpotEntry se;
 
+                    if (entry.size() < 7) continue;
+                    se.repairVersion = entry.size() >= 9 ? LIM(int(entry.data()[8]), 1, 2) : 1;
+
                     se.sourcePos.set(int(entry.data()[0] + epsilon), int(entry.data()[1] + epsilon));
                     se.targetPos.set(int(entry.data()[2] + epsilon), int(entry.data()[3] + epsilon));
                     se.radius  = LIM<int>(int  (entry.data()[4] + epsilon), SpotParams::minRadius, SpotParams::maxRadius);
@@ -7627,6 +7652,7 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
                 }
             }
             assignFromKeyfile(keyFile, "Film Presets", "Exposure", filmPresets.exposure, pedited->filmPresets.exposure);
+            assignFromKeyfile(keyFile, "Film Presets", "PrintExposure", filmPresets.printExposure, pedited->filmPresets.printExposure);
             assignFromKeyfile(keyFile, "Film Presets", "PushPull", filmPresets.pushPull, pedited->filmPresets.pushPull);
             assignFromKeyfile(keyFile, "Film Presets", "Process", filmPresets.process, pedited->filmPresets.process);
             assignFromKeyfile(keyFile, "Film Presets", "Output", filmPresets.output, pedited->filmPresets.output);
@@ -8224,6 +8250,12 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
             }
         }
 
+        if (filmLook) {
+            pedited->set(false);
+            pedited->filmPresets = ParamsEdited(true).filmPresets;
+            pedited->filmLook = true;
+        }
+
         return 0;
     } catch (const Glib::Error& e) {
         printf("-->%s\n", e.what().c_str());
@@ -8440,7 +8472,7 @@ void PartialProfile::applyTo(ProcParams* destParams, bool fromLastSave) const
     if (destParams && pparams && pedited) {
         bool fromHistMatching = fromLastSave && destParams->toneCurve.histmatching && pparams->toneCurve.histmatching;
         pedited->combine(*destParams, *pparams, true);
-        if (!fromLastSave) {
+        if (!fromLastSave && !pedited->filmLook) {
             destParams->toneCurve.fromHistMatching = fromHistMatching;
         }
     }

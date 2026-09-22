@@ -19,6 +19,7 @@
 
 #include "aiinpainting.h"
 #include "onnxruntime_compat.h"
+#include "repairmath.h"
 #include <cstdio>
 #include <cstring>
 #include <algorithm>
@@ -45,11 +46,14 @@ struct AIInpaintingEngine::Impl {
     OrtSession* session;
     OrtSessionOptions* sessionOptions;
     OrtMemoryInfo* memoryInfo;
-    bool initialized;
+    std::atomic<bool> initialized;
+    std::timed_mutex inferenceMutex;
+    int inputWidth = 512, inputHeight = 512;
+    float calibratedRange = 0.f;
     // Whether the export accepts non-512 input dims: -1 unknown, 1 yes, 0 no.
     // Probed on first use; native-resolution inference beats the 512 squash
     // for anything large (LaMa is fully convolutional).
-    int dynamicDims;
+    std::atomic<int> dynamicDims;
     // Output range of THIS export: 0 unknown, 1 = [0,1], 255 = [0,255].
     // A property of the model, so it is decided once and reused. Deciding
     // per call from the data peak misfires on dark content (a dark tile can
@@ -146,6 +150,23 @@ bool AIInpaintingEngine::init(const std::string& modelPath)
         return false;
     }
 
+    OrtTypeInfo* inputType = nullptr;
+    const OrtTensorTypeAndShapeInfo* tensorType = nullptr;
+    int64_t dims[4] = {};
+    size_t rank = 0;
+    status = pImpl->api->SessionGetInputTypeInfo(pImpl->session, 0, &inputType);
+    if (!status) status = pImpl->api->CastTypeInfoToTensorInfo(inputType, &tensorType);
+    if (!status && tensorType) status = pImpl->api->GetDimensionsCount(tensorType, &rank);
+    if (!status && rank == 4) status = pImpl->api->GetDimensions(tensorType, dims, 4);
+    if (inputType) pImpl->api->ReleaseTypeInfo(inputType);
+    if (status || rank != 4 || dims[1] != 3 || dims[2] > 2048 || dims[3] > 2048) {
+        if (status) pImpl->api->ReleaseStatus(status);
+        fprintf(stderr, "AI Inpainting: unsupported model input contract\n");
+        return false;
+    }
+    pImpl->inputHeight = dims[2] > 0 ? int(dims[2]) : 512;
+    pImpl->inputWidth = dims[3] > 0 ? int(dims[3]) : 512;
+    pImpl->dynamicDims = dims[2] > 0 && dims[3] > 0 ? 0 : -1;
     pImpl->initialized = true;
     fprintf(stderr, "AI Inpainting: LaMa engine initialized successfully\n");
     return true;
@@ -193,7 +214,7 @@ void AIInpaintingEngine::initDeferred(const std::string& modelPath)
     }).detach();
 }
 
-bool AIInpaintingEngine::inpaint(const float* imageR, const float* imageG, const float* imageB,
+bool AIInpaintingEngine::inpaintLegacy(const float* imageR, const float* imageG, const float* imageB,
                                   const float* mask, int width, int height,
                                   float* outR, float* outG, float* outB)
 {
@@ -424,15 +445,178 @@ bool AIInpaintingEngine::inpaint(const float* imageR, const float* imageG, const
     return false;
 }
 
-// Singleton
-static AIInpaintingEngine* s_inpaintEngine = nullptr;
+int AIInpaintingEngine::tileSize() const
+{
+    return pImpl->initialized ? std::min(pImpl->inputWidth, pImpl->inputHeight) : 512;
+}
+
+bool AIInpaintingEngine::inpaint(const float* r, const float* g, const float* b,
+                                const float* mask, int w, int h,
+                                float* outR, float* outG, float* outB,
+                                int version, const SmartRepairJob& job)
+{
+    {
+        std::unique_lock<std::mutex> lock(pImpl->loadMutex);
+        while (pImpl->loading) {
+            if (job) job->checkpoint();
+            pImpl->ready.wait_for(lock, std::chrono::milliseconds(50));
+        }
+    }
+    if (!pImpl->initialized || w < 1 || h < 1) return false;
+    std::unique_lock<std::timed_mutex> lock(pImpl->inferenceMutex, std::defer_lock);
+    while (!lock.try_lock_for(std::chrono::milliseconds(30))) {
+        if (job) job->checkpoint();
+    }
+    if (job) job->checkpoint();
+    return version >= 2 ? inpaintV2(r, g, b, mask, w, h, outR, outG, outB, job)
+                        : inpaintLegacy(r, g, b, mask, w, h, outR, outG, outB);
+}
+
+bool AIInpaintingEngine::inpaintV2(const float* r, const float* g, const float* b,
+                                  const float* mask, int w, int h,
+                                  float* outR, float* outG, float* outB, const SmartRepairJob& job)
+{
+    const auto* api = pImpl->api;
+    const int mw = pImpl->inputWidth, mh = pImpl->inputHeight;
+    const int count = mw * mh;
+    const int64_t imageShape[] = {1, 3, mh, mw}, maskShape[] = {1, 1, mh, mw};
+    std::vector<float> input(3 * count), modelMask(count);
+
+    struct RunResources {
+        const OrtApi* api;
+        SmartRepairJob job;
+        OrtValue *image = nullptr, *mask = nullptr, *output = nullptr;
+        OrtRunOptions* options = nullptr;
+        ~RunResources() {
+            if (job) job->setCancelRun({});
+            if (output) api->ReleaseValue(output);
+            if (mask) api->ReleaseValue(mask);
+            if (image) api->ReleaseValue(image);
+            if (options) api->ReleaseRunOptions(options);
+        }
+    } run{api, job};
+    const auto check = [api](OrtStatus* status) {
+        if (!status) return true;
+        fprintf(stderr, "AI Inpainting: %s\n", api->GetErrorMessage(status));
+        api->ReleaseStatus(status);
+        return false;
+    };
+    if (!check(api->CreateRunOptions(&run.options))) return false;
+    if (job) {
+        job->setCancelRun([api, options = run.options]() {
+            if (auto* status = api->RunOptionsSetTerminate(options)) api->ReleaseStatus(status);
+        });
+        job->checkpoint();
+    }
+    if (!check(api->CreateTensorWithDataAsOrtValue(pImpl->memoryInfo, input.data(), input.size() * sizeof(float),
+                                                   imageShape, 4, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &run.image))
+        || !check(api->CreateTensorWithDataAsOrtValue(pImpl->memoryInfo, modelMask.data(), modelMask.size() * sizeof(float),
+                                                      maskShape, 4, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &run.mask))) return false;
+    const auto infer = [&]() {
+        if (job) job->checkpoint();
+        if (run.output) { api->ReleaseValue(run.output); run.output = nullptr; }
+        const char* inputNames[] = {"image", "mask"};
+        const char* outputNames[] = {"output"};
+        OrtValue* inputs[] = {run.image, run.mask};
+        const bool ok = check(api->Run(pImpl->session, run.options, inputNames, inputs, 2, outputNames, 1, &run.output));
+        if (job) job->checkpoint();
+        if (!ok) return false;
+        OrtTensorTypeAndShapeInfo* info = nullptr;
+        size_t rank = 0;
+        int64_t shape[4] = {};
+        ONNXTensorElementDataType type = ONNX_TENSOR_ELEMENT_DATA_TYPE_UNDEFINED;
+        bool valid = check(api->GetTensorTypeAndShape(run.output, &info));
+        if (valid) valid = check(api->GetDimensionsCount(info, &rank)) && rank == 4;
+        if (valid) valid = check(api->GetDimensions(info, shape, 4)) && check(api->GetTensorElementType(info, &type));
+        if (info) api->ReleaseTensorTypeAndShapeInfo(info);
+        return valid && type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT
+            && shape[0] == 1 && shape[1] == 3 && shape[2] == mh && shape[3] == mw;
+    };
+
+    // Calibrate the export contract using a known unmasked neutral, never the
+    // user's first (possibly almost black) photograph.
+    if (pImpl->calibratedRange == 0.f) {
+        std::fill(input.begin(), input.end(), .25f);
+        std::fill(modelMask.begin(), modelMask.end(), 0.f);
+        if (!infer()) return false;
+        float* data = nullptr;
+        if (!check(api->GetTensorMutableData(run.output, reinterpret_cast<void**>(&data)))) return false;
+        double mean = 0.;
+        for (int i = 0; i < 3 * count; ++i) {
+            if (!std::isfinite(data[i])) return false;
+            mean += data[i];
+        }
+        mean /= 3 * count;
+        if (std::fabs(mean - .25) < .003) pImpl->calibratedRange = 1.f;
+        else if (std::fabs(mean - 63.75) < .75) pImpl->calibratedRange = 255.f;
+        else {
+            fprintf(stderr, "AI Inpainting: model does not preserve the neutral contract\n");
+            return false;
+        }
+    }
+
+    // Preserve aspect and native pixels when they fit; pad, never stretch.
+    const double scale = std::min({1., double(mw) / w, double(mh) / h});
+    const int rw = std::max(1, int(std::round(w * scale)));
+    const int rh = std::max(1, int(std::round(h * scale)));
+    const int ox = (mw - rw) / 2, oy = (mh - rh) / 2;
+    std::vector<float> encoded(size_t(w) * h), resized(rw * rh);
+    const float* channels[] = {r, g, b};
+    float modelWhite = 65535.f;
+    for (int i = 0; i < w * h; ++i) {
+        for (const auto* channel : channels) {
+            if (!std::isfinite(channel[i])) return false;
+            modelWhite = std::max(modelWhite, channel[i]);
+        }
+    }
+    for (int c = 0; c < 3; ++c) {
+        for (int i = 0; i < w * h; ++i) {
+            const float v = std::max(0.f, channels[c][i] / modelWhite);
+            encoded[i] = v <= .0031308f ? 12.92f * v : 1.055f * std::pow(v, 1.f / 2.4f) - .055f;
+        }
+        repairmath::resample(encoded.data(), w, h, resized.data(), rw, rh);
+        for (int y = 0; y < mh; ++y)
+            for (int x = 0; x < mw; ++x)
+                input[c * count + y * mw + x] = resized[std::max(0, std::min(rh - 1, y - oy)) * rw + std::max(0, std::min(rw - 1, x - ox))];
+    }
+    repairmath::resample(mask, w, h, resized.data(), rw, rh);
+    // A one-model-pixel guard ring prevents foreground fringes from leaking
+    // into the generated edge; the caller's blend mask is unchanged.
+    for (int y = 0; y < mh; ++y) {
+        for (int x = 0; x < mw; ++x) {
+            float m = 0.f;
+            for (int dy = -1; dy <= 1; ++dy)
+                for (int dx = -1; dx <= 1; ++dx)
+                    m = std::max(m, resized[std::max(0, std::min(rh - 1, y - oy + dy)) * rw + std::max(0, std::min(rw - 1, x - ox + dx))]);
+            modelMask[y * mw + x] = m > .001f ? 1.f : 0.f;
+        }
+    }
+    if (job) job->setStage(SmartRepairStage::Generating);
+    if (!infer()) return false;
+    float* data = nullptr;
+    if (!check(api->GetTensorMutableData(run.output, reinterpret_cast<void**>(&data)))) return false;
+    float* outputs[] = {outR, outG, outB};
+    for (int c = 0; c < 3; ++c) {
+        for (int y = 0; y < rh; ++y) {
+            for (int x = 0; x < rw; ++x) {
+                const float v = data[c * count + (y + oy) * mw + x + ox] / pImpl->calibratedRange;
+                if (!std::isfinite(v)) return false;
+                resized[y * rw + x] = std::max(0.f, std::min(1.f, v));
+            }
+        }
+        repairmath::resample(resized.data(), rw, rh, outputs[c], w, h);
+        for (int i = 0; i < w * h; ++i) {
+            const float v = outputs[c][i];
+            outputs[c][i] = (v <= .04045f ? v / 12.92f : std::pow((v + .055f) / 1.055f, 2.4f)) * modelWhite;
+        }
+    }
+    return true;
+}
 
 AIInpaintingEngine& getAIInpaintingEngine()
 {
-    if (!s_inpaintEngine) {
-        s_inpaintEngine = new AIInpaintingEngine();
-    }
-    return *s_inpaintEngine;
+    static auto* engine = new AIInpaintingEngine();
+    return *engine;
 }
 
 } // namespace rtengine

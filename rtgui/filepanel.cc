@@ -865,16 +865,18 @@ struct PreloadManager {
     // navigation warms likely forward RAWs first, while the byte cap prevents
     // runaway RAW memory use.
     static constexpr size_t kMaxBytes    = 384ULL * 1024 * 1024;
-    static constexpr size_t kMaxEntries  = 1;
+    static constexpr size_t kMaxEntries  = 2;
     static constexpr int    kRadius      = 4;
-    static constexpr size_t kDirectionalBacktrackEntries = 0;
+    static constexpr size_t kDirectionalBacktrackEntries = 1;
     static constexpr size_t kDirectionalLeadEntries = 1;
     static constexpr int    kThumbnailRefreshRadius = 2;
     static constexpr int    kQuickPreviewWarmRadius = 2;
-    static constexpr int    kStartDelayMs = 1800;
+    // The RAW gate still waits for foreground rendering and its quiet period.
+    // Avoid adding a second, longer delay before checking that gate.
+    static constexpr int    kStartDelayMs = 250;
     static constexpr int    kDirectionalStartDelayMs = 125;
     static constexpr int    kRawStrideDirectionalStartDelayMs = 35;
-    static constexpr int    kInterLoadDelayMs = 900;
+    static constexpr int    kInterLoadDelayMs = 125;
     static constexpr int    kDirectionalInterLoadDelayMs = 350;
     static constexpr int    kRawStrideInterLoadDelayMs = 125;
     static constexpr int    kForegroundQuietMs = 900;

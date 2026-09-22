@@ -115,7 +115,7 @@ int refreshmap[rtengine::NUMOFEVENTS] = {
     0,          // EvSHHighQuality : obsolete
     HDR,        // EvPerspCorr
     DARKFRAME,        // EvLCPFile
-    AUTOEXP,         // EvRGBrCurveLumamode
+    TONE,            // EvRGBrCurveLumamode
     IMPULSEDENOISE,   // EvIDNEnabled,
     IMPULSEDENOISE,   // EvIDNThresh,
     ALLNORAW,         // EvDPDNEnabled,
@@ -192,9 +192,9 @@ int refreshmap[rtengine::NUMOFEVENTS] = {
     SHARPENING,       // EvEPDScale
     SHARPENING,       // EvEPDReweightingIterates
     SHARPENING,       // EvEPDEnabled
-    AUTOEXP,         // EvRGBrCurve
-    AUTOEXP,         // EvRGBgCurve
-    AUTOEXP,         // EvRGBbCurve
+    TONE,            // EvRGBrCurve
+    TONE,            // EvRGBgCurve
+    TONE,            // EvRGBbCurve
     AUTOEXP,         // EvNeutralExp
     DEMOSAIC | M_PREPROC, // EvDemosaicMethodPreProc
     LUMINANCECURVE,   // EvLCCurve
@@ -521,7 +521,7 @@ int refreshmap[rtengine::NUMOFEVENTS] = {
     HDR,              // EvTMFattalThreshold
     HDR,              // EvTMFattalAmount
     WB,               // EvWBEnabled
-    AUTOEXP,         // EvRGBEnabled
+    TONE,            // EvRGBEnabled
     LUMINANCECURVE,   // EvLEnabled
     DEMOSAIC,         // EvPdShrEnabled
     CAPTURESHARPEN,    // EvPdShrMaskToggled
@@ -1209,7 +1209,7 @@ int refreshmap[rtengine::NUMOFEVENTS] = {
     ALLNORAW,        //EvPointColorLuminance
     ALLNORAW,        //EvPointColorRange
     ALLNORAW,        //EvPointColorTargetAdd
-    AUTOEXP,         //EvRGBMasterCurve
+    TONE,            //EvRGBMasterCurve
     AUTOEXP,         //EvBWNeutrals
     AUTOEXP,         //EvBWTone
     AUTOEXP          //EvBWStrength

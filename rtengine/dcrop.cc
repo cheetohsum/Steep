@@ -32,6 +32,7 @@
 #include "dcp.h"
 #include "dcrop.h"
 #include "edittrace.h"
+#include "filmlaboptics.h"
 #include "guidedfilter.h"
 #include "image8.h"
 #include "imagefloat.h"
@@ -179,6 +180,7 @@ bool neverCacheTransform()
 
 void Crop::update(int todo)
 {
+    if (todo & M_SPOT) todo |= M_INIT;
     MyMutex::MyLock cropLock(cropMutex);
     ProcParams& params = *parent->params;
 
@@ -707,11 +709,14 @@ void Crop::update(int todo)
             }
         }
 
-        if ((todo & M_SPOT) && params.spot.enabled && !params.spot.entries.empty()) {
+        delete spotCrop;
+        spotCrop = nullptr;
+        if (params.spot.enabled && !params.spot.entries.empty()) {
             spotsDone = true;
             PreviewProps pp(trafx, trafy, trafw * skip, trafh * skip, skip);
             //parent->imgsrc->getImage(parent->currWB, tr, origCrop, pp, params.toneCurve, params.raw);
-            parent->ipf.removeSpots(origCrop, parent->imgsrc, params.spot.entries, pp, parent->currWB, nullptr, tr);
+            parent->ipf.removeSpots(origCrop, parent->imgsrc, params.spot.entries, pp, parent->currWB, nullptr, tr,
+                parent->highDetailRawComputed || !parent->imgsrc->isRAW(), parent->smartRepairPass_);
         }
 
         DirPyrDenoiseParams denoiseParams = params.dirpyrDenoise;
@@ -824,7 +829,8 @@ void Crop::update(int todo)
             baseCrop->copyData (spotCrop);
             PreviewProps pp (trafx, trafy, trafw * skip, trafh * skip, skip);
             int tr = getCoarseBitMask(params.coarse);
-            parent->ipf.removeSpots (spotCrop, parent->imgsrc, params.spot.entries, pp, parent->currWB, &params.icm, tr);
+            parent->ipf.removeSpots (spotCrop, parent->imgsrc, params.spot.entries, pp, parent->currWB, &params.icm, tr,
+                parent->highDetailRawComputed || !parent->imgsrc->isRAW(), parent->smartRepairPass_);
         } else {
             if (spotCrop) {
                 delete spotCrop;
@@ -2363,11 +2369,19 @@ bool Crop::setCropSizes(const int cropX, const int cropY, const int cropW, const
 
     this->skip = skip;
 
+    // Keep emitters outside the viewport available to the material optics.
+    int renderBorder = borderRequested;
+    const auto& film = parent->params->filmPresets;
+    if (film.enabled && film.strength > 0 && film.modelVersion >= 5) {
+        const float frameMM = film.format == "120" ? 56.f : film.format == "large" ? 95.f : 24.f;
+        renderBorder = std::max(renderBorder, filmoptics::supportPixels(
+            std::min(parent->fullw, parent->fullh), frameMM, film.halationSize, skip));
+    }
     // add border, if possible
-    int bx1 = rqx1 - skip * borderRequested;
-    int by1 = rqy1 - skip * borderRequested;
-    int bx2 = rqx2 + skip * borderRequested;
-    int by2 = rqy2 + skip * borderRequested;
+    int bx1 = rqx1 - skip * renderBorder;
+    int by1 = rqy1 - skip * renderBorder;
+    int bx2 = rqx2 + skip * renderBorder;
+    int by2 = rqy2 + skip * renderBorder;
     // clip it to fit into image area
     bx1 = LIM(bx1, 0, parent->fullw - 1);
     by1 = LIM(by1, 0, parent->fullh - 1);

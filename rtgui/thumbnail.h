@@ -28,10 +28,12 @@
 #include "cacheimagedata.h"
 #include "threadutils.h"
 #include "thumbnaillistener.h"
+#include "thumbnailsizesnapshot.h"
 
 namespace rtengine
 {
 class Thumbnail;
+class Imagefloat;
 
 namespace procparams
 {
@@ -49,6 +51,8 @@ class Thumbnail
 {
 
     MyMutex         mutex;
+    // Lifetime bookkeeping must not wait for decode/processing or disk IO.
+    MyMutex         refMutex_;
 
     Glib::ustring   fname;              // file name corresponding to the thumbnail
     CacheImageData  cfs;                // cache entry corresponding to the thumbnail
@@ -61,6 +65,7 @@ class Thumbnail
     rtengine::Thumbnail* tpp;
     int             tw, th;             // dimensions of timgdata (it stores tpp->width and tpp->height in processed mode for simplicity)
     float           imgRatio;           // hack to avoid rounding error
+    ThumbnailSizeSnapshot layoutSize_;
 //  double          scale;              // portion of the sizes of the processed thumbnail image and the full scale image
 
     const std::unique_ptr<rtengine::procparams::ProcParams>      pparams;
@@ -191,6 +196,8 @@ public:
     rtengine::IImage8* processThumbImage    (const rtengine::procparams::ProcParams& pparams, int h, double& scale, bool cachePixbuf = false);
     rtengine::IImage8* processThumbImage    (int h, double& scale, rtengine::procparams::CropParams* crop = nullptr, bool cachePixbuf = false);
     rtengine::IImage8* processFullThumbImage(const rtengine::procparams::ProcParams& pparams, int h, double& scale, bool cachePixbuf = false);
+    std::unique_ptr<rtengine::Imagefloat> processAnalysisImage(const rtengine::procparams::ProcParams& pparams, int h);
+    std::unique_ptr<rtengine::Imagefloat> processCachedAnalysisImage(const rtengine::procparams::ProcParams& pparams, int h);
     Glib::RefPtr<Gdk::Pixbuf> getCachedPixbuf(double& scale) {
         MyMutex::MyLock lock(mutex);
         scale = cachedPixbufScale_;

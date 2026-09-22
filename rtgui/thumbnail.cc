@@ -471,6 +471,7 @@ void Thumbnail::initCachedThumbnailSize()
     imgRatio = -1.f;
 
     if (cfs.width <= 0 || cfs.height <= 0) {
+        layoutSize_.publish(tw, th);
         return;
     }
 
@@ -482,6 +483,7 @@ void Thumbnail::initCachedThumbnailSize()
     }
 
     tw = std::max(static_cast<int>(imgRatio * static_cast<float>(th)), 1);
+    layoutSize_.publish(tw, th, imgRatio);
 }
 
 Thumbnail::Thumbnail(CacheManager* cm, const Glib::ustring& fname, const std::string& md5, const std::string &xmpSidecarMd5, const Glib::ustring& cacheBaseName) :
@@ -682,6 +684,8 @@ void Thumbnail::_generateThumbnailImage()
 
         invalidateExifDateTimeStrings();
     }
+
+    layoutSize_.publish(tw, th, imgRatio);
 
     if (bench) {
         std::fprintf(
@@ -1162,14 +1166,14 @@ bool Thumbnail::isHDR () const
 
 void Thumbnail::increaseRef ()
 {
-    MyMutex::MyLock lock(mutex);
+    MyMutex::MyLock lock(refMutex_);
     ++ref;
 }
 
 void Thumbnail::decreaseRef ()
 {
     {
-        MyMutex::MyLock lock(mutex);
+        MyMutex::MyLock lock(refMutex_);
 
         if ( ref == 0 ) {
             return;
@@ -1184,7 +1188,7 @@ void Thumbnail::decreaseRef ()
 
 int Thumbnail::decreaseRefCacheMgr ()
 {
-    MyMutex::MyLock lock(mutex);
+    MyMutex::MyLock lock(refMutex_);
 
     if ( ref == 0 ) {
         return 0;
@@ -1195,6 +1199,11 @@ int Thumbnail::decreaseRefCacheMgr ()
 
 void Thumbnail::getThumbnailSize(int &w, int &h, const rtengine::procparams::ProcParams *pparams)
 {
+    if (!pparams) {
+        layoutSize_.fit(w, h, App::get().options().maxThumbnailWidth);
+        return;
+    }
+
     MyMutex::MyLock lock(mutex);
 
     int tw_ = tw;
@@ -1384,6 +1393,57 @@ rtengine::IImage8* Thumbnail::processFullThumbImage(
     }
 
     return processThumbImageLocked(pparams, h, scale, cachePixbuf);
+}
+
+std::unique_ptr<rtengine::Imagefloat> Thumbnail::processAnalysisImage(
+    const rtengine::procparams::ProcParams& params, int height)
+{
+    MyMutex::MyLock lock(mutex);
+    if (cfs.thumbImgType == CacheImageData::QUICK_THUMBNAIL) {
+        _generateThumbnailImage();
+    } else if (!tpp) {
+        _loadThumbnail(false);
+    }
+    if (!tpp) {
+        return {};
+    }
+    double scale = 1.0;
+    rtengine::Imagefloat* analysis = nullptr;
+    std::unique_ptr<rtengine::IImage8> preview(tpp->processImage(
+        params, static_cast<rtengine::eSensorType>(cfs.sensortype), height,
+        rtengine::TI_Bilinear, &cfs, scale, false, false, &analysis));
+    delete tpp;
+    tpp = nullptr;
+    return std::unique_ptr<rtengine::Imagefloat>(analysis);
+}
+
+std::unique_ptr<rtengine::Imagefloat> Thumbnail::processCachedAnalysisImage(
+    const rtengine::procparams::ProcParams& params, int height)
+{
+    CacheImageData data;
+    {
+        if (!mutex.trylock()) return {};
+        struct Unlock { MyMutex& mutex; ~Unlock() { mutex.unlock(); } } unlock{mutex};
+        if (cfs.thumbImgType != CacheImageData::FULL_THUMBNAIL) return {};
+        data = cfs;
+    }
+    // Read a private cache copy: recommendation work never upgrades a RAW or
+    // monopolizes the thumbnail object used by the filmstrip and editor.
+    rtengine::Thumbnail thumbnail;
+    thumbnail.isRaw = data.format == static_cast<int>(FT_Raw);
+    if (!thumbnail.readData(getCacheFileName("data", ".txt"))
+        || !thumbnail.readImageFile(getCacheFileName("images", ".rtti"))) return {};
+    thumbnail.readEmbProfile(getCacheFileName("embprofiles", ".icc"));
+    thumbnail.init();
+    float ratio = 1;
+    const int width = thumbnail.getImageWidth(params, height, ratio);
+    if (width > 384) height = std::max(8, height * 384 / width);
+    double scale = 1;
+    rtengine::Imagefloat* analysis = nullptr;
+    std::unique_ptr<rtengine::IImage8> preview(thumbnail.processImage(params,
+        static_cast<rtengine::eSensorType>(data.sensortype), height,
+        rtengine::TI_Bilinear, &data, scale, false, false, &analysis));
+    return std::unique_ptr<rtengine::Imagefloat>(analysis);
 }
 
 rtengine::IImage8* Thumbnail::upgradeThumbImageLocked (const rtengine::procparams::ProcParams& pparams, int h, double& scale, bool forceUpgrade, bool cachePixbuf)
@@ -1611,6 +1671,7 @@ void Thumbnail::_loadThumbnail(bool firstTrial)
     if (!initial_) {
         tw = tpp->getImageWidth (getProcParamsU(), th, imgRatio);    // this might return 0 if image was just building
     }
+    layoutSize_.publish(tw, th, imgRatio);
 }
 
 /*
