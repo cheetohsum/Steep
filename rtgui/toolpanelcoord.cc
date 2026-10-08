@@ -2347,6 +2347,12 @@ void ToolPanelCoordinator::populateEditPanel()
     addPanel(detailGroup->getContentBox(), aidenoise, 1);
     aidenoise->setFlatMode(true);
     aidenoise->collapseDetail();
+    // Stuck pixels (raw files only: imageTypeChanged hides it otherwise). The
+    // summary row is the stuck-pixel fix; the classic Bayer hot/dead filter
+    // stays folded away in the body.
+    addPanel(detailGroup->getContentBox(), preprocess, 1);
+    preprocess->setFlatMode(true);
+    preprocess->collapseDetail();
 
     // --- Effects preview strip ---
     effectsStrip_ = Gtk::manage(new PreviewStrip());
@@ -5867,6 +5873,7 @@ void ToolPanelCoordinator::updateResetButtons()
                      || !(current.pcvignette == n.pcvignette)
                      || !(current.filmPresets == n.filmPresets)
                      || !(current.doubleExposure == n.doubleExposure)
+
                      || !(current.softlight == n.softlight);
     effectsGroup->setResetVisible(effectsDirty);
 

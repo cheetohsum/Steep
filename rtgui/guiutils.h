@@ -77,6 +77,17 @@ Gdk::RGBA themeColor(const Gtk::Widget& widget, const char* name, const Gdk::RGB
 void themeColorCacheInvalidate();
 
 /**
+ * Pins a small count pill to the top-right corner of @p button, for state
+ * that has to stay visible while whatever the button opens is closed (how
+ * many filters are on, say). Pack the returned overlay where the button
+ * would have gone; @p badge receives the pill for setCountBadge. Both are
+ * Gtk::manage'd, and the pill never takes clicks from the button.
+ */
+Gtk::Overlay* addCountBadge(Gtk::Widget& button, Gtk::Label*& badge);
+/// Shows @p count in the pill, or hides the pill at zero.
+void setCountBadge(Gtk::Label* badge, int count);
+
+/**
  * Builds a thin hot strip that stands in for a panel collapse/expand button.
  * It only lights up once the pointer has rested on it for a moment, and the
  * highlight tapers away towards both ends so it reads as a hint rather than

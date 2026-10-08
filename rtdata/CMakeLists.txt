@@ -52,6 +52,18 @@ install(DIRECTORY "${IMAGESDIR}" DESTINATION "${DATADIR}")
 
 if(WITH_AI_MASKING)
     install(DIRECTORY "models" DESTINATION "${DATADIR}")
+    # Depth Anything V2 Small and SAM 2.1 Tiny for Double Exposure's depth
+    # confinement and click-to-select.
+    set(COMPOSITING_MODEL_DIR "" CACHE PATH "Validated depth and SAM 2 ONNX artifact directory")
+    if(COMPOSITING_MODEL_DIR)
+        foreach(MODEL composite_depth.onnx sam2_encoder.onnx sam2_decoder.onnx)
+            if(NOT EXISTS "${COMPOSITING_MODEL_DIR}/${MODEL}")
+                message(FATAL_ERROR "Missing model: ${MODEL}")
+            endif()
+            install(FILES "${COMPOSITING_MODEL_DIR}/${MODEL}" DESTINATION "${DATADIR}/models")
+        endforeach()
+        install(DIRECTORY "${COMPOSITING_MODEL_DIR}/licenses" DESTINATION "${DATADIR}/models")
+    endif()
 endif()
 
 if(APPLE)

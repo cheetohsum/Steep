@@ -25,13 +25,24 @@
 #include <gtkmm.h>
 
 #include "browserfilter.h"
+#include "phototagwidgets.h"
 #include "guiutils.h"
 #include "rtengine/procparams.h"
+#include "rtengine/doubleexposureblend.h"
+#include "compositedepthhistogram.h"
 
 class DEThumbGrid;
 class DEBlendPreview;
+
+namespace compositeui
+{
+class DepthRange;
+}
 struct DEThumbQueue;
 struct DEScenePlate;
+struct DEMotionPlate;
+struct DEMotionQueue;
+struct DEMotionRequest;
 
 namespace rtengine
 {
@@ -99,6 +110,9 @@ private:
     void openFolderChooser();
     void applyFilter();
     void itemToggled(const Glib::ustring& path);
+    void addMotionLayer();
+    void motionControlChanged();
+    void requestMotionPreviews(const std::vector<DEMotionRequest>& requests);
     void moveLayer(size_t index, int direction);
     void removeLayer(size_t index);
     void selectLayer(size_t index);
@@ -110,11 +124,18 @@ private:
     // quick = interactive pass (half resolution, replicated); a full pass
     // follows once the controls settle.
     void updatePreview(bool quick = false);
+    unsigned presentedPreviewRevision_ = 0;
     // Interactive placement of the selected exposure from the preview.
     void onPreviewMove(double dxCompositePx, double dyCompositePx);
     void onPreviewScale(double factor);
     void onPreviewRotate(double degrees);
     void openMaskEditor();
+    // Depth confinement: estimate maps on a worker for layers that ask for
+    // one, keep the range widget in step with the selected layer, and apply
+    // a dragged range.
+    void requestPartnerDepth();
+    void syncDepthControls();
+    void depthRangeChanged();
     void refreshSubjectLabels(const Glib::ustring& path);
     void renderSubjectTile(const Gtk::TreeModel::const_iterator& iter);
     void nudgeRotation(double degrees);
@@ -123,6 +144,8 @@ private:
     void syncPlacementControls();
     void schedulePreviewUpdate();
     void requestPreviewThumbs();
+    void trimPreviewCaches();
+    bool usesSource(const Glib::ustring& path) const;
     const std::vector<ScanItem>& activeItems() const;
     // Puts the grid back where it was when the picker last closed, once the
     // (streamed) results are tall enough; gives up as soon as the user
@@ -151,6 +174,8 @@ private:
     std::vector<ScanItem> globalItems_;
 
     std::map<Glib::ustring, Glib::RefPtr<Gdk::Pixbuf>> gridPix_;
+    std::map<Glib::ustring, unsigned long long> gridUse_;
+    unsigned long long gridClock_ = 0;
     std::map<Glib::ustring, Glib::RefPtr<Gdk::Pixbuf>> bigPix_;
     std::map<Glib::ustring, Glib::RefPtr<Gdk::Pixbuf>> hiPix_;
     // Neutral (default-params) renders: layer previews plus the base plate's
@@ -177,12 +202,17 @@ private:
 
     std::shared_ptr<std::atomic<bool>> alive_;
     std::shared_ptr<DEThumbQueue> thumbQueue_;
+    std::shared_ptr<DEMotionQueue> motionQueue_;
+    std::shared_ptr<DEMotionQueue> previewQueue_;
+    std::vector<std::shared_ptr<const DEMotionPlate>> motionCache_;
+    std::string pendingMotionKey_;
     bool filterRefreshPending_;
     bool visibleThumbsPending_;
 
     // -- widgets --
     Gtk::ToggleButton* folderBtn_;
     Gtk::ToggleButton* globalBtn_;
+    PhotoTagFilter* photoTagFilter_ = nullptr;
     Gtk::ToggleButton* pickedFilter_;
     MyComboBoxText* starsFilter_;
     Gtk::Label* countLabel_;
@@ -191,6 +221,16 @@ private:
     DEThumbGrid* grid_;
     DEBlendPreview* preview_;
     Gtk::CheckButton* highRes_;
+    Gtk::Button* addMotion_ = nullptr;
+    Gtk::Expander* motionExpander_ = nullptr;
+    MyComboBoxText* motionPath_ = nullptr;
+    Gtk::Scale* motionShutter_ = nullptr;
+    Gtk::Scale* motionSpeed_ = nullptr;
+    Gtk::Scale* motionDirection_ = nullptr;
+    Gtk::Scale* motionNoise_ = nullptr;
+    Gtk::Scale* motionComplexity_ = nullptr;
+    Gtk::Button* motionRandomize_ = nullptr;
+    Gtk::Spinner* motionSpinner_ = nullptr;
     MyComboBoxText* blendMethod_;
     Gtk::CheckButton* autoGain_;
     Gtk::Scale* baseEvScale_;
@@ -222,6 +262,15 @@ private:
     Gtk::Box* twistRow_;
     Gtk::Widget* subjectFeatherCell_;
     bool haveSegmentation_ = false;
+    Gtk::Expander* depthExpander_ = nullptr;
+    Gtk::CheckButton* depthEnable_ = nullptr;
+    Gtk::CheckButton* depthInvert_ = nullptr;
+    compositeui::DepthRange* depthRange_ = nullptr;
+    Gtk::Scale* depthNearShape_ = nullptr;
+    Gtk::Scale* depthFarShape_ = nullptr;
+    Gtk::Label* depthStatus_ = nullptr;
+    std::set<Glib::ustring> depthPending_;
+    std::map<Glib::ustring, compositeui::DepthHistogram> depthHistograms_;
     Gtk::Expander* adjustExpander_;
     Gtk::Expander* patternExpander_;
     Gtk::Box* subjectRow_;
@@ -233,6 +282,16 @@ private:
     Gtk::CheckButton* subjectInvert_;
     Gtk::CheckButton* subjectCrop_;
     Gtk::Button* subjectEdit_;
+    Gtk::ToggleButton* subjectPick_ = nullptr;
+    Gtk::CheckButton* asEdited_ = nullptr;
+    // The selected exposure's placed frame from the last preview, so a pick
+    // on the preview can be carried back into the partner's own frame.
+    rtengine::deplace::Frame previewSelFrame_;
+    float previewSelAspect_ = 1.f;
+    float previewBaseAspect_ = 1.f;
+    bool previewSelValid_ = false;
+    void onPreviewPick(double cx, double cy, bool include);
+    void syncPickMode();
     Gtk::Scale* subjectFeatherScale_;
     Gtk::Button* resetPlacement_;
     Gtk::Box* trayBox_;
@@ -267,5 +326,5 @@ private:
         float toneCurve[256] = {};
         float satFactor = 1.f;
     };
-    PreviewCache previewCache_;
+    std::shared_ptr<PreviewCache> previewCache_ = std::make_shared<PreviewCache>();
 };

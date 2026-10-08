@@ -1629,7 +1629,7 @@ private:
         }
 
         if (params.grain.enabled) {
-            ipf.grainEffect(labView, params.grain, labView->W, labView->H, 0, 0, 1);
+            ipf.grainEffect(labView, params.grain, labView->W, labView->H, 0, 0, 1, &params.filmPresets);
         }
 
 
@@ -2209,7 +2209,15 @@ private:
         // if Default gamma mode: we use the profile selected in the "Output profile" combobox;
         // gamma come from the selected profile, otherwise it comes from "Free gamma" tool
 
-        Imagefloat* readyImg = ipf.lab2rgbOut(labView, cx, cy, cw, ch, params.icm);
+        Imagefloat* readyImg = nullptr;
+
+        if (!job->linearWorkingProfile.empty()) {
+            Imagefloat linear(labView->W, labView->H);
+            ipf.lab2rgb(*labView, linear, job->linearWorkingProfile);
+            readyImg = linear.copySubRegion(cx, cy, cw, ch);
+        } else {
+            readyImg = ipf.lab2rgbOut(labView, cx, cy, cw, ch, params.icm);
+        }
 
         if (settings->verbose) {
             printf("Output profile_: \"%s\"\n", params.icm.outputProfile.c_str());
@@ -2278,7 +2286,9 @@ private:
         // Setting the output curve to readyImg
         // use the selected output profile if present, otherwise use LCMS2 profile generate by lab2rgb16 w/ gamma
 
-        if (!params.icm.outputProfile.empty() && params.icm.outputProfile != ColorManagementParams::NoICMString) {
+        if (!job->linearWorkingProfile.empty()) {
+            readyImg->setOutputProfile(ProfileContent(ICCStore::getInstance()->workingSpace(job->linearWorkingProfile)).getData());
+        } else if (!params.icm.outputProfile.empty() && params.icm.outputProfile != ColorManagementParams::NoICMString) {
 
             // if ICCStore::getInstance()->getProfile send back an object, then ICCStore::getInstance()->getContent will do too
             cmsHPROFILE jprof = ICCStore::getInstance()->getProfile(params.icm.outputProfile);  //get outProfile

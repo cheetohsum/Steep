@@ -1808,6 +1808,7 @@ struct FilmPresetsParamsEdited {
     bool process;
     bool output;
     bool format;
+    bool lensDesign;
     bool strength;
     bool contrast;
     bool saturation;
@@ -1926,6 +1927,8 @@ struct RAWParamsEdited {
     bool hotPixelFilter;
     bool deadPixelFilter;
     bool hotdeadpix_thresh;
+    bool stuckPixelFix;
+    bool stuckPixelSensitivity;
     bool darkFrame;
     bool df_autoselect;
     bool ff_file;
@@ -2029,6 +2032,7 @@ struct ParamsEdited {
     SoftLightParamsEdited softlight;
     DehazeParamsEdited dehaze;
     DoubleExposureParamsEdited doubleExposure;
+
     MetaDataParamsEdited metadata;
     FilmNegativeParamsEdited filmNegative;
     bool exif;

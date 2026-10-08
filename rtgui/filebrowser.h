@@ -87,6 +87,14 @@ private:
 
     using ThumbBrowserBase::redrawNeeded;
 
+    sigc::connection photoTagsConnection_;
+    Gtk::MenuItem* editTagsItem_ = nullptr;
+    Gtk::Menu* photoTagsMenu_ = nullptr;
+    Gtk::Widget* recentTagsIcon_ = nullptr;
+    std::unique_ptr<steepui::ListPopover> recentTagsPopover_;
+    std::vector<Glib::ustring> selectedTagPaths_();
+    void rebuildPhotoTagsMenu_();
+    void showRecentPhotoTags_();
     IdleRegister idle_register;
     unsigned int session_id_;
     bool selectionNotifyIdlePending_;

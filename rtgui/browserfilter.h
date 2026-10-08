@@ -52,6 +52,10 @@ public:
     // extension is in this set.  Empty = show all types.
     std::set<std::string> filetypeFilter;
 
+    std::set<std::string> tagFilter;
+    bool tagMatchAll = false;
+    bool tagUntagged = false;
+
     BrowserFilter ();
     bool isPassThrough () const;
 };

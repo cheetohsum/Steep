@@ -18,9 +18,11 @@
 
 #include "array2D.h"
 #include "boxblur.h"
+#include "filmhalation.h"
 #include "filmlaboptics.h"
 #include "filmlikeclip.h"
 #include "gauss.h"
+#include "graincharacter.h"
 #include "color.h"
 #include "curves.h"
 #include "iccstore.h"
@@ -1947,6 +1949,27 @@ std::shared_ptr<const FilmLabRenderTables> filmLabTables(
     return entry;
 }
 
+// Which traced construction a V5 stock was exposed on. Same rule as the V5
+// remjetFactor: construction at exposure, not the chemistry chosen after, so
+// the two CineStill-style presets are motion film with the rem-jet off.
+filmhalation::Construction materialHaloConstruction(const FilmLabStock& stock, const procparams::FilmPresetsParams& fp)
+{
+    const std::string format = fp.format.raw();
+    if (fp.preset == "cinema_reveal_35" || fp.preset == "ember") {
+        return filmhalation::constructionFor(filmhalation::StockKind::MotionPicture, format, true);
+    }
+    switch (stock.stockClass) {
+        case StockClass::Reversal:
+            return filmhalation::constructionFor(filmhalation::StockKind::Reversal, format, false);
+        case StockClass::Monochrome:
+            return filmhalation::constructionFor(filmhalation::StockKind::Monochrome, format, false);
+        case StockClass::MotionNegative:
+            return filmhalation::constructionFor(filmhalation::StockKind::MotionPicture, format, false);
+        default:
+            return filmhalation::constructionFor(filmhalation::StockKind::ColourNegative, format, false);
+    }
+}
+
 void filmPresetsV3(
     LabImage* lab,
     const procparams::FilmPresetsParams& fp,
@@ -2068,6 +2091,7 @@ void filmPresetsV3(
     array2D<float> halationInner;
     array2D<float> halationOuter;
     array2D<float> materialHalo[3];
+    float haloUniform[3][3] = {}; // the halo's uniform-field share, taken off per pixel at full resolution
     array2D<float> materialBloom[3];
     int halationReduction = 1;
     int halationWidth = 0;
@@ -2202,13 +2226,17 @@ void filmPresetsV3(
     const float opticalOnset = std::exp2(fp.halationThreshold / 50.f);
     const float bloomFraction = materialModel ? bloom * 0.08f : 0.f;
     if (materialModel && (halation > 0.001f || bloomFraction > 0.0001f)) {
+        // Four full-resolution pixels per plane pixel up to 50% zoom. Halving
+        // that sharpens the traced ring's edge by ~10% (measured ring contrast
+        // 1.41 -> 1.56) for ~15% longer 24 MP exports: not worth it for an
+        // edge that is ~4 px soft at export size.
         halationReduction = opticalScale <= 1.f ? 4 : (opticalScale <= 2.f ? 2 : 1);
         halationWidth = (lab->W + halationReduction - 1) / halationReduction;
         halationHeight = (lab->H + halationReduction - 1) / halationReduction;
         array2D<float> source[3];
         for (int c = 0; c < 3; ++c) {
             source[c](halationWidth, halationHeight);
-            materialHalo[c](halationWidth, halationHeight);
+            materialHalo[c](halationWidth, halationHeight, ARRAY2D_CLEAR_DATA);
             materialBloom[c](halationWidth, halationHeight);
         }
 #ifdef _OPENMP
@@ -2241,32 +2269,58 @@ void filmPresetsV3(
         }
         const float frameMM = fp.format == "120" ? 56.f : fp.format == "large" ? 95.f : 24.f;
         const float pixelsPerMM = fullShort / frameMM / (opticalScale * halationReduction);
-        const float innerSigma = 0.09f * pixelsPerMM * halationSize;
-        const float outerSigma = 0.28f * pixelsPerMM * halationSize;
         const float bloomSigma = 0.38f * pixelsPerMM * halationSize;
-        array2D<float> outer(halationWidth, halationHeight);
-        const float returnFraction[3] = {0.12f * halationWarmth, 0.035f, 0.008f / halationWarmth};
+        // Small thumbnail planes cannot support the recursive filter's
+        // boundary stencil. Below that size the spatial effect is unresolved.
+        const bool tiny = halationWidth < 8 || halationHeight < 8;
         for (int c = 0; c < 3; ++c) {
 #ifdef _OPENMP
             #pragma omp parallel if (multiThread)
 #endif
-            {
-                // Small thumbnail planes cannot support the recursive filter's
-                // boundary stencil. Below that size the spatial effect is unresolved.
-                const bool tiny = halationWidth < 8 || halationHeight < 8;
-                gaussianBlur(source[c], materialHalo[c], halationWidth, halationHeight, tiny ? 0.0 : innerSigma);
-                gaussianBlur(source[c], outer, halationWidth, halationHeight, tiny ? 0.0 : outerSigma);
-                gaussianBlur(source[c], materialBloom[c], halationWidth, halationHeight, tiny ? 0.0 : bloomSigma);
-            }
-#ifdef _OPENMP
-            #pragma omp parallel for schedule(static) if (multiThread)
-#endif
-            for (int y = 0; y < halationHeight; ++y) {
-                for (int x = 0; x < halationWidth; ++x) {
-                    materialHalo[c][y][x] = halation * returnFraction[c] * std::max(0.f,
-                        0.85f * materialHalo[c][y][x] + 0.15f * outer[y][x]);
+            gaussianBlur(source[c], materialBloom[c], halationWidth, halationHeight, tiny ? 0.0 : bloomSigma);
+        }
+
+        // Halation: the kernel traced through this film's own layers
+        // (tools/halation_tracer.cc) -- a ring that starts where the base
+        // reflects totally, with the colour split the layer stack produces,
+        // and without the uniform-field share the stock curve already holds,
+        // so flat areas are untouched and only edges and lights halate.
+        // Strength keeps the budget the Gaussian model had: white light puts
+        // halation * 0.12 into the red layer (x warmth, blue / warmth).
+        if (halation > 0.001f && !tiny) {
+            const filmhalation::Construction construction = materialHaloConstruction(stockRecord, fp);
+            const filmhalation::HaloTable& haloTable = filmhalation::table(construction);
+            const float whiteToRed = haloTable.total[0][0] + haloTable.total[1][0] + haloTable.total[2][0];
+            const float scale = halation * 0.12f / std::max(whiteToRed, 1e-9f);
+            const float layerWarmth[3] = {halationWarmth, 1.f, 1.f / halationWarmth};
+            float gain[3][3];
+            for (int b = 0; b < 3; ++b) {
+                for (int k = 0; k < 3; ++k) {
+                    gain[b][k] = scale * layerWarmth[k];
+                    haloUniform[b][k] = gain[b][k] * haloTable.total[b][k];
                 }
             }
+            float** const sourceRows[3] = {source[0], source[1], source[2]};
+            float** const haloRows[3] = {materialHalo[0], materialHalo[1], materialHalo[2]};
+            // Off the optical axis light meets the film at an angle and the
+            // halo leans outwards (tools/halation_tracer.cc --oblique). The
+            // tilt at each point follows from its distance to the frame's
+            // centre and a typical exit pupil distance for the format.
+            filmhalation::Obliquity obliquity;
+            obliquity.centreX = ((fullWidth * 0.5f - context.originX) / opticalScale + 0.5f) / halationReduction - 0.5f;
+            obliquity.centreY = ((fullHeight * 0.5f - context.originY) / opticalScale + 0.5f) / halationReduction - 0.5f;
+            // SLR (retrofocus) lenses put their exit pupil well in front of
+            // the film, wide rangefinder lenses close to it, telecentric
+            // designs at infinity: no lean at all.
+            const bool rangefinder = fp.lensDesign == "rangefinder";
+            obliquity.exitPupilMM = fp.format == "120" ? (rangefinder ? 45.f : 90.f)
+                : fp.format == "large" ? (rangefinder ? 100.f : 200.f)
+                : (rangefinder ? 25.f : 60.f);
+            // Convolve on the reduced plane, but take the uniform share off in
+            // the per-pixel loop below, where a small light's own exposure is
+            // known exactly instead of smeared over a reduced pixel.
+            filmhalation::convolve(construction, sourceRows, haloRows, halationWidth, halationHeight, pixelsPerMM, halationSize, gain,
+                                   multiThread, false, fp.lensDesign == "telecentric" ? nullptr : &obliquity);
         }
     }
 
@@ -2419,12 +2473,16 @@ void filmPresetsV3(
                 const float lowY = (row + 0.5f) / halationReduction - 0.5f;
                 const float weight = filmoptics::highlightWeight(
                     std::max(r, std::max(g, b)) * negativeGain, opticalOnset);
+                // This pixel's share of the halo source, as the reduced plane
+                // was built: read before the loop below rewrites r, g, b.
+                const float lit[3] = {std::max(r, 0.f) * weight, std::max(g, 0.f) * weight, std::max(b, 0.f) * weight};
                 float* rgb[] = {&r, &g, &b};
                 for (int c = 0; c < 3; ++c) {
                     // At preview scale the optical planes already match the
                     // image grid; interpolation at integer coordinates is redundant.
-                    const float reflected = halationReduction == 1 ? materialHalo[c][row][col]
-                        : sampleV3Plane(materialHalo[c], halationWidth, halationHeight, lowX, lowY);
+                    const float reflected = (halationReduction == 1 ? materialHalo[c][row][col]
+                        : sampleV3Plane(materialHalo[c], halationWidth, halationHeight, lowX, lowY))
+                        - (haloUniform[0][c] * lit[0] + haloUniform[1][c] * lit[1] + haloUniform[2][c] * lit[2]);
                     const float scattered = halationReduction == 1 ? materialBloom[c][row][col]
                         : sampleV3Plane(materialBloom[c], halationWidth, halationHeight, lowX, lowY);
                     *rgb[c] = std::max(0.f, *rgb[c] * (1.f - bloomFraction * weight)
@@ -2614,6 +2672,43 @@ void filmPresetsV3(
 }
 
 } // namespace
+
+// The Grain tool asks what kind of film it is imitating. Film Lab answers
+// from its stock table: speed sets how large the grains are relative to the
+// ISO slider, the stock class and its grainColor/grainClumping profile set
+// how much of the texture is colour and how clumped it is, a reversal stock
+// moves the granularity peak into the shadows, and the stock's own
+// graininess for its speed scales the amount. Off, custom and model 1
+// (which carries its own grain stage) leave the generic negative character.
+GrainCharacter filmGrainCharacter(const procparams::FilmPresetsParams& fp)
+{
+    GrainCharacter character;
+
+    if (!fp.enabled || fp.strength <= 0 || fp.modelVersion < 2) {
+        return character;
+    }
+
+    const FilmLabStock& stock = findStock(fp.preset);
+
+    if (stock.stockClass == StockClass::Custom) {
+        return character;
+    }
+
+    const FilmLabV3Profile profile = makeV3Profile(stock);
+    const Glib::ustring processName = fp.process == "auto" ? defaultProcess(stock.stockClass) : fp.process;
+    const FilmLabV3Process process = makeV3Process(processName);
+    const bool silver = stock.stockClass == StockClass::Monochrome || processName == "bw";
+
+    character.sizeMul = LIM(std::pow(stock.speed / 400.f, 0.2f), 0.8f, 1.25f)
+                        * LIM(1.f + fp.grainSize / 200.f, 0.5f, 1.5f);
+    character.clumping = LIM(0.2f + profile.grainClumping * 1.1f + fp.grainClumping / 200.f, 0.f, 1.f);
+    character.mono = silver;
+    character.chroma = silver ? 0.f
+                       : LIM(profile.grainColor / 0.16f, 0.f, 2.f) * LIM(1.f + fp.grainColor / 100.f, 0.f, 2.f);
+    character.densityPeak = stock.stockClass == StockClass::Reversal ? 0.34f : 0.62f;
+    character.gain = LIM((1.f + stock.grain * 0.6f) * process.grain, 0.4f, 2.f);
+    return character;
+}
 
 std::uint32_t ImProcFunctions::filmLabSeed(const Glib::ustring& filename)
 {

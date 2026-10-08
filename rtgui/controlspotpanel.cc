@@ -3168,13 +3168,18 @@ void ControlSpotPanel::gradTypeChanged(int /*index*/)
     // size: a spot whose handles have been dragged keeps what it was given.
     constexpr int kGradFullExtent = 1000;
     constexpr int kRadialExtent = 320;
-    const int fromExtent = newType == 1 ? kGradFullExtent : kRadialExtent;
+    // Gradients made from the Gradient chip before it was fixed started at
+    // the sliders' 3000 limit; that is just as untouched.
+    constexpr int kOldChipExtent = 3000;
     const int toExtent = newType == 1 ? kRadialExtent : kGradFullExtent;
+    const int extent = row[spots_.locX];
+    const bool untouched = extent == static_cast<int>(row[spots_.locXL])
+            && extent == static_cast<int>(row[spots_.locY])
+            && extent == static_cast<int>(row[spots_.locYT])
+            && (newType == 1 ? extent == kGradFullExtent || extent == kOldChipExtent
+                             : extent == kRadialExtent);
 
-    if (static_cast<int>(row[spots_.locX]) == fromExtent
-            && static_cast<int>(row[spots_.locXL]) == fromExtent
-            && static_cast<int>(row[spots_.locY]) == fromExtent
-            && static_cast<int>(row[spots_.locYT]) == fromExtent) {
+    if (untouched) {
         row[spots_.locX] = toExtent;
         row[spots_.locXL] = toExtent;
         row[spots_.locY] = toExtent;
@@ -4415,9 +4420,6 @@ void ControlSpotPanel::updateControlSpotCurve(const Gtk::TreeModel::Row& row)
         // Perpendicular direction to gradient
         const float perpX = cosT;
         const float perpY = sinT;
-        // Max span for drawing the lines — cap to image size
-        const float maxExtent = std::max((float)imW, (float)imH);
-        const float span = maxExtent;
         // Transition band position along gradient direction
         // Cap to image extent from center (matching engine calcTransitiongrad)
         const float imgMaxX = std::max((float)origin.x, (float)(imW - origin.x));
@@ -4429,20 +4431,27 @@ void ControlSpotPanel::updateControlSpotCurve(const Gtk::TreeModel::Row& row)
         const float ach = static_cast<float>(transit_val) / 100.f;
         const float bandHalf = maxProj * ach;
 
-        auto* l1 = static_cast<Line*>(geom1);
-        l1->begin.set(origin.x + sinT * bandHalf - perpX * span,
-                      origin.y - cosT * bandHalf - perpY * span);
-        l1->end.set(origin.x + sinT * bandHalf + perpX * span,
-                    origin.y - cosT * bandHalf + perpY * span);
+        // Each bar is cut to the picture itself. They used to run the
+        // longer image side out either way and were clipped only by the
+        // window, so on a portrait photo they crossed the grey on both sides
+        // as wide as a landscape frame.
+        const double grabLength = 0.15 * std::min(imW, imH);
+        const auto bar = [&](Geometry* geom, double sign) {
+            const auto seg = gradientgeometry::frameSegment(origin.x + sign * sinT * bandHalf,
+                                                            origin.y - sign * cosT * bandHalf,
+                                                            perpX, perpY, imW, imH, grabLength);
+            auto* line = static_cast<Line*>(geom);
+            line->begin.set(seg.x0, seg.y0);
+            line->end.set(seg.x1, seg.y1);
+            return seg;
+        };
+        const auto first = bar(geom1, 1.);
+        bar(geom2, -1.);
 
-        auto* l2 = static_cast<Line*>(geom2);
-        l2->begin.set(origin.x - sinT * bandHalf - perpX * span,
-                      origin.y + cosT * bandHalf - perpY * span);
-        l2->end.set(origin.x - sinT * bandHalf + perpX * span,
-                    origin.y + cosT * bandHalf + perpY * span);
-
+        // The rotation grip sits on the first bar, pulled onto its visible
+        // part when the spot's centre is off to one side.
         auto* h = static_cast<Circle*>(handle);
-        h->center.set(origin.x + sinT * bandHalf, origin.y - cosT * bandHalf);
+        h->center.set(first.grabX, first.grabY);
     };
 
     const int base = (curveid_ - 1) * GEOM_PER_SPOT;
@@ -4994,6 +5003,16 @@ bool ControlSpotPanel::button1Pressed(int modifierKey)
     lastCoord_.set(provider->posImage.x + provider->deltaImage.x, provider->posImage.y + provider->deltaImage.y);
     const auto selected = s->get_selected();
     const int handle = lastObject_ % GEOM_PER_SPOT;
+    if (selected) {
+        const Gtk::TreeModel::Row row = *selected;
+        spotDragStart_ = lastCoord_;
+        spotDragBox_.centerX = static_cast<int>(row[spots_.centerX]);
+        spotDragBox_.centerY = static_cast<int>(row[spots_.centerY]);
+        spotDragBox_.locX = static_cast<int>(row[spots_.locX]);
+        spotDragBox_.locXL = static_cast<int>(row[spots_.locXL]);
+        spotDragBox_.locY = static_cast<int>(row[spots_.locY]);
+        spotDragBox_.locYT = static_cast<int>(row[spots_.locYT]);
+    }
     if (selected && (handle == 7 || handle == 8)
         && (*selected)[spots_.shape] == 2 && (*selected)[spots_.gradType] != 1) {
         int width = 0, height = 0;
@@ -5117,12 +5136,17 @@ bool ControlSpotPanel::drag1(int modifierKey)
     const bool symmetric = gradientgeometry::symmetricResize(row[spots_.shape], row[spots_.gradType], method);
     Coord newCoord = Coord(provider->posImage.x + provider->deltaImage.x, provider->posImage.y + provider->deltaImage.y);
 
+    // Moves and grip resizes are worked out from where the drag began (see
+    // gradientgeometry::dragSpot); adding each event's delta to the rounded
+    // slider value lost every step under half a unit, so zoomed in, or
+    // dragged slowly, a grip did not follow the pointer at all.
+    const auto dragged = gradientgeometry::dragSpot(spotDragBox_, rem, newCoord.x - spotDragStart_.x,
+                                                    newCoord.y - spotDragStart_.y, imW, imH, symmetric);
+
     // Circle, Ellipses and Rectangle
     if (rem >= 0 && rem < 3) {
-        double deltaX = (double (newCoord.x) - double (lastCoord_.x)) * 2000. / double (imW);
-        double deltaY = (double (newCoord.y) - double (lastCoord_.y)) * 2000. / double (imH);
-        centerX_->setValue(centerX_->getValue() + deltaX);
-        centerY_->setValue(centerY_->getValue() + deltaY);
+        centerX_->setValue(dragged.centerX);
+        centerY_->setValue(dragged.centerY);
         row[spots_.centerX] = centerX_->getIntValue();
         row[spots_.centerY] = centerY_->getIntValue();
 
@@ -5135,13 +5159,12 @@ bool ControlSpotPanel::drag1(int modifierKey)
 
     // cirX
     if (rem == 3) {
-        double deltaX = (double (newCoord.x) - double (lastCoord_.x)) * 2000. / double (imW);
-        locX_->setValue(locX_->getValue() + deltaX);
+        locX_->setValue(dragged.locX);
         row[spots_.locX] = locX_->getIntValue();
 
         if (symmetric) {
             disableParamlistener(true);
-            locXL_->setValue(locX_->getValue());
+            locXL_->setValue(dragged.locXL);
             disableParamlistener(false);
             row[spots_.locXL] = locXL_->getIntValue();
         }
@@ -5155,13 +5178,12 @@ bool ControlSpotPanel::drag1(int modifierKey)
 
     // cirXL
     if (rem == 4) {
-        double deltaXL = (double (lastCoord_.x) - double (newCoord.x)) * 2000. / double (imW);
-        locXL_->setValue(locXL_->getValue() + deltaXL);
+        locXL_->setValue(dragged.locXL);
         row[spots_.locXL] = locXL_->getIntValue();
 
         if (symmetric) {
             disableParamlistener(true);
-            locX_->setValue(locXL_->getValue());
+            locX_->setValue(dragged.locX);
             disableParamlistener(false);
             row[spots_.locX] = locX_->getIntValue();
         }
@@ -5175,13 +5197,12 @@ bool ControlSpotPanel::drag1(int modifierKey)
 
     // cirY
     if (rem == 5) {
-        double deltaY = (double (newCoord.y) - double (lastCoord_.y)) * 2000. / double (imH);
-        locY_->setValue(locY_->getValue() + deltaY);
+        locY_->setValue(dragged.locY);
         row[spots_.locY] = locY_->getIntValue();
 
         if (symmetric) {
             disableParamlistener(true);
-            locYT_->setValue(locY_->getValue());
+            locYT_->setValue(dragged.locYT);
             disableParamlistener(false);
             row[spots_.locYT] = locYT_->getIntValue();
         }
@@ -5195,13 +5216,12 @@ bool ControlSpotPanel::drag1(int modifierKey)
 
     // cirYT
     if (rem == 6) {
-        double deltaYT = (double (lastCoord_.y) - double (newCoord.y)) * 2000. / double (imH);
-        locYT_->setValue(locYT_->getValue() + deltaYT);
+        locYT_->setValue(dragged.locYT);
         row[spots_.locYT] = locYT_->getIntValue();
 
         if (symmetric) {
             disableParamlistener(true);
-            locY_->setValue(locYT_->getValue());
+            locY_->setValue(dragged.locY);
             disableParamlistener(false);
             row[spots_.locY] = locY_->getIntValue();
         }

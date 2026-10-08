@@ -18,6 +18,7 @@
  */
 #include "guiutils.h"
 #include "thumbbrowserentrybase.h"
+#include "phototagwidgets.h"
 
 #include "options.h"
 #include "thumbbrowserbase.h"
@@ -1185,6 +1186,8 @@ std::tuple<Glib::ustring, bool> ThumbBrowserEntryBase::getToolTip (int x, int y)
     bool useMarkup = !tooltip.empty();
     if (inside(x, y) && tooltip.empty()) {
         tooltip = dispname;
+        const auto tags = photoTagSummary(filename);
+        if (!tags.empty()) tooltip += "\n" + tags;
 
         const auto& options = App::get().options();
         if (withFilename < WFNAME_FULL) {

@@ -42,7 +42,10 @@
 
 #include "imagefloat.h"
 #include "improcfun.h"
+#include "graincharacter.h"
 #include "rt_math.h"
+#include <cstdint>
+#include <vector>
 
 
 namespace rtengine {
@@ -101,63 +104,8 @@ public:
         evaluate_grain_lut(mb, divgr);
     }
     
-    // The improved model used by the standalone Grain tool (Effects >
-    // Grain). Differences from operator() below, which is kept as-is for
-    // the locallab path:
-    //  * Noise is sampled at FULL-image coordinates (origin + i * skip),
-    //    so the pattern is anchored to the image like real grain: the
-    //    detail window, the main preview and the export all show the same
-    //    grain at the same place. The old path restarted the pattern at
-    //    every crop origin and sampled per-buffer-pixel.
-    //  * Amplitude follows Selwyn's law: a preview pixel that integrates
-    //    several grains shows the noise reduced by cell/pixel linear
-    //    ratio, so a zoomed-out preview finally predicts the export. The
-    //    old max(scale/3, 1) divisor was ad hoc and ignored grain size.
-    //  * The Scale slider is grain SIZE (it used to be a second strength
-    //    knob); at its default of 100 the frequency is unchanged, so
-    //    existing exports render identically at default settings.
-    //  * Optional chroma grain: two independent noise fields on a/b, the
-    //    per-layer dye-cloud character of colour film.
-    void render(int isogr, int strengr, int scalegr, int colorgr, Imagefloat *lab, bool multithread)
-    {
-        const double strength = strengr / 100.0;
-        const double octaves = 3.;
-        const double wd = std::min(fw, fh);
-        const double sizeFactor = std::max(scalegr, 10) / 100.0;
-        const double zoom = sizeFactor * (1.0 + 8 * (double(isogr) / GRAIN_SCALE_FACTOR) / 100.0) / 800.0;
-
-        // Dominant-octave wavelength in full-resolution pixels; one output
-        // pixel spans `scale` of them.
-        const double cellPixels = zoom * wd / 1.728;
-        const double selwyn = std::min(1.0, cellPixels / std::max(scale, 1.0));
-
-        const int W = lab->getWidth();
-        const int H = lab->getHeight();
-        float **lab_L = lab->g.ptrs;
-        float **lab_a = lab->r.ptrs;
-        float **lab_b = lab->b.ptrs;
-        const double chromaAmp = strength * (double(colorgr) / 100.0) * 1780.0 * selwyn;
-
-#ifdef _OPENMP
-#       pragma omp parallel for if (multithread)
-#endif
-        for (int j = 0; j < H; ++j) {
-            const double y = (oy + j * scale) / wd;
-            for (int i = 0; i < W; ++i) {
-                const double x = (ox + i * scale) / wd;
-                const double noise = simplex_2d_noise(x, y, octaves, zoom) * selwyn;
-                lab_L[j][i] += lut_lookup(noise * strength * GRAIN_LIGHTNESS_STRENGTH_SCALE, lab_L[j][i] / 32768.f);
-
-                if (colorgr > 0) {
-                    const double noiseA = simplex_2d_noise(x + 17.31, y + 7.77, octaves, zoom);
-                    const double noiseB = simplex_2d_noise(x - 11.13, y + 23.70, octaves, zoom);
-                    lab_a[j][i] += noiseA * chromaAmp;
-                    lab_b[j][i] += noiseB * chromaAmp;
-                }
-            }
-        }
-    }
-
+    // Legacy locallab path. The standalone Grain tool (Effects > Grain) uses
+    // the dye-cloud model in grainv3 below.
     void operator()(int isogr, int strengr, int scalegr, float divgr, Imagefloat *lab, bool multithread, int call, int fww, int fhh)
     {
         const double strength = (strengr / 100.0);
@@ -431,6 +379,160 @@ private:
     float grain_lut[GRAIN_LUT_SIZE * GRAIN_LUT_SIZE];
 };
 
+// ---------------------------------------------------------------------------
+// Grain V3: silver clumps and dye clouds, not value noise.
+//
+// A developed emulsion is a random field of opaque clumps (silver) or soft
+// clouds (dye), each a few micrometres across, scattered with Poisson-like
+// irregularity and gathering into larger clumps. What a scan or print shows
+// is that field integrated by the sampling aperture. This renderer builds it
+// literally: on a jittered lattice whose pitch is the grain diameter in
+// image pixels (from the film format, the ISO and the Size slider), each
+// cell holds a couple of soft blobs with random position, size and signed
+// density; a second lattice 2.7x coarser adds the clumping. The blobs are
+// splatted into the image, so the cost is a few additions per pixel and the
+// pattern is anchored to full-image coordinates: the detail window, the main
+// preview and the export show the same grains in the same places.
+//
+// Previews integrate: an output pixel spanning s full-resolution pixels
+// widens every blob by the pixel's own footprint and scales it to keep its
+// integral, and once a pixel is larger than a grain the lattice itself
+// coarsens with the density of blobs reduced accordingly (Selwyn's law), so
+// a zoomed-out view shows the fine, quiet noise a real scan would, never a
+// blow-up of the texture.
+//
+// The field is then applied as density: luminance is multiplied by
+// exp(noise * sigma), with sigma following where real granularity lives in
+// the tone scale (lighter mid-tones for a negative, whose dense areas print
+// as highlights; shadows for reversal film), fading at paper white and in
+// the empty shadows of a thin negative. Colour grain is the same field
+// built once per dye layer, coarser, with the blue layer coarsest.
+// ---------------------------------------------------------------------------
+namespace grainv3 {
+
+inline uint32_t mix(uint32_t h)
+{
+    h ^= h >> 16;
+    h *= 0x7feb352dU;
+    h ^= h >> 15;
+    h *= 0x846ca68bU;
+    h ^= h >> 16;
+    return h;
+}
+
+inline uint32_t cellHash(int32_t x, int32_t y, uint32_t k, uint32_t seed)
+{
+    return mix(uint32_t(x) * 0x9E3779B1U ^ mix(uint32_t(y) * 0x85EBCA77U ^ (k * 0xC2B2AE3DU) ^ seed));
+}
+
+inline float unitFloat(uint32_t h)
+{
+    return (h >> 8) * (1.f / 16777216.f);
+}
+
+constexpr int GRAINS_PER_CELL = 2;
+
+struct Lattice {
+    double cell;     // pitch in full-resolution pixels
+    double amp;      // amplitude multiplier
+    uint32_t seed;
+};
+
+// Accumulate one lattice's blobs over a band of output rows [y0, y0 + rows).
+// Output pixel (i, j) sits at full-resolution (ox + (i + .5) * s, oy + (j + .5) * s).
+void splat(float* out, int W, int y0, int rows, const Lattice& lattice, double s, double ox, double oy)
+{
+    const double cell = lattice.cell;
+    const double widen = s * s * .25;              // the output pixel's own footprint
+    const double reach = std::sqrt(cell * cell + widen);
+    const double bandY0 = oy + y0 * s, bandY1 = oy + (y0 + rows) * s;
+    const int32_t gy0 = int32_t(std::floor((bandY0 - reach) / cell));
+    const int32_t gy1 = int32_t(std::floor((bandY1 + reach) / cell));
+    const int32_t gx0 = int32_t(std::floor((ox - reach) / cell));
+    const int32_t gx1 = int32_t(std::floor((ox + W * s + reach) / cell));
+
+    for (int32_t gy = gy0; gy <= gy1; ++gy) {
+        for (int32_t gx = gx0; gx <= gx1; ++gx) {
+            for (uint32_t k = 0; k < GRAINS_PER_CELL; ++k) {
+                const uint32_t h0 = cellHash(gx, gy, k, lattice.seed);
+                const uint32_t h1 = mix(h0 ^ 0x68E31DA4U);
+                const uint32_t h2 = mix(h0 ^ 0xB5297A4DU);
+                const uint32_t h3 = mix(h0 ^ 0x1B56C4E9U);
+                const float u0 = unitFloat(h0), u1 = unitFloat(h1), u2 = unitFloat(h2), u3 = unitFloat(h3);
+                const double px = (gx + u0) * cell, py = (gy + u1) * cell;
+                // Diameter spread: most grains near the nominal size, a few
+                // large ones. Bounded at one cell so neighbouring cells suffice.
+                const double rad = cell * (.5 + .5 * u2 * u2);
+                // Signed density: triangular, slightly heavy toward dense
+                // clumps, which is what real granularity histograms show.
+                const float t = u3 * 2.f - 1.f;
+                const float amp = float(lattice.amp) * (t + .35f * t * std::fabs(t));
+                const double r2 = rad * rad + widen;
+                const double rr = std::sqrt(r2);
+                const float keep = float(rad * rad / r2);   // integral preserved when widened
+                const int i0 = std::max(0, int(std::ceil((px - rr - ox) / s - .5)));
+                const int i1 = std::min(W - 1, int(std::floor((px + rr - ox) / s - .5)));
+                const int j0 = std::max(y0, int(std::ceil((py - rr - oy) / s - .5)));
+                const int j1 = std::min(y0 + rows - 1, int(std::floor((py + rr - oy) / s - .5)));
+                if (i0 > i1 || j0 > j1) continue;
+                const float inv = float(1. / r2);
+                for (int j = j0; j <= j1; ++j) {
+                    const double dy = oy + (j + .5) * s - py;
+                    float* row = out + size_t(j - y0) * W;
+                    for (int i = i0; i <= i1; ++i) {
+                        const double dx = ox + (i + .5) * s - px;
+                        const float q = 1.f - float(dx * dx + dy * dy) * inv;
+                        if (q > 0.f) row[i] += amp * keep * q * q;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Standard deviation of a unit-amplitude lattice at full resolution, so the
+// field can be expressed in sigma units. The field is self-similar, so one
+// measurement serves every cell size.
+float unitSigma()
+{
+    static const float sigma = [] {
+        const int n = 192;
+        std::vector<float> patch(size_t(n) * n, 0.f);
+        splat(patch.data(), n, 0, n, {6., 1., 0x51A7F00DU}, 1., 0., 0.);
+        double sum = 0, sq = 0;
+        for (float v : patch) { sum += v; sq += double(v) * v; }
+        const double mean = sum / patch.size();
+        return float(std::sqrt(std::max(1e-12, sq / patch.size() - mean * mean)));
+    }();
+    return sigma;
+}
+
+// Where in the tone scale the granularity lives: a hump centred on the
+// stock's density peak, wider toward black than toward white, with a floor
+// so the emptiest shadows are not glassily clean.
+inline float granularity(float lstar, float peak)
+{
+    const float d = lstar - peak;
+    const float width = d < 0.f ? .40f : .22f;
+    const float hump = std::exp(-d * d / (width * width));
+    const float paperWhite = 1.f - .85f * LIM((lstar - .88f) / .12f, 0.f, 1.f);
+    return (.14f + .86f * hump) * paperWhite;
+}
+
+inline float labToY(float L)
+{
+    const float fy = (L * (100.f / 32768.f) + 16.f) / 116.f;
+    return fy > 6.f / 29.f ? fy * fy * fy : 3.f * (6.f / 29.f) * (6.f / 29.f) * (fy - 4.f / 29.f);
+}
+
+inline float yToLab(float Y)
+{
+    const float fy = Y > 216.f / 24389.f ? std::cbrt(Y) : (24389.f / 27.f * Y + 16.f) / 116.f;
+    return (116.f * fy - 16.f) * (32768.f / 100.f);
+}
+
+} // namespace grainv3
+
 } // namespace
 
 
@@ -444,11 +546,98 @@ void ImProcFunctions::filmGrain(Imagefloat *rgb, int isogr, int strengr, int sca
     ge(isogr, strengr, scalegr, divgr, rgb, multiThread, call, fw, fh);
 }
 
-void ImProcFunctions::filmGrainV2(Imagefloat *rgb, int isogr, int strengr, int scalegr, int colorgr,
-                                  int originX, int originY, int oscale, int fullW, int fullH)
+void ImProcFunctions::filmGrainV2(Imagefloat *lab, int isogr, int strengr, int scalegr, int colorgr,
+                                  int originX, int originY, double oscale, int fullW, int fullH,
+                                  const GrainCharacter &character)
 {
-    GrainEvaluator ge(originX, originY, fullW, fullH, std::max(oscale, 1), 1.f, 0, fullW, fullH);
-    ge.render(isogr, strengr, scalegr, colorgr, rgb, multiThread);
+    using namespace grainv3;
+    const int W = lab->getWidth(), H = lab->getHeight();
+    if (W <= 0 || H <= 0 || strengr <= 0) return;
+    const double s = std::max(oscale, 1.);
+    const double wd = std::max(1, std::min(fullW, fullH));
+
+    // Grain diameter: micrometres on a 35 mm frame (24 mm short side), from
+    // the ISO slider. Fine-grained slow film near 7 um, fast film past 30.
+    const double micrometres = (6. + 2.6 * std::pow(std::max(isogr, 20) / 100., .6))
+                               * (std::max(scalegr, 10) / 100.) * std::max(.25f, character.sizeMul);
+    const double cell = std::max(.75, micrometres * wd / 24000.);
+    const float sigmaUnit = unitSigma();
+
+    // Once an output pixel outspans a grain the lattice follows the pixel
+    // and the blob density drops with it: Selwyn's law for the integrated
+    // texture, applied to how the field is built rather than as a fudge on
+    // the result.
+    const auto lattice = [&](double pitch, double amplitude, uint32_t seed) {
+        const double effective = std::max(pitch, s * .5);
+        return Lattice{effective, amplitude * (pitch / effective) / sigmaUnit, seed};
+    };
+    const float clumping = LIM(character.clumping, 0.f, 1.f);
+    const double norm = 1. / std::sqrt(1. + double(clumping) * clumping);
+    const Lattice fine = lattice(cell, norm, 0x12345678U);
+    const Lattice clump = lattice(cell * 2.7, norm * clumping, 0x9ABCDEF0U);
+    const bool colour = colorgr > 0 && !character.mono && character.chroma > 0.f;
+    // Dye clouds are larger than silver grains, the blue-sensitive layer's
+    // the largest; the colour lattices stay independent of the density one.
+    const Lattice dyeA = lattice(cell * 1.6, 1., 0x56789ABCU);
+    const Lattice dyeB = lattice(cell * 2.0, 1., 0x2468ACE0U);
+
+    const float strength = strengr / 100.f;
+    const float sigma = strength * .26f * std::max(.1f, character.gain);
+    const float chromaAmp = strength * (colorgr / 100.f) * LIM(character.chroma, 0.f, 3.f) * 2400.f;
+    const float peak = LIM(character.densityPeak, .1f, .9f);
+
+    float **lab_L = lab->g.ptrs;
+    float **lab_a = lab->r.ptrs;
+    float **lab_b = lab->b.ptrs;
+    constexpr int BAND = 32;
+    const int bands = (H + BAND - 1) / BAND;
+    const int fields = colour ? 4 : 2;
+
+#ifdef _OPENMP
+#   pragma omp parallel if (multiThread)
+#endif
+    {
+        std::vector<float> buffer(size_t(fields) * BAND * W);
+#ifdef _OPENMP
+#       pragma omp for schedule(dynamic)
+#endif
+        for (int band = 0; band < bands; ++band) {
+            const int y0 = band * BAND, rows = std::min(BAND, H - y0);
+            std::fill(buffer.begin(), buffer.end(), 0.f);
+            float* density = buffer.data();
+            float* dyeFieldA = density + size_t(BAND) * W;
+            float* dyeFieldB = dyeFieldA + size_t(BAND) * W;
+            splat(density, W, y0, rows, fine, s, originX, originY);
+            splat(density, W, y0, rows, clump, s, originX, originY);
+            if (colour) {
+                splat(dyeFieldA, W, y0, rows, dyeA, s, originX, originY);
+                splat(dyeFieldB, W, y0, rows, dyeB, s, originX, originY);
+            }
+            for (int j = y0; j < y0 + rows; ++j) {
+                const float* d = density + size_t(j - y0) * W;
+                const float* ca = dyeFieldA + size_t(j - y0) * W;
+                const float* cb = dyeFieldB + size_t(j - y0) * W;
+                for (int i = 0; i < W; ++i) {
+                    const float L = lab_L[j][i];
+                    const float lstar = LIM(L / 32768.f, 0.f, 1.2f);
+                    const float g = granularity(lstar, peak);
+                    const float Y = labToY(L);
+                    if (Y > 0.f) {
+                        // Density: the grain multiplies light, it does not add to it.
+                        const float n = LIM(d[i], -4.f, 4.f);
+                        lab_L[j][i] = yToLab(Y * std::exp(n * sigma * g));
+                    }
+                    if (colour) {
+                        // Chroma clouds ride the same granularity but keep
+                        // out of the deepest shadows, where a print holds no colour.
+                        const float c = chromaAmp * g * (.35f + .65f * std::sqrt(lstar));
+                        lab_a[j][i] += LIM(ca[i], -4.f, 4.f) * c;
+                        lab_b[j][i] += LIM(cb[i], -4.f, 4.f) * c * .9f;
+                    }
+                }
+            }
+        }
+    }
 }
 
 } // namespace rtengine

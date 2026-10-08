@@ -15,6 +15,8 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "doubleexposuredlg.h"
+#include "demotionlayers.h"
+#include "effectpreviewstate.h"
 
 #include "aimaskthumb.h"
 #include "partnerthumb.h"
@@ -22,6 +24,7 @@
 
 #include "rtengine/colortemp.h"
 #include "rtengine/doubleexposureblend.h"
+#include "rtengine/demotion.h"
 #include "rtengine/iccstore.h"
 #include "rtengine/imagefloat.h"
 #include "rtengine/aisegmentation.h"
@@ -29,6 +32,9 @@
 #include "rtengine/settings.h"
 #include "rtengine/partnerimagestore.h"
 #include "rtengine/partnermaskstore.h"
+#include "rtengine/partnerdepthstore.h"
+#include "rtengine/samselector.h"
+#include "depthrangewidget.h"
 
 #include <algorithm>
 #include <cmath>
@@ -37,6 +43,13 @@
 #include <mutex>
 #include <system_error>
 #include <thread>
+#include <condition_variable>
+#include <iomanip>
+#include <sstream>
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 #include <unordered_map>
 
 #include <glibmm/miscutils.h>
@@ -52,6 +65,7 @@
 #include "thumbnail.h"
 
 #include "rtengine/iimage.h"
+#include "rtengine/effectperf.h"
 
 using rtengine::procparams::DoubleExposureParams;
 
@@ -64,6 +78,35 @@ struct DEScenePlate {
     int w = 0;
     int h = 0;
     std::vector<float> rgb; // w * h * 3
+};
+
+struct DEMotionPlate : rtengine::demotion::Buffer {
+    std::string key;
+    std::shared_ptr<const DEScenePlate> source;
+#ifdef RT_AI_MASKING
+    std::shared_ptr<const rtengine::PartnerMask> mask;
+    std::shared_ptr<const rtengine::PartnerDepth> depth;
+    rtengine::DepthSelection depthSelect;
+#endif
+};
+struct DEMotionRequest {
+    std::shared_ptr<const DEScenePlate> source;
+#ifdef RT_AI_MASKING
+    std::shared_ptr<const rtengine::PartnerMask> mask;
+    std::shared_ptr<const rtengine::PartnerDepth> depth;
+    rtengine::DepthSelection depthSelect;
+#endif
+    rtengine::procparams::DEMotionParams params;
+    std::string key;
+    int edge = 768;
+    bool quick = false;
+};
+struct DEMotionQueue {
+    std::mutex mutex;
+    std::condition_variable wake;
+    std::function<void()> job;
+    std::atomic<unsigned> revision{0};
+    bool stop = false;
 };
 
 namespace
@@ -659,10 +702,11 @@ Glib::ustring subjectEntryLabel(int row)
         "TP_DOUBLEEXPOSURE_SUBJECT_VEGETATION",
         "TP_DOUBLEEXPOSURE_SUBJECT_BUILDING",
         "TP_DOUBLEEXPOSURE_SUBJECT_VEHICLE",
-        "TP_DOUBLEEXPOSURE_SUBJECT_ANIMAL"
+        "TP_DOUBLEEXPOSURE_SUBJECT_ANIMAL",
+        "TP_DOUBLEEXPOSURE_SUBJECT_POINTS"
     };
 
-    return row >= 0 && row <= 7 ? M(keys[row]) : Glib::ustring();
+    return row >= 0 && row <= 8 ? M(keys[row]) : Glib::ustring();
 }
 
 // Row order in the list is not class order: row 0 is "the whole frame", which
@@ -700,6 +744,7 @@ class DEBlendPreview final : public Gtk::DrawingArea
 {
 public:
     std::function<void(double, double)> onMove;  // drag delta since the last event
+    std::function<void(double, double, bool)> onPick; // click-to-select: composite px, include
     std::function<void(double)> onScale;         // multiplicative size factor
     std::function<void(double)> onRotate;        // absolute angle in degrees
     std::function<void()> onReset;               // double-click
@@ -712,6 +757,14 @@ public:
         set_vexpand(true);
         add_events(Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::POINTER_MOTION_MASK
                    | Gdk::SCROLL_MASK | Gdk::SMOOTH_SCROLL_MASK | Gdk::LEAVE_NOTIFY_MASK);
+    }
+
+    // While picking, clicks select instead of moving the frame.
+    void setPickMode(bool on)
+    {
+        pickMode_ = on;
+        setCursorName(on ? "crosshair" : "default");
+        queue_draw();
     }
 
     void setComposite(const Glib::RefPtr<Gdk::Pixbuf>& pixbuf)
@@ -739,6 +792,7 @@ private:
 
     Glib::RefPtr<Gdk::Pixbuf> composite_;
     bool frameVisible_ = false;
+    bool pickMode_ = false;
     double fx0_ = 0.0, fy0_ = 0.0, fx1_ = 0.0, fy1_ = 0.0;
     double angle_ = 0.0; // degrees, clockwise, as the engine turns the layer
     // composite -> widget mapping from the last draw
@@ -859,6 +913,16 @@ private:
 
     bool on_button_press_event(GdkEventButton* e) override
     {
+        if (pickMode_ && composite_ && sc_ > 0.0 && (e->button == 1 || e->button == 3)
+                && e->type == GDK_BUTTON_PRESS) {
+            if (onPick) {
+                onPick((e->x - ox_) / sc_, (e->y - oy_) / sc_,
+                       e->button == 1 && !(e->state & GDK_SHIFT_MASK));
+            }
+
+            return true;
+        }
+
         if (e->button != 1) {
             return false;
         }
@@ -1143,9 +1207,29 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     globalScanGen_(0),
     alive_(std::make_shared<std::atomic<bool>>(true)),
     thumbQueue_(std::make_shared<DEThumbQueue>()),
+    motionQueue_(std::make_shared<DEMotionQueue>()),
+    previewQueue_(std::make_shared<DEMotionQueue>()),
     filterRefreshPending_(false),
     visibleThumbsPending_(false)
 {
+    for (const auto& motionQueue : {motionQueue_, previewQueue_}) {
+    detachQuietly(std::thread([motionQueue] {
+#ifdef _OPENMP
+        omp_set_num_threads(2);
+#endif
+        for (;;) {
+            std::function<void()> job;
+            {
+                std::unique_lock<std::mutex> lock(motionQueue->mutex);
+                motionQueue->wake.wait(lock, [&] { return motionQueue->stop || bool(motionQueue->job); });
+                if (motionQueue->stop) return;
+                job = std::move(motionQueue->job);
+                motionQueue->job = {};
+            }
+            job();
+        }
+    }));
+    }
     initSceneContext();
 
     if (browserFilter) {
@@ -1239,6 +1323,18 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     starsFilter_->setPreferredWidth(100, 130);
     starsFilter_->connect(starsFilter_->signal_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::applyFilter)));
     toolbar->pack_start(*starsFilter_, Gtk::PACK_SHRINK);
+    photoTagFilter_ = Gtk::manage(new PhotoTagFilter());
+    if (haveBrowserFilter_) photoTagFilter_->setSelection(browserFilter_.tagFilter, browserFilter_.tagMatchAll, browserFilter_.tagUntagged);
+    photoTagFilter_->changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::applyFilter));
+    toolbar->pack_start(*photoTagFilter_, Gtk::PACK_SHRINK);
+    auto* editTags = Gtk::manage(new Gtk::Button(M("TAGS_EDIT_LAYERS")));
+    editTags->set_relief(Gtk::RELIEF_NONE);
+    editTags->signal_clicked().connect([this]() {
+        std::vector<Glib::ustring> paths;
+        for (const auto& layer : params_.layers) paths.push_back(layer.path);
+        editPhotoTags(this, paths);
+    });
+    toolbar->pack_start(*editTags, Gtk::PACK_SHRINK);
 
     spinner_ = Gtk::manage(new Gtk::Spinner());
     toolbar->pack_start(*spinner_, Gtk::PACK_SHRINK);
@@ -1271,6 +1367,7 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
 
     preview_ = Gtk::manage(new DEBlendPreview());
     preview_->onMove = [this](double dx, double dy) { onPreviewMove(dx, dy); };
+    preview_->onPick = [this](double cx, double cy, bool include) { onPreviewPick(cx, cy, include); };
     preview_->onScale = [this](double factor) { onPreviewScale(factor); };
     preview_->onRotate = [this](double degrees) { onPreviewRotate(degrees); };
     preview_->onReset = [this]() { onPreviewReset(); };
@@ -1336,6 +1433,8 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     blendMethod_->append(M("TP_DOUBLEEXPOSURE_BLEND_LIGHTEN"));
     blendMethod_->append(M("TP_DOUBLEEXPOSURE_BLEND_DARKEN"));
     blendMethod_->append(M("TP_DOUBLEEXPOSURE_BLEND_DIFFERENCE"));
+    blendMethod_->append(M("TP_DOUBLEEXPOSURE_BLEND_ADAPTIVE"));
+    blendMethod_->append(M("TP_DOUBLEEXPOSURE_BLEND_NORMAL"));
     blendMethod_->set_active(0);
     blendMethod_->setPreferredWidth(180, 230);
     blendMethod_->connect(blendMethod_->signal_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::blendControlChanged)));
@@ -1382,6 +1481,47 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     edgeFeatherScale_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_EDGEFEATHER_TOOLTIP"));
     edgeFeatherScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
     right->pack_start(*makeRow({softnessCell, edgeCell}), Gtk::PACK_SHRINK);
+
+    motionExpander_ = Gtk::manage(new Gtk::Expander(M("DE_MOTION")));
+    auto motionBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
+    auto motionHeader = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+    motionPath_ = Gtk::manage(new MyComboBoxText());
+    for (const auto key : {"DE_MOTION_OFF", "DE_MOTION_LINE", "DE_MOTION_WAVE", "DE_MOTION_ZIGZAG",
+                           "DE_MOTION_SWIRL", "DE_MOTION_ZOOM_IN", "DE_MOTION_ZOOM_OUT",
+                           "DE_MOTION_HANDHELD", "DE_MOTION_WANDER"}) motionPath_->append(M(key));
+    motionPath_->setPreferredWidth(130, 190);
+    motionPath_->set_active(0);
+    motionPath_->connect(motionPath_->signal_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::motionControlChanged)));
+    motionHeader->pack_start(*motionPath_, Gtk::PACK_EXPAND_WIDGET);
+    motionRandomize_ = Gtk::manage(new Gtk::Button());
+    motionRandomize_->set_image(*Gtk::manage(new RTImage("refresh-modern", Gtk::ICON_SIZE_BUTTON)));
+    motionRandomize_->set_relief(Gtk::RELIEF_NONE);
+    motionRandomize_->set_tooltip_text(M("DE_MOTION_RANDOMIZE"));
+    motionRandomize_->signal_clicked().connect([this] {
+        if (selectedLayer_ >= params_.layers.size()) return;
+        auto& m = params_.layers[selectedLayer_].motion;
+        m.seed = rtengine::demotion::nextSeed(m.seed);
+        schedulePreviewUpdate();
+    });
+    motionHeader->pack_start(*motionRandomize_, Gtk::PACK_SHRINK);
+    motionSpinner_ = Gtk::manage(new Gtk::Spinner());
+    motionSpinner_->set_no_show_all(true);
+    motionHeader->pack_start(*motionSpinner_, Gtk::PACK_SHRINK);
+    motionBox->pack_start(*motionHeader, Gtk::PACK_SHRINK);
+    auto shutterCell = makeCell(M("DE_MOTION_SHUTTER"), motionShutter_, .01, 4, .01, .25);
+    auto speedCell = makeCell(M("DE_MOTION_SPEED"), motionSpeed_, 0, 100, 1, 32);
+    motionShutter_->set_tooltip_text(M("DE_MOTION_SHUTTER_TOOLTIP"));
+    motionSpeed_->set_tooltip_text(M("DE_MOTION_SPEED_TOOLTIP"));
+    motionBox->pack_start(*makeRow({shutterCell, speedCell}), Gtk::PACK_SHRINK);
+    auto directionCell = makeCell(M("DE_MOTION_DIRECTION"), motionDirection_, -180, 180, 1, 0);
+    auto noiseCell = makeCell(M("DE_MOTION_NOISE"), motionNoise_, 0, 100, 1, 12);
+    motionNoise_->set_tooltip_text(M("DE_MOTION_NOISE_TOOLTIP"));
+    motionBox->pack_start(*makeRow({directionCell, noiseCell}), Gtk::PACK_SHRINK);
+    motionBox->pack_start(*makeCell(M("DE_MOTION_COMPLEXITY"), motionComplexity_, 1, 8, 1, 3), Gtk::PACK_SHRINK);
+    for (auto scale : {motionShutter_, motionSpeed_, motionDirection_, motionNoise_, motionComplexity_})
+        scale->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::motionControlChanged));
+    motionExpander_->add(*motionBox);
+    right->pack_start(*motionExpander_, Gtk::PACK_SHRINK);
 
     // Placement of the selected exposure over the base frame; the preview
     // drives the same three values by dragging.
@@ -1534,11 +1674,64 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     subjectEdit_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SUBJECT_EDIT_TOOLTIP"));
     subjectEdit_->signal_clicked().connect(sigc::mem_fun(*this, &DoubleExposureDlg::openMaskEditor));
     subjectRow_->pack_start(*subjectEdit_, Gtk::PACK_SHRINK);
+    // Click-to-select: while down, clicks on the preview become include and
+    // exclude prompts for this exposure's own picture.
+    subjectPick_ = Gtk::manage(new Gtk::ToggleButton(M("TP_DOUBLEEXPOSURE_PICK")));
+    subjectPick_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_PICK_TOOLTIP"));
+    subjectPick_->signal_toggled().connect(sigc::mem_fun(*this, &DoubleExposureDlg::syncPickMode));
+    subjectRow_->pack_start(*subjectPick_, Gtk::PACK_SHRINK);
+    // The partner as its own edits render it, in place of the neutral decode.
+    asEdited_ = Gtk::manage(new Gtk::CheckButton(M("TP_DOUBLEEXPOSURE_ASEDITED")));
+    asEdited_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_ASEDITED_TOOLTIP"));
+    asEdited_->signal_toggled().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    subjectRow_->pack_end(*asEdited_, Gtk::PACK_SHRINK);
     // Above the section, not inside it: what a layer is made of is not a
     // detail of where its frame sits, and it should not need a disclosure
     // opened to be seen.
     right->pack_start(*subjectRow_, Gtk::PACK_SHRINK);
     right->reorder_child(*subjectRow_, adjustPosition);
+
+    // Depth confinement, directly under the selection: an exposure can be
+    // kept to what is near in its own picture, or to what is far. The range
+    // widget and its maths are the compositor's, so a range reads the same
+    // in both tools. Hidden, like the subject row, when no model is installed.
+    depthExpander_ = Gtk::manage(new Gtk::Expander(M("TP_DOUBLEEXPOSURE_DEPTH")));
+    depthExpander_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_DEPTH_TOOLTIP"));
+    Gtk::Box* depthBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
+    Gtk::Box* depthHeader = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+    depthEnable_ = Gtk::manage(new Gtk::CheckButton(M("TP_DOUBLEEXPOSURE_DEPTH_ENABLE")));
+    depthEnable_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_DEPTH_ENABLE_TOOLTIP"));
+    depthEnable_->signal_toggled().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    depthHeader->pack_start(*depthEnable_, Gtk::PACK_SHRINK);
+    depthInvert_ = Gtk::manage(new Gtk::CheckButton(M("TP_DOUBLEEXPOSURE_DEPTH_INVERT")));
+    depthInvert_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_DEPTH_INVERT_TOOLTIP"));
+    depthInvert_->signal_toggled().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    depthHeader->pack_start(*depthInvert_, Gtk::PACK_SHRINK);
+    depthStatus_ = Gtk::manage(new Gtk::Label("", Gtk::ALIGN_END));
+    depthStatus_->get_style_context()->add_class("dim-label");
+    depthStatus_->set_ellipsize(Pango::ELLIPSIZE_END);
+    depthHeader->pack_end(*depthStatus_, Gtk::PACK_SHRINK);
+    depthBox->pack_start(*depthHeader, Gtk::PACK_SHRINK);
+    depthRange_ = Gtk::manage(new compositeui::DepthRange());
+    depthRange_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_DEPTH_RANGE_TOOLTIP"));
+    depthRange_->changed = [this] { depthRangeChanged(); };
+    depthBox->pack_start(*depthRange_, Gtk::PACK_SHRINK);
+    Gtk::Widget* depthNearCell = makeCell(M("TP_DOUBLEEXPOSURE_DEPTH_NEAR"), depthNearShape_, 0.1, 10.0, 0.1, 1.0);
+    depthNearShape_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_DEPTH_SHAPE_TOOLTIP"));
+    depthNearShape_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    Gtk::Widget* depthFarCell = makeCell(M("TP_DOUBLEEXPOSURE_DEPTH_FAR"), depthFarShape_, 0.1, 10.0, 0.1, 1.0);
+    depthFarShape_->set_tooltip_text(M("TP_DOUBLEEXPOSURE_DEPTH_SHAPE_TOOLTIP"));
+    depthFarShape_->signal_value_changed().connect(sigc::mem_fun(*this, &DoubleExposureDlg::layerControlChanged));
+    depthBox->pack_start(*makeRow({depthNearCell, depthFarCell}), Gtk::PACK_SHRINK);
+    depthExpander_->add(*depthBox);
+    depthExpander_->set_expanded(false);
+    right->pack_start(*depthExpander_, Gtk::PACK_SHRINK);
+    right->reorder_child(*depthExpander_, adjustPosition + 1);
+
+    if (!rtengine::PartnerDepthStore::getInstance().available()) {
+        depthExpander_->set_no_show_all(true);
+        depthExpander_->hide();
+    }
 
 
 #ifdef RT_AI_MASKING
@@ -1569,7 +1762,16 @@ DoubleExposureDlg::DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& b
     trayScroll->set_policy(Gtk::POLICY_AUTOMATIC, Gtk::POLICY_NEVER);
     trayScroll->set_min_content_height(44);
     trayScroll->add(*trayBox_);
-    content->pack_start(*trayScroll, Gtk::PACK_SHRINK);
+    auto trayRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
+    addMotion_ = Gtk::manage(new Gtk::Button(M("DE_MOTION")));
+    addMotion_->set_image(*Gtk::manage(new RTImage("add-small", Gtk::ICON_SIZE_BUTTON)));
+    addMotion_->set_always_show_image(true);
+    addMotion_->set_tooltip_text(M("DE_MOTION_ADD_TOOLTIP"));
+    addMotion_->set_valign(Gtk::ALIGN_CENTER);
+    addMotion_->signal_clicked().connect(sigc::mem_fun(*this, &DoubleExposureDlg::addMotionLayer));
+    trayRow->pack_start(*trayScroll, Gtk::PACK_EXPAND_WIDGET);
+    trayRow->pack_end(*addMotion_, Gtk::PACK_SHRINK);
+    content->pack_start(*trayRow, Gtk::PACK_SHRINK);
 
     add_button(M("GENERAL_CANCEL"), Gtk::RESPONSE_CANCEL);
     add_button(M("GENERAL_OK"), Gtk::RESPONSE_OK);
@@ -1693,7 +1895,13 @@ void DoubleExposureDlg::requestPreviewThumbs()
     // The composite itself runs on the engine's decodes.
     std::vector<Glib::ustring> scenePaths;
     scenePaths.push_back(baseImagePath_);
-    scenePaths.insert(scenePaths.end(), layerPaths.begin(), layerPaths.end());
+
+    for (const auto& layer : params_.layers) {
+        if (layer.enabled && !layer.path.empty()) {
+            scenePaths.push_back(layer.source());
+        }
+    }
+
     requestScenePlates(scenePaths, height);
     requestPartnerMasks();
 }
@@ -1728,6 +1936,14 @@ void DoubleExposureDlg::openFolderChooser()
 
 DoubleExposureDlg::~DoubleExposureDlg()
 {
+    *alive_ = false;
+    for (const auto& queue : {motionQueue_, previewQueue_}) {
+        std::lock_guard<std::mutex> lock(queue->mutex);
+        queue->stop = true;
+        ++queue->revision;
+        queue->job = {};
+        queue->wake.notify_one();
+    }
     *alive_ = false;
     previewSettle_.disconnect();
     savePickerState(); // the widgets outlive this body
@@ -2098,6 +2314,9 @@ void DoubleExposureDlg::pumpThumbQueue()
         const bool sceneVflip = baseVflip_;
 
         detachQuietly(std::thread([this, queue, alive, scenePath, sceneProfile, sceneWb, sceneRotate, sceneHflip, sceneVflip]() {
+#ifdef _OPENMP
+            omp_set_num_threads(2);
+#endif
             for (;;) {
                 Glib::ustring path;
                 int height = 0;
@@ -2222,12 +2441,16 @@ void DoubleExposureDlg::requestPartnerMasks()
             continue;
         }
 
-        if (rtengine::PartnerMaskStore::getInstance().peekMask(layer.path, workingProfile_,
+        if (layer.maskClass == DoubleExposureParams::MaskClass::POINTS && !layer.maskPaint.hasPrompts()) {
+            continue;
+        }
+
+        if (rtengine::PartnerMaskStore::getInstance().peekMask(layer.source(), workingProfile_,
                 layer.maskClass, layer.maskFeather, layer.maskInvert, layer.maskPaint)) {
             continue;
         }
 
-        const Glib::ustring key = layer.path + Glib::ustring::compose("|mask|%1|%2|%3|%4",
+        const Glib::ustring key = layer.source() + Glib::ustring::compose("|mask|%1|%2|%3|%4",
                                   static_cast<int>(layer.maskClass),
                                   static_cast<int>(std::lround(layer.maskFeather)),
                                   layer.maskInvert ? 1 : 0, layer.maskPaint.hash());
@@ -2237,7 +2460,7 @@ void DoubleExposureDlg::requestPartnerMasks()
         }
 
         pendingThumbs_.insert(key);
-        needed.push_back(DEThumbReq{layer.path, 0, false, false, false, true,
+        needed.push_back(DEThumbReq{layer.source(), 0, false, false, false, true,
                                     static_cast<int>(layer.maskClass), layer.maskFeather,
                                     layer.maskInvert, layer.maskPaint});
     }
@@ -2346,12 +2569,12 @@ void DoubleExposureDlg::onSceneLoaded(const Glib::ustring& path, int height, std
 {
     pendingThumbs_.erase(path + Glib::ustring::compose("|%1|scene", height));
 
-    if (!plate) {
+    if (!plate || !usesSource(path)) {
         return;
     }
 
     (height == PREVIEW_THUMB_HI ? sceneHiPix_ : scenePix_)[path] = std::move(plate);
-    updatePreview();
+    schedulePreviewUpdate();
 }
 
 // What the scene plates must match about the base edit: its working profile
@@ -2413,18 +2636,54 @@ void DoubleExposureDlg::onThumbLoaded(const Glib::ustring& path, int height, boo
     if (!pixbuf) {
         return;
     }
+    if (height != GRID_THUMB_H && !usesSource(path)) return;
 
     if (height == GRID_THUMB_H) {
         gridPix_[path] = pixbuf;
         grid_->setItemPixbuf(path, pixbuf);
+        gridUse_[path] = ++gridClock_;
     } else if (neutral) {
         (height == PREVIEW_THUMB_HI ? neutralHiPix_ : neutralPix_)[path] = pixbuf;
-        updatePreview();
+        schedulePreviewUpdate();
         rebuildTray();
     } else {
         (height == PREVIEW_THUMB_HI ? hiPix_ : bigPix_)[path] = pixbuf;
-        updatePreview();
+        schedulePreviewUpdate();
         rebuildTray();
+    }
+    trimPreviewCaches();
+}
+
+bool DoubleExposureDlg::usesSource(const Glib::ustring& path) const
+{
+    return path == baseImagePath_ || std::any_of(params_.layers.begin(), params_.layers.end(),
+                                               [&](const DoubleExposureParams::Layer& l) { return l.path == path || l.source() == path; });
+}
+
+void DoubleExposureDlg::trimPreviewCaches()
+{
+    const auto removeUnused = [this](auto& entries) {
+        for (auto i = entries.begin(); i != entries.end();)
+            if (!usesSource(i->first)) i = entries.erase(i); else ++i;
+    };
+    removeUnused(bigPix_); removeUnused(hiPix_); removeUnused(neutralPix_); removeUnused(neutralHiPix_);
+    removeUnused(scenePix_); removeUnused(sceneHiPix_);
+    size_t bytes = 0;
+    for (const auto& entry : gridPix_) bytes += size_t(entry.second->get_rowstride()) * entry.second->get_height();
+    const auto adjustment = gridScroll_->get_vadjustment();
+    const double top = adjustment->get_value(), page = std::max(1., adjustment->get_page_size());
+    while ((bytes > 32U * 1024U * 1024U || gridPix_.size() > 512) && !gridPix_.empty()) {
+        auto oldest = gridPix_.end();
+        for (auto i = gridPix_.begin(); i != gridPix_.end(); ++i) {
+            const int y = grid_->rowTopOf(i->first);
+            if (y >= 0 && y >= top - page && y <= top + 2 * page) continue;
+            if (oldest == gridPix_.end() || gridUse_[i->first] < gridUse_[oldest->first]) oldest = i;
+        }
+        if (oldest == gridPix_.end()) break;
+        bytes -= size_t(oldest->second->get_rowstride()) * oldest->second->get_height();
+        grid_->setItemPixbuf(oldest->first, {});
+        gridUse_.erase(oldest->first);
+        gridPix_.erase(oldest);
     }
 }
 
@@ -2474,6 +2733,9 @@ void DoubleExposureDlg::applyFilter()
             continue;
         }
 
+        if (photoTagFilter_ && !PhotoTags::instance().matches(item.path, photoTagFilter_->selected(),
+                photoTagFilter_->matchAll(), photoTagFilter_->untagged())) continue;
+
         DEThumbGrid::Item gi;
         gi.path = item.path;
         gi.rank = item.rank;
@@ -2520,6 +2782,11 @@ void DoubleExposureDlg::requestVisibleThumbs()
         ? adjustment->get_page_size()
         : gridScroll_->get_allocated_height();
     const double value = adjustment ? adjustment->get_value() : 0.0;
+    for (const auto& item : gridPix_) {
+        const int y = grid_->rowTopOf(item.first);
+        if (y >= 0 && y >= value - page && y <= value + 2 * page) gridUse_[item.first] = ++gridClock_;
+    }
+    trimPreviewCaches();
 
     requestThumbs(grid_->pathsNeedingPixbuf(value - page, value + 2.0 * page), GRID_THUMB_H);
 }
@@ -2597,6 +2864,7 @@ void DoubleExposureDlg::itemToggled(const Glib::ustring& path)
     }
 
     layer.path = path;
+    layer.motion = {}; // ordinary photo additions must not inherit a motion-only recipe
     layer.enabled = true;
     params_.layers.push_back(layer);
     selectedLayer_ = params_.layers.size() - 1;
@@ -2607,6 +2875,125 @@ void DoubleExposureDlg::itemToggled(const Glib::ustring& path)
     syncLayerControls();
     requestThumbs({path}, highRes_->get_active() ? PREVIEW_THUMB_HI : PREVIEW_THUMB_H, true);
     updatePreview();
+}
+
+void DoubleExposureDlg::addMotionLayer()
+{
+    const int selected = demotionui::addMotionLayer(params_, baseImagePath_);
+    if (selected < 0) return;
+    selectedLayer_ = size_t(selected);
+    grid_->setBadges(params_.layers);
+    grid_->setSelectedBadge(selected);
+    rebuildTray();
+    syncLayerControls();
+    motionExpander_->set_expanded(true);
+    requestPreviewThumbs();
+    schedulePreviewUpdate();
+}
+
+void DoubleExposureDlg::motionControlChanged()
+{
+    if (syncingControls_ || selectedLayer_ >= params_.layers.size()) return;
+    auto& m = params_.layers[selectedLayer_].motion;
+    m.path = static_cast<rtengine::demotion::Path>(std::max(0, motionPath_->get_active_row_number()));
+    m.shutter = motionShutter_->get_value();
+    m.speed = motionSpeed_->get_value();
+    m.direction = motionDirection_->get_value();
+    m.noise = motionNoise_->get_value();
+    m.complexity = motionComplexity_->get_value();
+    const bool enabled = m.path != rtengine::demotion::Path::OFF;
+    for (auto scale : {motionShutter_, motionSpeed_, motionDirection_, motionNoise_, motionComplexity_}) scale->set_sensitive(enabled);
+    motionRandomize_->set_sensitive(enabled && (m.noise > 0 || m.path == rtengine::demotion::Path::HANDHELD || m.path == rtengine::demotion::Path::WANDER));
+    schedulePreviewUpdate();
+}
+
+void DoubleExposureDlg::requestMotionPreviews(const std::vector<DEMotionRequest>& requests)
+{
+    const bool quick = !requests.empty() && requests.front().quick;
+    std::string batchKey;
+    for (const auto& request : requests) batchKey += request.key + "\n";
+    if (batchKey == pendingMotionKey_) return;
+    pendingMotionKey_ = batchKey;
+    auto queue = motionQueue_;
+    const unsigned revision = ++queue->revision;
+    auto life = alive_;
+    motionSpinner_->show();
+    motionSpinner_->start();
+    std::lock_guard<std::mutex> lock(queue->mutex);
+    queue->job = [this, requests, batchKey, queue, revision, life, quick] {
+        rtengine::EffectPerfScope timing(quick ? "motion-draft" : "motion-settled");
+        std::vector<std::shared_ptr<const DEMotionPlate>> results;
+        std::string error;
+        try {
+            for (const auto& request : requests) {
+                if (!*life || revision != queue->revision) return;
+                auto result = std::make_shared<DEMotionPlate>();
+                result->key = request.key;
+                result->source = request.source;
+#ifdef RT_AI_MASKING
+                result->mask = request.mask;
+                result->depth = request.depth;
+                result->depthSelect = request.depthSelect;
+#endif
+                const auto& src = *request.source;
+                const float ratio = std::min(1.f, float(request.edge) / std::max(src.w, src.h));
+                result->w = std::max(1, int(src.w * ratio));
+                result->h = std::max(1, int(src.h * ratio));
+                result->pixels.resize(size_t(result->w) * result->h);
+                const auto path = rtengine::demotion::trajectory(request.params, request.quick ? result->w : src.w, 192);
+                const auto read = [&](float u, float v) {
+                    const float fx = std::max(0.f, std::min(float(src.w - 1), u * src.w - .5f));
+                    const float fy = std::max(0.f, std::min(float(src.h - 1), v * src.h - .5f));
+                    const int x = int(fx), y = int(fy), nx = std::min(x + 1, src.w - 1), ny = std::min(y + 1, src.h - 1);
+                    const float dx = fx - x, dy = fy - y;
+                    const auto channel = [&](int c) {
+                        return (1 - dy) * ((1 - dx) * src.rgb[(size_t(y) * src.w + x) * 3 + c] + dx * src.rgb[(size_t(y) * src.w + nx) * 3 + c]) +
+                               dy * ((1 - dx) * src.rgb[(size_t(ny) * src.w + x) * 3 + c] + dx * src.rgb[(size_t(ny) * src.w + nx) * 3 + c]);
+                    };
+                    rtengine::demotion::Pixel p{channel(0), channel(1), channel(2), 1};
+#ifdef RT_AI_MASKING
+                    if (request.mask) p.a = request.mask->sample(u * request.mask->fullWidth, v * request.mask->fullHeight);
+                    if (request.depth) p.a *= request.depthSelect.weight(request.depth->sample(u * request.depth->fullWidth, v * request.depth->fullHeight));
+#endif
+                    return p;
+                };
+#ifdef _OPENMP
+                #pragma omp parallel for schedule(dynamic, 4)
+#endif
+                for (int y = 0; y < result->h; ++y) {
+                    if (!*life || revision != queue->revision) continue;
+                    for (int x = 0; x < result->w; ++x) {
+                        result->pixels[size_t(y) * result->w + x] = rtengine::demotion::sample(
+                            path, (x + .5f) / result->w, (y + .5f) / result->h, float(src.w) / src.h, read);
+                    }
+                }
+                results.push_back(result);
+            }
+        } catch (const std::exception& e) { error = e.what(); }
+          catch (const Glib::Error& e) { error = e.what(); }
+          catch (...) { error = M("DE_MOTION_FAILED"); }
+        if (!*life || revision != queue->revision) return;
+        Glib::signal_idle().connect_once([this, life, queue, revision, batchKey, results, error, quick] {
+            if (!*life || revision != queue->revision) return;
+            pendingMotionKey_.clear();
+            motionSpinner_->stop();
+            motionSpinner_->hide();
+            if (!error.empty()) {
+                countLabel_->set_text(M("DE_MOTION_FAILED"));
+                countLabel_->set_tooltip_text(error);
+                return;
+            }
+            for (const auto& result : results) motionCache_.push_back(result);
+            size_t bytes = 0;
+            for (const auto& cached : motionCache_) bytes += cached->pixels.size() * sizeof(rtengine::demotion::Pixel);
+            while (bytes > 96U * 1024U * 1024U && motionCache_.size() > results.size()) {
+                bytes -= motionCache_.front()->pixels.size() * sizeof(rtengine::demotion::Pixel);
+                motionCache_.erase(motionCache_.begin());
+            }
+            updatePreview(quick);
+        });
+    };
+    queue->wake.notify_one();
 }
 
 void DoubleExposureDlg::moveLayer(size_t index, int direction)
@@ -2660,6 +3047,7 @@ void DoubleExposureDlg::removeLayer(size_t index)
 
     rememberStickyLayer(params_.layers[index]);
     params_.layers.erase(params_.layers.begin() + index);
+    trimPreviewCaches();
 
     if (selectedLayer_ >= params_.layers.size() && selectedLayer_ > 0) {
         selectedLayer_ = params_.layers.size() - 1;
@@ -2774,6 +3162,15 @@ void DoubleExposureDlg::rebuildTray()
         face->signal_clicked().connect([this, idx]() { selectLayer(idx); });
         chip->add(*face);
 
+        if (params_.layers[i].motion.path != rtengine::demotion::Path::OFF) {
+            auto badge = Gtk::manage(new Gtk::Label(M("DE_MOTION")));
+            badge->get_style_context()->add_class("de-motion-badge");
+            badge->set_halign(Gtk::ALIGN_CENTER);
+            badge->set_valign(Gtk::ALIGN_START);
+            chip->add_overlay(*badge);
+            chip->set_overlay_pass_through(*badge, true);
+        }
+
         // compact controls over the thumbnail: reorder, develop, remove
         Gtk::Box* controls = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
         controls->set_name("DEChipControls");
@@ -2813,6 +3210,20 @@ void DoubleExposureDlg::rebuildTray()
 void DoubleExposureDlg::syncLayerControls()
 {
     syncingControls_ = true;
+    const bool haveLayer = selectedLayer_ < params_.layers.size();
+    addMotion_->set_sensitive(params_.layers.size() < MAX_LAYERS);
+    motionExpander_->set_sensitive(haveLayer);
+    const auto motion = haveLayer ? params_.layers[selectedLayer_].motion : rtengine::demotion::Params{};
+    motionPath_->set_active(static_cast<int>(motion.path));
+    motionShutter_->set_value(motion.shutter);
+    motionSpeed_->set_value(motion.speed);
+    motionDirection_->set_value(motion.direction);
+    motionNoise_->set_value(motion.noise);
+    motionComplexity_->set_value(motion.complexity);
+    for (auto scale : {motionShutter_, motionSpeed_, motionDirection_, motionNoise_, motionComplexity_})
+        scale->set_sensitive(haveLayer && motion.path != rtengine::demotion::Path::OFF);
+    motionRandomize_->set_sensitive(haveLayer && motion.path != rtengine::demotion::Path::OFF &&
+        (motion.noise > 0 || motion.path == rtengine::demotion::Path::HANDHELD || motion.path == rtengine::demotion::Path::WANDER));
 
     if (params_.layers.empty() || selectedLayer_ >= params_.layers.size()) {
         layerLabel_->set_text(M("DOUBLEEXPOSURE_NOLAYER"));
@@ -2838,19 +3249,24 @@ void DoubleExposureDlg::syncLayerControls()
         subjectCrop_->set_sensitive(false);
         subjectEdit_->set_sensitive(false);
         subjectFeatherScale_->set_sensitive(false);
+        subjectPick_->set_sensitive(false);
+        asEdited_->set_sensitive(false);
         resetPlacement_->set_sensitive(false);
         blendMethod_->set_sensitive(false);
+        syncDepthControls();
     } else {
         const auto& layer = params_.layers[selectedLayer_];
         layerLabel_->set_text(Glib::ustring::compose("%1 %2 \xE2\x80\x94 %3",
                               M("TP_DOUBLEEXPOSURE_LAYER"), selectedLayer_ + 1,
                               Glib::path_get_basename(layer.path)));
         const bool comparative = layer.blendMode == DoubleExposureParams::BlendMode::LIGHTEN
-                                 || layer.blendMode == DoubleExposureParams::BlendMode::DARKEN;
+                                 || layer.blendMode == DoubleExposureParams::BlendMode::DARKEN
+                                 || layer.blendMode == DoubleExposureParams::BlendMode::ADAPTIVE;
         layerEvScale_->set_sensitive(true);
         layerOpacityScale_->set_sensitive(true);
         gateStrengthScale_->set_sensitive(true);
-        softnessScale_->set_sensitive(comparative && layer.compare == DoubleExposureParams::Compare::LUMINANCE);
+        softnessScale_->set_sensitive(layer.blendMode == DoubleExposureParams::BlendMode::ADAPTIVE ||
+            (comparative && layer.compare == DoubleExposureParams::Compare::LUMINANCE));
         blendMethod_->set_sensitive(true);
         layerEvScale_->set_value(layer.ev);
         layerOpacityScale_->set_value(layer.opacity);
@@ -2910,6 +3326,27 @@ void DoubleExposureDlg::syncLayerControls()
         subjectCrop_->set_active(layer.cropToSubject);
         subjectFeatherScale_->set_value(layer.maskFeather);
         blendMethod_->set_active(static_cast<int>(layer.blendMode));
+        asEdited_->set_sensitive(true);
+        asEdited_->set_active(layer.asEdited);
+        subjectPick_->set_sensitive(layer.maskClass == DoubleExposureParams::MaskClass::POINTS);
+
+        if (depthExpander_) {
+            depthEnable_->set_active(layer.depthEnabled);
+            depthInvert_->set_active(layer.depthInvert);
+            depthNearShape_->set_value(layer.depthNearShape);
+            depthFarShape_->set_value(layer.depthFarShape);
+            depthRange_->values = layer.depthRange;
+            depthRange_->nearShape = layer.depthNearShape;
+            depthRange_->farShape = layer.depthFarShape;
+
+            // A confined exposure opens its own section, as a patterned one does.
+            if (layer.depthEnabled) {
+                depthExpander_->set_expanded(true);
+            }
+
+            syncDepthControls();
+            requestPartnerDepth();
+        }
     }
 
     bool anyAdd = false;
@@ -2962,6 +3399,31 @@ void DoubleExposureDlg::layerControlChanged()
     params_.layers[selectedLayer_].cropToSubject = subjectCrop_->get_active();
     params_.layers[selectedLayer_].maskFeather = subjectFeatherScale_->get_value();
 
+    if (asEdited_ && params_.layers[selectedLayer_].asEdited != asEdited_->get_active()) {
+        // A different source: its plates, masks and depth all have to come again.
+        params_.layers[selectedLayer_].asEdited = asEdited_->get_active();
+        requestPreviewThumbs();
+    }
+
+    if (subjectPick_) {
+        const bool points = params_.layers[selectedLayer_].maskClass == DoubleExposureParams::MaskClass::POINTS;
+        subjectPick_->set_sensitive(points);
+
+        if (!points && subjectPick_->get_active()) {
+            subjectPick_->set_active(false);
+        }
+    }
+
+    if (depthExpander_) {
+        params_.layers[selectedLayer_].depthEnabled = depthEnable_->get_active();
+        params_.layers[selectedLayer_].depthInvert = depthInvert_->get_active();
+        params_.layers[selectedLayer_].depthNearShape = depthNearShape_->get_value();
+        params_.layers[selectedLayer_].depthFarShape = depthFarShape_->get_value();
+        params_.layers[selectedLayer_].depthRange = depthRange_->values;
+        depthRange_->nearShape = params_.layers[selectedLayer_].depthNearShape;
+        depthRange_->farShape = params_.layers[selectedLayer_].depthFarShape;
+    }
+
     showPatternRows(params_.layers[selectedLayer_].pattern,
                     params_.layers[selectedLayer_].maskClass != DoubleExposureParams::MaskClass::OFF);
     const bool masked = params_.layers[selectedLayer_].maskClass != DoubleExposureParams::MaskClass::OFF;
@@ -2971,6 +3433,8 @@ void DoubleExposureDlg::layerControlChanged()
     subjectFeatherScale_->set_sensitive(masked);
 
     requestPartnerMasks();
+    syncDepthControls();
+    requestPartnerDepth();
     schedulePreviewUpdate();
 }
 
@@ -3019,6 +3483,8 @@ void DoubleExposureDlg::syncPlacementControls()
 void DoubleExposureDlg::schedulePreviewUpdate()
 {
     auto alive = alive_;
+    ++previewQueue_->revision;
+    set_response_sensitive(Gtk::RESPONSE_OK, false);
 
     if (!previewUpdatePending_) {
         previewUpdatePending_ = true;
@@ -3056,6 +3522,50 @@ void DoubleExposureDlg::onPreviewMove(double dx, double dy)
     layer.offsetY = std::min(std::max(layer.offsetY + dy * previewNys_ * 100.0, -150.0), 150.0);
     syncPlacementControls();
     schedulePreviewUpdate();
+}
+
+// A click on the preview, carried back through the selected exposure's
+// placement into its partner's own frame, becomes an include or exclude
+// prompt among the layer's strokes; the mask is then selected again.
+void DoubleExposureDlg::onPreviewPick(double cx, double cy, bool include)
+{
+    if (selectedLayer_ >= params_.layers.size() || !previewSelValid_ || previewNxs_ <= 0.0 || previewNys_ <= 0.0) {
+        return;
+    }
+
+    auto& layer = params_.layers[selectedLayer_];
+
+    if (layer.maskClass != DoubleExposureParams::MaskClass::POINTS) {
+        return;
+    }
+
+    const float nx = static_cast<float>(previewNx0_ + cx * previewNxs_);
+    const float ny = static_cast<float>(previewNy0_ + cy * previewNys_);
+    const auto hit = rtengine::deplace::place(previewSelFrame_, nx, ny / std::max(previewBaseAspect_, 1e-6f),
+                                              static_cast<float>(previewNxs_));
+
+    if (!hit.present) {
+        return;
+    }
+
+    rtengine::MaskStroke prompt;
+    prompt.kind = rtengine::MaskStroke::Kind::POINT;
+    prompt.add = include;
+    prompt.radius = 0.0;
+    prompt.points.push_back({std::min(std::max(static_cast<double>(hit.u), 0.0), 1.0),
+                             std::min(std::max(static_cast<double>(hit.v * previewSelAspect_), 0.0), 1.0)});
+    layer.maskPaint.strokes.push_back(prompt);
+    requestPartnerMasks();
+    schedulePreviewUpdate();
+}
+
+void DoubleExposureDlg::syncPickMode()
+{
+    if (!subjectPick_ || !preview_) {
+        return;
+    }
+
+    preview_->setPickMode(subjectPick_->get_active());
 }
 
 void DoubleExposureDlg::onPreviewScale(double factor)
@@ -3127,14 +3637,16 @@ void DoubleExposureDlg::refreshSubjectLabels(const Glib::ustring& path)
     subjectMethod_->remove_all();
     subjectRows_.clear();
 
-    for (int row = 0; row <= 7; ++row) {
+    for (int row = 0; row <= 8; ++row) {
         // "The whole frame" always stands, and so does whatever this layer is
         // already set to. Otherwise a class is offered only while it might be
         // there: unmeasured, or measured and actually present. A partner with
-        // no animal in it should not offer to cut one out.
-        bool offer = row == 0 || row == chosen || !view;
+        // no animal in it should not offer to cut one out. Click-to-select
+        // stands whenever its model is installed.
+        bool offer = row == 0 || row == chosen
+                     || (row == 8 ? rtengine::SamSelector::getInstance().available() : !view);
 
-        if (!offer) {
+        if (!offer && row != 8) {
             const int cls = subjectRowClass(row);
             offer = cls >= 0 && cls < static_cast<int>(view->coverage.size())
                     && view->coverage[cls] > 0.f;
@@ -3169,9 +3681,19 @@ void DoubleExposureDlg::openMaskEditor()
     // Computed here rather than waited for: the user has just asked to see
     // the selection, so paying for it on the spot is the least surprising
     // thing to do, and it warms the cache the preview reads.
+    // The click prompts stay with the strokes: the automatic mask shown
+    // underneath is the one they select, and they ride along unchanged.
+    rtengine::MaskPaint promptsOnly;
+
+    for (const auto& stroke : layer.maskPaint.strokes) {
+        if (stroke.kind == rtengine::MaskStroke::Kind::POINT) {
+            promptsOnly.strokes.push_back(stroke);
+        }
+    }
+
     auto mask = rtengine::PartnerMaskStore::getInstance().getMask(
-                    layer.path, workingProfile_, layer.maskClass, layer.maskFeather,
-                    layer.maskInvert, rtengine::MaskPaint(), true);
+                    layer.source(), workingProfile_, layer.maskClass, layer.maskFeather,
+                    layer.maskInvert, promptsOnly, true);
 
     rtengine::MaskPaint paint = layer.maskPaint;
 
@@ -3183,6 +3705,124 @@ void DoubleExposureDlg::openMaskEditor()
     requestPartnerMasks();
     schedulePreviewUpdate();
 #endif
+}
+
+// Depth maps are estimated once per partner on a worker; the preview reads
+// the store cache-only, exactly as it does for segmentation masks, so a
+// redraw never waits on the model. The histogram beneath the range handles
+// is measured at the same time from the partner's own scene plate.
+void DoubleExposureDlg::requestPartnerDepth()
+{
+#ifdef RT_AI_MASKING
+    auto& store = rtengine::PartnerDepthStore::getInstance();
+
+    if (!store.available()) {
+        return;
+    }
+
+    for (const auto& layer : params_.layers) {
+        if (!layer.enabled || !layer.depthEnabled || layer.path.empty()) {
+            continue;
+        }
+
+        if (store.peekDepth(layer.source(), workingProfile_) || depthPending_.count(layer.source())) {
+            continue;
+        }
+
+        depthPending_.insert(layer.source());
+        auto alive = alive_;
+        const Glib::ustring path = layer.source();
+        const Glib::ustring profile = workingProfile_;
+
+        detachQuietly(std::thread([this, alive, path, profile]() {
+#ifdef _OPENMP
+            omp_set_num_threads(2);
+#endif
+            auto depth = rtengine::PartnerDepthStore::getInstance().getDepth(path, profile);
+            compositeui::DepthHistogram histogram;
+
+            if (depth && depth->valid()) {
+                auto partner = rtengine::PartnerImageStore::getInstance().getPartner(path, profile, false);
+                const rtengine::Imagefloat* image = partner && partner->image ? partner->image.get() : nullptr;
+
+                for (int y = 0; y < depth->height; ++y) {
+                    for (int x = 0; x < depth->width; ++x) {
+                        float luminance = 0.f;
+
+                        if (image && image->getWidth() > 0 && image->getHeight() > 0) {
+                            const int ix = std::min(image->getWidth() - 1, x * image->getWidth() / depth->width);
+                            const int iy = std::min(image->getHeight() - 1, y * image->getHeight() / depth->height);
+                            luminance = (0.2126f * image->r(iy, ix) + 0.7152f * image->g(iy, ix)
+                                         + 0.0722f * image->b(iy, ix)) / 65535.f;
+                        }
+
+                        histogram.add(depth->depth[y][x], luminance);
+                    }
+                }
+            }
+
+            Glib::signal_idle().connect_once([this, alive, path, histogram]() {
+                if (!*alive) {
+                    return;
+                }
+
+                depthPending_.erase(path);
+                depthHistograms_[path] = histogram;
+                syncDepthControls();
+                schedulePreviewUpdate();
+            });
+        }));
+    }
+#endif
+}
+
+void DoubleExposureDlg::syncDepthControls()
+{
+    if (!depthExpander_) {
+        return;
+    }
+
+    const bool haveLayer = selectedLayer_ < params_.layers.size();
+    const DoubleExposureParams::Layer* layer = haveLayer ? &params_.layers[selectedLayer_] : nullptr;
+    const bool on = layer && layer->depthEnabled;
+    depthEnable_->set_sensitive(haveLayer);
+    depthInvert_->set_sensitive(on);
+    depthNearShape_->set_sensitive(on);
+    depthFarShape_->set_sensitive(on);
+    depthRange_->set_sensitive(on);
+    depthRange_->inverted = on && layer->depthInvert;
+    depthRange_->histogram = {};
+    Glib::ustring status;
+
+#ifdef RT_AI_MASKING
+    if (on) {
+        auto& store = rtengine::PartnerDepthStore::getInstance();
+        const auto found = depthHistograms_.find(layer->source());
+
+        if (found != depthHistograms_.end()) {
+            depthRange_->histogram = found->second;
+        }
+
+        if (!store.available()) {
+            status = M("TP_DOUBLEEXPOSURE_DEPTH_UNAVAILABLE");
+        } else if (!store.peekDepth(layer->source(), workingProfile_)) {
+            status = M("TP_DOUBLEEXPOSURE_DEPTH_WORKING");
+        }
+    }
+#endif
+
+    depthStatus_->set_text(status);
+    depthRange_->queue_draw();
+}
+
+void DoubleExposureDlg::depthRangeChanged()
+{
+    if (syncingControls_ || !depthRange_ || selectedLayer_ >= params_.layers.size()) {
+        return;
+    }
+
+    params_.layers[selectedLayer_].depthRange = depthRange_->values;
+    schedulePreviewUpdate();
 }
 
 void DoubleExposureDlg::onPreviewRotate(double degrees)
@@ -3245,8 +3885,10 @@ void DoubleExposureDlg::blendControlChanged()
         auto& layer = params_.layers[selectedLayer_];
         layer.blendMode = static_cast<DoubleExposureParams::BlendMode>(blendRow < 0 ? 0 : blendRow);
         const bool comparative = layer.blendMode == DoubleExposureParams::BlendMode::LIGHTEN
-                                 || layer.blendMode == DoubleExposureParams::BlendMode::DARKEN;
-        softnessScale_->set_sensitive(comparative && layer.compare == DoubleExposureParams::Compare::LUMINANCE);
+                                 || layer.blendMode == DoubleExposureParams::BlendMode::DARKEN
+                                 || layer.blendMode == DoubleExposureParams::BlendMode::ADAPTIVE;
+        softnessScale_->set_sensitive(layer.blendMode == DoubleExposureParams::BlendMode::ADAPTIVE ||
+            (comparative && layer.compare == DoubleExposureParams::Compare::LUMINANCE));
     }
 
     params_.autoGain = autoGain_->get_active();
@@ -3269,6 +3911,9 @@ void DoubleExposureDlg::blendControlChanged()
 
 void DoubleExposureDlg::updatePreview(bool quick)
 {
+    const auto queue = previewQueue_;
+    const unsigned revision = ++queue->revision;
+    set_response_sensitive(Gtk::RESPONSE_OK, false);
     // Prefer the high-res render when the toggle is on and it has arrived;
     // fall back to the standard tier so the preview never goes blank.
     const bool wantHi = highRes_ && highRes_->get_active();
@@ -3325,19 +3970,18 @@ void DoubleExposureDlg::updatePreview(bool quick)
     const Glib::RefPtr<Gdk::Pixbuf> neutralBase = findIn(neutralHiPix_, neutralPix_, baseImagePath_);
     const DEScenePlate* nbPlate = basePlate ? basePlate.get() : nullptr;
 
-    const std::vector<float>& srgbEnc = srgbEncodeLut();
-    const std::vector<float>& gateEnc = gateEncodeLut();
-
     float srgbLut[256];
 
     for (int i = 0; i < 256; ++i) {
         srgbLut[i] = srgbToLin(i / 255.f);
     }
 
-    const auto workingToSrgb = [this](float& r, float& g, float& b) {
-        const double rr = workingToSrgb_[0][0] * r + workingToSrgb_[0][1] * g + workingToSrgb_[0][2] * b;
-        const double gg = workingToSrgb_[1][0] * r + workingToSrgb_[1][1] * g + workingToSrgb_[1][2] * b;
-        const double bb = workingToSrgb_[2][0] * r + workingToSrgb_[2][1] * g + workingToSrgb_[2][2] * b;
+    std::array<std::array<double, 3>, 3> matrix;
+    for (int i = 0; i < 3; ++i) for (int j = 0; j < 3; ++j) matrix[i][j] = workingToSrgb_[i][j];
+    const auto workingToSrgb = [matrix](float& r, float& g, float& b) {
+        const double rr = matrix[0][0] * r + matrix[0][1] * g + matrix[0][2] * b;
+        const double gg = matrix[1][0] * r + matrix[1][1] * g + matrix[1][2] * b;
+        const double bb = matrix[2][0] * r + matrix[2][1] * g + matrix[2][2] * b;
         r = static_cast<float>(std::max(rr, 0.0));
         g = static_cast<float>(std::max(gg, 0.0));
         b = static_cast<float>(std::max(bb, 0.0));
@@ -3376,7 +4020,12 @@ void DoubleExposureDlg::updatePreview(bool quick)
     };
 
     // --- base-only work, cached across layer edits ---------------------
-    PreviewCache& pc = previewCache_;
+    if (previewCache_->styledRef != base || previewCache_->neutralRef != neutralBase ||
+        previewCache_->plateRef != basePlate || previewCache_->wantHi != wantHi ||
+        previewCache_->w != w || previewCache_->h != h) {
+        previewCache_ = std::make_shared<PreviewCache>();
+    }
+    PreviewCache& pc = *previewCache_;
 
     if (pc.styledRef != base || pc.neutralRef != neutralBase || pc.plateRef != basePlate
             || pc.wantHi != wantHi || pc.w != w || pc.h != h) {
@@ -3537,14 +4186,11 @@ void DoubleExposureDlg::updatePreview(bool quick)
 
     const float nx0 = pc.nx0, nxs = pc.nxs, ny0 = pc.ny0, nys = pc.nys;
     const float baseAspect = pc.baseAspect;
-    const std::vector<float>& lin = pc.lin;
-    constexpr int TBINS = 256;
-    const float* toneCurve = pc.toneCurve;
-    const float satFactor = pc.satFactor;
 
     // --- layers -----------------------------------------------------------
     struct LayerPix {
         std::shared_ptr<const DEScenePlate> plate; // engine decode (preferred)
+        std::shared_ptr<const DEMotionPlate> motion;
         Glib::RefPtr<Gdk::Pixbuf> pix;             // neutral thumb (fallback)
         int srcW = 0;
         int srcH = 0;
@@ -3565,12 +4211,17 @@ void DoubleExposureDlg::updatePreview(bool quick)
         float srcAspect = 1.f;
 #ifdef RT_AI_MASKING
         std::shared_ptr<const rtengine::PartnerMask> mask;
+        std::shared_ptr<const rtengine::PartnerDepth> depth;
+        rtengine::DepthSelection depthSelect;
 #endif
     };
 
     std::vector<LayerPix> layerPix;
+    previewSelValid_ = false;
     int addLayers = 0;
     bool allPlates = true;
+    std::vector<DEMotionRequest> motionRequests;
+    bool waitingMotionSource = false;
 
     for (const auto& layer : params_.layers) {
         if (!layer.enabled) {
@@ -3578,7 +4229,7 @@ void DoubleExposureDlg::updatePreview(bool quick)
         }
 
         LayerPix lp;
-        lp.plate = findPlate(layer.path);
+        lp.plate = findPlate(layer.source());
         lp.pix = findIn(neutralHiPix_, neutralPix_, layer.path);
 
         if (!lp.plate && !lp.pix) {
@@ -3614,7 +4265,7 @@ void DoubleExposureDlg::updatePreview(bool quick)
         // Cache-only: a redraw never waits on inference. requestPartnerMasks
         // warms these on the decoder pool and asks for another pass.
         lp.mask = rtengine::PartnerMaskStore::getInstance().peekMask(
-                      layer.path, workingProfile_, layer.maskClass, layer.maskFeather,
+                      layer.source(), workingProfile_, layer.maskClass, layer.maskFeather,
                       layer.maskInvert, layer.maskPaint);
 
         if (layer.cropToSubject && lp.mask && lp.mask->hasBounds() && lp.mask->fullWidth > 0) {
@@ -3626,10 +4277,57 @@ void DoubleExposureDlg::updatePreview(bool quick)
             lp.frame.srcH = (lp.mask->y1 - lp.mask->y0) * toUnit;
             cropped = true;
         }
+
+        if (layer.depthEnabled) {
+            // Cache-only as well; requestPartnerDepth fills it and redraws.
+            lp.depth = rtengine::PartnerDepthStore::getInstance().peekDepth(layer.source(), workingProfile_);
+            lp.depthSelect.range = layer.depthRange;
+            lp.depthSelect.nearShape = layer.depthNearShape;
+            lp.depthSelect.farShape = layer.depthFarShape;
+            lp.depthSelect.invert = layer.depthInvert;
+        }
 #endif
+
+        if (layer.motion.path != rtengine::demotion::Path::OFF && layer.motion.shutter > 0 && layer.motion.speed > 0) {
+            if (!lp.plate) {
+                waitingMotionSource = true;
+                requestScenePlates({layer.source()}, wantHi ? PREVIEW_THUMB_HI : PREVIEW_THUMB_H);
+            } else {
+                DEMotionRequest request;
+                request.source = lp.plate;
+                request.params = layer.motion;
+                request.edge = quick ? 384 : 768;
+                request.quick = quick;
+                std::ostringstream key;
+                key << std::setprecision(17) << lp.plate.get() << ':' << int(layer.motion.path) << ':'
+                    << layer.motion.shutter << ':' << layer.motion.speed << ':' << layer.motion.direction << ':'
+                    << layer.motion.noise << ':' << layer.motion.complexity << ':' << layer.motion.seed << ':' << request.edge;
+#ifdef RT_AI_MASKING
+                request.mask = lp.mask;
+                request.depth = lp.depth;
+                request.depthSelect = lp.depthSelect;
+                key << ':' << lp.mask.get() << ':' << lp.depth.get();
+                if (lp.depth)
+                    key << ':' << lp.depthSelect.range[0] << ':' << lp.depthSelect.range[1] << ':'
+                        << lp.depthSelect.range[2] << ':' << lp.depthSelect.range[3] << ':'
+                        << lp.depthSelect.nearShape << ':' << lp.depthSelect.farShape << ':' << lp.depthSelect.invert;
+#endif
+                request.key = key.str();
+                for (const auto& cached : motionCache_) if (cached->key == request.key) { lp.motion = cached; break; }
+                if (!lp.motion && std::none_of(motionRequests.begin(), motionRequests.end(), [&](const DEMotionRequest& r) {
+                    return r.key == request.key;
+                })) motionRequests.push_back(request);
+            }
+        }
 
         lp.frame.invCover = 1.f / std::max(lp.frame.baseW / lp.frame.srcW, lp.frame.baseH / lp.frame.srcH);
         rtengine::deplace::applyLayer(lp.frame, layer, cropped);
+
+        if (selectedLayer_ < params_.layers.size() && &layer == &params_.layers[selectedLayer_]) {
+            previewSelFrame_ = lp.frame;
+            previewSelAspect_ = lp.srcAspect;
+            previewSelValid_ = true;
+        }
 
         if (lp.mode == DoubleExposureParams::BlendMode::ADD) {
             ++addLayers;
@@ -3638,10 +4336,25 @@ void DoubleExposureDlg::updatePreview(bool quick)
         layerPix.push_back(lp);
     }
 
+    if (!motionRequests.empty() || waitingMotionSource) {
+        set_response_sensitive(Gtk::RESPONSE_OK, false);
+        if (!motionRequests.empty()) requestMotionPreviews(motionRequests);
+        return;
+    }
+    if (!pendingMotionKey_.empty()) {
+        ++motionQueue_->revision;
+        pendingMotionKey_.clear();
+        motionSpinner_->stop();
+        motionSpinner_->hide();
+    }
+
     // The film gain follows how many frames actually land on each pixel, as
     // the engine does: metering the base down for a layer that is absent here
     // would leave a step at its edge.
     const bool meterFrames = params_.autoGain && addLayers > 0;
+    const bool adaptiveStack = std::any_of(layerPix.begin(), layerPix.end(), [](const LayerPix& l) {
+        return l.mode == DoubleExposureParams::BlendMode::ADAPTIVE;
+    });
     const float baseEvGain = static_cast<float>(std::pow(2.0, params_.baseEv));
 
     // Film shoulder on the finished stack, same as the engine (white = 1
@@ -3664,10 +4377,11 @@ void DoubleExposureDlg::updatePreview(bool quick)
     previewNxs_ = nxs;
     previewNy0_ = ny0;
     previewNys_ = nys;
+    previewBaseAspect_ = baseAspect;
 
     if (selectedLayer_ < params_.layers.size()) {
         const auto& sel = params_.layers[selectedLayer_];
-        const std::shared_ptr<const DEScenePlate> selPlate = findPlate(sel.path);
+        const std::shared_ptr<const DEScenePlate> selPlate = findPlate(sel.source());
         const Glib::RefPtr<Gdk::Pixbuf> selPix = findIn(neutralHiPix_, neutralPix_, sel.path);
         float selAspect = baseAspect;
 
@@ -3690,6 +4404,25 @@ void DoubleExposureDlg::updatePreview(bool quick)
         preview_->setSelectionFrame(false, 0, 0, 0, 0, 0.0);
     }
 
+    // Render from immutable inputs; no worker reads widgets or mutable dialog state.
+    const auto cache = previewCache_;
+    const auto life = alive_;
+    std::lock_guard<std::mutex> queueLock(queue->mutex);
+    queue->job = [this, life, queue, revision, cache, layerPix, basePlate, neutralBase,
+                  workingToSrgb, quick, w, h, nx0, nxs, ny0, nys, baseAspect,
+                  nbW, nbH, nbStride, nbCh, srgbLut, sceneFaithful, sceneMode,
+                  meterFrames, adaptiveStack, baseEvGain, applyShoulder, knee] {
+    if (!*life || queue->revision != revision) return;
+    try {
+    rtengine::EffectPerfScope timing(quick ? "de-draft" : "de-settled", w, h);
+    const auto& lin = cache->lin;
+    const float* toneCurve = cache->toneCurve;
+    const float satFactor = cache->satFactor;
+    constexpr int TBINS = 256;
+    const auto& srgbEnc = srgbEncodeLut();
+    const auto& gateEnc = gateEncodeLut();
+    const auto* nbPlate = basePlate.get();
+    const auto* nbData = neutralBase ? neutralBase->get_pixels() : nullptr;
     // --- composite ----------------------------------------------------------
     // Interactive passes compute every other pixel in both directions and
     // replicate; the settled pass computes them all. Output stays w x h so
@@ -3711,7 +4444,9 @@ void DoubleExposureDlg::updatePreview(bool quick)
     #pragma omp parallel for schedule(dynamic, 4)
 #endif
     for (int by = 0; by < blockRows; ++by) {
+        if (!*life || (!quick && queue->revision != revision)) continue;
         std::vector<rtengine::deplace::Placed> hits(std::max(1, nLayers));
+        std::vector<rtengine::demotion::Pixel> motionPixels(std::max(1, nLayers));
         const int y = by * step;
         const float ny = ny0 + (y + 0.5f) * nys;
         const int nby = (sceneFaithful && nbH > 0) ? std::max(0, std::min(static_cast<int>(ny * nbH), nbH - 1)) : 0;
@@ -3726,15 +4461,27 @@ void DoubleExposureDlg::updatePreview(bool quick)
             for (int li = 0; li < nLayers; ++li) {
                 rtengine::deplace::Placed& hit = hits[li];
                 hit = rtengine::deplace::place(layers[li].frame, nx, ny * invBaseAspect, nxs);
+                if (hit.present && layers[li].motion) {
+                    const auto& lp = layers[li];
+                    auto p = lp.motion->at(hit.u, hit.v * lp.srcAspect);
+                    p.a *= hit.coverage;
+                    if (hit.mix > 0) {
+                        auto q = lp.motion->at(hit.u2, hit.v2 * lp.srcAspect);
+                        q.a *= hit.coverage2;
+                        p = rtengine::demotion::mix(p, q, hit.mix);
+                    }
+                    motionPixels[li] = p;
+                }
 
                 if (hit.present && layers[li].mode == DoubleExposureParams::BlendMode::ADD) {
-                    framesHere += hit.coverage + hit.mix * (hit.coverage2 - hit.coverage);
+                    framesHere += layers[li].motion ? motionPixels[li].a * layers[li].opacity
+                        : hit.coverage + hit.mix * (hit.coverage2 - hit.coverage);
                 }
             }
 
             const float gainFactor = meterFrames ? 1.f / (1.f + framesHere) : 1.f;
             const float baseGain = baseEvGain * gainFactor;
-            const float shoulderWhite = gainFactor;
+            const float shoulderWhite = adaptiveStack ? 1.f : gainFactor;
 
             float r, g, b;
 
@@ -3805,9 +4552,15 @@ void DoubleExposureDlg::updatePreview(bool quick)
                 };
 
                 float pr, pg, pb;
-                readLayer(hit.u, hit.v, pr, pg, pb);
+                if (lp.motion) {
+                    const auto& p = motionPixels[li];
+                    pr = p.r; pg = p.g; pb = p.b; coverage = p.a;
+                    if (!sceneMode) workingToSrgb(pr, pg, pb);
+                } else {
+                    readLayer(hit.u, hit.v, pr, pg, pb);
+                }
 
-                if (hit.mix > 0.f) {
+                if (hit.mix > 0.f && !lp.motion) {
                     // Hand over to the neighbouring radial copy, as the engine
                     // does, or the picker would show a boundary the render
                     // no longer has.
@@ -3830,7 +4583,7 @@ void DoubleExposureDlg::updatePreview(bool quick)
                 float wgt = lp.opacity * coverage;
 
 #ifdef RT_AI_MASKING
-                if (lp.mask) {
+                if (lp.mask && !lp.motion) {
                     const auto maskAt = [&](float u, float v) {
                         return lp.mask->sample(u * lp.mask->fullWidth,
                                                v * lp.srcAspect * lp.mask->fullHeight);
@@ -3842,6 +4595,24 @@ void DoubleExposureDlg::updatePreview(bool quick)
                     }
 
                     wgt *= m;
+
+                    if (wgt <= 0.f) {
+                        continue;
+                    }
+                }
+
+                if (lp.depth && !lp.motion) {
+                    const auto depthAt = [&](float u, float v) {
+                        return lp.depthSelect.weight(lp.depth->sample(u * lp.depth->fullWidth,
+                                                                      v * lp.srcAspect * lp.depth->fullHeight));
+                    };
+                    float d = depthAt(hit.u, hit.v);
+
+                    if (hit.mix > 0.f) {
+                        d += hit.mix * (depthAt(hit.u2, hit.v2) - d);
+                    }
+
+                    wgt *= d;
 
                     if (wgt <= 0.f) {
                         continue;
@@ -3912,5 +4683,27 @@ void DoubleExposureDlg::updatePreview(bool quick)
         }
     }
 
-    preview_->setComposite(result);
+    if (!*life || (!quick && queue->revision != revision)) return;
+    Glib::signal_idle().connect_once([this, life, queue, revision, result, quick] {
+        if (!*life || !effectpreview::canPublish(quick, revision, queue->revision, presentedPreviewRevision_)) return;
+        presentedPreviewRevision_ = revision;
+        preview_->setComposite(result);
+        set_response_sensitive(Gtk::RESPONSE_OK, !quick);
+    });
+    } catch (const std::exception& error) {
+        const std::string message = error.what();
+        Glib::signal_idle().connect_once([this, life, queue, revision, message] {
+            if (!*life || queue->revision != revision) return;
+            countLabel_->set_text(message);
+            set_response_sensitive(Gtk::RESPONSE_OK, false);
+        });
+    } catch (...) {
+        Glib::signal_idle().connect_once([this, life, queue, revision] {
+            if (!*life || queue->revision != revision) return;
+            countLabel_->set_text(M("TP_DOUBLEEXPOSURE_PREVIEW_FAILED"));
+            set_response_sensitive(Gtk::RESPONSE_OK, false);
+        });
+    }
+    };
+    queue->wake.notify_one();
 }

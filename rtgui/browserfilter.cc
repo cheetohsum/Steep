@@ -45,7 +45,8 @@ bool BrowserFilter::isPassThrough () const
     if (!showPicked || !showRejected || !showUnflagged || hideRejects
         || !showTrash || !showNotTrash || showOriginal
         || exifFilterEnabled || !vFilterStrings.empty()
-        || !albumWhitelist.empty() || !filetypeFilter.empty()) {
+        || !albumWhitelist.empty() || !filetypeFilter.empty()
+        || !tagFilter.empty() || tagUntagged) {
         return false;
     }
 

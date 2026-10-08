@@ -56,6 +56,8 @@
 #include "rtengine.h"
 #include "rtlensfun.h"
 #include "lensmetadata.h"
+#include "stuckpixels.h"
+#include "stuckpixelmemory.h"
 #include "rtgui/options.h"
 
 //#define BENCHMARK
@@ -1990,6 +1992,114 @@ void RawImageSource::preprocess(const RAWParams &raw, const LensProfParams &lens
 
         if (settings->verbose && nFound > 0) {
             printf("Correcting %d hot/dead pixels found inside image\n", nFound);
+        }
+    }
+
+    if (raw.stuckPixelFix && (ri->getSensorType() == ST_BAYER || ri->getSensorType() == ST_FUJI_XTRANS)) {
+        stuckpixels::CfaLayout cfa;
+
+        if (ri->getSensorType() == ST_FUJI_XTRANS) {
+            cfa.period = 6;
+            for (int r = 0; r < 6; ++r) {
+                for (int c = 0; c < 6; ++c) {
+                    cfa.color[r][c] = ri->XTRANSFC(r, c);
+                }
+            }
+        } else {
+            // dcraw's filter word can describe 8-row repeats; only a plain
+            // 2x2 Bayer tile is judged (the second green counts as green).
+            cfa.period = 2;
+            const auto colourAt = [this](int r, int c) { return ri->FC(r, c) == 3 ? 1u : ri->FC(r, c); };
+            for (int r = 0; r < 8; ++r) {
+                for (int c = 0; c < 8; ++c) {
+                    if (colourAt(r, c) != colourAt(r % 2, c % 2)) {
+                        cfa.period = 0;
+                    }
+                }
+            }
+            for (int r = 0; r < 2; ++r) {
+                for (int c = 0; c < 2; ++c) {
+                    cfa.color[r][c] = colourAt(r, c);
+                }
+            }
+        }
+
+        if (!bitmapBads) {
+            bitmapBads.reset(new PixelsMap(W, H));
+        }
+
+        // STEEP_STUCKPIX_TRACE=1 lists every photosite it takes out.
+        static const bool trace = std::getenv("STEEP_STUCKPIX_TRACE") != nullptr;
+        MyTime t0, t1;
+        t0.set();
+
+        // This frame's candidates ...
+        std::mutex candidateMutex;
+        std::vector<StuckPixelCandidate> candidates;
+        std::vector<float> leaks;
+        stuckpixels::find(rawData, W, H, cfa, raw.stuckPixelSensitivity, [&](int row, int col, float strength, float leak) {
+            std::lock_guard<std::mutex> lock(candidateMutex);
+            candidates.push_back({row, col, strength});
+            leaks.push_back(leak);
+        });
+
+        // ... and what this camera body is known to have (StuckPixelMemory):
+        // photosites seen stuck in two separate sessions are fixed in every
+        // frame, faint or not. Once the camera is well known, a candidate it
+        // has never shown is held back if light visibly leaked into its
+        // neighbours (a small coloured light, more likely than a new defect);
+        // a clean one is fixed, so heat-driven hot pixels that only show in
+        // long exposures still go before they have been learned.
+        StuckPixelMemory& memory = StuckPixelMemory::instance();
+        memory.setDirectory(settings->stuckPixelMemoryDir);
+        const std::string cameraKey = ri->get_maker() + " " + ri->get_model() + " " + idata->getSerialNumber() + " "
+            + std::to_string(W) + "x" + std::to_string(H);
+        const StuckPixelMemory::Verdict verdict = memory.update(cameraKey, static_cast<std::int64_t>(idata->getDateTimeAsTS()), candidates);
+
+        const auto listed = [](const std::vector<std::pair<int, int>>& sorted, const std::pair<int, int>& p) {
+            return std::binary_search(sorted.begin(), sorted.end(), p);
+        };
+
+        std::vector<std::pair<int, int>> fixed;
+        int heldBack = 0;
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            const std::pair<int, int> p(candidates[i].row, candidates[i].col);
+            if (!verdict.mature || leaks[i] <= stuckpixels::kAmbiguousLeak || listed(verdict.known, p)) {
+                fixed.push_back(p);
+            } else {
+                ++heldBack;
+            }
+        }
+        for (const auto& p : verdict.known) { // sorted: the memory keeps them in a map
+            if (p.first >= 0 && p.first < H && p.second >= 0 && p.second < W) {
+                fixed.push_back(p);
+            }
+        }
+        std::sort(fixed.begin(), fixed.end());
+        fixed.erase(std::unique(fixed.begin(), fixed.end()), fixed.end());
+        PixelsMap &bads = *bitmapBads;
+        for (const auto& p : fixed) {
+            bads.set(p.second, p.first);
+        }
+        const int nStuck = static_cast<int>(fixed.size());
+        t1.set();
+        totBP += nStuck;
+
+        if (trace) {
+            fprintf(stderr, "[stuckpix] %s: %d fixed of %d candidates, %d held back; camera knows %d over %d sessions%s (sensitivity %d, %d ms)\n",
+                    ri->get_filename().c_str(), nStuck, static_cast<int>(candidates.size()), heldBack, static_cast<int>(verdict.known.size()),
+                    verdict.sessions, verdict.mature ? ", mature" : "", raw.stuckPixelSensitivity, t1.etime(t0) / 1000);
+            for (const auto& p : fixed) {
+                fprintf(stderr, "[stuckpix]   row %d col %d colour %u value %.0f%s\n", p.first, p.second,
+                        unsigned(cfa.color[p.first % cfa.period][p.second % cfa.period]), rawData[p.first][p.second],
+                        listed(verdict.known, p) ? " known" : "");
+            }
+            for (size_t i = 0; i < candidates.size(); ++i) {
+                fprintf(stderr, "[stuckpix]   candidate row %d col %d strength %.1f leak %.2f\n", candidates[i].row, candidates[i].col,
+                        candidates[i].strength, leaks[i]);
+            }
+        } else if (settings->verbose && nStuck > 0) {
+            printf("Correcting %d stuck photosites\n", nStuck);
         }
     }
 

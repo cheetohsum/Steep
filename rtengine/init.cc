@@ -41,6 +41,8 @@
 #include "aisegmentation.h"
 #include "aisubjectmodel.h"
 #include "aiinpainting.h"
+#include "partnerdepthstore.h"
+#include "samselector.h"
 #endif
 
 namespace rtengine
@@ -159,6 +161,24 @@ int init (const Settings* s, const Glib::ustring& baseDir, const Glib::ustring& 
                 fprintf(stderr, "AI Masking: failed to initialise from %s\n", modelPath.c_str());
             } else {
                 fprintf(stderr, "AI Masking: initialised from %s\n", modelPath.c_str());
+            }
+        }
+
+        {
+            // Scene depth for the compositor and for depth-confined double
+            // exposures; the store loads the model the first time a map is
+            // asked for, so only the directory is recorded here.
+            const Glib::ustring depthPath = findModel("composite_depth.onnx");
+
+            if (!depthPath.empty()) {
+                PartnerDepthStore::getInstance().setModelDirectory(Glib::path_get_dirname(depthPath));
+            }
+
+            // Click-to-select on a double exposure partner; loaded on first use.
+            const Glib::ustring samPath = findModel("sam2_encoder.onnx");
+
+            if (!samPath.empty()) {
+                SamSelector::getInstance().setModelDirectory(Glib::path_get_dirname(samPath));
             }
         }
 

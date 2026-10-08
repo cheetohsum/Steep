@@ -748,10 +748,7 @@ void ImageArea::addCropWindow ()
 
     mainCropWindow->setObservedCropWin (cropWins.front());
 
-    if(!ipc->getHighQualComputed()) {
-        ipc->startProcessing(M_HIGHQUAL);
-        ipc->setHighQualComputed();
-    }
+    ipc->startProcessing(M_HIGHQUAL | M_MONITOR);
 }
 
 

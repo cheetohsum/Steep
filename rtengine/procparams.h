@@ -30,6 +30,7 @@
 
 #include "coord.h"
 #include "maskpaint.h"
+#include "demotionparams.h"
 #include "noncopyable.h"
 
 struct ParamsEdited;
@@ -1830,6 +1831,7 @@ struct FilmPresetsParams {
     Glib::ustring process;  // auto, c41, e6, ecn2, bw
     Glib::ustring output;   // scan, ra4, projection, cinema
     Glib::ustring format;   // 35mm, 120, large
+    Glib::ustring lensDesign; // slr, rangefinder, telecentric: how far off the film the exit pupil sits (V5 halation's off-axis lean)
     int strength;           // 0-100
     int contrast;           // -100..100
     int saturation;         // -100..100
@@ -1901,7 +1903,9 @@ struct DoubleExposureParams {
         MULTIPLY,   // slide sandwich: densities multiply
         LIGHTEN,    // max(a,b): layer shows only where brighter
         DARKEN,     // min(a,b): layer shows only where darker
-        ABSDIFF     // |a-b| (DIFFERENCE collides with a wingdi.h macro)
+        ABSDIFF,    // |a-b| (DIFFERENCE collides with a wingdi.h macro)
+        ADAPTIVE,   // preserve bright detail on dark backgrounds, dark detail on light
+        NORMAL      // the layer covers the base where it lands: a placed cut-out, not a blend of light
     };
 
     // Which luminance the "Reveal in" gate reads.
@@ -1935,15 +1939,21 @@ struct DoubleExposureParams {
         VEGETATION,
         BUILDING,
         VEHICLE,
-        ANIMAL
+        ANIMAL,
+        POINTS      // click-to-select: prompts kept among maskPaint's strokes
     };
 
     struct Layer {
         Glib::ustring path; // absolute path of the partner image
+        // Render the partner with its own saved edits (crop, tone, film) in
+        // place of the neutral camera decode. One level only: the partner's
+        // own double exposure is not applied.
+        bool asEdited;
         bool enabled;       // mute toggle; disabled layers are skipped
         double ev;          // exposure trim in EV applied to this layer
         double opacity;     // 0..100
         BlendMode blendMode;
+        DEMotionParams motion;
         // Comparative modes only: whole-pixel brightness compare vs legacy
         // per-channel, and the hand-over band width in stops (0 = hard pick).
         Compare compare;
@@ -1987,6 +1997,16 @@ struct DoubleExposureParams {
         bool cropToSubject;
         // Hand-painted corrections on top of the segmentation.
         MaskPaint maskPaint;
+        // Depth confinement: relative scene depth estimated on the partner
+        // (0 near .. 1 far), kept between four ordered handles — near fade
+        // start, near full, far full, far fade end — each transition with
+        // its own shape (1 = smooth), optionally turned inside out. Off
+        // costs nothing; the map is estimated the first time it is needed.
+        bool depthEnabled;
+        std::array<double, 4> depthRange;
+        double depthNearShape;
+        double depthFarShape;
+        bool depthInvert;
         // "Reveal in" gate: confine the layer to a luminance window with
         // smoothstep feather outside it. Low/high/feather are linear
         // luminance percent; strength 0 disables the gate.
@@ -1997,6 +2017,14 @@ struct DoubleExposureParams {
         double gateStrength; // 0..100
 
         Layer();
+
+        // What the partner stores are asked for: the path, tagged when the
+        // partner is to be rendered as edited, so every cache keeps the two
+        // renderings of one file apart.
+        Glib::ustring source() const
+        {
+            return asEdited ? path + "|edited" : path;
+        }
 
         bool operator==(const Layer &other) const;
         bool operator!=(const Layer &other) const;
@@ -2196,6 +2224,12 @@ struct RAWParams {
     bool hotPixelFilter;
     bool deadPixelFilter;
     int hotdeadpix_thresh;
+
+    // Single-photosite stuck pixels (rtengine/stuckpixels.h). On unless a
+    // profile says otherwise, so it also reaches photographs edited before
+    // it existed.
+    bool stuckPixelFix;
+    int stuckPixelSensitivity;
 
     RAWParams();
 

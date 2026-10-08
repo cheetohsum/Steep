@@ -111,6 +111,8 @@ struct WaveletParams;
 
 enum RenderingIntent : int;
 
+struct GrainCharacter;
+
 struct FilmLabContext {
     int originX;
     int originY;
@@ -418,8 +420,11 @@ enum class BlurType {
 
     //3 functions from Alberto Griggio, adapted J.Desmis 2019
     void filmGrain(Imagefloat *rgb, int isogr, int strengr, int scalegr,float divgr, int bfw, int bfh, int call, int fw, int fh);
-    void filmGrainV2(Imagefloat *rgb, int isogr, int strengr, int scalegr, int colorgr,
-                     int originX, int originY, int oscale, int fullW, int fullH);
+    // Grain V3 (Effects > Grain): the dye-cloud/silver-clump model, anchored to
+    // full-image coordinates; oscale is full-resolution pixels per output pixel.
+    void filmGrainV2(Imagefloat *lab, int isogr, int strengr, int scalegr, int colorgr,
+                     int originX, int originY, double oscale, int fullW, int fullH,
+                     const GrainCharacter &character);
     void log_encode(Imagefloat *rgb, struct local_params & lp, bool multiThread, int bfw, int bfh);
     void getAutoLogloc(int sp, ImageSource *imgsrc, float *sourceg, float *blackev, float *whiteev, bool *blackredu, bool *Autogr, float *sourceab, int *whits, int *blacks, int *whitslog, int *blackslog, int fw, int fh, float xsta, float xend, float ysta, float yend, int SCALE);
 
@@ -664,8 +669,11 @@ enum class BlurType {
     void localContrast(LabImage *lab, float **destination, const procparams::LocalContrastParams &localContrastParams, bool fftwlc, double scale);
     void textureContrast(LabImage *lab, const procparams::TextureParams &params, double scale);
     void clarityContrast(LabImage *lab, const procparams::ClarityParams &params, double scale);
+    // film, when given, lends the grain its emulsion's character (see
+    // graincharacter.h); Film Lab must be enabled for it to take effect.
     void grainEffect(LabImage *lab, const procparams::GrainParams &params, int fw, int fh,
-                     int originX = 0, int originY = 0, int oscale = 1);
+                     int originX = 0, int originY = 0, double oscale = 1,
+                     const procparams::FilmPresetsParams *film = nullptr);
     void lightEffects(LabImage *lab, const procparams::LightEffectsParams &params, double scaleFactor);
     void tiltShiftEffect(LabImage *lab, const procparams::TiltShiftParams &params, int fw, int fh);
     void lensBlur(LabImage *lab, const procparams::LensBlurParams &params, double scale);

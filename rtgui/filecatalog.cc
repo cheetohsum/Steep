@@ -626,9 +626,9 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     bFilterToggle_ = Gtk::manage(new Gtk::ToggleButton());
     bFilterToggle_->set_image(*Gtk::manage(new RTImage("filter-modern", Gtk::ICON_SIZE_BUTTON)));
     bFilterToggle_->set_relief(Gtk::RELIEF_NONE);
-    bFilterToggle_->set_tooltip_markup(M("FILEBROWSER_SHOWDIRHINT"));
+    bFilterToggle_->set_tooltip_markup(M("FILEBROWSER_FILTERBAR_TOOLTIP"));
     bFilterToggle_->signal_toggled().connect(sigc::mem_fun(*this, &FileCatalog::filterToggled));
-    buttonBar->pack_start(*bFilterToggle_, Gtk::PACK_SHRINK);
+    buttonBar->pack_start(*addCountBadge(*bFilterToggle_, filterCountBadge_), Gtk::PACK_SHRINK);
 
     // Global scope: apply the active filter across every known folder
     globalAliveToken_ = std::make_shared<std::atomic<bool>>(true);
@@ -1012,6 +1012,9 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
         filetypePopover_->set_position(Gtk::POS_BOTTOM);
         filetypeButton_->set_popover(*filetypePopover_);
         filterBar->pack_start(*filetypeButton_, Gtk::PACK_SHRINK);
+        photoTagFilter_ = Gtk::manage(new PhotoTagFilter());
+        photoTagFilter_->changed().connect([this]() { filterChanged(); updateFilterBadge(); });
+        filterBar->pack_start(*photoTagFilter_, Gtk::PACK_SHRINK);
         updateFiletypeButtonLabel();
         updateFiletypeDefaultCheck_();
     }
@@ -1274,6 +1277,34 @@ void FileCatalog::filterToggled()
 
     bool show = bFilterToggle_->get_active();
     filterRevealer_->set_reveal_child(show);
+}
+
+// Everything in the filter bar that narrows what is shown. The standing
+// hide-rejects preference is a setting, not a filter, and search has its own
+// field outside the bar.
+int FileCatalog::activeFilterCount()
+{
+    const Gtk::ToggleButton* const toggles[] = {
+        bUnRanked, bRank[0], bRank[1], bRank[2], bRank[3], bRank[4],
+        bUnCLabeled, bCLabel[0], bCLabel[1], bCLabel[2], bCLabel[3], bCLabel[4],
+        bPicked, bUnflagged, bRejected, bRejectsView,
+        bEdited[0], bEdited[1], bRecentlySaved[0], bRecentlySaved[1],
+        bOriginal, bTrash,
+    };
+
+    int count = 0;
+    for (const auto* toggle : toggles) {
+        count += toggle && toggle->get_active();
+    }
+    count += !selectedFiletypes_.empty();
+    count += photoTagFilter_ && (!photoTagFilter_->selected().empty() || photoTagFilter_->untagged());
+    count += metadataFilterButton_ && filterPanel && filterPanel->isEnabled();
+    return count;
+}
+
+void FileCatalog::updateFilterBadge()
+{
+    setCountBadge(filterCountBadge_, activeFilterCount());
 }
 
 void FileCatalog::exifInfoButtonToggled()
@@ -2646,6 +2677,7 @@ void FileCatalog::filterApplied()
         [this]() -> bool
         {
             _refreshProgressBar();
+            updateFilterBadge();
             return false;
         }
     );
@@ -3135,6 +3167,7 @@ bool FileCatalog::isInTabMode() const
 void FileCatalog::categoryButtonToggled (Gtk::ToggleButton* b, bool isMouseClick)
 {
 
+    if (b == bFilterClear && photoTagFilter_) photoTagFilter_->clear();
     //was control key pressed (ignored if was not mouse click)
     bool control_down = modifierKey & GDK_CONTROL_MASK && isMouseClick;
 
@@ -3575,6 +3608,12 @@ void FileCatalog::showRecursiveToggled()
 
 BrowserFilter FileCatalog::getFilter ()
 {
+    if (inTabMode) {
+        auto filter = editorFilter_;
+        // File types are shared between the two tabs and can change during loading.
+        filter.filetypeFilter = selectedFiletypes_;
+        return filter;
+    }
 
     BrowserFilter filter;
 
@@ -3719,8 +3758,19 @@ BrowserFilter FileCatalog::getFilter ()
     }
     filter.albumWhitelist = albumWhitelist_;
     filter.filetypeFilter = selectedFiletypes_;
+    if (photoTagFilter_) {
+        filter.tagFilter = photoTagFilter_->selected();
+        filter.tagMatchAll = photoTagFilter_->matchAll();
+        filter.tagUntagged = photoTagFilter_->untagged();
+    }
 
     return filter;
+}
+
+void FileCatalog::setEditorFilter(const BrowserFilter& filter)
+{
+    editorFilter_ = filter;
+    if (inTabMode) filterChanged();
 }
 
 void FileCatalog::setAlbumWhitelist (const std::set<std::string>& whitelist)
@@ -4373,6 +4423,7 @@ void FileCatalog::filterChanged ()
     // this needs further analysis and cleanup
     fileBrowser->applyFilter (getFilter());
     _refreshProgressBar();
+    updateFilterBadge();
 
     // In global scope the matching set spans other folders: re-run the scan
     // (debounced) when the filter itself changed. filterChanged() also fires

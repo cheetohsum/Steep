@@ -777,6 +777,8 @@ void ParamsEdited::set(bool v)
     raw.hotPixelFilter = v;
     raw.deadPixelFilter = v;
     raw.hotdeadpix_thresh = v;
+    raw.stuckPixelFix = v;
+    raw.stuckPixelSensitivity = v;
     raw.darkFrame = v;
     raw.df_autoselect = v;
     raw.ff_file = v;
@@ -986,6 +988,7 @@ void ParamsEdited::set(bool v)
     filmPresets.process = v;
     filmPresets.output = v;
     filmPresets.format = v;
+    filmPresets.lensDesign = v;
     filmPresets.strength = v;
     filmPresets.contrast = v;
     filmPresets.saturation = v;
@@ -2584,6 +2587,8 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         raw.hotPixelFilter = raw.hotPixelFilter && p.raw.hotPixelFilter == other.raw.hotPixelFilter;
         raw.deadPixelFilter = raw.deadPixelFilter && p.raw.deadPixelFilter == other.raw.deadPixelFilter;
         raw.hotdeadpix_thresh = raw.hotdeadpix_thresh && p.raw.hotdeadpix_thresh == other.raw.hotdeadpix_thresh;
+        raw.stuckPixelFix = raw.stuckPixelFix && p.raw.stuckPixelFix == other.raw.stuckPixelFix;
+        raw.stuckPixelSensitivity = raw.stuckPixelSensitivity && p.raw.stuckPixelSensitivity == other.raw.stuckPixelSensitivity;
         raw.darkFrame = raw.darkFrame && p.raw.dark_frame == other.raw.dark_frame;
         raw.df_autoselect = raw.df_autoselect && p.raw.df_autoselect == other.raw.df_autoselect;
         raw.ff_file = raw.ff_file && p.raw.ff_file == other.raw.ff_file;
@@ -2785,6 +2790,7 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         filmPresets.process = filmPresets.process && p.filmPresets.process == other.filmPresets.process;
         filmPresets.output = filmPresets.output && p.filmPresets.output == other.filmPresets.output;
         filmPresets.format = filmPresets.format && p.filmPresets.format == other.filmPresets.format;
+        filmPresets.lensDesign = filmPresets.lensDesign && p.filmPresets.lensDesign == other.filmPresets.lensDesign;
         filmPresets.strength = filmPresets.strength && p.filmPresets.strength == other.filmPresets.strength;
         filmPresets.contrast = filmPresets.contrast && p.filmPresets.contrast == other.filmPresets.contrast;
         filmPresets.saturation = filmPresets.saturation && p.filmPresets.saturation == other.filmPresets.saturation;
@@ -8529,6 +8535,14 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
         toEdit.raw.hotdeadpix_thresh = mods.raw.hotdeadpix_thresh;
     }
 
+    if (raw.stuckPixelFix) {
+        toEdit.raw.stuckPixelFix = mods.raw.stuckPixelFix;
+    }
+
+    if (raw.stuckPixelSensitivity) {
+        toEdit.raw.stuckPixelSensitivity = mods.raw.stuckPixelSensitivity;
+    }
+
     if (raw.darkFrame) {
         toEdit.raw.dark_frame = mods.raw.dark_frame;
     }
@@ -9294,6 +9308,10 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
     if (filmPresets.format) {
         toEdit.filmPresets.format = mods.filmPresets.format;
     }
+
+    if (filmPresets.lensDesign) {
+        toEdit.filmPresets.lensDesign = mods.filmPresets.lensDesign;
+    }
     if (filmPresets.strength) {
         toEdit.filmPresets.strength = mods.filmPresets.strength;
     }
@@ -9412,6 +9430,7 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
         toEdit.dehaze.saturation = mods.dehaze.saturation;
     }
 
+
     if (doubleExposure.enabled) {
         toEdit.doubleExposure.enabled = mods.doubleExposure.enabled;
     }
@@ -9505,7 +9524,7 @@ bool RAWParamsEdited::XTransSensor::isUnchanged() const
 
 bool RAWParamsEdited::isUnchanged() const
 {
-    return  bayersensor.isUnchanged() && xtranssensor.isUnchanged() && ca_autocorrect && ca_avoidcolourshift && caautoiterations && cared && cablue && hotPixelFilter && deadPixelFilter && hotdeadpix_thresh && darkFrame
+    return  bayersensor.isUnchanged() && xtranssensor.isUnchanged() && ca_autocorrect && ca_avoidcolourshift && caautoiterations && cared && cablue && hotPixelFilter && deadPixelFilter && hotdeadpix_thresh && stuckPixelFix && stuckPixelSensitivity && darkFrame
             && df_autoselect && ff_file && ff_AutoSelect && ff_FromMetaData && ff_BlurRadius && ff_BlurType && exPos && ff_AutoClipControl && ff_clipControl;
 }
 

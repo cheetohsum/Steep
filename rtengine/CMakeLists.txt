@@ -1,10 +1,13 @@
 set(PROCPARAM_SRCS
+    demotionparams.cc
     procparams.cc
     params/locallab.cc
     params/serdes.cc
 )
 
 set(RTENGINESOURCEFILES
+    depthestimator.cc
+    samselector.cc
     alpha.cc
     ahd_demosaic_RT.cc
     aidenoise.cc
@@ -41,7 +44,10 @@ set(RTENGINESOURCEFILES
     EdgePreservingDecomposition.cc
     fast_demo.cc
     ffmanager.cc
+    filmhalation.cc
+    filmhalationtables.cc
     filmnegativeproc.cc
+    stuckpixelmemory.cc
     flatcurves.cc
     FTblockDN.cc
     gamutwarning.cc
@@ -101,6 +107,7 @@ set(RTENGINESOURCEFILES
     munselllch.cc
     myfile.cc
     panasonic_decoders.cc
+    partnerdepthstore.cc
     partnerimagestore.cc
     partnermaskstore.cc
     pdaflinesfilter.cc

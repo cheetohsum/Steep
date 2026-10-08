@@ -128,7 +128,7 @@ EDITOR_EDGEGRIP_RIGHT;Click to show or hide the <b>tool panel</b>
 EDITOR_FILMSTRIP_SIZE;Filmstrip size
 EDITOR_FILMSTRIP_SIZE_HINT;Right-click: adjust filmstrip thumbnail size
 EDITOR_FILTER_SEARCH_PLACEHOLDER;Search
-EDITOR_FILTER_TOOLTIP;Show/hide filmstrip filter bar
+EDITOR_FILTER_TOOLTIP;Show/hide filmstrip filter bar\nThe number in the corner counts the filters that are on.
 EDIT_PIPETTE_TOOLTIP;To add an adjustment point to the curve, hold the Ctrl key while left-clicking the desired spot in the image preview.\nTo adjust the point, hold the Ctrl key while left-clicking the corresponding area in the preview, then let go of Ctrl (unless you desire fine control) and while still holding the left mouse button move the mouse up or down to move that point up or down in the curve.
 ERROR_MSG_METADATA_VALUE;Metadata: error setting %1 to %2
 EXIFFILTER_APERTURE;Aperture
@@ -325,6 +325,7 @@ FILEBROWSER_FILETYPE_SELECTALL;Select All
 FILEBROWSER_FILETYPE_DEFAULT;Use as default
 FILEBROWSER_FILETYPE_DEFAULT_TOOLTIP;Use this file type selection when Steep starts
 FILEBROWSER_FILETYPE_TOOLTIP;Show only specific file types
+FILEBROWSER_FILTERBAR_TOOLTIP;Show/hide the filter bar\nThe number in the corner counts the filters that are on.
 FILEBROWSER_SHOWNOTTRASHHINT;Show only images not in trash.
 FILEBROWSER_SHOWORIGINALHINT;Show only original images.\n\nWhen several images exist with the same filename but different extensions, the one considered original is the one whose extension is nearest the top of the parsed extensions list in Preferences > File Browser > Parsed Extensions.
 FILEBROWSER_SHOWRANK1HINT;Show images ranked as 1-star.\nShortcut: <b>Shift-1</b>
@@ -1741,6 +1742,7 @@ HISTORY_MSG_FILMPRESETS_PUSHPULL;Film Presets - Push/Pull
 HISTORY_MSG_FILMPRESETS_PROCESS;Film Presets - Process
 HISTORY_MSG_FILMPRESETS_OUTPUT;Film Presets - Output
 HISTORY_MSG_FILMPRESETS_FORMAT;Film Presets - Format
+HISTORY_MSG_FILMPRESETS_LENS;Film Presets - Lens
 HISTORY_MSG_FILMPRESETS_CONTRAST;Film Presets - Contrast
 HISTORY_MSG_FILMPRESETS_SATURATION;Film Presets - Saturation
 HISTORY_MSG_FILMPRESETS_WARMTH;Film Presets - Warmth
@@ -1968,6 +1970,8 @@ HISTORY_MSG_SOFTLIGHT_STRENGTH;Soft light - Strength
 HISTORY_MSG_SPOT;Spot removal
 HISTORY_MSG_SPOT_ENTRY;Spot removal - Point modif.
 HISTORY_MSG_SPOT_METHOD;Spot method
+HISTORY_MSG_STUCKPIX;Stuck pixels
+HISTORY_MSG_STUCKPIX_SENSITIVITY;Stuck pixels - Sensitivity
 HISTORY_MSG_TEMPOUT;CAM02 automatic temperature
 HISTORY_MSG_THRESWAV;Balance threshold
 HISTORY_MSG_TM_FATTAL_ANCHOR;DRC - Anchor
@@ -3418,6 +3422,11 @@ TP_FILMPRESETS_OUTPUT_PROJECTION;Projection
 TP_FILMPRESETS_OUTPUT_CINEMA;Cinema Print
 TP_FILMPRESETS_FORMAT;Format
 TP_FILMPRESETS_FORMAT_LARGE;Large Format
+TP_FILMPRESETS_LENS;Lens
+TP_FILMPRESETS_LENS_RANGEFINDER;Rangefinder
+TP_FILMPRESETS_LENS_SLR;SLR
+TP_FILMPRESETS_LENS_TELECENTRIC;Telecentric
+TP_FILMPRESETS_LENS_TOOLTIP;How the lens that took the picture sends light to the film's corners, which shapes halation there.\n\n<b>SLR</b>: the rear of the lens sits well in front of the film; towards the corners, halos lean gently outwards.\n<b>Rangefinder</b>: wide rangefinder lenses reach close to the film, so light hits the corners at a steep angle and halos lean hard outwards.\n<b>Telecentric</b>: light arrives straight on everywhere; halos stay round.\n\nModel V5 only.
 TP_FILMPRESETS_EXPOSURE;Film Exposure
 TP_FILMPRESETS_PUSHPULL;Push / Pull
 TP_FILMPRESETS_CONTRAST;Contrast
@@ -5001,6 +5010,10 @@ TP_PREPROCESS_LINEDENOISE_DIRECTION_PDAF_LINES;Horizontal only on PDAF rows
 TP_PREPROCESS_LINEDENOISE_DIRECTION_VERTICAL;Vertical
 TP_PREPROCESS_NO_FOUND;None found
 TP_PREPROCESS_PDAFLINESFILTER;PDAF lines filter
+TP_PREPROCESS_STUCKPIX;Remove stuck pixels
+TP_PREPROCESS_STUCKPIX_SENSITIVITY;Stuck pixel sensitivity
+TP_PREPROCESS_STUCKPIX_SENSITIVITY_TOOLTIP;Higher also catches fainter stuck pixels.\nLower it if a tiny, sharply focused coloured light (a distant red LED, say) goes missing: in a single photo such a light can look exactly like a stuck pixel.
+TP_PREPROCESS_STUCKPIX_TOOLTIP;Finds sensor pixels that are stuck bright, the tiny dots that show up as pure <b>red</b>, <b>green</b> or <b>blue</b>, and fills them in from their neighbours before the colours are worked out.\n\nA dot only counts as stuck when it outshines every nearby pixel of its own colour while the other colours around it stay dark. Stars, catchlights and fine detail come through the lens and light up their neighbours too, so they are left alone.\n\nIt also learns your camera: a pixel found stuck in two separate sessions is fixed in every photo from that camera, even when too faint to spot on its own, and once your camera is well known, dots that look more like tiny coloured lights are left alone.\n\nRaw files only.
 TP_PREPROCWB_LABEL;Preprocess White Balance
 TP_PREPROCWB_MODE;Mode
 TP_PREPROCWB_MODE_AUTO;Auto
@@ -5754,3 +5767,79 @@ ZOOMPANEL_ZOOMMENU;Zoom
 ZOOMPANEL_ZOOMOUT;Zoom Out\nShortcut: <b>-</b>
 //TP_WBALANCE_ITCWBNOPURPLE_TOOLTIP;By default when "Inpaint opposed" is activated, purple colors are not taken into account. However, if the image does not need highlight reconstruction, or if this image naturally contains purple tints (flowers, etc.), it may be necessary to deactivate, to take into account all the colors.
 //TP_WBALANCE_ITCWB_FORCED;Forces use of the entire CIE diagram
+
+# Photo collection tags
+TAGS_EDIT;Edit photo tags…
+TAGS_APPLY;Apply tags
+TAGS_SELECTION;%1 selected photos
+TAGS_EDIT_HINT;Checked tags apply to every selected photo. A dash means only some photos have that tag; leave it unchanged to preserve individual tags. Uncheck to remove a tag.
+TAGS_SEARCH;Search tags or collection themes
+TAGS_NEW_NAME;Create and add a new tag
+TAGS_NEW_DESCRIPTION;Collection idea / description (optional)
+TAGS_FILTER;Tags
+TAGS_FILTER_COUNT;Tags · %1
+TAGS_FILTER_HINT;Filter by collection tags. Choose any or all; combine with stars, flags and file types.
+TAGS_MATCH_ALL;Match every selected tag
+TAGS_UNTAGGED;Untagged photos
+TAGS_CLEAR_FILTER;Clear tag filter
+TAGS_NO_MATCHES;No matching tags. Use Edit photo tags to create one.
+TAGS_SAVE_ERROR;Could not save photo tags
+TAGS_EDIT_VISIBLE;Tag visible photos…
+TAGS_EDIT_LAYERS;Tag chosen layers…
+TAGS_ALBUM_COUNT;%1 of %2 photos
+TAGS_SMART_FIELD;Photo tag
+TAGS_MENU;Edit photo tags
+TAGS_MANAGE;Create tags / edit selection…
+TAGS_RECENT;Recently applied tags
+TAGS_RECENT_HINT;Recently applied tags — add to every selected photo
+TAGS_REPEAT_LAST;Repeat last tag set
+TAGS_QUICK_HINT;Click to add to the selection. A checked tag can be removed; a dash adds it to the remaining photos.
+TAGS_USAGE_HINT;Counts show tagged photos in this selection and across your entire tag library, including other folders.
+TAGS_USAGE_COUNT;%1/%2 selected · %3 total
+TAGS_DELETE;Delete tag
+TAGS_UNDO_DELETE;Undo deletion
+TAGS_DELETE_HINT;Deletion takes effect when you click Apply tags. It removes the tag from every photo in your libraries. Undo deletion or Cancel keeps it.
+HISTORY_COMPOSITING;Compositing
+DE_MOTION;Motion
+DE_MOTION_ADD_TOOLTIP;Add a motion copy beneath the first exposure and use adaptive light/dark blending on the sharp layer
+DE_MOTION_OFF;Still
+DE_MOTION_LINE;Line
+DE_MOTION_WAVE;Wave
+DE_MOTION_ZIGZAG;Zigzag
+DE_MOTION_SWIRL;Swirl
+DE_MOTION_ZOOM_IN;Zoom in
+DE_MOTION_ZOOM_OUT;Zoom out
+DE_MOTION_HANDHELD;Handheld
+DE_MOTION_WANDER;Wander
+DE_MOTION_RANDOMIZE;Randomize motion path
+DE_MOTION_SHUTTER;Shutter (s)
+DE_MOTION_SHUTTER_TOOLTIP;Simulated shutter time in seconds. Longer exposures travel farther; brightness remains compensated.
+DE_MOTION_SPEED;Travel / sec
+DE_MOTION_SPEED_TOOLTIP;Camera-path travel as a percentage of the source width per second
+DE_MOTION_DIRECTION;Direction
+DE_MOTION_NOISE;Path noise
+DE_MOTION_NOISE_TOOLTIP;Irregularity added to the camera path, not image grain. Randomize creates a new repeatable path.
+DE_MOTION_COMPLEXITY;Complexity
+DE_MOTION_FAILED;Motion preview could not be rendered
+TP_DOUBLEEXPOSURE_BLEND_ADAPTIVE;Adaptive light / dark
+TP_DOUBLEEXPOSURE_DEPTH;Depth range
+TP_DOUBLEEXPOSURE_DEPTH_TOOLTIP;Confine this exposure by how far away things are in its own picture, from an estimated depth map. Warm is near, cool is far; the depth is relative within this photograph only.
+TP_DOUBLEEXPOSURE_DEPTH_ENABLE;Limit by depth
+TP_DOUBLEEXPOSURE_DEPTH_ENABLE_TOOLTIP;Weight the exposure by scene depth. The map is estimated the first time it is needed. The four markers set where the kept range starts and ends and how softly each end fades.
+TP_DOUBLEEXPOSURE_DEPTH_INVERT;Invert
+TP_DOUBLEEXPOSURE_DEPTH_INVERT_TOOLTIP;Keep what lies outside the range instead of inside it, with the same fades.
+TP_DOUBLEEXPOSURE_DEPTH_RANGE_TOOLTIP;Filled curve: how much of the picture sits at each depth. Light curve: how bright it is there. Drag the four markers: near fade start, near full, far full, far fade end.
+TP_DOUBLEEXPOSURE_DEPTH_NEAR;Near fade shape
+TP_DOUBLEEXPOSURE_DEPTH_FAR;Far fade shape
+TP_DOUBLEEXPOSURE_DEPTH_SHAPE_TOOLTIP;How the fade crosses its band: 1 is a smooth transition, below 1 reaches full strength early, above 1 holds back until the far side.
+TP_DOUBLEEXPOSURE_DEPTH_WORKING;Estimating depth...
+TP_DOUBLEEXPOSURE_DEPTH_UNAVAILABLE;No depth model installed
+TP_DOUBLEEXPOSURE_PREVIEW_FAILED;The preview could not be rendered
+TP_DOUBLEEXPOSURE_BLEND_NORMAL;Place (normal)
+TP_DOUBLEEXPOSURE_SUBJECT_POINTS;Click to select
+TP_DOUBLEEXPOSURE_PICK;Pick
+TP_DOUBLEEXPOSURE_PICK_TOOLTIP;Click on the preview to select what the exposure should keep: left click includes, right click (or Shift+click) excludes. Each click refines the selection; Refine opens the brush and lasso over it.
+TP_DOUBLEEXPOSURE_ASEDITED;As edited
+TP_DOUBLEEXPOSURE_ASEDITED_TOOLTIP;Use this photograph as its own edits render it (crop, tone, film look) instead of a neutral camera decode. Its own double exposure is not applied.
+MASKPAINT_LASSO;Lasso
+MASKPAINT_LASSO_TOOLTIP;Draw around an area to include or exclude it whole; the outline closes back to where it started when you release.

@@ -91,6 +91,7 @@ FilmPresets::FilmPresets() :
     EvFilmPresetsProcess      = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_PROCESS");
     EvFilmPresetsOutput       = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_OUTPUT");
     EvFilmPresetsFormat       = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_FORMAT");
+    EvFilmPresetsLens         = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_LENS");
     EvFilmPresetsContrast     = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_CONTRAST");
     EvFilmPresetsSaturation   = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_SATURATION");
     EvFilmPresetsWarmth       = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_WARMTH");
@@ -250,15 +251,23 @@ FilmPresets::FilmPresets() :
     formatCombo_->append("35mm", "35 mm");
     formatCombo_->append("120", "120");
     formatCombo_->append("large", M("TP_FILMPRESETS_FORMAT_LARGE"));
+    // Where the lens puts its exit pupil sets how obliquely light reaches the
+    // film's corners, and so how hard the halo leans outwards there (V5).
+    lensCombo_ = Gtk::manage(new Gtk::ComboBoxText());
+    lensCombo_->append("slr", M("TP_FILMPRESETS_LENS_SLR"));
+    lensCombo_->append("rangefinder", M("TP_FILMPRESETS_LENS_RANGEFINDER"));
+    lensCombo_->append("telecentric", M("TP_FILMPRESETS_LENS_TELECENTRIC"));
+    lensCombo_->set_tooltip_markup(M("TP_FILMPRESETS_LENS_TOOLTIP"));
 
-    Gtk::ComboBoxText* labCombos[] = {modelCombo_, processCombo_, outputCombo_, formatCombo_};
+    Gtk::ComboBoxText* labCombos[] = {modelCombo_, processCombo_, outputCombo_, formatCombo_, lensCombo_};
     const char* labComboLabels[] = {
         "TP_FILMPRESETS_MODEL",
         "TP_FILMPRESETS_PROCESS",
         "TP_FILMPRESETS_OUTPUT",
-        "TP_FILMPRESETS_FORMAT"
+        "TP_FILMPRESETS_FORMAT",
+        "TP_FILMPRESETS_LENS"
     };
-    for (int row = 0; row < 4; ++row) {
+    for (int row = 0; row < 5; ++row) {
         auto* label = Gtk::manage(new Gtk::Label(M(labComboLabels[row])));
         label->set_halign(Gtk::ALIGN_START);
         labCombos[row]->set_hexpand(true);
@@ -272,6 +281,7 @@ FilmPresets::FilmPresets() :
     processCombo_->signal_changed().connect([this]() { onLabOptionChanged(EvFilmPresetsProcess, processCombo_); });
     outputCombo_->signal_changed().connect([this]() { onLabOptionChanged(EvFilmPresetsOutput, outputCombo_); });
     formatCombo_->signal_changed().connect([this]() { onLabOptionChanged(EvFilmPresetsFormat, formatCombo_); });
+    lensCombo_->signal_changed().connect([this]() { onLabOptionChanged(EvFilmPresetsLens, lensCombo_); });
 
     exposureAdj_ = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_EXPOSURE"), -4., 4., 0.1, 0.));
     pushPullAdj_ = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_PUSHPULL"), -2., 3., 0.1, 0.));
@@ -611,6 +621,7 @@ void FilmPresets::updateLabControlSensitivity()
     processCombo_->set_sensitive(filmLab);
     outputCombo_->set_sensitive(filmLab);
     formatCombo_->set_sensitive(filmLab);
+    lensCombo_->set_sensitive(modelCombo_->get_active_id() == "v5"); // the lean exists only in V5
     exposureAdj_->set_sensitive(filmLab);
     printExposureAdj_->set_sensitive(modelCombo_->get_active_id() == "v5");
     pushPullAdj_->set_sensitive(filmLab);
@@ -685,6 +696,9 @@ void FilmPresets::read(const ProcParams* pp, const ParamsEdited* pedited)
     if (!formatCombo_->set_active_id(pp->filmPresets.format)) {
         formatCombo_->set_active_id("35mm");
     }
+    if (!lensCombo_->set_active_id(pp->filmPresets.lensDesign)) {
+        lensCombo_->set_active_id("slr");
+    }
     exposureAdj_->setValue(pp->filmPresets.exposure);
     printExposureAdj_->setValue(pp->filmPresets.printExposure);
     pushPullAdj_->setValue(pp->filmPresets.pushPull);
@@ -738,6 +752,7 @@ void FilmPresets::write(ProcParams* pp, ParamsEdited* pedited)
     pp->filmPresets.process = processCombo_->get_active_id();
     pp->filmPresets.output = outputCombo_->get_active_id();
     pp->filmPresets.format = formatCombo_->get_active_id();
+    pp->filmPresets.lensDesign = lensCombo_->get_active_id();
 
     pp->filmPresets.strength = strength->getValue();
     pp->filmPresets.contrast = contrast->getValue();
@@ -775,6 +790,7 @@ void FilmPresets::write(ProcParams* pp, ParamsEdited* pedited)
         pedited->filmPresets.process = true;
         pedited->filmPresets.output = true;
         pedited->filmPresets.format = true;
+        pedited->filmPresets.lensDesign = true;
         pedited->filmPresets.strength = strength->getEditedState();
         pedited->filmPresets.contrast = contrast->getEditedState();
         pedited->filmPresets.saturation = saturation->getEditedState();

@@ -75,7 +75,8 @@ float brushFalloff(float distance, float radius, float hardness)
 
 bool MaskStroke::operator ==(const MaskStroke& other) const
 {
-    return add == other.add
+    return kind == other.kind
+        && add == other.add
         && radius == other.radius
         && hardness == other.hardness
         && strength == other.strength
@@ -96,8 +97,13 @@ std::string MaskPaint::encode() const
             out += ';';
         }
 
+        // a/s brush, l/x lasso, p/n prompt point: an old reader drops what
+        // it does not know rather than misreading it.
+        const char kind = stroke.kind == MaskStroke::Kind::LASSO ? (stroke.add ? 'l' : 'x')
+                          : stroke.kind == MaskStroke::Kind::POINT ? (stroke.add ? 'p' : 'n')
+                          : (stroke.add ? 'a' : 's');
         std::snprintf(buffer, sizeof(buffer), "%c,%.4f,%.3f,%.3f",
-                      stroke.add ? 'a' : 's', stroke.radius, stroke.hardness, stroke.strength);
+                      kind, stroke.radius, stroke.hardness, stroke.strength);
         out += buffer;
 
         for (const auto& point : stroke.points) {
@@ -130,7 +136,11 @@ MaskPaint MaskPaint::decode(const std::string& text)
         }
 
         MaskStroke stroke;
-        stroke.add = fields[0] != "s";
+        const std::string& kind = fields[0];
+        stroke.add = kind != "s" && kind != "x" && kind != "n";
+        stroke.kind = kind == "l" || kind == "x" ? MaskStroke::Kind::LASSO
+                      : kind == "p" || kind == "n" ? MaskStroke::Kind::POINT
+                      : MaskStroke::Kind::BRUSH;
 
         try {
             stroke.radius = std::stod(fields[1]);
@@ -152,6 +162,45 @@ MaskPaint MaskPaint::decode(const std::string& text)
     return paint;
 }
 
+std::vector<std::array<float, 3>> MaskPaint::prompts() const
+{
+    std::vector<std::array<float, 3>> result;
+
+    for (const auto& stroke : strokes) {
+        if (stroke.kind == MaskStroke::Kind::POINT && !stroke.points.empty()) {
+            result.push_back({{static_cast<float>(stroke.points.front().x),
+                               static_cast<float>(stroke.points.front().y),
+                               stroke.add ? 1.f : 0.f}});
+        }
+    }
+
+    return result;
+}
+
+bool MaskPaint::hasPrompts() const
+{
+    for (const auto& stroke : strokes) {
+        if (stroke.kind == MaskStroke::Kind::POINT && !stroke.points.empty()) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+MaskPaint MaskPaint::paintOnly() const
+{
+    MaskPaint result;
+
+    for (const auto& stroke : strokes) {
+        if (stroke.kind != MaskStroke::Kind::POINT) {
+            result.strokes.push_back(stroke);
+        }
+    }
+
+    return result;
+}
+
 unsigned int MaskPaint::hash() const
 {
     // FNV-1a over the encoded form: whatever round-trips through the pp3 is
@@ -167,7 +216,99 @@ unsigned int MaskPaint::hash() const
     return h;
 }
 
+namespace
+{
+
+// A lasso is the polygon its points close: full strength inside, falling
+// away over `radius` outside the outline so a hand-drawn edge need not be
+// pixel-exact. Three points are the least that enclose anything.
+void applyLasso(const MaskStroke& stroke, array2D<float>& mask, int width, int height,
+                int originX, int originY, int tileWidth, int tileHeight, bool multiThread)
+{
+    if (stroke.points.size() < 3) {
+        return;
+    }
+
+    const float shortSide = static_cast<float>(std::min(width, height));
+    const float rim = static_cast<float>(stroke.radius) * shortSide;
+    const float strength = std::min(std::max(static_cast<float>(stroke.strength), 0.f), 1.f);
+    const size_t n = stroke.points.size();
+    std::vector<float> px(n), py(n);
+    float minX = static_cast<float>(width), minY = static_cast<float>(height), maxX = 0.f, maxY = 0.f;
+
+    for (size_t i = 0; i < n; ++i) {
+        px[i] = static_cast<float>(stroke.points[i].x) * width;
+        py[i] = static_cast<float>(stroke.points[i].y) * height;
+        minX = std::min(minX, px[i]);
+        maxX = std::max(maxX, px[i]);
+        minY = std::min(minY, py[i]);
+        maxY = std::max(maxY, py[i]);
+    }
+
+    const int x0 = std::max(originX, static_cast<int>(std::floor(minX - rim)));
+    const int x1 = std::min(originX + tileWidth - 1, static_cast<int>(std::ceil(maxX + rim)));
+    const int y0 = std::max(originY, static_cast<int>(std::floor(minY - rim)));
+    const int y1 = std::min(originY + tileHeight - 1, static_cast<int>(std::ceil(maxY + rim)));
+
+    if (x1 < x0 || y1 < y0) {
+        return;
+    }
+
+#ifdef _OPENMP
+    #pragma omp parallel for if(multiThread)
+#endif
+    for (int y = y0; y <= y1; ++y) {
+        for (int x = x0; x <= x1; ++x) {
+            const float fx = x + 0.5f;
+            const float fy = y + 0.5f;
+            bool inside = false;
+
+            for (size_t i = 0, j = n - 1; i < n; j = i++) {
+                if ((py[i] > fy) != (py[j] > fy)
+                        && fx < (px[j] - px[i]) * (fy - py[i]) / (py[j] - py[i]) + px[i]) {
+                    inside = !inside;
+                }
+            }
+
+            float weight = inside ? 1.f : 0.f;
+
+            if (!inside && rim > 0.f) {
+                float nearest = rim;
+
+                for (size_t i = 0, j = n - 1; i < n; j = i++) {
+                    nearest = std::min(nearest, distanceToSegment(fx, fy, px[j], py[j], px[i], py[i]));
+                }
+
+                weight = nearest < rim ? 1.f - nearest / rim : 0.f;
+                weight *= weight * (3.f - 2.f * weight);
+            }
+
+            weight *= strength;
+
+            if (weight <= 0.f) {
+                continue;
+            }
+
+            float& value = mask[y - originY][x - originX];
+
+            if (stroke.add) {
+                value = std::max(value, weight);
+            } else {
+                value = std::min(value, 1.f - weight);
+            }
+        }
+    }
+}
+
+} // namespace
+
 void MaskPaint::apply(array2D<float>& mask, int width, int height, bool multiThread) const
+{
+    applyRegion(mask, width, height, 0, 0, width, height, multiThread);
+}
+
+void MaskPaint::applyRegion(array2D<float>& mask, int width, int height,
+                            int originX, int originY, int tileWidth, int tileHeight, bool multiThread) const
 {
     if (strokes.empty() || width <= 0 || height <= 0) {
         return;
@@ -178,7 +319,12 @@ void MaskPaint::apply(array2D<float>& mask, int width, int height, bool multiThr
     const float shortSide = static_cast<float>(std::min(width, height));
 
     for (const auto& stroke : strokes) {
-        if (stroke.points.empty()) {
+        if (stroke.points.empty() || stroke.kind == MaskStroke::Kind::POINT) {
+            continue;
+        }
+
+        if (stroke.kind == MaskStroke::Kind::LASSO) {
+            applyLasso(stroke, mask, width, height, originX, originY, tileWidth, tileHeight, multiThread);
             continue;
         }
 
@@ -205,10 +351,10 @@ void MaskPaint::apply(array2D<float>& mask, int width, int height, bool multiThr
             maxY = std::max(maxY, py[i]);
         }
 
-        const int x0 = std::max(0, static_cast<int>(std::floor(minX - radius)));
-        const int x1 = std::min(width - 1, static_cast<int>(std::ceil(maxX + radius)));
-        const int y0 = std::max(0, static_cast<int>(std::floor(minY - radius)));
-        const int y1 = std::min(height - 1, static_cast<int>(std::ceil(maxY + radius)));
+        const int x0 = std::max(originX, static_cast<int>(std::floor(minX - radius)));
+        const int x1 = std::min(originX + tileWidth - 1, static_cast<int>(std::ceil(maxX + radius)));
+        const int y0 = std::max(originY, static_cast<int>(std::floor(minY - radius)));
+        const int y1 = std::min(originY + tileHeight - 1, static_cast<int>(std::ceil(maxY + radius)));
 
         if (x1 < x0 || y1 < y0) {
             continue;
@@ -244,7 +390,7 @@ void MaskPaint::apply(array2D<float>& mask, int width, int height, bool multiThr
                     continue;
                 }
 
-                float& value = mask[y][x];
+                float& value = mask[y - originY][x - originX];
 
                 if (stroke.add) {
                     value = std::max(value, weight);

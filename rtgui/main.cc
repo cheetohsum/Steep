@@ -229,6 +229,7 @@ bool init_rt()
 
 void cleanup_rt()
 {
+
     rtengine::cleanup();
 }
 

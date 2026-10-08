@@ -469,8 +469,13 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                 r.avoidgamutMethod = 4;
             }
 
-            // Calculate spot size and center position according to preview area
-            if (provider && !batchMode) {
+            // Calculate spot size and center position according to preview area.
+            // Not for a gradient: it stays centred on the frame with the
+            // frame-fitted extents set above, whatever part of the picture
+            // is on screen. Sized to the view it came out smaller than the
+            // frame when zoomed in, and anything outside its box gets no
+            // effect at all.
+            if (provider && !batchMode && newSpot->shape != "GRAD") {
                 provider->getImageSize(imW, imH);
                 provider->getPreviewCenterPos(prX, prY);
                 provider->getPreviewSize(prW, prH);
@@ -487,10 +492,9 @@ void Locallab::write(rtengine::procparams::ProcParams* pp, ParamsEdited* pedited
                 }
             }
 
-            if (requestedShape == 2) {
-                newSpot->loc = {3000, 3000, 3000, 3000};
-                newSpot->transit = 100.;
-            }
+            // A gradient used to be overwritten here to 3000 on every side
+            // with Softness 100, undoing the frame-fitted 1000 above. At the
+            // sliders' limit its bars could not be dragged inwards at all.
 
             r.locX = newSpot->loc.at(0);
             r.locXL = newSpot->loc.at(1);

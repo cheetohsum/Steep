@@ -71,7 +71,7 @@ using rtengine::TMatrix;
 Crop::Crop(ImProcCoordinator* parent, EditDataProvider *editDataProvider, bool isDetailWindow)
     : PipetteBuffer(editDataProvider), origCrop(nullptr), spotCrop(nullptr), laboCrop(nullptr), labnCrop(nullptr), filmLabTapCrop(nullptr),
       cropImg(nullptr), shbuf_real(nullptr), transCrop(nullptr), cieCrop(nullptr), shbuffer(nullptr),
-      updating(false), newUpdatePending(false), skip(10),
+      skip(10),
       cropx(0), cropy(0), cropw(-1), croph(-1),
       trafx(0), trafy(0), trafw(-1), trafh(-1),
       rqcropx(0), rqcropy(0), rqcropw(-1), rqcroph(-1),
@@ -1622,7 +1622,8 @@ void Crop::update(int todo)
         }
 
         if (params.grain.enabled) {
-            parent->ipf.grainEffect(labnCrop, params.grain, parent->fw, parent->fh, trafx, trafy, std::max(skip, 1));
+            parent->ipf.grainEffect(labnCrop, params.grain, parent->fw, parent->fh, trafx, trafy, std::max(skip, 1),
+                                    &params.filmPresets);
         }
 
 
@@ -1926,6 +1927,7 @@ void Crop::update(int todo)
 
         }
         
+        traceStage("detail-before-film");
         {
             FilmLabContext filmLabContext(
                 trafx,
@@ -1938,6 +1940,7 @@ void Crop::update(int todo)
             filmLabContext.rgbSnapshot = laboCrop;
             parent->ipf.filmPresets(labnCrop, params.filmPresets, filmLabContext);
         }
+        traceStage("detail-film-lab");
         parent->ipf.softLight(labnCrop, params.softlight);
 
         if (params.lightEffects.enabled) {
@@ -2547,32 +2550,19 @@ bool Crop::setCropSizes(const int cropX, const int cropY, const int cropW, const
   */
 bool Crop::tryUpdate()
 {
-    bool needsNewThread = true;
-
-    if (updating) {
-        // tells to the updater thread that a new update is pending
-        newUpdatePending = true;
-        // no need for a new thread, the current one will do the job
-        needsNewThread = false;
-    } else
-        // the crop is now being updated ...well, when fullUpdate will be called
-    {
-        updating = true;
-    }
-
-    return needsNewThread;
+    return updateState.request();
 }
 
 void Crop::startUpdate()
 {
     if (!parent->scheduleCropUpdate(this)) {
-        updating = false;
+        updateState.cancel();
     }
 }
 
 /* @brief Handles Crop updating in its own thread
  *
- * This method will cycle updates as long as Crop::newUpdatePending will be true. During the processing,
+ * This method will cycle updates while a new request is pending. During the processing,
  * intermediary update will be automatically flushed by Crop::tryUpdate.
  *
  * This method is called when the visible part of the crop has changed (resize, zoom, etc..), so it needs a full update
@@ -2587,7 +2577,7 @@ void Crop::fullUpdate()
     // after it has set destroying — the Crop and parent may be freed
     // as soon as we release the lock.
     if (parent->destroying) {
-        updating = false;
+        updateState.cancel();
         parent->updaterThreadStart.unlock();
         return;
     }
@@ -2597,28 +2587,17 @@ void Crop::fullUpdate()
         progress->setProgressState(true);
     }
 
-    // If there are more update request, the following WHILE will collect it
-    newUpdatePending = true;
-
-    // An escaping exception used to skip everything below: updaterThreadStart
-    // stayed locked (so startProcessing/scheduleCropUpdate blocked forever),
-    // `updating` stayed true (so tryUpdate kept deferring to an updater that
-    // no longer existed, and this crop never rendered again), and the progress
-    // bracket never closed. Recover instead — the same contract
-    // ImProcCoordinator::process() applies around updatePreviewImage.
-    try {
-        while (newUpdatePending) {
-            newUpdatePending = false;
+    // Release worker ownership in the same critical section that checks for
+    // a final request, so a zoom/pan arriving at completion cannot get lost.
+    while (updateState.takePending()) {
+        try {
             update(ALL);
+        } catch (const std::exception& error) {
+            std::fprintf(stderr, "Crop update recovered from exception: %s\n", error.what());
+        } catch (...) {
+            std::fprintf(stderr, "Crop update recovered from unknown exception\n");
         }
-    } catch (const std::exception& error) {
-        std::fprintf(stderr, "Crop update recovered from exception: %s\n", error.what());
-    } catch (...) {
-        std::fprintf(stderr, "Crop update recovered from unknown exception\n");
     }
-
-    newUpdatePending = false;
-    updating = false;  // end of crop update
 
     ProgressListener* const progressDone = parent->plistener.load();
     if (progressDone) {

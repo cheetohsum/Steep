@@ -149,6 +149,8 @@ set(NONCLISOURCEFILES
     batchtoolpanelcoord.cc
     bqentryupdater.cc
     browserfilter.cc
+    phototags.cc
+    phototagwidgets.cc
     cacheimagedata.cc
     cachemanager.cc
     clipboard.cc
@@ -356,12 +358,36 @@ target_link_libraries(rth-cli PRIVATE
 
 option(STEEP_BUILD_PROFILE_TESTS "Build native film recipe regression tests" OFF)
 if(STEEP_BUILD_PROFILE_TESTS)
+    add_executable(steep-mask-sampling-tests ../tools/mask_sampling_tests.cc ../rtengine/maskpaint.cc)
+    target_include_directories(steep-mask-sampling-tests PRIVATE ${PROJECT_SOURCE_DIR})
+    target_link_libraries(steep-mask-sampling-tests PRIVATE PkgConfig::GLIBMM)
     find_package(Threads REQUIRED)
+    add_executable(steep-crop-update-tests ../tools/crop_update_state_tests.cc)
+    target_include_directories(steep-crop-update-tests PRIVATE ${PROJECT_SOURCE_DIR})
+    target_link_libraries(steep-crop-update-tests PRIVATE Threads::Threads)
     add_executable(steep-interactive-refresh-tests
         ../tools/interactive_refresh_tests.cc ../rtengine/refreshmap.cc)
     target_include_directories(steep-interactive-refresh-tests PRIVATE ${PROJECT_SOURCE_DIR})
     add_executable(steep-gradient-geometry-tests ../tools/gradient_geometry_tests.cc)
     target_include_directories(steep-gradient-geometry-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    add_executable(steep-stuck-pixel-tests ../tools/stuck_pixel_tests.cc)
+    add_executable(steep-stuck-pixel-memory-tests ../tools/stuck_pixel_memory_tests.cc ../rtengine/stuckpixelmemory.cc)
+    target_link_libraries(steep-stuck-pixel-memory-tests PRIVATE PkgConfig::GTKMM)
+    # Offline halation kernel tracer; --check-tables fails if the committed
+    # rtengine/filmhalationtables.cc no longer matches the tracer.
+    add_executable(steep-halation-tracer ../tools/halation_tracer.cc ../rtengine/filmhalationtables.cc)
+    target_compile_definitions(steep-halation-tracer PRIVATE HALATION_TABLES_LINKED)
+    find_package(OpenMP)
+    if(OpenMP_CXX_FOUND)
+        target_link_libraries(steep-halation-tracer PRIVATE OpenMP::OpenMP_CXX)
+    endif()
+    add_executable(steep-halation-convolve-tests ../tools/halation_convolve_tests.cc
+        ../rtengine/filmhalation.cc ../rtengine/filmhalationtables.cc threadutils.cc)
+    target_include_directories(steep-halation-convolve-tests PRIVATE ${PROJECT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(steep-halation-convolve-tests PRIVATE PkgConfig::FFTW3F PkgConfig::GTKMM)
+    if(OpenMP_CXX_FOUND)
+        target_link_libraries(steep-halation-convolve-tests PRIVATE OpenMP::OpenMP_CXX)
+    endif()
     add_executable(steep-thumbnail-size-tests ../tools/thumbnail_size_snapshot_tests.cc)
     target_include_directories(steep-thumbnail-size-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_link_libraries(steep-thumbnail-size-tests PRIVATE Threads::Threads)
@@ -370,6 +396,15 @@ if(STEEP_BUILD_PROFILE_TESTS)
     target_link_libraries(steep-histogram-style-tests PRIVATE PkgConfig::GTKMM)
     set(PROFILE_TEST_SOURCES ${CLISOURCEFILES})
     list(REMOVE_ITEM PROFILE_TEST_SOURCES main-cli.cc)
+    add_executable(steep-de-motion-tests ../tools/double_exposure_motion_tests.cc ${PROFILE_TEST_SOURCES})
+    add_dependencies(steep-de-motion-tests UpdateInfo)
+    target_include_directories(steep-de-motion-tests PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR} ${PROJECT_SOURCE_DIR} ${CMAKE_BINARY_DIR}/rtgui ${EXTRA_INCDIR})
+    target_link_directories(steep-de-motion-tests PRIVATE ${EXTRA_LIBDIR})
+    target_compile_definitions(steep-de-motion-tests PRIVATE CLIVERSION)
+    rt_setup_target(steep-de-motion-tests)
+    target_link_libraries(steep-de-motion-tests PRIVATE rtengine PkgConfig::GTKMM ${EXTRA_LIB_RTGUI})
+
     add_executable(steep-profile-tests ../tools/film_look_tests.cc ${PROFILE_TEST_SOURCES})
     add_dependencies(steep-profile-tests UpdateInfo)
     target_include_directories(steep-profile-tests PRIVATE

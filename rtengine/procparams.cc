@@ -3444,6 +3444,7 @@ FilmPresetsParams::FilmPresetsParams() :
     process("auto"),
     output("scan"),
     format("35mm"),
+    lensDesign("slr"),
     strength(100),
     contrast(0),
     saturation(0),
@@ -3488,6 +3489,7 @@ bool FilmPresetsParams::operator==(const FilmPresetsParams &other) const
         && process == other.process
         && output == other.output
         && format == other.format
+        && lensDesign == other.lensDesign
         && strength == other.strength
         && contrast == other.contrast
         && saturation == other.saturation
@@ -3570,6 +3572,7 @@ bool DehazeParams::operator !=(const DehazeParams& other) const
 
 DoubleExposureParams::Layer::Layer() :
     path(""),
+    asEdited(false),
     enabled(true),
     ev(0.0),
     opacity(100.0),
@@ -3595,6 +3598,11 @@ DoubleExposureParams::Layer::Layer() :
     maskFeather(25.0),
     maskInvert(false),
     cropToSubject(false),
+    depthEnabled(false),
+    depthRange{{0.0, 0.0, 1.0, 1.0}},
+    depthNearShape(1.0),
+    depthFarShape(1.0),
+    depthInvert(false),
     // Gate off by default: the silhouette look comes from the group's
     // highlight latitude (the film shoulder), driven by how bright the base
     // actually is, and pure addition stays order-free, as on film. The
@@ -3614,10 +3622,12 @@ bool DoubleExposureParams::Layer::operator ==(const Layer& other) const
 {
     return
         path == other.path
+        && asEdited == other.asEdited
         && enabled == other.enabled
         && ev == other.ev
         && opacity == other.opacity
         && blendMode == other.blendMode
+        && motion == other.motion
         && compare == other.compare
         && softness == other.softness
         && offsetX == other.offsetX
@@ -3638,6 +3648,11 @@ bool DoubleExposureParams::Layer::operator ==(const Layer& other) const
         && maskInvert == other.maskInvert
         && cropToSubject == other.cropToSubject
         && maskPaint == other.maskPaint
+        && depthEnabled == other.depthEnabled
+        && depthRange == other.depthRange
+        && depthNearShape == other.depthNearShape
+        && depthFarShape == other.depthFarShape
+        && depthInvert == other.depthInvert
         && gateSource == other.gateSource
         && gateLow == other.gateLow
         && gateHigh == other.gateHigh
@@ -3908,7 +3923,9 @@ RAWParams::RAWParams() :
     expos(1.0),
     hotPixelFilter(false),
     deadPixelFilter(false),
-    hotdeadpix_thresh(100)
+    hotdeadpix_thresh(100),
+    stuckPixelFix(true),
+    stuckPixelSensitivity(50)
 {
 }
 
@@ -3935,7 +3952,9 @@ bool RAWParams::operator ==(const RAWParams& other) const
         && preprocessWB == other.preprocessWB
         && hotPixelFilter == other.hotPixelFilter
         && deadPixelFilter == other.deadPixelFilter
-        && hotdeadpix_thresh == other.hotdeadpix_thresh;
+        && hotdeadpix_thresh == other.hotdeadpix_thresh
+        && stuckPixelFix == other.stuckPixelFix
+        && stuckPixelSensitivity == other.stuckPixelSensitivity;
 }
 
 bool RAWParams::operator !=(const RAWParams& other) const
@@ -4639,9 +4658,11 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
                 const std::string prefix = "Layer" + std::to_string(i + 1);
                 keyFile.set_string("Double Exposure", prefix + "Path", doubleExposure.layers[i].path);
                 keyFile.set_boolean("Double Exposure", prefix + "Enabled", doubleExposure.layers[i].enabled);
+                keyFile.set_boolean("Double Exposure", prefix + "AsEdited", doubleExposure.layers[i].asEdited);
                 keyFile.set_double("Double Exposure", prefix + "EV", doubleExposure.layers[i].ev);
                 keyFile.set_double("Double Exposure", prefix + "Opacity", doubleExposure.layers[i].opacity);
                 keyFile.set_integer("Double Exposure", prefix + "BlendMode", static_cast<int>(doubleExposure.layers[i].blendMode));
+                doubleExposure.layers[i].motion.save(keyFile, prefix);
                 keyFile.set_integer("Double Exposure", prefix + "Compare", static_cast<int>(doubleExposure.layers[i].compare));
                 keyFile.set_double("Double Exposure", prefix + "Softness", doubleExposure.layers[i].softness);
                 keyFile.set_double("Double Exposure", prefix + "OffsetX", doubleExposure.layers[i].offsetX);
@@ -4661,6 +4682,13 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
                 keyFile.set_double("Double Exposure", prefix + "MaskFeather", doubleExposure.layers[i].maskFeather);
                 keyFile.set_boolean("Double Exposure", prefix + "MaskInvert", doubleExposure.layers[i].maskInvert);
                 keyFile.set_boolean("Double Exposure", prefix + "CropToSubject", doubleExposure.layers[i].cropToSubject);
+                keyFile.set_boolean("Double Exposure", prefix + "DepthEnabled", doubleExposure.layers[i].depthEnabled);
+                keyFile.set_double_list("Double Exposure", prefix + "DepthRange",
+                                        std::vector<double>(doubleExposure.layers[i].depthRange.begin(),
+                                                            doubleExposure.layers[i].depthRange.end()));
+                keyFile.set_double("Double Exposure", prefix + "DepthNearShape", doubleExposure.layers[i].depthNearShape);
+                keyFile.set_double("Double Exposure", prefix + "DepthFarShape", doubleExposure.layers[i].depthFarShape);
+                keyFile.set_boolean("Double Exposure", prefix + "DepthInvert", doubleExposure.layers[i].depthInvert);
 
                 // Only written when something has been painted, so a file
                 // that has not been touched by the mask editor gains no key.
@@ -5354,6 +5382,7 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->filmPresets.process, "Film Presets", "Process", filmPresets.process, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.output, "Film Presets", "Output", filmPresets.output, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.format, "Film Presets", "Format", filmPresets.format, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.lensDesign, "Film Presets", "LensDesign", filmPresets.lensDesign, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.strength, "Film Presets", "Strength", filmPresets.strength, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.contrast, "Film Presets", "Contrast", filmPresets.contrast, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.saturation, "Film Presets", "Saturation", filmPresets.saturation, keyFile);
@@ -5459,6 +5488,8 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->raw.hotPixelFilter, "RAW", "HotPixelFilter", raw.hotPixelFilter, keyFile);
         saveToKeyfile(!pedited || pedited->raw.deadPixelFilter, "RAW", "DeadPixelFilter", raw.deadPixelFilter, keyFile);
         saveToKeyfile(!pedited || pedited->raw.hotdeadpix_thresh, "RAW", "HotDeadPixelThresh", raw.hotdeadpix_thresh, keyFile);
+        saveToKeyfile(!pedited || pedited->raw.stuckPixelFix, "RAW", "StuckPixelFix", raw.stuckPixelFix, keyFile);
+        saveToKeyfile(!pedited || pedited->raw.stuckPixelSensitivity, "RAW", "StuckPixelSensitivity", raw.stuckPixelSensitivity, keyFile);
         saveToKeyfile(!pedited || pedited->raw.bayersensor.method, "RAW Bayer", "Method", raw.bayersensor.method, keyFile);
         saveToKeyfile(!pedited || pedited->raw.bayersensor.border, "RAW Bayer", "Border", raw.bayersensor.border, keyFile);
         saveToKeyfile(!pedited || pedited->raw.bayersensor.imageNum, "RAW Bayer", "ImageNum", raw.bayersensor.imageNum + 1, keyFile);
@@ -7463,6 +7494,7 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
                     if (keyFile.has_key("Double Exposure", prefix + "Path")) {
                         DoubleExposureParams::Layer layer;
                         layer.path = keyFile.get_string("Double Exposure", prefix + "Path");
+                        layer.motion.load(keyFile, prefix);
 
                         if (keyFile.has_key("Double Exposure", prefix + "Enabled")) {
                             layer.enabled = keyFile.get_boolean("Double Exposure", prefix + "Enabled");
@@ -7479,7 +7511,7 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
                         if (keyFile.has_key("Double Exposure", prefix + "BlendMode")) {
                             const int mode = keyFile.get_integer("Double Exposure", prefix + "BlendMode");
 
-                            if (mode >= 0 && mode <= 5) {
+                            if (mode >= 0 && mode <= static_cast<int>(DoubleExposureParams::BlendMode::NORMAL)) {
                                 layer.blendMode = static_cast<DoubleExposureParams::BlendMode>(mode);
                             }
                         } else if (haveLegacyBlend) {
@@ -7568,7 +7600,7 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
                         if (keyFile.has_key("Double Exposure", prefix + "MaskClass")) {
                             const int cls = keyFile.get_integer("Double Exposure", prefix + "MaskClass");
 
-                            if (cls >= 0 && cls <= 7) {
+                            if (cls >= 0 && cls <= static_cast<int>(DoubleExposureParams::MaskClass::POINTS)) {
                                 layer.maskClass = static_cast<DoubleExposureParams::MaskClass>(cls);
                             }
                         }
@@ -7583,6 +7615,41 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
 
                         if (keyFile.has_key("Double Exposure", prefix + "CropToSubject")) {
                             layer.cropToSubject = keyFile.get_boolean("Double Exposure", prefix + "CropToSubject");
+                        }
+
+                        if (keyFile.has_key("Double Exposure", prefix + "AsEdited")) {
+                            layer.asEdited = keyFile.get_boolean("Double Exposure", prefix + "AsEdited");
+                        }
+
+                        if (keyFile.has_key("Double Exposure", prefix + "DepthEnabled")) {
+                            layer.depthEnabled = keyFile.get_boolean("Double Exposure", prefix + "DepthEnabled");
+                        }
+
+                        if (keyFile.has_key("Double Exposure", prefix + "DepthRange")) {
+                            const std::vector<double> range = keyFile.get_double_list("Double Exposure", prefix + "DepthRange");
+
+                            if (range.size() == 4) {
+                                // Handles stay ordered and inside 0..1 whatever the file says.
+                                double previous = 0.0;
+
+                                for (size_t k = 0; k < 4; ++k) {
+                                    const double value = std::isfinite(range[k]) ? range[k] : previous;
+                                    previous = std::max(previous, std::min(1.0, value));
+                                    layer.depthRange[k] = previous;
+                                }
+                            }
+                        }
+
+                        if (keyFile.has_key("Double Exposure", prefix + "DepthNearShape")) {
+                            layer.depthNearShape = std::max(0.1, std::min(10.0, keyFile.get_double("Double Exposure", prefix + "DepthNearShape")));
+                        }
+
+                        if (keyFile.has_key("Double Exposure", prefix + "DepthFarShape")) {
+                            layer.depthFarShape = std::max(0.1, std::min(10.0, keyFile.get_double("Double Exposure", prefix + "DepthFarShape")));
+                        }
+
+                        if (keyFile.has_key("Double Exposure", prefix + "DepthInvert")) {
+                            layer.depthInvert = keyFile.get_boolean("Double Exposure", prefix + "DepthInvert");
                         }
 
                         if (keyFile.has_key("Double Exposure", prefix + "MaskPaint")) {
@@ -7657,6 +7724,7 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
             assignFromKeyfile(keyFile, "Film Presets", "Process", filmPresets.process, pedited->filmPresets.process);
             assignFromKeyfile(keyFile, "Film Presets", "Output", filmPresets.output, pedited->filmPresets.output);
             assignFromKeyfile(keyFile, "Film Presets", "Format", filmPresets.format, pedited->filmPresets.format);
+            assignFromKeyfile(keyFile, "Film Presets", "LensDesign", filmPresets.lensDesign, pedited->filmPresets.lensDesign);
             assignFromKeyfile(keyFile, "Film Presets", "Strength", filmPresets.strength, pedited->filmPresets.strength);
             assignFromKeyfile(keyFile, "Film Presets", "Contrast", filmPresets.contrast, pedited->filmPresets.contrast);
             assignFromKeyfile(keyFile, "Film Presets", "Saturation", filmPresets.saturation, pedited->filmPresets.saturation);
@@ -8001,6 +8069,8 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
             assignFromKeyfile(keyFile, "RAW", "HotPixelFilter", raw.hotPixelFilter, pedited->raw.hotPixelFilter);
             assignFromKeyfile(keyFile, "RAW", "DeadPixelFilter", raw.deadPixelFilter, pedited->raw.deadPixelFilter);
             assignFromKeyfile(keyFile, "RAW", "HotDeadPixelThresh", raw.hotdeadpix_thresh, pedited->raw.hotdeadpix_thresh);
+            assignFromKeyfile(keyFile, "RAW", "StuckPixelFix", raw.stuckPixelFix, pedited->raw.stuckPixelFix);
+            assignFromKeyfile(keyFile, "RAW", "StuckPixelSensitivity", raw.stuckPixelSensitivity, pedited->raw.stuckPixelSensitivity);
             assignFromKeyfile(keyFile, "RAW", "PreExposure", raw.expos, pedited->raw.exPos);
 
             if (ppVersion < 320) {

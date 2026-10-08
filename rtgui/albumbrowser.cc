@@ -15,6 +15,7 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "albumbrowser.h"
+#include "phototags.h"
 
 #include <cmath>
 #include <cairomm/cairomm.h>
@@ -1820,7 +1821,8 @@ bool AlbumBrowser::showSmartAlbumDialog (Glib::ustring& name, std::vector<SmartA
         M("ALBUM_SMART_FIELD_ISO"),
         M("ALBUM_SMART_FIELD_FOCAL"),
         M("ALBUM_SMART_FIELD_APERTURE"),
-        M("ALBUM_SMART_FIELD_EDITED")
+        M("ALBUM_SMART_FIELD_EDITED"),
+        M("TAGS_SMART_FIELD")
     };
 
     std::vector<Glib::ustring> opNames = {">=", "<=", "is", "is not", "contains"};
@@ -1954,12 +1956,23 @@ std::vector<SmartAlbumRule> AlbumBrowser::deserializeRules (const Glib::ustring&
 
 namespace {
 
-bool matchesRule (const SmartAlbumRule& rule, const CacheImageData& cfs)
+bool matchesRule (const SmartAlbumRule& rule, const CacheImageData& cfs, const Glib::ustring& path)
 {
     double numVal = 0;
     Glib::ustring strVal;
 
+    if (rule.field == SmartAlbumRule::TAG) {
+        const auto wanted = PhotoTags::tagKey(rule.value);
+        const auto tags = PhotoTags::instance().tags(path);
+        if (rule.op == SmartAlbumRule::EQ) return tags.count(wanted) != 0;
+        if (rule.op == SmartAlbumRule::NEQ) return tags.count(wanted) == 0;
+        if (rule.op == SmartAlbumRule::CONTAINS) {
+            for (const auto& tag : tags) if (tag.find(wanted) != std::string::npos) return true;
+        }
+        return false;
+    }
     switch (rule.field) {
+        case SmartAlbumRule::TAG: break;
         case SmartAlbumRule::RATING:    numVal = cfs.rating; break;
         case SmartAlbumRule::COLOR_LABEL: numVal = cfs.colorLabel; break;
         case SmartAlbumRule::ISO:       numVal = cfs.iso; break;
@@ -2020,13 +2033,27 @@ std::vector<Glib::ustring> AlbumBrowser::evaluateSmartAlbum (const AlbumNode& no
         dirsToScan.insert(currentDirectory_);
     }
 
+    // Tag rules must find tagged photos in any folder, including folders not
+    // recently visited or directly listed as Places favorites.
+    std::set<Glib::ustring> filesToScan;
+    bool tagsOnly = true;
+    bool usesTags = false;
+    for (const auto& rule : node.rules) {
+        tagsOnly = tagsOnly && rule.field == SmartAlbumRule::TAG;
+        usesTags = usesTags || rule.field == SmartAlbumRule::TAG;
+    }
+    if (usesTags) for (const auto& path : PhotoTags::instance().taggedPaths()) filesToScan.insert(path);
     for (const auto& dir : dirsToScan) {
-        auto files = listImageFiles(dir);
-        for (const auto& fpath : files) {
+        const auto files = listImageFiles(dir);
+        filesToScan.insert(files.begin(), files.end());
+    }
+    {
+        for (const auto& fpath : filesToScan) {
+            if (!Glib::file_test(fpath, Glib::FILE_TEST_EXISTS)) continue;
             CacheImageData cid;
 
             // Fast path: try loading from cache file (no thumbnail generation)
-            if (!loadCacheDataForFile(fpath, cid)) {
+            if (!tagsOnly && !loadCacheDataForFile(fpath, cid)) {
                 // Slow path: read EXIF directly (still much cheaper than thumbnail)
                 if (!loadExifForFile(fpath, cid)) continue;
             }
@@ -2037,7 +2064,7 @@ std::vector<Glib::ustring> AlbumBrowser::evaluateSmartAlbum (const AlbumNode& no
             bool match = node.matchAll;
 
             for (const auto& rule : node.rules) {
-                bool ruleResult = matchesRule(rule, cid);
+                bool ruleResult = matchesRule(rule, cid, fpath);
                 if (node.matchAll) {
                     match = match && ruleResult;
                     if (!match) break;

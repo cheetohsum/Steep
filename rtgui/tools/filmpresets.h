@@ -42,6 +42,7 @@ private:
     Gtk::ComboBoxText* processCombo_;
     Gtk::ComboBoxText* outputCombo_;
     Gtk::ComboBoxText* formatCombo_;
+    Gtk::ComboBoxText* lensCombo_;
     Adjuster* exposureAdj_;
     Adjuster* printExposureAdj_;
     Adjuster* pushPullAdj_;
@@ -91,6 +92,7 @@ private:
     rtengine::ProcEvent EvFilmPresetsProcess;
     rtengine::ProcEvent EvFilmPresetsOutput;
     rtengine::ProcEvent EvFilmPresetsFormat;
+    rtengine::ProcEvent EvFilmPresetsLens;
     rtengine::ProcEvent EvFilmPresetsContrast;
     rtengine::ProcEvent EvFilmPresetsSaturation;
     rtengine::ProcEvent EvFilmPresetsWarmth;

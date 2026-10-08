@@ -31,6 +31,13 @@ class PreProcess final :
 {
 
 protected:
+    Gtk::CheckButton* stuckPixel;
+    Adjuster* stuckSensitivity;
+    bool lastStuck;
+    sigc::connection spixelconn;
+    rtengine::ProcEvent EvStuckPixel;
+    rtengine::ProcEvent EvStuckPixelSensitivity;
+
     Gtk::CheckButton* hotPixel;
     Gtk::CheckButton* deadPixel;
     bool lastHot, lastDead;
@@ -47,6 +54,9 @@ public:
     //void setBatchMode   (bool batchMode);
     //void setDefaults    (const rtengine::procparams::ProcParams* defParams, const ParamsEdited* pedited=NULL);
 
+    void setBatchMode(bool batchMode) override;
+
+    void stuckPixelChanged();
     void hotPixelChanged();
     void deadPixelChanged();
     void adjusterChanged(Adjuster* a, double newval) override;

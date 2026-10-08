@@ -48,6 +48,7 @@
 #endif
 
 #include "filebrowser.h"
+#include "phototagwidgets.h"
 
 #include "autoedit.h"
 #include "steepperflog.h"
@@ -742,6 +743,25 @@ FileBrowser::FileBrowser () :
         pmenu->attach(*colorRow.first, 0, 1, p, p + 1);
         p++;
 
+        // Keep tags beside the other selection metadata, directly below labels.
+        editTagsItem_ = Gtk::manage(new Gtk::MenuItem());
+        auto* tagsRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 10));
+        auto* tagsLabel = Gtk::manage(new Gtk::Label(M("TAGS_MENU")));
+        tagsLabel->set_xalign(0);
+        tagsRow->pack_start(*tagsLabel, Gtk::PACK_EXPAND_WIDGET);
+        addInlineAction(tagsRow, "photo-tags-recent", M("TAGS_RECENT_HINT"),
+                        [this]() { showRecentPhotoTags_(); });
+        recentTagsIcon_ = inlineZones->back().widget;
+        recentTagsIcon_->set_name("PhotoTagsRecent");
+        recentTagsIcon_->set_no_show_all(true);
+        recentTagsIcon_->get_accessible()->set_name(M("TAGS_RECENT"));
+        atk_object_set_role(recentTagsIcon_->get_accessible()->gobj(), ATK_ROLE_PUSH_BUTTON);
+        editTagsItem_->add(*tagsRow);
+        photoTagsMenu_ = Gtk::manage(new Gtk::Menu());
+        editTagsItem_->set_submenu(*photoTagsMenu_);
+        pmenu->attach(*editTagsItem_, 0, 1, p, p + 1);
+        ++p;
+
         // Auto looks: edit / grade / film lab / grade+film — hovering an
         // icon live-previews the look on the open image, same as the old
         // submenu entries did
@@ -1170,6 +1190,12 @@ FileBrowser::FileBrowser () :
     p++;
     duplicate->set_no_show_all(true);
     duplicate->hide();
+    photoTagsConnection_ = PhotoTags::instance().changed().connect([this]() {
+        // Apply a copy: applyFilter may update the browser's own filter.
+        const auto current = filter;
+        applyFilter(current);
+    });
+
     pmenu->attach (*Gtk::manage(addToAlbum = new MyImageMenuItem (M("EDITOR_ADD_TO_ALBUM_TOOLTIP"), "add-to-album")), 0, 1, p, p + 1);
     p++;
     addToAlbum->set_no_show_all(true);
@@ -2281,6 +2307,8 @@ FileBrowser::FileBrowser () :
 
 FileBrowser::~FileBrowser ()
 {
+    photoTagsConnection_.disconnect();
+    recentTagsPopover_.reset();
     autoEditHoverTrackingConnection_.disconnect();
     cancelAutoEditHoverPreview(nullptr, false);
     autoEditHoverPool_.reset();
@@ -2331,8 +2359,118 @@ FileBrowser::~FileBrowser ()
     delete[] amiExtProg;
 }
 
+std::vector<Glib::ustring> FileBrowser::selectedTagPaths_()
+{
+    std::vector<Glib::ustring> paths;
+    MYREADERLOCK(lock, entryRW);
+    for (auto* entry : selected) paths.push_back(entry->filename);
+    return paths;
+}
+
+void FileBrowser::rebuildPhotoTagsMenu_()
+{
+    const auto paths = selectedTagPaths_();
+    editTagsItem_->set_sensitive(!paths.empty());
+    for (auto* child : photoTagsMenu_->get_children()) photoTagsMenu_->remove(*child);
+    const auto definitions = PhotoTags::instance().definitions();
+    std::map<std::string, size_t> counts;
+    for (const auto& path : paths) for (const auto& key : PhotoTags::instance().tags(path)) ++counts[key];
+    auto* heading = Gtk::manage(new Gtk::MenuItem(Glib::ustring::compose(M("TAGS_SELECTION"), paths.size())));
+    heading->set_sensitive(false);
+    photoTagsMenu_->append(*heading);
+    if (!PhotoTags::instance().recentTags().empty()) {
+        auto* recent = Gtk::manage(new Gtk::MenuItem(M("TAGS_RECENT")));
+        auto* recentMenu = Gtk::manage(new Gtk::Menu());
+        const auto last = PhotoTags::instance().lastAppliedTags();
+        if (!last.empty()) {
+            auto* repeat = Gtk::manage(new Gtk::MenuItem(M("TAGS_REPEAT_LAST")));
+            repeat->signal_activate().connect([this, paths, last]() {
+                applyPhotoTags(dynamic_cast<Gtk::Window*>(get_toplevel()), paths, last);
+            });
+            recentMenu->append(*repeat);
+            recentMenu->append(*Gtk::manage(new Gtk::SeparatorMenuItem()));
+        }
+        for (const auto& key : PhotoTags::instance().recentTags()) {
+            const auto d = definitions.find(key);
+            if (d == definitions.end()) continue;
+            auto* item = Gtk::manage(new Gtk::MenuItem(d->second.name));
+            item->set_tooltip_text(d->second.description);
+            item->signal_activate().connect([this, paths, key]() {
+                applyPhotoTags(dynamic_cast<Gtk::Window*>(get_toplevel()), paths, {key});
+            });
+            recentMenu->append(*item);
+        }
+        recentMenu->show_all();
+        recent->set_submenu(*recentMenu);
+        photoTagsMenu_->append(*recent);
+    }
+    photoTagsMenu_->append(*Gtk::manage(new Gtk::SeparatorMenuItem()));
+    for (const auto& d : definitions) {
+        auto* item = Gtk::manage(new Gtk::CheckMenuItem(Glib::ustring::compose("%1  (%2/%3)", d.second.name, counts[d.first], paths.size())));
+        item->set_active(!paths.empty() && counts[d.first] == paths.size());
+        item->set_inconsistent(counts[d.first] > 0 && counts[d.first] < paths.size());
+        item->set_tooltip_text(d.second.description + "\n" + M("TAGS_QUICK_HINT"));
+        item->signal_activate().connect([this, paths, key = d.first, item]() {
+            // A mixed selection always adds the tag; only a fully checked row removes it.
+            const bool add = item->get_inconsistent() || item->get_active();
+            applyPhotoTags(dynamic_cast<Gtk::Window*>(get_toplevel()), paths,
+                           add ? PhotoTags::Tags{key} : PhotoTags::Tags{},
+                           add ? PhotoTags::Tags{} : PhotoTags::Tags{key});
+        });
+        photoTagsMenu_->append(*item);
+    }
+    photoTagsMenu_->append(*Gtk::manage(new Gtk::SeparatorMenuItem()));
+    auto* manage = Gtk::manage(new Gtk::MenuItem(M("TAGS_MANAGE")));
+    manage->signal_activate().connect([this, paths]() {
+        editPhotoTags(dynamic_cast<Gtk::Window*>(get_toplevel()), paths);
+    });
+    photoTagsMenu_->append(*manage);
+    photoTagsMenu_->show_all();
+    if (recentTagsIcon_) recentTagsIcon_->set_visible(!paths.empty() && !PhotoTags::instance().recentTags().empty());
+}
+
+void FileBrowser::showRecentPhotoTags_()
+{
+    const auto paths = selectedTagPaths_();
+    if (paths.empty()) return;
+    if (!recentTagsPopover_) recentTagsPopover_ = std::make_unique<steepui::ListPopover>(*this);
+    recentTagsPopover_->clear();
+    const auto definitions = PhotoTags::instance().definitions();
+    const auto last = PhotoTags::instance().lastAppliedTags();
+    if (!last.empty()) {
+        Glib::ustring names;
+        for (const auto& key : last) {
+            const auto it = definitions.find(key);
+            if (it == definitions.end()) continue;
+            if (!names.empty()) names += " · ";
+            names += it->second.name;
+        }
+        auto* repeat = recentTagsPopover_->addItem(M("TAGS_REPEAT_LAST"), [this, paths, last]() {
+            recentTagsPopover_->popdown();
+            applyPhotoTags(dynamic_cast<Gtk::Window*>(get_toplevel()), paths, last);
+        });
+        repeat->set_tooltip_text(names);
+        recentTagsPopover_->addSeparator();
+    }
+    for (const auto& key : PhotoTags::instance().recentTags()) {
+        const auto d = definitions.find(key);
+        if (d == definitions.end()) continue;
+        auto* row = recentTagsPopover_->addItem(d->second.name, [this, paths, key]() {
+            recentTagsPopover_->popdown();
+            applyPhotoTags(dynamic_cast<Gtk::Window*>(get_toplevel()), paths, {key});
+        });
+        row->set_tooltip_text(d->second.description);
+    }
+    int x = 0, y = 0;
+    get_pointer(x, y);
+    recentTagsPopover_->set_pointing_to(Gdk::Rectangle(x, y, 1, 1));
+    recentTagsPopover_->show_all();
+    recentTagsPopover_->popup();
+}
+
 void FileBrowser::rightClicked ()
 {
+    rebuildPhotoTagsMenu_();
 
     {
         MYREADERLOCK(l, entryRW);
@@ -4717,6 +4855,9 @@ bool FileBrowser::checkFilter (ThumbBrowserEntryBase* entryb) const   // true ->
     }
 
     FileBrowserEntry* entry = static_cast<FileBrowserEntry*>(entryb);
+
+    if (!PhotoTags::instance().matches(entry->filename, filter.tagFilter,
+            filter.tagMatchAll, filter.tagUntagged)) return false;
 
     // Album whitelist filter: if active, only show files in the album
     if (!filter.albumWhitelist.empty()) {

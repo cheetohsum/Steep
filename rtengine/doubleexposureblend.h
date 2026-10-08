@@ -84,6 +84,21 @@ inline void blend(BlendMode mode, Compare compare, float softnessStops, float wh
                   float& cr, float& cg, float& cb)
 {
     switch (mode) {
+        case BlendMode::ADAPTIVE: {
+            const float a = std::max(0.f, lum709(r, g, b));
+            const float p = std::max(0.f, lum709(pr, pg, pb));
+            // A continuous, exposure-relative transition avoids hard bright/dark
+            // seams. Keep RGB together and never create more energy than either input.
+            const float mid = .5f * (a + p) / white;
+            const float dark = smoothstep01((mid - .08f) / .32f);
+            const float brightWeight = compareWeight(a, p, true, std::max(.25f, softnessStops), white);
+            // Retain both exposures: a hard winner erases the integrated trail
+            // beneath a sharp layer and makes motion look like endpoint ghosts.
+            const float preference = brightWeight * (1 - dark) + (1 - brightWeight) * dark;
+            const float w = .2f + .6f * preference;
+            cr = r + w * (pr - r); cg = g + w * (pg - g); cb = b + w * (pb - b);
+            break;
+        }
         case BlendMode::SCREEN: {
             cr = white * (1.f - (1.f - clamp01w(r, white) / white) * (1.f - clamp01w(pr, white) / white));
             cg = white * (1.f - (1.f - clamp01w(g, white) / white) * (1.f - clamp01w(pg, white) / white));
@@ -128,6 +143,15 @@ inline void blend(BlendMode mode, Compare compare, float softnessStops, float wh
             cr = std::fabs(r - pr);
             cg = std::fabs(g - pg);
             cb = std::fabs(b - pb);
+            break;
+        }
+
+        case BlendMode::NORMAL: {
+            // The partner replaces the base where it lands; opacity, the
+            // selection, the gate and the frame edge decide how much of it.
+            cr = pr;
+            cg = pg;
+            cb = pb;
             break;
         }
 

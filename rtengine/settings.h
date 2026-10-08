@@ -49,6 +49,7 @@ public:
     bool            verbose;
     bool            smartMaskAutoAnalyze;   ///< Segment a freshly opened image in the background so Smart Mask presses are instant
     Glib::ustring   darkFramesPath;         ///< The default directory for dark frames
+    Glib::ustring   stuckPixelMemoryDir;    ///< Per-camera learned stuck photosites (StuckPixelMemory)
     Glib::ustring   flatFieldsPath;         ///< The default directory for flat fields
     Glib::ustring   cameraProfilesPath;     ///< The default directory for camera profiles
     Glib::ustring   lensProfilesPath;       ///< The default directory for lens profiles

@@ -17,13 +17,21 @@
 #include "partnerimagestore.h"
 
 #include <algorithm>
+#include <map>
+#include <mutex>
 
 #include <glibmm/fileutils.h>
 
+#include <glib/gstdio.h>
+#include <sys/stat.h>
+
 #include "colortemp.h"
+#include "iimage.h"
 #include "imagefloat.h"
 #include "procparams.h"
+#include "processingjob.h"
 #include "rawimagesource.h"
+#include "rtengine.h"
 #include "stdimagesource.h"
 
 namespace
@@ -149,10 +157,130 @@ std::shared_ptr<rtengine::PartnerImage> decodePartner(const Glib::ustring& path,
     return partner;
 }
 
+// Develop the partner as its own sidecar says, through the engine's export
+// pipeline, into scene-linear working-space RGB. The preview tier uses the
+// fast pipeline (demosaic and geometry at full size, an early resize to a
+// 2560 pixel long edge, every later stage at that size). fullWidth/fullHeight
+// report the size the full development has, so both tiers share one frame
+// and `skip` carries the preview's reduction.
+std::shared_ptr<rtengine::PartnerImage> developPartner(const Glib::ustring& path, const Glib::ustring& workingProfile, bool fullRes)
+{
+    using namespace rtengine;
+
+    if (!Glib::file_test(path, Glib::FILE_TEST_EXISTS)) {
+        return nullptr;
+    }
+
+    procparams::ProcParams params;
+    const Glib::ustring sidecar = path + ".pp3";
+
+    if (!Glib::file_test(sidecar, Glib::FILE_TEST_EXISTS) || params.load(sidecar) != 0) {
+        return nullptr;
+    }
+
+    // The partner's own exposures are not nested: a partner that itself
+    // composites this photograph would never finish.
+    params.doubleExposure.enabled = false;
+    params.resize.enabled = false;
+    params.framing.enabled = false;
+
+    int error = 0;
+    const bool raw = !hasNonRawExtension(path);
+    InitialImage* initial = InitialImage::load(path, raw, &error);
+
+    if (error || !initial) {
+        return nullptr;
+    }
+
+    struct Release {
+        InitialImage* image;
+        ~Release()
+        {
+            image->decreaseRef();
+        }
+    } release{initial};
+
+    int fw = 0, fh = 0;
+    ImageSource* imgsrc = initial->getImageSource();
+
+    if (imgsrc->getSensorType() == ST_BAYER) {
+        imgsrc->setBorder(params.raw.bayersensor.method == procparams::RAWParams::BayerSensor::getMethodString(procparams::RAWParams::BayerSensor::Method::PIXELSHIFT)
+                          ? std::max(params.raw.bayersensor.border, 2) : params.raw.bayersensor.border);
+    } else if (imgsrc->getSensorType() == ST_FUJI_XTRANS) {
+        imgsrc->setBorder(params.raw.xtranssensor.border);
+    }
+
+    imgsrc->getFullSize(fw, fh, getCoarseBitMask(params.coarse));
+
+    if (fw <= 0 || fh <= 0) {
+        return nullptr;
+    }
+
+    // The crop clamping the engine applies, so the frame recorded here is
+    // the one the full development reports.
+    int outW = fw, outH = fh;
+
+    if (params.crop.enabled) {
+        if (params.crop.x > fw || params.crop.y > fh) {
+            outW = fw;
+            outH = fh;
+        } else {
+            const int cx = std::max(0, params.crop.x), cy = std::max(0, params.crop.y);
+            outW = std::max(1, std::min(params.crop.w, fw - cx));
+            outH = std::max(1, std::min(params.crop.h, fh - cy));
+        }
+    }
+
+    if (!fullRes) {
+        params.resize.enabled = true;
+        params.resize.appliesTo = "Cropped area";
+        params.resize.method = "Lanczos";
+        params.resize.dataspec = 3;
+        params.resize.width = params.resize.height = 2560;
+        params.resize.allowUpscaling = false;
+        params.raw.bayersensor.method = procparams::RAWParams::BayerSensor::getMethodString(procparams::RAWParams::BayerSensor::Method::FAST);
+        params.raw.xtranssensor.method = procparams::RAWParams::XTransSensor::getMethodString(procparams::RAWParams::XTransSensor::Method::FAST);
+    }
+
+    auto job = new ProcessingJobImpl(initial, params, !fullRes);
+    job->linearWorkingProfile = workingProfile.empty() ? Glib::ustring("ProPhoto") : workingProfile;
+    IImagefloat* developed = processImage(job, error, nullptr, false);
+
+    if (error || !developed) {
+        return nullptr;
+    }
+
+    Imagefloat* image = dynamic_cast<Imagefloat*>(developed);
+
+    if (!image) {
+        delete developed;
+        return nullptr;
+    }
+
+    auto partner = std::make_shared<PartnerImage>();
+    partner->image.reset(image);
+    partner->fullWidth = outW;
+    partner->fullHeight = outH;
+    partner->skip = std::max(1.0, static_cast<double>(outW) / std::max(1, image->getWidth()));
+    return partner;
+}
+
 } // namespace
 
 namespace rtengine
 {
+
+Glib::ustring PartnerImageStore::filePath(const Glib::ustring& source, bool* asEdited)
+{
+    static const Glib::ustring tag = "|edited";
+    const bool tagged = source.size() > tag.size() && source.substr(source.size() - tag.size()) == tag;
+
+    if (asEdited) {
+        *asEdited = tagged;
+    }
+
+    return tagged ? source.substr(0, source.size() - tag.size()) : source;
+}
 
 PartnerImage::PartnerImage() :
     fullWidth(0),
@@ -175,14 +303,25 @@ PartnerImageStore& PartnerImageStore::getInstance()
     return instance;
 }
 
-std::shared_ptr<PartnerImage> PartnerImageStore::getPartner(const Glib::ustring& path, const Glib::ustring& workingProfile, bool fullRes,
+std::shared_ptr<PartnerImage> PartnerImageStore::getPartner(const Glib::ustring& source, const Glib::ustring& workingProfile, bool fullRes,
                                                             const ColorTemp* wbOverride)
 {
+    bool asEdited = false;
+    const Glib::ustring path = filePath(source, &asEdited);
+
     if (path.empty()) {
         return nullptr;
     }
 
-    Glib::ustring key = path + "\n" + workingProfile;
+    Glib::ustring key = source + "\n" + workingProfile;
+
+    if (asEdited) {
+        // The sidecar's own revision keys the cache: an edit made to the
+        // partner must reach the composite on the next render.
+        const Glib::ustring sidecar = path + ".pp3";
+        GStatBuf st;
+        key += Glib::ustring::compose("\nedited=%1", g_stat(sidecar.c_str(), &st) == 0 ? static_cast<long long>(st.st_mtime) : 0LL);
+    }
 
     if (wbOverride) {
         key += Glib::ustring::compose("\nwb=%1,%2,%3,%4", wbOverride->getTemp(), wbOverride->getGreen(),
@@ -197,7 +336,29 @@ std::shared_ptr<PartnerImage> PartnerImageStore::getPartner(const Glib::ustring&
         return result;
     }
 
-    result = decodePartner(path, workingProfile, fullRes, wbOverride);
+    // The dialog and editor can ask for the same RAW concurrently. Share the
+    // decode, without blocking requests for unrelated photographs.
+    static std::mutex gatesMutex;
+    static std::map<Glib::ustring, std::weak_ptr<std::mutex>> gates;
+    std::shared_ptr<std::mutex> gate;
+    {
+        std::lock_guard<std::mutex> guard(gatesMutex);
+        for (auto i = gates.begin(); i != gates.end();)
+            if (i->second.expired()) i = gates.erase(i); else ++i;
+        auto& weak = gates[key + (fullRes ? "\nfull" : "\npreview")];
+        gate = weak.lock();
+        if (!gate) weak = gate = std::make_shared<std::mutex>();
+    }
+    std::lock_guard<std::mutex> decodeGuard(*gate);
+    if (cache.get(key, result)) return result;
+
+    result = asEdited ? developPartner(path, workingProfile, fullRes) : nullptr;
+
+    if (!result) {
+        // No sidecar, or the development failed: the neutral decode stands
+        // in, which at least keeps the layer visible.
+        result = decodePartner(path, workingProfile, fullRes, wbOverride);
+    }
 
     if (result) {
         cache.insert(key, result);

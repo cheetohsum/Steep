@@ -20,16 +20,21 @@
 #include "imagefloat.h"
 #include "labimage.h"
 #include "procparams.h"
+#include "graincharacter.h"
 
 using namespace rtengine;
 using namespace rtengine::procparams;
 
 void ImProcFunctions::grainEffect(LabImage *lab, const GrainParams &params, int fw, int fh,
-                                  int originX, int originY, int oscale)
+                                  int originX, int originY, double oscale,
+                                  const FilmPresetsParams *film)
 {
     if (!params.enabled || params.strength == 0) {
         return;
     }
+
+    // Film Lab, when it is on, says what emulsion this grain belongs to.
+    const GrainCharacter character = film ? filmGrainCharacter(*film) : GrainCharacter();
 
     const int w = lab->W;
     const int h = lab->H;
@@ -46,7 +51,8 @@ void ImProcFunctions::grainEffect(LabImage *lab, const GrainParams &params, int 
         }
     }
 
-    filmGrainV2(tmp, params.iso, params.strength, params.scale, params.color, originX, originY, oscale, fw, fh);
+    filmGrainV2(tmp, params.iso, params.strength, params.scale, params.color, originX, originY, oscale, fw, fh,
+                character);
 
     // Copy luminance - and, when chroma grain ran, a/b - back
     for (int y = 0; y < h; y++) {

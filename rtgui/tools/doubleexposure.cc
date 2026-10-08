@@ -33,6 +33,7 @@
 
 #ifdef RT_AI_MASKING
 #include "rtengine/partnermaskstore.h"
+#include "rtengine/samselector.h"
 #endif
 
 #include "rtengine/procparams.h"
@@ -80,10 +81,11 @@ Glib::ustring subjectEntryLabel(int row)
         "TP_DOUBLEEXPOSURE_SUBJECT_VEGETATION",
         "TP_DOUBLEEXPOSURE_SUBJECT_BUILDING",
         "TP_DOUBLEEXPOSURE_SUBJECT_VEHICLE",
-        "TP_DOUBLEEXPOSURE_SUBJECT_ANIMAL"
+        "TP_DOUBLEEXPOSURE_SUBJECT_ANIMAL",
+        "TP_DOUBLEEXPOSURE_SUBJECT_POINTS"
     };
 
-    return row >= 0 && row <= 7 ? M(keys[row]) : Glib::ustring();
+    return row >= 0 && row <= 8 ? M(keys[row]) : Glib::ustring();
 }
 
 // Row order in the list is not class order: row 0 is "the whole frame", which
@@ -257,6 +259,7 @@ DoubleExposure::DoubleExposure() :
     subjectMethod->append(M("TP_DOUBLEEXPOSURE_SUBJECT_BUILDING"));
     subjectMethod->append(M("TP_DOUBLEEXPOSURE_SUBJECT_VEHICLE"));
     subjectMethod->append(M("TP_DOUBLEEXPOSURE_SUBJECT_ANIMAL"));
+    subjectMethod->append(M("TP_DOUBLEEXPOSURE_SUBJECT_POINTS"));
     subjectMethod->set_active(0);
     subjectMethod->setPreferredWidth(150, 200);
     subjectMethod->set_tooltip_text(M("TP_DOUBLEEXPOSURE_SUBJECT_TOOLTIP"));
@@ -308,6 +311,8 @@ DoubleExposure::DoubleExposure() :
     blendMethod->append(M("TP_DOUBLEEXPOSURE_BLEND_LIGHTEN"));
     blendMethod->append(M("TP_DOUBLEEXPOSURE_BLEND_DARKEN"));
     blendMethod->append(M("TP_DOUBLEEXPOSURE_BLEND_DIFFERENCE"));
+    blendMethod->append(M("TP_DOUBLEEXPOSURE_BLEND_ADAPTIVE"));
+    blendMethod->append(M("TP_DOUBLEEXPOSURE_BLEND_NORMAL"));
     blendMethod->set_active(0);
     blendMethod->setPreferredWidth(150, 200);
     blendMethod->connect(blendMethod->signal_changed().connect(sigc::mem_fun(*this, &DoubleExposure::blendChanged)));
@@ -524,7 +529,9 @@ void DoubleExposure::rebuildLayerRows()
 
         row->pack_start(*thumb, Gtk::PACK_SHRINK);
 
-        Gtk::Label* name = Gtk::manage(new Gtk::Label(Glib::path_get_basename(layers[i].path), Gtk::ALIGN_START));
+        const Glib::ustring motionLabel = layers[i].motion.path != rtengine::procparams::DEMotionParams::Path::OFF
+            ? M("DE_MOTION") + ": " : "";
+        Gtk::Label* name = Gtk::manage(new Gtk::Label(motionLabel + Glib::path_get_basename(layers[i].path), Gtk::ALIGN_START));
         name->set_ellipsize(Pango::ELLIPSIZE_MIDDLE);
         name->set_tooltip_text(layers[i].path);
 
@@ -755,13 +762,14 @@ void DoubleExposure::loadSelectedLayer()
         subjectMethod->remove_all();
         subjectRows_.clear();
 
-        for (int row = 0; row <= 7; ++row) {
+        for (int row = 0; row <= 8; ++row) {
             // "The whole frame" always stands, and so does whatever this layer
             // is already set to. Otherwise a class is offered only while it
             // might be there: unmeasured, or measured and actually present.
-            bool offer = row == 0 || row == chosen || !view;
+            // Click-to-select stands whenever its model is installed.
+            bool offer = row == 0 || row == chosen || (row == 8 ? rtengine::SamSelector::getInstance().available() : !view);
 
-            if (!offer) {
+            if (!offer && row != 8) {
                 const int cls = subjectRowClass(row);
                 offer = cls >= 0 && cls < static_cast<int>(view->coverage.size())
                         && view->coverage[cls] > 0.f;
@@ -862,7 +870,8 @@ void DoubleExposure::updateSensitivity()
                              && (layers[idx].blendMode == DoubleExposureParams::BlendMode::LIGHTEN
                                  || layers[idx].blendMode == DoubleExposureParams::BlendMode::DARKEN);
     compareRow->set_visible(haveLayers && comparative);
-    softness->set_visible(haveLayers && comparative && layers[idx].compare == DoubleExposureParams::Compare::LUMINANCE);
+    const bool adaptive = idx >= 0 && layers[idx].blendMode == DoubleExposureParams::BlendMode::ADAPTIVE;
+    softness->set_visible(haveLayers && (adaptive || (comparative && layers[idx].compare == DoubleExposureParams::Compare::LUMINANCE)));
 
     // Gutters and brick courses belong to the grid patterns; the ring
     // controls belong to the radial one. The section opens itself when the

@@ -1177,6 +1177,9 @@ void PartialPasteDlg::applyPaste (rtengine::procparams::ProcParams* dstPP, Param
 
     if (!raw_hotpix_filt->get_active ())     {
         filterPE.raw.hotPixelFilter     = falsePE.raw.hotPixelFilter;
+        // the stuck-pixel fix is the same job, so it travels with it
+        filterPE.raw.stuckPixelFix = falsePE.raw.stuckPixelFix;
+        filterPE.raw.stuckPixelSensitivity = falsePE.raw.stuckPixelSensitivity;
     }
 
     if (!raw_deadpix_filt->get_active ())    {

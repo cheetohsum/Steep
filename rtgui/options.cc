@@ -3393,6 +3393,10 @@ void Options::load(bool lightweight)
     // Update profile's path and recreate it if necessary
     options.updatePaths();
 
+    // Stuck photosites learned per camera (rtengine/stuckpixelmemory.h) live
+    // with the settings, not the cache: they take many sessions to learn.
+    options.rtSettings.stuckPixelMemoryDir = Glib::build_filename(rtdir, "stuckpixels");
+
     // Check default Raw and Img procparams existence
     if (options.defProfRaw.empty()) {
         options.defProfRaw = DEFPROFILE_RAW;

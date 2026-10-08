@@ -33,6 +33,10 @@ public:
     InitialImage* initialImage;
     procparams::ProcParams pparams;
     bool fast;
+    // When set, the result is scene-linear float RGB in this working profile
+    // (cropped, before output conversion): a partner developed for a double
+    // exposure rather than a file to save.
+    Glib::ustring linearWorkingProfile;
 
     ProcessingJobImpl (const Glib::ustring& fn, bool iR, const procparams::ProcParams& pp, bool ff)
         : fname(fn), isRaw(iR), initialImage(nullptr), pparams(pp), fast(ff) {}

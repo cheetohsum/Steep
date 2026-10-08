@@ -1600,7 +1600,14 @@ IImage8* Thumbnail::processImage (const procparams::ProcParams& params, eSensorT
     }
 
     if (params.grain.enabled) {
-        ipf.grainEffect(labView, params.grain, labView->W, labView->H);
+        // Grain is sized against the full frame and integrated by the
+        // thumbnail's pixels, as the film stage below does, so a thumbnail
+        // shows the fine noise of a reduced print rather than boulders.
+        const double grainScale = std::max(1.0, scale *
+            (params.coarse.rotate == 90 || params.coarse.rotate == 270
+                ? thumbImg->getWidth() : thumbImg->getHeight()) / fh);
+        ipf.grainEffect(labView, params.grain, std::lround(fw * grainScale), std::lround(fh * grainScale),
+                        0, 0, grainScale, &params.filmPresets);
     }
 
     if (params.lensBlur.enabled) {

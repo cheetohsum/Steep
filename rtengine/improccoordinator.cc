@@ -169,6 +169,14 @@ private:
 
     void run()
     {
+#ifdef _OPENMP
+        // OpenMP's setting is local to this executor thread and its child
+        // teams. Batch export and RAW-loading workers keep their own limits.
+        const int available = omp_get_max_threads();
+        omp_set_num_threads(rtengine::previewThreadCount(available));
+        rtengine::edittrace::logf("previewWorker threads=%d available=%d",
+                                  omp_get_max_threads(), available);
+#endif
         while (true) {
             std::shared_ptr<TaskState> task;
             {
@@ -492,6 +500,11 @@ DetailedCrop* ImProcCoordinator::createCrop(::EditDataProvider *editDataProvider
 // todo: bitmask containing desired actions, taken from changesSinceLast
 void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
 {
+    // High-quality requests must reach the visible crop even in Sidecar
+    // preview mode, where a bare M_HIGHQUAL otherwise skips processing.
+    if (todo & M_HIGHQUAL) {
+        todo |= M_MONITOR;
+    }
     // A repair must start from source pixels, never the previous composite.
     if (todo & M_SPOT) todo |= M_INIT;
     using PreviewClock = std::chrono::steady_clock;
@@ -2344,7 +2357,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             }
 
             if (params->grain.enabled) {
-                ipf.grainEffect(nprevl, params->grain, fw, fh, 0, 0, std::max(scale, 1));
+                ipf.grainEffect(nprevl, params->grain, fw, fh, 0, 0, std::max(scale, 1), &params->filmPresets);
             }
 
 
@@ -3187,7 +3200,8 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 }
 
                 // Computing the preview image, i.e. converting from WCS->Monitor color space (soft-proofing disabled) or WCS->Printer profile->Monitor color space (soft-proofing enabled)
-                ipf.lab2monitorRgb(nprevl, previmg);
+                auto* displayLab = nprevl;
+                ipf.lab2monitorRgb(displayLab, previmg);
 
                 // Export force-neutralises B&W after its own conversion
                 // ("Force BW" in simpleprocess.cc); without the same step here
@@ -3222,7 +3236,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                     delete workimg;
                     workimg = nullptr;
 
-                    workimg = ipf.lab2rgb(nprevl, 0, 0, pW, pH, params->icm);
+                    workimg = ipf.lab2rgb(displayLab, 0, 0, pW, pH, params->icm);
 
                     if (ImProcFunctions::bwForced(*params, autili, butili)) {
                         // Histogram, vectorscope and waveform must describe

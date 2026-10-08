@@ -119,12 +119,13 @@ public:
         return toFrame(paint_);
     }
 
-    void setBrush(double radius, double hardness, double strength, bool add)
+    void setBrush(double radius, double hardness, double strength, bool add, bool lasso)
     {
         radius_ = radius;
         hardness_ = hardness;
         strength_ = strength;
         add_ = add;
+        lasso_ = lasso;
         queue_draw();
     }
 
@@ -181,6 +182,7 @@ private:
     int height_ = 0;
 
     double radius_ = 0.08;
+    bool lasso_ = false;
     double hardness_ = 0.25;
     double strength_ = 1.0;
     bool add_ = true;
@@ -305,8 +307,11 @@ private:
 
         drawing_ = true;
         live_ = rtengine::MaskStroke();
+        live_.kind = lasso_ ? rtengine::MaskStroke::Kind::LASSO : rtengine::MaskStroke::Kind::BRUSH;
         live_.add = add;
-        live_.radius = radius_;
+        // A lasso's radius is its soft rim: a quarter of the brush size reads
+        // as a hand-drawn edge without turning the outline into a blur.
+        live_.radius = lasso_ ? radius_ * 0.25 : radius_;
         live_.hardness = hardness_;
         live_.strength = strength_;
         live_.points.push_back({nx, ny});
@@ -326,8 +331,9 @@ private:
         // the pp3, and a thousand points a pixel apart help nobody.
         const auto& last = live_.points.back();
         const double step = std::hypot((nx - last.x) * width_, (ny - last.y) * height_);
+        const double least = lasso_ ? 2.0 : std::max(1.0, radius_ * std::min(width_, height_) * 0.15);
 
-        if (step < std::max(1.0, radius_ * std::min(width_, height_) * 0.15)) {
+        if (step < least) {
             return;
         }
 
@@ -344,7 +350,11 @@ private:
 
         drawing_ = false;
 
-        if (!live_.points.empty()) {
+        // A lasso needs an area to enclose; two points are a slip, not a selection.
+        const bool keep = live_.kind == rtengine::MaskStroke::Kind::LASSO ? live_.points.size() >= 3
+                          : !live_.points.empty();
+
+        if (keep) {
             paint_.strokes.push_back(live_);
             rebake();
         }
@@ -591,8 +601,30 @@ private:
 
         cr->restore();
 
+        // The lasso being drawn: its outline back to the start, so the user
+        // sees what will close.
+        if (drawing_ && live_.kind == rtengine::MaskStroke::Kind::LASSO && live_.points.size() >= 2) {
+            cr->save();
+            cr->translate(ox_, oy_);
+            cr->scale(sc_, sc_);
+            cr->set_line_width(1.5 / std::max(sc_, 0.01));
+            cr->move_to(live_.points.front().x * width_, live_.points.front().y * height_);
+
+            for (size_t i = 1; i < live_.points.size(); ++i) {
+                cr->line_to(live_.points[i].x * width_, live_.points[i].y * height_);
+            }
+
+            cr->set_source_rgba(1.0, 1.0, 1.0, 0.9);
+            cr->stroke_preserve();
+            cr->line_to(live_.points.front().x * width_, live_.points.front().y * height_);
+            cr->set_source_rgba(1.0, 1.0, 1.0, 0.35);
+            cr->set_dash(std::vector<double>{6.0 / std::max(sc_, 0.01), 4.0 / std::max(sc_, 0.01)}, 0);
+            cr->stroke();
+            cr->restore();
+        }
+
         // Brush outline, so the size means something before the first stroke.
-        if (pointerIn_ && sc_ > 0.0) {
+        if (pointerIn_ && sc_ > 0.0 && !lasso_) {
             const double r = radius_ * std::min(width_, height_) * sc_;
             cr->arc(pointerX_, pointerY_, std::max(2.0, r), 0.0, 2.0 * G_PI);
             cr->set_source_rgba(0.0, 0.0, 0.0, 0.7);
@@ -694,6 +726,10 @@ MaskPaintDlg::MaskPaintDlg(Gtk::Window* parent,
     modeRow->pack_start(*includeBtn_, Gtk::PACK_SHRINK);
     modeRow->pack_start(*excludeBtn_, Gtk::PACK_SHRINK);
 
+    lassoBtn_ = Gtk::manage(new Gtk::CheckButton(M("MASKPAINT_LASSO")));
+    lassoBtn_->set_tooltip_text(M("MASKPAINT_LASSO_TOOLTIP"));
+    modeRow->pack_start(*lassoBtn_, Gtk::PACK_SHRINK);
+
     showMask_ = Gtk::manage(new Gtk::CheckButton(M("MASKPAINT_SHOWMASK")));
     showMask_->set_active(true);
     modeRow->pack_start(*showMask_, Gtk::PACK_SHRINK);
@@ -712,6 +748,7 @@ MaskPaintDlg::MaskPaintDlg(Gtk::Window* parent,
     hardnessScale_->signal_value_changed().connect(sigc::mem_fun(*this, &MaskPaintDlg::onBrushChanged));
     strengthScale_->signal_value_changed().connect(sigc::mem_fun(*this, &MaskPaintDlg::onBrushChanged));
     includeBtn_->signal_toggled().connect(sigc::mem_fun(*this, &MaskPaintDlg::onBrushChanged));
+    lassoBtn_->signal_toggled().connect(sigc::mem_fun(*this, &MaskPaintDlg::onBrushChanged));
     showMask_->signal_toggled().connect([this]() { canvas_->setShowMask(showMask_->get_active()); });
     undoBtn_->signal_clicked().connect(sigc::mem_fun(*this, &MaskPaintDlg::undo));
     clearBtn_->signal_clicked().connect(sigc::mem_fun(*this, &MaskPaintDlg::clearAll));
@@ -739,7 +776,8 @@ void MaskPaintDlg::onBrushChanged()
     canvas_->setBrush(sizeScale_->get_value() / 100.0,
                       hardnessScale_->get_value() / 100.0,
                       strengthScale_->get_value() / 100.0,
-                      includeBtn_->get_active());
+                      includeBtn_->get_active(),
+                      lassoBtn_->get_active());
 }
 
 void MaskPaintDlg::onStrokesChanged()

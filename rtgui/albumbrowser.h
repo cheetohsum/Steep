@@ -26,7 +26,7 @@
 enum class AlbumNodeType { FOLDER = 0, ALBUM = 1, SMART_ALBUM = 2 };
 
 struct SmartAlbumRule {
-    enum Field { RATING, COLOR_LABEL, FILE_TYPE, CAMERA, LENS, ISO, FOCAL_LEN, APERTURE, EDITED };
+    enum Field { RATING, COLOR_LABEL, FILE_TYPE, CAMERA, LENS, ISO, FOCAL_LEN, APERTURE, EDITED, TAG };
     enum Op { GTE, LTE, EQ, NEQ, CONTAINS };
     Field field;
     Op op;

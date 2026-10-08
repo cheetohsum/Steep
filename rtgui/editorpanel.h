@@ -21,6 +21,7 @@
 
 #include "albumbrowser.h"
 #include "browserfilter.h"
+#include "phototagwidgets.h"
 #include "extprog.h"
 #include "histogrampanel.h"
 #include "history.h"
@@ -87,6 +88,7 @@ class EditorPanel final :
     public HistogramPanelListener,
     public rtengine::NonCopyable
 {
+    friend class FilmstripFilterTests;
 public:
 
     explicit EditorPanel (FilePanel* filePanel = nullptr);
@@ -357,8 +359,14 @@ private:
     Gtk::RadioMenuItem* albumSortOrder_[2];
     void albumSortChanged ();
 
+    PhotoTagFilter* editorPhotoTagFilter_ = nullptr;
+    PhotoTagFilter* albumPhotoTagFilter_ = nullptr;
+    std::vector<Glib::ustring> albumAllFiles_;
+    void applyAlbumTagFilter();
+
     // Filter bar
     Gtk::ToggleButton* tbFilterBar;
+    Gtk::Label* filterCountBadge_ = nullptr; // how many filters are on, shown while the bar is closed
     Gtk::Revealer* filterBarRevealer;
     Gtk::ToggleButton* fbUnRanked;
     Gtk::ToggleButton* fbRank[5];
@@ -388,6 +396,7 @@ private:
     void updateEditorFiletypeDefaultCheck();
 
     void filterBarToggled();
+    int editorFilterCount() const;
     void filterBarChanged();
     void filterBarClearAll();
     void applyEditorFilter();

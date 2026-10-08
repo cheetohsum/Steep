@@ -504,6 +504,35 @@ Gdk::RGBA themeColor(const Gtk::Widget& widget, const char* name, const Gdk::RGB
     return themeColor(const_cast<Gtk::Widget&>(widget).get_style_context(), name, fallback);
 }
 
+Gtk::Overlay* addCountBadge(Gtk::Widget& button, Gtk::Label*& badge)
+{
+    Gtk::Overlay* overlay = Gtk::manage(new Gtk::Overlay());
+    overlay->add(button);
+
+    badge = Gtk::manage(new Gtk::Label());
+    badge->set_name("CountBadge"); // look: themes/common/widgets.css
+    badge->set_halign(Gtk::ALIGN_END);
+    badge->set_valign(Gtk::ALIGN_START);
+    badge->set_no_show_all(true);
+    overlay->add_overlay(*badge);
+    overlay->set_overlay_pass_through(*badge, true);
+    return overlay;
+}
+
+void setCountBadge(Gtk::Label* badge, int count)
+{
+    if (!badge) {
+        return;
+    }
+
+    if (count > 0) {
+        badge->set_text(Glib::ustring::format(count));
+        badge->show();
+    } else {
+        badge->hide();
+    }
+}
+
 void themeColorCacheInvalidate()
 {
     themeColorCache.clear();

@@ -22,6 +22,7 @@
 #include <memory>
 
 #include "rtengine.h"
+#include "cropupdatestate.h"
 #include "pipettebuffer.h"
 #include "rtgui/threadutils.h"
 
@@ -70,8 +71,7 @@ protected:
     // -----------------------------------------------------------------
     float**         shbuffer;
 
-    bool updating;         /// Flag telling if an updater thread is currently processing
-    bool newUpdatePending; /// Flag telling the updater thread that a new update is pending
+    CropUpdateState updateState;
     int skip;
     int cropx, cropy, cropw, croph;         /// size of the detail crop image ('skip' taken into account), with border
     int trafx, trafy, trafw, trafh;         /// the size and position to get from the imagesource that is transformed to the requested crop area

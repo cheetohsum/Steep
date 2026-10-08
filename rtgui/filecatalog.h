@@ -35,6 +35,7 @@
 #include "exiffiltersettings.h"
 #include "exportpanel.h"
 #include "filebrowser.h"
+#include "phototagwidgets.h"
 #include "fileselectionchangelistener.h"
 #include "fileselectionlistener.h"
 #include "filterpanel.h"
@@ -62,6 +63,7 @@ class FileCatalog final : public Gtk::Box,
     public ExportPanelListener,
     public rtengine::NonCopyable
 {
+    friend class FilmstripFilterTests;
 public:
     typedef sigc::slot<void, const Glib::ustring&> DirSelectionSlot;
 
@@ -125,21 +127,22 @@ private:
 
     Gtk::Revealer* filterRevealer_;
     Gtk::ToggleButton* bFilterToggle_;
+    Gtk::Label* filterCountBadge_ = nullptr; // how many filters are on, shown while the bar is closed
 
     Gtk::Separator* vSepiLeftPanel;
 
     Gtk::ToggleButton* tbLeftPanel_1;
     Gtk::ToggleButton* tbRightPanel_1;
     Gtk::ToggleButton* bFilterClear;
-    Gtk::ToggleButton* bUnRanked;
-    Gtk::ToggleButton* bRank[5];
-    Gtk::ToggleButton* bUnCLabeled;
-    Gtk::ToggleButton* bCLabel[5];//color label
-    Gtk::ToggleButton* bEdited[2];
-    Gtk::ToggleButton* bRecentlySaved[2];
-    Gtk::ToggleButton* bPicked;
-    Gtk::ToggleButton* bRejected;
-    Gtk::ToggleButton* bUnflagged;
+    Gtk::ToggleButton* bUnRanked = nullptr;
+    Gtk::ToggleButton* bRank[5] = {};
+    Gtk::ToggleButton* bUnCLabeled = nullptr;
+    Gtk::ToggleButton* bCLabel[5] = {};//color label
+    Gtk::ToggleButton* bEdited[2] = {};
+    Gtk::ToggleButton* bRecentlySaved[2] = {};
+    Gtk::ToggleButton* bPicked = nullptr;
+    Gtk::ToggleButton* bRejected = nullptr;
+    Gtk::ToggleButton* bUnflagged = nullptr;
 
     // Rejects view: shows only rejected photos, with mass delete
     Gtk::ToggleButton* bRejectsView = nullptr;
@@ -155,9 +158,9 @@ private:
     void showRejectsPopover ();
     void rejectsViewToggled ();
     void deleteAllRejects ();
-    Gtk::ToggleButton* bTrash;
+    Gtk::ToggleButton* bTrash = nullptr;
     Gtk::ToggleButton* bNotTrash;
-    Gtk::ToggleButton* bOriginal;
+    Gtk::ToggleButton* bOriginal = nullptr;
     Gtk::ToggleButton* bRecursive;
     Gtk::ToggleButton* categoryButtons[23];
     Gtk::ToggleButton* exifInfo;
@@ -319,9 +322,12 @@ private:
     // closed, so filtering a folder that is being discarded costs nothing).
     void scheduleFilterApply();
     sigc::connection filterApplyConn_;
+    // Editor controls own this snapshot while the shared catalog is a filmstrip.
+    BrowserFilter editorFilter_;
     void resetGlobalScopeQuiet();
 
     // Filetype filter dropdown
+    PhotoTagFilter* photoTagFilter_ = nullptr;
     Gtk::MenuButton* filetypeButton_;
     Gtk::Popover* filetypePopover_;
     Gtk::Box* filetypeBox_;
@@ -359,6 +365,7 @@ public:
     // Snapshot of the active filter state (used by the double-exposure
     // picker to inherit the browser's filtering).
     BrowserFilter getFilter ();
+    void setEditorFilter(const BrowserFilter& filter);
 
     // thumbnail browsers
     FileBrowser* fileBrowser;
@@ -460,6 +467,8 @@ public:
     void setExportPanel (ExportPanel* expanel);
     void exifInfoButtonToggled();
     void filterToggled();
+    int activeFilterCount();
+    void updateFilterBadge();
     void categoryButtonToggled (Gtk::ToggleButton* b, bool isMouseClick);
     void showRecursiveToggled();
     bool capture_event(GdkEventButton* event);

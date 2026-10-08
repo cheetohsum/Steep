@@ -234,10 +234,11 @@ void CropHandler::setZoom (int z, int centerx, int centery)
     compDim ();
 
     if (enabled && (oldZoom != zoom || oldcax != cax || oldcay != cay || oldCropX != cropX || oldCropY != cropY || oldCropW != cropW || oldCropH != cropH)) {
-        if (needsFullRefresh && !ipc->getHighQualComputed()) {
+        if (needsFullRefresh) {
             cropPixbuf.clear ();
-            ipc->startProcessing(M_HIGHQUAL);
-            ipc->setHighQualComputed();
+            // A preview preference (or an earlier queued request) does not
+            // prove that the current RAW has finished its detailed demosaic.
+            ipc->startProcessing(M_HIGHQUAL | M_MONITOR);
         } else {
             update ();
         }
@@ -358,17 +359,6 @@ void CropHandler::setDetailedCrop(
 
     cimg.lock ();
 
-    *cropParams = cp;
-    *colorParams = cmp;
-
-    if (!cropimg.empty()) {
-        cropimg.clear();
-    }
-
-    if (!cropimgtrue.empty()) {
-        cropimgtrue.clear();
-    }
-
     // A null "true" image means the engine skipped the output-profile
     // conversion because nothing was reading it (see wantsTrueImage). The
     // previously converted buffer is kept so an overlay or readout that
@@ -385,6 +375,11 @@ void CropHandler::setDetailedCrop(
 
     bool accepted = acceptUpdate(received);
     if (accepted) {
+        *cropParams = cp;
+        *colorParams = cmp;
+        // A late render for an old zoom must not erase an accepted frame
+        // that is still waiting for the GUI idle callback.
+        cropimgtrue.clear();
         cropimg_width = im->getWidth ();
         cropimg_height = im->getHeight ();
         const std::size_t cropimg_size = 3 * cropimg_width * cropimg_height;
@@ -408,9 +403,8 @@ void CropHandler::setDetailedCrop(
                     cimg.lock ();
 
                     if (redraw_needed.exchange(false)) {
-                        cropPixbuf.clear ();
-
                         if (!enabled) {
+                            cropPixbuf.clear ();
                             cropimg.clear();
                             cropimgtrue.clear();
                             cimg.unlock ();

@@ -97,6 +97,7 @@ private:
     Gtk::Scale* strengthScale_;
     Gtk::RadioButton* includeBtn_;
     Gtk::RadioButton* excludeBtn_;
+    Gtk::CheckButton* lassoBtn_;
     Gtk::CheckButton* showMask_;
     Gtk::Button* undoBtn_;
     Gtk::Button* clearBtn_;

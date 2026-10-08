@@ -27,6 +27,8 @@
 #include <vector>
 
 // array2D lives at global scope, not in rtengine.
+#include <array>
+
 template<typename T>
 class array2D;
 
@@ -45,6 +47,18 @@ struct MaskStroke {
         }
     };
 
+    // What the stroke is. BRUSH stamps a soft disc along the points. LASSO
+    // fills the polygon the points close, with `radius` as a soft rim. POINT
+    // is not paint at all: a single click-to-select prompt (include when
+    // `add`), kept with the strokes so it rides the same undo, pp3 key and
+    // cache hash; applying strokes ignores it.
+    enum class Kind {
+        BRUSH,
+        LASSO,
+        POINT
+    };
+
+    Kind kind = Kind::BRUSH;
     bool add = true;         // include, or cut away
     double radius = 0.05;    // fraction of the frame's SHORT side
     double hardness = 0.25;  // 0 = feathered to nothing, 1 = a hard disc
@@ -66,6 +80,13 @@ struct MaskPaint {
     {
         return strokes.empty();
     }
+
+    // Click-to-select prompts among the strokes: x, y as fractions of the
+    // frame and 1 for include / 0 for exclude, in the order they were made.
+    std::vector<std::array<float, 3>> prompts() const;
+    bool hasPrompts() const;
+    // The strokes that paint, without the prompts.
+    MaskPaint paintOnly() const;
 
     bool operator ==(const MaskPaint& other) const
     {
@@ -92,6 +113,9 @@ struct MaskPaint {
     // lowers it away from it, so the two are commutative within their kind
     // and the later kind wins where they cross.
     void apply(array2D<float>& mask, int width, int height, bool multiThread) const;
+    // Replay into a source-coordinate tile without changing stroke geometry.
+    void applyRegion(array2D<float>& mask, int fullWidth, int fullHeight,
+                     int originX, int originY, int width, int height, bool multiThread) const;
 };
 
 } // namespace rtengine

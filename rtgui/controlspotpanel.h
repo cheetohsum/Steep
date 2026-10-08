@@ -605,6 +605,10 @@ private:
     int lastObject_;
     rtengine::Coord lastCoord_;
     rtengine::Coord gradientDragStart_;
+    // Where a grip drag started and the spot's box at that moment: drags are
+    // computed from these, never by adding up rounded per-event deltas.
+    rtengine::Coord spotDragStart_;
+    gradientgeometry::SpotBox spotDragBox_;
     gradientgeometry::LinearBand gradientDragBand_;
     bool gradientDragActive_ = false;
     bool nbSpotChanged_;

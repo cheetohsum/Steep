@@ -167,15 +167,20 @@ Imagefloat* Imagefloat::copy () const
 
 Imagefloat* Imagefloat::copySubRegion (int x, int y, int width, int height)
 {
-    Imagefloat* cp = NULL;
-    int realWidth  = LIM<int>(x + width,  0, this->width)  - x;
-    int realHeight = LIM<int>(y + height, 0, this->height) - y;
-
-    if (realWidth > 0 && realHeight > 0) {
-        cp = new Imagefloat (realWidth, realHeight);
-        copyData(cp, x, y, realWidth, realHeight);
+    const int x0 = LIM(x, 0, this->width);
+    const int y0 = LIM(y, 0, this->height);
+    const int x1 = LIM<int64_t>(int64_t(x) + width, 0, this->width);
+    const int y1 = LIM<int64_t>(int64_t(y) + height, 0, this->height);
+    if (width <= 0 || height <= 0 || x1 <= x0 || y1 <= y0) {
+        return nullptr;
     }
-
+    auto cp = new Imagefloat(x1 - x0, y1 - y0);
+    // Offsets belong to the source; the destination starts at (0, 0).
+    for (int row = 0; row < y1 - y0; ++row) {
+        std::memcpy(cp->r(row), r(y0 + row) + x0, (x1 - x0) * sizeof(float));
+        std::memcpy(cp->g(row), g(y0 + row) + x0, (x1 - x0) * sizeof(float));
+        std::memcpy(cp->b(row), b(y0 + row) + x0, (x1 - x0) * sizeof(float));
+    }
     return cp;
 }
 

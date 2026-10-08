@@ -598,6 +598,7 @@ public:
 
     // Forward the browser tab's filter to the double-exposure picker.
     void setDoubleExposureBrowserFilterProvider(std::function<BrowserFilter()> provider);
+
     void setDoubleExposureBrowserDirProvider(std::function<Glib::ustring()> provider);
     void setDoubleExposureOpenPartnerHandler(std::function<void(const Glib::ustring&, const Glib::ustring&)> handler);
 

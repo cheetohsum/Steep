@@ -51,6 +51,7 @@
 #include "polymask.h"
 #ifdef RT_AI_MASKING
 #include "aimaskcache.h"
+#include "masksampling.h"
 #endif
 
 //#define BENCHMARK
@@ -87,26 +88,6 @@ float clamp(float x, float lo, float hi)
 {
     return fmax(fmin(x, hi), lo);
 }
-
-#ifdef RT_AI_MASKING
-float sampleAIMask(const array2D<float>& mask, int width, int height, float x, float y)
-{
-    if (width <= 0 || height <= 0 || x < 0.f || y < 0.f
-            || x > width - 1.f || y > height - 1.f) {
-        return 0.f;
-    }
-
-    const int x0 = std::min(static_cast<int>(x), width - 1);
-    const int y0 = std::min(static_cast<int>(y), height - 1);
-    const int x1 = std::min(x0 + 1, width - 1);
-    const int y1 = std::min(y0 + 1, height - 1);
-    const float fx = x - x0;
-    const float fy = y - y0;
-    const float top = mask[y0][x0] + fx * (mask[y0][x1] - mask[y0][x0]);
-    const float bottom = mask[y1][x0] + fx * (mask[y1][x1] - mask[y1][x0]);
-    return top + fy * (bottom - top);
-}
-#endif
 
 // Michaelis-Menten equation
 // Curiously we use the Michaelis-Menten equation, which is borrowed from biochemistry to describe enzyme kinetics
@@ -2233,8 +2214,11 @@ static void calcTransitiongrad(const float lox, const float loy, const float ach
 
     // Check bounding rectangle first. Outside it there is no gradient left:
     // no effect normally, and full effect when the gradient is inverted.
-    if (lox >= lp.xc + lp.gradlx || lox <= lp.xc - lp.gradlxL
-            || loy >= lp.yc + lp.gradly || loy <= lp.yc - lp.gradlyT) {
+    // The box's own edges count as inside: a box fitted to the frame (1000
+    // on every side) puts its left and top edges exactly on column and row
+    // 0, and excluding them left a one-pixel ungraded line along both.
+    if (lox > lp.xc + lp.gradlx || lox < lp.xc - lp.gradlxL
+            || loy > lp.yc + lp.gradly || loy < lp.yc - lp.gradlyT) {
         if (lp.gradinvert) {
             zone = 2;
             localFactor = 1.f;
@@ -10104,12 +10088,8 @@ void ImProcFunctions::transit_shapedetect2(int sp, float meantm, float stdtm, in
                 const bool aiMaskActive = aiMaskPtr && aiFullW > 0 && aiFullH > 0;
                 float aiMaskValue = 0.f;
                 if (aiMaskActive) {
-                    const float maskY = static_cast<float>(y + ystart + cy) * sk
-                        * aiMaskH / static_cast<float>(aiFullH);
-                    const float maskX = static_cast<float>(x + xstart + cx) * sk
-                        * aiMaskW / static_cast<float>(aiFullW);
-                    aiMaskValue = sampleAIMask(
-                        *aiMaskPtr, aiMaskW, aiMaskH, maskX, maskY);
+                    aiMaskValue = masksampling::atPixel(*aiMaskPtr, aiMaskW, aiMaskH,
+                        double(lox) * sk, double(loy) * sk, aiFullW, aiFullH, sk);
                     // In add mode the geometric shape contributes on its own,
                     // so a zero AI sample cannot skip; a cut of nothing can.
                     if (aiMaskValue <= 0.f
@@ -24059,12 +24039,8 @@ void ImProcFunctions::Lab_Local(
                 float factorx = localFactor;
 #ifdef RT_AI_MASKING
                 if (aiMaskPtrOv && aiFullWOv > 0 && aiFullHOv > 0) {
-                    const float maskY = static_cast<float>(y + cy) * sk
-                        * aiMaskHOv / static_cast<float>(aiFullHOv);
-                    const float maskX = static_cast<float>(x + cx) * sk
-                        * aiMaskWOv / static_cast<float>(aiFullWOv);
-                    const float aiVal = sampleAIMask(
-                        *aiMaskPtrOv, aiMaskWOv, aiMaskHOv, maskX, maskY);
+                    const float aiVal = masksampling::atPixel(*aiMaskPtrOv, aiMaskWOv, aiMaskHOv,
+                        double(lox) * sk, double(loy) * sk, aiFullWOv, aiFullHOv, sk);
                     if (aiShapeOpActiveOv) {
                         int zoneShape = 0;
                         float shapeFactor = 1.f;
@@ -24227,11 +24203,8 @@ void ImProcFunctions::Lab_Local(
                 float factorx = localFactor;
 #ifdef RT_AI_MASKING
                 if (aiDbPtr && aiDbFullW > 0 && aiDbFullH > 0) {
-                    const float maskY = static_cast<float>(loy) * sk
-                        * aiDbH / static_cast<float>(aiDbFullH);
-                    const float maskX = static_cast<float>(lox) * sk
-                        * aiDbW / static_cast<float>(aiDbFullW);
-                    const float aiVal = sampleAIMask(*aiDbPtr, aiDbW, aiDbH, maskX, maskY);
+                    const float aiVal = masksampling::atPixel(*aiDbPtr, aiDbW, aiDbH,
+                        double(lox) * sk, double(loy) * sk, aiDbFullW, aiDbFullH, sk);
                     if (aiShapeOpDb) {
                         int zoneShape = 0;
                         float shapeFactor = 1.f;

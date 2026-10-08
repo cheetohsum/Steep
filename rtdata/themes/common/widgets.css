@@ -55,6 +55,20 @@
 #EditorFilterBar label { margin: 0 2px; }
 #EditorFilterBar entry { min-height: 0; padding: 1px 4px; }
 
+/*** Count badge (guiutils.cc addCountBadge) ***************************************************/
+/* Top-right pill on the filter toggles: how many filters are on, visible while the bar is closed. */
+#CountBadge {
+    background-color: @steep_accent;
+    color: @steep_sel_fg;
+    font-size: 0.7em;
+    font-weight: bold;
+    border-radius: 6px;
+    min-width: 7px;
+    min-height: 0;
+    padding: 0 3px;
+    margin: 0;
+}
+
 /*** Album view (editorpanel.cc) ***************************************************************/
 #AlbumViewHeader { padding: 4px 8px; }
 #AlbumViewHeader label { padding: 0; margin: 0; }
@@ -296,6 +310,7 @@ button.curve-channel-blue label { color: #6695f2; }
 #DEChipControls button { padding: 0 3px; margin: 0; min-width: 10px; min-height: 14px; }
 button.de-chip { padding: 1px; margin: 0; }
 button.de-chip-selected { border: 2px solid @steep_accent; border-radius: 3px; padding: 0; }
+.de-motion-badge { background-color: alpha(@theme_bg_color, 0.85); color: @theme_fg_color; padding: 1px 5px; font-size: 9px; }
 
 /*** Mask list (controlspotpanel.cc) ***********************************************************/
 /* The masks of the current photo, one row each, inside a rounded well. The
@@ -367,3 +382,18 @@ button.de-chip-selected { border: 2px solid @steep_accent; border-radius: 3px; p
     font-weight: bold;
     opacity: 0.8;
 }
+
+/* Collection tags: quiet until a filter is active. */
+#PhotoTagFilter { padding: 4px 10px; border-radius: 14px; }
+#PhotoTagFilter.tags-active { background-color: alpha(@theme_selected_bg_color, 0.22); }
+#PhotoTagsRecent image { padding: 0; margin: 0; border-width: 0; }
+
+/* Compositing is a photographic workspace, with flat tool bands and a quiet canvas. */
+.compositing-workspace .composite-title { font-size: 17px; font-weight: bold; padding: 12px 0; }
+.compositing-workspace .composite-section { font-weight: bold; color: @steep_text_hi; }
+.compositing-workspace button { border-radius: 4px; }
+.compositing-workspace scrolledwindow { border-width: 0; }
+.compositing-workspace scale { min-width: 0; padding: 3px 0; }
+.compositing-workspace scale value { min-width: 36px; font-size: 11px; }
+.compositing-workspace iconview { background-color: alpha(@theme_bg_color, 0.5); }
+.compositing-workspace treeview { padding: 5px; }

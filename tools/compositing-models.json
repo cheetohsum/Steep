@@ -1,0 +1,26 @@
+{
+  "contract_version": 1,
+  "export_environment": {"torch": "2.6.0+cu124", "onnx": "1.20.1", "onnxruntime": "1.25.1", "opset": 17},
+  "sam2": {
+    "repository": "https://github.com/facebookresearch/sam2",
+    "revision": "2b90b9f5ceec907a1c18123530e92e794ad901a4",
+    "checkpoint": "sam2.1_hiera_tiny.pt",
+    "checkpoint_sha256": "7402e0d864fa82708a20fbd15bc84245c2f26dff0eb43a4b5b93452deb34be69",
+    "license": "Apache-2.0",
+    "encoder_sha256": "2171173e6439a946274e2b7a4b4be8339328a2b60dc0d04f607de6d83f8c2845",
+    "decoder_sha256": "909de1980c048e8d85d71a1ccc46362ee17176e281e10cccea96678f362aaa10",
+    "input": "RGB, linear ProPhoto converted to encoded sRGB, 1024 square, ImageNet normalization",
+    "prompts": "Points normalized to 1024; label 1 includes, 0 excludes",
+    "output": "Three 256-square logit masks; bilinear upsampling before zero threshold"
+  },
+  "depth": {
+    "repository": "https://github.com/DepthAnything/Depth-Anything-V2",
+    "revision": "a561b849ebae10a6f5ef49e26c83cbbcd36c71bf",
+    "checkpoint": "depth_anything_v2_vits.pth",
+    "checkpoint_sha256": "715fade13be8f229f8a70cc02066f656f2423a59effd0579197bbf57860e1378",
+    "license": "Apache-2.0",
+    "onnx_sha256": "a7d66386939681431d3b7c407b897d00cf205c44c607a33189eb4238bb7c9f80",
+    "input": "RGB, linear ProPhoto converted to encoded sRGB, 518 square with edge padding, ImageNet normalization",
+    "output": "Relative inverse depth, normalized once to 0 near and 1 far within unpadded source content"
+  }
+}

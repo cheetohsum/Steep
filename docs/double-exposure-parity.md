@@ -1,0 +1,32 @@
+# Depth confinement and compositor parity in Double Exposure
+
+Status: implemented October 8, 2026. The separate Effects > Compositing workspace was removed the same day and its capabilities were brought into Double Exposure instead: depth confinement (below), an opaque Normal blend, partners rendered as edited, click-to-select with SAM 2 prompts, and a lasso in the mask editor. The one capability not carried over is background reconstruction of a cut-out, which the editor's own Remove Object tool already provides on the base photograph.
+
+## What it does
+
+Each Double Exposure layer can be weighted by estimated scene depth on its own partner photograph. Four ordered handles over a depth histogram set the kept range: near fade start, near full, far full, far fade end. Each transition has its own shape (1 is smooth, below 1 reaches full strength early, above 1 holds back), and the selection can be inverted. Depth is relative within the partner photograph, 0 near to 1 far; two partners' depths are not the same distance, and an invalid estimate selects nothing even when inverted.
+
+The weight multiplies the layer at the same three places as the subject mask: the direct sample, the radial pattern's hand-over to the neighbouring copy, and motion plates. It stacks with the subject mask, the reveal gate and the edge feather.
+
+## Where it lives
+
+- Parameters: `Layer::depthEnabled`, `depthRange[4]`, `depthNearShape`, `depthFarShape`, `depthInvert` in `rtengine/procparams.h`; pp3 keys `LayerN DepthEnabled`, `DepthRange` (four doubles), `DepthNearShape`, `DepthFarShape`, `DepthInvert`. Files without the keys load with depth off; handles are re-ordered and clamped on load.
+- Maths: `rtengine/compositemath.h` (`depthWeight`, `ease`, `depthColor`), shared by the engine, the store and the widget.
+- Estimation: `rtengine/depthestimator.*` runs Depth Anything V2 Small (`composite_depth.onnx`, 518 pixel square input, DirectML when available) and `rtengine/partnerdepthstore.*` caches one map per partner and working profile (LRU of eight) at the partner's preview tier. `rtengine::init` records the model directory from the same lookup the masking models use; the picker and the engine estimate on demand, the picker on a worker so a redraw never waits.
+- Engine: `rtengine/ipdoubleexposure.cc`, `ResolvedLayer::depth/depthSelect`; the motion plate cache is keyed on the selection as well as the mask.
+- Picker: `rtgui/windows/doubleexposuredlg.cc`, a Depth range expander under the subject row; `rtgui/depthrangewidget.h` is the handle widget, `rtgui/compositedepthhistogram.h` the histogram measured from the partner's own scene plate. The preview reads the store cache-only, exactly as it does for masks.
+
+## Verification
+
+Headless: a `steep-cli` render of a Screen-mode layer confined to the near range removed the far wall of the fixture and kept the near road (mean luminance difference against the unconfined render 28 in the top rows versus 13 at the bottom). `tools/de_probe.py` (40 checks of the blend, gate, pattern and mask maths) and the 33 motion checks pass unchanged. The picker's controls were not driven live.
+
+## Compositor parity
+
+- **Normal blend** (`BlendMode::NORMAL`, pp3 value 7): the partner covers the base where it lands; opacity, the selection, the gate and the frame edge decide how much. It is not metered by auto film gain, which counts additive layers only. Verified: at 50 % opacity the render sits at the midpoint between base and layer (mean luminance residual 5 on the 8-bit scale, from gamma and JPEG rounding).
+- **As edited** (`Layer::asEdited`, key `AsEdited`): the partner is developed with its own sidecar through the engine's export pipeline into scene-linear working-space RGB (`ProcessingJobImpl::linearWorkingProfile`) instead of the neutral decode. The preview tier is the fast pipeline's 2560 pixel resize; `PartnerImage::skip` is fractional for it, and `fullWidth/fullHeight` are the full development's frame so both tiers, the masks and the depth map share one geometry. The partner's own double exposure is not applied (one level). The stores tell the two renderings apart by the `|edited` tag `Layer::source()` appends to the path, with the sidecar's modification time in the cache key. Without a sidecar the neutral decode stands in. Verified: a cropped black-and-white sidecar on the partner rendered a cropped, grey layer (mean |R-G| 1.3 against 22.7 for the neutral render).
+- **Click to select** (`MaskClass::POINTS`, pp3 value 8): include/exclude prompts are stored as `MaskStroke::Kind::POINT` strokes inside `maskPaint` (`p`/`n` kinds in the pp3 value), so they ride the same key, undo and cache hash as brush strokes. `PartnerMaskStore` runs `SamSelector` (SAM 2.1 Tiny, one embedding kept per partner, DirectML when available) on the preview-tier partner, picks the highest-scoring candidate for a single click and the joint one for several, and refines it against luminance with a guided filter before the usual feather, invert and strokes. In the picker, the Pick toggle turns preview clicks into prompts (left includes, right or Shift excludes), carried back through the selected exposure's placement into the partner frame. Verified: one click at the truck selected the truck (mask bounding box 36..1762 x 233..897 on a 1800 pixel frame), the top-left corner untouched.
+- **Lasso** (`MaskStroke::Kind::LASSO`, `l`/`x` kinds): the polygon the points close, full strength inside with a soft rim of a quarter of the brush size outside. Available in the mask editor as the Lasso toggle; the outline is drawn back to its start while it is being traced. Verified: an exclude lasso over the lower right of a click selection removed every changed pixel in its region (0.356 to 0.000) and left the rest unchanged.
+
+The picker's tool panel offers the new blend mode and selection mode; the As edited switch lives in the picker. Prompts are not yet drawn as markers on the preview, and the mask editor shows the partner's neutral rendering even for an as-edited layer: both are cosmetic follow-ups. Blend and mask maths are unchanged for existing files: `tools/de_probe.py` (40 checks) and the 33 motion checks pass.
+
+The SAM 2 export tooling that went with the compositor is not restored; the exported models in the install's `models` directory are the ones used. `tools/export_compositing_depth.py` and `tools/compositing-models.json` record the depth model's provenance.

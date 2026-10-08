@@ -31,6 +31,7 @@
 #include "imagefloat.h"
 #include "partnerimagestore.h"
 #include "rt_math.h"
+#include "samselector.h"
 #include "settings.h"
 
 namespace rtengine
@@ -70,6 +71,9 @@ int classIndex(procparams::DoubleExposureParams::MaskClass cls)
 
         case MaskClass::ANIMAL:
             return static_cast<int>(AISegClass::ANIMAL);
+
+        case MaskClass::POINTS:
+            return -2; // click-to-select: not a class of the segmentation model
 
         case MaskClass::OFF:
         default:
@@ -253,7 +257,7 @@ std::shared_ptr<PartnerMask> computeMask(const Glib::ustring& path, const Glib::
 {
     const int wanted = classIndex(cls);
 
-    if (wanted < 0) {
+    if (wanted == -1) {
         return nullptr;
     }
 
@@ -262,19 +266,63 @@ std::shared_ptr<PartnerMask> computeMask(const Glib::ustring& path, const Glib::
     int maskH = 0;
     int fullW = 0;
     int fullH = 0;
+    int chosenIndex = wanted;
 
-    if (!segmentPartner(path, workingProfile, multiThread, maps, maskW, maskH, fullW, fullH)) {
-        return nullptr;
-    }
+    if (wanted == -2) {
+        // Click-to-select: the prompts ride with the strokes. Without any the
+        // layer selects nothing yet, which is what an empty selection shows.
+        const auto prompts = paint.prompts();
 
-    if (wanted >= static_cast<int>(maps.size())) {
-        return nullptr;
-    }
+        if (prompts.empty()) {
+            return nullptr;
+        }
 
-    if (coverageOut) {
-        // Measured on the finished class maps, before this one mask's own
-        // feather and strokes narrow it to a single class.
-        *coverageOut = measureClasses(maps, maskW, maskH).coverage;
+        auto partner = PartnerImageStore::getInstance().getPartner(path, workingProfile, false);
+
+        if (!partner || !partner->image || partner->fullWidth <= 0 || partner->fullHeight <= 0) {
+            return nullptr;
+        }
+
+        auto selected = SamSelector::getInstance().select(*partner->image, path.raw(), prompts);
+
+        if (selected.getWidth() <= 0 || selected.getHeight() <= 0) {
+            return nullptr;
+        }
+
+        const int srcW = selected.getWidth();
+        const int srcH = selected.getHeight();
+        const float cacheScale = std::min(1.f, static_cast<float>(MAX_PARTNER_MASK_DIMENSION)
+                                          / static_cast<float>(std::max(srcW, srcH)));
+        maskW = std::max(1, static_cast<int>(std::lround(srcW * cacheScale)));
+        maskH = std::max(1, static_cast<int>(std::lround(srcH * cacheScale)));
+        maps.emplace_back(maskW, maskH);
+
+        for (int y = 0; y < maskH; ++y) {
+            const int sy = std::min(srcH - 1, static_cast<int>((y + 0.5f) * srcH / maskH));
+
+            for (int x = 0; x < maskW; ++x) {
+                const int sx = std::min(srcW - 1, static_cast<int>((x + 0.5f) * srcW / maskW));
+                maps[0][y][x] = selected[sy][sx];
+            }
+        }
+
+        fullW = partner->fullWidth;
+        fullH = partner->fullHeight;
+        chosenIndex = 0;
+    } else {
+        if (!segmentPartner(path, workingProfile, multiThread, maps, maskW, maskH, fullW, fullH)) {
+            return nullptr;
+        }
+
+        if (wanted >= static_cast<int>(maps.size())) {
+            return nullptr;
+        }
+
+        if (coverageOut) {
+            // Measured on the finished class maps, before this one mask's own
+            // feather and strokes narrow it to a single class.
+            *coverageOut = measureClasses(maps, maskW, maskH).coverage;
+        }
     }
 
     auto result = std::make_shared<PartnerMask>();
@@ -284,7 +332,7 @@ std::shared_ptr<PartnerMask> computeMask(const Glib::ustring& path, const Glib::
     result->fullHeight = fullH;
     result->mask(maskW, maskH);
 
-    array2D<float>& chosen = maps[wanted];
+    array2D<float>& chosen = maps[chosenIndex];
 
     // Feather is a blur radius as a fraction of the mask's short edge: a
     // segmentation boundary is only ever approximate, and a hard edge on an
@@ -321,7 +369,7 @@ std::shared_ptr<PartnerMask> computeMask(const Glib::ustring& path, const Glib::
     }
 
     if (!paint.empty()) {
-        paint.apply(result->mask, maskW, maskH, multiThread);
+        paint.paintOnly().apply(result->mask, maskW, maskH, multiThread);
     }
 
     // Bounds come from the UNBLURRED class, so a heavy feather does not creep
