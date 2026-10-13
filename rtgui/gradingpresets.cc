@@ -214,8 +214,8 @@ std::vector<Preset> load(const Glib::ustring& directory, unsigned& rejected)
         if (name.size() < 6 || name.substr(name.size()-6) != ".grade") continue;
         try {
             const auto path = Glib::build_filename(directory, name);
-            GStatBuf stat;
-            if (g_stat(path.c_str(), &stat) != 0 || stat.st_size > 16384) throw std::runtime_error("Invalid grading preset size");
+            GStatBuf fileStat; // not "stat": g_stat is stat() on POSIX
+            if (g_stat(path.c_str(), &fileStat) != 0 || fileStat.st_size > 16384) throw std::runtime_error("Invalid grading preset size");
             Glib::KeyFile key;
             key.load_from_file(path);
             if (key.get_integer("Grading Preset", "Version") != 1) throw std::runtime_error("Unsupported grading preset");

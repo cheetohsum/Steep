@@ -1077,10 +1077,12 @@ std::uint64_t hashEntryChain(const SpotEntry& entry,
     // Image identity: the cache is process-global, so patches must never
     // leak between images (editor tabs, before/after, batch queue).
     h = hashString(h, fileName);
-    GStatBuf stat;
-    if (entry.repairVersion >= 2 && g_stat(fileName.c_str(), &stat) == 0) {
-        h = hashDouble(h, double(stat.st_size));
-        h = hashDouble(h, double(stat.st_mtime));
+    // Not named "stat": on POSIX g_stat is a macro for stat(), which a
+    // local of that name would shadow.
+    GStatBuf fileStat;
+    if (entry.repairVersion >= 2 && g_stat(fileName.c_str(), &fileStat) == 0) {
+        h = hashDouble(h, double(fileStat.st_size));
+        h = hashDouble(h, double(fileStat.st_mtime));
     }
     if (entry.repairVersion >= 2) {
         h = hashDouble(h, currWB.getEqual());
