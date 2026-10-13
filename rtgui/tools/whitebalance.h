@@ -95,7 +95,7 @@ protected:
     bool detailExpanded_ = false;
     void toggleDetail();
 
-    Gtk::Label* sectionLabel_;
+    SectionHeader* sectionHeader_ = nullptr;
     Gtk::Box* wbContent_ = nullptr;
     bool contentExpanded_ = false;
     void toggleContent();

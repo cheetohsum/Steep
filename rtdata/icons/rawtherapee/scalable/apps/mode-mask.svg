@@ -1,21 +1,4 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-  <defs>
-    <clipPath id="halfClip">
-      <rect x="0" y="0" width="12" height="24"/>
-    </clipPath>
-  </defs>
-  <!-- Mask icon: circle split into opaque/transparent halves with dashed selection border -->
-  <!-- Left half — solid fill (masked area) -->
-  <circle cx="12" cy="12" r="8" clip-path="url(#halfClip)"
-    style="opacity:0.85;fill:#cccccc;stroke:none"/>
-  <!-- Right half — just outline (unmasked area) -->
-  <path d="M12,4 A8,8 0 0,1 12,20"
-    style="opacity:0.5;fill:none;stroke:#cccccc;stroke-width:1.5"/>
-  <!-- Dashed selection border (full circle) -->
-  <circle cx="12" cy="12" r="8"
-    style="opacity:0.9;fill:none;stroke:#cccccc;stroke-width:1.5;stroke-dasharray:3,2;stroke-linecap:round"/>
-  <!-- Small feather indicator — soft gradient lines at the split -->
-  <line x1="12" y1="5" x2="12" y2="19"
-    style="opacity:0.3;stroke:#cccccc;stroke-width:0.8;stroke-dasharray:1.5,1.5"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">
+  <circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor" fill-opacity=".35"/>
 </svg>

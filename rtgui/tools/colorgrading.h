@@ -60,7 +60,7 @@ private:
 
     AdvancedSection* advancedSection;
 
-    Gtk::Label* sectionLabel_;
+    SectionHeader* sectionHeader_;
     Gtk::Box* toolContent_;
     bool contentExpanded_;
     void toggleContent();

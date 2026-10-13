@@ -130,14 +130,18 @@ PlacesBrowser::PlacesBrowser ()
 
     Gtk::TreeView::Column *iviewcol = Gtk::manage (new Gtk::TreeView::Column (M("MAIN_FRAME_PLACES")));
     Gtk::CellRendererText *driveCR = Gtk::manage (new Gtk::CellRendererText());
-    driveCR->property_foreground() = "#888888";
+    driveCR->property_foreground_rgba() = themeColor(*treeView, "steep_text_dim", Gdk::RGBA("#888888"));
     driveCR->property_xalign() = 0.0;
     driveCR->property_width_chars() = 2;
     Gtk::CellRendererText *labelCR  = Gtk::manage (new Gtk::CellRendererText());
     labelCR->property_ellipsize() = Pango::ELLIPSIZE_MIDDLE;
     Gtk::CellRendererText *countCR = Gtk::manage (new Gtk::CellRendererText());
-    countCR->property_foreground() = "#888888";
+    countCR->property_foreground_rgba() = themeColor(*treeView, "steep_text_dim", Gdk::RGBA("#888888"));
     countCR->property_xalign() = 1.0;
+    // Compact rows: the GTK default 2px cell padding doubles the list height.
+    driveCR->property_ypad() = 0;
+    labelCR->property_ypad() = 0;
+    countCR->property_ypad() = 0;
 
     iviewcol->pack_start (*driveCR, false);
     iviewcol->pack_start (*labelCR, true);
@@ -150,7 +154,7 @@ PlacesBrowser::PlacesBrowser ()
         auto rowPath = placesModel->get_path(iter);
         bool hovered = !hoveredPath_.empty() && rowPath == hoveredPath_;
         textCR->property_cell_background_set() = hovered;
-        if (hovered) textCR->property_cell_background() = Glib::ustring("#3a3f4b");
+        paintTreeRowState(textCR, *treeView, hovered, false);
     });
     iviewcol->set_cell_data_func(*labelCR, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
         auto* textCR = static_cast<Gtk::CellRendererText*>(cr);
@@ -158,7 +162,7 @@ PlacesBrowser::PlacesBrowser ()
         auto rowPath = placesModel->get_path(iter);
         bool hovered = !hoveredPath_.empty() && rowPath == hoveredPath_;
         textCR->property_cell_background_set() = hovered;
-        if (hovered) textCR->property_cell_background() = Glib::ustring("#3a3f4b");
+        paintTreeRowState(textCR, *treeView, hovered, false);
     });
     iviewcol->set_cell_data_func(*countCR, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
         auto* textCR = static_cast<Gtk::CellRendererText*>(cr);
@@ -166,7 +170,7 @@ PlacesBrowser::PlacesBrowser ()
         auto rowPath = placesModel->get_path(iter);
         bool hovered = !hoveredPath_.empty() && rowPath == hoveredPath_;
         textCR->property_cell_background_set() = hovered;
-        if (hovered) textCR->property_cell_background() = Glib::ustring("#3a3f4b");
+        paintTreeRowState(textCR, *treeView, hovered, false);
     });
 
     treeView->append_column (*iviewcol);

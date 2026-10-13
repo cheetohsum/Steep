@@ -269,6 +269,17 @@ void ParamsEdited::set(bool v)
     lightEffects.flare = v;
     lightEffects.flareLength = v;
     lightEffects.flareAngle = v;
+    relight.enabled = v;
+    relight.lightX = v;
+    relight.lightY = v;
+    relight.distance = v;
+    relight.intensity = v;
+    relight.reach = v;
+    relight.shadows = v;
+    relight.background = v;
+    relight.subjectFocus = v;
+    relight.warmth = v;
+    relight.shape = v;
     tiltShift.enabled = v;
     tiltShift.amount = v;
     tiltShift.focusPos = v;
@@ -1171,6 +1182,17 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         lightEffects.flare = lightEffects.flare && p.lightEffects.flare == other.lightEffects.flare;
         lightEffects.flareLength = lightEffects.flareLength && p.lightEffects.flareLength == other.lightEffects.flareLength;
         lightEffects.flareAngle = lightEffects.flareAngle && p.lightEffects.flareAngle == other.lightEffects.flareAngle;
+        relight.enabled = relight.enabled && p.relight.enabled == other.relight.enabled;
+        relight.lightX = relight.lightX && p.relight.lightX == other.relight.lightX;
+        relight.lightY = relight.lightY && p.relight.lightY == other.relight.lightY;
+        relight.distance = relight.distance && p.relight.distance == other.relight.distance;
+        relight.intensity = relight.intensity && p.relight.intensity == other.relight.intensity;
+        relight.reach = relight.reach && p.relight.reach == other.relight.reach;
+        relight.shadows = relight.shadows && p.relight.shadows == other.relight.shadows;
+        relight.background = relight.background && p.relight.background == other.relight.background;
+        relight.subjectFocus = relight.subjectFocus && p.relight.subjectFocus == other.relight.subjectFocus;
+        relight.warmth = relight.warmth && p.relight.warmth == other.relight.warmth;
+        relight.shape = relight.shape && p.relight.shape == other.relight.shape;
 
         tiltShift.enabled = tiltShift.enabled && p.tiltShift.enabled == other.tiltShift.enabled;
         tiltShift.amount = tiltShift.amount && p.tiltShift.amount == other.tiltShift.amount;
@@ -3232,6 +3254,40 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
     }
     if (lightEffects.flareAngle) {
         toEdit.lightEffects.flareAngle = mods.lightEffects.flareAngle;
+    }
+
+    if (relight.enabled) {
+        toEdit.relight.enabled = mods.relight.enabled;
+    }
+    if (relight.lightX) {
+        toEdit.relight.lightX = mods.relight.lightX;
+    }
+    if (relight.lightY) {
+        toEdit.relight.lightY = mods.relight.lightY;
+    }
+    if (relight.distance) {
+        toEdit.relight.distance = mods.relight.distance;
+    }
+    if (relight.intensity) {
+        toEdit.relight.intensity = mods.relight.intensity;
+    }
+    if (relight.reach) {
+        toEdit.relight.reach = mods.relight.reach;
+    }
+    if (relight.shadows) {
+        toEdit.relight.shadows = mods.relight.shadows;
+    }
+    if (relight.background) {
+        toEdit.relight.background = mods.relight.background;
+    }
+    if (relight.subjectFocus) {
+        toEdit.relight.subjectFocus = mods.relight.subjectFocus;
+    }
+    if (relight.warmth) {
+        toEdit.relight.warmth = mods.relight.warmth;
+    }
+    if (relight.shape) {
+        toEdit.relight.shape = mods.relight.shape;
     }
 
     if (tiltShift.enabled) {

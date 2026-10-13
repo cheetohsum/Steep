@@ -12,6 +12,7 @@
   --steep-accent: #2d7fd3;
   --steep-select: #2d7fd3;
   --steep-attention: #b87848;
+  --steep-rating: #f2c240;
   --steep-success: #55c878;
   --steep-danger: #f06468;
   --steep-border: #14171c;
@@ -19,4 +20,13 @@
   --steep-sel-bg: #2d7fd3;
   --steep-sel-fg: #e2e6ed;
   --steep-wash: #ffffff;
+  --steep-on-accent: #ffffff;
+  --steep-shadow: alpha(#000000, 0.55);
+  --steep-surround: #2a2a2a;
+  --steep-ornament: alpha(#2d7fd3, 0.5);
+  --steep-label-1: #e0524c;
+  --steep-label-2: #e0b42c;
+  --steep-label-3: #4fae5a;
+  --steep-label-4: #3d7fe0;
+  --steep-label-5: #9a5cc8;
 }

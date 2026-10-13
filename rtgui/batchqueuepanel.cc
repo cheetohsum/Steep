@@ -17,6 +17,7 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "batchqueuepanel.h"
+#include "guiutils.h"
 
 #include "multilangmgr.h"
 #include "options.h"
@@ -51,7 +52,7 @@ BatchQueuePanel::BatchQueuePanel (FileCatalog* aFileCatalog) : parent(nullptr)
     Gtk::Box* batchQueueButtonBox = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     batchQueueButtonBox->set_name("BatchQueueButtons");
 
-    qStartStop = Gtk::manage (new Gtk::Button("Export Queue"));
+    qStartStop = Gtk::manage (new Gtk::Button(M("QUEUE_EXPORT_BUTTON")));
     qStartStop->set_tooltip_markup (M("QUEUE_STARTSTOP_TOOLTIP"));
     qStartStop->signal_clicked().connect (sigc::mem_fun(*this, &BatchQueuePanel::startOrStopBatchProc));
 
@@ -253,7 +254,7 @@ BatchQueuePanel::BatchQueuePanel (FileCatalog* aFileCatalog) : parent(nullptr)
     Gtk::Box* zoomBox = Gtk::manage (new Gtk::Box ());
     zoomBox->pack_start (*Gtk::manage (new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK, 4);
 
-    zoomSlider = Gtk::manage (new Gtk::Scale (Gtk::ORIENTATION_HORIZONTAL));
+    { auto* zs = Gtk::manage (new MyHScale ()); zs->setZoomStyle (true); zoomSlider = zs; }
     zoomSlider->set_range (0, options.thumbnailZoomRatios.size () - 1);
     zoomSlider->set_increments (1, 1);
     zoomSlider->set_draw_value (false);
@@ -799,8 +800,8 @@ void BatchQueuePanel::pathFolderButtonPressed ()
     auto& options = App::get().mut_options();
 
     Gtk::FileChooserDialog fc (getToplevelWindow (this), M("QUEUE_LOCATION_FOLDER"), Gtk::FILE_CHOOSER_ACTION_SELECT_FOLDER );
-    fc.add_button( "_Cancel", Gtk::RESPONSE_CANCEL); // STOCKICON WAS THERE
-    fc.add_button( "_OK", Gtk::RESPONSE_OK); // STOCKICON WAS THERE
+    fc.add_button( M("GENERAL_CANCEL"), Gtk::RESPONSE_CANCEL);
+    fc.add_button( M("GENERAL_OK"), Gtk::RESPONSE_OK)->get_style_context()->add_class(GTK_STYLE_CLASS_SUGGESTED_ACTION);
     fc.set_filename(options.savePathFolder);
     fc.set_transient_for(*parent);
     int result = fc.run();

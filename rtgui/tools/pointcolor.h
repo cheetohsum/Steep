@@ -66,6 +66,10 @@ private:
     void onPickTarget();
     void onTargetSelected();
     void setControlsSensitive(bool sensitive);
+    void selectTarget(int idx);
+    bool drawHueRing(const Cairo::RefPtr<Cairo::Context>& cr);
+    bool hueRingPointer(double x, double y);
+    void beforeAfter(const rtengine::procparams::PointColorTarget& t, Gdk::RGBA& before, Gdk::RGBA& after) const;
     static Glib::ustring hueToColorName(double hue01);
 
     // Target list model
@@ -86,6 +90,9 @@ private:
     Gtk::Button* addButton;
     Gtk::Button* removeButton;
     Gtk::Box* toolbarBox;
+    Gtk::Box* swatchBox;          // one swatch per picked colour
+    Gtk::DrawingArea* hueRing;    // target hue, its reach, before and after
+    bool ringDragging = false;
 
     // Per-target controls
     Adjuster* centerHueAdj;
@@ -101,7 +108,7 @@ private:
     bool internalUpdate;  // suppress adjuster events during load
     sigc::connection selectionConn_;
 
-    Gtk::Label* sectionLabel_;
+    SectionHeader* sectionHeader_;
     Gtk::Box* toolContent_;
     bool contentExpanded_;
     void toggleContent();

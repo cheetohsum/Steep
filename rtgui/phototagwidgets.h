@@ -1,4 +1,5 @@
 #pragma once
+#include <functional>
 #include <gtkmm.h>
 #include "phototags.h"
 
@@ -13,6 +14,8 @@ public:
     void clear();
     void setSelection(const PhotoTags::Tags& tags, bool all, bool untagged);
     sigc::signal<void>& changed() { return changed_; }
+    // An editing action kept inside the dropdown, under the filter controls.
+    void setEditAction(const Glib::ustring& label, std::function<void()> action);
 private:
     void rebuild();
     void updateLabel();
@@ -22,6 +25,8 @@ private:
     Gtk::CheckButton all_, untagged_;
     Gtk::ScrolledWindow scroll_;
     Gtk::Button clear_;
+    Gtk::Button edit_;
+    std::function<void()> editAction_;
     PhotoTags::Tags selected_;
     bool syncing_ = false;
     sigc::connection storeConnection_;

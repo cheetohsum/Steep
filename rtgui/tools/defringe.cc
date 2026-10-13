@@ -75,20 +75,12 @@ Defringe::Defringe () : FoldableToolPanel(this, TOOL_NAME, M("TP_DEFRINGE_LABEL"
     auto *summaryBox = getSummaryBox();
 
     // --- Collapsible Defringe header ---
-    defringeLabel = Gtk::manage(new Gtk::Label());
-    defringeLabel->set_markup(Glib::ustring("<b>\u25B8 ") + M("TP_DEFRINGE_LABEL") + "</b>");
-    defringeLabel->set_halign(Gtk::ALIGN_START);
-    defringeLabel->set_margin_top(4);
-    defringeLabel->set_margin_bottom(2);
-
-    Gtk::Button *defringeHeader = Gtk::manage(new Gtk::Button());
-    defringeHeader->set_name("CollapsibleHeader");
-    defringeHeader->set_relief(Gtk::RELIEF_NONE);
-    defringeHeader->set_can_focus(false);
-    defringeHeader->set_halign(Gtk::ALIGN_START);
-    defringeHeader->add(*defringeLabel);
-    defringeHeader->signal_clicked().connect(
-        sigc::mem_fun(*this, &Defringe::toggleDefringe));
+    defringeHeader = Gtk::manage(new SectionHeader(M("TP_DEFRINGE_LABEL")));
+    defringeHeader->set_halign(Gtk::ALIGN_FILL);
+    defringeHeader->set_hexpand(true);
+    defringeHeader->set_margin_top(4);
+    defringeHeader->set_margin_bottom(2);
+    defringeHeader->setOnToggled([this](bool) { toggleDefringe(); });
     summaryBox->pack_start(*defringeHeader, Gtk::PACK_SHRINK);
 
     // Content box for all defringe content (hidden by default)
@@ -99,20 +91,12 @@ Defringe::Defringe () : FoldableToolPanel(this, TOOL_NAME, M("TP_DEFRINGE_LABEL"
     defringeContent->pack_start(*threshold);
 
     // --- Collapsible Hue section (nested inside defringe content) ---
-    hueLabel = Gtk::manage(new Gtk::Label());
-    hueLabel->set_markup(Glib::ustring("<b>\u25B8 ") + M("TP_DEFRINGE_HUE_SECTION") + "</b>");
-    hueLabel->set_halign(Gtk::ALIGN_START);
-    hueLabel->set_margin_top(8);
-    hueLabel->set_margin_bottom(2);
-
-    Gtk::Button *hueHeader = Gtk::manage(new Gtk::Button());
-    hueHeader->set_name("CollapsibleHeader");
-    hueHeader->set_relief(Gtk::RELIEF_NONE);
-    hueHeader->set_can_focus(false);
-    hueHeader->set_halign(Gtk::ALIGN_START);
-    hueHeader->add(*hueLabel);
-    hueHeader->signal_clicked().connect(
-        sigc::mem_fun(*this, &Defringe::toggleHue));
+    hueHeader = Gtk::manage(new SectionHeader(M("TP_DEFRINGE_HUE_SECTION")));
+    hueHeader->set_halign(Gtk::ALIGN_FILL);
+    hueHeader->set_hexpand(true);
+    hueHeader->set_margin_top(8);
+    hueHeader->set_margin_bottom(2);
+    hueHeader->setOnToggled([this](bool) { toggleHue(); });
     defringeContent->pack_start(*hueHeader, Gtk::PACK_SHRINK);
 
     hueContent = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
@@ -243,7 +227,7 @@ void Defringe::toggleDefringe()
 {
     defringeExpanded = !defringeExpanded;
     if (defringeExpanded) {
-        defringeLabel->set_markup(Glib::ustring("<b>\u25BE ") + M("TP_DEFRINGE_LABEL") + "</b>");
+        defringeHeader->setExpanded(true);
         defringeContent->set_no_show_all(false);
         defringeContent->show_all();
         defringeContent->set_no_show_all(true);
@@ -254,7 +238,7 @@ void Defringe::toggleDefringe()
             updateModeDisplay();
         }
     } else {
-        defringeLabel->set_markup(Glib::ustring("<b>\u25B8 ") + M("TP_DEFRINGE_LABEL") + "</b>");
+        defringeHeader->setExpanded(false);
         defringeContent->hide();
     }
 }
@@ -263,14 +247,14 @@ void Defringe::toggleHue()
 {
     hueExpanded = !hueExpanded;
     if (hueExpanded) {
-        hueLabel->set_markup(Glib::ustring("<b>\u25BE ") + M("TP_DEFRINGE_HUE_SECTION") + "</b>");
+        hueHeader->setExpanded(true);
         hueContent->set_no_show_all(false);
         hueContent->show_all();
         hueContent->set_no_show_all(true);
         // Restore correct purple/green visibility
         updateModeDisplay();
     } else {
-        hueLabel->set_markup(Glib::ustring("<b>\u25B8 ") + M("TP_DEFRINGE_HUE_SECTION") + "</b>");
+        hueHeader->setExpanded(false);
         hueContent->hide();
     }
 }

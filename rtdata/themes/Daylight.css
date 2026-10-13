@@ -1,0 +1,53 @@
+/*
+  Daylight — light grey, classic blue
+
+  The light theme: paper-white wells, soft grey chrome, classic blue accent.
+  Note steep_wash is BLACK here — hovers and raised fills darken instead of
+  lighten, which is what a light surface needs.
+
+  This file is a PALETTE: the design lives in common/steep-look.css and
+  reads these steep_* tokens.
+
+  Copyright (c) 2016-2017 TooWaBoo, (c) 2026 RawTherapee
+  Licensed under the GNU General Public License v3 or later.
+*/
+
+/***************************/
+/**/ @import url("./common/size.css"); /**/
+/**/ @import url("./common/steep-look.css"); /**/
+/***************************/
+
+@define-color steep_surface_0 #dcdde0;
+@define-color steep_surface_1 #eceef1;
+@define-color steep_surface_2 #f6f7f9;
+@define-color steep_surface_3 #ffffff;
+
+@define-color steep_text_hi #15171a;
+@define-color steep_text #34383e;
+@define-color steep_text_dim #666c75;
+
+@define-color steep_accent #0a6fd6;
+@define-color steep_on_accent #ffffff;
+@define-color steep_select #0a6fd6;
+
+@define-color steep_attention #c4621d;
+@define-color steep_rating #b8860b;
+@define-color steep_success #2e8a4f;
+@define-color steep_danger #c0392b;
+
+@define-color steep_border #c4c8ce;
+@define-color steep_border_soft #d6d9de;
+@define-color steep_shadow alpha(#14181e, 0.28);
+
+@define-color steep_sel_bg #0a6fd6;
+@define-color steep_sel_fg #ffffff;
+
+@define-color steep_wash #0a1428;
+@define-color steep_surround #787878;
+@define-color steep_ornament alpha(#0a6fd6, 0.45);
+
+@define-color steep_label_1 #c0392b;
+@define-color steep_label_2 #c8941a;
+@define-color steep_label_3 #2e8a4f;
+@define-color steep_label_4 #0a6fd6;
+@define-color steep_label_5 #7d4fb0;

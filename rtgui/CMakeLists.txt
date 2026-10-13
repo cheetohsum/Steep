@@ -50,6 +50,7 @@ set(RT_GUI_TOOL_PANEL_SOURCES
     tools/clarity.cc
     tools/grain.cc
     tools/lighteffects.cc
+    tools/relight.cc
     tools/tiltshift.cc
     tools/lensblur.cc
     tools/locallab.cc

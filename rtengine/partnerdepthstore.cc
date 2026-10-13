@@ -19,9 +19,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <mutex>
 #include <stdexcept>
+#include <vector>
 
 #include <glibmm/fileutils.h>
 #include <glibmm/miscutils.h>
@@ -93,7 +95,98 @@ struct PartnerDepthStore::Impl {
     bool haveModel = false;
     std::unique_ptr<DepthEstimator> estimator;
     Cache<Glib::ustring, std::shared_ptr<PartnerDepth>> cache{8};
+
+    // Main-image maps, newest first. The fingerprint tells a re-framed
+    // photograph (crop rotation, perspective, lens geometry) from the same
+    // frame rendered at another resolution or exposure.
+    struct SceneEntry {
+        std::string imageId;
+        Glib::ustring profile;
+        std::array<std::uint64_t, 4> fingerprint;
+        std::shared_ptr<PartnerDepth> depth;
+    };
+    std::mutex sceneMutex;
+    std::vector<SceneEntry> scenes;
 };
+
+namespace
+{
+
+constexpr std::size_t kSceneEntries = 3;
+constexpr int kFingerprintBitsTolerated = 40;   // of 256
+
+bool sameShape(const PartnerDepth& depth, int fullWidth, int fullHeight)
+{
+    if (fullWidth <= 0 || fullHeight <= 0 || depth.fullWidth <= 0 || depth.fullHeight <= 0) {
+        return false;
+    }
+
+    const double a = double(fullWidth) / fullHeight;
+    const double b = double(depth.fullWidth) / depth.fullHeight;
+    return std::fabs(a / b - 1.0) < 0.01;
+}
+
+// 256-bit difference hash of the frame's luminance on a 17x16 grid: each bit
+// says whether a cell is brighter than its right-hand neighbour. Exposure,
+// white balance and resolution leave it alone; moving the content does not.
+std::array<std::uint64_t, 4> frameFingerprint(const Imagefloat& source)
+{
+    constexpr int GW = 17;
+    constexpr int GH = 16;
+    const int w = source.getWidth();
+    const int h = source.getHeight();
+    std::array<double, GW * GH> sum{};
+    std::array<int, GW * GH> count{};
+    const int step = std::max(1, std::max(w, h) / 512);
+
+    for (int y = 0; y < h; y += step) {
+        const int gy = std::min(GH - 1, y * GH / std::max(1, h));
+
+        for (int x = 0; x < w; x += step) {
+            const int gx = std::min(GW - 1, x * GW / std::max(1, w));
+            const float v = source.r(y, x) + 2.f * source.g(y, x) + source.b(y, x);
+
+            if (std::isfinite(v)) {
+                sum[gy * GW + gx] += v;
+                ++count[gy * GW + gx];
+            }
+        }
+    }
+
+    std::array<std::uint64_t, 4> bits{};
+    int bit = 0;
+
+    for (int gy = 0; gy < GH; ++gy) {
+        for (int gx = 0; gx + 1 < GW; ++gx, ++bit) {
+            const double l = sum[gy * GW + gx] / std::max(1, count[gy * GW + gx]);
+            const double r = sum[gy * GW + gx + 1] / std::max(1, count[gy * GW + gx + 1]);
+
+            if (l > r) {
+                bits[bit / 64] |= std::uint64_t(1) << (bit % 64);
+            }
+        }
+    }
+
+    return bits;
+}
+
+int fingerprintDistance(const std::array<std::uint64_t, 4>& a, const std::array<std::uint64_t, 4>& b)
+{
+    int d = 0;
+
+    for (int i = 0; i < 4; ++i) {
+        std::uint64_t v = a[i] ^ b[i];
+
+        while (v) {
+            v &= v - 1;
+            ++d;
+        }
+    }
+
+    return d;
+}
+
+} // namespace
 
 PartnerDepthStore::PartnerDepthStore() : impl(new Impl)
 {
@@ -203,9 +296,110 @@ std::shared_ptr<const PartnerDepth> PartnerDepthStore::getDepth(const Glib::ustr
     return result;
 }
 
+std::shared_ptr<const PartnerDepth> PartnerDepthStore::peekSceneDepth(const std::string& imageId, int fullWidth, int fullHeight,
+                                                                      const Glib::ustring& workingProfile)
+{
+    std::lock_guard<std::mutex> lock(impl->sceneMutex);
+
+    for (const auto& entry : impl->scenes) {
+        if (entry.imageId == imageId && entry.profile == workingProfile && sameShape(*entry.depth, fullWidth, fullHeight)) {
+            return entry.depth;
+        }
+    }
+
+    return nullptr;
+}
+
+std::shared_ptr<const PartnerDepth> PartnerDepthStore::getSceneDepth(const std::string& imageId, const Imagefloat& source,
+                                                                     int fullWidth, int fullHeight, const Glib::ustring& workingProfile)
+{
+    if (imageId.empty() || source.getWidth() < 8 || source.getHeight() < 8 || !available()) {
+        return nullptr;
+    }
+
+    const auto fingerprint = frameFingerprint(source);
+
+    // Caller holds sceneMutex.
+    const auto find = [&]() -> std::shared_ptr<PartnerDepth> {
+        for (auto it = impl->scenes.begin(); it != impl->scenes.end(); ++it) {
+            if (it->imageId == imageId && it->profile == workingProfile && sameShape(*it->depth, fullWidth, fullHeight)
+                    && fingerprintDistance(it->fingerprint, fingerprint) <= kFingerprintBitsTolerated) {
+                Impl::SceneEntry entry = *it;
+                impl->scenes.erase(it);
+                impl->scenes.insert(impl->scenes.begin(), entry);
+                return entry.depth;
+            }
+        }
+
+        return nullptr;
+    };
+
+    {
+        std::lock_guard<std::mutex> lock(impl->sceneMutex);
+
+        if (auto hit = find()) {
+            return hit;
+        }
+    }
+
+    std::unique_ptr<Imagefloat> map;
+    {
+        std::lock_guard<std::mutex> lock(impl->mutex);
+
+        {
+            // Another thread may have estimated it while this one waited.
+            std::lock_guard<std::mutex> sceneLock(impl->sceneMutex);
+
+            if (auto hit = find()) {
+                return hit;
+            }
+        }
+
+        try {
+            if (!impl->estimator) {
+                impl->estimator.reset(new DepthEstimator());
+            }
+
+            map = impl->estimator->depth(source, impl->directory.raw(), workingProfile);
+        } catch (const std::exception& e) {
+            std::fprintf(stderr, "Scene depth: %s\n", e.what());
+            return nullptr;
+        }
+    }
+
+    if (!map || map->getWidth() < 1 || map->getHeight() < 1) {
+        return nullptr;
+    }
+
+    auto result = std::make_shared<PartnerDepth>();
+    result->width = map->getWidth();
+    result->height = map->getHeight();
+    result->fullWidth = fullWidth;
+    result->fullHeight = fullHeight;
+    result->depth(result->width, result->height);
+
+    for (int y = 0; y < result->height; ++y) {
+        for (int x = 0; x < result->width; ++x) {
+            const float d = map->r(y, x);
+            result->depth[y][x] = std::isfinite(d) && d >= 0.f ? std::min(1.f, d / 65535.f) : -1.f;
+        }
+    }
+
+    std::lock_guard<std::mutex> lock(impl->sceneMutex);
+    impl->scenes.insert(impl->scenes.begin(), Impl::SceneEntry{imageId, workingProfile, fingerprint, result});
+
+    if (impl->scenes.size() > kSceneEntries) {
+        impl->scenes.resize(kSceneEntries);
+    }
+
+    return result;
+}
+
 void PartnerDepthStore::clearCache()
 {
     impl->cache.clear();
+    std::lock_guard<std::mutex> lock(impl->sceneMutex);
+    impl->scenes.clear();
 }
 
 } // namespace rtengine

@@ -1,22 +1,7 @@
-<?xml version="1.0" encoding="UTF-8" standalone="no"?>
-<svg
-   width="24px"
-   height="24px"
-   viewBox="0 0 24 24"
-   version="1.1"
-   xmlns="http://www.w3.org/2000/svg">
-  <g id="layer1">
-    <!-- Source circle (back) -->
-    <circle
-       style="opacity:0.5;fill:none;stroke:#cccccc;stroke-width:1.5;stroke-opacity:1.0"
-       cx="9"
-       cy="10"
-       r="6" />
-    <!-- Target circle (front) -->
-    <circle
-       style="opacity:0.9;fill:none;stroke:#cccccc;stroke-width:1.5;stroke-opacity:1.0"
-       cx="15"
-       cy="14"
-       r="6" />
+<svg xmlns="http://www.w3.org/2000/svg" width="24px" height="24px" viewBox="0 0 24 24">
+  <g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="9" cy="9" r="5.5" fill="currentColor" fill-opacity=".35" stroke="none"/>
+    <circle cx="9" cy="9" r="5.5"/>
+    <circle cx="15" cy="15" r="5.5"/>
   </g>
 </svg>

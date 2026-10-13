@@ -150,6 +150,13 @@ void applyQueuedImageUpdate(QueuedImageUpdate& update)
     --helper->pending;
 }
 
+// Rendered pixels used to drain at G_PRIORITY_LOW, behind relayouts
+// (DEFAULT_IDLE+10) and every other idle, so during a cold load finished
+// thumbnails sat in the queue while gray cells were re-laid-out. Just after
+// GTK's redraw (HIGH_IDLE+20) instead: they paint on the next frame, and the
+// drain's 8 ms budget plus re-arm keeps it from starving the redraw itself.
+constexpr gint kImageUpdateDrainPriority = G_PRIORITY_HIGH_IDLE + 30;
+
 gboolean drainQueuedImageUpdates(gpointer)
 {
     using clock = std::chrono::steady_clock;
@@ -262,7 +269,7 @@ void queueImageUpdate(QueuedImageUpdate&& update)
     }
 
     if (schedule) {
-        gdk_threads_add_idle_full(G_PRIORITY_LOW, drainQueuedImageUpdates, nullptr, nullptr);
+        gdk_threads_add_idle_full(kImageUpdateDrainPriority, drainQueuedImageUpdates, nullptr, nullptr);
     }
 }
 
@@ -318,7 +325,7 @@ void FileBrowserEntry::resumeQueuedImageUpdates()
     }
 
     if (schedule) {
-        gdk_threads_add_idle_full(G_PRIORITY_LOW, drainQueuedImageUpdates, nullptr, nullptr);
+        gdk_threads_add_idle_full(kImageUpdateDrainPriority, drainQueuedImageUpdates, nullptr, nullptr);
     }
 }
 
@@ -804,7 +811,11 @@ void FileBrowserEntry::customBackBufferUpdate (Cairo::RefPtr<Cairo::Context> c)
     if (state == SCropSelecting || state == SResizeH1 || state == SResizeH2 || state == SResizeW1 || state == SResizeW2 || state == SResizeTL || state == SResizeTR || state == SResizeBL || state == SResizeBR || state == SCropMove) {
         drawScaled(*cropParams);
     } else {
-        rtengine::procparams::CropParams cparams = thumbnail->getProcParams().crop;
+        // The crop the delivered pixels were rendered with — consistent with
+        // what is on screen, and lock-free: getProcParams() takes the
+        // thumbnail mutex, which a worker holds for a whole RAW decode during
+        // an upgrade, stalling this redraw for hundreds of ms.
+        rtengine::procparams::CropParams cparams = *cropParams;
         switch (App::get().options().cropGuides) {
         case Options::CROP_GUIDE_NONE:
             cparams.guide = rtengine::procparams::CropParams::Guide::NONE;

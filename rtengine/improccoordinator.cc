@@ -46,6 +46,7 @@
 #include "labimage.h"
 #include "lcp.h"
 #include "procparams.h"
+#include "relight.h"
 #include "previewquality.h"
 #include "tweakoperator.h"
 #include "refreshmap.h"
@@ -215,6 +216,12 @@ unsigned long long getSettledPreviewSerial(const StagedImageProcessor* processor
 {
     const auto* coordinator = dynamic_cast<const ImProcCoordinator*>(processor);
     return coordinator ? coordinator->getHighDetailPreviewSerial() : 0;
+}
+
+bool isPreviewShowingMask(const StagedImageProcessor* processor)
+{
+    const auto* coordinator = dynamic_cast<const ImProcCoordinator*>(processor);
+    return coordinator && coordinator->isShowingMaskView();
 }
 
 unsigned int getInteractivePassMs(const StagedImageProcessor* processor)
@@ -2605,6 +2612,24 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 ipf.filmPresets(nprevl, params->filmPresets, filmLabContext);
             }
             ipf.softLight(nprevl, params->softlight);
+
+            // Relight before the optical effects, so glow and halation
+            // spread from the light it adds.
+            if (params->relight.enabled) {
+                RelightFrame relightFrame;
+                relightFrame.imageId = imgsrc->getFileName().raw();
+                relightFrame.workingProfile = params->icm.workingProfile;
+                relightFrame.fullWidth = fw;
+                relightFrame.fullHeight = fh;
+                relightFrame.step = std::max(scale, 1);
+
+                if (oprevi) {
+                    prepareRelightInputs(params->relight, relightFrame.imageId, *oprevi, fw, fh,
+                                         params->icm.workingProfile, false);
+                }
+
+                ipf.relight(nprevl, params->relight, relightFrame);
+            }
 
             // After the Lab curves and the film stage: those rewrite a/b, so
             // halation's warm tint was being flattened out when this ran

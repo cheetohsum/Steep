@@ -120,6 +120,7 @@ void ProfileStore::parseProfiles ()
 void ProfileStore::_parseProfiles ()
 {
     // clear loaded profiles
+    generation_.fetch_add(1, std::memory_order_acq_rel);
     folders.clear();
     clearFileList();
     clearProfileList ();

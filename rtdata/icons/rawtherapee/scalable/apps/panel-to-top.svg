@@ -1,16 +1,1 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-  <!-- Hide top panel: layout frame with top bar + up chevron -->
-  <!-- Outer frame -->
-  <rect x="2" y="3" width="20" height="18" rx="1.5"
-    style="opacity:0.6;fill:none;stroke:#cccccc;stroke-width:1.5"/>
-  <!-- Top bar area (filled) -->
-  <rect x="2" y="3" width="20" height="7" rx="1.5"
-    style="opacity:0.5;fill:#cccccc;stroke:none"/>
-  <!-- Divider line -->
-  <line x1="2" y1="10" x2="22" y2="10"
-    style="opacity:0.7;stroke:#cccccc;stroke-width:1"/>
-  <!-- Up chevron (collapse direction) -->
-  <polyline points="10,8 12,5.5 14,8"
-    style="opacity:0.95;fill:none;stroke:#cccccc;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2.5"/><path d="M3 9.5h18"/><path d="M9.5 16l2.5-2.5 2.5 2.5"/></g></svg>

@@ -512,7 +512,7 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     iQueryClear = new RTImage("cancel-small", Gtk::ICON_SIZE_BUTTON);
     Query = Gtk::manage(new Gtk::Entry ()); // cannot use Gtk::manage here as FileCatalog::getFilter will fail on Query->get_text()
     Query->set_text("");
-    Query->set_placeholder_text("Search");
+    Query->set_placeholder_text(M("GENERAL_SEARCH"));
     Query->set_width_chars (15);
     Query->set_max_width_chars (20);
     Query->set_tooltip_markup (M("FILEBROWSER_QUERYHINT"));
@@ -669,6 +669,18 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     filterBar_ = filterBar;
     filterBar->set_name("BrowserFilterBar");
     filterBar->pack_start(*bFilterClear, Gtk::PACK_SHRINK);
+
+    // Global scope from the filter bar too: the same switch as the globe
+    // in the toolbar, kept in step with it.
+    bGlobalScopeBar_ = Gtk::manage(new Gtk::ToggleButton());
+    bGlobalScopeBar_->set_image(*Gtk::manage(new RTImage("globe-small", Gtk::ICON_SIZE_BUTTON)));
+    bGlobalScopeBar_->set_relief(Gtk::RELIEF_NONE);
+    bGlobalScopeBar_->get_style_context()->add_class("smallbutton");
+    bGlobalScopeBar_->set_tooltip_text(M("FILEBROWSER_GLOBALSCOPE_TOOLTIP"));
+    globalBarToggleConn_ = bGlobalScopeBar_->signal_toggled().connect([this]() {
+        setGlobalScope(bGlobalScopeBar_->get_active());
+    });
+    filterBar->pack_start(*bGlobalScopeBar_, Gtk::PACK_SHRINK);
     filterBar->pack_start(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK);
 
     fltrVbox1 = Gtk::manage (new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
@@ -681,6 +693,7 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     igUnRanked = new RTImage ("star-hollow-small", Gtk::ICON_SIZE_BUTTON);
     bUnRanked = Gtk::manage( new Gtk::ToggleButton () );
     bUnRanked->get_style_context()->add_class("smallbutton");
+    bUnRanked->get_style_context()->add_class("rating-filter");
     bUnRanked->set_active (false);
     bUnRanked->set_image (*igUnRanked);
     bUnRanked->set_relief (Gtk::RELIEF_NONE);
@@ -696,6 +709,7 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
         igranked[i]->show ();
         bRank[i] = Gtk::manage( new Gtk::ToggleButton () );
         bRank[i]->get_style_context()->add_class("smallbutton");
+        bRank[i]->get_style_context()->add_class("rating-filter");
         bRank[i]->set_image (*igranked[i]);
         bRank[i]->set_relief (Gtk::RELIEF_NONE);
         fltrRankbox->pack_start (*bRank[i], Gtk::PACK_SHRINK);
@@ -738,7 +752,17 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     colorLabelSummary_ = Gtk::manage(new Gtk::DrawingArea());
     colorLabelSummary_->set_size_request(RTScalable::scalePixelSize(36), RTScalable::scalePixelSize(16));
     colorLabelSummary_->signal_draw().connect([this](const Cairo::RefPtr<Cairo::Context>& cr) -> bool {
-        const double colors[][3] = {{1,0,0}, {1,1,0}, {0,0.75,0}, {0,0.4,1}, {0.6,0,0.8}};
+        Gdk::RGBA labelColors[5];
+        for (int i = 0; i < 5; ++i) {
+            labelColors[i] = colorLabelColor(i + 1);
+        }
+        const double colors[][3] = {
+            {labelColors[0].get_red(), labelColors[0].get_green(), labelColors[0].get_blue()},
+            {labelColors[1].get_red(), labelColors[1].get_green(), labelColors[1].get_blue()},
+            {labelColors[2].get_red(), labelColors[2].get_green(), labelColors[2].get_blue()},
+            {labelColors[3].get_red(), labelColors[3].get_green(), labelColors[3].get_blue()},
+            {labelColors[4].get_red(), labelColors[4].get_green(), labelColors[4].get_blue()},
+        };
         const int w = colorLabelSummary_->get_allocated_width();
         const int h = colorLabelSummary_->get_allocated_height();
         const double r = std::min(w / 12.0, h / 2.0 - 1.0);
@@ -1117,6 +1141,8 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     // (trash + metadata cog moved into the filter dropdown)
     buttonBar->pack_start (*exifInfo, Gtk::PACK_SHRINK);
     buttonBar->pack_start (*hbToolBar1, Gtk::PACK_SHRINK, 0);
+    // Search leads the row, ahead of the filters it narrows.
+    buttonBar->reorder_child(*hbToolBar1, 0);
     zoomSlider_->set_margin_start(8);
     buttonBar->pack_start(*zoomSlider_, Gtk::PACK_SHRINK);
 
@@ -1224,6 +1250,7 @@ FileCatalog::~FileCatalog()
     colorFadeConn_.disconnect();
     colorCollapseDelay_.disconnect();
     reparseDirectoryConn_.disconnect();
+    sidecarReloadConn_.disconnect();
     filmstripCenterConnection_.disconnect();
     if (navigationBenchmarkTimeoutId_ != 0) {
         g_source_remove(navigationBenchmarkTimeoutId_);
@@ -1366,6 +1393,8 @@ void FileCatalog::closeDir ()
     filetypeUpdateQueued_ = false;
     reparseDirectoryQueued_ = false;
     reparseDirectoryConn_.disconnect();
+    pendingSidecarReloads_.clear();
+    sidecarReloadConn_.disconnect();
 
     // terminate thumbnail preview loading
     previewLoader->removeAllJobs ();
@@ -3218,7 +3247,64 @@ void FileCatalog::categoryButtonToggled (Gtk::ToggleButton* b, bool isMouseClick
             // Pick-flag filters (picked/unflagged/rejected, indices 20-22)
             // form their own independent group: clicking toggles just that
             // button and leaves the other filter groups untouched.
-            if (toggled_button >= 20 && toggled_button <= 22) {
+            if (toggled_button >= 1 && toggled_button <= 6) {
+                // Ratings: a star shows that rating and up; clicked again,
+                // that rating only; a third click clears it. The 0-star
+                // button clears a rating filter, or with none set shows only
+                // unrated photos. The other groups are left as they are.
+                bool matches = rankAnchor_ > 0 && !(buttons & 2);
+
+                for (int s = 1; matches && s <= 5; ++s) {
+                    const bool want = rankExact_ ? s == rankAnchor_ : s >= rankAnchor_;
+                    matches = bool(buttons & (1 << (s + 1))) == want;
+                }
+
+                if (!matches) {
+                    // Changed from elsewhere (clear, modifier clicks): start over.
+                    rankAnchor_ = 0;
+                    rankExact_ = false;
+                }
+
+                const bool anyStar = buttons & (0x1f << 2);
+
+                if (toggled_button == 1) {
+                    if (anyStar) {
+                        rankAnchor_ = 0;
+                        rankExact_ = false;
+                        categoryButtons[1]->set_active(false);
+                    } else {
+                        categoryButtons[1]->set_active(!(buttons & 2));
+                    }
+                } else {
+                    const int star = toggled_button - 1;
+
+                    if (rankAnchor_ == star && !rankExact_) {
+                        rankExact_ = true;
+                    } else if (rankAnchor_ == star) {
+                        rankAnchor_ = 0;
+                        rankExact_ = false;
+                    } else {
+                        rankAnchor_ = star;
+                        rankExact_ = false;
+                    }
+
+                    categoryButtons[1]->set_active(false);
+                }
+
+                for (int s = 1; s <= 5; ++s) {
+                    categoryButtons[s + 1]->set_active(rankAnchor_ > 0 && (rankExact_ ? s == rankAnchor_ : s >= rankAnchor_));
+                }
+
+                // Trash is a view of its own, not a filter that combines.
+                categoryButtons[17]->set_active(false);
+                bool any = false;
+
+                for (int i = 1; i < numButtons; ++i) {
+                    any = any || categoryButtons[i]->get_active();
+                }
+
+                categoryButtons[0]->set_active(!any);
+            } else if (toggled_button >= 20 && toggled_button <= 22) {
                 const bool wasActive = buttons & (1 << toggled_button);
                 categoryButtons[toggled_button]->set_active(!wasActive);
 
@@ -3410,8 +3496,9 @@ void FileCatalog::categoryButtonToggled (Gtk::ToggleButton* b, bool isMouseClick
             }
         }
 
-        fileBrowser->applyFilter (getFilter ());
-        _refreshProgressBar();
+        // filterChanged, not a bare applyFilter: in global scope a changed
+        // filter has to look across folders again.
+        filterChanged ();
 
         //rearrange panels according to the selected filter
         removeIfThere (hBox, trashButtonBox);
@@ -3492,7 +3579,7 @@ void FileCatalog::showRejectsPopover ()
             auto* l = Gtk::manage(new Gtk::Label(label));
             l->set_halign(Gtk::ALIGN_START);
             box->pack_start(*l, Gtk::PACK_SHRINK);
-            auto* s = Gtk::manage(new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
+            auto* s = Gtk::manage(new MyHScale());
             s->set_range(0.0, 100.0);
             s->set_increments(1.0, 10.0);
             s->set_digits(0);
@@ -3844,6 +3931,39 @@ void FileCatalog::showAlbumFiles (const Glib::ustring& albumName, const std::vec
     _refreshProgressBar();
 }
 
+bool FileCatalog::isSourceFolderElsewhere (const Glib::ustring& fname) const
+{
+    return inAlbumMode_ || globalScopeActive_
+           || foldedPathKey(Glib::path_get_dirname(fname)) != foldedPathKey(selectedDirectory);
+}
+
+void FileCatalog::openSourceFolder (const Glib::ustring& fname)
+{
+    const Glib::ustring dir = Glib::path_get_dirname(fname);
+
+    if (!Glib::file_test(dir, Glib::FILE_TEST_IS_DIR)) {
+        return;
+    }
+
+    // Selected once the folder has loaded (previewsFinishedUI).
+    imageToSelect_fname = fname;
+    imageToSelect_key = catalogPathKey(fname);
+    resetGlobalScopeQuiet();
+
+    // Through the folder tree, so it shows where we are...
+    if (selectDir) {
+        selectDir(dir);
+    }
+
+    // ...and directly when the tree already had this folder selected (it
+    // then does not report a change): global scope and albums leave the
+    // folder name in place while showing something else.
+    if (inAlbumMode_ || foldedPathKey(selectedDirectory) != foldedPathKey(dir)) {
+        selectedDirectory.clear();
+        dirSelected(dir, "");
+    }
+}
+
 void FileCatalog::exitAlbumMode ()
 {
     if (!inAlbumMode_) return;
@@ -4062,6 +4182,130 @@ void FileCatalog::resetGlobalScopeQuiet ()
         bGlobalScope_->set_active(false);
         globalToggleConn_.unblock();
     }
+
+    syncGlobalScopeMirrors();
+}
+
+void FileCatalog::setGlobalScope (bool on)
+{
+    if (bGlobalScope_ && bGlobalScope_->get_active() != on) {
+        bGlobalScope_->set_active(on); // runs globalScopeToggled
+    }
+
+    syncGlobalScopeMirrors();
+}
+
+void FileCatalog::syncGlobalScopeMirrors ()
+{
+    const bool on = bGlobalScope_ && bGlobalScope_->get_active();
+
+    if (bGlobalScopeBar_ && bGlobalScopeBar_->get_active() != on) {
+        globalBarToggleConn_.block();
+        bGlobalScopeBar_->set_active(on);
+        globalBarToggleConn_.unblock();
+    }
+
+    globalScopeChanged_.emit(on);
+}
+
+FilterToggles FileCatalog::getFilterToggles ()
+{
+    FilterToggles t;
+    t.unranked = bUnRanked->get_active();
+
+    for (int i = 0; i < 5; ++i) {
+        t.rank[i] = bRank[i]->get_active();
+        t.label[i] = bCLabel[i]->get_active();
+    }
+
+    t.rankAnchor = rankAnchor_;
+    t.rankExact = rankExact_;
+    t.unlabeled = bUnCLabeled->get_active();
+
+    for (int i = 0; i < 2; ++i) {
+        t.edited[i] = bEdited[i]->get_active();
+        t.saved[i] = bRecentlySaved[i]->get_active();
+    }
+
+    t.picked = bPicked->get_active();
+    t.unflagged = bUnflagged->get_active();
+    t.rejected = bRejected->get_active();
+    t.search = Query->get_text();
+
+    if (photoTagFilter_) {
+        t.tags = photoTagFilter_->selected();
+        t.tagsAll = photoTagFilter_->matchAll();
+        t.untagged = photoTagFilter_->untagged();
+    }
+
+    return t;
+}
+
+void FileCatalog::setFilterToggles (const FilterToggles& t)
+{
+    const int numCateg = sizeof(bCateg) / sizeof(bCateg[0]);
+
+    for (int i = 0; i < numCateg; i++) {
+        bCateg[i].block (true);
+    }
+
+    const auto set = [](Gtk::ToggleButton* b, bool on, Gtk::Image* onImage, Gtk::Image* offImage) {
+        if (b->get_active() != on) {
+            b->set_active(on);
+
+            if (onImage && offImage) {
+                b->set_image(on ? *onImage : *offImage);
+            }
+        }
+    };
+
+    set(bUnRanked, t.unranked, iUnRanked, igUnRanked);
+    set(bUnCLabeled, t.unlabeled, iUnCLabeled, igUnCLabeled);
+
+    for (int i = 0; i < 5; ++i) {
+        set(bRank[i], t.rank[i], iranked[i], igranked[i]);
+        set(bCLabel[i], t.label[i], iCLabeled[i], igCLabeled[i]);
+    }
+
+    for (int i = 0; i < 2; ++i) {
+        set(bEdited[i], t.edited[i], iEdited[i], igEdited[i]);
+        set(bRecentlySaved[i], t.saved[i], iRecentlySaved[i], igRecentlySaved[i]);
+    }
+
+    set(bPicked, t.picked, nullptr, nullptr);
+    set(bUnflagged, t.unflagged, nullptr, nullptr);
+    set(bRejected, t.rejected, nullptr, nullptr);
+    rankAnchor_ = t.rankAnchor;
+    rankExact_ = t.rankExact;
+
+    bool any = bTrash->get_active() || bOriginal->get_active();
+    const Gtk::ToggleButton* const groups[] = {
+        bUnRanked, bRank[0], bRank[1], bRank[2], bRank[3], bRank[4],
+        bUnCLabeled, bCLabel[0], bCLabel[1], bCLabel[2], bCLabel[3], bCLabel[4],
+        bEdited[0], bEdited[1], bRecentlySaved[0], bRecentlySaved[1],
+        bPicked, bUnflagged, bRejected,
+    };
+
+    for (const auto* b : groups) {
+        any = any || b->get_active();
+    }
+
+    bFilterClear->set_active(!any);
+
+    for (int i = 0; i < numCateg; i++) {
+        bCateg[i].block (false);
+    }
+
+    if (Query->get_text() != t.search) {
+        Query->set_text(t.search);
+    }
+
+    if (photoTagFilter_ && (photoTagFilter_->selected() != t.tags || photoTagFilter_->matchAll() != t.tagsAll
+                            || photoTagFilter_->untagged() != t.untagged)) {
+        photoTagFilter_->setSelection(t.tags, t.tagsAll, t.untagged);
+    }
+
+    updateFilterBadge();
 }
 
 void FileCatalog::globalScopeToggled ()
@@ -4111,6 +4355,7 @@ void FileCatalog::globalScopeToggled ()
                 globalToggleConn_.block();
                 bGlobalScope_->set_active(false);
                 globalToggleConn_.unblock();
+                syncGlobalScopeMirrors();
                 return;
             }
         }
@@ -4121,6 +4366,7 @@ void FileCatalog::globalScopeToggled ()
             savedDirectory_ = selectedDirectory;
         }
 
+        syncGlobalScopeMirrors();
         startGlobalScan();
     } else {
         globalScopeActive_ = false;
@@ -4132,12 +4378,13 @@ void FileCatalog::globalScopeToggled ()
             *globalScanCancel_ = true;
         }
         settleGlobalScopeGlobe();
+        syncGlobalScopeMirrors();
 
         exitAlbumMode();
     }
 }
 
-void FileCatalog::startGlobalScan ()
+void FileCatalog::startGlobalScan (bool fresh)
 {
     const int generation = ++globalScanGen_;
 
@@ -4155,13 +4402,22 @@ void FileCatalog::startGlobalScan ()
     // sync…) is deferred until the scan completes — the same
     // directoryScanComplete_ mechanism directory loading uses; without it the
     // finalize re-runs on every streamed batch.
-    closeDir();
+    if (fresh) {
+        closeDir();
+    }
+
+    // Nothing is "found" or "not found" until the scan says so.
+    fileBrowser->setEmptyStateText(Glib::ustring());
     inAlbumMode_ = true;
     albumWhitelist_.clear();
     BrowsePath->set_text(M("FILEBROWSER_GLOBALSCOPE"));
     setBrowserTitle(M("FILEBROWSER_GLOBALSCOPE"), Glib::ustring());
     directoryScanComplete_ = false;
-    previewsToLoad = 0; // fresh accounting for this scan's streamed adds
+
+    if (fresh) {
+        previewsToLoad = 0; // fresh accounting for this scan's streamed adds
+    }
+
     filepanel->loadingThumbs(M("FILEBROWSER_GLOBALSCOPE"), 0);
     _refreshProgressBar();
 
@@ -4386,11 +4642,11 @@ void FileCatalog::scheduleGlobalRescan ()
     globalRescanConn_.disconnect();
     globalRescanConn_ = Glib::signal_timeout().connect([this]() {
         if (globalScopeActive_) {
-            startGlobalScan();
+            startGlobalScan(false);
         }
 
         return false;
-    }, 400);
+    }, 250);
 }
 
 void FileCatalog::scheduleGlobalScanRefresh ()
@@ -4431,6 +4687,9 @@ void FileCatalog::filterChanged ()
     // on those would spin the scan in a loop.
     if (globalScopeActive_ && !inGlobalStart_
             && filterScanKey(getFilter()) != globalLastScanKey_) {
+        // What is on screen may all be filtered away before the rescan has
+        // looked: say nothing rather than "no photos" in the meantime.
+        fileBrowser->setEmptyStateText(Glib::ustring());
         scheduleGlobalRescan();
     }
 }
@@ -4815,6 +5074,46 @@ void FileCatalog::scheduleReparseDirectory_()
     );
 }
 
+void FileCatalog::scheduleSidecarReload_(const Glib::ustring& sidecarPath)
+{
+    // Only the sidecar next to the image is watched; with the cache as the
+    // load location an external sidecar edit would not be read anyway.
+    if (App::get().options().paramsLoadLocation != PLL_Input) {
+        return;
+    }
+
+    pendingSidecarReloads_.insert(sidecarPath);
+
+    if (sidecarReloadConn_.connected()) {
+        return;
+    }
+
+    sidecarReloadConn_ = Glib::signal_timeout().connect(
+        [this]() -> bool {
+            std::set<Glib::ustring> paths;
+            paths.swap(pendingSidecarReloads_);
+            const Glib::ustring ext = App::PARAM_FILE_EXTENSION;
+
+            for (const auto& sidecar : paths) {
+                if (sidecar.size() <= ext.size()) {
+                    continue;
+                }
+
+                const Glib::ustring imagePath = sidecar.substr(0, sidecar.size() - ext.size());
+                FileBrowserEntry* entry = fileBrowser->findEntry(imagePath);
+
+                if (entry && entry->thumbnail) {
+                    entry->thumbnail->reloadProcParamsFromDisk();
+                }
+            }
+
+            return false;
+        },
+        400,
+        G_PRIORITY_DEFAULT_IDLE
+    );
+}
+
 void FileCatalog::on_dir_changed (const Glib::RefPtr<Gio::File>& file, const Glib::RefPtr<Gio::File>& other_file, Gio::FileMonitorEvent event_type, bool internal)
 {
     if (rtengine::settings->metadata_xmp_sync != rtengine::Settings::MetadataXmpSync::NONE
@@ -4830,6 +5129,10 @@ void FileCatalog::on_dir_changed (const Glib::RefPtr<Gio::File>& file, const Gli
             || event_type == Gio::FILE_MONITOR_EVENT_CHANGED)
         && isProcParamSidecarPath(file->get_parse_name())) {
         cacheMgr->invalidateMD5(file->get_parse_name());
+
+        if (event_type == Gio::FILE_MONITOR_EVENT_CREATED || event_type == Gio::FILE_MONITOR_EVENT_CHANGED) {
+            scheduleSidecarReload_(file->get_path());
+        }
     }
 
     if ((App::get().options().has_retained_extention(file->get_parse_name())

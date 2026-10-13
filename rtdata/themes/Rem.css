@@ -18,29 +18,37 @@
 /**/ @import url("./common/steep-look.css"); /**/
 /***************************/
 
-/* Four surfaces (canvas → panel → raised → overlay), three text levels,
-   one interactive accent (cyan), one selection fill (indigo). */
-@define-color steep_surface_0 #0d1120;
-@define-color steep_surface_1 #151a30;
-@define-color steep_surface_2 #1c2240;
-@define-color steep_surface_3 #232a4e;
+@define-color steep_surface_0 #0b0f1c;
+@define-color steep_surface_1 #12172b;
+@define-color steep_surface_2 #191f38;
+@define-color steep_surface_3 #212849;
 
-@define-color steep_text_hi  #d8d6e8;
-@define-color steep_text     #b4b2c8;
-@define-color steep_text_dim #7d84ac;
+@define-color steep_text_hi #e6e4f4;
+@define-color steep_text #c0bed6;
+@define-color steep_text_dim #8088ad;
 
 @define-color steep_accent #8fd9f0;
-@define-color steep_select #5f70c0;
+@define-color steep_on_accent #0b0f1c;
+@define-color steep_select #6f7fd6;
 
-@define-color steep_attention #c08858;
-@define-color steep_success   #65e8a8;
-@define-color steep_danger    #e0666a;
+@define-color steep_attention #e0915a;
+@define-color steep_rating #f0c75e;
+@define-color steep_success #7fc99a;
+@define-color steep_danger #e2677a;
 
-@define-color steep_border      #0a0e1e;
-@define-color steep_border_soft #2b3154;
+@define-color steep_border #060912;
+@define-color steep_border_soft #2a3156;
+@define-color steep_shadow alpha(#04060e, 0.60);
 
-@define-color steep_sel_bg #5f70c0;
-@define-color steep_sel_fg #0d1120;
+@define-color steep_sel_bg #6f7fd6;
+@define-color steep_sel_fg #0b0f1c;
 
-/* Hover/raise wash base: white on dark themes, black on light ones. */
-@define-color steep_wash #ffffff;
+@define-color steep_wash #e1e8ff;
+@define-color steep_surround #272727;
+@define-color steep_ornament alpha(#8fd9f0, 0.50);
+
+@define-color steep_label_1 #e2677a;
+@define-color steep_label_2 #e8c25a;
+@define-color steep_label_3 #7fc99a;
+@define-color steep_label_4 #6fb6e8;
+@define-color steep_label_5 #a98be0;

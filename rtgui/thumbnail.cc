@@ -30,10 +30,13 @@
 #include <cstdlib>
 #include <utility>
 #include "rtengine/colortemp.h"
+#include "rtengine/image8.h"
 #include "rtengine/imagedata.h"
 #include "rtengine/procparams.h"
 #include "rtengine/rtthumbnail.h"
 #include <glib/gstdio.h>
+#include <glibmm/checksum.h>
+#include <glibmm/fileutils.h>
 #include <glibmm/keyfile.h>
 #include <glibmm/timezone.h>
 
@@ -88,6 +91,93 @@ bool isRawOriginalExtension(const std::string& extension)
     }
 
     return false;
+}
+
+// True when the two parameter sets would render a different picture. Only
+// fields that cannot change the image (flags, versions, metadata, output
+// resizing) are ignored; a hand-kept whitelist of "visual" tools went stale
+// every time a tool was added (Film Lab, grain, Double Exposure, ...).
+bool renderedLookDiffers(const rtengine::procparams::ProcParams& current, const rtengine::procparams::ProcParams& next)
+{
+    if (current == next) {
+        return false;
+    }
+
+    rtengine::procparams::ProcParams probe = next;
+    probe.rank = current.rank;
+    probe.colorlabel = current.colorlabel;
+    probe.inTrash = current.inTrash;
+    probe.pickLabel = current.pickLabel;
+    probe.appVersion = current.appVersion;
+    probe.ppVersion = current.ppVersion;
+    probe.metadata = current.metadata;
+    probe.resize = current.resize;
+    probe.prsharpening = current.prsharpening;
+    return current != probe;
+}
+
+// Digest of a profile file restricted to what changes the picture: the
+// [Version], [General] (rank/label/trash/pick), [MetaData], [Exif] and [IPTC]
+// groups are skipped, so culling never invalidates a persisted render.
+// Empty when the file cannot be read.
+std::string lookDigest(const Glib::ustring& path)
+{
+    std::string contents;
+
+    try {
+        contents = Glib::file_get_contents(path);
+    } catch (const Glib::Exception&) {
+        return {};
+    }
+
+    static const std::array<const char*, 5> ignoredGroups = {
+        "[Version]", "[General]", "[MetaData]", "[Exif]", "[IPTC]"
+    };
+
+    std::string filtered;
+    filtered.reserve(contents.size());
+    bool skipping = false;
+    std::size_t pos = 0;
+
+    while (pos < contents.size()) {
+        std::size_t end = contents.find('\n', pos);
+        if (end == std::string::npos) {
+            end = contents.size();
+        }
+
+        std::string line = contents.substr(pos, end - pos);
+        pos = end + 1;
+
+        if (!line.empty() && line.back() == '\r') {
+            line.pop_back();
+        }
+
+        if (!line.empty() && line.front() == '[') {
+            skipping = std::find(ignoredGroups.begin(), ignoredGroups.end(), line) != ignoredGroups.end();
+        }
+
+        if (!skipping) {
+            filtered += line;
+            filtered += '\n';
+        }
+    }
+
+    return Glib::Checksum::compute_checksum(Glib::Checksum::CHECKSUM_MD5, filtered);
+}
+
+// Long edge of a persisted editor render: sharp enough for any thumbnail
+// size and HiDPI, small enough to stay ~150-250 KB as JPEG.
+constexpr int kEditorRenderLongEdge = 1280;
+
+// Empty when the file cannot be read.
+std::string sidecarDigest(const Glib::ustring& path)
+{
+    try {
+        const std::string contents = Glib::file_get_contents(path);
+        return Glib::Checksum::compute_checksum(Glib::Checksum::CHECKSUM_MD5, contents);
+    } catch (const Glib::Exception&) {
+        return {};
+    }
 }
 
 Glib::ustring findPairedJpegPreview(const Glib::ustring& rawPath)
@@ -470,16 +560,23 @@ void Thumbnail::initCachedThumbnailSize()
     th = options.maxThumbnailHeight;
     imgRatio = -1.f;
 
-    if (cfs.width <= 0 || cfs.height <= 0) {
+    // Prefer the cached base thumbnail's own size: it already carries the
+    // camera orientation, so the predicted cell matches the delivered pixels
+    // and the grid does not re-flow when they arrive.
+    const bool haveThumbSize = cfs.thumbWidth > 0 && cfs.thumbHeight > 0;
+    const int baseW = haveThumbSize ? cfs.thumbWidth : cfs.width;
+    const int baseH = haveThumbSize ? cfs.thumbHeight : cfs.height;
+
+    if (baseW <= 0 || baseH <= 0) {
         layoutSize_.publish(tw, th);
         return;
     }
 
     const auto& pparams = getProcParamsU();
     if (pparams.coarse.rotate == 90 || pparams.coarse.rotate == 270) {
-        imgRatio = static_cast<float>(cfs.height) / static_cast<float>(cfs.width);
+        imgRatio = static_cast<float>(baseH) / static_cast<float>(baseW);
     } else {
-        imgRatio = static_cast<float>(cfs.width) / static_cast<float>(cfs.height);
+        imgRatio = static_cast<float>(baseW) / static_cast<float>(baseH);
     }
 
     tw = std::max(static_cast<int>(imgRatio * static_cast<float>(th)), 1);
@@ -670,6 +767,19 @@ void Thumbnail::_generateThumbnailImage()
 
     if (tpp) {
         tpp->getAutoWBMultipliers(cfs.redAWBMul, cfs.greenAWBMul, cfs.blueAWBMul);
+
+        {
+            int baseW = 0;
+            int baseH = 0;
+            double baseScale = 0.0;
+            tpp->getDimensions(baseW, baseH, baseScale);
+
+            if (baseW > 0 && baseH > 0) {
+                cfs.thumbWidth = baseW;
+                cfs.thumbHeight = baseH;
+            }
+        }
+
         const Glib::ustring cacheDataName = getCacheFileName("data", ".txt");
         const auto stageStart = bench ? ThumbnailBenchClock::now() : ThumbnailBenchClock::time_point{};
         cachemgr->noteCacheFileWritten(cacheDataName);
@@ -731,7 +841,17 @@ const ProcParams& Thumbnail::getProcParamsU ()
     if (pparamsValid) {
         return *pparams;
     } else {
-        *pparams = *(ProfileStore::getInstance()->getDefaultProcParams (getType() == FT_Raw));
+        ProfileStore* const store = ProfileStore::getInstance();
+        const ProcParams* const defaults = store->getDefaultProcParams (getType() == FT_Raw);
+        const unsigned generation = store->getGeneration();
+
+        if (defaults && defaults == defaultsSource_ && generation == defaultsGeneration_) {
+            return *pparams;
+        }
+
+        *pparams = *defaults;
+        defaultsSource_ = defaults;
+        defaultsGeneration_ = generation;
 
         if (pparams->wb.method == "Camera") {
             double ct;
@@ -893,6 +1013,7 @@ void Thumbnail::loadProcParams(bool resetToDefaults)
     MyMutex::MyLock lock(mutex);
 
     pparamsValid = false;
+    defaultsSource_ = nullptr;
     if (resetToDefaults) {
         pparams->setDefaults();
     }
@@ -931,6 +1052,288 @@ void Thumbnail::loadProcParams(bool resetToDefaults)
     }
 }
 
+Glib::ustring Thumbnail::profileFileOfRecord () const
+{
+    // Mirrors loadProcParams: the file the params on disk are read from.
+    const auto& options = App::get().options();
+    const Glib::ustring sidecar = fname + App::PARAM_FILE_EXTENSION;
+    const Glib::ustring cached = getCacheFileName("profiles", App::PARAM_FILE_EXTENSION);
+
+    if (options.paramsLoadLocation == PLL_Input) {
+        return Glib::file_test(sidecar, Glib::FILE_TEST_EXISTS) ? sidecar : cached;
+    }
+
+    return Glib::file_test(cached, Glib::FILE_TEST_EXISTS) ? cached : sidecar;
+}
+
+bool Thumbnail::trySetEditorRender (const Glib::RefPtr<Gdk::Pixbuf>& render, const ProcParams& params, int fullW, int fullH, bool& paramsOnDisk)
+{
+    paramsOnDisk = false;
+
+    if (!render || fullW <= 0 || fullH <= 0 || !mutex.trylock()) {
+        return false;
+    }
+
+    struct UnlockGuard {
+        MyMutex& mutex;
+        ~UnlockGuard() { mutex.unlock(); }
+    } guard{mutex};
+
+    editorRender_ = render;
+    editorRenderParams_.reset(new ProcParams(params));
+    editorRenderFullW_ = fullW;
+    editorRenderFullH_ = fullH;
+    paramsOnDisk = !pendingParamsFlush_;
+    return true;
+}
+
+void Thumbnail::persistEditorRender ()
+{
+    Glib::RefPtr<Gdk::Pixbuf> render;
+    int fullW = 0;
+    int fullH = 0;
+
+    {
+        MyMutex::MyLock lock(mutex);
+
+        if (!editorRender_ || !editorRenderParams_ || !pparamsValid) {
+            return;
+        }
+
+        // The key is the look on disk, so the params must be flushed and be
+        // the ones the render was made with; a stale render is dropped.
+        if (renderedLookDiffers(*editorRenderParams_, *pparams)) {
+            editorRender_.reset();
+            editorRenderParams_.reset();
+            return;
+        }
+
+        if (pendingParamsFlush_) {
+            return;
+        }
+
+        render = editorRender_;
+        fullW = editorRenderFullW_;
+        fullH = editorRenderFullH_;
+    }
+
+    const std::string digest = lookDigest(profileFileOfRecord());
+
+    if (digest.empty()) {
+        return;
+    }
+
+    const Glib::ustring jpgName = getCacheFileName("renders", ".jpg");
+    const Glib::ustring keyName = getCacheFileName("renders", ".key");
+    const Glib::ustring tmpName = jpgName + ".tmp";
+
+    // Key last: a reader that finds a key always finds the matching image.
+    g_remove(keyName.c_str());
+
+    try {
+        render->save(tmpName, "jpeg", {"quality"}, {"88"});
+        g_remove(jpgName.c_str());
+
+        if (g_rename(tmpName.c_str(), jpgName.c_str()) != 0) {
+            g_remove(tmpName.c_str());
+            return;
+        }
+
+        Glib::file_set_contents(keyName, Glib::ustring::compose("%1\n%2 %3\n", digest, fullW, fullH));
+    } catch (const Glib::Exception&) {
+        g_remove(tmpName.c_str());
+        return;
+    }
+
+    MyMutex::MyLock lock(mutex);
+
+    if (editorRender_ == render) {
+        editorRender_.reset();
+        editorRenderParams_.reset();
+    }
+}
+
+Glib::RefPtr<Gdk::Pixbuf> Thumbnail::loadPersistedRenderPixbufLocked (const ProcParams& pp, int& fullW, int& fullH)
+{
+    fullW = fullH = 0;
+
+    if (!pparamsValid || renderedLookDiffers(*pparams, pp)) {
+        return {};
+    }
+
+    std::string key;
+
+    try {
+        key = Glib::file_get_contents(getCacheFileName("renders", ".key"));
+    } catch (const Glib::Exception&) {
+        return {};
+    }
+
+    std::istringstream keyStream(key);
+    std::string digest;
+
+    if (!(keyStream >> digest >> fullW >> fullH) || fullW <= 0 || fullH <= 0
+            || digest != lookDigest(profileFileOfRecord())) {
+        return {};
+    }
+
+    Glib::RefPtr<Gdk::Pixbuf> render;
+
+    try {
+        render = Gdk::Pixbuf::create_from_file(getCacheFileName("renders", ".jpg"));
+    } catch (const Glib::Exception&) {
+        return {};
+    }
+
+    if (!render || render->get_has_alpha() || render->get_n_channels() != 3 || render->get_height() <= 0) {
+        return {};
+    }
+
+    return render;
+}
+
+Glib::RefPtr<Gdk::Pixbuf> Thumbnail::loadPersistedRenderPixbuf (double& scale)
+{
+    MyMutex::MyLock lock(mutex);
+    scale = 1.0;
+    int fullW = 0;
+    int fullH = 0;
+    const auto render = loadPersistedRenderPixbufLocked(*pparams, fullW, fullH);
+
+    if (render) {
+        scale = std::max(static_cast<double>(fullW) / render->get_width(),
+                         static_cast<double>(fullH) / render->get_height());
+    }
+
+    return render;
+}
+
+rtengine::IImage8* Thumbnail::loadPersistedRenderLocked (const ProcParams& pp, int h, double& scale)
+{
+    if (h <= 0) {
+        return nullptr;
+    }
+
+    int fullW = 0;
+    int fullH = 0;
+    const Glib::RefPtr<Gdk::Pixbuf> render = loadPersistedRenderPixbufLocked(pp, fullW, fullH);
+
+    if (!render) {
+        return nullptr;
+    }
+
+    const int outH = std::min(h, render->get_height());
+    const int outW = std::max(1, static_cast<int>(std::lround(static_cast<double>(render->get_width()) * outH / render->get_height())));
+    const auto scaled = outW == render->get_width() && outH == render->get_height()
+        ? render
+        : render->scale_simple(outW, outH, Gdk::INTERP_TILES);
+
+    if (!scaled) {
+        return nullptr;
+    }
+
+    auto* image = new rtengine::Image8(outW, outH);
+    // Without a declared format Image8::setScanline copies nothing, and the
+    // image keeps whatever the allocator left: the noise thumbnails.
+    image->setSampleFormat(rtengine::IIOSF_UNSIGNED_CHAR);
+    image->setSampleArrangement(rtengine::IIOSA_CHUNKY);
+    const guint8* const src = scaled->get_pixels();
+    const int stride = scaled->get_rowstride();
+
+    for (int y = 0; y < outH; ++y) {
+        image->setScanline(y, src + static_cast<std::size_t>(y) * stride, 8, 3);
+    }
+
+    scale = static_cast<double>(outH) / fullH;
+
+    // Same crop presentation as rtengine::Thumbnail::processImage.
+    if (pp.crop.enabled) {
+        unsigned char* data = image->data;
+        std::size_t ix = 0;
+
+        for (int i = 0; i < outH; ++i) {
+            for (int j = 0; j < outW; ++j, ix += 3) {
+                if (i < pp.crop.y * scale || i > (pp.crop.y + pp.crop.h) * scale
+                        || j < pp.crop.x * scale || j > (pp.crop.x + pp.crop.w) * scale) {
+                    data[ix] /= 3;
+                    data[ix + 1] /= 3;
+                    data[ix + 2] /= 3;
+                }
+            }
+        }
+    }
+
+    // lastW/lastH are unrotated (see getFinalSize).
+    const bool quarterTurn = pp.coarse.rotate == 90 || pp.coarse.rotate == 270;
+    lastW = quarterTurn ? outH : outW;
+    lastH = quarterTurn ? outW : outH;
+    lastScale = 1.0 / scale;
+
+    return image;
+}
+
+bool Thumbnail::reloadProcParamsFromDisk ()
+{
+    const std::string digest = sidecarDigest(fname + App::PARAM_FILE_EXTENSION);
+
+    if (digest.empty()) {
+        return false;
+    }
+
+    ProcParams previous;
+    bool previousValid = false;
+
+    {
+        MyMutex::MyLock lock(mutex);
+
+        // Our own async flush also lands here; if RAM has moved on since,
+        // the file is older than what we hold.
+        if (pendingParamsFlush_) {
+            return false;
+        }
+
+        // The file is exactly what we last wrote: our own save, not an
+        // external edit. (A save -> load round trip is not bit-exact, so
+        // comparing params instead would re-trigger on every save.)
+        if (digest == ownSidecarDigest_) {
+            return false;
+        }
+
+        previous = *pparams;
+        previousValid = pparamsValid;
+    }
+
+    loadProcParams(true);
+
+    bool changed = false;
+
+    {
+        MyMutex::MyLock lock(mutex);
+
+        if (!pparamsValid) {
+            *pparams = previous;
+            pparamsValid = previousValid;
+            defaultsSource_ = nullptr;
+            return false;
+        }
+
+        changed = !previousValid || *pparams != previous;
+        ownSidecarDigest_ = digest;
+
+        if (changed) {
+            cfs.recentlySaved = false;
+            cachedPixbuf_.reset();
+        }
+    }
+
+    if (changed) {
+        loadProperties();
+        notifylisterners_procParamsChanged(FILEBROWSER);
+    }
+
+    return changed;
+}
+
 void Thumbnail::clearProcParams (int whoClearedIt)
 {
 
@@ -948,12 +1351,14 @@ void Thumbnail::clearProcParams (int whoClearedIt)
 
         cfs.recentlySaved = false;
         pparamsValid = false;
+        cachedPixbuf_.reset();
 
         //TODO: run though customprofilebuilder?
         // probably not as this is the only option to set param values to default
 
         // reset the params to defaults
         pparams->setDefaults();
+        defaultsSource_ = nullptr;
 
         // preserve rank, colorlabel and inTrash across clear
         updateProcParamsProperties(true);
@@ -1008,56 +1413,34 @@ bool Thumbnail::hasProcParams () const
 
 void Thumbnail::setProcParams (const ProcParams& pp, ParamsEdited* pe, int whoChangedIt, bool updateCacheNow, bool resetToDefault)
 {
-    const bool blackLevelChanged =
-        pparams->raw.bayersensor.black0 != pp.raw.bayersensor.black0
-        || pparams->raw.bayersensor.black1 != pp.raw.bayersensor.black1
-        || pparams->raw.bayersensor.black2 != pp.raw.bayersensor.black2
-        || pparams->raw.bayersensor.black3 != pp.raw.bayersensor.black3
-        || pparams->raw.xtranssensor.blackred != pp.raw.xtranssensor.blackred
-        || pparams->raw.xtranssensor.blackgreen != pp.raw.xtranssensor.blackgreen
-        || pparams->raw.xtranssensor.blackblue != pp.raw.xtranssensor.blackblue;
-    const bool needsReprocessing =
-           resetToDefault
-        || blackLevelChanged
-        || pparams->raw.expos != pp.raw.expos
-        || pparams->toneCurve != pp.toneCurve
-        || pparams->locallab != pp.locallab
-        || pparams->labCurve != pp.labCurve
-        || pparams->localContrast != pp.localContrast
-        || pparams->rgbCurves != pp.rgbCurves
-        || pparams->colorToning != pp.colorToning
-        || pparams->vibrance != pp.vibrance
-        || pparams->wb != pp.wb
-        || pparams->colorappearance != pp.colorappearance
-        || pparams->epd != pp.epd
-        || pparams->fattal != pp.fattal
-        || pparams->sh != pp.sh
-        || pparams->toneEqualizer != pp.toneEqualizer
-        || pparams->crop != pp.crop
-        || pparams->coarse != pp.coarse
-        || pparams->commonTrans != pp.commonTrans
-        || pparams->rotate != pp.rotate
-        || pparams->distortion != pp.distortion
-        || pparams->lensProf != pp.lensProf
-        || pparams->perspective != pp.perspective
-        || pparams->gradient != pp.gradient
-        || pparams->pcvignette != pp.pcvignette
-        || pparams->cacorrection != pp.cacorrection
-        || pparams->vignetting != pp.vignetting
-        || pparams->chmixer != pp.chmixer
-        || pparams->blackwhite != pp.blackwhite
-        || pparams->icm != pp.icm
-        || pparams->hsvequalizer != pp.hsvequalizer
-        || pparams->filmSimulation != pp.filmSimulation
-        || pparams->softlight != pp.softlight
-        || pparams->dehaze != pp.dehaze
-        || pparams->filmNegative != pp.filmNegative
-        || whoChangedIt == FILEBROWSER
-        || whoChangedIt == BATCHEDITOR;
-    const bool upgradeHint = blackLevelChanged;
+    bool needsReprocessing = false;
+    bool upgradeHint = false;
 
     {
         MyMutex::MyLock lock(mutex);
+
+        // Compared under the lock: worker threads read and replace *pparams.
+        const bool blackLevelChanged =
+            pparams->raw.bayersensor.black0 != pp.raw.bayersensor.black0
+            || pparams->raw.bayersensor.black1 != pp.raw.bayersensor.black1
+            || pparams->raw.bayersensor.black2 != pp.raw.bayersensor.black2
+            || pparams->raw.bayersensor.black3 != pp.raw.bayersensor.black3
+            || pparams->raw.xtranssensor.blackred != pp.raw.xtranssensor.blackred
+            || pparams->raw.xtranssensor.blackgreen != pp.raw.xtranssensor.blackgreen
+            || pparams->raw.xtranssensor.blackblue != pp.raw.xtranssensor.blackblue;
+        needsReprocessing =
+               resetToDefault
+            || whoChangedIt == FILEBROWSER
+            || whoChangedIt == BATCHEDITOR
+            || renderedLookDiffers(*pparams, pp);
+        upgradeHint = blackLevelChanged;
+
+        // The editor placeholder was rendered from the old look. The editor
+        // keeps it current itself (live frames); any other writer must drop
+        // it, or the next open flashes the pre-paste/pre-reset picture.
+        if (needsReprocessing && whoChangedIt != EDITOR) {
+            cachedPixbuf_.reset();
+        }
 
         if (*pparams != pp) {
             cfs.recentlySaved = false;
@@ -1071,6 +1454,7 @@ void Thumbnail::setProcParams (const ProcParams& pp, ParamsEdited* pe, int whoCh
         } else {
             *pparams = pp;
         }
+        defaultsSource_ = nullptr;
 
         pparamsValid = true;
 
@@ -1275,8 +1659,26 @@ void Thumbnail::getOriginalSize (int& w, int& h) const
     h = th;
 }
 
-rtengine::IImage8* Thumbnail::processThumbImageLocked (const rtengine::procparams::ProcParams& pparams, int h, double& scale, bool cachePixbuf)
+rtengine::IImage8* Thumbnail::processThumbImageLocked (const rtengine::procparams::ProcParams& pparams, int h, double& scale, bool cachePixbuf, bool allowPersistedRender)
 {
+    // Wherever a processed thumbnail is shown, the editor's own render of the
+    // same look is preferred: it carries every tool, and it is cheaper to read
+    // than the base image is to process. The embedded-preview path is left
+    // exactly as the user configured it.
+    if (allowPersistedRender && cfs.thumbImgType != CacheImageData::QUICK_THUMBNAIL) {
+        if (rtengine::IImage8* persisted = loadPersistedRenderLocked(pparams, h, scale)) {
+            if (cachePixbuf && persisted->getData()) {
+                const int pixW = persisted->getWidth();
+                const int pixH = persisted->getHeight();
+                cachedPixbuf_ = Gdk::Pixbuf::create_from_data(
+                    persisted->getData(), Gdk::COLORSPACE_RGB, false, 8, pixW, pixH, pixW * 3)->copy();
+                cachedPixbufScale_ = 1.0 / scale;
+            }
+
+            return persisted;
+        }
+    }
+
     if (!tpp) {
         _loadThumbnail();
 
@@ -1320,6 +1722,21 @@ Glib::RefPtr<Gdk::Pixbuf> Thumbnail::tryLoadCachedPreviewPixbuf(int h, double& s
     if (cachedPixbuf_) {
         scale = cachedPixbufScale_;
         return cachedPixbuf_;
+    }
+
+    if (cfs.thumbImgType != CacheImageData::QUICK_THUMBNAIL) {
+        double renderScale = 1.0;
+        std::unique_ptr<rtengine::IImage8> persisted(loadPersistedRenderLocked(getProcParamsU(), h, renderScale));
+
+        if (persisted && persisted->getData()) {
+            const int pixW = persisted->getWidth();
+            const int pixH = persisted->getHeight();
+            cachedPixbuf_ = Gdk::Pixbuf::create_from_data(
+                persisted->getData(), Gdk::COLORSPACE_RGB, false, 8, pixW, pixH, pixW * 3)->copy();
+            cachedPixbufScale_ = 1.0 / renderScale;
+            scale = cachedPixbufScale_;
+            return cachedPixbuf_;
+        }
     }
 
     if (!tpp) {
@@ -1392,7 +1809,7 @@ rtengine::IImage8* Thumbnail::processFullThumbImage(
         return upgradeThumbImageLocked(pparams, h, scale, true, cachePixbuf);
     }
 
-    return processThumbImageLocked(pparams, h, scale, cachePixbuf);
+    return processThumbImageLocked(pparams, h, scale, cachePixbuf, /*allowPersistedRender=*/false);
 }
 
 std::unique_ptr<rtengine::Imagefloat> Thumbnail::processAnalysisImage(
@@ -1456,6 +1873,26 @@ rtengine::IImage8* Thumbnail::upgradeThumbImageLocked (const rtengine::procparam
 
     if (!tpp) {
         return nullptr;
+    }
+
+    // The base image still has to be generated once (it flips the entry out
+    // of QUICK; skipping it makes the browser re-request the upgrade on every
+    // draw), but what is shown is the editor's render when it matches. Forced
+    // upgrades are for analysis, which wants the real pipeline output.
+    if (!forceUpgrade) {
+        if (rtengine::IImage8* persisted = loadPersistedRenderLocked(pparams, h, scale)) {
+            if (cachePixbuf && persisted->getData()) {
+                const int pixW = persisted->getWidth();
+                const int pixH = persisted->getHeight();
+                cachedPixbuf_ = Gdk::Pixbuf::create_from_data(
+                    persisted->getData(), Gdk::COLORSPACE_RGB, false, 8, pixW, pixH, pixW * 3)->copy();
+                cachedPixbufScale_ = 1.0 / scale;
+            }
+
+            delete tpp;
+            tpp = nullptr;
+            return persisted;
+        }
     }
 
     // rtengine::IImage8* image = tpp->processImage (pparams, h, rtengine::TI_Bilinear, cfs.getCamera(), cfs.focalLen, cfs.focalLen35mm, cfs.focusDist, cfs.shutter, cfs.fnumber, cfs.iso, cfs.expcomp,  scale );
@@ -1753,6 +2190,8 @@ void Thumbnail::updateCache (bool updatePParams, bool updateCacheImageData)
         );
         if (!fileProfileName.empty()) {
             cachemgr->noteCacheFileWritten(fileProfileName);
+
+            ownSidecarDigest_ = sidecarDigest(fileProfileName);
         }
         if (!cacheProfileName.empty()) {
             cachemgr->noteCacheFileWritten(cacheProfileName);
@@ -2038,6 +2477,10 @@ void Thumbnail::updateProcParamsProperties(bool forceUpdate)
     if (!(properties.edited() || forceUpdate)) {
         return;
     }
+
+    // The fields below are written into *pparams; it no longer holds a pure
+    // materialized default.
+    defaultsSource_ = nullptr;
 
     if ((properties.trashed.edited || forceUpdate) && properties.trashed != pparams->inTrash) {
         pparams->inTrash = properties.trashed;

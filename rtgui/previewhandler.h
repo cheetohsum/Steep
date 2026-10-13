@@ -18,6 +18,7 @@
  */
 #pragma once
 
+#include <algorithm>
 #include <functional>
 #include <list>
 #include <memory>
@@ -105,6 +106,21 @@ public:
         int width,
         int height,
         double& imageScale);
+
+    // Full-size image dimensions the current engine preview represents
+    // (same convention as getScaledEnginePreview). False without a preview.
+    bool getEnginePreviewFullSize(int& fullWidth, int& fullHeight, int* previewLongEdge = nullptr) {
+        MyMutex::MyLock lock(previewImgMutex);
+        if (!previewImg || previewScale <= 0.0) {
+            return false;
+        }
+        if (previewLongEdge) {
+            *previewLongEdge = std::max(previewImg->get_width(), previewImg->get_height());
+        }
+        fullWidth = static_cast<int>(previewImg->get_width() * previewScale + 0.5);
+        fullHeight = static_cast<int>(previewImg->get_height() * previewScale + 0.5);
+        return fullWidth > 0 && fullHeight > 0;
+    }
 
     rtengine::procparams::CropParams    getCropParams ();
 

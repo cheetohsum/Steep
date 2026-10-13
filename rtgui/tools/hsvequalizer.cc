@@ -75,17 +75,11 @@ HSVEqualizer::HSVEqualizer () : FoldableToolPanel(this, TOOL_NAME, M("TP_HSVEQUA
     }
 
     // Clickable section label (collapsed by default)
-    sectionLabel_ = Gtk::manage(new Gtk::Label());
-    sectionLabel_->set_markup("<b>\xe2\x96\xb8 Color Mixer</b>");
-    sectionLabel_->set_xalign(0.0);
-    sectionLabel_->get_style_context()->add_class("tool-heading-label");
-    auto* labelEvt = Gtk::manage(new Gtk::EventBox());
-    labelEvt->add(*sectionLabel_);
-    labelEvt->signal_button_press_event().connect([this](GdkEventButton*) -> bool {
-        toggleContent();
-        return true;
-    });
-    getSummaryBox()->pack_start(*labelEvt, Gtk::PACK_SHRINK, 2);
+    sectionHeader_ = Gtk::manage(new SectionHeader(M("TP_HSVEQUALIZER_SECTION")));
+    sectionHeader_->set_halign(Gtk::ALIGN_FILL);
+    sectionHeader_->set_hexpand(true);
+    sectionHeader_->setOnToggled([this](bool) { toggleContent(); });
+    getSummaryBox()->pack_start(*sectionHeader_, Gtk::PACK_SHRINK, 2);
 
     // Collapsible content box
     toolContent_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
@@ -98,41 +92,53 @@ HSVEqualizer::HSVEqualizer () : FoldableToolPanel(this, TOOL_NAME, M("TP_HSVEQUA
         const double dR = cR, dG = cG, dB = cB;
 
         channelDots[i] = Gtk::manage(new Gtk::DrawingArea());
-        channelDots[i]->set_size_request(16, 16);
+        channelDots[i]->set_size_request(30, 36);
         channelDots[i]->signal_draw().connect([this, i, dR, dG, dB](const Cairo::RefPtr<Cairo::Context>& cr) -> bool {
-            int w = channelDots[i]->get_allocated_width();
-            int h = channelDots[i]->get_allocated_height();
-            double r = std::min(w, h) / 2.0 - 1.0;
-            double cx = w / 2.0, cy = h / 2.0;
+            const int w = channelDots[i]->get_allocated_width();
+            const double size = 24.0;
+            const double x = (w - size) / 2.0;
+            const double y = 3.0;
+            const double top = 8.0;
+            const double bottom = 3.5;
             const bool hovered = hoveredChannel == i;
+            const bool active = activeChannel == i;
 
-            // A dot under the pointer swells slightly and takes a halo: eight
-            // small circles in a row otherwise give no sign that they are
-            // buttons, nor which one a click would land on.
-            if (hovered) {
-                cr->arc(cx, cy, r, 0, 2 * M_PI);
-                cr->set_source_rgba(1.0, 1.0, 1.0, 0.22);
-                cr->set_line_width(3.0);
+            // An arch: rounder top corners than bottom, as every container.
+            const auto tile = [&](double grow) {
+                const double x0 = x - grow, y0 = y - grow, s = size + 2 * grow;
+                const double t0 = top + grow, b0 = bottom + grow;
+                cr->begin_new_path();
+                cr->arc(x0 + s - t0, y0 + t0, t0, -M_PI / 2, 0);
+                cr->arc(x0 + s - b0, y0 + s - b0, b0, 0, M_PI / 2);
+                cr->arc(x0 + b0, y0 + s - b0, b0, M_PI / 2, M_PI);
+                cr->arc(x0 + t0, y0 + t0, t0, M_PI, 1.5 * M_PI);
+                cr->close_path();
+            };
+
+            if (active || hovered) {
+                const Gdk::RGBA ring = themeColor(*channelDots[i], active ? "steep_accent" : "steep_wash",
+                                                  Gdk::RGBA("#2d7fd3"));
+                tile(2.5);
+                cr->set_source_rgba(ring.get_red(), ring.get_green(), ring.get_blue(), active ? 1.0 : 0.35);
+                cr->set_line_width(1.5);
                 cr->stroke();
             }
 
-            // Filled color circle
-            cr->arc(cx, cy, hovered ? r : r - 0.5, 0, 2 * M_PI);
+            tile(0);
             cr->set_source_rgb(dR, dG, dB);
             cr->fill_preserve();
-
-            // Border: white if selected, brighter under the pointer, dim otherwise
-            if (activeChannel == i) {
-                cr->set_source_rgb(1.0, 1.0, 1.0);
-                cr->set_line_width(1.5);
-            } else if (hovered) {
-                cr->set_source_rgba(1.0, 1.0, 1.0, 0.7);
-                cr->set_line_width(1.0);
-            } else {
-                cr->set_source_rgba(1.0, 1.0, 1.0, 0.2);
-                cr->set_line_width(0.5);
-            }
+            cr->set_source_rgba(0, 0, 0, 0.25);
+            cr->set_line_width(1.0);
             cr->stroke();
+
+            // A colour that has been moved carries a small mark beneath it.
+            if (hueValues[i] != 0.0 || satValues[i] != 0.0 || lumValues[i] != 0.0) {
+                const Gdk::RGBA mark = themeColor(*channelDots[i], "steep_accent", Gdk::RGBA("#2d7fd3"));
+                cr->set_source_rgb(mark.get_red(), mark.get_green(), mark.get_blue());
+                cr->arc(w / 2.0, y + size + 6.0, 2.0, 0, 2 * M_PI);
+                cr->fill();
+            }
+
             return true;
         });
 
@@ -155,27 +161,94 @@ HSVEqualizer::HSVEqualizer () : FoldableToolPanel(this, TOOL_NAME, M("TP_HSVEQUA
         });
         evBox->signal_button_press_event().connect([this, i](GdkEventButton*) -> bool {
             onChannelSelected(i);
-            // Redraw all dots to update selection ring
-            for (int j = 0; j < 8; ++j) {
-                channelDots[j]->queue_draw();
-            }
+            setAllMode(false);
+            redrawSwatches();
             return true;
         });
 
         channelBar->pack_start(*evBox, Gtk::PACK_EXPAND_WIDGET, 0);
     }
+    // One colour | All colours
+    auto* modeRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+    oneColourBtn = Gtk::manage(new Gtk::ToggleButton(M("TP_HSVEQUALIZER_ONECOLOUR")));
+    allColoursBtn = Gtk::manage(new Gtk::ToggleButton(M("TP_HSVEQUALIZER_ALLCOLOURS")));
+    modeRow->pack_start(*oneColourBtn, Gtk::PACK_SHRINK);
+    modeRow->pack_start(*allColoursBtn, Gtk::PACK_SHRINK);
+    makeSegmented(*modeRow);
+    modeRow->set_halign(Gtk::ALIGN_CENTER);
+    modeRow->set_margin_bottom(4);
+    oneColourBtn->set_active(true);
+    oneColourBtn->signal_toggled().connect([this]() {
+        if (!modeBlock) {
+            setAllMode(!oneColourBtn->get_active());
+        }
+    });
+    allColoursBtn->signal_toggled().connect([this]() {
+        if (!modeBlock) {
+            setAllMode(allColoursBtn->get_active());
+        }
+    });
+    toolContent_->pack_start(*modeRow, Gtk::PACK_SHRINK, 0);
+
     toolContent_->pack_start(*channelBar, Gtk::PACK_SHRINK, 0);
 
-    // Three H/S/L sliders for the active channel
+    // One colour: its name, a reset, and its three sliders.
+    oneColourBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
+    auto* nameRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+    channelName = Gtk::manage(new Gtk::Label(M(CHANNEL_KEYS[0]), Gtk::ALIGN_START));
+    channelName->get_style_context()->add_class("tool-heading-label");
+    nameRow->pack_start(*channelName, Gtk::PACK_EXPAND_WIDGET);
+    Gtk::Button* channelReset = makeResetButton(M("TP_HSVEQUALIZER_RESETCOLOUR"));
+    channelReset->signal_clicked().connect(sigc::mem_fun(*this, &HSVEqualizer::resetActiveChannel));
+    nameRow->pack_start(*channelReset, Gtk::PACK_SHRINK);
+    oneColourBox->pack_start(*nameRow, Gtk::PACK_SHRINK, 0);
+
     hueAdj = Gtk::manage(new Adjuster(M("TP_HSVEQUALIZER_HUE"), -100., 100., 1., 0.));
     satAdj = Gtk::manage(new Adjuster(M("TP_HSVEQUALIZER_SAT"), -100., 100., 1., 0.));
     lumAdj = Gtk::manage(new Adjuster(M("TP_HSVEQUALIZER_VAL"), -100., 100., 1., 0.));
     hueAdj->setAdjusterListener(this);
     satAdj->setAdjusterListener(this);
     lumAdj->setAdjusterListener(this);
-    toolContent_->pack_start(*hueAdj, Gtk::PACK_SHRINK, 0);
-    toolContent_->pack_start(*satAdj, Gtk::PACK_SHRINK, 0);
-    toolContent_->pack_start(*lumAdj, Gtk::PACK_SHRINK, 0);
+    oneColourBox->pack_start(*hueAdj, Gtk::PACK_SHRINK, 0);
+    oneColourBox->pack_start(*satAdj, Gtk::PACK_SHRINK, 0);
+    oneColourBox->pack_start(*lumAdj, Gtk::PACK_SHRINK, 0);
+    toolContent_->pack_start(*oneColourBox, Gtk::PACK_SHRINK, 0);
+
+    // All colours: Hue | Saturation | Luminance, then a slider per colour.
+    allColoursBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
+    auto* propRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+    const char* propKeys[3] = {"TP_HSVEQUALIZER_HUE", "TP_HSVEQUALIZER_SAT", "TP_HSVEQUALIZER_VAL"};
+
+    for (int p = 0; p < 3; ++p) {
+        propertyBtns[p] = Gtk::manage(new Gtk::ToggleButton(M(propKeys[p])));
+        propRow->pack_start(*propertyBtns[p], Gtk::PACK_SHRINK);
+        propertyBtns[p]->signal_toggled().connect([this, p]() {
+            if (!modeBlock && propertyBtns[p]->get_active()) {
+                setAllProperty(p);
+            } else if (!modeBlock && p == allProperty) {
+                modeBlock = true;
+                propertyBtns[p]->set_active(true);   // one is always chosen
+                modeBlock = false;
+            }
+        });
+    }
+
+    makeSegmented(*propRow);
+    propRow->set_halign(Gtk::ALIGN_START);
+    propRow->set_margin_bottom(4);
+    modeBlock = true;   // the sliders it would load do not exist yet
+    propertyBtns[0]->set_active(true);
+    modeBlock = false;
+    allColoursBox->pack_start(*propRow, Gtk::PACK_SHRINK, 0);
+
+    for (int i = 0; i < 8; ++i) {
+        allAdj[i] = Gtk::manage(new Adjuster(M(CHANNEL_KEYS[i]), -100., 100., 1., 0.));
+        allAdj[i]->setAdjusterListener(this);
+        allColoursBox->pack_start(*allAdj[i], Gtk::PACK_SHRINK, 0);
+    }
+
+    allColoursBox->set_no_show_all(true);
+    toolContent_->pack_start(*allColoursBox, Gtk::PACK_SHRINK, 0);
 
     // Start hidden
     toolContent_->set_no_show_all(true);
@@ -218,7 +291,7 @@ void HSVEqualizer::toggleContent()
 {
     contentExpanded_ = !contentExpanded_;
     if (contentExpanded_) {
-        sectionLabel_->set_markup("<b>\xe2\x96\xbe Color Mixer</b>");
+        sectionHeader_->setExpanded(true);
         toolContent_->set_no_show_all(false);
         toolContent_->show_all();
         toolContent_->set_no_show_all(true);
@@ -226,14 +299,121 @@ void HSVEqualizer::toggleContent()
         advancedSection->show_all();
         advancedSection->set_no_show_all(true);
     } else {
-        sectionLabel_->set_markup("<b>\xe2\x96\xb8 Color Mixer</b>");
+        sectionHeader_->setExpanded(false);
         toolContent_->hide();
         advancedSection->hide();
     }
 }
 
+std::vector<GradientMilestone> HSVEqualizer::gradientFor(int property, int channel) const
+{
+    float R, G, B;
+    const float hue = static_cast<float>(CHANNEL_HUES[channel]);
+    std::vector<GradientMilestone> ms;
+
+    if (property == 0) {
+        float h0 = hue - 0.083f; if (h0 < 0) h0 += 1.0f;
+        float h1 = hue + 0.083f; if (h1 > 1) h1 -= 1.0f;
+        Color::hsv2rgb01(h0, 0.7f, 0.55f, R, G, B);
+        ms.push_back(GradientMilestone(0.0, R, G, B));
+        Color::hsv2rgb01(hue, 0.7f, 0.55f, R, G, B);
+        ms.push_back(GradientMilestone(0.5, R, G, B));
+        Color::hsv2rgb01(h1, 0.7f, 0.55f, R, G, B);
+        ms.push_back(GradientMilestone(1.0, R, G, B));
+    } else if (property == 1) {
+        ms.push_back(GradientMilestone(0.0, 0.5, 0.5, 0.5));
+        Color::hsv2rgb01(hue, 1.0f, 0.6f, R, G, B);
+        ms.push_back(GradientMilestone(1.0, R, G, B));
+    } else {
+        Color::hsv2rgb01(hue, 0.6f, 0.2f, R, G, B);
+        ms.push_back(GradientMilestone(0.0, R, G, B));
+        Color::hsv2rgb01(hue, 0.6f, 0.8f, R, G, B);
+        ms.push_back(GradientMilestone(1.0, R, G, B));
+    }
+
+    return ms;
+}
+
+std::array<double, 8>& HSVEqualizer::propertyValues(int property)
+{
+    return property == 0 ? hueValues : property == 1 ? satValues : lumValues;
+}
+
+void HSVEqualizer::redrawSwatches()
+{
+    for (auto* dot : channelDots) {
+        dot->queue_draw();
+    }
+}
+
+void HSVEqualizer::loadAllSliders()
+{
+    const auto& values = propertyValues(allProperty);
+    disableListener();
+
+    for (int i = 0; i < 8; ++i) {
+        allAdj[i]->setSliderGradient(gradientFor(allProperty, i));
+        allAdj[i]->setValue(values[i]);
+    }
+
+    enableListener();
+}
+
+void HSVEqualizer::setAllMode(bool all)
+{
+    allMode = all;
+    modeBlock = true;
+    oneColourBtn->set_active(!all);
+    allColoursBtn->set_active(all);
+    modeBlock = false;
+
+    // no_show_all keeps the hidden view hidden through the page's show_all.
+    if (all) {
+        loadAllSliders();
+        oneColourBox->hide();
+        oneColourBox->set_no_show_all(true);
+        allColoursBox->set_no_show_all(false);
+        allColoursBox->show_all();
+    } else {
+        allColoursBox->hide();
+        allColoursBox->set_no_show_all(true);
+        oneColourBox->set_no_show_all(false);
+        oneColourBox->show_all();
+    }
+}
+
+void HSVEqualizer::setAllProperty(int property)
+{
+    allProperty = property;
+    modeBlock = true;
+
+    for (int p = 0; p < 3; ++p) {
+        propertyBtns[p]->set_active(p == property);
+    }
+
+    modeBlock = false;
+    loadAllSliders();
+}
+
+void HSVEqualizer::resetActiveChannel()
+{
+    hueValues[activeChannel] = satValues[activeChannel] = lumValues[activeChannel] = 0.0;
+    disableListener();
+    hueAdj->setValue(0.0);
+    satAdj->setValue(0.0);
+    lumAdj->setValue(0.0);
+    enableListener();
+    redrawSwatches();
+
+    if (listener && getEnabled()) {
+        listener->panelChanged(EvHSVEqSliders, M("GENERAL_RESET"));
+    }
+}
+
 void HSVEqualizer::updateActiveSliderGradients()
 {
+    channelName->set_text(M(CHANNEL_KEYS[activeChannel]));
+
     float R, G, B;
     float hue = static_cast<float>(CHANNEL_HUES[activeChannel]);
 
@@ -351,6 +531,12 @@ void HSVEqualizer::read (const ProcParams* pp, const ParamsEdited* pedited)
     lumAdj->setValue(lumValues[activeChannel]);
 
     enableListener ();
+
+    if (allMode) {
+        loadAllSliders();
+    }
+
+    redrawSwatches();
 }
 
 void HSVEqualizer::setEditProvider (EditDataProvider *provider)
@@ -435,8 +621,25 @@ void HSVEqualizer::adjusterChanged(Adjuster* a, double newval)
         satValues[activeChannel] = newval;
     } else if (a == lumAdj) {
         lumValues[activeChannel] = newval;
+    } else {
+        for (int i = 0; i < 8; ++i) {
+            if (a == allAdj[i]) {
+                propertyValues(allProperty)[i] = newval;
+
+                // Keep the one-colour sliders in step for the selected colour.
+                if (i == activeChannel) {
+                    Adjuster* same = allProperty == 0 ? hueAdj : allProperty == 1 ? satAdj : lumAdj;
+                    disableListener();
+                    same->setValue(newval);
+                    enableListener();
+                }
+
+                break;
+            }
+        }
     }
 
+    redrawSwatches();
     autoEnable();
     if (listener && getEnabled()) {
         listener->panelChanged(EvHSVEqSliders, M("GENERAL_CHANGED"));
@@ -484,6 +687,10 @@ void HSVEqualizer::setBatchMode (bool batchMode)
     hueAdj->showEditedCB();
     satAdj->showEditedCB();
     lumAdj->showEditedCB();
+
+    for (auto* a : allAdj) {
+        a->showEditedCB();
+    }
 }
 
 void HSVEqualizer::enabledChanged()

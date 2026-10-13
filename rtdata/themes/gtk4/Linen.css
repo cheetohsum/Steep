@@ -1,0 +1,32 @@
+/* Generated from rtdata/themes/Linen.css by tools/gen_gtk4_tokens.py.
+   Do not edit — change the theme's palette block and regenerate. */
+
+:root {
+  --steep-surface-0: #e6ddce;
+  --steep-surface-1: #f1ebe0;
+  --steep-surface-2: #f8f4ec;
+  --steep-surface-3: #ffffff;
+  --steep-text-hi: #1d1813;
+  --steep-text: #3b332b;
+  --steep-text-dim: #776b5d;
+  --steep-accent: #9a6722;
+  --steep-select: #2c7369;
+  --steep-attention: #bd5626;
+  --steep-rating: #b8860b;
+  --steep-success: #61742a;
+  --steep-danger: #ae3727;
+  --steep-border: #c3b59f;
+  --steep-border-soft: #d9cdbb;
+  --steep-sel-bg: #2c7369;
+  --steep-sel-fg: #fffaf1;
+  --steep-wash: #281a0a;
+  --steep-on-accent: #fffaf1;
+  --steep-shadow: alpha(#1e160e, 0.30);
+  --steep-surround: #777777;
+  --steep-ornament: alpha(#9a6722, 0.55);
+  --steep-label-1: #b8432f;
+  --steep-label-2: #c4921c;
+  --steep-label-3: #62802c;
+  --steep-label-4: #2f7a96;
+  --steep-label-5: #7a5690;
+}

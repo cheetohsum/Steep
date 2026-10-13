@@ -33,17 +33,11 @@ ColorGrading::ColorGrading() : FoldableToolPanel(this, TOOL_NAME, M("TP_COLORGRA
     contentExpanded_(false)
 {
     // Clickable section label (collapsed by default)
-    sectionLabel_ = Gtk::manage(new Gtk::Label());
-    sectionLabel_->set_markup("<b>\xe2\x96\xb8 Grading</b>");
-    sectionLabel_->set_xalign(0.0);
-    sectionLabel_->get_style_context()->add_class("tool-heading-label");
-    auto* labelEvt = Gtk::manage(new Gtk::EventBox());
-    labelEvt->add(*sectionLabel_);
-    labelEvt->signal_button_press_event().connect([this](GdkEventButton*) -> bool {
-        toggleContent();
-        return true;
-    });
-    getSummaryBox()->pack_start(*labelEvt, Gtk::PACK_SHRINK, 2);
+    sectionHeader_ = Gtk::manage(new SectionHeader(M("TP_COLORGRADING_SECTION_GRADING")));
+    sectionHeader_->set_halign(Gtk::ALIGN_FILL);
+    sectionHeader_->set_hexpand(true);
+    sectionHeader_->setOnToggled([this](bool) { toggleContent(); });
+    getSummaryBox()->pack_start(*sectionHeader_, Gtk::PACK_SHRINK, 2);
 
     // Collapsible content box
     toolContent_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
@@ -119,7 +113,7 @@ void ColorGrading::toggleContent()
 {
     contentExpanded_ = !contentExpanded_;
     if (contentExpanded_) {
-        sectionLabel_->set_markup("<b>\xe2\x96\xbe Grading</b>");
+        sectionHeader_->setExpanded(true);
         toolContent_->set_no_show_all(false);
         toolContent_->show_all();
         toolContent_->set_no_show_all(true);
@@ -127,7 +121,7 @@ void ColorGrading::toggleContent()
         advancedSection->show_all();
         advancedSection->set_no_show_all(true);
     } else {
-        sectionLabel_->set_markup("<b>\xe2\x96\xb8 Grading</b>");
+        sectionHeader_->setExpanded(false);
         toolContent_->hide();
         advancedSection->hide();
     }

@@ -21,4 +21,11 @@ unsigned long long getSettledPreviewSerial(const StagedImageProcessor* processor
  */
 unsigned int getInteractivePassMs(const StagedImageProcessor* processor);
 
+/**
+ * True while the preview shows a local-adjustment mask or deltaE view instead
+ * of the photograph. That state lives outside the ProcParams, so a captured
+ * preview frame cannot be trusted as "the image these params produce".
+ */
+bool isPreviewShowingMask(const StagedImageProcessor* processor);
+
 }

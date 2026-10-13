@@ -68,10 +68,10 @@ RGBCurves::RGBCurves () : FoldableToolPanel(this, TOOL_NAME, M("TP_RGBCURVES_LAB
     curveEditorG->hideHeaderWidgets();
 
     // Explicit channel buttons; right-click still opens the curve-type menu.
-    Mshape->enableCompactMode("RGB", "curve-channel-master");
-    Rshape->enableCompactMode("R", "curve-channel-red");
-    Gshape->enableCompactMode("G", "curve-channel-green");
-    Bshape->enableCompactMode("B", "curve-channel-blue");
+    Mshape->enableCompactMode(M("CURVE_CHANNEL_LIGHT"), "curve-channel-master");
+    Rshape->enableCompactMode(M("CURVE_CHANNEL_RED"), "curve-channel-red");
+    Gshape->enableCompactMode(M("CURVE_CHANNEL_GREEN"), "curve-channel-green");
+    Bshape->enableCompactMode(M("CURVE_CHANNEL_BLUE"), "curve-channel-blue");
 
     // Hide button boxes (+/-, edit, copy/paste/load/save) and coord adjusters (I:/O:)
     curveEditorG->setCompactDisplay(true);

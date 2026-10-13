@@ -242,6 +242,7 @@ Spot::Spot() :
 
     reset = Gtk::manage (new Gtk::Button ());
     reset->add (*Gtk::manage (new RTImage ("undo-small")));
+    reset->set_tooltip_text(M("GENERAL_RESET_TO_DEFAULT"));
     reset->set_relief (Gtk::RELIEF_NONE);
     reset->set_border_width (0);
     reset->signal_clicked().connect ( sigc::mem_fun (*this, &Spot::resetPressed) );

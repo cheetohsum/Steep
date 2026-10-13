@@ -199,6 +199,10 @@ const std::vector<ToolTree> EXPOSURE_PANEL_TOOLS = {
         .children = {},
     },
     {
+        .id = Tool::RELIGHT,
+        .children = {},
+    },
+    {
         .id = Tool::PC_VIGNETTE,
         .children = {},
     },
@@ -538,6 +542,7 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
     clarity = nullptr;
     grain = nullptr;
     lighteffects = nullptr;
+    relight = nullptr;
     tiltshift = nullptr;
     lensblur = nullptr;
     spot = nullptr;
@@ -698,6 +703,7 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
     clarity             = Gtk::manage(new Clarity());
     grain               = Gtk::manage(new Grain());
     lighteffects        = Gtk::manage(new LightEffects());
+    relight             = Gtk::manage(new Relight());
     tiltshift           = Gtk::manage(new TiltShift());
     lensblur            = Gtk::manage(new LensBlur());
     filmSimulation      = Gtk::manage(new FilmSimulation());
@@ -879,9 +885,10 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
         return b;
     };
 
-    // Helper: make a collapsible section (Clarity-style toggle)
-    // Returns {headerRow, contentBox, label}
-    struct CollapsibleSection { Gtk::Box* header; Gtk::Box* content; Gtk::Label* label; };
+    // Helper: make a collapsible section with the shared section header at
+    // group level (same chrome and type as the Edit pane's group headers).
+    // Returns {headerRow, contentBox, header}
+    struct CollapsibleSection { Gtk::Box* header; Gtk::Box* content; SectionHeader* toggle; };
     auto mkCollapsible = [](const Glib::ustring& name) -> CollapsibleSection {
         Gtk::Box* headerRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
         // Flush with the panel: the toggle's own 4px of padding is what sets
@@ -891,28 +898,21 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
         headerRow->set_margin_top(4);
         headerRow->set_margin_bottom(0);
 
-        Gtk::Button* toggle = Gtk::manage(new Gtk::Button());
-        toggle->set_relief(Gtk::RELIEF_NONE);
-        // Same chrome and type treatment as the Edit pane's group headers
+        auto* toggle = Gtk::manage(new SectionHeader(name, true));
         toggle->set_name("ToolGroupHeader");
-        Gtk::Label* label = Gtk::manage(new Gtk::Label());
-        label->set_markup("\u25B8 <b>" + Glib::Markup::escape_text(name) + "</b>");
-        toggle->add(*label);
         headerRow->pack_start(*toggle, Gtk::PACK_SHRINK);
 
         Gtk::Box* content = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
         content->set_name("TransformSection");
         content->set_no_show_all(true);
 
-        toggle->signal_clicked().connect([content, label, name]() {
-            bool expanded = content->get_visible();
+        toggle->setOnToggled([content](bool expand) {
             content->set_no_show_all(false);
-            expanded ? content->hide() : content->show_all();
+            expand ? content->show_all() : content->hide();
             content->set_no_show_all(true);
-            label->set_markup(Glib::ustring(expanded ? "\u25B8 <b>" : "\u25BE <b>") + Glib::Markup::escape_text(name) + "</b>");
         });
 
-        return {headerRow, content, label};
+        return {headerRow, content, toggle};
     };
 
     // Labeled row at top: Rotate — RotL / RotR / FlipH / FlipV
@@ -923,8 +923,7 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
         btnRow->set_margin_top(2);
         btnRow->set_margin_bottom(2);
 
-        Gtk::Label* rotateLbl = Gtk::manage(new Gtk::Label());
-        rotateLbl->set_markup("<b>" + Glib::Markup::escape_text(M("TP_COARSETRAF_LABEL_ROTATE")) + "</b>");
+        Gtk::Label* rotateLbl = Gtk::manage(new Gtk::Label(M("TP_COARSETRAF_LABEL_ROTATE")));
         rotateLbl->get_style_context()->add_class("tool-section-label");
         rotateLbl->set_margin_end(8);
         btnRow->pack_start(*rotateLbl, Gtk::PACK_SHRINK);
@@ -956,8 +955,7 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
         levelHeader->set_margin_end(8);
         levelHeader->set_margin_top(4);
 
-        Gtk::Label* levelLbl = Gtk::manage(new Gtk::Label());
-        levelLbl->set_markup("<b>" + Glib::Markup::escape_text(M("TP_ROTATE_LABEL_LEVEL")) + "</b>");
+        Gtk::Label* levelLbl = Gtk::manage(new Gtk::Label(M("TP_ROTATE_LABEL_LEVEL")));
         levelLbl->get_style_context()->add_class("tool-section-label");
         levelHeader->pack_start(*levelLbl, Gtk::PACK_SHRINK);
         transformPanel->pack_start(*levelHeader, Gtk::PACK_SHRINK, 0);
@@ -972,7 +970,7 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
     {
         auto sec = mkCollapsible(M("TP_CROP_LABEL"));
         cropSectionContent_ = sec.content;
-        cropSectionLabel_ = sec.label;
+        cropSectionHeader_ = sec.toggle;
 
         // Crop-select and reset buttons in the header row (after label).
         // No straighten button here: the Level section directly above owns
@@ -981,15 +979,8 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
         sec.header->pack_start(*crop->getSelectCropButton(), Gtk::PACK_SHRINK);
         sec.header->pack_start(*crop->getResetCropButton(), Gtk::PACK_SHRINK);
 
-        // Reset X button for crop section
-        cropResetBtn_ = Gtk::manage(new Gtk::Button());
-        cropResetBtn_->set_relief(Gtk::RELIEF_NONE);
-        cropResetBtn_->set_can_focus(false);
-        cropResetBtn_->set_tooltip_text("Reset to defaults");
-        auto* cropResetLabel = Gtk::manage(new Gtk::Label());
-        cropResetLabel->set_use_markup(true);
-        cropResetLabel->set_markup("<small>\xc3\x97</small>");
-        cropResetBtn_->add(*cropResetLabel);
+        // Reset button for the crop section
+        cropResetBtn_ = makeResetButton();
         cropResetBtn_->set_no_show_all(true);
         cropResetBtn_->set_name("ToolGroupReset");
         cropResetBtn_->signal_clicked().connect([this]() {
@@ -1030,7 +1021,7 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
     {
         auto sec = mkCollapsible(M("TP_PERSPECTIVE_LABEL"));
         perspSectionContent_ = sec.content;
-        perspSectionLabel_ = sec.label;
+        perspSectionHeader_ = sec.toggle;
 
         Gtk::Button* perspSel = mkBtn("perspective-vertical-bottom", "TOOLBAR_TOOLTIP_PERSPECTIVE");
         perspSel->signal_pressed().connect([this]() {
@@ -1056,15 +1047,8 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
         });
         sec.header->pack_start(*perspGridSel, Gtk::PACK_SHRINK);
 
-        // Reset X button for perspective section
-        perspResetBtn_ = Gtk::manage(new Gtk::Button());
-        perspResetBtn_->set_relief(Gtk::RELIEF_NONE);
-        perspResetBtn_->set_can_focus(false);
-        perspResetBtn_->set_tooltip_text("Reset to defaults");
-        auto* perspResetLabel = Gtk::manage(new Gtk::Label());
-        perspResetLabel->set_use_markup(true);
-        perspResetLabel->set_markup("<small>\xc3\x97</small>");
-        perspResetBtn_->add(*perspResetLabel);
+        // Reset button for the perspective section
+        perspResetBtn_ = makeResetButton();
         perspResetBtn_->set_no_show_all(true);
         perspResetBtn_->set_name("ToolGroupReset");
         perspResetBtn_->signal_clicked().connect([this]() {
@@ -1094,7 +1078,7 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
     {
         auto sec = mkCollapsible(M("TP_TRANSFORM_ADVANCED"));
         advSectionContent_ = sec.content;
-        advSectionLabel_ = sec.label;
+        advSectionHeader_ = sec.toggle;
 
         lensgeom->setFlatMode(true);
         lensgeom->hideMethodCombo();
@@ -1368,6 +1352,8 @@ std::string ToolPanelCoordinator::getToolName(Tool tool)
             return Grain::TOOL_NAME;
         case Tool::LIGHT_EFFECTS:
             return LightEffects::TOOL_NAME;
+        case Tool::RELIGHT:
+            return Relight::TOOL_NAME;
         case Tool::TILT_SHIFT:
             return TiltShift::TOOL_NAME;
         case Tool::LENS_BLUR:
@@ -2152,14 +2138,14 @@ void ToolPanelCoordinator::populateEditPanel()
     presetSpacer->set_size_request(42, -1);
     dotBar->pack_start(*presetSpacer, Gtk::PACK_SHRINK);
 
-    const char* tooltips[] = {"Color Mixer", "Grading", "Point Color"};
+    const char* tooltips[] = {"TP_HSVEQUALIZER_SECTION", "TP_COLORGRADING_SECTION_GRADING", "TP_POINTCOLOR_SECTION"};
     const char* icons[] = {"page-colormixer", "page-grading", "page-pointcolor"};
     for (int i = 0; i < 3; i++) {
         colorDots_[i] = Gtk::manage(new Gtk::ToggleButton());
         colorDots_[i]->set_image(*Gtk::manage(new RTImage(icons[i], Gtk::ICON_SIZE_MENU)));
         colorDots_[i]->set_always_show_image(true);
         colorDots_[i]->get_style_context()->add_class("PaginationDot");
-        colorDots_[i]->set_tooltip_text(tooltips[i]);
+        colorDots_[i]->set_tooltip_text(M(tooltips[i]));
         colorDots_[i]->signal_toggled().connect([this, i]() {
             if (colorDotBlock_) return;
             if (colorDots_[i]->get_active()) {
@@ -2233,9 +2219,10 @@ void ToolPanelCoordinator::populateEditPanel()
     presetSlot->pack_start(*gradingPresets_, Gtk::PACK_SHRINK);
     dotBar->pack_start(*presetSlot, Gtk::PACK_SHRINK);
 
-    // Activate first dot
+    // Colour grading is the page the group opens on.
     colorDotBlock_ = true;
-    colorDots_[0]->set_active(true);
+    colorDots_[1]->set_active(true);
+    colorDotActive_ = 1;
     colorDotBlock_ = false;
 
     colorGroup->getContentBox()->pack_start(*dotBar, Gtk::PACK_SHRINK);
@@ -2282,6 +2269,16 @@ void ToolPanelCoordinator::populateEditPanel()
     prepareToolPage(hsvequalizer);
     prepareToolPage(colorgrading);
     prepareToolPage(pointcolor);
+
+    // Open on colour grading (its page must be shown before it can be the
+    // visible child).
+    colorgrading->getExpander()->show();
+    colorToolStack_->set_visible_child("grading");
+
+    if (gradingPresets_) {
+        gradingPresets_->set_visible(true);
+        gradingPresets_->warm();
+    }
 
     // --- Detail preview strip ---
     // Modifies sharpening, noise reduction (luma/chroma), and dehaze
@@ -2434,6 +2431,7 @@ void ToolPanelCoordinator::populateEditPanel()
         addLabelledEffect("TP_CLARITY_LABEL", clarity, true);
         addLabelledEffect("TP_GRAIN_LABEL", grain, true);
         addLabelledEffect("TP_LIGHTEFFECTS_LABEL", lighteffects, false);
+        addLabelledEffect("TP_RELIGHT_LABEL", relight, false);
         addLabelledEffect("TP_PCVIGNETTE_LABEL", pcvignette, true);
         addLabelledEffect("TP_TILTSHIFT_LABEL", tiltshift, true);
         addLabelledEffect("TP_FILMPRESETS_LABEL", filmPresets, true);
@@ -2545,7 +2543,7 @@ void ToolPanelCoordinator::populateEditPanel()
     });
 
     effectsGroup->setResetCallback([this]() {
-        resetGroupToNeutral({texture, clarity, grain, lighteffects, tiltshift, pcvignette,
+        resetGroupToNeutral({texture, clarity, grain, lighteffects, relight, tiltshift, pcvignette,
                              filmPresets, doubleExposure, softlight}, effectsStrip_);
     });
 
@@ -3496,15 +3494,15 @@ void ToolPanelCoordinator::buildQuickEditBar()
         }, 900);
     };
 
-    auto* autoButton = Gtk::manage(new Gtk::Button("Auto"));
+    auto* autoButton = Gtk::manage(new Gtk::Button(M("QUICKEDIT_AUTO")));
     autoButton->set_name("QuickEditButton");
     autoButton->set_relief(Gtk::RELIEF_NONE);
-    autoButton->set_tooltip_text("Auto Edit");
+    autoButton->set_tooltip_text(M("QUICKEDIT_AUTOEDIT"));
     autoButton->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
     autoButton->signal_enter_notify_event().connect([this, isRealCrossing](GdkEventCrossing* event) -> bool {
         if (isRealCrossing(event)) {
             quickPreviewVariant_ = 0;
-            requestQuickAutoParams(0, "Auto Edit", false);
+            requestQuickAutoParams(0, M("QUICKEDIT_AUTOEDIT"), false);
         }
         return false;
     });
@@ -3516,15 +3514,15 @@ void ToolPanelCoordinator::buildQuickEditBar()
     });
     autoButton->signal_clicked().connect([this, autoButton, flashQuickEditButton]() {
         flashQuickEditButton(autoButton);
-        requestQuickAutoParams(0, "Auto Edit", true);
+        requestQuickAutoParams(0, M("QUICKEDIT_AUTOEDIT"), true);
     });
 
     auto* autoMenu = Gtk::manage(new Gtk::Menu());
     const std::vector<std::pair<Glib::ustring, int>> autoItems = {
-        {"Auto Edit", 0},
-        {"Auto Grade", 1},
-        {"Film Lab", 2},
-        {"Auto Grade + Film Lab", 3}
+        {M("QUICKEDIT_AUTOEDIT"), 0},
+        {M("QUICKEDIT_AUTOGRADE"), 1},
+        {M("QUICKEDIT_FILMLAB"), 2},
+        {M("QUICKEDIT_AUTOGRADE_FILMLAB"), 3}
     };
     for (const auto& item : autoItems) {
         auto* mi = Gtk::manage(new Gtk::MenuItem(item.first));
@@ -3571,7 +3569,7 @@ void ToolPanelCoordinator::buildQuickEditBar()
     autoDrop->set_name("QuickEditDrop");
     autoDrop->set_image(*Gtk::manage(new RTImage("arrow-down-small", Gtk::ICON_SIZE_MENU)));
     autoDrop->set_relief(Gtk::RELIEF_NONE);
-    autoDrop->set_tooltip_text("Auto options");
+    autoDrop->set_tooltip_text(M("QUICKEDIT_AUTO_OPTIONS"));
     autoDrop->set_halign(Gtk::ALIGN_END);
     autoDrop->set_valign(Gtk::ALIGN_END);
     autoDrop->set_size_request(24, 22);
@@ -3598,15 +3596,15 @@ void ToolPanelCoordinator::buildQuickEditBar()
         });
     wireHoverMenuBehavior(autoMenu, autoDrop);
 
-    auto* bwButton = Gtk::manage(new Gtk::Button("B&W"));
+    auto* bwButton = Gtk::manage(new Gtk::Button(M("QUICKEDIT_BW")));
     bwButton->set_name("QuickEditButton");
     bwButton->set_relief(Gtk::RELIEF_NONE);
-    bwButton->set_tooltip_text("Black & White");
+    bwButton->set_tooltip_text(M("QUICKEDIT_BW_TOOLTIP"));
     bwButton->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
     bwButton->signal_enter_notify_event().connect([this, isRealCrossing](GdkEventCrossing* event) -> bool {
         if (isRealCrossing(event)) {
             quickPreviewVariant_ = 100;
-            beginQuickPreview(makeQuickBWParams(0), "Black & White");
+            beginQuickPreview(makeQuickBWParams(0), M("QUICKEDIT_BW_TOOLTIP"));
         }
         return false;
     });
@@ -3618,17 +3616,17 @@ void ToolPanelCoordinator::buildQuickEditBar()
     });
     bwButton->signal_clicked().connect([this, bwButton, flashQuickEditButton]() {
         flashQuickEditButton(bwButton);
-        applyQuickEditParams(makeQuickBWParams(0), "Black & White", true);
+        applyQuickEditParams(makeQuickBWParams(0), M("QUICKEDIT_BW_TOOLTIP"), true);
     });
 
     auto* bwMenu = Gtk::manage(new Gtk::Menu());
     const std::vector<std::pair<Glib::ustring, int>> bwItems = {
-        {"Neutral B&W", 0},
-        {"Portrait B&W", 1},
-        {"High Contrast", 2},
-        {"Red Filter", 3},
-        {"Green Filter", 4},
-        {"Infrared", 5}
+        {M("QUICKEDIT_BW_NEUTRAL"), 0},
+        {M("QUICKEDIT_BW_PORTRAIT"), 1},
+        {M("QUICKEDIT_BW_HIGHCONTRAST"), 2},
+        {M("QUICKEDIT_BW_RED"), 3},
+        {M("QUICKEDIT_BW_GREEN"), 4},
+        {M("QUICKEDIT_BW_INFRARED"), 5}
     };
     for (const auto& item : bwItems) {
         auto* mi = Gtk::manage(new Gtk::MenuItem(item.first));
@@ -3673,7 +3671,7 @@ void ToolPanelCoordinator::buildQuickEditBar()
     bwDrop->set_name("QuickEditDrop");
     bwDrop->set_image(*Gtk::manage(new RTImage("arrow-down-small", Gtk::ICON_SIZE_MENU)));
     bwDrop->set_relief(Gtk::RELIEF_NONE);
-    bwDrop->set_tooltip_text("Black & White options");
+    bwDrop->set_tooltip_text(M("QUICKEDIT_BW_OPTIONS"));
     bwDrop->set_halign(Gtk::ALIGN_END);
     bwDrop->set_valign(Gtk::ALIGN_END);
     bwDrop->set_size_request(24, 22);
@@ -3699,17 +3697,25 @@ void ToolPanelCoordinator::buildQuickEditBar()
         });
     wireHoverMenuBehavior(bwMenu, bwDrop);
 
-    auto* autoSplit = Gtk::manage(new Gtk::Overlay());
-    autoSplit->set_name("QuickEditSplit");
-    autoSplit->set_hexpand(true);
-    autoSplit->add(*autoButton);
-    autoSplit->add_overlay(*autoDrop);
+    // One split-button pattern (action | chevron), shared with the AI mask
+    // chip and styled once in widgets.css (.split-button).
+    const auto makeSplit = [](Gtk::Button* action, Gtk::MenuButton* drop) {
+        auto* split = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+        split->set_name("QuickEditSplit");
+        split->get_style_context()->add_class(GTK_STYLE_CLASS_LINKED);
+        split->get_style_context()->add_class("split-button");
+        split->set_hexpand(true);
+        action->set_hexpand(true);
+        drop->set_halign(Gtk::ALIGN_FILL);
+        drop->set_valign(Gtk::ALIGN_FILL);
+        drop->set_size_request(24, -1);
+        split->pack_start(*action, Gtk::PACK_EXPAND_WIDGET, 0);
+        split->pack_start(*drop, Gtk::PACK_SHRINK, 0);
+        return split;
+    };
 
-    auto* bwSplit = Gtk::manage(new Gtk::Overlay());
-    bwSplit->set_name("QuickEditSplit");
-    bwSplit->set_hexpand(true);
-    bwSplit->add(*bwButton);
-    bwSplit->add_overlay(*bwDrop);
+    auto* autoSplit = makeSplit(autoButton, autoDrop);
+    auto* bwSplit = makeSplit(bwButton, bwDrop);
 
     quickEditBar_->pack_start(*autoSplit, Gtk::PACK_EXPAND_WIDGET, 0);
     quickEditBar_->pack_start(*bwSplit, Gtk::PACK_EXPAND_WIDGET, 0);
@@ -4315,6 +4321,25 @@ void ToolPanelCoordinator::profileChange(
 
     std::shared_ptr<ProcParams> deferredMetadataParams;
 
+    // Opening a photo: start the engine now instead of after ~100 panel
+    // reads, the strips and the listeners (tens of ms on the GUI thread, all
+    // on the switch's critical path). Everything below then reads a private
+    // snapshot, so the worker never races the GUI over the engine's own
+    // params — the reason the start used to sit at the very end. Engine
+    // callbacks reach the GUI through idles, i.e. after this method returns,
+    // so they still land after the panels have been read.
+    std::unique_ptr<ProcParams> loadSnapshot;
+    bool engineStarted = false;
+
+    if (event == rtengine::EvPhotoLoaded && !spotOnlyChange && !filterRawRefresh) {
+        loadSnapshot.reset(new ProcParams(*params));
+        ipc->setLocallabMaskVisibility(false, false, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+        ipc->endUpdateParams(event);
+        engineStarted = true;
+        params = loadSnapshot.get();
+        logStep("early-engine-start");
+    }
+
     // updating the GUI with updated values
     for (size_t i = 0; i < toolPanels.size(); i++) {
         // The metadata panel's read() re-opens the file through Exiv2 and
@@ -4443,8 +4468,11 @@ void ToolPanelCoordinator::profileChange(
 
     // Start IPC processing after profile GUI state and listeners have finished
     // consuming the update params. Starting earlier lets the worker race the
-    // tail of this method during photo-load/profile-change handoff.
-    if (spotOnlyChange) {
+    // tail of this method during photo-load/profile-change handoff (photo
+    // load avoids that race by reading a snapshot; see above).
+    if (engineStarted) {
+        // already running
+    } else if (spotOnlyChange) {
         ipc->endUpdateParams(SPOTADJUST);
     } else if (filterRawRefresh) {
         ipc->endUpdateParams(rtengine::RefreshMapper::getInstance()->getAction(event) & ALLNORAW);
@@ -5174,7 +5202,7 @@ void ToolPanelCoordinator::applyUIComplexity(int complexityLevel)
         Tool::PREPROCESS, Tool::DARKFRAME_TOOL, Tool::FLATFIELD_TOOL,
         Tool::RAW_CA_CORRECTION, Tool::RAW_EXPOSURE, Tool::PREPROCESS_WB,
         Tool::BAYER_RAW_EXPOSURE, Tool::XTRANS_RAW_EXPOSURE, Tool::FATTAL,
-        Tool::FILM_NEGATIVE, Tool::PD_SHARPENING,
+        Tool::FILM_NEGATIVE, Tool::PD_SHARPENING, Tool::RELIGHT,
     };
 
     for (const auto& tool : allTools) {
@@ -5282,14 +5310,14 @@ void ToolPanelCoordinator::toolDeselected(ToolMode tool)
     }
 }
 
-void ToolPanelCoordinator::expandTransformSection(Gtk::Box* content, Gtk::Label* label, const Glib::ustring& name)
+void ToolPanelCoordinator::expandTransformSection(Gtk::Box* content, SectionHeader* header)
 {
     if (content && !content->get_visible()) {
         content->set_no_show_all(false);
         content->show_all();
         content->set_no_show_all(true);
-        if (label) {
-            label->set_markup("\u25BE <b>" + Glib::Markup::escape_text(name) + "</b>");
+        if (header) {
+            header->setExpanded(true);
         }
     }
 }
@@ -5330,7 +5358,7 @@ void ToolPanelCoordinator::toolSelected(ToolMode tool)
             toolBar->blockEditDeactivation(false);
             perspective->setDragEditMode(true);
             perspective->setExpanded(true);
-            expandTransformSection(perspSectionContent_, perspSectionLabel_, M("TP_PERSPECTIVE_LABEL"));
+            expandTransformSection(perspSectionContent_, perspSectionHeader_);
             modeButtonBar->setActiveMode(EditorMode::CROPPING);
             modeChanged(EditorMode::CROPPING);
             break;
@@ -5340,7 +5368,7 @@ void ToolPanelCoordinator::toolSelected(ToolMode tool)
             toolBar->blockEditDeactivation(false);
             perspective->setGridEditMode(true);
             perspective->setExpanded(true);
-            expandTransformSection(perspSectionContent_, perspSectionLabel_, M("TP_PERSPECTIVE_LABEL"));
+            expandTransformSection(perspSectionContent_, perspSectionHeader_);
             modeButtonBar->setActiveMode(EditorMode::CROPPING);
             modeChanged(EditorMode::CROPPING);
             break;
@@ -5499,6 +5527,8 @@ FoldableToolPanel *ToolPanelCoordinator::getFoldableToolPanel(Tool tool) const
             return grain;
         case Tool::LIGHT_EFFECTS:
             return lighteffects;
+        case Tool::RELIGHT:
+            return relight;
         case Tool::TILT_SHIFT:
             return tiltshift;
         case Tool::LENS_BLUR:
@@ -5724,7 +5754,7 @@ std::vector<ToolPanel*> ToolPanelCoordinator::groupToolPanels() const
         // Detail
         sharpening, dirpyrdenoise, dehaze,
         // Effects
-        texture, clarity, grain, lighteffects, tiltshift, pcvignette,
+        texture, clarity, grain, lighteffects, relight, tiltshift, pcvignette,
         filmPresets, doubleExposure, softlight,
         // Spot removal
         spot,
@@ -5869,6 +5899,7 @@ void ToolPanelCoordinator::updateResetButtons()
                      || !(current.clarity == n.clarity)
                      || !(current.grain == n.grain)
                      || !(current.lightEffects == n.lightEffects)
+                     || !(current.relight == n.relight)
                      || !(current.tiltShift == n.tiltShift)
                      || !(current.pcvignette == n.pcvignette)
                      || !(current.filmPresets == n.filmPresets)

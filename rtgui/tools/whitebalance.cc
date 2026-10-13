@@ -142,13 +142,14 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
     refTreeModel = Gtk::TreeStore::create(methodColumns);
     // Create the Combobox
     method = Gtk::manage (new MyComboBox ());
-    setExpandAlignProperties(method, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    // Full width, never ellipsized: the method names are the whole point.
+    setExpandAlignProperties(method, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
     // Assign the model to the Combobox
     method->set_model(refTreeModel);
     method->clear(); // Clear default cell layout to add custom one
     // Avoid the GTK icon theme/SVG loader during startup on Windows.
     Gtk::CellRendererText* const renderer_label = Gtk::manage(new Gtk::CellRendererText());
-    renderer_label->property_ellipsize() = Pango::ELLIPSIZE_MIDDLE;
+    renderer_label->property_ellipsize() = Pango::ELLIPSIZE_NONE;
     method->pack_start(*renderer_label, true);
     method->add_attribute(*renderer_label, "markup", methodColumns.colLabel);
 
@@ -236,11 +237,8 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
     EvWBitcwbprim = m->newEvent(WB, "HISTORY_MSG_WBITC_PRIM");
     EvWBitcwbalg = m->newEvent(WB, "HISTORY_MSG_WBITC_OBS");
     EvWBitcwgreen = m->newEvent(WB, "HISTORY_MSG_WBITC_GREEN");
-    resetButton = Gtk::manage (new Gtk::Button()); // No label, keep it short
+    resetButton = makeResetButton(); // resets the method to Camera (resetWB)
     setExpandAlignProperties(resetButton, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
-    resetButton->set_relief(Gtk::RELIEF_NONE);
-    resetButton->get_style_context()->add_class(GTK_STYLE_CLASS_FLAT);
-    resetButton->set_image (*Gtk::manage (new RTImage ("undo-small", Gtk::ICON_SIZE_BUTTON)));
 
     method->set_active (0); // Camera
 
@@ -380,21 +378,16 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
     pack_start(*PatchlevelLabel);
     green->setLogScale(MAXGREEN / MINGREEN, MINGREEN);
     // --- Summary box layout ---
-    // "WB ▸" label + Camera dropdown first, then Temp & Tint
+    // "WB" section header + Camera dropdown first, then Temp & Tint
     auto* wbHeaderRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
-    sectionLabel_ = Gtk::manage(new Gtk::Label());
-    sectionLabel_->set_markup("\u25B8 WB");
-    sectionLabel_->set_xalign(0.0);
-    auto* wbToggleBtn = Gtk::manage(new Gtk::Button());
-    wbToggleBtn->add(*sectionLabel_);
-    wbToggleBtn->set_relief(Gtk::RELIEF_NONE);
-    wbToggleBtn->set_can_focus(false);
-    wbToggleBtn->set_tooltip_text(M("TP_WBALANCE_LABEL"));
-    setExpandAlignProperties(wbToggleBtn, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
-    wbToggleBtn->signal_clicked().connect([this]() { toggleDetail(); });
+    // The header discloses the picker row (spot pickers, spot size, reset).
+    sectionHeader_ = Gtk::manage(new SectionHeader(M("TP_WBALANCE_SECTION")));
+    sectionHeader_->set_tooltip_text(M("TP_WBALANCE_LABEL"));
+    setExpandAlignProperties(sectionHeader_, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    sectionHeader_->setOnToggled([this](bool) { toggleDetail(); });
 
-    wbHeaderRow->pack_start(*wbToggleBtn, Gtk::PACK_SHRINK);
-    wbHeaderRow->pack_start(*method, Gtk::PACK_SHRINK);
+    wbHeaderRow->pack_start(*sectionHeader_, Gtk::PACK_SHRINK);
+    wbHeaderRow->pack_start(*method, Gtk::PACK_EXPAND_WIDGET);
     getSummaryBox()->pack_start(*wbHeaderRow, Gtk::PACK_SHRINK, 0);
 
     // Detail content: pickers + spot size + reset — single row below WB header
@@ -1120,11 +1113,7 @@ void WhiteBalance::resetWB ()
 void WhiteBalance::toggleDetail()
 {
     detailExpanded_ = !detailExpanded_;
-    if (detailExpanded_) {
-        sectionLabel_->set_markup("\u25BE WB");
-    } else {
-        sectionLabel_->set_markup("\u25B8 WB");
-    }
+    sectionHeader_->setExpanded(detailExpanded_);
     detailRevealer_->set_reveal_child(detailExpanded_);
 }
 

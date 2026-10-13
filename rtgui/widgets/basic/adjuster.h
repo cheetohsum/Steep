@@ -100,6 +100,8 @@ protected:
 
     double getSliderValue() const;
     void setSliderValue(double val);
+    // Where a slider-unit value sits on the (possibly log-scaled) slider.
+    double sliderPositionOf(double val) const;
 
 public:
     /// Type scale for every setting pill, shared by all Adjusters. The pill

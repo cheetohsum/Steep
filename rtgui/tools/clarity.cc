@@ -47,12 +47,16 @@ Clarity::Clarity(): FoldableToolPanel(this, TOOL_NAME, M("TP_CLARITY_LABEL"), fa
         GradientMilestone(1.0, 0.75, 0.80, 0.88)
     });
 
-    // Label-as-toggle: click the slider label to expand/collapse detail
-    amount->setLabel(Glib::ustring("\u25B8 ") + M("TP_CLARITY_AMOUNT"));
-    amount->setLabelClickCallback([this]() { toggleDetail(); });
-
     auto *summaryBox = getSummaryBox();
     summaryBox->pack_start(*amount);
+
+    // "Advanced" section header expands/collapses the detail sliders
+    detailHeader_ = Gtk::manage(new SectionHeader(M("TP_GENERAL_ADVANCED")));
+    detailHeader_->set_halign(Gtk::ALIGN_FILL);
+    detailHeader_->set_hexpand(true);
+    detailHeader_->setExpanded(detailExpanded_);
+    detailHeader_->setOnToggled([this](bool) { toggleDetail(); });
+    summaryBox->pack_start(*detailHeader_, Gtk::PACK_SHRINK);
 
     detailContent_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     detailContent_->pack_start(*radius);
@@ -72,7 +76,7 @@ Clarity::Clarity(): FoldableToolPanel(this, TOOL_NAME, M("TP_CLARITY_LABEL"), fa
 void Clarity::toggleDetail()
 {
     detailExpanded_ = !detailExpanded_;
-    amount->setLabel(Glib::ustring(detailExpanded_ ? "\u25BE " : "\u25B8 ") + M("TP_CLARITY_AMOUNT"));
+    detailHeader_->setExpanded(detailExpanded_);
     detailRevealer_->set_reveal_child(detailExpanded_);
 }
 

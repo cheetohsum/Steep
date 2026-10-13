@@ -20,7 +20,11 @@
 #include "mcp/mcpprotocol.h"
 #include "mcp/mcpvolumewatcher.h"
 
+#include "autoedit.h"
+#include "cachemanager.h"
 #include "editorpanel.h"
+#include "procparamchangers.h"
+#include "thumbnail.h"
 #include "toolpanelcoord.h"
 
 #include "rtengine/procparams.h"
@@ -678,6 +682,20 @@ std::vector<ToolDef> getToolDefinitions() {
         "auto_level",
         "Detect a reliable horizon or structural lines in the current image and apply a conservative local leveling rotation.",
         createObjectSchema({}, {})
+    });
+
+    // auto_edit
+    tools.push_back({
+        "auto_edit",
+        "Run Steep's Auto Edit on a photo by file path, exactly as the file browser's Auto Edit menu does "
+        "(framing and alignment are kept). Works without an open image. "
+        "mode: 'neutral' (technical auto edit), 'grade' (+ color grade), 'film' (+ film stock, the menu's Grade + Film), "
+        "'graded' (+ color grade and film stock, harmonized). Default 'film'. "
+        "output: optional path to write the resulting PP3 to. apply: true also saves it as the photo's own "
+        "sidecar (default false, so the photo's edit is untouched unless asked). "
+        "Returns the scene Auto Edit detected and a summary of the recipe.",
+        createObjectSchema({{"path", "string"}, {"mode", "string"}, {"output", "string"}, {"apply", "boolean"}},
+                           {"path"})
     });
 
     // set_tool_enabled
@@ -1343,6 +1361,114 @@ std::string handleToolCall(const std::string& toolName, cJSON* args, McpServer* 
     cJSON* result = buildToolResult("Unknown tool: " + toolName, true);
     std::string s = jsonStr(result);
     cJSON_Delete(result);
+    return s;
+}
+
+
+std::string runAutoEditTool(cJSON* args, McpServer* server) {
+    auto fail = [](const std::string& msg) {
+        cJSON* result = buildToolResult(msg, true);
+        std::string s = jsonStr(result);
+        cJSON_Delete(result);
+        return s;
+    };
+
+    const std::string path = args ? getStr(args, "path") : std::string();
+    if (path.empty()) {
+        return fail("Missing 'path' argument.");
+    }
+    if (!Glib::file_test(path, Glib::FILE_TEST_EXISTS)) {
+        return fail("File not found: " + path);
+    }
+
+    const std::string modeName = args ? getStr(args, "mode", "film") : std::string("film");
+    SteepAutoEditMode mode;
+    if (modeName == "neutral") {
+        mode = SteepAutoEditMode::Neutral;
+    } else if (modeName == "grade") {
+        mode = SteepAutoEditMode::Grade;
+    } else if (modeName == "film") {
+        mode = SteepAutoEditMode::GradeFilm;
+    } else if (modeName == "graded") {
+        mode = SteepAutoEditMode::GradedFilm;
+    } else {
+        return fail("Unknown mode '" + modeName + "'. Use neutral, grade, film or graded.");
+    }
+    const std::string output = args ? getStr(args, "output") : std::string();
+    const bool apply = args && getBool(args, "apply", false);
+
+    // The cache lookup belongs to GTK's thread; it takes a reference we release below.
+    Thumbnail* thumbnail = nullptr;
+    server->dispatchToGtk([&thumbnail, &path]() -> std::string {
+        thumbnail = cacheMgr->getEntry(path);
+        return std::string();
+    });
+    if (!thumbnail) {
+        return fail("Steep could not open " + path);
+    }
+
+    // The analysis itself runs here, off GTK's thread, as the browser's batch Auto Edit does.
+    ProcParams result;
+    AutoGradeFeatures features;
+    std::string error;
+    try {
+        const ProcParams source = thumbnail->getProcParamsCopy();
+        features = buildSteepAutoEditParamsFeatures(*thumbnail, mode, source, result);
+    } catch (const std::exception& e) {
+        error = e.what();
+    } catch (...) {
+        error = "unknown error";
+    }
+
+    bool saved = false;
+    if (error.empty() && !output.empty()) {
+        saved = result.save(output) == 0;
+    }
+    if (error.empty() && apply) {
+        server->dispatchToGtk([thumbnail, &result]() -> std::string {
+            thumbnail->setProcParams(result, nullptr, FILEBROWSER, true);
+            return std::string();
+        });
+    }
+    server->dispatchToGtk([thumbnail]() -> std::string {
+        thumbnail->decreaseRef();
+        return std::string();
+    });
+
+    if (!error.empty()) {
+        return fail("Auto Edit failed on " + path + ": " + error);
+    }
+
+    cJSON* payload = cJSON_CreateObject();
+    cJSON_AddStringToObject(payload, "path", path.c_str());
+    cJSON_AddStringToObject(payload, "mode", autoEditModeName(mode));
+    cJSON_AddStringToObject(payload, "scene", autoGradeSceneName(features.scene));
+    if (!output.empty()) {
+        cJSON_AddStringToObject(payload, "output", output.c_str());
+        cJSON_AddBoolToObject(payload, "saved", saved);
+    }
+    cJSON_AddBoolToObject(payload, "applied", apply);
+    cJSON* recipe = cJSON_CreateObject();
+    cJSON_AddNumberToObject(recipe, "expcomp", result.toneCurve.expcomp);
+    cJSON_AddNumberToObject(recipe, "brightness", result.toneCurve.brightness);
+    cJSON_AddNumberToObject(recipe, "contrast", result.toneCurve.contrast);
+    cJSON_AddNumberToObject(recipe, "highlightCompression", result.toneCurve.hlcompr);
+    cJSON_AddNumberToObject(recipe, "shadows", result.sh.shadows);
+    cJSON_AddNumberToObject(recipe, "highlights", result.sh.highlights);
+    cJSON_AddBoolToObject(recipe, "colorGrading", result.colorGrading.enabled);
+    cJSON_AddBoolToObject(recipe, "filmPresets", result.filmPresets.enabled);
+    cJSON_AddStringToObject(recipe, "filmPreset", result.filmPresets.preset.c_str());
+    cJSON_AddNumberToObject(recipe, "filmStrength", result.filmPresets.strength);
+    cJSON_AddItemToObject(payload, "recipe", recipe);
+    if (output.empty() && !apply) {
+        // Nothing was written anywhere, so return the full recipe.
+        cJSON_AddItemToObject(payload, "params", paramsToJson(result));
+    }
+
+    cJSON* wrapped = buildToolResultJson(payload);
+    cJSON_Delete(payload);
+    std::string s = jsonStr(wrapped);
+    cJSON_Delete(wrapped);
     return s;
 }
 

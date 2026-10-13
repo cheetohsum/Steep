@@ -467,7 +467,7 @@ void DirBrowser::fillDirTree ()
     });
 
     Gtk::CellRendererText* countCR = Gtk::manage(new Gtk::CellRendererText());
-    countCR->property_foreground() = "#888888";
+    countCR->property_foreground_rgba() = themeColor(*dirtree, "steep_text_dim", Gdk::RGBA("#888888"));
     countCR->property_xalign() = 1.0;
     countCR->property_ypad() = 0;
     countCR->property_scale() = 0.8;

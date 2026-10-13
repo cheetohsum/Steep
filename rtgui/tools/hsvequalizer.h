@@ -58,6 +58,19 @@ protected:
     Adjuster* satAdj;
     Adjuster* lumAdj;
 
+    // "One colour" shows the three sliders of the selected colour; "All
+    // colours" shows one property for all eight colours at once.
+    Gtk::ToggleButton* oneColourBtn;
+    Gtk::ToggleButton* allColoursBtn;
+    std::array<Gtk::ToggleButton*, 3> propertyBtns;
+    Gtk::Box* oneColourBox;
+    Gtk::Box* allColoursBox;
+    Gtk::Label* channelName;
+    std::array<Adjuster*, 8> allAdj;
+    bool allMode = false;
+    int allProperty = 0;   // 0 hue, 1 saturation, 2 luminance
+    bool modeBlock = false;
+
     // Internal storage for all 8 channels
     std::array<double, 8> hueValues;
     std::array<double, 8> satValues;
@@ -65,13 +78,20 @@ protected:
 
     AdvancedSection* advancedSection;
 
-    Gtk::Label* sectionLabel_;
+    SectionHeader* sectionHeader_;
     Gtk::Box* toolContent_;
     bool contentExpanded_;
     void toggleContent();
 
     void onChannelSelected(int channel);
     void updateActiveSliderGradients();
+    std::vector<GradientMilestone> gradientFor(int property, int channel) const;
+    std::array<double, 8>& propertyValues(int property);
+    void setAllMode(bool all);
+    void setAllProperty(int property);
+    void loadAllSliders();
+    void resetActiveChannel();
+    void redrawSwatches();
     std::vector<double> slidersToFlatCurve(const std::array<double, 8>& shifts) const;
 
 public:

@@ -42,6 +42,7 @@
 #include "labimage.h"
 #include "median.h"
 #include "procparams.h"
+#include "relight.h"
 #include "rawimage.h"
 #include "rawimagesource.h"
 #include "rtengine.h"
@@ -1217,6 +1218,28 @@ IImage8* Thumbnail::quickProcessImage (const procparams::ProcParams& params, int
 // Full thumbnail processing, second stage if complete profile exists
 IImage8* Thumbnail::processImage (const procparams::ProcParams& params, eSensorType sensorType, int rheight, TypeInterpolation interp, const FramesMetaData *metadata, double& myscale, bool forMonitor, bool forHistogramMatching, Imagefloat** analysisImage)
 {
+    // Auto-matched tone curve: once the editor has computed the curve, apply
+    // the same tone-stage overrides as the editor and export
+    // (simpleprocess.cc) so the thumbnail is not graded twice. Computing the
+    // curve here would cost another RAW decode per thumbnail; without it the
+    // params are rendered as stored, as before.
+    if (params.toneCurve.histmatching && params.toneCurve.fromHistMatching) {
+        procparams::ProcParams matched = params;
+
+        if (matched.toneCurve.autoexp) {
+            matched.toneCurve.expcomp = 0.0;
+        }
+
+        matched.toneCurve.autoexp = false;
+        matched.toneCurve.curveMode = ToneCurveMode::FILMLIKE;
+        matched.toneCurve.curve2 = { 0 };
+        matched.toneCurve.brightness = 0;
+        matched.toneCurve.contrast = 0;
+        matched.toneCurve.black = 0;
+        matched.toneCurve.histmatching = false;
+        return processImage(matched, sensorType, rheight, interp, metadata, myscale, forMonitor, forHistogramMatching, analysisImage);
+    }
+
     if (analysisImage) {
         *analysisImage = nullptr;
     }
@@ -1389,10 +1412,27 @@ IImage8* Thumbnail::processImage (const procparams::ProcParams& params, eSensorT
     // tiles show the stack too (partners come from the preview-tier cache).
     // Coarse-rotated bases map slightly differently here (the thumb rotates
     // later); acceptable at tile size.
-    if (params.doubleExposure.enabled && !params.doubleExposure.layers.empty() && full_width > 0 && fw > 0) {
+    if (params.doubleExposure.enabled && !params.doubleExposure.layers.empty() && fw > 0 && fh > 0) {
+        // full_width comes from the RAW decode (and the cache data since it
+        // was persisted); bases without it fall back to the thumb's own
+        // thumb-to-original scale so the stack still renders.
+        int deFullW = full_width;
+        int deFullH = full_height;
+
+        if (deFullW <= 0 || deFullH <= 0) {
+            deFullW = std::max(1, static_cast<int>(std::lround(thumbImg->getWidth() * scale)));
+            deFullH = std::max(1, static_cast<int>(std::lround(thumbImg->getHeight() * scale)));
+        }
+
+        // The decode size is unrotated, but baseImg already carries the
+        // camera orientation and coarse rotation: match its aspect.
+        if ((fw >= fh) != (deFullW >= deFullH)) {
+            std::swap(deFullW, deFullH);
+        }
+
         ipf.doubleExposure(baseImg, params.doubleExposure, params.icm.workingProfile,
-                           full_width, full_height, 0, 0,
-                           static_cast<float>(full_width) / fw, false);
+                           deFullW, deFullH, 0, 0,
+                           static_cast<float>(deFullW) / fw, false);
     }
 
     LUTu hist16 (65536);
@@ -1610,6 +1650,11 @@ IImage8* Thumbnail::processImage (const procparams::ProcParams& params, eSensorT
                         0, 0, grainScale, &params.filmPresets);
     }
 
+    // Tilt-shift is deliberately absent: its blur sigma is in the pixels of
+    // whatever image it is handed (it ignores fw/fh), so at tile size it
+    // would smear the whole thumbnail. Edited images get it via the
+    // persisted editor render instead.
+
     if (params.lensBlur.enabled) {
         ipf.lensBlur(labView, params.lensBlur, 16);
     }
@@ -1641,6 +1686,23 @@ IImage8* Thumbnail::processImage (const procparams::ProcParams& params, eSensorT
     filmTap.reset();
     filmSnapshot.reset();
     ipf.softLight(labView, params.softlight);
+
+    if (params.relight.enabled) {
+        // Thumbnails never run the models; they use the mask and depth map
+        // when this session has made them, and light the frame whole otherwise.
+        RelightFrame relightFrame;
+        relightFrame.imageId = metadata->getFileName();
+        relightFrame.workingProfile = params.icm.workingProfile;
+        relightFrame.fullWidth = labView->W;
+        relightFrame.fullHeight = labView->H;
+        ipf.relight(labView, params.relight, relightFrame);
+    }
+
+    if (params.lightEffects.enabled) {
+        // Glow/halation/flare radii are full-frame pixels; scale them to the
+        // thumbnail as the editor preview does with its subsampling factor.
+        ipf.lightEffects(labView, params.lightEffects, filmScale);
+    }
 
     if (params.icm.workingTRC != ColorManagementParams::WorkingTrc::NONE && params.icm.trcExp) {
         const int GW = labView->W;
@@ -2599,6 +2661,13 @@ bool Thumbnail::readData  (const Glib::KeyFile& keyFile)
             if (keyFile.has_key ("LiveThumbData", "ScaleGain")) {
                 scaleGain           = keyFile.get_double ("LiveThumbData", "ScaleGain");
             }
+
+            // Unrotated decode size; Double Exposure needs it on every
+            // cache-loaded render, not just the one straight after decode.
+            if (keyFile.has_key ("LiveThumbData", "FullWidth") && keyFile.has_key ("LiveThumbData", "FullHeight")) {
+                full_width          = keyFile.get_integer ("LiveThumbData", "FullWidth");
+                full_height         = keyFile.get_integer ("LiveThumbData", "FullHeight");
+            }
         }
 
         return true;
@@ -2641,6 +2710,11 @@ void Thumbnail::writeData(Glib::KeyFile& keyFile)
     Glib::ArrayHandle<double> cm ((double*)colorMatrix, 9, Glib::OWNERSHIP_NONE);
     keyFile.set_double_list ("LiveThumbData", "ColorMatrix", cm);
     keyFile.set_double  ("LiveThumbData", "ScaleGain", scaleGain);
+
+    if (full_width > 0 && full_height > 0) {
+        keyFile.set_integer ("LiveThumbData", "FullWidth", full_width);
+        keyFile.set_integer ("LiveThumbData", "FullHeight", full_height);
+    }
 }
 
 bool Thumbnail::writeData  (const Glib::ustring& fname)

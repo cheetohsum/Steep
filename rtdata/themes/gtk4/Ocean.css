@@ -1,0 +1,32 @@
+/* Generated from rtdata/themes/Ocean.css by tools/gen_gtk4_tokens.py.
+   Do not edit — change the theme's palette block and regenerate. */
+
+:root {
+  --steep-surface-0: #0a1622;
+  --steep-surface-1: #0f1f2f;
+  --steep-surface-2: #15293c;
+  --steep-surface-3: #1c344b;
+  --steep-text-hi: #e8f1f8;
+  --steep-text: #bdd0e0;
+  --steep-text-dim: #7d97ad;
+  --steep-accent: #5cb1ff;
+  --steep-select: #2f86d6;
+  --steep-attention: #ffa25c;
+  --steep-rating: #ffd166;
+  --steep-success: #57c99a;
+  --steep-danger: #ff6b6b;
+  --steep-border: #050c13;
+  --steep-border-soft: #24405a;
+  --steep-sel-bg: #2f86d6;
+  --steep-sel-fg: #e8f1f8;
+  --steep-wash: #dceeff;
+  --steep-on-accent: #06111c;
+  --steep-shadow: alpha(#02080e, 0.60);
+  --steep-surround: #272727;
+  --steep-ornament: alpha(#5cb1ff, 0.50);
+  --steep-label-1: #ff6b6b;
+  --steep-label-2: #ffd166;
+  --steep-label-3: #57c99a;
+  --steep-label-4: #5cb1ff;
+  --steep-label-5: #b49cff;
+}

@@ -1,6 +1,1 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg width="20" height="20" viewBox="0 0 20 20" xmlns="http://www.w3.org/2000/svg">
-  <circle cx="7" cy="10" r="5" fill="none" stroke="#cccccc" stroke-width="1.5"/>
-  <circle cx="13" cy="10" r="5" fill="#cccccc" fill-opacity="0.25" stroke="#cccccc" stroke-width="1.5"/>
-  <path d="M10 5.9a5 5 0 010 8.2 5 5 0 000-8.2z" fill="#cccccc"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20"><g fill="none" stroke="currentColor" stroke-width="1.375" stroke-linecap="round" stroke-linejoin="round"><circle cx="7.5" cy="10" r="5"/><circle cx="12.5" cy="10" r="5"/><path d="M10 5.67a5 5 0 0 1 0 8.66 5 5 0 0 1 0-8.66z" fill="currentColor"/></g></svg>

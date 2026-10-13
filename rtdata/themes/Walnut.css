@@ -1,0 +1,52 @@
+/*
+  Walnut — Atelier, dark
+
+  Walnut and brass chrome with teal enamel for selection. The photo sits on a
+  neutral surround (steep_surround) so warm chrome never biases colour.
+
+  This file is a PALETTE: the design lives in common/steep-look.css and
+  reads these steep_* tokens.
+
+  Copyright (c) 2026 Steep
+  Licensed under the GNU General Public License v3 or later.
+*/
+
+/***************************/
+/**/ @import url("./common/size.css"); /**/
+/**/ @import url("./common/steep-look.css"); /**/
+/***************************/
+
+@define-color steep_surface_0 #14110f;
+@define-color steep_surface_1 #1c1815;
+@define-color steep_surface_2 #25201b;
+@define-color steep_surface_3 #2f2822;
+
+@define-color steep_text_hi #f1e8da;
+@define-color steep_text #d6cab8;
+@define-color steep_text_dim #9a8c7a;
+
+@define-color steep_accent #d6a650;
+@define-color steep_on_accent #1a140e;
+@define-color steep_select #3e8e86;
+
+@define-color steep_attention #d9733f;
+@define-color steep_rating #e7bf55;
+@define-color steep_success #93a83f;
+@define-color steep_danger #c8503c;
+
+@define-color steep_border #0b0907;
+@define-color steep_border_soft #3a3129;
+@define-color steep_shadow alpha(#080604, 0.62);
+
+@define-color steep_sel_bg #3e8e86;
+@define-color steep_sel_fg #f1e8da;
+
+@define-color steep_wash #fff8ec;
+@define-color steep_surround #2b2b2b;
+@define-color steep_ornament alpha(#d6a650, 0.55);
+
+@define-color steep_label_1 #c8503c;
+@define-color steep_label_2 #d9a832;
+@define-color steep_label_3 #7d9a3e;
+@define-color steep_label_4 #3e8eaa;
+@define-color steep_label_5 #8c6aa0;

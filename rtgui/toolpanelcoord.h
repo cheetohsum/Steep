@@ -72,6 +72,7 @@
 #include "tools/clarity.h"
 #include "tools/grain.h"
 #include "tools/lighteffects.h"
+#include "tools/relight.h"
 #include "tools/tiltshift.h"
 #include "tools/lensblur.h"
 #include "tools/pcvignette.h"
@@ -166,6 +167,7 @@ protected:
     Clarity *clarity;
     Grain *grain;
     LightEffects *lighteffects;
+    Relight *relight;
     TiltShift *tiltshift;
     LensBlur *lensblur;
     Spot* spot;
@@ -368,14 +370,14 @@ private:
 
     // Collapsible transform sections (content box + label for programmatic expand)
     Gtk::Box* cropSectionContent_ = nullptr;
-    Gtk::Label* cropSectionLabel_ = nullptr;
+    SectionHeader* cropSectionHeader_ = nullptr;
     Gtk::Button* cropResetBtn_ = nullptr;
     Gtk::Box* perspSectionContent_ = nullptr;
-    Gtk::Label* perspSectionLabel_ = nullptr;
+    SectionHeader* perspSectionHeader_ = nullptr;
     Gtk::Button* perspResetBtn_ = nullptr;
     Gtk::Box* advSectionContent_ = nullptr;
-    Gtk::Label* advSectionLabel_ = nullptr;
-    void expandTransformSection(Gtk::Box* content, Gtk::Label* label, const Glib::ustring& name);
+    SectionHeader* advSectionHeader_ = nullptr;
+    void expandTransformSection(Gtk::Box* content, SectionHeader* header);
 
     // Debounced mask overlay toggling
     sigc::connection hoverMaskDebounce_;
@@ -490,6 +492,7 @@ public:
         FATTAL,
         FILM_NEGATIVE,
         PD_SHARPENING,
+        RELIGHT,
     };
 
     struct ToolTree {

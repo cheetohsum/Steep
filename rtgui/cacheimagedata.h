@@ -104,6 +104,12 @@ public:
 
     int width;
     int height;
+    // Pixel size of the cached base thumbnail, camera orientation applied:
+    // the aspect the browser will actually be handed. width/height above are
+    // sensor or file dimensions and ignore orientation, which made every
+    // portrait (and every RAW whose preview differs) re-flow the grid.
+    int thumbWidth = 0;
+    int thumbHeight = 0;
 
     CacheImageData ();
 

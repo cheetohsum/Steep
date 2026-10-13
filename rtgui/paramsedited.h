@@ -171,6 +171,20 @@ struct LightEffectsParamsEdited {
     bool flareAngle;
 };
 
+struct RelightParamsEdited {
+    bool enabled;
+    bool lightX;
+    bool lightY;
+    bool distance;
+    bool intensity;
+    bool reach;
+    bool shadows;
+    bool background;
+    bool subjectFocus;
+    bool warmth;
+    bool shape;
+};
+
 struct TiltShiftParamsEdited {
     bool enabled;
     bool amount;
@@ -1980,6 +1994,7 @@ struct ParamsEdited {
     ClarityParamsEdited clarity;
     GrainParamsEdited grain;
     LightEffectsParamsEdited lightEffects;
+    RelightParamsEdited relight;
     TiltShiftParamsEdited tiltShift;
     LensBlurParamsEdited lensBlur;
     RGBCurvesParamsEdited rgbCurves;

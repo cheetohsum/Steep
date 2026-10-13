@@ -19,6 +19,9 @@
 #pragma once
 
 #include <set>
+#include <string>
+
+#include <glibmm/ustring.h>
 #include <unordered_set>
 #include <vector>
 
@@ -58,4 +61,24 @@ public:
 
     BrowserFilter ();
     bool isPassThrough () const;
+};
+
+// The toggles both filter bars share, carried across a view switch so
+// the browser and the editor filmstrip always filter alike.
+struct FilterToggles {
+    bool unranked = false;
+    bool rank[5] = {false, false, false, false, false};
+    int rankAnchor = 0;
+    bool rankExact = false;
+    bool unlabeled = false;
+    bool label[5] = {false, false, false, false, false};
+    bool edited[2] = {false, false};
+    bool saved[2] = {false, false};
+    bool picked = false;
+    bool unflagged = false;
+    bool rejected = false;
+    Glib::ustring search;
+    std::set<std::string> tags; // PhotoTags::Tags
+    bool tagsAll = false;
+    bool untagged = false;
 };

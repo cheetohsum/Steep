@@ -26,7 +26,7 @@ modelbutton,
 #OptionsMenuButton,
 #ModeButtonBar .ModeButton,
 #MyExpanderTitle,
-#AdvancedSectionHeader,
+button.section-header,
 #ToolGroupHeader,
 notebook tab,
 scrollbar slider,
@@ -147,15 +147,18 @@ headerbar {
 }
 #OptionsPopover {
     background-color: @steep_surface_3;
+    border-radius: 12px 12px 6px 6px;
+    box-shadow: 0 10px 28px alpha(@steep_shadow, 0.45);
 }
-#OptionsPopover button {
-    padding: 0.333333em 0.5em;
-    border-radius: 2px;
-    min-width: 10em;
+#OptionsPopover button.options-item {
+    padding: 0.3em 0.6em;
+    border-radius: 6px;
+    min-width: 12em;
 }
-#OptionsPopover button:hover {
+#OptionsPopover button.options-item:hover {
     background-color: alpha(@steep_wash, 0.10);
 }
+#OptionsPopover button.options-item image { color: @steep_accent; }
 
 /* Window control buttons */
 #WindowControlButton {
@@ -1386,23 +1389,31 @@ radiobutton.ColorDot:checked > * {
     margin: 0;
     padding: 0;
 }
-#AdvancedSectionHeader {
-    padding: 0.1em 0;
+/* The one section header (guiutils.cc SectionHeader): every collapsible
+   section in tools and dialogs. Sizes live in widgets.css. */
+button.section-header {
+    padding: 2px 4px;
+    margin: 4px 0 0 0;
+    min-height: 0;
+    border: none;
+    border-radius: 4px;
+    background-color: transparent;
+    background-image: none;
+    box-shadow: none;
 }
-#AdvancedSectionHeader:hover {
+button.section-header:hover {
     background-color: alpha(@steep_wash, 0.06);
 }
-#AdvancedSectionHeader label {
-    color: @steep_text_dim;
-    font-size: 0.9em;
+button.section-header label {
+    color: @steep_text;
     padding: 0;
     margin: 0;
 }
-#AdvancedSectionHeader:hover label {
+button.section-header:hover label {
     color: @steep_text_hi;
 }
-#AdvancedSectionHeader image {
-    padding: 0.2em;
+button.section-header image {
+    padding: 0;
     margin: 0;
 }
 
@@ -1450,7 +1461,7 @@ radiobutton.ColorDot:checked > * {
     background-position: bottom;
 }
 #ModeButtonBar .ModeButton:hover:not(:checked) {
-    background-color: rgba(255, 255, 255, 0.05);
+    background-color: alpha(@steep_wash, 0.05);
 }
 #ModeButtonBar .ModeButton image {
     padding: 0 0.15em;
@@ -1486,14 +1497,9 @@ radiobutton.ColorDot:checked > * {
     margin: 0;
     min-height: 0;
 }
-/* NOTE: no label:first-child override here. The group header is a SINGLE
-   label (arrow + name in one markup string, guiutils.cc ToolGroup), so a
-   first-child rule matches the whole name and silently caps its size —
-   that bug kept group names tiny. The arrow shrinks via <small> markup. */
 #ToolGroupHeader:hover label {
     color: @steep_text_hi;
 }
-/* arrow is now a label, no image rule needed */
 #ToolGroupHeader box {
     margin: 0;
     padding: 0;

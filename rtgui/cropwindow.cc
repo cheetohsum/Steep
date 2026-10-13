@@ -25,6 +25,7 @@
 #include "guiutils.h"
 #include "imagearea.h"
 #include "lockablecolorpicker.h"
+#include "multilangmgr.h"
 #include "options.h"
 #include "rtimage.h"
 #include "threadutils.h"
@@ -117,10 +118,10 @@ CropWindow::CropWindow (ImageArea* parent, bool isLowUpdatePriority_, bool isDet
     titleHeight = ih;
 
     if (!initialized) {
-        zoomOuttt = "Zoom Out";
-        zoomIntt = "Zoom In";
-        zoom100tt = "Zoom 100/%";
-        closett = "Close";
+        zoomOuttt = M("CROPWINDOW_ZOOMOUT");
+        zoomIntt = M("CROPWINDOW_ZOOMIN");
+        zoom100tt = M("CROPWINDOW_ZOOM100");
+        closett = M("GENERAL_CLOSE");
         initialized = true;
     }
     bZoomOut = new LWButton(std::shared_ptr<RTSurface>(new RTSurface("magnifier-minus-small", Gtk::ICON_SIZE_BUTTON)), 0, nullptr, LWButton::Left, LWButton::Center, &zoomOuttt);
@@ -3186,10 +3187,11 @@ void CropWindow::getObservedFrameArea (int& x, int& y, int& w, int& h) const
 
 bool CropWindow::observedFrameVisible () const
 {
-    // The navigation guide marking an open detail window is suppressed while
-    // the before/after split is up: it is a red rectangle straddling one half
-    // of a comparison, and it tracks the after pane only.
-    return observedCropWin && !iarea->inBeforeAfterSplit;
+    // The navigation guide marking an open detail window. Shown in the
+    // before/after split too: the detail window lives on the after pane and
+    // shows the after image, so its frame belongs there (users asked where
+    // the detail view was looking once the split was up).
+    return observedCropWin != nullptr;
 }
 
 void CropWindow::drawObservedFrame (const Cairo::RefPtr<Cairo::Context>& cr)

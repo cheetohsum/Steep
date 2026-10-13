@@ -736,6 +736,10 @@ void PreviewLoader::removeAllJobs()
     impl_->invalidatePriorityIterators_();
     impl_->queuedWorkers_ = 0;
     impl_->postScanDrainMode_.store(false, std::memory_order_release);
+    // A slow folder (HDD, network) must not throttle the next one, which may
+    // live on a different disk entirely: re-learn the I/O cost per folder.
+    impl_->ioPressure_ = 0;
+    impl_->fastJobCredit_ = 0;
     // Increment generation so in-flight threads that already dequeued a job
     // from the old directory will skip the expensive cacheMgr I/O.
     impl_->generation_.fetch_add(1, std::memory_order_release);

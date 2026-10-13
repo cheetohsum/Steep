@@ -97,6 +97,10 @@ public:
     void open (Thumbnail* tmb, rtengine::InitialImage* isrc);
     void openPhaseB (Thumbnail* tmb);
     void setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scale, const Glib::ustring& sourceFile = Glib::ustring());
+    // Replaces the placeholder with a sharper one for the same photo, only
+    // while that placeholder is still what the canvas shows. Never cancels
+    // or re-arms anything (unlike setQuickPreview).
+    void upgradeQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scale, const Glib::ustring& sourceFile);
     bool setTransientEditPreview(
         const Glib::ustring& sourceFile,
         const rtengine::procparams::ProcParams* params,
@@ -236,6 +240,9 @@ public:
     void debugNudgeExposure ();
     void collapseFilterBar();  // Collapse filter bar to prevent filmstrip overlap
     void restoreEditorFilter();
+    // Filter toggles shared with the browser's filter bar across view switches.
+    FilterToggles getFilterToggles() const;
+    void setFilterToggles(const FilterToggles& toggles);
     void closeAlbumView ();  // public: close album view + deselect sidebar
     Glib::ustring getShortName ();
     Glib::ustring getFileName () const;
@@ -349,6 +356,13 @@ private:
     void scheduleFilmstripLivePreview(const Glib::ustring& sourceFile, unsigned int sourceSession);
     void updateFilmstripLivePreview(const Glib::ustring& sourceFile, unsigned int sourceSession);
     sigc::connection filmstripPreviewUpdateConn_;
+
+    // Hands the settled engine render to the thumbnail so the browser can
+    // show exactly what the editor shows (see Thumbnail::setEditorRender).
+    void scheduleEditorRenderCapture();
+    void captureEditorRender();
+    sigc::connection editorRenderCaptureConn_;
+    unsigned long long lastCapturedSettledSerial_ = 0;
     Glib::ustring pendingFilmstripPreviewFile_;
     unsigned int pendingFilmstripPreviewSession_ = 0;
 
@@ -380,6 +394,15 @@ private:
     Gtk::Button* fbClearAll;
     Gtk::Entry* fbSearchEntry;
     bool filterBarBlockSignals;
+    Gtk::ToggleButton* fbGlobalScope_ = nullptr;
+    sigc::connection fbGlobalScopeConn_;
+    // Rating filter, as in the browser: a star shows that rating and up,
+    // clicked again that rating only, a third click clears it.
+    int fbRankAnchor_ = 0;
+    bool fbRankExact_ = false;
+    bool rankButtonPressed(GdkEventButton* event, int star); // 0 = unrated
+    void setRankButtons();
+    void onGlobalScopeChanged(bool on);
 
     // Filetype filter in editor filter bar
     Gtk::MenuButton* fbFiletypeButton_;
@@ -485,6 +508,10 @@ private:
     Gtk::ToggleButton* tbAlbumView_;
     sigc::connection albumViewToggleConn_;
     std::map<std::string, Glib::RefPtr<Gdk::Pixbuf>> albumThumbCache_;
+    // Grid cell images by path, rebuilt with the grid (the only place its
+    // children are removed), so a delivered thumbnail finds its cell
+    // directly instead of walking every child of the FlowBox.
+    std::map<std::string, Gtk::Image*> albumGridImages_;
 
     // Rank/pick/label captured when album thumbnails load, so album views
     // can badge items like the browser does.

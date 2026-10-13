@@ -74,7 +74,16 @@ public:
     // icon SVG sources get their lightness flipped at load time. Set once at
     // startup (before any icon loads), from the theme's steep_wash token.
     static void setIconInkDark(bool dark);
+    // Theme-aware icons name their colours "currentColor" (ink),
+    // "var(--accent)", "var(--rating)", "var(--danger)" and "var(--surface)";
+    // these are resolved from the theme's steep_* tokens when the SVG loads.
+    // Returns true when the palette changed (cached icons must re-render).
+    static bool setIconPaletteFrom(const Glib::RefPtr<Gtk::StyleContext>& ctx);
     static bool getIconInkDark();
+    // Asks every scalable image to re-fetch its surface (as on a DPI change).
+    // Call after re-rendering the icon cache, e.g. when a live theme switch
+    // flips the icon ink.
+    static void notifyChanged();
     static void setDPInScale(const Gtk::Window* window);
     static void setDPInScale(const double newDPI, const int newScale);
     static double getDPI();

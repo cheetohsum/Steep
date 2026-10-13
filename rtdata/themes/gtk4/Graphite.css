@@ -1,0 +1,32 @@
+/* Generated from rtdata/themes/Graphite.css by tools/gen_gtk4_tokens.py.
+   Do not edit — change the theme's palette block and regenerate. */
+
+:root {
+  --steep-surface-0: #151517;
+  --steep-surface-1: #1d1d20;
+  --steep-surface-2: #252529;
+  --steep-surface-3: #2f2f34;
+  --steep-text-hi: #f3f3f5;
+  --steep-text: #cacace;
+  --steep-text-dim: #8e8e96;
+  --steep-accent: #4c9dff;
+  --steep-select: #4c9dff;
+  --steep-attention: #ff9f43;
+  --steep-rating: #ffcc4d;
+  --steep-success: #5ccf7a;
+  --steep-danger: #ff5f57;
+  --steep-border: #0b0b0c;
+  --steep-border-soft: #37373d;
+  --steep-sel-bg: #4c9dff;
+  --steep-sel-fg: #ffffff;
+  --steep-wash: #ffffff;
+  --steep-on-accent: #ffffff;
+  --steep-shadow: alpha(#000000, 0.60);
+  --steep-surround: #2a2a2a;
+  --steep-ornament: alpha(#4c9dff, 0.50);
+  --steep-label-1: #ff5f57;
+  --steep-label-2: #ffcc4d;
+  --steep-label-3: #5ccf7a;
+  --steep-label-4: #4c9dff;
+  --steep-label-5: #b98cff;
+}

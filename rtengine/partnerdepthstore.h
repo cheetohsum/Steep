@@ -19,6 +19,7 @@
 
 #include <array>
 #include <memory>
+#include <string>
 
 #include <glibmm/ustring.h>
 
@@ -26,6 +27,8 @@
 
 namespace rtengine
 {
+
+class Imagefloat;
 
 // Relative scene depth estimated on a double exposure partner, 0 near to 1
 // far, at the partner's preview tier. Relative within that photograph only:
@@ -91,6 +94,20 @@ public:
 
     // Cache-only lookup for redraws.
     std::shared_ptr<const PartnerDepth> peekDepth(const Glib::ustring& path, const Glib::ustring& workingProfile);
+
+    // Depth of the photograph being edited, for tools that light by distance.
+    // `source` is its working-space frame after transforms -- the frame the AI
+    // masks use -- at any resolution; fullWidth/fullHeight is that frame at
+    // full size, which the returned map covers. Estimated on the calling
+    // thread the first time; afterwards reused while the frame keeps its
+    // shape and content, so a preview's map also serves the detail windows
+    // and an export from the same session.
+    std::shared_ptr<const PartnerDepth> getSceneDepth(const std::string& imageId, const Imagefloat& source,
+                                                      int fullWidth, int fullHeight, const Glib::ustring& workingProfile);
+
+    // Cache-only: the latest map of this image whose frame has the same shape.
+    std::shared_ptr<const PartnerDepth> peekSceneDepth(const std::string& imageId, int fullWidth, int fullHeight,
+                                                       const Glib::ustring& workingProfile);
 
     void clearCache();
 

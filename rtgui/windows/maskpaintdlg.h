@@ -23,6 +23,7 @@
 #include <gtkmm.h>
 
 #include "rtengine/maskpaint.h"
+#include "widgets/basic/adjuster.h"
 
 class MaskPaintCanvas;
 
@@ -39,9 +40,11 @@ class PartnerMask;
 // it a picture and the automatic mask that goes with it, both covering the
 // same frame, and gets strokes back. That is what lets the same editor serve
 // the double exposure tool and the masking tab.
-class MaskPaintDlg final : public Gtk::Dialog
+class MaskPaintDlg final : public Gtk::Dialog, public AdjusterListener
 {
 public:
+    void adjusterChanged(Adjuster* a, double newval) override;
+
     // The automatic mask underneath the strokes: `values` holds width*height
     // samples in 0..1, row by row, over the whole frame. May be empty, in
     // which case the strokes are shown over the picture alone.
@@ -92,9 +95,9 @@ private:
     void updateCounts();
 
     MaskPaintCanvas* canvas_;
-    Gtk::Scale* sizeScale_;
-    Gtk::Scale* hardnessScale_;
-    Gtk::Scale* strengthScale_;
+    Adjuster* sizeScale_;
+    Adjuster* hardnessScale_;
+    Adjuster* strengthScale_;
     Gtk::RadioButton* includeBtn_;
     Gtk::RadioButton* excludeBtn_;
     Gtk::CheckButton* lassoBtn_;

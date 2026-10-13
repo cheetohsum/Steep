@@ -19,6 +19,7 @@
 #pragma once
 
 #include <functional>
+#include <vector>
 
 #include <gtkmm.h>
 
@@ -79,6 +80,27 @@ protected:
     void get_preferred_width_for_height_vfunc (int height, int &minimum_width, int &natural_width) const override;
 
     int fullImageWidth, fullImageHeight;
+
+    // Detail windows survive a photo switch: captured when the old image is
+    // torn down, recreated over the same part of the canvas, looking at the
+    // same relative spot of the next photo, once it has arrived. The most
+    // recent one is also remembered in Options for the next session.
+    struct DetailWindowState {
+        double posX, posY;          // top-left, fraction of the image area
+        int width, height;          // window size in px
+        double zoom;
+        double anchorX, anchorY;    // viewed spot, fraction of the image size
+    };
+    std::vector<DetailWindowState> pendingDetailWindows_;
+    bool detailSessionSeeded_ = false;
+    sigc::connection detailRestoreConn_;
+    void captureDetailWindows_();
+    void restoreDetailWindows_();
+    // Canvas size at the last resize, to keep detail windows on screen.
+    int lastAreaW_ = 0;
+    int lastAreaH_ = 0;
+    void keepDetailWindowsInView_();
+    CropWindow* createDetailWindow_(int x, int y, int w, int h);
 public:
     CropWindow* mainCropWindow;
     CropWindow* flawnOverWindow;

@@ -203,8 +203,7 @@ FilmPresets::FilmPresets() :
     // Strength slider (always visible in summary)
     strength = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_STRENGTH"), 0., 100., 1., 0.));
     strength->setAdjusterListener(this);
-    strength->setLabel(Glib::ustring("\u25B8 ") + M("TP_FILMPRESETS_STRENGTH"));
-    strength->setLabelClickCallback([this]() { toggleDetail(); });
+    strength->set_tooltip_text(M("TP_FILMPRESETS_STRENGTH_TOOLTIP"));
 
     auto* headerRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
     headerRow->pack_start(*headerLabel, Gtk::PACK_SHRINK, 0);
@@ -215,13 +214,27 @@ FilmPresets::FilmPresets() :
     summaryBox->pack_start(*headerRow, Gtk::PACK_SHRINK);
     summaryBox->pack_start(*strength);
 
+    // "Advanced" section header expands/collapses the detail controls
+    detailHeader_ = Gtk::manage(new SectionHeader(M("TP_GENERAL_ADVANCED")));
+    detailHeader_->set_halign(Gtk::ALIGN_FILL);
+    detailHeader_->set_hexpand(true);
+    detailHeader_->setExpanded(detailExpanded_);
+    detailHeader_->setOnToggled([this](bool) { toggleDetail(); });
+    summaryBox->pack_start(*detailHeader_, Gtk::PACK_SHRINK);
+
+    // Sub-section titles inside the detail area: plain labels, styled by CSS
+    const auto makeSectionLabel = [](const Glib::ustring& text) {
+        auto* label = Gtk::manage(new Gtk::Label(text));
+        label->set_halign(Gtk::ALIGN_START);
+        label->set_xalign(0.f);
+        label->get_style_context()->add_class("tool-section-label");
+        return label;
+    };
+
     // Detail section
     detailContent_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
 
-    auto* labLabel = Gtk::manage(new Gtk::Label());
-    labLabel->set_markup("<small>" + M("TP_FILMPRESETS_SECTION_LAB") + "</small>");
-    labLabel->set_halign(Gtk::ALIGN_START);
-    labLabel->get_style_context()->add_class("section-label");
+    auto* labLabel = makeSectionLabel(M("TP_FILMPRESETS_SECTION_LAB"));
     detailContent_->pack_start(*labLabel, Gtk::PACK_SHRINK, 4);
 
     auto* labGrid = Gtk::manage(new Gtk::Grid());
@@ -229,37 +242,41 @@ FilmPresets::FilmPresets() :
     labGrid->set_row_spacing(3);
     labGrid->set_hexpand(true);
 
-    modelCombo_ = Gtk::manage(new Gtk::ComboBoxText());
+    modelCombo_ = Gtk::manage(new MyComboBoxText());
     modelCombo_->append("legacy", M("TP_FILMPRESETS_MODEL_LEGACY"));
     modelCombo_->append("v2", M("TP_FILMPRESETS_MODEL_V2"));
     modelCombo_->append("v3", M("TP_FILMPRESETS_MODEL_V3"));
     modelCombo_->append("v4", M("TP_FILMPRESETS_MODEL_V4"));
     modelCombo_->append("v5", M("TP_FILMPRESETS_MODEL_V5"));
-    processCombo_ = Gtk::manage(new Gtk::ComboBoxText());
+    modelCombo_->set_tooltip_text(M("TP_FILMPRESETS_MODEL_TOOLTIP"));
+    processCombo_ = Gtk::manage(new MyComboBoxText());
     processCombo_->append("auto", M("TP_FILMPRESETS_PROCESS_AUTO"));
     processCombo_->append("c41", "C-41");
     processCombo_->append("e6", "E-6");
     processCombo_->append("ecn2", "ECN-2");
     processCombo_->append("bw", M("TP_FILMPRESETS_PROCESS_BW"));
-    outputCombo_ = Gtk::manage(new Gtk::ComboBoxText());
+    processCombo_->set_tooltip_text(M("TP_FILMPRESETS_PROCESS_TOOLTIP"));
+    outputCombo_ = Gtk::manage(new MyComboBoxText());
     outputCombo_->append("scan", M("TP_FILMPRESETS_OUTPUT_SCAN"));
     outputCombo_->append("labscan", M("TP_FILMPRESETS_OUTPUT_LABSCAN"));
     outputCombo_->append("ra4", M("TP_FILMPRESETS_OUTPUT_RA4"));
     outputCombo_->append("projection", M("TP_FILMPRESETS_OUTPUT_PROJECTION"));
     outputCombo_->append("cinema", M("TP_FILMPRESETS_OUTPUT_CINEMA"));
-    formatCombo_ = Gtk::manage(new Gtk::ComboBoxText());
+    outputCombo_->set_tooltip_text(M("TP_FILMPRESETS_OUTPUT_TOOLTIP"));
+    formatCombo_ = Gtk::manage(new MyComboBoxText());
     formatCombo_->append("35mm", "35 mm");
     formatCombo_->append("120", "120");
     formatCombo_->append("large", M("TP_FILMPRESETS_FORMAT_LARGE"));
+    formatCombo_->set_tooltip_text(M("TP_FILMPRESETS_FORMAT_TOOLTIP"));
     // Where the lens puts its exit pupil sets how obliquely light reaches the
     // film's corners, and so how hard the halo leans outwards there (V5).
-    lensCombo_ = Gtk::manage(new Gtk::ComboBoxText());
+    lensCombo_ = Gtk::manage(new MyComboBoxText());
     lensCombo_->append("slr", M("TP_FILMPRESETS_LENS_SLR"));
     lensCombo_->append("rangefinder", M("TP_FILMPRESETS_LENS_RANGEFINDER"));
     lensCombo_->append("telecentric", M("TP_FILMPRESETS_LENS_TELECENTRIC"));
     lensCombo_->set_tooltip_markup(M("TP_FILMPRESETS_LENS_TOOLTIP"));
 
-    Gtk::ComboBoxText* labCombos[] = {modelCombo_, processCombo_, outputCombo_, formatCombo_, lensCombo_};
+    MyComboBoxText* labCombos[] = {modelCombo_, processCombo_, outputCombo_, formatCombo_, lensCombo_};
     const char* labComboLabels[] = {
         "TP_FILMPRESETS_MODEL",
         "TP_FILMPRESETS_PROCESS",
@@ -294,10 +311,7 @@ FilmPresets::FilmPresets() :
     detailContent_->pack_start(*pushPullAdj_);
 
     // -- Tone --
-    auto* toneLabel = Gtk::manage(new Gtk::Label());
-    toneLabel->set_markup("<small>" + M("TP_FILMPRESETS_SECTION_TONE") + "</small>");
-    toneLabel->set_halign(Gtk::ALIGN_START);
-    toneLabel->get_style_context()->add_class("section-label");
+    auto* toneLabel = makeSectionLabel(M("TP_FILMPRESETS_SECTION_TONE"));
     detailContent_->pack_start(*toneLabel, Gtk::PACK_SHRINK, 4);
 
     contrast = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_CONTRAST"), -100., 100., 1., 0.));
@@ -311,10 +325,7 @@ FilmPresets::FilmPresets() :
     detailContent_->pack_start(*rolloff);
 
     // -- Color --
-    auto* colorLabel = Gtk::manage(new Gtk::Label());
-    colorLabel->set_markup("<small>" + M("TP_FILMPRESETS_SECTION_COLOR") + "</small>");
-    colorLabel->set_halign(Gtk::ALIGN_START);
-    colorLabel->get_style_context()->add_class("section-label");
+    auto* colorLabel = makeSectionLabel(M("TP_FILMPRESETS_SECTION_COLOR"));
     detailContent_->pack_start(*colorLabel, Gtk::PACK_SHRINK, 4);
 
     warmth = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_WARMTH"), -100., 100., 1., 0.));
@@ -328,10 +339,7 @@ FilmPresets::FilmPresets() :
     detailContent_->pack_start(*saturation);
 
     // -- Tinting --
-    auto* tintingLabel = Gtk::manage(new Gtk::Label());
-    tintingLabel->set_markup("<small>" + M("TP_FILMPRESETS_SECTION_TINTING") + "</small>");
-    tintingLabel->set_halign(Gtk::ALIGN_START);
-    tintingLabel->get_style_context()->add_class("section-label");
+    auto* tintingLabel = makeSectionLabel(M("TP_FILMPRESETS_SECTION_TINTING"));
     detailContent_->pack_start(*tintingLabel, Gtk::PACK_SHRINK, 4);
 
     shadowHue = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_SHADOWHUE"), 0., 360., 1., 220.));
@@ -354,10 +362,7 @@ FilmPresets::FilmPresets() :
     detailContent_->pack_start(*highlightTintAdj);
 
     // -- Channel Response --
-    auto* channelLabel = Gtk::manage(new Gtk::Label());
-    channelLabel->set_markup("<small>" + M("TP_FILMPRESETS_SECTION_CHANNEL") + "</small>");
-    channelLabel->set_halign(Gtk::ALIGN_START);
-    channelLabel->get_style_context()->add_class("section-label");
+    auto* channelLabel = makeSectionLabel(M("TP_FILMPRESETS_SECTION_CHANNEL"));
     detailContent_->pack_start(*channelLabel, Gtk::PACK_SHRINK, 4);
 
     redShift = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_REDSHIFT"), -100., 100., 1., 0.));
@@ -371,22 +376,15 @@ FilmPresets::FilmPresets() :
     detailContent_->pack_start(*blueShift);
 
     // -- Film Character --
-    auto* filmCharLabel = Gtk::manage(new Gtk::Label());
-    filmCharLabel->set_markup("<small>" + M("TP_FILMPRESETS_SECTION_FILM") + "</small>");
-    filmCharLabel->set_halign(Gtk::ALIGN_START);
-    filmCharLabel->get_style_context()->add_class("section-label");
+    auto* filmCharLabel = makeSectionLabel(M("TP_FILMPRESETS_SECTION_FILM"));
     detailContent_->pack_start(*filmCharLabel, Gtk::PACK_SHRINK, 4);
-
 
     vibranceAdj = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_VIBRANCE"), -100., 100., 1., 0.));
     vibranceAdj->setAdjusterListener(this);
     detailContent_->pack_start(*vibranceAdj);
 
     // -- Special --
-    auto* specialLabel = Gtk::manage(new Gtk::Label());
-    specialLabel->set_markup("<small>" + M("TP_FILMPRESETS_SECTION_SPECIAL") + "</small>");
-    specialLabel->set_halign(Gtk::ALIGN_START);
-    specialLabel->get_style_context()->add_class("section-label");
+    auto* specialLabel = makeSectionLabel(M("TP_FILMPRESETS_SECTION_SPECIAL"));
     detailContent_->pack_start(*specialLabel, Gtk::PACK_SHRINK, 4);
 
     halationAdj = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_HALATION"), -100., 100., 1., 0.));
@@ -395,10 +393,7 @@ FilmPresets::FilmPresets() :
 
     v3Controls_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
 
-    auto* fidelityLabel = Gtk::manage(new Gtk::Label());
-    fidelityLabel->set_markup("<small>" + M("TP_FILMPRESETS_SECTION_FIDELITY") + "</small>");
-    fidelityLabel->set_halign(Gtk::ALIGN_START);
-    fidelityLabel->get_style_context()->add_class("section-label");
+    auto* fidelityLabel = makeSectionLabel(M("TP_FILMPRESETS_SECTION_FIDELITY"));
     v3Controls_->pack_start(*fidelityLabel, Gtk::PACK_SHRINK, 4);
 
     skinProtectionAdj_ = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_SKINPROTECTION"), 0., 100., 1., 35.));
@@ -408,17 +403,9 @@ FilmPresets::FilmPresets() :
     v3Controls_->pack_start(*skinProtectionAdj_);
     v3Controls_->pack_start(*layerCouplingAdj_);
 
-    auto* emulsionLabel = Gtk::manage(new Gtk::Label());
-    emulsionLabel->set_markup("<small>" + M("TP_FILMPRESETS_SECTION_EMULSION") + "</small>");
-    emulsionLabel->set_halign(Gtk::ALIGN_START);
-    emulsionLabel->get_style_context()->add_class("section-label");
-    v3Controls_->pack_start(*emulsionLabel, Gtk::PACK_SHRINK, 4);
-
-
-    auto* opticsLabel = Gtk::manage(new Gtk::Label());
-    opticsLabel->set_markup("<small>" + Glib::Markup::escape_text(M("TP_FILMPRESETS_SECTION_OPTICS")) + "</small>");
-    opticsLabel->set_halign(Gtk::ALIGN_START);
-    opticsLabel->get_style_context()->add_class("section-label");
+    // (The "Emulsion texture" title used to sit here with nothing under it:
+    // grain moved to its own tool, so the empty heading is gone.)
+    auto* opticsLabel = makeSectionLabel(M("TP_FILMPRESETS_SECTION_OPTICS"));
     v3Controls_->pack_start(*opticsLabel, Gtk::PACK_SHRINK, 4);
 
     halationSizeAdj_ = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_HALATIONSIZE"), -100., 100., 1., 0.));
@@ -438,6 +425,40 @@ FilmPresets::FilmPresets() :
     v3Controls_->pack_start(*outputSoftnessAdj_);
     detailContent_->pack_start(*v3Controls_, Gtk::PACK_SHRINK);
 
+    // Tooltips for every Film Lab slider
+    const std::pair<Adjuster*, const char*> sliderTooltips[] = {
+        {exposureAdj_,          "TP_FILMPRESETS_EXPOSURE_TOOLTIP"},
+        {printExposureAdj_,     "TP_FILMPRESETS_PRINTEXPOSURE_TOOLTIP"},
+        {pushPullAdj_,          "TP_FILMPRESETS_PUSHPULL_TOOLTIP"},
+        {contrast,              "TP_FILMPRESETS_CONTRAST_TOOLTIP"},
+        {fade,                  "TP_FILMPRESETS_FADE_TOOLTIP"},
+        {rolloff,               "TP_FILMPRESETS_ROLLOFF_TOOLTIP"},
+        {warmth,                "TP_FILMPRESETS_WARMTH_TOOLTIP"},
+        {tintAdj,               "TP_FILMPRESETS_TINT_TOOLTIP"},
+        {saturation,            "TP_FILMPRESETS_SATURATION_TOOLTIP"},
+        {shadowHue,             "TP_FILMPRESETS_SHADOWHUE_TOOLTIP"},
+        {shadowTintAdj,         "TP_FILMPRESETS_SHADOWTINT_TOOLTIP"},
+        {midHue,                "TP_FILMPRESETS_MIDHUE_TOOLTIP"},
+        {midTintAdj,            "TP_FILMPRESETS_MIDTINT_TOOLTIP"},
+        {highlightHue,          "TP_FILMPRESETS_HIGHLIGHTHUE_TOOLTIP"},
+        {highlightTintAdj,      "TP_FILMPRESETS_HIGHLIGHTTINT_TOOLTIP"},
+        {redShift,              "TP_FILMPRESETS_REDSHIFT_TOOLTIP"},
+        {greenShift,            "TP_FILMPRESETS_GREENSHIFT_TOOLTIP"},
+        {blueShift,             "TP_FILMPRESETS_BLUESHIFT_TOOLTIP"},
+        {vibranceAdj,           "TP_FILMPRESETS_VIBRANCE_TOOLTIP"},
+        {halationAdj,           "TP_FILMPRESETS_HALATION_TOOLTIP"},
+        {skinProtectionAdj_,    "TP_FILMPRESETS_SKINPROTECTION_TOOLTIP"},
+        {layerCouplingAdj_,     "TP_FILMPRESETS_LAYERCOUPLING_TOOLTIP"},
+        {halationSizeAdj_,      "TP_FILMPRESETS_HALATIONSIZE_TOOLTIP"},
+        {halationThresholdAdj_, "TP_FILMPRESETS_HALATIONTHRESHOLD_TOOLTIP"},
+        {halationColorAdj_,     "TP_FILMPRESETS_HALATIONCOLOR_TOOLTIP"},
+        {bloomAdj_,             "TP_FILMPRESETS_BLOOM_TOOLTIP"},
+        {outputSoftnessAdj_,    "TP_FILMPRESETS_OUTPUTSOFTNESS_TOOLTIP"},
+    };
+    for (const auto& entry : sliderTooltips) {
+        entry.first->set_tooltip_text(M(entry.second));
+    }
+
     detailContent_->show_all();
 
     detailRevealer_ = Gtk::manage(new Gtk::Revealer());
@@ -454,7 +475,7 @@ FilmPresets::FilmPresets() :
 void FilmPresets::toggleDetail()
 {
     detailExpanded_ = !detailExpanded_;
-    strength->setLabel(Glib::ustring(detailExpanded_ ? "\u25BE " : "\u25B8 ") + M("TP_FILMPRESETS_STRENGTH"));
+    detailHeader_->setExpanded(detailExpanded_);
     detailRevealer_->set_reveal_child(detailExpanded_);
 }
 

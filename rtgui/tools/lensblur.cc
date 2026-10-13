@@ -49,20 +49,12 @@ LensBlur::LensBlur(): FoldableToolPanel(this, TOOL_NAME, M("TP_LENSBLUR_LABEL"),
     summaryBox->pack_start(*amount);
 
     // --- Bokeh section (clickable header) ---
-    bokehLabel = Gtk::manage(new Gtk::Label());
-    bokehLabel->set_markup(Glib::ustring("<b>\u25B8 ") + M("TP_LENSBLUR_BOKEH_SECTION") + "</b>");
-    bokehLabel->set_halign(Gtk::ALIGN_START);
-    bokehLabel->set_margin_top(8);
-    bokehLabel->set_margin_bottom(2);
-
-    Gtk::Button *bokehHeader = Gtk::manage(new Gtk::Button());
-    bokehHeader->set_name("CollapsibleHeader");
-    bokehHeader->set_relief(Gtk::RELIEF_NONE);
-    bokehHeader->set_can_focus(false);
-    bokehHeader->set_halign(Gtk::ALIGN_START);
-    bokehHeader->add(*bokehLabel);
-    bokehHeader->signal_clicked().connect(
-        sigc::mem_fun(*this, &LensBlur::toggleBokeh));
+    bokehHeader = Gtk::manage(new SectionHeader(M("TP_LENSBLUR_BOKEH_SECTION")));
+    bokehHeader->set_halign(Gtk::ALIGN_FILL);
+    bokehHeader->set_hexpand(true);
+    bokehHeader->set_margin_top(8);
+    bokehHeader->set_margin_bottom(2);
+    bokehHeader->setOnToggled([this](bool) { toggleBokeh(); });
     summaryBox->pack_start(*bokehHeader, Gtk::PACK_SHRINK);
 
     // Bokeh content (hidden by default)
@@ -123,20 +115,12 @@ LensBlur::LensBlur(): FoldableToolPanel(this, TOOL_NAME, M("TP_LENSBLUR_LABEL"),
     summaryBox->pack_start(*bokehContent, Gtk::PACK_SHRINK);
 
     // --- Focus Range section (clickable header) ---
-    focusLabel = Gtk::manage(new Gtk::Label());
-    focusLabel->set_markup(Glib::ustring("<b>\u25B8 ") + M("TP_LENSBLUR_FOCUSRANGE_SECTION") + "</b>");
-    focusLabel->set_halign(Gtk::ALIGN_START);
-    focusLabel->set_margin_top(8);
-    focusLabel->set_margin_bottom(2);
-
-    Gtk::Button *focusHeader = Gtk::manage(new Gtk::Button());
-    focusHeader->set_name("CollapsibleHeader");
-    focusHeader->set_relief(Gtk::RELIEF_NONE);
-    focusHeader->set_can_focus(false);
-    focusHeader->set_halign(Gtk::ALIGN_START);
-    focusHeader->add(*focusLabel);
-    focusHeader->signal_clicked().connect(
-        sigc::mem_fun(*this, &LensBlur::toggleFocus));
+    focusHeader = Gtk::manage(new SectionHeader(M("TP_LENSBLUR_FOCUSRANGE_SECTION")));
+    focusHeader->set_halign(Gtk::ALIGN_FILL);
+    focusHeader->set_hexpand(true);
+    focusHeader->set_margin_top(8);
+    focusHeader->set_margin_bottom(2);
+    focusHeader->setOnToggled([this](bool) { toggleFocus(); });
     summaryBox->pack_start(*focusHeader, Gtk::PACK_SHRINK);
 
     // Focus content (hidden by default)
@@ -311,12 +295,12 @@ void LensBlur::toggleBokeh()
 {
     bokehExpanded = !bokehExpanded;
     if (bokehExpanded) {
-        bokehLabel->set_markup(Glib::ustring("<b>\u25BE ") + M("TP_LENSBLUR_BOKEH_SECTION") + "</b>");
+        bokehHeader->setExpanded(true);
         bokehContent->set_no_show_all(false);
         bokehContent->show_all();
         bokehContent->set_no_show_all(true);
     } else {
-        bokehLabel->set_markup(Glib::ustring("<b>\u25B8 ") + M("TP_LENSBLUR_BOKEH_SECTION") + "</b>");
+        bokehHeader->setExpanded(false);
         bokehContent->hide();
     }
 }
@@ -325,12 +309,12 @@ void LensBlur::toggleFocus()
 {
     focusExpanded = !focusExpanded;
     if (focusExpanded) {
-        focusLabel->set_markup(Glib::ustring("<b>\u25BE ") + M("TP_LENSBLUR_FOCUSRANGE_SECTION") + "</b>");
+        focusHeader->setExpanded(true);
         focusContent->set_no_show_all(false);
         focusContent->show_all();
         focusContent->set_no_show_all(true);
     } else {
-        focusLabel->set_markup(Glib::ustring("<b>\u25B8 ") + M("TP_LENSBLUR_FOCUSRANGE_SECTION") + "</b>");
+        focusHeader->setExpanded(false);
         focusContent->hide();
     }
 }

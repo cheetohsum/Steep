@@ -18,6 +18,9 @@
  */
 #include "pointcolor.h"
 
+#include <cmath>
+
+#include "guiutils.h"
 #include "rtimage.h"
 #include "rtengine/color.h"
 #include "rtengine/procparams.h"
@@ -35,42 +38,40 @@ PointColor::PointColor() :
     contentExpanded_(false)
 {
     // Clickable section label (collapsed by default)
-    sectionLabel_ = Gtk::manage(new Gtk::Label());
-    sectionLabel_->set_markup("<b>\xe2\x96\xb8 Point Color</b>");
-    sectionLabel_->set_xalign(0.0);
-    sectionLabel_->get_style_context()->add_class("tool-heading-label");
-    auto* labelEvt = Gtk::manage(new Gtk::EventBox());
-    labelEvt->add(*sectionLabel_);
-    labelEvt->signal_button_press_event().connect([this](GdkEventButton*) -> bool {
-        toggleContent();
-        return true;
-    });
-    getSummaryBox()->pack_start(*labelEvt, Gtk::PACK_SHRINK, 2);
+    sectionHeader_ = Gtk::manage(new SectionHeader(M("TP_POINTCOLOR_SECTION")));
+    sectionHeader_->set_halign(Gtk::ALIGN_FILL);
+    sectionHeader_->set_hexpand(true);
+    sectionHeader_->setOnToggled([this](bool) { toggleContent(); });
+    getSummaryBox()->pack_start(*sectionHeader_, Gtk::PACK_SHRINK, 2);
 
     // Collapsible content box
     toolContent_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
 
-    // Toolbar: [Eyedropper] [+] [-]
+    // Row: [swatches of the picked colours]  ...  [pick] [+] [-]
     toolbarBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
     toolbarBox->set_name("PointColorToolbar");
-    toolbarBox->set_halign(Gtk::ALIGN_CENTER);
+    swatchBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+    toolbarBox->pack_start(*swatchBox, Gtk::PACK_EXPAND_WIDGET);
 
     pickButton = Gtk::manage(new Gtk::Button());
     auto* pickImg = Gtk::manage(new RTImage("color-picker"));
     pickButton->set_image(*pickImg);
     pickButton->set_always_show_image(true);
+    pickButton->set_relief(Gtk::RELIEF_NONE);
     pickButton->set_tooltip_text(M("TP_POINTCOLOR_PICK"));
     pickButton->signal_clicked().connect(sigc::mem_fun(*this, &PointColor::onPickTarget));
     toolbarBox->pack_start(*pickButton, Gtk::PACK_SHRINK);
 
     addButton = Gtk::manage(new Gtk::Button());
     addButton->set_image(*Gtk::manage(new RTImage("add-small")));
+    addButton->set_relief(Gtk::RELIEF_NONE);
     addButton->set_tooltip_text(M("TP_POINTCOLOR_ADD_TARGET"));
     addButton->signal_clicked().connect(sigc::mem_fun(*this, &PointColor::onAddTarget));
     toolbarBox->pack_start(*addButton, Gtk::PACK_SHRINK);
 
     removeButton = Gtk::manage(new Gtk::Button());
     removeButton->set_image(*Gtk::manage(new RTImage("remove-small")));
+    removeButton->set_relief(Gtk::RELIEF_NONE);
     removeButton->set_tooltip_text(M("TP_POINTCOLOR_REMOVE_TARGET"));
     removeButton->signal_clicked().connect(sigc::mem_fun(*this, &PointColor::onRemoveTarget));
     toolbarBox->pack_start(*removeButton, Gtk::PACK_SHRINK);
@@ -112,9 +113,28 @@ PointColor::PointColor() :
             });
     }
 
+    // The list stays as the selection model; the swatches are what shows.
     targetList->set_no_show_all(true);
     targetList->hide();
     toolContent_->pack_start(*targetList, Gtk::PACK_SHRINK, 0);
+
+    hueRing = Gtk::manage(new Gtk::DrawingArea());
+    hueRing->set_size_request(-1, 132);
+    hueRing->add_events(Gdk::BUTTON_PRESS_MASK | Gdk::BUTTON_RELEASE_MASK | Gdk::POINTER_MOTION_MASK);
+    hueRing->set_tooltip_text(M("TP_POINTCOLOR_RING_TOOLTIP"));
+    hueRing->signal_draw().connect(sigc::mem_fun(*this, &PointColor::drawHueRing));
+    hueRing->signal_button_press_event().connect([this](GdkEventButton* e) {
+        ringDragging = e->button == 1 && hueRingPointer(e->x, e->y);
+        return ringDragging;
+    });
+    hueRing->signal_motion_notify_event().connect([this](GdkEventMotion* e) {
+        return ringDragging && hueRingPointer(e->x, e->y);
+    });
+    hueRing->signal_button_release_event().connect([this](GdkEventButton*) {
+        ringDragging = false;
+        return false;
+    });
+    toolContent_->pack_start(*hueRing, Gtk::PACK_SHRINK, 4);
 
     // Center Hue selector (0..360 degrees displayed, stored as 0..1)
     centerHueAdj = Gtk::manage(new Adjuster(M("TP_POINTCOLOR_CENTER_HUE"), 0., 360., 1., 0.));
@@ -130,6 +150,7 @@ PointColor::PointColor() :
         centerHueAdj->setSliderGradient(ms);
     }
     toolContent_->pack_start(*centerHueAdj, Gtk::PACK_SHRINK, 0);
+    centerHueAdj->set_no_show_all(true);   // the ring sets the hue
 
     hueShiftAdj = Gtk::manage(new Adjuster(M("TP_POINTCOLOR_HUESHIFT"), -100., 100., 1., 0.));
     hueShiftAdj->setAdjusterListener(this);
@@ -162,12 +183,12 @@ void PointColor::toggleContent()
 {
     contentExpanded_ = !contentExpanded_;
     if (contentExpanded_) {
-        sectionLabel_->set_markup("<b>\xe2\x96\xbe Point Color</b>");
+        sectionHeader_->setExpanded(true);
         toolContent_->set_no_show_all(false);
         toolContent_->show_all();
         toolContent_->set_no_show_all(true);
     } else {
-        sectionLabel_->set_markup("<b>\xe2\x96\xb8 Point Color</b>");
+        sectionHeader_->setExpanded(false);
         toolContent_->hide();
     }
 }
@@ -237,11 +258,59 @@ void PointColor::updateTargetList()
         row[targetColumns.hue] = targets[i].centerHue;
     }
 
+    for (Gtk::Widget* child : swatchBox->get_children()) {
+        swatchBox->remove(*child);
+    }
+
+    for (size_t i = 0; i < targets.size(); ++i) {
+        const int idx = static_cast<int>(i);
+        auto* swatch = Gtk::manage(new Gtk::DrawingArea());
+        swatch->set_size_request(30, 30);
+        swatch->signal_draw().connect([this, idx, swatch](const Cairo::RefPtr<Cairo::Context>& cr) {
+            if (idx >= static_cast<int>(targets.size())) {
+                return true;
+            }
+
+            Gdk::RGBA before, after;
+            beforeAfter(targets[idx], before, after);
+            const double w = swatch->get_allocated_width();
+            const double h = swatch->get_allocated_height();
+            const double r = std::min(w, h) / 2.0 - 3.0;
+
+            if (idx == activeTarget) {
+                const Gdk::RGBA ring = themeColor(*swatch, "steep_accent", Gdk::RGBA("#2d7fd3"));
+                cr->set_source_rgb(ring.get_red(), ring.get_green(), ring.get_blue());
+                cr->set_line_width(1.5);
+                cr->arc(w / 2, h / 2, r + 2.25, 0, 2 * M_PI);
+                cr->stroke();
+            }
+
+            cr->set_source_rgb(before.get_red(), before.get_green(), before.get_blue());
+            cr->arc(w / 2, h / 2, r, 0, 2 * M_PI);
+            cr->fill_preserve();
+            cr->set_source_rgba(0, 0, 0, 0.25);
+            cr->set_line_width(1.0);
+            cr->stroke();
+            return true;
+        });
+
+        auto* box = Gtk::manage(new Gtk::EventBox());
+        box->add(*swatch);
+        box->set_tooltip_text(hueToColorName(targets[i].centerHue));
+        box->signal_button_press_event().connect([this, idx](GdkEventButton*) {
+            selectTarget(idx);
+            return true;
+        });
+        box->show_all();
+        swatchBox->pack_start(*box, Gtk::PACK_SHRINK);
+    }
+
+    hueRing->queue_draw();
+
     if (targets.empty()) {
         targetList->hide();
         setControlsSensitive(false);
     } else {
-        targetList->show();
         // Select active target
         if (activeTarget >= 0 && activeTarget < (int)targets.size()) {
             auto path = Gtk::TreePath(Glib::ustring::format(activeTarget));
@@ -381,6 +450,178 @@ void PointColor::onTargetSelected()
     loadTargetToControls(activeTarget);
 }
 
+void PointColor::selectTarget(int idx)
+{
+    if (idx < 0 || idx >= static_cast<int>(targets.size()) || idx == activeTarget) {
+        return;
+    }
+
+    if (activeTarget >= 0 && activeTarget < static_cast<int>(targets.size())) {
+        saveControlsToTarget(activeTarget);
+    }
+
+    activeTarget = idx;
+    loadTargetToControls(activeTarget);
+
+    for (Gtk::Widget* child : swatchBox->get_children()) {
+        child->queue_draw();
+        if (auto* box = dynamic_cast<Gtk::EventBox*>(child)) {
+            if (box->get_child()) {
+                box->get_child()->queue_draw();
+            }
+        }
+    }
+
+    hueRing->queue_draw();
+}
+
+// The engine's own arithmetic (improcfun.cc, Point Color) at full weight,
+// applied to a representative mid colour of the target hue.
+void PointColor::beforeAfter(const PointColorTarget& tgt, Gdk::RGBA& before, Gdk::RGBA& after) const
+{
+    float r, g, b;
+    float h = static_cast<float>(tgt.centerHue);
+    float s = 0.55f;
+    float v = 0.72f;
+    Color::hsv2rgb01(h, s, v, r, g, b);
+    before.set_rgba(r, g, b, 1.0);
+
+    h += static_cast<float>(tgt.hueShift) / 200.f;
+    h -= std::floor(h);
+    const float satParam = static_cast<float>(tgt.saturation) / 100.f;
+    s = satParam > 0 ? (1.f - satParam) * s + satParam * (1.f - (1.f - s) * (1.f - s)) : s * (1.f + satParam);
+    float valParam = static_cast<float>(tgt.luminance) / 200.f;
+    valParam *= 1.f - std::pow(1.f - std::min(s, 1.f), 4.f);
+    v = valParam > 0 ? (1.f - valParam) * v + valParam * (1.f - (1.f - v) * (1.f - v)) : v * (1.f + valParam);
+    Color::hsv2rgb01(h, std::max(0.f, std::min(1.f, s)), std::max(0.f, std::min(1.f, v)), r, g, b);
+    after.set_rgba(r, g, b, 1.0);
+}
+
+bool PointColor::drawHueRing(const Cairo::RefPtr<Cairo::Context>& cr)
+{
+    const double h = hueRing->get_allocated_height();
+    const double outer = h / 2.0 - 4.0;
+    const double inner = outer * 0.64;
+    const double cx = outer + 4.0;
+    const double cy = h / 2.0;
+    const bool haveTarget = activeTarget >= 0 && activeTarget < static_cast<int>(targets.size());
+
+    // Hue ring, red at the top, clockwise -- dimmed, so the reach stands out.
+    for (int i = 0; i < 180; ++i) {
+        const double a0 = (i / 180.0) * 2 * M_PI - M_PI / 2;
+        const double a1 = ((i + 1.5) / 180.0) * 2 * M_PI - M_PI / 2;
+        float r, g, b;
+        Color::hsv2rgb01(i / 180.f, 0.6f, 0.75f, r, g, b);
+        cr->set_source_rgba(r, g, b, haveTarget ? 0.45 : 0.8);
+        cr->begin_new_path();
+        cr->arc(cx, cy, outer, a0, a1);
+        cr->arc_negative(cx, cy, inner, a1, a0);
+        cr->close_path();
+        cr->fill();
+    }
+
+    if (!haveTarget) {
+        return true;
+    }
+
+    const PointColorTarget& tgt = targets[activeTarget];
+    const double centre = tgt.centerHue * 2 * M_PI - M_PI / 2;
+    // The engine weighs hue by a gaussian of sigma = range/100 * 0.15; the
+    // wedge covers +-2 sigma, where the weight is down to an eighth.
+    const double reach = std::min(M_PI, 2.0 * (tgt.range / 100.0 * 0.15) * 2 * M_PI);
+
+    // The reached hues at full strength.
+    for (int i = 0; i <= 60; ++i) {
+        const double a0 = centre - reach + (2 * reach) * i / 61.0;
+        const double a1 = centre - reach + (2 * reach) * (i + 1.2) / 61.0;
+        float r, g, b;
+        double hue = (a0 + M_PI / 2) / (2 * M_PI);
+        hue -= std::floor(hue);
+        Color::hsv2rgb01(static_cast<float>(hue), 0.75f, 0.85f, r, g, b);
+        cr->set_source_rgb(r, g, b);
+        cr->begin_new_path();
+        cr->arc(cx, cy, outer, a0, a1);
+        cr->arc_negative(cx, cy, inner, a1, a0);
+        cr->close_path();
+        cr->fill();
+    }
+
+    const Gdk::RGBA accent = themeColor(*hueRing, "steep_accent", Gdk::RGBA("#2d7fd3"));
+    cr->set_source_rgb(accent.get_red(), accent.get_green(), accent.get_blue());
+    cr->set_line_width(2.0);
+    cr->begin_new_path();
+    cr->arc(cx, cy, outer, centre - reach, centre + reach);
+    cr->arc_negative(cx, cy, inner, centre + reach, centre - reach);
+    cr->close_path();
+    cr->stroke();
+
+    Gdk::RGBA before, after;
+    beforeAfter(tgt, before, after);
+
+    // Handle on the target hue.
+    const double hr = (outer + inner) / 2.0;
+    cr->arc(cx + hr * std::cos(centre), cy + hr * std::sin(centre), 6.0, 0, 2 * M_PI);
+    cr->set_source_rgb(before.get_red(), before.get_green(), before.get_blue());
+    cr->fill_preserve();
+    cr->set_source_rgb(1, 1, 1);
+    cr->set_line_width(2.0);
+    cr->stroke();
+
+    // Centre: before above, after below.
+    const double core = inner - 6.0;
+    cr->set_source_rgb(after.get_red(), after.get_green(), after.get_blue());
+    cr->arc(cx, cy, core, 0, 2 * M_PI);
+    cr->fill();
+    cr->set_source_rgb(before.get_red(), before.get_green(), before.get_blue());
+    cr->arc(cx, cy, core, M_PI, 2 * M_PI);
+    cr->close_path();
+    cr->fill();
+
+    // Before / after, named, to the right of the ring.
+    const Gdk::RGBA dim = themeColor(*hueRing, "steep_text_dim", Gdk::RGBA("#8a92a1"));
+    const double tx = cx + outer + 18.0;
+    const auto label = [&](const Glib::ustring& text, double y, const Gdk::RGBA& swatchColour) {
+        auto layout = hueRing->create_pango_layout(text);
+        cr->set_source_rgb(dim.get_red(), dim.get_green(), dim.get_blue());
+        cr->move_to(tx, y);
+        layout->show_in_cairo_context(cr);
+        int lw, lh;
+        layout->get_pixel_size(lw, lh);
+        cr->set_source_rgb(swatchColour.get_red(), swatchColour.get_green(), swatchColour.get_blue());
+        cr->rectangle(tx, y + lh + 3, 56, 20);
+        cr->fill();
+    };
+    label(M("TP_POINTCOLOR_BEFORE"), cy - 52, before);
+    label(M("TP_POINTCOLOR_AFTER"), cy + 4, after);
+    return true;
+}
+
+bool PointColor::hueRingPointer(double x, double y)
+{
+    if (activeTarget < 0 || activeTarget >= static_cast<int>(targets.size())) {
+        return false;
+    }
+
+    const double h = hueRing->get_allocated_height();
+    const double outer = h / 2.0 - 4.0;
+    const double cx = outer + 4.0;
+    const double cy = h / 2.0;
+    const double dx = x - cx;
+    const double dy = y - cy;
+
+    if (!ringDragging && std::hypot(dx, dy) > outer + 4.0) {
+        return false;
+    }
+
+    // Clockwise from the top, as drawn.
+    double hue = (std::atan2(dy, dx) + M_PI / 2) / (2 * M_PI);
+    hue -= std::floor(hue);
+    centerHueAdj->setValue(hue * 360.0);
+    adjusterChanged(centerHueAdj, hue * 360.0);
+    hueRing->queue_draw();
+    return true;
+}
+
 void PointColor::read(const ProcParams* pp, const ParamsEdited* pedited)
 {
     disableListener();
@@ -508,6 +749,7 @@ void PointColor::adjusterChanged(Adjuster* a, double newval)
         saveControlsToTarget(activeTarget);
     }
 
+    hueRing->queue_draw();
     autoEnable();
     if (listener && getEnabled()) {
         Glib::ustring val = Glib::ustring::format(newval);

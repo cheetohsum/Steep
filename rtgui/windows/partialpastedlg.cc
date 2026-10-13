@@ -600,10 +600,8 @@ PartialPasteDlg::PartialPasteDlg (const Glib::ustring &title, Gtk::Window* paren
     //---
     raw_preprocwbConn       = raw_preprocwb->signal_toggled().connect (sigc::bind (sigc::mem_fun(*raw, &Gtk::CheckButton::set_inconsistent), true));
 
-    add_button (M("GENERAL_OK"), Gtk::RESPONSE_OK);
-    add_button (M("GENERAL_CANCEL"), Gtk::RESPONSE_CANCEL);
+    applyDialogTemplate(*this, M("GENERAL_OK"));
     set_response_sensitive (Gtk::RESPONSE_OK);
-    set_default_response (Gtk::RESPONSE_OK);
     show_all_children ();
 }
 

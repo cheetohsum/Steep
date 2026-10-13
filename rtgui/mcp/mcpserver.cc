@@ -257,10 +257,13 @@ std::string McpServer::handleMethod(const std::string& method, cJSON* params, cJ
         std::string toolName = nameJ->valuestring;
         cJSON* args = cJSON_GetObjectItemCaseSensitive(params, "arguments");
 
-        // Dispatch tool call to GTK thread
-        std::string resultStr = dispatchToGtk([this, &toolName, args]() -> std::string {
-            return handleToolCall(toolName, args, this);
-        });
+        // auto_edit analyses a RAW off GTK's thread (it can take longer than the GTK dispatch
+        // timeout); every other tool runs on GTK's thread.
+        std::string resultStr = toolName == "auto_edit"
+            ? runAutoEditTool(args, this)
+            : dispatchToGtk([this, &toolName, args]() -> std::string {
+                  return handleToolCall(toolName, args, this);
+              });
 
         // Parse the result string back to JSON
         cJSON* resultJson = cJSON_Parse(resultStr.c_str());

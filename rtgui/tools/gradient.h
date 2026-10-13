@@ -29,6 +29,7 @@ protected:
     Adjuster* centerX;
     Adjuster* centerY;
     Gtk::Box* detailContent_;
+    SectionHeader* detailHeader_;
     Gtk::Revealer* detailRevealer_;
     bool detailExpanded_;
     double draggedPointOldAngle;

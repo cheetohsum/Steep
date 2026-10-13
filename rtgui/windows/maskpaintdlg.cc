@@ -501,7 +501,7 @@ private:
         const int w = get_allocated_width();
         const int h = get_allocated_height();
 
-        cr->set_source_rgb(0.06, 0.06, 0.07);
+        Gdk::Cairo::set_source_rgba(cr, themeColor(*this, "steep_surface_0", Gdk::RGBA("#0f0f12")));
         cr->rectangle(0, 0, w, h);
         cr->fill();
 
@@ -631,11 +631,10 @@ private:
             cr->set_line_width(3.0);
             cr->stroke_preserve();
 
-            if (add_) {
-                cr->set_source_rgb(0.4, 1.0, 0.5);
-            } else {
-                cr->set_source_rgb(1.0, 0.5, 0.4);
-            }
+            // Include / exclude read as the theme's success and danger hues.
+            Gdk::Cairo::set_source_rgba(cr, add_
+                                        ? themeColor(*this, "steep_success", Gdk::RGBA("#66ff80"))
+                                        : themeColor(*this, "steep_danger", Gdk::RGBA("#ff8066")));
 
             cr->set_line_width(1.0);
             cr->stroke();
@@ -673,8 +672,6 @@ MaskPaintDlg::MaskPaintDlg(Gtk::Window* parent,
     }
 
     Gtk::Box* content = get_content_area();
-    content->set_spacing(6);
-    content->set_border_width(6);
 
     canvas_ = Gtk::manage(new MaskPaintCanvas(shown, automatic, initial, window));
     const bool emptySelection = !automatic.valid()
@@ -682,7 +679,9 @@ MaskPaintDlg::MaskPaintDlg(Gtk::Window* parent,
                                                 [](float v) { return v > 0.5f; });
     canvas_->onStrokes = [this]() { onStrokesChanged(); };
     canvas_->onBrushResize = [this](double factor) {
-        sizeScale_->set_value(std::min(std::max(sizeScale_->get_value() * factor, 0.5), 50.0));
+        // setValue is silent, so the brush is told directly.
+        sizeScale_->setValue(std::min(std::max(sizeScale_->getValue() * factor, 0.5), 50.0));
+        onBrushChanged();
     };
     content->pack_start(*canvas_, Gtk::PACK_EXPAND_WIDGET);
 
@@ -692,24 +691,14 @@ MaskPaintDlg::MaskPaintDlg(Gtk::Window* parent,
     hint->get_style_context()->add_class("dim-label");
     content->pack_start(*hint, Gtk::PACK_SHRINK);
 
-    auto makeCell = [](const Glib::ustring& label, Gtk::Scale*& outScale,
-                       double lo, double hi, double step, double value) {
-        Gtk::Box* cell = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
-        Gtk::Label* lab = Gtk::manage(new Gtk::Label(label, Gtk::ALIGN_START));
-        lab->set_xalign(0.f);
-        lab->get_style_context()->add_class("dim-label");
-        outScale = Gtk::manage(new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
-        outScale->set_range(lo, hi);
-        outScale->set_increments(step, step * 5);
-        outScale->set_value(value);
-        outScale->set_draw_value(true);
-        outScale->set_value_pos(Gtk::POS_RIGHT);
-        outScale->set_digits(step < 1.0 ? 1 : 0);
-        outScale->set_hexpand(true);
-        cell->pack_start(*lab, Gtk::PACK_SHRINK);
-        cell->pack_start(*outScale, Gtk::PACK_EXPAND_WIDGET);
-        cell->set_hexpand(true);
-        return cell;
+    // The tool panel's setting pill (name and value inside the track).
+    auto makeCell = [this](const Glib::ustring& label, Adjuster*& outAdj,
+                           double lo, double hi, double step, double def) {
+        outAdj = Gtk::manage(new Adjuster(label, lo, hi, step, def));
+        outAdj->setAdjusterListener(this);
+        outAdj->set_hexpand(true);
+        outAdj->set_valign(Gtk::ALIGN_CENTER);
+        return outAdj;
     };
 
     Gtk::Box* brushRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 12));
@@ -722,9 +711,14 @@ MaskPaintDlg::MaskPaintDlg(Gtk::Window* parent,
     includeBtn_ = Gtk::manage(new Gtk::RadioButton(M("MASKPAINT_INCLUDE")));
     excludeBtn_ = Gtk::manage(new Gtk::RadioButton(M("MASKPAINT_EXCLUDE")));
     excludeBtn_->join_group(*includeBtn_);
+    includeBtn_->set_mode(false);
+    excludeBtn_->set_mode(false);
     includeBtn_->set_active(true);
-    modeRow->pack_start(*includeBtn_, Gtk::PACK_SHRINK);
-    modeRow->pack_start(*excludeBtn_, Gtk::PACK_SHRINK);
+    Gtk::Box* modeSeg = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+    modeSeg->pack_start(*includeBtn_, Gtk::PACK_SHRINK);
+    modeSeg->pack_start(*excludeBtn_, Gtk::PACK_SHRINK);
+    makeSegmented(*modeSeg);
+    modeRow->pack_start(*modeSeg, Gtk::PACK_SHRINK);
 
     lassoBtn_ = Gtk::manage(new Gtk::CheckButton(M("MASKPAINT_LASSO")));
     lassoBtn_->set_tooltip_text(M("MASKPAINT_LASSO_TOOLTIP"));
@@ -744,18 +738,13 @@ MaskPaintDlg::MaskPaintDlg(Gtk::Window* parent,
     modeRow->pack_end(*undoBtn_, Gtk::PACK_SHRINK);
     content->pack_start(*modeRow, Gtk::PACK_SHRINK);
 
-    sizeScale_->signal_value_changed().connect(sigc::mem_fun(*this, &MaskPaintDlg::onBrushChanged));
-    hardnessScale_->signal_value_changed().connect(sigc::mem_fun(*this, &MaskPaintDlg::onBrushChanged));
-    strengthScale_->signal_value_changed().connect(sigc::mem_fun(*this, &MaskPaintDlg::onBrushChanged));
     includeBtn_->signal_toggled().connect(sigc::mem_fun(*this, &MaskPaintDlg::onBrushChanged));
     lassoBtn_->signal_toggled().connect(sigc::mem_fun(*this, &MaskPaintDlg::onBrushChanged));
     showMask_->signal_toggled().connect([this]() { canvas_->setShowMask(showMask_->get_active()); });
     undoBtn_->signal_clicked().connect(sigc::mem_fun(*this, &MaskPaintDlg::undo));
     clearBtn_->signal_clicked().connect(sigc::mem_fun(*this, &MaskPaintDlg::clearAll));
 
-    add_button(M("GENERAL_CANCEL"), Gtk::RESPONSE_CANCEL);
-    add_button(M("GENERAL_OK"), Gtk::RESPONSE_OK);
-    set_default_response(Gtk::RESPONSE_OK);
+    applyDialogTemplate(*this, M("GENERAL_OK"));
 
     onBrushChanged();
     updateCounts();
@@ -769,13 +758,18 @@ rtengine::MaskPaint MaskPaintDlg::getResult() const
     return canvas_->paint();
 }
 
+void MaskPaintDlg::adjusterChanged(Adjuster* /*a*/, double /*newval*/)
+{
+    onBrushChanged();
+}
+
 void MaskPaintDlg::onBrushChanged()
 {
     // Size is a percentage of the frame's short side, which is what the
     // stroke stores, so a brush keeps its size across resolutions.
-    canvas_->setBrush(sizeScale_->get_value() / 100.0,
-                      hardnessScale_->get_value() / 100.0,
-                      strengthScale_->get_value() / 100.0,
+    canvas_->setBrush(sizeScale_->getValue() / 100.0,
+                      hardnessScale_->getValue() / 100.0,
+                      strengthScale_->getValue() / 100.0,
                       includeBtn_->get_active(),
                       lassoBtn_->get_active());
 }

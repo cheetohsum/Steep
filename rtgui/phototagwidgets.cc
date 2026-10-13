@@ -37,6 +37,13 @@ PhotoTagFilter::PhotoTagFilter() : box_(Gtk::ORIENTATION_VERTICAL, 8),
         rebuild(); updateLabel(); changed_.emit();
     });
     clear_.signal_clicked().connect(sigc::mem_fun(*this, &PhotoTagFilter::clear));
+    edit_.set_relief(Gtk::RELIEF_NONE);
+    edit_.set_no_show_all(true);
+    edit_.signal_clicked().connect([this]() {
+        popover_.popdown();
+        if (editAction_) editAction_();
+    });
+    box_.pack_start(edit_, Gtk::PACK_SHRINK);
     storeConnection_ = PhotoTags::instance().changed().connect([this]() { rebuild(); updateLabel(); changed_.emit(); });
     rebuild(); updateLabel();
 }
@@ -87,6 +94,13 @@ void PhotoTagFilter::rebuild()
 }
 
 void PhotoTagFilter::clear() { setSelection({}, false, false); }
+
+void PhotoTagFilter::setEditAction(const Glib::ustring& label, std::function<void()> action)
+{
+    editAction_ = std::move(action);
+    edit_.set_label(label);
+    edit_.set_visible(bool(editAction_));
+}
 
 void PhotoTagFilter::setSelection(const PhotoTags::Tags& tags, bool all, bool untagged)
 {

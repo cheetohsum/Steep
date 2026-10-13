@@ -73,6 +73,18 @@ Gtk::Border getPadding(const Glib::RefPtr<Gtk::StyleContext> style);
  */
 Gdk::RGBA themeColor(const Glib::RefPtr<Gtk::StyleContext>& ctx, const char* name, const Gdk::RGBA& fallback);
 Gdk::RGBA themeColor(const Gtk::Widget& widget, const char* name, const Gdk::RGBA& fallback);
+
+/// themeColor as "#rrggbb", for Pango markup (which does not parse rgb()).
+Glib::ustring themeColorHex(const Gtk::Widget& widget, const char* name, const Gdk::RGBA& fallback);
+
+/// The one color-label palette (1 red, 2 yellow, 3 green, 4 blue, 5 purple;
+/// anything else is transparent). Two disagreeing tables used to exist.
+Gdk::RGBA colorLabelColor(int label);
+
+/// Row hover / drop-target background for tree-view cells, from the theme:
+/// the same faint wash every other hover uses, a select tint for a drop
+/// target. Callers keep setting property_cell_background_set() themselves.
+void paintTreeRowState(Gtk::CellRenderer* cell, const Gtk::Widget& widget, bool hovered, bool dropTarget);
 /// Flush the themeColor cache. Call when the theme (or a live preview of one) changes.
 void themeColorCacheInvalidate();
 
@@ -924,6 +936,59 @@ inline void setActiveTextOrIndex(Gtk::ComboBoxText &comboBox, const Glib::ustrin
  * Default state: collapsed for UI_BEGINNER/UI_STANDARD, expanded for UI_EXPERT.
  * In batch mode: always expanded.
  */
+/**
+ * @brief The one disclosure header for every collapsible section.
+ *
+ * A flat, keyboard-focusable button: chevron icon + label, styled by the
+ * `.section-header` class (`.section-header-group` for tool-group headers).
+ * Tools used to hand-build seven different looks (▸ in markup, bold, small,
+ * an arrow inside a slider label...); all of them go through this now.
+ */
+class SectionHeader final : public Gtk::Button
+{
+public:
+    explicit SectionHeader(const Glib::ustring& label, bool groupLevel = false);
+
+    /// Set the state without notifying (initial state, programmatic changes).
+    void setExpanded(bool expanded);
+    bool getExpanded() const { return expanded_; }
+
+    void setLabel(const Glib::ustring& label);
+
+    /// A short value shown at the trailing edge while the section is closed
+    /// ("Screen", "112%", "Off"), so a closed section still says what it does.
+    void setSummary(const Glib::ustring& summary);
+
+    /// Called after a click flips the state, with the new state.
+    void setOnToggled(std::function<void(bool)> callback) { onToggled_ = std::move(callback); }
+
+protected:
+    void on_clicked() override;
+
+private:
+    RTImage* arrow_;
+    Gtk::Label* label_;
+    Gtk::Label* summary_;
+    bool expanded_;
+    std::function<void(bool)> onToggled_;
+};
+
+/// The one reset affordance (↺ icon, flat): for groups, sections and tools
+/// alike. The tooltip defaults to "Reset to default".
+Gtk::Button* makeResetButton(const Glib::ustring& tooltip = Glib::ustring());
+
+/// Dialog template: 12px padded content area, then Cancel and the primary
+/// action on the right, primary styled as the suggested (accent) action and
+/// made the default response. Call once, after the content has been packed.
+/// withCancel=false adds no Cancel button (single-action dialogs).
+Gtk::Button* applyDialogTemplate(Gtk::Dialog& dialog, const Glib::ustring& primaryLabel,
+                                 int primaryResponse = Gtk::RESPONSE_OK,
+                                 bool withCancel = true);
+
+/// One segmented control: the box's buttons (toggle or radio-as-button) are
+/// joined and the checked one carries the tapered accent bar (widgets.css).
+void makeSegmented(Gtk::Box& box);
+
 class AdvancedSection final : public Gtk::Box
 {
 public:
@@ -942,18 +1007,18 @@ public:
     /// Force expanded (e.g. for batch mode).
     void setBatchMode(bool batchMode);
 
+    /// See SectionHeader::setSummary.
+    void setSummary(const Glib::ustring& summary) { header->setSummary(summary); }
+
     /// Notified on every expand (true) / collapse (false), so a section can
     /// put away tools it owns when it is hidden.
     void setOnToggled(std::function<void(bool)> callback) { onToggled = std::move(callback); }
 
 private:
     Gtk::Box* contentBox;
-    RTImage* arrowImage;
+    SectionHeader* header;
     bool expanded;
     std::function<void(bool)> onToggled;
-
-    bool onHeaderClick(GdkEventButton* event);
-    void updateArrow();
 };
 
 /**
@@ -998,14 +1063,10 @@ private:
     Gtk::Box* persistentBox;
     Gtk::Box* contentBox;
     Gtk::Revealer* revealer;
-    Gtk::Label* arrowLabel;
+    SectionHeader* header;
     Gtk::Button* resetBtn;
-    Glib::ustring groupLabel_;
     bool expanded;
     std::function<void()> resetCallback_;
-
-    void onHeaderClicked();
-    void updateArrow();
 };
 
 inline Gtk::Window& getToplevelWindow (Gtk::Widget* widget)

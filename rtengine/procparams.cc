@@ -704,6 +704,42 @@ bool GrainParams::operator!=(const GrainParams &other) const
     return !(*this == other);
 }
 
+RelightParams::RelightParams():
+    enabled(false),
+    lightX(-40),
+    lightY(-35),
+    distance(-40),
+    intensity(50),
+    reach(60),
+    shadows(30),
+    background(-25),
+    subjectFocus(75),
+    warmth(20),
+    shape(50)
+{
+}
+
+bool RelightParams::operator==(const RelightParams &other) const
+{
+    return
+        enabled == other.enabled
+        && lightX == other.lightX
+        && lightY == other.lightY
+        && distance == other.distance
+        && intensity == other.intensity
+        && reach == other.reach
+        && shadows == other.shadows
+        && background == other.background
+        && subjectFocus == other.subjectFocus
+        && warmth == other.warmth
+        && shape == other.shape;
+}
+
+bool RelightParams::operator!=(const RelightParams &other) const
+{
+    return !(*this == other);
+}
+
 LightEffectsParams::LightEffectsParams():
     enabled(false),
     threshold(70),
@@ -3437,7 +3473,7 @@ bool FilmSimulationParams::operator !=(const FilmSimulationParams& other) const
 FilmPresetsParams::FilmPresetsParams() :
     enabled(false),
     preset("cinema_reveal_35"),
-    modelVersion(4),
+    modelVersion(5),
     exposure(0.0),
     printExposure(0.0),
     pushPull(0.0),
@@ -4226,6 +4262,7 @@ void ProcParams::setDefaults()
     filmPresets = {};
 
     lightEffects = {};
+    relight = {};
     softlight = {};
 
     dehaze = {};
@@ -4381,6 +4418,19 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->lightEffects.flare, "Light Effects", "Flare", lightEffects.flare, keyFile);
         saveToKeyfile(!pedited || pedited->lightEffects.flareLength, "Light Effects", "FlareLength", lightEffects.flareLength, keyFile);
         saveToKeyfile(!pedited || pedited->lightEffects.flareAngle, "Light Effects", "FlareAngle", lightEffects.flareAngle, keyFile);
+
+// Relight
+        saveToKeyfile(!pedited || pedited->relight.enabled, "Relight", "Enabled", relight.enabled, keyFile);
+        saveToKeyfile(!pedited || pedited->relight.lightX, "Relight", "LightX", relight.lightX, keyFile);
+        saveToKeyfile(!pedited || pedited->relight.lightY, "Relight", "LightY", relight.lightY, keyFile);
+        saveToKeyfile(!pedited || pedited->relight.distance, "Relight", "Distance", relight.distance, keyFile);
+        saveToKeyfile(!pedited || pedited->relight.intensity, "Relight", "Intensity", relight.intensity, keyFile);
+        saveToKeyfile(!pedited || pedited->relight.reach, "Relight", "Reach", relight.reach, keyFile);
+        saveToKeyfile(!pedited || pedited->relight.shadows, "Relight", "Shadows", relight.shadows, keyFile);
+        saveToKeyfile(!pedited || pedited->relight.background, "Relight", "Background", relight.background, keyFile);
+        saveToKeyfile(!pedited || pedited->relight.subjectFocus, "Relight", "SubjectFocus", relight.subjectFocus, keyFile);
+        saveToKeyfile(!pedited || pedited->relight.warmth, "Relight", "Warmth", relight.warmth, keyFile);
+        saveToKeyfile(!pedited || pedited->relight.shape, "Relight", "Shape", relight.shape, keyFile);
 
 // Tilt-Shift
         saveToKeyfile(!pedited || pedited->tiltShift.enabled, "TiltShift", "Enabled", tiltShift.enabled, keyFile);
@@ -5925,6 +5975,20 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
             assignFromKeyfile(keyFile, "Light Effects", "Flare", lightEffects.flare, pedited->lightEffects.flare);
             assignFromKeyfile(keyFile, "Light Effects", "FlareLength", lightEffects.flareLength, pedited->lightEffects.flareLength);
             assignFromKeyfile(keyFile, "Light Effects", "FlareAngle", lightEffects.flareAngle, pedited->lightEffects.flareAngle);
+        }
+
+        if (keyFile.has_group("Relight")) {
+            assignFromKeyfile(keyFile, "Relight", "Enabled", relight.enabled, pedited->relight.enabled);
+            assignFromKeyfile(keyFile, "Relight", "LightX", relight.lightX, pedited->relight.lightX);
+            assignFromKeyfile(keyFile, "Relight", "LightY", relight.lightY, pedited->relight.lightY);
+            assignFromKeyfile(keyFile, "Relight", "Distance", relight.distance, pedited->relight.distance);
+            assignFromKeyfile(keyFile, "Relight", "Intensity", relight.intensity, pedited->relight.intensity);
+            assignFromKeyfile(keyFile, "Relight", "Reach", relight.reach, pedited->relight.reach);
+            assignFromKeyfile(keyFile, "Relight", "Shadows", relight.shadows, pedited->relight.shadows);
+            assignFromKeyfile(keyFile, "Relight", "Background", relight.background, pedited->relight.background);
+            assignFromKeyfile(keyFile, "Relight", "SubjectFocus", relight.subjectFocus, pedited->relight.subjectFocus);
+            assignFromKeyfile(keyFile, "Relight", "Warmth", relight.warmth, pedited->relight.warmth);
+            assignFromKeyfile(keyFile, "Relight", "Shape", relight.shape, pedited->relight.shape);
         }
 
         if (keyFile.has_group("Grain")) {
@@ -8360,6 +8424,7 @@ bool ProcParams::operator ==(const ProcParams& other) const
         && clarity == other.clarity
         && grain == other.grain
         && lightEffects == other.lightEffects
+        && relight == other.relight
         && tiltShift == other.tiltShift
         && lensBlur == other.lensBlur
         && labCurve == other.labCurve

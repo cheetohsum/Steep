@@ -1,0 +1,32 @@
+/* Generated from rtdata/themes/Walnut.css by tools/gen_gtk4_tokens.py.
+   Do not edit — change the theme's palette block and regenerate. */
+
+:root {
+  --steep-surface-0: #14110f;
+  --steep-surface-1: #1c1815;
+  --steep-surface-2: #25201b;
+  --steep-surface-3: #2f2822;
+  --steep-text-hi: #f1e8da;
+  --steep-text: #d6cab8;
+  --steep-text-dim: #9a8c7a;
+  --steep-accent: #d6a650;
+  --steep-select: #3e8e86;
+  --steep-attention: #d9733f;
+  --steep-rating: #e7bf55;
+  --steep-success: #93a83f;
+  --steep-danger: #c8503c;
+  --steep-border: #0b0907;
+  --steep-border-soft: #3a3129;
+  --steep-sel-bg: #3e8e86;
+  --steep-sel-fg: #f1e8da;
+  --steep-wash: #fff8ec;
+  --steep-on-accent: #1a140e;
+  --steep-shadow: alpha(#080604, 0.62);
+  --steep-surround: #2b2b2b;
+  --steep-ornament: alpha(#d6a650, 0.55);
+  --steep-label-1: #c8503c;
+  --steep-label-2: #d9a832;
+  --steep-label-3: #7d9a3e;
+  --steep-label-4: #3e8eaa;
+  --steep-label-5: #8c6aa0;
+}

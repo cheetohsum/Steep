@@ -215,7 +215,7 @@ AlbumBrowser::AlbumBrowser ()
     closeAlbumBtn_->set_name("AlbumCloseBtn");
     closeAlbumBtn_->set_label("\xC3\x97"); // × character
     closeAlbumBtn_->set_relief(Gtk::RELIEF_NONE);
-    closeAlbumBtn_->set_tooltip_text("Close album view");
+    closeAlbumBtn_->set_tooltip_text(M("ALBUM_CLOSE_VIEW"));
     closeAlbumBtn_->set_no_show_all(true);
     closeAlbumBtn_->signal_clicked().connect(sigc::mem_fun(*this, &AlbumBrowser::deselectAlbum));
 
@@ -410,8 +410,7 @@ AlbumBrowser::AlbumBrowser ()
         bool hovered = !hoveredPath_.empty() && rowPath == hoveredPath_;
         bool dropTarget = dragActive_ && !dropTargetPath_.empty() && rowPath == dropTargetPath_;
         pbCR->property_cell_background_set() = hovered || dropTarget;
-        if (dropTarget) pbCR->property_cell_background() = Glib::ustring("#2a4a6b");
-        else if (hovered) pbCR->property_cell_background() = Glib::ustring("#3a3f4b");
+        paintTreeRowState(pbCR, *treeView_, hovered, dropTarget);
     });
     treeView_->append_column(*chevronCol);
 
@@ -435,8 +434,7 @@ AlbumBrowser::AlbumBrowser ()
         bool hovered = !hoveredPath_.empty() && rowPath == hoveredPath_;
         bool dropTarget = dragActive_ && !dropTargetPath_.empty() && rowPath == dropTargetPath_;
         pbCR->property_cell_background_set() = hovered || dropTarget;
-        if (dropTarget) pbCR->property_cell_background() = Glib::ustring("#2a4a6b");
-        else if (hovered) pbCR->property_cell_background() = Glib::ustring("#3a3f4b");
+        paintTreeRowState(pbCR, *treeView_, hovered, dropTarget);
     });
     treeView_->append_column(*coverCol);
 
@@ -458,8 +456,7 @@ AlbumBrowser::AlbumBrowser ()
         bool hovered = !hoveredPath_.empty() && rowPath == hoveredPath_;
         bool dropTarget = dragActive_ && !dropTargetPath_.empty() && rowPath == dropTargetPath_;
         textCR->property_cell_background_set() = hovered || dropTarget;
-        if (dropTarget) textCR->property_cell_background() = Glib::ustring("#2a4a6b");
-        else if (hovered) textCR->property_cell_background() = Glib::ustring("#3a3f4b");
+        paintTreeRowState(textCR, *treeView_, hovered, dropTarget);
     });
     treeView_->append_column(*nameCol);
 
@@ -493,14 +490,13 @@ AlbumBrowser::AlbumBrowser ()
         bool hovered = !hoveredPath_.empty() && rowPath == hoveredPath_;
         bool dropTarget = dragActive_ && !dropTargetPath_.empty() && rowPath == dropTargetPath_;
         pbCR->property_cell_background_set() = hovered || dropTarget;
-        if (dropTarget) pbCR->property_cell_background() = Glib::ustring("#2a4a6b");
-        else if (hovered) pbCR->property_cell_background() = Glib::ustring("#3a3f4b");
+        paintTreeRowState(pbCR, *treeView_, hovered, dropTarget);
     });
     treeView_->append_column(*searchCol_);
 
     // Count column — fixed width, right-aligned
     Gtk::CellRendererText* countCR = Gtk::manage(new Gtk::CellRendererText());
-    countCR->property_foreground() = "#888888";
+    countCR->property_foreground_rgba() = themeColor(*treeView_, "steep_text_dim", Gdk::RGBA("#888888"));
     countCR->property_xalign() = 1.0;
     Gtk::TreeView::Column* countCol = Gtk::manage(new Gtk::TreeView::Column(""));
     countCol->pack_start(*countCR, false);
@@ -520,8 +516,7 @@ AlbumBrowser::AlbumBrowser ()
         bool hovered = !hoveredPath_.empty() && rowPath == hoveredPath_;
         bool dropTarget = dragActive_ && !dropTargetPath_.empty() && rowPath == dropTargetPath_;
         textCR->property_cell_background_set() = hovered || dropTarget;
-        if (dropTarget) textCR->property_cell_background() = Glib::ustring("#2a4a6b");
-        else if (hovered) textCR->property_cell_background() = Glib::ustring("#3a3f4b");
+        paintTreeRowState(textCR, *treeView_, hovered, dropTarget);
     });
     treeView_->append_column(*countCol);
 
@@ -1805,7 +1800,7 @@ bool AlbumBrowser::showSmartAlbumDialog (Glib::ustring& name, std::vector<SmartA
     matchCombo->append(M("ALBUM_SMART_MATCH_ALL"));
     matchCombo->append(M("ALBUM_SMART_MATCH_ANY"));
     matchCombo->set_active(matchAll ? 0 : 1);
-    matchRow->pack_start(*Gtk::manage(new Gtk::Label("Match:")), Gtk::PACK_SHRINK);
+    matchRow->pack_start(*Gtk::manage(new Gtk::Label(M("ALBUM_SMART_MATCH"))), Gtk::PACK_SHRINK);
     matchRow->pack_start(*matchCombo, Gtk::PACK_SHRINK);
     content->pack_start(*matchRow, Gtk::PACK_SHRINK, 4);
 
@@ -1859,7 +1854,7 @@ bool AlbumBrowser::showSmartAlbumDialog (Glib::ustring& name, std::vector<SmartA
         if (existingRule) rr.valueEntry->set_text(existingRule->value);
         rr.box->pack_start(*rr.valueEntry, Gtk::PACK_EXPAND_WIDGET);
 
-        Gtk::Button* removeBtn = Gtk::manage(new Gtk::Button("x"));
+        Gtk::Button* removeBtn = Gtk::manage(new Gtk::Button()); removeBtn->set_relief(Gtk::RELIEF_NONE); removeBtn->add(*Gtk::manage(new RTImage("cancel-small", Gtk::ICON_SIZE_BUTTON))); removeBtn->set_tooltip_text(M("ALBUM_SMART_REMOVE_RULE"));
         removeBtn->set_relief(Gtk::RELIEF_NONE);
         auto rowPtr = rr.box;
         removeBtn->signal_clicked().connect([rulesBox, rowPtr, ruleRows]() {

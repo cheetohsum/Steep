@@ -2,21 +2,31 @@
    Do not edit — change the theme's palette block and regenerate. */
 
 :root {
-  --steep-surface-0: #0d1120;
-  --steep-surface-1: #151a30;
-  --steep-surface-2: #1c2240;
-  --steep-surface-3: #232a4e;
-  --steep-text-hi: #d8d6e8;
-  --steep-text: #b4b2c8;
-  --steep-text-dim: #7d84ac;
+  --steep-surface-0: #0b0f1c;
+  --steep-surface-1: #12172b;
+  --steep-surface-2: #191f38;
+  --steep-surface-3: #212849;
+  --steep-text-hi: #e6e4f4;
+  --steep-text: #c0bed6;
+  --steep-text-dim: #8088ad;
   --steep-accent: #8fd9f0;
-  --steep-select: #5f70c0;
-  --steep-attention: #c08858;
-  --steep-success: #65e8a8;
-  --steep-danger: #e0666a;
-  --steep-border: #0a0e1e;
-  --steep-border-soft: #2b3154;
-  --steep-sel-bg: #5f70c0;
-  --steep-sel-fg: #0d1120;
-  --steep-wash: #ffffff;
+  --steep-select: #6f7fd6;
+  --steep-attention: #e0915a;
+  --steep-rating: #f0c75e;
+  --steep-success: #7fc99a;
+  --steep-danger: #e2677a;
+  --steep-border: #060912;
+  --steep-border-soft: #2a3156;
+  --steep-sel-bg: #6f7fd6;
+  --steep-sel-fg: #0b0f1c;
+  --steep-wash: #e1e8ff;
+  --steep-on-accent: #0b0f1c;
+  --steep-shadow: alpha(#04060e, 0.60);
+  --steep-surround: #272727;
+  --steep-ornament: alpha(#8fd9f0, 0.50);
+  --steep-label-1: #e2677a;
+  --steep-label-2: #e8c25a;
+  --steep-label-3: #7fc99a;
+  --steep-label-4: #6fb6e8;
+  --steep-label-5: #a98be0;
 }

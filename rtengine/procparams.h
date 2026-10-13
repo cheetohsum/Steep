@@ -258,6 +258,30 @@ struct GrainParams {
 };
 
 /**
+ * Relight: a virtual light placed on the photograph. It reads the AI subject
+ * mask and the estimated scene depth, so it can light the subject, model its
+ * surfaces from the depth map, and darken or lift the background separately.
+ */
+struct RelightParams {
+    bool enabled;
+    int lightX; // -150..150, light across the frame (-100/100 = left/right edge)
+    int lightY; // -150..150, light down the frame (-100/100 = top/bottom edge)
+    int distance; // -100..100, light depth: in front of the subject .. behind it (rim)
+    int intensity; // 0..200, key light brightness in 1/50 EV (50 = +1 EV)
+    int reach; // 5..100, how far the light carries
+    int shadows; // 0..100, darkens the side turned away from the light
+    int background; // -100..100, EV shift of everything that is not the subject
+    int subjectFocus; // 0..100, confine the light to the subject
+    int warmth; // -100..100, cool .. warm light
+    int shape; // 0..100, how much the depth map models the surfaces
+
+    RelightParams();
+
+    bool operator==(const RelightParams &other) const;
+    bool operator!=(const RelightParams &other) const;
+};
+
+/**
  * Optical light effects: diffusion glow, film halation and lens flare.
  * All three read the same highlight mask but spread it differently — glow
  * symmetrically, halation as a warm ring hugging the edge, flare as
@@ -2292,6 +2316,7 @@ public:
     ClarityParams           clarity;         ///< Clarity parameters
     GrainParams             grain;           ///< Film grain parameters
     LightEffectsParams      lightEffects;    ///< Glow / halation / flare parameters
+    RelightParams           relight;         ///< Subject and depth aware virtual light
     TiltShiftParams         tiltShift;       ///< Tilt-shift effect parameters
     LensBlurParams          lensBlur;        ///< Lens blur parameters
     RGBCurvesParams         rgbCurves;       ///< RGB curves parameters

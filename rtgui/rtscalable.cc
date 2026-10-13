@@ -20,7 +20,10 @@
 
 #include "rtscalable.h"
 
+#include <cmath>
+#include <cstdio>
 #include <iostream>
+#include <string>
 
 #include "rtengine/rtapp.h"
 #include "rtengine/settings.h"
@@ -230,6 +233,55 @@ namespace
 
 bool s_iconInkDark = false;
 
+// Hex colours substituted into theme-aware SVGs (see setIconPaletteFrom).
+struct IconPalette {
+    std::string ink = "#cdd2da";
+    std::string accent = "#2d7fd3";
+    std::string rating = "#f2c240";
+    std::string danger = "#f06468";
+    std::string surface = "#252a32";
+
+    bool operator==(const IconPalette& o) const
+    {
+        return ink == o.ink && accent == o.accent && rating == o.rating && danger == o.danger && surface == o.surface;
+    }
+};
+
+IconPalette s_iconPalette;
+
+std::string toHex(const Gdk::RGBA& c)
+{
+    char buf[8];
+    snprintf(buf, sizeof(buf), "#%02x%02x%02x",
+             static_cast<unsigned>(std::lround(std::max(0.0, std::min(1.0, c.get_red())) * 255.0)),
+             static_cast<unsigned>(std::lround(std::max(0.0, std::min(1.0, c.get_green())) * 255.0)),
+             static_cast<unsigned>(std::lround(std::max(0.0, std::min(1.0, c.get_blue())) * 255.0)));
+    return buf;
+}
+
+void replaceAll(std::string& s, const std::string& from, const std::string& to)
+{
+    for (size_t pos = s.find(from); pos != std::string::npos; pos = s.find(from, pos + to.size())) {
+        s.replace(pos, from.size(), to);
+    }
+}
+
+// Resolve the palette names of a theme-aware icon. Returns false for a
+// classic icon, which keeps the light-theme lightness flip instead.
+bool applyIconPalette(std::string& svg)
+{
+    if (svg.find("currentColor") == std::string::npos && svg.find("var(--") == std::string::npos) {
+        return false;
+    }
+
+    replaceAll(svg, "currentColor", s_iconPalette.ink);
+    replaceAll(svg, "var(--accent)", s_iconPalette.accent);
+    replaceAll(svg, "var(--rating)", s_iconPalette.rating);
+    replaceAll(svg, "var(--danger)", s_iconPalette.danger);
+    replaceAll(svg, "var(--surface)", s_iconPalette.surface);
+    return true;
+}
+
 int hexNibble(const char ch)
 {
     if (ch >= '0' && ch <= '9') return ch - '0';
@@ -317,6 +369,39 @@ bool RTScalable::getIconInkDark()
     return s_iconInkDark;
 }
 
+bool RTScalable::setIconPaletteFrom(const Glib::RefPtr<Gtk::StyleContext>& ctx)
+{
+    if (!ctx) {
+        return false;
+    }
+
+    IconPalette next = s_iconPalette;
+    const auto take = [&ctx](const char* name, std::string& slot) {
+        Gdk::RGBA c;
+
+        if (ctx->lookup_color(name, c)) {
+            slot = toHex(c);
+        }
+    };
+    take("steep_text", next.ink);
+    take("steep_accent", next.accent);
+    take("steep_rating", next.rating);
+    take("steep_danger", next.danger);
+    take("steep_surface_1", next.surface);
+
+    if (next == s_iconPalette) {
+        return false;
+    }
+
+    s_iconPalette = next;
+    return true;
+}
+
+void RTScalable::notifyChanged()
+{
+    s_signal_changed.emit(s_dpi, s_scale);
+}
+
 Cairo::RefPtr<Cairo::ImageSurface> RTScalable::loadSurfaceFromSVG(const Glib::ustring &fname, const int width, const int height, const bool is_path)
 {
     GThreadLock lock; // All icon theme access or image access on separate thread HAVE to be protected
@@ -355,7 +440,7 @@ Cairo::RefPtr<Cairo::ImageSurface> RTScalable::loadSurfaceFromSVG(const Glib::us
             return surf;
         }
 
-        if (s_iconInkDark) {
+        if (!applyIconPalette(svgFile) && s_iconInkDark) {
             svgFile = recolorSvgForLightTheme(svgFile);
         }
 

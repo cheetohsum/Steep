@@ -142,11 +142,11 @@ ThumbBrowserEntryBase::ThumbBrowserEntryBase (const Glib::ustring& fname, Thumbn
     prevPos(0, 0),
     activeDeviceScale(1),
     pendingDeviceScale(1),
-    upperMargin(4),
+    upperMargin(3),
     borderWidth(0),
     textGap(4),
-    sideMargin(4),
-    lowerMargin(4),
+    sideMargin(3),
+    lowerMargin(3),
     previewSlotClock_(0),
     dispname(Glib::path_get_basename(fname)),
     buttonSet(nullptr),
@@ -1002,34 +1002,31 @@ void ThumbBrowserEntryBase::draw (Cairo::RefPtr<Cairo::Context> cc)
         const double pw = previewSize.width;
         const double ph = previewSize.height;
 
-        auto roundedInset = [&cc, px, py, pw, ph](double inset, double rad) {
-            const double x0 = px + inset, y0 = py + inset;
-            const double w = pw - 2.0 * inset, h = ph - 2.0 * inset;
+        // An arch: rounder top corners than bottom ones, the shape every
+        // container in the Atelier look takes. `grow` > 0 lies outside the
+        // photo.
+        auto archAround = [&cc, px, py, pw, ph](double grow, double top, double bottom) {
+            const double x0 = px - grow, y0 = py - grow;
+            const double w = pw + 2.0 * grow, h = ph + 2.0 * grow;
             cc->begin_new_path();
-            cc->arc(x0 + w - rad, y0 + rad, rad, -G_PI / 2.0, 0);
-            cc->arc(x0 + w - rad, y0 + h - rad, rad, 0, G_PI / 2.0);
-            cc->arc(x0 + rad, y0 + h - rad, rad, G_PI / 2.0, G_PI);
-            cc->arc(x0 + rad, y0 + rad, rad, G_PI, 1.5 * G_PI);
+            cc->arc(x0 + w - top, y0 + top, top, -G_PI / 2.0, 0);
+            cc->arc(x0 + w - bottom, y0 + h - bottom, bottom, 0, G_PI / 2.0);
+            cc->arc(x0 + bottom, y0 + h - bottom, bottom, G_PI / 2.0, G_PI);
+            cc->arc(x0 + top, y0 + top, top, G_PI, 1.5 * G_PI);
             cc->close_path();
         };
 
         cc->set_line_join(Cairo::LINE_JOIN_ROUND);
 
-        // Soft glow bleeding inward from the frame
-        roundedInset(4.0, 3.0);
-        cc->set_source_rgba(ar, ag, ab, 0.14);
-        cc->set_line_width(5.0);
-        cc->stroke();
-
-        // Crisp accent frame hugging the image edge
-        roundedInset(1.25, 3.5);
+        // A passe-partout: two accent lines on the mat AROUND the photo, so
+        // selection never tints the picture being judged.
+        archAround(2.25, 6.0, 2.5);
         cc->set_source_rgba(ar, ag, ab, 0.95);
-        cc->set_line_width(2.5);
+        cc->set_line_width(1.5);
         cc->stroke();
 
-        // White hairline inside the accent for extra pop
-        roundedInset(3.25, 2.5);
-        cc->set_source_rgba(1.0, 1.0, 1.0, 0.30);
+        archAround(0.5, 3.5, 1.5);
+        cc->set_source_rgba(ar, ag, ab, 0.45);
         cc->set_line_width(1.0);
         cc->stroke();
     }
@@ -1236,8 +1233,9 @@ void ThumbBrowserEntryBase::drawFilmstripOverlays (Cairo::RefPtr<Cairo::Context>
         cc->clip();
         // Golden glow from bottom
         auto grad = Cairo::LinearGradient::create(imgX, imgY + imgH, imgX, imgY + imgH * 0.5);
-        grad->add_color_stop_rgba(0, 1.0, 0.84, 0.0, 0.4 * animRatingAlpha_);
-        grad->add_color_stop_rgba(1, 1.0, 0.84, 0.0, 0.0);
+        const Gdk::RGBA gold = themeColor(parent->getStyle(), "steep_rating", Gdk::RGBA("#f2c240"));
+        grad->add_color_stop_rgba(0, gold.get_red(), gold.get_green(), gold.get_blue(), 0.4 * animRatingAlpha_);
+        grad->add_color_stop_rgba(1, gold.get_red(), gold.get_green(), gold.get_blue(), 0.0);
         cc->set_source(grad);
         cc->paint();
         cc->restore();
@@ -1245,14 +1243,11 @@ void ThumbBrowserEntryBase::drawFilmstripOverlays (Cairo::RefPtr<Cairo::Context>
 
     // Draw color label animation glow
     if (animColorActive_ && animColorAlpha_ > 0 && clabel > 0) {
-        static const double colorR[] = {0, 1.0, 1.0, 0.2, 0.2, 0.6};
-        static const double colorG[] = {0, 0.2, 0.85, 0.8, 0.4, 0.2};
-        static const double colorB[] = {0, 0.2, 0.0, 0.2, 1.0, 0.8};
-        int ci = std::min(clabel, 5);
+        const Gdk::RGBA labelColor = colorLabelColor(std::min(clabel, 5));
         cc->save();
         // Colored border glow
         double glowW = 3.0 * animColorAlpha_;
-        cc->set_source_rgba(colorR[ci], colorG[ci], colorB[ci], 0.7 * animColorAlpha_);
+        cc->set_source_rgba(labelColor.get_red(), labelColor.get_green(), labelColor.get_blue(), 0.7 * animColorAlpha_);
         cc->set_line_width(glowW);
         cc->rectangle(imgX + glowW/2, imgY + glowW/2, imgW - glowW, imgH - glowW);
         cc->stroke();

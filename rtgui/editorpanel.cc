@@ -1004,7 +1004,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 
     presetListPanel = new PresetListPanel();
 
-    // Create navigator and history (NOT packed into sidebar â€” used in popup dialogs)
+    // Create navigator and history (NOT packed into sidebar — used in popup dialogs)
     navigator = new Navigator();
     navigator->previewWindow->set_size_request(-1, RTScalable::scalePixelSize(150));
     history = new History();
@@ -1200,7 +1200,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     filmstripCurrentPick_ = 0;
     albumSortBtn_ = nullptr;
 
-    // Filmstrip action bar (rating, color label, queue) â€” centered in toolbar
+    // Filmstrip action bar (rating, color label, queue) — centered in toolbar
     filmstripCurrentRating = 0;
     filmstripActionBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
     filmstripActionBar->set_name("FilmstripActions");
@@ -1224,7 +1224,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 
         filmstripFlagBtn_ = Gtk::manage(new Gtk::Button());
         // NOT Gtk::manage'd: set_image() swaps drop the old image from the
-        // button and a managed image is destroyed on unparent â€” the flag
+        // button and a managed image is destroyed on unparent — the flag
         // icon then rendered corrupted (missing its pole) on Windows.
         // C++-owned, freed in the destructor like every other swapped pair.
         iFilmstripFlagPick_ = new RTImage("flag-pick", filmstripIconSize());
@@ -1259,7 +1259,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         auto* sepFlag = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
         filmstripActionBar->pack_start(*sepFlag, Gtk::PACK_SHRINK);
 
-        // Color label pill â€” multicolor trigger circle expands on hover
+        // Color label pill — multicolor trigger circle expands on hover
         {
             auto* pillEventBox = Gtk::manage(new Gtk::EventBox());
             auto* pillBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
@@ -1367,7 +1367,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 
             for (int i = 0; i < 5; ++i) {
                 filmstripRankBtns[i] = Gtk::manage(new Gtk::Button());
-                // C++-owned swap icons â€” same rule as the flag button pair.
+                // C++-owned swap icons — same rule as the flag button pair.
                 iFilmstripStarGold_[i] = new RTImage("star-gold-small", filmstripIconSize());
                 iFilmstripStarPlain_[i] = new RTImage("star-small", filmstripIconSize());
                 filmstripRankBtns[i]->set_image(*iFilmstripStarPlain_[i]);
@@ -1763,7 +1763,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                 clipboard.setPartialProfile(pp);
             }
         });
-        // Copy filter dropdown â€” inset to the right of the copy button
+        // Copy filter dropdown — inset to the right of the copy button
         Gtk::MenuButton* copyFilterBtn = Gtk::manage(new Gtk::MenuButton());
         copyFilterBtn->set_image(*Gtk::manage(new RTImage("copy-filter", filmstripIconSize())));
         copyFilterBtn->set_relief(Gtk::RELIEF_NONE);
@@ -1853,24 +1853,60 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         fbClearAll->signal_clicked().connect(sigc::mem_fun(*this, &EditorPanel::filterBarClearAll));
         filterBar->pack_start(*fbClearAll, Gtk::PACK_SHRINK);
 
+        // Global scope, the same switch as the browser's globe.
+        fbGlobalScope_ = Gtk::manage(new Gtk::ToggleButton());
+        fbGlobalScope_->set_image(*Gtk::manage(new RTImage("globe-small", Gtk::ICON_SIZE_MENU)));
+        fbGlobalScope_->set_relief(Gtk::RELIEF_NONE);
+        fbGlobalScope_->set_tooltip_text(M("FILEBROWSER_GLOBALSCOPE_TOOLTIP"));
+        fbGlobalScopeConn_ = fbGlobalScope_->signal_toggled().connect([this]() {
+            if (fPanel && fPanel->fileCatalog) {
+                fPanel->fileCatalog->setGlobalScope(fbGlobalScope_->get_active());
+            }
+        });
+        filterBar->pack_start(*fbGlobalScope_, Gtk::PACK_SHRINK);
+
         auto* fsep0 = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
         filterBar->pack_start(*fsep0, Gtk::PACK_SHRINK);
 
         // Rating group
+        // Ratings show gold when on, in place of the checked-button wash.
+        // Each button holds both images and only their visibility changes.
+        const auto starFace = [](Gtk::ToggleButton* b, const char* offIcon, const char* onIcon) {
+            auto* face = Gtk::manage(new Gtk::Box());
+            auto* off = Gtk::manage(new RTImage(offIcon, Gtk::ICON_SIZE_MENU));
+            auto* on = Gtk::manage(new RTImage(onIcon, Gtk::ICON_SIZE_MENU));
+            off->set_no_show_all(true);
+            on->set_no_show_all(true);
+            off->show();
+            face->pack_start(*off, Gtk::PACK_SHRINK);
+            face->pack_start(*on, Gtk::PACK_SHRINK);
+            b->add(*face);
+            b->get_style_context()->add_class("rating-filter");
+            b->signal_toggled().connect([b, off, on]() {
+                on->set_visible(b->get_active());
+                off->set_visible(!b->get_active());
+            });
+        };
         fbUnRanked = Gtk::manage(new Gtk::ToggleButton());
-        fbUnRanked->set_image(*Gtk::manage(new RTImage("star-hollow-small", Gtk::ICON_SIZE_MENU)));
+        starFace(fbUnRanked, "star-hollow-small", "star-gold-hollow-small");
         fbUnRanked->set_relief(Gtk::RELIEF_NONE);
         fbUnRanked->set_tooltip_markup(M("FILEBROWSER_SHOWUNRANKHINT"));
         connectToggle(fbUnRanked);
+        fbUnRanked->signal_button_press_event().connect(
+            sigc::bind(sigc::mem_fun(*this, &EditorPanel::rankButtonPressed), 0), false);
         filterBar->pack_start(*fbUnRanked, Gtk::PACK_SHRINK);
 
         for (int i = 0; i < 5; i++) {
             fbRank[i] = Gtk::manage(new Gtk::ToggleButton());
-            fbRank[i]->set_image(*Gtk::manage(new RTImage("star-small", Gtk::ICON_SIZE_MENU)));
+            starFace(fbRank[i], "star-small", "star-gold-small");
             fbRank[i]->set_relief(Gtk::RELIEF_NONE);
             Glib::ustring convergent = Glib::ustring::compose("FILEBROWSER_SHOWRANK%1HINT", i + 1);
             fbRank[i]->set_tooltip_markup(M(convergent));
             connectToggle(fbRank[i]);
+            // Clicks are taken before the toggle so a star can cycle
+            // "and up" -> "only" -> off.
+            fbRank[i]->signal_button_press_event().connect(
+                sigc::bind(sigc::mem_fun(*this, &EditorPanel::rankButtonPressed), i + 1), false);
             filterBar->pack_start(*fbRank[i], Gtk::PACK_SHRINK);
         }
 
@@ -2012,12 +2048,9 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         editorPhotoTagFilter_ = Gtk::manage(new PhotoTagFilter());
         editorPhotoTagFilter_->changed().connect([this]() { if (!filterBarBlockSignals) applyEditorFilter(); });
         filterBar->pack_start(*editorPhotoTagFilter_, Gtk::PACK_SHRINK);
-        auto* editTags = Gtk::manage(new Gtk::Button(M("TAGS_EDIT")));
-        editTags->set_relief(Gtk::RELIEF_NONE);
-        editTags->signal_clicked().connect([this]() {
+        editorPhotoTagFilter_->setEditAction(M("TAGS_EDIT"), [this]() {
             if (!fname.empty()) editPhotoTags(dynamic_cast<Gtk::Window*>(get_toplevel()), {fname});
         });
-        filterBar->pack_start(*editTags, Gtk::PACK_SHRINK);
 
         filterBarRevealer = Gtk::manage(new Gtk::Revealer());
         filterBarRevealer->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
@@ -2235,7 +2268,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     navPrev = navNext = navSync = nullptr;
 
     if (!App::get().isSimpleEditor() && !options.tabbedUI) {
-        // Navigation buttons â€” smaller icons, centered in toolbar
+        // Navigation buttons — smaller icons, centered in toolbar
         Gtk::Image *navPrevImage = Gtk::manage (new RTImage ("nav-prev", Gtk::ICON_SIZE_SMALL_TOOLBAR));
         navPrev = Gtk::manage (new Gtk::Button ());
         navPrev->add (*navPrevImage);
@@ -2258,7 +2291,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     // Color management toolbar (buttons moved to Options menu, but keep object alive)
     colorMgmtToolBar.reset (new ColorManagementToolbar (ipc));
 
-    (void)iops;  // grid layout retired â€” a true center widget below
+    (void)iops;  // grid layout retired — a true center widget below
 
     // The nav/zoom cluster is a real GtkBox center widget: it stays put no
     // matter how the left (progress bar) or right content changes width.
@@ -2309,6 +2342,13 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     vboxright->set_name ("EditorModules");
 
     fPanel = filePanel;
+
+    if (filePanel && filePanel->fileCatalog) {
+        // The globe in this filter bar follows the browser's (a mem_fun, so
+        // the connection goes with this panel).
+        filePanel->fileCatalog->signalGlobalScopeChanged().connect(
+            sigc::mem_fun(*this, &EditorPanel::onGlobalScopeChanged));
+    }
 
     if (filePanel && tpc) {
         FilePanel* const fp = filePanel;
@@ -2386,7 +2426,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 
     // Album view styling lives in themes/common/widgets.css (#AlbumViewHeader etc.)
 
-    // View mode segmented control (Grid | Fit | Collage) â€” left side after back button
+    // View mode segmented control (Grid | Fit | Collage) — left side after back button
     {
         albumModeGrid_ = Gtk::manage(new Gtk::RadioButton(albumModeGroup_));
         albumModeGrid_->set_mode(false);
@@ -2427,7 +2467,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     albumViewHeader_->pack_start(*albumInfoToggle_, Gtk::PACK_SHRINK);
 
     // Zoom slider
-    albumZoomSlider_ = Gtk::manage(new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
+    { auto* zs = Gtk::manage(new MyHScale()); zs->setZoomStyle(true); albumZoomSlider_ = zs; }
     albumZoomSlider_->set_range(60, 400);
     albumZoomSlider_->set_value(albumThumbHeight_);
     albumZoomSlider_->set_draw_value(false);
@@ -2469,12 +2509,12 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         albumViewHeader_->pack_start(*albumSortBtn_, Gtk::PACK_SHRINK);
     }
 
-    // Album name â€” right side, expands to fill
+    // Album name — right side, expands to fill
     albumNameLabel_ = Gtk::manage(new Gtk::Label());
     albumNameLabel_->set_halign(Gtk::ALIGN_END);
     albumViewHeader_->pack_start(*albumNameLabel_, Gtk::PACK_EXPAND_WIDGET);
 
-    // Photo count â€” far right
+    // Photo count — far right
     albumCountLabel_ = Gtk::manage(new Gtk::Label());
     albumCountLabel_->set_halign(Gtk::ALIGN_END);
     albumViewHeader_->pack_end(*albumCountLabel_, Gtk::PACK_SHRINK);
@@ -2611,7 +2651,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                 }
                 // Toggle animation: drives show/hide via sidebar button
                 double toggleEased = 1.0 - std::pow(1.0 - rightAnimFraction_, 3);
-                // Use the minimum â€” either animation can hide the sidebar
+                // Use the minimum — either animation can hide the sidebar
                 double combined = std::min(viewEased, toggleEased);
                 int slideOffset = static_cast<int>(panelW * (1.0 - combined));
                 alloc.set_x(overlayW - panelW + slideOffset);
@@ -2819,7 +2859,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         navNext->signal_pressed().connect ( sigc::mem_fun (*this, &EditorPanel::openNextEditorImage) );
     }
 
-    // navSync removed â€” replaced by zoom panel in center position
+    // navSync removed — replaced by zoom panel in center position
 
     ShowHideSidePanelsconn = tbShowHideSidePanels->signal_toggled().connect ( sigc::mem_fun (*this, &EditorPanel::toggleSidePanels), true);
 
@@ -2933,11 +2973,11 @@ void EditorPanel::applyFilmstripPlacement ()
     const bool atBottom = App::get().options().filmstripAtBottom;
 
     // editbox stacks: [title] [filmstrip] [toolbar] filter bar, image, toolbar.
-    // The whole group travels together â€” the folder title labels the strip,
+    // The whole group travels together — the folder title labels the strip,
     // and the rating / before-after / sort toolbar belongs beside it rather
     // than stranded at the top of the window.
     if (atBottom) {
-        // Appending in order leaves: â€¦ toolbar, title, filmstrip (last).
+        // Appending in order leaves: … toolbar, title, filmstrip (last).
         if (editorToolbarTop_) {
             editbox_->reorder_child(*editorToolbarTop_, -1);
         }
@@ -3018,6 +3058,7 @@ EditorPanel::~EditorPanel ()
     deferredHighDetailConn_.disconnect();
     editBenchConn_.disconnect();
     filmstripPreviewUpdateConn_.disconnect();
+    editorRenderCaptureConn_.disconnect();
     quickPreviewWatchdogConn_.disconnect();
     pendingFilmstripPreviewFile_.clear();
     ++editorDirSyncGeneration_;
@@ -3353,11 +3394,11 @@ void EditorPanel::updateFilmstripStars(int highlightUpTo)
 void EditorPanel::updateFilmstripFlagBtn()
 {
     if (filmstripCurrentPick_ == 1) {
-        // Currently flagged â€” show unflag icon
+        // Currently flagged — show unflag icon
         filmstripFlagBtn_->set_image(*iFilmstripFlagUnflag_);
         filmstripFlagBtn_->set_tooltip_markup(M("FILEBROWSER_POPUPUNFLAG"));
     } else {
-        // Not flagged â€” show flag icon
+        // Not flagged — show flag icon
         filmstripFlagBtn_->set_image(*iFilmstripFlagPick_);
         filmstripFlagBtn_->set_tooltip_markup(M("FILEBROWSER_POPUPFLAG"));
     }
@@ -3378,7 +3419,7 @@ void EditorPanel::albumSortChanged ()
     // Sort the album files list
     if (albumAllFiles_.empty()) return;
 
-    // We need Thumbnail objects to compare â€” use cacheMgr
+    // We need Thumbnail objects to compare — use cacheMgr
     // Build sortable pairs of (filepath, Thumbnail*)
     struct SortEntry {
         Glib::ustring path;
@@ -3482,13 +3523,180 @@ int EditorPanel::editorFilterCount() const
 void EditorPanel::collapseFilterBar()
 {
     if (tbFilterBar && tbFilterBar->get_active()) {
-        tbFilterBar->set_active(false);  // triggers filterBarToggled â†’ hides
+        tbFilterBar->set_active(false);  // triggers filterBarToggled → hides
     }
 }
 
 void EditorPanel::restoreEditorFilter()
 {
     applyEditorFilter();
+}
+
+bool EditorPanel::rankButtonPressed(GdkEventButton* event, int star)
+{
+    if (!event || event->type != GDK_BUTTON_PRESS || event->button != 1) {
+        return false;
+    }
+
+    // Start over if the buttons no longer show the remembered state.
+    bool matches = fbRankAnchor_ > 0 && !fbUnRanked->get_active();
+
+    for (int s = 1; matches && s <= 5; ++s) {
+        const bool want = fbRankExact_ ? s == fbRankAnchor_ : s >= fbRankAnchor_;
+        matches = fbRank[s - 1]->get_active() == want;
+    }
+
+    if (!matches) {
+        fbRankAnchor_ = 0;
+        fbRankExact_ = false;
+    }
+
+    bool anyStar = false;
+
+    for (int s = 0; s < 5; ++s) {
+        anyStar = anyStar || fbRank[s]->get_active();
+    }
+
+    filterBarBlockSignals = true;
+
+    if (star == 0) {
+        // The 0-star button clears a rating filter, or with none set shows
+        // only unrated photos.
+        if (anyStar) {
+            fbRankAnchor_ = 0;
+            fbRankExact_ = false;
+            fbUnRanked->set_active(false);
+        } else {
+            fbUnRanked->set_active(!fbUnRanked->get_active());
+        }
+    } else {
+        if (fbRankAnchor_ == star && !fbRankExact_) {
+            fbRankExact_ = true;
+        } else if (fbRankAnchor_ == star) {
+            fbRankAnchor_ = 0;
+            fbRankExact_ = false;
+        } else {
+            fbRankAnchor_ = star;
+            fbRankExact_ = false;
+        }
+
+        fbUnRanked->set_active(false);
+    }
+
+    setRankButtons();
+    filterBarBlockSignals = false;
+    applyEditorFilter();
+    return true; // the toggle itself is handled here
+}
+
+void EditorPanel::onGlobalScopeChanged(bool on)
+{
+    if (fbGlobalScope_ && fbGlobalScope_->get_active() != on) {
+        fbGlobalScopeConn_.block();
+        fbGlobalScope_->set_active(on);
+        fbGlobalScopeConn_.unblock();
+    }
+}
+
+void EditorPanel::setRankButtons()
+{
+    if (fbRankAnchor_ <= 0) {
+        // Leave unrated alone; clear the stars.
+        for (int s = 1; s <= 5; ++s) {
+            fbRank[s - 1]->set_active(false);
+        }
+
+        return;
+    }
+
+    for (int s = 1; s <= 5; ++s) {
+        fbRank[s - 1]->set_active(fbRankExact_ ? s == fbRankAnchor_ : s >= fbRankAnchor_);
+    }
+}
+
+FilterToggles EditorPanel::getFilterToggles() const
+{
+    FilterToggles t;
+
+    if (!filterBarRevealer) {
+        return t;
+    }
+
+    t.unranked = fbUnRanked->get_active();
+    t.unlabeled = fbUnCLabeled->get_active();
+
+    for (int i = 0; i < 5; ++i) {
+        t.rank[i] = fbRank[i]->get_active();
+        t.label[i] = fbCLabel[i]->get_active();
+    }
+
+    t.rankAnchor = fbRankAnchor_;
+    t.rankExact = fbRankExact_;
+
+    for (int i = 0; i < 2; ++i) {
+        t.edited[i] = fbEdited[i]->get_active();
+        t.saved[i] = fbRecentlySaved[i]->get_active();
+    }
+
+    t.picked = fbPicked->get_active();
+    t.unflagged = fbUnflagged->get_active();
+    t.rejected = fbRejected->get_active();
+    t.search = fbSearchEntry->get_text();
+
+    if (editorPhotoTagFilter_) {
+        t.tags = editorPhotoTagFilter_->selected();
+        t.tagsAll = editorPhotoTagFilter_->matchAll();
+        t.untagged = editorPhotoTagFilter_->untagged();
+    }
+
+    return t;
+}
+
+void EditorPanel::setFilterToggles(const FilterToggles& t)
+{
+    if (!filterBarRevealer) {
+        return;
+    }
+
+    filterBarBlockSignals = true;
+    fbUnRanked->set_active(t.unranked);
+    fbUnCLabeled->set_active(t.unlabeled);
+
+    for (int i = 0; i < 5; ++i) {
+        fbRank[i]->set_active(t.rank[i]);
+        fbCLabel[i]->set_active(t.label[i]);
+    }
+
+    fbRankAnchor_ = t.rankAnchor;
+    fbRankExact_ = t.rankExact;
+
+    for (int i = 0; i < 2; ++i) {
+        fbEdited[i]->set_active(t.edited[i]);
+        fbRecentlySaved[i]->set_active(t.saved[i]);
+    }
+
+    fbPicked->set_active(t.picked);
+    fbUnflagged->set_active(t.unflagged);
+    fbRejected->set_active(t.rejected);
+
+    if (fbSearchEntry->get_text() != t.search) {
+        fbSearchEntry->set_text(t.search);
+    }
+
+    if (editorPhotoTagFilter_ && (editorPhotoTagFilter_->selected() != t.tags
+                                  || editorPhotoTagFilter_->matchAll() != t.tagsAll
+                                  || editorPhotoTagFilter_->untagged() != t.untagged)) {
+        editorPhotoTagFilter_->setSelection(t.tags, t.tagsAll, t.untagged);
+    }
+
+    if (fbGlobalScope_ && fPanel && fPanel->fileCatalog) {
+        fbGlobalScopeConn_.block();
+        fbGlobalScope_->set_active(fPanel->fileCatalog->isGlobalScope());
+        fbGlobalScopeConn_.unblock();
+    }
+
+    filterBarBlockSignals = false;
+    setCountBadge(filterCountBadge_, editorFilterCount());
 }
 
 void EditorPanel::filterBarChanged()
@@ -3505,6 +3713,8 @@ void EditorPanel::filterBarClearAll()
     for (int i = 0; i < 5; i++) {
         fbRank[i]->set_active(false);
     }
+    fbRankAnchor_ = 0;
+    fbRankExact_ = false;
 
     fbUnCLabeled->set_active(false);
     for (int i = 0; i < 5; i++) {
@@ -3624,7 +3834,7 @@ void EditorPanel::onEditorFiletypeAllToggled()
 
     std::set<std::string> sel;
     if (!all) {
-        // All unchecked â€” empty selection means show nothing
+        // All unchecked — empty selection means show nothing
     }
     fPanel->fileCatalog->setSelectedFiletypes(sel);
     updateEditorFiletypeDefaultCheck();
@@ -3932,6 +4142,7 @@ void EditorPanel::rebuildAlbumGrid ()
     if (!albumViewGrid_) return;
 
     // Clear existing grid
+    albumGridImages_.clear();
     for (auto* child : albumViewGrid_->get_children()) {
         albumViewGrid_->remove(*child);
     }
@@ -3952,6 +4163,7 @@ void EditorPanel::rebuildAlbumGrid ()
         Gtk::Image* thumbImg = Gtk::manage(new Gtk::Image());
         thumbImg->set_size_request(thumbW, thumbH);
         thumbImg->set_name("AlbumThumb_" + fpath);
+        albumGridImages_[fpath.raw()] = thumbImg;
 
         // Use cached pixbuf, scaled to display size
         auto cacheIt = albumThumbCache_.find(fpath);
@@ -4268,7 +4480,11 @@ bool EditorPanel::onCollageAreaDraw (const Cairo::RefPtr<Cairo::Context>& cr)
             cr->set_source_rgb(1, 1, 1);
             cr->move_to(item.x + 4, item.y + item.h - 4);
             auto layout = albumCollageArea_->create_pango_layout(basename);
-            auto fontDesc = Pango::FontDescription("sans 8");
+            // The UI font at the caption rung (was a hardcoded "sans 8").
+            auto fontDesc = albumCollageArea_->get_style_context()->get_font();
+            if (fontDesc.get_size() > 0) {
+                fontDesc.set_size(static_cast<int>(fontDesc.get_size() * 0.85));
+            }
             layout->set_font_description(fontDesc);
             layout->set_width((item.w - 8) * Pango::SCALE);
             layout->set_ellipsize(Pango::ELLIPSIZE_MIDDLE);
@@ -4311,8 +4527,10 @@ bool EditorPanel::onCollageAreaClick (GdkEventButton* ev)
 
 void EditorPanel::loadAlbumThumbnails (int session, const std::vector<Glib::ustring>& files)
 {
-    // Split work across multiple threads for parallel loading
-    unsigned int nThreads = std::max(2u, std::thread::hardware_concurrency());
+    // Split work across a few background threads. One normal-priority thread
+    // per core used to compete with the GUI and the editor for every core
+    // (and, on a hard disk, thrash it with that many parallel reads).
+    unsigned int nThreads = std::min(4u, std::max(2u, std::thread::hardware_concurrency() / 2));
     if (nThreads > files.size()) {
         nThreads = files.size();
     }
@@ -4327,6 +4545,9 @@ void EditorPanel::loadAlbumThumbnails (int session, const std::vector<Glib::ustr
         std::vector<Glib::ustring> chunk(files.begin() + start, files.begin() + end);
 
         std::thread([this, session, chunk]() {
+#ifdef _WIN32
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#endif
             for (const auto& fpath : chunk) {
                 if (session != albumViewSession_) return;
                 if (!Glib::file_test(fpath, Glib::FILE_TEST_EXISTS)) continue;
@@ -4382,26 +4603,17 @@ void EditorPanel::loadAlbumThumbnails (int session, const std::vector<Glib::ustr
                         }
                     } else {
                         // Update matching image widget in grid
-                        for (auto* child : albumViewGrid_->get_children()) {
-                            auto* flowChild = dynamic_cast<Gtk::FlowBoxChild*>(child);
-                            if (!flowChild) continue;
-                            auto* itemBox = dynamic_cast<Gtk::Box*>(flowChild->get_child());
-                            if (!itemBox) continue;
-
-                            for (auto* w : itemBox->get_children()) {
-                                auto* thumbImg = dynamic_cast<Gtk::Image*>(w);
-                                if (thumbImg && thumbImg->get_name() == "AlbumThumb_" + capturedPath) {
-                                    int srcW = pixbufCopy->get_width();
-                                    int srcH = pixbufCopy->get_height();
-                                    int thumbW = static_cast<int>(albumThumbHeight_ * 4.0 / 3.0);
-                                    double sc = std::min(static_cast<double>(thumbW) / srcW,
-                                                         static_cast<double>(albumThumbHeight_) / srcH);
-                                    int dispW = std::max(1, static_cast<int>(srcW * sc));
-                                    int dispH = std::max(1, static_cast<int>(srcH * sc));
-                                    thumbImg->set(pixbufCopy->scale_simple(dispW, dispH, Gdk::INTERP_BILINEAR));
-                                    return;
-                                }
-                            }
+                        const auto cell = albumGridImages_.find(capturedPath.raw());
+                        if (cell != albumGridImages_.end() && cell->second) {
+                            Gtk::Image* const thumbImg = cell->second;
+                            int srcW = pixbufCopy->get_width();
+                            int srcH = pixbufCopy->get_height();
+                            int thumbW = static_cast<int>(albumThumbHeight_ * 4.0 / 3.0);
+                            double sc = std::min(static_cast<double>(thumbW) / srcW,
+                                                 static_cast<double>(albumThumbHeight_) / srcH);
+                            int dispW = std::max(1, static_cast<int>(srcW * sc));
+                            int dispH = std::max(1, static_cast<int>(srcH * sc));
+                            thumbImg->set(pixbufCopy->scale_simple(dispW, dispH, Gdk::INTERP_BILINEAR));
                         }
                     }
                 });
@@ -4654,7 +4866,7 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
     // enable (quick-preview path below) while the handler is already disabled;
     // this branch would then see getEnabled()==false, never arm the deferred
     // enable, and the handler would stay disabled for this image AND every
-    // one after it â€” a disabled crop handler renders no detail crop, so the
+    // one after it — a disabled crop handler renders no detail crop, so the
     // canvas stops at the coarse preview and zoom/pan stop responding.
     if (iareapanel->imageArea->mainCropWindow) {
         if (iareapanel->imageArea->mainCropWindow->cropHandler.getEnabled()) {
@@ -4679,7 +4891,7 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
 
     // Set fit zoom for the new image so the placeholder renders at the right scale.
     // Normally zoomFit is called by initialImageArrived(), but that only fires when
-    // the engine delivers the first crop â€” too late for the placeholder.
+    // the engine delivers the first crop — too late for the placeholder.
     if (iareapanel->imageArea->mainCropWindow) {
         iareapanel->imageArea->mainCropWindow->zoomFit();
     }
@@ -4728,7 +4940,7 @@ void EditorPanel::setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scal
 
     // A cache miss can finish after the RAW has already opened. Do not let
     // that late thumbnail detach the live processor or cover its edit output.
-    // Compare normalized path keys â€” a raw string compare let same-file
+    // Compare normalized path keys — a raw string compare let same-file
     // previews through on case/separator differences, freezing the canvas
     // behind the placeholder (only initialImageArrived clears it, and no
     // new open ever happens for the same file).
@@ -4740,7 +4952,7 @@ void EditorPanel::setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scal
 
     // With remember-zoom-and-pan active, a successor with identical
     // dimensions keeps the current zoom and pan (initialImageArrived skips
-    // the re-fit) â€” showing the fitted placeholder would hop fit->remembered
+    // the re-fit) — showing the fitted placeholder would hop fit->remembered
     // and back. Keep the live canvas (bridge frame) as the transition.
     {
         const auto& opts = App::get().options();
@@ -4816,6 +5028,29 @@ void EditorPanel::setQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scal
     armQuickPreviewWatchdog();
 }
 
+void EditorPanel::upgradeQuickPreview (Glib::RefPtr<Gdk::Pixbuf> pixbuf, double scale, const Glib::ustring& sourceFile)
+{
+    if (!pixbuf || scale <= 0.0 || !previewHandler || sourceFile.empty() || quickPreviewFileName_.empty()) {
+        return;
+    }
+
+    const auto sourceKey = editorAlbumPathKey(sourceFile.raw());
+
+    if (editorAlbumPathKey(quickPreviewFileName_.raw()) != sourceKey) {
+        return;
+    }
+
+    // The engine's own frame for this photo has landed: it wins.
+    if (firstEnginePreviewReady_ && editorAlbumPathKey(fname.raw()) == sourceKey) {
+        return;
+    }
+
+    if (previewHandler->trySetPlaceholder(pixbuf, scale)) {
+        EDITOR_OPEN_LOG("[editorOpen] quick preview sharpened %dx%d file=%s\n",
+                        pixbuf->get_width(), pixbuf->get_height(), sourceFile.c_str());
+    }
+}
+
 bool EditorPanel::setTransientEditPreview(
     const Glib::ustring& sourceFile,
     const rtengine::procparams::ProcParams* params,
@@ -4828,7 +5063,7 @@ bool EditorPanel::setTransientEditPreview(
     }
 
     // A new transient state supersedes any final-quality pass queued for the
-    // previous state. EVERY exit below must leave a fresh one queued â€” this
+    // previous state. EVERY exit below must leave a fresh one queued — this
     // used to reschedule only on the restore path, so a preview that ended
     // through any other branch left the image at fast-preview quality
     // permanently (the settled pass is the only route to full quality).
@@ -4879,7 +5114,7 @@ void EditorPanel::armQuickPreviewWatchdog()
     // The thumbnail placeholder must always be a short-lived transition
     // state. If it is still covering the canvas seconds later, some link in
     // the open chain was dropped (a cancelled open, a detached preview
-    // listener) â€” recover instead of leaving a frozen, unzoomable still.
+    // listener) — recover instead of leaving a frozen, unzoomable still.
     quickPreviewWatchdogConn_ = Glib::signal_timeout().connect(
         [this]() -> bool {
             if (!iareapanel || !iareapanel->imageArea
@@ -4905,7 +5140,7 @@ void EditorPanel::armQuickPreviewWatchdog()
                 }
                 ipc->startProcessing(M_HIGHQUAL | M_MONITOR);
             } else if (fPanel && quickPreviewRecoverAttempts_ <= 2) {
-                // The open itself never landed â€” re-trigger it for the
+                // The open itself never landed — re-trigger it for the
                 // browser's current selection (the photo this placeholder
                 // was shown for).
                 fPanel->openSelectedInEditor();
@@ -5106,7 +5341,7 @@ void EditorPanel::scheduleFinalPreviewRefinement(bool imageOpen)
                     if (++*attempts > 4) {
                         // Repeating M_HIGHQUAL|M_MONITOR has not published
                         // anything, which means the pipeline keeps aborting
-                        // before imageReady() â€” most often mid-pipeline state
+                        // before imageReady() — most often mid-pipeline state
                         // left stale by an abort. Nothing else will ever retry
                         // for this image, so spend one full reprocess to
                         // rebuild that state rather than leave the canvas
@@ -5197,6 +5432,85 @@ void EditorPanel::updateFilmstripLivePreview(
             pixbuf,
             imageScale,
             previewHandler->getCropParams());
+    }
+}
+
+void EditorPanel::scheduleEditorRenderCapture()
+{
+    // Let the settled frame reach the preview handler (it arrives through its
+    // own idle) and let a burst of edits finish before taking a copy.
+    editorRenderCaptureConn_.disconnect();
+    editorRenderCaptureConn_ = Glib::signal_timeout().connect(
+        [this]() -> bool {
+            captureEditorRender();
+            return false;
+        },
+        400,
+        G_PRIORITY_LOW);
+}
+
+void EditorPanel::captureEditorRender()
+{
+    if (!ipc || !openThm || !previewHandler || isProcessing) {
+        return;
+    }
+
+    // Only a settled (full-quality) frame that nothing newer has replaced is
+    // "the image these params produce"; interactive passes may skip the
+    // preview, and a mask view is not the photograph.
+    const unsigned long long settledSerial = rtengine::getSettledPreviewSerial(ipc);
+    if (settledSerial == 0 || settledSerial == lastCapturedSettledSerial_
+            || rtengine::isPreviewShowingMask(ipc)) {
+        return;
+    }
+
+    // Untouched images have nothing the thumbnail pipeline would miss.
+    if (!openThm->hasProcParams() && !(tpc && tpc->getChangedState())) {
+        return;
+    }
+
+    int fullW = 0;
+    int fullH = 0;
+    int previewLongEdge = 0;
+    if (!previewHandler->getEnginePreviewFullSize(fullW, fullH, &previewLongEdge)) {
+        return;
+    }
+
+    // Never upscale the engine preview; cap what is stored on disk.
+    const int longEdge = std::min(1280, previewLongEdge);
+    const double fit = std::min(1.0, static_cast<double>(longEdge) / std::max(fullW, fullH));
+    const int targetW = std::max(1, static_cast<int>(std::lround(fullW * fit)));
+    const int targetH = std::max(1, static_cast<int>(std::lround(fullH * fit)));
+
+    double imageScale = 1.0;
+    const auto render = previewHandler->getScaledEnginePreview(targetW, targetH, imageScale);
+    if (!render) {
+        return;
+    }
+
+    rtengine::procparams::ProcParams params;
+    ipc->getParams(&params);
+
+    bool paramsOnDisk = false;
+    if (!openThm->trySetEditorRender(render, params, fullW, fullH, paramsOnDisk)) {
+        // A worker holds the thumbnail; try again shortly rather than block.
+        if (!isProcessing) {
+            scheduleEditorRenderCapture();
+        }
+        return;
+    }
+
+    lastCapturedSettledSerial_ = settledSerial;
+
+    // With the params already on disk the render can be written now;
+    // otherwise the next flush (view switch, close) writes it.
+    if (paramsOnDisk) {
+        Thumbnail* const thm = openThm;
+        thm->increaseRef();
+        EditorCleanupExecutor::instance().enqueue([thm]() {
+            thm->persistEditorRender();
+            thm->decreaseRef();
+        });
     }
 }
 
@@ -5402,7 +5716,7 @@ void EditorPanel::openPhaseB (Thumbnail* tmb)
 
                     if (ww > 0 && hh > 0) {
                         detailStr += Glib::ustring::compose(
-                            "\n%1 MP (%2Ã—%3)",
+                            "\n%1 MP (%2×%3)",
                             Glib::ustring::format(std::fixed, std::setprecision(1), (float)ww * hh / 1000000),
                             ww, hh);
                     }
@@ -5512,6 +5826,12 @@ void EditorPanel::close ()
     }
     logCloseStep("before-after-cancel");
 
+        // Last chance to hand the settled render to the thumbnail; the cleanup
+        // job below writes it once the params are flushed.
+        editorRenderCaptureConn_.disconnect();
+        captureEditorRender();
+        lastCapturedSettledSerial_ = 0;
+
         if (ipc) {
             // Signal the old processing thread to abort ASAP so it stops
             // competing for CPU with the new image's processing. Before the
@@ -5591,7 +5911,7 @@ void EditorPanel::close ()
 
         // Defer stopProcessing + IPC destruction to background thread.
         // stopProcessing() blocks until processing finishes, which can
-        // take seconds for large RAWs â€” too long for the UI thread.
+        // take seconds for large RAWs — too long for the UI thread.
         bool savedFileExists = false;
         if (!cacheMgr->getKnownFilePresence(fname, savedFileExists)) {
             savedFileExists = Glib::file_test(fname, Glib::FILE_TEST_EXISTS);
@@ -5653,6 +5973,8 @@ void EditorPanel::close ()
                 }
 
                 if (releaseThm) {
+                    releaseThm->persistEditorRender();
+
                     for (int i = 0; i < releaseRefCount; ++i) {
                         releaseThm->decreaseRef();
                     }
@@ -5693,8 +6015,8 @@ void EditorPanel::saveProfile ()
 
         // This runs on every switch back to the browser, and setProcParams
         // rewrites the sidecar, the cache entry and the XMP metadata whenever
-        // it is called with updateCacheNow â€” even when nothing was edited.
-        // Skip the whole round trip when the parameters already match â€” but
+        // it is called with updateCacheNow — even when nothing was edited.
+        // Skip the whole round trip when the parameters already match — but
         // only if no RAM-only sync (setProgressState runs one after every
         // render) still owes the disk a flush, or edits would never persist
         // on a view switch and could be lost entirely on exit.
@@ -5714,6 +6036,14 @@ void EditorPanel::saveProfile ()
 
         // Will call updateCache, which will update both the cached and sidecar files if necessary
         openThm->setProcParams (params, nullptr, EDITOR);
+
+        // The JPEG encode stays off the GUI thread; exit drains the executor.
+        Thumbnail* const thm = openThm;
+        thm->increaseRef ();
+        EditorCleanupExecutor::instance().enqueue([thm]() {
+            thm->persistEditorRender ();
+            thm->decreaseRef ();
+        });
     }
 }
 
@@ -5726,7 +6056,7 @@ void EditorPanel::saveProfileAsync ()
     ProcParams params;
     ipc->getParams (&params);
 
-    // Same RAM-only fast paths as saveProfile â€” see the comments there.
+    // Same RAM-only fast paths as saveProfile — see the comments there.
     if (openThm->procParamsMatch (params) && !openThm->hasUnsavedParams ()) {
         EDITOR_OPEN_LOG("[saveAsync] skip match file=%s\n", fname.c_str());
         return;
@@ -5739,11 +6069,11 @@ void EditorPanel::saveProfileAsync ()
 
     EDITOR_OPEN_LOG("[saveAsync] enqueue file=%s\n", fname.c_str());
 
-    // The RAM update and its listener notifications stay on the GUI thread â€”
+    // The RAM update and its listener notifications stay on the GUI thread —
     // the Thumbnail listener list has no lock of its own. Only the disk round
     // trip (stat + sidecar + cache + XMP writes) moves to the cleanup
     // executor: on a spun-down HDD the stat alone can block for seconds,
-    // which used to freeze every editorâ†’browser view switch. The executor
+    // which used to freeze every editor→browser view switch. The executor
     // also serializes against image teardown, and RTWindow drains it before
     // exit so the write cannot be torn.
     Thumbnail* const thm = openThm;
@@ -5752,9 +6082,10 @@ void EditorPanel::saveProfileAsync ()
     thm->increaseRef ();
     EditorCleanupExecutor::instance().enqueue([thm, file]() {
         // If the file was deleted, do not generate ghost entries. The stat
-        // deliberately happens here â€” it is the call that wakes the disk.
+        // deliberately happens here — it is the call that wakes the disk.
         if (Glib::file_test (file, Glib::FILE_TEST_EXISTS)) {
             thm->flushProcParamsToDisk ();
+            thm->persistEditorRender ();
             EDITOR_OPEN_LOG("[saveAsync] flushed file=%s\n", file.c_str());
         } else {
             EDITOR_OPEN_LOG("[saveAsync] file gone file=%s\n", file.c_str());
@@ -5826,7 +6157,7 @@ void EditorPanel::procParamsChanged(
             *alignedParams = std::move(beforeParams);
             beforeIpc->endUpdateParams(ev);
 
-            // Geometry (e.g. the crop) changed â€” refit the before pane so it
+            // Geometry (e.g. the crop) changed — refit the before pane so it
             // cannot stay stuck showing the old cropped framing after an undo.
             // Routed through the crop-preview helper so a clipped pane refits
             // to the crop rather than to the discarded frame around it.
@@ -5843,7 +6174,7 @@ void EditorPanel::procParamsChanged(
     // Profile changes MUST schedule it too: editor-side quick actions (Auto
     // Edit commits, presets) land through profileChange and otherwise leave
     // the canvas at fast-preview quality with nothing queued to settle it.
-    // Only the photo-load event is excluded â€” the open path runs its own
+    // Only the photo-load event is excluded — the open path runs its own
     // deferred refinement. The scheduler self-coalesces, so overlapping
     // schedules are harmless.
     if (ev != rtengine::EvPhotoLoaded) {
@@ -6071,6 +6402,8 @@ void EditorPanel::refreshProcessingState (bool inProcessingP)
             openThm->setProcParams (pparams, nullptr, EDITOR, false);
         }
 
+        scheduleEditorRenderCapture();
+
         // Ring a sound if it was a long event
         if (processingStartedTime != 0) {
             time_t curTime = ::time (nullptr);
@@ -6175,7 +6508,7 @@ void EditorPanel::info_toggled ()
 void EditorPanel::collapseLeftSidebarForEdit ()
 {
     if (hidehp && hidehp->get_active()) {
-        // Programmatic collapse â€” must not overwrite the user's remembered
+        // Programmatic collapse — must not overwrite the user's remembered
         // sidebar preference (options.editorShowLeftSidebar).
         programmaticSidebarChange_ = true;
         hidehp->set_active(false);  // triggers hideHistoryActivated
@@ -6382,7 +6715,7 @@ void EditorPanel::getQueueOverlayInsets (int& left, int& top, int& right) const
     // Right sidebar inset
     right = (vboxright && vboxright->get_visible()) ? vboxright->get_allocated_width () : 0;
 
-    // Top filmstrip inset â€” nothing to clear when the strip sits at the
+    // Top filmstrip inset — nothing to clear when the strip sits at the
     // bottom, since the queue drawer comes down from the top.
     top = (catalogPane && catalogPane->get_visible() && !App::get().options().filmstripAtBottom)
         ? catalogPane->get_allocated_height () : 0;
@@ -6504,7 +6837,7 @@ void EditorPanel::showFilmstripSizePopover ()
         label->set_halign(Gtk::ALIGN_START);
         box->pack_start(*label, Gtk::PACK_SHRINK);
 
-        filmstripSizeScale_ = Gtk::manage(new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
+        { auto* zs = Gtk::manage(new MyHScale()); zs->setZoomStyle(true); filmstripSizeScale_ = zs; }
         filmstripSizeScale_->set_range(64.0, 200.0);
         filmstripSizeScale_->set_increments(2.0, 16.0);
         filmstripSizeScale_->set_digits(0);
@@ -7381,7 +7714,7 @@ void EditorPanel::beforeAfterToggled ()
     // Image switches with before/after active keep the half/half split in
     // place and swap only the before pane's content. Tearing the whole
     // split down made the after image re-fit at full width and snap back
-    // to half width every switch â€” the visible "fidget".
+    // to half width every switch — the visible "fidget".
     const bool splitPacked = beforeBox
         && beforeBox->get_parent() == static_cast<Gtk::Widget*>(beforeAfterBox);
     const bool keepSplit = beforeAfter->get_active() && splitPacked;
@@ -7399,8 +7732,23 @@ void EditorPanel::beforeAfterToggled ()
             beforeAfterCancel_.reset();
         }
 
+        // Same teardown as the main processor in close(): stop it, detach
+        // everything that could call back, hand its crop back to it, and
+        // let the cleanup thread wait for the pass in flight. Waiting here
+        // (stopProcessing) froze the GUI for up to one pipeline stage on
+        // every switch made with before/after on.
         if (beforeIpc) {
-            beforeIpc->stopProcessing ();
+            beforeIpc->signalStop();
+            detachEditorProcessorListeners(beforeIpc);
+
+            if (beforeIarea->imageArea) {
+                if (beforeIarea->imageArea->mainCropWindow) {
+                    beforeIarea->imageArea->mainCropWindow->cropHandler.disconnectCrop();
+                }
+
+                beforeIarea->imageArea->setPreviewHandler(nullptr);
+                beforeIarea->imageArea->setImProcCoordinator(nullptr);
+            }
         }
 
         iareapanel->setBeforeAfterViews (nullptr, iareapanel);
@@ -7423,6 +7771,7 @@ void EditorPanel::beforeAfterToggled ()
             rtengine::StagedImageProcessor* old = beforeIpc;
             beforeIpc = nullptr;
             EditorCleanupExecutor::instance().enqueue([old]() {
+                old->stopProcessing();
                 rtengine::StagedImageProcessor::destroy(old);
             });
         }
@@ -7453,7 +7802,7 @@ void EditorPanel::beforeAfterToggled ()
 
         beforeIarea = new ImageAreaPanel ();
 
-        // Snug positioning applies to the after pane from the first frame â€”
+        // Snug positioning applies to the after pane from the first frame —
         // waiting for the async before-load made it start centered and hop.
         iareapanel->imageArea->inBeforeAfterSplit = true;
 
@@ -7479,7 +7828,7 @@ void EditorPanel::beforeAfterToggled ()
 
         beforeBox->pack_start (*beforeIarea);
 
-        // Show UI immediately â€” before panel appears as empty frame
+        // Show UI immediately — before panel appears as empty frame
         // while the image loads asynchronously in the background.
         beforeAfterBox->show_all ();
 
@@ -7883,7 +8232,7 @@ void EditorPanel::updateHistogramPosition (int oldPosition, int newPosition)
 
         case 1:
 
-            // Histogram on the left pane â€” remove placeholder if present
+            // Histogram on the left pane — remove placeholder if present
             if (auto* child1 = leftbox->get_child1()) {
                 if (child1 != histogramPanel) {
                     leftbox->remove(*child1);

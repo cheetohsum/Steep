@@ -82,8 +82,10 @@ Preferences::Preferences(RTWindow *rtwindow)
     const auto& options = App::get().options();
     moptions.copyFrom(&App::get().mut_options());
 
-    set_size_request(650, -1);
-    set_default_size(options.preferencesWidth, options.preferencesHeight);
+    set_size_request(820, -1);
+    // Never narrower than the sidebar plus a comfortable page, even when a
+    // smaller size was remembered from the tabbed layout.
+    set_default_size(std::max(options.preferencesWidth, 1120), std::max(options.preferencesHeight, 760));
 
     auto headerBar = Gtk::manage(new Gtk::HeaderBar());
     headerBar->set_title(M("MAIN_BUTTON_PREFERENCES"));
@@ -112,10 +114,44 @@ Preferences::Preferences(RTWindow *rtwindow)
 #endif
 //GTK318
 
-    Gtk::Notebook* nb = Gtk::manage(new Gtk::Notebook());
-    nb->set_scrollable(true);
+    // A list of pages down the side and the page itself beside it. The page
+    // container keeps the old notebook's name so the compact styling that
+    // targets its contents still applies.
+    Gtk::Box* layout = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+    Gtk::ListBox* sidebar = Gtk::manage(new Gtk::ListBox());
+    sidebar->set_name("PrefSidebar");
+    sidebar->set_selection_mode(Gtk::SELECTION_BROWSE);
+    sidebar->set_size_request(190, -1);
+    Gtk::Stack* nb = Gtk::manage(new Gtk::Stack());
     nb->set_name("PrefNotebook");
-    mainBox->pack_start(*nb);
+    nb->set_transition_type(Gtk::STACK_TRANSITION_TYPE_CROSSFADE);
+    nb->set_transition_duration(140);
+    nb->set_hexpand(true);
+    layout->pack_start(*sidebar, Gtk::PACK_SHRINK);
+    layout->pack_start(*nb, Gtk::PACK_EXPAND_WIDGET);
+    mainBox->pack_start(*layout);
+
+    std::vector<Glib::ustring> pageNames;
+    const auto addPage = [&](Gtk::Widget* panel, const Glib::ustring& title, const char* icon) {
+        const Glib::ustring name = Glib::ustring::format(pageNames.size());
+        pageNames.push_back(name);
+
+        Gtk::Box* page = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 6));
+        Gtk::Label* heading = Gtk::manage(new Gtk::Label(title, Gtk::ALIGN_START));
+        heading->get_style_context()->add_class("pref-page-title");
+        page->pack_start(*heading, Gtk::PACK_SHRINK);
+        page->pack_start(*panel, Gtk::PACK_EXPAND_WIDGET);
+        nb->add(*page, name);
+
+        Gtk::Box* entry = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 10));
+        entry->pack_start(*Gtk::manage(new RTImage(icon, Gtk::ICON_SIZE_BUTTON)), Gtk::PACK_SHRINK);
+        Gtk::Label* label = Gtk::manage(new Gtk::Label(title, Gtk::ALIGN_START));
+        label->set_ellipsize(Pango::ELLIPSIZE_END);
+        entry->pack_start(*label, Gtk::PACK_EXPAND_WIDGET);
+        Gtk::ListBoxRow* row = Gtk::manage(new Gtk::ListBoxRow());
+        row->add(*entry);
+        sidebar->append(*row);
+    };
 
     Gtk::Button* about  = Gtk::manage(new Gtk::Button(M("GENERAL_ABOUT")));
     Gtk::Button* ok     = Gtk::manage(new Gtk::Button(M("GENERAL_OK")));
@@ -125,23 +161,29 @@ Preferences::Preferences(RTWindow *rtwindow)
     ok->signal_clicked().connect(sigc::mem_fun(*this, &Preferences::okPressed));
     cancel->signal_clicked().connect(sigc::mem_fun(*this, &Preferences::cancelPressed));
 
+    ok->get_style_context()->add_class("suggested-action");
     get_action_area()->pack_start(*about);
     get_action_area()->pack_end(*ok);
     get_action_area()->pack_end(*cancel);
 
-    nb->append_page(*getGeneralPanel(), M("PREFERENCES_TAB_GENERAL"));
-    nb->append_page(*getImageProcessingPanel(), M("PREFERENCES_TAB_IMPROC"));
-    nb->append_page(*getFavoritesPanel(), M("PREFERENCES_TAB_FAVORITES"));
-    nb->append_page(*getDynamicProfilePanel(), M("PREFERENCES_TAB_DYNAMICPROFILE"));
-    nb->append_page(*getFileBrowserPanel(), M("PREFERENCES_TAB_BROWSER"));
-    nb->append_page(*getColorManPanel(), M("PREFERENCES_TAB_COLORMGR"));
-    nb->append_page(*getBatchProcPanel(), M("PREFERENCES_BATCH_PROCESSING"));
-    nb->append_page(*getPerformancePanel(), M("PREFERENCES_TAB_PERFORMANCE"));
+    addPage(getGeneralPanel(), M("PREFERENCES_TAB_GENERAL"), "preferences");
+    addPage(getImageProcessingPanel(), M("PREFERENCES_TAB_IMPROC"), "exposure");
+    addPage(getFavoritesPanel(), M("PREFERENCES_TAB_FAVORITES"), "star");
+    addPage(getDynamicProfilePanel(), M("PREFERENCES_TAB_DYNAMICPROFILE"), "profile-user");
+    addPage(getFileBrowserPanel(), M("PREFERENCES_TAB_BROWSER"), "nav-filebrowser");
+    addPage(getColorManPanel(), M("PREFERENCES_TAB_COLORMGR"), "gamut-plus");
+    addPage(getBatchProcPanel(), M("PREFERENCES_BATCH_PROCESSING"), "nav-queue");
+    addPage(getPerformancePanel(), M("PREFERENCES_TAB_PERFORMANCE"), "gears");
     // Sounds only on Windows and Linux
 #if defined(_WIN32) || defined(__linux__)
-    nb->append_page(*getSoundsPanel(), M("PREFERENCES_TAB_SOUND"));
+    addPage(getSoundsPanel(), M("PREFERENCES_TAB_SOUND"), "info");
 #endif
-    nb->set_current_page(0);
+    sidebar->signal_row_selected().connect([nb, pageNames](Gtk::ListBoxRow* row) {
+        if (row && row->get_index() >= 0 && row->get_index() < static_cast<int>(pageNames.size())) {
+            nb->set_visible_child(pageNames[row->get_index()]);
+        }
+    });
+    sidebar->select_row(*sidebar->get_row_at_index(0));
 
     ProfileStore::getInstance()->addListener(this);
 
@@ -711,7 +753,7 @@ Gtk::Widget* Preferences::getImageProcessingPanel ()
     setExpandAlignProperties(dfLab, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     darkFrameDir = Gtk::manage(new MyFileChooserButton(M("PREFERENCES_DIRDARKFRAMES"), Gtk::FILE_CHOOSER_ACTION_SELECT_FOLDER));
     setExpandAlignProperties(darkFrameDir, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
-    dfLabel = Gtk::manage(new Gtk::Label("Found:"));
+    dfLabel = Gtk::manage(new Gtk::Label(M("PREFERENCES_FOUND")));
     setExpandAlignProperties(dfLabel, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
 
     dirgrid->attach_next_to(*dfLab, Gtk::POS_TOP, 1, 1);
@@ -725,7 +767,7 @@ Gtk::Widget* Preferences::getImageProcessingPanel ()
     setExpandAlignProperties(ffLab, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
     flatFieldDir = Gtk::manage(new MyFileChooserButton(M("PREFERENCES_FLATFIELDSDIR"), Gtk::FILE_CHOOSER_ACTION_SELECT_FOLDER));
     setExpandAlignProperties(flatFieldDir, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_CENTER);
-    ffLabel = Gtk::manage(new Gtk::Label("Found:"));
+    ffLabel = Gtk::manage(new Gtk::Label(M("PREFERENCES_FOUND")));
     setExpandAlignProperties(ffLabel, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
 
     dirgrid->attach_next_to(*ffLab, *dfLab, Gtk::POS_BOTTOM, 1, 1);
@@ -1706,7 +1748,7 @@ Gtk::Widget* Preferences::getFileBrowserPanel()
     extensionModel = Gtk::ListStore::create(extensionColumns);
     extensions->set_model(extensionModel);
     extensions->append_column_editable("Enabled", extensionColumns.enabled);
-    extensions->append_column("Extension", extensionColumns.ext);
+    extensions->append_column(M("PREFERENCES_EXTENSION"), extensionColumns.ext);
     extensions->set_headers_visible(false);
 
     vbre->pack_start(*hb0, Gtk::PACK_SHRINK, 4);
@@ -1915,9 +1957,22 @@ void Preferences::parseThemeDir(Glib::ustring dirname)
         }
     }
 
-    // Sort theme by names
-    std::sort(themeNames.begin(), themeNames.end(), [](const Glib::ustring & first, const Glib::ustring & second) {
-        return first < second;
+    // The bundled themes in a deliberate order -- the Atelier pair, the
+    // other dark themes, the light one -- then any others alphabetically.
+    static const char* const bundledOrder[] = {"Walnut", "Linen", "Rem", "Graphite", "Darkroom", "Ocean", "Daylight"};
+    const auto rank = [](const Glib::ustring& name) {
+        for (int i = 0; i < static_cast<int>(sizeof(bundledOrder) / sizeof(bundledOrder[0])); ++i) {
+            if (name == bundledOrder[i]) {
+                return i;
+            }
+        }
+
+        return 1000;
+    };
+    std::sort(themeNames.begin(), themeNames.end(), [&rank](const Glib::ustring & first, const Glib::ustring & second) {
+        const int a = rank(first);
+        const int b = rank(second);
+        return a != b ? a < b : first < second;
     });
 
     delete dir;
@@ -2721,6 +2776,22 @@ void Preferences::switchThemeTo(Glib::ustring newTheme)
     // The steep_* tokens may now resolve differently (cached values belong to
     // the previous theme).
     themeColorCacheInvalidate();
+
+    // Switching between a dark and a light theme flips the icon line-art
+    // (see rtwindow.cc). Re-render the cached icons and have every image
+    // re-fetch them; this used to wait for a restart.
+    Gdk::RGBA wash;
+    if (get_style_context()->lookup_color("steep_wash", wash)) {
+        const bool inkDark = wash.get_red() + wash.get_green() + wash.get_blue() < 1.5;
+
+        const bool paletteChanged = RTScalable::setIconPaletteFrom(get_style_context());
+
+        if (inkDark != RTScalable::getIconInkDark() || paletteChanged) {
+            RTScalable::setIconInkDark(inkDark);
+            RTImageCache::updateCache();
+            RTScalable::notifyChanged();
+        }
+    }
 }
 
 void Preferences::fontChanged()
@@ -2750,7 +2821,10 @@ void Preferences::switchFontTo(const Glib::ustring &newFontFamily, const int new
     if (!fontcss) {
         fontcss = Gtk::CssProvider::create();
         Glib::RefPtr<Gdk::Screen> screen = Gdk::Screen::get_default();
-        Gtk::StyleContext::add_provider_for_screen(screen, fontcss, GTK_STYLE_PROVIDER_PRIORITY_USER);
+        // APPLICATION, like the startup font provider in rtwindow.cc: at USER
+        // (800 == widgets.css' APPLICATION+200, added later) its `* {
+        // font-size }` overrode the whole tool-panel type ladder until restart.
+        Gtk::StyleContext::add_provider_for_screen(screen, fontcss, GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
     }
 
     // Create css to load based on new font name and size

@@ -45,7 +45,7 @@ namespace
 {
 
 constexpr int cacheDirMode = 0777;
-constexpr const char* cacheDirs[] = { "profiles", "images", "embprofiles", "data" };
+constexpr const char* cacheDirs[] = { "profiles", "images", "embprofiles", "data", "renders" };
 
 std::string foldedNameKey(const Glib::ustring& name)
 {
@@ -103,6 +103,7 @@ void CacheManager::init ()
     error |= g_mkdir_with_parents (imagesDir_.c_str(), cacheDirMode);
     error |= g_mkdir_with_parents (embProfilesDir_.c_str(), cacheDirMode);
     error |= g_mkdir_with_parents (dataDir_.c_str(), cacheDirMode);
+    error |= g_mkdir_with_parents (Glib::build_filename(baseDir, "renders").c_str(), cacheDirMode);
 
     if (error != 0 && rtengine::settings->verbose) {
         std::cerr << "Failed to create all cache directories: " << g_strerror(errno) << std::endl;
@@ -273,6 +274,12 @@ void CacheManager::renameEntry (const std::string& oldfilename, const std::strin
     invalidateMD5(oldEmbProfileName);
     invalidateMD5(newEmbProfileName);
 
+    // Optional, so not part of the error tally.
+    for (const char* ext : {".jpg", ".key"}) {
+        g_rename (getCacheFileName ("renders", oldfilename, ext, oldmd5).c_str (),
+                  getCacheFileName ("renders", newfilename, ext, newmd5).c_str ());
+    }
+
     if (error != 0 && rtengine::settings->verbose) {
         std::cerr << "Failed to rename all files for cache entry '" << oldfilename << "': " << g_strerror(errno) << std::endl;
     }
@@ -331,6 +338,7 @@ void CacheManager::clearImages () const
     deleteDir ("data");
     deleteDir ("images");
     deleteDir ("embprofiles");
+    deleteDir ("renders");
     clearMD5Cache();
 }
 
@@ -375,6 +383,10 @@ void CacheManager::deleteFiles (const Glib::ustring& fname, const std::string& m
     error |= g_remove (embProfileName.c_str ());
     invalidateMD5(imageName);
     invalidateMD5(embProfileName);
+
+    // Persisted editor renders are optional; most entries have none.
+    g_remove (getCacheFileName ("renders", fname, ".jpg", md5).c_str ());
+    g_remove (getCacheFileName ("renders", fname, ".key", md5).c_str ());
 
     if (purgeData) {
         const auto dataName = getCacheFileName ("data", fname, ".txt", md5);

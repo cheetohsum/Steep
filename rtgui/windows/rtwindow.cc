@@ -53,6 +53,15 @@
 #include "steepperflog.h"
 #include "widgets/basic/adjuster.h"
 
+#include <atomic>
+#include <cstdio>
+#include <cstring>
+#include <thread>
+
+#ifdef _WIN32
+#include "rtengine/leanwindows.h"
+#endif
+
 Glib::RefPtr<Gtk::CssProvider> cssForced;
 Glib::RefPtr<Gtk::CssProvider> cssRT;
 Glib::RefPtr<Gtk::CssProvider> cssSteepPalette;
@@ -73,6 +82,129 @@ bool viewSwitchTraceOn()
     static const bool enabled = std::getenv("STEEP_FILESEL_LOG") != nullptr;
     return enabled;
 }
+
+// GUI freezes worth reporting, in ms (STEEP_LOOPSTALL_MS overrides).
+int loopStallThresholdMs()
+{
+    static const int value = []() {
+        const char* const env = std::getenv("STEEP_LOOPSTALL_MS");
+        const int parsed = env ? std::atoi(env) : 0;
+        return parsed > 0 ? parsed : 100;
+    }();
+    return value;
+}
+
+#if defined(_WIN32) && (defined(__x86_64__) || defined(_M_X64))
+// While the GUI thread is frozen, find out where. A watchdog thread notices
+// the heartbeat has stopped, suspends the GUI thread just long enough to copy
+// its instruction pointer and the top of its stack (plain memcpy: nothing that
+// could take a lock the frozen thread might hold), resumes it, and only then
+// scans the copy for return addresses inside steep.exe. Offsets are relative
+// to the image base: nm address = ImageBase (0x140000000) + offset.
+class LoopStallSampler
+{
+public:
+    static void start(std::shared_ptr<std::atomic<gint64>> lastTick)
+    {
+        HANDLE gui = nullptr;
+        if (!DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &gui,
+                             THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, 0)) {
+            return;
+        }
+
+        // Windows 8+ API, looked up at run time (the headers may target 7).
+        ULONG_PTR stackLow = 0;
+        ULONG_PTR stackHigh = 0;
+        using StackLimitsFn = VOID (WINAPI*)(PULONG_PTR, PULONG_PTR);
+        const auto stackLimits = reinterpret_cast<StackLimitsFn>(reinterpret_cast<void*>(
+            GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "GetCurrentThreadStackLimits")));
+
+        if (stackLimits) {
+            stackLimits(&stackLow, &stackHigh);
+        }
+
+        const auto base = reinterpret_cast<const unsigned char*>(GetModuleHandleW(nullptr));
+        const auto dos = reinterpret_cast<const IMAGE_DOS_HEADER*>(base);
+        const auto nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + dos->e_lfanew);
+        const DWORD64 imageLow = reinterpret_cast<DWORD64>(base);
+        const DWORD64 imageHigh = imageLow + nt->OptionalHeader.SizeOfImage;
+
+        std::thread([gui, stackLow, stackHigh, imageLow, imageHigh, lastTick]() {
+            SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
+            const gint64 thresholdUs = static_cast<gint64>(loopStallThresholdMs()) * 1000;
+            gint64 sampledForTick = 0;
+            int samplesThisStall = 0;
+
+            for (;;) {
+                Sleep(25);
+                const gint64 tick = lastTick->load(std::memory_order_acquire);
+                const gint64 stalledUs = g_get_monotonic_time() - tick;
+
+                if (stalledUs < thresholdUs) {
+                    continue;
+                }
+
+                // A few samples per stall are enough to see where it sits.
+                if (tick != sampledForTick) {
+                    sampledForTick = tick;
+                    samplesThisStall = 0;
+                }
+
+                if (samplesThisStall >= 4) {
+                    continue;
+                }
+
+                ++samplesThisStall;
+
+                constexpr size_t kStackCopy = 16 * 1024;
+                static unsigned char stackCopy[kStackCopy];
+                size_t copied = 0;
+                DWORD64 rip = 0;
+
+                if (SuspendThread(gui) == static_cast<DWORD>(-1)) {
+                    continue;
+                }
+
+                CONTEXT ctx;
+                memset(&ctx, 0, sizeof(ctx));
+                ctx.ContextFlags = CONTEXT_CONTROL;
+
+                if (GetThreadContext(gui, &ctx)) {
+                    rip = ctx.Rip;
+                    const ULONG_PTR rsp = static_cast<ULONG_PTR>(ctx.Rsp);
+
+                    if (rsp >= stackLow && rsp < stackHigh) {
+                        copied = std::min<size_t>(kStackCopy, stackHigh - rsp);
+                        memcpy(stackCopy, reinterpret_cast<const void*>(rsp), copied);
+                    }
+                }
+
+                ResumeThread(gui);
+
+                char line[512];
+                int len = snprintf(line, sizeof(line), "[loopStall] frozen %.0fms rip=%s+0x%llx callers:",
+                                   stalledUs / 1000.0,
+                                   (rip >= imageLow && rip < imageHigh) ? "steep" : "dll",
+                                   static_cast<unsigned long long>(rip >= imageLow && rip < imageHigh ? rip - imageLow : rip));
+                int found = 0;
+
+                for (size_t off = 0; off + sizeof(DWORD64) <= copied && found < 12 && len > 0 && len < static_cast<int>(sizeof(line)) - 24; off += sizeof(DWORD64)) {
+                    DWORD64 value;
+                    memcpy(&value, stackCopy + off, sizeof(value));
+
+                    if (value > imageLow + 0x1000 && value < imageHigh) {
+                        len += snprintf(line + len, sizeof(line) - len, " +0x%llx",
+                                        static_cast<unsigned long long>(value - imageLow));
+                        ++found;
+                    }
+                }
+
+                fileBrowserPerfLog("%s\n", line);
+            }
+        }).detach();
+    }
+};
+#endif
 
 // Times the stages of one browser⇄editor view switch. Lines land in the same
 // steep-fileSel.log as the editorOpen/fileSel traces so a switch and the work
@@ -249,7 +381,7 @@ RTWindow::RTWindow ()
         // Check if the current theme name in options exists, otherwise set it to default one (i.e. "RawTherapee.css")
         auto filename = Glib::build_filename(App::get().argv0(), "themes", options.theme + ".css");
         if (!Glib::file_test(filename, Glib::FILE_TEST_EXISTS)) {
-            options.theme = "RawTherapee - Modern";
+            options.theme = "Walnut";
             filename = Glib::build_filename(App::get().argv0(), "themes", options.theme + ".css");
         }
 
@@ -324,10 +456,13 @@ RTWindow::RTWindow ()
                 defaultFontFamily = "-apple-system";
             }
 #endif
+            // Steep's own face (bundled, registered in main.cc) leads; the
+            // system face stays behind it in case the bundle is missing. Jost
+            // sets about a point smaller than the system UI faces it replaces.
             css = Glib::ustring::compose (
-                "* { font-family: %1; font-size: %2pt }",
+                "* { font-family: Jost, %1; font-size: %2pt }",
                 defaultFontFamily,
-                defaultFontSize);
+                defaultFontSize + 1);
         }
 
         // Load custom CSS for font
@@ -355,6 +490,8 @@ RTWindow::RTWindow ()
             if (get_style_context()->lookup_color("steep_wash", wash)) {
                 RTScalable::setIconInkDark(wash.get_red() + wash.get_green() + wash.get_blue() < 1.5);
             }
+
+            RTScalable::setIconPaletteFrom(get_style_context());
         }
 
         if (rtengine::settings->verbose) {
@@ -637,170 +774,259 @@ RTWindow::RTWindow ()
             [this](const Cairo::RefPtr<Cairo::Context>& cr) -> bool {
                 if (!startupAnimActive_) return false;
 
-                int w = startupOverlay_->get_allocated_width ();
-                int h = startupOverlay_->get_allocated_height ();
-                double t = startupAnimTime_;
+                const int w = startupOverlay_->get_allocated_width ();
+                const int h = startupOverlay_->get_allocated_height ();
+                const double t = startupAnimTime_;
 
-                // Phase timings (seconds)
-                const double fadeInEnd = 0.3;     // logo fade-in
-                const double holdEnd = 1.8;       // hold with animated topo
-                const double fadeOutEnd = 3.0;    // everything fades out
+                // ~2.9 s on the frame clock. A starburst opens behind the
+                // mark, three arches draw themselves in, a satellite rides an
+                // orbit round the mark while a band of light sweeps across,
+                // the wordmark rises letter by letter over a rule, and then
+                // the whole composition drifts toward the viewer and fades.
+                const auto clamp01 = [](double v) { return std::max(0.0, std::min(1.0, v)); };
+                const auto easeOut = [](double p) { return 1.0 - std::pow(1.0 - p, 3.0); };
+                const auto easeInOut = [](double p) { return p < 0.5 ? 4 * p * p * p : 1 - std::pow(-2 * p + 2, 3) / 2; };
+                const auto phase = [&](double from, double to) { return clamp01((t - from) / (to - from)); };
 
-                // Overall opacity: fade in quickly, hold, then fade out
-                double opacity = 1.0;
-                if (t < fadeInEnd) {
-                    // Ease-out for smooth fade-in
-                    double p = t / fadeInEnd;
-                    opacity = 1.0 - (1.0 - p) * (1.0 - p);
-                } else if (t > holdEnd) {
-                    double p = std::min(1.0, (t - holdEnd) / (fadeOutEnd - holdEnd));
-                    // Ease-in for fade-out
-                    opacity = 1.0 - p * p;
-                }
-                opacity = std::max(0.0, std::min(1.0, opacity));
+                const double exitP = easeInOut(phase(2.35, 2.9));
+                const double opacity = 1.0 - exitP;
 
-                if (opacity <= 0.001) return false;
-
-                // Backdrop in the theme's panel surface so the splash blends
-                // into whatever theme comes up behind it
-                const Gdk::RGBA splashBg = themeColor(*this, "steep_surface_1", Gdk::RGBA("#14171f"));
-                cr->set_source_rgba (splashBg.get_red(), splashBg.get_green(), splashBg.get_blue(), opacity);
-                cr->rectangle (0, 0, w, h);
-                cr->fill ();
-
-                double cx = w * 0.5;
-                double cy = h * 0.5;
-                double animPhase = t * 0.6;  // slow drift
-
-                // === Digital Topography Contour Lines ===
-                // Flowing contour lines across the entire surface
-                const int numLines = 22;
-                double lineSpacing = h / (double)(numLines + 1);
-
-                for (int i = 0; i < numLines; i++) {
-                    double baseY = lineSpacing * (i + 1);
-
-                    // Color varies per line — blues/teals/cyans
-                    double seed = i * 0.47 + 1.2;
-                    double r = 0.18 + 0.08 * std::sin(seed);
-                    double g = 0.32 + 0.12 * std::cos(seed + 0.8);
-                    double b = 0.52 + 0.10 * std::sin(seed + 2.0);
-
-                    // Lines brightest near center, dimmer at edges
-                    double distFromCenter = std::abs(baseY - cy) / cy;
-                    double lineAlpha = opacity * (0.25 + 0.35 * (1.0 - distFromCenter));
-
-                    cr->set_source_rgba (r, g, b, lineAlpha);
-                    cr->set_line_width (1.2 + 0.4 * std::sin(i * 1.3));
-
-                    cr->move_to (0, baseY);
-                    for (int x = 0; x <= w; x += 3) {
-                        double fx = x / (double)w;
-                        // Multi-frequency sine waves for organic topographic contours
-                        double dy = 0.0;
-                        dy += 18.0 * std::sin(fx * 3.5 * M_PI + animPhase * 1.0 + i * 0.6);
-                        dy += 10.0 * std::sin(fx * 6.0 * M_PI + animPhase * 1.4 + i * 0.35);
-                        dy +=  6.0 * std::sin(fx * 11.0 * M_PI + animPhase * 0.8 + i * 0.9);
-                        dy +=  3.0 * std::cos(fx * 17.0 * M_PI + animPhase * 1.7 + i * 1.2);
-                        // Pinch amplitude toward horizontal center for a "peak" effect
-                        double pinch = 1.0 + 0.5 * std::exp(-8.0 * (fx - 0.5) * (fx - 0.5));
-                        cr->line_to (x, baseY + dy * pinch);
-                    }
-                    cr->stroke ();
+                if (opacity <= 0.001) {
+                    return false;
                 }
 
-                // === Elevation contour rings — irregular topographic rings ===
-                for (int ring = 0; ring < 8; ring++) {
-                    double baseR = 50.0 + ring * 35.0 + 8.0 * std::sin(animPhase * 0.9 + ring * 0.7);
-                    double ringAlpha = opacity * (0.12 + 0.08 * (1.0 - ring / 8.0));
-                    double rb = 0.30 + 0.05 * ring;
-                    double gb = 0.50 + 0.03 * ring;
-                    double bb = 0.65 + 0.02 * ring;
-                    cr->set_source_rgba (rb, gb, bb, ringAlpha);
-                    cr->set_line_width (0.9 + 0.2 * (ring % 3 == 0 ? 1.0 : 0.0));
+                const Gdk::RGBA bg = themeColor(*this, "steep_surface_1", Gdk::RGBA("#14171f"));
+                const Gdk::RGBA accent = themeColor(*this, "steep_accent", Gdk::RGBA("#d6a650"));
+                const Gdk::RGBA ink = themeColor(*this, "steep_text_hi", Gdk::RGBA("#ccd4e0"));
+                const Gdk::RGBA dim = themeColor(*this, "steep_text_dim", Gdk::RGBA("#8a92a1"));
+                const auto setRgba = [&](const Gdk::RGBA& c, double a) {
+                    cr->set_source_rgba(c.get_red(), c.get_green(), c.get_blue(), a);
+                };
 
-                    bool first = true;
-                    for (int deg = 0; deg <= 360; deg += 2) {
-                        double rad = deg * M_PI / 180.0;
-                        double wobble = 1.0
-                            + 0.08 * std::sin(rad * 3 + animPhase + ring * 0.9)
-                            + 0.05 * std::cos(rad * 5 + animPhase * 1.3 + ring * 0.6)
-                            + 0.03 * std::sin(rad * 8 + animPhase * 0.7 + ring * 1.4);
-                        double px = cx + baseR * wobble * std::cos(rad);
-                        double py = cy + baseR * wobble * std::sin(rad);
-                        if (first) { cr->move_to(px, py); first = false; }
-                        else cr->line_to(px, py);
-                    }
-                    cr->close_path ();
-                    cr->stroke ();
-                }
+                cr->set_source_rgba(bg.get_red(), bg.get_green(), bg.get_blue(), opacity);
+                cr->paint();
 
-                // === Subtle grid-dot pattern (elevation markers) ===
+                const double cx = w * 0.5;
+                const double cy = h * 0.5;
+                const double unit = std::max(150.0, std::min(280.0, std::min(w, h) * 0.22));
+                const double baseY = cy + unit * 0.55;
+                const double markY = baseY - unit * 0.95;
+
+                // A soft pool of light behind everything, brightening as the
+                // mark arrives.
                 {
-                    double dotAlpha = opacity * 0.06;
-                    const Gdk::RGBA dotInk = themeColor(*this, "steep_accent", Gdk::RGBA("#6699cc"));
-                    cr->set_source_rgba(dotInk.get_red(), dotInk.get_green(), dotInk.get_blue(), dotAlpha);
-                    double spacing = 30.0;
-                    for (double gx = spacing; gx < w; gx += spacing) {
-                        for (double gy = spacing; gy < h; gy += spacing) {
-                            cr->arc(gx, gy, 0.6, 0, 2 * M_PI);
+                    const double bloom = easeOut(phase(0.3, 1.4));
+                    auto pool = Cairo::RadialGradient::create(cx, markY, 0, cx, markY, unit * 1.6);
+                    pool->add_color_stop_rgba(0.0, accent.get_red(), accent.get_green(), accent.get_blue(), 0.10 * bloom * opacity);
+                    pool->add_color_stop_rgba(1.0, accent.get_red(), accent.get_green(), accent.get_blue(), 0.0);
+                    cr->set_source(pool);
+                    cr->paint();
+                }
+
+                // The exit: a slow drift toward the viewer, and a lift.
+                cr->save();
+                const double zoom = 1.0 + 0.05 * exitP;
+                cr->translate(cx, cy - 10.0 * exitP);
+                cr->scale(zoom, zoom);
+                cr->translate(-cx, -cy);
+
+                // Starburst: fine rays opening out from behind the mark,
+                // turning slowly the whole time.
+                {
+                    const double open = easeOut(phase(0.0, 1.3));
+                    const int rays = 56;
+                    const double inner = unit * 0.42;
+                    const double outer = inner + unit * 0.9 * open;
+                    cr->set_line_width(1.0);
+                    cr->set_line_cap(Cairo::LINE_CAP_ROUND);
+
+                    for (int i = 0; i < rays; ++i) {
+                        const double a = 2.0 * M_PI * i / rays + 0.12 * t;
+                        const double len = (i % 2 == 0) ? 1.0 : 0.62;
+                        setRgba(accent, opacity * open * (i % 2 == 0 ? 0.13 : 0.07));
+                        cr->move_to(cx + std::cos(a) * inner, markY + std::sin(a) * inner);
+                        cr->line_to(cx + std::cos(a) * (inner + (outer - inner) * len),
+                                    markY + std::sin(a) * (inner + (outer - inner) * len));
+                        cr->stroke();
+                    }
+                }
+
+                // Arches: the Atelier container shape, nested.
+                const auto archPath = [&](double aw, double ah) {
+                    const double r = aw / 2.0;
+                    cr->begin_new_path();
+                    cr->move_to(cx - r, baseY);
+                    cr->line_to(cx - r, baseY - (ah - r));
+                    cr->arc(cx, baseY - (ah - r), r, M_PI, 2 * M_PI);
+                    cr->line_to(cx + r, baseY);
+                };
+
+                for (int i = 0; i < 3; ++i) {
+                    const double aw = unit * (1.25 - 0.22 * i);
+                    const double ah = unit * (1.55 - 0.22 * i);
+                    const double r = aw / 2.0;
+                    const double length = 2.0 * (ah - r) + M_PI * r;
+                    const double drawn = easeInOut(phase(0.15 + 0.18 * i, 1.15 + 0.18 * i));
+
+                    if (drawn <= 0.0) {
+                        continue;
+                    }
+
+                    archPath(aw, ah);
+                    const std::vector<double> dash = {length * drawn, length};
+                    cr->set_dash(dash, 0.0);
+                    cr->set_line_width(i == 0 ? 1.8 : 1.1);
+                    cr->set_line_cap(Cairo::LINE_CAP_ROUND);
+                    setRgba(accent, opacity * (0.9 - 0.25 * i));
+                    cr->stroke();
+                    cr->unset_dash();
+
+                    // A bright bead running at the tip of the line as it draws.
+                    if (drawn < 1.0) {
+                        archPath(aw, ah);
+                        const std::vector<double> bead = {0.0, length * drawn, 0.001, length * 2};
+                        cr->set_dash(bead, 0.0);
+                        cr->set_line_width(i == 0 ? 5.0 : 3.5);
+                        setRgba(accent, opacity * 0.9 * std::sin(drawn * M_PI));
+                        cr->stroke();
+                        cr->unset_dash();
+                    }
+                }
+
+                // Band of light sweeping left to right inside the outer arch.
+                {
+                    const double sweep = easeInOut(phase(0.8, 2.0));
+
+                    if (sweep > 0.0 && sweep < 1.0) {
+                        const double sx = cx - unit * 1.1 + sweep * unit * 2.2;
+                        auto light = Cairo::LinearGradient::create(sx - unit * 0.4, 0, sx + unit * 0.4, 0);
+                        light->add_color_stop_rgba(0.0, accent.get_red(), accent.get_green(), accent.get_blue(), 0.0);
+                        light->add_color_stop_rgba(0.5, accent.get_red(), accent.get_green(), accent.get_blue(),
+                                                   0.12 * opacity * std::sin(sweep * M_PI));
+                        light->add_color_stop_rgba(1.0, accent.get_red(), accent.get_green(), accent.get_blue(), 0.0);
+                        archPath(unit * 1.25, unit * 1.55);
+                        cr->close_path();
+                        cr->set_source(light);
+                        cr->fill();
+                    }
+                }
+
+                // Orbit: a thin ellipse round the mark with a satellite on it.
+                {
+                    const double ring = easeOut(phase(0.55, 1.35));
+
+                    if (ring > 0.0) {
+                        const double rx = unit * 0.46, ry = unit * 0.16;
+                        const double tilt = -0.32;
+                        cr->save();
+                        cr->translate(cx, markY);
+                        cr->rotate(tilt);
+                        cr->scale(rx, ry);
+                        cr->begin_new_path();
+                        cr->arc(0, 0, 1.0, 0, 2 * M_PI * ring);
+                        cr->restore();
+                        cr->set_line_width(0.9);
+                        setRgba(dim, opacity * 0.55);
+                        cr->stroke();
+
+                        const double a = -M_PI * 0.5 + 2.0 * M_PI * easeInOut(phase(0.7, 2.3)) * 1.25;
+                        const double ex = std::cos(a) * rx, ey = std::sin(a) * ry;
+                        const double px = cx + ex * std::cos(tilt) - ey * std::sin(tilt);
+                        const double py = markY + ex * std::sin(tilt) + ey * std::cos(tilt);
+                        auto glow = Cairo::RadialGradient::create(px, py, 0, px, py, 9);
+                        glow->add_color_stop_rgba(0.0, accent.get_red(), accent.get_green(), accent.get_blue(), opacity * ring * 0.9);
+                        glow->add_color_stop_rgba(1.0, accent.get_red(), accent.get_green(), accent.get_blue(), 0.0);
+                        cr->set_source(glow);
+                        cr->arc(px, py, 9, 0, 2 * M_PI);
+                        cr->fill();
+                        setRgba(ink, opacity * ring);
+                        cr->arc(px, py, 2.2, 0, 2 * M_PI);
+                        cr->fill();
+                    }
+                }
+
+                // The mark: fades in and settles from slightly large.
+                const double markP = easeOut(phase(0.5, 1.4));
+
+                if (logoSurface_ && markP > 0.0) {
+                    const double logoW = logoSurface_->get_width();
+                    const double logoH = logoSurface_->get_height();
+                    const double target = unit * 0.5 * (1.1 - 0.1 * markP);
+                    const double s = target / std::max(logoW, logoH);
+                    cr->save();
+                    cr->translate(cx - logoW * s * 0.5, markY - logoH * s * 0.5 + 8.0 * (1.0 - markP));
+                    cr->scale(s, s);
+                    cr->set_source(logoSurface_, 0, 0);
+                    cr->paint_with_alpha(opacity * markP);
+                    cr->restore();
+                }
+
+                // Wordmark: each letter rises into place in turn while the
+                // tracking closes in.
+                const double wordP = easeOut(phase(0.95, 1.85));
+
+                if (wordP > 0.0) {
+                    static const char* const letters[] = {"S", "T", "E", "E", "P"};
+                    Pango::FontDescription font;
+                    font.set_family("Michroma, Jost, sans-serif");
+                    font.set_size(static_cast<int>(unit * 0.11) * PANGO_SCALE);
+                    const double tracking = unit * (0.09 + 0.10 * (1.0 - wordP));
+                    std::vector<Glib::RefPtr<Pango::Layout>> layouts;
+                    double total = 0.0;
+                    int th = 0;
+
+                    for (const char* letter : letters) {
+                        auto layout = Pango::Layout::create(cr);
+                        layout->set_font_description(font);
+                        layout->set_text(letter);
+                        int lw, lh;
+                        layout->get_pixel_size(lw, lh);
+                        th = std::max(th, lh);
+                        total += lw;
+                        layouts.push_back(layout);
+                    }
+
+                    total += tracking * (layouts.size() - 1);
+                    double x = cx - total * 0.5;
+                    const double textY = baseY + unit * 0.12;
+
+                    for (size_t i = 0; i < layouts.size(); ++i) {
+                        const double lp = easeOut(phase(0.95 + 0.09 * i, 1.55 + 0.09 * i));
+                        int lw, lh;
+                        layouts[i]->get_pixel_size(lw, lh);
+                        cr->move_to(x, textY + 10.0 * (1.0 - lp));
+                        setRgba(ink, opacity * lp);
+                        layouts[i]->show_in_cairo_context(cr);
+                        x += lw + tracking;
+                    }
+
+                    // A fine rule under the wordmark, drawn out from the
+                    // centre, with a small diamond at each end.
+                    const double ruleP = easeInOut(phase(1.35, 2.0));
+
+                    if (ruleP > 0.0) {
+                        const double rule = unit * 0.55 * ruleP;
+                        const double ry = std::round(textY + th + 12) + 0.5;
+                        setRgba(dim, opacity * 0.7);
+                        cr->set_line_width(1.0);
+                        cr->move_to(cx - rule, ry);
+                        cr->line_to(cx + rule, ry);
+                        cr->stroke();
+
+                        for (const double ex : {cx - rule, cx + rule}) {
+                            const double d = 3.0 * ruleP;
+                            setRgba(accent, opacity * ruleP);
+                            cr->move_to(ex, ry - d);
+                            cr->line_to(ex + d, ry);
+                            cr->line_to(ex, ry + d);
+                            cr->line_to(ex - d, ry);
+                            cr->close_path();
                             cr->fill();
                         }
                     }
                 }
 
-                // === Central glow behind logo ===
-                {
-                    double glowR = std::min(w, h) * 0.22;
-                    auto gradient = Cairo::RadialGradient::create(
-                        cx, cy - 10, 0, cx, cy - 10, glowR);
-                    gradient->add_color_stop_rgba(0.0, 0.25, 0.45, 0.65, 0.25 * opacity);
-                    gradient->add_color_stop_rgba(0.5, 0.15, 0.30, 0.50, 0.10 * opacity);
-                    gradient->add_color_stop_rgba(1.0, splashBg.get_red(), splashBg.get_green(), splashBg.get_blue(), 0.0);
-                    cr->set_source(gradient);
-                    cr->rectangle(0, 0, w, h);
-                    cr->fill();
-                }
-
-                // === Steep Logo (centered, large) ===
-                if (logoSurface_) {
-                    double logoW = logoSurface_->get_width();
-                    double logoH = logoSurface_->get_height();
-                    double targetSize = std::min(w, h) * 0.16;
-                    targetSize = std::max(120.0, std::min(220.0, targetSize));
-                    double scale = targetSize / std::max(logoW, logoH);
-                    double logoX = (w - logoW * scale) * 0.5;
-                    double logoY = (h - logoH * scale) * 0.5 - 24;
-
-                    cr->save();
-                    cr->translate(logoX, logoY);
-                    cr->scale(scale, scale);
-                    cr->set_source(logoSurface_, 0, 0);
-                    cr->paint_with_alpha(opacity);
-                    cr->restore();
-                }
-
-                // === "STEEP" text below logo ===
-                {
-                    auto layout = Pango::Layout::create(cr);
-                    auto fontDesc = Pango::FontDescription();
-                    fontDesc.set_family("sans-serif");
-                    fontDesc.set_weight(Pango::WEIGHT_LIGHT);
-                    fontDesc.set_size(20 * PANGO_SCALE);
-                    layout->set_font_description(fontDesc);
-                    layout->set_text("S T E E P");
-                    layout->set_alignment(Pango::ALIGN_CENTER);
-
-                    int textW, textH;
-                    layout->get_pixel_size(textW, textH);
-                    double textX = (w - textW) * 0.5;
-                    double textY = cy + 60;
-
-                    cr->move_to(textX, textY);
-                    const Gdk::RGBA splashInk = themeColor(*this, "steep_text_hi", Gdk::RGBA("#ccd4e0"));
-                    cr->set_source_rgba(splashInk.get_red(), splashInk.get_green(), splashInk.get_blue(), opacity * 0.9);
-                    layout->show_in_cairo_context(cr);
-                }
+                cr->restore();
 
                 return true;
             }, false);
@@ -1125,45 +1351,167 @@ RTWindow::RTWindow ()
                 ep->setGamutCheck(chkGamutCheck->get_active());
         });
 
-        optionsBox->pack_start (*menuHelpBtn, false, false);
-        optionsBox->pack_start (*menuIccBtn, false, false);
-        optionsBox->pack_start (*menuPrefsBtn, false, false);
-        optionsBox->pack_start (*menuSep1, false, false, 4);
-        optionsBox->pack_start (*menuNavBtn, false, false);
-        optionsBox->pack_start (*menuHistBtn, false, false);
-        optionsBox->pack_start (*menuSep2, false, false, 4);
-        optionsBox->pack_start (*bgColorRow, false, false);
-        optionsBox->pack_start (*chkFocusMask, false, false);
-        optionsBox->pack_start (*chkSharpMask, false, false);
-        optionsBox->pack_start (*chkClippedShadows, false, false);
-        optionsBox->pack_start (*chkClippedHighlights, false, false);
-        optionsBox->pack_start (*menuSep3, false, false, 4);
-        optionsBox->pack_start (*chkHistogramProfile, false, false);
-        optionsBox->pack_start (*menuSep4, false, false, 4);
-        optionsBox->pack_start (*previewChannelLabel, false, false);
-        optionsBox->pack_start (*chkPreviewR, false, false);
-        optionsBox->pack_start (*chkPreviewG, false, false);
-        optionsBox->pack_start (*chkPreviewB, false, false);
-        optionsBox->pack_start (*chkPreviewL, false, false);
-        optionsBox->pack_start (*menuSep5, false, false, 4);
-        optionsBox->pack_start (*intentRow, false, false);
-#if !defined(__APPLE__)
-        optionsBox->pack_start (*profileRow, false, false);
-#endif
-        optionsBox->pack_start (*chkSoftProof, false, false);
-        optionsBox->pack_start (*chkGamutCheck, false, false);
+        // Two columns under a header naming the app: what Steep itself
+        // offers on the left, how the open photo is shown on the right.
+        optionsBox->set_spacing (10);
+        optionsBox->set_margin_top (12);
+        optionsBox->set_margin_bottom (12);
+        optionsBox->set_margin_start (14);
+        optionsBox->set_margin_end (14);
 
-        // MCP Server button
-        auto* menuMcpSep = Gtk::manage(new Gtk::Separator());
-        auto* menuMcpBtn = Gtk::manage(new Gtk::Button(M("MCP_MENU_BUTTON")));
-        menuMcpBtn->set_relief(Gtk::RELIEF_NONE);
-        menuMcpBtn->set_halign(Gtk::ALIGN_START);
-        menuMcpBtn->signal_clicked().connect([this]() {
+        const auto heading = [] (const Glib::ustring& text) {
+            Gtk::Label* l = Gtk::manage (new Gtk::Label (text));
+            l->set_halign (Gtk::ALIGN_START);
+            l->get_style_context()->add_class ("options-heading");
+            return l;
+        };
+
+        Gtk::Box* menuHeader = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 10));
+        menuHeader->set_name ("OptionsHeader");
+        menuHeader->pack_start (*Gtk::manage (new RTImage ("steep-logo", Gtk::ICON_SIZE_LARGE_TOOLBAR)), false, false);
+        Gtk::Label* wordmark = Gtk::manage (new Gtk::Label ("STEEP"));
+        wordmark->get_style_context()->add_class ("options-wordmark");
+        menuHeader->pack_start (*wordmark, false, false);
+        Gtk::Label* versionLabel = Gtk::manage (new Gtk::Label (App::VERSION));
+        versionLabel->get_style_context()->add_class ("dim-label");
+        versionLabel->get_style_context()->add_class ("options-version");
+        versionLabel->set_valign (Gtk::ALIGN_BASELINE);
+        menuHeader->pack_end (*versionLabel, false, false);
+
+        Gtk::Box* menuCols = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 16));
+        Gtk::Box* appCol = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_VERTICAL, 1));
+        Gtk::Box* viewCol = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_VERTICAL, 6));
+        viewCol->set_size_request (300, -1);
+
+        // The MCP entry, drawn like its neighbours.
+        Gtk::Box* mcpRow = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 8));
+        mcpRow->pack_start (*Gtk::manage (new RTImage ("atom", Gtk::ICON_SIZE_LARGE_TOOLBAR)), false, false);
+        mcpRow->pack_start (*Gtk::manage (new Gtk::Label (M ("MCP_MENU_BUTTON"))), false, false);
+        Gtk::Button* menuMcpBtn = Gtk::manage (new Gtk::Button ());
+        menuMcpBtn->add (*mcpRow);
+        menuMcpBtn->set_relief (Gtk::RELIEF_NONE);
+        menuMcpBtn->signal_clicked().connect ([this]() {
             optionsBtn->get_popover()->hide();
             showMcpDialog();
         });
-        optionsBox->pack_start(*menuMcpSep, false, false, 4);
-        optionsBox->pack_start(*menuMcpBtn, false, false);
+
+        for (Gtk::Button* b : {menuPrefsBtn, menuHelpBtn, menuIccBtn, menuMcpBtn, menuNavBtn, menuHistBtn}) {
+            b->get_style_context()->add_class ("options-item");
+        }
+
+        appCol->pack_start (*menuPrefsBtn, false, false);
+        appCol->pack_start (*menuHelpBtn, false, false);
+        appCol->pack_start (*menuIccBtn, false, false);
+        appCol->pack_start (*menuMcpBtn, false, false);
+        Gtk::Label* windowsHeading = heading (M ("MAIN_MENU_SEC_WINDOWS"));
+        windowsHeading->set_margin_top (10);
+        appCol->pack_start (*windowsHeading, false, false);
+        appCol->pack_start (*menuNavBtn, false, false);
+        appCol->pack_start (*menuHistBtn, false, false);
+
+        // Background: a segmented choice; the combo stays as its model, so
+        // the sync on show and the handler above are untouched.
+        Gtk::Box* bgSeg = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 0));
+        makeSegmented (*bgSeg);
+        {
+            Gtk::RadioButton::Group bgGroup;
+            const char* bgKeys[] = {"MAIN_MENU_PREVIEW_BG_THEME", "MAIN_MENU_PREVIEW_BG_BLACK",
+                                    "MAIN_MENU_PREVIEW_BG_GREY", "MAIN_MENU_PREVIEW_BG_WHITE"};
+            auto radios = std::make_shared<std::vector<Gtk::RadioButton*>> ();
+
+            for (int i = 0; i < 4; ++i) {
+                Gtk::RadioButton* r = Gtk::manage (new Gtk::RadioButton (bgGroup, M (bgKeys[i])));
+                r->set_mode (false);
+                r->signal_toggled().connect ([this, r, i]() {
+                    if (r->get_active() && bgColorCombo->get_active_row_number() != i) {
+                        bgColorCombo->set_active (i);
+                    }
+                });
+                bgSeg->pack_start (*r, true, true);
+                radios->push_back (r);
+            }
+
+            bgColorCombo->signal_changed().connect ([this, radios]() {
+                const int i = bgColorCombo->get_active_row_number();
+
+                if (i >= 0 && i < static_cast<int>(radios->size()) && !(*radios)[i]->get_active()) {
+                    (*radios)[i]->set_active (true);
+                }
+            });
+        }
+
+        viewCol->pack_start (*heading (M ("MAIN_MENU_PREVIEW_BG")), false, false);
+        viewCol->pack_start (*bgSeg, false, false);
+
+        // Overlays as toggles, two by two.
+        Gtk::Grid* overlayGrid = Gtk::manage (new Gtk::Grid ());
+        overlayGrid->set_column_homogeneous (true);
+        overlayGrid->set_row_spacing (4);
+        overlayGrid->set_column_spacing (4);
+        {
+            Gtk::CheckButton* toggles[] = {chkClippedHighlights, chkClippedShadows, chkFocusMask, chkSharpMask};
+
+            for (int i = 0; i < 4; ++i) {
+                toggles[i]->set_mode (false);
+                toggles[i]->get_style_context()->add_class ("options-toggle");
+                overlayGrid->attach (*toggles[i], i % 2, i / 2, 1, 1);
+            }
+        }
+        viewCol->pack_start (*heading (M ("MAIN_MENU_SEC_OVERLAYS")), false, false);
+        viewCol->pack_start (*overlayGrid, false, false);
+
+        Gtk::Box* channelSeg = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 0));
+        makeSegmented (*channelSeg);
+
+        for (Gtk::CheckButton* c : {chkPreviewR, chkPreviewG, chkPreviewB, chkPreviewL}) {
+            c->set_mode (false);
+            channelSeg->pack_start (*c, true, true);
+        }
+
+        viewCol->pack_start (*heading (M ("MAIN_MENU_PREVIEW_CHANNEL")), false, false);
+        viewCol->pack_start (*channelSeg, false, false);
+        viewCol->pack_start (*chkHistogramProfile, false, false);
+
+        viewCol->pack_start (*heading (M ("MAIN_MENU_SEC_COLOUR")), false, false);
+        intentRow->set_margin_start (0);
+        intentRow->set_margin_end (0);
+        profileRow->set_margin_start (0);
+        profileRow->set_margin_end (0);
+        intentCombo->set_hexpand (true);
+        profileCombo->set_hexpand (true);
+        intentRow->child_property_pack_type (*intentCombo) = Gtk::PACK_START;
+        intentRow->child_property_expand (*intentCombo) = true;
+        intentRow->child_property_fill (*intentCombo) = true;
+        profileRow->child_property_pack_type (*profileCombo) = Gtk::PACK_START;
+        profileRow->child_property_expand (*profileCombo) = true;
+        profileRow->child_property_fill (*profileCombo) = true;
+        intentLabel->set_size_request (110, -1);
+        intentLabel->set_xalign (0.f);
+        profileLabel->set_size_request (110, -1);
+        profileLabel->set_xalign (0.f);
+        viewCol->pack_start (*intentRow, false, false);
+#if !defined(__APPLE__)
+        viewCol->pack_start (*profileRow, false, false);
+#endif
+        Gtk::Box* proofRow = Gtk::manage (new Gtk::Box (Gtk::ORIENTATION_HORIZONTAL, 12));
+        proofRow->pack_start (*chkSoftProof, false, false);
+        proofRow->pack_start (*chkGamutCheck, false, false);
+        viewCol->pack_start (*proofRow, false, false);
+
+        menuCols->pack_start (*appCol, false, false);
+        menuCols->pack_start (*Gtk::manage (new Gtk::Separator (Gtk::ORIENTATION_VERTICAL)), false, false);
+        menuCols->pack_start (*viewCol, true, true);
+
+        optionsBox->pack_start (*menuHeader, false, false);
+        optionsBox->pack_start (*Gtk::manage (new Gtk::Separator (Gtk::ORIENTATION_HORIZONTAL)), false, false);
+        optionsBox->pack_start (*menuCols, false, false);
+
+        // The separators the single column used are not part of this layout.
+        for (Gtk::Separator* s : {menuSep1, menuSep2, menuSep3, menuSep4, menuSep5}) {
+            delete s;
+        }
+
+        delete previewChannelLabel;
 
         optionsBox->show_all ();
         optionsPopover->add (*optionsBox);
@@ -1362,21 +1710,22 @@ void RTWindow::on_realize ()
         auto startTime = std::make_shared<Glib::Timer>();
         startTime->start();
 
-        startupAnimConn_ = Glib::signal_timeout().connect (
-            [this, startTime]() -> bool {
+        // Driven by the frame clock, not a 16 ms timer: one draw per
+        // display refresh, so the motion never stutters against vsync.
+        startupOverlay_->add_tick_callback(
+            [this, startTime](const Glib::RefPtr<Gdk::FrameClock>&) -> bool {
                 startupAnimTime_ = startTime->elapsed();
 
-                if (startupAnimTime_ > 3.1) {
-                    // Animation complete
+                if (startupAnimTime_ > 2.95) {
                     startupAnimActive_ = false;
                     startupOverlay_->hide ();
                     startupOverlay_->set_no_show_all (true);
-                    return false; // disconnect timer
+                    return false;
                 }
 
                 startupOverlay_->queue_draw ();
-                return true; // continue
-            }, 16); // ~60fps
+                return true;
+            });
     }
 
     // Display release notes only if new major version.
@@ -1404,25 +1753,34 @@ void RTWindow::on_realize ()
         showErrors();
     }
 
-    // Auto-start MCP server if configured
-    if (options.mcpAutoStart && mcpServer_ && !mcpServer_->isRunning()) {
-        mcpServer_->start();
+    // Auto-start MCP server if configured. STEEP_MCP_AUTOSTART=1 starts it for this session only
+    // (scripts), and STEEP_MCP_PORT pins the port so they can find it.
+    const char* const mcpEnvStart = g_getenv("STEEP_MCP_AUTOSTART");
+    const bool mcpStartFromEnv = mcpEnvStart && std::string(mcpEnvStart) == "1";
+    if ((options.mcpAutoStart || mcpStartFromEnv) && mcpServer_ && !mcpServer_->isRunning()) {
+        const char* const mcpEnvPort = g_getenv("STEEP_MCP_PORT");
+        mcpServer_->start(mcpEnvPort ? std::atoi(mcpEnvPort) : 0);
     }
 
-    // Main-loop stall probe: a 50ms default-priority heartbeat. Gaps beyond
-    // 250ms mean the GUI thread could not even run timeouts — input and
-    // painting were frozen for that long. Inert unless the perf log is on.
+    // Main-loop stall probe: a 25ms default-priority heartbeat. A gap beyond
+    // the threshold (100ms, STEEP_LOOPSTALL_MS) means the GUI thread could not
+    // even run timeouts — input and painting were frozen for that long. On
+    // Windows a watchdog also samples where the GUI thread was stuck. Inert
+    // unless the perf log is on.
     if (viewSwitchTraceOn()) {
-        auto lastTick = std::make_shared<gint64>(g_get_monotonic_time());
+        auto lastTick = std::make_shared<std::atomic<gint64>>(g_get_monotonic_time());
         Glib::signal_timeout().connect([lastTick]() -> bool {
             const gint64 now = g_get_monotonic_time();
-            const double gapMs = (now - *lastTick) / 1000.0;
-            if (gapMs > 250.0) {
+            const double gapMs = (now - lastTick->load(std::memory_order_relaxed)) / 1000.0;
+            if (gapMs > loopStallThresholdMs()) {
                 fileBrowserPerfLog("[loopStall] gap=%.0fms\n", gapMs);
             }
-            *lastTick = now;
+            lastTick->store(now, std::memory_order_release);
             return true;
-        }, 50);
+        }, 25);
+#if defined(_WIN32) && (defined(__x86_64__) || defined(_M_X64))
+        LoopStallSampler::start(lastTick);
+#endif
     }
 
     // Debug rig, inert unless STEEP_SWITCH_SELFTEST is set: after startup has
@@ -2273,6 +2631,8 @@ void RTWindow::MoveFileBrowserToMain()
         trace.step ("reparent");
         fCatalog->enableTabMode (false);
         trace.step ("enableTabMode(false)");
+        // ...and the browser picks up whatever the filmstrip was filtered by.
+        fCatalog->setFilterToggles (epanel->getFilterToggles ());
         fCatalog->tbLeftPanel_1_visible (false);  // Left toggle now in FilePanel footer
         fCatalog->tbRightPanel_1_visible (false); // Right sidebar retired in browser view
 
@@ -2315,6 +2675,8 @@ void RTWindow::MoveFileBrowserToEditor()
         trace.step ("showTopPanel");
         fCatalog->enableTabMode (true);
         trace.step ("enableTabMode(true)");
+        // The filmstrip starts from whatever the browser was filtering by.
+        epanel->setFilterToggles (fCatalog->getFilterToggles ());
         epanel->restoreEditorFilter();
         trace.step ("restoreEditorFilter");
         fCatalog->refreshHeight();

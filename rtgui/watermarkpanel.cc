@@ -434,7 +434,7 @@ void WatermarkPanel::showPreview()
     // logo chosen, an empty text field is a deliberate logo-only watermark
     // and the preview must reflect that.
     if (text.empty() && !logoSurf) {
-        text = "Sample Watermark";
+        text = M("WATERMARK_SAMPLE_TEXT");
     }
     const bool haveText = !text.empty();
 

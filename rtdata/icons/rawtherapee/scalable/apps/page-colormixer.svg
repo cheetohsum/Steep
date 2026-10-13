@@ -1,13 +1,1 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
-  <!-- Color wheel: 6 pie slices in rainbow order -->
-  <g transform="translate(8,8)">
-    <path d="M0,-6 A6,6 0 0,1 5.196,-3 L0,0 Z" fill="#ff4444" opacity="0.85"/>
-    <path d="M5.196,-3 A6,6 0 0,1 5.196,3 L0,0 Z" fill="#ffaa00" opacity="0.85"/>
-    <path d="M5.196,3 A6,6 0 0,1 0,6 L0,0 Z" fill="#44dd44" opacity="0.85"/>
-    <path d="M0,6 A6,6 0 0,1 -5.196,3 L0,0 Z" fill="#44dddd" opacity="0.85"/>
-    <path d="M-5.196,3 A6,6 0 0,1 -5.196,-3 L0,0 Z" fill="#4488ff" opacity="0.85"/>
-    <path d="M-5.196,-3 A6,6 0 0,1 0,-6 L0,0 Z" fill="#cc44ff" opacity="0.85"/>
-    <circle cx="0" cy="0" r="2" fill="#222" opacity="0.6"/>
-  </g>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><path d="M8 2a6 6 0 0 1 5.2 3L8 8z" fill="#e5544b"/><path d="M13.2 5a6 6 0 0 1 0 6L8 8z" fill="#e8a33a"/><path d="M13.2 11A6 6 0 0 1 8 14V8z" fill="#5cb85c"/><path d="M8 14a6 6 0 0 1-5.2-3L8 8z" fill="#4bbfc4"/><path d="M2.8 11a6 6 0 0 1 0-6L8 8z" fill="#4a7fe0"/><path d="M2.8 5A6 6 0 0 1 8 2v6z" fill="#b058d8"/><circle cx="8" cy="8" r="2" fill="var(--surface)"/></svg>

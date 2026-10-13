@@ -17,6 +17,7 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "modebuttonbar.h"
+#include "guiutils.h"
 #include "multilangmgr.h"
 #include "options.h"
 #include "rtimage.h"
@@ -88,7 +89,7 @@ void ModeButtonBar::showPillScalePopover()
         caption->set_halign(Gtk::ALIGN_START);
         box->pack_start(*caption, Gtk::PACK_SHRINK);
 
-        pillScaleSlider_ = Gtk::manage(new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
+        pillScaleSlider_ = Gtk::manage(new MyHScale());
         pillScaleSlider_->set_range(0.7, 2.2);
         pillScaleSlider_->set_increments(0.05, 0.1);
         pillScaleSlider_->set_digits(2);

@@ -39,6 +39,7 @@
 #include "processingjob.h"
 #include "partnerimagestore.h"
 #include "procparams.h"
+#include "relight.h"
 #include "rawimagesource.h"
 #include "aidenoise.h"
 #ifdef RT_AI_MASKING
@@ -1067,6 +1068,13 @@ private:
 
         labView = new LabImage(fw, fh);
 
+        if (params.relight.enabled) {
+            // An export in the session that previewed this image reuses its
+            // mask and depth map, so the export lights what the preview showed.
+            prepareRelightInputs(params.relight, imgsrc->getFileName().raw(), *baseImg,
+                                 baseImg->getWidth(), baseImg->getHeight(), params.icm.workingProfile, true);
+        }
+
         if (params.locallab.enabled && params.locallab.spots.size() > 0) {
 #ifdef RT_AI_MASKING
             if (getAISegmentationEngine().isInitialized()) {
@@ -1852,6 +1860,15 @@ private:
             filmLabSnapshot.reset();
         }
         ipf.softLight(labView, params.softlight);
+
+        if (params.relight.enabled) {
+            RelightFrame relightFrame;
+            relightFrame.imageId = imgsrc->getFileName().raw();
+            relightFrame.workingProfile = params.icm.workingProfile;
+            relightFrame.fullWidth = fw;
+            relightFrame.fullHeight = fh;
+            ipf.relight(labView, params.relight, relightFrame);
+        }
 
         if (params.lightEffects.enabled) {
             ipf.lightEffects(labView, params.lightEffects, 1);

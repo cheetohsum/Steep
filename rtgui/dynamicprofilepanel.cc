@@ -18,6 +18,7 @@
  */
 
 #include "dynamicprofilepanel.h"
+#include "guiutils.h"
 #include "multilangmgr.h"
 #include "rtengine/profilestore.h"
 #include "rtengine/rtengine.h"
@@ -61,8 +62,8 @@ DynamicProfilePanel::EditDialog::EditDialog (const Glib::ustring &title, Gtk::Wi
     add_range (M ("EXIFFILTER_SHUTTER"), shutterspeed_min_, shutterspeed_max_);
     add_range (M ("EXIFFILTER_EXPOSURECOMPENSATION"), expcomp_min_, expcomp_max_);
 
-    add_button (M ("GENERAL_OK"), 1);
-    add_button (M ("GENERAL_CANCEL"), 2);
+    // Cancel then OK; callers test the response for 1 (OK).
+    applyDialogTemplate(*this, M("GENERAL_OK"), 1);
 
     set_ranges();
 

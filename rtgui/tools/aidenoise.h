@@ -40,7 +40,7 @@ protected:
     Gtk::Button* cancelBtn;
     Gtk::Label* statusLabel;
 
-    Gtk::Label* sectionLabel_;
+    SectionHeader* sectionHeader_;
     Gtk::Box* toolContent_;
     Gtk::Revealer* revealer_;
     bool contentExpanded_;

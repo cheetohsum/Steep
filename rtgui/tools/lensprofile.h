@@ -164,7 +164,7 @@ private:
     Gtk::Box* contentWrapper;
     Gtk::Box* manualSubBox;
     Gtk::Box* correctContent;
-    Gtk::Label* correctLabel;
+    SectionHeader* correctHeader;
     /// Shows which camera and lens automatic matching actually found.
     Gtk::Label* autoMatchLabel;
     /// Put uncorrected photos on automatic matching when they open.

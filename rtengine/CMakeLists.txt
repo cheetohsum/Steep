@@ -81,6 +81,7 @@ set(RTENGINESOURCEFILES
     iptextureclarity.cc
     ipgraineffect.cc
     iplighteffects.cc
+    iprelight.cc
     iptiltshift.cc
     iplensblur.cc
     ipresize.cc

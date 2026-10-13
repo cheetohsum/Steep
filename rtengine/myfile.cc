@@ -18,6 +18,7 @@
  */
 #include "myfile.h"
 #include <algorithm>
+#include <functional>
 #include <cstdarg>
 #include <cstring>
 #include <cstdio>
@@ -27,6 +28,10 @@
 #include <string>
 #include <vector>
 #include "rtengine.h"
+#ifdef _WIN32
+#include "rtengine/leanwindows.h"
+#include <winioctl.h>
+#endif
 // get mmap() sorted out
 #ifdef MYFILE_MMAP
 
@@ -298,6 +303,83 @@ std::string rangeKey(const char* fname, ssize_t offset, ssize_t length)
     return std::string(fname) + '|' + std::to_string(offset) + '|' + std::to_string(length);
 }
 
+#ifdef _WIN32
+// 1 = rotational (or unknown: network, removable, query failed), 0 = no seek
+// penalty (SSD/NVMe). Queried once per drive letter.
+bool driveIncursSeekPenalty(wchar_t letter)
+{
+    static std::mutex cacheMutex;
+    static std::map<wchar_t, bool> cache;
+
+    std::lock_guard<std::mutex> lock(cacheMutex);
+    const auto it = cache.find(letter);
+
+    if (it != cache.end()) {
+        return it->second;
+    }
+
+    bool seekPenalty = true;
+    const wchar_t root[] = { letter, L':', L'\\', 0 };
+
+    if (GetDriveTypeW(root) == DRIVE_FIXED) {
+        const wchar_t volume[] = { L'\\', L'\\', L'.', L'\\', letter, L':', 0 };
+        HANDLE h = CreateFileW(volume, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+
+        if (h != INVALID_HANDLE_VALUE) {
+            STORAGE_PROPERTY_QUERY query;
+            memset(&query, 0, sizeof(query));
+            query.PropertyId = StorageDeviceSeekPenaltyProperty;
+            query.QueryType = PropertyStandardQuery;
+            DEVICE_SEEK_PENALTY_DESCRIPTOR desc;
+            memset(&desc, 0, sizeof(desc));
+            DWORD returned = 0;
+
+            if (DeviceIoControl(h, IOCTL_STORAGE_QUERY_PROPERTY, &query, sizeof(query), &desc, sizeof(desc), &returned, NULL)
+                    && returned >= sizeof(desc)) {
+                seekPenalty = desc.IncursSeekPenalty;
+            }
+
+            CloseHandle(h);
+        }
+    }
+
+    cache.emplace(letter, seekPenalty);
+    return seekPenalty;
+}
+#endif
+
+// The lock a preview read runs under. A spinning disk gets one stream at a
+// time per drive (sequential runs instead of interleaved seeks — the reason
+// this lock exists). A drive without seek penalty gets a lock per file:
+// different files read in parallel, while the two readers of the same RAW
+// preview still serialize so the second is served from RangeCache.
+std::mutex& readLockFor(const char* fname)
+{
+    static std::mutex perDrive[27];
+    static std::mutex perFile[32];
+
+#ifdef _WIN32
+    const char c = fname[0];
+    const bool hasLetter = ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) && fname[1] == ':';
+
+    if (hasLetter) {
+        const int index = (c | 0x20) - 'a';
+
+        if (!driveIncursSeekPenalty(static_cast<wchar_t>(L'A' + index))) {
+            return perFile[std::hash<std::string>()(fname) % 32];
+        }
+
+        return perDrive[index];
+    }
+
+    return perDrive[26];
+#else
+    (void)perFile;
+    (void)fname;
+    return perDrive[26];
+#endif
+}
+
 }
 
 bool rtengine::readFileRange (const char* fname, ssize_t offset, ssize_t length, std::vector<unsigned char>& out)
@@ -331,7 +413,7 @@ bool rtengine::readFileRange (const char* fname, ssize_t offset, ssize_t length,
     // threads, so an unlocked lookup misses in both and the range gets read
     // twice. Re-check once this thread owns the read lock: by then the other
     // one has finished and deposited its bytes.
-    std::lock_guard<std::mutex> lock(prefetchMutex());
+    std::lock_guard<std::mutex> lock(readLockFor(fname));
 
     if (RangeCache::get().take(key, out)) {
         served("hit2");

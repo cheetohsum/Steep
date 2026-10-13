@@ -277,6 +277,10 @@ private:
     bool runNavigationBenchmarkStep_(int dirId);
     sigc::connection reparseDirectoryConn_;
     bool reparseDirectoryQueued_ = false;
+    // Sidecars changed on disk, re-read once the burst of monitor events settles.
+    std::set<Glib::ustring> pendingSidecarReloads_;
+    sigc::connection sidecarReloadConn_;
+    void scheduleSidecarReload_(const Glib::ustring& sidecarPath);
     void scheduleReparseDirectory_();
 
     bool earlySelectDone_ = false;
@@ -312,7 +316,19 @@ private:
     void startGlobalScopeGlobe();
     void settleGlobalScopeGlobe();
     void globalScopeToggled();
-    void startGlobalScan();
+    // fresh: clear the grid first (turning global scope on). A rescan after a
+    // filter change keeps what is shown -- the filter already hides what no
+    // longer matches -- and only streams in what is new, so the grid never
+    // blanks or claims there is nothing while the scan runs.
+    void startGlobalScan(bool fresh = true);
+    Gtk::ToggleButton* bGlobalScopeBar_ = nullptr; // the same switch, inside the filter bar
+    sigc::connection globalBarToggleConn_;
+    sigc::signal<void, bool> globalScopeChanged_;
+    void syncGlobalScopeMirrors();
+    // Rating filter: a star shows that rating and up; clicked again, that
+    // rating only; a third click clears it.
+    int rankAnchor_ = 0;
+    bool rankExact_ = false;
     void scheduleGlobalRescan();
     // Coalesces the filter + viewport refresh that follows each batch of
     // global-scan matches into one pass per burst.
@@ -366,6 +382,13 @@ public:
     // picker to inherit the browser's filtering).
     BrowserFilter getFilter ();
     void setEditorFilter(const BrowserFilter& filter);
+
+    FilterToggles getFilterToggles();
+    void setFilterToggles(const FilterToggles& toggles);
+
+    bool isGlobalScope() const { return globalScopeActive_; }
+    void setGlobalScope(bool on);
+    sigc::signal<void, bool>& signalGlobalScopeChanged() { return globalScopeChanged_; }
 
     // thumbnail browsers
     FileBrowser* fileBrowser;
@@ -477,6 +500,11 @@ public:
     void showAlbumFiles (const Glib::ustring& albumName, const std::vector<Glib::ustring>& files);
     void exitAlbumMode ();
     bool isInAlbumMode () const { return inAlbumMode_; }
+    // The photo's own folder is not the one being shown.
+    bool isSourceFolderElsewhere (const Glib::ustring& fname) const;
+    // Go to the photo's folder and select it there. Global scope is left;
+    // every other filter stays as it is.
+    void openSourceFolder (const Glib::ustring& fname);
 
     // Surface a double-exposure partner in the strip directly after the
     // image it composites into, and open it in the editor. The pin lasts

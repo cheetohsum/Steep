@@ -46,6 +46,7 @@ FlatField::FlatField () : FoldableToolPanel(this, TOOL_NAME, M("TP_FLATFIELD_LAB
     ffLabel = Gtk::manage(new Gtk::Label(M("TP_FLATFIELD_FILE")));
     flatFieldFileReset = Gtk::manage(new Gtk::Button());
     flatFieldFileReset->set_image (*Gtk::manage(new RTImage ("cancel-small", Gtk::ICON_SIZE_BUTTON)));
+    flatFieldFileReset->set_tooltip_text(M("GENERAL_CLEAR_FILE"));
     hbff->pack_start(*ffLabel, Gtk::PACK_SHRINK);
     hbff->pack_start(*flatFieldFile);
     hbff->pack_start(*flatFieldFileReset, Gtk::PACK_SHRINK);

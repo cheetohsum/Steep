@@ -40,6 +40,7 @@
 #include "labimage.h"
 #include "mytime.h"
 #include "procparams.h"
+#include "relight.h"
 #include "refreshmap.h"
 #include "rt_math.h"
 #include "utils.h"
@@ -1942,6 +1943,21 @@ void Crop::update(int todo)
         }
         traceStage("detail-film-lab");
         parent->ipf.softLight(labnCrop, params.softlight);
+
+        // The preview pass has estimated the mask and depth by now; a detail
+        // window only reads them.
+        if (params.relight.enabled) {
+            const int relightSkip = std::max(skip, 1);
+            RelightFrame relightFrame;
+            relightFrame.imageId = parent->imgsrc->getFileName().raw();
+            relightFrame.workingProfile = params.icm.workingProfile;
+            relightFrame.fullWidth = parent->fw;
+            relightFrame.fullHeight = parent->fh;
+            relightFrame.originX = (cropx / relightSkip) * relightSkip;
+            relightFrame.originY = (cropy / relightSkip) * relightSkip;
+            relightFrame.step = relightSkip;
+            parent->ipf.relight(labnCrop, params.relight, relightFrame);
+        }
 
         if (params.lightEffects.enabled) {
             parent->ipf.lightEffects(labnCrop, params.lightEffects, std::max(skip, 1));

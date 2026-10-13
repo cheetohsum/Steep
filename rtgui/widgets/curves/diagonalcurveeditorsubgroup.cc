@@ -408,7 +408,7 @@ DiagonalCurveEditorSubGroup::DiagonalCurveEditorSubGroup (CurveEditorGroup* prt,
     presetRow->set_margin_start(6);
     presetRow->set_margin_end(6);
 
-    presetCombo_ = Gtk::manage(new Gtk::ComboBoxText());
+    presetCombo_ = Gtk::manage(new MyComboBoxText());
     for (int i = 0; i < kNumPresets; ++i) {
         presetCombo_->append(M(kDiagonalPresets[i].langKey));
     }

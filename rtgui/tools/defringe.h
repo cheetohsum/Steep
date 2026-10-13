@@ -52,10 +52,10 @@ protected:
     Gtk::Box *purpleBox;
     Gtk::Box *greenBox;
     Gtk::Box *defringeContent;
-    Gtk::Label *defringeLabel;
+    SectionHeader *defringeHeader;
     bool defringeExpanded;
     Gtk::Box *hueContent;
-    Gtk::Label *hueLabel;
+    SectionHeader *hueHeader;
     bool hueExpanded;
     Adjuster *purpleAmount;
     Adjuster *purpleHueLow;

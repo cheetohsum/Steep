@@ -1,0 +1,53 @@
+/*
+  Ocean — deep blue surfaces, sky accent
+
+  Actually blue: deep ocean surfaces with a bright sky accent.
+  (Historically a grey theme with a blue accent by TooWaBoo — rebuilt on the
+  steep token contract; the name stays in tribute.)
+
+  This file is a PALETTE: the design lives in common/steep-look.css and
+  reads these steep_* tokens.
+
+  Copyright (c) 2016-2019 TooWaBoo, (c) 2026 RawTherapee
+  Licensed under the GNU General Public License v3 or later.
+*/
+
+/***************************/
+/**/ @import url("./common/size.css"); /**/
+/**/ @import url("./common/steep-look.css"); /**/
+/***************************/
+
+@define-color steep_surface_0 #0a1622;
+@define-color steep_surface_1 #0f1f2f;
+@define-color steep_surface_2 #15293c;
+@define-color steep_surface_3 #1c344b;
+
+@define-color steep_text_hi #e8f1f8;
+@define-color steep_text #bdd0e0;
+@define-color steep_text_dim #7d97ad;
+
+@define-color steep_accent #5cb1ff;
+@define-color steep_on_accent #06111c;
+@define-color steep_select #2f86d6;
+
+@define-color steep_attention #ffa25c;
+@define-color steep_rating #ffd166;
+@define-color steep_success #57c99a;
+@define-color steep_danger #ff6b6b;
+
+@define-color steep_border #050c13;
+@define-color steep_border_soft #24405a;
+@define-color steep_shadow alpha(#02080e, 0.60);
+
+@define-color steep_sel_bg #2f86d6;
+@define-color steep_sel_fg #e8f1f8;
+
+@define-color steep_wash #dceeff;
+@define-color steep_surround #272727;
+@define-color steep_ornament alpha(#5cb1ff, 0.50);
+
+@define-color steep_label_1 #ff6b6b;
+@define-color steep_label_2 #ffd166;
+@define-color steep_label_3 #57c99a;
+@define-color steep_label_4 #5cb1ff;
+@define-color steep_label_5 #b49cff;

@@ -1,0 +1,52 @@
+/*
+  Darkroom — classic neutral grey, steel accent
+
+  The classic neutral grey darkroom look, with a quiet steel accent that
+  stays out of the image's way.
+
+  This file is a PALETTE: the design lives in common/steep-look.css and
+  reads these steep_* tokens.
+
+  Copyright (c) 2026 RawTherapee
+  Licensed under the GNU General Public License v3 or later.
+*/
+
+/***************************/
+/**/ @import url("./common/size.css"); /**/
+/**/ @import url("./common/steep-look.css"); /**/
+/***************************/
+
+@define-color steep_surface_0 #1a1a1a;
+@define-color steep_surface_1 #232323;
+@define-color steep_surface_2 #2b2b2b;
+@define-color steep_surface_3 #353535;
+
+@define-color steep_text_hi #ececec;
+@define-color steep_text #c6c6c6;
+@define-color steep_text_dim #8b8b8b;
+
+@define-color steep_accent #a8b8c8;
+@define-color steep_on_accent #151515;
+@define-color steep_select #6f8aa6;
+
+@define-color steep_attention #d9a05b;
+@define-color steep_rating #e6c35c;
+@define-color steep_success #8fbf7f;
+@define-color steep_danger #d46a5f;
+
+@define-color steep_border #101010;
+@define-color steep_border_soft #3b3b3b;
+@define-color steep_shadow alpha(#000000, 0.60);
+
+@define-color steep_sel_bg #6f8aa6;
+@define-color steep_sel_fg #ececec;
+
+@define-color steep_wash #ffffff;
+@define-color steep_surround #2b2b2b;
+@define-color steep_ornament alpha(#a8b8c8, 0.50);
+
+@define-color steep_label_1 #d46a5f;
+@define-color steep_label_2 #e6c35c;
+@define-color steep_label_3 #8fbf7f;
+@define-color steep_label_4 #7aa6cf;
+@define-color steep_label_5 #b08fc4;

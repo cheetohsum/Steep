@@ -221,13 +221,53 @@ void AIMaskCache::computeMasks(const std::string& imageId,
     std::uint64_t request = 0;
     {
         MyMutex::MyLock lock(mutex_);
+        const bool subjectModel = getAISubjectEngine().isInitialized();
+
         if (cachedImageId_ == imageId
                 && cachedWorkingProfile_ == workingProfile
                 && sourceWidth_ == width && sourceHeight_ == height
                 && fullW_ == fullW && fullH_ == fullH && cachedMasks_
-                && cachedSubjectModel_ == getAISubjectEngine().isInitialized()) {
+                && cachedSubjectModel_ == subjectModel) {
             return;
         }
+
+        // Revisiting a recent image: swap its maps back in.
+        for (auto it = archive_.begin(); it != archive_.end(); ++it) {
+            if (it->imageId == imageId
+                    && it->workingProfile == workingProfile
+                    && it->sourceWidth == width && it->sourceHeight == height
+                    && it->fullW == fullW && it->fullH == fullH && it->masks
+                    && it->subjectModel == subjectModel) {
+                ArchivedImage restored = std::move(*it);
+                archive_.erase(it);
+                archiveCurrentLocked_();
+
+                cachedImageId_ = std::move(restored.imageId);
+                cachedWorkingProfile_ = std::move(restored.workingProfile);
+                cachedSubjectModel_ = restored.subjectModel;
+                cachedMasks_ = std::move(restored.masks);
+                cachedGuide_ = std::move(restored.guide);
+                coverage_ = std::move(restored.coverage);
+                sourceWidth_ = restored.sourceWidth;
+                sourceHeight_ = restored.sourceHeight;
+                cachedWidth_ = restored.cachedWidth;
+                cachedHeight_ = restored.cachedHeight;
+                fullW_ = restored.fullW;
+                fullH_ = restored.fullH;
+                refinedMasks_.clear();
+                distanceMasks_.clear();
+                preparedMasks_.clear();
+                ++generation_;
+                // Anything still computing for another image is now stale.
+                ++requestGeneration_;
+
+                if (edittrace::enabled()) {
+                    edittrace::logf("[aiMask] restored from archive img=%s", imageId.c_str());
+                }
+                return;
+            }
+        }
+
         request = ++requestGeneration_;
     }
 
@@ -365,6 +405,10 @@ void AIMaskCache::computeMasks(const std::string& imageId,
         edittrace::logf("[aiMask] compute done img=%s total=%.0fms",
                         imageId.c_str(),
                         (edittrace::nowUs() - traceStartUs) / 1000.0);
+    }
+
+    if (cachedImageId_ != imageId) {
+        archiveCurrentLocked_();
     }
 
     cachedMasks_ = std::move(masks);
@@ -741,9 +785,50 @@ bool AIMaskCache::hasCachedMasks() const
     return cachedMasks_ && !cachedMasks_->empty();
 }
 
+void AIMaskCache::archiveCurrentLocked_()
+{
+    if (cachedImageId_.empty() || !cachedMasks_) {
+        return;
+    }
+
+    for (auto it = archive_.begin(); it != archive_.end(); ++it) {
+        if (it->imageId == cachedImageId_) {
+            archive_.erase(it);
+            break;
+        }
+    }
+
+    ArchivedImage entry;
+    entry.imageId = cachedImageId_;
+    entry.workingProfile = cachedWorkingProfile_;
+    entry.subjectModel = cachedSubjectModel_;
+    entry.masks = cachedMasks_;
+    entry.guide = cachedGuide_;
+    entry.coverage = coverage_;
+    entry.sourceWidth = sourceWidth_;
+    entry.sourceHeight = sourceHeight_;
+    entry.cachedWidth = cachedWidth_;
+    entry.cachedHeight = cachedHeight_;
+    entry.fullW = fullW_;
+    entry.fullH = fullH_;
+    archive_.push_front(std::move(entry));
+
+    while (archive_.size() > kArchivedImages) {
+        archive_.pop_back();
+    }
+}
+
 void AIMaskCache::invalidate(const std::string& imageId)
 {
     MyMutex::MyLock lock(mutex_);
+
+    for (auto it = archive_.begin(); it != archive_.end(); ++it) {
+        if (it->imageId == imageId) {
+            archive_.erase(it);
+            break;
+        }
+    }
+
     if (cachedImageId_ != imageId) {
         return;
     }
@@ -764,6 +849,7 @@ void AIMaskCache::invalidate(const std::string& imageId)
 void AIMaskCache::invalidateAll()
 {
     MyMutex::MyLock lock(mutex_);
+    archive_.clear();
     ++requestGeneration_;
     ++generation_;
     cachedImageId_.clear();

@@ -16,6 +16,7 @@
  */
 
 #include "mcp/mcpdialog.h"
+#include "../guiutils.h"
 #include "mcp/mcpserver.h"
 #include "mcp/mcptools.h"
 #include "multilangmgr.h"
@@ -188,7 +189,7 @@ void McpDialog::buildToolList() {
 
 void McpDialog::updateStatus() {
     if (server_->isRunning()) {
-        statusLabel_->set_markup("<span foreground='#73d216'>" + M("MCP_STATUS_RUNNING") + "</span>");
+        statusLabel_->set_markup("<span foreground='" + themeColorHex(*statusLabel_, "steep_success", Gdk::RGBA("#73d216")) + "'>" + Glib::Markup::escape_text(M("MCP_STATUS_RUNNING")) + "</span>");
         portLabel_->set_text(std::to_string(server_->getPort()));
         std::string url = "http://localhost:" + std::to_string(server_->getPort()) + "/mcp";
         urlLabel_->set_text(url);
@@ -197,7 +198,7 @@ void McpDialog::updateStatus() {
         copyConfigBtn_->set_sensitive(true);
         connectBtn_->set_sensitive(true);
     } else {
-        statusLabel_->set_markup("<span foreground='#cc0000'>" + M("MCP_STATUS_STOPPED") + "</span>");
+        statusLabel_->set_markup("<span foreground='" + themeColorHex(*statusLabel_, "steep_danger", Gdk::RGBA("#cc0000")) + "'>" + Glib::Markup::escape_text(M("MCP_STATUS_STOPPED")) + "</span>");
         portLabel_->set_text("");
         urlLabel_->set_text("");
         startStopBtn_->set_label(M("MCP_START_SERVER"));

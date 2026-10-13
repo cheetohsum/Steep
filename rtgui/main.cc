@@ -25,6 +25,7 @@
 
 #include <gtkmm.h>
 #include <giomm.h>
+#include <pango/pangocairo.h>
 #include <iostream>
 #include <tiffio.h>
 #include <atomic>
@@ -233,6 +234,52 @@ void cleanup_rt()
     rtengine::cleanup();
 }
 
+
+// Steep's interface faces (rtdata/fonts, SIL OFL) are added to the default
+// Pango font map, so the CSS can name them without a system install.
+static void registerBundledFonts()
+{
+    const std::string dir = Glib::build_filename(App::get().argv0(), "fonts");
+    PangoFontMap* fontMap = pango_cairo_font_map_get_default();
+
+    for (const char* face : {"jost/Jost-Variable.ttf", "michroma/Michroma-Regular.ttf"}) {
+        const std::string path = Glib::build_filename(dir, face);
+
+        if (!Glib::file_test(path, Glib::FILE_TEST_EXISTS)) {
+            continue;
+        }
+
+#if PANGO_VERSION_CHECK(1, 56, 0)
+        GError* error = nullptr;
+
+        if (!pango_font_map_add_font_file(fontMap, path.c_str(), &error)) {
+            fprintf(stderr, "Could not register font %s: %s\n", path.c_str(), error ? error->message : "");
+            g_clear_error(&error);
+        }
+#else
+        // Older Pango (the Linux AppImage builds against 1.50) has no
+        // pango_font_map_add_font_file. There the font map is Fontconfig's:
+        // add the file to Fontconfig's application fonts and have Pango
+        // reread its configuration. Both are looked up at run time so no
+        // extra link dependency is needed; where they are missing this does
+        // nothing and the theme falls back to the system face.
+        Glib::Module self("");
+        void* addFont = nullptr;
+        void* configChanged = nullptr;
+
+        if (self && self.get_symbol("FcConfigAppFontAddFile", addFont) && addFont) {
+            using AddFontFn = int (*)(void*, const unsigned char*);
+
+            if (!reinterpret_cast<AddFontFn>(addFont)(nullptr, reinterpret_cast<const unsigned char*>(path.c_str()))) {
+                fprintf(stderr, "Could not register font %s\n", path.c_str());
+            } else if (self.get_symbol("pango_fc_font_map_config_changed", configChanged) && configChanged) {
+                using ChangedFn = void (*)(PangoFontMap*);
+                reinterpret_cast<ChangedFn>(configChanged)(fontMap);
+            }
+        }
+#endif
+    }
+}
 
 RTWindow *create_rt_window()
 {
@@ -657,6 +704,7 @@ int main (int argc, char **argv)
     gdk_threads_set_lock_functions (G_CALLBACK (myGdkLockEnter), (G_CALLBACK (myGdkLockLeave)));
     gdk_threads_init();
     gtk_init (&argc, &argv);  // use the "--g-fatal-warnings" command line flag to make warnings fatal
+    registerBundledFonts();
 
     if (fatalError.empty() && app.isRemote()) {
         char *app_argv[2] = { const_cast<char *> (app.argv0().c_str()) };

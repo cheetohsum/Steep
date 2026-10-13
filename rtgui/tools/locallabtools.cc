@@ -182,6 +182,7 @@ LocallabTool::LocallabTool(Gtk::Box* content, Glib::ustring toolName, Glib::ustr
     removeEvBox->signal_button_release_event().connect(sigc::mem_fun(this, &LocallabTool::on_remove_change));
     RTImage* const removeImage = Gtk::manage(new RTImage("cancel-small", Gtk::ICON_SIZE_BUTTON));
     removeEvBox->add(*removeImage);
+    removeEvBox->set_tooltip_text(M("TP_LOCALLAB_REMOVE_TOOL"));
     titleBox->pack_end(*removeEvBox, Gtk::PACK_SHRINK, 1);
     if (needMode) {
         complexity->append(M("TP_LOCALLAB_MODE_EXPERT"));

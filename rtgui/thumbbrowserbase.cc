@@ -1393,8 +1393,11 @@ void ThumbBrowserBase::resort ()
             fd.end(),
             [&](const ThumbBrowserEntryBase* a, const ThumbBrowserEntryBase* b)
             {
-                bool lt = a->compare(*b, options.sortMethod);
-                return options.sortDescending ? !lt : lt;
+                // Swap operands for descending: negating the result is not a
+                // strict weak ordering (equal keys compare true both ways).
+                return options.sortDescending
+                    ? b->compare(*a, options.sortMethod)
+                    : a->compare(*b, options.sortMethod);
             }
         );
         applyPinnedOrder_();

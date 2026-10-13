@@ -67,12 +67,16 @@ Gradient::Gradient () : FoldableToolPanel(this, TOOL_NAME, M("TP_GRADIENT_LABEL"
         GradientMilestone(1.0, 0.20, 0.20, 0.25)
     });
 
-    // Label-as-toggle: click the slider label to expand/collapse detail
-    strength->setLabel(Glib::ustring("\u25B8 ") + M("TP_GRADIENT_STRENGTH"));
-    strength->setLabelClickCallback([this]() { toggleDetail(); });
-
     auto *summaryBox = getSummaryBox();
     summaryBox->pack_start (*strength, Gtk::PACK_SHRINK, 0);
+
+    // "Advanced" section header expands/collapses the detail controls
+    detailHeader_ = Gtk::manage(new SectionHeader(M("TP_GENERAL_ADVANCED")));
+    detailHeader_->set_halign(Gtk::ALIGN_FILL);
+    detailHeader_->set_hexpand(true);
+    detailHeader_->setExpanded(detailExpanded_);
+    detailHeader_->setOnToggled([this](bool) { toggleDetail(); });
+    summaryBox->pack_start(*detailHeader_, Gtk::PACK_SHRINK);
 
     detailContent_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     detailContent_->pack_start(*editHBox, Gtk::PACK_SHRINK, 0);
@@ -366,7 +370,7 @@ void Gradient::setEditProvider (EditDataProvider* provider)
 void Gradient::toggleDetail()
 {
     detailExpanded_ = !detailExpanded_;
-    strength->setLabel(Glib::ustring(detailExpanded_ ? "\u25BE " : "\u25B8 ") + M("TP_GRADIENT_STRENGTH"));
+    detailHeader_->setExpanded(detailExpanded_);
     detailRevealer_->set_reveal_child(detailExpanded_);
 }
 

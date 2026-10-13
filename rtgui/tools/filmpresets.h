@@ -38,11 +38,11 @@ private:
     sigc::connection hoverTimeout_;
 
     Adjuster* strength;
-    Gtk::ComboBoxText* modelCombo_;
-    Gtk::ComboBoxText* processCombo_;
-    Gtk::ComboBoxText* outputCombo_;
-    Gtk::ComboBoxText* formatCombo_;
-    Gtk::ComboBoxText* lensCombo_;
+    MyComboBoxText* modelCombo_;
+    MyComboBoxText* processCombo_;
+    MyComboBoxText* outputCombo_;
+    MyComboBoxText* formatCombo_;
+    MyComboBoxText* lensCombo_;
     Adjuster* exposureAdj_;
     Adjuster* printExposureAdj_;
     Adjuster* pushPullAdj_;
@@ -73,6 +73,7 @@ private:
     Gtk::Box* v3Controls_;
 
     Gtk::Box* detailContent_;
+    SectionHeader* detailHeader_;
     Gtk::Revealer* detailRevealer_;
     bool detailExpanded_;
 

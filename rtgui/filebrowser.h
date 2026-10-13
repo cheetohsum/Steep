@@ -243,6 +243,11 @@ protected:
     std::function<void(const Glib::ustring&)> albumCoverSetter_;
     std::function<void(const Glib::ustring&)> addToAlbumSetter_;
     std::function<bool()> isInAlbumMode_;
+    // "Open source folder": whether a photo lives somewhere other than the
+    // folder on show, and how to go there.
+    std::function<bool(const Glib::ustring&)> sourceFolderElsewhere_;
+    std::function<void(const Glib::ustring&)> sourceFolderOpener_;
+    MyImageMenuItem* openSourceFolder_ = nullptr;
     sigc::connection autoLevelPollConnection_;
     std::thread autoLevelThread_;
     std::shared_ptr<std::atomic<bool>> autoLevelCancel_;
@@ -399,5 +404,10 @@ public:
     }
     void setAlbumModeChecker(std::function<bool()> checker) {
         isInAlbumMode_ = std::move(checker);
+    }
+    void setSourceFolderHandlers(std::function<bool(const Glib::ustring&)> elsewhere,
+                                 std::function<void(const Glib::ustring&)> opener) {
+        sourceFolderElsewhere_ = std::move(elsewhere);
+        sourceFolderOpener_ = std::move(opener);
     }
 };

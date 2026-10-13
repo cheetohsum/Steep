@@ -25,6 +25,7 @@
 
 #include "rtengine/refreshmap.h"
 #include "rtengine/procparams.h"
+#include "rtengine/rt_math.h"
 
 #include "cropwindow.h"
 #include "hidpi.h"
@@ -52,6 +53,9 @@ ImageArea::ImageArea (ImageAreaPanel* p) : parent(p), quickPreviewFit_(false), f
     indClippedPanel = Gtk::manage (new IndicateClippedPanel (this));
     previewModePanel =  Gtk::manage (new PreviewModePanel (this));
     previewModePanel->get_style_context()->add_class("narrowbuttonbox");
+
+    // Styled as the neutral photo surround (widgets.css #PhotoCanvas).
+    set_name("PhotoCanvas");
 
     add_events(Gdk::LEAVE_NOTIFY_MASK);
 
@@ -105,6 +109,7 @@ void ImageArea::showBeforeAfterContextMenu ()
 
 ImageArea::~ImageArea ()
 {
+    detailRestoreConn_.disconnect();
 
     for (auto cropWin : cropWins) {
         delete cropWin;
@@ -158,8 +163,74 @@ void ImageArea::on_resized (Gtk::Allocation& req)
             mainCropWindow->setSize (get_width(), get_height());  // this execute the refresh itself
         }
 
+        keepDetailWindowsInView_();
         parent->syncBeforeAfterViews();
     }
+}
+
+void ImageArea::keepDetailWindowsInView_()
+{
+    const int areaW = get_width();
+    const int areaH = get_height();
+
+    if (areaW <= 1 || areaH <= 1) {
+        return;
+    }
+
+    const int oldW = lastAreaW_ > 1 ? lastAreaW_ : areaW;
+    const int oldH = lastAreaH_ > 1 ? lastAreaH_ : areaH;
+    lastAreaW_ = areaW;
+    lastAreaH_ = areaH;
+
+    if (oldW == areaW && oldH == areaH) {
+        return;
+    }
+
+    // The canvas changes size when before/after splits or joins, the side
+    // panels open, or the window is resized. Detail windows kept their pixel
+    // position and ended up off the visible canvas; instead, one docked to
+    // an edge stays docked, any other keeps its relative place, and every
+    // one stays fully inside.
+    constexpr int dockSlack = 4;
+
+    for (auto* cw : cropWins) {
+        int x = 0, y = 0, w = 0, h = 0;
+        cw->getPosition(x, y);
+        cw->getSize(w, h);
+
+        const int newW = std::max(64, std::min(w, areaW));
+        const int newH = std::max(64, std::min(h, areaH));
+
+        int newX;
+        if (x + w >= oldW - dockSlack) {
+            newX = areaW - newW;
+        } else if (x <= dockSlack) {
+            newX = 0;
+        } else {
+            newX = static_cast<int>(std::lround(static_cast<double>(x) * areaW / oldW));
+        }
+
+        int newY;
+        if (y + h >= oldH - dockSlack) {
+            newY = areaH - newH;
+        } else if (y <= dockSlack) {
+            newY = 0;
+        } else {
+            newY = static_cast<int>(std::lround(static_cast<double>(y) * areaH / oldH));
+        }
+
+        newX = rtengine::LIM(newX, 0, std::max(0, areaW - newW));
+        newY = rtengine::LIM(newY, 0, std::max(0, areaH - newH));
+
+        if (newW != w || newH != h) {
+            cw->setSize(newW, newH);
+        }
+        if (newX != x || newY != y) {
+            cw->setPosition(newX, newY);
+        }
+    }
+
+    queue_draw();
 }
 
 rtengine::StagedImageProcessor* ImageArea::getImProcCoordinator() const
@@ -170,6 +241,7 @@ rtengine::StagedImageProcessor* ImageArea::getImProcCoordinator() const
 void ImageArea::setImProcCoordinator(rtengine::StagedImageProcessor* ipc_)
 {
     if( !ipc_ ) {
+        captureDetailWindows_();
         focusGrabber = nullptr;
 
         for (auto cropWin : cropWins) {
@@ -657,11 +729,119 @@ void ImageArea::unGrabFocus ()
     focusGrabber = nullptr;
 }
 
+void ImageArea::captureDetailWindows_()
+{
+    // Only the main canvas carries detail windows across photos; a switch
+    // that tears down before the previous restore happened keeps what was
+    // pending rather than forgetting it.
+    if (isBeforeView || cropWins.empty()) {
+        return;
+    }
+
+    const int areaW = get_width();
+    const int areaH = get_height();
+
+    if (areaW <= 1 || areaH <= 1 || fullImageWidth <= 0 || fullImageHeight <= 0) {
+        return;
+    }
+
+    pendingDetailWindows_.clear();
+
+    // cropWins is most-recent-first.
+    for (auto* cw : cropWins) {
+        DetailWindowState state;
+        int x = 0, y = 0, ax = 0, ay = 0;
+        cw->getPosition(x, y);
+        cw->getSize(state.width, state.height);
+        cw->getCropAnchorPosition(ax, ay);
+        state.posX = static_cast<double>(x) / areaW;
+        state.posY = static_cast<double>(y) / areaH;
+        state.zoom = cw->getZoom();
+        state.anchorX = rtengine::LIM01(static_cast<double>(ax) / fullImageWidth);
+        state.anchorY = rtengine::LIM01(static_cast<double>(ay) / fullImageHeight);
+        pendingDetailWindows_.push_back(state);
+    }
+
+    auto& options = App::get().mut_options();
+    const DetailWindowState& recent = pendingDetailWindows_.front();
+    options.detailWindowOpen = true;
+    options.detailWindowPosX = recent.posX;
+    options.detailWindowPosY = recent.posY;
+    options.detailWindowAnchorX = recent.anchorX;
+    options.detailWindowAnchorY = recent.anchorY;
+    options.detailWindowZoom = recent.zoom;
+    options.detailWindowWidth = recent.width;
+    options.detailWindowHeight = recent.height;
+}
+
+void ImageArea::restoreDetailWindows_()
+{
+    if (!mainCropWindow || !ipc || !cropWins.empty() || pendingDetailWindows_.empty()) {
+        return;
+    }
+
+    const int areaW = get_width();
+    const int areaH = get_height();
+    const ImageSize full = mainCropWindow->cropHandler.getFullImageSize();
+
+    if (areaW <= 1 || areaH <= 1 || full.width <= 0 || full.height <= 0) {
+        return;
+    }
+
+    // Oldest first, so the most recent ends up on top and observed.
+    for (auto it = pendingDetailWindows_.rbegin(); it != pendingDetailWindows_.rend(); ++it) {
+        // No remembered size or position (first use, or a session that ended
+        // without a photo switch): 200px in the top-right corner, as a fresh
+        // detail window opens.
+        const int wantW = it->width > 0 ? it->width : 200;
+        const int wantH = it->height > 0 ? it->height : 200;
+        const int w = std::max(64, std::min(wantW, areaW));
+        const int h = std::max(64, std::min(wantH, areaH));
+        const int wantX = it->posX >= 0.0 ? static_cast<int>(std::lround(it->posX * areaW)) : areaW - w;
+        const int wantY = it->posY >= 0.0 ? static_cast<int>(std::lround(it->posY * areaH)) : 0;
+        const int x = rtengine::LIM(wantX, 0, std::max(0, areaW - w));
+        const int y = rtengine::LIM(wantY, 0, std::max(0, areaH - h));
+
+        CropWindow* cw = createDetailWindow_(x, y, w, h);
+        if (it->zoom > 0.0) {
+            cw->setZoom(it->zoom);
+        }
+        cw->setCropAnchorPosition(static_cast<int>(std::lround(it->anchorX * full.width)),
+                                  static_cast<int>(std::lround(it->anchorY * full.height)));
+    }
+
+    pendingDetailWindows_.clear();
+    mainCropWindow->setObservedCropWin(cropWins.front());
+    ipc->startProcessing(M_HIGHQUAL | M_MONITOR);
+    queue_draw();
+}
+
+CropWindow* ImageArea::createDetailWindow_(int x, int y, int w, int h)
+{
+    CropWindow* cw = new CropWindow (this, true, true);
+    cw->zoom11(false);
+    cw->setCropGUIListener (cropgl);
+    cw->setPointerMotionListener (pmlistener);
+    cw->setPointerMotionHListener (pmhlistener);
+    cropWins.push_front (cw);
+
+    // Needs to be before setSize()
+    cw->cropHandler.setDeviceScale(RTScalable::getScaleForWidget(this));
+    cw->setSize (w, h);
+    cw->setPosition (x, y);
+    cw->setEditSubscriber (getCurrSubscriber());
+    cw->enable(); // start processing!
+    return cw;
+}
+
 void ImageArea::addCropWindow ()
 {
     if (!mainCropWindow) {
         return;    // if called but no image is loaded, it would crash
     }
+
+    // The user opened one: reopen it on the next photo and next session.
+    App::get().mut_options().detailWindowOpen = true;
 
     CropWindow* cw = new CropWindow (this, true, true);
     cw->zoom11(false);
@@ -779,6 +959,9 @@ void ImageArea::cropWindowClosed (CropWindow* cw)
         mainCropWindow->setObservedCropWin (cropWins.front());
     } else {
         mainCropWindow->setObservedCropWin (nullptr);
+        // The user closed the last one: stop bringing it back.
+        App::get().mut_options().detailWindowOpen = false;
+        pendingDetailWindows_.clear();
     }
 
     queue_draw ();
@@ -945,6 +1128,29 @@ void ImageArea::initialImageArrived ()
         }
         fullImageWidth = size.width;
         fullImageHeight = size.height;
+
+        // First photo of the session: reopen the detail window the user had
+        // open last time, where it was and over the same spot.
+        if (!detailSessionSeeded_) {
+            detailSessionSeeded_ = true;
+
+            if (pendingDetailWindows_.empty() && options.detailWindowOpen) {
+                pendingDetailWindows_.push_back({
+                    options.detailWindowPosX, options.detailWindowPosY,
+                    options.detailWindowWidth, options.detailWindowHeight,
+                    options.detailWindowZoom,
+                    options.detailWindowAnchorX, options.detailWindowAnchorY});
+            }
+        }
+
+        // After the main view has settled (fit/zoom above), outside this
+        // callback: creating crops re-enters the processor.
+        if (!pendingDetailWindows_.empty() && cropWins.empty() && !detailRestoreConn_.connected()) {
+            detailRestoreConn_ = Glib::signal_idle().connect([this]() -> bool {
+                restoreDetailWindows_();
+                return false;
+            });
+        }
     }
 }
 

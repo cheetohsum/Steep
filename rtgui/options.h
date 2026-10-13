@@ -283,6 +283,15 @@ public:
     int meowY;
     int detailWindowWidth;
     int detailWindowHeight;
+    // The (most recent) detail window as last left open, so it reopens in
+    // the next session. Position is a fraction of the image area; the anchor
+    // is the spot of the photo it showed, as a fraction of the image size.
+    bool detailWindowOpen;
+    double detailWindowPosX;
+    double detailWindowPosY;
+    double detailWindowAnchorX;
+    double detailWindowAnchorY;
+    double detailWindowZoom;
     int dirBrowserWidth;
     int dirBrowserHeight;
     int albumPanelHeight;    // manual album sidebar height set by dragging its header; -1 = auto

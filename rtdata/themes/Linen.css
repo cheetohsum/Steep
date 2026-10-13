@@ -1,0 +1,52 @@
+/*
+  Linen — Atelier, light
+
+  Linen paper, aged brass and teal enamel. steep_wash is dark here so hovers
+  darken; the photo surround stays a neutral mid grey.
+
+  This file is a PALETTE: the design lives in common/steep-look.css and
+  reads these steep_* tokens.
+
+  Copyright (c) 2026 Steep
+  Licensed under the GNU General Public License v3 or later.
+*/
+
+/***************************/
+/**/ @import url("./common/size.css"); /**/
+/**/ @import url("./common/steep-look.css"); /**/
+/***************************/
+
+@define-color steep_surface_0 #e6ddce;
+@define-color steep_surface_1 #f1ebe0;
+@define-color steep_surface_2 #f8f4ec;
+@define-color steep_surface_3 #ffffff;
+
+@define-color steep_text_hi #1d1813;
+@define-color steep_text #3b332b;
+@define-color steep_text_dim #776b5d;
+
+@define-color steep_accent #9a6722;
+@define-color steep_on_accent #fffaf1;
+@define-color steep_select #2c7369;
+
+@define-color steep_attention #bd5626;
+@define-color steep_rating #b8860b;
+@define-color steep_success #61742a;
+@define-color steep_danger #ae3727;
+
+@define-color steep_border #c3b59f;
+@define-color steep_border_soft #d9cdbb;
+@define-color steep_shadow alpha(#1e160e, 0.30);
+
+@define-color steep_sel_bg #2c7369;
+@define-color steep_sel_fg #fffaf1;
+
+@define-color steep_wash #281a0a;
+@define-color steep_surround #777777;
+@define-color steep_ornament alpha(#9a6722, 0.55);
+
+@define-color steep_label_1 #b8432f;
+@define-color steep_label_2 #c4921c;
+@define-color steep_label_3 #62802c;
+@define-color steep_label_4 #2f7a96;
+@define-color steep_label_5 #7a5690;

@@ -50,6 +50,7 @@
    success:   progress bars, completed states
    danger:    destructive hover states, errors */
 @define-color steep_attention #b87848;
+@define-color steep_rating    #f2c240;
 @define-color steep_success   #55c878;
 @define-color steep_danger    #f06468;
 
@@ -65,3 +66,24 @@
 /* Hover/raise wash base: fills like alpha(@steep_wash, 0.06) brighten dark
    themes and darken light ones — light themes MUST override this to black. */
 @define-color steep_wash #ffffff;
+
+/* Text and icons drawn ON an accent fill (primary buttons, count badges). */
+@define-color steep_on_accent #ffffff;
+
+/* Drop shadows and the dark backing pills of thumbnail badges. */
+@define-color steep_shadow alpha(#000000, 0.55);
+
+/* The neutral ground behind the photograph: canvas, before/after gutter,
+   detail windows. Keep it a true grey (chroma near 0) in every theme —
+   coloured chrome next to the picture biases colour judgement. */
+@define-color steep_surround #2a2a2a;
+
+/* Fine decorative linework (empty-state art, the splash). */
+@define-color steep_ornament alpha(#2d7fd3, 0.5);
+
+/* Colour labels 1-5: red, yellow, green, blue, purple. */
+@define-color steep_label_1 #e0524c;
+@define-color steep_label_2 #e0b42c;
+@define-color steep_label_3 #4fae5a;
+@define-color steep_label_4 #3d7fe0;
+@define-color steep_label_5 #9a5cc8;

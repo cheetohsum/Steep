@@ -1763,6 +1763,70 @@ struct ForegroundLoadRequest {
     }
 };
 
+// The first placeholder is the browser tile (~250 px) stretched over the
+// canvas for the ~300+ ms a RAW decode takes. An edited photo usually has the
+// editor's own render persisted (up to 1280 px, every tool applied): load it
+// off the GUI thread and swap it in while the placeholder is still showing.
+// Worker thread.
+static void sharpenQuickPreviewNow(
+    const std::shared_ptr<Thumbnail>& holder,
+    const std::shared_ptr<std::atomic<bool>>& allowed,
+    const std::shared_ptr<ForegroundLoadRequest>& request,
+    RTWindow* parent,
+    const Glib::ustring& fileName)
+{
+    const auto stillWanted = [&allowed, &request]() {
+        return allowed && allowed->load(std::memory_order_acquire)
+            && (!request || !request->isStale());
+    };
+
+    if (!holder || !parent || !holder->hasProcParams() || !stillWanted()) {
+        return;
+    }
+
+    double scale = 1.0;
+    auto pixbuf = holder->loadPersistedRenderPixbuf(scale);
+
+    if (!pixbuf || !stillWanted()) {
+        return;
+    }
+
+    Glib::signal_idle().connect_once(
+        [pixbuf, scale, allowed, request, parent, fileName]() {
+            if (!allowed || !allowed->load(std::memory_order_acquire)
+                    || (request && request->isStale())
+                    || !parent->epanel) {
+                return;
+            }
+
+            parent->epanel->upgradeQuickPreview(pixbuf, scale, fileName);
+        },
+        Glib::PRIORITY_HIGH_IDLE);
+}
+
+// The executor holds one pending job (the newest selection wins), so a path
+// that already queued its own fallback job must call sharpenQuickPreviewNow
+// from inside it instead of queueing this.
+static void queueQuickPreviewSharpen(
+    Thumbnail* thm,
+    const std::shared_ptr<std::atomic<bool>>& allowed,
+    const std::shared_ptr<ForegroundLoadRequest>& request,
+    RTWindow* parent,
+    const Glib::ustring& fileName)
+{
+    if (!thm || !parent || !thm->hasProcParams()) {
+        return;
+    }
+
+    thm->increaseRef();
+    auto holder = std::shared_ptr<Thumbnail>(thm, [](Thumbnail* t) { t->decreaseRef(); });
+
+    quickPreviewFallbackExecutor().enqueue([holder, allowed, request, parent, fileName]() {
+        setBackgroundPreloadThreadPriority(true);
+        sharpenQuickPreviewNow(holder, allowed, request, parent, fileName);
+    });
+}
+
 static rtengine::InitialImage* loadInitialImageSerialized(
     Glib::ustring fname,
     std::string fnameRaw,
@@ -2534,6 +2598,9 @@ FilePanel::FilePanel () :
     fileCatalog->fileBrowser->setAlbumModeChecker([this]() {
         return fileCatalog->isInAlbumMode();
     });
+    fileCatalog->fileBrowser->setSourceFolderHandlers(
+        [this](const Glib::ustring& fname) { return fileCatalog->isSourceFolderElsewhere(fname); },
+        [this](const Glib::ustring& fname) { fileCatalog->openSourceFolder(fname); });
 
     //------------------
 
@@ -3397,6 +3464,9 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
             // That racing caused crashes. queue_draw() above is sufficient:
             // GTK paints the override on the next main-loop iteration (a few
             // ms later), still feels instant to the user.
+            if (!opts.tabbedUI) {
+                queueQuickPreviewSharpen(thm, pl->quickPreviewAllowed, foregroundRequest, parent, selectedFileName);
+            }
         } else if (!opts.tabbedUI) {
             quickPreviewMissed = true;
             Thumbnail* previewThm = thm;
@@ -3449,6 +3519,10 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
                             previewFileName.c_str());
                     },
                     Glib::PRIORITY_HIGH_IDLE);
+
+                // Then the sharper persisted render, if any (queued after the
+                // tile so it can only replace it, never be replaced by it).
+                sharpenQuickPreviewNow(previewThmHolder, previewAllowed, previewRequest, previewParent, previewFileName);
             });
         }
     }

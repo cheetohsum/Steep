@@ -176,6 +176,28 @@ private:
     int fullH_;
     std::uint64_t generation_ = 0;
     std::uint64_t requestGeneration_ = 0;
+
+    // Model output of the last few images left behind, so stepping A -> B -> A
+    // restores A's maps instead of running segmentation again (~30 MB each;
+    // the derived prepared/refined/distance caches are rebuilt on demand).
+    struct ArchivedImage
+    {
+        std::string imageId;
+        std::string workingProfile;
+        bool subjectModel = false;
+        std::shared_ptr<const std::vector<array2D<float>>> masks;
+        std::shared_ptr<const array2D<float>> guide;
+        std::vector<float> coverage;
+        int sourceWidth = 0;
+        int sourceHeight = 0;
+        int cachedWidth = 0;
+        int cachedHeight = 0;
+        int fullW = 0;
+        int fullH = 0;
+    };
+    static constexpr std::size_t kArchivedImages = 2;
+    std::deque<ArchivedImage> archive_;
+    void archiveCurrentLocked_();
 };
 
 } // namespace rtengine

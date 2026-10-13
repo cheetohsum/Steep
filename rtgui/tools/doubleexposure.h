@@ -57,8 +57,12 @@ private:
     Adjuster *patternTwist;      // radial only
     sigc::connection uprightConn;
     Adjuster *edgeFeather;
+    AdvancedSection *blendSection;
+    AdvancedSection *selectSection;
+    AdvancedSection *revealSection;
     AdvancedSection *adjustSection;
     AdvancedSection *patternSection;
+    Gtk::Label *stackHeading;
     Gtk::Box *subjectRow;        // hidden without a segmentation model
     Gtk::Box *subjectOptionsRow;
     Gtk::CellRendererPixbuf subjectTileCell;

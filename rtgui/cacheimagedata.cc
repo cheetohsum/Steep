@@ -257,6 +257,10 @@ int CacheImageData::load (const Glib::ustring& fname, bool fileExistsKnown)
                 if (keyFile.has_key("FileInfo", "Height")) {
                     height = keyFile.get_integer("FileInfo", "Height");
                 }
+                if (keyFile.has_key("FileInfo", "ThumbWidth") && keyFile.has_key("FileInfo", "ThumbHeight")) {
+                    thumbWidth = keyFile.get_integer("FileInfo", "ThumbWidth");
+                    thumbHeight = keyFile.get_integer("FileInfo", "ThumbHeight");
+                }
             }
             updateFiletypeUpper();
 
@@ -374,6 +378,11 @@ int CacheImageData::save (const Glib::ustring& fname, rtengine::Thumbnail* liveT
     keyFile.set_integer ("FileInfo", "SampleFormat", sampleFormat);
     keyFile.set_integer("FileInfo", "Width", width);
     keyFile.set_integer("FileInfo", "Height", height);
+
+    if (thumbWidth > 0 && thumbHeight > 0) {
+        keyFile.set_integer("FileInfo", "ThumbWidth", thumbWidth);
+        keyFile.set_integer("FileInfo", "ThumbHeight", thumbHeight);
+    }
 
     if (format == FT_Raw) {
         keyFile.set_integer ("ExtraRawInfo", "ThumbImageType", thumbImgType);

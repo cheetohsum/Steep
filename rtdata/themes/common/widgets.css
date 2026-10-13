@@ -59,7 +59,9 @@
 /* Top-right pill on the filter toggles: how many filters are on, visible while the bar is closed. */
 #CountBadge {
     background-color: @steep_accent;
-    color: @steep_sel_fg;
+    /* Text on the accent: the canvas color contrasts with it in every
+       palette; sel_fg is paired with sel_bg (1.6:1 here under Legacy). */
+    color: @steep_on_accent;
     font-size: 0.7em;
     font-weight: bold;
     border-radius: 6px;
@@ -106,6 +108,12 @@
 }
 #FBZoomSlider trough highlight { margin: 0; padding: 0; min-height: 0; background: transparent; }
 
+/*** Photo canvas (imagearea.cc) — the neutral surround, never a chrome surface **************/
+#PhotoCanvas, #PhotoCanvas.drawingarea {
+    background-color: @steep_surround;
+    border-color: @steep_border;
+}
+
 /*** Pane edge grips (guiutils.cc createEdgeGrip) **********************************************/
 #EdgeGripV, #EdgeGripH {
     background-color: transparent;
@@ -140,9 +148,83 @@
 }
 
 /*** Tool group chrome (guiutils.cc ToolGroup, toolpanelcoord.cc) ******************************/
-#ToolGroupHeader, #ToolGroupHeader:hover, #ToolGroupHeader.hovered {
-    border: none; border-radius: 0; background-color: transparent;
+#ToolGroupHeader, #ToolGroupHeader.hovered {
+    border: none; border-radius: 4px; background-color: transparent;
     background-image: none; box-shadow: none;
+}
+/* Same hover wash as every other section header. */
+#ToolGroupHeader:hover { background-color: alpha(@steep_wash, 0.06); background-image: none; box-shadow: none; }
+
+/* Atelier: a tool group is an arched container (round top, near-square
+   bottom). */
+#ToolGroup {
+    background-color: @steep_surface_2;
+    border: 1px solid @steep_border_soft;
+    border-radius: 12px 12px 4px 4px;
+    margin: 0 0 6px 0;
+    padding: 2px 4px 6px 4px;
+}
+#ToolGroupHeader { border-radius: 10px 10px 4px 4px; }
+#ToolGroupHeader label { color: @steep_text_hi; }
+
+/* A closed section's current value, at the trailing edge of its header. */
+label.section-summary { color: @steep_text_dim; font-size: 0.85em; }
+
+/* Double Exposure layer list: the row selects the layer the sections edit. */
+/* Preferences: a page list down the side, sections as cards. */
+#PrefSidebar { background-color: @steep_surface_1; padding: 10px 6px; border-right: 1px solid alpha(@steep_wash, 0.06); }
+#PrefSidebar row { padding: 7px 10px; margin: 1px 0; border-radius: 8px; }
+#PrefSidebar row:hover { background-color: alpha(@steep_wash, 0.06); }
+#PrefSidebar row:selected { background-color: alpha(@steep_select, 0.22); color: @steep_text_hi; }
+#PrefSidebar row:selected image { color: @steep_accent; }
+#PrefNotebook { padding: 4px 16px 0 16px; }
+label.pref-page-title {
+    font-family: Michroma, Jost, sans-serif; font-size: 1.15em; letter-spacing: 0.1em;
+    color: @steep_text_hi; margin: 10px 0 8px 2px;
+}
+#PrefNotebook frame {
+    background-color: alpha(@steep_wash, 0.035);
+    border-radius: 10px; padding: 4px 12px 10px 12px; margin: 0 0 10px 0;
+}
+#PrefNotebook frame > border { border: none; }
+#PrefNotebook frame frame { background-color: transparent; padding: 0; margin: 0 0 4px 0; }
+#PrefNotebook frame > label {
+    font-family: Michroma, Jost, sans-serif; font-size: 0.72em; letter-spacing: 0.12em;
+    color: @steep_text_dim; font-weight: normal; padding: 8px 0 4px 0;
+}
+
+/* Rating filters: the gold star is the "on" state, no checked wash. */
+button.rating-filter:checked,
+button.rating-filter:checked:hover,
+button.rating-filter:active {
+    background-color: transparent; background-image: none;
+    box-shadow: none; border-color: transparent;
+}
+button.rating-filter:hover { background-color: alpha(@steep_wash, 0.06); }
+
+/* Logo dropdown: wordmark header, section headings in the title face. */
+#OptionsHeader { padding: 0 2px 2px 2px; }
+label.options-wordmark { font-family: Michroma, Jost, sans-serif; font-size: 1.05em; letter-spacing: 0.22em; color: @steep_text_hi; }
+label.options-version { font-size: 0.8em; }
+label.options-heading {
+    font-family: Michroma, Jost, sans-serif; font-size: 0.72em; letter-spacing: 0.12em;
+    color: @steep_text_dim; margin: 4px 0 1px 2px;
+}
+#OptionsPopover button.options-toggle { padding: 3px 8px; border-radius: 6px; }
+
+/* Double Exposure dialog: picker | preview + stack | inspector. */
+#DEInspector { padding-bottom: 12px; }
+label.de-layer-title { font-family: Michroma, Jost, sans-serif; font-size: 0.9em; letter-spacing: 0.06em; color: @steep_text_hi; }
+.de-chip-number {
+    background-color: @steep_accent; color: @steep_on_accent;
+    border-radius: 8px; min-width: 16px; padding: 0 4px; margin: 3px;
+    font-size: 0.75em; font-weight: bold;
+}
+.de-layer-row { border-radius: 6px; }
+.de-layer-row:hover { background-color: alpha(@steep_wash, 0.06); }
+.de-layer-row.selected {
+    background-color: alpha(@steep_select, 0.24);
+    box-shadow: inset 2px 0 0 @steep_select;
 }
 
 /*** Tool panel type ladder ********************************************************************
@@ -152,18 +234,31 @@
    later provider win, so every font-size in steep-look.css is dead
    (verified with tools/gtk_css_probe.py: all labels computed to the same
    px). At +200 these outrank it. */
-#ToolGroupHeader label { font-size: 1.15em; font-weight: bold; }
+/* Group titles and pane headings use the display face (Michroma, bundled):
+   wide, so it runs smaller and unbolded, with a little tracking. */
+#ToolGroupHeader label,
+button.section-header-group label,
+#PlacesHeader label, #FoldersHeader label, #AlbumHeader label,
+#BrowserPathTitle, #BrowserPathTitle label {
+    font-family: Michroma, Jost, sans-serif;
+    font-weight: normal;
+    letter-spacing: 0.06em;
+}
+#ToolGroupHeader label, button.section-header-group label { font-size: 0.82em; }
+#PlacesHeader label, #FoldersHeader label, #AlbumHeader label { font-size: 0.78em; }
 .tool-heading-label    { font-size: 1em;    font-weight: bold; }
 .tool-section-label    { font-size: 0.85em; font-weight: bold; }
-/* Reset "×" — one rule set for every #ToolGroupReset (group headers, crop,
-   perspective); formerly duplicated per-button in toolpanelcoord.cc. */
-#ToolGroupReset {
-    padding: 1px 3px; margin: 0 2px; min-height: 12px; min-width: 12px;
-    border: none; background: none; background-image: none; box-shadow: none;
+/* Section headers (guiutils.cc SectionHeader) sit on the section rung. */
+button.section-header label { font-size: 0.85em; font-weight: bold; }
+/* The one reset affordance (guiutils.cc makeResetButton): groups, crop,
+   perspective, smart tools and tool resets all look and behave alike. */
+button.reset-button, #ToolGroupReset, .smart-tool-reset {
+    padding: 2px; margin: 0 2px; min-height: 16px; min-width: 16px;
+    border: none; border-radius: 4px; background: none; background-image: none; box-shadow: none;
 }
-#ToolGroupReset:hover { background-color: alpha(@steep_danger, 0.35); border-radius: 3px; }
-#ToolGroupReset label { font-size: 9px; color: @steep_text_dim; min-height: 0; padding: 0; margin: 0; }
-#ToolGroupReset:hover label { color: @steep_text_hi; }
+button.reset-button:hover, #ToolGroupReset:hover, .smart-tool-reset:hover {
+    background-color: alpha(@steep_wash, 0.08);
+}
 
 /*** Output-template presets (batchqueuepanel.cc) **********************************************/
 /* One-click template rows at the top of the "?" help pane. */
@@ -188,14 +283,68 @@
    in this layer: the theme's "#ExpanderBox box > box { margin: 0 }" outranks
    any theme-level rule on specificity. */
 #MyExpander.flat-mode .flush-tool { margin-left: -10px; padding-left: 0; }
-/* Per-tool reset "↺" embedded inside the right edge of its tool button. */
-.smart-tool-reset {
-    padding: 0 3px; margin: 0; min-height: 12px; min-width: 12px;
-    border: none; background: none; background-image: none; box-shadow: none;
+/*** Dropdowns *********************************************************************************/
+/* One dropdown look everywhere (tool panels, dialogs, preferences): a flat
+   field on the raised surface with a soft border, same radius as the pills. */
+combobox button.combo {
+    background-color: @steep_surface_2; background-image: none; box-shadow: none;
+    border: 1px solid @steep_border_soft; border-radius: 5px;
+    min-height: 20px; padding: 1px 6px;
 }
-.smart-tool-reset:hover { background-color: alpha(@steep_danger, 0.35); border-radius: 3px; }
-.smart-tool-reset label { font-size: 10px; color: @steep_text_dim; min-height: 0; padding: 0; margin: 0; }
-.smart-tool-reset:hover label { color: @steep_text_hi; }
+combobox button.combo:hover { background-color: shade(@steep_surface_2, 1.08); }
+combobox button.combo:checked { border-color: @steep_accent; }
+combobox button.combo arrow { color: @steep_text_dim; min-width: 10px; min-height: 10px; }
+
+/*** Dialog template (guiutils.cc applyDialogTemplate) ****************************************/
+/* The primary action of a dialog: filled with the accent, canvas-colored
+   text (contrasts with the accent in every palette, like #CountBadge). */
+button.suggested-action {
+    background-color: @steep_accent; background-image: none;
+    border: 1px solid @steep_accent; box-shadow: none; border-radius: 5px;
+}
+button.suggested-action label { color: @steep_on_accent; font-weight: bold; }
+button.suggested-action:hover { background-color: shade(@steep_accent, 1.08); }
+button.suggested-action:disabled { opacity: 0.5; }
+button.destructive-action {
+    background-color: @steep_danger; background-image: none;
+    border: 1px solid @steep_danger; box-shadow: none; border-radius: 5px;
+}
+button.destructive-action label { color: @steep_on_accent; font-weight: bold; }
+
+/*** Split button: action | chevron (toolpanelcoord.cc quick edits, smartmaskbar AI chip) ****/
+.split-button > button {
+    padding: 3px 10px; min-height: 0; border-radius: 0;
+    border: 1px solid @steep_border_soft;
+    background-color: alpha(@steep_wash, 0.055); background-image: none; box-shadow: none;
+}
+.split-button > button:first-child { border-radius: 5px 0 0 5px; }
+.split-button > button:last-child { border-radius: 0 5px 5px 0; border-left-width: 0; padding: 3px 5px; }
+.split-button > button:hover, .split-button > button:checked { background-color: alpha(@steep_wash, 0.10); }
+
+/*** Segmented control (guiutils.cc makeSegmented) *********************************************/
+/* Linked buttons; the checked one carries the tapered accent bar the mode
+   buttons use, over a select wash. */
+.segmented > button, .segmented > radiobutton {
+    padding: 3px 12px; min-height: 0; border-radius: 0;
+    border: 1px solid @steep_border_soft; border-left-width: 0;
+    background-color: @steep_surface_2; background-image: none; box-shadow: none;
+}
+.segmented > button:first-child, .segmented > radiobutton:first-child { border-left-width: 1px; border-radius: 5px 0 0 5px; }
+.segmented > button:last-child, .segmented > radiobutton:last-child { border-radius: 0 5px 5px 0; }
+.segmented > button:only-child { border-radius: 5px; }
+.segmented > button:hover, .segmented > radiobutton:hover { background-color: shade(@steep_surface_2, 1.08); }
+.segmented > button:checked, .segmented > radiobutton:checked {
+    background-color: alpha(@steep_select, 0.35);
+    background-image: linear-gradient(to right,
+        alpha(@steep_accent, 0.00) 0%, alpha(@steep_accent, 0.90) 22%,
+        alpha(@steep_accent, 0.90) 78%, alpha(@steep_accent, 0.00) 100%);
+    background-size: 100% 2px; background-repeat: no-repeat; background-position: bottom;
+}
+.segmented > button:checked label, .segmented > radiobutton:checked label { color: @steep_text_hi; }
+
+/* Per-tool reset embedded inside the right edge of its tool button: shares
+   the reset-button rules above; only its placement differs. */
+.smart-tool-reset { margin: 0; }
 .smart-tool { padding: 3px 5px; transition: background-color 120ms ease, color 120ms ease; }
 .smart-tool:hover, .smart-tool:focus { background-color: alpha(@steep_accent, 0.14); }
 .smart-tool:checked { background-color: alpha(@steep_accent, 0.22); }
@@ -249,7 +398,12 @@ button.curve-channel {
     background-color: transparent; background-image: none; box-shadow: none;
 }
 button.curve-channel:hover { background-color: transparent; }
-button.curve-channel:checked { background-color: transparent; }
+/* The channel in hand sits in a soft pill: dots only, no letters. */
+button.curve-channel:checked {
+    background-color: alpha(@steep_wash, 0.07);
+    border-radius: 12px;
+    box-shadow: inset 0 0 0 1px @steep_border_soft;
+}
 
 button.curve-channel label.curve-channel-dot {
     font-size: 20px;
@@ -259,7 +413,7 @@ button.curve-channel label.curve-channel-dot {
 button.curve-channel:hover label.curve-channel-dot { opacity: 0.72; }
 button.curve-channel:checked label.curve-channel-dot { opacity: 1.0; }
 
-button.curve-channel label { color: #d7d9dd; }
+button.curve-channel label { color: @steep_text; }
 button.curve-channel-red label { color: #f06468; }
 button.curve-channel-green label { color: #55c878; }
 button.curve-channel-blue label { color: #6695f2; }
@@ -286,8 +440,8 @@ button.curve-channel-blue label { color: #6695f2; }
 #RTFileChooser { border-radius: 8px; }
 #RTFileChooser headerbar { border-radius: 8px 8px 0 0; padding: 4px 10px; }
 #RTFileChooser placessidebar {
-    background: alpha(@theme_base_color, 0.6);
-    border-right: 1px solid alpha(@borders, 0.3);
+    background: alpha(@steep_surface_0, 0.6);
+    border-right: 1px solid @steep_border_soft;
     padding: 4px 0;
 }
 #RTFileChooser placessidebar row { padding: 4px 8px; margin: 1px 4px; border-radius: 6px; }
@@ -296,21 +450,21 @@ button.curve-channel-blue label { color: #6695f2; }
 #RTFileChooser treeview header button { padding: 4px 8px; font-weight: 600; }
 #RTFileChooser .dialog-action-box {
     padding: 8px 12px;
-    border-top: 1px solid alpha(@borders, 0.3);
+    border-top: 1px solid @steep_border_soft;
 }
 #RTFileChooser .dialog-action-box button { border-radius: 6px; padding: 6px 20px; min-height: 0; }
 #RTFileChooser .dialog-action-box button:last-child {
-    background: alpha(@theme_selected_bg_color, 0.7);
-    color: @theme_selected_fg_color;
+    background: alpha(@steep_select, 0.7);
+    color: @steep_text_hi;
 }
-#RTFileChooser .dialog-action-box button:last-child:hover { background: @theme_selected_bg_color; }
+#RTFileChooser .dialog-action-box button:last-child:hover { background: @steep_select; }
 #RTFileChooser .path-bar button { border-radius: 4px; padding: 2px 6px; margin: 1px; }
 
 /*** Double exposure partner chips (windows/doubleexposuredlg.cc) ******************************/
 #DEChipControls button { padding: 0 3px; margin: 0; min-width: 10px; min-height: 14px; }
 button.de-chip { padding: 1px; margin: 0; }
 button.de-chip-selected { border: 2px solid @steep_accent; border-radius: 3px; padding: 0; }
-.de-motion-badge { background-color: alpha(@theme_bg_color, 0.85); color: @theme_fg_color; padding: 1px 5px; font-size: 9px; }
+.de-motion-badge { background-color: alpha(@steep_surface_1, 0.85); color: @steep_text_hi; padding: 1px 5px; font-size: 0.75em; }
 
 /*** Mask list (controlspotpanel.cc) ***********************************************************/
 /* The masks of the current photo, one row each, inside a rounded well. The
@@ -363,13 +517,23 @@ button.de-chip-selected { border: 2px solid @steep_accent; border-radius: 3px; p
 #GradingPresetButton:checked {
     background-color: alpha(@steep_select, 0.32);
 }
+/* List popovers read exactly like the context menus (steep-look.css menu /
+   menuitem): raised surface, 3px inset, rounded selection-tinted rows. */
 .SteepListPopover contents {
-    padding: 4px;
+    padding: 3px;
     border-radius: 6px;
+    background-color: @steep_surface_3;
 }
+.SteepPopupList { background-color: transparent; }
 .SteepPopupList row {
-    padding: 5px 10px;
+    padding: 4px 8px;
     min-height: 20px;
+    border-radius: 4px;
+    color: @steep_text;
+}
+.SteepPopupList row:hover, .SteepPopupList row:selected {
+    background-color: alpha(@steep_select, 0.40);
+    color: @steep_text_hi;
 }
 .SteepPopupList row.separator {
     padding: 3px 0;
@@ -385,15 +549,6 @@ button.de-chip-selected { border: 2px solid @steep_accent; border-radius: 3px; p
 
 /* Collection tags: quiet until a filter is active. */
 #PhotoTagFilter { padding: 4px 10px; border-radius: 14px; }
-#PhotoTagFilter.tags-active { background-color: alpha(@theme_selected_bg_color, 0.22); }
+#PhotoTagFilter.tags-active { background-color: alpha(@steep_select, 0.22); }
 #PhotoTagsRecent image { padding: 0; margin: 0; border-width: 0; }
 
-/* Compositing is a photographic workspace, with flat tool bands and a quiet canvas. */
-.compositing-workspace .composite-title { font-size: 17px; font-weight: bold; padding: 12px 0; }
-.compositing-workspace .composite-section { font-weight: bold; color: @steep_text_hi; }
-.compositing-workspace button { border-radius: 4px; }
-.compositing-workspace scrolledwindow { border-width: 0; }
-.compositing-workspace scale { min-width: 0; padding: 3px 0; }
-.compositing-workspace scale value { min-width: 36px; font-size: 11px; }
-.compositing-workspace iconview { background-color: alpha(@theme_bg_color, 0.5); }
-.compositing-workspace treeview { padding: 5px; }

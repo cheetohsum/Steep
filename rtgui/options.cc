@@ -381,6 +381,12 @@ void Options::setDefaults()
     useBundledProfiles = true;
     detailWindowWidth = -1;
     detailWindowHeight = -1;
+    detailWindowOpen = false;
+    detailWindowPosX = -1.0;
+    detailWindowPosY = -1.0;
+    detailWindowAnchorX = 0.5;
+    detailWindowAnchorY = 0.5;
+    detailWindowZoom = 1.0;
     dirBrowserWidth = 260;
     dirBrowserHeight = 350;
     albumPanelHeight = -1;
@@ -390,8 +396,8 @@ void Options::setDefaults()
     filmstripAtBottom = false;
     showGlobalScopeUnfilteredWarning = true;
     dirBrowserSortType = Gtk::SORT_ASCENDING;
-    preferencesWidth = 800;
-    preferencesHeight = 600;
+    preferencesWidth = 1120;
+    preferencesHeight = 760;
     toolPanelWidth = 260;
     browserToolPanelWidth = 465;
     browserToolPanelHeight = 600;
@@ -453,7 +459,7 @@ void Options::setDefaults()
     lastSaveAsPath = "";
     overwriteOutputFile = false;        // if TRUE, existing output JPGs/PNGs are overwritten, instead of adding ..-1.jpg, -2.jpg etc.
     confirmDeleteFiles = true;
-    theme = "RawTherapee - Modern";
+    theme = "Walnut";
     maxThumbnailHeight = 250;
     maxThumbnailWidth = 800;
     maxCacheEntries = 20000;
@@ -917,6 +923,20 @@ void Options::readFromFile(Glib::ustring fname)
 
                 if (keyFile.has_key("General", "Theme")) {
                     theme = keyFile.get_string("General", "Theme");
+
+                    // Themes renamed in the Atelier pass.
+                    static const std::pair<const char*, const char*> renamed[] = {
+                        {"RawTherapee - Modern", "Graphite"},
+                        {"RawTherapee - Legacy", "Darkroom"},
+                        {"TooWaBlue", "Ocean"},
+                        {"TooWaGrey - Bright", "Daylight"},
+                    };
+
+                    for (const auto& r : renamed) {
+                        if (theme == r.first) {
+                            theme = r.second;
+                        }
+                    }
                 }
 
                 if (keyFile.has_key("General", "DarkFramesPath")) {
@@ -1828,6 +1848,30 @@ void Options::readFromFile(Glib::ustring fname)
 
                 if (keyFile.has_key("GUI", "DetailWindowHeight")) {
                     detailWindowHeight = keyFile.get_integer("GUI", "DetailWindowHeight");
+                }
+
+                if (keyFile.has_key("GUI", "DetailWindowOpen")) {
+                    detailWindowOpen = keyFile.get_boolean("GUI", "DetailWindowOpen");
+                }
+
+                if (keyFile.has_key("GUI", "DetailWindowPosX")) {
+                    detailWindowPosX = keyFile.get_double("GUI", "DetailWindowPosX");
+                }
+
+                if (keyFile.has_key("GUI", "DetailWindowPosY")) {
+                    detailWindowPosY = keyFile.get_double("GUI", "DetailWindowPosY");
+                }
+
+                if (keyFile.has_key("GUI", "DetailWindowAnchorX")) {
+                    detailWindowAnchorX = keyFile.get_double("GUI", "DetailWindowAnchorX");
+                }
+
+                if (keyFile.has_key("GUI", "DetailWindowAnchorY")) {
+                    detailWindowAnchorY = keyFile.get_double("GUI", "DetailWindowAnchorY");
+                }
+
+                if (keyFile.has_key("GUI", "DetailWindowZoom")) {
+                    detailWindowZoom = keyFile.get_double("GUI", "DetailWindowZoom");
                 }
 
                 if (keyFile.has_key("GUI", "DirBrowserWidth")) {
@@ -3018,6 +3062,12 @@ void Options::saveToFile(Glib::ustring fname)
         keyFile.set_boolean("GUI", "WindowMaximized", windowMaximized);
         keyFile.set_integer("GUI", "DetailWindowWidth", detailWindowWidth);
         keyFile.set_integer("GUI", "DetailWindowHeight", detailWindowHeight);
+        keyFile.set_boolean("GUI", "DetailWindowOpen", detailWindowOpen);
+        keyFile.set_double("GUI", "DetailWindowPosX", detailWindowPosX);
+        keyFile.set_double("GUI", "DetailWindowPosY", detailWindowPosY);
+        keyFile.set_double("GUI", "DetailWindowAnchorX", detailWindowAnchorX);
+        keyFile.set_double("GUI", "DetailWindowAnchorY", detailWindowAnchorY);
+        keyFile.set_double("GUI", "DetailWindowZoom", detailWindowZoom);
         keyFile.set_integer("GUI", "DirBrowserWidth", dirBrowserWidth);
         keyFile.set_integer("GUI", "DirBrowserHeight", dirBrowserHeight);
         keyFile.set_integer("GUI", "AlbumPanelHeight", albumPanelHeight);

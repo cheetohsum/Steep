@@ -32,12 +32,16 @@ PCVignette::PCVignette () : FoldableToolPanel(this, TOOL_NAME, M("TP_PCVIGNETTE_
         GradientMilestone(1.0, 0.75, 0.75, 0.70)
     });
 
-    // Label-as-toggle: click the slider label to expand/collapse detail
-    strength->setLabel(Glib::ustring("\u25B8 ") + M("TP_PCVIGNETTE_STRENGTH"));
-    strength->setLabelClickCallback([this]() { toggleDetail(); });
-
     auto *summaryBox = getSummaryBox();
     summaryBox->pack_start (*strength);
+
+    // "Advanced" section header expands/collapses the detail sliders
+    detailHeader_ = Gtk::manage(new SectionHeader(M("TP_GENERAL_ADVANCED")));
+    detailHeader_->set_halign(Gtk::ALIGN_FILL);
+    detailHeader_->set_hexpand(true);
+    detailHeader_->setExpanded(detailExpanded_);
+    detailHeader_->setOnToggled([this](bool) { toggleDetail(); });
+    summaryBox->pack_start(*detailHeader_, Gtk::PACK_SHRINK);
 
     detailContent_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
     detailContent_->pack_start(*feather);
@@ -58,7 +62,7 @@ PCVignette::PCVignette () : FoldableToolPanel(this, TOOL_NAME, M("TP_PCVIGNETTE_
 void PCVignette::toggleDetail()
 {
     detailExpanded_ = !detailExpanded_;
-    strength->setLabel(Glib::ustring(detailExpanded_ ? "\u25BE " : "\u25B8 ") + M("TP_PCVIGNETTE_STRENGTH"));
+    detailHeader_->setExpanded(detailExpanded_);
     detailRevealer_->set_reveal_child(detailExpanded_);
 }
 

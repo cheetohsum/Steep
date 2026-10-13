@@ -454,6 +454,15 @@ protected:
 
 public:
 
+    bool isShowingMaskView() const
+    {
+        return previewDeltaE || showMaskOverlay
+            || locallColorMask || locallColorMaskinv || locallExpMask || locallExpMaskinv
+            || locallSHMask || locallSHMaskinv || locallvibMask || locallsoftMask
+            || locallblMask || localltmMask || locallretiMask || locallsharMask
+            || localllcMask || locallcbMask || localllogMask || locall_Mask || locallcieMask;
+    }
+
     unsigned long long getHighDetailPreviewSerial() const
     {
         return highDetailPreviewSerial.load(std::memory_order_acquire);

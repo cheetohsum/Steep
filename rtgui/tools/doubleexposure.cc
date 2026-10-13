@@ -28,6 +28,7 @@
 #include "partnerthumb.h"
 
 #include "eventmapper.h"
+#include "rtimage.h"
 #include "windows/doubleexposuredlg.h"
 #include "windows/maskpaintdlg.h"
 
@@ -406,7 +407,33 @@ DoubleExposure::DoubleExposure() :
     getSummaryBox()->pack_start(*chooseRow);
     getSummaryBox()->show_all();
 
-    adjustSection = Gtk::manage(new AdvancedSection(M("TP_DOUBLEEXPOSURE_LAYERADJUST")));
+    // The selected layer's settings, in the order the eye works through
+    // them: how it mixes, which part of it, where it shows, where it sits.
+    // A closed section names its current value in its header.
+    blendSection = Gtk::manage(new AdvancedSection(M("TP_DOUBLEEXPOSURE_SEC_BLEND")));
+    blendSection->getContentBox()->pack_start(*blendRow);
+    blendSection->getContentBox()->pack_start(*compareRow);
+    blendSection->getContentBox()->pack_start(*softness);
+    blendSection->getContentBox()->pack_start(*layerEv);
+    blendSection->getContentBox()->pack_start(*layerOpacity);
+    blendSection->getContentBox()->pack_start(*edgeFeather);
+    blendSection->setExpanded(true);
+
+    selectSection = Gtk::manage(new AdvancedSection(M("TP_DOUBLEEXPOSURE_SEC_SELECT")));
+    selectSection->getContentBox()->pack_start(*subjectRow);
+    selectSection->getContentBox()->pack_start(*subjectOptionsRow);
+    selectSection->getContentBox()->pack_start(*subjectFeather);
+    selectSection->setExpanded(false);
+
+    revealSection = Gtk::manage(new AdvancedSection(M("TP_DOUBLEEXPOSURE_SEC_REVEAL")));
+    revealSection->getContentBox()->pack_start(*gateRow);
+    revealSection->getContentBox()->pack_start(*gateLow);
+    revealSection->getContentBox()->pack_start(*gateHigh);
+    revealSection->getContentBox()->pack_start(*gateFeather);
+    revealSection->getContentBox()->pack_start(*gateStrength);
+    revealSection->setExpanded(false);
+
+    adjustSection = Gtk::manage(new AdvancedSection(M("TP_DOUBLEEXPOSURE_SEC_PLACE")));
     adjustSection->getContentBox()->pack_start(*layerOffsetX);
     adjustSection->getContentBox()->pack_start(*layerOffsetY);
     adjustSection->getContentBox()->pack_start(*layerScale);
@@ -421,26 +448,30 @@ DoubleExposure::DoubleExposure() :
     patternSection->getContentBox()->pack_start(*patternCount);
     patternSection->getContentBox()->pack_start(*patternDiameter);
     patternSection->getContentBox()->pack_start(*patternTwist);
-    patternSection->getContentBox()->pack_start(*subjectRow);
-    patternSection->getContentBox()->pack_start(*subjectOptionsRow);
-    patternSection->getContentBox()->pack_start(*subjectFeather);
     patternSection->setExpanded(false);
+
+    // A section opening shows all its children; put back the ones the
+    // selected layer's mode hides.
+    for (AdvancedSection* section : {blendSection, selectSection, revealSection, adjustSection, patternSection}) {
+        section->setOnToggled([this](bool) { updateSensitivity(); });
+    }
+
+    // Settings that act on the whole stack, below every layer section.
+    stackHeading = Gtk::manage(new Gtk::Label(M("TP_DOUBLEEXPOSURE_SEC_STACK"), Gtk::ALIGN_START));
+    stackHeading->get_style_context()->add_class("tool-section-label");
+
+    // The layer list selects; the dropdown it replaces stays as the model.
+    layerSelRow->set_no_show_all(true);
+    layerSelRow->hide();
 
     pack_start(*layersBox);
     pack_start(*layerSelRow);
-    pack_start(*layerEv);
-    pack_start(*layerOpacity);
+    pack_start(*blendSection);
+    pack_start(*selectSection);
+    pack_start(*revealSection);
     pack_start(*adjustSection);
     pack_start(*patternSection);
-    pack_start(*blendRow);
-    pack_start(*compareRow);
-    pack_start(*softness);
-    pack_start(*edgeFeather);
-    pack_start(*gateRow);
-    pack_start(*gateLow);
-    pack_start(*gateHigh);
-    pack_start(*gateFeather);
-    pack_start(*gateStrength);
+    pack_start(*stackHeading);
     pack_start(*autoGain);
     pack_start(*baseEv);
     pack_start(*highlightLatitude);
@@ -512,7 +543,8 @@ void DoubleExposure::rebuildLayerRows()
     for (size_t i = 0; i < layers.size(); ++i) {
         const bool fileExists = Glib::file_test(layers[i].path, Glib::FILE_TEST_EXISTS);
 
-        Gtk::Box* row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
+        Gtk::Box* row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+        row->set_border_width(2);
 
         Gtk::Image* thumb = Gtk::manage(new Gtk::Image());
         const auto pix = rowThumbs_.find(layers[i].path);
@@ -544,7 +576,8 @@ void DoubleExposure::rebuildLayerRows()
 
         const size_t idx = i;
 
-        Gtk::Button* edit = Gtk::manage(new Gtk::Button("\xE2\x9C\x8E")); // pencil
+        Gtk::Button* edit = Gtk::manage(new Gtk::Button());
+        edit->set_image(*Gtk::manage(new RTImage("edit-small", Gtk::ICON_SIZE_BUTTON)));
         edit->set_relief(Gtk::RELIEF_NONE);
         edit->set_tooltip_text(M("TP_DOUBLEEXPOSURE_EDIT"));
         edit->set_sensitive(fileExists);
@@ -556,14 +589,30 @@ void DoubleExposure::rebuildLayerRows()
         row->pack_start(*edit, Gtk::PACK_SHRINK);
 
         Gtk::Button* remove = Gtk::manage(new Gtk::Button());
-        remove->set_image_from_icon_name("window-close-symbolic", Gtk::ICON_SIZE_MENU);
+        remove->set_image(*Gtk::manage(new RTImage("cancel-small", Gtk::ICON_SIZE_BUTTON)));
         remove->set_relief(Gtk::RELIEF_NONE);
         remove->set_tooltip_text(M("TP_DOUBLEEXPOSURE_REMOVE"));
         remove->signal_clicked().connect([this, idx]() { removeLayer(idx); });
         row->pack_start(*remove, Gtk::PACK_SHRINK);
 
-        row->show_all();
-        layersBox->pack_start(*row, Gtk::PACK_SHRINK);
+        // The whole row selects the layer the sections below edit.
+        Gtk::EventBox* rowBox = Gtk::manage(new Gtk::EventBox());
+        rowBox->add(*row);
+        rowBox->get_style_context()->add_class("de-layer-row");
+
+        if (static_cast<int>(i) == selectedLayerIndex()) {
+            rowBox->get_style_context()->add_class("selected");
+        }
+
+        rowBox->signal_button_press_event().connect([this, idx](GdkEventButton* event) {
+            if (event->button == 1 && idx < layers.size()) {
+                layerSel->set_active(static_cast<int>(idx));
+            }
+
+            return false;
+        });
+        rowBox->show_all();
+        layersBox->pack_start(*rowBox, Gtk::PACK_SHRINK);
     }
 
     requestRowThumbs(missingThumbs);
@@ -920,6 +969,38 @@ void DoubleExposure::updateSensitivity()
     }
 
     autoGain->set_sensitive(anyAdd);
+
+    // What each closed section is doing for the selected layer.
+    if (idx >= 0) {
+        const auto& layer = layers[idx];
+        blendSection->setSummary(blendMethod->get_active_text());
+        selectSection->setSummary(layer.maskClass == DoubleExposureParams::MaskClass::OFF
+                                  ? M("TP_DOUBLEEXPOSURE_SUM_WHOLE") : subjectMethod->get_active_text());
+        revealSection->setSummary(layer.gateStrength <= 0
+                                  ? M("TP_DOUBLEEXPOSURE_SUM_OFF")
+                                  : Glib::ustring::compose("%1", static_cast<int>(std::lround(layer.gateStrength))));
+        const bool placed = layer.offsetX != 0 || layer.offsetY != 0 || layer.scale != 100 || layer.rotate != 0;
+        adjustSection->setSummary(placed
+                                  ? Glib::ustring::compose("%1%%", static_cast<int>(std::lround(layer.scale)))
+                                  : M("TP_DOUBLEEXPOSURE_SUM_FIT"));
+        patternSection->setSummary(tiled ? patternMethod->get_active_text() : M("TP_DOUBLEEXPOSURE_SUM_OFF"));
+    } else {
+        for (AdvancedSection* section : {blendSection, selectSection, revealSection, adjustSection, patternSection}) {
+            section->setSummary("");
+        }
+    }
+
+    for (Gtk::Widget* child : layersBox->get_children()) {
+        child->get_style_context()->remove_class("selected");
+    }
+
+    if (idx >= 0) {
+        const auto rows = layersBox->get_children();
+
+        if (idx < static_cast<int>(rows.size())) {
+            rows[idx]->get_style_context()->add_class("selected");
+        }
+    }
 }
 
 void DoubleExposure::clearAll()

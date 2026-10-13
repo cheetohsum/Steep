@@ -140,15 +140,23 @@ inline void samplePartner(const PartnerImage& p, float u, float v, float& r, flo
 }
 
 // Only interactive plates are retained. Export samples the full source directly.
-std::shared_ptr<const MotionPlate> previewMotion(const ResolvedLayer& layer, const procparams::DEMotionParams& params)
+// `maxDim` caps the plate's long edge: a 100 px thumbnail needs a few hundred
+// samples across, not the partner's whole 2560 px preview tier (that took
+// minutes and held the thumbnail's lock, freezing the GUI behind it).
+std::shared_ptr<const MotionPlate> previewMotion(const ResolvedLayer& layer, const procparams::DEMotionParams& params, int maxDim)
 {
+    const int srcW = layer.partner->image->getWidth();
+    const int srcH = layer.partner->image->getHeight();
+    const double plateScale = std::min(1.0, double(std::max(64, maxDim)) / std::max(srcW, srcH));
+    const int plateW = std::max(1, int(std::lround(srcW * plateScale)));
+    const int plateH = std::max(1, int(std::lround(srcH * plateScale)));
     static std::mutex mutex;
     static std::list<std::shared_ptr<const MotionPlate>> cache;
     static std::list<MotionGate> gates;
     std::shared_ptr<std::mutex> gate;
     constexpr size_t budget = 128U * 1024U * 1024U;
     const auto matches = [&](const std::shared_ptr<const MotionPlate>& p) {
-        return p->source == layer.partner && p->params == params
+        return p->source == layer.partner && p->params == params && p->w == plateW && p->h == plateH
 #ifdef RT_AI_MASKING
             && p->mask == layer.mask && p->depth == layer.depth && p->depthSelect == layer.depthSelect
 #endif
@@ -195,8 +203,8 @@ std::shared_ptr<const MotionPlate> previewMotion(const ResolvedLayer& layer, con
     result->depth = layer.depth;
     result->depthSelect = layer.depthSelect;
 #endif
-    result->w = layer.partner->image->getWidth();
-    result->h = layer.partner->image->getHeight();
+    result->w = plateW;
+    result->h = plateH;
     result->pixels.resize(size_t(result->w) * result->h);
     const float pw = layer.partner->fullWidth, ph = layer.partner->fullHeight;
     const auto read = [&](float u, float v) {
@@ -312,7 +320,13 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
             }
 #endif
 
-            if (!fullRes && !rl.motion.empty()) rl.motionPlate = previewMotion(rl, layer.motion);
+            if (!fullRes && !rl.motion.empty()) {
+                // Twice the base frame's long edge at this zoom (a detail
+                // window at 1:1 asks for everything the partner tier holds;
+                // a thumbnail for a few hundred samples).
+                const float frameAtZoom = std::max(fullW, fullH) / std::max(skip, 1.f);
+                rl.motionPlate = previewMotion(rl, layer.motion, static_cast<int>(std::min(1.0e6f, 2.f * frameAtZoom)));
+            }
             fr.invCover = 1.f / std::max(fr.baseW / fr.srcW, fr.baseH / fr.srcH);
             deplace::applyLayer(fr, layer, cropped);
 

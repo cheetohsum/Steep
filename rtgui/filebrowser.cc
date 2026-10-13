@@ -1190,6 +1190,10 @@ FileBrowser::FileBrowser () :
     p++;
     duplicate->set_no_show_all(true);
     duplicate->hide();
+    pmenu->attach (*Gtk::manage(openSourceFolder_ = new MyImageMenuItem (M("FILEBROWSER_POPUPOPENSOURCEFOLDER"), "folder-open")), 0, 1, p, p + 1);
+    p++;
+    openSourceFolder_->set_no_show_all(true);
+    openSourceFolder_->hide();
     photoTagsConnection_ = PhotoTags::instance().changed().connect([this]() {
         // Apply a copy: applyFilter may update the browser's own filter.
         const auto current = filter;
@@ -1719,8 +1723,19 @@ FileBrowser::FileBrowser () :
                     // Remember what gets picked here so the icon can repeat it.
                     for (Gtk::Widget* child : sub->get_children()) {
                         if (auto* item = dynamic_cast<Gtk::MenuItem*>(child)) {
-                            item->signal_activate().connect([lastToolChoice, sub, item]() {
+                            item->signal_activate().connect([this, lastToolChoice, hoverState, sub, item]() {
                                 (*lastToolChoice)[sub] = item;
+
+                                // An action was taken (delete, sort, cache...):
+                                // the whole context menu is done, not just
+                                // the tool's own menu.
+                                if (!item->get_submenu()) {
+                                    if (hoverState->openSubmenu == sub) {
+                                        hoverState->openSubmenu = nullptr;
+                                    }
+
+                                    pmenu->popdown();
+                                }
                             });
                         }
                     }
@@ -2083,6 +2098,21 @@ FileBrowser::FileBrowser () :
 
         if (!selectedFile.empty()) {
             addToAlbumSetter_(selectedFile);
+        }
+    });
+
+    openSourceFolder_->signal_activate().connect([this]() {
+        if (!sourceFolderOpener_) return;
+        Glib::ustring fname;
+        {
+            MYREADERLOCK(l, entryRW);
+            if (selected.size() == 1) {
+                fname = (static_cast<FileBrowserEntry*>(selected[0]))->filename;
+            }
+        }
+        if (!fname.empty()) {
+            // After the lock: navigating rebuilds the entries.
+            Glib::signal_idle().connect_once([this, fname]() { sourceFolderOpener_(fname); });
         }
     });
 
@@ -2587,6 +2617,11 @@ void FileBrowser::rightClicked ()
         } else {
             setAlbumCover->hide();
         }
+
+        // Offered when the photo's own folder is not the one on show:
+        // global scope, albums, subfolders listed recursively.
+        openSourceFolder_->set_visible(selected.size() == 1 && sourceFolderElsewhere_
+            && sourceFolderElsewhere_(static_cast<FileBrowserEntry*>(selected[0])->filename));
     }
 
     pmenu->popup (3, this->eventTime);
@@ -6058,11 +6093,13 @@ void FileBrowser::visibleRangeChanged ()
     }
 
     Glib::ustring firstVisible;
+    std::string firstVisibleKey;
     {
         MYREADERLOCK(l, entryRW);
 
         if (!visibleEntries_.empty()) {
             firstVisible = visibleEntries_.front()->filename;
+            firstVisibleKey = browserPathKeyForEntry(visibleEntries_.front());
         }
     }
 
@@ -6071,7 +6108,10 @@ void FileBrowser::visibleRangeChanged ()
     }
 
     lastViewportHint_ = firstVisible;
-    previewLoader->setPriorityHint(firstVisible);
+    // The loader orders its jobs by the folded catalog key; a raw path sorts
+    // before all of them on Windows ("C:\" < "c:/"), which pinned the hint to
+    // the start of the folder and left the loader working alphabetically.
+    previewLoader->setPriorityHint(firstVisible, std::move(firstVisibleKey));
 }
 
 void FileBrowser::thumbRearrangementNeeded ()

@@ -259,7 +259,7 @@ window.csd:not(.fullscreen) #MainNotebook > header.top {
     margin: 0;
 }
 #BeforeAfterContainer > box:nth-child(2){
-    border-left: 1px solid rgba(255,255,255,0.08);
+    border-left: 1px solid alpha(@steep_wash, 0.08);
 }
 
 #BeforeAfterContainer label {

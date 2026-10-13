@@ -30,9 +30,11 @@
 #include "rtengine/procparams.h"
 #include "rtengine/doubleexposureblend.h"
 #include "compositedepthhistogram.h"
+#include "widgets/basic/adjuster.h"
 
 class DEThumbGrid;
 class DEBlendPreview;
+class DESection;
 
 namespace compositeui
 {
@@ -53,9 +55,12 @@ class ColorTemp;
 // folder or global picked/starred selects) on the left, a live approximate
 // blend preview and the layer stack on the right. On OK the chosen layer
 // stack and blend settings are read back via getResult().
-class DoubleExposureDlg final : public Gtk::Dialog
+class DoubleExposureDlg final : public Gtk::Dialog, public AdjusterListener
 {
 public:
+    // Every slider in the dialog reports here; routed by which one moved.
+    void adjusterChanged(Adjuster* a, double newval) override;
+
     DoubleExposureDlg(Gtk::Window* parent, const Glib::ustring& baseImagePath,
                       const rtengine::procparams::DoubleExposureParams& initial,
                       const BrowserFilter* browserFilter,
@@ -222,39 +227,44 @@ private:
     DEBlendPreview* preview_;
     Gtk::CheckButton* highRes_;
     Gtk::Button* addMotion_ = nullptr;
-    Gtk::Expander* motionExpander_ = nullptr;
+    DESection*motionExpander_ = nullptr;
     MyComboBoxText* motionPath_ = nullptr;
-    Gtk::Scale* motionShutter_ = nullptr;
-    Gtk::Scale* motionSpeed_ = nullptr;
-    Gtk::Scale* motionDirection_ = nullptr;
-    Gtk::Scale* motionNoise_ = nullptr;
-    Gtk::Scale* motionComplexity_ = nullptr;
+    Adjuster*motionShutter_ = nullptr;
+    Adjuster*motionSpeed_ = nullptr;
+    Adjuster*motionDirection_ = nullptr;
+    Adjuster*motionNoise_ = nullptr;
+    Adjuster*motionComplexity_ = nullptr;
     Gtk::Button* motionRandomize_ = nullptr;
     Gtk::Spinner* motionSpinner_ = nullptr;
     MyComboBoxText* blendMethod_;
     Gtk::CheckButton* autoGain_;
-    Gtk::Scale* baseEvScale_;
+    Adjuster*baseEvScale_;
     Gtk::Label* layerLabel_;
-    Gtk::Scale* layerEvScale_;
-    Gtk::Scale* layerOpacityScale_;
-    Gtk::Scale* gateStrengthScale_;
-    Gtk::Scale* softnessScale_;
-    Gtk::Scale* latitudeScale_;
-    Gtk::Scale* offsetXScale_;
-    Gtk::Scale* offsetYScale_;
-    Gtk::Scale* scaleScale_;
-    Gtk::Scale* rotateScale_;
+    Gtk::Button* layerDevelop_ = nullptr;
+    Gtk::Button* layerRemove_ = nullptr;
+    DESection* blendSection_ = nullptr;
+    DESection* selectSection_ = nullptr;
+    DESection* revealSection_ = nullptr;
+    Adjuster*layerEvScale_;
+    Adjuster*layerOpacityScale_;
+    Adjuster*gateStrengthScale_;
+    Adjuster*softnessScale_;
+    Adjuster*latitudeScale_;
+    Adjuster*offsetXScale_;
+    Adjuster*offsetYScale_;
+    Adjuster*scaleScale_;
+    Adjuster*rotateScale_;
     Gtk::Button* rotateLeft_;
     Gtk::Button* rotateRight_;
     Gtk::CheckButton* flipH_;
     MyComboBoxText* patternMethod_;
-    Gtk::Scale* patternSpacingScale_;
-    Gtk::Scale* patternStaggerScale_;
-    Gtk::Scale* patternCountScale_;
-    Gtk::Scale* patternDiameterScale_;
+    Adjuster*patternSpacingScale_;
+    Adjuster*patternStaggerScale_;
+    Adjuster*patternCountScale_;
+    Adjuster*patternDiameterScale_;
     Gtk::CheckButton* patternUpright_;
-    Gtk::Scale* patternTwistScale_;
-    Gtk::Scale* edgeFeatherScale_;
+    Adjuster*patternTwistScale_;
+    Adjuster*edgeFeatherScale_;
     Gtk::Box* gridRow_;    // spacing + stagger, for the two grid patterns
     Gtk::Box* radialRow_;  // count + diameter + selection feather
     Gtk::Widget* ringCountCell_;
@@ -262,17 +272,17 @@ private:
     Gtk::Box* twistRow_;
     Gtk::Widget* subjectFeatherCell_;
     bool haveSegmentation_ = false;
-    Gtk::Expander* depthExpander_ = nullptr;
+    DESection*depthExpander_ = nullptr;
     Gtk::CheckButton* depthEnable_ = nullptr;
     Gtk::CheckButton* depthInvert_ = nullptr;
     compositeui::DepthRange* depthRange_ = nullptr;
-    Gtk::Scale* depthNearShape_ = nullptr;
-    Gtk::Scale* depthFarShape_ = nullptr;
+    Adjuster*depthNearShape_ = nullptr;
+    Adjuster*depthFarShape_ = nullptr;
     Gtk::Label* depthStatus_ = nullptr;
     std::set<Glib::ustring> depthPending_;
     std::map<Glib::ustring, compositeui::DepthHistogram> depthHistograms_;
-    Gtk::Expander* adjustExpander_;
-    Gtk::Expander* patternExpander_;
+    DESection*adjustExpander_;
+    DESection*patternExpander_;
     Gtk::Box* subjectRow_;
     Gtk::CellRendererPixbuf subjectTileCell_;
     /// Which class row each visible row of the list stands for. A class the
@@ -292,7 +302,7 @@ private:
     bool previewSelValid_ = false;
     void onPreviewPick(double cx, double cy, bool include);
     void syncPickMode();
-    Gtk::Scale* subjectFeatherScale_;
+    Adjuster*subjectFeatherScale_;
     Gtk::Button* resetPlacement_;
     Gtk::Box* trayBox_;
 

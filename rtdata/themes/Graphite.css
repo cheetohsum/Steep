@@ -1,0 +1,52 @@
+/*
+  Graphite — neutral graphite, vivid blue
+
+  A neutral graphite dark theme with a vivid blue accent, in the spirit of
+  contemporary macOS dark surfaces.
+
+  This file is a PALETTE: the design lives in common/steep-look.css and
+  reads these steep_* tokens.
+
+  Copyright (c) 2026 RawTherapee
+  Licensed under the GNU General Public License v3 or later.
+*/
+
+/***************************/
+/**/ @import url("./common/size.css"); /**/
+/**/ @import url("./common/steep-look.css"); /**/
+/***************************/
+
+@define-color steep_surface_0 #151517;
+@define-color steep_surface_1 #1d1d20;
+@define-color steep_surface_2 #252529;
+@define-color steep_surface_3 #2f2f34;
+
+@define-color steep_text_hi #f3f3f5;
+@define-color steep_text #cacace;
+@define-color steep_text_dim #8e8e96;
+
+@define-color steep_accent #4c9dff;
+@define-color steep_on_accent #ffffff;
+@define-color steep_select #4c9dff;
+
+@define-color steep_attention #ff9f43;
+@define-color steep_rating #ffcc4d;
+@define-color steep_success #5ccf7a;
+@define-color steep_danger #ff5f57;
+
+@define-color steep_border #0b0b0c;
+@define-color steep_border_soft #37373d;
+@define-color steep_shadow alpha(#000000, 0.60);
+
+@define-color steep_sel_bg #4c9dff;
+@define-color steep_sel_fg #ffffff;
+
+@define-color steep_wash #ffffff;
+@define-color steep_surround #2a2a2a;
+@define-color steep_ornament alpha(#4c9dff, 0.50);
+
+@define-color steep_label_1 #ff5f57;
+@define-color steep_label_2 #ffcc4d;
+@define-color steep_label_3 #5ccf7a;
+@define-color steep_label_4 #4c9dff;
+@define-color steep_label_5 #b98cff;

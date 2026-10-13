@@ -41,6 +41,7 @@ private:
     Adjuster *feather;
     Adjuster *angle;
     Gtk::Box* detailContent_;
+    SectionHeader* detailHeader_;
     Gtk::Revealer* detailRevealer_;
     bool detailExpanded_;
     sigc::connection editConn;

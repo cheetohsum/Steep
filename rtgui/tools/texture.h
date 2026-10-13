@@ -28,6 +28,7 @@ private:
     Adjuster *amount;
     Adjuster *radius;
     Gtk::Box* detailContent_;
+    SectionHeader* detailHeader_;
     Gtk::Revealer* detailRevealer_;
     bool detailExpanded_;
 

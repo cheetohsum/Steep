@@ -181,10 +181,10 @@ ToneCurve::ToneCurve() : FoldableToolPanel(this, TOOL_NAME, M("TP_EXPOSURE_LABEL
     // Compact Lightroom-style header: colored channel chips instead of the
     // full curve-type combos, editing controls behind a cog.
     curveEditorG->hideHeaderWidgets();
-    shape->enableCompactMode("RGB", "curve-channel-master");
-    shapeR->enableCompactMode("R", "curve-channel-red");
-    shapeG->enableCompactMode("G", "curve-channel-green");
-    shapeB->enableCompactMode("B", "curve-channel-blue");
+    shape->enableCompactMode(M("CURVE_CHANNEL_LIGHT"), "curve-channel-master");
+    shapeR->enableCompactMode(M("CURVE_CHANNEL_RED"), "curve-channel-red");
+    shapeG->enableCompactMode(M("CURVE_CHANNEL_GREEN"), "curve-channel-green");
+    shapeB->enableCompactMode(M("CURVE_CHANNEL_BLUE"), "curve-channel-blue");
     curveEditorG->setCompactDisplay(true);
 
     for (auto* editor : {(CurveEditor*)shape, (CurveEditor*)shapeR, (CurveEditor*)shapeG, (CurveEditor*)shapeB}) {

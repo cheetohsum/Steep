@@ -60,8 +60,29 @@ std::vector<Adjuster*> Adjuster::instances_;
 namespace {
 Glib::ustring pillFontName()
 {
-    const int pt = std::max(6, static_cast<int>(std::lround(ADJUSTER_PILL_FONT_PT * Adjuster::getPillScale())));
-    return Glib::ustring::compose("sans %1", pt);
+    // The user's UI font (Preferences, or GTK's default), not a hardcoded
+    // "sans": the pills are most of the text in the tool panel. The size
+    // keeps its old relation to a 9pt UI font, so it follows the user's
+    // font size as well as the pill scale.
+    const auto& options = App::get().options();
+    Glib::ustring family = "sans";
+    double basePt = 9.0;
+
+    if (options.fontFamily != "default") {
+        family = options.fontFamily;
+        basePt = options.fontSize;
+    } else if (auto settings = Gtk::Settings::get_default()) {
+        const Pango::FontDescription gtkFont(settings->property_gtk_font_name().get_value());
+        if (!gtkFont.get_family().empty()) {
+            family = gtkFont.get_family();
+        }
+        if (gtkFont.get_size() > 0) {
+            basePt = static_cast<double>(gtkFont.get_size()) / Pango::SCALE;
+        }
+    }
+
+    const double pt = ADJUSTER_PILL_FONT_PT * (basePt / 9.0) * Adjuster::getPillScale();
+    return Glib::ustring::compose("%1 %2", family, std::max(6, static_cast<int>(std::lround(pt))));
 }
 }
 
@@ -874,6 +895,11 @@ double Adjuster::getSliderValue() const
 
 void Adjuster::setSliderValue(double val)
 {
+    slider->set_value(sliderPositionOf(val));
+}
+
+double Adjuster::sliderPositionOf(double val) const
+{
     if (logBase) {
         if (logAnchorMiddle) {
             double mid = (vMax - vMin) / 2;
@@ -898,7 +924,7 @@ void Adjuster::setSliderValue(double val)
             }
         }
     }
-    slider->set_value(val);
+    return val;
 }
 
 void Adjuster::setLogScale(double base, double pivot, bool anchorMiddle)
@@ -1079,12 +1105,18 @@ struct AdjusterPillSpec {
     int y = 0;
     int w = 0;
     int h = 0;
-    double radius = 4.0;
+    double radius = 6.0;
     // Fill extent in widget coordinates; fillRight <= fillLeft draws no fill.
     int fillLeft = 0;
     int fillRight = 0;
+    // The moving end of the fill, marked with a hairline; < 0 for none.
+    int fillEdge = -1;
+    // The default value, marked with a short accent notch; < 0 for none.
+    int notchX = -1;
     Gdk::RGBA well;
     Gdk::RGBA wash;
+    Gdk::RGBA border;
+    Gdk::RGBA accent;
 };
 
 void drawAdjusterPill(const Cairo::RefPtr<Cairo::Context>& cr, const AdjusterPillSpec& s)
@@ -1117,6 +1149,43 @@ void drawAdjusterPill(const Cairo::RefPtr<Cairo::Context>& cr, const AdjusterPil
         cr->rectangle(s.fillLeft, s.y, s.fillRight - s.fillLeft, s.h);
         cr->fill();
         cr->restore();
+    }
+
+    if (s.fillEdge >= 0) {
+        cr->save();
+        pillPath();
+        cr->clip();
+        cr->set_source_rgba(s.wash.get_red(), s.wash.get_green(), s.wash.get_blue(), 0.30);
+        cr->rectangle(s.fillEdge, s.y, 1, s.h);
+        cr->fill();
+        cr->restore();
+    }
+
+    // Midpoint tick: neutral, the same on every slider.
+    if (s.notchX >= 0) {
+        const double inset = std::max(4.0, s.h * 0.3);
+        cr->set_source_rgba(s.wash.get_red(), s.wash.get_green(), s.wash.get_blue(), 0.20);
+        cr->rectangle(s.notchX, s.y + inset, 1, s.h - 2 * inset);
+        cr->fill();
+    }
+
+    // Hairline rim, inset half a pixel so it lands on whole pixels, so the
+    // pill reads as a well on every surface.
+    {
+        const double x0 = s.x + 0.5;
+        const double y0 = s.y + 0.5;
+        const double x1 = s.x + s.w - 0.5;
+        const double y1 = s.y + s.h - 0.5;
+        const double r = std::max(0.0, s.radius - 0.5);
+        cr->begin_new_sub_path();
+        cr->arc(x0 + r, y0 + r, r, rtengine::RT_PI, rtengine::RT_PI * 1.5);
+        cr->arc(x1 - r, y0 + r, r, rtengine::RT_PI * 1.5, 0);
+        cr->arc(x1 - r, y1 - r, r, 0, rtengine::RT_PI * 0.5);
+        cr->arc(x0 + r, y1 - r, r, rtengine::RT_PI * 0.5, rtengine::RT_PI);
+        cr->close_path();
+        cr->set_line_width(1.0);
+        cr->set_source_rgba(s.border.get_red(), s.border.get_green(), s.border.get_blue(), s.border.get_alpha());
+        cr->stroke();
     }
 }
 
@@ -1200,6 +1269,8 @@ bool Adjuster::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
         spec.h = get_allocated_height();
         spec.well = themeColor(*this, "steep_surface_0", Gdk::RGBA("#14171f"));
         spec.wash = themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff"));
+        spec.border = themeColor(*this, "steep_border_soft", Gdk::RGBA("#22262e"));
+        spec.accent = themeColor(*this, "steep_accent", Gdk::RGBA("#2d7fd3"));
 
         auto adj = slider->get_adjustment();
         const double rangeMin = adj->get_lower();
@@ -1207,17 +1278,25 @@ bool Adjuster::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
 
         if (range > 0) {
             const double valueFrac = (adj->get_value() - rangeMin) / range;
+            const int valueX = spec.x + static_cast<int>(valueFrac * spec.w);
 
             if (isBipolar_) {
                 const double centerFrac = (0.0 - rangeMin) / range;
                 const int centerX = spec.x + static_cast<int>(centerFrac * spec.w);
-                const int valueX = spec.x + static_cast<int>(valueFrac * spec.w);
                 spec.fillLeft = std::min(centerX, valueX);
                 spec.fillRight = std::max(centerX, valueX);
             } else {
                 spec.fillLeft = spec.x;
-                spec.fillRight = spec.x + static_cast<int>(valueFrac * spec.w);
+                spec.fillRight = valueX;
             }
+
+            if (spec.fillRight > spec.fillLeft + 1 && valueX > spec.x + 1 && valueX < spec.x + spec.w - 1) {
+                spec.fillEdge = valueX;
+            }
+
+            // One quiet tick at the middle of every track, in the same place
+            // on every slider.
+            spec.notchX = spec.x + spec.w / 2;
         }
 
         drawAdjusterPill(cr, spec);
@@ -1257,18 +1336,20 @@ bool Adjuster::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
         cr->move_to(textX, textY);
         layout->show_in_cairo_context(cr);
 
-        // Draw value text on the right side of the pill
+        // Draw value text on the right side of the pill. It sits in a fixed
+        // inset -- the same in every state -- so hovering, clicking and typing
+        // never move the digits.
         Glib::ustring valStr = spin->get_text();
         auto valLayout = create_pango_layout(valStr);
         valLayout->set_font_description(Pango::FontDescription(pillFontName()));
         Pango::Rectangle vInk, vLog;
         valLayout->get_pixel_extents(vInk, vLog);
-        const int valX = sAlloc.get_x() + sAlloc.get_width() - vLog.get_width() - 10;
+        const int valX = sAlloc.get_x() + sAlloc.get_width() - vLog.get_width() - 14;
         const int valY = pillY + (pillH - vLog.get_height()) / 2;
         // Under the pointer the number gets a well to sit in and its full
         // strength, so "you can type here" is visible before the click.
         if (valueHover_) {
-            const double padX = 5.0;
+            const double padX = 7.0;
             const double boxX = valX - padX;
             const double boxY = pillY + 2;
             const double boxW = vLog.get_width() + padX * 2;
@@ -1281,7 +1362,10 @@ bool Adjuster::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
             cr->arc(boxX + boxW - radius, boxY + boxH - radius, radius, 0.0, 0.5 * M_PI);
             cr->arc(boxX + radius, boxY + boxH - radius, radius, 0.5 * M_PI, M_PI);
             cr->close_path();
-            cr->set_source_rgba(1.0, 1.0, 1.0, 0.10);
+            // Wash direction: lightens on dark themes, darkens on light ones
+            // (a white box was invisible on TooWaGrey - Bright).
+            const Gdk::RGBA hoverWash = themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff"));
+            cr->set_source_rgba(hoverWash.get_red(), hoverWash.get_green(), hoverWash.get_blue(), 0.10);
             cr->fill();
         }
 

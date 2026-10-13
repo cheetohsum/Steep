@@ -325,13 +325,15 @@ ICCProfileCreator::ICCProfileCreator(RTWindow *rtwindow)
 
     //--------------- Action area button
 
-    Gtk::Button* save = Gtk::manage(new Gtk::Button(M("GENERAL_SAVE_AS")));
-    save->signal_clicked().connect(sigc::mem_fun(*this, &ICCProfileCreator::savePressed));
-    get_action_area()->pack_start(*save);
-
+    // Close first, then the primary action at the trailing edge.
     Gtk::Button* close = Gtk::manage(new Gtk::Button(M("GENERAL_CLOSE")));
     close->signal_clicked().connect(sigc::mem_fun(*this, &ICCProfileCreator::closePressed));
     get_action_area()->pack_start(*close);
+
+    Gtk::Button* save = Gtk::manage(new Gtk::Button(M("GENERAL_SAVE_AS")));
+    save->get_style_context()->add_class(GTK_STYLE_CLASS_SUGGESTED_ACTION);
+    save->signal_clicked().connect(sigc::mem_fun(*this, &ICCProfileCreator::savePressed));
+    get_action_area()->pack_start(*save);
 
     //--------------- Show children
 

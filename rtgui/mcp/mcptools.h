@@ -36,6 +36,11 @@ std::vector<ToolDef> getToolDefinitions();
 // Must be called on GTK thread.
 std::string handleToolCall(const std::string& toolName, cJSON* args, McpServer* server);
 
+// auto_edit: runs Steep's Auto Edit on a photo by path (no open image needed). The analysis
+// runs on the calling (HTTP) thread like the file browser's batch Auto Edit; only the cache
+// lookup, the optional apply and the release hop onto GTK's thread. Returns JSON result.
+std::string runAutoEditTool(cJSON* args, McpServer* server);
+
 // Serialize ProcParams to cJSON. Caller must cJSON_Delete the result.
 // If section is non-empty, only that section is included.
 cJSON* paramsToJson(const rtengine::procparams::ProcParams& pp, const std::string& section = "");

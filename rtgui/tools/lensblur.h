@@ -42,8 +42,8 @@ private:
     // Collapsible section containers
     Gtk::Box *bokehContent;
     Gtk::Box *focusContent;
-    Gtk::Label *bokehLabel;
-    Gtk::Label *focusLabel;
+    SectionHeader *bokehHeader;
+    SectionHeader *focusHeader;
     bool bokehExpanded;
     bool focusExpanded;
 

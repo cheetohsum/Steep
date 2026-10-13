@@ -504,6 +504,61 @@ Gdk::RGBA themeColor(const Gtk::Widget& widget, const char* name, const Gdk::RGB
     return themeColor(const_cast<Gtk::Widget&>(widget).get_style_context(), name, fallback);
 }
 
+Glib::ustring themeColorHex(const Gtk::Widget& widget, const char* name, const Gdk::RGBA& fallback)
+{
+    const Gdk::RGBA color = themeColor(widget, name, fallback);
+    char buf[8];
+    snprintf(buf, sizeof(buf), "#%02x%02x%02x",
+             static_cast<unsigned>(std::lround(rtengine::LIM01(color.get_red()) * 255.0)),
+             static_cast<unsigned>(std::lround(rtengine::LIM01(color.get_green()) * 255.0)),
+             static_cast<unsigned>(std::lround(rtengine::LIM01(color.get_blue()) * 255.0)));
+    return buf;
+}
+
+Gdk::RGBA colorLabelColor(int label)
+{
+    // Theme tokens steep_label_1..5; the literals are the fallback for a
+    // theme that predates them.
+    static const char* const names[5] = {
+        "steep_label_1", "steep_label_2", "steep_label_3", "steep_label_4", "steep_label_5"
+    };
+    static const double rgb[5][3] = {
+        {1.0, 0.2, 0.2}, {1.0, 0.85, 0.0}, {0.2, 0.8, 0.2}, {0.2, 0.4, 1.0}, {0.6, 0.2, 0.8}
+    };
+    Gdk::RGBA color;
+
+    if (label < 1 || label > 5) {
+        color.set_rgba(0.0, 0.0, 0.0, 0.0);
+        return color;
+    }
+
+    color.set_rgba(rgb[label - 1][0], rgb[label - 1][1], rgb[label - 1][2], 1.0);
+
+    // A bare context on the default screen sees every application provider,
+    // which is all a named-colour lookup needs.
+    static Glib::RefPtr<Gtk::StyleContext> screenContext;
+
+    if (!screenContext) {
+        screenContext = Gtk::StyleContext::create();
+        screenContext->set_screen(Gdk::Screen::get_default());
+    }
+
+    return themeColor(screenContext, names[label - 1], color);
+}
+
+void paintTreeRowState(Gtk::CellRenderer* cell, const Gtk::Widget& widget, bool hovered, bool dropTarget)
+{
+    if (!cell || (!hovered && !dropTarget)) {
+        return;
+    }
+
+    Gdk::RGBA color = dropTarget
+        ? themeColor(widget, "steep_select", Gdk::RGBA("#5f70c0"))
+        : themeColor(widget, "steep_wash", Gdk::RGBA("#ffffff"));
+    color.set_alpha(dropTarget ? 0.35 : 0.08);
+    cell->property_cell_background_rgba() = color;
+}
+
 Gtk::Overlay* addCountBadge(Gtk::Widget& button, Gtk::Label*& badge)
 {
     Gtk::Overlay* overlay = Gtk::manage(new Gtk::Overlay());
@@ -2691,6 +2746,114 @@ void OptionalRadioButtonGroup::register_button(Gtk::ToggleButton &button)
 }
 
 
+// SectionHeader
+
+SectionHeader::SectionHeader(const Glib::ustring& label, bool groupLevel) :
+    Gtk::Button(),
+    expanded_(false)
+{
+    get_style_context()->add_class("section-header");
+    if (groupLevel) {
+        get_style_context()->add_class("section-header-group");
+    }
+    set_relief(Gtk::RELIEF_NONE);
+    // Keyboard reachable (Tab, Space/Enter), but a mouse click does not
+    // pull focus away from wherever the user was working.
+    set_can_focus(true);
+    set_focus_on_click(false);
+
+    auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+    arrow_ = Gtk::manage(new RTImage("expander-closed-small"));
+    label_ = Gtk::manage(new Gtk::Label(label));
+    setExpandAlignProperties(label_, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    box->pack_start(*arrow_, Gtk::PACK_SHRINK, 0);
+    box->pack_start(*label_, Gtk::PACK_SHRINK, 0);
+    summary_ = Gtk::manage(new Gtk::Label());
+    summary_->get_style_context()->add_class("section-summary");
+    summary_->set_ellipsize(Pango::ELLIPSIZE_END);
+    setExpandAlignProperties(summary_, true, false, Gtk::ALIGN_END, Gtk::ALIGN_CENTER);
+    box->pack_end(*summary_, Gtk::PACK_EXPAND_WIDGET, 0);
+    add(*box);
+    show_all_children();
+    summary_->set_no_show_all(true);
+    summary_->hide();
+}
+
+void SectionHeader::setExpanded(bool expanded)
+{
+    expanded_ = expanded;
+    arrow_->set_from_icon_name(expanded_ ? "expander-open-small" : "expander-closed-small");
+    summary_->set_visible(!expanded_ && !summary_->get_text().empty());
+}
+
+void SectionHeader::setSummary(const Glib::ustring& summary)
+{
+    summary_->set_text(summary);
+    summary_->set_visible(!expanded_ && !summary.empty());
+}
+
+void SectionHeader::setLabel(const Glib::ustring& label)
+{
+    label_->set_text(label);
+}
+
+void SectionHeader::on_clicked()
+{
+    setExpanded(!expanded_);
+
+    if (onToggled_) {
+        onToggled_(expanded_);
+    }
+}
+
+Gtk::Button* makeResetButton(const Glib::ustring& tooltip)
+{
+    auto* button = Gtk::manage(new Gtk::Button());
+    button->get_style_context()->add_class("reset-button");
+    button->set_relief(Gtk::RELIEF_NONE);
+    button->set_can_focus(false);
+    button->add(*Gtk::manage(new RTImage("undo-small", Gtk::ICON_SIZE_BUTTON)));
+    button->set_tooltip_text(tooltip.empty() ? M("GENERAL_RESET_TO_DEFAULT") : tooltip);
+    setExpandAlignProperties(button, false, false, Gtk::ALIGN_CENTER, Gtk::ALIGN_CENTER);
+    return button;
+}
+
+Gtk::Button* applyDialogTemplate(Gtk::Dialog& dialog, const Glib::ustring& primaryLabel,
+                                 int primaryResponse, bool withCancel)
+{
+    if (auto* content = dialog.get_content_area()) {
+        content->set_border_width(12);
+        content->set_spacing(8);
+    }
+
+    // Cancel first: buttons are packed left to right, so the primary
+    // action ends up at the trailing edge on every dialog.
+    if (withCancel) {
+        dialog.add_button(M("GENERAL_CANCEL"), Gtk::RESPONSE_CANCEL);
+    }
+
+    Gtk::Button* primary = dialog.add_button(primaryLabel, primaryResponse);
+    if (primary) {
+        primary->get_style_context()->add_class(GTK_STYLE_CLASS_SUGGESTED_ACTION);
+    }
+    dialog.set_default_response(primaryResponse);
+
+    if (auto* actions = dialog.get_action_area()) {
+        if (auto* box = dynamic_cast<Gtk::Container*>(actions)) {
+            box->set_border_width(12);
+        }
+    }
+
+    return primary;
+}
+
+void makeSegmented(Gtk::Box& box)
+{
+    box.set_spacing(0);
+    box.get_style_context()->add_class(GTK_STYLE_CLASS_LINKED);
+    box.get_style_context()->add_class("segmented");
+}
+
 // AdvancedSection
 
 AdvancedSection::AdvancedSection() :
@@ -2705,31 +2868,11 @@ AdvancedSection::AdvancedSection(const Glib::ustring& customLabel) :
     set_name("AdvancedSection");
     get_style_context()->add_class("AdvancedSection");
 
-    // Separator line above header
-    auto* sep = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL));
-    pack_start(*sep, Gtk::PACK_SHRINK, 0);
-
-    // Clickable header with arrow + label
-    auto* headerBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL));
-    headerBox->set_spacing(4);
-
-    arrowImage = Gtk::manage(new RTImage("expander-closed-small"));
-    arrowImage->set_can_focus(false);
-    headerBox->pack_start(*arrowImage, Gtk::PACK_SHRINK, 0);
-
-    auto* label = Gtk::manage(new Gtk::Label(customLabel));
-    setExpandAlignProperties(label, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
-    headerBox->pack_start(*label, Gtk::PACK_SHRINK, 0);
-
-    auto* headerEvBox = Gtk::manage(new Gtk::EventBox());
-    headerEvBox->set_name("AdvancedSectionHeader");
-    setExpandAlignProperties(headerEvBox, true, false, Gtk::ALIGN_FILL, Gtk::ALIGN_FILL);
-    headerEvBox->add(*headerBox);
-    headerEvBox->set_can_focus(false);
-    headerEvBox->signal_button_release_event().connect(
-        sigc::mem_fun(*this, &AdvancedSection::onHeaderClick));
-
-    pack_start(*headerEvBox, Gtk::PACK_SHRINK, 0);
+    header = Gtk::manage(new SectionHeader(customLabel));
+    header->set_halign(Gtk::ALIGN_FILL);
+    header->set_hexpand(true);
+    header->setOnToggled([this](bool expand) { setExpanded(expand); });
+    pack_start(*header, Gtk::PACK_SHRINK, 0);
 
     // Content box
     contentBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
@@ -2745,19 +2888,10 @@ AdvancedSection::AdvancedSection(const Glib::ustring& customLabel) :
     }
 }
 
-bool AdvancedSection::onHeaderClick(GdkEventButton* event)
-{
-    if (event->button != 1) {
-        return false;
-    }
-    setExpanded(!expanded);
-    return false;
-}
-
 void AdvancedSection::setExpanded(bool expand)
 {
     expanded = expand;
-    updateArrow();
+    header->setExpanded(expanded);
     if (expanded) {
         contentBox->set_no_show_all(false);
         contentBox->show_all();
@@ -2783,15 +2917,6 @@ void AdvancedSection::setBatchMode(bool batchMode)
     }
 }
 
-void AdvancedSection::updateArrow()
-{
-    if (expanded) {
-        arrowImage->set_from_icon_name("expander-open-small");
-    } else {
-        arrowImage->set_from_icon_name("expander-closed-small");
-    }
-}
-
 // ToolGroup
 
 ToolGroup::ToolGroup(const Glib::ustring& label) :
@@ -2803,45 +2928,26 @@ ToolGroup::ToolGroup(const Glib::ustring& label) :
     set_hexpand(true);
     set_halign(Gtk::ALIGN_FILL);
 
-    // Clickable header: single label with arrow + text via markup
-    groupLabel_ = Glib::Markup::escape_text(label);
-    arrowLabel = Gtk::manage(new Gtk::Label());
-    arrowLabel->set_use_markup(true);
-    arrowLabel->set_markup("<small>\xe2\x96\xb8</small>  " + groupLabel_);
-    arrowLabel->set_can_focus(false);
-    setExpandAlignProperties(arrowLabel, false, false, Gtk::ALIGN_START, Gtk::ALIGN_CENTER);
+    // Clickable header: the shared section header at group level. The id
+    // keeps the group's place in the type ladder (widgets.css).
+    header = Gtk::manage(new SectionHeader(label, true));
+    header->set_name("ToolGroupHeader");
+    header->set_halign(Gtk::ALIGN_START);
+    header->setOnToggled([this](bool expand) { setExpanded(expand); });
 
-    auto* headerBtn = Gtk::manage(new Gtk::Button());
-    headerBtn->set_name("ToolGroupHeader");
-    headerBtn->set_relief(Gtk::RELIEF_NONE);
-    headerBtn->set_can_focus(false);
-    headerBtn->set_halign(Gtk::ALIGN_START);
-    // Flattening lives in themes/common/widgets.css (#ToolGroupHeader)
-    headerBtn->add(*arrowLabel);
-
-    // Reset button (X) — hidden by default, shown when group has non-default values
-    resetBtn = Gtk::manage(new Gtk::Button());
+    // Reset — hidden by default, shown when group has non-default values
+    resetBtn = makeResetButton();
     resetBtn->set_name("ToolGroupReset");
-    resetBtn->set_relief(Gtk::RELIEF_NONE);
-    resetBtn->set_can_focus(false);
-    resetBtn->set_tooltip_text("Reset to defaults");
-    auto* resetLabel = Gtk::manage(new Gtk::Label());
-    resetLabel->set_use_markup(true);
-    resetLabel->set_markup("<small>\xc3\x97</small>"); // × (multiplication sign, used as X)
-    resetBtn->add(*resetLabel);
     resetBtn->set_no_show_all(true);
     resetBtn->signal_clicked().connect([this]() {
         if (resetCallback_) resetCallback_();
     });
 
-    headerBtn->signal_clicked().connect(
-        sigc::mem_fun(*this, &ToolGroup::onHeaderClicked));
-
     // Header row: header button + reset button
     headerRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL));
     headerRow->set_hexpand(true);
     headerRow->set_halign(Gtk::ALIGN_FILL);
-    headerRow->pack_start(*headerBtn, Gtk::PACK_SHRINK, 0);
+    headerRow->pack_start(*header, Gtk::PACK_SHRINK, 0);
     headerRow->pack_start(*resetBtn, Gtk::PACK_SHRINK, 0);
     pack_start(*headerRow, Gtk::PACK_SHRINK, 0);
 
@@ -2868,30 +2974,16 @@ ToolGroup::ToolGroup(const Glib::ustring& label) :
     show_all_children();
 }
 
-void ToolGroup::onHeaderClicked()
-{
-    setExpanded(!expanded);
-}
-
 void ToolGroup::setExpanded(bool expand)
 {
     expanded = expand;
-    updateArrow();
+    header->setExpanded(expanded);
     revealer->set_reveal_child(expanded);
 }
 
 bool ToolGroup::getExpanded() const
 {
     return expanded;
-}
-
-void ToolGroup::updateArrow()
-{
-    if (expanded) {
-        arrowLabel->set_markup("<small>\xe2\x96\xbe</small>  " + groupLabel_); // ▾
-    } else {
-        arrowLabel->set_markup("<small>\xe2\x96\xb8</small>  " + groupLabel_); // ▸
-    }
 }
 
 void ToolGroup::setResetVisible(bool visible)

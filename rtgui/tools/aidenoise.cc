@@ -68,25 +68,17 @@ AIDenoise::AIDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_AIDENOISE_LAB
             }
         }
     });
-    activateCheck_->set_tooltip_text("Check to run AI Denoise, uncheck to disable effect");
+    activateCheck_->set_tooltip_text(M("TP_AIDENOISE_ACTIVATE_TOOLTIP"));
 
-    // Clickable label that toggles the settings panel
-    sectionLabel_ = Gtk::manage(new Gtk::Label("AI Denoise"));
-    sectionLabel_->get_style_context()->add_class("tool-heading-label");
-    sectionLabel_->set_halign(Gtk::ALIGN_START);
-    auto* labelEvent = Gtk::manage(new Gtk::EventBox());
-    labelEvent->add(*sectionLabel_);
-    labelEvent->set_events(Gdk::BUTTON_PRESS_MASK);
-    labelEvent->signal_button_press_event().connect([this](GdkEventButton*) -> bool {
-        toggleContent();
-        return true;
-    });
-    labelEvent->set_tooltip_text("Click to show/hide settings");
+    // The shared section header toggles the settings panel
+    sectionHeader_ = Gtk::manage(new SectionHeader(M("TP_AIDENOISE_SECTION")));
+    sectionHeader_->set_tooltip_text(M("TP_AIDENOISE_SECTION_TOOLTIP"));
+    sectionHeader_->setOnToggled([this](bool) { toggleContent(); });
 
-    // Header row: checkbox + label + status
+    // Header row: checkbox + header + status
     auto* headerRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
     headerRow->pack_start(*activateCheck_, Gtk::PACK_SHRINK);
-    headerRow->pack_start(*labelEvent, Gtk::PACK_SHRINK);
+    headerRow->pack_start(*sectionHeader_, Gtk::PACK_SHRINK);
     headerRow->pack_end(*statusLabel, Gtk::PACK_SHRINK);
     getSummaryBox()->pack_start(*headerRow, Gtk::PACK_SHRINK);
 
@@ -144,6 +136,7 @@ AIDenoise::AIDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_AIDENOISE_LAB
 void AIDenoise::toggleContent()
 {
     contentExpanded_ = !contentExpanded_;
+    sectionHeader_->setExpanded(contentExpanded_);
     revealer_->set_reveal_child(contentExpanded_);
 }
 
@@ -279,7 +272,7 @@ void AIDenoise::onDenoiseClicked ()
     }
 
     if (imagePath_.empty()) {
-        updateStatus("No image loaded");
+        updateStatus(M("TP_AIDENOISE_STATUS_NOIMAGE"));
         return;
     }
 
@@ -287,7 +280,7 @@ void AIDenoise::onDenoiseClicked ()
     cancelBtn->set_sensitive(true);
 
     if (!ipc_) {
-        updateStatus("No image processor available");
+        updateStatus(M("TP_AIDENOISE_STATUS_NOPROCESSOR"));
         cancelBtn->set_sensitive(false);
         return;
     }
@@ -295,7 +288,7 @@ void AIDenoise::onDenoiseClicked ()
     std::unique_ptr<rtengine::Imagefloat> inputImage =
         ipc_->createDemosaicedImage();
     if (!inputImage) {
-        updateStatus("Failed to prepare image");
+        updateStatus(M("TP_AIDENOISE_STATUS_PREPAREFAILED"));
         cancelBtn->set_sensitive(false);
         return;
     }

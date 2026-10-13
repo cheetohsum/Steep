@@ -50,6 +50,7 @@ class multi_array2D;
 namespace rtengine
 {
 
+struct RelightFrame;
 class ColorAppearance;
 class ColorGradientCurve;
 class DCPProfile;
@@ -675,6 +676,10 @@ enum class BlurType {
                      int originX = 0, int originY = 0, double oscale = 1,
                      const procparams::FilmPresetsParams *film = nullptr);
     void lightEffects(LabImage *lab, const procparams::LightEffectsParams &params, double scaleFactor);
+    // Subject and depth aware virtual light; see iprelight.cc. Reads the mask
+    // and depth map prepareRelightInputs left in their caches, and lights the
+    // scene flat and whole when they are missing.
+    void relight(LabImage *lab, const procparams::RelightParams &params, const RelightFrame &frame);
     void tiltShiftEffect(LabImage *lab, const procparams::TiltShiftParams &params, int fw, int fh);
     void lensBlur(LabImage *lab, const procparams::LensBlurParams &params, double scale);
     void colorToningLabGrid(LabImage *lab, int xstart, int xend, int ystart, int yend, bool MultiThread);

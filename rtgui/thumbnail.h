@@ -76,6 +76,16 @@ class Thumbnail
     // every render, so "params match" alone must never be read as "disk is
     // up to date".
     bool            pendingParamsFlush_ = false;
+    // For unedited files getProcParamsU() materializes the default profile
+    // into *pparams. That full ProcParams copy (+ WB lookup) used to run on
+    // every call — several times per file during a folder load. Remember what
+    // was materialized; any other write to *pparams must clear the source.
+    const rtengine::procparams::ProcParams* defaultsSource_ = nullptr;
+    unsigned        defaultsGeneration_ = 0;
+    // Content digest of the sidecar as we last wrote it, so the directory
+    // monitor can tell our own writes (and sync tools re-touching the same
+    // bytes) from a real edit by another program.
+    std::string     ownSidecarDigest_;
     bool            imageLoading;
 
     // these are the data of the result image of the last getthumbnailimage  call (for caching purposes)
@@ -93,6 +103,22 @@ class Thumbnail
     // Cached low-res pixbuf for instant editor preview on image switch
     Glib::RefPtr<Gdk::Pixbuf> cachedPixbuf_;
     double cachedPixbufScale_ = 1.0;
+
+    // The editor's own full-frame render, waiting to be written to the
+    // "renders" cache once the params it was made with are on disk. It is
+    // the only thumbnail source that carries every tool (local adjustments,
+    // AI masks, object removal, light effects, ...).
+    Glib::RefPtr<Gdk::Pixbuf> editorRender_;
+    std::unique_ptr<rtengine::procparams::ProcParams> editorRenderParams_;
+    int             editorRenderFullW_ = 0;
+    int             editorRenderFullH_ = 0;
+
+    // Loads the persisted editor render when it was made from exactly the
+    // look on disk and `pp` is that look; nullptr otherwise. Mutex held.
+    rtengine::IImage8* loadPersistedRenderLocked (const rtengine::procparams::ProcParams& pp, int h, double& scale);
+    Glib::RefPtr<Gdk::Pixbuf> loadPersistedRenderPixbufLocked (const rtengine::procparams::ProcParams& pp, int& fullW, int& fullH);
+    Glib::ustring   profileFileOfRecord () const;
+
     bool            initial_;
 
     // Properties holds values and edited states for rank, color and trashed
@@ -127,7 +153,7 @@ class Thumbnail
     void            _saveThumbnail (bool saveLiveThumbData = true);
     void            _generateThumbnailImage ();
     void            initCachedThumbnailSize ();
-    rtengine::IImage8* processThumbImageLocked (const rtengine::procparams::ProcParams& pparams, int h, double& scale, bool cachePixbuf);
+    rtengine::IImage8* processThumbImageLocked (const rtengine::procparams::ProcParams& pparams, int h, double& scale, bool cachePixbuf, bool allowPersistedRender = true);
     rtengine::IImage8* upgradeThumbImageLocked (const rtengine::procparams::ProcParams& pparams, int h, double& scale, bool forceUpgrade, bool cachePixbuf);
     int             infoFromImage (const Glib::ustring& fname);
     void            generateExifDateTimeStrings () const;
@@ -179,6 +205,24 @@ public:
     bool              procParamsMatch (const rtengine::procparams::ProcParams& pp);
     void              clearProcParams (int whoClearedIt = -1);
     void              loadProcParams (bool resetToDefaults = true);
+
+    // GUI thread, cheap: remembers the editor's settled render of `params`
+    // (full-frame, final orientation; fullW/fullH = full image size). Never
+    // waits: returns false while a worker holds the thumbnail (a RAW decode
+    // can take hundreds of ms). paramsOnDisk reports !hasUnsavedParams().
+    bool              trySetEditorRender (const Glib::RefPtr<Gdk::Pixbuf>& render, const rtengine::procparams::ProcParams& params, int fullW, int fullH, bool& paramsOnDisk);
+    // Worker thread (JPEG encode + file I/O): writes the remembered render to
+    // the cache if its params are what is on disk right now; no-op otherwise.
+    void              persistEditorRender ();
+    // Worker thread: the persisted editor render at its stored size (up to
+    // 1280 px) as a sharp switch placeholder, when it still matches the look
+    // on disk. scale = full-size pixels per pixbuf pixel. Not cached in RAM.
+    Glib::RefPtr<Gdk::Pixbuf> loadPersistedRenderPixbuf (double& scale);
+    // GUI thread. Re-reads the sidecar after it changed on disk (another
+    // program, another instance) and notifies listeners when the result
+    // differs. Never overrides RAM edits that are still owed a flush, and
+    // keeps the current params when the file is unreadable (half-written).
+    bool              reloadProcParamsFromDisk ();
 
     void              notifylisterners_procParamsChanged(int whoChangedIt);
 

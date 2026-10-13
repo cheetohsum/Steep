@@ -467,20 +467,12 @@ LensProfilePanel::LensProfilePanel() :
     manualSubBox->set_no_show_all(true);
 
     // Clickable "Correct" header
-    correctLabel = Gtk::manage(new Gtk::Label());
-    correctLabel->set_markup(Glib::ustring("<b>\u25B8 ") + M("TP_LENSPROFILE_USE_HEADER") + "</b>");
-    correctLabel->set_halign(Gtk::ALIGN_START);
-    correctLabel->set_margin_top(8);
-    correctLabel->set_margin_bottom(2);
-
-    Gtk::Button *correctHeader = Gtk::manage(new Gtk::Button());
-    correctHeader->set_name("CollapsibleHeader");
-    correctHeader->set_relief(Gtk::RELIEF_NONE);
-    correctHeader->set_can_focus(false);
-    correctHeader->set_halign(Gtk::ALIGN_START);
-    correctHeader->add(*correctLabel);
-    correctHeader->signal_clicked().connect(
-        sigc::mem_fun(*this, &LensProfilePanel::toggleCorrect));
+    correctHeader = Gtk::manage(new SectionHeader(M("TP_LENSPROFILE_USE_HEADER")));
+    correctHeader->set_halign(Gtk::ALIGN_FILL);
+    correctHeader->set_hexpand(true);
+    correctHeader->set_margin_top(8);
+    correctHeader->set_margin_bottom(2);
+    correctHeader->setOnToggled([this](bool) { toggleCorrect(); });
 
     // Correct content (hidden by default)
     correctContent = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
@@ -924,12 +916,12 @@ void LensProfilePanel::toggleCorrect()
 {
     correctExpanded = !correctExpanded;
     if (correctExpanded) {
-        correctLabel->set_markup(Glib::ustring("<b>\u25BE ") + M("TP_LENSPROFILE_USE_HEADER") + "</b>");
+        correctHeader->setExpanded(true);
         correctContent->set_no_show_all(false);
         correctContent->show_all();
         correctContent->set_no_show_all(true);
     } else {
-        correctLabel->set_markup(Glib::ustring("<b>\u25B8 ") + M("TP_LENSPROFILE_USE_HEADER") + "</b>");
+        correctHeader->setExpanded(false);
         correctContent->hide();
     }
 }

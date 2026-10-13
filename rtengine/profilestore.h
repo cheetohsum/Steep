@@ -18,6 +18,7 @@
  */
 #pragma once
 
+#include <atomic>
 #include <list>
 #include <map>
 #include <vector>
@@ -128,6 +129,9 @@ class ProfileStore : public rtengine::NonCopyable, public DynamicProfileRules
 private:
     MyMutex parseMutex;
     StoreState storeState;
+    // Bumped whenever the profile list is rebuilt: profiles are freed and
+    // re-allocated, so a pointer seen before may now name something else.
+    std::atomic<unsigned> generation_{0};
     rtengine::procparams::AutoPartialProfile *internalDefaultProfile;
     ProfileStoreEntry *internalDefaultEntry;
     ProfileStoreEntry *internalDynamicEntry;
@@ -188,6 +192,7 @@ public:
     const std::vector<const ProfileStoreEntry*>* getFileList ();
     void                                         releaseFileList ();
     const rtengine::procparams::ProcParams*      getDefaultProcParams (bool isRaw);
+    unsigned                                     getGeneration () const { return generation_.load(std::memory_order_acquire); }
     const rtengine::procparams::PartialProfile*  getDefaultPartialProfile (bool isRaw);
     const Glib::ustring                          getPathFromId (int folderId) const;
     const ProfileStoreEntry*                     getInternalDefaultPSE() const

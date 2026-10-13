@@ -313,7 +313,7 @@ void MyDiagonalCurve::updateDrawingArea (const int handle, const ::Cairo::RefPtr
 
         // now the border
         c = themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff"));
-        cr->set_source_rgba (c.get_red(), c.get_green(), c.get_blue(), 0.5);
+        cr->set_source_rgba (c.get_red(), c.get_green(), c.get_blue(), 0.2);
         cr->rectangle(0.5, graphY - graphH - 0.5 - 0.5, CBAR_WIDTH + 1, (double)graphH + 1. + 1.);
         cr->stroke();
     }
@@ -326,7 +326,7 @@ void MyDiagonalCurve::updateDrawingArea (const int handle, const ::Cairo::RefPtr
 
         // now the border
         c = themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff"));
-        cr->set_source_rgba (c.get_red(), c.get_green(), c.get_blue(), 0.5);
+        cr->set_source_rgba (c.get_red(), c.get_green(), c.get_blue(), 0.2);
         cr->rectangle(graphX - 0.5 - 0.5, graphY + CBAR_MARGIN + 0.5, graphW + 1. + 0.5, CBAR_WIDTH + 1.);
         cr->stroke();
     }
@@ -418,31 +418,40 @@ void MyDiagonalCurve::updateDrawingArea (const int handle, const ::Cairo::RefPtr
         }
     }
 
-    // draw the grid lines:
+    // draw the grid lines: quarters, with fainter eighths between them,
+    // so the tonal zones read without the grid competing with the curve.
     cr->set_line_width (1.0);
     c = themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff"));
-    cr->set_source_rgba (c.get_red(), c.get_green(), c.get_blue(), 0.3);
+    const Gdk::RGBA accent = themeColor(*this, "steep_accent", Gdk::RGBA("#2d7fd3"));
     cr->set_antialias (Cairo::ANTIALIAS_NONE);
 
-    for (int i = 0; i <= 10; i++) {
-        // horizontal lines
-        cr->move_to     (graphX - 0.5 - 0.5, graphY + 0.5 + 0.5 - (graphH + 1. + 1.) * (double)i / 10.);
-        cr->rel_line_to (graphW + 1. + 1., 0.);
-        // vertical lines
-        cr->move_to     (graphX - 0.5 - 0.5 + (graphW + 1. + 1.) * (double)i / 10., graphY + 0.5 + 0.5);
-        cr->rel_line_to (0., -graphH - 1. - 1.);
-    }
+    for (int pass = 0; pass < 2; ++pass) {
+        cr->set_source_rgba (c.get_red(), c.get_green(), c.get_blue(), pass == 0 ? 0.04 : 0.10);
 
-    cr->stroke ();
+        for (int i = 0; i <= 8; i++) {
+            if ((i % 2 == 0) != (pass == 1)) {
+                continue;
+            }
+
+            // horizontal lines
+            cr->move_to     (graphX - 0.5 - 0.5, graphY + 0.5 + 0.5 - (graphH + 1. + 1.) * (double)i / 8.);
+            cr->rel_line_to (graphW + 1. + 1., 0.);
+            // vertical lines
+            cr->move_to     (graphX - 0.5 - 0.5 + (graphW + 1. + 1.) * (double)i / 8., graphY + 0.5 + 0.5);
+            cr->rel_line_to (0., -graphH - 1. - 1.);
+        }
+
+        cr->stroke ();
+    }
 
     // draw f(x)=x line
     if (snapToElmt == -2) {
-        cr->set_source_rgb (1.0, 0.0, 0.0);
+        cr->set_source_rgb (accent.get_red(), accent.get_green(), accent.get_blue());
     } else {
-        cr->set_source_rgba (c.get_red(), c.get_green(), c.get_blue(), 0.45);
+        cr->set_source_rgba (c.get_red(), c.get_green(), c.get_blue(), 0.18);
     }
 
-    const std::valarray<double> ds = {4.};
+    const std::valarray<double> ds = {3., 4.};
     cr->set_dash (ds, 0);
     cr->move_to (graphX - 0.5 - 0.5, graphY + 0.5 + 0.5);
     cr->rel_line_to (graphW + 1. + 1., -(graphH + 1. + 1.));
@@ -555,6 +564,7 @@ void MyDiagonalCurve::updateDrawingArea (const int handle, const ::Cairo::RefPtr
     }
 
     // draw master curve
+    cr->set_line_width (2.0);
     if (hasCustomColor_) {
         cr->set_source_rgb(customR_, customG_, customB_);
     } else {
@@ -567,6 +577,7 @@ void MyDiagonalCurve::updateDrawingArea (const int handle, const ::Cairo::RefPtr
     }
 
     cr->stroke ();
+    cr->set_line_width (1.0);
 
     // draw R/G/B channel overlay curves - only when a channel has a non-identity curve
     {
@@ -584,8 +595,9 @@ void MyDiagonalCurve::updateDrawingArea (const int handle, const ::Cairo::RefPtr
                 continue; // no curve data, skip
             }
 
-            cr->set_source_rgba(ov.r, ov.g, ov.b, 0.75);
-            cr->set_line_width(1.5);
+            // Faint: the other channels are context, not the curve in hand.
+            cr->set_source_rgba(ov.r, ov.g, ov.b, 0.35);
+            cr->set_line_width(1.2);
 
             float val0 = getVal(point, 0);
             double y0 = chanCurve->getVal(static_cast<double>(val0));
@@ -600,40 +612,67 @@ void MyDiagonalCurve::updateDrawingArea (const int handle, const ::Cairo::RefPtr
         }
     }
 
-    // draw bullets
+    // draw bullets: rings in the curve's own colour, filled with the well;
+    // the point in hand fills solid with a soft halo, plus dotted guides to
+    // both axes so its input and output can be read off.
     if (curve.type != DCT_Parametric) {
         c = style->get_color (state);
+        Gdk::RGBA ink = c;
+
+        if (hasCustomColor_) {
+            ink.set_rgba(customR_, customG_, customB_, 1.0);
+        }
+
+        const Gdk::RGBA well = themeColor(*this, "steep_surface_0", Gdk::RGBA("#1a1e24"));
 
         for (int i = 0; i < (int)curve.x.size(); ++i) {
             if (curve.x.at(i) == -1) {
                 continue;
             }
 
-            if (snapToElmt >= 1000) {
-                int pt = snapToElmt - 1000;
+            bool hot;
 
-                if (i >= (pt - 1) && i <= (pt + 1)) {
-                    cr->set_source_rgb(1.0, 0.0, 0.0);
-                } else {
-                    cr->set_source_rgb (c.get_red(), c.get_green(), c.get_blue());
-                }
+            if (snapToElmt >= 1000) {
+                const int pt = snapToElmt - 1000;
+                hot = i >= (pt - 1) && i <= (pt + 1);
             } else {
-                if (i == handle || i == snapToElmt || i == edited_point) {
-                    cr->set_source_rgb (1.0, 0.0, 0.0);
-                } else {
-                    cr->set_source_rgb (c.get_red(), c.get_green(), c.get_blue());
-                }
+                hot = i == handle || i == snapToElmt || i == edited_point;
             }
 
             double x = graphX + graphW * curve.x.at(i); // project (curve.x.at(i), 0, 1, graphW);
             double y = graphY - graphH * curve.y.at(i); // project (curve.y.at(i), 0, 1, graphH);
 
-            cr->arc (x, y, RADIUS + 0.5, 0, 2 * rtengine::RT_PI);
-            cr->fill ();
+            if (hot) {
+                const std::valarray<double> guide = {1., 3.};
+                cr->set_dash(guide, 0);
+                cr->set_source_rgba(ink.get_red(), ink.get_green(), ink.get_blue(), 0.45);
+                cr->move_to(x, graphY);
+                cr->line_to(x, y);
+                cr->line_to(graphX, y);
+                cr->stroke();
+                cr->unset_dash();
+
+                cr->set_source_rgba(accent.get_red(), accent.get_green(), accent.get_blue(), 0.25);
+                cr->arc(x, y, RADIUS + 4.0, 0, 2 * rtengine::RT_PI);
+                cr->fill();
+                cr->set_source_rgb(ink.get_red(), ink.get_green(), ink.get_blue());
+                cr->arc(x, y, RADIUS + 1.5, 0, 2 * rtengine::RT_PI);
+                cr->fill();
+            } else {
+                cr->set_source_rgb(well.get_red(), well.get_green(), well.get_blue());
+                cr->arc(x, y, RADIUS + 0.5, 0, 2 * rtengine::RT_PI);
+                cr->fill();
+                cr->set_line_width(1.5);
+                cr->set_source_rgb(ink.get_red(), ink.get_green(), ink.get_blue());
+                cr->arc(x, y, RADIUS + 0.5, 0, 2 * rtengine::RT_PI);
+                cr->stroke();
+                cr->set_line_width(1.);
+            }
 
             if (i == edited_point) {
                 cr->set_line_width(2.);
-                cr->arc (x, y, RADIUS + 2., 0, 2 * rtengine::RT_PI);
+                cr->set_source_rgb(accent.get_red(), accent.get_green(), accent.get_blue());
+                cr->arc (x, y, RADIUS + 3., 0, 2 * rtengine::RT_PI);
                 cr->stroke();
                 cr->set_line_width(1.);
             }

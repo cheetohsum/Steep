@@ -1,11 +1,1 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<svg width="16" height="16" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg">
-  <!-- Polygon outline with vertex dots -->
-  <polygon points="3,12 2,5 8,1 14,5 13,12"
-    style="opacity:0.7;fill:none;stroke:#cccccc;stroke-width:1.2;stroke-linejoin:round"/>
-  <circle cx="3" cy="12" r="1.5" style="opacity:0.8;fill:#cccccc"/>
-  <circle cx="2" cy="5" r="1.5" style="opacity:0.8;fill:#cccccc"/>
-  <circle cx="8" cy="1" r="1.5" style="opacity:0.8;fill:#cccccc"/>
-  <circle cx="14" cy="5" r="1.5" style="opacity:0.8;fill:#cccccc"/>
-  <circle cx="13" cy="12" r="1.5" style="opacity:0.8;fill:#cccccc"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16"><g fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 12.5L2.5 6 8 2.5 13.5 6l-1 6.5z"/><circle cx="3.5" cy="12.5" r="1.4" fill="var(--surface)"/><circle cx="2.5" cy="6" r="1.4" fill="var(--surface)"/><circle cx="8" cy="2.5" r="1.4" fill="var(--surface)"/><circle cx="13.5" cy="6" r="1.4" fill="var(--surface)"/><circle cx="12.5" cy="12.5" r="1.4" fill="var(--surface)"/></g></svg>

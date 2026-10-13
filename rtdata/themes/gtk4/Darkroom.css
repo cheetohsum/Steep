@@ -1,0 +1,32 @@
+/* Generated from rtdata/themes/Darkroom.css by tools/gen_gtk4_tokens.py.
+   Do not edit — change the theme's palette block and regenerate. */
+
+:root {
+  --steep-surface-0: #1a1a1a;
+  --steep-surface-1: #232323;
+  --steep-surface-2: #2b2b2b;
+  --steep-surface-3: #353535;
+  --steep-text-hi: #ececec;
+  --steep-text: #c6c6c6;
+  --steep-text-dim: #8b8b8b;
+  --steep-accent: #a8b8c8;
+  --steep-select: #6f8aa6;
+  --steep-attention: #d9a05b;
+  --steep-rating: #e6c35c;
+  --steep-success: #8fbf7f;
+  --steep-danger: #d46a5f;
+  --steep-border: #101010;
+  --steep-border-soft: #3b3b3b;
+  --steep-sel-bg: #6f8aa6;
+  --steep-sel-fg: #ececec;
+  --steep-wash: #ffffff;
+  --steep-on-accent: #151515;
+  --steep-shadow: alpha(#000000, 0.60);
+  --steep-surround: #2b2b2b;
+  --steep-ornament: alpha(#a8b8c8, 0.50);
+  --steep-label-1: #d46a5f;
+  --steep-label-2: #e6c35c;
+  --steep-label-3: #8fbf7f;
+  --steep-label-4: #7aa6cf;
+  --steep-label-5: #b08fc4;
+}

@@ -253,6 +253,10 @@ ControlSpotPanel::ControlSpotPanel():
         "mask-class-vegetation", "mask-class-building", "mask-class-vehicle",
         "mask-class-animal", "mask-class-foreground"
     };
+    // The vectors stay indexed by model class (refreshClassThumbs and the
+    // class combo rely on it); only the order shown changes, to match the
+    // smart mask chip's menu (smartmaskbar.cc): people first, the model's
+    // generic background class last.
     for (int i = 0; i < 8; ++i) {
         auto* item = createMaskMenuItem(aiClassIcons[i], M(aiClassKeys[i]));
         addMenuThumb(item);
@@ -261,7 +265,9 @@ ControlSpotPanel::ControlSpotPanel():
         aiClassNames_.push_back(M(aiClassKeys[i]));
         item->signal_activate().connect(
             sigc::bind(sigc::mem_fun(*this, &ControlSpotPanel::on_ai_mask_selected), i));
-        aiClassMenu->append(*item);
+    }
+    for (int i : {1, 2, 3, 4, 5, 6, 7, 0}) {
+        aiClassMenu->append(*aiClassMenuItems_[i]);
     }
     aiClassMenu->signal_show().connect(sigc::mem_fun(*this, &ControlSpotPanel::refreshClassThumbs));
     aiMenuItem->set_submenu(*aiClassMenu);
@@ -5761,9 +5767,11 @@ ControlSpotPanel::RenameDialog::RenameDialog(const Glib::ustring &actualname, Gt
     hb->pack_start(*newname_);
     get_content_area()->pack_start(*hb, Gtk::PACK_SHRINK, 4);
 
-    // OK/CANCEL buttons
-    add_button(M("GENERAL_OK"), OkButton);
+    // Cancel, then the primary action (dialog template order)
     add_button(M("GENERAL_CANCEL"), CancelButton);
+    if (Gtk::Button* ok = add_button(M("GENERAL_OK"), OkButton)) {
+        ok->get_style_context()->add_class(GTK_STYLE_CLASS_SUGGESTED_ACTION);
+    }
 
     // Set OK button as default one when pressing enter
     newname_->set_activates_default();

@@ -1,0 +1,32 @@
+/* Generated from rtdata/themes/Daylight.css by tools/gen_gtk4_tokens.py.
+   Do not edit — change the theme's palette block and regenerate. */
+
+:root {
+  --steep-surface-0: #dcdde0;
+  --steep-surface-1: #eceef1;
+  --steep-surface-2: #f6f7f9;
+  --steep-surface-3: #ffffff;
+  --steep-text-hi: #15171a;
+  --steep-text: #34383e;
+  --steep-text-dim: #666c75;
+  --steep-accent: #0a6fd6;
+  --steep-select: #0a6fd6;
+  --steep-attention: #c4621d;
+  --steep-rating: #b8860b;
+  --steep-success: #2e8a4f;
+  --steep-danger: #c0392b;
+  --steep-border: #c4c8ce;
+  --steep-border-soft: #d6d9de;
+  --steep-sel-bg: #0a6fd6;
+  --steep-sel-fg: #ffffff;
+  --steep-wash: #0a1428;
+  --steep-on-accent: #ffffff;
+  --steep-shadow: alpha(#14181e, 0.28);
+  --steep-surround: #787878;
+  --steep-ornament: alpha(#0a6fd6, 0.45);
+  --steep-label-1: #c0392b;
+  --steep-label-2: #c8941a;
+  --steep-label-3: #2e8a4f;
+  --steep-label-4: #0a6fd6;
+  --steep-label-5: #7d4fb0;
+}

@@ -67,35 +67,47 @@ SmartMaskBar::SmartMaskBar() :
     // Subject is the composed pseudo-class (dominant person/vehicle/animal/
     // foreground regions), and Background is its complement — not the model's
     // raw "background stuff" class, which stays reachable per-spot.
+    // Same order, labels and icons as the mask panel's class menu
+    // (controlspotpanel.cc): the composed classes first, then what the model
+    // detects. "Everything but the subject" is spelled out so "Background"
+    // only ever means the model's own background class.
     const struct {
+        const char* icon;
         const char* labelKey;
         int classIndex;
     } aiClasses[] = {
-        {"TP_LOCALLAB_SMARTMASK_SUBJECT", CLASS_SUBJECT},
-        {"TP_LOCALLAB_AIMASK_CLASS_BACKGROUND", CLASS_NOT_SUBJECT},
-        {"TP_LOCALLAB_AIMASK_CLASS_SKY", CLASS_SKY},
-        {"TP_LOCALLAB_AIMASK_CLASS_PERSON", CLASS_PERSON},
-        {"TP_LOCALLAB_AIMASK_CLASS_VEGETATION", CLASS_VEGETATION},
-        {"TP_LOCALLAB_AIMASK_CLASS_BUILDING", CLASS_BUILDING},
-        {"TP_LOCALLAB_AIMASK_CLASS_VEHICLE", CLASS_VEHICLE},
-        {"TP_LOCALLAB_AIMASK_CLASS_ANIMAL", CLASS_ANIMAL},
+        {"mask-ai", "TP_LOCALLAB_SMARTMASK_SUBJECT", CLASS_SUBJECT},
+        {"mask-ai", "TP_LOCALLAB_AIMASK_CLASS_NOTSUBJECT", CLASS_NOT_SUBJECT},
+        {nullptr, nullptr, -1},
+        {"mask-class-person", "TP_LOCALLAB_AIMASK_CLASS_PERSON", CLASS_PERSON},
+        {"mask-class-sky", "TP_LOCALLAB_AIMASK_CLASS_SKY", CLASS_SKY},
+        {"mask-class-vegetation", "TP_LOCALLAB_AIMASK_CLASS_VEGETATION", CLASS_VEGETATION},
+        {"mask-class-building", "TP_LOCALLAB_AIMASK_CLASS_BUILDING", CLASS_BUILDING},
+        {"mask-class-vehicle", "TP_LOCALLAB_AIMASK_CLASS_VEHICLE", CLASS_VEHICLE},
+        {"mask-class-animal", "TP_LOCALLAB_AIMASK_CLASS_ANIMAL", CLASS_ANIMAL},
     };
 
     for (const auto& entry : aiClasses) {
+        if (!entry.labelKey) {
+            aiMenu_->addSeparator();
+            continue;
+        }
+
         const int classIndex = entry.classIndex;
         const Glib::ustring label = M(entry.labelKey);
         Gtk::MenuItem* item = aiMenu_->addItem(label, [this, classIndex]() {
             classRequested_.emit(classIndex);
         });
 
-        // The row is rebuilt as name-then-tile. The plain label the menu made
-        // is dropped rather than reparented: taking a managed child out of a
-        // container destroys it, and putting it back is not worth the care
-        // when a fresh label costs nothing.
+        // The row is rebuilt as icon, name, then tile. The plain label the
+        // menu made is dropped rather than reparented: taking a managed child
+        // out of a container destroys it, and putting it back is not worth
+        // the care when a fresh label costs nothing.
         Gtk::Image* thumb = Gtk::manage(new Gtk::Image());
-        Gtk::Box* row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 10));
+        Gtk::Box* row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
         Gtk::Label* text = Gtk::manage(new Gtk::Label(label));
         text->set_halign(Gtk::ALIGN_START);
+        row->pack_start(*Gtk::manage(new RTImage(entry.icon)), Gtk::PACK_SHRINK);
         row->pack_start(*text, Gtk::PACK_EXPAND_WIDGET);
         row->pack_end(*thumb, Gtk::PACK_SHRINK);
 
@@ -109,8 +121,15 @@ SmartMaskBar::SmartMaskBar() :
     }
 
     Gtk::Button* aiBtn = makeChip(flow, "mask-ai",
-                                  M("TP_LOCALLAB_MASKTYPE_AI") + " ▾",
+                                  M("TP_LOCALLAB_MASKTYPE_AI"),
                                   M("TP_LOCALLAB_SMARTMASK_AI_TOOLTIP"));
+
+    // A menu, so the same chevron every other dropdown carries (instead of
+    // a typed "▾").
+    if (auto* chipBox = dynamic_cast<Gtk::Box*>(aiBtn->get_child())) {
+        auto* chevron = Gtk::manage(new RTImage("expander-open-small"));
+        chipBox->pack_start(*chevron, Gtk::PACK_SHRINK);
+    }
     aiBtn->signal_clicked().connect([this, aiBtn]() {
         refreshAIMenuThumbs();
         aiMenu_->popupAtWidget(*aiBtn);

@@ -17,6 +17,7 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "zoompanel.h"
+#include "guiutils.h"
 #include "multilangmgr.h"
 #include "imagearea.h"
 #include "rtimage.h"
@@ -67,7 +68,7 @@ ZoomPanel::ZoomPanel (ImageArea* iarea) : iarea(iarea), sliderUpdateInProgress(f
     popBox->set_margin_end (10);
 
     // Zoom slider (logarithmic feel: 1% to 1600%)
-    zoomSlider = Gtk::manage (new Gtk::Scale (Gtk::ORIENTATION_HORIZONTAL));
+    { auto* zs = Gtk::manage (new MyHScale ()); zs->setZoomStyle (true); zoomSlider = zs; }
     zoomSlider->set_range (-6.64, 4.0);
     zoomSlider->set_value (0.0);
     zoomSlider->set_draw_value (false);
@@ -189,16 +190,25 @@ bool ZoomPanel::onDrawZoom (const Cairo::RefPtr<Cairo::Context>& cr)
     const double cx = r + 1.8;
     const double cy = r + 1.4;
 
+    // Theme colors: the lens works on light themes too (it used to be pale
+    // blue and white, invisible there). Shadows only help on dark grounds,
+    // so they follow the wash direction.
+    const Gdk::RGBA accent = themeColor (*zoomDraw, "steep_accent", Gdk::RGBA ("#64a0ff"));
+    const Gdk::RGBA ink = themeColor (*zoomDraw, "steep_text_hi", Gdk::RGBA ("#d8d6e8"));
+    const Gdk::RGBA wash = themeColor (*zoomDraw, "steep_wash", Gdk::RGBA ("#ffffff"));
+    const bool darkGround = wash.get_red () + wash.get_green () + wash.get_blue () > 1.5;
+    const double shadow = darkGround ? 1.0 : 0.0;
+
     // Soft accent halo lifts the lens off the toolbar
-    cr->set_source_rgba (0.392, 0.627, 1.0, 0.12);
+    cr->set_source_rgba (accent.get_red (), accent.get_green (), accent.get_blue (), 0.12);
     cr->set_line_width (4.0);
     cr->arc (cx, cy, r + 1.2, 0, 2 * M_PI);
     cr->stroke ();
 
-    // Glass fill: bright toward the top-left, falls off to a faint tint
+    // Glass fill: accent-tinted, brighter toward the top-left
     auto glass = Cairo::RadialGradient::create (cx - r * 0.35, cy - r * 0.35, r * 0.15, cx, cy, r);
-    glass->add_color_stop_rgba (0.0, 0.75, 0.84, 1.0, 0.20);
-    glass->add_color_stop_rgba (1.0, 0.40, 0.56, 0.85, 0.06);
+    glass->add_color_stop_rgba (0.0, accent.get_red (), accent.get_green (), accent.get_blue (), 0.22);
+    glass->add_color_stop_rgba (1.0, accent.get_red (), accent.get_green (), accent.get_blue (), 0.06);
     cr->set_source (glass);
     cr->arc (cx, cy, r - 0.6, 0, 2 * M_PI);
     cr->fill ();
@@ -210,33 +220,35 @@ bool ZoomPanel::onDrawZoom (const Cairo::RefPtr<Cairo::Context>& cr)
     const double hx2 = std::min (cx + (r + 7.5) * diag, w - 2.4);
     const double hy2 = std::min (cy + (r + 7.5) * diag, h - 2.4);
     cr->set_line_cap (Cairo::LINE_CAP_ROUND);
-    cr->set_source_rgba (0.0, 0.0, 0.0, 0.30);
+    cr->set_source_rgba (0.0, 0.0, 0.0, 0.30 * shadow);
     cr->set_line_width (4.2);
     cr->move_to (hx1 + 0.8, hy1 + 1.0);
     cr->line_to (hx2 + 0.8, hy2 + 1.0);
     cr->stroke ();
-    cr->set_source_rgba (0.82, 0.87, 0.94, 0.95);
+    cr->set_source_rgba (ink.get_red (), ink.get_green (), ink.get_blue (), 0.95);
     cr->set_line_width (3.4);
     cr->move_to (hx1, hy1);
     cr->line_to (hx2, hy2);
     cr->stroke ();
 
     // Lens ring
-    cr->set_source_rgba (0.82, 0.87, 0.94, 0.92);
+    cr->set_source_rgba (ink.get_red (), ink.get_green (), ink.get_blue (), 0.92);
     cr->set_line_width (2.0);
     cr->arc (cx, cy, r, 0, 2 * M_PI);
     cr->stroke ();
 
     // Specular highlight arc at the top-left of the glass
-    cr->set_source_rgba (1.0, 1.0, 1.0, 0.35);
+    cr->set_source_rgba (wash.get_red (), wash.get_green (), wash.get_blue (), 0.35);
     cr->set_line_width (1.4);
     cr->arc (cx, cy, r - 2.4, M_PI * 1.02, M_PI * 1.44);
     cr->stroke ();
 
     // Zoom value centered in the lens. The font shrinks until the digits fit
     // the chord available inside the ring, so "8" and "1600" both stay in.
+    // The family is the user's UI font (it used to be a hardcoded "Sans").
     auto layout = zoomDraw->create_pango_layout (currentZoomText);
-    auto font = Pango::FontDescription ("Sans Bold");
+    auto font = zoomDraw->get_style_context ()->get_font ();
+    font.set_weight (Pango::WEIGHT_BOLD);
     const double maxTextWidth = 2.0 * (r - 2.2);
     const double maxTextHeight = 2.0 * (r - 1.4);
     int tw = 0, th = 0;
@@ -257,14 +269,16 @@ bool ZoomPanel::onDrawZoom (const Cairo::RefPtr<Cairo::Context>& cr)
     const double tx = std::round (cx - tw / 2.0);
     const double ty = std::round (cy - th / 2.0);
 
-    cr->set_source_rgba (0.0, 0.0, 0.0, 0.55);
-    cr->move_to (tx + 1.2, ty + 1.4);
-    layout->show_in_cairo_context (cr);
-    cr->set_source_rgba (0.0, 0.0, 0.0, 0.30);
-    cr->move_to (tx + 0.6, ty + 0.8);
-    layout->show_in_cairo_context (cr);
+    if (darkGround) {
+        cr->set_source_rgba (0.0, 0.0, 0.0, 0.55);
+        cr->move_to (tx + 1.2, ty + 1.4);
+        layout->show_in_cairo_context (cr);
+        cr->set_source_rgba (0.0, 0.0, 0.0, 0.30);
+        cr->move_to (tx + 0.6, ty + 0.8);
+        layout->show_in_cairo_context (cr);
+    }
 
-    cr->set_source_rgba (0.97, 0.98, 1.0, 0.98);
+    cr->set_source_rgba (ink.get_red (), ink.get_green (), ink.get_blue (), 0.98);
     cr->move_to (tx, ty);
     layout->show_in_cairo_context (cr);
 

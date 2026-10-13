@@ -18,6 +18,7 @@
  */
 #include "renamedlg.h"
 #include "cacheimagedata.h"
+#include "guiutils.h"
 #include "multilangmgr.h"
 #include "rtimage.h"
 
@@ -56,8 +57,7 @@ RenameDialog::RenameDialog (Gtk::Window* parent)
 
 //    get_content_area()->pack_start (*tbox, Gtk::PACK_SHRINK, 4);
 
-    add_button ("_OK", Gtk::RESPONSE_OK);
-    add_button ("_Cancel", Gtk::RESPONSE_CANCEL);
+    applyDialogTemplate(*this, M("GENERAL_OK"));
 // Issue 316
 //    all = add_button ("All", RESPONSE_ALL);
 
