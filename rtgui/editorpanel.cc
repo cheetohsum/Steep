@@ -390,7 +390,7 @@ private:
 #ifdef _OPENMP
             // The decode ran single-threaded; this is the expensive part, and
             // matches the editor's own pipeline width.
-            omp_set_num_threads(rtengine::previewThreadCount(omp_get_num_procs()));
+            omp_set_num_threads(rtengine::rawStageThreadCount(omp_get_num_procs()));
 #endif
             const auto start = std::chrono::steady_clock::now();
             if (!img->getImageSource()->precomputeFullQuality(params)) {

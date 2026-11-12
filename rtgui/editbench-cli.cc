@@ -866,17 +866,39 @@ int runHeadlessMemLoop(const char* listFile)
             if (mode == "thumb" || mode == "both") {
                 rtengine::eSensorType sensorType = rtengine::ST_NONE;
                 int tw = -1, th = 720;
+                const auto ms = [](BenchClock::time_point a) {
+                    return std::chrono::duration<double, std::milli>(BenchClock::now() - a).count();
+                };
+                if (isRaw) {
+                    // What a cold folder load pays per RAW: the embedded preview.
+                    rtengine::eSensorType quickSensor = rtengine::ST_NONE;
+                    int qw = -1, qh = 720;
+                    const auto tq = BenchClock::now();
+                    delete rtengine::Thumbnail::loadQuickFromRaw(path, quickSensor, qw, qh, 1, true);
+                    std::fprintf(stderr, "[memLoop] thumb quick=%.1fms\n", ms(tq));
+                }
+                const auto tl = BenchClock::now();
                 rtengine::Thumbnail* tpp = isRaw
                     ? rtengine::Thumbnail::loadFromRaw(path, sensorType, tw, th, 1, params.wb.equal, params.wb.observer, true, &params.raw)
                     : rtengine::Thumbnail::loadFromImage(path, tw, th, 1, params.wb.equal, params.wb.observer);
                 if (tpp) {
+                    const double loadMs = ms(tl);
+                    const auto tm = BenchClock::now();
                     std::unique_ptr<rtengine::FramesMetaData> meta(rtengine::FramesMetaData::fromFile(path));
+                    const double metaMs = ms(tm);
+                    const int rheight = std::max(16, envInt("STEEP_CLI_MEM_LOOP_THUMB_H", 60));
+                    std::vector<double> renders;
                     for (int f = 0; f < frames; ++f) {
                         rtengine::procparams::ProcParams pp = params;
                         pp.toneCurve.expcomp += 0.2 * f;
                         double scale = 1.0;
-                        delete tpp->processImage(pp, sensorType, 60, rtengine::TI_Bilinear, meta.get(), scale);
+                        const auto tr = BenchClock::now();
+                        delete tpp->processImage(pp, sensorType, rheight, rtengine::TI_Bilinear, meta.get(), scale);
+                        renders.push_back(ms(tr));
                     }
+                    std::sort(renders.begin(), renders.end());
+                    std::fprintf(stderr, "[memLoop] thumb full=%.1fms meta=%.1fms render min/p50=%.1f/%.1fms h=%d\n",
+                                 loadMs, metaMs, renders.front(), renders[renders.size() / 2], rheight);
                     delete tpp;
                 }
             }

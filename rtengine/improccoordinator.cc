@@ -272,6 +272,45 @@ bool isPreviewShowingMask(const StagedImageProcessor* processor)
     return coordinator && coordinator->isShowingMaskView();
 }
 
+int rawStageThreadCount(int available)
+{
+    static const int forced = []() {
+        const char* const env = std::getenv("STEEP_RAW_THREADS");
+        return env ? std::atoi(env) : 0;
+    }();
+
+    if (forced > 0) {
+        return forced;
+    }
+
+    return available <= 4 ? std::max(1, available) : std::max(4, available - available / 4);
+}
+
+RawStageThreads::RawStageThreads(bool widen)
+{
+#ifdef _OPENMP
+    if (widen) {
+        const int target = rawStageThreadCount(omp_get_num_procs());
+
+        if (target > omp_get_max_threads()) {
+            saved_ = omp_get_max_threads();
+            omp_set_num_threads(target);
+        }
+    }
+#else
+    (void)widen;
+#endif
+}
+
+RawStageThreads::~RawStageThreads()
+{
+#ifdef _OPENMP
+    if (saved_ > 0) {
+        omp_set_num_threads(saved_);
+    }
+#endif
+}
+
 unsigned int getInteractivePassMs(const StagedImageProcessor* processor)
 {
     const auto* coordinator = dynamic_cast<const ImProcCoordinator*>(processor);
@@ -844,6 +883,13 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
         float greendeha = 0.f;
         float bluedeha = 0.f;
 
+        // Preprocess and demosaic work on the whole sensor and scale with
+        // threads; the 4-thread preview team is sized for small crop stages.
+        auto rawStageThreads = std::make_unique<RawStageThreads>(
+            !usePrecomputed
+            && ((todo & (M_PREPROC | M_RAW))
+                || (highDetailNeeded && !(highDetailPreprocessComputed && highDetailRawComputed))));
+
         if (usePrecomputed || (todo & M_PREPROC) || (!highDetailPreprocessComputed && highDetailNeeded)) {
             imgsrc->setCurrentFrame(params->raw.bayersensor.imageNum);
             if (usePrecomputed) {
@@ -949,6 +995,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             todo |= (M_INIT | M_CSHARP);
 
         }
+        rawStageThreads.reset();
         traceStage("demosaic");
 
         if (destroying) {

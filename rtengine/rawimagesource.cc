@@ -2073,6 +2073,8 @@ void RawImageSource::preprocess(const RAWParams &raw, const LensProfParams &lens
         // neighbours (a small coloured light, more likely than a new defect);
         // a clean one is fixed, so heat-driven hot pixels that only show in
         // long exposures still go before they have been learned.
+        MyTime tFind;
+        tFind.set();
         StuckPixelMemory& memory = StuckPixelMemory::instance();
         memory.setDirectory(settings->stuckPixelMemoryDir);
         const std::string cameraKey = ri->get_maker() + " " + ri->get_model() + " " + idata->getSerialNumber() + " "
@@ -2109,9 +2111,9 @@ void RawImageSource::preprocess(const RAWParams &raw, const LensProfParams &lens
         totBP += nStuck;
 
         if (trace) {
-            fprintf(stderr, "[stuckpix] %s: %d fixed of %d candidates, %d held back; camera knows %d over %d sessions%s (sensitivity %d, %d ms)\n",
+            fprintf(stderr, "[stuckpix] %s: %d fixed of %d candidates, %d held back; camera knows %d over %d sessions%s (sensitivity %d, %d ms: scan %d)\n",
                     ri->get_filename().c_str(), nStuck, static_cast<int>(candidates.size()), heldBack, static_cast<int>(verdict.known.size()),
-                    verdict.sessions, verdict.mature ? ", mature" : "", raw.stuckPixelSensitivity, t1.etime(t0) / 1000);
+                    verdict.sessions, verdict.mature ? ", mature" : "", raw.stuckPixelSensitivity, t1.etime(t0) / 1000, tFind.etime(t0) / 1000);
             for (const auto& p : fixed) {
                 fprintf(stderr, "[stuckpix]   row %d col %d colour %u value %.0f%s\n", p.first, p.second,
                         unsigned(cfa.color[p.first % cfa.period][p.second % cfa.period]), rawData[p.first][p.second],

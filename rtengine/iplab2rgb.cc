@@ -16,6 +16,14 @@
  *  You should have received a copy of the GNU General Public License
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include <array>
+#include <cstdlib>
+#include <map>
+#include <memory>
+#include <mutex>
+#include <string>
+#include <vector>
+
 #include <glibmm/ustring.h>
 
 #include "alignedbuffer.h"
@@ -145,6 +153,226 @@ inline void copyAndClamp(const LabImage *src, unsigned char *dst, const double r
 
 #endif
     }
+}
+
+// A matrix/TRC output profile (sRGB, Adobe RGB, ProPhoto, Rec2020 ... every
+// profile RawTherapee ships) reduced to what LittleCMS computes for it: Lab ->
+// XYZ, one 3x3 matrix, one inverse tone curve per channel. Going through
+// cmsDoTransform for those costs ~80 ns per pixel per thread (the transform
+// is created unoptimised for thread safety, so every pixel walks the whole
+// pipeline in double precision): 130 ms for the 1.6 MP analysis image of a
+// fit-zoom crop, paid before the frame it belongs to is shown.
+struct ShaperFastPath {
+    float xyz_rgb[3][3];
+    LUTf curve[3]; // linear 0..65535 -> encoded 0..65535
+
+    ShaperFastPath()
+    {
+        for (LUTf& c : curve) {
+            c(65536);
+        }
+    }
+};
+
+void copyAndClampShaper(const LabImage* src, int cx, int cy, int cw, int ch, unsigned char* dst, const ShaperFastPath& fp, bool multiThread)
+{
+#if defined(__SSE2__) || defined(RT_SIMDE)
+    vfloat xyz_rgbv[3][3];
+
+    for (int i = 0; i < 3; i++) {
+        for (int j = 0; j < 3; j++) {
+            xyz_rgbv[i][j] = F2V(fp.xyz_rgb[i][j]);
+        }
+    }
+
+#endif
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(dynamic,16) if (multiThread)
+#endif
+
+    for (int i = 0; i < ch; ++i) {
+        const float* rL = src->L[cy + i] + cx;
+        const float* ra = src->a[cy + i] + cx;
+        const float* rb = src->b[cy + i] + cx;
+        unsigned char* out = dst + static_cast<std::size_t>(i) * 3 * cw;
+        float rbuffer[cw] ALIGNED16;
+        float gbuffer[cw] ALIGNED16;
+        float bbuffer[cw] ALIGNED16;
+        int j = 0;
+
+#if defined(__SSE2__) || defined(RT_SIMDE)
+
+        for (; j < cw - 3; j += 4) {
+            vfloat R, G, B;
+            vfloat x_, y_, z_;
+            Color::Lab2XYZ(LVFU(rL[j]), LVFU(ra[j]), LVFU(rb[j]), x_, y_, z_);
+            Color::xyz2rgb(x_, y_, z_, R, G, B, xyz_rgbv);
+            STVF(rbuffer[j], fp.curve[0][R]);
+            STVF(gbuffer[j], fp.curve[1][G]);
+            STVF(bbuffer[j], fp.curve[2][B]);
+        }
+
+#endif
+
+        for (; j < cw; ++j) {
+            float R, G, B;
+            float x_, y_, z_;
+            Color::Lab2XYZ(rL[j], ra[j], rb[j], x_, y_, z_);
+            Color::xyz2rgb(x_, y_, z_, R, G, B, fp.xyz_rgb);
+            rbuffer[j] = fp.curve[0][R];
+            gbuffer[j] = fp.curve[1][G];
+            bbuffer[j] = fp.curve[2][B];
+        }
+
+        for (j = 0; j < cw; ++j) {
+            *out++ = uint16ToUint8Rounded(rbuffer[j]);
+            *out++ = uint16ToUint8Rounded(gbuffer[j]);
+            *out++ = uint16ToUint8Rounded(bbuffer[j]);
+        }
+    }
+}
+
+// Builds the fast path for a profile, or returns null when the profile is not
+// a plain matrix/TRC one or when the result does not agree with LittleCMS.
+// The agreement is measured, not assumed: a grid of Lab values (in and far
+// out of gamut) goes through hTransform and through the fast path, and a
+// single sample more than one 8-bit level apart rejects the profile.
+std::shared_ptr<const ShaperFastPath> buildShaperFastPath(cmsHPROFILE oprof, cmsHTRANSFORM hTransform, int intent)
+{
+    if (intent == INTENT_ABSOLUTE_COLORIMETRIC || cmsGetColorSpace(oprof) != cmsSigRgbData || !cmsIsMatrixShaper(oprof)) {
+        return nullptr;
+    }
+
+    // With lookup tables present LittleCMS uses those, not the matrix.
+    for (cmsTagSignature tag : {cmsSigBToA0Tag, cmsSigBToA1Tag, cmsSigBToA2Tag, cmsSigBToD0Tag, cmsSigBToD1Tag, cmsSigBToD2Tag, cmsSigBToD3Tag}) {
+        if (cmsIsTag(oprof, tag)) {
+            return nullptr;
+        }
+    }
+
+    const cmsCIEXYZ* const colorant[3] = {
+        static_cast<const cmsCIEXYZ*>(cmsReadTag(oprof, cmsSigRedColorantTag)),
+        static_cast<const cmsCIEXYZ*>(cmsReadTag(oprof, cmsSigGreenColorantTag)),
+        static_cast<const cmsCIEXYZ*>(cmsReadTag(oprof, cmsSigBlueColorantTag))
+    };
+    cmsToneCurve* const trc[3] = {
+        static_cast<cmsToneCurve*>(cmsReadTag(oprof, cmsSigRedTRCTag)),
+        static_cast<cmsToneCurve*>(cmsReadTag(oprof, cmsSigGreenTRCTag)),
+        static_cast<cmsToneCurve*>(cmsReadTag(oprof, cmsSigBlueTRCTag))
+    };
+
+    for (int c = 0; c < 3; ++c) {
+        if (!colorant[c] || !trc[c]) {
+            return nullptr;
+        }
+    }
+
+    std::array<std::array<double, 3>, 3> rgb_xyz;
+    std::array<std::array<double, 3>, 3> xyz_rgb;
+
+    for (int c = 0; c < 3; ++c) {
+        rgb_xyz[0][c] = colorant[c]->X;
+        rgb_xyz[1][c] = colorant[c]->Y;
+        rgb_xyz[2][c] = colorant[c]->Z;
+    }
+
+    if (!invertMatrix(rgb_xyz, xyz_rgb)) {
+        return nullptr;
+    }
+
+    auto fp = std::make_shared<ShaperFastPath>();
+
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            fp->xyz_rgb[i][j] = xyz_rgb[i][j];
+        }
+    }
+
+    for (int c = 0; c < 3; ++c) {
+        cmsToneCurve* const inverse = cmsReverseToneCurve(trc[c]);
+
+        if (!inverse) {
+            return nullptr;
+        }
+
+        for (int i = 0; i < 65536; ++i) {
+            fp->curve[c][i] = 65535.f * LIM01(cmsEvalToneCurveFloat(inverse, i / 65535.f));
+        }
+
+        cmsFreeToneCurve(inverse);
+    }
+
+    // The check.
+    constexpr int kL = 26;  // 0 .. 100
+    constexpr int kAB = 21; // -120 .. 120
+    constexpr int n = kL * kAB * kAB;
+    LabImage samples(n, 1);
+    std::vector<double> labIn(3 * n);
+    int k = 0;
+
+    for (int l = 0; l < kL; ++l) {
+        for (int a = 0; a < kAB; ++a) {
+            for (int b = 0; b < kAB; ++b, ++k) {
+                // Dense in the shadows, where the tone curves are steepest.
+                const double L = l < 6 ? l * 0.5 : (l - 5) * 5.0;
+                labIn[3 * k] = L;
+                labIn[3 * k + 1] = (a - kAB / 2) * 12.0;
+                labIn[3 * k + 2] = (b - kAB / 2) * 12.0;
+                samples.L[0][k] = labIn[3 * k] * 327.68;
+                samples.a[0][k] = labIn[3 * k + 1] * 327.68;
+                samples.b[0][k] = labIn[3 * k + 2] * 327.68;
+            }
+        }
+    }
+
+    std::vector<float> reference(3 * n);
+    cmsDoTransform(hTransform, labIn.data(), reference.data(), n);
+    std::vector<unsigned char> expected(3 * n);
+    copyAndClampLine(reference.data(), expected.data(), n);
+    std::vector<unsigned char> got(3 * n);
+    copyAndClampShaper(&samples, 0, 0, n, 1, got.data(), *fp, false);
+
+    for (int i = 0; i < 3 * n; ++i) {
+        if (std::abs(int(expected[i]) - int(got[i])) > 1) {
+            return nullptr;
+        }
+    }
+
+    return fp;
+}
+
+// One verdict per (profile, intent, black point compensation); null = keep
+// using LittleCMS. STEEP_NO_FAST_LAB2RGB=1 switches the fast path off.
+std::shared_ptr<const ShaperFastPath> shaperFastPathFor(cmsHPROFILE oprof, cmsHTRANSFORM hTransform, const Glib::ustring& profile, int intent, bool bpc)
+{
+    static const bool disabled = std::getenv("STEEP_NO_FAST_LAB2RGB") != nullptr;
+
+    if (disabled) {
+        return nullptr;
+    }
+
+    static std::mutex mutex;
+    static std::map<std::string, std::shared_ptr<const ShaperFastPath>> verdicts;
+    const std::string key = profile.raw() + '|' + std::to_string(intent) + (bpc ? "|bpc" : "|");
+    std::lock_guard<std::mutex> lock(mutex);
+    const auto found = verdicts.find(key);
+
+    if (found != verdicts.end()) {
+        return found->second;
+    }
+
+    std::shared_ptr<const ShaperFastPath> fp;
+    {
+        MyMutex::MyLock lcmsLock(*lcmsMutex);
+        fp = buildShaperFastPath(oprof, hTransform, intent);
+    }
+
+    if (settings->verbose) {
+        printf("lab2rgb: output profile %s %s the matrix/TRC fast path\n", profile.c_str(), fp ? "takes" : "does not take");
+    }
+
+    verdicts.emplace(key, fp);
+    return fp;
 }
 
 } // namespace
@@ -325,6 +553,12 @@ Image8* ImProcFunctions::lab2rgb(LabImage* lab, int cx, int cy, int cw, int ch, 
 
         unsigned char *data = image->data;
 
+        const std::shared_ptr<const ShaperFastPath> fastPath =
+            hTransform ? shaperFastPathFor(oprof, hTransform, profile, icm.outputIntent, icm.outputBPC) : nullptr;
+
+        if (fastPath) {
+            copyAndClampShaper(lab, cx, cy, cw, ch, data, *fastPath, multiThread);
+        } else
         // cmsDoTransform is relatively expensive
 #ifdef _OPENMP
         #pragma omp parallel
@@ -360,9 +594,9 @@ Image8* ImProcFunctions::lab2rgb(LabImage* lab, int cx, int cy, int cw, int ch, 
 
         if (edittrace::enabled()) {
             const long long traceT2 = edittrace::nowUs();
-            edittrace::logf("lab2rgb size=%dx%d createTransform=%.1fms pixels=%.1fms profile=%s",
+            edittrace::logf("lab2rgb size=%dx%d createTransform=%.1fms pixels=%.1fms fast=%d profile=%s",
                             cw, ch, (traceT1 - traceT0) / 1000.0, (traceT2 - traceT1) / 1000.0,
-                            profile.c_str());
+                            static_cast<int>(fastPath != nullptr), profile.c_str());
         }
 
         cmsDeleteTransform(hTransform);

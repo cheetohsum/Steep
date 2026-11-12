@@ -191,6 +191,55 @@ inline float median(float* v, int n)
     return (n & 1) ? v[n / 2] : 0.5f * (v[n / 2 - 1] + v[n / 2]);
 }
 
+// The same value as median() for n <= kMaxSame, without a data-dependent
+// branch: the set is padded to twelve with +max and run through an odd-even
+// transposition network (min/max only). The insertion sort above mispredicts
+// on nearly every element of a noisy neighbourhood, and this median is taken
+// millions of times per frame.
+inline float medianSame(const float* in, int n)
+{
+    float v[kMaxSame];
+    for (int i = 0; i < kMaxSame; ++i) {
+        v[i] = i < n ? in[i] : std::numeric_limits<float>::max();
+    }
+    for (int round = 0; round < kMaxSame / 2; ++round) {
+        for (int i = 0; i + 1 < kMaxSame; i += 2) {
+            const float a = v[i], b = v[i + 1];
+            v[i] = std::min(a, b);
+            v[i + 1] = std::max(a, b);
+        }
+        for (int i = 1; i + 1 < kMaxSame; i += 2) {
+            const float a = v[i], b = v[i + 1];
+            v[i] = std::min(a, b);
+            v[i + 1] = std::max(a, b);
+        }
+    }
+    return (n & 1) ? v[n / 2] : 0.5f * (v[n / 2 - 1] + v[n / 2]);
+}
+
+// Row pointers to one photosite's nearest same-colour neighbours, for every
+// column phase of a row: nb[pc][k][col] is neighbour k of the photosite at
+// (row, col) when col % period == pc. Set up once per row, it takes the
+// modulo, the phase lookup and the row-table lookups out of the pixel loops.
+struct RowNeighbours {
+    const float* nb[6][kMaxSame];
+    int nSame[6];
+    int colour[6];
+
+    template <typename Rows>
+    void set(const Rows& raw, int row, int p, const std::vector<Phase>& phases)
+    {
+        for (int pc = 0; pc < p; ++pc) {
+            const Phase& ph = phases[(row % p) * p + pc];
+            nSame[pc] = ph.nSame;
+            colour[pc] = ph.colour;
+            for (int k = 0; k < ph.nSame; ++k) {
+                nb[pc][k] = &raw[row + ph.same[k].dr][0] + ph.same[k].dc;
+            }
+        }
+    }
+};
+
 template <typename Rows>
 float sameColourMedian(const Rows& raw, int row, int col, const Phase& ph)
 {
@@ -198,7 +247,7 @@ float sameColourMedian(const Rows& raw, int row, int col, const Phase& ph)
     for (int k = 0; k < ph.nSame; ++k) {
         v[k] = raw[row + ph.same[k].dr][col + ph.same[k].dc];
     }
-    return median(v, ph.nSame);
+    return medianSame(v, ph.nSame);
 }
 
 // Sensor noise per colour as a function of brightness: the spread of
@@ -246,21 +295,28 @@ public:
             #pragma omp for schedule(dynamic, 16) nowait
 #endif
             for (int row = kMargin; row < height - kMargin; row += 3) {
-                for (int col = kMargin + (row / 3) % 3; col < width - kMargin; col += 3) {
-                    const Phase& ph = phases[(row % p) * p + col % p];
+                RowNeighbours rn;
+                rn.set(raw, row, p, phases);
+                const float* const cur = &raw[row][0];
+                const int first = kMargin + (row / 3) % 3;
+                int pc = first % p;
+
+                for (int col = first; col < width - kMargin; col += 3, pc = (pc + 3) % p) {
+                    const float* const* const nb = rn.nb[pc];
+                    const int nSame = rn.nSame[pc];
                     float v[kMaxSame];
-                    bool clipped = false;
-                    for (int k = 0; k < ph.nSame; ++k) {
-                        v[k] = raw[row + ph.same[k].dr][col + ph.same[k].dc];
-                        clipped = clipped || v[k] >= 65000.f;
+                    float hi = cur[col];
+                    for (int k = 0; k < nSame; ++k) {
+                        v[k] = nb[k][col];
+                        hi = std::max(hi, v[k]);
                     }
-                    if (clipped || raw[row][col] >= 65000.f) {
-                        continue;
+                    if (hi >= 65000.f) {
+                        continue; // clipped
                     }
-                    const float med = median(v, ph.nSame);
-                    const float res = std::fabs(raw[row][col] - med);
+                    const float med = medianSame(v, nSame);
+                    const float res = std::fabs(cur[col] - med);
                     const int rb = std::max(0, std::min(kResBins - 1, int(std::log2(1.f + res) * (kResBins / 16.f))));
-                    ++hist[(ph.colour * kLevelBins + levelBin(med)) * kResBins + rb];
+                    ++hist[(rn.colour[pc] * kLevelBins + levelBin(med)) * kResBins + rb];
                 }
             }
 
@@ -363,10 +419,23 @@ int find(const Rows& raw, int width, int height, const CfaLayout& cfa, int sensi
 #endif
     for (int row = kMargin; row < height - kMargin; ++row) {
         const detail::Phase* phaseRow = &phases[(row % p) * p];
+        detail::RowNeighbours rn;
+        rn.set(raw, row, p, phases);
+        const float* const cur = &raw[row][0];
+        int pc = kMargin % p;
 
-        for (int col = kMargin; col < width - kMargin; ++col) {
-            const detail::Phase& ph = phaseRow[col % p];
-            const float v = raw[row][col];
+        for (int col = kMargin; col < width - kMargin; ++col, pc = pc + 1 == p ? 0 : pc + 1) {
+            const float v = cur[col];
+            const float* const* const nb = rn.nb[pc];
+
+            // Nearly every photosite leaves here: it is not brighter than
+            // its first four same-colour neighbours (every layout has eight
+            // or more). Four straight loads and one well-predicted branch.
+            if (v <= std::max(std::max(nb[0][col], nb[1][col]), std::max(nb[2][col], nb[3][col]))) {
+                continue;
+            }
+
+            const detail::Phase& ph = phaseRow[pc];
 
             // Cheap gate first: most photosites are not the brightest of their
             // colour nearby, and the rest mostly don't clear the floor.
@@ -374,7 +443,7 @@ int find(const Rows& raw, int width, int height, const CfaLayout& cfa, int sensi
             float lo = std::numeric_limits<float>::max();
             float hi = std::numeric_limits<float>::lowest();
             for (int k = 0; k < ph.nSame; ++k) {
-                vals[k] = raw[row + ph.same[k].dr][col + ph.same[k].dc];
+                vals[k] = nb[k][col];
                 lo = std::min(lo, vals[k]);
                 hi = std::max(hi, vals[k]);
             }
@@ -383,7 +452,7 @@ int find(const Rows& raw, int width, int height, const CfaLayout& cfa, int sensi
                 continue;
             }
 
-            const float med = detail::median(vals, ph.nSame);
+            const float med = detail::medianSame(vals, ph.nSame);
             const float dev = v - med;
 
             const float sigma = noise.sigma(ph.colour, med);

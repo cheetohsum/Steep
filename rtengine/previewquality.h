@@ -12,6 +12,27 @@ constexpr int previewThreadCount(int available)
     return available < 1 ? 1 : (available < 4 ? available : 4);
 }
 
+// Decoding-side work on the whole sensor (preprocess, demosaic) is the
+// opposite case: tens of megapixels per stage, and it scales. Measured on a
+// 26 MP X-Trans frame (16 logical processors), 3-pass demosaic: 819 ms at 4
+// threads. It gets three quarters of the machine; the rest stays with the GUI
+// and whatever else is running. STEEP_RAW_THREADS=<n> overrides, for tuning.
+int rawStageThreadCount(int available);
+
+// Widens the calling thread's OpenMP team for a raw stage and puts the
+// previous width back on the way out.
+class RawStageThreads
+{
+public:
+    explicit RawStageThreads(bool widen);
+    ~RawStageThreads();
+    RawStageThreads(const RawStageThreads&) = delete;
+    RawStageThreads& operator=(const RawStageThreads&) = delete;
+
+private:
+    int saved_ = 0;
+};
+
 unsigned long long getSettledPreviewSerial(const StagedImageProcessor* processor);
 
 /**
