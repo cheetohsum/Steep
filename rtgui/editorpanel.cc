@@ -371,7 +371,16 @@ private:
 
             job.twin->setStage(rtengine::FullQualityTwin::Stage::Decoding);
             int errorCode = 0;
-            rtengine::InitialImage* img = FilePanel::loadAuxiliaryInitialImage(job.fname, true, &errorCode, abandoned);
+            // The decode is the longest part of the twin (2.1 s of a 26 MP
+            // RAF's 3.2 s on one thread). This thread is persistent, so its
+            // team is not leaked; half the raw-stage width, because the
+            // editor's first pass is running at the same time.
+#ifdef _OPENMP
+            const int decodeThreads = std::max(1, rtengine::rawStageThreadCount(omp_get_num_procs()) / 2);
+#else
+            const int decodeThreads = 1;
+#endif
+            rtengine::InitialImage* img = FilePanel::loadAuxiliaryInitialImage(job.fname, true, &errorCode, abandoned, decodeThreads);
             if (!img || errorCode || abandoned->load()) {
                 if (img) {
                     img->decreaseRef();
@@ -388,8 +397,7 @@ private:
             }
             job.twin->setStage(rtengine::FullQualityTwin::Stage::Precomputing);
 #ifdef _OPENMP
-            // The decode ran single-threaded; this is the expensive part, and
-            // matches the editor's own pipeline width.
+            // Preprocess and demosaic at the editor's own raw-stage width.
             omp_set_num_threads(rtengine::rawStageThreadCount(omp_get_num_procs()));
 #endif
             const auto start = std::chrono::steady_clock::now();

@@ -98,7 +98,8 @@ public:
         const Glib::ustring& fname,
         bool isRaw,
         int* errorCode,
-        const std::shared_ptr<std::atomic<bool>>& cancel);
+        const std::shared_ptr<std::atomic<bool>>& cancel,
+        int decodeThreads = 1);
     std::function<void(rtengine::InitialImage*)> makeRecentInitialImageCacheFunc(
         const Glib::ustring& fname,
         bool isRaw);

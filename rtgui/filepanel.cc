@@ -2096,7 +2096,8 @@ rtengine::InitialImage* FilePanel::loadAuxiliaryInitialImage(
     const Glib::ustring& fname,
     bool isRaw,
     int* errorCode,
-    const std::shared_ptr<std::atomic<bool>>& cancel)
+    const std::shared_ptr<std::atomic<bool>>& cancel,
+    int decodeThreads)
 {
     using clk = std::chrono::steady_clock;
     const bool logSelection = g_fileSelLogEnabled();
@@ -2109,7 +2110,10 @@ rtengine::InitialImage* FilePanel::loadAuxiliaryInitialImage(
     // RAW load. MinGW libgomp retains that thread's worker team after the
     // load, so allowing the default team size leaked 15 workers per photo on
     // a 16-core machine and eventually starved the foreground editor.
-    omp_set_num_threads(1);
+    // Only a caller that lives on one persistent thread (the full-quality
+    // twin's executor) may ask for more: a 26 MP compressed RAF decodes in
+    // 2.1 s on one thread, 0.85 s on four.
+    omp_set_num_threads(std::max(1, decodeThreads));
 #endif
 
     auto elapsedFromStart = [&]() -> long long {

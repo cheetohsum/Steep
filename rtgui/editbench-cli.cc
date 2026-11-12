@@ -50,12 +50,17 @@
 #include <thread>
 #include <vector>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 #include <glibmm/miscutils.h>
 
 #include "options.h"
 #include "rtengine/fullqualitytwin.h"
 #include "rtengine/image8.h"
 #include "rtengine/imagesource.h"
+#include "rtengine/previewquality.h"
 #include "rtengine/procevents.h"
 #include "rtengine/procparams.h"
 #include "rtengine/profilestore.h"
@@ -292,9 +297,23 @@ int runHeadlessEditBench(const char* file)
             const auto t0 = BenchClock::now();
             twin->setStage(rtengine::FullQualityTwin::Stage::Decoding);
             int err = 0;
+#ifdef _OPENMP
+            // The team widths FullQualityTwinExecutor uses (editorpanel.cc).
+            // STEEP_CLI_EDIT_BENCH_TWIN_LEGACY=1: one decode thread and the
+            // 4-thread preview team, as before.
+            const bool legacy = envInt("STEEP_CLI_EDIT_BENCH_TWIN_LEGACY", 0) != 0;
+            const int rawThreads = legacy ? rtengine::previewThreadCount(omp_get_num_procs())
+                                          : rtengine::rawStageThreadCount(omp_get_num_procs());
+            omp_set_num_threads(legacy ? 1 : std::max(1, rawThreads / 2));
+#endif
             rtengine::InitialImage* twinImage = rtengine::InitialImage::load(path, true, &err, nullptr);
+            const double decodedMs = std::chrono::duration<double, std::milli>(BenchClock::now() - t0).count();
             twin->waitForPrecomputeRelease(2500);
             twin->setStage(rtengine::FullQualityTwin::Stage::Precomputing);
+#ifdef _OPENMP
+            omp_set_num_threads(rawThreads);
+#endif
+            std::printf("[cliEditBench] twin decoded after=%.1fms\n", decodedMs);
             if (twinImage && (err || !twinImage->getImageSource()->precomputeFullQuality(params))) {
                 twinImage->decreaseRef();
                 twinImage = nullptr;
