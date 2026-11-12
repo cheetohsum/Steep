@@ -141,6 +141,33 @@ int main(int argc, char **argv)
             const auto samePixel = demotion::sample(widerIntervals, .39, .5, 1.f, rightLight);
             check(near(reversePixel.r * reversePixel.a, samePixel.r * samePixel.a, .00004f),
                   "light trail exposure is independent of the path interval budget");
+            // The engine's plates step the path at plate resolution over a
+            // source box-filtered down to it (renderMotion): a one-pixel light
+            // four times finer than the plate must still leave an even trail.
+            constexpr int plateWidth = width / 4;
+            demotion::PremultipliedBuffer plate;
+            plate.w = plateWidth;
+            plate.h = 1;
+            for (int x = 0; x < plateWidth; ++x) {
+                demotion::Pixel sum;
+                for (int i = 0; i < 4; ++i) {
+                    const auto p = pointLight((x + (i + .5f) / 4) / plateWidth, .5f);
+                    sum.r += p.r * p.a / 4; sum.g += p.g * p.a / 4; sum.b += p.b * p.a / 4; sum.a += p.a / 4;
+                }
+                plate.pixels.push_back(sum);
+            }
+            pan.direction = 0;
+            const auto platePath = demotion::trajectory(pan, plateWidth, 192);
+            const auto plateRead = [&](float u, float v) { return plate.at(u, v); };
+            minimum = 1; maximum = 0;
+            for (int x = plateWidth / 5 + 2; x < int((.2f + .6f) * plateWidth) - 2; ++x) {
+                const auto pixel = demotion::sample<true>(platePath, (x + .5f) / plateWidth, .5, 1.f, plateRead);
+                const float relative = pixel.r * pixel.a * (.6f * width);
+                minimum = std::min(minimum, relative);
+                maximum = std::max(maximum, relative);
+            }
+            check(minimum > .9f && maximum < 1.1f,
+                  "a trail read at plate resolution from a filtered source stays unbroken and even");
         }
         {
             bool agrees = true;
@@ -176,22 +203,22 @@ int main(int argc, char **argv)
               "transparent sample RGB cannot contaminate motion edges");
         float r, g, bl;
         deblend::blend(DoubleExposureParams::BlendMode::ADAPTIVE, DoubleExposureParams::Compare::LUMINANCE,
-                       .5, 1, .01, .01, .01, .1, .1, .1, r, g, bl);
+                       .5, 1, deblend::LumWeights(), .01, .01, .01, .1, .1, .1, r, g, bl);
         check(r > .08 && r <= .100001,
               "adaptive comparison keeps light detail over dark scenes without additive clipping");
         deblend::blend(DoubleExposureParams::BlendMode::ADAPTIVE, DoubleExposureParams::Compare::LUMINANCE,
-                       .5, 1, .8, .8, .8, .5, .5, .5, r, g, bl);
+                       .5, 1, deblend::LumWeights(), .8, .8, .8, .5, .5, .5, r, g, bl);
         check(r >= .5 && r < .6, "adaptive comparison keeps dark detail over bright scenes");
         deblend::blend(DoubleExposureParams::BlendMode::ADAPTIVE, DoubleExposureParams::Compare::LUMINANCE,
-                       .5, 1, .4, .2, .1, .4, .2, .1, r, g, bl);
+                       .5, 1, deblend::LumWeights(), .4, .2, .1, .4, .2, .1, r, g, bl);
         check(near(r, .4) && near(g, .2) && near(bl, .1),
               "identical exposures do not brighten or desaturate each other");
         deblend::blend(DoubleExposureParams::BlendMode::ADAPTIVE, DoubleExposureParams::Compare::LUMINANCE,
-                       .5, 1, .48, .48, .48, .01, .01, .01, r, g, bl);
+                       .5, 1, deblend::LumWeights(), .48, .48, .48, .01, .01, .01, r, g, bl);
         check(r > .01f + .19f * (.48f - .01f),
               "adaptive sharp layer preserves the continuous trail beneath dark detail");
         deblend::blend(DoubleExposureParams::BlendMode::ADAPTIVE, DoubleExposureParams::Compare::LUMINANCE,
-                       .5, 1, .01, .01, .01, .14, .14, .14, r, g, bl);
+                       .5, 1, deblend::LumWeights(), .01, .01, .01, .14, .14, .14, r, g, bl);
         check(r < .14f - .19f * (.14f - .01f),
               "adaptive sharp layer preserves the continuous trail beneath bright detail");
         DoubleExposureParams params;

@@ -72,7 +72,6 @@
 #include "tools/clarity.h"
 #include "tools/grain.h"
 #include "tools/lighteffects.h"
-#include "tools/relight.h"
 #include "tools/tiltshift.h"
 #include "tools/lensblur.h"
 #include "tools/pcvignette.h"
@@ -167,7 +166,6 @@ protected:
     Clarity *clarity;
     Grain *grain;
     LightEffects *lighteffects;
-    Relight *relight;
     TiltShift *tiltshift;
     LensBlur *lensblur;
     Spot* spot;
@@ -247,6 +245,17 @@ protected:
     PreviewStrip* detailStrip_ = nullptr;
     PreviewStrip* effectsStrip_ = nullptr;
     PreviewStrip* bwStrip_ = nullptr;
+    // The strips' own history events, each refreshing what its strip changes
+    // (white balance, denoise, vignette): under EvExpComp they only re-ran
+    // the tone stages, so those edits did not show until something else did.
+    rtengine::ProcEvent EvPreviewStripColor;
+    rtengine::ProcEvent EvPreviewStripDetail;
+    rtengine::ProcEvent EvPreviewStripEffects;
+    // Right-click on a group header: which groups show their preview strip
+    // (Options::hiddenPreviewStrips).
+    std::unique_ptr<Gtk::Menu> previewStripMenu_;
+    void applyPreviewStripVisibility();
+    void showPreviewStripMenu(GdkEventButton* event);
     Gtk::Box* quickEditBar_ = nullptr;
 
     ToolBar* toolBar;
@@ -492,7 +501,6 @@ public:
         FATTAL,
         FILM_NEGATIVE,
         PD_SHARPENING,
-        RELIGHT,
     };
 
     struct ToolTree {

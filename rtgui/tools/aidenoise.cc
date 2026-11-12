@@ -23,6 +23,7 @@
 #include "aidenoise.h"
 
 #include "guiutils.h"
+#include "motion.h"
 
 #include "rtengine/aidenoise.h"
 #include "rtengine/procparams.h"
@@ -94,7 +95,7 @@ AIDenoise::AIDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_AIDENOISE_LAB
     // Animated revealer for smooth expand/collapse
     revealer_ = Gtk::manage(new Gtk::Revealer());
     revealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-    revealer_->set_transition_duration(200);
+    steep::motion::configureRevealer(*revealer_);
     revealer_->set_reveal_child(false);
     revealer_->add(*toolContent_);
     revealer_->show();

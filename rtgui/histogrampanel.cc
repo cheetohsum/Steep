@@ -34,7 +34,6 @@ using namespace rtengine;
 
 constexpr float HistogramArea::MAX_BRIGHT;
 constexpr float HistogramArea::MIN_BRIGHT;
-constexpr int HistogramArea::ANIM_DURATION_MS;
 
 using ScopeType = Options::ScopeType;
 
@@ -369,7 +368,7 @@ HistogramPanel::HistogramPanel () :
     // Wrap optionButtons in a Revealer for animated expand
     optionRevealer = Gtk::manage(new Gtk::Revealer());
     optionRevealer->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-    optionRevealer->set_transition_duration(250);
+    steep::motion::configureRevealer(*optionRevealer);
     optionRevealer->add(*optionButtons);
 
     // Vertical layout: overlaid gfxGrid on top, bottom bar hidden by default
@@ -381,7 +380,7 @@ HistogramPanel::HistogramPanel () :
     // Wrap bottomBar in a Revealer for animated slide-down
     bottomBarRevealer = Gtk::manage(new Gtk::Revealer());
     bottomBarRevealer->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-    bottomBarRevealer->set_transition_duration(300);
+    steep::motion::configureRevealer(*bottomBarRevealer);
     bottomBarRevealer->add(*bottomBar);
 
     add(*gfxOverlay);
@@ -1187,7 +1186,7 @@ HistogramArea::~HistogramArea ()
         pendingHistogramUpdate_.reset();
         histogramUpdateIdlePending_ = false;
     }
-    anim_connection.disconnect();
+    morphAnim_.stop();
     idle_register.destroy();
 }
 
@@ -1235,27 +1234,27 @@ void HistogramArea::updateFromOptions ()
     needPointer = options.histogramBar;
 }
 
-double HistogramArea::easeOutBack(double t)
+bool HistogramArea::pointerButtonHeld()
 {
-    const double c1 = 2.5;  // stronger overshoot for playful bounce
-    const double c3 = c1 + 1.0;
-    const double tm1 = t - 1.0;
-    return 1.0 + c3 * tm1 * tm1 * tm1 + c1 * tm1 * tm1;
-}
+    // The nearest thing to an "interaction in progress" signal reachable from
+    // here: a held mouse button means a slider (or anything else) is being
+    // dragged, and the histogram is being fed a stream of updates.
+    GdkWindow* const window = gtk_widget_get_window(GTK_WIDGET(gobj()));
 
-bool HistogramArea::onAnimationTick()
-{
-    auto now = std::chrono::steady_clock::now();
-    auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - anim_start).count();
-
-    if (elapsed_ms >= ANIM_DURATION_MS) {
-        animating = false;
-        queue_draw();
+    if (!window) {
         return false;
     }
 
-    queue_draw();
-    return true;
+    GdkSeat* const seat = gdk_display_get_default_seat(gdk_window_get_display(window));
+    GdkDevice* const pointer = seat ? gdk_seat_get_pointer(seat) : nullptr;
+
+    if (!pointer) {
+        return false;
+    }
+
+    GdkModifierType mask = GdkModifierType(0);
+    gdk_window_get_device_position(window, pointer, nullptr, nullptr, &mask);
+    return (mask & (GDK_BUTTON1_MASK | GDK_BUTTON2_MASK | GDK_BUTTON3_MASK)) != 0;
 }
 
 void HistogramArea::update(
@@ -1388,12 +1387,26 @@ void HistogramArea::update(
             ghistRaw = snapshot->histGreenRaw;
             bhistRaw = snapshot->histBlueRaw;
 
-            // Start animation
-            anim_start = std::chrono::steady_clock::now();
-            animating = true;
-            if (!anim_connection.connected()) {
-                anim_connection = Glib::signal_timeout().connect(
-                    sigc::mem_fun(*this, &HistogramArea::onAnimationTick), 16);
+            // Morph from the previous histogram to the new one - but never
+            // while dragging: a morph chasing a stream of updates only makes
+            // the scope lag behind the slider.
+            if (pointerButtonHeld()) {
+                morphAnim_.stop();
+                animating = false;
+                anim_t_ = 1.0;
+            } else {
+                animating = true;
+                anim_t_ = 0.0;
+                morphAnim_ = steep::motion::run(*this, 0.0, 1.0, steep::motion::Duration::Standard, steep::motion::Ease::Enter,
+                    [this](double t) {
+                        anim_t_ = t;
+                        queue_draw();
+                    },
+                    [this]() {
+                        animating = false;
+                        anim_t_ = 1.0;
+                        queue_draw();
+                    });
             }
 
             LUT_valid = true;
@@ -1512,10 +1525,7 @@ void HistogramArea::updateDrawingArea (const ::Cairo::RefPtr< Cairo::Context> &t
         // Compute animation interpolation factor
         double anim_t = 1.0;
         if (animating) {
-            auto now = std::chrono::steady_clock::now();
-            auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - anim_start).count();
-            double raw_t = std::min(1.0, static_cast<double>(elapsed_ms) / ANIM_DURATION_MS);
-            anim_t = easeOutBack(raw_t);
+            anim_t = anim_t_;
         }
 
         auto lerp_val = [anim_t](unsigned int prev, unsigned int curr) -> unsigned int {
@@ -1593,9 +1603,12 @@ void HistogramArea::updateDrawingArea (const ::Cairo::RefPtr< Cairo::Context> &t
 
         if (needLuma && !rawMode) {
             drawCurve(cr, anim_lhist_lut, realhistheight, winw, winh);
-            cr->set_source_rgba (0.65, 0.65, 0.65, (needRed || needGreen || needBlue) ? 0.18 : 0.65);
+            // Luminance in the theme's quiet ink: a fixed light grey sank
+            // into a light theme's histogram well.
+            const Gdk::RGBA lumaInk = themeColor(*this, "steep_text_dim", Gdk::RGBA("#a6a6a6"));
+            steepui::setSource(cr, lumaInk, (needRed || needGreen || needBlue) ? 0.18 : 0.65);
             cr->fill ();
-            cr->set_source_rgba (0.65, 0.65, 0.65, 0.65);
+            steepui::setSource(cr, lumaInk, 0.65);
             drawMarks(cr, anim_lhist_lut, realhistheight, winw, ui, oi);
         }
 
@@ -1935,7 +1948,7 @@ void HistogramArea::drawVectorscope(const Cairo::RefPtr<Cairo::Context> &cr, con
             cr->stroke();
         }
         cr->set_line_width (1.0);
-        cr->set_source_rgba (1, 1, 1, 0.25);
+        steepui::setSource(cr, themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff")), 0.25);
         // 100% saturation circle.
         cr->arc(0, 0, scope_size / 2.0, 0, 2 * RT_PI);
         cr->stroke();
@@ -1975,7 +1988,7 @@ void HistogramArea::drawVectorscope(const Cairo::RefPtr<Cairo::Context> &cr, con
         cr->move_to(0, 0);
         cr->line_to(-line_length, 0);
         cr->stroke();
-        cr->set_source_rgba (1, 1, 1, 0.25);
+        steepui::setSource(cr, themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff")), 0.25);
         cr->set_line_width (1.0);
         // 25%, 50%, 75%, and 100% of standard chroma range.
         cr->set_dash(ch_ds, 0);
@@ -2018,7 +2031,7 @@ void HistogramArea::drawVectorscope(const Cairo::RefPtr<Cairo::Context> &cr, con
                 cy = h / 2.f - scope_size * pointer_b * ab_factor;
             }
             const float crosshair_size = 20.f;
-            cr->set_source_rgba(1, 1, 1, 0.5);
+            steepui::setSource(cr, themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff")), 0.5);
             cr->move_to(cx - crosshair_size, cy);
             cr->line_to(cx + crosshair_size, cy);
             cr->move_to(cx, cy - crosshair_size);

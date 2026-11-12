@@ -25,6 +25,7 @@
 #include <gtkmm.h>
 
 #include "guiutils.h"
+#include "motion.h"
 #include "options.h"
 #include "thumbimageupdater.h"
 
@@ -243,12 +244,30 @@ public: // re-apply sort method
     // Request a reflow, coalescing bursts into a single pass.
     void scheduleRelayout ();
 
+    // Rating/label/pick pulse: ONE animation per browser. Every entry flagged
+    // before its first frame joins it (a batch rating is one animation, not
+    // N timers), and each frame repaints only the pulsing entries.
+    unsigned beginEntryPulse ();
+    unsigned entryPulseSerial () const { return pulseSerial_; }
+    double entryPulseAlpha () const { return pulseAlpha_; }
+    // Opacity of the hover ring on the hovered entry (fades in).
+    double hoverAlpha () const { return hoverAlpha_; }
+
     // Hint drawn centered on the canvas while there are no entries
     // (e.g. "scanning" / "no photos"). Empty string draws nothing.
-    void setEmptyStateText (const Glib::ustring& text);
+    // @p scanning draws placeholder cells behind the caption (work is in
+    // progress); otherwise a small ornament sits above it (nothing to show).
+    void setEmptyStateText (const Glib::ustring& text, bool scanning = false);
+
+    // The entry the keyboard acts from, while the browser has keyboard focus.
+    bool isFocusEntry (const ThumbBrowserEntryBase* entry) const
+    {
+        return entry && entry == lastClicked && internal.has_visible_focus();
+    }
 
 protected:
     Glib::ustring emptyStateText_;
+    bool emptyStateScanning_ = false;
 
 protected:
     bool redrawPending_ = false;
@@ -294,6 +313,15 @@ private:
     void maybeEvictOffscreenBuffers_(std::size_t firstVisible, std::size_t lastVisible);
     unsigned evictSweepCounter_ = 0;
     bool onRedrawIdle_ ();
+    steep::motion::Handle pulseAnim_;
+    unsigned pulseSerial_ = 0;
+    double pulseAlpha_ = 0.0;
+    steep::motion::Handle hoverAnim_;
+    double hoverAlpha_ = 1.0;
+    void startHoverFade_ ();
+    // Repaint just the on-screen entries that are pulsing / hovered.
+    void damageEntries_ (bool pulsing, bool hoveredOnes);
+    void damageEntry_ (ThumbBrowserEntryBase* entry);
     bool applyTabModeEntryGeometry_ (bool enable, unsigned int generation);
     unsigned int tabModeGeneration_ = 0;
 public:

@@ -18,8 +18,10 @@
  */
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <glibmm/ustring.h>
 #include <glibmm/datetime.h>
@@ -240,6 +242,11 @@ public:
     rtengine::IImage8* processThumbImage    (const rtengine::procparams::ProcParams& pparams, int h, double& scale, bool cachePixbuf = false);
     rtengine::IImage8* processThumbImage    (int h, double& scale, rtengine::procparams::CropParams* crop = nullptr, bool cachePixbuf = false);
     rtengine::IImage8* processFullThumbImage(const rtengine::procparams::ProcParams& pparams, int h, double& scale, bool cachePixbuf = false);
+    /// Several looks of the same photo, fully processed, from one load of the
+    /// base thumbnail. One image per entry of `frames`, in order (null where a
+    /// render failed); the vector is cut short where `cancelled` returned
+    /// true. The caller owns the images.
+    std::vector<rtengine::IImage8*> processFullThumbBatch(const std::vector<rtengine::procparams::ProcParams>& frames, int h, std::function<bool()> cancelled = {});
     std::unique_ptr<rtengine::Imagefloat> processAnalysisImage(const rtengine::procparams::ProcParams& pparams, int h);
     std::unique_ptr<rtengine::Imagefloat> processCachedAnalysisImage(const rtengine::procparams::ProcParams& pparams, int h);
     Glib::RefPtr<Gdk::Pixbuf> getCachedPixbuf(double& scale) {

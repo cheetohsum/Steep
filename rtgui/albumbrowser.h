@@ -23,6 +23,8 @@
 
 #include <gtkmm.h>
 
+#include "motion.h"
+
 enum class AlbumNodeType { FOLDER = 0, ALBUM = 1, SMART_ALBUM = 2 };
 
 struct SmartAlbumRule {
@@ -209,20 +211,18 @@ private:
     // Chevron rotation animation
     std::vector<Glib::RefPtr<Gdk::Pixbuf>> chevronFrames_;
     std::map<std::string, int> chevronAnimFrame_;
-    std::map<std::string, bool> chevronAnimExpanding_;
-    sigc::connection chevronAnimConn_;
-    void startChevronAnim();
+    std::map<std::string, steep::motion::Handle> chevronAnims_;
+    void animateChevron(const std::string& pathStr, bool expanding);
 
-    // Child row reveal (fade-in on expand)
+    // Child row reveal (clip-in on expand)
     std::string revealParentPath_;
-    double revealAlpha_ = 1.0;
+    steep::motion::Handle revealAnim_;
+    void animateReveal(const std::string& parentPathStr);
+    void clearReveal();
 
-    // Expand/collapse animation
-    sigc::connection expandAnimConn_;
-    double expandAnimFraction_ = 0.0;
-    int expandAnimTargetH_ = 0;
-    int expandAnimStartH_ = 0;
-    bool expandAnimExpanding_ = true;
+    // Expand/collapse height animation
+    steep::motion::Handle expandAnim_;
+    void stopExpandAnim();
 
     // Cover thumbnails
     int coverLoadSession_;

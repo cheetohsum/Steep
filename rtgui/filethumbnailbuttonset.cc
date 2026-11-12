@@ -54,11 +54,11 @@ void FileThumbnailButtonSet::ensureIconsLoaded ()
         unTrashIcon = std::shared_ptr<RTSurface>(new RTSurface("trash-remove-small", Gtk::ICON_SIZE_BUTTON));
         processIcon = std::shared_ptr<RTSurface>(new RTSurface("gears-small", Gtk::ICON_SIZE_BUTTON));
         colorLabelIcon[0] = std::shared_ptr<RTSurface>(new RTSurface("circle-empty-gray-small", Gtk::ICON_SIZE_MENU));
-        colorLabelIcon[1] = std::shared_ptr<RTSurface>(new RTSurface("circle-red-small", Gtk::ICON_SIZE_MENU));
-        colorLabelIcon[2] = std::shared_ptr<RTSurface>(new RTSurface("circle-yellow-small", Gtk::ICON_SIZE_MENU));
-        colorLabelIcon[3] = std::shared_ptr<RTSurface>(new RTSurface("circle-green-small", Gtk::ICON_SIZE_MENU));
-        colorLabelIcon[4] = std::shared_ptr<RTSurface>(new RTSurface("circle-blue-small", Gtk::ICON_SIZE_MENU));
-        colorLabelIcon[5] = std::shared_ptr<RTSurface>(new RTSurface("circle-purple-small", Gtk::ICON_SIZE_MENU));
+        colorLabelIcon[1] = std::shared_ptr<RTSurface>(new RTSurface("label-red-small", Gtk::ICON_SIZE_MENU));
+        colorLabelIcon[2] = std::shared_ptr<RTSurface>(new RTSurface("label-yellow-small", Gtk::ICON_SIZE_MENU));
+        colorLabelIcon[3] = std::shared_ptr<RTSurface>(new RTSurface("label-green-small", Gtk::ICON_SIZE_MENU));
+        colorLabelIcon[4] = std::shared_ptr<RTSurface>(new RTSurface("label-blue-small", Gtk::ICON_SIZE_MENU));
+        colorLabelIcon[5] = std::shared_ptr<RTSurface>(new RTSurface("label-purple-small", Gtk::ICON_SIZE_MENU));
         pickIcon = std::shared_ptr<RTSurface>(new RTSurface("flag-pick", Gtk::ICON_SIZE_BUTTON));
         rejectIcon = std::shared_ptr<RTSurface>(new RTSurface("flag-reject", Gtk::ICON_SIZE_BUTTON));
 

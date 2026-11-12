@@ -128,6 +128,7 @@ public:
     void wbCamera2Mul(double &rm, double &gm, double &bm) override;
 
     void        flush          () override;
+    std::size_t estimatedBytes () const override;
     void captureSharpening(const procparams::CaptureSharpeningParams &sharpeningParams, bool showMask, double &conrastThreshold, double &radius) override {};
 };
 

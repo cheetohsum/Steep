@@ -201,13 +201,13 @@ inline bool applySubjectModel(std::vector<array2D<float>>& maps,
                               float* const* rRows, float* const* gRows, float* const* bRows,
                               int width, int height, bool multiThread)
 {
-    if (static_cast<int>(maps.size()) < static_cast<int>(AISegClass::TOTAL_CLASSES)) {
+    if (static_cast<int>(maps.size()) <= static_cast<int>(AISegClass::NOT_SUBJECT)) {
         return false;
     }
 
     AISubjectEngine& engine = getAISubjectEngine();
 
-    if (!engine.isInitialized()) {
+    if (!engine.isInitialized() && !engine.retryLoad()) {
         return false;
     }
 

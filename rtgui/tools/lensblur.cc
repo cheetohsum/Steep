@@ -42,6 +42,7 @@ LensBlur::LensBlur(): FoldableToolPanel(this, TOOL_NAME, M("TP_LENSBLUR_LABEL"),
 
     bokehExpanded = false;
     focusExpanded = false;
+    shapeUpdating = false;
 
     // Main blur amount slider
     amount = Gtk::manage(new Adjuster(M("TP_LENSBLUR_AMOUNT"), 0., 100., 1., 0.));
@@ -133,6 +134,7 @@ LensBlur::LensBlur(): FoldableToolPanel(this, TOOL_NAME, M("TP_LENSBLUR_LABEL"),
     depthGrad.push_back(GradientMilestone(0.0, 0.15, 0.15, 0.15));
     depthGrad.push_back(GradientMilestone(1.0, 0.85, 0.85, 0.85));
     depth->setSliderGradient(depthGrad);
+    depth->set_tooltip_text(M("TP_LENSBLUR_DEPTH_TOOLTIP"));
     focusContent->pack_start(*depth);
 
     Gtk::Box *nearFarBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL));
@@ -158,14 +160,16 @@ LensBlur::LensBlur(): FoldableToolPanel(this, TOOL_NAME, M("TP_LENSBLUR_LABEL"),
 
 void LensBlur::shapeToggled(Gtk::ToggleButton *btn, const Glib::ustring &shapeName)
 {
-    static bool shapeUpdating = false;
-
     if (shapeUpdating) {
         return;
     }
 
     if (!btn->get_active()) {
-        // Programmatic deactivation — ignore
+        // Clicking the shape already chosen would leave none lit; the
+        // aperture always has a shape, so keep it on.
+        shapeUpdating = true;
+        btn->set_active(true);
+        shapeUpdating = false;
         return;
     }
 
@@ -207,9 +211,9 @@ void LensBlur::read(const ProcParams *pp, const ParamsEdited *pedited)
     depth->setValue(pp->lensBlur.depth);
     range->setValue(pp->lensBlur.range);
 
-    // Set active shape button (use lambda to batch-update without triggering signals)
+    // Light the stored shape without the toggle handler auto-enabling the tool.
     {
-        // Block signals by deactivating all first, then activating the right one
+        shapeUpdating = true;
         Gtk::ToggleButton *allBtns[] = {shapeCircle, shape5blade, shape6blade, shape7blade, shape8blade};
         for (auto *b : allBtns) {
             b->set_active(false);
@@ -219,6 +223,7 @@ void LensBlur::read(const ProcParams *pp, const ParamsEdited *pedited)
         else if (pp->lensBlur.shape == "7blade") shape7blade->set_active(true);
         else if (pp->lensBlur.shape == "8blade") shape8blade->set_active(true);
         else shapeCircle->set_active(true);
+        shapeUpdating = false;
     }
 
     enableListener();

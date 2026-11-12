@@ -20,6 +20,7 @@
 #include <iostream>
 
 #include "rtengine/edittrace.h"
+#include "motion.h"
 #include "rtengine/previewquality.h"
 #include "delayed.h"
 #include <algorithm>
@@ -36,6 +37,8 @@
 #include "smartmaskbar.h"
 #ifdef RT_AI_MASKING
 #include "rtengine/aimaskcache.h"
+#include "rtengine/maskpaint.h"
+#include "rtengine/samselector.h"
 #include "rtengine/aisegmentation.h"
 #endif
 #include "rawloadactivity.h"
@@ -44,6 +47,7 @@
 #include "aimaskthumb.h"
 #include "metadatapanel.h"
 #include "options.h"
+#include "eventmapper.h"
 #include "rtimage.h"
 #include "thumbnail.h"
 
@@ -196,10 +200,6 @@ const std::vector<ToolTree> EXPOSURE_PANEL_TOOLS = {
     },
     {
         .id = Tool::LIGHT_EFFECTS,
-        .children = {},
-    },
-    {
-        .id = Tool::RELIGHT,
         .children = {},
     },
     {
@@ -542,7 +542,6 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
     clarity = nullptr;
     grain = nullptr;
     lighteffects = nullptr;
-    relight = nullptr;
     tiltshift = nullptr;
     lensblur = nullptr;
     spot = nullptr;
@@ -703,7 +702,6 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
     clarity             = Gtk::manage(new Clarity());
     grain               = Gtk::manage(new Grain());
     lighteffects        = Gtk::manage(new LightEffects());
-    relight             = Gtk::manage(new Relight());
     tiltshift           = Gtk::manage(new TiltShift());
     lensblur            = Gtk::manage(new LensBlur());
     filmSimulation      = Gtk::manage(new FilmSimulation());
@@ -861,8 +859,10 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
     modeStack = Gtk::manage(new Gtk::Stack());
     modeStack->set_hhomogeneous(false);
     modeStack->set_vhomogeneous(false);
-    modeStack->set_transition_type(Gtk::STACK_TRANSITION_TYPE_SLIDE_LEFT);
-    modeStack->set_transition_duration(200);
+    // A quick crossfade, not a slide: the slide kept the incoming page's
+    // controls travelling (and unclickable) for its whole duration.
+    modeStack->set_transition_type(Gtk::STACK_TRANSITION_TYPE_CROSSFADE);
+    steep::motion::configureStack(*modeStack, steep::motion::Duration::Micro);
 
     // Presets page is added by EditorPanel via presetListPanel->getWidget()
     modeStack->add(*editPanelSW, "edit");
@@ -928,6 +928,13 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
         rotateLbl->set_margin_end(8);
         btnRow->pack_start(*rotateLbl, Gtk::PACK_SHRINK);
 
+        // Turn and flip as one segmented group at the row's right edge, so
+        // the four icons read as a set rather than loose glyphs.
+        Gtk::Box* turnGroup = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+        makeSegmented(*turnGroup);
+        turnGroup->get_style_context()->add_class("rotate-actions");
+        turnGroup->set_valign(Gtk::ALIGN_CENTER);
+
         Gtk::Button* rotL = mkBtn("rotate-left-90", "TP_COARSETRAF_TOOLTIP_ROTLEFT");
         Gtk::Button* rotR = mkBtn("rotate-right-90", "TP_COARSETRAF_TOOLTIP_ROTRIGHT");
         Gtk::Button* flipH = mkBtn("flip-horizontal", "TP_COARSETRAF_TOOLTIP_HFLIP");
@@ -938,26 +945,29 @@ ToolPanelCoordinator::ToolPanelCoordinator (bool batch) : ipc (nullptr), favorit
         flipH->signal_pressed().connect([this]() { coarse->toggleHFlip(); });
         flipV->signal_pressed().connect([this]() { coarse->toggleVFlip(); });
 
-        btnRow->pack_start(*rotL, Gtk::PACK_SHRINK);
-        btnRow->pack_start(*rotR, Gtk::PACK_SHRINK);
-        btnRow->pack_start(*flipH, Gtk::PACK_SHRINK);
-        btnRow->pack_start(*flipV, Gtk::PACK_SHRINK);
+        for (Gtk::Button* b : {rotL, rotR, flipH, flipV}) {
+            b->set_relief(Gtk::RELIEF_NORMAL);
+            turnGroup->pack_start(*b, Gtk::PACK_SHRINK);
+        }
+
+        btnRow->pack_end(*turnGroup, Gtk::PACK_SHRINK);
 
         transformPanel->pack_start(*btnRow, Gtk::PACK_SHRINK, 0);
     }
 
-    transformPanel->pack_start(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)), Gtk::PACK_SHRINK, 2);
-
     // --- Level section (labeled, above Crop) ---
     {
-        Gtk::Box* levelHeader = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+        Gtk::Box* levelHeader = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
         levelHeader->set_margin_start(6);
         levelHeader->set_margin_end(8);
-        levelHeader->set_margin_top(4);
+        levelHeader->set_margin_top(6);
+        levelHeader->set_margin_bottom(2);
 
         Gtk::Label* levelLbl = Gtk::manage(new Gtk::Label(M("TP_ROTATE_LABEL_LEVEL")));
         levelLbl->get_style_context()->add_class("tool-section-label");
         levelHeader->pack_start(*levelLbl, Gtk::PACK_SHRINK);
+        levelHeader->pack_end(*rotate->getActionsWidget(), Gtk::PACK_SHRINK);
+        levelHeader->pack_end(*rotate->getStatusWidget(), Gtk::PACK_EXPAND_WIDGET);
         transformPanel->pack_start(*levelHeader, Gtk::PACK_SHRINK, 0);
 
         rotate->setParent(transformPanel);
@@ -1352,8 +1362,6 @@ std::string ToolPanelCoordinator::getToolName(Tool tool)
             return Grain::TOOL_NAME;
         case Tool::LIGHT_EFFECTS:
             return LightEffects::TOOL_NAME;
-        case Tool::RELIGHT:
-            return Relight::TOOL_NAME;
         case Tool::TILT_SHIFT:
             return TiltShift::TOOL_NAME;
         case Tool::LENS_BLUR:
@@ -1747,11 +1755,6 @@ void ToolPanelCoordinator::resetEditGroupsToDefault()
 void ToolPanelCoordinator::modeChanged(EditorMode mode)
 {
     if (gradingPresets_) gradingPresets_->dismiss();
-    // Direction-aware slide transition
-    bool goingRight = static_cast<int>(mode) > static_cast<int>(prevMode);
-    modeStack->set_transition_type(
-        goingRight ? Gtk::STACK_TRANSITION_TYPE_SLIDE_LEFT
-                   : Gtk::STACK_TRANSITION_TYPE_SLIDE_RIGHT);
 
     // Switch the visible stack child
     switch (mode) {
@@ -2055,6 +2058,12 @@ void ToolPanelCoordinator::populateEditPanel()
     rgbcurves->getExpander()->set_margin_end(8);
 
     // --- Color preview strip ---
+    {
+        auto m = ProcEventMapper::getInstance();
+        EvPreviewStripColor = m->newEvent(WB, "HISTORY_MSG_PREVIEWSTRIP_COLOR");
+        EvPreviewStripDetail = m->newEvent(ALLNORAW, "HISTORY_MSG_PREVIEWSTRIP_DETAIL");
+        EvPreviewStripEffects = m->newEvent(HDR, "HISTORY_MSG_PREVIEWSTRIP_EFFECTS");
+    }
     colorStrip_ = Gtk::manage(new PreviewStrip());
     colorStrip_->setParamModifier([](rtengine::procparams::ProcParams& pp, double t) {
 
@@ -2095,7 +2104,7 @@ void ToolPanelCoordinator::populateEditPanel()
         // event, so assert the X while the handle is off centre and pay for the
         // honest answer only when it lands back on it.
         suppressResetUpdate_ = true;
-        panelChangedFromPreviewStrip(colorStrip_, rtengine::EvExpComp, M("GENERAL_CHANGED"));
+        panelChangedFromPreviewStrip(colorStrip_, EvPreviewStripColor, M("GENERAL_CHANGED"));
         suppressResetUpdate_ = false;
         if (std::abs(scrubber) < 0.001) {
             updateResetButtons();
@@ -2153,10 +2162,6 @@ void ToolPanelCoordinator::populateEditPanel()
                 for (int j = 0; j < 3; j++) {
                     if (j != i) colorDots_[j]->set_active(false);
                 }
-                colorToolStack_->set_transition_type(
-                    i > colorDotActive_
-                        ? Gtk::STACK_TRANSITION_TYPE_SLIDE_LEFT
-                        : Gtk::STACK_TRANSITION_TYPE_SLIDE_RIGHT);
                 colorDotActive_ = i;
                 const char* names[] = {"mixer", "grading", "pointcolor"};
                 colorToolStack_->set_visible_child(names[i]);
@@ -2230,8 +2235,8 @@ void ToolPanelCoordinator::populateEditPanel()
     // Stack for the three tool pages
     colorToolStack_ = Gtk::manage(new Gtk::Stack());
     colorToolStack_->set_name("ColorToolStack");
-    colorToolStack_->set_transition_type(Gtk::STACK_TRANSITION_TYPE_SLIDE_LEFT);
-    colorToolStack_->set_transition_duration(200);
+    colorToolStack_->set_transition_type(Gtk::STACK_TRANSITION_TYPE_CROSSFADE);
+    steep::motion::configureStack(*colorToolStack_, steep::motion::Duration::Micro);
     colorToolStack_->set_hhomogeneous(false);
     colorToolStack_->set_vhomogeneous(false);
 
@@ -2321,7 +2326,7 @@ void ToolPanelCoordinator::populateEditPanel()
         // event, so assert the X while the handle is off centre and pay for the
         // honest answer only when it lands back on it.
         suppressResetUpdate_ = true;
-        panelChangedFromPreviewStrip(detailStrip_, rtengine::EvExpComp, M("GENERAL_CHANGED"));
+        panelChangedFromPreviewStrip(detailStrip_, EvPreviewStripDetail, M("GENERAL_CHANGED"));
         suppressResetUpdate_ = false;
         if (std::abs(scrubber) < 0.001) {
             updateResetButtons();
@@ -2397,7 +2402,7 @@ void ToolPanelCoordinator::populateEditPanel()
         // event, so assert the X while the handle is off centre and pay for the
         // honest answer only when it lands back on it.
         suppressResetUpdate_ = true;
-        panelChangedFromPreviewStrip(effectsStrip_, rtengine::EvExpComp, M("GENERAL_CHANGED"));
+        panelChangedFromPreviewStrip(effectsStrip_, EvPreviewStripEffects, M("GENERAL_CHANGED"));
         suppressResetUpdate_ = false;
         if (std::abs(scrubber) < 0.001) {
             updateResetButtons();
@@ -2411,12 +2416,25 @@ void ToolPanelCoordinator::populateEditPanel()
     // the group reads as one long run of sliders separated only by hairlines.
     // Name each tool instead and drop the hairline.
     {
+        // labelKey null: the tool's own slider already names it (Texture,
+        // Clarity, Grain) or its sections do (Glow, Halation, Flare).
         auto addLabelledEffect = [this](const char* labelKey, FoldableToolPanel* panel, bool collapse) {
-            Gtk::Label* heading = Gtk::manage(new Gtk::Label(M(labelKey)));
-            heading->set_halign(Gtk::ALIGN_START);
-            heading->set_xalign(0.f);
-            heading->get_style_context()->add_class("tool-heading-label");
-            effectsGroup->getContentBox()->pack_start(*heading, Gtk::PACK_SHRINK);
+            if (labelKey) {
+                Gtk::Label* heading = Gtk::manage(new Gtk::Label(M(labelKey)));
+                heading->set_halign(Gtk::ALIGN_START);
+                heading->set_xalign(0.f);
+                heading->get_style_context()->add_class("tool-heading-label");
+
+                if (Gtk::Widget* extra = panel->getHeadingWidget()) {
+                    Gtk::Box* row = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+                    row->pack_start(*heading, Gtk::PACK_SHRINK);
+                    extra->set_valign(Gtk::ALIGN_CENTER);
+                    row->pack_start(*extra, Gtk::PACK_SHRINK);
+                    effectsGroup->getContentBox()->pack_start(*row, Gtk::PACK_SHRINK);
+                } else {
+                    effectsGroup->getContentBox()->pack_start(*heading, Gtk::PACK_SHRINK);
+                }
+            }
 
             addPanel(effectsGroup->getContentBox(), panel, 1);
             panel->setFlatMode(true);
@@ -2427,11 +2445,10 @@ void ToolPanelCoordinator::populateEditPanel()
             }
         };
 
-        addLabelledEffect("TP_TEXTURE_LABEL", texture, true);
-        addLabelledEffect("TP_CLARITY_LABEL", clarity, true);
-        addLabelledEffect("TP_GRAIN_LABEL", grain, true);
-        addLabelledEffect("TP_LIGHTEFFECTS_LABEL", lighteffects, false);
-        addLabelledEffect("TP_RELIGHT_LABEL", relight, false);
+        addLabelledEffect(nullptr, texture, true);
+        addLabelledEffect(nullptr, clarity, true);
+        addLabelledEffect(nullptr, grain, true);
+        addLabelledEffect(nullptr, lighteffects, false);
         addLabelledEffect("TP_PCVIGNETTE_LABEL", pcvignette, true);
         addLabelledEffect("TP_TILTSHIFT_LABEL", tiltshift, true);
         addLabelledEffect("TP_FILMPRESETS_LABEL", filmPresets, true);
@@ -2483,6 +2500,11 @@ void ToolPanelCoordinator::populateEditPanel()
 
     // B&W group: dedicated Black & White section
     bwGroup->getPersistentBox()->pack_start(*bwStrip_, Gtk::PACK_SHRINK);
+
+    for (ToolGroup* group : {lightGroup, colorGroup, detailGroup, effectsGroup, bwGroup}) {
+        group->setHeaderMenuCallback([this](GdkEventButton* event) { showPreviewStripMenu(event); });
+    }
+    applyPreviewStripVisibility();
     addPanel(bwGroup->getContentBox(), blackwhite, 1);
     blackwhite->setFlatMode(true);
 
@@ -2515,6 +2537,14 @@ void ToolPanelCoordinator::populateEditPanel()
     colorappearance->setFlatMode(true);
     addPanel(advancedGroup->getContentBox(), wavelet, 1);
     wavelet->setFlatMode(true);
+    // Legacy tools whose params the engine still applies from old pp3s and
+    // pasted profiles. Kept out of flat mode on purpose: flat mode hides the
+    // header and its power button, and being able to switch these off is the
+    // whole reason they are listed.
+    addPanel(advancedGroup->getContentBox(), localContrast, 1);
+    addPanel(advancedGroup->getContentBox(), lcurve, 1);
+    addPanel(advancedGroup->getContentBox(), cacorrection, 1);
+    addPanel(advancedGroup->getContentBox(), filmSimulation, 1);
     advancedGroup->getContentBox()->pack_start(*metadata, Gtk::PACK_SHRINK);
 
     // Camera group: Lens tools only
@@ -2543,7 +2573,7 @@ void ToolPanelCoordinator::populateEditPanel()
     });
 
     effectsGroup->setResetCallback([this]() {
-        resetGroupToNeutral({texture, clarity, grain, lighteffects, relight, tiltshift, pcvignette,
+        resetGroupToNeutral({texture, clarity, grain, lighteffects, tiltshift, pcvignette,
                              filmPresets, doubleExposure, softlight}, effectsStrip_);
     });
 
@@ -2563,6 +2593,11 @@ void ToolPanelCoordinator::populateEditPanel()
             entry.strip->setResetCallback([group]() {
                 group->triggerReset();
             });
+
+            // A closed group's strip is still on screen (it sits in the
+            // group's persistent box), so it stays current; a strip the user
+            // hid renders nothing (PreviewStrip checks visibility).
+            entry.strip->setActive(true);
         }
     }
 
@@ -4028,12 +4063,20 @@ void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const 
         locallab->setSkipToolWrites(false);
     }
 
+    // Light Effects' halation stands down while Film Lab draws its own; read()
+    // only runs on loads, so a Film Lab edit has to tell it here.
+    if (lighteffects) {
+        lighteffects->updateFilmLabHalation(params->filmPresets);
+    }
+
     // Manual edits establish a new center for every strip. Strip-generated
     // edits retain the existing centers so revisiting a position is absolute.
     if (!previewStripChangeSource_) {
+        // One snapshot for the five of them, not a full copy each.
+        const auto stripParams = std::make_shared<const ProcParams>(*params);
         PreviewStrip* strips[] = {exposureStrip_, colorStrip_, detailStrip_, effectsStrip_, bwStrip_};
         for (auto* strip : strips) {
-            if (strip) strip->setCurrentParams(*params);
+            if (strip) strip->setCurrentParams(stripParams);
         }
     }
 
@@ -4405,10 +4448,11 @@ void ToolPanelCoordinator::profileChange(
 
     // Update preview strips with new params
     {
+        const auto stripParams = std::make_shared<const ProcParams>(*params);
         PreviewStrip* strips[] = {exposureStrip_, colorStrip_, detailStrip_, effectsStrip_, bwStrip_};
         for (auto* strip : strips) {
             if (strip) {
-                strip->setCurrentParams(*params);
+                strip->setCurrentParams(stripParams);
             }
         }
     }
@@ -4815,9 +4859,25 @@ bool ToolPanelCoordinator::completeAIMaskPick()
     }
 
     const int classIndex = cache.getDominantClassAt(imageId, aiMaskPickX_, aiMaskPickY_);
+    const int fullW = cache.getFullWidth();
+    const int fullH = cache.getFullHeight();
+    const int pickX = aiMaskPickX_;
+    const int pickY = aiMaskPickY_;
     aiMaskPickX_ = aiMaskPickY_ = -1;
     if (classIndex >= 0) {
-        locallab->createAIMaskSpot(classIndex);
+        if (rtengine::SamSelector::getInstance().available() && fullW > 0 && fullH > 0) {
+            // Mask the object that was clicked, not every pixel of its class:
+            // the click rides along as a SAM prompt in the spot's paint.
+            rtengine::MaskPaint paint;
+            rtengine::MaskStroke prompt;
+            prompt.kind = rtengine::MaskStroke::Kind::POINT;
+            prompt.add = true;
+            prompt.points.push_back({(pickX + 0.5) / fullW, (pickY + 0.5) / fullH});
+            paint.strokes.push_back(prompt);
+            locallab->createAIMaskSpot(classIndex, paint.encode());
+        } else {
+            locallab->createAIMaskSpot(classIndex);
+        }
     }
 #endif
     return true;
@@ -5103,6 +5163,59 @@ void ToolPanelCoordinator::updateCurveBackgroundHistogram(
     retinex->updateCurveBackgroundHistogram(histToneCurve, histLCurve, histCCurve, histLCAM, histCCAM, histRed, histGreen, histBlue, histLuma, histLRETI);
 }
 
+void ToolPanelCoordinator::applyPreviewStripVisibility()
+{
+    const int hidden = App::get().options().hiddenPreviewStrips;
+    PreviewStrip* const strips[] = {exposureStrip_, colorStrip_, detailStrip_, effectsStrip_, bwStrip_};
+
+    for (int i = 0; i < 5; ++i) {
+        PreviewStrip* strip = strips[i];
+        if (!strip) {
+            continue;
+        }
+        const bool shown = !(hidden & (1 << i));
+        // no_show_all, or a later show_all() of the group brings it back.
+        strip->set_no_show_all(!shown);
+        if (shown && !strip->get_visible()) {
+            strip->show();
+            strip->regenerateThumbnails();
+        } else if (!shown) {
+            strip->hide();
+        }
+    }
+}
+
+void ToolPanelCoordinator::showPreviewStripMenu(GdkEventButton* event)
+{
+    previewStripMenu_.reset(new Gtk::Menu());
+
+    auto* title = Gtk::manage(new Gtk::MenuItem(M("TP_PREVIEWSTRIPS_MENU")));
+    title->set_sensitive(false);
+    previewStripMenu_->append(*title);
+
+    const char* const groupKeys[] = {"TOOLGROUP_LIGHT", "TOOLGROUP_COLOR", "TOOLGROUP_DETAIL", "TOOLGROUP_EFFECTS", "TOOLGROUP_BW"};
+    const int hidden = App::get().options().hiddenPreviewStrips;
+
+    for (int i = 0; i < 5; ++i) {
+        auto* item = Gtk::manage(new Gtk::CheckMenuItem(M(groupKeys[i])));
+        item->set_active(!(hidden & (1 << i)));
+        item->signal_toggled().connect([this, item, i]() {
+            int& mask = App::get().mut_options().hiddenPreviewStrips;
+            mask = item->get_active() ? (mask & ~(1 << i)) : (mask | (1 << i));
+            try {
+                Options::saveAsync();
+            } catch (Options::Error& error) {
+                std::cerr << "Failed to save options: " << error.get_msg() << std::endl;
+            }
+            applyPreviewStripVisibility();
+        });
+        previewStripMenu_->append(*item);
+    }
+
+    previewStripMenu_->show_all();
+    previewStripMenu_->popup_at_pointer(reinterpret_cast<GdkEvent*>(event));
+}
+
 void ToolPanelCoordinator::foldAllButOne(Gtk::Box* parent, FoldableToolPanel* openedSection)
 {
 
@@ -5202,7 +5315,7 @@ void ToolPanelCoordinator::applyUIComplexity(int complexityLevel)
         Tool::PREPROCESS, Tool::DARKFRAME_TOOL, Tool::FLATFIELD_TOOL,
         Tool::RAW_CA_CORRECTION, Tool::RAW_EXPOSURE, Tool::PREPROCESS_WB,
         Tool::BAYER_RAW_EXPOSURE, Tool::XTRANS_RAW_EXPOSURE, Tool::FATTAL,
-        Tool::FILM_NEGATIVE, Tool::PD_SHARPENING, Tool::RELIGHT,
+        Tool::FILM_NEGATIVE, Tool::PD_SHARPENING,
     };
 
     for (const auto& tool : allTools) {
@@ -5527,8 +5640,6 @@ FoldableToolPanel *ToolPanelCoordinator::getFoldableToolPanel(Tool tool) const
             return grain;
         case Tool::LIGHT_EFFECTS:
             return lighteffects;
-        case Tool::RELIGHT:
-            return relight;
         case Tool::TILT_SHIFT:
             return tiltshift;
         case Tool::LENS_BLUR:
@@ -5754,7 +5865,7 @@ std::vector<ToolPanel*> ToolPanelCoordinator::groupToolPanels() const
         // Detail
         sharpening, dirpyrdenoise, dehaze,
         // Effects
-        texture, clarity, grain, lighteffects, relight, tiltshift, pcvignette,
+        texture, clarity, grain, lighteffects, tiltshift, pcvignette,
         filmPresets, doubleExposure, softlight,
         // Spot removal
         spot,
@@ -5899,7 +6010,6 @@ void ToolPanelCoordinator::updateResetButtons()
                      || !(current.clarity == n.clarity)
                      || !(current.grain == n.grain)
                      || !(current.lightEffects == n.lightEffects)
-                     || !(current.relight == n.relight)
                      || !(current.tiltShift == n.tiltShift)
                      || !(current.pcvignette == n.pcvignette)
                      || !(current.filmPresets == n.filmPresets)

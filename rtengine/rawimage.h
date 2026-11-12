@@ -62,6 +62,8 @@ public:
     float** data;             // holds pixel values, data[i][j] corresponds to the ith row and jth column
     unsigned prefilters;               // original filters saved ( used for 4 color processing )
     unsigned int getFrameCount() const { return is_raw; }
+    // The float pixel buffer this object keeps for its lifetime.
+    std::size_t estimatedBytes() const { return memAccounted_; }
 
     double getBaselineExposure() const { return RT_baseline_exposure; }
  
@@ -75,6 +77,8 @@ protected:
     int rotate_deg; // 0,90,180,270 degree of rotation: info taken by dcraw from exif
     char* profile_data; // Embedded ICC color profile
     float* allocation; // pointer to allocated memory
+    std::size_t memAccounted_ = 0; // bytes of `allocation`
+    bool memReported_ = false;     // ... and whether MemGuard has been told
     int maximum_c4[4];
     Decoder decoder{Decoder::DCRAW};
     std::unique_ptr<LibRaw> libraw;

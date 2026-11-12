@@ -20,6 +20,7 @@
 #include <memory>
 
 #include "labimage.h"
+#include "memguard.h"
 
 namespace rtengine
 {
@@ -91,6 +92,8 @@ void LabImage::allocLab(size_t w, size_t h)
     b = new float*[h];
 
     data = new float [w * h * 3];
+    MemGuard::objectCreated(MemGuard::LabImages);
+    MemGuard::addBytes(MemGuard::LabImages, static_cast<long long>(w * h * 3 * sizeof(float)));
     float * index = data;
 
     for (size_t i = 0; i < h; i++) {
@@ -116,6 +119,9 @@ void LabImage::deleteLab()
     delete [] a;
     delete [] b;
     delete [] data;
+    // Paired with allocLab(): W and H never change in between.
+    MemGuard::objectDestroyed(MemGuard::LabImages);
+    MemGuard::addBytes(MemGuard::LabImages, -static_cast<long long>(static_cast<std::size_t>(W) * H * 3 * sizeof(float)));
 }
 
 void LabImage::reallocLab()

@@ -97,7 +97,7 @@ PointColor::PointColor() :
                 Glib::ustring label = (*iter)[targetColumns.label];
 
                 float R, G, B;
-                Color::hsv2rgb01(static_cast<float>(hue), 0.75f, 0.85f, R, G, B);
+                hsvDisplay_.toDisplay(static_cast<float>(hue), 0.75f, 0.85f, R, G, B);
 
                 // Use pango markup for colored bullet
                 char markup[256];
@@ -139,16 +139,7 @@ PointColor::PointColor() :
     // Center Hue selector (0..360 degrees displayed, stored as 0..1)
     centerHueAdj = Gtk::manage(new Adjuster(M("TP_POINTCOLOR_CENTER_HUE"), 0., 360., 1., 0.));
     centerHueAdj->setAdjusterListener(this);
-    {
-        std::vector<GradientMilestone> ms;
-        float R, G, B;
-        for (int i = 0; i <= 6; ++i) {
-            float h = i / 6.0f;
-            Color::hsv2rgb01(h, 0.75f, 0.65f, R, G, B);
-            ms.push_back(GradientMilestone(h, R, G, B));
-        }
-        centerHueAdj->setSliderGradient(ms);
-    }
+    updateHueGradient();
     toolContent_->pack_start(*centerHueAdj, Gtk::PACK_SHRINK, 0);
     centerHueAdj->set_no_show_all(true);   // the ring sets the hue
 
@@ -201,6 +192,22 @@ void PointColor::setControlsSensitive(bool sensitive)
     luminanceAdj->set_sensitive(sensitive);
     rangeAdj->set_sensitive(sensitive);
     removeButton->set_sensitive(sensitive);
+}
+
+void PointColor::updateHueGradient()
+{
+    // Twelve stops: a wide-gamut hue circle seen through sRGB does not
+    // interpolate evenly between its primaries.
+    std::vector<GradientMilestone> ms;
+    float R, G, B;
+
+    for (int i = 0; i <= 12; ++i) {
+        const float h = i / 12.0f;
+        hsvDisplay_.toDisplay(h < 1.f ? h : 0.f, 0.75f, 0.65f, R, G, B);
+        ms.push_back(GradientMilestone(h, R, G, B));
+    }
+
+    centerHueAdj->setSliderGradient(ms);
 }
 
 Glib::ustring PointColor::hueToColorName(double hue01)
@@ -483,7 +490,7 @@ void PointColor::beforeAfter(const PointColorTarget& tgt, Gdk::RGBA& before, Gdk
     float h = static_cast<float>(tgt.centerHue);
     float s = 0.55f;
     float v = 0.72f;
-    Color::hsv2rgb01(h, s, v, r, g, b);
+    hsvDisplay_.toDisplay(h, s, v, r, g, b);
     before.set_rgba(r, g, b, 1.0);
 
     h += static_cast<float>(tgt.hueShift) / 200.f;
@@ -493,7 +500,7 @@ void PointColor::beforeAfter(const PointColorTarget& tgt, Gdk::RGBA& before, Gdk
     float valParam = static_cast<float>(tgt.luminance) / 200.f;
     valParam *= 1.f - std::pow(1.f - std::min(s, 1.f), 4.f);
     v = valParam > 0 ? (1.f - valParam) * v + valParam * (1.f - (1.f - v) * (1.f - v)) : v * (1.f + valParam);
-    Color::hsv2rgb01(h, std::max(0.f, std::min(1.f, s)), std::max(0.f, std::min(1.f, v)), r, g, b);
+    hsvDisplay_.toDisplay(h, std::max(0.f, std::min(1.f, s)), std::max(0.f, std::min(1.f, v)), r, g, b);
     after.set_rgba(r, g, b, 1.0);
 }
 
@@ -511,7 +518,7 @@ bool PointColor::drawHueRing(const Cairo::RefPtr<Cairo::Context>& cr)
         const double a0 = (i / 180.0) * 2 * M_PI - M_PI / 2;
         const double a1 = ((i + 1.5) / 180.0) * 2 * M_PI - M_PI / 2;
         float r, g, b;
-        Color::hsv2rgb01(i / 180.f, 0.6f, 0.75f, r, g, b);
+        hsvDisplay_.toDisplay(i / 180.f, 0.6f, 0.75f, r, g, b);
         cr->set_source_rgba(r, g, b, haveTarget ? 0.45 : 0.8);
         cr->begin_new_path();
         cr->arc(cx, cy, outer, a0, a1);
@@ -537,7 +544,7 @@ bool PointColor::drawHueRing(const Cairo::RefPtr<Cairo::Context>& cr)
         float r, g, b;
         double hue = (a0 + M_PI / 2) / (2 * M_PI);
         hue -= std::floor(hue);
-        Color::hsv2rgb01(static_cast<float>(hue), 0.75f, 0.85f, r, g, b);
+        hsvDisplay_.toDisplay(static_cast<float>(hue), 0.75f, 0.85f, r, g, b);
         cr->set_source_rgb(r, g, b);
         cr->begin_new_path();
         cr->arc(cx, cy, outer, a0, a1);
@@ -644,6 +651,11 @@ void PointColor::read(const ProcParams* pp, const ParamsEdited* pedited)
     }
 
     setEnabled(pp->pointcolor.enabled);
+
+    if (hsvDisplay_.setProfile(pp->icm.workingProfile)) {
+        updateHueGradient();   // the swatches and ring repaint below
+    }
+
     targets = pp->pointcolor.targets;
     activeTarget = pp->pointcolor.activeTarget;
 

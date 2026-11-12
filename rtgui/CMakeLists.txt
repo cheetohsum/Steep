@@ -1,6 +1,7 @@
 # Common source files for both CLI and non-CLI execautables
 set(CLISOURCEFILES
     alignedmalloc.cc
+    editbench-cli.cc
     editcallbacks.cc
     main-cli.cc
     multilangmgr.cc
@@ -50,7 +51,6 @@ set(RT_GUI_TOOL_PANEL_SOURCES
     tools/clarity.cc
     tools/grain.cc
     tools/lighteffects.cc
-    tools/relight.cc
     tools/tiltshift.cc
     tools/lensblur.cc
     tools/locallab.cc
@@ -143,6 +143,7 @@ set(NONCLISOURCEFILES
     alignedmalloc.cc
     aspectratios.cc
     autoedit.cc
+    backgroundtasks.cc
     batchqueue.cc
     batchqueuebuttonset.cc
     batchqueueentry.cc
@@ -182,6 +183,7 @@ set(NONCLISOURCEFILES
     filethumbnailbuttonset.cc
     filterpanel.cc
     guiutils.cc
+    motion.cc
     imagescanhelpers.cc
     selectsindex.cc
     hidpi.cc
@@ -337,6 +339,23 @@ if(WIN32 AND WITH_AI_MASKING)
             COMMENT "Bundling the AI subject model"
         )
     endif()
+    # Upgraded models (rtdata/models/README.md). Over GitHub's 100 MiB limit,
+    # so gitignored and exported locally with tools/export_*_model.py; the
+    # engine prefers them when present and falls back to the two above.
+    foreach(AI_EXTRA_MODEL ade20k_hrnetv2_c1.onnx birefnet_subject.onnx)
+        if(EXISTS "${PROJECT_SOURCE_DIR}/rtdata/models/${AI_EXTRA_MODEL}")
+            add_custom_command(
+                TARGET rth POST_BUILD
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${PROJECT_SOURCE_DIR}/rtdata/models/${AI_EXTRA_MODEL}"
+                    "$<TARGET_FILE_DIR:rth>/models/${AI_EXTRA_MODEL}"
+                COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                    "${PROJECT_SOURCE_DIR}/rtdata/models/${AI_EXTRA_MODEL}"
+                    "${BUNDLE_BASE_INSTALL_DIR}/models/${AI_EXTRA_MODEL}"
+                COMMENT "Bundling ${AI_EXTRA_MODEL}"
+            )
+        endif()
+    endforeach()
 endif()
 
 target_include_directories(rth PRIVATE ${EXTRA_INCDIR})

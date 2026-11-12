@@ -46,6 +46,16 @@ public:
     // a worker keeps it out of startup, as the inpainting model does.
     void initDeferred(const std::string& modelPath);
     bool isInitialized() const;
+    // The model file in use once initialised (empty before).
+    std::string modelPath() const;
+    // Blocks until a load started by initDeferred has finished, whether or
+    // not it succeeded. A batch render calls this first: which subject it
+    // gets must not depend on how fast the session happened to build.
+    void waitForDeferredInit() const;
+    // A load that failed for want of memory (another program holding the
+    // GPU) tries again, after freeing the other models; at most every 30 s,
+    // blocking. True when the model is loaded.
+    bool retryLoad();
 
     // Planar linear RGB [0,65535] in, one saliency map in 0..1 at the same
     // size out. Empty when the model is unavailable.

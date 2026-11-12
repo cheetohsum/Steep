@@ -75,10 +75,15 @@
 // which depend on a tone slider. TONE drops those two bits and leaves the
 // tone stage onwards, exactly the footing RGBCURVE events have always had.
 //
-// Spot removal still shows: its result lives in the cached spotprev/spotCrop
-// buffer, which every pass copies back over the working image. Fattal and
-// dehaze likewise stay applied, because they wrote into that same working
-// image in place on the pass that last carried M_HDR.
+// Spot removal still shows: it is repaired into the working image itself
+// while that image is built from source. Fattal and dehaze likewise stay
+// applied, because they wrote into that same working image in place on the
+// pass that last carried M_HDR.
+//
+// The same holds for every tool that runs from the local-adjustments stage
+// on: local adjustments themselves, channel mixer, HSV, vibrance, B&W,
+// colour toning and the tone equalizer all use TONE. The auto log/CIE
+// events that read the source keep HDR.
 #define TONE                                                                                 (M_AUTOEXP|M_RGBCURVE|M_LUMACURVE|M_LUMINANCE|M_COLOR)
 #define RGBCURVE                                                                                          (M_RGBCURVE|M_LUMACURVE|M_LUMINANCE|M_COLOR)
 #define LUMINANCECURVE                                                                                               (M_LUMACURVE|M_LUMINANCE|M_COLOR)

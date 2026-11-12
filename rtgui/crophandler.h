@@ -137,6 +137,24 @@ public:
     Glib::RefPtr<Gdk::Pixbuf> cropPixbuf;     // image displayed on monitor, using the monitor profile (i.e. lab to monitor profile)
     Glib::RefPtr<Gdk::Pixbuf> cropPixbuftrue; // internal image in output color space for analysis (i.e. lab to either Working profile or Output profile, depending on options.rtSettings.HistogramWorking)
 
+    /// Where a painted frame sits in the image: its top-left in 1:1 image
+    /// coordinates, its pixels per image pixel, and the image size it was
+    /// rendered against (a rotate or crop edit invalidates the mapping).
+    struct FrameGeometry {
+        int x = 0;
+        int y = 0;
+        double zoom = 0.0;
+        int fullWidth = 0;
+        int fullHeight = 0;
+    };
+    FrameGeometry cropPixbufGeometry; // valid while cropPixbuf is set
+
+    /** The last sharp frame, kept after a pan or zoom invalidated cropPixbuf
+      * and until the re-render is accepted. Painting only: it no longer
+      * matches the current window, so overlays and pickers never read it. */
+    Glib::RefPtr<Gdk::Pixbuf> heldPixbuf;
+    FrameGeometry heldPixbufGeometry;
+
     MyMutex cimg;
 
 private:
@@ -150,6 +168,8 @@ private:
 
     void compDim();
     bool acceptUpdate(const PendingUpdate& update) const;
+    /// cropPixbuf is about to stop matching the window: keep it for painting.
+    void holdCropPixbuf();
 
     // size of the crop's canvas on the screen ; might be bigger than the displayed image, but not smaller
     hidpi::LogicalSize windowSize;

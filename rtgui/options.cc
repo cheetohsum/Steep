@@ -17,7 +17,12 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "options.h"
+#include <algorithm>
+#include <condition_variable>
 #include <cstdio>
+#include <mutex>
+#include <string>
+#include <thread>
 #include <glib/gstdio.h>
 #include <glibmm/date.h>
 #include <glibmm/fileutils.h>
@@ -394,6 +399,7 @@ void Options::setDefaults()
     browserTitleShowFullPath = false;
     browserTitlePinToEditor = false;
     filmstripAtBottom = false;
+    reduceMotion = false;
     showGlobalScopeUnfilteredWarning = true;
     dirBrowserSortType = Gtk::SORT_ASCENDING;
     preferencesWidth = 1120;
@@ -428,6 +434,13 @@ void Options::setDefaults()
     fbShowHidden = false;
 #endif
     fbArrangement = 2;                  // was 0
+    folderPreviews = true;
+    folderPreviewCount = 5;
+    folderPreviewSize = 1;
+    folderPreviewsPreferRated = true;
+    filmstripRatingStars = true;
+    filmstripRatingLabels = true;
+    hiddenPreviewStrips = 0;
     navRGBUnit = NavigatorUnit::PERCENT;
     navHSVUnit = NavigatorUnit::PERCENT;
     multiUser = true;
@@ -1533,6 +1546,34 @@ void Options::readFromFile(Glib::ustring fname)
                 }
 #endif
 
+                if (keyFile.has_key("File Browser", "FolderPreviews")) {
+                    folderPreviews = keyFile.get_boolean("File Browser", "FolderPreviews");
+                }
+
+                if (keyFile.has_key("File Browser", "FolderPreviewCount")) {
+                    folderPreviewCount = std::max(1, std::min(5, keyFile.get_integer("File Browser", "FolderPreviewCount")));
+                }
+
+                if (keyFile.has_key("File Browser", "HiddenPreviewStrips")) {
+                    hiddenPreviewStrips = keyFile.get_integer("File Browser", "HiddenPreviewStrips");
+                }
+
+                if (keyFile.has_key("File Browser", "FilmstripRatingStars")) {
+                    filmstripRatingStars = keyFile.get_boolean("File Browser", "FilmstripRatingStars");
+                }
+
+                if (keyFile.has_key("File Browser", "FilmstripRatingLabels")) {
+                    filmstripRatingLabels = keyFile.get_boolean("File Browser", "FilmstripRatingLabels");
+                }
+
+                if (keyFile.has_key("File Browser", "FolderPreviewsPreferRated")) {
+                    folderPreviewsPreferRated = keyFile.get_boolean("File Browser", "FolderPreviewsPreferRated");
+                }
+
+                if (keyFile.has_key("File Browser", "FolderPreviewSize")) {
+                    folderPreviewSize = std::max(0, std::min(3, keyFile.get_integer("File Browser", "FolderPreviewSize")));
+                }
+
                 if (keyFile.has_key("File Browser", "MaxPreviewHeight")) {
                     maxThumbnailHeight = keyFile.get_integer("File Browser", "MaxPreviewHeight");
                 }
@@ -1900,6 +1941,10 @@ void Options::readFromFile(Glib::ustring fname)
 
                 if (keyFile.has_key("GUI", "FilmstripAtBottom")) {
                     filmstripAtBottom = keyFile.get_boolean("GUI", "FilmstripAtBottom");
+                }
+
+                if (keyFile.has_key("GUI", "ReduceMotion")) {
+                    reduceMotion = keyFile.get_boolean("GUI", "ReduceMotion");
                 }
 
                 if (keyFile.has_key("GUI", "ShowGlobalScopeUnfilteredWarning")) {
@@ -2791,7 +2836,7 @@ bool Options::safeDirGet(const Glib::KeyFile& keyFile, const Glib::ustring& sect
     return false;
 }
 
-void Options::saveToFile(Glib::ustring fname)
+Glib::ustring Options::serializeKeyFile()
 {
 
     Glib::ustring keyData;
@@ -2874,6 +2919,13 @@ void Options::saveToFile(Glib::ustring fname)
 #ifndef _WIN32
         keyFile.set_boolean("File Browser", "BrowserShowsHidden", fbShowHidden);
 #endif
+        keyFile.set_boolean("File Browser", "FolderPreviews", folderPreviews);
+        keyFile.set_integer("File Browser", "FolderPreviewCount", folderPreviewCount);
+        keyFile.set_integer("File Browser", "FolderPreviewSize", folderPreviewSize);
+        keyFile.set_boolean("File Browser", "FolderPreviewsPreferRated", folderPreviewsPreferRated);
+        keyFile.set_boolean("File Browser", "FilmstripRatingStars", filmstripRatingStars);
+        keyFile.set_integer("File Browser", "HiddenPreviewStrips", hiddenPreviewStrips);
+        keyFile.set_boolean("File Browser", "FilmstripRatingLabels", filmstripRatingLabels);
         keyFile.set_integer("File Browser", "ThumbnailSize", thumbSize);
         keyFile.set_integer("File Browser", "ThumbnailSizeTab", thumbSizeTab);
         keyFile.set_boolean("File Browser", "FilmstripSizeMigrated", true);
@@ -3075,6 +3127,7 @@ void Options::saveToFile(Glib::ustring fname)
         keyFile.set_boolean("GUI", "BrowserTitleShowFullPath", browserTitleShowFullPath);
         keyFile.set_boolean("GUI", "BrowserTitlePinToEditor", browserTitlePinToEditor);
         keyFile.set_boolean("GUI", "FilmstripAtBottom", filmstripAtBottom);
+        keyFile.set_boolean("GUI", "ReduceMotion", reduceMotion);
         keyFile.set_boolean("GUI", "ShowGlobalScopeUnfilteredWarning", showGlobalScopeUnfilteredWarning);
         keyFile.set_integer("GUI", "SortType", dirBrowserSortType);
         keyFile.set_integer("GUI", "PreferencesWidth", preferencesWidth);
@@ -3323,6 +3376,122 @@ void Options::saveToFile(Glib::ustring fname)
         throw Error(e.what());
     }
 
+    return keyData;
+}
+
+namespace
+{
+
+// The writer behind Options::saveAsync(). It lives here rather than on the
+// GUI's shared background lanes because this file is also built into the
+// command-line program, and because a settings write must not queue behind
+// a folder of thumbnails. It never enters OpenMP, so it keeps no team.
+class OptionsWriter final
+{
+public:
+    static OptionsWriter& instance()
+    {
+        // Leaked: the thread may still be waiting during static destruction.
+        static OptionsWriter* const writer = new OptionsWriter();
+        return *writer;
+    }
+
+    void submit(std::string path, std::string data)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            pendingPath_ = std::move(path);
+            pendingData_ = std::move(data);
+            pending_ = true;
+
+            if (!started_) {
+                started_ = true;
+                std::thread([this]() { run(); }).detach();
+            }
+        }
+        changed_.notify_all();
+    }
+
+    // Waits for everything submitted so far to reach the disk.
+    void flush()
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        changed_.wait(lock, [this]() { return !pending_ && !writing_; });
+    }
+
+    // Drops a snapshot that has not been started and waits out one that has,
+    // so a newer synchronous save cannot be overwritten by an older one.
+    void supersede()
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        pending_ = false;
+        changed_.wait(lock, [this]() { return !writing_; });
+    }
+
+private:
+    OptionsWriter() = default;
+
+    void run()
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+
+        while (true) {
+            changed_.wait(lock, [this]() { return pending_; });
+            const std::string path = std::move(pendingPath_);
+            const std::string data = std::move(pendingData_);
+            pending_ = false;
+            writing_ = true;
+            lock.unlock();
+
+            write(path, data);
+
+            lock.lock();
+            writing_ = false;
+            changed_.notify_all();
+        }
+    }
+
+    static void write(const std::string& path, const std::string& data)
+    {
+        // Beside the file and renamed over it: the process can be killed at
+        // any moment, and that must leave either the old options or the new.
+        const std::string temp = path + ".tmp";
+        bool written = false;
+
+        if (FILE* f = g_fopen(temp.c_str(), "wt")) {
+            const bool ok = fputs(data.c_str(), f) >= 0;
+            written = (fclose(f) == 0) && ok;
+        }
+
+        if (written && g_rename(temp.c_str(), path.c_str()) == 0) {
+            return;
+        }
+
+        g_remove(temp.c_str());
+
+        if (FILE* f = g_fopen(path.c_str(), "wt")) {
+            fputs(data.c_str(), f);
+            fclose(f);
+        } else {
+            std::cout << "Warning! Unable to save your preferences to: " << path << std::endl;
+        }
+    }
+
+    std::mutex mutex_;
+    std::condition_variable changed_;
+    std::string pendingPath_;
+    std::string pendingData_;
+    bool pending_ = false;
+    bool writing_ = false;
+    bool started_ = false;
+};
+
+}
+
+void Options::saveToFile(Glib::ustring fname)
+{
+    const Glib::ustring keyData = serializeKeyFile();
+
     FILE *f = g_fopen(fname.c_str(), "wt");
 
     if (f == nullptr) {
@@ -3446,6 +3615,9 @@ void Options::load(bool lightweight)
     // Stuck photosites learned per camera (rtengine/stuckpixelmemory.h) live
     // with the settings, not the cache: they take many sessions to learn.
     options.rtSettings.stuckPixelMemoryDir = Glib::build_filename(rtdir, "stuckpixels");
+    // AI class maps are worth keeping across sessions (seconds of model time
+    // per photo) but are derived data, so they live in the cache.
+    options.rtSettings.aiMaskCacheDir = Glib::build_filename(cacheBaseDir, "aimasks");
 
     // Check default Raw and Img procparams existence
     if (options.defProfRaw.empty()) {
@@ -3534,8 +3706,25 @@ void Options::load(bool lightweight)
 
 void Options::save()
 {
+    // An older snapshot still on its way to the disk must not land on top
+    // of this one.
+    OptionsWriter::instance().supersede();
 
     App::get().mut_options().saveToFile(Glib::build_filename(rtdir, "options"));
+}
+
+void Options::saveAsync()
+{
+    // Serialised now, on the caller's thread: the options are plain members
+    // that only this thread is changing, so this is the consistent moment.
+    const Glib::ustring keyData = App::get().mut_options().serializeKeyFile();
+
+    OptionsWriter::instance().submit(Glib::build_filename(rtdir, "options"), keyData.raw());
+}
+
+void Options::flushPendingSave()
+{
+    OptionsWriter::instance().flush();
 }
 
 /*

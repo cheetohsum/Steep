@@ -18,6 +18,7 @@
 #ifdef RT_AI_MASKING
 
 #include "locallabaimask.h"
+#include "../aimaskclasses.h"
 #include "eventmapper.h"
 #include "options.h"
 #include "rtengine/procparams.h"
@@ -44,7 +45,7 @@ LocallabAIMask::LocallabAIMask():
     set_orientation(Gtk::ORIENTATION_VERTICAL);
 
     auto m = ProcEventMapper::getInstance();
-    EvlocallabAIMask = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_AIMASK");
+    EvlocallabAIMask = m->newEvent(TONE, "HISTORY_MSG_LOCAL_AIMASK");
 
     const LocallabParams::LocallabSpot defSpot;
 
@@ -52,18 +53,11 @@ LocallabAIMask::LocallabAIMask():
     Gtk::Frame* const classFrame = Gtk::manage(new Gtk::Frame(M("TP_LOCALLAB_AIMASK_CLASS")));
     Gtk::Box* const classBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
 
-    aiMaskClassCombo->append(M("TP_LOCALLAB_AIMASK_CLASS_BACKGROUND"));
-    aiMaskClassCombo->append(M("TP_LOCALLAB_AIMASK_CLASS_PERSON"));
-    aiMaskClassCombo->append(M("TP_LOCALLAB_AIMASK_CLASS_SKY"));
-    aiMaskClassCombo->append(M("TP_LOCALLAB_AIMASK_CLASS_VEGETATION"));
-    aiMaskClassCombo->append(M("TP_LOCALLAB_AIMASK_CLASS_BUILDING"));
-    aiMaskClassCombo->append(M("TP_LOCALLAB_AIMASK_CLASS_VEHICLE"));
-    aiMaskClassCombo->append(M("TP_LOCALLAB_AIMASK_CLASS_ANIMAL"));
-    aiMaskClassCombo->append(M("TP_LOCALLAB_AIMASK_CLASS_FOREGROUND"));
-    // Composed pseudo-classes (AISegClass::SUBJECT / NOT_SUBJECT).
-    aiMaskClassCombo->append(M("TP_LOCALLAB_AIMASK_CLASS_SUBJECT"));
-    aiMaskClassCombo->append(M("TP_LOCALLAB_AIMASK_CLASS_NOTSUBJECT"));
-    aiMaskClassCombo->set_active(defSpot.aiMaskClass);
+    // Rows follow aimaskclasses::menu(), the order every class menu uses.
+    for (const aimaskclasses::Entry& entry : aimaskclasses::menu()) {
+        aiMaskClassCombo->append(M(entry.labelKey));
+    }
+    aiMaskClassCombo->set_active(aimaskclasses::rowOf(defSpot.aiMaskClass));
     aiMaskClassConn = aiMaskClassCombo->signal_changed().connect(
         sigc::mem_fun(*this, &LocallabAIMask::aiMaskClassChanged));
     classBox->pack_start(*aiMaskClassCombo);
@@ -198,7 +192,7 @@ void LocallabAIMask::read(const rtengine::procparams::ProcParams* pp, const Para
         exp->set_visible(true);
         exp->setEnabled(spot.expaimask);
 
-        aiMaskClassCombo->set_active(spot.aiMaskClass);
+        aiMaskClassCombo->set_active(aimaskclasses::rowOf(spot.aiMaskClass));
         aiMaskThreshold->setValue(100.0 * (1.0 - spot.aiMaskThreshold));
         aiMaskFeather->setValue(spot.aiMaskFeather);
         aiMaskBlur->setValue(spot.aiMaskBlur);
@@ -224,7 +218,10 @@ void LocallabAIMask::write(rtengine::procparams::ProcParams* pp, ParamsEdited* p
         spot.expaimask = exp->getEnabled();
         spot.useAIMask = exp->getEnabled();
 
-        spot.aiMaskClass = aiMaskClassCombo->get_active_row_number();
+        const int cls = aimaskclasses::classAt(aiMaskClassCombo->get_active_row_number());
+        if (cls >= 0) {
+            spot.aiMaskClass = cls;
+        }
         spot.aiMaskThreshold = rtengine::LIM(
             1.0 - aiMaskThreshold->getValue() / 100.0, 0.0, 1.0);
         spot.aiMaskFeather = aiMaskFeather->getValue();
@@ -343,7 +340,7 @@ void LocallabAIMask::openMaskEditor()
 {
     MaskPaintDlg::AutoMask automatic;
     const AIMaskSnapshot snapshot = AIMaskCache::getInstance().getPreparedMask(
-        static_cast<AISegClass>(aiMaskClassCombo->get_active_row_number()),
+        static_cast<AISegClass>(std::max(0, aimaskclasses::classAt(aiMaskClassCombo->get_active_row_number()))),
         static_cast<float>(rtengine::LIM(1.0 - aiMaskThreshold->getValue() / 100.0, 0.0, 1.0)),
         static_cast<float>(aiMaskFeather->getValue()),
         static_cast<float>(aiMaskBlur->getValue()),
@@ -354,7 +351,7 @@ void LocallabAIMask::openMaskEditor()
         rtengine::MaskPaint(),
         true);
 
-    if (snapshot) {
+    if (snapshot && !snapshot.pending) {
         automatic.width = snapshot.width;
         automatic.height = snapshot.height;
         automatic.values.resize(static_cast<size_t>(automatic.width) * automatic.height);

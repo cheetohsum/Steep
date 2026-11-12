@@ -15,6 +15,7 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "filmpresets.h"
+#include "motion.h"
 
 #include "eventmapper.h"
 #include "steeppopup.h"
@@ -117,10 +118,7 @@ FilmPresets::FilmPresets() :
     EvFilmPresetsBloom = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_BLOOM");
     EvFilmPresetsOutputSoftness = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_OUTPUTSOFTNESS");
 
-    // --- Label + enable checkbox + preset dropdown on same row ---
-    auto* headerLabel = Gtk::manage(new Gtk::Label(M("TP_FILMPRESETS_LABEL")));
-    headerLabel->set_halign(Gtk::ALIGN_START);
-
+    // --- Enable checkbox (beside the tool's heading) + preset dropdown ---
     enableCheck_ = Gtk::manage(new Gtk::CheckButton());
     enableCheck_->set_active(false);
     enableConn_ = enableCheck_->signal_toggled().connect(
@@ -206,8 +204,6 @@ FilmPresets::FilmPresets() :
     strength->set_tooltip_text(M("TP_FILMPRESETS_STRENGTH_TOOLTIP"));
 
     auto* headerRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
-    headerRow->pack_start(*headerLabel, Gtk::PACK_SHRINK, 0);
-    headerRow->pack_start(*enableCheck_, Gtk::PACK_SHRINK, 0);
     headerRow->pack_start(*presetButton_, Gtk::PACK_EXPAND_WIDGET, 0);
 
     auto* summaryBox = getSummaryBox();
@@ -463,13 +459,14 @@ FilmPresets::FilmPresets() :
 
     detailRevealer_ = Gtk::manage(new Gtk::Revealer());
     detailRevealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-    detailRevealer_->set_transition_duration(200);
+    steep::motion::configureRevealer(*detailRevealer_);
     detailRevealer_->set_reveal_child(false);
     detailRevealer_->add(*detailContent_);
     detailRevealer_->show();
     summaryBox->pack_start(*detailRevealer_, Gtk::PACK_SHRINK);
 
     summaryBox->show_all();
+    enableCheck_->show();
 }
 
 void FilmPresets::toggleDetail()

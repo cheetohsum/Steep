@@ -2,6 +2,7 @@
  *  This file is part of RawTherapee.
  */
 #include "pcvignette.h"
+#include "motion.h"
 
 #include "rtengine/procparams.h"
 
@@ -50,7 +51,7 @@ PCVignette::PCVignette () : FoldableToolPanel(this, TOOL_NAME, M("TP_PCVIGNETTE_
 
     detailRevealer_ = Gtk::manage(new Gtk::Revealer());
     detailRevealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-    detailRevealer_->set_transition_duration(200);
+    steep::motion::configureRevealer(*detailRevealer_);
     detailRevealer_->set_reveal_child(false);
     detailRevealer_->add(*detailContent_);
     detailRevealer_->show();

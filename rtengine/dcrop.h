@@ -24,6 +24,7 @@
 #include "rtengine.h"
 #include "cropupdatestate.h"
 #include "pipettebuffer.h"
+#include "refreshmap.h"
 #include "rtgui/threadutils.h"
 
 namespace rtengine
@@ -67,11 +68,18 @@ protected:
     int          transCropTrafX = -1;
     int          transCropTrafY = -1;
     int          transCropSkip = -1;
+    /// True when origCrop was last built from the fast preview demosaic or
+    /// with preview-grade smart repairs, so the settled refinement has to
+    /// rebuild it from source rather than just finish the frame.
+    bool         sourceDegraded = true;
+    /// Pipeline bits of coordinator passes that did not update this crop.
+    std::atomic<int> skippedTodo{0};
     CieImage*    cieCrop;      // allocating 6 images, each in "one chunk" allocation
     // -----------------------------------------------------------------
     float**         shbuffer;
 
     CropUpdateState updateState;
+    std::atomic<bool> closing_{false};
     int skip;
     int cropx, cropy, cropw, croph;         /// size of the detail crop image ('skip' taken into account), with border
     int trafx, trafy, trafw, trafh;         /// the size and position to get from the imagesource that is transformed to the requested crop area
@@ -96,6 +104,11 @@ public:
     void setEditSubscriber(EditSubscriber* newSubscriber);
     bool hasListener();
     void update(int todo);
+    /// Remember the work of a coordinator pass that skipped this crop.
+    void noteSkippedUpdate(int todo)
+    {
+        skippedTodo.fetch_or(todo & ~M_HIGHQUAL);
+    }
     void setWindow   (int cropX, int cropY, int cropW, int cropH, int skip) override
     {
         setCropSizes(cropX, cropY, cropW, cropH, skip, false);

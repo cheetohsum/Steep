@@ -34,6 +34,9 @@
 #include "rtengine/procparams.h"
 #include "rtengine/profilestore.h"
 #include "rtengine/rtengine.h"
+#ifdef RT_AI_MASKING
+#include "rtengine/aisubjectmodel.h"
+#endif
 #include "options.h"
 #include "soundman.h"
 #include "rtimage.h"
@@ -73,11 +76,18 @@ bool fast_export = false;
  *  -2 if an error occurred during processing
  *  -3 if at least one required procparam file was not found */
 int processLineParams ( int argc, char **argv );
+int runHeadlessEditBench(const char* file);
+int runHeadlessMemLoop(const char* listFile);
+int runAIMaskEval(const char* listFile);
 
 bool dontLoadCache ( int argc, char **argv );
 
 int main (int argc, char **argv)
 {
+    // Idle OpenMP workers should sleep, not spin. Must come before the first
+    // parallel region; never overrides what the user has set.
+    g_setenv ("OMP_WAIT_POLICY", "passive", FALSE);
+
     setlocale (LC_ALL, "");
     setlocale (LC_NUMERIC, "C"); // to set decimal point to "."
 
@@ -191,6 +201,18 @@ int main (int argc, char **argv)
 #endif
 
     int ret = 0;
+    // Headless edit-latency bench (editbench-cli.cc); no GUI involved.
+    // Headless AI mask dump for tools/aimask_eval.py (editbench-cli.cc).
+    if (const char* evalList = std::getenv("STEEP_AIMASK_EVAL")) {
+        return runAIMaskEval(evalList);
+    }
+    if (const char* memLoop = std::getenv("STEEP_CLI_MEM_LOOP")) {
+        return runHeadlessMemLoop(memLoop);
+    }
+    if (const char* benchFile = std::getenv("STEEP_CLI_EDIT_BENCH")) {
+        return runHeadlessEditBench(benchFile);
+    }
+
 
     // printing RT's version in all case, particularly useful for the 'verbose' mode, but also for the batch processing
     std::cout << "Steep, version " << RTVERSION << ", command line." << std::endl;
@@ -658,6 +680,14 @@ int processLineParams ( int argc, char **argv )
             return -3;
         }
     }
+
+#ifdef RT_AI_MASKING
+    // The subject model loads in the background. Anything segmented before
+    // it is ready gets the composed-from-classes subject instead, so without
+    // this the same profile renders a different picture (AI masks)
+    // depending on how quickly the session built.
+    rtengine::getAISubjectEngine().waitForDeferredInit();
+#endif
 
     for ( size_t iFile = 0; iFile < inputFiles.size(); iFile++) {
 

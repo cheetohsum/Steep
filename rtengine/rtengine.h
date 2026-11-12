@@ -79,6 +79,7 @@ class IImage8;
 class IImage16;
 class IImagefloat;
 class Imagefloat;
+class FullQualityTwin;
 class ImageSource;
 class TweakOperator;
 
@@ -799,6 +800,10 @@ public:
     /** Sets the scale of the preview image. The larger the number is, the faster the image updates are (typical values are 4-5).
       * @param scale is the scale of the preview image */
     virtual void        setPreviewScale (int scale) = 0;
+    /** Gives the processor a second decode of its photo being prepared at full
+      * quality in the background (see fullqualitytwin.h); its first
+      * full-quality pass adopts it instead of demosaicing again. */
+    virtual void        setFullQualityTwin (std::shared_ptr<FullQualityTwin> twin) {}
     /** Returns the scale of the preview image.
       * @return the current scale of the preview image */
     virtual int         getPreviewScale () = 0;

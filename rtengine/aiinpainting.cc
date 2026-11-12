@@ -18,6 +18,7 @@
 #ifdef RT_AI_MASKING
 
 #include "aiinpainting.h"
+#include "aiidlereaper.h"
 #include "onnxruntime_compat.h"
 #include "repairmath.h"
 #include <cstdio>
@@ -69,6 +70,55 @@ struct AIInpaintingEngine::Impl {
     bool loading;
     std::mutex loadMutex;
     std::condition_variable ready;
+
+    // The session holds about 3.3 GB once built and Remove Object is used
+    // rarely, so it is released when idle (AIIdleReaper) and rebuilt on the
+    // next fill. inferenceMutex guards the session against both.
+    std::string modelPath;
+    std::atomic<long long> lastUse{0};
+    int reaperId = -1;
+
+    // Caller holds inferenceMutex.
+    bool loadSessionLocked()
+    {
+        if (session) {
+            return true;
+        }
+        if (!api || !env || !sessionOptions || modelPath.empty()) {
+            return false;
+        }
+#ifdef _WIN32
+        const int wlen = MultiByteToWideChar(CP_UTF8, 0, modelPath.c_str(), -1, nullptr, 0);
+        std::vector<wchar_t> wpath(wlen);
+        MultiByteToWideChar(CP_UTF8, 0, modelPath.c_str(), -1, wpath.data(), wlen);
+        OrtStatus* status = api->CreateSession(env, wpath.data(), sessionOptions, &session);
+#else
+        OrtStatus* status = api->CreateSession(env, modelPath.c_str(), sessionOptions, &session);
+#endif
+        if (status) {
+            fprintf(stderr, "AI Inpainting: failed to reload model: %s\n", api->GetErrorMessage(status));
+            api->ReleaseStatus(status);
+            session = nullptr;
+            return false;
+        }
+        fprintf(stderr, "AI Inpainting: reloaded %s\n", modelPath.c_str());
+        return true;
+    }
+
+    void releaseIfIdle(bool force)
+    {
+        std::unique_lock<std::timed_mutex> lock(inferenceMutex, std::try_to_lock);
+        if (!lock.owns_lock() || !session || (!force && AIIdleReaper::nowMs() - lastUse.load() < AIIdleReaper::kIdleMs)) {
+            return;
+        }
+        api->ReleaseSession(session);
+        session = nullptr;
+        if (force) {
+            fprintf(stderr, "AI Inpainting: model unloaded to free memory\n");
+        } else {
+            fprintf(stderr, "AI Inpainting: model unloaded after %lld s idle\n", AIIdleReaper::kIdleMs / 1000);
+        }
+    }
 
     Impl() : api(nullptr), env(nullptr), session(nullptr),
              sessionOptions(nullptr), memoryInfo(nullptr), initialized(false),
@@ -167,7 +217,13 @@ bool AIInpaintingEngine::init(const std::string& modelPath)
     pImpl->inputHeight = dims[2] > 0 ? int(dims[2]) : 512;
     pImpl->inputWidth = dims[3] > 0 ? int(dims[3]) : 512;
     pImpl->dynamicDims = dims[2] > 0 && dims[3] > 0 ? 0 : -1;
+    pImpl->modelPath = modelPath;
+    pImpl->lastUse = AIIdleReaper::nowMs();
     pImpl->initialized = true;
+    {
+        Impl* const impl = pImpl.get();
+        pImpl->reaperId = AIIdleReaper::watch([impl](bool force) { impl->releaseIfIdle(force); });
+    }
     fprintf(stderr, "AI Inpainting: LaMa engine initialized successfully\n");
     return true;
 }
@@ -468,6 +524,16 @@ bool AIInpaintingEngine::inpaint(const float* r, const float* g, const float* b,
         if (job) job->checkpoint();
     }
     if (job) job->checkpoint();
+    // Freed when idle (AIIdleReaper); back for this fill.
+    if (!pImpl->loadSessionLocked()) {
+        return false;
+    }
+    pImpl->lastUse = AIIdleReaper::nowMs();
+    const struct TouchOnExit {
+        Impl* impl;
+        // A long fill must not look idle the moment it ends.
+        ~TouchOnExit() { impl->lastUse = AIIdleReaper::nowMs(); }
+    } touch{pImpl.get()};
     return version >= 2 ? inpaintV2(r, g, b, mask, w, h, outR, outG, outB, job)
                         : inpaintLegacy(r, g, b, mask, w, h, outR, outG, outB);
 }

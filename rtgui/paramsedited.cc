@@ -269,17 +269,6 @@ void ParamsEdited::set(bool v)
     lightEffects.flare = v;
     lightEffects.flareLength = v;
     lightEffects.flareAngle = v;
-    relight.enabled = v;
-    relight.lightX = v;
-    relight.lightY = v;
-    relight.distance = v;
-    relight.intensity = v;
-    relight.reach = v;
-    relight.shadows = v;
-    relight.background = v;
-    relight.subjectFocus = v;
-    relight.warmth = v;
-    relight.shape = v;
     tiltShift.enabled = v;
     tiltShift.amount = v;
     tiltShift.focusPos = v;
@@ -1182,18 +1171,6 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         lightEffects.flare = lightEffects.flare && p.lightEffects.flare == other.lightEffects.flare;
         lightEffects.flareLength = lightEffects.flareLength && p.lightEffects.flareLength == other.lightEffects.flareLength;
         lightEffects.flareAngle = lightEffects.flareAngle && p.lightEffects.flareAngle == other.lightEffects.flareAngle;
-        relight.enabled = relight.enabled && p.relight.enabled == other.relight.enabled;
-        relight.lightX = relight.lightX && p.relight.lightX == other.relight.lightX;
-        relight.lightY = relight.lightY && p.relight.lightY == other.relight.lightY;
-        relight.distance = relight.distance && p.relight.distance == other.relight.distance;
-        relight.intensity = relight.intensity && p.relight.intensity == other.relight.intensity;
-        relight.reach = relight.reach && p.relight.reach == other.relight.reach;
-        relight.shadows = relight.shadows && p.relight.shadows == other.relight.shadows;
-        relight.background = relight.background && p.relight.background == other.relight.background;
-        relight.subjectFocus = relight.subjectFocus && p.relight.subjectFocus == other.relight.subjectFocus;
-        relight.warmth = relight.warmth && p.relight.warmth == other.relight.warmth;
-        relight.shape = relight.shape && p.relight.shape == other.relight.shape;
-
         tiltShift.enabled = tiltShift.enabled && p.tiltShift.enabled == other.tiltShift.enabled;
         tiltShift.amount = tiltShift.amount && p.tiltShift.amount == other.tiltShift.amount;
         tiltShift.focusPos = tiltShift.focusPos && p.tiltShift.focusPos == other.tiltShift.focusPos;
@@ -2227,6 +2204,7 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
                 locallab.spots.at(j).aiMaskRefineRadius = locallab.spots.at(j).aiMaskRefineRadius && pSpot.aiMaskRefineRadius == otherSpot.aiMaskRefineRadius;
                 locallab.spots.at(j).aiMaskRefineEps = locallab.spots.at(j).aiMaskRefineEps && pSpot.aiMaskRefineEps == otherSpot.aiMaskRefineEps;
                 locallab.spots.at(j).aiMaskShapeOp = locallab.spots.at(j).aiMaskShapeOp && pSpot.aiMaskShapeOp == otherSpot.aiMaskShapeOp;
+                locallab.spots.at(j).aiMaskDepthRange = locallab.spots.at(j).aiMaskDepthRange && pSpot.aiMaskDepthRange == otherSpot.aiMaskDepthRange;
                 locallab.spots.at(j).aiMaskPaint = locallab.spots.at(j).aiMaskPaint && pSpot.aiMaskPaint == otherSpot.aiMaskPaint;
 
                 //ciecam
@@ -3254,40 +3232,6 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
     }
     if (lightEffects.flareAngle) {
         toEdit.lightEffects.flareAngle = mods.lightEffects.flareAngle;
-    }
-
-    if (relight.enabled) {
-        toEdit.relight.enabled = mods.relight.enabled;
-    }
-    if (relight.lightX) {
-        toEdit.relight.lightX = mods.relight.lightX;
-    }
-    if (relight.lightY) {
-        toEdit.relight.lightY = mods.relight.lightY;
-    }
-    if (relight.distance) {
-        toEdit.relight.distance = mods.relight.distance;
-    }
-    if (relight.intensity) {
-        toEdit.relight.intensity = mods.relight.intensity;
-    }
-    if (relight.reach) {
-        toEdit.relight.reach = mods.relight.reach;
-    }
-    if (relight.shadows) {
-        toEdit.relight.shadows = mods.relight.shadows;
-    }
-    if (relight.background) {
-        toEdit.relight.background = mods.relight.background;
-    }
-    if (relight.subjectFocus) {
-        toEdit.relight.subjectFocus = mods.relight.subjectFocus;
-    }
-    if (relight.warmth) {
-        toEdit.relight.warmth = mods.relight.warmth;
-    }
-    if (relight.shape) {
-        toEdit.relight.shape = mods.relight.shape;
     }
 
     if (tiltShift.enabled) {
@@ -4588,6 +4532,18 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
             toEdit.locallab.spots.at(i).loc = mods.locallab.spots.at(i).loc;
         }
 
+        if (locallab.spots.at(i).polyMaskPoints) {
+            toEdit.locallab.spots.at(i).polyMaskPoints = mods.locallab.spots.at(i).polyMaskPoints;
+        }
+        if (locallab.spots.at(i).polyMaskFeather) {
+            toEdit.locallab.spots.at(i).polyMaskFeather = mods.locallab.spots.at(i).polyMaskFeather;
+        }
+        if (locallab.spots.at(i).polyMaskSnapTolerance) {
+            toEdit.locallab.spots.at(i).polyMaskSnapTolerance = mods.locallab.spots.at(i).polyMaskSnapTolerance;
+        }
+        if (locallab.spots.at(i).polyMaskLegLength) {
+            toEdit.locallab.spots.at(i).polyMaskLegLength = mods.locallab.spots.at(i).polyMaskLegLength;
+        }
         if (locallab.spots.at(i).maskBlendMode) {
             toEdit.locallab.spots.at(i).maskBlendMode = mods.locallab.spots.at(i).maskBlendMode;
         }
@@ -5170,8 +5126,8 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
             toEdit.locallab.spots.at(i).laplacexp = mods.locallab.spots.at(i).laplacexp;
         }
 
-        if (locallab.spots.at(i).laplacexp) {
-            toEdit.locallab.spots.at(i).laplacexp = mods.locallab.spots.at(i).laplacexp;
+        if (locallab.spots.at(i).balanexp) {
+            toEdit.locallab.spots.at(i).balanexp = mods.locallab.spots.at(i).balanexp;
         }
 
         if (locallab.spots.at(i).reparexp) {
@@ -5964,6 +5920,10 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
 
         if (locallab.spots.at(i).Lmaskblcurve) {
             toEdit.locallab.spots.at(i).Lmaskblcurve = mods.locallab.spots.at(i).Lmaskblcurve;
+        }
+
+        if (locallab.spots.at(i).csthresholdblur) {
+            toEdit.locallab.spots.at(i).csthresholdblur = mods.locallab.spots.at(i).csthresholdblur;
         }
 
         if (locallab.spots.at(i).LLmaskblcurvewav) {
@@ -7186,6 +7146,10 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
             toEdit.locallab.spots.at(i).aiMaskShapeOp = mods.locallab.spots.at(i).aiMaskShapeOp;
         }
 
+        if (locallab.spots.at(i).aiMaskDepthRange) {
+            toEdit.locallab.spots.at(i).aiMaskDepthRange = mods.locallab.spots.at(i).aiMaskDepthRange;
+        }
+
         if (locallab.spots.at(i).aiMaskRefineEps) {
             toEdit.locallab.spots.at(i).aiMaskRefineEps = mods.locallab.spots.at(i).aiMaskRefineEps;
         }
@@ -7417,6 +7381,10 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
 
         if (locallab.spots.at(i).jzcurve) {
             toEdit.locallab.spots.at(i).jzcurve = mods.locallab.spots.at(i).jzcurve;
+        }
+
+        if (locallab.spots.at(i).czcurve) {
+            toEdit.locallab.spots.at(i).czcurve = mods.locallab.spots.at(i).czcurve;
         }
 
         if (locallab.spots.at(i).czjzcurve) {
@@ -10278,6 +10246,7 @@ LocallabParamsEdited::LocallabSpotEdited::LocallabSpotEdited(bool v) :
     aiMaskRefineRadius(v),
     aiMaskRefineEps(v),
     aiMaskShapeOp(v),
+    aiMaskDepthRange(v),
     aiMaskPaint(v),
     //ciecam
     visicie(v),
@@ -10943,6 +10912,7 @@ void LocallabParamsEdited::LocallabSpotEdited::set(bool v)
     sharshow = v;
     sharshow = v;
     itercheck = v;
+    methodcap = v;
     capradius = v;
     deconvAutoRadius = v;
     deconvCoBoost = v;
@@ -11158,6 +11128,7 @@ void LocallabParamsEdited::LocallabSpotEdited::set(bool v)
     aiMaskRefineRadius = v;
     aiMaskRefineEps = v;
     aiMaskShapeOp = v;
+    aiMaskDepthRange = v;
     aiMaskPaint = v;
     //ciecam
     visicie= v;

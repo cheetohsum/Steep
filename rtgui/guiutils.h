@@ -99,6 +99,44 @@ Gtk::Overlay* addCountBadge(Gtk::Widget& button, Gtk::Label*& badge);
 /// Shows @p count in the pill, or hides the pill at zero.
 void setCountBadge(Gtk::Label* badge, int count);
 
+/// Shared pieces of the hand-drawn UI, so shape, type and numerals stay on
+/// one scale instead of being re-decided at every draw site.
+namespace steepui
+{
+
+/// The corner-radius scale. S: chips, badges, swatches. M: controls, pills,
+/// menu items, thumbnails. L: cards, popovers, group headers. The CSS keeps
+/// to the same three values (tools/ui_lint.py checks both).
+enum class Radius { S = 3, M = 6, L = 10 };
+
+/// Adds a rounded-rectangle sub-path (no fill or stroke). The radius is
+/// clamped so it can never exceed half of either side.
+void roundedRect(const Cairo::RefPtr<Cairo::Context>& cr, double x, double y, double w, double h, double radius);
+void roundedRect(const Cairo::RefPtr<Cairo::Context>& cr, double x, double y, double w, double h, Radius radius);
+
+/// Sets the Cairo source to a theme colour. @p alpha < 0 keeps the colour's
+/// own alpha (steep_shadow carries one); otherwise it replaces it.
+void setSource(const Cairo::RefPtr<Cairo::Context>& cr, const Gdk::RGBA& color, double alpha = -1.0);
+
+/// Fixed-width digits (OpenType "tnum") for readouts that change in place,
+/// so a value does not jitter sideways while it is being dragged.
+void useTabularNumerals(Gtk::Label& label);
+void useTabularNumerals(const Glib::RefPtr<Pango::Layout>& layout);
+
+/// The user's UI font (Preferences, or GTK's default) at @p scale times its
+/// size — for hand-drawn text, in place of a hardcoded "sans 9".
+/// The type ladder: 0.75 caption, 0.85 small, 1 body, 1.15 title, 1.25 display.
+Pango::FontDescription uiFont(double scale = 1.0);
+/// The same size in 1024ths of a point, for Pango markup size='N'.
+int uiFontMarkupSize(double scale = 1.0);
+
+/// The one sidebar list row height (Places, Folders, Albums): 24px, or the
+/// text line plus a little air when the user's font is too big for that.
+/// @p lineHeight receives the height of one line of the widget's text.
+int listRowHeight(Gtk::Widget& widget, int* lineHeight = nullptr);
+
+}
+
 /**
  * Builds a thin hot strip that stands in for a panel collapse/expand button.
  * It only lights up once the pointer has rested on it for a moment, and the
@@ -1016,6 +1054,7 @@ public:
 
 private:
     Gtk::Box* contentBox;
+    Gtk::Revealer* revealer;
     SectionHeader* header;
     bool expanded;
     std::function<void(bool)> onToggled;
@@ -1045,11 +1084,17 @@ public:
     /// Get expanded/collapsed state.
     bool getExpanded() const;
 
+    /// Told whenever the group opens or closes, however that came about.
+    void setExpandedCallback(std::function<void(bool)> cb);
+
     /// Show/hide the reset button (X icon next to header).
     void setResetVisible(bool visible);
 
     /// Set callback for when reset button is clicked.
     void setResetCallback(std::function<void()> cb);
+
+    /// What a right-click on the group's header does (a context menu).
+    void setHeaderMenuCallback(std::function<void(GdkEventButton*)> cb);
 
     /// Run that same callback from somewhere other than the button — the
     /// group's scrubber resets the group, so the two cannot drift apart.
@@ -1067,6 +1112,7 @@ private:
     Gtk::Button* resetBtn;
     bool expanded;
     std::function<void()> resetCallback_;
+    std::function<void(bool)> expandedCallback_;
 };
 
 inline Gtk::Window& getToplevelWindow (Gtk::Widget* widget)

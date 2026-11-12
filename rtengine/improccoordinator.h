@@ -78,6 +78,34 @@ protected:
     Imagefloat *fattal_11_dcrop_cache; // whole-frame dehaze+Fattal result shared by the detail crops
     /// Zoom step (Crop::skip) the Fattal cache was computed at; -1 when empty.
     int fattalCacheSkip = -1;
+    /// The frame the cache held before the last zoom change. Fit <-> 100%
+    /// is the common round trip, and one slot recomputed Fattal (seconds on
+    /// a 26MP frame) on every return.
+    Imagefloat *fattalCachePrev = nullptr;
+    int fattalCachePrevSkip = -1;
+    /// The source-side stages a cached frame carries ahead of dehaze/Fattal
+    /// (Double Exposure, gamut compression, AI Denoise). A frame built under
+    /// different ones must not be reused.
+    struct FattalSourceKey {
+        procparams::DoubleExposureParams doubleExposure;
+        procparams::CGParams cg;
+        procparams::AIDenoiseParams aiDenoise;
+        bool aiDenoiseReady = false;
+
+        bool operator==(const FattalSourceKey& other) const
+        {
+            return aiDenoiseReady == other.aiDenoiseReady
+                && aiDenoise == other.aiDenoise
+                && cg == other.cg
+                && doubleExposure == other.doubleExposure;
+        }
+    };
+    FattalSourceKey fattalCacheKey;
+    FattalSourceKey fattalCachePrevKey;
+    void dropFattalCache();
+#ifdef RT_AI_MASKING
+    void requestAIMasksForPass();
+#endif
     Image8 *previmg;  // displayed image in monitor color space, showing the output profile as well (soft-proofing enabled, which then correspond to workimg) or not
     Image8 *workimg;  // internal image in output color space for analysis
     // False when workimg holds pixels from an older edit (the conversion is
@@ -109,6 +137,10 @@ protected:
     int scale;
     bool highDetailPreprocessComputed;
     bool highDetailRawComputed;
+    // See setFullQualityTwin(); taken by the first pass that needs a
+    // full-quality demosaic.
+    std::mutex fullQualityTwinMutex;
+    std::shared_ptr<FullQualityTwin> fullQualityTwin;
     bool allocated;
 
     void freeAll();
@@ -273,6 +305,11 @@ protected:
     };
     std::vector<ProcessingTaskHandle> processingTasks;
     MyMutex updaterThreadStart;
+    // Held by Crop::fullUpdate for the whole render, so two detail crops of
+    // this coordinator never share its caches at once. Never taken on the GUI
+    // thread except by a closing Crop waiting out its own render; that is
+    // what updaterThreadStart used to do, stalling every startProcessing().
+    MyMutex cropRenderMutex;
     MyMutex paramsUpdateMutex;
     int  changeSinceLast;
     // Latency instrumentation (see edittrace.h). "pending" is written under
@@ -304,6 +341,19 @@ protected:
     /// True when another parameter change is already queued, so the frame
     /// being finished now will be superseded before anyone sees it.
     bool hasPendingChange();
+    /// Hands a long-running pass over to the newer change waiting behind it:
+    /// when one is queued (anything but M_VOID and ignoreMask), resumeTodo is
+    /// folded into it and the next pass is made to publish. Returns whether
+    /// the caller should stop. See standDown in updatePreviewImage.
+    bool standDownForNewerChange(int resumeTodo, int ignoreMask);
+    /// Set with the above, under paramsUpdateMutex: the next pass repeats
+    /// work this one left unfinished and must reach the crops and the screen.
+    bool resumeAbandonedPass_ = false;
+    /// Pipeline thread only. Two passes never stand down in a row, so a
+    /// steady stream of edits still gets a frame from every other pass.
+    bool abandonedLastPass_ = false;
+    /// The failed retry after running out of memory is reported once.
+    bool oomRetryReported_ = false;
     float colourToningSatLimit;
     float colourToningSatLimitOpacity;
     bool highQualityComputed;
@@ -468,6 +518,14 @@ public:
         return highDetailPreviewSerial.load(std::memory_order_acquire);
     }
 
+    /// A pass is running or a change is waiting for one. Any thread; a
+    /// change being submitted this instant may be missed.
+    bool isPreviewPassBusy();
+
+    /// MemGuard trimmer: frees the Fattal/dehaze frames of every live
+    /// coordinator that is not rendering right now.
+    static void trimIdleCaches(int level);
+
     /// Smoothed duration of a recent interactive pass, in ms; 0 until one has
     /// run. The GUI sizes the slider debounce from this.
     unsigned int getInteractivePassMs() const
@@ -502,6 +560,7 @@ public:
     {
         setScale(scale);
     }
+    void setFullQualityTwin (std::shared_ptr<FullQualityTwin> twin) override;
     int  getPreviewScale    () override
     {
         return scale;
@@ -735,5 +794,9 @@ public:
     void requestUpdateVectorscopeHS() override;
     void requestUpdateWaveform() override;
 };
+
+/// ImProcCoordinator::isPreviewPassBusy() for callers that only hold the
+/// interface; false for anything that is not a coordinator.
+bool isPreviewPassBusy(StagedImageProcessor* processor);
 
 }

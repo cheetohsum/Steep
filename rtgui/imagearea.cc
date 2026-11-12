@@ -87,7 +87,7 @@ void ImageArea::showBeforeAfterContextMenu ()
     snugItem->set_active(App::get().options().beforeAfterSnug);
     snugItem->signal_toggled().connect([this, snugItem]() {
         App::get().mut_options().beforeAfterSnug = snugItem->get_active();
-        Options::save();
+        Options::saveAsync();
 
         // Re-fit both panes so the new alignment takes effect immediately
         if (mainCropWindow) {
@@ -271,6 +271,29 @@ void ImageArea::setPreviewHandler (PreviewHandler* ph)
 
 void ImageArea::setQuickPreviewFit (bool enabled)
 {
+    if (enabled && !quickPreviewFit_ && mainCropWindow) {
+        // A new photo is taking over the canvas. Its frame is drawn right
+        // away; the old photo's last frame just fades out on top of it. When
+        // switches come faster than frames (held arrow key) there is no old
+        // frame to take, and nothing fades.
+        CropWindow::PaintedFrame previous = mainCropWindow->takeLastPaintedFrame();
+
+        if (previous.pixbuf && previous.w > 0 && previous.h > 0) {
+            switchFadeFrame_ = previous;
+            switchFadeAlpha_ = 1.0;
+            switchFade_ = steep::motion::run(*this, 1.0, 0.0, 100, steep::motion::Ease::Linear,
+                [this](double alpha) {
+                    switchFadeAlpha_ = alpha;
+                    queue_draw();
+                },
+                [this]() {
+                    switchFadeAlpha_ = 0.0;
+                    switchFadeFrame_ = CropWindow::PaintedFrame();
+                    queue_draw();
+                });
+        }
+    }
+
     quickPreviewFit_ = enabled;
     queue_draw();
 }
@@ -495,6 +518,17 @@ bool ImageArea::on_draw(const ::Cairo::RefPtr< Cairo::Context> &cr)
         // crop window and hands the same placeholder to the processor-backed
         // PreviewHandler.
         drawFitPreview();
+    }
+
+    if (switchFadeFrame_.pixbuf && switchFadeAlpha_ > 0.0) {
+        cr->save();
+        Gdk::Cairo::set_source_pixbuf(cr, switchFadeFrame_.pixbuf, switchFadeFrame_.x, switchFadeFrame_.y);
+        auto pattern = hidpi::getSourceForSurface(cr);
+        hidpi::setDeviceScale(pattern->get_surface(), switchFadeFrame_.deviceScale);
+        cr->rectangle(switchFadeFrame_.x, switchFadeFrame_.y, switchFadeFrame_.w, switchFadeFrame_.h);
+        cr->clip();
+        cr->paint_with_alpha(switchFadeAlpha_);
+        cr->restore();
     }
 
     for (std::list<CropWindow*>::reverse_iterator i = cropWins.rbegin(); i != cropWins.rend(); ++i) {

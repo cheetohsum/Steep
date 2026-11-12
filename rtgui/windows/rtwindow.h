@@ -29,6 +29,7 @@
 
 #include "progressconnector.h"
 #include "splash.h"
+#include "motion.h"
 
 #include "rtengine/noncopyable.h"
 
@@ -97,12 +98,15 @@ private:
     Gtk::Box* queueOverlayBox;
     Gtk::EventBox* queueBackdrop;
     bool queueOverlayVisible;
-    double queueAnimFraction;        // 0.0 = hidden, 1.0 = fully shown
-    sigc::connection queueAnimConn;  // animation timer
+    double queueAnimFraction;        // 0.0 = hidden, 1.0 = fully shown (already eased)
+    steep::motion::Handle queueAnim;
 
     // Startup animation overlay
     Gtk::EventBox* startupOverlay_;
     double startupAnimTime_;       // elapsed seconds
+    // When the splash starts leaving. Starts at the end of the full
+    // choreography and is pulled in once the window is ready.
+    double startupExitAt_ = 2.35;
     bool startupAnimActive_;
     sigc::connection startupAnimConn_;
     Cairo::RefPtr<Cairo::ImageSurface> logoSurface_;

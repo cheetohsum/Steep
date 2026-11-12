@@ -27,6 +27,7 @@
 #include <gtkmm.h>
 #include "rtwindow.h"
 #include "guiutils.h"
+#include "motion.h"
 #include "cachemanager.h"
 #include "preferences.h"
 #include "iccprofilecreator.h"
@@ -61,6 +62,10 @@
 #ifdef _WIN32
 #include "rtengine/leanwindows.h"
 #endif
+
+// Startup splash: shortest time it stays up, and how long it takes to leave.
+static const double STARTUP_MIN_SECONDS = 0.7;
+static const double STARTUP_EXIT_SECONDS = 0.3;
 
 Glib::RefPtr<Gtk::CssProvider> cssForced;
 Glib::RefPtr<Gtk::CssProvider> cssRT;
@@ -373,6 +378,8 @@ RTWindow::RTWindow ()
         Gtk::Settings::get_for_screen (screen)->property_gtk_theme_name() = "Adwaita";
         Gtk::Settings::get_for_screen (screen)->property_gtk_application_prefer_dark_theme() = true;
         Gtk::Settings::get_for_screen (screen)->property_gtk_icon_theme_name() = "rawtherapee";
+        // "Reduce motion" also has to reach GTK's own Revealers/Stacks.
+        steep::motion::applyReduceMotionSetting();
 
         // Initialize RTScalable for Hi-DPI support
         RTScalable::init(this);
@@ -637,10 +644,8 @@ RTWindow::RTWindow ()
             [this](const Cairo::RefPtr<Cairo::Context>& cr) -> bool {
                 int w = queueOverlayBox->get_allocated_width ();
                 int h = queueOverlayBox->get_allocated_height ();
-                // Ease-out quart — fast start, smooth deceleration
-                double t = queueAnimFraction;
-                double eased = 1.0 - std::pow (1.0 - t, 4);
-                int visibleH = std::max (1, static_cast<int>(h * eased));
+                // The fraction arrives already eased from steep::motion.
+                int visibleH = std::max (1, static_cast<int>(h * queueAnimFraction));
                 // Clip to the visible portion (top visibleH pixels)
                 cr->rectangle (0, 0, w, visibleH);
                 cr->clip ();
@@ -788,7 +793,9 @@ RTWindow::RTWindow ()
                 const auto easeInOut = [](double p) { return p < 0.5 ? 4 * p * p * p : 1 - std::pow(-2 * p + 2, 3) / 2; };
                 const auto phase = [&](double from, double to) { return clamp01((t - from) / (to - from)); };
 
-                const double exitP = easeInOut(phase(2.35, 2.9));
+                // The exit starts when the window is ready (see on_realize),
+                // not at a fixed point of the choreography.
+                const double exitP = easeInOut(phase(startupExitAt_, startupExitAt_ + STARTUP_EXIT_SECONDS));
                 const double opacity = 1.0 - exitP;
 
                 if (opacity <= 0.001) {
@@ -810,7 +817,8 @@ RTWindow::RTWindow ()
                 const double cy = h * 0.5;
                 const double unit = std::max(150.0, std::min(280.0, std::min(w, h) * 0.22));
                 const double baseY = cy + unit * 0.55;
-                const double markY = baseY - unit * 0.95;
+                // The mark sits in the middle of the innermost arch, clear of its dome.
+                const double markY = baseY - unit * 0.58;
 
                 // A soft pool of light behind everything, brightening as the
                 // mark arrives.
@@ -916,7 +924,7 @@ RTWindow::RTWindow ()
                     const double ring = easeOut(phase(0.55, 1.35));
 
                     if (ring > 0.0) {
-                        const double rx = unit * 0.46, ry = unit * 0.16;
+                        const double rx = unit * 0.34, ry = unit * 0.12;   // inside the innermost arch
                         const double tilt = -0.32;
                         cr->save();
                         cr->translate(cx, markY);
@@ -929,7 +937,9 @@ RTWindow::RTWindow ()
                         setRgba(dim, opacity * 0.55);
                         cr->stroke();
 
-                        const double a = -M_PI * 0.5 + 2.0 * M_PI * easeInOut(phase(0.7, 2.3)) * 1.25;
+                        // Starts on the left, clear of the mark fading in at the
+                        // centre, and comes to rest on the right.
+                        const double a = M_PI + 2.0 * M_PI * easeInOut(phase(0.7, 2.3)) * 1.5;
                         const double ex = std::cos(a) * rx, ey = std::sin(a) * ry;
                         const double px = cx + ex * std::cos(tilt) - ey * std::sin(tilt);
                         const double py = markY + ex * std::sin(tilt) + ey * std::cos(tilt);
@@ -1706,9 +1716,26 @@ void RTWindow::on_realize ()
     mainWindowCursorManager.init (get_window());
 
     // Start startup animation timer
+    if (startupOverlay_ && startupAnimActive_ && steep::motion::reduceMotion()) {
+        startupAnimActive_ = false;
+        startupOverlay_->hide ();
+        startupOverlay_->set_no_show_all (true);
+    }
+
     if (startupOverlay_ && startupAnimActive_) {
         auto startTime = std::make_shared<Glib::Timer>();
         startTime->start();
+
+        // The splash is cover for startup work, not a fixed-length show: it
+        // leaves as soon as the main loop has drained what startup queued
+        // (a low-priority idle only runs then), but stays long enough to
+        // read as a deliberate beat rather than a flash. The full
+        // choreography remains the upper bound for a slow start.
+        Glib::signal_idle().connect_once(
+            [this, startTime]() {
+                startupExitAt_ = std::min(startupExitAt_,
+                                          std::max(STARTUP_MIN_SECONDS, startTime->elapsed()));
+            }, Glib::PRIORITY_LOW);
 
         // Driven by the frame clock, not a 16 ms timer: one draw per
         // display refresh, so the motion never stutters against vsync.
@@ -1716,7 +1743,7 @@ void RTWindow::on_realize ()
             [this, startTime](const Glib::RefPtr<Gdk::FrameClock>&) -> bool {
                 startupAnimTime_ = startTime->elapsed();
 
-                if (startupAnimTime_ > 2.95) {
+                if (startupAnimTime_ > startupExitAt_ + STARTUP_EXIT_SECONDS) {
                     startupAnimActive_ = false;
                     startupOverlay_->hide ();
                     startupOverlay_->set_no_show_all (true);
@@ -2300,6 +2327,10 @@ bool RTWindow::on_delete_event (GdkEventAny* event)
         Gtk::MessageDialog msgd (getToplevelWindow (this), e.get_msg(), true, Gtk::MESSAGE_WARNING, Gtk::BUTTONS_CLOSE, true);
         msgd.run();
     }
+
+    // Nothing an interactive change queued may still be in the air when the
+    // process goes (the save above normally supersedes it already).
+    Options::flushPendingSave();
 
     hide();
 
@@ -2971,20 +3002,14 @@ void RTWindow::showQueueOverlay()
     // Force batch queue to recalculate layout and scrollbars for new size
     bpanel->queue_resize ();
 
-    // Animate drawer slide-down — 100ms with ease-out quart
-    queueAnimConn.disconnect ();
-    queueAnimConn = Glib::signal_timeout ().connect ([this]() -> bool {
-        queueAnimFraction += 16.0 / 100.0;
-        if (queueAnimFraction >= 1.0) {
-            queueAnimFraction = 1.0;
+    // Slide the drawer down, from wherever a close in progress left it.
+    queueOverlayBox->set_opacity (1.0);
+    queueAnim = steep::motion::toggle (*mainOverlay, queueAnimFraction, true, steep::motion::Duration::Large,
+        [this](double fraction) {
+            queueAnimFraction = fraction;
             queueBackdrop->queue_draw ();
             queueOverlayBox->queue_draw ();
-            return false;
-        }
-        queueBackdrop->queue_draw ();
-        queueOverlayBox->queue_draw ();
-        return true;
-    }, 16);
+        });
 
     // Sync nav button state (save/restore navSwitching for re-entrant safety)
     bool wasSwitching = navSwitching;
@@ -3001,23 +3026,22 @@ void RTWindow::hideQueueOverlay()
 
     queueOverlayVisible = false;
 
-    // Fade out drawer + backdrop — 70ms snap shut.
-    // Uses set_opacity() which works at compositor level, properly hiding
-    // child widgets that have their own GdkWindows (thumbnails, scrollbars).
-    queueAnimConn.disconnect ();
-    queueAnimConn = Glib::signal_timeout ().connect ([this]() -> bool {
-        queueAnimFraction -= 16.0 / 70.0;
-        if (queueAnimFraction <= 0.0) {
+    // Slide the drawer back up the way it came, quicker than it arrived.
+    // It also fades: set_opacity() works at compositor level, so child
+    // widgets with their own GdkWindows (thumbnails, scrollbars) leave with it.
+    queueAnim = steep::motion::toggle (*mainOverlay, queueAnimFraction, false, steep::motion::Duration::Large,
+        [this](double fraction) {
+            queueAnimFraction = fraction;
+            queueOverlayBox->set_opacity (fraction);
+            queueOverlayBox->queue_draw ();
+            queueBackdrop->queue_draw ();
+        },
+        [this]() {
             queueAnimFraction = 0.0;
             queueOverlayBox->set_opacity (1.0); // restore for next show
             queueBackdrop->hide ();
             queueOverlayBox->hide ();
-            return false;
-        }
-        queueOverlayBox->set_opacity (queueAnimFraction * queueAnimFraction);
-        queueBackdrop->queue_draw ();
-        return true;
-    }, 16);
+        });
 
     // Sync nav button state (save/restore navSwitching for re-entrant safety)
     bool wasSwitching = navSwitching;

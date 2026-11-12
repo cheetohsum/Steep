@@ -109,9 +109,6 @@ public:
     void updateToolPanelToolLocations(
         const std::vector<Glib::ustring> &favorites, bool cloneFavoriteTools);
 
-    // Fade browser content without affecting the left sidebar
-    void setContentOpacity (double opacity);
-
     // Fast-export settings widget (former Fast Export tab content), to be
     // embedded into the Export/queue tab by RTWindow
     Gtk::Widget* takeFastExportSettingsWidget () { return fastExportSettingsWidget_; }

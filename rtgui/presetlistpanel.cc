@@ -17,6 +17,7 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "presetlistpanel.h"
+#include "motion.h"
 
 #include "clipboard.h"
 #include "multilangmgr.h"
@@ -443,7 +444,7 @@ void PresetListPanel::buildContent()
 
             auto* revealer = Gtk::manage(new Gtk::Revealer());
             revealer->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-            revealer->set_transition_duration(200);
+            steep::motion::configureRevealer(*revealer);
 
             bool expanded = true;
             auto expIt = categoryExpanded_.find(entry->folderId);
@@ -550,7 +551,7 @@ void PresetListPanel::buildCategoryContent(
 
             auto* revealer = Gtk::manage(new Gtk::Revealer());
             revealer->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-            revealer->set_transition_duration(200);
+            steep::motion::configureRevealer(*revealer);
 
             bool expanded = true;
             auto expIt = categoryExpanded_.find(folder->folderId);

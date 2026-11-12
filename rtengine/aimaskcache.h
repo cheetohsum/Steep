@@ -10,6 +10,7 @@
 
 #ifdef RT_AI_MASKING
 
+#include <array>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -24,6 +25,9 @@
 namespace rtengine
 {
 
+class Imagefloat;
+struct PartnerDepth;
+
 struct AIMaskSnapshot
 {
     std::shared_ptr<const array2D<float>> mask;
@@ -35,6 +39,10 @@ struct AIMaskSnapshot
     int maskY0 = 0;
     int maskX1 = 0;
     int maskY1 = 0;
+    // A stand-in while this photo's maps are still being computed (see
+    // AIMaskCache::restoreOrBeginPending): all zero, so a spot waiting for its
+    // mask edits nothing. Not a real mask -- never offer it for refinement.
+    bool pending = false;
 
     explicit operator bool() const { return mask && width > 0 && height > 0; }
     bool hasBounds() const { return maskX1 > maskX0 && maskY1 > maskY0; }
@@ -48,7 +56,8 @@ public:
     void computeMasks(const std::string& imageId,
                       float* const* rRows, float* const* gRows, float* const* bRows,
                       int width, int height, int fullW, int fullH,
-                      const std::string& workingProfile, bool multiThread);
+                      const std::string& workingProfile, bool multiThread,
+                      std::uint64_t inputKey = 0);
 
     float getMaskValue(AISegClass cls, int y, int x) const;
 
@@ -62,10 +71,50 @@ public:
                                    float maskSize, bool invert,
                                    int refineRadius, float refineEps,
                                    const MaskPaint& paint,
-                                   bool multiThread);
+                                   bool multiThread,
+                                   const std::array<double, 4>& depthRange = automaticDepthRange());
+
+    // Depth classes: the range a spot keeps when it has none of its own --
+    // all -1, meaning "near" or "far" of this photo's own depth split.
+    static const std::array<double, 4>& automaticDepthRange()
+    {
+        static const std::array<double, 4> automatic{{-1.0, -1.0, -1.0, -1.0}};
+        return automatic;
+    }
+    // "a;b;c;d" (LocallabSpot::aiMaskDepthRange) to handles; automatic when
+    // empty or malformed.
+    static std::array<double, 4> parseDepthRange(const std::string& text);
+    static std::string formatDepthRange(const std::array<double, 4>& range);
+    // The handles an automatic near / far spot uses on this photo, for the
+    // depth range control to start from. False until depth is known.
+    bool getDepthPreset(const std::string& imageId, int classIndex, std::array<double, 4>& range) const;
 
     bool hasCachedMasks(const std::string& imageId) const;
+    // Only masks computed from the same kind of input (see aiMaskGeometryKey).
+    bool hasCachedMasks(const std::string& imageId, std::uint64_t inputKey) const;
     bool hasCachedMasks() const;
+
+    // FOREGROUND_DEPTH / BACKGROUND_DEPTH: empty until a mask needs them,
+    // then split from the scene depth map (requestAIMasks / ensureAIMasks
+    // with needDepth). Their coverage reads as unknown until then.
+    bool hasDepthClasses(const std::string& imageId, std::uint64_t inputKey) const;
+    void setDepthClasses(const std::string& imageId, std::uint64_t inputKey, const PartnerDepth& depth);
+
+    /** The editor's non-blocking path (requestAIMasks), in one lock: true
+     *  when this photo's maps are already active or come back from the
+     *  archive. Otherwise the photo becomes the cache's image with no maps
+     *  yet, and until computeMasks stores them getPreparedMask answers with
+     *  an all-zero placeholder (AIMaskSnapshot::pending): a spot waiting for
+     *  its mask edits nothing, rather than everything, and never draws the
+     *  previous photo's maps. @p discardInFlight drops a computation already
+     *  running for another photo, whose result would otherwise land on top. */
+    bool restoreOrBeginPending(const std::string& imageId,
+                               int width, int height, int fullW, int fullH,
+                               const std::string& workingProfile,
+                               std::uint64_t inputKey, bool discardInFlight);
+    // Back to "no maps" once a computation for this photo has failed.
+    void clearPending(const std::string& imageId, std::uint64_t inputKey);
+    bool isPending(const std::string& imageId, std::uint64_t inputKey) const;
 
     /** Fraction of pixels (0..1) whose probability for the class passes
      *  @p threshold — the same threshold the mask itself is built at, so the
@@ -85,6 +134,11 @@ public:
 
     void invalidate(const std::string& imageId);
     void invalidateAll();
+    /** Memory trimmer. Level 1 drops the maps archived for photos left
+     *  behind; level 2 also the masks derived for the current one, which
+     *  are rebuilt from its maps on demand. The current photo's model output
+     *  stays: without it its masks would go blank. Skipped while busy. */
+    void trimMemory(int level);
 
     int getCachedWidth() const;
     int getCachedHeight() const;
@@ -105,6 +159,7 @@ private:
         int refineRadius;
         int refineEps;
         unsigned int paint;   // hash of the hand-painted corrections
+        int depthRange[4];    // depth classes' handles, quantized (-1000 = automatic)
 
         bool operator==(const PreparedKey& other) const;
     };
@@ -158,12 +213,19 @@ private:
     mutable MyMutex mutex_;
     std::string cachedImageId_;
     std::string cachedWorkingProfile_;
+    std::uint64_t cachedInputKey_ = 0;
+    bool cachedDepthReady_ = false;
+    float cachedDepthSplit_ = 0.5f;
+    std::string cachedDiskPath_;
     // Whether the subject model was loaded when these maps were computed. It
     // arrives on a worker some seconds after startup, and maps composed
     // without it must not be reused once it is there.
     bool cachedSubjectModel_ = false;
+    // The cache's image is waiting for its maps; see restoreOrBeginPending.
+    bool pending_ = false;
     std::shared_ptr<const std::vector<array2D<float>>> cachedMasks_;
     std::shared_ptr<const array2D<float>> cachedGuide_;
+    std::shared_ptr<const Imagefloat> cachedSamSource_;
     std::vector<float> coverage_;
     std::deque<RefinedEntry> refinedMasks_;
     std::deque<DistanceEntry> distanceMasks_;
@@ -184,9 +246,14 @@ private:
     {
         std::string imageId;
         std::string workingProfile;
+        std::uint64_t inputKey = 0;
+        bool depthReady = false;
+        float depthSplit = 0.5f;
+        std::string diskPath;
         bool subjectModel = false;
         std::shared_ptr<const std::vector<array2D<float>>> masks;
         std::shared_ptr<const array2D<float>> guide;
+        std::shared_ptr<const Imagefloat> samSource;
         std::vector<float> coverage;
         int sourceWidth = 0;
         int sourceHeight = 0;
@@ -198,6 +265,11 @@ private:
     static constexpr std::size_t kArchivedImages = 2;
     std::deque<ArchivedImage> archive_;
     void archiveCurrentLocked_();
+    bool restoreArchivedLocked_(const std::string& imageId,
+                                int width, int height, int fullW, int fullH,
+                                const std::string& workingProfile,
+                                std::uint64_t inputKey, bool subjectModel);
+    bool requestStale_(std::uint64_t request) const;
 };
 
 } // namespace rtengine

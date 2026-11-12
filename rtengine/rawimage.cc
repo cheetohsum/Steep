@@ -17,6 +17,7 @@
 
 #include "image8.h"
 #include "rawimage.h"
+#include "memguard.h"
 #include "settings.h"
 #include "camconst.h"
 #include "utils.h"
@@ -157,6 +158,7 @@ RawImage::RawImage(const Glib::ustring &name)
     , profile_data(nullptr)
     , allocation(nullptr)
 {
+    MemGuard::objectCreated(MemGuard::RawImages);
     memset(maximum_c4, 0, sizeof(maximum_c4));
     memset(white, 0, sizeof(white));
     RT_matrix_from_constant = ThreeValBool::X;
@@ -168,6 +170,11 @@ RawImage::RawImage(const Glib::ustring &name)
 
 RawImage::~RawImage()
 {
+    MemGuard::objectDestroyed(MemGuard::RawImages);
+    if (memReported_) {
+        MemGuard::addBytes(MemGuard::RawImages, -static_cast<long long>(memAccounted_));
+    }
+
     if (ifp) {
         fclose(ifp);
         ifp = nullptr;
@@ -1335,6 +1342,7 @@ float** RawImage::compress_image(unsigned int frameNum, bool freeImage)
         if (!allocation) {
             // shift the beginning of all frames but the first by 32 floats to avoid cache miss conflicts on CPUs which have <= 4-way associative L1-Cache
             allocation = new float[static_cast<unsigned int>(height) * static_cast<unsigned int>(width) + frameNum * 32u];
+            memAccounted_ = static_cast<std::size_t>(height) * width * sizeof(float);
             data = new float*[height];
 
             for (int i = 0; i < height; i++) {
@@ -1345,6 +1353,7 @@ float** RawImage::compress_image(unsigned int frameNum, bool freeImage)
         // Monochrome
         if (!allocation) {
             allocation = new float[static_cast<unsigned long>(height) * static_cast<unsigned long>(width)];
+            memAccounted_ = static_cast<std::size_t>(height) * width * sizeof(float);
             data = new float*[height];
 
             for (int i = 0; i < height; i++) {
@@ -1354,12 +1363,18 @@ float** RawImage::compress_image(unsigned int frameNum, bool freeImage)
     } else {
         if (!allocation) {
             allocation = new float[3UL * static_cast<unsigned long>(height) * static_cast<unsigned long>(width)];
+            memAccounted_ = 3 * static_cast<std::size_t>(height) * width * sizeof(float);
             data = new float*[height];
 
             for (int i = 0; i < height; i++) {
                 data[i] = allocation + 3 * i * width;
             }
         }
+    }
+
+    if (memAccounted_ && !memReported_) {
+        memReported_ = true;
+        MemGuard::addBytes(MemGuard::RawImages, static_cast<long long>(memAccounted_));
     }
 
     // copy pixel raw data: the compressed format earns space

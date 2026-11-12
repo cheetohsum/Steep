@@ -24,8 +24,10 @@
 
 #include "addsetids.h"
 #include "cachemanager.h"
+#include "dirbrowser.h"
 #include "externaleditorpreferences.h"
 #include "guiutils.h"
+#include "motion.h"
 #include "multilangmgr.h"
 #include "preferences.h"
 #include "rtimage.h"
@@ -125,7 +127,7 @@ Preferences::Preferences(RTWindow *rtwindow)
     Gtk::Stack* nb = Gtk::manage(new Gtk::Stack());
     nb->set_name("PrefNotebook");
     nb->set_transition_type(Gtk::STACK_TRANSITION_TYPE_CROSSFADE);
-    nb->set_transition_duration(140);
+    steep::motion::configureStack(*nb, steep::motion::Duration::Standard);
     nb->set_hexpand(true);
     layout->pack_start(*sidebar, Gtk::PACK_SHRINK);
     layout->pack_start(*nb, Gtk::PACK_EXPAND_WIDGET);
@@ -1207,6 +1209,10 @@ Gtk::Widget* Preferences::getGeneralPanel()
     setExpandAlignProperties(browserTitlePin, false, false, Gtk::ALIGN_START, Gtk::ALIGN_BASELINE);
     workflowGrid->attach_next_to(*browserTitlePin, *filmstripAtBottomCB, Gtk::POS_BOTTOM, 2, 1);
 
+    reduceMotionCB = Gtk::manage(new Gtk::CheckButton(M("PREFERENCES_REDUCEMOTION")));
+    setExpandAlignProperties(reduceMotionCB, false, false, Gtk::ALIGN_START, Gtk::ALIGN_BASELINE);
+    workflowGrid->attach_next_to(*reduceMotionCB, *browserTitlePin, Gtk::POS_BOTTOM, 2, 1);
+
     Gtk::Label* complexityL = Gtk::manage(new Gtk::Label(M("PREFERENCES_COMPLEXITYLOC")));
     setExpandAlignProperties(complexityL, false, false, Gtk::ALIGN_START, Gtk::ALIGN_BASELINE);
     complexitylocal = Gtk::manage(new Gtk::ComboBoxText());
@@ -1215,7 +1221,7 @@ Gtk::Widget* Preferences::getGeneralPanel()
     complexitylocal->append(M("PREFERENCES_COMPLEXITY_NORM"));
     complexitylocal->append(M("PREFERENCES_COMPLEXITY_SIMP"));
     complexitylocal->set_active(2);
-    workflowGrid->attach_next_to(*complexityL, *browserTitlePin, Gtk::POS_BOTTOM, 1, 1);
+    workflowGrid->attach_next_to(*complexityL, *reduceMotionCB, Gtk::POS_BOTTOM, 1, 1);
     workflowGrid->attach_next_to(*complexitylocal, *curveBBoxPosC, Gtk::POS_BOTTOM, 1, 1);
 
 
@@ -1649,6 +1655,23 @@ Gtk::Widget* Preferences::getFileBrowserPanel()
 
     thumbnailRankColorMode = Gtk::manage(new Gtk::CheckButton(M("PREFERENCES_THUMBNAIL_RANK_COLOR_MODE")));
     vbro->pack_start(*thumbnailRankColorMode, Gtk::PACK_SHRINK, 0);
+
+    Gtk::Box* hbFolderPreviews = Gtk::manage(new Gtk::Box());
+    folderPreviewsCB = Gtk::manage(new Gtk::CheckButton(M("PREFERENCES_FOLDERPREVIEWS")));
+    folderPreviewsCB->set_tooltip_text(M("PREFERENCES_FOLDERPREVIEWS_TOOLTIP"));
+    folderPreviewCountSB = Gtk::manage(new Gtk::SpinButton());
+    folderPreviewCountSB->set_digits(0);
+    folderPreviewCountSB->set_increments(1, 1);
+    folderPreviewCountSB->set_range(1, 5);
+    Gtk::Label* labFolderPreviewCount = Gtk::manage(new Gtk::Label(M("PREFERENCES_FOLDERPREVIEWS_COUNT"), Gtk::ALIGN_START));
+    hbFolderPreviews->pack_start(*folderPreviewsCB, Gtk::PACK_SHRINK, 0);
+    hbFolderPreviews->pack_start(*labFolderPreviewCount, Gtk::PACK_SHRINK, 8);
+    hbFolderPreviews->pack_start(*folderPreviewCountSB, Gtk::PACK_SHRINK, 0);
+    folderPreviewsCB->signal_toggled().connect([this, labFolderPreviewCount]() {
+        labFolderPreviewCount->set_sensitive(folderPreviewsCB->get_active());
+        folderPreviewCountSB->set_sensitive(folderPreviewsCB->get_active());
+    });
+    vbro->pack_start(*hbFolderPreviews, Gtk::PACK_SHRINK, 0);
 
     Gtk::Box* hbrecent = Gtk::manage(new Gtk::Box());
     Gtk::Label* labrecent = Gtk::manage (new Gtk::Label (M("PREFERENCES_MAXRECENTFOLDERS"), Gtk::ALIGN_START));
@@ -2158,6 +2181,7 @@ void Preferences::storePreferences()
     moptions.sameThumbSize = sameThumbSize->get_active();
     moptions.browserTitlePinToEditor = browserTitlePin->get_active();
     moptions.filmstripAtBottom = filmstripAtBottomCB->get_active();
+    moptions.reduceMotion = reduceMotionCB->get_active();
     moptions.thumbSizeTab = (int)filmstripThumbSizeSB->get_value();
     moptions.thumbSize = (int)browserThumbSizeSB->get_value();
     moptions.internalThumbIfUntouched = ckbInternalThumbIfUntouched->get_active();
@@ -2240,6 +2264,8 @@ void Preferences::storePreferences()
     moptions.rtSettings.xmp_sidecar_style = rtengine::Settings::XmpSidecarStyle(xmpSidecarCombo->get_active_row_number());
 
     moptions.thumbnailRankColorMode = thumbnailRankColorMode->get_active() ? Options::ThumbnailPropertyMode::XMP : Options::ThumbnailPropertyMode::PROCPARAMS;
+    moptions.folderPreviews = folderPreviewsCB->get_active();
+    moptions.folderPreviewCount = folderPreviewCountSB->get_value_as_int();
 }
 
 void Preferences::fillPreferences()
@@ -2411,6 +2437,7 @@ void Preferences::fillPreferences()
     sameThumbSize->set_active(moptions.sameThumbSize);
     browserTitlePin->set_active(moptions.browserTitlePinToEditor);
     filmstripAtBottomCB->set_active(moptions.filmstripAtBottom);
+    reduceMotionCB->set_active(moptions.reduceMotion);
     filmstripThumbSizeSB->set_value(moptions.thumbSizeTab);
     browserThumbSizeSB->set_value(moptions.thumbSize);
     ckbInternalThumbIfUntouched->set_active(moptions.internalThumbIfUntouched);
@@ -2516,6 +2543,9 @@ void Preferences::fillPreferences()
     xmpSidecarCombo->set_active(int(moptions.rtSettings.xmp_sidecar_style));
 
     thumbnailRankColorMode->set_active(moptions.thumbnailRankColorMode == Options::ThumbnailPropertyMode::XMP);
+    folderPreviewCountSB->set_value(moptions.folderPreviewCount);
+    folderPreviewsCB->set_active(moptions.folderPreviews);
+    folderPreviewCountSB->set_sensitive(moptions.folderPreviews);
 }
 
 /*
@@ -2563,6 +2593,7 @@ void Preferences::okPressed()
     workflowUpdate();
     options.copyFrom(&moptions);
     options.filterOutParsedExtensions();
+    steep::motion::applyReduceMotionSetting();
 
     try {
         Options::save();
@@ -2572,6 +2603,7 @@ void Preferences::okPressed()
     }
 
     dynProfilePanel->save();
+    DirBrowser::previewSettingsChanged().emit();
     hide();
 }
 

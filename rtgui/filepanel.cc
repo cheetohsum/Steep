@@ -52,7 +52,12 @@
 #include "rawloadactivity.h"
 #include "thumbimageupdater.h"
 #include "thumbnail.h"
+#include "cachemanager.h"
 #include "windows/rtwindow.h"
+#include "rtengine/imagesource.h"
+#include "rtengine/memguard.h"
+#include "rtengine/myfile.h"
+#include "rtengine/procparams.h"
 
 #ifdef _OPENMP
 #include <omp.h>
@@ -655,6 +660,7 @@ public:
                 std::string(fname),
                 logKind
             });
+            rtengine::MemGuard::setCountGauge("imageReleaseQueue", static_cast<long long>(queue_.size()));
 
             if (!workerStarted_) {
                 workerStarted_ = true;
@@ -682,6 +688,8 @@ private:
                 cv_.wait(lock, [this]() { return !queue_.empty(); });
                 task = std::move(queue_.front());
                 queue_.pop_front();
+                // The one being released still counts until it is gone.
+                rtengine::MemGuard::setCountGauge("imageReleaseQueue", static_cast<long long>(queue_.size()) + 1);
             }
 
             const size_t count = task.images.size();
@@ -693,6 +701,11 @@ private:
                 if (img) {
                     img->decreaseRef();
                 }
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                rtengine::MemGuard::setCountGauge("imageReleaseQueue", static_cast<long long>(queue_.size()));
             }
 
             if (!g_fileSelLogEnabled()) {
@@ -857,6 +870,40 @@ static void releasePreloadImagesInBackground(
         InitialImageReleaseLogKind::PreloadCache);
 }
 
+// Memory a full-quality precompute adds to a decoded RAW: the preprocessed
+// raw plane and the three demosaiced ones (a decoded-only source holds just
+// the sensor data). A prediction for the room check; the entry is charged
+// what the source reports afterwards. Zero where it would not be adopted.
+static size_t precomputedRawExtraBytes(rtengine::InitialImage* img)
+{
+    rtengine::ImageSource* const src = img ? img->getImageSource() : nullptr;
+    if (!src || !src->isRAW() || src->getFrameCount() != 1) {
+        return 0;
+    }
+    int w = 0;
+    int h = 0;
+    src->getFullSize(w, h);
+    return w > 0 && h > 0 ? static_cast<size_t>(w) * static_cast<size_t>(h) * 4 * sizeof(float) : 0;
+}
+
+// Runs ImageSource::precomputeFullQuality on a preloaded RAW with the photo's
+// current profile. If the editor ends up opening it with different raw
+// settings, the pipeline simply ignores the result.
+static bool precomputePreloadedRaw(rtengine::InitialImage* img, const std::string& fname)
+{
+    Thumbnail* const thumb = cacheMgr->getEntry(Glib::ustring(fname));
+    if (!thumb) {
+        return false;
+    }
+    const rtengine::procparams::ProcParams params = thumb->getProcParamsCopy();
+    thumb->decreaseRef();
+    // Capture sharpening keeps a second copy of every plane; not worth it here.
+    if (params.pdsharpening.enabled) {
+        return false;
+    }
+    return img->getImageSource()->precomputeFullQuality(params);
+}
+
 // Bounded, thread-safe cache for pre-loaded adjacent InitialImages.
 // Owned via shared_ptr so in-flight load threads can safely outlive FilePanel:
 // they each hold a copy of the shared_ptr and check `stopped` before inserting.
@@ -864,8 +911,15 @@ struct PreloadManager {
     // Tunables. Keep full-image preloads narrow but useful: directional
     // navigation warms likely forward RAWs first, while the byte cap prevents
     // runaway RAW memory use.
-    static constexpr size_t kMaxBytes    = 384ULL * 1024 * 1024;
+    // Room for two 26 MP RAWs that also carry a full-quality demosaic
+    // (see precomputePreloadedRaw): ~520 MB each (4 B/px sensor data, 4 B/px
+    // preprocessed raw, 12 B/px RGB) instead of ~105 MB decoded only. Entries
+    // are charged what ImageSource::estimatedBytes() reports.
+    static constexpr size_t kMaxBytes    = 1100ULL * 1024 * 1024;
     static constexpr size_t kMaxEntries  = 2;
+    // RAWs past the decoded ones whose bytes are pre-read into the OS cache.
+    static constexpr size_t kCacheWarmEntries = 3;
+    static constexpr int    kCacheWarmQuietMs = 250;
     static constexpr int    kRadius      = 4;
     static constexpr size_t kDirectionalBacktrackEntries = 1;
     static constexpr size_t kDirectionalLeadEntries = 1;
@@ -1007,6 +1061,13 @@ struct PreloadManager {
             return bytes;
         }
 
+        // What the source really holds: the decoded raw plus, once it has
+        // been demosaiced, the three float planes and their copies. The
+        // per-pixel guess below under-counted that about threefold.
+        if (const size_t actual = src->estimatedBytes()) {
+            return actual;
+        }
+
         int w = 0;
         int h = 0;
         src->getFullSize(w, h);
@@ -1032,6 +1093,13 @@ struct PreloadManager {
         auto* src = img->getImageSource();
         if (!src) {
             return kFallbackEntryBytes;
+        }
+
+        // What the source really holds: the decoded raw plus, once it has
+        // been demosaiced, the three float planes and their copies. The
+        // per-pixel guess below under-counted that about threefold.
+        if (const size_t actual = src->estimatedBytes()) {
+            return actual;
         }
 
         int w = 0;
@@ -1515,6 +1583,8 @@ struct PreloadManager {
 
 constexpr size_t PreloadManager::kMaxBytes;
 constexpr size_t PreloadManager::kMaxEntries;
+constexpr size_t PreloadManager::kCacheWarmEntries;
+constexpr int PreloadManager::kCacheWarmQuietMs;
 constexpr int PreloadManager::kRadius;
 constexpr size_t PreloadManager::kDirectionalBacktrackEntries;
 constexpr size_t PreloadManager::kDirectionalLeadEntries;
@@ -2446,6 +2516,60 @@ FilePanel::FilePanel () :
     preload_ = std::make_shared<PreloadManager>();
     recentInitialImageCache_ = std::make_shared<RecentInitialImageCache>();
 
+    // Memory watcher (rtengine/memguard.h): what the two decoded-photo caches
+    // hold, and a way to empty them. Both run off the GUI thread and touch
+    // nothing but the caches under their own mutexes; a dropped neighbour is
+    // simply decoded again when it is opened.
+    {
+        const std::weak_ptr<PreloadManager> weakPreload = preload_;
+        const std::weak_ptr<RecentInitialImageCache> weakRecent = recentInitialImageCache_;
+
+        rtengine::MemGuard::registerProbe("preloadCache", [weakPreload]() -> long long {
+            const auto preload = weakPreload.lock();
+            if (!preload) {
+                return 0;
+            }
+            std::lock_guard<std::mutex> lock(preload->mutex);
+            return static_cast<long long>(preload->totalBytes);
+        });
+        rtengine::MemGuard::registerProbe("recentCache", [weakRecent]() -> long long {
+            const auto recent = weakRecent.lock();
+            if (!recent) {
+                return 0;
+            }
+            std::lock_guard<std::mutex> lock(recent->mutex);
+            return static_cast<long long>(recent->totalBytes);
+        });
+        rtengine::MemGuard::registerTrimmer("decoded-photo-caches", [weakPreload, weakRecent](int) {
+            std::vector<rtengine::InitialImage*> dropped;
+
+            if (const auto preload = weakPreload.lock()) {
+                std::lock_guard<std::mutex> lock(preload->mutex);
+                for (auto& entry : preload->cache) {
+                    dropped.push_back(entry.second.img);
+                }
+                preload->cache.clear();
+                preload->totalBytes = 0;
+                preload->cv.notify_all();
+            }
+
+            if (const auto recent = weakRecent.lock()) {
+                std::lock_guard<std::mutex> lock(recent->mutex);
+                for (auto& entry : recent->cache) {
+                    dropped.push_back(entry.second.img);
+                }
+                recent->cache.clear();
+                recent->totalBytes = 0;
+            }
+
+            // Here rather than on the release queue: the trim reports what
+            // it freed as soon as it returns.
+            for (auto* img : dropped) {
+                img->decreaseRef();
+            }
+        });
+    }
+
 
     const auto& options = App::get().options();
 
@@ -2816,13 +2940,6 @@ void FilePanel::on_realize ()
     tpc->closeAllTools();
 }
 
-
-void FilePanel::setContentOpacity (double opacity)
-{
-    // Fade only the content area (thumbnails + right panel), keep left sidebar static
-    if (ribbonPane) ribbonPane->set_opacity(opacity);
-    if (rightBox) rightBox->set_opacity(opacity);
-}
 
 void FilePanel::syncDirectoryHighlight(const Glib::ustring& directory)
 {
@@ -4056,6 +4173,36 @@ void FilePanel::preloadAdjacent(
         }
     }
 
+    // Only two neighbours get decoded ahead of time. On a spinning disk the
+    // next few RAWs past those still cost a cold whole-file read when the
+    // user gets to them, so pull them into the OS cache once the editor has
+    // settled and nothing in the foreground needs the disk. Replacing the
+    // request on every open cancels the previous one.
+    {
+        std::vector<std::string> warm;
+        for (const auto& e : entries) {
+            if (warm.size() >= PreloadManager::kCacheWarmEntries) {
+                break;
+            }
+            if (e.isRaw
+                && !newHotWantedSet.count(e.fnameRaw)
+                && !isRecentlyCachedRaw(e)
+                && rtengine::fileIncursSeekPenalty(e.fnameRaw.c_str())) {
+                warm.push_back(e.fnameRaw);
+            }
+        }
+        // Ready whenever no RAW load is running or pending. Editor rendering
+        // after the first frame is CPU work, and the warmer stops within one
+        // 4 MB chunk once a load starts.
+        rtengine::warmFileCache(std::move(warm), []() {
+            std::chrono::milliseconds retryAfter(0);
+            return g_rawLoadGate.checkPreloadReadiness(
+                std::chrono::milliseconds(PreloadManager::kCacheWarmQuietMs),
+                retryAfter,
+                false) == RawLoadGate::PreloadAcquireResult::Acquired;
+        });
+    }
+
     const int scheduledStartDelayMs = std::max(
         minStartDelayMs,
         directionalPreload
@@ -4660,7 +4807,49 @@ void FilePanel::preloadAdjacent(
                     continue;
                 }
 
-                const size_t bytes = PreloadManager::estimatedLoadedEntryBytes(entry, img);
+                size_t bytes = PreloadManager::estimatedLoadedEntryBytes(entry, img);
+
+                // Do the editor's slow full-quality demosaic now, while this
+                // photo is only a neighbour: opening it then skips both the
+                // fast preview demosaic and the settled one. The RAW gate is
+                // already released (this is CPU work, not a decode), but the
+                // file is still advertised as loading, so a click on it waits
+                // for the result instead of decoding it a second time.
+                if (entry.isRaw && !state->stopped) {
+                    const size_t precomputeBytes = precomputedRawExtraBytes(img);
+                    bool precomputeWanted = precomputeBytes > 0
+                        && bytes + precomputeBytes <= PreloadManager::kMaxBytes / PreloadManager::kMaxEntries;
+                    if (precomputeWanted) {
+                        std::lock_guard<std::mutex> lk(state->mutex);
+                        // A click is already waiting on this file: hand it
+                        // over now and let the editor show its fast frame.
+                        precomputeWanted = state->foregroundHandoffSet.count(loadFname) == 0
+                            && state->isHotWanted(loadFname);
+                    }
+                    if (precomputeWanted) {
+                        const auto precomputeStart = std::chrono::steady_clock::now();
+                        bool precomputed = false;
+                        {
+                            lowerBackgroundPreloadThreadPriority();
+                            BackgroundPreloadOpenMPGuard ompGuard(
+                                g_rawLoadGate.hasEditorActivity()
+                                    ? PreloadManager::kThroughEditorRawPreloadThreads
+                                    : 4);
+                            precomputed = precomputePreloadedRaw(img, loadFname);
+                        }
+                        if (precomputed) {
+                            // Measured, not predicted: border handling and
+                            // cached planes make the two differ.
+                            bytes = std::max(bytes + precomputeBytes, PreloadManager::estimatedLoadedEntryBytes(entry, img));
+                        }
+                        if (logPreload) {
+                            FILESEL_LOG("[preload] precompute done=%d duration=%lldms file=%s\n",
+                                static_cast<int>(precomputed),
+                                fileSelDurationMs(precomputeStart, std::chrono::steady_clock::now()),
+                                loadFname.c_str());
+                        }
+                    }
+                }
 
                 int interLoadDelayMs = PreloadManager::kInterLoadDelayMs;
                 std::vector<rtengine::InitialImage*> releaseImages;

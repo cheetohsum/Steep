@@ -199,6 +199,7 @@ int StdImageSource::loadThumbnail (const Glib::ustring &fname, int maxJpegOutput
     wb = ColorTemp (1.0, 1.0, 1.0, 1.0, ColorTemp::DEFAULT_OBSERVER);
     //this is probably a mistake if embedded profile is not D65
 
+    syncMemAccount();
     return 0;
 }
 
@@ -378,7 +379,17 @@ ColorTemp StdImageSource::getSpotWB (std::vector<Coord2D> &red, std::vector<Coor
 
 void StdImageSource::flush() {
     img->allocate(0, 0);
+    syncMemAccount();
 };
+
+std::size_t StdImageSource::estimatedBytes() const
+{
+    if (!img || img->getWidth() <= 0 || img->getHeight() <= 0) {
+        return 0;
+    }
+
+    return static_cast<std::size_t>(img->getWidth()) * img->getHeight() * 3 * (img->getBPS() / 8);
+}
 
 void StdImageSource::wbMul2Camera(double &rm, double &gm, double &bm)
 {

@@ -269,6 +269,10 @@ BlackWhite::BlackWhite (): FoldableToolPanel(this, TOOL_NAME, M("TP_BWMIX_LABEL"
     advancedBox->pack_start(*luminanceCEG, Gtk::PACK_SHRINK, 0);
     pack_start(*advancedSection, Gtk::PACK_SHRINK, 0);
 
+    // Closed whatever the UI complexity: the mixer and filters are second
+    // steps, and opened they push the rest of the group off the screen.
+    advancedSection->setExpanded(false);
+
     show_all();
 
     disableListener();

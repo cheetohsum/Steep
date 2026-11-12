@@ -36,8 +36,8 @@ things rather than fail:
 One visible trade-off: SegFormer emitted masks at a quarter of the input
 resolution and this emits an eighth, so raw masks are coarser before the edge
 refinement step. It also scores a little lower on ADE20K (34.8 mIoU against
-37.4). The upstream repo has heavier variants, HRNetV2 among them at 43.2, if
-that turns out to matter more than the speed.
+37.4). The upstream repo has heavier variants; HRNetV2, at 43.2, is now
+exported too — see `ade20k_hrnetv2_c1.onnx` below.
 
 Installed with `-DWITH_AI_MASKING=ON`, which is the default on Windows and is
 set explicitly by all three CI workflows.
@@ -59,6 +59,92 @@ This model is installed unconditionally; the tool switches itself on whenever
 ONNX Runtime is present.
 
 ## Not in this directory
+
+### `ade20k_hrnetv2_c1.onnx` — 254 MiB
+
+The heavier sibling of `ade20k_mobilenetv2_c1.onnx`: same upstream, same
+ADE20K 150 classes in the same order, HRNetV2-W48 encoder with a plain C1 head
+(epoch 30). It scores 43.2 mIoU against MobileNetV2's 34.8, and its output is a
+quarter of the input per side rather than an eighth, so raw masks carry twice
+the resolution into edge refinement.
+
+- Upstream: [CSAILVision/semantic-segmentation-pytorch](https://github.com/CSAILVision/semantic-segmentation-pytorch),
+  weights `ade20k-hrnetv2-c1/{encoder,decoder}_epoch_30.pth`
+- Licence: BSD-3-Clause
+- Rebuild it with `tools/export_segmentation_model.py --model hrnetv2`
+
+It is a drop-in for the MobileNetV2 file: the tensors are named `input` and
+`output`, the input is dynamic `[1, 3, H, W]` ImageNet-normalised RGB, and the
+output is raw logits `[1, 150, ceil(H/4), ceil(W/4)]`. Read the output size
+from the tensor rather than assuming a stride — MobileNetV2's is
+`ceil(H/8)`, and both round up.
+
+Verified at export time:
+
+- the exported graph agrees with the source PyTorch model to 9.9e-06
+- dynamic input sizes work: 450×675 gives 113×169, 600×900 gives 150×225
+- channel 0 is wall, 2 is sky, 4 is tree, 12 is person
+- the checkpoint loads strictly, since `ModelBuilder` alone would silently
+  leave any renamed layer at random initialisation
+
+The price is speed: about 0.85 s for a 600×900 frame on the CPU provider,
+against 0.09 s for MobileNetV2, measured on a 16-thread desktop that was busy
+with other work at the time.
+
+Not in git: GitHub refuses files over 100 MiB.
+
+### `birefnet_subject.onnx` — 901 MiB
+
+Subject (salient object) segmentation: one foreground probability map, used
+where a mask should "cut out the subject". It replaces U²-Net
+(`u2net_subject.onnx`), which works at 320×320 and loses hair, fur and thin
+structure; BiRefNet works at 1024×1024 with a Swin-L backbone and is built
+for exactly those edges. These are the "general" weights — people, animals
+and objects.
+
+- Upstream: [ZhengPeng7/BiRefNet](https://github.com/ZhengPeng7/BiRefNet),
+  Zheng et al., *Bilateral Reference for High-Resolution Dichotomous Image
+  Segmentation*, CAAI AIR 2024; weights
+  [ZhengPeng7/BiRefNet](https://huggingface.co/ZhengPeng7/BiRefNet),
+  `model.safetensors`
+- Licence: MIT, for the code and the published weights alike
+- Rebuild it with `tools/export_birefnet_model.py`
+
+The contract: `input` float32 `[1, 3, 1024, 1024]`, RGB in 0..1 normalised
+with the ImageNet mean and standard deviation — the same preprocessing as
+upstream's own inference code and as U²-Net — and `output` float32
+`[1, 1, 1024, 1024]`, already a probability. The sigmoid is inside the graph,
+and only the final map is returned, not the deep-supervision side outputs.
+The size is fixed; the engine resizes to and from it.
+
+BiRefNet's decoder uses deformable convolution. Upstream exports it with a
+third-party symbolic or as ONNX's native `DeformConv`, which DirectML does not
+implement. The export script instead rewrites it as bilinear gathers and a
+matmul per kernel tap, the same arithmetic torchvision performs, so the graph
+contains only ordinary opset-17 operators (Conv, MatMul, Gather, Floor,
+LayerNormalization, Softmax, Resize, Erf, ScatterND and shape arithmetic) and
+no `DeformConv`.
+
+Verified at export time:
+
+- the rewritten deformable convolution matches torchvision to 7.2e-07,
+  including samples that fall outside the image
+- the exported graph agrees with PyTorch to at most 2.9e-04 (mean under
+  1e-06) on three photos and a synthetic frame
+- the output is a probability, 0..1 (the CPU provider's sigmoid can land one
+  ulp above 1.0; the engine clamps)
+
+On the CPU provider one inference takes about 8 s and creating the session
+about 12 s, on a 16-thread desktop that was busy at the time. This model wants
+a GPU provider.
+
+The published weights are themselves fp16, which is why this file is twice
+their 424 MiB download. An fp16 export is half the size, but it misses the
+bar: on soft hair edges it moves some pixels by up to 0.13, about 1% of one
+portrait's pixels by more than 0.01. `--fp16` still writes one for anyone who
+wants to judge that on a GPU; it is not shipped.
+
+Not in git: GitHub refuses files over 100 MiB.
 
 ### `lama_inpainting.onnx` — ~200 MB
 
@@ -119,8 +205,8 @@ so a partial file cannot satisfy the existence check on the next start.
 
 ## A note on licences
 
-All three models are under licences whose terms can be satisfied inside a
-GPL-3.0 work: BSD-3-Clause, MIT and Apache 2.0. Each requires the original
+Every model here is under a licence whose terms can be satisfied inside a
+GPL-3.0 work: BSD-3-Clause, MIT or Apache 2.0. Each requires the original
 copyright and attribution notices to survive, which is part of what this file
 is for.
 

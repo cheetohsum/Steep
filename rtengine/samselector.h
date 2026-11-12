@@ -31,8 +31,14 @@ public:
     // exclude. Returns a 0..1 mask over the source's pixel grid, or an empty
     // array when the model is unavailable or inference failed. Blocking:
     // run it on a worker.
+    // `candidate` picks one of the decoder's three nested candidates by size
+    // (0 smallest .. 2 largest); -1 lets the scores decide, as a click does.
+    // With `reference` (a 0..1 map over the source grid), the candidate that
+    // overlaps it best is taken instead: how a coarse mask asks SAM to redraw
+    // its own outline rather than whatever part or group the clicks suggest.
     array2D<float> select(const Imagefloat& source, const std::string& sourceId,
-                          const std::vector<std::array<float, 3>>& prompts);
+                          const std::vector<std::array<float, 3>>& prompts, int candidate = -1,
+                          const array2D<float>* reference = nullptr);
 
 private:
     SamSelector();

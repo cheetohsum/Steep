@@ -65,14 +65,7 @@ HSVEqualizer::HSVEqualizer () : FoldableToolPanel(this, TOOL_NAME, M("TP_HSVEQUA
     satValues.fill(0.0);
     lumValues.fill(0.0);
 
-    std::vector<GradientMilestone> bottomMilestones;
-    float R, G, B;
-
-    for (int i = 0; i < 7; i++) {
-        float x = i / 6.0;
-        Color::hsv2rgb01(x, 0.5f, 0.5f, R, G, B);
-        bottomMilestones.push_back( GradientMilestone(double(x), double(R), double(G), double(B)) );
-    }
+    const std::vector<GradientMilestone> bottomMilestones = hueBarGradient();
 
     // Clickable section label (collapsed by default)
     sectionHeader_ = Gtk::manage(new SectionHeader(M("TP_HSVEQUALIZER_SECTION")));
@@ -87,13 +80,12 @@ HSVEqualizer::HSVEqualizer () : FoldableToolPanel(this, TOOL_NAME, M("TP_HSVEQUA
     // Channel bar — 8 colored dot buttons using DrawingArea circles
     channelBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 3));
     for (int i = 0; i < 8; ++i) {
-        float cR, cG, cB;
-        Color::hsv2rgb01(static_cast<float>(CHANNEL_HUES[i]), 0.75f, 0.65f, cR, cG, cB);
-        const double dR = cR, dG = cG, dB = cB;
-
         channelDots[i] = Gtk::manage(new Gtk::DrawingArea());
         channelDots[i]->set_size_request(30, 36);
-        channelDots[i]->signal_draw().connect([this, i, dR, dG, dB](const Cairo::RefPtr<Cairo::Context>& cr) -> bool {
+        channelDots[i]->signal_draw().connect([this, i](const Cairo::RefPtr<Cairo::Context>& cr) -> bool {
+            // Looked up per draw: the working profile can change under it.
+            float dR, dG, dB;
+            hsvDisplay_.toDisplay(static_cast<float>(CHANNEL_HUES[i]), 0.75f, 0.65f, dR, dG, dB);
             const int w = channelDots[i]->get_allocated_width();
             const double size = 24.0;
             const double x = (w - size) / 2.0;
@@ -305,6 +297,22 @@ void HSVEqualizer::toggleContent()
     }
 }
 
+std::vector<GradientMilestone> HSVEqualizer::hueBarGradient() const
+{
+    // Twelve stops rather than six: a wide-gamut hue circle seen through sRGB
+    // does not interpolate evenly between its primaries.
+    std::vector<GradientMilestone> ms;
+    float R, G, B;
+
+    for (int i = 0; i <= 12; i++) {
+        const float x = i / 12.f;
+        hsvDisplay_.toDisplay(x < 1.f ? x : 0.f, 0.5f, 0.5f, R, G, B);
+        ms.push_back(GradientMilestone(double(x), double(R), double(G), double(B)));
+    }
+
+    return ms;
+}
+
 std::vector<GradientMilestone> HSVEqualizer::gradientFor(int property, int channel) const
 {
     float R, G, B;
@@ -314,20 +322,20 @@ std::vector<GradientMilestone> HSVEqualizer::gradientFor(int property, int chann
     if (property == 0) {
         float h0 = hue - 0.083f; if (h0 < 0) h0 += 1.0f;
         float h1 = hue + 0.083f; if (h1 > 1) h1 -= 1.0f;
-        Color::hsv2rgb01(h0, 0.7f, 0.55f, R, G, B);
+        hsvDisplay_.toDisplay(h0, 0.7f, 0.55f, R, G, B);
         ms.push_back(GradientMilestone(0.0, R, G, B));
-        Color::hsv2rgb01(hue, 0.7f, 0.55f, R, G, B);
+        hsvDisplay_.toDisplay(hue, 0.7f, 0.55f, R, G, B);
         ms.push_back(GradientMilestone(0.5, R, G, B));
-        Color::hsv2rgb01(h1, 0.7f, 0.55f, R, G, B);
+        hsvDisplay_.toDisplay(h1, 0.7f, 0.55f, R, G, B);
         ms.push_back(GradientMilestone(1.0, R, G, B));
     } else if (property == 1) {
         ms.push_back(GradientMilestone(0.0, 0.5, 0.5, 0.5));
-        Color::hsv2rgb01(hue, 1.0f, 0.6f, R, G, B);
+        hsvDisplay_.toDisplay(hue, 1.0f, 0.6f, R, G, B);
         ms.push_back(GradientMilestone(1.0, R, G, B));
     } else {
-        Color::hsv2rgb01(hue, 0.6f, 0.2f, R, G, B);
+        hsvDisplay_.toDisplay(hue, 0.6f, 0.2f, R, G, B);
         ms.push_back(GradientMilestone(0.0, R, G, B));
-        Color::hsv2rgb01(hue, 0.6f, 0.8f, R, G, B);
+        hsvDisplay_.toDisplay(hue, 0.6f, 0.8f, R, G, B);
         ms.push_back(GradientMilestone(1.0, R, G, B));
     }
 
@@ -423,11 +431,11 @@ void HSVEqualizer::updateActiveSliderGradients()
         float h0 = hue - 0.083f; if (h0 < 0) h0 += 1.0f;
         float h1 = hue + 0.083f; if (h1 > 1) h1 -= 1.0f;
 
-        Color::hsv2rgb01(h0, 0.7f, 0.55f, R, G, B);
+        hsvDisplay_.toDisplay(h0, 0.7f, 0.55f, R, G, B);
         ms.push_back(GradientMilestone(0.0, R, G, B));
-        Color::hsv2rgb01(hue, 0.7f, 0.55f, R, G, B);
+        hsvDisplay_.toDisplay(hue, 0.7f, 0.55f, R, G, B);
         ms.push_back(GradientMilestone(0.5, R, G, B));
-        Color::hsv2rgb01(h1, 0.7f, 0.55f, R, G, B);
+        hsvDisplay_.toDisplay(h1, 0.7f, 0.55f, R, G, B);
         ms.push_back(GradientMilestone(1.0, R, G, B));
 
         hueAdj->setSliderGradient(ms);
@@ -437,7 +445,7 @@ void HSVEqualizer::updateActiveSliderGradients()
     {
         std::vector<GradientMilestone> ms;
         ms.push_back(GradientMilestone(0.0, 0.5, 0.5, 0.5));
-        Color::hsv2rgb01(hue, 1.0f, 0.6f, R, G, B);
+        hsvDisplay_.toDisplay(hue, 1.0f, 0.6f, R, G, B);
         ms.push_back(GradientMilestone(1.0, R, G, B));
 
         satAdj->setSliderGradient(ms);
@@ -446,9 +454,9 @@ void HSVEqualizer::updateActiveSliderGradients()
     // Luminance slider: dark to bright
     {
         std::vector<GradientMilestone> ms;
-        Color::hsv2rgb01(hue, 0.6f, 0.2f, R, G, B);
+        hsvDisplay_.toDisplay(hue, 0.6f, 0.2f, R, G, B);
         ms.push_back(GradientMilestone(0.0, R, G, B));
-        Color::hsv2rgb01(hue, 0.6f, 0.8f, R, G, B);
+        hsvDisplay_.toDisplay(hue, 0.6f, 0.8f, R, G, B);
         ms.push_back(GradientMilestone(1.0, R, G, B));
 
         lumAdj->setSliderGradient(ms);
@@ -517,6 +525,14 @@ void HSVEqualizer::read (const ProcParams* pp, const ParamsEdited* pedited)
     sshape->setCurve(pp->hsvequalizer.scurve);
     vshape->setCurve(pp->hsvequalizer.vcurve);
     setEnabled(pp->hsvequalizer.enabled);
+
+    if (hsvDisplay_.setProfile(pp->icm.workingProfile)) {
+        const std::vector<GradientMilestone> bar = hueBarGradient();
+        hshape->setBottomBarBgGradient(bar);
+        sshape->setBottomBarBgGradient(bar);
+        vshape->setBottomBarBgGradient(bar);
+        updateActiveSliderGradients();
+    }
 
     // Read slider values into internal arrays
     for (int i = 0; i < 8; ++i) {
@@ -663,17 +679,17 @@ void HSVEqualizer::colorForValue (double valX, double valY, enum ColorCaller::El
             h += 1.0f;
         }
 
-        Color::hsv2rgb01(h, 0.5f, 0.5f, r, g, b);
+        hsvDisplay_.toDisplay(h, 0.5f, 0.5f, r, g, b);
         caller->ccRed = double(r);
         caller->ccGreen = double(g);
         caller->ccBlue = double(b);
     } else if (callerId == 2) { // Saturation = f(Hue)
-        Color::hsv2rgb01(float(valX), float(valY), 0.5f, r, g, b);
+        hsvDisplay_.toDisplay(float(valX), float(valY), 0.5f, r, g, b);
         caller->ccRed = double(r);
         caller->ccGreen = double(g);
         caller->ccBlue = double(b);
     } else if (callerId == 3) { // Value = f(Hue)
-        Color::hsv2rgb01(float(valX), 0.5f, float(valY), r, g, b);
+        hsvDisplay_.toDisplay(float(valX), 0.5f, float(valY), r, g, b);
         caller->ccRed = double(r);
         caller->ccGreen = double(g);
         caller->ccBlue = double(b);

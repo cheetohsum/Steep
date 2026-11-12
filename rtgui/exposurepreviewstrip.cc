@@ -18,51 +18,25 @@
 #include "exposurepreviewstrip.h"
 
 #include <cmath>
-#include <thread>
 #include <algorithm>
-#include <mutex>
 
 #include "rtengine/rt_math.h"
 
+#include "backgroundtasks.h"
+#include "guiutils.h"
 #include "thumbnail.h"
 #include "../rtengine/iimage.h"
-
-#ifdef _OPENMP
-#include <omp.h>
-#endif
 
 namespace
 {
 
-std::mutex& previewStripGenerationMutex()
+// One strip at a time, on the shared I/O lane (OpenMP held to one there):
+// a thread per strip per edit left an OpenMP team behind every time.
+steep::SerialQueue& previewStripQueue()
 {
-    static std::mutex mutex;
-    return mutex;
+    static steep::SerialQueue* const queue = new steep::SerialQueue(steep::Lane::IO);
+    return *queue;
 }
-
-class PreviewStripOpenMPGuard
-{
-public:
-    PreviewStripOpenMPGuard()
-    {
-#ifdef _OPENMP
-        previousThreads_ = std::max(1, omp_get_max_threads());
-        omp_set_num_threads(1);
-#endif
-    }
-
-    ~PreviewStripOpenMPGuard()
-    {
-#ifdef _OPENMP
-        omp_set_num_threads(previousThreads_);
-#endif
-    }
-
-private:
-#ifdef _OPENMP
-    int previousThreads_ = 1;
-#endif
-};
 
 int visibleWidgetWidth(Gtk::Widget* widget)
 {
@@ -129,8 +103,12 @@ void PreviewStrip::setThumbnail(Thumbnail* thm)
     regenerateThumbnails();
 }
 
-void PreviewStrip::setCurrentParams(const rtengine::procparams::ProcParams& params)
+void PreviewStrip::setCurrentParams(std::shared_ptr<const rtengine::procparams::ProcParams> params)
 {
+    if (!params) {
+        return;
+    }
+
     // A strip-generated update is ignored while its gesture is active. External
     // edits establish a new neutral center instead of compounding the old look.
     if (isDragging_) {
@@ -156,10 +134,43 @@ void PreviewStrip::setCurrentParams(const rtengine::procparams::ProcParams& para
         dragPending_ = false;
     }
 
-    currentParams_ = std::make_shared<rtengine::procparams::ProcParams>(params);
+    currentParams_ = std::move(params);
     scrubberPos_ = 0.0;
     queue_draw();
     regenerateThumbnails();
+}
+
+void PreviewStrip::setCurrentParams(const rtengine::procparams::ProcParams& params)
+{
+    setCurrentParams(std::make_shared<const rtengine::procparams::ProcParams>(params));
+}
+
+void PreviewStrip::setActive(bool active)
+{
+    if (active_ == active) {
+        return;
+    }
+
+    active_ = active;
+
+    if (active_ && stale_) {
+        regenerateThumbnails();
+    }
+}
+
+void PreviewStrip::on_map()
+{
+    Gtk::DrawingArea::on_map();
+
+    // Edits made while the pane was away were not rendered.
+    if (stale_) {
+        regenerateThumbnails();
+    }
+}
+
+bool PreviewStrip::wantsThumbnails() const
+{
+    return active_ && get_visible() && get_mapped();
 }
 
 void PreviewStrip::setParamModifier(ParamModifier mod)
@@ -196,8 +207,11 @@ void PreviewStrip::regenerateThumbnails()
 
     cancelThumbnailGeneration();
 
-    if (debounceConn_.connected()) {
-        debounceConn_.disconnect();
+    // Nobody is looking: remember that the frames are behind, and render
+    // when the strip is next active and on screen.
+    if (!wantsThumbnails()) {
+        stale_ = true;
+        return;
     }
 
     debounceConn_ = Glib::signal_timeout().connect([this]() {
@@ -212,6 +226,14 @@ void PreviewStrip::generateThumbnailsAsync()
         return;
     }
 
+    // The debounce can outlive the strip's turn on screen.
+    if (!wantsThumbnails()) {
+        stale_ = true;
+        return;
+    }
+
+    stale_ = false;
+
     if (cancelToken_) {
         cancelToken_->store(true);
     }
@@ -221,64 +243,59 @@ void PreviewStrip::generateThumbnailsAsync()
 
     auto params = currentParams_; // shared_ptr copy
     Thumbnail* thm = thumbnail_;
-    thm->increaseRef(); // prevent thumbnail deletion while thread runs
+    thm->increaseRef(); // prevent thumbnail deletion while the job runs
     ParamModifier modifier = paramModifier_;
     PreviewStrip* self = this;
     auto alive = aliveToken_;
 
-    std::thread([self, params, thm, cancel, modifier, alive]() {
-        std::unique_lock<std::mutex> generationLock(previewStripGenerationMutex());
-        if (cancel->load(std::memory_order_acquire)
-            || !alive->load(std::memory_order_acquire)) {
+    previewStripQueue().enqueue([self, params, thm, cancel, modifier, alive]() {
+        const auto cancelled = [cancel, alive]() {
+            return cancel->load(std::memory_order_acquire)
+                || !alive->load(std::memory_order_acquire);
+        };
+
+        if (cancelled()) {
             thm->decreaseRef();
             return;
         }
 
-        PreviewStripOpenMPGuard ompGuard;
+        std::vector<rtengine::procparams::ProcParams> frames;
+        frames.reserve(NUM_THUMBS);
+
+        for (int i = 0; i < NUM_THUMBS; ++i) {
+            const double t = -1.0 + (2.0 * i) / (NUM_THUMBS - 1);
+            frames.push_back(*params);
+            modifier(frames.back(), t);
+        }
+
+        // Fully processed every time: an embedded-JPEG ("quick") RAW
+        // thumbnail only gets rotated, and the persisted editor render
+        // is the current look -- either way all six frames came out the
+        // same, unedited picture. One batch, so the base thumbnail is read
+        // (or developed from the RAW) once for the six, not once each.
+        const std::vector<rtengine::IImage8*> images =
+            thm->processFullThumbBatch(frames, STRIP_HEIGHT, cancelled);
+        thm->decreaseRef();
+
         auto results = std::make_shared<std::vector<Glib::RefPtr<Gdk::Pixbuf>>>();
         results->reserve(NUM_THUMBS);
 
-        for (int i = 0; i < NUM_THUMBS; ++i) {
-            if (cancel->load(std::memory_order_acquire)
-                || !alive->load(std::memory_order_acquire)) {
-                thm->decreaseRef();
-                return;
-            }
-
-            double t = -1.0 + (2.0 * i) / (NUM_THUMBS - 1);
-
-            rtengine::procparams::ProcParams pp = *params;
-            modifier(pp, t);
-
-            double scale;
-            rtengine::IImage8* img = thm->processThumbImage(pp, STRIP_HEIGHT, scale);
+        for (rtengine::IImage8* img : images) {
             if (!img) {
                 results->push_back(Glib::RefPtr<Gdk::Pixbuf>());
                 continue;
             }
 
-            if (cancel->load(std::memory_order_acquire)
-                || !alive->load(std::memory_order_acquire)) {
-                delete img;
-                thm->decreaseRef();
-                return;
-            }
-
-            int tw = img->getWidth();
-            int th = img->getHeight();
-            auto pixbuf = Gdk::Pixbuf::create_from_data(
+            const int tw = img->getWidth();
+            const int th = img->getHeight();
+            results->push_back(Gdk::Pixbuf::create_from_data(
                 img->getData(), Gdk::COLORSPACE_RGB, false, 8,
-                tw, th, tw * 3);
-            auto copied = pixbuf->copy();
+                tw, th, tw * 3)->copy());
             delete img;
-
-            results->push_back(copied);
         }
 
-        thm->decreaseRef();
-
-        if (cancel->load(std::memory_order_acquire)
-            || !alive->load(std::memory_order_acquire)) {
+        // A short batch was cancelled part-way, or had no base to render from.
+        if (cancelled() || results->size() < static_cast<size_t>(NUM_THUMBS)) {
             return;
         }
 
@@ -290,7 +307,7 @@ void PreviewStrip::generateThumbnailsAsync()
             self->thumbnails_ = *results;
             self->queue_draw();
         });
-    }).detach();
+    });
 }
 
 void PreviewStrip::cancelThumbnailGeneration()
@@ -342,20 +359,21 @@ bool PreviewStrip::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
     // Pill-shaped clip
     double r = CORNER_RADIUS;
     cr->begin_new_path();
-    cr->arc(r, r, r, M_PI, 1.5 * M_PI);
-    cr->arc(w - r, r, r, 1.5 * M_PI, 2.0 * M_PI);
-    cr->arc(w - r, h - r, r, 0, 0.5 * M_PI);
-    cr->arc(r, h - r, r, 0.5 * M_PI, M_PI);
-    cr->close_path();
+    steepui::roundedRect(cr, 0, 0, w, h, r);
     cr->clip();
 
     if (thumbnails_.empty() || thumbnails_.size() < static_cast<size_t>(NUM_THUMBS)) {
         // Quiet placeholder while previews generate — the finished set is
         // installed atomically, so the strip reveals all frames at once.
         auto grad = Cairo::LinearGradient::create(0, 0, w, 0);
-        grad->add_color_stop_rgb(0, 0.15, 0.15, 0.18);
-        grad->add_color_stop_rgb(0.5, 0.25, 0.25, 0.28);
-        grad->add_color_stop_rgb(1, 0.35, 0.35, 0.38);
+        // Theme surfaces, dark to light like the exposures it stands in
+        // for, so the empty strip is not a dark slab on a light theme.
+        const Gdk::RGBA lo = themeColor(*this, "steep_surface_0", Gdk::RGBA("#1a1e24"));
+        const Gdk::RGBA mid = themeColor(*this, "steep_surface_2", Gdk::RGBA("#2c3038"));
+        const Gdk::RGBA hi = themeColor(*this, "steep_surface_3", Gdk::RGBA("#2e3340"));
+        grad->add_color_stop_rgb(0, lo.get_red(), lo.get_green(), lo.get_blue());
+        grad->add_color_stop_rgb(0.5, mid.get_red(), mid.get_green(), mid.get_blue());
+        grad->add_color_stop_rgb(1, hi.get_red(), hi.get_green(), hi.get_blue());
         cr->set_source(grad);
         cr->paint();
     } else {
@@ -402,7 +420,9 @@ bool PreviewStrip::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
 
         if (live) {
             // A soft halo, so the line stands off a busy thumbnail.
-            cr->set_source_rgba(0, 0, 0, 0.35);
+            Gdk::RGBA haloFallback;
+            haloFallback.set_rgba(0.0, 0.0, 0.0, 0.35);
+            steepui::setSource(cr, themeColor(*this, "steep_shadow", haloFallback));
             cr->set_line_width(4.0);
             cr->move_to(scrubX, 0);
             cr->line_to(scrubX, h);
@@ -433,12 +453,8 @@ bool PreviewStrip::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
 
     // Pill border
     cr->begin_new_path();
-    cr->arc(r, r, r, M_PI, 1.5 * M_PI);
-    cr->arc(w - r, r, r, 1.5 * M_PI, 2.0 * M_PI);
-    cr->arc(w - r, h - r, r, 0, 0.5 * M_PI);
-    cr->arc(r, h - r, r, 0.5 * M_PI, M_PI);
-    cr->close_path();
-    cr->set_source_rgba(1, 1, 1, 0.15);
+    steepui::roundedRect(cr, 0.5, 0.5, w - 1.0, h - 1.0, r - 0.5);
+    steepui::setSource(cr, themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff")), 0.15);
     cr->set_line_width(1.0);
     cr->stroke();
 

@@ -42,7 +42,11 @@ enum class AISegClass {
     // keeps its 8-class world, while mask consumers may index all of these.
     SUBJECT = NUM_CLASSES,  ///< person|vehicle|animal|foreground → dominant connected regions, holes filled
     NOT_SUBJECT,            ///< complement of SUBJECT
-    TOTAL_CLASSES           ///< = 10: model classes + composed pseudo-classes
+    // By estimated depth rather than by kind, split where the scene's depths
+    // fall apart. Filled only when a mask uses them (AIMaskCache::setDepthClasses).
+    FOREGROUND_DEPTH,       ///< the near part of the scene
+    BACKGROUND_DEPTH,       ///< the far part
+    TOTAL_CLASSES           ///< = 12: model classes + composed pseudo-classes
 };
 
 class AISegmentationEngine : public NonCopyable
@@ -53,11 +57,14 @@ public:
 
     bool init(const std::string& modelPath);
     bool isInitialized() const;
+    // The model file in use, part of the persisted class maps' key.
+    std::string modelPath() const;
 
     // Takes planar RGB float [0,65535] as row pointers, returns per-class probability maps
-    // Output maps are sized to match input dimensions
+    // Output maps are sized to match input dimensions. `ok`, when given, is
+    // cleared when inference failed and the maps are not to be trusted.
     std::vector<array2D<float>> segment(float* const* rRows, float* const* gRows, float* const* bRows,
-                                         int width, int height, bool multiThread) const;
+                                         int width, int height, bool multiThread, bool* ok = nullptr) const;
 
     static int getClassCount();
     static const char* getClassName(AISegClass cls);

@@ -1,32 +1,28 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
   <title>Steep Logo</title>
+  <!-- A peak seen through a lens; the summit breaks out of the ring -->
   <defs>
     <linearGradient id="bgGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#2a3040"/>
-      <stop offset="1" stop-color="#1a1e28"/>
+      <stop offset="0" stop-color="#2c3140"/>
+      <stop offset="1" stop-color="#151821"/>
     </linearGradient>
     <linearGradient id="mountainGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#e0e4ec"/>
-      <stop offset="1" stop-color="#a0a8b8"/>
+      <stop offset="0" stop-color="#f3f4f8"/>
+      <stop offset="1" stop-color="#a7adbb"/>
     </linearGradient>
-    <linearGradient id="snowGrad" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffffff"/>
-      <stop offset="0.8" stop-color="#dce0e8"/>
-    </linearGradient>
-    <linearGradient id="ringGrad" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#c8ccd4"/>
-      <stop offset="1" stop-color="#8890a0"/>
-    </linearGradient>
+    <mask id="ringGap" maskUnits="userSpaceOnUse" x="0" y="0" width="48" height="48">
+      <rect width="48" height="48" fill="#fff"/>
+      <path d="M24.6 15 L29 3 L33.4 15 Z" fill="#000" stroke="#000" stroke-width="4.2" stroke-linejoin="round"/>
+    </mask>
+    <mask id="snowline" maskUnits="userSpaceOnUse" x="0" y="0" width="48" height="48">
+      <rect width="48" height="48" fill="#fff"/>
+      <path d="M25.4 13.2 L28.3 10.6 L29.9 12.7 L32.8 10.4" fill="none" stroke="#000" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+    </mask>
   </defs>
-  <!-- Background circle -->
-  <circle cx="128" cy="128" r="120" fill="url(#bgGrad)"/>
-  <!-- Outer lens ring -->
-  <circle cx="128" cy="128" r="108" fill="none" stroke="url(#ringGrad)" stroke-width="10"/>
-  <!-- Mountain silhouette -->
-  <path d="M48 200 L108 72 L138 120 L168 56 L228 200 Z" fill="url(#mountainGrad)"/>
-  <!-- Snow cap on taller peak -->
-  <path d="M168 56 L148 104 L168 90 L188 104 Z" fill="url(#snowGrad)"/>
-  <!-- Snow cap on shorter peak -->
-  <path d="M108 72 L98 96 L108 88 L118 96 Z" fill="url(#snowGrad)" opacity="0.7"/>
+  <g transform="scale(5.3333)">
+    <circle cx="24" cy="24" r="23" fill="url(#bgGrad)"/>
+    <circle cx="24" cy="24" r="19" fill="none" stroke="#c9cdd7" stroke-width="2.6" mask="url(#ringGap)"/>
+    <path d="M10 34 L19.5 18.5 L23.2 24 L29 3 L38 34 Z" fill="url(#mountainGrad)" stroke="url(#mountainGrad)" stroke-width="0.6" stroke-linejoin="round" mask="url(#snowline)"/>
+  </g>
 </svg>

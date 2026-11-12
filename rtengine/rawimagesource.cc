@@ -693,6 +693,20 @@ RawImageSource::RawImageSource()
 
 //%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
+// What a precomputeFullQuality() run used and produced. The pipeline only
+// adopts the result when every input matches the full-quality pass it would
+// otherwise run itself (ImProcCoordinator::updatePreviewImage).
+struct RawImageSource::FullQualityPrecompute {
+    RAWParams raw;
+    LensProfParams lensProf;
+    CoarseTransformParams coarse;
+    bool cache = false;
+    double contrastThreshold = 0.0;
+    float reddeha = 0.f;
+    float greendeha = 0.f;
+    float bluedeha = 0.f;
+};
+
 RawImageSource::~RawImageSource()
 {
 
@@ -1775,6 +1789,7 @@ int RawImageSource::load(const Glib::ustring &fname, bool firstFrameOnly)
             fname.c_str());
     }
 
+    syncMemAccount();
     return 0; // OK!
 }
 
@@ -1782,6 +1797,14 @@ int RawImageSource::load(const Glib::ustring &fname, bool firstFrameOnly)
 
 void RawImageSource::preprocess(const RAWParams &raw, const LensProfParams &lensProf, const CoarseTransformParams& coarse, float &reddeha, float &greendeha, float &bluedeha,  bool prepareDenoise)
 {
+    // rawData is allocated in here; report it on every way out.
+    const struct MemSync {
+        RawImageSource* self;
+        ~MemSync() { self->syncMemAccount(); }
+    } memSync{this};
+
+    // Whatever a precompute left in rawData is about to be replaced.
+    fullQualityPrecompute.reset();
 //    BENCHFUN
     MyTime t1, t2;
     t1.set();
@@ -2247,6 +2270,13 @@ void RawImageSource::preprocess(const RAWParams &raw, const LensProfParams &lens
 
 void RawImageSource::demosaic(const RAWParams &raw, bool autoContrast, double &contrastThreshold, bool cache)
 {
+    // The three demosaiced planes (and their cached copies) appear in here.
+    const struct MemSync {
+        RawImageSource* self;
+        ~MemSync() { self->syncMemAccount(); }
+    } memSync{this};
+
+    fullQualityPrecompute.reset();
     assert(checkRawDataDimensions(rawData, *ri, W, H));
 
     MyTime t1, t2;
@@ -3090,6 +3120,183 @@ void RawImageSource::flush()
 
     rawDirty = true;
     rgbSourceModified = false;
+    fullQualityPrecompute.reset();
+    syncMemAccount();
+}
+
+std::size_t RawImageSource::estimatedBytes() const
+{
+    const auto plane = [](const array2D<float>& a) -> std::size_t {
+        return a.getWidth() > 0 && a.getHeight() > 0
+            ? static_cast<std::size_t>(a.getWidth()) * a.getHeight() * sizeof(float)
+            : 0;
+    };
+
+    std::size_t total = plane(rawData) + plane(red) + plane(green) + plane(blue)
+        + plane(redloc) + plane(greenloc) + plane(blueloc);
+
+    for (const array2D<float>* cached : {redCache, greenCache, blueCache}) {
+        if (cached) {
+            total += plane(*cached);
+        }
+    }
+
+    for (const auto& buffer : rawDataBuffer) {
+        if (buffer) {
+            total += plane(*buffer);
+        }
+    }
+
+    for (const auto& frame : riFrames) {
+        if (frame) {
+            total += frame->estimatedBytes();
+        }
+    }
+
+    return total;
+}
+
+bool RawImageSource::precomputeFullQuality(const ProcParams& params)
+{
+    // Ahead-of-time work on a background thread: out of memory (often for a
+    // moment, another program holding it) just means the editor demosaics
+    // the usual way when the photo opens.
+    try {
+        return precomputeFullQualityUnchecked(params);
+    } catch (const std::bad_alloc&) {
+        fullQualityPrecompute.reset();
+        std::fprintf(stderr, "Full-quality precompute skipped: out of memory\n");
+        return false;
+    }
+}
+
+bool RawImageSource::precomputeFullQualityUnchecked(const ProcParams& params)
+{
+    fullQualityPrecompute.reset();
+
+    // Multi-frame files (pixel shift, frame averaging) keep the ordinary path:
+    // their demosaic reads per-frame state the pipeline sets up itself.
+    if (!ri || numFrames != 1
+            || params.raw.bayersensor.method == RAWParams::BayerSensor::getMethodString(RAWParams::BayerSensor::Method::PIXELSHIFT)) {
+        return false;
+    }
+
+    std::unique_ptr<FullQualityPrecompute> result(new FullQualityPrecompute);
+    result->raw = params.raw;
+    result->lensProf = params.lensProf;
+    result->coarse = params.coarse;
+    result->cache = params.pdsharpening.enabled;
+
+    // Exactly the calls the settled pipeline pass makes, in the same order.
+    setCurrentFrame(params.raw.bayersensor.imageNum);
+    preprocess(params.raw, params.lensProf, params.coarse, result->reddeha, result->greendeha, result->bluedeha, true);
+
+    const bool bayer = getSensorType() == ST_BAYER;
+    if (bayer) {
+        setBorder(params.raw.bayersensor.border);
+    } else if (getSensorType() == ST_FUJI_XTRANS) {
+        setBorder(params.raw.xtranssensor.border);
+    }
+
+    const bool autoContrast = bayer ? params.raw.bayersensor.dualDemosaicAutoContrast : params.raw.xtranssensor.dualDemosaicAutoContrast;
+    result->contrastThreshold = bayer ? params.raw.bayersensor.dualDemosaicContrast : params.raw.xtranssensor.dualDemosaicContrast;
+    demosaic(params.raw, autoContrast, result->contrastThreshold, result->cache);
+
+    fullQualityPrecompute = std::move(result);
+    return true;
+}
+
+bool RawImageSource::takePrecomputedFullQuality(const ProcParams& params, float& reddeha, float& greendeha, float& bluedeha, double& contrastThreshold)
+{
+    const std::unique_ptr<FullQualityPrecompute> precomputed = std::move(fullQualityPrecompute);
+
+    if (!precomputed
+            || precomputed->raw != params.raw
+            || precomputed->lensProf != params.lensProf
+            || precomputed->coarse != params.coarse
+            || precomputed->cache != params.pdsharpening.enabled) {
+        return false;
+    }
+
+    reddeha = precomputed->reddeha;
+    greendeha = precomputed->greendeha;
+    bluedeha = precomputed->bluedeha;
+    contrastThreshold = precomputed->contrastThreshold;
+    return true;
+}
+
+bool RawImageSource::hasPrecomputedFullQuality() const
+{
+    return static_cast<bool>(fullQualityPrecompute);
+}
+
+bool RawImageSource::adoptFullQualityFrom(ImageSource& other)
+{
+    RawImageSource* const twin = dynamic_cast<RawImageSource*>(&other);
+    if (!twin || twin == this || !twin->fullQualityPrecompute
+            || twin->fileName != fileName || twin->W != W || twin->H != H
+            || twin->numFrames != 1 || numFrames != 1) {
+        return false;
+    }
+
+    // Everything preprocess() and demosaic() write. The decoded raw (ri,
+    // riFrames), camera profiles, metadata and the base class stay where they
+    // are: both sources decoded the same file, and other objects hold
+    // pointers into this one's.
+    using std::swap;
+    swap(scale_mul, twin->scale_mul);
+    swap(c_black, twin->c_black);
+    swap(c_white, twin->c_white);
+    swap(cblacksom, twin->cblacksom);
+    swap(ref_pre_mul, twin->ref_pre_mul);
+    swap(refwb_red, twin->refwb_red);
+    swap(refwb_green, twin->refwb_green);
+    swap(refwb_blue, twin->refwb_blue);
+    swap(chmax, twin->chmax);
+    swap(hlmax, twin->hlmax);
+    swap(clmax, twin->clmax);
+    swap(initialGain, twin->initialGain);
+    swap(defGain, twin->defGain);
+    swap(border, twin->border);
+    swap(rgbSourceModified, twin->rgbSourceModified);
+    swap(flatFieldAutoClipValue, twin->flatFieldAutoClipValue);
+    swap(rawDirty, twin->rawDirty);
+    swap(psRedBrightness, twin->psRedBrightness);
+    swap(psGreenBrightness, twin->psGreenBrightness);
+    swap(psBlueBrightness, twin->psBlueBrightness);
+    swap(minVals, twin->minVals);
+
+    rawData.swap(twin->rawData);
+    red.swap(twin->red);
+    green.swap(twin->green);
+    blue.swap(twin->blue);
+    redloc.swap(twin->redloc);
+    greenloc.swap(twin->greenloc);
+    blueloc.swap(twin->blueloc);
+    swap(redCache, twin->redCache);
+    swap(greenCache, twin->greenCache);
+    swap(blueCache, twin->blueCache);
+
+    // Frame pointers either name the owner's own rawData member, which has
+    // to be re-pointed after the swap, or a rawDataBuffer entry, which moves
+    // along with the vector.
+    rawDataBuffer.swap(twin->rawDataBuffer);
+    rawDataFrames.swap(twin->rawDataFrames);
+    for (auto& frame : rawDataFrames) {
+        if (frame == &twin->rawData) {
+            frame = &rawData;
+        }
+    }
+    for (auto& frame : twin->rawDataFrames) {
+        if (frame == &rawData) {
+            frame = &twin->rawData;
+        }
+    }
+
+    fullQualityPrecompute = std::move(twin->fullQualityPrecompute);
+    syncMemAccount();
+    twin->syncMemAccount();
+    return true;
 }
 
 void RawImageSource::HLRecovery_Global(const ToneCurveParams &hrp)

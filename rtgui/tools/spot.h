@@ -22,6 +22,7 @@
 
 #include "editwidgets.h"
 #include "guiutils.h"
+#include "motion.h"
 #include "toolpanel.h"
 #include "widgets/basic/adjuster.h"
 
@@ -122,7 +123,8 @@ private:
     bool awaitingSmartResult_ = false;   // a smart stroke was committed, result pending
     bool busySeenActive_ = false;        // ignore a stale idle from the previous render
     float busyPhase_ = 0.f;
-    sigc::connection busyAnimConn_;
+    steep::motion::Handle busyAnim_;
+    void queueBusyArcRedraw();
     sigc::connection busyTimeoutConn_;
     void startBusyIndicator();
     void stopBusyIndicator();

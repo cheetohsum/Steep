@@ -17,6 +17,7 @@
 #ifdef RT_AI_MASKING
 
 #include "aisubjectmodel.h"
+#include "aiidlereaper.h"
 
 #include "onnxruntime_compat.h"
 
@@ -27,6 +28,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cmath>
+#include <condition_variable>
 #include <cstdio>
 #include <mutex>
 #include <thread>
@@ -71,7 +73,64 @@ struct AISubjectEngine::Impl {
     bool usingDirectML = false;
     std::string inputName;
     std::string outputName;
+    // Square input side read from the model: 320 for U^2-Net, 1024 for
+    // BiRefNet. They also differ in preparation, see saliency().
+    int side = SUBJECT_INPUT;
+    std::string modelPath;
+    // Inference and the idle release take turns on the session.
+    std::mutex runMutex;
+    std::atomic<long long> lastUse{0};
+
+    // Caller holds runMutex.
+    bool loadSessionLocked()
+    {
+        if (session) {
+            return true;
+        }
+        if (!api || !env || !sessionOptions || modelPath.empty()) {
+            return false;
+        }
+#ifdef _WIN32
+        const int wlen = MultiByteToWideChar(CP_UTF8, 0, modelPath.c_str(), -1, nullptr, 0);
+        std::vector<wchar_t> wpath(wlen);
+        MultiByteToWideChar(CP_UTF8, 0, modelPath.c_str(), -1, wpath.data(), wlen);
+        OrtStatus* status = api->CreateSession(env, wpath.data(), sessionOptions, &session);
+#else
+        OrtStatus* status = api->CreateSession(env, modelPath.c_str(), sessionOptions, &session);
+#endif
+        if (status) {
+            std::fprintf(stderr, "AI Subject: failed to reload model: %s\n", api->GetErrorMessage(status));
+            api->ReleaseStatus(status);
+            session = nullptr;
+            return false;
+        }
+        std::fprintf(stderr, "AI Subject: reloaded %s\n", modelPath.c_str());
+        return true;
+    }
+
+    void releaseIfIdle(bool force)
+    {
+        std::unique_lock<std::mutex> lock(runMutex, std::try_to_lock);
+        if (!lock.owns_lock() || !session || (!force && AIIdleReaper::nowMs() - lastUse.load() < AIIdleReaper::kIdleMs)) {
+            return;
+        }
+        api->ReleaseSession(session);
+        session = nullptr;
+        if (force) {
+            std::fprintf(stderr, "AI Subject: model unloaded to free memory\n");
+        } else {
+            std::fprintf(stderr, "AI Subject: model unloaded after %lld s idle\n", AIIdleReaper::kIdleMs / 1000);
+        }
+    }
+    int reaperId = -1;
+    // A load that failed for want of memory, and when (see retryLoad()).
+    std::string retryPath;
+    long long failedAtMs = 0;
     std::mutex initMutex;
+    // A deferred load still in flight, and its end.
+    bool loading = false;
+    std::mutex loadMutex;
+    std::condition_variable loaded;
 
     ~Impl()
     {
@@ -107,39 +166,45 @@ bool AISubjectEngine::init(const std::string& modelPath)
         return false;
     }
 
-    OrtStatus* status = pImpl->api->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "RawTherapee_Subject", &pImpl->env);
+    OrtStatus* status = nullptr;
 
-    if (status) {
-        pImpl->api->ReleaseStatus(status);
-        return false;
-    }
+    // Set up once; a load retried after running out of memory only
+    // builds the session again.
+    if (!pImpl->sessionOptions) {
+        status = pImpl->api->CreateEnv(ORT_LOGGING_LEVEL_WARNING, "RawTherapee_Subject", &pImpl->env);
 
-    status = pImpl->api->CreateSessionOptions(&pImpl->sessionOptions);
+        if (status) {
+            pImpl->api->ReleaseStatus(status);
+            return false;
+        }
 
-    if (status) {
-        pImpl->api->ReleaseStatus(status);
-        return false;
-    }
+        status = pImpl->api->CreateSessionOptions(&pImpl->sessionOptions);
 
-    pImpl->api->SetSessionGraphOptimizationLevel(pImpl->sessionOptions, ORT_ENABLE_ALL);
+        if (status) {
+            pImpl->api->ReleaseStatus(status);
+            return false;
+        }
+
+        pImpl->api->SetSessionGraphOptimizationLevel(pImpl->sessionOptions, ORT_ENABLE_ALL);
 
 #ifdef RT_AI_MASKING_DIRECTML
-    pImpl->api->DisableMemPattern(pImpl->sessionOptions);
-    pImpl->api->DisableCpuMemArena(pImpl->sessionOptions);
-    pImpl->api->SetSessionExecutionMode(pImpl->sessionOptions, ORT_SEQUENTIAL);
-    status = OrtSessionOptionsAppendExecutionProvider_DML(pImpl->sessionOptions, 0);
+        pImpl->api->DisableMemPattern(pImpl->sessionOptions);
+        pImpl->api->DisableCpuMemArena(pImpl->sessionOptions);
+        pImpl->api->SetSessionExecutionMode(pImpl->sessionOptions, ORT_SEQUENTIAL);
+        status = OrtSessionOptionsAppendExecutionProvider_DML(pImpl->sessionOptions, 0);
 
-    if (status) {
-        pImpl->api->ReleaseStatus(status);
-    } else {
-        pImpl->usingDirectML = true;
-    }
+        if (status) {
+            pImpl->api->ReleaseStatus(status);
+        } else {
+            pImpl->usingDirectML = true;
+        }
 #endif
 
-    if (!pImpl->usingDirectML) {
-        const unsigned int hardwareThreads = std::thread::hardware_concurrency();
-        pImpl->api->SetIntraOpNumThreads(pImpl->sessionOptions, static_cast<int>(
-            std::max(1u, std::min(4u, hardwareThreads > 1 ? hardwareThreads / 2 : 1u))));
+        if (!pImpl->usingDirectML) {
+            const unsigned int hardwareThreads = std::thread::hardware_concurrency();
+            pImpl->api->SetIntraOpNumThreads(pImpl->sessionOptions, static_cast<int>(
+                std::max(1u, std::min(4u, hardwareThreads > 1 ? hardwareThreads / 2 : 1u))));
+        }
     }
 
 #ifdef _WIN32
@@ -152,7 +217,15 @@ bool AISubjectEngine::init(const std::string& modelPath)
 #endif
 
     if (status) {
-        std::fprintf(stderr, "AI Subject: failed to load model: %s\n", pImpl->api->GetErrorMessage(status));
+        const char* message = pImpl->api->GetErrorMessage(status);
+        std::fprintf(stderr, "AI Subject: failed to load model: %s\n", message);
+        // Out of memory is usually someone else's, for a while: retryLoad()
+        // tries again later instead of leaving the model off for the session.
+        if (AIIdleReaper::outOfMemory(message)) {
+            pImpl->retryPath = modelPath;
+            pImpl->failedAtMs = AIIdleReaper::nowMs();
+        }
+        pImpl->session = nullptr;
         pImpl->api->ReleaseStatus(status);
         return false;
     }
@@ -186,7 +259,36 @@ bool AISubjectEngine::init(const std::string& modelPath)
         return false;
     }
 
+    // NCHW with a fixed square H x W.
+    const auto ok = [this](OrtStatus* st) {
+        if (st) {
+            pImpl->api->ReleaseStatus(st);
+            return false;
+        }
+        return true;
+    };
+    OrtTypeInfo* typeInfo = nullptr;
+    if (ok(pImpl->api->SessionGetInputTypeInfo(pImpl->session, 0, &typeInfo)) && typeInfo) {
+        const OrtTensorTypeAndShapeInfo* tensorInfo = nullptr;
+        size_t rank = 0;
+        if (ok(pImpl->api->CastTypeInfoToTensorInfo(typeInfo, &tensorInfo)) && tensorInfo
+                && ok(pImpl->api->GetDimensionsCount(tensorInfo, &rank)) && rank == 4) {
+            int64_t dims[4] = {0, 0, 0, 0};
+            if (ok(pImpl->api->GetDimensions(tensorInfo, dims, 4)) && dims[2] > 0 && dims[2] == dims[3]) {
+                pImpl->side = static_cast<int>(dims[2]);
+            }
+        }
+        pImpl->api->ReleaseTypeInfo(typeInfo);
+    }
+
+    pImpl->modelPath = modelPath;
+    pImpl->retryPath.clear();
+    pImpl->lastUse = AIIdleReaper::nowMs();
     pImpl->initialized = true;
+    {
+        Impl* const impl = pImpl;
+        pImpl->reaperId = AIIdleReaper::watch([impl](bool force) { impl->releaseIfIdle(force); });
+    }
     std::fprintf(stderr, "AI Subject: initialised from %s (%s)\n", modelPath.c_str(),
                  pImpl->usingDirectML ? "DirectML" : "CPU");
     return true;
@@ -202,9 +304,57 @@ void AISubjectEngine::initDeferred(const std::string& modelPath)
     // it is -- see cachedSubjectModel_ in AIMaskCache and the key in
     // PartnerMaskStore. Clearing them from here instead would race whatever
     // pass is running.
+    {
+        std::lock_guard<std::mutex> lock(pImpl->loadMutex);
+
+        if (pImpl->initialized || pImpl->loading) {
+            return;
+        }
+
+        pImpl->loading = true;
+    }
+
     std::thread([this, modelPath]() {
         this->init(modelPath);
+
+        {
+            std::lock_guard<std::mutex> lock(pImpl->loadMutex);
+            pImpl->loading = false;
+        }
+
+        pImpl->loaded.notify_all();
     }).detach();
+}
+
+bool AISubjectEngine::retryLoad()
+{
+    std::string path;
+    {
+        std::lock_guard<std::mutex> lock(pImpl->initMutex);
+        if (pImpl->initialized) {
+            return true;
+        }
+        constexpr long long kRetryMs = 30000;
+        if (pImpl->retryPath.empty() || AIIdleReaper::nowMs() - pImpl->failedAtMs < kRetryMs) {
+            return false;
+        }
+        path = pImpl->retryPath;
+        pImpl->failedAtMs = AIIdleReaper::nowMs();
+    }
+    std::fprintf(stderr, "AI Subject: retrying the load that ran out of memory\n");
+    AIIdleReaper::releaseNow();
+    return init(path);
+}
+
+void AISubjectEngine::waitForDeferredInit() const
+{
+    std::unique_lock<std::mutex> lock(pImpl->loadMutex);
+    pImpl->loaded.wait(lock, [this]() { return !pImpl->loading; });
+}
+
+std::string AISubjectEngine::modelPath() const
+{
+    return pImpl->initialized ? pImpl->modelPath : std::string();
 }
 
 bool AISubjectEngine::isInitialized() const
@@ -223,10 +373,17 @@ array2D<float> AISubjectEngine::saliency(float* const* rRows, float* const* gRow
 
     // One session shared by the coordinator, the thumbnail pool and the
     // picker's workers; the DirectML provider is not safe for concurrent Run.
-    static std::mutex inferenceMutex;
-    std::lock_guard<std::mutex> inferenceLock(inferenceMutex);
+    std::lock_guard<std::mutex> inferenceLock(pImpl->runMutex);
+    // Freed when idle (AIIdleReaper); back for this photo.
+    if (!pImpl->loadSessionLocked()) {
+        return result;
+    }
+    pImpl->lastUse = AIIdleReaper::nowMs();
 
-    const int side = SUBJECT_INPUT;
+    const int side = pImpl->side;
+    // U^2-Net's reference preparation stretches by the brightest value;
+    // BiRefNet (and anything else) takes plain sRGB in 0..1.
+    const bool stretchToPeak = side == SUBJECT_INPUT;
     std::vector<float> rgb(3 * side * side);
 
     const float scaleX = static_cast<float>(width) / side;
@@ -235,7 +392,7 @@ array2D<float> AISubjectEngine::saliency(float* const* rRows, float* const* gRow
     // U^2-Net's own preparation divides by the picture's brightest value
     // rather than by white, so a dark frame is stretched before the ImageNet
     // normalisation rather than arriving as a near-black block.
-    float peak = 1e-6f;
+    float peak = stretchToPeak ? 1e-6f : 1.f;
 
     for (int y = 0; y < side; ++y) {
         const float srcY = std::max(0.f, (y + 0.5f) * scaleY - 0.5f);
@@ -264,7 +421,9 @@ array2D<float> AISubjectEngine::saliency(float* const* rRows, float* const* gRow
             rgb[at] = r;
             rgb[plane + at] = g;
             rgb[2 * plane + at] = b;
-            peak = std::max(peak, std::max(r, std::max(g, b)));
+            if (stretchToPeak) {
+                peak = std::max(peak, std::max(r, std::max(g, b)));
+            }
         }
     }
 
@@ -292,6 +451,26 @@ array2D<float> AISubjectEngine::saliency(float* const* rRows, float* const* gRow
     OrtValue* output = nullptr;
 
     status = pImpl->api->Run(pImpl->session, nullptr, inputNames, &input, 1, outputNames, 1, &output);
+
+    if (status && AIIdleReaper::outOfMemory(pImpl->api->GetErrorMessage(status))) {
+        // Out of memory -- often another program's, on a GPU it shares.
+        // Free every other model and this session's buffers, then once more.
+        std::fprintf(stderr, "AI Subject: out of memory; freeing models and retrying\n");
+        pImpl->api->ReleaseStatus(status);
+        status = nullptr;
+        pImpl->api->ReleaseSession(pImpl->session);
+        pImpl->session = nullptr;
+        AIIdleReaper::releaseNow(pImpl->reaperId);
+        std::this_thread::sleep_for(std::chrono::milliseconds(750));
+
+        if (!pImpl->loadSessionLocked()) {
+            pImpl->api->ReleaseValue(input);
+            return result;
+        }
+
+        status = pImpl->api->Run(pImpl->session, nullptr, inputNames, &input, 1, outputNames, 1, &output);
+    }
+
     pImpl->api->ReleaseValue(input);
 
     if (status) {
@@ -343,6 +522,7 @@ array2D<float> AISubjectEngine::saliency(float* const* rRows, float* const* gRow
     }
 
     pImpl->api->ReleaseValue(output);
+    pImpl->lastUse = AIIdleReaper::nowMs();
     return result;
 }
 

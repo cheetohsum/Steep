@@ -29,6 +29,7 @@
 #include "editenums.h"
 #include "imageareapanel.h"
 #include "imageareatoollistener.h"
+#include "motion.h"
 #include "indclippedpanel.h"
 #include "previewhandler.h"
 #include "previewmodepanel.h"
@@ -100,6 +101,11 @@ protected:
     int lastAreaW_ = 0;
     int lastAreaH_ = 0;
     void keepDetailWindowsInView_();
+    // Photo switch: the previous photo's last frame fades out over the new
+    // photo's first frame, which is painted at once underneath it.
+    CropWindow::PaintedFrame switchFadeFrame_;
+    double switchFadeAlpha_ = 0.0;
+    steep::motion::Handle switchFade_;
     CropWindow* createDetailWindow_(int x, int y, int w, int h);
 public:
     CropWindow* mainCropWindow;

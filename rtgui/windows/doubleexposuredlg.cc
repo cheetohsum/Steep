@@ -15,10 +15,12 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "doubleexposuredlg.h"
+#include "motion.h"
 #include "demotionlayers.h"
 #include "effectpreviewstate.h"
 
 #include "aimaskthumb.h"
+#include "backgroundtasks.h"
 #include "partnerthumb.h"
 #include "maskpaintdlg.h"
 
@@ -623,7 +625,8 @@ private:
             const double th = THUMB_H;
 
             // thumb slot background
-            cr->set_source_rgba(0.0, 0.0, 0.0, 0.25);
+            // A well, not a black wash (which went muddy on light themes).
+            steepui::setSource(cr, themeColor(*this, "steep_surface_0", Gdk::RGBA("#1a1e24")), 1.0);
             cr->rectangle(cx, cy, tw, th);
             cr->fill();
 
@@ -682,7 +685,7 @@ private:
             const double markerY = cy + th + 24;
 
             if (item.pick == 1) {
-                cr->set_source_rgb(0.50, 0.70, 0.82);
+                steepui::setSource(cr, themeColor(*this, "steep_accent", Gdk::RGBA("#80b3d1")), 1.0);
                 cr->arc(markerX + 4, markerY - 3.5, 3.5, 0, 2 * M_PI);
                 cr->fill();
                 markerX += 13;
@@ -1276,6 +1279,7 @@ public:
         header_->set_hexpand(true);
         header_->setOnToggled([this](bool expanded) { revealer_->set_reveal_child(expanded); });
         revealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
+        steep::motion::configureRevealer(*revealer_);
         revealer_->set_reveal_child(false);
         pack_start(*header_, Gtk::PACK_SHRINK);
         pack_start(*revealer_, Gtk::PACK_SHRINK);
@@ -2001,7 +2005,7 @@ void DoubleExposureDlg::savePickerState()
     o.dePickerMinStars = std::max(0, starsFilter_->get_active_row_number());
     o.dePickerHighRes = highRes_->get_active();
     o.dePickerScroll = gridScroll_ ? gridScroll_->get_vadjustment()->get_value() : 0.0;
-    Options::save();
+    Options::saveAsync();
 }
 
 void DoubleExposureDlg::restoreScroll(bool final)
@@ -2246,6 +2250,11 @@ void DoubleExposureDlg::startScan(bool global)
     }
 
     detachQuietly(std::thread([this, alive, global, generation, basePath, dirs, filetypes, indexEntries, recurse]() {
+#ifdef _OPENMP
+        // A scan can outlast any shared lane's patience, so it keeps its own
+        // thread; held to one so it never grows an OpenMP team.
+        omp_set_num_threads(1);
+#endif
         std::vector<ScanItem> batch;
         std::set<std::string> seen;
 
@@ -3958,10 +3967,9 @@ void DoubleExposureDlg::requestPartnerDepth()
         const Glib::ustring path = layer.source();
         const Glib::ustring profile = workingProfile_;
 
-        detachQuietly(std::thread([this, alive, path, profile]() {
-#ifdef _OPENMP
-            omp_set_num_threads(2);
-#endif
+        // The shared CPU lane rather than a thread per layer: each new
+        // thread that reaches OpenMP keeps its team for good.
+        steep::runBackground([this, alive, path, profile]() {
             auto depth = rtengine::PartnerDepthStore::getInstance().getDepth(path, profile);
             compositeui::DepthHistogram histogram;
 
@@ -3995,7 +4003,7 @@ void DoubleExposureDlg::requestPartnerDepth()
                 syncDepthControls();
                 schedulePreviewUpdate();
             });
-        }));
+        }, steep::Lane::CPU);
     }
 #endif
 }
@@ -4595,6 +4603,11 @@ void DoubleExposureDlg::updatePreview(bool quick)
     // thumbnails' sRGB-linear space.
     const bool sceneMode = static_cast<bool>(basePlate) && allPlates && !layerPix.empty();
     const bool sceneFaithful = pc.haveTransfer && !layerPix.empty();
+    // Bright/dark comparisons and gates weigh luminance in whichever space
+    // the composite runs in, as the engine does in the working profile.
+    const rtengine::deblend::LumWeights blendLum = sceneMode
+        ? rtengine::deblend::lumWeights(rtengine::ICCStore::getInstance()->workingSpaceMatrix(workingProfile_))
+        : rtengine::deblend::LumWeights();
 
     // Remember the preview -> full-frame map for the drag handlers, and hand
     // the selected exposure's placed frame to the preview for its overlay.
@@ -4636,7 +4649,7 @@ void DoubleExposureDlg::updatePreview(bool quick)
     queue->job = [this, life, queue, revision, cache, layerPix, basePlate, neutralBase,
                   workingToSrgb, quick, w, h, nx0, nxs, ny0, nys, baseAspect,
                   nbW, nbH, nbStride, nbCh, srgbLut, sceneFaithful, sceneMode,
-                  meterFrames, adaptiveStack, baseEvGain, applyShoulder, knee] {
+                  meterFrames, adaptiveStack, baseEvGain, applyShoulder, knee, blendLum] {
     if (!*life || queue->revision != revision) return;
     try {
     rtengine::EffectPerfScope timing(quick ? "de-draft" : "de-settled", w, h);
@@ -4803,7 +4816,7 @@ void DoubleExposureDlg::updatePreview(bool quick)
                 pb *= gain;
 
                 float cr, cg, cb;
-                rtengine::deblend::blend(lp.mode, lp.compare, lp.softness, 1.f, r, g, b, pr, pg, pb, cr, cg, cb);
+                rtengine::deblend::blend(lp.mode, lp.compare, lp.softness, 1.f, blendLum, r, g, b, pr, pg, pb, cr, cg, cb);
 
                 float wgt = lp.opacity * coverage;
 
@@ -4846,8 +4859,7 @@ void DoubleExposureDlg::updatePreview(bool quick)
 #endif
 
                 if (lp.gateStrength > 0.f) {
-                    const float lum = lp.gateOnLayer ? rtengine::deblend::lum709(pr, pg, pb)
-                                                     : rtengine::deblend::lum709(r, g, b);
+                    const float lum = lp.gateOnLayer ? blendLum(pr, pg, pb) : blendLum(r, g, b);
                     wgt *= rtengine::deblend::gateWeight(lp.gateStrength,
                                                          rtengine::deblend::gateWindow(lutEncode(gateEnc, lum), lp.gateLow, lp.gateHigh, lp.gateFeather));
                 }

@@ -125,6 +125,10 @@ class CropWindow final : public LWButtonListener, public CropDisplayHandler, pub
     // Last successfully drawn crop — painted as a bridge during image transitions
     // to prevent white flash when cropPixbuf is null and rough image is unavailable.
     Glib::RefPtr<Gdk::Pixbuf> bridgePixbuf_;
+    // drawShiftedFrame's pixbuf converted once: a drag repaints the same
+    // frame dozens of times, and converting all of it each time is the cost.
+    Glib::RefPtr<Gdk::Pixbuf> shiftedFramePixbuf_;
+    Cairo::RefPtr<Cairo::ImageSurface> shiftedFrameSurface_;
 
     bool onArea                    (CursorArea a, int x, int y);
     void updateCursor              (int x, int y);
@@ -137,6 +141,16 @@ class CropWindow final : public LWButtonListener, public CropDisplayHandler, pub
     void drawUnscaledSpotRectangle (Cairo::RefPtr<Cairo::Context> cr, int rectSize);
     void drawObservedFrame         (const Cairo::RefPtr<Cairo::Context>& cr);
     bool observedFrameVisible      () const;
+    /// Visible part of the image, in logical widget coordinates.
+    bool visibleImageRect          (double& x, double& y, double& w, double& h);
+    /// Paints a sharp frame rendered for another position/zoom where it
+    /// belongs now. Returns false when the frame can't be placed (none, or
+    /// the image geometry changed); *covers says whether it fills the whole
+    /// visible image. dryRun answers both without painting.
+    bool drawShiftedFrame          (const Cairo::RefPtr<Cairo::Context>& cr,
+                                    const Glib::RefPtr<Gdk::Pixbuf>& frame,
+                                    const CropHandler::FrameGeometry& geometry,
+                                    bool* covers = nullptr, bool dryRun = false);
     void refreshEditObjectAt       (int x, int y);
     void changeZoom                (int zoom, bool notify = true, int centerx = -1, int centery = -1, bool needsRedraw = true);
     void updateHoveredPicker       (rtengine::Coord *imgPos = nullptr);
@@ -164,12 +178,28 @@ class CropWindow final : public LWButtonListener, public CropDisplayHandler, pub
     static const std::vector<ZoomStep>& sharedZoomSteps();
 
 public:
+    // The plain sharp frame the last expose() put on screen, where it put it
+    // (main window only; empty when that expose painted anything fancier).
+    // ImageArea cross-fades from it when the photo changes.
+    struct PaintedFrame {
+        Glib::RefPtr<Gdk::Pixbuf> pixbuf;
+        double x = 0.0, y = 0.0, w = 0.0, h = 0.0;   // logical px in the image area widget
+        int deviceScale = 1;
+    };
+    PaintedFrame takeLastPaintedFrame ()
+    {
+        PaintedFrame frame = lastPaintedFrame_;
+        lastPaintedFrame_ = PaintedFrame();
+        return frame;
+    }
+
     /// Largest ladder step <= zoom — the value zoomFit() will snap to.
     /// Used by the loading placeholder so every stage shows the image at
     /// the exact same display size.
     static double snapZoomToLadderStep(double zoom);
 
 private:
+    PaintedFrame lastPaintedFrame_;
 
     void initZoomSteps();
     

@@ -51,6 +51,8 @@
 #include "windows/rtwindow.h"
 #include "version.h"
 
+#include "rtengine/aiidlereaper.h"
+#include "rtengine/memguard.h"
 #include "rtengine/dynamicprofile.h"
 #include "rtengine/procparams.h"
 
@@ -515,6 +517,7 @@ static LONG WINAPI crashHandler(EXCEPTION_POINTERS* ep)
 
 int main (int argc, char **argv)
 {
+    g_setenv ("OMP_WAIT_POLICY", "passive", FALSE);
     std::set_terminate(steepTerminateHandler);
 #ifdef _WIN32
     SetUnhandledExceptionFilter(crashHandler);
@@ -541,6 +544,24 @@ int main (int argc, char **argv)
 
     Glib::init();  // called by Gtk::Main, but this may be important for thread handling, so we call it ourselves now
     Gio::init ();
+
+    // An exception escaping a GTK signal handler ends the program (glibmm's
+    // default). Running out of memory -- often another program grabbing it
+    // for a moment -- should cost a frame, not the session: free the AI
+    // models, redraw shortly. Anything else still takes the default path.
+    Glib::add_exception_handler([]() {
+        try {
+            throw;
+        } catch (const std::bad_alloc&) {
+            fprintf(stderr, "Out of memory in a UI handler; freeing AI models and carrying on\n");
+            rtengine::AIIdleReaper::releaseNow();
+            Glib::signal_timeout().connect_once([]() {
+                for (Gtk::Window* window : Gtk::Window::list_toplevels()) {
+                    window->queue_draw();
+                }
+            }, 1000);
+        }
+    });
 
 #ifdef _WIN32
     if (GetFileType (GetStdHandle (STD_OUTPUT_HANDLE)) == 0x0003) {
@@ -683,6 +704,12 @@ int main (int argc, char **argv)
         Options::load();
     } catch (Options::Error &e) {
         fatalError = e.get_msg();
+    }
+
+    // Memory watcher: logs to the cache folder and trims caches when the
+    // process outgrows its budget. GUI only; the CLI never starts it.
+    if (!Options::cacheBaseDir.empty()) {
+        rtengine::MemGuard::startWatcher(Glib::build_filename(Options::cacheBaseDir, "steep-memory.log"));
     }
 
     if (app.isGimpPlugin()) {

@@ -17,12 +17,14 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "aidenoise.h"
+#include "memguard.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <thread>
 #include <vector>
 
@@ -61,6 +63,7 @@ struct AIDenoiseManager::Impl
     std::unique_ptr<Ort::Env>     env;
     std::unique_ptr<Ort::Session> session;
     bool sessionRequestedGpu = false;
+    std::mutex sessionMutex;
 };
 #else
 struct AIDenoiseManager::Impl {};
@@ -665,196 +668,338 @@ void AIDenoiseManager::startDenoising(
             }
         };
 
-        try {
-            progress(0);
+        Glib::ustring error;
+        std::unique_ptr<Imagefloat> result =
+            runInference(params, *inputImage, iso, progress, &cancelled_, error);
 
-            const int imageH = inputImage->getHeight();
-            const int imageW = inputImage->getWidth();
-            const int tiledH = std::max(imageH, kTileSize);
-            const int tiledW = std::max(imageW, kTileSize);
-            const bool wantGpu = params.useGpu;
+        if (!result) {
+            return fail(error);
+        }
 
-            if (!impl_->session || impl_->sessionRequestedGpu != wantGpu || !impl_->env) {
-                impl_->session.reset();
-                impl_->env.reset(new Ort::Env(ORT_LOGGING_LEVEL_WARNING, "aidenoise"));
+        progress(98);
+        setCachedResult(
+            std::move(result),
+            rawPath,
+            params.isoConditioning);
+        progress(100);
 
-                Ort::SessionOptions opts;
-                opts.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
-                opts.DisableMemPattern();
+        running_ = false;
+        if (doneCb) {
+            doneCb(true, "");
+        }
+    }).detach();
+#endif
+}
+
+#ifdef RT_AI_DENOISE
+std::unique_ptr<Imagefloat> AIDenoiseManager::runInference(
+    const procparams::AIDenoiseParams& params,
+    const Imagefloat& input,
+    int iso,
+    const std::function<void(double)>& progressCb,
+    const std::atomic<bool>* cancel,
+    Glib::ustring& error)
+{
+    auto progress = [&](double value) {
+        if (progressCb) {
+            progressCb(value);
+        }
+    };
+
+    // One ONNX session serves the editor's background run and synchronous
+    // export runs alike; Ort sessions are not to be rebuilt under a Run().
+    std::lock_guard<std::mutex> sessionLock(impl_->sessionMutex);
+
+    try {
+        const int imageH = input.getHeight();
+        const int imageW = input.getWidth();
+        const int tiledH = std::max(imageH, kTileSize);
+        const int tiledW = std::max(imageW, kTileSize);
+        const bool wantGpu = params.useGpu;
+
+        if (!impl_->session || impl_->sessionRequestedGpu != wantGpu || !impl_->env) {
+            impl_->session.reset();
+            impl_->env.reset(new Ort::Env(ORT_LOGGING_LEVEL_WARNING, "aidenoise"));
+
+            Ort::SessionOptions opts;
+            opts.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+            opts.DisableMemPattern();
 
 #ifdef RT_AI_DENOISE_DIRECTML
-                if (wantGpu) {
-                    try {
-                        opts.DisableCpuMemArena();
-                        Ort::ThrowOnError(
-                            OrtSessionOptionsAppendExecutionProvider_DML(opts, 0));
-                        fprintf(stderr, "AI Denoise: using DirectML execution provider\n");
-                    } catch (const Ort::Exception& e) {
-                        fprintf(
-                            stderr,
-                            "AI Denoise: DirectML unavailable (%s), using CPU\n",
-                            e.what());
-                    }
+            if (wantGpu) {
+                try {
+                    opts.DisableCpuMemArena();
+                    Ort::ThrowOnError(
+                        OrtSessionOptionsAppendExecutionProvider_DML(opts, 0));
+                    fprintf(stderr, "AI Denoise: using DirectML execution provider\n");
+                } catch (const Ort::Exception& e) {
+                    fprintf(
+                        stderr,
+                        "AI Denoise: DirectML unavailable (%s), using CPU\n",
+                        e.what());
                 }
+            }
 #endif
 
-                const Glib::ustring modelPath = findModelPath();
-                if (modelPath.empty()) {
-                    return fail("Bundled AI Denoise model not found.");
-                }
-
-                const auto ortPath = toOrtPath(modelPath);
-                impl_->session.reset(
-                    new Ort::Session(*impl_->env, ortPath.c_str(), opts));
-                impl_->sessionRequestedGpu = wantGpu;
+            const Glib::ustring modelPath = findModelPath();
+            if (modelPath.empty()) {
+                error = "Bundled AI Denoise model not found.";
+                return nullptr;
             }
 
-            progress(5);
+            const auto ortPath = toOrtPath(modelPath);
+            impl_->session.reset(
+                new Ort::Session(*impl_->env, ortPath.c_str(), opts));
+            impl_->sessionRequestedGpu = wantGpu;
+        }
 
-            const std::vector<int> yPos = tilePositions(tiledH);
-            const std::vector<int> xPos = tilePositions(tiledW);
-            const int nTiles = static_cast<int>(yPos.size() * xPos.size());
+        progress(5);
 
-            fprintf(
-                stderr,
-                "AI Denoise: native inference, %zux%zu tiles, image %dx%d\n",
-                yPos.size(),
-                xPos.size(),
-                imageW,
-                imageH);
+        const std::vector<int> yPos = tilePositions(tiledH);
+        const std::vector<int> xPos = tilePositions(tiledW);
+        const int nTiles = static_cast<int>(yPos.size() * xPos.size());
 
-            std::vector<std::vector<float>> weightsY(yPos.size());
-            std::vector<std::vector<float>> weightsX(xPos.size());
-            for (size_t i = 0; i < yPos.size(); ++i) {
-                weightsY[i] = tileWeight1D(yPos[i], yPos, static_cast<int>(i));
+        fprintf(
+            stderr,
+            "AI Denoise: native inference, %zux%zu tiles, image %dx%d\n",
+            yPos.size(),
+            xPos.size(),
+            imageW,
+            imageH);
+
+        std::vector<std::vector<float>> weightsY(yPos.size());
+        std::vector<std::vector<float>> weightsX(xPos.size());
+        for (size_t i = 0; i < yPos.size(); ++i) {
+            weightsY[i] = tileWeight1D(yPos[i], yPos, static_cast<int>(i));
+        }
+        for (size_t i = 0; i < xPos.size(); ++i) {
+            weightsX[i] = tileWeight1D(xPos[i], xPos, static_cast<int>(i));
+        }
+
+        const float actualIso = iso > 0 ? static_cast<float>(iso) : 1600.0f;
+        const float strength =
+            clamp01(static_cast<float>(params.isoConditioning) / 100.0f);
+        const float isoCondition = clamp01(actualIso * strength / 6400.0f);
+
+        constexpr int kBatchSize = 4;
+        const size_t channelPixels =
+            static_cast<size_t>(kTileSize) * kTileSize;
+        const size_t tilePixels = 3 * channelPixels;
+
+        std::vector<float> batchBuffer(kBatchSize * tilePixels);
+        std::vector<float> conditionBuffer(kBatchSize, isoCondition);
+        int64_t imageShape[] = {kBatchSize, 3, kTileSize, kTileSize};
+        int64_t conditionShape[] = {kBatchSize, 1};
+
+        std::unique_ptr<Imagefloat> result(new Imagefloat(imageW, imageH));
+        std::vector<float> weightSum(
+            static_cast<size_t>(imageW) * imageH, 0.0f);
+
+        // The model has a small, repeating position-dependent tile bias.
+        // Estimate it while streaming outputs so tiles never accumulate
+        // in memory, then subtract only the zero-mean positional part.
+        std::vector<double> biasSum(tilePixels, 0.0);
+        std::vector<unsigned int> biasCount(channelPixels, 0);
+
+        auto memoryInfo =
+            Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+        const char* inputNames[] = {"rgb", "cond"};
+        const char* outputNames[] = {"denoised"};
+
+        for (int firstTile = 0; firstTile < nTiles; firstTile += kBatchSize) {
+            if (cancel && cancel->load()) {
+                error = "Cancelled";
+                return nullptr;
             }
-            for (size_t i = 0; i < xPos.size(); ++i) {
-                weightsX[i] = tileWeight1D(xPos[i], xPos, static_cast<int>(i));
-            }
 
-            const float actualIso = iso > 0 ? static_cast<float>(iso) : 1600.0f;
-            const float strength =
-                clamp01(static_cast<float>(params.isoConditioning) / 100.0f);
-            const float isoCondition = clamp01(actualIso * strength / 6400.0f);
+            const int batchSize = std::min(kBatchSize, nTiles - firstTile);
+            imageShape[0] = batchSize;
+            conditionShape[0] = batchSize;
 
-            constexpr int kBatchSize = 4;
-            const size_t channelPixels =
-                static_cast<size_t>(kTileSize) * kTileSize;
-            const size_t tilePixels = 3 * channelPixels;
+            for (int batchIndex = 0; batchIndex < batchSize; ++batchIndex) {
+                const int tileNumber = firstTile + batchIndex;
+                const int yIndex =
+                    tileNumber / static_cast<int>(xPos.size());
+                const int xIndex =
+                    tileNumber % static_cast<int>(xPos.size());
+                const int tileY = yPos[yIndex];
+                const int tileX = xPos[xIndex];
+                float* tile =
+                    batchBuffer.data() + batchIndex * tilePixels;
 
-            std::vector<float> batchBuffer(kBatchSize * tilePixels);
-            std::vector<float> conditionBuffer(kBatchSize, isoCondition);
-            int64_t imageShape[] = {kBatchSize, 3, kTileSize, kTileSize};
-            int64_t conditionShape[] = {kBatchSize, 1};
-
-            std::unique_ptr<Imagefloat> result(new Imagefloat(imageW, imageH));
-            std::vector<float> weightSum(
-                static_cast<size_t>(imageW) * imageH, 0.0f);
-
-            // The model has a small, repeating position-dependent tile bias.
-            // Estimate it while streaming outputs so tiles never accumulate
-            // in memory, then subtract only the zero-mean positional part.
-            std::vector<double> biasSum(tilePixels, 0.0);
-            std::vector<unsigned int> biasCount(channelPixels, 0);
-
-            auto memoryInfo =
-                Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-            const char* inputNames[] = {"rgb", "cond"};
-            const char* outputNames[] = {"denoised"};
-
-            for (int firstTile = 0; firstTile < nTiles; firstTile += kBatchSize) {
-                if (cancelled_) {
-                    running_ = false;
-                    if (doneCb) {
-                        doneCb(false, "Cancelled");
-                    }
-                    return;
-                }
-
-                const int batchSize = std::min(kBatchSize, nTiles - firstTile);
-                imageShape[0] = batchSize;
-                conditionShape[0] = batchSize;
-
-                for (int batchIndex = 0; batchIndex < batchSize; ++batchIndex) {
-                    const int tileNumber = firstTile + batchIndex;
-                    const int yIndex =
-                        tileNumber / static_cast<int>(xPos.size());
-                    const int xIndex =
-                        tileNumber % static_cast<int>(xPos.size());
-                    const int tileY = yPos[yIndex];
-                    const int tileX = xPos[xIndex];
-                    float* tile =
-                        batchBuffer.data() + batchIndex * tilePixels;
-
-                    for (int channel = 0; channel < 3; ++channel) {
-                        float* channelTile =
-                            tile + static_cast<size_t>(channel) * channelPixels;
-                        for (int tileRow = 0; tileRow < kTileSize; ++tileRow) {
-                            const int sourceY =
-                                std::min(tileY + tileRow, imageH - 1);
-                            const float* source =
-                                channel == 0 ? inputImage->r(sourceY) :
-                                channel == 1 ? inputImage->g(sourceY) :
-                                               inputImage->b(sourceY);
-                            float* destination =
-                                channelTile
-                                + static_cast<size_t>(tileRow) * kTileSize;
-                            for (int tileColumn = 0;
-                                 tileColumn < kTileSize;
-                                 ++tileColumn) {
-                                const int sourceX =
-                                    std::min(tileX + tileColumn, imageW - 1);
-                                destination[tileColumn] =
-                                    clamp01(source[sourceX] * kRTScaleInv);
-                            }
+                for (int channel = 0; channel < 3; ++channel) {
+                    float* channelTile =
+                        tile + static_cast<size_t>(channel) * channelPixels;
+                    for (int tileRow = 0; tileRow < kTileSize; ++tileRow) {
+                        const int sourceY =
+                            std::min(tileY + tileRow, imageH - 1);
+                        const float* source =
+                            channel == 0 ? input.r(sourceY) :
+                            channel == 1 ? input.g(sourceY) :
+                                           input.b(sourceY);
+                        float* destination =
+                            channelTile
+                            + static_cast<size_t>(tileRow) * kTileSize;
+                        for (int tileColumn = 0;
+                             tileColumn < kTileSize;
+                             ++tileColumn) {
+                            const int sourceX =
+                                std::min(tileX + tileColumn, imageW - 1);
+                            destination[tileColumn] =
+                                clamp01(source[sourceX] * kRTScaleInv);
                         }
                     }
                 }
+            }
 
-                Ort::Value imageTensor = Ort::Value::CreateTensor<float>(
-                    memoryInfo,
-                    batchBuffer.data(),
-                    static_cast<size_t>(batchSize) * tilePixels,
-                    imageShape,
-                    4);
-                Ort::Value conditionTensor = Ort::Value::CreateTensor<float>(
-                    memoryInfo,
-                    conditionBuffer.data(),
-                    batchSize,
-                    conditionShape,
-                    2);
-                Ort::Value inputs[] = {
-                    std::move(imageTensor),
-                    std::move(conditionTensor)
-                };
+            Ort::Value imageTensor = Ort::Value::CreateTensor<float>(
+                memoryInfo,
+                batchBuffer.data(),
+                static_cast<size_t>(batchSize) * tilePixels,
+                imageShape,
+                4);
+            Ort::Value conditionTensor = Ort::Value::CreateTensor<float>(
+                memoryInfo,
+                conditionBuffer.data(),
+                batchSize,
+                conditionShape,
+                2);
+            Ort::Value inputs[] = {
+                std::move(imageTensor),
+                std::move(conditionTensor)
+            };
 
-                auto outputs = impl_->session->Run(
-                    Ort::RunOptions{nullptr},
-                    inputNames,
-                    inputs,
-                    2,
-                    outputNames,
-                    1);
-                const float* output = outputs.front().GetTensorData<float>();
+            auto outputs = impl_->session->Run(
+                Ort::RunOptions{nullptr},
+                inputNames,
+                inputs,
+                2,
+                outputNames,
+                1);
+            const float* output = outputs.front().GetTensorData<float>();
 
-                for (int batchIndex = 0; batchIndex < batchSize; ++batchIndex) {
-                    const int tileNumber = firstTile + batchIndex;
-                    const int yIndex =
-                        tileNumber / static_cast<int>(xPos.size());
-                    const int xIndex =
-                        tileNumber % static_cast<int>(xPos.size());
-                    const int tileY = yPos[yIndex];
-                    const int tileX = xPos[xIndex];
-                    const float* tileOutput =
-                        output + static_cast<size_t>(batchIndex) * tilePixels;
-                    const float* tileInput =
-                        batchBuffer.data()
-                        + static_cast<size_t>(batchIndex) * tilePixels;
+            for (int batchIndex = 0; batchIndex < batchSize; ++batchIndex) {
+                const int tileNumber = firstTile + batchIndex;
+                const int yIndex =
+                    tileNumber / static_cast<int>(xPos.size());
+                const int xIndex =
+                    tileNumber % static_cast<int>(xPos.size());
+                const int tileY = yPos[yIndex];
+                const int tileX = xPos[xIndex];
+                const float* tileOutput =
+                    output + static_cast<size_t>(batchIndex) * tilePixels;
+                const float* tileInput =
+                    batchBuffer.data()
+                    + static_cast<size_t>(batchIndex) * tilePixels;
 
 #ifdef _OPENMP
-                    #pragma omp parallel for schedule(static)
+                #pragma omp parallel for schedule(static)
 #endif
-                    for (int tileRow = 0; tileRow < kTileSize; ++tileRow) {
+                for (int tileRow = 0; tileRow < kTileSize; ++tileRow) {
+                    const int outputY = tileY + tileRow;
+                    if (outputY >= imageH) {
+                        continue;
+                    }
+
+                    float* outputR = result->r(outputY);
+                    float* outputG = result->g(outputY);
+                    float* outputB = result->b(outputY);
+                    const float rowWeight = weightsY[yIndex][tileRow];
+
+                    for (int tileColumn = 0;
+                         tileColumn < kTileSize;
+                         ++tileColumn) {
+                        const int outputX = tileX + tileColumn;
+                        if (outputX >= imageW) {
+                            continue;
+                        }
+
+                        const float weight =
+                            rowWeight * weightsX[xIndex][tileColumn];
+                        const size_t imageIndex =
+                            static_cast<size_t>(outputY) * imageW + outputX;
+                        const size_t localIndex =
+                            static_cast<size_t>(tileRow) * kTileSize
+                            + tileColumn;
+
+                        weightSum[imageIndex] += weight;
+                        outputR[outputX] += tileOutput[localIndex] * weight;
+                        outputG[outputX] +=
+                            tileOutput[channelPixels + localIndex] * weight;
+                        outputB[outputX] +=
+                            tileOutput[2 * channelPixels + localIndex] * weight;
+
+                        biasSum[localIndex] +=
+                            tileOutput[localIndex] - tileInput[localIndex];
+                        biasSum[channelPixels + localIndex] +=
+                            tileOutput[channelPixels + localIndex]
+                            - tileInput[channelPixels + localIndex];
+                        biasSum[2 * channelPixels + localIndex] +=
+                            tileOutput[2 * channelPixels + localIndex]
+                            - tileInput[2 * channelPixels + localIndex];
+                        ++biasCount[localIndex];
+                    }
+                }
+            }
+
+            progress(
+                5.0
+                + 87.0
+                * std::min(nTiles, firstTile + batchSize)
+                / nTiles);
+        }
+
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(static)
+#endif
+        for (int y = 0; y < imageH; ++y) {
+            float* outputR = result->r(y);
+            float* outputG = result->g(y);
+            float* outputB = result->b(y);
+            for (int x = 0; x < imageW; ++x) {
+                const float weight = std::max(
+                    weightSum[static_cast<size_t>(y) * imageW + x],
+                    1e-6f);
+                outputR[x] /= weight;
+                outputG[x] /= weight;
+                outputB[x] /= weight;
+            }
+        }
+
+        if (nTiles >= 16) {
+            std::vector<float> biasMap(tilePixels, 0.0f);
+
+            for (int channel = 0; channel < 3; ++channel) {
+                const size_t offset =
+                    static_cast<size_t>(channel) * channelPixels;
+                double mean = 0.0;
+                size_t populated = 0;
+
+                for (size_t i = 0; i < channelPixels; ++i) {
+                    if (biasCount[i]) {
+                        biasMap[offset + i] = static_cast<float>(
+                            biasSum[offset + i] / biasCount[i]);
+                        mean += biasMap[offset + i];
+                        ++populated;
+                    }
+                }
+
+                mean /= std::max<size_t>(populated, 1);
+                for (size_t i = 0; i < channelPixels; ++i) {
+                    if (biasCount[i]) {
+                        biasMap[offset + i] -= static_cast<float>(mean);
+                    }
+                }
+            }
+
+            for (size_t yIndex = 0; yIndex < yPos.size(); ++yIndex) {
+                for (size_t xIndex = 0; xIndex < xPos.size(); ++xIndex) {
+                    const int tileY = yPos[yIndex];
+                    const int tileX = xPos[xIndex];
+
+                    for (int tileRow = 0;
+                         tileRow < kTileSize;
+                         ++tileRow) {
                         const int outputY = tileY + tileRow;
                         if (outputY >= imageH) {
                             continue;
@@ -863,7 +1008,8 @@ void AIDenoiseManager::startDenoising(
                         float* outputR = result->r(outputY);
                         float* outputG = result->g(outputY);
                         float* outputB = result->b(outputY);
-                        const float rowWeight = weightsY[yIndex][tileRow];
+                        const float rowWeight =
+                            weightsY[yIndex][tileRow];
 
                         for (int tileColumn = 0;
                              tileColumn < kTileSize;
@@ -873,194 +1019,110 @@ void AIDenoiseManager::startDenoising(
                                 continue;
                             }
 
-                            const float weight =
-                                rowWeight * weightsX[xIndex][tileColumn];
                             const size_t imageIndex =
-                                static_cast<size_t>(outputY) * imageW + outputX;
+                                static_cast<size_t>(outputY) * imageW
+                                + outputX;
+                            const float normalizedWeight =
+                                rowWeight * weightsX[xIndex][tileColumn]
+                                / std::max(weightSum[imageIndex], 1e-6f);
                             const size_t localIndex =
                                 static_cast<size_t>(tileRow) * kTileSize
                                 + tileColumn;
 
-                            weightSum[imageIndex] += weight;
-                            outputR[outputX] += tileOutput[localIndex] * weight;
-                            outputG[outputX] +=
-                                tileOutput[channelPixels + localIndex] * weight;
-                            outputB[outputX] +=
-                                tileOutput[2 * channelPixels + localIndex] * weight;
-
-                            biasSum[localIndex] +=
-                                tileOutput[localIndex] - tileInput[localIndex];
-                            biasSum[channelPixels + localIndex] +=
-                                tileOutput[channelPixels + localIndex]
-                                - tileInput[channelPixels + localIndex];
-                            biasSum[2 * channelPixels + localIndex] +=
-                                tileOutput[2 * channelPixels + localIndex]
-                                - tileInput[2 * channelPixels + localIndex];
-                            ++biasCount[localIndex];
+                            outputR[outputX] -=
+                                biasMap[localIndex] * normalizedWeight;
+                            outputG[outputX] -=
+                                biasMap[channelPixels + localIndex]
+                                * normalizedWeight;
+                            outputB[outputX] -=
+                                biasMap[2 * channelPixels + localIndex]
+                                * normalizedWeight;
                         }
                     }
                 }
-
-                progress(
-                    5.0
-                    + 87.0
-                    * std::min(nTiles, firstTile + batchSize)
-                    / nTiles);
-            }
-
-#ifdef _OPENMP
-            #pragma omp parallel for schedule(static)
-#endif
-            for (int y = 0; y < imageH; ++y) {
-                float* outputR = result->r(y);
-                float* outputG = result->g(y);
-                float* outputB = result->b(y);
-                for (int x = 0; x < imageW; ++x) {
-                    const float weight = std::max(
-                        weightSum[static_cast<size_t>(y) * imageW + x],
-                        1e-6f);
-                    outputR[x] /= weight;
-                    outputG[x] /= weight;
-                    outputB[x] /= weight;
-                }
-            }
-
-            if (nTiles >= 16) {
-                std::vector<float> biasMap(tilePixels, 0.0f);
-
-                for (int channel = 0; channel < 3; ++channel) {
-                    const size_t offset =
-                        static_cast<size_t>(channel) * channelPixels;
-                    double mean = 0.0;
-                    size_t populated = 0;
-
-                    for (size_t i = 0; i < channelPixels; ++i) {
-                        if (biasCount[i]) {
-                            biasMap[offset + i] = static_cast<float>(
-                                biasSum[offset + i] / biasCount[i]);
-                            mean += biasMap[offset + i];
-                            ++populated;
-                        }
-                    }
-
-                    mean /= std::max<size_t>(populated, 1);
-                    for (size_t i = 0; i < channelPixels; ++i) {
-                        if (biasCount[i]) {
-                            biasMap[offset + i] -= static_cast<float>(mean);
-                        }
-                    }
-                }
-
-                for (size_t yIndex = 0; yIndex < yPos.size(); ++yIndex) {
-                    for (size_t xIndex = 0; xIndex < xPos.size(); ++xIndex) {
-                        const int tileY = yPos[yIndex];
-                        const int tileX = xPos[xIndex];
-
-                        for (int tileRow = 0;
-                             tileRow < kTileSize;
-                             ++tileRow) {
-                            const int outputY = tileY + tileRow;
-                            if (outputY >= imageH) {
-                                continue;
-                            }
-
-                            float* outputR = result->r(outputY);
-                            float* outputG = result->g(outputY);
-                            float* outputB = result->b(outputY);
-                            const float rowWeight =
-                                weightsY[yIndex][tileRow];
-
-                            for (int tileColumn = 0;
-                                 tileColumn < kTileSize;
-                                 ++tileColumn) {
-                                const int outputX = tileX + tileColumn;
-                                if (outputX >= imageW) {
-                                    continue;
-                                }
-
-                                const size_t imageIndex =
-                                    static_cast<size_t>(outputY) * imageW
-                                    + outputX;
-                                const float normalizedWeight =
-                                    rowWeight * weightsX[xIndex][tileColumn]
-                                    / std::max(weightSum[imageIndex], 1e-6f);
-                                const size_t localIndex =
-                                    static_cast<size_t>(tileRow) * kTileSize
-                                    + tileColumn;
-
-                                outputR[outputX] -=
-                                    biasMap[localIndex] * normalizedWeight;
-                                outputG[outputX] -=
-                                    biasMap[channelPixels + localIndex]
-                                    * normalizedWeight;
-                                outputB[outputX] -=
-                                    biasMap[2 * channelPixels + localIndex]
-                                    * normalizedWeight;
-                            }
-                        }
-                    }
-                }
-            }
-
-#ifdef _OPENMP
-            #pragma omp parallel for schedule(static)
-#endif
-            for (int y = 0; y < imageH; ++y) {
-                const float* sourceR = inputImage->r(y);
-                const float* sourceG = inputImage->g(y);
-                const float* sourceB = inputImage->b(y);
-                float* outputR = result->r(y);
-                float* outputG = result->g(y);
-                float* outputB = result->b(y);
-
-                for (int x = 0; x < imageW; ++x) {
-                    const float sources[] = {
-                        sourceR[x] * kRTScaleInv,
-                        sourceG[x] * kRTScaleInv,
-                        sourceB[x] * kRTScaleInv
-                    };
-                    float* values[] = {
-                        &outputR[x],
-                        &outputG[x],
-                        &outputB[x]
-                    };
-
-                    for (int channel = 0; channel < 3; ++channel) {
-                        float value = clamp01(*values[channel]);
-                        const float highlightMix =
-                            clamp01((sources[channel] - 1.0f) / 0.05f);
-                        value =
-                            (1.0f - highlightMix) * value
-                            + highlightMix * sources[channel];
-                        *values[channel] = value * kRTScale;
-                    }
-                }
-            }
-
-            progress(98);
-            setCachedResult(
-                std::move(result),
-                rawPath,
-                params.isoConditioning);
-            progress(100);
-
-            running_ = false;
-            if (doneCb) {
-                doneCb(true, "");
-            }
-        } catch (const Ort::Exception& e) {
-            running_ = false;
-            if (doneCb) {
-                doneCb(false, Glib::ustring("ONNX Runtime: ") + e.what());
-            }
-        } catch (const std::exception& e) {
-            running_ = false;
-            if (doneCb) {
-                doneCb(false, e.what());
             }
         }
-    }).detach();
+
+#ifdef _OPENMP
+        #pragma omp parallel for schedule(static)
 #endif
+        for (int y = 0; y < imageH; ++y) {
+            const float* sourceR = input.r(y);
+            const float* sourceG = input.g(y);
+            const float* sourceB = input.b(y);
+            float* outputR = result->r(y);
+            float* outputG = result->g(y);
+            float* outputB = result->b(y);
+
+            for (int x = 0; x < imageW; ++x) {
+                const float sources[] = {
+                    sourceR[x] * kRTScaleInv,
+                    sourceG[x] * kRTScaleInv,
+                    sourceB[x] * kRTScaleInv
+                };
+                float* values[] = {
+                    &outputR[x],
+                    &outputG[x],
+                    &outputB[x]
+                };
+
+                for (int channel = 0; channel < 3; ++channel) {
+                    float value = clamp01(*values[channel]);
+                    const float highlightMix =
+                        clamp01((sources[channel] - 1.0f) / 0.05f);
+                    value =
+                        (1.0f - highlightMix) * value
+                        + highlightMix * sources[channel];
+                    *values[channel] = value * kRTScale;
+                }
+            }
+        }
+
+        return result;
+    } catch (const Ort::Exception& e) {
+        error = Glib::ustring("ONNX Runtime: ") + e.what();
+    } catch (const std::exception& e) {
+        error = e.what();
+    }
+
+    return nullptr;
+}
+#else
+std::unique_ptr<Imagefloat> AIDenoiseManager::runInference(
+    const procparams::AIDenoiseParams&,
+    const Imagefloat&,
+    int,
+    const std::function<void(double)>&,
+    const std::atomic<bool>*,
+    Glib::ustring& error)
+{
+    error = "AI Denoise not compiled in (ONNX Runtime missing).";
+    return nullptr;
+}
+#endif
+
+std::unique_ptr<Imagefloat> AIDenoiseManager::denoiseNow(
+    const procparams::AIDenoiseParams& params,
+    const Imagefloat& input,
+    int iso,
+    Glib::ustring* error)
+{
+    Glib::ustring message;
+
+    if (input.getWidth() <= 0 || input.getHeight() <= 0) {
+        message = "Could not prepare the image for AI Denoise.";
+    } else {
+        std::unique_ptr<Imagefloat> result = runInference(params, input, iso, {}, nullptr, message);
+        if (result) {
+            return result;
+        }
+    }
+
+    if (error) {
+        *error = message;
+    }
+
+    return nullptr;
 }
 
 void AIDenoiseManager::cancel()
@@ -1087,6 +1149,9 @@ void AIDenoiseManager::setCachedResult(std::unique_ptr<Imagefloat> result,
     cachedResult_ = std::shared_ptr<Imagefloat>(std::move(result));
     cachedRawPath_ = rawPath;
     cachedIso_ = iso;
+    MemGuard::setGauge("aiDenoiseCache", cachedResult_
+        ? static_cast<long long>(cachedResult_->getWidth()) * cachedResult_->getHeight() * 3 * sizeof(float)
+        : 0);
 }
 
 void AIDenoiseManager::clearCache()
@@ -1095,6 +1160,30 @@ void AIDenoiseManager::clearCache()
     cachedResult_.reset();
     cachedRawPath_.clear();
     cachedIso_ = 0;
+    MemGuard::setGauge("aiDenoiseCache", 0);
+}
+
+void AIDenoiseManager::clearCacheFor(const Glib::ustring& rawPath)
+{
+    MyMutex::MyLock lock(cacheMutex_);
+    if (cachedResult_ && cachedRawPath_ == rawPath) {
+        // A pass still blending it holds its own reference.
+        cachedResult_.reset();
+        cachedRawPath_.clear();
+        cachedIso_ = 0;
+        MemGuard::setGauge("aiDenoiseCache", 0);
+    }
+}
+
+void AIDenoiseManager::clearCacheUnless(const std::vector<Glib::ustring>& keep)
+{
+    MyMutex::MyLock lock(cacheMutex_);
+    if (cachedResult_ && std::find(keep.begin(), keep.end(), cachedRawPath_) == keep.end()) {
+        cachedResult_.reset();
+        cachedRawPath_.clear();
+        cachedIso_ = 0;
+        MemGuard::setGauge("aiDenoiseCache", 0);
+    }
 }
 
 } // namespace rtengine

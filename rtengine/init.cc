@@ -16,6 +16,7 @@
  *  You should have received a copy of the GNU General Public License
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include <cstdlib>
 #include <fftw3.h>
 #include <glibmm/miscutils.h>
 #include <glibmm/ustring.h>
@@ -37,8 +38,10 @@
 #include "metadata.h"
 #include "procparams.h"
 #include "aidenoise.h"
+#include "memguard.h"
 #ifdef RT_AI_MASKING
 #include "aisegmentation.h"
+#include "aimaskcache.h"
 #include "aisubjectmodel.h"
 #include "aiinpainting.h"
 #include "partnerdepthstore.h"
@@ -152,7 +155,15 @@ int init (const Settings* s, const Glib::ustring& baseDir, const Glib::ustring& 
         };
 
         {
-            const Glib::ustring modelPath = findModel("ade20k_mobilenetv2_c1.onnx");
+            // HRNetV2 when installed (43.2 mIoU on ADE20K against MobileNetV2's
+            // 34.8, and a quarter- rather than eighth-resolution output).
+            // STEEP_AIMASK_LEGACY_MODELS=1 keeps the original pair, for A/B
+            // comparisons (tools/aimask_eval.py).
+            const bool legacyModels = std::getenv("STEEP_AIMASK_LEGACY_MODELS") != nullptr;
+            Glib::ustring modelPath = legacyModels ? Glib::ustring() : findModel("ade20k_hrnetv2_c1.onnx");
+            if (modelPath.empty()) {
+                modelPath = findModel("ade20k_mobilenetv2_c1.onnx");
+            }
 
             if (modelPath.empty()) {
                 fprintf(stderr, "AI Masking: no segmentation model under %s or %s\n",
@@ -183,7 +194,12 @@ int init (const Settings* s, const Glib::ustring& baseDir, const Glib::ustring& 
         }
 
         {
-            const Glib::ustring subjectPath = findModel("u2net_subject.onnx");
+            // BiRefNet when it is installed: trained at 1024 px against
+            // U^2-Net's 320, it is what keeps hair and fur in a subject mask.
+            Glib::ustring subjectPath = std::getenv("STEEP_AIMASK_LEGACY_MODELS") ? Glib::ustring() : findModel("birefnet_subject.onnx");
+            if (subjectPath.empty()) {
+                subjectPath = findModel("u2net_subject.onnx");
+            }
 
             // Deferred: the session for a 170 MB model takes seconds to build,
             // and nothing needs it until a subject mask is asked for. Until it
@@ -215,6 +231,20 @@ int init (const Settings* s, const Glib::ustring& baseDir, const Glib::ustring& 
     }
 #endif
 
+    {
+        // Once per process: init() can run again after a settings change.
+        static const bool trimmersRegistered = []() {
+            MemGuard::registerTrimmer("ai-caches", [](int level) {
+#ifdef RT_AI_MASKING
+                AIMaskCache::getInstance().trimMemory(level);
+#endif
+                PartnerDepthStore::getInstance().trimMemory(level);
+            });
+            return true;
+        }();
+        static_cast<void>(trimmersRegistered);
+    }
+
     delete lcmsMutex;
     lcmsMutex = new MyMutex;
     fftwMutex = new MyMutex;
@@ -225,6 +255,7 @@ int init (const Settings* s, const Glib::ustring& baseDir, const Glib::ustring& 
 
 void cleanup ()
 {
+    MemGuard::shutdown();
     Exiv2Metadata::cleanup();
     ProcParams::cleanup ();
     Color::cleanup ();

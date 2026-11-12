@@ -1301,7 +1301,8 @@ void LensProfilePanel::updateAutoMatchLabel()
         }
     }
 
-    autoMatchLabel->set_markup("<small><i>" + Glib::Markup::escape_text(text) + "</i></small>");
+    autoMatchLabel->set_markup("<i>" + Glib::Markup::escape_text(text) + "</i>");
+    autoMatchLabel->get_style_context()->add_class("type-small");
     autoMatchLabel->set_no_show_all(false);
     autoMatchLabel->show();
 }

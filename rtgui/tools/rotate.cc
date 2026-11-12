@@ -37,55 +37,59 @@ Rotate::Rotate () : FoldableToolPanel(this, TOOL_NAME, M("TP_ROTATE_LABEL"))
 
     rlistener = nullptr;
 
+    // The Level heading names it; the pill shows only the angle in degrees,
+    // the bipolar fill growing from 0 either way.
     degree = Gtk::manage (new Adjuster ("", -45, 45, 0.01, 0));
     degree->setAdjusterListener (this);
     degree->setDelay(12, 32);
     degree->hideResetButton();
     degree->hideSpinButton();
+    degree->setValueSuffix("°");
+    degree->set_tooltip_text(M("TP_ROTATE_ANGLE_TOOLTIP"));
     degree->set_halign(Gtk::ALIGN_FILL);
-    degree->set_margin_start(10);
-    degree->set_margin_end(10);
+    degree->set_margin_start(6);
+    degree->set_margin_end(6);
     pack_start (*degree, false, false);
 
-    // Auto Level sits left of the Select Straight Line tool
-    Gtk::Box* levelRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
-    levelRow->set_margin_start(10);
-    levelRow->set_margin_end(10);
+    // Auto level and Straighten: an icon pair the Level heading carries on
+    // its right (getActionsWidget), like the turn/flip icons on the Rotate
+    // row above it.
+    levelActions = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+    makeSegmented(*levelActions);
+    levelActions->get_style_context()->add_class("rotate-actions");
+    levelActions->set_valign(Gtk::ALIGN_CENTER);
 
-    autoLevel = Gtk::manage(new Gtk::Button(M("TP_ROTATE_AUTO_LEVEL")));
+    autoLevel = Gtk::manage(new Gtk::Button());
     autoLevel->set_image(*Gtk::manage(new RTImage("auto-level", Gtk::ICON_SIZE_BUTTON)));
-    autoLevel->set_always_show_image(true);
     autoLevel->set_tooltip_text(M("TP_ROTATE_AUTO_LEVEL_TOOLTIP"));
     autoLevel->signal_clicked().connect(sigc::mem_fun(*this, &Rotate::autoLevelPressed));
-    levelRow->pack_start(*autoLevel, true, true);
+    levelActions->pack_start(*autoLevel, Gtk::PACK_SHRINK);
 
-    selectStraight = Gtk::manage(new Gtk::Button(M("TP_ROTATE_SELECTLINE")));
+    selectStraight = Gtk::manage(new Gtk::Button());
     selectStraight->set_image(*Gtk::manage(new RTImage("rotate-straighten-small", Gtk::ICON_SIZE_BUTTON)));
-    selectStraight->set_always_show_image(true);
+    selectStraight->set_tooltip_text(M("TP_ROTATE_STRAIGHTEN_TOOLTIP"));
     selectStraight->signal_clicked().connect([this]() {
         if (rlistener) {
             rlistener->straightenRequested();
         }
     });
-    levelRow->pack_start(*selectStraight, true, true);
+    levelActions->pack_start(*selectStraight, Gtk::PACK_SHRINK);
 
-    pack_start(*levelRow, false, false);
-
+    // Shown by the Level heading (getStatusWidget), so a result never
+    // pushes the rows below it down and back up again.
     autoLevelStatus = Gtk::manage(new Gtk::Label());
     autoLevelStatus->set_xalign(1.0f);
-    autoLevelStatus->set_line_wrap(true);
-    autoLevelStatus->set_margin_start(10);
-    autoLevelStatus->set_margin_end(10);
+    autoLevelStatus->set_ellipsize(Pango::ELLIPSIZE_END);
     autoLevelStatus->get_style_context()->add_class("dim-label");
+    autoLevelStatus->get_style_context()->add_class("level-status");
     autoLevelStatus->set_no_show_all(true);
-    pack_start(*autoLevelStatus, false, false);
 
     degree->setLogScale(2, 0);
 
     setExpandable(false);
     setFlatMode(true);
     show_all ();
-    autoLevelStatus->hide();
+    levelActions->show_all();
 }
 
 Rotate::~Rotate ()

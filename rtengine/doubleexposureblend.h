@@ -51,6 +51,56 @@ inline float lum709(float r, float g, float b)
     return 0.2126f * r + 0.7152f * g + 0.0722f * b;
 }
 
+// Luminance of the RGB the composite actually runs in. The engine composites
+// in the edit's working profile (Rec2020 by default, ProPhoto possible), whose
+// Y row differs a lot from Rec709's: under ProPhoto, 709 weights over-count
+// green by about a third, so a green partner wins bright/dark comparisons and
+// lands in gates it should miss. Defaults to Rec709 for sRGB-linear callers.
+struct LumWeights {
+    float r = 0.2126f;
+    float g = 0.7152f;
+    float b = 0.0722f;
+
+    float operator()(float rr, float gg, float bb) const
+    {
+        return r * rr + g * gg + b * bb;
+    }
+};
+
+// From a working space's RGB -> XYZ matrix (ICCStore::workingSpaceMatrix):
+// its Y row, normalised so neutral grey keeps its value.
+inline LumWeights lumWeights(const double (*rgbToXyz)[3])
+{
+    LumWeights w;
+
+    if (rgbToXyz) {
+        const double sum = rgbToXyz[1][0] + rgbToXyz[1][1] + rgbToXyz[1][2];
+
+        if (sum > 0.0) {
+            w.r = static_cast<float>(rgbToXyz[1][0] / sum);
+            w.g = static_cast<float>(rgbToXyz[1][1] / sum);
+            w.b = static_cast<float>(rgbToXyz[1][2] / sum);
+        }
+    }
+
+    return w;
+}
+
+// Screen extended past white. Inside [0, white] it is the textbook
+// 1 - (1 - a)(1 - b). Above white the overlap term stops growing: written as
+// a + b - min(a, 1) * min(b, 1) it is identical inside the unit square,
+// continuous across its edges, non-decreasing in both inputs, and never
+// darker than the brighter input -- one input above white returns it
+// unchanged, two add less their unit overlap. Clamping the inputs to white,
+// as screen used to, flattened partner highlights before Exposure and Film
+// Lab could roll them off.
+inline float screenUnbounded(float a, float b, float white)
+{
+    a = std::max(a, 0.f) / white;
+    b = std::max(b, 0.f) / white;
+    return white * (a + b - std::min(a, 1.f) * std::min(b, 1.f));
+}
+
 // Comparative bright / dark the way cameras do it: the two pixels are
 // compared by brightness and the winner is kept whole, so no channel is
 // ever taken from the loser and no colour appears that neither frame held.
@@ -79,14 +129,15 @@ inline float compareWeight(float lumBase, float lumPartner, bool keepBrighter, f
 // (r, g, b), both scene-linear on a 0..white scale. Returns the un-weighted
 // blend result; opacity/gate weighting is applied by the caller.
 inline void blend(BlendMode mode, Compare compare, float softnessStops, float white,
+                  const LumWeights& lum,
                   float r, float g, float b,
                   float pr, float pg, float pb,
                   float& cr, float& cg, float& cb)
 {
     switch (mode) {
         case BlendMode::ADAPTIVE: {
-            const float a = std::max(0.f, lum709(r, g, b));
-            const float p = std::max(0.f, lum709(pr, pg, pb));
+            const float a = std::max(0.f, lum(r, g, b));
+            const float p = std::max(0.f, lum(pr, pg, pb));
             // A continuous, exposure-relative transition avoids hard bright/dark
             // seams. Keep RGB together and never create more energy than either input.
             const float mid = .5f * (a + p) / white;
@@ -100,9 +151,9 @@ inline void blend(BlendMode mode, Compare compare, float softnessStops, float wh
             break;
         }
         case BlendMode::SCREEN: {
-            cr = white * (1.f - (1.f - clamp01w(r, white) / white) * (1.f - clamp01w(pr, white) / white));
-            cg = white * (1.f - (1.f - clamp01w(g, white) / white) * (1.f - clamp01w(pg, white) / white));
-            cb = white * (1.f - (1.f - clamp01w(b, white) / white) * (1.f - clamp01w(pb, white) / white));
+            cr = screenUnbounded(r, pr, white);
+            cg = screenUnbounded(g, pg, white);
+            cb = screenUnbounded(b, pb, white);
             break;
         }
 
@@ -130,7 +181,7 @@ inline void blend(BlendMode mode, Compare compare, float softnessStops, float wh
                     cb = std::min(b, pb);
                 }
             } else {
-                const float w = compareWeight(lum709(r, g, b), lum709(pr, pg, pb), keepBrighter, softnessStops, white);
+                const float w = compareWeight(lum(r, g, b), lum(pr, pg, pb), keepBrighter, softnessStops, white);
                 cr = r + w * (pr - r);
                 cg = g + w * (pg - g);
                 cb = b + w * (pb - b);

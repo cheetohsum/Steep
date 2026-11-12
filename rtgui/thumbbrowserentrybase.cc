@@ -187,9 +187,6 @@ ThumbBrowserEntryBase::ThumbBrowserEntryBase (const Glib::ustring& fname, Thumbn
     updatepriority(false),
     visibleGeneration(0),
     withFilename(WFNAME_NONE),
-    animRatingAlpha_(0),
-    animColorAlpha_(0),
-    animPickAlpha_(0),
     animRatingActive_(false),
     animColorActive_(false),
     animPickActive_(false)
@@ -198,7 +195,6 @@ ThumbBrowserEntryBase::ThumbBrowserEntryBase (const Glib::ustring& fname, Thumbn
 
 ThumbBrowserEntryBase::~ThumbBrowserEntryBase ()
 {
-    animTimerConn_.disconnect();
     delete buttonSet;
 }
 
@@ -358,7 +354,8 @@ void ThumbBrowserEntryBase::updateBackBuffer ()
     // Rounded preview corners: the fast path blits raw RGB (no cairo clip
     // possible), so paint the cell background back over the corner tips.
     if (!preview.empty() && previewSize.width > 12 && previewSize.height > 12) {
-        const double cr = 3.0;
+        // The one thumbnail radius: photo corners, hover and selection rings.
+        const double cr = static_cast<double>(steepui::Radius::M);
         const double x0 = prevPos.x, y0 = prevPos.y;
         const double x1 = prevPos.x + previewSize.width;
         const double y1 = prevPos.y + previewSize.height;
@@ -908,20 +905,11 @@ void ThumbBrowserEntryBase::drawSelectionHighlight (Cairo::RefPtr<Cairo::Context
     // Hug the photo with a small even margin, rounded to match the preview's
     // own corners, so the highlight reads as a mat around the image.
     constexpr double pad = 3.0;
-    constexpr double radius = 5.0;
-
-    const double x0 = prevPos.x - pad;
-    const double y0 = prevPos.y - pad;
-    const double x1 = prevPos.x + previewSize.width + pad;
-    const double y1 = prevPos.y + previewSize.height + pad;
 
     cc->save();
     cc->begin_new_path();
-    cc->arc(x0 + radius, y0 + radius, radius, G_PI, 1.5 * G_PI);
-    cc->arc(x1 - radius, y0 + radius, radius, 1.5 * G_PI, 2.0 * G_PI);
-    cc->arc(x1 - radius, y1 - radius, radius, 0, 0.5 * G_PI);
-    cc->arc(x0 + radius, y1 - radius, radius, 0.5 * G_PI, G_PI);
-    cc->close_path();
+    steepui::roundedRect(cc, prevPos.x - pad, prevPos.y - pad,
+                         previewSize.width + 2.0 * pad, previewSize.height + 2.0 * pad, steepui::Radius::M);
     cc->set_source_rgb(bg.get_red(), bg.get_green(), bg.get_blue());
     cc->fill();
     cc->restore();
@@ -977,17 +965,11 @@ void ThumbBrowserEntryBase::draw (Cairo::RefPtr<Cairo::Context> cc)
         const double py = y_offset + prevPos.y;
         const double pw = previewSize.width;
         const double ph = previewSize.height;
-        const double inset = 1.25, rad = 3.5;
-        const double hx = px + inset, hy = py + inset;
-        const double hw = pw - 2.0 * inset, hh = ph - 2.0 * inset;
+        const double inset = 1.25;
         cc->begin_new_path();
-        cc->arc(hx + hw - rad, hy + rad, rad, -G_PI / 2.0, 0);
-        cc->arc(hx + hw - rad, hy + hh - rad, rad, 0, G_PI / 2.0);
-        cc->arc(hx + rad, hy + hh - rad, rad, G_PI / 2.0, G_PI);
-        cc->arc(hx + rad, hy + rad, rad, G_PI, 1.5 * G_PI);
-        cc->close_path();
+        steepui::roundedRect(cc, px + inset, py + inset, pw - 2.0 * inset, ph - 2.0 * inset, steepui::Radius::M);
         cc->set_line_join(Cairo::LINE_JOIN_ROUND);
-        cc->set_source_rgba(ringAccent.get_red(), ringAccent.get_green(), ringAccent.get_blue(), 0.45);
+        cc->set_source_rgba(ringAccent.get_red(), ringAccent.get_green(), ringAccent.get_blue(), 0.45 * parent->hoverAlpha());
         cc->set_line_width(1.5);
         cc->stroke();
     }
@@ -1002,32 +984,38 @@ void ThumbBrowserEntryBase::draw (Cairo::RefPtr<Cairo::Context> cc)
         const double pw = previewSize.width;
         const double ph = previewSize.height;
 
-        // An arch: rounder top corners than bottom ones, the shape every
-        // container in the Atelier look takes. `grow` > 0 lies outside the
-        // photo.
-        auto archAround = [&cc, px, py, pw, ph](double grow, double top, double bottom) {
-            const double x0 = px - grow, y0 = py - grow;
-            const double w = pw + 2.0 * grow, h = ph + 2.0 * grow;
+        // Same corner as the photo and the hover ring. `grow` > 0 lies
+        // outside the photo.
+        auto ringAround = [&cc, px, py, pw, ph](double grow) {
             cc->begin_new_path();
-            cc->arc(x0 + w - top, y0 + top, top, -G_PI / 2.0, 0);
-            cc->arc(x0 + w - bottom, y0 + h - bottom, bottom, 0, G_PI / 2.0);
-            cc->arc(x0 + bottom, y0 + h - bottom, bottom, G_PI / 2.0, G_PI);
-            cc->arc(x0 + top, y0 + top, top, G_PI, 1.5 * G_PI);
-            cc->close_path();
+            steepui::roundedRect(cc, px - grow, py - grow, pw + 2.0 * grow, ph + 2.0 * grow, steepui::Radius::M);
         };
 
         cc->set_line_join(Cairo::LINE_JOIN_ROUND);
 
         // A passe-partout: two accent lines on the mat AROUND the photo, so
         // selection never tints the picture being judged.
-        archAround(2.25, 6.0, 2.5);
+        ringAround(2.25);
         cc->set_source_rgba(ar, ag, ab, 0.95);
         cc->set_line_width(1.5);
         cc->stroke();
 
-        archAround(0.5, 3.5, 1.5);
+        ringAround(0.5);
         cc->set_source_rgba(ar, ag, ab, 0.45);
         cc->set_line_width(1.0);
+        cc->stroke();
+    }
+
+    // Keyboard cursor: the entry arrow keys move from gets a full 2px ring
+    // on the same line as the selection ring, so it never needs more room
+    // than the filmstrip has.
+    if (parent->isFocusEntry(this) && previewSize.width > 12 && previewSize.height > 12) {
+        const Gdk::RGBA focusAccent = themeColor(parent->getStyle(), "steep_accent", Gdk::RGBA("#64a0ff"));
+        cc->begin_new_path();
+        steepui::roundedRect(cc, x_offset + prevPos.x - 2.25, y_offset + prevPos.y - 2.25,
+                             previewSize.width + 4.5, previewSize.height + 4.5, steepui::Radius::M);
+        steepui::setSource(cc, focusAccent, 1.0);
+        cc->set_line_width(2.0);
         cc->stroke();
     }
 
@@ -1217,7 +1205,8 @@ void ThumbBrowserEntryBase::drawFilmstripOverlays (Cairo::RefPtr<Cairo::Context>
     // by definition, so the badge would just stamp every thumbnail.
     const bool queued = thumbnail->isEnqueued()
         && parent->location != ThumbBrowserBase::THLOC_BATCHQUEUE;
-    if (rank <= 0 && clabel <= 0 && pick == 0 && !queued && !animRatingActive_ && !animColorActive_ && !animPickActive_) return;
+    const double pulse = pulseAlpha_();
+    if (rank <= 0 && clabel <= 0 && pick == 0 && !queued && pulse <= 0) return;
 
     // Icon area: bottom-left for stars, top-left for color label,
     // top-right for pick flag, bottom-right for the export-queue badge
@@ -1227,14 +1216,14 @@ void ThumbBrowserEntryBase::drawFilmstripOverlays (Cairo::RefPtr<Cairo::Context>
     int imgH = previewSize.height;
 
     // Draw rating animation glow
-    if (animRatingActive_ && animRatingAlpha_ > 0) {
+    if (animRatingActive_ && pulse > 0) {
         cc->save();
         cc->rectangle(imgX, imgY, imgW, imgH);
         cc->clip();
         // Golden glow from bottom
         auto grad = Cairo::LinearGradient::create(imgX, imgY + imgH, imgX, imgY + imgH * 0.5);
         const Gdk::RGBA gold = themeColor(parent->getStyle(), "steep_rating", Gdk::RGBA("#f2c240"));
-        grad->add_color_stop_rgba(0, gold.get_red(), gold.get_green(), gold.get_blue(), 0.4 * animRatingAlpha_);
+        grad->add_color_stop_rgba(0, gold.get_red(), gold.get_green(), gold.get_blue(), 0.4 * pulse);
         grad->add_color_stop_rgba(1, gold.get_red(), gold.get_green(), gold.get_blue(), 0.0);
         cc->set_source(grad);
         cc->paint();
@@ -1242,12 +1231,12 @@ void ThumbBrowserEntryBase::drawFilmstripOverlays (Cairo::RefPtr<Cairo::Context>
     }
 
     // Draw color label animation glow
-    if (animColorActive_ && animColorAlpha_ > 0 && clabel > 0) {
+    if (animColorActive_ && pulse > 0 && clabel > 0) {
         const Gdk::RGBA labelColor = colorLabelColor(std::min(clabel, 5));
         cc->save();
         // Colored border glow
-        double glowW = 3.0 * animColorAlpha_;
-        cc->set_source_rgba(labelColor.get_red(), labelColor.get_green(), labelColor.get_blue(), 0.7 * animColorAlpha_);
+        double glowW = 3.0 * pulse;
+        cc->set_source_rgba(labelColor.get_red(), labelColor.get_green(), labelColor.get_blue(), 0.7 * pulse);
         cc->set_line_width(glowW);
         cc->rectangle(imgX + glowW/2, imgY + glowW/2, imgW - glowW, imgH - glowW);
         cc->stroke();
@@ -1255,26 +1244,32 @@ void ThumbBrowserEntryBase::drawFilmstripOverlays (Cairo::RefPtr<Cairo::Context>
     }
 
     // Draw pick animation glow
-    if (animPickActive_ && animPickAlpha_ > 0) {
+    if (animPickActive_ && pulse > 0) {
         cc->save();
         cc->rectangle(imgX, imgY, imgW, imgH);
         cc->clip();
         if (pick == 1) {
             // Green glow from top for pick
             auto grad = Cairo::LinearGradient::create(imgX, imgY, imgX, imgY + imgH * 0.5);
-            grad->add_color_stop_rgba(0, 0.2, 0.9, 0.2, 0.4 * animPickAlpha_);
+            grad->add_color_stop_rgba(0, 0.2, 0.9, 0.2, 0.4 * pulse);
             grad->add_color_stop_rgba(1, 0.2, 0.9, 0.2, 0.0);
             cc->set_source(grad);
         } else if (pick == -1) {
             // Red glow from top for reject
             auto grad = Cairo::LinearGradient::create(imgX, imgY, imgX, imgY + imgH * 0.5);
-            grad->add_color_stop_rgba(0, 0.9, 0.2, 0.2, 0.4 * animPickAlpha_);
+            grad->add_color_stop_rgba(0, 0.9, 0.2, 0.2, 0.4 * pulse);
             grad->add_color_stop_rgba(1, 0.9, 0.2, 0.2, 0.0);
             cc->set_source(grad);
         }
         cc->paint();
         cc->restore();
     }
+
+    // Backing for the badges that sit on the photo: the theme's shadow, so
+    // it is as heavy as that theme's other overlays.
+    Gdk::RGBA badgeFallback;
+    badgeFallback.set_rgba(0.0, 0.0, 0.0, 0.5);
+    const Gdk::RGBA badgeBack = themeColor(parent->getStyle(), "steep_shadow", badgeFallback);
 
     // Draw star icons at bottom-left
     if (rank > 0 && FileThumbnailButtonSet::rankIcon) {
@@ -1299,20 +1294,15 @@ void ThumbBrowserEntryBase::drawFilmstripOverlays (Cairo::RefPtr<Cairo::Context>
             // Semi-transparent backdrop pill
             int scaledTotalW = static_cast<int>(totalW * fitScale);
             int scaledIconH = static_cast<int>(iconH * fitScale);
-            cc->set_source_rgba(0, 0, 0, 0.5);
-            double radius = 3.0;
+            steepui::setSource(cc, badgeBack);
             cc->begin_new_path();
-            cc->arc(sx - 2 + radius, sy - 2 + radius, radius, M_PI, 1.5 * M_PI);
-            cc->arc(sx + scaledTotalW + 2 - radius, sy - 2 + radius, radius, 1.5 * M_PI, 2.0 * M_PI);
-            cc->arc(sx + scaledTotalW + 2 - radius, sy + scaledIconH + 2 - radius, radius, 0, 0.5 * M_PI);
-            cc->arc(sx - 2 + radius, sy + scaledIconH + 2 - radius, radius, 0.5 * M_PI, M_PI);
-            cc->close_path();
+            steepui::roundedRect(cc, sx - 2, sy - 2, scaledTotalW + 4, scaledIconH + 4, steepui::Radius::S);
             cc->fill();
 
             // Draw stars with scale-up animation on recent change
             double starScale = fitScale;
-            if (animRatingActive_ && animRatingAlpha_ > 0.3) {
-                starScale *= 1.0 + 0.3 * (animRatingAlpha_ - 0.3) / 0.7;
+            if (animRatingActive_ && pulse > 0.3) {
+                starScale *= 1.0 + 0.3 * (pulse - 0.3) / 0.7;
             }
             double drawX = sx;
             for (int i = 0; i < rank; i++) {
@@ -1343,14 +1333,9 @@ void ThumbBrowserEntryBase::drawFilmstripOverlays (Cairo::RefPtr<Cairo::Context>
                 int fy = imgY + 3;
 
                 // Semi-transparent backdrop pill
-                cc->set_source_rgba(0, 0, 0, 0.5);
-                double radius = 3.0;
+                steepui::setSource(cc, badgeBack);
                 cc->begin_new_path();
-                cc->arc(fx - 2 + radius, fy - 2 + radius, radius, M_PI, 1.5 * M_PI);
-                cc->arc(fx + iconW + 2 - radius, fy - 2 + radius, radius, 1.5 * M_PI, 2.0 * M_PI);
-                cc->arc(fx + iconW + 2 - radius, fy + iconH + 2 - radius, radius, 0, 0.5 * M_PI);
-                cc->arc(fx - 2 + radius, fy + iconH + 2 - radius, radius, 0.5 * M_PI, M_PI);
-                cc->close_path();
+                steepui::roundedRect(cc, fx - 2, fy - 2, iconW + 4, iconH + 4, steepui::Radius::S);
                 cc->fill();
 
                 cc->set_source(flagSurf, fx, fy);
@@ -1371,14 +1356,9 @@ void ThumbBrowserEntryBase::drawFilmstripOverlays (Cairo::RefPtr<Cairo::Context>
             const int qy = imgY + imgH - iconH - 3;
 
             // Semi-transparent backdrop pill, matching the pick flag's
-            cc->set_source_rgba(0, 0, 0, 0.5);
-            const double radius = 3.0;
+            steepui::setSource(cc, badgeBack);
             cc->begin_new_path();
-            cc->arc(qx - 2 + radius, qy - 2 + radius, radius, M_PI, 1.5 * M_PI);
-            cc->arc(qx + iconW + 2 - radius, qy - 2 + radius, radius, 1.5 * M_PI, 2.0 * M_PI);
-            cc->arc(qx + iconW + 2 - radius, qy + iconH + 2 - radius, radius, 0, 0.5 * M_PI);
-            cc->arc(qx - 2 + radius, qy + iconH + 2 - radius, radius, 0.5 * M_PI, M_PI);
-            cc->close_path();
+            steepui::roundedRect(cc, qx - 2, qy - 2, iconW + 4, iconH + 4, steepui::Radius::S);
             cc->fill();
 
             cc->set_source(queueSurf, qx, qy);
@@ -1398,7 +1378,7 @@ void ThumbBrowserEntryBase::drawFilmstripOverlays (Cairo::RefPtr<Cairo::Context>
             int cy = imgY + 3;
 
             // Semi-transparent backdrop circle
-            cc->set_source_rgba(0, 0, 0, 0.5);
+            steepui::setSource(cc, badgeBack);
             cc->arc(cx + iconW * clScale / 2.0, cy + iconH * clScale / 2.0,
                     iconW * clScale / 2.0 + 1.5, 0, 2 * M_PI);
             cc->fill();
@@ -1415,87 +1395,41 @@ void ThumbBrowserEntryBase::drawFilmstripOverlays (Cairo::RefPtr<Cairo::Context>
     }
 }
 
+void ThumbBrowserEntryBase::joinPulse_ ()
+{
+    if (!parent) {
+        return;
+    }
+
+    const unsigned serial = parent->beginEntryPulse();
+
+    if (serial != pulseSerial_) {
+        // Flags left over from an earlier pulse.
+        animRatingActive_ = animColorActive_ = animPickActive_ = false;
+        pulseSerial_ = serial;
+    }
+}
+
+double ThumbBrowserEntryBase::pulseAlpha_ () const
+{
+    return parent && pulseSerial_ != 0 && parent->entryPulseSerial() == pulseSerial_
+        ? parent->entryPulseAlpha() : 0.0;
+}
+
 void ThumbBrowserEntryBase::startRatingAnimation ()
 {
+    joinPulse_();
     animRatingActive_ = true;
-    animRatingAlpha_ = 1.0;
-    animColorActive_ = animColorActive_; // preserve existing color anim
-    animStartTime_ = std::chrono::steady_clock::now();
-
-    if (!animTimerConn_.connected()) {
-        animTimerConn_ = Glib::signal_timeout().connect(
-            sigc::mem_fun(*this, &ThumbBrowserEntryBase::animTick), 30);
-    }
-
-    if (parent) {
-        parent->getDrawingArea()->queue_draw();
-    }
 }
 
 void ThumbBrowserEntryBase::startColorLabelAnimation ()
 {
+    joinPulse_();
     animColorActive_ = true;
-    animColorAlpha_ = 1.0;
-    animRatingActive_ = animRatingActive_; // preserve existing rating anim
-    animStartTime_ = std::chrono::steady_clock::now();
-
-    if (!animTimerConn_.connected()) {
-        animTimerConn_ = Glib::signal_timeout().connect(
-            sigc::mem_fun(*this, &ThumbBrowserEntryBase::animTick), 30);
-    }
-
-    if (parent) {
-        parent->getDrawingArea()->queue_draw();
-    }
 }
 
 void ThumbBrowserEntryBase::startPickAnimation ()
 {
+    joinPulse_();
     animPickActive_ = true;
-    animPickAlpha_ = 1.0;
-    animStartTime_ = std::chrono::steady_clock::now();
-
-    if (!animTimerConn_.connected()) {
-        animTimerConn_ = Glib::signal_timeout().connect(
-            sigc::mem_fun(*this, &ThumbBrowserEntryBase::animTick), 30);
-    }
-
-    if (parent) {
-        parent->getDrawingArea()->queue_draw();
-    }
-}
-
-bool ThumbBrowserEntryBase::animTick ()
-{
-    auto now = std::chrono::steady_clock::now();
-    double elapsed = std::chrono::duration<double, std::milli>(now - animStartTime_).count();
-    double t = std::min(1.0, elapsed / ANIM_DURATION_MS);
-
-    // Ease-out cubic
-    double ease = 1.0 - (1.0 - t) * (1.0 - t) * (1.0 - t);
-
-    if (animRatingActive_) {
-        animRatingAlpha_ = std::max(0.0, 1.0 - ease);
-    }
-    if (animColorActive_) {
-        animColorAlpha_ = std::max(0.0, 1.0 - ease);
-    }
-    if (animPickActive_) {
-        animPickAlpha_ = std::max(0.0, 1.0 - ease);
-    }
-
-    if (parent) {
-        parent->getDrawingArea()->queue_draw();
-    }
-
-    if (t >= 1.0) {
-        animRatingActive_ = false;
-        animColorActive_ = false;
-        animPickActive_ = false;
-        animRatingAlpha_ = 0;
-        animColorAlpha_ = 0;
-        animPickAlpha_ = 0;
-        return false; // disconnect timer
-    }
-    return true; // continue
 }

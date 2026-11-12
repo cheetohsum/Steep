@@ -247,6 +247,7 @@ bool ZoomPanel::onDrawZoom (const Cairo::RefPtr<Cairo::Context>& cr)
     // the chord available inside the ring, so "8" and "1600" both stay in.
     // The family is the user's UI font (it used to be a hardcoded "Sans").
     auto layout = zoomDraw->create_pango_layout (currentZoomText);
+    steepui::useTabularNumerals (layout);
     auto font = zoomDraw->get_style_context ()->get_font ();
     font.set_weight (Pango::WEIGHT_BOLD);
     const double maxTextWidth = 2.0 * (r - 2.2);

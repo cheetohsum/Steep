@@ -408,6 +408,7 @@ void CropWindow::scroll (int state, GdkScrollDirection direction, int x, int y, 
     }
     bool isUp = direction == GDK_SCROLL_UP || (direction == GDK_SCROLL_SMOOTH && scrollAccum < 0.0);
     scrollAccum = 0.0;
+
     if ((state & GDK_CONTROL_MASK) && onArea(ColorPicker, x, y)) {
         // resizing a color picker
         if (isUp) {
@@ -1637,6 +1638,7 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
     MyMutex::MyLock lock(cropHandler.cimg);
 
     bool isPreviewImg = false;
+    lastPaintedFrame_ = PaintedFrame();
 
     if (decorated) {
         drawDecoration (cr);
@@ -1674,8 +1676,23 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
         hidpi::ScaledDeviceSize desiredSize = imgAreaSize.scaleToDevice(
             RTScalable::getScaleForWidget(iarea));
 
-        Glib::RefPtr<Gdk::Pixbuf> rough = iarea->getPreviewHandler()->getRoughImage(
-            cropPos, desiredSize, zoomSteps[cropZoom].zoom);
+        // The anchor moves under the last sharp frame while dragging; paint
+        // that frame where it now belongs and let the rough preview fill
+        // only what it does not reach (and skip building it when nothing).
+        const bool haveCurrent = static_cast<bool>(cropHandler.cropPixbuf);
+        const Glib::RefPtr<Gdk::Pixbuf>& sharp =
+            haveCurrent ? cropHandler.cropPixbuf : cropHandler.heldPixbuf;
+        const CropHandler::FrameGeometry& sharpGeometry =
+            haveCurrent ? cropHandler.cropPixbufGeometry : cropHandler.heldPixbufGeometry;
+        bool sharpCovers = false;
+        drawShiftedFrame(cr, sharp, sharpGeometry, &sharpCovers, true);
+
+        Glib::RefPtr<Gdk::Pixbuf> rough;
+        if (!sharpCovers && iarea->getPreviewHandler()) {
+            // Only the strip the drag uncovers shows, for one motion event.
+            rough = iarea->getPreviewHandler()->getRoughImage(
+                cropPos, desiredSize, zoomSteps[cropZoom].zoom, Gdk::INTERP_NEAREST);
+        }
 
         if (rough) {
             hidpi::LogicalCoord offset = windowPos + imgAreaPos + imgPos;
@@ -1690,6 +1707,8 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
                                    imgAreaSize.height - imgPos.y));
             cr->fill();
         }
+
+        drawShiftedFrame(cr, sharp, sharpGeometry);
 
         if (observedFrameVisible ()) {
             drawObservedFrame (cr);
@@ -2179,6 +2198,19 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
                                        imgAreaSize.height - imgPos.y));
                 cr->fill();
 
+                // Remember it for the photo-switch cross-fade: a reference,
+                // not a copy, so this costs nothing per frame.
+                if (iarea->mainCropWindow == this && !(solidCropOverlay_ && cropHandler.cropParams->enabled)) {
+                    lastPaintedFrame_.pixbuf = cropHandler.cropPixbuf;
+                    lastPaintedFrame_.x = offset.x;
+                    lastPaintedFrame_.y = offset.y;
+                    lastPaintedFrame_.w = std::min(cropHandler.cropPixbuf->get_width() / deviceScale,
+                                                   imgAreaSize.width - imgPos.x);
+                    lastPaintedFrame_.h = std::min(cropHandler.cropPixbuf->get_height() / deviceScale,
+                                                   imgAreaSize.height - imgPos.y);
+                    lastPaintedFrame_.deviceScale = deviceScale;
+                }
+
                 if (solidCropOverlay_ && cropHandler.cropParams->enabled) {
                     cr->restore();
                 }
@@ -2272,20 +2304,26 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
             // Save last good frame as bridge for image transitions
             bridgePixbuf_ = cropHandler.cropPixbuf;
         } else {
-            // cropHandler.cropPixbuf is null — use rough preview or bridge
+            // cropHandler.cropPixbuf is null — a pan or zoom is re-rendering.
+            // Paint the last sharp frame where it now belongs, with the rough
+            // preview (or the bridge) under whatever it does not cover.
             ImageCoord cropPos = cropHandler.getPosition();
             hidpi::ScaledDeviceSize desiredSize = imgAreaSize.scaleToDevice(
                 RTScalable::getScaleForWidget(iarea));
 
+            bool heldCovers = false;
+            const bool heldUsable = drawShiftedFrame(
+                cr, cropHandler.heldPixbuf, cropHandler.heldPixbufGeometry, &heldCovers, true);
+
             Glib::RefPtr<Gdk::Pixbuf> rough;
-            if (iarea->getPreviewHandler()) {
+            if (!heldCovers && iarea->getPreviewHandler()) {
                 rough = iarea->getPreviewHandler()->getRoughImage(
                     cropPos, desiredSize, zoomSteps[cropZoom].zoom);
             }
 
             // Fall back to bridge pixbuf from last good frame if rough is unavailable
             // (happens during image transitions when placeholder dimensions don't match)
-            if (!rough && bridgePixbuf_) {
+            if (!rough && !heldUsable && bridgePixbuf_) {
                 rough = bridgePixbuf_;
             }
 
@@ -2319,10 +2357,24 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
                 if (solidCropOverlay_ && cropHandler.cropParams->enabled) {
                     cr->restore();
                 }
+            }
+
+            if (heldUsable) {
+                drawShiftedFrame(cr, cropHandler.heldPixbuf, cropHandler.heldPixbufGeometry);
+            }
+
+            double visX = 0.0, visY = 0.0, visW = 0.0, visH = 0.0;
+            const bool haveVisible = !rough && heldUsable
+                                     && visibleImageRect(visX, visY, visW, visH);
+
+            if (rough || haveVisible) {
+                hidpi::LogicalCoord offset = windowPos + imgAreaPos + imgPos;
+                double deviceScale = desiredSize.device_scale;
 
                 if (cropHandler.cropParams->enabled && !solidCropOverlay_) {
-                    double roughW = rough->get_width();
-                    double roughH = rough->get_height();
+                    // Without a rough image the frame spans the visible image.
+                    double roughW = rough ? rough->get_width() : visW * deviceScale;
+                    double roughH = rough ? rough->get_height() : visH * deviceScale;
                     double clipWidth =
                         std::min<double>(std::ceil(roughW / deviceScale),
                                          imgAreaSize.width - imgPos.x);
@@ -3183,6 +3235,123 @@ void CropWindow::getObservedFrameArea (int& x, int& y, int& w, int& h) const
 
     w = observedSize.width * zoomSteps[cropZoom].zoom / deviceScale;
     h = observedSize.height * zoomSteps[cropZoom].zoom / deviceScale;
+}
+
+bool CropWindow::visibleImageRect (double& x, double& y, double& w, double& h)
+{
+    const ImageSize fullSize = cropHandler.getFullImageSize();
+    const double deviceScale = RTScalable::getScaleForWidget(iarea);
+    const double scale = zoomSteps[cropZoom].zoom / deviceScale; // logical px per image px
+
+    if (fullSize.width <= 0 || fullSize.height <= 0 || scale <= 0.0) {
+        return false;
+    }
+
+    const ImageCoord cropPos = cropHandler.getPosition();
+    const hidpi::LogicalCoord base = windowPos + imgAreaPos + imgPos;
+    const hidpi::LogicalCoord area = windowPos + imgAreaPos;
+
+    const double x0 = std::max<double>(area.x, base.x - cropPos.x * scale);
+    const double y0 = std::max<double>(area.y, base.y - cropPos.y * scale);
+    const double x1 = std::min<double>(area.x + imgAreaSize.width,
+                                       base.x + (fullSize.width - cropPos.x) * scale);
+    const double y1 = std::min<double>(area.y + imgAreaSize.height,
+                                       base.y + (fullSize.height - cropPos.y) * scale);
+
+    if (x1 <= x0 || y1 <= y0) {
+        return false;
+    }
+
+    x = x0;
+    y = y0;
+    w = x1 - x0;
+    h = y1 - y0;
+    return true;
+}
+
+bool CropWindow::drawShiftedFrame (const Cairo::RefPtr<Cairo::Context>& cr,
+                                   const Glib::RefPtr<Gdk::Pixbuf>& frame,
+                                   const CropHandler::FrameGeometry& geometry,
+                                   bool* covers, bool dryRun)
+{
+    if (covers) {
+        *covers = false;
+    }
+
+    if (!frame || geometry.zoom <= 0.0) {
+        return false;
+    }
+
+    // A rotate, crop or lens edit changed what image coordinates mean.
+    const ImageSize fullSize = cropHandler.getFullImageSize();
+    if (geometry.fullWidth != fullSize.width || geometry.fullHeight != fullSize.height) {
+        return false;
+    }
+
+    double vx, vy, vw, vh;
+    if (!visibleImageRect(vx, vy, vw, vh)) {
+        return false;
+    }
+
+    const double deviceScale = RTScalable::getScaleForWidget(iarea);
+    const double scale = zoomSteps[cropZoom].zoom / deviceScale; // logical px per image px
+    const ImageCoord cropPos = cropHandler.getPosition();
+    const hidpi::LogicalCoord base = windowPos + imgAreaPos + imgPos;
+
+    // Frame pixel u sits at image coordinate geometry.x + u / geometry.zoom.
+    const double fx = base.x + (geometry.x - cropPos.x) * scale;
+    const double fy = base.y + (geometry.y - cropPos.y) * scale;
+    const double frameScale = scale / geometry.zoom; // logical px per frame px
+    const double fw = frame->get_width() * frameScale;
+    const double fh = frame->get_height() * frameScale;
+
+    // Half a pixel of slack for the rounding in the crop's own geometry.
+    if (covers) {
+        *covers = fx <= vx + 0.5 && fy <= vy + 0.5
+                  && fx + fw >= vx + vw - 0.5 && fy + fh >= vy + vh - 0.5;
+    }
+
+    if (dryRun) {
+        return true;
+    }
+
+    cr->save();
+    cr->rectangle(vx, vy, vw, vh);
+    cr->clip();
+
+    if (solidCropOverlay_ && cropHandler.cropParams->enabled) {
+        const auto& crop = *cropHandler.cropParams;
+        cr->rectangle(base.x + (crop.x - cropPos.x) * scale,
+                      base.y + (crop.y - cropPos.y) * scale,
+                      crop.w * scale, crop.h * scale);
+        cr->clip();
+    }
+
+    if (shiftedFramePixbuf_ != frame || !shiftedFrameSurface_) {
+        shiftedFrameSurface_ = Cairo::ImageSurface::create(
+            Cairo::FORMAT_RGB24, frame->get_width(), frame->get_height());
+        Cairo::RefPtr<Cairo::Context> convert = Cairo::Context::create(shiftedFrameSurface_);
+        Gdk::Cairo::set_source_pixbuf(convert, frame, 0, 0);
+        convert->set_operator(Cairo::OPERATOR_SOURCE);
+        convert->paint();
+        shiftedFramePixbuf_ = frame;
+    }
+
+    cr->translate(fx, fy);
+    cr->scale(frameScale, frameScale);
+    auto pattern = Cairo::SurfacePattern::create(shiftedFrameSurface_);
+
+    // A pure pan maps frame pixels 1:1 onto device pixels; filtering would
+    // only soften them. A zoom change resamples, and bilinear beats blocks.
+    const bool samePixelGrid = std::fabs(frameScale * deviceScale - 1.0) < 1e-4
+                               && std::fabs(fx * deviceScale - std::round(fx * deviceScale)) < 1e-4
+                               && std::fabs(fy * deviceScale - std::round(fy * deviceScale)) < 1e-4;
+    pattern->set_filter(samePixelGrid ? Cairo::FILTER_NEAREST : Cairo::FILTER_GOOD);
+    cr->set_source(pattern);
+    cr->paint();
+    cr->restore();
+
+    return true;
 }
 
 bool CropWindow::observedFrameVisible () const

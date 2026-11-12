@@ -23,6 +23,8 @@
 #include "rtengine.h"
 #include "rawimage.h"
 #include "rawimagesource.h"
+#include <atomic>
+#include <new>
 #include "rt_algo.h"
 #include "rt_math.h"
 #include "rtgui/multilangmgr.h"
@@ -289,6 +291,11 @@ void RawImageSource::xtrans_interpolate (const int passes, const bool useCieLab,
         RightShift[row] = (greencount == 2);
     }
 
+    // A thread that cannot get its tile buffer (the machine out of memory)
+    // still takes part in the shared loop -- skipping it would hang the
+    // others -- but does no work; afterwards the whole pass fails cleanly.
+    std::atomic<bool> outOfMemory{false};
+
 #ifdef _OPENMP
     #pragma omp parallel
 #endif
@@ -296,6 +303,10 @@ void RawImageSource::xtrans_interpolate (const int passes, const bool useCieLab,
         int progressCounter = 0;
 
         float *buffer = (float *) malloc ((ts * ts * (ndir * 4 + 3) + 128) * sizeof(float));
+
+        if (!buffer) {
+            outOfMemory = true;
+        }
         float (*rgb)[ts][ts][3] = (float(*)[ts][ts][3]) buffer;
         float (*lab)[ts - 8][ts - 8] = (float (*)[ts - 8][ts - 8])(buffer + ts * ts * (ndir * 3));
         float (*drv)[ts - 10][ts - 10] = (float (*)[ts - 10][ts - 10])   (buffer + ts * ts * (ndir * 3 + 3));
@@ -310,6 +321,10 @@ void RawImageSource::xtrans_interpolate (const int passes, const bool useCieLab,
 
         for (int top = 3; top < height - 19; top += ts - 16)
             for (int left = 3; left < width - 19; left += ts - 16) {
+                if (!buffer) {
+                    continue;
+                }
+
                 int mrow = MIN (top + ts, height - 3);
                 int mcol = MIN (left + ts, width - 3);
 
@@ -962,6 +977,10 @@ void RawImageSource::xtrans_interpolate (const int passes, const bool useCieLab,
             }
 
         free(buffer);
+    }
+
+    if (outOfMemory) {
+        throw std::bad_alloc();
     }
 
     xtransborder_interpolate(passes > 1 ? 8 : 11, red, green, blue);

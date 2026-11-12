@@ -19,6 +19,7 @@
 #include "rtengine/rt_math.h"
 
 #include "guiutils.h"
+#include "motion.h"
 
 #include "options.h"
 #include "rtengine/rtapp.h"
@@ -523,7 +524,7 @@ Gdk::RGBA colorLabelColor(int label)
         "steep_label_1", "steep_label_2", "steep_label_3", "steep_label_4", "steep_label_5"
     };
     static const double rgb[5][3] = {
-        {1.0, 0.2, 0.2}, {1.0, 0.85, 0.0}, {0.2, 0.8, 0.2}, {0.2, 0.4, 1.0}, {0.6, 0.2, 0.8}
+        {0.76, 0.36, 0.32}, {0.81, 0.68, 0.30}, {0.41, 0.65, 0.40}, {0.35, 0.51, 0.76}, {0.58, 0.44, 0.71}
     };
     Gdk::RGBA color;
 
@@ -569,6 +570,7 @@ Gtk::Overlay* addCountBadge(Gtk::Widget& button, Gtk::Label*& badge)
     badge->set_halign(Gtk::ALIGN_END);
     badge->set_valign(Gtk::ALIGN_START);
     badge->set_no_show_all(true);
+    steepui::useTabularNumerals(*badge);
     overlay->add_overlay(*badge);
     overlay->set_overlay_pass_through(*badge, true);
     return overlay;
@@ -591,6 +593,130 @@ void setCountBadge(Gtk::Label* badge, int count)
 void themeColorCacheInvalidate()
 {
     themeColorCache.clear();
+}
+
+namespace steepui
+{
+
+void roundedRect(const Cairo::RefPtr<Cairo::Context>& cr, double x, double y, double w, double h, double radius)
+{
+    const double r = std::max(0.0, std::min(radius, std::min(w, h) / 2.0));
+
+    if (r <= 0.0) {
+        cr->rectangle(x, y, w, h);
+        return;
+    }
+
+    cr->begin_new_sub_path();
+    cr->arc(x + r, y + r, r, rtengine::RT_PI, rtengine::RT_PI * 1.5);
+    cr->arc(x + w - r, y + r, r, rtengine::RT_PI * 1.5, rtengine::RT_PI * 2.0);
+    cr->arc(x + w - r, y + h - r, r, 0.0, rtengine::RT_PI * 0.5);
+    cr->arc(x + r, y + h - r, r, rtengine::RT_PI * 0.5, rtengine::RT_PI);
+    cr->close_path();
+}
+
+void roundedRect(const Cairo::RefPtr<Cairo::Context>& cr, double x, double y, double w, double h, Radius radius)
+{
+    roundedRect(cr, x, y, w, h, static_cast<double>(radius));
+}
+
+void setSource(const Cairo::RefPtr<Cairo::Context>& cr, const Gdk::RGBA& color, double alpha)
+{
+    cr->set_source_rgba(color.get_red(), color.get_green(), color.get_blue(),
+                        alpha < 0.0 ? color.get_alpha() : alpha);
+}
+
+namespace
+{
+// Returns a new list holding @p existing's attributes plus "tnum"; the
+// caller unrefs it. Copying keeps whatever markup or the caller already set.
+PangoAttrList* withTabularNumerals(PangoAttrList* existing)
+{
+    PangoAttrList* attrs = existing ? pango_attr_list_copy(existing) : pango_attr_list_new();
+    pango_attr_list_insert(attrs, pango_attr_font_features_new("tnum"));
+    return attrs;
+}
+}
+
+void useTabularNumerals(Gtk::Label& label)
+{
+    // Label attributes are kept apart from markup attributes, so this
+    // survives later set_text/set_markup calls.
+    PangoAttrList* attrs = withTabularNumerals(gtk_label_get_attributes(label.gobj()));
+    gtk_label_set_attributes(label.gobj(), attrs);
+    pango_attr_list_unref(attrs);
+}
+
+void useTabularNumerals(const Glib::RefPtr<Pango::Layout>& layout)
+{
+    if (!layout) {
+        return;
+    }
+
+    PangoAttrList* attrs = withTabularNumerals(pango_layout_get_attributes(layout->gobj()));
+    pango_layout_set_attributes(layout->gobj(), attrs);
+    pango_attr_list_unref(attrs);
+}
+
+namespace
+{
+void uiFontBase(Glib::ustring& family, double& basePt)
+{
+    const auto& options = App::get().options();
+    family = "sans";
+    basePt = 9.0;
+
+    if (options.fontFamily != "default") {
+        family = options.fontFamily;
+        basePt = options.fontSize;
+    } else if (auto settings = Gtk::Settings::get_default()) {
+        const Pango::FontDescription gtkFont(settings->property_gtk_font_name().get_value());
+
+        if (!gtkFont.get_family().empty()) {
+            family = gtkFont.get_family();
+        }
+
+        if (gtkFont.get_size() > 0) {
+            basePt = static_cast<double>(gtkFont.get_size()) / Pango::SCALE;
+        }
+    }
+}
+}
+
+Pango::FontDescription uiFont(double scale)
+{
+    Glib::ustring family;
+    double basePt;
+    uiFontBase(family, basePt);
+
+    Pango::FontDescription font;
+    font.set_family(family);
+    // Fractional sizes are fine here; the floor keeps a tiny UI font legible.
+    font.set_size(std::max(6 * Pango::SCALE, static_cast<int>(std::lround(basePt * scale * Pango::SCALE))));
+    return font;
+}
+
+int listRowHeight(Gtk::Widget& widget, int* lineHeight)
+{
+    int textW = 0;
+    int textH = 0;
+    widget.create_pango_layout("Ag")->get_pixel_size(textW, textH);
+
+    if (lineHeight) {
+        *lineHeight = textH;
+    }
+
+    return std::max(24, textH + 4);
+}
+
+int uiFontMarkupSize(double scale)
+{
+    Glib::ustring family;
+    double basePt;
+    uiFontBase(family, basePt);
+    return std::max(6 * 1024, static_cast<int>(std::lround(basePt * scale * 1024.0)));
+}
+
 }
 
 bool removeIfThere (Gtk::Container* cont, Gtk::Widget* w, bool increference)
@@ -1780,7 +1906,8 @@ bool MyHScale::on_draw (const Cairo::RefPtr<Cairo::Context>& cr)
         // Pill background, value fill, and label text are all drawn by Adjuster::on_draw
         // at the grid level. Here we only draw the gradient track if present.
 
-        const double pillR = 4.0;
+        // Nested inside the pill: its radius less the inset.
+        const double pillR = static_cast<double>(steepui::Radius::M) - 2.0;
 
         // --- Gradient track inside pill (if present, e.g. Temperature/Tint) ---
         if (!trackGradient_.empty()) {
@@ -1793,20 +1920,16 @@ bool MyHScale::on_draw (const Cairo::RefPtr<Cairo::Context>& cr)
             for (const auto& ms : trackGradient_) {
                 gradient->add_color_stop_rgba(ms.position, ms.r, ms.g, ms.b, (ms.a > 0 ? ms.a : 1.0) * 0.4);
             }
-            cr->begin_new_sub_path();
-            cr->arc(gradStartX + pillR, gradY2 + pillR, pillR, rtengine::RT_PI, rtengine::RT_PI * 1.5);
-            cr->arc(gradEndX - pillR, gradY2 + pillR, pillR, rtengine::RT_PI * 1.5, 0);
-            cr->arc(gradEndX - pillR, gradY2 + gradH - pillR, pillR, 0, rtengine::RT_PI * 0.5);
-            cr->arc(gradStartX + pillR, gradY2 + gradH - pillR, pillR, rtengine::RT_PI * 0.5, rtengine::RT_PI);
-            cr->close_path();
+            steepui::roundedRect(cr, gradStartX, gradY2, gradEndX - gradStartX, gradH, pillR);
             cr->set_source(gradient);
             cr->fill();
         }
 
         // Compute label area width for click detection (used by on_button_press_event)
         auto layout = create_pango_layout(labelText_);
-        auto fontDesc = Pango::FontDescription("sans 9");
-        layout->set_font_description(fontDesc);
+        // Hit-testing only; the visible name is drawn by Adjuster in the
+        // pill font, which is the UI font one rung up from 9pt body.
+        layout->set_font_description(steepui::uiFont(10.0 / 9.0 * Adjuster::getPillScale()));
         Pango::Rectangle logRect;
         layout->get_pixel_extents(logRect, logRect);
         labelAreaWidth_ = padding + 12 + logRect.get_width() + 6;
@@ -2874,9 +2997,24 @@ AdvancedSection::AdvancedSection(const Glib::ustring& customLabel) :
     header->setOnToggled([this](bool expand) { setExpanded(expand); });
     pack_start(*header, Gtk::PACK_SHRINK, 0);
 
-    // Content box
+    // Content box, inside a Revealer so the section folds like a ToolGroup
+    // instead of popping. At rest a collapsed section is still really hidden
+    // (and no_show_all), exactly as before: the revealer only exists for the
+    // moment of the fold.
     contentBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL));
-    pack_start(*contentBox, Gtk::PACK_SHRINK, 0);
+    revealer = Gtk::manage(new Gtk::Revealer());
+    revealer->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
+    steep::motion::configureRevealer(*revealer);
+    revealer->set_reveal_child(false);
+    revealer->add(*contentBox);
+    pack_start(*revealer, Gtk::PACK_SHRINK, 0);
+    revealer->property_child_revealed().signal_changed().connect([this]() {
+        // Fold finished: put the content away for good.
+        if (!expanded && !revealer->get_child_revealed()) {
+            revealer->hide();
+            revealer->set_no_show_all(true);
+        }
+    });
 
     // Default state based on UI complexity
     bool defaultExpanded = (App::get().options().uiComplexity >= Options::UI_EXPERT);
@@ -2884,7 +3022,7 @@ AdvancedSection::AdvancedSection(const Glib::ustring& customLabel) :
 
     show_all_children();
     if (!expanded) {
-        contentBox->hide();
+        revealer->hide();
     }
 }
 
@@ -2893,11 +3031,17 @@ void AdvancedSection::setExpanded(bool expand)
     expanded = expand;
     header->setExpanded(expanded);
     if (expanded) {
-        contentBox->set_no_show_all(false);
-        contentBox->show_all();
+        revealer->set_no_show_all(false);
+        revealer->show_all();
+        revealer->set_reveal_child(true);
     } else {
-        contentBox->hide();
-        contentBox->set_no_show_all(true);
+        revealer->set_reveal_child(false);
+        // No transition ran (not on screen, or already folded): hide now.
+        // Otherwise the child-revealed notification does it at the end.
+        if (!revealer->get_child_revealed()) {
+            revealer->hide();
+            revealer->set_no_show_all(true);
+        }
     }
 
     if (onToggled) {
@@ -2965,7 +3109,7 @@ ToolGroup::ToolGroup(const Glib::ustring& label) :
     contentBox->set_margin_end(12);
     revealer = Gtk::manage(new Gtk::Revealer());
     revealer->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-    revealer->set_transition_duration(200);
+    steep::motion::configureRevealer(*revealer);
     revealer->add(*contentBox);
     pack_start(*revealer, Gtk::PACK_SHRINK, 0);
 
@@ -2979,6 +3123,15 @@ void ToolGroup::setExpanded(bool expand)
     expanded = expand;
     header->setExpanded(expanded);
     revealer->set_reveal_child(expanded);
+
+    if (expandedCallback_) {
+        expandedCallback_(expanded);
+    }
+}
+
+void ToolGroup::setExpandedCallback(std::function<void(bool)> cb)
+{
+    expandedCallback_ = std::move(cb);
 }
 
 bool ToolGroup::getExpanded() const
@@ -3001,6 +3154,19 @@ void ToolGroup::setResetVisible(bool visible)
 void ToolGroup::setResetCallback(std::function<void()> cb)
 {
     resetCallback_ = cb;
+}
+
+void ToolGroup::setHeaderMenuCallback(std::function<void(GdkEventButton*)> cb)
+{
+    header->add_events(Gdk::BUTTON_PRESS_MASK);
+    // Before the button's own handler: a right-click must not fold the group.
+    header->signal_button_press_event().connect([cb](GdkEventButton* event) -> bool {
+        if (cb && event->type == GDK_BUTTON_PRESS && event->button == 3) {
+            cb(event);
+            return true;
+        }
+        return false;
+    }, false);
 }
 
 void ToolGroup::triggerReset()

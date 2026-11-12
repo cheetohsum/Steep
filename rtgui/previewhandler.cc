@@ -224,7 +224,7 @@ bool PreviewHandler::hasPlaceholder() const
 }
 
 Glib::RefPtr<Gdk::Pixbuf> PreviewHandler::getRoughImage (
-    ImageCoord pos, hidpi::ScaledDeviceSize desiredSize, double zoom)
+    ImageCoord pos, hidpi::ScaledDeviceSize desiredSize, double zoom, Gdk::InterpType interp)
 {
     MyMutex::MyLock lock(previewImgMutex);
 
@@ -256,7 +256,7 @@ Glib::RefPtr<Gdk::Pixbuf> PreviewHandler::getRoughImage (
     if (w < 1 || h < 1) return resPixbuf;
 
     resPixbuf = Gdk::Pixbuf::create (Gdk::COLORSPACE_RGB, false, 8, w, h);
-    previewImg->scale (resPixbuf, 0, 0, w, h, -pos.x, -pos.y, totalZoom, totalZoom, Gdk::INTERP_NEAREST);
+    previewImg->scale (resPixbuf, 0, 0, w, h, -pos.x, -pos.y, totalZoom, totalZoom, interp);
 
     return resPixbuf;
 }

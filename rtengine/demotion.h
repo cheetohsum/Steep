@@ -92,12 +92,11 @@ inline Pose pose(const Params &p, float t)
     result.invZoom = std::exp(-zoom * travel);
     return result;
 }
-inline Trajectory trajectory(const Params &p, int width, int maxIntervals)
+inline bool moves(const Params &p) { return p.path != Path::OFF && p.speed > 0 && p.shutter > 0; }
+// Distance travelled over the shutter, in source widths (rotation and zoom
+// counted roughly as travel at the frame's edge).
+inline float pathLength(const Params &p)
 {
-    if (p.path == Path::OFF || p.speed <= 0 || p.shutter <= 0)
-        return {};
-    // These are interval boundaries, not separate exposures. The sample loop
-    // integrates between them; limiting path storage must not leave holes in light trails.
     float distance = 0;
     auto previous = pose(p, 0);
     for (int i = 1; i <= 128; ++i) {
@@ -107,7 +106,24 @@ inline Trajectory trajectory(const Params &p, int width, int maxIntervals)
             .7f * (std::hypot(q.c - previous.c, q.s - previous.s) + std::abs(q.invZoom - previous.invZoom));
         previous = q;
     }
-    const int count = std::max(1, std::min(maxIntervals, std::max(12, int(std::ceil(distance * width * 1.25f)))));
+    return distance;
+}
+// `width` is the resolution the path is read at, in pixels across the source:
+// sample() takes two reads per pixel of travel at that resolution.
+inline Trajectory trajectory(const Params &p, int width, int maxIntervals)
+{
+    if (!moves(p))
+        return {};
+    // These are interval boundaries, not separate exposures. The sample loop
+    // integrates between them; limiting path storage must not leave holes in light trails.
+    const float distance = pathLength(p);
+    // Knots only have to follow the path's shape (the reads between them are
+    // spaced by sample()): one per three pixels of travel, and at least 24
+    // per wiggle of the noisiest term, keeps chords within a fraction of a
+    // pixel. Each interval costs as much as a few reads, so a knot per pixel
+    // was a third of a plate's time.
+    const int wiggles = int(std::max(1., std::min(8., p.complexity))) + 3;
+    const int count = std::max(1, std::min(maxIntervals, std::max(24 * wiggles, int(std::ceil(distance * width / 3)))));
     Trajectory result;
     result.width = std::max(1, width);
     result.knots.reserve(count + 1);
@@ -115,7 +131,10 @@ inline Trajectory trajectory(const Params &p, int width, int maxIntervals)
         result.knots.push_back(pose(p, float(i) / count));
     return result;
 }
-template <class Read> Pixel sample(const Trajectory &path, float u, float v, float aspect, Read read)
+// With Premultiplied, read() returns colour already multiplied by its alpha
+// (see PremultipliedBuffer); the result is the same un-premultiplied pixel.
+template <bool Premultiplied = false, class Read>
+Pixel sample(const Trajectory &path, float u, float v, float aspect, Read read)
 {
     if (path.empty())
         return read(u, v);
@@ -125,11 +144,18 @@ template <class Read> Pixel sample(const Trajectory &path, float u, float v, flo
                                      (-q.s * x + q.c * y) * q.invZoom * aspect + .5f}};
     };
     double r = 0, g = 0, b = 0, alpha = 0;
+    // Plates run this per pixel with a knot every pixel or so of travel, so
+    // the per-interval work is most of the cost: no divisions for intervals
+    // that stay inside the frame, and no libm calls (the build targets SSE2).
+    const double perInterval = 1.0 / (path.knots.size() - 1);
+    const float widthOverAspect = path.width / aspect;
+    const auto inside = [](float t) { return t >= 0 && t <= 1; };
     auto previous = map(path.knots.front());
     for (size_t i = 1; i < path.knots.size(); ++i) {
         const auto next = map(path.knots[i]);
         const float du = next[0] - previous[0], dv = next[1] - previous[1];
         const float su = previous[0], sv = previous[1];
+        const bool contained = inside(su) && inside(sv) && inside(next[0]) && inside(next[1]);
         previous = next;
         // Clip shutter time to observed image coverage before doing expensive
         // reads. Missing time stays transparent instead of extending edge pixels.
@@ -141,24 +167,31 @@ template <class Read> Pixel sample(const Trajectory &path, float u, float v, flo
             end = std::min(end, std::max(a, z));
             return end > begin;
         };
-        if (!clip(su, du) || !clip(sv, dv))
+        if (!contained && (!clip(su, du) || !clip(sv, dv)))
             continue;
         // Half-pixel temporal footprints join fine highlights continuously,
         // even when a long path exceeds the number of stored intervals.
-        const float length = (end - begin) * path.width * std::max(std::abs(du), std::abs(dv) / aspect);
-        const int count = std::max(1, int(std::ceil(length * 2)));
+        const float footprints = 2 * (end - begin) * std::max(std::abs(du) * path.width, std::abs(dv) * widthOverAspect);
+        int count = int(footprints);
+        count = std::max(1, count + (float(count) < footprints));
         const float dt = (end - begin) / count;
-        const double weight = double(dt) / (path.knots.size() - 1);
+        const double weight = dt * perInterval;
+        // The weight is constant along a segment: sum it in float, weigh once.
+        float sr = 0, sg = 0, sb = 0, sa = 0;
         for (int k = 0; k < count; ++k) {
             const float t = begin + (k + .5f) * dt;
             const Pixel p = read(std::max(0.f, std::min(1.f, su + t * du)),
                                  std::max(0.f, std::min(1.f, sv + t * dv)));
-            const double a = p.a * weight;
-            r += p.r * a;
-            g += p.g * a;
-            b += p.b * a;
-            alpha += a;
+            const float a = Premultiplied ? 1.f : p.a;
+            sr += p.r * a;
+            sg += p.g * a;
+            sb += p.b * a;
+            sa += p.a;
         }
+        r += sr * weight;
+        g += sg * weight;
+        b += sb * weight;
+        alpha += sa * weight;
     }
     if (alpha <= 1e-8) return {};
     return {float(r / alpha), float(g / alpha), float(b / alpha), float(alpha)};
@@ -180,6 +213,24 @@ struct Buffer {
         const int x = int(fx), y = int(fy), nx = std::min(x + 1, w - 1), ny = std::min(y + 1, h - 1);
         return mix(mix(pixels[size_t(y) * w + x], pixels[size_t(y) * w + nx], fx - x),
                    mix(pixels[size_t(ny) * w + x], pixels[size_t(ny) * w + nx], fx - x), fy - y);
+    }
+};
+// The source a plate integrates, filtered down to the plate's resolution:
+// colour premultiplied by coverage so bilinear reads need no weighting.
+struct PremultipliedBuffer {
+    int w = 0, h = 0;
+    std::vector<Pixel> pixels;
+    Pixel at(float u, float v) const
+    {
+        const float fx = std::max(0.f, std::min(float(w - 1), u * w - .5f));
+        const float fy = std::max(0.f, std::min(float(h - 1), v * h - .5f));
+        const int x = int(fx), y = int(fy), nx = std::min(x + 1, w - 1), ny = std::min(y + 1, h - 1);
+        const float dx = fx - x, dy = fy - y;
+        const float w00 = (1 - dx) * (1 - dy), w10 = dx * (1 - dy), w01 = (1 - dx) * dy, w11 = dx * dy;
+        const Pixel &a = pixels[size_t(y) * w + x], &b = pixels[size_t(y) * w + nx];
+        const Pixel &c = pixels[size_t(ny) * w + x], &d = pixels[size_t(ny) * w + nx];
+        return {w00 * a.r + w10 * b.r + w01 * c.r + w11 * d.r, w00 * a.g + w10 * b.g + w01 * c.g + w11 * d.g,
+                w00 * a.b + w10 * b.b + w01 * c.b + w11 * d.b, w00 * a.a + w10 * b.a + w01 * c.a + w11 * d.a};
     }
 };
 } // namespace demotion

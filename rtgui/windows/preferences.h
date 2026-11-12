@@ -201,6 +201,7 @@ class Preferences final :
     Gtk::CheckButton* sameThumbSize;
     Gtk::CheckButton* browserTitlePin;
     Gtk::CheckButton* filmstripAtBottomCB;
+    Gtk::CheckButton* reduceMotionCB;
     Gtk::SpinButton* filmstripThumbSizeSB;
     Gtk::SpinButton* browserThumbSizeSB;
     Gtk::SpinButton* browseRecursiveDepth;
@@ -242,6 +243,8 @@ class Preferences final :
     Gtk::CheckButton* ckbInternalThumbIfUntouched;
 
     Gtk::CheckButton *thumbnailRankColorMode;
+    Gtk::CheckButton* folderPreviewsCB;
+    Gtk::SpinButton* folderPreviewCountSB;
 
     Gtk::Entry* txtCustProfBuilderPath;
     Gtk::ComboBoxText* custProfBuilderLabelType;

@@ -24,10 +24,12 @@
 #include <array>
 #include <chrono>
 #include <future>
+#include <mutex>
 #include <sstream>
 #include <iomanip>
 #include <cstdio>
 #include <cstdlib>
+#include <thread>
 #include <utility>
 #include "rtengine/colortemp.h"
 #include "rtengine/image8.h"
@@ -42,6 +44,7 @@
 
 #include "rtengine/dynamicprofile.h"
 #include "rtengine/metadata.h"
+#include "rtengine/myfile.h"
 #include "rtengine/profilestore.h"
 #include "rtengine/settings.h"
 #include "rtengine/utils.h"
@@ -50,6 +53,7 @@
 #include "extprog.h"
 #include "md5helper.h"
 #include "pathutils.h"
+#include "rawloadactivity.h"
 #include "paramsedited.h"
 #include "ppversion.h"
 #include "procparamchangers.h"
@@ -706,7 +710,15 @@ void Thumbnail::_generateThumbnailImage()
         //  2. if we don't find that then just grab the real image.
         rtengine::eSensorType sensorType = rtengine::ST_NONE;
 
+        const bool seekPenalty = rtengine::fileIncursSeekPenalty(fname.c_str());
+
         if (isRawOriginalExtension(ext)) {
+            // On a spinning disk, read the head (header, EXIF, maker notes)
+            // in one sequential run before the metadata parser and LibRaw's
+            // identify fault it in piecemeal from two threads.
+            if (seekPenalty) {
+                rtengine::prefetchFileHead(fname.c_str(), 1024 * 1024);
+            }
             startRawMetadataFuture();
         }
 
@@ -734,6 +746,20 @@ void Thumbnail::_generateThumbnailImage()
         if (!tpp) {
             quick = false;
             const auto stageStart = bench ? ThumbnailBenchClock::now() : ThumbnailBenchClock::time_point{};
+            // A full decode touches the whole file; through the mapping that
+            // is page-fault clusters interleaved with every other reader on
+            // the spindle. One chunked sequential pass first is far cheaper.
+            // Upgrades stream one file at a time (another may decode
+            // meanwhile) and step aside while the editor loads a RAW.
+            if (seekPenalty) {
+                static std::mutex upgradeReadMutex;
+                std::lock_guard<std::mutex> lock(upgradeReadMutex);
+                const auto foregroundBusy = []() { return !isRawLoadForegroundQuietForMs(0); };
+
+                for (int attempt = 0; attempt < 100 && !rtengine::prefetchFile(fname.c_str(), foregroundBusy); ++attempt) {
+                    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+                }
+            }
             tpp = rtengine::Thumbnail::loadFromRaw(fname, sensorType, tw, th, 1, pparams->wb.equal, pparams->wb.observer, TRUE, &(pparams->raw));
             if (bench) {
                 fullRawMs = thumbnailBenchMs(stageStart, ThumbnailBenchClock::now());
@@ -1810,6 +1836,53 @@ rtengine::IImage8* Thumbnail::processFullThumbImage(
     }
 
     return processThumbImageLocked(pparams, h, scale, cachePixbuf, /*allowPersistedRender=*/false);
+}
+
+std::vector<rtengine::IImage8*> Thumbnail::processFullThumbBatch(
+    const std::vector<rtengine::procparams::ProcParams>& frames,
+    int h,
+    std::function<bool()> cancelled)
+{
+    std::vector<rtengine::IImage8*> images;
+    images.reserve(frames.size());
+
+    // processFullThumbImage per frame reads the base thumbnail back from the
+    // cache for every frame, and for an embedded-preview entry develops the
+    // RAW again each time. Here the base is obtained once and taken out of
+    // the entry, so the frames render without holding the entry's mutex and
+    // the browser and editor are not kept waiting for the whole set.
+    std::unique_ptr<rtengine::Thumbnail> base;
+    CacheImageData data;
+    {
+        MyMutex::MyLock lock(mutex);
+
+        if (cfs.thumbImgType == CacheImageData::QUICK_THUMBNAIL) {
+            _generateThumbnailImage();
+        } else if (!tpp) {
+            _loadThumbnail();
+        }
+
+        if (!tpp) {
+            return images;
+        }
+
+        base.reset(tpp);
+        tpp = nullptr;
+        data = cfs;
+    }
+
+    for (const auto& frame : frames) {
+        if (cancelled && cancelled()) {
+            break;
+        }
+
+        double scale = 1.0;
+        images.push_back(base->processImage(
+            frame, static_cast<rtengine::eSensorType>(data.sensortype), h,
+            rtengine::TI_Bilinear, &data, scale));
+    }
+
+    return images;
 }
 
 std::unique_ptr<rtengine::Imagefloat> Thumbnail::processAnalysisImage(

@@ -105,11 +105,20 @@ public:
     std::shared_ptr<const PartnerDepth> getSceneDepth(const std::string& imageId, const Imagefloat& source,
                                                       int fullWidth, int fullHeight, const Glib::ustring& workingProfile);
 
-    // Cache-only: the latest map of this image whose frame has the same shape.
+    // Cache-only: the newest scene map of imageId whose frame has this
+    // shape, or nullptr. Never runs the model, so a filter can ask on every
+    // pass. Without a source frame the content fingerprint is not checked;
+    // a re-framed photograph of the same aspect keeps its old map until the
+    // next getSceneDepth replaces it.
     std::shared_ptr<const PartnerDepth> peekSceneDepth(const std::string& imageId, int fullWidth, int fullHeight,
                                                        const Glib::ustring& workingProfile);
 
     void clearCache();
+
+    // Memory trimmer: lets go of the depth model's session when nothing is
+    // estimating; the next request builds it again. The maps themselves are
+    // a few megabytes and the open photo's is in use, so they stay.
+    void trimMemory(int level);
 
 private:
     PartnerDepthStore();

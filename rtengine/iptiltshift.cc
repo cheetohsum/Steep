@@ -27,7 +27,8 @@
 
 namespace rtengine {
 
-void ImProcFunctions::tiltShiftEffect(LabImage *lab, const procparams::TiltShiftParams &params, int fw, int fh)
+void ImProcFunctions::tiltShiftEffect(LabImage *lab, const procparams::TiltShiftParams &params, int fw, int fh,
+                                      int originX, int originY, double scale)
 {
     if (!params.enabled || params.amount == 0) {
         return;
@@ -35,19 +36,30 @@ void ImProcFunctions::tiltShiftEffect(LabImage *lab, const procparams::TiltShift
 
     const int W = lab->W;
     const int H = lab->H;
+    const double s = std::max(scale, 1e-3);
 
-    // Compute sigma from amount (0-100 -> 0-50 pixel sigma)
-    const double sigma = params.amount * 0.5;
+    // Everything below is defined on the full frame (the space the on-canvas
+    // handles edit in) and mapped into this buffer, so the fit preview, a 1:1
+    // tile, a thumbnail and the export all show the same band and the same
+    // blur. At scale 1 on a full frame this is exactly the old behaviour.
+    const double fullW = fw > 0 ? fw : W * s;
+    const double fullH = fh > 0 ? fh : H * s;
 
-    // Focus band parameters in pixels
-    const double focusCenterY = (params.focusPos / 100.0) * H;
-    const double halfWidth = (params.focusWidth / 100.0) * H * 0.5;
-    const double featherPx = std::max(1.0, (params.feather / 100.0) * H * 0.3);
+    // 0-100 -> 0-50 px sigma at full resolution.
+    const double sigma = params.amount * 0.5 / s;
 
-    // Angle: offset per column
+    if (sigma < 0.25) {
+        return;
+    }
+
+    const double focusCenterY = (params.focusPos / 100.0) * fullH;
+    const double halfWidth = (params.focusWidth / 100.0) * fullH * 0.5;
+    const double featherPx = std::max(s, (params.feather / 100.0) * fullH * 0.3);
+
+    // The band pivots on the frame's horizontal centre.
     const double angleRad = params.angle * (RT_PI / 180.0);
     const double tanAngle = std::tan(angleRad);
-    const double centerX = W * 0.5;
+    const double centerX = fullW * 0.5;
 
     // Allocate blurred L channel
     float **blurL = new float*[H];
@@ -76,12 +88,15 @@ void ImProcFunctions::tiltShiftEffect(LabImage *lab, const procparams::TiltShift
     #pragma omp parallel for schedule(dynamic, 16)
 #endif
     for (int y = 0; y < H; y++) {
+        const double fy = originY + y * s;
+
         for (int x = 0; x < W; x++) {
+            const double fx = originX + x * s;
             // Compute focus center for this column (angle offset)
-            double centerY = focusCenterY + (x - centerX) * tanAngle;
+            double centerY = focusCenterY + (fx - centerX) * tanAngle;
 
             // Distance from focus band edge
-            double dist = std::abs(y - centerY) - halfWidth;
+            double dist = std::abs(fy - centerY) - halfWidth;
             if (dist < 0.0) {
                 dist = 0.0;
             }

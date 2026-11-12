@@ -35,6 +35,7 @@
 #include "exiffiltersettings.h"
 #include "exportpanel.h"
 #include "filebrowser.h"
+#include "motion.h"
 #include "phototagwidgets.h"
 #include "fileselectionchangelistener.h"
 #include "fileselectionlistener.h"
@@ -118,7 +119,7 @@ private:
     Gtk::Revealer* colorLabelRevealer_;
     bool colorLabelExpanded_;
     double colorSummaryOpacity_;
-    sigc::connection colorFadeConn_;
+    steep::motion::Handle colorFade_;
     sigc::connection colorCollapseDelay_;
 
     Gtk::Box* fltrEditedBox;
@@ -366,7 +367,7 @@ private:
     // Color label hover-expand handlers
     bool onColorLabelChildEnter(GdkEventCrossing* event);
     bool onColorLabelChildLeave(GdkEventCrossing* event);
-    bool onColorLabelFadeTick();
+    void fadeColorLabelSummary();
 
     void addAndOpenFile (const Glib::ustring& fname);
     void addFile (const Glib::ustring& fName);

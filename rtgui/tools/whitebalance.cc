@@ -17,6 +17,7 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "whitebalance.h"
+#include "motion.h"
 
 #include <iomanip>
 
@@ -402,7 +403,7 @@ WhiteBalance::WhiteBalance () : FoldableToolPanel(this, TOOL_NAME, M("TP_WBALANC
     // Animated revealer for detail content — right after WB header, before sliders
     detailRevealer_ = Gtk::manage(new Gtk::Revealer());
     detailRevealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-    detailRevealer_->set_transition_duration(200);
+    steep::motion::configureRevealer(*detailRevealer_);
     detailRevealer_->set_reveal_child(false);
     detailRevealer_->add(*pickerRow_);
     detailRevealer_->show();

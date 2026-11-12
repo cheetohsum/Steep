@@ -61,6 +61,9 @@ tools/*.png
 tools/*.jpg
 rtdata/models/lama_inpainting.onnx
 rtdata/models/u2net_subject.onnx
+rtdata/models/birefnet_subject.onnx
+rtdata/models/birefnet_subject_fp16.onnx
+rtdata/models/ade20k_hrnetv2_c1.onnx
 tools/_u2net/
 
 # Run-time debris that lands in the source root.

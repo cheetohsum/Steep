@@ -37,6 +37,11 @@ class LabImage;
 class Imagefloat final : public IImagefloat, public ImageIO
 {
 
+    // What this instance added to MemGuard when it was built (three float
+    // planes at the constructed size). Subtracted as is on destruction, so a
+    // later allocate() or swap() cannot unbalance the gauge.
+    std::size_t memAccounted_ = 0;
+
 public:
 
     Imagefloat ();

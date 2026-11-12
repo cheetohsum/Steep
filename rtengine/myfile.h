@@ -18,6 +18,8 @@
  */
 #pragma once
 
+#include <functional>
+#include <string>
 #include <vector>
 
 #include <cstdio>
@@ -64,6 +66,17 @@ void fprefetch (IMFILE* f, ssize_t offset, ssize_t length);
 // into the page cache so the header/EXIF parsers that follow (LibRaw identify,
 // Exiv2 on its own handle) hit cache instead of seeking into the file.
 void prefetchFileHead (const char* fname, ssize_t bytes);
+// The whole file, chunked under the same per-drive lock as readFileRange, so
+// a full-RAW read reaches a spinning disk as one sequential stream.
+// Returns false if cancelled() stopped it early.
+bool prefetchFile (const char* fname, const std::function<bool()>& cancelled = {});
+// True for rotational, network or unknown storage (one reader at a time
+// pays off), false for SSD/NVMe. Cached per drive. Always false off Windows.
+bool fileIncursSeekPenalty (const char* fname);
+// Pulls `fnames` into the OS cache on one below-normal-priority thread, in
+// order, each file only once ready() returns true. A new call replaces the
+// pending list and abandons the file in progress; an empty list cancels.
+void warmFileCache (std::vector<std::string> fnames, std::function<bool()> ready);
 // Read [offset, offset+length) of `fname` into `out` with the same
 // serialisation as the prefetchers, so a parser that wants a byte range
 // costs the disk one sequential run. Returns false if nothing was read.

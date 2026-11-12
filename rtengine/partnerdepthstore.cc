@@ -18,16 +18,20 @@
 #include "partnerdepthstore.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <mutex>
 #include <stdexcept>
+#include <thread>
 #include <vector>
 
 #include <glibmm/fileutils.h>
 #include <glibmm/miscutils.h>
 
+#include "aiidlereaper.h"
 #include "cache.h"
 #include "compositemath.h"
 #include "depthestimator.h"
@@ -87,6 +91,41 @@ bool DepthSelection::operator==(const DepthSelection& other) const
 float DepthSelection::weight(float depth) const
 {
     return composite::depthWeight(depth, range, nearShape, farShape, invert);
+}
+
+namespace
+{
+
+// Runs `estimate` with the store's estimator. Out of memory -- often another
+// program's, on the GPU it shares -- frees its session and every idle model
+// and runs it once more; any other failure (or a second) is logged and gives
+// no map, which the next request asks for again.
+template<typename Estimate>
+std::unique_ptr<Imagefloat> estimateWithRetry(std::unique_ptr<DepthEstimator>& estimator, const char* what,
+                                              Estimate estimate)
+{
+    for (int attempt = 0;; ++attempt) {
+        try {
+            if (!estimator) {
+                estimator.reset(new DepthEstimator());
+            }
+
+            return estimate(*estimator);
+        } catch (const std::exception& e) {
+            if (attempt == 0 && AIIdleReaper::outOfMemory(e.what())) {
+                std::fprintf(stderr, "%s: out of memory; freeing models and retrying\n", what);
+                estimator.reset();
+                AIIdleReaper::releaseNow();
+                std::this_thread::sleep_for(std::chrono::milliseconds(750));
+                continue;
+            }
+
+            std::fprintf(stderr, "%s: %s\n", what, e.what());
+            return nullptr;
+        }
+    }
+}
+
 }
 
 struct PartnerDepthStore::Impl {
@@ -262,14 +301,11 @@ std::shared_ptr<const PartnerDepth> PartnerDepthStore::getDepth(const Glib::ustr
             return result;
         }
 
-        try {
-            if (!impl->estimator) {
-                impl->estimator.reset(new DepthEstimator());
-            }
+        map = estimateWithRetry(impl->estimator, "Double exposure depth", [&](DepthEstimator& estimator) {
+            return estimator.depth(*partner->image, impl->directory.raw(), workingProfile);
+        });
 
-            map = impl->estimator->depth(*partner->image, impl->directory.raw(), workingProfile);
-        } catch (const std::exception& e) {
-            std::fprintf(stderr, "Double exposure depth: %s\n", e.what());
+        if (!map) {
             return nullptr;
         }
     }
@@ -294,20 +330,6 @@ std::shared_ptr<const PartnerDepth> PartnerDepthStore::getDepth(const Glib::ustr
 
     impl->cache.insert(key, result);
     return result;
-}
-
-std::shared_ptr<const PartnerDepth> PartnerDepthStore::peekSceneDepth(const std::string& imageId, int fullWidth, int fullHeight,
-                                                                      const Glib::ustring& workingProfile)
-{
-    std::lock_guard<std::mutex> lock(impl->sceneMutex);
-
-    for (const auto& entry : impl->scenes) {
-        if (entry.imageId == imageId && entry.profile == workingProfile && sameShape(*entry.depth, fullWidth, fullHeight)) {
-            return entry.depth;
-        }
-    }
-
-    return nullptr;
 }
 
 std::shared_ptr<const PartnerDepth> PartnerDepthStore::getSceneDepth(const std::string& imageId, const Imagefloat& source,
@@ -355,14 +377,11 @@ std::shared_ptr<const PartnerDepth> PartnerDepthStore::getSceneDepth(const std::
             }
         }
 
-        try {
-            if (!impl->estimator) {
-                impl->estimator.reset(new DepthEstimator());
-            }
+        map = estimateWithRetry(impl->estimator, "Scene depth", [&](DepthEstimator& estimator) {
+            return estimator.detailedDepth(source, impl->directory.raw(), workingProfile, 1024);
+        });
 
-            map = impl->estimator->depth(source, impl->directory.raw(), workingProfile);
-        } catch (const std::exception& e) {
-            std::fprintf(stderr, "Scene depth: %s\n", e.what());
+        if (!map) {
             return nullptr;
         }
     }
@@ -393,6 +412,33 @@ std::shared_ptr<const PartnerDepth> PartnerDepthStore::getSceneDepth(const std::
     }
 
     return result;
+}
+
+std::shared_ptr<const PartnerDepth> PartnerDepthStore::peekSceneDepth(const std::string& imageId, int fullWidth, int fullHeight,
+                                                                      const Glib::ustring& workingProfile)
+{
+    if (imageId.empty()) {
+        return nullptr;
+    }
+
+    std::lock_guard<std::mutex> lock(impl->sceneMutex);
+
+    for (const auto& entry : impl->scenes) {
+        if (entry.imageId == imageId && entry.profile == workingProfile && sameShape(*entry.depth, fullWidth, fullHeight)) {
+            return entry.depth;
+        }
+    }
+
+    return nullptr;
+}
+
+void PartnerDepthStore::trimMemory(int)
+{
+    std::unique_lock<std::mutex> lock(impl->mutex, std::try_to_lock);
+    if (lock.owns_lock() && impl->estimator) {
+        impl->estimator.reset();
+        std::fprintf(stderr, "Depth: model unloaded to free memory\n");
+    }
 }
 
 void PartnerDepthStore::clearCache()

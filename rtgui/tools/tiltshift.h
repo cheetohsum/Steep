@@ -64,6 +64,7 @@ private:
     void releaseEdit();
 
 public:
+    Gtk::Widget* getHeadingWidget() override { return editHBox; }
     static const Glib::ustring TOOL_NAME;
 
     TiltShift();

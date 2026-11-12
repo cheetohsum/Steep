@@ -16,6 +16,7 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "tiltshift.h"
+#include "motion.h"
 
 #include "editwidgets.h"
 #include "rtimage.h"
@@ -62,13 +63,9 @@ TiltShift::TiltShift(): FoldableToolPanel(this, TOOL_NAME, M("TP_TILTSHIFT_LABEL
     feather = Gtk::manage(new Adjuster(M("TP_TILTSHIFT_FEATHER"), 0., 100., 1., 50.));
     angle = Gtk::manage(new Adjuster(M("TP_TILTSHIFT_ANGLE"), -45., 45., 1., 0.));
 
-    // Keep the tool identity, canvas control, and primary amount adjustment on
-    // one compact row. The canvas button intentionally follows the title.
+    // The canvas control: shown right of the tool's heading (getHeadingWidget)
+    // so the tool is named once.
     editHBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 4));
-    editHBox->set_hexpand(true);
-    auto *titleLabel = Gtk::manage(new Gtk::Label(M("TP_TILTSHIFT_LABEL")));
-    titleLabel->set_halign(Gtk::ALIGN_START);
-    editHBox->pack_start(*titleLabel, Gtk::PACK_SHRINK, 0);
 
     edit = Gtk::manage(new Gtk::ToggleButton());
     edit->get_style_context()->add_class("independent");
@@ -90,7 +87,6 @@ TiltShift::TiltShift(): FoldableToolPanel(this, TOOL_NAME, M("TP_TILTSHIFT_LABEL
     });
 
     auto *summaryBox = getSummaryBox();
-    summaryBox->pack_start(*editHBox, Gtk::PACK_SHRINK, 0);
     // Amount gets its own full-width row so the slider aligns with every
     // other tool instead of being squeezed right of the title.
     summaryBox->pack_start(*amount, Gtk::PACK_SHRINK, 0);
@@ -112,13 +108,14 @@ TiltShift::TiltShift(): FoldableToolPanel(this, TOOL_NAME, M("TP_TILTSHIFT_LABEL
 
     detailRevealer_ = Gtk::manage(new Gtk::Revealer());
     detailRevealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-    detailRevealer_->set_transition_duration(200);
+    steep::motion::configureRevealer(*detailRevealer_);
     detailRevealer_->set_reveal_child(false);
     detailRevealer_->add(*detailContent_);
     detailRevealer_->show();
     summaryBox->pack_start(*detailRevealer_, Gtk::PACK_SHRINK);
 
     summaryBox->show_all();
+    editHBox->show_all();
 
     // --- Editing geometry (lines + circle on the image preview) ---
     // We draw: center line, top/bottom focus edges, top/bottom feather edges, center circle

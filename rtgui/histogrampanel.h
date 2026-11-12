@@ -32,6 +32,7 @@
 
 #include "delayed.h"
 #include "guiutils.h"
+#include "motion.h"
 #include "options.h"
 #include "pointermotionlistener.h"
 
@@ -200,12 +201,9 @@ protected:
     LUTu prev_rhist, prev_ghist, prev_bhist, prev_lhist, prev_chist;
     LUTu prev_rhistRaw, prev_ghistRaw, prev_bhistRaw;
     bool animating;
-    std::chrono::steady_clock::time_point anim_start;
-    sigc::connection anim_connection;
-    static constexpr int ANIM_DURATION_MS = 500;
-
-    bool onAnimationTick();
-    static double easeOutBack(double t);
+    double anim_t_ = 1.0;   // 0 = previous histogram, 1 = current one
+    steep::motion::Handle morphAnim_;
+    bool pointerButtonHeld();
 
     // Motion event management
     bool isPressed;

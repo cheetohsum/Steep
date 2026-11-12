@@ -18,6 +18,7 @@
 #ifdef RT_AI_MASKING
 
 #include "aisegmentation.h"
+#include "aiidlereaper.h"
 #include "opthelper.h"
 #include "rt_math.h"
 
@@ -27,6 +28,8 @@
 #endif
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <cmath>
 #include <mutex>
 #include <cstring>
@@ -245,6 +248,53 @@ struct AISegmentationEngine::Impl {
     OrtMemoryInfo* memoryInfo;
     bool initialized;
     bool usingDirectML;
+    std::string modelPath;
+    // Inference and the idle release take turns on the session.
+    std::mutex runMutex;
+    std::atomic<long long> lastUse{0};
+
+    // Caller holds runMutex.
+    bool loadSessionLocked()
+    {
+        if (session) {
+            return true;
+        }
+        if (!api || !env || !sessionOptions || modelPath.empty()) {
+            return false;
+        }
+#ifdef _WIN32
+        const int wlen = MultiByteToWideChar(CP_UTF8, 0, modelPath.c_str(), -1, nullptr, 0);
+        std::vector<wchar_t> wpath(wlen);
+        MultiByteToWideChar(CP_UTF8, 0, modelPath.c_str(), -1, wpath.data(), wlen);
+        OrtStatus* status = api->CreateSession(env, wpath.data(), sessionOptions, &session);
+#else
+        OrtStatus* status = api->CreateSession(env, modelPath.c_str(), sessionOptions, &session);
+#endif
+        if (status) {
+            fprintf(stderr, "AI Masking: failed to reload model: %s\n", api->GetErrorMessage(status));
+            api->ReleaseStatus(status);
+            session = nullptr;
+            return false;
+        }
+        fprintf(stderr, "AI Masking: reloaded %s\n", modelPath.c_str());
+        return true;
+    }
+
+    void releaseIfIdle(bool force)
+    {
+        std::unique_lock<std::mutex> lock(runMutex, std::try_to_lock);
+        if (!lock.owns_lock() || !session || (!force && AIIdleReaper::nowMs() - lastUse.load() < AIIdleReaper::kIdleMs)) {
+            return;
+        }
+        api->ReleaseSession(session);
+        session = nullptr;
+        if (force) {
+            fprintf(stderr, "AI Masking: model unloaded to free memory\n");
+        } else {
+            fprintf(stderr, "AI Masking: model unloaded after %lld s idle\n", AIIdleReaper::kIdleMs / 1000);
+        }
+    }
+    int reaperId = -1;
 
     Impl() : api(nullptr), env(nullptr), session(nullptr),
              sessionOptions(nullptr), memoryInfo(nullptr), initialized(false),
@@ -274,6 +324,7 @@ AISegmentationEngine::~AISegmentationEngine()
 
 bool AISegmentationEngine::init(const std::string& modelPath)
 {
+    pImpl->modelPath = modelPath;
     pImpl->api = OrtGetApiBase()->GetApi(ORT_API_VERSION);
     if (!pImpl->api) {
         return false;
@@ -337,13 +388,23 @@ bool AISegmentationEngine::init(const std::string& modelPath)
         return false;
     }
 
+    pImpl->lastUse = AIIdleReaper::nowMs();
     pImpl->initialized = true;
+    {
+        Impl* const impl = pImpl;
+        pImpl->reaperId = AIIdleReaper::watch([impl](bool force) { impl->releaseIfIdle(force); });
+    }
     return true;
 }
 
 bool AISegmentationEngine::isInitialized() const
 {
     return pImpl->initialized;
+}
+
+std::string AISegmentationEngine::modelPath() const
+{
+    return pImpl->initialized ? pImpl->modelPath : std::string();
 }
 
 int AISegmentationEngine::getClassCount()
@@ -370,21 +431,41 @@ const char* AISegmentationEngine::getClassName(AISegClass cls)
 
 std::vector<array2D<float>> AISegmentationEngine::segment(
     float* const* rRows, float* const* gRows, float* const* bRows,
-    int width, int height, bool multiThread) const
+    int width, int height, bool multiThread, bool* ok) const
 {
+    if (ok) {
+        *ok = true;
+    }
+    const auto failed = [ok]() {
+        if (ok) {
+            *ok = false;
+        }
+    };
+
     // One session, shared by every caller. ONNX Runtime's DirectML provider
     // is not safe for concurrent Run on the same session, and there are now
     // callers on the thumbnail and picker worker pools as well as the
     // coordinator, so inference is serialised here rather than at each of
     // them. Inference is GPU-bound and already internally parallel; the lock
     // costs queueing, not throughput.
-    static std::mutex inferenceMutex;
-    std::lock_guard<std::mutex> inferenceLock(inferenceMutex);
+    std::lock_guard<std::mutex> inferenceLock(pImpl->runMutex);
+    // Freed when idle (AIIdleReaper); back for this photo.
+    if (!pImpl->loadSessionLocked()) {
+        failed();
+        // Empty maps, as every other failure here returns.
+        std::vector<array2D<float>> empty(static_cast<int>(AISegClass::NUM_CLASSES));
+        for (auto& map : empty) {
+            map(width, height, ARRAY2D_CLEAR_DATA);
+        }
+        return empty;
+    }
+    pImpl->lastUse = AIIdleReaper::nowMs();
 
     const int numClasses = static_cast<int>(AISegClass::NUM_CLASSES);
     std::vector<array2D<float>> result(numClasses);
 
     if (!pImpl->initialized) {
+        failed();
         // Return empty probability maps
         for (int c = 0; c < numClasses; ++c) {
             result[c](width, height);
@@ -488,6 +569,7 @@ std::vector<array2D<float>> AISegmentationEngine::segment(
 
     if (status) {
         pImpl->api->ReleaseStatus(status);
+        failed();
         for (int c = 0; c < numClasses; ++c) {
             result[c](width, height);
         }
@@ -502,12 +584,32 @@ std::vector<array2D<float>> AISegmentationEngine::segment(
                              inputNames, &inputOrt, 1,
                              outputNames, 1, &outputOrt);
 
+    if (status && AIIdleReaper::outOfMemory(pImpl->api->GetErrorMessage(status))) {
+        // Out of memory -- often another program's, on a GPU it shares.
+        // Free every other model and this session's buffers, then once more.
+        fprintf(stderr, "AI Masking: out of memory; freeing models and retrying\n");
+        pImpl->api->ReleaseStatus(status);
+        status = nullptr;
+        pImpl->api->ReleaseSession(pImpl->session);
+        pImpl->session = nullptr;
+        AIIdleReaper::releaseNow(pImpl->reaperId);
+        std::this_thread::sleep_for(std::chrono::milliseconds(750));
+
+        if (pImpl->loadSessionLocked()) {
+            status = pImpl->api->Run(pImpl->session, nullptr,
+                                     inputNames, &inputOrt, 1,
+                                     outputNames, 1, &outputOrt);
+        }
+    }
+
     pImpl->api->ReleaseValue(inputOrt);
 
-    if (status) {
-        const char* msg = pImpl->api->GetErrorMessage(status);
-        fprintf(stderr, "AI Masking: Inference failed: %s\n", msg);
-        pImpl->api->ReleaseStatus(status);
+    if (status || !pImpl->session) {
+        if (status) {
+            fprintf(stderr, "AI Masking: Inference failed: %s\n", pImpl->api->GetErrorMessage(status));
+            pImpl->api->ReleaseStatus(status);
+        }
+        failed();
         for (int c = 0; c < numClasses; ++c) {
             result[c](width, height);
         }
@@ -521,6 +623,7 @@ std::vector<array2D<float>> AISegmentationEngine::segment(
     if (!outputData) {
         fprintf(stderr, "AI Masking: GetTensorMutableData returned null\n");
         pImpl->api->ReleaseValue(outputOrt);
+        failed();
         for (int c = 0; c < numClasses; ++c) {
             result[c](width, height);
         }
@@ -533,6 +636,7 @@ std::vector<array2D<float>> AISegmentationEngine::segment(
     if (!typeInfo) {
         fprintf(stderr, "AI Masking: GetTensorTypeAndShape returned null\n");
         pImpl->api->ReleaseValue(outputOrt);
+        failed();
         for (int c = 0; c < numClasses; ++c) {
             result[c](width, height);
         }

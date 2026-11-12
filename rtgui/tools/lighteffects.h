@@ -21,6 +21,8 @@
 #include "toolpanel.h"
 #include "widgets/basic/adjuster.h"
 
+namespace rtengine { namespace procparams { struct FilmPresetsParams; } }
+
 /// Glow, halation and lens flare — three ways of spreading light out of the
 /// highlights, sharing one threshold.
 class LightEffects final :
@@ -42,7 +44,14 @@ public:
     void adjusterChanged(Adjuster* a, double newval) override;
     void adjusterAutoToggled(Adjuster* a, bool newval) override {}
 
+    /// Film Lab draws its own halation and the engine then skips ours, so
+    /// the halation controls stand down while that is the case.
+    void updateFilmLabHalation(const rtengine::procparams::FilmPresetsParams& film);
+
 private:
+    Gtk::Label* halationHeading = nullptr;
+    bool filmLabHalation = false;
+
     Adjuster* threshold;
     Adjuster* glow;
     Adjuster* glowRadius;

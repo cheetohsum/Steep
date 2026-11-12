@@ -17,9 +17,23 @@
 #include "edittrace.h"
 #include "guidedfilter.h"
 #include "iccstore.h"
+#include "imagefloat.h"
+#include "samselector.h"
+#include "partnerdepthstore.h"
+#include "aisubjectmodel.h"
+#include "settings.h"
 #include "rt_math.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <zlib.h>
+
+#include <glib/gstdio.h>
+#include <glibmm/checksum.h>
+#include <glibmm/fileutils.h>
+#include <glibmm/miscutils.h>
+#include <array>
+#include <cstdlib>
 #include <cmath>
 #include <vector>
 
@@ -32,7 +46,10 @@ namespace
 constexpr std::size_t MAX_PREPARED_MASKS = 12;
 constexpr std::size_t MAX_REFINED_MASKS = 4;
 constexpr std::size_t MAX_DISTANCE_MASKS = 4;
-constexpr int MAX_MASK_CACHE_DIMENSION = 1024;
+// Class maps are kept at up to this size (the input is 2048 on its long side,
+// see AI_MASK_INPUT_DIMENSION): the edges the refinement step recovers would
+// be thrown away again by a coarser cache.
+constexpr int MAX_MASK_CACHE_DIMENSION = 2048;
 constexpr float DISTANCE_INFINITY = 1.e20f;
 
 int quantize(float value, float scale)
@@ -188,7 +205,8 @@ bool AIMaskCache::PreparedKey::operator==(const PreparedKey& other) const
         && invert == other.invert
         && refineRadius == other.refineRadius
         && refineEps == other.refineEps
-        && paint == other.paint;
+        && paint == other.paint
+        && std::equal(depthRange, depthRange + 4, other.depthRange);
 }
 
 bool AIMaskCache::RefinedKey::operator==(const RefinedKey& other) const
@@ -208,10 +226,517 @@ bool AIMaskCache::DistanceKey::operator==(const DistanceKey& other) const
         && refineEps == other.refineEps;
 }
 
+namespace
+{
+
+/*
+ * Crisp edges for object classes. The scene parser decides WHAT is where but
+ * draws it at an eighth (MobileNet) or a quarter (HRNet) of its input, so a
+ * person's outline is a blur of blocks. SAM 2 knows nothing about classes but
+ * draws an object's exact outline from a few clicks inside it. Each sizeable
+ * region of an object class becomes a SAM prompt (points deep inside it); the
+ * answer replaces the region's map only where it agrees with it, so SAM can
+ * sharpen an edge but never decide that the person is the whole sofa.
+ * Amorphous classes -- sky, foliage, ground -- stay with the parser.
+ */
+// The class-map-sized picture SAM is shown (SamSelector reads ProPhoto; the
+// planes arrive as linear sRGB). Kept with the maps for click-to-select.
+std::shared_ptr<const Imagefloat> makeSamSource(float* const* r, float* const* g, float* const* b, int w, int h)
+{
+    if (!SamSelector::getInstance().available() || w < 32 || h < 32) {
+        return nullptr;
+    }
+    const TMatrix toXYZ = ICCStore::getInstance()->workingSpaceMatrix("sRGB");
+    const TMatrix toPro = ICCStore::getInstance()->workingSpaceInverseMatrix("ProPhoto");
+    float m[3][3] = {};
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 3; ++j) {
+            for (int k = 0; k < 3; ++k) {
+                m[i][j] += static_cast<float>(toPro[i][k] * toXYZ[k][j]);
+            }
+        }
+    }
+    auto source = std::make_shared<Imagefloat>(w, h);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            const float sr = std::max(0.f, r[y][x]);
+            const float sg = std::max(0.f, g[y][x]);
+            const float sb = std::max(0.f, b[y][x]);
+            source->r(y, x) = m[0][0] * sr + m[0][1] * sg + m[0][2] * sb;
+            source->g(y, x) = m[1][0] * sr + m[1][1] * sg + m[1][2] * sb;
+            source->b(y, x) = m[2][0] * sr + m[2][1] * sg + m[2][2] * sb;
+        }
+    }
+    return source;
+}
+
+bool refineObjectsWithSam(std::vector<array2D<float>>& maps, const Imagefloat& source, const std::string& id)
+{
+    SamSelector& sam = SamSelector::getInstance();
+    const int w = source.getWidth();
+    const int h = source.getHeight();
+    if (!sam.available() || std::getenv("STEEP_AIMASK_NO_SAM") || w < 32 || h < 32) {
+        return false;
+    }
+
+    struct Region {
+        int cls;
+        int labelSet;
+        int label;
+        int area;
+        int x0, y0, x1, y1;
+    };
+
+    const AISegClass objectClasses[] = {
+        AISegClass::PERSON, AISegClass::VEHICLE, AISegClass::ANIMAL, AISegClass::FOREGROUND_OBJECT
+    };
+    constexpr size_t maxPrompts = 8;
+    const int minArea = std::max(64, static_cast<int>(0.001 * w * h));
+
+    // One label image per class: regions of different classes may overlap.
+    std::vector<std::vector<int>> labels;
+    std::vector<Region> regions;
+    for (AISegClass cls : objectClasses) {
+        const int c = static_cast<int>(cls);
+        if (c >= static_cast<int>(maps.size())) {
+            continue;
+        }
+        const array2D<float>& map = maps[c];
+        labels.emplace_back(static_cast<size_t>(w) * h, -1);
+        const int labelSet = static_cast<int>(labels.size()) - 1;
+        std::vector<int>& lab = labels.back();
+        std::vector<int> stack;
+        int next = 0;
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                if (map[y][x] <= 0.5f || lab[y * w + x] >= 0) {
+                    continue;
+                }
+                Region region{c, labelSet, next, 0, x, y, x, y};
+                stack.assign(1, y * w + x);
+                lab[y * w + x] = next;
+                while (!stack.empty()) {
+                    const int at = stack.back();
+                    stack.pop_back();
+                    const int px = at % w;
+                    const int py = at / w;
+                    ++region.area;
+                    region.x0 = std::min(region.x0, px);
+                    region.x1 = std::max(region.x1, px);
+                    region.y0 = std::min(region.y0, py);
+                    region.y1 = std::max(region.y1, py);
+                    const int nx[4] = {px - 1, px + 1, px, px};
+                    const int ny[4] = {py, py, py - 1, py + 1};
+                    for (int k = 0; k < 4; ++k) {
+                        if (nx[k] >= 0 && nx[k] < w && ny[k] >= 0 && ny[k] < h) {
+                            const int n = ny[k] * w + nx[k];
+                            if (lab[n] < 0 && map[ny[k]][nx[k]] > 0.5f) {
+                                lab[n] = next;
+                                stack.push_back(n);
+                            }
+                        }
+                    }
+                }
+                ++next;
+                if (region.area >= minArea) {
+                    regions.push_back(region);
+                }
+            }
+        }
+    }
+    if (regions.empty()) {
+        return false;
+    }
+    std::sort(regions.begin(), regions.end(), [](const Region& a, const Region& b) { return a.area > b.area; });
+    if (regions.size() > maxPrompts) {
+        regions.resize(maxPrompts);
+    }
+
+    bool refined = false;
+    int accepted = 0;
+    for (const Region& region : regions) {
+        const std::vector<int>& lab = labels[region.labelSet];
+        const int label = region.label;
+        array2D<float>& map = maps[region.cls];
+
+        // Points deep inside the region: the interior maximum of a chamfer
+        // distance, then up to two more spread across its core.
+        const int bw = region.x1 - region.x0 + 3;
+        const int bh = region.y1 - region.y0 + 3;
+        std::vector<float> dt(static_cast<size_t>(bw) * bh, 0.f);
+        for (int y = 1; y < bh - 1; ++y) {
+            for (int x = 1; x < bw - 1; ++x) {
+                const int ix = region.x0 + x - 1;
+                const int iy = region.y0 + y - 1;
+                dt[y * bw + x] = lab[iy * w + ix] == label ? 1e9f : 0.f;
+            }
+        }
+        for (int y = 1; y < bh - 1; ++y) {
+            for (int x = 1; x < bw - 1; ++x) {
+                float& d = dt[y * bw + x];
+                d = std::min({d, dt[y * bw + x - 1] + 1.f, dt[(y - 1) * bw + x] + 1.f,
+                              dt[(y - 1) * bw + x - 1] + 1.414f, dt[(y - 1) * bw + x + 1] + 1.414f});
+            }
+        }
+        float deepest = 0.f;
+        int px = 0, py = 0;
+        for (int y = bh - 2; y >= 1; --y) {
+            for (int x = bw - 2; x >= 1; --x) {
+                float& d = dt[y * bw + x];
+                d = std::min({d, dt[y * bw + x + 1] + 1.f, dt[(y + 1) * bw + x] + 1.f,
+                              dt[(y + 1) * bw + x + 1] + 1.414f, dt[(y + 1) * bw + x - 1] + 1.414f});
+                if (d > deepest) {
+                    deepest = d;
+                    px = x;
+                    py = y;
+                }
+            }
+        }
+        if (deepest < 2.f) {
+            continue;
+        }
+        std::vector<std::pair<int, int>> points{{px, py}};
+        if (deepest >= 4.f) {
+            for (int extra = 0; extra < 2; ++extra) {
+                float best = 0.f;
+                int bx = -1, by = -1;
+                for (int y = 1; y < bh - 1; ++y) {
+                    for (int x = 1; x < bw - 1; ++x) {
+                        if (dt[y * bw + x] < 0.4f * deepest) {
+                            continue;
+                        }
+                        float nearest = 1e30f;
+                        for (const auto& p : points) {
+                            nearest = std::min(nearest, static_cast<float>((x - p.first) * (x - p.first) + (y - p.second) * (y - p.second)));
+                        }
+                        if (nearest > best) {
+                            best = nearest;
+                            bx = x;
+                            by = y;
+                        }
+                    }
+                }
+                if (bx >= 0 && best > deepest * deepest) {
+                    points.emplace_back(bx, by);
+                }
+            }
+        }
+        std::vector<std::array<float, 3>> prompts;
+        for (const auto& p : points) {
+            prompts.push_back({(region.x0 + p.first - 1 + 0.5f) / w, (region.y0 + p.second - 1 + 0.5f) / h, 1.f});
+        }
+
+        // The region itself as SAM's reference, so the candidate kept is the
+        // one that redraws this region rather than a part of it or a group.
+        array2D<float> reference(w, h, ARRAY2D_CLEAR_DATA);
+        for (int y = region.y0; y <= region.y1; ++y) {
+            for (int x = region.x0; x <= region.x1; ++x) {
+                reference[y][x] = lab[y * w + x] == label ? 1.f : 0.f;
+            }
+        }
+        const array2D<float> selected = sam.select(source, id, prompts, -1, &reference);
+        if (selected.getWidth() != w || selected.getHeight() != h) {
+            continue;
+        }
+
+        // Compare and splice inside the region's box plus a margin: SAM may
+        // move the edge, not wander off to another object.
+        const int margin = 4 + static_cast<int>(0.15f * std::max(bw, bh));
+        const int ex0 = std::max(0, region.x0 - margin), ex1 = std::min(w - 1, region.x1 + margin);
+        const int ey0 = std::max(0, region.y0 - margin), ey1 = std::min(h - 1, region.y1 + margin);
+        long inter = 0, uni = 0, outside = 0;
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                const bool s = selected[y][x] > 0.5f;
+                const bool inBox = x >= ex0 && x <= ex1 && y >= ey0 && y <= ey1;
+                if (!inBox) {
+                    outside += s;
+                    continue;
+                }
+                const bool a = lab[y * w + x] == label;
+                inter += a && s;
+                uni += a || s;
+            }
+        }
+        const float iou = uni > 0 ? static_cast<float>(inter) / uni : 0.f;
+        if (iou < 0.55f || outside > region.area / 10) {
+            if (edittrace::enabled()) {
+                edittrace::logf("[aiMask] sam reject cls=%d area=%d iou=%.2f outside=%ld", region.cls, region.area, iou, outside);
+            }
+            continue;
+        }
+        for (int y = ey0; y <= ey1; ++y) {
+            for (int x = ex0; x <= ex1; ++x) {
+                const int other = lab[y * w + x];
+                if (other >= 0 && other != label) {
+                    continue;   // another region of this class keeps its own map
+                }
+                map[y][x] = selected[y][x];
+            }
+        }
+        refined = true;
+        ++accepted;
+    }
+    if (edittrace::enabled()) {
+        edittrace::logf("[aiMask] sam refined %d of %zu regions", accepted, regions.size());
+    }
+    return refined;
+}
+
+}
+
+namespace
+{
+
+/*
+ * Persisted class maps. Segmenting a photo costs seconds of model time (more
+ * with SAM refinement), so the result is kept under the cache directory and
+ * a reopened photo, in this session or a later one, skips the models. The key
+ * covers everything the maps depend on: the file (path, size, mtime), the
+ * input geometry and size, the working profile and the exact models in use.
+ * Stored as 8-bit probabilities, zlib-compressed: a few hundred KB a photo.
+ */
+constexpr char DISK_MAGIC[4] = {'S', 'A', 'I', 'M'};
+constexpr std::uint32_t DISK_VERSION = 2;   // 2: twelve classes, depth flag
+
+std::string diskCachePath(const std::string& imageId, std::uint64_t inputKey, const std::string& workingProfile,
+                          int width, int height, int fullW, int fullH)
+{
+    if (!settings || settings->aiMaskCacheDir.empty() || std::getenv("STEEP_AIMASK_NO_DISK_CACHE")) {
+        return std::string();
+    }
+    GStatBuf st;
+    if (g_stat(imageId.c_str(), &st) != 0) {
+        return std::string();
+    }
+    std::string key = imageId;
+    key += "|" + std::to_string(static_cast<long long>(st.st_size)) + "|" + std::to_string(static_cast<long long>(st.st_mtime));
+    key += "|" + std::to_string(inputKey) + "|" + workingProfile;
+    key += "|" + std::to_string(width) + "x" + std::to_string(height) + "|" + std::to_string(fullW) + "x" + std::to_string(fullH);
+    key += "|seg=" + getAISegmentationEngine().modelPath();
+    key += "|subj=" + getAISubjectEngine().modelPath();
+    key += std::string("|sam=") + (SamSelector::getInstance().available() && !std::getenv("STEEP_AIMASK_NO_SAM") ? "1" : "0");
+    key += "|v" + std::to_string(DISK_VERSION);
+    const std::string digest = Glib::Checksum::compute_checksum(Glib::Checksum::CHECKSUM_MD5, key);
+    return Glib::build_filename(settings->aiMaskCacheDir.raw(), Glib::path_get_basename(imageId) + "." + digest + ".aim");
+}
+
+// Depth-class helpers, defined with getPreparedMask below.
+float depthSplitOf(const array2D<float>& depth);
+std::array<double, 4> depthPreset(int classIndex, float split);
+float depthRangeWeight(float d, const std::array<double, 4>& v);
+bool isDepthClass(int classIndex);
+
+bool loadMapsFromDisk(const std::string& path, int width, int height,
+                      std::vector<array2D<float>>& maps, bool& usedSubjectModel, bool& depthReady)
+{
+    if (path.empty()) {
+        return false;
+    }
+    std::FILE* f = g_fopen(path.c_str(), "rb");
+    if (!f) {
+        return false;
+    }
+    char magic[4] = {};
+    std::uint32_t header[5] = {};
+    bool ok = std::fread(magic, 1, 4, f) == 4 && std::equal(magic, magic + 4, DISK_MAGIC)
+              && std::fread(header, sizeof(header[0]), 5, f) == 5
+              && header[0] == DISK_VERSION && static_cast<int>(header[1]) == width
+              && static_cast<int>(header[2]) == height
+              && header[3] == static_cast<std::uint32_t>(AISegClass::TOTAL_CLASSES);
+    std::vector<unsigned char> packed;
+    if (ok) {
+        packed.resize(header[4]);
+        ok = std::fread(packed.data(), 1, packed.size(), f) == packed.size();
+    }
+    std::fclose(f);
+    if (!ok) {
+        return false;
+    }
+    const std::size_t plane = static_cast<std::size_t>(width) * height;
+    std::vector<unsigned char> bytes(plane * header[3] + 1);
+    uLongf length = bytes.size();
+    if (uncompress(bytes.data(), &length, packed.data(), packed.size()) != Z_OK || length != plane * header[3] + 1) {
+        return false;
+    }
+    usedSubjectModel = (bytes.back() & 1) != 0;
+    depthReady = (bytes.back() & 2) != 0;
+    maps.clear();
+    for (std::uint32_t c = 0; c < header[3]; ++c) {
+        maps.emplace_back(width, height);
+        const unsigned char* src = bytes.data() + c * plane;
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                maps.back()[y][x] = src[static_cast<std::size_t>(y) * width + x] / 255.f;
+            }
+        }
+    }
+    return true;
+}
+
+void saveMapsToDisk(const std::string& path, const std::vector<array2D<float>>& maps, int width, int height,
+                    bool usedSubjectModel, bool depthReady)
+{
+    if (path.empty() || maps.size() != static_cast<std::size_t>(AISegClass::TOTAL_CLASSES)) {
+        return;
+    }
+    const std::size_t plane = static_cast<std::size_t>(width) * height;
+    std::vector<unsigned char> bytes(plane * maps.size() + 1);
+    for (std::size_t c = 0; c < maps.size(); ++c) {
+        unsigned char* dst = bytes.data() + c * plane;
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                dst[static_cast<std::size_t>(y) * width + x] =
+                    static_cast<unsigned char>(LIM01(maps[c][y][x]) * 255.f + 0.5f);
+            }
+        }
+    }
+    bytes.back() = (usedSubjectModel ? 1 : 0) | (depthReady ? 2 : 0);
+    uLongf length = compressBound(bytes.size());
+    std::vector<unsigned char> packed(length);
+    if (compress2(packed.data(), &length, bytes.data(), bytes.size(), 6) != Z_OK) {
+        return;
+    }
+    g_mkdir_with_parents(Glib::path_get_dirname(path).c_str(), 0755);
+    const std::string temp = path + ".tmp";
+    std::FILE* f = g_fopen(temp.c_str(), "wb");
+    if (!f) {
+        return;
+    }
+    const std::uint32_t header[5] = {DISK_VERSION, static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height),
+                                     static_cast<std::uint32_t>(maps.size()), static_cast<std::uint32_t>(length)};
+    const bool ok = std::fwrite(DISK_MAGIC, 1, 4, f) == 4
+                    && std::fwrite(header, sizeof(header[0]), 5, f) == 5
+                    && std::fwrite(packed.data(), 1, length, f) == length;
+    std::fclose(f);
+    if (!ok || g_rename(temp.c_str(), path.c_str()) != 0) {
+        g_remove(temp.c_str());
+    }
+}
+
+}
+
+bool AIMaskCache::restoreArchivedLocked_(const std::string& imageId,
+                                         int width, int height, int fullW, int fullH,
+                                         const std::string& workingProfile,
+                                         std::uint64_t inputKey, bool subjectModel)
+{
+    for (auto it = archive_.begin(); it != archive_.end(); ++it) {
+        if (it->imageId == imageId
+                && it->inputKey == inputKey
+                && it->workingProfile == workingProfile
+                && it->sourceWidth == width && it->sourceHeight == height
+                && it->fullW == fullW && it->fullH == fullH && it->masks
+                && it->subjectModel == subjectModel) {
+            ArchivedImage restored = std::move(*it);
+            archive_.erase(it);
+            archiveCurrentLocked_();
+
+            cachedImageId_ = std::move(restored.imageId);
+            cachedWorkingProfile_ = std::move(restored.workingProfile);
+            cachedInputKey_ = restored.inputKey;
+            cachedDepthReady_ = restored.depthReady;
+            cachedDepthSplit_ = restored.depthSplit;
+            cachedDiskPath_ = std::move(restored.diskPath);
+            cachedSubjectModel_ = restored.subjectModel;
+            cachedMasks_ = std::move(restored.masks);
+            cachedGuide_ = std::move(restored.guide);
+            cachedSamSource_ = std::move(restored.samSource);
+            coverage_ = std::move(restored.coverage);
+            sourceWidth_ = restored.sourceWidth;
+            sourceHeight_ = restored.sourceHeight;
+            cachedWidth_ = restored.cachedWidth;
+            cachedHeight_ = restored.cachedHeight;
+            fullW_ = restored.fullW;
+            fullH_ = restored.fullH;
+            pending_ = false;
+            refinedMasks_.clear();
+            distanceMasks_.clear();
+            preparedMasks_.clear();
+            ++generation_;
+            // Anything still computing for another image is now stale.
+            ++requestGeneration_;
+
+            if (edittrace::enabled()) {
+                edittrace::logf("[aiMask] restored from archive img=%s", imageId.c_str());
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+bool AIMaskCache::restoreOrBeginPending(const std::string& imageId,
+                                        int width, int height, int fullW, int fullH,
+                                        const std::string& workingProfile,
+                                        std::uint64_t inputKey, bool discardInFlight)
+{
+    MyMutex::MyLock lock(mutex_);
+    if (cachedImageId_ == imageId && cachedInputKey_ == inputKey
+            && cachedMasks_ && !cachedMasks_->empty()) {
+        return true;
+    }
+    if (restoreArchivedLocked_(imageId, width, height, fullW, fullH, workingProfile,
+                               inputKey, getAISubjectEngine().isInitialized())) {
+        return true;
+    }
+    if (pending_ && cachedImageId_ == imageId && cachedInputKey_ == inputKey) {
+        return false;
+    }
+
+    archiveCurrentLocked_();
+    cachedImageId_ = imageId;
+    cachedWorkingProfile_ = workingProfile;
+    cachedInputKey_ = inputKey;
+    cachedDepthReady_ = false;
+    cachedDiskPath_.clear();
+    cachedMasks_.reset();
+    cachedGuide_.reset();
+    cachedSamSource_.reset();
+    coverage_.clear();
+    sourceWidth_ = width;
+    sourceHeight_ = height;
+    cachedWidth_ = 0;
+    cachedHeight_ = 0;
+    fullW_ = fullW;
+    fullH_ = fullH;
+    pending_ = true;
+    refinedMasks_.clear();
+    distanceMasks_.clear();
+    preparedMasks_.clear();
+    ++generation_;
+    if (discardInFlight) {
+        ++requestGeneration_;
+    }
+    return false;
+}
+
+void AIMaskCache::clearPending(const std::string& imageId, std::uint64_t inputKey)
+{
+    MyMutex::MyLock lock(mutex_);
+    if (pending_ && cachedImageId_ == imageId && cachedInputKey_ == inputKey) {
+        pending_ = false;
+        ++generation_;
+    }
+}
+
+bool AIMaskCache::isPending(const std::string& imageId, std::uint64_t inputKey) const
+{
+    MyMutex::MyLock lock(mutex_);
+    return pending_ && cachedImageId_ == imageId && cachedInputKey_ == inputKey;
+}
+
+bool AIMaskCache::requestStale_(std::uint64_t request) const
+{
+    MyMutex::MyLock lock(mutex_);
+    return request != requestGeneration_;
+}
+
 void AIMaskCache::computeMasks(const std::string& imageId,
                                float* const* rRows, float* const* gRows, float* const* bRows,
                                int width, int height, int fullW, int fullH,
-                               const std::string& workingProfile, bool multiThread)
+                               const std::string& workingProfile, bool multiThread,
+                               std::uint64_t inputKey)
 {
     AISegmentationEngine& engine = getAISegmentationEngine();
     if (!engine.isInitialized() || width <= 0 || height <= 0) {
@@ -224,6 +749,7 @@ void AIMaskCache::computeMasks(const std::string& imageId,
         const bool subjectModel = getAISubjectEngine().isInitialized();
 
         if (cachedImageId_ == imageId
+                && cachedInputKey_ == inputKey
                 && cachedWorkingProfile_ == workingProfile
                 && sourceWidth_ == width && sourceHeight_ == height
                 && fullW_ == fullW && fullH_ == fullH && cachedMasks_
@@ -232,40 +758,9 @@ void AIMaskCache::computeMasks(const std::string& imageId,
         }
 
         // Revisiting a recent image: swap its maps back in.
-        for (auto it = archive_.begin(); it != archive_.end(); ++it) {
-            if (it->imageId == imageId
-                    && it->workingProfile == workingProfile
-                    && it->sourceWidth == width && it->sourceHeight == height
-                    && it->fullW == fullW && it->fullH == fullH && it->masks
-                    && it->subjectModel == subjectModel) {
-                ArchivedImage restored = std::move(*it);
-                archive_.erase(it);
-                archiveCurrentLocked_();
-
-                cachedImageId_ = std::move(restored.imageId);
-                cachedWorkingProfile_ = std::move(restored.workingProfile);
-                cachedSubjectModel_ = restored.subjectModel;
-                cachedMasks_ = std::move(restored.masks);
-                cachedGuide_ = std::move(restored.guide);
-                coverage_ = std::move(restored.coverage);
-                sourceWidth_ = restored.sourceWidth;
-                sourceHeight_ = restored.sourceHeight;
-                cachedWidth_ = restored.cachedWidth;
-                cachedHeight_ = restored.cachedHeight;
-                fullW_ = restored.fullW;
-                fullH_ = restored.fullH;
-                refinedMasks_.clear();
-                distanceMasks_.clear();
-                preparedMasks_.clear();
-                ++generation_;
-                // Anything still computing for another image is now stale.
-                ++requestGeneration_;
-
-                if (edittrace::enabled()) {
-                    edittrace::logf("[aiMask] restored from archive img=%s", imageId.c_str());
-                }
-                return;
-            }
+        if (restoreArchivedLocked_(imageId, width, height, fullW, fullH,
+                                   workingProfile, inputKey, subjectModel)) {
+            return;
         }
 
         request = ++requestGeneration_;
@@ -335,18 +830,67 @@ void AIMaskCache::computeMasks(const std::string& imageId,
     float* const* segmentG = static_cast<float**>(scaledG);
     float* const* segmentB = static_cast<float**>(scaledB);
 
+    const std::string diskPath = diskCachePath(imageId, inputKey, workingProfile, width, height, fullW, fullH);
+    std::vector<array2D<float>> maps;
+    bool usedSubjectModel = false;
+    bool depthReady = false;
+    const bool fromDisk = loadMapsFromDisk(diskPath, maskWidth, maskHeight, maps, usedSubjectModel, depthReady);
+    if (fromDisk && edittrace::enabled()) {
+        edittrace::logf("[aiMask] loaded from disk img=%s", imageId.c_str());
+    }
+
     const long long traceSegmentUs = edittrace::enabled() ? edittrace::nowUs() : 0;
-    std::vector<array2D<float>> maps = engine.segment(segmentR, segmentG, segmentB,
-                                                      maskWidth, maskHeight, multiThread);
+    if (!fromDisk) {
+        bool segmented = true;
+        maps = engine.segment(segmentR, segmentG, segmentB, maskWidth, maskHeight, multiThread, &segmented);
+        if (!segmented) {
+            // Empty maps would read as "nothing here" -- and on disk, for
+            // good. Leave the photo pending: the mask worker tries again.
+            std::fprintf(stderr, "AI Masking: segmentation failed for '%s'\n", imageId.c_str());
+            return;
+        }
     if (edittrace::enabled()) {
         edittrace::logf("[aiMask] segment img=%s src=%dx%d mask=%dx%d infer=%.0fms",
                         imageId.c_str(), width, height, maskWidth, maskHeight,
                         (edittrace::nowUs() - traceSegmentUs) / 1000.0);
     }
 
-    appendSubjectMasks(maps, maskWidth, maskHeight, multiThread);
-    const bool usedSubjectModel = applySubjectModel(maps, segmentR, segmentG, segmentB,
-                                                    maskWidth, maskHeight, multiThread);
+    }
+    // Kept even when the maps come from disk: click-to-select prompts need it.
+    std::shared_ptr<const Imagefloat> samSource = makeSamSource(segmentR, segmentG, segmentB, maskWidth, maskHeight);
+    if (!fromDisk) {
+        // SAM refinement and the subject model are seconds more work; when
+        // the editor has already moved to another photo, stop here.
+        if (requestStale_(request)) {
+            if (edittrace::enabled()) {
+                edittrace::logf("[aiMask] compute abandoned (stale) img=%s", imageId.c_str());
+            }
+            return;
+        }
+        const long long traceSamUs = edittrace::enabled() ? edittrace::nowUs() : 0;
+        if (samSource && refineObjectsWithSam(maps, *samSource, imageId + "|aimask")
+                && edittrace::enabled()) {
+            edittrace::logf("[aiMask] sam refine %.0fms", (edittrace::nowUs() - traceSamUs) / 1000.0);
+        }
+        if (requestStale_(request)) {
+            if (edittrace::enabled()) {
+                edittrace::logf("[aiMask] compute abandoned (stale) img=%s", imageId.c_str());
+            }
+            return;
+        }
+        appendSubjectMasks(maps, maskWidth, maskHeight, multiThread);
+        usedSubjectModel = applySubjectModel(maps, segmentR, segmentG, segmentB,
+                                             maskWidth, maskHeight, multiThread);
+        // Depth classes start empty; setDepthClasses fills them on demand.
+        while (maps.size() < static_cast<std::size_t>(AISegClass::TOTAL_CLASSES)) {
+            maps.emplace_back(maskWidth, maskHeight, ARRAY2D_CLEAR_DATA);
+        }
+        // A subject model that failed (out of memory) leaves the composed
+        // subject in memory for now; never on disk, so the next open retries.
+        if (usedSubjectModel || !getAISubjectEngine().isInitialized()) {
+            saveMapsToDisk(diskPath, maps, maskWidth, maskHeight, usedSubjectModel, false);
+        }
+    }
 
     auto masks = std::make_shared<const std::vector<array2D<float>>>(std::move(maps));
 
@@ -413,10 +957,17 @@ void AIMaskCache::computeMasks(const std::string& imageId,
 
     cachedMasks_ = std::move(masks);
     cachedGuide_ = std::move(guide);
+    cachedSamSource_ = std::move(samSource);
+    cachedDepthReady_ = depthReady;
+    cachedDepthSplit_ = depthReady && cachedMasks_->size() > static_cast<std::size_t>(AISegClass::FOREGROUND_DEPTH)
+        ? depthSplitOf(cachedMasks_->at(static_cast<int>(AISegClass::FOREGROUND_DEPTH))) : 0.5f;
+    cachedDiskPath_ = diskPath;
     coverage_ = std::move(coverage);
     cachedImageId_ = imageId;
     cachedSubjectModel_ = usedSubjectModel;
     cachedWorkingProfile_ = workingProfile;
+    cachedInputKey_ = inputKey;
+    pending_ = false;
     sourceWidth_ = width;
     sourceHeight_ = height;
     cachedWidth_ = maskWidth;
@@ -448,11 +999,139 @@ AIMaskSnapshot AIMaskCache::getMaskSnapshot(AISegClass cls) const
     return snapshot;
 }
 
+namespace
+{
+
+// Otsu's split of a depth map (0 near .. 1 far): where this photograph's
+// depths fall apart into a near group and a far one.
+float depthSplitOf(const array2D<float>& depth)
+{
+    constexpr int bins = 256;
+    std::vector<double> histogram(bins, 0.0);
+    double count = 0.0;
+    for (int y = 0; y < depth.getHeight(); ++y) {
+        for (int x = 0; x < depth.getWidth(); ++x) {
+            histogram[std::min(bins - 1, static_cast<int>(LIM01(depth[y][x]) * bins))] += 1.0;
+            count += 1.0;
+        }
+    }
+    if (count < 1.0) {
+        return 0.5f;
+    }
+    double total = 0.0;
+    for (int i = 0; i < bins; ++i) {
+        total += i * histogram[i];
+    }
+    double below = 0.0, belowSum = 0.0, bestVariance = -1.0;
+    int split = bins / 2;
+    for (int i = 0; i < bins - 1; ++i) {
+        below += histogram[i];
+        belowSum += i * histogram[i];
+        const double above = count - below;
+        if (below <= 0.0 || above <= 0.0) {
+            continue;
+        }
+        const double meanBelow = belowSum / below;
+        const double meanAbove = (total - belowSum) / above;
+        const double variance = below * above * (meanBelow - meanAbove) * (meanBelow - meanAbove);
+        if (variance > bestVariance) {
+            bestVariance = variance;
+            split = i;
+        }
+    }
+    return (split + 1.f) / bins;
+}
+
+// The automatic range of a near or far spot around the split: a short
+// ramp either side, so the cut is soft enough to refine against the picture.
+std::array<double, 4> depthPreset(int classIndex, float split)
+{
+    constexpr double ramp = 0.04;
+    if (classIndex == static_cast<int>(AISegClass::BACKGROUND_DEPTH)) {
+        return {{std::max(0.0, split - ramp), std::min(1.0, split + ramp), 1.0, 1.0}};
+    }
+    return {{0.0, 0.0, std::max(0.0, split - ramp), std::min(1.0, split + ramp)}};
+}
+
+float depthRangeWeight(float d, const std::array<double, 4>& v)
+{
+    const auto ease = [](double t) {
+        t = std::max(0.0, std::min(1.0, t));
+        return t * t * (3.0 - 2.0 * t);
+    };
+    const double n = v[1] <= v[0] ? (d >= v[1] ? 1.0 : 0.0) : ease((d - v[0]) / (v[1] - v[0]));
+    const double f = v[3] <= v[2] ? (d <= v[2] ? 1.0 : 0.0) : ease((v[3] - d) / (v[3] - v[2]));
+    return static_cast<float>(n * f);
+}
+
+bool isDepthClass(int classIndex)
+{
+    return classIndex == static_cast<int>(AISegClass::FOREGROUND_DEPTH)
+        || classIndex == static_cast<int>(AISegClass::BACKGROUND_DEPTH);
+}
+
+}
+
+std::array<double, 4> AIMaskCache::parseDepthRange(const std::string& text)
+{
+    std::array<double, 4> range = automaticDepthRange();
+    if (text.empty()) {
+        return range;
+    }
+    std::array<double, 4> parsed{};
+    size_t start = 0;
+    for (int k = 0; k < 4; ++k) {
+        const size_t end = text.find(';', start);
+        const std::string part = text.substr(start, end == std::string::npos ? std::string::npos : end - start);
+        char* stop = nullptr;
+        const double value = std::strtod(part.c_str(), &stop);
+        if (part.empty() || stop == part.c_str() || !std::isfinite(value)) {
+            return range;
+        }
+        parsed[k] = value;
+        if (end == std::string::npos) {
+            if (k != 3) {
+                return range;
+            }
+            break;
+        }
+        start = end + 1;
+    }
+    // ordered and inside 0..1, whatever the file says
+    double previous = 0.0;
+    for (int k = 0; k < 4; ++k) {
+        previous = std::max(previous, std::min(1.0, parsed[k]));
+        parsed[k] = previous;
+    }
+    return parsed;
+}
+
+std::string AIMaskCache::formatDepthRange(const std::array<double, 4>& range)
+{
+    if (range[0] < 0.0) {
+        return std::string();
+    }
+    char buffer[96];
+    std::snprintf(buffer, sizeof(buffer), "%.4f;%.4f;%.4f;%.4f", range[0], range[1], range[2], range[3]);
+    return buffer;
+}
+
+bool AIMaskCache::getDepthPreset(const std::string& imageId, int classIndex, std::array<double, 4>& range) const
+{
+    MyMutex::MyLock lock(mutex_);
+    if (cachedImageId_ != imageId || !cachedMasks_ || !cachedDepthReady_) {
+        return false;
+    }
+    range = depthPreset(classIndex, cachedDepthSplit_);
+    return true;
+}
+
 AIMaskSnapshot AIMaskCache::getPreparedMask(
     AISegClass cls, float threshold, float feather, float blur, float maskSize,
     bool invert, int refineRadius, float refineEps, const MaskPaint& paint,
-    bool multiThread)
+    bool multiThread, const std::array<double, 4>& depthRange)
 {
+    const bool depthClass = isDepthClass(static_cast<int>(cls));
     const PreparedKey key {
         static_cast<int>(cls),
         quantize(threshold, 10000.f),
@@ -462,7 +1141,11 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
         invert ? 1 : 0,
         refineRadius,
         quantize(refineEps, 1000000.f),
-        paint.hash()
+        paint.hash(),
+        {depthClass ? quantize(static_cast<float>(depthRange[0]), 1000.f) : 0,
+         depthClass ? quantize(static_cast<float>(depthRange[1]), 1000.f) : 0,
+         depthClass ? quantize(static_cast<float>(depthRange[2]), 1000.f) : 0,
+         depthClass ? quantize(static_cast<float>(depthRange[3]), 1000.f) : 0}
     };
     const RefinedKey refinedKey {
         key.classIndex, key.blur, key.refineRadius, key.refineEps
@@ -475,6 +1158,16 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
     std::shared_ptr<const array2D<float>> guide;
     std::shared_ptr<const array2D<float>> signedDistance;
     bool hasRefinedMask = false;
+    // Click-to-select: POINT strokes in the paint are SAM prompts, and the
+    // object they pick replaces the class map as this spot's base mask. The
+    // refined/distance caches are keyed by class only, so they are bypassed.
+    const bool prompted = paint.hasPrompts();
+    // A depth class is the depth map, not a mask: its base mask depends on
+    // the spot's own range, which those caches do not key on either.
+    const bool bypassCaches = prompted || depthClass;
+    float depthSplit = 0.5f;
+    std::shared_ptr<const Imagefloat> samSource;
+    std::string samId;
     std::uint64_t generation = 0;
     int width = 0;
     int height = 0;
@@ -483,6 +1176,21 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
 
     {
         MyMutex::MyLock lock(mutex_);
+        if (!cachedMasks_ && pending_) {
+            static const std::shared_ptr<const array2D<float>> nothing = []() {
+                auto zero = std::make_shared<array2D<float>>(1, 1);
+                (*zero)[0][0] = 0.f;
+                return zero;
+            }();
+            AIMaskSnapshot placeholder;
+            placeholder.mask = nothing;
+            placeholder.width = 1;
+            placeholder.height = 1;
+            placeholder.fullWidth = fullW_;
+            placeholder.fullHeight = fullH_;
+            placeholder.pending = true;
+            return placeholder;
+        }
         if (!cachedMasks_ || key.classIndex < 0
                 || key.classIndex >= static_cast<int>(cachedMasks_->size())) {
             return {};
@@ -495,7 +1203,7 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
             }
         }
 
-        for (auto it = distanceMasks_.rbegin(); it != distanceMasks_.rend(); ++it) {
+        for (auto it = distanceMasks_.rbegin(); !bypassCaches && it != distanceMasks_.rend(); ++it) {
             if (it->generation == generation_ && it->key == distanceKey) {
                 signedDistance = it->signedDistance;
                 break;
@@ -503,7 +1211,7 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
         }
 
         if (!signedDistance) {
-            for (auto it = refinedMasks_.rbegin(); it != refinedMasks_.rend(); ++it) {
+            for (auto it = refinedMasks_.rbegin(); !bypassCaches && it != refinedMasks_.rend(); ++it) {
                 if (it->generation == generation_ && it->key == refinedKey) {
                     baseMask = it->mask;
                     hasRefinedMask = true;
@@ -517,6 +1225,12 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
             }
             guide = cachedGuide_;
         }
+        samSource = cachedSamSource_;
+        samId = cachedImageId_ + "|aimask";
+        depthSplit = cachedDepthSplit_;
+        if (depthClass && !cachedDepthReady_) {
+            return {};   // not estimated yet: the spot edits nothing
+        }
         generation = generation_;
         width = cachedWidth_;
         height = cachedHeight_;
@@ -528,6 +1242,32 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
     const bool traceDistanceHit = static_cast<bool>(signedDistance);
 
     const float safeThreshold = LIM(threshold, 0.f, 1.f);
+    if (depthClass && baseMask) {
+        // The spot's range over the depth map (or the automatic near / far).
+        const std::array<double, 4> range = depthRange[0] < 0.0
+            ? depthPreset(static_cast<int>(cls), depthSplit) : depthRange;
+        auto weighted = std::make_shared<array2D<float>>(width, height);
+        const array2D<float>& depth = *baseMask;
+#ifdef _OPENMP
+        #pragma omp parallel for if(multiThread)
+#endif
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                (*weighted)[y][x] = depthRangeWeight(depth[y][x], range);
+            }
+        }
+        baseMask = std::move(weighted);
+    }
+    if (prompted && samSource) {
+        array2D<float> selected = SamSelector::getInstance().select(*samSource, samId, paint.prompts());
+        if (selected.getWidth() == width && selected.getHeight() == height) {
+            auto picked = std::make_shared<array2D<float>>(width, height);
+            picked->swap(selected);
+            baseMask = std::move(picked);
+            // SamSelector already followed the picture's edges.
+            hasRefinedMask = true;
+        }
+    }
     if (!signedDistance) {
         auto refinedWorking = std::make_shared<array2D<float>>(*baseMask);
 
@@ -557,7 +1297,7 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
 
             const std::shared_ptr<const array2D<float>> refinedMask = refinedWorking;
             MyMutex::MyLock lock(mutex_);
-            if (generation == generation_) {
+            if (generation == generation_ && !bypassCaches) {
                 refinedMasks_.push_back({refinedKey, generation, refinedMask});
                 while (refinedMasks_.size() > MAX_REFINED_MASKS) {
                     refinedMasks_.pop_front();
@@ -568,7 +1308,7 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
         signedDistance = buildSignedDistance(
             *refinedWorking, safeThreshold, width, height, multiThread);
         MyMutex::MyLock lock(mutex_);
-        if (generation == generation_) {
+        if (generation == generation_ && !bypassCaches) {
             distanceMasks_.push_back({distanceKey, generation, signedDistance});
             while (distanceMasks_.size() > MAX_DISTANCE_MASKS) {
                 distanceMasks_.pop_front();
@@ -684,6 +1424,13 @@ float AIMaskCache::getClassCoverage(const std::string& imageId, int classIndex,
         return 0.f;
     }
 
+    // Not measured yet: depth is only estimated once a mask asks for it.
+    if (!cachedDepthReady_
+            && (classIndex == static_cast<int>(AISegClass::FOREGROUND_DEPTH)
+                || classIndex == static_cast<int>(AISegClass::BACKGROUND_DEPTH))) {
+        return -1.f;
+    }
+
     // Measured here rather than when the maps were built, because the
     // threshold is the user's tolerance and it moves. A class sitting at 0.35
     // covers a great deal at the default tolerance and nothing at all at 0.5,
@@ -698,6 +1445,18 @@ float AIMaskCache::getClassCoverage(const std::string& imageId, int classIndex,
 
     const float cut = LIM(threshold, 0.f, 1.f);
     int hits = 0;
+
+    if (isDepthClass(classIndex)) {
+        // The map is depth, not a probability: count what the automatic
+        // near / far range would select.
+        const std::array<double, 4> range = depthPreset(classIndex, cachedDepthSplit_);
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                hits += depthRangeWeight(map[y][x], range) > 0.5f;
+            }
+        }
+        return static_cast<float>(hits) / (static_cast<float>(w) * h);
+    }
 
     for (int y = 0; y < h; ++y) {
         for (int x = 0; x < w; ++x) {
@@ -779,6 +1538,118 @@ int AIMaskCache::getDominantClassAt(const std::string& imageId, int fullX, int f
     return best;
 }
 
+bool AIMaskCache::hasCachedMasks(const std::string& imageId, std::uint64_t inputKey) const
+{
+    MyMutex::MyLock lock(mutex_);
+    // An archived image counts as missing: computeMasks swaps it back in.
+    return cachedImageId_ == imageId && cachedInputKey_ == inputKey && cachedMasks_ && !cachedMasks_->empty();
+}
+
+bool AIMaskCache::hasDepthClasses(const std::string& imageId, std::uint64_t inputKey) const
+{
+    MyMutex::MyLock lock(mutex_);
+    return cachedImageId_ == imageId && cachedInputKey_ == inputKey && cachedMasks_ && cachedDepthReady_;
+}
+
+void AIMaskCache::setDepthClasses(const std::string& imageId, std::uint64_t inputKey, const PartnerDepth& depth)
+{
+    std::vector<array2D<float>> masks;
+    int width = 0;
+    int height = 0;
+    int fullWidth = 0;
+    int fullHeight = 0;
+    std::uint64_t generation = 0;
+    {
+        MyMutex::MyLock lock(mutex_);
+        if (cachedImageId_ != imageId || cachedInputKey_ != inputKey || !cachedMasks_
+                || cachedMasks_->size() != static_cast<std::size_t>(AISegClass::TOTAL_CLASSES)) {
+            return;
+        }
+        masks = *cachedMasks_;
+        width = cachedWidth_;
+        height = cachedHeight_;
+        fullWidth = fullW_;
+        fullHeight = fullH_;
+        generation = generation_;
+    }
+    if (!depth.valid() || width <= 0 || height <= 0) {
+        return;
+    }
+
+    // Both depth classes keep the depth map itself (0 near .. 1 far); each
+    // spot reads its own range out of it in getPreparedMask.
+    array2D<float>& nearMap = masks[static_cast<int>(AISegClass::FOREGROUND_DEPTH)];
+    array2D<float>& farMap = masks[static_cast<int>(AISegClass::BACKGROUND_DEPTH)];
+    float fillSum = 0.f;
+    int fillCount = 0;
+    for (int y = 0; y < height; ++y) {
+        const float v = (y + 0.5f) / height * fullHeight;
+        for (int x = 0; x < width; ++x) {
+            const float u = (x + 0.5f) / width * fullWidth;
+            const float d = depth.sample(u, v);
+            nearMap[y][x] = d;
+            if (d >= 0.f) {
+                fillSum += d;
+                ++fillCount;
+            }
+        }
+    }
+    // Samples the estimator could not see take the scene's mean depth.
+    const float fill = fillCount ? fillSum / fillCount : 0.5f;
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            if (nearMap[y][x] < 0.f) {
+                nearMap[y][x] = fill;
+            }
+            farMap[y][x] = nearMap[y][x];
+        }
+    }
+    const float threshold = depthSplitOf(nearMap);
+    const std::array<double, 4> nearPreset = depthPreset(static_cast<int>(AISegClass::FOREGROUND_DEPTH), threshold);
+    const std::array<double, 4> farPreset = depthPreset(static_cast<int>(AISegClass::BACKGROUND_DEPTH), threshold);
+
+    float nearCoverage = 0.f;
+    float farCoverage = 0.f;
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            nearCoverage += depthRangeWeight(nearMap[y][x], nearPreset) > 0.5f;
+            farCoverage += depthRangeWeight(nearMap[y][x], farPreset) > 0.5f;
+        }
+    }
+    nearCoverage /= static_cast<float>(width) * height;
+    farCoverage /= static_cast<float>(width) * height;
+
+    auto ready = std::make_shared<const std::vector<array2D<float>>>(std::move(masks));
+    std::string diskPath;
+    bool subjectModel = false;
+    {
+        MyMutex::MyLock lock(mutex_);
+        if (generation != generation_ || cachedImageId_ != imageId || cachedInputKey_ != inputKey) {
+            return;
+        }
+        cachedMasks_ = ready;
+        cachedDepthReady_ = true;
+        cachedDepthSplit_ = threshold;
+        if (coverage_.size() > static_cast<std::size_t>(AISegClass::BACKGROUND_DEPTH)) {
+            coverage_[static_cast<int>(AISegClass::FOREGROUND_DEPTH)] = nearCoverage;
+            coverage_[static_cast<int>(AISegClass::BACKGROUND_DEPTH)] = farCoverage;
+        }
+        refinedMasks_.clear();
+        distanceMasks_.clear();
+        preparedMasks_.clear();
+        ++generation_;
+        diskPath = cachedDiskPath_;
+        subjectModel = cachedSubjectModel_;
+    }
+    if (edittrace::enabled()) {
+        edittrace::logf("[aiMask] depth classes img=%s split=%.2f near=%d%% far=%d%%", imageId.c_str(),
+                        threshold, static_cast<int>(nearCoverage * 100), static_cast<int>(farCoverage * 100));
+    }
+    saveMapsToDisk(diskPath, *ready, width, height, subjectModel, true);
+}
+
+
+
 bool AIMaskCache::hasCachedMasks() const
 {
     MyMutex::MyLock lock(mutex_);
@@ -801,9 +1672,14 @@ void AIMaskCache::archiveCurrentLocked_()
     ArchivedImage entry;
     entry.imageId = cachedImageId_;
     entry.workingProfile = cachedWorkingProfile_;
+    entry.inputKey = cachedInputKey_;
+    entry.depthReady = cachedDepthReady_;
+    entry.depthSplit = cachedDepthSplit_;
+    entry.diskPath = cachedDiskPath_;
     entry.subjectModel = cachedSubjectModel_;
     entry.masks = cachedMasks_;
     entry.guide = cachedGuide_;
+    entry.samSource = cachedSamSource_;
     entry.coverage = coverage_;
     entry.sourceWidth = sourceWidth_;
     entry.sourceHeight = sourceHeight_;
@@ -836,14 +1712,30 @@ void AIMaskCache::invalidate(const std::string& imageId)
     ++generation_;
     cachedImageId_.clear();
     cachedWorkingProfile_.clear();
+    pending_ = false;
     cachedMasks_.reset();
     cachedGuide_.reset();
+    cachedSamSource_.reset();
     coverage_.clear();
     refinedMasks_.clear();
     distanceMasks_.clear();
     preparedMasks_.clear();
     sourceWidth_ = sourceHeight_ = 0;
     cachedWidth_ = cachedHeight_ = fullW_ = fullH_ = 0;
+}
+
+void AIMaskCache::trimMemory(int level)
+{
+    if (!mutex_.trylock()) {
+        return;
+    }
+    archive_.clear();
+    if (level >= 2) {
+        refinedMasks_.clear();
+        distanceMasks_.clear();
+        preparedMasks_.clear();
+    }
+    mutex_.unlock();
 }
 
 void AIMaskCache::invalidateAll()
@@ -854,8 +1746,10 @@ void AIMaskCache::invalidateAll()
     ++generation_;
     cachedImageId_.clear();
     cachedWorkingProfile_.clear();
+    pending_ = false;
     cachedMasks_.reset();
     cachedGuide_.reset();
+    cachedSamSource_.reset();
     coverage_.clear();
     refinedMasks_.clear();
     distanceMasks_.clear();

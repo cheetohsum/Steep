@@ -725,6 +725,10 @@ struct LocallabParams {
         int aiMaskRefineRadius;
         double aiMaskRefineEps;
         int aiMaskShapeOp; // 0 = blend with shape, 1 = shape adds to mask, 2 = shape cuts from mask
+        // Depth classes only: "" = automatic (near / far of the photo's own
+        // depth split), else "a;b;c;d" over the 0 near .. 1 far depth map --
+        // near fade start, near full, far full, far fade end.
+        Glib::ustring aiMaskDepthRange;
         MaskPaint aiMaskPaint; // hand-painted corrections on top of the segmentation
         //ciecam
         bool visicie;

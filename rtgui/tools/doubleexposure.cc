@@ -25,6 +25,7 @@
 #include "rtengine/aisubjectmodel.h"
 
 #include "aimaskthumb.h"
+#include "backgroundtasks.h"
 #include "partnerthumb.h"
 
 #include "eventmapper.h"
@@ -50,16 +51,6 @@ namespace
 {
 
 constexpr int ROW_THUMB_H = 34;
-
-// winpthreads can report ESRCH from detach() when the thread has already
-// finished; harmless here.
-void detachQuietly(std::thread&& thread)
-{
-    try {
-        thread.detach();
-    } catch (const std::system_error&) {
-    }
-}
 
 } // namespace
 
@@ -634,7 +625,7 @@ void DoubleExposure::requestRowThumbs(const std::vector<Glib::ustring>& paths)
 
     auto alive = aliveToken_;
 
-    detachQuietly(std::thread([this, alive, needed]() {
+    steep::runBackground([this, alive, needed]() {
         for (const auto& path : needed) {
             if (!*alive) {
                 return;
@@ -655,7 +646,7 @@ void DoubleExposure::requestRowThumbs(const std::vector<Glib::ustring>& paths)
                 }
             });
         }
-    }));
+    });
 }
 
 // One row's tile, from the pass that measured this partner's classes.
@@ -729,7 +720,8 @@ void DoubleExposure::requestCoverage(const Glib::ustring& path)
     auto alive = aliveToken_;
     const Glib::ustring profile = workingProfile_;
 
-    detachQuietly(std::thread([this, alive, path, profile]() {
+    // Segmentation is the heavy kind of work: the one CPU-lane thread.
+    steep::runBackground([this, alive, path, profile]() {
         rtengine::PartnerMaskStore::getInstance().warmCoverage(path, profile, true);
 
         Glib::signal_idle().connect_once([this, alive, path]() {
@@ -745,7 +737,7 @@ void DoubleExposure::requestCoverage(const Glib::ustring& path)
                 loadSelectedLayer();
             }
         });
-    }));
+    }, steep::Lane::CPU);
 #endif
 }
 

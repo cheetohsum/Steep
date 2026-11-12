@@ -28,6 +28,7 @@
 #include "rtengine.h"
 #include "colortemp.h"
 #include "array2D.h"
+#include "memguard.h"
 
 template<typename T>
 class LUT;
@@ -76,8 +77,20 @@ class ImageSource : public InitialImage
 
 private:
     int references;
+    // What this source last reported to MemGuard, see syncMemAccount().
+    std::size_t memAccounted_ = 0;
 
 protected:
+    // Brings MemGuard's figure for this source up to date. Called where the
+    // big planes come and go (load, demosaic, flush, hand-over); the
+    // destructor takes back whatever was reported last.
+    void syncMemAccount()
+    {
+        const std::size_t now = estimatedBytes();
+        MemGuard::addBytes(MemGuard::ImageSources, static_cast<long long>(now) - static_cast<long long>(memAccounted_));
+        memAccounted_ = now;
+    }
+
     double redAWBMul, greenAWBMul, blueAWBMul; // local copy of the multipliers, to avoid recomputing the values
     cmsHPROFILE embProfile;
     Glib::ustring fileName;
@@ -87,9 +100,19 @@ protected:
 
 public:
     ImageSource () : references (1), redAWBMul(-1.), greenAWBMul(-1.), blueAWBMul(-1.),
-        embProfile(nullptr), idata(nullptr), dirpyrdenoiseExpComp(RT_INFINITY) {}
+        embProfile(nullptr), idata(nullptr), dirpyrdenoiseExpComp(RT_INFINITY)
+    {
+        MemGuard::objectCreated(MemGuard::ImageSources);
+    }
 
-    ~ImageSource            () override {}
+    ~ImageSource            () override
+    {
+        MemGuard::objectDestroyed(MemGuard::ImageSources);
+        MemGuard::addBytes(MemGuard::ImageSources, -static_cast<long long>(memAccounted_));
+    }
+    // Bytes held in pixel planes right now: the decoded raw, the demosaiced
+    // channels and their copies. What a cache of decoded photos must count.
+    virtual std::size_t estimatedBytes () const { return 0; }
     virtual int         load        (const Glib::ustring &fname) = 0;
     virtual void        preprocess  (const procparams::RAWParams &raw, const procparams::LensProfParams &lensProf, const procparams::CoarseTransformParams& coarse, float &reddeha, float &greendeha, float &bluedeha, bool prepareDenoise = true) {};
     virtual void        demosaic    (const procparams::RAWParams &raw, bool autoContrast, double &contrastThreshold, bool cache = false) {};
@@ -97,6 +120,20 @@ public:
     virtual void        retinexPrepareCurves       (const procparams::RetinexParams &retinexParams, LUTf &cdcurve, LUTf &mapcurve, RetinextransmissionCurve &retinextransmissionCurve, RetinexgaintransmissionCurve &retinexgaintransmissionCurve, bool &retinexcontlutili, bool &mapcontlutili, bool &useHsl, LUTu & lhist16RETI, LUTu & histLRETI) {};
     virtual void        retinexPrepareBuffers      (const procparams::ColorManagementParams& cmp, const procparams::RetinexParams &retinexParams, multi_array2D<float, 4> &conversionBuffer, LUTu &lhist16RETI) {};
     virtual void        flush           () = 0;
+    // Full-quality raw preparation (preprocess + demosaic) done before an
+    // editor owns this source, e.g. on a photo the filmstrip preloaded or on a
+    // background twin of the one just opened. The pipeline adopts it instead
+    // of running the fast preview demosaic now and the slow one later.
+    // take...() hands it over only when the inputs match exactly what the
+    // pass would have used, and consumes it either way. Never call
+    // precompute...() on a source an ImProcCoordinator is already using.
+    virtual bool        precomputeFullQuality (const procparams::ProcParams& params) { return false; }
+    virtual bool        takePrecomputedFullQuality (const procparams::ProcParams& params, float& reddeha, float& greendeha, float& bluedeha, double& contrastThreshold) { return false; }
+    virtual bool        hasPrecomputedFullQuality () const { return false; }
+    // Takes over the precomputed full-quality raw state of `twin`, a second
+    // decode of the same file, swapping it with this source's own. Called by
+    // the pipeline thread only; the result is then taken as above.
+    virtual bool        adoptFullQualityFrom (ImageSource& twin) { return false; }
     virtual void        HLRecovery_Global  (const procparams::ToneCurveParams &hrp) {};
 
     virtual bool        isRGBSourceModified () const = 0; // tracks whether cached rgb output of demosaic has been modified

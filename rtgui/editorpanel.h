@@ -26,6 +26,7 @@
 #include "histogrampanel.h"
 #include "history.h"
 #include "imageareapanel.h"
+#include "motion.h"
 #include "presetlistpanel.h"
 #include "progressconnector.h"
 #include "thumbnaillistener.h"
@@ -286,7 +287,8 @@ public:
     // Returns sidebar/filmstrip insets for queue overlay positioning
     void getQueueOverlayInsets (int& left, int& top, int& right) const;
 
-    // Animated view transition (browser → editor)
+    // Browser → editor: put the editor's panels in their shown state (no
+    // transition; the old fraction-driven slide was never wired up).
     void animateEditorIn(bool skipFilmstrip = false);
 
     // Left panel (history) visibility for sync with browser sidebar
@@ -332,6 +334,17 @@ private:
     sigc::connection ratingPaletteCloseConn_;
     sigc::connection ratingPaletteOpenConn_;
     bool ratingPalettePinned_ = false;
+    // What the palette offers (right-click it to choose): the unrank +
+    // star buttons, and the separator + colour label buttons.
+    std::vector<Gtk::Widget*> ratingStarWidgets_;
+    std::vector<Gtk::Widget*> ratingLabelWidgets_;
+    Gtk::Box* ratingPaletteBox_ = nullptr;
+    Gtk::Box* ratingPaletteReservation_ = nullptr;
+    Gtk::Box* ratingPaletteAnchor_ = nullptr;
+    int ratingCollapsedWidth_ = 0;
+    std::unique_ptr<Gtk::Menu> ratingPaletteMenu_;
+    void applyRatingPaletteParts();
+    void showRatingPaletteMenu(GdkEventButton* event);
     // Thin hot strips along the panel borders; they replaced the
     // collapse/expand toggle buttons
     Gtk::EventBox* leftEdgeGrip_ = nullptr;
@@ -690,18 +703,14 @@ private:
     Glib::ustring pendingEditorDirSyncDir_;
     std::chrono::steady_clock::time_point pendingEditorDirSyncDue_;
 
-    // View transition animation state
-    double editorAnimFraction_ = 1.0;  // 0=hidden, 1=fully shown
-    bool editorAnimIn_ = true;         // true=animating in, false=animating out
-    sigc::connection editorAnimConn_;
-
-    // Sidebar/filmstrip toggle animation state
+    // Sidebar/filmstrip toggle animation state. The fractions are already
+    // eased (steep::motion hands out eased values).
     double leftAnimFraction_ = 1.0;    // 0=hidden, 1=fully shown
-    sigc::connection leftAnimConn_;
+    steep::motion::Handle leftAnim_;
     double rightAnimFraction_ = 1.0;
-    sigc::connection rightAnimConn_;
+    steep::motion::Handle rightAnim_;
     double topAnimFraction_ = 1.0;
-    sigc::connection topAnimConn_;
+    steep::motion::Handle topAnim_;
     // Panel slide animations re-allocate the re-parented file browser on every
     // frame; each allocation would otherwise trigger a full folder relayout.
     bool leftAnimLayoutPaused_ = false;

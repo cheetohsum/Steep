@@ -138,6 +138,9 @@ public:
 
     // One-click mask creation (Smart Masks chip strip)
     void createAIMaskSpot(int classIndex) { expsettings->requestAIMaskSpot(classIndex); }
+    // A spot of classIndex whose mask is the object picked by the click
+    // prompts in `paint` (an encoded rtengine::MaskPaint).
+    void createAIMaskSpot(int classIndex, const Glib::ustring& paint) { expsettings->requestAIMaskSpotWithPaint(classIndex, paint); }
     void createShapeMaskSpot(int shape) { expsettings->requestShapeMaskSpot(shape); }
     /// Keep the selected mask's black & white flag in the panel's row model,
     /// which is what the next write() reads back.

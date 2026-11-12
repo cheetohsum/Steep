@@ -50,7 +50,6 @@ class multi_array2D;
 namespace rtengine
 {
 
-struct RelightFrame;
 class ColorAppearance;
 class ColorGradientCurve;
 class DCPProfile;
@@ -85,6 +84,7 @@ class LabImage;
 class wavelet_decomposition;
 class ImageSource;
 class ColorTemp;
+struct PartnerDepth;
 
 namespace procparams
 {
@@ -675,13 +675,19 @@ enum class BlurType {
     void grainEffect(LabImage *lab, const procparams::GrainParams &params, int fw, int fh,
                      int originX = 0, int originY = 0, double oscale = 1,
                      const procparams::FilmPresetsParams *film = nullptr);
-    void lightEffects(LabImage *lab, const procparams::LightEffectsParams &params, double scaleFactor);
-    // Subject and depth aware virtual light; see iprelight.cc. Reads the mask
-    // and depth map prepareRelightInputs left in their caches, and lights the
-    // scene flat and whole when they are missing.
-    void relight(LabImage *lab, const procparams::RelightParams &params, const RelightFrame &frame);
-    void tiltShiftEffect(LabImage *lab, const procparams::TiltShiftParams &params, int fw, int fh);
-    void lensBlur(LabImage *lab, const procparams::LensBlurParams &params, double scale);
+    // fw/fh: the full frame in full-resolution pixels; scale: full-resolution
+    // pixels per buffer pixel; origin: the buffer's top-left in the full frame.
+    // film, when given, lets Light Effects stand its halation down while Film
+    // Lab is drawing its own.
+    void lightEffects(LabImage *lab, const procparams::LightEffectsParams &params, int fw, int fh, double scale,
+                      const procparams::FilmPresetsParams *film = nullptr);
+    void tiltShiftEffect(LabImage *lab, const procparams::TiltShiftParams &params, int fw, int fh,
+                         int originX = 0, int originY = 0, double scale = 1);
+    // Same frame convention as tiltShiftEffect. depth, when given, is the
+    // scene depth of that full frame (PartnerDepthStore::peekSceneDepth);
+    // without it the focus range falls back to luminance.
+    void lensBlur(LabImage *lab, const procparams::LensBlurParams &params, int fw, int fh,
+                  int originX, int originY, double scale, const PartnerDepth *depth = nullptr);
     void colorToningLabGrid(LabImage *lab, int xstart, int xend, int ystart, int yend, bool MultiThread);
     void colorGrading(LabImage *lab, int xstart, int xend, int ystart, int yend, bool MultiThread);
     //void shadowsHighlights(LabImage *lab);

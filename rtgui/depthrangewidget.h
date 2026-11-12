@@ -4,6 +4,7 @@
 #include <functional>
 #include <gtkmm.h>
 #include "compositedepthhistogram.h"
+#include "guiutils.h"
 #include "rtengine/compositemath.h"
 
 namespace compositeui
@@ -29,6 +30,9 @@ class DepthRange final : public Gtk::DrawingArea
     {
         using rtengine::composite::depthColor;
         using rtengine::composite::depthWeight;
+        // Chrome in theme ink; the depth gradient itself is data and stays.
+        const Gdk::RGBA ink = themeColor(*this, "steep_text_hi", Gdk::RGBA("#f5f7ff"));
+        const Gdk::RGBA accent = themeColor(*this, "steep_accent", Gdk::RGBA("#73d9bd"));
         const double w = std::max(1, get_allocated_width() - 24), h = 52;
         auto gradient = Cairo::LinearGradient::create(12, 0, w + 12, 0);
         for (float d : {0.f, .5f, 1.f}) {
@@ -45,27 +49,27 @@ class DepthRange final : public Gtk::DrawingArea
                 for (size_t i = 0; i < curve.size(); ++i)
                     cr->line_to(12 + w * i / (curve.size() - 1), 12 + h * (1 - .9 * curve[i]));
                 if (brightness) {
-                    cr->set_source_rgba(.96, .97, 1, .8);
+                    steepui::setSource(cr, ink, .8);
                     cr->set_line_width(1.2);
                     cr->stroke();
                 } else {
                     cr->line_to(12 + w, 12 + h);
                     cr->close_path();
-                    cr->set_source_rgba(.88, .91, .96, .32);
+                    steepui::setSource(cr, ink, .32);
                     cr->fill();
                 }
             };
             drawCurve(false);
             drawCurve(true);
         }
-        cr->set_source_rgba(.45, .85, .74, .9);
+        steepui::setSource(cr, accent, .9);
         cr->move_to(12, h + 12);
         for (int x = 0; x <= int(w); ++x)
             cr->line_to(x + 12, 12 + h * (1 - depthWeight(float(x) / w, values, nearShape, farShape, inverted)));
         cr->set_line_width(1.5);
         cr->stroke();
         for (int i = 0; i < 4; ++i) {
-            cr->set_source_rgb(.9, .93, .93);
+            steepui::setSource(cr, ink, 1.0);
             cr->set_line_width(1);
             double x = 12 + values[i] * w;
             cr->move_to(x, 10);

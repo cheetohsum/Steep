@@ -16,6 +16,7 @@
  *  You should have received a copy of the GNU General Public License
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
+#include <algorithm>
 #include <chrono>
 #include <condition_variable>
 #include <cstdlib>
@@ -24,10 +25,13 @@
 #include <fstream>
 #include <functional>
 #include <future>
+#include <memory>
 #include <mutex>
 #include <thread>
 
 #include "improccoordinator.h"
+#include "aidenoise.h"
+#include "fullqualitytwin.h"
 
 #include "array2D.h"
 #include "boxblur.h"
@@ -46,7 +50,6 @@
 #include "labimage.h"
 #include "lcp.h"
 #include "procparams.h"
-#include "relight.h"
 #include "previewquality.h"
 #include "tweakoperator.h"
 #include "refreshmap.h"
@@ -60,9 +63,13 @@
 #include <omp.h>
 #endif
 
+#include "aiidlereaper.h"
+#include "memguard.h"
 #ifdef RT_AI_MASKING
 #include "aisegmentation.h"
 #include "aimaskcache.h"
+#include "aimaskinput.h"
+#include "partnerdepthstore.h"
 #endif
 
 namespace
@@ -201,6 +208,20 @@ private:
 namespace rtengine
 {
 
+#ifdef RT_AI_MASKING
+/// STEEP_AIMASK_SYNC=1 runs AI mask analysis inside the pass again, holding
+/// the pipeline lock for its seconds (the A/B reference for requestAIMasks).
+static bool aiMasksInPass()
+{
+    static const bool value = []() {
+        const char* const env = std::getenv("STEEP_AIMASK_SYNC");
+        return env != nullptr && env[0] != 0 && env[0] != '0';
+    }();
+
+    return value;
+}
+#endif
+
 /// STEEP_NO_TRANSFORM_CACHE=1 restores the unconditional geometric transform.
 static bool neverCacheTransform()
 {
@@ -210,6 +231,33 @@ static bool neverCacheTransform()
     }();
 
     return value;
+}
+
+bool isPreviewPassBusy(StagedImageProcessor* processor)
+{
+    auto* const coordinator = dynamic_cast<ImProcCoordinator*>(processor);
+    return coordinator && coordinator->isPreviewPassBusy();
+}
+
+namespace
+{
+
+// Live coordinators, for the memory trimmer. Never destroyed: coordinators
+// are torn down from static destructors too.
+struct CoordinatorRegistry {
+    std::mutex mutex;
+    std::vector<ImProcCoordinator*> live;
+};
+
+CoordinatorRegistry& coordinatorRegistry()
+{
+    static CoordinatorRegistry* const registry = []() {
+        MemGuard::registerTrimmer("fattal-cache", &ImProcCoordinator::trimIdleCaches);
+        return new CoordinatorRegistry();
+    }();
+    return *registry;
+}
+
 }
 
 unsigned long long getSettledPreviewSerial(const StagedImageProcessor* processor)
@@ -423,23 +471,42 @@ ImProcCoordinator::ImProcCoordinator() :
     locallcieMask(0),
     retistrsav(nullptr)
 {
+    MemGuard::objectCreated(MemGuard::Coordinators);
+    CoordinatorRegistry& registry = coordinatorRegistry();
+    std::lock_guard<std::mutex> lock(registry.mutex);
+    registry.live.push_back(this);
 }
 
 ImProcCoordinator::~ImProcCoordinator()
 {
 
     destroying = true;
+    {
+        // Before anything is freed: a trim in progress finishes first, and
+        // no later one finds this coordinator.
+        CoordinatorRegistry& registry = coordinatorRegistry();
+        std::lock_guard<std::mutex> lock(registry.mutex);
+        registry.live.erase(std::remove(registry.live.begin(), registry.live.end(), this), registry.live.end());
+    }
+    MemGuard::objectDestroyed(MemGuard::Coordinators);
+#ifdef RT_AI_MASKING
+    // Before anything else: a mask analysis finishing now would start a pass.
+    cancelAIMaskRequests(this);
+#endif
+    {
+        std::lock_guard<std::mutex> lock(fullQualityTwinMutex);
+        if (fullQualityTwin) {
+            fullQualityTwin->abandon();
+            fullQualityTwin.reset();
+        }
+    }
     cancelProcessingTasks(true);
 
     mProcessing.lock();
     mProcessing.unlock();
     freeAll();
 
-    if (fattal_11_dcrop_cache) {
-        delete fattal_11_dcrop_cache;
-        fattal_11_dcrop_cache = nullptr;
-        fattalCacheSkip = -1;
-    }
+    dropFattalCache();
 
     std::vector<Crop*> toDel = crops;
 
@@ -459,6 +526,87 @@ ImProcCoordinator::~ImProcCoordinator()
         customTransformOut = nullptr;
     }
 
+}
+
+void ImProcCoordinator::dropFattalCache()
+{
+    delete fattal_11_dcrop_cache;
+    fattal_11_dcrop_cache = nullptr;
+    fattalCacheSkip = -1;
+    delete fattalCachePrev;
+    fattalCachePrev = nullptr;
+    fattalCachePrevSkip = -1;
+}
+
+void ImProcCoordinator::trimIdleCaches(int)
+{
+    CoordinatorRegistry& registry = coordinatorRegistry();
+    std::lock_guard<std::mutex> lock(registry.mutex);
+
+    // An AI Denoise result for a photo no editor has open is only kept in
+    // case that photo comes back. The open photos keep theirs: without it
+    // their preview would change.
+    std::vector<Glib::ustring> openPhotos;
+    for (const ImProcCoordinator* const coordinator : registry.live) {
+        if (coordinator->imgsrc) {
+            openPhotos.push_back(coordinator->imgsrc->getFileName());
+        }
+    }
+    AIDenoiseManager::getInstance().clearCacheUnless(openPhotos);
+
+    for (ImProcCoordinator* const coordinator : registry.live) {
+        // The frames are read by a preview pass (mProcessing) and by a
+        // detail crop's own render (cropRenderMutex). Whoever is busy keeps
+        // its cache; it costs seconds to rebuild and is in use.
+        if (coordinator->destroying || !coordinator->mProcessing.trylock()) {
+            continue;
+        }
+        if (coordinator->cropRenderMutex.trylock()) {
+            coordinator->dropFattalCache();
+            coordinator->cropRenderMutex.unlock();
+        }
+        coordinator->mProcessing.unlock();
+    }
+}
+
+bool ImProcCoordinator::isPreviewPassBusy()
+{
+    if (updaterRunning) {
+        return true;
+    }
+    if (!paramsUpdateMutex.trylock()) {
+        // Somebody is submitting a change right now.
+        return true;
+    }
+    const bool pending = (changeSinceLast & ~M_VOID) != 0;
+    paramsUpdateMutex.unlock();
+    return pending;
+}
+
+bool ImProcCoordinator::standDownForNewerChange(int resumeTodo, int ignoreMask)
+{
+    // Best effort, like hasPendingChange(): a miss only means the pass runs on.
+    if (!paramsUpdateMutex.trylock()) {
+        return false;
+    }
+
+    const bool newer = (changeSinceLast & ~(M_VOID | ignoreMask)) != 0;
+
+    if (newer) {
+        changeSinceLast |= resumeTodo;
+        resumeAbandonedPass_ = true;
+
+        // The edits this pass had claimed are still unrendered.
+        if (currentEditSerialFirst_ != 0) {
+            pendingEditSerialFirst_ = currentEditSerialFirst_;
+            if (pendingEditSerialLast_ == 0) {
+                pendingEditSerialLast_ = currentEditSerialLast_;
+            }
+        }
+    }
+
+    paramsUpdateMutex.unlock();
+    return newer;
 }
 
 void ImProcCoordinator::assign(ImageSource* imgsrc)
@@ -513,7 +661,12 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
         todo |= M_MONITOR;
     }
     // A repair must start from source pixels, never the previous composite.
-    if (todo & M_SPOT) todo |= M_INIT;
+    // M_LINDENOISE and M_HDR already rebuild the working image from source
+    // (and repair it there), so only a bare M_SPOT needs the promotion; adding
+    // M_INIT on top of them would just re-run retinex on every edit.
+    if ((todo & M_SPOT) && !(todo & (M_INIT | M_LINDENOISE | M_HDR))) {
+        todo |= M_INIT;
+    }
     using PreviewClock = std::chrono::steady_clock;
     const bool tracePipeline = std::getenv("STEEP_PIPELINE_TRACE") != nullptr || edittrace::enabled();
     const auto traceStart = PreviewClock::now();
@@ -541,6 +694,42 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
     // TODO Locallab printf
     MyMutex::MyLock processingLock(mProcessing);
     traceStage("processing-lock");
+
+    // A pass that has already run for a while and has a newer snapshot
+    // waiting behind it may stand down at a stage boundary instead of
+    // finishing a frame nobody will see. Deliberately narrow:
+    //  - never the first frame of a photo (!resultValid), a settled
+    //    refinement (M_HIGHQUAL) or a pass carrying a smart repair;
+    //  - never a quick pass: a slider drag wants every frame it can get;
+    //  - never twice in a row, so a stream of edits cannot starve the screen;
+    //  - inside the pipeline (previewComplete == false) never a pass that
+    //    preprocesses or demosaics, and everything it was asked to do --
+    //    including the bits added on the way (M_INIT after a demosaic,
+    //    TRANSFORM for a crop) -- goes back into the pending change, so the
+    //    next pass redoes every stage this one touched, from the top;
+    //  - once the preview image is complete only the detail crops and the
+    //    publication are left: the crops are told what they missed and the
+    //    next pass, which is made to publish, brings them up to date.
+    constexpr int kStandDownAfterMs = 300;
+    const bool mayStandDown = !abandonedLastPass_;
+    abandonedLastPass_ = false;
+    const auto standDown = [&](const char* where, bool previewComplete) -> bool {
+        if (!mayStandDown || !resultValid || destroying || (todo & M_HIGHQUAL) || smartRepairPass_
+                || (!previewComplete && (todo & (M_PREPROC | M_RAW)))
+                || PreviewClock::now() - traceStart < std::chrono::milliseconds(kStandDownAfterMs)) {
+            return false;
+        }
+        if (!standDownForNewerChange(previewComplete ? 0 : todo, previewComplete ? (M_CROP | M_MINUPDATE) : 0)) {
+            return false;
+        }
+        abandonedLastPass_ = true;
+        if (!previewComplete) {
+            // As at the end of a pass: it aliases buffers that outlive it.
+            oprevi = nullptr;
+        }
+        traceStage(where);
+        return true;
+    };
 
     const auto prevdemo = App::get().options().prevdemo;
     const bool progressiveInitialPreview =
@@ -578,6 +767,51 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
         LCurveParams  lcur = params->labCurve;
         bool spotsDone = false;
 
+        // A source prepared at full quality before this editor got it (a
+        // preloaded neighbour, or the background twin of this photo) skips
+        // both the fast demosaic now and the full one the settled pass would
+        // run. It is only taken when its inputs equal params->raw & co.
+        float precomputedRedDeha = 0.f;
+        float precomputedGreenDeha = 0.f;
+        float precomputedBlueDeha = 0.f;
+        double precomputedContrast = 0.0;
+        // The twin of this photo, if one is being prepared: adopt its
+        // demosaic now, in the pass that would otherwise compute one.
+        if (highDetailNeeded && !highDetailRawComputed && imgsrc->isRAW()) {
+            std::shared_ptr<FullQualityTwin> twin;
+            {
+                std::lock_guard<std::mutex> lock(fullQualityTwinMutex);
+                twin = std::move(fullQualityTwin);
+            }
+            if (twin) {
+                // Bounded: the twin is only waited for once it is already
+                // demosaicing, i.e. closer to done than this pass would be.
+                InitialImage* const twinImage = twin->take(3000);
+                const bool adopted = twinImage && twinImage->getImageSource()
+                    && imgsrc->adoptFullQualityFrom(*twinImage->getImageSource());
+                if (twinImage) {
+                    // It now holds this source's old fast-demosaic buffers.
+                    // A few GUI-thread readers (auto WB, raw values under the
+                    // cursor) touch the source without mProcessing, so free
+                    // them a little later rather than the instant they swap.
+                    std::thread([twinImage]() {
+                        std::this_thread::sleep_for(std::chrono::seconds(2));
+                        twinImage->decreaseRef();
+                    }).detach();
+                }
+                traceStage(adopted ? "twin-adopted" : "twin-missed");
+            }
+        }
+
+        const bool usePrecomputed =
+            ((todo & (M_PREPROC | M_RAW)) || (highDetailNeeded && !highDetailRawComputed))
+            && imgsrc->hasPrecomputedFullQuality()
+            && imgsrc->takePrecomputedFullQuality(*params, precomputedRedDeha, precomputedGreenDeha, precomputedBlueDeha, precomputedContrast);
+        if (usePrecomputed) {
+            highDetailNeeded = true;
+            traceStage("precomputed-full-quality");
+        }
+
         if (!highDetailNeeded) {
             // if below 100% magnification, take a fast path
             if (rp.bayersensor.method != RAWParams::BayerSensor::getMethodString(RAWParams::BayerSensor::Method::NONE) && rp.bayersensor.method != RAWParams::BayerSensor::getMethodString(RAWParams::BayerSensor::Method::MONO)) {
@@ -610,9 +844,15 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
         float greendeha = 0.f;
         float bluedeha = 0.f;
 
-        if ((todo & M_PREPROC) || (!highDetailPreprocessComputed && highDetailNeeded)) {
+        if (usePrecomputed || (todo & M_PREPROC) || (!highDetailPreprocessComputed && highDetailNeeded)) {
             imgsrc->setCurrentFrame(params->raw.bayersensor.imageNum);
-            imgsrc->preprocess(rp, params->lensProf, params->coarse, reddeha, greendeha, bluedeha, true);
+            if (usePrecomputed) {
+                reddeha = precomputedRedDeha;
+                greendeha = precomputedGreenDeha;
+                bluedeha = precomputedBlueDeha;
+            } else {
+                imgsrc->preprocess(rp, params->lensProf, params->coarse, reddeha, greendeha, bluedeha, true);
+            }
             if(imgsrc->getSensorType() == ST_BAYER) {//Bayer
                 AutoBlackListener* const abl = ablListener;
                 if (!destroying && abl) {
@@ -690,7 +930,11 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
 
             bool autoContrast = imgsrc->getSensorType() == ST_BAYER ? params->raw.bayersensor.dualDemosaicAutoContrast : params->raw.xtranssensor.dualDemosaicAutoContrast;
             double contrastThreshold = imgsrc->getSensorType() == ST_BAYER ? params->raw.bayersensor.dualDemosaicContrast : params->raw.xtranssensor.dualDemosaicContrast;
-            imgsrc->demosaic(rp, autoContrast, contrastThreshold, params->pdsharpening.enabled);
+            if (usePrecomputed) {
+                contrastThreshold = precomputedContrast;
+            } else {
+                imgsrc->demosaic(rp, autoContrast, contrastThreshold, params->pdsharpening.enabled);
+            }
 
             AutoContrastListener* const bayerAutoContrast = bayerAutoContrastListener;
             AutoContrastListener* const xtransAutoContrast = xtransAutoContrastListener;
@@ -1001,6 +1245,18 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             ipf.setScale(scale);
             imgsrc->getImage(currWB, tr, orig_prev, pp, params->toneCurve, params->raw);
 
+            // AI Denoise, at the same point the detail crop and the export
+            // blend it, so the fit view and navigator show it too.
+            if (params->aiDenoise.enabled && params->aiDenoise.blend > 0) {
+                auto& aidm = AIDenoiseManager::getInstance();
+                if (aidm.isCacheValid(imgsrc->getFileName(), params->aiDenoise.isoConditioning)) {
+                    if (const auto dn = aidm.getCachedResult()) {
+                        ImProcFunctions::blendAIDenoise(orig_prev, dn.get(),
+                            params->aiDenoise.blend / 100.0, 0, 0, scale);
+                    }
+                }
+            }
+
             delete spotprev;
             spotprev = nullptr;
 
@@ -1135,12 +1391,12 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             spotprev->copyData(orig_prev);
         }
 
-        if ((todo & M_HDR) && (params->fattal.enabled || params->dehaze.enabled)) {
-            if (fattal_11_dcrop_cache) {
-                delete fattal_11_dcrop_cache;
-                fattal_11_dcrop_cache = nullptr;
-                fattalCacheSkip = -1;
-            }
+        // Whenever the working image was just rebuilt from source it no longer
+        // carries dehaze/Fattal, which are applied to it in place -- the settled
+        // refinement's re-demosaic brings M_INIT alone, and used to leave the
+        // image without them until an edit happened to carry M_HDR.
+        if ((todo & (M_INIT | M_LINDENOISE | M_HDR)) && (params->fattal.enabled || params->dehaze.enabled)) {
+            dropFattalCache();
 
             ipf.dehaze(orig_prev, params->dehaze);
             ipf.ToneMapFattal02(orig_prev, params->fattal, 3, 0, nullptr, 0, 0, 0, false);
@@ -1150,6 +1406,9 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             }
         }
         traceStage("hdr-dehaze");
+        if (standDown("stood-down-before-transform", false)) {
+            return;
+        }
 
         // Remove transformation if unneeded
         bool needstransform = ipf.needsTransform(fw, fh, imgsrc->getRotateDegree(), imgsrc->getMetaData());
@@ -1218,6 +1477,9 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             ipf.lab2rgb(labcbdl, *oprevi, params->icm.workingProfile);
         }
         traceStage("transform-and-precurve-detail");
+        if (standDown("stood-down-before-autoexp", false)) {
+            return;
+        }
 
         if (todo & M_AUTOEXP) {
             if (params->toneCurve.autoexp) {
@@ -1271,55 +1533,55 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 std::vector<LocallabListener::locallabcieBEF> locallciebef;
                 std::vector<LocallabListener::locallabsharBEF> locallsharbef;
 
-                float *sourceg = nullptr;
-                sourceg = new float[sizespot];
-                float *sourceab = nullptr;
-                sourceab = new float[sizespot];
-                float *targetg = nullptr;
-                targetg = new float[sizespot];
-                bool *log = nullptr;
-                log = new bool[sizespot];
-                bool *cie = nullptr;
-                cie = new bool[sizespot];
-                bool *shar = nullptr;
-                shar = new bool[sizespot];
-                bool *autocomput = nullptr;
-                autocomput = new bool[sizespot];
-                float *blackev = nullptr;
-                blackev = new float[sizespot];
-                float *whiteev = nullptr;
-                whiteev = new float[sizespot];
-                bool *Autogr = nullptr;
-                Autogr = new bool[sizespot];
-                bool *autocie = nullptr;
-                autocie = new bool[sizespot];
-                int *whits = nullptr;
-                whits = new int[sizespot];
-                int *blacks = nullptr;
-                blacks = new int[sizespot];
-                int *whitslog = nullptr;
-                whitslog = new int[sizespot];
-                int *blackslog = nullptr;
-                blackslog = new int[sizespot];
-                bool *blackredu = nullptr;
-                blackredu = new bool[sizespot];
-                bool *autoradius = nullptr;
-                autoradius = new bool[sizespot];
-                float *caprad = nullptr;
-                caprad = new float[sizespot];
+                const std::unique_ptr<float[]> sourcegOwner(new float[sizespot]);
+                float *sourceg = sourcegOwner.get();
+                const std::unique_ptr<float[]> sourceabOwner(new float[sizespot]);
+                float *sourceab = sourceabOwner.get();
+                const std::unique_ptr<float[]> targetgOwner(new float[sizespot]);
+                float *targetg = targetgOwner.get();
+                const std::unique_ptr<bool[]> logOwner(new bool[sizespot]);
+                bool *log = logOwner.get();
+                const std::unique_ptr<bool[]> cieOwner(new bool[sizespot]);
+                bool *cie = cieOwner.get();
+                const std::unique_ptr<bool[]> sharOwner(new bool[sizespot]);
+                bool *shar = sharOwner.get();
+                const std::unique_ptr<bool[]> autocomputOwner(new bool[sizespot]);
+                bool *autocomput = autocomputOwner.get();
+                const std::unique_ptr<float[]> blackevOwner(new float[sizespot]);
+                float *blackev = blackevOwner.get();
+                const std::unique_ptr<float[]> whiteevOwner(new float[sizespot]);
+                float *whiteev = whiteevOwner.get();
+                const std::unique_ptr<bool[]> AutogrOwner(new bool[sizespot]);
+                bool *Autogr = AutogrOwner.get();
+                const std::unique_ptr<bool[]> autocieOwner(new bool[sizespot]);
+                bool *autocie = autocieOwner.get();
+                const std::unique_ptr<int[]> whitsOwner(new int[sizespot]);
+                int *whits = whitsOwner.get();
+                const std::unique_ptr<int[]> blacksOwner(new int[sizespot]);
+                int *blacks = blacksOwner.get();
+                const std::unique_ptr<int[]> whitslogOwner(new int[sizespot]);
+                int *whitslog = whitslogOwner.get();
+                const std::unique_ptr<int[]> blackslogOwner(new int[sizespot]);
+                int *blackslog = blackslogOwner.get();
+                const std::unique_ptr<bool[]> blackreduOwner(new bool[sizespot]);
+                bool *blackredu = blackreduOwner.get();
+                const std::unique_ptr<bool[]> autoradiusOwner(new bool[sizespot]);
+                bool *autoradius = autoradiusOwner.get();
+                const std::unique_ptr<float[]> capradOwner(new float[sizespot]);
+                float *caprad = capradOwner.get();
 
-                float *locx = nullptr;
-                locx = new float[sizespot];
-                float *locy = nullptr;
-                locy = new float[sizespot];
-                float *locxL = nullptr;
-                locxL = new float[sizespot];
-                float *locyT = nullptr;
-                locyT = new float[sizespot];
-                float *centx = nullptr;
-                centx = new float[sizespot];
-                float *centy = nullptr;
-                centy = new float[sizespot];
+                const std::unique_ptr<float[]> locxOwner(new float[sizespot]);
+                float *locx = locxOwner.get();
+                const std::unique_ptr<float[]> locyOwner(new float[sizespot]);
+                float *locy = locyOwner.get();
+                const std::unique_ptr<float[]> locxLOwner(new float[sizespot]);
+                float *locxL = locxLOwner.get();
+                const std::unique_ptr<float[]> locyTOwner(new float[sizespot]);
+                float *locyT = locyTOwner.get();
+                const std::unique_ptr<float[]> centxOwner(new float[sizespot]);
+                float *centx = centxOwner.get();
+                const std::unique_ptr<float[]> centyOwner(new float[sizespot]);
+                float *centy = centyOwner.get();
 
                 for (int sp = 0; sp < sizespot; sp++) {
                     log[sp] = params->locallab.spots.at(sp).explog;
@@ -1443,34 +1705,13 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                     }
                 }
 
-                delete [] locx;
-                delete [] locy;
-                delete [] locxL;
-                delete [] locyT;
-                delete [] centx;
-                delete [] centy;
 
-                delete [] autocie;
-                delete [] Autogr;
-                delete [] whiteev;
-                delete [] blackev;
-                delete [] targetg;
-                delete [] sourceab;
-                delete [] whits;
-                delete [] blacks;
-                delete [] whitslog;
-                delete [] blackslog;
-                delete [] blackredu;
-                delete [] sourceg;
-                delete [] cie;
-                delete [] log;
-                delete [] shar;
-                delete [] autocomput;
-                delete [] autoradius;
-                delete [] caprad;
             }
         }
         traceStage("auto-and-local-setup");
+        if (standDown("stood-down-before-local-adjustments", false)) {
+            return;
+        }
 
 
         if (destroying) {
@@ -1539,22 +1780,22 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             stdretis.resize(params->locallab.spots.size());
             const int sizespot = (int)params->locallab.spots.size();
 
-            float *huerefp = nullptr;
-            huerefp = new float[sizespot];
-            float *chromarefp = nullptr;
-            chromarefp = new float[sizespot];
-            float *lumarefp = nullptr;
-            lumarefp = new float[sizespot];
-            float *fabrefp = nullptr;
-            fabrefp = new float[sizespot];
+            const std::unique_ptr<float[]> huerefpOwner(new float[sizespot]);
+            float *huerefp = huerefpOwner.get();
+            const std::unique_ptr<float[]> chromarefpOwner(new float[sizespot]);
+            float *chromarefp = chromarefpOwner.get();
+            const std::unique_ptr<float[]> lumarefpOwner(new float[sizespot]);
+            float *lumarefp = lumarefpOwner.get();
+            const std::unique_ptr<float[]> fabrefpOwner(new float[sizespot]);
+            float *fabrefp = fabrefpOwner.get();
             //new controls mainfp and scopefp with multi spots
-            int *mainfp = nullptr;
-            mainfp = new int[sizespot];
-            int *scopefp = nullptr;
-            scopefp = new int[sizespot];
+            const std::unique_ptr<int[]> mainfpOwner(new int[sizespot]);
+            int *mainfp = mainfpOwner.get();
+            const std::unique_ptr<int[]> scopefpOwner(new int[sizespot]);
+            int *scopefp = scopefpOwner.get();
             
-            bool *autocontrast = nullptr;
-            autocontrast = new bool[sizespot];
+            const std::unique_ptr<bool[]> autocontrastOwner(new bool[sizespot]);
+            bool *autocontrast = autocontrastOwner.get();
 
 #ifdef RT_AI_MASKING
             // Compute AI segmentation masks once for all spots (if any spot uses AI masking)
@@ -1564,10 +1805,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                     needAIMask = params->locallab.spots.at(s).useAIMask;
                 }
                 if (needAIMask) {
-                    const std::string imageId = imgsrc->getFileName().raw();
-                    AIMaskCache::getInstance().computeMasks(
-                        imageId, oprevi->r.ptrs, oprevi->g.ptrs, oprevi->b.ptrs,
-                        pW, pH, fw, fh, params->icm.workingProfile.raw(), true);
+                    requestAIMasksForPass();
                 }
             }
 #endif
@@ -2117,13 +2355,6 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 
             }
 
-            delete [] huerefp;
-            delete [] chromarefp;
-            delete [] lumarefp;
-            delete [] fabrefp;
-            delete [] mainfp;
-            delete [] scopefp;
-            delete [] autocontrast;
             
             // Same trap as dcrop: oprevi may BE the cached transform buffer,
             // and writing locallab's result over it lets the next pass feed
@@ -2144,6 +2375,9 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
 
         }
         traceStage("local-adjustments");
+        if (standDown("stood-down-before-rgb-curves", false)) {
+            return;
+        }
 
         if (destroying) {
             return;
@@ -2337,6 +2571,10 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
 
         //scale = 1;
 
+        if (standDown("stood-down-before-lab-detail", false)) {
+            return;
+        }
+
         if ((todo & (M_LUMINANCE + M_COLOR)) || (todo & M_AUTOEXP)) {
             nprevl->CopyFrom(oprevl);
             histCCurve.clear();
@@ -2363,17 +2601,15 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 ipf.clarityContrast(nprevl, params->clarity, scale);
             }
 
-            if (params->grain.enabled) {
-                ipf.grainEffect(nprevl, params->grain, fw, fh, 0, 0, std::max(scale, 1), &params->filmPresets);
-            }
-
-
             if (params->tiltShift.enabled) {
-                ipf.tiltShiftEffect(nprevl, params->tiltShift, fw, fh);
+                ipf.tiltShiftEffect(nprevl, params->tiltShift, fw, fh, 0, 0, std::max(scale, 1));
             }
 
             if (params->lensBlur.enabled) {
-                ipf.lensBlur(nprevl, params->lensBlur, scale);
+                // Only a depth map some AI mask already paid for; never estimated here.
+                const auto sceneDepth = PartnerDepthStore::getInstance().peekSceneDepth(
+                    imgsrc->getFileName().raw(), fw, fh, params->icm.workingProfile);
+                ipf.lensBlur(nprevl, params->lensBlur, fw, fh, 0, 0, std::max(scale, 1), sceneDepth.get());
             }
 
             ipf.chromiLuminanceCurve(nullptr, pW, nprevl, nprevl, chroma_acurve, chroma_bcurve, satcurve, lhskcurve, clcurve, lumacurve, utili, autili, butili, ccutili, cclutili, clcutili, histCCurve, histLCurve);
@@ -2398,9 +2634,9 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 WaveletParams WaveParams = params->wavelet;
                 WaveParams.getCurves(wavCLVCurve, wavdenoise, wavdenoiseh, wavblcurve, waOpacityCurveRG, waOpacityCurveSH, waOpacityCurveBY, waOpacityCurveW, waOpacityCurveWL);
                 int kall = 0;
-                LabImage *unshar = nullptr;
+                std::unique_ptr<LabImage> unshar;
                 Glib::ustring provis;
-                LabImage *provradius = nullptr;
+                std::unique_ptr<LabImage> provradius;
                 bool procont = WaveParams.expcontrast;
                 bool prochro = WaveParams.expchroma;
                 bool proedge = WaveParams.expedge;
@@ -2414,14 +2650,14 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                 }
 
                 if (WaveParams.softrad > 0.f) {
-                    provradius = new LabImage(*nprevl, true);
+                    provradius.reset(new LabImage(*nprevl, true));
                 }
 
                 if ((WaveParams.ushamethod == "sharp" || WaveParams.ushamethod == "clari") && WaveParams.expclari && WaveParams.CLmethod != "all") {
                     provis = params->wavelet.CLmethod;
                     params->wavelet.CLmethod = "all";
                     ipf.ip_wavelet(nprevl, nprevl, kall, WaveParams, wavCLVCurve, wavdenoise, wavdenoiseh, wavblcurve, waOpacityCurveRG, waOpacityCurveSH, waOpacityCurveBY, waOpacityCurveW, waOpacityCurveWL, wavclCurve, scale);
-                    unshar = new LabImage(*nprevl, true);
+                    unshar.reset(new LabImage(*nprevl, true));
 
                     params->wavelet.CLmethod = provis;
 
@@ -2448,8 +2684,8 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
 
                         array2D<float> ble(pW, pH);
                         array2D<float> guid(pW, pH);
-                        Imagefloat *tmpImage = nullptr;
-                        tmpImage = new Imagefloat(pW, pH);
+                        std::unique_ptr<Imagefloat> tmpImageOwner(new Imagefloat(pW, pH));
+                        Imagefloat *const tmpImage = tmpImageOwner.get();
 
 #ifdef _OPENMP
                         #pragma omp parallel for
@@ -2500,7 +2736,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                                 nprevl->L[ir][jr] =  L;
                             }
 
-                        delete tmpImage;
+                        tmpImageOwner.reset();
 
                     }
 
@@ -2554,8 +2790,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                             nprevl->b[x][y] = (1.f + mC0) * (unshar->b[x][y]) - mC * indic * nprevl->b[x][y];
                         }
 
-                    delete unshar;
-                    unshar    = NULL;
+                    unshar.reset();
 
 
                     /*
@@ -2595,8 +2830,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                     */
                     if (WaveParams.softrad > 0.f) {
 
-                        delete provradius;
-                        provradius    = NULL;
+                        provradius.reset();
 
                     }
 
@@ -2613,29 +2847,17 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             }
             ipf.softLight(nprevl, params->softlight);
 
-            // Relight before the optical effects, so glow and halation
-            // spread from the light it adds.
-            if (params->relight.enabled) {
-                RelightFrame relightFrame;
-                relightFrame.imageId = imgsrc->getFileName().raw();
-                relightFrame.workingProfile = params->icm.workingProfile;
-                relightFrame.fullWidth = fw;
-                relightFrame.fullHeight = fh;
-                relightFrame.step = std::max(scale, 1);
-
-                if (oprevi) {
-                    prepareRelightInputs(params->relight, relightFrame.imageId, *oprevi, fw, fh,
-                                         params->icm.workingProfile, false);
-                }
-
-                ipf.relight(nprevl, params->relight, relightFrame);
-            }
-
             // After the Lab curves and the film stage: those rewrite a/b, so
             // halation's warm tint was being flattened out when this ran
             // earlier alongside grain.
             if (params->lightEffects.enabled) {
-                ipf.lightEffects(nprevl, params->lightEffects, std::max(scale, 1));
+                ipf.lightEffects(nprevl, params->lightEffects, fw, fh, std::max(scale, 1), &params->filmPresets);
+            }
+
+            // Grain is the last texture laid down: earlier, sharpening, the
+            // Lab curves and Film Lab's diffusion all reshaped it.
+            if (params->grain.enabled) {
+                ipf.grainEffect(nprevl, params->grain, fw, fh, 0, 0, std::max(scale, 1), &params->filmPresets);
             }
             traceStage("film-lab");
 
@@ -3060,7 +3282,8 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                         {wiprof[2][0], wiprof[2][1], wiprof[2][2]}
                     };
 
-                Imagefloat* provcomp = new Imagefloat(GW, GH);
+                std::unique_ptr<Imagefloat> provcompOwner(new Imagefloat(GW, GH));
+                Imagefloat* const provcomp = provcompOwner.get();
 
 #ifdef _OPENMP
         #   pragma omp parallel for
@@ -3131,7 +3354,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
                         Color::XYZ2Lab(x, y, z, nprevl->L[i][j], nprevl->a[i][j], nprevl->b[i][j]);
                     }
                 }
-                delete provcomp;
+                provcompOwner.reset();
             }
             AutoprimListener* const autoPrim = primListener;
             if (!destroying && autoPrim) {
@@ -3155,7 +3378,17 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
 
     traceStage("preview-done-before-crops");
 
+    bool cropsAbandoned = false;
+
     for (size_t i = 0; i < crops.size(); i++) {
+        if (!cropsAbandoned && standDown("stood-down-before-crop", true)) {
+            cropsAbandoned = true;
+        }
+        if (cropsAbandoned) {
+            crops[i]->noteSkippedUpdate(todo);
+            continue;
+        }
+
         const bool listening = crops[i]->hasListener();
         const bool wanted = panningRelatedChange
             || (highDetailNeeded && prevdemo != PD_Sidecar)
@@ -3165,6 +3398,10 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
         if (listening && wanted) {
             crops[i]->update(todo);     // may call ourselves
             ++settledCropsRendered;
+        } else {
+            // Its next update -- the settled refinement at the latest --
+            // still owes this pass's work.
+            crops[i]->noteSkippedUpdate(todo);
         }
     }
 
@@ -3175,7 +3412,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
     // that renders no crop therefore tells the editor's refinement watchdog
     // "published" while leaving the canvas on the previous, coarser render —
     // exactly the "stops improving, stuck at low res" symptom. Flag it.
-    if (highDetailNeeded && settledCropsRendered == 0) {
+    if (highDetailNeeded && settledCropsRendered == 0 && !cropsAbandoned) {
         std::fprintf(
             stderr,
             "Settled preview rendered no detail crop (crops=%d) for '%s'; canvas keeps the previous render.\n",
@@ -3206,8 +3443,9 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             nowSteady - lastAnalysisPublish).count();
 
     const bool analysisSupersededSoon =
-        resultValid && !highDetailNeeded
-        && (hasPendingChange() || sinceLastAnalysisUs < kAnalysisMinIntervalUs);
+        cropsAbandoned
+        || (resultValid && !highDetailNeeded
+            && (hasPendingChange() || sinceLastAnalysisUs < kAnalysisMinIntervalUs));
 
     if (analysisSupersededSoon) {
         traceStage("preview-publish-skipped");
@@ -3372,14 +3610,17 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             && !destroying && oprevi && pW > 0 && pH > 0
             && getAISegmentationEngine().isInitialized()) {
         const std::string imageId = imgsrc->getFileName().raw();
-        if (!AIMaskCache::getInstance().hasCachedMasks(imageId)) {
+        if (!AIMaskCache::getInstance().hasCachedMasks(imageId, aiMaskGeometryKey(*params))) {
             if (edittrace::enabled()) {
                 edittrace::logf("[aiMask] %s analyze img=%s",
                                 forcedAnalysis ? "requested" : "proactive", imageId.c_str());
             }
-            AIMaskCache::getInstance().computeMasks(
-                imageId, oprevi->r.ptrs, oprevi->g.ptrs, oprevi->b.ptrs,
-                pW, pH, fw, fh, params->icm.workingProfile.raw(), true);
+            if (aiMasksInPass()) {
+                ensureAIMasks(imgsrc, *params, currWB, true);
+            } else {
+                // Nothing on screen depends on the maps yet: no repaint.
+                requestAIMasks(imgsrc, *params, currWB, true, this, {});
+            }
         }
     }
 #endif
@@ -3392,7 +3633,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
     // slider debounce to what this pipeline can actually deliver instead of a
     // fixed guess. Settled passes are excluded: they are a one-off refinement,
     // not the rate the user is dragging against.
-    if (!highDetailNeeded) {
+    if (!highDetailNeeded && !cropsAbandoned) {
         const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
                                  PreviewClock::now() - traceStart).count();
         // Light smoothing: one slow pass (a first render, a background hiccup)
@@ -3646,6 +3887,32 @@ std::vector<procparams::SpotEntry> ImProcCoordinator::detectDustSpots(int maxSpo
 
     return found;
 }
+
+#ifdef RT_AI_MASKING
+// For a pass that draws with the AI maps (an AI-masked spot). The
+// analysis runs on the AI mask worker, not here: until it lands this pass
+// draws those spots as editing nothing (AIMaskCache's pending placeholder),
+// and the worker starts one more pass when the maps are in.
+void ImProcCoordinator::requestAIMasksForPass()
+{
+    // Depth is estimated only for a mask that splits by it.
+    const bool needDepth = aiMasksNeedDepth(*params);
+    if (aiMasksInPass()) {
+        ensureAIMasks(imgsrc, *params, currWB, true, needDepth);
+        return;
+    }
+
+    const AIMaskRequest state = requestAIMasks(imgsrc, *params, currWB, true, this, [this]() {
+        // TONE re-runs local adjustments; the detail crops
+        // follow. Never params, so safe off the GUI thread.
+        startProcessing(TONE);
+    }, needDepth);
+    if (state == AIMaskRequest::PENDING && edittrace::enabled()) {
+        edittrace::logf("[aiMask] pass drew without AI masks (pending) img=%s",
+                        imgsrc->getFileName().c_str());
+    }
+}
+#endif
 
 void ImProcCoordinator::setSmartMaskAnalysisWanted(bool wanted)
 {
@@ -4163,11 +4430,22 @@ void ImProcCoordinator::getSpotHSV(int x, int y, int rectSize, float& hOut, floa
 {
     MyMutex::MyLock lock(mProcessing);
 
+    // Point Color keys off the hue rgbProc computes, so sample what rgbProc is
+    // handed: oprevi is the working image after the transform (rotation, lens,
+    // perspective), Double Exposure, dehaze and local edits, at the canvas's
+    // own coordinates. orig_prev sat before the transform, so on a rotated or
+    // lens-corrected photo the pick read a different pixel. Then replay the
+    // rgbProc steps ahead of Point Color that are cheap to reproduce: channel
+    // mixer, exposure/highlight compression, black, the main tone curve,
+    // saturation and the HSV equaliser's hue curve. The custom tone curves
+    // and DCP look table are left out (they bend hue the least).
+    const Imagefloat* src = (oprevi && oprevi->getWidth() == pW && oprevi->getHeight() == pH) ? oprevi : orig_prev;
+
     // Scale image coords to preview coords
     int px = x / scale;
     int py = y / scale;
 
-    if (!orig_prev || px < 0 || py < 0 || px >= pW || py >= pH) {
+    if (!src || px < 0 || py < 0 || px >= pW || py >= pH) {
         hOut = sOut = vOut = 0.f;
         return;
     }
@@ -4178,26 +4456,92 @@ void ImProcCoordinator::getSpotHSV(int x, int y, int rectSize, float& hOut, floa
     int x2 = std::min(pW - 1, px + rectSize);
     int y2 = std::min(pH - 1, py + rectSize);
 
+    const auto& mix = params->chmixer;
+    const bool mixchannels = mix.enabled;
+    const double expcomp = params->toneCurve.expcomp;
+    const float exp_scale = std::pow(2.0, expcomp);
+    const float comp = (std::max(0.0, expcomp) + 1.0) * params->toneCurve.hlcompr / 100.0;
+    const float shoulder = ((65536.f / std::max(1.0f, exp_scale)) * (params->toneCurve.hlcomprthresh / 200.f)) + 0.1f;
+    const float hlrange = 65536.f - shoulder;
+    const bool useHl = static_cast<bool>(hltonecurve);
+    const bool useSh = params->toneCurve.black != 0 && static_cast<bool>(shtonecurve);
+    const bool useTc = static_cast<bool>(tonecurve);
+
     float rSum = 0.f, gSum = 0.f, bSum = 0.f;
     int count = 0;
     for (int i = y1; i <= y2; ++i) {
         for (int j = x1; j <= x2; ++j) {
-            rSum += orig_prev->r(i, j);
-            gSum += orig_prev->g(i, j);
-            bSum += orig_prev->b(i, j);
+            float r = src->r(i, j);
+            float g = src->g(i, j);
+            float b = src->b(i, j);
+
+            if (mixchannels) {
+                const float rm = (r * mix.red[0] + g * mix.red[1] + b * mix.red[2]) / 1000.f;
+                const float gm = (r * mix.green[0] + g * mix.green[1] + b * mix.green[2]) / 1000.f;
+                const float bm = (r * mix.blue[0] + g * mix.blue[1] + b * mix.blue[2]) / 1000.f;
+                r = rm;
+                g = gm;
+                b = bm;
+            }
+
+            if (useHl) {
+                const auto hl = [&](float v) {
+                    return v < MAXVALF ? hltonecurve[std::max(v, 0.f)] : CurveFactory::hlcurve(exp_scale, comp, hlrange, v);
+                };
+                const float tonefactor = (hl(r) + hl(g) + hl(b)) / 3.f;
+                r *= tonefactor;
+                g *= tonefactor;
+                b *= tonefactor;
+            }
+
+            if (useSh) {
+                const float tonefactor = shtonecurve[std::max(0.f, 0.299f * r + 0.587f * g + 0.114f * b)];
+                r *= tonefactor;
+                g *= tonefactor;
+                b *= tonefactor;
+            }
+
+            if (useTc) {
+                r = tonecurve[LIM(r, 0.f, 65535.f)];
+                g = tonecurve[LIM(g, 0.f, 65535.f)];
+                b = tonecurve[LIM(b, 0.f, 65535.f)];
+            }
+
+            rSum += r;
+            gSum += g;
+            bSum += b;
             ++count;
         }
     }
 
     if (count > 0) {
-        // orig_prev values are 0..65535 range; normalize to 0..1 for hsv conversion
-        float r = rSum / (count * 65535.f);
-        float g = gSum / (count * 65535.f);
-        float b = bSum / (count * 65535.f);
-        r = std::max(0.f, std::min(1.f, r));
-        g = std::max(0.f, std::min(1.f, g));
-        b = std::max(0.f, std::min(1.f, b));
-        Color::rgb2hsv01(r, g, b, hOut, sOut, vOut);
+        float h, s, v;
+        Color::rgb2hsvtc(std::max(rSum / count, 0.f), std::max(gSum / count, 0.f), std::max(bSum / count, 0.f), h, s, v);
+        h /= 6.f;
+
+        const float sat = params->toneCurve.saturation / 100.f;
+        if (sat > 0.f) {
+            s = std::max(0.f, intp(sat, 1.f - SQR(SQR(1.f - std::min(s, 1.0f))), s));
+        } else {
+            s *= 1.f + sat;
+        }
+
+        if (params->hsvequalizer.enabled
+                && static_cast<FlatCurveType>(params->hsvequalizer.hcurve.at(0)) > FCT_Linear) {
+            const FlatCurve hCurve(params->hsvequalizer.hcurve);
+            if (!hCurve.isIdentity()) {
+                h = (hCurve.getVal(h) - 0.5) * 2.0 + static_cast<double>(h);
+                if (h > 1.f) {
+                    h -= 1.f;
+                } else if (h < 0.f) {
+                    h += 1.f;
+                }
+            }
+        }
+
+        hOut = LIM(h, 0.f, 1.f);
+        sOut = LIM(s, 0.f, 1.f);
+        vOut = LIM(v, 0.f, 1.f);
     } else {
         hOut = sOut = vOut = 0.f;
     }
@@ -4467,6 +4811,20 @@ void ImProcCoordinator::rememberProcessingTask(
     processingTasks.push_back({std::move(completion), std::move(cancel)});
 }
 
+void ImProcCoordinator::setFullQualityTwin(std::shared_ptr<FullQualityTwin> twin)
+{
+    std::shared_ptr<FullQualityTwin> previous;
+    {
+        std::lock_guard<std::mutex> lock(fullQualityTwinMutex);
+        previous = std::move(fullQualityTwin);
+        // Too late once the raw is already demosaiced at full quality.
+        fullQualityTwin = destroying ? nullptr : std::move(twin);
+    }
+    if (previous) {
+        previous->abandon();
+    }
+}
+
 void ImProcCoordinator::startProcessing()
 {
     if (destroying) {
@@ -4619,9 +4977,12 @@ void ImProcCoordinator::process()
             || params->filmNegative != nextParams->filmNegative
             || params->doubleExposure != nextParams->doubleExposure
             || params->spot.enabled != nextParams->spot.enabled
-            || sharpMaskChanged;
+            || sharpMaskChanged
+            // The pass before this one stood down: this one publishes for it.
+            || resumeAbandonedPass_;
 
         sharpMaskChanged = false;
+        resumeAbandonedPass_ = false;
 
         *params = *nextParams;
         smartRepairPass_ = std::atomic_load(&smartRepairRequest_);
@@ -4655,8 +5016,50 @@ void ImProcCoordinator::process()
         if (change & (~M_VOID)) {
             try {
                 updatePreviewImage(change, panningRelatedChange);
+                // A first frame is on screen: the twin may now take cores
+                // for its demosaic without delaying it.
+                std::lock_guard<std::mutex> lock(fullQualityTwinMutex);
+                if (fullQualityTwin) {
+                    fullQualityTwin->releasePrecompute();
+                }
             } catch (const SmartRepairCancelled&) {
                 // The next queued parameter snapshot owns the replacement.
+            } catch (const std::bad_alloc&) {
+                // Out of memory, usually for a moment -- another program
+                // loading onto the GPU it shares. Free the AI models and run
+                // the pass once more rather than leave a stale preview.
+                std::fprintf(
+                    stderr,
+                    "Preview processing ran out of memory for '%s'; freeing caches and AI models and retrying\n",
+                    imgsrc ? imgsrc->getFileName().c_str() : "");
+                // Drops the caches that are cheap to rebuild along with the
+                // idle models. Refused when a trim ran moments ago, in which
+                // case the models are still worth a try on their own.
+                if (!MemGuard::trim(1, "preview pass out of memory")) {
+                    AIIdleReaper::releaseNow();
+                    MemGuard::logNow("preview pass out of memory");
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                // One retry, never a loop: if it fails too the stale preview
+                // stays until the next edit, and that is said once.
+                const auto retryFailed = [this](const char* what) {
+                    if (oomRetryReported_) {
+                        return;
+                    }
+                    oomRetryReported_ = true;
+                    std::fprintf(stderr, "Preview processing retry failed for '%s': %s; keeping the previous preview\n",
+                                 imgsrc ? imgsrc->getFileName().c_str() : "", what);
+                    MemGuard::logNow("preview retry failed after running out of memory");
+                };
+                try {
+                    updatePreviewImage(change, panningRelatedChange);
+                } catch (const SmartRepairCancelled&) {
+                } catch (const std::exception& error) {
+                    if (smartRepairPass_ && !smartRepairPass_->cancelled) smartRepairPass_->stage = SmartRepairStage::Failed;
+                    retryFailed(error.what());
+                } catch (...) {
+                    retryFailed("unknown exception");
+                }
             } catch (const std::exception& error) {
                 if (smartRepairPass_ && !smartRepairPass_->cancelled) smartRepairPass_->stage = SmartRepairStage::Failed;
                 std::fprintf(

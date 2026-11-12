@@ -81,7 +81,6 @@ set(RTENGINESOURCEFILES
     iptextureclarity.cc
     ipgraineffect.cc
     iplighteffects.cc
-    iprelight.cc
     iptiltshift.cc
     iplensblur.cc
     ipresize.cc
@@ -103,6 +102,7 @@ set(RTENGINESOURCEFILES
     lensmetadata.cc
     lmmse_demosaic.cc
     maskpaint.cc
+    memguard.cc
     loadinitial.cc
     metadata.cc
     munselllch.cc
@@ -182,7 +182,7 @@ if(NOT WITH_SYSTEM_KLT)
 endif()
 
 if(WITH_AI_MASKING)
-    list(APPEND RTENGINESOURCEFILES aisegmentation.cc aimaskcache.cc aiinpainting.cc aisubjectmodel.cc)
+    list(APPEND RTENGINESOURCEFILES aisegmentation.cc aimaskcache.cc aimaskinput.cc aiinpainting.cc aisubjectmodel.cc)
 endif()
 
 add_library(rtengine STATIC "${RTENGINESOURCEFILES}")

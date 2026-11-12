@@ -102,7 +102,7 @@ headerbar {
     padding: 0 0.25em;
 }
 #RTHeaderBar .title {
-    font-weight: bold;
+    font-weight: 600;
     font-size: 0.9em;
     color: @steep_text;
 }
@@ -115,7 +115,7 @@ headerbar {
 #NavButton {
     padding: 0.25em 0.5em;
     margin: 1px;
-    border-radius: 0.25em;
+    border-radius: 6px;
     background-color: transparent;
     border: none;
 }
@@ -140,16 +140,12 @@ headerbar {
 #OptionsMenuButton {
     padding: 0.25em 0.333333em;
     margin: 1px;
-    border-radius: 0.25em;
+    border-radius: 6px;
 }
 #OptionsMenuButton:hover {
     background-color: alpha(@steep_wash, 0.08);
 }
-#OptionsPopover {
-    background-color: @steep_surface_3;
-    border-radius: 12px 12px 6px 6px;
-    box-shadow: 0 10px 28px alpha(@steep_shadow, 0.45);
-}
+/* Shape and surface come from the floating-surface recipe (see `menu`). */
 #OptionsPopover button.options-item {
     padding: 0.3em 0.6em;
     border-radius: 6px;
@@ -164,7 +160,7 @@ headerbar {
 #WindowControlButton {
     padding: 0.25em 0.416666em;
     margin: 1px;
-    border-radius: 0.25em;
+    border-radius: 6px;
 }
 #WindowControlButton:hover {
     background-color: alpha(@steep_wash, 0.10);
@@ -172,13 +168,13 @@ headerbar {
 #WindowCloseButton {
     padding: 0.25em 0.416666em;
     margin: 1px;
-    border-radius: 0.25em;
+    border-radius: 6px;
 }
 #WindowCloseButton:hover {
-    background-color: rgba(232,17,35,0.9);
+    background-color: alpha(@steep_danger, 0.9);
 }
 dialog > box {
-    padding: 0.666666666666666666em;
+    padding: 16px;
 }
 dialog.csd #PrefNotebook > header,
 dialog.csd #AboutNotebook > header,
@@ -212,9 +208,12 @@ window.dialog.background {
     background-color: @steep_surface_1;
     color: @steep_text;
 }
+/* Floating surface (see the recipe at `menu`); size.css carries the shape. */
 popover, popover.background {
     background-color: @steep_surface_3;
     color: @steep_text;
+    border: 1px solid @steep_border_soft;
+    box-shadow: none;
 }
 
 box, grid {
@@ -232,7 +231,9 @@ box, grid {
 }
 label {
     padding: 1px 0;
-    margin: 2px;
+    /* Sideways air only. The old all-round 2px stacked up differently in
+       every panel; vertical rhythm belongs to the containers. */
+    margin: 0 2px;
     min-height: 1.333333333333333333em;
 }
 
@@ -245,7 +246,7 @@ frame {
 /* Create space between frame contents and frame border */
 frame border {
     border: 1px solid @steep_border;
-    border-radius: 0.3333333333333333em;
+    border-radius: 6px;
     padding: 1px;
 }
 
@@ -260,11 +261,15 @@ entry > window > frame {
 }
 
 tooltip {
-    border-radius: 0.416666666666666666em;
+    border-radius: 6px;
     background-color: alpha(@steep_surface_3, 0.97);
     border: 1px solid @steep_border_soft;
     box-shadow: none;
     padding: 0;
+    margin: 0;
+}
+tooltip label {
+    padding: 4px 8px;
     margin: 0;
 }
 
@@ -282,7 +287,7 @@ separator,
     min-height: 1px;
 }
 grid separator, box separator {
-    background-color: rgba(0, 0, 0, 0.17);
+    background-color: alpha(@steep_shadow, 0.30);
 }
 grid separator.horizontal, box separator.horizontal {
     margin: 0.5em 0.25em;
@@ -422,7 +427,7 @@ scrollbar slider {
     padding: 0;
     margin: 0;
     background-color: alpha(@steep_text_dim, 0.40);
-    border-radius: 0.25em;
+    border-radius: 3px;
 }
 scrollbar slider:hover {
     background-color: @steep_text_dim;
@@ -455,7 +460,7 @@ scrollbar.horizontal.overlay-indicator:not(.hovering) slider {
     min-width: 2em;
     min-height: 0.25em;
     border-width: 0;
-    border-radius: 0.25em;
+    border-radius: 3px;
     margin: 2px 0.25em;
     /*margin: 0 2px;*/
 }
@@ -481,7 +486,7 @@ scrollbar.vertical.overlay-indicator:not(.hovering) slider {
     min-width: 0.25em;
     min-height: 2em;
     border-width: 0;
-    border-radius: 0.25em;
+    border-radius: 3px;
     margin: 2px 0;
     /*margin: 0.25em 2px;*/
 }
@@ -560,7 +565,7 @@ button:hover  {
 
 button:active  {
     background-image: none;
-    background-color: alpha(#000000, 0.22);
+    background-color: alpha(@steep_shadow, 0.40);
 }
 
 button:checked  {
@@ -594,7 +599,7 @@ scale slider {
     min-height: 0;
     margin: -0.4em;
     padding: 0.4em;
-    border-radius: 0.8em;
+    border-radius: 50%;
     border-width: 1px;
     background-image: none;
     background-color: @steep_surface_3;
@@ -614,8 +619,8 @@ scale trough {
     min-width: 0.2em;
     padding: 0 0.583333333333333333em;
     border-width: 1px;
-    border-radius: 0.333333333333333333em;
-    background-color: rgba(0,0,0,0.15);
+    border-radius: 3px;
+    background-color: alpha(@steep_shadow, 0.27);
 }
 scale:disabled trough {
     background-color: @steep_surface_2;
@@ -632,7 +637,7 @@ scale.color trough {
 scale trough highlight {
     border: none;
     margin: 0 -0.583333333333333333em;
-    border-radius: 0.2em;
+    border-radius: 3px;
     min-height: 0;
     min-width: 0;
     padding: 0.1em 0.1em 0 0; /*height of trough */
@@ -640,7 +645,7 @@ scale trough highlight {
 
 scale.fine-tune trough highlight {
     padding: 0.5em 0.5em 0 0;
-    border-radius: 0.5em;
+    border-radius: 3px;
 }
 /*** end ***************************************************************************************/
 
@@ -652,7 +657,7 @@ scale.fine-tune trough highlight {
     padding: 0;
     min-height: 0.4166666666666666em;
     min-width: 0.4166666666666666em;
-    border-radius: 0.25em;
+    border-radius: 6px;
 }
 
 /* Adjusters */
@@ -688,12 +693,12 @@ button.text-button.toggle:hover:checked {
 
 #ShowMaskButton:checked {
     background-color: alpha(@steep_attention,0.75);
-    color: white;
+    color: @steep_on_accent;
 }
 
 #ShowMaskButton:hover:checked {
     background-color: alpha(@steep_attention,0.9);
-    color: white;
+    color: @steep_on_accent;
 }
 
 /* */
@@ -721,7 +726,7 @@ image {
 
 /* Vertical group of buttons in 1 column */
 button.Top {
-    border-radius: 0.25em 0.25em 0 0;
+    border-radius: 6px 6px 0 0;
     border-style: solid solid none solid;
     margin-bottom: 0;
 }
@@ -732,7 +737,7 @@ button.MiddleV {
     margin-bottom: 0;
 }
 button.Bottom {
-    border-radius: 0 0 0.25em 0.25em;
+    border-radius: 0 0 6px 6px;
     border-style: none solid solid solid;
     margin-top: 0;
 }
@@ -743,7 +748,7 @@ button.Bottom {
 #MetaPanelNotebook scrolledwindow + grid + grid > button.Left,
 #ProfilePanel button.Left,
 button.Left {
-    border-radius: 0.25em 0 0 0.25em;
+    border-radius: 6px 0 0 6px;
     border-style: solid none solid solid;
     margin-right: 0;
 }
@@ -760,7 +765,7 @@ button.MiddleH {
 #MetaPanelNotebook scrolledwindow + grid + grid > button.Right,
 #ProfilePanel button.Right,
 button.Right {
-    border-radius: 0 0.25em 0.25em 0;
+    border-radius: 0 6px 6px 0;
     border-style: solid solid solid none;
     margin-left: 0;
 }
@@ -769,7 +774,7 @@ button.Right {
 /* Preset list panel */
 #PresetListPanel .preset-card {
     padding: 4px;
-    border-radius: 4px;
+    border-radius: 6px;
     min-width: 80px;
 }
 
@@ -798,7 +803,7 @@ button.Right {
 }
 
 #PresetListPanel .preset-category > label {
-    font-weight: bold;
+    font-weight: 600;
     font-size: 0.9em;
 }
 
@@ -841,7 +846,7 @@ button.Right {
 }
 #NavigatorDialog headerbar .title,
 #HistoryDialog headerbar .title {
-    font-weight: bold;
+    font-weight: 600;
     font-size: 0.9em;
 }
 
@@ -860,15 +865,15 @@ decoration {
     border-radius: 3px;
 }
 #PointColorSwatch {
-    border-radius: 2px;
+    border-radius: 3px;
     min-height: 12px;
 }
 
 /* [1.23[-][+]] */
 entry, spinbutton {
     min-height: 0.8333333333333333em;
-    background-color: rgba(0,0,0,0.075);
-    border-radius: 0.2em;
+    background-color: alpha(@steep_shadow, 0.14);
+    border-radius: 6px;
 }
 
 spinbutton entry {
@@ -880,7 +885,7 @@ spinbutton button {
     border-radius: 0;
 }
 spinbutton button.up {
-    border-radius: 0 2px 2px 0;
+    border-radius: 0 6px 6px 0;
 }
 
 entry:disabled, spinbutton:disabled {
@@ -945,11 +950,21 @@ entry:selected {
     -gtk-icon-transform: scale(0.55);
 }
 
-/* Context menus — raised overlay surface, selection-tinted hover pill */
+/* Floating surfaces — menus, popovers and tooltips share one recipe: the
+   raised surface, a soft hairline, radius 10px (tooltips 6px), a 4px inset,
+   6px rows. The hairline does the separating: Windows GTK3 popups draw no
+   shadow. The lengths for the same nodes live in size.css. */
 menu {
     background-color: @steep_surface_3;
     color: @steep_text;
-    padding: 3px;
+    border: 1px solid @steep_border_soft;
+    padding: 4px;
+}
+/* The popup window behind a menu must not paint, or its square corners show
+   around the rounded menu. Only matches when the window has an alpha
+   channel (GTK adds .csd then), so an opaque popup keeps its backing. */
+.csd.popup:not(tooltip) {
+    background-color: transparent;
 }
 
 /* Context menu item */
@@ -957,7 +972,7 @@ menuitem {
     padding: 0.25em 0.4em;
     margin: 0;
     min-height: 0.8333333333333333em;
-    border-radius: 4px;
+    border-radius: 6px;
 }
 menuitem:hover {
     background-color: alpha(@steep_select, 0.40);
@@ -1091,14 +1106,14 @@ button.toggle#histButton:hover,
 
 /* Borders around tools and subtools */
 #MyExpander {
-    border-top: 1px solid rgba(0,0,0,0.3);
+    border-top: 1px solid alpha(@steep_shadow, 0.55);
 }
 #MyExpander:first-child {
     border-top: none;
 }
 #MyExpander:nth-last-child(1),
 #MyExpander #MyExpander:nth-last-child(1) {
-    border-bottom: 1px solid rgba(0,0,0,0.3);
+    border-bottom: 1px solid alpha(@steep_shadow, 0.55);
 }
 #MyExpander #MyExpander:nth-last-child(2) {
     border-bottom: none;
@@ -1178,7 +1193,7 @@ button.toggle#histButton:hover,
     padding: 0;
     margin: 0;
     font-size: 1.1em; /* TODO: Does not work? */
-    font-weight: bold;
+    font-weight: 600;
 }
 
 #MyExpander.Fold > #MyExpanderTitle label,
@@ -1259,7 +1274,7 @@ button.toggle#histButton:hover,
 #MyExpander scale slider {
     padding: 7px;
     margin: -7px;
-    border-radius: 7px;
+    border-radius: 50%;
     min-height: 0;
     min-width: 0;
 }
@@ -1355,7 +1370,7 @@ radiobutton.ColorDot:checked > * {
     background-color: alpha(@steep_accent, 0.28);
 }
 #PointColorToolbar button {
-    border-radius: 4px;
+    border-radius: 6px;
     background-color: transparent;
     border: 1px solid transparent;
 }
@@ -1396,7 +1411,7 @@ button.section-header {
     margin: 4px 0 0 0;
     min-height: 0;
     border: none;
-    border-radius: 4px;
+    border-radius: 6px;
     background-color: transparent;
     background-image: none;
     box-shadow: none;
@@ -1488,10 +1503,7 @@ button.section-header image {
 }
 #ToolGroupHeader label {
     color: @steep_text;
-    font-weight: bold;
-    /* Top of the type ladder: above tool titles (1.1em) and tool headings
-       (1em), so a group outranks everything it contains. */
-    font-size: 1.15em;
+    font-weight: 600;
     letter-spacing: 0.06em;
     padding: 0;
     margin: 0;
@@ -1538,12 +1550,11 @@ button.section-header image {
     padding-top: 0;
 }
 
-/* Tool section labels (within flat-mode tool groups).
-   NOTE: font-size here is dead — the forced-font provider outranks the
-   theme (see the type ladder in widgets.css, which carries the live sizes). */
+/* Tool section labels (within flat-mode tool groups). Sizes are not set
+   here: the forced-font provider outranks the theme, so the live sizes are
+   the type ladder in widgets.css. */
 .tool-section-label {
-    font-size: 0.85em;
-    font-weight: bold;
+    font-weight: 600;
     color: @steep_text;
     padding: 0 0 1px 0;
     margin: 0;
@@ -1554,8 +1565,7 @@ button.section-header image {
    Denoise). A size up from and brighter than the section labels inside the
    tools, pinned flush left, so the tool level reads above its sections. */
 .tool-heading-label {
-    font-size: 1em;
-    font-weight: bold;
+    font-weight: 600;
     color: @steep_text_hi;
     padding: 0;
     margin: 4px 0 1px 0;
@@ -1712,7 +1722,7 @@ paned box, paned grid {
 }
 
 paned > separator {
-    background: rgba(0,0,0,0.075);
+    background: alpha(@steep_shadow, 0.14);
     border: none;
     min-width: 0.25em;
     min-height: 0.25em;
@@ -1848,7 +1858,7 @@ dialog frame > label:not(.dummy) {
 #MetaPanelNotebook > stack > box {
     border: 1px solid @steep_border;
     background-color: @steep_surface_2;
-    border-radius: 0 0 0.3333333333333333em 0.3333333333333333em;
+    border-radius: 0 0 6px 6px;
     border-top-style: none;
     padding: 0 0.25em 0.25em 0.25em;
     margin: 0 0.4166666666666666em 0.4166666666666666em 0.4166666666666666em;
@@ -1857,7 +1867,7 @@ dialog frame > label:not(.dummy) {
 #MetaPanelNotebook header {
     border: 1px solid @steep_border;
     background-color: @steep_surface_2;
-    border-radius: 0.3333333333333333em 0.3333333333333333em 0 0;
+    border-radius: 6px 6px 0 0;
     border-bottom-style: none;
     padding: 0.4166666666666666em;
     margin: 0.4166666666666666em 0.4166666666666666em 0 0.4166666666666666em;
@@ -1873,7 +1883,7 @@ dialog frame > label:not(.dummy) {
 }
 
 #MetaPanelNotebook textview {
-    border-radius: 0.25em;
+    border-radius: 6px;
 }
 
 #MetaPanelNotebook entry, #MetaPanelNotebook scrolledwindow, #MetaPanelNotebook combobox {
@@ -1893,7 +1903,7 @@ dialog frame > label:not(.dummy) {
     background-color: @steep_surface_0;
     border-style: solid;
     border-width: 1px;
-    border-radius: 0.25em;
+    border-radius: 6px;
 }
 
 #MetaPanelNotebook stack > box > scrolledwindow > viewport {
@@ -1978,7 +1988,7 @@ dialog frame > label:not(.dummy) {
 /* Section headings (frame titles) — larger and bold */
 #PrefNotebook frame > label {
     font-size: 1.05em;
-    font-weight: bold;
+    font-weight: 600;
     padding: 0.3em 0.25em 0.15em;
     color: @steep_text_hi;
 }
@@ -2083,7 +2093,7 @@ dialog frame > label:not(.dummy) {
 #PartialPasteHeader {
     margin: 1.5em 0 0 0;
     padding: 0;
-    font-weight: bold;
+    font-weight: 600;
 }
 
 #PartialPasteHeaderSep {
@@ -2269,7 +2279,23 @@ combobox:focus,
 checkbutton:focus,
 radiobutton:focus,
 notebook tab:focus,
-scale:focus {
+scale:focus,
+treeview.view:focus,
+list row:focus,
+.segmented > button:focus,
+.segmented > radiobutton:focus {
     outline: 1px solid alpha(@steep_accent, 0.65);
     outline-offset: -1px;
+}
+
+/*** Disabled ***********************************************************************************/
+/* One legible disabled level for button content: 45% of the normal ink.
+   (The generic *:disabled above would stack to about 20%, which reads as
+   missing rather than unavailable.) */
+button:disabled label {
+    color: @steep_text;
+    opacity: 0.45;
+}
+button:disabled image {
+    opacity: 0.45;
 }

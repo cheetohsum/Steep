@@ -29,7 +29,7 @@
 
 
 // Aligned so the first entry starts on line 30.
-int refreshmap[rtengine::NUMOFEVENTS] = {
+int refreshmap[] = {
     ALL,              // EvPhotoLoaded,
     0,              // EvProfileLoaded : obsolete,
     ALL,              // EvProfileChanged,
@@ -102,7 +102,7 @@ int refreshmap[rtengine::NUMOFEVENTS] = {
     OUTPUTPROFILE,    // EvOProfile,
     ALLNORAW,         // EvIProfile,
     HDR,        // EvVignettingAmount,
-    AUTOEXP,         // EvChMixer,
+    TONE,            // EvChMixer,
     RESIZE,           // EvResizeScale,
     RESIZE,           // EvResizeMethod,
     EXIF,             // EvExif,
@@ -130,10 +130,10 @@ int refreshmap[rtengine::NUMOFEVENTS] = {
     DEMOSAIC,         // EvDemosaicMethod
     DARKFRAME,        // EvPreProcessHotPixel
     TONE,            // EvSaturation,
-    AUTOEXP,         // EvHSVEqualizerH,
-    AUTOEXP,         // EvHSVEqualizerS,
-    AUTOEXP,         // EvHSVEqualizerV,
-    AUTOEXP,         // EvHSVEqEnabled,
+    TONE,            // EvHSVEqualizerH,
+    TONE,            // EvHSVEqualizerS,
+    TONE,            // EvHSVEqualizerV,
+    TONE,            // EvHSVEqEnabled,
     DEFRINGE,         // EvDefringeEnabled,
     DEFRINGE,         // EvDefringeRadius,
     DEFRINGE,         // EvDefringeThreshold,
@@ -180,13 +180,13 @@ int refreshmap[rtengine::NUMOFEVENTS] = {
     SHARPENING,       // EvSharpenMicroEnabled
     SHARPENING,       // EvSharpenMicroMatrix
     DEMOSAIC,         // EvDemosaicALLEnhanced Disabled but not removed for now, may be reintroduced some day
-    AUTOEXP,         // EvVibranceEnabled
-    AUTOEXP,         // EvVibrancePastels
-    AUTOEXP,         // EvVibranceSaturated
-    AUTOEXP,         // EvVibranceProtectSkins
-    AUTOEXP,         // EvVibranceAvoidColorShift
-    AUTOEXP,         // EvVibrancePastSatTog
-    AUTOEXP,         // EvVibrancePastSatThreshold
+    TONE,            // EvVibranceEnabled
+    TONE,            // EvVibrancePastels
+    TONE,            // EvVibranceSaturated
+    TONE,            // EvVibranceProtectSkins
+    TONE,            // EvVibranceAvoidColorShift
+    TONE,            // EvVibrancePastSatTog
+    TONE,            // EvVibrancePastSatThreshold
     SHARPENING,       // EvEPDStrength
     SHARPENING,       // EvEPDEdgeStopping
     SHARPENING,       // EvEPDScale
@@ -199,7 +199,7 @@ int refreshmap[rtengine::NUMOFEVENTS] = {
     DEMOSAIC | M_PREPROC, // EvDemosaicMethodPreProc
     LUMINANCECURVE,   // EvLCCurve
     LUMINANCECURVE,   // EvLCHCurve
-    AUTOEXP,         // EvVibranceSkinTonesCurve
+    TONE,            // EvVibranceSkinTonesCurve
     LUMINANCECURVE,   // EvLLCCurve
     LUMINANCECURVE,   // EvLLCredsk
     ALLNORAW,         // EvDPDNLdetail
@@ -243,30 +243,30 @@ int refreshmap[rtengine::NUMOFEVENTS] = {
     HDR,        // EvGradientEnabled
     HDR,        // EvPCVignetteStrength
     HDR,        // EvPCVignetteEnabled
-    AUTOEXP,         // EvBWChmixEnabled
-    AUTOEXP,         // EvBWred
-    AUTOEXP,         // EvBWgreen
-    AUTOEXP,         // EvBWblue
-    AUTOEXP,         // EvBWredgam
-    AUTOEXP,         // EvBWgreengam
-    AUTOEXP,         // EvBWbluegam
-    AUTOEXP,         // EvBWfilter
-    AUTOEXP,         // EvBWsetting
-    AUTOEXP,         // EvBWoran
-    AUTOEXP,         // EvBWyell
-    AUTOEXP,         // EvBWcyan
-    AUTOEXP,         // EvBWmag
-    AUTOEXP,         // EvBpur
-    AUTOEXP,         // EvBWLuminanceEqual
-    AUTOEXP,         // EvBWChmixEnabledLm
-    AUTOEXP,         // EvBWmethod
-    AUTOEXP,         // EvBWBeforeCurve
-    AUTOEXP,         // EvBWBeforeCurveMode
-    AUTOEXP,         // EvBWAfterCurve
-    AUTOEXP,         // EvBWAfterCurveMode
-    AUTOEXP,         // EvAutoch
+    TONE,            // EvBWChmixEnabled
+    TONE,            // EvBWred
+    TONE,            // EvBWgreen
+    TONE,            // EvBWblue
+    TONE,            // EvBWredgam
+    TONE,            // EvBWgreengam
+    TONE,            // EvBWbluegam
+    TONE,            // EvBWfilter
+    TONE,            // EvBWsetting
+    TONE,            // EvBWoran
+    TONE,            // EvBWyell
+    TONE,            // EvBWcyan
+    TONE,            // EvBWmag
+    TONE,            // EvBpur
+    TONE,            // EvBWLuminanceEqual
+    TONE,            // EvBWChmixEnabledLm
+    TONE,            // EvBWmethod
+    TONE,            // EvBWBeforeCurve
+    TONE,            // EvBWBeforeCurveMode
+    TONE,            // EvBWAfterCurve
+    TONE,            // EvBWAfterCurveMode
+    TONE,            // EvAutoch
     0,                // --unused--
-    AUTOEXP,         // EvNeutralBW
+    TONE,            // EvNeutralBW
     HDR,        // EvGradientFeather
     HDR,        // EvGradientStrength
     HDR,        // EvGradientCenter
@@ -280,40 +280,40 @@ int refreshmap[rtengine::NUMOFEVENTS] = {
     LUMINANCECURVE,   // EvLHHCurve
     ALLNORAW,         // EvDirPyrEqualizerThreshold
     0,         // EvDPDNenhance : obsolete
-    AUTOEXP,         // EvBWMethodalg
+    TONE,            // EvBWMethodalg
     ALLNORAW,         // EvDirPyrEqualizerSkin
     ALLNORAW,         // EvDirPyrEqlgamutlab
     ALLNORAW,         // EvDirPyrEqualizerHueskin
     ALLNORAW,         // EvDPDNmedian
     ALLNORAW,         // EvDPDNmedmet
-    AUTOEXP,         // EvColorToningEnabled
-    AUTOEXP,         // EvColorToningColor
-    AUTOEXP,         // EvColorToningOpacity
-    AUTOEXP,         // EvColorToningCLCurve
-    AUTOEXP,         // EvColorToningMethod
-    AUTOEXP,         // EvColorToningLLCurve
-    AUTOEXP,         // EvColorToningredlow
-    AUTOEXP,         // EvColorToninggreenlow
-    AUTOEXP,         // EvColorToningbluelow
-    AUTOEXP,         // EvColorToningredmed
-    AUTOEXP,         // EvColorToninggreenmed
-    AUTOEXP,         // EvColorToningbluemed
-    AUTOEXP,         // EvColorToningredhigh
-    AUTOEXP,         // EvColorToninggreenhigh
-    AUTOEXP,         // EvColorToningbluehigh
-    AUTOEXP,         // EvColorToningbalance
-    AUTOEXP,         // EvColorToningNeutral
+    TONE,            // EvColorToningEnabled
+    TONE,            // EvColorToningColor
+    TONE,            // EvColorToningOpacity
+    TONE,            // EvColorToningCLCurve
+    TONE,            // EvColorToningMethod
+    TONE,            // EvColorToningLLCurve
+    TONE,            // EvColorToningredlow
+    TONE,            // EvColorToninggreenlow
+    TONE,            // EvColorToningbluelow
+    TONE,            // EvColorToningredmed
+    TONE,            // EvColorToninggreenmed
+    TONE,            // EvColorToningbluemed
+    TONE,            // EvColorToningredhigh
+    TONE,            // EvColorToninggreenhigh
+    TONE,            // EvColorToningbluehigh
+    TONE,            // EvColorToningbalance
+    TONE,            // EvColorToningNeutral
     0,         // EvColorToningsatlow : obsolete
     0,         // EvColorToningsathigh : obsolete
-    AUTOEXP,         // EvColorToningTwocolor
-    AUTOEXP,         // EvColorToningNeutralcur
-    AUTOEXP,         // EvColorToningLumamode
-    AUTOEXP,         // EvColorToningShadows
-    AUTOEXP,         // EvColorToningHighights
-    AUTOEXP,         // EvColorToningSatProtection
-    AUTOEXP,         // EvColorToningSatThreshold
-    AUTOEXP,         // EvColorToningStrength
-    AUTOEXP,         // EvColorToningautosat
+    TONE,            // EvColorToningTwocolor
+    TONE,            // EvColorToningNeutralcur
+    TONE,            // EvColorToningLumamode
+    TONE,            // EvColorToningShadows
+    TONE,            // EvColorToningHighights
+    TONE,            // EvColorToningSatProtection
+    TONE,            // EvColorToningSatThreshold
+    TONE,            // EvColorToningStrength
+    TONE,            // EvColorToningautosat
     ALLNORAW,         // EvDPDNmetmed
     ALLNORAW,         // EvDPDNrgbmet
     ALLNORAW,         // EvDPDNpasses
@@ -322,9 +322,9 @@ int refreshmap[rtengine::NUMOFEVENTS] = {
     DARKFRAME,        // EvPreProcessExpBlackRed
     DARKFRAME,        // EvPreProcessExpBlackGreen
     DARKFRAME,        // EvPreProcessExpBlackBlue
-    AUTOEXP,         // EvFilmSimulationEnabled
-    AUTOEXP,         // EvFilmSimulationStrength
-    AUTOEXP,         // EvFilmSimulationFilename
+    TONE,            // EvFilmSimulationEnabled (the HaldCLUT is applied in rgbProc)
+    TONE,            // EvFilmSimulationStrength
+    TONE,            // EvFilmSimulationFilename
     ALLNORAW,         // EvDPDNLCurve
     ALLNORAW,         // EvDPDNsmet
     DARKFRAME,        // EvPreProcessDeadPixel
@@ -525,624 +525,624 @@ int refreshmap[rtengine::NUMOFEVENTS] = {
     LUMINANCECURVE,   // EvLEnabled
     DEMOSAIC,         // EvPdShrEnabled
     CAPTURESHARPEN,    // EvPdShrMaskToggled
-    AUTOEXP,   // EvLocallabSpotDeleted
-    HDR,           // EvLocallabSpotSelected
+    TONE,      // EvLocallabSpotDeleted
+    TONE,           // EvLocallabSpotSelected
     M_VOID,           // EvLocallabSpotName
     M_VOID,           // EvLocallabSpotVisibility
-    AUTOEXP,   // EvLocallabSpotShape
-    AUTOEXP,   // EvLocallabSpotSpotMethod
-    AUTOEXP,   // EvLocallabSpotShapeMethod
-    AUTOEXP,   // EvLocallabSpotLocX
-    AUTOEXP,   // EvLocallabSpotLocXL
-    AUTOEXP,   // EvLocallabSpotLocY
-    AUTOEXP,   // EvLocallabSpotLocYT
-    AUTOEXP,   // EvLocallabSpotCenter
-    AUTOEXP,   // EvLocallabSpotCircrad
-    AUTOEXP,   // EvLocallabSpotQualityMethod
-    AUTOEXP,   // EvLocallabSpotTransit
-    AUTOEXP,   // EvLocallabSpotThresh
-    AUTOEXP,   // EvLocallabSpotIter
-    AUTOEXP,   // EvLocallabSpotSensiexclu
-    AUTOEXP,   // EvLocallabSpotStruc
-    AUTOEXP,   // EvlocallabEnabled
-    AUTOEXP,   // EvLocenacolor
-    AUTOEXP,   // Evlocallabcurvactiv
-    AUTOEXP,   // Evlocallablightness
-    AUTOEXP,   // Evlocallabcontrast
-    AUTOEXP,   // Evlocallabchroma
-    AUTOEXP,   // Evlocallabsensi
-    AUTOEXP,   // EvlocallabqualitycurveMethod
-    AUTOEXP,   // Evlocallabllshape
-    AUTOEXP,   // Evlocallabccshape
-    AUTOEXP,   // EvlocallabLHshape
-    AUTOEXP,   // EvlocallabHHshape
-    AUTOEXP,   // Evlocallabinvers
-    AUTOEXP,   // EvLocenaexpose
-    AUTOEXP,   // Evlocallabexpcomp
-    AUTOEXP,   // Evlocallabhlcompr
-    AUTOEXP,   // Evlocallabhlcomprthresh
-    AUTOEXP,   // Evlocallabblack
-    AUTOEXP,   // Evlocallabshcompr
-    AUTOEXP,   // Evlocallabwarm
-    AUTOEXP,   // Evlocallabsensiex
-    AUTOEXP,   // Evlocallabshapeexpos
-    AUTOEXP,   // EvLocenavibrance
-    AUTOEXP,   // EvlocallabSaturated
-    AUTOEXP,   // EvlocallabPastels
-    AUTOEXP,   // EvlocallabPastSatThreshold
-    AUTOEXP,   // EvlocallabProtectSkins
-    AUTOEXP,   // EvlocallabAvoidColorShift
-    AUTOEXP,   // EvlocallabPastSatTog
-    AUTOEXP,   // Evlocallabsensiv
-    AUTOEXP,   // EvlocallabSkinTonesCurve
-    AUTOEXP,   // EvLocenablur
-    AUTOEXP,   // Evlocallabradius
-    AUTOEXP,   // Evlocallabstrength
-    AUTOEXP,   // Evlocallabsensibn
-    AUTOEXP,   // EvlocallabblurMethod
-    AUTOEXP,   // Evlocallabactivlum
-    AUTOEXP,   // EvLocenatonemap
-    AUTOEXP,   // Evlocallabstren
-    AUTOEXP,   // Evlocallabgamma
-    AUTOEXP,   // Evlocallabestop
-    AUTOEXP,   // Evlocallabscaltm
-    AUTOEXP,   // Evlocallabrewei
-    AUTOEXP,   // Evlocallabsensitm
-    AUTOEXP,   // EvLocenareti
-    AUTOEXP,   // EvlocallabretinexMethod
-    AUTOEXP,   // Evlocallabstr
-    AUTOEXP,   // Evlocallabchrrt
-    AUTOEXP,   // Evlocallabneigh
-    AUTOEXP,   // Evlocallabvart
-    AUTOEXP,   // Evlocallabsensih
-    AUTOEXP,   // EvlocallabCTgainCurve
-    AUTOEXP,   // Evlocallabinversret
-    AUTOEXP,   // EvLocenasharp
-    AUTOEXP,   // Evlocallabsharradius
-    AUTOEXP,   // Evlocallabsharamount
-    AUTOEXP,   // Evlocallabshardamping
-    AUTOEXP,   // Evlocallabshariter
-    AUTOEXP,   // Evlocallabsensis
-    AUTOEXP,   // Evlocallabinverssha
-    AUTOEXP,   // EvLocenacbdl
-    AUTOEXP,   // EvlocallabEqualizer
-    AUTOEXP,   // Evlocallabchromacbdl
-    AUTOEXP,   // EvlocallabThresho
-    AUTOEXP,   // Evlocallabsensicb
-    AUTOEXP,   // EvLocenadenoi
-    AUTOEXP,   // Evlocallabnoiselumf
-    AUTOEXP,   // Evlocallabnoiselumc
-    AUTOEXP,   // Evlocallabnoiselumdetail
-    AUTOEXP,   // Evlocallabnoiselequal
-    AUTOEXP,   // Evlocallabnoisechrof
-    AUTOEXP,   // Evlocallabnoisechroc
-    AUTOEXP,   // Evlocallabnoisechrodetail
-    AUTOEXP,   // Evlocallabadjblur
-    AUTOEXP,   // Evlocallabbilateral
-    AUTOEXP,   // Evlocallabsensiden
-    AUTOEXP,   // Evlocallabavoid
-    AUTOEXP,   // Evlocallabsharcontrast
-    AUTOEXP,   // EvLocenacontrast
-    AUTOEXP,   // Evlocallablcradius
-    AUTOEXP,   // Evlocallablcamount
-    AUTOEXP,   // Evlocallablcdarkness
-    AUTOEXP,   // Evlocallablclightness
-    AUTOEXP,   // Evlocallabsensilc
-    AUTOEXP,   // Evlocallabdehaz
-    AUTOEXP,   // EvLocenasoft
-    AUTOEXP,   // EvLocallabstreng
-    AUTOEXP,   // EvLocallabsensisf
-    AUTOEXP,   // Evlocallabsharblur
+    TONE,      // EvLocallabSpotShape
+    TONE,      // EvLocallabSpotSpotMethod
+    TONE,      // EvLocallabSpotShapeMethod
+    TONE,      // EvLocallabSpotLocX
+    TONE,      // EvLocallabSpotLocXL
+    TONE,      // EvLocallabSpotLocY
+    TONE,      // EvLocallabSpotLocYT
+    TONE,      // EvLocallabSpotCenter
+    TONE,      // EvLocallabSpotCircrad
+    TONE,      // EvLocallabSpotQualityMethod
+    TONE,      // EvLocallabSpotTransit
+    TONE,      // EvLocallabSpotThresh
+    TONE,      // EvLocallabSpotIter
+    TONE,      // EvLocallabSpotSensiexclu
+    TONE,      // EvLocallabSpotStruc
+    TONE,      // EvlocallabEnabled
+    TONE,      // EvLocenacolor
+    TONE,      // Evlocallabcurvactiv
+    TONE,      // Evlocallablightness
+    TONE,      // Evlocallabcontrast
+    TONE,      // Evlocallabchroma
+    TONE,      // Evlocallabsensi
+    TONE,      // EvlocallabqualitycurveMethod
+    TONE,      // Evlocallabllshape
+    TONE,      // Evlocallabccshape
+    TONE,      // EvlocallabLHshape
+    TONE,      // EvlocallabHHshape
+    TONE,      // Evlocallabinvers
+    TONE,      // EvLocenaexpose
+    TONE,      // Evlocallabexpcomp
+    TONE,      // Evlocallabhlcompr
+    TONE,      // Evlocallabhlcomprthresh
+    TONE,      // Evlocallabblack
+    TONE,      // Evlocallabshcompr
+    TONE,      // Evlocallabwarm
+    TONE,      // Evlocallabsensiex
+    TONE,      // Evlocallabshapeexpos
+    TONE,      // EvLocenavibrance
+    TONE,      // EvlocallabSaturated
+    TONE,      // EvlocallabPastels
+    TONE,      // EvlocallabPastSatThreshold
+    TONE,      // EvlocallabProtectSkins
+    TONE,      // EvlocallabAvoidColorShift
+    TONE,      // EvlocallabPastSatTog
+    TONE,      // Evlocallabsensiv
+    TONE,      // EvlocallabSkinTonesCurve
+    TONE,      // EvLocenablur
+    TONE,      // Evlocallabradius
+    TONE,      // Evlocallabstrength
+    TONE,      // Evlocallabsensibn
+    TONE,      // EvlocallabblurMethod
+    TONE,      // Evlocallabactivlum
+    TONE,      // EvLocenatonemap
+    TONE,      // Evlocallabstren
+    TONE,      // Evlocallabgamma
+    TONE,      // Evlocallabestop
+    TONE,      // Evlocallabscaltm
+    TONE,      // Evlocallabrewei
+    TONE,      // Evlocallabsensitm
+    TONE,      // EvLocenareti
+    TONE,      // EvlocallabretinexMethod
+    TONE,      // Evlocallabstr
+    TONE,      // Evlocallabchrrt
+    TONE,      // Evlocallabneigh
+    TONE,      // Evlocallabvart
+    TONE,      // Evlocallabsensih
+    TONE,      // EvlocallabCTgainCurve
+    TONE,      // Evlocallabinversret
+    TONE,      // EvLocenasharp
+    TONE,      // Evlocallabsharradius
+    TONE,      // Evlocallabsharamount
+    TONE,      // Evlocallabshardamping
+    TONE,      // Evlocallabshariter
+    TONE,      // Evlocallabsensis
+    TONE,      // Evlocallabinverssha
+    TONE,      // EvLocenacbdl
+    TONE,      // EvlocallabEqualizer
+    TONE,      // Evlocallabchromacbdl
+    TONE,      // EvlocallabThresho
+    TONE,      // Evlocallabsensicb
+    TONE,      // EvLocenadenoi
+    TONE,      // Evlocallabnoiselumf
+    TONE,      // Evlocallabnoiselumc
+    TONE,      // Evlocallabnoiselumdetail
+    TONE,      // Evlocallabnoiselequal
+    TONE,      // Evlocallabnoisechrof
+    TONE,      // Evlocallabnoisechroc
+    TONE,      // Evlocallabnoisechrodetail
+    TONE,      // Evlocallabadjblur
+    TONE,      // Evlocallabbilateral
+    TONE,      // Evlocallabsensiden
+    TONE,      // Evlocallabavoid
+    TONE,      // Evlocallabsharcontrast
+    TONE,      // EvLocenacontrast
+    TONE,      // Evlocallablcradius
+    TONE,      // Evlocallablcamount
+    TONE,      // Evlocallablcdarkness
+    TONE,      // Evlocallablclightness
+    TONE,      // Evlocallabsensilc
+    TONE,      // Evlocallabdehaz
+    TONE,      // EvLocenasoft
+    TONE,      // EvLocallabstreng
+    TONE,      // EvLocallabsensisf
+    TONE,      // Evlocallabsharblur
     0,   // EvLocenalabregion : obsolete
-    AUTOEXP,   // EvlocallabshowmaskMethod
-    AUTOEXP,   // EvLocallabSpotSelectedWithMask
-    AUTOEXP,   // EvlocallabCCmaskshape
-    AUTOEXP,   // EvlocallabLLmaskshape
-    AUTOEXP,   // EvlocallabCCmaskexpshape
-    AUTOEXP,   // EvlocallabLLmaskexpshape
-    AUTOEXP,   // EvlocallabHHmaskshape
-    AUTOEXP,   // Evlocallabstructcol
-    AUTOEXP,   // Evlocallabstructexp
-    AUTOEXP,   // EvlocallabHHmaskexpshape
-    AUTOEXP,   // Evlocallabblendmaskcol
-    AUTOEXP,   // Evlocallabblendmaskexp
-    AUTOEXP,   // Evlocallabblurexpde
-    AUTOEXP,   // EvLocallabEnaColorMask
-    AUTOEXP,   // EvLocallabEnaExpMask
-    AUTOEXP,   // Evlocallabblurcolde
-    AUTOEXP,   // Evlocallabinversex
-    AUTOEXP,   // Evlocallabstructexclu
-    AUTOEXP,   // Evlocallabexpchroma
-    AUTOEXP,   // EvLocallabLabGridValue
-    AUTOEXP,   // EvLocallabLabstrengthgrid
-    AUTOEXP,   // EvLocallabgridMethod
-    AUTOEXP,   // EvLocenashadhigh
-    AUTOEXP,   // EvLocallabhighlights
-    AUTOEXP,   // EvLocallabh_tonalwidth
-    AUTOEXP,   // EvLocallabshadows
-    AUTOEXP,   // EvLocallabs_tonalwidth
-    AUTOEXP,   // EvLocallabsh_radius
-    AUTOEXP,   // EvLocallabsensihs
-    AUTOEXP,   // Evlocallabradmaskcol
-    AUTOEXP,   // Evlocallabradmaskexp
-    AUTOEXP,   // EvlocallabToolAdded
-    AUTOEXP,   // EvlocallabCCmaskSHshape
-    AUTOEXP,   // EvlocallabLLmaskSHshape
-    AUTOEXP,   // EvlocallabHHmaskSHshape
-    AUTOEXP,   // EvlocallabblendmaskSH
-    AUTOEXP,   // EvLocallabEnaSHMask
-    AUTOEXP,   // EvlocallabradmaskSH
-    AUTOEXP,   // EvlocallabblurSHde
-    AUTOEXP,   // Evlocallabinverssh
-    AUTOEXP,   // EvLocallabSpotbalan
-    AUTOEXP,   // EvLocallabchromaskexp
-    AUTOEXP,   // EvLocallabgammaskexp
-    AUTOEXP,   // EvLocallabslomaskexp
-    AUTOEXP,   // EvLocallabsoftradiusexp
-    AUTOEXP,   // EvLocallabchromaskcol
-    AUTOEXP,   // EvLocallabgammaskcol
-    AUTOEXP,   // EvLocallabslomaskcol
-    AUTOEXP,   // EvLocallabchromaskSH
-    AUTOEXP,   // EvLocallabgammaskSH
-    AUTOEXP,   // EvLocallabslomaskSH
-    AUTOEXP,   // EvLocallabsoftradiuscol
-    AUTOEXP,   // EvLocallabsoftradiusret
-    AUTOEXP,   // EvLocallabsoftradiuscb
-    AUTOEXP,   // EvLocallabSpotTransitweak
-    AUTOEXP,   // EvLocallabclarityml
-    AUTOEXP,   // EvLocallabcontresid
-    AUTOEXP,   // Evlocallabnoiselumf0
-    AUTOEXP,   // Evlocallabnoiselumf2
+    TONE,      // EvlocallabshowmaskMethod
+    TONE,      // EvLocallabSpotSelectedWithMask
+    TONE,      // EvlocallabCCmaskshape
+    TONE,      // EvlocallabLLmaskshape
+    TONE,      // EvlocallabCCmaskexpshape
+    TONE,      // EvlocallabLLmaskexpshape
+    TONE,      // EvlocallabHHmaskshape
+    TONE,      // Evlocallabstructcol
+    TONE,      // Evlocallabstructexp
+    TONE,      // EvlocallabHHmaskexpshape
+    TONE,      // Evlocallabblendmaskcol
+    TONE,      // Evlocallabblendmaskexp
+    TONE,      // Evlocallabblurexpde
+    TONE,      // EvLocallabEnaColorMask
+    TONE,      // EvLocallabEnaExpMask
+    TONE,      // Evlocallabblurcolde
+    TONE,      // Evlocallabinversex
+    TONE,      // Evlocallabstructexclu
+    TONE,      // Evlocallabexpchroma
+    TONE,      // EvLocallabLabGridValue
+    TONE,      // EvLocallabLabstrengthgrid
+    TONE,      // EvLocallabgridMethod
+    TONE,      // EvLocenashadhigh
+    TONE,      // EvLocallabhighlights
+    TONE,      // EvLocallabh_tonalwidth
+    TONE,      // EvLocallabshadows
+    TONE,      // EvLocallabs_tonalwidth
+    TONE,      // EvLocallabsh_radius
+    TONE,      // EvLocallabsensihs
+    TONE,      // Evlocallabradmaskcol
+    TONE,      // Evlocallabradmaskexp
+    TONE,      // EvlocallabToolAdded
+    TONE,      // EvlocallabCCmaskSHshape
+    TONE,      // EvlocallabLLmaskSHshape
+    TONE,      // EvlocallabHHmaskSHshape
+    TONE,      // EvlocallabblendmaskSH
+    TONE,      // EvLocallabEnaSHMask
+    TONE,      // EvlocallabradmaskSH
+    TONE,      // EvlocallabblurSHde
+    TONE,      // Evlocallabinverssh
+    TONE,      // EvLocallabSpotbalan
+    TONE,      // EvLocallabchromaskexp
+    TONE,      // EvLocallabgammaskexp
+    TONE,      // EvLocallabslomaskexp
+    TONE,      // EvLocallabsoftradiusexp
+    TONE,      // EvLocallabchromaskcol
+    TONE,      // EvLocallabgammaskcol
+    TONE,      // EvLocallabslomaskcol
+    TONE,      // EvLocallabchromaskSH
+    TONE,      // EvLocallabgammaskSH
+    TONE,      // EvLocallabslomaskSH
+    TONE,      // EvLocallabsoftradiuscol
+    TONE,      // EvLocallabsoftradiusret
+    TONE,      // EvLocallabsoftradiuscb
+    TONE,      // EvLocallabSpotTransitweak
+    TONE,      // EvLocallabclarityml
+    TONE,      // EvLocallabcontresid
+    TONE,      // Evlocallabnoiselumf0
+    TONE,      // Evlocallabnoiselumf2
     0,   // Evlocallabblurcbdl
-    AUTOEXP,   // Evlocallabblendmaskcb
-    AUTOEXP,   // Evlocallabradmaskcb
-    AUTOEXP,   // Evlocallabchromaskcb
-    AUTOEXP,   // Evlocallabgammaskcb
-    AUTOEXP,   // Evlocallabslomaskcb
-    AUTOEXP,   // EvlocallabCCmaskcbshape
-    AUTOEXP,   // EvlocallabLLmaskcbshape
-    AUTOEXP,   // EvlocallabHHmaskcbshape
-    AUTOEXP,   // EvLocallabEnacbMask
+    TONE,      // Evlocallabblendmaskcb
+    TONE,      // Evlocallabradmaskcb
+    TONE,      // Evlocallabchromaskcb
+    TONE,      // Evlocallabgammaskcb
+    TONE,      // Evlocallabslomaskcb
+    TONE,      // EvlocallabCCmaskcbshape
+    TONE,      // EvlocallabLLmaskcbshape
+    TONE,      // EvlocallabHHmaskcbshape
+    TONE,      // EvLocallabEnacbMask
     M_VOID,           // EvlocallabToolRemovedWithoutRefresh
-    AUTOEXP,   // Evlocallabsoftradiustm
-    AUTOEXP,   // EvLocallabSpotTransitgrad
-    AUTOEXP,   // Evlocallabamount
-    AUTOEXP,   // Evlocallabsatur
-    AUTOEXP,   // EvlocallabCCmaskretishape
-    AUTOEXP,   // EvlocallabLLmaskretishape
-    AUTOEXP,   // EvlocallabHHmaskretishape
-    AUTOEXP,   // EvLocallabEnaretiMask
-    AUTOEXP,   // Evlocallabblendmaskreti
-    AUTOEXP,   // Evlocallabradmaskreti
-    AUTOEXP,   // Evlocallabchromaskreti
-    AUTOEXP,   // Evlocallabgammaskreti
-    AUTOEXP,   // Evlocallabslomaskreti
-    AUTOEXP,   // EvlocallabToolRemovedWithRefresh
-    AUTOEXP,   // EvLocallabEnaretiMasktmap
-    AUTOEXP,   // Evlocallabscalereti
-    AUTOEXP,   // Evlocallabdarkness
-    AUTOEXP,   // Evlocallablightnessreti
-    AUTOEXP,   // Evlocallablimd
-    AUTOEXP,   // Evlocallablaplace
-    AUTOEXP,   // EvlocallabsoftMethod
-    AUTOEXP,   // Evlocallabequilret
-    AUTOEXP,   // Evlocallabequiltm
-    AUTOEXP,   // Evlocallabfftwlc
-    AUTOEXP,   // Evlocallabfftwreti
-    AUTOEXP,   // EvlocallabshowmasksoftMethod
-    AUTOEXP,   // Evlocallabshadex
-    AUTOEXP,   // EvlocallabexpMethod
-    AUTOEXP,   // EvLocallablaplacexp
-    AUTOEXP,   // EvLocallabbalanexp
-    AUTOEXP,   // EvLocallablinear
-    AUTOEXP,   // EvlocallabCCmasktmshape
-    AUTOEXP,   // EvlocallabLLmasktmshape
-    AUTOEXP,   // EvlocallabHHmasktmshape
-    AUTOEXP,   // EvLocallabEnatmMask
-    AUTOEXP,   // Evlocallabblendmasktm
-    AUTOEXP,   // Evlocallabradmasktm
-    AUTOEXP,   // Evlocallabchromasktm
-    AUTOEXP,   // Evlocallabgammasktm
-    AUTOEXP,   // Evlocallabslomasktm
-    AUTOEXP,   // EvlocallabshowmasktmMethod
-    AUTOEXP,   // EvlocallablocalcontMethod
-    AUTOEXP,   // Evlocallabwavcurve
-    AUTOEXP,   // Evlocallablevelwav
-    AUTOEXP,   // Evlocallabresidcont
-    AUTOEXP,   // EvlocallabCCmaskblshape
-    AUTOEXP,   // EvlocallabLLmaskblshape
-    AUTOEXP,   // EvlocallabHHmaskblshape
-    AUTOEXP,   // EvLocallabEnablMask
-    AUTOEXP,   // EvlocallabshowmaskblMethod
-    AUTOEXP,   // Evlocallabblendmaskbl
-    AUTOEXP,   // Evlocallabradmaskbl
-    AUTOEXP,   // Evlocallabchromaskbl
-    AUTOEXP,   // Evlocallabgammaskbl
-    AUTOEXP,   // Evlocallabslomaskbl
-    AUTOEXP,   // EvlocallabblMethod
-    AUTOEXP,   // EvlocallabmedMethod
-    AUTOEXP,   // Evlocallabitera
-    AUTOEXP,   // Evlocallabguidbl
-    AUTOEXP,   // Evlocallabepsbl
-    AUTOEXP,   // EvlocallabshowmaskcolMethodinv
-    AUTOEXP,   // EvlocallabshowmaskexpMethodinv
-    AUTOEXP,   // EvlocallabshowmaskSHMethodinv
-    AUTOEXP,   // Evlocallabclarilres
-    AUTOEXP,   // Evlocallabclarisoft
-    AUTOEXP,   // Evlocallabclaricres
-    AUTOEXP,   // Evlocallabresidchro
-    AUTOEXP,   // Evlocallabgamm
-    AUTOEXP,   // Evlocallabfatamount
-    AUTOEXP,   // Evlocallabfatdetail
-    AUTOEXP,   // Evlocallabfatanchor
-    AUTOEXP,   // Evlocallabfatlevel
-    AUTOEXP,   // EvlocallabSpotCreated
-    AUTOEXP,   // EvlocallabexnoiseMethod
-    AUTOEXP,   // Evlocallabdepth
-    AUTOEXP,   // Evlocallabloglin
-    AUTOEXP,   // EvlocallabdehazeSaturation
-    AUTOEXP,   // Evlocallaboffs
-    AUTOEXP,   // EvlocallabCTtransCurve
-    AUTOEXP,   // Evlocallabcliptm
-    AUTOEXP,   // Evlocallabenatmmaskaft
-    AUTOEXP,   // EvlocallabenaExpmaskaft
-    AUTOEXP,   // Evlocallablapmasktm
-    AUTOEXP,   // Evlocallablapmaskreti
-    AUTOEXP,   // Evlocallablapmaskexp
-    AUTOEXP,   // Evlocallablapmaskcol
-    AUTOEXP,   // EvlocallablapmaskSH
-    AUTOEXP,   // Evlocallablapmaskcb
-    AUTOEXP,   // Evlocallablapmaskbl
-    AUTOEXP,   // Evlocallablaplac
-    AUTOEXP,   // Evlocallabdetailthr
-    AUTOEXP,   // Evlocallabfftwbl
-    AUTOEXP,   // Evlocallabisogr
-    AUTOEXP,   // Evlocallabstrengr
-    AUTOEXP,   // Evlocallabscalegr
-    AUTOEXP,   // EvlocallabLmaskshape
-    AUTOEXP,   // EvlocallabLmaskexpshape
-    AUTOEXP,   // EvlocallabLmaskSHshape
-    AUTOEXP,   // EvlocallabLmasktmshape
-    AUTOEXP,   // EvlocallabLmaskretishape
-    AUTOEXP,   // EvlocallabLmaskcbshape
-    AUTOEXP,   // EvlocallabLmaskblshape
-    AUTOEXP,   // EvlocallabLLmaskblshapewav
-    AUTOEXP,   // Evlocallabshadmaskbl
-    AUTOEXP,   // EvlocallabLLmaskcolshapewav
-    AUTOEXP,   // Evlocallabshadmaskcol
-    AUTOEXP,   // EvlocallabcsThreshold
-    AUTOEXP,   // EvlocallabcsThresholdblur
-    AUTOEXP,   // EvlocallabcsThresholdcol
-    AUTOEXP,   // Evlocallabdeltae
-    AUTOEXP,   // EvLocallabSpotscopemask
-    AUTOEXP,   // EvlocallabshMethod
-    AUTOEXP,   // EvlocallabEqualizersh
-    AUTOEXP,   // EvlocallabdetailSH
-    AUTOEXP,   // EvlocallabfatamountSH
-    AUTOEXP,   // EvlocallabfatanchorSH
-    AUTOEXP,   // Evlocallabshortc
-    AUTOEXP,   // EvLocallabSpotlumask
-    AUTOEXP,   // EvlocallabgamSH
-    AUTOEXP,   // EvlocallabsloSH
-    AUTOEXP,   // Evlocallabsavrest
-    AUTOEXP,   // Evlocallabrecurs
-    AUTOEXP,   // EvLocallabmergecolMethod
-    AUTOEXP,   // EvLocallabopacol
-    AUTOEXP,   // Evlocallabrgbshape
-    AUTOEXP,   // EvLocallabtoneMethod
-    AUTOEXP,   // EvLocallabspecial
-    AUTOEXP,   // EvLocallabconthrcol
-    AUTOEXP,   // EvLocallabmerMethod
-    AUTOEXP,   // EvLocallabstrumaskcol
-    AUTOEXP,   // EvLocallabstrumaskbl
-    AUTOEXP,   // EvLocallabtoolcol
-    AUTOEXP,   // Evlocallabtoolbl
-    AUTOEXP,   // EvlocallabHHhmaskshape
-    AUTOEXP,   // EvlocallabCCmaskvibshape
-    AUTOEXP,   // EvlocallabLLmaskvibshape
-    AUTOEXP,   // EvlocallabHHmaskvibshape
-    AUTOEXP,   // EvlocallabshowmaskvibMethod
-    AUTOEXP,   // EvLocallabEnavibMask
-    AUTOEXP,   // Evlocallabblendmaskvi
-    AUTOEXP,   // Evlocallabradmaskvib
-    AUTOEXP,   // Evlocallabchromaskvib
-    AUTOEXP,   // Evlocallabgammaskvib
-    AUTOEXP,   // Evlocallabslomaskvib
-    AUTOEXP,   // Evlocallablapmaskvib
-    AUTOEXP,   // EvlocallabLmaskvibshape
-    AUTOEXP,   // EvLocallabLabGridmergValue
-    AUTOEXP,   // EvLocallabmercol
-    AUTOEXP,   // EvLocallabmerlucol
-    AUTOEXP,   // Evlocallabstrmaskexp
-    AUTOEXP,   // Evlocallabangmaskexp
-    AUTOEXP,   // Evlocallabstrexp
-    AUTOEXP,   // Evlocallabangexp
+    TONE,      // Evlocallabsoftradiustm
+    TONE,      // EvLocallabSpotTransitgrad
+    TONE,      // Evlocallabamount
+    TONE,      // Evlocallabsatur
+    TONE,      // EvlocallabCCmaskretishape
+    TONE,      // EvlocallabLLmaskretishape
+    TONE,      // EvlocallabHHmaskretishape
+    TONE,      // EvLocallabEnaretiMask
+    TONE,      // Evlocallabblendmaskreti
+    TONE,      // Evlocallabradmaskreti
+    TONE,      // Evlocallabchromaskreti
+    TONE,      // Evlocallabgammaskreti
+    TONE,      // Evlocallabslomaskreti
+    TONE,      // EvlocallabToolRemovedWithRefresh
+    TONE,      // EvLocallabEnaretiMasktmap
+    TONE,      // Evlocallabscalereti
+    TONE,      // Evlocallabdarkness
+    TONE,      // Evlocallablightnessreti
+    TONE,      // Evlocallablimd
+    TONE,      // Evlocallablaplace
+    TONE,      // EvlocallabsoftMethod
+    TONE,      // Evlocallabequilret
+    TONE,      // Evlocallabequiltm
+    TONE,      // Evlocallabfftwlc
+    TONE,      // Evlocallabfftwreti
+    TONE,      // EvlocallabshowmasksoftMethod
+    TONE,      // Evlocallabshadex
+    TONE,      // EvlocallabexpMethod
+    TONE,      // EvLocallablaplacexp
+    TONE,      // EvLocallabbalanexp
+    TONE,      // EvLocallablinear
+    TONE,      // EvlocallabCCmasktmshape
+    TONE,      // EvlocallabLLmasktmshape
+    TONE,      // EvlocallabHHmasktmshape
+    TONE,      // EvLocallabEnatmMask
+    TONE,      // Evlocallabblendmasktm
+    TONE,      // Evlocallabradmasktm
+    TONE,      // Evlocallabchromasktm
+    TONE,      // Evlocallabgammasktm
+    TONE,      // Evlocallabslomasktm
+    TONE,      // EvlocallabshowmasktmMethod
+    TONE,      // EvlocallablocalcontMethod
+    TONE,      // Evlocallabwavcurve
+    TONE,      // Evlocallablevelwav
+    TONE,      // Evlocallabresidcont
+    TONE,      // EvlocallabCCmaskblshape
+    TONE,      // EvlocallabLLmaskblshape
+    TONE,      // EvlocallabHHmaskblshape
+    TONE,      // EvLocallabEnablMask
+    TONE,      // EvlocallabshowmaskblMethod
+    TONE,      // Evlocallabblendmaskbl
+    TONE,      // Evlocallabradmaskbl
+    TONE,      // Evlocallabchromaskbl
+    TONE,      // Evlocallabgammaskbl
+    TONE,      // Evlocallabslomaskbl
+    TONE,      // EvlocallabblMethod
+    TONE,      // EvlocallabmedMethod
+    TONE,      // Evlocallabitera
+    TONE,      // Evlocallabguidbl
+    TONE,      // Evlocallabepsbl
+    TONE,      // EvlocallabshowmaskcolMethodinv
+    TONE,      // EvlocallabshowmaskexpMethodinv
+    TONE,      // EvlocallabshowmaskSHMethodinv
+    TONE,      // Evlocallabclarilres
+    TONE,      // Evlocallabclarisoft
+    TONE,      // Evlocallabclaricres
+    TONE,      // Evlocallabresidchro
+    TONE,      // Evlocallabgamm
+    TONE,      // Evlocallabfatamount
+    TONE,      // Evlocallabfatdetail
+    TONE,      // Evlocallabfatanchor
+    TONE,      // Evlocallabfatlevel
+    TONE,      // EvlocallabSpotCreated
+    TONE,      // EvlocallabexnoiseMethod
+    TONE,      // Evlocallabdepth
+    TONE,      // Evlocallabloglin
+    TONE,      // EvlocallabdehazeSaturation
+    TONE,      // Evlocallaboffs
+    TONE,      // EvlocallabCTtransCurve
+    TONE,      // Evlocallabcliptm
+    TONE,      // Evlocallabenatmmaskaft
+    TONE,      // EvlocallabenaExpmaskaft
+    TONE,      // Evlocallablapmasktm
+    TONE,      // Evlocallablapmaskreti
+    TONE,      // Evlocallablapmaskexp
+    TONE,      // Evlocallablapmaskcol
+    TONE,      // EvlocallablapmaskSH
+    TONE,      // Evlocallablapmaskcb
+    TONE,      // Evlocallablapmaskbl
+    TONE,      // Evlocallablaplac
+    TONE,      // Evlocallabdetailthr
+    TONE,      // Evlocallabfftwbl
+    TONE,      // Evlocallabisogr
+    TONE,      // Evlocallabstrengr
+    TONE,      // Evlocallabscalegr
+    TONE,      // EvlocallabLmaskshape
+    TONE,      // EvlocallabLmaskexpshape
+    TONE,      // EvlocallabLmaskSHshape
+    TONE,      // EvlocallabLmasktmshape
+    TONE,      // EvlocallabLmaskretishape
+    TONE,      // EvlocallabLmaskcbshape
+    TONE,      // EvlocallabLmaskblshape
+    TONE,      // EvlocallabLLmaskblshapewav
+    TONE,      // Evlocallabshadmaskbl
+    TONE,      // EvlocallabLLmaskcolshapewav
+    TONE,      // Evlocallabshadmaskcol
+    TONE,      // EvlocallabcsThreshold
+    TONE,      // EvlocallabcsThresholdblur
+    TONE,      // EvlocallabcsThresholdcol
+    TONE,      // Evlocallabdeltae
+    TONE,      // EvLocallabSpotscopemask
+    TONE,      // EvlocallabshMethod
+    TONE,      // EvlocallabEqualizersh
+    TONE,      // EvlocallabdetailSH
+    TONE,      // EvlocallabfatamountSH
+    TONE,      // EvlocallabfatanchorSH
+    TONE,      // Evlocallabshortc
+    TONE,      // EvLocallabSpotlumask
+    TONE,      // EvlocallabgamSH
+    TONE,      // EvlocallabsloSH
+    TONE,      // Evlocallabsavrest
+    TONE,      // Evlocallabrecurs
+    TONE,      // EvLocallabmergecolMethod
+    TONE,      // EvLocallabopacol
+    TONE,      // Evlocallabrgbshape
+    TONE,      // EvLocallabtoneMethod
+    TONE,      // EvLocallabspecial
+    TONE,      // EvLocallabconthrcol
+    TONE,      // EvLocallabmerMethod
+    TONE,      // EvLocallabstrumaskcol
+    TONE,      // EvLocallabstrumaskbl
+    TONE,      // EvLocallabtoolcol
+    TONE,      // Evlocallabtoolbl
+    TONE,      // EvlocallabHHhmaskshape
+    TONE,      // EvlocallabCCmaskvibshape
+    TONE,      // EvlocallabLLmaskvibshape
+    TONE,      // EvlocallabHHmaskvibshape
+    TONE,      // EvlocallabshowmaskvibMethod
+    TONE,      // EvLocallabEnavibMask
+    TONE,      // Evlocallabblendmaskvi
+    TONE,      // Evlocallabradmaskvib
+    TONE,      // Evlocallabchromaskvib
+    TONE,      // Evlocallabgammaskvib
+    TONE,      // Evlocallabslomaskvib
+    TONE,      // Evlocallablapmaskvib
+    TONE,      // EvlocallabLmaskvibshape
+    TONE,      // EvLocallabLabGridmergValue
+    TONE,      // EvLocallabmercol
+    TONE,      // EvLocallabmerlucol
+    TONE,      // Evlocallabstrmaskexp
+    TONE,      // Evlocallabangmaskexp
+    TONE,      // Evlocallabstrexp
+    TONE,      // Evlocallabangexp
     AUTOEXP | M_AUTOEXP,   // EvlocallabstrSH
-    AUTOEXP,   // EvlocallabangSH
-    AUTOEXP,   // Evlocallabstrcol
-    AUTOEXP,   // Evlocallabangcol
-    AUTOEXP,   // Evlocallabstrcolab
-    AUTOEXP,   // EvLocallabSpotfeather
-    AUTOEXP,   // Evlocallabstrcolh
-    AUTOEXP,   // Evlocallabstrvib
-    AUTOEXP,   // Evlocallabangvib
-    AUTOEXP,   // Evlocallabstrvibab
-    AUTOEXP,   // Evlocallabstrvibh
-    AUTOEXP,   // EvLocallabSpotcomplexMethod
-    AUTOEXP,   // Evlocallabclshape
-    AUTOEXP,   // Evlocallablcshape
-    AUTOEXP,   // Evlocallabblurcol
-    AUTOEXP,   // Evlocallabcontcol
-    AUTOEXP,   // EvLocallabfftColorMask
+    TONE,      // EvlocallabangSH
+    TONE,      // Evlocallabstrcol
+    TONE,      // Evlocallabangcol
+    TONE,      // Evlocallabstrcolab
+    TONE,      // EvLocallabSpotfeather
+    TONE,      // Evlocallabstrcolh
+    TONE,      // Evlocallabstrvib
+    TONE,      // Evlocallabangvib
+    TONE,      // Evlocallabstrvibab
+    TONE,      // Evlocallabstrvibh
+    TONE,      // EvLocallabSpotcomplexMethod
+    TONE,      // Evlocallabclshape
+    TONE,      // Evlocallablcshape
+    TONE,      // Evlocallabblurcol
+    TONE,      // Evlocallabcontcol
+    TONE,      // EvLocallabfftColorMask
     AUTOEXP | M_AUTOEXP,   // EvLocenalog
     HDR,          // EvLocallabAuto
-    AUTOEXP,   // EvlocallabsourceGray
+    TONE,      // EvlocallabsourceGray
     0,          // EvlocallabsourceGrayAuto : obsolete
     HDR,          // EvlocallabAutoGray
-    AUTOEXP,   // EvlocallabblackEv
-    AUTOEXP,   // EvlocallabwhiteEv
-    AUTOEXP,   // EvlocallabtargetGray
-    AUTOEXP,   // Evlocallabdetail
-    AUTOEXP,   // Evlocallabsensilog
-    AUTOEXP,          // Evlocallabfullimage
-    AUTOEXP,   // Evlocallabbaselog
-    AUTOEXP,   // Evlocallabresidblur
-    AUTOEXP,   // Evlocallabblurlc
-    AUTOEXP,   // Evlocallablevelblur
-    AUTOEXP,   // EvlocallabwavCurvelev
-    AUTOEXP,   // EvlocallabwavCurvecon
-    AUTOEXP,   // Evlocallabsigma
-    AUTOEXP,   // Evlocallaboriglc
-    AUTOEXP,   // Evlocallabsigmadc
-    AUTOEXP,   // Evlocallabdeltad
-    AUTOEXP,   // EvlocallabwavCurvecomp
-    AUTOEXP,   // Evlocallabfatres
-    AUTOEXP,   // EvLocallabSpotbalanh
-    AUTOEXP,   // EvlocallabwavCurveden
-    AUTOEXP,   // EvlocallabHHmasklcshape
-    AUTOEXP,   // EvlocallabCCmasklcshape
-    AUTOEXP,   // EvlocallabLLmasklcshape
-    AUTOEXP,   // EvlocallabEnalcMask
-    AUTOEXP,   // EvlocallabshowmasklcMethod
-    AUTOEXP,   // Evlocallabblendmasklc
-    AUTOEXP,   // Evlocallabradmasklc
-    AUTOEXP,   // Evlocallabchromasklc
-    AUTOEXP,   // EvlocallabLmasklcshape
-    AUTOEXP,   // Evlocallabchromalev
-    AUTOEXP,   // Evlocallabchromablu
-    AUTOEXP,   // Evlocallaboffset
-    AUTOEXP,   // Evlocallabwavblur
-    AUTOEXP,   // Evlocallabwavcont
-    AUTOEXP,   // Evlocallabwavcomp
-    AUTOEXP,   // Evlocallabwavcompre
-    AUTOEXP,   // EvlocallabwavCurvecompre
-    AUTOEXP,   // Evlocallabresidcomp
-    AUTOEXP,   // Evlocallabthreswav
-    AUTOEXP,   // Evlocallabstrwav
-    AUTOEXP,   // Evlocallabangwav
-    AUTOEXP,   // Evlocallabwavgradl
-    AUTOEXP,   // Evlocallabstrlog
-    AUTOEXP,   // Evlocallabanglog
-    AUTOEXP,   // EvLocallabSpotcolorde
-    AUTOEXP,   // EvlocallabshowmasksharMethod
-    AUTOEXP,   // Evlocallabshowreset
-    AUTOEXP,   // Evlocallabstrengthw
-    AUTOEXP,   // Evlocallabradiusw
-    AUTOEXP,   // Evlocallabdetailw
-    AUTOEXP,   // Evlocallabgradw
-    AUTOEXP,   // Evlocallabtloww
-    AUTOEXP,   // Evlocallabthigw
-    AUTOEXP,   // EvlocallabwavCurveedg
-    AUTOEXP,   // EvlocallablocaledgMethod
-    AUTOEXP,   // Evlocallabwavedg
-    AUTOEXP,   // Evlocallabedgw
-    AUTOEXP,   // Evlocallabbasew
-    AUTOEXP,   // EvlocallablocalneiMethod
-    AUTOEXP,   // Evlocallabwaveshow
-    AUTOEXP,   // EvLocallabSpotwavMethod
-    AUTOEXP,   // EvlocallabchroMethod
-    AUTOEXP,   // Evlocallabstrbl
-    AUTOEXP,   // Evlocallabsigmadr
-    AUTOEXP,   // Evlocallabsigmabl
-    AUTOEXP,   // Evlocallabsigmaed
-    AUTOEXP,   // Evlocallabresidsha
-    AUTOEXP,   // Evlocallabresidshathr
-    AUTOEXP,   // Evlocallabresidhi
-    AUTOEXP,   // Evlocallabresidhithr
-    AUTOEXP,   // Evlocallabsigmalc
-    AUTOEXP,   // Evlocallabsigmalc2
-    AUTOEXP,   // Evlocallabblwh
-    AUTOEXP,   // EvlocallabcomplexityWithRefresh
+    TONE,      // EvlocallabblackEv
+    TONE,      // EvlocallabwhiteEv
+    TONE,      // EvlocallabtargetGray
+    TONE,      // Evlocallabdetail
+    TONE,      // Evlocallabsensilog
+    TONE,             // Evlocallabfullimage
+    TONE,      // Evlocallabbaselog
+    TONE,      // Evlocallabresidblur
+    TONE,      // Evlocallabblurlc
+    TONE,      // Evlocallablevelblur
+    TONE,      // EvlocallabwavCurvelev
+    TONE,      // EvlocallabwavCurvecon
+    TONE,      // Evlocallabsigma
+    TONE,      // Evlocallaboriglc
+    TONE,      // Evlocallabsigmadc
+    TONE,      // Evlocallabdeltad
+    TONE,      // EvlocallabwavCurvecomp
+    TONE,      // Evlocallabfatres
+    TONE,      // EvLocallabSpotbalanh
+    TONE,      // EvlocallabwavCurveden
+    TONE,      // EvlocallabHHmasklcshape
+    TONE,      // EvlocallabCCmasklcshape
+    TONE,      // EvlocallabLLmasklcshape
+    TONE,      // EvlocallabEnalcMask
+    TONE,      // EvlocallabshowmasklcMethod
+    TONE,      // Evlocallabblendmasklc
+    TONE,      // Evlocallabradmasklc
+    TONE,      // Evlocallabchromasklc
+    TONE,      // EvlocallabLmasklcshape
+    TONE,      // Evlocallabchromalev
+    TONE,      // Evlocallabchromablu
+    TONE,      // Evlocallaboffset
+    TONE,      // Evlocallabwavblur
+    TONE,      // Evlocallabwavcont
+    TONE,      // Evlocallabwavcomp
+    TONE,      // Evlocallabwavcompre
+    TONE,      // EvlocallabwavCurvecompre
+    TONE,      // Evlocallabresidcomp
+    TONE,      // Evlocallabthreswav
+    TONE,      // Evlocallabstrwav
+    TONE,      // Evlocallabangwav
+    TONE,      // Evlocallabwavgradl
+    TONE,      // Evlocallabstrlog
+    TONE,      // Evlocallabanglog
+    TONE,      // EvLocallabSpotcolorde
+    TONE,      // EvlocallabshowmasksharMethod
+    TONE,      // Evlocallabshowreset
+    TONE,      // Evlocallabstrengthw
+    TONE,      // Evlocallabradiusw
+    TONE,      // Evlocallabdetailw
+    TONE,      // Evlocallabgradw
+    TONE,      // Evlocallabtloww
+    TONE,      // Evlocallabthigw
+    TONE,      // EvlocallabwavCurveedg
+    TONE,      // EvlocallablocaledgMethod
+    TONE,      // Evlocallabwavedg
+    TONE,      // Evlocallabedgw
+    TONE,      // Evlocallabbasew
+    TONE,      // EvlocallablocalneiMethod
+    TONE,      // Evlocallabwaveshow
+    TONE,      // EvLocallabSpotwavMethod
+    TONE,      // EvlocallabchroMethod
+    TONE,      // Evlocallabstrbl
+    TONE,      // Evlocallabsigmadr
+    TONE,      // Evlocallabsigmabl
+    TONE,      // Evlocallabsigmaed
+    TONE,      // Evlocallabresidsha
+    TONE,      // Evlocallabresidshathr
+    TONE,      // Evlocallabresidhi
+    TONE,      // Evlocallabresidhithr
+    TONE,      // Evlocallabsigmalc
+    TONE,      // Evlocallabsigmalc2
+    TONE,      // Evlocallabblwh
+    TONE,      // EvlocallabcomplexityWithRefresh
     0,                // can be reused
-    AUTOEXP,   // EvLocallabSpotcolorscope
-    AUTOEXP,   // EvlocallabshowmasktypMethod
-    AUTOEXP,   // Evlocallabshadmaskblsha
-    AUTOEXP,   // EvLocenamask
-    AUTOEXP,   // Evlocallabsensimask
-    AUTOEXP,   // Evlocallabblendmask
-    AUTOEXP,   // EvLocallabEna_Mask
-    AUTOEXP,   // Evlocallabradmask
-    AUTOEXP,   // Evlocallablapmask
-    AUTOEXP,   // Evlocallabchromask
-    AUTOEXP,   // Evlocallabgammask
-    AUTOEXP,   // Evlocallabslopmask
-    AUTOEXP,   // EvlocallabCCmask_shape
-    AUTOEXP,   // EvlocallabLLmask_shape
-    AUTOEXP,   // EvlocallabHHmask_shape
-    AUTOEXP,   // EvLocallabtoolmask
-    AUTOEXP,   // Evlocallabstrumaskmask
-    AUTOEXP,   // EvlocallabHHhmask_shape
-    AUTOEXP,   // EvLocallabfftmask
-    AUTOEXP,   // Evlocallabblurmask
-    AUTOEXP,   // Evlocallabcontmask
-    AUTOEXP,   // Evlocallabshadmask
-    AUTOEXP,   // EvlocallabLmask_shape
-    AUTOEXP,   // EvlocallabLLmask_shapewav
-    AUTOEXP,   // EvlocallabcsThresholdmask
-    AUTOEXP,   // Evlocallabstr_mask
-    AUTOEXP,   // Evlocallabang_mask
-    AUTOEXP,   // Evlocallabsoftradiusmask
-    AUTOEXP,   // Evlocallabblendmaskab
-    AUTOEXP,   // EvLocallabSpotprevMethod
-    AUTOEXP,   // Evlocallabactiv
-    AUTOEXP,   // EvlocallabCHshape
-    AUTOEXP,   //EvlocallabquaMethod
-    AUTOEXP,   //Evlocallabhishow
-    AUTOEXP,   // Evlocallabinvbl
-    AUTOEXP,   // Evlocallabcatad
-    AUTOEXP,   // Evlocallabciecam
-    AUTOEXP,   // Evlocallabsourceabs
-    AUTOEXP,   // Evlocallabtargabs
-    AUTOEXP,   // Evlocallabsurround
-    AUTOEXP,   // Evlocallabsaturl
-    AUTOEXP,   // Evlocallabcontl
-    AUTOEXP,   //EvlocallabCCmaskshapeL 
-    AUTOEXP,   //EvlocallabLLmaskshapeL
-    AUTOEXP,   // EvlocallabHHmaskshapeL
-    AUTOEXP,   // EvlocallabenaLMask
-    AUTOEXP,   // EvlocallabblendmaskL
-    AUTOEXP,   // EvlocallabradmaskL
-    AUTOEXP,   // EvlocallabchromaskL
-    AUTOEXP,   //EvlocallabLmaskshapeL
-    AUTOEXP,   // Evlocallablightl
-    AUTOEXP,   // EvlocallabLshapeL
-    AUTOEXP,   // Evlocallabcontq
-    AUTOEXP,   // Evlocallabsursour
-    AUTOEXP,   // Evlocallablightq
-    AUTOEXP,   // Evlocallabcolorfl
-    AUTOEXP,   // Evlocallabrepar
-    AUTOEXP,   //EvlocallabwavCurvehue
-    AUTOEXP,   // Evlocallablevelthr
-    AUTOEXP,   // Evlocallablevelthrlow
-    AUTOEXP,   //Evlocallabusemask1
-    AUTOEXP,   // Evlocallablnoiselow
-    AUTOEXP,   // Evlocallabrecothres
-    AUTOEXP,   // Evlocallablowthres
-    AUTOEXP,   // Evlocallabhigthres
-    AUTOEXP,   // Evlocallabrecothresd
-    AUTOEXP,   // Evlocallablowthresd
-    AUTOEXP,   // Evlocallabhigthresd
-    AUTOEXP,   // Evlocallabinvmaskd
-    AUTOEXP,   // Evlocallabinvmask
-    AUTOEXP,   // Evlocallabdecayd
-    AUTOEXP,   // Evlocallabrecothresc
-    AUTOEXP,   // Evlocallablowthresc
-    AUTOEXP,   // Evlocallabhigthresc
-    AUTOEXP,   // Evlocallabdecayc
-    AUTOEXP,   // Evlocallabmidthresd
-    AUTOEXP,   // Evlocallabrecothresl
-    AUTOEXP,   // Evlocallablowthresl
-    AUTOEXP,   // Evlocallabhigthresl
-    AUTOEXP,  // Evlocallabdecayl
-    AUTOEXP,   // Evlocallabrecothrese
-    AUTOEXP,   // Evlocallablowthrese
-    AUTOEXP,   // Evlocallabhigthrese
-    AUTOEXP,   // Evlocallabdecaye
-    AUTOEXP,   // Evlocallabrecothress
-    AUTOEXP,   // Evlocallablowthress
-    AUTOEXP,   // Evlocallabhigthress
-    AUTOEXP,   // Evlocallabdecays
-    AUTOEXP,   // Evlocallabrecothrev
-    AUTOEXP,   // Evlocallablowthresv
-    AUTOEXP,   // Evlocallabhigthresv
-    AUTOEXP,   // Evlocallabdecayv
-    AUTOEXP,   // Evlocallabrecothrew
-    AUTOEXP,   // Evlocallablowthresw
-    AUTOEXP,   // Evlocallabhigthresw
-    AUTOEXP,   // Evlocallabdecayw
-    AUTOEXP,   // Evlocallabmidthresdch
-    AUTOEXP,   // Evlocallabrecothret
-    AUTOEXP,   // Evlocallablowthrest
-    AUTOEXP,   // Evlocallabhigthrest
-    AUTOEXP,   // Evlocallabdecayt
-    AUTOEXP,   // Evlocallabrecothrecb
-    AUTOEXP,   // Evlocallablowthrescb
-    AUTOEXP,   // Evlocallabhigthrescb
-    AUTOEXP,   // Evlocallabdecaycb
-    AUTOEXP,   // Evlocallabrecothrer
-    AUTOEXP,   // Evlocallablowthresr
-    AUTOEXP,   // Evlocallabhigthresr
-    AUTOEXP,   // Evlocallabdecayr
-    AUTOEXP,   // Evlocallabnlstr
-    AUTOEXP,   // Evlocallabnldet
-    AUTOEXP,   // Evlocallabnlpat
-    AUTOEXP,   // Evlocallabnlrad
-    AUTOEXP,   // Evlocallabnlgam
-    AUTOEXP,   // Evlocallabdivgr
-    AUTOEXP,   // EvLocallabSpotavoidrad
-    AUTOEXP,   // EvLocallabSpotavoidmun
-    AUTOEXP,   // Evlocallabcontthres
-    AUTOEXP,   // Evlocallabnorm
-    AUTOEXP,   // Evlocallabreparw
-    AUTOEXP,   // Evlocallabreparcol
-    AUTOEXP,   // Evlocallabreparden
-    AUTOEXP,   // Evlocallabreparsh
-    AUTOEXP,   // Evlocallabreparexp
-    AUTOEXP,   // Evlocallabrepartm
-    AUTOEXP,   // Evlocallabchroml
-    AUTOEXP,   // Evlocallabresidgam
-    AUTOEXP,   // Evlocallabresidslop
-    AUTOEXP,   // Evlocallabnoisegam
-    AUTOEXP,    //Evlocallabgamlc
-    AUTOEXP,    //Evlocallabgamc
-    AUTOEXP,    //Evlocallabgamex
+    TONE,      // EvLocallabSpotcolorscope
+    TONE,      // EvlocallabshowmasktypMethod
+    TONE,      // Evlocallabshadmaskblsha
+    TONE,      // EvLocenamask
+    TONE,      // Evlocallabsensimask
+    TONE,      // Evlocallabblendmask
+    TONE,      // EvLocallabEna_Mask
+    TONE,      // Evlocallabradmask
+    TONE,      // Evlocallablapmask
+    TONE,      // Evlocallabchromask
+    TONE,      // Evlocallabgammask
+    TONE,      // Evlocallabslopmask
+    TONE,      // EvlocallabCCmask_shape
+    TONE,      // EvlocallabLLmask_shape
+    TONE,      // EvlocallabHHmask_shape
+    TONE,      // EvLocallabtoolmask
+    TONE,      // Evlocallabstrumaskmask
+    TONE,      // EvlocallabHHhmask_shape
+    TONE,      // EvLocallabfftmask
+    TONE,      // Evlocallabblurmask
+    TONE,      // Evlocallabcontmask
+    TONE,      // Evlocallabshadmask
+    TONE,      // EvlocallabLmask_shape
+    TONE,      // EvlocallabLLmask_shapewav
+    TONE,      // EvlocallabcsThresholdmask
+    TONE,      // Evlocallabstr_mask
+    TONE,      // Evlocallabang_mask
+    TONE,      // Evlocallabsoftradiusmask
+    TONE,      // Evlocallabblendmaskab
+    TONE,      // EvLocallabSpotprevMethod
+    TONE,      // Evlocallabactiv
+    TONE,      // EvlocallabCHshape
+    TONE,      //EvlocallabquaMethod
+    TONE,      //Evlocallabhishow
+    TONE,      // Evlocallabinvbl
+    TONE,      // Evlocallabcatad
+    TONE,      // Evlocallabciecam
+    TONE,      // Evlocallabsourceabs
+    TONE,      // Evlocallabtargabs
+    TONE,      // Evlocallabsurround
+    TONE,      // Evlocallabsaturl
+    TONE,      // Evlocallabcontl
+    TONE,      //EvlocallabCCmaskshapeL 
+    TONE,      //EvlocallabLLmaskshapeL
+    TONE,      // EvlocallabHHmaskshapeL
+    TONE,      // EvlocallabenaLMask
+    TONE,      // EvlocallabblendmaskL
+    TONE,      // EvlocallabradmaskL
+    TONE,      // EvlocallabchromaskL
+    TONE,      //EvlocallabLmaskshapeL
+    TONE,      // Evlocallablightl
+    TONE,      // EvlocallabLshapeL
+    TONE,      // Evlocallabcontq
+    TONE,      // Evlocallabsursour
+    TONE,      // Evlocallablightq
+    TONE,      // Evlocallabcolorfl
+    TONE,      // Evlocallabrepar
+    TONE,      //EvlocallabwavCurvehue
+    TONE,      // Evlocallablevelthr
+    TONE,      // Evlocallablevelthrlow
+    TONE,      //Evlocallabusemask1
+    TONE,      // Evlocallablnoiselow
+    TONE,      // Evlocallabrecothres
+    TONE,      // Evlocallablowthres
+    TONE,      // Evlocallabhigthres
+    TONE,      // Evlocallabrecothresd
+    TONE,      // Evlocallablowthresd
+    TONE,      // Evlocallabhigthresd
+    TONE,      // Evlocallabinvmaskd
+    TONE,      // Evlocallabinvmask
+    TONE,      // Evlocallabdecayd
+    TONE,      // Evlocallabrecothresc
+    TONE,      // Evlocallablowthresc
+    TONE,      // Evlocallabhigthresc
+    TONE,      // Evlocallabdecayc
+    TONE,      // Evlocallabmidthresd
+    TONE,      // Evlocallabrecothresl
+    TONE,      // Evlocallablowthresl
+    TONE,      // Evlocallabhigthresl
+    TONE,     // Evlocallabdecayl
+    TONE,      // Evlocallabrecothrese
+    TONE,      // Evlocallablowthrese
+    TONE,      // Evlocallabhigthrese
+    TONE,      // Evlocallabdecaye
+    TONE,      // Evlocallabrecothress
+    TONE,      // Evlocallablowthress
+    TONE,      // Evlocallabhigthress
+    TONE,      // Evlocallabdecays
+    TONE,      // Evlocallabrecothrev
+    TONE,      // Evlocallablowthresv
+    TONE,      // Evlocallabhigthresv
+    TONE,      // Evlocallabdecayv
+    TONE,      // Evlocallabrecothrew
+    TONE,      // Evlocallablowthresw
+    TONE,      // Evlocallabhigthresw
+    TONE,      // Evlocallabdecayw
+    TONE,      // Evlocallabmidthresdch
+    TONE,      // Evlocallabrecothret
+    TONE,      // Evlocallablowthrest
+    TONE,      // Evlocallabhigthrest
+    TONE,      // Evlocallabdecayt
+    TONE,      // Evlocallabrecothrecb
+    TONE,      // Evlocallablowthrescb
+    TONE,      // Evlocallabhigthrescb
+    TONE,      // Evlocallabdecaycb
+    TONE,      // Evlocallabrecothrer
+    TONE,      // Evlocallablowthresr
+    TONE,      // Evlocallabhigthresr
+    TONE,      // Evlocallabdecayr
+    TONE,      // Evlocallabnlstr
+    TONE,      // Evlocallabnldet
+    TONE,      // Evlocallabnlpat
+    TONE,      // Evlocallabnlrad
+    TONE,      // Evlocallabnlgam
+    TONE,      // Evlocallabdivgr
+    TONE,      // EvLocallabSpotavoidrad
+    TONE,      // EvLocallabSpotavoidmun
+    TONE,      // Evlocallabcontthres
+    TONE,      // Evlocallabnorm
+    TONE,      // Evlocallabreparw
+    TONE,      // Evlocallabreparcol
+    TONE,      // Evlocallabreparden
+    TONE,      // Evlocallabreparsh
+    TONE,      // Evlocallabreparexp
+    TONE,      // Evlocallabrepartm
+    TONE,      // Evlocallabchroml
+    TONE,      // Evlocallabresidgam
+    TONE,      // Evlocallabresidslop
+    TONE,      // Evlocallabnoisegam
+    TONE,       //Evlocallabgamlc
+    TONE,       //Evlocallabgamc
+    TONE,       //Evlocallabgamex
     AUTOEXP | M_AUTOEXP,    // EvLocenacie
-    AUTOEXP,     //Evlocallabreparcie
+    TONE,        //Evlocallabreparcie
     HDR,     //EvlocallabAutograycie
     HDR,    //EvlocallabsourceGraycie
     HDR,    //Evlocallabsourceabscie
-    AUTOEXP,    //Evlocallabsursourcie
-    AUTOEXP,    //Evlocallabsaturlcie
-    AUTOEXP,    //Evlocallabchromlcie
-    AUTOEXP,    //Evlocallablightlcie
-    AUTOEXP,    //Evlocallablightqcie
-    AUTOEXP,    //Evlocallabcontlcie
-    AUTOEXP,    //Evlocallabcontthrescie
-    AUTOEXP,    //Evlocallabcontqcie
-    AUTOEXP,    //Evlocallabcolorflcie
-    AUTOEXP,    //Evlocallabtargabscie
-    AUTOEXP,    //EvlocallabtargetGraycie
-    AUTOEXP,    //Evlocallabcatadcie
-    AUTOEXP,    //Evlocallabdetailcie
-    AUTOEXP,    //Evlocallabsurroundcie
-    AUTOEXP,    //Evlocallabsensicie
-    AUTOEXP,    //Evlocallabmodecie
-    AUTOEXP,    //Evlocallabrstprotectcie
-    AUTOEXP,    //Evlocallabsigmoidldacie12
-    AUTOEXP,    //Evlocallabsigmoidthcie12
-    AUTOEXP,    //Evlocallabsigmoidblcie12
+    TONE,       //Evlocallabsursourcie
+    TONE,       //Evlocallabsaturlcie
+    TONE,       //Evlocallabchromlcie
+    TONE,       //Evlocallablightlcie
+    TONE,       //Evlocallablightqcie
+    TONE,       //Evlocallabcontlcie
+    TONE,       //Evlocallabcontthrescie
+    TONE,       //Evlocallabcontqcie
+    TONE,       //Evlocallabcolorflcie
+    TONE,       //Evlocallabtargabscie
+    TONE,       //EvlocallabtargetGraycie
+    TONE,       //Evlocallabcatadcie
+    TONE,       //Evlocallabdetailcie
+    TONE,       //Evlocallabsurroundcie
+    TONE,       //Evlocallabsensicie
+    TONE,       //Evlocallabmodecie
+    TONE,       //Evlocallabrstprotectcie
+    TONE,       //Evlocallabsigmoidldacie12
+    TONE,       //Evlocallabsigmoidthcie12
+    TONE,       //Evlocallabsigmoidblcie12
     HDR,    //Evlocallabcomprcieauto
-    AUTOEXP,    //Evlocallabhuecie
-    AUTOEXP,    //Evlocallabjabcie
-    AUTOEXP,    //Evlocallablightjzcie
-    AUTOEXP,    //Evlocallabcontjzcie
-    AUTOEXP,    //Evlocallabchromjzcie
-    AUTOEXP,    //Evlocallabhuejzcie
-    AUTOEXP,    //Evlocallabsigmoidldajzcie12
-    AUTOEXP,    //Evlocallabsigmoidthjzcie12
-    AUTOEXP,    //Evlocallabsigmoidbljzcie12
-    AUTOEXP,    //Evlocallabadapjzcie
-    AUTOEXP,    //Evlocallabmodecam
-    AUTOEXP,    //Evlocallabhljzcie
-    AUTOEXP,    //Evlocallabhlthjzcie
-    AUTOEXP,    //Evlocallabshjzcie
-    AUTOEXP,    //Evlocallabshthjzcie
-    AUTOEXP,    //Evlocallabradjzcie
+    TONE,       //Evlocallabhuecie
+    TONE,       //Evlocallabjabcie
+    TONE,       //Evlocallablightjzcie
+    TONE,       //Evlocallabcontjzcie
+    TONE,       //Evlocallabchromjzcie
+    TONE,       //Evlocallabhuejzcie
+    TONE,       //Evlocallabsigmoidldajzcie12
+    TONE,       //Evlocallabsigmoidthjzcie12
+    TONE,       //Evlocallabsigmoidbljzcie12
+    TONE,       //Evlocallabadapjzcie
+    TONE,       //Evlocallabmodecam
+    TONE,       //Evlocallabhljzcie
+    TONE,       //Evlocallabhlthjzcie
+    TONE,       //Evlocallabshjzcie
+    TONE,       //Evlocallabshthjzcie
+    TONE,       //Evlocallabradjzcie
 //    AUTOEXP,    //EvlocallabHHshapejz
-    AUTOEXP,    //EvlocallabCHshapejz
-    AUTOEXP,    //Evlocallabjz100
-    AUTOEXP,    //Evlocallabpqremap
-    AUTOEXP,    //EvlocallabLHshapejz
-    AUTOEXP,    //Evlocallabshargam
-    AUTOEXP,    //Evlocallabvibgam
-    AUTOEXP,    //EvLocallabtoneMethodcie
-    AUTOEXP,    //Evlocallabshapecie
-    AUTOEXP,    //EvLocallabtoneMethodcie2
-    AUTOEXP,    //Evlocallabshapecie2
-    AUTOEXP,    //Evlocallabshapejz
-    AUTOEXP,    //Evlocallabshapecz
-    AUTOEXP,    //Evlocallabshapeczjz
-//    AUTOEXP,    //Evlocallabforcejz
+    TONE,       //EvlocallabCHshapejz
+    TONE,       //Evlocallabjz100
+    TONE,       //Evlocallabpqremap
+    TONE,       //EvlocallabLHshapejz
+    TONE,       //Evlocallabshargam
+    TONE,       //Evlocallabvibgam
+    TONE,       //EvLocallabtoneMethodcie
+    TONE,       //Evlocallabshapecie
+    TONE,       //EvLocallabtoneMethodcie2
+    TONE,       //Evlocallabshapecie2
+    TONE,       //Evlocallabshapejz
+    TONE,       //Evlocallabshapecz
+    TONE,       //Evlocallabshapeczjz
+    0,          // unused (Evlocallabforcejz = 1111 is commented out in procevents.h, but the slot remains)
 //    AUTOEXP,    //Evlocallablightlzcam
 //    AUTOEXP,    //Evlocallablightqzcam
 //    AUTOEXP,    //Evlocallabcontlzcam
@@ -1151,47 +1151,46 @@ int refreshmap[rtengine::NUMOFEVENTS] = {
 //    AUTOEXP,    //Evlocallabcolorflzcam
 //    AUTOEXP,    //Evlocallabsaturzcam
 //    AUTOEXP,    //Evlocallabchromzcam
-    AUTOEXP,    //Evlocallabpqremapcam16
-    AUTOEXP,    //EvLocallabEnacieMask    
-    AUTOEXP,    //EvlocallabCCmaskcieshape
-    AUTOEXP,    //EvlocallabLLmaskcieshape
-    AUTOEXP,    //EvlocallabHHmaskcieshape
-    AUTOEXP,    //Evlocallabblendmaskcie
-    AUTOEXP,    //Evlocallabradmaskcie
-    AUTOEXP,    //Evlocallabchromaskcie
-    AUTOEXP,    //EvlocallabLmaskcieshape 
-    AUTOEXP,    //Evlocallabrecothrescie
-    AUTOEXP,    //Evlocallablowthrescie
-    AUTOEXP,    //Evlocallabhigthrescie
-    AUTOEXP,    //Evlocallabdecaycie
-    AUTOEXP,    //Evlocallablapmaskcie
-    AUTOEXP,    //Evlocallabgammaskcie
-    AUTOEXP,    //Evlocallabslomaskcie
-    AUTOEXP,    //Evlocallabqtoj
-    AUTOEXP,    //Evlocallabsaturjzcie
-    AUTOEXP,    //EvLocallabSpotdenoichmask
-    AUTOEXP,    //Evlocallabsigmalcjz
-    AUTOEXP,    //EvlocallabcsThresholdjz
-    AUTOEXP,    //EvlocallabwavCurvejz
-    AUTOEXP,    //Evlocallabclarilresjz
-    AUTOEXP,    //Evlocallabclaricresjz
-    AUTOEXP,    //Evlocallabclarisoftjz
-    AUTOEXP,    //EvlocallabHHshapejz
-    AUTOEXP,    //Evlocallabsoftjzcie
-    AUTOEXP,    //Evlocallabthrhjzcie
-    AUTOEXP,    //Evlocallabchjzcie
-    AUTOEXP,    //Evlocallabstrsoftjzcie
-    AUTOEXP,    //EvlocallabblackEvjz
-    AUTOEXP,    //EvlocallabwhiteEvjz
-    AUTOEXP,    //Evlocallablogjz
-    AUTOEXP,    //Evlocallabtargetjz
-    AUTOEXP,    //Evlocallabsigybjz12
-    AUTOEXP,    //Evlocallabsigjz12
-    AUTOEXP,    //Evlocallabsigq12
-    AUTOEXP,    //Evlocallablogcie
+    TONE,       //Evlocallabpqremapcam16
+    TONE,       //EvLocallabEnacieMask    
+    TONE,       //EvlocallabCCmaskcieshape
+    TONE,       //EvlocallabLLmaskcieshape
+    TONE,       //EvlocallabHHmaskcieshape
+    TONE,       //Evlocallabblendmaskcie
+    TONE,       //Evlocallabradmaskcie
+    TONE,       //Evlocallabchromaskcie
+    TONE,       //EvlocallabLmaskcieshape 
+    TONE,       //Evlocallabrecothrescie
+    TONE,       //Evlocallablowthrescie
+    TONE,       //Evlocallabhigthrescie
+    TONE,       //Evlocallabdecaycie
+    TONE,       //Evlocallablapmaskcie
+    TONE,       //Evlocallabgammaskcie
+    TONE,       //Evlocallabslomaskcie
+    TONE,       //Evlocallabqtoj
+    TONE,       //Evlocallabsaturjzcie
+    TONE,       //EvLocallabSpotdenoichmask
+    TONE,       //Evlocallabsigmalcjz
+    TONE,       //EvlocallabcsThresholdjz
+    TONE,       //EvlocallabwavCurvejz
+    TONE,       //Evlocallabclarilresjz
+    TONE,       //Evlocallabclaricresjz
+    TONE,       //Evlocallabclarisoftjz
+    TONE,       //EvlocallabHHshapejz
+    TONE,       //Evlocallabsoftjzcie
+    TONE,       //Evlocallabthrhjzcie
+    TONE,       //Evlocallabchjzcie
+    TONE,       //Evlocallabstrsoftjzcie
+    TONE,       //EvlocallabblackEvjz
+    TONE,       //EvlocallabwhiteEvjz
+    TONE,       //Evlocallablogjz
+    TONE,       //Evlocallabtargetjz
+    TONE,       //Evlocallabsigybjz12
+    TONE,       //Evlocallabsigjz12
+    TONE,       //Evlocallabsigq12
+    TONE,       //Evlocallablogcie
     AIDENOISE,  //EvAIDNEnabled
     AIDENOISE,  //EvAIDNBlend
-    ALLNORAW,   //EvAIDNBlend (duplicate — compensates for a missing entry earlier in the array)
     LUMINANCECURVE,  //EvColorGradingEnabled
     LUMINANCECURVE,  //EvColorGradingShadows
     LUMINANCECURVE,  //EvColorGradingMidtones
@@ -1199,21 +1198,29 @@ int refreshmap[rtengine::NUMOFEVENTS] = {
     LUMINANCECURVE,  //EvColorGradingGlobal
     LUMINANCECURVE,  //EvColorGradingBlending
     LUMINANCECURVE,  //EvColorGradingBalance
-    ALLNORAW,        //EvHSVEqMode
-    ALLNORAW,        //EvHSVEqSliders
-    AUTOEXP,         //EvLocallabSpotGradAngle
-    ALLNORAW,        //EvPointColorEnabled
-    ALLNORAW,        //EvPointColorHue
-    ALLNORAW,        //EvPointColorHueShift
-    ALLNORAW,        //EvPointColorSaturation
-    ALLNORAW,        //EvPointColorLuminance
-    ALLNORAW,        //EvPointColorRange
-    ALLNORAW,        //EvPointColorTargetAdd
+    // HSV and Point Color run inside rgbProc: the footing the stock HSV
+    // events have (see TONE in refreshmap.h), not a rebuild from the source.
+    TONE,            //EvHSVEqMode
+    TONE,            //EvHSVEqSliders
+    TONE,            //EvLocallabSpotGradAngle
+    TONE,            //EvPointColorEnabled
+    TONE,            //EvPointColorHue
+    TONE,            //EvPointColorHueShift
+    TONE,            //EvPointColorSaturation
+    TONE,            //EvPointColorLuminance
+    TONE,            //EvPointColorRange
+    TONE,            //EvPointColorTargetAdd
     TONE,            //EvRGBMasterCurve
-    AUTOEXP,         //EvBWNeutrals
-    AUTOEXP,         //EvBWTone
-    AUTOEXP          //EvBWStrength
+    TONE,            //EvBWNeutrals
+    TONE,            //EvBWTone
+    TONE          //EvBWStrength
 };
+
+// The table is positional: one entry per event code, gaps included. A missing
+// or extra line shifts every later event onto its neighbour's action without
+// any other symptom, so the length is checked here.
+static_assert(sizeof(refreshmap) / sizeof(refreshmap[0]) == rtengine::NUMOFEVENTS,
+              "refreshmap[] must have exactly one entry per ProcEventCode");
 
 
 namespace rtengine

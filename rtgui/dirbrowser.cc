@@ -19,11 +19,14 @@
 #include "dirbrowser.h"
 
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <iostream>
 
 #include "rtengine/rt_math.h"
 
+#include "backgroundtasks.h"
 #include "cachemanager.h"
 #include "guiutils.h"
 #include "rtimage.h"
@@ -31,8 +34,15 @@
 #include "multilangmgr.h"
 #include "options.h"
 #include "thumbnail.h"
+#include "cacheimagedata.h"
+#include "imagescanhelpers.h"
 
+#include <algorithm>
+#include <mutex>
 #include <thread>
+
+#include <glib/gstdio.h>
+#include <glibmm/checksum.h>
 
 // Subclass TreeView to intercept motion/leave events BEFORE the base class
 // handler (which returns TRUE when hover_selection is enabled, consuming events).
@@ -106,8 +116,106 @@ protected:
     }
 };
 
+// The folder's name, and under it (folder previews) a strip of a few of its
+// photos. Before the strip has loaded the row already reserves its height and
+// shows faint tiles, so rows do not jump when the pictures land.
+class FolderNameRenderer : public Gtk::CellRendererText {
+public:
+    // Tile edge in logical px for Options::folderPreviewSize 0..3.
+    static int tileFor(int size) { return size <= 0 ? 18 : size == 1 ? 26 : size == 2 ? 36 : 52; }
+    static constexpr int kGap = 3;
+    static constexpr int kAbove = 2;    // between the name and the strip
+    static constexpr int kBelow = 5;
+
+    FolderNameRenderer() : Glib::ObjectBase("FolderNameRenderer") {}
+
+    // Set by the cell data function before every measure and render.
+    int slots = 0;
+    Glib::RefPtr<Gdk::Pixbuf> strip;    // device pixels, `scale` per logical px
+    int scale = 1;
+    int tile = 24;                      // logical px, square
+    Gdk::RGBA placeholderInk;
+
+    int visibleRight = 0;               // right edge of the visible tree, tree px
+    // Height of the name band (the shared sidebar row height). Never set a
+    // fixed size on this renderer: that would override the strip's height.
+    int nameRowH = 0;
+
+    // The strip starts under the row's chevron, not under the name.
+    static constexpr int kLead = 16;
+
+protected:
+    // One line at the chosen size; what does not fit is cut by the sidebar's
+    // edge (a narrower sidebar shows fewer photos, never smaller ones).
+    int stripHeight() const
+    {
+        return slots > 0 ? kAbove + tile + kBelow : 0;
+    }
+
+    void get_preferred_height_vfunc(Gtk::Widget& widget, int& minimum, int& natural) const override
+    {
+        Gtk::CellRendererText::get_preferred_height_vfunc(widget, minimum, natural);
+        minimum = std::max(minimum, nameRowH) + stripHeight();
+        natural = std::max(natural, nameRowH) + stripHeight();
+    }
+
+    void get_preferred_height_for_width_vfunc(Gtk::Widget& widget, int width, int& minimum, int& natural) const override
+    {
+        Gtk::CellRendererText::get_preferred_height_for_width_vfunc(widget, width, minimum, natural);
+        minimum = std::max(minimum, nameRowH) + stripHeight();
+        natural = std::max(natural, nameRowH) + stripHeight();
+    }
+
+    void render_vfunc(const Cairo::RefPtr<Cairo::Context>& cr, Gtk::Widget& widget,
+                      const Gdk::Rectangle& background_area, const Gdk::Rectangle& cell_area,
+                      Gtk::CellRendererState flags) override
+    {
+        if (slots <= 0) {
+            Gtk::CellRendererText::render_vfunc(cr, widget, background_area, cell_area, flags);
+            return;
+        }
+
+        int textMin = 0, textH = 0;
+        Gtk::CellRendererText::get_preferred_height_vfunc(widget, textMin, textH);
+        const int bandH = std::max(textH, nameRowH);
+        const int top = cell_area.get_y() + std::max(0, (cell_area.get_height() - bandH - stripHeight()) / 2);
+        const Gdk::Rectangle textArea(cell_area.get_x(), top, cell_area.get_width(), bandH);
+        Gtk::CellRendererText::render_vfunc(cr, widget, background_area, textArea, flags);
+
+        const double x0 = std::max<double>(background_area.get_x(), cell_area.get_x() - kLead);
+        const double y0 = top + bandH + kAbove;
+
+        cr->save();
+        cr->rectangle(background_area.get_x(), background_area.get_y(),
+                      std::max(0, visibleRight - background_area.get_x()), background_area.get_height());
+        cr->clip();
+
+        if (strip) {
+            cr->translate(x0, y0);
+            cr->scale(1.0 / scale, 1.0 / scale);
+            Gdk::Cairo::set_source_pixbuf(cr, strip, 0, 0);
+            cr->paint();
+        } else {
+            cr->set_source_rgba(placeholderInk.get_red(), placeholderInk.get_green(), placeholderInk.get_blue(), 0.08);
+            for (int i = 0; i < slots; ++i) {
+                roundedRect(cr, x0 + i * (tile + kGap), y0, tile, tile, 3.0);
+                cr->fill();
+            }
+        }
+
+        cr->restore();
+    }
+
+public:
+    static void roundedRect(const Cairo::RefPtr<Cairo::Context>& cr, double x, double y, double w, double h, double r)
+    {
+        steepui::roundedRect(cr, x, y, w, h, r);
+    }
+};
+
 #ifdef _WIN32
 #include "rtengine/leanwindows.h"
+#include <shellapi.h>
 #endif // _WIN32
 
 namespace
@@ -196,8 +304,9 @@ DirBrowser::DirBrowser () : dirTreeModel(),
     set_orientation(Gtk::ORIENTATION_VERTICAL);
     dirtree = Gtk::manage ( new DirTreeView() );
     scrolledwindow4 = Gtk::manage ( new Gtk::ScrolledWindow() );
-    crt.property_ellipsize() = Pango::ELLIPSIZE_END;
-    crt.property_max_width_chars() = 22;
+    crt = Gtk::manage(new FolderNameRenderer());
+    crt->property_ellipsize() = Pango::ELLIPSIZE_END;
+    crt->property_max_width_chars() = 22;
 
 //   dirtree->set_flags(Gtk::CAN_FOCUS);
     dirtree->set_headers_visible(false);
@@ -247,19 +356,22 @@ DirBrowser::DirBrowser () : dirTreeModel(),
     scrolledwindow4->get_vadjustment()->signal_value_changed().connect([this]() {
         hideHoverPopup();
     });
+
+    previewSettingsChanged().connect(sigc::mem_fun(*this, &DirBrowser::refreshFolderPreviews));
+
 }
 
 DirBrowser::~DirBrowser()
 {
-    chevronAnimConn_.disconnect();
     dirUpdateConn_.disconnect();
+    previewApplyConn_.disconnect();
     hideHoverPopup();
     delete hoverPopup_;
     idle_register.destroy();
 }
 
 // Generate rotated chevron pixbufs: frame 0 = right (0°), frame count = down (90°)
-static std::vector<Glib::RefPtr<Gdk::Pixbuf>> generateChevronFrames(int count)
+static std::vector<Glib::RefPtr<Gdk::Pixbuf>> generateChevronFrames(int count, const Gdk::RGBA& ink)
 {
     const int sz = 16;
     const double cx = sz / 2.0, cy = sz / 2.0;
@@ -272,7 +384,7 @@ static std::vector<Glib::RefPtr<Gdk::Pixbuf>> generateChevronFrames(int count)
         cr->translate(cx, cy);
         cr->rotate(angle);
         cr->translate(-cx, -cy);
-        cr->set_source_rgba(0.6, 0.6, 0.6, 1.0);
+        cr->set_source_rgba(ink.get_red(), ink.get_green(), ink.get_blue(), 1.0);
         cr->set_line_width(1.5);
         cr->set_line_cap(Cairo::LINE_CAP_ROUND);
         cr->set_line_join(Cairo::LINE_JOIN_ROUND);
@@ -343,25 +455,30 @@ bool DirBrowser::isCurrentDirFavorite () const
 
 void DirBrowser::toggleCurrentDirFavorite ()
 {
-    if (currentDir_.empty()) {
+    toggleDirFavorite(currentDir_);
+}
+
+void DirBrowser::toggleDirFavorite (const Glib::ustring& dir)
+{
+    if (dir.empty()) {
         return;
     }
 
     auto& favs = App::get().mut_options().favoriteDirs;
     bool removed = false;
     for (auto it = favs.begin(); it != favs.end(); ++it) {
-        if (isSamePath(*it, currentDir_)) {
+        if (isSamePath(*it, dir)) {
             favs.erase(it);
             removed = true;
             break;
         }
     }
     if (!removed) {
-        favs.push_back(currentDir_);
+        favs.push_back(dir);
     }
 
     try {
-        Options::save();
+        Options::saveAsync();
     } catch (Options::Error& error) {
         std::cerr << "Failed to save options: " << error.get_msg() << std::endl;
     }
@@ -373,6 +490,7 @@ void DirBrowser::toggleCurrentDirFavorite ()
 void DirBrowser::fillDirTree ()
 {
     //Create the Tree model:
+    ++previewGeneration_;
     dirTreeModel = Gtk::TreeStore::create(dtColumns);
     // A freshly built tree has nothing marked yet; callers re-sync afterwards.
     currentDir_.clear();
@@ -403,9 +521,29 @@ void DirBrowser::fillDirTree ()
     fillRoot ();
 
     // Generate chevron rotation frames (Cairo-drawn)
-    chevronFrames_ = generateChevronFrames(6);
-    chevronRightPixbuf_ = chevronFrames_.front();
-    chevronDownPixbuf_ = chevronFrames_.back();
+    // Theme ink rather than a fixed grey, which vanished on light themes.
+    // GTK has no "theme changed" signal of its own, so re-read the token
+    // whenever the style is invalidated and rebuild only if it moved.
+    const auto rebuildChevrons = [this](const Gdk::RGBA& ink) {
+        chevronFrames_ = generateChevronFrames(6, ink);
+        chevronRightPixbuf_ = chevronFrames_.front();
+        chevronDownPixbuf_ = chevronFrames_.back();
+    };
+    const Gdk::RGBA chevronInk = themeColor(*dirtree, "steep_text_dim", Gdk::RGBA("#8a92a1"));
+    rebuildChevrons(chevronInk);
+    const auto lastChevronInk = std::make_shared<Gdk::RGBA>(chevronInk);
+    dirtree->signal_style_updated().connect([this, rebuildChevrons, lastChevronInk]() {
+        const Gdk::RGBA ink = themeColor(*dirtree, "steep_text_dim", Gdk::RGBA("#8a92a1"));
+
+        if (ink != *lastChevronInk) {
+            *lastChevronInk = ink;
+            rebuildChevrons(ink);
+            starFilledPixbuf_ = generateStarPixbuf(true, themeColor(*this, "steep_accent", Gdk::RGBA("#f2c240")));
+            starHollowPixbuf_ = generateStarPixbuf(false, ink);
+            crt->placeholderInk = themeColor(*dirtree, "steep_text", Gdk::RGBA("#d0d4dc"));
+            dirtree->queue_draw();
+        }
+    });
 
     // Chevron expand/collapse indicator
     Gtk::CellRendererPixbuf* chevronCR = Gtk::manage(new Gtk::CellRendererPixbuf());
@@ -431,39 +569,43 @@ void DirBrowser::fillDirTree ()
         }
     });
 
-    // Favorite star: shown only on the current (open) folder row, to the
-    // left of its name. Filled when the folder is already a starred place;
-    // clicking it toggles the favorite (see the onButtonPress hook below).
+    crt->placeholderInk = themeColor(*dirtree, "steep_text", Gdk::RGBA("#d0d4dc"));
+    tvc.pack_start (*crt, false);
+    tvc.set_cell_data_func(*crt, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
+        auto* textCR = static_cast<FolderNameRenderer*>(cr);
+        paintCurrentDirBackground(cr, iter);
+        textCR->property_text() = iter ? iter->get_value(dtColumns.filename) : Glib::ustring();
+        textCR->property_weight() = isCurrentDirRow(iter) ? Pango::WEIGHT_BOLD : Pango::WEIGHT_NORMAL;
+        const bool previews = iter && App::get().options().folderPreviews;
+        textCR->slots = previews ? iter->get_value(dtColumns.previewSlots) : 0;
+        textCR->strip = previews ? iter->get_value(dtColumns.previewStrip) : Glib::RefPtr<Gdk::Pixbuf>();
+        textCR->scale = std::max(1, dirtree->get_scale_factor());
+        textCR->tile = FolderNameRenderer::tileFor(App::get().options().folderPreviewSize);
+        const auto hadj = scrolledwindow4->get_hadjustment();
+        textCR->visibleRight = hadj && hadj->get_page_size() > 0
+                               ? static_cast<int>(hadj->get_value() + hadj->get_page_size())
+                               : dirtree->get_allocated_width();
+    });
+
+    // Favorite star, right of the name on the row under the pointer only:
+    // filled when the folder is a starred place, hollow to offer starring
+    // it. Clicking it toggles (see the onButtonPress hook below).
     starFilledPixbuf_ = generateStarPixbuf(true, themeColor(*this, "steep_accent", Gdk::RGBA("#f2c240")));
     starHollowPixbuf_ = generateStarPixbuf(false, themeColor(*this, "steep_text_dim", Gdk::RGBA("#9ea4b2")));
     starCR_ = Gtk::manage(new Gtk::CellRendererPixbuf());
     starCR_->property_ypad() = 0;
-    starCR_->property_xpad() = 1;
+    starCR_->property_xpad() = 4;
     tvc.pack_start(*starCR_, false);
     tvc.set_cell_data_func(*starCR_, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
         auto* pbCR = static_cast<Gtk::CellRendererPixbuf*>(cr);
         paintCurrentDirBackground(cr, iter);
-        // Starred folders keep their star no matter which row is current;
-        // the hollow "star me" affordance only shows on the current row.
         const Glib::ustring rowDir = iter ? iter->get_value(dtColumns.dirname) : Glib::ustring();
-        if (!rowDir.empty() && isDirFavorite(rowDir)) {
-            pbCR->property_pixbuf() = starFilledPixbuf_;
-            pbCR->property_visible() = true;
-        } else if (isCurrentDirRow(iter)) {
-            pbCR->property_pixbuf() = starHollowPixbuf_;
-            pbCR->property_visible() = true;
-        } else {
-            pbCR->property_pixbuf().reset_value();
-            pbCR->property_visible() = false;
-        }
-    });
-
-    tvc.pack_start (crt);
-    tvc.set_cell_data_func(crt, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
-        auto* textCR = static_cast<Gtk::CellRendererText*>(cr);
-        paintCurrentDirBackground(cr, iter);
-        textCR->property_text() = iter ? iter->get_value(dtColumns.filename) : Glib::ustring();
-        textCR->property_weight() = isCurrentDirRow(iter) ? Pango::WEIGHT_BOLD : Pango::WEIGHT_NORMAL;
+        const bool hovered = iter && !rowDir.empty() && !hoverRow_.empty()
+                             && dirTreeModel->get_path(iter) == hoverRow_;
+        // Always measured, so the row does not reflow as the pointer moves.
+        pbCR->property_pixbuf() = hovered ? (isDirFavorite(rowDir) ? starFilledPixbuf_ : starHollowPixbuf_)
+                                          : Glib::RefPtr<Gdk::Pixbuf>();
+        pbCR->property_width() = 16 + 2 * 4;
     });
 
     Gtk::CellRendererText* countCR = Gtk::manage(new Gtk::CellRendererText());
@@ -489,11 +631,29 @@ void DirBrowser::fillDirTree ()
 
     dirTreeModel->set_sort_column(dtColumns.filename, options.dirBrowserSortType);
 
-    crt.property_ypad() = 0;
+    crt->property_ypad() = 0;
+
+    // One name-row height for every sidebar list. A row with a preview strip
+    // is taller than its name; the chevron, star and count stay level with
+    // the name (centred in that first band) instead of centring on the row.
+    int lineH = 0;
+    const int rowH = steepui::listRowHeight(*dirtree, &lineH);
+    crt->nameRowH = rowH;
+    chevronCR->property_yalign() = 0.f;
+    chevronCR->property_ypad() = std::max(0, (rowH - 16) / 2);
+    starCR_->property_yalign() = 0.f;
+    starCR_->property_ypad() = std::max(0, (rowH - 16) / 2);
+    countCR->property_yalign() = 0.f;
+    // The count is set at 0.8 scale (above).
+    countCR->property_ypad() = std::max(0, (rowH - static_cast<int>(lineH * 0.8)) / 2);
 
     // Clicking the star on the current folder row toggles its favorite
     // status instead of re-activating the row.
     dirtree->onButtonPress = [this](GdkEventButton* ev) -> bool {
+        if (ev->button == 3 && ev->type == GDK_BUTTON_PRESS) {
+            showPreviewMenu(ev);
+            return true;
+        }
         if (ev->button != 1 || ev->type != GDK_BUTTON_PRESS || !starCR_ || !dirTreeModel) {
             return false;
         }
@@ -504,7 +664,7 @@ void DirBrowser::fillDirTree ()
             return false;
         }
         auto iter = dirTreeModel->get_iter(path);
-        if (!iter || !isCurrentDirRow(iter)) {
+        if (!iter || iter->get_value(dtColumns.dirname).empty()) {
             return false;
         }
         // Resolve the star cell's x range within the row
@@ -517,7 +677,7 @@ void DirBrowser::fillDirTree ()
         }
         const int x0 = cellArea.get_x() + startPos;
         if (ev->x >= x0 && ev->x < x0 + width) {
-            toggleCurrentDirFavorite();
+            toggleDirFavorite(iter->get_value(dtColumns.dirname));
             return true;
         }
         return false;
@@ -816,137 +976,110 @@ void DirBrowser::row_activated (const Gtk::TreeModel::Path& path, Gtk::TreeViewC
         setCurrentDir (dname, path);
         dirSelectionSignal (dname, Glib::ustring());
 
-        expandAnimConn_.disconnect();
+        // A fold cancelled in mid-flight leaves the height capped; lift the
+        // cap before measuring. Nothing is laid out in between, so the new
+        // animation still starts from the height on screen.
+        if (expandAnim_.running()) {
+            expandAnim_.stop();
+            scrolledwindow4->set_max_content_height(-1);
+        }
+
+        const auto liftHeightCap = [this]() {
+            scrolledwindow4->set_max_content_height(-1);
+        };
         bool wasExpanded = dirtree->row_expanded(path);
 
         if (wasExpanded) {
             // Start chevron collapse animation
             auto pathStr = path.to_string();
-            auto it = chevronAnimFrame_.find(pathStr);
-            chevronAnimFrame_[pathStr] = it != chevronAnimFrame_.end()
-                ? it->second : static_cast<int>(chevronFrames_.size()) - 1;
-            chevronAnimExpanding_[pathStr] = false;
-            revealParentPath_.clear();
-            dirtree->revealParentPath.clear();
-            dirtree->revealFraction = 1.0;
-            startChevronAnim();
+            clearReveal();
+            animateChevron(pathStr, false);
 
-            // Collapse with animation (fast: 120ms)
-            expandAnimStartH_ = scrolledwindow4->get_allocated_height();
+            // Collapse with animation
+            const int startH = scrolledwindow4->get_allocated_height();
             dirtree->collapse_row(path);
             int minH = 0, natH = 0;
             dirtree->get_preferred_height(minH, natH);
-            expandAnimTargetH_ = std::max(natH + 4, scrolledwindow4->get_min_content_height());
+            const int targetH = std::max(natH + 4, scrolledwindow4->get_min_content_height());
             // Clamp to current if natural is larger (scrolled content)
-            if (expandAnimTargetH_ >= expandAnimStartH_) {
+            if (targetH >= startH) {
                 // Content is still larger than viewport, no height animation needed
                 return;
             }
-            expandAnimExpanding_ = false;
-            expandAnimFraction_ = 0.0;
-            scrolledwindow4->set_min_content_height(expandAnimTargetH_);
-            scrolledwindow4->set_max_content_height(expandAnimStartH_);
             scrolledwindow4->set_propagate_natural_height(true);
-            expandAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
-                expandAnimFraction_ += 16.0 / 120.0; // 120ms collapse
-                if (expandAnimFraction_ >= 1.0) {
-                    scrolledwindow4->set_max_content_height(-1);
-                    return false;
-                }
-                double t = expandAnimFraction_ * expandAnimFraction_; // ease-in-quad
-                int h = expandAnimStartH_ + static_cast<int>((expandAnimTargetH_ - expandAnimStartH_) * t);
-                scrolledwindow4->set_max_content_height(h);
-                return true;
-            }, 16);
+            // Only the maximum moves here: the tree can be far taller than
+            // the window, so its height must never become a minimum.
+            expandAnim_ = steep::motion::animatePaneHeight(*scrolledwindow4, startH, targetH, false, liftHeightCap);
         } else {
             // Start chevron expand animation + child reveal
             auto pathStr = path.to_string();
-            auto it = chevronAnimFrame_.find(pathStr);
-            chevronAnimFrame_[pathStr] = it != chevronAnimFrame_.end()
-                ? it->second : 0;
-            chevronAnimExpanding_[pathStr] = true;
-            revealParentPath_ = pathStr;
-            revealAlpha_ = 0.0;
-            dirtree->revealParentPath = pathStr;
-            dirtree->revealFraction = 0.0;
-            startChevronAnim();
+            animateChevron(pathStr, true);
+            animateReveal(pathStr);
 
-            // Expand with animation (smooth: 200ms)
-            expandAnimStartH_ = scrolledwindow4->get_allocated_height();
+            // Expand with animation
+            const int startH = scrolledwindow4->get_allocated_height();
             dirtree->expand_row(path, false);
             int minH = 0, natH = 0;
             dirtree->get_preferred_height(minH, natH);
-            expandAnimTargetH_ = natH + 4;
-            if (expandAnimTargetH_ <= expandAnimStartH_) {
+            const int targetH = natH + 4;
+            if (targetH <= startH) {
                 // Content fits, no animation needed
                 return;
             }
-            expandAnimExpanding_ = true;
-            expandAnimFraction_ = 0.0;
-            scrolledwindow4->set_max_content_height(expandAnimStartH_);
             scrolledwindow4->set_propagate_natural_height(true);
-            expandAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
-                expandAnimFraction_ += 16.0 / 200.0; // 200ms expand
-                if (expandAnimFraction_ >= 1.0) {
-                    scrolledwindow4->set_max_content_height(-1);
-                    return false;
-                }
-                double t = 1.0 - std::pow(1.0 - expandAnimFraction_, 3); // ease-out-cubic
-                int h = expandAnimStartH_ + static_cast<int>((expandAnimTargetH_ - expandAnimStartH_) * t);
-                scrolledwindow4->set_max_content_height(h);
-                return true;
-            }, 16);
+            expandAnim_ = steep::motion::animatePaneHeight(*scrolledwindow4, startH, targetH, false, liftHeightCap);
         }
     }
 }
 
-void DirBrowser::startChevronAnim()
+void DirBrowser::animateChevron(const std::string& pathStr, bool expanding)
 {
-    if (chevronAnimConn_.connected()) return;
-    chevronAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
-        // Advance chevron frames
-        for (auto it = chevronAnimFrame_.begin(); it != chevronAnimFrame_.end(); ) {
-            bool expanding = chevronAnimExpanding_[it->first];
-            if (expanding) {
-                it->second++;
-                if (it->second >= static_cast<int>(chevronFrames_.size()) - 1) {
-                    it->second = static_cast<int>(chevronFrames_.size()) - 1;
-                    chevronAnimExpanding_.erase(it->first);
-                    it = chevronAnimFrame_.erase(it);
-                    continue;
-                }
-            } else {
-                it->second--;
-                if (it->second <= 0) {
-                    it->second = 0;
-                    chevronAnimExpanding_.erase(it->first);
-                    it = chevronAnimFrame_.erase(it);
-                    continue;
-                }
-            }
-            ++it;
-        }
+    const int last = static_cast<int>(chevronFrames_.size()) - 1;
+    // A chevron still turning carries on from the frame it is showing.
+    const auto it = chevronAnimFrame_.find(pathStr);
+    const int startFrame = it != chevronAnimFrame_.end() ? it->second : (expanding ? 0 : last);
+    const int endFrame = expanding ? last : 0;
+    chevronAnimFrame_[pathStr] = startFrame;
 
-        // Advance reveal fraction (clip-based reveal)
-        if (revealAlpha_ < 1.0) {
-            revealAlpha_ += 16.0 / 150.0;
-            if (revealAlpha_ >= 1.0) {
-                revealAlpha_ = 1.0;
-                revealParentPath_.clear();
-                dirtree->revealParentPath.clear();
-                dirtree->revealFraction = 1.0;
-            } else {
-                // Ease-out-cubic for smooth deceleration
-                double t = 1.0 - std::pow(1.0 - revealAlpha_, 3);
-                dirtree->revealFraction = t;
-            }
-        }
+    const int duration = last > 0
+        ? steep::motion::ms(steep::motion::Duration::Micro) * std::abs(endFrame - startFrame) / last
+        : 0;
+    chevronAnims_[pathStr] = steep::motion::run(*dirtree, startFrame, endFrame, duration, steep::motion::Ease::Move,
+        [this, pathStr](double frame) {
+            chevronAnimFrame_[pathStr] = static_cast<int>(std::lround(frame));
+            dirtree->queue_draw();
+        },
+        [this, pathStr]() {
+            // Back to the static open/closed pixbuf.
+            chevronAnimFrame_.erase(pathStr);
+            dirtree->queue_draw();
+        });
+}
 
-        dirtree->queue_draw();
+void DirBrowser::animateReveal(const std::string& parentPathStr)
+{
+    revealParentPath_ = parentPathStr;
+    dirtree->revealParentPath = parentPathStr;
+    dirtree->revealFraction = 0.0;
+    revealAnim_ = steep::motion::run(*dirtree, 0.0, 1.0, steep::motion::Duration::Standard, steep::motion::Ease::Enter,
+        [this](double fraction) {
+            dirtree->revealFraction = fraction;
+            dirtree->queue_draw();
+        },
+        [this]() {
+            revealParentPath_.clear();
+            dirtree->revealParentPath.clear();
+            dirtree->revealFraction = 1.0;
+            dirtree->queue_draw();
+        });
+}
 
-        bool done = chevronAnimFrame_.empty() && revealAlpha_ >= 1.0;
-        return !done;
-    }, 16);
+void DirBrowser::clearReveal()
+{
+    revealAnim_.stop();
+    revealParentPath_.clear();
+    dirtree->revealParentPath.clear();
+    dirtree->revealFraction = 1.0;
 }
 
 Gtk::TreePath DirBrowser::expandToDir (const Glib::ustring& absDirPath)
@@ -1213,6 +1346,25 @@ void DirBrowser::selectDir (Glib::ustring dir)
 
 bool DirBrowser::onMotionNotify(GdkEventMotion* event)
 {
+    {
+        Gtk::TreeModel::Path row;
+        Gtk::TreeViewColumn* col = nullptr;
+        int cx = 0, cy = 0;
+        if (!dirtree->get_path_at_pos(static_cast<int>(event->x), static_cast<int>(event->y), row, col, cx, cy)) {
+            row = Gtk::TreeModel::Path();
+        }
+        if (row != hoverRow_) {
+            hoverRow_ = row;
+            dirtree->queue_draw();
+        }
+    }
+
+    // The rows already show their photos; the popup would repeat them.
+    if (App::get().options().folderPreviews) {
+        hideHoverPopup();
+        return false;
+    }
+
     Gtk::TreeModel::Path path;
     Gtk::TreeViewColumn* column = nullptr;
     int cell_x, cell_y;
@@ -1245,6 +1397,10 @@ bool DirBrowser::onMotionNotify(GdkEventMotion* event)
 
 bool DirBrowser::onLeaveNotify(GdkEventCrossing*)
 {
+    if (!hoverRow_.empty()) {
+        hoverRow_ = Gtk::TreeModel::Path();
+        dirtree->queue_draw();
+    }
     hideHoverPopup();
     return false;
 }
@@ -1288,7 +1444,7 @@ void DirBrowser::showHoverPopup(const Gtk::TreeModel::Path& path)
     popupVisible_ = true;
 
     int session = ++hoverSession_;
-    std::thread(&DirBrowser::loadHoverThumbnails, this, dirname, session).detach();
+    steep::runBackground([this, dirname, session]() { loadHoverThumbnails(dirname, session); });
 }
 
 void DirBrowser::hideHoverPopup()
@@ -1385,17 +1541,27 @@ void DirBrowser::countPhotosInChildren (const Gtk::TreeModel::iterator& parent)
     // to come from the captured RefPtr's internal pointer being clobbered,
     // so we just use the stable `this` on the main thread instead.
     DirBrowser* self = this;
+    const int generation = previewGeneration_;
+    const bool previews = App::get().options().folderPreviews;
+    const int previewCount = std::max(1, std::min(5, App::get().options().folderPreviewCount));
+    const int scale = std::max(1, dirtree->get_scale_factor());
+    const int tileSize = FolderNameRenderer::tileFor(App::get().options().folderPreviewSize);
+    const bool preferRated = App::get().options().folderPreviewsPreferRated;
+    const Glib::ustring cacheDir = Glib::build_filename(App::get().options().cacheBaseDir, "folderpreviews");
 
-    std::thread([entries, self]() {
+    steep::runBackground([entries, self, generation, previews, previewCount, scale, tileSize, preferRated, cacheDir]() {
         struct Result {
             Glib::ustring pathStr;
+            Glib::ustring dirname;
             Glib::ustring countStr;
+            int slots;
         };
         auto results = std::make_shared<std::vector<Result>>();
         results->reserve(entries.size());
+        std::vector<std::vector<std::string>> photos(entries.size());
 
-        for (const auto& entry : entries) {
-            int count = 0;
+        for (size_t e = 0; e < entries.size(); ++e) {
+            const auto& entry = entries[e];
             try {
                 Glib::Dir dir(entry.dirname);
                 const auto& exts = App::get().options().parsedExtensionsSet;
@@ -1405,26 +1571,437 @@ void DirBrowser::countPhotosInChildren (const Gtk::TreeModel::iterator& parent)
                     if (dotpos != Glib::ustring::npos) {
                         Glib::ustring ext = fname.substr(dotpos + 1).lowercase();
                         if (exts.count(ext.raw())) {
-                            ++count;
+                            photos[e].push_back(fname.raw());
                         }
                     }
                 }
             } catch (...) {}
 
-            results->push_back({entry.pathStr,
-                                count > 0 ? Glib::ustring(std::to_string(count)) : Glib::ustring()});
+            const int count = static_cast<int>(photos[e].size());
+            results->push_back({entry.pathStr, entry.dirname,
+                                count > 0 ? Glib::ustring(std::to_string(count)) : Glib::ustring(),
+                                previews ? std::min(count, previewCount) : 0});
         }
 
-        Glib::signal_idle().connect_once([self, results]() {
+        // Counts first: they are cheap, and the slots they set reserve each
+        // row's strip before any picture is decoded.
+        Glib::signal_idle().connect_once([self, results, generation]() {
+            const bool current = generation == self->previewGeneration_;
             for (const auto& r : *results) {
                 try {
                     Gtk::TreeModel::Path path(r.pathStr);
                     auto iter = self->dirTreeModel->get_iter(path);
-                    if (iter) {
+                    if (iter && iter->get_value(self->dtColumns.dirname) == r.dirname) {
                         (*iter)[self->dtColumns.photoCount] = r.countStr;
+                        if (current) {
+                            (*iter)[self->dtColumns.previewSlots] = r.slots;
+                        }
                     }
                 } catch (...) {}
             }
         });
-    }).detach();
+
+        if (!previews) {
+            return;
+        }
+
+        // One strip at a time across every expanded folder: the thumbnails
+        // compete with the file browser for the disk and the cache. The
+        // serial queue also keeps the second I/O thread free for counts and
+        // hover thumbnails while a long run of strips is being built.
+        static steep::SerialQueue* const stripQueue = new steep::SerialQueue(steep::Lane::IO);
+        constexpr int kRatedScanLimit = 2000;
+        const auto photoLists = std::make_shared<std::vector<std::vector<std::string>>>(std::move(photos));
+
+        stripQueue->enqueue([entries, self, generation, previewCount, scale, tileSize, preferRated, cacheDir, photoLists]() {
+            std::vector<std::vector<std::string>>& photos = *photoLists;
+
+            for (size_t e = 0; e < entries.size(); ++e) {
+                std::vector<std::string>& names = photos[e];
+                const int n = static_cast<int>(names.size());
+                if (n == 0) {
+                    continue;
+                }
+                if (generation != self->previewGeneration_) {
+                    return;
+                }
+
+                // Spread through the folder in name order: the middle of each of
+                // k equal runs, so 300 photos give 30, 90, 150, 210 and 270.
+                std::sort(names.begin(), names.end());
+                const int k = std::min(n, previewCount);
+                const auto spread = [](int count, int want) {
+                    std::vector<int> picks;
+                    for (int j = 0; j < want; ++j) {
+                        picks.push_back((2 * j + 1) * count / (2 * want));
+                    }
+                    return picks;
+                };
+
+                std::vector<int> indices;
+                // Past a couple of thousand photos the per-photo rating scan
+                // costs more than the strip is worth: space them evenly.
+                if (preferRated && n <= kRatedScanLimit) {
+                    // Starred or picked photos first, spread the same way through
+                    // the folder; rejects never show. Evenly spaced others fill
+                    // whatever slots the rated ones leave.
+                    std::vector<int> rated, others;
+                    for (int i = 0; i < n; ++i) {
+                        // Two small reads per photo: on a big folder that is
+                        // a long scan, so let a superseded one stop early.
+                        if (i % 200 == 199 && generation != self->previewGeneration_) {
+                            return;
+                        }
+                        const Glib::ustring path = Glib::build_filename(entries[e].dirname.raw(), names[i]);
+                        CacheImageData cid;
+                        cid.rating = 0;
+                        cid.pickLabel = 0;
+                        imagescan::loadCacheDataFast(path, cid);
+                        imagescan::loadPP3OverlaysFast(path, cid);
+                        if (cid.pickLabel < 0) {
+                            continue;
+                        }
+                        (cid.rating > 0 || cid.pickLabel > 0 ? rated : others).push_back(i);
+                    }
+                    const int ratedCount = static_cast<int>(rated.size());
+                    for (int r : spread(ratedCount, std::min(k, ratedCount))) {
+                        indices.push_back(rated[r]);
+                    }
+                    const int othersCount = static_cast<int>(others.size());
+                    const int fill = std::min(k - static_cast<int>(indices.size()), othersCount);
+                    for (int o : spread(othersCount, fill)) {
+                        indices.push_back(others[o]);
+                    }
+                    std::sort(indices.begin(), indices.end());
+                } else {
+                    indices = spread(n, k);
+                }
+
+                if (indices.empty()) {
+                    continue;
+                }
+                const int shown = static_cast<int>(indices.size());
+                std::vector<std::string> chosen;
+                for (int i : indices) {
+                    chosen.push_back(Glib::build_filename(entries[e].dirname.raw(), names[i]));
+                }
+
+                // The key covers what the strip shows: the files, their edits
+                // (sidecar times) and the tile size, so a stale strip is never
+                // read back.
+                std::string identity = std::to_string(scale) + "|" + std::to_string(tileSize);
+                for (const auto& f : chosen) {
+                    identity += "|" + f;
+                    for (const std::string& p : {f, f + ".pp3"}) {
+                        GStatBuf st;
+                        if (g_stat(p.c_str(), &st) == 0) {
+                            identity += ":" + std::to_string(static_cast<long long>(st.st_mtime)) + ":" + std::to_string(static_cast<long long>(st.st_size));
+                        }
+                    }
+                }
+                const std::string cacheFile = Glib::build_filename(cacheDir.raw(),
+                    Glib::Checksum::compute_checksum(Glib::Checksum::CHECKSUM_MD5, identity) + ".png");
+
+                Glib::RefPtr<Gdk::Pixbuf> strip;
+                if (Glib::file_test(cacheFile, Glib::FILE_TEST_EXISTS)) {
+                    try {
+                        strip = Gdk::Pixbuf::create_from_file(cacheFile);
+                    } catch (...) {}
+                }
+
+                if (!strip) {
+                        if (generation != self->previewGeneration_) {
+                        return;
+                    }
+
+                    const int tile = tileSize * scale;
+                    const int gap = FolderNameRenderer::kGap * scale;
+                    const int width = shown * tile + (shown - 1) * gap;
+                    auto surface = Cairo::ImageSurface::create(Cairo::FORMAT_ARGB32, width, tile);
+                    auto cr = Cairo::Context::create(surface);
+                    int drawn = 0;
+
+                    for (int j = 0; j < shown; ++j) {
+                        Glib::RefPtr<Gdk::Pixbuf> thumb;
+                        try {
+                            Thumbnail* thm = CacheManager::getInstance()->getEntry(chosen[j]);
+                            if (thm) {
+                                double thumbScale = 1.0;
+                                // Twice the tile: a portrait frame still covers
+                                // the square after the crop.
+                                rtengine::IImage8* img = thm->processThumbImage(tile * 2, thumbScale);
+                                if (img) {
+                                    thumb = Gdk::Pixbuf::create_from_data(
+                                        img->getData(), Gdk::COLORSPACE_RGB, false, 8,
+                                        img->getWidth(), img->getHeight(), img->getWidth() * 3)->copy();
+                                    delete img;
+                                }
+                                thm->decreaseRef();
+                            }
+                        } catch (...) {}
+
+                        if (!thumb || thumb->get_width() < 1 || thumb->get_height() < 1) {
+                            continue;
+                        }
+
+                        // Cover-crop into the square, corners rounded.
+                        const double x = j * (tile + gap);
+                        const double cover = std::max(double(tile) / thumb->get_width(), double(tile) / thumb->get_height());
+                        cr->save();
+                        FolderNameRenderer::roundedRect(cr, x, 0, tile, tile, 3.0 * scale);
+                        cr->clip();
+                        cr->translate(x + (tile - thumb->get_width() * cover) / 2.0, (tile - thumb->get_height() * cover) / 2.0);
+                        cr->scale(cover, cover);
+                        Gdk::Cairo::set_source_pixbuf(cr, thumb, 0, 0);
+                        cr->paint();
+                        cr->restore();
+                        ++drawn;
+                    }
+
+                    if (drawn == 0) {
+                        continue;
+                    }
+
+                    surface->flush();
+                    strip = Gdk::Pixbuf::create(surface, 0, 0, width, tile);
+                    try {
+                        g_mkdir_with_parents(cacheDir.c_str(), 0755);
+                        strip->save(cacheFile, "png");
+                    } catch (...) {}
+                }
+
+                const Glib::ustring pathStr = entries[e].pathStr;
+                const Glib::ustring dirname = entries[e].dirname;
+                Glib::signal_idle().connect_once([self, strip, pathStr, dirname, generation]() {
+                    if (generation != self->previewGeneration_) {
+                        return;
+                    }
+                    try {
+                        auto iter = self->dirTreeModel->get_iter(Gtk::TreeModel::Path(pathStr));
+                        if (iter && iter->get_value(self->dtColumns.dirname) == dirname) {
+                            (*iter)[self->dtColumns.previewStrip] = strip;
+                        }
+                    } catch (...) {}
+                });
+            }
+        });
+    });
+}
+
+void DirBrowser::refreshFolderPreviews ()
+{
+    ++previewGeneration_;
+    if (!dirTreeModel) {
+        return;
+    }
+
+    // Drop every strip, then recount the folders that are on show; the
+    // count pass sets the new slots and loads the new strips.
+    std::vector<Gtk::TreeModel::iterator> expanded;
+    dirTreeModel->foreach_iter([this, &expanded](const Gtk::TreeModel::iterator& iter) -> bool {
+        (*iter)[dtColumns.previewSlots] = 0;
+        (*iter)[dtColumns.previewStrip] = Glib::RefPtr<Gdk::Pixbuf>();
+        if (iter->get_value(dtColumns.childrenLoaded) && dirtree->row_expanded(dirTreeModel->get_path(iter))) {
+            expanded.push_back(iter);
+        }
+        return false;
+    });
+
+    for (const auto& iter : expanded) {
+        countPhotosInChildren(iter);
+    }
+    dirtree->columns_autosize();
+    hideHoverPopup();
+}
+
+sigc::signal<void>& DirBrowser::previewSettingsChanged ()
+{
+    static sigc::signal<void> sig;
+    return sig;
+}
+
+void DirBrowser::setPreviewOptions (bool show, int count, int size, bool preferRated)
+{
+    auto& options = App::get().mut_options();
+    options.folderPreviewsPreferRated = preferRated;
+    options.folderPreviews = show;
+    options.folderPreviewCount = std::max(1, std::min(5, count));
+    options.folderPreviewSize = std::max(0, std::min(3, size));
+
+    try {
+        Options::saveAsync();
+    } catch (Options::Error& error) {
+        std::cerr << "Failed to save options: " << error.get_msg() << std::endl;
+    }
+
+    previewSettingsChanged().emit();
+}
+
+void DirBrowser::openInFileManager (const Glib::ustring& dir)
+{
+    if (dir.empty()) {
+        return;
+    }
+
+#ifdef _WIN32
+    // Windows has no GIO handler for a file:// folder URI; ask the shell.
+    std::string path = dir.raw();
+    for (auto& c : path) {
+        if (c == '/') {
+            c = '\\';
+        }
+    }
+    const std::string argument = "\"" + path + "\"";
+    if (wchar_t* wide = reinterpret_cast<wchar_t*>(g_utf8_to_utf16(argument.c_str(), -1, nullptr, nullptr, nullptr))) {
+        const HINSTANCE result = ShellExecuteW(nullptr, L"open", L"explorer.exe", wide, nullptr, SW_SHOWNORMAL);
+        g_free(wide);
+        if (reinterpret_cast<INT_PTR>(result) > 32) {
+            return;
+        }
+    }
+#endif
+
+    try {
+        Gio::AppInfo::launch_default_for_uri_async(Gio::File::create_for_path(dir)->get_uri());
+    } catch (const Glib::Error& error) {
+        std::cerr << "Could not open " << dir << ": " << error.what() << std::endl;
+    }
+}
+
+void DirBrowser::schedulePreviewApply ()
+{
+    if (previewPopoverSyncing_) {
+        return;
+    }
+    // A drag crosses several stops; apply the one it settles on.
+    previewApplyConn_.disconnect();
+    previewApplyConn_ = Glib::signal_timeout().connect([this]() {
+        setPreviewOptions(previewSwitch_->get_active(),
+                          static_cast<int>(std::lround(previewCountScale_->get_value())),
+                          static_cast<int>(std::lround(previewSizeScale_->get_value())),
+                          previewRatedSwitch_->get_active());
+        return false;
+    }, 200);
+}
+
+void DirBrowser::buildPreviewPopover ()
+{
+    previewPopover_.reset(new Gtk::Popover(*dirtree));
+    previewPopover_->set_position(Gtk::POS_RIGHT);
+
+    Gtk::Grid* grid = Gtk::manage(new Gtk::Grid());
+    grid->set_row_spacing(6);
+    grid->set_column_spacing(10);
+    grid->set_border_width(10);
+
+    Gtk::Label* showLabel = Gtk::manage(new Gtk::Label(M("DIRBROWSER_PREVIEWS_SHOW"), Gtk::ALIGN_START));
+    previewSwitch_ = Gtk::manage(new Gtk::Switch());
+    previewSwitch_->set_halign(Gtk::ALIGN_END);
+    previewSwitch_->set_valign(Gtk::ALIGN_CENTER);
+    previewSwitch_->get_style_context()->add_class("compact-switch");
+    grid->attach(*showLabel, 0, 0, 1, 1);
+    grid->attach(*previewSwitch_, 1, 0, 1, 1);
+
+    // Discrete sliders: they snap to whole stops and show where they sit.
+    const auto makeScale = [](double lo, double hi) {
+        Gtk::Scale* scale = Gtk::manage(new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
+        scale->set_range(lo, hi);
+        scale->set_increments(1, 1);
+        scale->set_round_digits(0);
+        scale->set_digits(0);
+        scale->set_value_pos(Gtk::POS_RIGHT);
+        scale->set_hexpand(true);
+        scale->set_size_request(150, -1);
+        for (int v = static_cast<int>(lo); v <= static_cast<int>(hi); ++v) {
+            scale->add_mark(v, Gtk::POS_BOTTOM, "");
+        }
+        return scale;
+    };
+
+    Gtk::Label* sizeLabel = Gtk::manage(new Gtk::Label(M("DIRBROWSER_PREVIEWS_SIZE"), Gtk::ALIGN_START));
+    previewSizeScale_ = makeScale(0, 3);
+    previewSizeScale_->signal_format_value().connect([](double v) -> Glib::ustring {
+        static const char* names[] = {"S", "M", "L", "XL"};
+        return names[std::max(0, std::min(3, static_cast<int>(std::lround(v))))];
+    });
+    grid->attach(*sizeLabel, 0, 1, 1, 1);
+    grid->attach(*previewSizeScale_, 1, 1, 1, 1);
+
+    Gtk::Label* countLabel = Gtk::manage(new Gtk::Label(M("DIRBROWSER_PREVIEWS_COUNT"), Gtk::ALIGN_START));
+    previewCountScale_ = makeScale(1, 5);
+    grid->attach(*countLabel, 0, 2, 1, 1);
+    grid->attach(*previewCountScale_, 1, 2, 1, 1);
+
+    Gtk::Label* ratedLabel = Gtk::manage(new Gtk::Label(M("DIRBROWSER_PREVIEWS_PREFERRATED"), Gtk::ALIGN_START));
+    previewRatedSwitch_ = Gtk::manage(new Gtk::Switch());
+    previewRatedSwitch_->set_halign(Gtk::ALIGN_END);
+    previewRatedSwitch_->set_valign(Gtk::ALIGN_CENTER);
+    previewRatedSwitch_->get_style_context()->add_class("compact-switch");
+    grid->attach(*ratedLabel, 0, 3, 1, 1);
+    grid->attach(*previewRatedSwitch_, 1, 3, 1, 1);
+
+    grid->attach(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)), 0, 4, 2, 1);
+
+    // The browser's own Open source folder action: same icon, same words.
+    Gtk::Button* openButton = Gtk::manage(new Gtk::Button(M("FILEBROWSER_POPUPOPENSOURCEFOLDER")));
+    openButton->set_image(*Gtk::manage(new RTImage("folder-open-small", Gtk::ICON_SIZE_BUTTON)));
+    openButton->set_always_show_image(true);
+    openButton->set_relief(Gtk::RELIEF_NONE);
+    openButton->set_halign(Gtk::ALIGN_FILL);
+    if (auto* label = dynamic_cast<Gtk::Label*>(openButton->get_child())) {
+        label->set_xalign(0.f);
+    }
+    grid->attach(*openButton, 0, 5, 2, 1);
+
+    previewSwitch_->property_active().signal_changed().connect([this, sizeLabel, countLabel, ratedLabel]() {
+        const bool on = previewSwitch_->get_active();
+        sizeLabel->set_sensitive(on);
+        countLabel->set_sensitive(on);
+        ratedLabel->set_sensitive(on);
+        previewSizeScale_->set_sensitive(on);
+        previewCountScale_->set_sensitive(on);
+        previewRatedSwitch_->set_sensitive(on);
+        schedulePreviewApply();
+    });
+    previewRatedSwitch_->property_active().signal_changed().connect(sigc::mem_fun(*this, &DirBrowser::schedulePreviewApply));
+    previewSizeScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DirBrowser::schedulePreviewApply));
+    previewCountScale_->signal_value_changed().connect(sigc::mem_fun(*this, &DirBrowser::schedulePreviewApply));
+    openButton->signal_clicked().connect([this]() {
+        previewPopover_->popdown();
+        openInFileManager(previewMenuDir_);
+    });
+
+    previewPopover_->add(*grid);
+    grid->show_all();
+}
+
+void DirBrowser::showPreviewMenu (GdkEventButton* event)
+{
+    if (!previewPopover_) {
+        buildPreviewPopover();
+    }
+
+    // The folder under the pointer when the button went down: hover
+    // selection moves on while the popover is open.
+    previewMenuDir_.clear();
+    Gtk::TreeModel::Path path;
+    Gtk::TreeViewColumn* column = nullptr;
+    int cx = 0, cy = 0;
+    Gdk::Rectangle rect(static_cast<int>(event->x), static_cast<int>(event->y), 1, 1);
+    if (dirTreeModel && dirtree->get_path_at_pos(static_cast<int>(event->x), static_cast<int>(event->y), path, column, cx, cy)) {
+        if (auto iter = dirTreeModel->get_iter(path)) {
+            previewMenuDir_ = iter->get_value(dtColumns.dirname);
+        }
+    }
+
+    const auto& options = App::get().options();
+    previewPopoverSyncing_ = true;
+    previewSwitch_->set_active(options.folderPreviews);
+    previewSizeScale_->set_value(options.folderPreviewSize);
+    previewCountScale_->set_value(options.folderPreviewCount);
+    previewRatedSwitch_->set_active(options.folderPreviewsPreferRated);
+    previewPopoverSyncing_ = false;
+
+    previewPopover_->set_pointing_to(rect);
+    previewPopover_->popup();
 }

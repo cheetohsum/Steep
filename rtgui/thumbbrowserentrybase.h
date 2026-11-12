@@ -314,23 +314,27 @@ public:
         this->original = original;
     }
 
-    // Animation for rating/label changes (filmstrip overlay)
+    // Animation for rating/label changes (filmstrip overlay). The clock is
+    // the browser's (ThumbBrowserBase::beginEntryPulse): one animation for
+    // every entry flagged in the same operation, not a timer per entry.
     void startRatingAnimation ();
     void startColorLabelAnimation ();
     void startPickAnimation ();
+    // Taking part in the browser pulse with this serial?
+    bool isPulsing (unsigned serial) const
+    {
+        return pulseSerial_ == serial && (animRatingActive_ || animColorActive_ || animPickActive_);
+    }
 
 protected:
-    // Animation state
-    double animRatingAlpha_;       // 0.0 = no anim, >0 = fading out
-    double animColorAlpha_;
-    double animPickAlpha_;
-    sigc::connection animTimerConn_;
-    std::chrono::steady_clock::time_point animStartTime_;
+    // Animation state. The flags only count while pulseSerial_ matches the
+    // browser's current pulse; older ones are stale and ignored.
+    unsigned pulseSerial_ = 0;
     bool animRatingActive_;
     bool animColorActive_;
     bool animPickActive_;
-    static constexpr double ANIM_DURATION_MS = 600.0;
 
+    void joinPulse_ ();
+    double pulseAlpha_ () const;   // 1 = just flagged, 0 = no pulse
     void drawFilmstripOverlays (Cairo::RefPtr<Cairo::Context> cc, int x, int y);
-    bool animTick ();
 };

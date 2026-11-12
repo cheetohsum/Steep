@@ -45,6 +45,11 @@ public:
 };
 
 
+namespace compositeui
+{
+class DepthRange;
+}
+
 class ControlSpotPanel:
     public ToolParamBlock,
     public AdjusterListener,
@@ -105,6 +110,7 @@ public:
         int maskType; // 0 = Normal, 1 = AI Mask
         int aiMaskClass; // 0-7 class index
         Glib::ustring aiMaskPaint; // hand-painted corrections, encoded
+        Glib::ustring aiMaskDepthRange; // depth classes: "" automatic, else "a;b;c;d"
         double aiMaskThreshold; // Segmentation probability cutoff
         int maskBlendMode; // 0 = Normal, 1 = Darken, 2 = Lighten, 3 = Luminosity, 4 = Color
         int gradType; // 0 = Linear, 1 = Radial
@@ -218,6 +224,9 @@ public:
     void resetHoverState();
 
     int getPendingAIClass() const { return pendingAIClass_; }
+    // Encoded MaskPaint for the AI spot being created (click-to-select
+    // prompts from the Pick chip); empty for the dropdown and the + menu.
+    const Glib::ustring& getPendingAIPaint() const { return pendingAIPaint_; }
     int getPendingShape() const { return pendingShape_; }
     Gtk::Button* getAddMaskButton() const { return button_add_; }
 
@@ -228,6 +237,13 @@ public:
      * @param classIndex rtengine::AISegClass index (0-7)
      */
     void requestAIMaskSpot(int classIndex) { on_ai_mask_selected(classIndex); }
+    // The spot is built synchronously inside panelChanged, which reads
+    // getPendingAIPaint() before it is cleared again.
+    void requestAIMaskSpotWithPaint(int classIndex, const Glib::ustring& paint)
+    {
+        pendingAIPaint_ = paint;
+        requestAIMaskSpotKeepingPaint(classIndex);
+    }
 
     /**
      * Create a new shape mask spot, exactly as if the shape had been picked
@@ -450,6 +466,7 @@ private:
         Gtk::TreeModelColumn<int> maskType; // 0 = Normal, 1 = AI Mask
         Gtk::TreeModelColumn<int> aiMaskClass; // 0-7 class index
         Gtk::TreeModelColumn<Glib::ustring> aiMaskPaint;
+        Gtk::TreeModelColumn<Glib::ustring> aiMaskDepthRange;
         Gtk::TreeModelColumn<double> aiMaskThreshold;
         Gtk::TreeModelColumn<int> maskBlendMode;
         Gtk::TreeModelColumn<int> gradType;
@@ -532,6 +549,15 @@ private:
     sigc::connection aiMaskClassConn_;
     Gtk::Button* const aiMaskEdit_;
     Adjuster* const aiMaskTolerance_;
+    // Depth classes (near / far): which slab of the scene the mask takes,
+    // over the photo's own depth histogram -- the control Double Exposure's
+    // depth confinement uses.
+    Gtk::Box* aiDepthBox_ = nullptr;
+    compositeui::DepthRange* aiDepthRange_ = nullptr;
+    Gtk::Button* aiDepthAuto_ = nullptr;
+    sigc::connection aiDepthPoll_;
+    void updateDepthRangeControl();
+    void depthRangeChanged();
     PopUpButton* const maskBlendMode_;
     sigc::connection maskBlendModeConn_;
     sigc::connection aiPreviewRefresh_; // delayed treeview redraw after AI mask computation
@@ -706,6 +732,8 @@ private:
     bool updatingBlendModeMenu_ = false;
     int pendingShape_ = 0;
     int pendingAIClass_ = -1;
+    Glib::ustring pendingAIPaint_;
+    void requestAIMaskSpotKeepingPaint(int classIndex);
     std::vector<int> reorderMap_;
     sigc::connection rowsReorderedConn_;
     sigc::connection previewRefresh_;

@@ -34,7 +34,9 @@ void ImProcFunctions::textureContrast(LabImage *lab, const TextureParams &params
     LocalContrastParams lcp;
     lcp.enabled = true;
     lcp.radius = params.radius;
-    lcp.amount = std::abs(params.amount) / 100.0;
+    // Signed: below zero the detail is subtracted, which softens. The
+    // magnitude here used to drop the sign, so "soften" sharpened at half strength.
+    lcp.amount = params.amount / 100.0;
     lcp.darkness = params.amount > 0 ? 1.0 : 0.5;
     lcp.lightness = params.amount > 0 ? 1.0 : 0.5;
 
@@ -50,7 +52,9 @@ void ImProcFunctions::clarityContrast(LabImage *lab, const ClarityParams &params
     LocalContrastParams lcp;
     lcp.enabled = true;
     lcp.radius = params.radius;
-    lcp.amount = std::abs(params.amount) / 100.0;
+    // Signed: below zero the detail is subtracted, which softens. The
+    // magnitude here used to drop the sign, so "soften" sharpened at half strength.
+    lcp.amount = params.amount / 100.0;
     lcp.darkness = params.amount > 0 ? 1.0 : 0.5;
     lcp.lightness = params.amount > 0 ? 1.0 : 0.5;
 

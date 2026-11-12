@@ -31,6 +31,8 @@
 
 #include "doubleexposureblend.h"
 #include "demotion.h"
+#include "effectperf.h"
+#include "iccstore.h"
 #include "imagefloat.h"
 #include "partnerimagestore.h"
 #include "partnermaskstore.h"
@@ -57,6 +59,7 @@ struct MotionPlate : demotion::Buffer {
 struct MotionGate {
     const PartnerImage* source = nullptr;
     procparams::DEMotionParams params;
+    int w = 0;
 #ifdef RT_AI_MASKING
     const PartnerMask* mask = nullptr;
     const PartnerDepth* depth = nullptr;
@@ -139,39 +142,122 @@ inline void samplePartner(const PartnerImage& p, float u, float v, float& r, flo
     b = w00 * img.b(y0, x0) + w10 * img.b(y0, x1) + w01 * img.b(y1, x0) + w11 * img.b(y1, x1);
 }
 
-// Only interactive plates are retained. Export samples the full source directly.
-// `maxDim` caps the plate's long edge: a 100 px thumbnail needs a few hundred
-// samples across, not the partner's whole 2560 px preview tier (that took
-// minutes and held the thumbnail's lock, freezing the GUI behind it).
-std::shared_ptr<const MotionPlate> previewMotion(const ResolvedLayer& layer, const procparams::DEMotionParams& params, int maxDim)
+// A motion plate integrates the shutter once per plate pixel, and each pixel
+// takes two reads per plate pixel of travel, so a long shutter costs the cube
+// of the plate's width. The plate is as sharp as the view needs (`wantLong`,
+// long edge), then shrinks until it fits `budget` reads -- never below
+// `floorLong` unless the view asks for less. A real 0.94 s pan measured ~1900
+// reads per pixel when the path was read at partner width instead.
+void plateSize(const PartnerImage& partner, const procparams::DEMotionParams& params, int wantLong,
+               double budget, int floorLong, int capLong, int& w, int& h)
 {
-    const int srcW = layer.partner->image->getWidth();
-    const int srcH = layer.partner->image->getHeight();
-    const double plateScale = std::min(1.0, double(std::max(64, maxDim)) / std::max(srcW, srcH));
-    const int plateW = std::max(1, int(std::lround(srcW * plateScale)));
-    const int plateH = std::max(1, int(std::lround(srcH * plateScale)));
+    const int srcW = partner.image->getWidth();
+    const int srcH = partner.image->getHeight();
+    const int srcLong = std::max(srcW, srcH);
+    const int want = std::max(64, std::min({wantLong, capLong, srcLong}));
+    // Reads per pixel ~ 2 per pixel of travel plus the half-filled segment
+    // ends (sample() reads at least once per interval).
+    const double readsPerWidth = 2.6 * std::max(1e-3f, demotion::pathLength(params));
+    const double budgetW = std::cbrt(budget / (readsPerWidth * double(srcH) / srcW));
+    const double scale = std::min(double(want), std::max(budgetW * srcLong / srcW, double(std::min(want, floorLong)))) / srcLong;
+    w = std::max(1, int(std::lround(srcW * scale)));
+    h = std::max(1, int(std::lround(srcH * scale)));
+}
+
+std::shared_ptr<MotionPlate> renderMotion(const ResolvedLayer& layer, const procparams::DEMotionParams& params, int plateW, int plateH)
+{
+    EffectPerfScope timing("de-motion-plate", plateW, plateH);
+    auto result = std::make_shared<MotionPlate>();
+    result->source = layer.partner;
+    result->params = params;
+#ifdef RT_AI_MASKING
+    result->mask = layer.mask;
+    result->depth = layer.depth;
+    result->depthSelect = layer.depthSelect;
+#endif
+    result->w = plateW;
+    result->h = plateH;
+    result->pixels.resize(size_t(plateW) * plateH);
+    const float pw = layer.partner->fullWidth, ph = layer.partner->fullHeight;
+
+    // The path is stepped at plate resolution, so the source is first
+    // box-filtered down to it: a one-pixel highlight in the partner then
+    // still lands on every step instead of between them.
+    demotion::PremultipliedBuffer src;
+    src.w = plateW;
+    src.h = plateH;
+    src.pixels.resize(size_t(plateW) * plateH);
+    const int nx = std::max(1, int(std::ceil(double(layer.partner->image->getWidth()) / plateW)));
+    const int ny = std::max(1, int(std::ceil(double(layer.partner->image->getHeight()) / plateH)));
+    const float norm = 1.f / (nx * ny);
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(dynamic, 8)
+#endif
+    for (int y = 0; y < plateH; ++y) for (int x = 0; x < plateW; ++x) {
+        demotion::Pixel sum;
+        for (int j = 0; j < ny; ++j) for (int i = 0; i < nx; ++i) {
+            const float u = (x + (i + .5f) / nx) / plateW * pw, v = (y + (j + .5f) / ny) / plateH * ph;
+            float r, g, b, a = 1;
+            samplePartner(*layer.partner, u, v, r, g, b);
+#ifdef RT_AI_MASKING
+            if (layer.mask) a = layer.mask->sample(u, v);
+            if (layer.depth) a *= layer.depthSelect.weight(layer.depth->sample(u, v));
+#endif
+            sum.r += r * a;
+            sum.g += g * a;
+            sum.b += b * a;
+            sum.a += a;
+        }
+        src.pixels[size_t(y) * plateW + x] = {sum.r * norm, sum.g * norm, sum.b * norm, sum.a * norm};
+    }
+
+    const auto path = demotion::trajectory(params, plateW, 384);
+    const auto read = [&](float u, float v) { return src.at(u, v); };
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(dynamic, 4)
+#endif
+    for (int y = 0; y < plateH; ++y) for (int x = 0; x < plateW; ++x)
+        result->pixels[size_t(y) * plateW + x] = demotion::sample<true>(path,
+            (x + .5f) / plateW, (y + .5f) / plateH, pw / ph, read);
+    return result;
+}
+
+// Interactive plates are retained; export renders its own from the full tier
+// (renderMotion) and lets it go with the image. Preview, detail windows and
+// thumbnails ask for different sizes: any cached plate from 85% to twice the
+// wanted width serves, so a small zoom change or a thumbnail beside the editor
+// does not rebuild, and a request only waits behind a build of its own size.
+std::shared_ptr<const MotionPlate> previewMotion(const ResolvedLayer& layer, const procparams::DEMotionParams& params, int wantLong)
+{
+    int plateW, plateH;
+    plateSize(*layer.partner, params, wantLong, 1.0e9, 512, 1 << 20, plateW, plateH);
     static std::mutex mutex;
     static std::list<std::shared_ptr<const MotionPlate>> cache;
     static std::list<MotionGate> gates;
     std::shared_ptr<std::mutex> gate;
-    constexpr size_t budget = 128U * 1024U * 1024U;
-    const auto matches = [&](const std::shared_ptr<const MotionPlate>& p) {
-        return p->source == layer.partner && p->params == params && p->w == plateW && p->h == plateH
+    constexpr size_t budget = 256U * 1024U * 1024U;
+    const auto usable = [&](const MotionPlate& p) {
+        return p.source == layer.partner && p.params == params && p.w * 20 >= plateW * 17 && p.w <= 2 * plateW
 #ifdef RT_AI_MASKING
-            && p->mask == layer.mask && p->depth == layer.depth && p->depthSelect == layer.depthSelect
+            && p.mask == layer.mask && p.depth == layer.depth && p.depthSelect == layer.depthSelect
 #endif
             ;
     };
+    const auto find = [&]() {
+        std::shared_ptr<const MotionPlate> best;
+        for (const auto& p : cache) if (usable(*p) && (!best || std::abs(p->w - plateW) < std::abs(best->w - plateW))) best = p;
+        return best;
+    };
     {
         std::lock_guard<std::mutex> lock(mutex);
-        for (auto i = cache.begin(); i != cache.end(); ++i) if (matches(*i)) {
-            const auto result = *i;
-            cache.splice(cache.end(), cache, i);
-            return result;
+        if (const auto hit = find()) {
+            cache.remove(hit);
+            cache.push_back(hit);
+            return hit;
         }
         for (auto i = gates.begin(); i != gates.end();) {
             if (i->mutex.expired()) { i = gates.erase(i); continue; }
-            if (i->source == layer.partner.get() && i->params == params
+            if (i->source == layer.partner.get() && i->params == params && i->w == plateW
 #ifdef RT_AI_MASKING
                 && i->mask == layer.mask.get() && i->depth == layer.depth.get() && i->depthSelect == layer.depthSelect
 #endif
@@ -181,7 +267,7 @@ std::shared_ptr<const MotionPlate> previewMotion(const ResolvedLayer& layer, con
         if (!gate) {
             gate = std::make_shared<std::mutex>();
             MotionGate key;
-            key.source = layer.partner.get(); key.params = params; key.mutex = gate;
+            key.source = layer.partner.get(); key.params = params; key.w = plateW; key.mutex = gate;
 #ifdef RT_AI_MASKING
             key.mask = layer.mask.get();
             key.depth = layer.depth.get();
@@ -193,38 +279,11 @@ std::shared_ptr<const MotionPlate> previewMotion(const ResolvedLayer& layer, con
     std::lock_guard<std::mutex> singleRender(*gate);
     {
         std::lock_guard<std::mutex> lock(mutex);
-        for (const auto& existing : cache) if (matches(existing)) return existing;
+        if (const auto hit = find()) return hit;
     }
-    auto result = std::make_shared<MotionPlate>();
-    result->source = layer.partner;
-    result->params = params;
-#ifdef RT_AI_MASKING
-    result->mask = layer.mask;
-    result->depth = layer.depth;
-    result->depthSelect = layer.depthSelect;
-#endif
-    result->w = plateW;
-    result->h = plateH;
-    result->pixels.resize(size_t(result->w) * result->h);
-    const float pw = layer.partner->fullWidth, ph = layer.partner->fullHeight;
-    const auto read = [&](float u, float v) {
-        demotion::Pixel p;
-        samplePartner(*layer.partner, u * pw, v * ph, p.r, p.g, p.b);
-        p.a = 1;
-#ifdef RT_AI_MASKING
-        if (layer.mask) p.a = layer.mask->sample(u * pw, v * ph);
-        if (layer.depth) p.a *= layer.depthSelect.weight(layer.depth->sample(u * pw, v * ph));
-#endif
-        return p;
-    };
-#ifdef _OPENMP
-    #pragma omp parallel for schedule(dynamic, 4)
-#endif
-    for (int y = 0; y < result->h; ++y) for (int x = 0; x < result->w; ++x)
-        result->pixels[size_t(y) * result->w + x] = demotion::sample(layer.motion,
-            (x + .5f) / result->w, (y + .5f) / result->h, pw / ph, read);
+    std::shared_ptr<const MotionPlate> result = renderMotion(layer, params, plateW, plateH);
     std::lock_guard<std::mutex> lock(mutex);
-    for (const auto& existing : cache) if (matches(existing)) return existing;
+    if (const auto hit = find()) return hit;
     size_t bytes = result->pixels.size() * sizeof(demotion::Pixel);
     for (const auto& p : cache) bytes += p->pixels.size() * sizeof(demotion::Pixel);
     while (!cache.empty() && bytes > budget) {
@@ -266,6 +325,7 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
                      fullResPartners ? 1 : 0);
     }
 
+    EffectPerfScope timing("double-exposure", W, H);
     std::vector<ResolvedLayer> resolved;
     resolved.reserve(deParams.layers.size());
 
@@ -274,7 +334,11 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
             continue;
         }
 
-        auto partner = PartnerImageStore::getInstance().getPartner(layer.source(), workingProfile, fullRes);
+        std::shared_ptr<PartnerImage> partner;
+        {
+            EffectPerfScope partnerTiming("de-partner");
+            partner = PartnerImageStore::getInstance().getPartner(layer.source(), workingProfile, fullRes);
+        }
 
         if (partner && partner->image && partner->fullWidth > 0 && partner->fullHeight > 0) {
             ResolvedLayer rl;
@@ -320,15 +384,26 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
             }
 #endif
 
-            if (!fullRes && !rl.motion.empty()) {
-                // Twice the base frame's long edge at this zoom (a detail
-                // window at 1:1 asks for everything the partner tier holds;
-                // a thumbnail for a few hundred samples).
-                const float frameAtZoom = std::max(fullW, fullH) / std::max(skip, 1.f);
-                rl.motionPlate = previewMotion(rl, layer.motion, static_cast<int>(std::min(1.0e6f, 2.f * frameAtZoom)));
-            }
             fr.invCover = 1.f / std::max(fr.baseW / fr.srcW, fr.baseH / fr.srcH);
             deplace::applyLayer(fr, layer, cropped);
+
+            if (!rl.motion.empty()) {
+                // One plate pixel per output pixel: the partner's long edge
+                // at the size this view shows it (a detail window at 1:1 asks
+                // for everything the tier holds, a thumbnail for its own
+                // width). Export renders from the full tier and keeps the
+                // plate only for this image.
+                const float shown = std::max(partner->fullWidth, partner->fullHeight) * fr.scale /
+                                    (std::max(skip, 1e-3f) * fr.invCover);
+                const int wantLong = static_cast<int>(std::ceil(std::min(1.0e6f, shown)));
+                if (fullRes) {
+                    int plateW, plateH;
+                    plateSize(*partner, layer.motion, wantLong, 6.0e9, 2048, 4096, plateW, plateH);
+                    rl.motionPlate = renderMotion(rl, layer.motion, plateW, plateH);
+                } else {
+                    rl.motionPlate = previewMotion(rl, layer.motion, wantLong);
+                }
+            }
 
             rl.mode = layer.blendMode;
             rl.compare = layer.compare;
@@ -379,6 +454,8 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
     const float baseEvGain = static_cast<float>(std::pow(2.0, deParams.baseEv));
 
     constexpr float white = 65535.f;
+    // Comparisons and gates weigh brightness in the space being composited.
+    const deblend::LumWeights lum = deblend::lumWeights(ICCStore::getInstance()->workingSpaceMatrix(workingProfile));
 
     // Film shoulder on the finished stack (see deblend::shoulder). Off at 0:
     // legacy files then clip downstream exactly as they always did. The knee
@@ -495,7 +572,7 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
                 pb = std::max(pb, 0.f) * gain;
 
                 float cr, cg, cb;
-                deblend::blend(rl.mode, rl.compare, rl.softness, white, r, g, b, pr, pg, pb, cr, cg, cb);
+                deblend::blend(rl.mode, rl.compare, rl.softness, white, lum, r, g, b, pr, pg, pb, cr, cg, cb);
 
                 float w = rl.opacity * coverage;
 
@@ -530,10 +607,9 @@ void ImProcFunctions::doubleExposure(Imagefloat* rgb, const procparams::DoubleEx
 #endif
 
                 if (rl.gateStrength > 0.f) {
-                    const float lum = (rl.gateOnLayer ? deblend::lum709(pr, pg, pb)
-                                                      : deblend::lum709(r, g, b)) / white;
+                    const float gateLum = (rl.gateOnLayer ? lum(pr, pg, pb) : lum(r, g, b)) / white;
                     w *= deblend::gateWeight(rl.gateStrength,
-                                             deblend::gateWindow(deblend::gateEncode(lum), rl.gateLow, rl.gateHigh, rl.gateFeather));
+                                             deblend::gateWindow(deblend::gateEncode(gateLum), rl.gateLow, rl.gateHigh, rl.gateFeather));
                 }
 
                 r += w * (cr - r);

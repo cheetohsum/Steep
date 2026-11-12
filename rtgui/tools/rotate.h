@@ -36,6 +36,7 @@ protected:
     Adjuster*           degree;
     Gtk::Button*        autoLevel;
     Gtk::Button*        selectStraight = nullptr;
+    Gtk::Box*           levelActions = nullptr;
     Gtk::Label*         autoLevelStatus;
     sigc::connection    autoLevelStatusConn;
     LensGeomListener*   rlistener;
@@ -66,4 +67,8 @@ public:
         rlistener = l;
     }
     void setLevelingGridCallback (std::function<void(bool)> cb);
+    // Auto level's one-line result, for the section heading to show.
+    Gtk::Widget* getStatusWidget () { return autoLevelStatus; }
+    // The Auto level / Straighten icon pair, for the section heading.
+    Gtk::Widget* getActionsWidget () { return levelActions; }
 };

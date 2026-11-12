@@ -463,7 +463,7 @@ void MyDiagonalCurve::updateDrawingArea (const int handle, const ::Cairo::RefPtr
 
     // draw upper and lower bounds
     if (curve.type == DCT_Parametric && activeParam > 0 && lpoint.getUpperBound() > 1 && upoint.getUpperBound() > 1) {
-        cr->set_source_rgba (1.0, 1.0, 1.0, 0.1);
+        steepui::setSource(cr, themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff")), 0.1);
         cr->move_to (graphX, static_cast<double>(getVal(upoint, 0)) * -graphH + graphY);
 
         for (int i = 1; i < graphW - 2; ++i) {
@@ -693,7 +693,9 @@ void MyDiagonalCurve::updateDrawingArea (const int handle, const ::Cairo::RefPtr
 
             cr->save();
             cr->set_line_width(2.5);
-            cr->set_source_rgba(1.0, 1.0, 1.0, 0.35);
+            // Add-point preview in the theme's strong ink (white was lost on light themes).
+            const Gdk::RGBA previewInk = themeColor(*this, "steep_text_hi", Gdk::RGBA("#ffffff"));
+            steepui::setSource(cr, previewInk, 0.35);
             const int from = rtengine::LIM(col - 14, 0, lastCol);
             const int to = rtengine::LIM(col + 14, 0, lastCol);
             cr->move_to(graphX + from, static_cast<double>(getVal(point, from)) * -graphH + graphY);
@@ -705,7 +707,7 @@ void MyDiagonalCurve::updateDrawingArea (const int handle, const ::Cairo::RefPtr
             cr->stroke();
 
             cr->set_line_width(1.5);
-            cr->set_source_rgba(1.0, 1.0, 1.0, 0.9);
+            steepui::setSource(cr, previewInk, 0.9);
             cr->arc(px, py, RADIUS + 1.5, 0, 2 * rtengine::RT_PI);
             cr->stroke();
             cr->restore();

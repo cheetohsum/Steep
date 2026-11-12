@@ -89,6 +89,15 @@ private:
     }
 public:
 
+    // Exchanges contents without copying; row pointers stay valid because
+    // they point into heap storage that moves with the vectors.
+    void swap(array2D& other) noexcept
+    {
+        std::swap(width, other.width);
+        rows.swap(other.rows);
+        buffer.swap(other.buffer);
+    }
+
     // use as empty declaration, resize before use!
     // very useful as a member object
     array2D() : width(0) {}

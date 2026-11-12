@@ -22,6 +22,8 @@
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <memory>
+#include <new>
 
 #include <glibmm/ustring.h>
 #include <glibmm/timer.h>
@@ -40,14 +42,15 @@
 #include "labimage.h"
 #include "mytime.h"
 #include "procparams.h"
-#include "relight.h"
 #include "refreshmap.h"
 #include "rt_math.h"
 #include "utils.h"
 #include "aidenoise.h"
+#include "memguard.h"
 #include "iccstore.h"
 #ifdef RT_AI_MASKING
 #include "aimaskcache.h"
+#include "partnerdepthstore.h"
 #endif
 
 #include "rtgui/editcallbacks.h"
@@ -80,11 +83,22 @@ Crop::Crop(ImProcCoordinator* parent, EditDataProvider *editDataProvider, bool i
       cropAllocated(false),
       cropImageListener(nullptr), parent(parent), isDetailWindow(isDetailWindow)
 {
+    MemGuard::objectCreated(MemGuard::Crops);
     parent->crops.push_back(this);
 }
 
 Crop::~Crop()
 {
+    // fullUpdate no longer holds updaterThreadStart, so the crop window's
+    // close-button trylock can succeed mid-render: stop the loop and wait
+    // for it before tearing anything down.
+    closing_ = true;
+    MemGuard::objectDestroyed(MemGuard::Crops);
+    cropImageListener.store(nullptr, std::memory_order_release);
+    {
+        MyMutex::MyLock renderLock(parent->cropRenderMutex);
+    }
+
     delete locallabCrop;
     locallabCrop = nullptr;
 
@@ -181,7 +195,10 @@ bool neverCacheTransform()
 
 void Crop::update(int todo)
 {
-    if (todo & M_SPOT) todo |= M_INIT;
+    // A repair must start from source pixels; see updatePreviewImage.
+    if ((todo & M_SPOT) && !(todo & (M_INIT | M_LINDENOISE | M_HDR))) {
+        todo |= M_INIT;
+    }
     MyMutex::MyLock cropLock(cropMutex);
     ProcParams& params = *parent->params;
 
@@ -246,9 +263,31 @@ void Crop::update(int todo)
     const bool wantTrueImage = settledPass || neverSkipTrueImage
         || (cropListener && cropListener->wantsTrueImage());
 
+    // Coordinator passes this crop sat out still have to reach it.
+    todo |= skippedTodo.exchange(0);
+
     // it something has been reallocated, all processing steps have to be performed
-    if (needsinitupdate || (todo & M_HIGHQUAL)) {
+    if (needsinitupdate) {
         todo = ALL;
+    } else if (todo & M_HIGHQUAL) {
+        // The settled refinement only has to redo what the interactive passes
+        // degraded. A working image built from the fast demosaic or with
+        // preview-grade repairs is rebuilt from source; otherwise the stages
+        // already ran at full quality on these very pixels, and the settled
+        // pass just adds the analysis image (wantTrueImage above). Rerunning
+        // everything here cost ~100ms of source, transform and local
+        // adjustments for a bit-identical frame.
+        static const bool legacySettle = []() {
+            // Verification switch: STEEP_LEGACY_SETTLE=1 redoes the whole
+            // crop on every settled pass, as before.
+            const char* const value = std::getenv("STEEP_LEGACY_SETTLE");
+            return value != nullptr && value[0] != '\0' && value[0] != '0';
+        }();
+
+        if (legacySettle || sourceDegraded
+                || (todo & (M_PREPROC | M_RAW | M_INIT | M_LINDENOISE | M_HDR | M_SPOT))) {
+            todo = ALL;
+        }
     }
 
     // Tells to the ImProcFunctions' tool what is the preview scale, which may lead to some simplifications
@@ -286,15 +325,24 @@ void Crop::update(int todo)
 
         parent->ipf.Tile_calc(tilesize, overlap, 2, widIm, heiIm, numtiles_W, numtiles_H, tilewidth, tileheight, tileWskip, tileHskip);
 
-        float *min_b = new float [9];
-        float *min_r = new float [9];
-        float *lumL = new float [9];
-        float *chromC = new float [9];
-        float *ry = new float [9];
-        float *sk = new float [9];
-        float *pcsk = new float [9];
-        int *centerTile_X = new int [numtiles_W];
-        int *centerTile_Y = new int [numtiles_H];
+        const std::unique_ptr<float[]> min_bOwner(new float[9]);
+        float *min_b = min_bOwner.get();
+        const std::unique_ptr<float[]> min_rOwner(new float[9]);
+        float *min_r = min_rOwner.get();
+        const std::unique_ptr<float[]> lumLOwner(new float[9]);
+        float *lumL = lumLOwner.get();
+        const std::unique_ptr<float[]> chromCOwner(new float[9]);
+        float *chromC = chromCOwner.get();
+        const std::unique_ptr<float[]> ryOwner(new float[9]);
+        float *ry = ryOwner.get();
+        const std::unique_ptr<float[]> skOwner(new float[9]);
+        float *sk = skOwner.get();
+        const std::unique_ptr<float[]> pcskOwner(new float[9]);
+        float *pcsk = pcskOwner.get();
+        const std::unique_ptr<int[]> centerTile_XOwner(new int[numtiles_W]);
+        int *centerTile_X = centerTile_XOwner.get();
+        const std::unique_ptr<int[]> centerTile_YOwner(new int[numtiles_H]);
+        int *centerTile_Y = centerTile_YOwner.get();
 
         for (int cX = 0; cX < numtiles_W; cX++) {
             centerTile_X[cX] = tileWskip / 2 + tileWskip * cX;
@@ -720,6 +768,16 @@ void Crop::update(int todo)
                 parent->highDetailRawComputed || !parent->imgsrc->isRAW(), parent->smartRepairPass_);
         }
 
+        // Smart repairs may render a placeholder until their full-resolution
+        // patch is ready, so a crop carrying one is never taken as settled.
+        bool smartRepairs = false;
+        if (params.spot.enabled) {
+            for (const auto& entry : params.spot.entries) {
+                smartRepairs = smartRepairs || int(entry.method) >= int(SpotMethod::AI_REMOVE);
+            }
+        }
+        sourceDegraded = (parent->imgsrc->isRAW() && !parent->highDetailRawComputed) || smartRepairs;
+
         DirPyrDenoiseParams denoiseParams = params.dirpyrDenoise;
 
         if (params.dirpyrDenoise.Lmethod == "CUR") {
@@ -804,15 +862,6 @@ void Crop::update(int todo)
             parent->ipf.gamutcompr(baseCrop, baseCrop, beginend, mac, mac0, mac1, mac2);
         }
 
-        delete [] min_r;
-        delete [] min_b;
-        delete [] lumL;
-        delete [] chromC;
-        delete [] ry;
-        delete [] sk;
-        delete [] pcsk;
-        delete [] centerTile_X;
-        delete [] centerTile_Y;
 
     }
 
@@ -846,7 +895,10 @@ void Crop::update(int todo)
 
     std::unique_ptr<Imagefloat> fattalCrop;
 
-    if ((todo & M_HDR) && (params.fattal.enabled || params.dehaze.enabled)) {
+    // Whenever the working image was just rebuilt from source it no longer
+    // carries dehaze/Fattal, which are applied to it in place, so a rebuild
+    // without M_HDR (a bare M_SPOT, a re-demosaic) must put them back too.
+    if ((todo & (M_INIT | M_LINDENOISE | M_HDR)) && (params.fattal.enabled || params.dehaze.enabled)) {
         Imagefloat *f = origCrop;
         int fw = skips(parent->fw, skip);
         int fh = skips(parent->fh, skip);
@@ -874,8 +926,29 @@ void Crop::update(int todo)
                 && !params.filmNegative.enabled
                 && !params.spot.enabled;
 
+            // The frame also carries the source-side stages that run ahead
+            // of dehaze in the preview; a frame built under other settings
+            // for those (or before the AI Denoise result landed) is stale.
+            auto& aidm = AIDenoiseManager::getInstance();
+            const bool aiDenoiseWanted = params.aiDenoise.enabled && params.aiDenoise.blend > 0;
+            ImProcCoordinator::FattalSourceKey sourceKey;
+            sourceKey.doubleExposure = params.doubleExposure;
+            sourceKey.cg = params.cg;
+            sourceKey.aiDenoise = params.aiDenoise;
+            sourceKey.aiDenoiseReady = aiDenoiseWanted
+                && aidm.isCacheValid(parent->imgsrc->getFileName(), params.aiDenoise.isoConditioning);
+
+            if (fattalCacheable && parent->fattalCachePrev
+                    && parent->fattalCachePrevSkip == skip
+                    && parent->fattalCachePrevKey == sourceKey) {
+                std::swap(parent->fattal_11_dcrop_cache, parent->fattalCachePrev);
+                std::swap(parent->fattalCacheSkip, parent->fattalCachePrevSkip);
+                std::swap(parent->fattalCacheKey, parent->fattalCachePrevKey);
+            }
+
             if (fattalCacheable && parent->fattal_11_dcrop_cache
-                    && parent->fattalCacheSkip == skip) {
+                    && parent->fattalCacheSkip == skip
+                    && parent->fattalCacheKey == sourceKey) {
                 f = parent->fattal_11_dcrop_cache;
                 need_fattal = false;
             } else {
@@ -885,7 +958,31 @@ void Crop::update(int todo)
                 int tr = getCoarseBitMask(params.coarse);
                 parent->imgsrc->getImage(parent->currWB, tr, f, pp, params.toneCurve, params.raw);
                 traceStage("hdr-fullframe-getImage");
+
+                // Same source-side stages, in the same order, as the preview
+                // (improccoordinator) and this crop's own buffer: dropping
+                // them here lost Double Exposure, gamut compression and AI
+                // Denoise from every 1:1 view with dehaze or Fattal on.
+                if (sourceKey.aiDenoiseReady) {
+                    if (const auto dn = aidm.getCachedResult()) {
+                        ImProcFunctions::blendAIDenoise(f, dn.get(), params.aiDenoise.blend / 100.0, 0, 0, skip);
+                    }
+                }
+
                 parent->imgsrc->convertColorSpace(f, params.icm, parent->currWB);
+
+                if (params.doubleExposure.enabled && !params.doubleExposure.layers.empty()) {
+                    parent->ipf.doubleExposure(f, params.doubleExposure, params.icm.workingProfile, parent->fw, parent->fh, 0, 0, skip, false);
+                }
+
+                if (params.cg.enabled) {
+                    float mac = 0.f;
+                    float mac0 = 0.f;
+                    float mac1 = 0.f;
+                    float mac2 = 0.f;
+                    int beginend = 0;
+                    parent->ipf.gamutcompr(f, f, beginend, mac, mac0, mac1, mac2);
+                }
                 traceStage("hdr-fullframe-convert");
 
                 if (params.dirpyrDenoise.enabled || params.filmNegative.enabled || params.spot.enabled) {
@@ -907,13 +1004,18 @@ void Crop::update(int todo)
                         }
                     }
                 } else if (fattalCacheable) {
-                    // A different zoom needs a different frame; keep one.
+                    // A different zoom needs a different frame; keep the
+                    // newest two (fit and 100%).
                     if (parent->fattal_11_dcrop_cache != f) {
-                        delete parent->fattal_11_dcrop_cache;
+                        delete parent->fattalCachePrev;
+                        parent->fattalCachePrev = parent->fattal_11_dcrop_cache;
+                        parent->fattalCachePrevSkip = parent->fattalCacheSkip;
+                        parent->fattalCachePrevKey = parent->fattalCacheKey;
                     }
 
                     parent->fattal_11_dcrop_cache = f; // cache this globally
                     parent->fattalCacheSkip = skip;
+                    parent->fattalCacheKey = sourceKey;
                     fattalCrop.release();
                 }
             }
@@ -1622,18 +1724,17 @@ void Crop::update(int todo)
             parent->ipf.clarityContrast(labnCrop, params.clarity, skip);
         }
 
-        if (params.grain.enabled) {
-            parent->ipf.grainEffect(labnCrop, params.grain, parent->fw, parent->fh, trafx, trafy, std::max(skip, 1),
-                                    &params.filmPresets);
-        }
-
-
+        // labnCrop is post-transform: its top-left sits at cropx/cropy of the
+        // full frame (trafx/trafy is the pre-transform source window).
         if (params.tiltShift.enabled) {
-            parent->ipf.tiltShiftEffect(labnCrop, params.tiltShift, parent->fw, parent->fh);
+            parent->ipf.tiltShiftEffect(labnCrop, params.tiltShift, parent->fw, parent->fh, cropx, cropy, std::max(skip, 1));
         }
 
         if (params.lensBlur.enabled) {
-            parent->ipf.lensBlur(labnCrop, params.lensBlur, skip);
+            const auto sceneDepth = PartnerDepthStore::getInstance().peekSceneDepth(
+                parent->imgsrc->getFileName().raw(), parent->fw, parent->fh, params.icm.workingProfile);
+            parent->ipf.lensBlur(labnCrop, params.lensBlur, parent->fw, parent->fh, cropx, cropy, std::max(skip, 1),
+                                 sceneDepth.get());
         }
 
         traceStage("detail-effects");
@@ -1761,9 +1862,9 @@ void Crop::update(int todo)
             LUTf wavclCurve;
 
             params.wavelet.getCurves(wavCLVCurve, wavdenoise, wavdenoiseh, wavblcurve, waOpacityCurveRG, waOpacityCurveSH, waOpacityCurveBY, waOpacityCurveW, waOpacityCurveWL);
-            LabImage *unshar = nullptr;
+            std::unique_ptr<LabImage> unshar;
             Glib::ustring provis;
-            LabImage *provradius = nullptr;
+            std::unique_ptr<LabImage> provradius;
             bool procont = WaveParams.expcontrast;
             bool prochro = WaveParams.expchroma;
             bool proedge = WaveParams.expedge;
@@ -1778,7 +1879,7 @@ void Crop::update(int todo)
 
 
             if (WaveParams.softrad > 0.f) {
-                provradius = new LabImage(*labnCrop, true);
+                provradius.reset(new LabImage(*labnCrop, true));
             }
 
 
@@ -1788,7 +1889,7 @@ void Crop::update(int todo)
                 provis = params.wavelet.CLmethod;
                 params.wavelet.CLmethod = "all";
                 parent->ipf.ip_wavelet(labnCrop, labnCrop, kall, WaveParams, wavCLVCurve, wavdenoise, wavdenoiseh, wavblcurve, waOpacityCurveRG, waOpacityCurveSH, waOpacityCurveBY, waOpacityCurveW, waOpacityCurveWL, parent->wavclCurve, skip);
-                unshar = new LabImage(*labnCrop, true);
+                unshar.reset(new LabImage(*labnCrop, true));
 
                 params.wavelet.CLmethod = provis;
 
@@ -1816,8 +1917,8 @@ void Crop::update(int todo)
                 if (WaveParams.softrad > 0.f) {
                     array2D<float> ble(labnCrop->W, labnCrop->H);
                     array2D<float> guid(labnCrop->W, labnCrop->H);
-                    Imagefloat *tmpImage = nullptr;
-                    tmpImage = new Imagefloat(labnCrop->W, labnCrop->H);
+                    std::unique_ptr<Imagefloat> tmpImageOwner(new Imagefloat(labnCrop->W, labnCrop->H));
+                    Imagefloat *const tmpImage = tmpImageOwner.get();
 
 #ifdef _OPENMP
                     #pragma omp parallel for
@@ -1865,7 +1966,7 @@ void Crop::update(int todo)
                             Color::XYZ2Lab(X, Y, Z, L, a, b);
                             labnCrop->L[ir][jr] = L;
                         }
-                    delete tmpImage;
+                    tmpImageOwner.reset();
                 }
                 
             }
@@ -1917,11 +2018,9 @@ void Crop::update(int todo)
                         labnCrop->b[x][y] = (1.f + mC0) * (unshar->b[x][y]) - mC * indic * labnCrop->b[x][y];
                     }
 
-                delete unshar;
-                unshar    = NULL;
+                unshar.reset();
                 if (WaveParams.softrad > 0.f) {
-                    delete provradius;
-                    provradius    = NULL;
+                    provradius.reset();
                 }
 
             }
@@ -1944,23 +2043,16 @@ void Crop::update(int todo)
         traceStage("detail-film-lab");
         parent->ipf.softLight(labnCrop, params.softlight);
 
-        // The preview pass has estimated the mask and depth by now; a detail
-        // window only reads them.
-        if (params.relight.enabled) {
-            const int relightSkip = std::max(skip, 1);
-            RelightFrame relightFrame;
-            relightFrame.imageId = parent->imgsrc->getFileName().raw();
-            relightFrame.workingProfile = params.icm.workingProfile;
-            relightFrame.fullWidth = parent->fw;
-            relightFrame.fullHeight = parent->fh;
-            relightFrame.originX = (cropx / relightSkip) * relightSkip;
-            relightFrame.originY = (cropy / relightSkip) * relightSkip;
-            relightFrame.step = relightSkip;
-            parent->ipf.relight(labnCrop, params.relight, relightFrame);
+        if (params.lightEffects.enabled) {
+            parent->ipf.lightEffects(labnCrop, params.lightEffects, parent->fw, parent->fh, std::max(skip, 1),
+                                     &params.filmPresets);
         }
 
-        if (params.lightEffects.enabled) {
-            parent->ipf.lightEffects(labnCrop, params.lightEffects, std::max(skip, 1));
+        // Last texture, after sharpening (1:1 only) and Film Lab, as in the
+        // other pipelines.
+        if (params.grain.enabled) {
+            parent->ipf.grainEffect(labnCrop, params.grain, parent->fw, parent->fh, cropx, cropy, std::max(skip, 1),
+                                    &params.filmPresets);
         }
 
         if (params.icm.workingTRC != ColorManagementParams::WorkingTrc::NONE && params.icm.trcExp) {
@@ -2142,7 +2234,8 @@ void Crop::update(int todo)
                     {wiprof[2][0], wiprof[2][1], wiprof[2][2]}
                 };
 
-            Imagefloat* provcomp = new Imagefloat(GW, GH);
+            std::unique_ptr<Imagefloat> provcompOwner(new Imagefloat(GW, GH));
+            Imagefloat* const provcomp = provcompOwner.get();
 
 #ifdef _OPENMP
         #   pragma omp parallel for
@@ -2189,7 +2282,7 @@ void Crop::update(int todo)
                     Color::XYZ2Lab(x, y, z, labnCrop->L[i][j], labnCrop->a[i][j], labnCrop->b[i][j]);
             }
             }
-            delete provcomp;
+            provcompOwner.reset();
         }
     }
     // all pipette buffer processing should be finished now
@@ -2224,6 +2317,8 @@ void Crop::update(int todo)
             ? parent->ipf.lab2rgb(labnCrop, 0, 0, cropw, croph, params.icm)
             : nullptr;
 
+        const std::unique_ptr<Image8> cropImgtrueOwner(cropImgtrue);
+
         if (cropImgtrue && cropBwForced) {
             // Colour pickers read this buffer; they must report the neutral
             // values the export will actually contain.
@@ -2242,8 +2337,10 @@ void Crop::update(int todo)
             finalH = cropImg->getHeight() - upperBorder;
         }
 
-        Image8* final = new Image8(finalW, finalH);
-        Image8* finaltrue = cropImgtrue ? new Image8(finalW, finalH) : nullptr;
+        const std::unique_ptr<Image8> finalOwner(new Image8(finalW, finalH));
+        const std::unique_ptr<Image8> finaltrueOwner(cropImgtrue ? new Image8(finalW, finalH) : nullptr);
+        Image8* const final = finalOwner.get();
+        Image8* const finaltrue = finaltrueOwner.get();
 
         for (int i = 0; i < finalH; i++) {
             memcpy(final->data + 3 * i * finalW, cropImg->data + 3 * (i + upperBorder)*cropw + 3 * leftBorder, 3 * finalW);
@@ -2281,9 +2378,6 @@ void Crop::update(int todo)
                             static_cast<int>(wantTrueImage), static_cast<int>(settledPass));
         }
 
-        delete final;
-        delete finaltrue;
-        delete cropImgtrue;
     }
 }
 
@@ -2395,6 +2489,25 @@ bool Crop::setCropSizes(const int cropX, const int cropY, const int cropW, const
         const float frameMM = film.format == "120" ? 56.f : film.format == "large" ? 95.f : 24.f;
         renderBorder = std::max(renderBorder, filmoptics::supportPixels(
             std::min(parent->fullw, parent->fullh), frameMM, film.halationSize, skip));
+    }
+    // Light Effects spreads highlights by a share of the frame's short edge;
+    // without some border a light just outside the view throws no glow into
+    // it. Capped: the flare reach can be a third of the frame, and paying for
+    // that on every 1:1 pass is not worth the last faint tail.
+    const auto& light = parent->params->lightEffects;
+    if (light.enabled && (light.glow > 0 || light.halation > 0 || light.flare > 0)) {
+        const double shortFull = std::min(parent->fullw, parent->fullh);
+        double reach = 0.0;
+        if (light.glow > 0) {
+            reach = std::max(reach, shortFull * (0.02 + 0.16 * light.glowRadius / 100.0));
+        }
+        if (light.halation > 0) {
+            reach = std::max(reach, shortFull * (0.008 + 0.045 * light.halationSize / 100.0) * 3.4);
+        }
+        if (light.flare > 0) {
+            reach = std::max(reach, shortFull * (0.03 + 0.35 * light.flareLength / 100.0));
+        }
+        renderBorder = std::max(renderBorder, std::min(384, static_cast<int>(reach / std::max(skip, 1))));
     }
     // add border, if possible
     int bx1 = rqx1 - skip * renderBorder;
@@ -2585,29 +2698,50 @@ void Crop::startUpdate()
  */
 void Crop::fullUpdate()
 {
+    // Lifetime: the IPC destructor sets destroying, then waits for every
+    // task it handed out (cancelProcessingTasks(true)), and scheduleCropUpdate
+    // checks destroying under updaterThreadStart before enqueueing. So the
+    // parent outlives this call without holding updaterThreadStart through
+    // the render. Holding it used to block the GUI thread's startProcessing()
+    // and scheduleCropUpdate() for a whole 100% render (~1.3 s).
+    {
+        MyMutex::MyLock startLock(parent->updaterThreadStart);
 
-    parent->updaterThreadStart.lock();
+        if (parent->destroying) {
+            updateState.cancel();
+            return;
+        }
+    }
 
-    // If the IPC is shutting down, bail out immediately.  The IPC
-    // destructor acquires this same lock, so we must not do any work
-    // after it has set destroying — the Crop and parent may be freed
-    // as soon as we release the lock.
-    if (parent->destroying) {
+    // A closing Crop (~Crop) takes this lock to wait out its own render.
+    MyMutex::MyLock renderLock(parent->cropRenderMutex);
+
+    if (parent->destroying || closing_) {
         updateState.cancel();
-        parent->updaterThreadStart.unlock();
         return;
     }
 
     ProgressListener* const progress = parent->plistener.load();
-    if (!parent->destroying && progress) {
+    if (progress) {
         progress->setProgressState(true);
     }
 
     // Release worker ownership in the same critical section that checks for
     // a final request, so a zoom/pan arriving at completion cannot get lost.
+    bool outOfMemory = false;
+
     while (updateState.takePending()) {
+        if (parent->destroying || closing_) {
+            updateState.cancel();
+            break;
+        }
+
         try {
             update(ALL);
+        } catch (const std::bad_alloc&) {
+            // The canvas keeps its previous render; the next request, with
+            // the caches gone (below), has a better chance.
+            outOfMemory = true;
         } catch (const std::exception& error) {
             std::fprintf(stderr, "Crop update recovered from exception: %s\n", error.what());
         } catch (...) {
@@ -2620,7 +2754,14 @@ void Crop::fullUpdate()
         progressDone->setProgressState(false);
     }
 
-    parent->updaterThreadStart.unlock();
+    if (outOfMemory) {
+        // Not under the render lock: the coordinator's own trimmer try-locks it.
+        renderLock.release();
+        std::fprintf(stderr, "Crop update ran out of memory; freeing caches\n");
+        if (!MemGuard::trim(1, "crop update out of memory")) {
+            MemGuard::logNow("crop update out of memory");
+        }
+    }
 }
 
 int Crop::get_skip()

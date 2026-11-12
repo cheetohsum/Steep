@@ -35,6 +35,7 @@
 #include "thumbbrowserentrybase.h"
 
 #include "guiutils.h"
+#include "rawloadactivity.h"
 #include "threadutils.h"
 #include "thumbnail.h"
 
@@ -42,6 +43,7 @@
 #include "rtengine/leanwindows.h"
 #endif
 
+#include "rtengine/myfile.h"
 #include "rtengine/procparams.h"
 
 #ifdef _OPENMP
@@ -91,6 +93,7 @@ public:
             force_upgrade_(forceUpgrade),
             cache_pixbuf_(cachePixbuf),
             jpeg_(isJpegThumbnailJob(tbe)),
+            seek_(upgrade && tbe && rtengine::fileIncursSeekPenalty(tbe->filename.c_str())),
             foreground_(false),
             listener_(listener)
         {}
@@ -102,6 +105,7 @@ public:
             force_upgrade_(false),
             cache_pixbuf_(false),
             jpeg_(false),
+            seek_(false),
             foreground_(false),
             listener_(nullptr)
         {}
@@ -114,6 +118,8 @@ public:
         bool force_upgrade_;
         bool cache_pixbuf_;
         bool jpeg_;
+        // Upgrade of a file on a spinning (or unknown) disk.
+        bool seek_;
         bool foreground_;
         ThumbImageUpdateListener* listener_;
     };
@@ -157,7 +163,9 @@ public:
         foregroundJobCount_(0),
         activeJpegJobs_(0),
         activeUpgradeJobs_(0),
+        activeSeekUpgradeJobs_(0),
         maxUpgradeJobs_(2),
+        upgradeRetryArmed_(false),
         pauseDepth_(0),
         priorityScanNeeded_(true)
     {
@@ -222,7 +230,11 @@ public:
 
     int activeUpgradeJobs_;
 
+    int activeSeekUpgradeJobs_;
+
     int maxUpgradeJobs_;
+
+    bool upgradeRetryArmed_;
 
     std::atomic<unsigned> pauseDepth_;
 
@@ -239,6 +251,76 @@ public:
     // Workers allowed to keep filling visible cells while the foreground holds
     // the pause. Small enough that the editor still gets the machine.
     static constexpr int kPausedVisibleWorkers = 2;
+
+    // A RAW upgrade reads the whole file. On a spinning disk several of them,
+    // or one beside a foreground RAW decode, turn sequential reads into seeks
+    // and slow everything else down. So they only start once foreground RAW
+    // loading has been quiet for a while, and at most two run there: one
+    // streams its file (Thumbnail serialises that read) while the other
+    // decodes.
+    static constexpr int kMaxSeekPenaltyUpgradeJobs = 2;
+    static constexpr int kUpgradeForegroundQuietMs = 1000;
+    static constexpr int kUpgradeRetryMinMs = 100;
+
+    enum class UpgradeGate {
+        Open,
+        Paused,     // foreground holds the pause; upgrades never run then
+        NotQuiet    // foreground RAW load active or recent; retry later
+    };
+
+    UpgradeGate
+    upgradeGateLocked_() const
+    {
+        if (visibleOnlyLocked_()) {
+            return UpgradeGate::Paused;
+        }
+
+        return isRawLoadForegroundQuietForMs(kUpgradeForegroundQuietMs)
+            ? UpgradeGate::Open
+            : UpgradeGate::NotQuiet;
+    }
+
+    bool
+    canRunLocked_(const Job& job, UpgradeGate gate) const
+    {
+        if (job.jpeg_ && activeJpegJobs_ >= kMaxConcurrentBackgroundJpegJobs) {
+            return false;
+        }
+
+        if (!job.upgrade_) {
+            return true;
+        }
+
+        return gate == UpgradeGate::Open
+            && activeUpgradeJobs_ < maxUpgradeJobs_
+            && (!job.seek_ || activeSeekUpgradeJobs_ < kMaxSeekPenaltyUpgradeJobs);
+    }
+
+    // Upgrades held back only by foreground RAW activity have nobody to wake
+    // them once it goes quiet, so check back from the main loop.
+    void
+    armUpgradeRetryLocked_()
+    {
+        if (upgradeRetryArmed_) {
+            return;
+        }
+
+        upgradeRetryArmed_ = true;
+        const int delayMs = std::max(
+            kUpgradeRetryMinMs,
+            rawLoadForegroundQuietRetryMs(kUpgradeForegroundQuietMs, kUpgradeRetryMinMs));
+        Glib::signal_timeout().connect_once(
+            [this]() {
+                int workersToPush = 0;
+                {
+                    std::lock_guard<std::mutex> lock(mutex_);
+                    upgradeRetryArmed_ = false;
+                    workersToPush = scheduleWorkersLocked_();
+                }
+                pushWorkers_(workersToPush);
+            },
+            delayMs);
+    }
 
     struct CallbackLease {
         CallbackLease(Impl& impl, ThumbImageUpdateListener* listener):
@@ -461,11 +543,13 @@ public:
     JobList::iterator
     pickBestVisibleJobLocked_()
     {
+        // Upgrades are excluded: a whole-RAW read is exactly the disk traffic
+        // the pause exists to keep away from the editor.
         const auto runnableVisible = [this](const Job& job) {
             return job.priority_
                 && *job.priority_
-                && (!job.jpeg_ || activeJpegJobs_ < kMaxConcurrentBackgroundJpegJobs)
-                && (!job.upgrade_ || activeUpgradeJobs_ < maxUpgradeJobs_);
+                && !job.upgrade_
+                && (!job.jpeg_ || activeJpegJobs_ < kMaxConcurrentBackgroundJpegJobs);
         };
 
         JobList::iterator i = findPriorityJobLocked_(true);
@@ -532,9 +616,9 @@ public:
             DEBUG("processing(first) %s", i->tbe_->thumbnail->getFileName().c_str());
         }
 
-        const auto canRun = [this](const Job& job) {
-            return (!job.jpeg_ || activeJpegJobs_ < kMaxConcurrentBackgroundJpegJobs)
-                && (!job.upgrade_ || activeUpgradeJobs_ < maxUpgradeJobs_);
+        const UpgradeGate gate = upgradeGateLocked_();
+        const auto canRun = [this, gate](const Job& job) {
+            return canRunLocked_(job, gate);
         };
         if (i != jobs_.end() && !canRun(*i)) {
             i = std::find_if(jobs_.begin(), jobs_.end(), canRun);
@@ -576,6 +660,9 @@ public:
             }
             if (j.upgrade_) {
                 ++activeUpgradeJobs_;
+                if (j.seek_) {
+                    ++activeSeekUpgradeJobs_;
+                }
             }
 
             return true;
@@ -606,15 +693,25 @@ public:
         int availableJpegSlots = std::max(
             0,
             kMaxConcurrentBackgroundJpegJobs - activeJpegJobs_);
-        int availableUpgradeSlots = std::max(0, maxUpgradeJobs_ - activeUpgradeJobs_);
+        const UpgradeGate gate = upgradeGateLocked_();
+        int availableUpgradeSlots = gate == UpgradeGate::Open
+            ? std::max(0, maxUpgradeJobs_ - activeUpgradeJobs_)
+            : 0;
+        int availableSeekUpgradeSlots = std::max(0, kMaxSeekPenaltyUpgradeJobs - activeSeekUpgradeJobs_);
+        bool upgradeWaitsForQuiet = false;
         int runnableJobs = 0;
         for (const auto& job : jobs_) {
             if (visibleOnly && !(job.priority_ && *job.priority_)) {
                 continue;
             }
             if (job.upgrade_) {
-                if (availableUpgradeSlots > 0) {
+                if (gate == UpgradeGate::NotQuiet) {
+                    upgradeWaitsForQuiet = true;
+                } else if (availableUpgradeSlots > 0 && (!job.seek_ || availableSeekUpgradeSlots > 0)) {
                     --availableUpgradeSlots;
+                    if (job.seek_) {
+                        --availableSeekUpgradeSlots;
+                    }
                     ++runnableJobs;
                 }
             } else if (!job.jpeg_) {
@@ -626,6 +723,9 @@ public:
             if (runnableJobs >= capacity + queuedWorkers_) {
                 break;
             }
+        }
+        if (upgradeWaitsForQuiet) {
+            armUpgradeRetryLocked_();
         }
         const int usefulWorkers = runnableJobs - queuedWorkers_;
         const int toSchedule = std::max(0, std::min(capacity, usefulWorkers));
@@ -789,6 +889,9 @@ public:
                 }
                 if (j.upgrade_) {
                     --activeUpgradeJobs_;
+                    if (j.seek_) {
+                        --activeSeekUpgradeJobs_;
+                    }
                 }
             }
         }
@@ -819,6 +922,9 @@ public:
 constexpr int ThumbImageUpdater::Impl::kMaxConcurrentBackgroundJpegJobs;
 constexpr int ThumbImageUpdater::Impl::kForegroundWorkerReserve;
 constexpr int ThumbImageUpdater::Impl::kPausedVisibleWorkers;
+constexpr int ThumbImageUpdater::Impl::kMaxSeekPenaltyUpgradeJobs;
+constexpr int ThumbImageUpdater::Impl::kUpgradeForegroundQuietMs;
+constexpr int ThumbImageUpdater::Impl::kUpgradeRetryMinMs;
 
 ThumbImageUpdater*
 ThumbImageUpdater::getInstance()

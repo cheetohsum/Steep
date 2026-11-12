@@ -25,6 +25,7 @@
 #include "toolpanel.h"
 #include "widgets/basic/adjuster.h"
 #include "rtengine/procparams.h"
+#include "workinghsvdisplay.h"
 
 class PointColorPickListener
 {
@@ -71,6 +72,7 @@ private:
     bool hueRingPointer(double x, double y);
     void beforeAfter(const rtengine::procparams::PointColorTarget& t, Gdk::RGBA& before, Gdk::RGBA& after) const;
     static Glib::ustring hueToColorName(double hue01);
+    void updateHueGradient();
 
     // Target list model
     class TargetColumns : public Gtk::TreeModel::ColumnRecord {
@@ -107,6 +109,9 @@ private:
     PointColorPickListener* pickListener;
     bool internalUpdate;  // suppress adjuster events during load
     sigc::connection selectionConn_;
+
+    // Swatch colours in the working space the engine's HSV actually runs in.
+    WorkingHSVDisplay hsvDisplay_;
 
     SectionHeader* sectionHeader_;
     Gtk::Box* toolContent_;

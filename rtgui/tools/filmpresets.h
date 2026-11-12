@@ -140,6 +140,7 @@ private:
     Glib::ustring getPresetId(int index) const;
 
 public:
+    Gtk::Widget* getHeadingWidget() override { return enableCheck_; }
     static const Glib::ustring TOOL_NAME;
 
     FilmPresets();

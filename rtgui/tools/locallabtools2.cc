@@ -159,7 +159,7 @@ LocallabTone::LocallabTone():
     Lmasktmshape(static_cast<DiagonalCurveEditor*>(mask2tmCurveEditorG->addCurve(CT_Diagonal, "L(L)")))
 {
     auto m = ProcEventMapper::getInstance();
-    Evlocallabpreviewtm = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_PREVIEWTM");
+    Evlocallabpreviewtm = m->newEvent(TONE, "HISTORY_MSG_LOCAL_PREVIEWTM");
     
     set_orientation(Gtk::ORIENTATION_VERTICAL);
 
@@ -934,7 +934,7 @@ LocallabRetinex::LocallabRetinex():
 {
 
     auto m = ProcEventMapper::getInstance();
-    Evlocallabdehazeblack = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_DEHAZE_BLACK");
+    Evlocallabdehazeblack = m->newEvent(TONE, "HISTORY_MSG_LOCAL_DEHAZE_BLACK");
 
     set_orientation(Gtk::ORIENTATION_VERTICAL);
 
@@ -2141,19 +2141,19 @@ LocallabSharp::LocallabSharp():
     
     auto m = ProcEventMapper::getInstance();
     //rtengine::ProcEvent EvlocallabenacieMaskall;
-    Evlocallabmethodcap = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_METHODCAP");
-    Evlocallabcapradius = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CAPRADIUS");
-    Evlocallabautoradiuson = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_AUTOCAPRADIUS");
-    Evlocallabautoradiusoff = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_AUTOCAPRADIUS");
-    Evlocallabsharcontraston = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_AUTOSHAR");
-    Evlocallabsharcontrastoff = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_AUTOSHAR");
-    Evlocallababdconvboost = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CONVBOOST");
-    Evlocallababdcoprot = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CONVPROT");
-    Evlocallababdconvlat = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CONVLAT");
-    Evlocallabsharrepar = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_SHARREPAR");
-    Evlocallababsharshow = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_SHARSHOW");   
-    Evlocallababitercheck = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_SHARITERCHECK");   
-    Evlocallababdconvgam = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CONVGAM");
+    Evlocallabmethodcap = m->newEvent(TONE, "HISTORY_MSG_LOCAL_METHODCAP");
+    Evlocallabcapradius = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CAPRADIUS");
+    Evlocallabautoradiuson = m->newEvent(TONE, "HISTORY_MSG_LOCAL_AUTOCAPRADIUS");
+    Evlocallabautoradiusoff = m->newEvent(TONE, "HISTORY_MSG_LOCAL_AUTOCAPRADIUS");
+    Evlocallabsharcontraston = m->newEvent(TONE, "HISTORY_MSG_LOCAL_AUTOSHAR");
+    Evlocallabsharcontrastoff = m->newEvent(TONE, "HISTORY_MSG_LOCAL_AUTOSHAR");
+    Evlocallababdconvboost = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CONVBOOST");
+    Evlocallababdcoprot = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CONVPROT");
+    Evlocallababdconvlat = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CONVLAT");
+    Evlocallabsharrepar = m->newEvent(TONE, "HISTORY_MSG_LOCAL_SHARREPAR");
+    Evlocallababsharshow = m->newEvent(TONE, "HISTORY_MSG_LOCAL_SHARSHOW");   
+    Evlocallababitercheck = m->newEvent(TONE, "HISTORY_MSG_LOCAL_SHARITERCHECK");   
+    Evlocallababdconvgam = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CONVGAM");
     set_orientation(Gtk::ORIENTATION_VERTICAL);
     capradius->addAutoButton(M("TP_SHARPENING_EDRADIUS_TOOLTIP"));
     sharcontrast->addAutoButton(M("TP_SHARPENING_CONTRASTAUTO_TOOLTIP"));
@@ -2995,11 +2995,11 @@ LocallabContrast::LocallabContrast():
     Lmasklcshape(static_cast<DiagonalCurveEditor*>(mask2lcCurveEditorG->addCurve(CT_Diagonal, "L(L)")))
 {
     auto m = ProcEventMapper::getInstance();
-    Evlocallabpreviewlc = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_PREVIEWLC");
-    Evlocallabfeatherwav = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_FEATHERWAV");
-    Evlocallaboffslc = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_OFFSETWAV");
+    Evlocallabpreviewlc = m->newEvent(TONE, "HISTORY_MSG_LOCAL_PREVIEWLC");
+    Evlocallabfeatherwav = m->newEvent(TONE, "HISTORY_MSG_LOCAL_FEATHERWAV");
+    Evlocallaboffslc = m->newEvent(TONE, "HISTORY_MSG_LOCAL_OFFSETWAV");
 
-    Evlocallabprocesswav = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_PROCESSWAV");
+    Evlocallabprocesswav = m->newEvent(TONE, "HISTORY_MSG_LOCAL_PROCESSWAV");
     
     set_orientation(Gtk::ORIENTATION_VERTICAL);
 
@@ -5996,13 +5996,13 @@ LocallabLog::LocallabLog():
 
 {
     auto m = ProcEventMapper::getInstance();
-    Evlocallabpreviewlog = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_PREVIEWLOG");
-    Evlocallabwhiteslog = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_LOG_WHITES");
-    Evlocallabblackslog = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_LOG_BLACKS");
-    Evlocallabcomprlog = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_LOG_COMPR");
-    Evlocallabstrelog = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_LOG_STRE");
-    Evlocallabsatlog = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_LOG_SAT");
-    Evlocallabfeatherlog = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_FEATHERLOG");
+    Evlocallabpreviewlog = m->newEvent(TONE, "HISTORY_MSG_LOCAL_PREVIEWLOG");
+    Evlocallabwhiteslog = m->newEvent(TONE, "HISTORY_MSG_LOCAL_LOG_WHITES");
+    Evlocallabblackslog = m->newEvent(TONE, "HISTORY_MSG_LOCAL_LOG_BLACKS");
+    Evlocallabcomprlog = m->newEvent(TONE, "HISTORY_MSG_LOCAL_LOG_COMPR");
+    Evlocallabstrelog = m->newEvent(TONE, "HISTORY_MSG_LOCAL_LOG_STRE");
+    Evlocallabsatlog = m->newEvent(TONE, "HISTORY_MSG_LOCAL_LOG_SAT");
+    Evlocallabfeatherlog = m->newEvent(TONE, "HISTORY_MSG_LOCAL_FEATHERLOG");
 
     set_orientation(Gtk::ORIENTATION_VERTICAL);
 
@@ -7492,8 +7492,8 @@ LocallabMask::LocallabMask():
 {
 
     auto m = ProcEventMapper::getInstance();
-    Evlocallabpreviewmas = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_PREVIEWMAS");
-    Evlocallabfeather_mask = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_FEATHERMAS");
+    Evlocallabpreviewmas = m->newEvent(TONE, "HISTORY_MSG_LOCAL_PREVIEWMAS");
+    Evlocallabfeather_mask = m->newEvent(TONE, "HISTORY_MSG_LOCAL_FEATHERMAS");
     
     set_orientation(Gtk::ORIENTATION_VERTICAL);
 
@@ -8658,92 +8658,92 @@ Locallabcie::Locallabcie():
 
 {
     auto m = ProcEventMapper::getInstance();
-    Evlocallabpreviewcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_PREVIEWCIE");
-    Evlocallabnormcie12 = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_NORM");
-    Evlocallabnormcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_NORM11");
-    Evlocallabstrumaskcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIEMASK_STRU");
-    EvLocallabtoolcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIEMASK_STRU_TOOL");
-    EvLocallabfftcieMask = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIEMASK_BLURFFT");
-    Evlocallabcontcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIEMASK_BLURCONT");
-    Evlocallabblurcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIEMASK_BLURRAD");
-    Evlocallabhighmaskcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIEMASK_HIGH");
-    Evlocallabshadmaskcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIEMASK_SHAD");
-    EvlocallabLLmaskcieshapewav = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIEMASK_WLC");
-    EvlocallabcsThresholdcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIEMASK_WLEV");
+    Evlocallabpreviewcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_PREVIEWCIE");
+    Evlocallabnormcie12 = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_NORM");
+    Evlocallabnormcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_NORM11");
+    Evlocallabstrumaskcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIEMASK_STRU");
+    EvLocallabtoolcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIEMASK_STRU_TOOL");
+    EvLocallabfftcieMask = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIEMASK_BLURFFT");
+    Evlocallabcontcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIEMASK_BLURCONT");
+    Evlocallabblurcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIEMASK_BLURRAD");
+    Evlocallabhighmaskcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIEMASK_HIGH");
+    Evlocallabshadmaskcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIEMASK_SHAD");
+    EvlocallabLLmaskcieshapewav = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIEMASK_WLC");
+    EvlocallabcsThresholdcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIEMASK_WLEV");
     Evlocallabcomprcie = m->newEvent(HDR, "HISTORY_MSG_LOCAL_CIE_BRICOMP");
     Evlocallabstrcielog = m->newEvent(HDR, "HISTORY_MSG_LOCAL_CIE_STRLOG");
     Evlocallabsatcie = m->newEvent(HDR, "HISTORY_MSG_LOCAL_CIE_SATCIE");
     Evlocallablogcieq = m->newEvent(HDR, "HISTORY_MSG_LOCAL_CIE_LOGCIEQ");
     Evlocallabcomprcieth = m->newEvent(HDR, "HISTORY_MSG_LOCAL_CIE_BRICOMPTH");
-    EvlocallabHHhmaskcieshape = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIEMASK_CHH");
-    EvlocallabbwevMethod12 = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_SIGMET");
-    Evlocallabgamjcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_GAM");
-    Evlocallabslopjcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_SLOP");
-    Evlocallabsatjcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_SAT");
-    Evlocallabmidtciemet = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_MIDTMET");
-    Evlocallabmidtcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_MIDT");
-    Evlocallabcontsig = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_CONTSIG");
-    Evlocallabskewsig = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_SKEWSIG");
-    Evlocallabwhitsig = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_WHITSIG");
-    Evlocallabslopesmo = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_SLOPESMO");
-    Evlocallabslopesmoq = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_SLOPESMOQ");
-    Evlocallabslopesmor = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_SLOPESMOR");
-    Evlocallabslopesmog = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_SLOPESMOG");
-    Evlocallabslopesmob = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_SLOPESMOB");
-    Evlocallabkslopesmor = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_KSLOPESMOR");
-    Evlocallabkslopesmog = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_KSLOPESMOG");
-    Evlocallabkslopesmob = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_KSLOPESMOB");
-    Evlocallabsmoothcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_SMOOTH");
-    Evlocallabsmoothcielnk = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_SMOOTHLNK");
-    Evlocallabsmoothcieinv = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_SMOOTHINV");
-    Evlocallabsmoothcietrc = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_SMOOTHTRC");
-    Evlocallabsmoothcietrcrel = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_SMOOTHTRCREL");
-    Evlocallabsmoothcieyb = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_SMOOTHYB");
-    Evlocallabsmoothcieth = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_SMOOTHTH");
-    Evlocallabsmoothciethtrc = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_SMOOTHTHTRC");
-    Evlocallabsmoothcielum = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_SMOOTH_LUM");
-    Evlocallabsmoothciehigh = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_SMOOTH_HIGH");
-    Evlocallabsigcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_SIG");
-    Evlocallabillcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_ILL");
-    Evlocallabprimcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_PRIM");
-    Evlocallabcatcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_CAT");
-    Evlocallabwhitescie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_WHITES");
-    Evlocallabblackscie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_BLACKS");
-    Evlocallabredxl = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_REDXL");
-    Evlocallabredyl = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_REDYL");
-    Evlocallabgrexl = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_GREXL");
-    Evlocallabgreyl = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_GREYL");
-    Evlocallabbluxl = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_BLUXL");
-    Evlocallabbluyl = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_BLUYL");
-    EvlocallabGridciexy = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_LABGRIDCIE");
-    Evlocallabgamutcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_GAMUTCIE");
-    Evlocallabbwcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_BWCIE");
-    Evlocallabexpprecam = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_EXPPRECAM");
-    Evlocallablightsigqcie12 = m->newEvent(AUTOEXP, "");
-    Evlocallabcontsigqcie = m->newEvent(AUTOEXP, "");
-    Evlocallabrefi = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_REFI");
-    Evlocallabshiftxl = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_SHIFTXL");
-    Evlocallabshiftyl = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_SHIFTYL");
-    Evlocallabanggradcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_ANGGRAD");
-    Evlocallabstrgradcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_STRGRAD");
-    Evlocallabdetailciejz = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_DETAILJZ");
-    EvlocallabenacieMaskall = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_ENAMASKALL");
-    Evlocallabsmoothciemet = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_SMOOTHMET");
-    Evlocallabfeathercie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_FEATHERCIE");
-    EvlocallabmodeQJ = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_QJMETHOD");
-    EvlocallabbwevMethod = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_WEVMETHOD11");
-    Evlocallabsigmoidldacie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_SIGDACIE");
-    Evlocallabsigmoidthcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_SIGTHCIE");
-    Evlocallabsigmoidblcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_SIGBLCIE");
-    Evlocallabsigq = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_SIGQ11");
-    Evlocallabsigq_12 = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_SIGQ12");
-    Evlocallabsigjz = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_SIGJZ11");
-    Evlocallabforcebw = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_SIGFORCEBW");
-    Evlocallabsigmoidldajzcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_SIGJZ11CONT");
-    Evlocallabsigmoidthjzcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_SIGJZ11GRAY");
-    Evlocallabsigmoidbljzcie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_SIGJZ11BL");
-    Evlocallabsigmoidsenscie = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_SIGSENSICIE");
-    Evlocallablogcie_12 = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_LOGCIE12");
+    EvlocallabHHhmaskcieshape = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIEMASK_CHH");
+    EvlocallabbwevMethod12 = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_SIGMET");
+    Evlocallabgamjcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_GAM");
+    Evlocallabslopjcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_SLOP");
+    Evlocallabsatjcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_SAT");
+    Evlocallabmidtciemet = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_MIDTMET");
+    Evlocallabmidtcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_MIDT");
+    Evlocallabcontsig = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_CONTSIG");
+    Evlocallabskewsig = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_SKEWSIG");
+    Evlocallabwhitsig = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_WHITSIG");
+    Evlocallabslopesmo = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_SLOPESMO");
+    Evlocallabslopesmoq = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_SLOPESMOQ");
+    Evlocallabslopesmor = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_SLOPESMOR");
+    Evlocallabslopesmog = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_SLOPESMOG");
+    Evlocallabslopesmob = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_SLOPESMOB");
+    Evlocallabkslopesmor = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_KSLOPESMOR");
+    Evlocallabkslopesmog = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_KSLOPESMOG");
+    Evlocallabkslopesmob = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_KSLOPESMOB");
+    Evlocallabsmoothcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_SMOOTH");
+    Evlocallabsmoothcielnk = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_SMOOTHLNK");
+    Evlocallabsmoothcieinv = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_SMOOTHINV");
+    Evlocallabsmoothcietrc = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_SMOOTHTRC");
+    Evlocallabsmoothcietrcrel = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_SMOOTHTRCREL");
+    Evlocallabsmoothcieyb = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_SMOOTHYB");
+    Evlocallabsmoothcieth = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_SMOOTHTH");
+    Evlocallabsmoothciethtrc = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_SMOOTHTHTRC");
+    Evlocallabsmoothcielum = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_SMOOTH_LUM");
+    Evlocallabsmoothciehigh = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_SMOOTH_HIGH");
+    Evlocallabsigcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_SIG");
+    Evlocallabillcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_ILL");
+    Evlocallabprimcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_PRIM");
+    Evlocallabcatcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_CAT");
+    Evlocallabwhitescie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_WHITES");
+    Evlocallabblackscie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_BLACKS");
+    Evlocallabredxl = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_REDXL");
+    Evlocallabredyl = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_REDYL");
+    Evlocallabgrexl = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_GREXL");
+    Evlocallabgreyl = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_GREYL");
+    Evlocallabbluxl = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_BLUXL");
+    Evlocallabbluyl = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_BLUYL");
+    EvlocallabGridciexy = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_LABGRIDCIE");
+    Evlocallabgamutcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_GAMUTCIE");
+    Evlocallabbwcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_BWCIE");
+    Evlocallabexpprecam = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_EXPPRECAM");
+    Evlocallablightsigqcie12 = m->newEvent(TONE, "");
+    Evlocallabcontsigqcie = m->newEvent(TONE, "");
+    Evlocallabrefi = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_REFI");
+    Evlocallabshiftxl = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_SHIFTXL");
+    Evlocallabshiftyl = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_SHIFTYL");
+    Evlocallabanggradcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_ANGGRAD");
+    Evlocallabstrgradcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_STRGRAD");
+    Evlocallabdetailciejz = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_DETAILJZ");
+    EvlocallabenacieMaskall = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_ENAMASKALL");
+    Evlocallabsmoothciemet = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_SMOOTHMET");
+    Evlocallabfeathercie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_FEATHERCIE");
+    EvlocallabmodeQJ = m->newEvent(TONE, "HISTORY_MSG_LOCAL_QJMETHOD");
+    EvlocallabbwevMethod = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_WEVMETHOD11");
+    Evlocallabsigmoidldacie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_SIGDACIE");
+    Evlocallabsigmoidthcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_SIGTHCIE");
+    Evlocallabsigmoidblcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_SIGBLCIE");
+    Evlocallabsigq = m->newEvent(TONE, "HISTORY_MSG_LOCAL_SIGQ11");
+    Evlocallabsigq_12 = m->newEvent(TONE, "HISTORY_MSG_LOCAL_SIGQ12");
+    Evlocallabsigjz = m->newEvent(TONE, "HISTORY_MSG_LOCAL_SIGJZ11");
+    Evlocallabforcebw = m->newEvent(TONE, "HISTORY_MSG_LOCAL_SIGFORCEBW");
+    Evlocallabsigmoidldajzcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_SIGJZ11CONT");
+    Evlocallabsigmoidthjzcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_SIGJZ11GRAY");
+    Evlocallabsigmoidbljzcie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_SIGJZ11BL");
+    Evlocallabsigmoidsenscie = m->newEvent(TONE, "HISTORY_MSG_LOCAL_SIGSENSICIE");
+    Evlocallablogcie_12 = m->newEvent(TONE, "HISTORY_MSG_LOCAL_LOGCIE12");
     set_orientation(Gtk::ORIENTATION_VERTICAL);
 
     // Parameter Ciecam specific widgets

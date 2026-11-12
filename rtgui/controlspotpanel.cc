@@ -20,8 +20,10 @@
 
 #include "rtengine/rt_math.h"
 #include "controlspotpanel.h"
+#include "aimaskclasses.h"
 
 #include "aimaskthumb.h"
+#include "depthrangewidget.h"
 #include "windows/maskpaintdlg.h"
 
 #ifdef RT_AI_MASKING
@@ -35,6 +37,7 @@
 #include "imagearea.h"
 #include "cropwindow.h"
 #include "guiutils.h"
+#include "motion.h"
 #ifdef RT_AI_MASKING
 #include "rtengine/aimaskcache.h"
 #endif
@@ -156,8 +159,8 @@ ControlSpotPanel::ControlSpotPanel():
     maskPrevActive(false)
 {
     auto m = ProcEventMapper::getInstance();
-    EvLocallabavoidgamutMethod = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_GAMUTMUNSEL");
-    EvLocallabavoidnegative =  m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_AVOIDNEGATIVE");
+    EvLocallabavoidgamutMethod = m->newEvent(TONE, "HISTORY_MSG_LOCAL_GAMUTMUNSEL");
+    EvLocallabavoidnegative =  m->newEvent(TONE, "HISTORY_MSG_LOCAL_AVOIDNEGATIVE");
     EvLocallabMaskGrade = m->newEvent(TONE, "HISTORY_MSG_LOCAL_MASKGRADE");
     const bool showtooltip = App::get().options().showtooltip;
 
@@ -238,36 +241,25 @@ ControlSpotPanel::ControlSpotPanel():
 
     auto* aiMenuItem = createMaskMenuItem("mask-ai", M("TP_LOCALLAB_MASKTYPE_AI"));
     auto* aiClassMenu = Gtk::manage(new Gtk::Menu());
-    const char* aiClassKeys[] = {
-        "TP_LOCALLAB_AIMASK_CLASS_BACKGROUND",
-        "TP_LOCALLAB_AIMASK_CLASS_PERSON",
-        "TP_LOCALLAB_AIMASK_CLASS_SKY",
-        "TP_LOCALLAB_AIMASK_CLASS_VEGETATION",
-        "TP_LOCALLAB_AIMASK_CLASS_BUILDING",
-        "TP_LOCALLAB_AIMASK_CLASS_VEHICLE",
-        "TP_LOCALLAB_AIMASK_CLASS_ANIMAL",
-        "TP_LOCALLAB_AIMASK_CLASS_FOREGROUND"
-    };
-    const char* aiClassIcons[] = {
-        "mask-class-background", "mask-class-person", "mask-class-sky",
-        "mask-class-vegetation", "mask-class-building", "mask-class-vehicle",
-        "mask-class-animal", "mask-class-foreground"
-    };
-    // The vectors stay indexed by model class (refreshClassThumbs and the
-    // class combo rely on it); only the order shown changes, to match the
-    // smart mask chip's menu (smartmaskbar.cc): people first, the model's
-    // generic background class last.
-    for (int i = 0; i < 8; ++i) {
-        auto* item = createMaskMenuItem(aiClassIcons[i], M(aiClassKeys[i]));
+    // The vectors are indexed by class (refreshClassThumbs relies on it); the
+    // order shown is aimaskclasses::menu(), the same everywhere a class is
+    // picked, so creating a mask and changing it later offer the same list.
+    const int aiClassCount = aimaskclasses::classCount();
+    aiClassMenuThumbs_.assign(aiClassCount, nullptr);
+    aiClassMenuItems_.assign(aiClassCount, nullptr);
+    aiClassNames_.assign(aiClassCount, Glib::ustring());
+    for (const aimaskclasses::Entry& entry : aimaskclasses::menu()) {
+        if (entry.separatorBefore) {
+            aiClassMenu->append(*Gtk::manage(new Gtk::SeparatorMenuItem()));
+        }
+        auto* item = createMaskMenuItem(entry.icon, M(entry.labelKey));
         addMenuThumb(item);
-        aiClassMenuThumbs_.push_back(lastMaskMenuThumb);
-        aiClassMenuItems_.push_back(item);
-        aiClassNames_.push_back(M(aiClassKeys[i]));
+        aiClassMenuThumbs_[entry.classIndex] = lastMaskMenuThumb;
+        aiClassMenuItems_[entry.classIndex] = item;
+        aiClassNames_[entry.classIndex] = M(entry.labelKey);
         item->signal_activate().connect(
-            sigc::bind(sigc::mem_fun(*this, &ControlSpotPanel::on_ai_mask_selected), i));
-    }
-    for (int i : {1, 2, 3, 4, 5, 6, 7, 0}) {
-        aiClassMenu->append(*aiClassMenuItems_[i]);
+            sigc::bind(sigc::mem_fun(*this, &ControlSpotPanel::on_ai_mask_selected), entry.classIndex));
+        aiClassMenu->append(*item);
     }
     aiClassMenu->signal_show().connect(sigc::mem_fun(*this, &ControlSpotPanel::refreshClassThumbs));
     aiMenuItem->set_submenu(*aiClassMenu);
@@ -615,15 +607,11 @@ ControlSpotPanel::ControlSpotPanel():
     maskType_->setShowSelectionLabel(true);
 
     // AI Class combo
-    aiMaskClass_->addEntry("mask-class-background", M("TP_LOCALLAB_AIMASK_CLASS_BACKGROUND"));
-    aiMaskClass_->addEntry("mask-class-person", M("TP_LOCALLAB_AIMASK_CLASS_PERSON"));
-    aiMaskClass_->addEntry("mask-class-sky", M("TP_LOCALLAB_AIMASK_CLASS_SKY"));
-    aiMaskClass_->addEntry("mask-class-vegetation", M("TP_LOCALLAB_AIMASK_CLASS_VEGETATION"));
-    aiMaskClass_->addEntry("mask-class-building", M("TP_LOCALLAB_AIMASK_CLASS_BUILDING"));
-    aiMaskClass_->addEntry("mask-class-vehicle", M("TP_LOCALLAB_AIMASK_CLASS_VEHICLE"));
-    aiMaskClass_->addEntry("mask-class-animal", M("TP_LOCALLAB_AIMASK_CLASS_ANIMAL"));
-    aiMaskClass_->addEntry("mask-class-foreground", M("TP_LOCALLAB_AIMASK_CLASS_FOREGROUND"));
-    aiMaskClass_->setSelected(2); // Default: Sky
+    // Rows follow aimaskclasses::menu(); rowOf/classAt translate.
+    for (const aimaskclasses::Entry& entry : aimaskclasses::menu()) {
+        aiMaskClass_->addEntry(entry.icon, M(entry.labelKey));
+    }
+    aiMaskClass_->setSelected(aimaskclasses::rowOf(2)); // Default: Sky
     aiMaskClass_->show();
     aiMaskClassConn_ = aiMaskClass_->signal_changed().connect(
                            sigc::mem_fun(
@@ -965,6 +953,37 @@ ControlSpotPanel::ControlSpotPanel():
 
     maskDetailBox_->pack_start(*shapeTypeRow_, Gtk::PACK_SHRINK);
     maskDetailBox_->pack_start(*ctboxaiclass, Gtk::PACK_SHRINK);
+
+    aiDepthBox_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 2));
+    {
+        auto* const header = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+        auto* const label = Gtk::manage(new Gtk::Label(M("TP_LOCALLAB_AIMASK_DEPTHRANGE")));
+        label->set_halign(Gtk::ALIGN_START);
+        header->pack_start(*label, Gtk::PACK_EXPAND_WIDGET);
+        aiDepthAuto_ = Gtk::manage(new Gtk::Button(M("TP_LOCALLAB_AIMASK_DEPTHRANGE_AUTO")));
+        aiDepthAuto_->set_tooltip_text(M("TP_LOCALLAB_AIMASK_DEPTHRANGE_AUTO_TOOLTIP"));
+        aiDepthAuto_->signal_clicked().connect([this]() {
+            const auto s = treeview_->get_selection();
+            if (!s->count_selected_rows()) {
+                return;
+            }
+            Gtk::TreeModel::Row row = *s->get_selected();
+            row[spots_.aiMaskDepthRange] = Glib::ustring();
+            updateDepthRangeControl();
+            if (listener) {
+                listener->panelChanged(EvLocallabSpotShape, M("TP_LOCALLAB_AIMASK_DEPTHRANGE_AUTO"));
+            }
+            queueMaskPreviewRefresh();
+        });
+        header->pack_end(*aiDepthAuto_, Gtk::PACK_SHRINK);
+        aiDepthBox_->pack_start(*header, Gtk::PACK_SHRINK);
+        aiDepthRange_ = Gtk::manage(new compositeui::DepthRange());
+        aiDepthRange_->set_tooltip_text(M("TP_LOCALLAB_AIMASK_DEPTHRANGE_TOOLTIP"));
+        aiDepthRange_->changed = [this]() { depthRangeChanged(); };
+        aiDepthBox_->pack_start(*aiDepthRange_, Gtk::PACK_SHRINK);
+    }
+    aiDepthBox_->set_no_show_all(true);
+    maskDetailBox_->pack_start(*aiDepthBox_, Gtk::PACK_SHRINK);
     maskDetailBox_->pack_start(*aiMaskTolerance_, Gtk::PACK_SHRINK);
 
     auto* const blendModeRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
@@ -1029,7 +1048,7 @@ ControlSpotPanel::ControlSpotPanel():
 
     maskRevealer_ = Gtk::manage(new Gtk::Revealer());
     maskRevealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-    maskRevealer_->set_transition_duration(140);
+    steep::motion::configureRevealer(*maskRevealer_);
     maskRevealer_->set_reveal_child(false);
     maskRevealer_->add(*maskDetailBox_);
     maskRevealer_->set_no_show_all(true);
@@ -1130,6 +1149,7 @@ void ControlSpotPanel::setMaskDetailExpanded(bool expanded)
             ctboxaiclass->hide();
             aiMaskTolerance_->hide();
         }
+        updateDepthRangeControl();
 
         // A gradient is the only shape with a direction and a ramp to shape.
         if (shape_->getSelected() == 2) {
@@ -1480,11 +1500,11 @@ void ControlSpotPanel::render_preview(
     const double polyFeather = (double)row[spots_.polyMaskFeather];
 
     // AI class colors: model classes 0-7, then the composed SUBJECT and
-    // NOT_SUBJECT pseudo-classes (8, 9)
+    // NOT_SUBJECT pseudo-classes (8, 9), then near / far by depth (10, 11)
     static const guint8 classColors[][3] = {
         {128, 128, 128}, {220,  80,  80}, { 80, 140, 220}, { 80, 180,  80},
         {200, 150,  60}, {160,  80, 200}, {220, 180,  50}, { 80, 200, 200},
-        {240, 130,  90}, {110, 120, 150},
+        {240, 130,  90}, {110, 120, 150}, {230, 110, 160}, { 90, 110, 200},
     };
 
     // Heat colors for normal masks (warm orange/yellow)
@@ -1822,15 +1842,7 @@ void ControlSpotPanel::render_name(
     const Glib::ustring name = row[spots_.name];
     Glib::ustring detail;
     if (row[spots_.maskType] == 1) {
-        static const char* const classKeys[] = {
-            "TP_LOCALLAB_AIMASK_CLASS_BACKGROUND", "TP_LOCALLAB_AIMASK_CLASS_PERSON",
-            "TP_LOCALLAB_AIMASK_CLASS_SKY", "TP_LOCALLAB_AIMASK_CLASS_VEGETATION",
-            "TP_LOCALLAB_AIMASK_CLASS_BUILDING", "TP_LOCALLAB_AIMASK_CLASS_VEHICLE",
-            "TP_LOCALLAB_AIMASK_CLASS_ANIMAL", "TP_LOCALLAB_AIMASK_CLASS_FOREGROUND",
-            "TP_LOCALLAB_AIMASK_CLASS_SUBJECT", "TP_LOCALLAB_AIMASK_CLASS_NOTSUBJECT"
-        };
-        const int cls = rtengine::LIM(static_cast<int>(row[spots_.aiMaskClass]), 0, 9);
-        const Glib::ustring className = M(classKeys[cls]);
+        const Glib::ustring className = M(aimaskclasses::labelKey(row[spots_.aiMaskClass]));
         detail = M("TP_LOCALLAB_MASKTYPE_AI");
         if (name != className) {
             detail += separator + className;
@@ -1895,7 +1907,14 @@ void ControlSpotPanel::on_mask_shape_selected(int shape)
 
 void ControlSpotPanel::on_ai_mask_selected(int classIndex)
 {
+    pendingAIPaint_.clear();
+    requestAIMaskSpotKeepingPaint(classIndex);
+}
+
+void ControlSpotPanel::requestAIMaskSpotKeepingPaint(int classIndex)
+{
     if (!listener) {
+        pendingAIPaint_.clear();
         return;
     }
 
@@ -1904,6 +1923,7 @@ void ControlSpotPanel::on_ai_mask_selected(int classIndex)
     selSpotChanged_ = true;
     eventType = SpotCreationAI;
     listener->panelChanged(EvLocallabSpotCreated, "-");
+    pendingAIPaint_.clear();
 
     startAIPreviewRefresh();
 }
@@ -2049,12 +2069,14 @@ void ControlSpotPanel::updateAutomaticMaskName(Gtk::TreeModel::Row& row)
         "TP_LOCALLAB_MASK_NAME_BACKGROUND", "TP_LOCALLAB_MASK_NAME_PERSON",
         "TP_LOCALLAB_MASK_NAME_SKY", "TP_LOCALLAB_MASK_NAME_VEGETATION",
         "TP_LOCALLAB_MASK_NAME_BUILDING", "TP_LOCALLAB_MASK_NAME_VEHICLE",
-        "TP_LOCALLAB_MASK_NAME_ANIMAL", "TP_LOCALLAB_MASK_NAME_FOREGROUND"
+        "TP_LOCALLAB_MASK_NAME_ANIMAL", "TP_LOCALLAB_MASK_NAME_FOREGROUND",
+        "TP_LOCALLAB_MASK_NAME_SUBJECT", "TP_LOCALLAB_MASK_NAME_BACKGROUND",
+        "TP_LOCALLAB_MASK_NAME_NEAR", "TP_LOCALLAB_MASK_NAME_FAR"
     };
 
     const int type = row[spots_.maskType];
     const int index = type == 1
-        ? rtengine::LIM(static_cast<int>(row[spots_.aiMaskClass]), 0, 7)
+        ? rtengine::LIM(static_cast<int>(row[spots_.aiMaskClass]), 0, 11)
         : rtengine::LIM(static_cast<int>(row[spots_.shape]), 0, 3);
     const Glib::ustring newName = M(type == 1 ? aiNameKeys[index] : shapeNameKeys[index]);
     if (row[spots_.name] == newName) {
@@ -2307,7 +2329,7 @@ void ControlSpotPanel::load_ControlSpot_param()
     wavMethod_->set_active(row[spots_.wavMethod]);
 	avoidgamutMethod_->set_active(row[spots_.avoidgamutMethod]);
     maskType_->setSelected(row[spots_.maskType]);
-    aiMaskClass_->setSelected(row[spots_.aiMaskClass]);
+    aiMaskClass_->setSelected(aimaskclasses::rowOf(row[spots_.aiMaskClass]));
     aiMaskTolerance_->setValue(
         100.0 * (1.0 - static_cast<double>(row[spots_.aiMaskThreshold])));
     maskBlendModeConn_.block(true);
@@ -2341,6 +2363,7 @@ void ControlSpotPanel::load_ControlSpot_param()
     updateDodgeBurnToneVisibility();
     ctboxaiclass->set_visible(row[spots_.maskType] == 1);
     aiMaskTolerance_->set_visible(row[spots_.maskType] == 1);
+    updateDepthRangeControl();
 
     // Show/hide controls based on shape
     if (shape_->getSelected() == 2) { // Gradient
@@ -2997,6 +3020,7 @@ void ControlSpotPanel::maskTypeChanged(int /*index*/)
         ctboxaiclass->hide();
         aiMaskTolerance_->hide();
     }
+    updateDepthRangeControl();
     updateAutomaticMaskName(row);
 
     if (listener) {
@@ -3025,6 +3049,10 @@ void ControlSpotPanel::refreshClassThumbs()
         rtengine::LIM(1.0 - aiMaskTolerance_->getValue() / 100.0, 0.0, 1.0));
 
     for (size_t i = 0; i < aiClassNames_.size(); ++i) {
+        const int menuRow = aimaskclasses::rowOf(static_cast<int>(i));
+        if (menuRow < 0) {
+            continue;
+        }
         const aimaskthumb::Tile tile = thumbProvider_(static_cast<int>(i), threshold);
 
         if (i < aiClassMenuThumbs_.size() && aiClassMenuThumbs_[i]) {
@@ -3045,12 +3073,97 @@ void ControlSpotPanel::refreshClassThumbs()
             aiClassMenuItems_[i]->set_visible(!tile.absent());
         }
 
-        aiMaskClass_->setEntryVisible(static_cast<int>(i), !tile.absent());
+        aiMaskClass_->setEntryVisible(menuRow, !tile.absent());
 
         if (tile.image) {
-            aiMaskClass_->setEntryImage(static_cast<int>(i), tile.image);
+            aiMaskClass_->setEntryImage(menuRow, tile.image);
         }
     }
+}
+
+void ControlSpotPanel::updateDepthRangeControl()
+{
+    if (!aiDepthBox_) {
+        return;
+    }
+    const auto s = treeview_->get_selection();
+    bool visible = false;
+    Gtk::TreeModel::Row row;
+    if (s->count_selected_rows()) {
+        row = *s->get_selected();
+        const int cls = row[spots_.aiMaskClass];
+        visible = row[spots_.maskType] == 1 && (cls == 10 || cls == 11) && maskDetailExpanded_;
+    }
+    aiDepthBox_->set_visible(visible);
+    if (visible) {
+        aiDepthBox_->show_all();
+    } else {
+        aiDepthPoll_.disconnect();
+        return;
+    }
+
+#ifdef RT_AI_MASKING
+    const std::string imageId = editedFilePath_.raw();
+    auto& cache = rtengine::AIMaskCache::getInstance();
+    const int cls = row[spots_.aiMaskClass];
+    const Glib::ustring stored = row[spots_.aiMaskDepthRange];
+    std::array<double, 4> range = rtengine::AIMaskCache::parseDepthRange(stored.raw());
+    const bool automatic = range[0] < 0.0;
+    std::array<double, 4> preset;
+    const bool known = cache.getDepthPreset(imageId, cls, preset);
+    if (automatic) {
+        range = known ? preset
+                      : (cls == 11 ? std::array<double, 4>{{0.46, 0.54, 1.0, 1.0}}
+                                   : std::array<double, 4>{{0.0, 0.0, 0.46, 0.54}});
+    }
+    aiDepthRange_->values = range;
+    aiDepthAuto_->set_sensitive(!automatic);
+
+    // The photo's depths under the handles, once they are known.
+    aiDepthRange_->histogram = compositeui::DepthHistogram();
+    if (known) {
+        const rtengine::AIMaskSnapshot depth = cache.getMaskSnapshot(rtengine::AISegClass::FOREGROUND_DEPTH);
+        if (depth) {
+            const int step = std::max(1, std::max(depth.width, depth.height) / 400);
+            for (int y = 0; y < depth.height; y += step) {
+                for (int x = 0; x < depth.width; x += step) {
+                    aiDepthRange_->histogram.add((*depth.mask)[y][x], NAN);
+                }
+            }
+        }
+        aiDepthPoll_.disconnect();
+    } else if (!aiDepthPoll_.connected()) {
+        // Depth is estimated in the background once a mask needs it: look
+        // again until it lands, so the handles sit over the real histogram.
+        aiDepthPoll_ = Glib::signal_timeout().connect([this]() -> bool {
+            std::array<double, 4> probe;
+            if (rtengine::AIMaskCache::getInstance().getDepthPreset(editedFilePath_.raw(), 10, probe)) {
+                aiDepthPoll_.disconnect();
+                updateDepthRangeControl();
+                return false;
+            }
+            return aiDepthBox_ && aiDepthBox_->get_visible();
+        }, 500);
+    }
+#endif
+    aiDepthRange_->queue_draw();
+}
+
+void ControlSpotPanel::depthRangeChanged()
+{
+    const auto s = treeview_->get_selection();
+    if (!s->count_selected_rows()) {
+        return;
+    }
+    Gtk::TreeModel::Row row = *s->get_selected();
+#ifdef RT_AI_MASKING
+    row[spots_.aiMaskDepthRange] = rtengine::AIMaskCache::formatDepthRange(aiDepthRange_->values);
+#endif
+    aiDepthAuto_->set_sensitive(true);
+    if (listener) {
+        listener->panelChanged(EvLocallabSpotShape, M("TP_LOCALLAB_AIMASK_DEPTHRANGE"));
+    }
+    queueMaskPreviewRefresh();
 }
 
 void ControlSpotPanel::openMaskEditor()
@@ -3071,7 +3184,7 @@ void ControlSpotPanel::openMaskEditor()
     const rtengine::procparams::LocallabParams::LocallabSpot defSpot;
     MaskPaintDlg::AutoMask automatic;
     const rtengine::AIMaskSnapshot snapshot = rtengine::AIMaskCache::getInstance().getPreparedMask(
-        static_cast<rtengine::AISegClass>(rtengine::LIM(static_cast<int>(row[spots_.aiMaskClass]), 0, 9)),
+        static_cast<rtengine::AISegClass>(rtengine::LIM(static_cast<int>(row[spots_.aiMaskClass]), 0, 11)),
         static_cast<float>(rtengine::LIM(1.0 - aiMaskTolerance_->getValue() / 100.0, 0.0, 1.0)),
         static_cast<float>(transit_->getValue()),
         static_cast<float>(defSpot.aiMaskBlur),
@@ -3081,7 +3194,7 @@ void ControlSpotPanel::openMaskEditor()
         static_cast<float>(defSpot.aiMaskRefineEps),
         rtengine::MaskPaint(), true);
 
-    if (snapshot) {
+    if (snapshot && !snapshot.pending) {
         automatic.width = snapshot.width;
         automatic.height = snapshot.height;
         automatic.values.resize(static_cast<size_t>(automatic.width) * automatic.height);
@@ -3121,21 +3234,20 @@ void ControlSpotPanel::aiMaskClassChanged(int /*index*/)
     const auto iter = s->get_selected();
     Gtk::TreeModel::Row row = *iter;
 
-    row[spots_.aiMaskClass] = aiMaskClass_->getSelected();
+    const int cls = aimaskclasses::classAt(aiMaskClass_->getSelected());
+    if (cls < 0) {
+        return;
+    }
+    row[spots_.aiMaskClass] = cls;
+    // Near and far each start from their own automatic range.
+    row[spots_.aiMaskDepthRange] = Glib::ustring();
     updateAutomaticMaskName(row);
+    updateDepthRangeControl();
 
     if (listener) {
-        const char* aiClassKeys[] = {
-            "TP_LOCALLAB_AIMASK_CLASS_BACKGROUND", "TP_LOCALLAB_AIMASK_CLASS_PERSON",
-            "TP_LOCALLAB_AIMASK_CLASS_SKY", "TP_LOCALLAB_AIMASK_CLASS_VEGETATION",
-            "TP_LOCALLAB_AIMASK_CLASS_BUILDING", "TP_LOCALLAB_AIMASK_CLASS_VEHICLE",
-            "TP_LOCALLAB_AIMASK_CLASS_ANIMAL", "TP_LOCALLAB_AIMASK_CLASS_FOREGROUND"
-        };
-        const int sel = aiMaskClass_->getSelected();
         // Use EvLocallabSpotShape (not EvLocallabSpotSelectedWithMask) so the
         // hover mask overlay is NOT killed — this is a parameter change.
-        listener->panelChanged(EvLocallabSpotShape,
-            sel >= 0 && sel < 8 ? M(aiClassKeys[sel]) : "");
+        listener->panelChanged(EvLocallabSpotShape, M(aimaskclasses::labelKey(cls)));
     }
 
     startAIPreviewRefresh();
@@ -5369,6 +5481,7 @@ std::unique_ptr<ControlSpotPanel::SpotRow> ControlSpotPanel::getSpot(const int i
             r->maskType = row[spots_.maskType];
             r->aiMaskClass = row[spots_.aiMaskClass];
             r->aiMaskPaint = row[spots_.aiMaskPaint];
+            r->aiMaskDepthRange = row[spots_.aiMaskDepthRange];
             r->aiMaskThreshold = row[spots_.aiMaskThreshold];
             r->maskBlendMode = row[spots_.maskBlendMode];
             r->gradType = row[spots_.gradType];
@@ -5530,6 +5643,7 @@ void ControlSpotPanel::addControlSpot(const SpotRow &newSpot, bool expandDetails
     row[spots_.maskType] = newSpot.maskType;
     row[spots_.aiMaskClass] = newSpot.aiMaskClass;
     row[spots_.aiMaskPaint] = newSpot.aiMaskPaint;
+    row[spots_.aiMaskDepthRange] = newSpot.aiMaskDepthRange;
     row[spots_.aiMaskThreshold] = newSpot.aiMaskThreshold;
     row[spots_.maskBlendMode] = newSpot.maskBlendMode;
     row[spots_.gradType] = newSpot.gradType;
@@ -5735,6 +5849,7 @@ ControlSpotPanel::ControlSpots::ControlSpots()
     add(maskType);
     add(aiMaskClass);
     add(aiMaskPaint);
+    add(aiMaskDepthRange);
     add(aiMaskThreshold);
     add(maskBlendMode);
     add(gradType);

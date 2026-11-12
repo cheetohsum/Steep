@@ -238,7 +238,9 @@ public:
 
     void setFlatMode(bool flat);
     void collapseDetail();
-
+    /// A control the tool wants right of its heading where it is shown as a
+    /// labelled effect, in place of a second title of its own; none by default.
+    virtual Gtk::Widget* getHeadingWidget() { return nullptr; }
     Gtk::Box* getSummaryBox();
     void setExpandable(bool expandable);
     void autoEnable();

@@ -252,6 +252,37 @@ Adjuster::Adjuster(
             return false; // propagate to default handler
         }, false); // before default handler
 
+    // The focus ring on the pill is for keyboard users. GTK3 reports focus as
+    // "visible" after a click too, which would leave a ring on whichever
+    // slider was last dragged, so note how focus arrived: a pointer button
+    // is down when a click brought it.
+    slider->signal_focus_in_event().connect(
+        [this](GdkEventFocus*) -> bool {
+            bool byPointer = false;
+
+            if (auto window = slider->get_window()) {
+                if (auto seat = window->get_display()->get_default_seat()) {
+                    int px = 0;
+                    int py = 0;
+                    Gdk::ModifierType mask = Gdk::ModifierType(0);
+                    window->get_device_position(seat->get_pointer(), px, py, mask);
+                    byPointer = (mask & (Gdk::BUTTON1_MASK | Gdk::BUTTON2_MASK | Gdk::BUTTON3_MASK)) != 0;
+                }
+            }
+
+            keyboardFocus_ = !byPointer;
+            queue_draw();
+            return false;
+        }, false);
+    slider->signal_key_press_event().connect(
+        [this](GdkEventKey*) -> bool {
+            if (!keyboardFocus_) {
+                keyboardFocus_ = true;
+                queue_draw();
+            }
+            return false;
+        }, false);
+
     // Label-inside-pill drawing is handled by MyHScale::on_draw. Avoid
     // installing per-adjuster CSS providers here; startup creates many
     // Adjusters and repeated Gtk CSS parsing was crashing during construction
@@ -1075,6 +1106,12 @@ void Adjuster::setSliderMinWidth(int px)
     slider->set_size_request(px, -1);
 }
 
+void Adjuster::setValueSuffix(const Glib::ustring& suffix)
+{
+    valueSuffix_ = suffix;
+    queue_draw();
+}
+
 void Adjuster::get_preferred_width_vfunc(int& minimum_width, int& natural_width) const
 {
     Gtk::Grid::get_preferred_width_vfunc(minimum_width, natural_width);
@@ -1105,7 +1142,7 @@ struct AdjusterPillSpec {
     int y = 0;
     int w = 0;
     int h = 0;
-    double radius = 6.0;
+    double radius = static_cast<double>(steepui::Radius::M);
     // Fill extent in widget coordinates; fillRight <= fillLeft draws no fill.
     int fillLeft = 0;
     int fillRight = 0;
@@ -1117,17 +1154,14 @@ struct AdjusterPillSpec {
     Gdk::RGBA wash;
     Gdk::RGBA border;
     Gdk::RGBA accent;
+    // Keyboard focus is on the slider: ring the pill in the accent.
+    bool focused = false;
 };
 
 void drawAdjusterPill(const Cairo::RefPtr<Cairo::Context>& cr, const AdjusterPillSpec& s)
 {
     const auto pillPath = [&]() {
-        cr->begin_new_sub_path();
-        cr->arc(s.x + s.radius, s.y + s.radius, s.radius, rtengine::RT_PI, rtengine::RT_PI * 1.5);
-        cr->arc(s.x + s.w - s.radius, s.y + s.radius, s.radius, rtengine::RT_PI * 1.5, 0);
-        cr->arc(s.x + s.w - s.radius, s.y + s.h - s.radius, s.radius, 0, rtengine::RT_PI * 0.5);
-        cr->arc(s.x + s.radius, s.y + s.h - s.radius, s.radius, rtengine::RT_PI * 0.5, rtengine::RT_PI);
-        cr->close_path();
+        steepui::roundedRect(cr, s.x, s.y, s.w, s.h, s.radius);
     };
 
     // Well background: recesses on dark themes, reads as a white field on
@@ -1172,19 +1206,18 @@ void drawAdjusterPill(const Cairo::RefPtr<Cairo::Context>& cr, const AdjusterPil
     // Hairline rim, inset half a pixel so it lands on whole pixels, so the
     // pill reads as a well on every surface.
     {
-        const double x0 = s.x + 0.5;
-        const double y0 = s.y + 0.5;
-        const double x1 = s.x + s.w - 0.5;
-        const double y1 = s.y + s.h - 0.5;
-        const double r = std::max(0.0, s.radius - 0.5);
-        cr->begin_new_sub_path();
-        cr->arc(x0 + r, y0 + r, r, rtengine::RT_PI, rtengine::RT_PI * 1.5);
-        cr->arc(x1 - r, y0 + r, r, rtengine::RT_PI * 1.5, 0);
-        cr->arc(x1 - r, y1 - r, r, 0, rtengine::RT_PI * 0.5);
-        cr->arc(x0 + r, y1 - r, r, rtengine::RT_PI * 0.5, rtengine::RT_PI);
-        cr->close_path();
+        steepui::roundedRect(cr, s.x + 0.5, s.y + 0.5, s.w - 1.0, s.h - 1.0, s.radius - 0.5);
         cr->set_line_width(1.0);
         cr->set_source_rgba(s.border.get_red(), s.border.get_green(), s.border.get_blue(), s.border.get_alpha());
+        cr->stroke();
+    }
+
+    // Focus ring: 2px, drawn inside the pill's own edge so it is never
+    // clipped by the row and follows the same corner.
+    if (s.focused) {
+        steepui::roundedRect(cr, s.x + 1.0, s.y + 1.0, s.w - 2.0, s.h - 2.0, s.radius - 1.0);
+        cr->set_line_width(2.0);
+        cr->set_source_rgba(s.accent.get_red(), s.accent.get_green(), s.accent.get_blue(), 0.9);
         cr->stroke();
     }
 }
@@ -1203,6 +1236,13 @@ void Adjuster::beginValueEdit()
         valueEntry_->set_max_width_chars(9);
         valueEntry_->set_alignment(1.f);
         valueEntry_->set_input_purpose(Gtk::INPUT_PURPOSE_DIGITS);
+        {
+            // Same fixed-width digits as the pill it edits.
+            PangoAttrList* attrs = pango_attr_list_new();
+            pango_attr_list_insert(attrs, pango_attr_font_features_new("tnum"));
+            gtk_entry_set_attributes(valueEntry_->gobj(), attrs);
+            pango_attr_list_unref(attrs);
+        }
         valueEntry_->signal_activate().connect(sigc::mem_fun(*this, &Adjuster::commitValueEdit));
         valueEntry_->signal_key_press_event().connect(
             [this](GdkEventKey* event) -> bool {
@@ -1271,6 +1311,7 @@ bool Adjuster::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
         spec.wash = themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff"));
         spec.border = themeColor(*this, "steep_border_soft", Gdk::RGBA("#22262e"));
         spec.accent = themeColor(*this, "steep_accent", Gdk::RGBA("#2d7fd3"));
+        spec.focused = keyboardFocus_ && slider->has_visible_focus();
 
         auto adj = slider->get_adjustment();
         const double rangeMin = adj->get_lower();
@@ -1324,7 +1365,11 @@ bool Adjuster::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
         Pango::Rectangle inkRect, logRect;
         layout->get_pixel_extents(inkRect, logRect);
 
-        const int textX = sAlloc.get_x() + 10;
+        // Name and value sit the same distance in from their ends.
+        const int textX = sAlloc.get_x() + 12;
+
+        // A disabled slider keeps its place but drops to 45% ink.
+        const double inkScale = slider->is_sensitive() ? 1.0 : 0.45;
         const int textY = pillY + (pillH - logRect.get_height()) / 2;
 
         // The name brightens with the pointer anywhere on the row, so it is
@@ -1332,19 +1377,21 @@ bool Adjuster::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
         // them otherwise gives no sign of which one is under the hand.
         const Gdk::RGBA labelInk = themeColor(*this, "steep_text_hi", Gdk::RGBA("#e2e6ed"));
         cr->set_source_rgba(labelInk.get_red(), labelInk.get_green(), labelInk.get_blue(),
-                            rowHover_ ? 1.0 : 0.8);
+                            (rowHover_ ? 1.0 : 0.8) * inkScale);
         cr->move_to(textX, textY);
         layout->show_in_cairo_context(cr);
 
         // Draw value text on the right side of the pill. It sits in a fixed
         // inset -- the same in every state -- so hovering, clicking and typing
         // never move the digits.
-        Glib::ustring valStr = spin->get_text();
+        Glib::ustring valStr = spin->get_text() + valueSuffix_;
         auto valLayout = create_pango_layout(valStr);
         valLayout->set_font_description(Pango::FontDescription(pillFontName()));
+        // Fixed-width digits, so the number does not shimmer during a drag.
+        steepui::useTabularNumerals(valLayout);
         Pango::Rectangle vInk, vLog;
         valLayout->get_pixel_extents(vInk, vLog);
-        const int valX = sAlloc.get_x() + sAlloc.get_width() - vLog.get_width() - 14;
+        const int valX = sAlloc.get_x() + sAlloc.get_width() - vLog.get_width() - 12;
         const int valY = pillY + (pillH - vLog.get_height()) / 2;
         // Under the pointer the number gets a well to sit in and its full
         // strength, so "you can type here" is visible before the click.
@@ -1354,14 +1401,11 @@ bool Adjuster::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
             const double boxY = pillY + 2;
             const double boxW = vLog.get_width() + padX * 2;
             const double boxH = pillH - 4;
-            const double radius = std::min(6.0, boxH / 2.0);
+            // Nested corner: the pill's radius less the 2px inset.
+            const double radius = static_cast<double>(steepui::Radius::M) - 2.0;
 
             cr->begin_new_path();
-            cr->arc(boxX + radius, boxY + radius, radius, M_PI, 1.5 * M_PI);
-            cr->arc(boxX + boxW - radius, boxY + radius, radius, 1.5 * M_PI, 2.0 * M_PI);
-            cr->arc(boxX + boxW - radius, boxY + boxH - radius, radius, 0.0, 0.5 * M_PI);
-            cr->arc(boxX + radius, boxY + boxH - radius, radius, 0.5 * M_PI, M_PI);
-            cr->close_path();
+            steepui::roundedRect(cr, boxX, boxY, boxW, boxH, radius);
             // Wash direction: lightens on dark themes, darkens on light ones
             // (a white box was invisible on TooWaGrey - Bright).
             const Gdk::RGBA hoverWash = themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff"));
@@ -1372,7 +1416,7 @@ bool Adjuster::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
         const Gdk::RGBA valueInk = themeColor(*this, valueHover_ ? "steep_text_hi" : "steep_text",
                                               Gdk::RGBA(valueHover_ ? "#e8ecf3" : "#cdd2da"));
         cr->set_source_rgba(valueInk.get_red(), valueInk.get_green(), valueInk.get_blue(),
-                            valueHover_ ? 1.0 : 0.85);
+                            (valueHover_ ? 1.0 : 0.85) * inkScale);
         cr->move_to(valX, valY);
         valLayout->show_in_cairo_context(cr);
 

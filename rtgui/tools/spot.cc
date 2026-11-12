@@ -85,7 +85,7 @@ bool Spot::SpotSizePreview::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
     int dia = int(minDia + t * (maxDia - minDia) + 0.5);
     dia = std::max(minDia, std::min(maxDia, dia));
 
-    cr->set_source_rgba(0.7, 0.7, 0.7, 0.8);
+    steepui::setSource(cr, themeColor(*this, "steep_text_dim", Gdk::RGBA("#b3b3b3")), 0.8);
     cr->arc(w / 2.0, h / 2.0, dia / 2.0, 0, 2.0 * M_PI);
     cr->fill();
 
@@ -587,7 +587,7 @@ Spot::~Spot()
     statusPollConn_.disconnect();
     dustPollConn_.disconnect();
     strokeLingerConn_.disconnect();
-    busyAnimConn_.disconnect();
+    busyAnim_.stop();
     busyTimeoutConn_.disconnect();
 
     // delete all dynamically allocated geometry
@@ -616,28 +616,62 @@ void Spot::startBusyIndicator()
 {
     startStatusPolling();
     if (smartStatusProvider_) return; // The fixed-size tool spinner avoids full-canvas timer repaints.
-    if (busyAnimConn_.connected()) {
+    if (busyAnim_.running()) {
+        return;
+    }
+
+    EditDataProvider* const provider = getEditProvider();
+
+    if (!provider) {
         return;
     }
 
     busyPhase_ = 0.f;
     cursorPreviewCircle.busyPhase = 0.f;
-    busyAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
-        busyPhase_ += 0.05f;
-        if (busyPhase_ >= 1.f) {
-            busyPhase_ -= 1.f;
-        }
-        cursorPreviewCircle.busyPhase = busyPhase_;
-        queueCanvasRedraw();
-        return true;
-        // ~14fps: smooth enough for a rotating arc, and each tick repaints
-        // the canvas while the inference is already saturating the CPU.
-    }, 70);
+    // On the canvas' frame clock, so it only runs while the canvas is on
+    // screen, and each step repaints just the arc's square rather than the
+    // whole canvas (the inference is already saturating the CPU).
+    busyAnim_ = steep::motion::loop(*static_cast<ImageArea*>(provider), 1400,
+        [this](double phase) {
+            // ~30 steps a turn is plenty for a rotating arc.
+            const double advanced = phase - busyPhase_;
+            if (advanced >= 0.0 && advanced < 1.0 / 30.0) {
+                return;
+            }
+            busyPhase_ = static_cast<float>(phase);
+            cursorPreviewCircle.busyPhase = busyPhase_;
+            queueBusyArcRedraw();
+        });
+    queueCanvasRedraw();
+}
+
+void Spot::queueBusyArcRedraw()
+{
+    EditDataProvider* const provider = getEditProvider();
+
+    if (!provider) {
+        return;
+    }
+
+    ImageArea* const area = static_cast<ImageArea*>(provider);
+    CropWindow* const cropWindow = area->getMainCropWindow();
+
+    if (!cropWindow) {
+        area->queue_draw();
+        return;
+    }
+
+    // Same geometry as BrushCursorRing::drawInnerGeometry, plus the stroke.
+    int cx = 0, cy = 0;
+    cropWindow->imageCoordToScreen(cursorPreviewCircle.center.x, cursorPreviewCircle.center.y, cx, cy);
+    const double ring = cropWindow->scaleValueToCanvas(double(cursorPreviewCircle.radius));
+    const int reach = static_cast<int>(std::ceil(rtengine::max(ring + 6., 11.))) + 5;
+    area->queue_draw_area(cx - reach, cy - reach, 2 * reach + 2, 2 * reach + 2);
 }
 
 void Spot::stopBusyIndicator()
 {
-    busyAnimConn_.disconnect();
+    busyAnim_.stop();
     busyTimeoutConn_.disconnect();
 
     if (cursorPreviewCircle.busyPhase >= 0.f) {

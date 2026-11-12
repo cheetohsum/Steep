@@ -103,6 +103,10 @@ CURVEEDITOR_PRESET_CONSTRICTMASK;Constrict mask
 CURVEEDITOR_TYPE;Type:
 DIRBROWSER_BROWSE;Browse for folder
 DIRBROWSER_FOLDERS;Folders
+DIRBROWSER_PREVIEWS_COUNT;Photos
+DIRBROWSER_PREVIEWS_PREFERRATED;Prefer rated & picked
+DIRBROWSER_PREVIEWS_SHOW;Folder previews
+DIRBROWSER_PREVIEWS_SIZE;Size
 DONT_SHOW_AGAIN;Don't show this message again.
 DOUBLEEXPOSURE_BASEPLATE;Base plate
 DOUBLEEXPOSURE_COUNT;%1 of %2 images
@@ -276,16 +280,6 @@ GENERAL_INITIALVALUES;Initial values
 GENERAL_REMOVED;Removed
 GENERAL_RESET_TO_DEFAULT;Reset to default
 GENERAL_SEARCH;Search
-HISTORY_MSG_RELIGHT_BACKGROUND;Relight - Background
-HISTORY_MSG_RELIGHT_DISTANCE;Relight - Depth
-HISTORY_MSG_RELIGHT_ENABLED;Relight
-HISTORY_MSG_RELIGHT_INTENSITY;Relight - Brightness
-HISTORY_MSG_RELIGHT_POSITION;Relight - Light position
-HISTORY_MSG_RELIGHT_REACH;Relight - Reach
-HISTORY_MSG_RELIGHT_SHADOWS;Relight - Shadows
-HISTORY_MSG_RELIGHT_SHAPE;Relight - Shape
-HISTORY_MSG_RELIGHT_SUBJECTFOCUS;Relight - Subject focus
-HISTORY_MSG_RELIGHT_WARMTH;Relight - Warmth
 MAIN_MENU_SEC_COLOUR;Colour management
 MAIN_MENU_SEC_OVERLAYS;Overlays
 MAIN_MENU_SEC_WINDOWS;Windows
@@ -338,6 +332,8 @@ FILEBROWSER_POPUPFILMLAB;Film Lab
 FILEBROWSER_POPUPDUPLICATE;Duplicate
 FILEBROWSER_POPUPSETALBUMCOVER;Set as album cover
 FILEBROWSER_POPUPPROFILEOPERATIONS;Preset operations
+FILEBROWSER_RATINGPALETTE_LABELS;Color labels
+FILEBROWSER_RATINGPALETTE_STARS;Stars
 FILEBROWSER_POPUPRANK;Rating
 FILEBROWSER_POPUPRANK0;No rating
 FILEBROWSER_POPUPRANK1;1 star
@@ -2060,6 +2056,9 @@ HISTORY_MSG_PREPROCWB_MODE;Preprocess WB mode
 HISTORY_MSG_PROTAB;Protection
 HISTORY_MSG_PRSHARPEN_CONTRAST;PRS - Contrast threshold
 HISTORY_MSG_RANGEAB;Range ab
+HISTORY_MSG_PREVIEWSTRIP_COLOR;Color preview strip
+HISTORY_MSG_PREVIEWSTRIP_DETAIL;Detail preview strip
+HISTORY_MSG_PREVIEWSTRIP_EFFECTS;Effects preview strip
 HISTORY_MSG_RAWCACORR_AUTOIT;Raw CA correction - Iterations
 HISTORY_MSG_RAWCACORR_COLORSHIFT;Raw CA correction - Avoid color shift
 HISTORY_MSG_RAW_BORDER;Raw border
@@ -2328,6 +2327,7 @@ MODE_CROP;Crop
 MODE_EDIT;Edit
 MODE_EDIT_PILLSCALE_TIP;Right-click for a slider that resizes the text in the setting rows.
 MODE_EDIT_PILLSCALE_TITLE;Setting text size
+PREFERENCES_REDUCEMOTION;Reduce motion
 PREFERENCES_FSTRIP_AT_BOTTOM;Put the filmstrip below the image
 PREFERENCES_FSTRIP_AT_BOTTOM_TIP;Moves the editor's filmstrip (and its folder name) beneath the photo instead of above it.
 PREFERENCES_FSTRIP_FOLDER_NAME;Show the folder name above the filmstrip
@@ -2609,6 +2609,9 @@ PREFERENCES_FLATFIELDSHOTS;shots
 PREFERENCES_FLATFIELDTEMPLATES;templates
 PREFERENCES_FORIMAGE;For non-raw photos
 PREFERENCES_FORRAW;For raw photos
+PREFERENCES_FOLDERPREVIEWS;Folder previews
+PREFERENCES_FOLDERPREVIEWS_COUNT;Photos per folder
+PREFERENCES_FOLDERPREVIEWS_TOOLTIP;Show a strip of small photos under each folder in the folder tree, picked evenly through the folder
 PREFERENCES_FSTRIP_SAME_THUMB_HEIGHT;Same thumbnail height between the filmstrip and the file browser
 PREFERENCES_FSTRIP_SAME_THUMB_HEIGHT_HINT;Having separate thumbnail size will require more processing time each time you'll switch between the single Editor tab and the File Browser.
 PREFERENCES_FILMSTRIP_THUMB_SIZE;Filmstrip thumbnail size (px)
@@ -3890,7 +3893,8 @@ TP_LIGHTEFFECTS_GLOW_TOOLTIP;Soft diffusion spreading evenly out of the highligh
 TP_LIGHTEFFECTS_HALATION;Halation
 TP_LIGHTEFFECTS_HALATIONSIZE;Halation size
 TP_LIGHTEFFECTS_HALATIONWARMTH;Halation warmth
-TP_LIGHTEFFECTS_HALATION_TOOLTIP;A warm fringe hugging the edge of bright areas, as on film where light bounced off the backing. Independent of the Film Lab tool's own halation - if you use both, they add up.
+TP_LIGHTEFFECTS_HALATION_FILMLAB_TOOLTIP;Film Lab is already adding halation from its film stock, so this halation is not applied. Trim Film Lab's Halation all the way down to use this one instead.
+TP_LIGHTEFFECTS_HALATION_TOOLTIP;A warm fringe hugging the edge of bright areas, as on film where light bounced off the backing. Stands down while the Film Lab tool adds its own halation, so the two never stack.
 TP_LIGHTEFFECTS_LABEL;Glow & halation
 TP_LIGHTEFFECTS_THRESHOLD;Threshold
 TP_LIGHTEFFECTS_THRESHOLD_TOOLTIP;How bright an area must be before it gives off light. All three effects share it.
@@ -3905,32 +3909,6 @@ TP_POINTCOLOR_AFTER;After
 TP_POINTCOLOR_BEFORE;Before
 TP_POINTCOLOR_RING_TOOLTIP;Drag around the ring to choose the colour to change.
 TP_POINTCOLOR_SECTION;Point color
-TP_RELIGHT_BACKGROUND;Background
-TP_RELIGHT_BACKGROUND_TOOLTIP;Darkens or brightens everything that is not the subject, in stops.
-TP_RELIGHT_DISTANCE;Depth
-TP_RELIGHT_DISTANCE_TOOLTIP;How far the light stands from the subject. It starts in front; past zero it moves behind the subject, where only the outline catches it.
-TP_RELIGHT_INTENSITY;Brightness
-TP_RELIGHT_INTENSITY_TOOLTIP;How bright the light is at its brightest point, in stops.
-TP_RELIGHT_LABEL;Relight
-TP_RELIGHT_LIGHT;Light
-TP_RELIGHT_LIGHTX;Horizontal
-TP_RELIGHT_LIGHTY;Vertical
-TP_RELIGHT_PLACE;Place light
-TP_RELIGHT_PLACE_TOOLTIP;Show the light on the image and drag it where you want it. It can sit outside the frame.
-TP_RELIGHT_REACH;Reach
-TP_RELIGHT_REACH_TOOLTIP;How far the light carries before it fades.
-TP_RELIGHT_SCENE;Subject and scene
-TP_RELIGHT_SHADOWS;Shadows
-TP_RELIGHT_SHADOWS_TOOLTIP;Darkens the side of the subject turned away from the light.
-TP_RELIGHT_SHAPE;Shape
-TP_RELIGHT_SHAPE_TOOLTIP;How much the estimated depth shapes the light. At 0 the light falls as an even pool; higher values turn faces and forms towards or away from it.
-TP_RELIGHT_STATUS_NODEPTH;The depth model is not installed, so the light falls as a flat pool.
-TP_RELIGHT_STATUS_NOMODELS;The AI models are not installed: the light falls as a flat pool over the whole scene.
-TP_RELIGHT_STATUS_NOSUBJECT;AI masking is not available, so the nearest part of the scene stands in for the subject.
-TP_RELIGHT_STATUS_READY;The subject and depth are worked out the first time Relight is turned on for a photo.
-TP_RELIGHT_SUBJECTFOCUS;Subject focus
-TP_RELIGHT_SUBJECTFOCUS_TOOLTIP;Confines the light to the subject the AI finds. At 0 it lights the whole scene.
-TP_RELIGHT_WARMTH;Warmth
 TP_SHARPENING_RLD_AUTORADIUS_TOOLTIP;Estimate the radius automatically from the image.
 TP_TEXTURE_LABEL;Texture
 TP_TEXTURE_AMOUNT;Texture
@@ -3961,6 +3939,7 @@ TP_LENSBLUR_CATEYE;Cat eye
 TP_LENSBLUR_BOKEH;Boost
 TP_LENSBLUR_FOCUSRANGE_SECTION;Focus range
 TP_LENSBLUR_DEPTH;Focus Depth
+TP_LENSBLUR_DEPTH_TOOLTIP;Distance kept sharp, from near to far. Uses the photo's depth map when one has been computed (for example by an AI depth mask); otherwise brightness stands in for distance.
 TP_LENSBLUR_NEAR;Near
 TP_LENSBLUR_FAR;Far
 TP_LENSBLUR_RANGE;Range
@@ -4497,9 +4476,15 @@ TP_LOCALLAB_MASKCOM;Common color mask
 TP_LOCALLAB_MASKCOM_TOOLNAME;Common color mask
 TP_LOCALLAB_MASKCOM_TOOLTIP;A tool in its own right.\nCan be used to adjust the image appearance (chrominance, luminance, contrast) and texture as a function of Scope.
 TP_LOCALLAB_AIMASK;AI auto mask
+TP_LOCALLAB_AIMASK_DEPTHRANGE;Depth range
+TP_LOCALLAB_AIMASK_DEPTHRANGE_AUTO;Auto
+TP_LOCALLAB_AIMASK_DEPTHRANGE_AUTO_TOOLTIP;Back to the automatic near or far range, split where this photo's depths fall apart.
+TP_LOCALLAB_AIMASK_DEPTHRANGE_TOOLTIP;Which part of the scene the mask takes, by distance: near on the left, far on the right. Drag the outer handles to set where the mask starts to fade in and out, the inner ones where it is at full strength. The curve behind is how much of the photo sits at each depth.
 TP_LOCALLAB_AIMASK_TOOLNAME;AI auto mask
 TP_LOCALLAB_AIMASK_CLASS;Class
 TP_LOCALLAB_AIMASK_CLASS_BACKGROUND;Background
+TP_LOCALLAB_AIMASK_CLASS_FAR;Far (by depth)
+TP_LOCALLAB_AIMASK_CLASS_NEAR;Near (by depth)
 TP_LOCALLAB_AIMASK_CLASS_PERSON;Person
 TP_LOCALLAB_AIMASK_CLASS_SKY;Sky
 TP_LOCALLAB_AIMASK_CLASS_VEGETATION;Vegetation
@@ -4551,6 +4536,8 @@ TP_LOCALLAB_MASK_BLEND_LUMINOSITY;Luminosity
 TP_LOCALLAB_MASK_BLEND_COLOR;Color
 TP_LOCALLAB_MASK_REORDERED;Mask order
 TP_LOCALLAB_MASK_NAME_ELLIPSE;Ellipse mask
+TP_LOCALLAB_MASK_NAME_FAR;Far mask
+TP_LOCALLAB_MASK_NAME_NEAR;Near mask
 TP_LOCALLAB_MASK_NAME_RECTANGLE;Rectangle mask
 TP_LOCALLAB_MASK_NAME_GRADIENT;Gradient mask
 TP_LOCALLAB_MASK_NAME_LASSO;Lasso mask
@@ -5167,6 +5154,7 @@ TP_PREPROCWB_MODE_AUTO;Auto
 TP_PREPROCWB_MODE_CAMERA;Camera
 TP_PRSHARPENING_LABEL;Post-resize sharpening
 TP_PRSHARPENING_TOOLTIP;Sharpens the image after resizing. Only works when the 'Lanczos' resizing method is used. It is impossible to preview the effects of this tool. See RawPedia for usage instructions.
+TP_PREVIEWSTRIPS_MENU;Preview strips
 TP_RAWCACORR_AUTO;Auto-correction
 TP_RAWCACORR_AUTOIT;Iterations
 TP_RAWCACORR_AUTOIT_TOOLTIP;This setting is available if 'Auto-correction' is checked.\nAuto-correction is conservative, meaning that it often does not correct all chromatic aberration.\nTo correct the remaining chromatic aberration, you can use up to five iterations of automatic chromatic aberration correction.\nEach iteration will reduce the remaining chromatic aberration from the last iteration at the cost of additional processing time.
@@ -5370,13 +5358,14 @@ TP_RGBCURVES_RED;R
 TP_ROTATE_DEGREE;Rotate
 TP_ROTATE_LABEL;Rotate
 TP_ROTATE_LABEL_LEVEL;Level
+TP_ROTATE_ANGLE_TOOLTIP;Turn the picture by a fraction of a degree. Double-click to reset; click the number to type a value.
 TP_ROTATE_AUTO_LEVEL;Auto level
 TP_ROTATE_AUTO_LEVEL_TOOLTIP;Detect the horizon and strong structural lines, then level the image automatically
 TP_ROTATE_AUTO_LEVEL_FAILED;No reliable horizon or straight lines found
 TP_ROTATE_AUTO_LEVEL_LOAD_FAILED;Could not load image data for analysis
 TP_ROTATE_AUTO_LEVEL_ALREADY;Image is already level
-TP_ROTATE_AUTO_LEVEL_APPLIED;Leveled by %1 deg
-TP_ROTATE_SELECTLINE;Select straight line
+TP_ROTATE_AUTO_LEVEL_APPLIED;Leveled by %1°
+TP_ROTATE_STRAIGHTEN_TOOLTIP;Draw along a line in the picture that should be level or upright
 TP_SAVEDIALOG_OK_TOOLTIP;Shortcut: <b>Ctrl-enter</b>
 TP_SHADOWSHLIGHTS_HIGHLIGHTS;Highlights
 TP_SHADOWSHLIGHTS_HLTONALW;Highlights tonal width

@@ -21,6 +21,7 @@
 #include <cmath>
 #include <cstdio>
 
+#include "guiutils.h"
 #include "multilangmgr.h"
 #include "options.h"
 
@@ -28,6 +29,73 @@
 #include "rtengine/rt_math.h"
 
 using namespace rtengine;
+
+namespace
+{
+
+// The engine reads a wheel angle as a CIELab hue (a = cos h, b = sin h, see
+// ImProcFunctions::colorGrading), so the wheel is painted in Lab as well.
+// An HSV wheel put green at 120 degrees where the engine applies yellow-green,
+// and blue at 240 where it applies violet. L* sits a little above mid grey so
+// the disc reads on dark themes without glowing.
+constexpr double kWheelLightness = 62.0;
+// Display chroma at the rim. A little above the engine's 40-unit full-strength
+// shift so the rim stays legible; out-of-gamut hues are pulled in below.
+constexpr double kWheelRimChroma = 55.0;
+
+// D50 Lab -> linear sRGB (Bradford-adapted), the same convention the grading
+// preset swatches use, so wheel and preset chips agree.
+void labToLinearSRGB(double l, double a, double b, double rgb[3])
+{
+    const double fy = (l + 16.0) / 116.0;
+    const auto inv = [](double f) { return f > 6.0 / 29.0 ? f * f * f : (f - 16.0 / 116.0) / 7.787037037; };
+    const double x = 0.96422 * inv(fy + a / 500.0);
+    const double y = inv(fy);
+    const double z = 0.82521 * inv(fy - b / 200.0);
+    rgb[0] = 3.1338561 * x - 1.6168667 * y - 0.4906146 * z;
+    rgb[1] = -0.9787684 * x + 1.9161415 * y + 0.0334540 * z;
+    rgb[2] = 0.0719453 * x - 0.2289914 * y + 1.4052427 * z;
+}
+
+bool inGamut(const double rgb[3])
+{
+    constexpr double eps = 1e-6;
+    return rgb[0] >= -eps && rgb[0] <= 1.0 + eps
+        && rgb[1] >= -eps && rgb[1] <= 1.0 + eps
+        && rgb[2] >= -eps && rgb[2] <= 1.0 + eps;
+}
+
+// Display colour for a wheel position (hue in degrees, saturation 0..1).
+// Out-of-gamut colours lose chroma rather than having channels clipped, so
+// the hue shown is always the hue applied.
+void wheelColour(double hueDeg, double sat, float& r, float& g, float& b)
+{
+    const double h = hueDeg * rtengine::RT_PI / 180.0;
+    const double ca = std::cos(h), sa = std::sin(h);
+    double chroma = rtengine::LIM01(sat) * kWheelRimChroma;
+    double rgb[3];
+    labToLinearSRGB(kWheelLightness, chroma * ca, chroma * sa, rgb);
+
+    if (!inGamut(rgb)) {
+        double lo = 0.0, hi = chroma;
+        for (int i = 0; i < 16; ++i) {
+            const double mid = 0.5 * (lo + hi);
+            labToLinearSRGB(kWheelLightness, mid * ca, mid * sa, rgb);
+            (inGamut(rgb) ? lo : hi) = mid;
+        }
+        labToLinearSRGB(kWheelLightness, lo * ca, lo * sa, rgb);
+    }
+
+    const auto encode = [](double c) {
+        c = rtengine::LIM01(c);
+        return static_cast<float>(c <= 0.0031308 ? 12.92 * c : 1.055 * std::pow(c, 1.0 / 2.4) - 0.055);
+    };
+    r = encode(rgb[0]);
+    g = encode(rgb[1]);
+    b = encode(rgb[2]);
+}
+
+} // namespace
 
 // ============================================================
 // ColorWheelArea
@@ -174,19 +242,11 @@ bool ColorWheelArea::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
                 double dist = std::sqrt(dx * dx + dy * dy);
 
                 if (dist <= radius) {
-                    double angle = std::atan2(dy, dx);
-                    double hueNorm = angle / (2.0 * rtengine::RT_PI);
-                    if (hueNorm < 0) hueNorm += 1.0;
-
-                    double satNorm = dist / radius;
+                    const double hueDeg = std::atan2(dy, dx) * 180.0 / rtengine::RT_PI;
+                    const double satNorm = dist / radius;
 
                     float r, g, b;
-                    rtengine::Color::hsv2rgb01(
-                        static_cast<float>(hueNorm),
-                        static_cast<float>(satNorm),
-                        0.65f,
-                        r, g, b
-                    );
+                    wheelColour(hueDeg, satNorm, r, g, b);
 
                     wcr->set_source_rgb(r, g, b);
                     wcr->rectangle(px, py, 1, 1);
@@ -210,7 +270,8 @@ bool ColorWheelArea::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
     // with no chrome of its own, so without this there is nothing to say it
     // is a control rather than a picture of one.
     if (hover_ || isDragged_) {
-        cr->set_source_rgba(1.0, 1.0, 1.0, isDragged_ ? 0.55 : 0.35);
+        // The rim borders the panel, not the colours, so it takes the theme's wash.
+        steepui::setSource(cr, themeColor(*this, "steep_wash", Gdk::RGBA("#ffffff")), isDragged_ ? 0.55 : 0.35);
         cr->set_line_width(isDragged_ ? 2.0 : 1.5);
         cr->arc(cx, cy, radius, 0, 2 * rtengine::RT_PI);
         cr->stroke();
@@ -243,15 +304,15 @@ bool ColorWheelArea::on_draw(const Cairo::RefPtr<Cairo::Context>& cr)
     // Puck fill with selected color
     {
         float r, g, b;
-        float hueNorm = static_cast<float>(hue_ / 360.0);
-        rtengine::Color::hsv2rgb01(hueNorm, static_cast<float>(sat_), 0.65f, r, g, b);
+        wheelColour(hue_, sat_, r, g, b);
         cr->set_source_rgb(r, g, b);
         cr->arc(puckX, puckY, puckR, 0, 2 * rtengine::RT_PI);
         cr->fill();
     }
 
-    // Puck white outline
-    cr->set_source_rgba(1, 1, 1, puckLive ? 1.0 : 0.85);
+    // Puck outline in the theme's strong ink: white on dark themes, dark on
+    // light ones, where the pale centre of the wheel swallowed a white ring.
+    steepui::setSource(cr, themeColor(*this, "steep_text_hi", Gdk::RGBA("#ffffff")), puckLive ? 1.0 : 0.85);
     cr->set_line_width(puckLive ? 2.5 : 2.0);
     cr->arc(puckX, puckY, puckR, 0, 2 * rtengine::RT_PI);
     cr->stroke();
@@ -512,11 +573,11 @@ void ColorWheel::updateIndicator()
     // Update colored dot
     if (sat < 0.01) {
         dotLabel_.set_markup(
-            "<span foreground='#555555' size='small'>\xe2\x97\x8f</span>");
+            "<span foreground='" + themeColorHex(dotLabel_, "steep_text_dim", Gdk::RGBA("#555555"))
+            + "' size='small'>\xe2\x97\x8f</span>");
     } else {
         float r, g, b;
-        float hueNorm = static_cast<float>(hue / 360.0);
-        rtengine::Color::hsv2rgb01(hueNorm, static_cast<float>(sat), 0.65f, r, g, b);
+        wheelColour(hue, sat, r, g, b);
 
         char hex[8];
         std::snprintf(hex, sizeof(hex), "#%02x%02x%02x",

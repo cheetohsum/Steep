@@ -20,6 +20,7 @@
 
 #include "colortemp.h"
 #include "imagefloat.h"
+#include "memguard.h"
 #include "image16.h"
 #include "image8.h"
 #include "labimage.h"
@@ -35,15 +36,25 @@ using namespace rtengine;
 
 Imagefloat::Imagefloat ()
 {
+    MemGuard::objectCreated(MemGuard::Imagefloats);
 }
 
 Imagefloat::Imagefloat (int w, int h)
 {
     allocate (w, h);
+    MemGuard::objectCreated(MemGuard::Imagefloats);
+
+    // allocate() leaves the size at -1 when it failed.
+    if (getWidth() > 0 && getHeight() > 0) {
+        memAccounted_ = static_cast<std::size_t>(getWidth()) * getHeight() * 3 * sizeof(float);
+        MemGuard::addBytes(MemGuard::Imagefloats, static_cast<long long>(memAccounted_));
+    }
 }
 
 Imagefloat::~Imagefloat ()
 {
+    MemGuard::objectDestroyed(MemGuard::Imagefloats);
+    MemGuard::addBytes(MemGuard::Imagefloats, -static_cast<long long>(memAccounted_));
 }
 
 // Call this method to handle floating points input values of different size

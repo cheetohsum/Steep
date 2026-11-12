@@ -22,6 +22,7 @@
 #include <iostream>
 #include <thread>
 
+#include "backgroundtasks.h"
 #include "guiutils.h"
 #include "multilangmgr.h"
 #include "options.h"
@@ -77,14 +78,19 @@ PlacesBrowser::PlacesBrowser ()
     set_name("PlacesBrowserWidget");
     set_size_request(-1, 300);
 
-    // The compact section header; favoriting lives in the context menu.
-    Gtk::Box* headerBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
+    // The compact section header: a flat icon button, built like the Folders
+    // (browse) and Albums (new album) headers so the three line up. It adds
+    // the open folder to the list.
+    Gtk::Box* headerBar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 2));
     headerBar->set_name("PlacesHeader");
-    auto* headerIcon = Gtk::manage(new RTImage("star-small", Gtk::ICON_SIZE_SMALL_TOOLBAR));
-    headerIcon->set_tooltip_text(M("MAIN_FRAME_PLACES"));
-    headerIcon->set_margin_start(6);
-    headerIcon->set_margin_end(4);
-    headerBar->pack_start(*headerIcon, Gtk::PACK_SHRINK);
+    auto* headerButton = Gtk::manage(new Gtk::Button());
+    headerButton->set_name("PlacesAddBtn");
+    headerButton->set_relief(Gtk::RELIEF_NONE);
+    headerButton->set_tooltip_text(M("MAIN_FRAME_PLACES_ADD"));
+    headerButton->set_image(*Gtk::manage(new RTImage("places-favorites", Gtk::ICON_SIZE_SMALL_TOOLBAR)));
+    headerButton->set_always_show_image(true);
+    headerButton->signal_clicked().connect(sigc::mem_fun(*this, &PlacesBrowser::addPressed));
+    headerBar->pack_start(*headerButton, Gtk::PACK_SHRINK);
     pack_start(*headerBar, Gtk::PACK_SHRINK, 0);
 
     scrollw = Gtk::manage (new Gtk::ScrolledWindow ());
@@ -142,6 +148,8 @@ PlacesBrowser::PlacesBrowser ()
     driveCR->property_ypad() = 0;
     labelCR->property_ypad() = 0;
     countCR->property_ypad() = 0;
+    // Same name-row height as the Folders and Albums lists.
+    labelCR->set_fixed_size(-1, steepui::listRowHeight(*treeView));
 
     iviewcol->pack_start (*driveCR, false);
     iviewcol->pack_start (*labelCR, true);
@@ -210,7 +218,7 @@ namespace
 void persistOptionsQuiet()
 {
     try {
-        Options::save();
+        Options::saveAsync();
     } catch (Options::Error& error) {
         std::cerr << "Failed to save options: " << error.get_msg() << std::endl;
     }
@@ -798,7 +806,7 @@ void PlacesBrowser::startPhotoCount ()
     auto cache = &photoCountCache_;
     auto mtx = &photoCountMutex_;
 
-    std::thread([dirs, model, cols, activeFlag, cache, mtx]() {
+    steep::runBackground([dirs, model, cols, activeFlag, cache, mtx]() {
         for (const auto& entry : dirs) {
             int count = -1;
 
@@ -831,5 +839,5 @@ void PlacesBrowser::startPhotoCount ()
         }
 
         activeFlag->store(false);
-    }).detach();
+    });
 }

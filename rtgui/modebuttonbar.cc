@@ -85,7 +85,8 @@ void ModeButtonBar::showPillScalePopover()
         box->set_border_width(8);
 
         auto* caption = Gtk::manage(new Gtk::Label());
-        caption->set_markup("<small>" + Glib::Markup::escape_text(M("MODE_EDIT_PILLSCALE_TITLE")) + "</small>");
+        caption->set_text(M("MODE_EDIT_PILLSCALE_TITLE"));
+        caption->get_style_context()->add_class("type-small");
         caption->set_halign(Gtk::ALIGN_START);
         box->pack_start(*caption, Gtk::PACK_SHRINK);
 
@@ -102,7 +103,7 @@ void ModeButtonBar::showPillScalePopover()
 
         // Persist once the popover closes rather than on every tick.
         pillScalePopover_->signal_closed().connect([]() {
-            Options::save();
+            Options::saveAsync();
         });
 
         pillScalePopover_->add(*box);

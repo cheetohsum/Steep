@@ -19,6 +19,7 @@
 #pragma once
 
 #include <atomic>
+#include <future>
 #include <memory>
 #include <thread>
 
@@ -249,12 +250,12 @@ protected:
     std::function<void(const Glib::ustring&)> sourceFolderOpener_;
     MyImageMenuItem* openSourceFolder_ = nullptr;
     sigc::connection autoLevelPollConnection_;
-    std::thread autoLevelThread_;
+    std::future<void> autoLevelDone_; // ready once the queued analysis has returned
     std::shared_ptr<std::atomic<bool>> autoLevelCancel_;
 
     // Auto-cull: background analysis marking blatantly bad photos rejected
     sigc::connection autoCullPollConnection_;
-    std::thread autoCullThread_;
+    std::future<void> autoCullDone_;
     std::shared_ptr<std::atomic<bool>> autoCullCancel_;
     std::vector<std::pair<Thumbnail*, int>> autoCullUndo_; // thumbnail (ref held) + previous pick
 

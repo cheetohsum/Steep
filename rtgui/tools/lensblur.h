@@ -46,6 +46,7 @@ private:
     SectionHeader *focusHeader;
     bool bokehExpanded;
     bool focusExpanded;
+    bool shapeUpdating;
 
     rtengine::ProcEvent EvLensBlurEnabled;
     rtengine::ProcEvent EvLensBlurAmount;

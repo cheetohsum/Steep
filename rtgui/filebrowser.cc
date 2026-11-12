@@ -51,6 +51,7 @@
 #include "phototagwidgets.h"
 
 #include "autoedit.h"
+#include "backgroundtasks.h"
 #include "steepperflog.h"
 #include "batchqueue.h"
 #include "clipboard.h"
@@ -181,6 +182,21 @@ void lowerQuickPreviewWarmThreadPriority()
     SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
 #endif
 }
+
+// For work on a shared, persistent thread: the lowered priority must not
+// outlive the job that asked for it.
+struct ScopedLowThreadPriority {
+    ScopedLowThreadPriority()
+    {
+        lowerQuickPreviewWarmThreadPriority();
+    }
+    ~ScopedLowThreadPriority()
+    {
+#ifdef _WIN32
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_NORMAL);
+#endif
+    }
+};
 
 struct QuickPreviewCacheWarmItem {
     Thumbnail* thumbnail;
@@ -605,7 +621,9 @@ FileBrowser::FileBrowser () :
             vbox->set_margin_bottom(1);
             if (!caption.empty()) {
                 auto* label = Gtk::manage(new Gtk::Label());
-                label->set_markup("<span size='9500' alpha='60%'>"
+                // The small rung of the user's UI font, not a fixed 9.3pt.
+                label->set_markup("<span size='" + std::to_string(steepui::uiFontMarkupSize(0.85))
+                                  + "' alpha='60%'>"
                                   + Glib::Markup::escape_text(caption) + "</span>");
                 label->set_xalign(0.0);
                 label->set_halign(Gtk::ALIGN_START);
@@ -731,8 +749,8 @@ FileBrowser::FileBrowser () :
 
         // Color labels: none + 5 colors
         static const std::array<const char*, 6> inlineClabelIcons = {
-            "circle-empty-gray-small", "circle-red-small", "circle-yellow-small",
-            "circle-green-small", "circle-blue-small", "circle-purple-small"
+            "circle-empty-gray-small", "label-red-small", "label-yellow-small",
+            "label-green-small", "label-blue-small", "label-purple-small"
         };
         auto colorRow = makeInlineRow("");
         for (int i = 0; i <= 5; i++) {
@@ -1262,7 +1280,7 @@ FileBrowser::FileBrowser () :
      * menu keeps ownership of their lifetime.
      ***********************/
     std::array<std::string, 6> rankIcons = {"menu-star-empty", "menu-star-1", "menu-star-2", "menu-star-3", "menu-star-4", "menu-star-5"};
-    std::array<std::string, 6> clabelActiveIcons = {"circle-empty-gray-small", "circle-red-small", "circle-yellow-small", "circle-green-small", "circle-blue-small", "circle-purple-small"};
+    std::array<std::string, 6> clabelActiveIcons = {"circle-empty-gray-small", "label-red-small", "label-yellow-small", "label-green-small", "label-blue-small", "label-purple-small"};
 
     {
         auto* hiddenActions = Gtk::manage(new MyImageMenuItem(M("FILEBROWSER_POPUPRANK"), "menu-sort-rank"));
@@ -2130,8 +2148,8 @@ FileBrowser::FileBrowser () :
     pmenuColorLabels = new Gtk::Menu();
 
     static const std::array<const char*, 6> popClabelIcons = {
-        "circle-empty-gray-small", "circle-red-small", "circle-yellow-small",
-        "circle-green-small", "circle-blue-small", "circle-purple-small"
+        "circle-empty-gray-small", "label-red-small", "label-yellow-small",
+        "label-green-small", "label-blue-small", "label-purple-small"
     };
     for (int i = 0; i <= 5; i++) {
         pmenuColorLabels->attach(*Gtk::manage(colorlabel_pop[i] = new MyImageMenuItem(M(Glib::ustring::compose("%1%2", "FILEBROWSER_POPUPCOLORLABEL", i)), popClabelIcons[i])), 0, 1, c, c + 1);
@@ -2197,15 +2215,15 @@ FileBrowser::FileBrowser () :
                 std::max(1, ma.get_width()), std::max(1, ma.get_height()));
             {
                 auto wcr = Cairo::Context::create(ws);
-                wcr->set_source_rgb(0.06, 0.08, 0.16);
+                steepui::setSource(wcr, themeColor(*pmenu, "steep_surface_3", Gdk::RGBA("#2e3340")), 1.0);
                 wcr->paint();
                 gtk_widget_draw(GTK_WIDGET(pmenu->gobj()), wcr->cobj());
             }
             // PNG encoding is the slow part — keep it off the GUI thread.
-            std::thread([surf, ws, tagStr = std::string(tag)]() {
+            steep::runBackground([surf, ws, tagStr = std::string(tag)]() {
                 surf->write_to_png(Glib::get_tmp_dir() + "/steep_menu_" + tagStr + ".png");
                 ws->write_to_png(Glib::get_tmp_dir() + "/steep_menu_" + tagStr + "_widget.png");
-            }).detach();
+            });
             DeleteObject(bmp);
             DeleteDC(mdc);
             ReleaseDC(nullptr, sdc);
@@ -2346,15 +2364,15 @@ FileBrowser::~FileBrowser ()
         autoLevelCancel_->store(true, std::memory_order_release);
     }
     autoLevelPollConnection_.disconnect();
-    if (autoLevelThread_.joinable()) {
-        autoLevelThread_.join();
+    if (autoLevelDone_.valid()) {
+        autoLevelDone_.get();
     }
     if (autoCullCancel_) {
         autoCullCancel_->store(true, std::memory_order_release);
     }
     autoCullPollConnection_.disconnect();
-    if (autoCullThread_.joinable()) {
-        autoCullThread_.join();
+    if (autoCullDone_.valid()) {
+        autoCullDone_.get();
     }
     for (auto& undo : autoCullUndo_) {
         undo.first->decreaseRef();
@@ -3950,8 +3968,8 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
         autoEditMenu->set_sensitive(false);
         autoLevel->set_sensitive(false);
         autoLevelCancel_ = state->cancel;
-        if (autoLevelThread_.joinable()) {
-            autoLevelThread_.join();
+        if (autoLevelDone_.valid()) {
+            autoLevelDone_.get();
         }
 
         // Copy parameters on GTK's thread in small slices before handing the
@@ -3973,8 +3991,11 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
 
             tbl->quickActionProgress(M("TP_ROTATE_AUTO_LEVEL"), 0.01);
             state->readyResults.reserve(state->items.size());
-            autoLevelThread_ = std::thread([state]() {
-                lowerQuickPreviewWarmThreadPriority();
+            // The shared CPU lane: one persistent thread, so a batch does
+            // not leave an idle OpenMP team behind each time it is run.
+            autoLevelDone_ = steep::runBackgroundJoinable([state]() {
+                // The lane's thread is shared: give the priority back.
+                const ScopedLowThreadPriority lowPriority;
 
                 for (const auto& item : state->items) {
                     if (state->cancel->load(std::memory_order_acquire)) {
@@ -4045,7 +4066,7 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
                 }
 
                 state->analysisFinished.store(true, std::memory_order_release);
-            });
+            }, steep::Lane::CPU);
 
             autoLevelPollConnection_.disconnect();
             autoLevelPollConnection_ = Glib::signal_timeout().connect(
@@ -4087,8 +4108,8 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
                         return true;
                     }
 
-                    if (autoLevelThread_.joinable()) {
-                        autoLevelThread_.join();
+                    if (autoLevelDone_.valid()) {
+                        autoLevelDone_.get();
                     }
 
                     const size_t applied = state->applied.load(std::memory_order_acquire);
@@ -5354,11 +5375,11 @@ void FileBrowser::startAutoCull (int focusTolerance, int exposureTolerance)
     quickActionRunning_ = true;
     tbl->quickActionProgress(M("FILEBROWSER_AUTOCULL"), 0.01);
 
-    if (autoCullThread_.joinable()) {
-        autoCullThread_.join();
+    if (autoCullDone_.valid()) {
+        autoCullDone_.get();
     }
 
-    autoCullThread_ = std::thread([state, focusTolerance, exposureTolerance]() {
+    autoCullDone_ = steep::runBackgroundJoinable([state, focusTolerance, exposureTolerance]() {
         for (auto* thm : state->thumbnails) {
             if (state->cancel->load(std::memory_order_acquire)) {
                 break;
@@ -5378,7 +5399,7 @@ void FileBrowser::startAutoCull (int focusTolerance, int exposureTolerance)
         }
 
         state->analysisFinished.store(true, std::memory_order_release);
-    });
+    }, steep::Lane::CPU);
 
     autoCullPollConnection_.disconnect();
     autoCullPollConnection_ = Glib::signal_timeout().connect(
@@ -5419,8 +5440,8 @@ void FileBrowser::startAutoCull (int focusTolerance, int exposureTolerance)
                 return true;
             }
 
-            if (autoCullThread_.joinable()) {
-                autoCullThread_.join();
+            if (autoCullDone_.valid()) {
+                autoCullDone_.get();
             }
 
             for (auto* thm : state->thumbnails) {

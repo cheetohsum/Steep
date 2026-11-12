@@ -3109,6 +3109,15 @@ void runSteepAutoEditSelfTest()
                             measured, filmSeen, curveSeen, deterministic, passed ? "PASS" : "FAIL");
             }
 
+            // STEEP_AUTOEDIT_SELFTEST_SAVE=<dir>: keep the result as a pp3 in
+            // that folder (never beside the photo), named <file>.<mode>.pp3,
+            // so steep-cli can render exactly what Auto Edit chose.
+            if (const char* const saveDir = g_getenv("STEEP_AUTOEDIT_SELFTEST_SAVE")) {
+                const Glib::ustring out = Glib::build_filename(saveDir,
+                    Glib::path_get_basename(trimmed) + "." + autoEditModeName(mode) + ".pp3");
+                result.save(out);
+            }
+
             // One line per frame, so a run over a folder can be diffed
             // directly without parsing the block trace above it.
             fileBrowserPerfLog(

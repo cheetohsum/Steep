@@ -18,6 +18,7 @@
  */
 #include <iomanip>
 #include "navigator.h"
+#include "guiutils.h"
 #include "previewwindow.h"
 #include "toolpanel.h"
 #include "rtengine/color.h"
@@ -134,6 +135,11 @@ Navigator::Navigator() :
     LAB_A = Gtk::manage (new Gtk::Label ());
     LAB_B = Gtk::manage (new Gtk::Label ());
     LAB_L = Gtk::manage (new Gtk::Label ());
+
+    // Readouts that change under the pointer: fixed-width digits.
+    for (Gtk::Label* readout : {dimension, position, R, G, B, H, S, V, LAB_A, LAB_B, LAB_L}) {
+        steepui::useTabularNumerals (*readout);
+    }
 
     // right-align values
     R->set_alignment(Gtk::ALIGN_END);

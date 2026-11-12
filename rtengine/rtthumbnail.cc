@@ -42,7 +42,6 @@
 #include "labimage.h"
 #include "median.h"
 #include "procparams.h"
-#include "relight.h"
 #include "rawimage.h"
 #include "rawimagesource.h"
 #include "rtengine.h"
@@ -1639,24 +1638,22 @@ IImage8* Thumbnail::processImage (const procparams::ProcParams& params, eSensorT
         ipf.clarityContrast(labView, params.clarity, 16);
     }
 
-    if (params.grain.enabled) {
-        // Grain is sized against the full frame and integrated by the
-        // thumbnail's pixels, as the film stage below does, so a thumbnail
-        // shows the fine noise of a reduced print rather than boulders.
-        const double grainScale = std::max(1.0, scale *
-            (params.coarse.rotate == 90 || params.coarse.rotate == 270
-                ? thumbImg->getWidth() : thumbImg->getHeight()) / fh);
-        ipf.grainEffect(labView, params.grain, std::lround(fw * grainScale), std::lround(fh * grainScale),
-                        0, 0, grainScale, &params.filmPresets);
+    // Full-resolution pixels per thumbnail pixel. Grain, tilt-shift, the film
+    // stage and Light Effects are all sized against the full frame and mapped
+    // through this, so a thumbnail shows a reduced print, not boulders.
+    const double frameScale = std::max(1.0, scale *
+        (params.coarse.rotate == 90 || params.coarse.rotate == 270
+            ? thumbImg->getWidth() : thumbImg->getHeight()) / fh);
+    const int frameW = std::lround(fw * frameScale);
+    const int frameH = std::lround(fh * frameScale);
+
+    if (params.tiltShift.enabled) {
+        ipf.tiltShiftEffect(labView, params.tiltShift, frameW, frameH, 0, 0, frameScale);
     }
 
-    // Tilt-shift is deliberately absent: its blur sigma is in the pixels of
-    // whatever image it is handed (it ignores fw/fh), so at tile size it
-    // would smear the whole thumbnail. Edited images get it via the
-    // persisted editor render instead.
-
     if (params.lensBlur.enabled) {
-        ipf.lensBlur(labView, params.lensBlur, 16);
+        // No scene depth for thumbnails: the focus range falls back to luminance.
+        ipf.lensBlur(labView, params.lensBlur, frameW, frameH, 0, 0, frameScale);
     }
 
     ipf.chromiLuminanceCurve (nullptr, 1, labView, labView, curve1, curve2, satcurve, lhskcurve, clcurve, lumacurve, utili, autili, butili, ccutili, cclutili, clcutili, dummy, dummy);
@@ -1673,10 +1670,8 @@ IImage8* Thumbnail::processImage (const procparams::ProcParams& params, eSensorT
         ipf.EPDToneMap (labView, 5, 6);
     }
 
-    const double filmScale = std::max(1.0, scale *
-        (params.coarse.rotate == 90 || params.coarse.rotate == 270
-            ? thumbImg->getWidth() : thumbImg->getHeight()) / fh);
-    FilmLabContext filmContext(0, 0, std::lround(fw * filmScale), std::lround(fh * filmScale),
+    const double filmScale = frameScale;
+    FilmLabContext filmContext(0, 0, frameW, frameH,
                               std::max(1, static_cast<int>(std::lround(filmScale))),
                               ImProcFunctions::filmLabSeed(metadata->getFileName()));
     filmContext.samplingScale = filmScale;
@@ -1687,21 +1682,15 @@ IImage8* Thumbnail::processImage (const procparams::ProcParams& params, eSensorT
     filmSnapshot.reset();
     ipf.softLight(labView, params.softlight);
 
-    if (params.relight.enabled) {
-        // Thumbnails never run the models; they use the mask and depth map
-        // when this session has made them, and light the frame whole otherwise.
-        RelightFrame relightFrame;
-        relightFrame.imageId = metadata->getFileName();
-        relightFrame.workingProfile = params.icm.workingProfile;
-        relightFrame.fullWidth = labView->W;
-        relightFrame.fullHeight = labView->H;
-        ipf.relight(labView, params.relight, relightFrame);
-    }
-
     if (params.lightEffects.enabled) {
         // Glow/halation/flare radii are full-frame pixels; scale them to the
         // thumbnail as the editor preview does with its subsampling factor.
-        ipf.lightEffects(labView, params.lightEffects, filmScale);
+        ipf.lightEffects(labView, params.lightEffects, frameW, frameH, filmScale, &params.filmPresets);
+    }
+
+    // Last texture, after Film Lab and Light Effects, as in the editor.
+    if (params.grain.enabled) {
+        ipf.grainEffect(labView, params.grain, frameW, frameH, 0, 0, frameScale, &params.filmPresets);
     }
 
     if (params.icm.workingTRC != ColorManagementParams::WorkingTrc::NONE && params.icm.trcExp) {

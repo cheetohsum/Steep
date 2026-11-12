@@ -82,8 +82,8 @@
 @define-color steep_ornament alpha(#2d7fd3, 0.5);
 
 /* Colour labels 1-5: red, yellow, green, blue, purple. */
-@define-color steep_label_1 #e0524c;
-@define-color steep_label_2 #e0b42c;
-@define-color steep_label_3 #4fae5a;
-@define-color steep_label_4 #3d7fe0;
-@define-color steep_label_5 #9a5cc8;
+@define-color steep_label_1 #c25b52;
+@define-color steep_label_2 #cfae4c;
+@define-color steep_label_3 #69a565;
+@define-color steep_label_4 #5a82c2;
+@define-color steep_label_5 #9370b5;

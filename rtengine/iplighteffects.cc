@@ -114,15 +114,42 @@ void directionalStreak(const array2D<float>& source, array2D<float>& destination
     }
 }
 
+// CIE L* (0..100) <-> relative luminance Y (0..1).
+inline float lstarToY(float l)
+{
+    if (l > 8.f) {
+        const float f = (l + 16.f) / 116.f;
+        return f * f * f;
+    }
+
+    return l / 903.3f;
 }
 
-void ImProcFunctions::lightEffects(LabImage* lab, const LightEffectsParams& params, double scaleFactor)
+inline float yToLstar(float y)
+{
+    return y > 0.008856f ? 116.f * std::cbrt(y) - 16.f : 903.3f * y;
+}
+
+// Film Lab draws its own halation off the negative. Stacking ours on top
+// doubles the ring, so ours stands down while Film Lab's is live. Every stock
+// carries some base halation, so only a fully trimmed slider counts as off.
+bool filmLabHalationActive(const FilmPresetsParams* film)
+{
+    return film && film->enabled && film->strength > 0 && film->halation > -100;
+}
+
+}
+
+void ImProcFunctions::lightEffects(LabImage* lab, const LightEffectsParams& params, int fw, int fh, double scaleFactor,
+                                   const FilmPresetsParams* film)
 {
     if (!params.enabled || !lab) {
         return;
     }
 
-    if (params.glow <= 0 && params.halation <= 0 && params.flare <= 0) {
+    const bool wantHalation = params.halation > 0 && !filmLabHalationActive(film);
+
+    if (params.glow <= 0 && !wantHalation && params.flare <= 0) {
         return;
     }
 
@@ -141,10 +168,13 @@ void ImProcFunctions::lightEffects(LabImage* lab, const LightEffectsParams& para
     const int mw = std::max(4, width / reduction);
     const int mh = std::max(4, height / reduction);
 
-    // Onset spans most of the usable range: by this stage the tone curve has
+    // Onset spans the upper half of the range: by this stage the tone curve has
     // already folded the scene into a bounded signal, so keying it just below
-    // clipping would mean nothing qualifies.
-    const float onset = 0.25f + 0.65f * (params.threshold / 100.f);
+    // clipping would mean nothing qualifies. Quadratic so threshold 0 still
+    // only keys bright tones (a linear map from 0.25 lit midtones) while the
+    // default of 70 lands where it always did (~0.71).
+    const float thresholdUnit = rtengine::LIM(params.threshold / 100.f, 0.f, 1.f);
+    const float onset = 0.55f + 0.37f * thresholdUnit * thresholdUnit;
 
     array2D<float> mask(mw, mh);
 
@@ -173,9 +203,13 @@ void ImProcFunctions::lightEffects(LabImage* lab, const LightEffectsParams& para
         }
     }
 
-    // Radii are a share of the short edge, so the look survives a change of
-    // export size, then divided by the working scale so it survives zoom.
-    const float shortEdge = static_cast<float>(std::min(mw, mh));
+    // Radii are a share of the FULL FRAME's short edge, expressed in mask
+    // cells (buffer pixels / reduction). Taking the buffer's own edge made a
+    // 1:1 tile, which is a small piece of the frame, draw small effects.
+    const float fullShort = (fw > 0 && fh > 0)
+        ? static_cast<float>(std::min(fw, fh))
+        : static_cast<float>(std::min(width, height)) * scale;
+    const float shortEdge = fullShort / (scale * reduction);
 
     array2D<float> blurA(mw, mh);
     array2D<float> scratch(mw, mh);
@@ -185,7 +219,6 @@ void ImProcFunctions::lightEffects(LabImage* lab, const LightEffectsParams& para
     array2D<float> streakLayer(mw, mh);
 
     const bool wantGlow = params.glow > 0;
-    const bool wantHalation = params.halation > 0;
     const bool wantFlare = params.flare > 0;
 
     if (wantGlow) {
@@ -237,14 +270,15 @@ void ImProcFunctions::lightEffects(LabImage* lab, const LightEffectsParams& para
     const float flareAmount = params.flare / 100.f * 1.60f;
 
     // Halation's dye colour: neutral through to the red-orange of light
-    // bouncing off the film base.
-    // The ring value arriving at a pixel is small (hundredths), so a plain
-    // multiplier produced a colourless fringe however large the constant was
-    // made. Drive the tint off a saturating function of the ring instead, so
-    // a faint ring still reads warm and a strong one cannot run away.
+    // bouncing off the film base. The tint is carried by the light the ring
+    // actually adds (its share of the L* increase), saturating at the old
+    // full strength once a ring adds ~10 L*: a flat offset keyed off the
+    // ring's mere presence turned dark pixels beside a ring orange even
+    // where almost no light landed on them.
     const float warmth = params.halationWarmth / 100.f;
     const float ringA = 5.0f * AB_PER_LAB_UNIT * warmth;   // toward red
     const float ringB = 3.0f * AB_PER_LAB_UNIT * warmth;   // toward yellow
+    constexpr float RING_TINT_FULL_L = 10.f;
 
 #ifdef _OPENMP
     #pragma omp parallel for schedule(static) if (multiThread)
@@ -276,13 +310,22 @@ void ImProcFunctions::lightEffects(LabImage* lab, const LightEffectsParams& para
                 continue;
             }
 
-            // Screen the light in rather than adding it, so highlights that
-            // are already at the ceiling do not simply clip harder.
+            // Add the light in linear luminance, screened so highlights at the
+            // ceiling do not simply clip harder. The lift keeps its old
+            // meaning on black (the L* it raises a black pixel to), but over
+            // midtones it no longer lays a milky L*-space veil.
             const float l = lab->L[y][x];
-            lab->L[y][x] = l + (L_SCALE - l) * rtengine::LIM(lift, 0.f, 1.f);
+            const float lStar = rtengine::LIM(l / L_SCALE, 0.f, 1.f) * 100.f;
+            const float yBase = lstarToY(lStar);
+            const float yAdd = lstarToY(rtengine::LIM(lift, 0.f, 1.f) * 100.f);
+            const float yOut = yBase + (1.f - yBase) * yAdd;
+            const float lOut = yToLstar(yOut) * (L_SCALE / 100.f);
+            const float added = std::max(lOut - l, 0.f);
+            lab->L[y][x] = std::max(l, lOut);
 
             if (ring > 0.f) {
-                const float tint = rtengine::LIM(ring * 15.f, 0.f, 1.f);
+                const float ringAddedL = added * (ring / lift) * (100.f / L_SCALE);
+                const float tint = rtengine::LIM(ringAddedL / RING_TINT_FULL_L, 0.f, 1.f);
                 lab->a[y][x] += ringA * tint;
                 lab->b[y][x] += ringB * tint;
             }

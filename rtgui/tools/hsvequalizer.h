@@ -26,6 +26,7 @@
 #include "guiutils.h"
 #include "toolpanel.h"
 #include "widgets/basic/adjuster.h"
+#include "workinghsvdisplay.h"
 
 class CurveEditor;
 class CurveEditorGroup;
@@ -77,6 +78,10 @@ protected:
     std::array<double, 8> lumValues;
 
     AdvancedSection* advancedSection;
+
+    // Swatch colours in the working space the engine's HSV actually runs in.
+    WorkingHSVDisplay hsvDisplay_;
+    std::vector<GradientMilestone> hueBarGradient() const;
 
     SectionHeader* sectionHeader_;
     Gtk::Box* toolContent_;

@@ -30,11 +30,11 @@ const Glib::ustring ToneEqualizer::TOOL_NAME = "toneequalizer";
 ToneEqualizer::ToneEqualizer(): FoldableToolPanel(this, TOOL_NAME, M("TP_TONE_EQUALIZER_LABEL"), false, true)
 {
     auto m = ProcEventMapper::getInstance();
-    EvEnabled = m->newEvent(AUTOEXP, "HISTORY_MSG_TONE_EQUALIZER_ENABLED");
-    EvBands = m->newEvent(AUTOEXP, "HISTORY_MSG_TONE_EQUALIZER_BANDS");
-    EvRegularization = m->newEvent(AUTOEXP, "HISTORY_MSG_TONE_EQUALIZER_REGULARIZATION");
-    EvColormap = m->newEvent(AUTOEXP, "HISTORY_MSG_TONE_EQUALIZER_SHOW_COLOR_MAP");
-    EvPivot = m->newEvent(AUTOEXP, "HISTORY_MSG_TONE_EQUALIZER_PIVOT");
+    EvEnabled = m->newEvent(TONE, "HISTORY_MSG_TONE_EQUALIZER_ENABLED");
+    EvBands = m->newEvent(TONE, "HISTORY_MSG_TONE_EQUALIZER_BANDS");
+    EvRegularization = m->newEvent(TONE, "HISTORY_MSG_TONE_EQUALIZER_REGULARIZATION");
+    EvColormap = m->newEvent(TONE, "HISTORY_MSG_TONE_EQUALIZER_SHOW_COLOR_MAP");
+    EvPivot = m->newEvent(TONE, "HISTORY_MSG_TONE_EQUALIZER_PIVOT");
 
     std::array<const char *, 5> images = {
         "purple",

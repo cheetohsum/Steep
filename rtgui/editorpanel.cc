@@ -35,10 +35,25 @@
 #include <string>
 #include <thread>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 #include "rtengine/array2D.h"
 #include "rtengine/imagesource.h"
+#include "rtengine/fullqualitytwin.h"
+#include "rtengine/procparams.h"
 #include "rtengine/iccstore.h"
 #include "rtengine/previewquality.h"
+#include "rtengine/memguard.h"
+#include "rtengine/aidenoise.h"
+
+namespace rtengine
+{
+// Defined in rtengine/improccoordinator.cc (declared in improccoordinator.h,
+// which is too heavy to pull in here): a preview pass is running or queued.
+bool isPreviewPassBusy(StagedImageProcessor* processor);
+}
 #include "batchqueue.h"
 #include "batchqueueentry.h"
 #include "soundman.h"
@@ -48,6 +63,7 @@
 #include "filebrowserentry.h"
 #include "filethumbnailbuttonset.h"
 #include "guiutils.h"
+#include "motion.h"
 #include "options.h"
 #include "dirbrowser.h"
 #include "navigator.h"
@@ -86,6 +102,13 @@ namespace
 Gtk::IconSize filmstripIconSize()
 {
     static const Gtk::IconSize size = Gtk::IconSize::register_new("steep-filmstrip", 20, 20);
+    return size;
+}
+
+// The rating palette's stars: a step under the other filmstrip icons.
+Gtk::IconSize filmstripStarIconSize()
+{
+    static const Gtk::IconSize size = Gtk::IconSize::register_new("steep-filmstrip-star", 16, 16);
     return size;
 }
 
@@ -215,6 +238,7 @@ public:
         {
             std::lock_guard<std::mutex> lock(mutex_);
             queue_.push_back(std::move(work));
+            rtengine::MemGuard::setCountGauge("editorCleanupQueue", static_cast<long long>(queue_.size()));
         }
         ready_.notify_one();
     }
@@ -236,6 +260,11 @@ private:
     void run()
     {
         lowerEditorCleanupThreadPriority();
+#ifdef _OPENMP
+        // This worker lives for the whole session; cap the OpenMP team (and
+        // its per-thread scratch memory) it keeps, as the other executors do.
+        omp_set_num_threads(4);
+#endif
         while (true) {
             std::function<void()> work;
             {
@@ -244,6 +273,7 @@ private:
                 work = std::move(queue_.front());
                 queue_.pop_front();
                 working_ = true;
+                rtengine::MemGuard::setCountGauge("editorCleanupQueue", static_cast<long long>(queue_.size()) + 1);
             }
             work();
             // Captured image/cache owners must be released before drain returns.
@@ -251,6 +281,7 @@ private:
             {
                 std::lock_guard<std::mutex> lock(mutex_);
                 working_ = false;
+                rtengine::MemGuard::setCountGauge("editorCleanupQueue", static_cast<long long>(queue_.size()));
             }
             idle_.notify_all();
         }
@@ -261,6 +292,122 @@ private:
     std::condition_variable idle_;
     std::deque<std::function<void()>> queue_;
     bool working_ = false;
+};
+
+// Prepares rtengine::FullQualityTwin instances: a second decode of the photo
+// just opened, demosaiced at full quality while the editor shows its fast
+// first frame, so the settled frame does not need a demosaic of its own. One
+// persistent thread, because MinGW's libgomp keeps a worker team alive for
+// every thread that ever ran a parallel region (see loadAuxiliaryInitialImage).
+class FullQualityTwinExecutor final
+{
+public:
+    static FullQualityTwinExecutor& instance()
+    {
+        static FullQualityTwinExecutor* executor = new FullQualityTwinExecutor();
+        return *executor;
+    }
+
+    // Newest request wins: anything still queued belongs to a photo the
+    // editor has already left. Takes over one reference to thm.
+    void submit(const Glib::ustring& fname, Thumbnail* thm, const std::shared_ptr<rtengine::FullQualityTwin>& twin)
+    {
+        Job superseded;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            superseded = std::move(pending_);
+            pending_ = Job{fname, thm, twin};
+        }
+        finish(superseded, nullptr);
+        ready_.notify_one();
+    }
+
+private:
+    struct Job {
+        Glib::ustring fname;
+        Thumbnail* thm = nullptr;
+        std::shared_ptr<rtengine::FullQualityTwin> twin;
+    };
+
+    FullQualityTwinExecutor()
+    {
+        std::thread([this]() { run(); }).detach();
+    }
+
+    static void finish(Job& job, rtengine::InitialImage* img)
+    {
+        if (job.thm) {
+            job.thm->decreaseRef();
+            job.thm = nullptr;
+        }
+        if (job.twin) {
+            job.twin->deliver(img);
+            job.twin.reset();
+        } else if (img) {
+            img->decreaseRef();
+        }
+    }
+
+    void run()
+    {
+        while (true) {
+            Job job;
+            {
+                std::unique_lock<std::mutex> lock(mutex_);
+                ready_.wait(lock, [this]() { return static_cast<bool>(pending_.twin); });
+                job = std::move(pending_);
+                pending_ = Job{};
+            }
+
+            const auto& abandoned = job.twin->abandonedFlag();
+            if (abandoned->load()) {
+                finish(job, nullptr);
+                continue;
+            }
+
+            // The photo's own profile, read here rather than on the GUI
+            // thread: a thumbnail render can hold its lock for a while.
+            const rtengine::procparams::ProcParams params = job.thm->getProcParamsCopy();
+
+            job.twin->setStage(rtengine::FullQualityTwin::Stage::Decoding);
+            int errorCode = 0;
+            rtengine::InitialImage* img = FilePanel::loadAuxiliaryInitialImage(job.fname, true, &errorCode, abandoned);
+            if (!img || errorCode || abandoned->load()) {
+                if (img) {
+                    img->decreaseRef();
+                }
+                finish(job, nullptr);
+                continue;
+            }
+
+            // Hold the demosaic until the editor's fast first frame is out.
+            if (!job.twin->waitForPrecomputeRelease(2500)) {
+                img->decreaseRef();
+                finish(job, nullptr);
+                continue;
+            }
+            job.twin->setStage(rtengine::FullQualityTwin::Stage::Precomputing);
+#ifdef _OPENMP
+            // The decode ran single-threaded; this is the expensive part, and
+            // matches the editor's own pipeline width.
+            omp_set_num_threads(rtengine::previewThreadCount(omp_get_num_procs()));
+#endif
+            const auto start = std::chrono::steady_clock::now();
+            if (!img->getImageSource()->precomputeFullQuality(params)) {
+                img->decreaseRef();
+                img = nullptr;
+            }
+            if (editorOpenLogEnabled()) editorOpenLog("[editorOpen] full-quality twin ready=%d duration=%lldms file=%s\n",
+                static_cast<int>(img != nullptr),
+                editorOpenDurationMs(start, std::chrono::steady_clock::now()),
+                job.fname.c_str());
+            finish(job, img);
+        }
+    }
+
+    std::mutex mutex_;
+    std::condition_variable ready_;
+    Job pending_;
 };
 
 static void detachEditorProcessorListeners(rtengine::StagedImageProcessor* proc)
@@ -1267,7 +1414,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 
             // Trigger circle (always visible)
             auto* triggerBtn = Gtk::manage(new Gtk::Button());
-            triggerBtn->set_image(*Gtk::manage(new RTImage("star-small", filmstripIconSize())));
+            triggerBtn->set_image(*Gtk::manage(new RTImage("star-small", filmstripStarIconSize())));
             triggerBtn->set_relief(Gtk::RELIEF_NONE);
             triggerBtn->set_tooltip_markup(M("FILEBROWSER_POPUPRANK") + " / " + M("FILEBROWSER_COLORLABEL_TOOLTIP"));
             pillBox->pack_start(*triggerBtn, Gtk::PACK_SHRINK);
@@ -1275,7 +1422,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
             // Revealer with the 6 color label buttons
             colorLabelRevealer_ = Gtk::manage(new Gtk::Revealer());
             colorLabelRevealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_RIGHT);
-            colorLabelRevealer_->set_transition_duration(150);
+            steep::motion::configureRevealer(*colorLabelRevealer_, steep::motion::Duration::Micro);
             colorLabelRevealer_->set_reveal_child(false);
 
             auto* labelBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 0));
@@ -1342,7 +1489,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                 });
 
             auto* unrankBtn = Gtk::manage(new Gtk::Button());
-            unrankBtn->set_image(*Gtk::manage(new RTImage("star-hollow-small", filmstripIconSize())));
+            unrankBtn->set_image(*Gtk::manage(new RTImage("star-hollow-small", filmstripStarIconSize())));
             unrankBtn->set_relief(Gtk::RELIEF_NONE);
             unrankBtn->set_tooltip_markup(M("FILEBROWSER_UNRANK_TOOLTIP"));
             unrankBtn->signal_clicked().connect([this]() {
@@ -1364,12 +1511,13 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                     return false;
                 });
             labelBox->pack_start(*unrankBtn, Gtk::PACK_SHRINK);
+            ratingStarWidgets_.push_back(unrankBtn);
 
             for (int i = 0; i < 5; ++i) {
                 filmstripRankBtns[i] = Gtk::manage(new Gtk::Button());
                 // C++-owned swap icons — same rule as the flag button pair.
-                iFilmstripStarGold_[i] = new RTImage("star-gold-small", filmstripIconSize());
-                iFilmstripStarPlain_[i] = new RTImage("star-small", filmstripIconSize());
+                iFilmstripStarGold_[i] = new RTImage("star-gold-small", filmstripStarIconSize());
+                iFilmstripStarPlain_[i] = new RTImage("star-small", filmstripStarIconSize());
                 filmstripRankBtns[i]->set_image(*iFilmstripStarPlain_[i]);
                 filmstripRankBtns[i]->set_relief(Gtk::RELIEF_NONE);
                 filmstripRankBtns[i]->signal_clicked().connect([this, i]() {
@@ -1392,12 +1540,14 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                     return false;
                 });
                 labelBox->pack_start(*filmstripRankBtns[i], Gtk::PACK_SHRINK);
+                ratingStarWidgets_.push_back(filmstripRankBtns[i]);
             }
 
             auto* paletteSeparator = Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL));
             labelBox->pack_start(*paletteSeparator, Gtk::PACK_SHRINK);
+            ratingLabelWidgets_.push_back(paletteSeparator);
 
-            std::array<std::string, 6> clabelIcons = {"circle-gray-small", "circle-red-small", "circle-yellow-small", "circle-green-small", "circle-blue-small", "circle-purple-small"};
+            std::array<std::string, 6> clabelIcons = {"circle-gray-small", "label-red-small", "label-yellow-small", "label-green-small", "label-blue-small", "label-purple-small"};
             for (int i = 0; i < 6; i++) {
                 Gtk::Button* clabelBtn = Gtk::manage(new Gtk::Button());
                 clabelBtn->set_image(*Gtk::manage(new RTImage(clabelIcons[i], filmstripIconSize())));
@@ -1419,13 +1569,21 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                         return false;
                     });
                 labelBox->pack_start(*clabelBtn, Gtk::PACK_SHRINK);
+                ratingLabelWidgets_.push_back(clabelBtn);
             }
             colorLabelRevealer_->add(*labelBox);
             pillBox->pack_start(*colorLabelRevealer_, Gtk::PACK_SHRINK);
 
             pillEventBox->add(*pillBox);
             pillEventBox->set_visible_window(false);
-            pillEventBox->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK);
+            pillEventBox->add_events(Gdk::ENTER_NOTIFY_MASK | Gdk::LEAVE_NOTIFY_MASK | Gdk::BUTTON_PRESS_MASK);
+            pillEventBox->signal_button_press_event().connect([this](GdkEventButton* event) -> bool {
+                if (event->type == GDK_BUTTON_PRESS && event->button == 3) {
+                    showRatingPaletteMenu(event);
+                    return true;
+                }
+                return false;
+            });
             pillEventBox->signal_enter_notify_event().connect([showRatingPalette](GdkEventCrossing*) -> bool {
                 showRatingPalette();
                 return false;
@@ -1809,6 +1967,18 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         filmstripActionAnchor->pack_start(*paletteLeadingReservation, Gtk::PACK_SHRINK);
         filmstripActionAnchor->pack_start(*filmstripActionBar, Gtk::PACK_SHRINK);
         centeredFilmstripActions = filmstripActionAnchor;
+
+        ratingPaletteBox_ = ratingPaletteOptionsBox;
+        ratingPaletteReservation_ = paletteLeadingReservation;
+        ratingPaletteAnchor_ = filmstripActionAnchor;
+        ratingCollapsedWidth_ = collapsedWidth;
+        applyRatingPaletteParts();
+
+        // Open from the start (measured closed above, for the reservation):
+        // pinned, so moving the pointer away does not fold it. A click on
+        // the trigger star folds it.
+        ratingPalettePinned_ = true;
+        colorLabelRevealer_->set_reveal_child(true);
     }
     toolBarPanel->set_center_widget(*centeredFilmstripActions);
 
@@ -1914,7 +2084,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         filterBar->pack_start(*fsep1, Gtk::PACK_SHRINK);
 
         // Color label group
-        std::array<std::string, 6> clabelIcons = {"circle-empty-gray-small", "circle-red-small", "circle-yellow-small", "circle-green-small", "circle-blue-small", "circle-purple-small"};
+        std::array<std::string, 6> clabelIcons = {"circle-empty-gray-small", "label-red-small", "label-yellow-small", "label-green-small", "label-blue-small", "label-purple-small"};
         std::array<Glib::ustring, 6> clabelHints = {
             "FILEBROWSER_SHOWUNCOLORHINT",
             "FILEBROWSER_SHOWCOLORLABEL1HINT",
@@ -2054,7 +2224,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 
         filterBarRevealer = Gtk::manage(new Gtk::Revealer());
         filterBarRevealer->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-        filterBarRevealer->set_transition_duration(200);
+        steep::motion::configureRevealer(*filterBarRevealer);
         filterBarRevealer->add(*filterBar);
         filterBarRevealer->set_reveal_child(false);
 
@@ -2088,6 +2258,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     exifInfo->set_name("ExifInfoLabel");
     exifInfo->set_markup("<span size='small'>  </span>");
     exifInfo->set_halign(Gtk::ALIGN_CENTER);
+    steepui::useTabularNumerals(*exifInfo);
     exifInfo->set_margin_top(2);
     exifInfo->set_margin_bottom(2);
 
@@ -2119,7 +2290,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
 
     exifDetailRevealer_ = Gtk::manage(new Gtk::Revealer());
     exifDetailRevealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_UP);
-    exifDetailRevealer_->set_transition_duration(260);
+    steep::motion::configureRevealer(*exifDetailRevealer_);
     exifDetailRevealer_->set_reveal_child(false);
     exifDetailRevealer_->set_valign(Gtk::ALIGN_END);
     exifDetailRevealer_->set_halign(Gtk::ALIGN_FILL);
@@ -2576,7 +2747,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     // Stack to switch between FlowBox grid and Collage DrawingArea
     albumGridStack_ = Gtk::manage(new Gtk::Stack());
     albumGridStack_->set_transition_type(Gtk::STACK_TRANSITION_TYPE_CROSSFADE);
-    albumGridStack_->set_transition_duration(200);
+    steep::motion::configureStack(*albumGridStack_, steep::motion::Duration::Standard);
     albumGridStack_->add(*albumViewGrid_, "grid");
     albumGridStack_->add(*albumCollageArea_, "collage");
     albumGridStack_->set_visible_child("grid");
@@ -2587,7 +2758,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
     // Wrap editor view and album view in a Gtk::Stack
     albumViewStack_ = Gtk::manage(new Gtk::Stack());
     albumViewStack_->set_transition_type(Gtk::STACK_TRANSITION_TYPE_CROSSFADE);
-    albumViewStack_->set_transition_duration(250);
+    steep::motion::configureStack(*albumViewStack_, steep::motion::Duration::Standard);
     albumViewStack_->add(*editbox, "editor");
     albumViewStack_->add(*albumViewBox_, "album");
     albumViewStack_->set_visible_child("editor");
@@ -2631,9 +2802,9 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
             int sideH = std::max(1, overlayH - botOff);
 
             if (child == leftbox) {
-                // Slide left sidebar in/out from the left edge
-                double eased = 1.0 - std::pow(1.0 - leftAnimFraction_, 3); // ease-out-cubic
-                int slideOffset = static_cast<int>(natW * (1.0 - eased));
+                // Slide left sidebar in/out from the left edge (the fraction
+                // arrives already eased from steep::motion)
+                int slideOffset = static_cast<int>(natW * (1.0 - leftAnimFraction_));
                 alloc.set_x(-slideOffset);
                 alloc.set_y(0);
                 alloc.set_width(natW);
@@ -2641,19 +2812,8 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                 return true;
             } else if (child == vboxright) {
                 const int panelW = std::min(natW, overlayW);
-                // Combine view-transition animation with toggle animation
-                // View transition: drives entry/exit when switching to editor
-                double viewEased;
-                if (editorAnimIn_) {
-                    viewEased = 1.0 - std::pow(1.0 - editorAnimFraction_, 3);
-                } else {
-                    viewEased = editorAnimFraction_ * editorAnimFraction_ * editorAnimFraction_;
-                }
-                // Toggle animation: drives show/hide via sidebar button
-                double toggleEased = 1.0 - std::pow(1.0 - rightAnimFraction_, 3);
-                // Use the minimum — either animation can hide the sidebar
-                double combined = std::min(viewEased, toggleEased);
-                int slideOffset = static_cast<int>(panelW * (1.0 - combined));
+                // Show/hide via the sidebar button
+                int slideOffset = static_cast<int>(panelW * (1.0 - rightAnimFraction_));
                 alloc.set_x(overlayW - panelW + slideOffset);
                 alloc.set_y(0);
                 alloc.set_width(panelW);
@@ -2662,15 +2822,14 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
             }
             const int gripW = 8;
 
-            // Both sidebar borders are tracked through the same easing the
+            // Both sidebar borders are tracked through the same fractions the
             // panels use, so a grip stays glued to a moving edge.
             int leftEdgeX = 0;
 
             if (leftbox && leftbox->get_visible()) {
                 int lminW = 0, lnatW = 0;
                 leftbox->get_preferred_width(lminW, lnatW);
-                const double eased = 1.0 - std::pow(1.0 - leftAnimFraction_, 3);
-                leftEdgeX = static_cast<int>(lnatW * eased);
+                leftEdgeX = static_cast<int>(lnatW * leftAnimFraction_);
             }
 
             int rightEdgeX = overlayW;
@@ -2679,14 +2838,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
                 int rminW = 0, rnatW = 0;
                 vboxright->get_preferred_width(rminW, rnatW);
                 const int panelW = std::min(rnatW, overlayW);
-                double viewEased;
-                if (editorAnimIn_) {
-                    viewEased = 1.0 - std::pow(1.0 - editorAnimFraction_, 3);
-                } else {
-                    viewEased = editorAnimFraction_ * editorAnimFraction_ * editorAnimFraction_;
-                }
-                const double toggleEased = 1.0 - std::pow(1.0 - rightAnimFraction_, 3);
-                rightEdgeX = overlayW - static_cast<int>(panelW * std::min(viewEased, toggleEased));
+                rightEdgeX = overlayW - static_cast<int>(panelW * rightAnimFraction_);
             }
 
             // Top of the image canvas. The grips start there, so they never
@@ -3383,6 +3535,66 @@ void EditorPanel::on_realize ()
         Glib::PRIORITY_LOW);
 }
 
+void EditorPanel::applyRatingPaletteParts()
+{
+    const auto& options = App::get().options();
+    const bool stars = options.filmstripRatingStars;
+    const bool labels = options.filmstripRatingLabels;
+
+    const auto setShown = [](Gtk::Widget* w, bool shown) {
+        // no_show_all, or a later show_all() of the toolbar brings it back.
+        w->set_no_show_all(!shown);
+        if (shown) {
+            w->show();
+        } else {
+            w->hide();
+        }
+    };
+    for (Gtk::Widget* w : ratingStarWidgets_) {
+        setShown(w, stars);
+    }
+    for (size_t i = 0; i < ratingLabelWidgets_.size(); ++i) {
+        // Entry 0 is the separator: only between the stars and the labels.
+        setShown(ratingLabelWidgets_[i], labels && (i > 0 || stars));
+    }
+
+    // The anchor reserves the open palette's width on both sides so the bar
+    // stays centred while it opens; it follows what the palette now holds.
+    if (ratingPaletteBox_ && ratingPaletteReservation_ && ratingPaletteAnchor_) {
+        int minimum = 0, natural = 0;
+        ratingPaletteBox_->get_preferred_width(minimum, natural);
+        const int width = std::max(minimum, natural);
+        ratingPaletteReservation_->set_size_request(width, -1);
+        ratingPaletteAnchor_->set_size_request(ratingCollapsedWidth_ + 2 * width, -1);
+    }
+}
+
+void EditorPanel::showRatingPaletteMenu(GdkEventButton* event)
+{
+    const auto& options = App::get().options();
+    ratingPaletteMenu_.reset(new Gtk::Menu());
+
+    const auto addToggle = [this](const char* key, bool active, bool Options::*field) {
+        auto* item = Gtk::manage(new Gtk::CheckMenuItem(M(key)));
+        item->set_active(active);
+        item->signal_toggled().connect([this, item, field]() {
+            App::get().mut_options().*field = item->get_active();
+            try {
+                Options::save();
+            } catch (Options::Error& error) {
+                std::cerr << "Failed to save options: " << error.get_msg() << std::endl;
+            }
+            applyRatingPaletteParts();
+        });
+        ratingPaletteMenu_->append(*item);
+    };
+    addToggle("FILEBROWSER_RATINGPALETTE_STARS", options.filmstripRatingStars, &Options::filmstripRatingStars);
+    addToggle("FILEBROWSER_RATINGPALETTE_LABELS", options.filmstripRatingLabels, &Options::filmstripRatingLabels);
+
+    ratingPaletteMenu_->show_all();
+    ratingPaletteMenu_->popup_at_pointer(reinterpret_cast<GdkEvent*>(event));
+}
+
 void EditorPanel::updateFilmstripStars(int highlightUpTo)
 {
     for (int i = 0; i < 5; i++) {
@@ -4061,15 +4273,14 @@ void EditorPanel::drawAlbumBadges (const Cairo::RefPtr<Cairo::Context>& cr,
 
     FileThumbnailButtonSet::ensureIconsLoaded();
 
-    const auto pill = [&cr](double px, double py, double pw, double ph) {
-        constexpr double radius = 3.0;
-        cr->set_source_rgba(0, 0, 0, 0.5);
+    // Same backing as the browser's thumbnail badges.
+    Gdk::RGBA badgeFallback;
+    badgeFallback.set_rgba(0.0, 0.0, 0.0, 0.5);
+    const Gdk::RGBA badgeBack = themeColor(*this, "steep_shadow", badgeFallback);
+    const auto pill = [&cr, &badgeBack](double px, double py, double pw, double ph) {
+        steepui::setSource(cr, badgeBack);
         cr->begin_new_path();
-        cr->arc(px + radius, py + radius, radius, M_PI, 1.5 * M_PI);
-        cr->arc(px + pw - radius, py + radius, radius, 1.5 * M_PI, 2.0 * M_PI);
-        cr->arc(px + pw - radius, py + ph - radius, radius, 0, 0.5 * M_PI);
-        cr->arc(px + radius, py + ph - radius, radius, 0.5 * M_PI, M_PI);
-        cr->close_path();
+        steepui::roundedRect(cr, px, py, pw, ph, steepui::Radius::S);
         cr->fill();
     };
 
@@ -4813,6 +5024,19 @@ void EditorPanel::open (Thumbnail* tmb, rtengine::InitialImage* isrc)
     this->isrc = isrc;
     ipc = rtengine::StagedImageProcessor::create (isrc);
 
+    // While the editor renders its fast first frame, demosaic a second copy
+    // at full quality for the settled pass to adopt. Not needed when the
+    // filmstrip preloader already prepared this source.
+    if (refineHighDetail && isrc && isrc->getImageSource()
+            && isrc->getImageSource()->isRAW()
+            && isrc->getImageSource()->getFrameCount() == 1
+            && !isrc->getImageSource()->hasPrecomputedFullQuality()) {
+        auto twin = std::make_shared<rtengine::FullQualityTwin>();
+        ipc->setFullQualityTwin(twin);
+        tmb->increaseRef();
+        FullQualityTwinExecutor::instance().submit(openFileName, tmb, twin);
+    }
+
     ipc->setProgressListener (this);
     ipc->setPreviewImageListener (previewHandler);
     ipc->setPreviewScale (10);  // Important
@@ -5316,6 +5540,7 @@ void EditorPanel::scheduleFinalPreviewRefinement(bool imageOpen)
             const unsigned long long completedSerial =
                 rtengine::getSettledPreviewSerial(ipc);
             auto attempts = std::make_shared<int>(1);
+            auto busyTicks = std::make_shared<int>(0);
             EDITOR_OPEN_LOG("[editorPreview] requested settled refinement file=%s attempt=1\n",
                             sourceFile.c_str());
             if (previewHandler) {
@@ -5324,7 +5549,7 @@ void EditorPanel::scheduleFinalPreviewRefinement(bool imageOpen)
             ipc->startProcessing(M_HIGHQUAL | M_MONITOR);
 
             deferredHighDetailConn_ = Glib::signal_timeout().connect(
-                [this, session, sourceFile, refinementGeneration, completedSerial, attempts]() -> bool {
+                [this, session, sourceFile, refinementGeneration, completedSerial, attempts, busyTicks]() -> bool {
                     if (session != openSession_
                             || refinementGeneration != finalPreviewRefinementGeneration_
                             || fname != sourceFile
@@ -5336,6 +5561,23 @@ void EditorPanel::scheduleFinalPreviewRefinement(bool imageOpen)
                         EDITOR_OPEN_LOG("[editorPreview] settled refinement published file=%s attempt=%d\n",
                                         sourceFile.c_str(), *attempts);
                         return false;
+                    }
+
+                    if (rtengine::isPreviewPassBusy(ipc)) {
+                        // The request is still running or queued (a settled
+                        // 26 MP pass with local adjustments can take longer
+                        // than this timer). Asking again would queue a second
+                        // full-quality pass behind it, and escalating to ALL
+                        // a third, each holding its own working buffers. Wait
+                        // instead; that is not an attempt. Still bounded: a
+                        // pipeline that stays busy for a minute is left alone.
+                        constexpr int kMaxBusyTicks = 40;
+                        if (++*busyTicks > kMaxBusyTicks) {
+                            EDITOR_OPEN_LOG("[editorPreview] settled refinement still busy, giving up the watch file=%s\n",
+                                            sourceFile.c_str());
+                            return false;
+                        }
+                        return true;
                     }
 
                     if (++*attempts > 4) {
@@ -5809,6 +6051,12 @@ void EditorPanel::close ()
     deferredCropWindowEnable_ = false;
     quickPreviewFileName_.clear();
     setRawLoadFirstFramePending(std::string(closingFname), false);
+
+    // The AI Denoise result for this photo is a full-size float image that
+    // nothing else ever frees; it is recomputed if the photo is opened again.
+    if (!closingFname.empty()) {
+        rtengine::AIDenoiseManager::getInstance().clearCacheFor(closingFname);
+    }
 
     // Clear MCP server reference before closing
     if (parent && parent->getMcpServer()) {
@@ -6550,28 +6798,35 @@ void EditorPanel::hideHistoryActivated ()
     }
     hidehp->set_image(show ? *iHistoryHide : *iHistoryShow);
 
-    leftAnimConn_.disconnect();
+    leftAnim_.stop();
     // A cancelled animation never reaches its terminal frame, so release any
     // pause it was still holding before starting the next one.
     setAnimationLayoutPause(leftAnimLayoutPaused_, false);
+
+    // Slides from wherever the panel currently is, so toggling again in
+    // mid-flight reverses instead of snapping to the far end first.
+    const auto slideLeft = [this](bool in) {
+        setAnimationLayoutPause(leftAnimLayoutPaused_, true);
+        leftAnim_ = steep::motion::toggle(*hpanedr, leftAnimFraction_, in, steep::motion::Duration::Large,
+            [this](double fraction) {
+                leftAnimFraction_ = fraction;
+                hpanedr->queue_allocate();
+            },
+            [this, in]() {
+                if (!in) {
+                    leftbox->hide();
+                    leftbox->set_no_show_all(true);
+                    hpanedr->queue_allocate();
+                }
+                setAnimationLayoutPause(leftAnimLayoutPaused_, false);
+            });
+    };
 
     if (show) {
         // Show immediately, then animate in
         leftbox->set_no_show_all(false);
         leftbox->show_all();
-        leftAnimFraction_ = 0.0;
-        setAnimationLayoutPause(leftAnimLayoutPaused_, true);
-        leftAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
-            leftAnimFraction_ += 16.0 / 200.0; // 200ms
-            if (leftAnimFraction_ >= 1.0) {
-                leftAnimFraction_ = 1.0;
-                hpanedr->queue_allocate();
-                setAnimationLayoutPause(leftAnimLayoutPaused_, false);
-                return false;
-            }
-            hpanedr->queue_allocate();
-            return true;
-        }, 16);
+        slideLeft(true);
 
         Glib::ustring dirToSync = pendingEditorDirSyncDir_;
         if (dirToSync.empty() && fPanel && fPanel->fileCatalog) {
@@ -6601,21 +6856,7 @@ void EditorPanel::hideHistoryActivated ()
         }
 
         // Animate out, then hide
-        leftAnimFraction_ = 1.0;
-        setAnimationLayoutPause(leftAnimLayoutPaused_, true);
-        leftAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
-            leftAnimFraction_ -= 16.0 / 200.0;
-            if (leftAnimFraction_ <= 0.0) {
-                leftAnimFraction_ = 0.0;
-                leftbox->hide();
-                leftbox->set_no_show_all(true);
-                hpanedr->queue_allocate();
-                setAnimationLayoutPause(leftAnimLayoutPaused_, false);
-                return false;
-            }
-            hpanedr->queue_allocate();
-            return true;
-        }, 16);
+        slideLeft(false);
     }
 
     // Update filmstrip + toolbar margins so sidebars don't overlap content.
@@ -6645,35 +6886,25 @@ void EditorPanel::tbRightPanel_1_toggled ()
         const bool show = tbRightPanel_1->get_active();
         tbRightPanel_1->set_image(show ? *iRightPanel_1_Hide : *iRightPanel_1_Show);
 
-        rightAnimConn_.disconnect();
+        rightAnim_.stop();
 
         if (show) {
             vboxright->show();
-            rightAnimFraction_ = 0.0;
-            rightAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
-                rightAnimFraction_ += 16.0 / 200.0;
-                if (rightAnimFraction_ >= 1.0) {
-                    rightAnimFraction_ = 1.0;
-                    hpanedr->queue_allocate();
-                    return false;
-                }
+        }
+
+        // Continues from the panel's current position, so a second toggle in
+        // mid-flight reverses smoothly.
+        rightAnim_ = steep::motion::toggle(*hpanedr, rightAnimFraction_, show, steep::motion::Duration::Large,
+            [this](double fraction) {
+                rightAnimFraction_ = fraction;
                 hpanedr->queue_allocate();
-                return true;
-            }, 16);
-        } else {
-            rightAnimFraction_ = 1.0;
-            rightAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
-                rightAnimFraction_ -= 16.0 / 200.0;
-                if (rightAnimFraction_ <= 0.0) {
-                    rightAnimFraction_ = 0.0;
+            },
+            [this, show]() {
+                if (!show) {
                     vboxright->hide();
                     hpanedr->queue_allocate();
-                    return false;
                 }
-                hpanedr->queue_allocate();
-                return true;
-            }, 16);
-        }
+            });
 
         // Update filmstrip + toolbar margins so sidebars don't overlap content
         int rightMargin = show ? editorToolPanelInsetWidth() : 0;
@@ -6723,13 +6954,9 @@ void EditorPanel::getQueueOverlayInsets (int& left, int& top, int& right) const
 
 void EditorPanel::animateEditorIn(bool skipFilmstrip)
 {
-    // Cancel any running animation
-    editorAnimConn_.disconnect();
-    editorAnimIn_ = true;
-    editorAnimFraction_ = 1.0;  // Instantly at final state
-
-    // Show filmstrip if enabled
-    if (catalogPane && App::get().options().editorFilmStripOpened) {
+    // No transition here: the panels are simply put in their final state.
+    // Show filmstrip if enabled (a running show/hide slide owns it meanwhile)
+    if (catalogPane && App::get().options().editorFilmStripOpened && !topAnim_.running()) {
         catalogPane->set_opacity(1.0);
         catalogPane->show();
     }
@@ -6750,57 +6977,50 @@ void EditorPanel::tbTopPanel_1_toggled ()
     options.editorFilmStripOpened = show;
     tbTopPanel_1->set_image(show ? *iTopPanel_1_Hide : *iTopPanel_1_Show);
 
-    topAnimConn_.disconnect();
+    const bool wasMidSlide = topAnim_.running();
+    topAnim_.stop();
     setAnimationLayoutPause(topAnimLayoutPaused_, false);
+
+    // Reverse from the current height when toggled in mid-slide. Otherwise
+    // start from where the strip really is: view switches show and hide it
+    // without going through here.
+    if (!wasMidSlide) {
+        topAnimFraction_ = catalogPane->get_visible() ? 1.0 : 0.0;
+    }
+
+    const auto applyHeight = [this](double fraction) {
+        topAnimFraction_ = fraction;
+        catalogPane->set_size_request(-1, std::max(1, static_cast<int>(filmstripFullHeight_ * fraction)));
+        catalogPane->set_opacity(fraction);
+    };
 
     if (show) {
         // Update target from actual content height
-        if (fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser) {
+        if (!wasMidSlide && fPanel && fPanel->fileCatalog && fPanel->fileCatalog->fileBrowser) {
             int actualH = fPanel->fileCatalog->fileBrowser->getEffectiveHeight();
             if (actualH > 0) {
                 filmstripFullHeight_ = actualH;
             }
         }
-        // Show at zero height, then animate open
-        catalogPane->set_size_request(-1, 1);
+        // Show at its current (normally zero) height, then animate open
+        applyHeight(topAnimFraction_);
         catalogPane->show();
-        topAnimFraction_ = 0.0;
-        setAnimationLayoutPause(topAnimLayoutPaused_, true);
-        topAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
-            topAnimFraction_ += 16.0 / 200.0;
-            if (topAnimFraction_ >= 1.0) {
-                topAnimFraction_ = 1.0;
-                catalogPane->set_size_request(-1, -1);
-                catalogPane->set_opacity(1.0);
-                setAnimationLayoutPause(topAnimLayoutPaused_, false);
-                return false;
-            }
-            double eased = 1.0 - std::pow(1.0 - topAnimFraction_, 3);
-            int h = std::max(1, static_cast<int>(filmstripFullHeight_ * eased));
-            catalogPane->set_size_request(-1, h);
-            catalogPane->set_opacity(eased);
-            return true;
-        }, 16);
-    } else {
-        topAnimFraction_ = 1.0;
-        setAnimationLayoutPause(topAnimLayoutPaused_, true);
-        topAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
-            topAnimFraction_ -= 16.0 / 200.0;
-            if (topAnimFraction_ <= 0.0) {
-                topAnimFraction_ = 0.0;
-                catalogPane->hide();
-                catalogPane->set_size_request(-1, -1);
-                catalogPane->set_opacity(1.0);
-                setAnimationLayoutPause(topAnimLayoutPaused_, false);
-                return false;
-            }
-            double eased = topAnimFraction_ * topAnimFraction_ * topAnimFraction_;
-            int h = std::max(1, static_cast<int>(filmstripFullHeight_ * eased));
-            catalogPane->set_size_request(-1, h);
-            catalogPane->set_opacity(eased);
-            return true;
-        }, 16);
     }
+
+    // Thumbnail layout stays paused for the whole slide. The height is still
+    // requested per frame: the image area below has to follow the strip.
+    setAnimationLayoutPause(topAnimLayoutPaused_, true);
+    topAnim_ = steep::motion::toggle(*catalogPane, topAnimFraction_, show, steep::motion::Duration::Large,
+        applyHeight,
+        [this, show]() {
+            topAnimFraction_ = show ? 1.0 : 0.0;
+            if (!show) {
+                catalogPane->hide();
+            }
+            catalogPane->set_size_request(-1, -1);
+            catalogPane->set_opacity(1.0);
+            setAnimationLayoutPause(topAnimLayoutPaused_, false);
+        });
 
     tbShowHideSidePanels_managestate();
 }
@@ -7845,7 +8065,8 @@ void EditorPanel::beforeAfterToggled ()
             auto* beforeImg = FilePanel::loadAuxiliaryInitialImage(loadFname, loadIsRaw, &errorCode, cancel);
 
             if (!beforeImg || errorCode || cancel->load()) {
-                if (beforeImg) delete beforeImg;
+                // Reference counted, like every InitialImage.
+                if (beforeImg) beforeImg->decreaseRef();
                 return;
             }
 
@@ -7857,7 +8078,7 @@ void EditorPanel::beforeAfterToggled ()
                     || loadSession != openSession_
                     || fname != loadFname
                     || !beforeIarea) {
-                    delete beforeImg;
+                    beforeImg->decreaseRef();
                     return false;
                 }
 

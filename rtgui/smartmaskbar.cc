@@ -16,23 +16,14 @@
  */
 #include "smartmaskbar.h"
 
+#include "aimaskclasses.h"
+
 #include "multilangmgr.h"
 #include "rtimage.h"
 #include "steeppopup.h"
 
 namespace
 {
-
-// rtengine::AISegClass indices; plain ints so this widget builds without
-// the engine header (its callers are RT_AI_MASKING-gated, it is not).
-constexpr int CLASS_PERSON = 1;
-constexpr int CLASS_SKY = 2;
-constexpr int CLASS_VEGETATION = 3;
-constexpr int CLASS_BUILDING = 4;
-constexpr int CLASS_VEHICLE = 5;
-constexpr int CLASS_ANIMAL = 6;
-constexpr int CLASS_SUBJECT = 8;      // composed: person|vehicle|animal|foreground, dominant regions
-constexpr int CLASS_NOT_SUBJECT = 9;  // composed: everything but the subject
 
 // ControlSpotPanel shape codes (on_mask_shape_selected).
 constexpr int SHAPE_ELLIPSE = 0;
@@ -71,26 +62,11 @@ SmartMaskBar::SmartMaskBar() :
     // (controlspotpanel.cc): the composed classes first, then what the model
     // detects. "Everything but the subject" is spelled out so "Background"
     // only ever means the model's own background class.
-    const struct {
-        const char* icon;
-        const char* labelKey;
-        int classIndex;
-    } aiClasses[] = {
-        {"mask-ai", "TP_LOCALLAB_SMARTMASK_SUBJECT", CLASS_SUBJECT},
-        {"mask-ai", "TP_LOCALLAB_AIMASK_CLASS_NOTSUBJECT", CLASS_NOT_SUBJECT},
-        {nullptr, nullptr, -1},
-        {"mask-class-person", "TP_LOCALLAB_AIMASK_CLASS_PERSON", CLASS_PERSON},
-        {"mask-class-sky", "TP_LOCALLAB_AIMASK_CLASS_SKY", CLASS_SKY},
-        {"mask-class-vegetation", "TP_LOCALLAB_AIMASK_CLASS_VEGETATION", CLASS_VEGETATION},
-        {"mask-class-building", "TP_LOCALLAB_AIMASK_CLASS_BUILDING", CLASS_BUILDING},
-        {"mask-class-vehicle", "TP_LOCALLAB_AIMASK_CLASS_VEHICLE", CLASS_VEHICLE},
-        {"mask-class-animal", "TP_LOCALLAB_AIMASK_CLASS_ANIMAL", CLASS_ANIMAL},
-    };
-
-    for (const auto& entry : aiClasses) {
-        if (!entry.labelKey) {
+    // aimaskclasses::menu(): the same list, in the same order, as the class
+    // picker on a mask that already exists.
+    for (const aimaskclasses::Entry& entry : aimaskclasses::menu()) {
+        if (entry.separatorBefore) {
             aiMenu_->addSeparator();
-            continue;
         }
 
         const int classIndex = entry.classIndex;

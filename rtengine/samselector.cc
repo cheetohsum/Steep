@@ -1,9 +1,12 @@
 #include "samselector.h"
+#include "aiidlereaper.h"
 #include "imagefloat.h"
 #include "iccstore.h"
 #include "color.h"
 #include "compositemath.h"
 #include "guidedfilter.h"
+#include <atomic>
+#include <chrono>
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -11,6 +14,7 @@
 #include <list>
 #include <mutex>
 #include <stdexcept>
+#include <thread>
 #include <glibmm/fileutils.h>
 #include <glibmm/miscutils.h>
 #include <glibmm/convert.h>
@@ -41,10 +45,52 @@ struct SamSelector::Impl {
     };
     std::list<Embedding> embeddings;
     size_t embeddingBytes = 0;
+    std::atomic<long long> lastUse{0};
+    bool watched = false;
+
+    // Frees the sessions and the cached encodings when idle (AIIdleReaper);
+    // prepare() brings them back on the next click or refinement.
+    int reaperId = -1;
+
+    // Out of memory (the lock held): drop the sessions and encodings, free
+    // every other idle model, and leave prepare() to rebuild them.
+    void freeForMemory()
+    {
+        embeddings.clear();
+        embeddingBytes = 0;
+        encoder.reset();
+        decoder.reset();
+        AIIdleReaper::releaseNow(reaperId);
+        std::this_thread::sleep_for(std::chrono::milliseconds(750));
+    }
+
+    void releaseIfIdle(bool force)
+    {
+        std::unique_lock<std::mutex> lock(mutex, std::try_to_lock);
+        if (!lock.owns_lock() || !encoder || (!force && AIIdleReaper::nowMs() - lastUse.load() < AIIdleReaper::kIdleMs)) {
+            return;
+        }
+        embeddings.clear();
+        embeddingBytes = 0;
+        encoder.reset();
+        decoder.reset();
+        std::fprintf(stderr, "Click selection: SAM unloaded after %lld s idle\n", AIIdleReaper::kIdleMs / 1000);
+    }
 
     void prepare()
     {
-        if (env) return;
+        lastUse = AIIdleReaper::nowMs();
+        if (!watched) {
+            watched = true;
+            Impl* const impl = this;
+            reaperId = AIIdleReaper::watch([impl](bool force) { impl->releaseIfIdle(force); });
+        }
+        if (env && encoder && decoder) return;
+        if (env) {
+            // Unloaded while idle: only the sessions need rebuilding.
+            loadSessions();
+            return;
+        }
         // Check before constructing any ORT wrapper: even a null wrapper's
         // destructor calls through the runtime API table.
         if (!OrtGetApiBase()->GetApi(ORT_API_VERSION))
@@ -68,6 +114,11 @@ struct SamSelector::Impl {
             options->SetInterOpNumThreads(1);
         }
         options->SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
+        loadSessions();
+    }
+
+    void loadSessions()
+    {
         const auto session = [&](const char* file) {
             const auto path = Glib::build_filename(directory, file);
 #ifdef _WIN32
@@ -82,6 +133,11 @@ struct SamSelector::Impl {
         encoder = session("sam2_encoder.onnx");
         decoder = session("sam2_decoder.onnx");
     }
+
+    // The picture's encoding, at the front of the cache. Caller holds mutex.
+    void ensure(const Imagefloat& src, const std::string& id);
+    // The decoder's three candidates for these prompts: masks 3 x 256 x 256, and scores.
+    void decode(const std::vector<std::array<float, 3>>& prompts, std::vector<float>& masks, std::array<float, 3>& scores);
 #endif
 };
 
@@ -155,110 +211,176 @@ array2D<float> refineSelection(const Imagefloat& src, const std::vector<float>& 
 
 } // namespace
 
+
+#ifdef RT_AI_MASKING
+void SamSelector::Impl::ensure(const Imagefloat& src, const std::string& id)
+{
+    prepare();
+    auto memory = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+    auto cached = std::find_if(embeddings.begin(), embeddings.end(),
+                               [&](const Impl::Embedding& e) { return e.id == id; });
+    if (cached != embeddings.end()) {
+        embeddings.splice(embeddings.begin(), embeddings, cached);
+    } else {
+        constexpr int size = 1024;
+        std::vector<float> input(3 * size * size);
+        // Partners arrive in the base's working profile; the model wants sRGB.
+        const auto mat = ICCStore::getInstance()->workingSpaceMatrix("ProPhoto");
+        const float mean[] = {.485f, .456f, .406f}, stddev[] = {.229f, .224f, .225f};
+        for (int y = 0; y < size; ++y)
+            for (int x = 0; x < size; ++x) {
+                const float sx = (x + .5f) * src.getWidth() / size - .5f,
+                            sy = (y + .5f) * src.getHeight() / size - .5f;
+                const int x0 = std::max(0, std::min(src.getWidth() - 1, int(std::floor(sx))));
+                const int y0 = std::max(0, std::min(src.getHeight() - 1, int(std::floor(sy))));
+                const int x1 = std::min(x0 + 1, src.getWidth() - 1), y1 = std::min(y0 + 1, src.getHeight() - 1);
+                const float fx = std::max(0.f, sx - x0), fy = std::max(0.f, sy - y0);
+                auto at = [&](int c) {
+                    auto val = [&](int yy, int xx) {
+                        return c == 0 ? src.r(yy, xx) : c == 1 ? src.g(yy, xx) : src.b(yy, xx);
+                    };
+                    return (val(y0, x0) * (1 - fx) + val(y0, x1) * fx) * (1 - fy) +
+                           (val(y1, x0) * (1 - fx) + val(y1, x1) * fx) * fy;
+                };
+                float X, Y, Z, rgb[3];
+                Color::rgbxyz(at(0), at(1), at(2), X, Y, Z, mat);
+                Color::xyz2srgb(X, Y, Z, rgb[0], rgb[1], rgb[2]);
+                for (int c = 0; c < 3; ++c) {
+                    float v = std::max(0.f, std::min(1.f, rgb[c] / 65535.f));
+                    v = v <= .0031308f ? 12.92f * v : 1.055f * std::pow(v, 1.f / 2.4f) - .055f;
+                    input[c * size * size + y * size + x] = (v - mean[c]) / stddev[c];
+                }
+            }
+        std::array<int64_t, 4> shape = {{1, 3, size, size}};
+        auto tensor = Ort::Value::CreateTensor<float>(memory, input.data(), input.size(), shape.data(), shape.size());
+        const char* in[] = {"image"};
+        const char* out[] = {"high0", "high1", "embedding"};
+        auto features = encoder->Run(Ort::RunOptions{nullptr}, in, &tensor, 1, out, 3);
+        size_t bytes = 0;
+        for (const auto& feature : features)
+            bytes += feature.GetTensorTypeAndShapeInfo().GetElementCount() * sizeof(float);
+        while (!embeddings.empty() &&
+               (embeddingBytes + bytes > 128U * 1024U * 1024U || embeddings.size() >= 4)) {
+            embeddingBytes -= embeddings.back().bytes;
+            embeddings.pop_back();
+        }
+        embeddings.push_front({id, std::move(features), bytes});
+        embeddingBytes += bytes;
+    }
+}
+
+void SamSelector::Impl::decode(const std::vector<std::array<float, 3>>& prompts, std::vector<float>& masks,
+                           std::array<float, 3>& scores)
+{
+    auto memory = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
+    std::vector<float> xy, labels;
+    for (const auto& p : prompts) {
+        xy.push_back(std::max(0.f, std::min(1.f, p[0])) * 1024);
+        xy.push_back(std::max(0.f, std::min(1.f, p[1])) * 1024);
+        labels.push_back(p[2] > .5f ? 1.f : 0.f);
+    }
+    std::array<int64_t, 3> ps = {{1, int64_t(prompts.size()), 2}};
+    std::array<int64_t, 2> ls = {{1, int64_t(prompts.size())}};
+    auto pt = Ort::Value::CreateTensor<float>(memory, xy.data(), xy.size(), ps.data(), ps.size());
+    auto lb = Ort::Value::CreateTensor<float>(memory, labels.data(), labels.size(), ls.data(), ls.size());
+    const char* ins[] = {"high0", "high1", "embedding", "points", "labels"};
+    const char* outs[] = {"masks", "scores"};
+    std::vector<Ort::Value> inputs;
+    for (auto& f : embeddings.front().features) {
+        auto shape = f.GetTensorTypeAndShapeInfo().GetShape();
+        inputs.push_back(Ort::Value::CreateTensor<float>(memory, f.GetTensorMutableData<float>(),
+                                                         f.GetTensorTypeAndShapeInfo().GetElementCount(),
+                                                         shape.data(), shape.size()));
+    }
+    inputs.push_back(std::move(pt));
+    inputs.push_back(std::move(lb));
+    auto result = decoder->Run(Ort::RunOptions{nullptr}, ins, inputs.data(), inputs.size(), outs, 2);
+    const auto shape = result[0].GetTensorTypeAndShapeInfo().GetShape();
+    if (shape != std::vector<int64_t>{1, 3, 256, 256})
+        throw std::runtime_error("Unsupported SAM 2 decoder shape");
+    const float* data = result[0].GetTensorData<float>();
+    masks.assign(data, data + 3 * 256 * 256);
+    scores = {{0.f, 0.f, 0.f}};
+
+    if (result.size() > 1) {
+    const float* sc = result[1].GetTensorData<float>();
+    const size_t n = result[1].GetTensorTypeAndShapeInfo().GetElementCount();
+
+    for (size_t k = 0; k < std::min<size_t>(3, n); ++k) {
+        scores[k] = sc[k];
+    }
+    }
+}
+#endif
+
 array2D<float> SamSelector::select(const Imagefloat& src, const std::string& id,
-                                   const std::vector<std::array<float, 3>>& prompts)
+                                   const std::vector<std::array<float, 3>>& prompts, int candidate,
+                                   const array2D<float>* reference)
 {
 #ifndef RT_AI_MASKING
-    (void)src; (void)id; (void)prompts;
+    (void)src; (void)id; (void)prompts; (void)candidate; (void)reference;
     return array2D<float>();
 #else
     if (prompts.empty() || prompts.size() > 128 || src.getWidth() < 2 || src.getHeight() < 2) return array2D<float>();
     std::lock_guard<std::mutex> lock(impl->mutex);
     if (!impl->haveModels) return array2D<float>();
-    try {
+    // Out of memory (another program on the GPU, often): free, then once more.
+    for (int attempt = 0;; ++attempt) try {
         impl->prepare();
-        auto memory = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
-        auto cached = std::find_if(impl->embeddings.begin(), impl->embeddings.end(),
-                                   [&](const Impl::Embedding& e) { return e.id == id; });
-        if (cached != impl->embeddings.end()) {
-            impl->embeddings.splice(impl->embeddings.begin(), impl->embeddings, cached);
-        } else {
-            constexpr int size = 1024;
-            std::vector<float> input(3 * size * size);
-            // Partners arrive in the base's working profile; the model wants sRGB.
-            const auto mat = ICCStore::getInstance()->workingSpaceMatrix("ProPhoto");
-            const float mean[] = {.485f, .456f, .406f}, stddev[] = {.229f, .224f, .225f};
-            for (int y = 0; y < size; ++y)
-                for (int x = 0; x < size; ++x) {
-                    const float sx = (x + .5f) * src.getWidth() / size - .5f,
-                                sy = (y + .5f) * src.getHeight() / size - .5f;
-                    const int x0 = std::max(0, std::min(src.getWidth() - 1, int(std::floor(sx))));
-                    const int y0 = std::max(0, std::min(src.getHeight() - 1, int(std::floor(sy))));
-                    const int x1 = std::min(x0 + 1, src.getWidth() - 1), y1 = std::min(y0 + 1, src.getHeight() - 1);
-                    const float fx = std::max(0.f, sx - x0), fy = std::max(0.f, sy - y0);
-                    auto at = [&](int c) {
-                        auto val = [&](int yy, int xx) {
-                            return c == 0 ? src.r(yy, xx) : c == 1 ? src.g(yy, xx) : src.b(yy, xx);
-                        };
-                        return (val(y0, x0) * (1 - fx) + val(y0, x1) * fx) * (1 - fy) +
-                               (val(y1, x0) * (1 - fx) + val(y1, x1) * fx) * fy;
-                    };
-                    float X, Y, Z, rgb[3];
-                    Color::rgbxyz(at(0), at(1), at(2), X, Y, Z, mat);
-                    Color::xyz2srgb(X, Y, Z, rgb[0], rgb[1], rgb[2]);
-                    for (int c = 0; c < 3; ++c) {
-                        float v = std::max(0.f, std::min(1.f, rgb[c] / 65535.f));
-                        v = v <= .0031308f ? 12.92f * v : 1.055f * std::pow(v, 1.f / 2.4f) - .055f;
-                        input[c * size * size + y * size + x] = (v - mean[c]) / stddev[c];
-                    }
-                }
-            std::array<int64_t, 4> shape = {{1, 3, size, size}};
-            auto tensor = Ort::Value::CreateTensor<float>(memory, input.data(), input.size(), shape.data(), shape.size());
-            const char* in[] = {"image"};
-            const char* out[] = {"high0", "high1", "embedding"};
-            auto features = impl->encoder->Run(Ort::RunOptions{nullptr}, in, &tensor, 1, out, 3);
-            size_t bytes = 0;
-            for (const auto& feature : features)
-                bytes += feature.GetTensorTypeAndShapeInfo().GetElementCount() * sizeof(float);
-            while (!impl->embeddings.empty() &&
-                   (impl->embeddingBytes + bytes > 128U * 1024U * 1024U || impl->embeddings.size() >= 4)) {
-                impl->embeddingBytes -= impl->embeddings.back().bytes;
-                impl->embeddings.pop_back();
-            }
-            impl->embeddings.push_front({id, std::move(features), bytes});
-            impl->embeddingBytes += bytes;
-        }
-        std::vector<float> xy, labels;
-        for (const auto& p : prompts) {
-            xy.push_back(std::max(0.f, std::min(1.f, p[0])) * 1024);
-            xy.push_back(std::max(0.f, std::min(1.f, p[1])) * 1024);
-            labels.push_back(p[2] > .5f ? 1.f : 0.f);
-        }
-        std::array<int64_t, 3> ps = {{1, int64_t(prompts.size()), 2}};
-        std::array<int64_t, 2> ls = {{1, int64_t(prompts.size())}};
-        auto pt = Ort::Value::CreateTensor<float>(memory, xy.data(), xy.size(), ps.data(), ps.size());
-        auto lb = Ort::Value::CreateTensor<float>(memory, labels.data(), labels.size(), ls.data(), ls.size());
-        const char* ins[] = {"high0", "high1", "embedding", "points", "labels"};
-        const char* outs[] = {"masks", "scores"};
-        std::vector<Ort::Value> inputs;
-        for (auto& f : impl->embeddings.front().features) {
-            auto shape = f.GetTensorTypeAndShapeInfo().GetShape();
-            inputs.push_back(Ort::Value::CreateTensor<float>(memory, f.GetTensorMutableData<float>(),
-                                                             f.GetTensorTypeAndShapeInfo().GetElementCount(),
-                                                             shape.data(), shape.size()));
-        }
-        inputs.push_back(std::move(pt));
-        inputs.push_back(std::move(lb));
-        auto result = impl->decoder->Run(Ort::RunOptions{nullptr}, ins, inputs.data(), inputs.size(), outs, 2);
-        const auto shape = result[0].GetTensorTypeAndShapeInfo().GetShape();
-        if (shape != std::vector<int64_t>{1, 3, 256, 256})
-            throw std::runtime_error("Unsupported SAM 2 decoder shape");
-        const float* data = result[0].GetTensorData<float>();
+        std::vector<float> masks;
+        std::array<float, 3> scores {{0.f, 0.f, 0.f}};
+        impl->ensure(src, id);
+        impl->decode(prompts, masks, scores);
+        const float* data = masks.data();
         // The decoder offers three candidates (part, object, group); with
         // several prompts its first is the one they jointly describe, with a
         // single click the highest-scoring whole candidate reads best.
         int chosen = 0;
-        if (prompts.size() == 1 && result.size() > 1) {
-            const float* scores = result[1].GetTensorData<float>();
-            const size_t n = result[1].GetTensorTypeAndShapeInfo().GetElementCount();
-            for (size_t c = 1; c < std::min<size_t>(3, n); ++c)
-                if (std::isfinite(scores[c]) && scores[c] > scores[chosen]) chosen = int(c);
+        if (reference && reference->getWidth() == src.getWidth() && reference->getHeight() == src.getHeight()) {
+            const int w = src.getWidth(), h = src.getHeight();
+            float bestIou = -1.f;
+            for (int c = 0; c < 3; ++c) {
+                long inter = 0, uni = 0;
+                for (int gy = 0; gy < 256; ++gy) {
+                    const int sy = std::min(h - 1, int((gy + .5f) * h / 256));
+                    for (int gx = 0; gx < 256; ++gx) {
+                        const int sx = std::min(w - 1, int((gx + .5f) * w / 256));
+                        const bool a = (*reference)[sy][sx] > .5f;
+                        const bool b = data[c * 256 * 256 + gy * 256 + gx] > 0.f;
+                        inter += a && b;
+                        uni += a || b;
+                    }
+                }
+                const float iou = uni ? float(inter) / uni : 0.f;
+                if (iou > bestIou) {
+                    bestIou = iou;
+                    chosen = c;
+                }
+            }
+        } else if (candidate >= 0) {
+            // by size: the candidates nest, part in object in group
+            std::array<std::pair<long, int>, 3> areas;
+            for (int c = 0; c < 3; ++c) {
+                long n = 0;
+                for (int i = 0; i < 256 * 256; ++i) n += data[c * 256 * 256 + i] > 0.f;
+                areas[c] = {n, c};
+            }
+            std::sort(areas.begin(), areas.end());
+            chosen = areas[std::min(candidate, 2)].second;
+        } else if (prompts.size() == 1) {
+            for (int c = 1; c < 3; ++c)
+                if (std::isfinite(scores[c]) && scores[c] > scores[chosen]) chosen = c;
         }
         std::vector<float> logits(data + chosen * 256 * 256, data + (chosen + 1) * 256 * 256);
         if (!std::all_of(logits.begin(), logits.end(), [](float v) { return std::isfinite(v); }))
             throw std::runtime_error("Invalid SAM mask logits");
         return refineSelection(src, logits, 256);
     } catch (const std::exception& e) {
+        if (attempt == 0 && AIIdleReaper::outOfMemory(e.what())) {
+            std::fprintf(stderr, "Click selection: out of memory; freeing models and retrying\n");
+            impl->freeForMemory();
+            continue;
+        }
         std::fprintf(stderr, "Click selection: %s\n", e.what());
         return array2D<float>();
     }

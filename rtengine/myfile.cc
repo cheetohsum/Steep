@@ -18,6 +18,9 @@
  */
 #include "myfile.h"
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
 #include <functional>
 #include <cstdarg>
 #include <cstring>
@@ -26,6 +29,7 @@
 #include <map>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 #include "rtengine.h"
 #ifdef _WIN32
@@ -43,6 +47,8 @@
 // dummy values
 #define MAP_PRIVATE 1
 #define PROT_READ 1
+// Windows only, see mmap() below.
+#define RT_PROT_COPY_ON_WRITE 2
 #define MAP_FAILED (void *)-1
 
 #ifdef __GNUC__ // silence warning
@@ -52,10 +58,15 @@
 
 void* mmap(void *start, size_t length, int prot, int flags, int fd, off_t offset)
 {
-    HANDLE handle = CreateFileMapping((HANDLE)_get_osfhandle(fd), NULL, PAGE_WRITECOPY, 0, 0, NULL);
+    // A copy-on-write view is charged against the commit limit for its whole
+    // length the moment it is mapped, written to or not: every open RAW cost
+    // its file size in commit. Readers get a plain read-only view, which
+    // costs none.
+    const bool copyOnWrite = prot & RT_PROT_COPY_ON_WRITE;
+    HANDLE handle = CreateFileMapping((HANDLE)_get_osfhandle(fd), NULL, copyOnWrite ? PAGE_WRITECOPY : PAGE_READONLY, 0, 0, NULL);
 
     if (handle != NULL) {
-        start = MapViewOfFile(handle, FILE_MAP_COPY, 0, offset, length);
+        start = MapViewOfFile(handle, copyOnWrite ? FILE_MAP_COPY : FILE_MAP_READ, 0, offset, length);
         CloseHandle(handle);
         return start;
     }
@@ -127,7 +138,21 @@ rtengine::IMFILE* rtengine::fopen (const char* fname, bool randomAccess)
         return nullptr;
     }
 
-    void* data = mmap(nullptr, stat_buffer.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+    int prot = PROT_READ;
+#ifdef _WIN32
+    {
+        // The one writer through the mapping: fuji_fill_buffer() in
+        // fujicompressed.cc zero-fills a byte at its read position when a
+        // compressed strip runs past its declared size. Fuji files keep the
+        // copy-on-write view until that pads into a buffer of its own.
+        const std::size_t length = std::strlen(fname);
+        if (length >= 4 && !g_ascii_strcasecmp(fname + length - 4, ".raf")) {
+            prot |= RT_PROT_COPY_ON_WRITE;
+        }
+    }
+#endif
+
+    void* data = mmap(nullptr, stat_buffer.st_size, prot, MAP_PRIVATE, fd, 0);
 
     if ( data == MAP_FAILED ) {
         printf("no mmap %s\n", fname);
@@ -168,61 +193,6 @@ std::mutex& prefetchMutex()
     return instance;
 }
 
-}
-
-void rtengine::prefetchFileHead (const char* fname, ssize_t bytes)
-{
-    if (!fname || bytes <= 0) {
-        return;
-    }
-
-    std::lock_guard<std::mutex> lock(prefetchMutex());
-    std::vector<char> buffer(static_cast<size_t>(std::min<ssize_t>(bytes, 4 * 1024 * 1024)));
-
-#ifdef _WIN32
-    std::unique_ptr<wchar_t, GFreeFunc> wfname (reinterpret_cast<wchar_t*>(g_utf8_to_utf16 (fname, -1, NULL, NULL, NULL)), g_free);
-
-    if (!wfname) {
-        return;
-    }
-
-    HANDLE hFile = CreateFileW (wfname.get (), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-
-    if (hFile == INVALID_HANDLE_VALUE) {
-        return;
-    }
-
-    for (ssize_t done = 0; done < bytes;) {
-        const DWORD want = static_cast<DWORD>(std::min<ssize_t>(static_cast<ssize_t>(buffer.size()), bytes - done));
-        DWORD got = 0;
-
-        if (!ReadFile(hFile, buffer.data(), want, &got, NULL) || got == 0) {
-            break;
-        }
-
-        done += got;
-    }
-
-    CloseHandle(hFile);
-#else
-    const int fd = ::g_open (fname, O_RDONLY);
-
-    if (fd < 0) {
-        return;
-    }
-
-    for (ssize_t done = 0; done < bytes;) {
-        const ssize_t got = ::read(fd, buffer.data(), std::min<ssize_t>(static_cast<ssize_t>(buffer.size()), bytes - done));
-
-        if (got <= 0) {
-            break;
-        }
-
-        done += got;
-    }
-
-    close(fd);
-#endif
 }
 
 namespace
@@ -482,6 +452,255 @@ bool rtengine::readFileRange (const char* fname, ssize_t offset, ssize_t length,
     return done > 0;
 }
 
+bool rtengine::fileIncursSeekPenalty (const char* fname)
+{
+#ifdef _WIN32
+    if (!fname) {
+        return true;
+    }
+
+    const char c = fname[0];
+
+    if (((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) && fname[1] == ':') {
+        return driveIncursSeekPenalty(static_cast<wchar_t>(L'A' + ((c | 0x20) - 'a')));
+    }
+
+    return true;
+#else
+    (void)fname;
+    return false;
+#endif
+}
+
+namespace
+{
+
+// Reads [0, bytes) of `fname` (the whole file when bytes < 0) and throws the
+// data away, leaving it in the OS cache. Each 4 MB chunk is read under the
+// drive's read lock, so on a spinning disk this interleaves with preview
+// reads at chunk granularity instead of page-fault granularity, and other
+// readers are never held off for a whole file. False when cancelled.
+bool readSequentially(const char* fname, ssize_t bytes, const std::function<bool()>& cancelled)
+{
+    if (!fname || bytes == 0) {
+        return true;
+    }
+
+    constexpr ssize_t chunk = 4 * 1024 * 1024;
+    std::vector<char> buffer(static_cast<size_t>(bytes > 0 ? std::min(bytes, chunk) : chunk));
+    bool finished = true;
+
+#ifdef _WIN32
+    std::unique_ptr<wchar_t, GFreeFunc> wfname (reinterpret_cast<wchar_t*>(g_utf8_to_utf16 (fname, -1, NULL, NULL, NULL)), g_free);
+
+    if (!wfname) {
+        return true;
+    }
+
+    HANDLE hFile = CreateFileW (wfname.get (), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+
+    if (hFile == INVALID_HANDLE_VALUE) {
+        return true;
+    }
+
+    for (ssize_t done = 0; bytes < 0 || done < bytes;) {
+        if (cancelled && cancelled()) {
+            finished = false;
+            break;
+        }
+
+        const ssize_t want = bytes < 0 ? chunk : std::min(chunk, bytes - done);
+        DWORD got = 0;
+        bool ok;
+        {
+            std::lock_guard<std::mutex> lock(readLockFor(fname));
+            ok = ReadFile(hFile, buffer.data(), static_cast<DWORD>(want), &got, NULL);
+        }
+
+        if (!ok || got == 0) {
+            break;
+        }
+
+        done += got;
+    }
+
+    CloseHandle(hFile);
+#else
+    const int fd = ::g_open (fname, O_RDONLY);
+
+    if (fd < 0) {
+        return true;
+    }
+
+    for (ssize_t done = 0; bytes < 0 || done < bytes;) {
+        if (cancelled && cancelled()) {
+            finished = false;
+            break;
+        }
+
+        const ssize_t want = bytes < 0 ? chunk : std::min(chunk, bytes - done);
+        ssize_t got;
+        {
+            std::lock_guard<std::mutex> lock(readLockFor(fname));
+            got = ::read(fd, buffer.data(), want);
+        }
+
+        if (got <= 0) {
+            break;
+        }
+
+        done += got;
+    }
+
+    close(fd);
+#endif
+    return finished;
+}
+
+// One low-priority thread that pulls the files the user is likely to open
+// next into the OS cache. A new request replaces the old one, and the file
+// being read is abandoned at the next chunk boundary.
+class CacheWarmer
+{
+public:
+    static CacheWarmer& get()
+    {
+        // Leaked on purpose: the thread may still be parked at exit.
+        static CacheWarmer* instance = new CacheWarmer();
+        return *instance;
+    }
+
+    void request(std::vector<std::string> files, std::function<bool()> ready)
+    {
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+
+            // The same neighbourhood is often requested several times per
+            // open; restarting would throw away the read in progress.
+            std::vector<std::string> remaining;
+            if (!inFlight_.empty()) {
+                remaining.push_back(inFlight_);
+            }
+            remaining.insert(remaining.end(), files_.begin(), files_.end());
+
+            if (remaining == files) {
+                ready_ = std::move(ready);
+                return;
+            }
+
+            files_ = std::move(files);
+            ready_ = std::move(ready);
+            ++generation_;
+
+            static const bool trace = g_getenv("RT_RANGE_TRACE") != nullptr;
+            if (trace) {
+                std::fprintf(stderr, "RT_WARM t=%lld request n=%d first=%s\n",
+                    (long long)(g_get_monotonic_time() / 1000), (int)files_.size(),
+                    files_.empty() ? "-" : files_.front().c_str());
+            }
+
+            if (!started_) {
+                started_ = true;
+                std::thread(&CacheWarmer::run, this).detach();
+            }
+        }
+        cv_.notify_all();
+    }
+
+private:
+    void run()
+    {
+#ifdef _WIN32
+        // Not THREAD_MODE_BACKGROUND_BEGIN: besides I/O priority it lowers
+        // the memory priority of every page this thread reads, and those are
+        // the first the editor's allocations evict -- warming for nothing.
+        // Yielding to foreground loads is the ready() callback's job.
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+#endif
+        std::unique_lock<std::mutex> lock(mutex_);
+
+        while (true) {
+            cv_.wait(lock, [this] { return !files_.empty(); });
+
+            const unsigned generation = generation_;
+            const auto stale = [this, generation] { return generation_.load() != generation; };
+
+            // Wait for the foreground to go quiet; a newer request restarts.
+            while (!stale() && ready_ && !ready_()) {
+                cv_.wait_for(lock, std::chrono::milliseconds(100));
+            }
+
+            if (stale() || files_.empty()) {
+                continue;
+            }
+
+            const std::string file = files_.front();
+            files_.erase(files_.begin());
+            inFlight_ = file;
+            lock.unlock();
+            static const bool trace = g_getenv("RT_RANGE_TRACE") != nullptr;
+            const auto start = std::chrono::steady_clock::now();
+            const bool finished = readSequentially(file.c_str(), -1, [&]() {
+                return stale() || !readyUnlocked();
+            });
+            if (trace) {
+                std::fprintf(stderr, "RT_WARM t=%lld %s ms=%lld file=%s\n",
+                    (long long)(g_get_monotonic_time() / 1000), finished ? "done" : "stop",
+                    (long long)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count(),
+                    file.c_str());
+            }
+            lock.lock();
+            inFlight_.clear();
+
+            // Interrupted by foreground work rather than a new request: pick
+            // it up again later; the chunks already read are cached.
+            if (!finished && !stale()) {
+                files_.insert(files_.begin(), file);
+            }
+        }
+    }
+
+    // ready_ is only replaced together with a generation bump, after which
+    // the reader stops at its next chunk anyway; copying it under the lock
+    // keeps the callable alive while it runs.
+    bool readyUnlocked()
+    {
+        std::function<bool()> ready;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            ready = ready_;
+        }
+        return !ready || ready();
+    }
+
+    std::mutex mutex_;
+    std::condition_variable cv_;
+    std::vector<std::string> files_;
+    std::function<bool()> ready_;
+    std::string inFlight_;
+    std::atomic<unsigned> generation_{0};
+    bool started_ = false;
+};
+
+}
+
+void rtengine::prefetchFileHead (const char* fname, ssize_t bytes)
+{
+    if (bytes > 0) {
+        readSequentially(fname, bytes, {});
+    }
+}
+
+bool rtengine::prefetchFile (const char* fname, const std::function<bool()>& cancelled)
+{
+    return readSequentially(fname, -1, cancelled);
+}
+
+void rtengine::warmFileCache (std::vector<std::string> fnames, std::function<bool()> ready)
+{
+    CacheWarmer::get().request(std::move(fnames), std::move(ready));
+}
+
 void rtengine::fprefetch (IMFILE* f, ssize_t offset, ssize_t length)
 {
     if (!f || f->fd < 0 || !f->data || offset < 0 || length <= 0 || offset >= f->size) {
@@ -536,6 +755,20 @@ void rtengine::fprefetch (IMFILE*, ssize_t, ssize_t)
 }
 
 void rtengine::prefetchFileHead (const char*, ssize_t)
+{
+}
+
+bool rtengine::prefetchFile (const char*, const std::function<bool()>&)
+{
+    return true;
+}
+
+bool rtengine::fileIncursSeekPenalty (const char*)
+{
+    return false;
+}
+
+void rtengine::warmFileCache (std::vector<std::string>, std::function<bool()>)
 {
 }
 

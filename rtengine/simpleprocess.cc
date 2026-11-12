@@ -39,11 +39,12 @@
 #include "processingjob.h"
 #include "partnerimagestore.h"
 #include "procparams.h"
-#include "relight.h"
 #include "rawimagesource.h"
 #include "aidenoise.h"
 #ifdef RT_AI_MASKING
 #include "aimaskcache.h"
+#include "aimaskinput.h"
+#include "partnerdepthstore.h"
 #endif
 #include "rtengine.h"
 #include "utils.h"
@@ -840,14 +841,35 @@ private:
         baseImg = new Imagefloat(fw, fh);
         imgsrc->getImage(currWB, tr, baseImg, pp, params.toneCurve, params.raw);
 
-        // AI Denoise blending (uses cached result from subprocess)
+        // AI Denoise blending. The editor's cached result is reused when it
+        // is for this very frame; otherwise (batch exports, a photo that is
+        // not the open one, a changed rotation) run the same denoise here,
+        // on this thread, from the same demosaiced input the editor feeds it.
+        // Skipping it silently exported a noisy image.
         if (params.aiDenoise.enabled && params.aiDenoise.blend > 0) {
             auto& aidm = AIDenoiseManager::getInstance();
+            std::shared_ptr<const Imagefloat> dn;
+
             if (aidm.isCacheValid(imgsrc->getFileName(), params.aiDenoise.isoConditioning)) {
-                const auto dn = aidm.getCachedResult();
-                if (dn) {
-                    ImProcFunctions::blendAIDenoise(baseImg, dn.get(), params.aiDenoise.blend / 100.0);
+                dn = aidm.getCachedResult();
+                if (dn && (dn->getWidth() != baseImg->getWidth() || dn->getHeight() != baseImg->getHeight())) {
+                    dn.reset();
                 }
+            }
+
+            if (!dn) {
+                const FramesMetaData* md = imgsrc->getMetaData();
+                const int iso = md ? md->getISOSpeed() : 0;
+                Glib::ustring error;
+                dn = aidm.denoiseNow(params.aiDenoise, *baseImg, iso, &error);
+                if (!dn) {
+                    fprintf(stderr, "AI Denoise: export skipped it for %s: %s\n",
+                            imgsrc->getFileName().c_str(), error.c_str());
+                }
+            }
+
+            if (dn) {
+                ImProcFunctions::blendAIDenoise(baseImg, dn.get(), params.aiDenoise.blend / 100.0);
             }
         }
 
@@ -1068,13 +1090,6 @@ private:
 
         labView = new LabImage(fw, fh);
 
-        if (params.relight.enabled) {
-            // An export in the session that previewed this image reuses its
-            // mask and depth map, so the export lights what the preview showed.
-            prepareRelightInputs(params.relight, imgsrc->getFileName().raw(), *baseImg,
-                                 baseImg->getWidth(), baseImg->getHeight(), params.icm.workingProfile, true);
-        }
-
         if (params.locallab.enabled && params.locallab.spots.size() > 0) {
 #ifdef RT_AI_MASKING
             if (getAISegmentationEngine().isInitialized()) {
@@ -1084,13 +1099,9 @@ private:
                         return spot.useAIMask;
                     });
                 if (needsAIMask) {
-                    const int imageWidth = baseImg->getWidth();
-                    const int imageHeight = baseImg->getHeight();
-                    AIMaskCache::getInstance().computeMasks(
-                        imgsrc->getFileName().raw(),
-                        baseImg->r.ptrs, baseImg->g.ptrs, baseImg->b.ptrs,
-                        imageWidth, imageHeight, imageWidth, imageHeight,
-                        params.icm.workingProfile.raw(), true);
+                    // Same input as the editor's, so the export masks exactly
+                    // what the preview showed.
+                    ensureAIMasks(imgsrc, params, currWB, true, aiMasksNeedDepth(params));
                 }
             }
 #endif
@@ -1636,17 +1647,15 @@ private:
             ipf.clarityContrast(labView, params.clarity, 1);
         }
 
-        if (params.grain.enabled) {
-            ipf.grainEffect(labView, params.grain, labView->W, labView->H, 0, 0, 1, &params.filmPresets);
-        }
-
-
         if (params.tiltShift.enabled) {
-            ipf.tiltShiftEffect(labView, params.tiltShift, labView->W, labView->H);
+            ipf.tiltShiftEffect(labView, params.tiltShift, labView->W, labView->H, 0, 0, 1);
         }
 
         if (params.lensBlur.enabled) {
-            ipf.lensBlur(labView, params.lensBlur, 1);
+            // labView is still the whole uncropped frame here.
+            const auto sceneDepth = PartnerDepthStore::getInstance().peekSceneDepth(
+                imgsrc->getFileName().raw(), fw, fh, params.icm.workingProfile);
+            ipf.lensBlur(labView, params.lensBlur, fw, fh, 0, 0, 1, sceneDepth.get());
         }
 
         ipf.chromiLuminanceCurve(nullptr, 1, labView, labView, curve1, curve2, satcurve, lhskcurve, clcurve, lumacurve, utili, autili, butili, ccutili, cclutili, clcutili, dummy, dummy);
@@ -1861,17 +1870,14 @@ private:
         }
         ipf.softLight(labView, params.softlight);
 
-        if (params.relight.enabled) {
-            RelightFrame relightFrame;
-            relightFrame.imageId = imgsrc->getFileName().raw();
-            relightFrame.workingProfile = params.icm.workingProfile;
-            relightFrame.fullWidth = fw;
-            relightFrame.fullHeight = fh;
-            ipf.relight(labView, params.relight, relightFrame);
+        if (params.lightEffects.enabled) {
+            ipf.lightEffects(labView, params.lightEffects, labView->W, labView->H, 1, &params.filmPresets);
         }
 
-        if (params.lightEffects.enabled) {
-            ipf.lightEffects(labView, params.lightEffects, 1);
+        // Grain is the last texture laid down: earlier, sharpening, the Lab
+        // curves and Film Lab's diffusion all reshaped it.
+        if (params.grain.enabled) {
+            ipf.grainEffect(labView, params.grain, labView->W, labView->H, 0, 0, 1, &params.filmPresets);
         }
 
 

@@ -299,6 +299,7 @@ public:
     bool browserTitleShowFullPath;  // browser title shows the full path instead of the folder name
     bool browserTitlePinToEditor;   // browser title also shown above the editor filmstrip
     bool filmstripAtBottom;         // filmstrip below the image instead of above it
+    bool reduceMotion;              // skip UI animations (steep::motion + GTK revealers/stacks)
     bool showGlobalScopeUnfilteredWarning;  // warn before an unfiltered global-scope scan
     int preferencesWidth;
     int preferencesHeight;
@@ -315,6 +316,13 @@ public:
     bool fbShowBasicExif;
     bool fbShowExpComp;
     bool fbShowHidden;
+    bool folderPreviews;         // a strip of photos under each folder in the folder tree
+    int  folderPreviewCount;     // 1..5 photos in that strip
+    int  folderPreviewSize;      // 0 small, 1 medium, 2 large, 3 extra large tiles
+    bool folderPreviewsPreferRated; // starred/picked photos first, spread through the folder
+    bool filmstripRatingStars;   // the editor's rating palette shows the stars
+    bool filmstripRatingLabels;  // ... and the colour labels
+    int  hiddenPreviewStrips;    // edit pane preview strips hidden: bit 0 exposure, 1 color, 2 detail, 3 effects, 4 B&W
     int  fbArrangement;
     NavigatorUnit navRGBUnit;
     NavigatorUnit navHSVUnit;
@@ -619,9 +627,20 @@ public:
     void filterOutParsedExtensions ();
     void setDefaults     ();
     void readFromFile (Glib::ustring fname);
+    /// The options file's contents, as saveToFile() would write them.
+    Glib::ustring serializeKeyFile ();
     void saveToFile (Glib::ustring fname);
     static void load (bool lightweight = false);
+    /// Writes the options file before returning. For the Preferences dialog
+    /// and the exit path; it supersedes any saveAsync() still on its way.
     static void save();
+    /// For interactive changes (a toggle, a menu choice, a sidebar state):
+    /// the options are serialised here, so the snapshot is the caller's, and
+    /// written by a background writer. Calls made while a write is under way
+    /// coalesce -- the latest snapshot wins. A write failure is only logged.
+    static void saveAsync();
+    /// Returns once nothing handed to saveAsync() is still unwritten.
+    static void flushPendingSave();
 
     // if multiUser=false, send back the global profile path
     Glib::ustring getPreferredProfilePath() const;

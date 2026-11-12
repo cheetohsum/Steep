@@ -18,7 +18,9 @@
  */
 #pragma once
 
+#include <atomic>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -26,8 +28,10 @@
 #include <giomm.h>
 
 #include "guiutils.h"
+#include "motion.h"
 
 class DirTreeView; // Forward declaration for subclass with hover interception
+class FolderNameRenderer; // folder name with its optional strip of photos
 
 class DirBrowser : public Gtk::Box
 {
@@ -46,6 +50,10 @@ private:
         Gtk::TreeModelColumn<Glib::RefPtr<Gio::FileMonitor> > monitor;
         Gtk::TreeModelColumn<Glib::ustring> photoCount;
         Gtk::TreeModelColumn<bool> childrenLoaded;
+        // Folder previews: how many tiles the row reserves (0 = none) and
+        // the strip once it is loaded.
+        Gtk::TreeModelColumn<int> previewSlots;
+        Gtk::TreeModelColumn<Glib::RefPtr<Gdk::Pixbuf> > previewStrip;
 
         DirTreeColumns()
         {
@@ -55,12 +63,14 @@ private:
             add(monitor);
             add(photoCount);
             add(childrenLoaded);
+            add(previewSlots);
+            add(previewStrip);
         }
     };
 
     DirTreeColumns dtColumns;
     Gtk::TreeViewColumn tvc;
-    Gtk::CellRendererText crt;
+    FolderNameRenderer* crt;
 
 
     DirTreeView *dirtree;
@@ -99,6 +109,11 @@ private:
     sigc::connection dirUpdateConn_;
     void countPhotosInChildren (const Gtk::TreeModel::iterator& parent);
 
+    // Bumped whenever previews already queued must be dropped (setting
+    // changed, tree rebuilt); workers compare it before every folder.
+    std::atomic<int> previewGeneration_{0};
+    void refreshFolderPreviews ();
+
     // The directory currently open in the catalog. The tree uses hover
     // selection, so the GTK selection follows the pointer and is dropped when
     // it leaves the tree; the open folder has to be tracked separately and
@@ -124,24 +139,41 @@ private:
     bool isCurrentDirFavorite () const;
     bool isDirFavorite (const Glib::ustring& dir) const;
     void toggleCurrentDirFavorite ();
+    void toggleDirFavorite (const Glib::ustring& dir);
+
+    // Row under the pointer: it alone shows the favorite star.
+    Gtk::TreeModel::Path hoverRow_;
+
+    // Right-click popover: folder previews on/off, their size and count
+    // (sliders), and opening the clicked folder in the file manager.
+    std::unique_ptr<Gtk::Popover> previewPopover_;
+    Gtk::Switch* previewSwitch_ = nullptr;
+    Gtk::Switch* previewRatedSwitch_ = nullptr;
+    Gtk::Scale* previewSizeScale_ = nullptr;
+    Gtk::Scale* previewCountScale_ = nullptr;
+    bool previewPopoverSyncing_ = false;
+    sigc::connection previewApplyConn_;
+    Glib::ustring previewMenuDir_;
+    void showPreviewMenu (GdkEventButton* event);
+    void buildPreviewPopover ();
+    void schedulePreviewApply ();
+    static void setPreviewOptions (bool show, int count, int size, bool preferRated);
+    static void openInFileManager (const Glib::ustring& dir);
 
     // Chevron rotation animation
     std::vector<Glib::RefPtr<Gdk::Pixbuf>> chevronFrames_;
     std::map<std::string, int> chevronAnimFrame_;
-    std::map<std::string, bool> chevronAnimExpanding_;
-    sigc::connection chevronAnimConn_;
-    void startChevronAnim();
+    std::map<std::string, steep::motion::Handle> chevronAnims_;
+    void animateChevron(const std::string& pathStr, bool expanding);
 
-    // Child row reveal (fade-in on expand)
+    // Child row reveal (clip-in on expand)
     std::string revealParentPath_;
-    double revealAlpha_ = 1.0;
+    steep::motion::Handle revealAnim_;
+    void animateReveal(const std::string& parentPathStr);
+    void clearReveal();
 
-    // Expand/collapse animation
-    sigc::connection expandAnimConn_;
-    double expandAnimFraction_ = 0.0;
-    int expandAnimStartH_ = 0;
-    int expandAnimTargetH_ = 0;
-    bool expandAnimExpanding_ = true;
+    // Expand/collapse height animation
+    steep::motion::Handle expandAnim_;
 
     // Hover thumbnail popup
     Gtk::Window* hoverPopup_;
@@ -179,6 +211,9 @@ public:
     // Emitted (by any DirBrowser instance) when the favorites list changes
     // via the inline star, so every PlacesBrowser can refresh.
     static sigc::signal<void>& favoritesChanged ();
+
+    // Emitted when the folder preview options change (Preferences).
+    static sigc::signal<void>& previewSettingsChanged ();
 };
 
 inline DirBrowser::DirSelectionSignal DirBrowser::dirSelected () const

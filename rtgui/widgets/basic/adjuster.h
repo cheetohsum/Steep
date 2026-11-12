@@ -85,6 +85,10 @@ protected:
     Gdk::Rectangle valueTextRect_;
     /// The pointer is over the number, so a click there would type into it.
     bool valueHover_ = false;
+    // Focus reached the slider from the keyboard (Tab, arrows), not a click:
+    // only then does the pill draw its focus ring.
+    bool keyboardFocus_ = false;
+    Glib::ustring valueSuffix_;
     /// The pointer is anywhere on the slider, so it is the one being adjusted.
     bool rowHover_ = false;   // in Adjuster coordinates; width 0 = none
 
@@ -183,6 +187,8 @@ public:
     void hideResetButton();
     void hideSpinButton();
     void setSliderMinWidth(int px);
+    // Drawn after the number in the pill ("°", " px"); typing ignores it.
+    void setValueSuffix(const Glib::ustring& suffix);
 
 protected:
     bool on_draw(const Cairo::RefPtr<Cairo::Context>& cr) override;

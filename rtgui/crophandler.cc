@@ -95,6 +95,7 @@ void CropHandler::disconnectCrop ()
     idle_register.destroy();
     redraw_needed = false;
     cropPixbuf.clear();
+    heldPixbuf.clear();
     cropPixbuftrue.clear();
     trueImagePresent.store(false, std::memory_order_release);
 
@@ -120,6 +121,7 @@ void CropHandler::newImage (StagedImageProcessor* ipc_, bool isDetailWindow)
     idle_register.destroy();
     redraw_needed = false;
     cropPixbuf.clear();
+    heldPixbuf.clear();
     cropPixbuftrue.clear();
     trueImagePresent.store(false, std::memory_order_release);
 
@@ -235,7 +237,7 @@ void CropHandler::setZoom (int z, int centerx, int centery)
 
     if (enabled && (oldZoom != zoom || oldcax != cax || oldcay != cay || oldCropX != cropX || oldCropY != cropY || oldCropW != cropW || oldCropH != cropH)) {
         if (needsFullRefresh) {
-            cropPixbuf.clear ();
+            holdCropPixbuf();
             // A preview preference (or an earlier queued request) does not
             // prove that the current RAW has finished its detailed demosaic.
             ipc->startProcessing(M_HIGHQUAL | M_MONITOR);
@@ -405,6 +407,7 @@ void CropHandler::setDetailedCrop(
                     if (redraw_needed.exchange(false)) {
                         if (!enabled) {
                             cropPixbuf.clear ();
+                            heldPixbuf.clear ();
                             cropimg.clear();
                             cropimgtrue.clear();
                             cimg.unlock ();
@@ -433,6 +436,15 @@ void CropHandler::setDetailedCrop(
                                 cropPixbuf = Gdk::Pixbuf::create (Gdk::COLORSPACE_RGB, false, 8, imw, imh);
                                 tmpPixbuf->scale (cropPixbuf, 0, 0, imw, imh, 0, 0, czoom, czoom, Gdk::INTERP_TILES);
                                 tmpPixbuf.clear ();
+
+                                const ImageSize fullSize = getFullImageSize();
+                                cropPixbufGeometry.x = pendingUpdate.x;
+                                cropPixbufGeometry.y = pendingUpdate.y;
+                                cropPixbufGeometry.zoom = getZoomFactor();
+                                cropPixbufGeometry.fullWidth = fullSize.width;
+                                cropPixbufGeometry.fullHeight = fullSize.height;
+                                // The frame that matches the window is back.
+                                heldPixbuf.clear ();
 
                                 if (!cropimgtrue.empty()) {
                                     Glib::RefPtr<Gdk::Pixbuf> tmpPixbuftrue = Gdk::Pixbuf::create_from_data (cropimgtrue.data(), Gdk::COLORSPACE_RGB, false, 8, cropimg_width, cropimg_height, 3 * cropimg_width);
@@ -526,7 +538,10 @@ void CropHandler::update ()
     if (crop && enabled) {
 //        crop->setWindow (cropX, cropY, cropW, cropH, zoom>=1000 ? 1 : zoom); --> we use the "getWindow" hook instead of setting the size before
         crop->setListener (this);
-        cropPixbuf.clear ();
+        // Keep painting the last sharp frame, shifted, until the re-render
+        // is accepted; clearing it left the canvas blocky for a whole
+        // 100% render after every pan release.
+        holdCropPixbuf();
 
         // To save threads, try to mark "needUpdate" without a thread first
         if (crop->tryUpdate()) {
@@ -548,9 +563,21 @@ void CropHandler::setEnabled (bool e)
         cropimg.clear();
         cropimgtrue.clear();
         cropPixbuf.clear();
+        heldPixbuf.clear();
         cimg.unlock();
     } else {
         update ();
+    }
+}
+
+void CropHandler::holdCropPixbuf()
+{
+    // Several pans/zooms before a render lands keep the oldest sharp frame:
+    // only an accepted frame replaces it.
+    if (cropPixbuf) {
+        heldPixbuf = cropPixbuf;
+        heldPixbufGeometry = cropPixbufGeometry;
+        cropPixbuf.clear();
     }
 }
 

@@ -35,9 +35,14 @@
 
 #include <glib/gstdio.h>
 
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
 #include "rtengine/rt_math.h"
 #include "rtengine/procparams.h"
 
+#include "backgroundtasks.h"
 #include "batchqueue.h"
 #include "batchqueueentry.h"
 #include "cacheimagedata.h"
@@ -45,6 +50,7 @@
 #include "coarsepanel.h"
 #include "filepanel.h"
 #include "guiutils.h"
+#include "motion.h"
 #include "imagescanhelpers.h"
 #include "inspector.h"
 #include "multilangmgr.h"
@@ -490,7 +496,7 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
 
     searchRevealer_ = Gtk::manage(new Gtk::Revealer());
     searchRevealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_RIGHT);
-    searchRevealer_->set_transition_duration(180);
+    steep::motion::configureRevealer(*searchRevealer_);
     searchRevealer_->set_reveal_child(false);
     Gtk::Box* searchCluster = Gtk::manage(new Gtk::Box());
     searchCluster->pack_start(*hbBrowsePath, Gtk::PACK_SHRINK, 0);
@@ -578,7 +584,7 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
         }
         App::get().mut_options().browserTitlePinToEditor = titlePinItem_->get_active();
         try {
-            Options::save();
+            Options::saveAsync();
         } catch (Options::Error&) {}
         applyBrowserTitle();
     });
@@ -590,7 +596,7 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
         }
         App::get().mut_options().browserTitleShowFullPath = titleFullPathItem_->get_active();
         try {
-            Options::save();
+            Options::saveAsync();
         } catch (Options::Error&) {}
         applyBrowserTitle();
     });
@@ -719,7 +725,7 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
 
     // Toolbar
     // Similar image arrays in filebrowser.cc
-    std::array<std::string, 6> clabelActiveIcons = {"circle-gray-small", "circle-red-small", "circle-yellow-small", "circle-green-small", "circle-blue-small", "circle-purple-small"};
+    std::array<std::string, 6> clabelActiveIcons = {"circle-gray-small", "label-red-small", "label-yellow-small", "label-green-small", "label-blue-small", "label-purple-small"};
     std::array<std::string, 6> clabelInactiveIcons = {"circle-empty-gray-small", "circle-empty-red-small", "circle-empty-yellow-small", "circle-empty-green-small", "circle-empty-blue-small", "circle-empty-purple-small"};
 
     iUnCLabeled = new RTImage(clabelActiveIcons[0], Gtk::ICON_SIZE_BUTTON);
@@ -800,7 +806,7 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     // Put individual color label buttons inside a Revealer for animated expand
     colorLabelRevealer_ = Gtk::manage(new Gtk::Revealer());
     colorLabelRevealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_RIGHT);
-    colorLabelRevealer_->set_transition_duration(250);
+    steep::motion::configureRevealer(*colorLabelRevealer_, steep::motion::Duration::Micro);
     colorLabelRevealer_->add(*fltrLabelbox);
     colorLabelRevealer_->set_reveal_child(false);
 
@@ -1052,7 +1058,7 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     // Wrap filterBar in a Revealer
     filterRevealer_ = Gtk::manage(new Gtk::Revealer());
     filterRevealer_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
-    filterRevealer_->set_transition_duration(200);
+    steep::motion::configureRevealer(*filterRevealer_);
     filterRevealer_->add(*filterBar);
     filterRevealer_->set_reveal_child(false);
 
@@ -1185,12 +1191,7 @@ bool FileCatalog::onColorLabelChildEnter(GdkEventCrossing* /*event*/)
     if (!colorLabelExpanded_) {
         colorLabelExpanded_ = true;
         colorLabelRevealer_->set_reveal_child(true);
-
-        // Start fade animation
-        if (!colorFadeConn_.connected()) {
-            colorFadeConn_ = Glib::signal_timeout().connect(
-                sigc::mem_fun(*this, &FileCatalog::onColorLabelFadeTick), 16);
-        }
+        fadeColorLabelSummary();
     }
     return false;
 }
@@ -1206,31 +1207,23 @@ bool FileCatalog::onColorLabelChildLeave(GdkEventCrossing* event)
         colorCollapseDelay_ = Glib::signal_timeout().connect([this]() -> bool {
             colorLabelExpanded_ = false;
             colorLabelRevealer_->set_reveal_child(false);
-
-            // Start fade-in animation for summary
-            if (!colorFadeConn_.connected()) {
-                colorFadeConn_ = Glib::signal_timeout().connect(
-                    sigc::mem_fun(*this, &FileCatalog::onColorLabelFadeTick), 16);
-            }
+            fadeColorLabelSummary();
             return false; // one-shot
-        }, 300);
+        }, 150);
     }
     return false;
 }
 
-bool FileCatalog::onColorLabelFadeTick()
+void FileCatalog::fadeColorLabelSummary()
 {
-    const double step = 0.07;
-    if (colorLabelExpanded_) {
-        colorSummaryOpacity_ = std::max(0.0, colorSummaryOpacity_ - step);
-    } else {
-        colorSummaryOpacity_ = std::min(1.0, colorSummaryOpacity_ + step);
-    }
-    colorLabelSummary_->queue_draw();
-
-    bool done = (colorLabelExpanded_ && colorSummaryOpacity_ <= 0.0) ||
-                (!colorLabelExpanded_ && colorSummaryOpacity_ >= 1.0);
-    return !done;
+    // The summary dots hand over to the revealed buttons on the revealer's
+    // own clock (Micro), from whatever opacity they are at.
+    colorFade_ = steep::motion::toggle(*colorLabelSummary_, colorSummaryOpacity_, !colorLabelExpanded_,
+        steep::motion::Duration::Micro,
+        [this](double opacity) {
+            colorSummaryOpacity_ = opacity;
+            colorLabelSummary_->queue_draw();
+        });
 }
 
 FileCatalog::~FileCatalog()
@@ -1247,7 +1240,7 @@ FileCatalog::~FileCatalog()
     globalGlobeAnimConn_.disconnect();
     delete rejectsPopover_;
     zoomSliderApplyConn_.disconnect();
-    colorFadeConn_.disconnect();
+    colorFade_.stop();
     colorCollapseDelay_.disconnect();
     reparseDirectoryConn_.disconnect();
     sidecarReloadConn_.disconnect();
@@ -1567,7 +1560,7 @@ void FileCatalog::dirSelected (const Glib::ustring& dirname, const Glib::ustring
         previewsToLoad = 0;
         previewsLoaded = 0;
         if (fileBrowser) {
-            fileBrowser->setEmptyStateText(M("FILEBROWSER_EMPTY_SCANNING"));
+            fileBrowser->setEmptyStateText(M("FILEBROWSER_EMPTY_SCANNING"), true);
         }
 
         // if openfile exists, we have to open it first (it is a command line argument)
@@ -1620,7 +1613,14 @@ void FileCatalog::dirSelected (const Glib::ustring& dirname, const Glib::ustring
         previewBatchFirstDrainPending_.store(true, std::memory_order_release);
         const int dirId = selectedDirectoryId.load();
         const Glib::ustring selDir = selectedDirectory;
+        // Its own thread, not the shared I/O lane: the first thumbnails of
+        // a folder must not queue behind a hover strip that is decoding.
         std::thread([this, dirId, selDir]() {
+#ifdef _OPENMP
+            // Held to one so this per-folder thread never grows an OpenMP
+            // team, which libgomp would keep after the thread is gone.
+            omp_set_num_threads(1);
+#endif
             std::vector<Glib::RefPtr<Gio::File>> allDirs;
             const auto& opts = App::get().options();
             int dirs_left = opts.browseRecursive ? opts.browseRecursiveMaxDirs : 0;
@@ -2478,6 +2478,19 @@ bool FileCatalog::runNavigationBenchmarkStep_(int dirId)
         }
     }
 
+    // STEEP_NAV_BENCH_STRIDE=k (raw-only mode) jumps k RAWs per step, which
+    // stands in for filmstrip clicks on files the adjacent preload never warmed.
+    if (navigationBenchmarkRawOnly_) {
+        const int stride = navigationBenchmarkEnvInt("STEEP_NAV_BENCH_STRIDE", 1, 1, 100);
+        for (int s = 1; s < stride; ++s) {
+            std::size_t further = targetIndex;
+            if (!findNextBenchmarkIndex(targetIndex, navigationBenchmarkDirection_, further)) {
+                break;
+            }
+            targetIndex = further;
+        }
+    }
+
     const eRTNav direction = navigationBenchmarkDirection_;
     if (direction != NAV_NEXT && direction != NAV_PREVIOUS) {
         navigationBenchmarkStarted_ = false;
@@ -2819,7 +2832,7 @@ void FileCatalog::deleteRequested(const std::vector<FileBrowserEntry*>& tbe, boo
         const Glib::ustring paramExt = App::PARAM_FILE_EXTENSION;
         const auto filenamesForDelete = std::make_shared<std::vector<Glib::ustring>>(std::move(filenames));
         const auto batchPathsForDelete = std::make_shared<std::vector<std::pair<Glib::ustring, Glib::ustring>>>(std::move(batchPaths));
-        std::thread([filenamesForDelete, batchPathsForDelete, paramExt]() {
+        steep::runBackground([filenamesForDelete, batchPathsForDelete, paramExt]() {
             for (const auto& fname : *filenamesForDelete) {
                 // delete from cache
                 cacheMgr->deleteEntry(fname);
@@ -2837,7 +2850,7 @@ void FileCatalog::deleteRequested(const std::vector<FileBrowserEntry*>& tbe, boo
                 ::g_remove(bp.first.c_str());
                 ::g_remove(bp.second.c_str());
             }
-        }).detach();
+        });
     }
 }
 
@@ -3562,7 +3575,7 @@ void FileCatalog::showRejectsPopover ()
             App::get().mut_options().browserHideRejects = hideRejectsCheck_->get_active();
             // Persist immediately — the preference must survive even a
             // crash or force-kill, not just a clean exit.
-            Options::save();
+            Options::saveAsync();
             fileBrowser->applyFilter(getFilter());
             _refreshProgressBar();
         });
@@ -3599,7 +3612,7 @@ void FileCatalog::showRejectsPopover ()
                 static_cast<int>(cullFocusScale_->get_value() + 0.5);
             mutOptions.autoCullExposureTolerance =
                 static_cast<int>(cullExposureScale_->get_value() + 0.5);
-            Options::save();
+            Options::saveAsync();
             rejectsPopover_->popdown();
             fileBrowser->startAutoCull(
                 mutOptions.autoCullFocusTolerance,
@@ -4346,7 +4359,7 @@ void FileCatalog::globalScopeToggled ()
             if (dontShowAgain.get_active()) {
                 App::get().mut_options().showGlobalScopeUnfilteredWarning = false;
                 try {
-                    Options::save();
+                    Options::saveAsync();
                 } catch (Options::Error&) {}
             }
 
@@ -4537,6 +4550,9 @@ void FileCatalog::startGlobalScan (bool fresh)
 
     for (int worker = 0; worker < workerCount; ++worker) {
         detachQuietly(std::thread([this, alive, cancel, generation, filter, recurse, shared, worker, pushMatch, flushRemainder]() {
+#ifdef _OPENMP
+            omp_set_num_threads(1); // see the directory scan: no team per scan thread
+#endif
             // Worker 0 first streams the index — instant, complete results
             // from every folder ever flagged, before any folder walking.
             if (worker == 0) {
@@ -4888,7 +4904,7 @@ void FileCatalog::setCurrentFiletypeFilterAsDefault(bool active)
     updateFiletypeDefaultCheck_();
 
     try {
-        Options::save();
+        Options::saveAsync();
     } catch (Options::Error& error) {
         Gtk::MessageDialog dialog(
             getToplevelWindow(this), error.get_msg(), true,

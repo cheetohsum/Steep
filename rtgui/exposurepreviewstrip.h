@@ -43,6 +43,14 @@ public:
 
     void setThumbnail(Thumbnail* thm);
     void setCurrentParams(const rtengine::procparams::ProcParams& params);
+    /// The same, without a copy: one snapshot shared by every strip.
+    void setCurrentParams(std::shared_ptr<const rtengine::procparams::ProcParams> params);
+
+    /// Whether the strip's group is open. The strip sits in the group's
+    /// always-shown box, so being visible says nothing about whether anyone
+    /// is working with it; an inactive strip keeps the frames it has and
+    /// renders the current look when it becomes active again.
+    void setActive(bool active);
     void setParamModifier(ParamModifier mod);
     void setDragCallback(DragCallback cb);
     void setReleaseCallback(DragCallback cb);
@@ -59,11 +67,13 @@ private:
     bool on_button_release_event(GdkEventButton* event) override;
     bool on_motion_notify_event(GdkEventMotion* event) override;
     bool on_leave_notify_event(GdkEventCrossing* event) override;
+    void on_map() override;
     Gtk::SizeRequestMode get_request_mode_vfunc() const override;
     void get_preferred_width_vfunc(int& min, int& natural) const override;
     void get_preferred_height_vfunc(int& min, int& natural) const override;
 
     void generateThumbnailsAsync();
+    bool wantsThumbnails() const;
     void handleDrag(double x);
     void cancelThumbnailGeneration();
 
@@ -71,14 +81,17 @@ private:
     static constexpr int STRIP_WIDTH = 220;
     static constexpr int NUM_THUMBS = 6;
     static constexpr unsigned int THUMB_START_DELAY_MS = 1200;
-    static constexpr double CORNER_RADIUS = 8.0;
+    static constexpr double CORNER_RADIUS = 6.0;   // steepui::Radius::M
 
     Thumbnail* thumbnail_ = nullptr;
-    std::shared_ptr<rtengine::procparams::ProcParams> currentParams_;
+    std::shared_ptr<const rtengine::procparams::ProcParams> currentParams_;
     std::shared_ptr<rtengine::procparams::ProcParams> dragBaseParams_; // snapshot at drag start
     std::vector<Glib::RefPtr<Gdk::Pixbuf>> thumbnails_;
     double scrubberPos_ = 0.0; // -1.0 to 1.0
     bool isDragging_ = false;
+    bool active_ = true;
+    /// The frames on show are older than currentParams_.
+    bool stale_ = false;
     /// The pointer is near enough to the scrubber to grab it.
     bool handleHover_ = false;
     bool dragPending_ = false; // throttled drag waiting to fire

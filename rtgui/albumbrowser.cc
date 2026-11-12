@@ -22,6 +22,7 @@
 
 #include "rtengine/rt_math.h"
 
+#include "backgroundtasks.h"
 #include "cacheimagedata.h"
 #include "cachemanager.h"
 #include "guiutils.h"
@@ -35,6 +36,8 @@
 
 #include <fstream>
 #include <algorithm>
+#include <atomic>
+#include <memory>
 #include <cmath>
 #include <sstream>
 #include <thread>
@@ -138,7 +141,7 @@ private:
 };
 
 // Generate rotated chevron pixbufs: frame 0 = right (0°), frame count = down (90°)
-static std::vector<Glib::RefPtr<Gdk::Pixbuf>> generateChevronFrames(int count)
+static std::vector<Glib::RefPtr<Gdk::Pixbuf>> generateChevronFrames(int count, const Gdk::RGBA& ink)
 {
     const int sz = 16;
     const double cx = sz / 2.0, cy = sz / 2.0;
@@ -151,7 +154,7 @@ static std::vector<Glib::RefPtr<Gdk::Pixbuf>> generateChevronFrames(int count)
         cr->translate(cx, cy);
         cr->rotate(angle);
         cr->translate(-cx, -cy);
-        cr->set_source_rgba(0.6, 0.6, 0.6, 1.0);
+        cr->set_source_rgba(ink.get_red(), ink.get_green(), ink.get_blue(), 1.0);
         cr->set_line_width(1.5);
         cr->set_line_cap(Cairo::LINE_CAP_ROUND);
         cr->set_line_join(Cairo::LINE_JOIN_ROUND);
@@ -246,7 +249,7 @@ AlbumBrowser::AlbumBrowser ()
         const double dy = headerPressRootY_ - ev->y_root; // dragging up grows the list
         if (!headerDragging_ && std::abs(dy) > 4.0) {
             headerDragging_ = true;
-            expandAnimConn_.disconnect();
+            stopExpandAnim();
             hideAlbumHoverPopup();
             App::get().mut_options().albumPanelCollapsed = false;
             treeView_->show();
@@ -285,7 +288,7 @@ AlbumBrowser::AlbumBrowser ()
         }
         applyPanelSizing();
         try {
-            Options::save();
+            Options::saveAsync();
         } catch (Options::Error&) {}
         return true;
     });
@@ -376,9 +379,39 @@ AlbumBrowser::AlbumBrowser ()
     treeView_->set_level_indentation(12);
 
     // Generate chevron rotation frames.
-    chevronFrames_ = generateChevronFrames(6);
-    chevronRightPixbuf_ = chevronFrames_.front();
-    chevronDownPixbuf_ = chevronFrames_.back();
+    // Theme ink rather than a fixed grey (see DirBrowser): rebuilt when a
+    // style invalidation finds the token has moved, i.e. on a theme switch.
+    const auto rebuildGlyphs = [this](const Gdk::RGBA& ink) {
+        chevronFrames_ = generateChevronFrames(6, ink);
+        chevronRightPixbuf_ = chevronFrames_.front();
+        chevronDownPixbuf_ = chevronFrames_.back();
+
+        // Small magnifier for smart albums, in the same ink.
+        auto surface = Cairo::ImageSurface::create(Cairo::FORMAT_ARGB32, 14, 14);
+        auto cr = Cairo::Context::create(surface);
+        cr->set_source_rgba(ink.get_red(), ink.get_green(), ink.get_blue(), 0.85);
+        cr->set_line_width(1.3);
+        cr->arc(5.5, 5.5, 3.5, 0, 2 * M_PI);
+        cr->stroke();
+        cr->set_line_width(1.6);
+        cr->set_line_cap(Cairo::LINE_CAP_ROUND);
+        cr->move_to(8.2, 8.2);
+        cr->line_to(11.8, 11.8);
+        cr->stroke();
+        searchPixbuf_ = Gdk::Pixbuf::create(surface, 0, 0, 14, 14);
+    };
+    const Gdk::RGBA glyphInk = themeColor(*treeView_, "steep_text_dim", Gdk::RGBA("#8a92a1"));
+    rebuildGlyphs(glyphInk);
+    const auto lastGlyphInk = std::make_shared<Gdk::RGBA>(glyphInk);
+    treeView_->signal_style_updated().connect([this, rebuildGlyphs, lastGlyphInk]() {
+        const Gdk::RGBA ink = themeColor(*treeView_, "steep_text_dim", Gdk::RGBA("#8a92a1"));
+
+        if (ink != *lastGlyphInk) {
+            *lastGlyphInk = ink;
+            rebuildGlyphs(ink);
+            treeView_->queue_draw();
+        }
+    });
 
     // Chevron expand/collapse indicator column (only shown for FOLDER nodes)
     Gtk::CellRendererPixbuf* chevronCR = Gtk::manage(new Gtk::CellRendererPixbuf());
@@ -441,6 +474,8 @@ AlbumBrowser::AlbumBrowser ()
     // Name column — set to expand so album names aren't truncated
     Gtk::CellRendererText* nameCR = Gtk::manage(new Gtk::CellRendererText());
     nameCR->property_ellipsize() = Pango::ELLIPSIZE_END;
+    // Same name-row height as the Places and Folders lists.
+    nameCR->set_fixed_size(-1, steepui::listRowHeight(*treeView_));
     Gtk::TreeView::Column* nameCol = Gtk::manage(new Gtk::TreeView::Column(""));
     nameCol->pack_start(*nameCR, true);
     nameCol->add_attribute(*nameCR, "text", columns_.name);
@@ -460,22 +495,6 @@ AlbumBrowser::AlbumBrowser ()
     });
     treeView_->append_column(*nameCol);
 
-    // Create search icon pixbuf (small magnifier drawn with Cairo)
-    {
-        auto surface = Cairo::ImageSurface::create(Cairo::FORMAT_ARGB32, 14, 14);
-        auto cr = Cairo::Context::create(surface);
-        cr->set_source_rgba(0.58, 0.62, 0.68, 0.85);
-        cr->set_line_width(1.3);
-        cr->arc(5.5, 5.5, 3.5, 0, 2 * M_PI);
-        cr->stroke();
-        cr->set_line_width(1.6);
-        cr->set_line_cap(Cairo::LINE_CAP_ROUND);
-        cr->move_to(8.2, 8.2);
-        cr->line_to(11.8, 11.8);
-        cr->stroke();
-        searchPixbuf_ = Gdk::Pixbuf::create(surface, 0, 0, 14, 14);
-    }
-
     // Search icon column (clickable, only for smart albums)
     Gtk::CellRendererPixbuf* searchCR = Gtk::manage(new Gtk::CellRendererPixbuf());
     searchCol_ = Gtk::manage(new Gtk::TreeView::Column(""));
@@ -485,7 +504,10 @@ AlbumBrowser::AlbumBrowser ()
     searchCol_->set_cell_data_func(*searchCR, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
         auto* pbCR = static_cast<Gtk::CellRendererPixbuf*>(cr);
         // Manually set the pixbuf since set_cell_data_func overrides add_attribute
-        pbCR->property_pixbuf() = (*iter)[columns_.searchIcon];
+        // The row only says whether it has one: the glyph itself is the
+        // current theme's (rows keep whatever pixbuf they were built with).
+        const Glib::RefPtr<Gdk::Pixbuf> rowIcon = (*iter)[columns_.searchIcon];
+        pbCR->property_pixbuf() = rowIcon ? searchPixbuf_ : rowIcon;
         auto rowPath = model_->get_path(iter);
         bool hovered = !hoveredPath_.empty() && rowPath == hoveredPath_;
         bool dropTarget = dragActive_ && !dropTargetPath_.empty() && rowPath == dropTargetPath_;
@@ -607,8 +629,6 @@ AlbumBrowser::AlbumBrowser ()
 
 AlbumBrowser::~AlbumBrowser ()
 {
-    chevronAnimConn_.disconnect();
-    expandAnimConn_.disconnect();
     headerDragApplyConn_.disconnect();
     hoverPopupTimer_.disconnect();
     cycleConn_.disconnect();
@@ -617,52 +637,64 @@ AlbumBrowser::~AlbumBrowser ()
     delete hoverPopup_;
 }
 
-void AlbumBrowser::startChevronAnim()
+void AlbumBrowser::animateChevron(const std::string& pathStr, bool expanding)
 {
-    if (chevronAnimConn_.connected()) return;
-    chevronAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
-        // Advance chevron frames
-        for (auto it = chevronAnimFrame_.begin(); it != chevronAnimFrame_.end(); ) {
-            bool expanding = chevronAnimExpanding_[it->first];
-            if (expanding) {
-                it->second++;
-                if (it->second >= static_cast<int>(chevronFrames_.size()) - 1) {
-                    it->second = static_cast<int>(chevronFrames_.size()) - 1;
-                    chevronAnimExpanding_.erase(it->first);
-                    it = chevronAnimFrame_.erase(it);
-                    continue;
-                }
-            } else {
-                it->second--;
-                if (it->second <= 0) {
-                    it->second = 0;
-                    chevronAnimExpanding_.erase(it->first);
-                    it = chevronAnimFrame_.erase(it);
-                    continue;
-                }
-            }
-            ++it;
-        }
+    const int last = static_cast<int>(chevronFrames_.size()) - 1;
+    // A chevron still turning carries on from the frame it is showing.
+    const auto it = chevronAnimFrame_.find(pathStr);
+    const int startFrame = it != chevronAnimFrame_.end() ? it->second : (expanding ? 0 : last);
+    const int endFrame = expanding ? last : 0;
+    chevronAnimFrame_[pathStr] = startFrame;
 
-        // Advance reveal fraction (clip-based reveal)
-        if (revealAlpha_ < 1.0) {
-            revealAlpha_ += 16.0 / 150.0;
-            if (revealAlpha_ >= 1.0) {
-                revealAlpha_ = 1.0;
-                revealParentPath_.clear();
-                treeView_->revealParentPath.clear();
-                treeView_->revealFraction = 1.0;
-            } else {
-                double t = 1.0 - std::pow(1.0 - revealAlpha_, 3);
-                treeView_->revealFraction = t;
-            }
-        }
+    const int duration = last > 0
+        ? steep::motion::ms(steep::motion::Duration::Micro) * std::abs(endFrame - startFrame) / last
+        : 0;
+    chevronAnims_[pathStr] = steep::motion::run(*treeView_, startFrame, endFrame, duration, steep::motion::Ease::Move,
+        [this, pathStr](double frame) {
+            chevronAnimFrame_[pathStr] = static_cast<int>(std::lround(frame));
+            treeView_->queue_draw();
+        },
+        [this, pathStr]() {
+            // Back to the static open/closed pixbuf.
+            chevronAnimFrame_.erase(pathStr);
+            treeView_->queue_draw();
+        });
+}
 
-        treeView_->queue_draw();
+void AlbumBrowser::animateReveal(const std::string& parentPathStr)
+{
+    revealParentPath_ = parentPathStr;
+    treeView_->revealParentPath = parentPathStr;
+    treeView_->revealFraction = 0.0;
+    revealAnim_ = steep::motion::run(*treeView_, 0.0, 1.0, steep::motion::Duration::Standard, steep::motion::Ease::Enter,
+        [this](double fraction) {
+            treeView_->revealFraction = fraction;
+            treeView_->queue_draw();
+        },
+        [this]() {
+            revealParentPath_.clear();
+            treeView_->revealParentPath.clear();
+            treeView_->revealFraction = 1.0;
+            treeView_->queue_draw();
+        });
+}
 
-        bool done = chevronAnimFrame_.empty() && revealAlpha_ >= 1.0;
-        return !done;
-    }, 16);
+void AlbumBrowser::clearReveal()
+{
+    revealAnim_.stop();
+    revealParentPath_.clear();
+    treeView_->revealParentPath.clear();
+    treeView_->revealFraction = 1.0;
+}
+
+void AlbumBrowser::stopExpandAnim()
+{
+    if (expandAnim_.running()) {
+        expandAnim_.stop();
+        // A fold cancelled in mid-flight never ran its restore step, which
+        // would leave the scrollbar hidden for good.
+        scrollw_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+    }
 }
 
 void AlbumBrowser::onGlobalAlbumsChanged (AlbumBrowser* sender)
@@ -827,7 +859,7 @@ void AlbumBrowser::refreshTree ()
 
     // Load cover thumbnails in background
     int session = ++coverLoadSession_;
-    std::thread(&AlbumBrowser::loadCoverThumbnails, this, session).detach();
+    steep::runBackground([this, session]() { loadCoverThumbnails(session); });
 }
 
 void AlbumBrowser::saveExpansionState ()
@@ -1415,96 +1447,43 @@ void AlbumBrowser::onSelectionChanged ()
         } else {
             // Folders - toggle expand/collapse with animation
             auto path = model_->get_path(iter);
-            expandAnimConn_.disconnect();
+            expandAnim_.stop();
             bool wasExpanded = treeView_->row_expanded(path);
 
-            // Hide the scrollbar during the animation. POLICY_EXTERNAL, not
-            // POLICY_NEVER: with NEVER, GTK propagates the child's full
-            // minimum height and ignores max_content_height, so the panel
-            // would jump to the full tree height and snap back afterwards.
-            // With EXTERNAL the scrollbar stays hidden while min==max
-            // content height (set each tick below) pins the height exactly.
-            scrollw_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_EXTERNAL);
+            // animatePaneHeight hides the scrollbar for the duration with
+            // POLICY_EXTERNAL, not POLICY_NEVER: with NEVER, GTK propagates
+            // the child's full minimum height and ignores max_content_height,
+            // so the panel would jump to the full tree height and snap back
+            // afterwards. With EXTERNAL the scrollbar stays hidden while
+            // min==max content height (set each frame) pins the height exactly.
+            const auto restoreLimits = [this]() {
+                scrollw_->set_max_content_height(-1);  // so min can never exceed max below
+                scrollw_->set_min_content_height(effMinHeight());
+                scrollw_->set_max_content_height(effMaxHeight());
+                scrollw_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+            };
+
+            const auto pathStr = path.to_string();
+            // Capture height, fold or unfold, then animate to the new height.
+            const int startH = scrollw_->get_allocated_height();
 
             if (wasExpanded) {
-                // Start chevron collapse animation
-                auto pathStr = path.to_string();
-                auto cit = chevronAnimFrame_.find(pathStr);
-                chevronAnimFrame_[pathStr] = cit != chevronAnimFrame_.end()
-                    ? cit->second : static_cast<int>(chevronFrames_.size()) - 1;
-                chevronAnimExpanding_[pathStr] = false;
-                revealParentPath_.clear();
-                treeView_->revealParentPath.clear();
-                treeView_->revealFraction = 1.0;
-                startChevronAnim();
-
-                // Collapse animation: capture height, collapse, animate
-                expandAnimStartH_ = scrollw_->get_allocated_height();
+                clearReveal();
+                animateChevron(pathStr, false);
                 treeView_->collapse_row(path);
-                // Measure new natural height after collapse; the target must
-                // match the settled height once min/max are restored, or the
-                // panel snaps at the end of the animation.
-                int minH = 0, natH = 0;
-                treeView_->get_preferred_height(minH, natH);
-                expandAnimTargetH_ = std::max(std::min(natH + 4, effMaxHeight()), effMinHeight());
-                expandAnimExpanding_ = false;
-                expandAnimFraction_ = 0.0;
-                scrollw_->set_min_content_height(expandAnimStartH_);
-                scrollw_->set_max_content_height(expandAnimStartH_);
-                expandAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
-                    expandAnimFraction_ += 16.0 / 150.0; // 150ms collapse
-                    if (expandAnimFraction_ >= 1.0) {
-                        scrollw_->set_min_content_height(effMinHeight());
-                        scrollw_->set_max_content_height(effMaxHeight());
-                        scrollw_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
-                        return false;
-                    }
-                    double t = expandAnimFraction_ * expandAnimFraction_; // ease-in-quad
-                    int h = expandAnimStartH_ + static_cast<int>((expandAnimTargetH_ - expandAnimStartH_) * t);
-                    scrollw_->set_min_content_height(h);
-                    scrollw_->set_max_content_height(h);
-                    return true;
-                }, 16);
             } else {
-                // Start chevron expand animation + child reveal
-                auto pathStr = path.to_string();
-                auto cit = chevronAnimFrame_.find(pathStr);
-                chevronAnimFrame_[pathStr] = cit != chevronAnimFrame_.end()
-                    ? cit->second : 0;
-                chevronAnimExpanding_[pathStr] = true;
-                revealParentPath_ = pathStr;
-                revealAlpha_ = 0.0;
-                treeView_->revealParentPath = pathStr;
-                treeView_->revealFraction = 0.0;
-                startChevronAnim();
-
-                // Expand animation: capture height, expand, animate
-                expandAnimStartH_ = scrollw_->get_allocated_height();
+                animateChevron(pathStr, true);
+                animateReveal(pathStr);
                 treeView_->expand_row(path, false);
-                // Measure new natural height after expand; target must match
-                // the settled height once min/max are restored (see collapse).
-                int minH = 0, natH = 0;
-                treeView_->get_preferred_height(minH, natH);
-                expandAnimTargetH_ = std::max(std::min(natH + 4, effMaxHeight()), effMinHeight());
-                expandAnimExpanding_ = true;
-                expandAnimFraction_ = 0.0;
-                scrollw_->set_min_content_height(expandAnimStartH_);
-                scrollw_->set_max_content_height(expandAnimStartH_);
-                expandAnimConn_ = Glib::signal_timeout().connect([this]() -> bool {
-                    expandAnimFraction_ += 16.0 / 250.0; // 250ms expand
-                    if (expandAnimFraction_ >= 1.0) {
-                        scrollw_->set_min_content_height(effMinHeight());
-                        scrollw_->set_max_content_height(effMaxHeight());
-                        scrollw_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
-                        return false;
-                    }
-                    double t = 1.0 - std::pow(1.0 - expandAnimFraction_, 4); // ease-out-quart
-                    int h = expandAnimStartH_ + static_cast<int>((expandAnimTargetH_ - expandAnimStartH_) * t);
-                    scrollw_->set_min_content_height(h);
-                    scrollw_->set_max_content_height(h);
-                    return true;
-                }, 16);
             }
+
+            // Measure the new natural height; the target must match the
+            // settled height once min/max are restored, or the panel snaps at
+            // the end of the animation.
+            int minH = 0, natH = 0;
+            treeView_->get_preferred_height(minH, natH);
+            const int targetH = std::max(std::min(natH + 4, effMaxHeight()), effMinHeight());
+            expandAnim_ = steep::motion::animatePaneHeight(*scrollw_, startH, targetH, true, restoreLimits);
 
             selectedAlbumName_.clear();
             selectedNodeId_ = -1;
@@ -1539,7 +1518,7 @@ void AlbumBrowser::runSmartAlbumSearch (int nodeId, bool openAlbum)
         return false;
     });
 
-    std::thread([this, nodeCopy, albumName, nodeId, openAlbum]() {
+    steep::runBackground([this, nodeCopy, albumName, nodeId, openAlbum]() {
         auto matchingFiles = evaluateSmartAlbum(nodeCopy);
         Glib::signal_idle().connect_once([this, matchingFiles, albumName, nodeId, openAlbum]() {
             // Update the count in the tree model
@@ -1563,7 +1542,7 @@ void AlbumBrowser::runSmartAlbumSearch (int nodeId, bool openAlbum)
                 albumViewSignal_.emit(albumName, matchingFiles);
             }
         });
-    }).detach();
+    });
 }
 
 bool AlbumBrowser::onButtonPress (GdkEventButton* event)
@@ -1680,30 +1659,51 @@ void AlbumBrowser::showContextMenu (GdkEventButton* event, int nodeId)
                     flowBox->set_min_children_per_line(3);
 
                     Glib::ustring chosenPath;
+                    // The tiles belong to this dialog; a thumbnail that
+                    // arrives after it has closed must find that out.
+                    const auto dialogAlive = std::make_shared<std::atomic<bool>>(true);
                     for (const auto& fp : n->filePaths) {
                         Gtk::Image* img = Gtk::manage(new Gtk::Image());
                         img->set_size_request(64, 64);
                         img->set_tooltip_text(Glib::path_get_basename(fp));
                         flowBox->add(*img);
 
-                        // Load thumbnail asynchronously
+                        // Decode off the GUI thread: for a photo the cache has
+                        // not seen, getEntry develops the RAW, and an idle
+                        // callback per photo froze the dialog while it did.
+                        // Only the finished pixbuf comes back here.
                         Glib::ustring path = fp;
-                        Glib::signal_idle().connect_once([img, path]() {
+                        steep::runBackground([img, path, dialogAlive]() {
+                            if (!dialogAlive->load()) {
+                                return; // closed with a queue of tiles still to do
+                            }
+
+                            Glib::RefPtr<Gdk::Pixbuf> pixbuf;
                             try {
                                 Thumbnail* thm = CacheManager::getInstance()->getEntry(path);
                                 if (thm) {
                                     double scale = 1.0;
                                     rtengine::IImage8* im = thm->processThumbImage(64, scale);
                                     if (im) {
-                                        auto pb = Gdk::Pixbuf::create_from_data(
+                                        pixbuf = Gdk::Pixbuf::create_from_data(
                                             im->getData(), Gdk::COLORSPACE_RGB, false, 8,
-                                            im->getWidth(), im->getHeight(), im->getWidth() * 3);
-                                        img->set(pb->copy());
+                                            im->getWidth(), im->getHeight(), im->getWidth() * 3)->copy();
                                         delete im;
                                     }
                                     thm->decreaseRef();
                                 }
                             } catch (...) {}
+
+                            if (!pixbuf) {
+                                return;
+                            }
+
+                            // Cleared on the GUI thread, where this runs too.
+                            Glib::signal_idle().connect_once([img, pixbuf, dialogAlive]() {
+                                if (dialogAlive->load()) {
+                                    img->set(pixbuf);
+                                }
+                            });
                         });
                     }
 
@@ -1719,7 +1719,10 @@ void AlbumBrowser::showContextMenu (GdkEventButton* event, int nodeId)
                         }
                     });
 
-                    if (dlg.run() == Gtk::RESPONSE_OK && !chosenPath.empty()) {
+                    const int response = dlg.run();
+                    dialogAlive->store(false);
+
+                    if (response == Gtk::RESPONSE_OK && !chosenPath.empty()) {
                         setCoverForAlbum(nodeId, chosenPath);
                     }
                 });
@@ -2158,7 +2161,7 @@ void AlbumBrowser::applyPanelSizing()
 {
     if (App::get().options().albumPanelCollapsed) {
         hideAlbumHoverPopup();
-        expandAnimConn_.disconnect();
+        stopExpandAnim();
         scrollw_->hide();
         return;
     }
@@ -2289,8 +2292,9 @@ void AlbumBrowser::showAlbumHoverPopup(const Gtk::TreeModel::Path& path)
         indices.push_back(i);
         cycleLoading_.insert(i);
     }
-    std::thread(&AlbumBrowser::loadCycleThumbsWorker, this,
-                std::move(initialPaths), std::move(indices), session, true).detach();
+    steep::runBackground([this, initialPaths, indices, session]() {
+        loadCycleThumbsWorker(initialPaths, indices, session, true);
+    });
 }
 
 void AlbumBrowser::hideAlbumHoverPopup()
@@ -2405,9 +2409,11 @@ void AlbumBrowser::startCycleTimer()
             // it has finished loading.
             if (!cycleLoading_.count(next)) {
                 cycleLoading_.insert(next);
-                std::thread(&AlbumBrowser::loadCycleThumbsWorker, this,
-                            std::vector<Glib::ustring>{cycleFiles_[next]},
-                            std::vector<int>{next}, hoverPopupSession_, false).detach();
+                const Glib::ustring nextFile = cycleFiles_[next];
+                const int session = hoverPopupSession_;
+                steep::runBackground([this, nextFile, next, session]() {
+                    loadCycleThumbsWorker({nextFile}, {next}, session, false);
+                });
             }
             return true;
         }

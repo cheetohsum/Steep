@@ -549,12 +549,16 @@ Gtk::Box* BatchQueuePanel::buildTemplatePresets ()
     box->set_margin_top(6);
 
     Gtk::Label* heading = Gtk::manage(new Gtk::Label());
-    heading->set_markup("<big><b>" + Glib::Markup::escape_text(M("QUEUE_TEMPLATE_PRESETS_TITLE")) + "</b></big>");
+    // Sizes come from the type ladder (themes/common/widgets.css), not markup.
+    heading->set_text(M("QUEUE_TEMPLATE_PRESETS_TITLE"));
+    heading->get_style_context()->add_class("type-title");
+    heading->get_style_context()->add_class("type-strong");
     heading->set_halign(Gtk::ALIGN_START);
     box->pack_start(*heading, Gtk::PACK_SHRINK);
 
     Gtk::Label* intro = Gtk::manage(new Gtk::Label());
-    intro->set_markup("<small>" + Glib::Markup::escape_text(M("QUEUE_TEMPLATE_PRESETS_INTRO")) + "</small>");
+    intro->set_text(M("QUEUE_TEMPLATE_PRESETS_INTRO"));
+    intro->get_style_context()->add_class("type-small");
     intro->set_halign(Gtk::ALIGN_START);
     intro->set_line_wrap(true);
     box->pack_start(*intro, Gtk::PACK_SHRINK);
@@ -574,7 +578,8 @@ Gtk::Box* BatchQueuePanel::buildTemplatePresets ()
         content->pack_start(*name, Gtk::PACK_SHRINK);
 
         Gtk::Label* patternLbl = Gtk::manage(new Gtk::Label());
-        patternLbl->set_markup("<small><tt>" + Glib::Markup::escape_text(pattern) + "</tt></small>");
+        patternLbl->set_markup("<tt>" + Glib::Markup::escape_text(pattern) + "</tt>");
+        patternLbl->get_style_context()->add_class("type-small");
         patternLbl->set_halign(Gtk::ALIGN_START);
         patternLbl->set_ellipsize(Pango::ELLIPSIZE_MIDDLE);
         content->pack_start(*patternLbl, Gtk::PACK_SHRINK);

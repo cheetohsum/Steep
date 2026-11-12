@@ -111,6 +111,11 @@ protected:
     const std::unique_ptr<procparams::ColorManagementParams> histMatchingParams;
     float minVals[3];
 
+    // Inputs and outputs of a precomputeFullQuality() run; null when none is
+    // pending. Any later preprocess()/demosaic()/flush() drops it.
+    struct FullQualityPrecompute;
+    std::unique_ptr<FullQualityPrecompute> fullQualityPrecompute;
+
     void processFalseColorCorrectionThread(Imagefloat* im, array2D<float> &rbconv_Y, array2D<float> &rbconv_I, array2D<float> &rbconv_Q, array2D<float> &rbout_I, array2D<float> &rbout_Q, const int row_from, const int row_to);
     void hlRecovery(const std::string &method, float* red, float* green, float* blue, int width, float* hlmax);
     void transformRect(const PreviewProps &pp, int tran, int &sx1, int &sy1, int &width, int &height, int &fw);
@@ -136,6 +141,12 @@ public:
     void        retinexPrepareCurves       (const procparams::RetinexParams &retinexParams, LUTf &cdcurve, LUTf &mapcurve, RetinextransmissionCurve &retinextransmissionCurve, RetinexgaintransmissionCurve &retinexgaintransmissionCurve, bool &retinexcontlutili, bool &mapcontlutili, bool &useHsl, LUTu & lhist16RETI, LUTu & histLRETI) override;
     void        retinexPrepareBuffers      (const procparams::ColorManagementParams& cmp, const procparams::RetinexParams &retinexParams, multi_array2D<float, 4> &conversionBuffer, LUTu &lhist16RETI) override;
     void        flush      () override;
+    std::size_t estimatedBytes () const override;
+    bool        precomputeFullQuality (const procparams::ProcParams& params) override;
+    bool        precomputeFullQualityUnchecked (const procparams::ProcParams& params);
+    bool        takePrecomputedFullQuality (const procparams::ProcParams& params, float& reddeha, float& greendeha, float& bluedeha, double& contrastThreshold) override;
+    bool        hasPrecomputedFullQuality () const override;
+    bool        adoptFullQualityFrom (ImageSource& twin) override;
     void        HLRecovery_Global (const procparams::ToneCurveParams &hrp) override;
     void        refinement(int PassCount);
     void        setBorder(unsigned int rawBorder) override {border = rawBorder;}

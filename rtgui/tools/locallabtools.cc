@@ -578,8 +578,8 @@ LocallabColor::LocallabColor():
 {
     auto m = ProcEventMapper::getInstance();
     //rtengine::ProcEvent EvlocallabenacieMaskall;
-    Evlocallabfeathercol = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_FEATHERCOL");
-    Evlocallabpreviewcol = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_PREVIEWCOL");
+    Evlocallabfeathercol = m->newEvent(TONE, "HISTORY_MSG_LOCAL_FEATHERCOL");
+    Evlocallabpreviewcol = m->newEvent(TONE, "HISTORY_MSG_LOCAL_PREVIEWCOL");
     set_orientation(Gtk::ORIENTATION_VERTICAL);
 
     float R, G, B;
@@ -2781,15 +2781,15 @@ LocallabExposure::LocallabExposure():
     angmaskexp(Gtk::manage(new Adjuster(M("TP_LOCALLAB_GRADANG"), -180., 180., 0.1, 0.))),
     mask2expCurveEditorG(new CurveEditorGroup(App::get().mut_options().lastlocalCurvesDir, M("TP_LOCALLAB_MASK2"))),
     Lmaskexpshape(static_cast<DiagonalCurveEditor*>(mask2expCurveEditorG->addCurve(CT_Diagonal, "L(L)"))),
-    Evlocallabtmosatur(ProcEventMapper::getInstance()->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_TMO_SATUR"))
+    Evlocallabtmosatur(ProcEventMapper::getInstance()->newEvent(TONE, "HISTORY_MSG_LOCAL_TMO_SATUR"))
     
 {
     set_orientation(Gtk::ORIENTATION_VERTICAL);
 
     const LocallabParams::LocallabSpot defSpot;
     auto m = ProcEventMapper::getInstance();
-    Evlocallabpreviewexe = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_PREVIEWEXE");
-    Evlocallabfeatherexp = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_FEATHEREXE");
+    Evlocallabpreviewexe = m->newEvent(TONE, "HISTORY_MSG_LOCAL_PREVIEWEXE");
+    Evlocallabfeatherexp = m->newEvent(TONE, "HISTORY_MSG_LOCAL_FEATHEREXE");
 
     // Parameter Exposure specific widgets
     expMethod->append(M("TP_LOCALLAB_STD"));
@@ -4396,41 +4396,41 @@ LocallabShadow::LocallabShadow():
     fatSHFrame(Gtk::manage(new Gtk::Frame(M("TP_LOCALLAB_FATSHFRA")))),
     fatamountSH(Gtk::manage(new Adjuster(M("TP_LOCALLAB_FATAMOUNT"), 1., 100., 1., 1.))),
     fatanchorSH(Gtk::manage(new Adjuster(M("TP_LOCALLAB_FATANCHOR"), 1., 100., 1., 50., Gtk::manage(new RTImage("circle-black-small")), Gtk::manage(new RTImage("circle-white-small"))))),
-    EvlocallabTePivot(ProcEventMapper::getInstance()->newEvent(AUTOEXP, "HISTORY_MSG_LOCALLAB_TE_PIVOT"))
+    EvlocallabTePivot(ProcEventMapper::getInstance()->newEvent(TONE, "HISTORY_MSG_LOCALLAB_TE_PIVOT"))
 {
     auto m = ProcEventMapper::getInstance();
-    Evlocallabpreviewsh = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_PREVIEWSH");
-    EvlocallabfeatherSH = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_FEATHERSH");
-    EvlocallabghsMethod = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_GHSMETHOD");
-    Evlocallabghs_D = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_GHS_D");
-    Evlocallabghs_slope = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_GHS_SLOPE");
-    Evlocallabghs_chro = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_GHS_CHRO");
-    Evlocallabghs_B = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_GHS_B");
-    Evlocallabghs_SP = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_GHS_SP");
-    EvlocallabautoSPson = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_AUTOSP");
-    EvlocallabautoSPoff = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_AUTOSP");
-    Evlocallabghs_LP = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_GHS_LP");
-    Evlocallabghs_HP = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_GHS_HP");
-    Evlocallabghs_LC = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_GHS_LC");
-    Evlocallabghs_MID = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_GHS_MID");
-    Evlocallabghs_HLP = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_GHS_HLP");
-    Evlocallabghs_BLP = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_GHS_BLP");
-    Evlocallabghs_smooth = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_GHS_SMOOTH");
-    Evlocallabghs_autobw = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_GHS_AUTOBW");
-    Evlocallabghs_agx = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_GHS_AGX");
-    Evlocallabghs_Matmet = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_GHS_MATMET");
+    Evlocallabpreviewsh = m->newEvent(TONE, "HISTORY_MSG_LOCAL_PREVIEWSH");
+    EvlocallabfeatherSH = m->newEvent(TONE, "HISTORY_MSG_LOCAL_FEATHERSH");
+    EvlocallabghsMethod = m->newEvent(TONE, "HISTORY_MSG_LOCAL_GHSMETHOD");
+    Evlocallabghs_D = m->newEvent(TONE, "HISTORY_MSG_LOCAL_GHS_D");
+    Evlocallabghs_slope = m->newEvent(TONE, "HISTORY_MSG_LOCAL_GHS_SLOPE");
+    Evlocallabghs_chro = m->newEvent(TONE, "HISTORY_MSG_LOCAL_GHS_CHRO");
+    Evlocallabghs_B = m->newEvent(TONE, "HISTORY_MSG_LOCAL_GHS_B");
+    Evlocallabghs_SP = m->newEvent(TONE, "HISTORY_MSG_LOCAL_GHS_SP");
+    EvlocallabautoSPson = m->newEvent(TONE, "HISTORY_MSG_LOCAL_AUTOSP");
+    EvlocallabautoSPoff = m->newEvent(TONE, "HISTORY_MSG_LOCAL_AUTOSP");
+    Evlocallabghs_LP = m->newEvent(TONE, "HISTORY_MSG_LOCAL_GHS_LP");
+    Evlocallabghs_HP = m->newEvent(TONE, "HISTORY_MSG_LOCAL_GHS_HP");
+    Evlocallabghs_LC = m->newEvent(TONE, "HISTORY_MSG_LOCAL_GHS_LC");
+    Evlocallabghs_MID = m->newEvent(TONE, "HISTORY_MSG_LOCAL_GHS_MID");
+    Evlocallabghs_HLP = m->newEvent(TONE, "HISTORY_MSG_LOCAL_GHS_HLP");
+    Evlocallabghs_BLP = m->newEvent(TONE, "HISTORY_MSG_LOCAL_GHS_BLP");
+    Evlocallabghs_smooth = m->newEvent(TONE, "HISTORY_MSG_LOCAL_GHS_SMOOTH");
+    Evlocallabghs_autobw = m->newEvent(TONE, "HISTORY_MSG_LOCAL_GHS_AUTOBW");
+    Evlocallabghs_agx = m->newEvent(TONE, "HISTORY_MSG_LOCAL_GHS_AGX");
+    Evlocallabghs_Matmet = m->newEvent(TONE, "HISTORY_MSG_LOCAL_GHS_MATMET");
 
-    Evlocallabghs_inv = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_GHS_INV");
-    EvlocallabGridghs = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_CIE_LABGRIDGHS");
-    Evlocallabmich_exp = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_MICH_EXP");
-    Evlocallabmich_spar = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_MICH_SPAR");
-    Evlocallabmich_kpar = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_MICH_KPAR");
-    Evlocallabmich_sat = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_MICH_SAT");
-    Evlocallabmich_out = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_MICH_OUT");
-    Evlocallabmich_black = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_MICH_BLACK");
-    Evlocallabmich_white = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_MICH_WHITE");
-    Evlocallabmich_high = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_MICH_HIGH");
-    Evlocallabmich_jdx = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_MICH_JDX");
+    Evlocallabghs_inv = m->newEvent(TONE, "HISTORY_MSG_LOCAL_GHS_INV");
+    EvlocallabGridghs = m->newEvent(TONE, "HISTORY_MSG_LOCAL_CIE_LABGRIDGHS");
+    Evlocallabmich_exp = m->newEvent(TONE, "HISTORY_MSG_LOCAL_MICH_EXP");
+    Evlocallabmich_spar = m->newEvent(TONE, "HISTORY_MSG_LOCAL_MICH_SPAR");
+    Evlocallabmich_kpar = m->newEvent(TONE, "HISTORY_MSG_LOCAL_MICH_KPAR");
+    Evlocallabmich_sat = m->newEvent(TONE, "HISTORY_MSG_LOCAL_MICH_SAT");
+    Evlocallabmich_out = m->newEvent(TONE, "HISTORY_MSG_LOCAL_MICH_OUT");
+    Evlocallabmich_black = m->newEvent(TONE, "HISTORY_MSG_LOCAL_MICH_BLACK");
+    Evlocallabmich_white = m->newEvent(TONE, "HISTORY_MSG_LOCAL_MICH_WHITE");
+    Evlocallabmich_high = m->newEvent(TONE, "HISTORY_MSG_LOCAL_MICH_HIGH");
+    Evlocallabmich_jdx = m->newEvent(TONE, "HISTORY_MSG_LOCAL_MICH_JDX");
 
     ghs_SP->addAutoButton(M("TP_LOCALLAB_SPRADIUS_TOOLTIP"));
     set_orientation(Gtk::ORIENTATION_VERTICAL);
@@ -6897,8 +6897,8 @@ LocallabVibrance::LocallabVibrance():
     Lmaskvibshape(static_cast<DiagonalCurveEditor*>(mask2vibCurveEditorG->addCurve(CT_Diagonal, "L(L)")))
 {
     auto m = ProcEventMapper::getInstance();
-    Evlocallabpreviewvib = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_PREVIEWVIB");
-    Evlocallabfeathervib = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_FEATHERVIB");
+    Evlocallabpreviewvib = m->newEvent(TONE, "HISTORY_MSG_LOCAL_PREVIEWVIB");
+    Evlocallabfeathervib = m->newEvent(TONE, "HISTORY_MSG_LOCAL_FEATHERVIB");
     set_orientation(Gtk::ORIENTATION_VERTICAL);
 
     float R, G, B;
@@ -8519,18 +8519,18 @@ LocallabBlur::LocallabBlur():
     csThresholdblur(Gtk::manage(new ThresholdAdjuster(M("TP_LOCALLAB_CSTHRESHOLDBLUR"), 0, 9, 0, 0, 6, 5, 0, false)))
 {
     auto m = ProcEventMapper::getInstance();
-    Evlocallabnliter = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_NLITER");
-    Evlocallabdenocontrast = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_DENOCONTRAST");
-    Evlocallabautodenoon = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_DENOAUTO");
-    Evlocallabautodenooff = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_DENOAUTO");
-    Evlocallabcontrshow = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_DENOCONTRSHOW");
-    Evlocallabdenoratio = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_DENORATIO");
-    Evlocallabenacontrast = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_DENOENA");
-    Evlocallabdenomask = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_DENOMASK");
-    EvlocallabwavCurvehuecont = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_DENOMASKCURV");   
-    Evlocallablockmadl = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_LOCKMADL");
-    Evlocallablockmadls = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_LOCKMADLS");
-    Evlocallabmadllock = m->newEvent(AUTOEXP, "HISTORY_MSG_LOCAL_LOCKMADL2");
+    Evlocallabnliter = m->newEvent(TONE, "HISTORY_MSG_LOCAL_NLITER");
+    Evlocallabdenocontrast = m->newEvent(TONE, "HISTORY_MSG_LOCAL_DENOCONTRAST");
+    Evlocallabautodenoon = m->newEvent(TONE, "HISTORY_MSG_LOCAL_DENOAUTO");
+    Evlocallabautodenooff = m->newEvent(TONE, "HISTORY_MSG_LOCAL_DENOAUTO");
+    Evlocallabcontrshow = m->newEvent(TONE, "HISTORY_MSG_LOCAL_DENOCONTRSHOW");
+    Evlocallabdenoratio = m->newEvent(TONE, "HISTORY_MSG_LOCAL_DENORATIO");
+    Evlocallabenacontrast = m->newEvent(TONE, "HISTORY_MSG_LOCAL_DENOENA");
+    Evlocallabdenomask = m->newEvent(TONE, "HISTORY_MSG_LOCAL_DENOMASK");
+    EvlocallabwavCurvehuecont = m->newEvent(TONE, "HISTORY_MSG_LOCAL_DENOMASKCURV");   
+    Evlocallablockmadl = m->newEvent(TONE, "HISTORY_MSG_LOCAL_LOCKMADL");
+    Evlocallablockmadls = m->newEvent(TONE, "HISTORY_MSG_LOCAL_LOCKMADLS");
+    Evlocallabmadllock = m->newEvent(TONE, "HISTORY_MSG_LOCAL_LOCKMADL2");
    
     set_orientation(Gtk::ORIENTATION_VERTICAL);
     denocontrast->addAutoButton(M("TP_LOCALLAB_DENORADIUS_TOOLTIP"));

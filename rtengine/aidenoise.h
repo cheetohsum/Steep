@@ -22,6 +22,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <vector>
 
 #include <glibmm/ustring.h>
 
@@ -66,11 +67,25 @@ public:
     );
     void cancel();
 
+    // Runs the same denoise on the calling thread and hands the result back
+    // without touching the cache, so an export of a photo the cache does not
+    // hold still gets it. Works without detect(); nullptr on failure.
+    std::unique_ptr<Imagefloat> denoiseNow(
+        const procparams::AIDenoiseParams& params,
+        const Imagefloat& input,
+        int iso,
+        Glib::ustring* error = nullptr);
+
     bool isCacheValid(const Glib::ustring& rawPath, double iso) const;
     std::shared_ptr<const Imagefloat> getCachedResult() const;
     void setCachedResult(std::unique_ptr<Imagefloat> result,
                          const Glib::ustring& rawPath, double iso);
     void clearCache();
+    // The result is a full-resolution float image (~300 MB at 26 MP) that
+    // nothing else frees. Dropped when its photo is closed...
+    void clearCacheFor(const Glib::ustring& rawPath);
+    // ...and by the memory trimmer when it belongs to none of `keep`.
+    void clearCacheUnless(const std::vector<Glib::ustring>& keep);
 
 private:
     AIDenoiseManager();
@@ -81,6 +96,16 @@ private:
 
     // Find the model file on disk; empty string if not found.
     Glib::ustring findModelPath() const;
+
+    // The inference itself, shared by the background and synchronous entry
+    // points. Serialised on the ONNX session.
+    std::unique_ptr<Imagefloat> runInference(
+        const procparams::AIDenoiseParams& params,
+        const Imagefloat& input,
+        int iso,
+        const std::function<void(double)>& progressCb,
+        const std::atomic<bool>* cancel,
+        Glib::ustring& error);
 
     // PIMPL: ONNX Runtime types are kept out of the header so callers don't
     // need to include onnxruntime headers.

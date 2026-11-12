@@ -156,6 +156,70 @@ void ThumbBrowserBase::syncEntryOffset_(ThumbBrowserEntryBase* entry)
     entry->setOffset((int)(hscroll.get_value()), (int)(vscroll.get_value()));
 }
 
+void ThumbBrowserBase::damageEntry_(ThumbBrowserEntryBase* entry)
+{
+    syncEntryOffset_(entry);
+    internal.queue_draw_area(entry->getX(), entry->getY(),
+                             entry->getEffectiveWidth() + 1, entry->getEffectiveHeight() + 1);
+}
+
+void ThumbBrowserBase::damageEntries_(bool pulsing, bool hoveredOnes)
+{
+    if (!internal.get_realized()) {
+        return;
+    }
+
+    const int w = internal.get_width();
+    const int h = internal.get_height();
+
+    MYREADERLOCK(l, entryRW);
+
+    for (std::size_t i = firstViewportCandidate_(0, 0); i < drawableEntries_.size(); i++) {
+        auto* entry = drawableEntries_[i];
+        const auto relation = viewportRelation_(entry, 0, 0, w, h);
+
+        if (relation == VREL_BEFORE || relation == VREL_OUTSIDE) {
+            continue;
+        }
+
+        if (relation == VREL_AFTER) {
+            break;
+        }
+
+        if ((pulsing && entry->isPulsing(pulseSerial_)) || (hoveredOnes && entry->hovered)) {
+            damageEntry_(entry);
+        }
+    }
+}
+
+unsigned ThumbBrowserBase::beginEntryPulse()
+{
+    // Not yet drawn a frame: this is the same operation flagging another
+    // entry (batch rating), which simply joins the pulse.
+    if (pulseAnim_.running() && pulseAlpha_ >= 1.0) {
+        return pulseSerial_;
+    }
+
+    ++pulseSerial_;
+    pulseAlpha_ = 1.0;
+    pulseAnim_ = steep::motion::run(internal, 1.0, 0.0, steep::motion::Duration::Large, steep::motion::Ease::Enter,
+        [this](double alpha) {
+            pulseAlpha_ = alpha;
+            damageEntries_(true, false);
+        });
+    return pulseSerial_;
+}
+
+void ThumbBrowserBase::startHoverFade_()
+{
+    hoverAlpha_ = 0.0;
+    hoverAnim_ = steep::motion::run(internal, 0.0, 1.0, steep::motion::Duration::Micro, steep::motion::Ease::Enter,
+        [this](double alpha) {
+            hoverAlpha_ = alpha;
+            damageEntries_(false, true);
+        });
+}
+
 void ThumbBrowserBase::maybeEvictOffscreenBuffers_(std::size_t firstVisible, std::size_t lastVisible)
 {
     // Entries either side of the viewport that stay hydrated, so ordinary
@@ -1138,9 +1202,58 @@ bool ThumbBrowserBase::Internal::on_draw(const ::Cairo::RefPtr< Cairo::Context> 
             auto layout = create_pango_layout(parent->emptyStateText_);
             int tw = 0, th = 0;
             layout->get_pixel_size(tw, th);
+            double textY = (logical.height - th) / 2.0;
+
+            cr->save();
+            cr->set_antialias(Cairo::ANTIALIAS_DEFAULT);
+
+            if (parent->emptyStateScanning_) {
+                // Placeholder cells where the first thumbnails will land, at
+                // the current thumbnail size: the folder is on its way, not
+                // empty. Static on purpose - the scan itself is the motion.
+                const double cellH = std::max(24, parent->previewHeight);
+                const double cellW = std::round(cellH * 1.5);
+                const double gap = 12.0;
+                const double margin = 12.0;
+                const int cols = std::max(1, static_cast<int>((logical.width - 2.0 * margin + gap) / (cellW + gap)));
+                const int rows = std::max(1, static_cast<int>((logical.height - 2.0 * margin + gap) / (cellH + gap)));
+                const int cells = std::min(12, cols * rows);
+
+                steepui::setSource(cr, themeColor(*this, "steep_surface_1", Gdk::RGBA("#252a32")), 0.9);
+
+                for (int i = 0; i < cells; ++i) {
+                    steepui::roundedRect(cr, margin + (i % cols) * (cellW + gap), margin + (i / cols) * (cellH + gap),
+                                         cellW, cellH, steepui::Radius::M);
+                }
+
+                cr->fill();
+
+                // Caption under the cells when there is room, else over them.
+                const double below = margin + ((cells - 1) / cols + 1) * (cellH + gap) + 4.0;
+
+                if (below + th + margin <= logical.height) {
+                    textY = below;
+                }
+            } else {
+                // Nothing here: a short rule broken by a ring, above the caption.
+                const double cx = logical.width / 2.0;
+                const double oy = std::round(textY - 14.0) + 0.5;
+                steepui::setSource(cr, themeColor(*this, "steep_ornament", Gdk::RGBA("#2d7fd3")));
+                cr->set_line_width(1.0);
+                cr->move_to(cx - 30.0, oy);
+                cr->line_to(cx - 8.0, oy);
+                cr->move_to(cx + 8.0, oy);
+                cr->line_to(cx + 30.0, oy);
+                cr->stroke();
+                cr->arc(cx, oy, 3.5, 0.0, 2.0 * rtengine::RT_PI);
+                cr->stroke();
+            }
+
+            cr->restore();
+
             const Gdk::RGBA dim = themeColor(*this, "steep_text_dim", Gdk::RGBA("#8a92a1"));
             cr->set_source_rgba(dim.get_red(), dim.get_green(), dim.get_blue(), 0.85);
-            cr->move_to((logical.width - tw) / 2.0, (logical.height - th) / 2.0);
+            cr->move_to((logical.width - tw) / 2.0, textY);
             layout->show_in_cairo_context(cr);
         }
     }
@@ -1337,12 +1450,17 @@ bool ThumbBrowserBase::Internal::on_motion_notify_event (GdkEventMotion* event)
         const bool nowHovered = entry->inside((int)event->x, (int)event->y);
         if (nowHovered != entry->hovered) {
             entry->hovered = nowHovered;
-            hoverChanged = true;
+            hoverChanged = hoverChanged || nowHovered;
+            // Only this entry changed; no need to repaint the whole browser.
+            parent->damageEntry_(entry);
         }
     }
 
+    MYREADERLOCK_RELEASE(l);
+
     if (hoverChanged) {
-        queue_draw();
+        // The ring fades in on the entry the pointer arrived on.
+        parent->startHoverFade_();
     }
 
     return true;
@@ -1374,10 +1492,11 @@ bool ThumbBrowserBase::Internal::on_scroll_event (GdkEventScroll* event)
     return true;
 }
 
-void ThumbBrowserBase::setEmptyStateText (const Glib::ustring& text)
+void ThumbBrowserBase::setEmptyStateText (const Glib::ustring& text, bool scanning)
 {
-    if (emptyStateText_ != text) {
+    if (emptyStateText_ != text || emptyStateScanning_ != scanning) {
         emptyStateText_ = text;
+        emptyStateScanning_ = scanning;
         internal.queue_draw();
     }
 }

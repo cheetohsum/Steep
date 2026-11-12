@@ -75,6 +75,7 @@ LightEffects::LightEffects():
         heading->set_halign(Gtk::ALIGN_START);
         heading->get_style_context()->add_class("tool-section-label");
         pack_start(*heading, Gtk::PACK_SHRINK);
+        return heading;
     };
 
     // The whole block sits flush with the tool names (see widgets.css
@@ -86,7 +87,7 @@ LightEffects::LightEffects():
     pack_start(*glow);
     pack_start(*glowRadius);
 
-    section("TP_LIGHTEFFECTS_HALATION");
+    halationHeading = section("TP_LIGHTEFFECTS_HALATION");
     pack_start(*halation);
     pack_start(*halationSize);
     pack_start(*halationWarmth);
@@ -129,8 +130,34 @@ void LightEffects::read(const ProcParams* pp, const ParamsEdited* pedited)
     flare->setValue(pp->lightEffects.flare);
     flareLength->setValue(pp->lightEffects.flareLength);
     flareAngle->setValue(pp->lightEffects.flareAngle);
+    updateFilmLabHalation(pp->filmPresets);
 
     enableListener();
+}
+
+void LightEffects::updateFilmLabHalation(const FilmPresetsParams& film)
+{
+    // Keep in step with filmLabHalationActive() in rtengine/iplighteffects.cc.
+    // Every stock carries some base halation, so only a fully trimmed slider
+    // counts as off. A batch edit spans images that may disagree; leave it live.
+    const bool active = !batchMode && film.enabled && film.strength > 0 && film.halation > -100;
+
+    if (active == filmLabHalation) {
+        return;
+    }
+
+    filmLabHalation = active;
+    const Glib::ustring tip = M(active ? "TP_LIGHTEFFECTS_HALATION_FILMLAB_TOOLTIP" : "TP_LIGHTEFFECTS_HALATION_TOOLTIP");
+
+    for (Adjuster* a : {halation, halationSize, halationWarmth}) {
+        a->set_sensitive(!active);
+    }
+
+    halationHeading->set_sensitive(!active);
+    halationHeading->set_tooltip_text(active ? tip : Glib::ustring());
+    halation->set_tooltip_text(tip);
+    halationSize->set_tooltip_text(active ? tip : Glib::ustring());
+    halationWarmth->set_tooltip_text(active ? tip : Glib::ustring());
 }
 
 void LightEffects::write(ProcParams* pp, ParamsEdited* pedited)

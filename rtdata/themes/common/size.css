@@ -11,12 +11,12 @@ progressbar.vertical {
 }
 progressbar trough {
     border-width: 1px;
-    border-radius: 0.3em;
+    border-radius: 3px;
 }
 
 progressbar trough progress {
     border-width: 1px;
-    border-radius: 0.3em;
+    border-radius: 3px;
 }
 
 progressbar.vertical trough {
@@ -83,7 +83,7 @@ notebook > header tab > grid > image {
 }
 
 notebook > header > tabs > arrow {
-    border-radius: 0.2em;
+    border-radius: 3px;
     padding: 0 2px;
     margin: 0.5em 0;
 }
@@ -312,7 +312,7 @@ window.csd:not(.fullscreen) #MainNotebook > header.top {
 
 /*** Context & popups menus *****************************************************************************/
 .csd.popup > decoration {
-    border-radius: 0;
+    border-radius: 10px;
     border: none;
     padding: 0;
     margin: 0;
@@ -320,9 +320,9 @@ window.csd:not(.fullscreen) #MainNotebook > header.top {
 
 menu {
     border-width: 1px;
-    padding: 1px;
+    padding: 4px;
     margin: 0;
-    border-radius: 0;
+    border-radius: 10px;
 }
 menu > arrow.top,
 menu > arrow.top:hover,
@@ -375,8 +375,8 @@ entry > window > frame > border:not(.dummy) {
 /*** Popover *** Context menu filechooser ******************************************************/
 popover {
     border-width: 1px;
-    border-radius: 0;
-    padding: 0;
+    border-radius: 10px;
+    padding: 4px;
     margin: 0;
 }
 popover > box {
@@ -387,7 +387,7 @@ popover modelbutton {
     min-height: 2em;
     padding: 0 0.416666666666666666em;
     margin: 0;
-    border-radius: 0;
+    border-radius: 6px;
 }
 
 popover label {
@@ -401,21 +401,21 @@ switch {
     min-width: 11em;
     margin: 0 2px;
     padding: 0;
-    border-radius: 0.2em;
+    border-radius: 6px;
     border-width: 1px;
     margin-bottom: 0.5em;
 }
 
 switch slider {
     border-width: 1px;
-    border-radius: 0.2em 0 0 0.2em;
+    border-radius: 6px 0 0 6px;
     
     /* Needed to cover the total switch */
     margin: -1px;
     padding: 1px;
 }
 switch:checked  slider{
-    border-radius: 0 0.2em 0.2em 0;
+    border-radius: 0 6px 6px 0;
 }
 /** end ****************************************************************************************/
 
@@ -425,7 +425,7 @@ button,
     min-height: 1.666666666666666666em;
     min-width: 1.666666666666666666em;/*x*/
     margin: 0.125em;
-    border-radius: 0.2em;
+    border-radius: 6px;
     border-width: 1px;
 }
 button.flat {
@@ -524,14 +524,14 @@ button.color colorswatch {
     min-height: 0;
     min-width: 0;
     margin: 1px;
-    border-radius: 0.2em;
+    border-radius: 3px;
 }
 
 colorchooser colorswatch {
     border-width: 1px;
 }
 colorchooser colorswatch#add-color-button:first-child {
-  border-radius: 5.5px 0 0 5.5px;
+  border-radius: 6px 0 0 6px;
 }
 
 /* Font chooser button */
@@ -672,7 +672,7 @@ messagedialog .dialog-action-area button:not(:only-child):nth-child(2) {
     min-height: 1.666666666666666666em;/*x*/
     min-width: 1.666666666666666666em;/*x*/
     margin: 0;
-    border-radius: 0 0.2em 0.2em 0;
+    border-radius: 0 6px 6px 0;
     border-width: 1px;
     padding: 0;
 }
@@ -693,7 +693,7 @@ messagedialog .dialog-action-area button:not(:only-child):nth-child(2) {
     min-width: 14px;
     margin: 0 2px;
     padding: 0;
-    border-radius: 2px;
+    border-radius: 3px;
     border-width: 0;
 }
 #BeforeAfterContainer button.ba-lock image {
@@ -746,14 +746,14 @@ dialog .view button {
 }
 
 .path-bar button:first-child {
-    border-top-left-radius: 0.2em;
-    border-bottom-left-radius: 0.2em;
+    border-top-left-radius: 6px;
+    border-bottom-left-radius: 6px;
     margin: 0;
     padding: 0;
 }
 .path-bar button:last-child {
-    border-top-right-radius: 0.2em;
-    border-bottom-right-radius: 0.2em;
+    border-top-right-radius: 6px;
+    border-bottom-right-radius: 6px;
     margin: 0;
     padding: 0;
 }
@@ -800,11 +800,11 @@ radio {
     min-width: 1.166666666666666666em;
 }
 check {
-    border-radius: 2px;
+    border-radius: 3px;
 }
 
 radio{
-    border-radius: 1.166666666666666666em;
+    border-radius: 50%;
 }
 
 radiobutton label,
@@ -971,14 +971,14 @@ spinbutton button:active {
 
 /*** Window Layout *****************************************************************************/
 .csd:not(.popup):not(tooltip) > decoration {
-    border-radius: 0.416666666666666666em 0.416666666666666666em 0 0;
+    border-radius: 6px 6px 0 0;
     border: none;
     padding: 0;
     margin: 0.833333333333333333em;
 }
 headerbar {
     border-bottom-width: 1px;
-    border-radius: 0.416666666666666666em 0.416666666666666666em 0 0;
+    border-radius: 6px 6px 0 0;
     min-height: 2em;
     padding: 1px 0.416666666666666666em 0;
     margin: 0;

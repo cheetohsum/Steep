@@ -37,12 +37,14 @@ const Glib::ustring Defringe::TOOL_NAME = "defringe";
 Defringe::Defringe () : FoldableToolPanel(this, TOOL_NAME, M("TP_DEFRINGE_LABEL"), false, true)
 {
     auto m = ProcEventMapper::getInstance();
-    EvDefringePurpleAmount = m->newEvent(DEMOSAIC, "HISTORY_MSG_DEFRINGE_PURPLE_AMOUNT");
-    EvDefringePurpleHueLow = m->newEvent(DEMOSAIC, "HISTORY_MSG_DEFRINGE_PURPLE_HUE_LOW");
-    EvDefringePurpleHueHigh = m->newEvent(DEMOSAIC, "HISTORY_MSG_DEFRINGE_PURPLE_HUE_HIGH");
-    EvDefringeGreenAmount = m->newEvent(DEMOSAIC, "HISTORY_MSG_DEFRINGE_GREEN_AMOUNT");
-    EvDefringeGreenHueLow = m->newEvent(DEMOSAIC, "HISTORY_MSG_DEFRINGE_GREEN_HUE_LOW");
-    EvDefringeGreenHueHigh = m->newEvent(DEMOSAIC, "HISTORY_MSG_DEFRINGE_GREEN_HUE_HIGH");
+    // The engine defringes in Lab, late in the pipeline; nothing here is read
+    // at demosaic time, so these sit where radius and threshold do.
+    EvDefringePurpleAmount = m->newEvent(DEFRINGE, "HISTORY_MSG_DEFRINGE_PURPLE_AMOUNT");
+    EvDefringePurpleHueLow = m->newEvent(DEFRINGE, "HISTORY_MSG_DEFRINGE_PURPLE_HUE_LOW");
+    EvDefringePurpleHueHigh = m->newEvent(DEFRINGE, "HISTORY_MSG_DEFRINGE_PURPLE_HUE_HIGH");
+    EvDefringeGreenAmount = m->newEvent(DEFRINGE, "HISTORY_MSG_DEFRINGE_GREEN_AMOUNT");
+    EvDefringeGreenHueLow = m->newEvent(DEFRINGE, "HISTORY_MSG_DEFRINGE_GREEN_HUE_LOW");
+    EvDefringeGreenHueHigh = m->newEvent(DEFRINGE, "HISTORY_MSG_DEFRINGE_GREEN_HUE_HIGH");
 
     defringeExpanded = false;
     hueExpanded = false;
