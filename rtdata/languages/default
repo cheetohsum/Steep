@@ -466,6 +466,7 @@ TP_FILMPRESETS_HALATIONCOLOR_TOOLTIP;Makes the halation glow warmer or cooler.
 TP_FILMPRESETS_HALATIONSIZE_TOOLTIP;How far the halation glow spreads from bright areas.
 TP_FILMPRESETS_HALATIONTHRESHOLD_TOOLTIP;How bright an area must be before it starts to glow.
 TP_FILMPRESETS_LIGHTSOURCES_TOOLTIP;How bright lamps and other burnt-out lights are taken to be when they halate and bloom. A light that clips the sensor was brighter than the file records. At 0 its brightness is estimated from the exposure the camera used and from how dark its surroundings are. Lower trusts the file more (-100: exactly as recorded), higher makes lights glow harder. Engine v6.
+TP_FILMPRESETS_FILMSHARPNESS_TOOLTIP;How much fine detail the emulsion itself holds. Light scatters as it passes through the film's layers, so each colour layer is a little soft, the red-sensitive layer at the bottom most. At 0 each layer has the sharpness of this kind of stock at its speed; the larger the film format, the less it shows. Lower is softer, +100 loses nothing. Visible at 100% zoom and in exports. Engine v6.
 TP_FILMPRESETS_HALATION_TOOLTIP;A red-orange glow around bright lights, from light bouncing back through the film.
 TP_FILMPRESETS_HIGHLIGHTHUE_TOOLTIP;The color used to tint the highlights.
 TP_FILMPRESETS_HIGHLIGHTTINT_TOOLTIP;How strongly the highlights take on the highlight color.
@@ -3584,6 +3585,7 @@ TP_FILMPRESETS_GRAINCOLOR;Grain color
 TP_FILMPRESETS_HALATIONSIZE;Halation radius
 TP_FILMPRESETS_HALATIONTHRESHOLD;Halation threshold
 TP_FILMPRESETS_LIGHTSOURCES;Light sources
+TP_FILMPRESETS_FILMSHARPNESS;Film sharpness
 TP_FILMPRESETS_HALATIONCOLOR;Halation warmth
 TP_FILMPRESETS_BLOOM;Optical bloom
 TP_FILMPRESETS_OUTPUTSOFTNESS;Output softness
@@ -3597,6 +3599,7 @@ HISTORY_MSG_FILMPRESETS_GRAINCOLOR;Film Lab - Grain color
 HISTORY_MSG_FILMPRESETS_HALATIONSIZE;Film Lab - Halation radius
 HISTORY_MSG_FILMPRESETS_HALATIONTHRESHOLD;Film Lab - Halation threshold
 HISTORY_MSG_FILMPRESETS_LIGHTSOURCES;Film Lab - Light sources
+HISTORY_MSG_FILMPRESETS_FILMSHARPNESS;Film Lab - Film sharpness
 HISTORY_MSG_FILMPRESETS_HALATIONCOLOR;Film Lab - Halation warmth
 HISTORY_MSG_FILMPRESETS_BLOOM;Film Lab - Optical bloom
 HISTORY_MSG_FILMPRESETS_OUTPUTSOFTNESS;Film Lab - Output softness

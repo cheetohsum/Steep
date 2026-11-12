@@ -37,15 +37,15 @@ inline float clipLuminance(float fNumber, float shutterSeconds, float iso)
 // signs and lit windows sit in the thousands of cd/m2 whatever the exposure,
 // so the darker the scene the camera exposed for, the further over they are:
 // about a stop in daylight (where what clips is mostly white cloud and
-// paint), six at night. Three when the exposure is unknown. `amount` is the
+// paint), five at night. Two and a half when the exposure is unknown. `amount` is the
 // Light sources slider: -100 takes the file as recorded, +100 doubles the
 // stops.
 inline float emitterStops(float clipLuminanceCdM2, int amount)
 {
     constexpr float emitter = 5000.f;
     const float stops = clipLuminanceCdM2 > 0.f
-        ? std::max(1.f, std::min(6.f, std::log2(emitter / clipLuminanceCdM2)))
-        : 3.f;
+        ? std::max(1.f, std::min(5.f, std::log2(emitter / clipLuminanceCdM2)))
+        : 2.5f;
     return stops * (1.f + std::max(-100, std::min(100, amount)) / 100.f);
 }
 
@@ -58,6 +58,43 @@ inline float emitterConfidence(float surroundOverClip)
     const float stopsBelow = -std::log2(std::max(surroundOverClip, 1e-4f));
     const float t = std::max(0.f, std::min(1.f, (stopsBelow - 1.f) / 3.f));
     return t * t * (3.f - 2.f * t);
+}
+
+// The larger a clipped light is in the frame, the less of the estimate it
+// gets: a point is an unresolved lamp, a broad disc is a frosted globe or a
+// lit panel, whose surface is far less bright than a bare source, and its
+// area already multiplies the light it sends into the base. `clippedShare`
+// is the clipped fraction of the surroundings (4% of the short side).
+inline float emitterSizeFactor(float clippedShare)
+{
+    return 1.f / (1.f + std::max(clippedShare, 0.f) / 0.1f);
+}
+
+// Emulsion sharpness. A film layer's modulation transfer is close to
+// 1 / (1 + (f / f50)^2): it loses fine detail gently and keeps a long tail,
+// unlike a Gaussian. Two Gaussians of equal weight, the second three times
+// as wide, follow that curve within a few percent out to 2.5 f50.
+// `f50` is the spatial frequency, in cycles/mm, the layer holds at 50%.
+constexpr float emulsionSkirt = 3.f;
+
+inline float emulsionSigmaMM(float f50)
+{
+    return 0.0994f / std::max(f50, 1.f);
+}
+
+inline float emulsionMTF(float cyclesPerMM, float f50)
+{
+    const float sigma = emulsionSigmaMM(f50);
+    const float x = 2.f * 9.8696044f * sigma * sigma * cyclesPerMM * cyclesPerMM;
+    return 0.5f * std::exp(-x) + 0.5f * std::exp(-x * emulsionSkirt * emulsionSkirt);
+}
+
+// The Film sharpness slider as a factor on f50: 0 keeps the stock's own,
+// -100 halves it, and towards +100 it rises without bound (no loss).
+inline float emulsionSharpnessScale(int amount)
+{
+    const float v = std::max(-100, std::min(100, amount)) / 100.f;
+    return v < 0.f ? std::exp2(v) : 1.f / std::max(1.f - v, 1e-3f);
 }
 
 inline float printHighlightGain(float displayLuma)

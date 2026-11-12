@@ -69,6 +69,7 @@ private:
     Adjuster* halationSizeAdj_;
     Adjuster* halationThresholdAdj_;
     Adjuster* lightSourcesAdj_;
+    Adjuster* filmSharpnessAdj_;
     Adjuster* halationColorAdj_;
     Adjuster* bloomAdj_;
     Adjuster* outputSoftnessAdj_;
@@ -119,6 +120,7 @@ private:
     rtengine::ProcEvent EvFilmPresetsHalationSize;
     rtengine::ProcEvent EvFilmPresetsHalationThreshold;
     rtengine::ProcEvent EvFilmPresetsLightSources;
+    rtengine::ProcEvent EvFilmPresetsFilmSharpness;
     rtengine::ProcEvent EvFilmPresetsHalationColor;
     rtengine::ProcEvent EvFilmPresetsBloom;
     rtengine::ProcEvent EvFilmPresetsOutputSoftness;

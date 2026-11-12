@@ -7,8 +7,8 @@ A lamp 64x brighter than the capture's clip, on dark ground, rendered three ways
 
   truth    : the scene stored unclipped (16-bit, everything / 64, +6 stops in
              the pp3), recovery off
-  captured : the same scene clipped at the lamp, recovery at +6 stops (a file
-             without exposure data gets 3 stops, LightSources=100 doubles it)
+  captured : the same scene clipped at the lamp, recovery at a fixed +6 stops
+             (STEEP_FILMLAB_LIGHTS_STOPS, which also switches off the size rule)
   recorded : captured, recovery off
 
 Gates:
@@ -61,9 +61,9 @@ def write_tiff16(path, img):
     Path(path).write_bytes(buf)
 
 
-def render(cli, out, name, src, comp, **film):
+def render(cli, out, name, src, comp, stops=None, **film):
     s = dict(Enabled="true", ModelVersion=6, Preset="cinema_reveal_35", Strength=100, Halation=0, HalationSize=0,
-             HalationThreshold=0, Bloom=-100, OutputSoftness=0, Format=35)
+             HalationThreshold=0, Bloom=-100, OutputSoftness=0, Format=35, FilmSharpness=100)
     s.update(film)
     pp3 = out / (name + ".pp3")
     pp3.write_text("[Exposure]\nCompensation=%g\n\n[Film Presets]\n" % comp + "".join(f"{k}={v}\n" for k, v in s.items()),
@@ -72,6 +72,9 @@ def render(cli, out, name, src, comp, **film):
     env = dict(os.environ, OMP_NUM_THREADS="4", STEEP_FILMLAB_LIGHTS_TRACE="1")
     env["RT_SETTINGS"] = str((out / "settings").resolve())
     env["RT_CACHE"] = str((out / "cache").resolve())
+    env.pop("STEEP_FILMLAB_LIGHTS_STOPS", None)
+    if stops is not None:
+        env["STEEP_FILMLAB_LIGHTS_STOPS"] = str(stops)
     r = subprocess.run([str(Path(cli).resolve()), "-q", "-Y", "-o", str(tif.resolve()), "-d", "-p", str(pp3.resolve()),
                         "-t", "-b16", "-c", str(Path(src).resolve())], capture_output=True, text=True, timeout=600, env=env)
     if r.returncode != 0 or not tif.exists():
@@ -103,10 +106,10 @@ def main():
     far = (rr >= RADIUS + 1.5 * rc) & (rr <= RADIUS + 3.0 * rc)
 
     halo, lit = {}, {}
-    for name, src, comp, lights in (("truth", "truth.tif", 6, -100), ("captured", "captured.tif", 0, 100),
-                                    ("recorded", "captured.tif", 0, -100)):
-        lit[name] = render(args.cli, out, name + "_on", out / src, comp, LightSources=lights)
-        off = render(args.cli, out, name + "_off", out / src, comp, LightSources=lights, Halation=-100)
+    for name, src, comp, lights, stops in (("truth", "truth.tif", 6, -100, None), ("captured", "captured.tif", 0, 0, 6),
+                                           ("recorded", "captured.tif", 0, -100, None)):
+        lit[name] = render(args.cli, out, name + "_on", out / src, comp, stops, LightSources=lights)
+        off = render(args.cli, out, name + "_off", out / src, comp, stops, LightSources=lights, Halation=-100)
         d = (lit[name] - off)[..., 0] * 255
         halo[name] = (float(d[near].mean()), float(d[far].mean()))
         print(f"{name:9s} lamp halo, red, 8-bit levels: at the ring {halo[name][0]:7.2f}   further out {halo[name][1]:7.2f}")

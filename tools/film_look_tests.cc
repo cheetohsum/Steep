@@ -129,12 +129,14 @@ int main(int argc, char** argv)
         require(legacy.filmPresets.modelVersion == 4 && legacy.filmPresets.warmth == 12
             && legacy.filmPresets.shadowTint == baseline.filmPresets.shadowTint,
             "legacy partial recipe no longer merges normally");
-        Glib::file_set_contents(fixture, "[Film Presets]\nEnabled=true\nModelVersion=6\nLightSources=-40\n");
+        Glib::file_set_contents(fixture, "[Film Presets]\nEnabled=true\nModelVersion=6\nLightSources=-40\nFilmSharpness=35\n");
         require(look.load(fixture) == 0, "light sources recipe load");
         auto lights = baseline;
         look.applyTo(&lights);
         require(lights.filmPresets.lightSources == -40 && baseline.filmPresets.lightSources == 0,
             "LightSources did not round-trip");
+        require(lights.filmPresets.filmSharpness == 35 && baseline.filmPresets.filmSharpness == 0,
+            "FilmSharpness did not round-trip");
 
         // V6 light recovery: how far over the clip a burnt-out light is taken to be.
         namespace fo = rtengine::filmoptics;
@@ -143,13 +145,27 @@ int main(int argc, char** argv)
             && fo::clipLuminance(2.f, 0.01f, 0.f) == 0.f, "unknown exposure must give no clip luminance");
         require(near(fo::clipLuminance(8.f, 1.f / 500.f, 160.f), 34000.f, 1.f), "daylight clip luminance");
         require(near(fo::emitterStops(fo::clipLuminance(8.f, 1.f / 500.f, 160.f), 0), 1.f, 1e-4f), "daylight lights: one stop");
-        require(near(fo::emitterStops(fo::clipLuminance(2.f, 1.f / 8.f, 3200.f), 0), 6.f, 1e-4f), "night lights: six stops");
-        require(near(fo::emitterStops(fo::clipLuminance(2.8f, 1.f / 60.f, 800.f), 0), 5.64f, 0.02f), "interior lights");
-        require(near(fo::emitterStops(0.f, 0), 3.f, 1e-4f), "unknown exposure: three stops");
-        require(fo::emitterStops(1.f, -100) == 0.f && near(fo::emitterStops(1.f, 100), 12.f, 1e-4f), "light sources slider range");
+        require(near(fo::emitterStops(fo::clipLuminance(2.f, 1.f / 8.f, 3200.f), 0), 5.f, 1e-4f), "night lights: five stops");
+        require(near(fo::emitterStops(fo::clipLuminance(2.8f, 1.f / 60.f, 200.f), 0), 3.64f, 0.02f), "interior lights");
+        require(near(fo::emitterStops(0.f, 0), 2.5f, 1e-4f), "unknown exposure: two and a half stops");
+        require(fo::emitterStops(1.f, -100) == 0.f && near(fo::emitterStops(1.f, 100), 10.f, 1e-4f), "light sources slider range");
         require(fo::emitterConfidence(0.7f) == 0.f && fo::emitterConfidence(0.5f) == 0.f, "a surface within a stop of the clip is not a light");
         require(fo::emitterConfidence(0.01f) == 1.f && fo::emitterConfidence(0.f) == 1.f, "a light in the dark is a light");
         require(fo::emitterConfidence(0.2f) > 0.2f && fo::emitterConfidence(0.2f) < fo::emitterConfidence(0.1f), "confidence rises as the surround darkens");
+        require(fo::emitterSizeFactor(0.f) == 1.f && near(fo::emitterSizeFactor(0.1f), 0.5f, 1e-5f)
+            && fo::emitterSizeFactor(0.3f) < fo::emitterSizeFactor(0.1f), "larger lights get less of the estimate");
+
+        // V6 emulsion sharpness: the two-Gaussian layer response against 1 / (1 + (f / f50)^2).
+        for (const float f50 : {35.f, 60.f, 95.f}) {
+            for (const float ratio : {0.25f, 0.5f, 1.f, 1.5f, 2.f, 2.5f}) {
+                const float target = 1.f / (1.f + ratio * ratio);
+                require(near(fo::emulsionMTF(ratio * f50, f50), target, 0.035f), "emulsion MTF strays from its target curve");
+            }
+            require(near(fo::emulsionMTF(f50, f50), 0.5f, 0.01f), "f50 must be where the layer holds 50%");
+        }
+        require(fo::emulsionSharpnessScale(0) == 1.f && near(fo::emulsionSharpnessScale(-100), 0.5f, 1e-5f)
+            && near(fo::emulsionSharpnessScale(50), 2.f, 1e-5f) && fo::emulsionSharpnessScale(100) > 500.f,
+            "film sharpness slider scale");
         std::cout << "PASS preservation, repeatability, switching, serialization, validation and legacy compatibility\n";
         return 0;
     } catch (const std::exception& error) {

@@ -90,6 +90,90 @@ constexpr FilmLabStock STOCKS[] = {
     {"cinema_reveal_35", StockClass::MotionNegative, 250.f, 0.99f, 0.23f, 0.71f, 0.98f,  0.00f,  0.00f,  0.00f,  0.01f,  0.00f, 0.24f, 0.08f, 0.14f}
 };
 
+// The spatial frequency, in cycles/mm, each layer holds at 50% modulation:
+// red-, green- and blue-sensitive. Light reaches the red-sensitive layer last,
+// through everything above it, so it is the softest; faster emulsions have
+// larger crystals and thicker layers and scatter more. These are figures for
+// the class of stock at ISO 100, in the range manufacturers publish, scaled
+// with speed - not measurements of any one film.
+inline void layerResolution(const FilmLabStock& stock, float f50[3])
+{
+    float base[3];
+    switch (stock.stockClass) {
+        case StockClass::MotionNegative:
+            base[0] = 50.f; base[1] = 68.f; base[2] = 75.f;
+            break;
+        case StockClass::Reversal:
+            base[0] = 42.f; base[1] = 50.f; base[2] = 55.f;
+            break;
+        case StockClass::Monochrome:
+            base[0] = base[1] = base[2] = 95.f;
+            break;
+        case StockClass::Creative:
+            base[0] = 36.f; base[1] = 46.f; base[2] = 52.f;
+            break;
+        default:
+            base[0] = 48.f; base[1] = 62.f; base[2] = 70.f;
+            break;
+    }
+    const float speed = std::pow(LIM(stock.speed, 25.f, 3200.f) / 100.f, -0.25f);
+    for (int k = 0; k < 3; ++k) {
+        f50[k] = base[k] * speed;
+    }
+}
+
+// One half (centre outwards) of a Gaussian made for the pixel grid: the
+// taps whose frequency response IS exp(-2 pi^2 sigma^2 f^2) up to the grid's
+// limit. Sampling the bell curve itself is far off below one pixel of sigma,
+// which is where an emulsion's few microns land, and the library blur skips
+// such widths altogether.
+inline std::vector<float> bandLimitedGaussian(float sigma)
+{
+    const int radius = static_cast<int>(std::ceil(3.f * sigma)) + 3;
+    std::vector<float> taps(radius + 1);
+    constexpr int steps = 256;
+    constexpr double pi = 3.14159265358979323846;
+    double sum = 0.0;
+    for (int n = 0; n <= radius; ++n) {
+        double acc = 0.0;
+        for (int i = 0; i < steps; ++i) {
+            const double f = (i + 0.5) / steps * 0.5; // cycles per pixel
+            acc += std::exp(-2.0 * pi * pi * sigma * sigma * f * f) * std::cos(2.0 * pi * f * n);
+        }
+        taps[n] = static_cast<float>(acc / steps);
+        sum += n == 0 ? taps[n] : 2.0 * taps[n];
+    }
+    for (float& tap : taps) {
+        tap = static_cast<float>(tap / sum);
+    }
+    return taps;
+}
+
+inline void convolveRows(float** src, float** dst, int width, int height, const std::vector<float>& taps, bool multiThread)
+{
+    const int radius = static_cast<int>(taps.size()) - 1;
+#ifdef _OPENMP
+    #pragma omp parallel for schedule(static) if (multiThread)
+#endif
+    for (int row = 0; row < height; ++row) {
+        const float* const in = src[row];
+        float* const out = dst[row];
+        for (int col = 0; col < width; ++col) {
+            float value = taps[0] * in[col];
+            if (col >= radius && col + radius < width) {
+                for (int n = 1; n <= radius; ++n) {
+                    value += taps[n] * (in[col - n] + in[col + n]);
+                }
+            } else {
+                for (int n = 1; n <= radius; ++n) {
+                    value += taps[n] * (in[std::max(col - n, 0)] + in[std::min(col + n, width - 1)]);
+                }
+            }
+            out[col] = value;
+        }
+    }
+}
+
 inline float smoothStep(float edge0, float edge1, float value)
 {
     const float t = LIM((value - edge0) / (edge1 - edge0), 0.f, 1.f);
@@ -2315,7 +2399,14 @@ void filmPresetsV3(
         // optical sources are raised: the pixel's own exposure stays as
         // recorded, it is at the film's shoulder either way.
         const float clipLevel = tracedEnergy && sceneMode ? filmTapWhite / MAXVALF : 0.f;
-        const float lightStops = clipLevel > 1e-4f ? filmoptics::emitterStops(context.clipLuminance, fp.lightSources) : 0.f;
+        float lightStops = clipLevel > 1e-4f ? filmoptics::emitterStops(context.clipLuminance, fp.lightSources) : 0.f;
+        // Test hook (tools/filmlab_lights_probe.py): a fixed number of stops
+        // for every light, whatever its size, to compare against a scene
+        // whose true brightness is known.
+        const char* const fixedStops = lightStops > 0.f ? std::getenv("STEEP_FILMLAB_LIGHTS_STOPS") : nullptr;
+        if (fixedStops) {
+            lightStops = static_cast<float>(std::atof(fixedStops));
+        }
         const bool recoverLights = lightStops > 0.01f && halationWidth >= 8 && halationHeight >= 8;
         const float clipLow = 0.85f * clipLevel;
         const float clipHigh = 0.98f * clipLevel;
@@ -2408,7 +2499,8 @@ void filmPresetsV3(
                     const float open = 1.f - maskBlur[y][x];
                     const float surround = surroundBlur[y][x] / std::max(open, 1e-3f) / clipLevel;
                     const float confidence = filmoptics::emitterConfidence(surround) * smoothStep(0.02f, 0.15f, open);
-                    const float extra = std::exp2(lightStops * confidence) - 1.f;
+                    const float size = fixedStops ? 1.f : filmoptics::emitterSizeFactor(maskBlur[y][x]);
+                    const float extra = std::exp2(lightStops * confidence * size) - 1.f;
                     for (int c = 0; c < 3; ++c) {
                         source[c][y][x] += extra * clipped[c][y][x];
                     }
@@ -2484,6 +2576,115 @@ void filmPresetsV3(
         }
     }
 
+    // V6 emulsion sharpness: each layer records the image through the
+    // scatter of the emulsion above and around it, so each has its own
+    // resolving power (layerResolution) and the red record is the softest.
+    // The loss is in the exposure, before the density curve, which is why
+    // film softens highlights' edges into the shadows more than the reverse.
+    // Stored as the difference from the unsoftened layer exposure, so the
+    // main loop can add it to an exposure that already carries halation.
+    // It is a few microns wide: below ~0.3 of a pixel there is nothing to
+    // do, so it shows at 100% and in exports, less on larger formats.
+    array2D<float> layerSoften[3];
+    bool softenLayers = false;
+    if (tracedEnergy && stockRecord.stockClass != StockClass::Custom && fp.filmSharpness < 100
+            && lab->W > 8 && lab->H > 8) {
+        const float frameShortMM = fp.format == "120" ? 56.f : fp.format == "large" ? 95.f : 24.f;
+        const float pixelsPerMM = fullShort / frameShortMM / opticalScale;
+        float f50[3];
+        layerResolution(stockRecord, f50);
+        float sigma[3];
+        float widest = 0.f;
+        for (int k = 0; k < 3; ++k) {
+            sigma[k] = filmoptics::emulsionSigmaMM(f50[k] * filmoptics::emulsionSharpnessScale(fp.filmSharpness)) * pixelsPerMM;
+            widest = std::max(widest, sigma[k] * filmoptics::emulsionSkirt);
+        }
+        if (widest >= 0.3f) {
+            softenLayers = true;
+            for (int k = 0; k < 3; ++k) {
+                layerSoften[k](lab->W, lab->H);
+            }
+#ifdef _OPENMP
+            #pragma omp parallel for schedule(static) if (multiThread)
+#endif
+            for (int row = 0; row < lab->H; ++row) {
+                for (int col = 0; col < lab->W; ++col) {
+                    float r;
+                    float g;
+                    float b;
+                    if (sceneMode) {
+                        float labR;
+                        float labG;
+                        float labB;
+                        sceneFetch.fetch(row, col, r, g, b, labR, labG, labB);
+                    } else {
+                        toCanonicalV3(lab, row, col, inverse, r, g, b);
+                    }
+                    float exposure[3];
+                    applyV3Spectral(stock, r, g, b, exposure);
+                    for (int k = 0; k < 3; ++k) {
+                        layerSoften[k][row][col] = exposure[k];
+                    }
+                }
+            }
+            // Both Gaussians run from the unsoftened layer; rows first, into
+            // two scratch planes, then columns straight into the difference.
+            array2D<float> rowsCore(lab->W, lab->H);
+            array2D<float> rowsSkirt(lab->W, lab->H);
+            for (int k = 0; k < 3; ++k) {
+                const std::vector<float> core = bandLimitedGaussian(sigma[k]);
+                const std::vector<float> skirt = bandLimitedGaussian(sigma[k] * filmoptics::emulsionSkirt);
+                float** const layer = layerSoften[k];
+                convolveRows(layer, rowsCore, lab->W, lab->H, core, multiThread);
+                convolveRows(layer, rowsSkirt, lab->W, lab->H, skirt, multiThread);
+                float** const coreRows = rowsCore;
+                float** const skirtRows = rowsSkirt;
+                const int coreRadius = static_cast<int>(core.size()) - 1;
+                const int skirtRadius = static_cast<int>(skirt.size()) - 1;
+                const int lastRow = lab->H - 1;
+#ifdef _OPENMP
+                #pragma omp parallel for schedule(static) if (multiThread)
+#endif
+                for (int row = 0; row < lab->H; ++row) {
+                    float* const out = layer[row];
+                    for (int col = 0; col < lab->W; ++col) {
+                        out[col] = 0.5f * (core[0] * coreRows[row][col] + skirt[0] * skirtRows[row][col]) - out[col];
+                    }
+                    for (int n = 1; n <= skirtRadius; ++n) {
+                        const float* const above = skirtRows[std::max(row - n, 0)];
+                        const float* const below = skirtRows[std::min(row + n, lastRow)];
+                        const float weight = 0.5f * skirt[n];
+                        for (int col = 0; col < lab->W; ++col) {
+                            out[col] += weight * (above[col] + below[col]);
+                        }
+                    }
+                    for (int n = 1; n <= coreRadius; ++n) {
+                        const float* const above = coreRows[std::max(row - n, 0)];
+                        const float* const below = coreRows[std::min(row + n, lastRow)];
+                        const float weight = 0.5f * core[n];
+                        for (int col = 0; col < lab->W; ++col) {
+                            out[col] += weight * (above[col] + below[col]);
+                        }
+                    }
+                }
+            }
+            if (std::getenv("STEEP_FILMLAB_LIGHTS_TRACE")) {
+                std::fprintf(stderr, "[filmlab-sharpness] %.1f px/mm; 50%% at %.0f / %.0f / %.0f cycles/mm (R/G/B layers); core sigma %.2f / %.2f / %.2f px\n",
+                             pixelsPerMM, f50[0] * filmoptics::emulsionSharpnessScale(fp.filmSharpness),
+                             f50[1] * filmoptics::emulsionSharpnessScale(fp.filmSharpness),
+                             f50[2] * filmoptics::emulsionSharpnessScale(fp.filmSharpness), sigma[0], sigma[1], sigma[2]);
+            }
+        }
+    }
+
+    // The softened scene luminance's difference from the unsoftened one: the
+    // development effects below act on the image the emulsion recorded.
+    const auto softenedLuma = [&layerSoften, softenLayers](int row, int col) {
+        return softenLayers
+            ? 0.272229f * layerSoften[0][row][col] + 0.674082f * layerSoften[1][row][col] + 0.053689f * layerSoften[2][row][col]
+            : 0.f;
+    };
+
     // V4 adjacency: the lateral half of the DIR coupler story. The blurred
     // inhibitor field is built from the same pre-halation scene luminance the
     // main loop reads, so local-minus-blurred is an unbiased edge signal.
@@ -2526,7 +2727,7 @@ void filmPresetsV3(
                         toCanonicalV3(lab, row, col, inverse, r, g, b);
                     }
 
-                    adjacencySource[row][col] = v4AdjacencySignal(curves, std::max(luminance(r, g, b), 0.f));
+                    adjacencySource[row][col] = v4AdjacencySignal(curves, std::max(luminance(r, g, b) + softenedLuma(row, col), 0.f));
                 }
             }
 
@@ -2625,7 +2826,7 @@ void filmPresetsV3(
             // luminance before halation is added.
             float adjacencySourceLuma = 0.f;
             if (adjacencyBlur) {
-                adjacencySourceLuma = std::max(luminance(r, g, b), 0.f);
+                adjacencySourceLuma = std::max(luminance(r, g, b) + softenedLuma(row, col), 0.f);
             }
 
             if (materialHalo[0]) {
@@ -2664,6 +2865,11 @@ void filmPresetsV3(
                 layerExposure[2] = std::max(b, 0.f);
             } else {
                 applyV3Spectral(stock, r, g, b, layerExposure);
+            }
+            if (softenLayers) {
+                for (int k = 0; k < 3; ++k) {
+                    layerExposure[k] = std::max(0.f, layerExposure[k] + layerSoften[k][row][col]);
+                }
             }
             float density[3] = {
                 curves.sampleDensity(0, layerExposure[0]),
