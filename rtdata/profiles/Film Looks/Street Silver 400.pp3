@@ -8,7 +8,7 @@ Family=monochrome
 [Film Presets]
 Enabled=true
 Preset=silver_gelatin
-ModelVersion=5
+ModelVersion=6
 Exposure=0
 PrintExposure=0
 PushPull=0.5
@@ -28,7 +28,7 @@ MidHue=35
 MidTint=0
 HighlightHue=40
 HighlightTint=0
-Halation=-100
+Halation=0
 RedShift=0
 GreenShift=0
 BlueShift=0

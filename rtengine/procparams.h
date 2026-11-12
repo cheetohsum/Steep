@@ -1824,13 +1824,14 @@ struct FilmSimulationParams {
 struct FilmPresetsParams {
     bool enabled;
     Glib::ustring preset;  // preset ID: "custom", "heritage_gold", etc.
-    int modelVersion;       // 1 = legacy, 2 = Film Lab, 3 = density-domain Film Lab
+    int modelVersion;       // 1 = legacy, 2 = Film Lab, 3 = density-domain, 4 = scene-referred, 5 = traced halation, 6 = halation at traced energy
     double exposure;        // Film-plane exposure in EV
     double printExposure;   // V5 output placement in EV, independent of the negative.
     double pushPull;        // Development compensation in stops
     Glib::ustring process;  // auto, c41, e6, ecn2, bw
     Glib::ustring output;   // scan, ra4, projection, cinema
     Glib::ustring format;   // 35mm, 120, large
+    Glib::ustring backing;    // auto, intact, removed: the anti-halation backing at exposure (V6 halation)
     Glib::ustring lensDesign; // slr, rangefinder, telecentric: how far off the film the exit pupil sits (V5 halation's off-axis lean)
     int strength;           // 0-100
     int contrast;           // -100..100

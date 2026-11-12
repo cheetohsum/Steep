@@ -8,7 +8,7 @@ Family=motion
 [Film Presets]
 Enabled=true
 Preset=cinema_reveal_35
-ModelVersion=5
+ModelVersion=6
 Exposure=0
 PrintExposure=0
 PushPull=0

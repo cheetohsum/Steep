@@ -3437,13 +3437,14 @@ bool FilmSimulationParams::operator !=(const FilmSimulationParams& other) const
 FilmPresetsParams::FilmPresetsParams() :
     enabled(false),
     preset("cinema_reveal_35"),
-    modelVersion(5),
+    modelVersion(6),
     exposure(0.0),
     printExposure(0.0),
     pushPull(0.0),
     process("auto"),
     output("scan"),
     format("35mm"),
+    backing("auto"),
     lensDesign("slr"),
     strength(100),
     contrast(0),
@@ -3489,6 +3490,7 @@ bool FilmPresetsParams::operator==(const FilmPresetsParams &other) const
         && process == other.process
         && output == other.output
         && format == other.format
+        && backing == other.backing
         && lensDesign == other.lensDesign
         && strength == other.strength
         && contrast == other.contrast
@@ -5382,6 +5384,7 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->filmPresets.process, "Film Presets", "Process", filmPresets.process, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.output, "Film Presets", "Output", filmPresets.output, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.format, "Film Presets", "Format", filmPresets.format, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.backing, "Film Presets", "Backing", filmPresets.backing, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.lensDesign, "Film Presets", "LensDesign", filmPresets.lensDesign, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.strength, "Film Presets", "Strength", filmPresets.strength, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.contrast, "Film Presets", "Contrast", filmPresets.contrast, keyFile);
@@ -5657,7 +5660,8 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
             if (keyFile.get_integer("Steep Look", "Version") != 1
                 || keyFile.get_string("Steep Look", "Kind") != "film"
                 || !keyFile.has_group("Film Presets")
-                || keyFile.get_integer("Film Presets", "ModelVersion") != 5) {
+                || keyFile.get_integer("Film Presets", "ModelVersion") < 5
+                || keyFile.get_integer("Film Presets", "ModelVersion") > 6) {
                 return 1;
             }
             for (const auto& group : keyFile.get_groups()) {
@@ -7724,6 +7728,7 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
             assignFromKeyfile(keyFile, "Film Presets", "Process", filmPresets.process, pedited->filmPresets.process);
             assignFromKeyfile(keyFile, "Film Presets", "Output", filmPresets.output, pedited->filmPresets.output);
             assignFromKeyfile(keyFile, "Film Presets", "Format", filmPresets.format, pedited->filmPresets.format);
+            assignFromKeyfile(keyFile, "Film Presets", "Backing", filmPresets.backing, pedited->filmPresets.backing);
             assignFromKeyfile(keyFile, "Film Presets", "LensDesign", filmPresets.lensDesign, pedited->filmPresets.lensDesign);
             assignFromKeyfile(keyFile, "Film Presets", "Strength", filmPresets.strength, pedited->filmPresets.strength);
             assignFromKeyfile(keyFile, "Film Presets", "Contrast", filmPresets.contrast, pedited->filmPresets.contrast);

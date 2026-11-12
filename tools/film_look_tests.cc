@@ -73,7 +73,7 @@ int main(int argc, char** argv)
             AutoPartialProfile look;
             require(look.load(file) == 0, "load " + file.raw());
             require(look.pedited->filmLook, "missing film-only policy: " + file.raw());
-            require(look.pparams->filmPresets.modelVersion == 5, "look must opt into V5");
+            require(look.pparams->filmPresets.modelVersion == 6, "look must opt into V6");
             require(!look.pedited->toneCurve.expcomp && !look.pedited->wb.temperature
                 && !look.pedited->crop.enabled && !look.pedited->grain.enabled,
                 "look selects protected settings");

@@ -42,7 +42,7 @@ def main():
         assert meta["Version"] == "1" and meta["Kind"] == "film", path
         assert meta["Id"] not in ids, path
         ids.add(meta["Id"])
-        assert film["ModelVersion"] == "5", path
+        assert film["ModelVersion"] == "6", path
         assert float(film["Exposure"]) == 0 and float(film["PrintExposure"]) == 0, path
         assert 0 < float(film["Strength"]) <= 100, path
         recipes[path.stem] = recipe

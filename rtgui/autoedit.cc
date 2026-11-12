@@ -2286,7 +2286,7 @@ void applySteepAutoFilm(
     auto& film = params.filmPresets;
     film = rtengine::procparams::FilmPresetsParams();
     film.enabled = true;
-    film.modelVersion = 5;
+    film.modelVersion = 6;
     film.preset = "sovereign";
     film.process = "c41";
     film.output = "ra4";
@@ -3087,7 +3087,7 @@ void runSteepAutoEditSelfTest()
                 CurveAnchors filmLook, plainLook, curvedLook;
                 auto film = source;
                 film.filmPresets.enabled = true;
-                film.filmPresets.modelVersion = 5;
+                film.filmPresets.modelVersion = 6;
                 film.filmPresets.preset = "sovereign";
                 film.filmPresets.strength = 100;
                 film.toneCurve.expcomp = 1.0;

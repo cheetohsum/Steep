@@ -93,6 +93,7 @@ FilmPresets::FilmPresets() :
     EvFilmPresetsOutput       = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_OUTPUT");
     EvFilmPresetsFormat       = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_FORMAT");
     EvFilmPresetsLens         = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_LENS");
+    EvFilmPresetsBacking      = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_BACKING");
     EvFilmPresetsContrast     = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_CONTRAST");
     EvFilmPresetsSaturation   = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_SATURATION");
     EvFilmPresetsWarmth       = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_WARMTH");
@@ -244,6 +245,7 @@ FilmPresets::FilmPresets() :
     modelCombo_->append("v3", M("TP_FILMPRESETS_MODEL_V3"));
     modelCombo_->append("v4", M("TP_FILMPRESETS_MODEL_V4"));
     modelCombo_->append("v5", M("TP_FILMPRESETS_MODEL_V5"));
+    modelCombo_->append("v6", M("TP_FILMPRESETS_MODEL_V6"));
     modelCombo_->set_tooltip_text(M("TP_FILMPRESETS_MODEL_TOOLTIP"));
     processCombo_ = Gtk::manage(new MyComboBoxText());
     processCombo_->append("auto", M("TP_FILMPRESETS_PROCESS_AUTO"));
@@ -272,15 +274,24 @@ FilmPresets::FilmPresets() :
     lensCombo_->append("telecentric", M("TP_FILMPRESETS_LENS_TELECENTRIC"));
     lensCombo_->set_tooltip_markup(M("TP_FILMPRESETS_LENS_TOOLTIP"));
 
-    MyComboBoxText* labCombos[] = {modelCombo_, processCombo_, outputCombo_, formatCombo_, lensCombo_};
+    // The anti-halation backing the film was exposed with (V6). Washing it
+    // off is what makes motion-picture stock glow red round every light.
+    backingCombo_ = Gtk::manage(new MyComboBoxText());
+    backingCombo_->append("auto", M("TP_FILMPRESETS_BACKING_AUTO"));
+    backingCombo_->append("intact", M("TP_FILMPRESETS_BACKING_INTACT"));
+    backingCombo_->append("removed", M("TP_FILMPRESETS_BACKING_REMOVED"));
+    backingCombo_->set_tooltip_markup(M("TP_FILMPRESETS_BACKING_TOOLTIP"));
+
+    MyComboBoxText* labCombos[] = {modelCombo_, processCombo_, outputCombo_, formatCombo_, lensCombo_, backingCombo_};
     const char* labComboLabels[] = {
         "TP_FILMPRESETS_MODEL",
         "TP_FILMPRESETS_PROCESS",
         "TP_FILMPRESETS_OUTPUT",
         "TP_FILMPRESETS_FORMAT",
-        "TP_FILMPRESETS_LENS"
+        "TP_FILMPRESETS_LENS",
+        "TP_FILMPRESETS_BACKING"
     };
-    for (int row = 0; row < 5; ++row) {
+    for (int row = 0; row < 6; ++row) {
         auto* label = Gtk::manage(new Gtk::Label(M(labComboLabels[row])));
         label->set_halign(Gtk::ALIGN_START);
         labCombos[row]->set_hexpand(true);
@@ -295,6 +306,7 @@ FilmPresets::FilmPresets() :
     outputCombo_->signal_changed().connect([this]() { onLabOptionChanged(EvFilmPresetsOutput, outputCombo_); });
     formatCombo_->signal_changed().connect([this]() { onLabOptionChanged(EvFilmPresetsFormat, formatCombo_); });
     lensCombo_->signal_changed().connect([this]() { onLabOptionChanged(EvFilmPresetsLens, lensCombo_); });
+    backingCombo_->signal_changed().connect([this]() { onLabOptionChanged(EvFilmPresetsBacking, backingCombo_); });
 
     exposureAdj_ = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_EXPOSURE"), -4., 4., 0.1, 0.));
     pushPullAdj_ = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_PUSHPULL"), -2., 3., 0.1, 0.));
@@ -635,13 +647,16 @@ void FilmPresets::updateLabControlSensitivity()
 {
     const bool filmLab = modelCombo_->get_active_id() != "legacy";
     const bool filmLabV3 = modelCombo_->get_active_id() == "v3"
-        || modelCombo_->get_active_id() == "v4" || modelCombo_->get_active_id() == "v5";
+        || modelCombo_->get_active_id() == "v4" || modelCombo_->get_active_id() == "v5"
+        || modelCombo_->get_active_id() == "v6";
+    const bool materialModel = modelCombo_->get_active_id() == "v5" || modelCombo_->get_active_id() == "v6";
     processCombo_->set_sensitive(filmLab);
     outputCombo_->set_sensitive(filmLab);
     formatCombo_->set_sensitive(filmLab);
-    lensCombo_->set_sensitive(modelCombo_->get_active_id() == "v5"); // the lean exists only in V5
+    lensCombo_->set_sensitive(materialModel); // the lean exists from V5 on
+    backingCombo_->set_sensitive(modelCombo_->get_active_id() == "v6");
     exposureAdj_->set_sensitive(filmLab);
-    printExposureAdj_->set_sensitive(modelCombo_->get_active_id() == "v5");
+    printExposureAdj_->set_sensitive(materialModel);
     pushPullAdj_->set_sensitive(filmLab);
     v3Controls_->set_visible(filmLabV3);
 }
@@ -702,7 +717,8 @@ void FilmPresets::read(const ProcParams* pp, const ParamsEdited* pedited)
 
     modelCombo_->set_active_id(
         pp->filmPresets.modelVersion < 2 ? "legacy"
-        : pp->filmPresets.modelVersion >= 5 ? "v5"
+        : pp->filmPresets.modelVersion >= 6 ? "v6"
+        : pp->filmPresets.modelVersion == 5 ? "v5"
         : pp->filmPresets.modelVersion == 4 ? "v4"
         : pp->filmPresets.modelVersion == 3 ? "v3" : "v2");
     if (!processCombo_->set_active_id(pp->filmPresets.process)) {
@@ -716,6 +732,9 @@ void FilmPresets::read(const ProcParams* pp, const ParamsEdited* pedited)
     }
     if (!lensCombo_->set_active_id(pp->filmPresets.lensDesign)) {
         lensCombo_->set_active_id("slr");
+    }
+    if (!backingCombo_->set_active_id(pp->filmPresets.backing)) {
+        backingCombo_->set_active_id("auto");
     }
     exposureAdj_->setValue(pp->filmPresets.exposure);
     printExposureAdj_->setValue(pp->filmPresets.printExposure);
@@ -761,6 +780,7 @@ void FilmPresets::write(ProcParams* pp, ParamsEdited* pedited)
 
     pp->filmPresets.modelVersion = modelCombo_->get_active_id() == "legacy"
         ? 1
+        : modelCombo_->get_active_id() == "v6" ? 6
         : modelCombo_->get_active_id() == "v5" ? 5
         : modelCombo_->get_active_id() == "v4" ? 4
         : modelCombo_->get_active_id() == "v3" ? 3 : 2;
@@ -771,6 +791,7 @@ void FilmPresets::write(ProcParams* pp, ParamsEdited* pedited)
     pp->filmPresets.output = outputCombo_->get_active_id();
     pp->filmPresets.format = formatCombo_->get_active_id();
     pp->filmPresets.lensDesign = lensCombo_->get_active_id();
+    pp->filmPresets.backing = backingCombo_->get_active_id();
 
     pp->filmPresets.strength = strength->getValue();
     pp->filmPresets.contrast = contrast->getValue();
@@ -809,6 +830,7 @@ void FilmPresets::write(ProcParams* pp, ParamsEdited* pedited)
         pedited->filmPresets.output = true;
         pedited->filmPresets.format = true;
         pedited->filmPresets.lensDesign = true;
+        pedited->filmPresets.backing = true;
         pedited->filmPresets.strength = strength->getEditedState();
         pedited->filmPresets.contrast = contrast->getEditedState();
         pedited->filmPresets.saturation = saturation->getEditedState();

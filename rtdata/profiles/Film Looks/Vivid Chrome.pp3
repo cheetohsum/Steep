@@ -8,7 +8,7 @@ Family=reversal
 [Film Presets]
 Enabled=true
 Preset=vivid_chrome
-ModelVersion=5
+ModelVersion=6
 Exposure=0
 PrintExposure=0
 PushPull=0

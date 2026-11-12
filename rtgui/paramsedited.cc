@@ -988,6 +988,7 @@ void ParamsEdited::set(bool v)
     filmPresets.process = v;
     filmPresets.output = v;
     filmPresets.format = v;
+    filmPresets.backing = v;
     filmPresets.lensDesign = v;
     filmPresets.strength = v;
     filmPresets.contrast = v;
@@ -2790,6 +2791,7 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         filmPresets.process = filmPresets.process && p.filmPresets.process == other.filmPresets.process;
         filmPresets.output = filmPresets.output && p.filmPresets.output == other.filmPresets.output;
         filmPresets.format = filmPresets.format && p.filmPresets.format == other.filmPresets.format;
+        filmPresets.backing = filmPresets.backing && p.filmPresets.backing == other.filmPresets.backing;
         filmPresets.lensDesign = filmPresets.lensDesign && p.filmPresets.lensDesign == other.filmPresets.lensDesign;
         filmPresets.strength = filmPresets.strength && p.filmPresets.strength == other.filmPresets.strength;
         filmPresets.contrast = filmPresets.contrast && p.filmPresets.contrast == other.filmPresets.contrast;
@@ -9331,6 +9333,10 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
     }
     if (filmPresets.format) {
         toEdit.filmPresets.format = mods.filmPresets.format;
+    }
+
+    if (filmPresets.backing) {
+        toEdit.filmPresets.backing = mods.filmPresets.backing;
     }
 
     if (filmPresets.lensDesign) {

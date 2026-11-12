@@ -1952,10 +1952,42 @@ std::shared_ptr<const FilmLabRenderTables> filmLabTables(
 // Which traced construction a V5 stock was exposed on. Same rule as the V5
 // remjetFactor: construction at exposure, not the chemistry chosen after, so
 // the two CineStill-style presets are motion film with the rem-jet off.
+// Which stocks are exposed without an anti-halation backing. Motion-picture
+// negative normally carries rem-jet, which absorbs nearly everything that
+// reaches the back of the base; the stocks named here are the ones whose whole
+// point is that it has been washed off before the film was shot.
+bool stockBackingRemoved(const Glib::ustring& preset, bool v6)
+{
+    return preset == "cinema_reveal_35" || preset == "ember" || (v6 && preset == "cinematic_500t");
+}
+
 filmhalation::Construction materialHaloConstruction(const FilmLabStock& stock, const procparams::FilmPresetsParams& fp)
 {
     const std::string format = fp.format.raw();
-    if (fp.preset == "cinema_reveal_35" || fp.preset == "ember") {
+    const bool v6 = fp.modelVersion >= 6;
+    bool removed = stockBackingRemoved(fp.preset, v6);
+    if (v6 && fp.backing == "removed") {
+        removed = true;
+    } else if (v6 && fp.backing == "intact") {
+        removed = false;
+    }
+    if (v6) {
+        // The backing is a property of colour film only: slide and
+        // black-and-white stocks keep their own anti-halation construction.
+        switch (stock.stockClass) {
+            case StockClass::Reversal:
+                return filmhalation::constructionFor(filmhalation::StockKind::Reversal, format, false);
+            case StockClass::Monochrome:
+                return filmhalation::constructionFor(filmhalation::StockKind::Monochrome, format, false);
+            case StockClass::MotionNegative:
+                return filmhalation::constructionFor(filmhalation::StockKind::MotionPicture, format, removed);
+            default:
+                return removed
+                    ? filmhalation::constructionFor(filmhalation::StockKind::MotionPicture, format, true)
+                    : filmhalation::constructionFor(filmhalation::StockKind::ColourNegative, format, false);
+        }
+    }
+    if (removed) {
         return filmhalation::constructionFor(filmhalation::StockKind::MotionPicture, format, true);
     }
     switch (stock.stockClass) {
@@ -1985,6 +2017,10 @@ void filmPresetsV3(
     const FilmLabV3Output output = makeV3Output(fp.output);
     const bool stopsIndexed = fp.modelVersion >= 4;
     const bool materialModel = fp.modelVersion >= 5;
+    // V6: halation as the film's own optics deliver it. The amount is the
+    // traced stack's (the slider multiplies it, 0 = as traced), every tone
+    // halates in proportion to its exposure, and the backing is explicit.
+    const bool tracedEnergy = fp.modelVersion >= 6;
 
     FilmLabV4Character character;
 
@@ -2076,7 +2112,14 @@ void filmPresetsV3(
         }
     }
 
-    const float halation = LIM((stockRecord.halation + fp.halation / 155.f) * characterScale * remjetFactor, 0.f, 0.92f);
+    // V6: a multiplier on the traced energy. 0 on the slider is the film as
+    // traced; +100 is eight times that, -100 is none.
+    const float halationMultiplier = fp.halation >= 0
+        ? std::exp2(std::min(fp.halation, 100) / 100.f * 3.f)
+        : SQR(1.f + std::max(fp.halation, -100) / 100.f);
+    const float halation = tracedEnergy
+        ? halationMultiplier
+        : LIM((stockRecord.halation + fp.halation / 155.f) * characterScale * remjetFactor, 0.f, 0.92f);
     const float bloom = LIM((stock.bloom + fp.bloom / 180.f) * characterScale, 0.f, 0.65f);
     // Onset as a fraction of diffuse white, not stops above it - see
     // halationHighlightSource. Positive slider still means "trigger later".
@@ -2224,6 +2267,19 @@ void filmPresetsV3(
     const float negativeGain = std::exp2(LIM(static_cast<float>(fp.exposure), -4.f, 4.f)
         - LIM(static_cast<float>(fp.pushPull), -2.f, 3.f) * 0.32f);
     const float opticalOnset = std::exp2(fp.halationThreshold / 50.f);
+    // Light that crosses the base does so in proportion to the exposure,
+    // whatever the tone: there is no threshold in the film. V5 weighted the
+    // source towards the highlights (0.15 at middle grey, 0.5 at white), which
+    // mostly removed the faint warm bleed along ordinary bright edges; flat
+    // areas were never at stake, their share is subtracted below. In V6 the
+    // source is the exposure itself, and raising the Threshold slider above
+    // zero brings the highlight weighting back, as a choice.
+    const float sourceGate = tracedEnergy ? LIM(fp.halationThreshold / 100.f, 0.f, 1.f) : 1.f;
+    const auto sourceWeight = [sourceGate, opticalOnset](float light) {
+        return sourceGate > 0.f
+            ? 1.f - sourceGate + sourceGate * filmoptics::highlightWeight(light, opticalOnset)
+            : 1.f;
+    };
     const float bloomFraction = materialModel ? bloom * 0.08f : 0.f;
     if (materialModel && (halation > 0.001f || bloomFraction > 0.0001f)) {
         // Four full-resolution pixels per plane pixel up to 50% zoom. Halving
@@ -2254,8 +2310,7 @@ void filmPresetsV3(
                         } else {
                             toCanonicalV3(lab, sy, sx, inverse, r, g, b);
                         }
-                        const float weight = filmoptics::highlightWeight(
-                            std::max(r, std::max(g, b)) * negativeGain, opticalOnset);
+                        const float weight = sourceWeight(std::max(r, std::max(g, b)) * negativeGain);
                         sum[0] += std::max(r, 0.f) * weight;
                         sum[1] += std::max(g, 0.f) * weight;
                         sum[2] += std::max(b, 0.f) * weight;
@@ -2291,7 +2346,10 @@ void filmPresetsV3(
             const filmhalation::Construction construction = materialHaloConstruction(stockRecord, fp);
             const filmhalation::HaloTable& haloTable = filmhalation::table(construction);
             const float whiteToRed = haloTable.total[0][0] + haloTable.total[1][0] + haloTable.total[2][0];
-            const float scale = halation * 0.12f / std::max(whiteToRed, 1e-9f);
+            // V5 kept the Gaussian model's budget (white light puts
+            // halation * 0.12 into the red layer, whatever the stack); V6
+            // takes the traced kernels at their own energy.
+            const float scale = tracedEnergy ? halation : halation * 0.12f / std::max(whiteToRed, 1e-9f);
             const float layerWarmth[3] = {halationWarmth, 1.f, 1.f / halationWarmth};
             float gain[3][3];
             for (int b = 0; b < 3; ++b) {
@@ -2471,8 +2529,7 @@ void filmPresetsV3(
             if (materialHalo[0]) {
                 const float lowX = (col + 0.5f) / halationReduction - 0.5f;
                 const float lowY = (row + 0.5f) / halationReduction - 0.5f;
-                const float weight = filmoptics::highlightWeight(
-                    std::max(r, std::max(g, b)) * negativeGain, opticalOnset);
+                const float weight = sourceWeight(std::max(r, std::max(g, b)) * negativeGain);
                 // This pixel's share of the halo source, as the reduced plane
                 // was built: read before the loop below rewrites r, g, b.
                 const float lit[3] = {std::max(r, 0.f) * weight, std::max(g, 0.f) * weight, std::max(b, 0.f) * weight};
