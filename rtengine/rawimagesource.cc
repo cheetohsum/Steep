@@ -1912,6 +1912,8 @@ void RawImageSource::preprocess(const RAWParams &raw, const LensProfParams &lens
     }
 
     //FLATFIELD end
+    MyTime tCopied;
+    tCopied.set();
 
     if (raw.ff_FromMetaData && isGainMapSupported()) {
         applyDngGainMap(c_black, getMetaData()->getGainMaps());
@@ -1960,6 +1962,9 @@ void RawImageSource::preprocess(const RAWParams &raw, const LensProfParams &lens
     } else {
         scaleColors(0, 0, W, H, raw, rawData); //+ + raw parameters for black level(raw.blackxx)
     }
+
+    MyTime tScaled;
+    tScaled.set();
 
     // Correct vignetting of lens profile
     if (!hasFlatField && lensProf.useVign && lensProf.lcMode != LensProfParams::LcMode::NONE) {
@@ -2017,6 +2022,9 @@ void RawImageSource::preprocess(const RAWParams &raw, const LensProfParams &lens
             printf("Correcting %d hot/dead pixels found inside image\n", nFound);
         }
     }
+
+    MyTime tBeforeStuck;
+    tBeforeStuck.set();
 
     if (raw.stuckPixelFix && (ri->getSensorType() == ST_BAYER || ri->getSensorType() == ST_FUJI_XTRANS)) {
         stuckpixels::CfaLayout cfa;
@@ -2127,6 +2135,9 @@ void RawImageSource::preprocess(const RAWParams &raw, const LensProfParams &lens
             printf("Correcting %d stuck photosites\n", nStuck);
         }
     }
+
+    MyTime tAfterStuck;
+    tAfterStuck.set();
 
     if (ri->getSensorType() == ST_BAYER && raw.bayersensor.pdafLinesFilter) {
         PDAFLinesFilter f(ri);
@@ -2250,6 +2261,9 @@ void RawImageSource::preprocess(const RAWParams &raw, const LensProfParams &lens
         }
     }
 
+    MyTime tCorrected;
+    tCorrected.set();
+
     if (prepareDenoise) {
         LUTu aehist;
         int aehistcompr;
@@ -2262,7 +2276,9 @@ void RawImageSource::preprocess(const RAWParams &raw, const LensProfParams &lens
     t2.set();
 
     if (settings->verbose) {
-        printf("Preprocessing: %d usec\n", t2.etime(t1));
+        printf("Preprocessing: %d usec (copy %d, scale %d, vignette %d, stuck %d, repair+ca %d, histogram %d)\n", t2.etime(t1),
+               tCopied.etime(t1), tScaled.etime(tCopied), tBeforeStuck.etime(tScaled), tAfterStuck.etime(tBeforeStuck),
+               tCorrected.etime(tAfterStuck), t2.etime(tCorrected));
     }
 
     rawDirty = true;
