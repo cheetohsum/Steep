@@ -181,6 +181,7 @@ private:
         // OpenMP's setting is local to this executor thread and its child
         // teams. Batch export and RAW-loading workers keep their own limits.
         const int available = omp_get_max_threads();
+        // The starting width; every pass picks its own (updatePreviewImage).
         omp_set_num_threads(rtengine::previewThreadCount(available));
         rtengine::edittrace::logf("previewWorker threads=%d available=%d",
                                   omp_get_max_threads(), available);
@@ -733,6 +734,26 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
     // TODO Locallab printf
     MyMutex::MyLock processingLock(mProcessing);
     traceStage("processing-lock");
+
+#ifdef _OPENMP
+    {
+        // Wider for ordinary passes, narrow when local adjustments run (see
+        // interactiveThreadCount). STEEP_PREVIEW_THREADS=<n> forces a width,
+        // for tuning; 4 is the previous behaviour.
+        static const int forcedThreads = []() {
+            const char* const env = std::getenv("STEEP_PREVIEW_THREADS");
+            return env ? std::atoi(env) : 0;
+        }();
+        const bool localAdjustments = params->locallab.enabled && !params->locallab.spots.empty();
+        const int width = forcedThreads > 0
+            ? forcedThreads
+            : interactiveThreadCount(omp_get_num_procs(), localAdjustments);
+
+        if (width != omp_get_max_threads()) {
+            omp_set_num_threads(width);
+        }
+    }
+#endif
 
     // A pass that has already run for a while and has a newer snapshot
     // waiting behind it may stand down at a stage boundary instead of

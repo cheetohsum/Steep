@@ -22,6 +22,13 @@ int main()
     check(rtengine::previewThreadCount(4) == 4);
     check(rtengine::previewThreadCount(16) == 4);
     check(rtengine::previewThreadCount(128) == 4);
+    check(rtengine::interactiveThreadCount(16, false) == 8);
+    check(rtengine::interactiveThreadCount(16, true) == 4);
+    check(rtengine::interactiveThreadCount(128, false) == 8);
+    check(rtengine::interactiveThreadCount(12, false) == 6);
+    check(rtengine::interactiveThreadCount(6, false) == 4);
+    check(rtengine::interactiveThreadCount(4, false) == 4);
+    check(rtengine::interactiveThreadCount(2, false) == 2);
     rtengine::CropUpdateState state;
     check(state.request());
     check(!state.request());

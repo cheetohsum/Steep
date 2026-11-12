@@ -12,6 +12,19 @@ constexpr int previewThreadCount(int available)
     return available < 1 ? 1 : (available < 4 ? available : 4);
 }
 
+// Team width for one preview pass. Measured on a 26 MP frame at fit zoom
+// (16 logical processors), 4 -> 8 threads: exposure 25 -> 20 ms per slider
+// tick, vibrance 41 -> 33, channel mixer 27 -> 22 -- but a pass that runs
+// local adjustments goes from 84 to 150 ms, so those keep the narrow team.
+// Half the machine at most: the GUI thread scales and paints every frame
+// while the next one renders.
+constexpr int interactiveThreadCount(int available, bool localAdjustments)
+{
+    return localAdjustments || available <= 4
+        ? previewThreadCount(available)
+        : (available / 2 < 4 ? 4 : (available / 2 > 8 ? 8 : available / 2));
+}
+
 // Decoding-side work on the whole sensor (preprocess, demosaic) is the
 // opposite case: tens of megapixels per stage, and it scales. Measured on a
 // 26 MP X-Trans frame (16 logical processors), 3-pass demosaic: 819 ms at 4
