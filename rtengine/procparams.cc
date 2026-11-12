@@ -3472,6 +3472,7 @@ FilmPresetsParams::FilmPresetsParams() :
     grainColor(0),
     halationSize(0),
     halationThreshold(0),
+    lightSources(0),
     halationColor(0),
     bloom(0),
     outputSoftness(0)
@@ -3518,6 +3519,7 @@ bool FilmPresetsParams::operator==(const FilmPresetsParams &other) const
         && grainColor == other.grainColor
         && halationSize == other.halationSize
         && halationThreshold == other.halationThreshold
+        && lightSources == other.lightSources
         && halationColor == other.halationColor
         && bloom == other.bloom
         && outputSoftness == other.outputSoftness;
@@ -5412,6 +5414,7 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->filmPresets.grainColor, "Film Presets", "GrainColor", filmPresets.grainColor, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.halationSize, "Film Presets", "HalationSize", filmPresets.halationSize, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.halationThreshold, "Film Presets", "HalationThreshold", filmPresets.halationThreshold, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.lightSources, "Film Presets", "LightSources", filmPresets.lightSources, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.halationColor, "Film Presets", "HalationColor", filmPresets.halationColor, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.bloom, "Film Presets", "Bloom", filmPresets.bloom, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.outputSoftness, "Film Presets", "OutputSoftness", filmPresets.outputSoftness, keyFile);
@@ -7756,6 +7759,7 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
             assignFromKeyfile(keyFile, "Film Presets", "GrainColor", filmPresets.grainColor, pedited->filmPresets.grainColor);
             assignFromKeyfile(keyFile, "Film Presets", "HalationSize", filmPresets.halationSize, pedited->filmPresets.halationSize);
             assignFromKeyfile(keyFile, "Film Presets", "HalationThreshold", filmPresets.halationThreshold, pedited->filmPresets.halationThreshold);
+            assignFromKeyfile(keyFile, "Film Presets", "LightSources", filmPresets.lightSources, pedited->filmPresets.lightSources);
             assignFromKeyfile(keyFile, "Film Presets", "HalationColor", filmPresets.halationColor, pedited->filmPresets.halationColor);
             assignFromKeyfile(keyFile, "Film Presets", "Bloom", filmPresets.bloom, pedited->filmPresets.bloom);
             assignFromKeyfile(keyFile, "Film Presets", "OutputSoftness", filmPresets.outputSoftness, pedited->filmPresets.outputSoftness);

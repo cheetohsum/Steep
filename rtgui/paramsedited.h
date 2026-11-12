@@ -1837,6 +1837,7 @@ struct FilmPresetsParamsEdited {
     bool grainColor;
     bool halationSize;
     bool halationThreshold;
+    bool lightSources;
     bool halationColor;
     bool bloom;
     bool outputSoftness;

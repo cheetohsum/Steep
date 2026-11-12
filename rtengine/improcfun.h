@@ -133,6 +133,10 @@ struct FilmLabContext {
     Imagefloat* sceneTap = nullptr;
     const LabImage* rgbSnapshot = nullptr;
 
+    // Scene luminance (cd/m2) at the sensor's clip, from the exposure data
+    // (filmoptics::clipLuminance); 0 when unknown. V6 light recovery.
+    float clipLuminance = 0.f;
+
     FilmLabContext(
         int originX_ = 0,
         int originY_ = 0,
@@ -186,6 +190,10 @@ class ImProcFunctions
     const procparams::ProcParams* params;
     double scale;
     bool multiThread;
+    // What a neutral pixel at the input's white level came out of rgbProc's
+    // exposure stage as, in the film tap's units: where clipped light sits
+    // in the tap. Written by rgbProc whenever it fills a film tap.
+    float filmTapWhite = 0.f;
 
     void calcVignettingParams(int oW, int oH, const procparams::VignettingParams& vignetting, double &w2, double &h2, double& maxRadius, double &v, double &b, double &mul);
     static void rgb2lab(const Image8 &src, int x, int y, int w, int h, float L[], float a[], float b[], const procparams::ColorManagementParams &icm, bool consider_histogram_settings, bool multithread);

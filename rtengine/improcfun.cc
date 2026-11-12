@@ -2515,6 +2515,25 @@ void ImProcFunctions::rgbProc(Imagefloat* working, LabImage* lab, PipetteBuffer 
             }
         };
 
+    if (filmTap) {
+        // Where the input's white lands in the tap: the same exposure and
+        // highlight compression the pixels below go through, on one neutral
+        // pixel. Film Lab reads it to tell clipped light from bright light.
+        float wr = MAXVALF;
+        float wg = MAXVALF;
+        float wb = MAXVALF;
+        if (mixchannels) {
+            const float mr = (wr * chMixRR + wg * chMixRG + wb * chMixRB) / 100.f;
+            const float mg = (wr * chMixGR + wg * chMixGG + wb * chMixGB) / 100.f;
+            const float mb = (wr * chMixBR + wg * chMixBG + wb * chMixBB) / 100.f;
+            wr = mr;
+            wg = mg;
+            wb = mb;
+        }
+        highlightToneCurve(hltonecurve, &wr, &wg, &wb, 0, 1, 0, 1, TS, exp_scale, comp, hlrange);
+        filmTapWhite = std::max(wr, std::max(wg, wb));
+    }
+
 #ifdef _OPENMP
     #pragma omp parallel if (multiThread)
 #endif

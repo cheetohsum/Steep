@@ -21,6 +21,45 @@ inline float highlightWeight(float light, float onset)
     return x / (1.f + x);
 }
 
+// Scene luminance, in cd/m2, at which the sensor clipped, from the exposure the
+// camera used: the saturation-based speed definition (H_sat = 78 / S lux s,
+// H = 0.65 L t / N^2) gives 120 N^2 / (t S), and raw files keep about half a
+// stop above that. 0 when the exposure is not known.
+inline float clipLuminance(float fNumber, float shutterSeconds, float iso)
+{
+    if (!(fNumber > 0.f) || !(shutterSeconds > 0.f) || !(iso > 0.f)) {
+        return 0.f;
+    }
+    return 170.f * fNumber * fNumber / (shutterSeconds * iso);
+}
+
+// How many stops above the clip a burnt-out light is taken to be. Lamps,
+// signs and lit windows sit in the thousands of cd/m2 whatever the exposure,
+// so the darker the scene the camera exposed for, the further over they are:
+// about a stop in daylight (where what clips is mostly white cloud and
+// paint), six at night. Three when the exposure is unknown. `amount` is the
+// Light sources slider: -100 takes the file as recorded, +100 doubles the
+// stops.
+inline float emitterStops(float clipLuminanceCdM2, int amount)
+{
+    constexpr float emitter = 5000.f;
+    const float stops = clipLuminanceCdM2 > 0.f
+        ? std::max(1.f, std::min(6.f, std::log2(emitter / clipLuminanceCdM2)))
+        : 3.f;
+    return stops * (1.f + std::max(-100, std::min(100, amount)) / 100.f);
+}
+
+// How sure a clipped area is a light and not an over-exposed surface, from
+// what surrounds it: an area whose unclipped neighbours are within a stop of
+// the clip is a wall or a sky running out of range (0); one standing four
+// stops clear of everything near it is emitting (1).
+inline float emitterConfidence(float surroundOverClip)
+{
+    const float stopsBelow = -std::log2(std::max(surroundOverClip, 1e-4f));
+    const float t = std::max(0.f, std::min(1.f, (stopsBelow - 1.f) / 3.f));
+    return t * t * (3.f - 2.f * t);
+}
+
 inline float printHighlightGain(float displayLuma)
 {
     constexpr float knee = 0.72f;

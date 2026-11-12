@@ -21,6 +21,9 @@
 #include "filmhalation.h"
 #include "filmlaboptics.h"
 #include "filmlikeclip.h"
+
+#include <cstdio>
+#include <cstdlib>
 #include "gauss.h"
 #include "graincharacter.h"
 #include "color.h"
@@ -899,7 +902,8 @@ struct FilmLabV4SceneFetch {
     bool clampOOG = true;
 
     void fetch(int row, int col, float& sceneR, float& sceneG, float& sceneB,
-               float& labR, float& labG, float& labB, float* displayGain = nullptr) const
+               float& labR, float& labG, float& labB, float* displayGain = nullptr,
+               float* tapPeak = nullptr) const
     {
         const float tr = tap->r(row, col);
         const float tg = tap->g(row, col);
@@ -907,6 +911,10 @@ struct FilmLabV4SceneFetch {
         const float rawR = tapMatrix[0][0] * tr + tapMatrix[0][1] * tg + tapMatrix[0][2] * tb;
         const float rawG = tapMatrix[1][0] * tr + tapMatrix[1][1] * tg + tapMatrix[1][2] * tb;
         const float rawB = tapMatrix[2][0] * tr + tapMatrix[2][1] * tg + tapMatrix[2][2] * tb;
+        if (tapPeak) {
+            // Before the Lab tools' gains: a dodge does not un-clip a sensor.
+            *tapPeak = std::max(rawR, std::max(rawG, rawB));
+        }
 
         toCanonicalV3(lab, row, col, labInverse, labR, labG, labB);
 
@@ -2008,7 +2016,8 @@ void filmPresetsV3(
     const FilmLabContext& context,
     bool multiThread,
     const float (*tapToCanonical)[3],
-    bool clampOOG)
+    bool clampOOG,
+    float filmTapWhite)
 {
     const FilmLabStock& stockRecord = findStock(fp.preset);
     const Glib::ustring processName = fp.process == "auto" ? defaultProcess(stockRecord.stockClass) : fp.process;
@@ -2295,18 +2304,48 @@ void filmPresetsV3(
             materialHalo[c](halationWidth, halationHeight, ARRAY2D_CLEAR_DATA);
             materialBloom[c](halationWidth, halationHeight);
         }
+        // V6 light recovery. A lamp that clips the sensor reaches this stage
+        // at the clip level, though it was tens to thousands of times
+        // brighter, and halation is proportional to the light that crossed
+        // the base: at the recorded value a street lamp barely halates. The
+        // clipped part of the source is therefore raised to an estimate of
+        // what the light was (filmoptics::emitterStops: from the exposure
+        // the camera used), where its surroundings say it is a light and not
+        // an over-exposed surface (filmoptics::emitterConfidence). Only the
+        // optical sources are raised: the pixel's own exposure stays as
+        // recorded, it is at the film's shoulder either way.
+        const float clipLevel = tracedEnergy && sceneMode ? filmTapWhite / MAXVALF : 0.f;
+        const float lightStops = clipLevel > 1e-4f ? filmoptics::emitterStops(context.clipLuminance, fp.lightSources) : 0.f;
+        const bool recoverLights = lightStops > 0.01f && halationWidth >= 8 && halationHeight >= 8;
+        const float clipLow = 0.85f * clipLevel;
+        const float clipHigh = 0.98f * clipLevel;
+        array2D<float> clipped[3];
+        array2D<float> clipMask;
+        array2D<float> clipSurround;
+        if (recoverLights) {
+            for (int c = 0; c < 3; ++c) {
+                clipped[c](halationWidth, halationHeight);
+            }
+            clipMask(halationWidth, halationHeight);
+            clipSurround(halationWidth, halationHeight);
+        }
+        float tapPeakMax = 0.f; // diagnostics only
 #ifdef _OPENMP
-        #pragma omp parallel for schedule(static) if (multiThread)
+        #pragma omp parallel for schedule(static) reduction(max:tapPeakMax) if (multiThread)
 #endif
         for (int y = 0; y < halationHeight; ++y) {
             for (int x = 0; x < halationWidth; ++x) {
                 float sum[3] = {};
+                float clipSum[3] = {};
+                float maskSum = 0.f;
+                float surroundSum = 0.f;
                 int count = 0;
                 for (int sy = y * halationReduction; sy < std::min((y + 1) * halationReduction, lab->H); ++sy) {
                     for (int sx = x * halationReduction; sx < std::min((x + 1) * halationReduction, lab->W); ++sx) {
                         float r, g, b, lr, lg, lb;
+                        float peak = 0.f;
                         if (sceneMode) {
-                            sceneFetch.fetch(sy, sx, r, g, b, lr, lg, lb);
+                            sceneFetch.fetch(sy, sx, r, g, b, lr, lg, lb, nullptr, &peak);
                         } else {
                             toCanonicalV3(lab, sy, sx, inverse, r, g, b);
                         }
@@ -2314,12 +2353,75 @@ void filmPresetsV3(
                         sum[0] += std::max(r, 0.f) * weight;
                         sum[1] += std::max(g, 0.f) * weight;
                         sum[2] += std::max(b, 0.f) * weight;
+                        if (recoverLights) {
+                            const float k = smoothStep(clipLow, clipHigh, peak);
+                            clipSum[0] += std::max(r, 0.f) * weight * k;
+                            clipSum[1] += std::max(g, 0.f) * weight * k;
+                            clipSum[2] += std::max(b, 0.f) * weight * k;
+                            maskSum += k;
+                            surroundSum += (1.f - k) * std::max(peak, 0.f);
+                            tapPeakMax = std::max(tapPeakMax, peak);
+                        }
                         ++count;
                     }
                 }
                 for (int c = 0; c < 3; ++c) {
                     source[c][y][x] = sum[c] / count;
                 }
+                if (recoverLights) {
+                    for (int c = 0; c < 3; ++c) {
+                        clipped[c][y][x] = clipSum[c] / count;
+                    }
+                    clipMask[y][x] = maskSum / count;
+                    clipSurround[y][x] = surroundSum / count;
+                }
+            }
+        }
+        if (recoverLights) {
+            // What surrounds each clipped area, over 4% of the frame's short
+            // side: the mean of the unclipped light there. Deep inside a
+            // clipped area wider than that nothing unclipped is in reach, the
+            // evidence runs out and the light stays as recorded, which also
+            // keeps a large burnt-out area from flooding the frame.
+            const double surroundSigma = 0.04 * fullShort / (opticalScale * halationReduction);
+            array2D<float> maskBlur(halationWidth, halationHeight);
+            array2D<float> surroundBlur(halationWidth, halationHeight);
+#ifdef _OPENMP
+            #pragma omp parallel if (multiThread)
+#endif
+            {
+                gaussianBlur(clipMask, maskBlur, halationWidth, halationHeight, surroundSigma);
+                gaussianBlur(clipSurround, surroundBlur, halationWidth, halationHeight, surroundSigma);
+            }
+            double raisedPixels = 0.0;
+            double addedLight = 0.0;
+            double recordedLight = 0.0;
+#ifdef _OPENMP
+            #pragma omp parallel for schedule(static) reduction(+:raisedPixels, addedLight, recordedLight) if (multiThread)
+#endif
+            for (int y = 0; y < halationHeight; ++y) {
+                for (int x = 0; x < halationWidth; ++x) {
+                    recordedLight += source[1][y][x];
+                    if (clipMask[y][x] <= 0.f) {
+                        continue;
+                    }
+                    const float open = 1.f - maskBlur[y][x];
+                    const float surround = surroundBlur[y][x] / std::max(open, 1e-3f) / clipLevel;
+                    const float confidence = filmoptics::emitterConfidence(surround) * smoothStep(0.02f, 0.15f, open);
+                    const float extra = std::exp2(lightStops * confidence) - 1.f;
+                    for (int c = 0; c < 3; ++c) {
+                        source[c][y][x] += extra * clipped[c][y][x];
+                    }
+                    raisedPixels += clipMask[y][x] * confidence;
+                    addedLight += extra * clipped[1][y][x];
+                }
+            }
+            if (std::getenv("STEEP_FILMLAB_LIGHTS_TRACE")) {
+                std::fprintf(stderr, "[filmlab-lights] %dx%d plane: clip %.3f, clip luminance %.1f cd/m2, lights +%.2f stops; "
+                             "%.4f%% of the frame raised, source light x%.3f, brightest pixel %.3f\n",
+                             halationWidth, halationHeight, clipLevel, context.clipLuminance, lightStops,
+                             100.0 * raisedPixels / (double(halationWidth) * halationHeight),
+                             recordedLight > 0.0 ? 1.0 + addedLight / recordedLight : 1.0, tapPeakMax);
             }
         }
         const float frameMM = fp.format == "120" ? 56.f : fp.format == "large" ? 95.f : 24.f;
@@ -2816,7 +2918,7 @@ void ImProcFunctions::filmPresets(
             haveTapMatrix = true;
         }
 
-        filmPresetsV3(lab, fp, context, multiThread, haveTapMatrix ? tapToCanonical : nullptr, params->toneCurve.clampOOG);
+        filmPresetsV3(lab, fp, context, multiThread, haveTapMatrix ? tapToCanonical : nullptr, params->toneCurve.clampOOG, filmTapWhite);
         return;
     }
 

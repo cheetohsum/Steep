@@ -2037,6 +2037,9 @@ void Crop::update(int todo)
                 std::max(skip, 1),
                 ImProcFunctions::filmLabSeed(parent->imgsrc->getFileName()));
             filmLabContext.sceneTap = filmLabTapCrop;
+            if (parent->imgsrc->getMetaData()) {
+                filmLabContext.clipLuminance = filmoptics::clipLuminance(static_cast<float>(parent->imgsrc->getMetaData()->getFNumber()), static_cast<float>(parent->imgsrc->getMetaData()->getShutterSpeed()), static_cast<float>(parent->imgsrc->getMetaData()->getISOSpeed()));
+            }
             filmLabContext.rgbSnapshot = laboCrop;
             parent->ipf.filmPresets(labnCrop, params.filmPresets, filmLabContext);
         }

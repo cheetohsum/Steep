@@ -1016,6 +1016,7 @@ void ParamsEdited::set(bool v)
     filmPresets.grainColor = v;
     filmPresets.halationSize = v;
     filmPresets.halationThreshold = v;
+    filmPresets.lightSources = v;
     filmPresets.halationColor = v;
     filmPresets.bloom = v;
     filmPresets.outputSoftness = v;
@@ -2819,6 +2820,7 @@ void ParamsEdited::initFrom(const std::vector<rtengine::procparams::ProcParams>&
         filmPresets.grainColor = filmPresets.grainColor && p.filmPresets.grainColor == other.filmPresets.grainColor;
         filmPresets.halationSize = filmPresets.halationSize && p.filmPresets.halationSize == other.filmPresets.halationSize;
         filmPresets.halationThreshold = filmPresets.halationThreshold && p.filmPresets.halationThreshold == other.filmPresets.halationThreshold;
+        filmPresets.lightSources = filmPresets.lightSources && p.filmPresets.lightSources == other.filmPresets.lightSources;
         filmPresets.halationColor = filmPresets.halationColor && p.filmPresets.halationColor == other.filmPresets.halationColor;
         filmPresets.bloom = filmPresets.bloom && p.filmPresets.bloom == other.filmPresets.bloom;
         filmPresets.outputSoftness = filmPresets.outputSoftness && p.filmPresets.outputSoftness == other.filmPresets.outputSoftness;
@@ -9421,6 +9423,9 @@ void ParamsEdited::combine(rtengine::procparams::ProcParams& toEdit, const rteng
     }
     if (filmPresets.halationThreshold) {
         toEdit.filmPresets.halationThreshold = mods.filmPresets.halationThreshold;
+    }
+    if (filmPresets.lightSources) {
+        toEdit.filmPresets.lightSources = mods.filmPresets.lightSources;
     }
     if (filmPresets.halationColor) {
         toEdit.filmPresets.halationColor = mods.filmPresets.halationColor;

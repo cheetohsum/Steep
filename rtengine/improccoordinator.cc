@@ -29,6 +29,7 @@
 #include <mutex>
 #include <thread>
 
+#include "filmlaboptics.h"
 #include "improccoordinator.h"
 #include "aidenoise.h"
 #include "fullqualitytwin.h"
@@ -2910,6 +2911,9 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             {
                 FilmLabContext filmLabContext(0, 0, fw, fh, std::max(scale, 1), ImProcFunctions::filmLabSeed(imgsrc->getFileName()));
                 filmLabContext.sceneTap = filmLabTap;
+                if (imgsrc->getMetaData()) {
+                    filmLabContext.clipLuminance = filmoptics::clipLuminance(static_cast<float>(imgsrc->getMetaData()->getFNumber()), static_cast<float>(imgsrc->getMetaData()->getShutterSpeed()), static_cast<float>(imgsrc->getMetaData()->getISOSpeed()));
+                }
                 filmLabContext.rgbSnapshot = oprevl;
                 ipf.filmPresets(nprevl, params->filmPresets, filmLabContext);
             }

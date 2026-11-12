@@ -22,6 +22,7 @@
 #include <glibmm/thread.h>
 #include <glibmm/ustring.h>
 
+#include "filmlaboptics.h"
 #include "cieimage.h"
 #include "clutstore.h"
 #include "color.h"
@@ -1863,6 +1864,9 @@ private:
         {
             FilmLabContext filmLabContext(0, 0, fw, fh, 1, ImProcFunctions::filmLabSeed(imgsrc->getFileName()));
             filmLabContext.sceneTap = filmLabTap.get();
+            if (imgsrc->getMetaData()) {
+                filmLabContext.clipLuminance = filmoptics::clipLuminance(static_cast<float>(imgsrc->getMetaData()->getFNumber()), static_cast<float>(imgsrc->getMetaData()->getShutterSpeed()), static_cast<float>(imgsrc->getMetaData()->getISOSpeed()));
+            }
             filmLabContext.rgbSnapshot = filmLabSnapshot.get();
             ipf.filmPresets(labView, params.filmPresets, filmLabContext);
             filmLabTap.reset();

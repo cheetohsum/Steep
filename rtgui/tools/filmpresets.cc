@@ -115,6 +115,7 @@ FilmPresets::FilmPresets() :
     EvFilmPresetsLayerCoupling = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_LAYERCOUPLING");
     EvFilmPresetsHalationSize = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_HALATIONSIZE");
     EvFilmPresetsHalationThreshold = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_HALATIONTHRESHOLD");
+    EvFilmPresetsLightSources = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_LIGHTSOURCES");
     EvFilmPresetsHalationColor = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_HALATIONCOLOR");
     EvFilmPresetsBloom = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_BLOOM");
     EvFilmPresetsOutputSoftness = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_OUTPUTSOFTNESS");
@@ -418,16 +419,19 @@ FilmPresets::FilmPresets() :
 
     halationSizeAdj_ = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_HALATIONSIZE"), -100., 100., 1., 0.));
     halationThresholdAdj_ = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_HALATIONTHRESHOLD"), -100., 100., 1., 0.));
+    lightSourcesAdj_ = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_LIGHTSOURCES"), -100., 100., 1., 0.));
     halationColorAdj_ = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_HALATIONCOLOR"), -100., 100., 1., 0.));
     bloomAdj_ = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_BLOOM"), -100., 100., 1., 0.));
     outputSoftnessAdj_ = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_OUTPUTSOFTNESS"), -100., 100., 1., 0.));
     halationSizeAdj_->setAdjusterListener(this);
     halationThresholdAdj_->setAdjusterListener(this);
+    lightSourcesAdj_->setAdjusterListener(this);
     halationColorAdj_->setAdjusterListener(this);
     bloomAdj_->setAdjusterListener(this);
     outputSoftnessAdj_->setAdjusterListener(this);
     v3Controls_->pack_start(*halationSizeAdj_);
     v3Controls_->pack_start(*halationThresholdAdj_);
+    v3Controls_->pack_start(*lightSourcesAdj_);
     v3Controls_->pack_start(*halationColorAdj_);
     v3Controls_->pack_start(*bloomAdj_);
     v3Controls_->pack_start(*outputSoftnessAdj_);
@@ -459,6 +463,7 @@ FilmPresets::FilmPresets() :
         {layerCouplingAdj_,     "TP_FILMPRESETS_LAYERCOUPLING_TOOLTIP"},
         {halationSizeAdj_,      "TP_FILMPRESETS_HALATIONSIZE_TOOLTIP"},
         {halationThresholdAdj_, "TP_FILMPRESETS_HALATIONTHRESHOLD_TOOLTIP"},
+        {lightSourcesAdj_, "TP_FILMPRESETS_LIGHTSOURCES_TOOLTIP"},
         {halationColorAdj_,     "TP_FILMPRESETS_HALATIONCOLOR_TOOLTIP"},
         {bloomAdj_,             "TP_FILMPRESETS_BLOOM_TOOLTIP"},
         {outputSoftnessAdj_,    "TP_FILMPRESETS_OUTPUTSOFTNESS_TOOLTIP"},
@@ -655,6 +660,7 @@ void FilmPresets::updateLabControlSensitivity()
     formatCombo_->set_sensitive(filmLab);
     lensCombo_->set_sensitive(materialModel); // the lean exists from V5 on
     backingCombo_->set_sensitive(modelCombo_->get_active_id() == "v6");
+    lightSourcesAdj_->set_sensitive(modelCombo_->get_active_id() == "v6");
     exposureAdj_->set_sensitive(filmLab);
     printExposureAdj_->set_sensitive(materialModel);
     pushPullAdj_->set_sensitive(filmLab);
@@ -701,6 +707,7 @@ void FilmPresets::read(const ProcParams* pp, const ParamsEdited* pedited)
         layerCouplingAdj_->setEditedState(pedited->filmPresets.layerCoupling ? Edited : UnEdited);
         halationSizeAdj_->setEditedState(pedited->filmPresets.halationSize ? Edited : UnEdited);
         halationThresholdAdj_->setEditedState(pedited->filmPresets.halationThreshold ? Edited : UnEdited);
+        lightSourcesAdj_->setEditedState(pedited->filmPresets.lightSources ? Edited : UnEdited);
         halationColorAdj_->setEditedState(pedited->filmPresets.halationColor ? Edited : UnEdited);
         bloomAdj_->setEditedState(pedited->filmPresets.bloom ? Edited : UnEdited);
         outputSoftnessAdj_->setEditedState(pedited->filmPresets.outputSoftness ? Edited : UnEdited);
@@ -763,6 +770,7 @@ void FilmPresets::read(const ProcParams* pp, const ParamsEdited* pedited)
     layerCouplingAdj_->setValue(clampFilmValue(pp->filmPresets.layerCoupling, -100, 100));
     halationSizeAdj_->setValue(clampFilmValue(pp->filmPresets.halationSize, -100, 100));
     halationThresholdAdj_->setValue(clampFilmValue(pp->filmPresets.halationThreshold, -100, 100));
+    lightSourcesAdj_->setValue(clampFilmValue(pp->filmPresets.lightSources, -100, 100));
     halationColorAdj_->setValue(clampFilmValue(pp->filmPresets.halationColor, -100, 100));
     bloomAdj_->setValue(clampFilmValue(pp->filmPresets.bloom, -100, 100));
     outputSoftnessAdj_->setValue(clampFilmValue(pp->filmPresets.outputSoftness, -100, 100));
@@ -815,6 +823,7 @@ void FilmPresets::write(ProcParams* pp, ParamsEdited* pedited)
     pp->filmPresets.layerCoupling = layerCouplingAdj_->getValue();
     pp->filmPresets.halationSize = halationSizeAdj_->getValue();
     pp->filmPresets.halationThreshold = halationThresholdAdj_->getValue();
+    pp->filmPresets.lightSources = lightSourcesAdj_->getValue();
     pp->filmPresets.halationColor = halationColorAdj_->getValue();
     pp->filmPresets.bloom = bloomAdj_->getValue();
     pp->filmPresets.outputSoftness = outputSoftnessAdj_->getValue();
@@ -853,6 +862,7 @@ void FilmPresets::write(ProcParams* pp, ParamsEdited* pedited)
         pedited->filmPresets.layerCoupling = layerCouplingAdj_->getEditedState();
         pedited->filmPresets.halationSize = halationSizeAdj_->getEditedState();
         pedited->filmPresets.halationThreshold = halationThresholdAdj_->getEditedState();
+        pedited->filmPresets.lightSources = lightSourcesAdj_->getEditedState();
         pedited->filmPresets.halationColor = halationColorAdj_->getEditedState();
         pedited->filmPresets.bloom = bloomAdj_->getEditedState();
         pedited->filmPresets.outputSoftness = outputSoftnessAdj_->getEditedState();
@@ -886,6 +896,7 @@ void FilmPresets::setDefaults(const ProcParams* defParams, const ParamsEdited* p
     layerCouplingAdj_->setDefault(defParams->filmPresets.layerCoupling);
     halationSizeAdj_->setDefault(defParams->filmPresets.halationSize);
     halationThresholdAdj_->setDefault(defParams->filmPresets.halationThreshold);
+    lightSourcesAdj_->setDefault(defParams->filmPresets.lightSources);
     halationColorAdj_->setDefault(defParams->filmPresets.halationColor);
     bloomAdj_->setDefault(defParams->filmPresets.bloom);
     outputSoftnessAdj_->setDefault(defParams->filmPresets.outputSoftness);
@@ -916,6 +927,7 @@ void FilmPresets::setDefaults(const ProcParams* defParams, const ParamsEdited* p
         layerCouplingAdj_->setDefaultEditedState(pedited->filmPresets.layerCoupling ? Edited : UnEdited);
         halationSizeAdj_->setDefaultEditedState(pedited->filmPresets.halationSize ? Edited : UnEdited);
         halationThresholdAdj_->setDefaultEditedState(pedited->filmPresets.halationThreshold ? Edited : UnEdited);
+        lightSourcesAdj_->setDefaultEditedState(pedited->filmPresets.lightSources ? Edited : UnEdited);
         halationColorAdj_->setDefaultEditedState(pedited->filmPresets.halationColor ? Edited : UnEdited);
         bloomAdj_->setDefaultEditedState(pedited->filmPresets.bloom ? Edited : UnEdited);
         outputSoftnessAdj_->setDefaultEditedState(pedited->filmPresets.outputSoftness ? Edited : UnEdited);
@@ -945,6 +957,7 @@ void FilmPresets::setDefaults(const ProcParams* defParams, const ParamsEdited* p
         layerCouplingAdj_->setDefaultEditedState(Irrelevant);
         halationSizeAdj_->setDefaultEditedState(Irrelevant);
         halationThresholdAdj_->setDefaultEditedState(Irrelevant);
+        lightSourcesAdj_->setDefaultEditedState(Irrelevant);
         halationColorAdj_->setDefaultEditedState(Irrelevant);
         bloomAdj_->setDefaultEditedState(Irrelevant);
         outputSoftnessAdj_->setDefaultEditedState(Irrelevant);
@@ -1012,6 +1025,8 @@ void FilmPresets::adjusterChanged(Adjuster* a, double newval)
             listener->panelChanged(EvFilmPresetsHalationSize, a->getTextValue());
         } else if (a == halationThresholdAdj_) {
             listener->panelChanged(EvFilmPresetsHalationThreshold, a->getTextValue());
+        } else if (a == lightSourcesAdj_) {
+            listener->panelChanged(EvFilmPresetsLightSources, a->getTextValue());
         } else if (a == halationColorAdj_) {
             listener->panelChanged(EvFilmPresetsHalationColor, a->getTextValue());
         } else if (a == bloomAdj_) {
@@ -1073,6 +1088,7 @@ void FilmPresets::setBatchMode(bool batchMode)
     layerCouplingAdj_->showEditedCB();
     halationSizeAdj_->showEditedCB();
     halationThresholdAdj_->showEditedCB();
+    lightSourcesAdj_->showEditedCB();
     halationColorAdj_->showEditedCB();
     bloomAdj_->showEditedCB();
     outputSoftnessAdj_->showEditedCB();

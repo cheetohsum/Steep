@@ -29,6 +29,7 @@
 #include <glibmm/fileutils.h>
 #include <glibmm/keyfile.h>
 
+#include "filmlaboptics.h"
 #include "cieimage.h"
 #include "color.h"
 #include "colortemp.h"
@@ -1676,6 +1677,9 @@ IImage8* Thumbnail::processImage (const procparams::ProcParams& params, eSensorT
                               ImProcFunctions::filmLabSeed(metadata->getFileName()));
     filmContext.samplingScale = filmScale;
     filmContext.sceneTap = filmTap.get();
+    if (metadata) {
+        filmContext.clipLuminance = filmoptics::clipLuminance(static_cast<float>(metadata->getFNumber()), static_cast<float>(metadata->getShutterSpeed()), static_cast<float>(metadata->getISOSpeed()));
+    }
     filmContext.rgbSnapshot = filmSnapshot.get();
     ipf.filmPresets(labView, params.filmPresets, filmContext);
     filmTap.reset();

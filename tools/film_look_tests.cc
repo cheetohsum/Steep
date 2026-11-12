@@ -1,9 +1,11 @@
+#include "rtengine/filmlaboptics.h"
 #include "rtengine/procparams.h"
 #include "paramsedited.h"
 
 #include <giomm.h>
 #include <glibmm/fileutils.h>
 #include <clocale>
+#include <cmath>
 #include <iostream>
 #include <stdexcept>
 #include <string>
@@ -127,6 +129,27 @@ int main(int argc, char** argv)
         require(legacy.filmPresets.modelVersion == 4 && legacy.filmPresets.warmth == 12
             && legacy.filmPresets.shadowTint == baseline.filmPresets.shadowTint,
             "legacy partial recipe no longer merges normally");
+        Glib::file_set_contents(fixture, "[Film Presets]\nEnabled=true\nModelVersion=6\nLightSources=-40\n");
+        require(look.load(fixture) == 0, "light sources recipe load");
+        auto lights = baseline;
+        look.applyTo(&lights);
+        require(lights.filmPresets.lightSources == -40 && baseline.filmPresets.lightSources == 0,
+            "LightSources did not round-trip");
+
+        // V6 light recovery: how far over the clip a burnt-out light is taken to be.
+        namespace fo = rtengine::filmoptics;
+        const auto near = [](float a, float b, float tolerance) { return std::fabs(a - b) <= tolerance; };
+        require(fo::clipLuminance(0.f, 0.01f, 200.f) == 0.f && fo::clipLuminance(2.f, 0.f, 200.f) == 0.f
+            && fo::clipLuminance(2.f, 0.01f, 0.f) == 0.f, "unknown exposure must give no clip luminance");
+        require(near(fo::clipLuminance(8.f, 1.f / 500.f, 160.f), 34000.f, 1.f), "daylight clip luminance");
+        require(near(fo::emitterStops(fo::clipLuminance(8.f, 1.f / 500.f, 160.f), 0), 1.f, 1e-4f), "daylight lights: one stop");
+        require(near(fo::emitterStops(fo::clipLuminance(2.f, 1.f / 8.f, 3200.f), 0), 6.f, 1e-4f), "night lights: six stops");
+        require(near(fo::emitterStops(fo::clipLuminance(2.8f, 1.f / 60.f, 800.f), 0), 5.64f, 0.02f), "interior lights");
+        require(near(fo::emitterStops(0.f, 0), 3.f, 1e-4f), "unknown exposure: three stops");
+        require(fo::emitterStops(1.f, -100) == 0.f && near(fo::emitterStops(1.f, 100), 12.f, 1e-4f), "light sources slider range");
+        require(fo::emitterConfidence(0.7f) == 0.f && fo::emitterConfidence(0.5f) == 0.f, "a surface within a stop of the clip is not a light");
+        require(fo::emitterConfidence(0.01f) == 1.f && fo::emitterConfidence(0.f) == 1.f, "a light in the dark is a light");
+        require(fo::emitterConfidence(0.2f) > 0.2f && fo::emitterConfidence(0.2f) < fo::emitterConfidence(0.1f), "confidence rises as the surround darkens");
         std::cout << "PASS preservation, repeatability, switching, serialization, validation and legacy compatibility\n";
         return 0;
     } catch (const std::exception& error) {

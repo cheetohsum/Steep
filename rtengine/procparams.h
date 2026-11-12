@@ -1859,6 +1859,7 @@ struct FilmPresetsParams {
     int grainColor;         // -100..100
     int halationSize;       // -100..100
     int halationThreshold;  // -100..100
+    int lightSources;       // -100..100: how far above the sensor's clip blown-out lights are taken to be (V6)
     int halationColor;      // -100..100
     int bloom;              // -100..100
     int outputSoftness;     // -100..100
