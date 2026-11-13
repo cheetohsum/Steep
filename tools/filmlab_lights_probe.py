@@ -73,6 +73,7 @@ def render(cli, out, name, src, comp, stops=None, **film):
     env["RT_SETTINGS"] = str((out / "settings").resolve())
     env["RT_CACHE"] = str((out / "cache").resolve())
     env.pop("STEEP_FILMLAB_LIGHTS_STOPS", None)
+    env["STEEP_FILMLAB_NO_SPECTRAL"] = "1"  # compare against builds from before the spectral response
     if stops is not None:
         env["STEEP_FILMLAB_LIGHTS_STOPS"] = str(stops)
     r = subprocess.run([str(Path(cli).resolve()), "-q", "-Y", "-o", str(tif.resolve()), "-d", "-p", str(pp3.resolve()),

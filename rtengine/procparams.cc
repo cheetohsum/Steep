@@ -3445,6 +3445,7 @@ FilmPresetsParams::FilmPresetsParams() :
     output("scan"),
     format("35mm"),
     backing("auto"),
+    bwFilter("none"),
     lensDesign("slr"),
     strength(100),
     contrast(0),
@@ -3493,6 +3494,7 @@ bool FilmPresetsParams::operator==(const FilmPresetsParams &other) const
         && output == other.output
         && format == other.format
         && backing == other.backing
+        && bwFilter == other.bwFilter
         && lensDesign == other.lensDesign
         && strength == other.strength
         && contrast == other.contrast
@@ -5389,6 +5391,7 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
         saveToKeyfile(!pedited || pedited->filmPresets.output, "Film Presets", "Output", filmPresets.output, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.format, "Film Presets", "Format", filmPresets.format, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.backing, "Film Presets", "Backing", filmPresets.backing, keyFile);
+        saveToKeyfile(!pedited || pedited->filmPresets.bwFilter, "Film Presets", "BWFilter", filmPresets.bwFilter, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.lensDesign, "Film Presets", "LensDesign", filmPresets.lensDesign, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.strength, "Film Presets", "Strength", filmPresets.strength, keyFile);
         saveToKeyfile(!pedited || pedited->filmPresets.contrast, "Film Presets", "Contrast", filmPresets.contrast, keyFile);
@@ -7735,6 +7738,7 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
             assignFromKeyfile(keyFile, "Film Presets", "Output", filmPresets.output, pedited->filmPresets.output);
             assignFromKeyfile(keyFile, "Film Presets", "Format", filmPresets.format, pedited->filmPresets.format);
             assignFromKeyfile(keyFile, "Film Presets", "Backing", filmPresets.backing, pedited->filmPresets.backing);
+            assignFromKeyfile(keyFile, "Film Presets", "BWFilter", filmPresets.bwFilter, pedited->filmPresets.bwFilter);
             assignFromKeyfile(keyFile, "Film Presets", "LensDesign", filmPresets.lensDesign, pedited->filmPresets.lensDesign);
             assignFromKeyfile(keyFile, "Film Presets", "Strength", filmPresets.strength, pedited->filmPresets.strength);
             assignFromKeyfile(keyFile, "Film Presets", "Contrast", filmPresets.contrast, pedited->filmPresets.contrast);

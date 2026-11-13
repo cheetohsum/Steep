@@ -1810,6 +1810,7 @@ struct FilmPresetsParamsEdited {
     bool output;
     bool format;
     bool backing;
+    bool bwFilter;
     bool lensDesign;
     bool strength;
     bool contrast;

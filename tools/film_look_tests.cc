@@ -129,7 +129,7 @@ int main(int argc, char** argv)
         require(legacy.filmPresets.modelVersion == 4 && legacy.filmPresets.warmth == 12
             && legacy.filmPresets.shadowTint == baseline.filmPresets.shadowTint,
             "legacy partial recipe no longer merges normally");
-        Glib::file_set_contents(fixture, "[Film Presets]\nEnabled=true\nModelVersion=6\nLightSources=-40\nFilmSharpness=35\n");
+        Glib::file_set_contents(fixture, "[Film Presets]\nEnabled=true\nModelVersion=6\nLightSources=-40\nFilmSharpness=35\nBWFilter=orange\n");
         require(look.load(fixture) == 0, "light sources recipe load");
         auto lights = baseline;
         look.applyTo(&lights);
@@ -137,6 +137,8 @@ int main(int argc, char** argv)
             "LightSources did not round-trip");
         require(lights.filmPresets.filmSharpness == 35 && baseline.filmPresets.filmSharpness == 0,
             "FilmSharpness did not round-trip");
+        require(lights.filmPresets.bwFilter == "orange" && baseline.filmPresets.bwFilter == "none",
+            "BWFilter did not round-trip");
 
         // V6 light recovery: how far over the clip a burnt-out light is taken to be.
         namespace fo = rtengine::filmoptics;

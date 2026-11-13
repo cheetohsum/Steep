@@ -20,6 +20,7 @@
 #include "boxblur.h"
 #include "filmhalation.h"
 #include "filmlaboptics.h"
+#include "filmspectrum.h"
 #include "filmlikeclip.h"
 
 #include <cstdio>
@@ -1305,6 +1306,316 @@ inline std::array<float, 9> makeV4SpectralMatrix(StockClass stockClass)
     return full;
 }
 
+// V6 spectral response. What each layer records is the integral of the
+// light's spectrum against the layer's own sensitivity, which three numbers
+// per pixel cannot give. filmspectrum.h supplies the smoothest spectrum for
+// every chromaticity (broad for pale colours, narrow for saturated ones), and
+// the curves below are the same class-plausible sensitivities the matrices
+// above were derived from (tools/v4_spectral_gen.py): not any one product.
+struct SpectralLobe {
+    float weight;
+    float peak;
+    float sigma;
+};
+
+inline float lobe(float lambda, const SpectralLobe& shape)
+{
+    const float d = (lambda - shape.peak) / shape.sigma;
+    return shape.weight * std::exp(-0.5f * d * d);
+}
+
+inline float logistic(float x)
+{
+    return 1.f / (1.f + std::exp(-x));
+}
+
+// Layer 0 red-, 1 green-, 2 blue-sensitive.
+inline float layerSensitivity(StockClass stockClass, int layer, float lambda)
+{
+    struct Shapes {
+        SpectralLobe blue;
+        SpectralLobe green;
+        SpectralLobe greenLeak;
+        SpectralLobe red;
+        SpectralLobe redShoulder;
+        SpectralLobe redLeak;
+    };
+    static constexpr Shapes negative = {{1.f, 462.f, 34.f}, {1.f, 546.f, 40.f}, {0.035f, 468.f, 25.f},
+                                        {1.f, 640.f, 46.f}, {0.22f, 602.f, 30.f}, {0.02f, 468.f, 25.f}};
+    static constexpr Shapes reversal = {{1.f, 452.f, 28.f}, {1.f, 540.f, 33.f}, {0.02f, 466.f, 24.f},
+                                        {1.f, 645.f, 36.f}, {0.10f, 600.f, 25.f}, {0.012f, 466.f, 24.f}};
+    static constexpr Shapes motion = {{1.f, 464.f, 38.f}, {1.f, 552.f, 46.f}, {0.05f, 470.f, 26.f},
+                                      {1.f, 632.f, 50.f}, {0.30f, 596.f, 34.f}, {0.025f, 470.f, 26.f}};
+    const Shapes& shapes = stockClass == StockClass::Reversal ? reversal
+        : stockClass == StockClass::MotionNegative ? motion : negative;
+    // The yellow filter layer sits above the green- and red-sensitive layers.
+    const float yellowFilter = logistic((lambda - 497.f) / 8.f);
+    switch (layer) {
+        case 0:
+            return (lobe(lambda, shapes.red) + lobe(lambda, shapes.redShoulder)) * yellowFilter + lobe(lambda, shapes.redLeak);
+        case 1:
+            return lobe(lambda, shapes.green) * yellowFilter + lobe(lambda, shapes.greenLeak);
+        default:
+            return lobe(lambda, shapes.blue);
+    }
+}
+
+// A panchromatic emulsion, and what a filter on the lens (or an emulsion
+// that was never sensitised to red) leaves of it.
+inline float panchromatic(float lambda)
+{
+    return logistic((lambda - 395.f) / 8.f) * logistic(-(lambda - 665.f) / 12.f);
+}
+
+inline float monochromeFilter(const Glib::ustring& filter, float lambda)
+{
+    if (filter == "yellow") {
+        return logistic((lambda - 495.f) / 8.f);
+    }
+    if (filter == "orange") {
+        return logistic((lambda - 550.f) / 8.f);
+    }
+    if (filter == "red") {
+        return logistic((lambda - 600.f) / 8.f);
+    }
+    if (filter == "green") {
+        const float d = (lambda - 535.f) / 32.f;
+        return std::exp(-0.5f * d * d);
+    }
+    if (filter == "blue") {
+        return logistic(-(lambda - 490.f) / 10.f);
+    }
+    if (filter == "ortho") {
+        return logistic(-(lambda - 585.f) / 10.f);
+    }
+    return 1.f;
+}
+
+// Per chromaticity, how each layer's exposure departs from what the matrix
+// gives: added (per unit of R + G + B) for colour stocks, multiplied for
+// monochrome ones.
+struct FilmSpectralResponse {
+    bool active = false;
+    bool additive = false;
+    float ratio[filmspectrum::gridSize][filmspectrum::gridSize][3];
+
+    static void nodeSpectrum(int i, int j, float spectrum[filmspectrum::wavelengths])
+    {
+        const float* const c = filmspectrum::coefficients[i][j];
+        for (int w = 0; w < filmspectrum::wavelengths; ++w) {
+            const float x = w / static_cast<float>(filmspectrum::wavelengths - 1);
+            const float y = (c[0] * x + c[1]) * x + c[2];
+            spectrum[w] = 0.5f + y / (2.f * std::sqrt(1.f + y * y));
+        }
+    }
+
+    static void nodeColour(int i, int j, float rgb[3])
+    {
+        const float last = filmspectrum::gridSize - 1;
+        rgb[0] = i / last;
+        rgb[1] = j / last;
+        rgb[2] = std::max(1.f - rgb[0] - rgb[1], 0.f);
+        const float scale = 0.5f / std::max(rgb[0], std::max(rgb[1], std::max(rgb[2], 1e-6f)));
+        for (int k = 0; k < 3; ++k) {
+            rgb[k] *= scale;
+        }
+    }
+
+    // Colour stocks. The film stage's matrix is the part of this that is
+    // linear in the colour; the table holds only what the matrix cannot say:
+    // the layer's response to the smooth spectrum, minus the response a
+    // linear model fitted at neutral predicts for it. Pale colours are
+    // therefore exactly where the matrix put them, and the departure grows
+    // with saturation. (As a difference, not a quotient: the linear model
+    // passes through zero for saturated colours.) `survives` is the share of
+    // the layers' overlap that reaches the output (V4_SPECTRAL_STRENGTH),
+    // applied here as it is to the matrix.
+    void buildColour(StockClass stockClass, const float survives[3])
+    {
+        constexpr int size = filmspectrum::gridSize;
+        constexpr int count = filmspectrum::wavelengths;
+        float weight[3][count];
+        for (int k = 0; k < 3; ++k) {
+            float total = 0.f;
+            for (int w = 0; w < count; ++w) {
+                const float lambda = filmspectrum::firstWavelength + w * filmspectrum::wavelengthStep;
+                weight[k][w] = layerSensitivity(stockClass, k, lambda) * filmspectrum::white[w];
+                total += weight[k][w];
+            }
+            for (int w = 0; w < count; ++w) {
+                weight[k][w] /= total;
+            }
+        }
+        const auto response = [&weight](int i, int j, float out[3]) {
+            float spectrum[count];
+            nodeSpectrum(i, j, spectrum);
+            for (int k = 0; k < 3; ++k) {
+                float sum = 0.f;
+                for (int w = 0; w < count; ++w) {
+                    sum += weight[k][w] * spectrum[w];
+                }
+                out[k] = sum;
+            }
+        };
+        // Two linear models of that response, both exact at neutral: the
+        // tangent there (neutral and its six neighbours), and the best single
+        // matrix over every colour. The tangent is what a matrix means for
+        // pale colours, but it runs below zero for saturated ones; the
+        // overall fit is what a matrix can do for those. The reference
+        // passes from one to the other with saturation.
+        const int n = filmspectrum::neutralNode;
+        const auto fitLinear = [&response, n](bool everywhere, float linear[3][3]) {
+            double xx[3][3] = {};
+            double fx[3][3] = {};
+            for (int i = 0; i < size; ++i) {
+                for (int j = 0; i + j < size; ++j) {
+                    const bool near = std::abs(i - n) <= 1 && std::abs(j - n) <= 1 && std::abs(i + j - 2 * n) <= 1;
+                    if (!everywhere && !near) {
+                        continue;
+                    }
+                    float rgb[3];
+                    float f[3];
+                    nodeColour(i, j, rgb);
+                    response(i, j, f);
+                    for (int a = 0; a < 3; ++a) {
+                        for (int b = 0; b < 3; ++b) {
+                            xx[a][b] += double(rgb[a]) * rgb[b];
+                            fx[a][b] += double(f[a]) * rgb[b];
+                        }
+                    }
+                }
+            }
+            const double det = xx[0][0] * (xx[1][1] * xx[2][2] - xx[1][2] * xx[2][1])
+                - xx[0][1] * (xx[1][0] * xx[2][2] - xx[1][2] * xx[2][0])
+                + xx[0][2] * (xx[1][0] * xx[2][1] - xx[1][1] * xx[2][0]);
+            if (std::fabs(det) < 1e-12) {
+                return false;
+            }
+            double inv[3][3];
+            for (int a = 0; a < 3; ++a) {
+                for (int b = 0; b < 3; ++b) {
+                    const int a1 = (a + 1) % 3, a2 = (a + 2) % 3, b1 = (b + 1) % 3, b2 = (b + 2) % 3;
+                    inv[b][a] = (xx[a1][b1] * xx[a2][b2] - xx[a1][b2] * xx[a2][b1]) / det;
+                }
+            }
+            for (int a = 0; a < 3; ++a) {
+                for (int b = 0; b < 3; ++b) {
+                    linear[a][b] = static_cast<float>(fx[a][0] * inv[0][b] + fx[a][1] * inv[1][b] + fx[a][2] * inv[2][b]);
+                }
+            }
+            // Exact at neutral, so greys cannot move.
+            float grey[3];
+            float f[3];
+            nodeColour(n, n, grey);
+            response(n, n, f);
+            for (int a = 0; a < 3; ++a) {
+                const float miss = f[a] - (linear[a][0] * grey[0] + linear[a][1] * grey[1] + linear[a][2] * grey[2]);
+                for (int b = 0; b < 3; ++b) {
+                    linear[a][b] += miss * grey[b] / (grey[0] * grey[0] + grey[1] * grey[1] + grey[2] * grey[2]);
+                }
+            }
+            return true;
+        };
+        float tangent[3][3];
+        float overall[3][3];
+        if (!fitLinear(false, tangent) || !fitLinear(true, overall)) {
+            return;
+        }
+        for (int i = 0; i < size; ++i) {
+            for (int j = 0; j < size; ++j) {
+                float rgb[3];
+                float f[3];
+                nodeColour(i, j, rgb);
+                response(i, j, f);
+                const float sum = rgb[0] + rgb[1] + rgb[2];
+                const float away = std::hypot(rgb[0] / sum - 1.f / 3.f, rgb[1] / sum - 1.f / 3.f);
+                const float far = LIM((away - 0.08f) / 0.20f, 0.f, 1.f);
+                const float blend = far * far * (3.f - 2.f * far);
+                for (int k = 0; k < 3; ++k) {
+                    const float predicted = (1.f - blend) * (tangent[k][0] * rgb[0] + tangent[k][1] * rgb[1] + tangent[k][2] * rgb[2])
+                        + blend * (overall[k][0] * rgb[0] + overall[k][1] * rgb[1] + overall[k][2] * rgb[2]);
+                    ratio[i][j][k] = survives[k] * LIM((f[k] - predicted) / sum, -0.5f, 0.5f);
+                }
+            }
+        }
+        active = true;
+        additive = true;
+    }
+
+    // Monochrome stocks: the filtered response over the unfiltered one, both
+    // per unit of neutral light (the exposure is compensated for the filter).
+    void buildMonochrome(const Glib::ustring& filter)
+    {
+        if (filter.empty() || filter == "none") {
+            return;
+        }
+        constexpr int size = filmspectrum::gridSize;
+        constexpr int count = filmspectrum::wavelengths;
+        float open[count];
+        float filtered[count];
+        float openTotal = 0.f;
+        float filteredTotal = 0.f;
+        for (int w = 0; w < count; ++w) {
+            const float lambda = filmspectrum::firstWavelength + w * filmspectrum::wavelengthStep;
+            open[w] = panchromatic(lambda) * filmspectrum::white[w];
+            filtered[w] = open[w] * monochromeFilter(filter, lambda);
+            openTotal += open[w];
+            filteredTotal += filtered[w];
+        }
+        if (filteredTotal <= 0.f || filteredTotal >= openTotal * 0.9999f) {
+            return; // an unknown filter name passes everything
+        }
+        for (int i = 0; i < size; ++i) {
+            for (int j = 0; j < size; ++j) {
+                float spectrum[count];
+                nodeSpectrum(i, j, spectrum);
+                float seenOpen = 0.f;
+                float seenFiltered = 0.f;
+                for (int w = 0; w < count; ++w) {
+                    seenOpen += open[w] * spectrum[w];
+                    seenFiltered += filtered[w] * spectrum[w];
+                }
+                const float value = LIM((seenFiltered / filteredTotal) / std::max(seenOpen / openTotal, 1e-4f), 0.02f, 8.f);
+                ratio[i][j][0] = ratio[i][j][1] = ratio[i][j][2] = value;
+            }
+        }
+        active = true;
+    }
+
+    // Applies the departure for the colour (r, g, b) to its layer exposures.
+    void apply(float r, float g, float b, float exposure[3]) const
+    {
+        r = std::max(r, 0.f);
+        g = std::max(g, 0.f);
+        b = std::max(b, 0.f);
+        const float sum = r + g + b;
+        if (sum <= 1e-9f) {
+            return;
+        }
+        constexpr int last = filmspectrum::gridSize - 1;
+        const float u = r / sum * last;
+        const float v = g / sum * last;
+        const int i = std::min(static_cast<int>(u), last - 1);
+        const int j = std::min(static_cast<int>(v), last - 1);
+        const float fu = u - i;
+        const float fv = v - j;
+        for (int k = 0; k < 3; ++k) {
+            const float value = (ratio[i][j][k] * (1.f - fu) + ratio[i + 1][j][k] * fu) * (1.f - fv)
+                + (ratio[i][j + 1][k] * (1.f - fu) + ratio[i + 1][j + 1][k] * fu) * fv;
+            if (additive) {
+                // Bounded to about half a stop of the layer's own exposure:
+                // the spectrum is an estimate, and a steep stock (reversal)
+                // would turn a large correction to a barely exposed layer
+                // into a change of hue.
+                const float bound = 0.4f * exposure[k];
+                exposure[k] += LIM(value * sum, -bound, bound);
+            } else {
+                exposure[k] *= value;
+            }
+        }
+    }
+};
+
 // DIR couplers, V4: development in one layer releases inhibitors that
 // suppress development in the others. The Langmuir isotherm saturates the
 // inhibitor release as density builds, and only the DIFFERENCE between
@@ -2115,6 +2426,16 @@ void filmPresetsV3(
     // halates in proportion to its exposure, and the backing is explicit.
     const bool tracedEnergy = fp.modelVersion >= 6;
 
+    // V6: each layer answers to the light's spectrum (see FilmSpectralResponse).
+    FilmSpectralResponse spectralResponse;
+    if (tracedEnergy && !std::getenv("STEEP_FILMLAB_NO_SPECTRAL")) {
+        if (stockRecord.stockClass == StockClass::Monochrome) {
+            spectralResponse.buildMonochrome(fp.bwFilter);
+        } else if (stockRecord.stockClass != StockClass::Custom) {
+            spectralResponse.buildColour(stockRecord.stockClass, V4_SPECTRAL_STRENGTH);
+        }
+    }
+
     FilmLabV4Character character;
 
     if (stopsIndexed
@@ -2622,6 +2943,9 @@ void filmPresetsV3(
                     }
                     float exposure[3];
                     applyV3Spectral(stock, r, g, b, exposure);
+                    if (spectralResponse.active) {
+                        spectralResponse.apply(r, g, b, exposure);
+                    }
                     for (int k = 0; k < 3; ++k) {
                         layerSoften[k][row][col] = exposure[k];
                     }
@@ -2865,6 +3189,9 @@ void filmPresetsV3(
                 layerExposure[2] = std::max(b, 0.f);
             } else {
                 applyV3Spectral(stock, r, g, b, layerExposure);
+                if (spectralResponse.active) {
+                    spectralResponse.apply(r, g, b, layerExposure);
+                }
             }
             if (softenLayers) {
                 for (int k = 0; k < 3; ++k) {

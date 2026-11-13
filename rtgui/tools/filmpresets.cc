@@ -94,6 +94,7 @@ FilmPresets::FilmPresets() :
     EvFilmPresetsFormat       = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_FORMAT");
     EvFilmPresetsLens         = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_LENS");
     EvFilmPresetsBacking      = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_BACKING");
+    EvFilmPresetsBWFilter      = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_BWFILTER");
     EvFilmPresetsContrast     = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_CONTRAST");
     EvFilmPresetsSaturation   = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_SATURATION");
     EvFilmPresetsWarmth       = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_FILMPRESETS_WARMTH");
@@ -284,16 +285,25 @@ FilmPresets::FilmPresets() :
     backingCombo_->append("removed", M("TP_FILMPRESETS_BACKING_REMOVED"));
     backingCombo_->set_tooltip_markup(M("TP_FILMPRESETS_BACKING_TOOLTIP"));
 
-    MyComboBoxText* labCombos[] = {modelCombo_, processCombo_, outputCombo_, formatCombo_, lensCombo_, backingCombo_};
+    // What a black-and-white stock sees (V6): a coloured filter on the lens
+    // lightens its own colour and darkens the opposite one.
+    bwFilterCombo_ = Gtk::manage(new MyComboBoxText());
+    for (const char* id : {"none", "yellow", "orange", "red", "green", "blue", "ortho"}) {
+        bwFilterCombo_->append(id, M(Glib::ustring("TP_FILMPRESETS_BWFILTER_") + Glib::ustring(id).uppercase()));
+    }
+    bwFilterCombo_->set_tooltip_markup(M("TP_FILMPRESETS_BWFILTER_TOOLTIP"));
+
+    MyComboBoxText* labCombos[] = {modelCombo_, processCombo_, outputCombo_, formatCombo_, lensCombo_, backingCombo_, bwFilterCombo_};
     const char* labComboLabels[] = {
         "TP_FILMPRESETS_MODEL",
         "TP_FILMPRESETS_PROCESS",
         "TP_FILMPRESETS_OUTPUT",
         "TP_FILMPRESETS_FORMAT",
         "TP_FILMPRESETS_LENS",
-        "TP_FILMPRESETS_BACKING"
+        "TP_FILMPRESETS_BACKING",
+        "TP_FILMPRESETS_BWFILTER"
     };
-    for (int row = 0; row < 6; ++row) {
+    for (int row = 0; row < 7; ++row) {
         auto* label = Gtk::manage(new Gtk::Label(M(labComboLabels[row])));
         label->set_halign(Gtk::ALIGN_START);
         labCombos[row]->set_hexpand(true);
@@ -309,6 +319,7 @@ FilmPresets::FilmPresets() :
     formatCombo_->signal_changed().connect([this]() { onLabOptionChanged(EvFilmPresetsFormat, formatCombo_); });
     lensCombo_->signal_changed().connect([this]() { onLabOptionChanged(EvFilmPresetsLens, lensCombo_); });
     backingCombo_->signal_changed().connect([this]() { onLabOptionChanged(EvFilmPresetsBacking, backingCombo_); });
+    bwFilterCombo_->signal_changed().connect([this]() { onLabOptionChanged(EvFilmPresetsBWFilter, bwFilterCombo_); });
 
     exposureAdj_ = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_EXPOSURE"), -4., 4., 0.1, 0.));
     pushPullAdj_ = Gtk::manage(new Adjuster(M("TP_FILMPRESETS_PUSHPULL"), -2., 3., 0.1, 0.));
@@ -665,6 +676,7 @@ void FilmPresets::updateLabControlSensitivity()
     formatCombo_->set_sensitive(filmLab);
     lensCombo_->set_sensitive(materialModel); // the lean exists from V5 on
     backingCombo_->set_sensitive(modelCombo_->get_active_id() == "v6");
+    bwFilterCombo_->set_sensitive(modelCombo_->get_active_id() == "v6");
     lightSourcesAdj_->set_sensitive(modelCombo_->get_active_id() == "v6");
     filmSharpnessAdj_->set_sensitive(modelCombo_->get_active_id() == "v6");
     exposureAdj_->set_sensitive(filmLab);
@@ -750,6 +762,9 @@ void FilmPresets::read(const ProcParams* pp, const ParamsEdited* pedited)
     if (!backingCombo_->set_active_id(pp->filmPresets.backing)) {
         backingCombo_->set_active_id("auto");
     }
+    if (!bwFilterCombo_->set_active_id(pp->filmPresets.bwFilter)) {
+        bwFilterCombo_->set_active_id("none");
+    }
     exposureAdj_->setValue(pp->filmPresets.exposure);
     printExposureAdj_->setValue(pp->filmPresets.printExposure);
     pushPullAdj_->setValue(pp->filmPresets.pushPull);
@@ -808,6 +823,7 @@ void FilmPresets::write(ProcParams* pp, ParamsEdited* pedited)
     pp->filmPresets.format = formatCombo_->get_active_id();
     pp->filmPresets.lensDesign = lensCombo_->get_active_id();
     pp->filmPresets.backing = backingCombo_->get_active_id();
+    pp->filmPresets.bwFilter = bwFilterCombo_->get_active_id();
 
     pp->filmPresets.strength = strength->getValue();
     pp->filmPresets.contrast = contrast->getValue();
@@ -849,6 +865,7 @@ void FilmPresets::write(ProcParams* pp, ParamsEdited* pedited)
         pedited->filmPresets.format = true;
         pedited->filmPresets.lensDesign = true;
         pedited->filmPresets.backing = true;
+        pedited->filmPresets.bwFilter = true;
         pedited->filmPresets.strength = strength->getEditedState();
         pedited->filmPresets.contrast = contrast->getEditedState();
         pedited->filmPresets.saturation = saturation->getEditedState();

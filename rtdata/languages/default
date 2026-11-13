@@ -1850,6 +1850,7 @@ HISTORY_MSG_FILMPRESETS_PROCESS;Film Lab - Process
 HISTORY_MSG_FILMPRESETS_OUTPUT;Film Lab - Output
 HISTORY_MSG_FILMPRESETS_FORMAT;Film Lab - Format
 HISTORY_MSG_FILMPRESETS_BACKING;Film Lab - Backing
+HISTORY_MSG_FILMPRESETS_BWFILTER;Film Lab - B&W filter
 HISTORY_MSG_FILMPRESETS_LENS;Film Lab - Lens
 HISTORY_MSG_FILMPRESETS_CONTRAST;Film Lab - Contrast
 HISTORY_MSG_FILMPRESETS_SATURATION;Film Lab - Saturation
@@ -3541,6 +3542,15 @@ TP_FILMPRESETS_BACKING_AUTO;As the stock has it
 TP_FILMPRESETS_BACKING_INTACT;Intact
 TP_FILMPRESETS_BACKING_REMOVED;Removed
 TP_FILMPRESETS_BACKING_TOOLTIP;The anti-halation backing the film is exposed with. Intact: almost no light comes back through the base, so lights stay clean. Removed: light reflects off the back of the film and returns as a red ring round every light and along bright edges. Colour stocks only. Engine v6.
+TP_FILMPRESETS_BWFILTER;B&W filter
+TP_FILMPRESETS_BWFILTER_NONE;None
+TP_FILMPRESETS_BWFILTER_YELLOW;Yellow
+TP_FILMPRESETS_BWFILTER_ORANGE;Orange
+TP_FILMPRESETS_BWFILTER_RED;Red
+TP_FILMPRESETS_BWFILTER_GREEN;Green
+TP_FILMPRESETS_BWFILTER_BLUE;Blue
+TP_FILMPRESETS_BWFILTER_ORTHO;No red (ortho film)
+TP_FILMPRESETS_BWFILTER_TOOLTIP;A coloured filter on the lens of a black-and-white stock. It lightens its own colour and darkens the opposite one: yellow, orange and red darken blue skies progressively and lighten skin; green lightens foliage; blue lightens skies and deepens skin. 'No red' is film that cannot see red at all: lips and red brick go dark. Exposure is compensated, so greys stay where they were. Monochrome stocks only. Engine v6.
 TP_FILMPRESETS_FORMAT;Format
 TP_FILMPRESETS_FORMAT_LARGE;Large format
 TP_FILMPRESETS_LENS;Lens

@@ -1832,6 +1832,7 @@ struct FilmPresetsParams {
     Glib::ustring output;   // scan, ra4, projection, cinema
     Glib::ustring format;   // 35mm, 120, large
     Glib::ustring backing;    // auto, intact, removed: the anti-halation backing at exposure (V6 halation)
+    Glib::ustring bwFilter;   // none, yellow, orange, red, green, blue, ortho: the lens filter / sensitivity of a monochrome stock (V6)
     Glib::ustring lensDesign; // slr, rangefinder, telecentric: how far off the film the exit pupil sits (V5 halation's off-axis lean)
     int strength;           // 0-100
     int contrast;           // -100..100

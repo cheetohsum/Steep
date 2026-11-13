@@ -44,6 +44,7 @@ private:
     MyComboBoxText* formatCombo_;
     MyComboBoxText* lensCombo_;
     MyComboBoxText* backingCombo_;
+    MyComboBoxText* bwFilterCombo_;
     Adjuster* exposureAdj_;
     Adjuster* printExposureAdj_;
     Adjuster* pushPullAdj_;
@@ -98,6 +99,7 @@ private:
     rtengine::ProcEvent EvFilmPresetsFormat;
     rtengine::ProcEvent EvFilmPresetsLens;
     rtengine::ProcEvent EvFilmPresetsBacking;
+    rtengine::ProcEvent EvFilmPresetsBWFilter;
     rtengine::ProcEvent EvFilmPresetsContrast;
     rtengine::ProcEvent EvFilmPresetsSaturation;
     rtengine::ProcEvent EvFilmPresetsWarmth;
