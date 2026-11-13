@@ -2361,7 +2361,12 @@ std::shared_ptr<const FilmLabRenderTables> filmLabTables(
 // point is that it has been washed off before the film was shot.
 bool stockBackingRemoved(const Glib::ustring& preset, bool v6)
 {
-    return preset == "cinema_reveal_35" || preset == "ember" || (v6 && preset == "cinematic_500t");
+    // (The first V6 builds also exposed cinematic_500t without its backing.
+    // Auto Edit picks that stock for night scenes, and the result was a red
+    // veil over every lit building: a look to choose, not a default. The
+    // Neon Tungsten Night look asks for it explicitly.)
+    (void)v6;
+    return preset == "cinema_reveal_35" || preset == "ember";
 }
 
 filmhalation::Construction materialHaloConstruction(const FilmLabStock& stock, const procparams::FilmPresetsParams& fp)
@@ -2689,10 +2694,23 @@ void filmPresetsV3(
     // source is the exposure itself, and raising the Threshold slider above
     // zero brings the highlight weighting back, as a choice.
     const float sourceGate = tracedEnergy ? LIM(fp.halationThreshold / 100.f, 0.f, 1.f) : 1.f;
-    const auto sourceWeight = [sourceGate, opticalOnset](float light) {
-        return sourceGate > 0.f
-            ? 1.f - sourceGate + sourceGate * filmoptics::highlightWeight(light, opticalOnset)
+    // V6: a ceiling on what one pixel feeds the halo. Highlight compression
+    // holds a neutral highlight at the tap's white (filmTapWhite), but it
+    // works on the average of the channels, so a coloured lamp slips through
+    // at many times that: after a +3.7 EV night edit, sodium lamps sat at
+    // seven times white and drowned the frame in halation. Above white the
+    // source now grows with the logarithm of the light, as the neutral
+    // highlight beside it effectively does. (What a clipped light really
+    // was is the light estimate's job, further down.)
+    const float sourceCeiling = tracedEnergy && sceneMode && filmTapWhite > 1.f ? filmTapWhite / MAXVALF : 0.f;
+    const auto sourceWeight = [sourceGate, opticalOnset, negativeGain, sourceCeiling](float peak) {
+        float weight = sourceGate > 0.f
+            ? 1.f - sourceGate + sourceGate * filmoptics::highlightWeight(peak * negativeGain, opticalOnset)
             : 1.f;
+        if (sourceCeiling > 0.f && peak > sourceCeiling) {
+            weight *= sourceCeiling * (1.f + std::log(peak / sourceCeiling)) / peak;
+        }
+        return weight;
     };
     const float bloomFraction = materialModel ? bloom * 0.08f : 0.f;
     if (materialModel && (halation > 0.001f || bloomFraction > 0.0001f)) {
@@ -2765,7 +2783,7 @@ void filmPresetsV3(
                         } else {
                             toCanonicalV3(lab, sy, sx, inverse, r, g, b);
                         }
-                        const float weight = sourceWeight(std::max(r, std::max(g, b)) * negativeGain);
+                        const float weight = sourceWeight(std::max(r, std::max(g, b)));
                         sum[0] += std::max(r, 0.f) * weight;
                         sum[1] += std::max(g, 0.f) * weight;
                         sum[2] += std::max(b, 0.f) * weight;
@@ -3173,7 +3191,7 @@ void filmPresetsV3(
             if (materialHalo[0]) {
                 const float lowX = (col + 0.5f) / halationReduction - 0.5f;
                 const float lowY = (row + 0.5f) / halationReduction - 0.5f;
-                const float weight = sourceWeight(std::max(r, std::max(g, b)) * negativeGain);
+                const float weight = sourceWeight(std::max(r, std::max(g, b)));
                 // This pixel's share of the halo source, as the reduced plane
                 // was built: read before the loop below rewrites r, g, b.
                 const float lit[3] = {std::max(r, 0.f) * weight, std::max(g, 0.f) * weight, std::max(b, 0.f) * weight};

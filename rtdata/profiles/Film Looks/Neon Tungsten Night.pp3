@@ -6,6 +6,7 @@ Id=neon-tungsten-night
 Family=motion
 
 [Film Presets]
+Backing=removed
 Enabled=true
 Preset=cinematic_500t
 ModelVersion=6
