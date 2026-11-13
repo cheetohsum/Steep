@@ -1098,6 +1098,16 @@ bool AIMaskCache::getDepthPreset(const std::string& imageId, int classIndex, std
     return true;
 }
 
+bool AIMaskCache::getDepthPreset(int classIndex, std::array<double, 4>& range) const
+{
+    MyMutex::MyLock lock(mutex_);
+    if (!cachedMasks_ || !cachedDepthReady_) {
+        return false;
+    }
+    range = depthPreset(classIndex, cachedDepthSplit_);
+    return true;
+}
+
 AIMaskSnapshot AIMaskCache::getPreparedMask(
     AISegClass cls, float threshold, float feather, float blur, float maskSize,
     bool invert, int refineRadius, float refineEps, const MaskPaint& paint,

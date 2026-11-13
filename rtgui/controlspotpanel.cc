@@ -24,6 +24,7 @@
 
 #include "aimaskthumb.h"
 #include "depthrangewidget.h"
+#include "rtengine/depthscale.h"
 #include "windows/maskpaintdlg.h"
 
 #ifdef RT_AI_MASKING
@@ -1627,7 +1628,21 @@ void ControlSpotPanel::render_preview(
                                 static_cast<int>(AISegClass::TOTAL_CLASSES) - 1);
         const AIMaskSnapshot snapshot = AIMaskCache::getInstance().getMaskSnapshot(
             static_cast<AISegClass>(ci));
-        if (snapshot) {
+        // Near / far: the map is depth, and the selection is this spot's band
+        // of it. Until the depth is in there is nothing to draw.
+        const bool depthMask = ci == static_cast<int>(AISegClass::FOREGROUND_DEPTH)
+            || ci == static_cast<int>(AISegClass::BACKGROUND_DEPTH);
+        std::array<double, 4> depthBand = AIMaskCache::automaticDepthRange();
+        bool depthKnown = false;
+        if (depthMask) {
+            std::array<double, 4> preset;
+            depthKnown = AIMaskCache::getInstance().getDepthPreset(editedFilePath_.raw(), ci, preset);
+            depthBand = AIMaskCache::parseDepthRange(Glib::ustring(row[spots_.aiMaskDepthRange]).raw());
+            if (AIMaskCache::isAutomaticDepthRange(depthBand)) {
+                depthBand = preset;
+            }
+        }
+        if (snapshot && (!depthMask || depthKnown)) {
             for (int py = 0; py < H; py++) {
                 for (int px = 0; px < W; px++) {
                     const int my = std::min(
@@ -1638,7 +1653,9 @@ void ControlSpotPanel::render_preview(
                         snapshot.width - 1);
                     const float prob = (*snapshot.mask)[my][mx];
                     constexpr float transitionWidth = 0.21f;
-                    const float strength = std::max(0.f, std::min(
+                    const float strength = depthMask
+                        ? rtengine::depthscale::weight(prob, depthBand)
+                        : std::max(0.f, std::min(
                         1.f,
                         (prob - aiThreshold + transitionWidth * 0.5f) /
                             transitionWidth));

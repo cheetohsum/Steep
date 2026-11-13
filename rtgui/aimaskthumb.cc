@@ -21,19 +21,21 @@
 
 #ifdef RT_AI_MASKING
 #include "rtengine/aimaskcache.h"
+#include "rtengine/depthscale.h"
 #include "rtengine/partnermaskstore.h"
 #endif
 
 namespace
 {
 
-// Model classes 0-7, then the composed SUBJECT and NOT_SUBJECT pseudo-classes.
+// Model classes 0-7, the composed SUBJECT and NOT_SUBJECT pseudo-classes, then
+// near and far by depth.
 // The same colours the mask list swatches use, so one class means one colour
 // wherever it appears.
 const guint8 CLASS_COLOURS[][3] = {
     {128, 128, 128}, {220,  80,  80}, { 80, 140, 220}, { 80, 180,  80},
     {200, 150,  60}, {160,  80, 200}, {220, 180,  50}, { 80, 200, 200},
-    {240, 130,  90}, {110, 120, 150},
+    {240, 130,  90}, {110, 120, 150}, {230, 110, 160}, { 90, 110, 200},
 };
 
 constexpr int CLASS_COUNT = static_cast<int>(sizeof(CLASS_COLOURS) / sizeof(CLASS_COLOURS[0]));
@@ -111,6 +113,22 @@ Glib::RefPtr<Gdk::Pixbuf> fromEditedImage(int classIndex, float threshold,
     const auto& mask = *snapshot.mask;
     const int mw = snapshot.width;
     const int mh = snapshot.height;
+
+    if (classIndex == static_cast<int>(rtengine::AISegClass::FOREGROUND_DEPTH)
+            || classIndex == static_cast<int>(rtengine::AISegClass::BACKGROUND_DEPTH)) {
+        // These maps are depth (0 near .. 1 far), not how sure the class is:
+        // the tile shows what the automatic near or far band selects. Drawn
+        // as a probability, "near" lit up the far half of the picture.
+        std::array<double, 4> band;
+        if (!rtengine::AIMaskCache::getInstance().getDepthPreset(classIndex, band)) {
+            return Glib::RefPtr<Gdk::Pixbuf>();   // not estimated yet
+        }
+        return render([&mask, mw, mh, band](double u, double v) {
+            const int x = std::min(mw - 1, std::max(0, static_cast<int>(u * mw)));
+            const int y = std::min(mh - 1, std::max(0, static_cast<int>(v * mh)));
+            return rtengine::depthscale::weight(mask[y][x], band);
+        }, classIndex, 0.5f, imW, imH, maxW, maxH);
+    }
 
     return render([&mask, mw, mh](double u, double v) {
         const int x = std::min(mw - 1, std::max(0, static_cast<int>(u * mw)));

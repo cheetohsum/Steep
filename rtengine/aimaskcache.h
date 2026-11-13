@@ -99,6 +99,9 @@ public:
     // The handles an automatic near / far spot uses on this photo, for the
     // depth range control to start from. False until depth is known.
     bool getDepthPreset(const std::string& imageId, int classIndex, std::array<double, 4>& range) const;
+    // The same for whichever photo the cache holds, for callers that draw
+    // from getMaskSnapshot and so mean that photo anyway.
+    bool getDepthPreset(int classIndex, std::array<double, 4>& range) const;
 
     bool hasCachedMasks(const std::string& imageId) const;
     // Only masks computed from the same kind of input (see aiMaskGeometryKey).
