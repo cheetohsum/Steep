@@ -17,7 +17,7 @@ Gates:
   * recorded is several times weaker: the clip did hide the light;
   * a large over-exposed wall whose surroundings are within a stop of the clip
     is not raised: it is a surface, not a light;
-  * with --baseline: V5, and V6 with recovery off, render as the older build.
+  * with --baseline: V5 renders as the older build.
 """
 import argparse
 import os
@@ -130,7 +130,7 @@ def main():
     gate(wall.max() * 255 < 0.5, "an over-exposed wall with a bright surround is not raised", f"max {wall.max() * 255:.3f} levels")
 
     if args.baseline:
-        for model in (5, 6):
+        for model in (5,):  # V6 itself has been recalibrated since; only V5 is frozen
             n = render(args.cli, out, f"same_new{model}", out / "captured.tif", 0, ModelVersion=model, LightSources=-100)
             o = render(args.baseline, out, f"same_old{model}", out / "captured.tif", 0, ModelVersion=model, LightSources=-100)
             gate(np.array_equal(n, o), f"V{model} with recovery off renders as the older build",

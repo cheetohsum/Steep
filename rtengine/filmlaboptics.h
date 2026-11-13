@@ -36,16 +36,18 @@ inline float clipLuminance(float fNumber, float shutterSeconds, float iso)
 // How many stops above the clip a burnt-out light is taken to be. Lamps,
 // signs and lit windows sit in the thousands of cd/m2 whatever the exposure,
 // so the darker the scene the camera exposed for, the further over they are:
-// about a stop in daylight (where what clips is mostly white cloud and
-// paint), five at night. Two and a half when the exposure is unknown. `amount` is the
+// half a stop in daylight (where what clips is mostly white cloud and
+// paint), three at night - well short of what such lights measure, on
+// purpose: it is a guess, and an over-estimate is far uglier than an
+// under-estimate. One and a half when the exposure is unknown. `amount` is the
 // Light sources slider: -100 takes the file as recorded, +100 doubles the
 // stops.
 inline float emitterStops(float clipLuminanceCdM2, int amount)
 {
     constexpr float emitter = 5000.f;
     const float stops = clipLuminanceCdM2 > 0.f
-        ? std::max(1.f, std::min(5.f, std::log2(emitter / clipLuminanceCdM2)))
-        : 2.5f;
+        ? std::max(0.5f, std::min(3.f, std::log2(emitter / clipLuminanceCdM2)))
+        : 1.5f;
     return stops * (1.f + std::max(-100, std::min(100, amount)) / 100.f);
 }
 

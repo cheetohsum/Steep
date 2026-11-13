@@ -146,11 +146,11 @@ int main(int argc, char** argv)
         require(fo::clipLuminance(0.f, 0.01f, 200.f) == 0.f && fo::clipLuminance(2.f, 0.f, 200.f) == 0.f
             && fo::clipLuminance(2.f, 0.01f, 0.f) == 0.f, "unknown exposure must give no clip luminance");
         require(near(fo::clipLuminance(8.f, 1.f / 500.f, 160.f), 34000.f, 1.f), "daylight clip luminance");
-        require(near(fo::emitterStops(fo::clipLuminance(8.f, 1.f / 500.f, 160.f), 0), 1.f, 1e-4f), "daylight lights: one stop");
-        require(near(fo::emitterStops(fo::clipLuminance(2.f, 1.f / 8.f, 3200.f), 0), 5.f, 1e-4f), "night lights: five stops");
-        require(near(fo::emitterStops(fo::clipLuminance(2.8f, 1.f / 60.f, 200.f), 0), 3.64f, 0.02f), "interior lights");
-        require(near(fo::emitterStops(0.f, 0), 2.5f, 1e-4f), "unknown exposure: two and a half stops");
-        require(fo::emitterStops(1.f, -100) == 0.f && near(fo::emitterStops(1.f, 100), 10.f, 1e-4f), "light sources slider range");
+        require(near(fo::emitterStops(fo::clipLuminance(8.f, 1.f / 500.f, 160.f), 0), 0.5f, 1e-4f), "daylight lights: half a stop");
+        require(near(fo::emitterStops(fo::clipLuminance(2.f, 1.f / 8.f, 3200.f), 0), 3.f, 1e-4f), "night lights: three stops");
+        require(near(fo::emitterStops(fo::clipLuminance(2.8f, 1.f / 60.f, 100.f), 0), 2.64f, 0.02f), "interior lights");
+        require(near(fo::emitterStops(0.f, 0), 1.5f, 1e-4f), "unknown exposure: one and a half stops");
+        require(fo::emitterStops(1.f, -100) == 0.f && near(fo::emitterStops(1.f, 100), 6.f, 1e-4f), "light sources slider range");
         require(fo::emitterConfidence(0.7f) == 0.f && fo::emitterConfidence(0.5f) == 0.f, "a surface within a stop of the clip is not a light");
         require(fo::emitterConfidence(0.01f) == 1.f && fo::emitterConfidence(0.f) == 1.f, "a light in the dark is a light");
         require(fo::emitterConfidence(0.2f) > 0.2f && fo::emitterConfidence(0.2f) < fo::emitterConfidence(0.1f), "confidence rises as the surround darkens");

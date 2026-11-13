@@ -2729,8 +2729,12 @@ void filmPresetsV3(
             lightStops = static_cast<float>(std::atof(fixedStops));
         }
         const bool recoverLights = lightStops > 0.01f && halationWidth >= 8 && halationHeight >= 8;
-        const float clipLow = 0.85f * clipLevel;
-        const float clipHigh = 0.98f * clipLevel;
+        // How much of the estimate a pixel gets rises smoothly over the last
+        // three quarters of a stop below the clip. A light's image does not
+        // end where the sensor happens to clip: raising the clipped core
+        // alone made a glow in the shape of the clipping, not of the light.
+        const float clipLow = 0.6f * clipLevel;
+        const float clipHigh = clipLevel;
         array2D<float> clipped[3];
         array2D<float> clipMask;
         array2D<float> clipSurround;
@@ -2766,7 +2770,8 @@ void filmPresetsV3(
                         sum[1] += std::max(g, 0.f) * weight;
                         sum[2] += std::max(b, 0.f) * weight;
                         if (recoverLights) {
-                            const float k = smoothStep(clipLow, clipHigh, peak);
+                            const float ramp = smoothStep(clipLow, clipHigh, peak);
+                            const float k = ramp * ramp;
                             clipSum[0] += std::max(r, 0.f) * weight * k;
                             clipSum[1] += std::max(g, 0.f) * weight * k;
                             clipSum[2] += std::max(b, 0.f) * weight * k;
@@ -2789,6 +2794,22 @@ void filmPresetsV3(
                 }
             }
         }
+        const float frameMM = fp.format == "120" ? 56.f : fp.format == "large" ? 95.f : 24.f;
+        const float pixelsPerMM = fullShort / frameMM / (opticalScale * halationReduction);
+        const float bloomSigma = 0.38f * pixelsPerMM * halationSize;
+        // Small thumbnail planes cannot support the recursive filter's
+        // boundary stencil. Below that size the spatial effect is unresolved.
+        const bool tiny = halationWidth < 8 || halationHeight < 8;
+        for (int c = 0; c < 3; ++c) {
+#ifdef _OPENMP
+            #pragma omp parallel if (multiThread)
+#endif
+            gaussianBlur(source[c], materialBloom[c], halationWidth, halationHeight, tiny ? 0.0 : bloomSigma);
+        }
+
+        // The recovered light goes to halation only, which is why it comes
+        // after the bloom above: the wide soft glow of a lamp is the lens's
+        // doing and is already in the photograph at its true strength.
         if (recoverLights) {
             // What surrounds each clipped area, over 4% of the frame's short
             // side: the mean of the unclipped light there. Deep inside a
@@ -2837,19 +2858,6 @@ void filmPresetsV3(
                              recordedLight > 0.0 ? 1.0 + addedLight / recordedLight : 1.0, tapPeakMax);
             }
         }
-        const float frameMM = fp.format == "120" ? 56.f : fp.format == "large" ? 95.f : 24.f;
-        const float pixelsPerMM = fullShort / frameMM / (opticalScale * halationReduction);
-        const float bloomSigma = 0.38f * pixelsPerMM * halationSize;
-        // Small thumbnail planes cannot support the recursive filter's
-        // boundary stencil. Below that size the spatial effect is unresolved.
-        const bool tiny = halationWidth < 8 || halationHeight < 8;
-        for (int c = 0; c < 3; ++c) {
-#ifdef _OPENMP
-            #pragma omp parallel if (multiThread)
-#endif
-            gaussianBlur(source[c], materialBloom[c], halationWidth, halationHeight, tiny ? 0.0 : bloomSigma);
-        }
-
         // Halation: the kernel traced through this film's own layers
         // (tools/halation_tracer.cc) -- a ring that starts where the base
         // reflects totally, with the colour split the layer stack produces,
@@ -2864,7 +2872,16 @@ void filmPresetsV3(
             // V5 kept the Gaussian model's budget (white light puts
             // halation * 0.12 into the red layer, whatever the stack); V6
             // takes the traced kernels at their own energy.
-            const float scale = tracedEnergy ? halation : halation * 0.12f / std::max(whiteToRed, 1e-9f);
+            // The tracer treats the emulsion as a fully diffusing layer, which
+            // sends far more light past the base's critical angle than a real
+            // coating does; that barely matters behind an anti-halation layer,
+            // but without one (backing removed, and the monochrome stack) the
+            // traced return was several times what such films show. Those two
+            // are scaled to about a third.
+            // (Told apart by the return itself: over 3% of white light into the red layer.)
+            const bool unprotected = whiteToRed > 0.03f;
+            const float traced = unprotected ? 0.35f : 1.f;
+            const float scale = tracedEnergy ? halation * traced : halation * 0.12f / std::max(whiteToRed, 1e-9f);
             const float layerWarmth[3] = {halationWarmth, 1.f, 1.f / halationWarmth};
             float gain[3][3];
             for (int b = 0; b < 3; ++b) {
