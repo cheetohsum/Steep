@@ -365,6 +365,7 @@ std::shared_ptr<const PartnerDepth> PartnerDepthStore::getSceneDepth(const std::
     }
 
     std::unique_ptr<Imagefloat> map;
+    float farRatio = 0.f;
     {
         std::lock_guard<std::mutex> lock(impl->mutex);
 
@@ -378,7 +379,7 @@ std::shared_ptr<const PartnerDepth> PartnerDepthStore::getSceneDepth(const std::
         }
 
         map = estimateWithRetry(impl->estimator, "Scene depth", [&](DepthEstimator& estimator) {
-            return estimator.detailedDepth(source, impl->directory.raw(), workingProfile, 1024);
+            return estimator.detailedDepth(source, impl->directory.raw(), workingProfile, 1024, &farRatio);
         });
 
         if (!map) {
@@ -395,6 +396,7 @@ std::shared_ptr<const PartnerDepth> PartnerDepthStore::getSceneDepth(const std::
     result->height = map->getHeight();
     result->fullWidth = fullWidth;
     result->fullHeight = fullHeight;
+    result->farRatio = farRatio;
     result->depth(result->width, result->height);
 
     for (int y = 0; y < result->height; ++y) {

@@ -20,6 +20,7 @@
 #include "imagefloat.h"
 #include "samselector.h"
 #include "partnerdepthstore.h"
+#include "depthscale.h"
 #include "aisubjectmodel.h"
 #include "settings.h"
 #include "rt_math.h"
@@ -34,6 +35,7 @@
 #include <glibmm/miscutils.h>
 #include <array>
 #include <cstdlib>
+#include <functional>
 #include <cmath>
 #include <vector>
 
@@ -497,7 +499,11 @@ namespace
  * Stored as 8-bit probabilities, zlib-compressed: a few hundred KB a photo.
  */
 constexpr char DISK_MAGIC[4] = {'S', 'A', 'I', 'M'};
-constexpr std::uint32_t DISK_VERSION = 2;   // 2: twelve classes, depth flag
+// 2: twelve classes, depth flag. 3: depth is the log-distance scale and
+// rides behind the class planes at 16 bits (8 bits put visible steps into a
+// feathered depth mask); a version 2 file still serves its class maps, and
+// its depth is estimated again.
+constexpr std::uint32_t DISK_VERSION = 3;
 
 std::string diskCachePath(const std::string& imageId, std::uint64_t inputKey, const std::string& workingProfile,
                           int width, int height, int fullW, int fullH)
@@ -541,7 +547,7 @@ bool loadMapsFromDisk(const std::string& path, int width, int height,
     std::uint32_t header[5] = {};
     bool ok = std::fread(magic, 1, 4, f) == 4 && std::equal(magic, magic + 4, DISK_MAGIC)
               && std::fread(header, sizeof(header[0]), 5, f) == 5
-              && header[0] == DISK_VERSION && static_cast<int>(header[1]) == width
+              && (header[0] == DISK_VERSION || header[0] == 2) && static_cast<int>(header[1]) == width
               && static_cast<int>(header[2]) == height
               && header[3] == static_cast<std::uint32_t>(AISegClass::TOTAL_CLASSES);
     std::vector<unsigned char> packed;
@@ -554,13 +560,16 @@ bool loadMapsFromDisk(const std::string& path, int width, int height,
         return false;
     }
     const std::size_t plane = static_cast<std::size_t>(width) * height;
-    std::vector<unsigned char> bytes(plane * header[3] + 1);
+    const std::size_t classBytes = plane * header[3] + 1;
+    std::vector<unsigned char> bytes(classBytes + plane * 2);
     uLongf length = bytes.size();
-    if (uncompress(bytes.data(), &length, packed.data(), packed.size()) != Z_OK || length != plane * header[3] + 1) {
+    if (uncompress(bytes.data(), &length, packed.data(), packed.size()) != Z_OK
+            || (length != classBytes && length != classBytes + plane * 2)) {
         return false;
     }
-    usedSubjectModel = (bytes.back() & 1) != 0;
-    depthReady = (bytes.back() & 2) != 0;
+    const unsigned char flags = bytes[classBytes - 1];
+    usedSubjectModel = (flags & 1) != 0;
+    depthReady = header[0] == DISK_VERSION && (flags & 2) != 0 && length == classBytes + plane * 2;
     maps.clear();
     for (std::uint32_t c = 0; c < header[3]; ++c) {
         maps.emplace_back(width, height);
@@ -568,6 +577,18 @@ bool loadMapsFromDisk(const std::string& path, int width, int height,
         for (int y = 0; y < height; ++y) {
             for (int x = 0; x < width; ++x) {
                 maps.back()[y][x] = src[static_cast<std::size_t>(y) * width + x] / 255.f;
+            }
+        }
+    }
+    for (int c : {static_cast<int>(AISegClass::FOREGROUND_DEPTH), static_cast<int>(AISegClass::BACKGROUND_DEPTH)}) {
+        if (c >= static_cast<int>(maps.size())) {
+            continue;
+        }
+        const unsigned char* src = bytes.data() + classBytes;
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                const std::size_t i = (static_cast<std::size_t>(y) * width + x) * 2;
+                maps[c][y][x] = depthReady ? (src[i] | (src[i + 1] << 8)) / 65535.f : 0.f;
             }
         }
     }
@@ -581,7 +602,8 @@ void saveMapsToDisk(const std::string& path, const std::vector<array2D<float>>& 
         return;
     }
     const std::size_t plane = static_cast<std::size_t>(width) * height;
-    std::vector<unsigned char> bytes(plane * maps.size() + 1);
+    const std::size_t classBytes = plane * maps.size() + 1;
+    std::vector<unsigned char> bytes(classBytes + (depthReady ? plane * 2 : 0));
     for (std::size_t c = 0; c < maps.size(); ++c) {
         unsigned char* dst = bytes.data() + c * plane;
         for (int y = 0; y < height; ++y) {
@@ -591,7 +613,19 @@ void saveMapsToDisk(const std::string& path, const std::vector<array2D<float>>& 
             }
         }
     }
-    bytes.back() = (usedSubjectModel ? 1 : 0) | (depthReady ? 2 : 0);
+    bytes[classBytes - 1] = (usedSubjectModel ? 1 : 0) | (depthReady ? 2 : 0);
+    if (depthReady) {
+        const array2D<float>& depth = maps[static_cast<int>(AISegClass::FOREGROUND_DEPTH)];
+        unsigned char* dst = bytes.data() + classBytes;
+        for (int y = 0; y < height; ++y) {
+            for (int x = 0; x < width; ++x) {
+                const unsigned int v = static_cast<unsigned int>(LIM01(depth[y][x]) * 65535.f + 0.5f);
+                const std::size_t i = (static_cast<std::size_t>(y) * width + x) * 2;
+                dst[i] = v & 0xff;
+                dst[i + 1] = v >> 8;
+            }
+        }
+    }
     uLongf length = compressBound(bytes.size());
     std::vector<unsigned char> packed(length);
     if (compress2(packed.data(), &length, bytes.data(), bytes.size(), 6) != Z_OK) {
@@ -1002,66 +1036,28 @@ AIMaskSnapshot AIMaskCache::getMaskSnapshot(AISegClass cls) const
 namespace
 {
 
-// Otsu's split of a depth map (0 near .. 1 far): where this photograph's
-// depths fall apart into a near group and a far one.
+// Where this photograph's depths (0 near .. 1 far) fall apart into a near
+// group and a far one; see depthscale::splitOf.
 float depthSplitOf(const array2D<float>& depth)
 {
-    constexpr int bins = 256;
-    std::vector<double> histogram(bins, 0.0);
-    double count = 0.0;
+    std::vector<double> histogram(256, 0.0);
+    const int bins = static_cast<int>(histogram.size());
     for (int y = 0; y < depth.getHeight(); ++y) {
         for (int x = 0; x < depth.getWidth(); ++x) {
             histogram[std::min(bins - 1, static_cast<int>(LIM01(depth[y][x]) * bins))] += 1.0;
-            count += 1.0;
         }
     }
-    if (count < 1.0) {
-        return 0.5f;
-    }
-    double total = 0.0;
-    for (int i = 0; i < bins; ++i) {
-        total += i * histogram[i];
-    }
-    double below = 0.0, belowSum = 0.0, bestVariance = -1.0;
-    int split = bins / 2;
-    for (int i = 0; i < bins - 1; ++i) {
-        below += histogram[i];
-        belowSum += i * histogram[i];
-        const double above = count - below;
-        if (below <= 0.0 || above <= 0.0) {
-            continue;
-        }
-        const double meanBelow = belowSum / below;
-        const double meanAbove = (total - belowSum) / above;
-        const double variance = below * above * (meanBelow - meanAbove) * (meanBelow - meanAbove);
-        if (variance > bestVariance) {
-            bestVariance = variance;
-            split = i;
-        }
-    }
-    return (split + 1.f) / bins;
+    return depthscale::splitOf(std::move(histogram));
 }
 
-// The automatic range of a near or far spot around the split: a short
-// ramp either side, so the cut is soft enough to refine against the picture.
 std::array<double, 4> depthPreset(int classIndex, float split)
 {
-    constexpr double ramp = 0.04;
-    if (classIndex == static_cast<int>(AISegClass::BACKGROUND_DEPTH)) {
-        return {{std::max(0.0, split - ramp), std::min(1.0, split + ramp), 1.0, 1.0}};
-    }
-    return {{0.0, 0.0, std::max(0.0, split - ramp), std::min(1.0, split + ramp)}};
+    return depthscale::preset(classIndex == static_cast<int>(AISegClass::BACKGROUND_DEPTH), split);
 }
 
 float depthRangeWeight(float d, const std::array<double, 4>& v)
 {
-    const auto ease = [](double t) {
-        t = std::max(0.0, std::min(1.0, t));
-        return t * t * (3.0 - 2.0 * t);
-    };
-    const double n = v[1] <= v[0] ? (d >= v[1] ? 1.0 : 0.0) : ease((d - v[0]) / (v[1] - v[0]));
-    const double f = v[3] <= v[2] ? (d <= v[2] ? 1.0 : 0.0) : ease((v[3] - d) / (v[3] - v[2]));
-    return static_cast<float>(n * f);
+    return depthscale::weight(d, v);
 }
 
 bool isDepthClass(int classIndex)
@@ -1072,54 +1068,40 @@ bool isDepthClass(int classIndex)
 
 }
 
+std::array<double, 4> AIMaskCache::makeDepthRange(double nearLimit, double farLimit, double feather)
+{
+    return depthscale::makeRange(nearLimit, farLimit, feather);
+}
+
+void AIMaskCache::splitDepthRange(const std::array<double, 4>& range, double& nearLimit, double& farLimit, double& feather)
+{
+    depthscale::splitRange(range, nearLimit, farLimit, feather);
+}
+
 std::array<double, 4> AIMaskCache::parseDepthRange(const std::string& text)
 {
-    std::array<double, 4> range = automaticDepthRange();
-    if (text.empty()) {
-        return range;
-    }
-    std::array<double, 4> parsed{};
-    size_t start = 0;
-    for (int k = 0; k < 4; ++k) {
-        const size_t end = text.find(';', start);
-        const std::string part = text.substr(start, end == std::string::npos ? std::string::npos : end - start);
-        char* stop = nullptr;
-        const double value = std::strtod(part.c_str(), &stop);
-        if (part.empty() || stop == part.c_str() || !std::isfinite(value)) {
-            return range;
-        }
-        parsed[k] = value;
-        if (end == std::string::npos) {
-            if (k != 3) {
-                return range;
-            }
-            break;
-        }
-        start = end + 1;
-    }
-    // ordered and inside 0..1, whatever the file says
-    double previous = 0.0;
-    for (int k = 0; k < 4; ++k) {
-        previous = std::max(previous, std::min(1.0, parsed[k]));
-        parsed[k] = previous;
-    }
-    return parsed;
+    return depthscale::parse(text);
 }
 
 std::string AIMaskCache::formatDepthRange(const std::array<double, 4>& range)
 {
-    if (range[0] < 0.0) {
-        return std::string();
-    }
-    char buffer[96];
-    std::snprintf(buffer, sizeof(buffer), "%.4f;%.4f;%.4f;%.4f", range[0], range[1], range[2], range[3]);
-    return buffer;
+    return depthscale::format(range);
 }
 
 bool AIMaskCache::getDepthPreset(const std::string& imageId, int classIndex, std::array<double, 4>& range) const
 {
     MyMutex::MyLock lock(mutex_);
     if (cachedImageId_ != imageId || !cachedMasks_ || !cachedDepthReady_) {
+        return false;
+    }
+    range = depthPreset(classIndex, cachedDepthSplit_);
+    return true;
+}
+
+bool AIMaskCache::getDepthPreset(int classIndex, std::array<double, 4>& range) const
+{
+    MyMutex::MyLock lock(mutex_);
+    if (!cachedMasks_ || !cachedDepthReady_) {
         return false;
     }
     range = depthPreset(classIndex, cachedDepthSplit_);
@@ -1244,7 +1226,7 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
     const float safeThreshold = LIM(threshold, 0.f, 1.f);
     if (depthClass && baseMask) {
         // The spot's range over the depth map (or the automatic near / far).
-        const std::array<double, 4> range = depthRange[0] < 0.0
+        const std::array<double, 4> range = isAutomaticDepthRange(depthRange)
             ? depthPreset(static_cast<int>(cls), depthSplit) : depthRange;
         auto weighted = std::make_shared<array2D<float>>(width, height);
         const array2D<float>& depth = *baseMask;
@@ -1268,7 +1250,11 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
             hasRefinedMask = true;
         }
     }
-    if (!signedDistance) {
+    // A depth band is already the finished mask: its soft edge is the
+    // feather along the depth scale, which follows the ground as it recedes.
+    // Cutting it at a threshold and feathering by distance in the frame
+    // instead would turn that gradient into an outline with a halo.
+    if (!depthClass && !signedDistance) {
         auto refinedWorking = std::make_shared<array2D<float>>(*baseMask);
 
         if (!hasRefinedMask) {
@@ -1336,12 +1322,17 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
 #endif
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
-            const float edgeDistance = (*signedDistance)[y][x] + sizeShift;
-            float value = edgeDistance >= 0.f ? 1.f : 0.f;
-            if (featherRadius > 0.01f) {
-                const float transition = LIM(
-                    0.5f + edgeDistance / (2.f * featherRadius), 0.f, 1.f);
-                value = transition * transition * (3.f - 2.f * transition);
+            float value;
+            if (depthClass) {
+                value = (*baseMask)[y][x];
+            } else {
+                const float edgeDistance = (*signedDistance)[y][x] + sizeShift;
+                value = edgeDistance >= 0.f ? 1.f : 0.f;
+                if (featherRadius > 0.01f) {
+                    const float transition = LIM(
+                        0.5f + edgeDistance / (2.f * featherRadius), 0.f, 1.f);
+                    value = transition * transition * (3.f - 2.f * transition);
+                }
             }
             if (invert) {
                 value = 1.f - value;
@@ -1576,19 +1567,42 @@ void AIMaskCache::setDepthClasses(const std::string& imageId, std::uint64_t inpu
         return;
     }
 
-    // Both depth classes keep the depth map itself (0 near .. 1 far); each
+    // Both depth classes keep the depth scale itself (0 near .. 1 far); each
     // spot reads its own range out of it in getPreparedMask.
+    //
+    // The estimator's map is linear in INVERSE depth between its own extreme
+    // samples, which as a depth scale calls the strip of ground at the
+    // camera's feet "near" and a person three metres away "far". It is put
+    // back into inverse depth with the estimator's own zero (0 at infinity,
+    // through depth.farRatio) and from there onto depthscale::Scale.
     array2D<float>& nearMap = masks[static_cast<int>(AISegClass::FOREGROUND_DEPTH)];
     array2D<float>& farMap = masks[static_cast<int>(AISegClass::BACKGROUND_DEPTH)];
-    float fillSum = 0.f;
-    int fillCount = 0;
+    const float farRatio = LIM01(depth.farRatio);
+    std::vector<float> ranked;
+    ranked.reserve(static_cast<std::size_t>(width) * height / 16 + 16);
     for (int y = 0; y < height; ++y) {
         const float v = (y + 0.5f) / height * fullHeight;
         for (int x = 0; x < width; ++x) {
             const float u = (x + 0.5f) / width * fullWidth;
             const float d = depth.sample(u, v);
-            nearMap[y][x] = d;
+            // inverse depth, 1 at the estimator's nearest sample
+            nearMap[y][x] = d >= 0.f ? 1.f - std::min(1.f, d) * (1.f - farRatio) : -1.f;
+            if (d >= 0.f && (x & 3) == 0 && (y & 3) == 0) {
+                ranked.push_back(nearMap[y][x]);
+            }
+        }
+    }
+    if (ranked.size() < 16) {
+        return;
+    }
+    const depthscale::Scale scale = depthscale::fitScale(ranked);
+    float fillSum = 0.f;
+    int fillCount = 0;
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            float& d = nearMap[y][x];
             if (d >= 0.f) {
+                d = scale.at(d);
                 fillSum += d;
                 ++fillCount;
             }
@@ -1642,8 +1656,33 @@ void AIMaskCache::setDepthClasses(const std::string& imageId, std::uint64_t inpu
         subjectModel = cachedSubjectModel_;
     }
     if (edittrace::enabled()) {
-        edittrace::logf("[aiMask] depth classes img=%s split=%.2f near=%d%% far=%d%%", imageId.c_str(),
-                        threshold, static_cast<int>(nearCoverage * 100), static_cast<int>(farCoverage * 100));
+        edittrace::logf("[aiMask] depth classes img=%s split=%.2f near=%d%% far=%d%% reach=%.1fx", imageId.c_str(),
+                        threshold, static_cast<int>(nearCoverage * 100), static_cast<int>(farCoverage * 100),
+                        scale.reach());
+    }
+    if (const char* const dumpDir = std::getenv("STEEP_DEPTH_DUMP")) {
+        // Headless check: the depth scale (white = near) and the automatic
+        // near and far masks, as PGMs named after the photo.
+        const std::string stem = std::string(dumpDir) + "/" + Glib::path_get_basename(imageId);
+        const auto dump = [&](const char* suffix, const std::function<float(float)>& value) {
+            if (std::FILE* const f = g_fopen((stem + suffix).c_str(), "wb")) {
+                std::fprintf(f, "P5\n%d %d\n255\n", width, height);
+                std::vector<unsigned char> row(width);
+                const array2D<float>& map = ready->at(static_cast<int>(AISegClass::FOREGROUND_DEPTH));
+                for (int y = 0; y < height; ++y) {
+                    for (int x = 0; x < width; ++x) {
+                        row[x] = static_cast<unsigned char>(LIM01(value(map[y][x])) * 255.f + 0.5f);
+                    }
+                    std::fwrite(row.data(), 1, row.size(), f);
+                }
+                std::fclose(f);
+            }
+        };
+        dump(".depth.pgm", [](float d) { return 1.f - d; });
+        dump(".near.pgm", [&](float d) { return depthRangeWeight(d, nearPreset); });
+        dump(".far.pgm", [&](float d) { return depthRangeWeight(d, farPreset); });
+        std::fprintf(stderr, "[depthDump] %s split=%.3f near=%.1f%% far=%.1f%% reach=%.1fx farRatio=%.3f\n",
+                     stem.c_str(), threshold, nearCoverage * 100.f, farCoverage * 100.f, scale.reach(), farRatio);
     }
     saveMapsToDisk(diskPath, *ready, width, height, subjectModel, true);
 }

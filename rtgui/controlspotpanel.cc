@@ -24,6 +24,7 @@
 
 #include "aimaskthumb.h"
 #include "depthrangewidget.h"
+#include "rtengine/depthscale.h"
 #include "windows/maskpaintdlg.h"
 
 #ifdef RT_AI_MASKING
@@ -974,13 +975,26 @@ ControlSpotPanel::ControlSpotPanel():
                 listener->panelChanged(EvLocallabSpotShape, M("TP_LOCALLAB_AIMASK_DEPTHRANGE_AUTO"));
             }
             queueMaskPreviewRefresh();
+            showDepthPreview();
         });
         header->pack_end(*aiDepthAuto_, Gtk::PACK_SHRINK);
         aiDepthBox_->pack_start(*header, Gtk::PACK_SHRINK);
         aiDepthRange_ = Gtk::manage(new compositeui::DepthRange());
         aiDepthRange_->set_tooltip_text(M("TP_LOCALLAB_AIMASK_DEPTHRANGE_TOOLTIP"));
-        aiDepthRange_->changed = [this]() { depthRangeChanged(); };
+        aiDepthRange_->readOnly = true;
         aiDepthBox_->pack_start(*aiDepthRange_, Gtk::PACK_SHRINK);
+        aiDepthNear_ = Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_DEPTH_NEAR"), 0, 100, 1, 0));
+        aiDepthFar_ = Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_DEPTH_FAR"), 0, 100, 1, 100));
+        // 50 and 10: depthscale::kMaxFeather and kDefaultFeather, in
+        // percent (that header is absent from a build without AI masking).
+        aiDepthFeather_ = Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_DEPTH_FEATHER"), 0, 50, 1, 10));
+        aiDepthNear_->set_tooltip_text(M("TP_LOCALLAB_AIMASK_DEPTH_NEAR_TOOLTIP"));
+        aiDepthFar_->set_tooltip_text(M("TP_LOCALLAB_AIMASK_DEPTH_FAR_TOOLTIP"));
+        aiDepthFeather_->set_tooltip_text(M("TP_LOCALLAB_AIMASK_DEPTH_FEATHER_TOOLTIP"));
+        for (Adjuster* const a : {aiDepthNear_, aiDepthFar_, aiDepthFeather_}) {
+            a->setAdjusterListener(this);
+            aiDepthBox_->pack_start(*a, Gtk::PACK_SHRINK);
+        }
     }
     aiDepthBox_->set_no_show_all(true);
     maskDetailBox_->pack_start(*aiDepthBox_, Gtk::PACK_SHRINK);
@@ -1309,6 +1323,37 @@ void ControlSpotPanel::resetHoverState()
     eyePinned_ = false;
     sidebarHoverActive_ = false;
     hoveredSpotIndex_ = -1;
+    endDepthPreview(false);
+}
+
+void ControlSpotPanel::showDepthPreview()
+{
+    // Nothing to do while the eye already pins the overlay on.
+    if (eyePinned_ || !controlPanelListener) {
+        return;
+    }
+    if (!depthPreviewActive_) {
+        depthPreviewActive_ = true;
+        // forceRedraw: no wait for the pointer to settle, this is a drag.
+        controlPanelListener->spotHovered(true, true, getSelectedSpot());
+    }
+    depthPreviewOff_.disconnect();
+    depthPreviewOff_ = Glib::signal_timeout().connect([this]() {
+        endDepthPreview(true);
+        return false;
+    }, 2500);
+}
+
+void ControlSpotPanel::endDepthPreview(bool notify)
+{
+    depthPreviewOff_.disconnect();
+    if (!depthPreviewActive_) {
+        return;
+    }
+    depthPreviewActive_ = false;
+    if (notify && !eyePinned_ && !sidebarHoverActive_ && controlPanelListener) {
+        controlPanelListener->spotHovered(false, false, -1);
+    }
 }
 
 void ControlSpotPanel::startAIPreviewRefresh()
@@ -1402,6 +1447,10 @@ bool ControlSpotPanel::isPointerOverTreeview() const
     // within the treeview's screen allocation. This avoids bin_window
     // coordinate issues on Windows where get_device_position can return
     // stale values during redraws.
+    if (depthPreviewActive_) {
+        // A depth slider holds the overlay on from outside the list.
+        return true;
+    }
     auto toplevel = treeview_->get_toplevel();
     if (!toplevel) return false;
 
@@ -1430,6 +1479,7 @@ void ControlSpotPanel::resetSidebarHover()
     clearSidebarHoverGeometry();
     sidebarHoverActive_ = false;
     hoveredSpotIndex_ = -1;
+    endDepthPreview(false);
 }
 
 void ControlSpotPanel::setEditProvider(EditDataProvider* provider)
@@ -1578,7 +1628,21 @@ void ControlSpotPanel::render_preview(
                                 static_cast<int>(AISegClass::TOTAL_CLASSES) - 1);
         const AIMaskSnapshot snapshot = AIMaskCache::getInstance().getMaskSnapshot(
             static_cast<AISegClass>(ci));
-        if (snapshot) {
+        // Near / far: the map is depth, and the selection is this spot's band
+        // of it. Until the depth is in there is nothing to draw.
+        const bool depthMask = ci == static_cast<int>(AISegClass::FOREGROUND_DEPTH)
+            || ci == static_cast<int>(AISegClass::BACKGROUND_DEPTH);
+        std::array<double, 4> depthBand = AIMaskCache::automaticDepthRange();
+        bool depthKnown = false;
+        if (depthMask) {
+            std::array<double, 4> preset;
+            depthKnown = AIMaskCache::getInstance().getDepthPreset(editedFilePath_.raw(), ci, preset);
+            depthBand = AIMaskCache::parseDepthRange(Glib::ustring(row[spots_.aiMaskDepthRange]).raw());
+            if (AIMaskCache::isAutomaticDepthRange(depthBand)) {
+                depthBand = preset;
+            }
+        }
+        if (snapshot && (!depthMask || depthKnown)) {
             for (int py = 0; py < H; py++) {
                 for (int px = 0; px < W; px++) {
                     const int my = std::min(
@@ -1589,7 +1653,9 @@ void ControlSpotPanel::render_preview(
                         snapshot.width - 1);
                     const float prob = (*snapshot.mask)[my][mx];
                     constexpr float transitionWidth = 0.21f;
-                    const float strength = std::max(0.f, std::min(
+                    const float strength = depthMask
+                        ? rtengine::depthscale::weight(prob, depthBand)
+                        : std::max(0.f, std::min(
                         1.f,
                         (prob - aiThreshold + transitionWidth * 0.5f) /
                             transitionWidth));
@@ -3092,13 +3158,18 @@ void ControlSpotPanel::updateDepthRangeControl()
     if (s->count_selected_rows()) {
         row = *s->get_selected();
         const int cls = row[spots_.aiMaskClass];
-        visible = row[spots_.maskType] == 1 && (cls == 10 || cls == 11) && maskDetailExpanded_;
+        const bool depthMask = row[spots_.maskType] == 1 && (cls == 10 || cls == 11);
+        visible = depthMask && maskDetailExpanded_;
+        // "AI range" is how sure the classifier must be; depth has no such
+        // thing, its range is the sliders below.
+        aiMaskTolerance_->set_visible(row[spots_.maskType] == 1 && !depthMask);
     }
     aiDepthBox_->set_visible(visible);
     if (visible) {
         aiDepthBox_->show_all();
     } else {
         aiDepthPoll_.disconnect();
+        endDepthPreview(true);
         return;
     }
 
@@ -3108,16 +3179,31 @@ void ControlSpotPanel::updateDepthRangeControl()
     const int cls = row[spots_.aiMaskClass];
     const Glib::ustring stored = row[spots_.aiMaskDepthRange];
     std::array<double, 4> range = rtengine::AIMaskCache::parseDepthRange(stored.raw());
-    const bool automatic = range[0] < 0.0;
+    const bool automatic = rtengine::AIMaskCache::isAutomaticDepthRange(range);
     std::array<double, 4> preset;
     const bool known = cache.getDepthPreset(imageId, cls, preset);
     if (automatic) {
+        // Until the depth is known, stand in with a split down the middle.
+        const double feather = 0.10;   // depthscale::kDefaultFeather
         range = known ? preset
-                      : (cls == 11 ? std::array<double, 4>{{0.46, 0.54, 1.0, 1.0}}
-                                   : std::array<double, 4>{{0.0, 0.0, 0.46, 0.54}});
+                      : (cls == 11 ? rtengine::AIMaskCache::makeDepthRange(0.5 + feather / 2.0, 1.0, feather)
+                                   : rtengine::AIMaskCache::makeDepthRange(0.0, 0.5 - feather / 2.0, feather));
     }
     aiDepthRange_->values = range;
     aiDepthAuto_->set_sensitive(!automatic);
+    {
+        double nearLimit = 0.0, farLimit = 1.0, feather = 0.0;
+        rtengine::AIMaskCache::splitDepthRange(range, nearLimit, farLimit, feather);
+        for (Adjuster* const a : {aiDepthNear_, aiDepthFar_, aiDepthFeather_}) {
+            a->block(true);
+        }
+        aiDepthNear_->setValue(std::round(nearLimit * 100.0));
+        aiDepthFar_->setValue(std::round(farLimit * 100.0));
+        aiDepthFeather_->setValue(std::round(feather * 100.0));
+        for (Adjuster* const a : {aiDepthNear_, aiDepthFar_, aiDepthFeather_}) {
+            a->block(false);
+        }
+    }
 
     // The photo's depths under the handles, once they are known.
     aiDepthRange_->histogram = compositeui::DepthHistogram();
@@ -3149,21 +3235,39 @@ void ControlSpotPanel::updateDepthRangeControl()
     aiDepthRange_->queue_draw();
 }
 
-void ControlSpotPanel::depthRangeChanged()
+void ControlSpotPanel::depthRangeChanged(Adjuster* moved)
 {
     const auto s = treeview_->get_selection();
     if (!s->count_selected_rows()) {
         return;
     }
     Gtk::TreeModel::Row row = *s->get_selected();
+    // The limit being dragged pushes the other one along rather than
+    // stopping at it.
+    double nearLimit = aiDepthNear_->getValue();
+    double farLimit = aiDepthFar_->getValue();
+    if (nearLimit > farLimit) {
+        Adjuster* const pushed = moved == aiDepthFar_ ? aiDepthNear_ : aiDepthFar_;
+        nearLimit = farLimit = moved == aiDepthFar_ ? farLimit : nearLimit;
+        pushed->block(true);
+        pushed->setValue(nearLimit);
+        pushed->block(false);
+    }
 #ifdef RT_AI_MASKING
-    row[spots_.aiMaskDepthRange] = rtengine::AIMaskCache::formatDepthRange(aiDepthRange_->values);
+    const std::array<double, 4> range = rtengine::AIMaskCache::makeDepthRange(
+        nearLimit / 100.0, farLimit / 100.0, aiDepthFeather_->getValue() / 100.0);
+    row[spots_.aiMaskDepthRange] = rtengine::AIMaskCache::formatDepthRange(range);
+    aiDepthRange_->values = range;
+    aiDepthRange_->queue_draw();
 #endif
     aiDepthAuto_->set_sensitive(true);
     if (listener) {
-        listener->panelChanged(EvLocallabSpotShape, M("TP_LOCALLAB_AIMASK_DEPTHRANGE"));
+        listener->panelChanged(EvLocallabSpotShape, Glib::ustring::compose(
+            "%1: %2 - %3, %4", M("TP_LOCALLAB_AIMASK_DEPTHRANGE"), aiDepthNear_->getTextValue(),
+            aiDepthFar_->getTextValue(), aiDepthFeather_->getTextValue()));
     }
     queueMaskPreviewRefresh();
+    showDepthPreview();
 }
 
 void ControlSpotPanel::openMaskEditor()
@@ -3192,7 +3296,8 @@ void ControlSpotPanel::openMaskEditor()
         defSpot.aiMaskInvert,
         defSpot.aiMaskRefineRadius,
         static_cast<float>(defSpot.aiMaskRefineEps),
-        rtengine::MaskPaint(), true);
+        rtengine::MaskPaint(), true,
+        rtengine::AIMaskCache::parseDepthRange(Glib::ustring(row[spots_.aiMaskDepthRange]).raw()));
 
     if (snapshot && !snapshot.pending) {
         automatic.width = snapshot.width;
@@ -3873,6 +3978,10 @@ void ControlSpotPanel::adjusterChanged(Adjuster* a, double newval)
         if (listener) {
             listener->panelChanged(EvLocallabSpotlumask, lumask_->getTextValue());
         }
+    }
+
+    if (a == aiDepthNear_ || a == aiDepthFar_ || a == aiDepthFeather_) {
+        depthRangeChanged(a);
     }
 
     if (a == aiMaskTolerance_) {

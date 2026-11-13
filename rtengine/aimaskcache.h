@@ -74,20 +74,34 @@ public:
                                    bool multiThread,
                                    const std::array<double, 4>& depthRange = automaticDepthRange());
 
-    // Depth classes: the range a spot keeps when it has none of its own --
-    // all -1, meaning "near" or "far" of this photo's own depth split.
+    // Depth classes select a band {a, b, c, d} of the photo's depth scale
+    // (see depthscale.h, which holds the arithmetic behind these).
+    //
+    // The range a spot keeps when it has none of its own is all -1, meaning
+    // "near" or "far" of this photo's own depth split.
     static const std::array<double, 4>& automaticDepthRange()
     {
         static const std::array<double, 4> automatic{{-1.0, -1.0, -1.0, -1.0}};
         return automatic;
     }
-    // "a;b;c;d" (LocallabSpot::aiMaskDepthRange) to handles; automatic when
+    static bool isAutomaticDepthRange(const std::array<double, 4>& range)
+    {
+        return range[3] < 0.0;
+    }
+    // Near limit, far limit and feather (each 0..1; feather at most
+    // depthscale::kMaxFeather) to a range and back.
+    static std::array<double, 4> makeDepthRange(double nearLimit, double farLimit, double feather);
+    static void splitDepthRange(const std::array<double, 4>& range, double& nearLimit, double& farLimit, double& feather);
+    // "a;b;c;d" (LocallabSpot::aiMaskDepthRange) to a range; automatic when
     // empty or malformed.
     static std::array<double, 4> parseDepthRange(const std::string& text);
     static std::string formatDepthRange(const std::array<double, 4>& range);
     // The handles an automatic near / far spot uses on this photo, for the
     // depth range control to start from. False until depth is known.
     bool getDepthPreset(const std::string& imageId, int classIndex, std::array<double, 4>& range) const;
+    // The same for whichever photo the cache holds, for callers that draw
+    // from getMaskSnapshot and so mean that photo anyway.
+    bool getDepthPreset(int classIndex, std::array<double, 4>& range) const;
 
     bool hasCachedMasks(const std::string& imageId) const;
     // Only masks computed from the same kind of input (see aiMaskGeometryKey).

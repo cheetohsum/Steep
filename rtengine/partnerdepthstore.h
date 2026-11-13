@@ -41,6 +41,10 @@ struct PartnerDepth {
     int height = 0;
     int fullWidth = 0;      // the partner's own full frame, which `depth` covers
     int fullHeight = 0;
+    // The estimator's farthest point over its nearest in inverse depth (see
+    // DepthEstimator::depth): relative distance at `d` is 1 / (1 - d * (1 -
+    // farRatio)). Only scene maps carry it; 0 reads as "out to infinity".
+    float farRatio = 0.f;
 
     bool valid() const
     {

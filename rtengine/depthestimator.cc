@@ -122,7 +122,7 @@ float sampleGrid(const std::vector<float> &g, int w, int h, float x, float y)
 DepthEstimator::DepthEstimator() = default;
 DepthEstimator::~DepthEstimator() = default;
 std::unique_ptr<Imagefloat> DepthEstimator::depth(const Imagefloat &src, const std::string &dir,
-                                                const Glib::ustring &workingProfile)
+                                                const Glib::ustring &workingProfile, float *farRatio)
 {
 #ifndef RT_AI_MASKING
     throw std::runtime_error("This build has no ONNX Runtime support");
@@ -182,6 +182,8 @@ std::unique_ptr<Imagefloat> DepthEstimator::depth(const Imagefloat &src, const s
         }
     if (high - low < 1e-6f)
         throw std::runtime_error("No reliable depth range in this image");
+    if (farRatio)
+        *farRatio = high > 0.f ? std::max(0.f, std::min(1.f, low / high)) : 0.f;
     auto map = std::unique_ptr<Imagefloat>(new Imagefloat(w, h));
     for (int y = 0; y < h; ++y)
         for (int x = 0; x < w; ++x) {
@@ -193,13 +195,14 @@ std::unique_ptr<Imagefloat> DepthEstimator::depth(const Imagefloat &src, const s
 #endif
 }
 std::unique_ptr<Imagefloat> DepthEstimator::detailedDepth(const Imagefloat &src, const std::string &dir,
-                                                        const Glib::ustring &workingProfile, int longEdge)
+                                                        const Glib::ustring &workingProfile, int longEdge,
+                                                        float *farRatio)
 {
 #ifndef RT_AI_MASKING
     throw std::runtime_error("This build has no ONNX Runtime support");
 #else
     // the whole frame first: it holds the layout every tile is fitted onto
-    auto base = depth(src, dir, workingProfile);
+    auto base = depth(src, dir, workingProfile, farRatio);
     const int bw = base->getWidth(), bh = base->getHeight();
     const int sw = src.getWidth(), sh = src.getHeight();
     const double s = std::min(1.0, double(longEdge) / std::max(sw, sh));
