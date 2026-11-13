@@ -984,7 +984,7 @@ ControlSpotPanel::ControlSpotPanel():
         aiDepthBox_->pack_start(*aiDepthRange_, Gtk::PACK_SHRINK);
         aiDepthNear_ = Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_DEPTH_NEAR"), 0, 100, 1, 0));
         aiDepthFar_ = Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_DEPTH_FAR"), 0, 100, 1, 100));
-        // 50 and 10: AIMaskCache::kMaxDepthFeather and kDefaultDepthFeather, in
+        // 50 and 10: depthscale::kMaxFeather and kDefaultFeather, in
         // percent (that header is absent from a build without AI masking).
         aiDepthFeather_ = Gtk::manage(new Adjuster(M("TP_LOCALLAB_AIMASK_DEPTH_FEATHER"), 0, 50, 1, 10));
         aiDepthNear_->set_tooltip_text(M("TP_LOCALLAB_AIMASK_DEPTH_NEAR_TOOLTIP"));
@@ -3167,7 +3167,7 @@ void ControlSpotPanel::updateDepthRangeControl()
     const bool known = cache.getDepthPreset(imageId, cls, preset);
     if (automatic) {
         // Until the depth is known, stand in with a split down the middle.
-        const double feather = rtengine::AIMaskCache::kDefaultDepthFeather;
+        const double feather = 0.10;   // depthscale::kDefaultFeather
         range = known ? preset
                       : (cls == 11 ? rtengine::AIMaskCache::makeDepthRange(0.5 + feather / 2.0, 1.0, feather)
                                    : rtengine::AIMaskCache::makeDepthRange(0.0, 0.5 - feather / 2.0, feather));

@@ -20,6 +20,7 @@
 #include "imagefloat.h"
 #include "samselector.h"
 #include "partnerdepthstore.h"
+#include "depthscale.h"
 #include "aisubjectmodel.h"
 #include "settings.h"
 #include "rt_math.h"
@@ -1035,79 +1036,28 @@ AIMaskSnapshot AIMaskCache::getMaskSnapshot(AISegClass cls) const
 namespace
 {
 
-// Otsu's split of a depth map (0 near .. 1 far): where this photograph's
-// depths fall apart into a near group and a far one. What sits at the far
-// end of the scale -- sky, anything past kFarReach -- is far by definition
-// and stays out of the count: with it in, an open sky outweighs the whole
-// scene and "near" comes out as everything that is not sky.
+// Where this photograph's depths (0 near .. 1 far) fall apart into a near
+// group and a far one; see depthscale::splitOf.
 float depthSplitOf(const array2D<float>& depth)
 {
-    constexpr int bins = 256;
-    constexpr int farEnd = 248;   // 0.97 and beyond
-    std::vector<double> histogram(bins, 0.0);
-    double count = 0.0;
+    std::vector<double> histogram(256, 0.0);
+    const int bins = static_cast<int>(histogram.size());
     for (int y = 0; y < depth.getHeight(); ++y) {
         for (int x = 0; x < depth.getWidth(); ++x) {
             histogram[std::min(bins - 1, static_cast<int>(LIM01(depth[y][x]) * bins))] += 1.0;
-            count += 1.0;
         }
     }
-    if (count < 1.0) {
-        return 0.5f;
-    }
-    double body = 0.0;
-    for (int i = 0; i < farEnd; ++i) {
-        body += histogram[i];
-    }
-    if (body >= 0.05 * count) {
-        std::fill(histogram.begin() + farEnd, histogram.end(), 0.0);
-        count = body;
-    }
-    double total = 0.0;
-    for (int i = 0; i < bins; ++i) {
-        total += i * histogram[i];
-    }
-    double below = 0.0, belowSum = 0.0, bestVariance = -1.0;
-    int split = bins / 2;
-    for (int i = 0; i < bins - 1; ++i) {
-        below += histogram[i];
-        belowSum += i * histogram[i];
-        const double above = count - below;
-        if (below <= 0.0 || above <= 0.0) {
-            continue;
-        }
-        const double meanBelow = belowSum / below;
-        const double meanAbove = (total - belowSum) / above;
-        const double variance = below * above * (meanBelow - meanAbove) * (meanBelow - meanAbove);
-        if (variance > bestVariance) {
-            bestVariance = variance;
-            split = i;
-        }
-    }
-    return (split + 1.f) / bins;
+    return depthscale::splitOf(std::move(histogram));
 }
 
-// The automatic range of a near or far spot: everything this side of the
-// split, with the default feather centred on it so that the two are each
-// other's complement.
 std::array<double, 4> depthPreset(int classIndex, float split)
 {
-    const double half = AIMaskCache::kDefaultDepthFeather / 2.0;
-    if (classIndex == static_cast<int>(AISegClass::BACKGROUND_DEPTH)) {
-        return AIMaskCache::makeDepthRange(std::min(1.0, split + half), 1.0, AIMaskCache::kDefaultDepthFeather);
-    }
-    return AIMaskCache::makeDepthRange(0.0, std::max(0.0, split - half), AIMaskCache::kDefaultDepthFeather);
+    return depthscale::preset(classIndex == static_cast<int>(AISegClass::BACKGROUND_DEPTH), split);
 }
 
 float depthRangeWeight(float d, const std::array<double, 4>& v)
 {
-    const auto ease = [](double t) {
-        t = std::max(0.0, std::min(1.0, t));
-        return t * t * (3.0 - 2.0 * t);
-    };
-    const double n = v[1] <= v[0] ? (d >= v[1] ? 1.0 : 0.0) : ease((d - v[0]) / (v[1] - v[0]));
-    const double f = v[3] <= v[2] ? (d <= v[2] ? 1.0 : 0.0) : ease((v[3] - d) / (v[3] - v[2]));
-    return static_cast<float>(n * f);
+    return depthscale::weight(d, v);
 }
 
 bool isDepthClass(int classIndex)
@@ -1118,65 +1068,24 @@ bool isDepthClass(int classIndex)
 
 }
 
-constexpr double AIMaskCache::kMaxDepthFeather;
-constexpr double AIMaskCache::kDefaultDepthFeather;
-
 std::array<double, 4> AIMaskCache::makeDepthRange(double nearLimit, double farLimit, double feather)
 {
-    const double n = std::max(0.0, std::min(1.0, nearLimit));
-    const double f = std::max(n, std::min(1.0, farLimit));
-    const double w = std::max(0.0, std::min(kMaxDepthFeather, feather));
-    return {{n - w, n, f, f + w}};
+    return depthscale::makeRange(nearLimit, farLimit, feather);
 }
 
 void AIMaskCache::splitDepthRange(const std::array<double, 4>& range, double& nearLimit, double& farLimit, double& feather)
 {
-    nearLimit = range[1];
-    farLimit = range[2];
-    feather = std::max(range[1] - range[0], range[3] - range[2]);
+    depthscale::splitRange(range, nearLimit, farLimit, feather);
 }
 
 std::array<double, 4> AIMaskCache::parseDepthRange(const std::string& text)
 {
-    std::array<double, 4> range = automaticDepthRange();
-    if (text.empty()) {
-        return range;
-    }
-    std::array<double, 4> parsed{};
-    size_t start = 0;
-    for (int k = 0; k < 4; ++k) {
-        const size_t end = text.find(';', start);
-        const std::string part = text.substr(start, end == std::string::npos ? std::string::npos : end - start);
-        char* stop = nullptr;
-        const double value = std::strtod(part.c_str(), &stop);
-        if (part.empty() || stop == part.c_str() || !std::isfinite(value)) {
-            return range;
-        }
-        parsed[k] = value;
-        if (end == std::string::npos) {
-            if (k != 3) {
-                return range;
-            }
-            break;
-        }
-        start = end + 1;
-    }
-    // limits ordered and inside 0..1, feathers no wider than allowed,
-    // whatever the file says
-    const double n = std::max(0.0, std::min(1.0, parsed[1]));
-    const double f = std::max(n, std::min(1.0, parsed[2]));
-    return {{n - std::max(0.0, std::min(kMaxDepthFeather, parsed[1] - parsed[0])), n,
-             f, f + std::max(0.0, std::min(kMaxDepthFeather, parsed[3] - parsed[2]))}};
+    return depthscale::parse(text);
 }
 
 std::string AIMaskCache::formatDepthRange(const std::array<double, 4>& range)
 {
-    if (isAutomaticDepthRange(range)) {
-        return std::string();
-    }
-    char buffer[96];
-    std::snprintf(buffer, sizeof(buffer), "%.4f;%.4f;%.4f;%.4f", range[0], range[1], range[2], range[3]);
-    return buffer;
+    return depthscale::format(range);
 }
 
 bool AIMaskCache::getDepthPreset(const std::string& imageId, int classIndex, std::array<double, 4>& range) const
@@ -1652,20 +1561,10 @@ void AIMaskCache::setDepthClasses(const std::string& imageId, std::uint64_t inpu
     // spot reads its own range out of it in getPreparedMask.
     //
     // The estimator's map is linear in INVERSE depth between its own extreme
-    // samples. Read as a depth scale that is badly lopsided: half of it is
-    // spent between the nearest point and twice that distance, everything
-    // from a few metres to the horizon shares the last tenth, and one stray
-    // sample at either end squeezes the rest. A split made there calls the
-    // strip of ground at the camera's feet "near" and a person three metres
-    // away "far". So the scale is rebuilt here:
-    //  - back to relative distance, using the estimator's own zero (its
-    //    output is 0 at infinity) through depth.farRatio;
-    //  - anchored at robust ends, the 0.5% nearest and farthest samples
-    //    aside, and no farther than kFarReach times the nearest distance --
-    //    beyond that everything is "the far end";
-    //  - in equal steps of distance ratio (logarithmic), so the middle of the
-    //    scale is the scene's geometric middle distance.
-    constexpr float kFarReach = 40.f;
+    // samples, which as a depth scale calls the strip of ground at the
+    // camera's feet "near" and a person three metres away "far". It is put
+    // back into inverse depth with the estimator's own zero (0 at infinity,
+    // through depth.farRatio) and from there onto depthscale::Scale.
     array2D<float>& nearMap = masks[static_cast<int>(AISegClass::FOREGROUND_DEPTH)];
     array2D<float>& farMap = masks[static_cast<int>(AISegClass::BACKGROUND_DEPTH)];
     const float farRatio = LIM01(depth.farRatio);
@@ -1686,23 +1585,14 @@ void AIMaskCache::setDepthClasses(const std::string& imageId, std::uint64_t inpu
     if (ranked.size() < 16) {
         return;
     }
-    const auto rankAt = [&ranked](double fraction) {
-        const std::size_t k = std::min(ranked.size() - 1, static_cast<std::size_t>(fraction * ranked.size()));
-        std::nth_element(ranked.begin(), ranked.begin() + k, ranked.end());
-        return ranked[k];
-    };
-    const float nearest = std::max(1e-6f, rankAt(0.995));
-    const float farthest = std::max(std::max(rankAt(0.005), nearest / kFarReach), 1e-7f);
-    // A flat subject (a wall square to the lens) has almost no range; keep
-    // the scale from blowing its noise up to the full 0..1.
-    const float span = std::log(std::max(1.05f, nearest / farthest));
+    const depthscale::Scale scale = depthscale::fitScale(ranked);
     float fillSum = 0.f;
     int fillCount = 0;
     for (int y = 0; y < height; ++y) {
         for (int x = 0; x < width; ++x) {
             float& d = nearMap[y][x];
             if (d >= 0.f) {
-                d = LIM01(std::log(nearest / LIM(d, farthest, nearest)) / span);
+                d = scale.at(d);
                 fillSum += d;
                 ++fillCount;
             }
@@ -1758,7 +1648,7 @@ void AIMaskCache::setDepthClasses(const std::string& imageId, std::uint64_t inpu
     if (edittrace::enabled()) {
         edittrace::logf("[aiMask] depth classes img=%s split=%.2f near=%d%% far=%d%% reach=%.1fx", imageId.c_str(),
                         threshold, static_cast<int>(nearCoverage * 100), static_cast<int>(farCoverage * 100),
-                        nearest / farthest);
+                        scale.reach());
     }
     if (const char* const dumpDir = std::getenv("STEEP_DEPTH_DUMP")) {
         // Headless check: the depth scale (white = near) and the automatic
@@ -1782,7 +1672,7 @@ void AIMaskCache::setDepthClasses(const std::string& imageId, std::uint64_t inpu
         dump(".near.pgm", [&](float d) { return depthRangeWeight(d, nearPreset); });
         dump(".far.pgm", [&](float d) { return depthRangeWeight(d, farPreset); });
         std::fprintf(stderr, "[depthDump] %s split=%.3f near=%.1f%% far=%.1f%% reach=%.1fx farRatio=%.3f\n",
-                     stem.c_str(), threshold, nearCoverage * 100.f, farCoverage * 100.f, nearest / farthest, farRatio);
+                     stem.c_str(), threshold, nearCoverage * 100.f, farCoverage * 100.f, scale.reach(), farRatio);
     }
     saveMapsToDisk(diskPath, *ready, width, height, subjectModel, true);
 }

@@ -74,13 +74,8 @@ public:
                                    bool multiThread,
                                    const std::array<double, 4>& depthRange = automaticDepthRange());
 
-    // Depth classes select a band of the photo's depth scale: 0 at the
-    // nearest thing in the frame, 1 at the farthest, in equal steps of
-    // distance *ratio* (halfway is not "half as far" but the geometric middle,
-    // the way a lens's focus scale is marked). A range is {a, b, c, d}: full
-    // weight from the near limit b to the far limit c, fading to nothing
-    // over the feather on either side (a = b - feather, d = c + feather, so
-    // a may be below 0 and d above 1).
+    // Depth classes select a band {a, b, c, d} of the photo's depth scale
+    // (see depthscale.h, which holds the arithmetic behind these).
     //
     // The range a spot keeps when it has none of its own is all -1, meaning
     // "near" or "far" of this photo's own depth split.
@@ -94,9 +89,7 @@ public:
         return range[3] < 0.0;
     }
     // Near limit, far limit and feather (each 0..1; feather at most
-    // kMaxDepthFeather) to a range and back.
-    static constexpr double kMaxDepthFeather = 0.5;
-    static constexpr double kDefaultDepthFeather = 0.10;
+    // depthscale::kMaxFeather) to a range and back.
     static std::array<double, 4> makeDepthRange(double nearLimit, double farLimit, double feather);
     static void splitDepthRange(const std::array<double, 4>& range, double& nearLimit, double& farLimit, double& feather);
     // "a;b;c;d" (LocallabSpot::aiMaskDepthRange) to a range; automatic when
