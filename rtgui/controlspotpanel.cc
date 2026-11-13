@@ -3166,7 +3166,9 @@ void ControlSpotPanel::updateDepthRangeControl()
     }
     aiDepthBox_->set_visible(visible);
     if (visible) {
-        aiDepthBox_->show_all();
+        // Not show_all(): the box is no_show_all, and GTK then ignores
+        // show_all() on it entirely, leaving every control inside hidden.
+        aiDepthBox_->show_all_children();
     } else {
         aiDepthPoll_.disconnect();
         endDepthPreview(true);
