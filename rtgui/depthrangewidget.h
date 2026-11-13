@@ -21,6 +21,10 @@ class DepthRange final : public Gtk::DrawingArea
     DepthHistogram histogram;
     std::function<void()> begin, changed;
     int active = -1;
+    // A display only: the band is set by sliders elsewhere, so there are no
+    // handles to drag, just a mark at each limit (values[1] and values[2];
+    // the outer two may then lie outside 0..1).
+    bool readOnly = false;
     DepthRange()
     {
         set_size_request(-1, 80);
@@ -68,13 +72,16 @@ class DepthRange final : public Gtk::DrawingArea
             cr->line_to(x + 12, 12 + h * (1 - depthWeight(float(x) / w, values, nearShape, farShape, inverted)));
         cr->set_line_width(1.5);
         cr->stroke();
-        for (int i = 0; i < 4; ++i) {
+        for (int i = readOnly ? 1 : 0; i < (readOnly ? 3 : 4); ++i) {
             steepui::setSource(cr, ink, 1.0);
             cr->set_line_width(1);
             double x = 12 + values[i] * w;
             cr->move_to(x, 10);
             cr->line_to(x, 66);
             cr->stroke();
+            if (readOnly) {
+                continue;
+            }
             cr->rectangle(x - 3, i % 2 ? 68 : 3, 6, 7);
             cr->fill();
         }
@@ -82,6 +89,8 @@ class DepthRange final : public Gtk::DrawingArea
     }
     bool on_button_press_event(GdkEventButton *e) override
     {
+        if (readOnly)
+            return false;
         double nearest = 1e9;
         for (int i = 0; i < 4; ++i) {
             double d = std::abs(e->x - 12 - values[i] * (get_allocated_width() - 24));

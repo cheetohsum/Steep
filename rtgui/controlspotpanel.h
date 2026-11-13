@@ -556,8 +556,19 @@ private:
     compositeui::DepthRange* aiDepthRange_ = nullptr;
     Gtk::Button* aiDepthAuto_ = nullptr;
     sigc::connection aiDepthPoll_;
+    // The band along the photo's depth scale, 0 (nearest) .. 100 (farthest).
+    Adjuster* aiDepthNear_ = nullptr;
+    Adjuster* aiDepthFar_ = nullptr;
+    Adjuster* aiDepthFeather_ = nullptr;
+    // While a depth slider is in use the mask is drawn over the photo, as
+    // it is while the pointer rests on the mask's thumbnail, and for a
+    // moment after the last change.
+    bool depthPreviewActive_ = false;
+    sigc::connection depthPreviewOff_;
+    void showDepthPreview();
+    void endDepthPreview(bool notify);
     void updateDepthRangeControl();
-    void depthRangeChanged();
+    void depthRangeChanged(Adjuster* moved);
     PopUpButton* const maskBlendMode_;
     sigc::connection maskBlendModeConn_;
     sigc::connection aiPreviewRefresh_; // delayed treeview redraw after AI mask computation

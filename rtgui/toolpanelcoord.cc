@@ -3185,8 +3185,10 @@ void ToolPanelCoordinator::hoverMaskChanged(bool hover, bool forceRedraw, int sp
         return false;  // one-shot debounce
         // Long enough that the pointer has to rest on a row to mean it. A
         // shorter wait armed a full reprocess for a pointer merely travelling
-        // across the list to reach the controls below it.
-    }, 500);
+        // across the list to reach the controls below it. A caller that
+        // forces the redraw is not a passing pointer (a depth slider being
+        // dragged), and gets the overlay at once.
+    }, forceRedraw ? 20 : 500);
 }
 
 void ToolPanelCoordinator::applyHoverMask()

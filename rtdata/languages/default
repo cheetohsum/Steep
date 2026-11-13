@@ -4502,7 +4502,13 @@ TP_LOCALLAB_AIMASK;AI auto mask
 TP_LOCALLAB_AIMASK_DEPTHRANGE;Depth range
 TP_LOCALLAB_AIMASK_DEPTHRANGE_AUTO;Auto
 TP_LOCALLAB_AIMASK_DEPTHRANGE_AUTO_TOOLTIP;Back to the automatic near or far range, split where this photo's depths fall apart.
-TP_LOCALLAB_AIMASK_DEPTHRANGE_TOOLTIP;Which part of the scene the mask takes, by distance: near on the left, far on the right. Drag the outer handles to set where the mask starts to fade in and out, the inner ones where it is at full strength. The curve behind is how much of the photo sits at each depth.
+TP_LOCALLAB_AIMASK_DEPTH_FAR;Farthest
+TP_LOCALLAB_AIMASK_DEPTH_FAR_TOOLTIP;Where the mask ends, going away from the camera. 100 is the farthest thing in the photo (the sky, when there is one).
+TP_LOCALLAB_AIMASK_DEPTH_FEATHER;Depth feather
+TP_LOCALLAB_AIMASK_DEPTH_FEATHER_TOOLTIP;How gradually the mask fades out beyond its two limits, along the depth scale. 0 cuts it off sharply.
+TP_LOCALLAB_AIMASK_DEPTH_NEAR;Nearest
+TP_LOCALLAB_AIMASK_DEPTH_NEAR_TOOLTIP;Where the mask begins, going away from the camera. 0 is the nearest thing in the photo.
+TP_LOCALLAB_AIMASK_DEPTHRANGE_TOOLTIP;Which part of the scene the mask takes, by distance: the nearest thing in the photo on the left, the farthest on the right, in equal steps of distance ratio. The filled curve is how much of the photo sits at each depth, the line is the mask's strength there. Set the band with the sliders below; the mask is shown over the photo while you do.
 TP_LOCALLAB_AIMASK_TOOLNAME;AI auto mask
 TP_LOCALLAB_AIMASK_CLASS;Class
 TP_LOCALLAB_AIMASK_CLASS_BACKGROUND;Background
