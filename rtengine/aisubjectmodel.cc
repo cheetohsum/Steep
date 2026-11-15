@@ -132,9 +132,10 @@ struct AISubjectEngine::Impl {
     bool loading = false;
     std::mutex loadMutex;
     std::condition_variable loaded;
-    // The deferred load starts on the first request for a subject mask, or
-    // once the app has been up for a while: building a ~1 GB session in the
-    // first seconds competed with the first folder scan and thumbnails.
+    // The deferred load starts on the first request for a subject mask (or
+    // the CLI's wait): building a ~1 GB session in the first seconds competed
+    // with the first folder scan and thumbnails, and the idle reaper freed
+    // it a minute later if nothing used it.
     bool startNow = false;
     std::condition_variable startRequested;
 
@@ -332,8 +333,9 @@ void AISubjectEngine::initDeferred(const std::string& modelPath)
     std::thread([this, modelPath]() {
         {
             std::unique_lock<std::mutex> lock(pImpl->loadMutex);
-            pImpl->startRequested.wait_for(lock, std::chrono::seconds(30),
-                                           [this]() { return pImpl->startNow; });
+            // No timer: a load that starts on its own lands whenever it lands,
+            // and measured mid-edit it cost slider drags more than it ever saved.
+            pImpl->startRequested.wait(lock, [this]() { return pImpl->startNow; });
         }
 
         this->init(modelPath);
