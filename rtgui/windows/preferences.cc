@@ -1673,6 +1673,10 @@ Gtk::Widget* Preferences::getFileBrowserPanel()
     });
     vbro->pack_start(*hbFolderPreviews, Gtk::PACK_SHRINK, 0);
 
+    groupByFolderCB = Gtk::manage(new Gtk::CheckButton(M("PREFERENCES_GROUPBYFOLDER")));
+    groupByFolderCB->set_tooltip_text(M("PREFERENCES_GROUPBYFOLDER_TOOLTIP"));
+    vbro->pack_start(*groupByFolderCB, Gtk::PACK_SHRINK, 0);
+
     Gtk::Box* hbrecent = Gtk::manage(new Gtk::Box());
     Gtk::Label* labrecent = Gtk::manage (new Gtk::Label (M("PREFERENCES_MAXRECENTFOLDERS"), Gtk::ALIGN_START));
     maxRecentFolders = Gtk::manage(new Gtk::SpinButton());
@@ -2265,6 +2269,7 @@ void Preferences::storePreferences()
 
     moptions.thumbnailRankColorMode = thumbnailRankColorMode->get_active() ? Options::ThumbnailPropertyMode::XMP : Options::ThumbnailPropertyMode::PROCPARAMS;
     moptions.folderPreviews = folderPreviewsCB->get_active();
+    moptions.browserGroupByFolder = groupByFolderCB->get_active();
     moptions.folderPreviewCount = folderPreviewCountSB->get_value_as_int();
 }
 
@@ -2545,6 +2550,7 @@ void Preferences::fillPreferences()
     thumbnailRankColorMode->set_active(moptions.thumbnailRankColorMode == Options::ThumbnailPropertyMode::XMP);
     folderPreviewCountSB->set_value(moptions.folderPreviewCount);
     folderPreviewsCB->set_active(moptions.folderPreviews);
+    groupByFolderCB->set_active(moptions.browserGroupByFolder);
     folderPreviewCountSB->set_sensitive(moptions.folderPreviews);
 }
 
@@ -2893,6 +2899,10 @@ void Preferences::workflowUpdate()
     if (moptions.showFilmStripToolBar != options.showFilmStripToolBar) {
         // Update the visibility of FB toolbar
         parent->updateFBToolBarVisibility(moptions.showFilmStripToolBar);
+    }
+
+    if (moptions.browserGroupByFolder != options.browserGroupByFolder) {
+        parent->updateFolderGrouping(moptions.browserGroupByFolder);
     }
 
     if (moptions.showtooltip != options.showtooltip) {

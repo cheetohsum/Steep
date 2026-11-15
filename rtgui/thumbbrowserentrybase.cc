@@ -191,6 +191,8 @@ ThumbBrowserEntryBase::ThumbBrowserEntryBase (const Glib::ustring& fname, Thumbn
     animColorActive_(false),
     animPickActive_(false)
 {
+    folder = Glib::path_get_dirname(fname);
+    collate_folder = getPaddedName(folder).casefold_collate_key();
 }
 
 ThumbBrowserEntryBase::~ThumbBrowserEntryBase ()

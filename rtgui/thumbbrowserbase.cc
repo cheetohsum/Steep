@@ -15,6 +15,8 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include <algorithm>
+#include <functional>
+#include <string>
 
 #include <glibmm/ustring.h>
 
@@ -821,6 +823,7 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry, bool filterSta
 
     if (fd.empty()) {
         // nothing to arrange
+        folderHeadings_.clear();
         clearDrawableEntries_();
         resizeThumbnailArea(0, 0);
         return;
@@ -869,6 +872,38 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry, bool filterSta
         }
     }
 
+    // Folder grouping: a heading opens wherever the folder changes between
+    // consecutive drawable entries. Sorting keeps each folder contiguous, so
+    // this is one heading per folder (a pinned partner from another folder
+    // can split one, which only repeats its heading).
+    folderHeadings_.clear();
+    const int headingExtent = groupByFolder_ ? folderHeadingExtent_() : 0;
+    const std::string* currentFolder = nullptr;
+    constexpr std::size_t kPaletteSize = 8;
+    std::size_t previousColour = kPaletteSize;
+    const auto startsGroup = [&](const ThumbBrowserEntryBase* thumb) {
+        if (!groupByFolder_ || (currentFolder && *currentFolder == thumb->collate_folder)) {
+            return false;
+        }
+        currentFolder = &thumb->collate_folder;
+        return true;
+    };
+    const auto openHeading = [&](const ThumbBrowserEntryBase* thumb, int x, int y, int w, int h) {
+        // Colour follows the folder, so it stays put as filters change; a
+        // collision with the group before steps to the next hue.
+        std::size_t colour = std::hash<std::string>()(thumb->collate_folder) % kPaletteSize;
+        if (colour == previousColour) {
+            colour = (colour + 1) % kPaletteSize;
+        }
+        previousColour = colour;
+        folderHeadings_.push_back({x, y, w, h, thumb->folder, 0, colour});
+    };
+    const auto countInGroup = [&]() {
+        if (groupByFolder_ && !folderHeadings_.empty()) {
+            ++folderHeadings_.back().count;
+        }
+    };
+
     if (arrangement == TB_Horizontal) {
         numOfCols = 1;
 
@@ -876,10 +911,15 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry, bool filterSta
 
         if (fullRelayout) {
             for (auto* thumb : drawableEntries_) {
+                if (startsGroup(thumb)) {
+                    openHeading(thumb, currx, 0, headingExtent, rowHeight);
+                    currx += headingExtent;
+                }
                 const int maxw = thumb->getMinimalWidth();
                 thumb->setPosition(currx, 0, maxw, rowHeight);
                 thumb->drawable = true;
                 currx += maxw;
+                countInGroup();
             }
         } else for (unsigned int ct = 0; ct < fd.size(); ) {
             // skip filtered entries — position off-screen
@@ -890,11 +930,16 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry, bool filterSta
                 continue;
             }
 
+            if (startsGroup(fd[ct])) {
+                openHeading(fd[ct], currx, 0, headingExtent, rowHeight);
+                currx += headingExtent;
+            }
             const int maxw = fd[ct]->getMinimalWidth();
             fd[ct]->setPosition(currx, 0, maxw, rowHeight);
             fd[ct]->drawable = true;
             drawableEntries_.push_back(fd[ct]);
             currx += maxw;
+            countInGroup();
             ++ct;
         }
 
@@ -923,7 +968,18 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry, bool filterSta
             }
 
             const int itemWidth = std::max(thumb->getMinimalWidth(), 1);
-            if (currx > 0 && currx + itemWidth > availWidth) {
+            if (startsGroup(thumb)) {
+                // A new folder starts on a fresh row, under its heading.
+                if (currx > 0) {
+                    maxRowWidth = std::max(maxRowWidth, currx);
+                    maxEntriesInRow = std::max(maxEntriesInRow, entriesInRow);
+                    curry += rowHeight;
+                    currx = 0;
+                    entriesInRow = 0;
+                }
+                openHeading(thumb, 0, curry, availWidth, headingExtent);
+                curry += headingExtent;
+            } else if (currx > 0 && currx + itemWidth > availWidth) {
                 maxRowWidth = std::max(maxRowWidth, currx);
                 maxEntriesInRow = std::max(maxEntriesInRow, entriesInRow);
                 curry += rowHeight;
@@ -936,6 +992,7 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry, bool filterSta
             drawableEntries_.push_back(thumb);
             currx += itemWidth;
             ++entriesInRow;
+            countInGroup();
         }
 
         if (entriesInRow > 0) {
@@ -949,6 +1006,173 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry, bool filterSta
         // This will require a Writer access
         resizeThumbnailArea(maxRowWidth, curry);
     }
+}
+
+namespace
+{
+
+// Folder heading hues: mid lightness so the tint reads on dark and light
+// themes alike and the accent bar stays visible on both.
+const char* const kFolderHeadingPalette[] = {
+    "#e07a4f", // ember
+    "#d6a93e", // ochre
+    "#79ad5c", // moss
+    "#3fae9f", // teal
+    "#4f8fe0", // cornflower
+    "#8f78db", // iris
+    "#d26a9e", // rose
+    "#b58b63", // walnut
+};
+
+Glib::ustring folderHeadingCount(int count)
+{
+    return count == 1
+        ? M("FILEBROWSER_FOLDERGROUP_ONE")
+        : Glib::ustring::compose(M("FILEBROWSER_FOLDERGROUP_COUNT"), count);
+}
+
+}
+
+int ThumbBrowserBase::folderHeadingExtent_()
+{
+    // One line of the UI font plus air: a grid row's height, or the
+    // filmstrip band's width (its label runs vertically).
+    auto layout = internal.create_pango_layout("Ag");
+    layout->set_font_description(steepui::uiFont());
+    int tw = 0;
+    int th = 0;
+    layout->get_pixel_size(tw, th);
+    return th + 16;
+}
+
+const ThumbBrowserBase::FolderHeading* ThumbBrowserBase::folderHeadingAt_(int x, int y) const
+{
+    const int cx = x - getScrollOffsetX();
+    const int cy = y - getScrollOffsetY();
+
+    for (const auto& fh : folderHeadings_) {
+        if (cx >= fh.x && cx < fh.x + fh.w && cy >= fh.y && cy < fh.y + fh.h) {
+            return &fh;
+        }
+    }
+
+    return nullptr;
+}
+
+void ThumbBrowserBase::drawFolderHeadings_(const Cairo::RefPtr<Cairo::Context>& cr, int width, int height)
+{
+    if (folderHeadings_.empty()) {
+        return;
+    }
+
+    const Gdk::RGBA ink = themeColor(internal, "steep_text", Gdk::RGBA("#d0d4dc"));
+    const Gdk::RGBA dim = themeColor(internal, "steep_text_dim", Gdk::RGBA("#8a92a1"));
+    Pango::FontDescription nameFont = steepui::uiFont();
+    nameFont.set_weight(Pango::WEIGHT_SEMIBOLD);
+    const Pango::FontDescription metaFont = steepui::uiFont(0.9);
+
+    const int ox = getScrollOffsetX();
+    const int oy = getScrollOffsetY();
+    constexpr double inset = 3.0;
+    constexpr double accent = 4.0;
+
+    cr->save();
+    cr->set_antialias(Cairo::ANTIALIAS_DEFAULT);
+
+    for (const auto& fh : folderHeadings_) {
+        const double x = fh.x + ox;
+        const double y = fh.y + oy;
+
+        if (x + fh.w < 0 || y + fh.h < 0 || x > width || y > height) {
+            continue;
+        }
+
+        const Gdk::RGBA colour(kFolderHeadingPalette[fh.colour % G_N_ELEMENTS(kFolderHeadingPalette)]);
+        Glib::ustring name = Glib::path_get_basename(fh.path);
+        if (name.empty() || name == "." || name == G_DIR_SEPARATOR_S) {
+            name = fh.path;
+        }
+
+        const double bx = x + inset;
+        const double by = y + inset;
+        const double bw = fh.w - 2.0 * inset;
+        const double bh = fh.h - 2.0 * inset;
+
+        if (bw <= accent || bh <= accent) {
+            continue;
+        }
+
+        // Tinted band, with the folder's colour as a solid accent edge.
+        steepui::setSource(cr, colour, 0.16);
+        steepui::roundedRect(cr, bx, by, bw, bh, steepui::Radius::M);
+        cr->fill();
+
+        auto nameLayout = internal.create_pango_layout(name);
+        nameLayout->set_font_description(nameFont);
+        nameLayout->set_ellipsize(Pango::ELLIPSIZE_MIDDLE);
+
+        if (arrangement == TB_Vertical) {
+            steepui::setSource(cr, colour);
+            steepui::roundedRect(cr, bx, by, accent, bh, steepui::Radius::S);
+            cr->fill();
+
+            // Folder name, then "N photos · parent path", dimmed.
+            const double textX = bx + accent + 10.0;
+            const double textW = std::max(1.0, bx + bw - textX - 10.0);
+            nameLayout->set_width(static_cast<int>(textW * 0.6 * PANGO_SCALE));
+            int nw = 0;
+            int nh = 0;
+            nameLayout->get_pixel_size(nw, nh);
+            steepui::setSource(cr, ink);
+            cr->move_to(textX, by + (bh - nh) / 2.0);
+            nameLayout->show_in_cairo_context(cr);
+
+            Glib::ustring meta = folderHeadingCount(fh.count);
+            const Glib::ustring parentPath = Glib::path_get_dirname(fh.path);
+            if (!parentPath.empty() && parentPath != ".") {
+                meta += "  ·  " + parentPath;
+            }
+
+            const double metaX = textX + nw + 14.0;
+            const double metaW = bx + bw - metaX - 10.0;
+
+            if (metaW > 24.0) {
+                auto metaLayout = internal.create_pango_layout(meta);
+                metaLayout->set_font_description(metaFont);
+                metaLayout->set_ellipsize(Pango::ELLIPSIZE_MIDDLE);
+                metaLayout->set_width(static_cast<int>(metaW * PANGO_SCALE));
+                steepui::useTabularNumerals(metaLayout);
+                int mw = 0;
+                int mh = 0;
+                metaLayout->get_pixel_size(mw, mh);
+                steepui::setSource(cr, dim);
+                cr->move_to(metaX, by + (bh - mh) / 2.0);
+                metaLayout->show_in_cairo_context(cr);
+            }
+        } else {
+            // Filmstrip: a narrow band with the accent along its top and the
+            // name reading upward from the bottom.
+            steepui::setSource(cr, colour);
+            steepui::roundedRect(cr, bx, by, bw, accent, steepui::Radius::S);
+            cr->fill();
+
+            const double labelLen = std::max(1.0, bh - accent - 12.0);
+            nameLayout->set_width(static_cast<int>(labelLen * PANGO_SCALE));
+            int nw = 0;
+            int nh = 0;
+            nameLayout->get_pixel_size(nw, nh);
+
+            cr->save();
+            cr->translate(bx + (bw - nh) / 2.0, by + bh - 6.0);
+            cr->rotate(-rtengine::RT_PI / 2.0);
+            steepui::setSource(cr, ink);
+            cr->move_to(0.0, 0.0);
+            nameLayout->show_in_cairo_context(cr);
+            cr->restore();
+        }
+    }
+
+    cr->restore();
 }
 
 void ThumbBrowserBase::disableInspector()
@@ -1005,6 +1229,12 @@ bool ThumbBrowserBase::Internal::on_query_tooltip (int x, int y, bool keyboard_t
     // Gtk signals automatically acquire the GUI (i.e. this method is enclosed by gdk_thread_enter and gdk_thread_leave)
     Glib::ustring ttip;
     bool useMarkup = false;
+
+    if (const auto* heading = parent->folderHeadingAt_(x, y)) {
+        tooltip->set_text(heading->path + "\n" + folderHeadingCount(heading->count));
+        return true;
+    }
+
     {
         MYREADERLOCK(l, parent->entryRW);
 
@@ -1326,6 +1556,8 @@ bool ThumbBrowserBase::Internal::on_draw(const ::Cairo::RefPtr< Cairo::Context> 
         entry->draw(cr);
     }
 
+    parent->drawFolderHeadings_(cr, logical.width, logical.height);
+
     if (!parent->visibleThumbnailRequests_.empty()) {
         thumbImageUpdater->addBatch(parent->visibleThumbnailRequests_);
         parent->visibleThumbnailRequests_.clear();
@@ -1506,17 +1738,12 @@ void ThumbBrowserBase::resort ()
     {
         MYWRITERLOCK(l, entryRW);
 
-        const auto& options = App::get().options();
         std::sort(
             fd.begin(),
             fd.end(),
-            [&](const ThumbBrowserEntryBase* a, const ThumbBrowserEntryBase* b)
+            [this](const ThumbBrowserEntryBase* a, const ThumbBrowserEntryBase* b)
             {
-                // Swap operands for descending: negating the result is not a
-                // strict weak ordering (equal keys compare true both ways).
-                return options.sortDescending
-                    ? b->compare(*a, options.sortMethod)
-                    : a->compare(*b, options.sortMethod);
+                return entryLess_(a, b);
             }
         );
         applyPinnedOrder_();
@@ -1524,6 +1751,100 @@ void ThumbBrowserBase::resort ()
     }
 
     redraw ();
+}
+
+bool ThumbBrowserBase::entryLess_(const ThumbBrowserEntryBase* a, const ThumbBrowserEntryBase* b) const
+{
+    // Folders always run A-Z; the user's sort (and its direction) applies
+    // inside each folder.
+    if (groupByFolder_ && a->collate_folder != b->collate_folder) {
+        return a->collate_folder < b->collate_folder;
+    }
+
+    // Swap operands for descending: negating the result is not a strict weak
+    // ordering (equal keys compare true both ways).
+    const auto& options = App::get().options();
+    return options.sortDescending
+        ? b->compare(*a, options.sortMethod)
+        : a->compare(*b, options.sortMethod);
+}
+
+int ThumbBrowserBase::rowStepDistance(bool down)
+{
+    MYREADERLOCK(l, entryRW);
+
+    if (!groupByFolder_ || arrangement != TB_Vertical || !lastClicked) {
+        return numOfCols;
+    }
+
+    const auto current = std::find(drawableEntries_.begin(), drawableEntries_.end(), lastClicked);
+
+    if (current == drawableEntries_.end()) {
+        return numOfCols;
+    }
+
+    const int rowY = lastClicked->getStartY();
+    const int centreX = lastClicked->getStartX() + lastClicked->getEffectiveWidth() / 2;
+    const auto distanceTo = [centreX](const ThumbBrowserEntryBase* e) {
+        return std::abs(e->getStartX() + e->getEffectiveWidth() / 2 - centreX);
+    };
+    const std::ptrdiff_t from = current - drawableEntries_.begin();
+    const std::ptrdiff_t count = static_cast<std::ptrdiff_t>(drawableEntries_.size());
+    std::ptrdiff_t best = -1;
+    int targetY = 0;
+
+    if (down) {
+        for (std::ptrdiff_t i = from + 1; i < count; ++i) {
+            const int y = drawableEntries_[i]->getStartY();
+            if (y == rowY) {
+                continue;
+            }
+            if (best < 0) {
+                targetY = y;
+            } else if (y != targetY) {
+                break;
+            }
+            if (best < 0 || distanceTo(drawableEntries_[i]) < distanceTo(drawableEntries_[best])) {
+                best = i;
+            }
+        }
+    } else {
+        for (std::ptrdiff_t i = from - 1; i >= 0; --i) {
+            const int y = drawableEntries_[i]->getStartY();
+            if (y == rowY) {
+                continue;
+            }
+            if (best < 0) {
+                targetY = y;
+            } else if (y != targetY) {
+                break;
+            }
+            if (best < 0 || distanceTo(drawableEntries_[i]) <= distanceTo(drawableEntries_[best])) {
+                best = i;
+            }
+        }
+    }
+
+    if (best < 0) {
+        return numOfCols; // no row there: let selectNext/Prev clamp as before
+    }
+
+    return static_cast<int>(std::abs(best - from));
+}
+
+void ThumbBrowserBase::setFolderGrouping(bool on)
+{
+    if (on == groupByFolder_) {
+        return;
+    }
+
+    groupByFolder_ = on;
+
+    if (!on) {
+        folderHeadings_.clear();
+    }
+
+    resort();
 }
 
 void ThumbBrowserBase::applyPinnedOrder_ ()
@@ -2015,11 +2336,8 @@ void ThumbBrowserBase::flushPendingInserts_ ()
     if (!batch.empty()) {
         MYWRITERLOCK(l, entryRW);
 
-        const auto& options = App::get().options();
-        auto cmp = [&](const ThumbBrowserEntryBase* a, const ThumbBrowserEntryBase* b) {
-            return options.sortDescending
-                ? b->compare(*a, options.sortMethod)
-                : a->compare(*b, options.sortMethod);
+        auto cmp = [this](const ThumbBrowserEntryBase* a, const ThumbBrowserEntryBase* b) {
+            return entryLess_(a, b);
         };
 
         if (batch.size() > 1 && !std::is_sorted(batch.begin(), batch.end(), cmp)) {

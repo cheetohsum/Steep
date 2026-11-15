@@ -235,6 +235,8 @@ FILEBROWSER_EMPTYTRASH;Empty trash
 FILEBROWSER_EMPTYTRASHHINT;<b>Permanently</b> delete all files in trash.
 FILEBROWSER_EXTPROGMENU;Open with
 FILEBROWSER_FLATFIELD;Flat-field
+FILEBROWSER_FOLDERGROUP_COUNT;%1 photos
+FILEBROWSER_FOLDERGROUP_ONE;1 photo
 FILEBROWSER_MOVETODARKFDIR;Move to dark-frames folder
 FILEBROWSER_MOVETOFLATFIELDDIR;Move to flat-fields folder
 FILEBROWSER_NEW_NAME;New name:
@@ -2621,6 +2623,8 @@ PREFERENCES_FSTRIP_SAME_THUMB_HEIGHT_HINT;Having separate thumbnail size will re
 PREFERENCES_FILMSTRIP_THUMB_SIZE;Filmstrip thumbnail size (px)
 PREFERENCES_BROWSER_THUMB_SIZE;Browser thumbnail size (px)
 PREFERENCES_GIMPPATH;GIMP installation folder
+PREFERENCES_GROUPBYFOLDER;Group photos by folder in multi-folder views
+PREFERENCES_GROUPBYFOLDER_TOOLTIP;In the global view and when browsing sub-folders, show each source folder's photos under its own coloured heading, in the browser grid and the filmstrip
 PREFERENCES_HISTOGRAMPOSITIONLEFT;Histogram in left panel
 PREFERENCES_HISTOGRAM_TOOLTIP;If enabled, the working profile is used for rendering the main histogram and the Navigator panel, otherwise the gamma-corrected output profile is used.
 PREFERENCES_HLTHRESHOLD;Threshold for clipped highlights

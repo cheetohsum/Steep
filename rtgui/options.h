@@ -392,6 +392,9 @@ public:
     std::set<std::string> parsedExtensionsSet;  // Set containing all retained extensions (lowercase)
     std::vector<Glib::ustring> defaultFiletypeFilter; // Startup file-type filter (uppercase)
     bool browseRecursive;
+    // Multi-folder views (global scope, sub-folder browsing) group thumbnails
+    // under a coloured heading per source folder, in the grid and filmstrip.
+    bool browserGroupByFolder;
     int browseRecursiveDepth;
     int browseRecursiveMaxDirs;
     bool browseRecursiveFollowLinks;

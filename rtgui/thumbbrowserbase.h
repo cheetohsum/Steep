@@ -222,6 +222,16 @@ public:
     void on_style_updated () override;
     void resort ();
 
+    // Multi-folder views: keep each source folder's entries together and lay
+    // a coloured heading before each group (a row in the grid, a vertical band
+    // in the filmstrip). Re-sorts when it changes.
+    void setFolderGrouping (bool on);
+    bool folderGrouping () const { return groupByFolder_; }
+    // How many photos Up/Down moves from the current one. A fixed column
+    // count, except in a grouped grid where folder rows can be short: there it
+    // is the photo in the row above/below nearest in x.
+    int rowStepDistance (bool down);
+
 protected:
     // Reposition pinned entries (pinAfter set) directly after their anchor.
     // Caller must hold the entryRW write lock.
@@ -302,6 +312,24 @@ private:
         VREL_OUTSIDE,
         VREL_AFTER
     };
+
+    // Browser order: the user's sort method, under the source folder when
+    // folder grouping is on. Every sort and merge of `fd` goes through this.
+    bool entryLess_(const ThumbBrowserEntryBase* a, const ThumbBrowserEntryBase* b) const;
+
+    // One heading per folder group, in content coordinates (before scroll),
+    // rebuilt by arrangeFiles(). GUI thread only.
+    struct FolderHeading {
+        int x, y, w, h;
+        Glib::ustring path;
+        int count;
+        std::size_t colour; // index into the heading palette
+    };
+    bool groupByFolder_ = false;
+    std::vector<FolderHeading> folderHeadings_;
+    int folderHeadingExtent_();
+    void drawFolderHeadings_(const Cairo::RefPtr<Cairo::Context>& cr, int width, int height);
+    const FolderHeading* folderHeadingAt_(int x, int y) const;
 
     ViewportRelation viewportRelation_(const ThumbBrowserEntryBase* entry, int x, int y, int w, int h) const;
     std::size_t firstViewportCandidate_(int x, int y) const;

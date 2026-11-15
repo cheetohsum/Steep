@@ -1003,6 +1003,7 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     bRecursive->set_relief(Gtk::RELIEF_NONE);
     bRecursive->set_active(options.browseRecursive);
     bRecursive->signal_toggled().connect(sigc::mem_fun(*this, &FileCatalog::showRecursiveToggled));
+    refreshFolderGrouping_(); // sub-folder browsing can be on from the last session
 
     // bRecursive stays on the main bar; bOriginal (and, further right,
     // bTrash + the metadata cog) go in the filter bar
@@ -3691,6 +3692,7 @@ void FileCatalog::showRecursiveToggled()
     }
 
     App::get().mut_options().browseRecursive = state;
+    refreshFolderGrouping_();
 
     // Killing background threads can sometimes block the UI for a long time,
     // This may be a spot where giving the user information is needed.
@@ -4219,6 +4221,25 @@ void FileCatalog::syncGlobalScopeMirrors ()
     }
 
     globalScopeChanged_.emit(on);
+    refreshFolderGrouping_();
+}
+
+void FileCatalog::refreshFolderGrouping_ (bool preference)
+{
+    if (fileBrowser) {
+        fileBrowser->setFolderGrouping(
+            preference && (globalScopeActive_ || App::get().options().browseRecursive));
+    }
+}
+
+void FileCatalog::refreshFolderGrouping_ ()
+{
+    refreshFolderGrouping_(App::get().options().browserGroupByFolder);
+}
+
+void FileCatalog::updateFolderGrouping (bool groupByFolder)
+{
+    refreshFolderGrouping_(groupByFolder);
 }
 
 FilterToggles FileCatalog::getFilterToggles ()

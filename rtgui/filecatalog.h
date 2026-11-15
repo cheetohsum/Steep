@@ -326,6 +326,10 @@ private:
     sigc::connection globalBarToggleConn_;
     sigc::signal<void, bool> globalScopeChanged_;
     void syncGlobalScopeMirrors();
+    // Folder headings show while a multi-folder view (global scope or
+    // sub-folder browsing) is on and the preference allows them.
+    void refreshFolderGrouping_(bool preference);
+    void refreshFolderGrouping_();
     // Rating filter: a star shows that rating and up; clicked again, that
     // rating only; a third click clears it.
     int rankAnchor_ = 0;
@@ -531,6 +535,8 @@ public:
     bool Query_key_pressed(GdkEventKey *event);
     void updateFBQueryTB (bool singleRow);
     void updateFBToolBarVisibility (bool showFilmStripToolBar);
+    // Preferences changed "group by folder" (called before the new options land).
+    void updateFolderGrouping (bool groupByFolder);
 
     void tbLeftPanel_1_toggled ();
     void tbLeftPanel_1_visible (bool visible);

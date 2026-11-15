@@ -2771,6 +2771,13 @@ void RTWindow::updateFBToolBarVisibility (bool showFilmStripToolBar)
     fpanel->fileCatalog->updateFBToolBarVisibility (showFilmStripToolBar);
 }
 
+void RTWindow::updateFolderGrouping (bool groupByFolder)
+{
+    if (fpanel && fpanel->fileCatalog) {
+        fpanel->fileCatalog->updateFolderGrouping (groupByFolder);
+    }
+}
+
 void RTWindow::updateShowtooltipVisibility (bool showtooltip)
 {
     if (epanel) {

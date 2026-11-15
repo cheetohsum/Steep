@@ -167,6 +167,10 @@ public:
 
 // thumbnail preview properties:
     Glib::ustring filename;
+    // Source folder and its sort key, computed once: grouped multi-folder
+    // views compare these on every sort (see ThumbBrowserBase::setFolderGrouping).
+    Glib::ustring folder;
+    std::string collate_folder;
     // Session-pinned entry (e.g. a double-exposure partner surfaced next to
     // the image it composites into): sorts directly after the entry whose
     // filename this holds, and bypasses browser filters. Empty = normal.

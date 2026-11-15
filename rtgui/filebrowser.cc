@@ -4480,10 +4480,10 @@ bool FileBrowser::keyPressed (GdkEventKey* event)
         selectNext (1, shift);
         return true;
     } else if (event->keyval == GDK_KEY_Up) {
-        selectPrev (numOfCols, shift);
+        selectPrev (rowStepDistance (false), shift);
         return true;
     } else if (event->keyval == GDK_KEY_Down) {
-        selectNext (numOfCols, shift);
+        selectNext (rowStepDistance (true), shift);
         return true;
     } else if (event->keyval == GDK_KEY_Home) {
         selectFirst (shift);

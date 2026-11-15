@@ -244,6 +244,7 @@ class Preferences final :
 
     Gtk::CheckButton *thumbnailRankColorMode;
     Gtk::CheckButton* folderPreviewsCB;
+    Gtk::CheckButton* groupByFolderCB;
     Gtk::SpinButton* folderPreviewCountSB;
 
     Gtk::Entry* txtCustProfBuilderPath;

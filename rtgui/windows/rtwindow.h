@@ -191,6 +191,7 @@ public:
     void updateHistogramPosition (int oldPosition, int newPosition);
     void updateFBQueryTB (bool singleRow);
     void updateFBToolBarVisibility (bool showFilmStripToolBar);
+    void updateFolderGrouping (bool groupByFolder);
     void updateShowtooltipVisibility (bool showtooltip);
     void updateToolPanelToolLocations(
         const std::vector<Glib::ustring> &favorites, bool cloneFavoriteTools);
