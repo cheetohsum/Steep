@@ -50,6 +50,12 @@ public:
     virtual void refreshPreview(const rtengine::ProcEvent& event) = 0;
     /// @brief Used to notify all listeners that a parameters has been effectively changed
     virtual void panelChanged(const rtengine::ProcEvent& event, const Glib::ustring& descr) = 0;
+    /// @brief The same, from an on-canvas handle drag: called on every motion
+    /// event, so the listener may pace it to what the engine can deliver.
+    virtual void panelChangedDuringDrag(const rtengine::ProcEvent& event, const Glib::ustring& descr)
+    {
+        panelChanged(event, descr);
+    }
     /// @brief Set the TweakOperator to the StagedImageProcessor, to let some tool enter into special modes
     virtual void setTweakOperator (rtengine::TweakOperator *tOperator) = 0;
     /// @brief Unset the TweakOperator to the StagedImageProcessor

@@ -18,7 +18,11 @@
  */
 #pragma once
 
+#include <memory>
+
 #include <gtkmm.h>
+
+#include "delayed.h"
 
 class ColorWheel;
 
@@ -33,6 +37,7 @@ class ColorWheelArea final : public Gtk::DrawingArea
 {
 public:
     ColorWheelArea();
+    ~ColorWheelArea() override;
 
     void setHueSat(double hue, double saturation, bool notify = true);
     double getHue() const { return hue_; }
@@ -56,6 +61,12 @@ public:
 
 private:
     bool notifyListener();
+    // Drag updates go through the same engine-paced min/max debounce as
+    // sliders. The old min-only timer was re-armed on every motion event, so
+    // it either fired on nearly every event or not at all until the pointer
+    // paused.
+    void schedulePacedNotify();
+    void cancelPacedNotify();
     void updateFromMouse(double mx, double my);
     void wheelGeometry(double& cx, double& cy, double& radius) const;
     void beginDrag(double mx, double my, bool fine);
@@ -77,7 +88,7 @@ private:
     double dragY_;
     double lastMouseX_;
     double lastMouseY_;
-    sigc::connection delayconn_;
+    std::unique_ptr<DelayedCall<>> pacedNotify_;
     Cairo::RefPtr<Cairo::ImageSurface> cachedWheel_;
     int cachedSize_;
 };

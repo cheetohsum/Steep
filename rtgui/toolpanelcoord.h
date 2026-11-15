@@ -27,6 +27,8 @@
 
 #include <gtkmm.h>
 
+#include "delayed.h"
+
 #include "modebuttonbar.h"
 #include "gradingpresetmenu.h"
 #include "tools/bayerpreprocess.h"
@@ -338,7 +340,7 @@ private:
 
     bool bridgeGlobalToSpot(rtengine::procparams::ProcParams* params, const rtengine::ProcEvent& event);
     void loadSpotIntoGlobalTools();
-    void updateResetButtons();
+    void updateResetButtons(const rtengine::procparams::ProcParams* written = nullptr);
     void captureBaseline();
     void captureNeutralReference();
     /// The panels the tool groups' reset buttons judge and restore.
@@ -580,6 +582,7 @@ public:
     // toolpanellistener interface
     void refreshPreview(const rtengine::ProcEvent& event) override;
     void panelChanged(const rtengine::ProcEvent& event, const Glib::ustring& descr) override;
+    void panelChangedDuringDrag(const rtengine::ProcEvent& event, const Glib::ustring& descr) override;
     void setTweakOperator (rtengine::TweakOperator *tOperator) override;
     void unsetTweakOperator (rtengine::TweakOperator *tOperator) override;
     void hoverMaskChanged(bool hover, bool forceRedraw = false, int spotIndex = -1) override;
@@ -723,6 +726,9 @@ private:
         const rtengine::ProcEvent& event,
         const Glib::ustring& descr);
     void deferPanelChanged(const rtengine::ProcEvent& event, const Glib::ustring& descr);
+    // Handle drags (gradient, tilt-shift, spots, mask spots) keep only the
+    // latest position, paced like slider drags.
+    std::unique_ptr<DelayedCall<rtengine::ProcEvent, Glib::ustring>> dragPanelChange_;
     bool retryDeferredPanelChanged();
 
     bool deferredPanelChangePending_ = false;

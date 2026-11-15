@@ -195,6 +195,9 @@ private:
         int blur;
         int refineRadius;
         int refineEps;
+        // 0 for a class map; for a click-picked spot, the hash of its prompts
+        // (the picked object replaces the class map as the base mask).
+        std::uint64_t source;
 
         bool operator==(const RefinedKey& other) const;
     };
@@ -213,6 +216,7 @@ private:
         int blur;
         int refineRadius;
         int refineEps;
+        std::uint64_t source;   // as RefinedKey::source
 
         bool operator==(const DistanceKey& other) const;
     };
@@ -244,6 +248,15 @@ private:
     std::deque<RefinedEntry> refinedMasks_;
     std::deque<DistanceEntry> distanceMasks_;
     std::deque<PreparedEntry> preparedMasks_;
+    // Objects picked by click (SAM), by prompt hash: the decoder result only
+    // depends on the photo and the clicks, not on threshold, feather or size.
+    struct SamEntry
+    {
+        std::uint64_t prompts;
+        std::uint64_t generation;
+        std::shared_ptr<const array2D<float>> mask;
+    };
+    std::deque<SamEntry> samMasks_;
     int sourceWidth_;
     int sourceHeight_;
     int cachedWidth_;

@@ -494,7 +494,7 @@ bool TiltShift::drag1(int modifierKey)
             angle->setValue(intAngle);
             updateGeometry(focusPos->getIntValue(), focusWidth->getIntValue(), feather->getIntValue(), angle->getIntValue());
             if (listener) {
-                listener->panelChanged(EvTiltShiftAngle, angle->getTextValue());
+                listener->panelChangedDuringDrag(EvTiltShiftAngle, angle->getTextValue());
             }
             return true;
         }
@@ -511,7 +511,7 @@ bool TiltShift::drag1(int modifierKey)
             focusPos->setValue(newFocusPos);
             updateGeometry(focusPos->getIntValue(), focusWidth->getIntValue(), feather->getIntValue(), angle->getIntValue());
             if (listener) {
-                listener->panelChanged(EvTiltShiftFocusPos, focusPos->getTextValue());
+                listener->panelChangedDuringDrag(EvTiltShiftFocusPos, focusPos->getTextValue());
             }
             return true;
         }
@@ -528,7 +528,7 @@ bool TiltShift::drag1(int modifierKey)
             focusWidth->setValue(newWidth);
             updateGeometry(focusPos->getIntValue(), focusWidth->getIntValue(), feather->getIntValue(), angle->getIntValue());
             if (listener) {
-                listener->panelChanged(EvTiltShiftFocusWidth, focusWidth->getTextValue());
+                listener->panelChangedDuringDrag(EvTiltShiftFocusWidth, focusWidth->getTextValue());
             }
             return true;
         }
@@ -547,7 +547,7 @@ bool TiltShift::drag1(int modifierKey)
                 feather->setValue(newFeather);
                 updateGeometry(focusPos->getIntValue(), focusWidth->getIntValue(), feather->getIntValue(), angle->getIntValue());
                 if (listener) {
-                    listener->panelChanged(EvTiltShiftFeather, feather->getTextValue());
+                    listener->panelChangedDuringDrag(EvTiltShiftFeather, feather->getTextValue());
                 }
                 return true;
             }
@@ -560,7 +560,7 @@ bool TiltShift::drag1(int modifierKey)
                 feather->setValue(newFeather);
                 updateGeometry(focusPos->getIntValue(), focusWidth->getIntValue(), feather->getIntValue(), angle->getIntValue());
                 if (listener) {
-                    listener->panelChanged(EvTiltShiftFeather, feather->getTextValue());
+                    listener->panelChangedDuringDrag(EvTiltShiftFeather, feather->getTextValue());
                 }
                 return true;
             }

@@ -16058,7 +16058,10 @@ void ImProcFunctions::Lab_Local(
 
 //encoding lab at the beginning
     llStage("before-log");
-    if (lp.logena && (call <= 3 || lp.prevdE || lp.showMaskOverlay || lp.showmasklogmet == 2 || lp.enaLMask || lp.showmasklogmet == 3 || lp.showmasklogmet == 4)) {
+    // Not under lp.showMaskOverlay (here and in the other tool blocks of this
+    // spot): the overlay pass rewrites every pixel of the spot from the mask,
+    // so the tools' output is thrown away. Same reasoning as exposure below.
+    if ((lp.logena && (call <= 3 || lp.prevdE || lp.showmasklogmet == 2 || lp.enaLMask || lp.showmasklogmet == 3 || lp.showmasklogmet == 4)) && !lp.showMaskOverlay) {
 
         const int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
         const int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
@@ -16960,7 +16963,7 @@ void ImProcFunctions::Lab_Local(
 
 //Tone mapping
 
-    if ((lp.strengt != 0.f || lp.showmasktmmet == 2 || lp.enatmMask || lp.showmasktmmet == 3 || lp.showmasktmmet == 4 || lp.prevdE || lp.showMaskOverlay) && lp.tonemapena && !params->epd.enabled) {
+    if (((lp.strengt != 0.f || lp.showmasktmmet == 2 || lp.enatmMask || lp.showmasktmmet == 3 || lp.showmasktmmet == 4 || lp.prevdE) && lp.tonemapena && !params->epd.enabled) && !lp.showMaskOverlay) {
         if (call <= 3) { //simpleprocess dcrop improcc
             const int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
             const int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
@@ -17254,7 +17257,7 @@ void ImProcFunctions::Lab_Local(
 //end TM
 
 
-    if ((lp.dehaze != 0 || lp.prevdE || lp.showMaskOverlay) && lp.retiena) {
+    if (((lp.dehaze != 0 || lp.prevdE) && lp.retiena) && !lp.showMaskOverlay) {
         int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
         int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
         int xstart = rtengine::max(static_cast<int>(lp.xc - lp.lxL) - cx, 0);
@@ -18018,7 +18021,7 @@ void ImProcFunctions::Lab_Local(
 
 
 //begin cbdl
-    if ((lp.mulloc[0] != 1.f || lp.mulloc[1] != 1.f || lp.mulloc[2] != 1.f || lp.mulloc[3] != 1.f || lp.mulloc[4] != 1.f || lp.mulloc[5] != 1.f || lp.clarityml != 0.f || lp.contresid != 0.f  || lp.enacbMask || lp.showmaskcbmet == 2 || lp.showmaskcbmet == 3 || lp.showmaskcbmet == 4 || lp.prevdE || lp.showMaskOverlay) && lp.cbdlena) {
+    if (((lp.mulloc[0] != 1.f || lp.mulloc[1] != 1.f || lp.mulloc[2] != 1.f || lp.mulloc[3] != 1.f || lp.mulloc[4] != 1.f || lp.mulloc[5] != 1.f || lp.clarityml != 0.f || lp.contresid != 0.f  || lp.enacbMask || lp.showmaskcbmet == 2 || lp.showmaskcbmet == 3 || lp.showmaskcbmet == 4 || lp.prevdE) && lp.cbdlena) && !lp.showMaskOverlay) {
         if (call <= 3) { //call from simpleprocess dcrop improcc
             const int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
             const int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
@@ -18252,7 +18255,7 @@ void ImProcFunctions::Lab_Local(
     float vibg = params->locallab.spots.at(sp).vibgam;
 
     llStage("before-vibrance");
-    if (lp.expvib && (lp.past != 0.f  || lp.satur != 0.f || lp.strvib != 0.f || vibg != 1.f  || lp.war != 0 || lp.strvibab != 0.f  || lp.strvibh != 0.f || lp.showmaskvibmet == 2 || lp.enavibMask || lp.showmaskvibmet == 3 || lp.showmaskvibmet == 4 || lp.prevdE || lp.showMaskOverlay) && lp.vibena) { //interior ellipse reinforced lightness and chroma  //locallutili
+    if ((lp.expvib && (lp.past != 0.f  || lp.satur != 0.f || lp.strvib != 0.f || vibg != 1.f  || lp.war != 0 || lp.strvibab != 0.f  || lp.strvibh != 0.f || lp.showmaskvibmet == 2 || lp.enavibMask || lp.showmaskvibmet == 3 || lp.showmaskvibmet == 4 || lp.prevdE) && lp.vibena) && !lp.showMaskOverlay) { //interior ellipse reinforced lightness and chroma  //locallutili
         if (call <= 3) { //simpleprocess, dcrop, improccoordinator
             const int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
             const int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
@@ -18588,7 +18591,7 @@ void ImProcFunctions::Lab_Local(
     if(D != 0.f /* || BLP != 0.f || HLP != 1.f*  || smoth*/) {
         ghsactiv = true;
     }
-    if (! lp.invsh && (lp.highlihs > 0.f || lp.shadowhs > 0.f || tonequ || tonecurv || ghsactiv || lp.strSH != 0.f || lp.showmaskSHmet == 2 || lp.enaSHMask || lp.showmaskSHmet == 3 || lp.showmaskSHmet == 4 || lp.prevdE || lp.showMaskOverlay) && call <= 3 && lp.hsena) {
+    if ((! lp.invsh && (lp.highlihs > 0.f || lp.shadowhs > 0.f || tonequ || tonecurv || ghsactiv || lp.strSH != 0.f || lp.showmaskSHmet == 2 || lp.enaSHMask || lp.showmaskSHmet == 3 || lp.showmaskSHmet == 4 || lp.prevdE) && call <= 3 && lp.hsena) && !lp.showMaskOverlay) {
         const int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
         const int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
         const int xstart = rtengine::max(static_cast<int>(lp.xc - lp.lxL) - cx, 0);
@@ -19936,7 +19939,7 @@ void ImProcFunctions::Lab_Local(
     }
 
 // soft light and retinex_pde
-    if ((lp.strng > 1.f || lp.prevdE || lp.showMaskOverlay) && call <= 3 && lp.sfena) {
+    if (((lp.strng > 1.f || lp.prevdE) && call <= 3 && lp.sfena) && !lp.showMaskOverlay) {
         int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
         int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
         int xstart = rtengine::max(static_cast<int>(lp.xc - lp.lxL) - cx, 0);
@@ -20070,7 +20073,7 @@ void ImProcFunctions::Lab_Local(
         }
     }
 
-    if ((lp.lcamount > 0.f || wavcurve || lp.showmasklcmet == 2 || lp.enalcMask || lp.showmasklcmet == 3 || lp.showmasklcmet == 4 || lp.prevdE || lp.showMaskOverlay || lp.strwav != 0.f || wavcurvelev || wavcurvecon || wavcurvecomp || wavcurvecompre || lp.edgwena || params->locallab.spots.at(sp).residblur > 0.0 || params->locallab.spots.at(sp).levelblur > 0.0 || params->locallab.spots.at(sp).residcont != 0.0 || params->locallab.spots.at(sp).clarilres != 0.0 || params->locallab.spots.at(sp).claricres != 0.0) && call <= 3 && lp.lcena) {
+    if (((lp.lcamount > 0.f || wavcurve || lp.showmasklcmet == 2 || lp.enalcMask || lp.showmasklcmet == 3 || lp.showmasklcmet == 4 || lp.prevdE || lp.strwav != 0.f || wavcurvelev || wavcurvecon || wavcurvecomp || wavcurvecompre || lp.edgwena || params->locallab.spots.at(sp).residblur > 0.0 || params->locallab.spots.at(sp).levelblur > 0.0 || params->locallab.spots.at(sp).residcont != 0.0 || params->locallab.spots.at(sp).clarilres != 0.0 || params->locallab.spots.at(sp).claricres != 0.0) && call <= 3 && lp.lcena) && !lp.showMaskOverlay) {
 
         int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
         int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
@@ -21548,7 +21551,7 @@ void ImProcFunctions::Lab_Local(
     const float b_scalemerg = (lp.highBmerg - lp.lowBmerg) / factor / scaling;
 
     llStage("before-color");
-    if (!lp.inv && (lp.chro != 0 || lp.ligh != 0.f || lp.cont != 0 || ctoning || lp.mergemet > 0 ||  lp.strcol != 0.f ||  lp.strcolab != 0.f || lp.qualcurvemet != 0 || lp.showmaskcolmet == 2 || lp.enaColorMask || lp.showmaskcolmet == 3  || lp.showmaskcolmet == 4 || lp.showmaskcolmet == 5 || lp.prevdE || lp.showMaskOverlay || lp.blwh) && lp.colorena) { // || lllocalcurve)) { //interior ellipse reinforced lightness and chroma  //locallutili
+    if ((!lp.inv && (lp.chro != 0 || lp.ligh != 0.f || lp.cont != 0 || ctoning || lp.mergemet > 0 ||  lp.strcol != 0.f ||  lp.strcolab != 0.f || lp.qualcurvemet != 0 || lp.showmaskcolmet == 2 || lp.enaColorMask || lp.showmaskcolmet == 3  || lp.showmaskcolmet == 4 || lp.showmaskcolmet == 5 || lp.prevdE || lp.blwh) && lp.colorena) && !lp.showMaskOverlay) { // || lllocalcurve)) { //interior ellipse reinforced lightness and chroma  //locallutili
         int ystart = rtengine::max(static_cast<int>(lp.yc - lp.lyT) - cy, 0);
         int yend = rtengine::min(static_cast<int>(lp.yc + lp.ly) - cy, original->H);
         int xstart = rtengine::max(static_cast<int>(lp.xc - lp.lxL) - cx, 0);

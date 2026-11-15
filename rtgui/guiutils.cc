@@ -3141,6 +3141,11 @@ bool ToolGroup::getExpanded() const
 
 void ToolGroup::setResetVisible(bool visible)
 {
+    // Runs after every slider tick; only touch the widget when it flips.
+    if (resetBtn->get_visible() == visible && resetBtn->get_no_show_all() == !visible) {
+        return;
+    }
+
     if (visible) {
         resetBtn->set_no_show_all(false);
         resetBtn->set_visible(true);

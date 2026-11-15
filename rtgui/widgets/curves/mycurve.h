@@ -23,6 +23,7 @@
 #include <gtkmm.h>
 
 #include "cursormanager.h"
+#include "delayed.h"
 #include "curvelistener.h"
 #include "widgets/basic/coloredbar.h"
 #include "widgets/basic/coordinateadjuster.h"
@@ -113,6 +114,10 @@ public:
     }
     void setColoredBar (ColoredBar *left, ColoredBar *bottom);
     void notifyListener ();
+    // While a point is being dragged, curve changes are paced like slider
+    // drags (engine-paced min/max delay); anything else notifies at once.
+    DelayedCall<> pacedNotify_;
+    void notifyListenerNow ();
     void updateBackgroundHistogram (LUTu & hist)
     {
         return;

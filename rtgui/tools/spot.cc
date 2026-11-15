@@ -1967,7 +1967,7 @@ bool Spot::drag1 (int modifierKey)
 
     if (listener && modified) {
         updateGeometry();
-        listener->panelChanged (EvSpotEntry, M ("TP_SPOT_ENTRYCHANGED"));
+        listener->panelChangedDuringDrag (EvSpotEntry, M ("TP_SPOT_ENTRYCHANGED"));
     }
 
     return modified;
@@ -1998,7 +1998,7 @@ bool Spot::drag3 (int modifierKey)
 
     if (listener) {
         updateGeometry();
-        listener->panelChanged (EvSpotEntry, M ("TP_SPOT_ENTRYCHANGED"));
+        listener->panelChangedDuringDrag (EvSpotEntry, M ("TP_SPOT_ENTRYCHANGED"));
     }
 
     return modified;

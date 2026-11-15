@@ -271,12 +271,15 @@ void History::procParamsChanged(
         row = historyModel->children()[size - 1];
     }
 
+    bool rowAlreadyCurrent = false;
+
     // if there is no last item or its chev!=ev, create a new one
     if (size == 0 || !row || row[historyColumns.chev] != ev || ev == EvProfileChanged
             || ev == EvLocallabSpotCreated || ev == EvLocallabSpotDeleted) { // Special cases: If Locallab spot is created , deleted or duplicated several times in a row, a new history row is used
         Gtk::TreeModel::Row newrow = * (historyModel->append());
         newrow[historyColumns.text] = ProcEventMapper::getInstance()->getHistoryMsg(ev);
-        newrow[historyColumns.value] = g_markup_escape_text (descr.c_str(), -1);
+        // Glib::Markup::escape_text frees its buffer; the raw g_markup call leaked one per edit.
+        newrow[historyColumns.value] = Glib::Markup::escape_text(descr);
         newrow[historyColumns.chev] = ev;
         newrow[historyColumns.params] = *params;
         newrow[historyColumns.paramsEdited] = paramsEdited ? *paramsEdited : defParamsEdited;
@@ -299,21 +302,25 @@ void History::procParamsChanged(
             }
         }
     } else { // else just update it
-        row[historyColumns.value] = g_markup_escape_text(descr.c_str(), -1);
+        row[historyColumns.value] = Glib::Markup::escape_text(descr);
         row[historyColumns.params] = *params;
         row[historyColumns.paramsEdited] = paramsEdited ? *paramsEdited : defParamsEdited;
 
-        if (ev != EvBookmarkSelected) {
+        // A slider drag lands here on every tick. When the row is already the
+        // selected one, reselecting and scrolling to it only redraws the tree.
+        if (ev != EvBookmarkSelected && !selection->is_selected(row)) {
             selection->select(row);
+        } else {
+            rowAlreadyCurrent = true;
         }
     }
 
-    if (ev != EvBookmarkSelected) {
+    if (ev != EvBookmarkSelected && bTreeView->get_selection()->count_selected_rows() > 0) {
         bTreeView->get_selection()->unselect_all();
     }
 
 
-    if (!selection->get_selected_rows().empty()) {
+    if (!rowAlreadyCurrent && !selection->get_selected_rows().empty()) {
         std::vector<Gtk::TreeModel::Path> selp = selection->get_selected_rows();
         hTreeView->scroll_to_row(*selp.begin());
     }

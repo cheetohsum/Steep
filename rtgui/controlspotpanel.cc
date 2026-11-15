@@ -5382,7 +5382,7 @@ bool ControlSpotPanel::drag1(int modifierKey)
         updateControlSpotCurve(row);
 
         if (listener) {
-            listener->panelChanged(EvLocallabSpotCenter, "X=" + centerX_->getTextValue() + ", Y=" + centerY_->getTextValue());
+            listener->panelChangedDuringDrag(EvLocallabSpotCenter, "X=" + centerX_->getTextValue() + ", Y=" + centerY_->getTextValue());
         }
     }
 
@@ -5401,7 +5401,7 @@ bool ControlSpotPanel::drag1(int modifierKey)
         updateControlSpotCurve(row);
 
         if (listener) {
-            listener->panelChanged(EvLocallabSpotLocX, locX_->getTextValue());
+            listener->panelChangedDuringDrag(EvLocallabSpotLocX, locX_->getTextValue());
         }
     }
 
@@ -5420,7 +5420,7 @@ bool ControlSpotPanel::drag1(int modifierKey)
         updateControlSpotCurve(row);
 
         if (listener) {
-            listener->panelChanged(EvLocallabSpotLocXL, locXL_->getTextValue());
+            listener->panelChangedDuringDrag(EvLocallabSpotLocXL, locXL_->getTextValue());
         }
     }
 
@@ -5439,7 +5439,7 @@ bool ControlSpotPanel::drag1(int modifierKey)
         updateControlSpotCurve(row);
 
         if (listener) {
-            listener->panelChanged(EvLocallabSpotLocY, locY_->getTextValue());
+            listener->panelChangedDuringDrag(EvLocallabSpotLocY, locY_->getTextValue());
         }
     }
 
@@ -5458,7 +5458,7 @@ bool ControlSpotPanel::drag1(int modifierKey)
         updateControlSpotCurve(row);
 
         if (listener) {
-            listener->panelChanged(EvLocallabSpotLocYT, locYT_->getTextValue());
+            listener->panelChangedDuringDrag(EvLocallabSpotLocYT, locYT_->getTextValue());
         }
     }
 
@@ -5487,7 +5487,7 @@ bool ControlSpotPanel::drag1(int modifierKey)
         updateControlSpotCurve(row);
 
         if (listener) {
-            listener->panelChanged(EvLocallabSpotTransit, transit_->getTextValue());
+            listener->panelChangedDuringDrag(EvLocallabSpotTransit, transit_->getTextValue());
         }
     }
 
@@ -5512,7 +5512,7 @@ bool ControlSpotPanel::drag1(int modifierKey)
         updateControlSpotCurve(row);
 
         if (listener) {
-            listener->panelChanged(EvLocallabSpotGradAngle, gradangle_->getTextValue());
+            listener->panelChangedDuringDrag(EvLocallabSpotGradAngle, gradangle_->getTextValue());
         }
     }
 

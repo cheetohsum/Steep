@@ -21,6 +21,7 @@
 #include <cstring>
 #include <gdkmm/types.h>
 #include "rtscalable.h"
+#include "options.h"
 
 MyCurve::MyCurve () :
     pipetteR(-1.f),
@@ -39,8 +40,11 @@ MyCurve::MyCurve () :
     snapToMinDistX(0.0),
     snapToMinDistY(0.0),
     snapToValX(0.0),
-    snapToValY(0.0)
+    snapToValY(0.0),
+    pacedNotify_(App::get().options().adjusterMinDelay, App::get().options().adjusterMaxDelay)
 {
+    pacedNotify_.setFunction([this]() { notifyListenerNow(); });
+    pacedNotify_.setEnginePaced(true);
     int pointDiameter = (int)(RADIUS * 2.);
     graphW = get_allocation().get_width() - pointDiameter;
     graphH = get_allocation().get_height() - pointDiameter;
@@ -66,6 +70,8 @@ MyCurve::MyCurve () :
 
 MyCurve::~MyCurve ()
 {
+    pacedNotify_.cancel();
+
     if (mcih->pending) {
         mcih->destroyed = true;
     } else {
@@ -131,7 +137,19 @@ void MyCurve::setColoredBar (ColoredBar *left, ColoredBar *bottom)
 
 void MyCurve::notifyListener ()
 {
+    if (buttonPressed) {
+        // Mid-drag: every motion event lands here. Without pacing each one
+        // ran the whole panelChanged chain and queued a reprocess.
+        pacedNotify_();
+        return;
+    }
 
+    pacedNotify_.cancel();
+    notifyListenerNow();
+}
+
+void MyCurve::notifyListenerNow ()
+{
     if (listener) {
         listener->curveChanged ();
     }

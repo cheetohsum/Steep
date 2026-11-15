@@ -149,6 +149,36 @@ void ColorWheelArea::reset()
     notifyListener();
 }
 
+ColorWheelArea::~ColorWheelArea()
+{
+    cancelPacedNotify();
+}
+
+void ColorWheelArea::schedulePacedNotify()
+{
+    const auto& options = App::get().options();
+
+    if (options.adjusterMinDelay == 0) {
+        notifyListener();
+        return;
+    }
+
+    if (!pacedNotify_) {
+        pacedNotify_.reset(new DelayedCall<>([this]() { notifyListener(); },
+                                             options.adjusterMinDelay, options.adjusterMaxDelay));
+        pacedNotify_->setEnginePaced(true);
+    }
+
+    (*pacedNotify_)();
+}
+
+void ColorWheelArea::cancelPacedNotify()
+{
+    if (pacedNotify_) {
+        pacedNotify_->cancel();
+    }
+}
+
 bool ColorWheelArea::notifyListener()
 {
     if (listener_) {
@@ -333,9 +363,7 @@ bool ColorWheelArea::on_button_press_event(GdkEventButton* event)
     // Deliberately not limited to inside the circle: it is a discard gesture,
     // so being forgiving about aim costs nothing.
     if (event->button == 3 && event->type == GDK_BUTTON_PRESS) {
-        if (delayconn_.connected()) {
-            delayconn_.disconnect();
-        }
+        cancelPacedNotify();
 
         isDragged_ = false;
         reset();
@@ -373,14 +401,7 @@ bool ColorWheelArea::on_button_press_event(GdkEventButton* event)
 
             updateFromMouse(dragX_, dragY_);
 
-            const auto& options = App::get().options();
-            if (options.adjusterMinDelay == 0) {
-                notifyListener();
-            } else {
-                delayconn_ = Glib::signal_timeout().connect(
-                    sigc::mem_fun(*this, &ColorWheelArea::notifyListener),
-                    options.adjusterMinDelay);
-            }
+            schedulePacedNotify();
             queue_draw();
             return true;
         }
@@ -392,6 +413,7 @@ bool ColorWheelArea::on_button_release_event(GdkEventButton* event)
 {
     if (isDragged_) {
         isDragged_ = false;
+        cancelPacedNotify();
         notifyListener();
         return true;
     }
@@ -438,9 +460,7 @@ bool ColorWheelArea::on_motion_notify_event(GdkEventMotion* event)
     }
 
     if (isDragged_) {
-        if (delayconn_.connected()) {
-            delayconn_.disconnect();
-        }
+        cancelPacedNotify();
 
         // Shift advances the puck at a quarter of the pointer's speed. The
         // scale is applied per motion event, so it can be taken up and dropped
@@ -470,14 +490,7 @@ bool ColorWheelArea::on_motion_notify_event(GdkEventMotion* event)
 
         updateFromMouse(dragX_, dragY_);
 
-        const auto& options = App::get().options();
-        if (options.adjusterMinDelay == 0) {
-            notifyListener();
-        } else {
-            delayconn_ = Glib::signal_timeout().connect(
-                sigc::mem_fun(*this, &ColorWheelArea::notifyListener),
-                options.adjusterMinDelay);
-        }
+        schedulePacedNotify();
         queue_draw();
         return true;
     }

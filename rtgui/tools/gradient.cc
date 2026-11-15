@@ -566,7 +566,7 @@ bool Gradient::drag1(int modifierKey)
             updateGeometry (int(centerX->getValue()), int(centerY->getValue()), feather->getValue(), degree->getValue());
 
             if (listener) {
-                listener->panelChanged (EvGradientDegree, degree->getTextValue());
+                listener->panelChangedDuringDrag (EvGradientDegree, degree->getTextValue());
             }
 
             return true;
@@ -605,7 +605,7 @@ bool Gradient::drag1(int modifierKey)
             updateGeometry (centerX->getValue(), centerY->getValue(), feather->getValue(), degree->getValue());
 
             if (listener) {
-                listener->panelChanged (EvGradientFeather, feather->getTextValue());
+                listener->panelChangedDuringDrag (EvGradientFeather, feather->getTextValue());
             }
 
             return true;
@@ -625,7 +625,7 @@ bool Gradient::drag1(int modifierKey)
             updateGeometry (newCenterX, newCenterY, feather->getValue(), degree->getValue());
 
             if (listener) {
-                listener->panelChanged (EvGradientCenter, Glib::ustring::compose ("X=%1\nY=%2", centerX->getTextValue(), centerY->getTextValue()));
+                listener->panelChangedDuringDrag (EvGradientCenter, Glib::ustring::compose ("X=%1\nY=%2", centerX->getTextValue(), centerY->getTextValue()));
             }
 
             return true;

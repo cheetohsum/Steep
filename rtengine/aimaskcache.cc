@@ -26,6 +26,8 @@
 #include "rt_math.h"
 
 #include <algorithm>
+#include <array>
+#include <cstring>
 #include <cstdio>
 #include <zlib.h>
 
@@ -48,6 +50,24 @@ namespace
 constexpr std::size_t MAX_PREPARED_MASKS = 12;
 constexpr std::size_t MAX_REFINED_MASKS = 4;
 constexpr std::size_t MAX_DISTANCE_MASKS = 4;
+constexpr std::size_t MAX_SAM_MASKS = 4;
+
+// FNV-1a over the prompt coordinates: identifies a click-picked object.
+std::uint64_t hashPrompts(const std::vector<std::array<float, 3>>& prompts)
+{
+    std::uint64_t h = 1469598103934665603ULL;
+    for (const auto& p : prompts) {
+        for (float v : p) {
+            std::uint32_t bits;
+            std::memcpy(&bits, &v, sizeof(bits));
+            for (int i = 0; i < 4; ++i) {
+                h ^= (bits >> (8 * i)) & 0xffu;
+                h *= 1099511628211ULL;
+            }
+        }
+    }
+    return h ? h : 1;   // 0 means "no prompts"
+}
 // Class maps are kept at up to this size (the input is 2048 on its long side,
 // see AI_MASK_INPUT_DIMENSION): the edges the refinement step recovers would
 // be thrown away again by a coarser cache.
@@ -216,7 +236,8 @@ bool AIMaskCache::RefinedKey::operator==(const RefinedKey& other) const
     return classIndex == other.classIndex
         && blur == other.blur
         && refineRadius == other.refineRadius
-        && refineEps == other.refineEps;
+        && refineEps == other.refineEps
+        && source == other.source;
 }
 
 bool AIMaskCache::DistanceKey::operator==(const DistanceKey& other) const
@@ -225,7 +246,8 @@ bool AIMaskCache::DistanceKey::operator==(const DistanceKey& other) const
         && threshold == other.threshold
         && blur == other.blur
         && refineRadius == other.refineRadius
-        && refineEps == other.refineEps;
+        && refineEps == other.refineEps
+        && source == other.source;
 }
 
 namespace
@@ -737,6 +759,7 @@ bool AIMaskCache::restoreOrBeginPending(const std::string& imageId,
     pending_ = true;
     refinedMasks_.clear();
     distanceMasks_.clear();
+    samMasks_.clear();
     preparedMasks_.clear();
     ++generation_;
     if (discardInFlight) {
@@ -1010,6 +1033,7 @@ void AIMaskCache::computeMasks(const std::string& imageId,
     fullH_ = fullH;
     refinedMasks_.clear();
     distanceMasks_.clear();
+    samMasks_.clear();
     preparedMasks_.clear();
     ++generation_;
 }
@@ -1129,24 +1153,28 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
          depthClass ? quantize(static_cast<float>(depthRange[2]), 1000.f) : 0,
          depthClass ? quantize(static_cast<float>(depthRange[3]), 1000.f) : 0}
     };
+    // Click-to-select: POINT strokes in the paint are SAM prompts, and the
+    // object they pick replaces the class map as this spot's base mask. The
+    // refined/distance caches key on those prompts, so a slider tick on a
+    // picked spot reuses them instead of re-running the decoder, the
+    // refinement and the distance transform -- twice, since Lab_Local asks
+    // for a work-bounds variant and the real one.
+    const bool prompted = paint.hasPrompts();
+    const std::uint64_t promptsHash = prompted ? hashPrompts(paint.prompts()) : 0;
     const RefinedKey refinedKey {
-        key.classIndex, key.blur, key.refineRadius, key.refineEps
+        key.classIndex, key.blur, key.refineRadius, key.refineEps, promptsHash
     };
     const DistanceKey distanceKey {
-        key.classIndex, key.threshold, key.blur, key.refineRadius, key.refineEps
+        key.classIndex, key.threshold, key.blur, key.refineRadius, key.refineEps, promptsHash
     };
 
     std::shared_ptr<const array2D<float>> baseMask;
     std::shared_ptr<const array2D<float>> guide;
     std::shared_ptr<const array2D<float>> signedDistance;
     bool hasRefinedMask = false;
-    // Click-to-select: POINT strokes in the paint are SAM prompts, and the
-    // object they pick replaces the class map as this spot's base mask. The
-    // refined/distance caches are keyed by class only, so they are bypassed.
-    const bool prompted = paint.hasPrompts();
     // A depth class is the depth map, not a mask: its base mask depends on
-    // the spot's own range, which those caches do not key on either.
-    const bool bypassCaches = prompted || depthClass;
+    // the spot's own range, which the refined/distance caches do not key on.
+    const bool bypassCaches = depthClass;
     float depthSplit = 0.5f;
     std::shared_ptr<const Imagefloat> samSource;
     std::string samId;
@@ -1240,11 +1268,35 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
         }
         baseMask = std::move(weighted);
     }
-    if (prompted && samSource) {
-        array2D<float> selected = SamSelector::getInstance().select(*samSource, samId, paint.prompts());
-        if (selected.getWidth() == width && selected.getHeight() == height) {
-            auto picked = std::make_shared<array2D<float>>(width, height);
-            picked->swap(selected);
+    if (prompted && samSource && !signedDistance) {
+        std::shared_ptr<const array2D<float>> picked;
+        {
+            MyMutex::MyLock lock(mutex_);
+            for (auto it = samMasks_.rbegin(); it != samMasks_.rend(); ++it) {
+                if (it->generation == generation && it->prompts == promptsHash) {
+                    picked = it->mask;
+                    break;
+                }
+            }
+        }
+
+        if (!picked) {
+            array2D<float> selected = SamSelector::getInstance().select(*samSource, samId, paint.prompts());
+            if (selected.getWidth() == width && selected.getHeight() == height) {
+                auto fresh = std::make_shared<array2D<float>>(width, height);
+                fresh->swap(selected);
+                picked = fresh;
+                MyMutex::MyLock lock(mutex_);
+                if (generation == generation_) {
+                    samMasks_.push_back({promptsHash, generation, picked});
+                    while (samMasks_.size() > MAX_SAM_MASKS) {
+                        samMasks_.pop_front();
+                    }
+                }
+            }
+        }
+
+        if (picked) {
             baseMask = std::move(picked);
             // SamSelector already followed the picture's edges.
             hasRefinedMask = true;
@@ -1758,6 +1810,7 @@ void AIMaskCache::invalidate(const std::string& imageId)
     coverage_.clear();
     refinedMasks_.clear();
     distanceMasks_.clear();
+    samMasks_.clear();
     preparedMasks_.clear();
     sourceWidth_ = sourceHeight_ = 0;
     cachedWidth_ = cachedHeight_ = fullW_ = fullH_ = 0;
@@ -1792,6 +1845,7 @@ void AIMaskCache::invalidateAll()
     coverage_.clear();
     refinedMasks_.clear();
     distanceMasks_.clear();
+    samMasks_.clear();
     preparedMasks_.clear();
     sourceWidth_ = sourceHeight_ = 0;
     cachedWidth_ = cachedHeight_ = fullW_ = fullH_ = 0;

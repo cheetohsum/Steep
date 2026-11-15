@@ -307,6 +307,14 @@ void ImageArea::on_style_updated ()
 
 void ImageArea::setInfoText (Glib::ustring&& text)
 {
+    // Called after every edit, but the text only changes with the photo.
+    // Rebuilding means a Pango layout plus a fresh ARGB buffer per slider
+    // tick, so skip it when nothing visible would change.
+    if (text == infotext && iBackBuffer.getSurface()
+            && backBufferDeviceScale == RTScalable::getScaleForWidget(this)) {
+        return;
+    }
+
     infotext = std::move(text);
     updateInfoTextBackBuffer();
 }

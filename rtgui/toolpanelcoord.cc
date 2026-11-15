@@ -2818,6 +2818,9 @@ void ToolPanelCoordinator::addPanel(Gtk::Box* where, FoldableToolPanel* panel, i
 
 ToolPanelCoordinator::~ToolPanelCoordinator ()
 {
+    if (dragPanelChange_) {
+        dragPanelChange_->cancel();
+    }
     if (gradingPresets_) gradingPresets_->shutdown();
     aiMaskPickPoll_.disconnect();
     quickAutoEditGeneration_->fetch_add(1, std::memory_order_acq_rel);
@@ -3083,7 +3086,9 @@ void ToolPanelCoordinator::turnOffMaskOverlay(bool force)
         params->blackwhite = savedBlackWhite_;
         params->labCurve = savedLabCurve_;
     }
-    ipc->endUpdateParams(AUTOEXP);
+    // TONE reaches the local-adjustment stage that draws the overlay. AUTOEXP
+    // also redid spot removal and the HDR stage on every hover on and off.
+    ipc->endUpdateParams(TONE);
     hoverPreviewSpot_ = -1;
     hoverRestoreSpot_ = -1;
 }
@@ -3157,7 +3162,7 @@ void ToolPanelCoordinator::hoverMaskChanged(bool hover, bool forceRedraw, int sp
             hoverPreviewSpot_ = spotIndex;
         }
         hoverMaskApplied_ = true;
-        ipc->endUpdateParams(AUTOEXP);
+        ipc->endUpdateParams(TONE); // see turnOffMaskOverlay
 
         // Start watchdog: periodically check actual pointer position
         // This catches cases where leave events are missed (common on WSLg/X11)
@@ -3265,6 +3270,25 @@ void ToolPanelCoordinator::panelChangedFromPreviewStrip(
     previewStripChangeSource_ = source;
     panelChanged(event, descr);
     previewStripChangeSource_ = nullptr;
+}
+
+void ToolPanelCoordinator::panelChangedDuringDrag(const rtengine::ProcEvent& event, const Glib::ustring& descr)
+{
+    const auto& options = App::get().options();
+
+    if (options.adjusterMinDelay == 0) {
+        panelChanged(event, descr);
+        return;
+    }
+
+    if (!dragPanelChange_) {
+        dragPanelChange_.reset(new DelayedCall<rtengine::ProcEvent, Glib::ustring>(
+            [this](rtengine::ProcEvent ev, Glib::ustring d) { panelChanged(ev, d); },
+            options.adjusterMinDelay, options.adjusterMaxDelay));
+        dragPanelChange_->setEnginePaced(true);
+    }
+
+    (*dragPanelChange_)(event, descr);
 }
 
 void ToolPanelCoordinator::deferPanelChanged(const rtengine::ProcEvent& event, const Glib::ustring& descr)
@@ -4213,10 +4237,12 @@ void ToolPanelCoordinator::panelChanged(const rtengine::ProcEvent& event, const 
                                   (rtengine::edittrace::nowUs() - guiStartUs) / 1000.0);
     }
 
+    // Judge the reset buttons from these params while they are still ours.
+    updateResetButtons(params);
+
     ipc->endUpdateParams(changeFlags);    // starts the IPC processing
 
     hasChanged = true;
-    updateResetButtons();
 
     for (auto paramcListener : paramcListeners) {
         paramcListener->procParamsChanged(params, event, descr);
@@ -5958,17 +5984,26 @@ bool toneCurveDiffers(const rtengine::procparams::ToneCurveParams& a,
 
 }  // namespace
 
-void ToolPanelCoordinator::updateResetButtons()
+void ToolPanelCoordinator::updateResetButtons(const ProcParams* written)
 {
     if (!ipc) return;
     if (!lightGroup) return;
     if (suppressResetUpdate_) return;
 
-    // Collect current params from all tool panels
-    ProcParams current;
-    for (auto toolPanel : toolPanels) {
-        toolPanel->write(&current);
+    // panelChanged() has just written every panel into the params it hands
+    // the engine, so on that path reuse them instead of writing all ~70
+    // panels a second time on every slider tick. Mask mode is the exception:
+    // there the panels show spot values and the globals are restored after
+    // the write, so judge what the panels show, as before.
+    ProcParams ownWrite;
+    const ProcParams* src = written;
+    if (!src || maskModeActive_) {
+        for (auto toolPanel : toolPanels) {
+            toolPanel->write(&ownWrite);
+        }
+        src = &ownWrite;
     }
+    const ProcParams& current = *src;
 
     // Tool groups are judged against the unedited photograph, geometry against
     // the file as it was opened. An edit is an edit whoever made it -- Auto
