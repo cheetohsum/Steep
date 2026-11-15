@@ -122,6 +122,8 @@ public:
         bool seek_;
         bool foreground_;
         ThumbImageUpdateListener* listener_;
+        // Order in which the job was queued; see cancelled_.
+        std::uint64_t seq_ = 0;
     };
 
     typedef std::list<Job> JobList;
@@ -213,8 +215,13 @@ public:
 
     std::condition_variable inactive_;
 
-    // Listeners that have been removed — skip callbacks for these.
-    std::unordered_set<ThumbImageUpdateListener*> cancelled_;
+    // Listeners that have been removed, with the last job number issued when
+    // they were: jobs queued up to then are skipped. Keyed by address alone,
+    // this used to swallow every job of a NEW entry that reused a freed
+    // address until the updater went fully idle, leaving its tile grey until
+    // clicked (old entries are freed while the next folder is loading).
+    std::unordered_map<ThumbImageUpdateListener*, std::uint64_t> cancelled_;
+    std::uint64_t jobSeq_ = 0;
 
     std::unordered_map<ThumbImageUpdateListener*, unsigned int> callbacksInFlight_;
 
@@ -460,6 +467,7 @@ public:
         jobs_.push_back(job);
         auto inserted = jobs_.end();
         --inserted;
+        inserted->seq_ = ++jobSeq_;
         if (job.priority_ && *job.priority_) {
             ++foregroundJobCount_;
         }
@@ -646,7 +654,7 @@ public:
             DEBUG("%d job(s) remaining", int(jobs_.size()) );
 
             // If listener already cancelled, skip entirely
-            if (cancelled_.find(j.listener_) != cancelled_.end()) {
+            if (cancelledLocked_(j.listener_, j.seq_)) {
                 continue;
             }
 
@@ -756,9 +764,16 @@ public:
     }
 
     bool
-    beginCallbackLocked_(ThumbImageUpdateListener* listener)
+    cancelledLocked_(ThumbImageUpdateListener* listener, std::uint64_t seq) const
     {
-        if (cancelled_.find(listener) != cancelled_.end()) {
+        const auto it = cancelled_.find(listener);
+        return it != cancelled_.end() && seq <= it->second;
+    }
+
+    bool
+    beginCallbackLocked_(ThumbImageUpdateListener* listener, std::uint64_t seq)
+    {
+        if (cancelledLocked_(listener, seq)) {
             return false;
         }
 
@@ -864,7 +879,7 @@ public:
             CallbackLease callback(*this, j.listener_);
             {
                 std::lock_guard<std::mutex> lock(mutex_);
-                callback.active_ = beginCallbackLocked_(j.listener_);
+                callback.active_ = beginCallbackLocked_(j.listener_, j.seq_);
             }
 
             if (callback.active_) {
@@ -1068,7 +1083,7 @@ void ThumbImageUpdater::removeJobs(ThumbImageUpdateListener* listener)
 
     // Mark listener as cancelled so any in-flight jobs skip the callback
     // instead of delivering to a deleted object.
-    impl_->cancelled_.insert(listener);
+    impl_->cancelled_[listener] = impl_->jobSeq_;
     impl_->notifyInactiveLocked_();
     impl_->inactive_.wait(lock, [this, listener]() {
         return impl_->callbacksInFlight_.find(listener) == impl_->callbacksInFlight_.end();

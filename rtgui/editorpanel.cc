@@ -1637,6 +1637,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
             auto* doCopy = Gtk::manage(new MyImageMenuItem(M("PRESET_COPY_SETTINGS"), "preset-copy"));
             doCopy->signal_activate().connect([this]() {
                 if (!openThm) return;
+                if (thumbnailParamsSyncConn_.connected()) syncThumbnailParamsNow(); // latest edits
                 const auto& srcPP = openThm->getProcParams();
                 bool allActive = true;
                 for (const auto& kv : editorCopyFilters_) {
@@ -1858,6 +1859,7 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         copySettingsBtn->set_tooltip_markup(M("EDITOR_COPY_SETTINGS_TOOLTIP"));
         copySettingsBtn->signal_clicked().connect([this]() {
             if (!openThm) return;
+            if (thumbnailParamsSyncConn_.connected()) syncThumbnailParamsNow(); // latest edits
             const auto& srcPP = openThm->getProcParams();
 
             // Check if all visible filters are active
@@ -3196,6 +3198,7 @@ void EditorPanel::refreshEditorTitleVisibility ()
 
 EditorPanel::~EditorPanel ()
 {
+    thumbnailParamsSyncConn_.disconnect();
     exifInfoUnmapConn_.disconnect();
     exifDetailOpenTimer_.disconnect();
     exifDetailCloseTimer_.disconnect();
@@ -3641,42 +3644,52 @@ void EditorPanel::albumSortChanged ()
 
     // We need Thumbnail objects to compare — use cacheMgr
     // Build sortable pairs of (filepath, Thumbnail*)
+    // Keys are computed once per file. The comparator used to case-fold both
+    // paths and build EXIF strings on every comparison, and returned false
+    // whenever either side had no thumbnail -- which breaks std::sort's
+    // ordering contract (undefined behaviour, a crash risk) once a missing
+    // file sat among present ones.
     struct SortEntry {
         Glib::ustring path;
         Thumbnail* thm;
+        std::string folded;
+        Glib::ustring exif;
     };
+    Options::SortMethod sm = Options::SortMethod(method);
     std::vector<SortEntry> entries;
+    entries.reserve(albumAllFiles_.size());
     for (const auto& f : albumAllFiles_) {
         Thumbnail* thm = cacheMgr->getEntry(f);
-        entries.push_back({f, thm});
+        SortEntry entry{f, thm, f.casefold().raw(), {}};
+        if (thm && sm == Options::SORT_BY_EXIF) {
+            entry.exif = thm->getExifString();
+        }
+        entries.push_back(std::move(entry));
     }
 
-    Options::SortMethod sm = Options::SortMethod(method);
-
-    std::sort(entries.begin(), entries.end(), [sm, descending](const SortEntry& a, const SortEntry& b) {
-        if (!a.thm || !b.thm) return false;
-        int cmp = 0;
-        switch (sm) {
-        case Options::SORT_BY_NAME:
-            return descending
-                ? a.path.casefold() > b.path.casefold()
-                : a.path.casefold() < b.path.casefold();
-        case Options::SORT_BY_DATE:
-            cmp = a.thm->getDateTime().compare(b.thm->getDateTime());
-            break;
-        case Options::SORT_BY_EXIF:
-            cmp = a.thm->getExifString().compare(b.thm->getExifString());
-            break;
-        case Options::SORT_BY_RANK:
-            cmp = a.thm->getRank() - b.thm->getRank();
-            break;
-        case Options::SORT_BY_LABEL:
-            cmp = a.thm->getColorLabel() - b.thm->getColorLabel();
-            break;
-        default: break;
+    const auto compareKeys = [sm](const SortEntry& a, const SortEntry& b) -> int {
+        // Files without a thumbnail go after the rest, in path order.
+        if (!a.thm || !b.thm) {
+            return (a.thm != nullptr) == (b.thm != nullptr) ? 0 : (a.thm ? -1 : 1);
         }
+        switch (sm) {
+        case Options::SORT_BY_DATE:
+            return a.thm->getDateTime().compare(b.thm->getDateTime());
+        case Options::SORT_BY_EXIF:
+            return a.exif.compare(b.exif);
+        case Options::SORT_BY_RANK:
+            return a.thm->getRank() - b.thm->getRank();
+        case Options::SORT_BY_LABEL:
+            return a.thm->getColorLabel() - b.thm->getColorLabel();
+        default:
+            return 0;
+        }
+    };
+
+    std::sort(entries.begin(), entries.end(), [&compareKeys, descending](const SortEntry& a, const SortEntry& b) {
+        int cmp = compareKeys(a, b);
         if (!cmp) {
-            cmp = a.path.casefold().compare(b.path.casefold());
+            cmp = a.folded.compare(b.folded);
         }
         return descending ? cmp > 0 : cmp < 0;
     });
@@ -6029,6 +6042,11 @@ void EditorPanel::openPhaseB (Thumbnail* tmb)
 void EditorPanel::close ()
 {
     beforePaneRebuildConn_.disconnect();
+    // A sync still waiting for the edit stream to go quiet lands now, while
+    // this image's engine and thumbnail are both still here.
+    if (thumbnailParamsSyncConn_.connected()) {
+        syncThumbnailParamsNow();
+    }
     using clk = std::chrono::steady_clock;
     const bool logClose = editorOpenLogEnabled();
     const Glib::ustring closingFname = fname;
@@ -6350,6 +6368,25 @@ void EditorPanel::saveProfileAsync ()
     });
 }
 
+void queueThumbnailParamsFlush (Thumbnail* thm)
+{
+    if (!thm) {
+        return;
+    }
+
+    // Same durability as saveProfileAsync: one serial writer, drained before
+    // the process exits, and the stat that wakes a sleeping disk happens on
+    // it rather than on the GUI thread.
+    const Glib::ustring file = thm->getFileName ();
+    thm->increaseRef ();
+    EditorCleanupExecutor::instance().enqueue([thm, file]() {
+        if (Glib::file_test (file, Glib::FILE_TEST_EXISTS)) {
+            thm->flushProcParamsToDisk ();
+        }
+        thm->decreaseRef ();
+    });
+}
+
 void EditorPanel::drainBackgroundSaves ()
 {
     EditorCleanupExecutor::instance().drain();
@@ -6651,11 +6688,10 @@ void EditorPanel::refreshProcessingState (bool inProcessingP)
             quickPreviewFileName_.clear();
         }
 
-        // Set proc params of thumbnail. It saves it into the cache and updates the file browser.
+        // Set proc params of thumbnail. It saves it into the cache and updates
+        // the file browser -- once the edit stream has gone quiet.
         if (ipc && openThm && tpc->getChangedState()) {
-            rtengine::procparams::ProcParams pparams;
-            ipc->getParams (&pparams);
-            openThm->setProcParams (pparams, nullptr, EDITOR, false);
+            scheduleThumbnailParamsSync();
         }
 
         scheduleEditorRenderCapture();
@@ -6690,6 +6726,32 @@ void EditorPanel::refreshProcessingState (bool inProcessingP)
     isProcessing = inProcessingP;
 
     setprogressStrUI(val, str, progressLabel);
+}
+
+void EditorPanel::scheduleThumbnailParamsSync ()
+{
+    thumbnailParamsSyncConn_.disconnect();
+    thumbnailParamsSyncConn_ = Glib::signal_timeout().connect([this]() -> bool {
+        if (isProcessing) {
+            return true; // still editing: check again next tick
+        }
+
+        syncThumbnailParamsNow();
+        return false;
+    }, 300);
+}
+
+void EditorPanel::syncThumbnailParamsNow ()
+{
+    thumbnailParamsSyncConn_.disconnect();
+
+    if (ipc && openThm && tpc && tpc->getChangedState()) {
+        rtengine::procparams::ProcParams pparams;
+        ipc->getParams (&pparams);
+        openThm->setProcParams (pparams, nullptr, EDITOR, false);
+        // The render capture compares against the thumbnail's params.
+        scheduleEditorRenderCapture();
+    }
 }
 
 void EditorPanel::info_toggled ()
@@ -8255,31 +8317,37 @@ bool EditorPanel::updateHistogram(void) const
         || histogram_scope_type == ScopeType::NONE;
 }
 
+// Without a histogram panel only the curve backgrounds read scope data, and
+// they use the LRGB histogram above. The raw histogram, vectorscopes and
+// waveform were still computed on every pass (the scope type stays NONE, or
+// the last type shown, after the panel is removed) and then dropped.
 bool EditorPanel::updateHistogramRaw(void) const
 {
-    return histogram_scope_type == ScopeType::HISTOGRAM_RAW
-        || histogram_scope_type == ScopeType::NONE;
+    return histogramPanel
+        && (histogram_scope_type == ScopeType::HISTOGRAM_RAW
+            || histogram_scope_type == ScopeType::NONE);
 }
 
 bool EditorPanel::updateVectorscopeHC(void) const
 {
-    return
-        histogram_scope_type == ScopeType::VECTORSCOPE_HC
-        || histogram_scope_type == ScopeType::NONE;
+    return histogramPanel
+        && (histogram_scope_type == ScopeType::VECTORSCOPE_HC
+            || histogram_scope_type == ScopeType::NONE);
 }
 
 bool EditorPanel::updateVectorscopeHS(void) const
 {
-    return
-        histogram_scope_type == ScopeType::VECTORSCOPE_HS
-        || histogram_scope_type == ScopeType::NONE;
+    return histogramPanel
+        && (histogram_scope_type == ScopeType::VECTORSCOPE_HS
+            || histogram_scope_type == ScopeType::NONE);
 }
 
 bool EditorPanel::updateWaveform(void) const
 {
-    return histogram_scope_type == ScopeType::WAVEFORM
-        || histogram_scope_type == ScopeType::PARADE
-        || histogram_scope_type == ScopeType::NONE;
+    return histogramPanel
+        && (histogram_scope_type == ScopeType::WAVEFORM
+            || histogram_scope_type == ScopeType::PARADE
+            || histogram_scope_type == ScopeType::NONE);
 }
 
 void EditorPanel::scopeTypeChanged(ScopeType new_type)

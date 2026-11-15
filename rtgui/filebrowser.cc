@@ -55,6 +55,7 @@
 #include "steepperflog.h"
 #include "batchqueue.h"
 #include "clipboard.h"
+#include "editorpanel.h"
 #include "filepanel.h"
 #include "inspector.h"
 #include "multilangmgr.h"
@@ -128,6 +129,7 @@ void prepareAutoLevelImageSource(
 struct AutoEditBatchState {
     std::vector<Thumbnail*> thumbnails;
     AutoEditMode mode = AutoEditMode::Neutral;
+    std::shared_ptr<std::atomic<bool>> cancel = std::make_shared<std::atomic<bool>>(false);
     std::atomic<bool> analysisFinished{false};
     size_t applied = 0;
     bool finalized = false;
@@ -544,6 +546,7 @@ FileBrowser::FileBrowser () :
     numFiltered(0),
     exportPanel(nullptr),
     autoEditHoverPool_(new Glib::ThreadPool(1, true)),
+    autoEditBatchPool_(new Glib::ThreadPool(1, true)),
     autoEditHoverGeneration_(std::make_shared<std::atomic<unsigned>>(0))
 {
     session_id_ = 0;
@@ -2360,6 +2363,10 @@ FileBrowser::~FileBrowser ()
     autoEditHoverTrackingConnection_.disconnect();
     cancelAutoEditHoverPreview(nullptr, false);
     autoEditHoverPool_.reset();
+    if (autoEditBatchCancel_) {
+        autoEditBatchCancel_->store(true, std::memory_order_release);
+    }
+    autoEditBatchPool_.reset();
     if (autoLevelCancel_) {
         autoLevelCancel_->store(true, std::memory_order_release);
     }
@@ -3858,8 +3865,16 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
         // RAW analysis can require upgrading an embedded preview. Keep that
         // work off GTK's thread, then apply each completed recipe on GTK's
         // thread so listeners and thumbnail drawing remain correctly owned.
-        autoEditHoverPool_->push([this, state, finishBatch]() {
+        autoEditBatchCancel_ = state->cancel;
+        autoEditBatchPool_->push([this, state, finishBatch]() {
+            // Background work: the editor and the thumbnail updater come first.
+            ScopedLowThreadPriority lowPriority;
+
             for (size_t index = 0; index < state->thumbnails.size(); ++index) {
+                if (state->cancel->load(std::memory_order_acquire)) {
+                    break;
+                }
+
                 auto* thm = state->thumbnails[index];
                 AutoGradeFeatures features;
                 rtengine::procparams::ProcParams pp;
@@ -3917,7 +3932,8 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
                             pp.filmPresets.enabled ? pp.filmPresets.preset.c_str() : "off",
                             pp.filmPresets.strength,
                             thm->getFileName().c_str());
-                        thm->setProcParams(pp, nullptr, FILEBROWSER, true);
+                        thm->setProcParams(pp, nullptr, FILEBROWSER, false);
+                        queueThumbnailParamsFlush(thm);
                     }
 
                     ++state->applied;
@@ -4082,7 +4098,8 @@ void FileBrowser::menuItemActivated (Gtk::MenuItem* m)
                             bppcl->beginBatchPParamsChange(completed.size());
                         }
                         for (auto& result : completed) {
-                            result.first->setProcParams(result.second, nullptr, FILEBROWSER, true);
+                            result.first->setProcParams(result.second, nullptr, FILEBROWSER, false);
+                            queueThumbnailParamsFlush(result.first);
                             fileBrowserPerfLog(
                                 "[autoLevelBatch] applied degree=%.4f file=%s\n",
                                 result.second.rotate.degree,
@@ -4334,7 +4351,8 @@ void FileBrowser::pasteProfile ()
             rtengine::procparams::PartialProfile pastedPartProf(cbPartProf.pparams, cbPartProf.pedited, true);
 
             // applying the PartialProfile to the thumb's ProcParams
-            mselected[i]->thumbnail->setProcParams (*pastedPartProf.pparams, pastedPartProf.pedited, FILEBROWSER);
+            mselected[i]->thumbnail->setProcParams (*pastedPartProf.pparams, pastedPartProf.pedited, FILEBROWSER, false);
+            queueThumbnailParamsFlush (mselected[i]->thumbnail);
             pastedPartProf.deleteInstance();
         }
 
@@ -4387,7 +4405,8 @@ void FileBrowser::partPasteProfile ()
                 partialPasteDlg.applyPaste (pastedPartProf.pparams, pastedPartProf.pedited, cbPartProf.pparams, cbPartProf.pedited);
 
                 // applying the temporary PartialProfile to the thumb's ProcParams
-                entry->thumbnail->setProcParams (*pastedPartProf.pparams, pastedPartProf.pedited, FILEBROWSER);
+                entry->thumbnail->setProcParams (*pastedPartProf.pparams, pastedPartProf.pedited, FILEBROWSER, false);
+                queueThumbnailParamsFlush (entry->thumbnail);
                 pastedPartProf.deleteInstance();
             }
 
@@ -4717,7 +4736,8 @@ void FileBrowser::applyMenuItemActivated (ProfileStoreLabel *label)
         }
 
         for (size_t i = 0; i < selected.size(); i++) {
-            (static_cast<FileBrowserEntry*>(selected[i]))->thumbnail->setProcParams (*partProfile->pparams, partProfile->pedited, FILEBROWSER);
+            (static_cast<FileBrowserEntry*>(selected[i]))->thumbnail->setProcParams (*partProfile->pparams, partProfile->pedited, FILEBROWSER, false);
+            queueThumbnailParamsFlush ((static_cast<FileBrowserEntry*>(selected[i]))->thumbnail);
         }
 
         if (bppcl) {
@@ -4764,7 +4784,8 @@ void FileBrowser::applyPartialMenuItemActivated (ProfileStoreLabel *label)
                 dstProfile.set(true);
                 dstProfile.pedited->locallab.spots.resize(dstProfile.pparams->locallab.spots.size(), LocallabParamsEdited::LocallabSpotEdited(true));
                 partialPasteDlg.applyPaste (dstProfile.pparams, dstProfile.pedited, srcProfiles->pparams, srcProfiles->pedited);
-                (static_cast<FileBrowserEntry*>(selected[i]))->thumbnail->setProcParams (*dstProfile.pparams, dstProfile.pedited, FILEBROWSER);
+                (static_cast<FileBrowserEntry*>(selected[i]))->thumbnail->setProcParams (*dstProfile.pparams, dstProfile.pedited, FILEBROWSER, false);
+                queueThumbnailParamsFlush ((static_cast<FileBrowserEntry*>(selected[i]))->thumbnail);
                 dstProfile.deleteInstance();
             }
 

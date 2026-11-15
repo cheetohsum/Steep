@@ -201,6 +201,16 @@ public:
 private:
     PaintedFrame lastPaintedFrame_;
 
+    // The last image pixbuf converted to a cairo surface. Handle hovers,
+    // drags and mask-list hovers repaint the canvas without a new image, and
+    // set_source_pixbuf converted the whole picture (several MB) each time.
+    // Crop pixbufs are always freshly created, never written in place, so
+    // the pixbuf's identity is the cache key; holding it keeps that true.
+    Glib::RefPtr<Gdk::Pixbuf> surfacePixbuf_;
+    Cairo::RefPtr<Cairo::ImageSurface> surface_;
+    void setSourceCached_(const Cairo::RefPtr<Cairo::Context>& cr,
+                          const Glib::RefPtr<Gdk::Pixbuf>& pixbuf, double x, double y);
+
     void initZoomSteps();
     
 public:

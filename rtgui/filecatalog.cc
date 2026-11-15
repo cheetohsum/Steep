@@ -4505,6 +4505,9 @@ void FileCatalog::startGlobalScan (bool fresh)
         std::atomic<size_t> scanned{0};
         std::atomic<size_t> matched{0};
         std::atomic<int> pendingWorkers{0};
+        // When the last batch went to the GUI (guarded by batchMutex). Zero
+        // until the first match, which is posted at once.
+        std::chrono::steady_clock::time_point lastPost{};
     };
 
     auto shared = std::make_shared<ScanShared>();
@@ -4543,8 +4546,15 @@ void FileCatalog::startGlobalScan (bool fresh)
             std::lock_guard<std::mutex> lock(shared->batchMutex);
             shared->batch.push_back(fpath);
 
-            if (shared->batch.size() >= 64) {
+            // Post the first match at once, then every 64 matches or every
+            // 100 ms. Batching on count alone held a narrow filter's results
+            // (say 30 five-star shots) until the whole disk had been walked.
+            const auto now = std::chrono::steady_clock::now();
+            const bool firstMatch = shared->lastPost == std::chrono::steady_clock::time_point{};
+            if (shared->batch.size() >= 64 || firstMatch
+                    || now - shared->lastPost >= std::chrono::milliseconds(100)) {
                 ready.swap(shared->batch);
+                shared->lastPost = now;
             }
         }
 

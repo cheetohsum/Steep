@@ -79,6 +79,12 @@ struct EditorPanelIdleHelper {
 
 class RTWindow;
 
+// Writes a thumbnail's params (sidecar, cache, XMP) on the background save
+// worker that EditorPanel uses, after setProcParams(..., updateCacheNow=false).
+// Batch actions in the browser (paste, Auto Edit, auto-level) wrote each file
+// from the GUI thread, which froze the window while a sleeping disk woke up.
+void queueThumbnailParamsFlush (Thumbnail* thm);
+
 class EditorPanel final :
     public Gtk::Box,
     public PParamsChangeListener,
@@ -375,6 +381,14 @@ private:
     void scheduleEditorRenderCapture();
     void captureEditorRender();
     sigc::connection editorRenderCaptureConn_;
+
+    // The open image's thumbnail is given the editor's params once edits go
+    // quiet, not after every pass: mid-drag that copied the params twice,
+    // took the thumbnail mutex and redrew (or re-rendered) the filmstrip
+    // entry between every two ticks.
+    void scheduleThumbnailParamsSync();
+    void syncThumbnailParamsNow();
+    sigc::connection thumbnailParamsSyncConn_;
     unsigned long long lastCapturedSettledSerial_ = 0;
     Glib::ustring pendingFilmstripPreviewFile_;
     unsigned int pendingFilmstripPreviewSession_ = 0;

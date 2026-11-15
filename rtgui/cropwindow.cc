@@ -2172,7 +2172,7 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
                 }
             } else {
                 hidpi::LogicalCoord offset = windowPos + imgAreaPos + imgPos;
-                Gdk::Cairo::set_source_pixbuf(cr, cropHandler.cropPixbuf, offset.x, offset.y);
+                setSourceCached_(cr, cropHandler.cropPixbuf, offset.x, offset.y);
                 auto pattern = hidpi::getSourceForSurface(cr);
                 int deviceScale = RTScalable::getScaleForWidget(iarea);
                 hidpi::setDeviceScale(pattern->get_surface(), deviceScale);
@@ -2330,7 +2330,7 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
             if (rough) {
                 hidpi::LogicalCoord offset = windowPos + imgAreaPos + imgPos;
                 double deviceScale = desiredSize.device_scale;
-                Gdk::Cairo::set_source_pixbuf(cr, rough, offset.x, offset.y);
+                setSourceCached_(cr, rough, offset.x, offset.y);
                 auto pattern = hidpi::getSourceForSurface(cr);
                 hidpi::setDeviceScale(pattern->get_surface(), deviceScale);
 
@@ -3527,4 +3527,27 @@ void CropWindow::cycleHSV ()
     if (redraw) {
         iarea->redraw ();
     }
+}
+
+void CropWindow::setSourceCached_(const Cairo::RefPtr<Cairo::Context>& cr,
+                                  const Glib::RefPtr<Gdk::Pixbuf>& pixbuf, double x, double y)
+{
+    if (!pixbuf) {
+        return;
+    }
+
+    if (pixbuf != surfacePixbuf_ || !surface_) {
+        // Same conversion set_source_pixbuf does, done once per image.
+        surface_ = Cairo::ImageSurface::create(
+            pixbuf->get_has_alpha() ? Cairo::FORMAT_ARGB32 : Cairo::FORMAT_RGB24,
+            pixbuf->get_width(), pixbuf->get_height());
+        auto convert = Cairo::Context::create(surface_);
+        Gdk::Cairo::set_source_pixbuf(convert, pixbuf, 0, 0);
+        convert->set_operator(Cairo::OPERATOR_SOURCE);
+        convert->paint();
+        surface_->flush();
+        surfacePixbuf_ = pixbuf;
+    }
+
+    cr->set_source(surface_, x, y);
 }

@@ -266,6 +266,11 @@ protected:
     sigc::connection persistConn_;
     void queueThumbnailPersist (Thumbnail* thm);
     std::unique_ptr<Glib::ThreadPool> autoEditHoverPool_;
+    // Auto Edit on a selection runs on its own worker, so hover previews are
+    // not queued behind a whole batch, and can be cancelled: closing the
+    // browser used to wait for the batch inside the pool's teardown.
+    std::unique_ptr<Glib::ThreadPool> autoEditBatchPool_;
+    std::shared_ptr<std::atomic<bool>> autoEditBatchCancel_;
     std::shared_ptr<std::atomic<unsigned>> autoEditHoverGeneration_;
     sigc::connection autoEditHoverDelayConnection_;
     sigc::connection autoEditHoverTrackingConnection_;
