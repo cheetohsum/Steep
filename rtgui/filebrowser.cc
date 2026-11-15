@@ -5153,25 +5153,12 @@ void FileBrowser::requestRotateSelected (int degrees)
 
 void FileBrowser::queueThumbnailPersist (Thumbnail* thm)
 {
-    thm->increaseRef();
-    persistQueue_.push_back(thm);
-
-    if (persistConn_.connected()) {
-        return;
-    }
-
-    persistConn_ = Glib::signal_idle().connect(
-        [this]() -> bool {
-            int budget = 4; // disk writes per idle tick
-            while (budget-- > 0 && !persistQueue_.empty()) {
-                Thumbnail* thm = persistQueue_.front();
-                persistQueue_.pop_front();
-                thm->updateCache();
-                thm->decreaseRef();
-            }
-            return !persistQueue_.empty();
-        },
-        G_PRIORITY_LOW);
+    // The rank/label/pick is already applied in memory. The write used to
+    // drain in idle chunks on the GUI thread, four files per tick, and the
+    // first star click after the photo disk had spun down froze the window
+    // while it woke. The editor's background writer does it instead (same
+    // updateCache, under the thumbnail's mutex, drained at exit).
+    queueThumbnailParamsFlush(thm);
 }
 
 void FileBrowser::rankingRequested (std::vector<FileBrowserEntry*> tbe, int rank)
