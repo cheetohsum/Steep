@@ -979,7 +979,18 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
 
         bool iscolor = (params->toneCurve.method == "Color" || params->toneCurve.method == "Coloropp");
         if ((todo & M_WB) && params->toneCurve.hrenabled && params->toneCurve.method == "Coloropp") {
-            todo |= DEMOSAIC;
+            // Opposed recovery depends on the white balance, and it rewrites
+            // the demosaiced planes in place. Put back the box it last wrote
+            // when that was kept; only otherwise redo the whole demosaic
+            // (which the bundled profiles made happen on every WB tick).
+            // Verification switch: STEEP_LEGACY_OPPOSED=1 re-demosaics as before.
+            static const bool legacyOpposed = []() {
+                const char* const value = std::getenv("STEEP_LEGACY_OPPOSED");
+                return value != nullptr && value[0] != '\0' && value[0] != '0';
+            }();
+            if (legacyOpposed || !imgsrc->restoreOpposedSource()) {
+                todo |= DEMOSAIC;
+            }
         }
 
         if ((todo & M_RAW)

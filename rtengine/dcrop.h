@@ -75,6 +75,9 @@ protected:
     // The last Lab pass ran Film Lab optics at reduced resolution (an
     // interactive pass); the settled pass must rerun the Lab stages.
     bool         filmOpticsDegraded = false;
+    // The Lab image just before Film Lab, kept while a creative effect is on
+    // so an EFFECTS-only pass (grain, light effects) replays only the tail.
+    std::unique_ptr<LabImage> preEffectsCrop_;
     /// Pipeline bits of coordinator passes that did not update this crop.
     std::atomic<int> skippedTodo{0};
     CieImage*    cieCrop;      // allocating 6 images, each in "one chunk" allocation

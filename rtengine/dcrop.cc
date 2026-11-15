@@ -923,10 +923,29 @@ void Crop::update(int todo)
             // frame, and it used to be paid on every single pass.
             //
             // Only cacheable when nothing splices crop-local pixels into the
-            // frame below (denoise, film negative, spot removal).
-            const bool fattalCacheable = !params.dirpyrDenoise.enabled
-                && !params.filmNegative.enabled
-                && !params.spot.enabled;
+            // frame below. Spot removal used to be one of those, which put
+            // every spotted photo back on a multi-second frame per pan, zoom
+            // or WB tick; heal/clone spots are now removed from the frame
+            // itself and keyed below. Denoise only touches the crop at 100%,
+            // so below that it splices nothing either. Smart repairs (AI
+            // remove and up) fill in asynchronously and still splice.
+            bool smartRepairSpots = false;
+            if (params.spot.enabled) {
+                for (const auto& entry : params.spot.entries) {
+                    smartRepairSpots = smartRepairSpots || int(entry.method) >= int(SpotMethod::AI_REMOVE);
+                }
+            }
+            const bool spliceDenoise = params.dirpyrDenoise.enabled && skip == 1;
+            // Verification switch: STEEP_LEGACY_FATTAL=1 restores the old
+            // rule (no cache with denoise, film negative or any spot).
+            static const bool legacyFattal = []() {
+            const char* const value = std::getenv("STEEP_LEGACY_FATTAL");
+            return value != nullptr && value[0] != '\0' && value[0] != '0';
+        }();
+            const bool fattalCacheable = legacyFattal
+                ? !params.dirpyrDenoise.enabled && !params.filmNegative.enabled && !params.spot.enabled
+                : !spliceDenoise && !params.filmNegative.enabled && !smartRepairSpots;
+            const bool spotsInFrame = fattalCacheable && params.spot.enabled && !params.spot.entries.empty();
 
             // The frame also carries the source-side stages that run ahead
             // of dehaze in the preview; a frame built under other settings
@@ -939,6 +958,10 @@ void Crop::update(int todo)
             sourceKey.aiDenoise = params.aiDenoise;
             sourceKey.aiDenoiseReady = aiDenoiseWanted
                 && aidm.isCacheValid(parent->imgsrc->getFileName(), params.aiDenoise.isoConditioning);
+            if (spotsInFrame) {
+                sourceKey.spot = params.spot;
+                sourceKey.spotFullQuality = parent->highDetailRawComputed || !parent->imgsrc->isRAW();
+            }
 
             if (fattalCacheable && parent->fattalCachePrev
                     && parent->fattalCachePrevSkip == skip
@@ -971,6 +994,15 @@ void Crop::update(int todo)
                     }
                 }
 
+                if (spotsInFrame) {
+                    // Where the crop removes them: on source pixels, before
+                    // the colour-space conversion.
+                    PreviewProps framePP(0, 0, parent->fw, parent->fh, skip);
+                    parent->ipf.removeSpots(f, parent->imgsrc, params.spot.entries, framePP, parent->currWB, nullptr, tr,
+                        sourceKey.spotFullQuality, parent->smartRepairPass_);
+                    traceStage("hdr-fullframe-spots");
+                }
+
                 parent->imgsrc->convertColorSpace(f, params.icm, parent->currWB);
 
                 if (params.doubleExposure.enabled && !params.doubleExposure.layers.empty()) {
@@ -987,7 +1019,7 @@ void Crop::update(int todo)
                 }
                 traceStage("hdr-fullframe-convert");
 
-                if (params.dirpyrDenoise.enabled || params.filmNegative.enabled || params.spot.enabled) {
+                if (!fattalCacheable) {
                     // copy the denoised crop
                     int oy = trafy / skip;
                     int ox = trafx / skip;
@@ -1693,6 +1725,29 @@ void Crop::update(int todo)
 
     // apply luminance operations
     if (todo & (M_LUMINANCE + M_COLOR)) {
+        // Grain and light-effects sliders change nothing before Film Lab.
+        // Replaying the tail from the saved image skips grading, shadows/
+        // highlights, local contrast, clarity, wavelets and the rest, which
+        // reran on every tick of an effect slider.
+        const bool effectsOn = params.filmPresets.enabled || params.lightEffects.enabled
+            || params.grain.enabled || params.softlight.enabled;
+        const int effectsOnlyFlags = M_EFFECTS | M_LUMACURVE | M_LUMINANCE | M_COLOR | M_HIGHQUAL | M_MONITOR | M_MINUPDATE | M_VOID;
+        // Verification switch: STEEP_LEGACY_EFFECTS=1 reruns the whole Lab
+        // block for effect sliders, as before.
+        static const bool legacyEffects = []() {
+            const char* const value = std::getenv("STEEP_LEGACY_EFFECTS");
+            return value != nullptr && value[0] != '\0' && value[0] != '0';
+        }();
+        const bool effectsReplay = !legacyEffects && (todo & M_EFFECTS) && !(todo & ~effectsOnlyFlags)
+            && effectsOn && preEffectsCrop_
+            && preEffectsCrop_->W == labnCrop->W && preEffectsCrop_->H == labnCrop->H;
+
+        LUTu dummy; // also read by the tail below
+
+        if (effectsReplay) {
+            labnCrop->CopyFrom(preEffectsCrop_.get());
+            traceStage("detail-effects-replay");
+        } else {
         //I made a little change here. Rather than have luminanceCurve (and others) use in/out lab images, we can do more if we copy right here.
         labnCrop->CopyFrom(laboCrop);
 
@@ -1703,7 +1758,6 @@ void Crop::update(int todo)
         bool clcutili = parent->clcutili;
         bool cclutili = parent->cclutili;
 
-        LUTu dummy;
         if (params.colorToning.enabled && params.colorToning.method == "LabGrid") {
             parent->ipf.colorToningLabGrid(labnCrop, 0,labnCrop->W , 0, labnCrop->H, false);
         }
@@ -2029,6 +2083,16 @@ void Crop::update(int todo)
 
         }
         
+            if (effectsOn) {
+                if (!preEffectsCrop_ || preEffectsCrop_->W != labnCrop->W || preEffectsCrop_->H != labnCrop->H) {
+                    preEffectsCrop_.reset(new LabImage(labnCrop->W, labnCrop->H));
+                }
+                preEffectsCrop_->CopyFrom(labnCrop);
+            } else {
+                preEffectsCrop_.reset();
+            }
+        } // !effectsReplay
+
         traceStage("detail-before-film");
         {
             FilmLabContext filmLabContext(

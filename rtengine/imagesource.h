@@ -137,6 +137,10 @@ public:
     virtual void        HLRecovery_Global  (const procparams::ToneCurveParams &hrp) {};
 
     virtual bool        isRGBSourceModified () const = 0; // tracks whether cached rgb output of demosaic has been modified
+    // Undo what opposed highlight recovery wrote into the demosaiced planes,
+    // so a white-balance change can rerun it without a re-demosaic. False
+    // when that is not possible (then re-demosaic as before).
+    virtual bool        restoreOpposedSource () { return false; }
 
     virtual void        setBorder (unsigned int border) {}
     virtual void        setCurrentFrame (unsigned int frameNum) = 0;

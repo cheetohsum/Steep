@@ -31,11 +31,11 @@ Grain::Grain(): FoldableToolPanel(this, TOOL_NAME, M("TP_GRAIN_LABEL"), false, t
     detailExpanded_(false)
 {
     auto m = ProcEventMapper::getInstance();
-    EvGrainEnabled = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_GRAIN_ENABLED");
-    EvGrainStrength = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_GRAIN_STRENGTH");
-    EvGrainISO = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_GRAIN_ISO");
-    EvGrainScale = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_GRAIN_SCALE");
-    EvGrainColor = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_GRAIN_COLOR");
+    EvGrainEnabled = m->newEvent(EFFECTS, "HISTORY_MSG_GRAIN_ENABLED");
+    EvGrainStrength = m->newEvent(EFFECTS, "HISTORY_MSG_GRAIN_STRENGTH");
+    EvGrainISO = m->newEvent(EFFECTS, "HISTORY_MSG_GRAIN_ISO");
+    EvGrainScale = m->newEvent(EFFECTS, "HISTORY_MSG_GRAIN_SCALE");
+    EvGrainColor = m->newEvent(EFFECTS, "HISTORY_MSG_GRAIN_COLOR");
 
     strength = Gtk::manage(new Adjuster(M("TP_GRAIN_STRENGTH"), 0., 100., 1., 0.));
     iso = Gtk::manage(new Adjuster(M("TP_GRAIN_ISO"), 20., 6400., 10., 400.));

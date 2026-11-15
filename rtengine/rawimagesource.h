@@ -78,6 +78,19 @@ protected:
     double defGain;
     cmsHPROFILE camProfile;
     bool rgbSourceModified;
+    // The box of the demosaiced planes that opposed highlight recovery last
+    // rewrote, as it was before (it writes nowhere else). Valid only while
+    // the planes are otherwise those the demosaic produced: every place that
+    // rebuilds them invalidates it.
+    struct OpposedBackup {
+        bool valid = false;
+        int x = 0;
+        int y = 0;
+        int w = 0;
+        int h = 0;
+        std::vector<float> data;   // r, g, b planes of the box, row-major
+    };
+    OpposedBackup opposedBackup_;
 
     RawImage* ri;  // Copy of raw pixels, NOT corrected for initial gain, blackpoint etc.
     std::vector<std::unique_ptr<RawImage>> riFrames;
@@ -154,6 +167,7 @@ public:
     {
         return rgbSourceModified;   // tracks whether cached rgb output of demosaic has been modified
     }
+    bool        restoreOpposedSource() override;
 
     void        processFlatField(const procparams::RAWParams &raw, RawImage *riFlatFile, array2D<float> &rawData, const float black[4]);
     void        copyOriginalPixels(const procparams::RAWParams &raw, RawImage *ri, const RawImage *riDark, RawImage *riFlatFile, array2D<float> &rawData, float &reddeha, float &greendeha, float &bluedeha);

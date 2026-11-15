@@ -685,6 +685,7 @@ RawImageSource::RawImageSource()
 {
     embProfile = nullptr;
     rgbSourceModified = false;
+    opposedBackup_.valid = false;
 
     for (int i = 0; i < 4; ++i) {
         psRedBrightness[i] = psGreenBrightness[i] = psBlueBrightness[i] = 1.f;
@@ -1168,6 +1169,7 @@ void RawImageSource::getImage(const ColorTemp &ctemp, int tran, Imagefloat* imag
                 }
 
                 HLRecovery_inpaint(red, green, blue, hrp.hlbl);
+                opposedBackup_.valid = false;
             } else if (hrp.method == "Coloropp"  && ctemp.getTemp() >= 0) {
                 float s[3] = { rm, gm, bm };
                 highlight_recovery_opposed(s, ctemp, hrp.hlth);
@@ -2382,6 +2384,7 @@ void RawImageSource::demosaic(const RAWParams &raw, bool autoContrast, double &c
 
 
     rgbSourceModified = false;
+    opposedBackup_.valid = false;
 
     if (cache) {
         if (!redCache) {
@@ -3087,6 +3090,7 @@ void RawImageSource::retinex(const ColorManagementParams& cmp, const RetinexPara
     }
 
     rgbSourceModified = false; // tricky handling for Color propagation
+    opposedBackup_.valid = false;
     t5.set();
 
     if (settings->verbose) {
@@ -3138,6 +3142,7 @@ void RawImageSource::flush()
 
     rawDirty = true;
     rgbSourceModified = false;
+    opposedBackup_.valid = false;
     fullQualityPrecompute.reset();
     syncMemAccount();
 }
@@ -3277,6 +3282,8 @@ bool RawImageSource::adoptFullQualityFrom(ImageSource& other)
     swap(defGain, twin->defGain);
     swap(border, twin->border);
     swap(rgbSourceModified, twin->rgbSourceModified);
+    opposedBackup_.valid = false;
+    twin->opposedBackup_.valid = false;
     swap(flatFieldAutoClipValue, twin->flatFieldAutoClipValue);
     swap(rawDirty, twin->rawDirty);
     swap(psRedBrightness, twin->psRedBrightness);
@@ -9141,6 +9148,34 @@ void RawImageSource::getMinValsXtrans(const array2D<float> &rawData) {
         minVals[c5] = rtengine::min(m5, minVals[c5]);
 
     }
+}
+
+bool RawImageSource::restoreOpposedSource()
+{
+    if (!rgbSourceModified) {
+        return true;   // nothing written yet
+    }
+
+    if (!opposedBackup_.valid) {
+        return false;
+    }
+
+    const OpposedBackup& b = opposedBackup_;
+    float** const planes[3] = { red, green, blue };
+    const std::size_t planeSize = static_cast<std::size_t>(b.w) * b.h;
+
+#ifdef _OPENMP
+    #pragma omp parallel for
+#endif
+    for (int y = 0; y < b.h; ++y) {
+        for (int c = 0; c < 3; ++c) {
+            const float* src = b.data.data() + c * planeSize + static_cast<std::size_t>(y) * b.w;
+            std::copy(src, src + b.w, planes[c][b.y + y] + b.x);
+        }
+    }
+
+    rgbSourceModified = false;
+    return true;
 }
 
 bool RawImageSource::isGainMapSupported() const

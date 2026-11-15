@@ -24,6 +24,12 @@
 
 // Use M_VOID if you wish to update the proc params without updating the preview at all !
 #define M_VOID       (1<<20)
+// Only the creative tail changed (Film Lab onward: soft light, light
+// effects, grain). EFFECTS carries everything LUMINANCECURVE does, so a
+// pipeline that does not know the bit runs exactly what it ran before (and
+// crops are still refreshed: they need M_LUMACURVE at fit zoom); the detail
+// crop replays the tail from its saved pre-Film-Lab image instead.
+#define M_EFFECTS    (1<<21)
 // Use M_MINUPDATE if you wish to update the preview without modifying the image (think about it like a "refreshPreview")
 // Must NOT be used with other event (i.e. will be used for MINUPDATE only)
 #define M_MINUPDATE  (1<<19)
@@ -90,6 +96,7 @@
 // source re-read (HDR re-ran dehaze, Fattal and crop denoise on every tick).
 // Rotation and perspective DO move the window and keep TRANSFORM.
 #define GEOMETRY                                                                      (M_TRANSFORM|M_BLURMAP|M_AUTOEXP|M_RGBCURVE|M_LUMACURVE|M_LUMINANCE|M_COLOR)
+#define EFFECTS                                                                                                                  (M_EFFECTS|M_LUMACURVE|M_LUMINANCE|M_COLOR)
 #define RGBCURVE                                                                                          (M_RGBCURVE|M_LUMACURVE|M_LUMINANCE|M_COLOR)
 #define LUMINANCECURVE                                                                                               (M_LUMACURVE|M_LUMINANCE|M_COLOR)
 #define SHARPENING                                                                                                               (M_LUMINANCE|M_COLOR)

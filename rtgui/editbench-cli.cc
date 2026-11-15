@@ -9,7 +9,8 @@
  *
  *    STEEP_CLI_EDIT_BENCH=<raw file>     run the bench instead of the CLI
  *    STEEP_CLI_EDIT_BENCH_TARGET=<name>  locallab (default) | chmixer |
- *                                        vibrance | exposure | spotsel | pan
+ *                                        vibrance | exposure | spotsel | pan |
+ *                                        wb | grain | gradient
  *    STEEP_CLI_EDIT_BENCH_STEPS=<n>      edits to time (default 30)
  *    STEEP_CLI_EDIT_BENCH_SKIP=<n>       crop subsampling, 4 ~ fit zoom
  *    STEEP_CLI_EDIT_BENCH_PP3=<file>     profile applied on top of defaults
@@ -62,6 +63,7 @@
 #include "rtengine/imagesource.h"
 #include "rtengine/previewquality.h"
 #include "rtengine/procevents.h"
+#include "rtengine/refreshmap.h"
 #include "rtengine/procparams.h"
 #include "rtengine/profilestore.h"
 #include "rtengine/refreshmap.h"
@@ -207,6 +209,27 @@ void applyEdit(rtengine::procparams::ProcParams& p, const std::string& target, i
         event = rtengine::EvExpComp;
     } else if (target == "spotsel") {
         event = rtengine::EvLocallabSpotSelected;
+    } else if (target == "wbhold") {
+        // Reference for target=wb: the drag's final white balance on every
+        // step, so the settled frame is that WB without a drag behind it.
+        p.wb.method = "Custom";
+        p.wb.temperature = 5000;
+        event = rtengine::EvWBTemp;
+    } else if (target == "wb") {
+        // A temperature drag, as the white balance slider sends it.
+        p.wb.method = "Custom";
+        p.wb.temperature = 5000 + 150 * wave;
+        event = rtengine::EvWBTemp;
+    } else if (target == "grain") {
+        // The Grain panel's events map to EFFECTS; the CLI has no event
+        // mapper, so the loop sends those flags directly (event < 0).
+        p.grain.enabled = true;
+        p.grain.strength = 20 + 10 * wave;
+        event = -EFFECTS;
+    } else if (target == "gradient") {
+        p.gradient.enabled = true;
+        p.gradient.strength = 0.5 + 0.25 * wave;
+        event = rtengine::EvGradientStrength;
     } else {
         p.locallab.spots[0].expcomp = 0.1 * wave + 0.2;
         event = rtengine::Evlocallabexpcomp;
@@ -529,7 +552,11 @@ int runHeadlessEditBench(const char* file)
         rtengine::procparams::ProcParams* p = ipc->beginUpdateParams();
         int event = rtengine::EvExpComp;
         applyEdit(*p, target, step, event);
-        ipc->endUpdateParams(rtengine::ProcEvent(event));
+        if (event < 0) {
+            ipc->endUpdateParams(-event);   // raw refresh flags
+        } else {
+            ipc->endUpdateParams(rtengine::ProcEvent(event));
+        }
         const double ms = timePass(ipc, cropListener, seen, start);
         if (ms >= 0) {
             passes.push_back(ms);

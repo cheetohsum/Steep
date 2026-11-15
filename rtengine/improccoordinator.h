@@ -91,13 +91,19 @@ protected:
         procparams::CGParams cg;
         procparams::AIDenoiseParams aiDenoise;
         bool aiDenoiseReady = false;
+        // Spot removal is applied to the cached frame itself (heal/clone
+        // only; smart repairs fill in asynchronously and stay uncached).
+        procparams::SpotParams spot;
+        bool spotFullQuality = false;
 
         bool operator==(const FattalSourceKey& other) const
         {
             return aiDenoiseReady == other.aiDenoiseReady
+                && spotFullQuality == other.spotFullQuality
                 && aiDenoise == other.aiDenoise
                 && cg == other.cg
-                && doubleExposure == other.doubleExposure;
+                && doubleExposure == other.doubleExposure
+                && spot == other.spot;
         }
     };
     FattalSourceKey fattalCacheKey;

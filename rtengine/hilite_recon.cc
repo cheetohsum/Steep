@@ -1406,6 +1406,10 @@ void RawImageSource::highlight_recovery_opposed(float scale_mul[3], const ColorT
     }
 
     if (!anyclipped) {
+        // Nothing written: restoring is a no-op.
+        opposedBackup_.valid = true;
+        opposedBackup_.w = opposedBackup_.h = 0;
+        opposedBackup_.data.clear();
         if (plistener) {
             plistener->setProgress(1.0);
         }
@@ -1419,6 +1423,33 @@ void RawImageSource::highlight_recovery_opposed(float scale_mul[3], const ColorT
 
     const int cW = x2 - x1 + 1;
     const int cH = y2 - y1 + 1;
+
+    // Keep the box as it is now (the planes are as demosaiced, or restored
+    // to that), so a white-balance tick can put it back instead of
+    // re-demosaicing the whole sensor. Bounded to a quarter of the frame;
+    // above that the re-demosaic is the cheaper memory trade.
+    if (static_cast<long long>(cW) * cH <= static_cast<long long>(W) * H / 4) {
+        const std::size_t planeSize = static_cast<std::size_t>(cW) * cH;
+        opposedBackup_.data.resize(3 * planeSize);
+        opposedBackup_.x = x1;
+        opposedBackup_.y = y1;
+        opposedBackup_.w = cW;
+        opposedBackup_.h = cH;
+#ifdef _OPENMP
+#       pragma omp parallel for
+#endif
+        for (int y = 0; y < cH; ++y) {
+            for (int c = 0; c < 3; ++c) {
+                const float* src = chan[c][y1 + y] + x1;
+                std::copy(src, src + cW, opposedBackup_.data.data() + c * planeSize + static_cast<std::size_t>(y) * cW);
+            }
+        }
+        opposedBackup_.valid = true;
+    } else {
+        opposedBackup_.valid = false;
+        opposedBackup_.data.clear();
+        opposedBackup_.data.shrink_to_fit();
+    }
     
 #ifdef _OPENMP
 #   pragma omp parallel for

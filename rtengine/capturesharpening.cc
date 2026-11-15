@@ -1115,6 +1115,7 @@ BENCHFUN
         }
    
     rgbSourceModified = false;
+    opposedBackup_.valid = false;
 }
 
 // To call Capture Sharpening from Improcoordinator for Selective Editing

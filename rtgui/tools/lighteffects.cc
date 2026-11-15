@@ -30,16 +30,16 @@ LightEffects::LightEffects():
     FoldableToolPanel(this, TOOL_NAME, M("TP_LIGHTEFFECTS_LABEL"), false, true)
 {
     auto m = ProcEventMapper::getInstance();
-    EvEnabled        = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_LIGHTEFFECTS_ENABLED");
-    EvThreshold      = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_LIGHTEFFECTS_THRESHOLD");
-    EvGlow           = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_LIGHTEFFECTS_GLOW");
-    EvGlowRadius     = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_LIGHTEFFECTS_GLOWRADIUS");
-    EvHalation       = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_LIGHTEFFECTS_HALATION");
-    EvHalationSize   = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_LIGHTEFFECTS_HALATIONSIZE");
-    EvHalationWarmth = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_LIGHTEFFECTS_HALATIONWARMTH");
-    EvFlare          = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_LIGHTEFFECTS_FLARE");
-    EvFlareLength    = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_LIGHTEFFECTS_FLARELENGTH");
-    EvFlareAngle     = m->newEvent(LUMINANCECURVE, "HISTORY_MSG_LIGHTEFFECTS_FLAREANGLE");
+    EvEnabled        = m->newEvent(EFFECTS, "HISTORY_MSG_LIGHTEFFECTS_ENABLED");
+    EvThreshold      = m->newEvent(EFFECTS, "HISTORY_MSG_LIGHTEFFECTS_THRESHOLD");
+    EvGlow           = m->newEvent(EFFECTS, "HISTORY_MSG_LIGHTEFFECTS_GLOW");
+    EvGlowRadius     = m->newEvent(EFFECTS, "HISTORY_MSG_LIGHTEFFECTS_GLOWRADIUS");
+    EvHalation       = m->newEvent(EFFECTS, "HISTORY_MSG_LIGHTEFFECTS_HALATION");
+    EvHalationSize   = m->newEvent(EFFECTS, "HISTORY_MSG_LIGHTEFFECTS_HALATIONSIZE");
+    EvHalationWarmth = m->newEvent(EFFECTS, "HISTORY_MSG_LIGHTEFFECTS_HALATIONWARMTH");
+    EvFlare          = m->newEvent(EFFECTS, "HISTORY_MSG_LIGHTEFFECTS_FLARE");
+    EvFlareLength    = m->newEvent(EFFECTS, "HISTORY_MSG_LIGHTEFFECTS_FLARELENGTH");
+    EvFlareAngle     = m->newEvent(EFFECTS, "HISTORY_MSG_LIGHTEFFECTS_FLAREANGLE");
 
     glow           = Gtk::manage(new Adjuster(M("TP_LIGHTEFFECTS_AMOUNT"), 0., 100., 1., 0.));
     glowRadius     = Gtk::manage(new Adjuster(M("TP_LIGHTEFFECTS_GLOWRADIUS"), 0., 100., 1., 25.));
