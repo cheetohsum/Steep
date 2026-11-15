@@ -137,6 +137,12 @@ struct FilmLabContext {
     // (filmoptics::clipLuminance); 0 when unknown. V6 light recovery.
     float clipLuminance = 0.f;
 
+    // An interactive (drag) pass may run the costliest optics at a coarser
+    // plane; reducedOptics reports that it did, so the caller can redo the
+    // stage on its settled pass.
+    bool interactive = false;
+    mutable bool reducedOptics = false;
+
     FilmLabContext(
         int originX_ = 0,
         int originY_ = 0,

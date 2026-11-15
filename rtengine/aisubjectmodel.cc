@@ -27,6 +27,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
@@ -131,6 +132,20 @@ struct AISubjectEngine::Impl {
     bool loading = false;
     std::mutex loadMutex;
     std::condition_variable loaded;
+    // The deferred load starts on the first request for a subject mask, or
+    // once the app has been up for a while: building a ~1 GB session in the
+    // first seconds competed with the first folder scan and thumbnails.
+    bool startNow = false;
+    std::condition_variable startRequested;
+
+    // Caller holds loadMutex.
+    void requestLoadLocked()
+    {
+        if (loading && !startNow) {
+            startNow = true;
+            startRequested.notify_all();
+        }
+    }
 
     ~Impl()
     {
@@ -315,6 +330,12 @@ void AISubjectEngine::initDeferred(const std::string& modelPath)
     }
 
     std::thread([this, modelPath]() {
+        {
+            std::unique_lock<std::mutex> lock(pImpl->loadMutex);
+            pImpl->startRequested.wait_for(lock, std::chrono::seconds(30),
+                                           [this]() { return pImpl->startNow; });
+        }
+
         this->init(modelPath);
 
         {
@@ -349,6 +370,7 @@ bool AISubjectEngine::retryLoad()
 void AISubjectEngine::waitForDeferredInit() const
 {
     std::unique_lock<std::mutex> lock(pImpl->loadMutex);
+    pImpl->requestLoadLocked();
     pImpl->loaded.wait(lock, [this]() { return !pImpl->loading; });
 }
 
@@ -366,6 +388,13 @@ array2D<float> AISubjectEngine::saliency(float* const* rRows, float* const* gRow
                                          int width, int height, bool multiThread) const
 {
     array2D<float> result;
+
+    if (!pImpl->initialized && width > 0 && height > 0) {
+        // Asked for before the held-back load ran: start it and wait. This
+        // runs on worker threads only, and a subject mask from the model is
+        // worth the wait over the composed-from-classes stand-in.
+        waitForDeferredInit();
+    }
 
     if (!pImpl->initialized || width <= 0 || height <= 0) {
         return result;

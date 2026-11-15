@@ -70,6 +70,22 @@ struct AIInpaintingEngine::Impl {
     bool loading;
     std::mutex loadMutex;
     std::condition_variable ready;
+    // The deferred load waits for its first use (requestLoad) before building
+    // anything: about 3.3 GB and 4.5 s of CPU that competed with the first
+    // thumbnails at every launch, for a session the idle reaper frees after a
+    // minute anyway. `abandon` lets a destroyed instance skip the load.
+    bool startNow = false;
+    bool abandon = false;
+    std::condition_variable startRequested;
+
+    // Caller holds loadMutex.
+    void requestLoadLocked()
+    {
+        if (loading && !startNow) {
+            startNow = true;
+            startRequested.notify_all();
+        }
+    }
 
     // The session holds about 3.3 GB once built and Remove Object is used
     // rarely, so it is released when idle (AIIdleReaper) and rebuilt on the
@@ -148,6 +164,9 @@ AIInpaintingEngine::~AIInpaintingEngine()
     // deliberately never deleted so it cannot dangle there, but any other
     // instance must not be destroyed out from under a load in flight.
     std::unique_lock<std::mutex> lock(pImpl->loadMutex);
+    pImpl->abandon = true;
+    pImpl->startNow = true;
+    pImpl->startRequested.notify_all();
     pImpl->ready.wait(lock, [this]() { return !pImpl->loading; });
 }
 
@@ -253,7 +272,14 @@ void AIInpaintingEngine::initDeferred(const std::string& modelPath)
     pImpl->available = true;
 
     std::thread([this, modelPath]() {
-        const bool ok = this->init(modelPath);
+        bool abandoned = false;
+        {
+            std::unique_lock<std::mutex> lock(pImpl->loadMutex);
+            pImpl->startRequested.wait(lock, [this]() { return pImpl->startNow; });
+            abandoned = pImpl->abandon;
+        }
+
+        const bool ok = !abandoned && this->init(modelPath);
 
         {
             std::lock_guard<std::mutex> lock(pImpl->loadMutex);
@@ -279,6 +305,7 @@ bool AIInpaintingEngine::inpaintLegacy(const float* imageR, const float* imageG,
         // The alternative -- refusing -- makes the tool look broken for the
         // first few seconds after startup for no good reason.
         std::unique_lock<std::mutex> lock(pImpl->loadMutex);
+        pImpl->requestLoadLocked();
         pImpl->ready.wait(lock, [this]() { return !pImpl->loading; });
     }
 
@@ -513,6 +540,7 @@ bool AIInpaintingEngine::inpaint(const float* r, const float* g, const float* b,
 {
     {
         std::unique_lock<std::mutex> lock(pImpl->loadMutex);
+        pImpl->requestLoadLocked();
         while (pImpl->loading) {
             if (job) job->checkpoint();
             pImpl->ready.wait_for(lock, std::chrono::milliseconds(50));

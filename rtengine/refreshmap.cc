@@ -122,8 +122,8 @@ int refreshmap[] = {
     ALLNORAW,         // EvDPDNLuma,
     ALLNORAW,         // EvDPDNChroma,
     ALLNORAW,         // EvDPDNGamma,
-    ALLNORAW,         // EvDirPyrEqualizer,
-    ALLNORAW,         // EvDirPyrEqlEnabled,
+    RGBCURVE,         // EvDirPyrEqualizer,
+    RGBCURVE,         // EvDirPyrEqlEnabled,
     LUMINANCECURVE,   // EvLSaturation,
     LUMINANCECURVE,   // EvLaCurve,
     LUMINANCECURVE,   // EvLbCurve,
@@ -239,10 +239,10 @@ int refreshmap[] = {
     DEFRINGE,         // EvPFCurve
     WB,               // EvWBequal
     0,         // EvWBequalbo : obsolete
-    HDR,        // EvGradientDegree
-    HDR,        // EvGradientEnabled
-    HDR,        // EvPCVignetteStrength
-    HDR,        // EvPCVignetteEnabled
+    GEOMETRY,   // EvGradientDegree
+    GEOMETRY,   // EvGradientEnabled
+    GEOMETRY,   // EvPCVignetteStrength
+    GEOMETRY,   // EvPCVignetteEnabled
     TONE,            // EvBWChmixEnabled
     TONE,            // EvBWred
     TONE,            // EvBWgreen
@@ -267,23 +267,23 @@ int refreshmap[] = {
     TONE,            // EvAutoch
     0,                // --unused--
     TONE,            // EvNeutralBW
-    HDR,        // EvGradientFeather
-    HDR,        // EvGradientStrength
-    HDR,        // EvGradientCenter
-    HDR,        // EvPCVignetteFeather
-    HDR,        // EvPCVignetteRoundness
-    HDR,        // EvVignettingRadius,
-    HDR,        // EvVignettingStrength
-    HDR,        // EvVignettingCenter
+    GEOMETRY,   // EvGradientFeather
+    GEOMETRY,   // EvGradientStrength
+    GEOMETRY,   // EvGradientCenter
+    GEOMETRY,   // EvPCVignetteFeather
+    GEOMETRY,   // EvPCVignetteRoundness
+    GEOMETRY,   // EvVignettingRadius,
+    GEOMETRY,   // EvVignettingStrength
+    GEOMETRY,   // EvVignettingCenter
     LUMINANCECURVE,   // EvLCLCurve
     LUMINANCECURVE,   // EvLLHCurve
     LUMINANCECURVE,   // EvLHHCurve
-    ALLNORAW,         // EvDirPyrEqualizerThreshold
+    RGBCURVE,         // EvDirPyrEqualizerThreshold
     0,         // EvDPDNenhance : obsolete
     TONE,            // EvBWMethodalg
-    ALLNORAW,         // EvDirPyrEqualizerSkin
-    ALLNORAW,         // EvDirPyrEqlgamutlab
-    ALLNORAW,         // EvDirPyrEqualizerHueskin
+    RGBCURVE,         // EvDirPyrEqualizerSkin
+    RGBCURVE,         // EvDirPyrEqlgamutlab
+    RGBCURVE,         // EvDirPyrEqualizerHueskin
     ALLNORAW,         // EvDPDNmedian
     ALLNORAW,         // EvDPDNmedmet
     TONE,            // EvColorToningEnabled
@@ -469,7 +469,7 @@ int refreshmap[] = {
     RETINEX,          // EvmapMethod
     DEMOSAIC,         // EvRetinexmapcurve
     DEMOSAIC,         // EvviewMethod
-    ALLNORAW,         // EvcbdlMethod
+    RGBCURVE,         // EvcbdlMethod
     RETINEX,          // EvRetinexgaintransmission
     RETINEX,          // EvLskal
     OUTPUTPROFILE,    // EvOBPCompens

@@ -207,6 +207,13 @@ inline bool applySubjectModel(std::vector<array2D<float>>& maps,
 
     AISubjectEngine& engine = getAISubjectEngine();
 
+    // The model's load is held back from startup until something asks for
+    // it; this is that ask. Waits only while a deferred load is pending (on
+    // the mask worker, never the GUI thread), and returns at once otherwise.
+    if (!engine.isInitialized()) {
+        engine.waitForDeferredInit();
+    }
+
     if (!engine.isInitialized() && !engine.retryLoad()) {
         return false;
     }

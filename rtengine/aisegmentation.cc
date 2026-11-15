@@ -28,6 +28,8 @@
 #endif
 
 #include <algorithm>
+
+#include <glib.h>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -366,19 +368,12 @@ bool AISegmentationEngine::init(const std::string& modelPath)
         pImpl->api->SetIntraOpNumThreads(pImpl->sessionOptions, inferenceThreads);
     }
 
-#ifdef _WIN32
-    // ONNX Runtime on Windows requires wide-char path
-    const int wlen = MultiByteToWideChar(CP_UTF8, 0, modelPath.c_str(), -1, nullptr, 0);
-    std::vector<wchar_t> wpath(wlen);
-    MultiByteToWideChar(CP_UTF8, 0, modelPath.c_str(), -1, wpath.data(), wlen);
-    status = pImpl->api->CreateSession(pImpl->env, wpath.data(), pImpl->sessionOptions, &pImpl->session);
-#else
-    status = pImpl->api->CreateSession(pImpl->env, modelPath.c_str(), pImpl->sessionOptions, &pImpl->session);
-#endif
-    if (status) {
-        const char* msg = pImpl->api->GetErrorMessage(status);
-        fprintf(stderr, "AI Masking: Failed to load model: %s\n", msg);
-        pImpl->api->ReleaseStatus(status);
+    // The session itself is built on first use (loadSessionLocked, the same
+    // path that rebuilds it after the idle reaper frees it). Building it here
+    // ran before the window existed and cost every launch 1-3 s, often for
+    // nothing: unused for a minute, the reaper freed it again.
+    if (!g_file_test(modelPath.c_str(), G_FILE_TEST_IS_REGULAR)) {
+        fprintf(stderr, "AI Masking: model not found: %s\n", modelPath.c_str());
         return false;
     }
 

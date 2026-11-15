@@ -72,6 +72,9 @@ protected:
     /// with preview-grade smart repairs, so the settled refinement has to
     /// rebuild it from source rather than just finish the frame.
     bool         sourceDegraded = true;
+    // The last Lab pass ran Film Lab optics at reduced resolution (an
+    // interactive pass); the settled pass must rerun the Lab stages.
+    bool         filmOpticsDegraded = false;
     /// Pipeline bits of coordinator passes that did not update this crop.
     std::atomic<int> skippedTodo{0};
     CieImage*    cieCrop;      // allocating 6 images, each in "one chunk" allocation

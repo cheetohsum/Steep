@@ -2719,6 +2719,14 @@ void filmPresetsV3(
         // 1.41 -> 1.56) for ~15% longer 24 MP exports: not worth it for an
         // edge that is ~4 px soft at export size.
         halationReduction = opticalScale <= 1.f ? 4 : (opticalScale <= 2.f ? 2 : 1);
+        // Below 50% zoom the plane is already at display resolution, and the
+        // halo kernel is smooth at that scale: while a slider is dragging,
+        // a half-resolution plane (a quarter of the pixels) is not visibly
+        // different. The settled pass redoes it at full resolution.
+        if (context.interactive && halationReduction == 1) {
+            halationReduction = 2;
+            context.reducedOptics = true;
+        }
         halationWidth = (lab->W + halationReduction - 1) / halationReduction;
         halationHeight = (lab->H + halationReduction - 1) / halationReduction;
         array2D<float> source[3];

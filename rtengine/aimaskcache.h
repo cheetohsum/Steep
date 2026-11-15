@@ -257,6 +257,13 @@ private:
         std::shared_ptr<const array2D<float>> mask;
     };
     std::deque<SamEntry> samMasks_;
+    // Class-menu coverage: per class, a 256-bin histogram of the map (or, for
+    // depth classes, the measured share), built once per generation. Opening
+    // the menu asked for 12 classes and scanned every map in full each time,
+    // under mutex_, which the render needs too.
+    mutable std::uint64_t coverageGeneration_ = ~std::uint64_t(0);
+    mutable std::vector<std::vector<int>> coverageHistograms_;
+    mutable std::vector<float> depthCoverage_;
     int sourceWidth_;
     int sourceHeight_;
     int cachedWidth_;

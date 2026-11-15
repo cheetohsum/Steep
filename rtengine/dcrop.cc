@@ -287,6 +287,8 @@ void Crop::update(int todo)
         if (legacySettle || sourceDegraded
                 || (todo & (M_PREPROC | M_RAW | M_INIT | M_LINDENOISE | M_HDR | M_SPOT))) {
             todo = ALL;
+        } else if (filmOpticsDegraded) {
+            todo |= LUMINANCECURVE;
         }
     }
 
@@ -2041,7 +2043,9 @@ void Crop::update(int todo)
                 filmLabContext.clipLuminance = filmoptics::clipLuminance(static_cast<float>(parent->imgsrc->getMetaData()->getFNumber()), static_cast<float>(parent->imgsrc->getMetaData()->getShutterSpeed()), static_cast<float>(parent->imgsrc->getMetaData()->getISOSpeed()));
             }
             filmLabContext.rgbSnapshot = laboCrop;
+            filmLabContext.interactive = !settledPass;
             parent->ipf.filmPresets(labnCrop, params.filmPresets, filmLabContext);
+            filmOpticsDegraded = filmLabContext.reducedOptics;
         }
         traceStage("detail-film-lab");
         parent->ipf.softLight(labnCrop, params.softlight);

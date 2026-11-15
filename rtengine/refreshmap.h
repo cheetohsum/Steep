@@ -85,6 +85,11 @@
 // colour toning and the tone equalizer all use TONE. The auto log/CIE
 // events that read the source keep HDR.
 #define TONE                                                                                 (M_AUTOEXP|M_RGBCURVE|M_LUMACURVE|M_LUMINANCE|M_COLOR)
+// Gradient, PC vignette and vignetting are applied inside the transform and
+// do not move the source window, so they need the transform onwards, not the
+// source re-read (HDR re-ran dehaze, Fattal and crop denoise on every tick).
+// Rotation and perspective DO move the window and keep TRANSFORM.
+#define GEOMETRY                                                                      (M_TRANSFORM|M_BLURMAP|M_AUTOEXP|M_RGBCURVE|M_LUMACURVE|M_LUMINANCE|M_COLOR)
 #define RGBCURVE                                                                                          (M_RGBCURVE|M_LUMACURVE|M_LUMINANCE|M_COLOR)
 #define LUMINANCECURVE                                                                                               (M_LUMACURVE|M_LUMINANCE|M_COLOR)
 #define SHARPENING                                                                                                               (M_LUMINANCE|M_COLOR)

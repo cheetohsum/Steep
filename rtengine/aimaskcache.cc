@@ -1486,30 +1486,56 @@ float AIMaskCache::getClassCoverage(const std::string& imageId, int classIndex,
         return 0.f;
     }
 
-    const float cut = LIM(threshold, 0.f, 1.f);
-    int hits = 0;
+    const std::size_t classCount = cachedMasks_->size();
+    if (coverageGeneration_ != generation_ || coverageHistograms_.size() != classCount) {
+        coverageGeneration_ = generation_;
+        coverageHistograms_.assign(classCount, {});
+        depthCoverage_.assign(classCount, -1.f);
+    }
+
+    const float area = static_cast<float>(w) * static_cast<float>(h);
 
     if (isDepthClass(classIndex)) {
         // The map is depth, not a probability: count what the automatic
-        // near / far range would select.
-        const std::array<double, 4> range = depthPreset(classIndex, cachedDepthSplit_);
+        // near / far range would select. That does not depend on the
+        // threshold, so it is measured once per generation.
+        float& share = depthCoverage_[classIndex];
+        if (share < 0.f) {
+            const std::array<double, 4> range = depthPreset(classIndex, cachedDepthSplit_);
+            int hits = 0;
+            for (int y = 0; y < h; ++y) {
+                for (int x = 0; x < w; ++x) {
+                    hits += depthRangeWeight(map[y][x], range) > 0.5f;
+                }
+            }
+            share = static_cast<float>(hits) / area;
+        }
+        return share;
+    }
+
+    // Bin b holds values in [b/256, (b+1)/256). "Above the cut" is then the
+    // sum of the bins past the cut's own bin: exact to 1/256 of tolerance,
+    // which is far finer than the percentage the menu prints.
+    constexpr int kBins = 256;
+    std::vector<int>& histogram = coverageHistograms_[classIndex];
+    if (histogram.empty()) {
+        histogram.assign(kBins, 0);
         for (int y = 0; y < h; ++y) {
             for (int x = 0; x < w; ++x) {
-                hits += depthRangeWeight(map[y][x], range) > 0.5f;
-            }
-        }
-        return static_cast<float>(hits) / (static_cast<float>(w) * h);
-    }
-
-    for (int y = 0; y < h; ++y) {
-        for (int x = 0; x < w; ++x) {
-            if (map[y][x] > cut) {
-                ++hits;
+                const int bin = LIM(static_cast<int>(map[y][x] * kBins), 0, kBins - 1);
+                ++histogram[bin];
             }
         }
     }
 
-    return static_cast<float>(hits) / (static_cast<float>(w) * h);
+    const float cut = LIM(threshold, 0.f, 1.f);
+    const int firstBin = LIM(static_cast<int>(cut * kBins) + 1, 0, kBins);
+    int hits = 0;
+    for (int bin = firstBin; bin < kBins; ++bin) {
+        hits += histogram[bin];
+    }
+
+    return static_cast<float>(hits) / area;
 }
 
 int AIMaskCache::getDominantClassAt(const std::string& imageId, int fullX, int fullY) const
