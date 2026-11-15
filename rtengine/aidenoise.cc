@@ -189,36 +189,20 @@ void AIDenoiseManager::detect()
     if (detectDoneCb_) detectDoneCb_(false);
     return;
 #else
-    std::thread([this]() {
+    {
+        // Only finds the model. It used to build a whole CPU session as a
+        // smoke test, in its own ONNX environment, and throw it away: the
+        // first Denoise click then did nothing but this, and the real session
+        // was built again by startDenoising, which reports its own failures.
         Glib::ustring modelPath = findModelPath();
         if (modelPath.empty()) {
             fprintf(stderr, "AI Denoise: bundled model file was not found.\n");
-            detecting_ = false;
-            if (detectDoneCb_) detectDoneCb_(false);
-            return;
         }
-
-        // Try to instantiate a CPU session as a smoke test. The actual
-        // session used for inference is created lazily in startDenoising
-        // (per-invocation GPU/CPU mode).
-        try {
-            Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "aidenoise-detect");
-            Ort::SessionOptions opts;
-            opts.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_BASIC);
-            auto p = toOrtPath(modelPath);
-            Ort::Session session(env, p.c_str(), opts);
-            available_ = true;
-            fprintf(stderr, "AI Denoise: ONNX model loaded OK from %s\n",
-                    modelPath.c_str());
-        } catch (const Ort::Exception& e) {
-            fprintf(stderr, "AI Denoise: ONNX session creation failed: %s\n",
-                    e.what());
-            available_ = false;
-        }
+        available_ = !modelPath.empty();
 
         detecting_ = false;
         if (detectDoneCb_) detectDoneCb_(available_.load());
-    }).detach();
+    }
 #endif
 }
 

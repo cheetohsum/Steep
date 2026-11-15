@@ -196,6 +196,16 @@ bool AIInpaintingEngine::init(const std::string& modelPath)
             std::max(1u, std::min(4u, hardwareThreads > 1 ? hardwareThreads / 2 : 1u)));
         pImpl->api->SetIntraOpNumThreads(pImpl->sessionOptions, inferenceThreads);
     }
+
+    // Worker threads otherwise spin after each Run, busy-waiting against
+    // the preview's OpenMP team for as long as the session lives.
+    {
+        OrtStatus* spinStatus = pImpl->api->AddSessionConfigEntry(pImpl->sessionOptions,
+                                                                  "session.intra_op.allow_spinning", "0");
+        if (spinStatus) {
+            pImpl->api->ReleaseStatus(spinStatus);
+        }
+    }
     pImpl->api->SetSessionGraphOptimizationLevel(pImpl->sessionOptions, ORT_ENABLE_EXTENDED);
 
 #ifdef _WIN32

@@ -3591,7 +3591,7 @@ void EditorPanel::showRatingPaletteMenu(GdkEventButton* event)
         item->signal_toggled().connect([this, item, field]() {
             App::get().mut_options().*field = item->get_active();
             try {
-                Options::save();
+                Options::saveAsync(); // written off the GUI thread; flushed at exit
             } catch (Options::Error& error) {
                 std::cerr << "Failed to save options: " << error.get_msg() << std::endl;
             }

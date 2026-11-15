@@ -51,6 +51,8 @@ protected:
     double savedBlend_ = 100.0;
 
     Glib::ustring imagePath_;
+    // The model check was started by a Denoise click, which carries on itself.
+    bool detectFromClick_ = false;
     rtengine::StagedImageProcessor* ipc_;
 
 public:

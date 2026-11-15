@@ -905,6 +905,15 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
         float greendeha = 0.f;
         float bluedeha = 0.f;
 
+        // The settled pass reran preprocess because the interactive one used
+        // the fast demosaic method. Preprocess reads the method only for
+        // Bayer green equilibration (rawimagesource.cc), so on X-Trans the
+        // rerun was identical work -- ~90 ms with the stuck-pixel scan.
+        if (highDetailNeeded && !highDetailPreprocessComputed && !(todo & M_PREPROC)
+                && preprocessDone_ && imgsrc->getSensorType() == ST_FUJI_XTRANS) {
+            highDetailPreprocessComputed = true;
+        }
+
         // Preprocess and demosaic work on the whole sensor and scale with
         // threads; the 4-thread preview team is sized for small crop stages.
         auto rawStageThreads = std::make_unique<RawStageThreads>(
@@ -946,6 +955,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             hist_raw_dirty = !(rawHistListener && !destroying && rawHistListener->updateHistogramRaw());
 
             highDetailPreprocessComputed = highDetailNeeded;
+            preprocessDone_ = true;
         }
         traceStage("preprocess");
 

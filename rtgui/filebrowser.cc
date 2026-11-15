@@ -109,6 +109,12 @@ void prepareAutoLevelImageSource(
         rtengine::procparams::RAWParams::BayerSensor::Method::FAST);
     raw.xtranssensor.method = rtengine::procparams::RAWParams::XTransSensor::getMethodString(
         rtengine::procparams::RAWParams::XTransSensor::Method::FAST);
+    // Line detection runs on a ~900 px copy: single-pixel defects are below
+    // its resolution. The full-sensor stuck-pixel scan cost time per file
+    // and fed the per-camera defect memory as a side effect of levelling.
+    raw.stuckPixelFix = false;
+    raw.hotPixelFilter = false;
+    raw.deadPixelFilter = false;
 
     source->setCurrentFrame(raw.bayersensor.imageNum);
     float redDehaze = 0.f;

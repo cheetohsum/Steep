@@ -203,14 +203,39 @@ MaskPaint MaskPaint::paintOnly() const
 
 unsigned int MaskPaint::hash() const
 {
-    // FNV-1a over the encoded form: whatever round-trips through the pp3 is
-    // exactly what the caches should key on.
-    const std::string text = encode();
+    // FNV-1a over the strokes' own values. Equal paints (operator==) hash
+    // equal, which is what the caches need. It used to hash encode()'s text,
+    // formatting every point with snprintf on each of the 4+ lookups per
+    // spot per pass, in the preview and the crop alike.
     unsigned int h = 2166136261u;
+    const auto mix = [&h](const void* data, std::size_t size) {
+        const unsigned char* bytes = static_cast<const unsigned char*>(data);
+        for (std::size_t i = 0; i < size; ++i) {
+            h ^= bytes[i];
+            h *= 16777619u;
+        }
+    };
+    const auto mixDouble = [&mix](double value) {
+        if (value == 0.0) {
+            value = 0.0;   // -0.0 == 0.0, so they must hash alike
+        }
+        mix(&value, sizeof(value));
+    };
 
-    for (char c : text) {
-        h ^= static_cast<unsigned char>(c);
-        h *= 16777619u;
+    for (const auto& stroke : strokes) {
+        const int kind = static_cast<int>(stroke.kind);
+        const int add = stroke.add ? 1 : 0;
+        const std::size_t count = stroke.points.size();
+        mix(&kind, sizeof(kind));
+        mix(&add, sizeof(add));
+        mixDouble(stroke.radius);
+        mixDouble(stroke.hardness);
+        mixDouble(stroke.strength);
+        mix(&count, sizeof(count));
+        for (const auto& point : stroke.points) {
+            mixDouble(point.x);
+            mixDouble(point.y);
+        }
     }
 
     return h;

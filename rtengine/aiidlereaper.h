@@ -42,6 +42,11 @@ public:
     // Long enough that moving between photos does not reload a model per
     // photo; short enough that a session is gone soon after the last mask.
     static constexpr long long kIdleMs = 60000;
+    // Segmentation and subject run for every photo opened with masks: freed
+    // after a minute, stepping to the next photo rebuilt both sessions (and
+    // on DirectML recompiled their shaders) for several seconds. They wait
+    // longer; memguard still trims them at once under memory pressure.
+    static constexpr long long kIdleLongMs = 10 * 60000;
 
     static long long nowMs()
     {

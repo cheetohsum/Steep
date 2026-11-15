@@ -731,6 +731,14 @@ private:
     bool onTreeviewLeave(GdkEventCrossing* event);
 public:
     bool isPointerOverTreeview() const;
+    // The pointer rests on the selected spot's shape on the canvas (set by
+    // mouseOver), which arms the same hover overlay as the list does.
+    bool isCanvasSpotHovered() const { return canvasSpotHovered_; }
+    bool canvasSpotHovered_ = false;
+    // The row whose geometry setSidebarHoverGeometry lit, so clearing it
+    // resets that one spot instead of rebuilding every spot's outline on
+    // each hover change. -1: unknown, reset them all.
+    int sidebarHoverSpot_ = -1;
     void resetSidebarHover();
 private:
 

@@ -111,9 +111,12 @@ AIDenoise::AIDenoise () : FoldableToolPanel(this, TOOL_NAME, M("TP_AIDENOISE_LAB
     auto& aidm = rtengine::AIDenoiseManager::getInstance();
     aidm.setDetectDoneCallback([this](bool success) {
         Glib::signal_idle().connect_once([this, success]() {
+            const bool fromClick = detectFromClick_;
+            detectFromClick_ = false;
             if (success) {
                 updateStatus(M("TP_AIDENOISE_STATUS_READY"));
-                if (activateCheck_->get_active() && !imagePath_.empty()) {
+                // A click that ran the check carries on by itself.
+                if (!fromClick && activateCheck_->get_active() && !imagePath_.empty()) {
                     onDenoiseClicked();
                 }
             } else {
@@ -267,9 +270,14 @@ void AIDenoise::onDenoiseClicked ()
     }
 
     if (!aidm.isAvailable()) {
-        updateStatus(M("TP_AIDENOISE_STATUS_LOADING"));
+        // detect() is now a quick file check that returns at once: go on with
+        // this click instead of making the user press Denoise twice.
+        detectFromClick_ = true;
         aidm.detect();
-        return;
+        if (!aidm.isAvailable()) {
+            updateStatus(M("TP_AIDENOISE_STATUS_NOT_AVAILABLE"));
+            return;
+        }
     }
 
     if (imagePath_.empty()) {

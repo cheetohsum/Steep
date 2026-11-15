@@ -19,6 +19,7 @@
 #include <vector>
 #include <utility>
 #include <mutex>
+#include <list>
 #include <unordered_map>
 #include "array2D.h"
 
@@ -76,6 +77,7 @@ private:
     PolyMaskCache() = default;
 
     struct CacheEntry {
+        int spotIndex = -1;
         std::vector<int> points;
         float feather = 0.f;
         int width = 0;
@@ -83,8 +85,12 @@ private:
         array2D<float> mask;
     };
 
+    // Most recently used first. Several entries per spot: the preview and
+    // the detail crop rasterize the same polygon at different sizes, and
+    // with one slot per spot each evicted the other on every pass.
+    static constexpr std::size_t kMaxEntries = 8;
     std::mutex mutex_;
-    std::unordered_map<int, CacheEntry> entries_;  // keyed by spot index
+    std::list<CacheEntry> entries_;
 };
 
 } // namespace rtengine

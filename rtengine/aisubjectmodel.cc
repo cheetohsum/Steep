@@ -112,7 +112,7 @@ struct AISubjectEngine::Impl {
     void releaseIfIdle(bool force)
     {
         std::unique_lock<std::mutex> lock(runMutex, std::try_to_lock);
-        if (!lock.owns_lock() || !session || (!force && AIIdleReaper::nowMs() - lastUse.load() < AIIdleReaper::kIdleMs)) {
+        if (!lock.owns_lock() || !session || (!force && AIIdleReaper::nowMs() - lastUse.load() < AIIdleReaper::kIdleLongMs)) {
             return;
         }
         api->ReleaseSession(session);
@@ -120,7 +120,7 @@ struct AISubjectEngine::Impl {
         if (force) {
             std::fprintf(stderr, "AI Subject: model unloaded to free memory\n");
         } else {
-            std::fprintf(stderr, "AI Subject: model unloaded after %lld s idle\n", AIIdleReaper::kIdleMs / 1000);
+            std::fprintf(stderr, "AI Subject: model unloaded after %lld s idle\n", AIIdleReaper::kIdleLongMs / 1000);
         }
     }
     int reaperId = -1;
@@ -220,6 +220,16 @@ bool AISubjectEngine::init(const std::string& modelPath)
             const unsigned int hardwareThreads = std::thread::hardware_concurrency();
             pImpl->api->SetIntraOpNumThreads(pImpl->sessionOptions, static_cast<int>(
                 std::max(1u, std::min(4u, hardwareThreads > 1 ? hardwareThreads / 2 : 1u))));
+        }
+
+        // Worker threads otherwise spin after each Run, busy-waiting against
+        // the preview's OpenMP team for as long as the session lives.
+        {
+            OrtStatus* spinStatus = pImpl->api->AddSessionConfigEntry(pImpl->sessionOptions,
+                                                                      "session.intra_op.allow_spinning", "0");
+            if (spinStatus) {
+                pImpl->api->ReleaseStatus(spinStatus);
+            }
         }
     }
 

@@ -137,6 +137,9 @@ protected:
     int scale;
     bool highDetailPreprocessComputed;
     bool highDetailRawComputed;
+    // A preprocess has run on this source since the last raw-parameter
+    // change (any of which carries M_PREPROC and reruns it).
+    bool preprocessDone_ = false;
     // See setFullQualityTwin(); taken by the first pass that needs a
     // full-quality demosaic.
     std::mutex fullQualityTwinMutex;

@@ -1880,7 +1880,10 @@ void Locallab::spotHovered(bool hovered, bool forceRedraw, int spotIndex)
 
 bool Locallab::isPointerOverMaskList() const
 {
-    return expsettings->isPointerOverTreeview();
+    // The hover overlay is also armed from the spot's shape on the canvas;
+    // the watchdog used to see "not over the list" and take it down again
+    // about 1.5 s later, a second full pass for a flash.
+    return expsettings->isPointerOverTreeview() || expsettings->isCanvasSpotHovered();
 }
 
 void Locallab::resetSidebarHover()

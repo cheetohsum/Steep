@@ -1737,6 +1737,16 @@ void RTWindow::on_realize ()
                                           std::max(STARTUP_MIN_SECONDS, startTime->elapsed()));
             }, Glib::PRIORITY_LOW);
 
+        // Thumbnail streaming can keep that low-priority idle from running,
+        // which held the splash (and its whole-window repaints over the
+        // first thumbnails) to the full choreography. Leave at the minimum
+        // regardless once it has passed.
+        Glib::signal_timeout().connect_once(
+            [this, startTime]() {
+                startupExitAt_ = std::min(startupExitAt_,
+                                          std::max(STARTUP_MIN_SECONDS, startTime->elapsed()));
+            }, static_cast<unsigned int>(STARTUP_MIN_SECONDS * 1000.0));
+
         // Driven by the frame clock, not a 16 ms timer: one draw per
         // display refresh, so the motion never stutters against vsync.
         startupOverlay_->add_tick_callback(

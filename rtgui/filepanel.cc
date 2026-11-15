@@ -38,6 +38,7 @@
 #include <vector>
 
 #include "albumbrowser.h"
+#include "backgroundtasks.h"
 #include "guiutils.h"
 #include "options.h"
 #include "rtimage.h"
@@ -2986,11 +2987,23 @@ void FilePanel::init ()
         } else if (options.startupDir == STARTUPDIR_CURRENT) {
             dirBrowser->open (App::get().argv0());
         } else if (options.startupDir == STARTUPDIR_CUSTOM || options.startupDir == STARTUPDIR_LAST) {
-            if (options.startupPath.length() && Glib::file_test(options.startupPath, Glib::FILE_TEST_EXISTS) && Glib::file_test(options.startupPath, Glib::FILE_TEST_IS_DIR)) {
-                dirBrowser->open (options.startupPath);
-            } else {
-                // Fallback option if the path is empty or the folder doesn't exist
+            const Glib::ustring startupPath = options.startupPath;
+
+            if (startupPath.empty()) {
                 dirBrowser->open (PlacesBrowser::userPicturesDir ());
+            } else {
+                // The last folder is usually on the photo disk, which may be
+                // asleep: checking it here held the first paint for the
+                // seconds it takes to spin up. Check on the IO lane, open on
+                // the GUI thread.
+                DirBrowser* const browser = dirBrowser;
+                steep::runBackground([browser, startupPath]() {
+                    const bool usable = Glib::file_test(startupPath, Glib::FILE_TEST_IS_DIR);
+                    Glib::signal_idle().connect_once([browser, startupPath, usable]() {
+                        // Fallback option if the folder doesn't exist
+                        browser->open (usable ? startupPath : PlacesBrowser::userPicturesDir ());
+                    });
+                });
             }
         }
     }

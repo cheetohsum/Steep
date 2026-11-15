@@ -285,7 +285,7 @@ struct AISegmentationEngine::Impl {
     void releaseIfIdle(bool force)
     {
         std::unique_lock<std::mutex> lock(runMutex, std::try_to_lock);
-        if (!lock.owns_lock() || !session || (!force && AIIdleReaper::nowMs() - lastUse.load() < AIIdleReaper::kIdleMs)) {
+        if (!lock.owns_lock() || !session || (!force && AIIdleReaper::nowMs() - lastUse.load() < AIIdleReaper::kIdleLongMs)) {
             return;
         }
         api->ReleaseSession(session);
@@ -293,7 +293,7 @@ struct AISegmentationEngine::Impl {
         if (force) {
             fprintf(stderr, "AI Masking: model unloaded to free memory\n");
         } else {
-            fprintf(stderr, "AI Masking: model unloaded after %lld s idle\n", AIIdleReaper::kIdleMs / 1000);
+            fprintf(stderr, "AI Masking: model unloaded after %lld s idle\n", AIIdleReaper::kIdleLongMs / 1000);
         }
     }
     int reaperId = -1;
@@ -366,6 +366,16 @@ bool AISegmentationEngine::init(const std::string& modelPath)
         const int inferenceThreads = static_cast<int>(
             std::max(1u, std::min(4u, hardwareThreads > 1 ? hardwareThreads / 2 : 1u)));
         pImpl->api->SetIntraOpNumThreads(pImpl->sessionOptions, inferenceThreads);
+    }
+
+    // Worker threads otherwise spin after each Run, busy-waiting against
+    // the preview's OpenMP team for as long as the session lives.
+    {
+        OrtStatus* spinStatus = pImpl->api->AddSessionConfigEntry(pImpl->sessionOptions,
+                                                                  "session.intra_op.allow_spinning", "0");
+        if (spinStatus) {
+            pImpl->api->ReleaseStatus(spinStatus);
+        }
     }
 
     // The session itself is built on first use (loadSessionLocked, the same

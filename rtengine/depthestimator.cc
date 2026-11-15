@@ -57,6 +57,8 @@ struct DepthEstimator::Impl {
             options.SetIntraOpNumThreads(4);
             options.SetInterOpNumThreads(1);
         }
+        // No busy-waiting between runs (see aisegmentation.cc).
+        options.AddConfigEntry("session.intra_op.allow_spinning", "0");
         options.SetGraphOptimizationLevel(GraphOptimizationLevel::ORT_ENABLE_ALL);
     }
 #endif

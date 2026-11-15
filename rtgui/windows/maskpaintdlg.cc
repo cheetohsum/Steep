@@ -338,7 +338,23 @@ private:
         }
 
         live_.points.push_back({nx, ny});
-        refreshShown();
+
+        if (live_.kind == rtengine::MaskStroke::Kind::BRUSH) {
+            // shown_ already holds the stroke up to the previous point. A
+            // brush takes, per pixel, the nearest segment through a falloff
+            // that only drops with distance, then max (add) / min (cut): so
+            // stamping just the new segment is exactly the whole replay. The
+            // full replay copied the mask and re-ran every segment over the
+            // stroke's whole box on each motion event -- quadratic in a long
+            // stroke, on the GUI thread. A lasso is one polygon and redoes all.
+            rtengine::MaskPaint segment;
+            segment.strokes.push_back(live_);
+            auto& points = segment.strokes.back().points;
+            points.erase(points.begin(), points.end() - 2);
+            segment.apply(shown_, width_, height_, true);
+        } else {
+            refreshShown();
+        }
         queue_draw();
     }
 

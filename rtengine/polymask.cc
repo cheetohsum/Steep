@@ -287,24 +287,24 @@ bool PolyMaskCache::getCached(int spotIndex,
                                array2D<float>& mask)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto it = entries_.find(spotIndex);
+    auto it = std::find_if(entries_.begin(), entries_.end(), [&](const CacheEntry& entry) {
+        return entry.spotIndex == spotIndex && entry.width == width && entry.height == height
+            && std::abs(entry.feather - feather) <= 0.01f && entry.points == points;
+    });
     if (it == entries_.end()) {
         return false;
     }
 
-    const auto& entry = it->second;
-    if (entry.width != width || entry.height != height ||
-        std::abs(entry.feather - feather) > 0.01f ||
-        entry.points != points) {
-        return false;
-    }
+    entries_.splice(entries_.begin(), entries_, it);
+    const auto& entry = entries_.front();
 
     // Cache hit: copy the mask
     mask(width, height);
+#ifdef _OPENMP
+    #pragma omp parallel for
+#endif
     for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            mask[y][x] = entry.mask[y][x];
-        }
+        std::copy(entry.mask[y], entry.mask[y] + width, mask[y]);
     }
     return true;
 }
@@ -316,16 +316,26 @@ void PolyMaskCache::store(int spotIndex,
                            const array2D<float>& mask)
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    auto& entry = entries_[spotIndex];
+    // Replace this spot's entry at this size, if any; other sizes stay.
+    entries_.remove_if([&](const CacheEntry& entry) {
+        return entry.spotIndex == spotIndex && entry.width == width && entry.height == height;
+    });
+    entries_.emplace_front();
+    auto& entry = entries_.front();
+    entry.spotIndex = spotIndex;
     entry.points = points;
     entry.feather = feather;
     entry.width = width;
     entry.height = height;
     entry.mask(width, height);
+#ifdef _OPENMP
+    #pragma omp parallel for
+#endif
     for (int y = 0; y < height; ++y) {
-        for (int x = 0; x < width; ++x) {
-            entry.mask[y][x] = mask[y][x];
-        }
+        std::copy(mask[y], mask[y] + width, entry.mask[y]);
+    }
+    while (entries_.size() > kMaxEntries) {
+        entries_.pop_back();
     }
 }
 

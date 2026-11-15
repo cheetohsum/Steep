@@ -1231,7 +1231,15 @@ void ControlSpotPanel::queueCanvasRedraw()
 
 void ControlSpotPanel::clearSidebarHoverGeometry()
 {
+    const int onlySpot = sidebarHoverSpot_;
+    sidebarHoverSpot_ = -1;
+    int index = -1;
+
     for (auto& row : treemodel_->children()) {
+        ++index;
+        if (onlySpot >= 0 && index != onlySpot) {
+            continue;
+        }
         updateControlSpotCurve(row);
         const int curveId = row[spots_.curveid];
         if (curveId <= 0) {
@@ -1257,6 +1265,7 @@ void ControlSpotPanel::clearSidebarHoverGeometry()
 void ControlSpotPanel::setSidebarHoverGeometry(int spotIndex)
 {
     clearSidebarHoverGeometry();
+    sidebarHoverSpot_ = spotIndex;
 
     int index = 0;
     for (auto& row : treemodel_->children()) {
@@ -4925,6 +4934,7 @@ bool ControlSpotPanel::mouseOver(int modifierKey)
             }
 
             // Notify listener that mouse left spot area
+            canvasSpotHovered_ = false;
             if (controlPanelListener) {
                 controlPanelListener->spotHovered(false, false, -1);
             }
@@ -4940,6 +4950,7 @@ bool ControlSpotPanel::mouseOver(int modifierKey)
         // Notify listener that mouse entered a spot (selected spot only)
         if (controlPanelListener) {
             const bool isSelectedSpot = (selRow[spots_.curveid] == curveId_);
+            canvasSpotHovered_ = isSelectedSpot;
             controlPanelListener->spotHovered(
                 isSelectedSpot, false, isSelectedSpot ? getSelectedSpot() : -1);
         }
