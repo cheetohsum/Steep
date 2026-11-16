@@ -42,6 +42,7 @@
 #include "pathutils.h"
 #include "rtimage.h"
 #include "watermarkrenderer.h"
+#include "backgroundtasks.h"
 #include <sys/time.h>
 
 using namespace std;
@@ -168,6 +169,10 @@ BatchQueue::BatchQueue (FileCatalog* aFileCatalog) : processing(nullptr), fileCa
 
 BatchQueue::~BatchQueue ()
 {
+    if (pendingWrite_.valid()) {
+        pendingWrite_.wait();   // an export still being written
+    }
+
     std::set<BatchQueueEntry*> removable_bqes;
 
     mutex_removable_batch_queue_entries.lock();
@@ -794,8 +799,35 @@ void BatchQueue::error(const Glib::ustring& descr)
     }
 }
 
+void BatchQueue::finishPendingWrite_()
+{
+    if (pendingWrite_.valid()) {
+        pendingWrite_.wait();
+        pendingWrite_ = std::future<void>();
+    }
+
+    if (pendingWriteError_ && !pendingWriteError_->empty() && listener) {
+        // Same report error() gives; the job itself is long gone.
+        BatchQueueListener* const bql = listener;
+        const Glib::ustring descr = *pendingWriteError_;
+        idle_register.add(
+            [bql, descr]() -> bool
+            {
+                bql->queueSizeChanged(0, false, true, descr);
+                return false;
+            }
+        );
+    }
+
+    pendingWriteError_.reset();
+}
+
 rtengine::ProcessingJob* BatchQueue::imageReady(rtengine::IImagefloat* img)
 {
+    // The previous image's file must exist before this one's name is made
+    // unique against the disk.
+    finishPendingWrite_();
+
     // save image img
     Glib::ustring fname;
     SaveFormat saveFormat;
@@ -821,47 +853,66 @@ rtengine::ProcessingJob* BatchQueue::imageReady(rtengine::IImagefloat* img)
     //printf ("fname=%s, %s\n", fname.c_str(), removeExtension(fname).c_str());
 
     if (img && !fname.empty()) {
-        // Apply watermark if enabled
-        const auto& wmOpts = options.watermark;
-        // A logo with no text is a valid watermark, so ask the renderer what
-        // counts as content rather than testing the text here.
-        if (wmOpts.enabled && watermarkHasContent(wmOpts)) {
-            applyWatermark(img, wmOpts);
-        }
-
-        int err = 0;
-
-        if (saveFormat.format == "tif") {
-            err = img->saveAsTIFF (
-                fname,
-                saveFormat.tiffBits,
-                saveFormat.tiffFloat,
-                saveFormat.tiffUncompressed,
-                saveFormat.bigTiff
-            );
-        } else if (saveFormat.format == "png") {
-            err = img->saveAsPNG (fname, saveFormat.pngBits);
-        } else if (saveFormat.format == "jpg") {
-            err = img->saveAsJPEG (fname, saveFormat.jpegQuality, saveFormat.jpegSubSamp);
-        }
-
-        delete img;
-
-        if (err) {
-            throw Glib::FileError(Glib::FileError::FAILED, M("MAIN_MSG_CANNOTSAVE") + "\n" + fname);
-        }
-
+        // Watermark, encode and write on the IO lane, so the next job starts
+        // now instead of after a 0.5-2 s encode (16-bit TIFF at 26 MP).
+        const WatermarkOptions wmOpts = options.watermark;
+        const SaveFormat format = saveFormat;
+        std::shared_ptr<rtengine::procparams::ProcParams> savedParams;
         if (saveFormat.saveParams) {
-            // We keep the extension to avoid overwriting the profile when we have
-            // the same output filename with different extension
-            //processing->params.save (removeExtension(fname) + App::PARAM_FILE_EXTENSION);
-            processing->params->save (fname + ".out" + App::PARAM_FILE_EXTENSION);
+            savedParams = std::make_shared<rtengine::procparams::ProcParams>(*processing->params);
         }
+        ::Thumbnail* const thumbnail = processing->thumbnail;
+        if (thumbnail) {
+            thumbnail->increaseRef();
+        }
+        auto errorOut = std::make_shared<std::string>();
+        pendingWriteError_ = errorOut;
+        const Glib::ustring cannotSave = M("MAIN_MSG_CANNOTSAVE");
 
-        if (processing->thumbnail) {
-            processing->thumbnail->imageDeveloped ();
-            processing->thumbnail->imageRemovedFromQueue ();
-        }
+        pendingWrite_ = steep::runBackgroundJoinable([img, fname, wmOpts, format, savedParams, thumbnail, errorOut, cannotSave]() {
+            // A logo with no text is a valid watermark, so ask the renderer
+            // what counts as content rather than testing the text here.
+            if (wmOpts.enabled && watermarkHasContent(wmOpts)) {
+                applyWatermark(img, wmOpts);
+            }
+
+            int err = 0;
+
+            if (format.format == "tif") {
+                err = img->saveAsTIFF (
+                    fname,
+                    format.tiffBits,
+                    format.tiffFloat,
+                    format.tiffUncompressed,
+                    format.bigTiff
+                );
+            } else if (format.format == "png") {
+                err = img->saveAsPNG (fname, format.pngBits);
+            } else if (format.format == "jpg") {
+                err = img->saveAsJPEG (fname, format.jpegQuality, format.jpegSubSamp);
+            }
+
+            delete img;
+
+            if (err) {
+                *errorOut = (cannotSave + "\n" + fname).raw();
+            } else {
+                if (savedParams) {
+                    // We keep the extension to avoid overwriting the profile when we have
+                    // the same output filename with different extension
+                    savedParams->save (fname + ".out" + App::PARAM_FILE_EXTENSION);
+                }
+
+                if (thumbnail) {
+                    thumbnail->imageDeveloped ();
+                    thumbnail->imageRemovedFromQueue ();
+                }
+            }
+
+            if (thumbnail) {
+                thumbnail->decreaseRef();
+            }
+        }, steep::Lane::IO);
     }
 
     // save temporary params file name: delete as last thing
@@ -935,6 +986,11 @@ rtengine::ProcessingJob* BatchQueue::imageReady(rtengine::IImagefloat* img)
 
             } catch (Glib::Exception&) {}
         }
+    }
+
+    if (!processing) {
+        // The queue is done: report it only once the last file is written.
+        finishPendingWrite_();
     }
 
     redraw ();

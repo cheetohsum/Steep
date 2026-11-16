@@ -338,6 +338,10 @@ private:
     // Coalesces the filter + viewport refresh that follows each batch of
     // global-scan matches into one pass per burst.
     void scheduleGlobalScanRefresh();
+    // The filter the last global scan matched against. A later filter that
+    // can only drop photos from that set is applied in the browser alone.
+    BrowserFilter globalLastScanFilter_;
+    bool globalLastScanFilterValid_ = false;
     sigc::connection globalScanRefreshConn_;
     // Deferred, coalesced filter application (cancelled when the directory is
     // closed, so filtering a folder that is being discarded costs nothing).

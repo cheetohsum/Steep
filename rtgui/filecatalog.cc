@@ -4459,6 +4459,8 @@ void FileCatalog::startGlobalScan (bool fresh)
 
     const BrowserFilter filter = getFilter();
     globalLastScanKey_ = filterScanKey(filter);
+    globalLastScanFilter_ = filter;
+    globalLastScanFilterValid_ = true;
     const bool recurse = App::get().options().globalScanSubfolders;
 
     // Roots: favorites + recents + the folder we came from + every folder the
@@ -4719,6 +4721,75 @@ void FileCatalog::scheduleGlobalScanRefresh ()
     }, 150, G_PRIORITY_DEFAULT_IDLE + 10);
 }
 
+namespace
+{
+
+// True when every photo `next` shows, `scanned` showed too, so the global
+// scan's results already hold all of them. Conservative: anything it cannot
+// reason about (both EXIF filters on, a changed search, album, tags) counts
+// as a change and rescans.
+bool filterOnlyNarrows (const BrowserFilter& next, const BrowserFilter& scanned)
+{
+    const auto within = [](bool now, bool before) { return !now || before; };
+
+    for (int i = 0; i < 6; ++i) {
+        if (!within(next.showRanked[i], scanned.showRanked[i])
+                || !within(next.showCLabeled[i], scanned.showCLabeled[i])) {
+            return false;
+        }
+    }
+
+    for (int i = 0; i < 2; ++i) {
+        if (!within(next.showEdited[i], scanned.showEdited[i])
+                || !within(next.showRecentlySaved[i], scanned.showRecentlySaved[i])) {
+            return false;
+        }
+    }
+
+    if (!within(next.showPicked, scanned.showPicked)
+            || !within(next.showRejected, scanned.showRejected)
+            || !within(next.showUnflagged, scanned.showUnflagged)
+            || !within(next.showTrash, scanned.showTrash)
+            || !within(next.showNotTrash, scanned.showNotTrash)
+            || (scanned.hideRejects && !next.hideRejects)
+            || next.showOriginal != scanned.showOriginal) {
+        return false;
+    }
+
+    if (scanned.exifFilterEnabled) {
+        return false;   // cannot compare two EXIF filters; rescan
+    }
+
+    if (next.vFilterStrings != scanned.vFilterStrings && !scanned.vFilterStrings.empty()) {
+        return false;
+    }
+
+    if (next.albumWhitelist != scanned.albumWhitelist) {
+        return false;
+    }
+
+    if (!scanned.filetypeFilter.empty()) {
+        if (next.filetypeFilter.empty()) {
+            return false;
+        }
+        for (const auto& type : next.filetypeFilter) {
+            if (!scanned.filetypeFilter.count(type)) {
+                return false;
+            }
+        }
+    }
+
+    const bool scannedTagged = !scanned.tagFilter.empty() || scanned.tagUntagged;
+    if (scannedTagged && (next.tagFilter != scanned.tagFilter || next.tagMatchAll != scanned.tagMatchAll
+                          || next.tagUntagged != scanned.tagUntagged)) {
+        return false;
+    }
+
+    return true;
+}
+
+}
+
 void FileCatalog::filterChanged ()
 {
     //TODO !!! there is too many repetitive and unnecessary executions of
@@ -4732,8 +4803,12 @@ void FileCatalog::filterChanged ()
     // (debounced) when the filter itself changed. filterChanged() also fires
     // for internal reasons (previews finishing, streamed adds) — rescanning
     // on those would spin the scan in a loop.
+    // A filter that only narrows what the last scan matched (another star,
+    // one label fewer) needs no walk over every folder: the browser has the
+    // superset already and applyFilter above did the rest.
     if (globalScopeActive_ && !inGlobalStart_
-            && filterScanKey(getFilter()) != globalLastScanKey_) {
+            && filterScanKey(getFilter()) != globalLastScanKey_
+            && !(globalLastScanFilterValid_ && filterOnlyNarrows(getFilter(), globalLastScanFilter_))) {
         // What is on screen may all be filtered away before the rescan has
         // looked: say nothing rather than "no photos" in the meantime.
         fileBrowser->setEmptyStateText(Glib::ustring());

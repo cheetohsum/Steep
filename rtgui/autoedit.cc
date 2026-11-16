@@ -2899,6 +2899,8 @@ AutoGradeFeatures buildSteepAutoEditParamsInternal(
     const rtengine::procparams::ProcParams& source,
     rtengine::procparams::ProcParams& result)
 {
+    // One cache load for the 3-5 small renders below instead of one each.
+    Thumbnail::BaseHold keepLoaded(&thumbnail);
     AutoGradeFeatures features = analyzeSteepAutoGrade(thumbnail);
     AutoEditRender render;
     applySteepAutoEdit(thumbnail, features, result, render);

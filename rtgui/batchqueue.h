@@ -17,6 +17,10 @@
  */
 #pragma once
 
+#include <future>
+#include <memory>
+#include <string>
+
 #include <set>
 
 #include <gtkmm.h>
@@ -95,6 +99,13 @@ public:
     static int calcMaxThumbnailHeight();
 
 private:
+    // The finished image of the previous job is watermarked, encoded and
+    // written on the IO lane while the next job processes. At most one
+    // write is in flight: a new image waits for it first, so output names
+    // (made unique against files on disk) and memory stay as before.
+    std::future<void> pendingWrite_;
+    std::shared_ptr<std::string> pendingWriteError_;
+    void finishPendingWrite_();
     int getMaxThumbnailHeight() const override;
     void saveThumbnailHeight (int height) override;
     int  getThumbnailHeight () override;

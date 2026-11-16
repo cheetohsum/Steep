@@ -65,6 +65,9 @@ class Thumbnail
 
     // if the thumbnail is in processed mode, this class holds its data:
     rtengine::Thumbnail* tpp;
+    // > 0 while a BaseHold is alive: renders keep tpp instead of freeing it.
+    int baseHoldDepth_ = 0;
+    void releaseLoadedBase_();
     int             tw, th;             // dimensions of timgdata (it stores tpp->width and tpp->height in processed mode for simplicity)
     float           imgRatio;           // hack to avoid rounding error
     ThumbnailSizeSnapshot layoutSize_;
@@ -167,6 +170,21 @@ class Thumbnail
     void loadProperties();
     void updateProcParamsProperties(bool forceUpdate = false);
     void saveXMPSidecarProperties();
+
+public:
+    // Keeps the photo's cached thumbnail data loaded across several renders
+    // (Auto Edit's analysis, metering, checks), which each read it from disk
+    // and decompressed it again. Released when the last hold ends.
+    class BaseHold
+    {
+    public:
+        explicit BaseHold(Thumbnail* thumbnail);
+        ~BaseHold();
+        BaseHold(const BaseHold&) = delete;
+        BaseHold& operator=(const BaseHold&) = delete;
+    private:
+        Thumbnail* thumbnail_;
+    };
 
 public:
     Thumbnail (CacheManager* cm, const Glib::ustring& fname, CacheImageData* cf, const Glib::ustring& cacheBaseName);

@@ -1736,8 +1736,7 @@ rtengine::IImage8* Thumbnail::processThumbImageLocked (const rtengine::procparam
         }
     }
 
-    delete tpp;
-    tpp = nullptr;
+    releaseLoadedBase_();
     return image;
 }
 
@@ -1783,8 +1782,7 @@ Glib::RefPtr<Gdk::Pixbuf> Thumbnail::tryLoadCachedPreviewPixbuf(int h, double& s
     }
 
     tpp->getDimensions(lastW, lastH, lastScale);
-    delete tpp;
-    tpp = nullptr;
+    releaseLoadedBase_();
 
     if (!image) {
         scale = 1.0;
@@ -1902,8 +1900,7 @@ std::unique_ptr<rtengine::Imagefloat> Thumbnail::processAnalysisImage(
     std::unique_ptr<rtengine::IImage8> preview(tpp->processImage(
         params, static_cast<rtengine::eSensorType>(cfs.sensortype), height,
         rtengine::TI_Bilinear, &cfs, scale, false, false, &analysis));
-    delete tpp;
-    tpp = nullptr;
+    releaseLoadedBase_();
     return std::unique_ptr<rtengine::Imagefloat>(analysis);
 }
 
@@ -1962,8 +1959,7 @@ rtengine::IImage8* Thumbnail::upgradeThumbImageLocked (const rtengine::procparam
                 cachedPixbufScale_ = 1.0 / scale;
             }
 
-            delete tpp;
-            tpp = nullptr;
+            releaseLoadedBase_();
             return persisted;
         }
     }
@@ -1982,8 +1978,7 @@ rtengine::IImage8* Thumbnail::upgradeThumbImageLocked (const rtengine::procparam
         }
     }
 
-    delete tpp;
-    tpp = nullptr;
+    releaseLoadedBase_();
     return image;
 }
 
@@ -2125,6 +2120,35 @@ int Thumbnail::infoFromImage(const Glib::ustring &fname, CacheImageData &cfs)
  *  - embedded profile (full thumbnail only)
  *  - LiveThumbData section of the data file
  */
+void Thumbnail::releaseLoadedBase_()
+{
+    // Caller holds mutex. Under a BaseHold the loaded cache stays for the
+    // next render of the same photo.
+    if (baseHoldDepth_ == 0) {
+        delete tpp;
+        tpp = nullptr;
+    }
+}
+
+Thumbnail::BaseHold::BaseHold(Thumbnail* thumbnail) : thumbnail_(thumbnail)
+{
+    if (thumbnail_) {
+        MyMutex::MyLock lock(thumbnail_->mutex);
+        ++thumbnail_->baseHoldDepth_;
+    }
+}
+
+Thumbnail::BaseHold::~BaseHold()
+{
+    if (thumbnail_) {
+        MyMutex::MyLock lock(thumbnail_->mutex);
+        if (--thumbnail_->baseHoldDepth_ == 0) {
+            delete thumbnail_->tpp;
+            thumbnail_->tpp = nullptr;
+        }
+    }
+}
+
 void Thumbnail::_loadThumbnail(bool firstTrial)
 {
 
@@ -2687,8 +2711,7 @@ bool Thumbnail::applyAutoExp (rtengine::procparams::ProcParams& pparams)
     }
 
     if (loadedForAutoExposure) {
-        delete tpp;
-        tpp = nullptr;
+        releaseLoadedBase_();
     }
 
     return metered;
