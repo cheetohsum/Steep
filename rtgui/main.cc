@@ -39,6 +39,7 @@
 
 #include "autoedit.h"
 #include "cachemanager.h"
+#include "delayed.h"
 #include "config.h"
 #include "editorpanel.h"
 #include "extprog.h"
@@ -75,6 +76,38 @@
 
 // stores path to data files
 Glib::ustring argv2;
+
+#ifdef _WIN32
+namespace
+{
+
+// GUI thread only (the debounce helpers run there).
+bool fineTimerHeld = false;
+sigc::connection fineTimerRelease;
+
+void releaseFineTimer()
+{
+    fineTimerRelease.disconnect();
+    if (fineTimerHeld) {
+        timeEndPeriod(1);
+        fineTimerHeld = false;
+    }
+}
+
+void holdFineTimerWhileInteracting()
+{
+    if (!fineTimerHeld) {
+        fineTimerHeld = timeBeginPeriod(1) == TIMERR_NOERROR;
+    }
+    fineTimerRelease.disconnect();
+    fineTimerRelease = Glib::signal_timeout().connect([]() {
+        releaseFineTimer();
+        return false;
+    }, 1500);
+}
+
+}
+#endif
 
 namespace {
 
@@ -527,15 +560,14 @@ int main (int argc, char **argv)
     // timeout is rounded up to the next tick, which put a hard floor under the
     // slider debounce -- a 20ms delay actually fired at ~31ms, so dragging
     // could not update faster than ~24 times a second no matter how quick the
-    // render was. Released in the RAII guard below at exit.
+    // render was. The 1 ms resolution used to be held for the whole session,
+    // waking the process (and the CPU) more often while idle; it is now held
+    // only while a drag is feeding the debounce, and released 1.5 s after.
+    delayed_helper::interactiveHook().store(&holdFineTimerWhileInteracting, std::memory_order_relaxed);
     struct TimerResolutionGuard {
-        bool raised;
-        TimerResolutionGuard() : raised(timeBeginPeriod(1) == TIMERR_NOERROR) {}
         ~TimerResolutionGuard()
         {
-            if (raised) {
-                timeEndPeriod(1);
-            }
+            releaseFineTimer();
         }
     } timerResolutionGuard;
 #endif

@@ -142,6 +142,9 @@ protected:
     bool sharpMaskChanged;
     int scale;
     bool highDetailPreprocessComputed;
+    // Per-pass local-adjustment working copies, kept between passes.
+    std::unique_ptr<LabImage> locallabReservBuf_;
+    std::unique_ptr<LabImage> locallabLastOrigBuf_;
     bool highDetailRawComputed;
     // A preprocess has run on this source since the last raw-parameter
     // change (any of which carries M_PREPROC and reruns it).

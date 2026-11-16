@@ -78,6 +78,9 @@ protected:
     // The Lab image just before Film Lab, kept while a creative effect is on
     // so an EFFECTS-only pass (grain, light effects) replays only the tail.
     std::unique_ptr<LabImage> preEffectsCrop_;
+    // Per-pass local-adjustment working copies, kept between passes.
+    std::unique_ptr<LabImage> locallabReservBuf_;
+    std::unique_ptr<LabImage> locallabLastOrigBuf_;
     /// Pipeline bits of coordinator passes that did not update this crop.
     std::atomic<int> skippedTodo{0};
     CieImage*    cieCrop;      // allocating 6 images, each in "one chunk" allocation

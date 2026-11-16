@@ -155,6 +155,9 @@ public:
     void trimMemory(int level);
 
     int getCachedWidth() const;
+    // Bumped whenever the class maps change (new photo, maps landing, depth
+    // classes added): lets a view redraw only when there is something new.
+    std::uint64_t getGeneration() const;
     int getCachedHeight() const;
     int getFullWidth() const;
     int getFullHeight() const;

@@ -1763,7 +1763,18 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
                 overlaysNeedTrueImage || isFlawnOver || !colorPickers.empty());
 
             if (overlaysNeedTrueImage && cropHandler.cropPixbuftrue) {
-                Glib::RefPtr<Gdk::Pixbuf> tmp = cropHandler.cropPixbuf->copy ();
+                // The overlay depends only on the two images, the indicator
+                // switches and the thresholds. It was rebuilt on every expose
+                // -- handle hovers, drags, mask-list hovers -- with a full copy,
+                // per-pixel loops and, for the focus mask, four allocations.
+                const auto& overlayOptions = App::get().options();
+                const ClipOverlayKey overlayKey {
+                    cropHandler.cropPixbuf.get(), cropHandler.cropPixbuftrue.get(),
+                    showR, showG, showB, showL, showFocusMask, showcs, showch,
+                    overlayOptions.highlightThreshold, overlayOptions.shadowThreshold
+                };
+                const bool overlayHit = clipOverlay_ && overlayKey == clipOverlayKey_;
+                Glib::RefPtr<Gdk::Pixbuf> tmp = overlayHit ? clipOverlay_ : cropHandler.cropPixbuf->copy ();
                 guint8* pix = tmp->get_pixels();
                 guint8* pixWrkSpace = cropHandler.cropPixbuftrue->get_pixels();
 
@@ -1773,6 +1784,7 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
                 const int bHeight = tmp->get_height();
                 const int bWidth = tmp->get_width();
 
+                if (!overlayHit) {
                 if (showFocusMask) { // modulate preview to display focus mask
                     const int blur_radius2 = 1;                             // radius of small kernel. 1 => 3x3 kernel
                     const int blur_dim2 = 2 * blur_radius2 + 1;             // dimension of small kernel
@@ -2139,6 +2151,14 @@ void CropWindow::expose (Cairo::RefPtr<Cairo::Context> cr)
                         }
                     }
                 }
+
+                // The source pixbufs are held here, so a key's addresses
+                // cannot be reused by a later image while it is cached.
+                clipOverlay_ = tmp;
+                clipOverlayKey_ = overlayKey;
+                clipOverlaySources_[0] = cropHandler.cropPixbuf;
+                clipOverlaySources_[1] = cropHandler.cropPixbuftrue;
+                } // !overlayHit
 
                 hidpi::LogicalCoord offset = windowPos + imgAreaPos + imgPos;
                 Gdk::Cairo::set_source_pixbuf(cr, tmp, offset.x, offset.y);

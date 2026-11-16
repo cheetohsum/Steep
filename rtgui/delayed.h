@@ -50,6 +50,24 @@ namespace delayed_helper
         return value;
     }
 
+    /**
+     * Called whenever a debounced widget sees input (a slider, curve, wheel
+     * or handle being dragged). main() installs one on Windows that holds a
+     * 1 ms system timer resolution only while such input keeps arriving.
+     */
+    inline std::atomic<void (*)()>& interactiveHook()
+    {
+        static std::atomic<void (*)()> hook{nullptr};
+        return hook;
+    }
+
+    inline void noteInteractive()
+    {
+        if (void (*const hook)() = interactiveHook().load(std::memory_order_relaxed)) {
+            hook();
+        }
+    }
+
     // C++14
 
     // See https://gist.github.com/ntessore/dc17769676fb3c6daa1f
@@ -146,6 +164,7 @@ public:
             return;
         }
 
+        delayed_helper::noteInteractive();
         params = std::make_tuple(ts...);
 
         min_timeout.disconnect();
@@ -270,6 +289,7 @@ private:
             return;
         }
 
+        delayed_helper::noteInteractive();
         params = std::make_tuple(ts...);
 
         min_timeout.disconnect();

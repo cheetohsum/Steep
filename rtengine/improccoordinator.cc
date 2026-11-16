@@ -1838,8 +1838,8 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
              *  2017 2018 Jacques Desmis <jdesmis@gmail.com>
              *  2019 Pierre Cabrera <pierre.cab@gmail.com>
              */
-            const std::unique_ptr<LabImage> reserv(new LabImage(*oprevl, true));
-            const std::unique_ptr<LabImage> lastorigimp(new LabImage(*oprevl, true));
+            const std::unique_ptr<LabImage>& reserv = reuseLabCopy(locallabReservBuf_, *oprevl);
+            const std::unique_ptr<LabImage>& lastorigimp = reuseLabCopy(locallabLastOrigBuf_, *oprevl);
             std::unique_ptr<LabImage> savenormdr;
             std::unique_ptr<LabImage> savenormtm;
             std::unique_ptr<LabImage> savenormreti;

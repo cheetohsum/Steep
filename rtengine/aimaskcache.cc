@@ -1877,6 +1877,12 @@ void AIMaskCache::invalidateAll()
     cachedWidth_ = cachedHeight_ = fullW_ = fullH_ = 0;
 }
 
+std::uint64_t AIMaskCache::getGeneration() const
+{
+    MyMutex::MyLock lock(mutex_);
+    return generation_;
+}
+
 int AIMaskCache::getCachedWidth() const
 {
     MyMutex::MyLock lock(mutex_);

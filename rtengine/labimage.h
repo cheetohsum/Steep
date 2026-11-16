@@ -18,6 +18,8 @@
  */
 #pragma once
 
+#include <memory>
+
 #include <cstring>
 
 namespace rtengine
@@ -47,4 +49,18 @@ public:
     void clear(bool multiThread = false);
 };
 
+}
+
+// Local adjustments keep two copies of the Lab image per pass. The copies
+// are needed; allocating them (and faulting in ~20 MB of fresh pages each)
+// on every pass is not, so the buffers persist while their size holds.
+inline const std::unique_ptr<rtengine::LabImage>& reuseLabCopy(std::unique_ptr<rtengine::LabImage>& buffer,
+                                                               const rtengine::LabImage& source)
+{
+    if (!buffer || buffer->W != source.W || buffer->H != source.H) {
+        buffer.reset(new rtengine::LabImage(source, true));
+    } else {
+        buffer->CopyFrom(&source);
+    }
+    return buffer;
 }

@@ -207,6 +207,25 @@ private:
     // Crop pixbufs are always freshly created, never written in place, so
     // the pixbuf's identity is the cache key; holding it keeps that true.
     Glib::RefPtr<Gdk::Pixbuf> surfacePixbuf_;
+
+    // The last clipping / focus-mask overlay and what it was made from.
+    struct ClipOverlayKey {
+        const void* image = nullptr;
+        const void* trueImage = nullptr;
+        bool r = false, g = false, b = false, l = false, focus = false, shadows = false, highlights = false;
+        int highlightThreshold = 0;
+        int shadowThreshold = 0;
+
+        bool operator==(const ClipOverlayKey& o) const
+        {
+            return image == o.image && trueImage == o.trueImage && r == o.r && g == o.g && b == o.b
+                && l == o.l && focus == o.focus && shadows == o.shadows && highlights == o.highlights
+                && highlightThreshold == o.highlightThreshold && shadowThreshold == o.shadowThreshold;
+        }
+    };
+    Glib::RefPtr<Gdk::Pixbuf> clipOverlay_;
+    ClipOverlayKey clipOverlayKey_;
+    Glib::RefPtr<Gdk::Pixbuf> clipOverlaySources_[2];
     Cairo::RefPtr<Cairo::ImageSurface> surface_;
     void setSourceCached_(const Cairo::RefPtr<Cairo::Context>& cr,
                           const Glib::RefPtr<Gdk::Pixbuf>& pixbuf, double x, double y);

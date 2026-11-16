@@ -72,6 +72,24 @@
 namespace
 {
 
+// One stuck-pixel scan, and what it was run on (see preprocess).
+struct StuckScanEntry {
+    std::string file;
+    unsigned int frame = 0;
+    int width = 0;
+    int height = 0;
+    rtengine::procparams::RAWParams raw;
+    rtengine::procparams::LensProfParams lens;
+    std::vector<rtengine::StuckPixelCandidate> candidates;
+    std::vector<float> leaks;
+
+    bool sameScan(const StuckScanEntry& other) const
+    {
+        return frame == other.frame && width == other.width && height == other.height
+            && file == other.file && raw == other.raw && lens == other.lens;
+    }
+};
+
 bool rawLoadTimingLogEnabled()
 {
     static const bool enabled = std::getenv("STEEP_FILESEL_LOG") != nullptr;
@@ -2070,11 +2088,53 @@ void RawImageSource::preprocess(const RAWParams &raw, const LensProfParams &lens
         std::mutex candidateMutex;
         std::vector<StuckPixelCandidate> candidates;
         std::vector<float> leaks;
-        stuckpixels::find(rawData, W, H, cfa, raw.stuckPixelSensitivity, [&](int row, int col, float strength, float leak) {
-            std::lock_guard<std::mutex> lock(candidateMutex);
-            candidates.push_back({row, col, strength});
-            leaks.push_back(leak);
-        });
+
+        // ... from the scan cache when this file was scanned under the same
+        // raw-stage settings: the full-sensor detector reran on the
+        // full-quality twin's decode, on Bayer settles and on every reopen
+        // and export of a photo, for an identical list.
+        static std::mutex scanCacheMutex;
+        static std::deque<StuckScanEntry> scanCache;
+        StuckScanEntry key;
+        key.file = ri->get_filename();
+        key.frame = currFrame;
+        key.width = W;
+        key.height = H;
+        key.raw = raw;
+        key.raw.bayersensor.method.clear();   // the scan runs before anything reads these
+        key.raw.xtranssensor.method.clear();
+        key.raw.bayersensor.ccSteps = 0;
+        key.raw.xtranssensor.ccSteps = 0;
+        key.lens = lensProf;
+
+        bool cached = false;
+        {
+            std::lock_guard<std::mutex> lock(scanCacheMutex);
+            for (const auto& entry : scanCache) {
+                if (entry.sameScan(key)) {
+                    candidates = entry.candidates;
+                    leaks = entry.leaks;
+                    cached = true;
+                    break;
+                }
+            }
+        }
+
+        if (!cached) {
+            stuckpixels::find(rawData, W, H, cfa, raw.stuckPixelSensitivity, [&](int row, int col, float strength, float leak) {
+                std::lock_guard<std::mutex> lock(candidateMutex);
+                candidates.push_back({row, col, strength});
+                leaks.push_back(leak);
+            });
+
+            key.candidates = candidates;
+            key.leaks = leaks;
+            std::lock_guard<std::mutex> lock(scanCacheMutex);
+            scanCache.push_front(std::move(key));
+            while (scanCache.size() > 6) {
+                scanCache.pop_back();
+            }
+        }
 
         // ... and what this camera body is known to have (StuckPixelMemory):
         // photosites seen stuck in two separate sessions are fixed in every

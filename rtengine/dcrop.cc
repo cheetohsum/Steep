@@ -1178,8 +1178,8 @@ void Crop::update(int todo)
 
         labnCrop->CopyFrom(laboCrop);
 
-        const std::unique_ptr<LabImage> reservCrop(new LabImage(*laboCrop, true));
-        const std::unique_ptr<LabImage> lastorigCrop(new LabImage(*laboCrop, true));
+        const std::unique_ptr<LabImage>& reservCrop = reuseLabCopy(locallabReservBuf_, *laboCrop);
+        const std::unique_ptr<LabImage>& lastorigCrop = reuseLabCopy(locallabLastOrigBuf_, *laboCrop);
         std::unique_ptr<LabImage> savenormtmCrop;
         std::unique_ptr<LabImage> savenormretiCrop;
         auto& lllocalcurve2 = parent->lllocalcurve;

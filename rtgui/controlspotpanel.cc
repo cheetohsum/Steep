@@ -1369,10 +1369,26 @@ void ControlSpotPanel::startAIPreviewRefresh()
 {
     aiPreviewRefresh_.disconnect();
     aiPreviewAttempts_ = 0;
+#ifdef RT_AI_MASKING
+    // Redraw once now, then only when the mask cache has something new:
+    // every list redraw rebuilds every row's swatch pixel by pixel, and this
+    // used to force twenty of them for each AI change.
+    treeview_->queue_draw();
+    auto lastGeneration = std::make_shared<std::uint64_t>(rtengine::AIMaskCache::getInstance().getGeneration());
+    aiPreviewRefresh_ = Glib::signal_timeout().connect([this, lastGeneration]() {
+        const std::uint64_t generation = rtengine::AIMaskCache::getInstance().getGeneration();
+        if (generation != *lastGeneration) {
+            *lastGeneration = generation;
+            treeview_->queue_draw();
+        }
+        return ++aiPreviewAttempts_ < 20;
+    }, 120);
+#else
     aiPreviewRefresh_ = Glib::signal_timeout().connect([this]() {
         treeview_->queue_draw();
         return ++aiPreviewAttempts_ < 20;
     }, 120);
+#endif
 }
 
 bool ControlSpotPanel::onTreeviewMotion(GdkEventMotion* event)
