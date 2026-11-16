@@ -209,6 +209,9 @@ void applyEdit(rtengine::procparams::ProcParams& p, const std::string& target, i
         event = rtengine::EvExpComp;
     } else if (target == "spotsel") {
         event = rtengine::EvLocallabSpotSelected;
+    } else if (target == "locallab2") {
+        p.locallab.spots[2].expcomp = 0.1 * wave + 0.2;
+        event = rtengine::Evlocallabexpcomp;
     } else if (target == "wbhold") {
         // Reference for target=wb: the drag's final white balance on every
         // step, so the settled frame is that WB without a drag behind it.
@@ -265,6 +268,28 @@ int runHeadlessEditBench(const char* file)
     }
     if (const char* pp3 = std::getenv("STEEP_CLI_EDIT_BENCH_PP3")) {
         params.load(pp3);
+    }
+
+    if (target == "locallab2") {
+        // Three spots, the last one selected and edited: what the spot
+        // prefix cache is for (spots 0 and 1 need not rerun per tick).
+        params.locallab.enabled = true;
+        params.locallab.spots.clear();
+        for (int i = 0; i < 3; ++i) {
+            params.locallab.spots.emplace_back();
+            auto& spot = params.locallab.spots.back();
+            spot.isvisible = true;
+            spot.expexpose = true;
+            spot.visiexpose = true;
+            spot.expcomp = 0.15 * (i + 1);
+            if (i < 2) {
+                spot.expshadhigh = true;
+                spot.visishadhigh = true;
+                spot.highlights = 30;
+                spot.shadows = 30;
+            }
+        }
+        params.locallab.selspot = 2;
     }
 
     if (target == "locallab" || target == "spotsel" || target == "aimask") {

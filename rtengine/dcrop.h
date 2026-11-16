@@ -19,12 +19,15 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <memory>
+#include <vector>
 
 #include "rtengine.h"
 #include "cropupdatestate.h"
 #include "pipettebuffer.h"
 #include "refreshmap.h"
+#include "procparams.h"
 #include "rtgui/threadutils.h"
 
 namespace rtengine
@@ -81,6 +84,28 @@ protected:
     // Per-pass local-adjustment working copies, kept between passes.
     std::unique_ptr<LabImage> locallabReservBuf_;
     std::unique_ptr<LabImage> locallabLastOrigBuf_;
+
+    // Spot prefix cache: the Lab image as it entered the selected spot k, so
+    // a tick on spot k need not rerun spots 0..k-1. Keyed on the image that
+    // entered the spot loop (a hash: it covers every upstream change), the
+    // geometry, spots 0..k-1, the preview's references for them, the AI mask
+    // generation and the global settings the spots read.
+    struct SpotPrefix {
+        std::unique_ptr<LabImage> image;
+        int k = -1;
+        std::uint64_t inputHash = 0;
+        int cropx = 0, cropy = 0, skip = 0;
+        std::uint64_t aiGeneration = 0;
+        bool blackwhite = false;
+        Glib::ustring workingProfile;
+        std::vector<procparams::LocallabParams::LocallabSpot> spots;
+        std::vector<float> refs;
+        std::vector<LocallabListener::locallabDenoiseLC> denoiselc;
+        std::vector<LocallabListener::locallabDenoiseMAD> denoisemadl;
+        std::vector<LocallabListener::locallabsharAFT> sharaft;
+        std::vector<LocallabListener::locallabDenoiseLC2> denoiselc2;
+    };
+    SpotPrefix spotPrefix_;
     /// Pipeline bits of coordinator passes that did not update this crop.
     std::atomic<int> skippedTodo{0};
     CieImage*    cieCrop;      // allocating 6 images, each in "one chunk" allocation

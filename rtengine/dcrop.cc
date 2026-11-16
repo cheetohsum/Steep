@@ -21,6 +21,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <memory>
 #include <new>
@@ -1278,7 +1279,103 @@ void Crop::update(int todo)
         std::vector<LocallabListener::locallabsharAFT> locallsharaft;
         std::vector<LocallabListener::locallabDenoiseLC2> localldenoiselc2;
 
-        for (int sp = 0; sp < (int)params.locallab.spots.size(); sp++) {
+        // Spot prefix cache (see SpotPrefix in dcrop.h). Off in every mask or
+        // delta-E display mode (those rewrite params after the selected spot)
+        // and for spot 0. STEEP_NO_LOCALLAB_PREFIX=1 turns it off.
+        static const bool noSpotPrefix = []() {
+            const char* const value = std::getenv("STEEP_NO_LOCALLAB_PREFIX");
+            return value != nullptr && value[0] != '\0' && value[0] != '0';
+        }();
+        const int spotCount = static_cast<int>(params.locallab.spots.size());
+        const int prefixSpot = params.locallab.selspot;
+        const bool prefixUsable = !noSpotPrefix && prefixSpot > 0 && prefixSpot < spotCount
+            && !parent->isShowingMaskView();
+        std::uint64_t prefixInputHash = 0;
+        std::uint64_t prefixAiGeneration = 0;
+        std::vector<float> prefixRefs;
+        if (prefixUsable) {
+            std::uint64_t h = 1469598103934665603ULL;
+            const auto mixPlane = [&h](float** rows, int w, int hgt) {
+                for (int y = 0; y < hgt; ++y) {
+                    const float* row = rows[y];
+                    for (int x = 0; x < w; ++x) {
+                        std::uint32_t bits;
+                        std::memcpy(&bits, row + x, sizeof(bits));
+                        h = (h ^ bits) * 0x100000001b3ULL;
+                    }
+                }
+            };
+            mixPlane(laboCrop->L, laboCrop->W, laboCrop->H);
+            mixPlane(laboCrop->a, laboCrop->W, laboCrop->H);
+            mixPlane(laboCrop->b, laboCrop->W, laboCrop->H);
+            prefixInputHash = h;
+#ifdef RT_AI_MASKING
+            prefixAiGeneration = AIMaskCache::getInstance().getGeneration();
+#endif
+            for (int sp = 0; sp < prefixSpot; ++sp) {
+                for (const std::vector<float>* refs : {&parent->huerefblurs, &parent->chromarefblurs, &parent->lumarefblurs,
+                                                       &parent->huerefs, &parent->chromarefs, &parent->lumarefs,
+                                                       &parent->sobelrefs, &parent->avgs, &parent->meantms,
+                                                       &parent->stdtms, &parent->meanretis, &parent->stdretis}) {
+                    prefixRefs.push_back(sp < static_cast<int>(refs->size()) ? (*refs)[sp] : 0.f);
+                }
+            }
+        }
+        const auto prefixMatches = [&]() {
+            const SpotPrefix& c = spotPrefix_;
+            if (!c.image || c.k != prefixSpot || c.inputHash != prefixInputHash
+                    || c.image->W != labnCrop->W || c.image->H != labnCrop->H
+                    || c.cropx != cropx || c.cropy != cropy || c.skip != skip
+                    || c.aiGeneration != prefixAiGeneration
+                    || c.blackwhite != params.blackwhite.enabled
+                    || c.workingProfile != params.icm.workingProfile
+                    || c.refs != prefixRefs || static_cast<int>(c.spots.size()) != prefixSpot) {
+                return false;
+            }
+            for (int sp = 0; sp < prefixSpot; ++sp) {
+                if (!(c.spots[sp] == params.locallab.spots[sp])) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        int firstSpot = 0;
+        if (prefixUsable && prefixMatches()) {
+            labnCrop->CopyFrom(spotPrefix_.image.get());
+            lastorigCrop->CopyFrom(spotPrefix_.image.get());
+            localldenoiselc = spotPrefix_.denoiselc;
+            localldenoisemadl = spotPrefix_.denoisemadl;
+            locallsharaft = spotPrefix_.sharaft;
+            localldenoiselc2 = spotPrefix_.denoiselc2;
+            firstSpot = prefixSpot;
+            traceStage("locallab-prefix-hit");
+        }
+
+        for (int sp = firstSpot; sp < (int)params.locallab.spots.size(); sp++) {
+            if (prefixUsable && firstSpot == 0 && sp == prefixSpot) {
+                // Entering the selected spot: keep what spots 0..k-1 made.
+                SpotPrefix& c = spotPrefix_;
+                if (!c.image || c.image->W != labnCrop->W || c.image->H != labnCrop->H) {
+                    c.image.reset(new LabImage(*labnCrop, true));
+                } else {
+                    c.image->CopyFrom(labnCrop);
+                }
+                c.k = prefixSpot;
+                c.inputHash = prefixInputHash;
+                c.cropx = cropx;
+                c.cropy = cropy;
+                c.skip = skip;
+                c.aiGeneration = prefixAiGeneration;
+                c.blackwhite = params.blackwhite.enabled;
+                c.workingProfile = params.icm.workingProfile;
+                c.refs = prefixRefs;
+                c.spots.assign(params.locallab.spots.begin(), params.locallab.spots.begin() + prefixSpot);
+                c.denoiselc = localldenoiselc;
+                c.denoisemadl = localldenoisemadl;
+                c.sharaft = locallsharaft;
+                c.denoiselc2 = localldenoiselc2;
+            }
             locRETgainCurve.Set(params.locallab.spots.at(sp).localTgaincurve);
             locRETtransCurve.Set(params.locallab.spots.at(sp).localTtranscurve);
             const bool LHutili = loclhCurve.Set(params.locallab.spots.at(sp).LHcurve);
