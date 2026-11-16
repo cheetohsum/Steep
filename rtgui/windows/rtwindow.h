@@ -204,6 +204,10 @@ public:
     void closeOpenEditors();
     void setEditorMode (bool tabbedUI);
     void createSetmEditor();
+    // Single-tab mode: builds the editor if it is not built yet. Startup
+    // schedules it after the browser's first paint; anything that needs the
+    // editor sooner calls this. No-op in tabbed mode.
+    void ensureEditor();
 
     void writeToolExpandedStatus (std::vector<int> &tpOpen);
 

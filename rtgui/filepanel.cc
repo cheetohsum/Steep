@@ -3305,6 +3305,9 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
             }
         }
 
+        if (!opts.tabbedUI) {
+            parent->ensureEditor();   // may not be built yet right after startup
+        }
         EditorPanel* quickPreviewTarget = opts.tabbedUI ? epanel : parent->epanel;
         if (quickPreviewTarget) {
             double cachedScale = 1.0;
@@ -3575,6 +3578,9 @@ bool FilePanel::fileSelected (Thumbnail* thm, eRTNav preloadDirectionHint)
     // Pixbuf before the editor view switch. Avoid synchronous thumbnail
     // rendering here; first paint matters more than manufacturing a fallback
     // preview on the GTK thread.
+    if (!opts.tabbedUI) {
+        parent->ensureEditor();   // may not be built yet right after startup
+    }
     EditorPanel* quickPreviewTarget = opts.tabbedUI ? pl->epanel : parent->epanel;
     bool quickPreviewMissed = false;
     if (quickPreviewTarget) {
@@ -3936,6 +3942,7 @@ bool FilePanel::imageLoaded( Thumbnail* thm, ProgressConnector<rtengine::Initial
             } else {
                 // View was already switched in fileSelected(); just open.
                 FILESEL_LOG("[imageLoaded] calling epanel->open\n");
+                parent->ensureEditor();
                 parent->epanel->open(loadThm, loadedImage);
                 FILESEL_LOG("[imageLoaded] epanel->open returned\n");
                 parent->set_title_decorated(loadThm->getFileName());

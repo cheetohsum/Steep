@@ -600,8 +600,15 @@ RTWindow::RTWindow ()
             bpanel->embedFastExportSettings(fastExport);
         }
 
+        // The editor (about 70 tool panels, the image area, histogram,
+        // history and its own browsers) used to be built here, before the
+        // first frame, though Steep opens on the browser. It is built once
+        // the browser is up -- or at once by ensureEditor() when something
+        // needs it sooner, such as opening a photo.
         if (isSingleTabMode()) {
-            createSetmEditor();
+            Glib::signal_idle().connect_once([this]() { ensureEditor(); }, Glib::PRIORITY_LOW);
+            // Thumbnail streaming can starve a low-priority idle for a while.
+            Glib::signal_timeout().connect_once([this]() { ensureEditor(); }, 2000);
         }
         mainNB->set_current_page (mainNB->page_num (*fpanel));
 
@@ -1826,6 +1833,7 @@ void RTWindow::on_realize ()
     // switch the trace is after. STEEP_SWITCH_SELFTEST_DELAY_MS/_PERIOD_MS
     // move the flips relative to startup (e.g. into a cold folder load).
     if (const char* const cyclesEnv = std::getenv("STEEP_SWITCH_SELFTEST")) {
+        ensureEditor();
         if (isSingleTabMode() && epanel && fpanel && mainNB) {
             const int cycles = std::max(1, std::atoi(cyclesEnv));
             const char* const delayEnv = std::getenv("STEEP_SWITCH_SELFTEST_DELAY_MS");
@@ -2175,6 +2183,7 @@ bool RTWindow::keyPressed (GdkEventKey* event)
                 return true;
 
             case GDK_KEY_F4: //single tab mode, editor panel
+                ensureEditor();
                 if (isSingleTabMode() && epanel) {
                     mainNB->set_current_page (mainNB->page_num (*epanel));
                 }
@@ -2244,7 +2253,7 @@ bool RTWindow::on_delete_event (GdkEventAny* event)
     auto& options = App::get().mut_options();
 
     if (isSingleTabMode() || App::get().isSimpleEditor()) {
-        isProcessing = epanel->getIsProcessing();
+        isProcessing = epanel && epanel->getIsProcessing();
     } else if (options.multiDisplayMode > 0) {
         editWindow = EditWindow::getInstance (this);
         isProcessing = editWindow->isProcessing();
@@ -2270,7 +2279,7 @@ bool RTWindow::on_delete_event (GdkEventAny* event)
         bpanel->saveOptions ();
     }
 
-    if ((isSingleTabMode() || App::get().isSimpleEditor()) && epanel->isRealized()) {
+    if ((isSingleTabMode() || App::get().isSimpleEditor()) && epanel && epanel->isRealized()) {
         epanel->saveProfile();
         // A view switch may have left its sidecar write on the cleanup
         // executor; finish it before teardown so the file cannot be torn.
@@ -2351,7 +2360,7 @@ bool RTWindow::on_delete_event (GdkEventAny* event)
 
 void RTWindow::writeToolExpandedStatus (std::vector<int> &tpOpen)
 {
-    if ((isSingleTabMode() || App::get().isGimpPlugin()) && epanel->isRealized()) {
+    if ((isSingleTabMode() || App::get().isGimpPlugin()) && epanel && epanel->isRealized()) {
         epanel->writeToolExpandedStatus (tpOpen);
     } else {
         // Storing the options of the last EditorPanel before Gtk destroys everything
@@ -2599,6 +2608,7 @@ void RTWindow::on_nav_switched (Gtk::ToggleButton* active)
             mainNB->set_current_page (mainNB->page_num (*fpanel));
         } else if (active == navEditor) {
             // In single-tab mode, switch to epanel; in multi-tab, switch to last editor
+            ensureEditor();
             if (isSingleTabMode() && epanel) {
                 mainNB->set_current_page (mainNB->page_num (*epanel));
             } else if (!epanels.empty()) {
@@ -2638,6 +2648,7 @@ void RTWindow::syncNavButtons (guint page_num)
 
 void RTWindow::SetEditorCurrent()
 {
+    ensureEditor();
     if (!mainNB || !epanel) {
         return;
     }
@@ -2664,7 +2675,7 @@ void RTWindow::SetMainCurrent()
 
 void RTWindow::MoveFileBrowserToMain()
 {
-    if ( fpanel->ribbonPane->get_children().empty()) {
+    if (epanel && fpanel->ribbonPane->get_children().empty()) {
         ViewSwitchTrace trace ("->browser.move");
         FileCatalog *fCatalog = fpanel->fileCatalog;
         epanel->catalogPane->remove (*fCatalog);
@@ -2705,7 +2716,8 @@ void RTWindow::MoveFileBrowserToMain()
 
 void RTWindow::MoveFileBrowserToEditor()
 {
-    if (epanel->catalogPane->get_children().empty() ) {
+    ensureEditor();
+    if (epanel && epanel->catalogPane->get_children().empty() ) {
         ViewSwitchTrace trace ("->editor.move");
         FileCatalog *fCatalog = fpanel->fileCatalog;
         fpanel->ribbonPane->remove (*fCatalog);
@@ -2970,6 +2982,16 @@ void RTWindow::setEditorMode (bool tabbedUI)
         epanel->show_all();
         set_title_decorated ("");
     }
+}
+
+void RTWindow::ensureEditor()
+{
+    if (epanel || !isSingleTabMode() || on_delete_has_run) {
+        return;
+    }
+
+    createSetmEditor();
+    epanel->show_all();   // as setEditorMode does for an editor built after startup
 }
 
 void RTWindow::createSetmEditor()

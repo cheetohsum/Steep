@@ -2529,6 +2529,9 @@ EditorPanel::EditorPanel (FilePanel* filePanel)
         // the connection goes with this panel).
         filePanel->fileCatalog->signalGlobalScopeChanged().connect(
             sigc::mem_fun(*this, &EditorPanel::onGlobalScopeChanged));
+        // The editor can be built after startup (RTWindow::ensureEditor):
+        // take the scope as it is now, not only its later changes.
+        onGlobalScopeChanged(filePanel->fileCatalog->isGlobalScope());
     }
 
     if (filePanel && tpc) {
