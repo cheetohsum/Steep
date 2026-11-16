@@ -24,6 +24,8 @@
 
 #pragma once
 
+#include <memory>
+
 #include "controlspotpanel.h"
 #include "guiutils.h"
 #include "tools/locallabtools.h"
@@ -43,25 +45,28 @@ private:
     // Spot control panel widget
     ControlSpotPanel* const expsettings;
 
-    // Locallab tool widgets
-    LocallabColor expcolor;
-    LocallabExposure expexpose;
-    LocallabShadow expshadhigh;
-    LocallabVibrance expvibrance;
-    LocallabSoft expsoft;
-    LocallabBlur expblur;
-    LocallabTone exptonemap;
-    LocallabRetinex expreti;
-    LocallabSharp expsharp;
-    LocallabContrast expcontrast;
-    LocallabCBDL expcbdl;
-    LocallabLog explog;
+    // Locallab tool widgets. All but the mask and AI-mask tools are built
+    // on first need (ensureSubTools): they are never shown -- per-mask editing
+    // goes through the global tools -- and only carry the selected spot's
+    // params, yet they were ~480 sliders and ~70 curve groups built at launch.
+    std::unique_ptr<LocallabColor> expcolor;
+    std::unique_ptr<LocallabExposure> expexpose;
+    std::unique_ptr<LocallabShadow> expshadhigh;
+    std::unique_ptr<LocallabVibrance> expvibrance;
+    std::unique_ptr<LocallabSoft> expsoft;
+    std::unique_ptr<LocallabBlur> expblur;
+    std::unique_ptr<LocallabTone> exptonemap;
+    std::unique_ptr<LocallabRetinex> expreti;
+    std::unique_ptr<LocallabSharp> expsharp;
+    std::unique_ptr<LocallabContrast> expcontrast;
+    std::unique_ptr<LocallabCBDL> expcbdl;
+    std::unique_ptr<LocallabLog> explog;
     LocallabMask expmask;
 #ifdef RT_AI_MASKING
     LocallabAIMask expaimask;
 
 #endif
-    Locallabcie expcie;
+    std::unique_ptr<Locallabcie> expcie;
 
     // Internal ToolGroups for per-mask editing (hideable)
     ToolGroup* llLightGroup_;
@@ -75,6 +80,13 @@ private:
     bool skipToolWrites_ = false;
 
     std::vector<LocallabTool*> locallabTools;
+    // Built while any spot exists (read/write call ensureSubTools first), so
+    // a photo without masks never builds them and nothing saved can differ.
+    bool subToolsBuilt_ = false;
+    std::unique_ptr<rtengine::procparams::ProcParams> subToolDefaults_;
+    std::unique_ptr<ParamsEdited> subToolDefaultsEdited_;
+    void ensureSubTools();
+    void rebuildToolList();
 
     // Locallab tools mask background management data
     std::vector<locallabRetiMinMax> retiMinMax;
@@ -133,7 +145,7 @@ public:
     void hideSettingsHeader();
 
     // Access exposure tool for preview strip routing
-    LocallabExposure& getExposureTool() { return expexpose; }
+    LocallabExposure& getExposureTool() { ensureSubTools(); return *expexpose; }
     Gtk::Button* getAddMaskButton() const { return expsettings->getAddMaskButton(); }
 
     // One-click mask creation (Smart Masks chip strip)
