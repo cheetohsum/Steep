@@ -278,6 +278,10 @@ private:
     bool runNavigationBenchmarkStep_(int dirId);
     sigc::connection reparseDirectoryConn_;
     bool reparseDirectoryQueued_ = false;
+    // The disk half of reparseDirectory runs on the IO lane; one at a time,
+    // and a change arriving meanwhile runs it once more afterwards.
+    bool reparseInFlight_ = false;
+    bool reparseAgain_ = false;
     // Sidecars changed on disk, re-read once the burst of monitor events settles.
     std::set<Glib::ustring> pendingSidecarReloads_;
     sigc::connection sidecarReloadConn_;
@@ -526,6 +530,9 @@ public:
 
     void on_realize() override;
     void reparseDirectory ();
+    void applyReparse_ (bool directoryOk, const std::set<Glib::ustring>& missing,
+                        const std::vector<Glib::ustring>& listing,
+                        const std::vector<Glib::RefPtr<Gio::File>>& allDirs);
     void _openImage (const std::vector<Thumbnail*>& tmb, eRTNav preloadDirectionHint = NAV_NONE);
 
     void zoomIn ();

@@ -5111,7 +5111,63 @@ void FileCatalog::reparseDirectory ()
         return;
     }
 
-    if (!Glib::file_test(selectedDirectory, Glib::FILE_TEST_IS_DIR)) {
+    // A directory change (an export or import into the browsed folder fires
+    // one about every 150 ms) used to stat every entry -- thousands, on the
+    // photo HDD -- and re-list the folder on the GUI thread. The disk work
+    // now runs on the IO lane; only the diff is applied here.
+    if (reparseInFlight_) {
+        reparseAgain_ = true;
+        return;
+    }
+    reparseInFlight_ = true;
+
+    const Glib::ustring directory = selectedDirectory;
+    std::vector<Glib::ustring> entryNames;
+    for (const auto& entry : fileBrowser->getEntries()) {
+        entryNames.push_back(entry->filename);
+    }
+    auto alive = globalAliveToken_;
+
+    steep::runBackground([this, alive, directory, entryNames]() {
+        const bool directoryOk = Glib::file_test(directory, Glib::FILE_TEST_IS_DIR);
+        std::set<Glib::ustring> missing;
+        std::vector<Glib::ustring> listing;
+        std::vector<Glib::RefPtr<Gio::File>> allDirs;
+
+        if (directoryOk) {
+            for (const auto& name : entryNames) {
+                if (!Glib::file_test(name, Glib::FILE_TEST_EXISTS)) {
+                    missing.insert(name);
+                }
+            }
+            const auto& options = App::get().options();
+            int dirsLeft = options.browseRecursive ? options.browseRecursiveMaxDirs : 0;
+            getFilesRecursively(directory, options.browseRecursiveDepth, dirsLeft, listing, &allDirs);
+        }
+
+        Glib::signal_idle().connect_once([this, alive, directory, directoryOk, missing, listing, allDirs]() {
+            if (!alive || !*alive) {
+                return;
+            }
+            reparseInFlight_ = false;
+
+            if (directory == selectedDirectory) {
+                applyReparse_(directoryOk, missing, listing, allDirs);
+            }
+
+            if (reparseAgain_) {
+                reparseAgain_ = false;
+                scheduleReparseDirectory_();
+            }
+        });
+    }, steep::Lane::IO);
+}
+
+void FileCatalog::applyReparse_ (bool directoryOk, const std::set<Glib::ustring>& missing,
+                                 const std::vector<Glib::ustring>& listing,
+                                 const std::vector<Glib::RefPtr<Gio::File>>& allDirs)
+{
+    if (!directoryOk) {
         closeDir();
         return;
     }
@@ -5122,7 +5178,7 @@ void FileCatalog::reparseDirectory ()
     std::set<Glib::ustring> fileNamesToRemove;
 
     for (const auto& entry : t) {
-        if (!Glib::file_test(entry->filename, Glib::FILE_TEST_EXISTS)) {
+        if (missing.count(entry->filename)) {
             fileNamesToDel.insert(entry->filename);
             fileNamesToRemove.insert(entry->filename);
         }
@@ -5161,8 +5217,7 @@ void FileCatalog::reparseDirectory ()
         oldNames.insert(catalogPathKey(oldName));
     }
 
-    std::vector<Glib::RefPtr<Gio::File>> allDirs;
-    fileNameList = getFileList(&allDirs);
+    fileNameList = listing;
     std::vector<Glib::ustring> newNames;
     for (const auto& newName : fileNameList) {
         if (oldNames.find(catalogPathKey(newName)) == oldNames.end()) {

@@ -11,6 +11,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <deque>
 #include <memory>
 #include <mutex>
@@ -2410,6 +2411,52 @@ filmhalation::Construction materialHaloConstruction(const FilmLabStock& stock, c
     }
 }
 
+// The optical planes (bloom, recovered lights, traced halation) depend only
+// on the downsampled source and the settings, not on anything after Film Lab
+// -- grain and light-effects ticks, the EFFECTS replay, settled refreshes of
+// an unchanged frame recomputed them for ~200 ms a pass.
+struct HaloCacheEntry {
+    std::uint64_t sourceHash = 0;
+    int width = 0;
+    int height = 0;
+    int reduction = 0;
+    int originX = 0;
+    int originY = 0;
+    int fullWidth = 0;
+    int fullHeight = 0;
+    float opticalScale = 0.f;
+    float clipLuminance = 0.f;
+    float tapWhite = 0.f;
+    procparams::FilmPresetsParams fp;
+    array2D<float> halo[3];
+    array2D<float> bloom[3];
+    float haloUniform[3][3] = {};   // also produced by the cached region
+};
+
+std::mutex haloCacheMutex;
+std::deque<std::shared_ptr<HaloCacheEntry>> haloCache;
+
+std::uint64_t hashPlane(std::uint64_t h, const array2D<float>& plane, int width, int height)
+{
+    for (int y = 0; y < height; ++y) {
+        const float* row = plane[y];
+        for (int x = 0; x < width; ++x) {
+            std::uint32_t bits;
+            std::memcpy(&bits, row + x, sizeof(bits));
+            h = (h ^ bits) * 0x100000001b3ULL;
+        }
+    }
+    return h;
+}
+
+void copyPlane(const array2D<float>& from, array2D<float>& to, int width, int height)
+{
+    to(width, height);
+    for (int y = 0; y < height; ++y) {
+        std::copy(from[y], from[y] + width, to[y]);
+    }
+}
+
 void filmPresetsV3(
     LabImage* lab,
     const procparams::FilmPresetsParams& fp,
@@ -2820,6 +2867,43 @@ void filmPresetsV3(
                 }
             }
         }
+
+        // Everything below reads only these planes and the settings.
+        std::uint64_t sourceHash = 1469598103934665603ULL;
+        for (int c = 0; c < 3; ++c) {
+            sourceHash = hashPlane(sourceHash, source[c], halationWidth, halationHeight);
+        }
+        if (recoverLights) {
+            for (int c = 0; c < 3; ++c) {
+                sourceHash = hashPlane(sourceHash, clipped[c], halationWidth, halationHeight);
+            }
+            sourceHash = hashPlane(sourceHash, clipMask, halationWidth, halationHeight);
+            sourceHash = hashPlane(sourceHash, clipSurround, halationWidth, halationHeight);
+        }
+        const auto matches = [&](const HaloCacheEntry& e) {
+            return e.sourceHash == sourceHash && e.width == halationWidth && e.height == halationHeight
+                && e.reduction == halationReduction && e.originX == context.originX && e.originY == context.originY
+                && e.fullWidth == fullWidth && e.fullHeight == fullHeight && e.opticalScale == opticalScale
+                && e.clipLuminance == context.clipLuminance && e.tapWhite == filmTapWhite
+                && !std::getenv("STEEP_FILMLAB_LIGHTS_STOPS") && e.fp == fp;
+        };
+        std::shared_ptr<HaloCacheEntry> haloHit;
+        {
+            std::lock_guard<std::mutex> lock(haloCacheMutex);
+            for (const auto& entry : haloCache) {
+                if (matches(*entry)) {
+                    haloHit = entry;
+                    break;
+                }
+            }
+        }
+        if (haloHit) {
+            for (int c = 0; c < 3; ++c) {
+                copyPlane(haloHit->halo[c], materialHalo[c], halationWidth, halationHeight);
+                copyPlane(haloHit->bloom[c], materialBloom[c], halationWidth, halationHeight);
+            }
+            std::memcpy(haloUniform, haloHit->haloUniform, sizeof(haloUniform));
+        } else {
         const float frameMM = fp.format == "120" ? 56.f : fp.format == "large" ? 95.f : 24.f;
         const float pixelsPerMM = fullShort / frameMM / (opticalScale * halationReduction);
         const float bloomSigma = 0.38f * pixelsPerMM * halationSize;
@@ -2938,6 +3022,31 @@ void filmPresetsV3(
             filmhalation::convolve(construction, sourceRows, haloRows, halationWidth, halationHeight, pixelsPerMM, halationSize, gain,
                                    multiThread, false, fp.lensDesign == "telecentric" ? nullptr : &obliquity);
         }
+
+        auto entry = std::make_shared<HaloCacheEntry>();
+        entry->sourceHash = sourceHash;
+        entry->width = halationWidth;
+        entry->height = halationHeight;
+        entry->reduction = halationReduction;
+        entry->originX = context.originX;
+        entry->originY = context.originY;
+        entry->fullWidth = fullWidth;
+        entry->fullHeight = fullHeight;
+        entry->opticalScale = opticalScale;
+        entry->clipLuminance = context.clipLuminance;
+        entry->tapWhite = filmTapWhite;
+        entry->fp = fp;
+        std::memcpy(entry->haloUniform, haloUniform, sizeof(haloUniform));
+        for (int c = 0; c < 3; ++c) {
+            copyPlane(materialHalo[c], entry->halo[c], halationWidth, halationHeight);
+            copyPlane(materialBloom[c], entry->bloom[c], halationWidth, halationHeight);
+        }
+        std::lock_guard<std::mutex> lock(haloCacheMutex);
+        haloCache.push_front(std::move(entry));
+        while (haloCache.size() > 3) {   // preview, detail crop, and one spare
+            haloCache.pop_back();
+        }
+        } // !haloHit
     }
 
     // V6 emulsion sharpness: each layer records the image through the
