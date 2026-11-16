@@ -800,6 +800,8 @@ public:
     /** Sets the scale of the preview image. The larger the number is, the faster the image updates are (typical values are 4-5).
       * @param scale is the scale of the preview image */
     virtual void        setPreviewScale (int scale) = 0;
+    /** A secondary view (e.g. the before pane): processes with leftover CPU. */
+    virtual void        setBackgroundPriority (bool background) {}
     /** Gives the processor a second decode of its photo being prepared at full
       * quality in the background (see fullqualitytwin.h); its first
       * full-quality pass adopts it instead of demosaicing again. */

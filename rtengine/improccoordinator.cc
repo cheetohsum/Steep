@@ -28,6 +28,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <unordered_set>
 
 #include "filmlaboptics.h"
 #include "improccoordinator.h"
@@ -94,9 +95,17 @@ public:
         return *executor;
     }
 
-    TaskHandle enqueue(std::function<void()> work, const char* label = "task")
+    // `owner` (the coordinator) keeps a coordinator's own tasks strictly one
+    // at a time: a crop's fullUpdate reads its coordinator's params, image
+    // functions and Fattal cache without the processing lock, which only the
+    // old single worker made safe. Tasks of different coordinators (the
+    // after and before panes) may now run side by side.
+    TaskHandle enqueue(std::function<void()> work, const char* label = "task",
+                       const void* owner = nullptr, bool background = false)
     {
         auto task = std::make_shared<TaskState>(std::move(work), label);
+        task->owner = owner;
+        task->background = background;
         auto result = task->completion.get_future().share();
 
         {
@@ -169,11 +178,27 @@ private:
         long long enqueuedUs;
         std::promise<void> completion;
         std::atomic<bool> claimed{false};
+        const void* owner = nullptr;
+        bool background = false;
     };
 
+    // Two workers: enough for the before pane to render beside the after
+    // pane. Process lifetime, like the single worker before them.
     PreviewProcessingExecutor()
-        : worker_([this]() { run(); })
+        : worker_([this]() { run(); }),
+          secondWorker_([this]() { run(); })
     {
+    }
+
+    // Caller holds mutex_. The newest task whose coordinator is idle.
+    std::deque<std::shared_ptr<TaskState>>::iterator nextRunnableLocked()
+    {
+        for (auto it = tasks_.begin(); it != tasks_.end(); ++it) {
+            if (!(*it)->owner || !runningOwners_.count((*it)->owner)) {
+                return it;
+            }
+        }
+        return tasks_.end();
     }
 
     void run()
@@ -183,6 +208,9 @@ private:
         // teams. Batch export and RAW-loading workers keep their own limits.
         const int available = omp_get_max_threads();
         // The starting width; every pass picks its own (updatePreviewImage).
+        // The width a crop fullUpdate (which sets none of its own) ran at
+        // when it shared one worker with the edit passes: theirs.
+        const int defaultWidth = rtengine::interactiveThreadCount(omp_get_num_procs(), false);
         omp_set_num_threads(rtengine::previewThreadCount(available));
         rtengine::edittrace::logf("previewWorker threads=%d available=%d",
                                   omp_get_max_threads(), available);
@@ -191,18 +219,38 @@ private:
             std::shared_ptr<TaskState> task;
             {
                 std::unique_lock<std::mutex> lock(mutex_);
-                ready_.wait(lock, [this]() { return !tasks_.empty(); });
-                task = std::move(tasks_.front());
-                tasks_.pop_front();
+                ready_.wait(lock, [this]() { return nextRunnableLocked() != tasks_.end(); });
+                const auto it = nextRunnableLocked();
+                task = std::move(*it);
+                tasks_.erase(it);
+                if (task->owner) {
+                    runningOwners_.insert(task->owner);
+                }
             }
+#ifdef _OPENMP
+            // Every task starts from the worker's width (a crop fullUpdate
+            // sets none of its own and would inherit the last task's); the
+            // before pane only gets a narrow team -- it should not compete
+            // with the photo being edited.
+            omp_set_num_threads(task->background ? std::min(2, defaultWidth) : defaultWidth);
+#endif
             task->run();
+            {
+                std::lock_guard<std::mutex> lock(mutex_);
+                if (task->owner) {
+                    runningOwners_.erase(task->owner);
+                }
+            }
+            ready_.notify_all();   // that owner's next task may run now
         }
     }
 
     std::mutex mutex_;
     std::condition_variable ready_;
     std::deque<std::shared_ptr<TaskState>> tasks_;
+    std::unordered_set<const void*> runningOwners_;
     std::thread worker_;
+    std::thread secondWorker_;
 };
 
 }
@@ -746,9 +794,12 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
             return env ? std::atoi(env) : 0;
         }();
         const bool localAdjustments = params->locallab.enabled && !params->locallab.spots.empty();
-        const int width = forcedThreads > 0
+        int width = forcedThreads > 0
             ? forcedThreads
             : interactiveThreadCount(omp_get_num_procs(), localAdjustments);
+        if (backgroundPriority_) {
+            width = std::min(width, 2);   // the before pane: leftover CPU only
+        }
 
         if (width != omp_get_max_threads()) {
             omp_set_num_threads(width);
@@ -917,7 +968,7 @@ void ImProcCoordinator::updatePreviewImage(int todo, bool panningRelatedChange)
         // Preprocess and demosaic work on the whole sensor and scale with
         // threads; the 4-thread preview team is sized for small crop stages.
         auto rawStageThreads = std::make_unique<RawStageThreads>(
-            !usePrecomputed
+            !usePrecomputed && !backgroundPriority_
             && ((todo & (M_PREPROC | M_RAW))
                 || (highDetailNeeded && !(highDetailPreprocessComputed && highDetailRawComputed))));
 
@@ -3754,7 +3805,7 @@ std::shared_future<std::vector<procparams::SpotEntry>> ImProcCoordinator::reques
         auto task = PreviewProcessingExecutor::instance().enqueue([this, promise, maxSpots, sensitivity]() {
             try { promise->set_value(destroying ? std::vector<procparams::SpotEntry>{} : detectDustSpots(maxSpots, sensitivity)); }
             catch (...) { promise->set_exception(std::current_exception()); }
-        }, "dustScan");
+        }, "dustScan", this, backgroundPriority_);
         rememberProcessingTask(std::move(task.completion), std::move(task.cancel));
     }
     updaterThreadStart.unlock();
@@ -4927,7 +4978,7 @@ void ImProcCoordinator::startProcessing()
     updaterThreadStart.lock();
     if (!destroying && !updaterRunning) {
         updaterRunning = true;
-        auto task = PreviewProcessingExecutor::instance().enqueue([this]() { process(); }, "preview");
+        auto task = PreviewProcessingExecutor::instance().enqueue([this]() { process(); }, "preview", this, backgroundPriority_);
         rememberProcessingTask(std::move(task.completion), std::move(task.cancel));
     }
 
@@ -4942,7 +4993,7 @@ bool ImProcCoordinator::scheduleCropUpdate(Crop* crop)
         return false;
     }
 
-    auto task = PreviewProcessingExecutor::instance().enqueue([crop]() { crop->fullUpdate(); }, "cropFullUpdate");
+    auto task = PreviewProcessingExecutor::instance().enqueue([crop]() { crop->fullUpdate(); }, "cropFullUpdate", this, backgroundPriority_);
     rememberProcessingTask(std::move(task.completion), std::move(task.cancel));
     updaterThreadStart.unlock();
     return true;

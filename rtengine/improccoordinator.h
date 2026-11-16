@@ -149,6 +149,9 @@ protected:
     // A preprocess has run on this source since the last raw-parameter
     // change (any of which carries M_PREPROC and reruns it).
     bool preprocessDone_ = false;
+    // A secondary view (the before pane): its passes run with a narrow
+    // thread team and never widen the raw stage.
+    bool backgroundPriority_ = false;
     // See setFullQualityTwin(); taken by the first pass that needs a
     // full-quality demosaic.
     std::mutex fullQualityTwinMutex;
@@ -563,6 +566,7 @@ public:
     ProcParams* beginUpdateParams () override;
     void        endUpdateParams (ProcEvent change) override;  // must be called after beginUpdateParams, triggers update
     void        endUpdateParams (int changeFlags) override;
+    void        setBackgroundPriority (bool background) override { backgroundPriority_ = background; }
     void        stopProcessing () override;
     void        signalStop () override;
 

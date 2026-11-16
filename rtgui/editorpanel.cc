@@ -8169,6 +8169,7 @@ void EditorPanel::beforeAfterToggled ()
                     });
 
                 beforeIpc = rtengine::StagedImageProcessor::create (beforeImg);
+                beforeIpc->setBackgroundPriority (true);
                 beforeIpc->setPreviewScale (10);
                 beforeIpc->setPreviewImageListener (beforePreviewHandler);
                 Glib::ustring monitorProfile;
