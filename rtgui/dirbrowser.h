@@ -111,14 +111,28 @@ private:
     void flushPendingDirUpdates ();
     std::map<std::string, Gtk::TreeRowReference> pendingDirUpdates_;
     sigc::connection dirUpdateConn_;
-    void countPhotosInChildren (const Gtk::TreeModel::iterator& parent);
+    void countPhotosInChildren (const Gtk::TreeModel::iterator& parent, bool withStats = true);
+    // GUI thread: the row for a folder, by path when it still matches,
+    // else by name (rows shift while background passes run).
+    Gtk::TreeModel::iterator rowFor (const Glib::ustring& pathStr, const Glib::ustring& dirname) const;
+    // Photos per strip: the user's count, or more when the sidebar is wider.
+    int previewCountForWidth () const;
+    int builtPreviewCount_ = 0;
+    int lastTreeWidth_ = 0;
+    sigc::connection previewGrowConn_;
+    void onTreeWidthChanged ();
 
     // Per-folder rating / flag / label summary chips
     struct ScanEntry {
         Glib::ustring dirname;
         Glib::ustring pathStr;
     };
-    void scanFolderStats (std::vector<ScanEntry> entries);
+    void scanFolderStats (std::vector<ScanEntry> entries, bool force = false);
+    struct StatsJob;
+    void runStatsChunk (std::shared_ptr<StatsJob> job);
+    std::map<std::string, Glib::ustring> statsCache_;   // dir -> encoded stats (GUI thread)
+    std::set<std::string> statsInFlight_;
+    std::set<std::string> statsRedo_;
     Gtk::CellRenderer* statsCR_ = nullptr;
     bool statsChipAt (int bx, int by, Gtk::TreeModel::Path* pathOut, int* chipOut, Gdk::Rectangle* rectOut);
     bool onQueryTooltip (int x, int y, bool keyboard, const Glib::RefPtr<Gtk::Tooltip>& tooltip);

@@ -612,6 +612,12 @@ DirBrowser::DirBrowser () : dirTreeModel(),
     scrolledwindow4->set_min_content_height(150);
     scrolledwindow4->property_window_placement().set_value(Gtk::CORNER_TOP_LEFT);
     scrolledwindow4->add(*dirtree);
+    scrolledwindow4->signal_size_allocate().connect([this](Gtk::Allocation& a) {
+        if (a.get_width() != lastTreeWidth_) {
+            lastTreeWidth_ = a.get_width();
+            onTreeWidthChanged();
+        }
+    });
 
     dirtree->set_name("DirBrowserTree");
 
@@ -660,6 +666,7 @@ DirBrowser::~DirBrowser()
     previewApplyConn_.disconnect();
     statRefreshConn_.disconnect();
     flagsChangedConn_.disconnect();
+    previewGrowConn_.disconnect();
     hideHoverPopup();
     delete hoverPopup_;
     idle_register.destroy();
@@ -1835,7 +1842,7 @@ void DirBrowser::loadHoverThumbnails(const Glib::ustring& dirname, int session)
     }
 }
 
-void DirBrowser::countPhotosInChildren (const Gtk::TreeModel::iterator& parent)
+void DirBrowser::countPhotosInChildren (const Gtk::TreeModel::iterator& parent, bool withStats)
 {
     struct Entry {
         Glib::ustring dirname;
@@ -1850,7 +1857,7 @@ void DirBrowser::countPhotosInChildren (const Gtk::TreeModel::iterator& parent)
         }
     }
 
-    {
+    if (withStats) {
         std::vector<ScanEntry> statEntries;
         for (const auto& e : entries) {
             statEntries.push_back({e.dirname, e.pathStr});
@@ -1867,7 +1874,8 @@ void DirBrowser::countPhotosInChildren (const Gtk::TreeModel::iterator& parent)
     DirBrowser* self = this;
     const int generation = previewGeneration_;
     const bool previews = App::get().options().folderPreviews;
-    const int previewCount = std::max(1, std::min(5, App::get().options().folderPreviewCount));
+    const int previewCount = previewCountForWidth();
+    builtPreviewCount_ = std::max(builtPreviewCount_, previewCount);
     const int scale = std::max(1, dirtree->get_scale_factor());
     const int tileSize = FolderNameRenderer::tileFor(App::get().options().folderPreviewSize);
     const bool preferRated = App::get().options().folderPreviewsPreferRated;
@@ -1913,9 +1921,8 @@ void DirBrowser::countPhotosInChildren (const Gtk::TreeModel::iterator& parent)
             const bool current = generation == self->previewGeneration_;
             for (const auto& r : *results) {
                 try {
-                    Gtk::TreeModel::Path path(r.pathStr);
-                    auto iter = self->dirTreeModel->get_iter(path);
-                    if (iter && iter->get_value(self->dtColumns.dirname) == r.dirname) {
+                    auto iter = self->rowFor(r.pathStr, r.dirname);
+                    if (iter) {
                         (*iter)[self->dtColumns.photoCount] = r.countStr;
                         if (current) {
                             (*iter)[self->dtColumns.previewSlots] = r.slots;
@@ -1937,14 +1944,18 @@ void DirBrowser::countPhotosInChildren (const Gtk::TreeModel::iterator& parent)
         constexpr int kRatedScanLimit = 2000;
         const auto photoLists = std::make_shared<std::vector<std::vector<std::string>>>(std::move(photos));
 
-        stripQueue->enqueue([entries, self, generation, previewCount, scale, tileSize, preferRated, cacheDir, photoLists]() {
+        for (size_t e = 0; e < entries.size(); ++e) {
+        if ((*photoLists)[e].empty()) {
+            continue;
+        }
+        stripQueue->enqueue([entries, self, generation, previewCount, scale, tileSize, preferRated, cacheDir, photoLists, e]() {
             std::vector<std::vector<std::string>>& photos = *photoLists;
 
-            for (size_t e = 0; e < entries.size(); ++e) {
+            {
                 std::vector<std::string>& names = photos[e];
                 const int n = static_cast<int>(names.size());
                 if (n == 0) {
-                    continue;
+                    return;
                 }
                 if (generation != self->previewGeneration_) {
                     return;
@@ -2002,7 +2013,7 @@ void DirBrowser::countPhotosInChildren (const Gtk::TreeModel::iterator& parent)
                 }
 
                 if (indices.empty()) {
-                    continue;
+                    return;
                 }
                 const int shown = static_cast<int>(indices.size());
                 std::vector<std::string> chosen;
@@ -2083,15 +2094,32 @@ void DirBrowser::countPhotosInChildren (const Gtk::TreeModel::iterator& parent)
                     }
 
                     if (drawn == 0) {
-                        continue;
+                        // Nothing to show yet (no thumbnails could be made):
+                        // drop the placeholder rather than leave grey squares.
+                        const Glib::ustring pathStr = entries[e].pathStr;
+                        const Glib::ustring dirname = entries[e].dirname;
+                        Glib::signal_idle().connect_once([self, pathStr, dirname, generation]() {
+                            if (generation != self->previewGeneration_) {
+                                return;
+                            }
+                            auto iter = self->rowFor(pathStr, dirname);
+                            if (iter && !iter->get_value(self->dtColumns.previewStrip)) {
+                                (*iter)[self->dtColumns.previewSlots] = 0;
+                            }
+                        });
+                        return;
                     }
 
                     surface->flush();
                     strip = Gdk::Pixbuf::create(surface, 0, 0, width, tile);
-                    try {
-                        g_mkdir_with_parents(cacheDir.c_str(), 0755);
-                        strip->save(cacheFile, "png");
-                    } catch (...) {}
+                    // A strip with holes is shown but never cached: the
+                    // missing thumbnails may exist next time.
+                    if (drawn == shown) {
+                        try {
+                            g_mkdir_with_parents(cacheDir.c_str(), 0755);
+                            strip->save(cacheFile, "png");
+                        } catch (...) {}
+                    }
                 }
 
                 const Glib::ustring pathStr = entries[e].pathStr;
@@ -2101,20 +2129,22 @@ void DirBrowser::countPhotosInChildren (const Gtk::TreeModel::iterator& parent)
                         return;
                     }
                     try {
-                        auto iter = self->dirTreeModel->get_iter(Gtk::TreeModel::Path(pathStr));
-                        if (iter && iter->get_value(self->dtColumns.dirname) == dirname) {
+                        auto iter = self->rowFor(pathStr, dirname);
+                        if (iter) {
                             (*iter)[self->dtColumns.previewStrip] = strip;
                         }
                     } catch (...) {}
                 });
             }
         });
+        }
     });
 }
 
 void DirBrowser::refreshFolderPreviews ()
 {
     ++previewGeneration_;
+    builtPreviewCount_ = 0;
     if (!dirTreeModel) {
         return;
     }
@@ -2334,72 +2364,177 @@ void DirBrowser::showPreviewMenu (GdkEventButton* event)
 // Folder rating / flag / label chips
 // ---------------------------------------------------------------------------
 
-void DirBrowser::scanFolderStats (std::vector<ScanEntry> entries)
+struct DirBrowser::StatsJob {
+    Glib::ustring dirname;
+    Glib::ustring pathStr;
+    std::vector<std::string> files;
+    size_t next = 0;
+    bool listed = false;
+    FolderStats stats;
+};
+
+namespace
 {
-    if (entries.empty()) {
+// Rating scans read two small files per photo. They run on the CPU lane, a
+// chunk at a time, so they never hold the I/O lane the thumbnails and the
+// edit-pane preview strips are waiting on.
+steep::SerialQueue& statsQueue()
+{
+    static steep::SerialQueue* const queue = new steep::SerialQueue(steep::Lane::CPU);
+    return *queue;
+}
+constexpr size_t kStatsChunk = 150;
+}
+
+Gtk::TreeModel::iterator DirBrowser::rowFor (const Glib::ustring& pathStr, const Glib::ustring& dirname) const
+{
+    if (!dirTreeModel) {
+        return Gtk::TreeModel::iterator();
+    }
+    if (!pathStr.empty()) {
+        try {
+            auto iter = dirTreeModel->get_iter(Gtk::TreeModel::Path(pathStr));
+            if (iter && iter->get_value(dtColumns.dirname) == dirname) {
+                return iter;
+            }
+        } catch (...) {}
+    }
+    Gtk::TreeModel::iterator found;
+    dirTreeModel->foreach_iter([&](const Gtk::TreeModel::iterator& it) -> bool {
+        if (it->get_value(dtColumns.dirname) == dirname) {
+            found = it;
+            return true;
+        }
+        return false;
+    });
+    return found;
+}
+
+int DirBrowser::previewCountForWidth () const
+{
+    const auto& options = App::get().options();
+    const int wanted = std::max(1, std::min(5, options.folderPreviewCount));
+    const int tile = FolderNameRenderer::tileFor(options.folderPreviewSize);
+    const auto hadj = scrolledwindow4->get_hadjustment();
+    const int visible = hadj && hadj->get_page_size() > 0 ? static_cast<int>(hadj->get_page_size())
+                                                         : scrolledwindow4->get_allocated_width();
+    // Room for a top-level row's strip: it starts under the chevron and
+    // keeps a small margin from the sidebar's edge.
+    const int room = visible - 8;
+    const int fit = room > tile ? (room + FolderNameRenderer::kGap) / (tile + FolderNameRenderer::kGap) : 0;
+    return std::max(wanted, std::min(fit, 24));
+}
+
+void DirBrowser::onTreeWidthChanged ()
+{
+    if (!App::get().options().folderPreviews || !dirTreeModel) {
+        return;
+    }
+    // Only a wider sidebar needs new strips; a narrower one just cuts them.
+    if (previewCountForWidth() <= builtPreviewCount_) {
+        return;
+    }
+    previewGrowConn_.disconnect();
+    previewGrowConn_ = Glib::signal_timeout().connect([this]() -> bool {
+        if (previewCountForWidth() <= builtPreviewCount_) {
+            return false;
+        }
+        // Rebuild the strips for the folders on show, keeping what is drawn
+        // until each wider strip replaces it.
+        ++previewGeneration_;
+        builtPreviewCount_ = 0;
+        std::vector<Gtk::TreeModel::iterator> expanded;
+        dirTreeModel->foreach_iter([this, &expanded](const Gtk::TreeModel::iterator& iter) -> bool {
+            if (iter->get_value(dtColumns.childrenLoaded) && dirtree->row_expanded(dirTreeModel->get_path(iter))) {
+                expanded.push_back(iter);
+            }
+            return false;
+        });
+        for (const auto& iter : expanded) {
+            countPhotosInChildren(iter, false);
+        }
+        return false;
+    }, 350);
+}
+
+void DirBrowser::scanFolderStats (std::vector<ScanEntry> entries, bool force)
+{
+    for (auto& entry : entries) {
+        const std::string key = entry.dirname.raw();
+
+        if (!force) {
+            const auto cached = statsCache_.find(key);
+            if (cached != statsCache_.end()) {
+                auto iter = rowFor(entry.pathStr, entry.dirname);
+                if (iter && iter->get_value(dtColumns.flagStats) != cached->second) {
+                    (*iter)[dtColumns.flagStats] = cached->second;
+                }
+                continue;
+            }
+        }
+
+        if (statsInFlight_.count(key)) {
+            if (force) {
+                statsRedo_.insert(key);
+            }
+            continue;
+        }
+        statsInFlight_.insert(key);
+
+        auto job = std::make_shared<StatsJob>();
+        job->dirname = entry.dirname;
+        job->pathStr = entry.pathStr;
+        statsQueue().enqueue([this, job]() { runStatsChunk(job); });
+    }
+}
+
+// Worker side: one chunk, then back to the end of the queue.
+void DirBrowser::runStatsChunk (std::shared_ptr<StatsJob> job)
+{
+    if (!job->listed) {
+        job->listed = true;
+        try {
+            Glib::Dir dir(job->dirname);
+            const auto& exts = App::get().options().parsedExtensionsSet;
+            for (auto it = dir.begin(); it != dir.end(); ++it) {
+                const Glib::ustring fname = *it;
+                const auto dotpos = fname.find_last_of('.');
+                if (dotpos == Glib::ustring::npos) {
+                    continue;
+                }
+                const Glib::ustring ext = fname.substr(dotpos + 1).lowercase();
+                if (exts.count(ext.raw())) {
+                    job->files.push_back(fname.raw());
+                }
+            }
+        } catch (...) {}
+    }
+
+    const size_t end = std::min(job->files.size(), job->next + kStatsChunk);
+    for (; job->next < end; ++job->next) {
+        accumulateFileFlags(Glib::build_filename(job->dirname.raw(), job->files[job->next]), job->stats);
+    }
+
+    if (job->next < job->files.size()) {
+        statsQueue().enqueue([this, job]() { runStatsChunk(job); });
         return;
     }
 
-    // DirBrowser lives for the lifetime of the app (see countPhotosInChildren).
     DirBrowser* self = this;
+    Glib::signal_idle().connect_once([self, job]() {
+        const std::string key = job->dirname.raw();
+        const Glib::ustring encoded = job->stats.encode();
+        self->statsCache_[key] = encoded;
+        self->statsInFlight_.erase(key);
 
-    steep::runBackground([entries, self]() {
-        struct Result {
-            Glib::ustring dirname;
-            Glib::ustring pathStr;
-            Glib::ustring statsStr;
-        };
-        auto results = std::make_shared<std::vector<Result>>();
-        results->reserve(entries.size());
-
-        for (const auto& entry : entries) {
-            FolderStats stats;
-            try {
-                Glib::Dir dir(entry.dirname);
-                const auto& exts = App::get().options().parsedExtensionsSet;
-                for (auto it = dir.begin(); it != dir.end(); ++it) {
-                    const Glib::ustring fname = *it;
-                    const auto dotpos = fname.find_last_of('.');
-                    if (dotpos == Glib::ustring::npos) {
-                        continue;
-                    }
-                    const Glib::ustring ext = fname.substr(dotpos + 1).lowercase();
-                    if (exts.count(ext.raw())) {
-                        accumulateFileFlags(Glib::build_filename(entry.dirname, fname), stats);
-                    }
-                }
-            } catch (...) {}
-
-            results->push_back({entry.dirname, entry.pathStr, stats.encode()});
+        auto iter = self->rowFor(job->pathStr, job->dirname);
+        if (iter && iter->get_value(self->dtColumns.flagStats) != encoded) {
+            (*iter)[self->dtColumns.flagStats] = encoded;
         }
 
-        Glib::signal_idle().connect_once([self, results]() {
-            if (!self->dirTreeModel) {
-                return;
-            }
-            for (const auto& r : *results) {
-                try {
-                    Gtk::TreeModel::iterator iter;
-                    if (!r.pathStr.empty()) {
-                        iter = self->dirTreeModel->get_iter(Gtk::TreeModel::Path(r.pathStr));
-                    }
-                    if (!iter || iter->get_value(self->dtColumns.dirname) != r.dirname) {
-                        // Rows moved since the scan started: find the folder by name.
-                        iter = Gtk::TreeModel::iterator();
-                        self->dirTreeModel->foreach_iter([&](const Gtk::TreeModel::iterator& it) -> bool {
-                            if (it->get_value(self->dtColumns.dirname) == r.dirname) {
-                                iter = it;
-                                return true;
-                            }
-                            return false;
-                        });
-                    }
-                    if (iter && iter->get_value(self->dtColumns.flagStats) != r.statsStr) {
-                        (*iter)[self->dtColumns.flagStats] = r.statsStr;
-                    }
-                } catch (...) {}
-            }
-        });
+        if (self->statsRedo_.erase(key)) {
+            self->scanFolderStats({{job->dirname, job->pathStr}}, true);
+        }
     });
 }
 
@@ -2431,7 +2566,7 @@ void DirBrowser::queueFolderStatsRefresh (const Glib::ustring& dirname)
                 return false;
             });
         }
-        scanFolderStats(std::move(entries));
+        scanFolderStats(std::move(entries), true);
         return false;
     }, 400);
 }
