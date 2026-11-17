@@ -108,21 +108,39 @@ DIRCLEANUP_COL_FROM;From
 DIRCLEANUP_COL_PHOTOS;Photos
 DIRCLEANUP_COL_REASON;Reason
 DIRCLEANUP_COL_TO;To
+DIRCLEANUP_CLEAR;Clear %1
+DIRCLEANUP_CLEARPREF;Clear preference
 DIRCLEANUP_CREATES;Creates a new folder:
 DIRCLEANUP_CROSSDRIVE;Other drive
 DIRCLEANUP_DESELECTALL;Deselect all
-DIRCLEANUP_DUPLICATE;Already there. Moving keeps any edits only this copy has, then sends this copy to the Recycle Bin.
+DIRCLEANUP_DUPLICATE;Already there. Clearing moves over anything only this copy has, then sends this copy to the Recycle Bin.
+DIRCLEANUP_DUP_ALSOIN;Also in:
+DIRCLEANUP_DUP_EDITSDIFFER;Different edits: %1
+DIRCLEANUP_DUP_IDENTICAL;Identical copy
+DIRCLEANUP_DUP_KEEPING;Keeping edits from %1
+DIRCLEANUP_DUP_MOVESOVER;Moves over: %1
+DIRCLEANUP_DUP_NEWERHERE;this copy is newer
+DIRCLEANUP_DUP_NEWERTHERE;the other copy is newer
+DIRCLEANUP_DUP_UNRESOLVED;Right-click to choose which edits to keep
+DIRCLEANUP_KEEPEDITS;Keep edits from %1
+DIRCLEANUP_MEDIADIFF;%1 photo files differ (left as is)
 DIRCLEANUP_MOVE;Move %1
+DIRCLEANUP_MOVECLEAR;Move %1 · Clear %2
 DIRCLEANUP_NEWFOLDER;New folder
 DIRCLEANUP_NONE;Nothing to move
+DIRCLEANUP_OPENOTHER;Open other copy
+DIRCLEANUP_PREFER;Always prefer %1
+DIRCLEANUP_PREFERRING;Preferring edits from %1
 DIRCLEANUP_NOPLACES;Star folders in Places to clean them up
 DIRCLEANUP_REASON_DATE;Capture date
 DIRCLEANUP_REASON_NAME;Date in file name
 DIRCLEANUP_REASON_SEQ;Capture date and file numbering
 DIRCLEANUP_RESCAN;Rescan
 DIRCLEANUP_SELECTALL;Select all
+DIRCLEANUP_SELECTDUPS;Select duplicates
 DIRCLEANUP_SELECTSUGGESTED;Select suggested
 DIRCLEANUP_TITLE;Directory cleanup
+DIRCLEANUP_UNRESOLVED;%1 with different edits
 DIRCLEANUP_UNDO;Undo
 DIRBROWSER_FOLDERS;Folders
 DIRBROWSER_PREVIEWS_COUNT;Photos

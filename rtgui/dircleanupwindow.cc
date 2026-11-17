@@ -217,6 +217,7 @@ DirCleanupWindow::DirCleanupWindow ()
     view_->signal_query_tooltip().connect(sigc::mem_fun(*this, &DirCleanupWindow::onQueryTooltip));
     view_->get_selection()->set_mode(Gtk::SELECTION_SINGLE);
     view_->get_selection()->signal_changed().connect(sigc::mem_fun(*this, &DirCleanupWindow::showThumbs));
+    view_->signal_button_press_event().connect(sigc::mem_fun(*this, &DirCleanupWindow::onListButton), false);
 
     auto* toggle = Gtk::manage(new Gtk::CellRendererToggle());
     toggle->signal_toggled().connect([this](const Glib::ustring& path) {
@@ -305,6 +306,9 @@ DirCleanupWindow::DirCleanupWindow ()
     suggestedBtn_ = Gtk::manage(new Gtk::Button(M("DIRCLEANUP_SELECTSUGGESTED")));
     suggestedBtn_->set_relief(Gtk::RELIEF_NONE);
     bar->pack_start(*suggestedBtn_, Gtk::PACK_SHRINK);
+    dupBtn_ = Gtk::manage(new Gtk::Button(M("DIRCLEANUP_SELECTDUPS")));
+    dupBtn_->set_relief(Gtk::RELIEF_NONE);
+    bar->pack_start(*dupBtn_, Gtk::PACK_SHRINK);
     bar->pack_start(*selectAllBtn_, Gtk::PACK_SHRINK);
     bar->pack_start(*summary_, Gtk::PACK_EXPAND_WIDGET);
     bar->pack_start(*rescanBtn_, Gtk::PACK_SHRINK);
@@ -319,6 +323,15 @@ DirCleanupWindow::DirCleanupWindow ()
         }
         for (const auto& row : store_->children()) {
             row[cols_.active] = !any && !suggestions_[row[cols_.index]].duplicate;
+        }
+        lastResult_.clear();
+        updateSummary();
+    });
+    dupBtn_->signal_clicked().connect([this]() {
+        for (const auto& row : store_->children()) {
+            if (suggestions_[row[cols_.index]].duplicate) {
+                row[cols_.active] = true;
+            }
         }
         lastResult_.clear();
         updateSummary();
@@ -365,6 +378,30 @@ bool DirCleanupWindow::onQueryTooltip (int x, int y, bool keyboard, const Glib::
         text = s.source;
     } else if (s.duplicate && (column == toCol_ || column == reasonCol_ || column == dotsCol_)) {
         text = M("DIRCLEANUP_DUPLICATE") + "\n" + s.dest;
+        int conflicts = 0, unresolved = 0, differ = 0;
+        for (const auto& g : s.groups) {
+            const auto it = dupInfo_.find(lowerAscii(g.primary));
+            if (it == dupInfo_.end()) {
+                continue;
+            }
+            differ += it->second.mediaDiffers;
+            if (!it->second.conflicts.empty()) {
+                ++conflicts;
+                unresolved += resolutionFor(g, s.dest) == 0;
+            }
+        }
+        if (conflicts) {
+            text += "\n" + Glib::ustring::compose(M("DIRCLEANUP_UNRESOLVED"), conflicts)
+                  + (unresolved < conflicts ? Glib::ustring::compose(" (%1 \u2713)", conflicts - unresolved) : "");
+        }
+        if (differ) {
+            text += "\n" + Glib::ustring::compose(M("DIRCLEANUP_MEDIADIFF"), differ);
+        }
+        for (const auto& pref : App::get().options().cleanupPreferFolders) {
+            if (lowerAscii(pref.raw()) == lowerAscii(s.source) || lowerAscii(pref.raw()) == lowerAscii(s.dest)) {
+                text += "\n" + Glib::ustring::compose(M("DIRCLEANUP_PREFERRING"), Glib::path_get_basename(pref));
+            }
+        }
     } else if (column == toCol_) {
         text = s.createDest ? M("DIRCLEANUP_CREATES") + "\n" + s.dest : Glib::ustring(s.dest);
         if (s.crossDrive) {
@@ -387,6 +424,9 @@ void DirCleanupWindow::showThumbs ()
 {
     const int gen = ++(*thumbLive_);
     thumbImages_.clear();
+    thumbTiles_.clear();
+    thumbBadges_.clear();
+    thumbRow_ = -1;
     for (auto* child : thumbs_->get_children()) {
         thumbs_->remove(*child);   // GTK destroys the managed child
     }
@@ -403,30 +443,71 @@ void DirCleanupWindow::showThumbs ()
     const size_t shown = std::min<size_t>(groups.size(), 400);
 
     thumbImages_.clear();
+    thumbTiles_.clear();
+    thumbBadges_.clear();
+    thumbRow_ = index;
+    const bool dupRow = suggestions_[index].duplicate;
     for (size_t i = 0; i < shown; ++i) {
         auto* img = Gtk::manage(new Gtk::Image());
         img->set_size_request(kTile, kTile);
+        auto* overlay = Gtk::manage(new Gtk::Overlay());
+        overlay->add(*img);
+        auto* badge = Gtk::manage(new Gtk::Label());
+        badge->set_halign(Gtk::ALIGN_END);
+        badge->set_valign(Gtk::ALIGN_START);
+        badge->set_name("CleanupConflictBadge");
+        badge->set_no_show_all(true);
+        overlay->add_overlay(*badge);
         auto* tile = Gtk::manage(new Gtk::EventBox());
-        tile->add(*img);
-        const Glib::ustring when = captureText(groups[i]);
-        tile->set_tooltip_text(Glib::path_get_basename(groups[i].primary) + (when.empty() ? "" : "\n" + when));
+        tile->add(*overlay);
         const std::string path = groups[i].primary;
-        tile->signal_button_press_event().connect([this, path](GdkEventButton* ev) -> bool {
+        const int row = index;
+        const size_t gi = i;
+        tile->signal_button_press_event().connect([this, path, row, gi, dupRow](GdkEventButton* ev) -> bool {
             if (ev->button != 3 || ev->type != GDK_BUTTON_PRESS) {
                 return false;
             }
+            if (row >= static_cast<int>(suggestions_.size()) || gi >= suggestions_[row].groups.size()) {
+                return true;
+            }
+            const auto& s = suggestions_[row];
+            const auto& g = s.groups[gi];
             thumbMenu_.reset(new Gtk::Menu());
-            auto* item = Gtk::manage(new Gtk::MenuItem(M("FILEBROWSER_POPUPOPENSOURCEFOLDER")));
-            item->signal_activate().connect([path]() { revealInFileManager(path); });
-            thumbMenu_->append(*item);
+            auto addItem = [this](const Glib::ustring& label, std::function<void()> act) {
+                auto* item = Gtk::manage(new Gtk::MenuItem(label));
+                item->signal_activate().connect(act);
+                thumbMenu_->append(*item);
+            };
+            if (dupRow) {
+                const auto it = dupInfo_.find(lowerAscii(g.primary));
+                if (it != dupInfo_.end() && !it->second.conflicts.empty()) {
+                    const std::string key = lowerAscii(g.primary);
+                    const std::string src = s.source, dst = s.dest;
+                    addItem(Glib::ustring::compose(M("DIRCLEANUP_KEEPEDITS"), Glib::path_get_basename(src)),
+                            [this, key]() { conflictChoice_[key] = 1; refreshDupDisplay(); });
+                    addItem(Glib::ustring::compose(M("DIRCLEANUP_KEEPEDITS"), Glib::path_get_basename(dst)),
+                            [this, key]() { conflictChoice_[key] = 2; refreshDupDisplay(); });
+                    addItem(Glib::ustring::compose(M("DIRCLEANUP_PREFER"), Glib::path_get_basename(src)),
+                            [this, src, dst]() { setFolderPreference(src, dst); });
+                    addItem(Glib::ustring::compose(M("DIRCLEANUP_PREFER"), Glib::path_get_basename(dst)),
+                            [this, src, dst]() { setFolderPreference(dst, src); });
+                    thumbMenu_->append(*Gtk::manage(new Gtk::SeparatorMenuItem()));
+                }
+                const std::string other = Glib::build_filename(s.dest, Glib::path_get_basename(path));
+                addItem(M("DIRCLEANUP_OPENOTHER"), [other]() { revealInFileManager(other); });
+            }
+            addItem(M("FILEBROWSER_POPUPOPENSOURCEFOLDER"), [path]() { revealInFileManager(path); });
             thumbMenu_->show_all();
             thumbMenu_->popup_at_pointer(reinterpret_cast<GdkEvent*>(ev));
             return true;
         });
         thumbs_->add(*tile);
         thumbImages_.push_back(img);
+        thumbTiles_.push_back(tile);
+        thumbBadges_.push_back(badge);
     }
     thumbs_->show_all();
+    refreshDupDisplay();
 
     // One thumbnail per job on the cleanup's own queue; a newer click
     // drops whatever is still waiting.
@@ -517,17 +598,27 @@ bool DirCleanupWindow::hasUndo () const
 
 void DirCleanupWindow::updateSummary ()
 {
-    int photos = 0;
+    int photos = 0, moves = 0, clears = 0;
     long long bytes = 0;
+    bool anyDup = false;
     for (const auto& row : store_->children()) {
-        if (row[cols_.active] && row[cols_.index] < static_cast<int>(suggestions_.size())) {
-            const auto& s = suggestions_[row[cols_.index]];
+        if (row[cols_.index] >= static_cast<int>(suggestions_.size())) {
+            continue;
+        }
+        const auto& s = suggestions_[row[cols_.index]];
+        anyDup = anyDup || s.duplicate;
+        if (row[cols_.active]) {
             photos += static_cast<int>(s.groups.size());
+            (s.duplicate ? clears : moves) += static_cast<int>(s.groups.size());
             bytes += s.bytes;
         }
     }
     summary_->set_text(photos ? Glib::ustring::compose("%1 · %2", photos, humanBytes(bytes)) : lastResult_);
-    moveBtn_->set_label(Glib::ustring::compose(M("DIRCLEANUP_MOVE"), photos));
+    moveBtn_->set_label(clears == 0 ? Glib::ustring::compose(M("DIRCLEANUP_MOVE"), moves)
+                      : moves == 0 ? Glib::ustring::compose(M("DIRCLEANUP_CLEAR"), clears)
+                      : Glib::ustring::compose(M("DIRCLEANUP_MOVECLEAR"), moves, clears));
+    dupBtn_->set_visible(anyDup);
+    dupBtn_->set_sensitive(!busy_);
     selectAllBtn_->set_label(photos ? M("DIRCLEANUP_DESELECTALL") : M("DIRCLEANUP_SELECTALL"));
     selectAllBtn_->set_sensitive(!busy_ && !suggestions_.empty());
     suggestedBtn_->set_sensitive(!busy_ && !suggestions_.empty());
@@ -751,6 +842,7 @@ void DirCleanupWindow::fillList (bool keepTicks)
         }
         row[cols_.index] = static_cast<int>(i);
     }
+    analyzeDuplicates();
     showThumbs();
     if (suggestions_.empty()) {
         empty_->set_text(M("DIRCLEANUP_NONE"));
@@ -769,11 +861,13 @@ struct MoveJob {
     std::string dest;
     bool create = false;
     bool duplicate = false;   // the same photo is already in `dest`: merge, then recycle this copy
+    int resolve = 0;          // edits differ: 1 keep this copy's, 2 keep the destination's, 0 leave the photo
 };
 
 struct MoveResult {
     std::vector<std::pair<Glib::ustring, Glib::ustring>> media;   // photo paths, for tags/albums
     bool moved = false;
+    bool conflict = false;   // left alone: the copies' edits differ and nothing says which wins
     Group after;   // the group at its new place
 };
 
@@ -831,7 +925,8 @@ MoveResult mergeDuplicate(const MoveJob& job, Journal& journal)
     all.insert(all.end(), g.dirs.begin(), g.dirs.end());
 
     std::vector<std::pair<std::string, std::string>> toMove;
-    std::vector<std::pair<std::string, std::string>> toTrash;   // (redundant copy, its twin in dest)
+    std::vector<std::pair<std::string, std::string>> toTrash;     // (redundant copy, its twin in dest)
+    std::vector<std::pair<std::string, std::string>> toReplace;   // ours wins: (ours, theirs to recycle)
     for (const auto& f : all) {
         const std::string target = Glib::build_filename(job.dest, Glib::path_get_basename(f));
         const bool isDir = Glib::file_test(f, Glib::FILE_TEST_IS_DIR);
@@ -842,8 +937,14 @@ MoveResult mergeDuplicate(const MoveJob& job, Journal& journal)
             toMove.emplace_back(f, target);
         } else if (!isDir && sameContent(f, target)) {
             toTrash.emplace_back(f, target);
+        } else if (isDir || isMediaName(Glib::path_get_basename(f)) || job.resolve == 0) {
+            // A photo file that differs, or edits with no winner: leave both.
+            result.conflict = !isDir && !isMediaName(Glib::path_get_basename(f));
+            return result;
+        } else if (job.resolve == 2) {
+            toTrash.emplace_back(f, target);      // theirs wins: ours goes to the bin
         } else {
-            return result;   // a different version on each side: leave both
+            toReplace.emplace_back(f, target);    // ours wins: theirs goes to the bin, ours takes its place
         }
     }
     // The photo itself must be a true twin before anything goes to the bin.
@@ -860,6 +961,20 @@ MoveResult mergeDuplicate(const MoveJob& job, Journal& journal)
         if (isMediaName(Glib::path_get_basename(f))) {
             md5s.emplace_back(f, cacheMgr->getMD5(f));
         }
+    }
+    for (const auto& r : toReplace) {
+        bool trashed = false;
+        try {
+            trashed = Gio::File::create_for_path(r.second)->trash();
+        } catch (...) {}
+        if (!trashed) {
+            return result;
+        }
+        journal.write("trash\t" + r.second + "\t" + r.first);
+        if (!moveOne(r.first, r.second, false)) {
+            return result;
+        }
+        journal.write("move\t" + r.first + "\t" + r.second);
     }
     for (const auto& mv : toMove) {
         if (!moveOne(mv.first, mv.second, Glib::file_test(mv.first, Glib::FILE_TEST_IS_DIR))) {
@@ -1031,7 +1146,7 @@ void DirCleanupWindow::startMove ()
         }
         const auto& s = suggestions_[row[cols_.index]];
         for (const auto& g : s.groups) {
-            jobs.push_back({g, s.dest, s.createDest, s.duplicate});
+            jobs.push_back({g, s.dest, s.createDest, s.duplicate, s.duplicate ? resolutionFor(g, s.dest) : 0});
         }
     }
     if (jobs.empty()) {
@@ -1055,7 +1170,7 @@ void DirCleanupWindow::startMove ()
         std::mutex mutex;
         std::vector<std::pair<Glib::ustring, Glib::ustring>> media;
         std::vector<std::pair<Group, Group>> groups;   // before, after
-        int moved = 0, skipped = 0, finished = 0, total = 0;
+        int moved = 0, skipped = 0, conflicts = 0, finished = 0, total = 0;
     };
     auto prog = std::make_shared<Progress>();
     prog->total = static_cast<int>(jobs.size());
@@ -1067,12 +1182,12 @@ void DirCleanupWindow::startMove ()
     for (const auto& job : jobs) {
         moveQueue().enqueue([job, journal, prog, self]() {
             const MoveResult r = moveGroup(job, *journal);
-            int finished = 0, total = 0, moved = 0, skipped = 0;
+            int finished = 0, total = 0, moved = 0, skipped = 0, conflicts = 0;
             std::vector<std::pair<Glib::ustring, Glib::ustring>> media;
             std::vector<std::pair<Group, Group>> groups;
             {
                 std::lock_guard<std::mutex> lock(prog->mutex);
-                (r.moved ? prog->moved : prog->skipped)++;
+                (r.moved ? prog->moved : r.conflict ? prog->conflicts : prog->skipped)++;
                 prog->media.insert(prog->media.end(), r.media.begin(), r.media.end());
                 if (r.moved) {
                     prog->groups.emplace_back(job.group, r.after);
@@ -1084,9 +1199,10 @@ void DirCleanupWindow::startMove ()
                     groups.swap(prog->groups);
                     moved = prog->moved;
                     skipped = prog->skipped;
+                    conflicts = prog->conflicts;
                 }
             }
-            Glib::signal_idle().connect_once([self, finished, total, moved, skipped, media, groups]() {
+            Glib::signal_idle().connect_once([self, finished, total, moved, skipped, conflicts, media, groups]() {
                 if (instance != self) {
                     applyRenames(media);
                     return;
@@ -1095,6 +1211,10 @@ void DirCleanupWindow::startMove ()
                 if (finished == total) {
                     applyRenames(media);
                     self->moveFinished(moved, skipped, groups);
+                    if (conflicts) {
+                        self->lastResult_ += Glib::ustring::compose("   \u2260 %1", conflicts);
+                        self->updateSummary();
+                    }
                 }
             });
         });
@@ -1241,4 +1361,319 @@ void DirCleanupWindow::startUndo ()
             self->startScan();
         });
     });
+}
+
+// ---------------------------------------------------------------------------
+// Duplicates: what each one is, and which edits win when the copies differ
+// ---------------------------------------------------------------------------
+
+namespace
+{
+
+bool wholeFileEqual(const std::string& a, const std::string& b)
+{
+    gchar* da = nullptr;
+    gchar* db = nullptr;
+    gsize la = 0, lb = 0;
+    const bool ok = g_file_get_contents(a.c_str(), &da, &la, nullptr) && g_file_get_contents(b.c_str(), &db, &lb, nullptr);
+    const bool same = ok && la == lb && std::memcmp(da, db, la) == 0;
+    g_free(da);
+    g_free(db);
+    return same;
+}
+
+// Which sections of two processing profiles differ: "Exposure, Crop, Rank".
+std::string pp3Sections(const std::string& a, const std::string& b)
+{
+    std::vector<std::string> names;
+    try {
+        Glib::KeyFile ka, kb;
+        ka.load_from_file(a);
+        kb.load_from_file(b);
+        std::set<std::string> groups;
+        for (const auto& g : ka.get_groups()) groups.insert(g.raw());
+        for (const auto& g : kb.get_groups()) groups.insert(g.raw());
+        for (const auto& g : groups) {
+            if (g == "Version") {
+                continue;
+            }
+            std::set<std::string> keys;
+            if (ka.has_group(g)) for (const auto& k : ka.get_keys(g)) keys.insert(k.raw());
+            if (kb.has_group(g)) for (const auto& k : kb.get_keys(g)) keys.insert(k.raw());
+            for (const auto& k : keys) {
+                const std::string va = ka.has_group(g) && ka.has_key(g, k) ? ka.get_value(g, k).raw() : std::string();
+                const std::string vb = kb.has_group(g) && kb.has_key(g, k) ? kb.get_value(g, k).raw() : std::string();
+                if (va == vb) {
+                    continue;
+                }
+                if (g == "General") {
+                    if (k == "Rank" || k == "PickLabel" || k == "ColorLabel") {
+                        names.push_back(k + " " + (va.empty() ? "-" : va) + "/" + (vb.empty() ? "-" : vb));
+                    }
+                    continue;
+                }
+                names.push_back(g);
+                break;
+            }
+        }
+    } catch (...) {
+        return std::string();
+    }
+    std::string out;
+    for (size_t i = 0; i < names.size() && i < 6; ++i) {
+        out += (i ? ", " : "") + names[i];
+    }
+    if (names.size() > 6) {
+        out += ", …";
+    }
+    return out;
+}
+
+DirCleanupWindow::DupInfo analyzeDuplicate(const Group& g, const std::string& dest)
+{
+    DirCleanupWindow::DupInfo d;
+    for (const auto& f : g.files) {
+        const std::string base = Glib::path_get_basename(f);
+        const std::string target = Glib::build_filename(dest, base);
+        if (!Glib::file_test(target, Glib::FILE_TEST_EXISTS)) {
+            d.movesOver.push_back(base);
+            continue;
+        }
+        if (isMediaName(base)) {
+            // Size only here (the full check runs before anything is cleared).
+            GStatBuf sa, sb;
+            const bool same = g_stat(f.c_str(), &sa) == 0 && g_stat(target.c_str(), &sb) == 0 && sa.st_size == sb.st_size;
+            if (same) {
+                d.sameMedia = d.sameMedia || f == g.primary;
+            } else {
+                d.mediaDiffers = true;
+            }
+            continue;
+        }
+        if (!wholeFileEqual(f, target)) {
+            d.conflicts.emplace_back(f, target);
+            const size_t n = base.size();
+            if (n > 4 && lowerAscii(base.substr(n - 4)) == ".pp3") {
+                const std::string sec = pp3Sections(f, target);
+                d.sections += (d.sections.empty() || sec.empty() ? "" : ", ") + sec;
+            }
+            GStatBuf sa, sb;
+            if (g_stat(f.c_str(), &sa) == 0 && g_stat(target.c_str(), &sb) == 0 && sa.st_mtime != sb.st_mtime) {
+                d.newer = sa.st_mtime > sb.st_mtime ? 1 : -1;
+            }
+        }
+    }
+    for (const auto& dir : g.dirs) {
+        if (!Glib::file_test(Glib::build_filename(dest, Glib::path_get_basename(dir)), Glib::FILE_TEST_EXISTS)) {
+            d.movesOver.push_back(Glib::path_get_basename(dir));
+        }
+    }
+    return d;
+}
+
+} // namespace
+
+void DirCleanupWindow::analyzeDuplicates ()
+{
+    const int gen = ++dupGen_;
+    DirCleanupWindow* self = this;
+    for (const auto& s : suggestions_) {
+        if (!s.duplicate) {
+            continue;
+        }
+        for (const auto& g : s.groups) {
+            const std::string key = lowerAscii(g.primary);
+            if (dupInfo_.count(key)) {
+                continue;
+            }
+            const Group grp = g;
+            const std::string dest = s.dest;
+            scanQueue().enqueue([self, gen, grp, dest, key]() {
+                const DupInfo info = analyzeDuplicate(grp, dest);
+                Glib::signal_idle().connect_once([self, gen, key, info]() {
+                    if (instance != self || gen != self->dupGen_) {
+                        return;
+                    }
+                    self->dupInfo_[key] = info;
+                    if (!self->dupRefreshConn_.connected()) {
+                        self->dupRefreshConn_ = Glib::signal_timeout().connect([self]() {
+                            self->refreshDupDisplay();
+                            return false;
+                        }, 150);
+                    }
+                });
+            });
+        }
+    }
+    refreshDupDisplay();
+}
+
+int DirCleanupWindow::resolutionFor (const Group& g, const std::string& dest) const
+{
+    const auto it = conflictChoice_.find(lowerAscii(g.primary));
+    if (it != conflictChoice_.end()) {
+        return it->second;
+    }
+    // Folder preferences: the one set most recently wins.
+    const auto& prefs = App::get().options().cleanupPreferFolders;
+    int srcAt = -1, dstAt = -1;
+    for (size_t i = 0; i < prefs.size(); ++i) {
+        const std::string p = lowerAscii(prefs[i].raw());
+        if (p == lowerAscii(g.dir)) srcAt = static_cast<int>(i);
+        if (p == lowerAscii(dest)) dstAt = static_cast<int>(i);
+    }
+    if (srcAt < 0 && dstAt < 0) {
+        return 0;
+    }
+    return srcAt > dstAt ? 1 : 2;
+}
+
+void DirCleanupWindow::setFolderPreference (const std::string& folder, const std::string& other)
+{
+    auto& prefs = App::get().mut_options().cleanupPreferFolders;
+    const std::string key = lowerAscii(folder);
+    prefs.erase(std::remove_if(prefs.begin(), prefs.end(),
+        [&key](const Glib::ustring& p) { return lowerAscii(p.raw()) == key; }), prefs.end());
+    prefs.push_back(folder);
+    try {
+        Options::saveAsync();
+    } catch (...) {}
+    refreshDupDisplay();
+    updateSummary();
+}
+
+void DirCleanupWindow::clearFolderPreference (const std::string& a, const std::string& b)
+{
+    auto& prefs = App::get().mut_options().cleanupPreferFolders;
+    const std::string ka = lowerAscii(a), kb = lowerAscii(b);
+    prefs.erase(std::remove_if(prefs.begin(), prefs.end(), [&](const Glib::ustring& p) {
+        const std::string k = lowerAscii(p.raw());
+        return k == ka || k == kb;
+    }), prefs.end());
+    try {
+        Options::saveAsync();
+    } catch (...) {}
+    refreshDupDisplay();
+}
+
+Glib::ustring DirCleanupWindow::dupTooltip (const Group& g, const Suggestion& s) const
+{
+    Glib::ustring text = Glib::path_get_basename(g.primary);
+    const Glib::ustring when = captureText(g);
+    if (!when.empty()) {
+        text += "\n" + when;
+    }
+    if (!s.duplicate) {
+        return text;
+    }
+    text += "\n" + M("DIRCLEANUP_DUP_ALSOIN") + " " + s.dest;
+    const auto it = dupInfo_.find(lowerAscii(g.primary));
+    if (it == dupInfo_.end()) {
+        return text;
+    }
+    const DupInfo& d = it->second;
+    if (!d.conflicts.empty()) {
+        Glib::ustring line = Glib::ustring::compose(M("DIRCLEANUP_DUP_EDITSDIFFER"),
+                                                    d.sections.empty() ? Glib::ustring("pp3") : Glib::ustring(d.sections));
+        if (d.newer) {
+            line += " · " + (d.newer > 0 ? M("DIRCLEANUP_DUP_NEWERHERE") : M("DIRCLEANUP_DUP_NEWERTHERE"));
+        }
+        text += "\n" + line;
+        const int r = resolutionFor(g, s.dest);
+        text += "\n" + (r == 0 ? M("DIRCLEANUP_DUP_UNRESOLVED")
+                       : Glib::ustring::compose(M("DIRCLEANUP_DUP_KEEPING"),
+                                                Glib::path_get_basename(r == 1 ? s.source : s.dest)));
+    }
+    if (!d.movesOver.empty()) {
+        Glib::ustring list;
+        for (size_t i = 0; i < d.movesOver.size() && i < 4; ++i) {
+            list += (i ? ", " : "") + d.movesOver[i];
+        }
+        text += "\n" + Glib::ustring::compose(M("DIRCLEANUP_DUP_MOVESOVER"), list);
+    }
+    if (d.mediaDiffers) {
+        text += "\n" + Glib::ustring::compose(M("DIRCLEANUP_MEDIADIFF"), 1);
+    }
+    if (d.conflicts.empty() && d.movesOver.empty() && !d.mediaDiffers) {
+        text += "\n" + M("DIRCLEANUP_DUP_IDENTICAL");
+    }
+    return text;
+}
+
+void DirCleanupWindow::refreshDupDisplay ()
+{
+    // Rows: "=" for clean duplicates, "≠N" while N photos have differing edits
+    // and nothing says which to keep.
+    for (const auto& row : store_->children()) {
+        const int idx = row[cols_.index];
+        if (idx >= static_cast<int>(suggestions_.size()) || !suggestions_[idx].duplicate) {
+            continue;
+        }
+        const auto& s = suggestions_[idx];
+        int unresolved = 0;
+        for (const auto& g : s.groups) {
+            const auto it = dupInfo_.find(lowerAscii(g.primary));
+            if (it != dupInfo_.end() && (it->second.mediaDiffers
+                                        || (!it->second.conflicts.empty() && resolutionFor(g, s.dest) == 0))) {
+                ++unresolved;
+            }
+        }
+        row[cols_.reason] = unresolved ? Glib::ustring::compose("≠%1", unresolved) : Glib::ustring("=");
+    }
+
+    // The strip: hover text, and a badge on photos whose edits differ.
+    if (thumbRow_ < 0 || thumbRow_ >= static_cast<int>(suggestions_.size())) {
+        return;
+    }
+    const auto& s = suggestions_[thumbRow_];
+    for (size_t i = 0; i < thumbTiles_.size() && i < s.groups.size(); ++i) {
+        const auto& g = s.groups[i];
+        thumbTiles_[i]->set_tooltip_text(dupTooltip(g, s));
+        Gtk::Label* badge = thumbBadges_[i];
+        const auto it = s.duplicate ? dupInfo_.find(lowerAscii(g.primary)) : dupInfo_.end();
+        if (it == dupInfo_.end() || (it->second.conflicts.empty() && !it->second.mediaDiffers)) {
+            badge->hide();
+            continue;
+        }
+        const bool open = it->second.mediaDiffers || resolutionFor(g, s.dest) == 0;
+        badge->set_markup(open ? "<span background=\"#c0392b\" foreground=\"white\"> ≠ </span>"
+                               : "<span background=\"#2e7d32\" foreground=\"white\"> ✓ </span>");
+        badge->show();
+    }
+}
+
+bool DirCleanupWindow::onListButton (GdkEventButton* ev)
+{
+    if (ev->button != 3 || ev->type != GDK_BUTTON_PRESS) {
+        return false;
+    }
+    Gtk::TreeModel::Path path;
+    Gtk::TreeViewColumn* column = nullptr;
+    int cx = 0, cy = 0;
+    if (!view_->get_path_at_pos(static_cast<int>(ev->x), static_cast<int>(ev->y), path, column, cx, cy)) {
+        return false;
+    }
+    auto it = store_->get_iter(path);
+    if (!it || (*it)[cols_.index] >= static_cast<int>(suggestions_.size())) {
+        return false;
+    }
+    const auto& s = suggestions_[(*it)[cols_.index]];
+    if (!s.duplicate) {
+        return false;
+    }
+    const std::string src = s.source, dst = s.dest;
+    listMenu_.reset(new Gtk::Menu());
+    auto addItem = [this](const Glib::ustring& label, std::function<void()> act) {
+        auto* item = Gtk::manage(new Gtk::MenuItem(label));
+        item->signal_activate().connect(act);
+        listMenu_->append(*item);
+    };
+    addItem(Glib::ustring::compose(M("DIRCLEANUP_PREFER"), Glib::path_get_basename(src)),
+            [this, src, dst]() { setFolderPreference(src, dst); });
+    addItem(Glib::ustring::compose(M("DIRCLEANUP_PREFER"), Glib::path_get_basename(dst)),
+            [this, src, dst]() { setFolderPreference(dst, src); });
+    addItem(M("DIRCLEANUP_CLEARPREF"), [this, src, dst]() { clearFolderPreference(src, dst); });
+    listMenu_->show_all();
+    listMenu_->popup_at_pointer(reinterpret_cast<GdkEvent*>(ev));
+    return true;
 }

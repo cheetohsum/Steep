@@ -1640,6 +1640,10 @@ void Options::readFromFile(Glib::ustring fname)
                     favoriteDirs = keyFile.get_string_list("File Browser", "FavoriteDirs");
                 }
 
+                if (keyFile.has_key("File Browser", "CleanupPreferFolders")) {
+                    cleanupPreferFolders = keyFile.get_string_list("File Browser", "CleanupPreferFolders");
+                }
+
                 if (keyFile.has_key("File Browser", "HiddenDriveRoots")) {
                     hiddenDriveRoots = keyFile.get_string_list("File Browser", "HiddenDriveRoots");
                 }
@@ -2982,6 +2986,8 @@ Glib::ustring Options::serializeKeyFile()
         keyFile.set_integer("File Browser", "ThumbnailInterpolation", thumbInterp);
         Glib::ArrayHandle<Glib::ustring> pfav = favoriteDirs;
         keyFile.set_string_list("File Browser", "FavoriteDirs", pfav);
+        Glib::ArrayHandle<Glib::ustring> pprefer = cleanupPreferFolders;
+        keyFile.set_string_list("File Browser", "CleanupPreferFolders", pprefer);
         Glib::ArrayHandle<Glib::ustring> phidden = hiddenDriveRoots;
         keyFile.set_string_list("File Browser", "HiddenDriveRoots", phidden);
         Glib::ArrayHandle<Glib::ustring> pren = renameTemplates;

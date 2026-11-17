@@ -9,6 +9,7 @@
 #pragma once
 
 #include <atomic>
+#include <map>
 #include <memory>
 #include <utility>
 #include <vector>
@@ -53,6 +54,19 @@ private:
 
     struct State;
 
+public:
+    // What a duplicate photo is, next to its twin in the destination.
+    struct DupInfo {
+        bool sameMedia = false;                        // the photo file(s) match in size
+        bool mediaDiffers = false;                     // a photo file with the same name differs
+        std::vector<std::string> movesOver;            // only this copy has them
+        std::vector<std::pair<std::string, std::string>> conflicts;   // (here, there) edits that differ
+        std::string sections;                          // which edit sections differ
+        int newer = 0;                                 // +1 this copy's edits newer, -1 the other's
+    };
+
+private:
+
     void startScan ();
     void scanFinished ();
     void fillList (bool keepTicks = false);
@@ -66,6 +80,14 @@ private:
     bool on_delete_event (GdkEventAny* event) override;
     bool onQueryTooltip (int x, int y, bool keyboard, const Glib::RefPtr<Gtk::Tooltip>& tooltip);
     void showThumbs ();
+    void analyzeDuplicates ();
+    void refreshDupDisplay ();
+    // 0 unresolved, 1 keep this copy's edits, 2 keep the destination's
+    int resolutionFor (const dircleanup::Group& g, const std::string& dest) const;
+    void setFolderPreference (const std::string& folder, const std::string& other);
+    void clearFolderPreference (const std::string& a, const std::string& b);
+    Glib::ustring dupTooltip (const dircleanup::Group& g, const dircleanup::Suggestion& s) const;
+    bool onListButton (GdkEventButton* ev);
 
     Columns cols_;
     Glib::RefPtr<Gtk::ListStore> store_;
@@ -79,6 +101,15 @@ private:
     Gtk::Stack* stack_ = nullptr;
     Gtk::Button* selectAllBtn_ = nullptr;
     Gtk::Button* suggestedBtn_ = nullptr;
+    Gtk::Button* dupBtn_ = nullptr;
+    std::map<std::string, DupInfo> dupInfo_;       // lower-case primary path -> analysis
+    std::map<std::string, int> conflictChoice_;    // lower-case primary path -> 1 / 2
+    int dupGen_ = 0;
+    sigc::connection dupRefreshConn_;
+    int thumbRow_ = -1;                             // suggestion the strip shows
+    std::vector<Gtk::EventBox*> thumbTiles_;
+    std::vector<Gtk::Label*> thumbBadges_;
+    std::unique_ptr<Gtk::Menu> listMenu_;
     Gtk::FlowBox* thumbs_ = nullptr;
     Gtk::ScrolledWindow* thumbScroll_ = nullptr;
     Gtk::TreeViewColumn* fromCol_ = nullptr;

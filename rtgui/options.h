@@ -412,6 +412,9 @@ public:
     rtengine::Settings rtSettings;
     bool showtooltip;
     std::vector<Glib::ustring> favoriteDirs;
+    // Directory cleanup: when two copies of a photo carry different edits,
+    // the copy in one of these folders wins.
+    std::vector<Glib::ustring> cleanupPreferFolders;
     std::vector<Glib::ustring> hiddenDriveRoots;
     std::vector<Glib::ustring> renameTemplates;
     bool renameUseTemplates;
