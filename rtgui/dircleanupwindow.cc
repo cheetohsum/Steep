@@ -27,6 +27,10 @@
 #include "multilangmgr.h"
 #include "options.h"
 #include "phototags.h"
+#ifdef _WIN32
+#include "rtengine/leanwindows.h"
+#include <shellapi.h>
+#endif
 #include "thumbnail.h"
 #include "rtengine/iimage.h"
 
@@ -98,6 +102,42 @@ Glib::ustring humanBytes(long long b)
     return buf;
 }
 
+// Explorer with the photo selected (other platforms: its folder).
+void revealInFileManager(const std::string& path)
+{
+#ifdef _WIN32
+    std::string p = path;
+    std::replace(p.begin(), p.end(), '/', '\\');
+    const std::string argument = "/select,\"" + p + "\"";
+    if (wchar_t* wide = reinterpret_cast<wchar_t*>(g_utf8_to_utf16(argument.c_str(), -1, nullptr, nullptr, nullptr))) {
+        const HINSTANCE r = ShellExecuteW(nullptr, L"open", L"explorer.exe", wide, nullptr, SW_SHOWNORMAL);
+        g_free(wide);
+        if (reinterpret_cast<INT_PTR>(r) > 32) {
+            return;
+        }
+    }
+#endif
+    try {
+        Gio::AppInfo::launch_default_for_uri(Glib::filename_to_uri(Glib::path_get_dirname(path)));
+    } catch (...) {}
+}
+
+Glib::ustring captureText(const Group& g)
+{
+    if (g.day < 0) {
+        return Glib::ustring();
+    }
+    int y, m, d;
+    dayToYMD(g.day, y, m, d);
+    char buf[48];
+    if (g.minute >= 0) {
+        std::snprintf(buf, sizeof(buf), "%s %d %d, %02d:%02d", monthAbbrev(m), d, y, g.minute / 60, g.minute % 60);
+    } else {
+        std::snprintf(buf, sizeof(buf), "%s %d %d", monthAbbrev(m), d, y);
+    }
+    return buf;
+}
+
 bool isMediaName(const std::string& base)
 {
     const size_t dot = base.find('.');
@@ -157,7 +197,7 @@ DirCleanupWindow::DirCleanupWindow ()
 {
     set_title(M("DIRCLEANUP_TITLE"));
     set_name("DirCleanupWindow");
-    set_default_size(820, 640);
+    set_default_size(880, 780);
     set_type_hint(Gdk::WINDOW_TYPE_HINT_DIALOG);
 
     auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 6));
@@ -239,12 +279,12 @@ DirCleanupWindow::DirCleanupWindow ()
     thumbScroll_ = Gtk::manage(new Gtk::ScrolledWindow());
     thumbScroll_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
     thumbScroll_->add(*thumbs_);
-    thumbScroll_->set_size_request(-1, 120);
+    thumbScroll_->set_size_request(-1, 220);
 
     auto* paned = Gtk::manage(new Gtk::Paned(Gtk::ORIENTATION_VERTICAL));
     paned->pack1(*stack_, true, false);
     paned->pack2(*thumbScroll_, false, false);
-    paned->set_position(380);
+    paned->set_position(300);
     box->pack_start(*paned, Gtk::PACK_EXPAND_WIDGET);
 
     auto* bar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
@@ -328,6 +368,7 @@ bool DirCleanupWindow::onQueryTooltip (int x, int y, bool keyboard, const Glib::
 void DirCleanupWindow::showThumbs ()
 {
     const int gen = ++(*thumbLive_);
+    thumbImages_.clear();
     for (auto* child : thumbs_->get_children()) {
         thumbs_->remove(*child);   // GTK destroys the managed child
     }
@@ -343,13 +384,29 @@ void DirCleanupWindow::showThumbs ()
     constexpr int kTile = 96;
     const size_t shown = std::min<size_t>(groups.size(), 400);
 
-    std::vector<Gtk::Image*> images;
+    thumbImages_.clear();
     for (size_t i = 0; i < shown; ++i) {
         auto* img = Gtk::manage(new Gtk::Image());
         img->set_size_request(kTile, kTile);
-        img->set_tooltip_text(Glib::path_get_basename(groups[i].primary));
-        thumbs_->add(*img);
-        images.push_back(img);
+        auto* tile = Gtk::manage(new Gtk::EventBox());
+        tile->add(*img);
+        const Glib::ustring when = captureText(groups[i]);
+        tile->set_tooltip_text(Glib::path_get_basename(groups[i].primary) + (when.empty() ? "" : "\n" + when));
+        const std::string path = groups[i].primary;
+        tile->signal_button_press_event().connect([this, path](GdkEventButton* ev) -> bool {
+            if (ev->button != 3 || ev->type != GDK_BUTTON_PRESS) {
+                return false;
+            }
+            thumbMenu_.reset(new Gtk::Menu());
+            auto* item = Gtk::manage(new Gtk::MenuItem(M("FILEBROWSER_POPUPOPENSOURCEFOLDER")));
+            item->signal_activate().connect([path]() { revealInFileManager(path); });
+            thumbMenu_->append(*item);
+            thumbMenu_->show_all();
+            thumbMenu_->popup_at_pointer(reinterpret_cast<GdkEvent*>(ev));
+            return true;
+        });
+        thumbs_->add(*tile);
+        thumbImages_.push_back(img);
     }
     thumbs_->show_all();
 
@@ -392,13 +449,8 @@ void DirCleanupWindow::showThumbs ()
                 if (instance != self || gen != live->load()) {
                     return;
                 }
-                auto children = self->thumbs_->get_children();
-                if (i < children.size()) {
-                    if (auto* fbc = dynamic_cast<Gtk::FlowBoxChild*>(children[i])) {
-                        if (auto* img = dynamic_cast<Gtk::Image*>(fbc->get_child())) {
-                            img->set(pixbuf);
-                        }
-                    }
+                if (i < self->thumbImages_.size()) {
+                    self->thumbImages_[i]->set(pixbuf);
                 }
             });
         });
@@ -679,6 +731,7 @@ struct MoveJob {
 struct MoveResult {
     std::vector<std::pair<Glib::ustring, Glib::ustring>> media;   // photo paths, for tags/albums
     bool moved = false;
+    Group after;   // the group at its new place
 };
 
 struct Journal {
@@ -783,6 +836,16 @@ MoveResult moveGroup(const MoveJob& job, Journal& journal)
         result.media.emplace_back(m.first, to);
     }
     result.moved = true;
+    result.after = g;
+    result.after.dir = job.dest;
+    result.after.stem = stem;
+    result.after.primary = targetFor(g.primary, stem);
+    for (auto& f : result.after.files) {
+        f = targetFor(f, stem);
+    }
+    for (auto& d : result.after.dirs) {
+        d = targetFor(d, stem);
+    }
     return result;
 }
 
@@ -840,6 +903,7 @@ void DirCleanupWindow::startMove ()
     struct Progress {
         std::mutex mutex;
         std::vector<std::pair<Glib::ustring, Glib::ustring>> media;
+        std::vector<std::pair<Group, Group>> groups;   // before, after
         int moved = 0, skipped = 0, finished = 0, total = 0;
     };
     auto prog = std::make_shared<Progress>();
@@ -851,19 +915,24 @@ void DirCleanupWindow::startMove ()
             const MoveResult r = moveGroup(job, *journal);
             int finished = 0, total = 0, moved = 0, skipped = 0;
             std::vector<std::pair<Glib::ustring, Glib::ustring>> media;
+            std::vector<std::pair<Group, Group>> groups;
             {
                 std::lock_guard<std::mutex> lock(prog->mutex);
                 (r.moved ? prog->moved : prog->skipped)++;
                 prog->media.insert(prog->media.end(), r.media.begin(), r.media.end());
+                if (r.moved) {
+                    prog->groups.emplace_back(job.group, r.after);
+                }
                 finished = ++prog->finished;
                 total = prog->total;
                 if (finished == total) {
                     media.swap(prog->media);
+                    groups.swap(prog->groups);
                     moved = prog->moved;
                     skipped = prog->skipped;
                 }
             }
-            Glib::signal_idle().connect_once([self, finished, total, moved, skipped, media]() {
+            Glib::signal_idle().connect_once([self, finished, total, moved, skipped, media, groups]() {
                 if (instance != self) {
                     applyRenames(media);
                     return;
@@ -871,21 +940,70 @@ void DirCleanupWindow::startMove ()
                 self->moveBtn_->set_label(Glib::ustring::compose("%1 / %2", finished, total));
                 if (finished == total) {
                     applyRenames(media);
-                    self->moveFinished(moved, skipped);
+                    self->moveFinished(moved, skipped, groups);
                 }
             });
         });
     }
 }
 
-void DirCleanupWindow::moveFinished (int moved, int skipped)
+void DirCleanupWindow::moveFinished (int moved, int skipped,
+                                     const std::vector<std::pair<Group, Group>>& movedGroups)
 {
-    setBusy(false);
     filesMoved().emit();
     lastResult_ = Glib::ustring::compose("✓ %1%2", moved,
                   skipped ? Glib::ustring::compose("   ✕ %1", skipped) : Glib::ustring());
-    // Fresh suggestions from the new layout.
-    startScan();
+
+    // Patch the scan instead of rescanning: each moved photo leaves its
+    // folder and joins the destination (a new folder gets its own entry).
+    {
+        std::lock_guard<std::mutex> lock(state_->mutex);
+        auto& scans = state_->scans;
+        const auto findScan = [&scans](const std::string& path) -> FolderScan* {
+            const std::string key = lowerAscii(path);
+            for (auto& f : scans) {
+                if (lowerAscii(f.path) == key) {
+                    return &f;
+                }
+            }
+            return nullptr;
+        };
+        for (const auto& mv : movedGroups) {
+            const Group& before = mv.first;
+            const Group& after = mv.second;
+            std::string root;
+            if (FolderScan* src = findScan(before.dir)) {
+                root = src->root;
+                const std::string key = lowerAscii(before.primary);
+                src->groups.erase(std::remove_if(src->groups.begin(), src->groups.end(),
+                    [&key](const Group& g) { return lowerAscii(g.primary) == key; }), src->groups.end());
+            }
+            FolderScan* dst = findScan(after.dir);
+            if (!dst) {
+                FolderScan created;
+                created.path = after.dir;
+                created.name = Glib::path_get_basename(after.dir);
+                created.parent = Glib::path_get_dirname(after.dir);
+                created.root = root;
+                created.info = parseFolderName(created.name);
+                scans.push_back(std::move(created));
+                dst = &scans.back();
+            }
+            dst->groups.push_back(after);
+            // The date index follows the files (a move keeps size and time).
+            for (size_t k = 0; k < before.files.size() && k < after.files.size(); ++k) {
+                const auto it = state_->index.find(before.files[k]);
+                if (it != state_->index.end()) {
+                    state_->index[after.files[k]] = it->second;
+                    state_->index.erase(it);
+                    state_->indexDirty = true;
+                }
+            }
+        }
+        suggestions_ = suggest(scans);
+    }
+    setBusy(false);
+    fillList();
 }
 
 void DirCleanupWindow::startUndo ()

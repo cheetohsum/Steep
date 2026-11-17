@@ -10,6 +10,7 @@
 
 #include <atomic>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include <gtkmm.h>
@@ -56,7 +57,8 @@ private:
     void fillList ();
     void updateSummary ();
     void startMove ();
-    void moveFinished (int moved, int skipped);
+    void moveFinished (int moved, int skipped,
+                       const std::vector<std::pair<dircleanup::Group, dircleanup::Group>>& movedGroups);
     void startUndo ();
     bool hasUndo () const;
     void setBusy (bool busy);
@@ -81,6 +83,8 @@ private:
     Gtk::TreeViewColumn* toCol_ = nullptr;
     Gtk::TreeViewColumn* dotsCol_ = nullptr;
     Gtk::TreeViewColumn* reasonCol_ = nullptr;
+    std::vector<Gtk::Image*> thumbImages_;       // index-aligned with the shown groups
+    std::unique_ptr<Gtk::Menu> thumbMenu_;
     std::shared_ptr<std::atomic<int>> thumbLive_ = std::make_shared<std::atomic<int>>(0);
 
     std::shared_ptr<State> state_;
