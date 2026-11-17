@@ -392,7 +392,7 @@ void Options::setDefaults()
     detailWindowAnchorX = 0.5;
     detailWindowAnchorY = 0.5;
     detailWindowZoom = 1.0;
-    dirBrowserWidth = 260;
+    dirBrowserWidth = 340;
     dirBrowserHeight = 350;
     albumPanelHeight = -1;
     albumPanelCollapsed = false;
@@ -438,6 +438,11 @@ void Options::setDefaults()
     folderPreviewCount = 5;
     folderPreviewSize = 1;
     folderPreviewsPreferRated = true;
+    folderShowCount = true;
+    folderShowStars = true;
+    folderShowFlags = true;
+    folderShowRejects = false;
+    folderShowLabels = false;
     filmstripRatingStars = true;
     filmstripRatingLabels = true;
     hiddenPreviewStrips = 0;
@@ -1571,6 +1576,21 @@ void Options::readFromFile(Glib::ustring fname)
                     folderPreviewsPreferRated = keyFile.get_boolean("File Browser", "FolderPreviewsPreferRated");
                 }
 
+                {
+                    const std::pair<const char*, bool*> folderShows[] = {
+                        {"FolderShowCount", &folderShowCount},
+                        {"FolderShowStars", &folderShowStars},
+                        {"FolderShowFlags", &folderShowFlags},
+                        {"FolderShowRejects", &folderShowRejects},
+                        {"FolderShowLabels", &folderShowLabels},
+                    };
+                    for (const auto& show : folderShows) {
+                        if (keyFile.has_key("File Browser", show.first)) {
+                            *show.second = keyFile.get_boolean("File Browser", show.first);
+                        }
+                    }
+                }
+
                 if (keyFile.has_key("File Browser", "FolderPreviewSize")) {
                     folderPreviewSize = std::max(0, std::min(3, keyFile.get_integer("File Browser", "FolderPreviewSize")));
                 }
@@ -1922,6 +1942,10 @@ void Options::readFromFile(Glib::ustring fname)
 
                 if (keyFile.has_key("GUI", "DirBrowserWidth")) {
                     dirBrowserWidth = keyFile.get_integer("GUI", "DirBrowserWidth");
+                    // 260 was the old default: follow the new, wider one.
+                    if (dirBrowserWidth == 260) {
+                        dirBrowserWidth = 340;
+                    }
                 }
 
                 if (keyFile.has_key("GUI", "DirBrowserHeight")) {
@@ -2928,6 +2952,11 @@ Glib::ustring Options::serializeKeyFile()
         keyFile.set_integer("File Browser", "FolderPreviewCount", folderPreviewCount);
         keyFile.set_integer("File Browser", "FolderPreviewSize", folderPreviewSize);
         keyFile.set_boolean("File Browser", "FolderPreviewsPreferRated", folderPreviewsPreferRated);
+        keyFile.set_boolean("File Browser", "FolderShowCount", folderShowCount);
+        keyFile.set_boolean("File Browser", "FolderShowStars", folderShowStars);
+        keyFile.set_boolean("File Browser", "FolderShowFlags", folderShowFlags);
+        keyFile.set_boolean("File Browser", "FolderShowRejects", folderShowRejects);
+        keyFile.set_boolean("File Browser", "FolderShowLabels", folderShowLabels);
         keyFile.set_boolean("File Browser", "FilmstripRatingStars", filmstripRatingStars);
         keyFile.set_integer("File Browser", "HiddenPreviewStrips", hiddenPreviewStrips);
         keyFile.set_boolean("File Browser", "FilmstripRatingLabels", filmstripRatingLabels);

@@ -189,6 +189,25 @@ void accumulateFileFlags(const Glib::ustring& fname, FolderStats& st)
     }
 }
 
+// The chips the user chose to show (right-click menu).
+FolderStats visibleStats(FolderStats st)
+{
+    const auto& o = App::get().options();
+    if (!o.folderShowStars) {
+        for (int& r : st.rank) r = 0;
+    }
+    if (!o.folderShowFlags) {
+        st.pick = 0;
+    }
+    if (!o.folderShowRejects) {
+        st.reject = 0;
+    }
+    if (!o.folderShowLabels) {
+        for (int& c : st.color) c = 0;
+    }
+    return st;
+}
+
 // Same palette as the thumbnail colour-label glow (thumbbrowserentrybase.cc).
 const double kLabelR[] = {0, 1.0, 1.0, 0.2, 0.2, 0.6};
 const double kLabelG[] = {0, 0.2, 0.85, 0.8, 0.4, 0.2};
@@ -689,6 +708,7 @@ DirBrowser::~DirBrowser()
     statRefreshConn_.disconnect();
     flagsChangedConn_.disconnect();
     previewGrowConn_.disconnect();
+    sidebarWidthConn_.disconnect();
     hideHoverPopup();
     delete hoverPopup_;
     idle_register.destroy();
@@ -909,8 +929,9 @@ void DirBrowser::fillDirTree ()
         textCR->visibleRight = hadj && hadj->get_page_size() > 0
                                ? static_cast<int>(hadj->get_value() + hadj->get_page_size())
                                : dirtree->get_allocated_width();
-        textCR->countText = iter ? iter->get_value(dtColumns.photoCount) : Glib::ustring();
-        textCR->stats = FolderStats::decode(iter ? iter->get_value(dtColumns.flagStats) : Glib::ustring());
+        textCR->countText = iter && App::get().options().folderShowCount
+                            ? iter->get_value(dtColumns.photoCount) : Glib::ustring();
+        textCR->stats = visibleStats(FolderStats::decode(iter ? iter->get_value(dtColumns.flagStats) : Glib::ustring()));
     });
     crt->ink = themeColor(*dirtree, "steep_text_dim", Gdk::RGBA("#888888"));
 
@@ -2290,6 +2311,59 @@ void DirBrowser::buildPreviewPopover ()
 
     grid->attach(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)), 0, 4, 2, 1);
 
+    // What each folder row shows next to its name.
+    Gtk::Grid* showGrid = Gtk::manage(new Gtk::Grid());
+    showGrid->set_row_spacing(2);
+    showGrid->set_column_spacing(12);
+    const char* showKeys[5] = {"DIRBROWSER_SHOW_COUNT", "DIRBROWSER_SHOW_STARS", "DIRBROWSER_SHOW_FLAGS",
+                               "DIRBROWSER_SHOW_REJECTS", "DIRBROWSER_SHOW_LABELS"};
+    for (int i = 0; i < 5; ++i) {
+        showChecks_[i] = Gtk::manage(new Gtk::CheckButton(M(showKeys[i])));
+        showGrid->attach(*showChecks_[i], i % 2, i / 2, 1, 1);
+        showChecks_[i]->signal_toggled().connect([this, i]() {
+            if (previewPopoverSyncing_) {
+                return;
+            }
+            auto& o = App::get().mut_options();
+            bool* flags[5] = {&o.folderShowCount, &o.folderShowStars, &o.folderShowFlags,
+                              &o.folderShowRejects, &o.folderShowLabels};
+            *flags[i] = showChecks_[i]->get_active();
+            try {
+                Options::saveAsync();
+            } catch (Options::Error& error) {
+                std::cerr << "Failed to save options: " << error.get_msg() << std::endl;
+            }
+            dirtree->queue_draw();
+        });
+    }
+    grid->attach(*showGrid, 0, 5, 2, 1);
+
+    Gtk::Label* widthLabel = Gtk::manage(new Gtk::Label(M("DIRBROWSER_SIDEBAR_WIDTH"), Gtk::ALIGN_START));
+    sidebarWidthScale_ = Gtk::manage(new Gtk::Scale(Gtk::ORIENTATION_HORIZONTAL));
+    sidebarWidthScale_->set_range(200, 700);
+    sidebarWidthScale_->set_increments(10, 50);
+    sidebarWidthScale_->set_round_digits(-1);
+    sidebarWidthScale_->set_digits(0);
+    sidebarWidthScale_->set_value_pos(Gtk::POS_RIGHT);
+    sidebarWidthScale_->set_hexpand(true);
+    sidebarWidthScale_->set_size_request(150, -1);
+    sidebarWidthScale_->add_mark(340, Gtk::POS_BOTTOM, "");   // the default
+    grid->attach(*widthLabel, 0, 6, 1, 1);
+    grid->attach(*sidebarWidthScale_, 1, 6, 1, 1);
+    sidebarWidthScale_->signal_value_changed().connect([this]() {
+        if (previewPopoverSyncing_) {
+            return;
+        }
+        const int w = static_cast<int>(std::lround(sidebarWidthScale_->get_value() / 10.0)) * 10;
+        sidebarWidthConn_.disconnect();
+        sidebarWidthConn_ = Glib::signal_timeout().connect([w]() {
+            sidebarWidthRequested().emit(w);
+            return false;
+        }, 60);
+    });
+
+    grid->attach(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_HORIZONTAL)), 0, 7, 2, 1);
+
     // The browser's own Open source folder action: same icon, same words.
     Gtk::Button* openButton = Gtk::manage(new Gtk::Button(M("FILEBROWSER_POPUPOPENSOURCEFOLDER")));
     openButton->set_image(*Gtk::manage(new RTImage("folder-open-small", Gtk::ICON_SIZE_BUTTON)));
@@ -2299,7 +2373,7 @@ void DirBrowser::buildPreviewPopover ()
     if (auto* label = dynamic_cast<Gtk::Label*>(openButton->get_child())) {
         label->set_xalign(0.f);
     }
-    grid->attach(*openButton, 0, 5, 2, 1);
+    grid->attach(*openButton, 0, 8, 2, 1);
 
     previewSwitch_->property_active().signal_changed().connect([this, sizeLabel, countLabel, ratedLabel]() {
         const bool on = previewSwitch_->get_active();
@@ -2348,6 +2422,12 @@ void DirBrowser::showPreviewMenu (GdkEventButton* event)
     previewSizeScale_->set_value(options.folderPreviewSize);
     previewCountScale_->set_value(options.folderPreviewCount);
     previewRatedSwitch_->set_active(options.folderPreviewsPreferRated);
+    const bool shows[5] = {options.folderShowCount, options.folderShowStars, options.folderShowFlags,
+                           options.folderShowRejects, options.folderShowLabels};
+    for (int i = 0; i < 5; ++i) {
+        showChecks_[i]->set_active(shows[i]);
+    }
+    sidebarWidthScale_->set_value(get_allocated_width() > 0 ? get_allocated_width() : options.dirBrowserWidth);
     previewPopoverSyncing_ = false;
 
     previewPopover_->set_pointing_to(rect);
@@ -2532,6 +2612,12 @@ void DirBrowser::runStatsChunk (std::shared_ptr<StatsJob> job)
     });
 }
 
+sigc::signal<void, int>& DirBrowser::sidebarWidthRequested ()
+{
+    static sigc::signal<void, int> sig;
+    return sig;
+}
+
 sigc::signal<void, const Glib::ustring&>& DirBrowser::folderFlagsChanged ()
 {
     static sigc::signal<void, const Glib::ustring&> sig;
@@ -2581,7 +2667,7 @@ bool DirBrowser::statsChipAt (int bx, int by, Gtk::TreeModel::Path* pathOut, int
     if (!iter) {
         return false;
     }
-    const FolderStats st = FolderStats::decode(iter->get_value(dtColumns.flagStats));
+    const FolderStats st = visibleStats(FolderStats::decode(iter->get_value(dtColumns.flagStats)));
     if (st.empty()) {
         return false;
     }

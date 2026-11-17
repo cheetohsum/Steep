@@ -320,6 +320,13 @@ public:
     int  folderPreviewCount;     // 1..5 photos in that strip
     int  folderPreviewSize;      // 0 small, 1 medium, 2 large, 3 extra large tiles
     bool folderPreviewsPreferRated; // starred/picked photos first, spread through the folder
+    // Folder tree row details (right-click menu): photo count and the
+    // rating / flag / reject / colour-label chips.
+    bool folderShowCount;
+    bool folderShowStars;
+    bool folderShowFlags;
+    bool folderShowRejects;
+    bool folderShowLabels;
     bool filmstripRatingStars;   // the editor's rating palette shows the stars
     bool filmstripRatingLabels;  // ... and the colour labels
     int  hiddenPreviewStrips;    // edit pane preview strips hidden: bit 0 exposure, 1 color, 2 detail, 3 effects, 4 B&W

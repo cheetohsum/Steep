@@ -2639,6 +2639,13 @@ FilePanel::FilePanel () :
     // refresh the Places list whenever a star is toggled there.
     favoritesRefreshConn_ = DirBrowser::favoritesChanged().connect(
         sigc::mem_fun(*placesBrowser, &PlacesBrowser::refreshPlacesList));
+    // Sidebar width from the folder tree's right-click menu.
+    DirBrowser::sidebarWidthRequested().connect([this](int width) {
+        if (dirpaned) {
+            dirpaned->set_position(width);
+        }
+        App::get().mut_options().dirBrowserWidth = width;
+    });
     obox->pack_start(*folderHeader, Gtk::PACK_SHRINK, 0);
     obox->pack_start (*dirBrowser, Gtk::PACK_EXPAND_WIDGET, 0);
     dirBrowser->set_size_request(-1, 200);

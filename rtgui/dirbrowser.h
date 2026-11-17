@@ -182,6 +182,9 @@ private:
     Gtk::Switch* previewRatedSwitch_ = nullptr;
     Gtk::Scale* previewSizeScale_ = nullptr;
     Gtk::Scale* previewCountScale_ = nullptr;
+    Gtk::Scale* sidebarWidthScale_ = nullptr;
+    Gtk::CheckButton* showChecks_[5] = {nullptr, nullptr, nullptr, nullptr, nullptr};
+    sigc::connection sidebarWidthConn_;
     bool previewPopoverSyncing_ = false;
     sigc::connection previewApplyConn_;
     Glib::ustring previewMenuDir_;
@@ -249,6 +252,9 @@ public:
     // Emitted after ratings / flags / colour labels / trash change for
     // files in a folder, so the tree refreshes that folder's chips.
     static sigc::signal<void, const Glib::ustring&>& folderFlagsChanged ();
+
+    // Emitted when the right-click menu asks for a new sidebar width (px).
+    static sigc::signal<void, int>& sidebarWidthRequested ();
 };
 
 inline DirBrowser::DirSelectionSignal DirBrowser::dirSelected () const
