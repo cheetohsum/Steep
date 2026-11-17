@@ -32,6 +32,8 @@ public:
               const std::vector<Definition>& define, Glib::ustring& error,
               const std::map<Glib::ustring, Tags>& individualAdd = {}, bool rememberRecent = true,
               const Tags& deleteDefinitions = {});
+    // Photos moved on disk: carry their tags to the new paths (one write).
+    bool renamePaths(const std::vector<std::pair<Glib::ustring, Glib::ustring>>& moves, Glib::ustring& error);
     sigc::signal<void>& changed() { return changed_; }
 private:
     struct Record { Glib::ustring path; Tags tags; };

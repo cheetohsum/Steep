@@ -140,6 +140,8 @@ set(RT_GUI_MCP_SOURCES
 
 set(NONCLISOURCEFILES
     albumbrowser.cc
+    dircleanupcore.cc
+    dircleanupwindow.cc
     alignedmalloc.cc
     aspectratios.cc
     autoedit.cc
@@ -382,6 +384,9 @@ if(STEEP_BUILD_PROFILE_TESTS)
     target_include_directories(steep-mask-sampling-tests PRIVATE ${PROJECT_SOURCE_DIR})
     target_link_libraries(steep-mask-sampling-tests PRIVATE PkgConfig::GLIBMM)
     find_package(Threads REQUIRED)
+    add_executable(steep-dircleanup-tests ../tools/dircleanup_tests.cc dircleanupcore.cc)
+    target_include_directories(steep-dircleanup-tests PRIVATE ${PROJECT_SOURCE_DIR})
+    target_link_libraries(steep-dircleanup-tests PRIVATE PkgConfig::GLIBMM)
     add_executable(steep-crop-update-tests ../tools/crop_update_state_tests.cc)
     target_include_directories(steep-crop-update-tests PRIVATE ${PROJECT_SOURCE_DIR})
     target_link_libraries(steep-crop-update-tests PRIVATE Threads::Threads)

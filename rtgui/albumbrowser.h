@@ -69,6 +69,10 @@ public:
     void loadAlbums ();
     void saveAlbums ();
 
+    // Photos moved on disk: rewrite album members and covers in the albums
+    // file, then tell every open album list to reload.
+    static void renamePaths (const std::vector<std::pair<Glib::ustring, Glib::ustring>>& moves);
+
     void addFileToTargetAlbum (const Glib::ustring& filePath);
     void addFileToAlbum (const Glib::ustring& albumName, const Glib::ustring& filePath);
     void removeFileFromAlbum (const Glib::ustring& albumName, const Glib::ustring& filePath);

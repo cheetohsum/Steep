@@ -231,3 +231,26 @@ bool PhotoTags::edit(const std::vector<Glib::ustring>& paths, const Tags& add, c
     changed_.emit();
     return true;
 }
+
+bool PhotoTags::renamePaths(const std::vector<std::pair<Glib::ustring, Glib::ustring>>& moves, Glib::ustring& error)
+{
+    std::vector<Glib::ustring> paths;
+    Tags removeAll;
+    std::map<Glib::ustring, Tags> addTo;
+    for (const auto& mv : moves) {
+        const Tags t = tags(mv.first);
+        if (t.empty()) {
+            continue;
+        }
+        paths.push_back(mv.first);
+        paths.push_back(mv.second);
+        removeAll.insert(t.begin(), t.end());
+        addTo[mv.second].insert(t.begin(), t.end());
+    }
+    if (paths.empty()) {
+        return true;
+    }
+    // Removing from every listed path then adding back per new path leaves the
+    // old paths untagged and the new ones carrying exactly what they had.
+    return edit(paths, {}, removeAll, {}, error, addTo, false);
+}

@@ -17,6 +17,7 @@
  *  along with RawTherapee.  If not, see <https://www.gnu.org/licenses/>.
  */
 #include "filepanel.h"
+#include "dircleanupwindow.h"
 
 #include <algorithm>
 #include <atomic>
@@ -2610,6 +2611,21 @@ FilePanel::FilePanel () :
     browseButton->set_image(*browseIcon);
     browseButton->set_always_show_image(true);
     browseButton->signal_clicked().connect(sigc::mem_fun(*dirBrowser, &DirBrowser::browseForFolder));
+    // Right-click: directory cleanup (starred places -> month folders).
+    browseButton->add_events(Gdk::BUTTON_PRESS_MASK);
+    browseButton->signal_button_press_event().connect([this](GdkEventButton* ev) -> bool {
+        if (ev->button != 3 || ev->type != GDK_BUTTON_PRESS) {
+            return false;
+        }
+        recentHoverTimer_.disconnect();
+        DirCleanupWindow::open(dynamic_cast<Gtk::Window*>(get_toplevel()));
+        return true;
+    }, false);
+    DirCleanupWindow::filesMoved().connect([this]() {
+        if (fileCatalog) {
+            fileCatalog->reparseDirectory();
+        }
+    });
 
     // Hovering the folder icon opens the recent-folders menu after a short
     // delay. The popup happens from the timer callback, never from inside

@@ -704,6 +704,58 @@ void AlbumBrowser::onGlobalAlbumsChanged (AlbumBrowser* sender)
     refreshTree();
 }
 
+void AlbumBrowser::renamePaths (const std::vector<std::pair<Glib::ustring, Glib::ustring>>& moves)
+{
+    if (moves.empty()) {
+        return;
+    }
+    std::map<std::string, Glib::ustring> to;
+    for (const auto& mv : moves) {
+        to[PhotoTags::pathKey(mv.first)] = mv.second;
+    }
+    const Glib::ustring fpath = Glib::build_filename(Options::rtdir, "albums");
+    bool changed = false;
+    try {
+        Glib::KeyFile kf;
+        if (!kf.load_from_file(fpath, Glib::KEY_FILE_KEEP_COMMENTS)) {
+            return;
+        }
+        for (const auto& group : kf.get_groups()) {
+            if (kf.has_key(group, "Files")) {
+                std::vector<Glib::ustring> files = kf.get_string_list(group, "Files");
+                bool any = false;
+                for (auto& f : files) {
+                    const auto it = to.find(PhotoTags::pathKey(f));
+                    if (it != to.end()) {
+                        f = it->second;
+                        any = true;
+                    }
+                }
+                if (any) {
+                    kf.set_string_list(group, "Files", files);
+                    changed = true;
+                }
+            }
+            if (kf.has_key(group, "Cover")) {
+                const auto it = to.find(PhotoTags::pathKey(kf.get_string(group, "Cover")));
+                if (it != to.end()) {
+                    kf.set_string(group, "Cover", it->second);
+                    changed = true;
+                }
+            }
+        }
+        if (changed) {
+            const Glib::ustring data = kf.to_data();
+            g_file_set_contents(fpath.c_str(), data.c_str(), data.bytes(), nullptr);
+        }
+    } catch (...) {
+        return;
+    }
+    if (changed) {
+        albumsChangedOnDisk_.emit(nullptr);
+    }
+}
+
 Glib::ustring AlbumBrowser::getAlbumsFilePath () const
 {
     return Glib::build_filename(Options::rtdir, "albums");

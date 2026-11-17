@@ -414,6 +414,28 @@ public:
     static constexpr int kCountGap = 6;
     static constexpr int kRightPad = 6;
 
+    // Whether the name is cut short in this cell (same sums as render_vfunc).
+    bool nameTruncated(Gtk::Widget& widget, const Gdk::Rectangle& cell_area) const
+    {
+        int chipsW = 0, chipTextH = 0;
+        const auto chips = layoutChips(widget, stats, chipsW, chipTextH);
+        const int right = chipsRight(cell_area);
+        int countW = 0, countH = 0;
+        if (!countText.empty()) {
+            auto countLayout = widget.create_pango_layout(countText);
+            Pango::AttrList attrs;
+            auto scaleAttr = Pango::Attribute::create_attr_scale(0.8);
+            attrs.insert(scaleAttr);
+            countLayout->set_attributes(attrs);
+            countLayout->get_pixel_size(countW, countH);
+        }
+        int nameMin = 0, nameNat = 0;
+        Gtk::CellRendererText::get_preferred_width_vfunc(widget, nameMin, nameNat);
+        const int chipsLeft = chips.empty() ? right : right - chipsW - kChipGap;
+        const int room = chipsLeft - cell_area.get_x() - (countW > 0 ? countW + kCountGap : 0);
+        return nameNat > room;
+    }
+
     // Right edge of the chip strip for a cell (cell_area coordinates).
     int chipsRight(const Gdk::Rectangle& cell_area) const
     {
@@ -2717,7 +2739,32 @@ bool DirBrowser::onQueryTooltip (int x, int y, bool keyboard, const Glib::RefPtr
     int chip = 0;
     Gdk::Rectangle rect;
     if (!statsChipAt(bx, by, &path, &chip, &rect)) {
-        return false;
+        // A name cut short shows in full.
+        Gtk::TreeViewColumn* column = nullptr;
+        int cx = 0, cy = 0;
+        if (!crt || !dirTreeModel || !dirtree->get_path_at_pos(bx, by, path, column, cx, cy) || column != &tvc) {
+            return false;
+        }
+        auto row = dirTreeModel->get_iter(path);
+        if (!row) {
+            return false;
+        }
+        tvc.cell_set_cell_data(dirTreeModel, row, false, dirtree->row_expanded(path));
+        int start = 0, width = 0;
+        if (!tvc.get_cell_position(*crt, start, width) || width <= 0) {
+            return false;
+        }
+        Gdk::Rectangle cellArea;
+        dirtree->get_cell_area(path, tvc, cellArea);
+        const Gdk::Rectangle nameCell(cellArea.get_x() + start, cellArea.get_y(), width, cellArea.get_height());
+        if (!crt->nameTruncated(*dirtree, nameCell)) {
+            return false;
+        }
+        tooltip->set_text(row->get_value(dtColumns.filename));
+        int tx = 0, ty = 0;
+        dirtree->convert_bin_window_to_widget_coords(nameCell.get_x(), nameCell.get_y(), tx, ty);
+        tooltip->set_tip_area(Gdk::Rectangle(tx, ty, nameCell.get_width(), nameCell.get_height()));
+        return true;
     }
     auto iter = dirTreeModel->get_iter(path);
     if (!iter) {
