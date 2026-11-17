@@ -111,7 +111,7 @@ DIRCLEANUP_COL_TO;To
 DIRCLEANUP_CREATES;Creates a new folder:
 DIRCLEANUP_CROSSDRIVE;Other drive
 DIRCLEANUP_DESELECTALL;Deselect all
-DIRCLEANUP_DUPLICATE;Already there (same name and size). Nothing is moved.
+DIRCLEANUP_DUPLICATE;Already there. Moving keeps any edits only this copy has, then sends this copy to the Recycle Bin.
 DIRCLEANUP_MOVE;Move %1
 DIRCLEANUP_NEWFOLDER;New folder
 DIRCLEANUP_NONE;Nothing to move

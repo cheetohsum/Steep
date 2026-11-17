@@ -9,6 +9,7 @@
 #include "dircleanupwindow.h"
 
 #include <algorithm>
+#include <cstring>
 #include <cmath>
 #include <atomic>
 #include <cstdio>
@@ -314,7 +315,7 @@ DirCleanupWindow::DirCleanupWindow ()
             any = any || row[cols_.active];
         }
         for (const auto& row : store_->children()) {
-            row[cols_.active] = !any && row[cols_.movable];
+            row[cols_.active] = !any && !suggestions_[row[cols_.index]].duplicate;
         }
         lastResult_.clear();
         updateSummary();
@@ -377,7 +378,7 @@ void DirCleanupWindow::showThumbs ()
         thumbs_->remove(*child);   // GTK destroys the managed child
     }
     auto it = view_->get_selection()->get_selected();
-    if (!it) {
+    if (!it || busy_) {
         return;
     }
     const int index = (*it)[cols_.index];
@@ -691,7 +692,7 @@ void DirCleanupWindow::fillList ()
     for (size_t i = 0; i < suggestions_.size(); ++i) {
         const auto& s = suggestions_[i];
         auto row = *store_->append();
-        row[cols_.movable] = !s.duplicate;
+        row[cols_.movable] = true;
         row[cols_.active] = !s.duplicate && s.dots() == 3;
         row[cols_.from] = Glib::Markup::escape_text(Glib::path_get_basename(s.source));
         row[cols_.arrow] = "\u2192";
@@ -736,6 +737,7 @@ struct MoveJob {
     Group group;
     std::string dest;
     bool create = false;
+    bool duplicate = false;   // the same photo is already in `dest`: merge, then recycle this copy
 };
 
 struct MoveResult {
@@ -759,8 +761,110 @@ struct Journal {
     }
 };
 
+// Same bytes? Sizes, then 64 KB at the start, middle and end.
+bool sameContent(const std::string& a, const std::string& b)
+{
+    GStatBuf sa, sb;
+    if (g_stat(a.c_str(), &sa) != 0 || g_stat(b.c_str(), &sb) != 0 || sa.st_size != sb.st_size) {
+        return false;
+    }
+    FILE* fa = g_fopen(a.c_str(), "rb");
+    FILE* fb = g_fopen(b.c_str(), "rb");
+    bool same = fa && fb;
+    const long long size = static_cast<long long>(sa.st_size);
+    const long long block = 64 * 1024;
+    std::vector<char> ba(block), bb(block);
+    for (long long off : {0LL, std::max(0LL, size / 2 - block / 2), std::max(0LL, size - block)}) {
+        if (!same) {
+            break;
+        }
+        same = fseeko64(fa, off, SEEK_SET) == 0 && fseeko64(fb, off, SEEK_SET) == 0;
+        const size_t na = same ? std::fread(ba.data(), 1, block, fa) : 0;
+        const size_t nb = same ? std::fread(bb.data(), 1, block, fb) : 0;
+        same = same && na == nb && std::memcmp(ba.data(), bb.data(), na) == 0;
+    }
+    if (fa) std::fclose(fa);
+    if (fb) std::fclose(fb);
+    return same;
+}
+
+// The photo already sits in `dest`. Carry over whatever only this copy has
+// (edits, sidecars, a missing RAW or JPEG), then send the now-redundant
+// files to the Recycle Bin. If both copies hold different versions of the
+// same file (two different .pp3 edits), nothing is touched.
+MoveResult mergeDuplicate(const MoveJob& job, Journal& journal)
+{
+    MoveResult result;
+    const Group& g = job.group;
+    std::vector<std::string> all = g.files;
+    all.insert(all.end(), g.dirs.begin(), g.dirs.end());
+
+    std::vector<std::pair<std::string, std::string>> toMove;
+    std::vector<std::pair<std::string, std::string>> toTrash;   // (redundant copy, its twin in dest)
+    for (const auto& f : all) {
+        const std::string target = Glib::build_filename(job.dest, Glib::path_get_basename(f));
+        const bool isDir = Glib::file_test(f, Glib::FILE_TEST_IS_DIR);
+        if (!Glib::file_test(target, Glib::FILE_TEST_EXISTS)) {
+            if (isDir && driveOf(f) != driveOf(job.dest)) {
+                return result;
+            }
+            toMove.emplace_back(f, target);
+        } else if (!isDir && sameContent(f, target)) {
+            toTrash.emplace_back(f, target);
+        } else {
+            return result;   // a different version on each side: leave both
+        }
+    }
+    // The photo itself must be a true twin before anything goes to the bin.
+    bool primaryTwin = false;
+    for (const auto& t : toTrash) {
+        primaryTwin = primaryTwin || t.first == g.primary;
+    }
+    if (!primaryTwin) {
+        return result;
+    }
+
+    std::vector<std::pair<std::string, std::string>> md5s;
+    for (const auto& f : g.files) {
+        if (isMediaName(Glib::path_get_basename(f))) {
+            md5s.emplace_back(f, cacheMgr->getMD5(f));
+        }
+    }
+    for (const auto& mv : toMove) {
+        if (!moveOne(mv.first, mv.second, Glib::file_test(mv.first, Glib::FILE_TEST_IS_DIR))) {
+            return result;
+        }
+        journal.write("move\t" + mv.first + "\t" + mv.second);
+    }
+    for (const auto& t : toTrash) {
+        bool trashed = false;
+        try {
+            trashed = Gio::File::create_for_path(t.first)->trash();
+        } catch (...) {}
+        if (trashed) {
+            journal.write("trash\t" + t.first + "\t" + t.second);
+        }
+    }
+    for (const auto& m : md5s) {
+        const std::string to = Glib::build_filename(job.dest, Glib::path_get_basename(m.first));
+        bool moved = false;
+        for (const auto& mv : toMove) {
+            moved = moved || mv.first == m.first;
+        }
+        if (moved && !m.second.empty()) {
+            cacheMgr->renameEntry(m.first, m.second, to);
+        }
+        result.media.emplace_back(m.first, to);   // tags and albums follow to the kept copy
+    }
+    result.moved = true;   // result.after stays empty: dest already lists this photo
+    return result;
+}
+
 MoveResult moveGroup(const MoveJob& job, Journal& journal)
 {
+    if (job.duplicate) {
+        return mergeDuplicate(job, journal);
+    }
     MoveResult result;
     const Group& g = job.group;
     if (!Glib::file_test(g.primary, Glib::FILE_TEST_EXISTS)) {
@@ -896,11 +1000,17 @@ void DirCleanupWindow::startMove ()
         }
         const auto& s = suggestions_[row[cols_.index]];
         for (const auto& g : s.groups) {
-            jobs.push_back({g, s.dest, s.createDest});
+            jobs.push_back({g, s.dest, s.createDest, s.duplicate});
         }
     }
     if (jobs.empty()) {
         return;
+    }
+    // Thumbnails read the same photos the mover is about to take away.
+    ++(*thumbLive_);
+    thumbImages_.clear();
+    for (auto* child : thumbs_->get_children()) {
+        thumbs_->remove(*child);
     }
     setBusy(true);
     moveBtn_->set_sensitive(false);
@@ -920,6 +1030,9 @@ void DirCleanupWindow::startMove ()
     prog->total = static_cast<int>(jobs.size());
     DirCleanupWindow* self = this;
 
+    // Queued behind any thumbnail still loading (same queue, one at a time):
+    // nothing reads a photo while it moves.
+    scanQueue().enqueue([jobs, journal, prog, self]() {
     for (const auto& job : jobs) {
         moveQueue().enqueue([job, journal, prog, self]() {
             const MoveResult r = moveGroup(job, *journal);
@@ -955,6 +1068,7 @@ void DirCleanupWindow::startMove ()
             });
         });
     }
+    });
 }
 
 void DirCleanupWindow::moveFinished (int moved, int skipped,
@@ -987,6 +1101,9 @@ void DirCleanupWindow::moveFinished (int moved, int skipped,
                 const std::string key = lowerAscii(before.primary);
                 src->groups.erase(std::remove_if(src->groups.begin(), src->groups.end(),
                     [&key](const Group& g) { return lowerAscii(g.primary) == key; }), src->groups.end());
+            }
+            if (after.dir.empty()) {
+                continue;   // merged into a copy the destination already lists
             }
             FolderScan* dst = findScan(after.dir);
             if (!dst) {

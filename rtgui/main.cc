@@ -29,6 +29,7 @@
 #include <iostream>
 #include <tiffio.h>
 #include <atomic>
+#include <cstdarg>
 #include <cstring>
 #include <cstdlib>
 #include <exception>
@@ -492,24 +493,51 @@ static void steepTerminateHandler()
 }
 
 #ifdef _WIN32
+static FILE* crashLog = nullptr;
+
+static void crashPrintf(const char* fmt, ...)
+{
+    va_list ap;
+    va_start(ap, fmt);
+    vfprintf(stderr, fmt, ap);
+    va_end(ap);
+    if (crashLog) {
+        va_start(ap, fmt);
+        vfprintf(crashLog, fmt, ap);
+        va_end(ap);
+    }
+}
+
 static LONG WINAPI crashHandler(EXCEPTION_POINTERS* ep)
 {
-    fprintf(stderr, "\n=== CRASH ===\n");
-    fprintf(stderr, "Exception code: 0x%08lX\n", ep->ExceptionRecord->ExceptionCode);
-    fprintf(stderr, "Exception addr: %p\n", ep->ExceptionRecord->ExceptionAddress);
+    // Also into %LOCALAPPDATA%/RawTherapee/crash.log: started from the Start
+    // menu, stderr goes nowhere.
+    if (const char* base = getenv("LOCALAPPDATA")) {
+        char path[MAX_PATH];
+        snprintf(path, sizeof(path), "%s\\RawTherapee\\crash.log", base);
+        crashLog = fopen(path, "a");
+        if (crashLog) {
+            SYSTEMTIME t;
+            GetLocalTime(&t);
+            fprintf(crashLog, "\n%04d-%02d-%02d %02d:%02d:%02d", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+        }
+    }
+    crashPrintf("\n=== CRASH ===\n");
+    crashPrintf("Exception code: 0x%08lX\n", ep->ExceptionRecord->ExceptionCode);
+    crashPrintf("Exception addr: %p\n", ep->ExceptionRecord->ExceptionAddress);
     if (ep->ExceptionRecord->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && ep->ExceptionRecord->NumberParameters >= 2) {
-        fprintf(stderr, "Access violation %s address %p\n",
+        crashPrintf("Access violation %s address %p\n",
             ep->ExceptionRecord->ExceptionInformation[0] ? "writing" : "reading",
             (void*)ep->ExceptionRecord->ExceptionInformation[1]);
     }
 #if defined(_M_ARM64) || defined(__aarch64__)
-    fprintf(stderr, "PC=%p SP=%p\n", (void*)ep->ContextRecord->Pc, (void*)ep->ContextRecord->Sp);
+    crashPrintf("PC=%p SP=%p\n", (void*)ep->ContextRecord->Pc, (void*)ep->ContextRecord->Sp);
 #elif defined(_M_X64) || defined(__x86_64__)
-    fprintf(stderr, "RIP=%p RSP=%p\n", (void*)ep->ContextRecord->Rip, (void*)ep->ContextRecord->Rsp);
+    crashPrintf("RIP=%p RSP=%p\n", (void*)ep->ContextRecord->Rip, (void*)ep->ContextRecord->Rsp);
 #endif
 
     // Walk the stack with module names
-    fprintf(stderr, "Stack trace:\n");
+    crashPrintf("Stack trace:\n");
     void* stack[64];
     USHORT frames = CaptureStackBackTrace(0, 64, stack, NULL);
     for (USHORT i = 0; i < frames; i++) {
@@ -521,10 +549,10 @@ static LONG WINAPI crashHandler(EXCEPTION_POINTERS* ep)
             // Just print the filename part
             char* slash = strrchr(modName, '\\');
             char* name = slash ? slash + 1 : modName;
-            fprintf(stderr, "  [%2d] %p (%s+0x%llx)\n", i, stack[i], name,
+            crashPrintf("  [%2d] %p (%s+0x%llx)\n", i, stack[i], name,
                     (unsigned long long)((char*)stack[i] - (char*)hMod));
         } else {
-            fprintf(stderr, "  [%2d] %p\n", i, stack[i]);
+            crashPrintf("  [%2d] %p\n", i, stack[i]);
         }
     }
 
@@ -538,12 +566,16 @@ static LONG WINAPI crashHandler(EXCEPTION_POINTERS* ep)
             GetModuleFileNameA(hMod, modName, MAX_PATH);
             char* slash = strrchr(modName, '\\');
             char* name = slash ? slash + 1 : modName;
-            fprintf(stderr, "Crash in: %s+0x%llx\n", name,
+            crashPrintf("Crash in: %s+0x%llx\n", name,
                     (unsigned long long)((char*)crashAddr - (char*)hMod));
         }
     }
 
     fflush(stderr);
+    if (crashLog) {
+        fclose(crashLog);
+        crashLog = nullptr;
+    }
     return EXCEPTION_EXECUTE_HANDLER;
 }
 #endif
