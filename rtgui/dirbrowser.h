@@ -133,7 +133,6 @@ private:
     std::map<std::string, Glib::ustring> statsCache_;   // dir -> encoded stats (GUI thread)
     std::set<std::string> statsInFlight_;
     std::set<std::string> statsRedo_;
-    Gtk::CellRenderer* statsCR_ = nullptr;
     bool statsChipAt (int bx, int by, Gtk::TreeModel::Path* pathOut, int* chipOut, Gdk::Rectangle* rectOut);
     bool onQueryTooltip (int x, int y, bool keyboard, const Glib::RefPtr<Gtk::Tooltip>& tooltip);
     std::set<std::string> pendingStatDirs_;

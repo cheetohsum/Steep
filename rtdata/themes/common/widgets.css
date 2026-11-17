@@ -270,6 +270,15 @@ label.de-layer-title { font-family: Michroma, Jost, sans-serif; font-size: 0.85e
 /* Sidebar lists: the 24px name row is set on the cell renderers
    (steepui::listRowHeight); the trees themselves add nothing. */
 #PlacesBrowserTree, #DirBrowserTree, #AlbumBrowserTree { margin: 0; padding: 0; }
+/* The folder tree selects on hover, so "selected" is only the row under the
+   pointer: a faint wash keeps its name, count and rating chips readable. */
+#DirBrowserTree.view:selected,
+#DirBrowserTree.view:selected:focus,
+#DirBrowserTree:selected {
+    color: @steep_text;
+    background-color: alpha(@steep_text, 0.07);
+    background-image: none;
+}
 
 /*** Tool panel type ladder ********************************************************************
    Group name > tool name > section label. These sizes MUST live in this

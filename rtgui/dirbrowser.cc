@@ -119,100 +119,6 @@ protected:
 // The folder's name, and under it (folder previews) a strip of a few of its
 // photos. Before the strip has loaded the row already reserves its height and
 // shows faint tiles, so rows do not jump when the pictures land.
-class FolderNameRenderer : public Gtk::CellRendererText {
-public:
-    // Tile edge in logical px for Options::folderPreviewSize 0..3.
-    static int tileFor(int size) { return size <= 0 ? 18 : size == 1 ? 26 : size == 2 ? 36 : 52; }
-    static constexpr int kGap = 3;
-    static constexpr int kAbove = 2;    // between the name and the strip
-    static constexpr int kBelow = 5;
-
-    FolderNameRenderer() : Glib::ObjectBase("FolderNameRenderer") {}
-
-    // Set by the cell data function before every measure and render.
-    int slots = 0;
-    Glib::RefPtr<Gdk::Pixbuf> strip;    // device pixels, `scale` per logical px
-    int scale = 1;
-    int tile = 24;                      // logical px, square
-    Gdk::RGBA placeholderInk;
-
-    int visibleRight = 0;               // right edge of the visible tree, tree px
-    // Height of the name band (the shared sidebar row height). Never set a
-    // fixed size on this renderer: that would override the strip's height.
-    int nameRowH = 0;
-
-    // The strip starts under the row's chevron, not under the name.
-    static constexpr int kLead = 16;
-
-protected:
-    // One line at the chosen size; what does not fit is cut by the sidebar's
-    // edge (a narrower sidebar shows fewer photos, never smaller ones).
-    int stripHeight() const
-    {
-        return slots > 0 ? kAbove + tile + kBelow : 0;
-    }
-
-    void get_preferred_height_vfunc(Gtk::Widget& widget, int& minimum, int& natural) const override
-    {
-        Gtk::CellRendererText::get_preferred_height_vfunc(widget, minimum, natural);
-        minimum = std::max(minimum, nameRowH) + stripHeight();
-        natural = std::max(natural, nameRowH) + stripHeight();
-    }
-
-    void get_preferred_height_for_width_vfunc(Gtk::Widget& widget, int width, int& minimum, int& natural) const override
-    {
-        Gtk::CellRendererText::get_preferred_height_for_width_vfunc(widget, width, minimum, natural);
-        minimum = std::max(minimum, nameRowH) + stripHeight();
-        natural = std::max(natural, nameRowH) + stripHeight();
-    }
-
-    void render_vfunc(const Cairo::RefPtr<Cairo::Context>& cr, Gtk::Widget& widget,
-                      const Gdk::Rectangle& background_area, const Gdk::Rectangle& cell_area,
-                      Gtk::CellRendererState flags) override
-    {
-        if (slots <= 0) {
-            Gtk::CellRendererText::render_vfunc(cr, widget, background_area, cell_area, flags);
-            return;
-        }
-
-        int textMin = 0, textH = 0;
-        Gtk::CellRendererText::get_preferred_height_vfunc(widget, textMin, textH);
-        const int bandH = std::max(textH, nameRowH);
-        const int top = cell_area.get_y() + std::max(0, (cell_area.get_height() - bandH - stripHeight()) / 2);
-        const Gdk::Rectangle textArea(cell_area.get_x(), top, cell_area.get_width(), bandH);
-        Gtk::CellRendererText::render_vfunc(cr, widget, background_area, textArea, flags);
-
-        const double x0 = std::max<double>(background_area.get_x(), cell_area.get_x() - kLead);
-        const double y0 = top + bandH + kAbove;
-
-        cr->save();
-        cr->rectangle(background_area.get_x(), background_area.get_y(),
-                      std::max(0, visibleRight - background_area.get_x()), background_area.get_height());
-        cr->clip();
-
-        if (strip) {
-            cr->translate(x0, y0);
-            cr->scale(1.0 / scale, 1.0 / scale);
-            Gdk::Cairo::set_source_pixbuf(cr, strip, 0, 0);
-            cr->paint();
-        } else {
-            cr->set_source_rgba(placeholderInk.get_red(), placeholderInk.get_green(), placeholderInk.get_blue(), 0.08);
-            for (int i = 0; i < slots; ++i) {
-                roundedRect(cr, x0 + i * (tile + kGap), y0, tile, tile, 3.0);
-                cr->fill();
-            }
-        }
-
-        cr->restore();
-    }
-
-public:
-    static void roundedRect(const Cairo::RefPtr<Cairo::Context>& cr, double x, double y, double w, double h, double r)
-    {
-        steepui::roundedRect(cr, x, y, w, h, r);
-    }
-};
-
 namespace
 {
 
@@ -411,52 +317,6 @@ void drawChipIcon(const Cairo::RefPtr<Cairo::Context>& cr, ChipKind kind, double
     cr->restore();
 }
 
-class FolderStatsRenderer : public Gtk::CellRenderer
-{
-public:
-    FolderStatsRenderer() : Glib::ObjectBase("SteepFolderStatsRenderer"), Gtk::CellRenderer() {}
-
-    FolderStats stats;
-    Gdk::RGBA ink;          // icon + number colour (steep_text_dim)
-    int nameRowH = 0;       // chips sit level with the name, not the preview strip
-
-protected:
-    void get_preferred_width_vfunc(Gtk::Widget& widget, int& minimum, int& natural) const override
-    {
-        int w = 0, h = 0;
-        layoutChips(widget, stats, w, h);
-        const int xpad = property_xpad();
-        minimum = natural = w > 0 ? w + 2 * xpad : 0;
-    }
-
-    void get_preferred_height_vfunc(Gtk::Widget&, int& minimum, int& natural) const override
-    {
-        minimum = natural = 0;
-    }
-
-    void render_vfunc(const Cairo::RefPtr<Cairo::Context>& cr, Gtk::Widget& widget,
-                      const Gdk::Rectangle&, const Gdk::Rectangle& cell_area,
-                      Gtk::CellRendererState) override
-    {
-        int totalW = 0, textH = 0;
-        auto chips = layoutChips(widget, stats, totalW, textH);
-        if (chips.empty()) {
-            return;
-        }
-        const int xpad = property_xpad();
-        const int x0 = cell_area.get_x() + cell_area.get_width() - xpad - totalW;
-        const double cy = cell_area.get_y() + (nameRowH > 0 ? nameRowH : cell_area.get_height()) / 2.0;
-        const int icon = chipIconSize(textH);
-        const Gdk::RGBA& fg = ink;
-        for (const auto& c : chips) {
-            drawChipIcon(cr, c.kind, x0 + c.x, cy, icon, fg, stats);
-            cr->set_source_rgba(fg.get_red(), fg.get_green(), fg.get_blue(), fg.get_alpha());
-            cr->move_to(x0 + c.x + icon + kChipIconGap, cy - textH / 2.0);
-            c.layout->show_in_cairo_context(cr);
-        }
-    }
-};
-
 Glib::ustring chipTooltipMarkup(ChipKind kind, const FolderStats& st)
 {
     Glib::ustring out;
@@ -501,6 +361,169 @@ Glib::ustring chipTooltipMarkup(ChipKind kind, const FolderStats& st)
 }
 
 } // namespace
+
+class FolderNameRenderer : public Gtk::CellRendererText {
+public:
+    // Tile edge in logical px for Options::folderPreviewSize 0..3.
+    static int tileFor(int size) { return size <= 0 ? 18 : size == 1 ? 26 : size == 2 ? 36 : 52; }
+    static constexpr int kGap = 3;
+    static constexpr int kAbove = 2;    // between the name and the strip
+    static constexpr int kBelow = 5;
+
+    FolderNameRenderer() : Glib::ObjectBase("FolderNameRenderer") {}
+
+    // Set by the cell data function before every measure and render.
+    int slots = 0;
+    Glib::RefPtr<Gdk::Pixbuf> strip;    // device pixels, `scale` per logical px
+    int scale = 1;
+    int tile = 24;                      // logical px, square
+    Gdk::RGBA placeholderInk;
+
+    int visibleRight = 0;               // right edge of the visible tree, tree px
+    // Height of the name band (the shared sidebar row height). Never set a
+    // fixed size on this renderer: that would override the strip's height.
+    int nameRowH = 0;
+
+    // The strip starts under the row's chevron, not under the name.
+    static constexpr int kLead = 16;
+
+    // Photo count drawn right after the name; rating / flag / label chips
+    // right-aligned in the same band (hit-tested by DirBrowser::statsChipAt).
+    Glib::ustring countText;
+    FolderStats stats;
+    Gdk::RGBA ink;
+    static constexpr int kCountGap = 6;
+    static constexpr int kRightPad = 6;
+
+    // Right edge of the chip strip for a cell (cell_area coordinates).
+    int chipsRight(const Gdk::Rectangle& cell_area) const
+    {
+        const int right = cell_area.get_x() + cell_area.get_width();
+        return (visibleRight > 0 ? std::min(right, visibleRight) : right) - kRightPad;
+    }
+
+protected:
+    // One line at the chosen size; what does not fit is cut by the sidebar's
+    // edge (a narrower sidebar shows fewer photos, never smaller ones).
+    int stripHeight() const
+    {
+        return slots > 0 ? kAbove + tile + kBelow : 0;
+    }
+
+    void get_preferred_height_vfunc(Gtk::Widget& widget, int& minimum, int& natural) const override
+    {
+        Gtk::CellRendererText::get_preferred_height_vfunc(widget, minimum, natural);
+        minimum = std::max(minimum, nameRowH) + stripHeight();
+        natural = std::max(natural, nameRowH) + stripHeight();
+    }
+
+    void get_preferred_height_for_width_vfunc(Gtk::Widget& widget, int width, int& minimum, int& natural) const override
+    {
+        Gtk::CellRendererText::get_preferred_height_for_width_vfunc(widget, width, minimum, natural);
+        minimum = std::max(minimum, nameRowH) + stripHeight();
+        natural = std::max(natural, nameRowH) + stripHeight();
+    }
+
+    // The name's own width wants no more than the name: the column gives
+    // this cell the rest of the row (it expands), so long names ellipsize
+    // only when the count and chips need the room.
+    void get_preferred_width_vfunc(Gtk::Widget& widget, int& minimum, int& natural) const override
+    {
+        Gtk::CellRendererText::get_preferred_width_vfunc(widget, minimum, natural);
+        minimum = std::min(minimum, 40);
+    }
+
+    void render_vfunc(const Cairo::RefPtr<Cairo::Context>& cr, Gtk::Widget& widget,
+                      const Gdk::Rectangle& background_area, const Gdk::Rectangle& cell_area,
+                      Gtk::CellRendererState flags) override
+    {
+        int textMin = 0, textH = 0;
+        Gtk::CellRendererText::get_preferred_height_vfunc(widget, textMin, textH);
+        const int bandH = std::max(textH, nameRowH);
+        const int top = cell_area.get_y() + std::max(0, (cell_area.get_height() - bandH - stripHeight()) / 2);
+        const double bandMid = top + bandH / 2.0;
+
+        // Chips, right-aligned.
+        int chipsW = 0, chipTextH = 0;
+        const auto chips = layoutChips(widget, stats, chipsW, chipTextH);
+        const int right = chipsRight(cell_area);
+        if (!chips.empty()) {
+            const int x0 = right - chipsW;
+            const int icon = chipIconSize(chipTextH);
+            for (const auto& c : chips) {
+                drawChipIcon(cr, c.kind, x0 + c.x, bandMid, icon, ink, stats);
+                cr->set_source_rgba(ink.get_red(), ink.get_green(), ink.get_blue(), ink.get_alpha());
+                cr->move_to(x0 + c.x + icon + kChipIconGap, bandMid - chipTextH / 2.0);
+                c.layout->show_in_cairo_context(cr);
+            }
+        }
+
+        // Count layout (dim, smaller), placed after the name.
+        Glib::RefPtr<Pango::Layout> countLayout;
+        int countW = 0, countH = 0;
+        if (!countText.empty()) {
+            countLayout = widget.create_pango_layout(countText);
+            Pango::AttrList attrs;
+            auto scaleAttr = Pango::Attribute::create_attr_scale(0.8);
+            attrs.insert(scaleAttr);
+            countLayout->set_attributes(attrs);
+            countLayout->get_pixel_size(countW, countH);
+        }
+
+        // Name gets what is left, ellipsizing only when it must.
+        int nameMin = 0, nameNat = 0;
+        Gtk::CellRendererText::get_preferred_width_vfunc(widget, nameMin, nameNat);
+        const int chipsLeft = chips.empty() ? right : right - chipsW - kChipGap;
+        const int room = chipsLeft - cell_area.get_x() - (countW > 0 ? countW + kCountGap : 0);
+        const int nameW = std::max(0, std::min(nameNat, room));
+        const Gdk::Rectangle textArea(cell_area.get_x(), top, nameW, bandH);
+        Gtk::CellRendererText::render_vfunc(cr, widget, background_area, textArea, flags);
+
+        if (countLayout) {
+            // Ellipsized names end slightly short of nameW; close enough to
+            // read as "after the name".
+            int xpad = property_xpad();
+            int shown = std::min(nameW, nameNat) - xpad;
+            cr->set_source_rgba(ink.get_red(), ink.get_green(), ink.get_blue(), ink.get_alpha());
+            cr->move_to(cell_area.get_x() + shown + kCountGap, bandMid - countH / 2.0);
+            countLayout->show_in_cairo_context(cr);
+        }
+
+        if (slots <= 0) {
+            return;
+        }
+
+        const double x0 = std::max<double>(background_area.get_x(), cell_area.get_x() - kLead);
+        const double y0 = top + bandH + kAbove;
+
+        cr->save();
+        cr->rectangle(background_area.get_x(), background_area.get_y(),
+                      std::max(0, visibleRight - background_area.get_x()), background_area.get_height());
+        cr->clip();
+
+        if (strip) {
+            cr->translate(x0, y0);
+            cr->scale(1.0 / scale, 1.0 / scale);
+            Gdk::Cairo::set_source_pixbuf(cr, strip, 0, 0);
+            cr->paint();
+        } else {
+            cr->set_source_rgba(placeholderInk.get_red(), placeholderInk.get_green(), placeholderInk.get_blue(), 0.08);
+            for (int i = 0; i < slots; ++i) {
+                roundedRect(cr, x0 + i * (tile + kGap), y0, tile, tile, 3.0);
+                cr->fill();
+            }
+        }
+
+        cr->restore();
+    }
+
+public:
+    static void roundedRect(const Cairo::RefPtr<Cairo::Context>& cr, double x, double y, double w, double h, double r)
+    {
+        steepui::roundedRect(cr, x, y, w, h, r);
+    }
+};
+
 
 #ifdef _WIN32
 #include "rtengine/leanwindows.h"
@@ -595,7 +618,6 @@ DirBrowser::DirBrowser () : dirTreeModel(),
     scrolledwindow4 = Gtk::manage ( new Gtk::ScrolledWindow() );
     crt = Gtk::manage(new FolderNameRenderer());
     crt->property_ellipsize() = Pango::ELLIPSIZE_END;
-    crt->property_max_width_chars() = 22;
 
 //   dirtree->set_flags(Gtk::CAN_FOCUS);
     dirtree->set_headers_visible(false);
@@ -872,7 +894,7 @@ void DirBrowser::fillDirTree ()
     });
 
     crt->placeholderInk = themeColor(*dirtree, "steep_text", Gdk::RGBA("#d0d4dc"));
-    tvc.pack_start (*crt, false);
+    tvc.pack_start (*crt, true);
     tvc.set_cell_data_func(*crt, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
         auto* textCR = static_cast<FolderNameRenderer*>(cr);
         paintCurrentDirBackground(cr, iter);
@@ -887,7 +909,10 @@ void DirBrowser::fillDirTree ()
         textCR->visibleRight = hadj && hadj->get_page_size() > 0
                                ? static_cast<int>(hadj->get_value() + hadj->get_page_size())
                                : dirtree->get_allocated_width();
+        textCR->countText = iter ? iter->get_value(dtColumns.photoCount) : Glib::ustring();
+        textCR->stats = FolderStats::decode(iter ? iter->get_value(dtColumns.flagStats) : Glib::ustring());
     });
+    crt->ink = themeColor(*dirtree, "steep_text_dim", Gdk::RGBA("#888888"));
 
     // Favorite star, right of the name on the row under the pointer only:
     // filled when the folder is a starred place, hollow to offer starring
@@ -908,33 +933,6 @@ void DirBrowser::fillDirTree ()
         pbCR->property_pixbuf() = hovered ? (isDirFavorite(rowDir) ? starFilledPixbuf_ : starHollowPixbuf_)
                                           : Glib::RefPtr<Gdk::Pixbuf>();
         pbCR->property_width() = 16 + 2 * 4;
-    });
-
-    Gtk::CellRendererText* countCR = Gtk::manage(new Gtk::CellRendererText());
-    countCR->property_foreground_rgba() = themeColor(*dirtree, "steep_text_dim", Gdk::RGBA("#888888"));
-    countCR->property_xalign() = 1.0;
-    countCR->property_ypad() = 0;
-    countCR->property_scale() = 0.8;
-    countCR->property_xpad() = 8;
-    tvc.pack_end(*countCR, false);
-    tvc.set_cell_data_func(*countCR, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
-        auto* textCR = static_cast<Gtk::CellRendererText*>(cr);
-        paintCurrentDirBackground(cr, iter);
-        textCR->property_text() = iter ? iter->get_value(dtColumns.photoCount) : Glib::ustring();
-    });
-
-    // Rating / flag / reject / label chips, left of the photo count.
-    // Hovering a chip shows its breakdown (onQueryTooltip).
-    auto* statsCR = Gtk::manage(new FolderStatsRenderer());
-    statsCR->property_xpad() = 2;
-    statsCR->property_ypad() = 0;
-    statsCR->ink = themeColor(*dirtree, "steep_text_dim", Gdk::RGBA("#888888"));
-    statsCR_ = statsCR;
-    tvc.pack_end(*statsCR, false);
-    tvc.set_cell_data_func(*statsCR, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
-        paintCurrentDirBackground(cr, iter);
-        static_cast<FolderStatsRenderer*>(cr)->stats =
-            FolderStats::decode(iter ? iter->get_value(dtColumns.flagStats) : Glib::ustring());
     });
 
     dirtree->append_column(tvc);
@@ -959,10 +957,6 @@ void DirBrowser::fillDirTree ()
     chevronCR->property_ypad() = std::max(0, (rowH - 16) / 2);
     starCR_->property_yalign() = 0.f;
     starCR_->property_ypad() = std::max(0, (rowH - 16) / 2);
-    countCR->property_yalign() = 0.f;
-    // The count is set at 0.8 scale (above).
-    countCR->property_ypad() = std::max(0, (rowH - static_cast<int>(lineH * 0.8)) / 2);
-    static_cast<FolderStatsRenderer*>(statsCR_)->nameRowH = rowH;
 
     // Clicking the star on the current folder row toggles its favorite
     // status instead of re-activating the row.
@@ -2574,7 +2568,7 @@ void DirBrowser::queueFolderStatsRefresh (const Glib::ustring& dirname)
 // (bx, by) in the tree's bin-window coordinates.
 bool DirBrowser::statsChipAt (int bx, int by, Gtk::TreeModel::Path* pathOut, int* chipOut, Gdk::Rectangle* rectOut)
 {
-    if (!statsCR_ || !dirTreeModel) {
+    if (!crt || !dirTreeModel) {
         return false;
     }
     Gtk::TreeModel::Path path;
@@ -2595,16 +2589,16 @@ bool DirBrowser::statsChipAt (int bx, int by, Gtk::TreeModel::Path* pathOut, int
     // Lay the row out the way it was drawn.
     tvc.cell_set_cell_data(dirTreeModel, iter, false, dirtree->row_expanded(path));
     int start = 0, width = 0;
-    if (!tvc.get_cell_position(*statsCR_, start, width) || width <= 0) {
+    if (!tvc.get_cell_position(*crt, start, width) || width <= 0) {
         return false;
     }
     Gdk::Rectangle cellArea;
     dirtree->get_cell_area(path, tvc, cellArea);
+    const Gdk::Rectangle nameCell(cellArea.get_x() + start, cellArea.get_y(), width, cellArea.get_height());
 
     int totalW = 0, textH = 0;
     const auto chips = layoutChips(*dirtree, st, totalW, textH);
-    const int xpad = statsCR_->property_xpad();
-    const int x0 = cellArea.get_x() + start + width - xpad - totalW;
+    const int x0 = crt->chipsRight(nameCell) - totalW;
     for (const auto& c : chips) {
         const int left = x0 + c.x - kChipGap / 2;
         const int right = x0 + c.x + c.w + kChipGap / 2;
