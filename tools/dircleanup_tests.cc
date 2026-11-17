@@ -144,7 +144,7 @@ int main(int argc, char** argv)
                     s.dots() == 3 ? "***" : s.dots() == 2 ? "**-" : "*--",
                     s.createDest ? " +" : "", s.source.c_str(), s.dest.c_str(), s.groups.size(),
                     ymd(s.firstDay).c_str(), ymd(s.lastDay).c_str(), s.score, char(s.reason),
-                    s.crossDrive ? " cross-drive" : "", s.alternative ? " alt" : "");
+                    s.crossDrive ? " cross-drive" : "", s.duplicate ? " DUPLICATE" : (s.alternative ? " alt" : ""));
         int shown = 0;
         for (const auto& g : s.groups) {
             if (shown++ >= 4) break;

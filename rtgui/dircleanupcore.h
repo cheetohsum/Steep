@@ -61,6 +61,7 @@ struct Group {
     int minute = -1;                  // minute of day, -1 unknown
     DateSource source = DateSource::None;
     long long bytes = 0;
+    long long primarySize = -1;       // size of `primary` alone (duplicate check)
     bool derivative = false;          // an edit/export with no original beside it
 };
 
@@ -111,6 +112,7 @@ struct Suggestion {
     Reason reason = Reason::Date;
     bool crossDrive = false;
     bool alternative = false;    // another folder would also fit
+    bool duplicate = false;      // the same photos (name + size) are already in `dest`
     long long bytes = 0;
     int dots() const { return score >= 0.85 ? 3 : score >= 0.65 ? 2 : 1; }
 };

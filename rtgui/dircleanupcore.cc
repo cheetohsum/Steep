@@ -826,6 +826,9 @@ FolderScan scanFolder(const std::string& dir, const std::string& root, const std
             GStatBuf st;
             if (g_stat(f.c_str(), &st) == 0) {
                 g.bytes += static_cast<long long>(st.st_size);
+                if (f == g.primary) {
+                    g.primarySize = static_cast<long long>(st.st_size);
+                }
             }
         }
 
@@ -1063,9 +1066,21 @@ std::vector<Suggestion> suggest(const std::vector<FolderScan>& folders)
             }
             const Group* g = order[i];
             const std::string destPath = choice[i].create ? choice[i].createPath : choice[i].dest->path;
-            const auto key = std::make_pair(src.path, destPath);
+            // Already there (same name, same size): its own row, never moved.
+            bool dup = false;
+            if (choice[i].dest && g->primarySize >= 0) {
+                const std::string stem = lowerAscii(g->stem);
+                for (const auto& tg : choice[i].dest->groups) {
+                    if (tg.primarySize == g->primarySize && lowerAscii(tg.stem) == stem) {
+                        dup = true;
+                        break;
+                    }
+                }
+            }
+            const auto key = std::make_pair(src.path, destPath + (dup ? std::string("\x01") : std::string()));
             auto& row = rows[key];
             if (row.groups.empty()) {
+                row.duplicate = dup;
                 row.source = src.path;
                 row.dest = destPath;
                 row.createDest = choice[i].create;
@@ -1109,6 +1124,13 @@ std::vector<Suggestion> suggest(const std::vector<FolderScan>& folders)
         for (const auto& f : folders) {
             if (samePath(f.path, row.source)) src = &f;
             if (samePath(f.path, row.dest)) dst = &f;
+        }
+        if (row.duplicate) {
+            // Shown so the user knows why these stay; confidence is moot.
+            row.score = 1.0;
+            row.reason = Reason::Date;
+            out.push_back(std::move(row));
+            continue;
         }
 
         double score = base;

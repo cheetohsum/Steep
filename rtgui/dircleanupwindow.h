@@ -36,6 +36,7 @@ private:
 
     struct Columns : public Gtk::TreeModelColumnRecord {
         Gtk::TreeModelColumn<bool> active;
+        Gtk::TreeModelColumn<bool> movable;
         Gtk::TreeModelColumn<Glib::ustring> from;
         Gtk::TreeModelColumn<Glib::ustring> arrow;
         Gtk::TreeModelColumn<Glib::ustring> to;
@@ -46,7 +47,7 @@ private:
         Gtk::TreeModelColumn<int> index;
         Columns ()
         {
-            add(active); add(from); add(arrow); add(to); add(count); add(dates); add(dots); add(reason); add(index);
+            add(active); add(movable); add(from); add(arrow); add(to); add(count); add(dates); add(dots); add(reason); add(index);
         }
     };
 

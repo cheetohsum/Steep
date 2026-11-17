@@ -220,7 +220,7 @@ DirCleanupWindow::DirCleanupWindow ()
     auto* toggle = Gtk::manage(new Gtk::CellRendererToggle());
     toggle->signal_toggled().connect([this](const Glib::ustring& path) {
         auto it = store_->get_iter(path);
-        if (it) {
+        if (it && (*it)[cols_.movable]) {
             (*it)[cols_.active] = !(*it)[cols_.active];
             lastResult_.clear();
             updateSummary();
@@ -228,6 +228,8 @@ DirCleanupWindow::DirCleanupWindow ()
     });
     view_->append_column("", *toggle);
     view_->get_column(0)->add_attribute(toggle->property_active(), cols_.active);
+    view_->get_column(0)->add_attribute(toggle->property_activatable(), cols_.movable);
+    view_->get_column(0)->add_attribute(toggle->property_sensitive(), cols_.movable);
 
     auto addText = [this](const Glib::ustring& title, const Gtk::TreeModelColumn<Glib::ustring>& col,
                           float xalign, bool expand, bool dim) {
@@ -312,7 +314,7 @@ DirCleanupWindow::DirCleanupWindow ()
             any = any || row[cols_.active];
         }
         for (const auto& row : store_->children()) {
-            row[cols_.active] = !any;
+            row[cols_.active] = !any && row[cols_.movable];
         }
         lastResult_.clear();
         updateSummary();
@@ -347,6 +349,8 @@ bool DirCleanupWindow::onQueryTooltip (int x, int y, bool keyboard, const Glib::
     Glib::ustring text;
     if (column == fromCol_) {
         text = s.source;
+    } else if (s.duplicate && (column == toCol_ || column == reasonCol_ || column == dotsCol_)) {
+        text = M("DIRCLEANUP_DUPLICATE") + "\n" + s.dest;
     } else if (column == toCol_) {
         text = s.createDest ? M("DIRCLEANUP_CREATES") + "\n" + s.dest : Glib::ustring(s.dest);
         if (s.crossDrive) {
@@ -687,7 +691,8 @@ void DirCleanupWindow::fillList ()
     for (size_t i = 0; i < suggestions_.size(); ++i) {
         const auto& s = suggestions_[i];
         auto row = *store_->append();
-        row[cols_.active] = s.dots() == 3;
+        row[cols_.movable] = !s.duplicate;
+        row[cols_.active] = !s.duplicate && s.dots() == 3;
         row[cols_.from] = Glib::Markup::escape_text(Glib::path_get_basename(s.source));
         row[cols_.arrow] = "\u2192";
         Glib::ustring to = Glib::Markup::escape_text(Glib::path_get_basename(s.dest));
@@ -706,7 +711,12 @@ void DirCleanupWindow::fillList ()
             dm += k < dots ? "\u25cf" : "<span alpha=\"25%\">\u25cf</span>";
         }
         row[cols_.dots] = dm;
-        row[cols_.reason] = s.reason == Reason::Sequence ? "#" : s.reason == Reason::FileName ? "Aa" : "\u25f7";
+        row[cols_.reason] = s.duplicate ? "=" : s.reason == Reason::Sequence ? "#"
+                          : s.reason == Reason::FileName ? "Aa" : "\u25f7";
+        if (s.duplicate) {
+            row[cols_.dots] = "";
+            row[cols_.to] = "<span alpha=\"55%\">" + Glib::ustring(row[cols_.to]) + "</span>";
+        }
         row[cols_.index] = static_cast<int>(i);
     }
     showThumbs();
@@ -881,7 +891,7 @@ void DirCleanupWindow::startMove ()
 {
     std::vector<MoveJob> jobs;
     for (const auto& row : store_->children()) {
-        if (!row[cols_.active]) {
+        if (!row[cols_.active] || !row[cols_.movable]) {
             continue;
         }
         const auto& s = suggestions_[row[cols_.index]];
