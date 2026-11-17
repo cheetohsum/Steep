@@ -9,6 +9,7 @@
 #include "dircleanupwindow.h"
 
 #include <algorithm>
+#include <cmath>
 #include <atomic>
 #include <cstdio>
 #include <ctime>
@@ -26,6 +27,8 @@
 #include "multilangmgr.h"
 #include "options.h"
 #include "phototags.h"
+#include "thumbnail.h"
+#include "rtengine/iimage.h"
 
 using namespace dircleanup;
 
@@ -154,7 +157,7 @@ DirCleanupWindow::DirCleanupWindow ()
 {
     set_title(M("DIRCLEANUP_TITLE"));
     set_name("DirCleanupWindow");
-    set_default_size(760, 520);
+    set_default_size(820, 640);
     set_type_hint(Gdk::WINDOW_TYPE_HINT_DIALOG);
 
     auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 6));
@@ -167,9 +170,12 @@ DirCleanupWindow::DirCleanupWindow ()
 
     store_ = Gtk::ListStore::create(cols_);
     view_ = Gtk::manage(new Gtk::TreeView(store_));
-    view_->set_headers_visible(false);
-    view_->set_tooltip_column(6);   // cols_.tooltip
+    view_->set_headers_visible(true);
     view_->set_enable_search(false);
+    view_->set_has_tooltip(true);
+    view_->signal_query_tooltip().connect(sigc::mem_fun(*this, &DirCleanupWindow::onQueryTooltip));
+    view_->get_selection()->set_mode(Gtk::SELECTION_SINGLE);
+    view_->get_selection()->signal_changed().connect(sigc::mem_fun(*this, &DirCleanupWindow::showThumbs));
 
     auto* toggle = Gtk::manage(new Gtk::CellRendererToggle());
     toggle->signal_toggled().connect([this](const Glib::ustring& path) {
@@ -183,27 +189,33 @@ DirCleanupWindow::DirCleanupWindow ()
     view_->append_column("", *toggle);
     view_->get_column(0)->add_attribute(toggle->property_active(), cols_.active);
 
-    auto addText = [this](const Gtk::TreeModelColumn<Glib::ustring>& col, float xalign, bool expand, bool dim) {
+    auto addText = [this](const Glib::ustring& title, const Gtk::TreeModelColumn<Glib::ustring>& col,
+                          float xalign, bool expand, bool dim) {
         auto* cr = Gtk::manage(new Gtk::CellRendererText());
         cr->property_xalign() = xalign;
         cr->property_xpad() = 6;
         if (expand) {
-            cr->property_ellipsize() = Pango::ELLIPSIZE_MIDDLE;
+            cr->property_ellipsize() = Pango::ELLIPSIZE_END;
         }
         if (dim) {
             cr->property_foreground_rgba() = Gdk::RGBA("rgba(160,160,160,1)");
         }
-        auto* column = Gtk::manage(new Gtk::TreeViewColumn());
+        auto* column = Gtk::manage(new Gtk::TreeViewColumn(title));
         column->pack_start(*cr, true);
         column->add_attribute(cr->property_markup(), col);
         column->set_expand(expand);
+        column->set_resizable(expand);
+        column->set_alignment(xalign);
         view_->append_column(*column);
+        return column;
     };
-    addText(cols_.route, 0.f, true, false);
-    addText(cols_.count, 1.f, false, false);
-    addText(cols_.dates, 0.f, false, true);
-    addText(cols_.dots, 0.5f, false, false);
-    addText(cols_.reason, 0.5f, false, true);
+    fromCol_ = addText(M("DIRCLEANUP_COL_FROM"), cols_.from, 0.f, true, true);
+    addText("", cols_.arrow, 0.5f, false, true);
+    toCol_ = addText(M("DIRCLEANUP_COL_TO"), cols_.to, 0.f, true, false);
+    addText(M("DIRCLEANUP_COL_PHOTOS"), cols_.count, 1.f, false, false);
+    addText(M("DIRCLEANUP_COL_DATES"), cols_.dates, 0.f, false, true);
+    dotsCol_ = addText(M("DIRCLEANUP_COL_CONFIDENCE"), cols_.dots, 0.5f, false, false);
+    reasonCol_ = addText(M("DIRCLEANUP_COL_REASON"), cols_.reason, 0.5f, false, true);
 
     auto* scroll = Gtk::manage(new Gtk::ScrolledWindow());
     scroll->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
@@ -215,9 +227,29 @@ DirCleanupWindow::DirCleanupWindow ()
     stack_ = Gtk::manage(new Gtk::Stack());
     stack_->add(*scroll, "list");
     stack_->add(*empty_, "empty");
-    box->pack_start(*stack_, Gtk::PACK_EXPAND_WIDGET);
+
+    // The photos the clicked row would move.
+    thumbs_ = Gtk::manage(new Gtk::FlowBox());
+    thumbs_->set_selection_mode(Gtk::SELECTION_NONE);
+    thumbs_->set_homogeneous(true);
+    thumbs_->set_max_children_per_line(64);
+    thumbs_->set_row_spacing(4);
+    thumbs_->set_column_spacing(4);
+    thumbs_->set_valign(Gtk::ALIGN_START);
+    thumbScroll_ = Gtk::manage(new Gtk::ScrolledWindow());
+    thumbScroll_->set_policy(Gtk::POLICY_NEVER, Gtk::POLICY_AUTOMATIC);
+    thumbScroll_->add(*thumbs_);
+    thumbScroll_->set_size_request(-1, 120);
+
+    auto* paned = Gtk::manage(new Gtk::Paned(Gtk::ORIENTATION_VERTICAL));
+    paned->pack1(*stack_, true, false);
+    paned->pack2(*thumbScroll_, false, false);
+    paned->set_position(380);
+    box->pack_start(*paned, Gtk::PACK_EXPAND_WIDGET);
 
     auto* bar = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+    selectAllBtn_ = Gtk::manage(new Gtk::Button(M("DIRCLEANUP_DESELECTALL")));
+    selectAllBtn_->set_relief(Gtk::RELIEF_NONE);
     summary_ = Gtk::manage(new Gtk::Label("", Gtk::ALIGN_START));
     summary_->get_style_context()->add_class("dim-label");
     rescanBtn_ = Gtk::manage(new Gtk::Button());
@@ -227,12 +259,24 @@ DirCleanupWindow::DirCleanupWindow ()
     undoBtn_ = Gtk::manage(new Gtk::Button(M("DIRCLEANUP_UNDO")));
     moveBtn_ = Gtk::manage(new Gtk::Button());
     moveBtn_->get_style_context()->add_class("suggested-action");
+    bar->pack_start(*selectAllBtn_, Gtk::PACK_SHRINK);
     bar->pack_start(*summary_, Gtk::PACK_EXPAND_WIDGET);
     bar->pack_start(*rescanBtn_, Gtk::PACK_SHRINK);
     bar->pack_start(*undoBtn_, Gtk::PACK_SHRINK);
     bar->pack_start(*moveBtn_, Gtk::PACK_SHRINK);
     box->pack_start(*bar, Gtk::PACK_SHRINK);
 
+    selectAllBtn_->signal_clicked().connect([this]() {
+        bool any = false;
+        for (const auto& row : store_->children()) {
+            any = any || row[cols_.active];
+        }
+        for (const auto& row : store_->children()) {
+            row[cols_.active] = !any;
+        }
+        lastResult_.clear();
+        updateSummary();
+    });
     rescanBtn_->signal_clicked().connect(sigc::mem_fun(*this, &DirCleanupWindow::startScan));
     moveBtn_->signal_clicked().connect(sigc::mem_fun(*this, &DirCleanupWindow::startMove));
     undoBtn_->signal_clicked().connect(sigc::mem_fun(*this, &DirCleanupWindow::startUndo));
@@ -240,6 +284,125 @@ DirCleanupWindow::DirCleanupWindow ()
     add(*box);
     box->show_all();
     updateSummary();
+}
+
+bool DirCleanupWindow::onQueryTooltip (int x, int y, bool keyboard, const Glib::RefPtr<Gtk::Tooltip>& tooltip)
+{
+    if (keyboard) {
+        return false;
+    }
+    int bx = 0, by = 0;
+    view_->convert_widget_to_bin_window_coords(x, y, bx, by);
+    Gtk::TreeModel::Path path;
+    Gtk::TreeViewColumn* column = nullptr;
+    int cx = 0, cy = 0;
+    if (!view_->get_path_at_pos(bx, by, path, column, cx, cy) || !column) {
+        return false;
+    }
+    auto it = store_->get_iter(path);
+    if (!it) {
+        return false;
+    }
+    const auto& s = suggestions_[(*it)[cols_.index]];
+    Glib::ustring text;
+    if (column == fromCol_) {
+        text = s.source;
+    } else if (column == toCol_) {
+        text = s.createDest ? M("DIRCLEANUP_CREATES") + "\n" + s.dest : Glib::ustring(s.dest);
+        if (s.crossDrive) {
+            text += "\n" + M("DIRCLEANUP_CROSSDRIVE");
+        }
+    } else if (column == reasonCol_) {
+        text = s.reason == Reason::Sequence ? M("DIRCLEANUP_REASON_SEQ")
+             : s.reason == Reason::FileName ? M("DIRCLEANUP_REASON_NAME") : M("DIRCLEANUP_REASON_DATE");
+    } else if (column == dotsCol_) {
+        text = Glib::ustring::compose("%1%%", static_cast<int>(std::lround(s.score * 100)));
+    } else {
+        return false;
+    }
+    tooltip->set_text(text);
+    view_->set_tooltip_cell(tooltip, &path, column, nullptr);
+    return true;
+}
+
+void DirCleanupWindow::showThumbs ()
+{
+    const int gen = ++(*thumbLive_);
+    for (auto* child : thumbs_->get_children()) {
+        thumbs_->remove(*child);   // GTK destroys the managed child
+    }
+    auto it = view_->get_selection()->get_selected();
+    if (!it) {
+        return;
+    }
+    const int index = (*it)[cols_.index];
+    if (index < 0 || index >= static_cast<int>(suggestions_.size())) {
+        return;
+    }
+    const auto& groups = suggestions_[index].groups;
+    constexpr int kTile = 96;
+    const size_t shown = std::min<size_t>(groups.size(), 400);
+
+    std::vector<Gtk::Image*> images;
+    for (size_t i = 0; i < shown; ++i) {
+        auto* img = Gtk::manage(new Gtk::Image());
+        img->set_size_request(kTile, kTile);
+        img->set_tooltip_text(Glib::path_get_basename(groups[i].primary));
+        thumbs_->add(*img);
+        images.push_back(img);
+    }
+    thumbs_->show_all();
+
+    // One thumbnail per job on the cleanup's own queue; a newer click
+    // drops whatever is still waiting.
+    std::shared_ptr<std::atomic<int>> live = thumbLive_;
+    DirCleanupWindow* self = this;
+    for (size_t i = 0; i < shown; ++i) {
+        const Glib::ustring path = groups[i].primary;
+        scanQueue().enqueue([self, gen, live, path, i]() {
+            if (gen != live->load()) {
+                return;
+            }
+            Glib::RefPtr<Gdk::Pixbuf> pixbuf;
+            try {
+                Thumbnail* thm = cacheMgr->getEntry(path);
+                if (thm) {
+                    double s = 1.0;
+                    rtengine::IImage8* img = thm->processThumbImage(kTile, s);
+                    if (img) {
+                        pixbuf = Gdk::Pixbuf::create_from_data(img->getData(), Gdk::COLORSPACE_RGB, false, 8,
+                                                               img->getWidth(), img->getHeight(),
+                                                               img->getWidth() * 3)->copy();
+                        delete img;
+                    }
+                    thm->decreaseRef();
+                }
+            } catch (...) {}
+            if (!pixbuf) {
+                return;
+            }
+            // Fit inside the tile.
+            const int box = kTile;
+            const double f = std::min(double(box) / pixbuf->get_width(), double(box) / pixbuf->get_height());
+            if (f < 1.0) {
+                pixbuf = pixbuf->scale_simple(std::max(1, int(pixbuf->get_width() * f)),
+                                              std::max(1, int(pixbuf->get_height() * f)), Gdk::INTERP_BILINEAR);
+            }
+            Glib::signal_idle().connect_once([self, gen, live, pixbuf, i]() {
+                if (instance != self || gen != live->load()) {
+                    return;
+                }
+                auto children = self->thumbs_->get_children();
+                if (i < children.size()) {
+                    if (auto* fbc = dynamic_cast<Gtk::FlowBoxChild*>(children[i])) {
+                        if (auto* img = dynamic_cast<Gtk::Image*>(fbc->get_child())) {
+                            img->set(pixbuf);
+                        }
+                    }
+                }
+            });
+        });
+    }
 }
 
 DirCleanupWindow::~DirCleanupWindow ()
@@ -295,6 +458,8 @@ void DirCleanupWindow::updateSummary ()
     }
     summary_->set_text(photos ? Glib::ustring::compose("%1 · %2", photos, humanBytes(bytes)) : lastResult_);
     moveBtn_->set_label(Glib::ustring::compose(M("DIRCLEANUP_MOVE"), photos));
+    selectAllBtn_->set_label(photos ? M("DIRCLEANUP_DESELECTALL") : M("DIRCLEANUP_SELECTALL"));
+    selectAllBtn_->set_sensitive(!busy_ && !suggestions_.empty());
     moveBtn_->set_sensitive(!busy_ && photos > 0);
     undoBtn_->set_sensitive(!busy_ && hasUndo());
 }
@@ -471,41 +636,28 @@ void DirCleanupWindow::fillList ()
         const auto& s = suggestions_[i];
         auto row = *store_->append();
         row[cols_.active] = s.dots() == 3;
-        const Glib::ustring from = Glib::Markup::escape_text(Glib::path_get_basename(s.source));
-        const Glib::ustring to = Glib::Markup::escape_text(Glib::path_get_basename(s.dest));
-        Glib::ustring route = "<span alpha=\"65%\">" + from + "</span>  →  " + (s.createDest ? "+ " : "") + to;
-        if (s.crossDrive) {
-            route += "  <span alpha=\"55%\">" + Glib::Markup::escape_text(driveOf(s.dest)) + "</span>";
+        row[cols_.from] = Glib::Markup::escape_text(Glib::path_get_basename(s.source));
+        row[cols_.arrow] = "\u2192";
+        Glib::ustring to = Glib::Markup::escape_text(Glib::path_get_basename(s.dest));
+        if (s.createDest) {
+            to = "<b>+</b> " + to;
         }
-        row[cols_.route] = route;
+        if (s.crossDrive) {
+            to += "  <span alpha=\"55%\">" + Glib::Markup::escape_text(driveOf(s.dest)) + "</span>";
+        }
+        row[cols_.to] = to;
         row[cols_.count] = std::to_string(s.groups.size());
         row[cols_.dates] = Glib::Markup::escape_text(dateRange(s.firstDay, s.lastDay));
         const int dots = s.dots();
         Glib::ustring dm;
         for (int k = 0; k < 3; ++k) {
-            dm += k < dots ? "●" : "<span alpha=\"25%\">●</span>";
+            dm += k < dots ? "\u25cf" : "<span alpha=\"25%\">\u25cf</span>";
         }
         row[cols_.dots] = dm;
-        row[cols_.reason] = s.reason == Reason::Sequence ? "#" : s.reason == Reason::FileName ? "Aa" : "";
-        Glib::ustring tip = s.source + "\n→ " + s.dest;
-        if (s.createDest) {
-            tip += "\n" + M("DIRCLEANUP_NEWFOLDER");
-        }
-        if (s.crossDrive) {
-            tip += "\n" + M("DIRCLEANUP_CROSSDRIVE");
-        }
-        tip += "\n" + (s.reason == Reason::Sequence ? M("DIRCLEANUP_REASON_SEQ")
-                     : s.reason == Reason::FileName ? M("DIRCLEANUP_REASON_NAME") : M("DIRCLEANUP_REASON_DATE"));
-        const size_t sample = std::min<size_t>(s.groups.size(), 6);
-        for (size_t k = 0; k < sample; ++k) {
-            tip += (k ? ", " : "\n") + s.groups[k].stem;
-        }
-        if (s.groups.size() > sample) {
-            tip += ", …";
-        }
-        row[cols_.tooltip] = Glib::Markup::escape_text(tip);
+        row[cols_.reason] = s.reason == Reason::Sequence ? "#" : s.reason == Reason::FileName ? "Aa" : "\u25f7";
         row[cols_.index] = static_cast<int>(i);
     }
+    showThumbs();
     if (suggestions_.empty()) {
         empty_->set_text(M("DIRCLEANUP_NONE"));
         stack_->set_visible_child("empty");

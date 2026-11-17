@@ -8,6 +8,7 @@
  */
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <vector>
 
@@ -34,16 +35,17 @@ private:
 
     struct Columns : public Gtk::TreeModelColumnRecord {
         Gtk::TreeModelColumn<bool> active;
-        Gtk::TreeModelColumn<Glib::ustring> route;
+        Gtk::TreeModelColumn<Glib::ustring> from;
+        Gtk::TreeModelColumn<Glib::ustring> arrow;
+        Gtk::TreeModelColumn<Glib::ustring> to;
         Gtk::TreeModelColumn<Glib::ustring> count;
         Gtk::TreeModelColumn<Glib::ustring> dates;
         Gtk::TreeModelColumn<Glib::ustring> dots;
         Gtk::TreeModelColumn<Glib::ustring> reason;
-        Gtk::TreeModelColumn<Glib::ustring> tooltip;
         Gtk::TreeModelColumn<int> index;
         Columns ()
         {
-            add(active); add(route); add(count); add(dates); add(dots); add(reason); add(tooltip); add(index);
+            add(active); add(from); add(arrow); add(to); add(count); add(dates); add(dots); add(reason); add(index);
         }
     };
 
@@ -59,6 +61,8 @@ private:
     bool hasUndo () const;
     void setBusy (bool busy);
     bool on_delete_event (GdkEventAny* event) override;
+    bool onQueryTooltip (int x, int y, bool keyboard, const Glib::RefPtr<Gtk::Tooltip>& tooltip);
+    void showThumbs ();
 
     Columns cols_;
     Glib::RefPtr<Gtk::ListStore> store_;
@@ -70,6 +74,14 @@ private:
     Gtk::Button* undoBtn_ = nullptr;
     Gtk::Button* rescanBtn_ = nullptr;
     Gtk::Stack* stack_ = nullptr;
+    Gtk::Button* selectAllBtn_ = nullptr;
+    Gtk::FlowBox* thumbs_ = nullptr;
+    Gtk::ScrolledWindow* thumbScroll_ = nullptr;
+    Gtk::TreeViewColumn* fromCol_ = nullptr;
+    Gtk::TreeViewColumn* toCol_ = nullptr;
+    Gtk::TreeViewColumn* dotsCol_ = nullptr;
+    Gtk::TreeViewColumn* reasonCol_ = nullptr;
+    std::shared_ptr<std::atomic<int>> thumbLive_ = std::make_shared<std::atomic<int>>(0);
 
     std::shared_ptr<State> state_;
     std::vector<dircleanup::Suggestion> suggestions_;

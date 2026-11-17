@@ -2610,17 +2610,16 @@ FilePanel::FilePanel () :
     auto* browseIcon = Gtk::manage(new RTImage("folder-open-small", Gtk::ICON_SIZE_SMALL_TOOLBAR));
     browseButton->set_image(*browseIcon);
     browseButton->set_always_show_image(true);
-    browseButton->signal_clicked().connect(sigc::mem_fun(*dirBrowser, &DirBrowser::browseForFolder));
-    // Right-click: directory cleanup (starred places -> month folders).
-    browseButton->add_events(Gdk::BUTTON_PRESS_MASK);
-    browseButton->signal_button_press_event().connect([this](GdkEventButton* ev) -> bool {
-        if (ev->button != 3 || ev->type != GDK_BUTTON_PRESS) {
-            return false;
-        }
-        recentHoverTimer_.disconnect();
+    // Click: browse, or tidy the starred places into their month folders.
+    folderMenu_ = std::make_unique<steepui::PopupMenu>();
+    folderMenu_->addItem(M("DIRBROWSER_BROWSE"), [this]() { dirBrowser->browseForFolder(); });
+    folderMenu_->addItem(M("DIRCLEANUP_TITLE"), [this]() {
         DirCleanupWindow::open(dynamic_cast<Gtk::Window*>(get_toplevel()));
-        return true;
-    }, false);
+    });
+    browseButton->signal_clicked().connect([this, browseButton]() {
+        recentHoverTimer_.disconnect();
+        folderMenu_->popupAtWidget(*browseButton);
+    });
     DirCleanupWindow::filesMoved().connect([this]() {
         if (fileCatalog) {
             fileCatalog->reparseDirectory();
