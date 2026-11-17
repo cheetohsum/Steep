@@ -21,6 +21,7 @@
 #include <atomic>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -54,6 +55,8 @@ private:
         // the strip once it is loaded.
         Gtk::TreeModelColumn<int> previewSlots;
         Gtk::TreeModelColumn<Glib::RefPtr<Gdk::Pixbuf> > previewStrip;
+        // Encoded rating / flag / reject / label counts (see FolderStats)
+        Gtk::TreeModelColumn<Glib::ustring> flagStats;
 
         DirTreeColumns()
         {
@@ -65,6 +68,7 @@ private:
             add(childrenLoaded);
             add(previewSlots);
             add(previewStrip);
+            add(flagStats);
         }
     };
 
@@ -108,6 +112,20 @@ private:
     std::map<std::string, Gtk::TreeRowReference> pendingDirUpdates_;
     sigc::connection dirUpdateConn_;
     void countPhotosInChildren (const Gtk::TreeModel::iterator& parent);
+
+    // Per-folder rating / flag / label summary chips
+    struct ScanEntry {
+        Glib::ustring dirname;
+        Glib::ustring pathStr;
+    };
+    void scanFolderStats (std::vector<ScanEntry> entries);
+    Gtk::CellRenderer* statsCR_ = nullptr;
+    bool statsChipAt (int bx, int by, Gtk::TreeModel::Path* pathOut, int* chipOut, Gdk::Rectangle* rectOut);
+    bool onQueryTooltip (int x, int y, bool keyboard, const Glib::RefPtr<Gtk::Tooltip>& tooltip);
+    std::set<std::string> pendingStatDirs_;
+    sigc::connection statRefreshConn_;
+    sigc::connection flagsChangedConn_;
+    void queueFolderStatsRefresh (const Glib::ustring& dirname);
 
     // Bumped whenever previews already queued must be dropped (setting
     // changed, tree rebuilt); workers compare it before every folder.
@@ -214,6 +232,10 @@ public:
 
     // Emitted when the folder preview options change (Preferences).
     static sigc::signal<void>& previewSettingsChanged ();
+
+    // Emitted after ratings / flags / colour labels / trash change for
+    // files in a folder, so the tree refreshes that folder's chips.
+    static sigc::signal<void, const Glib::ustring&>& folderFlagsChanged ();
 };
 
 inline DirBrowser::DirSelectionSignal DirBrowser::dirSelected () const

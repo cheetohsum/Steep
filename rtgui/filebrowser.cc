@@ -55,6 +55,7 @@
 #include "steepperflog.h"
 #include "batchqueue.h"
 #include "clipboard.h"
+#include "dirbrowser.h"
 #include "editorpanel.h"
 #include "filepanel.h"
 #include "inspector.h"
@@ -5060,6 +5061,23 @@ bool FileBrowser::checkFilter (ThumbBrowserEntryBase* entryb) const   // true ->
         && (!filter.exifFilter.filterFiletype  || filter.exifFilter.filetypes.count(cfs->getFiletypeRaw()) > 0);
 }
 
+namespace
+{
+// Tell the folder tree which folders' rating / flag / label summaries changed.
+void notifyFolderFlags(const std::vector<FileBrowserEntry*>& tbe)
+{
+    std::set<std::string> dirs;
+    for (const auto* e : tbe) {
+        if (e) {
+            dirs.insert(Glib::path_get_dirname(e->filename));
+        }
+    }
+    for (const auto& d : dirs) {
+        DirBrowser::folderFlagsChanged().emit(d);
+    }
+}
+}
+
 void FileBrowser::toTrashRequested (std::vector<FileBrowserEntry*> tbe)
 {
 
@@ -5084,6 +5102,7 @@ void FileBrowser::toTrashRequested (std::vector<FileBrowserEntry*> tbe)
 
     trash_changed().emit();
     applyFilter (filter);
+    notifyFolderFlags(tbe);
 }
 
 void FileBrowser::fromTrashRequested (std::vector<FileBrowserEntry*> tbe)
@@ -5107,6 +5126,7 @@ void FileBrowser::fromTrashRequested (std::vector<FileBrowserEntry*> tbe)
 
     trash_changed().emit();
     applyFilter (filter);
+    notifyFolderFlags(tbe);
 }
 
 void FileBrowser::sortMethodRequested (int method)
@@ -5203,6 +5223,7 @@ void FileBrowser::rankingRequested (std::vector<FileBrowserEntry*> tbe, int rank
     }
 
     applyFilter (filter);
+    notifyFolderFlags(tbe);
 
     if (!tbe.empty() && bppcl) {
         bppcl->endBatchPParamsChange();
@@ -5240,6 +5261,7 @@ void FileBrowser::colorlabelRequested (std::vector<FileBrowserEntry*> tbe, int c
     }
 
     applyFilter (filter);
+    notifyFolderFlags(tbe);
 
     if (!tbe.empty() && bppcl) {
         bppcl->endBatchPParamsChange();
@@ -5537,6 +5559,7 @@ void FileBrowser::pickRequested (std::vector<FileBrowserEntry*> tbe, int pick)
     }
 
     applyFilter (filter);
+    notifyFolderFlags(tbe);
 
     if (!tbe.empty() && bppcl) {
         bppcl->endBatchPParamsChange();

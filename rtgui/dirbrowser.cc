@@ -213,6 +213,295 @@ public:
     }
 };
 
+namespace
+{
+
+// ---------------------------------------------------------------------------
+// Per-folder rating / flag / colour-label summary
+// ---------------------------------------------------------------------------
+
+struct FolderStats {
+    int rank[6] = {0, 0, 0, 0, 0, 0};   // index 1..5 = stars
+    int pick = 0;
+    int reject = 0;
+    int color[6] = {0, 0, 0, 0, 0, 0};  // index 1..5 = colour labels
+
+    int rated() const { return rank[1] + rank[2] + rank[3] + rank[4] + rank[5]; }
+    int labelled() const { return color[1] + color[2] + color[3] + color[4] + color[5]; }
+    bool empty() const { return rated() == 0 && pick == 0 && reject == 0 && labelled() == 0; }
+
+    Glib::ustring encode() const
+    {
+        if (empty()) {
+            return Glib::ustring();
+        }
+        std::string s;
+        for (int i = 1; i <= 5; ++i) { s += std::to_string(rank[i]); s += ' '; }
+        s += std::to_string(pick); s += ' ';
+        s += std::to_string(reject);
+        for (int i = 1; i <= 5; ++i) { s += ' '; s += std::to_string(color[i]); }
+        return s;
+    }
+
+    static FolderStats decode(const Glib::ustring& str)
+    {
+        FolderStats st;
+        if (str.empty()) {
+            return st;
+        }
+        int v[12] = {};
+        std::sscanf(str.c_str(), "%d %d %d %d %d %d %d %d %d %d %d %d",
+                    &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6], &v[7], &v[8], &v[9], &v[10], &v[11]);
+        for (int i = 0; i < 5; ++i) { st.rank[i + 1] = v[i]; st.color[i + 1] = v[7 + i]; }
+        st.pick = v[5];
+        st.reject = v[6];
+        return st;
+    }
+};
+
+// Same rules the folder preview strip uses to read a photo's rating, flag and
+// label without building a Thumbnail: the cache entry, then the sidecar.
+void accumulateFileFlags(const Glib::ustring& fname, FolderStats& st)
+{
+    CacheImageData cid;
+    cid.rating = 0;
+    cid.pickLabel = 0;
+    cid.colorLabel = 0;
+    imagescan::loadCacheDataFast(fname, cid);
+    imagescan::loadPP3OverlaysFast(fname, cid);
+
+    if (cid.rating >= 1 && cid.rating <= 5) {
+        ++st.rank[cid.rating];
+    }
+    if (cid.pickLabel > 0) {
+        ++st.pick;
+    } else if (cid.pickLabel < 0) {
+        ++st.reject;
+    }
+    if (cid.colorLabel >= 1 && cid.colorLabel <= 5) {
+        ++st.color[cid.colorLabel];
+    }
+}
+
+// Same palette as the thumbnail colour-label glow (thumbbrowserentrybase.cc).
+const double kLabelR[] = {0, 1.0, 1.0, 0.2, 0.2, 0.6};
+const double kLabelG[] = {0, 0.2, 0.85, 0.8, 0.4, 0.2};
+const double kLabelB[] = {0, 0.2, 0.0, 0.2, 1.0, 0.8};
+
+enum ChipKind { CHIP_RATED, CHIP_PICK, CHIP_REJECT, CHIP_LABEL };
+
+struct Chip {
+    ChipKind kind;
+    int count;
+    int x;      // offset from the left of the chip strip
+    int w;
+    Glib::RefPtr<Pango::Layout> layout;
+};
+
+constexpr int kChipIconGap = 3;
+constexpr int kChipGap = 9;
+
+int chipIconSize(int textH)
+{
+    return std::max(6, textH * 7 / 10);
+}
+
+std::vector<Chip> layoutChips(Gtk::Widget& widget, const FolderStats& st, int& totalW, int& textH)
+{
+    std::vector<Chip> chips;
+    const std::pair<ChipKind, int> items[] = {
+        {CHIP_RATED, st.rated()},
+        {CHIP_PICK, st.pick},
+        {CHIP_REJECT, st.reject},
+        {CHIP_LABEL, st.labelled()},
+    };
+    totalW = 0;
+    textH = 0;
+    Pango::AttrList attrs;
+    auto scale = Pango::Attribute::create_attr_scale(0.8);
+    attrs.insert(scale);
+    for (const auto& it : items) {
+        if (it.second <= 0) {
+            continue;
+        }
+        Chip c;
+        c.kind = it.first;
+        c.count = it.second;
+        c.x = 0;
+        c.layout = widget.create_pango_layout(std::to_string(it.second));
+        c.layout->set_attributes(attrs);
+        int lw = 0, lh = 0;
+        c.layout->get_pixel_size(lw, lh);
+        c.w = lw;
+        textH = std::max(textH, lh);
+        chips.push_back(c);
+    }
+    const int icon = chipIconSize(textH);
+    for (auto& c : chips) {
+        if (totalW > 0) {
+            totalW += kChipGap;
+        }
+        c.x = totalW;
+        c.w += icon + kChipIconGap;
+        totalW += c.w;
+    }
+    return chips;
+}
+
+void drawChipIcon(const Cairo::RefPtr<Cairo::Context>& cr, ChipKind kind, double x, double cy, double s,
+                  const Gdk::RGBA& fg, const FolderStats& st)
+{
+    cr->save();
+    cr->set_source_rgba(fg.get_red(), fg.get_green(), fg.get_blue(), fg.get_alpha());
+    switch (kind) {
+        case CHIP_RATED: {
+            const double cx = x + s / 2.0, r = s / 2.0 + 0.5, ri = r * 0.45;
+            for (int i = 0; i < 10; ++i) {
+                const double a = -M_PI / 2.0 + i * M_PI / 5.0;
+                const double rr = (i % 2) ? ri : r;
+                const double px = cx + rr * std::cos(a), py = cy + 0.08 * s + rr * std::sin(a);
+                if (i == 0) {
+                    cr->move_to(px, py);
+                } else {
+                    cr->line_to(px, py);
+                }
+            }
+            cr->close_path();
+            cr->fill();
+            break;
+        }
+        case CHIP_PICK: {
+            // Flag: pole + pennant
+            const double top = cy - s / 2.0, bot = cy + s / 2.0;
+            cr->set_line_width(std::max(1.0, s / 9.0));
+            cr->move_to(x + s * 0.2, bot);
+            cr->line_to(x + s * 0.2, top);
+            cr->stroke();
+            cr->move_to(x + s * 0.2, top);
+            cr->line_to(x + s * 0.95, top + s * 0.28);
+            cr->line_to(x + s * 0.2, top + s * 0.56);
+            cr->close_path();
+            cr->fill();
+            break;
+        }
+        case CHIP_REJECT: {
+            const double h = s * 0.38, cx = x + s / 2.0;
+            cr->set_line_width(std::max(1.2, s / 6.5));
+            cr->set_line_cap(Cairo::LINE_CAP_ROUND);
+            cr->move_to(cx - h, cy - h);
+            cr->line_to(cx + h, cy + h);
+            cr->move_to(cx + h, cy - h);
+            cr->line_to(cx - h, cy + h);
+            cr->stroke();
+            break;
+        }
+        case CHIP_LABEL: {
+            int best = 1;
+            for (int i = 2; i <= 5; ++i) {
+                if (st.color[i] > st.color[best]) {
+                    best = i;
+                }
+            }
+            cr->set_source_rgba(kLabelR[best], kLabelG[best], kLabelB[best], 0.9);
+            cr->arc(x + s / 2.0, cy, s * 0.4, 0, 2 * M_PI);
+            cr->fill();
+            break;
+        }
+    }
+    cr->restore();
+}
+
+class FolderStatsRenderer : public Gtk::CellRenderer
+{
+public:
+    FolderStatsRenderer() : Glib::ObjectBase("SteepFolderStatsRenderer"), Gtk::CellRenderer() {}
+
+    FolderStats stats;
+    Gdk::RGBA ink;          // icon + number colour (steep_text_dim)
+    int nameRowH = 0;       // chips sit level with the name, not the preview strip
+
+protected:
+    void get_preferred_width_vfunc(Gtk::Widget& widget, int& minimum, int& natural) const override
+    {
+        int w = 0, h = 0;
+        layoutChips(widget, stats, w, h);
+        const int xpad = property_xpad();
+        minimum = natural = w > 0 ? w + 2 * xpad : 0;
+    }
+
+    void get_preferred_height_vfunc(Gtk::Widget&, int& minimum, int& natural) const override
+    {
+        minimum = natural = 0;
+    }
+
+    void render_vfunc(const Cairo::RefPtr<Cairo::Context>& cr, Gtk::Widget& widget,
+                      const Gdk::Rectangle&, const Gdk::Rectangle& cell_area,
+                      Gtk::CellRendererState) override
+    {
+        int totalW = 0, textH = 0;
+        auto chips = layoutChips(widget, stats, totalW, textH);
+        if (chips.empty()) {
+            return;
+        }
+        const int xpad = property_xpad();
+        const int x0 = cell_area.get_x() + cell_area.get_width() - xpad - totalW;
+        const double cy = cell_area.get_y() + (nameRowH > 0 ? nameRowH : cell_area.get_height()) / 2.0;
+        const int icon = chipIconSize(textH);
+        const Gdk::RGBA& fg = ink;
+        for (const auto& c : chips) {
+            drawChipIcon(cr, c.kind, x0 + c.x, cy, icon, fg, stats);
+            cr->set_source_rgba(fg.get_red(), fg.get_green(), fg.get_blue(), fg.get_alpha());
+            cr->move_to(x0 + c.x + icon + kChipIconGap, cy - textH / 2.0);
+            c.layout->show_in_cairo_context(cr);
+        }
+    }
+};
+
+Glib::ustring chipTooltipMarkup(ChipKind kind, const FolderStats& st)
+{
+    Glib::ustring out;
+    switch (kind) {
+        case CHIP_RATED:
+            for (int r = 5; r >= 1; --r) {
+                if (st.rank[r] == 0) {
+                    continue;
+                }
+                if (!out.empty()) {
+                    out += "\n";
+                }
+                Glib::ustring stars;
+                for (int i = 0; i < 5; ++i) {
+                    stars += i < r ? "★" : "☆";
+                }
+                out += Glib::ustring::compose("%1  %2", stars, st.rank[r]);
+            }
+            break;
+        case CHIP_PICK:
+            out = Glib::ustring::compose("%1  %2", Glib::Markup::escape_text(M("FILEBROWSER_POPUPPICK")), st.pick);
+            break;
+        case CHIP_REJECT:
+            out = Glib::ustring::compose("%1  %2", Glib::Markup::escape_text(M("FILEBROWSER_POPUPREJECT")), st.reject);
+            break;
+        case CHIP_LABEL:
+            for (int i = 1; i <= 5; ++i) {
+                if (st.color[i] == 0) {
+                    continue;
+                }
+                if (!out.empty()) {
+                    out += "\n";
+                }
+                char hex[8];
+                std::snprintf(hex, sizeof(hex), "#%02x%02x%02x",
+                              int(kLabelR[i] * 255), int(kLabelG[i] * 255), int(kLabelB[i] * 255));
+                out += Glib::ustring::compose("<span foreground=\"%1\">●</span>  %2", hex, st.color[i]);
+            }
+            break;
+    }
+    return out;
+}
+
+} // namespace
+
 #ifdef _WIN32
 #include "rtengine/leanwindows.h"
 #include <shellapi.h>
@@ -352,6 +641,10 @@ DirBrowser::DirBrowser () : dirTreeModel(),
     dirtree->onMotion = [this](GdkEventMotion* event) { return onMotionNotify(event); };
     dirtree->onLeave = [this](GdkEventCrossing* event) { return onLeaveNotify(event); };
 
+    dirtree->set_has_tooltip(true);
+    dirtree->signal_query_tooltip().connect(sigc::mem_fun(*this, &DirBrowser::onQueryTooltip));
+    flagsChangedConn_ = folderFlagsChanged().connect(sigc::mem_fun(*this, &DirBrowser::queueFolderStatsRefresh));
+
     // Hide popup on scroll
     scrolledwindow4->get_vadjustment()->signal_value_changed().connect([this]() {
         hideHoverPopup();
@@ -365,6 +658,8 @@ DirBrowser::~DirBrowser()
 {
     dirUpdateConn_.disconnect();
     previewApplyConn_.disconnect();
+    statRefreshConn_.disconnect();
+    flagsChangedConn_.disconnect();
     hideHoverPopup();
     delete hoverPopup_;
     idle_register.destroy();
@@ -621,6 +916,20 @@ void DirBrowser::fillDirTree ()
         textCR->property_text() = iter ? iter->get_value(dtColumns.photoCount) : Glib::ustring();
     });
 
+    // Rating / flag / reject / label chips, left of the photo count.
+    // Hovering a chip shows its breakdown (onQueryTooltip).
+    auto* statsCR = Gtk::manage(new FolderStatsRenderer());
+    statsCR->property_xpad() = 2;
+    statsCR->property_ypad() = 0;
+    statsCR->ink = themeColor(*dirtree, "steep_text_dim", Gdk::RGBA("#888888"));
+    statsCR_ = statsCR;
+    tvc.pack_end(*statsCR, false);
+    tvc.set_cell_data_func(*statsCR, [this](Gtk::CellRenderer* cr, const Gtk::TreeModel::iterator& iter) {
+        paintCurrentDirBackground(cr, iter);
+        static_cast<FolderStatsRenderer*>(cr)->stats =
+            FolderStats::decode(iter ? iter->get_value(dtColumns.flagStats) : Glib::ustring());
+    });
+
     dirtree->append_column(tvc);
 
     const auto& options = App::get().options();
@@ -646,6 +955,7 @@ void DirBrowser::fillDirTree ()
     countCR->property_yalign() = 0.f;
     // The count is set at 0.8 scale (above).
     countCR->property_ypad() = std::max(0, (rowH - static_cast<int>(lineH * 0.8)) / 2);
+    static_cast<FolderStatsRenderer*>(statsCR_)->nameRowH = rowH;
 
     // Clicking the star on the current folder row toggles its favorite
     // status instead of re-activating the row.
@@ -1359,6 +1669,12 @@ bool DirBrowser::onMotionNotify(GdkEventMotion* event)
         }
     }
 
+    // Over a chip its tooltip takes the place of the thumbnail popup.
+    if (statsChipAt(static_cast<int>(event->x), static_cast<int>(event->y), nullptr, nullptr, nullptr)) {
+        hideHoverPopup();
+        return false;
+    }
+
     // The rows already show their photos; the popup would repeat them.
     if (App::get().options().folderPreviews) {
         hideHoverPopup();
@@ -1532,6 +1848,14 @@ void DirBrowser::countPhotosInChildren (const Gtk::TreeModel::iterator& parent)
         if (!dirname.empty()) {
             entries.push_back({dirname, dirTreeModel->get_path(child).to_string()});
         }
+    }
+
+    {
+        std::vector<ScanEntry> statEntries;
+        for (const auto& e : entries) {
+            statEntries.push_back({e.dirname, e.pathStr});
+        }
+        scanFolderStats(std::move(statEntries));
     }
 
     // DirBrowser is created once and lives for the lifetime of the app,
@@ -2004,4 +2328,192 @@ void DirBrowser::showPreviewMenu (GdkEventButton* event)
 
     previewPopover_->set_pointing_to(rect);
     previewPopover_->popup();
+}
+
+// ---------------------------------------------------------------------------
+// Folder rating / flag / label chips
+// ---------------------------------------------------------------------------
+
+void DirBrowser::scanFolderStats (std::vector<ScanEntry> entries)
+{
+    if (entries.empty()) {
+        return;
+    }
+
+    // DirBrowser lives for the lifetime of the app (see countPhotosInChildren).
+    DirBrowser* self = this;
+
+    steep::runBackground([entries, self]() {
+        struct Result {
+            Glib::ustring dirname;
+            Glib::ustring pathStr;
+            Glib::ustring statsStr;
+        };
+        auto results = std::make_shared<std::vector<Result>>();
+        results->reserve(entries.size());
+
+        for (const auto& entry : entries) {
+            FolderStats stats;
+            try {
+                Glib::Dir dir(entry.dirname);
+                const auto& exts = App::get().options().parsedExtensionsSet;
+                for (auto it = dir.begin(); it != dir.end(); ++it) {
+                    const Glib::ustring fname = *it;
+                    const auto dotpos = fname.find_last_of('.');
+                    if (dotpos == Glib::ustring::npos) {
+                        continue;
+                    }
+                    const Glib::ustring ext = fname.substr(dotpos + 1).lowercase();
+                    if (exts.count(ext.raw())) {
+                        accumulateFileFlags(Glib::build_filename(entry.dirname, fname), stats);
+                    }
+                }
+            } catch (...) {}
+
+            results->push_back({entry.dirname, entry.pathStr, stats.encode()});
+        }
+
+        Glib::signal_idle().connect_once([self, results]() {
+            if (!self->dirTreeModel) {
+                return;
+            }
+            for (const auto& r : *results) {
+                try {
+                    Gtk::TreeModel::iterator iter;
+                    if (!r.pathStr.empty()) {
+                        iter = self->dirTreeModel->get_iter(Gtk::TreeModel::Path(r.pathStr));
+                    }
+                    if (!iter || iter->get_value(self->dtColumns.dirname) != r.dirname) {
+                        // Rows moved since the scan started: find the folder by name.
+                        iter = Gtk::TreeModel::iterator();
+                        self->dirTreeModel->foreach_iter([&](const Gtk::TreeModel::iterator& it) -> bool {
+                            if (it->get_value(self->dtColumns.dirname) == r.dirname) {
+                                iter = it;
+                                return true;
+                            }
+                            return false;
+                        });
+                    }
+                    if (iter && iter->get_value(self->dtColumns.flagStats) != r.statsStr) {
+                        (*iter)[self->dtColumns.flagStats] = r.statsStr;
+                    }
+                } catch (...) {}
+            }
+        });
+    });
+}
+
+sigc::signal<void, const Glib::ustring&>& DirBrowser::folderFlagsChanged ()
+{
+    static sigc::signal<void, const Glib::ustring&> sig;
+    return sig;
+}
+
+void DirBrowser::queueFolderStatsRefresh (const Glib::ustring& dirname)
+{
+    pendingStatDirs_.insert(dirname.raw());
+    statRefreshConn_.disconnect();
+    statRefreshConn_ = Glib::signal_timeout().connect([this]() -> bool {
+        std::set<std::string> wanted;
+        wanted.swap(pendingStatDirs_);
+        std::vector<ScanEntry> entries;
+        if (dirTreeModel) {
+            dirTreeModel->foreach_iter([&](const Gtk::TreeModel::iterator& it) -> bool {
+                const Glib::ustring d = it->get_value(dtColumns.dirname);
+                if (!d.empty()) {
+                    for (const auto& w : wanted) {
+                        if (isSamePath(d, Glib::ustring(w))) {
+                            entries.push_back({d, dirTreeModel->get_path(it).to_string()});
+                            break;
+                        }
+                    }
+                }
+                return false;
+            });
+        }
+        scanFolderStats(std::move(entries));
+        return false;
+    }, 400);
+}
+
+// (bx, by) in the tree's bin-window coordinates.
+bool DirBrowser::statsChipAt (int bx, int by, Gtk::TreeModel::Path* pathOut, int* chipOut, Gdk::Rectangle* rectOut)
+{
+    if (!statsCR_ || !dirTreeModel) {
+        return false;
+    }
+    Gtk::TreeModel::Path path;
+    Gtk::TreeViewColumn* column = nullptr;
+    int cx = 0, cy = 0;
+    if (!dirtree->get_path_at_pos(bx, by, path, column, cx, cy) || column != &tvc) {
+        return false;
+    }
+    auto iter = dirTreeModel->get_iter(path);
+    if (!iter) {
+        return false;
+    }
+    const FolderStats st = FolderStats::decode(iter->get_value(dtColumns.flagStats));
+    if (st.empty()) {
+        return false;
+    }
+
+    // Lay the row out the way it was drawn.
+    tvc.cell_set_cell_data(dirTreeModel, iter, false, dirtree->row_expanded(path));
+    int start = 0, width = 0;
+    if (!tvc.get_cell_position(*statsCR_, start, width) || width <= 0) {
+        return false;
+    }
+    Gdk::Rectangle cellArea;
+    dirtree->get_cell_area(path, tvc, cellArea);
+
+    int totalW = 0, textH = 0;
+    const auto chips = layoutChips(*dirtree, st, totalW, textH);
+    const int xpad = statsCR_->property_xpad();
+    const int x0 = cellArea.get_x() + start + width - xpad - totalW;
+    for (const auto& c : chips) {
+        const int left = x0 + c.x - kChipGap / 2;
+        const int right = x0 + c.x + c.w + kChipGap / 2;
+        if (bx >= left && bx < right) {
+            if (pathOut) {
+                *pathOut = path;
+            }
+            if (chipOut) {
+                *chipOut = c.kind;
+            }
+            if (rectOut) {
+                int tx = 0, ty = 0;
+                dirtree->convert_bin_window_to_widget_coords(left, cellArea.get_y(), tx, ty);
+                *rectOut = Gdk::Rectangle(tx, ty, right - left, cellArea.get_height());
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+bool DirBrowser::onQueryTooltip (int x, int y, bool keyboard, const Glib::RefPtr<Gtk::Tooltip>& tooltip)
+{
+    if (keyboard) {
+        return false;
+    }
+    int bx = 0, by = 0;
+    dirtree->convert_widget_to_bin_window_coords(x, y, bx, by);
+    Gtk::TreeModel::Path path;
+    int chip = 0;
+    Gdk::Rectangle rect;
+    if (!statsChipAt(bx, by, &path, &chip, &rect)) {
+        return false;
+    }
+    auto iter = dirTreeModel->get_iter(path);
+    if (!iter) {
+        return false;
+    }
+    const Glib::ustring markup =
+        chipTooltipMarkup(static_cast<ChipKind>(chip), FolderStats::decode(iter->get_value(dtColumns.flagStats)));
+    if (markup.empty()) {
+        return false;
+    }
+    tooltip->set_markup(markup);
+    tooltip->set_tip_area(rect);
+    return true;
 }
