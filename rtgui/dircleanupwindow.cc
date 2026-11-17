@@ -302,6 +302,9 @@ DirCleanupWindow::DirCleanupWindow ()
     undoBtn_ = Gtk::manage(new Gtk::Button(M("DIRCLEANUP_UNDO")));
     moveBtn_ = Gtk::manage(new Gtk::Button());
     moveBtn_->get_style_context()->add_class("suggested-action");
+    suggestedBtn_ = Gtk::manage(new Gtk::Button(M("DIRCLEANUP_SELECTSUGGESTED")));
+    suggestedBtn_->set_relief(Gtk::RELIEF_NONE);
+    bar->pack_start(*suggestedBtn_, Gtk::PACK_SHRINK);
     bar->pack_start(*selectAllBtn_, Gtk::PACK_SHRINK);
     bar->pack_start(*summary_, Gtk::PACK_EXPAND_WIDGET);
     bar->pack_start(*rescanBtn_, Gtk::PACK_SHRINK);
@@ -316,6 +319,16 @@ DirCleanupWindow::DirCleanupWindow ()
         }
         for (const auto& row : store_->children()) {
             row[cols_.active] = !any && !suggestions_[row[cols_.index]].duplicate;
+        }
+        lastResult_.clear();
+        updateSummary();
+    });
+    suggestedBtn_->signal_clicked().connect([this]() {
+        for (const auto& row : store_->children()) {
+            const auto& s = suggestions_[row[cols_.index]];
+            if (!s.duplicate && s.dots() == 3) {
+                row[cols_.active] = true;
+            }
         }
         lastResult_.clear();
         updateSummary();
@@ -507,7 +520,7 @@ void DirCleanupWindow::updateSummary ()
     int photos = 0;
     long long bytes = 0;
     for (const auto& row : store_->children()) {
-        if (row[cols_.active]) {
+        if (row[cols_.active] && row[cols_.index] < static_cast<int>(suggestions_.size())) {
             const auto& s = suggestions_[row[cols_.index]];
             photos += static_cast<int>(s.groups.size());
             bytes += s.bytes;
@@ -517,6 +530,7 @@ void DirCleanupWindow::updateSummary ()
     moveBtn_->set_label(Glib::ustring::compose(M("DIRCLEANUP_MOVE"), photos));
     selectAllBtn_->set_label(photos ? M("DIRCLEANUP_DESELECTALL") : M("DIRCLEANUP_SELECTALL"));
     selectAllBtn_->set_sensitive(!busy_ && !suggestions_.empty());
+    suggestedBtn_->set_sensitive(!busy_ && !suggestions_.empty());
     moveBtn_->set_sensitive(!busy_ && photos > 0);
     undoBtn_->set_sensitive(!busy_ && hasUndo());
 }
@@ -686,14 +700,31 @@ void DirCleanupWindow::scanFinished ()
     });
 }
 
-void DirCleanupWindow::fillList ()
+namespace
 {
+std::string rowKey(const Suggestion& s)
+{
+    return lowerAscii(s.source) + "|" + lowerAscii(s.dest) + (s.duplicate ? "|=" : "");
+}
+}
+
+void DirCleanupWindow::fillList (bool keepTicks)
+{
+    std::set<std::string> ticked;
+    if (keepTicks) {
+        for (const auto& row : store_->children()) {
+            if (row[cols_.active]) {
+                ticked.insert(rowKey(previousSuggestions_[row[cols_.index]]));
+            }
+        }
+    }
+    previousSuggestions_ = suggestions_;
     store_->clear();
     for (size_t i = 0; i < suggestions_.size(); ++i) {
         const auto& s = suggestions_[i];
         auto row = *store_->append();
         row[cols_.movable] = true;
-        row[cols_.active] = !s.duplicate && s.dots() == 3;
+        row[cols_.active] = ticked.count(rowKey(s)) > 0;
         row[cols_.from] = Glib::Markup::escape_text(Glib::path_get_basename(s.source));
         row[cols_.arrow] = "\u2192";
         Glib::ustring to = Glib::Markup::escape_text(Glib::path_get_basename(s.dest));
@@ -1129,8 +1160,8 @@ void DirCleanupWindow::moveFinished (int moved, int skipped,
         }
         suggestions_ = suggest(scans);
     }
+    fillList(true);   // rebuild the rows before anything reads them against the new list
     setBusy(false);
-    fillList();
 }
 
 void DirCleanupWindow::startUndo ()

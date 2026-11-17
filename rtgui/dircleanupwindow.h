@@ -55,7 +55,7 @@ private:
 
     void startScan ();
     void scanFinished ();
-    void fillList ();
+    void fillList (bool keepTicks = false);
     void updateSummary ();
     void startMove ();
     void moveFinished (int moved, int skipped,
@@ -78,6 +78,7 @@ private:
     Gtk::Button* rescanBtn_ = nullptr;
     Gtk::Stack* stack_ = nullptr;
     Gtk::Button* selectAllBtn_ = nullptr;
+    Gtk::Button* suggestedBtn_ = nullptr;
     Gtk::FlowBox* thumbs_ = nullptr;
     Gtk::ScrolledWindow* thumbScroll_ = nullptr;
     Gtk::TreeViewColumn* fromCol_ = nullptr;
@@ -90,6 +91,7 @@ private:
 
     std::shared_ptr<State> state_;
     std::vector<dircleanup::Suggestion> suggestions_;
+    std::vector<dircleanup::Suggestion> previousSuggestions_;   // what the list rows index into
     bool busy_ = false;
     Glib::ustring lastResult_;   // moved / skipped counts after a batch, until the next pick
 };
