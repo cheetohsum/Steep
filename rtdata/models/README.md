@@ -168,6 +168,13 @@ That URL and hash are the defaults in `CMakeLists.txt`, so nothing has to be
 hosted and no configuration is needed. Override `AI_INPAINT_MODEL_URL` to point
 elsewhere.
 
+That export declares a fixed 512x512 input, so every repair is squeezed to 512.
+The network itself takes any size. `python tools/make_lama_dynamic.py <in> <out>
+--check` rewrites only the declared dimensions (weights untouched, hash changes);
+with the result in place, smart repairs run the model at up to 1024 px, which
+keeps lines and edges noticeably straighter on mid-sized removals. The fixed
+file keeps working as before.
+
 To bake the model into a build instead — worth it for an offline or otherwise
 self-contained install, at the cost of the download size:
 
@@ -215,3 +222,21 @@ The trap is not obscure: NVIDIA's SegFormer weights sat here for a while and
 are non-commercial, which GPL-3.0 cannot carry. A permissive-sounding project
 licence does not always cover the published weights, so read the terms attached
 to the weights themselves.
+
+### `rorem_unet.onnx` (+ `.data`), `rorem_vae_encoder.onnx`, `rorem_vae_decoder.onnx` — ~5.5 GB, optional
+
+High-quality Remove Object for large areas ("High quality for large areas" in
+Smart Tools). Without these files the option is greyed out and removal uses
+LaMa alone.
+
+- Upstream: [RORem](https://github.com/leeruibin/RORem), Li et al., CVPR 2025 —
+  an SDXL-inpainting model fine-tuned to remove objects
+- Weights: [LetsThink/RORem](https://huggingface.co/LetsThink/RORem), Apache 2.0;
+  built on `diffusers/stable-diffusion-xl-1.0-inpainting-0.1` (CreativeML
+  Open RAIL++-M)
+- Exported with `python tools/export_rorem_model.py <out-dir>`: the fixed
+  quality prompt is baked into the UNet, so no text encoder is shipped
+- Runs the UNet on the GPU (DirectML) and the image codec on the CPU; needs
+  about 12 GB of free system memory and is skipped, falling back to LaMa, when
+  that is not available
+- Not bundled, not downloaded by the app, far too large for the repository

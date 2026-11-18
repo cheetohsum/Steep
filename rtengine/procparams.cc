@@ -1901,14 +1901,14 @@ bool SpotEntry::operator ==(const SpotEntry& other) const
 {
     return other.sourcePos == sourcePos && other.targetPos == targetPos &&
            other.radius == radius && other.feather == feather && other.opacity == opacity &&
-           other.method == method && other.repairVersion == repairVersion && other.strokePoints == strokePoints;
+           other.method == method && other.repairVersion == repairVersion && other.strokePoints == strokePoints &&
+           other.objectPoints == objectPoints && other.objectGrow == objectGrow && other.objectShadow == objectShadow &&
+           other.highQuality == highQuality;
 }
 
 bool SpotEntry::operator !=(const SpotEntry& other) const
 {
-    return other.sourcePos != sourcePos || other.targetPos != targetPos ||
-           other.radius != radius || other.feather != feather || other.opacity != opacity ||
-           other.method != method || other.repairVersion != repairVersion || other.strokePoints != strokePoints;
+    return !(*this == other);
 }
 
 SpotParams::SpotParams() :
@@ -5280,7 +5280,7 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
 //Spot removal
         saveToKeyfile(!pedited || pedited->spot.enabled, "Spot removal", "Enabled", spot.enabled, keyFile);
         for (size_t i = 0; i < spot.entries.size (); ++i) {
-            std::vector<double> entry(9);
+            std::vector<double> entry(10);
 
             entry[0] = double (spot.entries.at (i).sourcePos.x);
             entry[1] = double (spot.entries.at (i).sourcePos.y);
@@ -5291,6 +5291,7 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
             entry[6] = double (spot.entries.at (i).opacity);
             entry[7] = double (static_cast<int>(spot.entries.at (i).method));
             entry[8] = spot.entries.at(i).repairVersion;
+            entry[9] = spot.entries.at(i).highQuality ? 1. : 0.;
 
             std::stringstream ss;
             ss << "Spot" << (i + 1);
@@ -5308,6 +5309,20 @@ int ProcParams::save(const Glib::ustring& fname, const Glib::ustring& fname2, bo
                 std::stringstream strokeKey;
                 strokeKey << "SpotStroke" << (i + 1);
                 saveToKeyfile(!pedited || pedited->spot.entries, "Spot removal", strokeKey.str(), strokeData, keyFile);
+            }
+
+            // Picked object: grow;shadow, then x;y;include per click.
+            if (!spot.entries.at(i).objectPoints.empty()) {
+                const auto& se = spot.entries.at(i);
+                std::vector<double> objectData {double(se.objectGrow), se.objectShadow ? 1. : 0.};
+                for (const auto& pt : se.objectPoints) {
+                    objectData.push_back(double(pt.x));
+                    objectData.push_back(double(pt.y));
+                    objectData.push_back(pt.include ? 1. : 0.);
+                }
+                std::stringstream objectKey;
+                objectKey << "SpotObject" << (i + 1);
+                saveToKeyfile(!pedited || pedited->spot.entries, "Spot removal", objectKey.str(), objectData, keyFile);
             }
         }
 
@@ -6694,7 +6709,10 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
                     SpotEntry se;
 
                     if (entry.size() < 7) continue;
-                    se.repairVersion = entry.size() >= 9 ? LIM(int(entry.data()[8]), 1, 2) : 1;
+                    se.repairVersion = entry.size() >= 9 ? LIM(int(entry.data()[8]), 1, int(SpotEntry::currentRepairVersion)) : 1;
+                    // Absent in sidecars written before the option existed:
+                    // those repairs keep the fill they were made with.
+                    se.highQuality = entry.size() >= 10 && entry.data()[9] > 0.5;
 
                     se.sourcePos.set(int(entry.data()[0] + epsilon), int(entry.data()[1] + epsilon));
                     se.targetPos.set(int(entry.data()[2] + epsilon), int(entry.data()[3] + epsilon));
@@ -6715,6 +6733,23 @@ int ProcParams::load(const Glib::ustring& fname, ParamsEdited* pedited, bool fil
                         Glib::ArrayHandle<double> strokeData = keyFile.get_double_list("Spot removal", strokeKey.str());
                         for (size_t si = 0; si + 1 < strokeData.size(); si += 2) {
                             se.strokePoints.push_back(Coord(int(strokeData.data()[si] + epsilon), int(strokeData.data()[si + 1] + epsilon)));
+                        }
+                    }
+
+                    std::stringstream objectKey;
+                    objectKey << "SpotObject" << i;
+                    if (keyFile.has_key("Spot removal", objectKey.str())) {
+                        Glib::ArrayHandle<double> objectData = keyFile.get_double_list("Spot removal", objectKey.str());
+                        if (objectData.size() >= 5) {
+                            se.objectGrow = LIM(float(objectData.data()[0]), 0.f, 10.f);
+                            se.objectShadow = objectData.data()[1] > 0.5;
+                            for (size_t oi = 2; oi + 2 < objectData.size(); oi += 3) {
+                                SpotEntry::ObjectPoint pt;
+                                pt.x = int(objectData.data()[oi] + epsilon);
+                                pt.y = int(objectData.data()[oi + 1] + epsilon);
+                                pt.include = objectData.data()[oi + 2] > 0.5;
+                                se.objectPoints.push_back(pt);
+                            }
                         }
                     }
 

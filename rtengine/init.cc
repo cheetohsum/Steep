@@ -46,6 +46,7 @@
 #include "aiinpainting.h"
 #include "partnerdepthstore.h"
 #include "samselector.h"
+#include "airemover.h"
 #endif
 
 namespace rtengine
@@ -190,6 +191,13 @@ int init (const Settings* s, const Glib::ustring& baseDir, const Glib::ustring& 
 
             if (!samPath.empty()) {
                 SamSelector::getInstance().setModelDirectory(Glib::path_get_dirname(samPath));
+            }
+
+            // Optional high-quality Remove Object fill; loaded on first use.
+            const Glib::ustring removerPath = findModel("rorem_unet.onnx");
+
+            if (!removerPath.empty()) {
+                AIRemoverEngine::getInstance().setModelDirectory(Glib::path_get_dirname(removerPath));
             }
         }
 

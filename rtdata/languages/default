@@ -5524,9 +5524,18 @@ TP_SMART_READY;Final repair applied
 TP_SMART_DUST_SCANNING;Scanning for dust
 TP_SMART_DUST_SENSITIVITY;Sensitivity
 TP_SMART_FEATHER;Feather
+TP_SMART_HIGH_QUALITY;High quality for large areas
+TP_SMART_HIGH_QUALITY_MISSING;Needs the optional high-quality removal models (about 5.5 GB) in the models folder.
+TP_SMART_HIGH_QUALITY_TIP;Rebuild large removed areas with a slower model that reconstructs the scene (walls, ground, edges) instead of smoothing over it. Needs a graphics card and can take a minute. Small repairs are not affected.
+TP_SMART_OBJECT_GROW;Expand selection
+TP_SMART_OBJECT_GROW_TIP;How far the removal reaches beyond the picked object's outline. Raise it when an edge or fringe of the object is left behind.
+TP_SMART_OBJECT_SHADOW;Include shadow
+TP_SMART_OBJECT_SHADOW_TIP;Also remove the dark shadow attached to the base of the picked object.
+TP_SMART_PICK_OBJECT;Click picks whole object
+TP_SMART_PICK_OBJECT_TIP;A single click selects the whole object under the pointer and removes it. Ctrl+click adds a part the selection missed, Alt+click protects something it should not have taken. Dragging still paints a freeform stroke. Turn this off to make a click a plain brush dab.
 TP_SMART_GLARE_STRENGTH;Glare reduction
 TP_SPOT_AI_COMING_SOON;Coming soon
-TP_SPOT_AI_OBJECT_TIP;Paint over the object — the removal applies by itself the moment you release the stroke. Drag for a freeform stroke, click for a single dab.
+TP_SPOT_AI_OBJECT_TIP;Click an object to remove all of it, or paint over it — the removal applies by itself the moment you release. Click picks the whole object, drag paints a freeform stroke.
 TP_SPOT_AI_UNAVAILABLE;The AI inpainting model is not installed.
 TP_SPOT_AI_RESET_TIP;Remove every edit this tool has made to the photo.
 TP_SPOT_AI_DUST_TIP;Scan the photo for sensor dust and heal every speck found. Each spot stays reviewable — click one and press Delete to keep it.

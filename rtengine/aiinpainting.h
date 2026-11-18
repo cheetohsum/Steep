@@ -96,13 +96,20 @@ public:
                  float* outR, float* outG, float* outB,
                  int version = 1, const SmartRepairJob& job = {});
 
-    int tileSize() const;
+    /// Finish the deferred model load (starting it if needed). tileSize()
+    /// is only meaningful afterwards. False when no model could be loaded.
+    bool ensureLoaded(const SmartRepairJob& job = {});
+
+    /// Longest side the model is run at for this repair version: 512 for a
+    /// fixed-size export, more when the export takes any size (version 3).
+    /// Regions up to this size are filled natively, larger ones in tiles of it.
+    int tileSize(int version = 2) const;
 
 private:
     struct Impl;
     std::unique_ptr<Impl> pImpl;
     bool inpaintLegacy(const float*, const float*, const float*, const float*, int, int, float*, float*, float*);
-    bool inpaintV2(const float*, const float*, const float*, const float*, int, int, float*, float*, float*, const SmartRepairJob&);
+    bool inpaintV2(const float*, const float*, const float*, const float*, int, int, float*, float*, float*, int version, const SmartRepairJob&);
 };
 
 /**

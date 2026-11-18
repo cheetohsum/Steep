@@ -136,6 +136,14 @@ private:
     Gtk::EventBox* smartStatusHit_[4] = {};
     Gtk::Button *smartCancel_ = nullptr, *smartRetry_ = nullptr, *smartUpgrade_ = nullptr;
     Adjuster *dustSensitivity_ = nullptr, *repairFeather_ = nullptr, *reflectionStrength_ = nullptr;
+    // Remove Object by picking: a plain click selects the whole object.
+    Gtk::CheckButton *pickObject_ = nullptr, *pickShadow_ = nullptr;
+    // Large fills through the diffusion remover, when its models are installed.
+    Gtk::CheckButton* highQuality_ = nullptr;
+    Adjuster* objectGrow_ = nullptr;
+    int strokeModifier_ = 0;             // modifier keys held when the stroke began
+    /// The newest Remove Object entry made by picking, or null.
+    rtengine::procparams::SpotEntry* lastPickedObject();
     sigc::connection statusPollConn_, dustPollConn_;
     std::function<rtengine::SmartRepairStatus()> smartStatusProvider_;
     std::function<void()> cancelRepair_, retryRepair_;

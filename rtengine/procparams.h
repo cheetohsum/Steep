@@ -1246,7 +1246,28 @@ struct SpotEntry {
     float opacity;
     SpotMethod method;
     int repairVersion = 1; // Saved legacy repairs retain their original rendering.
+    // 1: per-view fill. 2: one full-resolution repair, model at 512 px.
+    // 3: the model runs at up to 1024 px when its export allows, small
+    //    regions are given real surroundings instead of repeated edges.
+    enum { currentRepairVersion = 3 };
     std::vector<Coord> strokePoints;  // non-empty = stroke-based spot
+
+    // Remove Object by picking: clicks on the thing to remove (include) or on
+    // what must stay (exclude), in the same image coordinates as the stroke.
+    // When present, the repair area is the picked object's outline, grown
+    // outward, rather than the brush discs.
+    struct ObjectPoint {
+        int x = 0;
+        int y = 0;
+        bool include = true;
+        bool operator ==(const ObjectPoint& o) const { return x == o.x && y == o.y && include == o.include; }
+    };
+    std::vector<ObjectPoint> objectPoints;
+    float objectGrow = 1.5f;     // outward growth, percent of the object's size
+    bool objectShadow = false;   // also take the dark area attached to the object's base
+    // Smart repairs: let the diffusion remover (when installed) build the
+    // structure of a wide fill. Narrow fills never use it.
+    bool highQuality = true;
 
     SpotEntry();
     float getFeatherRadius() const;

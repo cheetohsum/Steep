@@ -29,6 +29,7 @@
 #include "rtengine/refreshmap.h"
 #ifdef RT_AI_MASKING
 #include "rtengine/aiinpainting.h"
+#include "rtengine/airemover.h"
 #include "modeldownloader.h"
 #endif
 
@@ -437,7 +438,7 @@ Spot::Spot() :
     smartRetry_->signal_clicked().connect([this]() { if (retryRepair_) retryRepair_(); startStatusPolling(); });
     smartUpgrade_->signal_clicked().connect([this]() {
         for (auto& entry : spots) {
-            if (int(entry.method) >= int(SpotMethod::AI_REMOVE)) entry.repairVersion = 2;
+            if (int(entry.method) >= int(SpotMethod::AI_REMOVE)) entry.repairVersion = SpotEntry::currentRepairVersion;
         }
         updateSmartToolIndicators();
         if (listener) listener->panelChanged(EvSpotEntry, M("TP_SMART_UPGRADE_HISTORY"));
@@ -452,6 +453,53 @@ Spot::Spot() :
     aiContent->pack_start(*dustSensitivity_, Gtk::PACK_SHRINK);
     aiContent->pack_start(*repairFeather_, Gtk::PACK_SHRINK);
     aiContent->pack_start(*reflectionStrength_, Gtk::PACK_SHRINK);
+
+    // Remove Object: a click picks the whole object instead of dabbing.
+    // Growth is stored as a percentage of the object's size (slider / 20).
+    pickObject_ = Gtk::manage(new Gtk::CheckButton(M("TP_SMART_PICK_OBJECT")));
+    pickObject_->set_active(true);
+    pickObject_->set_tooltip_text(M("TP_SMART_PICK_OBJECT_TIP"));
+    objectGrow_ = Gtk::manage(new Adjuster(M("TP_SMART_OBJECT_GROW"), 0, 100, 1, 30));
+    objectGrow_->set_tooltip_text(M("TP_SMART_OBJECT_GROW_TIP"));
+    objectGrow_->setAdjusterListener(this);
+    pickShadow_ = Gtk::manage(new Gtk::CheckButton(M("TP_SMART_OBJECT_SHADOW")));
+    pickShadow_->set_tooltip_text(M("TP_SMART_OBJECT_SHADOW_TIP"));
+    pickShadow_->signal_toggled().connect([this]() {
+        if (auto* entry = lastPickedObject()) {
+            if (entry->objectShadow == pickShadow_->get_active()) return;
+            entry->objectShadow = pickShadow_->get_active();
+            if (listener) listener->panelChanged(EvSpotEntry, M("TP_SPOT_ENTRYCHANGED"));
+            startStatusPolling();
+        }
+    });
+    aiContent->pack_start(*pickObject_, Gtk::PACK_SHRINK);
+    aiContent->pack_start(*objectGrow_, Gtk::PACK_SHRINK);
+    aiContent->pack_start(*pickShadow_, Gtk::PACK_SHRINK);
+
+    // Large removals rebuilt by the diffusion remover. Offered only when
+    // its (optional, multi-gigabyte) models are installed.
+    highQuality_ = Gtk::manage(new Gtk::CheckButton(M("TP_SMART_HIGH_QUALITY")));
+#ifdef RT_AI_MASKING
+    const bool removerInstalled = rtengine::AIRemoverEngine::getInstance().available();
+#else
+    const bool removerInstalled = false;
+#endif
+    highQuality_->set_active(removerInstalled);
+    highQuality_->set_sensitive(removerInstalled);
+    highQuality_->set_tooltip_text(M(removerInstalled ? "TP_SMART_HIGH_QUALITY_TIP" : "TP_SMART_HIGH_QUALITY_MISSING"));
+    highQuality_->signal_toggled().connect([this]() {
+        // Applies to the newest smart fill, like the sliders above.
+        auto it = std::find_if(spots.rbegin(), spots.rend(), [](const SpotEntry& entry) {
+            return entry.repairVersion >= 3 && entry.isStroke()
+                && (entry.method == SpotMethod::AI_REMOVE || entry.method == SpotMethod::AI_FILL);
+        });
+        if (it != spots.rend() && it->highQuality != highQuality_->get_active()) {
+            it->highQuality = highQuality_->get_active();
+            if (listener) listener->panelChanged(EvSpotEntry, M("TP_SPOT_ENTRYCHANGED"));
+            startStatusPolling();
+        }
+    });
+    aiContent->pack_start(*highQuality_, Gtk::PACK_SHRINK);
 
 #ifdef RT_AI_MASKING
     // The inpainting model is ~200 MB and some builds ship without it, so offer
@@ -856,8 +904,24 @@ void Spot::onMethodButtonToggled(Gtk::ToggleButton* button, int methodIndex)
 }
 
 // Phase 3: AdjusterListener
+rtengine::procparams::SpotEntry* Spot::lastPickedObject()
+{
+    for (auto it = spots.rbegin(); it != spots.rend(); ++it) {
+        if (it->method == SpotMethod::AI_REMOVE && !it->objectPoints.empty()) return &*it;
+    }
+    return nullptr;
+}
+
 void Spot::adjusterChanged(Adjuster* a, double newval)
 {
+    if (a == objectGrow_) {
+        if (auto* entry = lastPickedObject()) {
+            entry->objectGrow = float(newval / 20.);
+            if (listener) listener->panelChanged(EvSpotEntry, M("TP_SPOT_ENTRYCHANGED"));
+            startStatusPolling();
+        }
+        return;
+    }
     if (a == reflectionStrength_ || a == repairFeather_) {
         auto it = std::find_if(spots.rbegin(), spots.rend(), [a, this](const SpotEntry& entry) {
             return entry.repairVersion >= 2 && entry.isStroke()
@@ -990,7 +1054,7 @@ void Spot::pollSmartStatus()
     if (smartRetry_) smartRetry_->set_visible(failed || cancelled);
     if (btnAIDust) btnAIDust->set_sensitive(bool(dustDetector_) && !dustScanning_);
     if (smartUpgrade_) smartUpgrade_->set_visible(std::any_of(spots.begin(), spots.end(), [](const SpotEntry& e) {
-        return int(e.method) >= int(SpotMethod::AI_REMOVE) && e.repairVersion < 2;
+        return int(e.method) >= int(SpotMethod::AI_REMOVE) && e.repairVersion < SpotEntry::currentRepairVersion;
     }));
     if (awaitingSmartResult_ && (status.stage == SmartRepairStage::Ready || failed || cancelled)) finishSmartResult();
 }
@@ -1669,6 +1733,7 @@ bool Spot::button1Pressed (int modifierKey)
             strokeLingerConn_.disconnect();
             strokeLingerActive_ = false;
             isStrokeDragging = true;
+            strokeModifier_ = modifierKey;
             currentStrokePoints.clear();
             currentStrokePoints.push_back(startPos);
             strokePreviewLine.points.clear();
@@ -1719,11 +1784,39 @@ bool Spot::button1Released()
         // A drag and a single-click dab commit through one path. They used
         // to differ: the dab created its entry silently, with no overlay
         // and no spinner, which read as "the tool did not fire".
+        // Remove Object: a click that did not turn into a drag picks the
+        // whole object under it. With Ctrl held it adds to the last picked
+        // object (a part the outline missed), with Alt it marks something
+        // the outline must leave alone.
+        const bool pickClick = strokeMethod == SpotMethod::AI_REMOVE && pickObject_ && pickObject_->get_active()
+            && currentStrokePoints.size() == 1;
+        SpotEntry* refined = nullptr;
+        if (pickClick && (strokeModifier_ & (GDK_CONTROL_MASK | GDK_MOD1_MASK))) {
+            refined = lastPickedObject();
+        }
+        if (refined) {
+            SpotEntry::ObjectPoint pt;
+            pt.x = currentStrokePoints.front().x;
+            pt.y = currentStrokePoints.front().y;
+            pt.include = !(strokeModifier_ & GDK_MOD1_MASK);
+            refined->objectPoints.push_back(pt);
+            currentStrokePoints.clear();
+
+            strokePreviewLine.setActive(false);
+            strokePreviewLine.points.clear();
+            awaitingSmartResult_ = true;
+            busySeenActive_ = false;
+            startBusyIndicator();
+            if (listener) listener->panelChanged(EvSpotEntry, M("TP_SPOT_ENTRYCHANGED"));
+            startStatusPolling();
+        }
+
         if (!currentStrokePoints.empty()) {
             SpotEntry se;
             se.radius = spotSize->getIntValue();
             se.method = strokeMethod;
-            se.repairVersion = 2;
+            se.repairVersion = SpotEntry::currentRepairVersion;
+            se.highQuality = highQuality_->get_active();
             se.feather = float(repairFeather_->getValue() / 100.);
             if (strokeMethod == SpotMethod::AI_REFLECT) se.opacity = float(reflectionStrength_->getValue() / 100.);
 
@@ -1743,6 +1836,14 @@ bool Spot::button1Released()
             // stroke path at any length.
             if (currentStrokePoints.size() >= 2 || strokeMethod != SpotMethod::ERASE) {
                 se.strokePoints = currentStrokePoints;
+            }
+            if (pickClick) {
+                SpotEntry::ObjectPoint pt;
+                pt.x = currentStrokePoints.front().x;
+                pt.y = currentStrokePoints.front().y;
+                se.objectPoints.push_back(pt);
+                se.objectGrow = float(objectGrow_->getValue() / 20.);
+                se.objectShadow = pickShadow_->get_active();
             }
 
             spots.push_back(se);

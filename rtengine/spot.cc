@@ -46,6 +46,8 @@
 
 #ifdef RT_AI_MASKING
 #include "aiinpainting.h"
+#include "samselector.h"
+#include "airemover.h"
 #endif
 
 namespace rtengine
@@ -1066,6 +1068,18 @@ std::uint64_t hashEntryChain(const SpotEntry& entry,
             const int xy[] = {pt.x, pt.y};
             h = hashInts(h, xy, 2);
         }
+        if (!e.objectPoints.empty()) {
+            for (const auto& pt : e.objectPoints) {
+                const int v[] = {pt.x, pt.y, pt.include ? 1 : 0};
+                h = hashInts(h, v, 3);
+            }
+            const int opts[] = {static_cast<int>(e.objectGrow * 1000.f), e.objectShadow ? 1 : 0};
+            h = hashInts(h, opts, 2);
+        }
+        if (e.repairVersion >= 3 && e.highQuality && AIRemoverEngine::getInstance().available()) {
+            const int hq = 1;
+            h = hashInts(h, &hq, 1);
+        }
     };
     hashEntry(entry);
     for (const auto* prior : priorStrokes) {
@@ -1246,19 +1260,52 @@ void resamplePlaneSpot(const float* src, int sw, int sh, float* dst, int dw, int
 // Run the model over a large region as overlapping full-resolution tiles:
 // a reduced-size pass establishes structure, seeds the masked area, and each
 // tile regenerates crisp texture on top with feather-blended overlaps.
+std::vector<float> distanceToSet(const std::vector<unsigned char>& set, int w, int h);
+
+// How wide the hole is at its widest: twice the largest distance from a
+// masked pixel to the nearest pixel that is kept, in region pixels.
+float holeThickness(const std::vector<float>& mask, int w, int h)
+{
+    const int step = std::max(1, std::max(w, h) / 256);
+    const int gw = (w + step - 1) / step, gh = (h + step - 1) / step;
+    // A one-cell kept border, so a hole touching the region's edge still
+    // measures from that edge rather than reading as endless.
+    std::vector<unsigned char> kept(size_t(gw + 2) * (gh + 2), 1);
+    for (int y = 0; y < gh; ++y) {
+        for (int x = 0; x < gw; ++x) {
+            kept[size_t(y + 1) * (gw + 2) + x + 1] =
+                mask[size_t(std::min(h - 1, y * step + step / 2)) * w + std::min(w - 1, x * step + step / 2)] <= .05f;
+        }
+    }
+    const std::vector<float> dist = distanceToSet(kept, gw + 2, gh + 2);
+    return 2.f * step * *std::max_element(dist.begin(), dist.end());
+}
+
+// The fill model keeps structure (edges, horizons, repeating elements) only
+// while the hole is narrow enough for it to see across: measured on test
+// fills, about 215 model pixels still held straight lines and 340 turned to
+// a blur. Wider holes are therefore shown to it smaller.
+constexpr float MODEL_HOLE_THICKNESS = 224.f;
+
 bool inpaintTiled(AIInpaintingEngine& engine,
                   const std::vector<float>& inR, const std::vector<float>& inG,
                   const std::vector<float>& inB, const std::vector<float>& mask,
                   int w, int h,
                   std::vector<float>& fillR, std::vector<float>& fillG,
-                  std::vector<float>& fillB, int version, const SmartRepairJob& job)
+                  std::vector<float>& fillB, int version, const SmartRepairJob& job,
+                  float thickness = 0.f, bool highQuality = false, std::uint32_t seed = 0)
 {
     const long long pixels = static_cast<long long>(w) * h;
 
     // Pass 1: structure at reduced size.
-    const double structScale = version >= 2 ? std::min(1., 512. / std::max(w, h)) : std::sqrt(500000.0 / pixels);
-    const int sw = std::max(version >= 2 ? 1 : 64, static_cast<int>(w * structScale));
-    const int sh = std::max(version >= 2 ? 1 : 64, static_cast<int>(h * structScale));
+    double structScale = version >= 2 ? std::min(1., double(engine.tileSize(version)) / std::max(w, h)) : std::sqrt(500000.0 / pixels);
+    if (version >= 3 && thickness > 0.f) {
+        // Never coarser than the 512 px pass of version 2.
+        structScale = std::max(std::min(1., 512. / std::max(w, h)),
+                               std::min(structScale, double(MODEL_HOLE_THICKNESS) / thickness));
+    }
+    int sw = std::max(version >= 2 ? 1 : 64, static_cast<int>(w * structScale));
+    int sh = std::max(version >= 2 ? 1 : 64, static_cast<int>(h * structScale));
     const auto resizePlane = version >= 2 ? repairmath::resample : resamplePlaneSpot;
     std::vector<float> smallR(sw * sh), smallG(sw * sh), smallB(sw * sh), smallM(sw * sh);
     resizePlane(inR.data(), w, h, smallR.data(), sw, sh);
@@ -1267,8 +1314,51 @@ bool inpaintTiled(AIInpaintingEngine& engine,
     resizePlane(mask.data(), w, h, smallM.data(), sw, sh);
 
     std::vector<float> structR(sw * sh), structG(sw * sh), structB(sw * sh);
-    if (!engine.inpaint(smallR.data(), smallG.data(), smallB.data(), smallM.data(),
-                        sw, sh, structR.data(), structG.data(), structB.data(), version, job)) {
+    bool structured = false;
+    // Only where the convolutional model would have to shrink the hole to
+    // see across it; on a narrow hole it matches texture and tone better.
+    const bool wideHole = thickness * std::min(1., double(engine.tileSize(version)) / std::max(w, h)) > .8f * MODEL_HOLE_THICKNESS;
+    if (version >= 3 && highQuality && wideHole && AIRemoverEngine::getInstance().available()) {
+        // A wide hole: the diffusion remover decides what the scene is. It
+        // takes the hole at any width, so it gets the largest view it works
+        // at rather than the reduced one the convolutional model needs.
+        const double hqScale = std::min(1., double(AIRemoverEngine::maxSide) / std::max(w, h));
+        const int hw = std::max(16, static_cast<int>(w * hqScale)), hh = std::max(16, static_cast<int>(h * hqScale));
+        std::vector<float> viewR(hw * hh), viewG(hw * hh), viewB(hw * hh), viewM(hw * hh);
+        resizePlane(inR.data(), w, h, viewR.data(), hw, hh);
+        resizePlane(inG.data(), w, h, viewG.data(), hw, hh);
+        resizePlane(inB.data(), w, h, viewB.data(), hw, hh);
+        resizePlane(mask.data(), w, h, viewM.data(), hw, hh);
+        std::vector<float> outR(hw * hh), outG(hw * hh), outB(hw * hh);
+        if (AIRemoverEngine::getInstance().fill(viewR.data(), viewG.data(), viewB.data(), viewM.data(), hw, hh,
+                                                outR.data(), outG.data(), outB.data(), seed, job)) {
+            // The model re-renders the whole view through its own image
+            // codec, which shifts tone slightly. Measure that shift where
+            // the truth is known (outside the hole) and take it out, or the
+            // fill sits in the picture as a faintly lighter or darker patch.
+            float* outs[] = {outR.data(), outG.data(), outB.data()};
+            const float* views[] = {viewR.data(), viewG.data(), viewB.data()};
+            for (int c = 0; c < 3; ++c) {
+                double sumView = 0., sumOut = 0.;
+                for (int i = 0; i < hw * hh; ++i) {
+                    if (viewM[i] <= .001f) {
+                        sumView += views[c][i];
+                        sumOut += outs[c][i];
+                    }
+                }
+                const float gain = sumOut > 1. ? std::max(.8f, std::min(1.25f, float(sumView / sumOut))) : 1.f;
+                for (int i = 0; i < hw * hh; ++i) outs[c][i] *= gain;
+            }
+            sw = hw;
+            sh = hh;
+            structR = std::move(outR);
+            structG = std::move(outG);
+            structB = std::move(outB);
+            structured = true;
+        }
+    }
+    if (!structured && !engine.inpaint(smallR.data(), smallG.data(), smallB.data(), smallM.data(),
+                                       sw, sh, structR.data(), structG.data(), structB.data(), version, job)) {
         return false;
     }
 
@@ -1283,6 +1373,18 @@ bool inpaintTiled(AIInpaintingEngine& engine,
             seedG[i] = inG[i];
             seedB[i] = inB[i];
         }
+    }
+
+    if (structured) {
+        // The diffusion remover's view is a finished picture, detail
+        // included. The frequency split below exists because the
+        // convolutional structure pass is only trustworthy in its low
+        // frequencies; applied here it would blur away what was just gained
+        // and spend most of the repair's time doing it.
+        fillR = std::move(seedR);
+        fillG = std::move(seedG);
+        fillB = std::move(seedB);
+        return true;
     }
 
     // Frequency split: the fill's low frequencies come from the ONE global
@@ -1310,7 +1412,7 @@ bool inpaintTiled(AIInpaintingEngine& engine,
     // Pass 2: overlapping tiles over the masked region. 640px measured
     // fastest end-to-end: LaMa's FFT cost grows superlinearly, so fewer
     // bigger tiles (768) actually lose to more smaller ones.
-    const int TILE = version >= 2 ? engine.tileSize() : 640;
+    const int TILE = version >= 2 ? engine.tileSize(version) : 640;
     const int STRIDE = std::max(1, TILE - 128);
     constexpr float RAMP = 64.f; // feather width inside the overlap
 
@@ -1407,6 +1509,394 @@ bool inpaintTiled(AIInpaintingEngine& engine,
     return true;
 }
 
+// ---------------------------------------------------------------------------
+// Picked-object mask for Remove Object.
+//
+// A brush stroke only covers what the hand painted; any sliver of the object
+// left outside it is background to the fill model, which then rebuilds the
+// object from it. A picked entry instead asks the click-selection model for
+// the object's own outline on an untransformed copy of the frame (spots live
+// in pre-transform coordinates), and the repair area is that outline grown
+// outward. The result is kept as a distance field so growth and the blend
+// ramp can change without running the model again.
+struct ObjectMask {
+    std::uint64_t key = 0;
+    int skip = 1, w = 0, h = 0;          // grid over the whole frame
+    std::vector<float> dist;             // distance outside the object in full-res px, 0 inside
+    float size = 0.f;                    // sqrt(area) in full-res px
+    int x0 = 0, y0 = 0, x1 = 0, y1 = 0;  // object bounds in full-res px
+
+    float distanceAt(int fx, int fy) const
+    {
+        const float gx = std::max(0.f, std::min(float(w - 1), (fx + .5f) / skip - .5f));
+        const float gy = std::max(0.f, std::min(float(h - 1), (fy + .5f) / skip - .5f));
+        const int ix = int(gx), iy = int(gy);
+        const int jx = std::min(w - 1, ix + 1), jy = std::min(h - 1, iy + 1);
+        const float tx = gx - ix, ty = gy - iy;
+        const float* a = &dist[size_t(iy) * w];
+        const float* b = &dist[size_t(jy) * w];
+        return (a[ix] * (1.f - tx) + a[jx] * tx) * (1.f - ty) + (b[ix] * (1.f - tx) + b[jx] * tx) * ty;
+    }
+};
+
+std::mutex objectMaskMutex;
+std::deque<std::shared_ptr<const ObjectMask>> objectMaskCache;
+constexpr std::size_t MAX_OBJECT_MASKS = 8;
+constexpr int OBJECT_MASK_DIMENSION = 1600;
+// A click that selects this much of the frame hit the sky, a wall or the
+// ground, not an object; removing it would be a surprise, so the entry falls
+// back to a plain brush dab.
+constexpr float OBJECT_MAX_FRAME_SHARE = 0.35f;
+
+// Exact Euclidean distance (Felzenszwalb): one pass of lower envelopes.
+void squaredDistance1D(const float* f, float* d, int n, std::vector<int>& v, std::vector<double>& z)
+{
+    int k = 0;
+    v[0] = 0;
+    z[0] = -1e30;
+    z[1] = 1e30;
+    for (int q = 1; q < n; ++q) {
+        double s;
+        for (;;) {
+            const int p = v[k];
+            s = ((double(f[q]) + double(q) * q) - (double(f[p]) + double(p) * p)) / (2. * (q - p));
+            if (s <= z[k] && k > 0) {
+                --k;
+            } else {
+                break;
+            }
+        }
+        ++k;
+        v[k] = q;
+        z[k] = s;
+        z[k + 1] = 1e30;
+    }
+    k = 0;
+    for (int q = 0; q < n; ++q) {
+        while (z[k + 1] < q) {
+            ++k;
+        }
+        const double dq = q - v[k];
+        d[q] = float(dq * dq + f[v[k]]);
+    }
+}
+
+// Distance in grid cells from every cell to the nearest set cell (0 on it).
+std::vector<float> distanceToSet(const std::vector<unsigned char>& set, int w, int h)
+{
+    constexpr float FAR = 1e12f;
+    std::vector<float> d(size_t(w) * h);
+    const int n = std::max(w, h);
+    std::vector<float> f(n), out(n);
+    std::vector<int> v(n);
+    std::vector<double> z(n + 1);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) f[x] = set[size_t(y) * w + x] ? 0.f : FAR;
+        squaredDistance1D(f.data(), out.data(), w, v, z);
+        std::copy(out.begin(), out.begin() + w, d.begin() + size_t(y) * w);
+    }
+    for (int x = 0; x < w; ++x) {
+        for (int y = 0; y < h; ++y) f[y] = d[size_t(y) * w + x];
+        squaredDistance1D(f.data(), out.data(), h, v, z);
+        for (int y = 0; y < h; ++y) d[size_t(y) * w + x] = std::sqrt(std::min(out[y], FAR));
+    }
+    return d;
+}
+
+// Keep the connected pieces the include clicks landed on (the largest piece
+// when a click fell into a gap). The selection model sometimes adds specks
+// elsewhere in the frame, and one of those would stretch the repair region
+// across the picture. Returns the kept area in cells.
+long long keepClickedPieces(std::vector<unsigned char>& set, int w, int h,
+                            const std::vector<std::array<int, 2>>& clicks)
+{
+    std::vector<int> label(size_t(w) * h, 0);
+    std::vector<long long> area(1, 0);
+    std::vector<int> stack;
+    for (int start = 0; start < w * h; ++start) {
+        if (!set[start] || label[start]) continue;
+        const int id = int(area.size());
+        area.push_back(0);
+        label[start] = id;
+        stack.push_back(start);
+        while (!stack.empty()) {
+            const int i = stack.back();
+            stack.pop_back();
+            ++area[id];
+            const int x = i % w, y = i / w;
+            const int next[4] = {x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, y > 0 ? i - w : -1, y < h - 1 ? i + w : -1};
+            for (int j : next) {
+                if (j >= 0 && set[j] && !label[j]) {
+                    label[j] = id;
+                    stack.push_back(j);
+                }
+            }
+        }
+    }
+    if (area.size() == 1) return 0;
+
+    std::vector<unsigned char> keep(area.size(), 0);
+    bool any = false;
+    for (const auto& c : clicks) {
+        // A click right on an outline may sit one cell outside the piece.
+        for (int dy = -2; dy <= 2; ++dy) {
+            for (int dx = -2; dx <= 2; ++dx) {
+                const int x = c[0] + dx, y = c[1] + dy;
+                if (x < 0 || y < 0 || x >= w || y >= h) continue;
+                const int id = label[size_t(y) * w + x];
+                if (id) {
+                    keep[id] = 1;
+                    any = true;
+                }
+            }
+        }
+    }
+    if (!any) {
+        keep[std::max_element(area.begin() + 1, area.end()) - area.begin()] = 1;
+    }
+    long long kept = 0;
+    for (size_t i = 0; i < set.size(); ++i) {
+        if (set[i] && !keep[label[i]]) set[i] = 0;
+        kept += set[i];
+    }
+    return kept;
+}
+
+// Add the cast shadow attached to the object's base: cells clearly darker
+// than the ground around the object, reachable from its lower part without
+// leaving the dark area. Deliberately conservative -- a wrong shadow removes
+// real picture content, so anything implausibly large is dropped whole.
+void addAttachedShadow(std::vector<unsigned char>& set, const std::vector<float>& luma, int w, int h, long long area)
+{
+    int by0 = h, by1 = -1;
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            if (set[size_t(y) * w + x]) {
+                by0 = std::min(by0, y);
+                by1 = std::max(by1, y);
+            }
+        }
+    }
+    if (by1 < 0) return;
+    const float size = std::sqrt(float(area));
+    const std::vector<float> dist = distanceToSet(set, w, h);
+
+    // The ground the shadow falls on: the ring around the object's lower half.
+    std::vector<float> ring;
+    const int midY = (by0 + by1) / 2;
+    for (int y = midY; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            const float d = dist[size_t(y) * w + x];
+            if (d > .25f * size && d < .8f * size) ring.push_back(luma[size_t(y) * w + x]);
+        }
+    }
+    if (ring.size() < 64) return;
+    std::nth_element(ring.begin(), ring.begin() + ring.size() / 2, ring.end());
+    const float ground = ring[ring.size() / 2];
+    if (ground <= 0.f) return;
+
+    const float reach = .7f * size;
+    const float attach = std::max(2.f, .04f * size);
+    const int baseY = by1 - int(.35f * (by1 - by0));
+    const auto dark = [&](int i) { return !set[i] && luma[i] < .62f * ground && dist[i] <= reach; };
+
+    std::vector<unsigned char> shadow(set.size(), 0);
+    std::vector<int> stack;
+    for (int y = std::max(0, baseY); y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            const int i = y * w + x;
+            if (dark(i) && dist[i] <= attach) {
+                shadow[i] = 1;
+                stack.push_back(i);
+            }
+        }
+    }
+    long long count = stack.size();
+    while (!stack.empty()) {
+        const int i = stack.back();
+        stack.pop_back();
+        const int x = i % w, y = i / w;
+        const int next[4] = {x > 0 ? i - 1 : -1, x < w - 1 ? i + 1 : -1, y > 0 ? i - w : -1, y < h - 1 ? i + w : -1};
+        for (int j : next) {
+            if (j >= 0 && !shadow[j] && dark(j)) {
+                shadow[j] = 1;
+                stack.push_back(j);
+                ++count;
+            }
+        }
+    }
+    if (count == 0 || count > area * 3 / 2) return;
+    for (size_t i = 0; i < set.size(); ++i) {
+        if (shadow[i]) set[i] = 1;
+    }
+}
+
+// Called with the patch mutex held (it serializes image-source access); the
+// lock is released while the selection model runs.
+std::shared_ptr<const ObjectMask> getObjectMask(
+    ImageSource* imgsrc, const SpotEntry& entry, const ColorTemp& currWB, int tr,
+    const procparams::ProcParams* params, int fw, int fh,
+    std::unique_lock<std::mutex>& patchLock, const SmartRepairJob& job)
+{
+    if (entry.objectPoints.empty() || !SamSelector::getInstance().available()) return nullptr;
+
+    std::uint64_t key = 14695981039346656037ULL;
+    for (const auto& pt : entry.objectPoints) {
+        const int v[] = {pt.x, pt.y, pt.include ? 1 : 0};
+        key = hashInts(key, v, 3);
+    }
+    const int flags[] = {entry.objectShadow ? 1 : 0, tr, fw, fh};
+    key = hashInts(key, flags, 4);
+    key = hashDouble(key, currWB.getTemp());
+    key = hashDouble(key, currWB.getGreen());
+    key = hashString(key, imgsrc->getFileName().raw());
+    {
+        std::lock_guard<std::mutex> cacheLock(objectMaskMutex);
+        for (auto it = objectMaskCache.begin(); it != objectMaskCache.end(); ++it) {
+            if ((*it)->key == key) {
+                auto hit = *it;
+                objectMaskCache.erase(it);
+                objectMaskCache.push_back(hit);
+                return hit->size > 0.f ? hit : nullptr;
+            }
+        }
+    }
+
+    const int skip = std::max(1, int(std::ceil(double(std::max(fw, fh)) / OBJECT_MASK_DIMENSION)));
+    const PreviewProps pp(0, 0, fw, fh, skip);
+    int w = 0, h = 0;
+    imgsrc->getSize(pp, w, h);
+    if (w < 16 || h < 16) return nullptr;
+
+    // The selection model takes linear ProPhoto and encodes it itself.
+    std::unique_ptr<Imagefloat> frame(new Imagefloat(w, h));
+    imgsrc->getImage(currWB, tr, frame.get(), pp, params->toneCurve, params->raw);
+    auto icm = params->icm;
+    icm.workingProfile = "ProPhoto";
+    imgsrc->convertColorSpace(frame.get(), icm, currWB);
+
+    patchLock.unlock();
+    struct Relock {
+        std::unique_lock<std::mutex>& lock;
+        ~Relock() { if (!lock.owns_lock()) lock.lock(); }
+    } relock{patchLock};
+    if (job) job->checkpoint();
+
+    // Raw scene data can sit stops below a normal exposure; bring the median
+    // to mid grey so the model sees an ordinary photograph.
+    std::vector<float> luma(size_t(w) * h);
+    for (int y = 0; y < h; ++y) {
+        for (int x = 0; x < w; ++x) {
+            luma[size_t(y) * w + x] = .29f * frame->r(y, x) + .71f * frame->g(y, x);
+        }
+    }
+    {
+        std::vector<float> sorted;
+        sorted.reserve(luma.size() / 16 + 1);
+        for (size_t i = 0; i < luma.size(); i += 16) sorted.push_back(luma[i]);
+        std::nth_element(sorted.begin(), sorted.begin() + sorted.size() / 2, sorted.end());
+        const float median = sorted[sorted.size() / 2];
+        const float gain = median > 1.f ? std::max(.25f, std::min(16.f, .18f * 65535.f / median)) : 1.f;
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                frame->r(y, x) *= gain;
+                frame->g(y, x) *= gain;
+                frame->b(y, x) *= gain;
+            }
+        }
+    }
+
+    std::vector<std::array<float, 3>> prompts;
+    std::vector<std::array<int, 2>> clicks;
+    for (const auto& pt : entry.objectPoints) {
+        prompts.push_back({{(pt.x + .5f) / fw, (pt.y + .5f) / fh, pt.include ? 1.f : 0.f}});
+        if (pt.include) {
+            clicks.push_back({{std::max(0, std::min(w - 1, pt.x / skip)), std::max(0, std::min(h - 1, pt.y / skip))}});
+        }
+    }
+    const long long traceStartUs = edittrace::enabled() ? edittrace::nowUs() : 0;
+    char samId[64];
+    std::snprintf(samId, sizeof samId, "|spot-object|%d|%dx%d", tr, w, h);
+    // One click is ambiguous between a part, the object and the group it
+    // belongs to (a click on a car door: the door, or the car). The model
+    // offers three nested candidates; its own favourite is often the part,
+    // which leaves the rest of the object standing. Removal wants the whole
+    // thing, so take the largest candidate that is still an object rather
+    // than a large share of the frame.
+    auto result = std::make_shared<ObjectMask>();
+    result->key = key;
+    long long area = 0;
+    int taken = -1;
+    std::vector<unsigned char> set;
+    const long long maxArea = static_cast<long long>(OBJECT_MAX_FRAME_SHARE * w * h);
+    for (int candidate = 2; candidate >= 0 && !clicks.empty(); --candidate) {
+        if (job) job->checkpoint();
+        const array2D<float> selected = SamSelector::getInstance().select(
+            *frame, imgsrc->getFileName().raw() + samId, prompts, candidate);
+        if (selected.getWidth() != w || selected.getHeight() != h) break;
+        std::vector<unsigned char> trial(size_t(w) * h);
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) trial[size_t(y) * w + x] = selected[y][x] > .5f;
+        }
+        const long long trialArea = keepClickedPieces(trial, w, h, clicks);
+        if (trialArea >= 9 && trialArea <= maxArea) {
+            set = std::move(trial);
+            area = trialArea;
+            taken = candidate;
+            break;
+        }
+    }
+    frame.reset();
+    const bool usable = area >= 9;
+    if (usable) {
+        if (entry.objectShadow) {
+            addAttachedShadow(set, luma, w, h, area);
+            area = std::count(set.begin(), set.end(), 1);
+        }
+        result->skip = skip;
+        result->w = w;
+        result->h = h;
+        result->dist = distanceToSet(set, w, h);
+        int gx0 = w, gy0 = h, gx1 = -1, gy1 = -1;
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                result->dist[size_t(y) * w + x] *= skip;
+                if (set[size_t(y) * w + x]) {
+                    gx0 = std::min(gx0, x); gx1 = std::max(gx1, x);
+                    gy0 = std::min(gy0, y); gy1 = std::max(gy1, y);
+                }
+            }
+        }
+        result->x0 = gx0 * skip;
+        result->y0 = gy0 * skip;
+        result->x1 = std::min(fw - 1, (gx1 + 1) * skip - 1);
+        result->y1 = std::min(fh - 1, (gy1 + 1) * skip - 1);
+        result->size = std::sqrt(float(area)) * skip;
+    }
+    if (edittrace::enabled()) {
+        edittrace::logf("[aiPatch] object pick points=%zu grid=%dx%d candidate=%d share=%.3f shadow=%d usable=%d %.0fms",
+                        entry.objectPoints.size(), w, h, taken, double(area) / (double(w) * h),
+                        entry.objectShadow ? 1 : 0, usable ? 1 : 0,
+                        (edittrace::nowUs() - traceStartUs) / 1000.0);
+    }
+    if (const char* dump = std::getenv("STEEP_SPOT_OBJECT_DUMP")) {
+        // Debug: the picked outline as a PGM (white = object, grey = within 5% growth).
+        if (FILE* f = g_fopen(dump, "wb")) {
+            std::fprintf(f, "P5\n%d %d\n255\n", w, h);
+            for (size_t i = 0; i < size_t(w) * h; ++i) {
+                const float d = usable ? result->dist[i] : 1e9f;
+                std::fputc(d <= 0.f ? 255 : d <= .05f * result->size ? 110 : 0, f);
+            }
+            std::fclose(f);
+        }
+    }
+
+    std::lock_guard<std::mutex> cacheLock(objectMaskMutex);
+    objectMaskCache.push_back(result);
+    while (objectMaskCache.size() > MAX_OBJECT_MASKS) objectMaskCache.pop_front();
+    return usable ? result : nullptr;
+}
+
 // Compute (or fetch) the finished full-resolution repair for one AI stroke.
 std::shared_ptr<const AIPatch> getOrComputeAIPatch(
     ImageSource* imgsrc, const SpotEntry& entry,
@@ -1474,6 +1964,11 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
         }
     } pendingGuard{lock, key};
     if (job) job->setStage(SmartRepairStage::Preparing);
+    // The model's working size decides how the region is laid out, and it
+    // is only known once the (deferred) load has finished.
+    lock.unlock();
+    engine.ensureLoaded(job);
+    lock.lock();
     const auto abandonPending = [&key]() {
         aiPatchPending.erase(key);
         aiPatchCv.notify_all();
@@ -1489,15 +1984,43 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
     const float radius = float(entry.radius);
     const float featherRadius = std::min(entry.getFeatherRadius(), radius * 3.f + 32.f);
 
-    int bx0 = INT_MAX, by0 = INT_MAX, bx1 = INT_MIN, by1 = INT_MIN;
-    for (const auto& pt : entry.strokePoints) {
-        bx0 = std::min(bx0, pt.x - int(featherRadius) - 1);
-        by0 = std::min(by0, pt.y - int(featherRadius) - 1);
-        bx1 = std::max(bx1, pt.x + int(featherRadius) + 1);
-        by1 = std::max(by1, pt.y + int(featherRadius) + 1);
+    // A picked object replaces the brush discs with its own outline. When
+    // the pick is unusable (no model, nothing found, or it took a large part
+    // of the frame) the entry is repaired as the plain dab it also is.
+    std::shared_ptr<const ObjectMask> object;
+    float objectGrow = 0.f, objectRamp = 0.f;
+    if (entry.repairVersion >= 2 && !entry.objectPoints.empty()) {
+        object = getObjectMask(imgsrc, entry, currWB, tr, params, fw, fh, lock, job);
     }
+
+    int bx0 = INT_MAX, by0 = INT_MAX, bx1 = INT_MIN, by1 = INT_MIN;
     int pad = int(featherRadius * 2);
-    if (entry.method == procparams::SpotMethod::AI_FILL) {
+    if (object) {
+        // The whole outline is replaced: full strength out to the grown
+        // edge, and the blend ramp lies entirely outside it, so no part of
+        // the object is ever mixed back in.
+        objectGrow = std::max({6.f, 1.5f * object->skip, entry.objectGrow / 100.f * object->size});
+        objectRamp = std::max(2.f, entry.feather * .06f * object->size);
+        const int reach = int(objectGrow + objectRamp) + 2;
+        bx0 = object->x0 - reach;
+        by0 = object->y0 - reach;
+        bx1 = object->x1 + reach;
+        by1 = object->y1 + reach;
+        // Context for the fill model: about a third of the hole's extent on
+        // each side keeps the hole near a third of what the model sees.
+        // Shrunk when the region would exceed the repair memory limit.
+        const long long holeW = bx1 - bx0 + 1, holeH = by1 - by0 + 1;
+        pad = std::max(96, int(std::max(holeW, holeH) / 3));
+        while (pad > 32 && (holeW + 2 * pad) * (holeH + 2 * pad) > MAX_AI_PATCH_PIXELS) pad = pad * 3 / 4;
+    } else {
+        for (const auto& pt : entry.strokePoints) {
+            bx0 = std::min(bx0, pt.x - int(featherRadius) - 1);
+            by0 = std::min(by0, pt.y - int(featherRadius) - 1);
+            bx1 = std::max(bx1, pt.x + int(featherRadius) + 1);
+            by1 = std::max(by1, pt.y + int(featherRadius) + 1);
+        }
+    }
+    if (!object && entry.method == procparams::SpotMethod::AI_FILL) {
         // Tiles bring their own context; a quarter-size ring suffices for
         // the structure pass without ballooning the patch.
         pad += std::max(bx1 - bx0, by1 - by0) / 4;
@@ -1511,9 +2034,28 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
         return nullptr;
     }
 
+    if (entry.repairVersion >= 3) {
+        // The model always sees at least a 512 px field. A smaller region
+        // used to be padded out with repeated edge pixels; real surroundings
+        // cost nothing more and tell the model what the place looks like.
+        const auto widen = [](int& lo, int& hi, int limit) {
+            const int missing = std::min(512, limit) - (hi - lo + 1);
+            if (missing <= 0) return;
+            lo -= missing / 2;
+            hi += missing - missing / 2;
+            if (lo < 0) { hi -= lo; lo = 0; }
+            if (hi > limit - 1) { lo = std::max(0, lo - (hi - (limit - 1))); hi = limit - 1; }
+        };
+        widen(bx0, bx1, fw);
+        widen(by0, by1, fh);
+    }
+
     const int w = bx1 - bx0 + 1;
     const int h = by1 - by0 + 1;
     const long long pixels = static_cast<long long>(w) * h;
+    // One native pass when the region fits the model, tiles otherwise.
+    const int modelSide = engine.tileSize(entry.repairVersion);
+    bool tiled = modelSide > 512 ? std::max(w, h) > modelSide : pixels > 700000;
     if (pixels > MAX_AI_PATCH_PIXELS) {
         abandonPending();
         return nullptr; // legacy per-view path takes over
@@ -1563,7 +2105,18 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
 
     // Soft stroke mask in full resolution.
     std::vector<float> mask(pixels, 0.f);
-    for (const auto& pt : entry.strokePoints) {
+    if (object) {
+        for (int y = 0; y < h; ++y) {
+            for (int x = 0; x < w; ++x) {
+                const float d = object->distanceAt(bx0 + x, by0 + y);
+                if (d < objectGrow + objectRamp) {
+                    mask[static_cast<long long>(y) * w + x] =
+                        d <= objectGrow ? 1.f : repairmath::smoothstep(1.f - (d - objectGrow) / objectRamp);
+                }
+            }
+        }
+    }
+    for (const auto& pt : object ? std::vector<Coord>() : entry.strokePoints) {
         const float cx = float(pt.x - bx0);
         const float cy = float(pt.y - by0);
         const int pyMin = std::max(0, int(cy - featherRadius));
@@ -1672,17 +2225,22 @@ std::shared_ptr<const AIPatch> getOrComputeAIPatch(
 
     std::vector<float> fillR(pixels), fillG(pixels), fillB(pixels);
     bool ok;
-    if (pixels <= 700000) {
+    // A hole too wide for the model at this size gets its structure from a
+    // smaller view first, even when the region itself would fit in one pass.
+    const float thickness = entry.repairVersion >= 3 ? holeThickness(mask, w, h) : 0.f;
+    if (modelSide > 512 && thickness > MODEL_HOLE_THICKNESS * 1.15f) tiled = true;
+    if (!tiled) {
         ok = engine.inpaint(srcR.data(), srcG.data(), srcB.data(), mask.data(),
                             w, h, fillR.data(), fillG.data(), fillB.data(), entry.repairVersion, job);
     } else {
-        ok = inpaintTiled(engine, srcR, srcG, srcB, mask, w, h, fillR, fillG, fillB, entry.repairVersion, job);
+        ok = inpaintTiled(engine, srcR, srcG, srcB, mask, w, h, fillR, fillG, fillB, entry.repairVersion, job, thickness,
+                          entry.highQuality, static_cast<std::uint32_t>(key ^ (key >> 32)));
     }
 
     if (edittrace::enabled()) {
-        edittrace::logf("[aiPatch] method=%d bb=%dx%d tiled=%d ok=%d srgb=%d total=%.0fms",
-                        static_cast<int>(entry.method), w, h,
-                        pixels > 700000 ? 1 : 0, ok ? 1 : 0, colorMapped ? 1 : 0,
+        edittrace::logf("[aiPatch] method=%d v=%d bb=%dx%d model=%d hole=%.0f tiled=%d ok=%d srgb=%d total=%.0fms",
+                        static_cast<int>(entry.method), entry.repairVersion, w, h, modelSide, thickness,
+                        tiled ? 1 : 0, ok ? 1 : 0, colorMapped ? 1 : 0,
                         (edittrace::nowUs() - traceStartUs) / 1000.0);
     }
 

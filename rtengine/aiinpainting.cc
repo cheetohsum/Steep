@@ -50,6 +50,9 @@ struct AIInpaintingEngine::Impl {
     std::atomic<bool> initialized;
     std::timed_mutex inferenceMutex;
     int inputWidth = 512, inputHeight = 512;
+    // The export declares free height and width: the network is fully
+    // convolutional, so it can then run at the region's own size.
+    bool freeInputSize = false;
     float calibratedRange = 0.f;
     // Whether the export accepts non-512 input dims: -1 unknown, 1 yes, 0 no.
     // Probed on first use; native-resolution inference beats the 512 squash
@@ -245,6 +248,7 @@ bool AIInpaintingEngine::init(const std::string& modelPath)
     }
     pImpl->inputHeight = dims[2] > 0 ? int(dims[2]) : 512;
     pImpl->inputWidth = dims[3] > 0 ? int(dims[3]) : 512;
+    pImpl->freeInputSize = dims[2] <= 0 && dims[3] <= 0;
     pImpl->dynamicDims = dims[2] > 0 && dims[3] > 0 ? 0 : -1;
     pImpl->modelPath = modelPath;
     pImpl->lastUse = AIIdleReaper::nowMs();
@@ -538,9 +542,29 @@ bool AIInpaintingEngine::inpaintLegacy(const float* imageR, const float* imageG,
     return false;
 }
 
-int AIInpaintingEngine::tileSize() const
+namespace
 {
-    return pImpl->initialized ? std::min(pImpl->inputWidth, pImpl->inputHeight) : 512;
+// Cost grows with the pixel count (measured 2 s at 512, 9 s at 1024 on four
+// threads), and beyond this the network's reach no longer spans a large hole.
+constexpr int NATIVE_MAX_SIDE = 1024;
+}
+
+bool AIInpaintingEngine::ensureLoaded(const SmartRepairJob& job)
+{
+    std::unique_lock<std::mutex> lock(pImpl->loadMutex);
+    pImpl->requestLoadLocked();
+    while (pImpl->loading) {
+        if (job) job->checkpoint();
+        pImpl->ready.wait_for(lock, std::chrono::milliseconds(50));
+    }
+    return pImpl->initialized;
+}
+
+int AIInpaintingEngine::tileSize(int version) const
+{
+    if (!pImpl->initialized) return 512;
+    if (version >= 3 && pImpl->freeInputSize) return NATIVE_MAX_SIDE;
+    return std::min(pImpl->inputWidth, pImpl->inputHeight);
 }
 
 bool AIInpaintingEngine::inpaint(const float* r, const float* g, const float* b,
@@ -548,15 +572,7 @@ bool AIInpaintingEngine::inpaint(const float* r, const float* g, const float* b,
                                 float* outR, float* outG, float* outB,
                                 int version, const SmartRepairJob& job)
 {
-    {
-        std::unique_lock<std::mutex> lock(pImpl->loadMutex);
-        pImpl->requestLoadLocked();
-        while (pImpl->loading) {
-            if (job) job->checkpoint();
-            pImpl->ready.wait_for(lock, std::chrono::milliseconds(50));
-        }
-    }
-    if (!pImpl->initialized || w < 1 || h < 1) return false;
+    if (!ensureLoaded(job) || w < 1 || h < 1) return false;
     std::unique_lock<std::timed_mutex> lock(pImpl->inferenceMutex, std::defer_lock);
     while (!lock.try_lock_for(std::chrono::milliseconds(30))) {
         if (job) job->checkpoint();
@@ -572,19 +588,28 @@ bool AIInpaintingEngine::inpaint(const float* r, const float* g, const float* b,
         // A long fill must not look idle the moment it ends.
         ~TouchOnExit() { impl->lastUse = AIIdleReaper::nowMs(); }
     } touch{pImpl.get()};
-    return version >= 2 ? inpaintV2(r, g, b, mask, w, h, outR, outG, outB, job)
+    return version >= 2 ? inpaintV2(r, g, b, mask, w, h, outR, outG, outB, version, job)
                         : inpaintLegacy(r, g, b, mask, w, h, outR, outG, outB);
 }
 
 bool AIInpaintingEngine::inpaintV2(const float* r, const float* g, const float* b,
                                   const float* mask, int w, int h,
-                                  float* outR, float* outG, float* outB, const SmartRepairJob& job)
+                                  float* outR, float* outG, float* outB, int version, const SmartRepairJob& job)
 {
     const auto* api = pImpl->api;
-    const int mw = pImpl->inputWidth, mh = pImpl->inputHeight;
+    // Preserve aspect and native pixels when they fit; pad, never stretch.
+    // A free-size export runs at the region's own size (sides a multiple of
+    // 16: three halvings, then an FFT that needs an even length).
+    const bool native = version >= 3 && pImpl->freeInputSize;
+    const double scale = native ? std::min(1., double(NATIVE_MAX_SIDE) / std::max(w, h))
+                                : std::min({1., double(pImpl->inputWidth) / w, double(pImpl->inputHeight) / h});
+    const int rw = std::max(1, int(std::round(w * scale)));
+    const int rh = std::max(1, int(std::round(h * scale)));
+    const int mw = native ? std::max(64, (rw + 15) / 16 * 16) : pImpl->inputWidth;
+    const int mh = native ? std::max(64, (rh + 15) / 16 * 16) : pImpl->inputHeight;
     const int count = mw * mh;
-    const int64_t imageShape[] = {1, 3, mh, mw}, maskShape[] = {1, 1, mh, mw};
-    std::vector<float> input(3 * count), modelMask(count);
+    int boundW = 0, boundH = 0;
+    std::vector<float> input, modelMask;
 
     struct RunResources {
         const OrtApi* api;
@@ -612,10 +637,20 @@ bool AIInpaintingEngine::inpaintV2(const float* r, const float* g, const float* 
         });
         job->checkpoint();
     }
-    if (!check(api->CreateTensorWithDataAsOrtValue(pImpl->memoryInfo, input.data(), input.size() * sizeof(float),
-                                                   imageShape, 4, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &run.image))
-        || !check(api->CreateTensorWithDataAsOrtValue(pImpl->memoryInfo, modelMask.data(), modelMask.size() * sizeof(float),
-                                                      maskShape, 4, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &run.mask))) return false;
+    // The tensors wrap the vectors' storage, so they are made after sizing.
+    const auto bind = [&](int tw, int th) {
+        if (run.image) { api->ReleaseValue(run.image); run.image = nullptr; }
+        if (run.mask) { api->ReleaseValue(run.mask); run.mask = nullptr; }
+        boundW = tw;
+        boundH = th;
+        input.assign(size_t(3) * tw * th, 0.f);
+        modelMask.assign(size_t(tw) * th, 0.f);
+        const int64_t imageShape[] = {1, 3, th, tw}, maskShape[] = {1, 1, th, tw};
+        return check(api->CreateTensorWithDataAsOrtValue(pImpl->memoryInfo, input.data(), input.size() * sizeof(float),
+                                                         imageShape, 4, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &run.image))
+            && check(api->CreateTensorWithDataAsOrtValue(pImpl->memoryInfo, modelMask.data(), modelMask.size() * sizeof(float),
+                                                         maskShape, 4, ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT, &run.mask));
+    };
     const auto infer = [&]() {
         if (job) job->checkpoint();
         if (run.output) { api->ReleaseValue(run.output); run.output = nullptr; }
@@ -634,23 +669,25 @@ bool AIInpaintingEngine::inpaintV2(const float* r, const float* g, const float* 
         if (valid) valid = check(api->GetDimensions(info, shape, 4)) && check(api->GetTensorElementType(info, &type));
         if (info) api->ReleaseTensorTypeAndShapeInfo(info);
         return valid && type == ONNX_TENSOR_ELEMENT_DATA_TYPE_FLOAT
-            && shape[0] == 1 && shape[1] == 3 && shape[2] == mh && shape[3] == mw;
+            && shape[0] == 1 && shape[1] == 3 && shape[2] == boundH && shape[3] == boundW;
     };
 
     // Calibrate the export contract using a known unmasked neutral, never the
     // user's first (possibly almost black) photograph.
     if (pImpl->calibratedRange == 0.f) {
+        // A small neutral is enough when the export takes any size.
+        if (!bind(native ? 256 : mw, native ? 256 : mh)) return false;
         std::fill(input.begin(), input.end(), .25f);
-        std::fill(modelMask.begin(), modelMask.end(), 0.f);
         if (!infer()) return false;
         float* data = nullptr;
         if (!check(api->GetTensorMutableData(run.output, reinterpret_cast<void**>(&data)))) return false;
+        const int samples = 3 * boundW * boundH;
         double mean = 0.;
-        for (int i = 0; i < 3 * count; ++i) {
+        for (int i = 0; i < samples; ++i) {
             if (!std::isfinite(data[i])) return false;
             mean += data[i];
         }
-        mean /= 3 * count;
+        mean /= samples;
         if (std::fabs(mean - .25) < .003) pImpl->calibratedRange = 1.f;
         else if (std::fabs(mean - 63.75) < .75) pImpl->calibratedRange = 255.f;
         else {
@@ -659,10 +696,7 @@ bool AIInpaintingEngine::inpaintV2(const float* r, const float* g, const float* 
         }
     }
 
-    // Preserve aspect and native pixels when they fit; pad, never stretch.
-    const double scale = std::min({1., double(mw) / w, double(mh) / h});
-    const int rw = std::max(1, int(std::round(w * scale)));
-    const int rh = std::max(1, int(std::round(h * scale)));
+    if (!bind(mw, mh)) return false;
     const int ox = (mw - rw) / 2, oy = (mh - rh) / 2;
     std::vector<float> encoded(size_t(w) * h), resized(rw * rh);
     const float* channels[] = {r, g, b};

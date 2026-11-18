@@ -78,3 +78,7 @@ tools/fp_*
 tools/q_*
 tools/chk_*
 /test-output/
+rtdata/models/rorem_unet.onnx
+rtdata/models/rorem_unet.onnx.data
+rtdata/models/rorem_vae_encoder.onnx
+rtdata/models/rorem_vae_decoder.onnx

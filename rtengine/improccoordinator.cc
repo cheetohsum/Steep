@@ -4025,7 +4025,7 @@ std::vector<procparams::SpotEntry> ImProcCoordinator::detectDustSpots(int maxSpo
         entry.sourcePos.set(sx * scale + scale / 2, sy * scale + scale / 2);
         entry.radius = LIM(blobs[i].radius * scale, 8, 200);
         entry.opacity = 1.f;
-        entry.repairVersion = 2;
+        entry.repairVersion = procparams::SpotEntry::currentRepairVersion;
         found.push_back(entry);
     }
 
