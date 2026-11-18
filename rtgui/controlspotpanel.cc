@@ -2384,7 +2384,7 @@ void ControlSpotPanel::load_ControlSpot_param()
     centerX_->setValue((double)row[spots_.centerX]);
     centerY_->setValue((double)row[spots_.centerY]);
     circrad_->setResetValue(18.0);
-    transit_->setResetValue(row[spots_.maskType] == 1 ? 35.0 : 60.0);
+    transit_->setResetValue(row[spots_.maskType] == 1 ? 8.0 : 60.0);
     circrad_->setValue((double)row[spots_.circrad]);
     qualityMethod_->set_active(row[spots_.qualityMethod]);
     transit_->setValue((double)row[spots_.transit]);
@@ -3090,7 +3090,7 @@ void ControlSpotPanel::maskTypeChanged(int /*index*/)
     Gtk::TreeModel::Row row = *iter;
 
     row[spots_.maskType] = maskType_->getSelected();
-    transit_->setResetValue(maskType_->getSelected() == 1 ? 35.0 : 60.0);
+    transit_->setResetValue(maskType_->getSelected() == 1 ? 8.0 : 60.0);
 
     // Show/hide AI class based on mask type
     if (maskType_->getSelected() == 1) {

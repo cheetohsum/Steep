@@ -736,6 +736,11 @@ int runAIMaskEval(const char* listFile)
     rtengine::getAISubjectEngine().waitForDeferredInit();
     const std::string outDir(outEnv);
     const int dim = std::max(64, envInt("STEEP_AIMASK_EVAL_DIM", rtengine::AI_MASK_INPUT_DIMENSION));
+    // The feather a new AI mask starts with; STEEP_AIMASK_EVAL_FEATHER tries another.
+    const float evalFeather = float(envInt("STEEP_AIMASK_EVAL_FEATHER", int(rtengine::procparams::LocallabParams::LocallabSpot().aiMaskFeather)));
+    // Likewise STEEP_AIMASK_EVAL_THRESHOLD (percent) and STEEP_AIMASK_EVAL_REFINE (radius).
+    const float evalThreshold = envInt("STEEP_AIMASK_EVAL_THRESHOLD", int(std::lround(rtengine::procparams::LocallabParams::LocallabSpot().aiMaskThreshold * 100.))) / 100.f;
+    const int evalRefine = envInt("STEEP_AIMASK_EVAL_REFINE", rtengine::procparams::LocallabParams::LocallabSpot().aiMaskRefineRadius);
 
     std::ifstream list(listFile);
     std::string line;
@@ -798,7 +803,7 @@ int runAIMaskEval(const char* listFile)
                 const auto cls = static_cast<rtengine::AISegClass>(c);
                 const rtengine::AIMaskSnapshot snap = std::strcmp(kind, "raw") == 0
                     ? cache.getMaskSnapshot(cls)
-                    : cache.getPreparedMask(cls, 0.3f, 35.f, 0.f, 18.f, false, 8, 0.01f, noPaint, true);
+                    : cache.getPreparedMask(cls, evalThreshold, evalFeather, 0.f, 18.f, false, evalRefine, 0.01f, noPaint, true);
                 if (!snap) {
                     continue;
                 }

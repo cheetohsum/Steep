@@ -1326,7 +1326,14 @@ AIMaskSnapshot AIMaskCache::getPreparedMask(
             if (guide && refineRadius > 0) {
                 const int maxRadius = std::max(
                     1, (std::min(width, height) - 1) / 2 - 1);
-                const int radius = std::min(refineRadius, maxRadius);
+                // The radius is meant for the editor's ~2048 px mask input
+                // (short side about 1365). On a smaller mask the same count
+                // of pixels spans proportionally more of the picture and
+                // smooths the outline away: on 680 px images radius 8 cost
+                // 0.07 of boundary F-score, radius 3 almost nothing.
+                const int scaled = std::max(1, static_cast<int>(std::lround(
+                    refineRadius * std::min(1.f, std::min(width, height) / 1365.f))));
+                const int radius = std::min(scaled, maxRadius);
                 auto refined = std::make_shared<array2D<float>>(width, height);
                 guidedFilter(*guide, *refinedWorking, *refined, radius,
                              LIM(refineEps, 0.0001f, 0.5f), multiThread);

@@ -1668,7 +1668,10 @@ LocallabParams::LocallabSpot::LocallabSpot() :
     useAIMask(false),
     aiMaskClass(0),
     aiMaskThreshold(0.3),
-    aiMaskFeather(35.0),
+    // Feather is a share of the mask's short side (100 = 12% each way), so
+    // 35 put a new mask at half strength on the object's own edge and spread
+    // it 4% of the frame beyond. 8 keeps the edge soft without that.
+    aiMaskFeather(8.0),
     aiMaskBlur(0.0),
     aiMaskInvert(false),
     aiMaskOpacity(1.0),
