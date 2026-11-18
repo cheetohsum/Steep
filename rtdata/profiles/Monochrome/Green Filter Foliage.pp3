@@ -1,0 +1,75 @@
+# Green filter: leaves and grass lifted, lips and brick darker.
+# Graded look: owns Film Lab, colour grading, the Lab curve and the Black-and-White switch,
+# plus the finish sections listed below. It never sets exposure, white balance, crop or lens corrections.
+# Apply with the fill option off so the rest of the edit is kept.
+
+[Film Presets]
+Enabled=true
+Preset=silver_gelatin
+ModelVersion=6
+PushPull=0
+Process=auto
+Output=scan
+Format=35mm
+Backing=auto
+BWFilter=green
+LensDesign=slr
+Strength=100
+Contrast=-30
+Saturation=0
+Warmth=0
+Tint=0
+Fade=0
+Rolloff=0
+ShadowHue=220
+ShadowTint=0
+MidHue=35
+MidTint=0
+HighlightHue=40
+HighlightTint=0
+Halation=0
+RedShift=0
+GreenShift=0
+BlueShift=0
+Grain=0
+Vibrance=0
+SkinProtection=35
+LayerCoupling=0
+GrainSize=0
+GrainClumping=0
+GrainColor=0
+HalationSize=0
+HalationThreshold=0
+LightSources=0
+FilmSharpness=0
+HalationColor=0
+Bloom=0
+OutputSoftness=0
+
+[Color Grading]
+Enabled=false
+ShadowsHue=0
+ShadowsSat=0
+ShadowsLum=0
+MidtonesHue=0
+MidtonesSat=0
+MidtonesLum=0
+HighlightsHue=0
+HighlightsSat=0
+HighlightsLum=0
+GlobalHue=0
+GlobalSat=0
+GlobalLum=0
+Blending=100
+Balance=60
+
+[Luminance Curve]
+Enabled=false
+Brightness=0
+Contrast=0
+Chromaticity=0
+LCurve=0;
+
+[Black & White]
+Enabled=true
+Method=Desaturation
