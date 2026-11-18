@@ -1,0 +1,15 @@
+# A diagonal streak, as from a smeared front element.
+# Layer: carries only the sections below, so it stacks on the current look.
+# Apply with the fill option off; it never sets exposure or white balance.
+
+[Light Effects]
+Enabled=true
+Threshold=70
+Glow=0
+GlowRadius=25
+Halation=0
+HalationSize=30
+HalationWarmth=70
+Flare=35
+FlareLength=45
+FlareAngle=35

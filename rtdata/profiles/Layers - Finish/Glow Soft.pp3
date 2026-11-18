@@ -1,0 +1,15 @@
+# A light diffusion over the highlights.
+# Layer: carries only the sections below, so it stacks on the current look.
+# Apply with the fill option off; it never sets exposure or white balance.
+
+[Light Effects]
+Enabled=true
+Threshold=70
+Glow=25
+GlowRadius=25
+Halation=0
+HalationSize=30
+HalationWarmth=70
+Flare=0
+FlareLength=40
+FlareAngle=0

@@ -1,0 +1,8 @@
+# Fine texture eased back.
+# Layer: carries only the sections below, so it stacks on the current look.
+# Apply with the fill option off; it never sets exposure or white balance.
+
+[Texture]
+Enabled=true
+Radius=20
+Amount=-30

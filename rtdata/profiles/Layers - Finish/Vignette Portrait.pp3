@@ -1,0 +1,9 @@
+# A rounder, tighter fall-off that holds the eye on a face.
+# Layer: carries only the sections below, so it stacks on the current look.
+# Apply with the fill option off; it never sets exposure or white balance.
+
+[PCVignette]
+Enabled=true
+Strength=0.45
+Feather=60
+Roundness=30
