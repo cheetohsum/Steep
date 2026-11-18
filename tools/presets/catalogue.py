@@ -121,7 +121,7 @@ look(G, "Cross Process Rose", "cross-process", "Negative film in slide chemistry
 # --------------------------------------------------------------------------------------------
 G = "Decades"
 look(G, "1940s Three-Strip", "period", "Dye-transfer colour: separated, saturated primaries with rich blacks.",
-     "vivid_chrome", Strength=55, LayerCoupling=60, Saturation=15, Contrast=-10, lab=dict(c=0.2))
+     "vivid_chrome", Strength=55, LayerCoupling=60, Saturation=5, Contrast=-10, lab=dict(c=0.2))
 look(G, "1950s Travel Slide", "period", "A projected holiday slide: warm, clean, strong blue skies and red details.",
      "desert_chrome", Strength=65, Contrast=-15, Warmth=10, cg=dict(hi=(YELLOW, 3)))
 look(G, "1950s Studio Glamour", "period", "A studio colour portrait print: warm skin, soft contrast, a glow on the highlights.",
@@ -178,7 +178,7 @@ look(G, "Reportage Pushed", "reportage", "The same stock pushed: more contrast, 
 look(G, "Documentary Overcast", "reportage", "Flat grey days: cool, quiet colour that keeps cloud detail.",
      "arctic", Strength=50, Saturation=-15)
 look(G, "Field Notes Green", "reportage", "Pale, slightly green field colour for land and rural work.",
-     "nostalgia_200", cg=dict(gl=(LIME, 3)))
+     "nostalgia_200", cg=dict(gl=(LIME, 2)))
 look(G, "Op-Ed Portrait", "portrait", "A serious portrait for the opinion page: restrained colour, firm contrast, quiet corners.",
      "porcelain_400", Saturation=-18, Contrast=10, vig=(0.25, 60))
 look(G, "Photo Essay Soft", "portrait", "Gentle essay colour: soft contrast and grey-lifted blacks.",
@@ -204,7 +204,7 @@ look(G, "Silver Classic", "silver", "A straight silver print: full range, neutra
 look(G, "Silver Soft", "silver", "A long-scale print on soft paper: open shadows, gentle highlights.",
      S, Contrast=-55, lab=dict(c=-0.15))
 look(G, "Silver Hard", "silver", "A hard-paper print: strong blacks, bright whites, little in between.",
-     S, Contrast=-5, lab=dict(c=0.2))
+     S, Contrast=-12, lab=dict(c=0.2))
 look(G, "Chromogenic Mono", "silver", "Colour-process monochrome: smooth, low grain, long highlights.",
      "cinema_reveal_35", Process="bw", Contrast=10)
 look(G, "Matte Mono", "silver", "Grey-black matte print: lifted blacks, soft contrast.",
@@ -221,7 +221,7 @@ look(G, "Newsprint Mono", "documentary", "A picture as the newspaper printed it:
 look(G, "Wire Photo Mono", "documentary", "Agency black-and-white: crisp and firm, made to survive reproduction.",
      S, Contrast=-18, FilmSharpness=60, clarity=15)
 look(G, "Flash Mono", "documentary", "Direct flash at night: bright foreground, falling to dark corners.",
-     S, Contrast=-12, Rolloff=-40, vig=(0.45, 35))
+     S, Contrast=-20, Rolloff=-40, vig=(0.45, 35))
 # lens filters
 look(G, "Yellow Filter Skies", "filter", "Yellow filter: skies a step darker, clouds separated, skin natural.",
      S, BWFilter="yellow", Contrast=-30)
@@ -251,11 +251,11 @@ look(G, "Platinum Print", "toned", "Platinum on warm paper: very long scale, sof
      S, Format="large", Contrast=-55, Warmth=18, lab=dict(black=0.03, white=0.97))
 look(G, "Cyanotype", "toned", "Blueprint blue from shadow to highlight.",
      S, Contrast=-30, Warmth=-100, ShadowHue=225, ShadowTint=100, MidHue=225, MidTint=100, HighlightHue=215, HighlightTint=60,
-     lab=dict(black=0.03))
+     lab=dict(black=0.03, white=0.94))
 look(G, "Copper and Steel", "toned", "Split-toned print: steel-blue shadows under copper highlights.",
-     S, Contrast=-30, ShadowHue=225, ShadowTint=100, HighlightHue=28, HighlightTint=100)
+     S, Contrast=-30, Warmth=22, ShadowHue=225, ShadowTint=100, MidHue=28, MidTint=60, HighlightHue=28, HighlightTint=100)
 look(G, "Lith Print", "toned", "Lith development: gritty blacks, peach highlights, coarse grain.",
-     S, Contrast=-8, Warmth=25, MidHue=30, MidTint=60, HighlightHue=30, HighlightTint=100, grain=(1600, 65))
+     S, Contrast=-12, Warmth=25, MidHue=30, MidTint=60, HighlightHue=30, HighlightTint=100, lab=dict(white=0.96), grain=(1600, 65))
 
 # --------------------------------------------------------------------------------------------
 # Texture
@@ -342,7 +342,7 @@ look(G, "Real Estate Bright", "architecture", "Listings: bright mid-tones, open 
 look(G, "Landscape Natural", "landscape", "Landscape as seen: neutral stock, muted colours brought up, a little structure.",
      "sovereign", Strength=70, Saturation=6, Vibrance=35, clarity=10)
 look(G, "Landscape Vivid", "landscape", "Slide-film landscape: strong colour kept inside the highlights.",
-     "vivid_chrome", Strength=45, Contrast=-15, clarity=15)
+     "vivid_chrome", Strength=60, Contrast=-20, Saturation=8, clarity=12)
 look(G, "Landscape Golden", "landscape", "Low sun: golden highlights and warm colour.",
      "golden_hour", Saturation=10, cg=dict(hi=(AMBER, 7), bal=80))
 look(G, "Landscape Moody", "landscape", "Weather: thin colour, teal shadows, lowered mid-tones, strong structure.",
@@ -354,7 +354,7 @@ look(G, "Forest Deep Green", "landscape", "Woodland: deep, slightly cool greens 
 look(G, "Autumn Foliage", "landscape", "Autumn: reds and oranges lifted, warm overall.",
      "heritage_gold", Warmth=4, RedShift=45, Saturation=12, Contrast=-10, cg=dict(mid=(RED, 4)))
 look(G, "Food Fresh", "food", "Fresh, bright food: lively colour, lifted mid-tones.",
-     "sovereign", Strength=50, Saturation=22, Vibrance=30, Warmth=6, lab=dict(mid=0.2))
+     "sovereign", Strength=50, Saturation=22, Vibrance=30, Warmth=10, cg=dict(mid=(AMBER, 2)), lab=dict(mid=0.2))
 look(G, "Food Warm Table", "food", "A warm table: golden light, soft corners.",
      "golden_hour", Strength=70, Warmth=10, vig=(0.25, 60))
 look(G, "Food Dark Rustic", "food", "Dark, rustic food: low key, rich mid-tones, heavy corners.",

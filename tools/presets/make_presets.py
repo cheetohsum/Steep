@@ -138,6 +138,11 @@ def graded_look_text(look):
         out += ["", "[Clarity]", "Enabled=true", "Radius=100", "Amount=%d" % look["clarity"]]
     if "texture" in look:
         out += ["", "[Texture]", "Enabled=true", "Radius=20", "Amount=%d" % look["texture"]]
+    if is_mono(look):
+        # Film Lab re-applies the master RGB curve to its own output channel by channel, which
+        # puts colour back into a monochrome stock. In luminosity mode the curve keeps its
+        # brightness and stays neutral.
+        out += ["", "[RGB Curves]", "LumaMode=true"]
     return "\n".join(out) + "\n"
 
 
@@ -152,10 +157,14 @@ def layer_text(look):
     return "\n".join(out) + "\n"
 
 
+def is_mono(look):
+    return look["stock"] == "silver_gelatin" or look.get("film", {}).get("Process") == "bw"
+
+
 def text_for(group, look):
     if "layers" in look:
         return layer_text(look)
-    if any(key in look for key in ("cg", "lab", "grain", "fx", "vig", "clarity", "texture")):
+    if is_mono(look) or any(key in look for key in ("cg", "lab", "grain", "fx", "vig", "clarity", "texture")):
         return graded_look_text(look)
     return film_look_text(group, look)
 
@@ -213,7 +222,9 @@ def lint(files):
                         problems.append("%s: %s=%s" % (path, key, film[key]))
                 if "Exposure" in film or "PrintExposure" in film:
                     problems.append("%s: a look must not place exposure" % path)
-            extra = set(seen) - (LOOK_SECTIONS if film else LAYER_SECTIONS)
+            if "RGB Curves" in seen and seen["RGB Curves"] != {"LumaMode": "true"}:
+                problems.append("%s: a look may only set the RGB curve's luminosity mode" % path)
+            extra = set(seen) - (LOOK_SECTIONS | {"RGB Curves"} if film else LAYER_SECTIONS)
             if extra:
                 problems.append("%s: forbidden sections %s" % (path, sorted(extra)))
     return problems
