@@ -1,7 +1,7 @@
 # Streets under sodium lamps: orange light, green-black shadows.
-# Graded look: owns Film Lab, colour grading, the Lab curve and the Black-and-White switch,
-# plus the finish sections listed below. It never sets exposure, white balance, crop or lens corrections.
-# Apply with the fill option off so the rest of the edit is kept.
+# Look: owns Film Lab, colour grading and toning, the Lab curves, the Black-and-White
+# switch and the finish tools below. It never sets exposure, white balance, crop or lens
+# corrections. Apply with the fill option off so the rest of the edit is kept.
 
 [Film Presets]
 Enabled=true
@@ -16,8 +16,8 @@ BWFilter=none
 LensDesign=slr
 Strength=70
 Contrast=0
-Saturation=-10
-Warmth=15
+Saturation=-14
+Warmth=20
 Tint=0
 Fade=0
 Rolloff=0
@@ -49,13 +49,13 @@ OutputSoftness=0
 [Color Grading]
 Enabled=true
 ShadowsHue=172
-ShadowsSat=0.175
+ShadowsSat=0.315
 ShadowsLum=0
 MidtonesHue=0
 MidtonesSat=0
 MidtonesLum=0
 HighlightsHue=74
-HighlightsSat=0.175
+HighlightsSat=0.315
 HighlightsLum=0
 GlobalHue=0
 GlobalSat=0
@@ -63,12 +63,81 @@ GlobalLum=0
 Blending=100
 Balance=60
 
+[ColorToning]
+Enabled=false
+Method=LabGrid
+LabGridALow=0
+LabGridBLow=0
+LabGridAHigh=0
+LabGridBHigh=0
+
 [Luminance Curve]
 Enabled=true
 Brightness=0
 Contrast=0
 Chromaticity=0
-LCurve=1;0;0.0000;0.06;0.0528;0.125;0.1110;0.25;0.2279;0.375;0.3535;0.5;0.4850;0.625;0.6165;0.75;0.7420;0.875;0.8590;0.94;0.9172;1;0.9700;
+LCurve=1;0;0.0000;0.06;0.0496;0.125;0.1048;0.25;0.2192;0.375;0.3473;0.5;0.4850;0.625;0.6227;0.75;0.7508;0.875;0.8652;0.94;0.9204;1;0.9700;
+aCurve=0;
+bCurve=0;
 
 [Black & White]
 Enabled=false
+
+[Grain]
+Enabled=false
+ISO=400
+Strength=0
+Scale=100
+Color=0
+
+[Light Effects]
+Enabled=false
+Threshold=70
+Glow=0
+GlowRadius=25
+Halation=0
+HalationSize=30
+HalationWarmth=70
+Flare=0
+FlareLength=40
+FlareAngle=0
+
+[PCVignette]
+Enabled=false
+Strength=0
+Feather=50
+Roundness=50
+
+[TiltShift]
+Enabled=false
+Amount=0
+FocusPos=50
+FocusWidth=20
+Feather=50
+Angle=0
+
+[Gradient]
+Enabled=false
+Degree=0
+Feather=40
+Strength=0
+CenterX=0
+CenterY=0
+
+[SoftLight]
+Enabled=false
+Strength=30
+
+[Dehaze]
+Enabled=false
+Strength=50
+
+[Clarity]
+Enabled=false
+Radius=100
+Amount=0
+
+[Texture]
+Enabled=false
+Radius=20
+Amount=0
