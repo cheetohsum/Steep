@@ -20,6 +20,8 @@ private:
     void rebuild();
     void updateLabel();
     Gtk::Popover popover_;
+    Gtk::Box face_;             // the button itself: tag icon + count when active
+    Gtk::Label count_;
     Gtk::Box box_, rows_;
     Gtk::SearchEntry search_;
     Gtk::CheckButton all_, untagged_;

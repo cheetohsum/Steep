@@ -1022,10 +1022,10 @@ FileCatalog::FileCatalog (CoarsePanel* cp, ToolBar* tb, FilePanel* filepanel) :
     filterBar->pack_start(*Gtk::manage(new Gtk::Separator(Gtk::ORIENTATION_VERTICAL)), Gtk::PACK_SHRINK);
     {
         filetypeButton_ = Gtk::manage(new Gtk::MenuButton());
+        filetypeButton_->set_name("FiletypeFilter");   // plain text, no frame (widgets.css)
         filetypeButton_->set_label(M("FILEBROWSER_FILETYPE_ALL"));
         filetypeButton_->set_relief(Gtk::RELIEF_NONE);
         filetypeButton_->set_tooltip_markup(M("FILEBROWSER_FILETYPE_TOOLTIP"));
-        filetypeButton_->get_style_context()->add_class("smallbutton");
 
         filetypePopover_ = Gtk::manage(new Gtk::Popover(*filetypeButton_));
         filetypeBox_ = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
@@ -5071,7 +5071,7 @@ void FileCatalog::onFiletypeAllToggled ()
 
     if (all) {
         selectedFiletypes_.clear();
-        filetypeButton_->set_label(M("FILEBROWSER_FILETYPE_ALL"));
+        updateFiletypeButtonLabel();
     } else {
         // "All" unchecked = hide everything (unusual but consistent)
         selectedFiletypes_.clear();
@@ -5172,18 +5172,24 @@ void FileCatalog::updateFiletypeDefaultCheck_()
 
 void FileCatalog::updateFiletypeButtonLabel ()
 {
+    // "All types ▾" dim when nothing is filtered; the types themselves, in
+    // the accent, when something is.
+    Glib::ustring text;
     if (selectedFiletypes_.empty()) {
-        filetypeButton_->set_label(M("FILEBROWSER_FILETYPE_ALL"));
-    } else if (selectedFiletypes_.size() == 1) {
-        filetypeButton_->set_label(*selectedFiletypes_.begin() + " Only");
-    } else if (selectedFiletypes_.size() == 2) {
-        auto it = selectedFiletypes_.begin();
-        Glib::ustring first = *it++;
-        filetypeButton_->set_label(first + ", " + *it);
+        text = M("FILEBROWSER_FILETYPE_ALL");
+    } else if (selectedFiletypes_.size() <= 2) {
+        for (const auto& t : selectedFiletypes_) {
+            text += (text.empty() ? "" : ", ") + Glib::ustring(t).uppercase();
+        }
     } else {
-        filetypeButton_->set_label(
-            Glib::ustring::compose("%1 +%2 more", *selectedFiletypes_.begin(),
-                                   selectedFiletypes_.size() - 1));
+        text = Glib::ustring::compose("%1 +%2", Glib::ustring(*selectedFiletypes_.begin()).uppercase(), selectedFiletypes_.size() - 1);
+    }
+    filetypeButton_->set_label(text + " \u25be");
+    auto ctx = filetypeButton_->get_style_context();
+    if (selectedFiletypes_.empty()) {
+        ctx->remove_class("active");
+    } else {
+        ctx->add_class("active");
     }
 }
 

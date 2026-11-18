@@ -619,7 +619,39 @@ button.de-chip-selected { border: 2px solid @steep_accent; border-radius: 3px; p
 }
 
 /* Collection tags: quiet until a filter is active. */
-#PhotoTagFilter { padding: 4px 10px; border-radius: 14px; }
-#PhotoTagFilter.tags-active { background-color: alpha(@steep_select, 0.22); }
+/* Tags filter: an icon button. A count in the accent joins it while tags
+   filter, on a soft accent wash. No frame. */
+#PhotoTagFilter,
+#PhotoTagFilter:checked {
+    padding: 2px 6px;
+    min-height: 0;
+    border: none;
+    border-radius: 6px;
+    box-shadow: none;
+    background-color: transparent;
+    background-image: none;
+}
+#PhotoTagFilter:hover { background-color: alpha(@steep_text, 0.08); }
+#PhotoTagFilter.tags-active { background-color: alpha(@steep_accent, 0.18); }
+#PhotoTagFilterCount { color: @steep_accent; font-weight: bold; font-size: 0.85em; }
+
+/* File-type filter: text only, no box. Dim at "All types", the accent when
+   it narrows the view. */
+#FiletypeFilter,
+#FiletypeFilter:hover,
+#FiletypeFilter:checked,
+#FiletypeFilter:active {
+    padding: 2px 6px;
+    min-height: 0;
+    border: none;
+    box-shadow: none;
+    background-color: transparent;
+    background-image: none;
+    outline: none;
+}
+#FiletypeFilter label { color: @steep_text_dim; }
+#FiletypeFilter:hover label,
+#FiletypeFilter:checked label { color: @steep_text_hi; }
+#FiletypeFilter.active label { color: @steep_accent; font-weight: bold; }
 #PhotoTagsRecent image { padding: 0; margin: 0; border-width: 0; }
 

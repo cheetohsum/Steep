@@ -1,4 +1,5 @@
 #include "phototagwidgets.h"
+#include "rtimage.h"
 #include "options.h"
 #include "multilangmgr.h"
 
@@ -8,13 +9,23 @@ PhotoTags& PhotoTags::instance()
     return store;
 }
 
-PhotoTagFilter::PhotoTagFilter() : box_(Gtk::ORIENTATION_VERTICAL, 8),
+PhotoTagFilter::PhotoTagFilter() : face_(Gtk::ORIENTATION_HORIZONTAL, 3), box_(Gtk::ORIENTATION_VERTICAL, 8),
     rows_(Gtk::ORIENTATION_VERTICAL, 2), all_(M("TAGS_MATCH_ALL")),
     untagged_(M("TAGS_UNTAGGED")), clear_(M("TAGS_CLEAR_FILTER"))
 {
     set_name("PhotoTagFilter");
     set_relief(Gtk::RELIEF_NONE);
     set_tooltip_text(M("TAGS_FILTER_HINT"));
+    // An icon, not a word: a count joins it while tags are filtering.
+    face_.pack_start(*Gtk::manage(new RTImage("tag-modern", Gtk::ICON_SIZE_BUTTON)), Gtk::PACK_SHRINK);
+    count_.set_name("PhotoTagFilterCount");
+    count_.set_no_show_all(true);
+    face_.pack_start(count_, Gtk::PACK_SHRINK);
+    face_.show_all();
+    if (get_child()) {
+        remove();   // the menu button's default arrow
+    }
+    add(face_);
     set_popover(popover_);
     box_.set_border_width(12);
     box_.set_size_request(280, -1);
@@ -56,8 +67,18 @@ PhotoTagFilter::~PhotoTagFilter()
 
 void PhotoTagFilter::updateLabel()
 {
-    set_label(untagged() ? M("TAGS_UNTAGGED") : selected_.empty() ? M("TAGS_FILTER") :
-        Glib::ustring::compose(M("TAGS_FILTER_COUNT"), selected_.size()));
+    const Glib::ustring state = untagged() ? M("TAGS_UNTAGGED") : selected_.empty() ? M("TAGS_FILTER") :
+        Glib::ustring::compose(M("TAGS_FILTER_COUNT"), selected_.size());
+    set_tooltip_text(state + "\n" + M("TAGS_FILTER_HINT"));
+    if (untagged()) {
+        count_.set_text("\u2205");
+        count_.show();
+    } else if (!selected_.empty()) {
+        count_.set_text(Glib::ustring::format(selected_.size()));
+        count_.show();
+    } else {
+        count_.hide();
+    }
     get_style_context()->remove_class("tags-active");
     if (untagged() || !selected_.empty()) get_style_context()->add_class("tags-active");
 }
