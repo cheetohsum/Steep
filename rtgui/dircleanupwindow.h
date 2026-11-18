@@ -88,6 +88,12 @@ private:
     void clearFolderPreference (const std::string& a, const std::string& b);
     Glib::ustring dupTooltip (const dircleanup::Group& g, const dircleanup::Suggestion& s) const;
     bool onListButton (GdkEventButton* ev);
+    void showCompare (int gi, bool reload = true);
+    void hideCompare ();
+    void chooseSide (int side, bool wholeRow);   // 0 this copy's edits, 1 the destination's
+    void stepConflict (int dir);
+    int nextUnresolved (int from, int dir) const;
+    bool onWindowKey (GdkEventKey* ev);
 
     Columns cols_;
     Glib::RefPtr<Gtk::ListStore> store_;
@@ -110,6 +116,18 @@ private:
     std::vector<Gtk::EventBox*> thumbTiles_;
     std::vector<Gtk::Label*> thumbBadges_;
     std::unique_ptr<Gtk::Menu> listMenu_;
+    Gtk::Revealer* compareRev_ = nullptr;
+    Gtk::EventBox* cmpSide_[2] = {nullptr, nullptr};
+    Gtk::Image* cmpImg_[2] = {nullptr, nullptr};
+    Gtk::Label* cmpName_[2] = {nullptr, nullptr};
+    Gtk::Label* cmpNewer_[2] = {nullptr, nullptr};
+    Gtk::ToggleButton* cmpPin_[2] = {nullptr, nullptr};
+    Gtk::Label* cmpDiff_ = nullptr;
+    Gtk::Label* cmpProgress_ = nullptr;
+    int compareIndex_ = -1;
+    bool comparePinSync_ = false;
+    bool autoCompare_ = false;   // open the first conflict once the row's analysis lands
+    std::shared_ptr<std::atomic<int>> compareLive_ = std::make_shared<std::atomic<int>>(0);
     Gtk::FlowBox* thumbs_ = nullptr;
     Gtk::ScrolledWindow* thumbScroll_ = nullptr;
     Gtk::TreeViewColumn* fromCol_ = nullptr;

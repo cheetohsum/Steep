@@ -25,6 +25,7 @@
 #include "backgroundtasks.h"
 #include "cachemanager.h"
 #include "dirbrowser.h"
+#include "guiutils.h"
 #include "multilangmgr.h"
 #include "options.h"
 #include "phototags.h"
@@ -198,7 +199,7 @@ DirCleanupWindow::DirCleanupWindow ()
 {
     set_title(M("DIRCLEANUP_TITLE"));
     set_name("DirCleanupWindow");
-    set_default_size(880, 780);
+    set_default_size(900, 880);
     set_type_hint(Gdk::WINDOW_TYPE_HINT_DIALOG);
 
     auto* box = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 6));
@@ -242,7 +243,7 @@ DirCleanupWindow::DirCleanupWindow ()
             cr->property_ellipsize() = Pango::ELLIPSIZE_END;
         }
         if (dim) {
-            cr->property_foreground_rgba() = Gdk::RGBA("rgba(160,160,160,1)");
+            cr->property_foreground_rgba() = themeColor(*this, "steep_text_dim", Gdk::RGBA("#8e8e96"));
         }
         auto* column = Gtk::manage(new Gtk::TreeViewColumn(title));
         column->pack_start(*cr, true);
@@ -285,9 +286,94 @@ DirCleanupWindow::DirCleanupWindow ()
     thumbScroll_->add(*thumbs_);
     thumbScroll_->set_size_request(-1, 220);
 
+    // Conflict compare: this copy | the other copy, above the strip.
+    auto* cmpBox = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 6));
+    cmpBox->set_name("CleanupCompare");
+    cmpBox->set_border_width(8);
+    auto* sides = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 12));
+    sides->set_halign(Gtk::ALIGN_CENTER);
+    for (int k = 0; k < 2; ++k) {
+        auto* column = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 4));
+        cmpImg_[k] = Gtk::manage(new Gtk::Image());
+        cmpImg_[k]->set_size_request(360, 240);
+        cmpSide_[k] = Gtk::manage(new Gtk::EventBox());
+        cmpSide_[k]->set_name("CleanupCompareSide");
+        cmpSide_[k]->add(*cmpImg_[k]);
+        cmpSide_[k]->add_events(Gdk::BUTTON_PRESS_MASK);
+        cmpSide_[k]->signal_button_press_event().connect([this, k](GdkEventButton* ev) -> bool {
+            if (ev->button == 1 && ev->type == GDK_BUTTON_PRESS) {
+                chooseSide(k, (ev->state & GDK_SHIFT_MASK) != 0);
+                return true;
+            }
+            return false;
+        });
+        auto* caption = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 6));
+        caption->set_halign(Gtk::ALIGN_CENTER);
+        cmpName_[k] = Gtk::manage(new Gtk::Label());
+        cmpName_[k]->set_ellipsize(Pango::ELLIPSIZE_MIDDLE);
+        cmpName_[k]->set_max_width_chars(28);
+        cmpNewer_[k] = Gtk::manage(new Gtk::Label("\u25cf"));
+        cmpNewer_[k]->set_name("CleanupNewerDot");
+        cmpNewer_[k]->set_no_show_all(true);
+        cmpPin_[k] = Gtk::manage(new Gtk::ToggleButton(M("DIRCLEANUP_ALWAYS")));
+        cmpPin_[k]->set_relief(Gtk::RELIEF_NONE);
+        cmpPin_[k]->get_style_context()->add_class("smallbutton");
+        cmpPin_[k]->signal_toggled().connect([this, k]() {
+            if (comparePinSync_ || thumbRow_ < 0 || thumbRow_ >= static_cast<int>(suggestions_.size())) {
+                return;
+            }
+            const auto& s = suggestions_[thumbRow_];
+            const std::string mine = k == 0 ? s.source : s.dest;
+            const std::string other = k == 0 ? s.dest : s.source;
+            if (cmpPin_[k]->get_active()) {
+                setFolderPreference(mine, other);
+            } else {
+                clearFolderPreference(mine, mine);
+            }
+            if (compareIndex_ >= 0) {
+                showCompare(compareIndex_, false);
+            }
+        });
+        caption->pack_start(*cmpName_[k], Gtk::PACK_SHRINK);
+        caption->pack_start(*cmpNewer_[k], Gtk::PACK_SHRINK);
+        caption->pack_start(*cmpPin_[k], Gtk::PACK_SHRINK);
+        column->pack_start(*cmpSide_[k], Gtk::PACK_SHRINK);
+        column->pack_start(*caption, Gtk::PACK_SHRINK);
+        sides->pack_start(*column, Gtk::PACK_SHRINK);
+    }
+    auto* diffRow = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_HORIZONTAL, 8));
+    cmpDiff_ = Gtk::manage(new Gtk::Label());
+    cmpDiff_->get_style_context()->add_class("dim-label");
+    cmpDiff_->set_ellipsize(Pango::ELLIPSIZE_END);
+    cmpProgress_ = Gtk::manage(new Gtk::Label());
+    cmpProgress_->get_style_context()->add_class("dim-label");
+    auto* prevBtn = Gtk::manage(new Gtk::Button("\u2039"));
+    auto* nextBtn = Gtk::manage(new Gtk::Button("\u203a"));
+    for (auto* b : {prevBtn, nextBtn}) {
+        b->set_relief(Gtk::RELIEF_NONE);
+        b->get_style_context()->add_class("smallbutton");
+    }
+    prevBtn->signal_clicked().connect([this]() { stepConflict(-1); });
+    nextBtn->signal_clicked().connect([this]() { stepConflict(+1); });
+    diffRow->pack_start(*cmpDiff_, Gtk::PACK_EXPAND_WIDGET);
+    diffRow->pack_start(*cmpProgress_, Gtk::PACK_SHRINK);
+    diffRow->pack_start(*prevBtn, Gtk::PACK_SHRINK);
+    diffRow->pack_start(*nextBtn, Gtk::PACK_SHRINK);
+    cmpBox->pack_start(*sides, Gtk::PACK_SHRINK);
+    cmpBox->pack_start(*diffRow, Gtk::PACK_SHRINK);
+    compareRev_ = Gtk::manage(new Gtk::Revealer());
+    compareRev_->set_transition_type(Gtk::REVEALER_TRANSITION_TYPE_SLIDE_DOWN);
+    compareRev_->add(*cmpBox);
+    compareRev_->set_reveal_child(false);
+    signal_key_press_event().connect(sigc::mem_fun(*this, &DirCleanupWindow::onWindowKey), false);
+
+    auto* bottom = Gtk::manage(new Gtk::Box(Gtk::ORIENTATION_VERTICAL, 0));
+    bottom->pack_start(*compareRev_, Gtk::PACK_SHRINK);
+    bottom->pack_start(*thumbScroll_, Gtk::PACK_EXPAND_WIDGET);
+
     auto* paned = Gtk::manage(new Gtk::Paned(Gtk::ORIENTATION_VERTICAL));
     paned->pack1(*stack_, true, false);
-    paned->pack2(*thumbScroll_, false, false);
+    paned->pack2(*bottom, false, false);
     paned->set_position(300);
     box->pack_start(*paned, Gtk::PACK_EXPAND_WIDGET);
 
@@ -422,6 +508,8 @@ bool DirCleanupWindow::onQueryTooltip (int x, int y, bool keyboard, const Glib::
 
 void DirCleanupWindow::showThumbs ()
 {
+    hideCompare();
+    autoCompare_ = false;
     const int gen = ++(*thumbLive_);
     thumbImages_.clear();
     thumbTiles_.clear();
@@ -464,6 +552,10 @@ void DirCleanupWindow::showThumbs ()
         const int row = index;
         const size_t gi = i;
         tile->signal_button_press_event().connect([this, path, row, gi, dupRow](GdkEventButton* ev) -> bool {
+            if (ev->button == 1 && ev->type == GDK_BUTTON_PRESS && dupRow) {
+                showCompare(static_cast<int>(gi));
+                return false;
+            }
             if (ev->button != 3 || ev->type != GDK_BUTTON_PRESS) {
                 return false;
             }
@@ -503,10 +595,12 @@ void DirCleanupWindow::showThumbs ()
         });
         thumbs_->add(*tile);
         thumbImages_.push_back(img);
+        tile->set_name("CleanupTile");
         thumbTiles_.push_back(tile);
         thumbBadges_.push_back(badge);
     }
     thumbs_->show_all();
+    autoCompare_ = dupRow;
     refreshDupDisplay();
 
     // One thumbnail per job on the cleanup's own queue; a newer click
@@ -1153,8 +1247,13 @@ void DirCleanupWindow::startMove ()
         return;
     }
     // Thumbnails read the same photos the mover is about to take away.
+    hideCompare();
+    autoCompare_ = false;
     ++(*thumbLive_);
     thumbImages_.clear();
+    thumbTiles_.clear();
+    thumbBadges_.clear();
+    thumbRow_ = -1;
     for (auto* child : thumbs_->get_children()) {
         thumbs_->remove(*child);
     }
@@ -1618,7 +1717,10 @@ void DirCleanupWindow::refreshDupDisplay ()
                 ++unresolved;
             }
         }
-        row[cols_.reason] = unresolved ? Glib::ustring::compose("≠%1", unresolved) : Glib::ustring("=");
+        row[cols_.reason] = unresolved
+            ? "<span foreground=\"" + themeColorHex(*view_, "steep_attention", Gdk::RGBA("#e0a03c"))
+              + "\">" + Glib::ustring::compose("≠%1", unresolved) + "</span>"
+            : Glib::ustring("=");
     }
 
     // The strip: hover text, and a badge on photos whose edits differ.
@@ -1635,10 +1737,25 @@ void DirCleanupWindow::refreshDupDisplay ()
             badge->hide();
             continue;
         }
-        const bool open = it->second.mediaDiffers || resolutionFor(g, s.dest) == 0;
-        badge->set_markup(open ? "<span background=\"#c0392b\" foreground=\"white\"> ≠ </span>"
-                               : "<span background=\"#2e7d32\" foreground=\"white\"> ✓ </span>");
+        const int r = it->second.mediaDiffers ? 0 : resolutionFor(g, s.dest);
+        auto ctx = badge->get_style_context();
+        ctx->remove_class("open");
+        ctx->remove_class("resolved");
+        badge->set_text(r == 0 ? "≠" : r == 1 ? "A" : "B");
+        ctx->add_class(r == 0 ? "open" : "resolved");
         badge->show();
+    }
+
+    // The compare follows: open on the row's first conflict once known,
+    // and keep an open one's captions current.
+    if (compareIndex_ >= 0) {
+        showCompare(compareIndex_, false);
+    } else if (autoCompare_ && !busy_) {
+        const int first = nextUnresolved(-1, +1);
+        if (first >= 0) {
+            autoCompare_ = false;
+            showCompare(first);
+        }
     }
 }
 
@@ -1676,4 +1793,262 @@ bool DirCleanupWindow::onListButton (GdkEventButton* ev)
     listMenu_->show_all();
     listMenu_->popup_at_pointer(reinterpret_cast<GdkEvent*>(ev));
     return true;
+}
+
+// ---------------------------------------------------------------------------
+// Conflict compare: this copy | the other copy, each with its own edits
+// ---------------------------------------------------------------------------
+
+int DirCleanupWindow::nextUnresolved (int from, int dir) const
+{
+    if (thumbRow_ < 0 || thumbRow_ >= static_cast<int>(suggestions_.size())) {
+        return -1;
+    }
+    const auto& s = suggestions_[thumbRow_];
+    const int n = static_cast<int>(std::min(s.groups.size(), thumbTiles_.size()));
+    for (int step = 1; step <= n; ++step) {
+        const int i = ((from + dir * step) % n + n) % n;
+        const auto it = dupInfo_.find(lowerAscii(s.groups[i].primary));
+        if (it != dupInfo_.end() && !it->second.mediaDiffers && !it->second.conflicts.empty()
+                && resolutionFor(s.groups[i], s.dest) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+void DirCleanupWindow::hideCompare ()
+{
+    ++(*compareLive_);
+    if (compareIndex_ >= 0 && compareIndex_ < static_cast<int>(thumbTiles_.size())) {
+        thumbTiles_[compareIndex_]->get_style_context()->remove_class("current");
+    }
+    compareIndex_ = -1;
+    if (compareRev_) {
+        compareRev_->set_reveal_child(false);
+    }
+}
+
+void DirCleanupWindow::showCompare (int gi, bool reload)
+{
+    if (busy_ || thumbRow_ < 0 || thumbRow_ >= static_cast<int>(suggestions_.size())) {
+        return;
+    }
+    const auto& s = suggestions_[thumbRow_];
+    if (!s.duplicate || gi < 0 || gi >= static_cast<int>(s.groups.size())) {
+        return;
+    }
+    const auto& g = s.groups[gi];
+    const auto info = dupInfo_.find(lowerAscii(g.primary));
+    if (info == dupInfo_.end() || (info->second.conflicts.empty() && !info->second.mediaDiffers)) {
+        return;
+    }
+
+    if (compareIndex_ >= 0 && compareIndex_ < static_cast<int>(thumbTiles_.size())) {
+        thumbTiles_[compareIndex_]->get_style_context()->remove_class("current");
+    }
+    compareIndex_ = gi;
+    if (gi < static_cast<int>(thumbTiles_.size())) {
+        thumbTiles_[gi]->get_style_context()->add_class("current");
+    }
+
+    // Captions: folder, a dot on the newer side, "Always" for that folder.
+    const std::string folders[2] = {s.source, s.dest};
+    const auto& prefs = App::get().options().cleanupPreferFolders;
+    comparePinSync_ = true;
+    for (int k = 0; k < 2; ++k) {
+        cmpName_[k]->set_text(Glib::path_get_basename(folders[k]));
+        cmpName_[k]->set_tooltip_text(folders[k]);
+        cmpNewer_[k]->set_visible(k == 0 ? info->second.newer > 0 : info->second.newer < 0);
+        bool pinned = false;
+        for (const auto& p : prefs) {
+            pinned = pinned || lowerAscii(p.raw()) == lowerAscii(folders[k]);
+        }
+        cmpPin_[k]->set_active(pinned);
+        cmpPin_[k]->set_tooltip_text(Glib::ustring::compose(M("DIRCLEANUP_PREFER"), Glib::path_get_basename(folders[k])));
+    }
+    comparePinSync_ = false;
+
+    // Which sections differ; ≠ alone when the photo files themselves differ.
+    if (info->second.mediaDiffers) {
+        cmpDiff_->set_text("≠");
+    } else {
+        std::string sec = info->second.sections;
+        for (size_t p = sec.find(", "); p != std::string::npos; p = sec.find(", ", p + 3)) {
+            sec.replace(p, 2, " · ");
+        }
+        cmpDiff_->set_text(sec);
+    }
+
+    int total = 0, resolved = 0;
+    for (size_t i = 0; i < s.groups.size(); ++i) {
+        const auto it = dupInfo_.find(lowerAscii(s.groups[i].primary));
+        if (it != dupInfo_.end() && !it->second.conflicts.empty()) {
+            ++total;
+            resolved += resolutionFor(s.groups[i], s.dest) != 0;
+        }
+    }
+    cmpProgress_->set_text(Glib::ustring::compose("%1 / %2", resolved, total));
+
+    // The chosen side wears the accent ring, the other steps back.
+    const int r = info->second.mediaDiffers ? 0 : resolutionFor(g, s.dest);
+    for (int k = 0; k < 2; ++k) {
+        auto ctx = cmpSide_[k]->get_style_context();
+        const bool chosen = r == (k == 0 ? 1 : 2);
+        if (chosen) {
+            ctx->add_class("chosen");
+        } else {
+            ctx->remove_class("chosen");
+        }
+        cmpSide_[k]->set_opacity(r != 0 && !chosen ? 0.45 : 1.0);
+        cmpSide_[k]->set_sensitive(!info->second.mediaDiffers);
+    }
+    compareRev_->set_reveal_child(true);
+
+    if (!reload) {
+        return;
+    }
+    const int gen = ++(*compareLive_);
+    std::shared_ptr<std::atomic<int>> live = compareLive_;
+    DirCleanupWindow* self = this;
+    const std::string paths[2] = {g.primary, Glib::build_filename(s.dest, Glib::path_get_basename(g.primary))};
+    for (int k = 0; k < 2; ++k) {
+        cmpImg_[k]->clear();
+        const std::string path = paths[k];
+        scanQueue().enqueue([self, gen, live, path, k]() {
+            if (gen != live->load()) {
+                return;
+            }
+            constexpr int kBox = 360;
+            Glib::RefPtr<Gdk::Pixbuf> pixbuf;
+            try {
+                Thumbnail* thm = cacheMgr->getEntry(path);
+                if (thm) {
+                    double sc = 1.0;
+                    rtengine::IImage8* img = thm->processThumbImage(kBox, sc);
+                    if (img) {
+                        pixbuf = Gdk::Pixbuf::create_from_data(img->getData(), Gdk::COLORSPACE_RGB, false, 8,
+                                                               img->getWidth(), img->getHeight(),
+                                                               img->getWidth() * 3)->copy();
+                        delete img;
+                    }
+                    thm->decreaseRef();
+                }
+            } catch (...) {}
+            if (!pixbuf) {
+                return;
+            }
+            const double f = std::min(double(kBox) / pixbuf->get_width(), double(kBox) / pixbuf->get_height());
+            if (f < 1.0) {
+                pixbuf = pixbuf->scale_simple(std::max(1, int(pixbuf->get_width() * f)),
+                                              std::max(1, int(pixbuf->get_height() * f)), Gdk::INTERP_BILINEAR);
+            }
+            Glib::signal_idle().connect_once([self, gen, live, pixbuf, k]() {
+                if (instance == self && gen == live->load()) {
+                    self->cmpImg_[k]->set(pixbuf);
+                }
+            });
+        });
+    }
+}
+
+void DirCleanupWindow::chooseSide (int side, bool wholeRow)
+{
+    if (compareIndex_ < 0 || thumbRow_ < 0 || thumbRow_ >= static_cast<int>(suggestions_.size())) {
+        return;
+    }
+    const auto& s = suggestions_[thumbRow_];
+    if (compareIndex_ >= static_cast<int>(s.groups.size())) {
+        return;
+    }
+    const auto& g = s.groups[compareIndex_];
+    const auto info = dupInfo_.find(lowerAscii(g.primary));
+    if (info == dupInfo_.end() || info->second.mediaDiffers) {
+        return;
+    }
+    const std::string key = lowerAscii(g.primary);
+    const int want = side == 0 ? 1 : 2;
+
+    if (!wholeRow) {
+        const auto it = conflictChoice_.find(key);
+        if (it != conflictChoice_.end() && it->second == want) {
+            conflictChoice_.erase(it);   // clicking the chosen side again clears it
+            refreshDupDisplay();
+            updateSummary();
+            showCompare(compareIndex_, false);
+            return;
+        }
+        conflictChoice_[key] = want;
+    } else {
+        for (const auto& other : s.groups) {
+            const auto oi = dupInfo_.find(lowerAscii(other.primary));
+            if (oi != dupInfo_.end() && !oi->second.conflicts.empty() && !oi->second.mediaDiffers
+                    && resolutionFor(other, s.dest) == 0) {
+                conflictChoice_[lowerAscii(other.primary)] = want;
+            }
+        }
+        conflictChoice_[key] = want;
+    }
+    refreshDupDisplay();
+    updateSummary();
+
+    const int next = nextUnresolved(compareIndex_, +1);
+    if (next >= 0) {
+        showCompare(next);
+    } else {
+        showCompare(compareIndex_, false);   // all decided: stay, showing the choice
+    }
+}
+
+void DirCleanupWindow::stepConflict (int dir)
+{
+    if (compareIndex_ < 0 || thumbRow_ < 0 || thumbRow_ >= static_cast<int>(suggestions_.size())) {
+        return;
+    }
+    const auto& s = suggestions_[thumbRow_];
+    const int n = static_cast<int>(std::min(s.groups.size(), thumbTiles_.size()));
+    for (int step = 1; step <= n; ++step) {
+        const int i = ((compareIndex_ + dir * step) % n + n) % n;
+        const auto it = dupInfo_.find(lowerAscii(s.groups[i].primary));
+        if (it != dupInfo_.end() && (!it->second.conflicts.empty() || it->second.mediaDiffers)) {
+            showCompare(i);
+            return;
+        }
+    }
+}
+
+bool DirCleanupWindow::onWindowKey (GdkEventKey* ev)
+{
+    if (!compareRev_ || !compareRev_->get_reveal_child() || compareIndex_ < 0) {
+        return false;
+    }
+    const bool shift = (ev->state & GDK_SHIFT_MASK) != 0;
+    switch (ev->keyval) {
+        case GDK_KEY_1: case GDK_KEY_KP_1: case GDK_KEY_exclam: case GDK_KEY_Left:
+            chooseSide(0, shift || ev->keyval == GDK_KEY_exclam);
+            return true;
+        case GDK_KEY_2: case GDK_KEY_KP_2: case GDK_KEY_at: case GDK_KEY_Right:
+            chooseSide(1, shift || ev->keyval == GDK_KEY_at);
+            return true;
+        case GDK_KEY_Up:
+            stepConflict(-1);
+            return true;
+        case GDK_KEY_Down:
+            stepConflict(+1);
+            return true;
+        case GDK_KEY_BackSpace:
+            if (thumbRow_ >= 0 && thumbRow_ < static_cast<int>(suggestions_.size())
+                    && compareIndex_ < static_cast<int>(suggestions_[thumbRow_].groups.size())) {
+                conflictChoice_.erase(lowerAscii(suggestions_[thumbRow_].groups[compareIndex_].primary));
+                refreshDupDisplay();
+                updateSummary();
+                showCompare(compareIndex_, false);
+            }
+            return true;
+        case GDK_KEY_Escape:
+            hideCompare();
+            return true;
+        default:
+            return false;
+    }
 }

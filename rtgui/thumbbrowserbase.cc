@@ -879,7 +879,15 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry, bool filterSta
     folderHeadings_.clear();
     const int headingExtent = groupByFolder_ ? folderHeadingExtent_() : 0;
     const std::string* currentFolder = nullptr;
-    constexpr std::size_t kPaletteSize = 8;
+    constexpr std::size_t kPaletteSize = 12;
+    // Stable across runs and builds (std::hash isn't), so a folder keeps its hue.
+    const auto folderHash = [](const std::string& s) {
+        std::uint64_t h = 1469598103934665603ULL;
+        for (unsigned char c : s) {
+            h = (h ^ c) * 1099511628211ULL;
+        }
+        return static_cast<std::size_t>(h >> 7);
+    };
     std::size_t previousColour = kPaletteSize;
     const auto startsGroup = [&](const ThumbBrowserEntryBase* thumb) {
         if (!groupByFolder_ || (currentFolder && *currentFolder == thumb->collate_folder)) {
@@ -891,7 +899,7 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry, bool filterSta
     const auto openHeading = [&](const ThumbBrowserEntryBase* thumb, int x, int y, int w, int h) {
         // Colour follows the folder, so it stays put as filters change; a
         // collision with the group before steps to the next hue.
-        std::size_t colour = std::hash<std::string>()(thumb->collate_folder) % kPaletteSize;
+        std::size_t colour = folderHash(thumb->collate_folder) % kPaletteSize;
         if (colour == previousColour) {
             colour = (colour + 1) % kPaletteSize;
         }
@@ -981,7 +989,7 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry, bool filterSta
                 if (groupByFolder_) {
                     // Colour follows the folder, so it stays put as filters
                     // change; a collision with the group before steps on.
-                    colour = std::hash<std::string>()(thumb->collate_folder) % kPaletteSize;
+                    colour = folderHash(thumb->collate_folder) % kPaletteSize;
                     if (colour == previousColour) {
                         colour = (colour + 1) % kPaletteSize;
                     }
@@ -1080,18 +1088,44 @@ void ThumbBrowserBase::arrangeFiles(ThumbBrowserEntryBase* entry, bool filterSta
 namespace
 {
 
-// Folder heading hues: mid lightness so the tint reads on dark and light
-// themes alike and the accent bar stays visible on both.
-const char* const kFolderHeadingPalette[] = {
-    "#e07a4f", // ember
-    "#d6a93e", // ochre
-    "#79ad5c", // moss
-    "#3fae9f", // teal
-    "#4f8fe0", // cornflower
-    "#8f78db", // iris
-    "#d26a9e", // rose
-    "#b58b63", // walnut
-};
+// Folder heading hue for a slot (0..11): muted, derived for the theme
+// (lighter on dark surfaces, deeper on light ones) and kept clear of the
+// accent's hue so a folder never reads as "selected".
+Gdk::RGBA folderHeadingColour(std::size_t slot, const Gdk::RGBA& accent, bool dark)
+{
+    double hue = (slot % 12) * 30.0 + 15.0;
+    {
+        const double r = accent.get_red(), g = accent.get_green(), b = accent.get_blue();
+        const double mx = std::max({r, g, b}), mn = std::min({r, g, b}), d = mx - mn;
+        if (d > 1e-6) {
+            double ah = mx == r ? std::fmod((g - b) / d, 6.0) : mx == g ? (b - r) / d + 2.0 : (r - g) / d + 4.0;
+            ah *= 60.0;
+            if (ah < 0) {
+                ah += 360.0;
+            }
+            const double dist = std::fabs(std::fmod(hue - ah + 540.0, 360.0) - 180.0);
+            if (dist < 25.0) {
+                hue = std::fmod(hue + 45.0, 360.0);
+            }
+        }
+    }
+    const double s = dark ? 0.34 : 0.42;
+    const double l = dark ? 0.64 : 0.44;
+    const double c = (1.0 - std::fabs(2.0 * l - 1.0)) * s;
+    const double hp = hue / 60.0;
+    const double x = c * (1.0 - std::fabs(std::fmod(hp, 2.0) - 1.0));
+    double r = 0, g = 0, b = 0;
+    if (hp < 1) { r = c; g = x; }
+    else if (hp < 2) { r = x; g = c; }
+    else if (hp < 3) { g = c; b = x; }
+    else if (hp < 4) { g = x; b = c; }
+    else if (hp < 5) { r = x; b = c; }
+    else { r = c; b = x; }
+    const double m = l - c / 2.0;
+    Gdk::RGBA out;
+    out.set_rgba(r + m, g + m, b + m, 1.0);
+    return out;
+}
 
 Glib::ustring folderHeadingCount(int count)
 {
@@ -1111,7 +1145,7 @@ int ThumbBrowserBase::folderHeadingExtent_()
     int tw = 0;
     int th = 0;
     layout->get_pixel_size(tw, th);
-    return th + 16;
+    return th + 22;   // a little air above each heading
 }
 
 const ThumbBrowserBase::FolderHeading* ThumbBrowserBase::folderHeadingAt_(int x, int y) const
@@ -1134,8 +1168,11 @@ void ThumbBrowserBase::drawFolderHeadings_(const Cairo::RefPtr<Cairo::Context>& 
         return;
     }
 
-    const Gdk::RGBA ink = themeColor(internal, "steep_text", Gdk::RGBA("#d0d4dc"));
-    const Gdk::RGBA dim = themeColor(internal, "steep_text_dim", Gdk::RGBA("#8a92a1"));
+    const Gdk::RGBA ink = themeColor(internal, "steep_text_hi", Gdk::RGBA("#e6e6ea"));
+    const Gdk::RGBA dim = themeColor(internal, "steep_text_dim", Gdk::RGBA("#8e8e96"));
+    const Gdk::RGBA accent = themeColor(internal, "steep_accent", Gdk::RGBA("#4c9dff"));
+    const Gdk::RGBA surface = themeColor(internal, "steep_surface_1", Gdk::RGBA("#1d1d20"));
+    const bool dark = 0.2126 * surface.get_red() + 0.7152 * surface.get_green() + 0.0722 * surface.get_blue() < 0.5;
     Pango::FontDescription nameFont = steepui::uiFont();
     nameFont.set_weight(Pango::WEIGHT_SEMIBOLD);
     const Pango::FontDescription metaFont = steepui::uiFont(0.9);
@@ -1143,7 +1180,8 @@ void ThumbBrowserBase::drawFolderHeadings_(const Cairo::RefPtr<Cairo::Context>& 
     const int ox = getScrollOffsetX();
     const int oy = getScrollOffsetY();
     constexpr double inset = 3.0;
-    constexpr double accent = 4.0;
+    constexpr double topGap = 6.0;
+    constexpr double bar = 3.0;
 
     cr->save();
     cr->set_antialias(Cairo::ANTIALIAS_DEFAULT);
@@ -1156,111 +1194,113 @@ void ThumbBrowserBase::drawFolderHeadings_(const Cairo::RefPtr<Cairo::Context>& 
             continue;
         }
 
-        const Gdk::RGBA colour(kFolderHeadingPalette[fh.colour % G_N_ELEMENTS(kFolderHeadingPalette)]);
+        const Gdk::RGBA colour = folderHeadingColour(fh.colour, accent, dark);
         Glib::ustring name = Glib::path_get_basename(fh.path);
         if (name.empty() || name == "." || name == G_DIR_SEPARATOR_S) {
             name = fh.path;
         }
 
-        const double bx = x + inset;
-        const double by = y + inset;
-        const double bw = fh.w - 2.0 * inset;
-        const double bh = fh.h - 2.0 * inset;
-
-        if (bw <= accent || bh <= accent) {
-            continue;
-        }
-
-        // Tinted band, with the folder's colour as a solid accent edge.
-        steepui::setSource(cr, colour, 0.16);
-        steepui::roundedRect(cr, bx, by, bw, bh, steepui::Radius::M);
-        cr->fill();
-
         auto nameLayout = internal.create_pango_layout(name);
         nameLayout->set_font_description(nameFont);
-        nameLayout->set_ellipsize(Pango::ELLIPSIZE_MIDDLE);
+        nameLayout->set_ellipsize(Pango::ELLIPSIZE_END);
 
-        if (fh.w >= fh.h && (fh.continued || fh.w < 420)) {
-            // A segment of a shared row: accent, the name cut to the
-            // segment, and the count at the right edge when there is room.
-            steepui::setSource(cr, colour, fh.continued ? 0.55 : 1.0);
-            steepui::roundedRect(cr, bx, by, accent, bh, steepui::Radius::S);
+        if (fh.w >= fh.h) {
+            // Grid: a whisper of the folder's hue behind, the hue itself in a
+            // slim bar, the name in the theme's bright text.
+            const double bx = x + inset;
+            const double by = y + inset + topGap;
+            const double bw = fh.w - 2.0 * inset;
+            const double bh = fh.h - 2.0 * inset - topGap;
+            if (bw <= 4.0 * bar || bh <= 6.0) {
+                continue;
+            }
+
+            steepui::setSource(cr, colour, fh.continued ? 0.04 : (dark ? 0.10 : 0.09));
+            steepui::roundedRect(cr, bx, by, bw, bh, steepui::Radius::M);
+            cr->fill();
+            steepui::setSource(cr, colour, fh.continued ? 0.45 : 0.95);
+            steepui::roundedRect(cr, bx + 5.0, by + 5.0, bar, std::max(2.0, bh - 10.0), 1.5);
             cr->fill();
 
-            const double textX = bx + accent + 8.0;
-            const double right = bx + bw - 8.0;
+            const double textX = bx + 5.0 + bar + 9.0;
+            const double right = bx + bw - 10.0;
+
             Glib::RefPtr<Pango::Layout> countLayout;
-            int cw = 0;
-            int ch = 0;
-            if (!fh.continued && bw >= 90.0) {
+            int cw = 0, ch = 0;
+            if (!fh.continued) {
                 countLayout = internal.create_pango_layout(Glib::ustring::format(fh.count));
                 countLayout->set_font_description(metaFont);
                 steepui::useTabularNumerals(countLayout);
                 countLayout->get_pixel_size(cw, ch);
             }
-            const double nameW = std::max(1.0, right - textX - (cw ? cw + 8.0 : 0.0));
-            nameLayout->set_ellipsize(Pango::ELLIPSIZE_END);
-            nameLayout->set_width(static_cast<int>(nameW * PANGO_SCALE));
-            int nw = 0;
-            int nh = 0;
-            nameLayout->get_pixel_size(nw, nh);
-            steepui::setSource(cr, fh.continued ? dim : ink);
-            cr->move_to(textX, by + (bh - nh) / 2.0);
-            nameLayout->show_in_cairo_context(cr);
-            if (countLayout) {
-                steepui::setSource(cr, dim);
-                cr->move_to(right - cw, by + (bh - ch) / 2.0);
-                countLayout->show_in_cairo_context(cr);
-            }
-        } else if (fh.w >= fh.h) {
-            steepui::setSource(cr, colour);
-            steepui::roundedRect(cr, bx, by, accent, bh, steepui::Radius::S);
-            cr->fill();
 
-            // Folder name, then "N photos · parent path", dimmed.
-            const double textX = bx + accent + 10.0;
-            const double textW = std::max(1.0, bx + bw - textX - 10.0);
-            nameLayout->set_width(static_cast<int>(textW * 0.6 * PANGO_SCALE));
-            int nw = 0;
-            int nh = 0;
-            nameLayout->get_pixel_size(nw, nh);
-            steepui::setSource(cr, ink);
-            cr->move_to(textX, by + (bh - nh) / 2.0);
-            nameLayout->show_in_cairo_context(cr);
+            const bool wide = !fh.continued && fh.w >= 420;
+            if (wide) {
+                // Name, count, then the parent path (dim, cut in the middle).
+                nameLayout->set_width(static_cast<int>(std::max(1.0, (right - textX) * 0.5) * PANGO_SCALE));
+                int nw = 0, nh = 0;
+                nameLayout->get_pixel_size(nw, nh);
+                steepui::setSource(cr, ink);
+                cr->move_to(textX, by + (bh - nh) / 2.0);
+                nameLayout->show_in_cairo_context(cr);
 
-            Glib::ustring meta = folderHeadingCount(fh.count);
-            const Glib::ustring parentPath = Glib::path_get_dirname(fh.path);
-            if (!parentPath.empty() && parentPath != ".") {
-                meta += "  ·  " + parentPath;
-            }
-
-            const double metaX = textX + nw + 14.0;
-            const double metaW = bx + bw - metaX - 10.0;
-
-            if (metaW > 24.0) {
-                auto metaLayout = internal.create_pango_layout(meta);
-                metaLayout->set_font_description(metaFont);
-                metaLayout->set_ellipsize(Pango::ELLIPSIZE_MIDDLE);
-                metaLayout->set_width(static_cast<int>(metaW * PANGO_SCALE));
-                steepui::useTabularNumerals(metaLayout);
-                int mw = 0;
-                int mh = 0;
-                metaLayout->get_pixel_size(mw, mh);
-                steepui::setSource(cr, dim);
-                cr->move_to(metaX, by + (bh - mh) / 2.0);
-                metaLayout->show_in_cairo_context(cr);
+                double cursor = textX + nw + 10.0;
+                if (countLayout) {
+                    steepui::setSource(cr, dim);
+                    cr->move_to(cursor, by + (bh - ch) / 2.0);
+                    countLayout->show_in_cairo_context(cr);
+                    cursor += cw + 14.0;
+                }
+                const Glib::ustring parentPath = Glib::path_get_dirname(fh.path);
+                const double pathW = right - cursor;
+                if (!parentPath.empty() && parentPath != "." && pathW > 40.0) {
+                    auto pathLayout = internal.create_pango_layout(parentPath);
+                    pathLayout->set_font_description(metaFont);
+                    pathLayout->set_ellipsize(Pango::ELLIPSIZE_MIDDLE);
+                    pathLayout->set_width(static_cast<int>(pathW * PANGO_SCALE));
+                    int pw = 0, ph = 0;
+                    pathLayout->get_pixel_size(pw, ph);
+                    steepui::setSource(cr, dim, 0.75);
+                    cr->move_to(cursor, by + (bh - ph) / 2.0);
+                    pathLayout->show_in_cairo_context(cr);
+                }
+            } else {
+                // A segment of a shared row: name cut to fit, count at the edge.
+                const bool showCount = countLayout && bw >= 90.0;
+                const double nameW = std::max(1.0, right - textX - (showCount ? cw + 8.0 : 0.0));
+                nameLayout->set_width(static_cast<int>(nameW * PANGO_SCALE));
+                int nw = 0, nh = 0;
+                nameLayout->get_pixel_size(nw, nh);
+                steepui::setSource(cr, fh.continued ? dim : ink);
+                cr->move_to(textX, by + (bh - nh) / 2.0);
+                nameLayout->show_in_cairo_context(cr);
+                if (showCount) {
+                    steepui::setSource(cr, dim);
+                    cr->move_to(right - cw, by + (bh - ch) / 2.0);
+                    countLayout->show_in_cairo_context(cr);
+                }
             }
         } else {
-            // Filmstrip: a narrow band with the accent along its top and the
+            // Filmstrip: a narrow band with the hue along its top and the
             // name reading upward from the bottom.
-            steepui::setSource(cr, colour);
-            steepui::roundedRect(cr, bx, by, bw, accent, steepui::Radius::S);
+            const double bx = x + inset;
+            const double by = y + inset;
+            const double bw = fh.w - 2.0 * inset;
+            const double bh = fh.h - 2.0 * inset;
+            if (bw <= bar || bh <= bar) {
+                continue;
+            }
+            steepui::setSource(cr, colour, dark ? 0.10 : 0.09);
+            steepui::roundedRect(cr, bx, by, bw, bh, steepui::Radius::M);
+            cr->fill();
+            steepui::setSource(cr, colour, 0.95);
+            steepui::roundedRect(cr, bx + 3.0, by + 3.0, bw - 6.0, bar, 1.5);
             cr->fill();
 
-            const double labelLen = std::max(1.0, bh - accent - 12.0);
+            nameLayout->set_ellipsize(Pango::ELLIPSIZE_MIDDLE);
+            const double labelLen = std::max(1.0, bh - bar - 14.0);
             nameLayout->set_width(static_cast<int>(labelLen * PANGO_SCALE));
-            int nw = 0;
-            int nh = 0;
+            int nw = 0, nh = 0;
             nameLayout->get_pixel_size(nw, nh);
 
             cr->save();

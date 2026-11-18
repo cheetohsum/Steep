@@ -270,6 +270,20 @@ label.de-layer-title { font-family: Michroma, Jost, sans-serif; font-size: 0.85e
 /* Sidebar lists: the 24px name row is set on the cell renderers
    (steepui::listRowHeight); the trees themselves add nothing. */
 #PlacesBrowserTree, #DirBrowserTree, #AlbumBrowserTree { margin: 0; padding: 0; }
+/* Directory cleanup: conflict badges, compare sides, current tile. */
+#CleanupConflictBadge {
+    margin: 3px;
+    padding: 0 5px;
+    border-radius: 4px;
+    font-weight: bold;
+}
+#CleanupConflictBadge.open { background-color: @steep_attention; color: @steep_surface_0; }
+#CleanupConflictBadge.resolved { background-color: @steep_accent; color: @steep_on_accent; }
+#CleanupCompare { background-color: @steep_surface_1; border-radius: 8px; }
+#CleanupCompareSide { border: 2px solid transparent; border-radius: 6px; padding: 2px; }
+#CleanupCompareSide.chosen { border-color: @steep_accent; }
+#CleanupNewerDot { color: @steep_accent; }
+#CleanupTile.current { box-shadow: inset 0 0 0 2px @steep_accent; border-radius: 4px; }
 /* The folder tree selects on hover, so "selected" is only the row under the
    pointer: a faint wash keeps its name, count and rating chips readable. */
 #DirBrowserTree.view:selected,
