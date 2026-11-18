@@ -1,0 +1,86 @@
+# Light and airy: soft contrast, raised mid-tones, pale blacks, gentle glow.
+# Graded look: owns Film Lab, colour grading, the Lab curve and the Black-and-White switch,
+# plus the finish sections listed below. It never sets exposure, white balance, crop or lens corrections.
+# Apply with the fill option off so the rest of the edit is kept.
+
+[Film Presets]
+Enabled=true
+Preset=porcelain_400
+ModelVersion=6
+PushPull=0
+Process=auto
+Output=scan
+Format=35mm
+Backing=auto
+BWFilter=none
+LensDesign=slr
+Strength=85
+Contrast=-30
+Saturation=-8
+Warmth=0
+Tint=0
+Fade=0
+Rolloff=0
+ShadowHue=220
+ShadowTint=0
+MidHue=35
+MidTint=0
+HighlightHue=40
+HighlightTint=0
+Halation=0
+RedShift=0
+GreenShift=0
+BlueShift=0
+Grain=0
+Vibrance=0
+SkinProtection=35
+LayerCoupling=0
+GrainSize=0
+GrainClumping=0
+GrainColor=0
+HalationSize=0
+HalationThreshold=0
+LightSources=0
+FilmSharpness=0
+HalationColor=0
+Bloom=0
+OutputSoftness=0
+
+[Color Grading]
+Enabled=true
+ShadowsHue=0
+ShadowsSat=0
+ShadowsLum=0
+MidtonesHue=0
+MidtonesSat=0
+MidtonesLum=0
+HighlightsHue=60
+HighlightsSat=0.0375
+HighlightsLum=0
+GlobalHue=0
+GlobalSat=0
+GlobalLum=0
+Blending=100
+Balance=60
+
+[Luminance Curve]
+Enabled=true
+Brightness=0
+Contrast=0
+Chromaticity=0
+LCurve=1;0;0.0400;0.06;0.1106;0.125;0.1856;0.25;0.3206;0.375;0.4401;0.5;0.5469;0.625;0.6496;0.75;0.7574;0.875;0.8750;0.94;0.9395;1;1.0000;
+
+[Light Effects]
+Enabled=true
+Threshold=70
+Glow=10
+GlowRadius=25
+Halation=0
+HalationSize=30
+HalationWarmth=70
+Flare=0
+FlareLength=40
+FlareAngle=0
+
+[Black & White]
+Enabled=false
